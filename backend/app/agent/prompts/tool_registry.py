@@ -196,6 +196,8 @@ REPORT_TOOL_NAMES = [
     "create_report_package",
     "render_report_package",
     "validate_report_package",
+    # 报告工作流可按结构化任务协议委托专家分析
+    "call_sub_agent",
 ]
 
 # ===== 图表模式工具 =====

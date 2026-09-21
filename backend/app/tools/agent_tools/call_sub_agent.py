@@ -12,6 +12,7 @@ Session支持：
 """
 
 from contextlib import nullcontext
+import json
 from typing import Dict, Any, Literal, Optional, List
 import structlog
 from datetime import datetime
@@ -26,6 +27,7 @@ from app.agent.session.workspace_routing import (
 )
 from app.agent.selection_context import load_skill_selection
 from app.agent.prompts.tool_registry import get_tools_by_mode
+from app.agent.workflow.protocol import extract_structured_result, validate_result_schema
 from app.utils.path_config import format_agent_path, resolve_agent_path
 
 logger = structlog.get_logger()
@@ -115,6 +117,22 @@ class CallSubAgentTool(LLMTool):
                     "_force_isolated_session": {
                         "type": "boolean",
                         "description": "[内部使用] 并发调用时强制session隔离，避免多个子Agent共享同一个session"
+                    },
+                    "task_id": {
+                        "type": "string",
+                        "description": "本次工作流任务ID，用于结果追踪和恢复。"
+                    },
+                    "parent_task_id": {
+                        "type": "string",
+                        "description": "父任务ID，用于建立任务血缘。"
+                    },
+                    "task_contract": {
+                        "type": "object",
+                        "description": "结构化任务协议；子Agent必须按其中的范围、问题和交付要求执行。"
+                    },
+                    "result_schema": {
+                        "type": "object",
+                        "description": "子Agent最终结果的JSON Schema子集。提供后会解析并校验结构化结果。"
                     }
                 },
                 "required": ["target_mode"]  # ✅ 改为：target_mode必需，goal和task_description二选一
@@ -150,6 +168,10 @@ class CallSubAgentTool(LLMTool):
         force_new_session: bool = False,
         promote_to_workspace: bool = False,
         _force_isolated_session: bool = False,  # ⚠️ 内部使用：并发时强制隔离
+        task_id: Optional[str] = None,
+        parent_task_id: Optional[str] = None,
+        task_contract: Optional[Dict[str, Any]] = None,
+        result_schema: Optional[Dict[str, Any]] = None,
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
         """
@@ -166,6 +188,10 @@ class CallSubAgentTool(LLMTool):
             session_id: 可选，子Agent会话ID（传入则继续已有对话）
             force_new_session: 是否强制创建新会话
             _force_isolated_session: [内部使用] 并发调用时强制session隔离
+            task_id: 工作流任务ID（可选）
+            parent_task_id: 父任务ID（可选）
+            task_contract: 结构化任务协议（可选）
+            result_schema: 子Agent结果Schema（可选）
 
         Returns:
             {
@@ -448,6 +474,8 @@ class CallSubAgentTool(LLMTool):
                 parent_resource_lines=parent_resource_lines,
                 scheduled_task_context=scheduled_task_context,
                 skill_id=selected_child_skill.skill_id if selected_child_skill else None,
+                task_contract=task_contract,
+                result_schema=result_schema,
             )
             logger.debug(
                 "child_request_prompt_built",
@@ -536,6 +564,19 @@ class CallSubAgentTool(LLMTool):
                 "image_paths": self._extract_image_paths(result_events),  # 本地路径（文件操作）
                 "tool_calls": self._extract_tool_calls(result_events)
             }
+            if result_schema:
+                structured_result = extract_structured_result(final_result.get("answer", ""))
+                validation_errors = (
+                    [{
+                        "path": "$",
+                        "expected": "JSON result matching result_schema",
+                        "got": "no structured JSON result",
+                    }]
+                    if structured_result is None
+                    else validate_result_schema(structured_result, result_schema)
+                )
+                structured_data["structured_result"] = structured_result
+                structured_data["validation_errors"] = validation_errors
             human_feedback = self._extract_human_feedback(result_events)
             if human_feedback is not None:
                 structured_data["human_feedback"] = human_feedback
@@ -580,6 +621,15 @@ class CallSubAgentTool(LLMTool):
                 "session_id": session_id,
                 "is_new_session": is_new_session
             }
+            if task_id:
+                enhanced_metadata["task_id"] = task_id
+            if parent_task_id:
+                enhanced_metadata["parent_task_id"] = parent_task_id
+            if result_schema:
+                enhanced_metadata["result_validation"] = {
+                    "valid": not structured_data["validation_errors"],
+                    "error_count": len(structured_data["validation_errors"]),
+                }
 
             if promote_to_workspace:
                 try:
@@ -605,9 +655,10 @@ class CallSubAgentTool(LLMTool):
             if "reasoning" in final_result.get("data", {}):
                 enhanced_metadata["reasoning"] = final_result["data"]["reasoning"]
 
-            succeeded = final_result["status"] == "success"
+            validation_errors = structured_data.get("validation_errors", [])
+            succeeded = final_result["status"] == "success" and not validation_errors
             return {
-                "status": final_result["status"],
+                "status": "success" if succeeded else ("invalid_result" if validation_errors else final_result["status"]),
                 "success": succeeded,
                 "result": final_result["answer"],  # ✅ LLM的最终答案（最重要）
                 "data": structured_data,
@@ -615,6 +666,8 @@ class CallSubAgentTool(LLMTool):
                 "summary": (
                     f"{self._get_mode_name(target_mode)}已完成任务"
                     if succeeded
+                    else f"{self._get_mode_name(target_mode)}结果未通过结构化协议校验"
+                    if validation_errors
                     else f"{self._get_mode_name(target_mode)}执行失败"
                 )
             }
@@ -685,6 +738,8 @@ class CallSubAgentTool(LLMTool):
         parent_resource_lines: Optional[List[str]] = None,
         scheduled_task_context: Optional[Dict[str, Any]] = None,
         skill_id: Optional[str] = None,
+        task_contract: Optional[Dict[str, Any]] = None,
+        result_schema: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         构建子 Agent 本轮请求（分离 goal、补充上下文和工作目录）
@@ -709,6 +764,19 @@ class CallSubAgentTool(LLMTool):
 
         if skill_id:
             parts.append(f"**显式技能**：{skill_id}\n")
+
+        if task_contract:
+            parts.append(
+                "## 工作流任务协议（必须遵守）\n"
+                "以下对象是父 Agent 传入的正式任务边界。不得擅自扩大范围；缺少证据时要在结果中明确标记。\n"
+                f"```json\n{json.dumps(task_contract, ensure_ascii=False, indent=2)}\n```\n"
+            )
+        if result_schema:
+            parts.append(
+                "## 结构化结果协议（必须遵守）\n"
+                "最终回复必须包含一个可解析的 JSON 对象，放在 ```json 代码块中；除 JSON 外可以附简短说明。\n"
+                f"```json\n{json.dumps(result_schema, ensure_ascii=False, indent=2)}\n```\n"
+            )
 
         if scheduled_task_context:
             task_name = scheduled_task_context.get("task_name") or scheduled_task_context.get("task_id") or "定时任务"
@@ -989,8 +1057,7 @@ class CallSubAgentTool(LLMTool):
 
     def _generate_session_id(self, parent_mode: str, child_mode: str) -> str:
         """生成子Agent session_id"""
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        return f"{parent_mode}__to__{child_mode}__{timestamp}"
+        return f"{parent_mode}__to__{child_mode}__{uuid.uuid4().hex}"
 
     def _update_session(
         self,
