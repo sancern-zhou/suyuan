@@ -52,6 +52,7 @@
 ## 子Agent返回
 
 作为子Agent返回时，最终回复必须列出所有可追溯 file_path，并按查询数据、分析结果、图表数据等类型简要说明。
+当父Agent传入“结构化结果协议”时，最终回复还必须在 ```json 代码块中返回符合协议的 JSON 对象。至少包含 `status`、`findings`、`evidence`、`uncertainties`、`data_gaps`；每条 finding 尽量引用 evidence 中的证据 id，并区分事实、推断与不确定性。
 
 ## 安全原则
 
