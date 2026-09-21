@@ -133,6 +133,12 @@ class CallSubAgentTool(LLMTool):
                     "result_schema": {
                         "type": "object",
                         "description": "子Agent最终结果的JSON Schema子集。提供后会解析并校验结构化结果。"
+                    },
+                    "repair_attempts": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 2,
+                        "description": "结构化结果校验失败时的自动修复轮数，默认1，最多2轮。"
                     }
                 },
                 "required": ["target_mode"]  # ✅ 改为：target_mode必需，goal和task_description二选一
@@ -172,6 +178,7 @@ class CallSubAgentTool(LLMTool):
         parent_task_id: Optional[str] = None,
         task_contract: Optional[Dict[str, Any]] = None,
         result_schema: Optional[Dict[str, Any]] = None,
+        repair_attempts: int = 1,
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
         """
@@ -545,8 +552,38 @@ class CallSubAgentTool(LLMTool):
                 ):
                     result_events.append(event)
 
-            # 7. 提取最终结果
+            # 7. 提取最终结果；结构化协议失败时在同一 child runtime 上做有限修复。
             final_result = self._extract_final_result(result_events)
+            structured_result = None
+            validation_errors = []
+            if result_schema:
+                structured_result, validation_errors = self._validate_structured_result(
+                    final_result.get("answer", ""), result_schema
+                )
+                attempts = max(0, min(int(repair_attempts or 0), 2))
+                for repair_index in range(attempts):
+                    if not validation_errors:
+                        break
+                    repair_prompt = (
+                        "上一轮结果未通过结构化结果协议校验。请保留已完成的证据和分析，"
+                        "只修复输出格式或缺失字段，并在 ```json 代码块中重新提交完整 JSON。\n"
+                        f"校验错误：{json.dumps(validation_errors, ensure_ascii=False)}\n"
+                        f"结果协议：{json.dumps(result_schema, ensure_ascii=False)}"
+                    )
+                    async for event in sub_agent.analyze(
+                        user_query=repair_prompt,
+                        session_id=session_id if session_id else None,
+                        manual_mode=target_mode,
+                        enhance_with_history=True,
+                        initial_messages=None,
+                        user_identifier=None,
+                        runtime_metadata=dict(getattr(context, "runtime_metadata", {}) or {}),
+                    ):
+                        result_events.append(event)
+                    final_result = self._extract_final_result(result_events)
+                    structured_result, validation_errors = self._validate_structured_result(
+                        final_result.get("answer", ""), result_schema
+                    )
 
             logger.info(
                 "sub_agent_completed",
@@ -565,16 +602,6 @@ class CallSubAgentTool(LLMTool):
                 "tool_calls": self._extract_tool_calls(result_events)
             }
             if result_schema:
-                structured_result = extract_structured_result(final_result.get("answer", ""))
-                validation_errors = (
-                    [{
-                        "path": "$",
-                        "expected": "JSON result matching result_schema",
-                        "got": "no structured JSON result",
-                    }]
-                    if structured_result is None
-                    else validate_result_schema(structured_result, result_schema)
-                )
                 structured_data["structured_result"] = structured_result
                 structured_data["validation_errors"] = validation_errors
             human_feedback = self._extract_human_feedback(result_events)
@@ -906,6 +933,17 @@ class CallSubAgentTool(LLMTool):
             "code": "编程Agent",
         }
         return mode_names.get(mode, mode)
+
+    @staticmethod
+    def _validate_structured_result(answer: str, schema: Dict[str, Any]):
+        structured_result = extract_structured_result(answer)
+        if structured_result is None:
+            return None, [{
+                "path": "$",
+                "expected": "JSON result matching result_schema",
+                "got": "no structured JSON result",
+            }]
+        return structured_result, validate_result_schema(structured_result, schema)
 
     def _extract_file_paths(self, events: list) -> list:
         """从事件流中提取所有file_path"""
