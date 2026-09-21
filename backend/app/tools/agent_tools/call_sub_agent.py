@@ -256,6 +256,23 @@ class CallSubAgentTool(LLMTool):
         try:
             # 获取父Agent模式
             parent_mode = self._get_parent_mode(context)
+            runtime_metadata = dict(getattr(context, "runtime_metadata", {}) or {}) if context is not None else {}
+            agent_depth = int(runtime_metadata.get("agent_depth", 0) or 0)
+            max_agent_depth = int(runtime_metadata.get("max_agent_depth", 2) or 2)
+            if agent_depth >= max_agent_depth:
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "result": f"子Agent调用深度已达到上限（{max_agent_depth}），拒绝继续嵌套。",
+                    "data": {},
+                    "metadata": {
+                        "schema_version": "workflow.v1",
+                        "generator": "call_sub_agent",
+                        "agent_depth": agent_depth,
+                        "max_agent_depth": max_agent_depth,
+                    },
+                    "summary": "子Agent嵌套深度超限",
+                }
             skill_ids = list(dict.fromkeys(skill_ids or []))
             if len(skill_ids) > 1:
                 return {
@@ -542,7 +559,7 @@ class CallSubAgentTool(LLMTool):
                     enhance_with_history=True,  # ✅ 启用记忆增强
                     initial_messages=conversation_history if conversation_history else None,  # ✅ 传入历史
                     user_identifier=None,  # ⚠️ 使用模式专属记忆（不跨模式共享）
-                    runtime_metadata=dict(getattr(context, "runtime_metadata", {}) or {}),
+                    runtime_metadata={**runtime_metadata, "agent_depth": agent_depth + 1, "max_agent_depth": max_agent_depth},
                     selected_skill_context=(
                         selected_child_skill.content if selected_child_skill else None
                     ),
@@ -577,7 +594,7 @@ class CallSubAgentTool(LLMTool):
                         enhance_with_history=True,
                         initial_messages=None,
                         user_identifier=None,
-                        runtime_metadata=dict(getattr(context, "runtime_metadata", {}) or {}),
+                        runtime_metadata={**runtime_metadata, "agent_depth": agent_depth + 1, "max_agent_depth": max_agent_depth},
                     ):
                         result_events.append(event)
                     final_result = self._extract_final_result(result_events)
