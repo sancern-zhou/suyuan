@@ -26,7 +26,7 @@ def test_default_project_loads_legacy_module():
         "ops",
     ]
     assert context.manifest.frontend.agent_platform_layout == "scenes"
-    assert context.manifest.backend.tools == []
+    assert context.manifest.backend.tools  # project-scoped tools declared explicitly
     assert context.manifest.backend.fetchers_enabled is True
     assert context.manifest.backend.mode_prompt_files == {}
     assert context.manifest.knowledge.collections == []
