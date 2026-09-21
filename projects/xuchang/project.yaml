@@ -86,7 +86,13 @@ backend:
       - query_xcai_city_history
       - execute_sql_query
       - execute_postgres_sql_query
-      - analyze_upwind_enterprises
+      # 许昌数据查询工具（中台 + 全国空气质量 + 站点定位）
+      - query_airdata_platform
+      - airdata_calc_report_summary
+      - xuchang_station_catalog
+      - query_national_province_air_quality
+      - query_national_city_air_quality
+      - resolve_station_geo
       - meteorological_trajectory_analysis
       - create_report_chart
       - execute_python
