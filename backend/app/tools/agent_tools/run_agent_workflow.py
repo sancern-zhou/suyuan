@@ -6,6 +6,7 @@ import json
 from typing import Any, Dict, Mapping, Optional
 
 from app.agent.workflow.coordinator import WorkflowCoordinator, WorkflowNodeSpec
+from app.agent.workflow.templates import build_report_analysis_workflow
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 
@@ -53,6 +54,15 @@ class RunAgentWorkflowTool(LLMTool):
                             },
                             "required": ["workflow_id", "nodes"],
                         },
+                        "workflow_template": {
+                            "type": "string",
+                            "enum": ["report_analysis_v1"],
+                            "description": "可选标准模板；选择 report_analysis_v1 时使用 template_options 构建报告 DAG。",
+                        },
+                        "template_options": {
+                            "type": "object",
+                            "description": "标准模板参数：source_tasks、synthesis_task、delivery_tasks。",
+                        },
                         "max_concurrency": {
                             "type": "integer",
                             "minimum": 1,
@@ -64,7 +74,7 @@ class RunAgentWorkflowTool(LLMTool):
                             "description": "可选的上次运行快照；传入后从中断位置恢复。",
                         },
                     },
-                    "required": ["workflow"],
+                    "required": [],
                 },
             },
             version="1.0.0",
@@ -74,12 +84,24 @@ class RunAgentWorkflowTool(LLMTool):
         self,
         context: Optional[Any] = None,
         workflow: Optional[Mapping[str, Any]] = None,
+        workflow_template: Optional[str] = None,
+        template_options: Optional[Mapping[str, Any]] = None,
         max_concurrency: int = 4,
         snapshot: Optional[Mapping[str, Any]] = None,
         **_: Any,
     ) -> Dict[str, Any]:
         if not isinstance(workflow, Mapping):
-            return self._failure("缺少有效的 workflow 定义")
+            if workflow_template != "report_analysis_v1" or not isinstance(template_options, Mapping):
+                return self._failure("请提供 workflow 定义，或使用 report_analysis_v1 模板及 template_options")
+            try:
+                workflow = build_report_analysis_workflow(
+                    workflow_id=str(template_options.get("workflow_id") or "report-workflow"),
+                    source_tasks=template_options.get("source_tasks") or [],
+                    synthesis_task=template_options.get("synthesis_task") or {},
+                    delivery_tasks=template_options.get("delivery_tasks") or [],
+                )
+            except (TypeError, ValueError) as exc:
+                return self._failure(f"报告工作流模板参数无效：{exc}")
         try:
             definition = dict(workflow)
             nodes = [dict(node) for node in definition.get("nodes") or []]
@@ -107,6 +129,8 @@ class RunAgentWorkflowTool(LLMTool):
                     parent_task_id=str(definition["workflow_id"]),
                     task_contract=payload.get("task_contract"),
                     result_schema=payload.get("result_schema"),
+                    # A coordinator node always emits a lineage manifest.  The
+                    # template can opt into strict result-envelope checking.
                     repair_attempts=max(0, min(node.max_attempts - 1, 2)),
                     _force_isolated_session=True,
                 )
@@ -129,6 +153,7 @@ class RunAgentWorkflowTool(LLMTool):
                     "status": snapshot["status"],
                     "node_results": snapshot["node_results"],
                     "node_errors": snapshot["node_errors"],
+                    "node_lineage": snapshot["node_lineage"],
                     "snapshot": snapshot,
                 },
                 "metadata": {

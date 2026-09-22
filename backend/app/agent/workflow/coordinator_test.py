@@ -94,3 +94,34 @@ def test_coordinator_cancels_pending_nodes():
         assert result["graph"]["downstream"]["status"] == "cancelled"
 
     asyncio.run(run())
+
+
+def test_coordinator_records_strict_node_lineage():
+    async def run():
+        async def execute(node, dependencies, attempt):
+            return {
+                "status": "success",
+                "success": True,
+                "data": {
+                    "result_envelope": {
+                        "status": "completed",
+                        "summary": node.task_id,
+                        "outputs": {"attempt": attempt},
+                        "evidence": [{"source": node.task_id}],
+                        "artifacts": [],
+                    }
+                },
+            }
+
+        coordinator = WorkflowCoordinator(
+            {
+                "workflow_id": "lineage-1",
+                "nodes": [{"task_id": "source", "require_lineage": True}],
+            },
+            executor=execute,
+        )
+        result = await coordinator.run()
+        assert result["status"] == "succeeded"
+        assert result["node_lineage"]["source"]["evidence"][0]["source_task_id"] == "source"
+
+    asyncio.run(run())

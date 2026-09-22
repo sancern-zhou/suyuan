@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Opti
 import uuid
 
 from .graph import WorkflowConcurrencyGovernor, WorkflowGraph
+from .lineage import build_node_lineage, validate_node_lineage
 from .runtime import TERMINAL_STATUSES, WorkflowRuntime
 
 
@@ -37,7 +38,7 @@ class WorkflowNodeSpec:
         payload = dict(value.get("payload") or {})
         # Allow concise node definitions while keeping the coordinator's
         # execution contract stable.
-        for key in ("target_mode", "goal", "context", "task_contract", "result_schema"):
+        for key in ("target_mode", "goal", "context", "task_contract", "result_schema", "require_lineage"):
             if key in value and key not in payload:
                 payload[key] = value[key]
         return cls(
@@ -115,6 +116,7 @@ class WorkflowCoordinator:
         self.node_specs = {node.task_id: node for node in self.definition.nodes}
         self.node_results: Dict[str, Any] = {}
         self.node_errors: Dict[str, str] = {}
+        self.node_lineage: Dict[str, Dict[str, Any]] = {}
         self.status = "queued"
         self.cancel_requested = False
         self.cancel_reason = ""
@@ -212,6 +214,7 @@ class WorkflowCoordinator:
             "graph": self.graph.snapshot(),
             "node_results": dict(self.node_results),
             "node_errors": dict(self.node_errors),
+            "node_lineage": dict(self.node_lineage),
             "workflow_run_id": self.workflow_run.run_id if hasattr(self, "workflow_run") else None,
             "runtime": self.runtime.snapshot() if hasattr(self, "runtime") else {},
         }
@@ -232,6 +235,21 @@ class WorkflowCoordinator:
             if self._result_failed(result):
                 raise RuntimeError(self._result_error(result))
             self.node_results[task_id] = result
+            lineage = build_node_lineage(
+                task_id=task_id,
+                dependency_task_ids=node.dependencies,
+                result=result,
+            )
+            lineage_errors = validate_node_lineage(
+                lineage,
+                expected_task_id=task_id,
+                expected_dependencies=node.dependencies,
+                require_envelope=bool(node.payload.get("require_lineage")),
+            )
+            if lineage_errors:
+                self.node_results.pop(task_id, None)
+                raise RuntimeError(f"node lineage validation failed: {lineage_errors}")
+            self.node_lineage[task_id] = lineage
             self.graph.set_status(task_id, "succeeded")
             self.runtime.transition(node_run.run_id, "succeeded")
         except asyncio.CancelledError:
@@ -257,6 +275,11 @@ class WorkflowCoordinator:
         self.cancel_reason = str(snapshot.get("cancel_reason") or "")
         self.node_results = dict(snapshot.get("node_results") or {})
         self.node_errors = {str(key): str(value) for key, value in (snapshot.get("node_errors") or {}).items()}
+        self.node_lineage = {
+            str(key): dict(value)
+            for key, value in (snapshot.get("node_lineage") or {}).items()
+            if isinstance(value, Mapping)
+        }
         graph_snapshot = snapshot.get("graph")
         if isinstance(graph_snapshot, Mapping):
             self.graph = WorkflowGraph.from_snapshot(graph_snapshot)

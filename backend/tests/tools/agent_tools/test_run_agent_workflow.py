@@ -57,3 +57,42 @@ async def test_run_agent_workflow_rejects_invalid_nodes():
     )
     assert result["success"] is False
     assert "缺少 target_mode 或 goal" in result["result"]
+
+
+@pytest.mark.asyncio
+async def test_run_agent_workflow_accepts_report_analysis_template(monkeypatch):
+    class FakeSubAgentTool:
+        async def execute(self, **kwargs):
+            return {
+                "status": "success",
+                "success": True,
+                "result": kwargs["goal"],
+                "data": {
+                    "result_envelope": {
+                        "status": "completed",
+                        "summary": kwargs["goal"],
+                        "outputs": {},
+                        "evidence": [{"source": kwargs["goal"]}],
+                        "artifacts": [],
+                    }
+                },
+            }
+
+    monkeypatch.setattr(
+        RunAgentWorkflowTool,
+        "_build_sub_agent_tool",
+        staticmethod(lambda: FakeSubAgentTool()),
+    )
+    result = await RunAgentWorkflowTool().execute(
+        workflow_template="report_analysis_v1",
+        template_options={
+            "workflow_id": "report-template-1",
+            "source_tasks": [
+                {"task_id": "air", "target_mode": "expert", "goal": "空气分析"},
+                {"task_id": "weather", "target_mode": "expert", "goal": "气象分析"},
+            ],
+            "synthesis_task": {"target_mode": "expert", "goal": "交叉分析", "require_lineage": True},
+        },
+    )
+    assert result["success"] is True
+    assert result["data"]["node_lineage"]["synthesis"]["inputs"][0]["source_task_id"] == "air"
