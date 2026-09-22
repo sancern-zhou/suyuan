@@ -142,6 +142,7 @@ class WorkflowCoordinator:
             self.runtime.register_child(self.workflow_run.run_id, node.task_id)
             if node_run.status in {"succeeded", "failed", "cancelled"}:
                 self.graph.set_status(node.task_id, node_run.status)
+        self._prepare_snapshot_resume(snapshot)
 
     async def run(self) -> Dict[str, Any]:
         if self.status == "succeeded":
@@ -286,6 +287,25 @@ class WorkflowCoordinator:
             for node in self._graph_nodes():
                 if node.status in {"running", "waiting", "repairing"}:
                     node.status = "pending"
+
+    def _prepare_snapshot_resume(self, snapshot: Mapping[str, Any]) -> None:
+        """Normalize a failed snapshot before scheduling retryable nodes."""
+        if not snapshot or self.cancel_requested or self.status == "cancelled":
+            return
+        runtime_runs = self.runtime.snapshot().get("runs") or {}
+        for node in self._graph_nodes():
+            if node.status != "failed":
+                continue
+            run = runtime_runs.get(self._node_run_id(node.task_id, snapshot)) or {}
+            if int(run.get("attempt") or 0) < int(
+                run.get("max_attempts") or self.node_specs[node.task_id].max_attempts
+            ):
+                node.status = "pending"
+        if self.status == "failed" and any(node.status == "pending" for node in self._graph_nodes()):
+            # Older snapshots created the parent with one attempt. Allow one
+            # explicit resume while preserving per-node retry budgets.
+            self.workflow_run.max_attempts = max(self.workflow_run.max_attempts, 2)
+            self.status = "queued"
 
     def _persist_snapshot(self, snapshot: Dict[str, Any]) -> None:
         if self.persist:

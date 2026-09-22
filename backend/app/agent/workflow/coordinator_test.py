@@ -125,3 +125,31 @@ def test_coordinator_records_strict_node_lineage():
         assert result["node_lineage"]["source"]["evidence"][0]["source_task_id"] == "source"
 
     asyncio.run(run())
+
+
+def test_coordinator_resume_retries_failed_node_from_snapshot():
+    async def run():
+        definition = {
+            "workflow_id": "resume-1",
+            "nodes": [{"task_id": "source", "max_attempts": 2}],
+        }
+        first = WorkflowCoordinator(definition, executor=lambda *args: {"success": True})
+        failed = first.snapshot()
+        failed["status"] = "failed"
+        failed["graph"]["source"]["status"] = "failed"
+        failed["node_errors"] = {"source": "process interrupted"}
+        failed["runtime"]["runs"][failed["workflow_run_id"]]["status"] = "failed"
+        failed["runtime"]["runs"]["resume-1:source"]["status"] = "failed"
+        failed["runtime"]["runs"]["resume-1:source"]["attempt"] = 1
+        calls = []
+
+        async def execute(node, dependencies, attempt):
+            calls.append(attempt)
+            return {"success": True}
+
+        resumed = WorkflowCoordinator(definition, executor=execute, snapshot=failed)
+        result = await resumed.run()
+        assert result["status"] == "succeeded"
+        assert calls == [2]
+
+    asyncio.run(run())
