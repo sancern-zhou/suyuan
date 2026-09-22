@@ -2,7 +2,7 @@ from app.agent.prompts.expert_prompt import build_expert_prompt
 from app.agent.prompts.tool_registry import AGENT_HIDDEN_TOOL_NAMES, get_tools_by_mode
 
 
-def test_expert_mode_exposes_meteorology_and_remote_sensing_tools():
+def test_expert_mode_exposes_meteorology_tools_only():
     from app.agent.prompts.tool_registry import _get_project_disabled_tool_names
 
     tools = get_tools_by_mode("expert")
@@ -11,13 +11,17 @@ def test_expert_mode_exposes_meteorology_and_remote_sensing_tools():
         "get_universal_meteorology",
         "get_observed_meteorology",
         "get_weather_forecast",
+    } - set(_get_project_disabled_tool_names())
+
+    assert expected.issubset(tools)
+    assert {
+        "get_platform_weather_image",
         "get_satellite_data",
         "get_gems_image",
         "get_sentinel5p_image",
         "get_fire_hotspots",
-    } - set(_get_project_disabled_tool_names())
-
-    assert expected.issubset(tools)
+        "broadcast_social_users",
+    }.isdisjoint(tools)
 
 
 def test_hidden_tools_are_not_exposed_by_any_agent_mode():
