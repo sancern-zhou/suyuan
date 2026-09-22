@@ -24,6 +24,7 @@ from .actors import AgentActorRegistry, child_actor_registry
 from .coordinator import WorkflowCoordinator, WorkflowDefinition, WorkflowNodeSpec
 from .lineage import build_node_lineage, validate_node_lineage
 from .templates import build_report_analysis_workflow
+from .registry import ActiveWorkflow, ActiveWorkflowRegistry, active_workflow_registry
 
 __all__ = [
     "EXPERT_ANALYSIS_RESULT_SCHEMA",
@@ -54,4 +55,7 @@ __all__ = [
     "build_node_lineage",
     "validate_node_lineage",
     "build_report_analysis_workflow",
+    "ActiveWorkflow",
+    "ActiveWorkflowRegistry",
+    "active_workflow_registry",
 ]

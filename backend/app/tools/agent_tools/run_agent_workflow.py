@@ -7,6 +7,7 @@ from typing import Any, Dict, Mapping, Optional
 
 from app.agent.workflow.coordinator import WorkflowCoordinator, WorkflowNodeSpec
 from app.agent.workflow.templates import build_report_analysis_workflow
+from app.agent.workflow.registry import active_workflow_registry
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 
@@ -142,7 +143,17 @@ class RunAgentWorkflowTool(LLMTool):
                 snapshot=snapshot,
                 persist=lambda current: self._persist_parent_snapshot(context, current),
             )
-            snapshot = await coordinator.run()
+            await active_workflow_registry.register(
+                str(definition["workflow_id"]),
+                coordinator,
+                session_id=getattr(context, "session_id", None) if context is not None else None,
+            )
+            try:
+                snapshot = await coordinator.run()
+            finally:
+                await active_workflow_registry.unregister(
+                    str(definition["workflow_id"]), coordinator
+                )
             succeeded = snapshot["status"] == "succeeded"
             return {
                 "status": "success" if succeeded else snapshot["status"],
@@ -187,6 +198,12 @@ class RunAgentWorkflowTool(LLMTool):
             session = manager.get_session(session_id)
             if session is None:
                 return
+            workflow_id = str(snapshot.get("workflow_id") or "").strip()
+            workflows = dict(session.metadata.get("workflow_coordinators") or {})
+            if workflow_id:
+                workflows[workflow_id] = dict(snapshot)
+            session.metadata["workflow_coordinators"] = workflows
+            # Keep the legacy key for existing session restore consumers.
             session.metadata["workflow_coordinator"] = dict(snapshot)
             manager.save_session_metadata(session, update_timestamp=True)
         except Exception:
