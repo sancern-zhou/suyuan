@@ -431,6 +431,14 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="execute_sql_query", error=str(e))
 
+    # 江苏运维主题数据集受控SQL（部署新增: jiangsu_mart 语义层, agent_reader 只读）
+    try:
+        from app.tools.query.jiangsu_ops_sql_query.tool import ExecuteJiangsuOpsSQLQueryTool
+        registry.register(ExecuteJiangsuOpsSQLQueryTool(), priority=47)
+        logger.info("tool_loaded", tool="execute_jiangsu_mart_sql")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="execute_jiangsu_mart_sql", error=str(e))
+
     try:
         from app.tools.query.qianlima_realtime_tender.tool import QianlimaRealtimeTenderTool
         registry.register(QianlimaRealtimeTenderTool(), priority=46)

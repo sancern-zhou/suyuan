@@ -97,11 +97,19 @@ class NacosLifecycle:
             self._client = None
 
     def _build_client_config(self):
+        import os
+
         builder = (
             ClientConfigBuilder()
             .server_address(",".join(self.config.nacos_server_addresses_list))
             .namespace_id(self.config.nacos_namespace)
         )
+        # DEPLOYMENT PATCH (Windows): web and worker processes share the same
+        # home directory; the SDK's TimedRotatingFileHandler fails to rotate
+        # naming.log when two processes hold it open. Give each role its own
+        # log directory.
+        role = os.getenv("APP_ROLE", "web").strip() or "web"
+        builder.log_dir(os.path.join("logs", "nacos", role))
         if self.config.nacos_username:
             builder.username(self.config.nacos_username)
         if self.config.nacos_password:

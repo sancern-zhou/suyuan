@@ -117,7 +117,7 @@ class InMemoryCancellationStateStore:
 class RedisCancellationStateStore:
     """Atomic Redis control plane for cancellation across Uvicorn workers."""
 
-    REGISTER_SCRIPT = """-- cancellation:register
+    REGISTER_SCRIPT = """-- cancellation:register (single-field HSET only: target Redis is 3.x)
 local current_run = redis.call('HGET', KEYS[1], 'run_id')
 local current_status = redis.call('HGET', KEYS[1], 'status')
 if current_run and current_run ~= ARGV[1]
@@ -126,7 +126,8 @@ if current_run and current_run ~= ARGV[1]
    and current_status ~= 'failed' then
   return 0
 end
-redis.call('HSET', KEYS[1], 'run_id', ARGV[1], 'status', 'running')
+redis.call('HSET', KEYS[1], 'run_id', ARGV[1])
+redis.call('HSET', KEYS[1], 'status', 'running')
 redis.call('HDEL', KEYS[1], 'reason', 'error')
 redis.call('EXPIRE', KEYS[1], ARGV[2])
 return 1
@@ -142,7 +143,8 @@ end
 local current_reason = redis.call('HGET', KEYS[1], 'reason')
 local reason = ARGV[2]
 if current_reason == 'user_paused' or reason == 'user_paused' then reason = 'user_paused' end
-redis.call('HSET', KEYS[1], 'status', 'pause_requested', 'reason', reason)
+redis.call('HSET', KEYS[1], 'status', 'pause_requested')
+redis.call('HSET', KEYS[1], 'reason', reason)
 redis.call('EXPIRE', KEYS[1], ARGV[3])
 return 1
 """

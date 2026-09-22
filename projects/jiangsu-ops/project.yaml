@@ -316,6 +316,8 @@ backend:
       - get_current_weather
       - get_observed_meteorology
       - execute_sql_query
+      # 江苏运维主题数据集受控SQL（本地 mart 语义层）
+      - execute_jiangsu_mart_sql
       - create_report_chart
       - execute_echarts_python
       - execute_python
@@ -393,6 +395,8 @@ backend:
       - validate_report_package
       - jiangsu_query_operations_graph
       - knowledge_graph_query
+      # 江苏运维主题数据集受控SQL（本地 mart 语义层）
+      - execute_jiangsu_mart_sql
       - create_report_chart
       - call_sub_agent
     # 站房巡检的业务查询仍为只读；巡检执行、工单生成与派发仍需后续单独评审。
@@ -415,6 +419,8 @@ backend:
       - jiangsu_fetch_qc_run_logs
       - jiangsu_fetch_qc_monitoring_curve
       - knowledge_graph_query
+      # 江苏运维主题数据集受控SQL（本地 mart 语义层）
+      - execute_jiangsu_mart_sql
     # 分析到站记录和空间台账，不能替代工单、告警处置等确定性流程约束。
     operations_analysis:
       - read_file
@@ -449,6 +455,8 @@ backend:
       - validate_report_package
       - publish_report
       - knowledge_graph_query
+      # 江苏运维主题数据集受控SQL（本地 mart 语义层）
+      - execute_jiangsu_mart_sql
     # 设备反控仅允许固定指令集。所有执行动作必须先生成待确认指令，再由用户明确确认。
     device_control:
       - read_file
@@ -485,6 +493,8 @@ backend:
       - jiangsu_fetch_qc_monitoring_curve
       - jiangsu_query_operations_graph
       - knowledge_graph_query
+      # 江苏运维主题数据集受控SQL（本地 mart 语义层）
+      - execute_jiangsu_mart_sql
       - jiangsu_prepare_fault_work_order
   mode_prompt_files:
     assistant: projects/jiangsu-ops/prompts/assistant.md

@@ -35,6 +35,18 @@
 6. 用户查询气象数据时，根据问题选择 `get_weather_data`（历史 ERA5/观测数据）、`get_weather_forecast`（未来预报）、`get_current_weather`（当前天气）或 `get_observed_meteorology`（逐小时地面观测）。历史观测数据优先把用户给出的城市传入 `city/cities`、区县传入 `district/districts`，由 `get_weather_data` 在内部解析 NMC 站点；不得要求用户提供站点编号，也不得把江苏站点目录写入上下文。只有用户明确按坐标或站点编号查询时才传对应精确参数；时间范围不明确时再澄清，不得猜测。
 7. 用户查询城市未来空气质量预报时，调用 `execute_sql_query` 查询 `WeatherForecast7Day`；按 `cityname` 使用城市全称精确筛选，返回 `TimePoint`、`DayTitle`、`MinAqi`、`MaxAqi`、`MaxPollution`、`WeatherCondition`、`Temperature`、`WindLevel`、`WindDirection`、`UpdateDate` 和 `UpdateTime`。只读查询未来有效时段，并在结果中说明预报发布/更新时间；不得将气象预报或自行模型计算值冒充为平台空气质量预报。
 
+## 本地运维历史数据集（工单/告警/站点统计）
+
+- 除环境监测数据外，本模式可查询本地运维历史数据集（`execute_jiangsu_mart_sql`），覆盖**工单、告警、站点健康的历史统计**：如“各市本月工单量与超期率”“告警转工单转化率”“当前高风险站点清单”“近两周每日告警趋势”。
+- **路由规则**：环境监测数据（空气质量、气象）→ 上方平台数据工具；运维域历史统计（工单/告警/站点风险，跨单汇总、趋势、排名）→ `execute_jiangsu_mart_sql`；运维域实时或单据明细（某张工单详情、当前待审核清单）→ 建议用户切换工单审核模式，本模式不查平台运维接口。
+- 数据集速查（字段含义见工具说明内嵌契约）：
+  - `mart_work_order_analysis` 一行=一张工单：城市/站点/状态/响应时长(response_minutes)/超期(is_overdue)/30天重复故障(is_repeat_fault)。
+  - `mart_alarm_event_analysis` 一行=一条告警：级别/状态/持续时长/24小时关联工单数。
+  - `mart_station_device_health` 一行=一个站点：近30天工单/超期率/未处理告警/风险分级(高、中、低、稳定)，当前态势优先查此表。
+  - `mart_station_daily_profile` 一行=站点×日：当日工单与告警计数，趋势对比用此表。
+- **口径与边界（必须随结论说明）**：数据自 2026-07-01 起，不做同比/年度对比；超期率偏高源于平台长期未闭环工单；返回需带数据截至时间（data_as_of）。
+- 生成 SQL 只允许 SELECT 且必须带 LIMIT；只查白名单 4 张表；面向用户的表述按表达规范使用业务语言，不出现表名与 SQL。
+
 ## 输出要求
 
 - 开头用一至三句话给出核心结果，并明确站点、时间范围和数据口径。

@@ -57,6 +57,7 @@
 1. 明确分析月份（默认最近整月，如 2026-08）。
 2. 调用演示工具获取 8 类演示业务数据；调用 `jiangsu_fetch_fault_work_orders`（显式传 `order_types=["Fault"]`、`workflow_statuses=["Finish"]`、`order_statuses=["Finish"]`、`fetch_all=true`）和 `jiangsu_fetch_alarm_records`（`fetch_all=true`）获取真实工单与报警。
 3. 结果可能内联预览并返回顶层 `file_path`；后续脚本用该路径读取完整清单。记录每次调用的接口、时间范围、`total_count`、`returned_records`、`source_data_complete`。
+4. 涉及**多站点横向对比、多月趋势或站点风险背景**时，可补充查询本地历史数据集（`execute_jiangsu_mart_sql`）：`mart_station_daily_profile`（站点×日工单/告警计数，趋势对比首选）、`mart_station_device_health`（每站点近30天工单/超期率/告警/风险分级）、`mart_work_order_analysis`（工单明细含响应/超期/重复故障指标）。本地数据自 2026-07-01 起，SQL 仅 SELECT 且带 LIMIT，返回需带数据截至时间；与演示数据、平台接口数据来源不同的，须在报告中分开披露，不得混算。
 
 ### 步骤二：确定性计算（禁止自行心算或编造数字）
 

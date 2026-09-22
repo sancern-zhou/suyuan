@@ -746,7 +746,30 @@ class ExecutePythonTool(LLMTool):
         with open(script_file, 'w', encoding='utf-8') as f:
             f.write(code)
 
-        if self.execution_engine != "bubblewrap":
+        if self.execution_engine == "subprocess":
+            # Windows 部署回退引擎：无 bwrap 时在独立子进程直接执行。
+            # 隔离弱于 Bubblewrap（无文件系统/网络命名空间，继承父环境变量），仅限受信内网部署。
+            python_exe = os.getenv("PYTHON_EXECUTION_PYTHON") or sys.executable
+            command = [python_exe, script_file]
+            sandbox_sync_dirs = []
+            relative_input_mounts = []
+        elif self.execution_engine == "bubblewrap":
+            sandbox_spec = self._build_bubblewrap_command(
+                code=code,
+                script_file=script_file,
+                working_dir=working_dir,
+                timeout=timeout,
+                context=context,
+            )
+            if sandbox_spec is None:
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "data": {"error": "Bubblewrap 沙箱不可用，已拒绝在宿主机直接执行代码"},
+                    "summary": "Python 沙箱不可用",
+                }
+            command, sandbox_sync_dirs, relative_input_mounts = sandbox_spec
+        else:
             return {
                 "status": "failed",
                 "success": False,
@@ -754,33 +777,20 @@ class ExecutePythonTool(LLMTool):
                 "summary": "Python 沙箱配置错误",
             }
 
-        sandbox_spec = self._build_bubblewrap_command(
-            code=code,
-            script_file=script_file,
-            working_dir=working_dir,
-            timeout=timeout,
-            context=context,
-        )
-        if sandbox_spec is None:
-            return {
-                "status": "failed",
-                "success": False,
-                "data": {"error": "Bubblewrap 沙箱不可用，已拒绝在宿主机直接执行代码"},
-                "summary": "Python 沙箱不可用",
-            }
-        command, sandbox_sync_dirs, relative_input_mounts = sandbox_spec
-
         # 执行代码
         process = None
         try:
-            process = subprocess.Popen(
-                command,
+            popen_kwargs = dict(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 cwd=working_dir,
-                start_new_session=True,
             )
+            if os.name == "posix":
+                popen_kwargs["start_new_session"] = True
+            else:
+                popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            process = subprocess.Popen(command, **popen_kwargs)
             logger.info(
                 "execute_python_subprocess_started",
                 pid=process.pid,
@@ -1175,7 +1185,10 @@ class ExecutePythonTool(LLMTool):
     def _terminate_process_group(process: subprocess.Popen) -> None:
         """终止工具进程及其派生的所有子进程。"""
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
         except ProcessLookupError:
             pass
 

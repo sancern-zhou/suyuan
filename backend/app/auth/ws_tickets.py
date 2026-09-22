@@ -44,7 +44,14 @@ class WebSocketTicketService:
         if not ticket:
             raise InvalidWebSocketTicket("invalid ticket")
         try:
-            value = await self._redis.getdel(self.key_for_ticket(ticket))
+            # GET+DEL via Lua: Redis 3.x has no GETDEL (6.2+); keeps single-use atomic.
+            value = await self._redis.eval(
+                "local v = redis.call('GET', KEYS[1]) "
+                "if v then redis.call('DEL', KEYS[1]) end "
+                "return v",
+                1,
+                self.key_for_ticket(ticket),
+            )
         except Exception as exc:
             raise InvalidWebSocketTicket("invalid ticket") from exc
         if value is None:
