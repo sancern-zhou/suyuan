@@ -18,6 +18,13 @@
           <span v-if="fileProductCount > 0" class="tab-count">{{ fileProductCount }}</span>
         </button>
         <button
+          v-if="workflowAvailable"
+          :class="['tab-btn', { active: activeTab === 'workflow' }]"
+          @click="handleTabChange('workflow')"
+        >
+          <span>工作流</span>
+        </button>
+        <button
           v-if="feedbackAvailable"
           :class="['tab-btn', { active: activeTab === 'feedback' }]"
           @click="handleTabChange('feedback')"
@@ -31,8 +38,13 @@
         class="panel-content"
         @open-resource-tab="handleTabChange"
       />
+      <WorkflowPanel
+        v-if="activeTab === 'workflow' && sessionId"
+        class="panel-content"
+        :session-id="sessionId"
+      />
       <ReportGenerationPanel
-        v-else-if="activeTab !== 'feedback'"
+        v-else-if="!['feedback', 'workflow'].includes(activeTab)"
         :assistant-mode="assistantMode"
       />
       <HumanFeedbackPanel
@@ -110,6 +122,16 @@
           <span v-if="fileProductCount > 0" class="tab-count">{{ fileProductCount }}</span>
         </button>
         <button
+          v-if="workflowAvailable"
+          :class="['tab-btn', { active: activeTab === 'workflow' }]"
+          role="tab"
+          :aria-selected="activeTab === 'workflow'"
+          @click="handleTabChange('workflow')"
+        >
+          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h5v5H5zM14 14h5v5h-5z"/><path d="M10 7.5h4M16.5 10v4"/></svg>
+          <span>工作流</span>
+        </button>
+        <button
           v-if="feedbackAvailable"
           :class="['tab-btn', { active: activeTab === 'feedback' }]"
           role="tab"
@@ -167,6 +189,12 @@
         @open-resource-tab="handleTabChange"
       />
 
+      <WorkflowPanel
+        v-if="activeTab === 'workflow' && sessionId"
+        class="panel-content"
+        :session-id="sessionId"
+      />
+
       <HumanFeedbackPanel
         v-if="activeTab === 'feedback'"
         class="panel-content"
@@ -187,6 +215,7 @@ import ResourceProductsPanel from '@/components/resources/ResourceProductsPanel.
 import ResourcePreviewHost from '@/components/resources/ResourcePreviewHost.vue'
 import VisualizationGallery from '@/components/resources/VisualizationGallery.vue'
 import HumanFeedbackPanel from './HumanFeedbackPanel.vue'
+import WorkflowPanel from '@/components/workflow/WorkflowPanel.vue'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { summarizeRightPanelResources } from '@/components/resources/rightPanelResources.js'
 import { buildResourceGroups, targetTab } from '@/services/resourceGroups.js'
@@ -285,7 +314,7 @@ const explicitTarget = computed(() => {
 
 const showTabs = computed(() => {
   // 只要有任意一个面板可见，就显示标签页切换按钮
-  return props.sessionId || resourceSummary.value.hasArtifacts || props.knowledgePanelVisible || showBoardTab.value || feedbackAvailable.value
+  return workflowAvailable.value || resourceSummary.value.hasArtifacts || props.knowledgePanelVisible || showBoardTab.value || feedbackAvailable.value
 })
 
 const fileProductCount = computed(() => resourceSummary.value.counts.files)
@@ -293,14 +322,15 @@ const visualizationCount = computed(() => resourceSummary.value.counts.visualiza
 const documentCount = computed(() => resourceSummary.value.counts.document)
 const visualizationAvailable = computed(() => visualizationCount.value > 0 || explicitTarget.value === 'visualization')
 const documentAvailable = computed(() => documentCount.value > 0 || explicitTarget.value === 'document')
+const workflowAvailable = computed(() => Boolean(props.sessionId))
 
 const knowledgeCount = computed(() => props.knowledgeSources?.length || 0)
 const feedbackCount = computed(() => props.humanFeedback?.items?.length || 0)
 const feedbackAvailable = computed(() => feedbackCount.value > 0)
 
 watch(
-  () => [props.assistantMode, props.activeTab, visualizationAvailable.value, documentAvailable.value, knowledgeCount.value, showBoardTab.value, feedbackAvailable.value],
-  ([mode, tab, visualizations, documents, knowledge, board, feedback]) => {
+  () => [props.assistantMode, props.activeTab, visualizationAvailable.value, documentAvailable.value, knowledgeCount.value, showBoardTab.value, feedbackAvailable.value, workflowAvailable.value],
+  ([mode, tab, visualizations, documents, knowledge, board, feedback, workflow]) => {
     if (mode === 'report-generation-expert') return
     const unavailable = (
       (tab === 'visualization' && !visualizations)
@@ -308,6 +338,7 @@ watch(
       || (tab === 'knowledge' && knowledge === 0)
       || (tab === 'board' && !board)
       || (tab === 'feedback' && !feedback)
+      || (tab === 'workflow' && !workflow)
     )
     if (unavailable) emit('tab-change', 'files')
   },
