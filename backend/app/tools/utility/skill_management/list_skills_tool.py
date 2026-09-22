@@ -235,10 +235,18 @@ class ListSkillsTool(LLMTool):
 
         filtered = []
         for skill in skills:
+            skill_path = Path(skill.get("file", ""))
+            # 相对路径含技能目录名（即技能ID，如 daily-operations-supervision-report/SKILL.md），
+            # 纳入搜索文本才能按技能ID或部分ID命中包式技能。
+            try:
+                relative = str(skill_path.relative_to(self.skills_dir)).replace("\\", "/")
+            except ValueError:
+                relative = skill_path.name
             searchable_text = (
                 f"{skill.get('name', '')}\n"
                 f"{skill.get('description', '')}\n"
-                f"{Path(skill.get('file', '')).name}"
+                f"{relative}\n"
+                f"{skill_path.name}"
             ).lower()
             if any(token in searchable_text for token in tokens):
                 filtered.append(skill)
