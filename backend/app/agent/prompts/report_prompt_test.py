@@ -15,3 +15,4 @@ def test_report_prompt_explains_when_to_use_agent_workflow_dag():
 
     assert "run_agent_workflow" in prompt
     assert "无依赖节点并行执行" in prompt
+    assert "report_analysis_v1" in prompt
