@@ -117,7 +117,7 @@ async def get_workflow(
         job = await get_workflow_job_store().get(workflow_id)
     except Exception:
         job = None
-    if snapshot is None and active is None and job is None:
+    if snapshot is None and active is None and (job is None or job.session_id != session_id):
         raise HTTPException(status_code=404, detail="workflow_not_found")
     if active is not None and active.session_id not in {None, session_id}:
         raise HTTPException(status_code=404, detail="workflow_not_found")
@@ -156,7 +156,7 @@ async def workflow_events(
             job = await get_workflow_job_store().get(workflow_id)
         except Exception:
             job = None
-        if active is None and job is None:
+        if active is None and (job is None or job.session_id != session_id):
             raise HTTPException(status_code=404, detail="workflow_not_found")
         if active is not None and active.session_id not in {None, session_id}:
             raise HTTPException(status_code=404, detail="workflow_not_found")
