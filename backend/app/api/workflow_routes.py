@@ -20,6 +20,12 @@ from app.core.sse import create_sse_response
 
 
 router = APIRouter(prefix="/api/sessions/{session_id}/workflows", tags=["agent-workflows"])
+_resume_tasks: set[asyncio.Task] = set()
+
+
+def _track_resume_task(task: asyncio.Task) -> None:
+    _resume_tasks.add(task)
+    task.add_done_callback(_resume_tasks.discard)
 
 
 def _workflow_snapshots(metadata: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -224,11 +230,11 @@ async def resume_workflow(
 
     # The tool owns the coordinator registration, checkpointing and executor
     # wiring. This endpoint only supplies the restored definition and context.
-    asyncio.create_task(
+    _track_resume_task(asyncio.create_task(
         RunAgentWorkflowTool().execute(
             context=SimpleNamespace(session_id=session_id),
             workflow=snapshot.get("definition"),
             snapshot=snapshot,
         )
-    )
+    ))
     return {"workflow_id": workflow_id, "status": "resume_requested"}
