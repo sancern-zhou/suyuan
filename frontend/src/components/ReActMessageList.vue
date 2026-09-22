@@ -1270,7 +1270,6 @@ const formatSectionTitle = (key) => {
     '1_overall_assessment': '总体评估',
     '2_meteorological_analysis': '气象分析',
     '3_chemical_diagnostics': '化学诊断',
-    '4_upwind_enterprises': '上风向企业',
     '5_control_recommendations': '控制建议',
     '6_risk_assessment': '风险评估',
     'executive_summary': '执行摘要',

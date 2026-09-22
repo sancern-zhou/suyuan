@@ -213,7 +213,6 @@ def test_deliberation_modes_are_isolated_from_generic_expert_mode():
     assert "calculate_pm_pmf" not in monitoring_tools
 
     assert "meteorological_trajectory_analysis" in meteorology_tools
-    assert "analyze_upwind_enterprises" in meteorology_tools
     assert "calculate_pm_pmf" not in meteorology_tools
 
     assert "get_vocs_data" in chemistry_tools

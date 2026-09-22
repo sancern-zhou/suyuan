@@ -206,17 +206,15 @@ const scenarios = [
     badge: '专业',
     badgeClass: 'badge-professional',
     icon: '🗺️',
-    description: '后向轨迹分析 + 上风向企业 + 传输路径地图',
-    longDescription: '专注于污染物传输路径分析，通过后向轨迹计算识别污染来源方向，生成专业的传输路径地图和上风向企业分析。',
+    description: '后向轨迹分析 + 传输路径地图',
+    longDescription: '专注于污染物传输路径分析，通过后向轨迹计算识别污染来源方向，生成专业的传输路径地图。',
     tools: [
       'get_weather_data',
-      'meteorological_trajectory_analysis',
-      'analyze_upwind_enterprises'
+      'meteorological_trajectory_analysis'
     ],
     features: [
       '后向轨迹计算',
       '传输路径地图',
-      '上风向企业分析',
       '污染源识别'
     ]
   },
@@ -233,7 +231,6 @@ const scenarios = [
       'get_fire_hotspots',
       'get_dust_data',
       'meteorological_trajectory_analysis',
-      'analyze_upwind_enterprises',
       'create_report_chart'
     ],
     features: [

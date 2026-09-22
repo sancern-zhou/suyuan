@@ -90,7 +90,6 @@ class MonitorConfig:
     include_components: bool = True
     auto_enhance_evidence: bool = True
     include_trajectory: bool = True
-    include_upwind_enterprises: bool = True
     include_component_models: bool = True
     max_target_stations: int = 1
     event_context_hours: int = 2
@@ -379,7 +378,6 @@ class PollutionEventMonitorService:
         if self.config.auto_enhance_evidence and event.get("event_lifecycle", {}).get("status") != "routine":
             enhancer = PollutionEventEvidenceEnhancer(
                 include_trajectory=self.config.include_trajectory,
-                include_upwind_enterprises=self.config.include_upwind_enterprises,
                 include_component_models=self.config.include_component_models,
             )
             auto_analysis = await enhancer.enhance(
@@ -443,7 +441,7 @@ class PollutionEventMonitorService:
             "analysis_contract": {
                 "skill_name": "city_pollution_process_analysis",
                 "skill_file": str(self.backend_dir / "docs" / "skills" / "city_pollution_process_analysis.md"),
-                "agent_goal": "Use the project pollution process analysis skill to create a formal source-apportionment report.qmd from the evidence pack. Focus on data displays, analysis, source judgment, and upwind enterprise lists.",
+                "agent_goal": "Use the project pollution process analysis skill to create a formal source-apportionment report.qmd from the evidence pack. Focus on data displays, analysis, and source judgment.",
                 "required_outputs": [
                     "report.qmd",
                     "report_package_preview",
@@ -547,7 +545,6 @@ class PollutionEventMonitorService:
             return False
         statuses = [
             auto_analysis.get("trajectory", {}).get("status") if isinstance(auto_analysis.get("trajectory"), dict) else None,
-            auto_analysis.get("upwind_enterprises", {}).get("status") if isinstance(auto_analysis.get("upwind_enterprises"), dict) else None,
             auto_analysis.get("component_analysis", {}).get("status") if isinstance(auto_analysis.get("component_analysis"), dict) else None,
         ]
         relevant = [status for status in statuses if status and status != "skipped"]
@@ -1644,7 +1641,7 @@ class PollutionEventMonitorService:
             "结合证据包推荐信息判断该包是否为本次默认分析对象；"
             "梳理可引用事实、自动模型结果和证据缺口；不要重复运行已经成功的自动分析工具；"
             "完成必要的假设验证后，直接生成面向用户的正式溯源分析报告 report.qmd，"
-            "并创建报告包用于右侧预览。报告应突出数据展示、污染来源研判和上风向企业清单；"
+            "并创建报告包用于右侧预览。报告应突出数据展示和污染来源研判；"
             "开头不要使用“项目-内容”元数据表，不要描述系统判定字段；"
             "不要在报告正文输出系统字段名或IT技术用语；"
             "数据来源、数据可用性限制和工具失败说明放在最后的附件；不要输出建议章节。\n"

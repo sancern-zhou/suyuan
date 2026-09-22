@@ -66,6 +66,7 @@ class TenderNotice:
     key_requirements: List[str] = field(default_factory=list)
     attachment_urls: List[str] = field(default_factory=list)
     structured_json: Dict[str, Any] = field(default_factory=dict)
+    classification: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 
@@ -88,3 +89,4 @@ class PipelineRunResult:
     saved_notices: int = 0
     vector_indexed: int = 0
     errors: List[str] = field(default_factory=list)
+    api_requests: List[Dict[str, Any]] = field(default_factory=list)

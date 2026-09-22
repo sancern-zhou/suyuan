@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Iterable, Sequence
 
 import pyodbc
+from .columns import QUERY_COLUMNS, query_column_values
 
 from config.settings import settings
 from app.services.tenders.models import (
@@ -93,7 +94,11 @@ class SQLServerTenderRepository:
             for chunk in self._chunks(urls, 500):
                 placeholders = ", ".join("?" for _ in chunk)
                 cursor.execute(
-                    f"SELECT url, filter_status FROM tender_candidates WHERE url IN ({placeholders})",
+                    f"""SELECT c.url,
+                        CASE WHEN c.filter_status = 'accepted' AND n.url IS NULL
+                             THEN 'pending' ELSE c.filter_status END
+                        FROM tender_candidates c LEFT JOIN tender_notices n ON n.url = c.url
+                        WHERE c.url IN ({placeholders})""",
                     tuple(chunk),
                 )
                 for row in cursor.fetchall():
@@ -234,23 +239,23 @@ class SQLServerTenderRepository:
                     """,
                     values,
                 )
+            if notice.classification:
+                assignments = ", ".join(f"[{name}] = ?" for name in QUERY_COLUMNS)
+                cursor.execute(
+                    f"UPDATE tender_notices SET {assignments} WHERE url = ?",
+                    query_column_values(notice.classification) + (notice.url,),
+                )
             cursor.execute(
                 """
-                UPDATE tender_notice_contents
-                SET raw_content = ?,
+                UPDATE tender_notices
+                SET raw_content = CASE WHEN detail_fetched_at IS NULL THEN ? ELSE raw_content END,
+                    content_created_at = COALESCE(content_created_at, SYSUTCDATETIME()),
+                    content_updated_at = CASE WHEN detail_fetched_at IS NULL THEN SYSUTCDATETIME() ELSE content_updated_at END,
                     updated_at = sysdatetime()
                 WHERE url = ?
                 """,
                 content_values,
             )
-            if cursor.rowcount == 0:
-                cursor.execute(
-                    """
-                    INSERT INTO tender_notice_contents (url, raw_content)
-                    VALUES (?, ?)
-                    """,
-                    (notice.url, notice.raw_content),
-                )
             conn.commit()
         finally:
             conn.close()
@@ -372,6 +377,7 @@ class SQLServerTenderRepository:
             "filter_reason": notice.filter_reason,
             "filter_confidence": notice.filter_confidence,
             "attachment_urls": notice.attachment_urls,
+            "classification": notice.classification,
         }
 
     def _candidate_values(

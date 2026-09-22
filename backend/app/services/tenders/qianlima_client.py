@@ -9,7 +9,7 @@ import socket
 import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 from urllib.parse import quote, quote_plus, urlencode, urljoin, urlsplit, urlunsplit
 
 import requests
@@ -52,7 +52,13 @@ class QianlimaDetailAccessExhaustedError(RuntimeError):
 class _QianlimaSocksTunnel:
     """Create a short-lived local SOCKS5 tunnel over SSH."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        setting_getter: Callable[[str], str] | None = None,
+        password_env: str = "QIANLIMA_SSH_PROXY_PASSWORD",
+    ):
+        self._setting = setting_getter or _qianlima_ssh_proxy_setting
+        self._password_env = password_env
         self.process: asyncio.subprocess.Process | None = None
         self.local_port: int | None = None
         self.askpass_path: str | None = None
@@ -60,13 +66,13 @@ class _QianlimaSocksTunnel:
     async def start(self) -> str:
         if self.process is not None and self.process.returncode is None and self.local_port:
             return f"socks5://127.0.0.1:{self.local_port}"
-        host = _qianlima_ssh_proxy_setting("host")
-        username = _qianlima_ssh_proxy_setting("username") or "root"
+        host = self._setting("host")
+        username = self._setting("username") or "root"
         if not host:
-            raise RuntimeError("QIANLIMA_SSH_PROXY_HOST is required when SSH proxy is enabled")
-        port = int(_qianlima_ssh_proxy_setting("port") or "22")
-        password = _qianlima_ssh_proxy_setting("password")
-        key_path = _qianlima_ssh_proxy_setting("key_path")
+            raise RuntimeError("SSH proxy host is required when SSH proxy is enabled")
+        port = int(self._setting("port") or "22")
+        password = self._setting("password")
+        key_path = self._setting("key_path")
         self.local_port = _find_free_local_port()
         command = [
             "ssh", "-N", "-D", f"127.0.0.1:{self.local_port}", "-p", str(port),
@@ -78,7 +84,7 @@ class _QianlimaSocksTunnel:
             askpass = tempfile.NamedTemporaryFile(
                 mode="w", prefix="qianlima-ssh-askpass-", delete=False
             )
-            askpass.write("#!/bin/sh\nprintf '%s\\n' \"$QIANLIMA_SSH_PROXY_PASSWORD\"\n")
+            askpass.write(f"#!/bin/sh\nprintf '%s\\n' \"${self._password_env}\"\n")
             askpass.close()
             os.chmod(askpass.name, 0o700)
             self.askpass_path = askpass.name
@@ -86,7 +92,7 @@ class _QianlimaSocksTunnel:
                 "SSH_ASKPASS": askpass.name,
                 "SSH_ASKPASS_REQUIRE": "force",
                 "DISPLAY": ":99",
-                "QIANLIMA_SSH_PROXY_PASSWORD": password,
+                self._password_env: password,
             })
             command.extend(["-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no"])
         elif key_path:
@@ -321,9 +327,9 @@ class QianlimaClient:
         self._playwright = None
         self._browser = None
         self._context = None
-        self._browser_uses_proxy = False
-        self._search_proxy_server: str | None = None
+        self._browser_proxy: str | None = None
         self._ssh_proxy_tunnel: _QianlimaSocksTunnel | None = None
+        self._detail_ssh_proxy_tunnel: _QianlimaSocksTunnel | None = None
         self._public_search_page = None
         self._public_search_request_count = 0
         self._public_search_lock = asyncio.Lock()
@@ -344,24 +350,34 @@ class QianlimaClient:
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.close()
 
-    async def start(self, use_proxy: bool = False) -> None:
-        if self._context is not None and self._browser_uses_proxy == use_proxy:
-            return
+    async def _resolve_proxy(
+        self, use_proxy: bool = False, detail_proxy: bool = False
+    ) -> str | None:
+        if detail_proxy:
+            return await self._ensure_detail_proxy()
+        if use_proxy:
+            return await self._ensure_search_proxy()
+        return None
+
+    async def start(
+        self,
+        use_proxy: bool = False,
+        detail_proxy: bool = False,
+    ) -> None:
         async with self._start_lock:
-            if self._context is not None and self._browser_uses_proxy == use_proxy:
+            proxy_server = await self._resolve_proxy(
+                use_proxy=use_proxy, detail_proxy=detail_proxy
+            )
+            if self._context is not None and self._browser_proxy == proxy_server:
                 return
             if self._context is not None:
-                await self.close()
+                await self._close_browser()
             from playwright.async_api import async_playwright
 
-            if use_proxy:
-                self._search_proxy_server = await self._ensure_search_proxy()
             self._playwright = await async_playwright().start()
             launch_kwargs = {"headless": self.headless}
             proxy_config = (
-                _qianlima_playwright_proxy(self._search_proxy_server)
-                if use_proxy
-                else None
+                _qianlima_playwright_proxy(proxy_server) if proxy_server else None
             )
             if proxy_config:
                 launch_kwargs["proxy"] = proxy_config
@@ -372,27 +388,30 @@ class QianlimaClient:
             self._context = await self._browser.new_context(
                 ignore_https_errors=not self.verify_tls, **context_kwargs
             )
-            self._browser_uses_proxy = use_proxy
+            self._browser_proxy = proxy_server
             if _env_bool("QIANLIMA_BLOCK_HEAVY_RESOURCES", True):
                 await self._context.route("**/*", self._route_lightweight_detail_resources)
 
-    async def close(self) -> None:
+    async def _close_browser(self) -> None:
         self._public_search_page = None
         self._public_search_request_count = 0
-        if self._context is not None:
-            await self._context.close()
-            self._context = None
-        if self._browser is not None:
-            await self._browser.close()
-            self._browser = None
-        if self._playwright is not None:
-            await self._playwright.stop()
-            self._playwright = None
-        self._browser_uses_proxy = False
+        context, browser, playwright = self._context, self._browser, self._playwright
+        self._context = None
+        self._browser = None
+        self._playwright = None
+        self._browser_proxy = None
+        await _close_with_timeout(context, 10)
+        await _close_with_timeout(browser, 10)
+        await _close_with_timeout(playwright, 10)
+
+    async def close(self) -> None:
+        await self._close_browser()
         if self._ssh_proxy_tunnel is not None:
             await self._ssh_proxy_tunnel.close()
             self._ssh_proxy_tunnel = None
-        self._search_proxy_server = None
+        if self._detail_ssh_proxy_tunnel is not None:
+            await self._detail_ssh_proxy_tunnel.close()
+            self._detail_ssh_proxy_tunnel = None
 
     async def _ensure_search_proxy(self) -> str | None:
         configured_server = _qianlima_proxy_setting("server")
@@ -402,6 +421,17 @@ class QianlimaClient:
                 self._ssh_proxy_tunnel = _QianlimaSocksTunnel()
             return await self._ssh_proxy_tunnel.start()
         return configured_server or None
+
+    async def _ensure_detail_proxy(self) -> str | None:
+        detail_ssh_host = _qianlima_detail_ssh_proxy_setting("host")
+        if detail_ssh_host:
+            if self._detail_ssh_proxy_tunnel is None:
+                self._detail_ssh_proxy_tunnel = _QianlimaSocksTunnel(
+                    _qianlima_detail_ssh_proxy_setting,
+                    password_env="QIANLIMA_DETAIL_SSH_PROXY_PASSWORD",
+                )
+            return await self._detail_ssh_proxy_tunnel.start()
+        return _qianlima_proxy_setting("server") or None
 
     async def login(self, login_url: Optional[str] = None) -> None:
         if not self.username or not self.password:
@@ -605,12 +635,28 @@ class QianlimaClient:
             for _ in range(max_attempts):
                 account_index = self._active_account_index
                 await self._ensure_member_detail_session()
-                await self.start()
+                await self.start(detail_proxy=True)
                 await _sleep_before_detail_request()
-                page = await self._context.new_page()
+                try:
+                    page = await asyncio.wait_for(
+                        self._context.new_page(),
+                        timeout=float(
+                            os.getenv("QIANLIMA_DETAIL_PAGE_TIMEOUT_SECONDS", "30")
+                        ),
+                    )
+                except Exception as exc:
+                    last_error = exc
+                    await self._close_browser()
+                    continue
                 daily_limit_error: _QianlimaDailyLimitError | None = None
                 try:
-                    await page.goto(candidate.url, wait_until="domcontentloaded")
+                    await page.goto(
+                        candidate.url,
+                        wait_until="domcontentloaded",
+                        timeout=int(
+                            os.getenv("QIANLIMA_DETAIL_GOTO_TIMEOUT_MS", "30000")
+                        ),
+                    )
                     networkidle_timeout_ms = int(
                         os.getenv("QIANLIMA_DETAIL_NETWORKIDLE_TIMEOUT_MS", "1500")
                     )
@@ -627,7 +673,9 @@ class QianlimaClient:
                         raise _QianlimaDailyLimitError(
                             "千里马详情页返回浏览上限或壳页面，拒绝入库"
                         )
-                    if _is_member_limited_page(content):
+                    if _is_member_limited_page(content) and _env_bool(
+                        "QIANLIMA_REJECT_MEMBER_LIMITED_DETAIL", True
+                    ):
                         raise RuntimeError("千里马详情页返回会员受限内容，拒绝使用非会员脱敏详情")
                     if _is_access_verification_page(content):
                         raise RuntimeError("千里马详情页触发访问验证，无法确认会员详情内容")
@@ -639,7 +687,7 @@ class QianlimaClient:
                     last_error = exc
                     await page.wait_for_timeout(self.request_delay_ms)
                 finally:
-                    await page.close()
+                    await _close_with_timeout(page, 10)
                 if daily_limit_error is not None:
                     if await self._switch_to_next_detail_account(account_index):
                         continue
@@ -894,13 +942,11 @@ class QianlimaClient:
         }
 
         async with self._public_search_lock:
-            # Public search is anonymous. Tests can opt into a dedicated SOCKS
-            # exit without changing the normal direct-search route.
+            # Search now runs directly from the local server; the proxy is
+            # reserved for detail fetching. Set QIANLIMA_SEARCH_USE_PROXY=true
+            # to route search back through the configured proxy.
             await self.start(
-                use_proxy=_env_bool(
-                    "QIANLIMA_SEARCH_USE_PROXY",
-                    bool(_qianlima_ssh_proxy_setting("host") or _qianlima_proxy_setting("server")),
-                )
+                use_proxy=_env_bool("QIANLIMA_SEARCH_USE_PROXY", False)
             )
             if self._public_search_page is None or self._public_search_page.is_closed():
                 # Public search is anonymous. Do not leak a stored member session into it.
@@ -912,19 +958,35 @@ class QianlimaClient:
                     timeout=int(os.getenv("QIANLIMA_REQUEST_TIMEOUT", "30")) * 1000,
                 )
 
-            response = await self._public_search_page.evaluate(
-                """
-                async ({url, queryString}) => {
-                    const response = await fetch(`${url}?${queryString}`, {
-                        method: "POST",
-                        headers: {"Content-Type": "application/json"},
-                        body: "{}",
-                    });
-                    return {status: response.status, body: await response.text()};
-                }
-                """,
-                {"url": self.search_api_url, "queryString": urlencode(params)},
-            )
+            try:
+                response = await asyncio.wait_for(
+                    self._public_search_page.evaluate(
+                        """
+                        async ({url, queryString}) => {
+                            const controller = new AbortController();
+                            const timer = setTimeout(() => controller.abort(), 40000);
+                            try {
+                                const response = await fetch(`${url}?${queryString}`, {
+                                    method: "POST",
+                                    headers: {"Content-Type": "application/json"},
+                                    body: "{}",
+                                    signal: controller.signal,
+                                });
+                                return {status: response.status, body: await response.text()};
+                            } finally {
+                                clearTimeout(timer);
+                            }
+                        }
+                        """,
+                        {"url": self.search_api_url, "queryString": urlencode(params)},
+                    ),
+                    timeout=float(
+                        os.getenv("QIANLIMA_SEARCH_FETCH_TIMEOUT_SECONDS", "45")
+                    ),
+                )
+            except asyncio.TimeoutError as exc:
+                await self._close_browser()
+                raise _QianlimaPublicSearchError("千里马公开搜索请求超时") from exc
             self._public_search_request_count += 1
         status_code = int(response.get("status") or 0)
         if status_code >= 400:
@@ -1064,7 +1126,7 @@ class QianlimaClient:
         publish_date: Optional[date],
         max_pages: int,
     ) -> List[TenderCandidate]:
-        await self.start(use_proxy=True)
+        await self.start(use_proxy=_env_bool("QIANLIMA_SEARCH_USE_PROXY", False))
         candidates: List[TenderCandidate] = []
         query = keyword.strip()
         for page_number in range(1, max_pages + 1):
@@ -1233,10 +1295,33 @@ def _qianlima_ssh_proxy_setting(name: str) -> str:
     return str(getattr(settings, f"qianlima_ssh_proxy_{name}", "") or "").strip()
 
 
+def _qianlima_detail_ssh_proxy_setting(name: str) -> str:
+    env_name = f"QIANLIMA_DETAIL_SSH_PROXY_{name.upper()}"
+    value = os.getenv(env_name)
+    if value is not None and value.strip():
+        return value.strip()
+    return str(
+        getattr(settings, f"qianlima_detail_ssh_proxy_{name}", "") or ""
+    ).strip()
+
+
 def _find_free_local_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+async def _close_with_timeout(target, timeout: float = 10.0) -> None:
+    """Close a Playwright handle without letting a wedged connection stall us."""
+    if target is None:
+        return
+    closer = getattr(target, "close", None) or getattr(target, "stop", None)
+    if closer is None:
+        return
+    try:
+        await asyncio.wait_for(closer(), timeout=timeout)
+    except Exception:
+        pass
 
 
 async def _sleep_before_detail_request() -> None:

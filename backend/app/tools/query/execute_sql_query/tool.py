@@ -199,7 +199,6 @@ OPS_SQL_TABLES = [
 
 TENDER_SQL_TABLES = [
     'tender_notices',
-    'tender_notice_contents',
     'tender_candidates',
     'tender_fetch_runs',
 ]
@@ -973,19 +972,25 @@ class ExecuteTenderSQLQueryTool(BaseSQLQueryTool):
     def __init__(self):
         schema_description = (
             "招投标数据SQL Server查询工具。支持二选一：describe_table查看表结构，或sql执行SELECT查询。"
-            "用于助手模式查询已抓取、初筛、详情清洗并入库的招标公告和中标公告。"
+            "用于通用助手查询已入库招标、中标、候选和更正公告，包含仅有列表信息及已补充完整详情的记录。"
             "只能查询下方列出的招投标白名单表；禁止查询其他业务库表。"
             "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回1000条。"
             "SQL Server语法：中文字符串必须加N前缀，如 N'生态环境局'；分页/限制用TOP，不支持LIMIT。"
             "database默认为XcAiDb。"
             "\n\n常用表说明："
             "\n- tender_notices：清洗后的目标公告主表，也是回答“某天有多少条招投标公告/有哪些公告”的最终事实表。包含title、notice_type、project_name、purchaser、winning_bidder、budget_amount、winning_amount、province、city、publish_date、project_category、summary、key_requirements_json、extraction_meta_json等字段。"
-            "\n- tender_notice_contents：公告原文内容表，按url关联tender_notices，包含raw_content等大文本字段。"
-            "\n- tender_candidates：列表页候选公告表，用于判断初筛和补录闭环状态。accepted候选表示已通过初筛；accepted候选LEFT JOIN tender_notices后n.url IS NULL的数量，才表示仍缺详情/仍未入库。"
+            "\n- 公告内容已合并到tender_notices，不再查询tender_notice_contents。raw_content为正文/列表文本；detail_fetched_at非空表示已获取知了详情，空值不能视为完整正文。detail_json保存详情API的data和meta，attachment_urls_json为附件JSON数组，detail_cost_units为最近一次详情请求积分，detail_fetched_at为UTC时间。"
+            "\n- 查询具体项目先SELECT TOP 20 id,bid_id,title,purchaser,publish_date,url,detail_fetched_at FROM tender_notices WHERE title LIKE N'%具体项目名%' ORDER BY publish_date DESC；需要服务要求、技术指标、标段明细等正文信息时，将确认的bid_id传给zhiliao_tender_detail工具，工具自动获取并入库，多个同名公告应先确认，不猜测。"
+            "\n- 列表统计不要SELECT *或读取大型raw_content/detail_json；仅选择所需独立列。money为API原始元金额，money_wan为原始万元金额；最终中标金额仍用winning_amount_wan_yuan，元金额可由它乘10000。"
+            "\n- tender_candidates：列表页候选公告表，用于判断初筛和补录闭环状态。accepted候选表示已通过初筛或保留策略，不能据此认定与核心业务相关；accepted候选LEFT JOIN tender_notices后n.url IS NULL的数量，才表示仍缺详情/仍未入库。"
+            "\n- API信息已有独立列：county区县、bid_id、caller_id、agency_name、winner_names中标/候选供应商原始列表、winner_ids、winner_moneys原始元金额列表、sm_names标的物列表、brand_names品牌列表、tender_names等；采购单位仍用purchaser，公告链接用url，省市用province/city。"
+            "\n- 分类优先读取独立列business_type、content_tags、classification_status、notice_stage；原始副本仍保留在extraction_meta_json.classification。content_tags、winner_names、sm_names、brand_names等独立列为JSON数组，可用OPENJSON展开后精确匹配和GROUP BY统计；一次只展开所需数组，避免多个数组笛卡尔积。"
+            "\n- winner_names包括API候选供应商，统计最终中标须筛选notice_stage='final_result'并按公告ID去重；统计金额用winning_amount_wan_yuan，不使用含义未确认的money/money_wan。不要把公告数当项目数，也不要把候选或更正金额重复计入中标合计。"
+            "\n- 知了API回补与旧千里马记录可能包含同一公告。统计知了回补范围时增加bid_id IS NOT NULL，并按bid_id去重；跨来源统计须先明确去重口径，不直接累加两个来源的公告数。"
             "\n- tender_fetch_runs：抓取执行日志表，可能保留初次失败、补录中断、重试成功等多轮历史记录。它只用于排障，不是最终业务状态；不要累加saved_notices，不要仅因旧run存在detail_fetch_failures就判断补录未完成。"
             "\n\n判断口径："
             "\n- 最终入库数量：只统计tender_notices，按publish_date去重后的事实表结果为准。"
-            "\n- 补录是否完成：统计accepted候选中尚未在tender_notices出现的数量；为0表示已通过详情页抓取/复核闭环，即使历史run仍有失败日志。"
+            "\n- 补录是否完成：统计accepted候选中尚未在tender_notices出现的数量；为0表示已入库闭环，即使历史run仍有失败日志；不表示已获取详情或所有业务分类均确认，仍需查看classification_status。"
             "\n- run状态解读：tender_fetch_runs.status=partial_failed/failed/interrupted只说明该执行批次有错误或被中断，不代表该日期最终未完成；需要结合最终入库和accepted_missing_notice判断。"
             "\n\n常见查询："
             "\n- 某日最终入库公告：SELECT TOP 50 title, notice_type, purchaser, publish_date FROM tender_notices WHERE publish_date = '2026-07-01' ORDER BY id DESC"
@@ -993,6 +998,16 @@ class ExecuteTenderSQLQueryTool(BaseSQLQueryTool):
             "\n- 某日候选初筛统计：SELECT filter_status, decision_source, COUNT(*) AS cnt FROM tender_candidates WHERE publish_date = '2026-07-01' GROUP BY filter_status, decision_source"
             "\n- 最近执行日志排障：SELECT TOP 10 id, target_date, status, total_candidates, detail_fetch_failures, saved_notices, started_at, finished_at FROM tender_fetch_runs ORDER BY started_at DESC"
             "\n\n提示：使用describe_table可查看白名单表的完整字段结构。"
+        )
+        from app.services.tenders.taxonomy import BUSINESS_TYPES, CONTENT_TAGS
+        schema_description += (
+            "\n- business_type类型合法值：" + "、".join(BUSINESS_TYPES) + "。"
+            "\n- content_tags内容标签合法值：" + "、".join(CONTENT_TAGS) + "。"
+            "\n- classification_status为classified或needs_review；待复核记录也保留，除非用户指定不要默认过滤。"
+            "notice_stage为final_result最终结果、candidate候选、correction更正、contract合同、tender招标、other或unknown。"
+            "\n- 分类查询示例：SELECT TOP 50 bid_id,title,business_type,content_tags,publish_date FROM tender_notices WHERE business_type=N'运维服务' ORDER BY publish_date DESC。"
+            "\n- 标签查询示例：SELECT TOP 50 n.bid_id,n.title,n.publish_date FROM tender_notices n WHERE EXISTS (SELECT 1 FROM OPENJSON(n.content_tags) t WHERE t.value=N'AI') ORDER BY n.publish_date DESC。"
+            "\n- 省份城市区县用province/city/county；供应商名称匹配用winner_names的OPENJSON，不把包含候选的原始名单都当最终中标。日期区间建议publish_date>=开始日期 AND publish_date<下月首日。"
         )
         super().__init__(
             tool_name="execute_tender_sql_query",

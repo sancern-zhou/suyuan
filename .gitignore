@@ -227,6 +227,8 @@ backend/docs/skills/*
 !backend/docs/skills/ops_work_order_audit/
 !backend/docs/skills/ops_work_order_audit/**
 !backend/docs/skills/archify.md
+!backend/docs/skills/SKILLS_INDEX.md
+!backend/docs/skills/生态环境招投标市场分析.md
 scripts/
 !/.github/scripts/
 !/.github/scripts/build_filter_repo_replacements.py

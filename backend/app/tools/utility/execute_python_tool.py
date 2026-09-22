@@ -48,6 +48,7 @@ from app.utils.path_config import (
     get_python_output_dir,
     get_reports_dir,
     resolve_agent_path,
+    is_agent_sensitive_path,
 )
 from app.utils.font_utils import BROWSER_CHART_FONT_FAMILY, select_preferred_chinese_font_path
 
@@ -81,7 +82,7 @@ class ExecutePythonTool(LLMTool):
             description=(
                 "执行 Python 代码，用于数据处理、数值计算、Excel/文件处理、"
                 "⭐ **自定义图表生成**：matplotlib/seaborn/plotly/bokeh 绘制复杂/3D/科研图表。"
-                "每次调用是独立环境；用 load_data(file_path) 读取会话数据文件，"
+                "每次调用是独立环境；读取输入文件须通过 input_files 声明，声明的路径可在代码中通过 input_files 列表访问；用 load_data(file_path) 读取会话数据文件，"
                 "跨调用或跨工具复用结构化结果必须用 save_data(...) 保存，并原样复用其返回的 file_path；"
                 "不得将自行写入或推断得到的中间数据路径传给后续工具。"
                 "生成 Excel、Word、PDF 等交付文件时必须先调用 artifact_path(filename) 获取输出路径，"
@@ -93,7 +94,7 @@ class ExecutePythonTool(LLMTool):
                 "生成文件由工具自动归档并返回可复用路径。"
             ),
             category=ToolCategory.QUERY,
-            version="1.0.3",
+            version="1.1.0",
             requires_context=True  # ✅ 需要上下文以支持数据访问功能
         )
 
@@ -162,8 +163,44 @@ class ExecutePythonTool(LLMTool):
             return assigned_strings.get(node.id)
         return None
 
-    def _build_allowed_data_files_payload(self, code: str, context) -> str:
+    def _validate_input_files(self, input_files, context) -> Optional[List[str]]:
+        """Resolve declared files without treating a declaration as authorization."""
+        if input_files is None:
+            return None  # Compatibility with existing literal-path callers.
+        if not isinstance(input_files, list) or len(input_files) > 256:
+            raise ValueError("input_files 必须是最多256项的文件路径数组")
+        if not input_files:
+            return []
+        if context is None:
+            raise ValueError("声明输入文件需要当前会话上下文")
+        try:
+            session_dir = resolve_agent_path(context.data_manager.memory.session.data_dir)
+        except (AttributeError, TypeError, ValueError):
+            session_dir = None
+        authorized = {
+            resolve_agent_path(path)
+            for path in [*(getattr(context, "available_file_paths", []) or []),
+                         *(getattr(context, "authorized_input_paths", []) or [])]
+            if path
+        }
+        resolved_files = []
+        for index, raw in enumerate(input_files):
+            if not isinstance(raw, str) or not raw.strip():
+                raise ValueError(f"input_files[{index}] 必须是非空文件路径")
+            path = resolve_agent_path(raw)
+            in_session = session_dir is not None and path.is_relative_to(session_dir)
+            if is_agent_sensitive_path(path) or (path not in authorized and not in_session):
+                raise ValueError(f"input_files[{index}] 不属于当前会话或已授权输入文件")
+            if not path.is_file():
+                raise ValueError(f"input_files[{index}] 文件不存在或不是普通文件")
+            if str(path) not in resolved_files:
+                resolved_files.append(str(path))
+        return resolved_files
+
+    def _build_allowed_data_files_payload(self, code: str, context, input_files=None) -> str:
         """Build a small allowlist; the child loads data instead of embedding it in code."""
+        if input_files is not None:
+            return json.dumps(input_files, ensure_ascii=False)
         session_data_dir = resolve_agent_path(context.data_manager.memory.session.data_dir)
         available_paths = {
             str(resolve_agent_path(path))
@@ -195,6 +232,7 @@ class ExecutePythonTool(LLMTool):
         context=None,
         code: str = None,
         timeout: Optional[int] = None,
+        input_files: Optional[List[str]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -203,6 +241,7 @@ class ExecutePythonTool(LLMTool):
         Args:
             code: Python 代码
             timeout: 超时时间（秒），默认 30 秒
+            input_files: 本次需要读取的已授权文件，代码内可通过同名列表访问。
 
         Returns:
             {
@@ -228,6 +267,16 @@ class ExecutePythonTool(LLMTool):
                 "summary": "缺少代码参数"
             }
 
+        try:
+            declared_inputs = self._validate_input_files(input_files, context)
+        except (ValueError, OSError) as exc:
+            return {
+                "status": "failed", "success": False,
+                "error_code": "INVALID_INPUT_FILES", "error": str(exc),
+                "summary": f"输入文件声明无效：{exc}", "data": None,
+                "metadata": {"tool_name": self.name},
+            }
+
         # ✅ 确保图表目录存在（每次执行时都检查）
         os.makedirs(self.CHARTS_DIR, exist_ok=True)
 
@@ -244,8 +293,9 @@ class ExecutePythonTool(LLMTool):
         try:
             # 只在独立子进程中执行，且不修改 Web worker 的全局 cwd。
             original_code = code
+            code = "input_files = " + json.dumps(declared_inputs or [], ensure_ascii=False) + "\n" + code
             code = self._inject_artifact_path_helper(code)
-            code = self._inject_data_context(code, context)
+            code = self._inject_data_context(code, context, input_files=declared_inputs)
             code = self._inject_matplotlib_save_support(code)
             code = self._inject_excel_helpers(code)
 
@@ -264,6 +314,7 @@ class ExecutePythonTool(LLMTool):
                 timeout or self.default_timeout,
                 working_dir=temp_dir,
                 context=context,
+                input_files=declared_inputs,
             )
 
             # ✅ 从 output 中提取用户保存的文件路径（绝对路径保存的文件）
@@ -739,6 +790,7 @@ class ExecutePythonTool(LLMTool):
         *,
         working_dir: str,
         context=None,
+        input_files=None,
     ) -> Dict[str, Any]:
         """在独立沙箱进程组中执行代码，同时保持 Web worker 事件循环可运行。"""
         # 写入脚本文件
@@ -760,6 +812,7 @@ class ExecutePythonTool(LLMTool):
             working_dir=working_dir,
             timeout=timeout,
             context=context,
+            input_files=input_files,
         )
         if sandbox_spec is None:
             return {
@@ -861,6 +914,7 @@ class ExecutePythonTool(LLMTool):
         working_dir: str,
         timeout: int,
         context=None,
+        input_files=None,
     ) -> Optional[Tuple[List[str], List[Tuple[Path, Path, set[str]]], List[Path]]]:
         """构建 fail-closed Bubblewrap 沙箱命令。
 
@@ -1000,7 +1054,10 @@ class ExecutePythonTool(LLMTool):
             )
         )
         requested_paths = self._find_data_file_accesses(code)
-        candidate_paths = list(dict.fromkeys([*context_paths, *requested_paths]))
+        candidate_paths = (
+            list(input_files) if input_files is not None
+            else list(dict.fromkeys([*context_paths, *requested_paths]))
+        )
         try:
             if session_data_dir and session_data_dir.is_dir():
                 staged_session_dir = Path(working_dir) / "session_data"
@@ -1648,7 +1705,7 @@ def artifact_path(filename: str) -> str:
             return echarts_title.get("text", f"{chart_type.upper()}图表")
         return echarts_title or f"{chart_type.upper()}图表"
 
-    def _inject_data_context(self, code: str, context) -> str:
+    def _inject_data_context(self, code: str, context, input_files=None) -> str:
         """
         注入基于会话文件路径的数据访问上下文。
 
@@ -1670,7 +1727,7 @@ def artifact_path(filename: str) -> str:
             has_data_manager=context.data_manager is not None
         )
 
-        allowed_data_files_payload = self._build_allowed_data_files_payload(code, context)
+        allowed_data_files_payload = self._build_allowed_data_files_payload(code, context, input_files)
         resolved_session_dir = resolve_agent_path(context.data_manager.memory.session.data_dir)
         resolved_session_dir.mkdir(parents=True, exist_ok=True)
         session_data_dir = json.dumps(str(resolved_session_dir), ensure_ascii=False)
@@ -2794,7 +2851,9 @@ def merge_excel_with_charts(file_paths, output_path):
                 "如果任务只是查看文件、搜索文本、检查进程或调用现成 CLI，优先使用 bash；"
                 "需要循环、条件分支、解析转换、程序化处理或可靠地产出文件时，优先使用 execute_python。"
                 "复杂用法先阅读 backend/app/tools/utility/execute_python_manual.md。"
-                "每次调用是独立环境；用 load_data(file_path) 读取会话数据文件，"
+                "每次调用是独立环境，变量和文件挂载不跨调用保留；每次读取输入文件都须通过 input_files 声明。"
+                "声明文件经会话权限校验后挂载，代码中的 input_files 列表提供规范化绝对路径，支持循环读取和路径运算。"
+                "用 load_data(file_path) 读取会话数据文件，"
                 "跨调用或交给其他工具使用的结构化结果必须调用 save_data(...)，"
                 "并原样复用 save_data 返回的 file_path。"
                 "执行后必须检查success、error_code和data.data_file_paths：只有经过文件校验的路径才可继续传递。"
@@ -2809,6 +2868,12 @@ def merge_excel_with_charts(file_paths, output_path):
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "input_files": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "maxItems": 256,
+                        "description": "本次需要读取的输入文件路径，读取文件时必须声明；只允许当前会话数据文件或已授权资源文件，不接受目录。相对路径以项目根目录为准。代码中的 input_files 为校验后的绝对路径列表。无需读取文件时可省略。"
+                    },
                     "code": {
                         "type": "string",
                         "description": (
@@ -2920,6 +2985,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                 "首次使用前必须先调用 read_file 阅读 "
                 "backend/app/tools/utility/execute_echarts_python_manual.md。"
                 "使用工具返回的 file_path，代码中通过系统注入的 load_data(file_path) 获取数据。"
+                "每次调用是独立环境；读取输入文件须通过 input_files 声明，代码中的同名列表提供校验后的绝对路径。"
                 "仅用于图表模式的 ECharts 输出：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
                 "图表通过统一会话资源目录发布和预览，不返回独立图片 URL。"
@@ -2929,6 +2995,12 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "input_files": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "maxItems": 256,
+                        "description": "本次需要读取的当前会话或已授权输入文件路径；每次调用重新声明，不接受目录，代码中通过 input_files 列表访问。"
+                    },
                     "code": {
                         "type": "string",
                         "description": (
