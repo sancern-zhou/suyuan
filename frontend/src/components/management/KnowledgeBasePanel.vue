@@ -345,14 +345,14 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
   align-items: center;
   margin-bottom: 20px;
   padding-bottom: 15px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--border-2);
 }
 
 .panel-header h3 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-1);
 }
 
 .panel-actions {
@@ -362,9 +362,9 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 
 .panel-btn {
   padding: 6px 12px;
-  border: 1px solid #1976d2;
+  border: 1px solid var(--color-primary);
   background: white;
-  color: #1976d2;
+  color: var(--color-primary);
   border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
@@ -372,7 +372,7 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 }
 
 .panel-btn:hover {
-  background: #1976d2;
+  background: var(--color-primary);
   color: white;
 }
 
@@ -388,21 +388,21 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 }
 
 .kb-section {
-  background: #f8f9fa;
+  background: var(--bg-muted);
   border-radius: 8px;
   padding: 15px;
 }
 
 .kb-section-title {
   font-weight: 600;
-  color: #495057;
+  color: var(--text-2);
   margin-bottom: 12px;
   font-size: 14px;
 }
 
 .kb-item {
   background: white;
-  border: 1px solid #dee2e6;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   padding: 12px;
   margin-bottom: 8px;
@@ -411,8 +411,8 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 }
 
 .kb-item:hover {
-  border-color: #1976d2;
-  box-shadow: 0 2px 8px rgba(25, 118, 210, 0.15);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-2);
 }
 
 .kb-item-header {
@@ -436,13 +436,13 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 }
 
 .kb-badge.public {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
 }
 
 .kb-badge.shared {
   background: #e6f4ff;
-  color: #1677ff;
+  color: var(--color-primary);
 }
 
 .kb-badge.local {
@@ -457,13 +457,13 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 
 .kb-meta {
   font-size: 12px;
-  color: #6c757d;
+  color: var(--text-2);
 }
 
 .kb-empty {
   text-align: center;
   padding: 40px 20px;
-  color: #6c757d;
+  color: var(--text-2);
   font-style: italic;
 }
 
@@ -478,7 +478,7 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
   justify-content: space-between;
   align-items: center;
   padding-bottom: 15px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--border-2);
 }
 
 .kb-detail-title {
@@ -491,7 +491,7 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-1);
 }
 
 .kb-detail-actions {
@@ -501,9 +501,9 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 
 .kb-detail-desc {
   padding: 12px;
-  background: #f8f9fa;
+  background: var(--bg-muted);
   border-radius: 6px;
-  color: #495057;
+  color: var(--text-2);
   font-size: 14px;
   line-height: 1.6;
 }
@@ -513,14 +513,14 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
   flex-wrap: wrap;
   gap: 15px;
   padding: 12px;
-  background: #e3f2fd;
+  background: var(--color-primary-bg);
   border-radius: 6px;
   font-size: 13px;
-  color: #1565c0;
+  color: var(--color-primary-active);
 }
 
 .kb-upload-section {
-  background: #f8f9fa;
+  background: var(--bg-muted);
   border-radius: 8px;
   padding: 15px;
 }
@@ -545,7 +545,7 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
   margin-bottom: 5px;
   font-size: 12px;
   font-weight: 500;
-  color: #495057;
+  color: var(--text-2);
 }
 
 .option-group select,
@@ -569,8 +569,8 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 
 .upload-area:hover,
 .upload-area.dragging {
-  border-color: #1976d2;
-  background: #e3f2fd;
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
 }
 
 .upload-area.uploading {
@@ -589,7 +589,7 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
   width: 30px;
   height: 30px;
   border: 3px solid #f3f3f3;
-  border-top: 3px solid #1976d2;
+  border-top: 3px solid var(--color-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -601,23 +601,23 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 
 .upload-area p {
   margin: 5px 0;
-  color: #495057;
+  color: var(--text-2);
   font-size: 14px;
 }
 
 .upload-hint {
   font-size: 12px;
-  color: #6c757d;
+  color: var(--text-2);
 }
 
 .upload-note {
   font-size: 12px;
-  color: #ff9800;
+  color: var(--color-warning);
   font-style: italic;
 }
 
 .kb-documents-section {
-  background: #f8f9fa;
+  background: var(--bg-muted);
   border-radius: 8px;
   padding: 15px;
 }
@@ -625,7 +625,7 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 .kb-empty-docs {
   text-align: center;
   padding: 20px;
-  color: #6c757d;
+  color: var(--text-2);
   font-style: italic;
 }
 
@@ -637,7 +637,7 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 
 .kb-doc-item {
   background: white;
-  border: 1px solid #dee2e6;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   padding: 12px;
   display: flex;
@@ -650,8 +650,8 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 }
 
 .kb-doc-item.clickable:hover {
-  border-color: #1976d2;
-  box-shadow: 0 2px 8px rgba(25, 118, 210, 0.15);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-2);
 }
 
 .kb-doc-info {
@@ -669,7 +669,7 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 
 .kb-doc-meta {
   font-size: 12px;
-  color: #6c757d;
+  color: var(--text-2);
 }
 
 .status-completed {
@@ -683,12 +683,12 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 }
 
 .status-failed {
-  color: #dc3545;
+  color: var(--color-danger);
   font-weight: 500;
 }
 
 .view-hint {
-  color: #1976d2;
+  color: var(--color-primary);
   font-size: 11px;
 }
 
@@ -700,7 +700,7 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 .kb-btn-text {
   background: none;
   border: none;
-  color: #1976d2;
+  color: var(--color-primary);
   cursor: pointer;
   font-size: 12px;
   padding: 4px 8px;
@@ -709,11 +709,11 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 }
 
 .kb-btn-text:hover {
-  background: #e3f2fd;
+  background: var(--color-primary-bg);
 }
 
 .kb-btn-text.danger {
-  color: #dc3545;
+  color: var(--color-danger);
 }
 
 .kb-btn-text.danger:hover {
@@ -721,7 +721,7 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 }
 
 .kb-btn-text:disabled {
-  color: #ccc;
+  color: var(--border-3);
   cursor: not-allowed;
   opacity: 0.6;
 }

@@ -281,9 +281,9 @@ const proceedWithScenario = async () => {
 <style lang="scss" scoped>
 .meteorology-scenario-selector {
   padding: 24px;
-  background: #f8f9fa;
+  background: var(--bg-muted);
   border-radius: 12px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
 }
 
 .scenario-header {
@@ -293,21 +293,21 @@ const proceedWithScenario = async () => {
     margin: 0 0 8px 0;
     font-size: 20px;
     font-weight: 600;
-    color: #1976d2;
+    color: var(--color-primary);
   }
 
   .scenario-description {
     margin: 0;
     font-size: 14px;
-    color: #666;
+    color: var(--text-2);
     line-height: 1.6;
 
     .expert-type {
       display: inline-block;
       margin-top: 4px;
       padding: 2px 8px;
-      background: #e3f2fd;
-      color: #1976d2;
+      background: var(--color-primary-bg);
+      color: var(--color-primary);
       border-radius: 4px;
       font-size: 12px;
       font-weight: 500;
@@ -324,22 +324,22 @@ const proceedWithScenario = async () => {
 
 .scenario-card {
   background: white;
-  border: 2px solid #e0e0e0;
+  border: 2px solid var(--border-2);
   border-radius: 8px;
   padding: 16px;
   cursor: pointer;
   transition: all 0.3s ease;
 
   &:hover {
-    border-color: #1976d2;
-    box-shadow: 0 4px 12px rgba(25, 118, 210, 0.1);
+    border-color: var(--color-primary);
+    box-shadow: var(--shadow-2);
     transform: translateY(-2px);
   }
 
   &.active {
-    border-color: #1976d2;
+    border-color: var(--color-primary);
     background: #f5f9ff;
-    box-shadow: 0 4px 12px rgba(25, 118, 210, 0.15);
+    box-shadow: var(--shadow-2);
   }
 }
 
@@ -362,7 +362,7 @@ const proceedWithScenario = async () => {
     margin: 0 0 4px 0;
     font-size: 16px;
     font-weight: 600;
-    color: #333;
+    color: var(--text-1);
   }
 }
 
@@ -374,8 +374,8 @@ const proceedWithScenario = async () => {
   font-weight: 500;
 
   &.badge-recommended {
-    background: #e8f5e9;
-    color: #2e7d32;
+    background: var(--color-success-bg);
+    color: var(--color-success);
   }
 
   &.badge-enhanced {
@@ -384,8 +384,8 @@ const proceedWithScenario = async () => {
   }
 
   &.badge-professional {
-    background: #e3f2fd;
-    color: #1976d2;
+    background: var(--color-primary-bg);
+    color: var(--color-primary);
   }
 
   &.badge-comprehensive {
@@ -397,7 +397,7 @@ const proceedWithScenario = async () => {
 .scenario-detail {
   margin: 0 0 12px 0;
   font-size: 13px;
-  color: #666;
+  color: var(--text-2);
   line-height: 1.5;
 }
 
@@ -406,7 +406,7 @@ const proceedWithScenario = async () => {
 
   .tools-label {
     font-size: 12px;
-    color: #888;
+    color: var(--text-3);
     margin-bottom: 6px;
   }
 
@@ -419,11 +419,11 @@ const proceedWithScenario = async () => {
 
 .tool-tag {
   padding: 3px 8px;
-  background: #f5f5f5;
-  border: 1px solid #e0e0e0;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-2);
   border-radius: 4px;
   font-size: 11px;
-  color: #555;
+  color: var(--text-2);
   font-family: monospace;
 }
 
@@ -447,12 +447,12 @@ const proceedWithScenario = async () => {
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: #555;
+  color: var(--text-2);
 
   .feature-icon {
     width: 14px;
     height: 14px;
-    color: #2e7d32;
+    color: var(--color-success);
     flex-shrink: 0;
   }
 }
@@ -468,7 +468,7 @@ const proceedWithScenario = async () => {
   align-items: center;
   gap: 8px;
   padding: 12px 24px;
-  background: #1976d2;
+  background: var(--color-primary);
   color: white;
   border: none;
   border-radius: 6px;
@@ -478,13 +478,13 @@ const proceedWithScenario = async () => {
   transition: all 0.2s;
 
   &:hover:not(.disabled) {
-    background: #1565c0;
+    background: var(--color-primary-active);
     transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(25, 118, 210, 0.3);
+    box-shadow: var(--shadow-3);
   }
 
   &.disabled {
-    background: #ccc;
+    background: var(--border-3);
     cursor: not-allowed;
   }
 }
@@ -495,21 +495,21 @@ const proceedWithScenario = async () => {
   gap: 6px;
   padding: 12px 20px;
   background: white;
-  color: #1976d2;
-  border: 1px solid #1976d2;
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
   border-radius: 6px;
   font-size: 14px;
   cursor: pointer;
   transition: all 0.2s;
 
   &:hover {
-    background: #e3f2fd;
+    background: var(--color-primary-bg);
   }
 }
 
 .advanced-options {
   background: white;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
   border-radius: 8px;
   padding: 20px;
   margin-bottom: 24px;
@@ -518,7 +518,7 @@ const proceedWithScenario = async () => {
     margin: 0 0 16px 0;
     font-size: 16px;
     font-weight: 600;
-    color: #333;
+    color: var(--text-1);
   }
 }
 
@@ -530,7 +530,7 @@ const proceedWithScenario = async () => {
     margin-bottom: 8px;
     font-size: 13px;
     font-weight: 500;
-    color: #555;
+    color: var(--text-2);
   }
 }
 
@@ -542,40 +542,40 @@ const proceedWithScenario = async () => {
 .option-btn {
   padding: 8px 16px;
   background: white;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   font-size: 13px;
   cursor: pointer;
   transition: all 0.2s;
 
   &:hover {
-    border-color: #1976d2;
-    color: #1976d2;
+    border-color: var(--color-primary);
+    color: var(--color-primary);
   }
 
   &.active {
-    background: #1976d2;
+    background: var(--color-primary);
     color: white;
-    border-color: #1976d2;
+    border-color: var(--color-primary);
   }
 }
 
 .option-input {
   width: 120px;
   padding: 8px 12px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   font-size: 13px;
 
   &:focus {
     outline: none;
-    border-color: #1976d2;
+    border-color: var(--color-primary);
   }
 }
 
 .selected-summary {
   background: #f5f9ff;
-  border: 1px solid #1976d2;
+  border: 1px solid var(--color-primary);
   border-radius: 8px;
   padding: 16px;
 
@@ -583,13 +583,13 @@ const proceedWithScenario = async () => {
     margin: 0 0 8px 0;
     font-size: 15px;
     font-weight: 600;
-    color: #1976d2;
+    color: var(--color-primary);
   }
 
   p {
     margin: 0;
     font-size: 13px;
-    color: #666;
+    color: var(--text-2);
     line-height: 1.5;
   }
 }

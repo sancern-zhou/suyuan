@@ -111,9 +111,41 @@ def test_convert_anthropic_messages_to_chat_messages_with_tool_chain():
                     },
                 }
             ],
+            "reasoning_content": "Need weather lookup",
         },
         {"role": "tool", "tool_call_id": "toolu_1", "content": "晴，28度"},
     ]
+
+
+def test_convert_anthropic_messages_replays_reasoning_content_on_assistant_turns():
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "plain answer"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "with thinking"},
+                {"type": "thinking", "thinking": "step one"},
+                {"type": "thinking", "thinking": "step two"},
+                {
+                    "type": "tool_use",
+                    "id": "toolu_2",
+                    "name": "foo",
+                    "input": {},
+                },
+            ],
+        },
+    ]
+
+    converted = convert_anthropic_messages_to_chat(messages)
+
+    assert converted[1] == {
+        "role": "assistant",
+        "content": "plain answer",
+        "reasoning_content": "",
+    }
+    assert converted[2]["reasoning_content"] == "step one\nstep two"
+    assert converted[2]["tool_calls"][0]["id"] == "toolu_2"
 
 
 def test_convert_anthropic_messages_to_chat_preserves_image_url_blocks():

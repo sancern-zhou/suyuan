@@ -140,7 +140,7 @@ export function useSessionManagement(store) {
     const contextRefs = payload.contextRefs || []
     const activeContexts = Array.isArray(payload.activeContexts) ? payload.activeContexts : null
     const messageAttachments = payload.messageAttachments || []
-    const modelTier = payload.modelTier || 'auto'
+    const modelTier = payload.modelTier || 'flash'
 
     // 构建分析选项
     const options = {

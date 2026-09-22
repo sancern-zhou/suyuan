@@ -53,8 +53,8 @@ watch(() => [props.contentUrl, props.resource.resource_id, props.resource.versio
 <style scoped>
 .image { display: grid; height: 100%; padding: 16px; overflow: auto; place-items: center; box-sizing: border-box; }
 .image-preview-trigger { display: grid; width: 100%; height: 100%; min-height: 0; padding: 0; border: 0; background: transparent; place-items: center; cursor: zoom-in; }
-.image-preview-trigger:focus-visible { outline: 2px solid #1976d2; outline-offset: 2px; }
+.image-preview-trigger:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 .image img { max-width: 100%; max-height: 100%; object-fit: contain; }
-.error { display: grid; gap: 8px; place-items: center; color: #b42318; }
-.error button { border: 0; background: transparent; color: #1976d2; cursor: pointer; }
+.error { display: grid; gap: 8px; place-items: center; color: var(--color-danger); }
+.error button { border: 0; background: transparent; color: var(--color-primary); cursor: pointer; }
 </style>

@@ -199,7 +199,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #fff;
+  background: var(--bg-container);
 }
 
 /* 管理器头部 */
@@ -253,8 +253,8 @@ onMounted(() => {
   justify-content: flex-end;
   align-items: center;
   padding: 12px 16px;
-  background: #f8f9fa;
-  border-bottom: 1px solid #e0e0e0;
+  background: var(--bg-muted);
+  border-bottom: 1px solid var(--border-2);
 }
 
 .actions {
@@ -267,18 +267,18 @@ onMounted(() => {
   align-items: center;
   gap: 4px;
   padding: 6px 12px;
-  border: 1px solid #e0e0e0;
-  background: #fff;
+  border: 1px solid var(--border-2);
+  background: var(--bg-container);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s;
   font-size: 13px;
-  color: #666;
+  color: var(--text-2);
 }
 
 .action-button:hover {
-  background: #f5f5f5;
-  border-color: #d0d0d0;
+  background: var(--bg-hover);
+  border-color: var(--border-3);
 }
 
 .action-icon {
@@ -290,8 +290,8 @@ onMounted(() => {
   display: flex;
   gap: 12px;
   padding: 16px;
-  background: #f8f9fa;
-  border-bottom: 1px solid #e0e0e0;
+  background: var(--bg-muted);
+  border-bottom: 1px solid var(--border-2);
 }
 
 .stat-card {
@@ -300,9 +300,9 @@ onMounted(() => {
   align-items: center;
   gap: 12px;
   padding: 16px;
-  background: #fff;
+  background: var(--bg-container);
   border-radius: 8px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
 }
 
 .stat-icon {
@@ -317,14 +317,14 @@ onMounted(() => {
 .stat-value {
   font-size: 24px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-1);
   line-height: 1;
   margin-bottom: 4px;
 }
 
 .stat-label {
   font-size: 12px;
-  color: #888;
+  color: var(--text-3);
 }
 
 /* 会话列表 */
@@ -341,7 +341,7 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   padding: 60px 20px;
-  color: #999;
+  color: var(--text-3);
 }
 
 .spinner {
@@ -390,12 +390,12 @@ onMounted(() => {
 
 .sessions-list::-webkit-scrollbar-thumb,
 .filter-tabs::-webkit-scrollbar-thumb {
-  background: #888;
+  background: var(--text-3);
   border-radius: 3px;
 }
 
 .sessions-list::-webkit-scrollbar-thumb:hover,
 .filter-tabs::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: var(--text-2);
 }
 </style>

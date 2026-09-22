@@ -8,4 +8,4 @@ const error = ref('')
 const downloading = ref(false)
 const download = async () => { if (downloading.value) return; downloading.value = true; error.value = ''; try { await downloadResource(props.resource) } catch (failure) { error.value = failure?.message || '下载失败' } finally { downloading.value = false } }
 </script>
-<style scoped>.details { padding: 24px; }.details dl { display: grid; grid-template-columns: 90px 1fr; gap: 8px; }.details dt { color: #64748b; }.details dd { margin: 0; }.details button { border: 0; background: transparent; color: #1976d2; cursor: pointer; }.details .back { padding: 0 0 12px; }.notice { color: #64748b; }.error { color: #b42318; }.content-ref { display: none; }</style>
+<style scoped>.details { padding: 24px; }.details dl { display: grid; grid-template-columns: 90px 1fr; gap: 8px; }.details dt { color: var(--text-2); }.details dd { margin: 0; }.details button { border: 0; background: transparent; color: var(--color-primary); cursor: pointer; }.details .back { padding: 0 0 12px; }.notice { color: var(--text-2); }.error { color: var(--color-danger); }.content-ref { display: none; }</style>

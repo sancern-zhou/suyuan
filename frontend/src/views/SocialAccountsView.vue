@@ -257,7 +257,7 @@ onUnmounted(() => {
 .loading, .empty {
   text-align: center;
   padding: 60px 20px;
-  color: #999;
+  color: var(--text-3);
 }
 
 .empty-buttons {
@@ -274,7 +274,7 @@ onUnmounted(() => {
 }
 
 .account-card {
-  border: 2px solid #e0e0e0;
+  border: 2px solid var(--border-2);
   border-radius: 8px;
   padding: 20px;
   background: white;
@@ -282,7 +282,7 @@ onUnmounted(() => {
 }
 
 .account-card.running {
-  border-color: #4caf50;
+  border-color: var(--color-success);
   box-shadow: 0 2px 8px rgba(76, 175, 80, 0.2);
 }
 
@@ -300,13 +300,13 @@ onUnmounted(() => {
 .account-header h3 {
   margin: 0;
   font-size: 18px;
-  color: #333;
+  color: var(--text-1);
 }
 
 .account-id {
   font-size: 12px;
-  color: #999;
-  background: #f5f5f5;
+  color: var(--text-3);
+  background: var(--bg-hover);
   padding: 4px 8px;
   border-radius: 4px;
 }
@@ -324,11 +324,11 @@ onUnmounted(() => {
 
 .label {
   font-weight: bold;
-  color: #666;
+  color: var(--text-2);
 }
 
 .value {
-  color: #333;
+  color: var(--text-1);
 }
 
 .badge {
@@ -339,22 +339,22 @@ onUnmounted(() => {
 }
 
 .badge.running {
-  background: #4caf50;
+  background: var(--color-success);
   color: white;
 }
 
 .badge.stopped {
-  background: #999;
+  background: var(--text-3);
   color: white;
 }
 
 .badge.success {
-  background: #4caf50;
+  background: var(--color-success);
   color: white;
 }
 
 .badge.warning {
-  background: #ff9800;
+  background: var(--color-warning);
   color: white;
 }
 
@@ -379,7 +379,7 @@ onUnmounted(() => {
 }
 
 .btn-start {
-  background: #4caf50;
+  background: var(--color-success);
   color: white;
 }
 
@@ -397,7 +397,7 @@ onUnmounted(() => {
 }
 
 .btn-qrcode {
-  background: #2196f3;
+  background: var(--color-primary);
   color: white;
 }
 
@@ -416,7 +416,7 @@ onUnmounted(() => {
 
 .btn-primary {
   padding: 10px 20px;
-  background: #2196f3;
+  background: var(--color-primary);
   color: white;
   border: none;
   border-radius: 4px;
@@ -430,7 +430,7 @@ onUnmounted(() => {
 }
 
 .btn-social {
-  background: #4caf50;
+  background: var(--color-success);
 }
 
 .btn-social:hover {
@@ -438,7 +438,7 @@ onUnmounted(() => {
 }
 
 .btn-exam {
-  background: #ff9800;
+  background: var(--color-warning);
 }
 
 .btn-exam:hover {

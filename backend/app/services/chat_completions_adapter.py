@@ -52,6 +52,16 @@ def _message_text_from_content(content: Any) -> str:
     return "\n".join(part for part in parts if part)
 
 
+def _message_thinking_from_content(content: Any) -> str:
+    if not isinstance(content, list):
+        return ""
+    parts: List[str] = []
+    for block in content:
+        if _block_get(block, "type") == "thinking":
+            parts.append(str(_block_get(block, "thinking", "")))
+    return "\n".join(part for part in parts if part)
+
+
 def _image_url_block(block: Any) -> Optional[Dict[str, Any]]:
     if _block_get(block, "type") != "image":
         return None
@@ -203,13 +213,24 @@ def convert_anthropic_messages_to_chat(
             payload: Dict[str, Any] = {"role": "assistant", "content": text or ""}
             if tool_calls:
                 payload["tool_calls"] = tool_calls
+            # DeepSeek/OpenCode Go thinking models require the previous assistant
+            # reasoning to be replayed, even when tools are enabled but the
+            # assistant turn has no tool call. Omitting it (including after a
+            # session restore that did not persist thinking blocks) yields HTTP
+            # 400 "reasoning_content in the thinking mode must be passed back".
+            # An empty string is accepted when no thinking text was stored.
+            payload["reasoning_content"] = _message_thinking_from_content(content)
             converted.append(payload)
             continue
 
         if role in {"user", "assistant", "system"}:
-            converted.append(
-                {"role": role, "content": _message_text_from_content(content)}
-            )
+            chat_message: Dict[str, Any] = {
+                "role": role,
+                "content": _message_text_from_content(content),
+            }
+            if role == "assistant":
+                chat_message["reasoning_content"] = _message_thinking_from_content(content)
+            converted.append(chat_message)
 
     return converted
 
