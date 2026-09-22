@@ -5,7 +5,7 @@ from typing import Any
 
 from app.boards.application import BoardApplicationService
 from app.boards.quality import BoardQualityFailed, BoardRenderFailed, DrawioQualityService
-from app.db.database import async_session
+from app.db.session_database import session_async_session as async_session
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import board_product
 

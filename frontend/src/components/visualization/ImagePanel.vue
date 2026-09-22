@@ -198,7 +198,7 @@ onUnmounted(() => {
 <style lang="scss" scoped>
 .image-panel {
   width: 100%;
-  background: #fafafa;
+  background: var(--bg-muted);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
@@ -210,7 +210,7 @@ onUnmounted(() => {
     cursor: zoom-in;
 
     &:focus-visible {
-      outline: 2px solid #1976D2;
+      outline: 2px solid var(--color-primary);
       outline-offset: -2px;
     }
   }
@@ -225,7 +225,7 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #999;
+  color: var(--text-3);
 
   svg {
     margin-bottom: 16px;
@@ -238,7 +238,7 @@ onUnmounted(() => {
 }
 
 .image-loading {
-  background: #f5f5f5;
+  background: var(--bg-hover);
 }
 
 .image-error {
@@ -248,7 +248,7 @@ onUnmounted(() => {
 .loading-spinner {
   width: 40px;
   height: 40px;
-  border: 3px solid #e0e0e0;
+  border: 3px solid var(--border-2);
   border-top-color: #3498db;
   border-radius: 50%;
   animation: spin 1s linear infinite;

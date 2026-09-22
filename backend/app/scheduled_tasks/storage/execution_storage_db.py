@@ -46,9 +46,9 @@ class DatabaseExecutionStorage:
             async with self._session_factory() as session:
                 yield session
         else:
-            from app.db.sync_bridge import bridge_session
+            from app.db.sync_bridge import session_db_session
 
-            async with bridge_session() as session:
+            async with session_db_session() as session:
                 yield session
 
     def _run(self, coro):

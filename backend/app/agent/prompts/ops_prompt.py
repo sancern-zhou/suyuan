@@ -49,13 +49,35 @@ def build_ops_prompt(
             "- 不确定表结构或字段名时，先调用 `execute_ops_sql_query(describe_table='表名', database='AirPollutionAnalysis')` 查看结构和样例。\n",
             "- 如果不知道中文业务表单对应哪个白名单表名，不要猜表名或模糊搜索系统表；请基于已列出的白名单表说明选择最可能的表，或向用户说明当前表单映射不明确。\n",
             "- 质控、工单、基础表单、站点基础信息通常使用 `database='AirPollutionAnalysis'`。\n",
-            "- 需要核对监测数据时，仅使用站点小时数据 `query_gd_suncere_station_hour_new` 或站点日数据 `query_gd_suncere_station_day_new`。\n",
+        ]
+    )
+
+    station_tool_names = [
+        name for name in ("query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new")
+        if name in available_tools
+    ]
+    if station_tool_names:
+        station_tool_list = " 或 ".join(f"`{name}`" for name in station_tool_names)
+        prompt_parts.append(
+            f"- 需要核对监测数据时，仅使用站点数据工具：{station_tool_list}。\n"
+        )
+
+    prompt_parts.extend(
+        [
             "\n",
             "## 认知地图驱动的故障诊断\n",
             "\n",
             "- 用户要求分析站点故障、设备异常、告警原因、数据异常原因、故障工单根因时，先在当前已选择的知识库范围内做图谱检索形成候选原因，再用工单、质控表单、站点小时/日数据或用户提供证据核验。\n",
             "- 图谱检索结果是线索和候选关系，不是最终原因；未核验的图谱关系不得写成事实结论。\n",
-            "- 调用知识库图谱后，根据返回分块与关系形成候选原因，再选择 `ops_audit_fetch_dataset`、`query_gd_suncere_station_hour_new`、`query_gd_suncere_station_day_new` 或 `execute_ops_sql_query` 补查。\n",
+        ]
+    )
+    if station_tool_names:
+        station_tool_list = "、".join(f"`{name}`" for name in station_tool_names)
+        prompt_parts.append(
+            f"- 调用知识库图谱后，根据返回分块与关系形成候选原因，再选择 `ops_audit_fetch_dataset`、{station_tool_list} 或 `execute_ops_sql_query` 补查。\n"
+        )
+    prompt_parts.extend(
+        [
             "- 故障诊断输出必须包含：图谱给出的分析路径、已查询证据、原因排序、每个原因的支持/否定证据、缺失信息和建议处置动作。\n",
             "- 普通工单审核、抽样复核、审核报告生成仍按 `ops_audit_fetch_dataset` -> `ops_audit_run_rules` 流程执行，不因为存在认知地图而改变审核入口。\n",
             "\n",

@@ -172,12 +172,18 @@ class BackendManifest(StrictModel):
     gis_tools_enabled: bool = True
     mode_prompt_files: dict[str, str] = Field(default_factory=dict)
     agent_mode_tools: dict[str, list[str]] = Field(default_factory=dict)
+    # Project-scoped tools appended to a shared mode whitelist.  Unlike
+    # ``agent_mode_tools`` (full replacement), these are unioned on top of the
+    # shared list so projects can enable their own tools per mode without
+    # re-declaring the shared baseline.
+    agent_mode_extra_tools: dict[str, list[str]] = Field(default_factory=dict)
 
     _unique_tools = field_validator("tools")(unique)
     _unique_disabled_tools = field_validator("disabled_tools")(unique)
     _unique_fetchers = field_validator("fetchers")(unique)
     _valid_mode_prompt_files = field_validator("mode_prompt_files")(valid_identifier_map)
     _unique_agent_mode_tools = field_validator("agent_mode_tools")(unique_string_lists)
+    _unique_agent_mode_extra_tools = field_validator("agent_mode_extra_tools")(unique_string_lists)
 
     @model_validator(mode="after")
     def validate_weather_history_worker(self):

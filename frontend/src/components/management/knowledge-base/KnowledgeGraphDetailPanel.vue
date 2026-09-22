@@ -85,9 +85,9 @@ onUnmounted(() => controller?.abort())
 </script>
 
 <style scoped>
-.graph-detail-panel { width: 360px; max-height: 68vh; overflow: auto; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; background: #fff; }
-header { display: flex; justify-content: space-between; } dl { display: grid; grid-template-columns: 80px 1fr; gap: 6px; } dt { color: #667085; } dd { margin: 0; }
-.actions { display: flex; gap: 7px; flex-wrap: wrap; margin: 12px 0; } button { cursor: pointer; } .danger, .error { color: #b42318; }
+.graph-detail-panel { width: 360px; max-height: 68vh; overflow: auto; border: 1px solid var(--border-2); border-radius: 8px; padding: 14px; background: var(--bg-container); }
+header { display: flex; justify-content: space-between; } dl { display: grid; grid-template-columns: 80px 1fr; gap: 6px; } dt { color: var(--text-2); } dd { margin: 0; }
+.actions { display: flex; gap: 7px; flex-wrap: wrap; margin: 12px 0; } button { cursor: pointer; } .danger, .error { color: var(--color-danger); }
 form label { display: grid; gap: 4px; margin: 8px 0; } textarea { min-height: 70px; }
-.evidence article { border-top: 1px solid #eee; padding: 10px 0; } .evidence article.stale { opacity: .6; } .evidence p { white-space: pre-wrap; }.evidence small { display: block; color: #667085; }.warning { color: #9a6700; }
+.evidence article { border-top: 1px solid var(--border-1); padding: 10px 0; } .evidence article.stale { opacity: .6; } .evidence p { white-space: pre-wrap; }.evidence small { display: block; color: var(--text-2); }.warning { color: #9a6700; }
 </style>

@@ -140,18 +140,18 @@ const sizeLabel = (size) => {
 </script>
 
 <style scoped>
-.resource-products { height: 100%; padding: 16px; overflow: auto; box-sizing: border-box; background: #fff; }
+.resource-products { height: 100%; padding: 16px; overflow: auto; box-sizing: border-box; background: var(--bg-container); }
 header, .product-main { display: flex; align-items: center; }
-header { justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid #edf1f7; }
-h3 { margin: 0; font-size: 16px; color: #17223b; } header p { margin: 4px 0 0; color: #64748b; font-size: 12px; }
-button { border: 0; background: transparent; color: #1976d2; cursor: pointer; font: inherit; }
-.state { margin: 28px 4px; color: #64748b; text-align: center; }.error { color: #b42318; }
-.product-list { display: grid; gap: 10px; padding-top: 14px; }.product { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; border: 1px solid #e2e8f0; border-radius: 6px; }
+header { justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid var(--bg-muted); }
+h3 { margin: 0; font-size: 16px; color: #17223b; } header p { margin: 4px 0 0; color: var(--text-2); font-size: 12px; }
+button { border: 0; background: transparent; color: var(--color-primary); cursor: pointer; font: inherit; }
+.state { margin: 28px 4px; color: var(--text-2); text-align: center; }.error { color: var(--color-danger); }
+.product-list { display: grid; gap: 10px; padding-top: 14px; }.product { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; border: 1px solid var(--border-2); border-radius: 6px; }
 .product-main { grid-column: 1; grid-row: 1; width: 100%; gap: 10px; padding: 10px; color: #17223b; text-align: left; }
 .format { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 5px; background: #e8f1fb; color: #1b66aa; font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .details { display: grid; min-width: 0; gap: 4px; }.details strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.details small, .derivatives { color: #7a8798; font-size: 11px; }
 .derivatives { display: flex; grid-column: 1; grid-row: 2; flex-wrap: wrap; gap: 8px; padding: 0 10px 10px 58px; }
 .product-actions { display: flex; grid-column: 2; grid-row: 1 / 3; align-items: center; gap: 2px; padding: 8px; }
 .product-actions button { padding: 8px 6px; white-space: nowrap; }
-.download-error { margin: 10px 4px 0; color: #b42318; font-size: 12px; }
+.download-error { margin: 10px 4px 0; color: var(--color-danger); font-size: 12px; }
 </style>

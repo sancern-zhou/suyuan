@@ -25,8 +25,8 @@ onMounted(load)
 </script>
 
 <style scoped>
-.rules-card { padding: 16px; border: 1px solid #dce3ea; border-radius: 8px; background: #fff; display: grid; gap: 10px; }
+.rules-card { padding: 16px; border: 1px solid #dce3ea; border-radius: 8px; background: var(--bg-container); display: grid; gap: 10px; }
 .rule-input { display: flex; gap: 8px; }.rule-input textarea { flex: 1; padding: 8px; }.preview { padding: 10px; background: #f0f7ff; border-radius: 6px; }
-ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; } li { display: flex; align-items: center; gap: 10px; } li span { flex: 1; } small { color: #667085; }
-button { padding: 7px 12px; border: 0; border-radius: 5px; background: #2563eb; color: white; }.plain { background: transparent; color: #475467; }.danger { color: #b42318; }
+ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; } li { display: flex; align-items: center; gap: 10px; } li span { flex: 1; } small { color: var(--text-2); }
+button { padding: 7px 12px; border: 0; border-radius: 5px; background: var(--color-primary); color: white; }.plain { background: transparent; color: #475467; }.danger { color: var(--color-danger); }
 </style>

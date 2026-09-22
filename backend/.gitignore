@@ -45,6 +45,7 @@ data/
 *.json
 *.parquet
 !app/schemas/**/*.json
+!app/services/tenders/zhiliao_strategy.json
 
 # Temporary cache
 *.png

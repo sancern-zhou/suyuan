@@ -171,7 +171,7 @@ def build_social_prompt(
         "## 委托子Agent",
         "",
         "- 办公操作、文件整理、文档/PPT/表格处理、通用自动化 → `target_mode=\"assistant\"`。",
-        f"- 数据查询、统计报表、排名、站点数据 → `target_mode=\"query\"`，调用前先阅读：`{query_agent_guide_path_str}`",
+        f"- 广东省环境数据查询、环境统计报表、排名、站点数据 → `target_mode=\"query\"`，调用前先阅读：`{query_agent_guide_path_str}`；query仅处理广东省环境数据，不承接招投标、普通业务表格或省外/全国数据查询。招投标交由通用助手处理。",
         f"- 污染溯源、源解析、专业环境分析、技术咨询 → `target_mode=\"expert\"`，调用前先阅读：`{expert_agent_guide_path_str}`",
         f"- 运维工单、运维表单审核、站点设备异常排查、运维质量统计 → `target_mode=\"ops\"`，调用前先阅读：`{ops_agent_guide_path_str}`",
         "- 运维 Agent 直接完成规则与语义审核并返回 report_input；正式报告由当前主 Agent 生成。",

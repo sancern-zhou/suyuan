@@ -163,21 +163,21 @@ const exportReport = async format => {
 </script>
 
 <style scoped>
-.resource-actions { position: relative; min-height: 42px; box-sizing: border-box; border-bottom: 1px solid #e5eaf0; background: #fff; color: #526174; font-size: 12px; }
+.resource-actions { position: relative; min-height: 42px; box-sizing: border-box; border-bottom: 1px solid #e5eaf0; background: var(--bg-container); color: #526174; font-size: 12px; }
 .action-list { display: flex; min-height: 42px; align-items: center; gap: 8px; padding: 6px 12px; box-sizing: border-box; }
 .resource-actions.floating { position: absolute; z-index: 20; top: 64px; right: 12px; min-height: 0; border: 0; background: transparent; }
 .resource-actions.compact { min-height: 0; border: 0; background: transparent; }
-button, a { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 5px; background: #fff; color: #1b66aa; cursor: pointer; font: inherit; text-decoration: none; }
+button, a { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--border-2); border-radius: 5px; background: var(--bg-container); color: #1b66aa; cursor: pointer; font: inherit; text-decoration: none; }
 button:hover:not(:disabled), a:hover { background: #f1f6fb; }
 button:disabled { cursor: wait; opacity: .6; }
 .download-trigger { min-height: 34px; border-color: #c3d2e2; border-radius: 7px; box-shadow: 0 2px 8px rgba(15, 23, 42, .12); font-weight: 500; }
 .download-trigger svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .download-trigger .chevron { width: 12px; height: 12px; }
-.download-menu { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; display: flex; width: max-content; min-width: 168px; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid #d9e2ec; border-radius: 8px; background: #fff; box-shadow: 0 10px 28px rgba(15, 23, 42, .16); }
-.download-menu button, .download-menu a { width: 100%; justify-content: flex-start; box-sizing: border-box; border-color: transparent; color: #334155; text-align: left; white-space: nowrap; }
+.download-menu { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; display: flex; width: max-content; min-width: 168px; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid #d9e2ec; border-radius: 8px; background: var(--bg-container); box-shadow: 0 10px 28px rgba(15, 23, 42, .16); }
+.download-menu button, .download-menu a { width: 100%; justify-content: flex-start; box-sizing: border-box; border-color: transparent; color: var(--text-1); text-align: left; white-space: nowrap; }
 .download-menu button:hover:not(:disabled), .download-menu a:hover { border-color: #d8e9fb; color: #1b66aa; }
-.divider { width: 1px; height: 20px; margin: 0 2px; background: #e2e8f0; }
-.error { margin-left: auto; color: #b42318; }
+.divider { width: 1px; height: 20px; margin: 0 2px; background: var(--border-2); }
+.error { margin-left: auto; color: var(--color-danger); }
 .download-menu .divider { width: 100%; height: 1px; margin: 2px 0; }
 .download-menu .error { max-width: 220px; margin: 2px 8px; line-height: 1.4; }
 </style>

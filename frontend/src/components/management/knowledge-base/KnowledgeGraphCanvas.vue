@@ -91,6 +91,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.knowledge-graph-canvas { position: relative; min-height: 560px; height: 68vh; overflow: hidden; background: radial-gradient(circle at center, #fff, #f7f9fc); border: 1px solid #e5e7eb; border-radius: 8px; }
-.graph-empty { position: absolute; inset: 0; display: grid; place-items: center; color: #667085; }
+.knowledge-graph-canvas { position: relative; min-height: 560px; height: 68vh; overflow: hidden; background: radial-gradient(circle at center, var(--bg-container), var(--bg-muted)); border: 1px solid var(--border-2); border-radius: 8px; }
+.graph-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-2); }
 </style>
