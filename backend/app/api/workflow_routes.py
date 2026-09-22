@@ -94,7 +94,16 @@ async def cancel_workflow(
 ):
     await catalog.require_write(session_id, user)
     active = await active_workflow_registry.get(workflow_id)
-    if active is None or active.session_id not in {None, session_id}:
+    if active is not None and active.session_id not in {None, session_id}:
+        raise HTTPException(status_code=404, detail="workflow_not_found")
+    if active is None:
+        session = get_session_manager().load_session(session_id)
+        if session is None or workflow_id not in _workflow_snapshots(dict(session.metadata or {})):
+            raise HTTPException(status_code=404, detail="workflow_not_found")
+    accepted = await active_workflow_registry.cancel(workflow_id, reason="cancelled by API")
+    if not accepted:
         raise HTTPException(status_code=409, detail="workflow_not_active")
-    await active_workflow_registry.cancel(workflow_id, reason="cancelled by API")
-    return {"workflow_id": workflow_id, "status": "cancelled"}
+    return {
+        "workflow_id": workflow_id,
+        "status": "cancelled" if active is not None else "cancel_requested",
+    }
