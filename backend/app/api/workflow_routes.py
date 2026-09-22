@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-from types import SimpleNamespace
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.agent.session import get_session_manager
 from app.agent.workflow.registry import active_workflow_registry
+from app.agent.workflow.jobs import get_workflow_job_store
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.conversations.dependencies import get_conversation_catalog
@@ -20,12 +20,6 @@ from app.core.sse import create_sse_response
 
 
 router = APIRouter(prefix="/api/sessions/{session_id}/workflows", tags=["agent-workflows"])
-_resume_tasks: set[asyncio.Task] = set()
-
-
-def _track_resume_task(task: asyncio.Task) -> None:
-    _resume_tasks.add(task)
-    task.add_done_callback(_resume_tasks.discard)
 
 
 def _workflow_snapshots(metadata: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -83,20 +77,25 @@ async def list_workflows(
     if session is None:
         raise HTTPException(status_code=404, detail="session_not_found")
     snapshots = _workflow_snapshots(dict(session.metadata or {}))
+    store = get_workflow_job_store()
     active = {
         item.workflow_id
         for item in await active_workflow_registry.list(session_id=session_id)
     }
+    workflows = []
+    for workflow_id, snapshot in snapshots.items():
+        try:
+            job = await store.get(workflow_id)
+        except Exception:
+            job = None
+        workflows.append({
+            "workflow_id": workflow_id,
+            "status": job.status if job is not None else snapshot.get("status"),
+            "active": workflow_id in active or job is not None and job.status == "running",
+            "snapshot": snapshot,
+        })
     return {
-        "workflows": [
-            {
-                "workflow_id": workflow_id,
-                "status": snapshot.get("status"),
-                "active": workflow_id in active,
-                "snapshot": snapshot,
-            }
-            for workflow_id, snapshot in snapshots.items()
-        ],
+        "workflows": workflows,
         "total": len(snapshots),
     }
 
@@ -114,13 +113,18 @@ async def get_workflow(
         raise HTTPException(status_code=404, detail="session_not_found")
     snapshot = _workflow_snapshots(dict(session.metadata or {})).get(workflow_id)
     active = await active_workflow_registry.get(workflow_id)
-    if snapshot is None and active is None:
+    try:
+        job = await get_workflow_job_store().get(workflow_id)
+    except Exception:
+        job = None
+    if snapshot is None and active is None and job is None:
         raise HTTPException(status_code=404, detail="workflow_not_found")
     if active is not None and active.session_id not in {None, session_id}:
         raise HTTPException(status_code=404, detail="workflow_not_found")
     return {
         "workflow_id": workflow_id,
-        "active": active is not None,
+        "active": active is not None or job is not None and job.status == "running",
+        "job_status": job.status if job is not None else None,
         "snapshot": snapshot,
     }
 
@@ -130,6 +134,7 @@ async def workflow_events(
     session_id: str,
     workflow_id: str,
     after: int = Query(default=0, ge=0),
+    event_id: str = Query(default="0-0"),
     follow: bool = Query(default=False),
     timeout_seconds: float = Query(default=30.0, ge=0.0, le=300.0),
     user: CurrentUser = Depends(require_current_user),
@@ -147,25 +152,50 @@ async def workflow_events(
     snapshot = await load_snapshot()
     if snapshot is None:
         active = await active_workflow_registry.get(workflow_id)
-        if active is None or active.session_id not in {None, session_id}:
+        try:
+            job = await get_workflow_job_store().get(workflow_id)
+        except Exception:
+            job = None
+        if active is None and job is None:
+            raise HTTPException(status_code=404, detail="workflow_not_found")
+        if active is not None and active.session_id not in {None, session_id}:
             raise HTTPException(status_code=404, detail="workflow_not_found")
 
+    store = get_workflow_job_store()
     if not follow:
+        stream_events = []
+        try:
+            stream_events = await store.read_events(workflow_id, after_id=event_id)
+        except Exception:
+            stream_events = []
         return {
             "workflow_id": workflow_id,
             "status": (snapshot or {}).get("status"),
-            "events": _workflow_events(snapshot or {}, after),
+            "events": [
+                {"event_id": event_key, **payload}
+                for event_key, payload in stream_events
+            ] or _workflow_events(snapshot or {}, after),
         }
 
     async def event_generator():
         cursor = after
+        stream_cursor = event_id
         deadline = asyncio.get_running_loop().time() + timeout_seconds
         while True:
             current = await load_snapshot()
-            events = _workflow_events(current or {}, cursor)
-            for event in events:
-                cursor = max(cursor, int(event.get("sequence") or cursor))
-                yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+            try:
+                stream_events = await store.read_events(workflow_id, after_id=stream_cursor, block_ms=250)
+            except Exception:
+                stream_events = []
+            if stream_events:
+                for event_key, event in stream_events:
+                    stream_cursor = event_key
+                    yield f"data: {json.dumps({'event_id': event_key, **event}, ensure_ascii=False, default=str)}\n\n"
+            else:
+                events = _workflow_events(current or {}, cursor)
+                for event in events:
+                    cursor = max(cursor, int(event.get("sequence") or cursor))
+                    yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
             status = str((current or {}).get("status") or "")
             if status in {"succeeded", "failed", "cancelled"}:
                 yield f"data: {json.dumps({'type': 'workflow.terminal', 'status': status, 'sequence': cursor}, ensure_ascii=False)}\n\n"
@@ -226,15 +256,14 @@ async def resume_workflow(
     if await active_workflow_registry.get(workflow_id) is not None:
         raise HTTPException(status_code=409, detail="workflow_already_active")
 
-    from app.tools.agent_tools.run_agent_workflow import RunAgentWorkflowTool
-
-    # The tool owns the coordinator registration, checkpointing and executor
-    # wiring. This endpoint only supplies the restored definition and context.
-    _track_resume_task(asyncio.create_task(
-        RunAgentWorkflowTool().execute(
-            context=SimpleNamespace(session_id=session_id),
-            workflow=snapshot.get("definition"),
+    store = get_workflow_job_store()
+    try:
+        job = await store.enqueue(
+            session_id=session_id,
+            workflow_id=workflow_id,
+            definition=snapshot.get("definition") or {},
             snapshot=snapshot,
         )
-    ))
-    return {"workflow_id": workflow_id, "status": "resume_requested"}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="workflow_queue_unavailable") from exc
+    return {"workflow_id": workflow_id, "status": job.status, "queued": True}
