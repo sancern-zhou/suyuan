@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import socket
 import time
@@ -42,6 +43,21 @@ class WorkflowJobStore:
     def event_key(self, workflow_id: str) -> str:
         return f"{self.prefix}:events:{workflow_id}"
 
+    def seq_key(self, workflow_id: str) -> str:
+        return f"{self.prefix}:events_seq:{workflow_id}"
+
+    async def _hset_all(self, key: str, mapping: Mapping[str, Any]) -> None:
+        # Redis 3.x compatibility: multi-field HSET requires 4.0+; write fields one by one.
+        for field, value in mapping.items():
+            await self.redis.hset(key, str(field), str(value))
+
+    @staticmethod
+    def _parse_event_seq(after_id: str) -> int:
+        try:
+            return int(str(after_id).split("-", 1)[0])
+        except (TypeError, ValueError):
+            return 0
+
     async def enqueue(
         self,
         *,
@@ -61,9 +77,9 @@ class WorkflowJobStore:
             "definition": dict(definition),
             "snapshot": dict(snapshot),
         }
-        await self.redis.hset(
+        await self._hset_all(
             key,
-            mapping={
+            {
                 "job_id": workflow_id,
                 "session_id": session_id,
                 "workflow_id": workflow_id,
@@ -87,9 +103,9 @@ class WorkflowJobStore:
         values = await self.redis.hgetall(self.state_key(workflow_id))
         if str(values.get("status") or "") != "queued":
             return None
-        await self.redis.hset(
+        await self._hset_all(
             self.state_key(workflow_id),
-            mapping={"status": "running", "owner": self.worker_id, "updated_at": str(time.time())},
+            {"status": "running", "owner": self.worker_id, "updated_at": str(time.time())},
         )
         await self.publish_event(workflow_id, {"type": "workflow.running", "status": "running"})
         values["status"] = "running"
@@ -109,7 +125,7 @@ class WorkflowJobStore:
             workflow_id = str(values.get("workflow_id") or "")
             if not workflow_id:
                 continue
-            await self.redis.hset(key, mapping={"status": "queued", "updated_at": str(now)})
+            await self._hset_all(key, {"status": "queued", "updated_at": str(now)})
             await self.redis.rpush(self.queue_key, workflow_id)
             await self.publish_event(workflow_id, {"type": "workflow.recovered", "status": "queued"})
             recovered += 1
@@ -132,9 +148,9 @@ class WorkflowJobStore:
                 continue
             await self.publish_event(workflow_id, {"type": "runtime", "sequence": sequence, "event": dict(event)})
             last_sequence = sequence
-        await self.redis.hset(
+        await self._hset_all(
             self.state_key(workflow_id),
-            mapping={
+            {
                 "last_sequence": str(last_sequence),
                 "snapshot": json.dumps(dict(snapshot), ensure_ascii=False, default=str),
                 "status": str(snapshot.get("status") or "running"),
@@ -143,28 +159,42 @@ class WorkflowJobStore:
         )
 
     async def publish_event(self, workflow_id: str, event: Mapping[str, Any]) -> str:
-        values = {"event": json.dumps(dict(event), ensure_ascii=False, default=str), "created_at": str(time.time())}
-        result = await self.redis.xadd(self.event_key(workflow_id), values, maxlen=5000, approximate=True)
-        return result.decode() if isinstance(result, bytes) else str(result)
+        # Redis 3.x compatibility: streams (XADD/XREAD, 5.0+) are unavailable; a sorted
+        # set scored by an INCR sequence provides the same durable journal and cursor reads.
+        seq = int(await self.redis.incr(self.seq_key(workflow_id)))
+        member = json.dumps(
+            {"event": dict(event), "created_at": str(time.time())},
+            ensure_ascii=False,
+            default=str,
+        )
+        key = self.event_key(workflow_id)
+        await self.redis.zadd(key, {member: seq})
+        await self.redis.zremrangebyrank(key, 0, -5001)
+        return f"{seq}-0"
 
     async def read_events(self, workflow_id: str, *, after_id: str = "0-0", block_ms: int = 0, count: int = 100) -> list[tuple[str, dict[str, Any]]]:
-        result = await self.redis.xread({self.event_key(workflow_id): after_id}, count=max(1, count), block=max(0, block_ms))
-        if not result:
-            return []
-        rows = []
-        for _, entries in result:
-            for event_id, values in entries:
-                if isinstance(event_id, bytes):
-                    event_id = event_id.decode()
-                raw = values.get("event") if isinstance(values, Mapping) else None
+        key = self.event_key(workflow_id)
+        last = self._parse_event_seq(after_id)
+        deadline = time.monotonic() + max(0, int(block_ms)) / 1000
+        while True:
+            entries = await self.redis.zrangebyscore(key, f"({last}", "+inf", start=0, num=max(1, count), withscores=True)
+            rows: list[tuple[str, dict[str, Any]]] = []
+            for raw, score in entries:
                 if isinstance(raw, bytes):
                     raw = raw.decode()
                 try:
-                    payload = json.loads(raw or "{}")
+                    envelope = json.loads(raw or "{}")
                 except (TypeError, ValueError):
+                    envelope = {"event": {"type": "workflow.event", "raw": raw}}
+                payload = envelope.get("event") if isinstance(envelope, Mapping) else None
+                if not isinstance(payload, Mapping):
                     payload = {"type": "workflow.event", "raw": raw}
-                rows.append((str(event_id), payload))
-        return rows
+                rows.append((f"{int(score)}-0", dict(payload)))
+            if rows:
+                return rows
+            if time.monotonic() >= deadline:
+                return []
+            await asyncio.sleep(0.05)
 
     async def get(self, workflow_id: str) -> Optional[WorkflowJob]:
         values = await self.redis.hgetall(self.state_key(workflow_id))
@@ -173,9 +203,9 @@ class WorkflowJobStore:
         return self._decode_job(values)
 
     async def finish(self, workflow_id: str, *, status: str, result: Optional[Mapping[str, Any]] = None) -> None:
-        await self.redis.hset(
+        await self._hset_all(
             self.state_key(workflow_id),
-            mapping={"status": status, "result": json.dumps(dict(result or {}), ensure_ascii=False, default=str), "updated_at": str(time.time())},
+            {"status": status, "result": json.dumps(dict(result or {}), ensure_ascii=False, default=str), "updated_at": str(time.time())},
         )
         await self.publish_event(workflow_id, {"type": "workflow.terminal", "status": status})
 
