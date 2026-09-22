@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 from typing import Any, Dict, Mapping, Optional
 
 from app.agent.workflow.coordinator import WorkflowCoordinator, WorkflowNodeSpec
-from app.agent.workflow.templates import build_report_analysis_workflow
+from app.agent.workflow.templates import build_report_analysis_workflow, build_report_delivery_manifest
 from app.agent.workflow.registry import active_workflow_registry
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
@@ -91,6 +93,7 @@ class RunAgentWorkflowTool(LLMTool):
         snapshot: Optional[Mapping[str, Any]] = None,
         **_: Any,
     ) -> Dict[str, Any]:
+        is_report_template = workflow_template == "report_analysis_v1"
         if not isinstance(workflow, Mapping):
             if workflow_template != "report_analysis_v1" or not isinstance(template_options, Mapping):
                 return self._failure("请提供 workflow 定义，或使用 report_analysis_v1 模板及 template_options")
@@ -154,7 +157,11 @@ class RunAgentWorkflowTool(LLMTool):
                 await active_workflow_registry.unregister(
                     str(definition["workflow_id"]), coordinator
                 )
+            pending_persistence = list(getattr(context, "workflow_persistence_tasks", set())) if context is not None else []
+            if pending_persistence:
+                await asyncio.gather(*pending_persistence, return_exceptions=True)
             succeeded = snapshot["status"] == "succeeded"
+            report_delivery = build_report_delivery_manifest(snapshot) if is_report_template else None
             return {
                 "status": "success" if succeeded else snapshot["status"],
                 "success": succeeded,
@@ -165,6 +172,7 @@ class RunAgentWorkflowTool(LLMTool):
                     "node_results": snapshot["node_results"],
                     "node_errors": snapshot["node_errors"],
                     "node_lineage": snapshot["node_lineage"],
+                    "report_delivery": report_delivery,
                     "snapshot": snapshot,
                 },
                 "metadata": {
@@ -195,17 +203,49 @@ class RunAgentWorkflowTool(LLMTool):
             from app.agent.session.session_manager import get_session_manager
 
             manager = get_session_manager()
-            session = manager.get_session(session_id)
-            if session is None:
-                return
-            workflow_id = str(snapshot.get("workflow_id") or "").strip()
-            workflows = dict(session.metadata.get("workflow_coordinators") or {})
-            if workflow_id:
-                workflows[workflow_id] = dict(snapshot)
-            session.metadata["workflow_coordinators"] = workflows
-            # Keep the legacy key for existing session restore consumers.
-            session.metadata["workflow_coordinator"] = dict(snapshot)
-            manager.save_session_metadata(session, update_timestamp=True)
+            session_result = manager.get_session(session_id)
+
+            async def save_async(session_awaitable):
+                session = await session_awaitable
+                if session is None:
+                    return
+                workflow_id = str(snapshot.get("workflow_id") or "").strip()
+                workflows = dict(session.metadata.get("workflow_coordinators") or {})
+                if workflow_id:
+                    workflows[workflow_id] = dict(snapshot)
+                session.metadata["workflow_coordinators"] = workflows
+                session.metadata["workflow_coordinator"] = dict(snapshot)
+                saved = manager.save_session_metadata(session, update_timestamp=True)
+                if inspect.isawaitable(saved):
+                    await saved
+                event_sink = getattr(context, "workflow_event_sink", None)
+                if callable(event_sink):
+                    event_sink(dict(snapshot))
+
+            if inspect.isawaitable(session_result):
+                task = asyncio.create_task(save_async(session_result))
+                pending = getattr(context, "workflow_persistence_tasks", None)
+                if pending is None:
+                    pending = set()
+                    setattr(context, "workflow_persistence_tasks", pending)
+                pending.add(task)
+                task.add_done_callback(pending.discard)
+            else:
+                # File-backed managers are synchronous; execute the same
+                # metadata update without forcing an event-loop round trip.
+                session = session_result
+                if session is None:
+                    return
+                workflow_id = str(snapshot.get("workflow_id") or "").strip()
+                workflows = dict(session.metadata.get("workflow_coordinators") or {})
+                if workflow_id:
+                    workflows[workflow_id] = dict(snapshot)
+                session.metadata["workflow_coordinators"] = workflows
+                session.metadata["workflow_coordinator"] = dict(snapshot)
+                manager.save_session_metadata(session, update_timestamp=True)
+                event_sink = getattr(context, "workflow_event_sink", None)
+                if callable(event_sink):
+                    event_sink(dict(snapshot))
         except Exception:
             # Checkpointing must never turn a successfully running node into a
             # failed node; the coordinator still returns the in-memory snapshot.

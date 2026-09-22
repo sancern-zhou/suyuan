@@ -56,3 +56,65 @@ def build_report_analysis_workflow(
         "version": version,
         "nodes": sources + [synthesis] + deliveries,
     }
+
+
+def build_report_delivery_manifest(snapshot: Mapping[str, Any]) -> Dict[str, Any]:
+    """Normalize report conclusions, evidence and delivery artifacts."""
+    definition = snapshot.get("definition") if isinstance(snapshot, Mapping) else {}
+    nodes = definition.get("nodes") if isinstance(definition, Mapping) else []
+    node_by_id = {
+        str(node.get("task_id")): node
+        for node in nodes or []
+        if isinstance(node, Mapping) and node.get("task_id")
+    }
+    lineages = snapshot.get("node_lineage") or {}
+    results = snapshot.get("node_results") or {}
+    def mode(node: Mapping[str, Any]) -> str:
+        payload = node.get("payload") if isinstance(node.get("payload"), Mapping) else {}
+        return str(node.get("target_mode") or payload.get("target_mode") or "").lower()
+
+    synthesis_ids = [
+        task_id for task_id, node in node_by_id.items()
+        if node.get("dependencies") and mode(node) == "expert"
+    ]
+    synthesis_id = synthesis_ids[-1] if synthesis_ids else None
+    delivery_ids = [
+        task_id for task_id, node in node_by_id.items()
+        if mode(node) in {"report", "chart", "report_generation"}
+    ]
+    evidence, artifacts = [], []
+    for lineage in lineages.values():
+        if not isinstance(lineage, Mapping):
+            continue
+        evidence.extend(item for item in lineage.get("evidence") or [] if isinstance(item, Mapping))
+        artifacts.extend(item for item in lineage.get("artifacts") or [] if isinstance(item, Mapping))
+    synthesis_result = results.get(synthesis_id) if synthesis_id else None
+    envelope = {}
+    if isinstance(synthesis_result, Mapping):
+        data = synthesis_result.get("data")
+        if isinstance(data, Mapping) and isinstance(data.get("result_envelope"), Mapping):
+            envelope = data["result_envelope"]
+    report_artifacts = [
+        item for item in artifacts
+        if item.get("source_task_id") in delivery_ids or item.get("kind") in {"file", "report", "report_package"}
+    ]
+    missing = []
+    if not synthesis_id:
+        missing.append("synthesis_node")
+    elif (lineages.get(synthesis_id) or {}).get("status") != "complete":
+        missing.append("synthesis_lineage")
+    if not delivery_ids:
+        missing.append("delivery_node")
+    if not report_artifacts:
+        missing.append("report_artifact")
+    return {
+        "schema_version": "report_delivery.v1",
+        "status": "completed" if not missing else "completed_with_gaps",
+        "synthesis_task_id": synthesis_id,
+        "synthesis_outputs": envelope.get("outputs") or {},
+        "evidence": evidence,
+        "artifacts": artifacts,
+        "delivery_task_ids": delivery_ids,
+        "report_artifacts": report_artifacts,
+        "missing": missing,
+    }

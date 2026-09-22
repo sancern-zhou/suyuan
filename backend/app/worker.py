@@ -79,10 +79,15 @@ async def main() -> None:
     app = SimpleNamespace(state=SimpleNamespace())
     await run_startup(app)
     logger.info("background_worker_started")
+    from app.agent.workflow.worker import workflow_worker_loop
+
+    workflow_task = asyncio.create_task(workflow_worker_loop(stop_event))
 
     try:
         await stop_event.wait()
     finally:
+        workflow_task.cancel()
+        await asyncio.gather(workflow_task, return_exceptions=True)
         logger.info("background_worker_stopping")
         await run_shutdown(app)
 
