@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy import delete, select, update
 
-from app.db.database import async_session
+from app.db.session_database import session_async_session as async_session
 from .report_models import SocialReportResult
 
 

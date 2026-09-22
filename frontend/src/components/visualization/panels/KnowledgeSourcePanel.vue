@@ -75,7 +75,7 @@ const props = defineProps({
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #f8fafc;
+  background: var(--bg-muted);
   overflow: hidden;
 }
 
@@ -103,7 +103,7 @@ const props = defineProps({
 .empty-title {
   font-size: 15px;
   font-weight: 500;
-  color: #526173;
+  color: var(--text-2);
   margin: 0;
 }
 
@@ -127,9 +127,9 @@ const props = defineProps({
 
 .source-item {
   padding: 12px;
-  border: 1px solid #edf1f7;
+  border: 1px solid var(--bg-muted);
   border-radius: 8px;
-  background: #fff;
+  background: var(--bg-container);
 }
 
 .source-header {
@@ -154,8 +154,8 @@ const props = defineProps({
   justify-content: center;
   width: 24px;
   height: 24px;
-  background: #e3f2fd;
-  color: #1976d2;
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
   border-radius: 7px;
   font-size: 12px;
   font-weight: 600;
@@ -164,7 +164,7 @@ const props = defineProps({
 
 .source-name {
   font-weight: 500;
-  color: #35425f;
+  color: var(--text-1);
   font-size: 14px;
   line-height: 1.5;
   overflow: hidden;
@@ -178,7 +178,7 @@ const props = defineProps({
 .relevance-badge {
   padding: 3px 8px;
   background: #f1f8f4;
-  color: #2e7d32;
+  color: var(--color-success);
   border: 1px solid #c8e6c9;
   border-radius: 999px;
   font-size: 11px;
@@ -205,7 +205,7 @@ const props = defineProps({
 }
 
 .info-row span {
-  color: #526173;
+  color: var(--text-2);
 }
 
 .source-content {
@@ -214,10 +214,10 @@ const props = defineProps({
 
 .content-preview {
   padding: 10px;
-  background: #f8fafc;
+  background: var(--bg-muted);
   border-radius: 6px;
   font-size: 13px;
-  color: #526173;
+  color: var(--text-2);
   line-height: 1.65;
   max-height: 128px;
   overflow-y: auto;

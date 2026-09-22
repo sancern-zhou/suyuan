@@ -41,6 +41,8 @@ PROJECT_SCOPED_TOOL_NAMES = frozenset({
 # ===== 助手模式工具 =====
 ASSISTANT_TOOL_NAMES = [
     "list_session_resources",
+    "execute_tender_sql_query",
+    "zhiliao_tender_detail",
     # 轻量办公：搜索、阅读、编辑文档和生成 HTML 结果。
     "list_directory",
     "search_files",
@@ -348,7 +350,6 @@ DELIBERATION_METEOROLOGY_TOOL_NAMES = [
     "get_weather_forecast",
     "get_observed_meteorology",
     "meteorological_trajectory_analysis",
-    "analyze_upwind_enterprises",
     "analyze_trajectory_sources",
     "TaskCreate",
     "TaskUpdate",

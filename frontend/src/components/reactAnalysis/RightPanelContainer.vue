@@ -2,9 +2,11 @@
   <div v-if="visible" class="viz-wrapper" :style="panelStyle">
     <!-- 报告生成专家 -->
     <template v-if="assistantMode === 'report-generation-expert'">
-      <div class="right-panel-tabs">
+      <div class="right-panel-tabs" role="tablist" aria-label="报告资源面板">
         <button
           :class="['tab-btn', { active: activeTab === 'document' }]"
+          role="tab"
+          :aria-selected="activeTab === 'document'"
           @click="handleTabChange('document')"
         >
           <span>报告</span>
@@ -12,6 +14,8 @@
         </button>
         <button
           :class="['tab-btn', { active: activeTab === 'files' }]"
+          role="tab"
+          :aria-selected="activeTab === 'files'"
           @click="handleTabChange('files')"
         >
           <span>文件产物</span>
@@ -20,6 +24,8 @@
         <button
           v-if="feedbackAvailable"
           :class="['tab-btn', { active: activeTab === 'feedback' }]"
+          role="tab"
+          :aria-selected="activeTab === 'feedback'"
           @click="handleTabChange('feedback')"
         >
           <span>待确认</span>

@@ -1269,14 +1269,14 @@ const saveTask = async () => {
   align-items: center;
   margin-bottom: 20px;
   padding-bottom: 15px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--border-2);
 }
 
 .panel-header h3 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-1);
 }
 
 .panel-actions {
@@ -1286,9 +1286,9 @@ const saveTask = async () => {
 
 .panel-btn {
   padding: 6px 12px;
-  border: 1px solid #1976d2;
+  border: 1px solid var(--color-primary);
   background: white;
-  color: #1976d2;
+  color: var(--color-primary);
   border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
@@ -1296,17 +1296,17 @@ const saveTask = async () => {
 }
 
 .panel-btn:hover:not(:disabled) {
-  background: #1976d2;
+  background: var(--color-primary);
   color: white;
 }
 
 .panel-btn.primary {
-  background: #1976d2;
+  background: var(--color-primary);
   color: white;
 }
 
 .panel-btn.primary:hover:not(:disabled) {
-  background: #1565c0;
+  background: var(--color-primary-active);
   color: white;
 }
 
@@ -1335,7 +1335,7 @@ const saveTask = async () => {
 .scheduled-empty-state {
   text-align: center;
   padding: 40px 20px;
-  color: #6c757d;
+  color: var(--text-2);
 }
 
 .scheduled-empty-state p {
@@ -1349,15 +1349,15 @@ const saveTask = async () => {
 
 .scheduled-task-card {
   background: white;
-  border: 1px solid #dee2e6;
+  border: 1px solid var(--border-2);
   border-radius: 8px;
   padding: 15px;
   transition: all 0.2s;
 }
 
 .scheduled-task-card:hover {
-  border-color: #1976d2;
-  box-shadow: 0 2px 8px rgba(25, 118, 210, 0.15);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-2);
 }
 
 .scheduled-task-header {
@@ -1388,8 +1388,8 @@ const saveTask = async () => {
 }
 
 .scheduled-task-tag.once {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
 }
 
 .scheduled-task-tag.daily {
@@ -1398,7 +1398,7 @@ const saveTask = async () => {
 }
 
 .scheduled-task-tag.weekly {
-  background: #e8f5e9;
+  background: var(--color-success-bg);
   color: #388e3c;
 }
 
@@ -1418,13 +1418,13 @@ const saveTask = async () => {
 }
 
 .scheduled-task-tag.event {
-  background: #e8f5e9;
+  background: var(--color-success-bg);
   color: #237a3b;
 }
 
 .scheduled-task-tag.schedule {
-  background: #e3f2fd;
-  color: #1565c0;
+  background: var(--color-primary-bg);
+  color: var(--color-primary-active);
 }
 
 .scheduled-switch {
@@ -1447,7 +1447,7 @@ const saveTask = async () => {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: #ccc;
+  background-color: var(--border-3);
   transition: .4s;
   border-radius: 24px;
 }
@@ -1465,7 +1465,7 @@ const saveTask = async () => {
 }
 
 .scheduled-switch input:checked + .scheduled-slider {
-  background-color: #1976d2;
+  background-color: var(--color-primary);
 }
 
 .scheduled-switch input:checked + .scheduled-slider:before {
@@ -1478,7 +1478,7 @@ const saveTask = async () => {
 }
 
 .scheduled-task-description {
-  color: #495057;
+  color: var(--text-2);
   font-size: 13px;
   line-height: 1.6;
   margin-bottom: 10px;
@@ -1493,7 +1493,7 @@ const saveTask = async () => {
 
 .scheduled-meta-item {
   font-size: 12px;
-  color: #6c757d;
+  color: var(--text-2);
 }
 
 .scheduled-task-tags {
@@ -1508,7 +1508,7 @@ const saveTask = async () => {
   background: #e9ecef;
   border-radius: 12px;
   font-size: 11px;
-  color: #495057;
+  color: var(--text-2);
 }
 
 .scheduled-task-actions {
@@ -1519,7 +1519,7 @@ const saveTask = async () => {
 
 .scheduled-btn {
   padding: 4px 10px;
-  border: 1px solid #dee2e6;
+  border: 1px solid var(--border-2);
   background: white;
   border-radius: 4px;
   cursor: pointer;
@@ -1528,7 +1528,7 @@ const saveTask = async () => {
 }
 
 .scheduled-btn:hover:not(:disabled) {
-  background: #f8f9fa;
+  background: var(--bg-muted);
 }
 
 .scheduled-btn:disabled {
@@ -1537,27 +1537,27 @@ const saveTask = async () => {
 }
 
 .scheduled-btn-execute {
-  background: #1976d2;
+  background: var(--color-primary);
   color: white;
-  border-color: #1976d2;
+  border-color: var(--color-primary);
 }
 
 .scheduled-btn-execute:hover:not(:disabled) {
-  background: #1565c0;
+  background: var(--color-primary-active);
 }
 
 .scheduled-btn-secondary {
-  color: #1976d2;
-  border-color: #1976d2;
+  color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 .scheduled-btn-secondary:hover:not(:disabled) {
-  background: #e3f2fd;
+  background: var(--color-primary-bg);
 }
 
 .scheduled-btn-danger {
-  color: #dc3545;
-  border-color: #dc3545;
+  color: var(--color-danger);
+  border-color: var(--color-danger);
 }
 
 .scheduled-btn-danger:hover:not(:disabled) {
@@ -1575,12 +1575,12 @@ const saveTask = async () => {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: #64748b;
+  color: var(--text-2);
   text-align: center;
 }
 
 .execution-history-state.error {
-  color: #b42318;
+  color: var(--color-danger);
 }
 
 .execution-history-state p {
@@ -1605,7 +1605,7 @@ const saveTask = async () => {
   justify-content: center;
   gap: 12px;
   margin-top: 16px;
-  color: #64748b;
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -1614,16 +1614,16 @@ const saveTask = async () => {
   padding: 14px 16px;
   border: 1px solid #dbe3ea;
   border-radius: 8px;
-  background: #fff;
-  color: #334155;
+  background: var(--bg-container);
+  color: var(--text-1);
   cursor: pointer;
   text-align: left;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
 .execution-history-item:hover:not(:disabled) {
-  border-color: #1976d2;
-  box-shadow: 0 2px 8px rgba(25, 118, 210, 0.14);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-2);
 }
 
 .execution-history-item.disabled {
@@ -1644,7 +1644,7 @@ const saveTask = async () => {
 }
 
 .execution-history-meta {
-  color: #64748b;
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -1675,17 +1675,17 @@ const saveTask = async () => {
 
 .status-cancelled,
 .status-unknown {
-  background: #e2e8f0;
-  color: #475569;
+  background: var(--border-2);
+  color: var(--text-2);
 }
 
 .execution-time {
   font-weight: 500;
-  color: #1f2937;
+  color: var(--text-1);
 }
 
 .execution-duration {
-  color: #64748b;
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -1695,7 +1695,7 @@ const saveTask = async () => {
   padding: 8px 10px;
   border-left: 3px solid #dc2626;
   background: #fff5f5;
-  color: #b42318;
+  color: var(--color-danger);
   font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -1715,7 +1715,7 @@ const saveTask = async () => {
   width: min(840px, calc(100vw - 32px));
   max-height: min(90vh, 860px);
   overflow: auto;
-  background: #fff;
+  background: var(--bg-container);
   border-radius: 8px;
   border: 1px solid #dbe3ea;
   box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
@@ -1738,7 +1738,7 @@ const saveTask = async () => {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--text-1);
 }
 
 .modal-body {
@@ -1764,14 +1764,14 @@ const saveTask = async () => {
 
 .form-field span {
   font-size: 12px;
-  color: #475569;
+  color: var(--text-2);
 }
 
 .form-field input,
 .form-field select,
 .form-field textarea {
   width: 100%;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   padding: 9px 10px;
   font-size: 13px;
@@ -1790,7 +1790,7 @@ const saveTask = async () => {
 .tool-picker {
   max-height: 260px;
   overflow-y: auto;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
 }
 
@@ -1800,15 +1800,15 @@ const saveTask = async () => {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border-2);
 }
 
 .tool-option:last-child { border-bottom: 0; }
 .tool-option input { width: auto; }
 .tool-option-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .tool-option-main strong { font-size: 13px; color: #0f172a; overflow-wrap: anywhere; }
-.tool-option-main small, .form-hint { font-size: 12px; color: #64748b; }
-.tool-disabled { font-size: 12px; color: #b42318; }
+.tool-option-main small, .form-hint { font-size: 12px; color: var(--text-2); }
+.tool-disabled { font-size: 12px; color: var(--color-danger); }
 
 .channel-checks {
   display: flex;
@@ -1821,7 +1821,7 @@ const saveTask = async () => {
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: #334155;
+  color: var(--text-1);
 }
 
 .channel-check input,
@@ -1835,16 +1835,16 @@ const saveTask = async () => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   min-height: 36px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   overflow: hidden;
 }
 
 .trigger-segment button {
   border: 0;
-  border-right: 1px solid #cbd5e1;
-  background: #fff;
-  color: #475569;
+  border-right: 1px solid var(--border-2);
+  background: var(--bg-container);
+  color: var(--text-2);
   cursor: pointer;
   font-size: 13px;
 }
@@ -1854,8 +1854,8 @@ const saveTask = async () => {
 }
 
 .trigger-segment button.active {
-  background: #1976d2;
-  color: #fff;
+  background: var(--color-primary);
+  color: var(--bg-container);
 }
 
 .inline-switch {
@@ -1865,7 +1865,7 @@ const saveTask = async () => {
 .recipient-list {
   max-height: 190px;
   overflow-y: auto;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
 }
 
@@ -1876,7 +1876,7 @@ const saveTask = async () => {
   gap: 8px;
   min-height: 40px;
   padding: 7px 10px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border-2);
   cursor: pointer;
 }
 
@@ -1890,29 +1890,29 @@ const saveTask = async () => {
 }
 
 .recipient-channel {
-  color: #64748b;
+  color: var(--text-2);
   text-align: right;
 }
 
 .recipient-empty {
   padding: 14px;
-  color: #64748b;
+  color: var(--text-2);
   font-size: 13px;
 }
 
 .form-error {
-  border-left: 3px solid #dc3545;
+  border-left: 3px solid var(--color-danger);
   padding: 9px 12px;
   background: #fff5f5;
-  color: #b42318;
+  color: var(--color-danger);
   font-size: 13px;
 }
 
 .task-preview {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-2);
   border-radius: 8px;
   padding: 12px 14px;
-  background: #f8fafc;
+  background: var(--bg-muted);
 }
 
 .task-preview-title {
@@ -1924,7 +1924,7 @@ const saveTask = async () => {
 
 .task-preview-body {
   font-size: 13px;
-  color: #475569;
+  color: var(--text-2);
   line-height: 1.6;
 }
 
@@ -1933,7 +1933,7 @@ const saveTask = async () => {
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  color: #334155;
+  color: var(--text-1);
 }
 
 .modal-actions {
@@ -1976,7 +1976,7 @@ const saveTask = async () => {
   display: flex;
   gap: 8px;
   margin-bottom: 14px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--border-2);
   padding-bottom: 8px;
 }
 
@@ -1984,26 +1984,26 @@ const saveTask = async () => {
   padding: 6px 14px;
   border: none;
   background: transparent;
-  color: #6c757d;
+  color: var(--text-2);
   font-size: 13px;
   cursor: pointer;
   border-radius: 4px;
 }
 
 .history-tabs button.active {
-  background: #1976d2;
+  background: var(--color-primary);
   color: white;
 }
 
 .history-state {
   text-align: center;
-  color: #6c757d;
+  color: var(--text-2);
   padding: 24px 12px;
   font-size: 13px;
 }
 
 .history-state.error {
-  color: #c2413b;
+  color: var(--color-danger);
 }
 
 .history-cases {
@@ -2024,7 +2024,7 @@ const saveTask = async () => {
   align-items: center;
   gap: 10px;
   font-size: 12px;
-  color: #64748b;
+  color: var(--text-2);
 }
 
 .history-case-time,
@@ -2036,7 +2036,7 @@ const saveTask = async () => {
 .history-case-brief {
   margin: 6px 0 0;
   font-size: 13px;
-  color: #333;
+  color: var(--text-1);
 }
 
 .history-case-dimensions {
@@ -2059,7 +2059,7 @@ const saveTask = async () => {
   margin: 6px 0 0;
   padding-left: 18px;
   font-size: 12px;
-  color: #4b5563;
+  color: var(--text-2);
 }
 
 .history-case-findings li {
@@ -2087,7 +2087,7 @@ const saveTask = async () => {
 .history-case-errors {
   margin-top: 8px;
   font-size: 12px;
-  color: #c2413b;
+  color: var(--color-danger);
 }
 
 .history-case-errors p {
@@ -2098,7 +2098,7 @@ const saveTask = async () => {
 .history-cases-more {
   text-align: center;
   font-size: 12px;
-  color: #6c757d;
+  color: var(--text-2);
   margin: 8px 0 0;
 }
 
@@ -2108,7 +2108,7 @@ const saveTask = async () => {
   flex-wrap: wrap;
   gap: 12px;
   font-size: 12px;
-  color: #64748b;
+  color: var(--text-2);
   margin-bottom: 10px;
 }
 

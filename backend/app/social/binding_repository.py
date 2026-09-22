@@ -5,7 +5,7 @@ import uuid
 
 from sqlalchemy import select
 
-from app.db.database import async_session
+from app.db.session_database import session_async_session as async_session
 from app.social.models import SocialUser, WeixinScanTask
 
 from .binding_schemas import SocialBindingRecord, WeixinScanTaskRecord

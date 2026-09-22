@@ -4,10 +4,47 @@ from app.services.tenders.llm import TenderLLMClientPool
 from config.settings import settings
 
 
+def test_default_llm_prefers_opencode_go_when_configured(monkeypatch):
+    created = []
+
+    class FakeLLMClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            created.append(self)
+
+    monkeypatch.setattr(
+        fetcher_module,
+        "OpenAICompatibleTenderLLMClient",
+        FakeLLMClient,
+    )
+    monkeypatch.setattr(settings, "go_api_key", "go-key")
+    monkeypatch.setattr(settings, "go_base_url", "https://go.example/v1")
+    monkeypatch.setattr(settings, "go_model", "deepseek-v4.1-flash")
+    monkeypatch.setattr(settings, "go_api_mode", "chat_completions")
+    monkeypatch.setattr(settings, "agnes_api_key", None)
+    monkeypatch.setattr(settings, "bailian_api_key", None)
+    monkeypatch.setattr(settings, "tender_secondary_llm_api_key", None)
+    monkeypatch.setattr(settings, "tender_llm_concurrency", 5)
+
+    client = TenderInformationFetcher()._default_llm()
+
+    assert isinstance(client, FakeLLMClient)
+    assert len(created) == 1
+    assert created[0].kwargs == {
+        "api_key": "go-key",
+        "base_url": "https://go.example/v1",
+        "model": "deepseek-v4.1-flash",
+        "provider": "go",
+        "api_mode": "chat_completions",
+    }
+
+
 def test_default_llm_builds_agnes_primary_and_bailian_secondary_with_bailian_screening(
     monkeypatch,
 ):
     created = []
+
+    monkeypatch.setattr(settings, "go_api_key", None)
 
     class FakeLLMClient:
         def __init__(self, **kwargs):

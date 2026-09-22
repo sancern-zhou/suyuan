@@ -57,7 +57,7 @@ defineEmits(['toggle-debug', 'open-report'])
 .topbar {
   height: 60px;
   background: white;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-1);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -69,7 +69,7 @@ defineEmits(['toggle-debug', 'open-report'])
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-1);
 }
 
 .right {
@@ -83,14 +83,14 @@ defineEmits(['toggle-debug', 'open-report'])
   align-items: center;
   gap: 8px;
   font-size: 14px;
-  color: #666;
+  color: var(--text-2);
 }
 
 .spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid #e0e0e0;
-  border-top-color: #1976D2;
+  border: 2px solid var(--border-2);
+  border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -98,7 +98,7 @@ defineEmits(['toggle-debug', 'open-report'])
 .debug-toggle,
 .report-btn {
   padding: 8px 16px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
   background: white;
   border-radius: 6px;
   font-size: 14px;
@@ -108,13 +108,13 @@ defineEmits(['toggle-debug', 'open-report'])
 
 .debug-toggle:hover,
 .report-btn:hover {
-  border-color: #1976D2;
-  color: #1976D2;
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .debug-toggle.active {
   background: #FFF3E0;
-  border-color: #FF9800;
+  border-color: var(--color-warning);
   color: #F57C00;
 }
 </style>

@@ -74,7 +74,7 @@ class CallSubAgentTool(LLMTool):
                     "target_mode": {
                         "type": "string",
                     "enum": ["assistant", "query", "report", "social", "chart", "expert", "ops", "board", "ppt"],
-                    "description": "目标 Agent 模式。"
+                    "description": "目标 Agent 模式。query 仅处理广东省环境数据查询及相关统计导出，不处理招投标、中标、企业采购、普通Excel或省外/全国数据查询；招投标由通用助手直接使用专用工具完成。"
                     },
                     # ✅ 新设计：goal（必需）- 原始任务描述
                     "goal": {
@@ -1063,7 +1063,7 @@ class CallSubAgentTool(LLMTool):
                 "- 错误示例：❌ '更新Excel文件'\n"
             ),
             "social": "\n专注完成上述社交平台任务。\n",
-            "query": "\n专注完成上述数据查询任务，请解析用户的自然语言描述，选择合适的工具和参数。\n",
+            "query": "\n仅处理广东省环境数据查询及相关统计导出。先核对任务范围；招投标、中标、普通业务表格或省外/全国查询超出职责时，向父助手说明，不尝试绕过工具权限。范围内任务选择合适工具和参数完成。\n",
             "report": "\n专注完成上述报告生成任务。\n",
             "ops": "\n专注完成上述运维管理任务，围绕工单查询、审核判断、异常分析和闭环建议给出结构化结果。\n",
             "code": "\n专注完成上述编程任务。\n",

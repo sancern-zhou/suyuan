@@ -11,6 +11,12 @@ async def main() -> None:
         return
     try:
         await init_db()
+        # 会话历史/任务执行记录可能落在独立实例（SESSION_DATABASE_URL），
+        # 主库 schema 就绪后同步确保该库的表存在。
+        if os.getenv("SESSION_DATABASE_URL"):
+            from app.db.init_session_db import init_session_tables
+
+            await init_session_tables()
     finally:
         await close_db()
 

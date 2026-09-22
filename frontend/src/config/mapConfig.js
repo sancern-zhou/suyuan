@@ -27,7 +27,7 @@ export const MARKER_ICONS = {
     offset: [-18, -36],
     content: `
       <div style="position:relative;width:36px;height:36px;">
-        <div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:24px;height:24px;background:#1976d2;border-radius:50% 50% 50% 0;transform:rotate(-45deg) translateX(-50%);border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);"></div>
+        <div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:24px;height:24px;background:var(--color-primary);border-radius:50% 50% 50% 0;transform:rotate(-45deg) translateX(-50%);border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);"></div>
         <div style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:8px;height:8px;background:white;border-radius:50%;"></div>
       </div>
     `
@@ -93,8 +93,8 @@ export const INFO_WINDOW_STYLES = `
     margin: 0 0 12px 0;
     font-size: 15px;
     font-weight: 600;
-    color: #333;
-    border-bottom: 2px solid #1976d2;
+    color: var(--text-1);
+    border-bottom: 2px solid var(--color-primary);
     padding-bottom: 8px;
   }
 
@@ -108,14 +108,14 @@ export const INFO_WINDOW_STYLES = `
   }
 
   .enterprise-popup .info-row .label {
-    color: #666;
+    color: var(--text-2);
     font-weight: 500;
     min-width: 60px;
   }
 
   .enterprise-popup .info-row .value {
     font-weight: 600;
-    color: #333;
+    color: var(--text-1);
     text-align: right;
     flex: 1;
   }
@@ -123,14 +123,14 @@ export const INFO_WINDOW_STYLES = `
   .enterprise-popup .info-section {
     margin-top: 12px;
     padding-top: 12px;
-    border-top: 1px solid #f0f0f0;
+    border-top: 1px solid var(--border-1);
   }
 
   .enterprise-popup .info-section h4 {
     margin: 0 0 8px 0;
     font-size: 13px;
     font-weight: 600;
-    color: #666;
+    color: var(--text-2);
   }
 
   .enterprise-popup .emissions-grid {
@@ -147,12 +147,12 @@ export const INFO_WINDOW_STYLES = `
   }
 
   .enterprise-popup .emission-item .em-label {
-    color: #888;
+    color: var(--text-3);
     font-size: 11px;
   }
 
   .enterprise-popup .emission-item .em-value {
-    color: #333;
+    color: var(--text-1);
     font-weight: 600;
     margin-top: 2px;
   }

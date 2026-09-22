@@ -29,21 +29,21 @@ defineEmits(['close'])
   align-items: center;
   margin-bottom: 20px;
   padding-bottom: 15px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--border-2);
 }
 
 .panel-header h3 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-1);
 }
 
 .panel-btn {
   padding: 6px 12px;
-  border: 1px solid #1976d2;
+  border: 1px solid var(--color-primary);
   background: white;
-  color: #1976d2;
+  color: var(--color-primary);
   border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
@@ -51,7 +51,7 @@ defineEmits(['close'])
 }
 
 .panel-btn:hover {
-  background: #1976d2;
+  background: var(--color-primary);
   color: white;
 }
 

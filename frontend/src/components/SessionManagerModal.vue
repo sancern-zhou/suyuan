@@ -55,7 +55,7 @@ const handleRestore = (sessionId) => {
   width: 100%;
   max-width: 900px;
   height: 90vh;
-  background: #fff;
+  background: var(--bg-container);
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);

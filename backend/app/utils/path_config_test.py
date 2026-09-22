@@ -2,7 +2,6 @@ from pathlib import Path
 
 import pytest
 
-from app.tools.office.generate_random_doc_tool import GenerateRandomDocTool
 from app.tools.office.ppt_master_tool import CreatePptxWithPptMasterTool
 from app.tools.office.read_pptx_tool import ReadPptxTool
 from app.tools.office.validate_pptx_tool import ValidatePptxTool
@@ -86,7 +85,6 @@ def test_office_agent_paths_do_not_depend_on_process_cwd(tmp_path, monkeypatch):
     expected = (tmp_path / "deliverables/deck.pptx").resolve()
     assert ReadPptxTool()._resolve_path("deliverables/deck.pptx") == expected
     assert ValidatePptxTool()._resolve_path("deliverables/deck.pptx") == expected
-    assert GenerateRandomDocTool()._resolve_path("deliverables/deck.pptx") == expected
     assert CreatePptxWithPptMasterTool()._resolve_output_file(
         "deliverables/deck.pptx", "ignored"
     ) == expected

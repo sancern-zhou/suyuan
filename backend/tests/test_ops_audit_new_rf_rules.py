@@ -334,6 +334,180 @@ def test_multipoint_step_time_allows_short_midnight_crossing():
     assert "RF_Q_MULTIPOINT_STEP_TIME_INVALID" not in _issue_ids(issues)
 
 
+def test_multipoint_slope_below_range_is_flagged():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_SLOPE_LOW",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "XL": "0.932",
+        "XGXS": "0.9995",
+    }
+
+    check_rf_multipoint_values(_order("CH_SLOPE_LOW"), [("RF_Q_GASEOUSMULTIPOINT_CO", form)], issues)
+
+    assert "RF_MULTIPOINT_LINEARITY_OUT_OF_RANGE" in _issue_ids(issues)
+    evidence = json.loads(issues[0].evidence)
+    assert evidence["violations"][0]["metric"] == "slope"
+    assert evidence["violations"][0]["value"] == 0.932
+
+
+def test_multipoint_slope_above_range_is_flagged():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_SLOPE_HIGH",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "XL": "1.083",
+        "XGXS": "0.9998",
+    }
+
+    check_rf_multipoint_values(_order("CH_SLOPE_HIGH"), [("RF_Q_GASEOUSMULTIPOINT_CO", form)], issues)
+
+    assert "RF_MULTIPOINT_LINEARITY_OUT_OF_RANGE" in _issue_ids(issues)
+    evidence = json.loads(issues[0].evidence)
+    assert evidence["violations"][0]["metric"] == "slope"
+
+
+def test_multipoint_correlation_at_threshold_is_flagged():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_CORR",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "XL": "1.001",
+        "XGXS": "0.999",
+    }
+
+    check_rf_multipoint_values(_order("CH_CORR"), [("RF_Q_GASEOUSMULTIPOINT_CO", form)], issues)
+
+    assert "RF_MULTIPOINT_LINEARITY_OUT_OF_RANGE" in _issue_ids(issues)
+    evidence = json.loads(issues[0].evidence)
+    assert evidence["violations"][0]["metric"] == "correlation"
+
+
+def test_multipoint_linearity_within_range_is_not_flagged():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_OK",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "XL": "1.002",
+        "XGXS": "0.9999",
+    }
+
+    check_rf_multipoint_values(_order("CH_OK"), [("RF_Q_GASEOUSMULTIPOINT_CO", form)], issues)
+
+    assert "RF_MULTIPOINT_LINEARITY_OUT_OF_RANGE" not in _issue_ids(issues)
+
+
+def test_multipoint_linearity_ignores_blank_and_range_text():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_BLANK",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "XL": "",
+        "XGXS": "/",
+    }
+    range_form = {
+        "WORKINGORDERCODE": "CH_RANGE_TEXT",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "XL": "0.95-1.05",
+        "XGXS": ">0.999",
+    }
+
+    check_rf_multipoint_values(_order("CH_BLANK"), [("RF_Q_GASEOUSMULTIPOINT_CO", form)], issues)
+    check_rf_multipoint_values(_order("CH_RANGE_TEXT"), [("RF_Q_GASEOUSMULTIPOINT_CO", range_form)], issues)
+
+    assert "RF_MULTIPOINT_LINEARITY_OUT_OF_RANGE" not in _issue_ids(issues)
+
+
+def test_multipoint_intercept_beyond_full_scale_ratio_is_flagged():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_INTERCEPT",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "PPB": 20000,
+        "XL": "1.001",
+        "JU": "-250",
+        "XGXS": "0.9999",
+    }
+
+    check_rf_multipoint_values(_order("CH_INTERCEPT"), [("RF_Q_GASEOUSMULTIPOINT_CO", form)], issues)
+
+    assert "RF_MULTIPOINT_INTERCEPT_OUT_OF_RANGE" in _issue_ids(issues)
+    evidence = json.loads(issues[0].evidence)
+    assert evidence["intercept"] == -250
+    assert evidence["full_scale"] == 20000
+    assert evidence["limit"] == 200
+
+
+def test_multipoint_intercept_within_full_scale_ratio_is_not_flagged():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_INTERCEPT_OK",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "PPB": 20000,
+        "XL": "1.001",
+        "JU": "150",
+        "XGXS": "0.9999",
+    }
+
+    check_rf_multipoint_values(_order("CH_INTERCEPT_OK"), [("RF_Q_GASEOUSMULTIPOINT_CO", form)], issues)
+
+    assert "RF_MULTIPOINT_INTERCEPT_OUT_OF_RANGE" not in _issue_ids(issues)
+
+
+def test_multipoint_intercept_uses_full_scale_range_upper_bound():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_INTERCEPT_RANGE",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "SO2",
+        "PPB": "0~500",
+        "XL": "1.001",
+        "JU": "6",
+        "XGXS": "0.9999",
+    }
+
+    check_rf_multipoint_values(_order("CH_INTERCEPT_RANGE"), [("RF_Q_GASEOUSMULTIPOINT_SO2", form)], issues)
+
+    assert "RF_MULTIPOINT_INTERCEPT_OUT_OF_RANGE" in _issue_ids(issues)
+    evidence = json.loads(issues[0].evidence)
+    assert evidence["full_scale"] == 500
+    assert evidence["limit"] == 5
+
+
+def test_multipoint_intercept_skips_without_full_scale():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_INTERCEPT_NO_SCALE",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "XL": "1.001",
+        "JU": "999",
+        "XGXS": "0.9999",
+    }
+
+    check_rf_multipoint_values(_order("CH_INTERCEPT_NO_SCALE"), [("RF_Q_GASEOUSMULTIPOINT_CO", form)], issues)
+
+    assert "RF_MULTIPOINT_INTERCEPT_OUT_OF_RANGE" not in _issue_ids(issues)
+
+
 def test_quarter_gaseous_flow_pressure_true_value_is_recomputed():
     issues: list[Issue] = []
     form = {

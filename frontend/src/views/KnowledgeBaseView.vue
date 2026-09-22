@@ -918,8 +918,8 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
   justify-content: space-between;
   align-items: center;
   padding: 16px 24px;
-  background: #fff;
-  border-bottom: 1px solid #e8e8e8;
+  background: var(--bg-container);
+  border-bottom: 1px solid var(--border-2);
 }
 
 .header-left {
@@ -933,19 +933,19 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
   align-items: center;
   gap: 4px;
   padding: 6px 12px;
-  background: #f5f5f5;
-  border: 1px solid #d9d9d9;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-3);
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
-  color: #333;
+  color: var(--text-1);
   transition: all 0.2s;
 }
 
 .btn-back:hover {
-  background: #e6f7ff;
-  border-color: #1890ff;
-  color: #1890ff;
+  background: var(--color-primary-bg);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .back-icon {
@@ -965,13 +965,13 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 
 .stats {
   font-size: 13px;
-  color: #666;
+  color: var(--text-2);
   margin-left: 16px;
 }
 
 .btn-primary {
-  background: #1890ff;
-  color: #fff;
+  background: var(--color-primary);
+  color: var(--bg-container);
   border: none;
   padding: 8px 16px;
   border-radius: 6px;
@@ -980,31 +980,31 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 }
 
 .btn-primary:hover {
-  background: #40a9ff;
+  background: var(--color-primary-hover);
 }
 
 .btn-primary:disabled {
-  background: #d9d9d9;
+  background: var(--border-3);
   cursor: not-allowed;
 }
 
 .btn-secondary {
-  background: #fff;
-  color: #333;
-  border: 1px solid #d9d9d9;
+  background: var(--bg-container);
+  color: var(--text-1);
+  border: 1px solid var(--border-3);
   padding: 8px 16px;
   border-radius: 6px;
   cursor: pointer;
 }
 
 .btn-secondary:hover {
-  border-color: #40a9ff;
-  color: #40a9ff;
+  border-color: var(--color-primary-hover);
+  color: var(--color-primary-hover);
 }
 
 .btn-danger {
-  background: #ff4d4f;
-  color: #fff;
+  background: var(--color-danger);
+  color: var(--bg-container);
   border: none;
   padding: 6px 12px;
   border-radius: 4px;
@@ -1015,7 +1015,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 .btn-text {
   background: none;
   border: none;
-  color: #1890ff;
+  color: var(--color-primary);
   cursor: pointer;
   font-size: 13px;
   padding: 4px 8px;
@@ -1027,11 +1027,11 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 }
 
 .btn-text.danger {
-  color: #ff4d4f;
+  color: var(--color-danger);
 }
 
 .btn-text.danger:hover {
-  background: #fff1f0;
+  background: var(--color-danger-bg);
 }
 
 .main-content {
@@ -1044,7 +1044,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 
 .kb-list-panel {
   width: 300px;
-  background: #fff;
+  background: var(--bg-container);
   border-radius: 8px;
   display: flex;
   flex-direction: column;
@@ -1053,7 +1053,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 
 .kb-detail-panel {
   flex: 1;
-  background: #fff;
+  background: var(--bg-container);
   border-radius: 8px;
   overflow-y: auto;
   padding: 20px;
@@ -1064,7 +1064,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-1);
   font-weight: 500;
 }
 
@@ -1080,14 +1080,14 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 
 .section-title {
   font-size: 13px;
-  color: #666;
+  color: var(--text-2);
   padding: 8px;
   font-weight: 500;
 }
 
 .kb-card {
   padding: 12px;
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   margin-bottom: 8px;
   cursor: pointer;
@@ -1095,12 +1095,12 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 }
 
 .kb-card:hover {
-  border-color: #1890ff;
+  border-color: var(--color-primary);
 }
 
 .kb-card.active {
-  border-color: #1890ff;
-  background: #e6f7ff;
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
 }
 
 .kb-card-header {
@@ -1122,13 +1122,13 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 }
 
 .kb-badge.public {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
 }
 
 .kb-badge.shared {
   background: #e6f4ff;
-  color: #1677ff;
+  color: var(--color-primary);
 }
 
 .kb-badge.local {
@@ -1143,13 +1143,13 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 }
 
 .kb-badge.private {
-  background: #f6ffed;
-  color: #52c41a;
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 
 .kb-card-meta {
   font-size: 12px;
-  color: #999;
+  color: var(--text-3);
 }
 
 .detail-title {
@@ -1173,7 +1173,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 }
 
 .kb-description {
-  color: #666;
+  color: var(--text-2);
   margin-bottom: 16px;
 }
 
@@ -1191,7 +1191,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 
 .info-label {
   font-size: 12px;
-  color: #999;
+  color: var(--text-3);
 }
 
 .info-value {
@@ -1206,9 +1206,9 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 .chunking-options {
   margin-bottom: 16px;
   padding: 16px;
-  background: #fafafa;
+  background: var(--bg-muted);
   border-radius: 8px;
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--border-2);
 }
 
 .option-row {
@@ -1227,39 +1227,39 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 .option-group label {
   font-size: 13px;
   font-weight: 500;
-  color: #333;
+  color: var(--text-1);
 }
 
 .option-group select,
 .option-group input[type="number"] {
   padding: 8px 12px;
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--border-3);
   border-radius: 6px;
   font-size: 14px;
-  background: #fff;
+  background: var(--bg-container);
 }
 
 .option-group select:focus,
 .option-group input[type="number"]:focus {
-  border-color: #1890ff;
+  border-color: var(--color-primary);
   outline: none;
 }
 
 .strategy-hint {
   margin-top: 12px;
   font-size: 12px;
-  color: #666;
+  color: var(--text-2);
   line-height: 1.5;
 }
 
 .upload-note {
   font-size: 12px;
-  color: #faad14;
+  color: var(--color-warning);
   margin-top: 8px;
 }
 
 .upload-area {
-  border: 2px dashed #d9d9d9;
+  border: 2px dashed var(--border-3);
   border-radius: 8px;
   padding: 40px;
   text-align: center;
@@ -1269,18 +1269,18 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 
 .upload-area:hover,
 .upload-area.dragging {
-  border-color: #1890ff;
+  border-color: var(--color-primary);
   background: #f0f7ff;
 }
 
 .upload-area.uploading {
   cursor: not-allowed;
-  background: #fafafa;
+  background: var(--bg-muted);
 }
 
 .upload-hint {
   font-size: 12px;
-  color: #999;
+  color: var(--text-3);
   margin-top: 8px;
 }
 
@@ -1294,8 +1294,8 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 .spinner {
   width: 24px;
   height: 24px;
-  border: 3px solid #f0f0f0;
-  border-top-color: #1890ff;
+  border: 3px solid var(--border-1);
+  border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -1305,7 +1305,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 }
 
 .doc-list {
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -1315,7 +1315,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-1);
   transition: background 0.2s;
 }
 
@@ -1332,7 +1332,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 }
 
 .view-hint {
-  color: #1890ff;
+  color: var(--color-primary);
   margin-left: 8px;
   font-size: 11px;
 }
@@ -1349,7 +1349,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 
 .doc-meta {
   font-size: 12px;
-  color: #999;
+  color: var(--text-3);
   margin-top: 4px;
 }
 
@@ -1359,19 +1359,19 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 }
 
 .status-completed {
-  color: #52c41a;
+  color: var(--color-success);
 }
 
 .status-processing {
-  color: #1890ff;
+  color: var(--color-primary);
 }
 
 .status-failed {
-  color: #ff4d4f;
+  color: var(--color-danger);
 }
 
 .status-pending {
-  color: #faad14;
+  color: var(--color-warning);
 }
 
 .no-selection,
@@ -1382,13 +1382,13 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
   align-items: center;
   justify-content: center;
   height: 200px;
-  color: #999;
+  color: var(--text-3);
   font-size: 14px;
 }
 
 .no-selection {
   flex: 1;
-  background: #fff;
+  background: var(--bg-container);
   border-radius: 8px;
 }
 
@@ -1407,7 +1407,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 }
 
 .dialog {
-  background: #fff;
+  background: var(--bg-container);
   border-radius: 8px;
   width: 480px;
   max-height: 80vh;
@@ -1426,7 +1426,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-1);
 }
 
 .dialog-header h3 {
@@ -1439,12 +1439,12 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
   border: none;
   font-size: 20px;
   cursor: pointer;
-  color: #999;
+  color: var(--text-3);
   line-height: 1;
 }
 
 .btn-close:hover {
-  color: #333;
+  color: var(--text-1);
 }
 
 .dialog-body {
@@ -1458,7 +1458,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
   justify-content: flex-end;
   gap: 12px;
   padding: 16px 20px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--border-1);
 }
 
 .form-group {
@@ -1478,7 +1478,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 .form-group textarea {
   width: 100%;
   padding: 8px 12px;
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--border-3);
   border-radius: 6px;
   font-size: 14px;
 }
@@ -1494,7 +1494,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 
 .form-hint {
   font-size: 12px;
-  color: #999;
+  color: var(--text-3);
   margin-top: 4px;
 }
 
@@ -1525,8 +1525,8 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
   justify-content: space-between;
   align-items: center;
   padding: 16px 24px;
-  background: #fff;
-  border-bottom: 1px solid #e8e8e8;
+  background: var(--bg-container);
+  border-bottom: 1px solid var(--border-2);
 }
 
 .chunks-title {
@@ -1543,25 +1543,25 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 
 .chunks-count {
   font-size: 14px;
-  color: #666;
-  background: #f0f0f0;
+  color: var(--text-2);
+  background: var(--border-1);
   padding: 4px 12px;
   border-radius: 12px;
 }
 
 .btn-back {
   background: none;
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--border-3);
   padding: 6px 12px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 14px;
-  color: #333;
+  color: var(--text-1);
 }
 
 .btn-back:hover {
-  border-color: #1890ff;
-  color: #1890ff;
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .chunks-content {
@@ -1579,7 +1579,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 }
 
 .chunk-card {
-  background: #fff;
+  background: var(--bg-container);
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   overflow: hidden;
@@ -1590,24 +1590,24 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
   align-items: center;
   gap: 16px;
   padding: 12px 20px;
-  background: #fafafa;
-  border-bottom: 1px solid #f0f0f0;
+  background: var(--bg-muted);
+  border-bottom: 1px solid var(--border-1);
 }
 
 .chunk-number {
   font-weight: 600;
-  color: #1890ff;
+  color: var(--color-primary);
   font-size: 14px;
 }
 
 .chunk-length {
   font-size: 13px;
-  color: #666;
+  color: var(--text-2);
 }
 
 .chunk-position {
   font-size: 12px;
-  color: #999;
+  color: var(--text-3);
   margin-left: auto;
 }
 
@@ -1628,13 +1628,13 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 
 .metadata-label {
   font-size: 12px;
-  color: #666;
+  color: var(--text-2);
   font-weight: 500;
 }
 
 .metadata-value {
   font-size: 13px;
-  color: #1890ff;
+  color: var(--color-primary);
 }
 
 .type-tag {
@@ -1644,13 +1644,13 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 }
 
 .type-paragraph {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
 }
 
 .type-table {
-  background: #f6ffed;
-  color: #52c41a;
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 
 .type-list {
@@ -1664,7 +1664,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
   line-height: 1.8;
   white-space: pre-wrap;
   word-break: break-word;
-  color: #333;
+  color: var(--text-1);
 }
 
 /* Search Dialog */
@@ -1677,7 +1677,7 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 }
 
 .search-results {
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--border-1);
   padding-top: 16px;
 }
 
@@ -1685,11 +1685,11 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
   font-size: 14px;
   font-weight: 500;
   margin-bottom: 12px;
-  color: #333;
+  color: var(--text-1);
 }
 
 .result-item {
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   margin-bottom: 12px;
   overflow: hidden;
@@ -1700,14 +1700,14 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
   align-items: center;
   gap: 12px;
   padding: 8px 12px;
-  background: #fafafa;
-  border-bottom: 1px solid #e8e8e8;
+  background: var(--bg-muted);
+  border-bottom: 1px solid var(--border-2);
   font-size: 13px;
 }
 
 .result-rank {
   font-weight: 600;
-  color: #1890ff;
+  color: var(--color-primary);
 }
 
 .result-filename {
@@ -1715,11 +1715,11 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 }
 
 .result-score {
-  color: #52c41a;
+  color: var(--color-success);
 }
 
 .result-kb {
-  color: #999;
+  color: var(--text-3);
   margin-left: auto;
 }
 
@@ -1727,18 +1727,18 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
   padding: 12px;
   font-size: 13px;
   line-height: 1.6;
-  color: #333;
+  color: var(--text-1);
 }
 
 .no-results {
   text-align: center;
   padding: 40px;
-  color: #999;
+  color: var(--text-3);
 }
 
-.graph-build-section { margin: 18px 0; padding: 16px; border: 1px solid #e8e8e8; border-radius: 6px; }
+.graph-build-section { margin: 18px 0; padding: 16px; border: 1px solid var(--border-2); border-radius: 6px; }
 .graph-build-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.graph-build-controls select { min-width: 260px; padding: 7px 9px; border: 1px solid #d9d9d9; border-radius: 4px; }
-.graph-build-status { display: flex; gap: 18px; margin-top: 12px; font-size: 13px; color: #666; flex-wrap: wrap; }
+.graph-build-controls select { min-width: 260px; padding: 7px 9px; border: 1px solid var(--border-3); border-radius: 4px; }
+.graph-build-status { display: flex; gap: 18px; margin-top: 12px; font-size: 13px; color: var(--text-2); flex-wrap: wrap; }
 .error-text { color: #d4380d; }
 </style>

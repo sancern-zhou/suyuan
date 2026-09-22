@@ -32,7 +32,7 @@ from app.fetchers.quick_trace import JiningQuickTraceFetcher  # 济宁市快速�
 from app.fetchers.satellite.gems_hcho_data_fetcher import GemsHchoDataFetcher
 from app.fetchers.satellite.gems_image_fetcher import GemsImageFetcher
 from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
-from app.fetchers.tenders import TenderInformationFetcher  # 招投标信息每日抓取
+from app.fetchers.tenders import MonthlyTenderInformationFetcher
 from app.fetchers.weather.city_air_quality_forecast_fetcher import CityAirQualityForecastFetcher
 from app.fetchers.weather.era5_fetcher import ERA5Fetcher
 from app.fetchers.weather.jining_era5_fetcher import JiningERA5Fetcher
@@ -110,7 +110,7 @@ def _configured_fetchers(project_context):
         "cams_dust": CAMSDustFetcher,
         "air_quality_data_quality_monitor": AirQualityDataQualityFetcher,
         "city_pollution_event_monitor": CityPollutionEventFetcher,
-        "tender_information": TenderInformationFetcher,
+        "tender_information": MonthlyTenderInformationFetcher,
         "jining_quick_trace": JiningQuickTraceFetcher,
         "consultation": ConsultationFileFetcher,
         "monthly_consultation": MonthlyConsultationFileFetcher,
