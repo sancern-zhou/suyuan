@@ -265,7 +265,7 @@ let recognition = null
 let transitionTimer = null
 let proactiveTimer = null
 
-const assistantName = computed(() => props.coordinator.name || '苏小环')
+const assistantName = computed(() => props.coordinator.name || '苏环智管')
 const workspace = computed(() => getCommandCenterWorkspace(scene.value))
 const revealLevel = computed(() => getCommandCenterRevealLevel(scene.value))
 const workspaceLabel = computed(() => ({

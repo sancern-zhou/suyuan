@@ -71,7 +71,7 @@ export const COMMAND_CENTER_RESPONSES = Object.freeze({
   [COMMAND_CENTER_SCENES.ANOMALY]: '我已围绕源创包装厂房异常建立调查上下文，先放入已确认事实，不提前认定故障原因。',
   [COMMAND_CENTER_SCENES.DIAGNOSIS]: '我在当前调查中追加了三个原因假设。采集或传输链路异常的解释力更高，但仍需通信日志和设备状态验证。',
   [COMMAND_CENTER_SCENES.STAFFING]: '我保留了前面的判断依据，并追加两名可到站人员。推荐结果同时考虑距离、相关经验和当前负荷。',
-  [COMMAND_CENTER_SCENES.TASK_DRAFT]: '调查上下文已整理为核查任务草案，并携带证据、判断边界和人员建议交给苏小环首页审核。',
+  [COMMAND_CENTER_SCENES.TASK_DRAFT]: '调查上下文已整理为核查任务草案，并携带证据、判断边界和人员建议交给苏环智管首页审核。',
   [COMMAND_CENTER_SCENES.PROVINCE]: '我已将工作区切换到全省智慧运维调度，先建立单位、人员、任务和站点需求的资源上下文。',
   [COMMAND_CENTER_SCENES.MOBILITY]: '我已融合近三十日跨市任务、运维单位轨迹、运维人员轨迹和到站记录，识别可合并、属地承接和专项治理的调度机会。',
   [COMMAND_CENTER_SCENES.INTERFERENCE]: '视频模型发现一项疑似喷淋雾炮干扰。我已完成首轮告警筛选，保留视频片段和识别框作为调查起点。',

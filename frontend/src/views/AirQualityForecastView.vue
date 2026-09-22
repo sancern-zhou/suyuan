@@ -235,17 +235,17 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .forecast-page { min-height: 100vh; padding: 30px 38px 42px; background: #f4f7f6; color: #18262d; }
-.forecast-page.embedded { min-height: 100%; height: 100%; overflow: auto; box-sizing: border-box; padding: 18px 26px 22px; background: #fff; display: flex; flex-direction: column; gap: 16px; }
+.forecast-page.embedded { min-height: 100%; height: 100%; overflow: auto; box-sizing: border-box; padding: 18px 26px 22px; background: var(--bg-container); display: flex; flex-direction: column; gap: 16px; }
 .page-header { display: flex; justify-content: space-between; align-items: flex-start; max-width: 1480px; margin: 0 auto 24px; border-bottom: 1px solid #d9e1df; padding-bottom: 20px; }
 .eyebrow { margin: 0 0 7px; font-size: 13px; color: #38756b; font-weight: 700; letter-spacing: 0; }
 h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: 0; }
-.back-button { border: 1px solid #9ab1ac; border-radius: 4px; background: #fff; padding: 8px 12px; color: #245c54; cursor: pointer; font-size: 14px; }
-.toolbar, .chart-section { max-width: 1480px; margin: 0 auto; background: #fff; border: 1px solid #dbe4e2; border-radius: 6px; }
+.back-button { border: 1px solid #9ab1ac; border-radius: 4px; background: var(--bg-container); padding: 8px 12px; color: #245c54; cursor: pointer; font-size: 14px; }
+.toolbar, .chart-section { max-width: 1480px; margin: 0 auto; background: var(--bg-container); border: 1px solid #dbe4e2; border-radius: 6px; }
 .toolbar { min-height: 72px; display: flex; align-items: center; gap: 28px; padding: 12px 20px; }
 .embedded .toolbar, .embedded .chart-section { width: 100%; max-width: none; margin: 0; background: transparent; border: 0; border-radius: 0; }
 .embedded .toolbar { min-height: 48px; padding: 0 0 12px; border-bottom: 1px solid #e3eae8; }
 .field-label { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #4d5e66; }
-select { height: 34px; min-width: 120px; border: 1px solid #aebfbb; border-radius: 4px; background: #fff; color: #1f2d33; padding: 0 8px; }
+select { height: 34px; min-width: 120px; border: 1px solid #aebfbb; border-radius: 4px; background: var(--bg-container); color: #1f2d33; padding: 0 8px; }
 .legend { display: flex; flex-wrap: wrap; gap: 13px; font-size: 12px; color: #607079; }
 .legend span, .series-key span { display: inline-flex; gap: 5px; align-items: center; white-space: nowrap; }
 .legend i { width: 10px; height: 10px; border-radius: 50%; }

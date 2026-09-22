@@ -789,6 +789,8 @@ async def test_dispatch_order_moves_event_to_dispatching_state(tmp_path):
         "alarm:1",
         title="现场核查喷淋作业",
         order_type="现场核查",
+        urgency_type="Urgent",
+        issued_types=["App", "SMS"],
         assignee="站点运维",
         description="核查喷淋位置与持续时间",
         actor=actor,
@@ -798,6 +800,8 @@ async def test_dispatch_order_moves_event_to_dispatching_state(tmp_path):
     operation = event["operation_records"][-1]
     assert operation["action"] == "dispatch_order"
     assert operation["details"]["assignee"] == "站点运维"
+    assert operation["details"]["urgency_type"] == "Urgent"
+    assert operation["details"]["issued_types"] == ["App", "SMS"]
     review = _submit_result("结论", "exec:archive")
     service.apply_task_execution("alarm:1", build_jiangsu_smart_event_task(), _finished_execution("结论", execution_id="exec:archive"))
     from app.services.task_review import decide_review

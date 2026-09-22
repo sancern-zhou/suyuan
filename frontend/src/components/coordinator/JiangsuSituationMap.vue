@@ -441,7 +441,7 @@ onBeforeUnmount(() => {
 .legend-station.muted { opacity: .42; }
 .legend-anomaly { border-radius: 50%; background: #ff9c4d; box-shadow: 0 0 8px rgba(255,156,77,.7); }
 .legend-person { border-radius: 1px; background: #55e5d4; }
-.legend-person.mobility { transform: rotate(45deg); border: 1px solid #fff; background: #fff1a8; }
+.legend-person.mobility { transform: rotate(45deg); border: 1px solid var(--bg-container); background: #fff1a8; }
 .legend-route { width: 18px!important; height: 3px!important; border-radius: 99px; background: linear-gradient(90deg,#ffad5c,#ed7c62,#c68eff); box-shadow: 0 0 7px rgba(255,173,92,.42); }
 .legend-unit { width: 16px!important; height: 0!important; border-top: 2px dashed #53d7d2; }
 .legend-frequent { border-radius: 50%; background: #ff8668; box-shadow: 0 0 7px rgba(255,134,104,.65); }

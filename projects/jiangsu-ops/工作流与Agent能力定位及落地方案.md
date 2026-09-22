@@ -20,7 +20,7 @@ Agent 负责目标理解、动态取证、解释归因、建议和成果表达
 
 当前江苏项目已经具备以下基础能力：
 
-- `projects/jiangsu-ops/project.yaml` 已配置“小值/苏小环”协调入口、专业模式、关键词路由和任务关注项。
+- `projects/jiangsu-ops/project.yaml` 已配置“小值/苏环智管”协调入口、专业模式、关键词路由和任务关注项。
 - `backend/app/services/jiangsu_smart_event_automation.py` 已实现智能事件扫描、证据采集、队列、重试和并发控制。
 - `backend/app/services/jiangsu_smart_event.py` 和 `backend/app/tools/jiangsu/smart_event_workspace.py` 已提供事件工作区和证据上下文。
 - `backend/app/tools/jiangsu/fault_diagnosis.py` 已提供告警、工单、站房环境和质控历史取证工具。
@@ -304,7 +304,7 @@ Agent 返回值也必须结构化：
 - 失败可重试，超时可恢复；
 - 执行过程和业务产物可审计。
 
-### 阶段三：接入苏小环
+### 阶段三：接入苏环智管
 
 首页展示轨迹分析服务的最新数据范围、待核查线索数、涉及人员和单位数及最近分析结果。用户追问时，Agent 读取结构化分析结果，并按当前问题生成摘要、比较或报告。
 
@@ -352,7 +352,7 @@ prepare -> review -> approve -> execute -> verify
   -> 事件证据刷新工作流
   -> 任务复查工作流
   -> 工作流任务模型和调度器
-  -> 苏小环结果回流
+  -> 苏环智管结果回流
   -> 工单批量审核工作流
 
 运维轨迹分析单独走 Agent 主导路线：先建设确定性分析服务，再由 Agent 按不同管理问题调用和组织输出。

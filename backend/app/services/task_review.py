@@ -128,8 +128,31 @@ def review_path(review_id: str) -> Path:
 @contextmanager
 def review_lock(review_id):
     with review_path(review_id).with_suffix(".lock").open("a") as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
         yield
+
+
+def is_work_order_review(record: dict) -> bool:
+    """判断审核记录是否属于故障工单审核（subject_id 为工单号或分类为工单审核）。"""
+    subject = str(record.get("subject_id") or "")
+    return bool(subject) and (subject.startswith("FA") or record.get("category") == "工单审核")
+
+
+def _sync_work_order_review(record: dict, decision: dict | None = None) -> None:
+    """把工单审核的 AI 提交/人工决策同步到证据包；失败不阻断审核主流程。"""
+    try:
+        if not is_work_order_review(record):
+            return
+        from app.services.jiangsu_work_order_review import sync_review_record
+
+        sync_review_record(record, decision)
+    except KeyError:
+        # 尚未采集证据包的工单审核（例如未走 jiangsu_fetch_review_evidence）跳过同步。
+        logger.debug("work_order_review_package_missing", subject_id=record.get("subject_id"))
+    except Exception as exc:
+        logger.warning("work_order_review_sync_failed", error=str(exc),
+                       subject_id=record.get("subject_id"))
+
 
 
 def _parse_db_datetime(value):
@@ -465,6 +488,7 @@ def submit_review(payload, source):
             "allow_archived_review_reopen": allow_reopen,
         }
         save_review(record)
+        _sync_work_order_review(record)
         return record
 
 
@@ -499,6 +523,7 @@ def decide_review(review_id, payload, actor):
                 "status": "pending", "attempts": 0,
             }
         save_review(record)
+        _sync_work_order_review(record, decision)
         if decision["action"] == "reject":
             # 智能事件人工退回后自动触发以审核意见为基准的增量 AI 研判；
             # 钩子内部自行隔离异常，退回动作本身永不因此失败。

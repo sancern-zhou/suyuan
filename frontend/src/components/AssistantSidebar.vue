@@ -18,6 +18,16 @@
       <div class="new-session-section">
         <button
           class="module-card"
+          type="button"
+          @click="handleModuleSelect('restart-session')"
+        >
+          <span class="module-icon" v-html="getModuleIcon('restart-session')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">新建对话</p>
+          </div>
+        </button>
+        <button
+          class="module-card"
           :class="{ active: isActive('agent-platform') }"
           type="button"
           @click="handleModuleSelect('agent-platform')"
@@ -55,16 +65,6 @@
           </div>
         </button>
         <button
-          class="module-card"
-          type="button"
-          @click="handleModuleSelect('restart-session')"
-        >
-          <span class="module-icon" v-html="getModuleIcon('restart-session')"></span>
-          <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">新建对话</p>
-          </div>
-        </button>
-        <button
           v-if="projectConfig.hasModule('xuchang-air-quality')"
           class="module-card"
           :class="{ active: isActive('air-quality-forecast') }"
@@ -78,6 +78,7 @@
           </div>
         </button>
         <button
+          v-if="projectConfig.project !== 'jiangsu-ops'"
           class="module-card"
           :class="{ active: isActive('query-dashboard') }"
           type="button"
@@ -104,72 +105,6 @@
           </div>
         </button>
         <button
-          v-if="projectConfig.project === 'jiangsu-ops'"
-          class="module-card"
-          :class="{ active: isActive('operations-analysis') }"
-          type="button"
-          @click="handleModuleSelect('operations-analysis')"
-          :title="isCollapsed ? '运维操作分析' : ''"
-        >
-          <span class="module-icon" v-html="getModuleIcon('operations-analysis')"></span>
-          <div v-if="!isCollapsed" class="module-info"><p class="module-title">运维操作分析</p></div>
-        </button>
-        <button
-          v-if="projectConfig.project === 'jiangsu-ops'"
-          class="module-card"
-          :class="{ active: isActive('smart-event-external') }"
-          type="button"
-          @click="handleModuleSelect('smart-event-external')"
-          :title="isCollapsed ? '外界环境识别' : ''"
-        >
-          <span class="module-icon" v-html="getModuleIcon('smart-events')"></span>
-          <div v-if="!isCollapsed" class="module-info"><p class="module-title">外界环境识别</p></div>
-        </button>
-        <button
-          v-if="projectConfig.project === 'jiangsu-ops'"
-          class="module-card"
-          :class="{ active: isActive('smart-event-instrument') }"
-          type="button"
-          @click="handleModuleSelect('smart-event-instrument')"
-          :title="isCollapsed ? '仪器故障识别' : ''"
-        >
-          <span class="module-icon" v-html="getModuleIcon('smart-events')"></span>
-          <div v-if="!isCollapsed" class="module-info"><p class="module-title">仪器故障识别</p></div>
-        </button>
-        <button
-          v-if="projectConfig.project === 'jiangsu-ops'"
-          class="module-card"
-          :class="{ active: isActive('smart-inspection') }"
-          type="button"
-          @click="handleModuleSelect('smart-inspection')"
-          :title="isCollapsed ? '智能巡检' : ''"
-        >
-          <span class="module-icon" v-html="getModuleIcon('smart-inspection')"></span>
-          <div v-if="!isCollapsed" class="module-info"><p class="module-title">智能巡检</p></div>
-        </button>
-        <button
-          v-if="projectConfig.project === 'jiangsu-ops'"
-          class="module-card"
-          :class="{ active: isActive('device-control') }"
-          type="button"
-          @click="handleModuleSelect('device-control')"
-          :title="isCollapsed ? '智能遥控' : ''"
-        >
-          <span class="module-icon" v-html="getModuleIcon('device-control')"></span>
-          <div v-if="!isCollapsed" class="module-info"><p class="module-title">智能遥控</p></div>
-        </button>
-        <button
-          v-if="projectConfig.project === 'jiangsu-ops'"
-          class="module-card"
-          :class="{ active: isActive('station-fault-diagnosis') }"
-          type="button"
-          @click="handleModuleSelect('station-fault-diagnosis')"
-          :title="isCollapsed ? '故障诊断' : ''"
-        >
-          <span class="module-icon" v-html="getModuleIcon('station-fault-diagnosis')"></span>
-          <div v-if="!isCollapsed" class="module-info"><p class="module-title">故障诊断</p></div>
-        </button>
-        <button
           class="module-card"
           :class="{ active: isActive('knowledge-base') }"
           type="button"
@@ -181,6 +116,50 @@
             <p class="module-title">知识管理</p>
           </div>
         </button>
+        <div
+          v-if="projectConfig.project === 'jiangsu-ops'"
+          ref="quickEntryRef"
+          class="quick-entry"
+          :class="{ open: quickEntryOpen }"
+          @mouseenter="openQuickEntry"
+          @mouseleave="closeQuickEntry"
+        >
+          <button
+            class="module-card"
+            :class="{ active: quickEntryActive }"
+            type="button"
+            aria-haspopup="menu"
+            :aria-expanded="quickEntryOpen"
+            @click="toggleQuickEntry"
+            @focus="openQuickEntry"
+            :title="isCollapsed ? '快捷入口' : ''"
+          >
+            <span class="module-icon" v-html="getModuleIcon('quick-entry')"></span>
+            <div v-if="!isCollapsed" class="module-info">
+              <p class="module-title">快捷入口</p>
+            </div>
+            <span v-if="!isCollapsed" class="quick-entry-caret" aria-hidden="true"></span>
+          </button>
+          <div
+            v-if="quickEntryOpen"
+            class="quick-entry-flyout"
+            role="menu"
+            aria-label="运维快捷入口"
+          >
+            <button
+              v-for="entry in quickEntries"
+              :key="entry.id"
+              class="quick-entry-item"
+              :class="{ active: isActive(entry.id) }"
+              type="button"
+              role="menuitem"
+              @click="handleQuickEntrySelect(entry.id)"
+            >
+              <span class="module-icon" v-html="getModuleIcon(entry.icon)"></span>
+              <span class="quick-entry-label">{{ entry.name }}</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div class="module-list">
@@ -350,6 +329,7 @@ const toggleSettingsMenu = () => {
 }
 const toggleCollapse = () => {
   closeSettingsMenu()
+  closeQuickEntry()
   const newValue = !isCollapsed.value
   isCollapsed.value = newValue
   emit('update:collapsed', newValue)
@@ -359,6 +339,7 @@ const toggleCollapse = () => {
 watch(() => props.collapsed, (newValue) => {
   isCollapsed.value = newValue
   closeSettingsMenu()
+  closeQuickEntry()
 })
 
 const userDisplayName = computed(() => {
@@ -474,6 +455,28 @@ const conversationListEmptyText = computed(() => ({
 
 const platformEntryLabel = computed(() => '智能体平台')
 
+// 运维管理类智能体模式统一收纳到“快捷入口”，悬停时在右侧展开
+const quickEntryRef = ref(null)
+const quickEntryOpen = ref(false)
+const openQuickEntry = () => { quickEntryOpen.value = true }
+const closeQuickEntry = () => { quickEntryOpen.value = false }
+const toggleQuickEntry = () => { quickEntryOpen.value = !quickEntryOpen.value }
+const quickEntries = Object.freeze([
+  { id: 'query-dashboard', name: '运维问数生图', icon: 'query-dashboard' },
+  { id: 'smart-inspection', name: '智能巡检', icon: 'smart-inspection' },
+  { id: 'operations-analysis', name: '运维操作分析', icon: 'operations-analysis' },
+  { id: 'device-control', name: '智能遥控', icon: 'device-control' },
+  { id: 'station-fault-diagnosis', name: '故障诊断', icon: 'station-fault-diagnosis' },
+  { id: 'work-order-review', name: '工单审核', icon: 'work-order-review' },
+  { id: 'smart-event-external', name: '外界环境识别', icon: 'smart-event-external' },
+  { id: 'smart-event-instrument', name: '仪器故障识别', icon: 'smart-event-instrument' }
+])
+const quickEntryActive = computed(() => quickEntries.some(entry => isActive(entry.id)))
+const handleQuickEntrySelect = (moduleId) => {
+  closeQuickEntry()
+  handleModuleSelect(moduleId)
+}
+
 // 问数入口绑定当前项目实际启用的问数模式：江苏使用 jiangsu_query，
 // 其他项目回退到共享的 query 模式，避免江苏误入 main 的问数生图智能体。
 const queryDashboardMode = computed(() => (
@@ -485,7 +488,7 @@ const queryDashboardModule = computed(() => {
     return { label: '智能问数', title: '智能问数' }
   }
   const mode = getAgentMode(queryDashboardMode.value, projectConfig.agentModeOverrides)
-  return { label: mode?.shortName || '江苏问数生图', title: mode?.name || '江苏问数生图' }
+  return { label: mode?.shortName || '运维问数生图', title: mode?.name || '运维问数生图' }
 })
 
 const allModules = [
@@ -740,6 +743,33 @@ const moduleIcons = {
       <path d="M17.5 16.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm2.1 5.1 1.9 1.9" />
     </svg>
   `,
+  'quick-entry': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4.5 5.5h6v6h-6z" />
+      <path d="M13.5 5.5h6v6h-6z" />
+      <path d="M4.5 12.5h6v6h-6z" />
+      <path d="M13.5 12.5h6v6h-6z" />
+    </svg>
+  `,
+  'smart-event-external': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 5h16v14H4z" />
+      <path d="M6 15c2-5 4-5 6 0s4 5 6 0" />
+    </svg>
+  `,
+  'smart-event-instrument': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 5h16v14H4z" />
+      <path d="M12 7v10M8 11h8M9 17h6" />
+    </svg>
+  `,
+  'work-order-review': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 4.5h12v15H6z" />
+      <path d="M9 4.5V3h6v1.5" />
+      <path d="M9 10h6M9 13.5h6M9 17h3" />
+    </svg>
+  `,
   'social-platform': `
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M7 9.5a4 4 0 1 1 8 0v3a4 4 0 0 1-8 0v-3Z" />
@@ -764,12 +794,19 @@ const handleSettingsSelect = (moduleId) => {
 }
 
 const handleDocumentPointerDown = (event) => {
-  if (!settingsMenuOpen.value) return
-  if (!settingsFooterRef.value?.contains(event.target)) closeSettingsMenu()
+  if (settingsMenuOpen.value && !settingsFooterRef.value?.contains(event.target)) {
+    closeSettingsMenu()
+  }
+  if (quickEntryOpen.value && !quickEntryRef.value?.contains(event.target)) {
+    closeQuickEntry()
+  }
 }
 
 const handleDocumentKeydown = (event) => {
-  if (event.key === 'Escape') closeSettingsMenu()
+  if (event.key === 'Escape') {
+    closeSettingsMenu()
+    closeQuickEntry()
+  }
 }
 
 const isActive = (moduleId) => props.activeModule === moduleId
@@ -863,14 +900,14 @@ onUnmounted(() => {
 <style lang="scss" scoped>
 .assistant-sidebar {
   width: 272px;
-  background: #f8fafc;
+  background: var(--bg-muted);
   display: flex;
   flex-direction: column;
   padding: 0 12px 14px;
   overflow: visible;
   transition: width 0.2s ease, padding 0.2s ease;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
-  border-right: 1px solid #edf1f7;
+  border-right: 1px solid var(--bg-muted);
 
   &.collapsed {
     width: 60px;
@@ -893,7 +930,7 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  background: #f8fafc;
+  background: var(--bg-muted);
   padding-top: 10px;
   padding-bottom: 10px;
 
@@ -913,7 +950,7 @@ onUnmounted(() => {
   h2 {
     margin: 0;
     font-size: 16px;
-    color: #1f2a44;
+    color: var(--text-1);
     font-weight: 600;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
   }
@@ -944,7 +981,7 @@ onUnmounted(() => {
 }
 
 .new-session-section {
-  background: #f8fafc;
+  background: var(--bg-muted);
   padding-bottom: 0;
   margin-bottom: 0;
   display: flex;
@@ -971,7 +1008,7 @@ onUnmounted(() => {
   border-radius: 8px;
 
   &:hover {
-    background: #eef4fb;
+    background: var(--sidebar-hover);
   }
 
   .collapsed & {
@@ -1025,20 +1062,20 @@ onUnmounted(() => {
   background: transparent;
   min-height: 38px;
   padding: 8px 10px;
-  color: #526173;
+  color: var(--text-2);
   cursor: pointer;
   text-align: left;
   transition: background 0.16s ease, color 0.16s ease;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 
   &:hover {
-    background: #eef4fb;
-    color: #1976d2;
+    background: var(--sidebar-hover);
+    color: var(--color-primary);
   }
 
   &.active {
-    background: #e3f2fd;
-    color: #1976d2;
+    background: var(--color-primary-bg);
+    color: var(--color-primary);
   }
 
   &.disabled {
@@ -1089,8 +1126,79 @@ onUnmounted(() => {
 .module-desc {
   margin: 4px 0 0;
   font-size: 12px;
-  color: #7a86a0;
+  color: var(--text-3);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+}
+
+.quick-entry {
+  position: relative;
+
+  &.open > .module-card {
+    background: var(--sidebar-hover);
+    color: var(--color-primary);
+  }
+}
+
+.quick-entry-caret {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  margin-left: auto;
+  border-right: 1.6px solid currentColor;
+  border-bottom: 1.6px solid currentColor;
+  transform: rotate(-45deg);
+  opacity: 0.65;
+}
+
+.quick-entry-flyout {
+  position: absolute;
+  top: 0;
+  left: calc(100% - 6px);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 184px;
+  padding: 6px;
+  border: 1px solid #e0e7f0;
+  border-radius: 10px;
+  background: var(--bg-container);
+  box-shadow: 0 12px 30px rgba(31, 42, 68, 0.14);
+}
+
+.quick-entry-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 7px;
+  color: var(--text-2);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+
+  &:hover,
+  &:focus-visible {
+    color: var(--color-primary);
+    background: var(--sidebar-hover);
+    outline: none;
+  }
+
+  &.active {
+    color: var(--color-primary);
+    background: var(--color-primary-bg);
+  }
+}
+
+.quick-entry-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .user-settings-footer {
@@ -1104,7 +1212,7 @@ onUnmounted(() => {
   margin-top: 10px;
   padding: 9px 4px 0;
   border-top: 1px solid #e4eaf2;
-  background: #f8fafc;
+  background: var(--bg-muted);
 
   .collapsed & {
     gap: 0;
@@ -1124,7 +1232,7 @@ onUnmounted(() => {
 .user-name {
   min-width: 0;
   overflow: hidden;
-  color: #35425f;
+  color: var(--text-1);
   font-size: 13px;
   font-weight: 500;
   line-height: 32px;
@@ -1139,8 +1247,8 @@ onUnmounted(() => {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  color: #526173;
-  background: #e8eef6;
+  color: var(--text-2);
+  background: var(--color-primary-bg-hover);
   font-size: 11px;
   font-weight: 600;
 }
@@ -1155,7 +1263,7 @@ onUnmounted(() => {
   padding: 0;
   border: none;
   border-radius: 8px;
-  color: #69758c;
+  color: var(--text-3);
   background: transparent;
   cursor: pointer;
 
@@ -1171,12 +1279,12 @@ onUnmounted(() => {
 
   &:hover,
   &[aria-expanded='true'] {
-    color: #1976d2;
-    background: #eaf2fb;
+    color: var(--color-primary);
+    background: var(--color-primary-bg);
   }
 
   &:focus-visible {
-    outline: 2px solid #8abfff;
+    outline: 2px solid var(--color-primary-light);
     outline-offset: 2px;
   }
 }
@@ -1194,7 +1302,7 @@ onUnmounted(() => {
   padding: 6px;
   border: 1px solid #e0e7f0;
   border-radius: 10px;
-  background: #fff;
+  background: var(--bg-container);
   box-shadow: 0 12px 30px rgba(31, 42, 68, 0.14);
 
   .collapsed & {
@@ -1214,7 +1322,7 @@ onUnmounted(() => {
   padding: 7px 9px;
   border: none;
   border-radius: 7px;
-  color: #526173;
+  color: var(--text-2);
   background: transparent;
   cursor: pointer;
   font: inherit;
@@ -1223,14 +1331,14 @@ onUnmounted(() => {
 
   &:hover,
   &:focus-visible {
-    color: #1976d2;
-    background: #eef4fb;
+    color: var(--color-primary);
+    background: var(--sidebar-hover);
     outline: none;
   }
 
   &.active {
-    color: #1976d2;
-    background: #e3f2fd;
+    color: var(--color-primary);
+    background: var(--color-primary-bg);
   }
 }
 
@@ -1238,7 +1346,7 @@ onUnmounted(() => {
 .recent-sessions-section {
   margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid #e8e8e8;
+  border-top: 1px solid var(--border-2);
 }
 
 .recent-sessions-header {
@@ -1251,7 +1359,7 @@ onUnmounted(() => {
 .recent-sessions-title {
   font-size: 14px;
   font-weight: 500;
-  color: #333;
+  color: var(--text-1);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 }
 
@@ -1270,7 +1378,7 @@ onUnmounted(() => {
   background: transparent;
   border: 1px solid transparent;
   border-radius: 6px;
-  color: #64748b;
+  color: var(--text-2);
   cursor: pointer;
   padding: 0;
   transition: all 0.2s;
@@ -1287,13 +1395,13 @@ onUnmounted(() => {
 
   &:hover {
     background: #eef4ff;
-    color: #1565c0;
+    color: var(--color-primary-active);
   }
 
   &.active {
     border-color: #b7d4ff;
     background: #e9f3ff;
-    color: #1565c0;
+    color: var(--color-primary-active);
   }
 }
 
@@ -1339,7 +1447,7 @@ onUnmounted(() => {
 .session-query {
   flex: 1;
   font-size: 12px;
-  color: #333;
+  color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1348,7 +1456,7 @@ onUnmounted(() => {
 
 .session-time {
   font-size: 11px;
-  color: #999;
+  color: var(--text-3);
   flex-shrink: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 }
@@ -1363,7 +1471,7 @@ onUnmounted(() => {
 
   &.status-ready {
     border-color: #b3d5ff;
-    color: #1976d2;
+    color: var(--color-primary);
     background: #e9f3ff;
   }
 

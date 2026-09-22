@@ -2,7 +2,6 @@ schema_version: 1
 project: jiangsu-ops
 modules:
   - legacy
-  - demo
 frontend:
   theme: default
   brand_name: 江苏省运维审核管理服务平台
@@ -21,10 +20,10 @@ frontend:
     - smart_event_external
     - smart_event_instrument
   default_agent_mode: ops
-  # Web 首页由“苏小环”统筹场景承载；专业智能体保留为按需进入的二级工作区。
+  # Web 首页由“苏环智管”统筹场景承载；专业智能体保留为按需进入的二级工作区。
   agent_platform_layout: coordinator
   coordinator:
-    name: 苏小环
+    name: 苏环智管
     role: 江苏运维智能值班助手
     greeting: 今天需要我关注什么？
     description: 持续关注全省运维态势，组织专业能力完成取证、研判与任务闭环。
@@ -70,7 +69,7 @@ frontend:
     workspace_blocks:
       - id: shift-briefing
         type: briefing
-        title: 苏小环值班简报（场景演示）
+        title: 苏环智管值班简报（场景演示）
         items:
           - label: 当前重点
             text: 优先关注持续断数、设备离线和证据不完整的站点异常事件。
@@ -100,7 +99,7 @@ frontend:
         items:
           - label: 异常发现
             value: 自动触发
-          - label: 苏小环取证与研判
+          - label: 苏环智管取证与研判
             value: 自动执行
           - label: 工单草案审核
             value: 人工确认
@@ -123,8 +122,8 @@ frontend:
         - 江苏知识库
         - 来源追溯
     jiangsu_query:
-      name: 江苏问数生图智能体
-      short_name: 江苏问数生图
+      name: 运维问数生图智能体
+      short_name: 运维问数生图
       description: 查询江苏省监测与气象数据、完成统计分析并生成专业图表
       welcome:
         description: 面向江苏省空气监测和气象数据，以自然语言完成查询、统计、趋势分析和可追溯图表生成。
@@ -198,18 +197,15 @@ backend:
     - jiangsu_fetch_qc_task_status
     - jiangsu_fetch_qc_run_logs
     - jiangsu_fetch_qc_monitoring_curve
+    - jiangsu_fetch_review_evidence
+    # 运维操作分析：独立进站证据（门禁）与设备台账（备机分析）。
+    - jiangsu_fetch_door_access_records
+    - jiangsu_fetch_device_ledger
+    # 智能事件中心 PostgreSQL 结构化查询（只读 SELECT，事件中心表白名单）。
+    - execute_smart_event_sql_query
     # 非故障例行工单审核（真实平台接口）。
     - jiangsu_ops_audit_fetch_dataset
     - jiangsu_ops_audit_run_rules
-    # 运维监管场景演示数据工具（2026-08 预设数据集，非真实接口）。
-    - jiangsu_demo_operation_plans
-    - jiangsu_demo_attendance_signins
-    - jiangsu_demo_personnel_certificates
-    - jiangsu_demo_performance_two_rates
-    - jiangsu_demo_qc_pass_rate_stats
-    - jiangsu_demo_operation_approvals
-    - jiangsu_demo_door_remote_open_logs
-    - jiangsu_demo_standard_materials
   # 江苏项目按模式向工单审核、故障诊断和其他运维智能体暴露经评审的工具。
   # 该白名单同时用于提示词和函数 schema；新增工具必须经过项目评审后加入。
   agent_mode_tools:
@@ -245,6 +241,7 @@ backend:
       - jiangsu_smart_event_workspace
       - jiangsu_fetch_fault_work_orders
       - jiangsu_fetch_fault_work_order_detail
+      - jiangsu_fetch_review_evidence
       - jiangsu_prepare_fault_work_order
       - submit_task_review
     # 知识问答以授权知识库为主，允许读取已注册的会话资源，并按需联网补充。
@@ -362,26 +359,24 @@ backend:
       - list_directory
       - search_files
     ops:
+      # 2026-09 工具面瘦身后仅保留故障工单审核、例行工单审核与最小只读补查所需工具；
+      # 移除项（城市/区县/统计/地理解析、智能事件工作台、图谱、报告图表）经项目评审：
+      # 审核链路不依赖，且 city/district/statistics/geography 等分析能力仍保留在
+      # jiangsu_query / social 等模式下。
       - list_session_resources
       - publish_session_file
       - read_file
       - edit_file
       - write_file
-      - jiangsu_fetch_city_data
-      - jiangsu_fetch_district_data
       - jiangsu_fetch_station_data
-      - jiangsu_query_statistics
-      - jiangsu_resolve_geography
       - jiangsu_fetch_alarm_records
       - jiangsu_smart_event_workspace
-      - jiangsu_fetch_station_alarm_logs
+      # 站房告警、动环历史与质控清单已并入 jiangsu_fetch_review_evidence 的
+      # modules 参数，与证据图表同窗一次取齐；质控任务明细仍用 qc_task_status 下钻。
       - jiangsu_fetch_fault_work_orders
       - jiangsu_fetch_fault_work_order_detail
-      - jiangsu_fetch_station_environment_history
-      - jiangsu_fetch_qc_task_history
       - jiangsu_fetch_qc_task_status
-      - jiangsu_fetch_qc_run_logs
-      - jiangsu_fetch_qc_monitoring_curve
+      - jiangsu_fetch_review_evidence
       # 非故障例行工单审核（真实平台接口）。
       - jiangsu_ops_audit_fetch_dataset
       - jiangsu_ops_audit_run_rules
@@ -389,6 +384,7 @@ backend:
       - list_skills
       - view_skill
       - submit_task_review
+      # 例行工单审核正式报告与子代理复核仍依赖以下工具，暂保留。
       - create_report_package
       - publish_report
       - render_report_package
@@ -438,15 +434,17 @@ backend:
       - jiangsu_fetch_station_alarm_logs
       - jiangsu_fetch_station_data
       - jiangsu_analyze_work_order_tracks
-      # 运维监管场景演示数据工具（2026-08 预设数据集）。
-      - jiangsu_demo_operation_plans
-      - jiangsu_demo_attendance_signins
-      - jiangsu_demo_personnel_certificates
-      - jiangsu_demo_performance_two_rates
-      - jiangsu_demo_qc_pass_rate_stats
-      - jiangsu_demo_operation_approvals
-      - jiangsu_demo_door_remote_open_logs
-      - jiangsu_demo_standard_materials
+      # 独立进站证据与设备台账（备机分析），只读。
+      - jiangsu_fetch_door_access_records
+      - jiangsu_fetch_device_ledger
+      # 智能事件中心结构化查询：优先用它做告警/风险/积压的结构化筛选与聚合。
+      - execute_smart_event_sql_query
+      # 站房动环/供电历史，用于高值窗口停电/离线核验。
+      - jiangsu_fetch_station_environment_history
+      # 真实统计与质控数据（两率、质控合格率口径）。
+      - jiangsu_query_statistics
+      - jiangsu_fetch_qc_task_history
+      - jiangsu_fetch_qc_task_status
       # 报告出具链路。
       - create_report_chart
       - execute_python

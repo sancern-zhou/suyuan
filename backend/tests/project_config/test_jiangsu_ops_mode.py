@@ -15,6 +15,15 @@ def test_jiangsu_ops_mode_uses_jiangsu_fault_work_order_query_only():
     assert override["short_name"] == "工单审核"
     assert "jiangsu_fetch_fault_work_orders" in tools
     assert "jiangsu_fetch_fault_work_order_detail" in tools
+    # 站房告警/动环历史/质控清单已并入 jiangsu_fetch_review_evidence 的 modules 参数；
+    # 质控任务明细面板仍依赖 jiangsu_fetch_qc_task_status 下钻。
+    assert "jiangsu_fetch_review_evidence" in tools
+    assert "jiangsu_fetch_qc_task_status" in tools
+    assert "jiangsu_fetch_station_alarm_logs" not in tools
+    assert "jiangsu_fetch_station_environment_history" not in tools
+    assert "jiangsu_fetch_qc_task_history" not in tools
+    assert "jiangsu_fetch_qc_run_logs" not in tools
+    assert "jiangsu_fetch_qc_monitoring_curve" not in tools
     assert "ops_audit_fetch_dataset" not in tools
     assert "ops_audit_run_rules" not in tools
     assert "ops_audit_inspect" not in tools

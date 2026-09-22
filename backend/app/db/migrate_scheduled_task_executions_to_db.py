@@ -95,10 +95,10 @@ async def _load_session_transcripts() -> dict[str, tuple[str, Optional[str]]]:
     from sqlalchemy import select
 
     from app.db.models_session import SessionDB, SessionMessageDB
-    from app.db.sync_bridge import bridge_session
+    from app.db.sync_bridge import session_db_session
 
     transcripts: dict[str, tuple[str, Optional[str]]] = {}
-    async with bridge_session() as session:
+    async with session_db_session() as session:
         rows = (
             await session.execute(
                 select(SessionDB.session_id, SessionDB.session_metadata)
@@ -279,9 +279,9 @@ async def _ensure_schema_async() -> None:
     same loop, so schema creation stays on one event loop.
     """
     from app.db.models.scheduled_task_execution_db import ScheduledTaskExecutionDB
-    from app.db.sync_bridge import bridge_session
+    from app.db.sync_bridge import session_db_session
 
-    async with bridge_session() as session:
+    async with session_db_session() as session:
         conn = await session.connection()
         await conn.run_sync(
             ScheduledTaskExecutionDB.__table__.create,

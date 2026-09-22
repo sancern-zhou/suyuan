@@ -28,9 +28,9 @@ const toggle = (event, type, checked) => emit(event, { type, checked })
 </script>
 
 <style scoped>
-.graph-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
+.graph-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--bg-container); }
 .graph-toolbar input[type='text'], .graph-toolbar > input { min-width: 180px; padding: 6px 8px; }
 .graph-toolbar button { padding: 6px 9px; cursor: pointer; }
-details { position: relative; } details[open] { padding: 5px; border: 1px solid #ddd; } details label { display: block; white-space: nowrap; }
-.counts { margin-left: auto; color: #667085; font-size: 12px; } em { margin-left: 6px; color: #1976d2; font-style: normal; }
+details { position: relative; } details[open] { padding: 5px; border: 1px solid var(--border-3); } details label { display: block; white-space: nowrap; }
+.counts { margin-left: auto; color: var(--text-2); font-size: 12px; } em { margin-left: 6px; color: var(--color-primary); font-style: normal; }
 </style>

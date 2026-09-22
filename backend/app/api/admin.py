@@ -91,15 +91,6 @@ async def get_workflow() -> Dict[str, Any]:
             ]
         },
         {
-            "id": "5_upwind_analysis",
-            "name": "上风向企业识别",
-            "description": "基于风向数据筛选上风向企业，生成地图",
-            "type": "api",
-            "api_url": "UPWIND_ANALYSIS_API_URL/api/external/wind/upwind-and-map",
-            "depends_on": ["4_parallel_data"],
-            "outputs": ["enterprises", "map_url", "top_enterprises"]
-        },
-        {
             "id": "6_component_analysis",
             "name": "组分数据分析",
             "description": "根据污染物类型获取VOCs或颗粒物组分数据",
@@ -125,7 +116,7 @@ async def get_workflow() -> Dict[str, Any]:
             "name": "LLM污染源分析",
             "description": "使用LLM基于组分数据和企业信息进行污染源解析（提示词已内联优化）",
             "type": "llm",
-            "depends_on": ["5_upwind_analysis", "6_component_analysis"],
+            "depends_on": ["6_component_analysis"],
             "note": "Prompts are hardcoded in llm_service.py for better performance and maintainability"
         },
         {
@@ -179,13 +170,7 @@ async def get_system_config() -> Dict[str, Any]:
             "monitoring_api": settings.monitoring_data_api_url,
             "vocs_api": settings.vocs_data_api_url,
             "particulate_api": settings.particulate_data_api_url,
-            "meteorological_api": settings.meteorological_api_url,
-            "upwind_api": settings.upwind_analysis_api_url
-        },
-        "analysis": {
-            "search_range_km": settings.default_search_range_km,
-            "max_enterprises": settings.default_max_enterprises,
-            "top_n_enterprises": settings.default_top_n_enterprises
+            "meteorological_api": settings.meteorological_api_url
         },
         "retry": {
             "max_retries": settings.max_retries,

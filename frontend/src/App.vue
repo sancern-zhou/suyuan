@@ -58,6 +58,6 @@
 
 #app {
   min-height: 100vh;
-  background: #f5f5f5;
+  background: var(--bg-hover);
 }
 </style>

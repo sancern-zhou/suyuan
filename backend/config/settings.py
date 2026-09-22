@@ -304,10 +304,6 @@ class Settings(BaseSettings):
         default="http://180.184.30.94/api/AiDataService/ReportApplication/UserReportDataQuery/Query",
         description="Meteorological data API URL"
     )
-    upwind_analysis_api_url: str = Field(
-        default="http://180.184.91.74:9095",
-        description="Upwind analysis API base URL (port 9095 for upwind-and-map)"
-    )
 
     # API Keys
     meteorological_api_key: Optional[str] = Field(
@@ -637,26 +633,6 @@ class Settings(BaseSettings):
     )
 
     # Analysis Parameters
-    default_search_range_km: float = Field(
-        default=5.0,
-        description="Default search range in kilometers"
-    )
-    default_max_enterprises: int = Field(
-        default=10,
-        description="Default max enterprises to fetch"
-    )
-    default_top_n_enterprises: int = Field(
-        default=10,
-        description="Default top N enterprises to return"
-    )
-    wind_speed_low_threshold: float = Field(
-        default=1.5,
-        description="Wind speed threshold for calm conditions"
-    )
-    candidate_radius_km: float = Field(
-        default=25.0,
-        description="Candidate enterprise search radius"
-    )
     nearby_stations_radius_km: float = Field(
         default=20.0,
         description="Nearby stations search radius in kilometers"
@@ -679,14 +655,18 @@ class Settings(BaseSettings):
     # Tender Information Fetcher Configuration
     tender_fetcher_enabled: bool = Field(
         default=True,
-        description="Enable daily tender information fetcher"
+        description="Enable scheduled monthly Zhiliao tender ingestion"
+    )
+    tender_monthly_schedule: str = Field(
+        default="30 3 1 * *",
+        description="Previous-month winning notices, Asia/Shanghai, first day at 03:30",
     )
     tender_fetcher_schedule: str = Field(
         default="30 2 * * *",
         description="Cron schedule for tender information fetcher"
     )
     tender_keywords: str = Field(
-        default="生态环境局,环境监测中心,生态环境厅,环境监测站,生态环境分局,环境监控中心,污染源在线监控,空气自动站,水质自动站,VOCs走航,噪声自动监测",
+        default="生态环境局,环境监测中心,生态环境厅,环境监测站,生态环境分局,环境监控中心,污染源在线监控,空气自动站,大气监测,大气污染防控,VOCs走航,噪声自动监测",
         description="Comma-separated tender search keywords"
     )
     tender_notice_types: str = Field(
@@ -749,6 +729,26 @@ class Settings(BaseSettings):
         default=None,
         description="Optional SSH private key path used for the Qianlima search proxy"
     )
+    qianlima_detail_ssh_proxy_host: Optional[str] = Field(
+        default=None,
+        description="SSH host used to create a temporary SOCKS5 proxy for Qianlima detail fetching"
+    )
+    qianlima_detail_ssh_proxy_port: int = Field(
+        default=22,
+        description="SSH port used to create a temporary SOCKS5 proxy for Qianlima detail fetching"
+    )
+    qianlima_detail_ssh_proxy_username: str = Field(
+        default="root",
+        description="SSH username used for the Qianlima detail proxy"
+    )
+    qianlima_detail_ssh_proxy_password: Optional[str] = Field(
+        default=None,
+        description="SSH password used for the Qianlima detail proxy"
+    )
+    qianlima_detail_ssh_proxy_key_path: Optional[str] = Field(
+        default=None,
+        description="Optional SSH private key path used for the Qianlima detail proxy"
+    )
     tender_llm_api_key: Optional[str] = Field(
         default=None,
         description="OpenAI-compatible API key for tender LLM screening and extraction"
@@ -781,45 +781,45 @@ class Settings(BaseSettings):
         default=5,
         description="Max concurrent tender LLM detail requests for the secondary provider"
     )
-
-    # qianlima_realtime_tender 工具反爬配置
-    qianlima_realtime_max_retries: int = Field(
-        default=3,
-        description="qianlima_realtime_tender 工具最大重试次数"
+    tender_sources: str = Field(
+        default="qianlima",
+        description="Comma-separated tender sources, e.g. qianlima,zhiliaobiaoxun,jianyu360"
     )
-    qianlima_realtime_base_delay_seconds: float = Field(
-        default=1.0,
-        description="qianlima_realtime_tender 工具重试基础延迟(秒)"
+    ggzy_platforms: str = Field(
+        default="浙江,四川,海南",
+        description="Enabled provincial public-resource platforms (comma-separated provinces)"
     )
-    qianlima_realtime_max_delay_seconds: float = Field(
-        default=30.0,
-        description="qianlima_realtime_tender 工具重试最大延迟(秒)"
+    zhiliao_ai_api_key: Optional[str] = Field(
+        default=None,
+        description="知了标讯AI开放平台 API Key (ai.zhiliaobiaoxun.com)"
     )
-    qianlima_realtime_request_delay_ms: int = Field(
-        default=800,
-        description="qianlima_realtime_tender 工具请求间延迟(毫秒)"
+    zhiliao_ai_base_url: str = Field(
+        default="https://mcp-server.zhiliaobiaoxun.com/api_v2",
+        description="知了标讯AI开放平台 API base URL"
     )
-    qianlima_realtime_detail_min_delay_seconds: float = Field(
-        default=1.0,
-        description="qianlima_realtime_tender 工具详情页最小延迟(秒)"
+    zhiliao_base_url: str = Field(
+        default="https://api-service-zhiliao.bailian-ai.com",
+        description="知了标讯 API base URL"
     )
-    qianlima_realtime_detail_max_delay_seconds: float = Field(
-        default=3.0,
-        description="qianlima_realtime_tender 工具详情页最大延迟(秒)"
+    zhiliao_cookie: Optional[str] = Field(
+        default=None,
+        description="登录后知了标讯 Cookie，用于历史搜索和详情"
     )
-    qianlima_realtime_concurrency: int = Field(
-        default=2,
-        ge=1,
-        le=5,
-        description="qianlima_realtime_tender 工具最大并发数"
+    zhiliao_username: Optional[str] = Field(
+        default=None, description="知了标讯账号（手机号）"
     )
-    qianlima_realtime_enable_search_delay: bool = Field(
-        default=True,
-        description="qianlima_realtime_tender 工具启用搜索页延迟"
+    zhiliao_password: Optional[str] = Field(
+        default=None, description="知了标讯密码（明文，登录时做 MD5）"
     )
-    qianlima_realtime_enable_detail_delay: bool = Field(
-        default=True,
-        description="qianlima_realtime_tender 工具启用详情页延迟"
+    jianyu_cookie: Optional[str] = Field(
+        default=None,
+        description="登录后剑鱼标讯 Cookie"
+    )
+    jianyu_username: Optional[str] = Field(
+        default=None, description="剑鱼标讯账号"
+    )
+    jianyu_password: Optional[str] = Field(
+        default=None, description="剑鱼标讯密码"
     )
 
     # SQL Server Configuration (History Database)

@@ -199,6 +199,7 @@
         :human-feedback-error="humanFeedbackError"
         :knowledge-sources="knowledgeSources"
         :smart-event-command="smartEventCommand"
+        :work-order-review-command="workOrderReviewCommand"
         :device-control-command="deviceControlCommand"
         :task-workspace-task="taskWorkspaceTask"
         @tab-change="handleTabChange"
@@ -209,6 +210,7 @@
         @open-smart-event-task-side="$emit('open-smart-event-task-side', $event)"
         @close-smart-event-panel="$emit('close-smart-event-panel')"
         @close-smart-event-task="$emit('close-smart-event-task')"
+        @close-work-order-review-panel="$emit('close-work-order-review-panel')"
         @close-device-control-panel="$emit('close-device-control-panel')"
         @restore-execution-session="$emit('restore-execution-session', $event)"
         />
@@ -251,6 +253,7 @@ const props = defineProps({
   taskWorkspaceEntries: { type: Array, default: () => [] },
   taskWorkspaceTask: { type: Object, default: null },
   smartEventCommand: { type: Object, default: null },
+  workOrderReviewCommand: { type: Object, default: null },
   deviceControlCommand: { type: Object, default: null },
   workspace: {
     type: String,
@@ -505,6 +508,7 @@ const emit = defineEmits([
   'open-smart-event-task-side',
   'close-smart-event-panel',
   'close-smart-event-task',
+  'close-work-order-review-panel',
   'close-device-control-panel',
   'refresh-session-history',
   'cleanup-sessions',

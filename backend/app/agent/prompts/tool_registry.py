@@ -15,9 +15,34 @@ from typing import Dict, Iterable, List
 # 工具有序白名单（仅包含工具名称）
 # ========================================
 
+# 广东省数据源工具（项目专属）。这些工具依赖广东联网接口/数据库，
+# 不允许进入任何共享模式白名单：
+# - 工具实例仅在项目 manifest 声明启用时注册（app/tools/__init__.py）；
+# - 项目通过 manifest 的 backend.agent_mode_extra_tools 按模式追加。
+# 守卫测试：backend/tests/test_project_scoped_tools.py
+PROJECT_SCOPED_TOOL_NAMES = frozenset({
+    "query_gd_suncere",
+    "query_gd_suncere_city_hour",
+    "query_gd_suncere_station_hour_new",
+    "query_gd_suncere_station_day_new",
+    "query_gd_suncere_regional_comparison",
+    "query_gd_suncere_city_day",
+    "query_gd_suncere_district_day",
+    "query_gd_suncere_district_report",
+    "query_gd_suncere_report_compare",
+    "query_city_standard_report",
+    "query_city_standard_yoy_report",
+    "query_station_standard_report",
+    "query_station_standard_yoy_report",
+    "analyze_city_pollutant_rankings",
+    "get_5min_data",
+})
+
 # ===== 助手模式工具 =====
 ASSISTANT_TOOL_NAMES = [
     "list_session_resources",
+    "execute_tender_sql_query",
+    "zhiliao_tender_detail",
     # 轻量办公：搜索、阅读、编辑文档和生成 HTML 结果。
     "list_directory",
     "search_files",
@@ -86,27 +111,9 @@ EXPERT_TOOL_NAMES = [
     "get_platform_weather_image",
     "query_xcai_city_history",
     "execute_sql_query",
-    "query_gd_suncere_city_hour",
-    "query_gd_suncere_city_day",
-    "query_gd_suncere_district_day",
-    "query_gd_suncere_district_report",
-    "query_gd_suncere_station_hour_new",
-    "query_city_standard_report",
-    "query_city_standard_yoy_report",
     # 分析工具
-    "calculate_pm_pmf",
-    "calculate_vocs_pmf",
-    "analyze_upwind_enterprises",
     "meteorological_trajectory_analysis",
-    "analyze_trajectory_sources",
-    "calculate_reconstruction",
-    "calculate_carbon",
-    "calculate_soluble",
-    "calculate_crustal",
-    "calculate_trace",
-    "predict_air_quality",
     # 可视化
-    "generate_map",
     "create_report_chart",
     # 代码执行
     "execute_python",
@@ -131,7 +138,6 @@ QUERY_TOOL_NAMES = [
     "list_directory",
     "search_files",
     # === 参数化查询工具 ===
-    "get_5min_data",
     "get_vocs_data",
     "get_pm25_ionic",
     "get_pm25_carbon",
@@ -142,16 +148,6 @@ QUERY_TOOL_NAMES = [
     "get_current_weather",
     "query_xcai_city_history",
     "execute_sql_query",
-    "query_gd_suncere_city_hour",
-    "query_gd_suncere_station_day_new",
-    "query_gd_suncere_city_day",
-    "query_gd_suncere_district_day",
-    "query_city_standard_report",
-    "query_city_standard_yoy_report",
-    "query_station_standard_report",
-    "query_station_standard_yoy_report",
-    "query_gd_suncere_district_report",
-    "analyze_city_pollutant_rankings",
     "knowledge_graph_query",
     "resolve_station_geo",
     # === 全国省份空气质量查询 ===
@@ -188,17 +184,7 @@ REPORT_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     # 数据查询
-    "get_5min_data",
-    "query_gd_suncere_city_hour",
-    "query_gd_suncere_city_day",
-    "query_gd_suncere_district_day",
     "execute_sql_query",
-    "query_city_standard_report",
-    "query_city_standard_yoy_report",
-    "query_gd_suncere_district_report",
-    "query_station_standard_report",
-    "query_station_standard_yoy_report",
-    "analyze_city_pollutant_rankings",
     # 文件和执行
     "read_file",
     "write_file",
@@ -234,16 +220,6 @@ CHART_TOOL_NAMES = [
     "execute_echarts_python",
     # 数据查询工具
     "get_observed_meteorology",
-    "get_5min_data",
-    "query_gd_suncere_city_hour",
-    "query_gd_suncere_station_hour_new",
-    "query_gd_suncere_city_day",
-    "query_gd_suncere_district_day",
-    "query_gd_suncere_district_report",
-    "query_city_standard_report",
-    "query_city_standard_yoy_report",
-    "query_station_standard_report",
-    "query_station_standard_yoy_report",
     "execute_sql_query",
 ]
 
@@ -281,9 +257,6 @@ OPS_TOOL_NAMES = [
     "validate_report_package",
     # 子 Agent 复核
     "call_sub_agent",
-    # 站点小时/日数据核对
-    "query_gd_suncere_station_hour_new",
-    "query_gd_suncere_station_day_new",
     # 代码执行
     "execute_python",
     # 文件操作
@@ -377,10 +350,7 @@ DELIBERATION_METEOROLOGY_TOOL_NAMES = [
     "publish_session_file",
     "get_weather_forecast",
     "get_observed_meteorology",
-    "query_gd_suncere_city_hour",
-    "query_gd_suncere_station_hour_new",
     "meteorological_trajectory_analysis",
-    "analyze_upwind_enterprises",
     "analyze_trajectory_sources",
     "TaskCreate",
     "TaskUpdate",
@@ -391,14 +361,6 @@ DELIBERATION_METEOROLOGY_TOOL_NAMES = [
 DELIBERATION_MONITORING_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-    "query_gd_suncere_city_hour",
-    "query_gd_suncere_city_day",
-    "query_gd_suncere_district_day",
-    "query_gd_suncere_district_report",
-    "query_gd_suncere_station_hour_new",
-    "query_gd_suncere_station_day_new",
-    "query_city_standard_report",
-    "query_city_standard_yoy_report",
     "execute_python",
     "TaskCreate",
     "TaskUpdate",
@@ -602,25 +564,55 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     }
 
     project_tool_names = _get_project_tool_names_by_mode(mode)
+    if mode not in mode_mapping and project_tool_names is None:
+        raise ValueError(f"Unknown mode: {mode}")
+
     if project_tool_names is not None:
         return _build_tool_dict(project_tool_names)
 
-    if mode not in mode_mapping:
-        raise ValueError(f"Unknown mode: {mode}")
+    extra_tool_names = _get_project_extra_tool_names_by_mode(mode)
+    if not extra_tool_names:
+        return mode_mapping[mode]
 
-    return mode_mapping[mode]
+    base_names = list(mode_mapping[mode].keys())
+    merged_names = base_names + [name for name in extra_tool_names if name not in base_names]
+    return _build_tool_dict(merged_names)
+
+
+def _load_project_context():
+    """Load the active project context; missing/broken manifests fail loudly."""
+    from app.project_config.loader import load_project_context
+    from config.settings import settings
+
+    return load_project_context(settings.project_id)
 
 
 def _get_project_tool_names_by_mode(mode: str) -> list[str] | None:
     """Return project-specific mode tools when the active manifest declares them."""
-    try:
-        from app.project_config.loader import load_project_context
-        from config.settings import settings
+    from app.project_config.loader import ProjectConfigError
 
-        context = load_project_context(settings.project_id)
+    try:
+        context = _load_project_context()
+    except ProjectConfigError:
+        # Fail closed: a broken manifest must not silently expose the full
+        # shared whitelist (this is how project-scoped tools used to leak).
+        raise
     except Exception:
         return None
     return context.manifest.backend.agent_mode_tools.get(mode)
+
+
+def _get_project_extra_tool_names_by_mode(mode: str) -> list[str]:
+    """Return project tools appended to a shared mode whitelist."""
+    from app.project_config.loader import ProjectConfigError
+
+    try:
+        context = _load_project_context()
+    except ProjectConfigError:
+        raise
+    except Exception:
+        return []
+    return context.manifest.backend.agent_mode_extra_tools.get(mode, [])
 
 
 def get_tool_order(mode: str) -> List[str]:

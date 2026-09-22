@@ -6,7 +6,7 @@
     <div class="center-content">
       <header class="scheduler-header">
         <div>
-          <p class="scheduler-kicker">苏小环 · 任务调度</p>
+          <p class="scheduler-kicker">苏环智管 · 任务调度</p>
           <h1>任务调度中心</h1>
           <p class="scheduler-description">统一查看待办与定时任务，点击卡片进入对应任务工作区查看执行情况与产出。</p>
         </div>
@@ -263,7 +263,7 @@ onMounted(loadTasks)
 .header-actions { display: flex; align-items: center; gap: 14px; }
 .live-status { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border: 1px solid rgba(47, 181, 122, .3); border-radius: 999px; background: rgba(47, 181, 122, .1); color: #238b60; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .live-status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 14%, transparent); }
-.refresh-btn { padding: 8px 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--lake-600); font: inherit; font-size: 12px; cursor: pointer; transition: all .2s ease; }
+.refresh-btn { padding: 8px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-container); color: var(--lake-600); font: inherit; font-size: 12px; cursor: pointer; transition: all .2s ease; }
 .refresh-btn:hover { border-color: color-mix(in srgb, var(--teal-500) 55%, var(--line)); color: var(--teal-600); }
 .refresh-btn:disabled { cursor: wait; opacity: .6; }
 
@@ -272,18 +272,18 @@ onMounted(loadTasks)
 .scheduler-tabs { display: flex; gap: 4px; margin-bottom: 14px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255, 255, 255, .74); width: fit-content; }
 .scheduler-tabs button { display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; transition: all .2s ease; }
 .scheduler-tabs button:hover { color: var(--lake-600); }
-.scheduler-tabs button.active { background: var(--lake-900); color: #fff; box-shadow: 0 4px 12px rgba(7, 41, 59, .18); }
+.scheduler-tabs button.active { background: var(--lake-900); color: var(--bg-container); box-shadow: 0 4px 12px rgba(7, 41, 59, .18); }
 .scheduler-tabs button span { min-width: 17px; padding: 1px 5px; border-radius: 999px; background: rgba(10, 42, 58, .08); color: var(--faint); font-size: 10px; font-weight: 700; text-align: center; }
 .scheduler-tabs button.active span { background: rgba(255, 255, 255, .16); color: #d7f7f6; }
 
 .task-type-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
-.task-type-filters button { display: inline-flex; align-items: center; gap: 7px; padding: 8px 13px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; transition: all .2s ease; }
+.task-type-filters button { display: inline-flex; align-items: center; gap: 7px; padding: 8px 13px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg-container); color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; transition: all .2s ease; }
 .task-type-filters button:hover { border-color: color-mix(in srgb, var(--teal-500) 55%, var(--line)); color: var(--lake-600); }
-.task-type-filters button.active { border-color: var(--teal-600); background: color-mix(in srgb, var(--teal-500) 12%, #fff); color: var(--teal-600); font-weight: 700; }
+.task-type-filters button.active { border-color: var(--teal-600); background: color-mix(in srgb, var(--teal-500) 12%, var(--bg-container)); color: var(--teal-600); font-weight: 700; }
 .type-icon { display: inline-flex; width: 15px; height: 15px; align-items: center; }
 .type-icon :deep(svg) { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .type-count { padding: 1px 7px; border-radius: 999px; background: rgba(10, 42, 58, .07); color: var(--faint); font-size: 10px; font-weight: 700; }
-.task-type-filters button.active .type-count { background: color-mix(in srgb, var(--teal-500) 20%, #fff); color: var(--teal-600); }
+.task-type-filters button.active .type-count { background: color-mix(in srgb, var(--teal-500) 20%, var(--bg-container)); color: var(--teal-600); }
 
 .status-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 0 0 22px; }
 .status-grid article { display: grid; min-height: 82px; align-content: center; gap: 2px; padding: 0 20px; border: 1px solid rgba(207, 224, 226, .88); border-radius: 14px; background: rgba(255, 255, 255, .86); box-shadow: 0 6px 18px rgba(26, 69, 78, .04); }
@@ -310,20 +310,20 @@ onMounted(loadTasks)
   border-radius: 14px;
   background: linear-gradient(120deg, var(--lake-900) 0%, #0a3a52 52%, var(--lake-700) 100%);
   box-shadow: 0 14px 32px rgba(7, 41, 59, .2);
-  color: #fff;
+  color: var(--bg-container);
   transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
 }
 .task-card:hover { transform: translateY(-4px); border-color: rgba(63, 200, 212, .62); box-shadow: 0 18px 38px rgba(7, 41, 59, .28); }
 .task-card.paused { opacity: .88; }
 .task-ambient { position: absolute; width: 260px; height: 260px; top: -145px; right: -100px; border-radius: 50%; background: radial-gradient(circle, rgba(63, 200, 212, .3), transparent 70%); pointer-events: none; }
-.task-type-badge { position: absolute; z-index: 2; top: 0; right: 0; padding: 5px 13px 6px 15px; border-radius: 0 14px 0 13px; background: linear-gradient(120deg, #f2a93b, #de9220); color: #fff; font-size: 9px; font-weight: 800; letter-spacing: .12em; }
+.task-type-badge { position: absolute; z-index: 2; top: 0; right: 0; padding: 5px 13px 6px 15px; border-radius: 0 14px 0 13px; background: linear-gradient(120deg, #f2a93b, #de9220); color: var(--bg-container); font-size: 9px; font-weight: 800; letter-spacing: .12em; }
 .task-card.duty-card { border-color: rgba(46, 168, 151, .58); }
 .task-card.duty-card .task-type-badge { background: linear-gradient(120deg, #159b8a, #147a78); }
 .task-card-top { position: relative; z-index: 1; display: flex; align-items: flex-start; gap: 11px; padding-right: 76px; }
 .task-icon { display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border: 1px solid rgba(255, 255, 255, .24); border-radius: 11px; background: rgba(255, 255, 255, .12); color: var(--cyan-400); }
 .task-icon svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .task-title-wrap { display: flex; min-width: 0; flex: 1; flex-direction: column; align-items: flex-start; gap: 5px; }
-.task-title-wrap strong { color: #fff; font-size: 16px; line-height: 1.3; }
+.task-title-wrap strong { color: var(--bg-container); font-size: 16px; line-height: 1.3; }
 .task-title-wrap small { overflow: hidden; max-width: 100%; color: rgba(203, 226, 233, .56); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .task-state { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; color: #65ddb4; font-size: 10px; font-weight: 700; white-space: nowrap; }
 .task-state.paused { color: #f3bf69; }

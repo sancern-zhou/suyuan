@@ -3,7 +3,7 @@
     <header class="center-header">
       <div class="heading-copy">
         <span class="eyebrow">REMOTE QUALITY CONTROL</span>
-        <strong>远程质控工作区<span v-if="simulated" class="demo-tag">演示数据</span></strong>
+        <strong>远程质控工作区</strong>
         <span class="sub">反控全过程留痕：状态核查 → 待确认指令 → 平台下发 → 状态回读 → 审计</span>
       </div>
       <button type="button" class="close-btn" @click="$emit('close')">收起</button>
@@ -81,7 +81,7 @@
     </div>
 
     <footer class="center-footer">
-      <p>本页面仅展示质控过程信息（模拟演示形态）：指令下发必须经对话中的用户明确确认；平台受理成功不代表设备已生效，以状态回读与现场核查为准。</p>
+      <p>本页面仅展示质控过程信息：指令下发必须经对话中的用户明确确认；平台受理成功不代表设备已生效，以状态回读与现场核查为准。</p>
     </footer>
   </section>
 </template>
@@ -121,7 +121,6 @@ watch(() => props.workspaceCommand, command => {
 })
 
 const history = computed(() => state.history || [])
-const simulated = computed(() => history.value.some(item => item.command?.simulated === true))
 const stationLabel = computed(() => (
   state.station?.station_name || state.station?.station_id || '—'
 ))
@@ -168,17 +167,16 @@ const formatTime = raw => {
 </script>
 
 <style scoped>
-.device-control-center { display: flex; height: 100%; flex-direction: column; gap: 12px; overflow-y: auto; padding: 14px; box-sizing: border-box; background: #f8fafc; }
-.center-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 14px 16px; border: 1px solid #d8e9fb; border-radius: 10px; background: linear-gradient(120deg, #eef6ff, #f8fbff); }
+.device-control-center { display: flex; height: 100%; flex-direction: column; gap: 12px; overflow-y: auto; padding: 14px; box-sizing: border-box; background: var(--bg-muted); }
+.center-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 14px 16px; border: 1px solid var(--color-primary-bg-hover); border-radius: 10px; background: linear-gradient(120deg, var(--color-primary-bg), var(--bg-muted)); }
 .heading-copy { display: grid; gap: 4px; }
 .heading-copy .eyebrow { color: #5aa9e6; font-size: 10px; letter-spacing: 2px; }
 .heading-copy strong { color: #10365c; font-size: 18px; }
-.demo-tag { margin-left: 8px; padding: 2px 8px; border: 1px solid #e0a63c; border-radius: 999px; background: #fdf3e0; color: #b97a19; font-size: 11px; vertical-align: middle; }
 .heading-copy .sub { color: #6b87a3; font-size: 11px; }
-.close-btn { padding: 7px 14px; border: 1px solid #d8e9fb; border-radius: 8px; background: #fff; color: #526173; font-size: 12px; cursor: pointer; }
-.close-btn:hover { color: #1976d2; border-color: #b9d7f5; }
+.close-btn { padding: 7px 14px; border: 1px solid #d8e9fb; border-radius: 8px; background: var(--bg-container); color: var(--text-2); font-size: 12px; cursor: pointer; }
+.close-btn:hover { color: var(--color-primary); border-color: #b9d7f5; }
 .process-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.summary-card { display: grid; gap: 5px; padding: 10px 12px; border: 1px solid #e3edf7; border-radius: 8px; background: #fff; }
+.summary-card { display: grid; gap: 5px; padding: 10px 12px; border: 1px solid #e3edf7; border-radius: 8px; background: var(--bg-container); }
 .summary-card span { color: #7d93a9; font-size: 10px; }
 .summary-card strong { overflow: hidden; color: #17364f; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .stage-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
@@ -187,31 +185,31 @@ const formatTime = raw => {
 .stage span { color: #33546f; font-size: 12px; font-weight: 600; }
 .stage small { color: #8fa6ba; font-size: 9px; }
 .stage.done { border: 1px solid #bfe8d2; background: #f2fbf6; }
-.stage.done i { border-color: #35b977; background: #35b977; color: #fff; }
+.stage.done i { border-color: #35b977; background: #35b977; color: var(--bg-container); }
 .stage.done span { color: #1d7a4d; }
 .stage.pending { border: 1px solid #d8e9fb; }
-.history-section { flex: 1 0 auto; padding: 12px 14px; border: 1px solid #e3edf7; border-radius: 10px; background: #fff; }
+.history-section { flex: 1 0 auto; padding: 12px 14px; border: 1px solid #e3edf7; border-radius: 10px; background: var(--bg-container); }
 .section-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: #17364f; font-size: 13px; font-weight: 700; }
-.section-title b { min-width: 22px; padding: 2px 6px; border-radius: 10px; background: #e8f2fc; color: #1976d2; font-size: 11px; text-align: center; }
+.section-title b { min-width: 22px; padding: 2px 6px; border-radius: 10px; background: #e8f2fc; color: var(--color-primary); font-size: 11px; text-align: center; }
 .empty-hint { margin: 18px 0; color: #8fa6ba; font-size: 12px; text-align: center; }
 .timeline { position: relative; margin: 0; padding: 0 0 0 18px; list-style: none; }
 .timeline::before { position: absolute; top: 6px; bottom: 6px; left: 8px; width: 2px; background: #e3edf7; content: ""; }
 .timeline li { position: relative; display: flex; gap: 12px; padding: 8px 0; }
 .timeline .node { flex: none; }
-.badge { display: inline-block; min-width: 44px; padding: 3px 8px; border-radius: 999px; background: #eef4fb; color: #526173; font-size: 10px; text-align: center; }
-.timeline li.step-prepare .badge { background: #e8f2fc; color: #1976d2; }
+.badge { display: inline-block; min-width: 44px; padding: 3px 8px; border-radius: 999px; background: var(--bg-muted); color: var(--text-2); font-size: 10px; text-align: center; }
+.timeline li.step-prepare .badge { background: #e8f2fc; color: var(--color-primary); }
 .timeline li.step-blocked .badge { background: #fdf3e0; color: #b97a19; }
 .timeline li.step-execute .badge { background: #e6f6ec; color: #1d7a4d; }
 .timeline .body { display: grid; flex: 1; gap: 4px; }
 .timeline header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .timeline header strong { color: #17364f; font-size: 13px; }
 .timeline time { color: #9db1c4; font-size: 10px; }
-.timeline .line { margin: 0; color: #526173; font-size: 11px; line-height: 17px; word-break: break-all; }
+.timeline .line { margin: 0; color: var(--text-2); font-size: 11px; line-height: 17px; word-break: break-all; }
 .timeline .line.warning { color: #b97a19; }
 .timeline .line.audit { color: #7d93a9; }
 .timeline em { font-style: normal; font-weight: 700; }
 .timeline em.ok { color: #1d7a4d; }
-.timeline em.fail { color: #c0392b; }
+.timeline em.fail { color: var(--color-danger); }
 .center-footer { padding: 0 4px 2px; }
 .center-footer p { margin: 0; color: #9db1c4; font-size: 10px; line-height: 16px; }
 </style>

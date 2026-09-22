@@ -266,13 +266,13 @@ defineExpose({
   flex-direction: column;
   overflow: hidden;
   position: relative;
-  background: #f5f5f5;
+  background: var(--bg-hover);
   transition: background-color 0.3s;
 }
 
 .chat-area.drag-over {
-  background: #e6f7ff;
-  border: 2px dashed #1890ff;
+  background: var(--color-primary-bg);
+  border: 2px dashed var(--color-primary);
 }
 
 .viz-toggle-btn {
@@ -283,9 +283,9 @@ defineExpose({
   z-index: 1000;
   width: 20px;
   height: 80px;
-  background: #f5f5f5;
-  color: #666;
-  border: 1px solid #d9d9d9;
+  background: var(--bg-hover);
+  color: var(--text-2);
+  border: 1px solid var(--border-3);
   border-radius: 4px 0 0 4px;
   cursor: pointer;
   display: flex;
@@ -338,10 +338,10 @@ defineExpose({
 
 .read-only-notice button {
   padding: 5px 10px;
-  border: 1px solid #1976d2;
+  border: 1px solid var(--color-primary);
   border-radius: 4px;
-  color: #1976d2;
-  background: #fff;
+  color: var(--color-primary);
+  background: var(--bg-container);
   cursor: pointer;
 }
 </style>

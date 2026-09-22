@@ -19,58 +19,6 @@ class RecordingRunner:
         }
 
 
-class UpwindRunner:
-    def __init__(self):
-        self.calls = []
-
-    async def __call__(self, name, **kwargs):
-        self.calls.append((name, kwargs))
-        if name == "analyze_upwind_enterprises":
-            enterprises = [
-                {
-                    "name": f"企业{i}",
-                    "industry": "机动车燃油零售",
-                    "distance_km": i / 10,
-                    "lat": 23.1 + i / 1000,
-                    "lng": 113.2 + i / 1000,
-                    "hit_ratio": 1 - i / 20,
-                    "score_sum": 100 - i,
-                    "emissions": {"VOCs": 10 - i / 10, "NOx": i / 10},
-                }
-                for i in range(1, 13)
-            ]
-            return {
-                "success": True,
-                "summary": "upwind completed",
-                "visuals": [
-                    {
-                        "payload": {
-                            "data": {
-                                "station": {"name": "广雅中学"},
-                                "enterprises": enterprises,
-                                "map_url": "http://example.test/static-link/upwind-map",
-                                "map_local_path": "/tmp/upwind_enterprises_1.png",
-                                "local_path": "/tmp/upwind_enterprises_1.png",
-                            }
-                        }
-                    }
-                ],
-                "map_images": [
-                    {
-                        "station_name": "广雅中学",
-                        "map_url": "http://example.test/static-link/upwind-map",
-                        "local_path": "/tmp/upwind_enterprises_1.png",
-                        "visual_id": "upwind-test",
-                    }
-                ],
-            }
-        return {
-            "success": True,
-            "summary": f"{name} completed",
-            "data": {"name": name},
-        }
-
-
 class SynopticWeatherRunner(RecordingRunner):
     async def __call__(self, name, **kwargs):
         self.calls.append((name, kwargs))
@@ -99,15 +47,6 @@ class SynopticWeatherRunner(RecordingRunner):
                 ],
             }
         return await super().__call__(name, **kwargs)
-
-
-class SavingContext:
-    def __init__(self):
-        self.saved = []
-
-    def save_data(self, data, schema, metadata=None):
-        self.saved.append((data, schema, metadata))
-        return "saved-weather-data"
 
 
 def _station_records():
@@ -174,14 +113,12 @@ async def test_pm_event_uses_pm_branch_and_highest_station(tmp_path):
     assert result["main_pollutant_branch"] == "pm"
     assert result["target_station"]["station_name"] == "高值站"
     assert result["trajectory"]["status"] == "success"
-    assert result["upwind_enterprises"]["status"] == "success"
     output_names = [item["name"] for item in result["component_analysis"]["outputs"]]
     assert "calculate_pm_pmf" in output_names
     assert "calculate_reconstruction" in output_names
     call_names = [name for name, _ in runner.calls]
-    assert call_names[:4] == [
+    assert call_names[:3] == [
         "meteorological_trajectory_analysis",
-        "analyze_upwind_enterprises",
         "calculate_pm_pmf",
         "calculate_reconstruction",
     ]
@@ -272,69 +209,6 @@ async def test_target_station_backfills_latitude_longitude_coordinate_keys(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_upwind_result_exposes_top_ten_enterprises(tmp_path):
-    runner = UpwindRunner()
-    enhancer = PollutionEventEvidenceEnhancer(tool_runner=runner)
-
-    result = await enhancer.enhance(
-        context=object(),
-        city="广州",
-        event={"event_id": "evt_o3", "main_pollutant": "O3_8h"},
-        event_dir=tmp_path,
-        station_records=_station_records_without_coordinates(),
-        weather_records=[{"weather_data_id": "weather-data"}],
-        component_results={"data_refs": {"vocs_components_data_id": "vocs-data"}},
-        fetch_start=datetime(2026, 7, 4, 8),
-        fetch_end=datetime(2026, 7, 4, 12),
-    )
-
-    top_enterprises = result["upwind_enterprises"]["top_enterprises"]
-    assert len(top_enterprises) == 10
-    assert top_enterprises[0] == {
-        "rank": 1,
-        "station_name": "广雅中学",
-        "name": "企业1",
-        "industry": "机动车燃油零售",
-        "distance_km": 0.1,
-        "lat": 23.101,
-        "lng": 113.201,
-        "hit_ratio": 0.95,
-        "score_sum": 99,
-        "emissions": {"VOCs": 9.9, "NOx": 0.1},
-    }
-
-
-@pytest.mark.asyncio
-async def test_upwind_map_images_are_exposed_from_tool_result(tmp_path):
-    runner = UpwindRunner()
-    enhancer = PollutionEventEvidenceEnhancer(tool_runner=runner)
-
-    result = await enhancer.enhance(
-        context=object(),
-        city="广州",
-        event={"event_id": "evt_o3", "main_pollutant": "O3_8h"},
-        event_dir=tmp_path,
-        station_records=_station_records_without_coordinates(),
-        weather_records=[{"weather_data_id": "weather-data"}],
-        component_results={"data_refs": {"vocs_components_data_id": "vocs-data"}},
-        fetch_start=datetime(2026, 7, 4, 8),
-        fetch_end=datetime(2026, 7, 4, 12),
-    )
-
-    map_images = result["upwind_enterprises"]["map_images"]
-    assert map_images == [
-        {
-            "station_name": "广雅中学",
-            "map_url": "http://example.test/static-link/upwind-map",
-            "local_path": "/tmp/upwind_enterprises_1.png",
-            "visual_id": "upwind-test",
-        }
-    ]
-    upwind_call = [kwargs for name, kwargs in runner.calls if name == "analyze_upwind_enterprises"][0]
-    assert upwind_call["output_dir"] == str(tmp_path / "assets" / "images")
-
-
-@pytest.mark.asyncio
 async def test_enhance_collects_synoptic_weather_images(tmp_path):
     runner = SynopticWeatherRunner()
     enhancer = PollutionEventEvidenceEnhancer(tool_runner=runner)
@@ -405,7 +279,6 @@ async def test_missing_station_location_records_warning(tmp_path):
     assert result["trajectory"]["status"] == "skipped"
     codes = [item["code"] for item in result["analysis_errors"]]
     assert "missing_station_location" in codes
-    assert "missing_weather_data_id" in codes
 
 
 @pytest.mark.asyncio
@@ -425,7 +298,6 @@ async def test_tool_failure_isolated_in_result(tmp_path):
     )
 
     assert result["trajectory"]["status"] == "failed"
-    assert result["upwind_enterprises"]["status"] == "failed"
     assert result["component_analysis"]["status"] == "failed"
     assert result["synoptic_weather"]["status"] == "failed"
 
@@ -435,33 +307,8 @@ def test_real_runner_declares_supported_tool_names():
 
     assert set(enhancer.supported_tool_names()) >= {
         "meteorological_trajectory_analysis",
-        "analyze_upwind_enterprises",
         "calculate_pm_pmf",
         "calculate_reconstruction",
         "calculate_vocs_pmf",
         "get_platform_weather_image",
     }
-
-
-@pytest.mark.asyncio
-async def test_upwind_uses_saved_weather_data_when_records_have_no_data_id(tmp_path):
-    runner = RecordingRunner()
-    context = SavingContext()
-    enhancer = PollutionEventEvidenceEnhancer(tool_runner=runner)
-
-    result = await enhancer.enhance(
-        context=context,
-        city="广州",
-        event={"event_id": "evt_pm", "main_pollutant": "PM2_5"},
-        event_dir=tmp_path,
-        station_records=_station_records(),
-        weather_records=[{"time": "2026-07-04 10:00:00", "wind_speed_10m": 1.2, "wind_direction_10m": 90}],
-        component_results={"data_refs": {"pm25_components_data_id": "pm-components"}},
-        fetch_start=datetime(2026, 7, 4, 8),
-        fetch_end=datetime(2026, 7, 4, 12),
-    )
-
-    assert result["upwind_enterprises"]["status"] == "success"
-    assert context.saved[0][1] == "pollution_event_weather"
-    upwind_call = [kwargs for name, kwargs in runner.calls if name == "analyze_upwind_enterprises"][0]
-    assert upwind_call["weather_data_id"] == "saved-weather-data"

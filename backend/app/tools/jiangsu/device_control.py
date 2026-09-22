@@ -24,7 +24,6 @@ from Crypto.Cipher import DES3
 from Crypto.Util.Padding import pad
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.jiangsu import device_control_simulation as simulation
 from app.tools.resource_declarations import resources_for_visuals
 from app.utils.path_config import format_agent_path, resolve_agent_path
 
@@ -66,44 +65,6 @@ _DEVICE_ICONS = {
     "dynamic_calibrator": "dynamic-calibrator",
     "air_conditioner": "air-conditioner",
 }
-
-_AC_MODE_TEXT = {0: "自动", 1: "制冷", 16: "制热", 31: "除湿", 46: "送风", 63: "关机"}
-
-
-def _build_sim_rtype_map() -> dict[str, tuple[str, str]]:
-    """Map legacy rType codes to the simulated state change they represent."""
-    mapping: dict[str, tuple[str, str]] = {}
-    for _name, on_code, off_code in _VALVE_CODES.values():
-        mapping[on_code] = (_name, "开启")
-        mapping[off_code] = (_name, "关闭")
-    for _name, on_code, off_code, display in _POWER_CODES.values():
-        mapping[on_code] = (display, "开启")
-        mapping[off_code] = (display, "关闭")
-    return mapping
-
-
-_SIM_RTYPE_STATE = _build_sim_rtype_map()
-
-
-def _simulation_changes(payload: dict[str, Any]) -> dict[str, str]:
-    """Translate one CtlDevState payload into the simulated state it changes."""
-    r_type = str(payload.get("rType") or "")
-    if r_type in _SIM_RTYPE_STATE:
-        key, value = _SIM_RTYPE_STATE[r_type]
-        return {key: value}
-    if str(payload.get("devName") or "") == "空调控制":
-        try:
-            mode = _AC_MODE_TEXT.get(int(payload.get("cmdIndex") or 0), "自动")
-        except (TypeError, ValueError):
-            mode = "自动"
-        if mode == "关机":
-            return {"空调": "关闭"}
-        index = payload.get("selectIndex")
-        if isinstance(index, int) and mode != "自动":
-            return {"空调": f"{mode} {index + 15}℃"}
-        return {"空调": mode}
-    return {}
-
 
 def _normalise_switch_state(value: Any) -> str | None:
     """Normalise the platform's 开启/关闭 style switch values."""
@@ -268,8 +229,7 @@ def _precondition_catalog(states: dict[str, str | None] | None = None) -> list[d
     return rows
 
 
-def _device_control_state_visual(station: dict[str, Any], state_data: Any, queried_at: str,
-                                 *, simulated: bool = False) -> dict[str, Any]:
+def _device_control_state_visual(station: dict[str, Any], state_data: Any, queried_at: str) -> dict[str, Any]:
     station_name = str(station.get("station_name") or station["station_id"])
     states = {
         key: _normalise_switch_state(state_data.get(state_key))
@@ -289,7 +249,6 @@ def _device_control_state_visual(station: dict[str, Any], state_data: Any, queri
                 "snapshot": _flatten_state_entries(state_data),
                 "devices": _precondition_catalog(states),
                 "state_keys": list(_DEVICE_STATE_KEYS.values()),
-                "simulated": simulated,
                 "updated_at": queried_at,
             }
         },
@@ -297,7 +256,6 @@ def _device_control_state_visual(station: dict[str, Any], state_data: Any, queri
             "generator": "jiangsu_get_device_control_state",
             "scenario": "device_control_state",
             "station": station,
-            "simulated": simulated,
         },
     }
 
@@ -427,12 +385,6 @@ async def _post_qc(method: str, payload: dict[str, str | int], *, gateway_data: 
     """
     from app.tools.jiangsu.fault_diagnosis import _JiangsuAuthenticatedApi
 
-    if simulation.simulation_enabled() and method in {"GetQCStateInfo", "CtlDevState"}:
-        station_id = str(payload.get("stationId") or "")
-        if method == "GetQCStateInfo":
-            return simulation.state_envelope(station_id), "simulation"
-        return simulation.command_envelope(station_id, _simulation_changes(payload)), "simulation"
-
     data = gateway_data or _gateway_form_data(payload, user_name="suyuan-agent")
     try:
         result = await _JiangsuAuthenticatedApi(source="air").post(_QC_GATEWAY_PROXY_PATH, {
@@ -476,9 +428,8 @@ class JiangsuDeviceControlStateTool(LLMTool):
             success = _request_succeeded(result)
             state_data = _decode_state_payload(result)
             has_snapshot = bool(state_data)
-            simulated = channel == "simulation"
             queried_at = datetime.now(timezone.utc).isoformat()
-            visual = _device_control_state_visual(station, state_data, queried_at, simulated=simulated) if success else None
+            visual = _device_control_state_visual(station, state_data, queried_at) if success else None
             empty_note = ("服务连通但该站点未返回设备状态数据（上游 QC 快照为空）；"
                           "可结合自动巡检或人工现场核查确认设备实际状态。")
             response: dict[str, Any] = {
@@ -486,14 +437,13 @@ class JiangsuDeviceControlStateTool(LLMTool):
                 "data": {
                     "station": station,
                     "state": state_data,
-                    "simulated": simulated,
                     "ui_command": _workspace_command(
-                        "state", station=station, success=success, simulated=simulated,
+                        "state", station=station, success=success,
                         message=(None if success else str(result.get("ErrorMessage") or result.get("message") or "服务未说明原因")),
                         occurred_at=queried_at,
                     ),
                 },
-                "metadata": {"source": "jiangsu_qc_api", "channel": channel, "station": station, "simulated": simulated,
+                "metadata": {"source": "jiangsu_qc_api", "channel": channel, "station": station,
                              "method": "GetQCStateInfo", "has_snapshot": has_snapshot, "queried_at": queried_at},
                 "summary": (f"{station.get('station_name') or station['station_id']} 设备状态查询完成，已更新右侧设备状态面板。"
                             if success and has_snapshot else
@@ -534,30 +484,26 @@ class JiangsuDeviceControlPrepareTool(LLMTool):
         try:
             station = await _resolve_station(station_id, station_name)
             payload, summary = _build_command(station["station_id"], device, action, temperature_celsius)
-            simulated = simulation.simulation_enabled()
             if _requires_frontend_confirmation(device, action):
                 reason = "开关操作必须经前端人工确认；当前尚未提供确认交互，未生成可执行指令。"
                 return {
                     "status": "frontend_confirmation_required", "success": False,
-                    "data": {"station": station, "station_id": payload["stationId"], "command": summary, "simulated": simulated,
-                             "ui_command": _workspace_command("blocked", station=station, command=summary, reason=reason,
-                                                              simulated=simulated)},
+                    "data": {"station": station, "station_id": payload["stationId"], "command": summary,
+                             "ui_command": _workspace_command("blocked", station=station, command=summary, reason=reason)},
                     "summary": reason,
                 }
             pending = await _DeviceControlClient().prepare(context, payload, summary)
-            note = "（演示模式：指令将在确认后作用于模拟数据）" if simulated else ""
             return {
                 "status": "pending_confirmation", "success": True,
-                "data": {"station": station, "station_id": payload["stationId"], "command": summary, "simulated": simulated,
+                "data": {"station": station, "station_id": payload["stationId"], "command": summary,
                          "expires_at": pending.expires_at.isoformat(),
                          "ui_command": _workspace_command(
                              "prepare", station=station, command=summary,
                              expires_at=pending.expires_at.isoformat(),
                              confirmation_token=pending.token,
-                             simulated=simulated,
                          )},
                 "confirmation_token": pending.token,
-                "summary": f"待确认指令：{summary}{note}。未执行；请在下一轮获得用户明确确认后再执行。",
+                "summary": f"待确认指令：{summary}。未执行；请在下一轮获得用户明确确认后再执行。",
             }
         except ValueError as exc:
             return {"status": "failed", "success": False, "summary": f"生成待确认指令失败：{exc}"}
@@ -587,7 +533,6 @@ class JiangsuDeviceControlExecuteTool(LLMTool):
             client = _DeviceControlClient()
             pending = await client.consume(context, str(confirmation_token or ""))
             result, channel = await _post_qc("CtlDevState", pending.payload)
-            simulated = channel == "simulation"
             accepted = bool(result.get("Result", result.get("success", False)))
             state_result: dict[str, Any] | None = None
             if accepted:
@@ -603,7 +548,7 @@ class JiangsuDeviceControlExecuteTool(LLMTool):
                     state_result = {"recheck_error": str(exc)}
             audit_path = client.audit({
                 "occurred_at": datetime.now(timezone.utc).isoformat(), "session_id": getattr(context, "session_id", None),
-                "command": pending.summary, "payload": pending.payload, "accepted": accepted, "simulated": simulated,
+                "command": pending.summary, "payload": pending.payload, "accepted": accepted,
                 "service_response": result, "recheck_response": state_result,
             })
             readback_error = isinstance(state_result, dict) and state_result.get("recheck_error")
@@ -611,10 +556,10 @@ class JiangsuDeviceControlExecuteTool(LLMTool):
                 "status": "success" if accepted else "failed", "success": accepted,
                 "data": {
                     "station_id": pending.payload["stationId"], "command": pending.summary,
-                    "service_response": result, "recheck": state_result, "simulated": simulated,
+                    "service_response": result, "recheck": state_result,
                     "ui_command": _workspace_command(
                         "execute", station={"station_id": pending.payload["stationId"]},
-                        command=pending.summary, accepted=accepted, simulated=simulated,
+                        command=pending.summary, accepted=accepted,
                         message=(None if accepted else str(result.get("ErrorMessage") or result.get("message") or "服务未说明原因")),
                         readback_available=bool(accepted and state_result and not readback_error),
                         audit_log=audit_path,
@@ -622,7 +567,7 @@ class JiangsuDeviceControlExecuteTool(LLMTool):
                     ),
                 },
                 "metadata": {"audit_log": audit_path, "station_id": pending.payload["stationId"],
-                             "channel": channel, "simulated": simulated},
+                             "channel": channel},
                 "summary": (f"设备反控已由平台受理：{pending.summary}。已完成状态复查。" if accepted
                             else f"设备反控未被平台受理：{result.get('ErrorMessage') or result.get('message') or '服务未说明原因'}"),
             }
@@ -675,10 +620,6 @@ def _requires_frontend_confirmation(device: str | None, action: str | None) -> b
 
     This preserves the requested initial integration scope: state reads and
     air-conditioner temperature-setting can be tested, but no equipment switch
-    state can be changed from Agent chat alone.  The simulated demo mode
-    (JIANGSU_DEVICE_CONTROL_SIMULATION) relaxes this so the full 质控 process can
-    be demonstrated against the simulated backend.
+    state can be changed from Agent chat alone.
     """
-    if simulation.simulation_enabled():
-        return False
     return device in {*_VALVE_CODES, *_POWER_CODES} or action in {"on", "off"}

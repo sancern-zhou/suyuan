@@ -28,7 +28,7 @@ def test_default_project_loads_legacy_module():
         "ops",
     ]
     assert context.manifest.frontend.agent_platform_layout == "scenes"
-    assert context.manifest.backend.tools == []
+    assert context.manifest.backend.tools  # project-scoped tools declared explicitly
     assert context.manifest.backend.fetchers_enabled is True
     assert context.manifest.backend.mode_prompt_files == {}
     assert context.manifest.knowledge.collections == []
@@ -78,7 +78,7 @@ def test_jiangsu_project_owns_station_fault_automation_surfaces():
 
     assert context.manifest.frontend.agent_platform_layout == "coordinator"
     assert context.manifest.frontend.coordinator is not None
-    assert context.manifest.frontend.coordinator.name == "苏小环"
+    assert context.manifest.frontend.coordinator.name == "苏环智管"
     assert context.manifest.frontend.coordinator.default_mode == "ops"
     assert context.manifest.frontend.coordinator.attention_task_ids == [
         "jiangsu_station_fault_diagnosis",
@@ -102,8 +102,8 @@ def test_jiangsu_project_owns_station_fault_automation_surfaces():
     assert {"read_file", "edit_file", "write_file"} <= set(
         context.manifest.backend.agent_mode_tools["operations_analysis"]
     )
+    # ops（工单审核模式）2026-09 瘦身后不再暴露图谱工具；其余运维模式保持不变。
     for mode in (
-        "ops",
         "smart_inspection",
         "operations_analysis",
         "device_control",
@@ -113,11 +113,11 @@ def test_jiangsu_project_owns_station_fault_automation_surfaces():
         assert "knowledge_graph_query" in context.manifest.backend.agent_mode_tools[mode]
     assert "jiangsu_query_operations_graph" in context.manifest.backend.tools
     assert "submit_task_review" in context.manifest.backend.tools
+    # 站房告警/动环历史/质控清单证据已并入 jiangsu_fetch_review_evidence 的 modules；
+    # 质控任务明细面板仍由 jiangsu_fetch_qc_task_status 提供下钻。
     assert {
-        "jiangsu_fetch_qc_task_history",
+        "jiangsu_fetch_review_evidence",
         "jiangsu_fetch_qc_task_status",
-        "jiangsu_fetch_qc_run_logs",
-        "jiangsu_fetch_qc_monitoring_curve",
         "submit_task_review",
     } <= set(context.manifest.backend.agent_mode_tools["ops"])
     assert context.manifest.scheduled_tasks_enabled is True

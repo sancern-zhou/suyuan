@@ -46,7 +46,7 @@ from app.conversations import ConversationSource
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.service import ConversationCatalogService
 from app.core.sse import create_sse_response
-from app.db.database import async_session
+from app.db.session_database import session_async_session as async_session
 from app.services.llm_service import llm_service
 from app.tools import global_tool_registry
 
@@ -664,9 +664,6 @@ async def analyze_stream(
       - get_fire_hotspots - 火点数据查询
       - get_dust_data - 扬尘数据查询
       - get_component_data - 组分数据查询（广东省超级站）
-
-    - Analysis Tools (1个):
-      - analyze_upwind_enterprises - 上风向企业分析（广东省）
 
     - Visualization Tools:
       - execute_echarts_python - 交互式 ECharts 图表生成

@@ -42,10 +42,10 @@ async function discover() {
 </script>
 
 <style scoped>
-.scene-card { padding: 18px; border: 1px solid #dce3ea; border-radius: 8px; background: #fff; display: grid; gap: 14px; }
+.scene-card { padding: 18px; border: 1px solid #dce3ea; border-radius: 8px; background: var(--bg-container); display: grid; gap: 14px; }
 label { display: grid; gap: 6px; font-weight: 600; }
 textarea { padding: 10px; border: 1px solid #cfd8e3; border-radius: 6px; resize: vertical; font: inherit; }
 .warning { color: #b54708; }
-button { width: fit-content; padding: 9px 16px; border: 0; border-radius: 6px; background: #2563eb; color: white; cursor: pointer; }
+button { width: fit-content; padding: 9px 16px; border: 0; border-radius: 6px; background: var(--color-primary); color: white; cursor: pointer; }
 button:disabled { opacity: .5; cursor: not-allowed; }
 </style>

@@ -44,6 +44,7 @@ import * as echarts from 'echarts'
 import 'echarts-gl'  // 引入echarts-gl扩展库以支持3D图表
 import { cloneEChartsOption, sanitizeCompleteRadarOption } from '../../utils/echartsOptionSanitizer'
 import { applyPreferredChartFont } from '../../services/chartTypography'
+import { CHART_PRIMARY, CHART_TEXT_1, CHART_TEXT_2, CHART_COLORS, CHART_PRIMARY_FILL } from '../../services/chart/chartColors'
 
 const props = defineProps({
   data: {
@@ -820,9 +821,9 @@ const buildBarOption = (chartData, title, meta) => {
       type: 'bar',
       data: s.data,
       itemStyle: {
-        color: ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272'][index % 6]
+        color: CHART_COLORS[index % CHART_COLORS.length]
       },
-      emphasis: { itemStyle: { color: '#91cc75' } }
+      emphasis: { itemStyle: { color: CHART_COLORS[1] } }
     }))
   } else if (yData && yData.length > 0) {
     // 单序列格式：y: [...]
@@ -831,8 +832,8 @@ const buildBarOption = (chartData, title, meta) => {
       name: title || '数据',
       type: 'bar',
       data: yData,
-      itemStyle: { color: '#5470c6' },
-      emphasis: { itemStyle: { color: '#91cc75' } }
+      itemStyle: { color: CHART_COLORS[0] },
+      emphasis: { itemStyle: { color: CHART_COLORS[1] } }
     }]
   }
 
@@ -1009,7 +1010,7 @@ const buildLineOption = (chartData, title, meta) => {
       showSymbol: false,
       emphasis: { focus: 'series' },
       itemStyle: {
-        color: ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272'][index % 6]
+        color: CHART_COLORS[index % CHART_COLORS.length]
       },
       lineStyle: { width: 1 }
     }))
@@ -1023,7 +1024,7 @@ const buildLineOption = (chartData, title, meta) => {
       smooth: true,
       showSymbol: false,
       emphasis: { focus: 'series' },
-      itemStyle: { color: '#5470c6' },
+      itemStyle: { color: CHART_COLORS[0] },
       lineStyle: { width: 1 }
     }]
   }
@@ -1060,8 +1061,8 @@ const buildLineOption = (chartData, title, meta) => {
       height: 24,
       bottom: 5,
       borderColor: '#ddd',
-      fillerColor: 'rgba(25, 118, 210, 0.15)',
-      handleStyle: { color: '#1976d2' },
+      fillerColor: CHART_PRIMARY_FILL,
+      handleStyle: { color: CHART_PRIMARY },
       textStyle: { fontSize: 10 },
       brushSelect: false
     },
@@ -1145,7 +1146,7 @@ const buildRadarOption = (chartData, title, meta) => {
     seriesData = [{
       value: values,
       name: title || '控制效果',
-      itemStyle: { color: '#5470c6' }
+      itemStyle: { color: CHART_COLORS[0] }
     }]
   }
 
@@ -1438,7 +1439,7 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
   const otherSeries = series.filter(s => s.type !== 'wind')
   
   // 颜色方案
-  const colors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272']
+  const colors = CHART_COLORS.slice(0, 6)
   
   // 构建ECharts系列
   const chartSeries = []
@@ -1457,7 +1458,7 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
       showSymbol: true,
       symbol: 'circle',
       symbolSize: 6,
-      itemStyle: { color: '#5470c6' },
+      itemStyle: { color: CHART_COLORS[0] },
       lineStyle: { width: 1 },
       emphasis: { focus: 'series' }
     })
@@ -1477,7 +1478,7 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
           symbolSize: [8, 14],
           symbolRotate: arrowAngle - 90,  // ECharts箭头默认朝右，需要调整
           itemStyle: { 
-            color: '#1976d2',
+            color: CHART_PRIMARY,
             borderColor: '#fff',
             borderWidth: 1
           },
@@ -1504,7 +1505,7 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
       symbol: 'arrow',
       symbolSize: [8, 14],
       itemStyle: { 
-        color: '#1976d2',
+        color: CHART_PRIMARY,
         borderColor: '#fff',
         borderWidth: 1
       },
@@ -1525,10 +1526,10 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
   
   // 颜色映射
   const colorMap = {
-    '温度': '#ee6666',
-    '降水': '#73c0de',
-    '湿度': '#91cc75',
-    '云量': '#fac858'
+    '温度': CHART_COLORS[3],
+    '降水': CHART_PRIMARY,
+    '湿度': CHART_COLORS[1],
+    '云量': CHART_COLORS[2]
   }
   
   // 其他气象要素系列
@@ -1559,7 +1560,7 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
       type: 'value',
       name: '风速/温度/降水',
       position: 'left',
-      axisLine: { show: true, lineStyle: { color: '#5470c6' } },
+      axisLine: { show: true, lineStyle: { color: CHART_PRIMARY } },
       axisLabel: { formatter: '{value}' },
       splitLine: { show: true, lineStyle: { type: 'dashed' } }
     },
@@ -1569,7 +1570,7 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
       position: 'right',
       min: 0,
       max: 100,
-      axisLine: { show: true, lineStyle: { color: '#91cc75' } },
+      axisLine: { show: true, lineStyle: { color: CHART_COLORS[1] } },
       axisLabel: { formatter: '{value}%' },
       splitLine: { show: false }
     }
@@ -1589,8 +1590,8 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
       height: 24,
       bottom: 5,
       borderColor: '#ddd',
-      fillerColor: 'rgba(25, 118, 210, 0.15)',
-      handleStyle: { color: '#1976d2' },
+      fillerColor: CHART_PRIMARY_FILL,
+      handleStyle: { color: CHART_PRIMARY },
       textStyle: { fontSize: 10 },
       brushSelect: false
     },
@@ -1615,7 +1616,7 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
       left: 'center',
       top: 5,
       textStyle: { fontSize: 16, fontWeight: 'bold' },
-      subtextStyle: { fontSize: 12, color: '#666' }
+      subtextStyle: { fontSize: 12, color: CHART_TEXT_2 }
     },
     tooltip: {
       trigger: 'axis',
@@ -1634,7 +1635,7 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
           if (wd !== undefined) {
             const dirNames = ['北风', '东北风', '东风', '东南风', '南风', '西南风', '西风', '西北风']
             const dirIdx = Math.round(wd / 45) % 8
-            result += `<span style="color:#1976d2">▲</span> 风向: ${dirNames[dirIdx]} (${wd}°)<br/>`
+            result += `<span style="color:var(--color-primary)">▲</span> 风向: ${dirNames[dirIdx]} (${wd}°)<br/>`
           }
         }
         return result
@@ -1680,8 +1681,8 @@ const buildPressurePblOption = (chartData, title, meta) => {
   const series = chartData.series || []
 
   // 颜色配置
-  const pressureColor = '#5470c6'  // 蓝色 - 气压
-  const pblColor = '#ee6666'       // 红色 - 边界层高度
+  const pressureColor = CHART_PRIMARY // 蓝色 - 气压
+  const pblColor = CHART_COLORS[3] // 红色 - 边界层高度
 
   // 提取气压数据，计算合适的Y轴范围
   const pressureSeries = series.find(s => s.name === '气压')
@@ -1751,8 +1752,8 @@ const buildPressurePblOption = (chartData, title, meta) => {
       height: 24,
       bottom: 5,
       borderColor: '#ddd',
-      fillerColor: 'rgba(25, 118, 210, 0.15)',
-      handleStyle: { color: '#1976d2' },
+      fillerColor: CHART_PRIMARY_FILL,
+      handleStyle: { color: CHART_PRIMARY },
       textStyle: { fontSize: 10 },
       brushSelect: false
     },
@@ -1840,7 +1841,7 @@ const buildStackedTimeseriesOption = (chartData, title, meta) => {
       smooth: s.smooth !== false,
       showSymbol: false,
       itemStyle: s.itemStyle || {
-        color: ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#ff9f7f', '#3ba272'][index % 8]
+        color: CHART_COLORS[index % CHART_COLORS.length]
       },
       lineStyle: { width: 1 },
       emphasis: { focus: 'series' },
@@ -1871,8 +1872,8 @@ const buildStackedTimeseriesOption = (chartData, title, meta) => {
       type: 'value',
       name: '离子浓度 (μg/m³)',
       position: 'left',
-      axisLine: { show: true, lineStyle: { color: '#5470c6' } },
-      axisLabel: { formatter: '{value}', color: '#5470c6' },
+      axisLine: { show: true, lineStyle: { color: CHART_PRIMARY } },
+      axisLabel: { formatter: '{value}', color: CHART_PRIMARY },
       splitLine: { show: true, lineStyle: { type: 'dashed' } }
     },
     {
@@ -1897,8 +1898,8 @@ const buildStackedTimeseriesOption = (chartData, title, meta) => {
       height: 24,
       bottom: 5,
       borderColor: '#ddd',
-      fillerColor: 'rgba(25, 118, 210, 0.15)',
-      handleStyle: { color: '#1976d2' },
+      fillerColor: CHART_PRIMARY_FILL,
+      handleStyle: { color: CHART_PRIMARY },
       textStyle: { fontSize: 10 },
       brushSelect: false
     },
@@ -2023,7 +2024,7 @@ const buildScatter3dOption = (chartData, title, meta) => {
       data: points,
       emphasis: {
         itemStyle: {
-          color: '#ee6666'
+          color: CHART_COLORS[3]
         }
       }
     }]
@@ -2141,12 +2142,12 @@ const buildLine3dOption = (chartData, title, meta) => {
       type: 'line3D',
       data: trajectory,
       lineStyle: {
-        color: '#5470c6',
+        color: CHART_PRIMARY,
         width: 3
       },
       emphasis: {
         lineStyle: {
-          color: '#ee6666',
+          color: CHART_COLORS[3],
           width: 5
         }
       }
@@ -2208,7 +2209,7 @@ const buildBar3dOption = (chartData, title, meta) => {
       data: bars.map(bar => [bar.x, bar.y, bar.z]),
       emphasis: {
         itemStyle: {
-          color: '#ee6666'
+          color: CHART_COLORS[3]
         }
       }
     }]
@@ -2279,7 +2280,7 @@ const buildVolume3dOption = (chartData, title, meta) => {
       symbolSize: 2,
       emphasis: {
         itemStyle: {
-          color: '#ee6666'
+          color: CHART_COLORS[3]
         }
       }
     }]
@@ -2332,7 +2333,7 @@ const buildProfileOption = (chartData, title, meta) => {
       symbol: 'circle',
       symbolSize: 6,
       itemStyle: {
-        color: ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272'][index % 6]
+        color: CHART_COLORS[index % CHART_COLORS.length]
       },
       emphasis: {
         focus: 'series'
@@ -2354,8 +2355,7 @@ const buildFacetTimeseriesOption = (chartData, title, meta) => {
 
   // 站点颜色映射
   const stationColors = [
-    '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de',
-    '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc', '#ff9f7f'
+    ...CHART_COLORS
   ]
 
   // 构建 ECharts grid 配置（垂直分面：每个 facet 一个子图上下排列）
@@ -2392,7 +2392,7 @@ const buildFacetTimeseriesOption = (chartData, title, meta) => {
         bottom: `${bottomPercent}%`,
         show: true,
         borderWidth: 1,
-        borderColor: '#eee'
+        borderColor: '#e8e8e8'
       })
 
       // 每个 facet 的 x 轴 - 添加 id 以便 series 正确绑定
@@ -2445,7 +2445,7 @@ const buildFacetTimeseriesOption = (chartData, title, meta) => {
         textStyle: {
           fontSize: 12,
           fontWeight: 'bold',
-          color: '#333'
+          color: CHART_TEXT_1
         }
       })
     })
@@ -2469,8 +2469,8 @@ const buildFacetTimeseriesOption = (chartData, title, meta) => {
       height: 24,
       bottom: 5,
       borderColor: '#ddd',
-      fillerColor: 'rgba(25, 118, 210, 0.15)',
-      handleStyle: { color: '#1976d2' },
+      fillerColor: CHART_PRIMARY_FILL,
+      handleStyle: { color: CHART_PRIMARY },
       textStyle: { fontSize: 10 },
       brushSelect: false
     },
@@ -3060,13 +3060,13 @@ defineExpose({
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #999;
+  color: var(--text-3);
   font-size: 14px;
   gap: 8px;
 
   .debug-info {
     font-size: 11px;
-    color: #ccc;
+    color: var(--border-3);
     font-family: monospace;
     max-width: 90%;
     word-break: break-all;
@@ -3088,7 +3088,7 @@ defineExpose({
   position: fixed;
   z-index: 100000;  // 非常高的 z-index，确保在浏览器原生菜单之上
   min-width: 160px;
-  background: #fff;
+  background: var(--bg-container);
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.1);
   padding: 6px 0;
@@ -3101,25 +3101,25 @@ defineExpose({
     padding: 10px 16px;
     cursor: pointer;
     font-size: 14px;
-    color: #333;
+    color: var(--text-1);
     transition: all 0.15s;
 
     svg {
       flex-shrink: 0;
-      color: #666;
+      color: var(--text-2);
     }
 
     &:hover {
-      background: #f5f5f5;
-      color: #1976d2;
+      background: var(--bg-hover);
+      color: var(--color-primary);
 
       svg {
-        color: #1976d2;
+        color: var(--color-primary);
       }
     }
 
     &:active {
-      background: #e8e8e8;
+      background: var(--border-2);
     }
   }
 }

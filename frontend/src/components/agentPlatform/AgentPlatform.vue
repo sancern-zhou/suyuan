@@ -248,7 +248,7 @@ const formatTaskSchedule = (task) => {
   --ink: #0a2531;
   --muted: #5b7684;
   --faint: #8aa3ae;
-  --surface: #ffffff;
+  --surface: var(--bg-container);
   --line: #d9e6ea;
   --lake-900: #07293b;
   --lake-700: #0d4c6b;
@@ -339,14 +339,14 @@ const formatTaskSchedule = (task) => {
   &:disabled { cursor: wait; opacity: 0.78; }
 }
 .agent-card-top, .task-card-top { display: flex; align-items: flex-start; gap: 11px; }
-.agent-icon, .task-icon { display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border-radius: 11px; background: var(--agent-accent, var(--lake-600)); color: #fff; box-shadow: 0 4px 12px rgba(10, 42, 58, 0.2); }
+.agent-icon, .task-icon { display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border-radius: 11px; background: var(--agent-accent, var(--lake-600)); color: var(--bg-container); box-shadow: 0 4px 12px rgba(10, 42, 58, 0.2); }
 .agent-icon svg, .task-icon svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .agent-title-wrap, .task-title-wrap { display: flex; min-width: 0; flex: 1; flex-direction: column; align-items: flex-start; gap: 5px; }
 .agent-title-wrap strong, .task-title-wrap strong { color: var(--ink); font-size: 15px; line-height: 1.3; }
 .running-badge, .task-status { display: inline-flex; align-items: center; gap: 6px; color: #238b60; font-size: 10px; font-weight: 700; }
 .card-description { display: block; margin-top: 11px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .agent-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.agent-tags > span { padding: 2px 7px; border: 1px solid color-mix(in srgb, var(--agent-accent) 22%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--agent-accent) 8%, #fff); color: color-mix(in srgb, var(--agent-accent) 72%, var(--ink)); font-size: 10px; }
+.agent-tags > span { padding: 2px 7px; border: 1px solid color-mix(in srgb, var(--agent-accent) 22%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--agent-accent) 8%, var(--bg-container)); color: color-mix(in srgb, var(--agent-accent) 72%, var(--ink)); font-size: 10px; }
 .card-action { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 12px; color: var(--agent-accent, var(--teal-600)); font-size: 11px; font-weight: 700; }
 .card-action svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.2s ease; }
 .agent-card:hover .card-action svg, .scheduled-task-card:hover .card-action svg { transform: translateX(3px); }
@@ -358,16 +358,16 @@ const formatTaskSchedule = (task) => {
   border-color: rgba(63, 200, 212, 0.28);
   background: linear-gradient(120deg, var(--lake-900) 0%, #0a3a52 52%, var(--lake-700) 100%);
   box-shadow: 0 14px 32px rgba(7, 41, 59, 0.2);
-  color: #fff;
+  color: var(--bg-container);
 
   &:hover { border-color: rgba(63, 200, 212, 0.62); box-shadow: 0 18px 38px rgba(7, 41, 59, 0.28); }
   .card-description { position: relative; z-index: 1; max-width: 90%; color: rgba(220, 239, 244, 0.78); font-size: 12px; }
 }
 .task-ambient { position: absolute; width: 260px; height: 260px; top: -145px; right: -100px; border-radius: 50%; background: radial-gradient(circle, rgba(63, 200, 212, 0.3), transparent 70%); pointer-events: none; }
-.task-badge { position: absolute; z-index: 2; top: 0; right: 0; padding: 5px 13px 6px 15px; border-radius: 0 14px 0 13px; background: linear-gradient(120deg, #f2a93b, #de9220); color: #fff; font-size: 9px; font-weight: 800; letter-spacing: 0.12em; }
+.task-badge { position: absolute; z-index: 2; top: 0; right: 0; padding: 5px 13px 6px 15px; border-radius: 0 14px 0 13px; background: linear-gradient(120deg, #f2a93b, #de9220); color: var(--bg-container); font-size: 9px; font-weight: 800; letter-spacing: 0.12em; }
 .task-card-top { position: relative; z-index: 1; padding-right: 64px; }
 .task-icon { border: 1px solid rgba(255, 255, 255, 0.24); background: rgba(255, 255, 255, 0.12); box-shadow: none; color: var(--cyan-400); }
-.task-title-wrap strong { color: #fff; font-size: 16px; }
+.task-title-wrap strong { color: var(--bg-container); font-size: 16px; }
 .task-title-wrap small { overflow: hidden; max-width: 100%; color: rgba(203, 226, 233, 0.56); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .task-status { margin-left: auto; color: #65ddb4; white-space: nowrap; }
 .task-status.paused { color: #f3bf69; }

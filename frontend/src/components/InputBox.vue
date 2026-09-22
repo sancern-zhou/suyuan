@@ -374,12 +374,25 @@ const quickPrompts = computed(() => {
   if (props.agentMode === 'smart_event_instrument') {
     return ['今日故障识别结果', '故障原因研判', '历史故障查询', '故障响应跟踪']
   }
+  if (props.agentMode === 'ops') {
+    return [
+      '查询本周的故障工单审核情况',
+      '对今天的待审核故障工单进行审核',
+      '对上周的例行工单进行审核'
+    ]
+  }
+  if (props.agentMode === 'smart_inspection') {
+    return ['执行全网巡检', '对高淳淳溪站点巡检']
+  }
+  if (props.agentMode === 'operations_analysis') {
+    return ['运维风险监管分析', '日常运维监管分析']
+  }
   if (props.agentMode === 'jiangsu_query') {
     return [
       '南京有哪些省控站点',
-      '查询高淳淳溪站点的最近的5分钟数据',
-      '绘制今天5分钟数据的时序图',
-      '昨天区县的PM2.5排名'
+      '站点的运维单位和运维负责人',
+      '苏力有运维哪些站点',
+      '苏力的运维人员信息'
     ]
   }
   return []
@@ -405,7 +418,7 @@ const isComposing = ref(false)
 const useReranker = ref(props.useReranker)  // 精准检索开关状态
 const validAgentModes = [...new Set([...AGENT_MODE_IDS, ...projectConfig.agentModeIds, 'graph'])]
 const validModelTiers = ['auto', 'flash', 'pro']
-const legacyModelTier = localStorage.getItem('llm-model-tier') || 'auto'
+const legacyModelTier = localStorage.getItem('llm-model-tier') || 'flash'
 const draftModelTierKey = 'llm-model-tier:draft'
 
 const getSessionModelTierKey = (sessionId) => `llm-model-tier:${sessionId}`
@@ -426,7 +439,7 @@ const readStoredModelTier = (sessionId) => {
     return legacyModelTier
   }
 
-  return 'auto'
+  return 'flash'
 }
 
 const modelTier = ref(readStoredModelTier(props.sessionId))
@@ -1303,8 +1316,8 @@ defineExpose({
 <style lang="scss" scoped>
 .input-area {
   padding: 16px 20px;
-  background: #fff;
-  border-top: 1px solid #f0f0f0;
+  background: var(--bg-container);
+  border-top: 1px solid var(--border-1);
   flex-shrink: 0;
 }
 
@@ -1386,27 +1399,27 @@ defineExpose({
 .composer-chip.invalid {
   border-color: #ef9a9a;
   background: #fff4f4;
-  color: #b42318;
+  color: var(--color-danger);
 }
 
 .input-wrapper {
   display: flex;
   flex-direction: column;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
   border-radius: 8px;
-  background: #fff;
+  background: var(--bg-container);
   transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
   position: relative;
 
   &:focus-within {
-    border-color: #1976D2;
-    box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--color-primary-ring);
   }
 
   &.drag-over {
-    border-color: #1976D2;
-    background: #e3f2fd;
-    box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.15);
+    border-color: var(--color-primary);
+    background: var(--color-primary-bg);
+    box-shadow: 0 0 0 3px var(--color-primary-ring);
   }
 }
 
@@ -1419,8 +1432,8 @@ defineExpose({
   flex-direction: column;
   gap: 4px;
   padding: 8px;
-  background: #fff;
-  border: 1px solid #e0e0e0;
+  background: var(--bg-container);
+  border: 1px solid var(--border-2);
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   z-index: 10;
@@ -1438,12 +1451,12 @@ defineExpose({
 
 .palette-empty {
   padding: 10px 12px;
-  color: #667085;
+  color: var(--text-2);
   font-size: 13px;
 }
 
 .palette-empty.error {
-  color: #b42318;
+  color: var(--color-danger);
 }
 
 .workflow-tool-item {
@@ -1466,13 +1479,13 @@ defineExpose({
   }
 
   &:hover {
-    background: #f5f5f5;
-    color: #1976D2;
+    background: var(--bg-hover);
+    color: var(--color-primary);
   }
 
   &.active {
-    background: #e3f2fd;
-    color: #1976D2;
+    background: var(--color-primary-bg);
+    color: var(--color-primary);
     font-weight: 500;
   }
 
@@ -1501,9 +1514,9 @@ defineExpose({
   }
 
   &:disabled {
-    background: #f5f5f5;
+    background: var(--bg-hover);
     cursor: not-allowed;
-    color: #999;
+    color: var(--text-3);
   }
 }
 
@@ -1526,7 +1539,7 @@ defineExpose({
     width: 5px;
     height: 5px;
     border-radius: 50%;
-    background: #64748b;
+    background: var(--text-2);
     opacity: 0.42;
     animation: pending-steering-pulse 1.2s ease-in-out infinite;
 
@@ -1546,7 +1559,7 @@ defineExpose({
   gap: 6px;
   min-width: 0;
   max-width: 100%;
-  color: #475569;
+  color: var(--text-2);
   font-size: 13px;
   line-height: 18px;
 }
@@ -1560,7 +1573,7 @@ defineExpose({
 
 .pending-steering-count {
   flex: 0 0 auto;
-  color: #64748b;
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -1598,10 +1611,10 @@ defineExpose({
 .model-tier-select {
   height: 30px;
   padding: 0 24px 0 10px;
-  border: 1px solid #d8deea;
+  border: 1px solid var(--border-2);
   border-radius: 999px;
-  color: #526173;
-  background: #fff;
+  color: var(--text-2);
+  background: var(--bg-container);
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
@@ -1619,13 +1632,13 @@ defineExpose({
 
   &:hover:not(:disabled),
   &:focus:not(:disabled) {
-    color: #1976D2;
-    border-color: #90CAF9;
-    background-color: #f8fbff;
+    color: var(--color-primary);
+    border-color: var(--color-primary-hover);
+    background-color: var(--color-primary-bg);
   }
 
   &:disabled {
-    color: #9aa5b8;
+    color: var(--text-disabled);
     background: #f5f7fb;
     cursor: not-allowed;
   }
@@ -1655,11 +1668,11 @@ defineExpose({
 
 .model-tier-tooltip .tooltip-text {
   font-size: 11px;
-  color: #526173;
-  background: #fff;
+  color: var(--text-2);
+  background: var(--bg-container);
   padding: 4px 8px;
   border-radius: 4px;
-  border: 1px solid #d8deea;
+  border: 1px solid var(--border-2);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
@@ -1677,8 +1690,8 @@ defineExpose({
   transition: background 0.2s;
 
   &:hover {
-    background: #f5f5f5;
-    color: #1976D2;
+    background: var(--bg-hover);
+    color: var(--color-primary);
   }
 }
 
@@ -1711,13 +1724,13 @@ defineExpose({
 }
 
 .kb-toggle-button:hover {
-  background: #f5f5f5;
-  color: #1976D2;
+  background: var(--bg-hover);
+  color: var(--color-primary);
 }
 
 .kb-toggle-button.kb-active {
-  background: #e3f2fd;
-  color: #1976D2;
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
 }
 
 .kb-icon {
@@ -1754,16 +1767,16 @@ defineExpose({
   justify-content: center;
   width: 32px;
   height: 32px;
-  border: 1px solid #d8deea;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
-  background: #fff;
-  color: #526173;
+  background: var(--bg-container);
+  color: var(--text-2);
   cursor: pointer;
   transition: all 0.2s;
 
   &:hover:not(:disabled) {
-    border-color: #1976D2;
-    color: #1976D2;
+    border-color: var(--color-primary);
+    color: var(--color-primary);
     background: #f4f9ff;
   }
 
@@ -1779,14 +1792,14 @@ defineExpose({
   }
 
   &.processing {
-    color: #1976D2;
+    color: var(--color-primary);
     background: #eef6ff;
   }
 
   &.active {
-    border-color: #1976D2;
-    color: #1976D2;
-    background: #e3f2fd;
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    background: var(--color-primary-bg);
   }
 }
 
@@ -1806,32 +1819,32 @@ defineExpose({
 }
 
 .send-button {
-  background: #1976D2;
+  background: var(--color-primary);
   color: white;
 
   &:hover:not(:disabled) {
-    background: #1565C0;
+    background: var(--color-primary-active);
   }
 
   &:disabled {
-    background: #e0e0e0;
-    color: #999;
+    background: var(--border-2);
+    color: var(--text-3);
   }
 }
 
 .steer-button {
   width: auto;
   padding: 0 12px;
-  background: #1976D2;
+  background: var(--color-primary);
   color: white;
 
   &:hover:not(:disabled) {
-    background: #1565C0;
+    background: var(--color-primary-active);
   }
 
   &:disabled {
-    background: #e0e0e0;
-    color: #999;
+    background: var(--border-2);
+    color: var(--text-3);
   }
 }
 
@@ -1846,8 +1859,8 @@ defineExpose({
   }
 
   &:disabled {
-    background: #e0e0e0;
-    color: #999;
+    background: var(--border-2);
+    color: var(--text-3);
   }
 }
 
@@ -1888,8 +1901,8 @@ defineExpose({
   min-width: 0;
   min-height: 32px;
   padding: 3px 6px;
-  background: #fff;
-  border: 1px solid #d8deea;
+  background: var(--bg-container);
+  border: 1px solid var(--border-2);
   border-radius: 999px;
   position: relative;
   color: #5f6f89;
@@ -1903,7 +1916,7 @@ defineExpose({
 
 .board-sync-message {
   padding: 2px 14px 0;
-  color: #526173;
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -1941,7 +1954,7 @@ defineExpose({
   padding: 6px 14px;
   border: 1px solid #b7d7ef;
   border-radius: 4px;
-  background: #fff;
+  background: var(--bg-container);
   color: #1769aa;
   font-size: 12px;
   line-height: 1.25;
@@ -1949,7 +1962,7 @@ defineExpose({
 }
 
 .smart-event-quick-prompts button:hover:not(:disabled) {
-  border-color: #1677ff;
+  border-color: var(--color-primary);
   background: #f0f7ff;
 }
 
@@ -1985,7 +1998,7 @@ defineExpose({
   white-space: nowrap;
   font-size: 12px;
   line-height: 1;
-  color: #526173;
+  color: var(--text-2);
 }
 
 .attachment-remove {
@@ -2003,7 +2016,7 @@ defineExpose({
 
   &:hover:not(:disabled) {
     background: #eef2f7;
-    color: #35425f;
+    color: var(--text-1);
   }
 
   &:disabled {
@@ -2021,7 +2034,7 @@ defineExpose({
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #1976D2;
+  background: var(--color-primary);
   animation: pulse 1.5s infinite;
 }
 

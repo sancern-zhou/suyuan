@@ -35,6 +35,7 @@
       :task-workspace-entries="taskWorkspaceEntries"
       :task-workspace-task="taskWorkspaceTask"
       :smart-event-command="smartEventCommand"
+      :work-order-review-command="workOrderReviewCommand"
       :device-control-command="deviceControlCommand"
       :agent-mode="store.currentMode"
       :left-sidebar-collapsed="leftSidebarCollapsed"
@@ -107,6 +108,7 @@
       @open-smart-event-task-side="handleSmartEventSideTaskOpen"
       @close-smart-event-panel="handleSmartEventPanelClose"
       @close-smart-event-task="handleSmartEventTaskClose"
+      @close-work-order-review-panel="handleWorkOrderReviewPanelClose"
       @close-device-control-panel="handleDeviceControlPanelClose"
       @select-review="handleTodoReviewOpen"
       @refresh-session-history="refreshSessionHistory"
@@ -173,6 +175,7 @@ import {
 } from '@/components/agentPlatform/workspacePolicy.js'
 import { resolveCoordinatorMode } from '@/components/coordinator/coordinatorWorkspace.js'
 import { extractSmartEventWorkspaceCommand } from '@/services/jiangsuSmartEventWorkspace.js'
+import { extractWorkOrderReviewCommand } from '@/services/jiangsuWorkOrderReviewWorkspace.js'
 import { extractDeviceControlWorkspaceCommand } from '@/services/jiangsuDeviceControlWorkspace.js'
 
 // 引入composables
@@ -203,6 +206,8 @@ const taskWorkspaceTask = ref(null)
 const smartEventCommand = ref(null)
 const suppressSmartEventCommandOpen = ref(false)
 const lastSmartEventCommandKey = ref('')
+const workOrderReviewCommand = ref(null)
+const lastWorkOrderReviewCommandKey = ref('')
 const deviceControlCommand = ref(null)
 const lastDeviceControlCommandKey = ref('')
 const taskWorkspaceEntries = computed(() => scheduledTasksStore.tasks.filter(task => task.workspace_entry?.enabled))
@@ -393,6 +398,21 @@ const handleSmartEventTaskClose = () => {
   taskWorkspaceTask.value = null
 }
 
+// AI 取证命令驱动的故障工单审核页面在右侧面板打开，保留对话供用户继续交互
+const openWorkOrderReviewSidePanel = () => {
+  workspace.value = 'chat'
+  hideManagementPanel()
+  activeRightTab.value = 'work-order-review'
+  rightPanelVisible.value = true
+  leftSidebarCollapsed.value = true
+  vizWidth.value = Math.max(vizWidth.value, PANEL_SIZES.COLLAPSED_VIZ_WIDTH)
+}
+
+const handleWorkOrderReviewPanelClose = () => {
+  rightPanelVisible.value = false
+  leftSidebarCollapsed.value = false
+}
+
 // AI 工作区命令驱动的远程质控页面在右侧面板打开，保留对话窗口供确认与后续交互
 const openDeviceControlSidePanel = () => {
   workspace.value = 'chat'
@@ -408,6 +428,22 @@ const handleDeviceControlPanelClose = () => {
   leftSidebarCollapsed.value = false
 }
 
+// 切换会话时重置右侧面板并清空上一个会话遗留的工作区命令与任务，避免面板串到当前会话
+watch(currentModeSessionId, () => {
+  rightPanelVisible.value = false
+  activeRightTab.value = 'files'
+  knowledgePanelVisible.value = false
+  managementPanel.value = null
+  leftSidebarCollapsed.value = false
+  taskWorkspaceTask.value = null
+  smartEventCommand.value = null
+  workOrderReviewCommand.value = null
+  deviceControlCommand.value = null
+  lastSmartEventCommandKey.value = ''
+  lastWorkOrderReviewCommandKey.value = ''
+  lastDeviceControlCommandKey.value = ''
+})
+
 watch(currentModeMessages, messages => {
   const command = extractDeviceControlWorkspaceCommand(messages)
   if (!command) return
@@ -416,6 +452,16 @@ watch(currentModeMessages, messages => {
   lastDeviceControlCommandKey.value = commandKey
   deviceControlCommand.value = command
   openDeviceControlSidePanel()
+}, { deep: true })
+
+watch(currentModeMessages, messages => {
+  const command = extractWorkOrderReviewCommand(messages)
+  if (!command) return
+  const commandKey = JSON.stringify(command)
+  if (commandKey === lastWorkOrderReviewCommandKey.value) return
+  lastWorkOrderReviewCommandKey.value = commandKey
+  workOrderReviewCommand.value = command
+  openWorkOrderReviewSidePanel()
 }, { deep: true })
 
 watch(currentModeMessages, messages => {
@@ -511,10 +557,6 @@ const handleSessionRestoreAndClosePanel = async (sessionId) => {
   if (restored) {
     hideManagementPanel()
     workspace.value = 'chat'
-    if (taskWorkspaceTask.value) {
-      rightPanelVisible.value = true
-      activeRightTab.value = 'files'
-    }
   }
   return restored
 }
@@ -678,6 +720,17 @@ const handleSidebarAction = async (actionId) => {
       rightPanelVisible.value = true
       leftSidebarCollapsed.value = true
     }
+    return
+  }
+
+  if (actionId === 'work-order-review') {
+    if (!await confirmResourcePreviewLeave()) return
+    if (route.name !== 'analysis') await router.replace({ name: 'analysis' })
+    hideManagementPanel()
+    resetPanelState()
+    workspace.value = 'chat'
+    if (store.currentMode !== 'ops') store.switchMode('ops')
+    openWorkOrderReviewSidePanel()
     return
   }
 

@@ -52,7 +52,7 @@ onMounted(() => {
 .data-table {
   width: 100%;
   overflow-x: auto;
-  background: #fafafa;
+  background: var(--bg-muted);
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 
@@ -61,7 +61,7 @@ onMounted(() => {
     border-collapse: collapse;
 
     th {
-      background: #1976D2;
+      background: var(--color-primary);
       color: white;
       padding: 12px;
       text-align: left;
@@ -71,9 +71,9 @@ onMounted(() => {
 
     td {
       padding: 12px;
-      border-bottom: 1px solid #e0e0e0;
+      border-bottom: 1px solid var(--border-2);
       font-size: 14px;
-      color: #333;
+      color: var(--text-1);
     }
 
     tr:last-child td {
@@ -81,7 +81,7 @@ onMounted(() => {
     }
 
     tr:hover {
-      background: #f5f5f5;
+      background: var(--bg-hover);
     }
   }
 }

@@ -30,7 +30,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.facts-card { padding: 16px; border: 1px solid #dce3ea; border-radius: 8px; background: #fff; display: grid; gap: 10px; }
+.facts-card { padding: 16px; border: 1px solid #dce3ea; border-radius: 8px; background: var(--bg-container); display: grid; gap: 10px; }
 .fact-input { display: flex; gap: 8px; }.fact-input textarea { flex: 1; padding: 8px; }.preview { padding: 10px; background: #f2fdf5; border-radius: 6px; }
 .resolution label { display: grid; gap: 5px; } select { padding: 7px; } ul { list-style: none; padding: 0; display: grid; gap: 6px; } li { display: flex; justify-content: space-between; gap: 12px; } small { color: #027a48; }
 button { padding: 7px 12px; border: 0; border-radius: 5px; background: #027a48; color: white; }.plain { background: transparent; color: #475467; }

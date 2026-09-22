@@ -765,7 +765,7 @@ defineExpose({
   position: relative;
   width: 100%;
   height: 600px;
-  background: #f5f5f5;
+  background: var(--bg-hover);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
@@ -792,13 +792,13 @@ defineExpose({
 
   p {
     margin: 0;
-    color: #666;
+    color: var(--text-2);
     font-size: 14px;
   }
 
   button {
     padding: 8px 20px;
-    background: #1976d2;
+    background: var(--color-primary);
     color: white;
     border: none;
     border-radius: 4px;
@@ -807,7 +807,7 @@ defineExpose({
     transition: background 0.2s;
 
     &:hover {
-      background: #1565c0;
+      background: var(--color-primary-active);
     }
   }
 }
@@ -815,8 +815,8 @@ defineExpose({
 .spinner {
   width: 40px;
   height: 40px;
-  border: 4px solid #f0f0f0;
-  border-top-color: #1976d2;
+  border: 4px solid var(--border-1);
+  border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -842,18 +842,18 @@ defineExpose({
 .control-header {
   margin-bottom: 16px;
   padding-bottom: 12px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-1);
 
   h4 {
     margin: 0 0 4px 0;
     font-size: 16px;
     font-weight: 600;
-    color: #333;
+    color: var(--text-1);
   }
 
   .trajectory-count {
     font-size: 12px;
-    color: #666;
+    color: var(--text-2);
   }
 }
 
@@ -868,7 +868,7 @@ defineExpose({
     margin: 0 0 10px 0;
     font-size: 13px;
     font-weight: 600;
-    color: #555;
+    color: var(--text-2);
   }
 
   label {
@@ -881,7 +881,7 @@ defineExpose({
     user-select: none;
 
     &:hover {
-      color: #1976d2;
+      color: var(--color-primary);
     }
 
     input[type="checkbox"] {
@@ -897,7 +897,7 @@ defineExpose({
 }
 
 .trajectory-info {
-  background: #fafafa;
+  background: var(--bg-muted);
   padding: 12px;
   border-radius: 6px;
 
@@ -913,12 +913,12 @@ defineExpose({
     }
 
     .stat-label {
-      color: #666;
+      color: var(--text-2);
       font-weight: 500;
     }
 
     .stat-value {
-      color: #333;
+      color: var(--text-1);
       font-weight: 600;
       font-family: monospace;
     }
@@ -953,8 +953,8 @@ defineExpose({
     margin: 0 0 12px 0;
     font-size: 16px;
     font-weight: 600;
-    color: #333;
-    border-bottom: 2px solid #FF6B6B;
+    color: var(--text-1);
+    border-bottom: 2px solid var(--color-danger);
     padding-bottom: 8px;
   }
 
@@ -970,13 +970,13 @@ defineExpose({
     }
 
     .label {
-      color: #666;
+      color: var(--text-2);
       font-weight: 500;
       margin-right: 12px;
     }
 
     .value {
-      color: #333;
+      color: var(--text-1);
       font-weight: 600;
     }
   }

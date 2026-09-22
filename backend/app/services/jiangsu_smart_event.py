@@ -865,7 +865,10 @@ class JiangsuSmartEventService:
         station_codes: list[str] | None,
         limit: int,
     ) -> dict[str, Any]:
-        result = await self.alarm_tool.execute(
+        # Prefer the internal pipeline sweep; fall back to execute() for
+        # injected alarm tools that only implement the public interface.
+        sweep = getattr(self.alarm_tool, "execute_pipeline", self.alarm_tool.execute)
+        result = await sweep(
             station_codes=station_codes,
             station_type="省控" if not station_codes else None,
             start_time=start_time,
@@ -2015,6 +2018,7 @@ class JiangsuSmartEventService:
 
     def dispatch_order(
         self, event_id: str, *, title: str, order_type: str | None = None,
+        urgency_type: str | None = None, issued_types: list[str] | None = None,
         assignee: str | None = None, description: str | None = None,
         actor: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -2037,6 +2041,10 @@ class JiangsuSmartEventService:
             summary=f"派单处置：{order_title}",
             details={
                 "order_type": str(order_type or "").strip() or None,
+                "urgency_type": str(urgency_type or "").strip() or None,
+                "issued_types": [
+                    str(item).strip() for item in (issued_types or []) if str(item).strip()
+                ][:10],
                 "assignee": str(assignee or "").strip() or None,
                 "title": order_title,
                 "description": str(description or "").strip() or None,
