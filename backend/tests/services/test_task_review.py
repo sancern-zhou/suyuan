@@ -36,6 +36,57 @@ def test_submission_validated_and_idempotent():
         service.submit_review({**payload(), 'summary': '偷偷覆盖'}, source())
 
 
+@pytest.mark.asyncio
+async def test_submit_tool_conversational_context_creates_review():
+    from app.tools.task_management.submit_task_review import CONVERSATIONAL_REVIEW_TASK_ID
+
+    tool = SubmitTaskReviewTool()
+    submission = payload()
+    submission['subject_id'] = 'FA260914178938611578927'
+    result = await tool.execute(context=SimpleNamespace(session_id='ops_session_1'), **submission)
+    assert result['success'] is True
+    review = service.load_review(result['data']['review_id'])
+    assert review['status'] == 'pending_review'
+    assert review['task_id'] == CONVERSATIONAL_REVIEW_TASK_ID
+    assert review['execution_id'].startswith('chat-ops_session_1-')
+
+    # 同一会话的下一轮提交递增版本，允许复审更新结论
+    resubmit = payload()
+    resubmit['subject_id'] = 'FA260914178938611578927'
+    resubmit['summary'] = '复审结论'
+    again = await tool.execute(context=SimpleNamespace(session_id='ops_session_1'), **resubmit)
+    assert again['success'] is True
+    assert again['data']['review_id'] == result['data']['review_id']
+    assert service.load_review(again['data']['review_id'])['version'] >= 2
+
+
+@pytest.mark.asyncio
+async def test_conversational_submit_writes_work_order_review_judgment(tmp_path, monkeypatch):
+    from config.settings import settings
+    from app.services.jiangsu_work_order_review import get_order, save_evidence
+
+    monkeypatch.setattr(settings, 'data_registry_dir', str(tmp_path))
+    save_evidence({
+        'working_order_code': 'FA260914178938611578927',
+        'title': '站点PM10偏高', 'site_name': '阜宁滨湖高级中学', 'pollutant': 'PM10',
+        'window': {'start_time': '2026-09-13 19:41:00', 'end_time': '2026-09-16 19:41:00'},
+        'sources': {'station_hour': {'status': 'success', 'record_count': 1,
+                                     'data': {'points': [{'time': '2026-09-14 11:00:00', 'value': 105}]}}},
+    })
+
+    tool = SubmitTaskReviewTool()
+    submission = payload()
+    submission['subject_id'] = 'FA260914178938611578927'
+    result = await tool.execute(context=SimpleNamespace(session_id='ops_session_2'), **submission)
+    assert result['success'] is True
+
+    detail = get_order('FA260914178938611578927')
+    assert detail['index']['judgment']['decision'] == 'approve'
+    assert detail['index']['judgment']['comment'] == '依据充分'
+    assert detail['entry']['status'] == '待归档'
+    assert detail['entry']['review_id'] == result['data']['review_id']
+
+
 def test_confirm_then_new_execution_reopens_without_losing_history():
     record = service.submit_review(payload(), source())
     result = service.decide_review(record['review_id'], human(record), {'username': 'operator'})
@@ -85,7 +136,10 @@ def test_data_exclusion_validation_and_confirmation():
 @pytest.mark.asyncio
 async def test_tool_failure_has_no_card_and_success_has_generic_resource():
     tool = SubmitTaskReviewTool()
-    assert not (await tool.execute(**payload()))['success']
+    # 对话式会话（无计划任务上下文）同样可以提交人工确认卡片
+    conversational = await tool.execute(context=SimpleNamespace(session_id='ops_session_x'), **payload())
+    assert conversational['success']
+    assert conversational['visuals'][0]['type'] == 'task_review'
     result = await tool.execute(context=SimpleNamespace(scheduled_task_context=source()), **payload())
     assert result['success']
 

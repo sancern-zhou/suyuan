@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 
@@ -14,7 +15,9 @@ from app.tools.jiangsu.fault_diagnosis import (
     JiangsuQcRunLogTool,
     JiangsuQcTaskHistoryTool,
     JiangsuQcTaskStatusTool,
+    JiangsuReviewEvidenceTool,
     JiangsuStationAlarmLogsTool,
+    JiangsuStationEnvironmentHistoryTool,
 )
 
 
@@ -652,7 +655,7 @@ async def test_alarm_records_resolves_province_selector_without_station_codes(mo
     monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_directory)
     monkeypatch.setattr(JiangsuAlarmRecordsTool, "_request", fake_alarm)
     tool = JiangsuAlarmRecordsTool(base_url="http://ops", token_url="http://token", username="u", password="p")
-    result = await tool.execute(city_name="江苏省", start_time="2026-08-01 00:00:00", end_time="2026-08-01 01:00:00")
+    result = await tool.execute_pipeline(city_name="江苏省", start_time="2026-08-01 00:00:00", end_time="2026-08-01 01:00:00")
 
     assert result["success"] is True
     assert result["metadata"]["station_codes"] == ["1001A", "1002A"]
@@ -733,6 +736,518 @@ async def test_qc_history_queries_direct_station_list_concurrently(monkeypatch):
     assert sorted(requested_codes) == ["1001A", "1002A"]
     assert max_active == 2
     assert "并发查询 2 个站点" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_fault_work_orders_mine_only_uses_role_step_ids(monkeypatch):
+    requested = []
+
+    async def fake_get(self, path, params):
+        requested.append((path, params))
+        if path.endswith("GetWorkFlowByUser"):
+            assert params == [("Type", "Fault")]
+            return {"success": True, "result": {
+                "stepList": [{"guid": "prov", "taskName": "省中心审核"}],
+                "stepIds": ["prov"],
+            }}
+        assert path.endswith("GetMtcWorkingOrderPagedListAsync")
+        return {"success": True, "result": {"items": [
+            {"workingOrderCode": "WO-1", "currentPointName": "省中心审核", "orderStatusStr": "处理中"},
+            {"workingOrderCode": "WO-2", "currentPointName": "运维单位审核", "orderStatusStr": "处理中"},
+        ], "totalCount": 2}}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    result = await JiangsuFaultWorkOrdersTool().execute(mine_only=True)
+
+    assert result["success"] is True
+    list_params = requested[1][1]
+    assert ("CurrentPoint", "prov") in list_params
+    assert result["metadata"]["filters"]["mine_only"] is True
+    assert result["metadata"]["distribution"]["scope"] == "full"
+    assert result["metadata"]["distribution"]["by_node"] == {"运维单位审核": 1, "省中心审核": 1}
+    assert result["metadata"]["distribution"]["by_order_status"] == {"处理中": 2}
+    assert "节点分布" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_fault_work_orders_mine_only_conflicts_with_current_points():
+    result = await JiangsuFaultWorkOrdersTool().execute(
+        mine_only=True, current_points=["省中心审核"],
+    )
+
+    assert result["success"] is False
+    assert "二选一" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_fault_work_orders_review_finished_filters_by_finish_time(monkeypatch):
+    requested = []
+
+    async def fake_get(self, path, params):
+        requested.append((path, params))
+        if path.endswith("GetWorkFlowByUser"):
+            return {"success": True, "result": {"stepList": [{"guid": "prov", "taskName": "省中心审核"}]}}
+        assert path.endswith("GetMtcWorkingOrderPagedListAsync")
+        return {"success": True, "result": {"items": [
+            {"workingOrderCode": "WO-IN", "currentPointName": "省中心审核",
+             "createTime": "2026-09-10 08:00:00", "finishTime": "2026-09-15 10:00:00"},
+            {"workingOrderCode": "WO-EARLY", "currentPointName": "省中心审核",
+             "createTime": "2026-09-01 08:00:00", "finishTime": "2026-09-02 10:00:00"},
+            {"workingOrderCode": "WO-NO-FINISH", "currentPointName": "省中心审核",
+             "createTime": "2026-09-11 08:00:00"},
+        ], "totalCount": 3}}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    result = await JiangsuFaultWorkOrdersTool().execute(
+        current_points=["省中心审核"],
+        review_finished_start="2026-09-14 00:00:00",
+        review_finished_end="2026-09-20 23:59:59",
+    )
+
+    assert result["success"] is True
+    list_params = requested[1][1]
+    # 自动限定 Finish 并回溯创建时间窗口
+    assert list_params.count(("WorkFlowStatus", "Finish")) == 1
+    create_times = [value for name, value in list_params if name == "CreateTime"]
+    assert len(create_times) == 2
+    assert create_times[0] < "2026-09-14"
+    assert [item["workingOrderCode"] for item in result["data"]] == ["WO-IN"]
+    review = result["metadata"]["review_finished"]
+    assert review["platform_matched"] == 3
+    assert review["matched"] == 1
+    assert review["dropped_out_of_range"] == 1
+    assert review["dropped_missing_finish_time"] == 1
+    assert review["forced_workflow_status_finish"] is True
+    assert review["created_window_widened_days"] == JiangsuFaultWorkOrdersTool._REVIEW_FILTER_BACKFILL_DAYS
+    assert result["metadata"]["distribution"]["by_node"] == {"省中心审核": 1}
+    assert "窗口内完成 1 条" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_fault_work_orders_review_finished_rejects_conflicting_workflow_statuses():
+    result = await JiangsuFaultWorkOrdersTool().execute(
+        current_points=["省中心审核"],
+        workflow_statuses=["Doing"],
+        review_finished_start="2026-09-14 00:00:00",
+    )
+
+    assert result["success"] is False
+    assert "Finish" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_fault_work_orders_review_finished_requires_start():
+    result = await JiangsuFaultWorkOrdersTool().execute(review_finished_end="2026-09-20 00:00:00")
+
+    assert result["success"] is False
+    assert "review_finished_start" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_review_evidence_builds_panel_visual(monkeypatch):
+    async def fake_directory(self, path, params):
+        assert path.endswith("GetAllEnabledBSDStationAsync")
+        return {"success": True, "result": [
+            {"positionName": "阜宁滨湖", "cityName": "盐城市", "districtName": "阜宁县",
+             "stationCode": "7099A", "uniqueCode": "320100397"},
+        ]}
+
+    async def fake_raw_records(self, **kwargs):
+        assert kwargs["data_kind"] == "station_hour"
+        assert kwargs["station_codes"] == ["7099A"]
+        assert "pollutant_codes" not in kwargs
+        return ([
+            {"timePoint": "2026-09-14 10:00:00", "pM10": 82.0},
+            {"timePoint": "2026-09-14 11:00:00", "pM10": -99},
+            {"timePoint": "2026-09-14 12:00:00", "pM10": 120.5},
+        ], 3)
+
+    async def fake_city_weather(*, city_name, start_time, end_time):
+        assert city_name == "盐城市"
+        return {"status": "success", "data": [
+            {"timePoint": "2026-09-14T10:00:00", "windSpeed": 2.1, "windDirection": 120,
+             "temperature": 24.0, "humidity": 60, "rain": 0, "pressure": 1008},
+        ]}
+
+    async def fake_same_city_band(station, start_time, end_time, pollutant, *, station_data_tool=None):
+        assert pollutant == "PM10"
+        return {"status": "success", "scope": "same_district", "station_count": 3, "band": [
+            {"time": "2026-09-14 10:00:00", "target": 82.0, "min": 60.0, "median": 70.0, "max": 90.0},
+            {"time": "2026-09-14 12:00:00", "target": 120.5, "min": 65.0, "median": 75.0, "max": 95.0},
+        ]}
+
+    saved_packages = []
+
+    def fake_save_evidence(package):
+        saved_packages.append(package)
+        return {"working_order_code": package["working_order_code"], "status": "待审核",
+                "index_path": "/nonexistent/jiangsu_work_order_reviews/index.json",
+                "source_files": {}}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_directory)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis.JiangsuStationDataTool.fetch_raw_records", fake_raw_records)
+    monkeypatch.setattr("app.fetchers.weather.jiangsu_review_weather.fetch_city_weather", fake_city_weather)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis.fetch_same_city_band", fake_same_city_band)
+    monkeypatch.setattr("app.services.jiangsu_work_order_review.save_evidence", fake_save_evidence)
+
+    result = await JiangsuReviewEvidenceTool().execute(
+        station_names=["阜宁滨湖"], pollutant="PM10",
+        start_time="2026-09-14 00:00:00", end_time="2026-09-15 00:00:00",
+        working_order_code="FA260914178938611578927",
+        modules=[],
+    )
+
+    assert result["success"] is True
+    # 不再向可视化面板发布图表：visuals 为空，资源只包含证据索引/分文件（此处路径不可用则降级为空）
+    assert result["visuals"] == []
+    assert result["resources"] == []
+    # 证据索引投影：LLM 可直接读到逐时值与统计摘要
+    index = result["data"]["evidence_index"]
+    assert index["station_hour"]["projection"]["hourly"] == [
+        {"time": "2026-09-14 10:00:00", "value": 82.0},
+        {"time": "2026-09-14 12:00:00", "value": 120.5},
+    ]
+    assert index["band"]["projection"]["exceed_hours"] == 1
+    assert index["band"]["projection"]["exceed_samples"] == [
+        {"time": "2026-09-14 12:00:00", "target": 120.5, "band_max": 95.0}]
+    assert index["weather"]["projection"]["windSpeed"]["max"] == 2.1
+    # 证据包拆分持久化：sources 携带完整 data
+    assert saved_packages[0]["working_order_code"] == "FA260914178938611578927"
+    assert saved_packages[0]["sources"]["station_hour"]["data"]["points"] == [
+        {"time": "2026-09-14 10:00:00", "value": 82.0},
+        {"time": "2026-09-14 12:00:00", "value": 120.5},
+    ]
+    assert result["data"]["package"]["status"] == "待审核"
+    assert result["data"]["ui_command"] == {
+        "type": "open_work_order_review", "working_order_code": "FA260914178938611578927"}
+    assert result["metadata"]["point_count"] == 2
+    assert result["metadata"]["band_point_count"] == 2
+    assert result["metadata"]["weather_status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_review_evidence_resolves_from_working_order_code(monkeypatch, tmp_path):
+    async def fake_get(self, path, params):
+        if path.endswith("GetMtcWorkingOrderPagedListAsync"):
+            assert ("WorkingOrderCode", "FA260914178938611578927") in params
+            return {"success": True, "result": {"items": [
+                {"workingOrderCode": "FA260914178938611578927", "uniqueCode": "320100397",
+                 "stationCodeStr": "7099A", "createTime": "2026-09-14 21:14:44",
+                 "orderTitle": "PM10 分析仪数据偏高，疑似污染过程"},
+            ], "totalCount": 1}}
+        if path.endswith("GetWorkingOrderInfoByUniqueCode"):
+            assert ("uniqueCode", "320100397") in params
+            return {"success": True, "result": [
+                {"wo": {"workingOrderCode": "FA260914178938611578927",
+                        "orderTitle": "PM10 分析仪数据偏高，疑似污染过程",
+                        "orderContent": "09-14 06 时起 PM10 抬升",
+                        "createTime": "2026-09-14 19:41:00",
+                        "commonFile": [{"id": "file-1", "fileName": "站点照片.jpg",
+                                        "filePath": "/NewFiles/2026/09/站点照片.jpg"}]},
+                 "details": [{"processContent": "现场检查采样已恢复", "createTime": "2026-09-14 19:42:00"}],
+                 "workFlowInfo": {"stepList": [{"taskName": "省中心审核", "status": 2,
+                                                "createTime": "2026-09-15 10:30:00"}]}},
+            ]}
+        assert path.endswith("GetAllEnabledBSDStationAsync")
+        return {"success": True, "result": [
+            {"positionName": "阜宁滨湖", "cityName": "盐城市", "districtName": "阜宁县",
+             "stationCode": "7099A", "uniqueCode": "320100397"},
+        ]}
+
+    async def fake_download_file(self, path, params, max_bytes=None):
+        assert path.endswith("DownFile")
+        return b"fake-image-bytes", "image/jpeg"
+
+    def fake_output_dir(raw_resource_path, order_code):
+        folder = tmp_path / "attachments"
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder
+
+    async def fake_raw_records(self, **kwargs):
+        assert "pollutant_codes" not in kwargs
+        assert kwargs["start_time"] == "2026-09-13 21:14:44"
+        assert kwargs["end_time"] == "2026-09-16 21:14:44"
+        return ([{"timePoint": "2026-09-14 22:00:00", "pM10": 96.0}], 1)
+
+    async def fake_city_weather(*, city_name, start_time, end_time):
+        assert city_name == "盐城市"
+        assert start_time == "2026-09-13 21:14:44"
+        return {"status": "success", "data": [{"timePoint": "2026-09-14T22:00:00", "windSpeed": 1.6}]}
+
+    async def fake_empty_same_city_band(station, start_time, end_time, pollutant, *, station_data_tool=None):
+        return {"status": "empty", "scope": "same_district", "station_count": 0,
+                "band": [], "message": "同区无可比较站点"}
+
+    saved_packages = []
+
+    def fake_save_evidence(package):
+        saved_packages.append(package)
+        return {"working_order_code": package["working_order_code"], "status": "待审核",
+                "index_path": "/nonexistent/jiangsu_work_order_reviews/index.json",
+                "source_files": {}}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.download_file", fake_download_file)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._fault_attachment_output_dir", fake_output_dir)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis.JiangsuStationDataTool.fetch_raw_records", fake_raw_records)
+    monkeypatch.setattr("app.fetchers.weather.jiangsu_review_weather.fetch_city_weather", fake_city_weather)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis.fetch_same_city_band",
+                        fake_empty_same_city_band)
+    monkeypatch.setattr("app.services.jiangsu_work_order_review.save_evidence", fake_save_evidence)
+
+    result = await JiangsuReviewEvidenceTool().execute(
+        working_order_code="FA260914178938611578927",
+        mark_areas=[{"name": "剔除候选", "start": "2026-09-14 20:00:00", "end": "2026-09-14 23:00:00"}],
+        modules=[],
+    )
+
+    assert result["success"] is True
+    assert result["visuals"] == []
+    # 标注区间随证据包持久化，由工单审核工作台图表渲染
+    assert saved_packages[0]["mark_areas"] == [
+        {"name": "剔除候选", "start": "2026-09-14 20:00:00", "end": "2026-09-14 23:00:00"}]
+    index = result["data"]["evidence_index"]
+    assert index["station_hour"]["projection"]["hourly"] == [{"time": "2026-09-14 22:00:00", "value": 96.0}]
+    assert index["work_order"]["status"] == "success"
+    assert index["work_order"]["projection"]["attachment_count"] == 1
+    assert result["data"]["ui_command"]["working_order_code"] == "FA260914178938611578927"
+    # 源平台详单进入证据包：清单条目 + wo 主表 + 处置过程 + 附件（含落盘路径）
+    work_order_source = saved_packages[0]["sources"]["work_order"]["data"]
+    assert work_order_source["order"]["orderTitle"] == "PM10 分析仪数据偏高，疑似污染过程"
+    assert work_order_source["wo"]["workingOrderCode"] == "FA260914178938611578927"
+    assert work_order_source["details"][0]["processContent"] == "现场检查采样已恢复"
+    attachment = work_order_source["attachments"][0]
+    assert attachment["download_status"] == "success"
+    assert attachment["content_type"] == "image/jpeg"
+    assert Path(attachment["local_path"]).is_file()
+    # 附件同时发布为会话资源
+    assert any(resource["role"] == "attachment" for resource in result["resources"])
+    assert result["metadata"]["station_source"] == "work_order"
+    assert result["metadata"]["pollutant_source"] == "inferred"
+    assert result["metadata"]["window_source"] == "work_order"
+
+
+def test_review_evidence_same_city_band_statistics():
+    from app.tools.jiangsu.review_evidence import pollutant_points, same_city_band
+
+    records = [
+        {"timePoint": "2026-09-14 10:00:00", "stationCode": "T", "pM10": 82.0},
+        {"timePoint": "2026-09-14 10:00:00", "stationCode": "A", "pM10": 60.0},
+        {"timePoint": "2026-09-14 10:00:00", "stationCode": "B", "pM10": 70.0},
+        {"timePoint": "2026-09-14 10:00:00", "stationCode": "C", "pM10": 90.0},
+        {"timePoint": "2026-09-14 11:00:00", "stationCode": "T", "pM10": -99},
+    ]
+
+    band = same_city_band(records, target_station_code="T", pollutant="PM10")
+
+    assert band == [{"time": "2026-09-14 10:00:00", "target": 82.0, "min": 60.0, "median": 70.0, "max": 90.0}]
+    assert pollutant_points([
+        {"timePoint": "2026-09-14 10:00:00", "pM10": 82.0},
+        {"timePoint": "2026-09-14 11:00:00", "pM10": -99},
+    ], "PM10") == [{"time": "2026-09-14 10:00:00", "value": 82.0}]
+
+
+@pytest.mark.asyncio
+async def test_review_evidence_requires_single_station():
+    result = await JiangsuReviewEvidenceTool().execute(
+        station_names=["站点甲", "站点乙"],
+        start_time="2026-09-14 00:00:00", end_time="2026-09-15 00:00:00",
+    )
+
+    assert result["success"] is False
+    assert "仅支持单个站点" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_review_evidence_modules_gather_alarm_env_qc_in_parallel(monkeypatch):
+    seen_paths = []
+
+    async def fake_get(self, path, params):
+        seen_paths.append(path)
+        if path.endswith("GetAllEnabledBSDStationAsync"):
+            return {"success": True, "result": [
+                {"positionName": "阜宁滨湖", "cityName": "盐城市", "districtName": "阜宁县",
+                 "stationCode": "7099A", "uniqueCode": "320100397"},
+            ]}
+        if path.endswith("GetAlarmLogsAsync"):
+            # 含一条动环类告警（AlarmType=1150）触发动环抓取门控
+            return {"success": True, "result": {"alarmLogs": [
+                {"id": index, "AlarmType": 1150 if index == 0 else 999} for index in range(60)],
+                "alarmStatistics": [{"x": 1}], "alarmState": {"a": 1}}}
+        if path.endswith("GetStationEnvPowerData"):
+            return {"success": True, "result": {
+                "tableData": [{"timePoint": f"h{index}", "StationTemp": 26 if index else 88}
+                              for index in range(60)],
+                "chartData": [{"timePoint": "t", "StationTemp": 26, "SmokeState": 0}]}}
+        if path.endswith("GetNewQCHisResultListAsync"):
+            return {"success": True, "result": [
+                {"rId": "task-1", "rStart": "2026-09-14 10:00:00", "poll": "PM10", "qcType": "零气检查"},
+            ]}
+        if path.endswith("GetNewQCHisTaskStatusResultAsync"):
+            return {"success": True, "result": {
+                "rStart": "2026-09-14 10:00:00", "rId": "task-1",
+                "stationCode": "7099A", "poll": "PM10", "qcType": "零气检查",
+                "jsonStr": "{}"}}
+        if path.endswith("GetNewQCHisRunLogResultListAsync"):
+            return {"success": True, "result": []}
+        if path.endswith("GetNewQCAirDataResultListAsync"):
+            return {"success": True, "result": [
+                {"dataValue": 1.2, "timePoint": "2026-09-14 10:00:00", "unit": "μg/m³", "isQCing": True},
+            ]}
+        raise AssertionError(f"unexpected path {path}")
+
+    async def fake_raw_records(self, **kwargs):
+        return ([{"timePoint": "2026-09-14 10:00:00", "pM10": 82.0}], 1)
+
+    async def fake_city_weather(*, city_name, start_time, end_time):
+        return {"status": "success", "data": []}
+
+    async def fake_same_city_band(station, start_time, end_time, pollutant, *, station_data_tool=None):
+        return {"status": "empty", "station_count": 0, "band": []}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis.JiangsuStationDataTool.fetch_raw_records", fake_raw_records)
+    monkeypatch.setattr("app.fetchers.weather.jiangsu_review_weather.fetch_city_weather", fake_city_weather)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis.fetch_same_city_band", fake_same_city_band)
+
+    result = await JiangsuReviewEvidenceTool().execute(
+        station_codes=["7099A"], pollutant="PM10",
+        start_time="2026-09-14 00:00:00", end_time="2026-09-15 00:00:00",
+    )
+
+    assert result["success"] is True
+    assert any(path.endswith("GetAlarmLogsAsync") for path in seen_paths)
+    assert any(path.endswith("GetStationEnvPowerData") for path in seen_paths)
+    assert any(path.endswith("GetNewQCHisResultListAsync") for path in seen_paths)
+    # 质控任务带动合格结果与质控曲线
+    assert any(path.endswith("GetNewQCHisTaskStatusResultAsync") for path in seen_paths)
+    assert any(path.endswith("GetNewQCAirDataResultListAsync") for path in seen_paths)
+
+    # 模块明细只进证据包分文件；tool_result 中是投影索引
+    index = result["data"]["evidence_index"]
+    alarms = index["alarms"]
+    assert alarms["status"] == "success"
+    assert alarms["record_count"] == 60
+    assert len(alarms["projection"]["recent"]) == 5
+
+    # 动环只保留异常行（60 行中仅 1 行 StationTemp=88 超范围）
+    env = index["env_power"]
+    assert env["status"] == "success"
+    assert env["record_count"] == 1
+
+    # 质控只抓目标污染物，并带合格结果/曲线
+    qc = index["qc"]
+    assert qc["record_count"] == 1
+    assert qc["projection"]["tasks"][0]["rId"] == "task-1"
+    assert qc["projection"]["tasks"][0]["curve_points"] == 1
+
+    assert "补充取证" in result["summary"]
+    module_briefs = result["metadata"]["modules"]
+    assert {"module": "qc", "status": "success", "record_count": 1, "truncated": False} in module_briefs
+
+
+@pytest.mark.asyncio
+async def test_review_evidence_module_failure_degrades_without_breaking_chart(monkeypatch):
+    async def fake_get(self, path, params):
+        if path.endswith("GetAllEnabledBSDStationAsync"):
+            return {"success": True, "result": [
+                {"positionName": "阜宁滨湖", "cityName": "盐城市", "districtName": "阜宁县",
+                 "stationCode": "7099A", "uniqueCode": "320100397"},
+            ]}
+        if path.endswith("GetAlarmLogsAsync"):
+            raise ValueError("站房告警接口 result 无效")
+        if path.endswith("GetNewQCHisResultListAsync"):
+            return {"success": True, "result": []}
+        raise AssertionError(f"unexpected path {path}")
+
+    async def fake_raw_records(self, **kwargs):
+        return ([{"timePoint": "2026-09-14 10:00:00", "pM10": 82.0}], 1)
+
+    async def fake_city_weather(*, city_name, start_time, end_time):
+        return {"status": "success", "data": []}
+
+    async def fake_same_city_band(station, start_time, end_time, pollutant, *, station_data_tool=None):
+        return {"status": "empty", "station_count": 0, "band": []}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis.JiangsuStationDataTool.fetch_raw_records", fake_raw_records)
+    monkeypatch.setattr("app.fetchers.weather.jiangsu_review_weather.fetch_city_weather", fake_city_weather)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis.fetch_same_city_band", fake_same_city_band)
+
+    result = await JiangsuReviewEvidenceTool().execute(
+        station_codes=["7099A"], pollutant="PM10",
+        start_time="2026-09-14 00:00:00", end_time="2026-09-15 00:00:00",
+        modules=["alarms", "qc"],
+    )
+
+    assert result["success"] is True
+    assert result["visuals"] == []
+    index = result["data"]["evidence_index"]
+    assert index["alarms"]["status"] == "failed"
+    assert index["alarms"]["record_count"] == 0
+    assert index["qc"]["status"] == "success"
+    assert "告警不可用" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_review_evidence_qc_detail_timeout_degrades_to_summary(monkeypatch):
+    """质控详情超时应降级为任务概要，不拖挂整次取证。"""
+    import app.tools.jiangsu.fault_diagnosis as module
+
+    async def fake_get(self, path, params):
+        if path.endswith("GetAllEnabledBSDStationAsync"):
+            return {"success": True, "result": [
+                {"positionName": "阜宁滨湖", "cityName": "盐城市", "districtName": "阜宁县",
+                 "stationCode": "7099A", "uniqueCode": "320100397"}]}
+        if path.endswith("GetNewQCHisResultListAsync"):
+            return {"success": True, "result": [
+                {"rId": "task-1", "rStart": "2026-09-14 10:00:00", "poll": "PM10", "qcType": "零气检查"}]}
+        raise AssertionError(f"unexpected path {path}")
+
+    async def fake_raw_records(self, **kwargs):
+        return ([{"timePoint": "2026-09-14 10:00:00", "pM10": 82.0}], 1)
+
+    async def fake_city_weather(*, city_name, start_time, end_time):
+        return {"status": "success", "data": []}
+
+    async def fake_same_city_band(station, start_time, end_time, pollutant, *, station_data_tool=None):
+        return {"status": "empty", "station_count": 0, "band": []}
+
+    async def slow_detail(self, task, pollutant_code):
+        await asyncio.sleep(5)
+        return {}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis.JiangsuStationDataTool.fetch_raw_records", fake_raw_records)
+    monkeypatch.setattr("app.fetchers.weather.jiangsu_review_weather.fetch_city_weather", fake_city_weather)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis.fetch_same_city_band", fake_same_city_band)
+    monkeypatch.setattr(module.JiangsuReviewEvidenceTool, "_fetch_qc_task_detail", slow_detail)
+    monkeypatch.setattr(module.JiangsuReviewEvidenceTool, "_MODULE_QC_DETAIL_TIMEOUT", 0.05)
+
+    result = await JiangsuReviewEvidenceTool().execute(
+        station_codes=["7099A"], pollutant="PM10",
+        start_time="2026-09-14 00:00:00", end_time="2026-09-15 00:00:00",
+        modules=["qc"],
+    )
+
+    assert result["success"] is True
+    qc = result["data"]["evidence_index"]["qc"]
+    assert qc["status"] == "success"
+    assert qc["record_count"] == 1
+    assert qc["projection"]["tasks"][0]["detail_status"] == "timeout"
+
+
+def test_review_evidence_rejects_unknown_module():
+    import asyncio
+
+    result = asyncio.run(JiangsuReviewEvidenceTool().execute(
+        station_codes=["7099A"], pollutant="PM10",
+        start_time="2026-09-14 00:00:00", end_time="2026-09-15 00:00:00",
+        modules=["weather"],
+    ))
+
+    assert result["success"] is False
+    assert "modules 含无效值" in result["summary"]
 
 
 @pytest.mark.asyncio
@@ -871,8 +1386,12 @@ async def test_auto_inspection_queries_direct_station_list_concurrently(monkeypa
         inspected_station_ids.append(payload["data"].split("&", 1)[0].removeprefix("StationId="))
         return {"success": True, "result": {"DevDtls": []}}
 
+    async def fake_air_snapshot(station_code):
+        return {}
+
     monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
     monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.post", fake_post)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._fetch_station_air_snapshot", fake_air_snapshot)
     result = await JiangsuAutoInspectionTool().execute(station_codes=["1001A", "1002A"])
 
     assert result["success"] is True
@@ -890,3 +1409,91 @@ async def test_auto_inspection_rejects_more_stations_than_limit():
 
     assert result["success"] is False
     assert f"最多并发巡检 {JiangsuAutoInspectionTool._MAX_STATIONS} 个站点" in result["summary"]
+
+
+def _visual_values(data):
+    from app.tools.jiangsu.fault_diagnosis import _stationhouse_visual
+
+    station = {"station_name": "高淳淳溪", "station_code": "1001A", "unique_code": "U1",
+               "city_name": "南京市", "district_name": "高淳区"}
+    visual = _stationhouse_visual(station, data, [], {})
+    return visual["data"]["stationhouse"]["values"]
+
+
+def test_stationhouse_visual_prefers_qc_value_over_monitoring_snapshot():
+    values = _visual_values({
+        "DevDtls": [{"DevPollCode": "SO2", "HourDataDtsls": [{"Value": 5.0}]}],
+        "MonitoringSnapshot": {"SO2": {"Value": 6.0, "DataAlarm": 0},
+                               "NO": {"Value": 3.0, "DataAlarm": 0}},
+    })
+
+    assert values["SO2"]["value"] == "5"
+    assert values["NO"]["value"] == "3"
+
+
+def test_stationhouse_visual_fills_missing_instruments_from_monitoring_snapshot():
+    values = _visual_values({
+        "DevDtls": [{"DevPollCode": "CO", "DevAlarm": 0}],
+        "MonitoringSnapshot": {"CO": {"Value": 1.2, "DataAlarm": 0},
+                               "PM2.5": {"Value": 10.0, "DataAlarm": 0},
+                               "NO": {"Value": "-99", "DataAlarm": 0}},
+    })
+
+    assert values["CO"]["value"] == "1.2"
+    assert values["PM2.5"]["value"] == "10"
+    assert "NO" not in values
+
+
+@pytest.mark.asyncio
+async def test_station_environment_history_rejects_city_scope():
+    result = await JiangsuStationEnvironmentHistoryTool().execute(
+        city_name="南京市", start_time="2026-08-01 00:00:00", end_time="2026-08-01 06:00:00"
+    )
+
+    assert result["success"] is False
+    assert result["status"] == "failed"
+    assert "不支持城市/区县批量" in result["summary"]
+    assert "jiangsu_fetch_station_alarm_logs" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_station_environment_history_requires_codes_for_multiple_stations(monkeypatch):
+    async def fake_get(self, path, params):
+        if path.endswith("GetAllEnabledBSDStationAsync"):
+            return {"result": [
+                {"stationCode": "1001A", "uniqueCode": "U1", "positionName": "站1"},
+                {"stationCode": "1002A", "uniqueCode": "U2", "positionName": "站2"},
+            ]}
+        raise AssertionError("多站点未指定 pollutant_codes 时不应请求动环接口")
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    result = await JiangsuStationEnvironmentHistoryTool().execute(
+        station_codes=["1001A", "1002A"], start_time="2026-08-01 00:00:00", end_time="2026-08-01 06:00:00"
+    )
+
+    assert result["success"] is False
+    assert "pollutant_codes" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_station_environment_history_queries_only_requested_codes(monkeypatch):
+    captured = {}
+
+    async def fake_get(self, path, params):
+        if path.endswith("GetAllEnabledBSDStationAsync"):
+            return {"result": [{"stationCode": "1001A", "uniqueCode": "U1", "positionName": "站1"}]}
+        assert path.endswith("GetStationEnvPowerData")
+        captured["params"] = params
+        return {"result": {"tableData": [{"time": "2026-08-01 01:00:00", "StationTemp": 99}], "chartData": []}}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    result = await JiangsuStationEnvironmentHistoryTool().execute(
+        station_codes=["1001A"], start_time="2026-08-01 00:00:00", end_time="2026-08-01 06:00:00",
+        pollutant_codes=["StationTemp", "VA"],
+    )
+
+    assert result["success"] is True
+    params = dict(captured["params"])
+    assert params["Uniquecode"] == "U1"
+    assert params["PollutantCode"] == "StationTemp,VA"
+    assert result["metadata"]["pollutant_codes"] == ["StationTemp", "VA"]

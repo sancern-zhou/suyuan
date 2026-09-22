@@ -258,78 +258,8 @@ async def test_qc_call_surfaces_gateway_error_when_direct_unconfigured(monkeypat
         await _post_qc("GetQCStateInfo", {"stationId": "320100001"})
 
 
-class _FakeContext:
-    session_id = "session-simulation-1"
-
-
-def _enable_simulation(monkeypatch, tmp_path):
-    state_path = tmp_path / "device_control_simulation.json"
-    monkeypatch.setenv("JIANGSU_DEVICE_CONTROL_SIMULATION", "1")
-    monkeypatch.setenv("JIANGSU_DEVICE_CONTROL_SIMULATION_STATE", str(state_path))
-    monkeypatch.setattr(
-        _DeviceControlClient, "audit",
-        staticmethod(lambda event: "backend/backend_data_registry_jiangsu_ops/device_control_audit.jsonl"),
-    )
-    return state_path
-
-
-def test_simulation_disabled_blocks_switch(monkeypatch):
-    monkeypatch.delenv("JIANGSU_DEVICE_CONTROL_SIMULATION", raising=False)
-
+def test_switch_requires_frontend_confirmation():
     assert _requires_frontend_confirmation("o3_valve", "on") is True
-
-
-async def test_simulation_state_read_returns_seeded_states(monkeypatch, tmp_path):
-    _enable_simulation(monkeypatch, tmp_path)
-    result = await JiangsuDeviceControlStateTool().execute(station_id="320118891")
-
-    assert result["success"] is True
-    assert result["metadata"]["channel"] == "simulation"
-    assert result["metadata"]["simulated"] is True
-    assert result["data"]["state"]["O3质控阀"] == "开启"
-    devices = {row["key"]: row for row in result["visuals"][0]["data"]["device_control"]["devices"]}
-    assert devices["o3_valve"]["status"] == "开启"
-    assert devices["dynamic_calibrator"]["status"] == "开启"
-    assert result["visuals"][0]["meta"]["simulated"] is True
-
-
-async def test_simulation_relaxes_switch_and_applies_command(monkeypatch, tmp_path):
-    _enable_simulation(monkeypatch, tmp_path)
-    context = _FakeContext()
-    assert _requires_frontend_confirmation("o3_valve", "on") is False
-
-    prepared = await JiangsuDeviceControlPrepareTool().execute(
-        context=context, station_id="320115002", device="o3_valve", action="on",
-    )
-    assert prepared["status"] == "pending_confirmation"
-    assert prepared["data"]["simulated"] is True
-    assert prepared["data"]["ui_command"]["simulated"] is True
-
-    executed = await JiangsuDeviceControlExecuteTool().execute(
-        context=context, confirmation_token=prepared["confirmation_token"], confirmed=True,
-    )
-    assert executed["success"] is True
-    assert executed["data"]["simulated"] is True
-    assert executed["data"]["recheck"]["Data"]["O3质控阀"] == "开启"
-    assert executed["data"]["ui_command"]["simulated"] is True
-
-    read = await JiangsuDeviceControlStateTool().execute(station_id="320115002")
-    assert read["data"]["state"]["O3质控阀"] == "开启"
-
-
-async def test_simulation_records_ac_command(monkeypatch, tmp_path):
-    _enable_simulation(monkeypatch, tmp_path)
-    context = _FakeContext()
-
-    prepared = await JiangsuDeviceControlPrepareTool().execute(
-        context=context, station_id="320115002", device="air_conditioner", action="cool", temperature_celsius=24,
-    )
-    executed = await JiangsuDeviceControlExecuteTool().execute(
-        context=context, confirmation_token=prepared["confirmation_token"], confirmed=True,
-    )
-
-    assert executed["success"] is True
-    assert executed["data"]["recheck"]["Data"]["空调"] == "制冷 24℃"
 
 
 def test_device_control_tools_declare_session_context_requirement():

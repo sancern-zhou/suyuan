@@ -680,7 +680,10 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
         records: list[dict[str, Any]] = []
         skip_count = 0
         while True:
-            result = await self.alarm_tool.execute(
+            # Prefer the internal pipeline sweep; fall back to execute() for
+            # injected alarm tools that only implement the public interface.
+            sweep = getattr(self.alarm_tool, "execute_pipeline", self.alarm_tool.execute)
+            result = await sweep(
                 city_name="江苏省",
                 start_time=start.strftime("%Y-%m-%d %H:%M:%S"),
                 end_time=end.strftime("%Y-%m-%d %H:%M:%S"),

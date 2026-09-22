@@ -16,15 +16,46 @@ class _Response:
             raise RuntimeError(f"HTTP {self.status_code}")
 
 
-@pytest.mark.asyncio
-async def test_alarm_records_uses_indexed_query_params_and_extracts_page(monkeypatch):
-    tool = JiangsuAlarmRecordsTool(
+def _tool():
+    return JiangsuAlarmRecordsTool(
         base_url="http://ops.example/api/operacityproduct",
         token_url="http://token.example/token",
         username="user",
         password="password",
     )
+
+
+def _patch_resolver(monkeypatch, codes):
+    async def resolve(self, station_name):
+        return list(codes)
+
+    monkeypatch.setattr(JiangsuAlarmRecordsTool, "_resolve_station_name_codes", resolve)
+
+
+@pytest.mark.asyncio
+async def test_alarm_records_requires_station_name():
+    result = await _tool().execute(
+        start_time="2026-08-11 15:00:00", end_time="2026-08-11 16:00:00"
+    )
+    assert result["success"] is False
+    assert "station_name" in result["summary"]
+    assert "execute_smart_event_sql_query" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_alarm_records_rejects_city_scope():
+    result = await _tool().execute(
+        city_name="江苏省", start_time="2026-08-11 15:00:00", end_time="2026-08-11 16:00:00"
+    )
+    assert result["success"] is False
+    assert "不支持 city_name" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_alarm_records_uses_station_name_and_indexed_query_params(monkeypatch):
+    tool = _tool()
     captured = {}
+    _patch_resolver(monkeypatch, ["5006A", "5005A"])
 
     async def get_token():
         return "token-value"
@@ -38,9 +69,9 @@ async def test_alarm_records_uses_indexed_query_params_and_extracts_page(monkeyp
     monkeypatch.setattr(tool, "_get", get_records)
 
     result = await tool.execute(
-        station_codes=["5006A", "5005A"],
+        station_name="江宁站",
         start_time="2026-08-11 15:00:00",
-        end_time="2026-08-12 15:00:00",
+        end_time="2026-08-12 14:00:00",
         call_type="qb",
         alarm_state=1,
         call_level="qb",
@@ -48,6 +79,7 @@ async def test_alarm_records_uses_indexed_query_params_and_extracts_page(monkeyp
     )
 
     assert result["success"] is True
+    assert result["metadata"]["station_name"] == "江宁站"
     assert result["metadata"]["total_count"] == 1
     assert ("code[0]", "5006A") in captured["params"]
     assert ("code[1]", "5005A") in captured["params"]
@@ -56,15 +88,22 @@ async def test_alarm_records_uses_indexed_query_params_and_extracts_page(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_alarm_records_rejects_invalid_time_range_before_request():
-    tool = JiangsuAlarmRecordsTool(
-        base_url="http://ops.example/api/operacityproduct",
-        token_url="http://token.example/token",
-        username="user",
-        password="password",
+async def test_alarm_records_rejects_range_over_24h(monkeypatch):
+    _patch_resolver(monkeypatch, ["5006A"])
+    result = await _tool().execute(
+        station_name="江宁站",
+        start_time="2026-08-11 00:00:00",
+        end_time="2026-08-12 01:00:00",
     )
-    result = await tool.execute(
-        station_codes=["5006A"],
+    assert result["success"] is False
+    assert "24 小时" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_alarm_records_rejects_invalid_time_range_before_request(monkeypatch):
+    _patch_resolver(monkeypatch, ["5006A"])
+    result = await _tool().execute(
+        station_name="江宁站",
         start_time="2026-08-13 00:00:00",
         end_time="2026-08-12 00:00:00",
     )
@@ -73,13 +112,8 @@ async def test_alarm_records_rejects_invalid_time_range_before_request():
 
 
 @pytest.mark.asyncio
-async def test_alarm_records_supports_unscoped_upstream_query_and_pagination(monkeypatch):
-    tool = JiangsuAlarmRecordsTool(
-        base_url="http://ops.example/api/operacityproduct",
-        token_url="http://token.example/token",
-        username="user",
-        password="password",
-    )
+async def test_alarm_records_pipeline_supports_unscoped_pagination(monkeypatch):
+    tool = _tool()
     requests = []
 
     async def get_records(params):
@@ -89,9 +123,9 @@ async def test_alarm_records_supports_unscoped_upstream_query_and_pagination(mon
         return {"success": True, "result": {"items": rows, "totalCount": 3}}
 
     monkeypatch.setattr(tool, "_request", get_records)
-    result = await tool.execute(
+    result = await tool.execute_pipeline(
         start_time="2026-08-11 15:00:00",
-        end_time="2026-08-12 15:00:00",
+        end_time="2026-08-11 16:00:00",
         max_result_count=2,
         sorting="timePoint",
     )
@@ -105,13 +139,9 @@ async def test_alarm_records_supports_unscoped_upstream_query_and_pagination(mon
 
 
 @pytest.mark.asyncio
-async def test_alarm_records_filters_unscoped_query_to_requested_station_type(monkeypatch):
-    tool = JiangsuAlarmRecordsTool(
-        base_url="http://ops.example/api/operacityproduct",
-        token_url="http://token.example/token",
-        username="user",
-        password="password",
-    )
+async def test_alarm_records_pipeline_filters_to_requested_station_type(monkeypatch):
+    tool = _tool()
+
     async def resolve_station_type_codes(station_type):
         assert station_type == "省控"
         return {"P1"}, True
@@ -123,10 +153,10 @@ async def test_alarm_records_filters_unscoped_query_to_requested_station_type(mo
 
     monkeypatch.setattr(tool, "_resolve_station_type_codes", resolve_station_type_codes)
     monkeypatch.setattr(tool, "_request", get_records)
-    result = await tool.execute(
+    result = await tool.execute_pipeline(
         station_type="省控",
         start_time="2026-08-11 15:00:00",
-        end_time="2026-08-12 15:00:00",
+        end_time="2026-08-11 16:00:00",
     )
 
     assert result["success"] is True

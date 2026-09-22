@@ -11,7 +11,6 @@
         </div>
       </div>
       <div class="query-result">
-        <div v-if="simulated" class="demo-badge">演示数据</div>
         <div class="online-badge" :class="snapshotAvailable ? 'online' : 'offline'">
           <i></i>
           <span>{{ snapshotAvailable ? '状态在线' : '状态未返回' }}</span>
@@ -80,8 +79,7 @@
         </div>
         <div class="source-note">
           <span>数据来源</span>
-          <p v-if="simulated">演示模式（JIANGSU_DEVICE_CONTROL_SIMULATION）：当前设备状态为预设演示数据，非平台真实状态；开关类指令作用于模拟数据，用于展示完整质控流程。</p>
-          <p v-else>江苏 QC 反控服务实时状态接口。面板仅做状态展示与前置条件标注，不直接执行任何设备控制。</p>
+          <p>江苏 QC 反控服务实时状态接口。面板仅做状态展示与前置条件标注，不直接执行任何设备控制。</p>
         </div>
       </aside>
     </div>
@@ -118,7 +116,6 @@ const stationName = computed(() => station.value.station_name || station.value.s
 const devices = computed(() => (Array.isArray(payload.value.devices) ? payload.value.devices : []))
 const snapshot = computed(() => (Array.isArray(payload.value.snapshot) ? payload.value.snapshot : []))
 const snapshotAvailable = computed(() => snapshot.value.length > 0)
-const simulated = computed(() => payload.value.simulated === true || props.data?.meta?.simulated === true)
 const knownStates = computed(() => devices.value.filter(item => item.status).length)
 const headline = computed(() => {
   if (!snapshotAvailable.value) return '状态读取完成，但反控服务未返回设备状态'
@@ -145,18 +142,17 @@ const statusClass = status => {
 .dashboard-header { display: flex; min-height: 88px; align-items: center; justify-content: space-between; padding: 12px 26px; border-bottom: 1px solid rgba(69, 178, 255, .68); background: linear-gradient(90deg, #063e76, #075fa8 54%, #073d72); box-sizing: border-box; box-shadow: inset 0 -12px 28px rgba(0, 153, 255, .14); }
 .station-heading { display: grid; gap: 4px; }
 .station-heading .eyebrow { color: #5bc7ff; font-size: 10px; letter-spacing: 2px; }
-.station-heading strong { color: #fff; font-size: 21px; text-shadow: 0 0 12px rgba(71, 190, 255, .55); }
+.station-heading strong { color: var(--bg-container); font-size: 21px; text-shadow: 0 0 12px rgba(71, 190, 255, .55); }
 .station-meta { display: flex; gap: 18px; color: #a8d7f8; font-size: 11px; }
 .query-result { display: flex; align-items: center; gap: 16px; }
-.demo-badge { padding: 6px 12px; border: 1px solid rgba(255, 189, 57, .75); border-radius: 999px; background: rgba(255, 189, 57, .14); color: #ffd479; font-size: 12px; letter-spacing: 1px; }
 .online-badge { display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; border: 1px solid; border-radius: 999px; font-size: 12px; }
 .online-badge i { width: 8px; height: 8px; border-radius: 50%; }
 .online-badge.online { border-color: rgba(55, 229, 123, .7); color: #37e57b; background: rgba(55, 229, 123, .08); }
 .online-badge.online i { background: #37e57b; box-shadow: 0 0 8px #37e57b; }
-.online-badge.offline { border-color: rgba(255, 189, 57, .7); color: #ffbd39; background: rgba(255, 189, 57, .08); }
-.online-badge.offline i { background: #ffbd39; box-shadow: 0 0 8px #ffbd39; }
+.online-badge.offline { border-color: rgba(255, 189, 57, .7); color: var(--color-warning); background: rgba(255, 189, 57, .08); }
+.online-badge.offline i { background: var(--color-warning); box-shadow: 0 0 8px var(--color-warning); }
 .result-copy { display: grid; gap: 6px; }
-.result-copy strong { color: #fff; font-size: 15px; }
+.result-copy strong { color: var(--bg-container); font-size: 15px; }
 .result-copy span { color: #8ecaf1; font-size: 10px; }
 .dashboard-body { display: grid; grid-template-columns: minmax(560px, 1.5fr) minmax(320px, 1fr); }
 .device-section { padding: 14px 18px 16px; border-right: 1px solid #1768ac; box-sizing: border-box; }
@@ -178,7 +174,7 @@ const statusClass = status => {
 .device-card.unknown .device-icon { opacity: .78; }
 .device-info { display: grid; min-width: 0; gap: 6px; }
 .device-info header { display: flex; align-items: baseline; gap: 8px; }
-.device-info strong { color: #fff; font-size: 14px; }
+.device-info strong { color: var(--bg-container); font-size: 14px; }
 .device-kind { padding: 1px 6px; border: 1px solid rgba(84, 200, 255, .5); border-radius: 3px; color: #54c8ff; font-size: 9px; }
 .device-state { display: flex; align-items: center; gap: 8px; }
 .switch-icon { width: 26px; height: 26px; object-fit: contain; }

@@ -38,6 +38,7 @@ import {
 import { LineChart } from 'echarts/charts'
 import { CanvasRenderer } from 'echarts/renderers'
 import { finiteObservation, normalizeReviewPoints } from './reviewTimeSeriesData.js'
+import { CHART_TEXT_1 } from '../../services/chart/chartColors'
 
 echarts.use([
   DataZoomComponent,
@@ -118,8 +119,8 @@ const chartYAxis = computed(() => {
   const leftAxis = {
     type: 'value',
     name: props.unit,
-    nameTextStyle: { color: '#111827', fontSize: 10, padding: [0, 0, 4, 0] },
-    axisLabel: { color: '#111827', fontSize: 10 },
+    nameTextStyle: { color: CHART_TEXT_1, fontSize: 10, padding: [0, 0, 4, 0] },
+    axisLabel: { color: CHART_TEXT_1, fontSize: 10 },
     splitLine: { lineStyle: { color: 'rgba(17, 24, 39, .12)' } }
   }
   if (!hasRightAxis.value) return leftAxis
@@ -129,8 +130,8 @@ const chartYAxis = computed(() => {
       type: 'value',
       name: 'O3',
       position: 'right',
-      nameTextStyle: { color: '#111827', fontSize: 10, padding: [0, 0, 4, 0] },
-      axisLabel: { color: '#111827', fontSize: 10 },
+      nameTextStyle: { color: CHART_TEXT_1, fontSize: 10, padding: [0, 0, 4, 0] },
+      axisLabel: { color: CHART_TEXT_1, fontSize: 10 },
       splitLine: { show: false }
     }
   ]
@@ -181,7 +182,7 @@ const chartOption = computed(() => ({
     confine: true,
     backgroundColor: 'rgba(255, 255, 255, 0)',
     borderColor: 'rgba(17, 24, 39, .24)',
-    textStyle: { color: '#111827', fontSize: 11 },
+    textStyle: { color: CHART_TEXT_1, fontSize: 11 },
     formatter: tooltipFormatter
   },
   legend: {
@@ -191,7 +192,7 @@ const chartOption = computed(() => ({
     right: 8,
     itemWidth: 16,
     itemHeight: 3,
-    textStyle: { color: '#111827', fontSize: 11 }
+    textStyle: { color: CHART_TEXT_1, fontSize: 11 }
   },
   grid: { top: 54, right: hasRightAxis.value ? 48 : 18, bottom: 58, left: 48, containLabel: true },
   xAxis: {
@@ -199,7 +200,7 @@ const chartOption = computed(() => ({
     boundaryGap: false,
     axisLine: { lineStyle: { color: 'rgba(17, 24, 39, .24)' } },
     axisTick: { show: false },
-    axisLabel: { color: '#111827', fontSize: 10, formatter: formatTime }
+    axisLabel: { color: CHART_TEXT_1, fontSize: 10, formatter: formatTime }
   },
   yAxis: chartYAxis.value,
   dataZoom: [
@@ -211,8 +212,8 @@ const chartOption = computed(() => ({
       bottom: 16,
       borderColor: 'rgba(17, 24, 39, .22)',
       fillerColor: 'rgba(17, 24, 39, .08)',
-      handleStyle: { color: '#111827' },
-      textStyle: { color: '#111827', fontSize: 10 },
+      handleStyle: { color: CHART_TEXT_1 },
+      textStyle: { color: CHART_TEXT_1, fontSize: 10 },
       filterMode: 'none'
     }
   ],
@@ -231,7 +232,7 @@ const chartOption = computed(() => ({
       ? {
           silent: true,
           itemStyle: { color: 'rgba(246, 189, 74, .13)' },
-          label: { color: '#111827', fontSize: 10, lineHeight: 14 },
+          label: { color: CHART_TEXT_1, fontSize: 10, lineHeight: 14 },
           data: normalizedMarkAreas.value.map(area => [
             { name: area.chartLabel, xAxis: area.start },
             { xAxis: area.end }
@@ -270,15 +271,15 @@ onBeforeUnmount(() => {
 .review-timeseries-card { display: grid; gap: 8px; min-width: 0; padding: 10px; border: 1px solid rgba(17, 24, 39, .16); border-radius: 4px; background: transparent; }
 .chart-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; min-width: 0; }
 .chart-head > div { display: grid; gap: 4px; min-width: 0; }
-.chart-head strong { min-width: 0; color: #111827; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chart-head span { color: #111827; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
-.chart-head em { flex: none; color: #111827; font-size: 11px; font-style: normal; }
+.chart-head strong { min-width: 0; color: var(--text-1); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chart-head span { color: var(--text-1); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+.chart-head em { flex: none; color: var(--text-1); font-size: 11px; font-style: normal; }
 .mark-area-list { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
-.mark-area-pill { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 7px; border: 1px solid rgba(180, 83, 9, .28); border-radius: 4px; background: rgba(246, 189, 74, .15); color: #111827; font-size: 11px; line-height: 1.35; }
+.mark-area-pill { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 7px; border: 1px solid rgba(180, 83, 9, .28); border-radius: 4px; background: rgba(246, 189, 74, .15); color: var(--text-1); font-size: 11px; line-height: 1.35; }
 .mark-area-pill b { flex: none; font-weight: 700; }
-.mark-area-pill em { min-width: 0; color: #111827; font-style: normal; overflow-wrap: anywhere; }
+.mark-area-pill em { min-width: 0; color: var(--text-1); font-style: normal; overflow-wrap: anywhere; }
 .chart-surface { width: 100%; min-height: 220px; border: 1px solid rgba(17, 24, 39, .12); border-radius: 4px; background: transparent; }
-.chart-empty { padding: 42px 10px; border: 1px dashed rgba(17, 24, 39, .2); border-radius: 4px; color: #111827; text-align: center; font-size: 12px; }
+.chart-empty { padding: 42px 10px; border: 1px dashed rgba(17, 24, 39, .2); border-radius: 4px; color: var(--text-1); text-align: center; font-size: 12px; }
 @media (max-width: 720px) {
   .chart-head { align-items: stretch; flex-direction: column; gap: 6px; }
   .chart-head em { flex: initial; }

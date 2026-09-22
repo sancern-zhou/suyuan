@@ -62,6 +62,8 @@ class SmartEventOperationRequest(BaseModel):
 
 class SmartEventDispatchOrderRequest(BaseModel):
     order_type: str | None = Field(default=None, max_length=120)
+    urgency_type: str | None = Field(default=None, max_length=20)
+    issued_types: list[str] = Field(default_factory=list)
     assignee: str | None = Field(default=None, max_length=120)
     title: str = Field(min_length=1, max_length=240)
     description: str | None = Field(default=None, max_length=4000)
@@ -288,6 +290,8 @@ async def dispatch_smart_event_order(
             event_id,
             title=request.title,
             order_type=request.order_type,
+            urgency_type=request.urgency_type,
+            issued_types=request.issued_types,
             assignee=request.assignee,
             description=request.description,
             actor={"user_id": user.id, "username": user.username},

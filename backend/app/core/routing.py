@@ -97,6 +97,12 @@ ROUTER_REGISTRY = [
         owner="legacy",
     ),
     RouterSpec(
+        "app.api.jiangsu_work_order_review_routes",
+        optional=True,
+        description="Jiangsu fault work-order review workspace",
+        owner="legacy",
+    ),
+    RouterSpec(
         "app.api.jiangsu_data_audit_routes",
         optional=True,
         description="Jiangsu data-audit AI conclusions",

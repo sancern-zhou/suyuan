@@ -17,8 +17,18 @@ import structlog
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.jiangsu.device_control import _DeviceControlClient
 from app.tools.jiangsu.result_filter import externalize_compact_records
+from app.tools.jiangsu.review_evidence import (
+    POLLUTANT_UNITS,
+    fetch_same_city_band,
+    pollutant_points,
+)
 from app.tools.jiangsu.station_data import JiangsuStationDataTool
-from app.tools.resource_declarations import resources_for_visuals, single_file_product
+from app.tools.resource_declarations import (
+    data_file_resource,
+    derivative_file,
+    resources_for_visuals,
+    single_file_product,
+)
 from app.utils.path_config import (
     format_agent_path,
     get_data_registry,
@@ -627,6 +637,9 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
     # therefore rejected in favour of directly addressed concurrent queries.
     _MAX_STATIONS = 10
     _MAX_FETCH_ALL_RECORDS = 1000
+    # “时段内完成审核”查询默认回溯的创建时间窗口（天）：按实测周完成量放大仍远低于
+    # _MAX_FETCH_ALL_RECORDS，同时覆盖跨月/跨季补审工单。
+    _REVIEW_FILTER_BACKFILL_DAYS = 92
     _WORKFLOW_STATUS_LABELS = {"待分配": "ToAssign", "待领取": "ToAccept", "处理中": "Doing",
                                "已完成": "Finish", "已拒绝": "Reject"}
     _ORDER_STATUS_LABELS = {"待处理": "Wait", "处理中": "Doing", "已完成": "Finish", "已作废": "Invalid"}
@@ -642,9 +655,21 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
     def __init__(self) -> None:
         super().__init__(
             name="jiangsu_fetch_fault_work_orders",
-            description="查询江苏运维工单清单：默认查询故障工单，也可查询巡检/例行运维、现场检查或取消类型过滤查询全部工单。按工单号、创建时间和状态筛选时默认取齐匹配清单；超过 24 条时完整清单外部化保存。具体故障工单复核请继续调用 jiangsu_fetch_fault_work_order_detail。",
+            description=(
+                "查询江苏运维工单清单：默认查询故障工单，也可查询巡检/例行运维、现场检查或取消类型过滤查询全部工单。"
+                "按工单号、创建时间、节点或状态筛选；数量/统计类问题直接用返回的 total_count 与 distribution 回答，不要回读完整清单。"
+                "标准口径：查“某节点待审核”用 current_points=[节点名]（默认在办状态）；查“某节点已审核/时段内完成审核”"
+                "用 current_points=[节点名] + review_finished_start/end（工具自动限定 Finish 并按工单 finishTime 精确过滤，"
+                "省中心审核为末级节点，已完成工单停留在该节点），不要用 mine_only 代替节点口径，也不要拉全量后自行筛选。"
+                "超过 24 条时完整清单外部化保存；具体故障工单复核请继续调用 jiangsu_fetch_fault_work_order_detail。"
+            ),
             category=ToolCategory.QUERY,
-            function_schema={"name": "jiangsu_fetch_fault_work_orders", "description": "查询运维工单清单，默认类型为故障工单。默认 fetch_all=true，由工具内部完成分页并一次返回完整匹配范围；超过 24 条自动保存完整数据文件并内联首尾 24 条。仅当用户明确要求浏览某一页时才设置 fetch_all=false。",
+            function_schema={"name": "jiangsu_fetch_fault_work_orders",
+                             "description": (
+                                 "查询运维工单清单，默认类型为故障工单。默认 fetch_all=true，由工具内部完成分页并一次返回完整匹配范围；"
+                                 "超过 24 条自动保存完整数据文件并内联首尾 24 条，仅当用户明确要求浏览某一页时才设 fetch_all=false。"
+                                 "返回 metadata 含 total_count（匹配总数）与 distribution（节点/工单状态分布），统计类问题直接引用，勿回读清单。"
+                             ),
                              "parameters": {"type": "object", "properties": {
                                  "station_names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
                                                     "description": "站点名称列表，最多 10 个；与其他筛选条件组合时作为站点过滤。"},
@@ -662,8 +687,14 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
                                  ]}, "description": "平台工单类型，最多指定一种；Check 是巡检/例行运维。省略时默认仅查 Fault；传空数组时取消类型过滤并查询全部工单。"},
                                  "start_time": {"type": "string", "description": "创建时间起，YYYY-MM-DD HH:mm:ss。"},
                                  "end_time": {"type": "string", "description": "创建时间止，YYYY-MM-DD HH:mm:ss。"},
-                                 "current_points": {"type": "array", "items": {"type": "string"}, "minItems": 1,
-                                                     "description": "工单节点名称列表，如 [\"故障处理\"]；也可传节点 guid。"},
+                                 "review_finished_start": {"type": "string",
+                                                             "description": "审核完成时间起（按工单 finishTime 过滤），YYYY-MM-DD HH:mm:ss；如“本周完成审核”传周一 00:00:00。必填才能启用该口径，工具自动回溯创建时间窗口。"},
+                                 "review_finished_end": {"type": "string",
+                                                           "description": "审核完成时间止，YYYY-MM-DD HH:mm:ss；缺省为当前时间。"},
+                                  "current_points": {"type": "array", "items": {"type": "string"}, "minItems": 1,
+                                                      "description": "工单节点筛选，仅支持 Fault 故障工单流程。传平台节点全名（如 [\"运维单位审核\"]、[\"省中心审核\"]）或节点 guid；不要自造节点名，与 mine_only 互斥二选一。"},
+                                  "mine_only": {"type": "boolean", "default": False,
+                                                 "description": "平台“我的待办”口径：true 时只查当前服务账号有角色的流程节点（如省中心审核账号即省中心审核节点），与 current_points 互斥二选一；仅支持 Fault 故障工单流程。用户问“我的待办/待我审核”时用 true，不要改为手填节点名。"},
                                  "workflow_statuses": {"type": "array", "items": {"type": "string"}, "minItems": 1,
                                                         "description": "节点状态：ToAssign 待分配、ToAccept 待领取、Doing 处理中、Finish 已完成、Reject 已拒绝；也接受中文。默认 [\"ToAssign\",\"ToAccept\",\"Doing\"]。"},
                                  "order_statuses": {"type": "array", "items": {"type": "string"}, "minItems": 1,
@@ -683,9 +714,11 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
                       take: int = 5, working_order_code: str | None = None,
                       order_types: list[str] | None = None,
                       start_time: str | None = None, end_time: str | None = None,
+                      review_finished_start: str | None = None, review_finished_end: str | None = None,
                       current_points: list[str] | None = None,
                       workflow_statuses: list[str] | None = None,
                       order_statuses: list[str] | None = None,
+                      mine_only: bool = False,
                       fetch_all: bool = True,
                       page: int = 1, page_size: int = 50, **_: Any) -> dict[str, Any]:
         try:
@@ -700,17 +733,19 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
             stations_given = _nonempty(station_names) or _nonempty(station_codes) or _nonempty(unique_codes)
             points = current_points if isinstance(current_points, list) else None
             filters_given = bool(working_order_code or start_time or end_time
+                                 or review_finished_start or review_finished_end
                                  or (points is not None and len(points) > 0)
                                  or workflow_statuses is not None or order_statuses is not None
-                                 or order_types is not None)
+                                 or order_types is not None or mine_only)
             if not stations_given or filters_given:
                 return await self._execute_filtered(
                     context,
                     station_names, station_codes, unique_codes,
                     working_order_code=working_order_code, start_time=start_time, end_time=end_time,
+                    review_finished_start=review_finished_start, review_finished_end=review_finished_end,
                     order_types=order_types,
                     current_points=points, workflow_statuses=workflow_statuses,
-                    order_statuses=order_statuses, fetch_all=fetch_all,
+                    order_statuses=order_statuses, mine_only=mine_only, fetch_all=fetch_all,
                     page=page, page_size=page_size,
                 )
             stations = await _resolve_direct_station_scope(
@@ -747,10 +782,13 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
         working_order_code: str | None,
         start_time: str | None,
         end_time: str | None,
+        review_finished_start: str | None,
+        review_finished_end: str | None,
         order_types: list[str] | None,
         current_points: list[str] | None,
         workflow_statuses: list[str] | None,
         order_statuses: list[str] | None,
+        mine_only: bool,
         fetch_all: bool,
         page: int,
         page_size: int,
@@ -769,8 +807,38 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
             filter_params: list[tuple[str, str]] = []
             if order_code:
                 filter_params.append(("WorkingOrderCode", order_code))
+            review_start_text = str(review_finished_start or "").strip()
+            review_end_text = str(review_finished_end or "").strip()
+            review_filter_active = bool(review_start_text or review_end_text)
+            review_start_dt: datetime | None = None
+            review_end_dt: datetime | None = None
+            if review_start_text or review_end_text:
+                if not review_start_text:
+                    raise ValueError("review_finished_end 需与 review_finished_start 搭配使用")
+                review_start_dt = _parse_iso_time(review_start_text, "review_finished_start")
+                review_end_dt = (_parse_iso_time(review_end_text, "review_finished_end")
+                                 if review_end_text else datetime.now())
+                if review_start_dt > review_end_dt:
+                    raise ValueError("review_finished_start 不能晚于 review_finished_end")
+                if workflow_statuses is not None:
+                    normalized_review = [
+                        self._WORKFLOW_STATUS_LABELS.get(str(value or "").strip(), str(value or "").strip())
+                        for value in workflow_statuses
+                    ]
+                    if "Finish" not in normalized_review:
+                        raise ValueError(
+                            "review_finished_start/end 表示审核已完成（Finish）；"
+                            "请勿再传不含 Finish 的 workflow_statuses"
+                        )
             time_range: list[str] = []
-            if start_time or end_time:
+            created_window_widened = False
+            if review_filter_active and not start_time and not end_time:
+                widened_start = review_start_dt - timedelta(days=self._REVIEW_FILTER_BACKFILL_DAYS)
+                time_range = [widened_start.strftime("%Y-%m-%d %H:%M:%S"),
+                              datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+                filter_params += [("CreateTime", time_range[0]), ("CreateTime", time_range[1])]
+                created_window_widened = True
+            elif start_time or end_time:
                 start = _parse_iso_time(start_time, "start_time") if start_time else datetime(2000, 1, 1)
                 end = _parse_iso_time(end_time, "end_time") if end_time else datetime.now()
                 if start > end:
@@ -778,10 +846,17 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
                 time_range = [start.strftime("%Y-%m-%d %H:%M:%S"), end.strftime("%Y-%m-%d %H:%M:%S")]
                 filter_params += [("CreateTime", time_range[0]), ("CreateTime", time_range[1])]
             point_guids: list[str] = []
+            if current_points and mine_only:
+                raise ValueError("mine_only 与 current_points 二选一：mine_only 表示当前账号有角色的全部节点")
             if current_points:
                 if type_values != ["Fault"]:
                     raise ValueError("current_points 仅支持 Fault 故障工单流程；查询全部或其他类型时请勿传入")
                 point_guids = await self._resolve_point_guids(current_points)
+                filter_params += [("CurrentPoint", guid) for guid in point_guids]
+            if mine_only:
+                if type_values != ["Fault"]:
+                    raise ValueError("mine_only 仅支持 Fault 故障工单流程；查询全部或其他类型时请勿传入")
+                point_guids = await self._resolve_my_point_guids()
                 filter_params += [("CurrentPoint", guid) for guid in point_guids]
             workflow_values, workflow_default = self._normalise_status_values(
                 workflow_statuses, self._WORKFLOW_STATUS_LABELS,
@@ -791,6 +866,11 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
                 order_statuses, self._ORDER_STATUS_LABELS,
                 self._DEFAULT_ORDER_STATUSES, "order_statuses",
             )
+            review_forced_finish = False
+            if review_filter_active and "Finish" not in workflow_values:
+                workflow_values = ["Finish"]
+                workflow_default = False
+                review_forced_finish = True
             filter_params += [("WorkFlowStatus", value) for value in workflow_values]
             filter_params += [("OrderStatus", value) for value in order_values]
             station_filter_codes: list[str] = []
@@ -847,6 +927,35 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
                 for compact in (_compact_fault_order_list_item(item) for item in items)
                 if compact
             ]
+            # 审核完成时间过滤：平台仅支持创建时间筛选，finishTime 在工具内本地精确过滤。
+            review_platform_matched = len(compact_items)
+            review_missing_finish = review_out_of_range = 0
+            if review_filter_active:
+                def _finished_in_review_window(item: dict[str, Any]) -> bool:
+                    nonlocal review_missing_finish, review_out_of_range
+                    finished = _parse_qc_datetime(item.get("finishTime"))
+                    if finished is None:
+                        review_missing_finish += 1
+                        return False
+                    if not (review_start_dt <= finished <= review_end_dt):
+                        review_out_of_range += 1
+                        return False
+                    return True
+
+                compact_items = [item for item in compact_items if _finished_in_review_window(item)]
+            # 节点/状态分布：取齐完整清单时零成本产出，供统计类问题免回读直接作答。
+            node_counts: dict[str, int] = {}
+            order_status_counts: dict[str, int] = {}
+            for item in compact_items:
+                node_key = str(item.get("currentPointName") or "未知节点")
+                status_key = str(item.get("orderStatusStr") or "未知状态")
+                node_counts[node_key] = node_counts.get(node_key, 0) + 1
+                order_status_counts[status_key] = order_status_counts.get(status_key, 0) + 1
+            distribution = {
+                "scope": "full" if source_data_complete else "partial",
+                "by_node": dict(sorted(node_counts.items(), key=lambda kv: -kv[1])),
+                "by_order_status": dict(sorted(order_status_counts.items(), key=lambda kv: -kv[1])),
+            }
             inline_items, file_path, externalization = externalize_compact_records(
                 compact_items,
                 context=context,
@@ -865,21 +974,46 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
                 summary += "；完整清单已外部化保存，当前内联首尾 24 条预览"
             if fetch_all and not source_data_complete:
                 summary += f"；匹配量超过单次完整抓取上限 {self._MAX_FETCH_ALL_RECORDS} 条，当前数据不完整"
+            if review_filter_active:
+                summary += (f"；审核完成时间 {review_start_dt.strftime('%Y-%m-%d %H:%M:%S')}"
+                            f"~{review_end_dt.strftime('%Y-%m-%d %H:%M:%S')}："
+                            f"平台匹配 {review_platform_matched} 条，窗口内完成 {len(compact_items)} 条")
+                if review_missing_finish or review_out_of_range:
+                    summary += (f"（剔除无 finishTime {review_missing_finish} 条、"
+                                f"窗口外 {review_out_of_range} 条）")
             if defaults_applied:
                 summary += "；默认状态筛选：节点状态 待分配/待领取/处理中，工单状态 待处理/处理中/已完成，传空数组可清除"
+            if mine_only:
+                summary += "；已按当前账号负责节点（我的待办口径）筛选"
+            if distribution["scope"] == "full" and distribution["by_node"]:
+                node_brief = "、".join(f"{node} {count}" for node, count in list(distribution["by_node"].items())[:5])
+                summary += f"；节点分布 {node_brief}"
             metadata = {"source": "jiangsu_operations_api", "endpoint": self._LIST_PATH,
                         "query_mode": "filtered",
                         "filters": {"working_order_code": order_code or None,
                                     "order_types": type_values,
                                     "create_time": time_range or None,
                                     "current_points": current_points or [],
+                                    "mine_only": mine_only,
                                     "workflow_statuses": workflow_values,
                                     "order_statuses": order_values,
                                     "station_codes": station_filter_codes},
+                        "review_finished": ({
+                                "start": review_start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                                "end": review_end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                                "platform_matched": review_platform_matched,
+                                "matched": len(compact_items),
+                                "dropped_missing_finish_time": review_missing_finish,
+                                "dropped_out_of_range": review_out_of_range,
+                                "forced_workflow_status_finish": review_forced_finish,
+                                "created_window_widened_days":
+                                    self._REVIEW_FILTER_BACKFILL_DAYS if created_window_widened else None,
+                            } if review_filter_active else None),
                         "defaults_applied": defaults_applied,
                         "order_type_default_applied": type_default,
                         "record_count": len(compact_items), "total_count": total_count,
                         "returned_records": len(inline_items),
+                        "distribution": distribution,
                         "fetch_all": fetch_all, "source_data_complete": source_data_complete,
                         "page": request_page, "page_size": request_page_size,
                         "context_data": externalization,
@@ -951,6 +1085,18 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
             if value not in resolved:
                 resolved.append(value)
         return resolved, False
+
+    async def _resolve_my_point_guids(self) -> list[str]:
+        """平台“我的待办”口径：GetWorkFlowByUser.stepIds 即当前账号有角色的节点 guid。"""
+        payload = await _JiangsuAuthenticatedApi(source="ops").get(self._WORKFLOW_PATH, [("Type", "Fault")])
+        result = payload.get("result") or {}
+        step_ids = result.get("stepIds") or []
+        if not isinstance(step_ids, list):
+            raise ValueError("故障工单流程节点接口 stepIds 无效")
+        guids = [str(guid).strip() for guid in step_ids if str(guid).strip()]
+        if not guids:
+            raise ValueError("当前账号在故障工单流程中没有负责的节点")
+        return guids
 
     async def _resolve_point_guids(self, names: list[str]) -> list[str]:
         """Resolve workflow node names (or guids) against the Fault workflow."""
@@ -1399,18 +1545,18 @@ class JiangsuAutoInspectionTool(LLMTool):
         success = _truthy(payload.get("Result", payload.get("success", False))) or has_snapshot
         if not raw_data:
             raw_data = payload
-        # Some enabled stations return a successful QC envelope with an
-        # empty result.  The platform page still renders its room and
-        # latest动环 values, so enrich the visual input from the same
-        # station-history endpoint without changing the raw QC result.
+        raw_data = dict(raw_data)
+        try:
+            air_snapshot = await _fetch_station_air_snapshot(station["station_code"])
+        except (ValueError, httpx.HTTPError) as exc:
+            air_snapshot = {}
+            logger.info("jiangsu_stationhouse_air_snapshot_unavailable",
+                        station_code=station.get("station_code"), error=str(exc))
+        if air_snapshot:
+            raw_data["MonitoringSnapshot"] = air_snapshot
         if not has_snapshot and single:
             try:
-                raw_data = dict(raw_data)
-                environment_snapshot = await _fetch_environment_snapshot(station["unique_code"])
-                environment_snapshot.update(
-                    await _fetch_station_air_snapshot(station["station_code"])
-                )
-                raw_data["EnvironmentSnapshot"] = environment_snapshot
+                raw_data["EnvironmentSnapshot"] = await _fetch_environment_snapshot(station["unique_code"])
             except (ValueError, httpx.HTTPError) as exc:
                 logger.info("jiangsu_stationhouse_environment_fallback_unavailable",
                             station_code=station.get("station_code"), error=str(exc))
@@ -1466,9 +1612,17 @@ class JiangsuNetworkInspectionSummaryTool(LLMTool):
 
 
 class JiangsuStationEnvironmentHistoryTool(LLMTool):
-    """Read station-house environment/power history from the air platform."""
+    """Read station-house environment/power history from the air platform.
+
+    The environment endpoint returns every requested item for every station in
+    the window, so a city-wide query with default items can produce a very
+    large payload.  Callers must address stations directly, and should first
+    use the alarm-log tool to locate abnormal items and time windows, then ask
+    only for those ``pollutant_codes``.
+    """
 
     _PATH = "stationintegrate/StationIntegrate/GetStationEnvPowerData"
+    _MAX_STATIONS = 10
     _DEFAULT_ITEMS = (
         "SO2GasPressAD,NOxGasPressAD,COGasPressAD,SamplePipeSPress,StationTemp,StationHum,"
         "PipeTemp,PipeHum,VA,VB,VC,IA,IB,IC,Water1,SmokeState,SampleTemp,SampleHumi,"
@@ -1478,19 +1632,32 @@ class JiangsuStationEnvironmentHistoryTool(LLMTool):
     def __init__(self) -> None:
         super().__init__(
             name="jiangsu_fetch_station_environment_history",
-            description="读取江苏站房温湿度、电流电压、钢瓶压力和采样参数历史；支持具体站点、城市/区县下辖站点。",
+            description=(
+                "读取江苏站房温湿度、电流电压、钢瓶压力和采样参数历史，只支持直接指定站点（最多 10 个）；"
+                "优先先用站房告警定位异常项和异常时段，再只查询异常动环编码，避免全量拉取。"
+            ),
             category=ToolCategory.QUERY,
             function_schema={"name": "jiangsu_fetch_station_environment_history",
-                             "description": "查询站房动环历史曲线和表格数据。",
+                             "description": (
+                                 "查询站房动环历史曲线和表格数据。只支持直接指定站点（station_names/"
+                                 "station_codes/unique_codes，最多 10 个），不支持城市/区县批量。"
+                                 "建议先调用 jiangsu_fetch_station_alarm_logs 定位异常动环项和异常时段，"
+                                 "再传入这些异常 pollutant_codes 并尽量缩小时间范围；多站点查询必须显式指定 pollutant_codes。"
+                                 "不传 pollutant_codes 时仅在单站查询下默认返回全部支持项。"
+                             ),
                              "parameters": {"type": "object", "properties": {
-                                 "station_name": {"type": "string"}, "station_code": {"type": "string"},
-                                 "unique_code": {"type": "string"}, "city_name": {"type": "string"},
-                                 "district_name": {"type": "string"},
+                                 "station_names": {"type": "array", "items": {"type": "string"}, "maxItems": 10,
+                                                   "description": "站点名称，最多 10 个。"},
+                                 "station_codes": {"type": "array", "items": {"type": "string"}, "maxItems": 10,
+                                                   "description": "平台站点编码，最多 10 个。"},
+                                 "unique_codes": {"type": "array", "items": {"type": "string"}, "maxItems": 10,
+                                                  "description": "平台唯一编码，最多 10 个。"},
                                  "start_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss。"},
                                  "end_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss。"},
                                  "time_type": {"type": "string", "enum": ["h", "30s"], "default": "h"},
                                  "pollutant_codes": {"type": "array", "items": {"type": "string"},
-                                                     "description": "可选动环编码；不提供时查询全部支持项。"},
+                                                     "description": "只查询需要核验的动环编码（如 StationTemp、VA、IA）。"
+                                                                    "应先用站房告警定位异常项后只传异常编码；多站点查询时必须显式指定。"},
                              }, "required": ["start_time", "end_time"]}},
         )
 
@@ -1498,8 +1665,14 @@ class JiangsuStationEnvironmentHistoryTool(LLMTool):
                       district_name: str | None = None, station_code: str | None = None,
                       unique_code: str | None = None, start_time: str | None = None,
                       end_time: str | None = None, time_type: str = "h",
-                      pollutant_codes: list[str] | None = None, **_: Any) -> dict[str, Any]:
+                      pollutant_codes: list[str] | None = None, station_names: list[str] | None = None,
+                      station_codes: list[str] | None = None, unique_codes: list[str] | None = None,
+                      **_: Any) -> dict[str, Any]:
         try:
+            if city_name or district_name:
+                raise ValueError(
+                    "站房动环不支持城市/区县批量查询；请先用 jiangsu_fetch_station_alarm_logs 定位异常站点，再按站点查询"
+                )
             start = _parse_iso_time(start_time, "start_time")
             end = _parse_iso_time(end_time, "end_time")
             if start > end:
@@ -1510,12 +1683,21 @@ class JiangsuStationEnvironmentHistoryTool(LLMTool):
             max_seconds = 31 * 86400 if time_type == "h" else 86400
             if (end - start).total_seconds() > max_seconds:
                 raise ValueError("小时数据最多查询 31 天，30 秒数据最多查询 1 天")
-            stations = await _resolve_station_rows(
-                station_name, city_name, district_name,
-                station_code=station_code, unique_code=unique_code,
+            names = ([station_name] if station_name else []) + list(station_names or [])
+            codes_in = ([station_code] if station_code else []) + list(station_codes or [])
+            uniques = ([unique_code] if unique_code else []) + list(unique_codes or [])
+            stations = await _resolve_direct_station_scope(
+                names or None, codes_in or None, uniques or None,
+                max_stations=self._MAX_STATIONS,
+                require_unique_code=True,
+                alternative_tool="jiangsu_fetch_station_alarm_logs",
             )
-            codes = ",".join(station["unique_code"] for station in stations)
             items = [str(item).strip() for item in (pollutant_codes or []) if str(item).strip()]
+            if not items and len(stations) > 1:
+                raise ValueError(
+                    "多站点查询必须显式指定 pollutant_codes：请先用站房告警定位异常项，再只查询异常动环编码"
+                )
+            codes = ",".join(station["unique_code"] for station in stations)
             pollutant = ",".join(items) if items else self._DEFAULT_ITEMS
             payload = await _JiangsuAuthenticatedApi(source="air").get(self._PATH, [
                 ("Uniquecode", codes), ("PollutantCode", pollutant), ("TimeType", time_type),
@@ -1989,6 +2171,963 @@ class JiangsuQcMonitoringCurveTool(LLMTool):
             return {"records": [], "success": False, "error": str(exc)}
 
 
+def _numeric_series(values: list[Any]) -> list[float]:
+    stats: list[float] = []
+    for value in values:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number == number and number not in (float("inf"), float("-inf")):
+            stats.append(number)
+    return stats
+
+
+def _field_stats(rows: list[dict[str, Any]], fields: list[str]) -> dict[str, dict[str, float]]:
+    projections: dict[str, dict[str, float]] = {}
+    for field in fields:
+        series = _numeric_series([row.get(field) for row in rows if isinstance(row, dict)])
+        if not series:
+            continue
+        projections[field] = {
+            "min": round(min(series), 3), "max": round(max(series), 3),
+            "mean": round(sum(series) / len(series), 3),
+            "first": series[0], "last": series[-1],
+        }
+    return projections
+
+
+def _project_pollutant_points(points: list[dict[str, Any]], cap: int = 96) -> dict[str, Any]:
+    series = _numeric_series([item.get("value") for item in points])
+    projection: dict[str, Any] = {"point_count": len(points)}
+    if series and points:
+        peak = max(points, key=lambda item: float(item.get("value") or 0))
+        projection.update({
+            "peak": {"time": peak.get("time"), "value": peak.get("value")},
+            "min": round(min(series), 3), "max": round(max(series), 3),
+            "mean": round(sum(series) / len(series), 3),
+            "first": {"time": points[0].get("time"), "value": points[0].get("value")},
+            "last": {"time": points[-1].get("time"), "value": points[-1].get("value")},
+        })
+    if len(points) > cap:
+        step = max(1, len(points) // cap)
+        projection["hourly_sampled"] = points[::step]
+        projection["hourly_note"] = f"共 {len(points)} 小时，索引按每 {step} 小时采样；逐时全量见分文件 station_hour"
+    else:
+        projection["hourly"] = points
+    return projection
+
+
+def _project_band(band: list[dict[str, Any]], cap: int = 6) -> dict[str, Any]:
+    exceed = [
+        {"time": row.get("time"), "target": row.get("target"), "band_max": row.get("max")}
+        for row in band
+        if isinstance(row, dict)
+        and _numeric_series([row.get("target")])
+        and _numeric_series([row.get("max")])
+        and float(row["target"]) > float(row["max"])
+    ]
+    projection: dict[str, Any] = {
+        "point_count": len(band),
+        "exceed_hours": len(exceed),
+        "exceed_note": "本站高于同城对比带最高值的小时数（>0 提示区域同步性存疑）",
+    }
+    if exceed:
+        projection["exceed_samples"] = exceed[:cap]
+    return projection
+
+
+def _project_alarms(payload: dict[str, Any], cap: int = 5) -> dict[str, Any]:
+    logs = payload.get("alarm_logs") or []
+    projection: dict[str, Any] = {
+        "note": "站房告警接口不支持时间窗过滤，返回的是当前告警清单，需人工比对异常窗口",
+        "recent": [],
+    }
+    for log in logs[:cap]:
+        if isinstance(log, dict):
+            projection["recent"].append({
+                key: log.get(key) for key in ("alarmTime", "time", "alarmContent", "content",
+                                              "alarmLevel", "level", "alarmName", "name")
+                if log.get(key) is not None
+            })
+    return projection
+
+
+def _project_qc(tasks: list[dict[str, Any]], cap: int = 5) -> dict[str, Any]:
+    compact = []
+    for task in tasks[:cap]:
+        if not isinstance(task, dict):
+            continue
+        detail = task.get("detail") if isinstance(task.get("detail"), dict) else {}
+        task_info = detail.get("task") if isinstance(detail.get("task"), dict) else {}
+        compact.append({
+            "rId": task.get("rId"),
+            "poll": task.get("target_pollutant") or task.get("poll") or task_info.get("poll"),
+            "qcType": task.get("qcType") or task_info.get("qc_type"),
+            "sStart": task.get("sStart") or task.get("rStart"),
+            "qc_result": task_info.get("qc_result") or task.get("result"),
+            "task_status_label": task_info.get("task_status_label"),
+            "detail_status": task.get("detail_status"),
+            "curve_points": len(detail.get("curve") or []),
+        })
+    return {"tasks": [{key: value for key, value in task.items() if value is not None}
+                      for task in compact],
+            "note": "已按目标污染物过滤；合格结果/步骤/质控曲线在 qc 分文件与前端详情中展开"}
+
+
+# 站房动环要素的正常范围（含工程容差）；不在表内的要素不做阈值判定。
+# 参考源平台动环页面告警判据，用于从逐时表中只保留疑似异常行。
+_ENV_POWER_FIELD_LIMITS: dict[str, tuple[float, float]] = {
+    "StationTemp": (5.0, 40.0),
+    "StationHum": (10.0, 90.0),
+    "PipeTemp": (-10.0, 60.0),
+    "PipeHum": (0.0, 100.0),
+    "VA": (180.0, 260.0),
+    "VB": (180.0, 260.0),
+    "VC": (180.0, 260.0),
+    "IA": (0.0, 20.0),
+    "IB": (0.0, 20.0),
+    "IC": (0.0, 20.0),
+    "SamplePipeSPress": (-1200.0, 200.0),
+    "SampleFlow": (0.0, 5.0),
+    "SamplePipeStay": (0.0, 30.0),
+    "SampleTemp": (-10.0, 60.0),
+    "SampleHumi": (0.0, 100.0),
+    "SampleAirTemp": (-10.0, 60.0),
+    "SampleAirHumi": (0.0, 100.0),
+    "HeatTemp": (0.0, 200.0),
+    "HeatPower": (0.0, 500.0),
+    "PumpPower": (0.0, 1000.0),
+    "SO2GasPressAD": (0.0, 30.0),
+    "NOxGasPressAD": (0.0, 30.0),
+    "COGasPressAD": (0.0, 30.0),
+}
+# 状态型要素：0 表示正常，非 0 视为告警。
+_ENV_POWER_STATE_FIELDS = {"SmokeState": "烟感", "Water1": "水浸"}
+# 动力环境（动环）告警分类码：1101~1299 段，排除水浸/火警/门禁等非动环类。
+_ENV_POWER_ALARM_EXCLUDED_CODES = {1205, 1207, 1218, 1219}
+
+
+def _is_power_environment_alarm(row: dict[str, Any]) -> bool:
+    raw = row.get("AlarmType", row.get("alarmType", row.get("SubCatalog")))
+    try:
+        code = int(raw)
+    except (TypeError, ValueError):
+        return False
+    return 1100 < code < 1300 and code not in _ENV_POWER_ALARM_EXCLUDED_CODES
+
+
+def _env_power_row_issues(row: dict[str, Any], fields: list[str]) -> list[dict[str, Any]]:
+    """返回该动环行命中的异常项（空列表表示正常行）。"""
+    issues: list[dict[str, Any]] = []
+    if not isinstance(row, dict):
+        return issues
+    for field in fields:
+        value = row.get(field)
+        if value in (None, ""):
+            continue
+        if field in _ENV_POWER_STATE_FIELDS:
+            try:
+                if float(value) != 0:
+                    issues.append({"field": field, "value": value, "reason": f"{_ENV_POWER_STATE_FIELDS[field]}告警"})
+            except (TypeError, ValueError):
+                issues.append({"field": field, "value": value, "reason": f"{_ENV_POWER_STATE_FIELDS[field]}状态异常"})
+            continue
+        limits = _ENV_POWER_FIELD_LIMITS.get(field)
+        if limits is None:
+            continue
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            continue
+        if numeric < limits[0] or numeric > limits[1]:
+            issues.append({"field": field, "value": numeric, "reason": f"超出正常范围 {limits[0]}~{limits[1]}"})
+    return issues
+
+
+def _abnormal_env_power_rows(rows: list[dict[str, Any]], fields: list[str]) -> list[dict[str, Any]]:
+    """仅保留命中动环阈值/状态告警的行，并标注异常要素（无告警返回空列表）。"""
+    abnormal: list[dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        issues = _env_power_row_issues(row, fields)
+        if not issues:
+            continue
+        abnormal.append({**row, "_issues": issues})
+    return abnormal
+
+
+class JiangsuReviewEvidenceTool(LLMTool):
+    """工单审核证据采集：站点污染物小时时序 + 同城对比带 + 城市气象时序 + 补充取证模块。
+
+    证据拆分持久化为审核证据包（index + sources 分文件），由右侧「工单审核」
+    工作台渲染图表与研判结果，不再向可视化面板发布图表资源。
+    """
+
+    # 补充取证模块的行数上限：证据只用于人工核验，避免整段原始表撑爆上下文。
+    _MODULE_ALARM_LOG_LIMIT = 50
+    _MODULE_ENV_ROW_LIMIT = 48
+    _MODULE_QC_TASK_LIMIT = 5
+    # 质控详情每个任务需 3 次接口调用（状态/日志/曲线）：限制并发与单任务超时，
+    # 超时或失败降级为任务概要（不含曲线），避免宽时间窗下整次取证被拖挂。
+    _MODULE_QC_DETAIL_CONCURRENCY = 3
+    _MODULE_QC_DETAIL_TIMEOUT = 45.0
+    # 单个取证模块的整体上限：超时即降级为空结果，保证取证不被单模块拖挂。
+    _MODULE_TOTAL_TIMEOUT = 90.0
+    _MODULE_KINDS = ("alarms", "env_power", "qc")
+
+    def __init__(self) -> None:
+        super().__init__(
+            name="jiangsu_fetch_review_evidence",
+            description=(
+                "获取工单审核证据：单站点污染物小时时序与城市气象时序（风速/风向/温湿压雨），"
+                "证据数据拆分持久化为审核证据包（index.json + sources 分文件），"
+                "并触发右侧「工单审核」工作台展示证据图表与 AI 研判。"
+                "只传工单号即可自动解析站点、监测项与时间窗。"
+                "本工具返回的是证据索引与投影摘要（峰值/均值/超标小时/要素统计），不要期待原始明细；"
+                "需要逐时明细时按 evidence_index 中的 file 路径或同名 session 资源按需读取单个分文件。"
+                "同一时间窗内并行取证模块（modules）：站房设备告警、站房动环历史、质控任务清单。"
+            ),
+            category=ToolCategory.QUERY,
+            function_schema={
+                "name": "jiangsu_fetch_review_evidence",
+                "description": (
+                    "获取审核证据图表：只传 working_order_code 时自动解析站点、监测项（从工单标题/设备推断）"
+                    "与时间窗（创建时间前 1 天至后 2 天）；也可显式指定单站点 + 监测项 + 时间范围。"
+                    "用户要求查看工单/审核的证据图表、污染物与气象过程时调用。"
+                    "modules 控制与图表同窗口并行获取的补充取证；缺省全部获取，一次调用返回完整证据包。"
+                    "质控模块返回任务清单（rId/rStart），需要单个任务执行明细时再用 jiangsu_fetch_qc_task_status 下钻。"
+                ),
+                "parameters": {"type": "object", "properties": {
+                    "working_order_code": {"type": "string",
+                                            "description": "故障工单号。提供后自动解析站点、监测项与时间窗，无需其他必填参数；显式传入的站点/监测项/时间参数优先。"},
+                    "station_names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 1,
+                                       "description": "站点名称，仅支持单个站点；不传时由工单号解析。"},
+                    "station_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 1,
+                                       "description": "平台站点编码，仅支持单个站点，如 [\"5006A\"]。"},
+                    "unique_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 1,
+                                      "description": "平台唯一编码，仅支持单个站点。"},
+                    "pollutant": {"type": "string",
+                                   "description": "监测项：PM10、PM2.5、SO2、NO、NO2、CO、O3；不传时由工单标题/设备推断，再退回 PM10。"},
+                    "start_time": {"type": "string", "description": "开始时间，YYYY-MM-DD HH:mm:ss；不传时由工单创建时间推算（前 1 天）。"},
+                    "end_time": {"type": "string", "description": "结束时间，YYYY-MM-DD HH:mm:ss；不传时由工单创建时间推算（后 2 天）。"},
+                    "mark_areas": {"type": "array", "items": {"type": "object", "properties": {
+                        "name": {"type": "string", "description": "区间标注名，如“剔除候选区间”。"},
+                        "start": {"type": "string", "description": "区间开始，YYYY-MM-DD HH:mm:ss。"},
+                        "end": {"type": "string", "description": "区间结束，YYYY-MM-DD HH:mm:ss。"},
+                    }, "required": ["start", "end"]},
+                                    "description": "可选，需要在图表上标注的时间区间（如工单数据剔除区间、质控时段），来自工单数据或审核结论。"},
+                    "modules": {"type": "array", "items": {"type": "string", "enum": ["alarms", "env_power", "qc"]},
+                                "minItems": 1, "maxItems": 3,
+                                "description": "与图表同时间窗并行获取的补充取证模块；缺省全部获取：alarms 站房设备告警、env_power 站房动环历史（小时）、qc 质控任务清单（含 rId/rStart，可用 jiangsu_fetch_qc_task_status 下钻明细）。传空数组只出图表。"},
+                }, "required": []},
+            },
+            requires_context=True,
+        )
+
+    async def _resolve_review_order(self, working_order_code: str) -> dict[str, Any]:
+        """Locate one exact fault order to derive station/pollutant/window."""
+        api = _JiangsuAuthenticatedApi(source="ops")
+        payload = await api.get(JiangsuFaultWorkOrdersTool._LIST_PATH, [
+            ("OrderType", "Fault"), ("MaxResultCount", "20"), ("SkipCount", "0"),
+            ("WorkingOrderCode", working_order_code),
+        ])
+        items = (payload.get("result") or {}).get("items") or []
+        if not isinstance(items, list):
+            raise ValueError("故障工单定位接口 items 无效")
+        for item in items:
+            if isinstance(item, dict) and \
+                    str(item.get("workingOrderCode") or "").strip().casefold() == working_order_code.casefold():
+                return item
+        raise ValueError(f"未找到与工单号 {working_order_code} 完全匹配的故障工单")
+
+    async def _fetch_review_order_detail(self, order_code: str,
+                                         order_info: dict[str, Any] | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """抓取与源平台一致的工单详单（主表/处置过程/流程/附件），附件落盘审核附件目录。
+
+        失败时返回空 dict，工单信息退回清单条目，不阻断证据采集。
+        """
+        unique_code = str((order_info or {}).get("uniqueCode") or "").strip()
+        if not unique_code:
+            return {}, []
+        api = _JiangsuAuthenticatedApi(source="ops")
+        detail_payload = await api.get(JiangsuFaultWorkOrdersTool._PATH, [
+            ("uniqueCode", unique_code), ("take", "20"),
+        ])
+        detail_items = detail_payload.get("result") or []
+        if not isinstance(detail_items, list):
+            return {}, []
+        matches = [
+            entry for entry in detail_items
+            if _detail_working_order_code(entry).casefold() == order_code.casefold()
+        ]
+        if not matches:
+            return {}, []
+        compact_detail, _projection = _compact_fault_order_detail(matches[0])
+        attachment_resources: list[dict[str, Any]] = []
+        attachments = compact_detail.get("attachments") or []
+        if isinstance(attachments, list) and attachments:
+            # raw_resource_path=None：附件落到 <registry>/work_order_review_attachments/<工单号>/，
+            # 与会话无关，供工单审核工作台跨会话展示。
+            attachments, attachment_resources, _stats = await _download_fault_order_attachments(
+                api=api, attachments=attachments, raw_resource_path=None,
+                order_code=order_code, tool_name=self.name,
+            )
+            compact_detail["attachments"] = attachments
+        return compact_detail, attachment_resources
+
+    async def _collect_order_context(self, order_code: str,
+                                     order_info: dict[str, Any] | None) -> tuple[dict[str, Any] | None, dict[str, Any], list[dict[str, Any]]]:
+        """清单定位（如需）+ 详单与附件抓取；任何失败都降级为清单条目，不阻断证据采集。"""
+        if not order_code:
+            return order_info, {}, []
+        try:
+            if order_info is None:
+                order_info = await self._resolve_review_order(order_code)
+            detail, resources = await self._fetch_review_order_detail(order_code, order_info)
+            return order_info, detail, resources
+        except Exception as exc:
+            logger.warning("review_evidence_order_detail_failed",
+                           working_order_code=order_code, error=str(exc))
+            return order_info, {}, []
+
+    @staticmethod
+    def _infer_pollutant(order_info: dict[str, Any]) -> str:
+        text = " ".join(str(order_info.get(key) or "") for key in
+                        ("orderTitle", "deviceInfo", "orderContent", "faultDevice")).lower()
+        for name in ("PM2.5", "PM10", "SO2", "NO2", "O3", "CO"):
+            if name.lower() in text:
+                return name
+        if re.search(r"\bno\b", text):
+            return "NO"
+        return "PM10"
+
+    async def execute(self, context=None, station_names: list[str] | None = None,
+                      station_codes: list[str] | None = None, unique_codes: list[str] | None = None,
+                      pollutant: str | None = None, start_time: str | None = None,
+                      end_time: str | None = None, working_order_code: str | None = None,
+                      mark_areas: list[dict[str, Any]] | None = None,
+                      modules: list[str] | None = None,
+                      **_: Any) -> dict[str, Any]:
+        try:
+            # 模块参数先于任何接口调用校验，非法值快速失败。
+            requested_modules = self._normalise_modules(modules)
+            order_code = str(working_order_code or "").strip()
+            if len(order_code) > 64:
+                raise ValueError("working_order_code 过长")
+
+            identifiers = [str(item).strip() for item in
+                           (*(station_names or []), *(station_codes or []), *(unique_codes or []))
+                           if str(item or "").strip()]
+            # 仅在缺少站点/监测项/时间窗时才回查工单，显式参数齐全时不做多余请求。
+            needs_order = bool(order_code) and (
+                not identifiers or not start_time or not end_time or not str(pollutant or "").strip()
+            )
+            order_info: dict[str, Any] | None = await self._resolve_review_order(order_code) if needs_order else None
+
+            if identifiers and len(identifiers) != 1:
+                raise ValueError("证据图表仅支持单个站点：请提供一个站点名称/平台编码/唯一编码")
+            if identifiers:
+                if station_codes or unique_codes:
+                    stations = await _resolve_station_rows(
+                        None, None, None,
+                        station_codes=station_codes or None, unique_codes=unique_codes or None,
+                    )
+                else:
+                    stations = await _resolve_station_rows(identifiers[0], None, None)
+                station_source = "explicit"
+            elif order_info is not None:
+                unique_code = str(order_info.get("uniqueCode") or "").strip()
+                station_code = str(order_info.get("stationCodeStr") or order_info.get("stationCode") or "").strip()
+                if not unique_code and not station_code:
+                    raise ValueError("工单缺少站点编码，无法自动解析站点；请显式提供站点参数")
+                stations = await _resolve_station_rows(
+                    None, None, None,
+                    station_codes=[station_code] if station_code else None,
+                    unique_codes=[unique_code] if unique_code else None,
+                )
+                station_source = "work_order"
+            else:
+                raise ValueError("请提供工单号（working_order_code），或同时提供单站点与时间范围")
+            station = stations[0]
+
+            pollutant_source = "explicit"
+            pollutant_code = str(pollutant or "").strip().upper()
+            if not pollutant_code:
+                if order_info is not None:
+                    pollutant_code = self._infer_pollutant(order_info)
+                    pollutant_source = "inferred"
+                else:
+                    pollutant_code = "PM10"
+                    pollutant_source = "default"
+
+            if start_time and end_time:
+                start_dt = _parse_iso_time(start_time, "start_time")
+                end_dt = _parse_iso_time(end_time, "end_time")
+                window_source = "explicit"
+            elif order_info is not None:
+                created = _parse_qc_datetime(order_info.get("createTime"))
+                if created is None:
+                    raise ValueError("工单创建时间解析失败，请显式传入 start_time/end_time")
+                start_dt = created - timedelta(days=1)
+                end_dt = created + timedelta(days=2)
+                window_source = "work_order"
+            else:
+                raise ValueError("缺少时间范围：请传 start_time/end_time，或只提供工单号自动解析")
+            if start_dt > end_dt:
+                raise ValueError("开始时间不能晚于结束时间")
+
+            normalized_mark_areas: list[dict[str, Any]] = []
+            for area in mark_areas or []:
+                if not isinstance(area, dict) or not area.get("start") or not area.get("end"):
+                    raise ValueError("mark_areas 每项必须包含 start 与 end")
+                normalized_mark_areas.append({
+                    "name": str(area.get("name") or "标注区间"),
+                    "start": _qc_time_text(area["start"]),
+                    "end": _qc_time_text(area["end"]),
+                })
+            station = stations[0]
+
+            records, _total = await JiangsuStationDataTool().fetch_raw_records(
+                data_kind="station_hour", station_codes=[station["station_code"]],
+                start_time=start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                end_time=end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                # station_hour 接口固定返回全要素序列（pollutant_codes 仅兼容 5 分钟调用），
+                # 目标污染物由 pollutant_points 本地提取。
+            )
+            points = pollutant_points(records, pollutant_code)
+
+            # 延迟导入：气象抓取器反向依赖本模块，避免循环导入。
+            from app.fetchers.weather.jiangsu_review_weather import fetch_city_weather
+
+            window_texts = (start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                            end_dt.strftime("%Y-%m-%d %H:%M:%S"))
+            # 源平台详单（主表/处置过程/流程/附件）与图表取证并行抓取。
+            order_context_task = (
+                asyncio.ensure_future(self._collect_order_context(order_code, order_info))
+                if order_code else None
+            )
+            band_result, weather_result, *module_results = await asyncio.gather(
+                fetch_same_city_band(
+                    station, window_texts[0], window_texts[1], pollutant_code,
+                ),
+                fetch_city_weather(
+                    city_name=station.get("city_name"),
+                    start_time=window_texts[0], end_time=window_texts[1],
+                ),
+                *(self._fetch_evidence_module(kind, station, window_texts, pollutant_code)
+                  for kind in requested_modules),
+            )
+            order_detail: dict[str, Any] = {}
+            attachment_resources: list[dict[str, Any]] = []
+            if order_context_task is not None:
+                order_info, order_detail, attachment_resources = await order_context_task
+            band = band_result.get("band") if isinstance(band_result, dict) else []
+            weather_rows = weather_result.get("data") if isinstance(weather_result, dict) and \
+                isinstance(weather_result.get("data"), list) else []
+            weather_status = weather_result.get("status") if isinstance(weather_result, dict) else "unavailable"
+            module_payloads = list(module_results)
+
+            start_text = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+            end_text = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+            unit = POLLUTANT_UNITS.get(pollutant_code, "μg/m³")
+            station_label = station.get("station_name") or station["station_code"]
+            band_status = band_result.get("status") if isinstance(band_result, dict) else "unavailable"
+            summary = (
+                f"工单审核证据已采集：{station_label} {pollutant_code} {start_text}~{end_text}"
+                f"（站点{ {'explicit': '显式指定', 'work_order': '由工单解析'}[station_source] }、"
+                f"监测项{ {'explicit': '显式指定', 'inferred': '由工单推断', 'default': '默认'}[pollutant_source] }、"
+                f"时间窗{ {'explicit': '显式指定', 'work_order': '由工单创建时间推算'}[window_source] }），"
+                f"污染物 {len(points)} 点、气象 {len(weather_rows)} 小时记录"
+                + (f"、同城对比 {len(band)} 小时" if band else "、同城对比不可用")
+                + (f"、标注区间 {len(normalized_mark_areas)} 个" if normalized_mark_areas else "")
+                + self._module_summary_suffix(module_payloads)
+                + "；证据已在右侧「工单审核」工作台展开。"
+            )
+
+            # ---- 证据包拆分存储：index.json + sources/<name>.json（参照智能事件证据包） ----
+            evidence = self._build_evidence_package(
+                order_code=order_code, order_info=order_info, order_detail=order_detail,
+                station=station,
+                pollutant_code=pollutant_code, start_text=start_text, end_text=end_text,
+                records=records, points=points, unit=unit,
+                band=band, band_result=band_result,
+                weather_rows=weather_rows, weather_result=weather_result,
+                module_payloads=module_payloads,
+                mark_areas=normalized_mark_areas,
+            )
+            package_entry, package_note = self._persist_evidence_package(evidence)
+            if package_note:
+                summary += package_note
+
+            # ---- 资源发布：证据索引/分文件 + 附件图片（供 read_session_resource 与文件面板） ----
+            resources = self._evidence_resources(package_entry) if package_entry else []
+            resources.extend(attachment_resources)
+
+            # ---- 投影索引：LLM 只读统计摘要，不读原始明细 ----
+            evidence_index = self._project_evidence_index(evidence, package_entry)
+
+            metadata = {"source": "jiangsu_operations_api",
+                        "endpoints": ["station_hour", "station_hour_same_city", "city_weather"],
+                        "station_code": station["station_code"], "unique_code": station.get("unique_code"),
+                        "pollutant": pollutant_code, "start_time": start_text, "end_time": end_text,
+                        "working_order_code": order_code or None,
+                        "station_source": station_source, "pollutant_source": pollutant_source,
+                        "window_source": window_source,
+                        "point_count": len(points), "weather_record_count": len(weather_rows),
+                        "band_status": band_status, "band_point_count": len(band),
+                        "band_station_count": band_result.get("station_count") if isinstance(band_result, dict) else 0,
+                        "weather_status": weather_status,
+                        "evidence_package": {
+                            "status": (package_entry or {}).get("status"),
+                            "index_path": (package_entry or {}).get("index_path"),
+                            "source_files": (package_entry or {}).get("source_files") or {},
+                        },
+                        "modules": [{key: payload.get(key) for key in ("module", "status", "record_count", "truncated")}
+                                    for payload in module_payloads],
+                        "queried_at": datetime.now().astimezone().isoformat()}
+            data_payload = {
+                "point_count": len(points), "weather_record_count": len(weather_rows),
+                "band_point_count": len(band),
+                "station_code": station["station_code"], "station_name": station.get("station_name"),
+                "pollutant": pollutant_code, "start_time": start_text, "end_time": end_text,
+                "evidence_index": evidence_index,
+                "package": {
+                    "status": (package_entry or {}).get("status"),
+                    "index_path": (package_entry or {}).get("index_path"),
+                    "source_files": (package_entry or {}).get("source_files") or {},
+                },
+            }
+            if order_code:
+                data_payload["ui_command"] = {"type": "open_work_order_review", "working_order_code": order_code}
+            return {"status": "success" if points or weather_rows or band else "empty", "success": True,
+                    "data": data_payload,
+                    "metadata": metadata, "visuals": [],
+                    "resources": resources,
+                    "summary": summary}
+        except (ValueError, httpx.HTTPError) as exc:
+            return _failed("工单审核证据查询", exc)
+
+    @staticmethod
+    def _build_evidence_package(*, order_code: str, order_info: dict[str, Any] | None,
+                                order_detail: dict[str, Any] | None,
+                                station: dict[str, Any], pollutant_code: str,
+                                start_text: str, end_text: str,
+                                records: list[dict[str, Any]], points: list[dict[str, Any]],
+                                unit: str, band: list[dict[str, Any]],
+                                band_result: dict[str, Any], weather_rows: list[dict[str, Any]],
+                                weather_result: dict[str, Any],
+                                module_payloads: list[dict[str, Any]],
+                                mark_areas: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        """把本次取证结果整理为可拆分存储的证据包（sources 内含完整 data）。"""
+        module_by_kind = {str(payload.get("module")): payload for payload in module_payloads
+                          if isinstance(payload, dict)}
+        order_fields = (
+            "workingOrderCode", "orderTitle", "orderContent", "describe", "content",
+            "deviceInfo", "faultDevice", "createTime", "completeTime", "orderStatus",
+            "statusStr", "siteName", "stationName", "address", "uniqueCode",
+            "stationCodeStr", "orderType", "emergencyLevel", "urgency",
+        )
+        order_data = ({key: order_info.get(key) for key in order_fields if order_info.get(key) is not None}
+                      if isinstance(order_info, dict) else {})
+        # 源平台详单：主表 wo / 处置过程 details / 流程 workFlowInfo / 故障设备 / 附件（含已落盘图片）。
+        detail = order_detail if isinstance(order_detail, dict) else {}
+        work_order_data: dict[str, Any] = {"order": order_data}
+        for key in ("wo", "details", "workFlowInfo", "faultDevice", "changeDevice",
+                    "faultContentItems", "checkItemList"):
+            if detail.get(key) not in (None, "", [], {}):
+                work_order_data[key] = detail[key]
+        work_order_data["attachments"] = detail.get("attachments") or []
+        attachment_count = len(work_order_data["attachments"])
+        process_count = len(work_order_data.get("details") or [])
+        if work_order_data["attachments"]:
+            work_order_summary = f"源平台工单详单（处置过程 {process_count} 条、附件 {attachment_count} 个）"
+        elif order_data:
+            work_order_summary = "故障工单关键字段（标题/内容/设备/时间/状态）"
+        else:
+            work_order_summary = "未提供工单号，仅图表证据"
+        pm25_points: list[dict[str, Any]] = []
+        if pollutant_code != "PM2.5":
+            try:
+                pm25_points = pollutant_points(records, "PM2.5")
+            except (ValueError, KeyError):
+                pm25_points = []
+        sources: dict[str, dict[str, Any]] = {
+            "work_order": {
+                "status": "success" if (order_data or detail) else "skipped",
+                "record_count": 1 + process_count if (order_data or detail) else 0,
+                "summary": work_order_summary,
+                "data": work_order_data,
+            },
+            "station_hour": {
+                "status": "success" if points else "empty",
+                "record_count": len(points),
+                "summary": f"本站 {pollutant_code} 逐时浓度（含 PM2.5 对照序列）",
+                "data": {"unit": unit, "pollutant": pollutant_code, "points": points,
+                         "pm25_points": pm25_points},
+            },
+            "band": {
+                "status": "success" if band else "empty",
+                "record_count": len(band),
+                "summary": "同城对比带（本站/最低/中位/最高）",
+                "data": {"band": band,
+                         "scope": band_result.get("scope") if isinstance(band_result, dict) else None,
+                         "district_name": band_result.get("district_name") if isinstance(band_result, dict) else None,
+                         "station_codes": band_result.get("station_codes") if isinstance(band_result, dict) else None,
+                         "failures": band_result.get("failures") if isinstance(band_result, dict) else None},
+            },
+            "weather": {
+                "status": str(weather_result.get("status") if isinstance(weather_result, dict) else "unavailable"),
+                "record_count": len(weather_rows),
+                "summary": "城市气象时序（风速/风向/温湿压雨）",
+                "data": {"rows": weather_rows,
+                         "city_name": weather_result.get("city_name") if isinstance(weather_result, dict) else None,
+                         "gaps": weather_result.get("gaps") if isinstance(weather_result, dict) else None},
+            },
+        }
+        module_labels = {
+            "alarms": "站房设备告警（当前清单，不按时间窗过滤）",
+            "env_power": "站房动环异常记录（仅动环类告警且有阈值/状态异常的行）",
+            "qc": f"目标污染物 {pollutant_code} 质控任务（含合格结果与质控曲线）",
+        }
+        for kind, label in module_labels.items():
+            payload = module_by_kind.get(kind) or {}
+            sources[kind] = {
+                "status": str(payload.get("status") or "skipped"),
+                "record_count": int(payload.get("record_count") or 0),
+                "summary": str(payload.get("summary") or label),
+                "data": {key: value for key, value in payload.items()
+                         if key not in ("module", "summary")},
+            }
+        return {
+            "working_order_code": order_code or None,
+            "title": (order_data or {}).get("orderTitle"),
+            "site_name": station.get("station_name"),
+            "site_id": station.get("site_id") or station.get("station_code"),
+            "pollutant": pollutant_code,
+            "station": station,
+            "window": {"start_time": start_text, "end_time": end_text},
+            "mark_areas": mark_areas or [],
+            "sources": sources,
+        }
+
+    @staticmethod
+    def _persist_evidence_package(evidence: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+        if not evidence.get("working_order_code"):
+            return None, "（未提供工单号，证据未持久化为审核包）"
+        try:
+            from app.services.jiangsu_work_order_review import save_evidence
+
+            entry = save_evidence(evidence)
+            note = f"；审核证据包已归档（状态：{entry.get('status')}，索引 {entry.get('index_path')}）"
+            return entry, note
+        except Exception as exc:  # 持久化失败不阻断图表返回
+            logger.warning("review_evidence_package_save_failed",
+                           working_order_code=evidence.get("working_order_code"), error=str(exc))
+            return None, f"（审核证据包持久化失败：{exc}）"
+
+    @staticmethod
+    def _evidence_resources(entry: dict[str, Any]) -> list[dict[str, Any]]:
+        """证据索引（primary）+ 各来源分文件（attachment），同一资源组发布。
+
+        声明构建失败只降级（不发布分文件资源），不阻断图表与证据包返回。
+        """
+        try:
+            code = str(entry.get("working_order_code") or "")
+            group_key = f"review_evidence:{code}"
+            counts = entry.get("source_counts") or {}
+            summary = "、".join(f"{name}×{count}" for name, count in counts.items() if count)
+            # 资源声明必须携带绝对路径：发布管道按进程 CWD 解析相对路径会得到错误位置。
+            index_absolute = resolve_agent_path(entry.get("index_path"))
+            resources = [data_file_resource(
+                str(index_absolute), tool_name="jiangsu_fetch_review_evidence",
+                logical_key=group_key,
+                label=f"工单 {code} 审核证据索引",
+                metadata={"summary": f"故障工单审核证据包索引（{summary or '无数据'}）；"
+                                     "各来源明细见同组 sources 分文件",
+                          "working_order_code": code, "status": entry.get("status")},
+            )]
+            for name, path in (entry.get("source_files") or {}).items():
+                resources.append(derivative_file(
+                    str(resolve_agent_path(path)), group_key=group_key, parent_key="primary:data",
+                    tool_name="jiangsu_fetch_review_evidence",
+                    relation="attachment", renderer="file",
+                    label=f"工单 {code} 证据·{name}",
+                    metadata={"working_order_code": code, "source": name,
+                              "record_count": (entry.get("source_counts") or {}).get(name)},
+                ))
+            return resources
+        except Exception as exc:
+            logger.warning("review_evidence_resources_failed",
+                           working_order_code=entry.get("working_order_code"), error=str(exc))
+            return []
+
+    @staticmethod
+    def _project_evidence_index(evidence: dict[str, Any],
+                                entry: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+        """LLM 可见的证据索引：每个来源只给 status/record_count/投影摘要/文件路径。"""
+        sources = evidence.get("sources") or {}
+        source_files = (entry or {}).get("source_files") or {}
+        index: dict[str, dict[str, Any]] = {}
+        for name, payload in sources.items():
+            data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+            item: dict[str, Any] = {
+                "status": payload.get("status"),
+                "record_count": payload.get("record_count"),
+                "summary": payload.get("summary"),
+                "file": source_files.get(name),
+            }
+            if name == "station_hour":
+                item["projection"] = _project_pollutant_points(data.get("points") or [])
+                pm25 = data.get("pm25_points") or []
+                if pm25:
+                    item["projection"]["pm25"] = _project_pollutant_points(pm25)
+            elif name == "band":
+                item["projection"] = _project_band(data.get("band") or [])
+            elif name == "weather":
+                rows = data.get("rows") or []
+                fields = ["windSpeed", "windDirection", "humidity", "temperature", "pressure", "rain"]
+                item["projection"] = {"record_count": len(rows), **_field_stats(rows, fields)}
+            elif name == "alarms":
+                item["projection"] = _project_alarms(data)
+            elif name == "env_power":
+                rows = data.get("table_rows") or []
+                series_names = data.get("series_names") or []
+                item["projection"] = {"record_count": len(rows),
+                                      **_field_stats(rows, series_names or [])}
+            elif name == "qc":
+                item["projection"] = _project_qc(data.get("qc_tasks") or [])
+            elif name == "work_order":
+                attachments = data.get("attachments") or []
+                item["projection"] = {
+                    "process_count": len(data.get("details") or []),
+                    "attachment_count": len(attachments),
+                    "attachments": [
+                        {key: attachment.get(key) for key in ("fileName", "content_type",
+                                                              "download_status", "size_bytes")
+                         if attachment.get(key) is not None}
+                        for attachment in attachments[:6] if isinstance(attachment, dict)
+                    ],
+                    "detail_sections": sorted(key for key in data.keys() if key != "order"),
+                }
+            else:
+                item["projection"] = {"fields": sorted(data.keys())}
+            index[name] = item
+        return index
+
+    @staticmethod
+    @staticmethod
+    def _normalise_modules(modules: list[str] | None) -> list[str]:
+        """Default to every evidence module; explicit lists keep order, [] skips extras."""
+        if modules is None:
+            return list(JiangsuReviewEvidenceTool._MODULE_KINDS)
+        if not isinstance(modules, list):
+            raise ValueError("modules 必须是字符串数组")
+        resolved: list[str] = []
+        for raw in modules:
+            value = str(raw or "").strip().lower()
+            if value not in JiangsuReviewEvidenceTool._MODULE_KINDS:
+                options = "、".join(JiangsuReviewEvidenceTool._MODULE_KINDS)
+                raise ValueError(f"modules 含无效值“{value}”；可选：{options}")
+            if value not in resolved:
+                resolved.append(value)
+        return resolved
+
+    @staticmethod
+    def _module_summary_suffix(module_payloads: list[dict[str, Any]]) -> str:
+        if not module_payloads:
+            return ""
+        labels = {"alarms": "告警", "env_power": "动环", "qc": "质控任务"}
+        parts: list[str] = []
+        for payload in module_payloads:
+            label = labels.get(str(payload.get("module")), str(payload.get("module")))
+            if payload.get("status") == "success":
+                suffix = "+" if payload.get("truncated") else ""
+                parts.append(f"{label} {payload.get('record_count', 0)}{suffix}")
+            else:
+                parts.append(f"{label}不可用")
+        return "；补充取证：" + "、".join(parts)
+
+    async def _fetch_evidence_module(self, kind: str, station: dict[str, Any],
+                                     window_texts: tuple[str, str],
+                                     pollutant_code: str | None = None) -> dict[str, Any]:
+        """Fetch one supplementary evidence module; failures degrade, never abort the chart."""
+        try:
+            if kind == "alarms":
+                return await self._fetch_alarms_module(station)
+            if kind == "env_power":
+                return await asyncio.wait_for(
+                    self._fetch_env_power_module(station, window_texts),
+                    timeout=self._MODULE_TOTAL_TIMEOUT)
+            if kind == "qc":
+                return await asyncio.wait_for(
+                    self._fetch_qc_module(station, window_texts, pollutant_code),
+                    timeout=self._MODULE_TOTAL_TIMEOUT)
+            raise ValueError(f"未知的取证模块：{kind}")
+        except TimeoutError:
+            return {"module": kind, "status": "failed", "record_count": 0,
+                    "message": f"{kind} 取证超时（>{self._MODULE_TOTAL_TIMEOUT:.0f}s），已降级"}
+        except (ValueError, httpx.HTTPError) as exc:
+            return {"module": kind, "status": "failed", "record_count": 0, "message": str(exc)[:200]}
+
+    async def _fetch_alarms_module(self, station: dict[str, Any]) -> dict[str, Any]:
+        payload = await _JiangsuAuthenticatedApi(source="air").get(
+            JiangsuStationAlarmLogsTool._PATH, [("StationCode", station["station_code"])])
+        result = payload.get("result") or {}
+        if not isinstance(result, dict):
+            raise ValueError("站房告警接口 result 无效")
+        logs = result.get("alarmLogs") or []
+        statistics = result.get("alarmStatistics") or []
+        return {"module": "alarms", "status": "success",
+                "record_count": len(logs),
+                "truncated": len(logs) > self._MODULE_ALARM_LOG_LIMIT,
+                "alarm_logs": logs[:self._MODULE_ALARM_LOG_LIMIT],
+                "alarm_statistics": statistics,
+                "alarm_state": result.get("alarmState") or {}}
+
+    async def _fetch_env_power_module(self, station: dict[str, Any],
+                                      window_texts: tuple[str, str]) -> dict[str, Any]:
+        """动环历史按告警门控抓取，并只保留命中阈值/状态告警的行。
+
+        无动环类告警时不抓取（与智能事件取证一致）：动环正常逐时表对审核分析无价值。
+        """
+        alarm_payload = await _JiangsuAuthenticatedApi(source="air").get(
+            JiangsuStationAlarmLogsTool._PATH, [("StationCode", station["station_code"])])
+        alarm_result = alarm_payload.get("result") or {}
+        logs = alarm_result.get("alarmLogs") if isinstance(alarm_result, dict) else None
+        env_alarms = [row for row in (logs or [])
+                      if isinstance(row, dict) and _is_power_environment_alarm(row)]
+        if not env_alarms:
+            return {"module": "env_power", "status": "skipped", "record_count": 0,
+                    "summary": "站房告警中无动环（动力环境）类告警，未抓取动环历史",
+                    "table_rows": [], "series_names": [], "abnormal_count": 0}
+
+        payload = await _JiangsuAuthenticatedApi(source="air").get(
+            JiangsuStationEnvironmentHistoryTool._PATH, [
+                ("Uniquecode", station.get("unique_code") or ""),
+                ("PollutantCode", JiangsuStationEnvironmentHistoryTool._DEFAULT_ITEMS),
+                ("TimeType", "h"),
+                ("StartTime", window_texts[0]), ("EndTime", window_texts[1]),
+            ])
+        result = payload.get("result") or payload.get("data") or {}
+        if not isinstance(result, dict):
+            raise ValueError("站房动环接口 result 无效")
+        rows = result.get("tableData") or []
+        series_names = sorted({
+            str(key) for row in (result.get("chartData") or []) if isinstance(row, dict)
+            for key in row if key not in ("timePoint", "TimePoint", "time", "Time")
+        }) if isinstance(result.get("chartData"), list) else []
+        monitored_fields = series_names or [key for key in _ENV_POWER_FIELD_LIMITS]
+        abnormal_rows = _abnormal_env_power_rows(rows, monitored_fields)
+        return {"module": "env_power", "status": "success",
+                "record_count": len(abnormal_rows),
+                "total_row_count": len(rows),
+                "environment_alarm_count": len(env_alarms),
+                # 只保留异常行：正常逐时动环对审核分析无价值。
+                "table_rows": abnormal_rows,
+                "series_names": monitored_fields}
+
+    async def _fetch_qc_module(self, station: dict[str, Any],
+                               window_texts: tuple[str, str],
+                               pollutant_code: str | None = None) -> dict[str, Any]:
+        """只抓目标污染物的质控任务，并附带每个任务的合格结果与质控曲线。"""
+        params = [
+            ("stationCode", station["station_code"]),
+            *_time_range("sStart", window_texts[0], window_texts[1]),
+        ]
+        if pollutant_code:
+            params.append(("poll", pollutant_code))
+        payload = await _JiangsuAuthenticatedApi(source="ops").get(
+            JiangsuQcTaskHistoryTool._PATH, params)
+        records = _list_result(payload, "质控任务")
+        tasks = [task for task in records[:self._MODULE_QC_TASK_LIMIT] if isinstance(task, dict)]
+        semaphore = asyncio.Semaphore(self._MODULE_QC_DETAIL_CONCURRENCY)
+
+        async def _bounded(task: dict[str, Any]) -> dict[str, Any]:
+            async with semaphore:
+                try:
+                    return await asyncio.wait_for(
+                        self._fetch_qc_task_detail(task, pollutant_code),
+                        timeout=self._MODULE_QC_DETAIL_TIMEOUT,
+                    )
+                except (TimeoutError, ValueError, httpx.HTTPError) as exc:
+                    base = {key: task.get(key) for key in
+                            ("rId", "rStart", "poll", "qcType", "sStart", "sEnd") if task.get(key) is not None}
+                    base["target_pollutant"] = pollutant_code
+                    base["detail_status"] = "timeout" if isinstance(exc, TimeoutError) else "failed"
+                    base["detail_error"] = "质控详情获取超时" if isinstance(exc, TimeoutError) else str(exc)[:200]
+                    return base
+
+        enriched = await asyncio.gather(*(_bounded(task) for task in tasks))
+        result = {"module": "qc", "status": "success",
+                  "record_count": len(enriched),
+                  "total_task_count": len(records),
+                  "truncated": len(records) > self._MODULE_QC_TASK_LIMIT,
+                  "pollutant": pollutant_code,
+                  "qc_tasks": enriched}
+        return result
+
+    async def _fetch_qc_task_detail(self, task: dict[str, Any],
+                                    pollutant_code: str | None) -> dict[str, Any]:
+        """读取单条质控任务的合格结果、执行步骤与监测曲线（失败降级为任务概要）。"""
+        base = {
+            key: task.get(key) for key in ("rId", "rStart", "poll", "qcType", "sStart", "sEnd",
+                                           "stationCode", "stationName", "result", "status")
+            if task.get(key) is not None
+        }
+        if pollutant_code:
+            base["target_pollutant"] = pollutant_code
+        r_id = str(task.get("rId") or task.get("rid") or "").strip()
+        r_start = str(task.get("rStart") or task.get("rstart") or "").strip()
+        if not r_id or not r_start:
+            base["detail_status"] = "missing_identifiers"
+            return base
+        try:
+            api = _JiangsuAuthenticatedApi(source="ops")
+            status_payload = await api.get(JiangsuQcTaskStatusTool._PATH,
+                                           [("rStart", r_start), ("rId", r_id)])
+            status = status_payload.get("result") or {}
+            if not isinstance(status, dict) or not status:
+                raise ValueError("质控任务状态接口 result 无效")
+            detail = _decode_qc_payload(_pick(status, "jsonStr", "JsonStr"))
+            run_logs: list[dict[str, Any]] = []
+            try:
+                log_payload = await api.get(JiangsuQcRunLogTool._PATH,
+                                            [("rStart", r_start), ("rId", r_id)])
+                run_logs = _compact_qc_run_logs(_list_result(log_payload, "质控运行日志"))
+            except (ValueError, httpx.HTTPError):
+                run_logs = []
+            curve: list[dict[str, Any]] = []
+            station_code = str(_pick(status, "stationCode", "StationCode") or "").strip()
+            poll = str(_pick(status, "poll", "Poll")
+                       or _pick(detail, "PollutantCode", "pollutantCode") or "").strip()
+            qc_type = str(_pick(status, "qcType", "QCType") or "").strip()
+            curve_start, curve_end = _qc_curve_window(detail, status, r_start)
+            if station_code and poll and qc_type and curve_start and curve_end:
+                try:
+                    curve_payload = await api.get(
+                        JiangsuQcMonitoringCurveTool._PATH,
+                        [("stationCode", station_code), ("poll", _identifier(poll, "pollutant")),
+                         ("qcType", _identifier(qc_type, "qc_type")),
+                         ("timePoint", curve_start), ("timePoint", curve_end)],
+                    )
+                    curve = _compact_qc_curve(_list_result(curve_payload, "质控监测曲线"))
+                except (ValueError, httpx.HTTPError):
+                    curve = []
+            visual = _qc_task_detail_visual(
+                r_id=r_id, r_start=r_start, status=status, detail=detail,
+                run_logs=run_logs, curve=curve,
+            )
+            base["detail_status"] = "success"
+            base["detail"] = visual["data"]["qc_task_detail"]
+            return base
+        except (ValueError, httpx.HTTPError) as exc:
+            base["detail_status"] = "failed"
+            base["detail_error"] = str(exc)[:200]
+            return base
+
+
 def _inspection_metrics(data: dict[str, Any], issues: list[dict[str, Any]]) -> dict[str, Any]:
     """Mirror the platform's client-side counters without hiding raw issues."""
     categories = {"仪器状态": 0, "监测数据": 0, "站房动环": 0, "采样系统": 0, "质控与标气": 0,
@@ -2030,6 +3169,15 @@ def _inspection_metrics(data: dict[str, Any], issues: list[dict[str, Any]]) -> d
     }
 
 
+def _has_monitoring_value(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    raw = entry.get("Value", entry.get("value"))
+    if raw is None:
+        return False
+    return str(raw).strip() not in {"", "-99", "—"}
+
+
 def _stationhouse_visual(
     station: dict[str, Any],
     data: dict[str, Any],
@@ -2046,12 +3194,25 @@ def _stationhouse_visual(
         for device in devices:
             if not isinstance(device, dict):
                 continue
-            code = str(device.get("DevPollCode") or device.get("devPollCode") or "").strip()
+            device_code = str(device.get("DevPollCode") or device.get("devPollCode") or "").strip()
             rows = device.get("HourDataDtsls") or device.get("hourDataDtsls") or []
-            if isinstance(rows, list) and rows and isinstance(rows[0], dict):
-                latest[code] = rows[0]
-            else:
-                latest[code] = {"DataAlarm": device.get("DevAlarm", device.get("devAlarm"))}
+            if isinstance(rows, list) and rows:
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    code = str(row.get("PollutantCatalog") or row.get("pollutantCatalog")
+                               or row.get("ItemCode") or row.get("itemCode")
+                               or device_code).strip()
+                    if code and code not in latest:
+                        latest[code] = row
+            elif device_code:
+                latest[device_code] = {"DataAlarm": device.get("DevAlarm", device.get("devAlarm"))}
+    monitoring_snapshot = data.get("MonitoringSnapshot")
+    if isinstance(monitoring_snapshot, dict):
+        for code, value in monitoring_snapshot.items():
+            if isinstance(value, dict) and _has_monitoring_value(value) \
+                    and not _has_monitoring_value(latest.get(str(code))):
+                latest[str(code)] = value
     environment_snapshot = data.get("EnvironmentSnapshot")
     if isinstance(environment_snapshot, dict):
         for code, value in environment_snapshot.items():
@@ -2259,14 +3420,15 @@ async def _fetch_environment_snapshot(unique_code: str) -> dict[str, dict[str, A
 
 
 async def _fetch_station_air_snapshot(station_code: str) -> dict[str, dict[str, Any]]:
-    """Add the latest pollutant readings when QC returns an empty envelope."""
+    """Return the latest five-minute pollutant readings for a station."""
     end = datetime.now()
-    start = end - timedelta(minutes=15)
+    start = end - timedelta(hours=1)
     records, _ = await JiangsuStationDataTool().fetch_raw_records(
         data_kind="station_5minute",
         station_codes=[station_code],
         start_time=start.strftime("%Y-%m-%d %H:%M:%S"),
         end_time=end.strftime("%Y-%m-%d %H:%M:%S"),
+        data_type=0,
         pollutant_codes=["PM2_5", "PM10", "SO2", "NO", "CO", "O3"],
     )
     if not records:

@@ -70,8 +70,10 @@ def test_jiangsu_ops_mode_includes_qc_review_tools():
 
     ops_tools = context.manifest.backend.agent_mode_tools["ops"]
     assert "submit_task_review" in ops_tools
-    assert "jiangsu_fetch_qc_task_history" in ops_tools
-    assert "jiangsu_fetch_station_environment_history" in ops_tools
+    # 站房告警/动环历史/质控清单证据已并入 jiangsu_fetch_review_evidence 的 modules；
+    # 质控任务明细面板仍由 jiangsu_fetch_qc_task_status 提供下钻。
+    assert "jiangsu_fetch_review_evidence" in ops_tools
+    assert "jiangsu_fetch_qc_task_status" in ops_tools
 
 
 def test_jiangsu_fault_work_order_review_tool_is_registered():

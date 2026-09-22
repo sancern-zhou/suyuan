@@ -51,7 +51,7 @@ test('fixed event detail exposes confirmation and archive controls', () => {
   assert.match(source, /refreshSelectedReview/)
   assert.match(source, /label: '处置操作'/)
   assert.match(source, /派单处理/)
-  assert.match(source, /工单说明/)
+  assert.match(source, /工单内容/)
   assert.match(source, /dispatchDialogVisible/)
   assert.match(source, /role="dialog" aria-modal="true" aria-label="工单派发"/)
   assert.doesNotMatch(source, /label: '人工确认'/)
@@ -174,8 +174,8 @@ test('regional comparison owns delta bars while raw monitoring remains hidden ev
   assert.match(source, /weatherChartOption/)
   assert.match(source, /regionalDeltas/)
   assert.match(source, /new Set\(\['monitoring', 'platform_alarm'/)
-  assert.match(source, /'与周边站点差值', type: 'bar', itemStyle: \{ color: '#1677ff' \}/)
-  assert.match(source, /'与全市其余站点差值', type: 'bar', itemStyle: \{ color: '#d4380d' \}/)
+  assert.match(source, /'与周边站点差值', type: 'bar', itemStyle: \{ color: CHART_PRIMARY \}/)
+  assert.match(source, /'与全市其余站点差值', type: 'bar', itemStyle: \{ color: CHART_ALARM \}/)
   assert.match(source, /POLLUTANT_SERIES/)
   assert.match(source, /WEATHER_SERIES/)
   assert.match(source, /recordPollutant/)
@@ -269,4 +269,11 @@ test('type options union keeps category and agent-filtered values selectable', (
 
 test('event list defaults to the current day time range', () => {
   assert.match(source, /start: `\$\{parts\.year\}-\$\{parts\.month\}-\$\{parts\.day\}T00:00`/)
+})
+
+test('video evidence template state is declared as refs', () => {
+  // 视频证据区在模板中读写 videoImageUrls/previewImageUrl；
+  // 未声明时 videoImageUrls[item.index] 会对 undefined 取下标，导致整个详情面板渲染崩溃白屏。
+  assert.match(source, /const videoImageUrls = ref\(\{\}\)/)
+  assert.match(source, /const previewImageUrl = ref\(''\)/)
 })

@@ -11,9 +11,20 @@ import httpx
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.jiangsu.station_type import normalize_station_type, station_type_from_row
+from app.tools.jiangsu.result_filter import externalize_compact_records
+from app.tools.jiangsu.station_type import filter_station_rows, station_type_from_row
 
 logger = structlog.get_logger(__name__)
+
+# The interactive operations tools are intentionally scoped to provincial-
+# control stations managed by the operations platform.  National- and
+# municipal-control stations are excluded from both the relationship graph and
+# the station directory so downstream answers cannot mix jurisdictions.
+PROVINCIAL_STATION_TYPE = "省控"
+
+
+def _operation_unit_id(row: dict[str, Any]) -> str:
+    return str(row.get("operationUnitId") or row.get("OperationUnitId") or "").strip()
 
 
 class _JiangsuOperationsTool(LLMTool):
@@ -125,7 +136,7 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
         self._graph_lock = asyncio.Lock()
         super().__init__(
             name="jiangsu_query_operations_graph",
-            description="查询江苏运维人员、运维单位、责任站点、城市和区县的实时业务关系图，用于解析接口所需的人员/单位/站点标识。",
+            description="查询江苏运维人员、运维单位、省控责任站点、城市和区县的实时业务关系图，用于解析接口所需的人员/单位/站点标识。",
             requires_context=True,
             function_schema={
                 "name": "jiangsu_query_operations_graph",
@@ -135,6 +146,7 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                     "查询“运维单位”可返回目录中的全部运维单位（建议将 depth 设为 1）；"
                     "站点、区县、城市、运维单位和运维人员之间支持双向关系展开；"
                     "不得猜测或编造人员、单位和站点标识。返回的是实时业务目录关系，不依赖用户手动选择知识库。"
+                    "本工具只保留省控站点：国控、市控站点一律不返回，站点类型固定为省控。"
                     "仅返回精简标识与关系（名称、编码、归属、站点类型），不含站点完整台账字段（如经纬度）。"
                     "如果结果超过上下文容量，完整实体/关系会外置保存并返回 file_path；需要完整清单时应让 execute_python 使用 load_data(file_path) 读取，"
                     "不要把内联 preview 当作全量结果。"
@@ -163,12 +175,6 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                             "default": 120,
                             "description": "最多返回实体数，避免把全量人员目录写入上下文。",
                         },
-                        "station_type": {
-                            "type": "string",
-                            "enum": ["全部", "国控", "省控", "市控"],
-                            "default": "全部",
-                            "description": "站点类型筛选；默认全部。可选国控、省控或市控。",
-                        },
                     },
                     "required": ["queries"],
                 },
@@ -181,7 +187,6 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
         queries: list[str] | None = None,
         depth: int = 2,
         max_entities: int = 120,
-        station_type: str | None = None,
         **_: Any,
     ) -> dict[str, Any]:
         try:
@@ -195,12 +200,12 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                 raise ValueError("depth 必须在 0 到 2 之间")
             if not isinstance(max_entities, int) or not 1 <= max_entities <= 300:
                 raise ValueError("max_entities 必须在 1 到 300 之间")
-            if station_type is not None and normalize_station_type(station_type, allow_all=True) is None:
-                raise ValueError("station_type 必须为 全部、国控、省控或市控")
-            effective_station_type = normalize_station_type(station_type, allow_all=True) or "全部"
+            effective_station_type = PROVINCIAL_STATION_TYPE
 
             graph = await self._load_graph()
-            graph, type_filter_applied = self._filter_graph_station_type(graph, effective_station_type)
+            graph, type_filter_applied = self._filter_graph_station_type(
+                graph, effective_station_type, require_operation_unit=True
+            )
             entities: dict[str, dict[str, Any]] = graph["entities"]
             relations: list[dict[str, str]] = graph["relations"]
             seed_ids = self._match_entities(entities, queries)
@@ -522,9 +527,21 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
 
     @classmethod
     def _filter_graph_station_type(
-        cls, graph: dict[str, Any], requested_type: str
+        cls,
+        graph: dict[str, Any],
+        requested_type: str,
+        *,
+        require_operation_unit: bool = False,
     ) -> tuple[dict[str, Any], bool]:
-        """Return a filtered graph while preserving non-station context nodes."""
+        """Return a filtered graph while preserving non-station context nodes.
+
+        ``require_operation_unit`` drops stations the operations platform does
+        not manage.  A provincial superstation can carry the 省控 type while
+        having no operation unit; it is not part of the managed network and
+        must not inflate the station count.  The requirement is only applied
+        when at least one station exposes an operation unit so directories that
+        omit the field keep their previous behavior.
+        """
 
         if requested_type == "全部":
             return graph, False
@@ -537,11 +554,18 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
         typed = [(entity_id, entity) for entity_id, entity in station_rows if entity.get("properties", {}).get("station_type")]
         if not typed:
             return graph, False
-        allowed = {
-            entity_id
+        selected = [
+            (entity_id, entity)
             for entity_id, entity in typed
             if entity.get("properties", {}).get("station_type") == requested_type
-        }
+        ]
+        if require_operation_unit:
+            def has_unit(entity: dict[str, Any]) -> bool:
+                return bool(str(entity.get("properties", {}).get("operation_unit_id") or "").strip())
+
+            if any(has_unit(entity) for _, entity in selected):
+                selected = [(entity_id, entity) for entity_id, entity in selected if has_unit(entity)]
+        allowed = {entity_id for entity_id, _ in selected}
         filtered_entities = {
             entity_id: entity
             for entity_id, entity in entities.items()
@@ -803,11 +827,12 @@ class JiangsuStationDirectoryTool(_JiangsuOperationsTool):
     def __init__(self) -> None:
         super().__init__(
             name="jiangsu_fetch_station_directory",
-            description="查询江苏运维站点台账明细：返回站点完整原始字段（城市、区县、运维单位、经纬度、站点类型等），适合解读签到定位、核对站点属性。",
+            description="查询江苏运维省控站点台账明细：返回省控站点完整原始字段（城市、区县、运维单位、经纬度、站点类型等），适合解读签到定位、核对站点属性。",
             function_schema={
                 "name": "jiangsu_fetch_station_directory",
                 "description": (
-                    "只读获取江苏运维站点台账明细，返回站点完整字段（城市、区县、运维单位、经纬度、站点类型等空间位置）。"
+                    "只读获取江苏运维省控站点台账明细，返回站点完整字段（城市、区县、运维单位、经纬度、站点类型等空间位置）。"
+                    "仅保留省控站点，国控、市控站点一律不返回。"
                     "适用场景：解读签到定位、核对站点属性、按站点编码筛选台账。不得用台账修改站点。"
                 ),
                 "parameters": {"type": "object", "properties": {
@@ -821,6 +846,15 @@ class JiangsuStationDirectoryTool(_JiangsuOperationsTool):
             if station_codes is not None and (len(station_codes) > 100 or not all(isinstance(item, str) and item.strip() for item in station_codes)):
                 raise ValueError("station_codes 最多 100 个，且必须均为有效站点编码")
             records, total_count = self._page(await self._request(self._PATH, []))
+            records = [item for item in records if isinstance(item, dict)]
+            records, type_filter_applied = filter_station_rows(records, PROVINCIAL_STATION_TYPE)
+            # A provincial superstation can carry the 省控 type without an
+            # operation unit; it is not part of the managed network.  Only
+            # enforce the requirement when the directory exposes the field.
+            operation_unit_filter_applied = False
+            if type_filter_applied and any(_operation_unit_id(item) for item in records):
+                records = [item for item in records if _operation_unit_id(item)]
+                operation_unit_filter_applied = True
             requested = {item.strip() for item in station_codes or []}
             if requested:
                 records = [item for item in records if str(item.get("stationCode") or item.get("StationCode") or "").strip() in requested]
@@ -828,8 +862,10 @@ class JiangsuStationDirectoryTool(_JiangsuOperationsTool):
                 "status": "success" if records else "empty", "success": True, "data": records,
                 "metadata": {"source": "jiangsu_operations_station_directory_api", "endpoint": self._PATH,
                              "station_codes": sorted(requested), "record_count": len(records), "total_count": total_count,
+                             "station_type": PROVINCIAL_STATION_TYPE, "station_type_filter_applied": type_filter_applied,
+                             "operation_unit_filter_applied": operation_unit_filter_applied,
                              "queried_at": datetime.now().astimezone().isoformat()},
-                "summary": f"江苏运维站点台账查询完成：返回 {len(records)} 条记录。",
+                "summary": f"江苏运维省控站点台账查询完成：返回 {len(records)} 条记录。",
             }
         except (ValueError, httpx.HTTPError) as exc:
             logger.warning("jiangsu_station_directory_failed", error=str(exc))
@@ -876,3 +912,400 @@ class JiangsuWorkOrderTrackAnalysisTool(_JiangsuOperationsTool):
                     if float(get(r,'distance_to_station','Distance','distance') or 0)>gps_limit: remote.append({'user_name':user,'record':r})
                 except (TypeError,ValueError): pass
         return {'success': True, 'status':'success' if rows else 'empty', 'findings':findings, 'remote_signins':remote, 'users':sorted(users), 'finding_count':len(findings), 'metadata': {'start_time':start_time,'end_time':end_time,'record_count':len(rows),'rules': {'speed_limit':speed_limit,'overlap_minutes':overlap_minutes,'distance_limit':distance_limit,'gps_limit':gps_limit}}, 'summary':f'轨迹分析完成：{len(rows)}条签到，发现{len(findings)}条疑似线索。'}
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers for the door-access and device-ledger tools
+# ---------------------------------------------------------------------------
+
+
+def _clean_station_codes(
+    station_codes: Any, maximum: int, *, required: bool = True
+) -> list[str]:
+    if station_codes is None:
+        if required:
+            raise ValueError("station_codes 不能为空")
+        return []
+    if isinstance(station_codes, str):
+        station_codes = [station_codes]
+    if not isinstance(station_codes, list) or not all(
+        isinstance(item, str) and item.strip() for item in station_codes
+    ):
+        raise ValueError("station_codes 必须为站点编码列表")
+    codes = list(dict.fromkeys(item.strip() for item in station_codes))
+    if not codes:
+        raise ValueError("station_codes 不能为空")
+    if len(codes) > maximum:
+        raise ValueError(f"station_codes 最多 {maximum} 个")
+    return codes
+
+
+def _parse_time_range(
+    start_time: str | None, end_time: str | None, maximum_days: int
+) -> tuple[datetime, datetime]:
+    try:
+        start, end = (
+            datetime.fromisoformat((value or "").replace("Z", "+00:00"))
+            for value in (start_time, end_time)
+        )
+    except ValueError as exc:
+        raise ValueError("时间必须为 YYYY-MM-DD HH:mm:ss 格式") from exc
+    if start > end or (end - start).days > maximum_days:
+        raise ValueError(f"时间范围必须有效且单次不超过 {maximum_days} 天")
+    return start, end
+
+
+def _take_field(record: dict[str, Any], keys: tuple[str, ...], used: set[str]) -> Any:
+    for key in keys:
+        value = record.get(key)
+        if value is not None and str(value).strip() != "":
+            used.add(key)
+            return value
+    return None
+
+
+def _extra_fields(record: dict[str, Any], used: set[str]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in record.items()
+        if key not in used and value not in (None, "")
+    }
+
+
+class JiangsuDoorAccessRecordsTool(LLMTool):
+    """Read-only station door access-control records (independent entry evidence).
+
+    A door/opening event is independent corroboration that a person physically
+    entered a station, complementing discrete sign-in records.  It is still a
+    discrete card/opening event, not a continuous location track, and a shared
+    card cannot prove who actually entered.
+    """
+
+    _PATH = "stationintegrate/HK/GetACSDoorRecordsAsync"
+    _MAX_STATIONS = 10
+    _MAX_RANGE_DAYS = 31
+    _MAX_RESULT_COUNT = 1000
+    _CONCURRENCY = 6
+
+    _STATION_CODE_KEYS = ("stationCode", "StationCode", "code", "Code")
+    _STATION_NAME_KEYS = ("stationName", "StationName", "positionName", "PositionName")
+    _PERSON_KEYS = ("personName", "PersonName", "employeeName", "staffName", "name", "Name")
+    _TIME_KEYS = (
+        "eventTime", "EventTime", "swipeTime", "SwipeTime", "openTime", "OpenTime",
+        "createTime", "CreateTime", "timePoint", "TimePoint", "occurredAt",
+    )
+    _TYPE_KEYS = ("eventType", "EventType", "eventName", "accessType", "openType", "doorEventType")
+    _DOOR_KEYS = ("doorName", "DoorName", "deviceName", "channelName", "readerName", "pointName")
+    _CARD_KEYS = ("cardNo", "CardNo", "cardNumber", "icCard", "idCard", "credentialNo")
+
+    def __init__(self) -> None:
+        from app.tools.jiangsu.fault_diagnosis import _JiangsuAuthenticatedApi
+
+        self._api = _JiangsuAuthenticatedApi(source="air")
+        super().__init__(
+            name="jiangsu_fetch_door_access_records",
+            description=(
+                "只读查询江苏运维省控站点门禁开关门/刷卡记录，用于核验人员是否实际进站；"
+                "门禁记录是离散事件，不代表连续轨迹，刷卡信息不能证明实际进站人员身份。"
+            ),
+            category=ToolCategory.QUERY,
+            function_schema={
+                "name": "jiangsu_fetch_door_access_records",
+                "description": (
+                    "按站点和时间范围只读读取江苏省控站点门禁开关门/刷卡记录，用作签到到站之外的独立进站证据。"
+                    "返回记录会归一为人员、站点、事件时间、事件类型、门名称和卡号等字段，并保留平台原始字段。"
+                    "本工具只读查询；门禁记录为离散事件，不是连续位置轨迹，也不等同于责任认定；"
+                    "签到与门禁不一致只能作为待核查线索。"
+                ),
+                "parameters": {"type": "object", "properties": {
+                    "station_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                                      "description": "省控站点编码（1-10 个）。"},
+                    "start_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
+                    "end_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
+                    "max_result_count": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 1000,
+                                         "description": "单站最多返回记录数，1-1000。需要完整月度清单时可先调高再结合 file_path 读取。"},
+                }, "required": ["station_codes", "start_time", "end_time"]},
+            },
+        )
+
+    async def execute(
+        self,
+        context=None,
+        station_codes: list[str] | None = None,
+        start_time: str | None = None,
+        end_time: str | None = None,
+        max_result_count: int = 1000,
+        **_: Any,
+    ) -> dict[str, Any]:
+        try:
+            codes = _clean_station_codes(station_codes, self._MAX_STATIONS)
+            _parse_time_range(start_time, end_time, self._MAX_RANGE_DAYS)
+            if not isinstance(max_result_count, int) or not 1 <= max_result_count <= self._MAX_RESULT_COUNT:
+                raise ValueError(f"max_result_count 必须在 1 到 {self._MAX_RESULT_COUNT} 之间")
+            semaphore = asyncio.Semaphore(self._CONCURRENCY)
+
+            async def guarded(station_code: str) -> Any:
+                async with semaphore:
+                    return await self._fetch_station(station_code, start_time or "", end_time or "", max_result_count)
+
+            outcomes = await asyncio.gather(*(guarded(code) for code in codes), return_exceptions=True)
+            records: list[dict[str, Any]] = []
+            station_status: dict[str, dict[str, Any]] = {}
+            for code, outcome in zip(codes, outcomes, strict=True):
+                if isinstance(outcome, BaseException):
+                    station_status[code] = {"record_count": 0, "status": "failed", "error": str(outcome)}
+                    continue
+                rows = self._rows(outcome)
+                normalized = [self._normalize(row, code) for row in rows if isinstance(row, dict)]
+                records.extend(normalized)
+                state = {
+                    "record_count": len(normalized),
+                    "status": "success" if normalized else "empty",
+                }
+                total = self._total(outcome)
+                if total is not None and total > len(normalized):
+                    state["total_count"] = total
+                    state["truncated"] = True
+                station_status[code] = state
+            failed_stations = [code for code, state in station_status.items() if state["status"] == "failed"]
+            truncated_stations = [code for code, state in station_status.items() if state.get("truncated")]
+            if failed_stations and len(failed_stations) == len(codes):
+                status = "failed"
+            elif records:
+                status = "success"
+            else:
+                status = "empty"
+            preview, file_path, externalization = externalize_compact_records(
+                records,
+                context=context,
+                schema="jiangsu_door_access_records",
+                metadata={
+                    "source_tool": self.name,
+                    "station_codes": codes,
+                    "time_range": [start_time, end_time],
+                },
+            )
+            metadata = {
+                "source": "jiangsu_air_stationintegrate_door_api",
+                "endpoint": self._PATH,
+                "time_range": [start_time, end_time],
+                "station_codes": codes,
+                "station_status": station_status,
+                "record_count": len(records),
+                "failed_station_count": len(failed_stations),
+                "truncated_stations": truncated_stations,
+                "boundary": "门禁记录是离散开关门/刷卡事件，不是连续轨迹；卡可能共用，不能据此认定实际进站人员或违规事实。",
+                "queried_at": datetime.now().astimezone().isoformat(),
+                **externalization,
+            }
+            return {
+                "status": status,
+                "success": status != "failed",
+                "data": preview,
+                "metadata": metadata,
+                "summary": (
+                    f"江苏站点门禁记录查询完成：{len(codes)} 个站点共返回 {len(records)} 条记录；"
+                    + (f"{len(failed_stations)} 个站点取数失败。" if failed_stations else "无失败站点。")
+                ),
+                **({"file_path": file_path, "data_complete": False} if file_path else {"data_complete": True}),
+            }
+        except (ValueError, httpx.HTTPError) as exc:
+            logger.warning("jiangsu_door_access_records_failed", error=str(exc))
+            return {
+                "status": "failed",
+                "success": False,
+                "data": [],
+                "summary": f"江苏站点门禁记录查询失败：{exc}",
+            }
+
+    async def _fetch_station(
+        self, station_code: str, start_time: str, end_time: str, max_result_count: int
+    ) -> dict[str, Any]:
+        return await self._api.get(self._PATH, [
+            ("StationCode", station_code),
+            ("EventTime", start_time),
+            ("EventTime", end_time),
+            ("MaxResultCount", str(max_result_count)),
+        ])
+
+    @staticmethod
+    def _rows(payload: Any) -> list[dict[str, Any]]:
+        result = payload.get("result", payload) if isinstance(payload, dict) else payload
+        if isinstance(result, list):
+            return [row for row in result if isinstance(row, dict)]
+        if isinstance(result, dict):
+            for key in ("list", "items", "data", "records", "rows"):
+                value = result.get(key)
+                if isinstance(value, list):
+                    return [row for row in value if isinstance(row, dict)]
+        return []
+
+    @staticmethod
+    def _total(payload: Any) -> int | None:
+        result = payload.get("result", payload) if isinstance(payload, dict) else payload
+        if isinstance(result, dict):
+            for key in ("total", "totalCount", "Total", "TotalCount"):
+                try:
+                    return int(result.get(key))
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    @classmethod
+    def _normalize(cls, row: dict[str, Any], fallback_station: str) -> dict[str, Any]:
+        used: set[str] = set()
+        record = {
+            "station_code": _take_field(row, cls._STATION_CODE_KEYS, used) or fallback_station,
+            "station_name": _take_field(row, cls._STATION_NAME_KEYS, used),
+            "person_name": _take_field(row, cls._PERSON_KEYS, used),
+            "event_time": _take_field(row, cls._TIME_KEYS, used),
+            "event_type": _take_field(row, cls._TYPE_KEYS, used),
+            "door_name": _take_field(row, cls._DOOR_KEYS, used),
+            "card_no": _take_field(row, cls._CARD_KEYS, used),
+        }
+        extra = _extra_fields(row, used)
+        if extra:
+            record["extra"] = extra
+        return {key: value for key, value in record.items() if value not in (None, "")}
+
+
+class JiangsuDeviceLedgerTool(_JiangsuOperationsTool):
+    """Read the operations-platform station device ledger for backup analysis."""
+
+    _PATH = "asset/DeviceManagement/GetBSDDeviceListAsync"
+    _MAX_STATIONS = 20
+    _CONCURRENCY = 6
+
+    _DEVICE_ID_KEYS = ("id", "deviceId", "DeviceId", "Id")
+    _DEVICE_CODE_KEYS = ("deviceCode", "DeviceCode")
+    _DEVICE_TYPE_KEYS = ("deviceType", "DeviceType")
+    _DEVICE_TYPE_NAME_KEYS = ("deviceTypeName", "DeviceTypeName")
+    _DEVICE_BRAND_KEYS = ("deviceBrand", "DeviceBrand")
+    _DEVICE_MODEL_KEYS = ("deviceModel", "DeviceModel")
+    _DEVICE_STATUS_KEYS = ("deviceStatus", "DeviceStatus", "status", "Status", "isEnable", "IsEnable")
+    _DEVICE_START_KEYS = (
+        "startTime", "StartTime", "installTime", "InstallTime", "onlineTime", "OnlineTime",
+        "enableTime", "EnableTime", "productionDate",
+    )
+    _DEVICE_END_KEYS = (
+        "endTime", "EndTime", "offTime", "OffTime", "disableTime", "DisableTime", "scrapTime",
+    )
+    _DEVICE_ROLE_KEYS = ("deviceRole", "DeviceRole", "isBackup", "IsBackup", "backupFlag", "BackupFlag")
+
+    def __init__(self) -> None:
+        super().__init__(
+            name="jiangsu_fetch_device_ledger",
+            description=(
+                "只读查询江苏运维省控站点的设备台账明细，返回平台登记的每台设备及其原始字段，"
+                "用于核对设备构成、识别备用设备，并为备机更换及时性与超期分析提供设备清单。"
+            ),
+            function_schema={
+                "name": "jiangsu_fetch_device_ledger",
+                "description": (
+                    "只读获取指定江苏运维省控站点的设备台账明细，返回平台登记的每台设备及其完整原始字段。"
+                    "适用于核对站点设备构成、识别备用设备、为备机更换与超期分析提供设备清单。"
+                    "本工具只读取台账，不新增、变更或报废设备；"
+                    "备机备案、设备启用/停用时间、借出与生命周期起止等字段是否可用以平台实际返回为准，"
+                    "缺失时必须作为数据盲区如实说明，不得编造。"
+                ),
+                "parameters": {"type": "object", "properties": {
+                    "station_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 20,
+                                      "description": "省控站点编码（1-20 个）。"},
+                }, "required": ["station_codes"]},
+            },
+        )
+
+    async def execute(
+        self, context=None, station_codes: list[str] | None = None, **_: Any
+    ) -> dict[str, Any]:
+        try:
+            codes = _clean_station_codes(station_codes, self._MAX_STATIONS)
+            semaphore = asyncio.Semaphore(self._CONCURRENCY)
+
+            async def guarded(station_code: str) -> Any:
+                async with semaphore:
+                    return await self._request(self._PATH, [("StationCode", station_code)])
+
+            outcomes = await asyncio.gather(*(guarded(code) for code in codes), return_exceptions=True)
+            records: list[dict[str, Any]] = []
+            station_status: dict[str, dict[str, Any]] = {}
+            for code, outcome in zip(codes, outcomes, strict=True):
+                if isinstance(outcome, BaseException):
+                    station_status[code] = {"record_count": 0, "status": "failed", "error": str(outcome)}
+                    continue
+                rows, _ = self._page(outcome)
+                normalized = [self._normalize(row, code) for row in rows if isinstance(row, dict)]
+                records.extend(normalized)
+                station_status[code] = {
+                    "record_count": len(normalized),
+                    "status": "success" if normalized else "empty",
+                }
+            failed_stations = [code for code, state in station_status.items() if state["status"] == "failed"]
+            if failed_stations and len(failed_stations) == len(codes):
+                status = "failed"
+            elif records:
+                status = "success"
+            else:
+                status = "empty"
+            preview, file_path, externalization = externalize_compact_records(
+                records,
+                context=context,
+                schema="jiangsu_device_ledger",
+                metadata={"source_tool": self.name, "station_codes": codes},
+            )
+            metadata = {
+                "source": "jiangsu_operations_device_ledger_api",
+                "endpoint": self._PATH,
+                "station_codes": codes,
+                "station_status": station_status,
+                "record_count": len(records),
+                "failed_station_count": len(failed_stations),
+                "blind_spots": "备机备案、设备启用/停用时间、借出记录与生命周期起止等字段是否可用以平台实际返回为准；缺失时只能作为数据盲区说明。",
+                "queried_at": datetime.now().astimezone().isoformat(),
+                **externalization,
+            }
+            return {
+                "status": status,
+                "success": status != "failed",
+                "data": preview,
+                "metadata": metadata,
+                "summary": (
+                    f"江苏站点设备台账查询完成：{len(codes)} 个站点共返回 {len(records)} 条设备记录；"
+                    + (f"{len(failed_stations)} 个站点取数失败。" if failed_stations else "无失败站点。")
+                ),
+                **({"file_path": file_path, "data_complete": False} if file_path else {"data_complete": True}),
+            }
+        except (ValueError, httpx.HTTPError) as exc:
+            logger.warning("jiangsu_device_ledger_failed", error=str(exc))
+            return {
+                "status": "failed",
+                "success": False,
+                "data": [],
+                "summary": f"江苏站点设备台账查询失败：{exc}",
+            }
+
+    @classmethod
+    def _normalize(cls, row: dict[str, Any], fallback_station: str) -> dict[str, Any]:
+        used: set[str] = set()
+        station_code = (
+            _take_field(row, ("stationCode", "StationCode", "code", "Code"), used)
+            or fallback_station
+        )
+        record = {
+            "station_code": station_code,
+            "station_name": _take_field(row, ("stationName", "StationName", "positionName"), used),
+            "device_id": _take_field(row, cls._DEVICE_ID_KEYS, used),
+            "device_code": _take_field(row, cls._DEVICE_CODE_KEYS, used),
+            "device_type": _take_field(row, cls._DEVICE_TYPE_KEYS, used),
+            "device_type_name": _take_field(row, cls._DEVICE_TYPE_NAME_KEYS, used),
+            "device_brand": _take_field(row, cls._DEVICE_BRAND_KEYS, used),
+            "device_model": _take_field(row, cls._DEVICE_MODEL_KEYS, used),
+            "device_status": _take_field(row, cls._DEVICE_STATUS_KEYS, used),
+            "start_time": _take_field(row, cls._DEVICE_START_KEYS, used),
+            "end_time": _take_field(row, cls._DEVICE_END_KEYS, used),
+            "backup_role": _take_field(row, cls._DEVICE_ROLE_KEYS, used),
+        }
+        extra = _extra_fields(row, used)
+        if extra:
+            record["extra"] = extra
+        return {key: value for key, value in record.items() if value not in (None, "")}

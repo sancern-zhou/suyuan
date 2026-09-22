@@ -3,6 +3,8 @@ import pytest
 from app.agent.prompts.tool_registry import get_tool_order
 from app.tools.jiangsu.operations_analysis import (
     JiangsuAttendanceRecordsTool,
+    JiangsuDeviceLedgerTool,
+    JiangsuDoorAccessRecordsTool,
     JiangsuOperationsKnowledgeGraphTool,
     JiangsuStationDirectoryTool,
 )
@@ -105,6 +107,36 @@ async def test_track_analysis_propagates_attendance_source_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_station_directory_keeps_only_provincial_stations(monkeypatch):
+    tool = JiangsuStationDirectoryTool()
+
+    async def request(path, params):
+        assert path == "operation/AirOperaBase/GetOpaEnabledStationAsync"
+        assert params == []
+        return {"result": [
+            {"stationCode": "5006A", "stationType": 2, "operationUnitId": "TH"},
+            {"stationCode": "5005A", "stationTypeName": "省控", "operationUnitId": "SL1"},
+            {"stationCode": "5007A", "stationType": 2},
+            {"stationCode": "5004A", "stationType": 1, "operationUnitId": "TH"},
+            {"stationCode": "5003A", "站点类型ID": 3.0, "operationUnitId": "TH"},
+        ]}
+
+    monkeypatch.setattr(tool, "_request", request)
+    result = await tool.execute()
+
+    assert result["success"] is True
+    assert [row["stationCode"] for row in result["data"]] == ["5006A", "5005A"]
+    assert result["metadata"]["station_type"] == "省控"
+    assert result["metadata"]["station_type_filter_applied"] is True
+    assert result["metadata"]["operation_unit_filter_applied"] is True
+
+    filtered = await tool.execute(station_codes=["5005A"])
+    assert filtered["data"] == [
+        {"stationCode": "5005A", "stationTypeName": "省控", "operationUnitId": "SL1"}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_station_directory_filters_result_client_side(monkeypatch):
     tool = JiangsuStationDirectoryTool()
 
@@ -140,7 +172,7 @@ async def test_operations_graph_resolves_person_unit_station_and_area(monkeypatc
         {
             "stationCode": "5006A", "positionName": "江宁站", "cityCode": "320100",
             "cityName": "南京市", "districtCode": "320115", "districtName": "江宁区",
-            "operationUnitId": "TH", "operationUnitName": "武汉天虹", "stationType": 1,
+            "operationUnitId": "TH", "operationUnitName": "武汉天虹", "stationType": 2,
         }
     ]
 
@@ -168,12 +200,14 @@ async def test_operations_graph_resolves_person_unit_station_and_area(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_operations_graph_exposes_and_filters_station_type(monkeypatch):
+async def test_operations_graph_only_keeps_provincial_stations(monkeypatch):
     tool = JiangsuOperationsKnowledgeGraphTool()
     group_rows = [{"id": "TH", "pId": "", "name": "江苏运维", "level": 2}]
     stations = [
-        {"stationCode": "N", "positionName": "国控站", "cityName": "南京市", "stationType": 1},
-        {"stationCode": "P", "positionName": "省控站", "cityName": "南京市", "stationTypeName": "省控"},
+        {"stationCode": "N", "positionName": "国控站", "cityName": "南京市", "stationType": 1, "operationUnitId": "TH"},
+        {"stationCode": "P", "positionName": "省控站", "cityName": "南京市", "stationTypeName": "省控", "operationUnitId": "TH"},
+        {"stationCode": "S", "positionName": "省控超站", "cityName": "南京市", "stationType": 2},
+        {"stationCode": "M", "positionName": "市控站", "cityName": "南京市", "站点类型ID": 3.0, "operationUnitId": "TH"},
     ]
 
     async def request(path, params):
@@ -184,7 +218,7 @@ async def test_operations_graph_exposes_and_filters_station_type(monkeypatch):
         raise AssertionError(path)
 
     monkeypatch.setattr(tool, "_request", request)
-    result = await tool.execute(queries=["南京市"], depth=1, station_type="省控")
+    result = await tool.execute(queries=["南京市"], depth=1)
 
     assert result["success"] is True
     station_entities = [
@@ -424,3 +458,119 @@ async def test_operations_graph_externalizes_large_selection(monkeypatch):
     assert saved["schema"] == "jiangsu_operations_graph"
     assert len(saved["data"]["entities"]) == result["metadata"]["record_count"]
     assert len(saved["data"]["relations"]) == result["metadata"]["relation_count"]
+
+
+@pytest.mark.asyncio
+async def test_door_access_records_normalizes_and_flags_boundary(monkeypatch):
+    tool = JiangsuDoorAccessRecordsTool()
+
+    async def fake_get(path, params):
+        assert path == "stationintegrate/HK/GetACSDoorRecordsAsync"
+        assert ("StationCode", "5006A") in params
+        assert ("EventTime", "2026-08-01 00:00:00") in params
+        assert ("MaxResultCount", "1000") in params
+        return {"result": {"list": [
+            {
+                "personName": "张三",
+                "eventTime": "2026-08-01 08:00:00",
+                "eventType": "刷卡",
+                "doorName": "站房大门",
+                "cardNo": "C1",
+                "stationCode": "5006A",
+            }
+        ], "total": 1}}
+
+    monkeypatch.setattr(tool._api, "get", fake_get)
+    result = await tool.execute(
+        station_codes=["5006A"], start_time="2026-08-01 00:00:00", end_time="2026-08-02 00:00:00"
+    )
+
+    assert result["success"] is True
+    assert result["status"] == "success"
+    assert result["metadata"]["record_count"] == 1
+    assert result["data"][0]["person_name"] == "张三"
+    assert result["data"][0]["door_name"] == "站房大门"
+    assert result["data"][0]["station_code"] == "5006A"
+    assert "连续轨迹" in result["metadata"]["boundary"]
+
+
+@pytest.mark.asyncio
+async def test_door_access_records_isolates_station_failure(monkeypatch):
+    tool = JiangsuDoorAccessRecordsTool()
+
+    async def fake_get(path, params):
+        if dict(params)["StationCode"] == "B":
+            raise RuntimeError("平台超时")
+        return {"result": {"list": [{"personName": "李四", "eventTime": "2026-08-01 09:00:00"}]}}
+
+    monkeypatch.setattr(tool._api, "get", fake_get)
+    result = await tool.execute(
+        station_codes=["A", "B"], start_time="2026-08-01 00:00:00", end_time="2026-08-02 00:00:00"
+    )
+
+    assert result["success"] is True
+    assert result["metadata"]["record_count"] == 1
+    assert result["metadata"]["failed_station_count"] == 1
+    assert result["metadata"]["station_status"]["B"]["status"] == "failed"
+    assert result["metadata"]["station_status"]["A"]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_door_access_records_rejects_oversized_range_before_request():
+    tool = JiangsuDoorAccessRecordsTool()
+    result = await tool.execute(
+        station_codes=["5006A"], start_time="2026-01-01 00:00:00", end_time="2026-06-01 00:00:00"
+    )
+    assert result["success"] is False
+    assert "31 天" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_device_ledger_normalizes_and_keeps_platform_fields(monkeypatch):
+    tool = JiangsuDeviceLedgerTool()
+
+    async def request(path, params):
+        assert path == "asset/DeviceManagement/GetBSDDeviceListAsync"
+        assert ("StationCode", "5006A") in params
+        return {"result": [
+            {
+                "id": 12,
+                "deviceCode": "PM10-1",
+                "deviceType": "PM10",
+                "deviceTypeName": "PM10 分析仪",
+                "deviceBrand": "天虹",
+                "deviceModel": "X1",
+                "deviceStatus": "启用",
+                "startTime": "2025-01-01",
+                "remark": "备机已备案",
+            }
+        ]}
+
+    monkeypatch.setattr(tool, "_request", request)
+    result = await tool.execute(station_codes=["5006A"])
+
+    assert result["success"] is True
+    assert result["metadata"]["record_count"] == 1
+    row = result["data"][0]
+    assert row["station_code"] == "5006A"
+    assert row["device_id"] == 12
+    assert row["device_type_name"] == "PM10 分析仪"
+    assert row["start_time"] == "2025-01-01"
+    assert row["extra"] == {"remark": "备机已备案"}
+    assert "数据盲区" in result["metadata"]["blind_spots"]
+
+
+@pytest.mark.asyncio
+async def test_device_ledger_reports_empty_without_fabricating(monkeypatch):
+    tool = JiangsuDeviceLedgerTool()
+
+    async def request(path, params):
+        return {"result": []}
+
+    monkeypatch.setattr(tool, "_request", request)
+    result = await tool.execute(station_codes=["5006A"])
+
+    assert result["success"] is True
+    assert result["status"] == "empty"
+    assert result["data"] == []
+    assert result["metadata"]["station_status"]["5006A"]["status"] == "empty"

@@ -6,10 +6,12 @@
   >
     <!-- 报告生成专家 -->
     <template v-if="assistantMode === 'report-generation-expert'">
-      <div class="right-panel-tabs">
+      <div class="right-panel-tabs" role="tablist" aria-label="报告资源面板">
         <button
           v-if="documentCount > 0"
           :class="['tab-btn', { active: activeTab === 'document' }]"
+          role="tab"
+          :aria-selected="activeTab === 'document'"
           @click="handleTabChange('document')"
         >
           <span>报告</span>
@@ -18,6 +20,8 @@
         <button
           v-if="fileProductCount > 0"
           :class="['tab-btn', { active: activeTab === 'files' }]"
+          role="tab"
+          :aria-selected="activeTab === 'files'"
           @click="handleTabChange('files')"
         >
           <span>文件产物</span>
@@ -26,6 +30,8 @@
         <button
           v-if="feedbackAvailable"
           :class="['tab-btn', { active: activeTab === 'feedback' }]"
+          role="tab"
+          :aria-selected="activeTab === 'feedback'"
           @click="handleTabChange('feedback')"
         >
           <span>待确认</span>
@@ -150,6 +156,20 @@
           <span>智能事件</span>
         </button>
         <button
+          v-if="workOrderReviewAvailable"
+          :class="['tab-btn', { active: activeTab === 'work-order-review' }]"
+          role="tab"
+          :aria-selected="activeTab === 'work-order-review'"
+          @click="handleTabChange('work-order-review')"
+        >
+          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 4.5h6v3H9v-3Z" />
+            <path d="M9 6H6.5A1.5 1.5 0 0 0 5 7.5v12A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-12A1.5 1.5 0 0 0 17.5 6H15" />
+            <path d="M9 13.5l2 2 4-4" />
+          </svg>
+          <span>工单审核</span>
+        </button>
+        <button
           v-if="deviceControlAvailable"
           :class="['tab-btn', { active: activeTab === 'device-control' }]"
           role="tab"
@@ -218,6 +238,14 @@
         @open-task="$emit('open-smart-event-task-side', $event)"
       />
 
+      <!-- 故障工单审核工作区：证据包拆分数据 + AI 研判 + 人工反馈/归档/退回 -->
+      <WorkOrderReviewCenterPanel
+        v-else-if="activeTab === 'work-order-review'"
+        class="panel-content"
+        :workspace-command="workOrderReviewCommand"
+        @close="$emit('close-work-order-review-panel')"
+      />
+
       <!-- 远程质控工作区：设备反控 Agent 在右侧展示质控过程（状态核查/待确认/下发/回读/审计） -->
       <DeviceControlProcessPanel
         v-else-if="activeTab === 'device-control'"
@@ -240,6 +268,7 @@ import VisualizationGallery from '@/components/resources/VisualizationGallery.vu
 import HumanFeedbackPanel from './HumanFeedbackPanel.vue'
 import DeviceControlProcessPanel from '@/components/management/DeviceControlProcessPanel.vue'
 import SmartEventCenterPanel from '@/components/management/SmartEventCenterPanel.vue'
+import WorkOrderReviewCenterPanel from '@/components/management/WorkOrderReviewCenterPanel.vue'
 import TaskExecutionWorkspace from '@/components/management/TaskExecutionWorkspace.vue'
 import { projectConfig } from '@/config/projectConfig.js'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
@@ -309,6 +338,10 @@ const props = defineProps({
     type: Object,
     default: null
   },
+  workOrderReviewCommand: {
+    type: Object,
+    default: null
+  },
   deviceControlCommand: {
     type: Object,
     default: null
@@ -328,6 +361,7 @@ const emit = defineEmits([
   'open-smart-event-task-side',
   'close-smart-event-panel',
   'close-smart-event-task',
+  'close-work-order-review-panel',
   'close-device-control-panel',
   'restore-execution-session'
 ])
@@ -383,6 +417,12 @@ const smartEventAvailable = computed(() => (
   projectConfig.project === 'jiangsu-ops' &&
   ['smart_event_external', 'smart_event_instrument'].includes(props.assistantMode)
 ))
+// 工单审核工作台：仅在工单审核模式常驻；其他模式（故障诊断、智能事件）由 Agent
+// 工作区命令打开后按命令动态显示，避免在无关模式下固定占用标签栏。
+const workOrderReviewAvailable = computed(() => (
+  projectConfig.project === 'jiangsu-ops' &&
+  (props.assistantMode === 'ops' || Boolean(props.workOrderReviewCommand))
+))
 const deviceControlAvailable = computed(() => (
   projectConfig.project === 'jiangsu-ops' && props.assistantMode === 'device_control'
 ))
@@ -394,7 +434,7 @@ const smartEventCategory = computed(() => {
 
 const showTabs = computed(() => {
   // 只要有任意一个面板可见，就显示标签页切换按钮
-  return visualizationAvailable.value || documentAvailable.value || fileProductCount.value > 0 || knowledgeCount.value > 0 || showBoardTab.value || feedbackAvailable.value || smartEventAvailable.value || deviceControlAvailable.value
+  return visualizationAvailable.value || documentAvailable.value || fileProductCount.value > 0 || knowledgeCount.value > 0 || showBoardTab.value || feedbackAvailable.value || smartEventAvailable.value || workOrderReviewAvailable.value || deviceControlAvailable.value
 })
 
 const fileProductCount = computed(() => resourceSummary.value.counts.files)
@@ -419,6 +459,7 @@ watch(
       || (tab === 'feedback' && !feedback)
       || (tab === 'files' && fileProductCount.value === 0)
       || (tab === 'smart-event' && !smartEventAvailable.value)
+      || (tab === 'work-order-review' && !workOrderReviewAvailable.value)
       || (tab === 'device-control' && !deviceControlAvailable.value)
     )
     if (unavailable) emit('tab-change', 'files')
@@ -450,8 +491,8 @@ const handleBoardSnapshotConfirm = (snapshot) => {
   flex-direction: column;
   overflow: hidden;
   height: 100%;
-  background: #f8fafc;
-  border-left: 1px solid #edf1f7;
+  background: var(--bg-muted);
+  border-left: 1px solid var(--border-2);
 }
 
 .viz-wrapper.full-bleed-resource-panel {
@@ -462,13 +503,14 @@ const handleBoardSnapshotConfirm = (snapshot) => {
 .right-panel-tabs {
   display: flex;
   flex-shrink: 0;
-  gap: 4px;
-  padding: 8px;
-  background: #f8fafc;
-  border-bottom: 1px solid #edf1f7;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  background: var(--bg-container);
+  border-bottom: 1px solid var(--border-1);
   overflow-x: auto;
 }
 
+/* 卡片式标签（§6.5）：默认 --bg-muted 底 --text-2 字，选中白底 + --color-primary 字 + --border-2 描边 */
 .tab-btn {
   flex: 1;
   display: inline-flex;
@@ -476,39 +518,52 @@ const handleBoardSnapshotConfirm = (snapshot) => {
   justify-content: center;
   gap: 6px;
   min-width: 72px;
-  min-height: 34px;
-  padding: 7px 8px;
+  height: var(--control-h-md);
+  padding: 0 var(--space-2);
   border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
+  border-radius: var(--radius-sm);
+  background: var(--bg-muted);
   cursor: pointer;
-  font-size: 13px;
-  color: #526173;
-  transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+  font-family: inherit;
+  font-size: var(--text-size-sm);
+  color: var(--text-2);
+  transition: color var(--transition-base), background var(--transition-base),
+    border-color var(--transition-base), box-shadow var(--transition-base);
   white-space: nowrap;
 }
 
-.tab-btn:hover {
-  color: #1976D2;
-  background: #eef4fb;
+.tab-btn:hover:not(:disabled) {
+  color: var(--color-primary);
+  background: var(--color-primary-bg);
 }
 
-.tab-btn:disabled { cursor: not-allowed; opacity: .4; }
-.tab-btn:disabled:hover { color: #526173; background: transparent; }
+.tab-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-primary-ring);
+}
 
-.tab-btn.active {
-  color: #1976D2;
-  border-color: #d8e9fb;
-  background: #fff;
-  font-weight: 500;
+.tab-btn:disabled { cursor: not-allowed; color: var(--text-disabled); }
+.tab-btn:disabled:hover { background: var(--bg-muted); }
+
+.tab-btn.active,
+.tab-btn.active:hover:not(:disabled) {
+  color: var(--color-primary);
+  border-color: var(--border-2);
+  background: var(--bg-container);
+  box-shadow: var(--shadow-1);
+  font-weight: var(--font-weight-medium);
+}
+
+.tab-btn.active:focus-visible {
+  box-shadow: var(--shadow-1), 0 0 0 3px var(--color-primary-ring);
 }
 
 .tab-icon {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.8;
+  stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
   flex: 0 0 auto;
@@ -518,17 +573,22 @@ const handleBoardSnapshotConfirm = (snapshot) => {
   min-width: 18px;
   height: 18px;
   padding: 0 6px;
-  border-radius: 999px;
-  background: #edf3fb;
-  color: #526173;
-  font-size: 11px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-container);
+  color: var(--text-2);
+  font-size: var(--text-size-xs);
   line-height: 18px;
   text-align: center;
 }
 
+.tab-btn:hover:not(:disabled) .tab-count {
+  background: var(--color-primary-bg-hover);
+  color: var(--color-primary);
+}
+
 .tab-btn.active .tab-count {
-  background: #e3f2fd;
-  color: #1976D2;
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
 }
 
 .panel-content {
