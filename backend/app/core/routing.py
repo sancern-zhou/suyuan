@@ -49,6 +49,7 @@ ROUTER_REGISTRY = [
     RouterSpec("app.api.monitoring", description="LLM monitoring"),
     RouterSpec("app.api.image_routes", prefix="/api", description="Image cache API"),
     RouterSpec("app.api.session_routes", description="Session management"),
+    RouterSpec("app.api.workflow_routes", description="Agent workflow inspection and cancellation"),
     RouterSpec(
         "app.api.session_resource_routes",
         description="Session resource delivery",
