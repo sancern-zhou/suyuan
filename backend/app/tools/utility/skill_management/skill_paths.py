@@ -23,6 +23,32 @@ def active_skill_paths() -> tuple[Path, Path]:
 
 _UNSAFE_CHARS = re.compile(r'[<>:"|?*\x00-\x1f]')
 
+_LOOKUP_STRIP_CHARS = "「」『』《》【】<>\"'`"
+
+
+def normalize_skill_lookup(value: Any) -> str:
+    """Normalise a skill name/title for tolerant matching."""
+    text = str(value or "").strip()
+    for char in _LOOKUP_STRIP_CHARS:
+        text = text.replace(char, "")
+    return "".join(text.split()).casefold()
+
+
+def iter_skill_documents(directory: Path) -> Iterable[Path]:
+    """Yield flat ``<skill>.md`` files and packaged ``<skill>/SKILL.md`` files."""
+    directory = Path(directory)
+    if not directory.is_dir():
+        return
+    for path in sorted(directory.glob("*.md")):
+        if path.is_file() and path.name != "SKILLS_INDEX.md":
+            yield path
+    for child in sorted(directory.iterdir()):
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        skill_md = child / "SKILL.md"
+        if skill_md.is_file():
+            yield skill_md
+
 
 def sanitize_skill_filename(name: str) -> str:
     raw = (name or "").strip().replace("\\", "/")
@@ -69,7 +95,60 @@ def resolve_skill_file(
         if draft_path.exists() and draft_path.is_file():
             return draft_path
 
+    matched = find_skill_by_title(
+        name,
+        skills_dir=skills_dir,
+        drafts_dir=drafts_dir,
+        include_drafts=include_drafts,
+    )
+    if matched is not None:
+        return matched
+
     raise FileNotFoundError(filename)
+
+
+def _skill_title(path: Path) -> str:
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    return parse_skill_metadata(content, path.name)["title"]
+
+
+def find_skill_by_title(
+    name: str,
+    *,
+    skills_dir: Path = SKILLS_DIR,
+    drafts_dir: Path = DRAFTS_DIR,
+    include_drafts: bool = False,
+) -> Path | None:
+    """Resolve a skill document by its display title (heading or frontmatter name)."""
+    target = normalize_skill_lookup(name)
+    if not target:
+        return None
+    directories = [skills_dir, drafts_dir] if include_drafts else [skills_dir]
+    for directory in directories:
+        for path in iter_skill_documents(directory):
+            if normalize_skill_lookup(_skill_title(path)) == target:
+                return ensure_within_directory(path, directory)
+    return None
+
+
+def list_skill_titles(
+    *,
+    skills_dir: Path = SKILLS_DIR,
+    drafts_dir: Path = DRAFTS_DIR,
+    include_drafts: bool = False,
+) -> list[str]:
+    """Return the display titles of the available skill documents."""
+    directories = [skills_dir, drafts_dir] if include_drafts else [skills_dir]
+    titles: list[str] = []
+    for directory in directories:
+        for path in iter_skill_documents(directory):
+            title = _skill_title(path)
+            if title and title not in titles:
+                titles.append(title)
+    return titles
 
 
 def parse_skill_metadata(content: str, fallback_name: str) -> dict[str, str]:

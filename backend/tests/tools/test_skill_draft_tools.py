@@ -74,8 +74,7 @@ async def test_view_skill_reads_official_skill(monkeypatch, tmp_path: Path):
 
     import app.tools.utility.skill_management.view_skill_tool as module
 
-    monkeypatch.setattr(module, "SKILLS_DIR", skills_dir)
-    monkeypatch.setattr(module, "DRAFTS_DIR", drafts_dir)
+    monkeypatch.setattr(module, "active_skill_paths", lambda: (skills_dir, drafts_dir))
 
     result = await ViewSkillTool().execute(name="excel")
 
@@ -95,8 +94,7 @@ async def test_view_skill_reads_draft_when_requested(monkeypatch, tmp_path: Path
 
     import app.tools.utility.skill_management.view_skill_tool as module
 
-    monkeypatch.setattr(module, "SKILLS_DIR", skills_dir)
-    monkeypatch.setattr(module, "DRAFTS_DIR", drafts_dir)
+    monkeypatch.setattr(module, "active_skill_paths", lambda: (skills_dir, drafts_dir))
 
     result = await ViewSkillTool().execute(name="draft", include_drafts=True)
 
@@ -137,7 +135,7 @@ async def test_create_skill_draft_writes_to_drafts(monkeypatch, tmp_path: Path):
 
     import app.tools.utility.skill_management.create_skill_draft_tool as module
 
-    monkeypatch.setattr(module, "DRAFTS_DIR", drafts_dir)
+    monkeypatch.setattr(module, "active_skill_paths", lambda: (drafts_dir.parent, drafts_dir))
 
     result = await CreateSkillDraftTool().execute(**_draft_payload())
 
@@ -156,7 +154,7 @@ async def test_create_skill_draft_rejects_duplicate_without_overwrite(monkeypatc
 
     import app.tools.utility.skill_management.create_skill_draft_tool as module
 
-    monkeypatch.setattr(module, "DRAFTS_DIR", drafts_dir)
+    monkeypatch.setattr(module, "active_skill_paths", lambda: (drafts_dir.parent, drafts_dir))
 
     result = await CreateSkillDraftTool().execute(**_draft_payload())
 
@@ -170,7 +168,7 @@ async def test_create_skill_draft_requires_workflow_steps(monkeypatch, tmp_path:
 
     import app.tools.utility.skill_management.create_skill_draft_tool as module
 
-    monkeypatch.setattr(module, "DRAFTS_DIR", drafts_dir)
+    monkeypatch.setattr(module, "active_skill_paths", lambda: (drafts_dir.parent, drafts_dir))
     payload = _draft_payload()
     payload["workflow_steps"] = []
 
