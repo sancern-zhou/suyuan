@@ -218,6 +218,19 @@
             </div>
           </div>
         </div>
+
+        <!-- 【新增】AI回复用时统计 -->
+        <div
+          v-if="!message.streaming && getFinalDurationText(message)"
+          class="agent-message-duration"
+          title="AI 回复总用时"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7.5V12l3 2" />
+          </svg>
+          <span>用时 {{ getFinalDurationText(message) }}</span>
+        </div>
       </div>
 
       <!-- 错误消息 -->
@@ -815,6 +828,59 @@ const copyUserMessage = async (message) => {
   document.body.removeChild(textarea)
   markUserMessageCopied(message?.id)
 }
+
+// 【新增】AI回复用时统计：优先使用store在完成时记录的response_duration_ms，
+// 否则用 final 消息与其前最近 user 消息的时间戳差值（历史消息恢复场景）
+const formatResponseDuration = (durationMs) => {
+  if (!Number.isFinite(durationMs) || durationMs < 0) return ''
+  const totalSeconds = durationMs / 1000
+  if (totalSeconds < 60) return `${totalSeconds.toFixed(1)} 秒`
+  const totalWholeSeconds = Math.round(totalSeconds)
+  const minutes = Math.floor(totalWholeSeconds / 60)
+  const seconds = totalWholeSeconds % 60
+  if (minutes < 60) return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分`
+  const hours = Math.floor(minutes / 60)
+  const restMinutes = minutes % 60
+  return restMinutes ? `${hours} 小时 ${restMinutes} 分` : `${hours} 小时`
+}
+
+const finalDurationTextMap = computed(() => {
+  const map = new Map()
+  const msgs = props.messages
+
+  for (let i = 0; i < msgs.length; i++) {
+    const message = msgs[i]
+    if (getMessageType(message) !== 'final') continue
+
+    const precomputed = Number(message.data?.response_duration_ms)
+    let durationMs = Number.isFinite(precomputed) ? precomputed : null
+
+    if (durationMs === null) {
+      let startTimestamp = null
+      for (let j = i - 1; j >= 0; j--) {
+        if (getMessageType(msgs[j]) === 'user') {
+          startTimestamp = msgs[j].timestamp
+          break
+        }
+      }
+      const endTimestamp = message.timestamp
+      if (startTimestamp && endTimestamp) {
+        const start = Date.parse(startTimestamp)
+        const end = Date.parse(endTimestamp)
+        if (Number.isFinite(start) && Number.isFinite(end)) {
+          durationMs = end - start
+        }
+      }
+    }
+
+    const text = formatResponseDuration(durationMs)
+    if (text) map.set(message.id, text)
+  }
+
+  return map
+})
+
+const getFinalDurationText = (message) => finalDurationTextMap.value.get(message?.id) || ''
 
 // 【新增】处理details的toggle事件
 const handleProcessToggle = (messageId, event) => {
@@ -2109,6 +2175,29 @@ const downloadPreviewedImage = async () => {
         }
       }
     }
+  }
+}
+
+// 【新增】AI回复用时统计
+.agent-message-duration {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  font-size: var(--text-size-xs);
+  line-height: 1;
+  color: var(--text-3);
+  user-select: none;
+  white-space: nowrap;
+
+  svg {
+    width: 13px;
+    height: 13px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 }
 
