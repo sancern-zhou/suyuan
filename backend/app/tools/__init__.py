@@ -965,11 +965,14 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
 
     try:
         from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
+        from app.tools.agent_tools.run_agent_workflow import RunAgentWorkflowTool
         # 注意：CallSubAgentTool需要延迟初始化（在ReActLoop中注入依赖）
         # 这里创建一个占位符工具，真实的工具实例在executor中创建
         call_sub_agent_tool = CallSubAgentTool()
         registry.register(call_sub_agent_tool, priority=385)  # 修复: 900->385
         logger.info("tool_loaded", tool="call_sub_agent")
+        registry.register(RunAgentWorkflowTool(), priority=387)
+        logger.info("tool_loaded", tool="run_agent_workflow")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="call_sub_agent", error=str(e))
 

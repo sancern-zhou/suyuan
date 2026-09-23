@@ -12,6 +12,7 @@ Session支持：
 """
 
 from contextlib import nullcontext
+import json
 from typing import Dict, Any, Literal, Optional, List
 import structlog
 from datetime import datetime
@@ -26,6 +27,14 @@ from app.agent.session.workspace_routing import (
 )
 from app.agent.selection_context import load_skill_selection
 from app.agent.prompts.tool_registry import get_tools_by_mode
+from app.agent.workflow.capabilities import build_child_capability_policy
+from app.agent.workflow.protocol import (
+    build_result_envelope,
+    extract_structured_result,
+    validate_result_schema,
+)
+from app.agent.workflow.runtime import WorkflowRuntime
+from app.agent.workflow.actors import child_actor_registry
 from app.utils.path_config import format_agent_path, resolve_agent_path
 
 logger = structlog.get_logger()
@@ -57,6 +66,7 @@ class CallSubAgentTool(LLMTool):
             "name": "call_sub_agent",
             "description": (
                 "调用另一个 Agent 模式执行任务；继续旧会话需传 session_id。"
+                "默认不会自动复用旧的 assistant 子会话。"
             ),
             "parameters": {
                 "type": "object",
@@ -102,11 +112,11 @@ class CallSubAgentTool(LLMTool):
                     },
                     "session_id": {
                         "type": "string",
-                        "description": "子Agent会话ID；传入则继续指定会话。"
+                        "description": "子Agent会话ID；只有显式传入 session_id 才会复用旧会话。"
                     },
                     "force_new_session": {
                         "type": "boolean",
-                        "description": "是否强制创建新会话。"
+                        "description": "是否强制创建新会话；assistant 子会话未传 session_id 时默认已创建新会话。"
                     },
                     "promote_to_workspace": {
                         "type": "boolean",
@@ -115,6 +125,50 @@ class CallSubAgentTool(LLMTool):
                     "_force_isolated_session": {
                         "type": "boolean",
                         "description": "[内部使用] 并发调用时强制session隔离，避免多个子Agent共享同一个session"
+                    },
+                    "task_id": {
+                        "type": "string",
+                        "description": "本次工作流任务ID，用于结果追踪和恢复。"
+                    },
+                    "parent_task_id": {
+                        "type": "string",
+                        "description": "父任务ID，用于建立任务血缘。"
+                    },
+                    "task_contract": {
+                        "type": "object",
+                        "description": "结构化任务协议；子Agent必须按其中的范围、问题和交付要求执行。"
+                    },
+                    "result_schema": {
+                        "type": "object",
+                        "description": "子Agent最终结果的JSON Schema子集。提供后会解析并校验结构化结果。"
+                    },
+                    "repair_attempts": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 2,
+                        "description": "结构化结果校验失败时的自动修复轮数，默认1，最多2轮。"
+                    },
+                    "workflow_run_id": {
+                        "type": "string",
+                        "description": "可选的运行实例ID；用于恢复同一个工作流运行。"
+                    },
+                    "allowed_tool_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "子Agent允许使用的工具白名单。"
+                    },
+                    "denied_tool_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "子Agent禁止使用的工具黑名单。"
+                    },
+                    "allow_child_delegation": {
+                        "type": "boolean",
+                        "description": "是否允许子Agent继续调用子Agent，默认允许但仍受嵌套深度限制。"
+                    },
+                    "deadline_at": {
+                        "type": "string",
+                        "description": "可选的工作流截止时间，ISO-8601 格式；超时后任务进入 cancelled。"
                     }
                 },
                 "required": ["target_mode"]  # ✅ 改为：target_mode必需，goal和task_description二选一
@@ -150,6 +204,16 @@ class CallSubAgentTool(LLMTool):
         force_new_session: bool = False,
         promote_to_workspace: bool = False,
         _force_isolated_session: bool = False,  # ⚠️ 内部使用：并发时强制隔离
+        task_id: Optional[str] = None,
+        parent_task_id: Optional[str] = None,
+        task_contract: Optional[Dict[str, Any]] = None,
+        result_schema: Optional[Dict[str, Any]] = None,
+        repair_attempts: int = 1,
+        workflow_run_id: Optional[str] = None,
+        allowed_tool_names: Optional[List[str]] = None,
+        denied_tool_names: Optional[List[str]] = None,
+        allow_child_delegation: bool = True,
+        deadline_at: Optional[str] = None,
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
         """
@@ -166,6 +230,10 @@ class CallSubAgentTool(LLMTool):
             session_id: 可选，子Agent会话ID（传入则继续已有对话）
             force_new_session: 是否强制创建新会话
             _force_isolated_session: [内部使用] 并发调用时强制session隔离
+            task_id: 工作流任务ID（可选）
+            parent_task_id: 父任务ID（可选）
+            task_contract: 结构化任务协议（可选）
+            result_schema: 子Agent结果Schema（可选）
 
         Returns:
             {
@@ -179,6 +247,10 @@ class CallSubAgentTool(LLMTool):
                 "summary": "简要总结"
             }
         """
+        workflow_runtime = None
+        workflow_run = None
+        effective_task_id = task_id or f"task-{uuid.uuid4().hex}"
+
         # ✅ 参数验证
         if not target_mode:
             return {
@@ -223,6 +295,23 @@ class CallSubAgentTool(LLMTool):
         try:
             # 获取父Agent模式
             parent_mode = self._get_parent_mode(context)
+            runtime_metadata = dict(getattr(context, "runtime_metadata", {}) or {}) if context is not None else {}
+            agent_depth = int(runtime_metadata.get("agent_depth", 0) or 0)
+            max_agent_depth = int(runtime_metadata.get("max_agent_depth", 2) or 2)
+            if agent_depth >= max_agent_depth:
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "result": f"子Agent调用深度已达到上限（{max_agent_depth}），拒绝继续嵌套。",
+                    "data": {},
+                    "metadata": {
+                        "schema_version": "workflow.v1",
+                        "generator": "call_sub_agent",
+                        "agent_depth": agent_depth,
+                        "max_agent_depth": max_agent_depth,
+                    },
+                    "summary": "子Agent嵌套深度超限",
+                }
             skill_ids = list(dict.fromkeys(skill_ids or []))
             if len(skill_ids) > 1:
                 return {
@@ -432,6 +521,72 @@ class CallSubAgentTool(LLMTool):
             # 2. 动态导入（避免循环导入）
             from app.agent.react_agent import ReActAgent
 
+            # 建立通用工作流运行时。运行时快照可由 Session 持久化，模式只负责
+            # 提供 task_contract/result_schema，不参与生命周期管理。
+            existing_session = session_manager.get_session(session_id) if session_id else None
+            runtime_snapshot = {}
+            if existing_session:
+                runtime_snapshot = (existing_session.metadata or {}).get("workflow_runtime") or {}
+            workflow_runtime = WorkflowRuntime(snapshot=runtime_snapshot)
+            workflow_run = workflow_runtime.create_run(
+                task_id=effective_task_id,
+                parent_task_id=parent_task_id,
+                run_id=workflow_run_id,
+                max_attempts=max(1, min(int(repair_attempts or 0) + 1, 3)),
+                deadline_at=deadline_at,
+            )
+            workflow_runtime.start(workflow_run.run_id)
+
+            def persist_workflow_snapshot(snapshot: Dict[str, Any]) -> None:
+                self._persist_workflow_snapshot(
+                    session_id=session_id,
+                    query=effective_goal,
+                    parent_mode=parent_mode,
+                    child_mode=target_mode,
+                    snapshot=snapshot,
+                )
+
+            workflow_runtime.set_persist(persist_workflow_snapshot)
+            persist_workflow_snapshot(workflow_runtime.snapshot())
+            if workflow_runtime.check_deadline(workflow_run.run_id):
+                return {
+                    "status": "cancelled",
+                    "success": False,
+                    "result": "工作流已超过截止时间，未启动子 Agent。",
+                    "data": {},
+                    "metadata": {
+                        "schema_version": "workflow.v1",
+                        "generator": "call_sub_agent",
+                        "workflow_run_id": workflow_run.run_id,
+                    },
+                    "summary": "工作流超时取消",
+                }
+            if parent_task_id:
+                workflow_runtime.append(
+                    workflow_run.run_id,
+                    "task.lineage_attached",
+                    payload={"parent_task_id": parent_task_id},
+                )
+            if task_contract or result_schema:
+                workflow_runtime.append(
+                    workflow_run.run_id,
+                    "task.contract_bound",
+                    payload={
+                        "task_type": (task_contract or {}).get("task_type"),
+                        "contract_fields": sorted((task_contract or {}).keys()),
+                        "result_schema_fields": sorted((result_schema or {}).get("properties", {}).keys()),
+                    },
+                )
+
+            mode_tool_names = set(get_tools_by_mode(target_mode).keys())
+            if selected_child_skill:
+                mode_tool_names.update(selected_child_skill.required_tools or [])
+            capability_policy = build_child_capability_policy(
+                allowed_tools=(allowed_tool_names if allowed_tool_names is not None else mode_tool_names),
+                denied_tools=denied_tool_names,
+                allow_delegation=allow_child_delegation,
+            )
+
             # 3. 构建子 Agent 请求：ReActAgent 会自行构建系统提示，因此把任务、
             # 补充上下文和规范化后的工作目录作为本轮用户请求一起传入。
             parent_resource_lines = await self._collect_parent_resource_lines(context)
@@ -448,6 +603,8 @@ class CallSubAgentTool(LLMTool):
                 parent_resource_lines=parent_resource_lines,
                 scheduled_task_context=scheduled_task_context,
                 skill_id=selected_child_skill.skill_id if selected_child_skill else None,
+                task_contract=task_contract,
+                result_schema=result_schema,
             )
             logger.debug(
                 "child_request_prompt_built",
@@ -460,10 +617,13 @@ class CallSubAgentTool(LLMTool):
             # ⚠️ 不传递 memory_manager，让子Agent自己创建 UnifiedMemoryManager
 
             # 所有模式统一使用 ReActAgent；专家模式通过工具注册表中的原子工具/工作流工具完成分析。
+            child_registry = capability_policy.filter_registry(
+                tool_executor.tool_registry if tool_executor else None
+            )
             sub_agent = ReActAgent(
                 max_iterations=120,  # 子Agent默认120次迭代
                 enable_memory=True,  # ✅ 启用记忆（子Agent会自动创建 UnifiedMemoryManager）
-                tool_registry=tool_executor.tool_registry if tool_executor else None  # ✅ 传递工具注册表
+                tool_registry=child_registry  # 子 Agent 只获得策略允许的工具
             )
 
             # 子Agent必须继承父Agent本次请求已经选定的完整模型优先级链。
@@ -494,31 +654,96 @@ class CallSubAgentTool(LLMTool):
                     fallbacks=parent_fallbacks,
                 )
 
-            # 5. 执行子Agent（传入所有必要参数）
-            # ✅ 双重保障机制（参考Hermes）：
-            #   - 系统提示（assistant_prompt.py已包含关键要求）
-            #   - 用户消息（effective_goal）仍是纯净的原始任务
-            result_events = []
-            with model_chain_context:
-                async for event in sub_agent.analyze(
-                    user_query=child_request_prompt,
-                    session_id=session_id if session_id else None,  # ✅ 传递session_id用于会话恢复
-                    manual_mode=target_mode,  # ✅ 强制使用指定模式（如 query）
-                    enhance_with_history=True,  # ✅ 启用记忆增强
-                    initial_messages=conversation_history if conversation_history else None,  # ✅ 传入历史
-                    user_identifier=None,  # ⚠️ 使用模式专属记忆（不跨模式共享）
-                    runtime_metadata=dict(getattr(context, "runtime_metadata", {}) or {}),
-                    selected_skill_context=(
-                        selected_child_skill.content if selected_child_skill else None
-                    ),
-                    extra_tool_names=(
-                        selected_child_skill.required_tools if selected_child_skill else None
-                    ),
-                ):
-                    result_events.append(event)
+            # 5. 执行子Agent（同一 session + mode 的 turn 串行化，避免上下文交叉）。
+            actor_key = f"{session_id or workflow_run.run_id}:{target_mode}"
 
-            # 7. 提取最终结果
+            async def run_child_turn(
+                prompt: str,
+                initial_messages: Optional[List[Dict[str, Any]]] = None,
+                *,
+                include_skill: bool = False,
+            ) -> List[Dict[str, Any]]:
+                turn_events: List[Dict[str, Any]] = []
+                async with child_actor_registry.lease(actor_key):
+                    with model_chain_context:
+                        async for event in sub_agent.analyze(
+                            user_query=prompt,
+                            session_id=session_id if session_id else None,
+                            manual_mode=target_mode,
+                            enhance_with_history=True,
+                            initial_messages=initial_messages,
+                            user_identifier=None,
+                            runtime_metadata={
+                                **runtime_metadata,
+                                "agent_depth": agent_depth + 1,
+                                "max_agent_depth": max_agent_depth,
+                                "workflow_run_id": workflow_run.run_id,
+                            },
+                            selected_skill_context=(
+                                selected_child_skill.content
+                                if include_skill and selected_child_skill
+                                else None
+                            ),
+                            extra_tool_names=(
+                                selected_child_skill.required_tools
+                                if include_skill and selected_child_skill
+                                else None
+                            ),
+                        ):
+                            turn_events.append(event)
+                return turn_events
+
+            result_events = await run_child_turn(
+                child_request_prompt,
+                conversation_history if conversation_history else None,
+                include_skill=True,
+            )
+            workflow_runtime.append(
+                workflow_run.run_id,
+                "task.child_turn_completed",
+                payload={"event_count": len(result_events)},
+            )
+
+            # 7. 提取最终结果；结构化协议失败时在同一 child runtime 上做有限修复。
             final_result = self._extract_final_result(result_events)
+            if workflow_runtime.check_deadline(workflow_run.run_id):
+                final_result = {
+                    **final_result,
+                    "status": "cancelled",
+                    "answer": "工作流已超过截止时间，子 Agent 结果已取消。",
+                }
+            structured_result = None
+            validation_errors = []
+            if result_schema and final_result["status"] != "cancelled":
+                structured_result, validation_errors = self._validate_structured_result(
+                    final_result.get("answer", ""), result_schema
+                )
+                attempts = max(0, min(int(repair_attempts or 0), 2))
+                for repair_index in range(attempts):
+                    if not validation_errors:
+                        break
+                    workflow_runtime.begin_repair(
+                        workflow_run.run_id,
+                        errors=validation_errors,
+                    )
+                    workflow_runtime.append(
+                        workflow_run.run_id,
+                        "task.result_repair_requested",
+                        payload={"repair_index": repair_index + 1, "errors": validation_errors},
+                    )
+                    repair_prompt = (
+                        "上一轮结果未通过结构化结果协议校验。请保留已完成的证据和分析，"
+                        "只修复输出格式或缺失字段，并在 ```json 代码块中重新提交完整 JSON。\n"
+                        f"校验错误：{json.dumps(validation_errors, ensure_ascii=False)}\n"
+                        f"结果协议：{json.dumps(result_schema, ensure_ascii=False)}"
+                    )
+                    result_events.extend(await run_child_turn(repair_prompt))
+                    final_result = self._extract_final_result(result_events)
+                    structured_result, validation_errors = self._validate_structured_result(
+                        final_result.get("answer", ""), result_schema
+                    )
+                    if validation_errors:
+                        workflow_runtime.start(workflow_run.run_id)
 
             logger.info(
                 "sub_agent_completed",
@@ -536,6 +761,33 @@ class CallSubAgentTool(LLMTool):
                 "image_paths": self._extract_image_paths(result_events),  # 本地路径（文件操作）
                 "tool_calls": self._extract_tool_calls(result_events)
             }
+            if result_schema:
+                structured_data["structured_result"] = structured_result
+                structured_data["validation_errors"] = validation_errors
+            structured_data["result_envelope"] = build_result_envelope(
+                status=(
+                    "completed"
+                    if final_result["status"] == "success" and not validation_errors
+                    else "cancelled"
+                    if final_result["status"] == "cancelled"
+                    else "failed"
+                ),
+                summary=final_result.get("answer", "")[:1000],
+                outputs=(
+                    structured_result
+                    if isinstance(structured_result, dict)
+                    else {"answer": final_result.get("answer", "")}
+                ),
+                artifacts=[
+                    {"kind": "file", "path": path}
+                    for path in structured_data["file_paths"]
+                ] + [
+                    {"kind": "chart", "url": url}
+                    for url in structured_data["chart_urls"]
+                ],
+                errors=validation_errors,
+                metadata={"target_mode": target_mode, "task_id": effective_task_id},
+            )
             human_feedback = self._extract_human_feedback(result_events)
             if human_feedback is not None:
                 structured_data["human_feedback"] = human_feedback
@@ -556,6 +808,20 @@ class CallSubAgentTool(LLMTool):
                     structured_data["board"] = child_data.get("board") or child_data
                     break
 
+            validation_errors = structured_data.get("validation_errors", [])
+            succeeded = final_result["status"] == "success" and not validation_errors
+            if succeeded:
+                workflow_runtime.transition(workflow_run.run_id, "succeeded")
+            elif workflow_runtime.get_run(workflow_run.run_id).status != "cancelled":
+                workflow_runtime.transition(
+                    workflow_run.run_id,
+                    "failed",
+                    payload={
+                        "status": final_result["status"],
+                        "validation_errors": validation_errors,
+                    },
+                )
+
             # ✅ 8. 保存/更新session
             if not workspace_parent_session_id:
                 self._update_session(
@@ -564,7 +830,20 @@ class CallSubAgentTool(LLMTool):
                     child_mode=target_mode,
                     user_query=effective_goal,  # ✅ 使用effective_goal
                     assistant_answer=final_result["answer"],
-                    result_events=result_events
+                    result_events=result_events,
+                    task_id=task_id,
+                    parent_task_id=parent_task_id,
+                    task_contract=task_contract,
+                    result_schema=result_schema,
+                    result_status=(
+                        "cancelled"
+                        if final_result["status"] == "cancelled"
+                        else "success"
+                        if not structured_data.get("validation_errors")
+                        else "invalid_result"
+                    ),
+                    validation_errors=structured_data.get("validation_errors", []),
+                    workflow_snapshot=workflow_runtime.snapshot(),
                 )
 
             # ✅ 构建增强的metadata（包含子Agent的思考过程）
@@ -580,6 +859,18 @@ class CallSubAgentTool(LLMTool):
                 "session_id": session_id,
                 "is_new_session": is_new_session
             }
+            if task_id:
+                enhanced_metadata["task_id"] = task_id
+            enhanced_metadata["workflow_run_id"] = workflow_run.run_id
+            enhanced_metadata["workflow_status"] = workflow_runtime.get_run(workflow_run.run_id).status
+            enhanced_metadata["workflow_event_count"] = len(workflow_runtime.events(run_id=workflow_run.run_id))
+            if parent_task_id:
+                enhanced_metadata["parent_task_id"] = parent_task_id
+            if result_schema:
+                enhanced_metadata["result_validation"] = {
+                    "valid": not structured_data["validation_errors"],
+                    "error_count": len(structured_data["validation_errors"]),
+                }
 
             if promote_to_workspace:
                 try:
@@ -605,9 +896,8 @@ class CallSubAgentTool(LLMTool):
             if "reasoning" in final_result.get("data", {}):
                 enhanced_metadata["reasoning"] = final_result["data"]["reasoning"]
 
-            succeeded = final_result["status"] == "success"
             return {
-                "status": final_result["status"],
+                "status": "success" if succeeded else ("invalid_result" if validation_errors else final_result["status"]),
                 "success": succeeded,
                 "result": final_result["answer"],  # ✅ LLM的最终答案（最重要）
                 "data": structured_data,
@@ -615,11 +905,24 @@ class CallSubAgentTool(LLMTool):
                 "summary": (
                     f"{self._get_mode_name(target_mode)}已完成任务"
                     if succeeded
+                    else f"{self._get_mode_name(target_mode)}结果未通过结构化协议校验"
+                    if validation_errors
                     else f"{self._get_mode_name(target_mode)}执行失败"
                 )
             }
 
         except Exception as e:
+            if workflow_runtime is not None:
+                try:
+                    run = workflow_run
+                    if run and run.status not in {"succeeded", "failed", "cancelled"}:
+                        workflow_runtime.transition(
+                            run.run_id,
+                            "failed",
+                            payload={"error": str(e)},
+                        )
+                except Exception:
+                    logger.debug("workflow_runtime_failure_record_failed", exc_info=True)
             logger.error(
                 "sub_agent_failed",
                 target_mode=target_mode,
@@ -685,6 +988,8 @@ class CallSubAgentTool(LLMTool):
         parent_resource_lines: Optional[List[str]] = None,
         scheduled_task_context: Optional[Dict[str, Any]] = None,
         skill_id: Optional[str] = None,
+        task_contract: Optional[Dict[str, Any]] = None,
+        result_schema: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         构建子 Agent 本轮请求（分离 goal、补充上下文和工作目录）
@@ -709,6 +1014,19 @@ class CallSubAgentTool(LLMTool):
 
         if skill_id:
             parts.append(f"**显式技能**：{skill_id}\n")
+
+        if task_contract:
+            parts.append(
+                "## 工作流任务协议（必须遵守）\n"
+                "以下对象是父 Agent 传入的正式任务边界。不得擅自扩大范围；缺少证据时要在结果中明确标记。\n"
+                f"```json\n{json.dumps(task_contract, ensure_ascii=False, indent=2)}\n```\n"
+            )
+        if result_schema:
+            parts.append(
+                "## 结构化结果协议（必须遵守）\n"
+                "最终回复必须包含一个可解析的 JSON 对象，放在 ```json 代码块中；除 JSON 外可以附简短说明。\n"
+                f"```json\n{json.dumps(result_schema, ensure_ascii=False, indent=2)}\n```\n"
+            )
 
         if scheduled_task_context:
             task_name = scheduled_task_context.get("task_name") or scheduled_task_context.get("task_id") or "定时任务"
@@ -838,6 +1156,17 @@ class CallSubAgentTool(LLMTool):
             "code": "编程Agent",
         }
         return mode_names.get(mode, mode)
+
+    @staticmethod
+    def _validate_structured_result(answer: str, schema: Dict[str, Any]):
+        structured_result = extract_structured_result(answer)
+        if structured_result is None:
+            return None, [{
+                "path": "$",
+                "expected": "JSON result matching result_schema",
+                "got": "no structured JSON result",
+            }]
+        return structured_result, validate_result_schema(structured_result, schema)
 
     def _extract_file_paths(self, events: list) -> list:
         """从事件流中提取所有file_path"""
@@ -989,8 +1318,7 @@ class CallSubAgentTool(LLMTool):
 
     def _generate_session_id(self, parent_mode: str, child_mode: str) -> str:
         """生成子Agent session_id"""
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        return f"{parent_mode}__to__{child_mode}__{timestamp}"
+        return f"{parent_mode}__to__{child_mode}__{uuid.uuid4().hex}"
 
     def _update_session(
         self,
@@ -999,7 +1327,14 @@ class CallSubAgentTool(LLMTool):
         child_mode: str,
         user_query: str,
         assistant_answer: str,
-        result_events: List[Dict]
+        result_events: List[Dict],
+        task_id: Optional[str] = None,
+        parent_task_id: Optional[str] = None,
+        task_contract: Optional[Dict[str, Any]] = None,
+        result_schema: Optional[Dict[str, Any]] = None,
+        result_status: Optional[str] = None,
+        validation_errors: Optional[List[Dict[str, str]]] = None,
+        workflow_snapshot: Optional[Dict[str, Any]] = None,
     ):
         """更新子Agent session"""
         # 加载或创建session
@@ -1021,6 +1356,22 @@ class CallSubAgentTool(LLMTool):
             "content": user_query,
             "timestamp": datetime.now().isoformat()
         })
+
+        if task_id or parent_task_id or task_contract or result_schema:
+            workflow = dict(session.metadata.get("workflow") or {})
+            workflow.update({
+                "protocol_version": "workflow.v1",
+                "task_id": task_id,
+                "parent_task_id": parent_task_id,
+                "task_type": (task_contract or {}).get("task_type"),
+                "task_contract": task_contract,
+                "result_schema": result_schema,
+                "status": result_status or "completed",
+                "validation_errors": validation_errors or [],
+                "workflow_runtime": workflow_snapshot or workflow.get("workflow_runtime") or {},
+                "updated_at": datetime.now().isoformat(),
+            })
+            session.metadata["workflow"] = workflow
         session.conversation_history.append({
             "role": "assistant",
             "content": assistant_answer,
@@ -1042,3 +1393,27 @@ class CallSubAgentTool(LLMTool):
             conversation_length=len(session.conversation_history),
             data_count=0
         )
+
+    @staticmethod
+    def _persist_workflow_snapshot(
+        *,
+        session_id: str,
+        query: str,
+        parent_mode: str,
+        child_mode: str,
+        snapshot: Dict[str, Any],
+    ) -> None:
+        """Persist runtime state independently from the final transcript."""
+        if not session_id:
+            return
+        session = session_manager.get_session(session_id)
+        if session is None:
+            session = Session(
+                session_id=session_id,
+                query=query,
+                parent_mode=parent_mode,
+                child_mode=child_mode,
+                is_sub_agent_session=True,
+            )
+        session.metadata["workflow_runtime"] = snapshot
+        session_manager.save_session_metadata(session, update_timestamp=True)
