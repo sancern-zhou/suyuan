@@ -47,6 +47,28 @@ STATION_ROWS = [
         "stationtypeid": 1,
         "status": True,
     },
+    {
+        "positionname": "新元大道996号",
+        "areacode": "411003",
+        "uniquecode": "411003002",
+        "stationcode": "1011A",
+        "longitude": "113.80348",
+        "latitude": "34.1424",
+        "address": "新元大道996号",
+        "stationtypeid": 1,
+        "status": True,
+    },
+    {
+        "positionname": "建安区昌盛街道办事处",
+        "areacode": "411003",
+        "uniquecode": "411003002",
+        "stationcode": "1015B",
+        "longitude": None,
+        "latitude": None,
+        "address": "",
+        "stationtypeid": 4,
+        "status": True,
+    },
 ]
 
 STATION_COORDINATES = {
@@ -137,10 +159,10 @@ def test_township_coordinates_are_joined_by_station_name(fake_catalog):
     assert township["coordinate_source"] == "township_coordinates.xlsx"
 
     regular = catalog["regular_stations"]
-    assert len(regular) == 1
-    assert regular[0]["station_code"] == "1009A"
+    assert [item["station_code"] for item in regular] == ["1009A", "1011A"]
     assert regular[0]["unique_code"] == "411000408"
     assert regular[0]["type_name"] == "国控"
+    assert regular[1]["district"] == "建安区"
 
 
 def test_regular_station_coordinates_filled_from_sqlserver(fake_catalog):
@@ -162,7 +184,7 @@ async def test_provider_returns_canonical_records(fake_catalog):
     provider = XuchangStationCatalogProvider()
     records = await provider.list_stations(StationQuery(station_types=("国控",)))
 
-    assert [record.station_code for record in records] == ["1009A"]
+    assert [record.station_code for record in records] == ["1009A", "1011A"]
     assert records[0].station_category == "regular"
     assert records[0].station_type == "国控"
     assert records[0].longitude == pytest.approx(113.8428)
@@ -208,7 +230,7 @@ def test_resolve_stations_type_filter(fake_catalog):
     assert [item["station_code"] for item in townships_only] == ["1107B"]
 
     regular_only = resolve_stations(catalog, station_type="regular")
-    assert [item["station_code"] for item in regular_only] == ["1009A"]
+    assert [item["station_code"] for item in regular_only] == ["1009A", "1011A"]
 
 
 @pytest.mark.asyncio

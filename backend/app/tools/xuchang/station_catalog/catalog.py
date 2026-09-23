@@ -34,6 +34,8 @@ CITY_AREA_PREFIX = "4110"
 
 TOWNSHIP_SOURCE_VIEW = "v_t_d_src"
 
+TOWNSHIP_CODE_SUFFIX = "B"
+
 STATION_TYPE_NAME_MAP = {1: "国控", 2: "省控", 3: "市控", 4: "区县控", 5: "乡镇控"}
 
 ZONE_NAME_ALIASES = ("示范区",)
@@ -163,7 +165,7 @@ def normalize_regular_stations(
     stations: dict[str, dict[str, Any]] = {}
     for row in rows:
         code = str(row.get("stationcode") or "").strip()
-        if not code:
+        if not code or code.upper().endswith(TOWNSHIP_CODE_SUFFIX):
             continue
         try:
             type_id = int(row.get("stationtypeid") or 0)
@@ -215,7 +217,13 @@ def build_catalog() -> dict[str, Any]:
     station_coordinates = load_station_coordinates()
     station_rows = client.query_page(
         "station",
-        filters=[{"field": "areacode", "operator": "eq", "value": CITY_CODE}],
+        filters=[
+            {
+                "field": "areacode",
+                "operator": "like",
+                "value": f"{CITY_AREA_PREFIX}%",
+            }
+        ],
         size=1000,
     )["rows"]
 
