@@ -1405,6 +1405,40 @@ export const useReactStore = defineStore('react', {
       Object.assign(message, updatedMessage)
     },
 
+    /**
+     * 【新增】为final消息记录回复用时统计（复制到data中供UI展示）
+     * 使用前端时钟计算，避免后端naive时间戳与前端UTC时间戳混用导致时区误差
+     */
+    _stampResponseTiming(modeState, message) {
+      if (!modeState?.messages || !message) return
+      const index = modeState.messages.indexOf(message)
+      if (index === -1) return
+
+      let startTimestamp = null
+      for (let i = index - 1; i >= 0; i--) {
+        if (modeState.messages[i].type === 'user') {
+          startTimestamp = modeState.messages[i].timestamp
+          break
+        }
+      }
+
+      const completedAt = new Date().toISOString()
+      const nextData = {
+        ...(message.data || {}),
+        completed_at: completedAt
+      }
+
+      if (startTimestamp) {
+        const start = Date.parse(startTimestamp)
+        const end = Date.parse(completedAt)
+        if (Number.isFinite(start) && Number.isFinite(end) && end >= start) {
+          nextData.response_duration_ms = end - start
+        }
+      }
+
+      message.data = nextData
+    },
+
     _convertStreamingAnswerToThoughtIfToolPlanning(modeState) {
       convertStreamingAnswerToThoughtIfToolPlanning(modeState, contentToString)
     },
@@ -1774,6 +1808,8 @@ export const useReactStore = defineStore('react', {
               if (msg) {
                 msg.streaming = false
                 msg.renderVersion = (msg.renderVersion || 0) + 1
+                // 【新增】记录回复用时统计
+                this._stampResponseTiming(targetState, msg)
                 // 强制触发响应式更新，确保流式完成后重新渲染
                 targetState._forceRenderCount++
               }
@@ -1890,6 +1926,8 @@ export const useReactStore = defineStore('react', {
               expert_results: data?.expert_results || null,  // ✅ 传递专家结果用于显示
               sources: data?.sources || null  // ✅ 知识问答参考来源
             })
+            // 【新增】记录回复用时统计
+            this._stampResponseTiming(targetState, existingFinalMessage)
             if (finalContent) {
               targetState.finalAnswer = finalContent
             }
@@ -1897,13 +1935,16 @@ export const useReactStore = defineStore('react', {
           } else if (finalContent) {
             // 【修复】优先使用response字段，兼容answer字段
             console.log('[event:complete] 添加final消息，content:', finalContent.substring(0, 50) + '...')
-            addMessage('final', finalContent, {
+            const completedMessageId = addMessage('final', finalContent, {
               iterations: data?.iterations,
               session_id: data?.session_id,
               timestamp: data?.timestamp,
               expert_results: data?.expert_results || null,  // ✅ 传递专家结果用于显示
               sources: data?.sources || null  // ✅ 知识问答参考来源
             }, null, { streaming: false })  // 【修复】明确设置 streaming: false
+            // 【新增】记录回复用时统计
+            const completedMessage = targetState.messages.find(m => m.id === completedMessageId)
+            this._stampResponseTiming(targetState, completedMessage)
             console.log('[event:complete] messages数量:', targetState.messages.length)
           } else {
             console.log('[event:complete] 警告：没有answer或response字段，不添加final消息')
@@ -1983,14 +2024,19 @@ export const useReactStore = defineStore('react', {
                 timestamp: data?.timestamp,
                 expert_results: data?.expert_results || null  // ✅ 传递专家结果用于显示
               }
+              // 【新增】记录回复用时统计
+              this._stampResponseTiming(targetState, msg)
             }
           } else if (data?.answer) {
-            addMessage('final', data.answer, {
+            const incompleteMessageId = addMessage('final', data.answer, {
               iterations: data?.iterations,
               reason: data?.reason,
               timestamp: data?.timestamp,
               expert_results: data?.expert_results || null  // ✅ 传递专家结果用于显示
             })
+            // 【新增】记录回复用时统计
+            const incompleteMessage = targetState.messages.find(m => m.id === incompleteMessageId)
+            this._stampResponseTiming(targetState, incompleteMessage)
           }
 
           // 处理多专家系统的最终结果（即使未完成也可能有部分结果）
