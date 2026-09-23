@@ -1808,6 +1808,8 @@ export const useReactStore = defineStore('react', {
               if (msg) {
                 msg.streaming = false
                 msg.renderVersion = (msg.renderVersion || 0) + 1
+                // 【新增】记录回复用时统计
+                this._stampResponseTiming(targetState, msg)
                 // 强制触发响应式更新，确保流式完成后重新渲染
                 targetState._forceRenderCount++
               }
@@ -2830,7 +2832,7 @@ export const useReactStore = defineStore('react', {
         gridResolution = 21,  // 网格分辨率选项
         agentMode = this.agentMode,  // ✅ 双模式架构：assistant | expert
         knowledgeBaseIds = null,  // ✅ 知识库ID列表
-        modelTier = 'auto',
+        modelTier = 'flash',
         skillIds = [],
         contextRefs = [],
         activeContexts = null,

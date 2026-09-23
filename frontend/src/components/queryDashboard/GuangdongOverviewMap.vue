@@ -695,9 +695,9 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 2px solid #ffffff;
+  border: 2px solid var(--bg-container);
   border-radius: 999px;
-  color: #ffffff;
+  color: var(--bg-container);
   font-size: 11px;
   font-weight: 700;
   line-height: 1;

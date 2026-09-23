@@ -75,7 +75,7 @@ class FetcherScheduler:
         # 添加到调度器
         job = self.scheduler.add_job(
             fetcher.run,
-            CronTrigger.from_crontab(fetcher.schedule),
+            CronTrigger.from_crontab(fetcher.schedule, timezone=self.scheduler.timezone),
             id=fetcher.name,
             name=fetcher.description,
             replace_existing=True

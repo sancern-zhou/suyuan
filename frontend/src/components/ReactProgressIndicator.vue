@@ -61,7 +61,7 @@ const statusText = computed(() => {
 <style lang="scss" scoped>
 .react-progress-indicator {
   padding: 16px 20px;
-  background: #f8f9fa;
+  background: var(--bg-muted);
   border-bottom: 1px solid #e9ecef;
   animation: slideDown 0.3s;
 }
@@ -76,12 +76,12 @@ const statusText = computed(() => {
 .status-text {
   font-size: 14px;
   font-weight: 600;
-  color: #495057;
+  color: var(--text-2);
 }
 
 .progress-percent {
   font-size: 13px;
-  color: #6c757d;
+  color: var(--text-2);
   font-weight: 500;
 }
 
@@ -96,12 +96,12 @@ const statusText = computed(() => {
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #1976D2, #42A5F5);
+  background: linear-gradient(90deg, var(--color-primary), #42A5F5);
   border-radius: 3px;
   transition: width 0.3s ease;
 
   &.is-complete {
-    background: linear-gradient(90deg, #4CAF50, #66BB6A);
+    background: linear-gradient(90deg, var(--color-success), #66BB6A);
   }
 }
 
@@ -109,7 +109,7 @@ const statusText = computed(() => {
   display: flex;
   justify-content: space-between;
   font-size: 12px;
-  color: #6c757d;
+  color: var(--text-2);
 }
 
 .error-text {

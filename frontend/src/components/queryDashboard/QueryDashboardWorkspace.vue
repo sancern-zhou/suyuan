@@ -196,8 +196,8 @@ onMounted(() => {
 }
 
 .query-dashboard-workspace.drag-over {
-  background: #e6f7ff;
-  outline: 2px dashed #1890ff;
+  background: var(--color-primary-bg);
+  outline: 2px dashed var(--color-primary);
   outline-offset: -2px;
 }
 
@@ -211,10 +211,10 @@ onMounted(() => {
   justify-content: center;
   width: 20px;
   height: 80px;
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--border-3);
   border-radius: 4px 0 0 4px;
-  background: #f5f5f5;
-  color: #666;
+  background: var(--bg-hover);
+  color: var(--text-2);
   cursor: pointer;
   font-weight: 700;
   transform: translateY(-50%);
@@ -223,7 +223,7 @@ onMounted(() => {
 
 .viz-toggle-btn.expanded {
   background: #e8f4ff;
-  color: #1890ff;
+  color: var(--color-primary);
   border-color: #91d5ff;
 }
 

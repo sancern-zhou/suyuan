@@ -66,7 +66,7 @@ const handleDoubleClick = () => {
   width: 4px;
   height: 100%;
   cursor: col-resize;
-  background: #e8e8e8;
+  background: var(--border-2);
   transition: background-color 0.2s;
   user-select: none;
   flex-shrink: 0;
@@ -75,7 +75,7 @@ const handleDoubleClick = () => {
 
 .resize-handle:hover,
 .resize-handle.dragging {
-  background: #1890ff;
+  background: var(--color-primary);
 }
 
 .resize-line {

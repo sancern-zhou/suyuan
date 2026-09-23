@@ -131,7 +131,7 @@ def save_review(review):
 @contextmanager
 def review_lock(review_id):
     with review_path(review_id).with_suffix(".lock").open("a") as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
         yield
 
 

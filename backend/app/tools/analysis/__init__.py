@@ -5,17 +5,12 @@ Analysis Tools
 """
 
 __all__ = [
-    "AnalyzeUpwindEnterprisesTool",
     "AnalyzeXuchangUpwindPermitSourcesTool",
     "TrajectorySourceAnalysisTool",
 ]
 
 
 def __getattr__(name: str):
-    if name == "AnalyzeUpwindEnterprisesTool":
-        from app.tools.analysis.analyze_upwind_enterprises.tool import AnalyzeUpwindEnterprisesTool
-
-        return AnalyzeUpwindEnterprisesTool
     if name == "TrajectorySourceAnalysisTool":
         from app.tools.analysis.trajectory_source_analysis.tool import TrajectorySourceAnalysisTool
 

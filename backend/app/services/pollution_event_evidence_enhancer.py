@@ -15,13 +15,11 @@ class PollutionEventEvidenceEnhancer:
         *,
         tool_runner: ToolRunner | None = None,
         include_trajectory: bool = True,
-        include_upwind_enterprises: bool = True,
         include_component_models: bool = True,
         include_synoptic_weather: bool = True,
     ) -> None:
         self.tool_runner = tool_runner or self._run_real_tool
         self.include_trajectory = include_trajectory
-        self.include_upwind_enterprises = include_upwind_enterprises
         self.include_component_models = include_component_models
         self.include_synoptic_weather = include_synoptic_weather
 
@@ -50,14 +48,6 @@ class PollutionEventEvidenceEnhancer:
             fetch_end=fetch_end,
             errors=errors,
         )
-        upwind = await self._run_upwind(
-            context=context,
-            event_dir=event_dir,
-            city=city,
-            target_station=target_station,
-            weather_records=weather_records,
-            errors=errors,
-        )
         component_analysis = await self._run_component_analysis(
             context=context,
             event_dir=event_dir,
@@ -80,7 +70,6 @@ class PollutionEventEvidenceEnhancer:
             "main_pollutant_branch": branch,
             "target_station": target_station,
             "trajectory": trajectory,
-            "upwind_enterprises": upwind,
             "component_analysis": component_analysis,
             "synoptic_weather": synoptic_weather,
             "analysis_errors": errors,
@@ -214,40 +203,6 @@ class PollutionEventEvidenceEnhancer:
             start_time=fetch_end.isoformat(sep=" "),
             hours=72,
             direction="Backward",
-        )
-
-    async def _run_upwind(
-        self,
-        *,
-        context: Any,
-        event_dir: Path,
-        city: str,
-        target_station: dict[str, Any],
-        weather_records: list[dict[str, Any]],
-        errors: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        if not self.include_upwind_enterprises:
-            return {"status": "skipped", "reason": "disabled"}
-        weather_data_id = self._weather_data_id(weather_records, context)
-        if not weather_data_id:
-            errors.append({
-                "stage": "upwind_enterprises",
-                "code": "missing_weather_data_id",
-                "severity": "warning",
-                "message": "No weather data_id available for upwind enterprise analysis.",
-            })
-            return {"status": "skipped", "reason": "missing_weather_data_id"}
-        return await self._safe_tool_call(
-            "upwind_enterprises",
-            "analyze_upwind_enterprises",
-            event_dir / "upwind_enterprises.json",
-            errors=errors,
-            context=context,
-            city_name=city,
-            station_name=target_station.get("station_name") or None,
-            weather_data_id=weather_data_id,
-            weather_records=weather_records,
-            output_dir=str(event_dir / "assets" / "images"),
         )
 
     async def _run_component_analysis(
@@ -436,9 +391,6 @@ class PollutionEventEvidenceEnhancer:
                 "summary": result.get("summary"),
                 "raw_data": result,
             }
-            if name == "analyze_upwind_enterprises":
-                response["top_enterprises"] = self._extract_top_enterprises(result)
-                response["map_images"] = self._extract_map_images(result)
             return response
         except Exception as exc:
             errors.append({
@@ -449,101 +401,9 @@ class PollutionEventEvidenceEnhancer:
             })
             return {"name": name, "status": "failed", "tool": name, "file": str(output_path), "summary": str(exc)}
 
-    def _extract_top_enterprises(self, result: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
-        enterprises: list[dict[str, Any]] = []
-        for visual in result.get("visuals") or []:
-            if not isinstance(visual, dict):
-                continue
-            payload = visual.get("payload") if isinstance(visual.get("payload"), dict) else {}
-            data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-            station = data.get("station") if isinstance(data.get("station"), dict) else {}
-            station_name = station.get("name")
-            for enterprise in data.get("enterprises") or []:
-                if not isinstance(enterprise, dict):
-                    continue
-                enterprises.append({
-                    "station_name": station_name,
-                    "name": enterprise.get("name"),
-                    "industry": enterprise.get("industry"),
-                    "distance_km": self._round_number(enterprise.get("distance_km"), 3),
-                    "lat": self._round_number(enterprise.get("lat"), 6),
-                    "lng": self._round_number(enterprise.get("lng"), 6),
-                    "hit_ratio": self._round_number(enterprise.get("hit_ratio"), 6),
-                    "score_sum": self._round_number(enterprise.get("score_sum"), 6),
-                    "emissions": enterprise.get("emissions"),
-                })
-        enterprises.sort(
-            key=lambda item: (
-                self._sort_number(item.get("score_sum")),
-                self._sort_number(item.get("hit_ratio")),
-                self._sort_number((item.get("emissions") or {}).get("VOCs") if isinstance(item.get("emissions"), dict) else None),
-            ),
-            reverse=True,
-        )
-        return [
-            {"rank": index + 1, **enterprise}
-            for index, enterprise in enumerate(enterprises[:limit])
-        ]
-
-    def _extract_map_images(self, result: dict[str, Any]) -> list[dict[str, Any]]:
-        existing = result.get("map_images")
-        if isinstance(existing, list) and existing:
-            return [item for item in existing if isinstance(item, dict)]
-        images: list[dict[str, Any]] = []
-        for visual in result.get("visuals") or []:
-            if not isinstance(visual, dict):
-                continue
-            payload = visual.get("payload") if isinstance(visual.get("payload"), dict) else {}
-            data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-            local_path = data.get("map_local_path") or data.get("local_path")
-            if not local_path:
-                continue
-            images.append({
-                "station_name": (data.get("station") or {}).get("name") if isinstance(data.get("station"), dict) else None,
-                "map_url": data.get("map_url") or data.get("public_url"),
-                "local_path": str(local_path),
-                "visual_id": visual.get("id") or payload.get("id"),
-            })
-        return images
-
-    def _sort_number(self, value: Any) -> float:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return float("-inf")
-
-    def _round_number(self, value: Any, digits: int) -> Any:
-        try:
-            return round(float(value), digits)
-        except (TypeError, ValueError):
-            return value
-
-    def _weather_data_id(self, weather_records: list[dict[str, Any]], context: Any = None) -> str | None:
-        for record in weather_records:
-            for key in ("data_id", "weather_data_id"):
-                value = record.get(key)
-                if value:
-                    return str(value)
-        if weather_records and context is not None and hasattr(context, "save_data"):
-            ref = context.save_data(
-                weather_records,
-                schema="pollution_event_weather",
-                metadata={"source": "pollution_event_evidence_enhancer"},
-            )
-            if isinstance(ref, str):
-                return ref
-            if isinstance(ref, dict) and ref.get("data_id"):
-                return str(ref["data_id"])
-            data_id = getattr(ref, "data_id", None)
-            if data_id:
-                return str(data_id)
-            return str(ref)
-        return None
-
     def supported_tool_names(self) -> list[str]:
         return [
             "meteorological_trajectory_analysis",
-            "analyze_upwind_enterprises",
             "calculate_pm_pmf",
             "calculate_reconstruction",
             "calculate_vocs_pmf",
@@ -556,10 +416,6 @@ class PollutionEventEvidenceEnhancer:
             from app.tools.analysis.meteorological_trajectory_analysis.tool import MeteorologicalTrajectoryAnalysisTool
 
             return await MeteorologicalTrajectoryAnalysisTool().execute(context=context, **kwargs)
-        if name == "analyze_upwind_enterprises":
-            from app.tools.analysis.analyze_upwind_enterprises.tool import AnalyzeUpwindEnterprisesTool
-
-            return await AnalyzeUpwindEnterprisesTool().execute(context=context, **kwargs)
         if name == "calculate_pm_pmf":
             from app.tools.analysis.calculate_pm_pmf.tool import CalculatePMFTool
 

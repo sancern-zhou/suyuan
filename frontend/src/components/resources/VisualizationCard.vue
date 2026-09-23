@@ -103,9 +103,9 @@ onErrorCaptured(error => {
 </script>
 
 <style scoped>
-.visualization-card { display: flex; min-width: 0; min-height: 360px; flex-direction: column; overflow: hidden; border: 1px solid #e1e8f0; border-radius: 10px; background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, .06); }
+.visualization-card { display: flex; min-width: 0; min-height: 360px; flex-direction: column; overflow: hidden; border: 1px solid #e1e8f0; border-radius: 10px; background: var(--bg-container); box-shadow: 0 1px 3px rgba(15, 23, 42, .06); }
 header { display: flex; min-height: 52px; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; border-bottom: 1px solid #edf1f5; box-sizing: border-box; }
 .identity { display: grid; min-width: 0; gap: 3px; }.identity strong { overflow: hidden; color: #17223b; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }.identity span { color: #7a8798; font-size: 11px; }
-button { border: 0; background: transparent; color: #1976d2; cursor: pointer; font: inherit; white-space: nowrap; }.card-content { min-height: 300px; flex: 1; }.card-state { display: grid; min-height: 300px; flex: 1; gap: 8px; place-content: center; text-align: center; }.error { color: #b42318; }
-.download-error { margin: 0; padding: 5px 12px; background: #fff2f0; color: #b42318; font-size: 11px; }
+button { border: 0; background: transparent; color: var(--color-primary); cursor: pointer; font: inherit; white-space: nowrap; }.card-content { min-height: 300px; flex: 1; }.card-state { display: grid; min-height: 300px; flex: 1; gap: 8px; place-content: center; text-align: center; }.error { color: var(--color-danger); }
+.download-error { margin: 0; padding: 5px 12px; background: #fff2f0; color: var(--color-danger); font-size: 11px; }
 </style>

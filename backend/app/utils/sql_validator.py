@@ -326,6 +326,11 @@ class SQLValidator:
 
         for match in re.finditer(pattern, sql, re.IGNORECASE):
             raw_table = match.group(1)
+            # SQL Server's built-in JSON rowset is a function, not a table.
+            # Only the unqualified call is exempt; subqueries in its argument
+            # are still found and checked by the same scan.
+            if raw_table.lower() == "openjson" and sql[match.end():].lstrip().startswith("("):
+                continue
             parts = [
                 part.strip().strip("[]").lower()
                 for part in raw_table.split(".")

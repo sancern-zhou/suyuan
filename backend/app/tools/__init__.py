@@ -16,7 +16,6 @@ LLM Tools
    - get_5min_data - 5分钟数据查询（站点污染物浓度和气象数据）
 
 2. Analysis Tools - 分析工具（执行计算和分析）
-   - analyze_upwind_enterprises - 上风向企业分析（广东省）
    - calculate_pm_pmf - PM2.5/PM10颗粒物PMF源解析（广东省超级站）
    - calculate_vocs_pmf - VOCs挥发性有机物PMF源解析（仅用于臭氧溯源）
 
@@ -450,11 +449,11 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.warning("tool_import_failed", tool="execute_postgres_sql_query", error=str(e))
 
     try:
-        from app.tools.query.qianlima_realtime_tender.tool import QianlimaRealtimeTenderTool
-        registry.register(QianlimaRealtimeTenderTool(), priority=46)
-        logger.info("tool_loaded", tool="qianlima_realtime_tender")
+        from app.tools.query.zhiliao_tender_detail.tool import ZhiliaoTenderDetailTool
+        registry.register(ZhiliaoTenderDetailTool(), priority=46)
+        logger.info("tool_loaded", tool="zhiliao_tender_detail")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="qianlima_realtime_tender", error=str(e))
+        logger.warning("tool_import_failed", tool="zhiliao_tender_detail", error=str(e))
 
     try:
         from app.tools.analysis.ops_work_order_audit.tool import (
@@ -522,13 +521,6 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     # ========================================
     # Analysis Tools（分析工具）
     # ========================================
-
-    try:
-        from app.tools.analysis.analyze_upwind_enterprises.tool import AnalyzeUpwindEnterprisesTool
-        registry.register(AnalyzeUpwindEnterprisesTool(), priority=100)
-        logger.info("tool_loaded", tool="analyze_upwind_enterprises")
-    except (ImportError, KeyError) as e:
-        logger.warning("tool_import_failed", tool="analyze_upwind_enterprises", error=str(e))
 
     if is_project_tool_enabled(
         context,

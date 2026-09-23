@@ -87,6 +87,9 @@ class TenderPipeline:
         llm_client: TenderLLMProtocol | None = None,
         vector_indexer: VectorIndexerProtocol | None = None,
         enable_vector_index: bool = False,
+        classification_only: bool = False,
+        enable_business_prefilter: bool = False,
+        enable_llm_business_filter: bool = False,
     ):
         self.client = client
         self.repository = repository
@@ -95,6 +98,9 @@ class TenderPipeline:
         self.llm_client = llm_client
         self.vector_indexer = vector_indexer
         self.enable_vector_index = enable_vector_index
+        self.classification_only = classification_only
+        self.enable_business_prefilter = enable_business_prefilter
+        self.enable_llm_business_filter = enable_llm_business_filter
 
     async def run_daily(
         self,
@@ -107,6 +113,17 @@ class TenderPipeline:
         max_pages: int = 1,
     ) -> PipelineRunResult:
         result = PipelineRunResult()
+        search_plan = getattr(self.client, "search_plan", None)
+        if callable(search_plan):
+            try:
+                candidates = await search_plan(keywords, notice_types, publish_date, max_pages)
+                result.errors.extend(getattr(self.client, "search_errors", []))
+                result.total_candidates = len(candidates)
+                await self._process_candidates(candidates, result)
+            except Exception as exc:
+                result.errors.append(f"search plan failed: {exc}")
+            result.api_requests = list(getattr(self.client, "request_audit", []))
+            return result
         search_notice_types = self._search_notice_types(notice_types)
         for keyword in keywords:
             for notice_type in search_notice_types:
@@ -141,6 +158,9 @@ class TenderPipeline:
         seen_titles: set[str] = set()
         for candidate in candidates:
             title_key = self._normalized_title_key(candidate)
+            if self.classification_only:
+                # Identical titles can refer to distinct lots or corrections.
+                title_key = f"{candidate.source}:{candidate.metadata.get('zhiliao_ai_bid_id') or candidate.url}"
             if title_key and title_key in seen_titles:
                 result.duplicate_candidates += 1
                 continue
@@ -149,6 +169,30 @@ class TenderPipeline:
             deduped_candidates.append(candidate)
 
         new_candidates = await self._save_new_candidates(deduped_candidates, result)
+
+        if self.classification_only:
+            decisions = {}
+            for candidate in new_candidates:
+                candidate.metadata["classification_only"] = True
+                if self.enable_business_prefilter:
+                    rejected = self.relevance_filter.prefilter_decision(candidate)
+                    if rejected is not None:
+                        decisions[candidate.normalized_url_key()] = rejected
+                        result.filtered_out += 1
+                        continue
+                decisions[candidate.normalized_url_key()] = TenderFilterDecision(
+                    is_relevant=True, reason="保留检索结果，分类打标签，不做业务淘汰",
+                    confidence=0.0, decision_source="retention_policy",
+                )
+            await self._persist_initial_decisions(new_candidates, decisions, result)
+            semaphore = asyncio.Semaphore(self._detail_concurrency())
+
+            async def classify(candidate):
+                async with semaphore:
+                    await self._process_candidate(candidate, decisions, result)
+
+            await asyncio.gather(*(classify(candidate) for candidate in new_candidates))
+            return
 
         prefilter_decisions: dict[str, TenderFilterDecision] = {}
         llm_candidates: list[TenderCandidate] = []
@@ -315,6 +359,10 @@ class TenderPipeline:
             if not decision.is_relevant:
                 return
 
+            if self.classification_only:
+                await self._classify_retained_candidate(candidate, decision, result)
+                return
+
             try:
                 detail_html = await self.client.fetch_detail(candidate)
             except Exception as exc:
@@ -381,6 +429,72 @@ class TenderPipeline:
             result.errors.append(
                 f"candidate processing failed for {candidate.url}: {exc}"
             )
+
+    async def _classify_retained_candidate(self, candidate, decision, result):
+        from .taxonomy import normalize_classification
+
+        # API list fields are already paid for. No automatic detail purchase.
+        detail = candidate.raw_list_text or candidate.title
+        if candidate.source != "zhiliao_ai":
+            try:
+                detail = await self.client.fetch_detail(candidate) or detail
+            except Exception as exc:
+                result.detail_fetch_failures += 1
+                result.errors.append(f"detail unavailable; retained list data for {candidate.url}: {exc}")
+        notice = None
+        if self.llm_client is not None:
+            try:
+                classified = await self._review_and_extract_notice(candidate, detail, decision)
+                if isinstance(classified, TenderNotice):
+                    notice = classified
+            except Exception as exc:
+                result.errors.append(f"classification pending for {candidate.url}: {exc}")
+        if notice is None:
+            notice = self.extractor.extract(candidate, detail, decision)
+            notice.environment_relevance = False
+            notice.classification = normalize_classification({})
+            notice.classification["environment_relevance"] = None
+        notice.classification["source"] = candidate.source
+        notice.classification["source_metadata"] = candidate.metadata
+        if self.enable_llm_business_filter:
+            classification = notice.classification
+            category = classification.get("exclusion_category")
+            evidence = classification.get("exclusion_evidence", "").strip()
+            reason = classification.get("exclusion_reason", "").strip()
+            # A model recommendation alone is insufficient: require a supported
+            # category, high confidence and a verbatim quote from actual input.
+            facts = candidate.title + "\n" + candidate.raw_list_text
+            if (category in {"engineering_remediation", "office_procurement", "laboratory_instruments"}
+                    and classification.get("exclusion_confidence", 0) >= 0.9
+                    and reason and len(evidence) >= 4 and evidence in facts):
+                rejection = TenderFilterDecision(
+                    is_relevant=False, confidence=classification["exclusion_confidence"],
+                    reason=f"LLM业务排除:{category}: {reason}；证据：{evidence}",
+                    decision_source="llm_business_filter",
+                )
+                await self.repository.update_candidate_decision(candidate, rejection)
+                result.filtered_out += 1
+                return
+        if candidate.source == "zhiliao_ai":
+            from .sources.zhiliao_ai import apply_list_fields
+            apply_list_fields(notice, candidate)
+        if not notice.industry_category or notice.industry_category == "other_environment_procurement":
+            from .taxonomy import legacy_category_from_classification
+            notice.industry_category = legacy_category_from_classification(notice.classification, notice.title)
+            notice.classification["legacy_category_source"] = "business_type_mapping"
+        notice.structured_json["classification"] = notice.classification
+        notice.structured_json.update(
+            notice_type=notice.notice_type.value, purchaser=notice.purchaser,
+            winning_bidder=notice.winning_bidder, winning_amount=notice.winning_amount,
+            winning_amount_wan_yuan=notice.winning_amount_wan_yuan,
+            industry_category=notice.industry_category, summary=notice.summary,
+            budget_amount=notice.budget_amount, budget_amount_wan_yuan=notice.budget_amount_wan_yuan,
+        )
+        await self.repository.save_notice(notice)
+        result.saved_notices += 1
+        if self.enable_vector_index and self.vector_indexer is not None:
+            await self.vector_indexer.index_notice(notice)
+            result.vector_indexed += 1
 
     async def _review_and_extract_notice(
         self,

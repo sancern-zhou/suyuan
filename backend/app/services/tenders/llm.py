@@ -16,6 +16,7 @@ from .categories import (
 )
 from .extractor import amount_to_wan_yuan, clean_detail_content, extract_attachment_urls
 from .models import NoticeType, TenderCandidate, TenderFilterDecision, TenderNotice
+from .taxonomy import classification_prompt, normalize_classification
 
 
 @dataclass(slots=True)
@@ -458,8 +459,8 @@ class OpenAICompatibleTenderLLMClient:
             ),
             bid_open_date=self._string_or_none(data.get("bid_open_date")),
             deadline=self._string_or_none(data.get("deadline")),
-            industry_category=normalize_project_category(data.get("industry_category"))
-            or normalize_project_category(data.get("project_category"))
+            industry_category=normalize_project_category(data.get("project_category"))
+            or normalize_project_category(data.get("industry_category"))
             or normalize_project_category(decision.project_category),
             environment_relevance=decision.is_relevant,
             filter_reason=decision.reason,
@@ -481,6 +482,21 @@ class OpenAICompatibleTenderLLMClient:
         prompt = self._combined_notice_prompt(candidate, raw_content, decision)
         data = await self._json_chat(prompt)
         is_relevant = bool(data.get("is_relevant", False))
+        if candidate.metadata.get("classification_only"):
+            # Relevance is a label, never an admission gate in retention mode.
+            notice = self._notice_from_data(candidate, detail_text, raw_content, decision, data)
+            notice.environment_relevance = data.get("environment_relevance") is True
+            notice.classification = normalize_classification(data)
+            relevance = data.get("environment_relevance")
+            notice.classification["environment_relevance"] = relevance if isinstance(relevance, bool) else None
+            if notice.classification["notice_stage"] in {"candidate", "tender", "unknown", "other"}:
+                notice.winning_bidder = None
+                notice.winning_amount = None
+                notice.winning_amount_wan_yuan = None
+                if notice.notice_type == NoticeType.WINNING_BID:
+                    notice.notice_type = NoticeType.OTHER
+            notice.structured_json = self._notice_payload(notice)
+            return notice
         confidence = float(data.get("confidence", decision.confidence))
         project_category = normalize_project_category(data.get("project_category")) or normalize_project_category(
             decision.project_category
@@ -533,6 +549,12 @@ class OpenAICompatibleTenderLLMClient:
             client_kwargs["base_url"] = self.base_url
         client_kwargs["timeout"] = float(os.getenv("TENDER_LLM_TIMEOUT_SECONDS", "120"))
         client_kwargs["max_retries"] = 0
+        if getattr(self, "provider", "") == "go":
+            client_kwargs["default_headers"] = {
+                "User-Agent": os.getenv("OPENCODE_GO_USER_AGENT", "suyuan-agent/1.0"),
+                "x-opencode-session": os.getenv("TENDER_LLM_OPENCODE_SESSION")
+                or f"tender-{os.getpid()}",
+            }
         client = AsyncOpenAI(**client_kwargs)
         max_retries = (
             int(os.getenv("TENDER_LLM_MAX_RETRIES", "3"))
@@ -854,6 +876,25 @@ class OpenAICompatibleTenderLLMClient:
         raw_content: str,
         decision: TenderFilterDecision,
     ) -> str:
+        if candidate.metadata.get("classification_only"):
+            prompt = json.loads(self._notice_prompt(candidate, raw_content, decision))
+            taxonomy = classification_prompt()
+            prompt["task"] = taxonomy["task"]
+            prompt["classification"] = taxonomy
+            prompt["output_schema"].update(taxonomy["output_fields"])
+            prompt["output_schema"]["project_category"] = project_category_schema()
+            prompt["output_schema"].pop("industry_category", None)
+            prompt["project_category_options"] = project_category_options()
+            prompt["candidate"]["api_list_fields"] = candidate.metadata.get("api_list_fields", {})
+            prompt["extraction_rules"].extend([
+                "API列表字段与标题也是事实依据；没有详情不等于非环保。",
+                "输入仅为API列表，并非公告全文；未知信息写列表未提供，不能断言公告未披露。",
+                "money和money_wan含义未确认，不能填写budget_amount或在摘要中称为预算/中标金额；缺失金额不得用这些字段补齐。",
+                "标题仅为大气污染防治项目、无明确技术服务或施工范围时，用待确认，不推定为防控服务项目。",
+                "API money_wan语义未确认，不能据此填写winning_amount；winner_moneys单位为元，按标包保留，不把多标包合并成一个供应商。",
+                "只有notice_stage=final_result或contract才可填写中标供应商和中标金额；候选供应商不得当作最终中标供应商。",
+            ])
+            return json.dumps(prompt, ensure_ascii=False)
         return json.dumps(
             {
                 "task": "先判断采购内容是否属于环境业务；如果不是环境业务，直接返回is_relevant=false，不需要结构化抽取。若是环境业务采购/招标/成交/中标/合同类公告，再在同一次响应中抽取结构化字段。",
@@ -954,8 +995,8 @@ class OpenAICompatibleTenderLLMClient:
             ),
             bid_open_date=self._string_or_none(data.get("bid_open_date")),
             deadline=self._string_or_none(data.get("deadline")),
-            industry_category=normalize_project_category(data.get("industry_category"))
-            or normalize_project_category(data.get("project_category"))
+            industry_category=normalize_project_category(data.get("project_category"))
+            or normalize_project_category(data.get("industry_category"))
             or normalize_project_category(decision.project_category),
             environment_relevance=decision.is_relevant,
             filter_reason=decision.reason,
@@ -1053,4 +1094,5 @@ class OpenAICompatibleTenderLLMClient:
             "summary": notice.summary,
             "key_requirements": notice.key_requirements,
             "attachment_urls": notice.attachment_urls,
+            "classification": notice.classification,
         }

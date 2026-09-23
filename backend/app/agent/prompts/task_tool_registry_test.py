@@ -50,9 +50,10 @@ def test_weather_image_tool_is_reserved_for_expert_mode():
     assert "get_platform_weather_image" in get_tools_by_mode("expert")
 
 
-def test_domain_tender_tools_are_reserved_for_specialist_workspaces():
+def test_assistant_exposes_zhiliao_details_and_tender_queries():
     assert "qianlima_realtime_tender" not in get_tools_by_mode("assistant")
-    assert "execute_tender_sql_query" not in ASSISTANT_TOOL_ORDER
+    assert "execute_tender_sql_query" in ASSISTANT_TOOL_ORDER
+    assert "zhiliao_tender_detail" in get_tools_by_mode("assistant")
 
 
 def test_assistant_mode_keeps_lightweight_office_and_web_tools():
@@ -153,6 +154,23 @@ def test_assistant_prompt_is_a_workspace_router():
     assert "create_report_chart" not in prompt
     assert "execute_python" not in prompt
     assert "create_diagram_artifact" not in prompt
+
+
+def test_tender_export_is_direct_and_query_is_guangdong_environment_only():
+    from app.agent.prompts.query_prompt import build_query_prompt
+
+    assistant = build_assistant_prompt(["execute_tender_sql_query", "execute_python", "call_sub_agent"])
+    assert "招投标直接处理" in assistant
+    assert "直接查询完整日期范围" in assistant
+    assert "分页取全" in assistant
+    assert "不得调用 `call_sub_agent(target_mode='query')`" in assistant
+    assert "query 的能力范围仅为广东省环境数据查询" in assistant
+    assert '数据查询、统计、同比环比、站点数据 → `target_mode="query"`' not in assistant
+
+    query = build_query_prompt(["execute_sql_query"])
+    assert "广东省内的招投标也不属于本模式" in query
+    assert "不承接广东省外或全国范围的数据查询" in query
+    assert "工具描述不能扩大本模式职责" in query
 
 
 def test_board_mode_exposes_drawio_board_not_diagram_artifact():

@@ -232,7 +232,7 @@ onUnmounted(() => {
   min-height: 460px;
   padding: 28px;
   border-radius: 12px;
-  background: #fff;
+  background: var(--bg-container);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
 }
 
@@ -247,18 +247,18 @@ onUnmounted(() => {
 .close-btn { border: 0; background: transparent; color: #777; font-size: 28px; cursor: pointer; }
 .center-state, .qrcode-container, .success-container { padding: 35px 10px; text-align: center; }
 .instruction-text { margin-bottom: 18px; }
-.step { margin: 0 0 8px; color: #333; font-size: 18px; font-weight: 700; }
+.step { margin: 0 0 8px; color: var(--text-1); font-size: 18px; font-weight: 700; }
 .hint { margin: 5px 0; color: #777; font-size: 14px; }
-.qrcode-image { display: block; width: 280px; height: 280px; margin: 10px auto; padding: 8px; border: 1px solid #ddd; border-radius: 8px; }
+.qrcode-image { display: block; width: 280px; height: 280px; margin: 10px auto; padding: 8px; border: 1px solid var(--border-3); border-radius: 8px; }
 .status { min-height: 24px; color: #e48a00; font-weight: 600; }
 .inline-error { color: #d93025; }
-.spinner { width: 38px; height: 38px; margin: 20px auto; border: 4px solid #eee; border-top-color: #1976d2; border-radius: 50%; animation: spin 1s linear infinite; }
-.btn-primary, .btn-done { padding: 10px 22px; border: 0; border-radius: 5px; color: #fff; background: #1976d2; cursor: pointer; }
+.spinner { width: 38px; height: 38px; margin: 20px auto; border: 4px solid var(--border-1); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 1s linear infinite; }
+.btn-primary, .btn-done { padding: 10px 22px; border: 0; border-radius: 5px; color: var(--bg-container); background: var(--color-primary); cursor: pointer; }
 .btn-primary:disabled { background: #aaa; }
 .btn-done { background: #43a047; }
 .success-icon { color: #43a047; font-size: 64px; }
 .success-container h3 { color: #43a047; }
-.account-info { margin: 20px auto; padding: 12px; border-radius: 8px; background: #f5f5f5; text-align: left; }
+.account-info { margin: 20px auto; padding: 12px; border-radius: 8px; background: var(--bg-hover); text-align: left; }
 .account-info p { margin: 7px 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>

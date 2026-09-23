@@ -153,8 +153,8 @@ defineExpose({
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid #e8e8e8;
-  background: #fafafa;
+  border-bottom: 1px solid var(--border-2);
+  background: var(--bg-muted);
 }
 
 .chunks-title {
@@ -167,7 +167,7 @@ defineExpose({
 .btn-back {
   padding: 6px 12px;
   background: white;
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--border-3);
   border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
@@ -175,21 +175,21 @@ defineExpose({
 }
 
 .btn-back:hover {
-  color: #1890ff;
-  border-color: #1890ff;
+  color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 .chunks-title h2 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-1);
 }
 
 .chunks-count {
   font-size: 14px;
-  color: #666;
-  background: #f0f0f0;
+  color: var(--text-2);
+  background: var(--border-1);
   padding: 4px 12px;
   border-radius: 12px;
 }
@@ -213,14 +213,14 @@ defineExpose({
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #999;
+  color: var(--text-3);
 }
 
 .spinner {
   width: 40px;
   height: 40px;
-  border: 3px solid #f0f0f0;
-  border-top-color: #1890ff;
+  border: 3px solid var(--border-1);
+  border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -246,37 +246,37 @@ defineExpose({
 
 .chunk-card {
   background: white;
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--border-2);
   border-radius: 8px;
   overflow: hidden;
 }
-.chunk-card.targeted { border-color: #1976d2; box-shadow: 0 0 0 2px rgba(25, 118, 210, .16); }
+.chunk-card.targeted { border-color: var(--color-primary); box-shadow: 0 0 0 2px var(--color-primary-ring); }
 
 .chunk-card-header {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  background: #fafafa;
-  border-bottom: 1px solid #e8e8e8;
+  background: var(--bg-muted);
+  border-bottom: 1px solid var(--border-2);
 }
 
 .chunk-number {
   font-weight: 600;
-  color: #1890ff;
+  color: var(--color-primary);
   font-size: 14px;
 }
 
 .chunk-length,
 .chunk-position {
   font-size: 12px;
-  color: #999;
+  color: var(--text-3);
 }
 
 .chunk-metadata {
   padding: 12px 16px;
   background: #f9f9f9;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-1);
 }
 
 .metadata-row {
@@ -293,11 +293,11 @@ defineExpose({
 
 .metadata-label {
   font-weight: 500;
-  color: #666;
+  color: var(--text-2);
 }
 
 .metadata-value {
-  color: #333;
+  color: var(--text-1);
 }
 
 .type-tag {
@@ -308,13 +308,13 @@ defineExpose({
 }
 
 .type-tag.type-text {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
 }
 
 .type-tag.type-code {
-  background: #f6ffed;
-  color: #52c41a;
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 
 .type-tag.type-table {
@@ -323,20 +323,20 @@ defineExpose({
 }
 
 .type-tag.type-image {
-  background: #fff1f0;
-  color: #ff4d4f;
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
 }
 
 .type-tag.type-metadata {
-  background: #f5f5f5;
-  color: #999;
+  background: var(--bg-hover);
+  color: var(--text-3);
 }
 
 .chunk-card-body {
   padding: 16px;
   font-size: 14px;
   line-height: 1.6;
-  color: #333;
+  color: var(--text-1);
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 300px;
@@ -355,21 +355,21 @@ defineExpose({
 
 .btn-secondary {
   background: white;
-  border-color: #d9d9d9;
-  color: #333;
+  border-color: var(--border-3);
+  color: var(--text-1);
 }
 
 .btn-secondary:hover {
-  color: #1890ff;
-  border-color: #1890ff;
+  color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 .btn-primary {
-  background: #1890ff;
+  background: var(--color-primary);
   color: white;
 }
 
 .btn-primary:hover {
-  background: #40a9ff;
+  background: var(--color-primary-hover);
 }
 </style>
