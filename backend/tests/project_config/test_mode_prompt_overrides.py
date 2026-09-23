@@ -41,16 +41,29 @@ def test_xuchang_disables_guangdong_query_tools_only_for_xuchang(monkeypatch):
     assert standard_report_tools.issubset(get_tools_by_mode("query"))
 
 
-def test_xuchang_only_report_mode_exposes_broadcast_tool(monkeypatch):
+def test_xuchang_report_mode_is_orchestrator_focused(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "xuchang")
 
     expert_tools = get_tools_by_mode("expert")
     report_tools = get_tools_by_mode("report")
 
     assert "broadcast_social_users" not in expert_tools
-    assert "broadcast_social_users" in report_tools
+    assert "broadcast_social_users" not in report_tools
+    assert "run_agent_workflow" in report_tools
+    assert "call_sub_agent" not in report_tools
+    assert {
+        "execute_sql_query",
+        "execute_postgres_sql_query",
+        "bash",
+        "grep",
+        "list_directory",
+        "search_files",
+    }.isdisjoint(report_tools)
+    assert {"read_file", "write_file", "edit_file"}.issubset(report_tools)
     assert "execute_python" in expert_tools
     assert "create_report_package" in report_tools
+    assert "render_report_package" not in report_tools
+    assert "validate_report_package" not in report_tools
 
     monkeypatch.setattr(settings, "project_id", "default")
     assert "broadcast_social_users" not in get_tools_by_mode("expert")

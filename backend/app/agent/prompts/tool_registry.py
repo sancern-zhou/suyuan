@@ -64,8 +64,6 @@ ASSISTANT_TOOL_NAMES = [
     "grep",
     "create_html_artifact",
     "create_report_package",
-    "render_report_package",
-    "validate_report_package",
     # 轻量数据计算与网页检索抓取。
     "execute_python",
     "web_search",
@@ -194,25 +192,17 @@ KNOWLEDGE_TOOL_NAMES = [
 # ===== 报告模式工具 =====
 REPORT_TOOL_NAMES = [
     "list_session_resources",
+    "read_session_resource",
     "publish_session_file",
-    # 数据查询
-    "execute_sql_query",
-    # 文件和执行
+    # 读取参考资料、报告草稿与记忆；编辑交付物与记忆，数据查询由 DAG 子节点完成
     "read_file",
     "write_file",
     "edit_file",
-    "grep",
-    "list_directory",
-    "search_files",
-    "bash",
+    # 报告主 Agent 负责图表、整理和产物收口
     "create_report_chart",
     "execute_python",
-    # 报告产物收口
     "create_report_package",
-    "render_report_package",
-    "validate_report_package",
-    # 报告工作流可按结构化任务协议委托专家分析
-    "call_sub_agent",
+    # 报告主 Agent 统一通过 DAG 委托子 Agent
     "run_agent_workflow",
 ]
 
@@ -265,8 +255,6 @@ OPS_TOOL_NAMES = [
     "execute_ops_sql_query",
     # 审核正式报告生成与验收
     "create_report_package",
-    "render_report_package",
-    "validate_report_package",
     # 子 Agent 复核
     "call_sub_agent",
     # 代码执行
@@ -314,7 +302,6 @@ SOCIAL_TOOL_NAMES = [
     # 正式报告生成与收口
     "create_report_chart",
     "create_report_package",
-    "validate_report_package",
     # 网络搜索
     "web_search",
     "web_fetch",

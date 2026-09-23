@@ -75,6 +75,7 @@ async def test_create_report_package_returns_source_and_html_resource_refs(
         qmd_content="# 正式报告\n",
         source_qmd_path=str(source_qmd),
         render_html=True,
+        render_docx=False,
     )
 
     file_paths = {item["path"] for item in result["refs"]["files"]}
@@ -86,3 +87,62 @@ async def test_create_report_package_returns_source_and_html_resource_refs(
     assert result["llm_resume"]["source_qmd_path"] == str(source_qmd.resolve())
     assert result["llm_resume"]["primary_artifact_path"] == str(html_path)
     assert "/api/" not in result["llm_resume"]["tool_hint"]
+
+
+@pytest.mark.asyncio
+async def test_create_report_package_renders_validates_and_presents_in_one_call(
+    tmp_path, monkeypatch
+):
+    tool = CreateReportPackageTool()
+    report_root = tmp_path / "reports"
+    report_dir = report_root / "one_call"
+    html_path = report_dir / "report.html"
+    docx_path = report_dir / "report.docx"
+    monkeypatch.setattr(
+        "app.tools.report.report_package.tool.quarto_report_renderer.report_root",
+        report_root,
+    )
+
+    def fake_render_preview_html(_report_id):
+        html_path.write_text("<html><body>preview</body></html>", encoding="utf-8")
+        return html_path
+
+    def fake_render_docx(_report_id):
+        docx_path.write_bytes(b"docx")
+        return docx_path
+
+    class FakeRenderedHtmlReport:
+        def __init__(self, _path):
+            pass
+
+        def validate(self, _path):
+            return {"valid": True}
+
+    monkeypatch.setattr(
+        "app.tools.report.report_package.tool.quarto_report_renderer.render_preview_html",
+        fake_render_preview_html,
+    )
+    monkeypatch.setattr(
+        "app.tools.report.report_package.tool.quarto_report_renderer.render_docx",
+        fake_render_docx,
+    )
+    monkeypatch.setattr(
+        "app.services.report.html_docx_bridge.RenderedHtmlReport",
+        FakeRenderedHtmlReport,
+    )
+
+    result = await tool.execute(
+        report_id="one_call",
+        qmd_content="# 一次收口报告\n",
+    )
+
+    assert result["success"] is True
+    assert result["data"]["quality_gate"] == {"passed": True, "errors": []}
+    assert result["data"]["package_validation"]["html_exists"] is True
+    assert result["data"]["package_validation"]["docx_exists"] is True
+    assert {item["resource_key"] for item in result["resources"]} == {"qmd", "html", "docx"}
+    assert result["presentation"] == {
+        "action": "open",
+        "resource_key": "html",
+        "target_tab": "document",
+    }

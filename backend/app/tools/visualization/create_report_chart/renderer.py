@@ -57,6 +57,7 @@ SPECIALIZED_CHART_TYPES = {
     "aqi_calendar",
     "pollutant_wind_rose",
     "pollutant_calendar",
+    "wind_rose",
     "generic_pollutant_wind_rose",
     "wind_timeseries",
     "weather_timeseries",

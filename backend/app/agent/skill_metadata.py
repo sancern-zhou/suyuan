@@ -34,7 +34,7 @@ SKILL_METADATA = {
         "aliases": ["故障工单分析"],
         "required_tools": [
             "ops_audit_fetch_dataset", "execute_ops_sql_query", "execute_python",
-            "create_report_chart", "create_report_package", "validate_report_package",
+            "create_report_chart", "create_report_package",
         ],
     },
     "operation_availability_root_cause_analysis": {
@@ -50,7 +50,7 @@ SKILL_METADATA = {
         "aliases": ["运维工单审核"],
         "required_tools": [
             "read_file", "ops_audit_fetch_dataset", "ops_audit_run_rules", "ops_audit_inspect",
-            "create_report_package", "render_report_package", "validate_report_package",
+            "create_report_package",
         ],
     },
     "pollution_alert_classification": {"enabled": True, "aliases": [], "required_tools": []},
@@ -75,7 +75,7 @@ SKILL_METADATA = {
     "xuchang_station_daily_source_report": {
         "enabled": True,
         "aliases": ["许昌市昨日污染回顾分析"],
-        "required_tools": ["read_file", "execute_python", "create_report_package", "render_report_package", "validate_report_package"],
+        "required_tools": ["read_file", "execute_python", "create_report_package"],
     },
     "上个月污染特征与溯源分析": {
         "enabled": True, "aliases": [], "required_tools": ["call_sub_agent"],
@@ -98,7 +98,7 @@ SKILL_METADATA = {
             "list_session_resources", "web_search", "web_fetch", "write_file",
             "execute_tender_sql_query", "query_national_province_air_quality",
             "query_national_city_air_quality", "execute_python", "create_report_chart",
-            "create_report_package", "render_report_package", "validate_report_package",
+            "create_report_package",
         ],
     },
     "昨日污染特征与溯源分析": {

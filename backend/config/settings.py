@@ -355,7 +355,7 @@ class Settings(BaseSettings):
     # LLM Configuration
     llm_provider: str = Field(
         default="doubao",
-        description="LLM provider: doubao, openai, anthropic, deepseek, minimax, mimo, agnes, glm, bailian, scnet, go"
+        description="LLM provider: doubao, openai, anthropic, deepseek, minimax, mimo, agnes, glm, bailian, scnet, go, go2"
     )
     doubao_api_key: Optional[str] = Field(default=None, description="Doubao-compatible gateway API key")
     doubao_base_url: str = Field(
@@ -476,6 +476,19 @@ class Settings(BaseSettings):
     go_api_mode: str = Field(
         default="chat_completions",
         description="OpenCode Go API protocol mode: chat_completions"
+    )
+    go2_api_key: Optional[str] = Field(default=None, description="Secondary OpenCode Go subscription API key (go2)")
+    go2_base_url: str = Field(
+        default="https://opencode.ai/zen/go/v1",
+        description="Secondary OpenCode Go OpenAI-compatible API base URL"
+    )
+    go2_model: str = Field(
+        default="deepseek-v4.1-flash",
+        description="Default secondary OpenCode Go model used by Flash tier"
+    )
+    go2_api_mode: str = Field(
+        default="chat_completions",
+        description="Secondary OpenCode Go API protocol mode: chat_completions"
     )
     voice_mimo_base_url: str = Field(
         default="https://api.xiaomimimo.com/v1",

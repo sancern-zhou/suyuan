@@ -99,9 +99,11 @@ async def persist_tool_result_resources(
         return None
     data = event.get("data") if isinstance(event.get("data"), dict) else {}
     tool_name = str(data.get("tool_name") or event.get("tool_name") or "")
+    presentation = result.get("presentation") if isinstance(result.get("presentation"), dict) else {}
     focus_requested = (
         tool_name == "publish_session_file"
         or bool(result.get("visuals"))
+        or presentation.get("action") == "open"
     )
     tracking = result.get("resource_tracking")
     if isinstance(tracking, dict) and tracking.get("durable") is True:
@@ -110,7 +112,11 @@ async def persist_tool_result_resources(
             catalog_version=int(tracking.get("version") or 0),
             changed_resource_ids=resource_ids,
             rejected=list(tracking.get("rejected") or []),
-            focus_resource_id=resource_ids[0] if focus_requested and resource_ids else None,
+            focus_resource_id=(
+                tracking.get("focus_resource_id") or (resource_ids[0] if resource_ids else None)
+                if focus_requested
+                else None
+            ),
         )
 
     declarations, rejected = normalize_tool_resources(result=result)
@@ -143,7 +149,15 @@ async def persist_tool_result_resources(
         for publication in published
         for resource in publication.resources
     ]
+    preferred_resource_key = str(presentation.get("resource_key") or "").strip()
     focus_resource = next(
+        (
+            resource
+            for resource in changed_resources
+            if preferred_resource_key and resource.resource_key == preferred_resource_key
+        ),
+        None,
+    ) or next(
         (resource for resource in changed_resources if resource.relation == "primary"),
         changed_resources[0] if changed_resources else None,
     )

@@ -3,7 +3,7 @@
   "name": "许昌市昨日污染回顾分析",
   "description": "每日汇总场景一告警episode证据包，结合乡镇站区域响应、中大源城市日均排名、中大发布城市小时数据和NMC/ERA5气象，生成约500字的许昌市昨日污染综合回顾。",
   "execution_mode": "custom",
-  "tool_names": ["read_file", "execute_python", "create_report_package", "render_report_package", "validate_report_package"],
+  "tool_names": ["read_file", "execute_python", "create_report_package"],
   "skill_id": "xuchang_station_daily_source_report",
   "knowledge_base_binding": null,
   "trigger_type": "event",
@@ -32,6 +32,6 @@
   "owner_display_name": "定时任务",
   "tags": ["xuchang", "daily_review", "daily_review_report"],
   "workspace_entry": {"enabled": true, "title": "昨日污染回顾"},
-  "prompt": "你是许昌市昨日污染回顾分析 Agent。严格遵循已注入的 xuchang_station_daily_source_report Skill，按 Define、Frame、Collect、Validate、Analyze、Synthesize、Compose、Review、Deliver 的工作方法完成任务；流程可按证据和任务复杂度裁剪，分析中发现口径或数据问题时允许回退修正。事件 payload 提供 evidence_package_path，先读取 manifest，再按需读取证据文件。只使用 Fetcher 已生成的证据，不重新查询数据库、抓取数据、判定告警、计算阈值或补算缺失数据。正文采用最多三段：1、昨日告警概览；2、污染成因回顾分析（只选择当日证据支持且有解释力的内容）；3、其他（历史趋势、关键发现、数据缺口或建议确有价值时才写）。正文约500字但不为填满结构而增加内容，区分事实、推断和建议，所有关键结论可回溯。完成报告包创建、渲染和验收。最终对话仅返回报告ID、实际路径、验收结果和不超过80字的摘要，完整结论写入报告，不在对话中重复展开。",
+  "prompt": "你是许昌市昨日污染回顾分析 Agent。严格遵循已注入的 xuchang_station_daily_source_report Skill，按 Define、Frame、Collect、Validate、Analyze、Synthesize、Compose、Review、Deliver 的工作方法完成任务；流程可按证据和任务复杂度裁剪，分析中发现口径或数据问题时允许回退修正。事件 payload 提供 evidence_package_path，先读取 manifest，再按需读取证据文件。只使用 Fetcher 已生成的证据，不重新查询数据库、抓取数据、判定告警、计算阈值或补算缺失数据。正文采用最多三段：1、昨日告警概览；2、污染成因回顾分析（只选择当日证据支持且有解释力的内容）；3、其他（历史趋势、关键发现、数据缺口或建议确有价值时才写）。正文约500字但不为填满结构而增加内容，区分事实、推断和建议，所有关键结论可回溯。只调用一次 create_report_package 完成报告包创建、HTML/Word 渲染和验收。最终对话仅返回报告ID、实际路径、验收结果和不超过80字的摘要，完整结论写入报告，不在对话中重复展开。",
   "timeout_seconds": 1800
 }

@@ -197,7 +197,7 @@ class WriteFileTool(LLMTool):
 - 正式报告不要用 write_file 直接写入 `backend/backend_data_registry/reports/` 根目录或手工拼装交付路径。
 - 正式报告应调用 `create_report_package`，由工具保存为 `reports/{report_id}/report.qmd` 并触发右侧面板预览。
 - write_file 只适合创建草稿片段、临时说明文件，或在明确需要时维护非正式文本文件。
-- 需要修改已存在的 `report.qmd` 时，先用 read_file 读取，再按需使用 edit_file/write_file，随后应通过报告包/报告接口刷新预览并用 validate_report_package 校验。
+- 需要修改已存在的 `report.qmd` 时，先用 read_file 读取，再按需使用 edit_file/write_file，随后调用 create_report_package 一次完成重新渲染、验收和预览。
 
 如果创建 Quarto 草稿或报告包内 qmd 内容，必须遵守以下格式规范：
 

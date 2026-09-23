@@ -32,8 +32,8 @@ def test_shared_ops_audit_skill_frontmatter_is_visible_to_skill_listing():
     assert selection.skill_id == "ops_work_order_audit"
     assert "read_file" in selection.required_tools
     assert "create_report_package" in selection.required_tools
-    assert "render_report_package" in selection.required_tools
-    assert "validate_report_package" in selection.required_tools
+    assert "render_report_package" not in selection.required_tools
+    assert "validate_report_package" not in selection.required_tools
 
 
 def test_shared_ops_audit_report_and_review_contracts_are_preserved():

@@ -413,8 +413,17 @@ const optimizeChartLayout = (option) => {
 
   // 标题高度估算（包含 padding）- 增加间距
   const TITLE_HEIGHT = 50
-  const LEGEND_HEIGHT = 35
+  const LEGEND_HEIGHT = 25
   const TITLE_PADDING = 20
+  const X_AXIS_LABEL_HEIGHT = 24
+  const LAYOUT_GAP = 0
+  const DEFAULT_BOTTOM_LEGEND_OFFSET = 35
+  const MIN_BOTTOM_LEGEND_OFFSET = 35
+
+  // 容器高度用于把百分比边距换算成像素，保证 grid 预留空间可计算
+  const containerHeight = chartContainer.value?.clientHeight
+    || parseInt(dynamicHeight.value, 10)
+    || 400
 
   // 优化标题位置：确保标题与图表内容有间距
   if (optimized.title) {
@@ -429,12 +438,18 @@ const optimizeChartLayout = (option) => {
     }
   }
 
-  // 优化图例位置：确保图例不与标题重叠
+  // 优化图例位置：确保图例不与标题、横坐标刻度重叠
+  // 底部图例距离容器底部的像素偏移；null 表示图例不在底部
+  let bottomLegendOffset = null
   if (optimized.legend) {
     const legend = optimized.legend
+    const hasTop = legend.top !== undefined && legend.top !== null
+    const hasBottom = legend.bottom !== undefined && legend.bottom !== null
+    const hasLeft = legend.left !== undefined && legend.left !== null
+    const hasRight = legend.right !== undefined && legend.right !== null
 
     // 如果图例在顶部，强制调整位置
-    if (legend.top && typeof legend.top === 'string' && legend.top.includes('%')) {
+    if (hasTop && typeof legend.top === 'string' && legend.top.includes('%')) {
       const topValue = parseInt(legend.top)
       if (topValue < 15) {
         // 图例位置太靠上，容易与标题重叠
@@ -443,65 +458,90 @@ const optimizeChartLayout = (option) => {
           top: '18%'
         }
       }
-    } else if (legend.top && typeof legend.top === 'number' && legend.top < 60) {
+    } else if (hasTop && typeof legend.top === 'number' && legend.top < 60) {
       // 图例位置数值太小，调整到 65
       optimized.legend = {
         ...legend,
         top: 65
       }
     }
-    // 如果图例在底部，确保有足够空间
-    else if (legend.bottom) {
-      // 强制设置底部图例位置
+    // 底部图例：换算成像素，笛卡尔图抬到距底部至少 35px，避免贴边
+    else if (hasBottom) {
+      if (typeof legend.bottom === 'number') {
+        bottomLegendOffset = legend.bottom
+      } else if (typeof legend.bottom === 'string' && legend.bottom.includes('%')) {
+        bottomLegendOffset = Math.round(containerHeight * parseInt(legend.bottom) / 100)
+      } else {
+        bottomLegendOffset = DEFAULT_BOTTOM_LEGEND_OFFSET
+      }
+      if (optimized.grid) {
+        bottomLegendOffset = Math.max(bottomLegendOffset, MIN_BOTTOM_LEGEND_OFFSET)
+      }
       optimized.legend = {
         ...legend,
-        bottom: '15%'  // 容器变大后，使用百分比更合适
+        bottom: bottomLegendOffset
       }
     }
-    // 如果图例没有设置位置，默认放底部
-    else if (!legend.top && !legend.bottom && !legend.left && !legend.right) {
+    // 图例没有设置位置且不在侧边时，默认放底部
+    else if (!hasLeft && !hasRight) {
+      bottomLegendOffset = DEFAULT_BOTTOM_LEGEND_OFFSET
       optimized.legend = {
         ...legend,
-        bottom: '15%'
+        bottom: bottomLegendOffset
       }
     }
   }
 
-  // 优化 grid 位置：为标题和图例预留空间
+  // 优化 grid 位置：为标题、底部图例和横坐标刻度预留空间
   if (optimized.grid) {
     const minTop = TITLE_HEIGHT + TITLE_PADDING
 
-    // 处理 grid 数组（多 grid 配置，如日历热力图）
-    if (Array.isArray(optimized.grid)) {
-      optimized.grid = optimized.grid.map(g => {
-        if (typeof g.top === 'string' && g.top.includes('%')) {
-          const topValue = parseInt(g.top)
-          if (topValue < 15) {
-            return { ...g, top: '18%' }
-          }
-        } else if (typeof g.top !== 'number' || g.top < minTop) {
-          return { ...g, top: minTop }
+    const adjustTop = (g) => {
+      if (typeof g.top === 'string' && g.top.includes('%')) {
+        const topValue = parseInt(g.top)
+        if (topValue < 15) {
+          return { ...g, top: '18%' }
         }
         return g
-      })
+      }
+      if (typeof g.top !== 'number' || g.top < minTop) {
+        return { ...g, top: minTop }
+      }
+      return g
+    }
+
+    // 底部图例必须位于横坐标刻度（以及横轴名称）下方，据此反推 grid.bottom
+    const reserveBottomForLegend = (g) => {
+      if (bottomLegendOffset === null) {
+        return g
+      }
+      // 横轴名称在轴末端（默认）时与底部图例同一行、位于最右侧，无需额外占行；
+      // 只有居中显示的横轴名称才需要在刻度下方单独预留一行。
+      const xAxes = Array.isArray(optimized.xAxis)
+        ? optimized.xAxis
+        : (optimized.xAxis ? [optimized.xAxis] : [])
+      const namedAxes = xAxes.filter(axis => axis && axis.name
+        && ['middle', 'center'].includes(axis.nameLocation || 'end'))
+      const axisNameSpace = namedAxes.length
+        ? Math.max(...namedAxes.map(axis => axis.nameGap || 15)) + 16
+        : 0
+      const requiredBottom = bottomLegendOffset + LEGEND_HEIGHT
+        + X_AXIS_LABEL_HEIGHT + axisNameSpace + LAYOUT_GAP
+      const currentBottom = typeof g.bottom === 'number'
+        ? g.bottom
+        : (typeof g.bottom === 'string' && g.bottom.includes('%')
+            ? Math.round(containerHeight * parseInt(g.bottom) / 100)
+            : 0)
+      return { ...g, bottom: Math.max(currentBottom, requiredBottom) }
+    }
+
+    // 处理 grid 数组（多 grid 配置，如日历热力图）
+    if (Array.isArray(optimized.grid)) {
+      optimized.grid = optimized.grid.map(g => reserveBottomForLegend(adjustTop(g)))
     }
     // 处理单个 grid 对象
     else {
-      const grid = optimized.grid
-      if (typeof grid.top === 'string' && grid.top.includes('%')) {
-        const topValue = parseInt(grid.top)
-        if (topValue < 15) {
-          optimized.grid = {
-            ...grid,
-            top: '18%'
-          }
-        }
-      } else {
-        optimized.grid = {
-          ...grid,
-          top: minTop
-        }
-      }
+      optimized.grid = reserveBottomForLegend(adjustTop(optimized.grid))
     }
   }
 

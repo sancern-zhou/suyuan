@@ -109,6 +109,7 @@ const loading = ref(false)
 const detailLoading = ref(false)
 const error = ref('')
 const streamController = ref(null)
+const emptyRefreshTimer = ref(null)
 
 const statusMap = {
   queued: { key: 'pending', label: '排队中' },
@@ -173,22 +174,39 @@ function nodeSnapshotFromWorkflow(item) {
   return item?.snapshot || {}
 }
 
+function stopEmptyRefresh() {
+  if (emptyRefreshTimer.value !== null) {
+    window.clearInterval(emptyRefreshTimer.value)
+    emptyRefreshTimer.value = null
+  }
+}
+
+function startEmptyRefresh() {
+  if (emptyRefreshTimer.value !== null) return
+  emptyRefreshTimer.value = window.setInterval(() => {
+    if (!loading.value && props.sessionId) refresh()
+  }, 2000)
+}
+
 async function refresh() {
-  if (!props.sessionId) return
+  if (!props.sessionId || loading.value) return
   loading.value = true
   error.value = ''
   try {
     const payload = await listSessionWorkflows(props.sessionId)
     workflows.value = Array.isArray(payload?.workflows) ? payload.workflows : []
     if (selectedId.value && workflows.value.some(item => item.workflow_id === selectedId.value)) {
+      stopEmptyRefresh()
       await selectWorkflow(selectedId.value, false)
     } else if (workflows.value.length) {
+      stopEmptyRefresh()
       const preferred = workflows.value.find(item => item.active) || workflows.value[0]
       await selectWorkflow(preferred.workflow_id, false)
     } else {
       selectedId.value = ''
       selectedWorkflow.value = null
       stopStream()
+      startEmptyRefresh()
     }
   } catch (err) {
     error.value = err?.message || '工作流列表加载失败'
@@ -265,6 +283,7 @@ async function runAction(action, fallback) {
 
 watch(() => props.sessionId, () => {
   stopStream()
+  stopEmptyRefresh()
   workflows.value = []
   selectedId.value = ''
   selectedWorkflow.value = null
@@ -273,7 +292,10 @@ watch(() => props.sessionId, () => {
 })
 
 onMounted(() => { if (props.sessionId) refresh() })
-onBeforeUnmount(stopStream)
+onBeforeUnmount(() => {
+  stopStream()
+  stopEmptyRefresh()
+})
 </script>
 
 <style scoped>

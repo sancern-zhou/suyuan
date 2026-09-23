@@ -1605,9 +1605,12 @@ def artifact_path(filename: str) -> str:
         generator: str,
     ) -> List[Dict[str, Any]]:
         """Convert parsed ECharts options into frontend visuals."""
+        from app.utils.echarts_layout import normalize_echarts_layout
+
         visuals: List[Dict[str, Any]] = []
         for index, echarts_data in enumerate(echarts_options):
             try:
+                echarts_data = normalize_echarts_layout(echarts_data)
                 echarts_data["textStyle"] = {
                     **(echarts_data.get("textStyle") or {}),
                     "fontFamily": BROWSER_CHART_FONT_FAMILY,
@@ -2922,6 +2925,8 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                 "使用工具返回的 file_path，代码中通过系统注入的 load_data(file_path) 获取数据。"
                 "仅用于图表模式的 ECharts 输出：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
+                "布局要求：图例（legend）水平置于横坐标刻度下方（不得与刻度重叠），"
+                "纵轴名称（yAxis.name）置于图表左侧，横轴名称（xAxis.name）置于横轴右侧。"
                 "图表通过统一会话资源目录发布和预览，不返回独立图片 URL。"
                 "多图时输出多行纯 JSON。禁止输出 CHART_1: 前缀、Markdown 代码块、解释文字包裹 JSON。"
                 "数据分析、清洗、中间计算和文件生成请使用 execute_python。"

@@ -33,6 +33,8 @@ def render_specialized_chart(
         return _render_pollutant_wind_rose(chart_id, title, data, output_context, options)
     if chart_type == "pollutant_calendar":
         return _render_pollutant_calendar(chart_id, title, data, output_context, options)
+    if chart_type == "wind_rose":
+        return _render_wind_rose(chart_id, title, data, output_context, options)
     if chart_type == "generic_pollutant_wind_rose":
         return _render_generic_pollutant_wind_rose(chart_id, title, data, output_context, options)
     if chart_type == "wind_timeseries":
@@ -370,6 +372,57 @@ def _render_generic_pollutant_wind_rose(
     }
 
 
+def _render_wind_rose(
+    chart_id: str | None,
+    title: str,
+    data: Dict[str, Any],
+    output_context: str,
+    options: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Render a frequency wind rose without pollutant/color concentration data."""
+    wind_directions = _number_sequence(data.get("wind_directions"))
+    wind_speeds = _number_sequence(data.get("wind_speeds"))
+    records = _records_from_data(data)
+    if not wind_directions and records:
+        extracted = _extract_wind_arrays(records, data, options)
+        wind_directions = extracted["wind_directions"]
+        wind_speeds = extracted["wind_speeds"]
+
+    if not wind_directions or not wind_speeds:
+        raise ChartDataError("wind_rose 需要 wind_directions、wind_speeds 或 records。")
+    if len(wind_directions) != len(wind_speeds):
+        raise ChartDataError("wind_rose 的风向、风速长度必须一致。")
+
+    direction_bins = int(options.get("direction_bins") or data.get("direction_bins") or 16)
+    direction_bins = min(max(direction_bins, 4), 36)
+    speed_bins = _speed_bins(options.get("speed_bins") or data.get("speed_bins"))
+    image_base64, valid_count, calm_count = _render_wind_rose_image(
+        title=title,
+        wind_directions=wind_directions,
+        wind_speeds=wind_speeds,
+        direction_bins=direction_bins,
+        speed_bins=speed_bins,
+    )
+    visual = _cache_base64_image(image_base64, chart_id or "wind_rose", title)
+    return {
+        "chart_id": visual["image_id"],
+        "title": title,
+        "visuals": [visual],
+        "layout_warnings": [],
+        "metadata": {
+            "requested_chart_type": "wind_rose",
+            "applied_chart_type": "wind_rose",
+            "scope": "generic",
+            "output_context": output_context,
+            "direction_bin_count": direction_bins,
+            "speed_bins": [label for label, _, _ in speed_bins],
+            "valid_point_count": valid_count,
+            "calm_point_count": calm_count,
+        },
+        "summary": f"报告图表已生成：{title}。",
+    }
+
+
 def _records_from_data(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     records = data.get("records")
     if isinstance(records, list):
@@ -599,6 +652,91 @@ def _extract_wind_rose_arrays(
         "concentrations": concentrations,
         "timestamps": timestamps,
     }
+
+
+def _extract_wind_arrays(
+    records: Sequence[Dict[str, Any]], data: Dict[str, Any], options: Dict[str, Any]
+) -> Dict[str, List[float]]:
+    direction_field = data.get("wind_direction_field") or options.get("wind_direction_field")
+    speed_field = data.get("wind_speed_field") or options.get("wind_speed_field")
+    wind_directions: List[float] = []
+    wind_speeds: List[float] = []
+    for record in records:
+        try:
+            direction = _field_value(record, [direction_field, "wind_direction_10m", "wind_direction", "WD", "wd", "direction", "风向"])
+            speed = _field_value(record, [speed_field, "wind_speed_10m", "wind_speed", "WS", "ws", "speed", "风速"])
+            wind_directions.append(float(direction))
+            wind_speeds.append(float(speed))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return {"wind_directions": wind_directions, "wind_speeds": wind_speeds}
+
+
+def _speed_bins(value: Any) -> List[tuple[str, float, float]]:
+    default = [("<0.5", 0.0, 0.5), ("0.5-1", 0.5, 1.0), ("1-2", 1.0, 2.0),
+               ("2-3", 2.0, 3.0), ("3-5", 3.0, 5.0), (">=5", 5.0, float("inf"))]
+    if not isinstance(value, list) or not value:
+        return default
+    result = []
+    for item in value:
+        if not isinstance(item, (list, tuple)) or len(item) != 3:
+            continue
+        try:
+            result.append((str(item[0]), float(item[1]), float(item[2])))
+        except (TypeError, ValueError):
+            continue
+    return result or default
+
+
+def _render_wind_rose_image(
+    title: str,
+    wind_directions: Sequence[float],
+    wind_speeds: Sequence[float],
+    direction_bins: int,
+    speed_bins: Sequence[tuple[str, float, float]],
+) -> tuple[str, int, int]:
+    valid = [(float(direction) % 360, float(speed)) for direction, speed in zip(wind_directions, wind_speeds)
+             if math.isfinite(float(direction)) and math.isfinite(float(speed)) and float(speed) >= 0]
+    if not valid:
+        raise ChartDataError("wind_rose 没有可渲染的有效数据点。")
+    bin_width = 360.0 / direction_bins
+    counts = [[0 for _ in range(direction_bins)] for _ in speed_bins]
+    calm_count = 0
+    for direction, speed in valid:
+        matched = False
+        for speed_index, (_, lower, upper) in enumerate(speed_bins):
+            if lower <= speed < upper:
+                direction_index = int((direction + bin_width / 2) // bin_width) % direction_bins
+                counts[speed_index][direction_index] += 1
+                matched = True
+                if speed < 0.5:
+                    calm_count += 1
+                break
+        if not matched:
+            continue
+
+    total = len(valid)
+    theta = np.deg2rad(np.arange(direction_bins) * bin_width)
+    width = np.deg2rad(bin_width * 0.88)
+    fig, ax = plt.subplots(figsize=(6.4, 6.4), dpi=180, subplot_kw={"polar": True})
+    colors = ["#bdbdbd", "#9ecae1", "#6baed6", "#4292c6", "#2171b5", "#084594"]
+    bottom = np.zeros(direction_bins)
+    for speed_index, (label, _, _) in enumerate(speed_bins):
+        values = np.array(counts[speed_index], dtype=float) / total * 100
+        ax.bar(theta, values, width=width, bottom=bottom, color=colors[speed_index % len(colors)],
+               edgecolor="white", linewidth=0.5, label=f"{label} m/s")
+        bottom += values
+    ax.set_theta_zero_location("N")
+    ax.set_theta_direction(-1)
+    ax.set_title(str(normalize_matplotlib_label_text(title)), fontsize=14, fontweight="bold", pad=18)
+    ax.set_rlabel_position(135)
+    ax.set_ylabel("频率 (%)", labelpad=28)
+    ax.tick_params(labelsize=9)
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.18), ncol=3, fontsize=8, frameon=False)
+    ax.text(0.5, -0.29, f"有效点位: {total}；静风(<0.5 m/s): {calm_count} ({calm_count / total * 100:.1f}%)；方向分箱: {direction_bins}",
+            transform=ax.transAxes, ha="center", va="top", fontsize=8)
+    fig.tight_layout(pad=1.0)
+    return _figure_to_base64(fig), total, calm_count
 
 
 def _field_value(record: Dict[str, Any], candidates: Sequence[Any]) -> Any:

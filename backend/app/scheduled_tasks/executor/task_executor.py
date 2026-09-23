@@ -648,7 +648,7 @@ class ScheduledTaskExecutor:
                 """## 输出与投递约束
 - 完成任务后调用 `broadcast_social_users` 发送结果。
 - 目标微信用户名称：%s
-- `target_user_names` 使用上述名称；生成的附件必须使用上游工具返回的最终成品路径（例如 render_report_package 的 `path` 或 resources 中的 DOCX/PDF），禁止把 `report.qmd`/`file_path` 源文件当作正式报告附件，也禁止自行拼接路径。
+- `target_user_names` 使用上述名称；生成的附件必须使用上游工具返回的最终成品资源路径（例如 create_report_package 的 resources 中的 DOCX/PDF），禁止把 `report.qmd`/`file_path` 源文件当作正式报告附件，也禁止自行拼接路径。
 - 广播工具执行完成后，正常简要说明执行结果，不需要返回 JSON。""" % names
             )
         return "\n\n".join(sections)

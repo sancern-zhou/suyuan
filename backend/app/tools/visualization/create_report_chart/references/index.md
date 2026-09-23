@@ -54,14 +54,17 @@ single-chart specifications selected by the routing table below.
 
 ## Domain Chart Routing
 
-- Guangdong Province AQI calendar only: read `aqi-calendar.md`.
+- Guangdong Province AQI calendar only (Guangdong/default project only): read
+  `aqi-calendar.md`. Other projects do not expose this type.
 - Calendar for another region/station or a non-AQI pollutant: read
   `pollutant-calendar.md`.
-- Generic wind rose, pollutant wind rose, pollution rose, or wind-direction
-  concentration chart outside Guangdong-specific reports: read
-  `generic-pollutant-wind-rose.md`.
-- Guangdong Province pollutant wind rose only: read `pollutant-wind-rose.md`
-  and use `chart_type: "pollutant_wind_rose"`.
+- Pure wind direction/wind speed frequency chart: read `wind-rose.md` and use
+  `chart_type: "wind_rose"`.
+- Pollutant concentration by wind direction outside Guangdong-specific reports:
+  read `generic-pollutant-wind-rose.md`.
+- Guangdong Province pollutant wind rose only (Guangdong/default project only):
+  read `pollutant-wind-rose.md` and use `chart_type: "pollutant_wind_rose"`.
+  Other projects do not expose this type; use `generic_pollutant_wind_rose`.
 - Wind direction, wind speed, and one pollutant changing over time: read
   `wind-timeseries.md` and use `chart_type: "wind_timeseries"`.
 - Five-element weather forecast time series (wind arrows, speed, temperature,

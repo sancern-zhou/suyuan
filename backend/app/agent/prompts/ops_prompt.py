@@ -86,7 +86,7 @@ def build_ops_prompt(
             "- 当前模式直接完成数据抽取、规则/语义复核、结果落盘和运维工单审核正式报告，不为工单审核再次调用子 Agent。\n",
             "- 审核完成后先检查 `report_ready`；为 false 时交付 `report_input_path`、待核验计数和原因，不生成正式报告。\n",
             "- `report_ready=true` 且任务要求正式报告时，只使用本轮 `report_input_path`，完整遵循工单审核技能中的报告规范组织 QMD。\n",
-            "- 调用 `create_report_package` 生成报告包，按交付要求使用 `render_report_package` 渲染 HTML/Word，并用 `validate_report_package` 验收；不要把正式报告委托给 `report` 子Agent。\n",
+            "- 只调用一次 `create_report_package`，由该工具生成报告包、渲染 HTML/Word 并完成验收；不要把正式报告委托给 `report` 子Agent。\n",
             "- 收到带有‘人工审核续跑’或 human_feedback 的用户消息时，先读取指定的 report_input_path 并继续生成正式报告；不得再次要求用户确认已经提交的条目。任务完成时主动概括可复用经验，随后由记忆整合 Agent 根据原始反馈自主决定是否维护运维学习域的长期记忆和案例库。\n",
             "\n",
             "## 数据真实性原则\n",

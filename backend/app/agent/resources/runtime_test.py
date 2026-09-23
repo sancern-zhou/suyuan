@@ -13,6 +13,7 @@ from app.tools.utility.read_file_tool import ReadFileTool
 from app.tools.utility.read_session_resource_tool import ReadSessionResourceTool
 from app.utils.path_config import BACKEND_ROOT
 from app.tools.office.validate_pptx_tool import validation_output_resources
+from app.tools.artifact_utils import attach_report_package_resources
 from app.tools.resource_declarations import primary_file
 from .contracts import ResourceDeclaration
 from .contracts import ResourceLocator
@@ -184,6 +185,36 @@ async def test_durably_tracked_visual_requests_frontend_focus():
     assert result.focus_resource_id == "chart-resource"
 
 
+@pytest.mark.asyncio
+async def test_durably_tracked_report_presentation_focuses_html_preview():
+    result = await persist_tool_result_resources(
+        object(),
+        "session-a",
+        "run-a",
+        {
+            "type": "tool_result",
+            "data": {
+                "tool_name": "create_report_package",
+                "result": {
+                    "success": True,
+                    "presentation": {"action": "open", "resource_key": "html"},
+                    "resource_tracking": {
+                        "durable": True,
+                        "version": 9,
+                        "resource_ids": ["qmd-resource", "html-resource", "docx-resource"],
+                        "focus_resource_id": "html-resource",
+                    },
+                },
+            },
+        },
+        turn_sequence=1,
+    )
+
+    assert result.focus_resource_id == "html-resource"
+    event = result.changed_event("session-a", "run-a")
+    assert event["data"]["focus_resource_id"] == "html-resource"
+
+
 def test_malformed_iteration_falls_back_to_zero():
     assert event_turn_sequence({"iteration": "not-a-number"}) == 0
 
@@ -231,6 +262,52 @@ async def test_executor_persists_resources_before_returning_result(tmp_path):
     assert page.resources[0].turn_sequence == 3
     assert f"path={generated.resolve()}" in context_builder.session_resource_context
     await run_ownership_registry.complete("session-a", "run-a")
+
+
+@pytest.mark.asyncio
+async def test_executor_tracks_html_as_report_presentation_focus(tmp_path):
+    report_dir = tmp_path / "report"
+    report_dir.mkdir()
+    qmd_path = report_dir / "report.qmd"
+    html_path = report_dir / "report.html"
+    docx_path = report_dir / "report.docx"
+    qmd_path.write_text("# Report\n", encoding="utf-8")
+    html_path.write_text("<h1>Report</h1>", encoding="utf-8")
+    docx_path.write_bytes(b"docx")
+
+    async def tool(**_):
+        data = {}
+        attach_report_package_resources(
+            data,
+            qmd_path,
+            report_id="focus-report",
+            html_path=html_path,
+            docx_path=docx_path,
+            generator="create_report_package",
+        )
+        return {
+            "success": True,
+            "resources": data["resources"],
+            "presentation": {"action": "open", "resource_key": "html"},
+        }
+
+    service = SessionResourceService.in_memory()
+    executor = ToolExecutor(tool_registry={"create_report_package": tool})
+    executor.memory_manager = SimpleNamespace(session_id="session-report-focus")
+    executor.configure_resource_tracking(
+        service=service,
+        context_builder=SimpleNamespace(session_resource_context=""),
+    )
+    executor.resource_run_id = "run-report-focus"
+    from app.agent.runtime.ownership import run_ownership_registry
+
+    await run_ownership_registry.register("session-report-focus", "run-report-focus")
+    result = await executor.execute_tool("create_report_package", {}, iteration=1)
+    page = await service.list_resources("session-report-focus")
+    html_resource = next(item for item in page.resources if item.resource_key == "html")
+
+    assert result["resource_tracking"]["focus_resource_id"] == html_resource.resource_id
+    await run_ownership_registry.complete("session-report-focus", "run-report-focus")
 
 
 @pytest.mark.asyncio

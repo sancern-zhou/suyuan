@@ -103,23 +103,14 @@ backend:
       - list_session_resources
       - read_session_resource
       - publish_session_file
-      - execute_sql_query
-      - execute_postgres_sql_query
+      # 报告主 Agent 通过 DAG 委托 query/expert 子节点执行数据任务
       - read_file
       - write_file
       - edit_file
-      - grep
-      - list_directory
-      - search_files
-      - bash
       - create_report_chart
       - execute_python
       - create_report_package
-      - render_report_package
-      - validate_report_package
-      - call_sub_agent
       - run_agent_workflow
-      - broadcast_social_users
       - list_skills
       - view_skill
     social:

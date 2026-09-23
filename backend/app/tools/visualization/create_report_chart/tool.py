@@ -11,9 +11,87 @@ from app.tools.visualization.create_report_chart.renderer import ChartDataError
 
 REFERENCE_DIR = Path(__file__).resolve().parent / "references"
 
+# chart_type enum 的稳定顺序（全部共享图型）。
+ALL_CHART_TYPES: tuple[str, ...] = (
+    "bar",
+    "horizontal_bar",
+    "line",
+    "timeseries",
+    "scatter",
+    "pie",
+    "stacked_area",
+    "dual_axis_line",
+    "stacked_bar",
+    "percent_stacked_bar",
+    "histogram",
+    "correlation_heatmap",
+    "boxplot",
+    "combo",
+    "range_line",
+    "waterfall",
+    "pareto",
+    "diverging_bar",
+    "step_line",
+    "error_bar",
+    "pollutant_calendar",
+    "wind_rose",
+    "generic_pollutant_wind_rose",
+    "wind_timeseries",
+    "weather_timeseries",
+    "aqi_calendar",
+    "pollutant_wind_rose",
+    "henan_city_map",
+)
 
-def report_chart_reference_paths() -> Dict[str, str]:
-    return {
+# 项目专用图型：仅允许列出的 project_id 暴露。
+# 未列出的项目会从 chart_type enum、引用文档和路由中隐藏，避免跨项目误用。
+PROJECT_SCOPED_CHART_TYPES: dict[str, frozenset[str]] = {
+    # 广东省专用六档等值线风玫瑰；其他地区使用 generic_pollutant_wind_rose。
+    "pollutant_wind_rose": frozenset({"default"}),
+    # 广东省专用月级 AQI 日历；其他地区使用通用 pollutant_calendar。
+    "aqi_calendar": frozenset({"default"}),
+}
+
+# 项目裁剪后用于替代的通用图型（键为被隐藏的 chart_type）。
+_SCOPED_CHART_TYPE_FALLBACKS: dict[str, str] = {
+    "pollutant_wind_rose": "generic_pollutant_wind_rose",
+    "aqi_calendar": "pollutant_calendar",
+}
+
+# 项目裁剪后给 Agent 的替代指引（键为被隐藏的 chart_type）。
+_SCOPED_CHART_TYPE_HINTS: dict[str, str] = {
+    "pollutant_wind_rose": (
+        "本项目污染物风玫瑰图使用 `generic_pollutant_wind_rose`；"
+        "它需要风向、风速、污染物浓度在记录中平铺同行，或直接提供三个等长数组。"
+    ),
+    "aqi_calendar": (
+        "本项目日历图使用 `pollutant_calendar`，不使用广东专用 `aqi_calendar`。"
+    ),
+}
+
+
+def active_project_id() -> str:
+    """当前部署项目 ID；未配置时回退到默认项目（广东）。"""
+    from config.settings import settings
+
+    return str(getattr(settings, "project_id", "") or "").strip() or "default"
+
+
+def chart_type_enabled(chart_type: str, project_id: str | None = None) -> bool:
+    """判断 chart_type 在当前（或指定）项目下是否可用。"""
+    allowed_projects = PROJECT_SCOPED_CHART_TYPES.get(chart_type)
+    if allowed_projects is None:
+        return True
+    return (project_id or active_project_id()) in allowed_projects
+
+
+def available_chart_types(project_id: str | None = None) -> list[str]:
+    """当前项目可用的 chart_type 列表（保持 ALL_CHART_TYPES 顺序）。"""
+    return [name for name in ALL_CHART_TYPES if chart_type_enabled(name, project_id)]
+
+
+def report_chart_reference_paths(project_id: str | None = None) -> dict[str, str]:
+    paths = {
         "index": str(REFERENCE_DIR / "index.md"),
         "pie_rules": str(REFERENCE_DIR / "pie-rules.md"),
         "bar_chart": str(REFERENCE_DIR / "bar-chart.md"),
@@ -31,6 +109,7 @@ def report_chart_reference_paths() -> Dict[str, str]:
         "pareto_chart": str(REFERENCE_DIR / "pareto-chart.md"),
         "comparison_charts": str(REFERENCE_DIR / "comparison-charts.md"),
         "pollutant_calendar": str(REFERENCE_DIR / "pollutant-calendar.md"),
+        "wind_rose": str(REFERENCE_DIR / "wind-rose.md"),
         "generic_pollutant_wind_rose": str(REFERENCE_DIR / "generic-pollutant-wind-rose.md"),
         "wind_timeseries": str(REFERENCE_DIR / "wind-timeseries.md"),
         "aqi_calendar": str(REFERENCE_DIR / "aqi-calendar.md"),
@@ -38,6 +117,10 @@ def report_chart_reference_paths() -> Dict[str, str]:
         "henan_city_map": str(REFERENCE_DIR / "henan-city-map.md"),
         "weather_timeseries": str(REFERENCE_DIR / "weather-timeseries.md"),
     }
+    for scoped_type in PROJECT_SCOPED_CHART_TYPES:
+        if not chart_type_enabled(scoped_type, project_id):
+            paths.pop(scoped_type, None)
+    return paths
 
 
 class CreateReportChartTool(LLMTool):
@@ -53,8 +136,13 @@ class CreateReportChartTool(LLMTool):
             "⚠️ **适用范围**：标准报告图表（bar/line/scatter/pie/histogram等）及河南省城市 AQI/污染物地图（henan_city_map）；"
             "weather_timeseries 仅绘制单日风向、风速、温度、降水概率、湿度五要素，禁止叠加污染物或跨日期叠加；"
             "仅 wind_timeseries/明确的组合图允许在气象背景上叠加污染物序列。"
+            "纯风向风速频率图使用 `wind_rose`；含污染物浓度的风玫瑰图才使用 "
+            "`generic_pollutant_wind_rose` 或项目专用 `pollutant_wind_rose`，禁止用占位浓度替代。"
             "如需复杂/自定义图表（3D图/科研图表），请使用 execute_python + matplotlib/seaborn/plotly。"
         )
+        for scoped_type, hint in _SCOPED_CHART_TYPE_HINTS.items():
+            if not chart_type_enabled(scoped_type):
+                description += hint
         function_schema = {
             "name": "create_report_chart",
             "description": description,
@@ -67,35 +155,7 @@ class CreateReportChartTool(LLMTool):
                     },
                     "chart_type": {
                         "type": "string",
-                        "enum": [
-                            "bar",
-                            "horizontal_bar",
-                            "line",
-                            "timeseries",
-                            "scatter",
-                            "pie",
-                            "stacked_area",
-                            "dual_axis_line",
-                            "stacked_bar",
-                            "percent_stacked_bar",
-                            "histogram",
-                            "correlation_heatmap",
-                            "boxplot",
-                            "combo",
-                            "range_line",
-                            "waterfall",
-                            "pareto",
-                            "diverging_bar",
-                            "step_line",
-                            "error_bar",
-                            "pollutant_calendar",
-                            "generic_pollutant_wind_rose",
-                            "wind_timeseries",
-                            "weather_timeseries",
-                            "aqi_calendar",
-                            "pollutant_wind_rose",
-                            "henan_city_map",
-                        ],
+                        "enum": available_chart_types(),
                         "description": "图表类型。",
                     },
                     "title": {"type": "string", "description": "图表标题。"},
@@ -193,6 +253,12 @@ class CreateReportChartTool(LLMTool):
             "style_profile": style_profile or "report",
             "reference_paths": report_chart_reference_paths(),
         }
+        if chart_type and not chart_type_enabled(chart_type):
+            fallback = _SCOPED_CHART_TYPE_FALLBACKS.get(chart_type)
+            message = f"当前项目不支持的 chart_type：{chart_type}。"
+            if fallback:
+                message += f"请使用 {fallback}。"
+            return self._failed_result(message, metadata, chart_type, title, file_path)
         if data is None and not file_path:
             return self._failed_result(
                 "必须提供 data 或 file_path 作为图表数据输入。",

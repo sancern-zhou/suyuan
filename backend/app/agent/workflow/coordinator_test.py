@@ -63,6 +63,10 @@ def test_coordinator_retries_node_and_persists_a_resumable_snapshot():
         )
         assert restored.snapshot()["node_results"]["fetch"] == {"ok": True}
         assert snapshots
+        assert all(
+            snapshot.get("workflow_id") == "retry-1" and "definition" in snapshot
+            for snapshot in snapshots
+        )
 
     asyncio.run(run())
 

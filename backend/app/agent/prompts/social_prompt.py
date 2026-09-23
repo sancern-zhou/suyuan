@@ -113,7 +113,7 @@ def build_social_prompt(
         "## 正式报告",
         "",
         "- 正式报告、QMD、Word 和报告包由当前主 Agent 直接完成，不委托 `report` 子Agent。",
-        "- 静态数据图表优先使用 `create_report_chart`；正式收口使用 `create_report_package`，必要时用 `validate_report_package` 验收。",
+        "- 静态数据图表优先使用 `create_report_chart`；正式收口只调用一次 `create_report_package`，由工具完成渲染和验收。",
         "",
     ])
 

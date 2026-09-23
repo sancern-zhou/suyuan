@@ -102,3 +102,11 @@ test('welcome capabilities render as centered plain text instead of styled butto
   assert.match(source, /\.welcome-capabilities[\s\S]*align-items: center/)
   assert.match(source, /\.welcome-capability[\s\S]*text-align: center/)
 })
+
+test('chat keeps task duration hidden until the task reaches a terminal state', async () => {
+  const source = await readComponent('../ReActMessageList.vue')
+
+  assert.match(source, /v-if="!isAnalyzing && getFinalDurationText\(message\)"/)
+  assert.match(source, /class="task-progress-status"/)
+  assert.match(source, /任务执行中，完成后显示总用时/)
+})

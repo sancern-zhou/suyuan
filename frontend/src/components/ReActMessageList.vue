@@ -222,15 +222,15 @@
         <!-- AI回复操作栏：用时统计 + 复制按钮 -->
         <div v-if="showAgentMessageFooter(message)" class="agent-message-footer">
           <span
-            v-if="getFinalDurationText(message)"
+            v-if="!isAnalyzing && getFinalDurationText(message)"
             class="agent-message-duration"
-            title="AI 回复总用时"
+            title="任务总用时"
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="12" cy="12" r="9" />
               <path d="M12 7.5V12l3 2" />
             </svg>
-            <span>用时 {{ getFinalDurationText(message) }}</span>
+            <span>任务用时 {{ getFinalDurationText(message) }}</span>
           </span>
           <div class="agent-message-tools">
             <button
@@ -260,14 +260,14 @@
     </div>
 
     <div
-      v-if="showThinkingPlaceholder"
-      class="thinking-placeholder"
+      v-if="isAnalyzing"
+      class="task-progress-status"
       role="status"
       aria-live="polite"
-      aria-label="AI 正在思考"
+      aria-label="任务执行中"
     >
       <span class="thinking-indicator" aria-hidden="true"></span>
-      <span>正在思考</span>
+      <span>任务执行中，完成后显示总用时</span>
     </div>
 
     <!-- 当前轮实时分析过程：默认折叠，用户可点击展开查看 -->
@@ -377,8 +377,7 @@ import {
   getExecutingProcessMessages,
   getMessageType,
   getUnifiedProcessMessages as collectUnifiedProcessMessages,
-  isProcessMessage,
-  isWaitingForAgentResponse
+  isProcessMessage
 } from './reactAnalysis/messageProcessGrouping.js'
 
 const reactStore = useReactStore()
@@ -721,10 +720,6 @@ const displayedMessages = computed(() => {
   })
 })
 
-const showThinkingPlaceholder = computed(() => (
-  isWaitingForAgentResponse(props.messages, props.isAnalyzing)
-))
-
 // 【新增】details展开状态管理（用于控制<details>的open属性）
 const expandedProcessIds = ref(new Set())
 
@@ -883,7 +878,7 @@ const copyAgentMessage = async (message) => {
   }
 }
 
-// 【新增】AI回复用时统计：优先使用store在完成时记录的response_duration_ms，
+// 任务总用时：优先使用生命周期终态时记录的response_duration_ms，
 // 否则用 final 消息与其前最近 user 消息的时间戳差值（历史消息恢复场景）
 const formatResponseDuration = (durationMs) => {
   if (!Number.isFinite(durationMs) || durationMs < 0) return ''
@@ -2364,7 +2359,7 @@ const downloadPreviewedImage = async () => {
   }
 }
 
-.thinking-placeholder {
+.task-progress-status {
   display: flex;
   align-items: center;
   gap: 8px;

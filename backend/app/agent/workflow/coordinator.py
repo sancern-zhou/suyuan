@@ -118,6 +118,7 @@ class WorkflowCoordinator:
         self.node_errors: Dict[str, str] = {}
         self.node_lineage: Dict[str, Dict[str, Any]] = {}
         self.status = "queued"
+        self._persistence_ready = False
         self.cancel_requested = False
         self.cancel_reason = ""
         self._active_tasks: Dict[str, asyncio.Task] = {}
@@ -143,6 +144,7 @@ class WorkflowCoordinator:
             if node_run.status in {"succeeded", "failed", "cancelled"}:
                 self.graph.set_status(node.task_id, node_run.status)
         self._prepare_snapshot_resume(snapshot)
+        self._persistence_ready = True
 
     async def run(self) -> Dict[str, Any]:
         if self.status == "succeeded":
@@ -307,9 +309,17 @@ class WorkflowCoordinator:
             self.workflow_run.max_attempts = max(self.workflow_run.max_attempts, 2)
             self.status = "queued"
 
-    def _persist_snapshot(self, snapshot: Dict[str, Any]) -> None:
-        if self.persist:
-            self.persist(snapshot)
+    def _persist_snapshot(self, _runtime_snapshot: Dict[str, Any]) -> None:
+        """Persist one complete coordinator snapshot.
+
+        ``WorkflowRuntime`` calls this hook with its runtime-only snapshot.
+        The session/API contract stores the coordinator envelope, so rebuild it
+        here instead of allowing a runtime fragment to overwrite the index.
+        During construction the graph/runtime are still being assembled; the
+        first coordinator snapshot is emitted when ``run`` starts.
+        """
+        if self.persist and self._persistence_ready:
+            self.persist(self.snapshot())
 
     def _graph_nodes(self):
         return [self.graph._nodes[node.task_id] for node in self.definition.nodes]

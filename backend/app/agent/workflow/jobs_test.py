@@ -9,6 +9,7 @@ class _FakeRedis:
         self.lists = {}
         self.streams = {}
         self.sequence = 0
+        self.last_xread_block = "unset"
 
     async def hgetall(self, key):
         return dict(self.hashes.get(key, {}))
@@ -43,6 +44,7 @@ class _FakeRedis:
         return event_id
 
     async def xread(self, streams, count=100, block=0):
+        self.last_xread_block = block
         result = []
         for key, after in streams.items():
             after_number = int(str(after).split("-", 1)[0])
@@ -70,3 +72,13 @@ async def test_workflow_job_store_claims_idempotently_and_streams_events():
     await store.publish_snapshot("wf-1", {"status": "running", "runtime": {"events": [{"sequence": 1, "event_type": "task.running"}]}})
     events = await store.read_events("wf-1")
     assert any(event.get("type") == "runtime" for _, event in events)
+    assert store.redis.last_xread_block is None
+
+
+@pytest.mark.asyncio
+async def test_workflow_job_store_does_not_wait_for_missing_event_stream():
+    redis = _FakeRedis()
+    store = WorkflowJobStore(redis, prefix="test:workflow")
+
+    assert await store.read_events("missing") == []
+    assert redis.last_xread_block is None

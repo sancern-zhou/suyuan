@@ -6,7 +6,7 @@
         <span>{{ formatName(resource) }} · v{{ group.primary?.version || resource.version }}</span>
       </div>
       <button
-        v-if="downloadTarget?.download_url"
+        v-if="downloadTarget?.download_url || isChart"
         type="button"
         :disabled="downloading"
         @click="download"
@@ -20,6 +20,7 @@
       :is="rendererComponent"
       v-else
       :key="renderKey"
+      ref="rendererRef"
       class="card-content"
       :resource="resource"
       :group="group"
@@ -46,6 +47,7 @@ const renderError = ref('')
 const downloadError = ref('')
 const downloading = ref(false)
 const retryVersion = ref(0)
+const rendererRef = ref(null)
 const rendererComponent = computed(() => RENDERERS[rendererKey(props.resource)])
 const renderKey = computed(() => (
   `${props.resource.resource_id}:${props.resource.version}:${retryVersion.value}`
@@ -53,18 +55,39 @@ const renderKey = computed(() => (
 const downloadTarget = computed(() => props.group.primary?.download_url
   ? props.group.primary
   : props.resource)
+const isChart = computed(() => rendererKey(props.resource) === 'chart')
+const chartFileName = computed(() => {
+  const label = props.group.primary?.label || props.resource.label || '图表'
+  return String(label).replace(/[\\/:*?"<>|]/g, '_')
+})
 
 const retry = () => {
   renderError.value = ''
   retryVersion.value += 1
 }
 
+const downloadChartImage = async () => {
+  const dataUrl = await rendererRef.value?.getChartImage?.()
+  if (!dataUrl) throw new Error('图表图片生成失败')
+  const link = document.createElement('a')
+  link.href = dataUrl
+  link.download = `${chartFileName.value}.png`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+}
+
 const download = async () => {
-  if (!downloadTarget.value || downloading.value) return
+  if (downloading.value) return
+  if (!isChart.value && !downloadTarget.value?.download_url) return
   downloading.value = true
   downloadError.value = ''
   try {
-    await downloadResource(downloadTarget.value)
+    if (isChart.value) {
+      await downloadChartImage()
+    } else {
+      await downloadResource(downloadTarget.value)
+    }
   } catch (error) {
     downloadError.value = error?.message || '下载失败'
   } finally {

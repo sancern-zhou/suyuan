@@ -28,12 +28,8 @@ def _workflow_snapshots(metadata: dict[str, Any]) -> dict[str, dict[str, Any]]:
         return {
             str(key): dict(value)
             for key, value in values.items()
-            if isinstance(value, dict)
+            if isinstance(value, dict) and value.get("workflow_id")
         }
-    # Compatibility with snapshots written before multi-workflow indexing.
-    legacy = metadata.get("workflow_coordinator")
-    if isinstance(legacy, dict) and legacy.get("workflow_id"):
-        return {str(legacy["workflow_id"]): dict(legacy)}
     return {}
 
 

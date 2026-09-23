@@ -150,6 +150,11 @@ class ChartImageRenderer(LLMTool):
             # Step 2: 确保输出目录存在
             OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
             
+            # 统一图例/坐标轴布局，避免图例与横坐标刻度重叠
+            from app.utils.echarts_layout import normalize_echarts_layout
+
+            echarts_option = normalize_echarts_layout(echarts_option)
+
             # Step 3: 生成输出文件名
             image_filename = f"chart_{uuid.uuid4().hex[:12]}.png"
             image_path = OUTPUT_DIR / image_filename

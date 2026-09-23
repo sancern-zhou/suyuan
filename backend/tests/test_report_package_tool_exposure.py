@@ -9,17 +9,19 @@ def test_render_report_package_is_registered_globally():
     assert "render_report_package" in registry.list_tools()
 
 
-def test_render_report_package_is_exposed_to_assistant_mode():
+def test_legacy_report_tools_are_not_exposed_to_assistant_mode():
     assistant_tools = get_tools_by_mode("assistant")
     assistant_order = get_tool_order("assistant")
 
-    assert "render_report_package" in assistant_tools
-    assert "render_report_package" in assistant_order
+    assert "create_report_package" in assistant_tools
+    assert "render_report_package" not in assistant_tools
+    assert "validate_report_package" not in assistant_tools
+    assert "render_report_package" not in assistant_order
+    assert "validate_report_package" not in assistant_order
 
 
 def test_create_report_package_schema_points_to_real_reference_path():
     schema = CreateReportPackageTool().get_function_schema()
     description = schema["description"]
 
-    assert "app/tools/report/report_package/references/index.md" in description
-    assert "backend/app/tools/report/report_package/references/index.md" not in description
+    assert "backend/app/tools/report/report_package/references/index.md" in description

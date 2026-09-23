@@ -54,6 +54,14 @@ Do not guess or rewrite a path. Reuse the exact path returned by the producing t
 - option 必须可由 JSON 序列化；JavaScript 回调、Python 函数和 lambda 不能放入 option。
 - 序列数据中的 Python `None` 会输出为 JSON `null`，可用于折线缺口。
 
+## 布局约束
+
+- 图例（`legend`）统一水平排列，由渲染器固定在横坐标刻度文字下方的底边区域；不要放在顶部或右侧。
+- 纵轴名称（`yAxis.name`）放在图表左侧，垂直显示在轴的中部，例如
+  `"yAxis": {"name": "PM2.5 (μg/m³)", "nameLocation": "middle", "nameGap": 50, "nameRotate": 90}`。
+- 横轴名称（`xAxis.name`）放在横轴右侧，例如 `"xAxis": {"name": "时间", "nameLocation": "end", "nameGap": 30}`。
+- 图例必须紧贴横坐标刻度文字下方，不得与刻度重叠；渲染器会自动设置 `legend.bottom` 与 `grid.bottom`，无需自行估算图例与刻度的间距。
+
 ## 最小正确示例
 
 ```json

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
-from typing import Any, Dict, Iterable, Mapping, Optional
+from typing import Any
 
 
 def build_report_analysis_workflow(
@@ -11,15 +12,14 @@ def build_report_analysis_workflow(
     workflow_id: str,
     source_tasks: Iterable[Mapping[str, Any]],
     synthesis_task: Mapping[str, Any],
-    delivery_tasks: Optional[Iterable[Mapping[str, Any]]] = None,
+    delivery_tasks: Iterable[Mapping[str, Any]] | None = None,
     version: str = "report_analysis_v1",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build a standard report DAG without embedding domain-specific fields.
 
-    Source tasks run in parallel.  The synthesis task consumes every source
-    result.  Optional delivery tasks consume the synthesis result and run in
-    parallel, which covers chart/report/artifact delivery without forcing one
-    mode to own the whole workflow.
+    Source tasks run in parallel. The synthesis task consumes every source
+    result and returns a report-ready brief. The parent report Agent remains
+    the single writer and closes the report package after this DAG completes.
     """
     sources = [deepcopy(dict(task)) for task in source_tasks]
     if not sources:
@@ -30,36 +30,39 @@ def build_report_analysis_workflow(
     if len(source_ids) != len(set(source_ids)):
         raise ValueError("source task_id values must be unique")
     for source in sources:
+        if source.get("target_mode") not in {"query", "expert"} or not source.get("goal"):
+            raise ValueError("source task requires target_mode query/expert and goal")
         source.setdefault("require_lineage", True)
 
     synthesis = deepcopy(dict(synthesis_task))
     synthesis_id = str(synthesis.get("task_id") or "synthesis").strip()
-    if not synthesis.get("target_mode") or not synthesis.get("goal"):
-        raise ValueError("synthesis task requires target_mode and goal")
+    if synthesis.get("target_mode") != "expert" or not synthesis.get("goal"):
+        raise ValueError("synthesis task requires target_mode expert and goal")
     synthesis["task_id"] = synthesis_id
-    synthesis["dependencies"] = list(synthesis.get("dependencies") or source_ids)
+    declared_dependencies = list(synthesis.get("dependencies") or [])
+    if declared_dependencies and set(declared_dependencies) != set(source_ids):
+        raise ValueError("synthesis dependencies must include every source task")
+    synthesis["dependencies"] = source_ids
     synthesis.setdefault("require_lineage", True)
 
-    deliveries = []
-    for task in delivery_tasks or []:
-        delivery = deepcopy(dict(task))
-        task_id = str(delivery.get("task_id") or "").strip()
-        if not task_id or not delivery.get("target_mode") or not delivery.get("goal"):
-            raise ValueError("delivery task requires task_id, target_mode and goal")
-        delivery["task_id"] = task_id
-        delivery["dependencies"] = list(delivery.get("dependencies") or [synthesis_id])
-        delivery.setdefault("require_lineage", True)
-        deliveries.append(delivery)
+    if list(delivery_tasks or []):
+        raise ValueError(
+            "report delivery tasks are not supported; the parent report Agent owns final delivery"
+        )
+
+    all_ids = source_ids + [synthesis_id]
+    if len(all_ids) != len(set(all_ids)):
+        raise ValueError("workflow task_id values must be unique")
 
     return {
         "workflow_id": workflow_id,
         "version": version,
-        "nodes": sources + [synthesis] + deliveries,
+        "nodes": sources + [synthesis],
     }
 
 
-def build_report_delivery_manifest(snapshot: Mapping[str, Any]) -> Dict[str, Any]:
-    """Normalize report conclusions, evidence and delivery artifacts."""
+def build_report_analysis_manifest(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the compact, report-ready synthesis receipt for the parent Agent."""
     definition = snapshot.get("definition") if isinstance(snapshot, Mapping) else {}
     nodes = definition.get("nodes") if isinstance(definition, Mapping) else []
     node_by_id = {
@@ -78,10 +81,6 @@ def build_report_delivery_manifest(snapshot: Mapping[str, Any]) -> Dict[str, Any
         if node.get("dependencies") and mode(node) == "expert"
     ]
     synthesis_id = synthesis_ids[-1] if synthesis_ids else None
-    delivery_ids = [
-        task_id for task_id, node in node_by_id.items()
-        if mode(node) in {"report", "chart", "report_generation"}
-    ]
     evidence, artifacts = [], []
     for lineage in lineages.values():
         if not isinstance(lineage, Mapping):
@@ -94,27 +93,30 @@ def build_report_delivery_manifest(snapshot: Mapping[str, Any]) -> Dict[str, Any
         data = synthesis_result.get("data")
         if isinstance(data, Mapping) and isinstance(data.get("result_envelope"), Mapping):
             envelope = data["result_envelope"]
-    report_artifacts = [
-        item for item in artifacts
-        if item.get("source_task_id") in delivery_ids or item.get("kind") in {"file", "report", "report_package"}
-    ]
+    synthesis_status = str(envelope.get("status") or "").strip()
+    data_gaps = list(envelope.get("data_gaps") or [])
     missing = []
     if not synthesis_id:
         missing.append("synthesis_node")
     elif (lineages.get(synthesis_id) or {}).get("status") != "complete":
         missing.append("synthesis_lineage")
-    if not delivery_ids:
-        missing.append("delivery_node")
-    if not report_artifacts:
-        missing.append("report_artifact")
+    if synthesis_status != "completed":
+        missing.append(f"synthesis_status:{synthesis_status or 'missing'}")
+    if data_gaps:
+        missing.append("synthesis_data_gaps")
     return {
-        "schema_version": "report_delivery.v1",
+        "schema_version": "report_analysis.v1",
         "status": "completed" if not missing else "completed_with_gaps",
         "synthesis_task_id": synthesis_id,
+        "synthesis_status": synthesis_status or None,
         "synthesis_outputs": envelope.get("outputs") or {},
         "evidence": evidence,
         "artifacts": artifacts,
-        "delivery_task_ids": delivery_ids,
-        "report_artifacts": report_artifacts,
+        "data_gaps": data_gaps,
         "missing": missing,
     }
+
+
+def build_report_delivery_manifest(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    """Backward-compatible alias for callers migrating to analysis-only DAGs."""
+    return build_report_analysis_manifest(snapshot)

@@ -147,8 +147,23 @@ class WorkflowJobStore:
         result = await self.redis.xadd(self.event_key(workflow_id), values, maxlen=5000, approximate=True)
         return result.decode() if isinstance(result, bytes) else str(result)
 
-    async def read_events(self, workflow_id: str, *, after_id: str = "0-0", block_ms: int = 0, count: int = 100) -> list[tuple[str, dict[str, Any]]]:
-        result = await self.redis.xread({self.event_key(workflow_id): after_id}, count=max(1, count), block=max(0, block_ms))
+    async def read_events(
+        self,
+        workflow_id: str,
+        *,
+        after_id: str = "0-0",
+        block_ms: Optional[int] = None,
+        count: int = 100,
+    ) -> list[tuple[str, dict[str, Any]]]:
+        # Redis interprets BLOCK 0 as an infinite wait.  A normal snapshot
+        # lookup must return immediately when no stream exists; only the SSE
+        # follow path supplies a positive polling timeout.
+        block = None if block_ms is None or block_ms <= 0 else block_ms
+        result = await self.redis.xread(
+            {self.event_key(workflow_id): after_id},
+            count=max(1, count),
+            block=block,
+        )
         if not result:
             return []
         rows = []
