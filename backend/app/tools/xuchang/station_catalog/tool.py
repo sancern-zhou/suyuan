@@ -9,18 +9,14 @@
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
-from .catalog import (
-    StationCatalogError,
-    load_catalog,
-    resolve_stations,
-)
+from .catalog import StationCatalogError
+from .provider import XuchangStationCatalogProvider
 
 logger = structlog.get_logger()
 
@@ -28,7 +24,8 @@ logger = structlog.get_logger()
 class XuchangStationCatalogTool(LLMTool):
     """许昌空气监测站点目录解析工具"""
 
-    def __init__(self) -> None:
+    def __init__(self, provider: XuchangStationCatalogProvider | None = None) -> None:
+        self._provider = provider or XuchangStationCatalogProvider()
         function_schema = {
             "name": "xuchang_station_catalog",
             "description": (
@@ -97,7 +94,15 @@ class XuchangStationCatalogTool(LLMTool):
         if action == "sync_knowledge_graph":
             return await self._sync_knowledge_graph(force_refresh=bool(refresh))
         try:
-            catalog = await asyncio.to_thread(load_catalog, bool(refresh))
+            stations_payload, catalog = await self._provider.resolve_legacy(
+                stations=stations,
+                station_codes=station_codes,
+                districts=districts,
+                station_type=station_type
+                if station_type in ("township", "regular", "all")
+                else "all",
+                refresh=bool(refresh),
+            )
         except StationCatalogError as exc:
             return self._failed(str(exc))
         except Exception as exc:
@@ -107,14 +112,6 @@ class XuchangStationCatalogTool(LLMTool):
                 error_type=type(exc).__name__,
             )
             return self._failed(str(exc))
-
-        stations_payload = resolve_stations(
-            catalog,
-            station_names=stations,
-            station_codes=station_codes,
-            districts=districts,
-            station_type=station_type if station_type in ("township", "regular", "all") else "all",
-        )
 
         district_names = [item.get("name") for item in (catalog.get("districts") or [])]
         metadata = {

@@ -49,6 +49,16 @@ STATION_ROWS = [
     },
 ]
 
+STATION_COORDINATES = {
+    "芙蓉广场": {
+        "station_id": "3338A",
+        "name": "芙蓉广场",
+        "longitude": 113.8428,
+        "latitude": 34.0825,
+        "source": "sqlserver:dat_station_hour",
+    },
+}
+
 FIELDS_RESPONSE = {
     "columns": [],
     "rows": [],
@@ -87,6 +97,9 @@ def fake_catalog(monkeypatch, tmp_path):
         raising=False,
     )
     monkeypatch.setattr(catalog_module, "get_airdata_platform_client", lambda: FakeClient())
+    monkeypatch.setattr(
+        catalog_module, "load_station_coordinates", lambda: STATION_COORDINATES
+    )
     return tmp_path
 
 
@@ -128,6 +141,40 @@ def test_township_coordinates_are_joined_by_station_name(fake_catalog):
     assert regular[0]["station_code"] == "1009A"
     assert regular[0]["unique_code"] == "411000408"
     assert regular[0]["type_name"] == "国控"
+
+
+def test_regular_station_coordinates_filled_from_sqlserver(fake_catalog):
+    catalog = build_catalog()
+
+    regular = catalog["regular_stations"][0]
+    assert regular["longitude"] == pytest.approx(113.8428)
+    assert regular["latitude"] == pytest.approx(34.0825)
+    assert regular["coordinate_source"] == "sqlserver:dat_station_hour"
+
+
+@pytest.mark.asyncio
+async def test_provider_returns_canonical_records(fake_catalog):
+    from app.services.station_directory import StationQuery
+    from app.tools.xuchang.station_catalog.provider import (
+        XuchangStationCatalogProvider,
+    )
+
+    provider = XuchangStationCatalogProvider()
+    records = await provider.list_stations(StationQuery(station_types=("国控",)))
+
+    assert [record.station_code for record in records] == ["1009A"]
+    assert records[0].station_category == "regular"
+    assert records[0].station_type == "国控"
+    assert records[0].longitude == pytest.approx(113.8428)
+    assert records[0].latitude == pytest.approx(34.0825)
+
+    township_records = await provider.list_stations(
+        StationQuery(station_categories=("township",))
+    )
+    assert township_records
+    assert all(
+        record.station_category == "township" for record in township_records
+    )
 
 
 def test_load_catalog_uses_cache_within_ttl(fake_catalog):

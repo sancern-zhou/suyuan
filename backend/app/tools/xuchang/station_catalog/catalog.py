@@ -24,6 +24,8 @@ from app.tools.xuchang.airdata_platform.client import (
 )
 from app.utils.path_config import get_data_registry
 
+from .coordinates import load_station_coordinates, normalize_station_name
+
 logger = structlog.get_logger()
 
 CITY_NAME = "许昌市"
@@ -152,9 +154,12 @@ def normalize_townships(
 
 
 def normalize_regular_stations(
-    rows: list[dict[str, Any]], districts: list[dict[str, Any]]
+    rows: list[dict[str, Any]],
+    districts: list[dict[str, Any]],
+    station_coordinates: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     districts_by_code = {item["areacode"]: item["name"] for item in districts}
+    station_coordinates = station_coordinates or {}
     stations: dict[str, dict[str, Any]] = {}
     for row in rows:
         code = str(row.get("stationcode") or "").strip()
@@ -164,17 +169,28 @@ def normalize_regular_stations(
             type_id = int(row.get("stationtypeid") or 0)
         except (TypeError, ValueError):
             type_id = 0
+        name = str(row.get("positionname") or "").strip() or code
+        longitude = row.get("longitude")
+        latitude = row.get("latitude")
+        coordinate_source = None
+        if longitude is None or latitude is None:
+            fallback = station_coordinates.get(normalize_station_name(name)) or {}
+            if fallback:
+                longitude = fallback.get("longitude")
+                latitude = fallback.get("latitude")
+                coordinate_source = fallback.get("source")
         stations[code] = {
             "station_code": code,
             "unique_code": str(row.get("uniquecode") or "").strip(),
-            "station_name": str(row.get("positionname") or "").strip() or code,
+            "station_name": name,
             "district": districts_by_code.get(str(row.get("areacode") or "").strip(), ""),
             "city": CITY_NAME,
             "station_type": "regular",
             "type_name": STATION_TYPE_NAME_MAP.get(type_id, "常规站"),
-            "longitude": row.get("longitude"),
-            "latitude": row.get("latitude"),
+            "longitude": longitude,
+            "latitude": latitude,
             "address": str(row.get("address") or "").strip(),
+            "coordinate_source": coordinate_source,
             "data_source": "airdata_platform:station",
         }
     return sorted(
@@ -196,6 +212,7 @@ def build_catalog() -> dict[str, Any]:
         max_rows=5000,
     )["rows"]
     coordinate_rows = load_township_coordinates()
+    station_coordinates = load_station_coordinates()
     station_rows = client.query_page(
         "station",
         filters=[{"field": "areacode", "operator": "eq", "value": CITY_CODE}],
@@ -207,7 +224,9 @@ def build_catalog() -> dict[str, Any]:
         "city": {"name": CITY_NAME, "areacode": CITY_CODE},
         "districts": districts,
         "townships": normalize_townships(town_rows, district_names, coordinate_rows),
-        "regular_stations": normalize_regular_stations(station_rows, districts),
+        "regular_stations": normalize_regular_stations(
+            station_rows, districts, station_coordinates
+        ),
     }
 
 

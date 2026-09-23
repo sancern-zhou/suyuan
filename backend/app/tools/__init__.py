@@ -400,9 +400,19 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         "xuchang_station_catalog",
     ):
         try:
+            from app.services.station_directory import get_station_directory_registry
+            from app.tools.xuchang.station_catalog.provider import (
+                XuchangStationCatalogProvider,
+            )
             from app.tools.xuchang.station_catalog.tool import XuchangStationCatalogTool
 
-            registry.register(XuchangStationCatalogTool(), priority=48)
+            station_provider = XuchangStationCatalogProvider()
+            get_station_directory_registry().register(
+                station_provider, projects=[context.manifest.project]
+            )
+            registry.register(
+                XuchangStationCatalogTool(provider=station_provider), priority=48
+            )
             logger.info("tool_loaded", tool="xuchang_station_catalog")
         except (ImportError, KeyError) as e:
             logger.warning(
