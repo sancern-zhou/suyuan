@@ -2911,6 +2911,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "① 正式报告Word/QMD静态图表 → 优先使用 create_report_chart；"
             "② 前端交互式图表/复杂数据可视化 → 使用 execute_echarts_python；"
             "③ 复杂Python绘图（3D/科研图/多子图） → 使用 execute_python + matplotlib/seaborn/plotly。"
+            "成功时会尝试为交互图登记同组 PNG 资源；复用到文档时用 list_session_resources 查找 chart-image。"
             "通用计算和文件生成仍使用 execute_python。"
         )
 
@@ -2998,7 +2999,11 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                 "每次调用是独立环境；读取输入文件须通过 input_files 声明，代码中的同名列表提供校验后的绝对路径。"
                 "仅用于图表模式的 ECharts 输出：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
-                "图表通过统一会话资源目录发布和预览，不返回独立图片 URL。"
+                "图表通过统一会话资源目录发布；成功生成的 PNG 衍生资源标记为 chart-image。"
+                "对话展示由前端自动完成，不要在回复中拼图片 URL 或输出本地路径。"
+                "将已有交互图放入 Word/QMD 时，调用 list_session_resources，设置 logical_key=chart-image、"
+                "tool_name=execute_echarts_python，从结果取得 file_path 作为文档图片输入；"
+                "若没有 chart-image，说明静态渲染未成功，可使用 create_report_chart 生成报告图片。"
                 "多图时输出多行纯 JSON。禁止输出 CHART_1: 前缀、Markdown 代码块、解释文字包裹 JSON。"
                 "数据分析、清洗、中间计算和文件生成请使用 execute_python。"
             ),

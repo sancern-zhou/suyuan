@@ -502,7 +502,12 @@ class CreateReportPackageTool(LLMTool):
                     },
                     "assets": {
                         "type": "array",
-                        "description": "真实文件路径或 {path,type,name}；见 references/index.md。",
+                        "description": (
+                            "真实文件路径或 {path,type,name}；见 references/index.md。"
+                            "复用当前会话已有 ECharts 图表时，先用 list_session_resources"
+                            "(logical_key=chart-image) 取得 PNG 的 file_path，作为 image asset；"
+                            "qmd_content 中使用报告包内的相对图片路径。"
+                        ),
                         "items": {
                             "oneOf": [
                                 {

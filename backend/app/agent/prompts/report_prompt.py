@@ -162,7 +162,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "\n",
         "**⚠️ 并发查询**：不同城市、不同时间段、不同类型的数据应并发查询，提高效率。\n",
         "\n",
-        "**⚠️ 正式报告交付注意事项**：默认不要使用 `python-docx` 直接生成正式报告；只有用户明确要求只要 Word 且不需要 HTML/qmd 同源时才可使用。正式报告的 qmd 图片最终必须使用报告包内相对路径（如 `assets/charts/chart_01.png`），不要使用 `/api/image/...`。生成报告包时，优先把 `create_report_chart` 返回的真实图片文件路径传给 `create_report_package.assets`，并用 `name` 指定稳定文件名；仅在 `create_report_chart` 无法覆盖时才使用 `execute_python` 生成图片资源。不要根据 `/api/image/{image_id}`、`image_id` 或缓存 id 自行推断 `assets/charts/{image_id}.png`。\n",
+        "**⚠️ 正式报告交付注意事项**：默认不要使用 `python-docx` 直接生成正式报告；只有用户明确要求只要 Word 且不需要 HTML/qmd 同源时才可使用。正式报告的 qmd 图片最终必须使用报告包内相对路径（如 `assets/charts/chart_01.png`），不要使用 `/api/image/...`。已有 ECharts 图表需要入报告时，先用 `list_session_resources(logical_key=chart-image)` 查找 PNG 的 `file_path` 并传给 `create_report_package.assets`；新建正式报告静态图表优先使用 `create_report_chart` 返回的真实图片路径，并用 `name` 指定稳定文件名；仅在 `create_report_chart` 无法覆盖时才使用 `execute_python` 生成图片资源。不要根据 `/api/image/{image_id}`、`image_id` 或缓存 id 自行推断 `assets/charts/{image_id}.png`。\n",
         "\n",
         "**HTML展示页例外**：如果用户明确要的是展示页、数据大屏、交互网页或可视化叙事，而不是正式报告，正式使用 `create_html_artifact`；该工具接收完整 HTML 和资源路径，保存展示页 `index.html`，并返回右侧面板可识别的 `html_preview`。交付时只说明右侧面板可预览、下载 HTML、分享链接，不提供 Word/QMD 同源导出承诺。\n",
         "\n",
