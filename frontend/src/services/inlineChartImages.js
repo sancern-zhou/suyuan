@@ -1,15 +1,28 @@
 import { getUnifiedProcessMessages, getMessageType } from '../components/reactAnalysis/messageProcessGrouping.js'
 
-export function inlineChartImages(finalMessage, messages, resources) {
+export function inlineChartImages(finalMessage, messages, resources, content = '') {
   const imageByVisualId = new Map((resources || [])
     .filter(resource => resource.resource_key === 'chart-image' && resource.status === 'active')
     .map(resource => [resource.visual_id, resource]))
   const seen = new Set()
-  return getUnifiedProcessMessages(finalMessage, messages)
+  const processMessages = getUnifiedProcessMessages(finalMessage, messages)
+  const hasReportPackage = processMessages.some(message =>
+    message.data?.tool_name === 'create_report_package'
+  )
+  return processMessages
     .filter(message => getMessageType(message) === 'tool_result'
-      && message.data?.tool_name === 'execute_echarts_python')
+      && message.data?.tool_name !== 'create_report_package'
+      && Array.isArray(message.data?.result?.visuals))
     .flatMap(message => message.data?.result?.visuals || [])
-    .map(visual => imageByVisualId.get(visual.id))
+    .filter(visual => visual?.id && (
+      !hasReportPackage || content.includes(`[[chart:${visual.id}]]`)
+    ))
+    .map(visual => ({ visual, resource: imageByVisualId.get(visual.id) }))
+    .filter(({ visual, resource }) =>
+      !(visual.image_url && content.includes(visual.image_url))
+      && !(resource?.content_url && content.includes(resource.content_url))
+    )
+    .map(({ resource }) => resource)
     .filter(resource => {
       if (!resource?.content_url || seen.has(resource.resource_id)) return false
       seen.add(resource.resource_id)

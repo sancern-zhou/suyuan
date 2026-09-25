@@ -122,6 +122,22 @@ def test_catalog_uses_group_renderer_filters_and_has_no_presentation_type():
     assert "presentation_type" not in parameters
 
 
+def test_chart_catalog_exposes_interactivity_for_current_and_existing_resources():
+    static = session_resource_routes.resource_dto(
+        "session-1",
+        stored_resource(resource_key="chart-spec", renderer="chart", tool_name="create_report_chart",
+                        metadata={"visual_id": "static-1", "type": "image"}),
+    )
+    interactive = session_resource_routes.resource_dto(
+        "session-1",
+        stored_resource(resource_key="chart-spec", renderer="chart", tool_name="execute_echarts_python",
+                        metadata={"visual_id": "interactive-1", "interactive": True}),
+    )
+    assert static["interactive"] is False
+    assert interactive["interactive"] is True
+    assert "tool_name" not in static
+
+
 def test_directory_artifact_content_url_carries_ticket_in_path():
     item = session_resource_routes.resource_dto(
         "session-1",

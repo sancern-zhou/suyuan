@@ -2862,6 +2862,9 @@ def merge_excel_with_charts(file_paths, output_path):
                 "执行环境相互隔离，不得将自行写入、拼接或猜测得到的中间数据路径交给后续工具。"
                 "生成 Excel、Word、PDF 等交付文件必须先调用 artifact_path(filename) 获取输出路径并保存；"
                 "正式报告静态图表优先使用 create_report_chart；流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
+                "生成的静态图只在对话正文展示，不进入右侧交互图面板；"
+                "最终答复可用 [[chart:<visual_id>]] 将图片放在相应分析旁，visual_id 取工具返回的 visuals.id，"
+                "未指定位置的图片由前端追加到本轮答复末尾。不要自行拼图片 URL 或本地路径。"
                 "生成文件会自动归档并发布到会话资源目录；必须复用返回的 file_path，"
                 "不得自行构造资源路径，也不要再调用 publish_session_file；默认超时30秒。"
             ),

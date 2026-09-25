@@ -30,3 +30,40 @@ test('replaces chart placeholders with the matching image resource', () => {
 test('keeps unknown chart placeholders for a later resource update', () => {
   assert.equal(renderChartPlaceholders('[[chart:missing]]', []).content, '[[chart:missing]]')
 })
+
+test('embeds static Python and report charts from the current answer', () => {
+  const user = { id: 'user', type: 'user' }
+  const python = { id: 'python', type: 'tool_result', data: {
+    tool_name: 'execute_python', result: { visuals: [{ id: 'python-chart' }] }
+  } }
+  const reportChart = { id: 'report-chart', type: 'tool_result', data: {
+    tool_name: 'create_report_chart', result: { visuals: [{ id: 'report-chart' }] }
+  } }
+  const final = { id: 'final', type: 'final' }
+  const resources = ['python-chart', 'report-chart'].map(id => ({
+    resource_id: id, resource_key: 'chart-image', visual_id: id,
+    status: 'active', content_url: `/${id}.png`
+  }))
+  assert.deepEqual(
+    inlineChartImages(final, [user, python, reportChart, final], resources).map(item => item.visual_id),
+    ['python-chart', 'report-chart']
+  )
+  const packageResult = { id: 'package', type: 'tool_result', data: { tool_name: 'create_report_package' } }
+  assert.deepEqual(
+    inlineChartImages(final, [user, reportChart, packageResult, final], resources),
+    []
+  )
+  assert.deepEqual(
+    inlineChartImages(final, [user, python, packageResult, final], resources),
+    []
+  )
+  assert.deepEqual(
+    inlineChartImages(final, [user, reportChart, packageResult, final], resources, '[[chart:report-chart]]')
+      .map(item => item.visual_id),
+    ['report-chart']
+  )
+  assert.deepEqual(
+    inlineChartImages(final, [user, reportChart, final], resources, '![图](/report-chart.png)'),
+    []
+  )
+})
