@@ -139,6 +139,10 @@ class CreateReportChartTool(LLMTool):
             "纯风向风速频率图使用 `wind_rose`；含污染物浓度的风玫瑰图才使用 "
             "`generic_pollutant_wind_rose` 或项目专用 `pollutant_wind_rose`，禁止用占位浓度替代。"
             "如需复杂/自定义图表（3D图/科研图表），请使用 execute_python + matplotlib/seaborn/plotly。"
+            "生成的静态图在对话正文展示，不进入右侧交互图面板；"
+            "单独交付图表时可在最终答复中用 [[chart:<visual_id>]] 控制位置，visual_id 取返回的 visuals.id，"
+            "未指定位置的图由前端追加到本轮答复末尾。制作正式报告时图表仍可作为报告素材复用，"
+            "报告包内部配图不会自动逐张追加到对话。不要自行拼图片 URL 或本地路径。"
         )
         for scoped_type, hint in _SCOPED_CHART_TYPE_HINTS.items():
             if not chart_type_enabled(scoped_type):

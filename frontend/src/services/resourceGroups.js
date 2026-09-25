@@ -49,6 +49,9 @@ export function topLevelProducts(groups = []) {
 
 export function preferredPreview(group) {
   const active = (group?.resources || []).filter(resource => resource.status === 'active')
+  if (group?.primary?.renderer === 'chart' && group.primary.interactive === false) {
+    return active.find(resource => resource.renderer === 'image') || group.primary
+  }
   if (group?.primary?.renderer === 'chart' && group.primary.status === 'active') return group.primary
   return active.find(resource => resource.relation === 'preview' && SUPPORTED_RENDERERS.has(resource.renderer))
     || active.find(resource => resource.relation === 'rendition' && SUPPORTED_RENDERERS.has(resource.renderer))
@@ -59,17 +62,16 @@ export function preferredPreview(group) {
 export function targetTab(group) {
   const primary = group?.primary
   if (primary?.renderer === 'board' || primary?.format === 'drawio') return 'board'
+  if (primary?.renderer === 'image' || (primary?.renderer === 'chart' && primary.interactive === false)) return 'files'
   if (
     primary?.kind === 'visual'
     || primary?.renderer === 'chart'
-    || primary?.renderer === 'image'
   ) return 'visualization'
   const resource = preferredPreview(group) || group?.primary
   if (!resource) return 'files'
   if (resource.renderer === 'board' || resource.format === 'drawio') return 'board'
   if (
     resource.renderer === 'chart'
-    || resource.renderer === 'image'
     || resource.kind === 'visual'
   ) return 'visualization'
   if (DOCUMENT_RENDERERS.has(resource.renderer)) return 'document'

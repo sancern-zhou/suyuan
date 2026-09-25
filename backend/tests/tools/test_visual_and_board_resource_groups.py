@@ -42,6 +42,7 @@ def test_chart_spec_and_image_are_one_resource_group(tmp_path, monkeypatch):
     assert chart.kind.value == "visual"
     assert chart.renderer.value == "chart"
     assert chart.media_type == "application/json"
+    assert chart.metadata["interactive"] is False
     assert rendition.relation.value == "rendition"
     assert rendition.parent_key == "chart-spec"
     spec = json.loads((tmp_path / "charts" / "chart-1.json").read_text())

@@ -45,12 +45,12 @@
         <div class="product-actions">
           <button type="button" class="open-label" @click="open(group)">{{ targetTab(group) === 'files' ? '详情' : '打开' }}</button>
           <button
-            v-if="group.primary.download_url"
+            v-if="downloadTarget(group)?.download_url"
             type="button"
             class="download"
             :disabled="Boolean(downloadingId)"
-            @click="download(group.primary)"
-          >{{ downloadingId === group.primary.resource_id ? '下载中...' : '下载' }}</button>
+            @click="download(downloadTarget(group))"
+          >{{ downloadingId === downloadTarget(group)?.resource_id ? '下载中...' : '下载' }}</button>
         </div>
       </article>
     </div>
@@ -114,6 +114,14 @@ const open = (group) => {
   resourceStore.selectGroup(sessionId, group.group_id)
   resourceStore.selectResource(sessionId, resource.resource_id)
   emit('open-resource-tab', targetTab(group))
+}
+
+const downloadTarget = group => {
+  if (group.primary?.renderer === 'chart' && group.primary.interactive === false) {
+    const image = group.resources.find(resource => resource.status === 'active' && resource.renderer === 'image' && resource.download_url)
+    if (image) return image
+  }
+  return group.primary?.download_url ? group.primary : null
 }
 
 const download = async resource => {

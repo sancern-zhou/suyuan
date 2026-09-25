@@ -487,7 +487,8 @@ const chartResourcesForMessage = message => inlineChartImages(
   props.messages,
   sessionResourceStore.activeSessionId === props.sessionId
     ? sessionResourceStore.activeSessionState?.resources
-    : []
+    : [],
+  contentToString(getMessageContent(message))
 )
 const renderedMessageContent = message => {
   const content = contentToString(getMessageContent(message))

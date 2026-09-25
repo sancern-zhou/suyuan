@@ -44,7 +44,7 @@ test('chooses the best active renderer and target tab for each group', () => {
   assert.equal(targetTab({ primary: primary({ renderer: 'file', format: 'zip' }) }), 'files')
 })
 
-test('keeps chart image renditions in visualization and treats standalone images as visual', () => {
+test('keeps interactive chart renditions in visualization and routes static images to files', () => {
   const [chartGroup] = buildResourceGroups([
     primary({ resource_id: 'chart', kind: 'visual', renderer: 'chart', format: 'json' }),
     primary({
@@ -55,7 +55,13 @@ test('keeps chart image renditions in visualization and treats standalone images
 
   assert.equal(preferredPreview(chartGroup).renderer, 'chart')
   assert.equal(targetTab(chartGroup), 'visualization')
-  assert.equal(targetTab({ primary: primary({ renderer: 'image', format: 'png' }) }), 'visualization')
+  assert.equal(targetTab({ primary: primary({ renderer: 'image', format: 'png' }) }), 'files')
+  const [staticChart] = buildResourceGroups([
+    primary({ resource_id: 'static-spec', group_id: 'static', kind: 'visual', renderer: 'chart', interactive: false }),
+    primary({ resource_id: 'static-image', group_id: 'static', relation: 'rendition', renderer: 'image', format: 'png' })
+  ])
+  assert.equal(targetTab(staticChart), 'files')
+  assert.equal(preferredPreview(staticChart).resource_id, 'static-image')
 })
 
 test('only document, visualization, and board targets request an automatic preview', () => {
