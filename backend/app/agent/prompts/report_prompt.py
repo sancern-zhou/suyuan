@@ -93,6 +93,8 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "最终只调用一次 `create_report_package`：该工具会保存 QMD、渲染 HTML/Word、执行验收并触发右侧预览；"
         "qmd 图片必须使用报告包内相对路径（如 `assets/charts/chart_01.png`），不要用 `/api/image/...`，"
         "默认不要用 `python-docx` 直接生成正式报告。\n",
+        "- 已有 ECharts 图表入报告时，用 `list_session_resources(logical_key=chart-image)` 取得 PNG 的 `file_path`，\n"
+        "作为 `create_report_package.assets` 的图片输入；新建正式报告静态图表仍用 `create_report_chart`。\n",
         edit_delivery_bullet,
         "- 展示型 HTML、数据大屏或交互叙事用 `create_html_artifact`，只承诺右侧预览、下载 HTML 和分享链接。\n",
         "- 交付说明：报告可在右侧面板预览，下载可选 QMD/Word，分享生成预览链接；"

@@ -23,6 +23,9 @@ def test_execute_echarts_python_schema_owns_data_access_contract():
     assert "图表左侧" in contract
     assert "xAxis.name" in contract
     assert "横轴右侧" in contract
+    assert "chart-image" in contract
+    assert "list_session_resources" in contract
+    assert "file_path" in contract
 
 
 def test_echarts_visuals_receive_the_preferred_browser_font_stack():

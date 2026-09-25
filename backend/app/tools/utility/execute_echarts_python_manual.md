@@ -5,7 +5,7 @@
 ## 使用边界
 
 - 前端交互式 ECharts 图表使用 `execute_echarts_python`。
-- 成功生成的交互图同时有同组 PNG 图片资源，可在对话中展示并用于文档。后续制作 Word/QMD 时调用 `list_session_resources`，查找 `logical_key=chart-image` 的图片资源；需要文件路径时设置 `include_locator=true`，使用返回的真实路径，不要重新绘制或猜测路径。
+- 交互图成功生成 PNG 时会登记同组 `chart-image` 图片资源，对话页面自动展示。制作 Word/QMD 时调用 `list_session_resources(logical_key="chart-image", tool_name="execute_echarts_python")`，直接使用结果中的 `file_path` 作为文档图片输入；无需设置 `include_locator`，不要猜测路径或在回复中拼图片 URL。若没有 `chart-image`，使用 `create_report_chart` 生成正式报告图片。
 - 正式报告 Word/QMD 中的静态图表优先使用 `create_report_chart`。
 - 数据清洗、中间计算、文件生成和 matplotlib/seaborn/plotly 绘图使用 `execute_python`。
 

@@ -25,3 +25,6 @@ def test_create_report_package_schema_points_to_real_reference_path():
     description = schema["description"]
 
     assert "backend/app/tools/report/report_package/references/index.md" in description
+    assets = schema["parameters"]["properties"]["assets"]["description"]
+    assert "chart-image" in assets
+    assert "file_path" in assets
