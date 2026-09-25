@@ -16,3 +16,19 @@ export function inlineChartImages(finalMessage, messages, resources) {
       return true
     })
 }
+
+export function renderChartPlaceholders(content, chartResources) {
+  const byVisualId = new Map((chartResources || []).map(resource => [resource.visual_id, resource]))
+  const usedResourceIds = new Set()
+  const rendered = String(content ?? '').replace(
+    /\[\[chart:([A-Za-z0-9_-]{1,100})\]\]/g,
+    (placeholder, visualId) => {
+      const resource = byVisualId.get(visualId)
+      if (!resource?.content_url) return placeholder
+      usedResourceIds.add(resource.resource_id)
+      const label = String(resource.label || visualId).replace(/[\[\]\\]/g, '')
+      return `![${label}](${resource.content_url})`
+    }
+  )
+  return { content: rendered, usedResourceIds }
+}
