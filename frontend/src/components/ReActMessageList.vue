@@ -184,11 +184,11 @@
           <!-- 【Vue 3 最佳实践】使用 key 强制重新渲染 -->
           <MarkdownRenderer
             :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}-${message.renderVersion || 0}`"
-            :content="contentToString(getMessageContent(message))"
+            :content="renderedMessageContent(message)"
             :streaming="message.streaming === true"
           />
         </div>
-        <div class="message-content" v-else>{{ contentToString(getMessageContent(message)) }}</div>
+        <div class="message-content" v-else>{{ renderedMessageContent(message) }}</div>
         <div v-if="!message.streaming && inlineImagesForFinal(message).length" class="message-content inline-chart-images">
           <MarkdownRenderer
             v-for="image in inlineImagesForFinal(message)"
@@ -360,7 +360,7 @@ import {
 import { getAgentMode } from '@/config/agentModes.js'
 import { projectConfig } from '@/config/projectConfig.js'
 import MarkdownRenderer from './MarkdownRenderer.vue'
-import { inlineChartImages } from '@/services/inlineChartImages.js'
+import { inlineChartImages, renderChartPlaceholders } from '@/services/inlineChartImages.js'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import {
   getExecutingProcessMessages,
@@ -464,13 +464,23 @@ const props = defineProps({
 
 const emit = defineEmits(['load-more', 'preview-message-attachment'])
 const sessionResourceStore = useSessionResourceStore()
-const inlineImagesForFinal = message => inlineChartImages(
+const chartResourcesForMessage = message => inlineChartImages(
   message,
   props.messages,
   sessionResourceStore.activeSessionId === props.sessionId
     ? sessionResourceStore.activeSessionState?.resources
     : []
 )
+const renderedMessageContent = message => {
+  const content = contentToString(getMessageContent(message))
+  if (!content.includes('[[chart:')) return content
+  return renderChartPlaceholders(content, chartResourcesForMessage(message)).content
+}
+const inlineImagesForFinal = message => {
+  const resources = chartResourcesForMessage(message)
+  const rendered = renderChartPlaceholders(contentToString(getMessageContent(message)), resources)
+  return resources.filter(resource => !rendered.usedResourceIds.has(resource.resource_id))
+}
 
 const messagesContainer = ref(null)
 const messagesContent = ref(null)

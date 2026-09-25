@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { inlineChartImages } from './inlineChartImages.js'
+import { inlineChartImages, renderChartPlaceholders } from './inlineChartImages.js'
 
 test('only embeds image renditions produced by the final response tool calls', () => {
   const user = { id: 'user', type: 'user' }
@@ -15,4 +15,18 @@ test('only embeds image renditions produced by the final response tool calls', (
   ]
   assert.deepEqual(inlineChartImages(final, [user, tool, final], resources).map(item => item.resource_id), ['image-a'])
   assert.deepEqual(inlineChartImages(final, [user, final], resources), [])
+})
+
+test('replaces chart placeholders with the matching image resource', () => {
+  const resource = {
+    resource_id: 'image-a', resource_key: 'chart-image', visual_id: 'chart-a',
+    label: 'trend', content_url: '/a.png'
+  }
+  const rendered = renderChartPlaceholders('before\n\n[[chart:chart-a]]\n\nafter', [resource])
+  assert.equal(rendered.content, 'before\n\n![trend](/a.png)\n\nafter')
+  assert.deepEqual([...rendered.usedResourceIds], ['image-a'])
+})
+
+test('keeps unknown chart placeholders for a later resource update', () => {
+  assert.equal(renderChartPlaceholders('[[chart:missing]]', []).content, '[[chart:missing]]')
 })

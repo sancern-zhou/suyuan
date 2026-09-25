@@ -2912,6 +2912,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "② 前端交互式图表/复杂数据可视化 → 使用 execute_echarts_python；"
             "③ 复杂Python绘图（3D/科研图/多子图） → 使用 execute_python + matplotlib/seaborn/plotly。"
             "成功时会尝试为交互图登记同组 PNG 资源；复用到文档时用 list_session_resources 查找 chart-image。"
+            "最终答复需要控制图表位置时，可使用 [[chart:<visual_id>]] 占位符；未指定位置的图表由前端统一补充。"
             "通用计算和文件生成仍使用 execute_python。"
         )
 
@@ -3001,6 +3002,9 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
                 "图表通过统一会话资源目录发布；成功生成的 PNG 衍生资源标记为 chart-image。"
                 "对话展示由前端自动完成，不要在回复中拼图片 URL 或输出本地路径。"
+                "需要控制图表在最终 Markdown 中的位置时，使用 [[chart:<visual_id>]] 占位符；"
+                "visual_id 必须来自本次工具返回的 visuals.id，前端会将占位符替换为对应 PNG。"
+                "未使用占位符的成功图表仍会由前端追加到最终答复末尾。"
                 "将已有交互图放入 Word/QMD 时，调用 list_session_resources，设置 logical_key=chart-image、"
                 "tool_name=execute_echarts_python，从结果取得 file_path 作为文档图片输入；"
                 "若没有 chart-image，说明静态渲染未成功，可使用 create_report_chart 生成报告图片。"
