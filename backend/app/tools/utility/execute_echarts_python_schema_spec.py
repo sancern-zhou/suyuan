@@ -18,6 +18,9 @@ def test_execute_echarts_python_schema_owns_data_access_contract():
     assert "stdout" in contract
     assert "series" in contract
     assert "chart-image" in contract
+    assert "PNG 静态图可嵌入对话正文" in contract
+    assert "右侧面板可查看交互版本" in contract
+    assert "不要只说图表已在右侧面板展示" in contract
     assert "list_session_resources" in contract
     assert "file_path" in contract
 
