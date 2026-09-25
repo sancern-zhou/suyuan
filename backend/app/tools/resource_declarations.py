@@ -422,7 +422,7 @@ def resources_for_visuals(
             group_key=group_key,
             tool_name=tool_name,
             label=str(visual.get("title") or payload.get("title") or visual_id),
-            metadata={"type": visual.get("type") or payload.get("type")},
+            metadata={"type": visual.get("type") or payload.get("type"), "visual_id": visual_id},
         )
         chart["resource_key"] = "chart-spec"
         resources.append(chart)
@@ -455,6 +455,7 @@ def resources_for_visuals(
                     tool_name=tool_name,
                     relation="rendition",
                     renderer="image",
+                    metadata={"visual_id": visual_id},
                 )
                 image["resource_key"] = "chart-image"
                 resources.append(image)

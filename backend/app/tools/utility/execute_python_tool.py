@@ -2973,6 +2973,16 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
         result.setdefault("metadata", {})
         result["metadata"]["tool_name"] = "execute_echarts_python"
         result["metadata"]["visuals_count"] = len(echarts_visuals)
+        for visual in echarts_visuals:
+            try:
+                from app.tools.visualization.echarts_snapshot import render_echarts_png
+
+                image_path = await asyncio.to_thread(
+                    render_echarts_png, visual["data"], visual["id"]
+                )
+                visual["local_path"] = str(image_path)
+            except Exception as exc:
+                logger.warning("echarts_snapshot_failed", visual_id=visual.get("id"), error=str(exc))
         result.setdefault("resources", []).extend(
             resources_for_visuals(echarts_visuals, tool_name=self.name)
         )

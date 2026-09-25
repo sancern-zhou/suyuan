@@ -129,6 +129,8 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
     }
+    if item.resource_key in {"chart-spec", "chart-image"}:
+        dto["visual_id"] = item.metadata.get("visual_id")
     board_id = _board_id_from_resource(item)
     if board_id:
         dto["board_id"] = board_id

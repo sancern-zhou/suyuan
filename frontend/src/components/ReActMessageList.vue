@@ -189,6 +189,13 @@
           />
         </div>
         <div class="message-content" v-else>{{ contentToString(getMessageContent(message)) }}</div>
+        <div v-if="!message.streaming && inlineImagesForFinal(message).length" class="message-content inline-chart-images">
+          <MarkdownRenderer
+            v-for="image in inlineImagesForFinal(message)"
+            :key="image.resource_id"
+            :content="`![${image.label.replace(/[\\[\\]\\\\]/g, '')}](${image.content_url})`"
+          />
+        </div>
 
         <!-- 多专家系统：直接显示报告内容，无额外装饰 -->
         <div v-if="message.data?.expert_results?.report && reportContentCacheMap.get(message.data.expert_results.report)" class="expert-report-content">
@@ -372,6 +379,7 @@ import {
 import { getAgentMode } from '@/config/agentModes.js'
 import { projectConfig } from '@/config/projectConfig.js'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import { inlineChartImages } from '@/services/inlineChartImages.js'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import {
   getExecutingProcessMessages,
@@ -474,6 +482,13 @@ const props = defineProps({
 
 const emit = defineEmits(['load-more', 'preview-message-attachment'])
 const sessionResourceStore = useSessionResourceStore()
+const inlineImagesForFinal = message => inlineChartImages(
+  message,
+  props.messages,
+  sessionResourceStore.activeSessionId === props.sessionId
+    ? sessionResourceStore.activeSessionState?.resources
+    : []
+)
 
 const messagesContainer = ref(null)
 const messagesContent = ref(null)

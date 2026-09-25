@@ -52,9 +52,12 @@ const rendererComponent = computed(() => RENDERERS[rendererKey(props.resource)])
 const renderKey = computed(() => (
   `${props.resource.resource_id}:${props.resource.version}:${retryVersion.value}`
 ))
+const chartImage = computed(() => props.group.resources?.find(resource =>
+  resource.resource_key === 'chart-image' && resource.status === 'active' && resource.download_url
+))
 const downloadTarget = computed(() => props.group.primary?.download_url
   ? props.group.primary
-  : props.resource)
+  : chartImage.value || props.resource)
 const isChart = computed(() => rendererKey(props.resource) === 'chart')
 const chartFileName = computed(() => {
   const label = props.group.primary?.label || props.resource.label || '图表'
@@ -83,7 +86,7 @@ const download = async () => {
   downloading.value = true
   downloadError.value = ''
   try {
-    if (isChart.value) {
+    if (isChart.value && !chartImage.value) {
       await downloadChartImage()
     } else {
       await downloadResource(downloadTarget.value)

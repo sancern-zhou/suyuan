@@ -18,13 +18,13 @@ test('shows chart and image groups in first-produced order', () => {
   assert.deepEqual(items.map(item => item.group.group_id), ['old', 'new'])
 })
 
-test('keeps one card per group and uses its preferred preview', () => {
+test('keeps one interactive chart card per group with an image rendition', () => {
   const items = visualizationGalleryItems([
     visual(),
     visual({ resource_id: 'chart-1-image', relation: 'rendition', renderer: 'image', format: 'png' })
   ])
   assert.equal(items.length, 1)
-  assert.equal(items[0].resource.resource_id, 'chart-1-image')
+  assert.equal(items[0].resource.resource_id, 'chart-1')
 })
 
 test('can include an explicitly opened visual attachment', () => {

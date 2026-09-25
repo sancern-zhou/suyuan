@@ -49,6 +49,7 @@ export function topLevelProducts(groups = []) {
 
 export function preferredPreview(group) {
   const active = (group?.resources || []).filter(resource => resource.status === 'active')
+  if (group?.primary?.renderer === 'chart' && group.primary.status === 'active') return group.primary
   return active.find(resource => resource.relation === 'preview' && SUPPORTED_RENDERERS.has(resource.renderer))
     || active.find(resource => resource.relation === 'rendition' && SUPPORTED_RENDERERS.has(resource.renderer))
     || group?.primary

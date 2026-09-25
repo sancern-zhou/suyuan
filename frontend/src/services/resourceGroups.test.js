@@ -53,7 +53,7 @@ test('keeps chart image renditions in visualization and treats standalone images
     })
   ])
 
-  assert.equal(preferredPreview(chartGroup).renderer, 'image')
+  assert.equal(preferredPreview(chartGroup).renderer, 'chart')
   assert.equal(targetTab(chartGroup), 'visualization')
   assert.equal(targetTab({ primary: primary({ renderer: 'image', format: 'png' }) }), 'visualization')
 })
