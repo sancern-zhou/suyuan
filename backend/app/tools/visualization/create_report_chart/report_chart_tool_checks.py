@@ -36,13 +36,16 @@ def test_schema_stays_compact_and_points_to_progressive_references():
         "style_profile",
         "notes",
         "options",
+        "data_policy",
+        "emphasis",
+        "annotations",
     }
     assert schema["parameters"]["required"] == ["chart_type", "title"]
     assert schema["parameters"]["anyOf"] == [
         {"required": ["data"]},
         {"required": ["file_path"]},
     ]
-    assert len(str(schema)) < 7000
+    assert len(str(schema)) < 10000
     assert "references/index.md" in schema["description"]
     assert "两层规范" in schema["description"]
     assert "无需另读输入、A4 或布局规范" in schema["description"]
@@ -91,6 +94,29 @@ def test_schema_stays_compact_and_points_to_progressive_references():
     assert "reference_lines" in properties["options"]["description"]
     assert "wind_direction_convention" in properties["options"]["description"]
     assert "east_u/north_v" in properties["options"]["description"]
+
+
+@pytest.mark.asyncio
+async def test_bar_theme_supports_semantic_annotations_sorting_and_notes():
+    result = await CreateReportChartTool().execute(
+        chart_id="bar_theme_v2_case",
+        chart_type="bar",
+        title="城市金额",
+        data={"labels": ["甲", "乙", "丙"], "values": [10, 30, 20]},
+        data_policy={"sort": "descending"},
+        emphasis={"items": ["乙"], "mode": "primary"},
+        annotations=[
+            {"kind": "value", "target": "bars", "format": "{value:,.1f}", "placement": "auto"}
+        ],
+        notes=["按去重后口径", "单位：万元"],
+    )
+
+    assert result["success"] is True
+    metadata = result["data"]["metadata"]
+    assert metadata["theme_version"] == "report_v2"
+    assert metadata["data_policy"] == {"sort": "descending"}
+    assert metadata["annotation_count"] == 3
+    assert metadata["notes"] == ["按去重后口径", "单位：万元"]
 
 
 @pytest.mark.asyncio

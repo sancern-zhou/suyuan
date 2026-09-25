@@ -12,6 +12,10 @@ from matplotlib.transforms import Bbox
 
 WORD_SOURCE_WIDTH_IN = 8.2
 WORD_TARGET_WIDTH_IN = 5.8
+# 字体回算用的源宽度：故意小于画布宽度 WORD_SOURCE_WIDTH_IN，
+# 使插入 Word（目标宽 5.8in）后的页面字号整体缩小。
+# 补偿比值 = WORD_FONT_SOURCE_WIDTH_IN / WORD_TARGET_WIDTH_IN = 6.96 / 5.8 = 1.2
+WORD_FONT_SOURCE_WIDTH_IN = 6.96
 DEFAULT_SPACING_PX = 3.0
 BOUNDARY_PADDING_PX = 3.0
 MAX_FONT_REDUCTION_PASSES = 10
@@ -560,16 +564,22 @@ def _thin_overlapping_ticks(fig, registry: TextLayoutRegistry) -> dict[str, Any]
                 # floor, retain one scale marker instead of shipping two
                 # illegible labels. Prefer the first X endpoint and the last Y
                 # endpoint; omitted text remains recoverable in metadata.
-                item = labels[0] if domain.startswith("y_ticks:") else labels[1]
-                item.artist.set_visible(False)
-                actions["thinned_ticks"] += 1
-                omitted_items.append(
-                    {
-                        "role": item.role,
-                        "label": item.artist.get_text(),
-                        "reason": "overlapping_tick_labels",
-                    }
-                )
+                # Extremely long endpoint labels are not useful as a single
+                # surviving scale marker; omit both and keep the full values
+                # in metadata for callers that need them.
+                omit_items = labels if domain.startswith("x_ticks:") and all(
+                    len(str(item.artist.get_text())) > 24 for item in labels
+                ) else [labels[0] if domain.startswith("y_ticks:") else labels[1]]
+                for item in omit_items:
+                    item.artist.set_visible(False)
+                    actions["thinned_ticks"] += 1
+                    omitted_items.append(
+                        {
+                            "role": item.role,
+                            "label": item.artist.get_text(),
+                            "reason": "overlapping_tick_labels",
+                        }
+                    )
                 changed = True
                 continue
             keep = {0, len(labels) - 1}
@@ -816,7 +826,7 @@ def _nudge_pie_labels_inside_figure(fig, items: Sequence[LayoutTextItem]) -> Non
 
 def _source_font(final_pt: float, output_context: str) -> float:
     if output_context == "word":
-        return final_pt * WORD_SOURCE_WIDTH_IN / WORD_TARGET_WIDTH_IN
+        return final_pt * WORD_FONT_SOURCE_WIDTH_IN / WORD_TARGET_WIDTH_IN
     return final_pt
 
 
