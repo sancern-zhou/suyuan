@@ -437,11 +437,23 @@ async def get_session_resource_content(
         "Access-Control-Allow-Origin": "*",
     }
     if media_type == "text/html":
-        headers["Content-Security-Policy"] = (
-            "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-            "script-src 'self' 'unsafe-inline'; font-src 'self' data:; "
-            "object-src 'none'; base-uri 'none'"
-        )
+        if target.name.startswith("xuchang_air_quality_daily_review_"):
+            # This standalone report embeds AMap JSAPI and an inline timeline.
+            # Keep the relaxation scoped to its generated report filename.
+            headers["Content-Security-Policy"] = (
+                "default-src 'self'; img-src 'self' data: blob: https:; "
+                "style-src 'self' 'unsafe-inline' https:; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+                "https://webapi.amap.com https://restapi.amap.com https://a.amap.com; "
+                "connect-src 'self' https:; font-src 'self' data: https:; "
+                "worker-src 'self' blob:; object-src 'none'; base-uri 'none'"
+            )
+        else:
+            headers["Content-Security-Policy"] = (
+                "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+                "script-src 'self' 'unsafe-inline'; font-src 'self' data:; "
+                "object-src 'none'; base-uri 'none'"
+            )
     filename = target.name if asset_path is not None else (resource.label or target.name)
     response = FileResponse(
         path=target,

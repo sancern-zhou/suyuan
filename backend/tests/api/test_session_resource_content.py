@@ -266,6 +266,29 @@ async def test_html_preview_allows_quarto_assets_from_opaque_sandbox_origin(
     assert "font-src 'self' data:" in html.headers["content-security-policy"]
 
 
+@pytest.mark.asyncio
+async def test_xuchang_map_report_preview_allows_amap_and_inline_timeline(tmp_path, monkeypatch):
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    report = registry / "xuchang_air_quality_daily_review_20260925.html"
+    report.write_text("<script src='https://webapi.amap.com/maps?v=2.0'></script><script>init()</script>")
+    install_service(
+        monkeypatch,
+        stored(report, media_type="text/html", format="html", renderer="html"),
+    )
+    monkeypatch.setattr(session_resource_routes, "get_data_registry", lambda: registry)
+
+    response = await session_resource_routes.get_session_resource_content(
+        "session-1", "resource-1", user=object(), catalog=Catalog()
+    )
+
+    policy = response.headers["content-security-policy"]
+    assert "'unsafe-inline'" in policy
+    assert "'unsafe-eval'" in policy
+    assert "https://webapi.amap.com" in policy
+    assert "connect-src 'self' https:" in policy
+
+
 def _ticket_path_artifact(tmp_path, monkeypatch):
     registry = tmp_path / "registry"
     artifact = registry / "artifact"
