@@ -274,6 +274,7 @@ def test_report_formats_lists_available_exports_with_download_urls():
         report_dir = reports_root / "report-abc"
         report_dir.mkdir(parents=True)
         (report_dir / "report.html").write_text("<html>ok</html>", encoding="utf-8")
+        (report_dir / "report.export.html").write_text("<html>standalone</html>", encoding="utf-8")
         (report_dir / "report.docx").write_bytes(b"docx-bytes")
 
         for app, service, task, records, _dir in _make_app(temp_dir):
@@ -295,12 +296,21 @@ def test_report_formats_lists_available_exports_with_download_urls():
                 body = resp.json()
                 by_format = {item["format"]: item for item in body["formats"]}
                 assert set(by_format) == {"docx", "html"}
+                assert by_format["html"]["filename"] == "report.export.html"
                 assert "attachment" in by_format["docx"]["url"]
 
                 # 下载请求使用 attachment 处置
                 resp = client.get(by_format["docx"]["url"])
                 assert resp.status_code == 200
                 assert resp.headers["content-disposition"].startswith("attachment")
+
+                resp = client.get(by_format["html"]["url"])
+                assert resp.status_code == 200
+                assert resp.content == b"<html>standalone</html>"
+
+                (report_dir / "report.export.html").unlink()
+                resp = client.get("/api/scheduled-tasks/results/exec-1/report/formats")
+                assert next(item for item in resp.json()["formats"] if item["format"] == "html")["filename"] == "report.html"
 
                 # 不存在的格式不会列出；QMD 源文件未生成时不出现
                 records[0].report_refs = []
@@ -398,6 +408,20 @@ def test_report_accepts_path_segment_ticket_without_user():
                 assert resp.content == b"<html>ok</html>"
                 # 回归：attachment 会让 iframe 触发下载而非渲染，必须为 inline
                 assert resp.headers["content-disposition"].startswith("inline")
+                assert "webapi.amap.com" not in resp.headers["content-security-policy"]
+
+                map_dir = reports_root / "xuchang_daily_review_demo"
+                map_dir.mkdir()
+                (map_dir / "report.html").write_text("<html>map</html>", encoding="utf-8")
+                records[0].report_refs = [{"kind": "report", "ref": map_dir.name}]
+                map_resp = client.get(
+                    f"/api/scheduled-tasks/results/exec-1/report/_t/{ticket}/report.html"
+                )
+                assert map_resp.status_code == 200
+                map_csp = map_resp.headers["content-security-policy"]
+                assert "https://*.amap.com" in map_csp
+                assert "https://*.autonavi.com" in map_csp
+                records[0].report_refs = [{"kind": "report", "ref": "report-abc"}]
 
                 # 相对资源继承同一路径票据
                 resp = client.get(

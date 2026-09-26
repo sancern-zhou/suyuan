@@ -151,7 +151,7 @@
           :src="reportUrl"
           class="report-frame"
           sandbox="allow-scripts"
-          referrerpolicy="no-referrer"
+          referrerpolicy="origin"
           title="报告预览"
         ></iframe>
       </div>

@@ -818,6 +818,7 @@ async def get_task_result_file(
 _REPORT_EXPORT_FORMATS = (
     ("report.docx", "Word 文档", "docx"),
     ("report.pdf", "PDF 文档", "pdf"),
+    ("report.export.html", "HTML 文件", "html"),
     ("report.html", "HTML 文件", "html"),
     ("report.qmd", "源文件（QMD）", "qmd"),
 )
@@ -840,14 +841,18 @@ async def list_task_result_report_formats(
     report_dir = _result_report_dir(result)
     formats: List[Dict[str, Any]] = []
     if report_dir is not None and report_dir.is_dir():
+        listed_formats: set[str] = set()
         ticket = _result_preview_ticket(execution_id)
         base = (
             f"/api/scheduled-tasks/results/{execution_id}"
             f"/report/_t/{ticket}"
         )
         for filename, label, fmt in _REPORT_EXPORT_FORMATS:
+            if fmt in listed_formats:
+                continue
             candidate = report_dir / filename
             if candidate.is_file():
+                listed_formats.add(fmt)
                 formats.append({
                     "format": fmt,
                     "label": label,
@@ -902,11 +907,23 @@ async def get_task_result_report(
         "Access-Control-Allow-Origin": "*",
     }
     if media_type == "text/html" and disposition == "inline":
-        headers["Content-Security-Policy"] = (
-            "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-            "script-src 'self' 'unsafe-inline'; font-src 'self' data:; "
-            "object-src 'none'; base-uri 'none'"
-        )
+        if report_dir.name.startswith("xuchang_daily_review_"):
+            # Interactive AMap needs JSAPI, tile images and HTTPS data requests.
+            # Keep third-party access scoped to this report family.
+            headers["Content-Security-Policy"] = (
+                "default-src 'self'; img-src 'self' data: blob: https:; "
+                "style-src 'self' 'unsafe-inline' https:; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+                "https://*.amap.com https://*.autonavi.com; "
+                "connect-src 'self' https:; font-src 'self' data: https:; "
+                "worker-src 'self' blob:; object-src 'none'; base-uri 'none'"
+            )
+        else:
+            headers["Content-Security-Policy"] = (
+                "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+                "script-src 'self' 'unsafe-inline'; font-src 'self' data:; "
+                "object-src 'none'; base-uri 'none'"
+            )
     return FileResponse(
         path=target,
         media_type=media_type,
