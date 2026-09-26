@@ -89,6 +89,23 @@ class _JiangsuApiTool(LLMTool):
             raise ValueError(str(payload.get("msg") or "江苏接口返回失败"))
         return payload
 
+    async def _post_json(self, endpoint: str, body: dict[str, Any]) -> dict[str, Any]:
+        """POST + JSON body variant of _get for endpoints that reject GET (405)."""
+        self._validate_config()
+        token = await self._get_token()
+        headers = {"Authorization": f"Bearer {token}", "SysCode": "SunAirProvince"}
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            response = await client.post(f"{self.base_url}/{endpoint}", json=body, headers=headers)
+            if response.status_code == 401:
+                self._token = None
+                headers["Authorization"] = f"Bearer {await self._get_token()}"
+                response = await client.post(f"{self.base_url}/{endpoint}", json=body, headers=headers)
+        response.raise_for_status()
+        payload = response.json()
+        if not payload.get("success") or int(payload.get("state", 500)) != 200:
+            raise ValueError(str(payload.get("msg") or "江苏接口返回失败"))
+        return payload
+
     async def _resolve_area_codes(
         self, codes: list[str] | None, area_names: list[str] | None, scope: str
     ) -> list[str]:
@@ -400,11 +417,17 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
         "station_effective_rate",
         "station_receive_rate",
     }
+    # 两率端点（GetStation*RateQueryDataPage）只接受 POST + JSON body：
+    # GET 返回 405，POST 查询串返回 415；body 形如 {"codes": [...],
+    # "timePoint": [start, end], "dataType": 1, "skipCount": 0, "maxResultCount": n}。
+    _RATE_STATISTIC_KINDS = {"station_transfer_rate", "station_effective_rate", "station_receive_rate"}
 
     def __init__(self) -> None:
+        self._directory_rows: list[dict[str, Any]] | None = None
+        self._directory_lock = asyncio.Lock()
         super().__init__(
             name="jiangsu_query_statistics", description="查询江苏省城市、区县、站点的均值浓度、排名、综合指数及传输率、有效率等平台统计结果。",
-            category=ToolCategory.QUERY, version="1.1.0",
+            category=ToolCategory.QUERY, version="1.3.0",
             function_schema={
                 "name": "jiangsu_query_statistics",
                 "description": (
@@ -415,13 +438,20 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
                     "same_compare, same_compare_rank, same_compare_*_name}}，同一档位内各指标的持有区域互相独立；"
                     "空值字段已剔除，全部指标为空的区域仅列入 metadata.no_data_names；"
                     "超过24条时完整结果外部化保存为文件，data 仅返回首尾样本，可用 file_path 读取。"
-                    "district_rank 查询全省所有区县时，codes 可传 jiangsu_resolve_geography 解析出的全部区县编码；"
-                    "站点编码未知时，可先用 jiangsu_fetch_station_directory 或 jiangsu_resolve_geography 解析再传入 codes。"
+                    "district_rank 查询全省所有区县时，codes 可传 jiangsu_resolve_geography 解析出的全部区县编码。"
+                    "站点级统计（station_rank/station_o3_rank/station_overday/传输率/有效率/接收率）支持三种选站方式："
+                    "直接传 codes；或传 city_names/district_names/station_names 名称（按平台实时站点目录自动映射辖区站点编码，城市名传“江苏省”即全网）；"
+                    "或全部省略——默认全省省控站点（station_type 可改选国控/省控/市控；city_names 传“江苏省”可覆盖目录内全部类型站点）。"
+                    "传输率/有效率/接收率结果为每站点一行、按污染物列出率值（SO2/NO2/PM2.5/PM10/CO/O3，接收率另含 AQI 与 totalReceiveRate 综合率）以及 rank 全网排名；"
+                    "窗口内无数据的站点不会出现在结果中。"
                 ),
                 "parameters": {"type": "object", "properties": {
                     "statistic_kind": {"type": "string", "enum": list(self._ENDPOINTS), "description": "统计类型。city_rank/district_rank/station_rank/station_o3_rank 为时段平均浓度排名（station_rank 按站点、district_rank 按区县、city_rank 按城市）；station_overday 为超标天数；station_transfer_rate/station_effective_rate/station_receive_rate 为传输率/有效率/接收率。"},
-                    "codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "城市、区县或站点编码，最多300个；可先用 jiangsu_resolve_geography 将名称解析为编码。"},
-                    "station_type": {"type": "string", "enum": ["全部", "国控", "省控", "市控"], "default": "全部", "description": "仅 station_rank/station_o3_rank/station_overday/传输率/有效率/接收率生效；按实时站点目录过滤站点编码，默认全部。city_rank/district_rank 是平台区域汇总口径，不支持该维度。"},
+                    "codes": {"type": "array", "items": {"type": "string"}, "description": "城市、区县或站点编码，最多300个。站点级统计可省略（默认全网站点）或改用名称参数；city_rank/district_rank 必传。"},
+                    "city_names": {"type": "array", "items": {"type": "string"}, "description": "城市名称（如 南京市；江苏省=全网），站点级统计专用；按实时站点目录自动映射辖区站点编码，可与 codes 并用。"},
+                    "district_names": {"type": "array", "items": {"type": "string"}, "description": "区县名称（如 海门区），站点级统计专用；自动映射辖区站点编码。"},
+                    "station_names": {"type": "array", "items": {"type": "string"}, "description": "站点名称（如 海门城悦建筑），站点级统计专用；自动映射站点编码。"},
+                    "station_type": {"type": "string", "enum": ["全部", "国控", "省控", "市控"], "default": "全部", "description": "仅 station_rank/station_o3_rank/station_overday/传输率/有效率/接收率生效；按实时站点目录过滤站点编码。未传任何站点/区域参数时，缺省按省控站点子集查询。city_rank/district_rank 是平台区域汇总口径，不支持该维度。"},
                     "start_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
                     "end_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
                     "data_type": {"type": "integer", "enum": [0, 1, 2, 3], "default": 1,
@@ -430,7 +460,7 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
                     "cal_area_type": {"type": "integer", "description": "城市/区县排名的计算区域类型，可选。"},
                     "ascending": {"type": "boolean", "description": "排名升序，默认 true。"},
                     "max_results": {"type": "integer", "minimum": 1, "maximum": 1000},
-                }, "required": ["statistic_kind", "codes", "start_time", "end_time"]},
+                }, "required": ["statistic_kind", "start_time", "end_time"]},
             },
         )
 
@@ -438,12 +468,25 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
                       start_time: str | None = None, end_time: str | None = None, data_type: int = 1,
                       pollutant_code: str | None = None, cal_area_type: int | None = None,
                       ascending: bool = True, max_results: int = 200,
-                      station_type: str | None = None, **_: Any) -> dict[str, Any]:
+                      station_type: str | None = None,
+                      station_names: list[str] | None = None, city_names: list[str] | None = None,
+                      district_names: list[str] | None = None, **_: Any) -> dict[str, Any]:
         try:
             if statistic_kind not in self._ENDPOINTS:
                 raise ValueError("不支持的 statistic_kind")
-            if not codes or len(codes) > 300 or not all(isinstance(code, str) and code.strip() for code in codes):
-                raise ValueError("codes 需要 1 至 300 个有效编码")
+            is_station_kind = statistic_kind in self._STATION_STATISTIC_KINDS
+            resolved_codes = [str(code).strip() for code in codes or [] if isinstance(code, str) and code.strip()]
+            if len(resolved_codes) > 300:
+                raise ValueError("codes 最多 300 个编码")
+            for values in (station_names, city_names, district_names):
+                if values is not None and (
+                    not isinstance(values, list) or not values
+                    or not all(isinstance(v, str) and v.strip() for v in values)
+                ):
+                    raise ValueError("station_names/city_names/district_names 必须是非空字符串数组")
+            has_names = bool(station_names or city_names or district_names)
+            if not is_station_kind and (has_names or not resolved_codes):
+                raise ValueError("city_rank/district_rank 必须传 codes；名称映射与全网缺省仅站点级统计支持")
             if data_type not in self._DATA_TYPES:
                 raise ValueError("data_type 必须为 0、1、2 或 3")
             if statistic_kind == "station_overday" and not pollutant_code:
@@ -453,37 +496,80 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
             if station_type is not None and normalize_station_type(station_type, allow_all=True) is None:
                 raise ValueError("station_type 必须为 全部、国控、省控或市控")
             effective_station_type = normalize_station_type(station_type, allow_all=True) or "全部"
-            if effective_station_type != "全部" and statistic_kind not in self._STATION_STATISTIC_KINDS:
+            if effective_station_type != "全部" and not is_station_kind:
                 raise ValueError("station_type 仅适用于站点排名、超标天数、传输率、有效率和接收率统计；city_rank/district_rank 不支持")
             station_type_filter_applied = False
-            if effective_station_type != "全部" and statistic_kind in self._STATION_STATISTIC_KINDS:
-                directory_payload = await self._get("AirCityProductBase/GetAllEnabledBSDStationAsync", [])
-                directory_rows = [row for row in directory_payload.get("result") or [] if isinstance(row, dict)]
-                typed_rows, station_type_filter_applied = filter_station_rows(directory_rows, effective_station_type)
+            codes_source = "explicit"
+            # 名称解析与全网缺省都依赖实时站点目录；显式编码+全部类型时保持原有行为不查目录。
+            if is_station_kind and (has_names or not resolved_codes or effective_station_type != "全部"):
+                typed_rows, station_type_filter_applied = await self._typed_station_rows(effective_station_type)
                 allowed_codes = {
                     str(row.get("stationCode") or row.get("StationCode") or "").strip()
                     for row in typed_rows
                 }
                 allowed_codes.discard("")
-                if station_type_filter_applied:
-                    codes = [code for code in codes if code in allowed_codes]
-                    if not codes:
+                if has_names:
+                    name_codes = [
+                        code for code in self._match_station_codes(
+                            typed_rows, station_names, city_names, district_names)
+                        if code in allowed_codes
+                    ]
+                    resolved_codes = list(dict.fromkeys(resolved_codes + name_codes))
+                    codes_source = "names"
+                    if not resolved_codes:
+                        raise ValueError("名称解析后没有可查询的站点，请检查名称与 station_type 过滤条件")
+                elif not resolved_codes:
+                    # 未指定任何站点/区域：缺省全省省控站点（station_type 显式指定时用该子集）。
+                    # 平台不支持省略 codes 的全网查询；全类型目录 1439 站一次请求会超时。
+                    default_type = effective_station_type if effective_station_type != "全部" else "省控"
+                    typed_rows, station_type_filter_applied = await self._typed_station_rows(default_type)
+                    allowed_codes = {
+                        str(row.get("stationCode") or row.get("StationCode") or "").strip()
+                        for row in typed_rows
+                    }
+                    allowed_codes.discard("")
+                    resolved_codes = sorted(allowed_codes)
+                    codes_source = "network_default"
+                elif station_type_filter_applied:
+                    resolved_codes = [code for code in resolved_codes if code in allowed_codes]
+                    if not resolved_codes:
                         raise ValueError(f"站点编码中没有{effective_station_type}站点")
             self._parse_range(start_time, end_time)
-            code_field = self._CODE_FIELDS[statistic_kind]
-            params: list[tuple[str, Any]] = [("skipCount", 0), ("maxResultCount", max_results)]
-            params.extend((f"{code_field}[{index}]", code.strip()) for index, code in enumerate(codes))
-            params.extend([("TimePoint[0]", start_time), ("TimePoint[1]", end_time), ("DataType", data_type)])
-            if statistic_kind not in {"station_transfer_rate", "station_effective_rate", "station_receive_rate"}:
-                params.extend([("TimeType", 100), ("IsAsc", str(bool(ascending)).lower())])
-            if pollutant_code:
-                params.append(("PollutantCode", pollutant_code))
-            if cal_area_type is not None:
-                params.append(("CalAreaType", cal_area_type))
             endpoint = f"dataanalysis/StationDataStatisticQuery/{self._ENDPOINTS[statistic_kind]}"
-            payload = await self._get(endpoint, params)
-            result = payload.get("result") or {}
-            items = result.get("items", []) if isinstance(result, dict) else []
+            if statistic_kind in self._RATE_STATISTIC_KINDS:
+                # 两率 POST：编码过多平台会超时，按 200 一批串行取回合并（与明细工具分批同思路）；
+                # 平台对无数据站点回填无站号的 0 值占位行（rank=99999），丢弃。
+                items = []
+                for start in range(0, len(resolved_codes), 200):
+                    chunk = resolved_codes[start:start + 200]
+                    payload = await self._post_json(endpoint, {
+                        "codes": chunk,
+                        "timePoint": [start_time, end_time],
+                        "dataType": data_type,
+                        "skipCount": 0,
+                        "maxResultCount": min(1000, max(max_results, len(chunk))),
+                    })
+                    result = payload.get("result") or {}
+                    raw_items = result.get("items", []) if isinstance(result, dict) else []
+                    items.extend(
+                        row for row in raw_items
+                        if isinstance(row, dict) and row.get("stationCode")
+                    )
+                total_count = len(items)
+            else:
+                code_field = self._CODE_FIELDS[statistic_kind]
+                params: list[tuple[str, Any]] = [("skipCount", 0), ("maxResultCount", max_results)]
+                params.extend((f"{code_field}[{index}]", code.strip()) for index, code in enumerate(resolved_codes))
+                params.extend([("TimePoint[0]", start_time), ("TimePoint[1]", end_time), ("DataType", data_type)])
+                params.extend([("TimeType", 100), ("IsAsc", str(bool(ascending)).lower())])
+                if pollutant_code:
+                    params.append(("PollutantCode", pollutant_code))
+                if cal_area_type is not None:
+                    params.append(("CalAreaType", cal_area_type))
+                payload = await self._get(endpoint, params)
+                result = payload.get("result") or {}
+                items = result.get("items", []) if isinstance(result, dict) else []
+                total_count = result.get("totalCount", len(items))
             compact_items, filter_metadata = compact_statistics_records(items)
             inline_items, filtered_file_path, externalization = externalize_compact_records(
                 compact_items,
@@ -492,11 +578,13 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
                 metadata={"source_tool": self.name, "source_record_count": len(items)},
             )
             metadata = {"source": "jiangsu_air_province_api", "endpoint": endpoint,
-                        "statistic_kind": statistic_kind, "codes": codes, "station_type": effective_station_type,
+                        "statistic_kind": statistic_kind, "codes": resolved_codes,
+                        "codes_source": codes_source, "station_count": len(resolved_codes),
+                        "station_type": effective_station_type,
                         "station_type_filter_applied": station_type_filter_applied,
                         "time_range": [start_time, end_time],
                         "data_type": data_type, "data_type_label": self._DATA_TYPES[data_type],
-                        "total_count": result.get("totalCount", len(items)), "record_count": len(compact_items),
+                        "total_count": total_count, "record_count": len(compact_items),
                         "queried_at": datetime.now().astimezone().isoformat(), **filter_metadata}
             metadata["context_data"] = externalization
             return {
@@ -509,3 +597,57 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
         except (ValueError, httpx.HTTPError) as exc:
             logger.warning("jiangsu_statistics_failed", statistic_kind=statistic_kind, error=str(exc))
             return {"status": "failed", "success": False, "data": [], "summary": f"江苏统计查询失败：{exc}"}
+
+    async def _typed_station_rows(self, station_type: str) -> tuple[list[dict[str, Any]], bool]:
+        """Live station directory (cached) filtered by station_type: (rows, filter_applied)."""
+        if self._directory_rows is None:
+            async with self._directory_lock:
+                if self._directory_rows is None:
+                    payload = await self._get("AirCityProductBase/GetAllEnabledBSDStationAsync", [])
+                    self._directory_rows = [
+                        row for row in payload.get("result") or [] if isinstance(row, dict)
+                    ]
+        return filter_station_rows(self._directory_rows or [], station_type)
+
+    @staticmethod
+    def _norm_name(value: Any) -> str:
+        return str(value or "").strip().replace(" ", "").rstrip("省市区县")
+
+    def _match_station_codes(
+        self,
+        rows: list[dict[str, Any]],
+        station_names: list[str] | None,
+        city_names: list[str] | None,
+        district_names: list[str] | None,
+    ) -> list[str]:
+        """Name → station-code mapping, same matching rules as the data tools."""
+        def code_of(row: dict[str, Any]) -> str:
+            return str(row.get("stationCode") or row.get("StationCode") or "").strip()
+
+        codes: list[str] = []
+        for name in station_names or []:
+            target = self._norm_name(name)
+            matches = [code_of(row) for row in rows if self._norm_name(row.get("positionName")) == target]
+            if not matches:
+                raise ValueError(f"未在江苏站点目录中找到“{name}”")
+            codes.extend(matches)
+        for city in city_names or []:
+            target = self._norm_name(city)
+            if target in {"江苏", "全省"}:
+                codes.extend(code_of(row) for row in rows)
+                continue
+            matches = [code_of(row) for row in rows if self._norm_name(row.get("cityName")) == target]
+            if not matches:
+                raise ValueError(f"未在江苏站点目录中找到“{city}”下辖站点")
+            codes.extend(matches)
+        for district in district_names or []:
+            target = self._norm_name(district)
+            matches = [
+                code_of(row) for row in rows
+                if target == self._norm_name(row.get("districtName"))
+                or target == self._norm_name(row.get("cityName")) + self._norm_name(row.get("districtName"))
+            ]
+            if not matches:
+                raise ValueError(f"未在江苏站点目录中找到“{district}”下辖站点")
+            codes.extend(matches)
+        return list(dict.fromkeys(codes))

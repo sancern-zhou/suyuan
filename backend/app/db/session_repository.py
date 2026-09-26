@@ -1014,6 +1014,14 @@ class SessionRepository:
                 data["result"] = result_data
                 msg_dict["data"] = data
 
+        ui_command = getattr(row, "ui_command", None)
+        if isinstance(ui_command, dict) and ui_command:
+            data = msg_dict.get("data") if isinstance(msg_dict.get("data"), dict) else {}
+            result_data = data.get("result") if isinstance(data.get("result"), dict) else {}
+            result_data["ui_command"] = ui_command
+            data["result"] = result_data
+            msg_dict["data"] = data
+
         return msg_dict
 
     async def get_messages_before(
@@ -1087,6 +1095,22 @@ class SessionRepository:
                             ),
                             else_=None,
                         ).label("human_feedback"),
+                        # 工作区命令（如 open_work_order_review）挂在 result 顶层，
+                        # 体积很小；恢复会话时前端依赖它重放右侧工作台展开。
+                        case(
+                            (
+                                SessionMessageDB.msg_type == "tool_result",
+                                cast(
+                                    func.json_extract_path(
+                                        SessionMessageDB.data,
+                                        "result",
+                                        "ui_command",
+                                    ),
+                                    JSON,
+                                ),
+                            ),
+                            else_=None,
+                        ).label("ui_command"),
                     )
                     .where(SessionMessageDB.session_id == session_id)
                 )

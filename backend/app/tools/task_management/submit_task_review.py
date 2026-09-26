@@ -46,9 +46,31 @@ class SubmitTaskReviewTool(LLMTool):
                 submission["comment"] = submission["summary"]
             review = submit_review(submission, source)
             visual = review_visual(review)
+            # 结果必须是标准 UDF 格式（metadata 齐全）：缺 metadata 会被 tool_adapter
+            # 强制转换，转换会在有 visuals 时把 data 置空，ui_command 也就丢了。
             return {"success": True, "status": review["status"],
                     "data": {"review_id": review["review_id"], "version": review["version"]},
+                    "metadata": {"generator": self.name},
                     "visuals": [visual], "resources": resources_for_visuals([visual], tool_name=self.name),
+                    **self._workbench_ui_command(review),
                     "summary": f"已提交：{review['title']}，等待人工确认或处置。"}
         except ValueError as exc:
             return {"success": False, "status": "failed", "summary": str(exc)}
+
+    @staticmethod
+    def _workbench_ui_command(review: dict) -> dict:
+        """工单审核且工作台已有证据包条目时，让右侧工作台在会话中自动展开。
+
+        命令放在结果顶层：回放与实时链路都完整保留顶层字段，不依赖 data
+        （data 在带 visuals 的标准格式里不保证保留）。
+        """
+        try:
+            from app.services.jiangsu_work_order_review import has_order
+
+            code = str(review.get("subject_id") or "").strip()
+            # 工作台条目只由工单审核证据链路创建，存在即说明本次审核属于工单审核。
+            if code and has_order(code):
+                return {"ui_command": {"type": "open_work_order_review", "working_order_code": code}}
+        except Exception:  # noqa: BLE001 - 工作台不可用时静默跳过，不影响审核提交
+            pass
+        return {}

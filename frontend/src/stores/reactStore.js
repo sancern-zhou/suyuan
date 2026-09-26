@@ -685,15 +685,37 @@ export const useReactStore = defineStore('react', {
       this.currentMode = newMode
       localStorage.setItem('current-mode', newMode)
 
-      // 3. 恢复目标模式状态
-      if (!this.activeSessionByMode[newMode]) {
-        this._restoreModeState(newMode)
+      // 3. 进入模式默认开启新会话；该模式有正在运行的分析时保持展示运行中的会话
+      const targetSessionId = this.activeSessionByMode[newMode]
+      const targetSession = targetSessionId ? this.sessionStates[targetSessionId] : null
+      if (!targetSession?.isAnalyzing && !this.modeStates[newMode]?.isAnalyzing) {
+        delete this.activeSessionByMode[newMode]
+        Object.assign(this.modeStates[newMode], createEmptyModeState())
+        localStorage.removeItem(`mode-state-${newMode}`)
       }
 
       console.log('[switchMode] Mode switched successfully')
       console.log('[switchMode] Old mode running:', this.modeStates[oldMode]?.isAnalyzing)
       console.log('[switchMode] New mode running:', this.modeStates[newMode]?.isAnalyzing)
       console.log('[switchMode] ✅ Multi-mode parallel working enabled')
+    },
+
+    /**
+     * 选择模式进入对话：默认开启新会话
+     * - 目标模式有正在运行的分析时保持展示该会话
+     * - 与当前模式相同时也重置为新会话
+     */
+    enterModeConversation(newMode) {
+      if (!VALID_MODES.includes(newMode)) return
+      if (this.currentMode !== newMode) {
+        this.switchMode(newMode)
+        return
+      }
+      const activeSessionId = this.activeSessionByMode[newMode]
+      const activeSession = activeSessionId ? this.sessionStates[activeSessionId] : null
+      if (!activeSession?.isAnalyzing && !this.modeStates[newMode]?.isAnalyzing) {
+        this.reset()
+      }
     },
 
     /** Activate a server-authorized persistent specialist workspace. */

@@ -11,6 +11,11 @@ export const getTaskReview = id => request(`/${encodeURIComponent(id)}`)
 export const decideTaskReview = (id, decision) => request(`/${encodeURIComponent(id)}/decision`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(decision)
 })
+export async function fetchReviewEvidenceUrl(id, index) {
+  const response = await authFetch(`/api/task-reviews/${encodeURIComponent(id)}/evidence/${index}`)
+  if (!response.ok) throw new Error('证据文件读取失败')
+  return URL.createObjectURL(await response.blob())
+}
 export async function downloadReviewEvidence(id, index) {
   const response = await authFetch(`/api/task-reviews/${encodeURIComponent(id)}/evidence/${index}`)
   if (!response.ok) throw new Error('证据文件读取失败')

@@ -41,6 +41,14 @@ def normalize_matplotlib_label_text(value: Any) -> Any:
         ("m³", "m$^3$"),
         ("km²", "km$^2$"),
         ("m²", "m$^2$"),
+        # 方正小标宋简是 7751 字形的子集，缺这些单位合字与裸上下标；
+        # 转成 mathtext 后由 mathtext 字体渲染，避免缺字画成方框。
+        ("㎡", "m$^2$"),
+        ("㎥", "m$^3$"),
+        ("㎞", "km"),
+        ("²", "$^2$"),
+        ("³", "$^3$"),
+        ("¹", "$^1$"),
     ]
     normalized = value
     for old, new in replacements:

@@ -30,6 +30,18 @@ def encoded(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode()
 
 
+def _fsync_directory(path: Path) -> None:
+    # Linux 上 fsync 目录句柄保证 rename 持久化；Windows 没有 O_DIRECTORY 也无法
+    # 按目录句柄 fsync，持久性由 os.replace 自身保证，直接跳过。
+    if not hasattr(os, "O_DIRECTORY"):
+        return
+    directory_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 def atomic_json(path: Path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -39,11 +51,7 @@ def atomic_json(path: Path, value):
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(name, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        _fsync_directory(path.parent)
     finally:
         Path(name).unlink(missing_ok=True)
 

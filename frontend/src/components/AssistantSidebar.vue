@@ -554,6 +554,16 @@ const allModules = [
     requiredModule: 'legacy'
   },
   {
+    id: 'quick-prompts-management',
+    name: '常用问题',
+    abbr: '常用',
+    desc: '维护首页快捷提问按钮',
+    badge: '管理',
+    isAction: true,
+    adminOnly: true,
+    requiredModule: 'legacy'
+  },
+  {
     id: 'fetchers',
     name: '数据管理',
     abbr: '数据',
@@ -604,6 +614,7 @@ const modules = filterSidebarModules(allModules, projectConfig.hasModule)
 const SETTINGS_MODULE_IDS = Object.freeze([
   'session-history',
   'skills-management',
+  'quick-prompts-management',
   'scheduled-tasks',
   'tools-management',
   'file-manager',
@@ -612,8 +623,13 @@ const SETTINGS_MODULE_IDS = Object.freeze([
 ])
 
 const settingsModules = computed(() => {
+  // mock 模式的用户对象带 isAdmin；公司认证映射为 admin。
+  const isAdminUser = auth.user?.admin === true || auth.user?.isAdmin === true
   const byId = new Map(modules.map(module => [module.id, module]))
-  return SETTINGS_MODULE_IDS.map(id => byId.get(id)).filter(Boolean)
+  return SETTINGS_MODULE_IDS
+    .map(id => byId.get(id))
+    .filter(Boolean)
+    .filter(module => module.adminOnly !== true || isAdminUser)
 })
 
 const moduleIcons = {
@@ -687,6 +703,12 @@ const moduleIcons = {
       <path d="M12 4 5 7.5l7 3.5 7-3.5L12 4Z" />
       <path d="M5 12l7 3.5L19 12" />
       <path d="M5 16.5 12 20l7-3.5" />
+    </svg>
+  `,
+  'quick-prompts-management': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 5.5h16v10.5H9.5L5.5 20v-4H4V5.5Z" />
+      <path d="M9 10h.01M12 10h.01M15 10h.01" />
     </svg>
   `,
   fetchers: `

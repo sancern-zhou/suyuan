@@ -168,6 +168,12 @@ def setup_chinese_font():
             'name': 'GB_XBS_GBT2312',
             'fonts': ['GB_XBS_GBT2312', 'GB_XBS_GB18030', 'SimSun']
         },
+        # Windows 方正小标宋简（授权字体，由 install-chinese-font.ps1 装入系统字体目录）
+        {
+            'path': 'C:\\Windows\\Fonts\\方正小标宋简.TTF',
+            'name': 'FZXiaoBiaoSong-B05S',
+            'fonts': ['FZXiaoBiaoSong-B05S', 'Microsoft YaHei', 'SimHei']
+        },
         # Windows Microsoft YaHei
         {
             'path': 'C:\\Windows\\Fonts\\msyh.ttc',

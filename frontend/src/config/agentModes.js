@@ -12,7 +12,6 @@ export const AGENT_MODES = Object.freeze([
         '拆解复杂任务，汇总并提炼关键信息',
         '形成清晰、可直接使用的内容成果'
       ],
-      example: '例如："整理我上传的项目材料，提炼关键结论并生成一份汇报提纲"'
     },
     tags: ['通用问答', '任务处理'],
     accent: '#2878ff',
@@ -35,7 +34,6 @@ export const AGENT_MODES = Object.freeze([
         '基于已有源码项目定位页面并进行增量修改',
         '检查内容溢出、布局质量与文件完整性'
       ],
-      example: '例如："根据我上传的项目材料制作一份 10 页汇报 PPT，并采用蓝色科技风"'
     },
     tags: ['可编辑 PPT', '演示设计'],
     accent: '#5b6de8',
@@ -59,7 +57,6 @@ export const AGENT_MODES = Object.freeze([
         '交叉核验多类证据，识别结论的不确定性',
         '输出专业研判结论与针对性决策建议'
       ],
-      example: '例如："综合分析广州近期臭氧污染过程的成因，并给出管控建议"'
     },
     tags: ['协同研判', '专业决策'],
     accent: '#7656e8',
@@ -82,7 +79,6 @@ export const AGENT_MODES = Object.freeze([
         '将查询结果或手动输入数据生成交互式与静态图表',
         '保留可追溯的数据来源、查询口径和图表产物'
       ],
-      example: '例如："查询江苏本月 PM2.5 日均浓度，与去年同期对比并生成趋势图"'
     },
     tags: ['数据查询', '图表生成'],
     accent: '#0b9b8a',
@@ -106,7 +102,6 @@ export const AGENT_MODES = Object.freeze([
         '结合原文上下文核验关键数字与重要结论',
         '标明知识库和文档来源，识别资料冲突与缺口'
       ],
-      example: '例如："根据知识库说明，重污染天气应急响应的启动条件是什么？"'
     },
     tags: ['知识检索', '来源追溯'],
     accent: '#237a57',
@@ -129,7 +124,6 @@ export const AGENT_MODES = Object.freeze([
         '完成趋势、对比、统计与异常线索整理',
         '保留站点编码、时间范围和数据来源等证据'
       ],
-      example: '例如：“查询1002A站点昨天的小时 PM2.5 与臭氧趋势”'
     },
     tags: ['江苏数据', '站点查询'],
     accent: '#1677b8',
@@ -152,7 +146,6 @@ export const AGENT_MODES = Object.freeze([
         '依据模板生成简报、专报和分析报告',
         '优化表述与版式，形成可编辑交付成果'
       ],
-      example: '例如："根据本轮分析结果生成一份污染过程溯源简报"'
     },
     tags: ['专业报告', '结构化输出'],
     accent: '#e78324',
@@ -175,7 +168,6 @@ export const AGENT_MODES = Object.freeze([
         '输出 ECharts 与适合报告使用的静态图表',
         '调整配色、标题、标注和整体版式'
       ],
-      example: '例如："绘制广州各站点 PM2.5 月均浓度对比图，并突出异常站点"'
     },
     tags: ['数据图表', '流程图'],
     accent: '#d24d77',
@@ -198,7 +190,6 @@ export const AGENT_MODES = Object.freeze([
         '结合截图检查视觉效果和结构差异',
         '保留可编辑 XML 与画板版本状态'
       ],
-      example: '例如："阅读我上传的任务说明，绘制一张三模块业务流程画板"'
     },
     tags: ['流程画板', '可编辑图形'],
     accent: '#7b61d1',
@@ -220,7 +211,6 @@ export const AGENT_MODES = Object.freeze([
         '制定处置步骤、验证方法和回退方案',
         '沉淀处理记录与可复用的运维经验'
       ],
-      example: '例如："审核这个月1-7日的运维工单"'
     },
     tags: ['故障排查', '工单处置'],
     accent: '#52677f',
@@ -243,7 +233,6 @@ export const AGENT_MODES = Object.freeze([
         '生成包含巡检项与处置建议的工单草案',
         '当前仅做查询与建议，不会创建、派发或关闭工单'
       ],
-      example: '例如：“查询昨天5006A、5005A的未处理告警，并生成巡检工单建议”'
     },
     tags: ['站点巡检', '工单建议'],
     accent: '#1f8f72',
@@ -266,7 +255,6 @@ export const AGENT_MODES = Object.freeze([
         '识别值得管理人员进一步核查的高频远距离或重复折返线索',
         '当前不判定工单或告警流程合规，也不作自动考核结论'
       ],
-      example: '例如：“分析本月运维人员的跨市到站情况，找出值得核查的路径模式”'
     },
     tags: ['人员覆盖', '路径洞察'],
     accent: '#b36a28',
@@ -289,7 +277,6 @@ export const AGENT_MODES = Object.freeze([
         '执行前生成待确认指令，执行后自动复查状态',
         '记录会话、指令、结果与复查信息，便于追溯'
       ],
-      example: '例如：“查询站点唯一编号 320100001 的设备状态，并准备将空调设为制冷 24℃”'
     },
     tags: ['设备反控', '人工确认'],
     accent: '#b54738',
@@ -312,7 +299,6 @@ export const AGENT_MODES = Object.freeze([
         '基于知识图谱形成候选根因并标注支持与反证',
         '输出处置步骤、验证方法、风险提示和回退建议，不直接控制设备'
       ],
-      example: '例如：“诊断站点 1002A 今天上午的断数故障，并给出现场排查方案”'
     },
     tags: ['站点故障', '根因诊断'],
     accent: '#8a3ffc',
@@ -325,13 +311,13 @@ export const AGENT_MODES = Object.freeze([
   {
     id: 'smart_event_external', name: '外界环境识别智能体', shortName: '外界环境',
     description: '识别外界环境和人为行为对监测代表性的影响',
-    welcome: { description: '围绕雾炮、喷淋、人员进入和其他外界环境线索开展证据核验与处置。', features: ['查询环境事件', '核验气象与门禁证据', '反馈归档', '派单处置'], example: '查询今天的疑似外界环境影响事件' },
+    welcome: { description: '围绕雾炮、喷淋、人员进入和其他外界环境线索开展证据核验与处置。', features: ['查询环境事件', '核验气象与门禁证据', '反馈归档', '派单处置'] },
     tags: ['外界环境', '事件处置'], accent: '#1677ff', iconPaths: ['M4 5h16v14H4z', 'M6 15c2-5 4-5 6 0s4 5 6 0']
   },
   {
     id: 'smart_event_instrument', name: '仪器故障识别智能体', shortName: '仪器故障',
     description: '识别仪器、供电、数采和站房运行故障',
-    welcome: { description: '围绕仪器状态、断数、供电、数采和站房环境线索开展故障核验与处置。', features: ['查询故障事件', '核验仪器与质控证据', '反馈归档', '派单维修'], example: '查询今天的疑似仪器故障事件并给出处置建议' },
+    welcome: { description: '围绕仪器状态、断数、供电、数采和站房环境线索开展故障核验与处置。', features: ['查询故障事件', '核验仪器与质控证据', '反馈归档', '派单维修'] },
     tags: ['仪器故障', '事件处置'], accent: '#0f9d8a', iconPaths: ['M4 5h16v14H4z', 'M12 7v10M8 11h8M9 17h6']
   }
 ])

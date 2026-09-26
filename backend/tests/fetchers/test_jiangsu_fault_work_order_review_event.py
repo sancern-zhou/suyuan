@@ -32,6 +32,24 @@ def test_qc_task_refs_keeps_all_unique_target_pollutant_tasks_in_evidence_window
     assert refs[-1]["r_start"] == "2026-09-05 03:45:00"
 
 
+def test_qc_task_refs_prefers_platform_rid_over_numeric_id():
+    # 平台历史行同时含数字 id 与 rId（UUID），且 id 在行内键序更靠前；
+    # 质控状态接口要求 rId，数字 id 会导致状态查询全部失败。
+    rows = [{
+        "cityCode": "321200",
+        "id": 225468,
+        "rId": "edd7db8e-2d7d-48be-8d32-c947eb34bc0e",
+        "rStart": "2026-09-20T01:45:01",
+        "poll": "CO",
+        "qcType": "零点检查",
+        "qcResult": "不合格，相对误差超警告限",
+    }]
+
+    refs = _qc_task_refs({"data": rows}, target_pollutants=["CO"])
+
+    assert refs[0]["r_id"] == "edd7db8e-2d7d-48be-8d32-c947eb34bc0e"
+
+
 class FakeWorkOrderTool:
     def __init__(self):
         self.calls = []

@@ -1206,6 +1206,14 @@ class LLMService:
             "model_env": "GO_MODEL",
             "model_default": "deepseek-v4.1-flash",
         },
+        # OpenCode Go 订阅备用套餐（与 go 同网关；go 额度耗尽/限流时经 fallback 链自动切换）
+        "go2": {
+            "url_env": "GO2_BASE_URL",
+            "url_default": "https://opencode.ai/zen/go/v1",
+            "key_env": "GO2_API_KEY",
+            "model_env": "GO2_MODEL",
+            "model_default": "deepseek-v4.1-flash",
+        },
         # 智谱 GLM Coding Plan（OpenAI + Anthropic 兼容协议）
         "glm": {
             "url_env": "GLM_BASE_URL",
@@ -1586,6 +1594,23 @@ class LLMService:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_go_model_fallback_to_env", model=self.model)
 
+        elif self.provider == "go2":
+            self.api_mode = getattr(settings, "go2_api_mode", "chat_completions")
+            self.base_url = (
+                settings.go2_base_url
+                or os.getenv(config["url_env"])
+                or config["url_default"]
+            )
+            self.api_key = (
+                settings.go2_api_key
+                or os.getenv(config["key_env"])
+                or ""
+            )
+            self.model = settings.go2_model
+            if not self.model:
+                self.model = os.getenv(config["model_env"], config["model_default"])
+                logger.debug("llm_go2_model_fallback_to_env", model=self.model)
+
         elif self.provider == "glm":
             self.api_mode = getattr(settings, "glm_api_mode", "anthropic_messages")
             self.base_url = (
@@ -1810,7 +1835,7 @@ class LLMService:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         # OpenCode Go 网关要求：专属 User-Agent + 稳定会话头（缺失会被拒绝）
-        if self.provider == "go":
+        if self.provider in {"go", "go2"}:
             headers["User-Agent"] = OPENCODE_GO_USER_AGENT
             headers["x-opencode-session"] = (
                 _llm_opencode_session_id.get() or f"suyuan-{os.getpid()}"

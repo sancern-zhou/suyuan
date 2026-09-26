@@ -52,7 +52,7 @@ class FontManager:
         'sans-serif',
     ]
 
-    # 字体文件路径（Linux）
+    # 字体文件路径（按平台优先级排列）
     FONT_FILE_PATHS = [
         Path('/home/xckj/.local/share/fonts/方正小标宋简.TTF'),
         Path('/usr/share/fonts/gb-cjk/GB_XBS_GB18030.TTF'),
@@ -63,6 +63,15 @@ class FontManager:
         Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'),
         Path('/usr/share/fonts/truetype/arphic/uming.ttc'),
         Path('/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc'),
+        # Windows 部署（无 Linux 字体文件时使用系统字体）
+        # 方正小标宋简为授权字体，由 E:\Tools\suyuan-jiangsu\install-chinese-font.ps1 安装
+        Path('C:/Windows/Fonts/方正小标宋简.TTF'),
+        Path('C:/Windows/Fonts/方正小标宋简.ttf'),
+        Path('C:/Windows/Fonts/FZXiaoBiaoSong-B05S.ttf'),
+        Path('C:/Windows/Fonts/msyh.ttc'),
+        Path('C:/Windows/Fonts/simhei.ttf'),
+        Path('C:/Windows/Fonts/simsun.ttc'),
+        Path('C:/Windows/Fonts/Deng.ttf'),
     ]
 
     def __init__(self):

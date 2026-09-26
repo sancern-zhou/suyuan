@@ -133,3 +133,22 @@ def test_evidence_resources_declared_for_session(isolated_registry):
     # 发布管道按进程 CWD 解析相对路径会指向错误位置，声明必须携带绝对路径
     for resource in resources:
         assert Path(resource["locator"]["path"]).is_absolute()
+
+
+def test_list_orders_filters_by_date_range(isolated_registry):
+    from datetime import date
+
+    save_evidence(_sample_package())  # window_start = 2026-09-13 19:41:00
+
+    assert list_orders(start_date="2026-09-13", end_date="2026-09-13")["total"] == 1
+    assert list_orders(start_date="2026-09-01", end_date="2026-09-30")["total"] == 1
+    assert list_orders(start_date="2026-09-14")["total"] == 0
+    assert list_orders(end_date="2026-09-12")["total"] == 0
+
+    # 缺故障窗口的工单回退取证时间（存证当天）参与日期过滤
+    package = _sample_package(code="FA-NO-WINDOW")
+    package.pop("window")
+    save_evidence(package)
+    today = date.today().isoformat()
+    assert list_orders(start_date="2026-09-13", end_date="2026-09-13")["total"] == 1
+    assert list_orders(start_date=today, end_date=today)["total"] == 1

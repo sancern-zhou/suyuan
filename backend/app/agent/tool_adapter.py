@@ -439,6 +439,9 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
             "source_report_file_path",
             "source_report_file_paths",
             "visual_ids",
+            # 前端工作区命令（如 open_work_order_review）挂在结果顶层，
+            # 转换路径不得丢弃，否则会话回放/实时都无法展开右侧工作台。
+            "ui_command",
         )
         for key in passthrough_fields:
             if key in result:

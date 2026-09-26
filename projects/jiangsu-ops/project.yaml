@@ -12,7 +12,7 @@ frontend:
     - ops
     - jiangsu_query
     - knowledge
-    - expert
+    # - expert  # 2026-09-23 专家研判场景暂时下线（方案未定，前端同步隐藏）；恢复场景时取消本行注释并重建前端。
     - smart_inspection
     - operations_analysis
     - device_control
@@ -58,8 +58,8 @@ frontend:
         keywords: [人员, 到站, 签到, 调度, 覆盖, 跨市]
       - mode: knowledge
         keywords: [知识库, 规程, 标准, 制度, 文档, 条款]
-      - mode: expert
-        keywords: [污染过程, 成因, 来源, 传输, 专家研判]
+      # - mode: expert  # 2026-09-23 专家研判下线，路由关键词一并停用。
+      #   keywords: [污染过程, 成因, 来源, 传输, 专家研判]
       - mode: jiangsu_query
         keywords: [查询, 数据, 浓度, 趋势, 排名, 图表, 同比]
       - mode: smart_inspection
@@ -117,7 +117,6 @@ frontend:
           - 阅读命中文档上下文和用户上传材料
           - 知识库证据不足时按需搜索并抓取公开网页
           - 区分知识库、用户材料和网络信息来源
-        example: 例如：“根据知识库中的运维规程，颗粒物断数后应按什么顺序排查？”
       tags:
         - 江苏知识库
         - 来源追溯
@@ -132,7 +131,6 @@ frontend:
           - 完成趋势、对比、统计与异常线索整理
           - 将查询结果或用户提供的数据生成交互式与静态图表
           - 保留数据来源、查询口径和图表产物的可追溯关系
-        example: 例如：“查询南京本月 PM2.5 日均趋势并生成折线图”
       tags:
         - 江苏数据
         - 问数生图
@@ -149,7 +147,6 @@ frontend:
           - 核对工单状态、故障描述与处置过程
           - 标注接口失败、字段缺失和需要人工确认的风险点
           - 当前不支持工单流转操作
-        example: 例如：“查一下目前待审核的故障工单有哪些”
       tags:
         - 工单查询
         - 人工复核
@@ -198,9 +195,8 @@ backend:
     - jiangsu_fetch_qc_run_logs
     - jiangsu_fetch_qc_monitoring_curve
     - jiangsu_fetch_review_evidence
-    # 运维操作分析：独立进站证据（门禁）与设备台账（备机分析）。
-    - jiangsu_fetch_door_access_records
-    - jiangsu_fetch_device_ledger
+    # 门禁与设备台账接口工具已下线（2026-09-22）：门禁平台无数据（实测5站31天0条）；
+    # 设备台账公共部分改由 execute_jiangsu_mart_sql 查 jiangsu_mart.dim_device。
     # 智能事件中心 PostgreSQL 结构化查询（只读 SELECT，事件中心表白名单）。
     - execute_smart_event_sql_query
     # 非故障例行工单审核（真实平台接口）。
@@ -318,7 +314,9 @@ backend:
       - create_report_chart
       - execute_echarts_python
       - execute_python
-    expert:
+    # 2026-09-23 专家研判场景暂时下线（方案未定）：模式已从 agent_modes 移除，
+    # 此键改名后不再被任何模式命中；恢复时把键名改回 expert 并在 agent_modes 加回。
+    expert_offline:
       - list_session_resources
       - publish_session_file
       - knowledge_qa_workflow
@@ -434,9 +432,7 @@ backend:
       - jiangsu_fetch_station_alarm_logs
       - jiangsu_fetch_station_data
       - jiangsu_analyze_work_order_tracks
-      # 独立进站证据与设备台账（备机分析），只读。
-      - jiangsu_fetch_door_access_records
-      - jiangsu_fetch_device_ledger
+      # 门禁/设备台账接口工具已下线：门禁平台无数据；设备台账走 execute_jiangsu_mart_sql（dim_device）。
       # 智能事件中心结构化查询：优先用它做告警/风险/积压的结构化筛选与聚合。
       - execute_smart_event_sql_query
       # 站房动环/供电历史，用于高值窗口停电/离线核验。
@@ -498,7 +494,7 @@ backend:
     assistant: projects/jiangsu-ops/prompts/assistant.md
     knowledge: projects/jiangsu-ops/prompts/knowledge.md
     jiangsu_query: projects/jiangsu-ops/prompts/jiangsu_query.md
-    expert: projects/jiangsu-ops/prompts/expert.md
+    # expert: projects/jiangsu-ops/prompts/expert.md  # 2026-09-23 专家研判下线，提示词映射停用（文件保留在磁盘）。
     smart_inspection: projects/jiangsu-ops/prompts/smart_inspection.md
     operations_analysis: projects/jiangsu-ops/prompts/operations_analysis.md
     device_control: projects/jiangsu-ops/prompts/device_control.md

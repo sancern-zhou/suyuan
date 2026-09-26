@@ -2016,7 +2016,20 @@ def _suyuan_configure_matplotlib_chinese_font(force_default=False):
         from matplotlib import font_manager as _suyuan_font_manager
         from matplotlib.ft2font import FT2Font
         current_fonts = list(_suyuan_plt.rcParams.get('font.sans-serif', []))
+
+        def _font_supports_chinese(font_name):
+            try:
+                prop = _suyuan_font_manager.FontProperties(family=[font_name])
+                path = _suyuan_font_manager.findfont(prop, fallback_to_default=False)
+                charmap = FT2Font(path).get_charmap()
+                return ord('中') in charmap, _suyuan_font_manager.FontProperties(fname=path)
+            except Exception:
+                return False, None
+
+        # 两个执行引擎都以工作目录为 cwd：沙箱内即 /sandbox/_suyuan_assets/...，
+        # Windows subprocess 引擎不挂载字体资产，只能靠系统字体回退。
         default_font_paths = [
+            os.path.abspath(os.path.join('_suyuan_assets', 'preferred_chinese_font.ttf')),
             '/sandbox/_suyuan_assets/preferred_chinese_font.ttf',
             '/home/xckj/.local/share/fonts/方正小标宋简.TTF',
             '/usr/share/fonts/gb-cjk/GB_XBS_GB18030.TTF',
@@ -2027,22 +2040,43 @@ def _suyuan_configure_matplotlib_chinese_font(force_default=False):
             '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
             '/usr/share/fonts/truetype/arphic/uming.ttc',
             '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+            # Windows 部署：方正小标宋简（授权字体，由 install-chinese-font.ps1 装入系统字体目录）
+            'C:/Windows/Fonts/方正小标宋简.TTF',
+            'C:/Windows/Fonts/方正小标宋简.ttf',
+            'C:/Windows/Fonts/FZXiaoBiaoSong-B05S.ttf',
+            'C:/Windows/Fonts/msyh.ttc',
+            'C:/Windows/Fonts/simhei.ttf',
+            'C:/Windows/Fonts/simsun.ttc',
+            'C:/Windows/Fonts/Deng.ttf',
         ]
         default_font_path = next((path for path in default_font_paths if os.path.exists(path)), None)
-        if not default_font_path:
+        if default_font_path:
+            _suyuan_font_manager.fontManager.addfont(default_font_path)
+            default_font_prop = _suyuan_font_manager.FontProperties(fname=default_font_path)
+        else:
+            # 无预置字体文件时按字体族名解析系统字体，否则中文会退回 DejaVu Sans 显示方框。
+            default_font_prop = None
+            for candidate_name in (
+                'FZXiaoBiaoSong-B05S',
+                'GB_XBS_GB18030',
+                'GB_XBS_GBT2312',
+                'Noto Sans CJK SC',
+                'Noto Sans CJK TC',
+                'Noto Sans CJK JP',
+                'Microsoft YaHei',
+                'SimHei',
+                'SimSun',
+                'DengXian',
+                'PingFang SC',
+                'WenQuanYi Micro Hei',
+            ):
+                supports_chinese, candidate_prop = _font_supports_chinese(candidate_name)
+                if supports_chinese:
+                    default_font_prop = candidate_prop
+                    break
+        if default_font_prop is None:
             return
-        _suyuan_font_manager.fontManager.addfont(default_font_path)
-        default_font_prop = _suyuan_font_manager.FontProperties(fname=default_font_path)
         default_font_name = default_font_prop.get_name()
-
-        def _font_supports_chinese(font_name):
-            try:
-                prop = _suyuan_font_manager.FontProperties(family=[font_name])
-                path = _suyuan_font_manager.findfont(prop, fallback_to_default=False)
-                charmap = FT2Font(path).get_charmap()
-                return ord('中') in charmap, _suyuan_font_manager.FontProperties(fname=path)
-            except Exception:
-                return False, None
 
         selected_name = default_font_name
         selected_prop = default_font_prop
@@ -2098,6 +2132,14 @@ def _suyuan_normalize_matplotlib_label_text(value):
         ('m³', 'm$^3$'),
         ('km²', 'km$^2$'),
         ('m²', 'm$^2$'),
+        # 方正小标宋简是 7751 字形的子集，缺这些单位合字与裸上下标；
+        # 转成 mathtext 后由 mathtext 字体渲染，避免缺字画成方框。
+        ('㎡', 'm$^2$'),
+        ('㎥', 'm$^3$'),
+        ('㎞', 'km'),
+        ('²', '$^2$'),
+        ('³', '$^3$'),
+        ('¹', '$^1$'),
     ]
     normalized = value
     for old, new in replacements:

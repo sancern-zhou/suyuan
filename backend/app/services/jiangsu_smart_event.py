@@ -209,7 +209,10 @@ def _parse_time(value: Any) -> datetime | None:
                 continue
         else:
             return None
-    return parsed if parsed.tzinfo else parsed.astimezone()
+    # DB 时间列为 naive timestamp(DateTime 无 timezone),统一归一为本地 naive:
+    # aware 输入先转本地时区再去掉 tzinfo,与写入侧 _parse_db_datetime 同一口径,
+    # 避免 asyncpg 绑定 aware/naive 混用报 "can't subtract offset-naive and offset-aware"。
+    return parsed.astimezone().replace(tzinfo=None)
 
 
 def _format_time(value: datetime | None) -> str | None:
@@ -1408,7 +1411,7 @@ class JiangsuSmartEventService:
             task_event = TaskEvent(
                 event_id=str(event["event_id"]),
                 event_type=SMART_EVENT_EVENT_TYPE,
-                occurred_at=_parse_time(event.get("event_start_time")) or datetime.now().astimezone(),
+                occurred_at=_parse_time(event.get("event_start_time")) or datetime.now(),
                 attributes={
                     "agent_mode": smart_event_agent_mode(event),
                     "smart_event_id": event["event_id"],

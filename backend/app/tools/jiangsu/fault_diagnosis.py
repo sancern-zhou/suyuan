@@ -657,7 +657,10 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
             name="jiangsu_fetch_fault_work_orders",
             description=(
                 "查询江苏运维工单清单：默认查询故障工单，也可查询巡检/例行运维、现场检查或取消类型过滤查询全部工单。"
-                "按工单号、创建时间、节点或状态筛选；数量/统计类问题直接用返回的 total_count 与 distribution 回答，不要回读完整清单。"
+                "按工单号、创建时间、节点或状态筛选。跨单统计/趋势/排名类问题（2026-07-01 起）"
+                "优先用 execute_jiangsu_mart_sql 查本地工单宽表，不要用本工具拉清单计数；"
+                "本工具用于单据定位、实时节点/审核状态和 2026-07-01 之前的工单，"
+                "此时数量口径用返回的 total_count 与 distribution 直接回答，不要回读完整清单。"
                 "标准口径：查“某节点待审核”用 current_points=[节点名]（默认在办状态）；查“某节点已审核/时段内完成审核”"
                 "用 current_points=[节点名] + review_finished_start/end（工具自动限定 Finish 并按工单 finishTime 精确过滤，"
                 "省中心审核为末级节点，已完成工单停留在该节点），不要用 mine_only 代替节点口径，也不要拉全量后自行筛选。"
@@ -668,7 +671,8 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
                              "description": (
                                  "查询运维工单清单，默认类型为故障工单。默认 fetch_all=true，由工具内部完成分页并一次返回完整匹配范围；"
                                  "超过 24 条自动保存完整数据文件并内联首尾 24 条，仅当用户明确要求浏览某一页时才设 fetch_all=false。"
-                                 "返回 metadata 含 total_count（匹配总数）与 distribution（节点/工单状态分布），统计类问题直接引用，勿回读清单。"
+                                 "跨单统计优先 execute_jiangsu_mart_sql；本工具返回 metadata 含 total_count（匹配总数）"
+                                 "与 distribution（节点/工单状态分布），单据定位与实时节点场景直接引用，勿回读清单。"
                              ),
                              "parameters": {"type": "object", "properties": {
                                  "station_names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,

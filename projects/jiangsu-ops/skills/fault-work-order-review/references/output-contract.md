@@ -10,7 +10,7 @@
 - `title`：站点名称与工单审核标题。
 - `summary`：一句话说明“审核结论 + 数据处置 + 核心原因”。
 - `decision`：`approve`、`reject` 或 `needs_evidence`。
-- `comment`：审核意见，依次说明事实一致性、逻辑一致性、缺口与下一步。
+- `comment`：审核意见，面向人工快速研判，固定两段：第一段写明审核是否通过与处置意见（如"建议通过，归档""建议退回，需补充×××"）；第二段用一句话说明核心原因。若建议剔除数据，另起一段仅列剔除污染物与时间段（精确到小时区间）。事实一致性、逻辑一致性、缺口与下一步分析一律写入 `checks` 与 `sections`，不得塞进 `comment`。
 - `review_basis`：例如 `["SOP-01"]`。
 - `checks`：核验项数组。每项包含 `name`、`status`、`basis`、`scope`、`missing_evidence`。`status` 为 `pass/fail/uncertain/not_applicable`；`scope` 为 `core/supporting/rebuttal`。至少一项，名称和依据非空。SOP-01 使用 M1–M6，SOP-02 使用 E1–E8，SOP-03 使用 T1–T7，并附中文名称。
 - `data_impact`：按污染物填写数组；无数据影响可为空。
@@ -47,4 +47,4 @@ SOP-01 分别核验对象、失败事实、标识、处置、复测，并在 M5 
 
 ## 增量复审轮次
 
-事件 `payload.continuity_context.reason=review_reject` 表示人工退回后的增量复审：`subject_id` 仍为同一完整工单号，提交字段与首轮完全一致；上一轮结论保留在审核记录 history 中，本次提交生成新版本待办，不覆盖人工审核依据。`comment` 中应说明依据退回意见做了哪些修正；仅当存在与退回意见直接矛盾且确凿的证据时，才在 `comment` 中逐条列明分歧依据后维持原结论。同一轮复审同样只提交一次。
+事件 `payload.continuity_context.reason=review_reject` 表示人工退回后的增量复审：`subject_id` 仍为同一完整工单号，提交字段与首轮完全一致；上一轮结论保留在审核记录 history 中，本次提交生成新版本待办，不覆盖人工审核依据。第二段原因句中说明依据退回意见做了哪些修正（保持两段结构）；仅当存在与退回意见直接矛盾且确凿的证据时，才在 `comment` 末尾逐条列明分歧依据后维持原结论。同一轮复审同样只提交一次。

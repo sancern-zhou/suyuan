@@ -3,7 +3,7 @@
     <header class="wor-header">
       <div class="wor-title">
         <h3>故障工单审核</h3>
-        <p>证据包拆分存储 · AI 研判 · 人工反馈 / 归档 / 退回</p>
+        <p>按故障日期查看工单、AI 研判与证据</p>
       </div>
       <div class="wor-header-actions">
         <button type="button" class="btn btn--secondary" :disabled="listLoading" @click="loadOrders">
@@ -20,9 +20,8 @@
       </div>
     </header>
 
-    <div v-if="actionError || actionMessage" class="wor-banners">
-      <p v-if="actionError" class="action-error" role="alert">{{ actionError }}</p>
-      <p v-if="actionMessage" class="action-message" role="status">{{ actionMessage }}</p>
+    <div v-if="actionError" class="wor-banners">
+      <p class="action-error" role="alert">{{ actionError }}</p>
     </div>
 
     <!-- 列表视图 -->
@@ -32,14 +31,19 @@
           v-model="keyword"
           class="wor-search"
           type="search"
-          placeholder="搜索工单号 / 站点 / 标题"
+          placeholder="搜索工单号 / 站点 / 标题 / 污染物"
           aria-label="搜索工单"
           @keyup.enter="applyFilters"
         />
+        <input v-model="startDate" class="wor-date" type="date" aria-label="故障开始日期" @change="applyFilters" />
+        <span class="wor-date-sep" aria-hidden="true">~</span>
+        <input v-model="endDate" class="wor-date" type="date" aria-label="故障结束日期" @change="applyFilters" />
         <select v-model="statusFilter" class="wor-status-select" aria-label="按状态筛选" @change="applyFilters">
           <option value="">全部状态</option>
           <option v-for="item in statuses" :key="item" :value="item">{{ item }}</option>
         </select>
+        <button type="button" class="btn btn--secondary" :disabled="listLoading" @click="applyFilters">查询</button>
+        <button type="button" class="btn btn--text" @click="resetFilters">重置</button>
       </div>
 
       <div v-if="listLoading && !orders.length" class="wor-state">
@@ -57,28 +61,44 @@
       </div>
 
       <template v-else>
-        <ul class="wor-order-list">
-          <li v-for="order in orders" :key="order.working_order_code">
-            <button type="button" class="wor-order-card" @click="openDetail(order.working_order_code)">
-              <div class="order-line">
-                <strong class="order-code">{{ order.working_order_code }}</strong>
-                <span class="status-badge" :class="statusClass(order.status)">{{ order.status || '待审核' }}</span>
-              </div>
-              <div class="order-title">{{ order.title || '未命名工单' }}</div>
-              <div class="order-meta">
-                <span>{{ order.site_name || order.site_id || '未设置站点' }}</span>
-                <span>{{ order.pollutant || '未设置污染物' }}</span>
-                <span v-if="order.window_start">{{ shortTime(order.window_start) }} ~ {{ shortTime(order.window_end) }}</span>
-              </div>
-              <div class="order-foot">
-                <span v-if="order.review_id">AI 已研判</span>
-                <span>取证于 {{ formatTime(order.collected_at) }}</span>
-                <span v-if="order.operations_count">操作 {{ order.operations_count }} 次</span>
-              </div>
-            </button>
-          </li>
-        </ul>
-        <p class="wor-total">共 {{ total }} 条工单</p>
+        <div class="table-scroll">
+          <table class="evidence-table wor-order-table">
+            <thead>
+              <tr>
+                <th>工单号</th>
+                <th>标题</th>
+                <th>站点</th>
+                <th>污染物</th>
+                <th>故障时段</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="order in orders"
+                :key="order.working_order_code"
+                class="wor-order-row"
+                @click="openDetail(order.working_order_code)"
+              >
+                <td class="order-code">{{ order.working_order_code }}</td>
+                <td class="order-title-cell" :title="order.title">{{ order.title || '未命名工单' }}</td>
+                <td>{{ order.site_name || order.site_id || '未设置站点' }}</td>
+                <td>{{ order.pollutant || '—' }}</td>
+                <td>{{ order.window_start ? `${shortTime(order.window_start)} ~ ${shortTime(order.window_end)}` : '—' }}</td>
+                <td><span class="status-badge" :class="statusClass(order.status)">{{ order.status || '待审核' }}</span></td>
+                <td>
+                  <button type="button" class="link-btn" @click.stop="openDetail(order.working_order_code)">详情</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <nav v-if="total > 0" class="wor-pagination" aria-label="工单分页">
+          <button type="button" :disabled="listLoading || page <= 1" @click="changePage(page - 1)">上一页</button>
+          <span>第 {{ page }} / {{ totalPages }} 页，共 {{ total }} 条</span>
+          <button type="button" :disabled="listLoading || page >= totalPages" @click="changePage(page + 1)">下一页</button>
+        </nav>
       </template>
     </section>
 
@@ -104,11 +124,7 @@
           <span class="status-badge" :class="statusClass(entry.status)">{{ entry.status || '待审核' }}</span>
         </header>
 
-        <div class="action-bar">
-          <button type="button" class="btn btn--secondary" :disabled="actionBusy" @click="openDialog('feedback')">反馈</button>
-          <button type="button" class="btn btn--danger" :disabled="actionBusy" @click="openDialog('reject')">退回</button>
-          <button type="button" class="btn btn--primary" :disabled="actionBusy" @click="openDialog('archive')">归档</button>
-        </div>
+        <p class="action-hint">人工操作（确认归档 / 退回 / 转入处置）统一在任务调度中心的审核卡片中进行，本页仅作证据查看。</p>
 
         <div class="workbench-layout">
           <aside class="workbench-index" aria-label="审核目录">
@@ -154,6 +170,36 @@
               </template>
             </article>
 
+            <!-- 事件脉络：AI 时间线结论梳理，节点按关键词对应证据节，可跳转核验 -->
+            <article v-if="narrativeSections.length" id="wor-section-narrative" class="section-card narrative" aria-label="事件脉络">
+              <header class="section-head">
+                <h4>事件脉络</h4>
+                <span class="muted">AI 时间线梳理 · 节点可跳转对应证据</span>
+              </header>
+              <ol class="narrative-timeline">
+                <li v-for="(section, index) in narrativeSections" :key="index" class="narrative-node">
+                  <div class="narrative-node-head">
+                    <span class="narrative-index">{{ index + 1 }}</span>
+                    <strong>{{ section.title }}</strong>
+                    <button
+                      v-if="narrativeTarget(section.title)"
+                      type="button"
+                      class="link-btn"
+                      @click="scrollToSection(narrativeTarget(section.title))"
+                    >
+                      查看{{ sectionLabelOf(narrativeTarget(section.title)) }}
+                    </button>
+                  </div>
+                  <dl class="narrative-fields">
+                    <template v-for="(field, n) in section.fields" :key="n">
+                      <dt>{{ field.label }}</dt>
+                      <dd>{{ field.value }}</dd>
+                    </template>
+                  </dl>
+                </li>
+              </ol>
+            </article>
+
             <!-- 证据数据 -->
             <article
               v-for="source in evidenceSections"
@@ -171,25 +217,25 @@
               <p v-if="source.summary" class="source-summary">{{ source.summary }}</p>
 
               <template v-if="source.key === 'work_order'">
-                <div v-if="woFacts.length" class="fact-grid">
-                  <div v-for="fact in woFacts" :key="fact.label" class="fact-item">
+                <div v-if="woFacts.length" class="fact-list">
+                  <div v-for="fact in woFacts" :key="fact.label" class="fact-row" :class="{ wide: fact.value.length > 40 }">
                     <span>{{ fact.label }}</span>
                     <strong>{{ fact.value }}</strong>
                   </div>
                 </div>
                 <p v-else class="source-empty">未获取到工单信息（未提供工单号）。</p>
 
-                <div v-for="device in deviceSections" :key="device.key" class="sub-section">
+                <div v-for="device in deviceSections" :key="device.key" class="fact-block">
                   <h5>{{ device.label }}</h5>
-                  <div class="fact-grid">
-                    <div v-for="fact in device.entries" :key="fact.label" class="fact-item">
+                  <div class="fact-list">
+                    <div v-for="fact in device.entries" :key="fact.label" class="fact-row" :class="{ wide: fact.value.length > 40 }">
                       <span>{{ fact.label }}</span>
                       <strong>{{ fact.value }}</strong>
                     </div>
                   </div>
                 </div>
 
-                <div v-if="woSteps.length" class="sub-section">
+                <div v-if="woSteps.length" class="fact-block">
                   <h5>流程节点</h5>
                   <ol class="step-list">
                     <li v-for="(step, index) in woSteps" :key="index">
@@ -201,18 +247,18 @@
                   </ol>
                 </div>
 
-                <div v-if="woDetails.length" class="sub-section">
+                <div v-if="woDetails.length" class="fact-block">
                   <h5>处置过程（{{ woDetails.length }} 条）</h5>
                   <ol class="history-list">
                     <li v-for="(item, index) in woDetails" :key="index">
                       <strong>{{ item.step ? `${item.step} · ${item.user || '平台记录'}` : (item.user || '平台记录') }}</strong>
-                      <span>{{ item.content || '—' }}</span>
+                      <span v-if="item.content">{{ item.content }}</span>
                       <small v-if="item.time">{{ formatTime(item.time) }}</small>
                     </li>
                   </ol>
                 </div>
 
-                <div v-if="woAttachments.length" class="sub-section">
+                <div v-if="woAttachments.length" class="fact-block">
                   <h5>附件（{{ woAttachments.length }}）</h5>
                   <div class="attachment-grid">
                     <figure v-for="att in woAttachments" :key="att.index" :class="{ failed: att.status !== 'success' }">
@@ -240,6 +286,34 @@
                 <p v-else class="source-empty">该来源暂无小时数据。</p>
               </template>
 
+              <template v-else-if="source.key === 'band'">
+                <ReviewTimeSeriesChart
+                  v-if="bandChartSeries.length"
+                  title="同城对比带小时趋势"
+                  :subtitle="bandSubtitle"
+                  :unit="unit"
+                  :series="bandChartSeries"
+                  :mark-areas="markAreas"
+                  :height="300"
+                />
+                <p v-else class="source-empty">该来源暂无同城对比数据。</p>
+                <template v-if="source.rows.length">
+                  <button type="button" class="link-btn" @click="toggleSourceRows(source.key)">
+                    {{ expandedSourceKeys.includes(source.key) ? '收起数据表' : `查看数据表（${source.rows.length} 条）` }}
+                  </button>
+                  <div v-if="expandedSourceKeys.includes(source.key)" class="table-scroll">
+                    <table class="evidence-table">
+                      <thead><tr><th v-for="col in source.columns" :key="col.key">{{ col.label }}</th></tr></thead>
+                      <tbody>
+                        <tr v-for="(row, rowIndex) in source.rows" :key="rowIndex">
+                          <td v-for="col in source.columns" :key="col.key">{{ row[col.key] }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </template>
+              </template>
+
               <template v-else-if="source.key === 'weather'">
                 <JiangsuWeatherReviewChart v-if="weatherRows.length" :entry="weatherEntry" :weather="weatherPayload" :mark-areas="markAreas" />
                 <p v-else class="source-empty">未获取到城市气象数据。</p>
@@ -253,7 +327,7 @@
                         <strong>{{ task.qcType || task.task_type_name || '质控任务' }}</strong>
                         <span class="muted">{{ task.poll || entry.pollutant }} · {{ task.sStart || task.rStart || '—' }}</span>
                       </div>
-                      <span class="chip" :class="qcResultClass(task)">{{ qcResultText(task) }}</span>
+                      <span class="chip" :class="qcResultClass(task)" :title="task.qc_result">{{ qcResultText(task) }}</span>
                     </header>
                     <div class="qc-task-actions">
                       <button
@@ -334,34 +408,6 @@
       </template>
     </section>
 
-    <!-- 操作对话框 -->
-    <div v-if="dialog.visible" class="dialog-mask" @click.self="closeDialog" @keydown.esc="closeDialog">
-      <div class="dialog" role="dialog" aria-modal="true" :aria-label="dialogTitle">
-        <header class="dialog-head"><h4>{{ dialogTitle }}</h4></header>
-        <div class="dialog-body">
-          <p class="dialog-hint">{{ dialogHint }}</p>
-          <textarea ref="dialogTextarea" v-model="dialog.comment" rows="4" placeholder="填写意见（退回时必填）"></textarea>
-          <label v-if="dialog.action === 'archive' && hasExclusions" class="dialog-check">
-            <input v-model="dialog.intervalsConfirmed" type="checkbox" />
-            已核验数据剔除区间与合理性
-          </label>
-        </div>
-        <footer class="dialog-actions">
-          <button type="button" class="btn btn--secondary" @click="closeDialog">取消</button>
-          <button
-            type="button"
-            class="btn"
-            :class="dialog.action === 'reject' ? 'btn--danger' : 'btn--primary'"
-            :disabled="actionBusy || (dialog.action === 'reject' && !dialog.comment.trim())"
-            @click="submitDialog"
-          >
-            <span v-if="actionBusy" class="spinner spinner--sm" aria-hidden="true"></span>
-            {{ actionBusy ? '提交中…' : '确认' }}
-          </button>
-        </footer>
-      </div>
-    </div>
-
     <!-- 附件图片放大预览 -->
     <div v-if="previewUrl" class="dialog-mask image-mask" @click.self="previewUrl = null">
       <img class="preview-image" :src="previewUrl" alt="附件预览" @click="previewUrl = null" />
@@ -371,7 +417,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import JiangsuWeatherReviewChart from '@/components/visualization/JiangsuWeatherReviewChart.vue'
 import QcTaskDetailPanel from '@/components/visualization/QcTaskDetailPanel.vue'
@@ -381,7 +427,6 @@ import {
   getWorkOrderReviewSource,
   fetchWorkOrderReviewAttachmentUrl,
   listWorkOrderReviews,
-  submitWorkOrderReviewOperation,
 } from '@/services/jiangsuWorkOrderReviewApi.js'
 import {
   TABLE_PREFERRED_COLUMNS,
@@ -393,8 +438,9 @@ import {
   operationActionLabel,
   sourceStatusLabel,
   woDetailLabel,
-  workflowStatusLabel,
   WO_FIELD_ORDER,
+  WO_RAW_ENUM_KEYS,
+  woValueLabel,
   DEVICE_SECTION_LABELS,
   DETAIL_TIME_KEYS,
   DETAIL_USER_KEYS,
@@ -423,26 +469,31 @@ const SOURCE_TABLE_FIELDS = {
   qc: 'qc_tasks',
 }
 
+const PAGE_SIZE = 10
 const orders = ref([])
 const statuses = ref([])
 const total = ref(0)
 const listLoading = ref(false)
 const keyword = ref('')
 const statusFilter = ref('')
+const startDate = ref('')
+const endDate = ref('')
+const page = ref(1)
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
 
 const selectedCode = ref(null)
 const detail = ref(null)
 const detailLoading = ref(false)
 const sourceCache = ref({})
-const actionBusy = ref(false)
 const actionError = ref('')
-const actionMessage = ref('')
-const dialog = reactive({ visible: false, action: '', comment: '', intervalsConfirmed: false })
-const dialogTextarea = ref(null)
 
 const entry = computed(() => detail.value?.entry || {})
 const index = computed(() => detail.value?.index || {})
 const judgment = computed(() => index.value.judgment || null)
+// AI 时间线结论梳理（task_reviews.sections 回写）：工作台以"事件脉络"卡片展示，
+// 与快速研判卡片分工——卡片只留结论，详细脉络在这里与证据数据对照。
+const narrativeSections = computed(() => (judgment.value?.sections || [])
+  .filter(section => section && Array.isArray(section.fields) && section.fields.length))
 const operations = computed(() => index.value.operations || [])
 const unit = computed(() => sourceCache.value.station_hour?.data?.unit || 'μg/m³')
 
@@ -492,11 +543,13 @@ const chartSeries = computed(() => {
   const series = [{ name: `${data.pollutant || entry.value.pollutant || 'PM10'}（本站）`, unit: data.unit || 'μg/m³', color: '#2f86e0', points: target }]
   const pm25 = data.pm25_points || []
   if (pm25.length) series.push({ name: 'PM2.5（对照）', unit: data.unit || 'μg/m³', color: '#9b8cff', points: pm25 })
-  const band = sourceCache.value.band?.data?.band || []
-  if (band.length) {
-    const pick = key => band.filter(row => row[key] != null).map(row => ({ time: row.time, value: row[key] }))
-    const overlays = [['min', '同城最低', '#94a3b8'], ['median', '同城中位', '#61d394'], ['max', '同城最高', '#f6bd4a']]
-    overlays.forEach(([key, name, color]) => {
+  if (bandRows.value.length) {
+    const pick = key => bandRows.value.filter(row => row[key] != null).map(row => ({ time: row.time, value: row[key] }))
+    // 同域只有 1 个对比站时最低/中位/最高三值相同，合并为一条线，避免三条重合曲线。
+    const overlays = bandComparisonCollapsed.value
+      ? [[`同城对比站（${sourceCache.value.band?.data?.district_name || '同域'}）`, '#f6bd4a', 'median']]
+      : [['同城最低', '#94a3b8', 'min'], ['同城中位', '#61d394', 'median'], ['同城最高', '#f6bd4a', 'max']]
+    overlays.forEach(([name, color, key]) => {
       const points = pick(key)
       if (points.length) series.push({ name, unit: data.unit || 'μg/m³', color, points })
     })
@@ -504,6 +557,44 @@ const chartSeries = computed(() => {
   return series
 })
 const markAreas = computed(() => index.value.mark_areas || [])
+
+// 同城对比带：取证侧只存聚合行（本站 target + 同城最低/中位/最高）。本站值取本站小时时序
+// （同窗口、同单位，且比 band.target 更完整——对比数据集缺小时的 target 为空），
+// 同区只有 1 个省控对比站时最低/中位/最高三值相同，合并为一条"同城对比站"线，避免三条重合线。
+const bandRows = computed(() => (sourceCache.value.band?.data?.band || [])
+  .filter(row => row && row.time)
+  .slice()
+  .sort((left, right) => String(left.time).localeCompare(String(right.time))))
+const bandComparisonCollapsed = computed(() => bandRows.value.length > 0 && bandRows.value.every(row => (
+  row.min == null || row.max == null || Number(row.min) === Number(row.max)
+)))
+const bandChartSeries = computed(() => {
+  const rows = bandRows.value
+  if (!rows.length) return []
+  const data = sourceCache.value.station_hour?.data || {}
+  const unit = data.unit || 'μg/m³'
+  const pick = key => rows.filter(row => row[key] != null).map(row => ({ time: row.time, value: row[key] }))
+  const series = []
+  const target = (data.points || []).map(point => ({ time: point.time, value: point.value }))
+  if (target.length) {
+    series.push({ name: `${data.pollutant || entry.value.pollutant || '本站'}（本站）`, unit, color: '#2f86e0', points: target })
+  }
+  if (bandComparisonCollapsed.value) {
+    series.push({ name: `同城对比站（${sourceCache.value.band?.data?.district_name || '同域'}）`, unit, color: '#f6bd4a', points: pick('median') })
+  } else {
+    ;[['min', '同城最低', '#94a3b8'], ['median', '同城中位', '#61d394'], ['max', '同城最高', '#f6bd4a']].forEach(([key, name, color]) => {
+      const points = pick(key)
+      if (points.length) series.push({ name, unit, color, points })
+    })
+  }
+  return series
+})
+const bandSubtitle = computed(() => {
+  const data = sourceCache.value.band?.data || {}
+  const scopeText = data.scope === 'same_city' ? '同城' : '同区县'
+  const base = `${scopeText}省控对比${data.district_name ? `（${data.district_name}）` : ''} · 共 ${bandRows.value.length} 小时`
+  return bandComparisonCollapsed.value ? `${base}；同域仅 1 个对比站，最低/中位/最高为同一序列` : base
+})
 const weatherRows = computed(() => sourceCache.value.weather?.data?.rows || [])
 const weatherPayload = computed(() => ({
   start: entry.value.window_start,
@@ -544,34 +635,149 @@ function visibleRows(source) {
   return source.rows.slice(0, TABLE_ROW_LIMIT)
 }
 
-// 质控任务：只保留目标污染物任务，展示合格结果并可展开质控曲线
+// 质控任务：只保留目标污染物任务，展示合格结果并可展开质控曲线。
+// 证据包 qc 分文件里的 detail 是取证侧结构（status / run_log / curve 均为工具返回包裹，
+// 曲线原始行键为 timePoint / dataValue），而 QcTaskDetailPanel 期望对话侧 visual 的
+// qc_task_detail 结构（steps / curve[{time_point, value}] / …）。这里做一次归一化投影，
+// 与 AI 事件研判右侧的质控详情展示同构。
+function pickFirst(source, ...keys) {
+  for (const key of keys) {
+    const value = source?.[key]
+    if (value !== undefined && value !== null && value !== '') return value
+  }
+  return undefined
+}
+
+const STEP_STATUS_BY_TEXT = [['待执行', 0], ['执行中', 1], ['已完成', 2], ['已中止', 3], ['中止中', 4]]
+
+function stepStatusValue(status) {
+  if (typeof status === 'number') return status
+  const text = String(status ?? '')
+  const hit = STEP_STATUS_BY_TEXT.find(([label]) => text.includes(label))
+  return hit ? hit[1] : undefined
+}
+
+function normalizeSteps(steps) {
+  return (Array.isArray(steps) ? steps : [])
+    .filter(step => step && typeof step === 'object')
+    .map(step => ({
+      name: pickFirst(step, 'name', 'StepName', 'stepName', 'label'),
+      status: stepStatusValue(pickFirst(step, 'status', 'Status')),
+      actions: (Array.isArray(step.actions) ? step.actions : [])
+        .filter(action => action && typeof action === 'object')
+        .map(action => ({
+          name: pickFirst(action, 'name', 'ActionName', 'actionName'),
+          value: pickFirst(action, 'value', 'ActionParameter', 'actionParameter'),
+          status: stepStatusValue(pickFirst(action, 'status', 'Status')),
+        })),
+    }))
+}
+
+function normalizeValueRows(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter(row => row && typeof row === 'object')
+    .map(row => ({
+      name: pickFirst(row, 'name', 'DataName', 'dataName', 'Name'),
+      value: pickFirst(row, 'value', 'DataValue', 'dataValue', 'Value') ?? '',
+    }))
+}
+
+function normalizeRunLogs(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter(row => row && typeof row === 'object')
+    .map(row => ({
+      record_time: pickFirst(row, 'record_time', 'recordTime', 'RecordTime'),
+      target: pickFirst(row, 'target', 'Target'),
+      message: pickFirst(row, 'message', 'Message', 'strEvent', 'StrEvent'),
+    }))
+}
+
+// 平台无效观测值以 -99 / -999 标记，绘图前与对话侧一致地过滤。
+function normalizeCurve(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter(row => row && typeof row === 'object')
+    .map(row => ({
+      time_point: pickFirst(row, 'time_point', 'timePoint', 'TimePoint', 'time', 'Time'),
+      value: Number(pickFirst(row, 'value', 'dataValue', 'DataValue', 'Value')),
+      unit: pickFirst(row, 'unit', 'Unit') || '',
+      is_qcing: Boolean(pickFirst(row, 'is_qcing', 'isQCing', 'IsQCing')),
+    }))
+    .filter(point => point.time_point && Number.isFinite(point.value))
+    .sort((left, right) => String(left.time_point).localeCompare(String(right.time_point)))
+}
+
+function qcPanelDetail(detail) {
+  if (!detail || typeof detail !== 'object') return null
+  // 证据包直接存 visual 同构结构时无需投影
+  if (Array.isArray(detail.steps) || Array.isArray(detail.curve)) return detail
+  const statusData = detail.status?.data
+  const statusTask = (statusData && typeof statusData === 'object' && statusData.task) || {}
+  const snapshot = detail.status_detail || {}
+  const ref = (detail.task && typeof detail.task === 'object') ? detail.task : {}
+  const historyRow = ref.history_row || {}
+  const historyDetail = ref.history_detail || snapshot.history_detail || {}
+  return {
+    task: {
+      ...ref,
+      r_id: statusTask.r_id ?? ref.r_id,
+      r_start: statusTask.r_start ?? ref.r_start,
+      station_code: statusTask.station_code ?? historyRow.stationCode,
+      unique_code: statusTask.unique_code ?? historyRow.uniqueCode,
+      station_name: statusTask.station_name ?? historyRow.stationName,
+      poll: statusTask.poll ?? ref.pollutant ?? historyRow.poll,
+      qc_type: statusTask.qc_type ?? ref.qc_type ?? historyRow.qcType,
+      task_status: statusTask.task_status,
+      task_status_label: statusTask.task_status_label,
+      qc_result: statusTask.qc_result ?? ref.qc_result ?? historyRow.qcResult ?? historyDetail.QCResult,
+      relevant_value: statusTask.relevant_value ?? historyRow.rValue ?? historyDetail.RelevantValue,
+      inaccuracy: statusTask.inaccuracy ?? historyRow.inac ?? historyDetail.Inaccuracy,
+      start_time: statusTask.start_time ?? ref.r_start ?? historyRow.rStartStr ?? historyRow.rStart,
+      end_time: statusTask.end_time ?? ref.end_time ?? historyRow.endTimeStr ?? historyRow.endTime,
+      zero_air_flow: statusTask.zero_air_flow ?? historyDetail.ZeroAirFlow,
+      std_air_flow: statusTask.std_air_flow ?? historyDetail.StdAirFlow,
+      task_type_name: statusTask.task_type_name ?? historyRow.qcType,
+    },
+    steps: normalizeSteps(statusData?.steps ?? snapshot.steps),
+    result_values: normalizeValueRows(statusData?.result_values ?? snapshot.result_values ?? ref.result_values),
+    data_values: normalizeValueRows(statusData?.data_values ?? snapshot.data_values ?? ref.data_values),
+    run_logs: normalizeRunLogs(statusData?.run_logs ?? detail.run_log?.data),
+    curve: normalizeCurve(detail.curve?.data),
+    updated_at: detail.status?.metadata?.queried_at ?? null,
+  }
+}
+
 const qcTasks = computed(() => {
   const tasks = sourceCache.value.qc?.data?.qc_tasks || []
   return tasks.map(task => {
-    const detailTask = task.detail?.task || {}
+    const detail = qcPanelDetail(task.detail)
+    const detailTask = detail?.task || {}
     return {
       ...task,
       poll: task.target_pollutant || task.poll || detailTask.poll,
       qcType: task.qcType || detailTask.qc_type,
       qc_result: detailTask.qc_result || task.qc_result || task.result,
       task_status_label: detailTask.task_status_label,
-      detail: task.detail || null,
+      detail,
     }
   })
 })
 
+// 注意顺序：必须先判"不合格"再判"合格"，否则"不合格"作为子串会先命中 /合格/。
+const QC_FAIL_PATTERN = /不合格|异常|超(?:控制|警告)限|fail|ng/i
+const QC_PASS_PATTERN = /合格|pass|normal|success/i
+
 function qcResultText(task) {
   const result = String(task.qc_result || '').trim()
   if (!result) return task.task_status_label || '结果未知'
-  if (/合格|pass|normal|success/i.test(result)) return '合格'
-  if (/不合格|异常|fail|ng/i.test(result)) return '不合格'
+  if (QC_FAIL_PATTERN.test(result)) return '不合格'
+  if (QC_PASS_PATTERN.test(result)) return '合格'
   return result
 }
 
 function qcResultClass(task) {
   const result = String(task.qc_result || '').trim()
-  if (/合格|pass|normal|success/i.test(result) && !/不合格/i.test(result)) return 'ok'
-  if (result) return 'bad'
+  if (QC_FAIL_PATTERN.test(result)) return 'bad'
+  if (QC_PASS_PATTERN.test(result)) return 'ok'
   return 'neutral'
 }
 
@@ -581,10 +787,31 @@ const envEmptyHint = computed(() => {
   return '窗口内无动环异常记录（正常逐时数据已过滤，不参与研判）。'
 })
 
+// 事件脉络节点 → 证据节映射：section 标题由模型生成、不同单差异大（如"处置与附件"
+// "关键数据事实""审核结论与数据处置"），按关键词模糊对应，规则顺序即优先级。
+function narrativeTarget(title) {
+  if (/结论/.test(title)) return 'station_hour' // 数据处置/剔除区间标注在时序图上
+  if (/处置|处理|附件|流程/.test(title)) return 'work_order'
+  if (/恢复/.test(title)) return 'station_hour'
+  if (/质控|复测|校准|零跨|跨度/.test(title)) return 'qc'
+  if (/站点|设备|工单|概况/.test(title)) return 'work_order'
+  if (/事实|异常|数据/.test(title)) return 'station_hour'
+  if (/同区|同城|对比/.test(title)) return 'band'
+  if (/气象/.test(title)) return 'weather'
+  if (/告警|动环/.test(title)) return 'alarms'
+  return null
+}
+function sectionLabelOf(key) {
+  return SECTION_LABELS[key] || '证据'
+}
+
 const workbenchSections = computed(() => {
   const sources = index.value.sources || {}
   const entries = [
     { key: 'judgment', label: 'AI 研判结果', state: judgment.value ? 'ok' : 'empty' },
+    ...(narrativeSections.value.length
+      ? [{ key: 'narrative', label: '事件脉络', state: 'ok' }]
+      : []),
     ...Object.keys(SECTION_LABELS)
       .filter(key => sources[key])
       .map(key => ({
@@ -618,20 +845,50 @@ function updateActiveSection() {
 const attachmentUrls = ref({})
 const previewUrl = ref(null)
 
+// 平台序列化残留（如 wo.stationCode = System.Collections.Generic.List`1[System.String]）不展示。
+const SERIALIZER_NOISE = /^System\./
+// 平台时间串统一成 "YYYY-MM-DD HH:mm:ss"（去掉 T 与毫秒），与平台页面显示一致。
+const ISO_TIME = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/
+
+function factValue(value) {
+  if (typeof value === 'boolean') return value ? '是' : '否'
+  const text = String(value)
+  const time = text.match(ISO_TIME)
+  if (time) return `${time[1]} ${time[2].length === 5 ? `${time[2]}:00` : time[2]}`
+  return woValueLabel(text)
+}
+
 function scalarFacts(source, excludeKeys = []) {
   if (!source || typeof source !== 'object') return []
   return Object.entries(source)
     .filter(([key, value]) => !excludeKeys.includes(key)
-      && value != null && value !== '' && ['string', 'number', 'boolean'].includes(typeof value))
-    .map(([key, value]) => ({ key, label: woDetailLabel(key), value: String(value) }))
-    .filter(item => item.label)
+      && value != null && value !== '' && ['string', 'number', 'boolean'].includes(typeof value)
+      // 有 *Str 中文字段时丢弃同名的枚举原值字段（orderType/orderStatus…）
+      && !(WO_RAW_ENUM_KEYS.has(key) && source[`${key}Str`] != null))
+    .map(([key, value]) => ({ key, label: woDetailLabel(key), value: factValue(value) }))
+    .filter(item => item.label && !SERIALIZER_NOISE.test(item.value))
 }
+
+// 流程节点：详单里的 currentPoint / prevPoint 是节点 GUID，按 workFlowInfo.stepList 的
+// guid→taskName 映射成平台页面显示的中文节点名。
+const workflowNodeNames = computed(() => Object.fromEntries(
+  (workOrderData.value.workFlowInfo?.stepList || [])
+    .filter(step => step?.guid)
+    .map(step => [String(step.guid), String(step.taskName || '').trim()])
+    .filter(([, name]) => name)))
 
 // 源平台详单结构：data.order（清单条目）+ data.wo（详单主表）；主表优先，清单补缺
 const woFacts = computed(() => {
   const data = workOrderData.value
   const merged = { ...(data.order || {}), ...(data.wo || {}) }
-  return scalarFacts(merged)
+  const nodes = workflowNodeNames.value
+  const currentPoint = merged.currentPointName || nodes[String(merged.currentPoint || '')] || ''
+  const prevPoint = nodes[String(merged.prevPoint || '')] || ''
+  const resolved = [
+    currentPoint ? { key: 'currentPointName', label: '当前节点', value: currentPoint } : null,
+    prevPoint ? { key: 'prevPoint', label: '上一节点', value: prevPoint } : null,
+  ].filter(Boolean)
+  return [...resolved, ...scalarFacts(merged, ['currentPoint', 'prevPoint', 'currentPointName', 'stationCode'])]
     .sort((left, right) => {
       const leftIndex = WO_FIELD_ORDER.indexOf(left.key)
       const rightIndex = WO_FIELD_ORDER.indexOf(right.key)
@@ -648,19 +905,32 @@ const deviceSections = computed(() => Object.entries(DEVICE_SECTION_LABELS)
   .map(([key, label]) => ({ key, label, entries: scalarFacts(workOrderData.value[key]).slice(0, 12) }))
   .filter(section => section.entries.length))
 
+// 流程节点：stepList 是工作流定义（status/ createTime 都是模板信息，不能当进度与时间用），
+// 进度按 details 里的 processStep 是否已处理判断，当前节点取 order.currentPointFormCode。
 const woSteps = computed(() => {
-  const steps = workOrderData.value.workFlowInfo?.stepList || []
+  const data = workOrderData.value
+  const steps = data.workFlowInfo?.stepList || []
+  const currentNodeCode = String(data.order?.currentPointFormCode || '').trim()
+  const processedAt = new Map()
+  ;(data.details || []).forEach(row => {
+    const code = String(row?.processStep || '').trim()
+    if (!code) return
+    const time = row.processTimeStr || row.processEdtTime || row.processSdtTime || ''
+    if (!processedAt.has(code) || String(time) > String(processedAt.get(code))) processedAt.set(code, time)
+  })
   return steps
     .map(step => {
-      const status = workflowStatusLabel(step?.status)
+      const code = String(step?.formCode || '').trim()
+      const done = processedAt.has(code)
+      const active = !done && code && code === currentNodeCode
       return {
-        name: step?.taskName || step?.name || '—',
-        statusText: status.text,
-        statusKey: status.key,
-        time: step?.createTime || step?.finishTime || '',
+        name: String(step?.taskName || step?.name || '').trim(),
+        statusText: done ? '已完成' : (active ? '进行中' : '待处理'),
+        statusKey: done ? 'ok' : (active ? 'info' : 'pending'),
+        time: done ? processedAt.get(code) : '',
       }
     })
-    .filter(step => step.name !== '—' || step.time)
+    .filter(step => step.name)
 })
 
 const woDetails = computed(() => (workOrderData.value.details || [])
@@ -729,15 +999,6 @@ const dataImpactChips = computed(() => (judgment.value?.data_impact || [])
     return pollutant ? `${pollutant} ${impact}` : impact
   })
   .filter(Boolean))
-const hasExclusions = computed(() => (judgment.value?.data_impact || [])
-  .some(item => ['exclude', 'partial_exclude'].includes(String(item.decision || ''))))
-
-const dialogTitle = computed(() => ({ feedback: '反馈意见', reject: '退回工单审核', archive: '归档审核结论' }[dialog.action] || '工单操作'))
-const dialogHint = computed(() => ({
-  feedback: '反馈将记录到操作历史；涉及结论修正时建议同步在对话中发起增量复审。',
-  reject: '退回后如存在 AI 审核记录，会触发以退回意见为基准的增量复审。',
-  archive: '归档表示人工确认通过，证据包与审核记录将定格。',
-}[dialog.action] || ''))
 
 const statusClass = status => ({
   '已归档': 'st-ok',
@@ -771,7 +1032,10 @@ async function loadOrders() {
     const payload = await listWorkOrderReviews({
       keyword: keyword.value || undefined,
       status: statusFilter.value || undefined,
-      limit: 100,
+      start_date: startDate.value || undefined,
+      end_date: endDate.value || undefined,
+      limit: PAGE_SIZE,
+      offset: (page.value - 1) * PAGE_SIZE,
     })
     orders.value = payload.orders || []
     statuses.value = payload.statuses || []
@@ -784,6 +1048,21 @@ async function loadOrders() {
 }
 
 function applyFilters() {
+  page.value = 1
+  loadOrders()
+}
+
+function resetFilters() {
+  keyword.value = ''
+  statusFilter.value = ''
+  startDate.value = ''
+  endDate.value = ''
+  applyFilters()
+}
+
+function changePage(target) {
+  if (target < 1 || target > totalPages.value || target === page.value) return
+  page.value = target
   loadOrders()
 }
 
@@ -806,7 +1085,6 @@ async function openDetail(code) {
   expandedSourceKeys.value = []
   activeSectionKey.value = 'judgment'
   actionError.value = ''
-  actionMessage.value = ''
   detailLoading.value = true
   try {
     detail.value = await getWorkOrderReview(code)
@@ -826,42 +1104,6 @@ function backToList() {
   releaseAttachmentUrls()
   loadOrders()
 }
-
-function openDialog(action) {
-  dialog.action = action
-  dialog.comment = ''
-  dialog.intervalsConfirmed = false
-  dialog.visible = true
-  actionError.value = ''
-  actionMessage.value = ''
-}
-
-function closeDialog() {
-  dialog.visible = false
-}
-
-async function submitDialog() {
-  actionBusy.value = true
-  actionError.value = ''
-  try {
-    await submitWorkOrderReviewOperation(selectedCode.value, {
-      action: dialog.action,
-      comment: dialog.comment.trim(),
-      intervalsConfirmed: dialog.intervalsConfirmed,
-    })
-    dialog.visible = false
-    actionMessage.value = { feedback: '反馈已记录。', reject: '已退回。', archive: '已归档。' }[dialog.action]
-    detail.value = await getWorkOrderReview(selectedCode.value)
-  } catch (error) {
-    actionError.value = error.message
-  } finally {
-    actionBusy.value = false
-  }
-}
-
-watch(() => dialog.visible, visible => {
-  if (visible) nextTick(() => dialogTextarea.value?.focus())
-})
 
 watch(() => props.workspaceCommand, command => {
   const code = command?.working_order_code
@@ -1173,7 +1415,37 @@ loadOrders()
 
 .wor-toolbar {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-2);
+}
+
+.wor-date-sep {
+  color: var(--text-3);
+}
+
+.wor-date {
+  min-height: var(--control-h-md);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-container);
+  color: var(--text-1);
+  font-family: inherit;
+  font-size: var(--text-size-sm);
+}
+
+.wor-date:hover {
+  border-color: var(--color-primary-hover);
+}
+
+.wor-date:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.wor-date:focus-visible {
+  box-shadow: 0 0 0 3px var(--color-primary-ring);
 }
 
 .wor-search {
@@ -1288,76 +1560,67 @@ loadOrders()
   color: var(--text-3);
 }
 
-.wor-order-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+/* 工单列表：智能事件中心同款表格形态，整行可点，操作列显式“详情” */
+.wor-order-table th {
+  white-space: nowrap;
 }
 
-.wor-order-card {
-  width: 100%;
-  display: grid;
-  gap: var(--space-1);
-  padding: var(--space-3);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-md);
-  background: var(--bg-container);
-  text-align: left;
+.wor-order-table .order-title-cell {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wor-order-table .status-badge {
+  vertical-align: middle;
+}
+
+.wor-order-row {
   cursor: pointer;
-  transition: border-color var(--transition-base), box-shadow var(--transition-base);
 }
 
-.wor-order-card:hover {
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow-2);
+.wor-order-row:hover td {
+  background: var(--color-primary-bg);
 }
 
-.wor-order-card:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--color-primary-ring);
-}
-
-.order-line {
+.wor-pagination {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
+  justify-content: center;
+  gap: var(--space-3);
+  font-size: var(--text-size-xs);
+  color: var(--text-2);
+}
+
+.wor-pagination button {
+  min-width: 64px;
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-container);
+  color: var(--text-1);
+  cursor: pointer;
+  font-size: var(--text-size-xs);
+  font-family: inherit;
+}
+
+.wor-pagination button:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.wor-pagination button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .order-code {
   font-family: var(--font-mono);
   font-size: var(--text-size-xs);
   color: var(--text-2);
-}
-
-.order-title {
-  font-size: var(--text-size-base);
-  color: var(--text-1);
-}
-
-.order-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  font-size: var(--text-size-xs);
-  color: var(--text-2);
-}
-
-.order-foot {
-  display: flex;
-  gap: var(--space-3);
-  font-size: var(--text-size-xs);
-  color: var(--text-3);
-}
-
-.wor-total {
-  margin: 0;
-  text-align: center;
-  font-size: var(--text-size-xs);
-  color: var(--text-3);
 }
 
 /* 状态徽章（规范 §6.3） */
@@ -1396,9 +1659,14 @@ loadOrders()
   color: var(--text-3);
 }
 
-.action-bar {
-  display: flex;
-  gap: var(--space-2);
+/* 人工操作统一到任务调度中心审核卡片后，这里只留引导说明 */
+.action-hint {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--border-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  font-size: var(--text-size-xs);
 }
 
 .section-card {
@@ -1412,6 +1680,87 @@ loadOrders()
 
 .section-card.judgment {
   border-left: 3px solid var(--color-primary);
+}
+
+/* 事件脉络：纵向时间轴，节点 = AI 结论 section，字段为 label/value 对照 */
+.section-card.narrative {
+  border-left: 3px solid var(--color-primary);
+}
+.narrative-timeline {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.narrative-node {
+  position: relative;
+  padding: 0 0 var(--space-3) var(--space-4);
+  border-left: 2px solid var(--border-2);
+}
+.narrative-node:last-child {
+  padding-bottom: 0;
+  border-left-color: transparent;
+}
+.narrative-node::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-primary);
+}
+.narrative-node-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.narrative-node-head strong {
+  font-size: 14px;
+}
+.narrative-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+.narrative-fields {
+  display: grid;
+  grid-template-columns: minmax(96px, 22%) 1fr;
+  gap: 8px 16px;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary, rgba(148, 163, 184, .08));
+}
+.narrative-fields dt {
+  color: var(--text-muted, #64748b);
+  font-weight: 600;
+}
+.narrative-fields dd {
+  margin: 0;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+@media (max-width: 720px) {
+  .narrative-fields {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .narrative-fields dd {
+    margin-bottom: 8px;
+  }
 }
 
 .section-head {
@@ -1478,29 +1827,44 @@ loadOrders()
 .chip.bad { background: var(--color-danger-bg); color: var(--color-danger); }
 .chip.neutral { background: var(--bg-muted); color: var(--text-2); }
 
-.fact-grid {
+/* 工单信息：信息表样式（对齐平台详单排版）——标签+取值成对排列，不用逐个字段的框线，
+   长文本（描述、内容）自动占满整行。 */
+.fact-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: var(--space-1);
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 2px var(--space-5);
 }
 
-.fact-item {
-  display: grid;
-  gap: 2px;
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--border-1);
-  border-radius: var(--radius-sm);
+.fact-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 3px 0;
 }
 
-.fact-item span {
+.fact-row.wide {
+  grid-column: 1 / -1;
+}
+
+.fact-row > span {
+  flex: none;
+  width: 76px;
   font-size: var(--text-size-xs);
   color: var(--text-3);
 }
 
-.fact-item strong {
+.fact-row > strong {
+  min-width: 0;
   font-size: var(--text-size-sm);
+  font-weight: 500;
   color: var(--text-1);
-  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.fact-row.wide > strong {
+  white-space: pre-wrap;
+  line-height: 1.6;
 }
 
 .table-scroll {
@@ -1546,18 +1910,37 @@ loadOrders()
 
 .history-list {
   margin: 0;
-  padding-left: var(--space-5);
+  padding: 0;
+  list-style: none;
   display: grid;
-  gap: var(--space-1);
+  gap: var(--space-2);
   font-size: var(--text-size-sm);
   color: var(--text-1);
+}
+
+.history-list li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.history-list li strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.history-list li span {
+  color: var(--text-2);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .history-list small {
   color: var(--text-3);
 }
 
-/* 对话框（规范 §4.4） */
+/* 遮罩：仅图片预览使用（人工操作对话框已移除，操作统一在任务调度中心审核卡片） */
 .dialog-mask {
   position: fixed;
   inset: 0;
@@ -1568,98 +1951,15 @@ loadOrders()
   background: rgba(15, 23, 42, 0.38);
 }
 
-.dialog {
-  width: min(520px, 100%);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border-radius: var(--radius-lg);
-  background: var(--bg-container);
-  box-shadow: var(--shadow-3);
-}
-
-.dialog-head {
-  display: flex;
-  align-items: center;
-  min-height: var(--panel-header-h);
-  padding: 0 var(--space-6);
-  border-bottom: 1px solid var(--border-1);
-}
-
-.dialog-head h4 {
-  margin: 0;
-  font-size: var(--text-size-lg);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-1);
-}
-
-.dialog-body {
+/* 工单信息分区（设备/流程/处置/附件）：只用一条细分割线分区，不再套框 */
+.fact-block {
   display: grid;
-  gap: var(--space-3);
-  padding: var(--space-6);
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-1);
 }
 
-.dialog-hint {
-  margin: 0;
-  font-size: var(--text-size-sm);
-  line-height: var(--line-height-body);
-  color: var(--text-2);
-}
-
-.dialog textarea {
-  width: 100%;
-  box-sizing: border-box;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-3);
-  border-radius: var(--radius-sm);
-  color: var(--text-1);
-  font-family: inherit;
-  font-size: var(--text-size-sm);
-  line-height: var(--line-height-body);
-  resize: vertical;
-}
-
-.dialog textarea::placeholder {
-  color: var(--text-3);
-}
-
-.dialog textarea:hover {
-  border-color: var(--color-primary-hover);
-}
-
-.dialog textarea:focus {
-  outline: none;
-  border-color: var(--color-primary);
-}
-
-.dialog textarea:focus-visible {
-  box-shadow: 0 0 0 3px var(--color-primary-ring);
-}
-
-.dialog-check {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-size-sm);
-  color: var(--text-1);
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-6) var(--space-6);
-}
-
-/* 工单信息子区块（源平台详单结构） */
-.sub-section {
-  display: grid;
-  gap: 6px;
-  border-top: 1px dashed var(--border-1, #e2e8f1);
-  padding-top: 8px;
-}
-
-.sub-section h5 {
+.fact-block h5 {
   margin: 0;
   font-size: 12px;
   color: var(--text-2);
@@ -1672,13 +1972,14 @@ loadOrders()
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .step-list li {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 2px 0;
   font-size: 12px;
   color: var(--text-1);
 }
@@ -1695,8 +1996,8 @@ loadOrders()
 }
 
 .step-dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: #b6c2d2;
   flex: none;
@@ -1712,14 +2013,15 @@ loadOrders()
 
 .attachment-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: var(--space-3);
 }
 
 .attachment-grid figure {
   margin: 0;
   display: grid;
   gap: 4px;
+  min-width: 0;
   font-size: 11px;
   color: var(--text-3);
 }
@@ -1730,10 +2032,10 @@ loadOrders()
 
 .attachment-thumb {
   width: 100%;
-  height: 104px;
+  height: 96px;
   padding: 0;
   border: 1px solid var(--border-1, #e2e8f1);
-  border-radius: 6px;
+  border-radius: 4px;
   overflow: hidden;
   background: #f6f8fb;
   cursor: zoom-in;
@@ -1750,7 +2052,7 @@ loadOrders()
   font-size: 12px;
   color: #2563c4;
   text-decoration: none;
-  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 .attachment-file.muted {
@@ -1761,7 +2063,8 @@ loadOrders()
   display: flex;
   justify-content: space-between;
   gap: 6px;
-  word-break: break-all;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .attachment-grid figcaption em {

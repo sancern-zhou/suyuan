@@ -34,14 +34,19 @@ def _packages():
 
 
 def _parse_db_datetime(value):
-    if value is None or isinstance(value, datetime):
-        return value
-    try:
-        parsed = datetime.fromisoformat(str(value))
-    except (ValueError, TypeError):
+    if value is None:
         return None
-    if parsed.tzinfo is None:
-        parsed = parsed.astimezone()
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except (ValueError, TypeError):
+            return None
+    if parsed.tzinfo is not None:
+        # 智能事件库时间列均为 timestamp without time zone，asyncpg 拒绝带时区值，
+        # 落库前统一折算为本地裸时间（与 task_review._parse_db_datetime 保持一致）。
+        parsed = parsed.astimezone().replace(tzinfo=None)
     return parsed
 
 

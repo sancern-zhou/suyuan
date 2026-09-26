@@ -11,6 +11,7 @@ deployment server (single governance source; keep both in sync).
 """
 
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import asyncpg
@@ -24,38 +25,35 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-MART_TABLES = [
-    "mart_work_order_analysis",
-    "mart_alarm_event_analysis",
-    "mart_station_device_health",
-    "mart_station_daily_profile",
-]
 
-MART_SCHEMA_GUIDE = (
-    "\n\n【江苏运维主题数据集契约（PostgreSQL，仅下列4张表）】"
-    "\n数据自2026-07-01起；不支持同比/年度；实时状态请走平台API工具，不在本数据集。"
-    "\n生成SQL前先读契约，直接生成SQL，不要先describe_table；仅当契约未列字段时才describe_table。"
-    "\n- mart_work_order_analysis（工单宽表，一行=一张故障工单）："
-    "维度 working_order_code/station_code/station_name/city_name/device_id/order_type/order_status_cn"
-    "(处理中/已完成/已作废)/urgency_type；时间 create_time/dispatch_time/arrival_time/finish_time/plan_finish_time；"
-    "指标 response_minutes(响应=派单→到站)/process_minutes/repair_minutes/is_overdue(按plan_finish_time)/"
-    "is_repeat_fault(同站同设备30天)/repeat_fault_basis/repeat_count_30d/alarm_count_1d/node_count。"
-    "注意：派单/到站为工作流节点代理口径；平台存在大量长期未闭环单，超期率~85%是数据现状。"
-    "\n- mart_alarm_event_analysis（告警宽表，一行=一条站点告警）："
-    "维度 station_code/station_name/city_name/alarm_level_cn(紧急/中级/一般)/alarm_state_cn(未处理/已解除)/rule_type/alarm_content；"
-    "时间 alarm_time/handle_time/remove_time；指标 duration_minutes/handle_minutes/is_unresolved/linked_work_orders_24h。"
-    "\n- mart_station_device_health（站点健康，一行=一个站点）："
-    "work_orders_30d/overdue_orders_30d/overdue_rate_30d/repeat_fault_orders_30d/avg_response_minutes_30d/"
-    "alarms_7d/alarms_30d/unresolved_alarms/last_alarm_time/last_work_order_time/device_count/"
-    "risk_level(高/中/低/稳定)。当前态势类问题优先查本表。"
-    "\n- mart_station_daily_profile（站点日概况，一行=站点×日）："
-    "profile_date/station_code/city_name/work_orders_created/work_orders_finished/overdue_orders_created/alarms/"
-    "attendance_signins(源数据稀疏)。趋势/对比类问题查本表，当日数据次日凌晨才完整。"
-    "\n【SQL方言】PostgreSQL：用 LIMIT 不用 TOP；日期截断用 date_trunc('day', col)；"
-    "布尔列直接用 IS TRUE / = TRUE；时间比较用 '2026-09-01' 字面量。"
-    "查询务必带 LIMIT（上限1000）；聚合统计优先 GROUP BY 城市或站点返回小结果集。"
-)
+def _load_contract() -> tuple:
+    """Load the dataset contract generated from sync/datasets/*.yaml (single source).
 
+    contract.txt is produced by sync/gen_tool_contract.py (E:\\Tools\\suyuan-jiangsu);
+    drift between the yaml sources and this file is checked daily by dq_check.py.
+    """
+    text = (Path(__file__).with_name("contract.txt")).read_text(encoding="utf-8")
+    tables: List[str] = []
+    guide_lines: List[str] = []
+    in_guide = False
+    for line in text.splitlines():
+        if line.startswith("TABLES:"):
+            tables = [t.strip() for t in line.split(":", 1)[1].split(",") if t.strip()]
+        elif line.strip() == "GUIDE_START":
+            in_guide = True
+        elif line.strip() == "GUIDE_END":
+            in_guide = False
+        elif in_guide:
+            guide_lines.append(line)
+    if not tables or not guide_lines:
+        raise RuntimeError(
+            "contract.txt invalid (missing TABLES or GUIDE block) — "
+            "regenerate with sync/gen_tool_contract.py"
+        )
+    return tables, "\n".join(guide_lines)
+
+
+MART_TABLES, MART_SCHEMA_GUIDE = _load_contract()
 
 class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
     """对 jiangsu_mart 主题数据集执行受控 SELECT 查询。"""
@@ -71,7 +69,7 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
         function_schema = {
             "name": self.tool_name,
             "description": (
-                "查询江苏运维主题数据集（本地PostgreSQL语义层：工单/告警/站点健康/站点日概况4张宽表）。"
+                "查询江苏运维主题数据集（本地PostgreSQL语义层：工单/告警/站点健康/站点日概况/质控执行/质控安排6张宽表+设备台账维度表）。"
                 "只允许SELECT；表名白名单见工具说明；返回带数据截至时间。"
                 + MART_SCHEMA_GUIDE
             ),

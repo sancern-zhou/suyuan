@@ -110,13 +110,14 @@ export const TABLE_COLUMN_LABELS = {
   min: '同城最低',
   median: '同城中位',
   max: '同城最高',
+  target: '本站',
   ...ENV_POWER_COLUMN_LABELS,
 }
 
 export const TABLE_PREFERRED_COLUMNS = {
   alarms: ['alarmTime', 'alarmContent', 'alarmLevel'],
   qc: ['qcType', 'sStart', 'sEnd', 'result'],
-  band: ['time', 'min', 'median', 'max'],
+  band: ['time', 'target', 'min', 'median', 'max'],
   env_power: ['timePoint'],
 }
 
@@ -173,6 +174,7 @@ export const WO_DETAIL_LABELS = {
   finishTime: '办结时间',
   finishUserName: '办结人',
   createUserName: '创建人',
+  updateUserName: '更新人',
   handler: '处理人',
   handlerName: '处理人',
   modifyTime: '更新时间',
@@ -184,15 +186,19 @@ export const WO_DETAIL_LABELS = {
   issuedTypeStr: '下发方式',
   orderCreateTypeStr: '创建方式',
   workFlowStatusStr: '流程状态',
+  currentPointName: '当前节点',
   currentPoint: '当前节点',
   prevPoint: '上一节点',
   city: '城市',
   emergency: '紧急程度',
   emergencyDegree: '紧急程度',
   orderSource: '工单来源',
-  stationCode: '站点编码',
+  // 站点编码只认字符串字段；wo.stationCode 是平台序列化残留（System.Collections…），不登记即不渲染
+  stationCodeStr: '站点编码',
   uniqueCode: '站点唯一编码',
   remark: '备注',
+  isMakeup: '是否补录',
+  deviceInfo: '设备',
   processStepName: '流程节点',
   processTimeStr: '处理时间',
   processEdtTime: '处理完成时间',
@@ -212,7 +218,7 @@ export const WO_FIELD_ORDER = [
   'operationUnitName', 'siteName', 'stationName', 'stationCodeStr', 'stationCode', 'uniqueCode', 'address', 'city',
   'deviceInfo', 'faultPhenomenon', 'faultReason', 'orderContent', 'otherContent', 'describe',
   'dealContent', 'treatAdvice', 'remark',
-  'createUserName', 'handler', 'handlerName', 'finishUserName', 'currentPoint', 'prevPoint',
+  'createUserName', 'handler', 'handlerName', 'finishUserName', 'currentPointName', 'currentPoint', 'prevPoint',
   'workFlowStatusStr', 'issuedTypeStr', 'orderCreateTypeStr', 'modifyTime', 'updateTime',
 ]
 
@@ -238,8 +244,39 @@ export const DETAIL_USER_KEYS = ['processUserName', 'handlerName', 'userName', '
 export const DETAIL_CONTENT_KEYS = ['submitRemark', 'processContent', 'content', 'description', 'dealContent', 'handleContent', 'remark']
 export const DETAIL_STEP_KEYS = ['processStepName', 'stepName', 'taskName', 'nodeName']
 
+// 平台枚举原值 → 中文（payload 里没有对应 *Str 字段时兜底翻译，避免 Doing / DeviceFault 这类原值透出）
+export const WO_ENUM_VALUE_LABELS = {
+  Fault: '故障单',
+  Doing: '处理中',
+  Done: '已办结',
+  Finish: '已办结',
+  Finished: '已办结',
+  ToAssign: '待分配',
+  Normal: '正常',
+  Urgent: '紧急',
+  DeviceFault: '设备故障',
+  DeviceNormal: '设备正常',
+  DeviceStop: '设备停用',
+  Manual: '手动',
+  Auto: '自动',
+  True: '是',
+  False: '否',
+}
+
+// payload 里同时存在原值与 *Str 中文字段时，原值字段直接丢弃（不参与渲染）。
+export const WO_RAW_ENUM_KEYS = new Set([
+  'orderType', 'orderStatus', 'workFlowStatus', 'urgencyType', 'orderCreateType', 'issuedType',
+  'processType', 'faultProcessType', 'userType', 'deviceStatus',
+])
+
+export function woValueLabel(value) {
+  const text = normalize(value)
+  return WO_ENUM_VALUE_LABELS[text] || text
+}
+
 export function woDetailLabel(key) {
-  return labelFrom(WORK_ORDER_FACT_LABELS, key, '') || labelFrom(WO_DETAIL_LABELS, key, key)
+  // 未登记字段一律不渲染（规范 §5：内部字段名不得原样透出），而不是回退成原始键名。
+  return labelFrom(WORK_ORDER_FACT_LABELS, key, '') || labelFrom(WO_DETAIL_LABELS, key, '')
 }
 
 export function workflowStatusLabel(status) {

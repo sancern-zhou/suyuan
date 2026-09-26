@@ -15,7 +15,6 @@
           {{ feature }}
         </li>
       </ul>
-      <p class="hint">{{ welcomeContent.example }}</p>
     </div>
 
     <!-- 加载更多按钮 -->
@@ -685,8 +684,7 @@ const welcomeContent = computed(() => {
   return {
     title: agent.name,
     description: agent.welcome.description,
-    features: agent.welcome.features,
-    example: agent.welcome.example
+    features: agent.welcome.features
   }
 })
 
@@ -1538,13 +1536,6 @@ const downloadPreviewedImage = async () => {
     line-height: 1.6;
     text-align: center;
   }
-
-  .hint {
-    margin-top: 18px;
-    color: #6f7f97;
-    font-size: 13px;
-    font-style: normal;
-  }
 }
 
 .scroll-bottom-button {
@@ -1823,7 +1814,6 @@ const downloadPreviewedImage = async () => {
   border-top-left-radius: 2px;
   margin-left: 0;
   margin-right: 0;
-  border: 1px solid var(--border-2);
   max-width: 100%;
   font-size: 14px;
   line-height: 1.6;

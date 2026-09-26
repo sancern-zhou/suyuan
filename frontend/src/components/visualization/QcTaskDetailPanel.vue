@@ -36,9 +36,9 @@
       </article>
     </div>
 
-    <section class="qc-card">
+    <section v-if="steps.length" class="qc-card">
       <div class="card-title"><span>任务执行步骤</span><b>{{ steps.length }}</b></div>
-      <div v-if="steps.length" class="steps-strip">
+      <div class="steps-strip">
         <article
           v-for="(step, index) in steps"
           :key="`${step.name}-${index}`"
@@ -63,30 +63,27 @@
           </footer>
         </article>
       </div>
-      <p v-else class="card-empty">接口未返回任务步骤。</p>
     </section>
 
-    <div class="qc-columns">
-      <section class="qc-card">
+    <div v-if="resultValues.length || dataValues.length" class="qc-columns">
+      <section v-if="resultValues.length" class="qc-card">
         <div class="card-title"><span>结果项</span><b>{{ resultValues.length }}</b></div>
-        <div v-if="resultValues.length" class="value-group">
+        <div class="value-group">
           <div v-for="(row, index) in resultValues" :key="`r-${index}`" class="value-row">
             <span>{{ row.name || '结果' }}</span>
             <b>{{ row.value || '—' }}</b>
           </div>
         </div>
-        <p v-else class="card-empty">接口未返回结果项。</p>
       </section>
 
-      <section class="qc-card">
+      <section v-if="dataValues.length" class="qc-card">
         <div class="card-title"><span>计算数据项</span><b>{{ dataValues.length }}</b></div>
-        <div v-if="dataValues.length" class="value-group">
+        <div class="value-group">
           <div v-for="(row, index) in dataValues" :key="`d-${index}`" class="value-row">
             <span>{{ row.name || '数据' }}</span>
             <b>{{ row.value || '—' }}</b>
           </div>
         </div>
-        <p v-else class="card-empty">接口未返回计算数据项。</p>
       </section>
     </div>
 
@@ -97,9 +94,9 @@
       <p v-else class="card-empty">接口未返回监测曲线数据。</p>
     </section>
 
-    <section class="qc-card">
+    <section v-if="runLogs.length" class="qc-card">
       <div class="card-title"><span>质控日志</span><b>{{ runLogs.length }}</b></div>
-      <div v-if="runLogs.length" class="log-table">
+      <div class="log-table">
         <div class="log-head">
           <span>时间</span><span>类型</span><span>日志信息</span>
         </div>
@@ -109,13 +106,7 @@
           <span :title="log.message">{{ log.message || '—' }}</span>
         </div>
       </div>
-      <p v-else class="card-empty">接口未返回质控日志。</p>
     </section>
-
-    <p class="qc-source">
-      数据来源：江苏运维平台质控历史接口（任务状态 / 运行日志 / 监测曲线），仅展示接口返回内容，不推断、不补造。
-      更新于 {{ updateTimeText }}
-    </p>
   </section>
 </template>
 
@@ -159,12 +150,6 @@ const flowText = computed(() => {
   const span = task.value.std_air_flow
   if (zero == null && span == null) return '—'
   return `${zero ?? '—'} / ${span ?? '—'}`
-})
-const updateTimeText = computed(() => {
-  const raw = payload.value.updated_at
-  const date = raw ? new Date(raw) : null
-  if (!date || Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleString('zh-CN', { hour12: false })
 })
 const hasCurve = computed(() => chartPoints.value.length > 0)
 
@@ -367,7 +352,6 @@ onBeforeUnmount(() => {
 .log-row { border-bottom: 1px dashed rgba(17, 24, 39, .08); color: #374151; }
 .log-row:last-child { border-bottom: 0; }
 .log-row span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.qc-source { margin: 0; color: var(--text-3); font-size: 10px; line-height: 15px; }
 @media (max-width: 980px) {
   .qc-columns { grid-template-columns: 1fr; }
   .qc-metrics { grid-template-columns: repeat(2, 1fr); }

@@ -195,6 +195,38 @@ async def _ensure_session_resources_schema(conn) -> None:
     logger.info("session_resources_schema_ensured")
 
 
+async def _ensure_coordinator_quick_prompts_schema(conn) -> None:
+    """Upgrade the pre-surface coordinator_quick_prompts table in place.
+
+    Adds the ``surface`` column (existing rows are home-surface prompts) and
+    widens label uniqueness from (project_id, label) to
+    (project_id, surface, label).
+    """
+    if conn.dialect.name != "postgresql":
+        return
+    statements = (
+        """
+        ALTER TABLE coordinator_quick_prompts
+            ADD COLUMN IF NOT EXISTS surface VARCHAR(16) NOT NULL DEFAULT 'home'
+        """,
+        """
+        ALTER TABLE coordinator_quick_prompts
+            DROP CONSTRAINT IF EXISTS uq_coordinator_quick_prompts_project_label
+        """,
+        """
+        ALTER TABLE coordinator_quick_prompts
+            DROP CONSTRAINT IF EXISTS uq_coordinator_quick_prompts_project_surface_label
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_coordinator_quick_prompts_scope_label
+            ON coordinator_quick_prompts (project_id, surface, COALESCE(mode, ''), label)
+        """,
+    )
+    for statement in statements:
+        await conn.execute(text(statement))
+    logger.info("coordinator_quick_prompts_schema_ensured")
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency for FastAPI endpoints to get database session.
@@ -270,6 +302,7 @@ async def init_db():
     import app.social.report_models  # noqa: F401
     import app.conversations.models  # noqa: F401
     import app.db.models.scheduled_task_execution_db  # noqa: F401
+    import app.db.models.coordinator_quick_prompt_db  # noqa: F401
     # Web Agent conversation persistence uses SessionDB / SessionMessageDB.
     # Import it before create_all so isolated project databases receive the
     # required `sessions` tables on their first startup as well.
@@ -295,6 +328,7 @@ async def init_db():
         await _ensure_uploaded_files_schema(conn)
         await _ensure_social_binding_schema(conn)
         await _ensure_session_resources_schema(conn)
+        await _ensure_coordinator_quick_prompts_schema(conn)
     logger.info("database_initialized")
 
 

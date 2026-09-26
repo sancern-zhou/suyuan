@@ -30,6 +30,17 @@ ROUTER_REGISTRY = [
         owner="core",
     ),
     RouterSpec(
+        "app.api.coordinator_config_routes",
+        description="Coordinator quick prompts runtime read",
+        owner="core",
+    ),
+    RouterSpec(
+        "app.api.coordinator_config_routes",
+        attr="admin_router",
+        description="Coordinator quick prompts admin CRUD",
+        owner="core",
+    ),
+    RouterSpec(
         "app.auth.routes",
         prefix="/api",
         description="Authentication support",

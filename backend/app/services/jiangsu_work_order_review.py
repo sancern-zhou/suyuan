@@ -30,6 +30,14 @@ _DECISION_STATUS = {
     "needs_evidence": "待补证",
     "reject": "已退回",
 }
+_DECISION_LABELS = {
+    "approve": "建议通过",
+    "pass": "通过",
+    "confirm": "通过",
+    "reject": "建议退回",
+    "needs_evidence": "需要补证",
+    "needs_action": "需要处置",
+}
 _HUMAN_ACTION_STATUS = {
     "confirm": "已归档",
     "complete": "已归档",
@@ -217,14 +225,57 @@ def attach_judgment(code: str, review: dict[str, Any]) -> dict[str, Any]:
             "comment": submission.get("comment"),
             "data_impact": submission.get("data_impact") or [],
             "checks": submission.get("checks") or [],
+            # sections 是 AI 的时间线结论梳理（站点与设备/故障事实/处置/恢复与复测/质控…），
+            # 工单审核工作台据此渲染"事件脉络"卡片；标题由模型生成，前端按关键词模糊对应证据节。
+            "sections": submission.get("sections") or [],
+            "review_basis": submission.get("review_basis") or [],
             "title": review.get("title"),
             "summary": review.get("summary"),
             "judged_at": review.get("updated_at") or _now(),
         }
         decision = str(submission.get("decision") or "").lower()
         package["status"] = _DECISION_STATUS.get(decision, "待归档")
+        package["judgment"]["decision_label"] = (submission.get("decision_label")
+                                                 or _DECISION_LABELS.get(decision))
+        # 剔除建议 → 图表标注区间：工单审核工作台的时序图按 mark_areas 高亮。
+        package["mark_areas"] = _mark_areas_from_data_impact(submission.get("data_impact"))
 
     return _persist_package_update(code, mutate)
+
+
+def _mark_areas_from_data_impact(data_impact: Any) -> list[dict[str, Any]]:
+    """剔除类数据影响（partial_exclude/exclude 且带区间）→ 图表标注区间。"""
+    areas: list[dict[str, Any]] = []
+    for item in data_impact or []:
+        if not isinstance(item, dict):
+            continue
+        decision = str(item.get("decision") or "").lower()
+        if decision not in {"partial_exclude", "exclude"}:
+            continue
+        start, end = item.get("start"), item.get("end")
+        if not start or not end:
+            continue
+        pollutant = str(item.get("pollutant") or "").strip()
+        areas.append({
+            "name": f"{pollutant}剔除区间" if pollutant else "剔除区间",
+            "start": _compact_time_text(start),
+            "end": _compact_time_text(end),
+        })
+    return areas
+
+
+def _compact_time_text(value: Any) -> str:
+    text = str(value)
+    return text.replace("T", " ")[:19] if len(text) >= 19 else text
+
+
+def has_order(code: str) -> bool:
+    """工作台是否已有该工单的证据包条目（submit_task_review 决定是否发 ui_command）。"""
+    key = str(code or "").strip()
+    if not key:
+        return False
+    with _store_lock():
+        return key in _load_store()["orders"]
 
 
 def apply_human_decision(review: dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:
@@ -273,11 +324,14 @@ def record_operation(code: str, action: str, comment: str = "", actor: dict[str,
 
 
 def list_orders(limit: int = 50, offset: int = 0, status: str | None = None,
-                keyword: str | None = None) -> dict[str, Any]:
+                keyword: str | None = None, start_date: str | None = None,
+                end_date: str | None = None) -> dict[str, Any]:
     with _store_lock():
         store = _load_store()
         entries = list(store["orders"].values())
     keyword_text = str(keyword or "").strip().casefold()
+    start_day = str(start_date or "").strip() or None
+    end_day = str(end_date or "").strip() or None
     rows = []
     for entry in entries:
         if status and entry.get("status") != status:
@@ -286,6 +340,16 @@ def list_orders(limit: int = 50, offset: int = 0, status: str | None = None,
             haystack = " ".join(str(entry.get(key) or "") for key in
                                 ("working_order_code", "title", "site_name", "pollutant")).casefold()
             if keyword_text not in haystack:
+                continue
+        if start_day or end_day:
+            # 按故障日期过滤：取故障窗口开始时间的本地日期（YYYY-MM-DD），
+            # 缺窗口的工单回退到取证时间；无任何时间信息的工单不命中日期筛选。
+            reference_day = str(entry.get("window_start") or entry.get("collected_at") or "")[:10]
+            if not reference_day:
+                continue
+            if start_day and reference_day < start_day:
+                continue
+            if end_day and reference_day > end_day:
                 continue
         rows.append(entry)
     rows.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)

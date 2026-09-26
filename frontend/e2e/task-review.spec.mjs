@@ -30,8 +30,13 @@ test('generic review renders and persists human decision without a business rend
   expect(errors).toEqual([])
 })
 
-test('scheduler classifies generic todos, opens shared review and removes confirmed items', async ({ page }) => {
-  const records = [structuredClone(base), { ...structuredClone(base), review_id: 'review_456', category: '智能事件', title: '站点告警需确认' }]
+test('scheduler classifies generic todos by task type, opens shared review and removes confirmed items', async ({ page }) => {
+  const today = new Date().toISOString()
+  const records = [
+    { ...structuredClone(base), updated_at: today },
+    { ...structuredClone(base), review_id: 'review_789', title: '恒值异常需确认', updated_at: today },
+    { ...structuredClone(base), review_id: 'review_456', category: '智能事件', title: '站点告警需确认', updated_at: today },
+  ]
   const errors = []
   page.on('pageerror', error => errors.push(error.message))
   await page.route('**/api/**', async route => {
@@ -47,18 +52,22 @@ test('scheduler classifies generic todos, opens shared review and removes confir
   })
   await page.route('**/__scheduler_review_test__', route => route.fulfill({ contentType: 'text/html', body: `<div id="app" data-scheduler="true" style="height:900px"></div><script type="module" src="/e2e/taskReviewHarness.js"></script>` }))
   await page.goto('/__scheduler_review_test__')
-  await expect(page.locator('.task-card')).toHaveCount(2)
-  await page.getByRole('button', { name: '工单审核 1', exact: true }).click()
-  await expect(page.locator('.task-card')).toHaveCount(1)
-  await page.getByRole('button', { name: '查看研判结果' }).click()
+  // 调度中心只渲染结构化审核结果列表：无页签、无统计看板；任务类型筛选默认故障工单审核（category=工单审核）。
+  const reviewRows = page.locator('.review-list tbody tr')
+  await expect(reviewRows).toHaveCount(2)
+  await expect(reviewRows.first()).toContainText('故障处理需确认')
+  await expect(reviewRows.first()).not.toContainText('SOP-01')
+  await expect(page.locator('.status-grid, .scheduler-tabs, .task-cards-grid, .section-header')).toHaveCount(0)
+  await page.getByLabel('任务类型').selectOption('智能事件')
+  await expect(reviewRows).toHaveCount(1)
+  await expect(reviewRows.first()).toContainText('站点告警需确认')
+  await page.getByLabel('任务类型').selectOption('工单审核')
+  await expect(reviewRows).toHaveCount(2)
+  await page.getByRole('button', { name: '查看详情' }).click()
   await page.getByLabel('审核意见', { exact: true }).fill('已核验')
   await page.getByRole('button', { name: '确认归档' }).click()
   await page.getByRole('button', { name: '关闭', exact: true }).click()
-  await expect(page.locator('.task-card')).toHaveCount(1)
-  await expect(page.locator('.task-card')).toContainText('站点告警需确认')
-  await page.getByRole('button', { name: '事件任务 1', exact: true }).click()
-  await expect(page.locator('.task-card')).toContainText('告警研判')
-  await page.getByRole('button', { name: '定时任务 1', exact: true }).click()
-  await expect(page.locator('.task-card')).toContainText('定时巡检')
+  await expect(reviewRows).toHaveCount(1)
+  await expect(reviewRows.first()).toContainText('恒值异常需确认')
   expect(errors).toEqual([])
 })

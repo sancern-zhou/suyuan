@@ -448,6 +448,19 @@ class Settings(BaseSettings):
         default="chat_completions",
         description="OpenCode Go API protocol mode: chat_completions"
     )
+    go2_api_key: Optional[str] = Field(default=None, description="OpenCode Go subscription #2 API key (failover after go)")
+    go2_base_url: str = Field(
+        default="https://opencode.ai/zen/go/v1",
+        description="OpenCode Go #2 OpenAI-compatible API base URL"
+    )
+    go2_model: str = Field(
+        default="deepseek-v4.1-flash",
+        description="Default OpenCode Go #2 model used by Flash tier"
+    )
+    go2_api_mode: str = Field(
+        default="chat_completions",
+        description="OpenCode Go #2 API protocol mode: chat_completions"
+    )
     voice_mimo_base_url: str = Field(
         default="https://api.xiaomimimo.com/v1",
         description="Xiaomi Mimo OpenAI-compatible base URL for ASR/TTS"

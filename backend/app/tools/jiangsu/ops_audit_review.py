@@ -1,22 +1,26 @@
-"""Jiangsu non-fault operations work-order audit against the real platform API.
+"""Jiangsu non-fault operations work-order audit from the local ODS database.
 
 This is the Jiangsu counterpart of the shared (SQL-Server backed) ops audit.
 It reads routine work orders (巡检/现场检查/校准/质控/质量保证/数据录入) from the
-Jiangsu operations platform REST API, translates the generic ``rFCommon`` form
-matrix into named business fields via the extracted form dictionaries, runs
-deterministic audit rules, and produces a report input for the report package
-chain.
+local PostgreSQL ODS (jiangsu_ods, populated by the Jiangsu sync pipeline),
+translates the generic ``rFCommon`` form matrix into named business fields via
+the extracted form dictionaries, runs deterministic audit rules, and produces
+a report input for the report package chain.
+
+Data freshness is bounded by the sync watermark (``query_info.rf_common_watermark``);
+there is deliberately no platform-API fallback — if the ODS has no matching rows
+the fetch fails loudly so the gap is visible.
 
 Two tools are exposed to the Agent:
 
-- ``jiangsu_ops_audit_fetch_dataset``: list + detail + translate -> dataset JSON
+- ``jiangsu_ops_audit_fetch_dataset``: ODS query + translate -> dataset JSON
 - ``jiangsu_ops_audit_run_rules``: deterministic rules -> issues + report input
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
+import os
 import re
 from collections import Counter
 from datetime import datetime
@@ -24,12 +28,12 @@ from hashlib import sha1
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import httpx
+import asyncpg
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.jiangsu.fault_diagnosis import _JiangsuAuthenticatedApi
 from app.tools.jiangsu.ops_audit_form_fields import (
+    component_name,
     device_identity,
     load_form,
     translate_rfcommon,
@@ -38,9 +42,6 @@ from app.tools.resource_refs import build_file_ref, merge_refs
 from app.utils.path_config import format_agent_path, get_data_registry, resolve_agent_path
 
 logger = structlog.get_logger()
-
-LIST_PATH = "operation/WorkingOrder/GetMtcWorkingOrderPagedListAsync"
-DETAIL_PATH = "operation/WorkingOrder/GetWorkingOrderInfo"
 
 AUDITABLE_ORDER_TYPES = ["Check", "SECCheck", "Calibration", "QC", "QA", "DataEntry"]
 ORDER_TYPE_LABELS = {
@@ -55,7 +56,22 @@ ORDER_STATUS_LABELS = {
 }
 FINISHED_ORDER_STATUSES = {"Finish", "已完成"}
 MAX_FETCH = 300
-MAX_CONCURRENCY = 4
+
+# DB 取数(本地 ODS):非故障工单、任务项与 rFCommon 表单矩阵由江苏同步管线
+# 落到本地 PostgreSQL(jiangsu_ods);同步水位之后的新单不在本工具覆盖范围。
+DB_DSN_ENV = "OPS_MART_DATABASE_URL"
+RF_COMMON_TABLE = "jiangsu_ods.rf_common"
+# 同步回填窗口(sync_config.full_load_since)下界:rf_common 表单只有该窗口
+# 之后的行,更早的工单即使主表在库也无表单可审,直接查不到比返回半截数据好。
+DB_SYNC_WINDOW_START = "2026-07-01 00:00:00"
+# 平台 rFCommon 键为驼峰/小写混合;同步引擎把列名统一小写,
+# 从库行构造 rFCommon 时补回这些驼峰别名(字典按驼峰取值)。
+RFCOMMON_CAMEL_KEYS = (
+    "checkDate", "deviceBrand", "deviceCode", "deviceId", "deviceModel",
+    "isCancel", "workingOrderCode",
+)
+DB_WORKFLOW_STATUS_CN = {code: cn for cn, code in WORKFLOW_STATUS_LABELS.items()}
+DB_ORDER_STATUS_CN = {code: cn for cn, code in ORDER_STATUS_LABELS.items()}
 
 
 def _now_text() -> str:
@@ -151,71 +167,6 @@ def _output_dir(context: Any, requested: str | None) -> Path:
     return (get_data_registry() / "ops_audit" / "jiangsu" / stamp).resolve()
 
 
-async def _list_orders(
-    api: _JiangsuAuthenticatedApi,
-    *,
-    order_type: str,
-    create_start: str | None,
-    create_end: str | None,
-    workflow_statuses: list[str],
-    order_statuses: list[str],
-    order_codes: list[str],
-    station_codes: list[str],
-    limit: int,
-) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    skip = 0
-    page_size = 50
-    while len(items) < limit:
-        params: list[tuple[str, str]] = [
-            ("OrderType", order_type),
-            ("MaxResultCount", str(page_size)),
-            ("SkipCount", str(skip)),
-        ]
-        if station_codes:
-            params += [("StationCode", code) for code in station_codes]
-        if order_codes:
-            params += [("WorkingOrderCode", code) for code in order_codes]
-        if create_start:
-            params.append(("CreateTime", create_start))
-        if create_end:
-            params.append(("CreateTime", create_end))
-        params += [("WorkFlowStatus", status) for status in workflow_statuses]
-        params += [("OrderStatus", status) for status in order_statuses]
-        payload = await api.get(LIST_PATH, params)
-        result = payload.get("result") or {}
-        page_items = [item for item in (result.get("items") or []) if isinstance(item, dict)]
-        if not page_items:
-            break
-        items.extend(page_items)
-        try:
-            total = int(result.get("totalCount") or len(items))
-        except (TypeError, ValueError):
-            total = len(items)
-        skip += page_size
-        if skip >= total:
-            break
-    return items[:limit]
-
-
-async def _fetch_detail(
-    api: _JiangsuAuthenticatedApi,
-    code: str,
-    semaphore: asyncio.Semaphore,
-) -> tuple[str, dict[str, Any] | None, str]:
-    async with semaphore:
-        try:
-            payload = await api.get(DETAIL_PATH, [("WorkingOrderCode", code)])
-            result = payload.get("result") or {}
-            if isinstance(result, dict) and result.get("wo"):
-                return code, result, ""
-            if isinstance(result, list) and result:
-                return code, result[0], ""
-            return code, None, "empty"
-        except (ValueError, httpx.HTTPError) as exc:
-            return code, None, f"{type(exc).__name__}: {exc}"
-
-
 def _normalize_task(
     item: dict[str, Any],
     *,
@@ -258,60 +209,206 @@ def _normalize_task(
     }
 
 
-def _normalize_order(wo: dict[str, Any], detail: dict[str, Any]) -> dict[str, Any]:
-    order_type = _text(wo.get("orderType"))
-    workflow = detail.get("workFlowInfo") or {}
-    steps = []
-    for step in workflow.get("stepList") or []:
-        if isinstance(step, dict):
-            steps.append({"task_name": _text(step.get("taskName")), "form_code": _text(step.get("formCode"))})
-    process = []
-    for entry in detail.get("details") or []:
-        if not isinstance(entry, dict):
+def _db_dsn() -> str:
+    dsn = os.getenv(DB_DSN_ENV, "")
+    if not dsn:
+        raise RuntimeError(f"{DB_DSN_ENV} 未配置")
+    return dsn
+
+
+def _iso(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat(timespec="milliseconds")
+    return value
+
+
+def _rfcommon_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    """把 rf_common 库行转成与平台详情 API 一致的 rFCommon dict。
+
+    同步列名全小写;字典按小写(string1/time1/remark1)与驼峰(deviceBrand 等)
+    取值,这里统一补回驼峰别名。
+    """
+    out: dict[str, Any] = {}
+    for key, value in row.items():
+        if key.startswith("_") or key in ("stringjson", "booljson", "remarkjson"):
             continue
-        process.append(
-            {
-                "step": _text(entry.get("processStep")),
-                "step_name": _text(entry.get("processStepName")),
-                "submit_remark": _text(entry.get("submitRemark")),
-                "start": entry.get("processSdtTime"),
-                "end": entry.get("processEdtTime"),
-                "is_submit": bool(entry.get("isSubmit")),
-            }
-        )
-    tasks = [
-        _normalize_task(item, order_type=order_type)
-        for item in (detail.get("checkItemList") or [])
-        if isinstance(item, dict)
+        out[key] = _iso(value)
+    for key in RFCOMMON_CAMEL_KEYS:
+        low = key.lower()
+        if low in out and out[low] is not None:
+            out[key] = out[low]
+    return out
+
+
+def _component_type_key(rule_item_tag: str, pollutant_type: str) -> str:
+    return component_name(rule_item_tag, pollutant_type).lower()
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    """Parse a create-time filter string; None keeps the filter absent."""
+    text = _text(value)
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        try:
+            return datetime.strptime(text, "%Y-%m-%d")
+        except ValueError:
+            return None
+
+
+async def _db_fetch_orders(
+    pg: asyncpg.Connection,
+    *,
+    order_types: list[str],
+    create_start: str | None,
+    create_end: str | None,
+    wf_values: list[str],
+    order_values: list[str],
+    order_codes: list[str],
+    station_values: list[str],
+    limit: int,
+) -> list[dict[str, Any]]:
+    clauses = [
+        "w.ordertype <> 'Fault'",
+        "w.ordertype = ANY($1)",
+        f"w.createtime >= '{DB_SYNC_WINDOW_START}'::timestamp",
     ]
-    return {
-        "working_order_code": _text(wo.get("workingOrderCode")),
-        "order_type": order_type,
-        "order_type_str": _text(wo.get("orderTypeStr")) or ORDER_TYPE_LABELS.get(order_type, order_type),
-        "station_id": wo.get("stationId"),
-        "station_code": _text(wo.get("stationCodeStr")),
-        "station_name": _text(wo.get("stationName")),
-        "city": _text(wo.get("city")),
-        "operation_unit_name": _text(wo.get("operationUnitName")),
-        "order_title": _text(wo.get("orderTitle")),
-        "order_content": _text(wo.get("orderContent")),
-        "order_status": _text(wo.get("orderStatus")),
-        "order_status_str": _text(wo.get("orderStatusStr")),
-        "workflow_status": _text(wo.get("workFlowStatus")),
-        "workflow_status_str": _text(wo.get("workFlowStatusStr")),
-        "current_point_name": _text(wo.get("currentPointName")),
-        "create_time": wo.get("createTime"),
-        "finish_time": wo.get("finishTime"),
-        "plan_finish_time": wo.get("planFinishTime"),
-        "device_code": _text(wo.get("deviceCode")),
-        "is_makeup": wo.get("isMakeup"),
-        "workflow_steps": steps,
-        "process": process,
-        "tasks": tasks,
-    }
+    args: list[Any] = [order_types]
+
+    def add(value: Any) -> str:
+        args.append(value)
+        return f"${len(args)}"
+
+    if create_start:
+        clauses.append(f"w.createtime >= {add(create_start)}")
+    if create_end:
+        clauses.append(f"w.createtime <= {add(create_end)}")
+    if wf_values:
+        clauses.append(f"w.workflowstatus = ANY({add(wf_values)})")
+    if order_values:
+        clauses.append(f"w.orderstatus = ANY({add(order_values)})")
+    if order_codes:
+        clauses.append(f"w.workingordercode ILIKE ANY({add([f'%{c}%' for c in order_codes])})")
+    if station_values:
+        clauses.append(f"w.stationcode = ANY({add(station_values)})")
+    rows = await pg.fetch(
+        f"""
+        SELECT w.workingordercode, w.ordertype, w.orderstatus, w.workflowstatus,
+               w.workflowid, w.stationid, w.stationcode, s.positionname AS station_name,
+               c.name AS city_name, mu.name AS operation_unit_name,
+               w.ordertitle, w.ordercontent, w.currentpoint,
+               cp.taskname AS current_point_name,
+               w.createtime, w.finishtime, w.planfinishtime,
+               bd.devicecode, w.ismakeup
+        FROM jiangsu_ods.mtc_working_order w
+        LEFT JOIN jiangsu_ods.bsd_station s ON s.stationcode = w.stationcode
+        LEFT JOIN jiangsu_ods.bsd_city c
+               ON c.level = '2'
+              AND c.code = CASE WHEN length(s.areacode) >= 4
+                                THEN rpad(left(s.areacode, 4), 6, '0')
+                                ELSE s.areacode END
+        LEFT JOIN jiangsu_ods.bsd_maintenanceunit mu ON mu.code = w.operationunitid
+        LEFT JOIN jiangsu_ods.wfl_workflowtask cp ON cp.guid = w.currentpoint
+        LEFT JOIN LATERAL (
+            SELECT d.devicecode FROM jiangsu_ods.bsd_device d WHERE d.id = w.deviceid LIMIT 1
+        ) bd ON w.deviceid IS NOT NULL
+        WHERE {' AND '.join(clauses)}
+        ORDER BY w.createtime DESC
+        LIMIT {add(limit)}
+        """,
+        *args,
+    )
+    return [dict(row) for row in rows]
 
 
-async def fetch_dataset(
+async def _db_fetch_tasks(
+    pg: asyncpg.Connection, codes: list[str]
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[dict[str, Any]]], dict[str, list[dict[str, Any]]]]:
+    """按工单号返回 (tasks, process, attachments)。"""
+    task_rows = await pg.fetch(
+        """
+        SELECT t.workingordercode, t.id AS task_item_id, t.ruleitemtag, t.pollutanttype,
+               t.status, t.prosesssdttime, t.prosessedttime, t.planfinishtime, t.detailid,
+               ri.ruleitemname AS rule_item_name
+        FROM jiangsu_ods.mtc_taskitem t
+        LEFT JOIN jiangsu_ods.rf_ruleitem ri
+               ON ri.ruleitemtag = t.ruleitemtag AND ri.pollutanttype = t.pollutanttype
+        WHERE t.workingordercode = ANY($1)
+        ORDER BY t.id
+        """,
+        codes,
+    )
+    tasks_by_code: dict[str, list[dict[str, Any]]] = {}
+    for row in task_rows:
+        tasks_by_code.setdefault(row["workingordercode"], []).append(dict(row))
+
+    process_rows = await pg.fetch(
+        """
+        SELECT d.workingordercode, d.processstep, d.processsdttime, d.processedttime,
+               d.issubmit, d.submitremark
+        FROM jiangsu_ods.mtc_working_order_detail d
+        WHERE d.workingordercode = ANY($1)
+        ORDER BY d.id
+        """,
+        codes,
+    )
+    process_by_code: dict[str, list[dict[str, Any]]] = {}
+    for row in process_rows:
+        process_by_code.setdefault(row["workingordercode"], []).append(dict(row))
+
+    file_rows = await pg.fetch(
+        """
+        SELECT f.workingordercode, f.id, f.filename, f.filepath, f.functioncode,
+               f.typecode, f.createtime
+        FROM jiangsu_ods.wo_commonfile f
+        WHERE f.workingordercode = ANY($1)
+        ORDER BY f.id
+        """,
+        codes,
+    )
+    files_by_code: dict[str, list[dict[str, Any]]] = {}
+    for row in file_rows:
+        files_by_code.setdefault(row["workingordercode"], []).append(dict(row))
+    return tasks_by_code, process_by_code, files_by_code
+
+
+async def _db_fetch_rfcommon(
+    pg: asyncpg.Connection, codes: list[str]
+) -> tuple[dict[str, list[dict[str, Any]]], str | None]:
+    rows = await pg.fetch(
+        f"SELECT * FROM {RF_COMMON_TABLE} WHERE workingordercode = ANY($1) ORDER BY id",
+        codes,
+    )
+    rf_by_code: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        entry = dict(row)
+        code = entry.pop("workingordercode")
+        rf_by_code.setdefault(code, []).append(entry)
+    watermark = await pg.fetchval(f"SELECT max(_src_incremental) FROM {RF_COMMON_TABLE}")
+    return rf_by_code, watermark
+
+
+async def _db_fetch_workflow_steps(
+    pg: asyncpg.Connection, workflow_ids: list[str]
+) -> dict[str, list[dict[str, Any]]]:
+    rows = await pg.fetch(
+        """
+        SELECT wt.workflowid, wt.taskname, wt.formcode
+        FROM jiangsu_ods.wfl_workflowtask wt
+        WHERE wt.workflowid = ANY($1)
+        ORDER BY wt.rank
+        """,
+        workflow_ids,
+    )
+    steps_by_workflow: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        steps_by_workflow.setdefault(row["workflowid"], []).append(dict(row))
+    return steps_by_workflow
+
+
+async def _fetch_dataset_from_db(
     context: Any,
     *,
     order_types: list[str] | None,
@@ -322,8 +419,8 @@ async def fetch_dataset(
     working_order_codes: list[str] | None,
     station_codes: list[str] | None,
     limit: int,
-    output_dir: str | None,
 ) -> dict[str, Any]:
+    """从本地 ODS 组装审核数据集;取不到数据直接抛错,不回退平台 API。"""
     requested_types = _as_list(order_types) or list(AUDITABLE_ORDER_TYPES)
     if "Fault" in requested_types:
         raise ValueError("本工具仅审核非故障工单；故障工单请使用故障工单审核链路")
@@ -337,58 +434,129 @@ async def fetch_dataset(
     station_values = _as_list(station_codes)
     limit = max(1, min(int(limit or 50), MAX_FETCH))
 
-    api = _JiangsuAuthenticatedApi(source="ops")
-    listed: list[dict[str, Any]] = []
-    for order_type in requested_types:
-        listed.extend(
-            await _list_orders(
-                api,
-                order_type=order_type,
-                create_start=create_time_start,
-                create_end=create_time_end,
-                workflow_statuses=wf_values,
-                order_statuses=order_values,
-                order_codes=order_codes,
-                station_codes=station_values,
-                limit=max(0, limit - len(listed)),
-            )
+    # asyncpg 参数按类型绑定,时间过滤先解析成 datetime。
+    create_start = _parse_dt(create_time_start)
+    create_end = _parse_dt(create_time_end)
+    if create_time_start and create_start is None:
+        raise ValueError("create_time_start 格式无法解析")
+    if create_time_end and create_end is None:
+        raise ValueError("create_time_end 格式无法解析")
+
+    pg = await asyncpg.connect(_db_dsn())
+    try:
+        order_rows = await _db_fetch_orders(
+            pg,
+            order_types=requested_types,
+            create_start=create_start,
+            create_end=create_end,
+            wf_values=wf_values,
+            order_values=order_values,
+            order_codes=order_codes,
+            station_values=station_values,
+            limit=limit,
         )
-        if len(listed) >= limit:
-            break
+        if not order_rows:
+            raise RuntimeError(
+                "本地 ODS 无匹配工单（同步窗口自 2026-07-01 起，watermark 见 rf_common 同步水位）"
+            )
+        codes = [row["workingordercode"] for row in order_rows]
+        workflow_ids = [_text(row["workflowid"]) for row in order_rows if _text(row["workflowid"])]
+        tasks_by_code, process_by_code, files_by_code = await _db_fetch_tasks(pg, codes)
+        rf_by_code, watermark = await _db_fetch_rfcommon(pg, codes)
+        steps_by_workflow = await _db_fetch_workflow_steps(pg, workflow_ids)
+    finally:
+        await pg.close()
 
-    dedup: dict[str, dict[str, Any]] = {}
-    for item in listed:
-        code = _text(item.get("workingOrderCode"))
-        if code and code not in dedup:
-            dedup[code] = item
-    listed = list(dedup.values())[:limit]
+    orders: list[dict[str, Any]] = []
+    for row in order_rows:
+        code = _text(row["workingordercode"])
+        order_type = _text(row["ordertype"])
+        tasks_raw = tasks_by_code.get(code, [])
+        rf_rows = rf_by_code.get(code, [])
+        rf_by_detail = {entry["detailid"]: entry for entry in rf_rows}
 
-    semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
-    results = await asyncio.gather(*(
-        _fetch_detail(api, _text(item.get("workingOrderCode")), semaphore)
-        for item in listed
-    ))
-    details_by_code = {code: detail for code, detail, _ in results}
-    detail_errors = {code: error for code, _, error in results if error}
+        attachments_by_type: dict[str, list[dict[str, Any]]] = {}
+        for entry in files_by_code.get(code, []):
+            attachments_by_type.setdefault(_text(entry["typecode"]).lower(), []).append(entry)
 
-    orders = []
-    for item in listed:
-        code = _text(item.get("workingOrderCode"))
-        detail = details_by_code.get(code)
-        list_wo = item
-        if detail and isinstance(detail.get("wo"), dict):
-            merged = dict(detail["wo"])
-            for key, value in list_wo.items():
-                if key not in merged or merged.get(key) in (None, "", [], {}):
-                    merged[key] = value
-            orders.append(_normalize_order(merged, detail))
-        else:
-            orders.append(_normalize_order(list_wo, {}))
+        task_items = []
+        for t in tasks_raw:
+            tag = _text(t["ruleitemtag"])
+            pollutant = _text(t["pollutanttype"])
+            rf_row = rf_by_detail.get(_text(t["detailid"])) if _text(t["detailid"]) else None
+            item = {
+                "ruleItemTag": tag,
+                "ruleItemName": _text(t.get("rule_item_name")),
+                "pollutantType": pollutant,
+                "status": t["status"],
+                "prosessSdtTime": _iso(t["prosesssdttime"]),
+                "prosessEdtTime": _iso(t["prosessedttime"]),
+                "planFinishTime": _iso(t["planfinishtime"]),
+                "detailId": t["detailid"],
+                "rFCommon": _rfcommon_from_row(rf_row) if rf_row else {},
+                "commonFile": [
+                    {
+                        "id": entry["id"],
+                        "fileName": entry["filename"],
+                        "filePath": entry["filepath"],
+                        "functionCode": entry["functioncode"],
+                        "typeCode": entry["typecode"],
+                        "createTime": _iso(entry["createtime"]),
+                    }
+                    for entry in attachments_by_type.get(_component_type_key(tag, pollutant), [])
+                ],
+            }
+            task_items.append(_normalize_task(item, order_type=order_type))
+
+        workflow_id = _text(row["workflowid"])
+        workflow_steps = [
+            {"task_name": _text(s["taskname"]), "form_code": _text(s["formcode"])}
+            for s in steps_by_workflow.get(workflow_id, [])
+        ]
+        step_names = {_text(s["formcode"]): _text(s["taskname"]) for s in steps_by_workflow.get(workflow_id, [])}
+        process = [
+            {
+                "step": _text(p["processstep"]),
+                "step_name": step_names.get(_text(p["processstep"]), _text(p["processstep"])),
+                "submit_remark": _text(p["submitremark"]),
+                "start": _iso(p["processsdttime"]),
+                "end": _iso(p["processedttime"]),
+                "is_submit": bool(p["issubmit"]),
+            }
+            for p in process_by_code.get(code, [])
+        ]
+        orders.append(
+            {
+                "working_order_code": code,
+                "order_type": order_type,
+                "order_type_str": ORDER_TYPE_LABELS.get(order_type, order_type),
+                "station_id": row["stationid"],
+                "station_code": _text(row["stationcode"]),
+                "station_name": _text(row["station_name"]),
+                "city": _text(row["city_name"]),
+                "operation_unit_name": _text(row["operation_unit_name"]),
+                "order_title": _text(row["ordertitle"]),
+                "order_content": _text(row["ordercontent"]),
+                "order_status": _text(row["orderstatus"]),
+                "order_status_str": DB_ORDER_STATUS_CN.get(_text(row["orderstatus"]), _text(row["orderstatus"])),
+                "workflow_status": _text(row["workflowstatus"]),
+                "workflow_status_str": DB_WORKFLOW_STATUS_CN.get(_text(row["workflowstatus"]), _text(row["workflowstatus"])),
+                "current_point_name": _text(row["current_point_name"]),
+                "create_time": _iso(row["createtime"]),
+                "finish_time": _iso(row["finishtime"]),
+                "plan_finish_time": _iso(row["planfinishtime"]),
+                "device_code": _text(row["devicecode"]),
+                "is_makeup": row["ismakeup"],
+                "workflow_steps": workflow_steps,
+                "process": process,
+                "tasks": task_items,
+            }
+        )
 
     task_total = sum(len(order["tasks"]) for order in orders)
     unmatched = sum(1 for order in orders for task in order["tasks"] if not task["form_matched"])
     attachment_total = sum(len(task["attachments"]) for order in orders for task in order["tasks"])
-    dataset = {
+    return {
         "schema_version": "jiangsu_ops_audit_dataset.v1",
         "generated_at": _now_text(),
         "query_info": {
@@ -400,7 +568,8 @@ async def fetch_dataset(
             "working_order_codes": order_codes,
             "station_codes": station_values,
             "limit": limit,
-            "source": "jiangsu_operations_api",
+            "source": "jiangsu_ods_db",
+            "rf_common_watermark": _iso(watermark),
         },
         "summary": {
             "order_count": len(orders),
@@ -408,21 +577,50 @@ async def fetch_dataset(
             "unmapped_task_count": unmatched,
             "attachment_count": attachment_total,
             "order_type_counts": dict(Counter(o["order_type_str"] for o in orders)),
-            "detail_error_count": len(detail_errors),
         },
         "orders": orders,
     }
 
+
+def _save_dataset(dataset: dict[str, Any], context: Any, output_dir: str | None) -> Path:
     out_dir = _output_dir(context, output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     dataset_path = out_dir / "jiangsu_ops_audit_dataset.json"
     dataset_path.write_text(json.dumps(dataset, ensure_ascii=False, indent=2), encoding="utf-8")
+    return dataset_path
 
+
+async def fetch_dataset(
+    context: Any,
+    *,
+    order_types: list[str] | None = None,
+    create_time_start: str | None = None,
+    create_time_end: str | None = None,
+    workflow_statuses: list[str] | None = None,
+    order_statuses: list[str] | None = None,
+    working_order_codes: list[str] | None = None,
+    station_codes: list[str] | None = None,
+    limit: int = 50,
+    output_dir: str | None = None,
+) -> dict[str, Any]:
+    """从本地 ODS 取数并落盘;取不到数据/库不可用时直接抛错。"""
+    dataset = await _fetch_dataset_from_db(
+        context,
+        order_types=order_types,
+        create_time_start=create_time_start,
+        create_time_end=create_time_end,
+        workflow_statuses=workflow_statuses,
+        order_statuses=order_statuses,
+        working_order_codes=working_order_codes,
+        station_codes=station_codes,
+        limit=limit,
+    )
+    dataset_path = _save_dataset(dataset, context, output_dir)
+    orders = dataset["orders"]
     return {
         "dataset_path": format_agent_path(dataset_path),
         "summary": dataset["summary"],
         "query_info": dataset["query_info"],
-        "detail_errors": detail_errors,
         "sample_orders": [
             {
                 "working_order_code": o["working_order_code"],
@@ -1026,8 +1224,10 @@ class JiangsuOpsAuditFetchTool(LLMTool):
             function_schema={
                 "name": "jiangsu_ops_audit_fetch_dataset",
                 "description": (
-                    "从江苏运维平台抽取非故障工单（巡检/现场检查/校准/质控/质量保证/数据录入）及表单字段，"
+                    "从本地 ODS 数据库（江苏同步管线，5分钟增量）抽取非故障工单"
+                    "（巡检/现场检查/校准/质控/质量保证/数据录入）及表单字段，"
                     "翻译 rFCommon 泛化列为具名字段后落盘数据集，不执行审核规则。"
+                    "仅覆盖 2026-07-01 之后、同步水位之前的工单；无匹配数据时直接报错。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -1093,10 +1293,12 @@ class JiangsuOpsAuditFetchTool(LLMTool):
                 output_dir=output_dir,
             )
             summary = result["summary"]
+            watermark = result["query_info"].get("rf_common_watermark") or ""
+            watermark_text = f"表单同步截至 {watermark[:19]}。" if watermark else ""
             text = (
                 f"已抽取工单 {summary['order_count']} 条，检查项 {summary['task_count']} 个，"
-                f"附件 {summary['attachment_count']} 个，未匹配字段字典检查项 {summary['unmapped_task_count']} 个，"
-                f"详单失败 {summary['detail_error_count']} 条。数据集：{result['dataset_path']}"
+                f"附件 {summary['attachment_count']} 个，未匹配字段字典检查项 {summary['unmapped_task_count']} 个。"
+                f"{watermark_text}数据集：{result['dataset_path']}"
             )
             return _standard_result(self.name, text, result, [result["dataset_path"]])
         except Exception as exc:  # noqa: BLE001

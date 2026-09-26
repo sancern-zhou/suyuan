@@ -30,7 +30,10 @@ def index(pending_only: bool = True, category: str | None = None,
           limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0),
           user: CurrentUser = Depends(require_current_user)):
     payload = list_reviews_payload(pending_only=pending_only, category=category, limit=limit, offset=offset)
-    keys = ("review_id", "task_id", "task_name", "execution_id", "category", "title", "summary", "status", "updated_at", "version")
+    # 任务调度中心列表列绑定 subject_id/decision/review_basis/data_impact，
+    # 缺了会显示成"—"或误报"无数据影响"；checks/sections/evidence 等大字段仍留详情接口。
+    keys = ("review_id", "task_id", "task_name", "execution_id", "category", "title", "summary",
+            "status", "updated_at", "version", "subject_id", "decision", "review_basis", "data_impact")
     return {"reviews": [{key: record[key] for key in keys if key in record} for record in payload["records"]],
             "total": payload["total"], "categories": payload["categories"]}
 

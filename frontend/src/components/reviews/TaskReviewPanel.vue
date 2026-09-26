@@ -5,11 +5,30 @@
     <template v-if="review">
       <header class="review-header"><div class="review-eyebrow"><span>{{ review.category }}</span><span class="status-pill">{{ (jiangsuReviewStatus(review) || statuses[review.status]) }}</span></div><h2>{{ review.title }}</h2><p>{{ review.summary }}</p></header>
       <p class="review-reference">业务编号：{{ review.subject_id }} <span aria-hidden="true">·</span> {{ review.task_name }}</p>
-      <section class="review-section conclusion"><h3>AI 结论 <span>{{ decisions[review.decision] }}</span></h3><p class="text">{{ review.comment }}</p></section>
-      <section v-if="review.review_basis.length" class="review-section"><h3>审核依据</h3><ul><li v-for="basis in review.review_basis" :key="basis">{{ basis }}</li></ul></section>
+
+      <!-- 工单审核紧凑卡片按"快速研判"定位裁剪：只保留故障处理反馈、附件图片、AI 结论与人工处理，
+           完整审核依据/检查项等详细数据到工单审核工作台查看。 -->
+      <section v-if="leanMode && opsFeedback.length" class="review-section">
+        <h3>故障处理反馈 <span>运维填报</span></h3>
+        <dl><template v-for="(field, index) in opsFeedback" :key="index"><dt>{{ field.label }}</dt><dd class="text">{{ field.value }}</dd></template></dl>
+      </section>
+      <section v-if="leanMode && attachmentImages.length" class="review-section">
+        <h3>附件图片 <span>点击放大</span></h3>
+        <div class="attachment-grid">
+          <figure v-for="image in attachmentImages" :key="image.url">
+            <button type="button" class="attachment-thumb" :title="image.label" @click="lightboxUrl = image.url">
+              <img :src="image.url" :alt="image.label" />
+            </button>
+            <figcaption>{{ image.label }}</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section v-if="!leanMode" class="review-section conclusion"><h3>AI 结论 <span>{{ decisions[review.decision] }}</span></h3><p class="text">{{ review.comment }}</p></section>
+      <section v-if="!leanMode && review.review_basis.length" class="review-section"><h3>审核依据</h3><ul><li v-for="basis in review.review_basis" :key="basis">{{ basis }}</li></ul></section>
       <section v-if="!compact" class="review-section"><h3>检查项</h3><article v-for="(check, index) in review.checks" :key="index"><strong>{{ check.name }} · {{ checkStatuses[check.status] }}</strong><p>{{ check.basis }}</p><p v-if="check.missing_evidence.length">缺少证据：{{ check.missing_evidence.join('、') }}</p></article></section>
-      <section v-for="(section, index) in review.sections" :key="index" class="review-section"><h3>{{ section.title }}</h3><dl><template v-for="(field, n) in section.fields" :key="n"><dt>{{ field.label }}</dt><dd class="text">{{ field.value }}</dd></template></dl></section>
-      <section v-if="review.actions.length" class="review-section"><h3>处置建议</h3><ol><li v-for="(action, index) in review.actions" :key="index">{{ action }}</li></ol></section>
+      <template v-if="!leanMode"><section v-for="(section, index) in review.sections" :key="index" class="review-section"><h3>{{ section.title }}</h3><dl><template v-for="(field, n) in section.fields" :key="n"><dt>{{ field.label }}</dt><dd class="text">{{ field.value }}</dd></template></dl></section></template>
+      <section v-if="!leanMode && review.actions.length" class="review-section"><h3>处置建议</h3><ol><li v-for="(action, index) in review.actions" :key="index">{{ action }}</li></ol></section>
       <section v-if="!compact && review.evidence.length" class="review-section"><h3>证据材料</h3><button class="evidence-button" v-for="(item, index) in review.evidence" :key="index" @click="download(index)">{{ item.label }}</button></section>
       <!-- 紧凑模式不展示数据影响与时间区间明细：结论文字已包含该说明；涉及剔除时的核验勾选仍保留。 -->
       <section v-if="!compact && form.data_impact.length"><h3>数据影响与时间区间</h3><fieldset v-for="(impact, index) in form.data_impact" :key="index" :disabled="!editable || submitting">
@@ -19,6 +38,9 @@
         <p>{{ impact.basis }}</p><p v-if="impact.boundary_sources.length">边界来源：{{ impact.boundary_sources.join('、') }}</p>
         <template v-if="impact.reasonableness_status"><label>合理性<select v-model="impact.reasonableness_status"><option value="pass">合理</option><option value="uncertain">不确定</option><option value="fail">不合理</option></select></label><label>合理性说明<textarea v-model="impact.reasonableness_basis" /></label></template>
       </fieldset></section>
+
+      <section v-if="leanMode" class="review-section conclusion"><h3>AI 结论 <span>{{ decisions[review.decision] }}</span></h3><p class="text">{{ review.comment }}</p></section>
+      <p v-if="leanMode" class="lean-hint">事件脉络与完整审核依据、原始监测数据，请到工单审核工作台或对话工作区查看。</p>
       <form v-if="editable" @submit.prevent>
         <h3>人工处理</h3><label>最终结论<select v-model="form.decision" :disabled="submitting"><option v-for="(label, value) in decisions" :key="value" :value="value">{{ label }}</option></select></label>
         <label>审核意见<textarea v-model="form.comment" :disabled="submitting" required maxlength="4000" /></label>
@@ -27,12 +49,17 @@
       </form>
       <section v-if="review.human_decision" class="review-section human-record"><h3>人工处理记录</h3><p>{{ review.human_decision.actor.username }} · {{ review.human_decision.occurred_at }}</p><p>{{ review.human_decision.comment }}</p></section>
     </template>
+
+    <div v-if="lightboxUrl" class="lightbox" role="dialog" aria-modal="true" aria-label="附件图片预览" @click="lightboxUrl = null">
+      <img :src="lightboxUrl" alt="附件图片" />
+      <button type="button" @click="lightboxUrl = null">关闭预览</button>
+    </div>
   </section>
 </template>
 <script setup>
 import { jiangsuReviewStatus } from '../management/jiangsuJudgmentPresentation.js'
-import { computed, ref, watch } from 'vue'
-import { getTaskReview, decideTaskReview, downloadReviewEvidence } from '@/services/taskReviewsApi.js'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { fetchReviewEvidenceUrl, getTaskReview, decideTaskReview, downloadReviewEvidence } from '@/services/taskReviewsApi.js'
 const props = defineProps({ reviewId: { type: String, required: true }, compact: { type: Boolean, default: false } })
 const emit = defineEmits(['updated'])
 const review = ref(null), loading = ref(false), submitting = ref(false), error = ref('')
@@ -43,6 +70,58 @@ const checkStatuses = { pass: '通过', fail: '未通过', uncertain: '不确定
 const impactDecisions = { keep: '保留', partial_exclude: '部分剔除', exclude: '剔除', missing_no_delete: '缺失无需剔除', not_applicable: '不适用', needs_evidence: '需要补证' }
 const editable = computed(() => ['pending_review', 'in_disposal'].includes(review.value?.status))
 const requiresConfirmation = computed(() => [...(review.value?.data_impact || []), ...form.value.data_impact].some(item => ['exclude', 'partial_exclude'].includes(item.decision)))
+
+// 工单审核（业务编号 FA 开头或分类为工单审核，与后端 is_work_order_review 一致）在紧凑模式下
+// 按"快速研判卡片"呈现，与工单审核工作台的完整详情区分。
+const leanMode = computed(() => props.compact && !!review.value &&
+  (review.value.category === '工单审核' || String(review.value.subject_id || '').startsWith('FA')))
+
+// 运维人员在工单里反馈的故障处理内容：各 section 中"申报"字段（运维原话）+ "处置"类 section；
+// section 标题由模型生成、不完全固定，匹配不到时回退"故障事实"整节。
+const opsFeedback = computed(() => {
+  const sections = review.value?.sections || []
+  const picks = []
+  for (const section of sections) {
+    for (const field of section.fields) {
+      if (/申报/.test(field.label)) picks.push({ label: field.label, value: field.value })
+    }
+  }
+  for (const section of sections) {
+    if (/处置/.test(section.title)) picks.push(...section.fields.map(field => ({ label: field.label, value: field.value })))
+  }
+  if (picks.length) return picks
+  const facts = sections.find(section => /故障事实/.test(section.title))
+  return facts ? facts.fields.map(field => ({ label: field.label, value: field.value })) : []
+})
+
+// 附件图片：evidence 中图片文件（工单附件照片）经鉴权接口拉取 blob 后内联展示，点击放大。
+const IMAGE_PATTERN = /\.(jpe?g|png|webp|gif|bmp)$/i
+const attachmentImages = ref([])
+const lightboxUrl = ref(null)
+const objectUrls = []
+function releaseAttachmentImages() {
+  lightboxUrl.value = null
+  attachmentImages.value = []
+  while (objectUrls.length) URL.revokeObjectURL(objectUrls.pop())
+}
+async function loadAttachmentImages() {
+  releaseAttachmentImages()
+  if (!leanMode.value) return
+  const requestedId = props.reviewId
+  const targets = (review.value?.evidence || [])
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => IMAGE_PATTERN.test(item.path || ''))
+  if (!targets.length) return
+  const results = await Promise.all(targets.map(async ({ item, index }) => {
+    try { return { label: item.label, url: await fetchReviewEvidenceUrl(requestedId, index) } } catch { return null }
+  }))
+  const loaded = results.filter(Boolean)
+  if (props.reviewId !== requestedId) { loaded.forEach(image => URL.revokeObjectURL(image.url)); return }
+  attachmentImages.value = loaded
+  objectUrls.push(...loaded.map(image => image.url))
+}
+onBeforeUnmount(releaseAttachmentImages)
+
 function populate(value) {
   review.value = value
   const human = value.human_decision
@@ -51,6 +130,7 @@ function populate(value) {
 async function load() {
   loading.value = true; error.value = ''; review.value = null
   try { populate((await getTaskReview(props.reviewId)).review) } catch (e) { error.value = e.message } finally { loading.value = false }
+  void loadAttachmentImages()
 }
 async function submit(action) {
   if (!form.value.comment.trim()) { error.value = '请填写审核意见'; return }
@@ -72,6 +152,7 @@ h2 { margin:10px 0 6px; color:#0f172a; font-size:clamp(20px, 2vw, 26px); line-he
 .review-section { margin:22px 0; padding-top:2px; }
 h3 { display:flex; align-items:center; gap:8px; margin:0 0 11px; color:#334155; font-size:14px; font-weight:700; }
 h3::before { width:3px; height:15px; border-radius:2px; background:#2563eb; content:""; }
+h3 span { color:#64748b; font-weight:500; font-size:12px; }
 .conclusion { padding:16px 18px; border:1px solid #dbeafe; border-radius:8px; background:#eff6ff; }
 .conclusion h3 span { color:#1d4ed8; font-weight:600; }
 article, fieldset { margin:10px 0; padding:14px 16px; border:1px solid #e5e7eb; border-radius:7px; background:#fff; }
@@ -88,5 +169,14 @@ form { margin-top:28px; padding:18px; border:1px solid #dbeafe; border-radius:8p
 footer { display:flex; flex-wrap:wrap; gap:8px; margin-top:18px; padding-top:14px; border-top:1px solid #e5e7eb; }
 footer button:first-child { border-color:#2563eb; background:#2563eb; color:#fff; } footer button:nth-child(2) { border-color:#cbd5e1; background:#f8fafc; color:#334155; }
 button:disabled { opacity:.5; cursor:wait; } [role=alert] { padding:10px 12px; border:1px solid #fecaca; border-radius:6px; background:#fef2f2; color:#b91c1c; }
-@media (max-width:560px) { .task-review-panel { padding:16px; } dl { grid-template-columns:1fr; gap:3px; } dd { margin-bottom:8px; } form { padding:14px; } }
+.lean-hint { margin:12px 0 0; color:#94a3b8; font-size:12px; }
+.attachment-grid { display:flex; flex-wrap:wrap; gap:14px; }
+.attachment-grid figure { margin:0; width:184px; }
+.attachment-thumb { display:block; box-sizing:border-box; width:100%; height:130px; padding:0; overflow:hidden; cursor:zoom-in; border:1px solid #cbd5e1; border-radius:8px; background:#fff; }
+.attachment-thumb img { display:block; width:100%; height:100%; object-fit:cover; }
+.attachment-grid figcaption { margin-top:6px; color:#64748b; font-size:11px; line-height:1.5; }
+.lightbox { position:fixed; inset:0; z-index:1200; display:grid; place-content:center; gap:14px; padding:24px; background:rgba(15,23,42,.82); cursor:zoom-out; }
+.lightbox img { max-width:92vw; max-height:80vh; object-fit:contain; border-radius:6px; }
+.lightbox button { justify-self:center; cursor:pointer; padding:8px 18px; border:1px solid #cbd5e1; border-radius:6px; background:#fff; color:#0f172a; font:inherit; }
+@media (max-width:560px) { .task-review-panel { padding:16px; } dl { grid-template-columns:1fr; gap:3px; } dd { margin-bottom:8px; } form { padding:14px; } .attachment-grid figure { width:calc(50% - 7px); } }
 </style>

@@ -156,14 +156,19 @@ def _sync_work_order_review(record: dict, decision: dict | None = None) -> None:
 
 
 def _parse_db_datetime(value):
-    if value is None or isinstance(value, datetime):
-        return value
-    try:
-        parsed = datetime.fromisoformat(str(value))
-    except (ValueError, TypeError):
+    if value is None:
         return None
-    if parsed.tzinfo is None:
-        parsed = parsed.astimezone()
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except (ValueError, TypeError):
+            return None
+    if parsed.tzinfo is not None:
+        # 任务库时间列均为 timestamp without time zone，asyncpg 拒绝带时区值
+        # （报 offset-naive/aware 相减异常），落库前统一折算为本地裸时间。
+        parsed = parsed.astimezone().replace(tzinfo=None)
     return parsed
 
 
@@ -257,7 +262,10 @@ async def _db_list_reviews(*, pending_only=True, category=None, task_id=None, li
     from app.db.sync_bridge import bridge_session
 
     async with bridge_session() as session:
-        stmt = select(TaskReviewDB).where(_db_filters(pending_only, category, task_id))
+        stmt = select(TaskReviewDB)
+        where = _db_filters(pending_only, category, task_id)
+        if where is not None:  # .where(None) 在 SQLAlchemy 2.x 渲染为 WHERE NULL
+            stmt = stmt.where(where)
         stmt = stmt.order_by(TaskReviewDB.updated_at.desc())
         if limit is not None:
             stmt = stmt.offset(offset).limit(limit)
@@ -315,12 +323,16 @@ async def _db_list_reviews_payload(*, pending_only=True, category=None, limit=10
     from app.db.sync_bridge import bridge_session
 
     async with bridge_session() as session:
+        # where 条件可能为 None（pending_only=False 且不过滤分类）：.where(None)
+        # 在 SQLAlchemy 2.x 里会渲染成 WHERE NULL 导致恒空，必须跳过。
         where = _db_filters(pending_only, category, None)
-        total = (await session.execute(
-            select(func.count(TaskReviewDB.review_id)).where(where)
-        )).scalar_one()
-        stmt = select(TaskReviewDB).where(where).order_by(TaskReviewDB.updated_at.desc())
-        stmt = stmt.offset(offset).limit(limit)
+        count_stmt = select(func.count(TaskReviewDB.review_id))
+        stmt = select(TaskReviewDB)
+        if where is not None:
+            count_stmt = count_stmt.where(where)
+            stmt = stmt.where(where)
+        total = (await session.execute(count_stmt)).scalar_one()
+        stmt = stmt.order_by(TaskReviewDB.updated_at.desc()).offset(offset).limit(limit)
         rows = (await session.execute(stmt)).scalars().all()
         categories = sorted({row[0] for row in (await session.execute(
             select(distinct(TaskReviewDB.category))

@@ -19,7 +19,10 @@ test('coordinator layout delegates to the controlled coordinator home', async ()
   const source = await readComponent('AgentPlatform.vue')
 
   assert.match(source, /<CoordinatorHome/)
-  assert.match(source, /:coordinator="coordinator"/)
+  // 运行时常用问题覆盖构建期内置配置，接口失败时回退。
+  assert.match(source, /:coordinator="coordinatorConfig"/)
+  assert.match(source, /runtimeQuickPrompts/)
+  assert.match(source, /getCoordinatorQuickPrompts/)
   assert.match(source, /@submit="emit\('submit', \$event\)"/)
 })
 
@@ -287,6 +290,14 @@ test('empty chat resolves complete welcome copy from the selected agent catalog 
   assert.match(source, /agentMode/)
   assert.match(source, /agent\.welcome/)
   assert.doesNotMatch(source, /大气环境智能分析与决策支持平台/)
+})
+
+test('empty chat welcome no longer repeats example question guidance above the composer', async () => {
+  const source = await readComponent('../ReActMessageList.vue')
+
+  assert.doesNotMatch(source, /welcomeContent\.example/)
+  assert.doesNotMatch(source, /class="hint"/)
+  assert.doesNotMatch(source, /\.hint \{/)
 })
 
 test('welcome capabilities render as centered plain text instead of styled buttons', async () => {

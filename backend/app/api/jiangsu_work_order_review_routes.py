@@ -37,8 +37,10 @@ def _order_or_404(code: str) -> dict:
 @router.get("")
 def index(limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0),
           status: str | None = None, keyword: str | None = None,
+          start_date: str | None = None, end_date: str | None = None,
           user: CurrentUser = Depends(require_current_user)):
-    return list_orders(limit=limit, offset=offset, status=status, keyword=keyword)
+    return list_orders(limit=limit, offset=offset, status=status, keyword=keyword,
+                       start_date=start_date, end_date=end_date)
 
 
 @router.get("/{code}")

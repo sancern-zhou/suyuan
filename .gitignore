@@ -290,3 +290,4 @@ id_ed25519*
 # Launcher icons are source assets and must remain versioned despite the
 # repository-wide generated-image rule above.
 !android-native/app/src/main/res/**/*.png
+backend/.tmp-pytest/ 

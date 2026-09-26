@@ -248,22 +248,15 @@
         @submit="$emit('submit-human-feedback', $event)"
       />
 
-      <!-- 智能事件工作区：江苏事件任务 Agent 可在保留对话的同时调度该页面 -->
-      <TaskExecutionWorkspace
-        v-if="activeTab === 'smart-event' && taskWorkspaceTask"
-        class="panel-content"
-        :task="taskWorkspaceTask"
-        show-back-button
-        @close="$emit('close-smart-event-task')"
-        @restore-execution-session="$emit('restore-execution-session', $event)"
-      />
-        <SmartEventCenterPanel
-          v-else-if="activeTab === 'smart-event'"
-          :category="smartEventCategory"
+      <!-- 智能事件中心：右侧 tab 只保留事件列表与事件详情两个页面；
+           任务执行记录工作区统一走整页管理面板（open-smart-event-task） -->
+      <SmartEventCenterPanel
+        v-if="activeTab === 'smart-event'"
+        :category="smartEventCategory"
         class="panel-content"
         :workspace-command="smartEventCommand"
         @close="$emit('close-smart-event-panel')"
-        @open-task="$emit('open-smart-event-task-side', $event)"
+        @open-task="$emit('open-smart-event-task', $event)"
       />
 
       <!-- 故障工单审核工作区：证据包拆分数据 + AI 研判 + 人工反馈/归档/退回 -->
@@ -287,7 +280,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, computed, watch } from 'vue'
 import ReportGenerationPanel from '@/components/ReportGenerationPanel.vue'
 import KnowledgeSourcePanel from '@/components/visualization/panels/KnowledgeSourcePanel.vue'
 import ResourceProductsPanel from '@/components/resources/ResourceProductsPanel.vue'
@@ -297,9 +290,9 @@ import HumanFeedbackPanel from './HumanFeedbackPanel.vue'
 import DeviceControlProcessPanel from '@/components/management/DeviceControlProcessPanel.vue'
 import SmartEventCenterPanel from '@/components/management/SmartEventCenterPanel.vue'
 import WorkOrderReviewCenterPanel from '@/components/management/WorkOrderReviewCenterPanel.vue'
-import TaskExecutionWorkspace from '@/components/management/TaskExecutionWorkspace.vue'
 import WorkflowPanel from '@/components/workflow/WorkflowPanel.vue'
 import { projectConfig } from '@/config/projectConfig.js'
+import { listSessionWorkflows } from '@/services/workflowApi.js'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { summarizeRightPanelResources } from '@/components/resources/rightPanelResources.js'
 import { buildResourceGroups, targetTab } from '@/services/resourceGroups.js'
@@ -374,10 +367,6 @@ const props = defineProps({
   deviceControlCommand: {
     type: Object,
     default: null
-  },
-  taskWorkspaceTask: {
-    type: Object,
-    default: null
   }
 })
 
@@ -387,12 +376,10 @@ const emit = defineEmits([
   'board-selection-change',
   'board-snapshot-confirm',
   'submit-human-feedback',
-  'open-smart-event-task-side',
+  'open-smart-event-task',
   'close-smart-event-panel',
-  'close-smart-event-task',
   'close-work-order-review-panel',
-  'close-device-control-panel',
-  'restore-execution-session'
+  'close-device-control-panel'
 ])
 const resourceStore = useSessionResourceStore()
 
@@ -446,11 +433,11 @@ const smartEventAvailable = computed(() => (
   projectConfig.project === 'jiangsu-ops' &&
   ['smart_event_external', 'smart_event_instrument'].includes(props.assistantMode)
 ))
-// 工单审核工作台：仅在工单审核模式常驻；其他模式（故障诊断、智能事件）由 Agent
-// 工作区命令打开后按命令动态显示，避免在无关模式下固定占用标签栏。
+// 工单审核工作台：按需显示 —— Agent 工作区命令打开（ui_command），或用户从侧边栏
+// 入口显式进入（此时 activeTab 即为 work-order-review）；不再按 ops 模式常驻占用标签栏。
 const workOrderReviewAvailable = computed(() => (
   projectConfig.project === 'jiangsu-ops' &&
-  (props.assistantMode === 'ops' || Boolean(props.workOrderReviewCommand))
+  (Boolean(props.workOrderReviewCommand) || props.activeTab === 'work-order-review')
 ))
 const deviceControlAvailable = computed(() => (
   projectConfig.project === 'jiangsu-ops' && props.assistantMode === 'device_control'
@@ -471,15 +458,55 @@ const visualizationCount = computed(() => resourceSummary.value.counts.visualiza
 const documentCount = computed(() => resourceSummary.value.counts.document)
 const visualizationAvailable = computed(() => visualizationCount.value > 0 || explicitTarget.value === 'visualization')
 const documentAvailable = computed(() => documentCount.value > 0 || explicitTarget.value === 'document')
-const workflowAvailable = computed(() => Boolean(props.sessionId))
+// 工作流 TAB 跟随会话实际数据：探测到工作流才显示。工作流由后端异步创建，
+// 面板打开期间 15s 轮询一次，保证会话中途新起的工作流能及时出现。
+const sessionWorkflowCount = ref(0)
+const workflowProbed = ref(false)
+let workflowProbeTimer = null
+let workflowProbeToken = 0
+
+async function probeSessionWorkflows() {
+  const token = ++workflowProbeToken
+  const sessionId = props.sessionId
+  if (!sessionId) {
+    sessionWorkflowCount.value = 0
+    workflowProbed.value = true
+    return
+  }
+  try {
+    const payload = await listSessionWorkflows(sessionId)
+    if (token !== workflowProbeToken) return
+    sessionWorkflowCount.value = Array.isArray(payload?.workflows) ? payload.workflows.length : 0
+    workflowProbed.value = true
+  } catch {
+    // 探测失败保留上次结果，避免 TAB 显隐因瞬时错误抖动
+  }
+}
+
+watch(() => props.sessionId, () => {
+  workflowProbed.value = false
+  probeSessionWorkflows()
+})
+
+onMounted(() => {
+  probeSessionWorkflows()
+  workflowProbeTimer = setInterval(probeSessionWorkflows, 15000)
+})
+
+onBeforeUnmount(() => {
+  if (workflowProbeTimer) clearInterval(workflowProbeTimer)
+  workflowProbeTimer = null
+})
+
+const workflowAvailable = computed(() => Boolean(props.sessionId) && sessionWorkflowCount.value > 0)
 
 const knowledgeCount = computed(() => props.knowledgeSources?.length || 0)
 const feedbackCount = computed(() => props.humanFeedback?.items?.length || 0)
 const feedbackAvailable = computed(() => feedbackCount.value > 0)
 
 watch(
-  () => [props.assistantMode, props.activeTab, visualizationAvailable.value, documentAvailable.value, knowledgeCount.value, showBoardTab.value, feedbackAvailable.value, workflowAvailable.value],
-  ([mode, tab, visualizations, documents, knowledge, board, feedback, workflow]) => {
+  () => [props.assistantMode, props.activeTab, visualizationAvailable.value, documentAvailable.value, knowledgeCount.value, showBoardTab.value, feedbackAvailable.value, workflowAvailable.value, workflowProbed.value],
+  ([mode, tab, visualizations, documents, knowledge, board, feedback, workflow, workflowSettled]) => {
     if (mode === 'report-generation-expert') return
     const unavailable = (
       (tab === 'visualization' && !visualizations)
@@ -491,7 +518,7 @@ watch(
       || (tab === 'smart-event' && !smartEventAvailable.value)
       || (tab === 'work-order-review' && !workOrderReviewAvailable.value)
       || (tab === 'device-control' && !deviceControlAvailable.value)
-      || (tab === 'workflow' && !workflow)
+      || (tab === 'workflow' && workflowSettled && !workflow)
     )
     if (unavailable) emit('tab-change', 'files')
   },

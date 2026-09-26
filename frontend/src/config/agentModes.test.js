@@ -52,14 +52,21 @@ test('every agent provides complete chat welcome content', () => {
     assert.ok(agent.welcome?.description)
     assert.ok(agent.welcome?.features.length >= 3)
     assert.ok(agent.welcome?.features.every(feature => feature.trim()))
-    assert.ok(agent.welcome?.example)
   }
+})
+
+test('chat welcome copy drops the example question guidance for every agent', () => {
+  // 输入框上方已有常用问题按钮，欢迎区不再重复给出示例问题。
+  for (const agent of AGENT_MODES) {
+    assert.equal(agent.welcome.example, undefined)
+  }
+  assert.equal(getAgentMode('ops')?.welcome.example, undefined)
 })
 
 test('agent mode lookup returns matching metadata and null for unsupported modes', () => {
   assert.equal(getAgentMode('query')?.name, '问数生图智能体')
   assert.equal(getAgentMode('knowledge')?.name, '知识问答智能体')
-  assert.equal(getAgentMode('ops')?.welcome.example, '例如："审核这个月1-7日的运维工单"')
+  assert.equal(getAgentMode('ops')?.welcome.description, '面向系统运维与工单处置场景，协助定位故障原因、评估影响并形成可执行的处理方案。')
   assert.equal(getAgentMode('missing'), null)
 })
 

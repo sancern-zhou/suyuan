@@ -164,6 +164,11 @@
             @close="$emit('close-management-panel')"
           />
 
+          <QuickPromptsPanel
+            v-else-if="managementPanel === 'quick-prompts-management'"
+            @close="$emit('close-management-panel')"
+          />
+
           <FileManagerPanel
             v-else-if="managementPanel === 'file-manager'"
             @close="$emit('close-management-panel')"
@@ -201,18 +206,15 @@
         :smart-event-command="smartEventCommand"
         :work-order-review-command="workOrderReviewCommand"
         :device-control-command="deviceControlCommand"
-        :task-workspace-task="taskWorkspaceTask"
         @tab-change="handleTabChange"
         @board-xml-change="handleBoardXmlChange"
         @board-selection-change="handleBoardSelectionChange"
         @board-snapshot-confirm="handleBoardSnapshotConfirm"
         @submit-human-feedback="$emit('submit-human-feedback', $event)"
-        @open-smart-event-task-side="$emit('open-smart-event-task-side', $event)"
+        @open-smart-event-task="$emit('open-smart-event-task', $event)"
         @close-smart-event-panel="$emit('close-smart-event-panel')"
-        @close-smart-event-task="$emit('close-smart-event-task')"
         @close-work-order-review-panel="$emit('close-work-order-review-panel')"
         @close-device-control-panel="$emit('close-device-control-panel')"
-        @restore-execution-session="$emit('restore-execution-session', $event)"
         />
       </template>
     </div>
@@ -236,6 +238,7 @@ import SessionHistoryPanel from '@/components/management/SessionHistoryPanel.vue
 import SocialPlatformPanel from '@/components/management/SocialPlatformPanel.vue'
 import ToolsManagementPanel from '@/components/management/ToolsManagementPanel.vue'
 import SkillsManagementPanel from '@/components/management/SkillsManagementPanel.vue'
+import QuickPromptsPanel from '@/components/management/QuickPromptsPanel.vue'
 import FileManagerPanel from '@/components/FileManagerPanel.vue'
 import { useAuthStore } from '@/auth/authStore.js'
 
@@ -505,9 +508,7 @@ const emit = defineEmits([
   'delete-scheduled-task',
   'restore-execution-session',
   'open-smart-event-task',
-  'open-smart-event-task-side',
   'close-smart-event-panel',
-  'close-smart-event-task',
   'close-work-order-review-panel',
   'close-device-control-panel',
   'refresh-session-history',

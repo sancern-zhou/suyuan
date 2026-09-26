@@ -115,11 +115,15 @@ const hasRightAxis = computed(() => normalizedSeries.value.some(item => item.axi
 const seriesUnitMap = computed(() => Object.fromEntries(
   normalizedSeries.value.map(item => [item.name, item.unit]).filter(([, unit]) => unit)
 ))
+// 纵坐标名称：贴各自的轴侧、垂直居中（默认 nameLocation:'end' 会把名称顶到轴顶端，
+// 与图例、剔除区间标注重叠）。
+const AXIS_NAME_STYLE = { nameLocation: 'middle', nameRotate: 90, nameGap: 44, nameTextStyle: { color: CHART_TEXT_1, fontSize: 10 } }
+
 const chartYAxis = computed(() => {
   const leftAxis = {
     type: 'value',
     name: props.unit,
-    nameTextStyle: { color: CHART_TEXT_1, fontSize: 10, padding: [0, 0, 4, 0] },
+    ...AXIS_NAME_STYLE,
     axisLabel: { color: CHART_TEXT_1, fontSize: 10 },
     splitLine: { lineStyle: { color: 'rgba(17, 24, 39, .12)' } }
   }
@@ -130,7 +134,7 @@ const chartYAxis = computed(() => {
       type: 'value',
       name: 'O3',
       position: 'right',
-      nameTextStyle: { color: CHART_TEXT_1, fontSize: 10, padding: [0, 0, 4, 0] },
+      ...AXIS_NAME_STYLE,
       axisLabel: { color: CHART_TEXT_1, fontSize: 10 },
       splitLine: { show: false }
     }
@@ -194,7 +198,7 @@ const chartOption = computed(() => ({
     itemHeight: 3,
     textStyle: { color: CHART_TEXT_1, fontSize: 11 }
   },
-  grid: { top: 54, right: hasRightAxis.value ? 48 : 18, bottom: 58, left: 48, containLabel: true },
+  grid: { top: 54, right: hasRightAxis.value ? 60 : 24, bottom: 58, left: 64, containLabel: true },
   xAxis: {
     type: 'time',
     boundaryGap: false,
@@ -232,7 +236,8 @@ const chartOption = computed(() => ({
       ? {
           silent: true,
           itemStyle: { color: 'rgba(246, 189, 74, .13)' },
-          label: { color: CHART_TEXT_1, fontSize: 10, lineHeight: 14 },
+          // 区间名称已由图上方的胶囊标签完整列出，图内不再重复标注（会与图例文字重叠）。
+          label: { show: false },
           data: normalizedMarkAreas.value.map(area => [
             { name: area.chartLabel, xAxis: area.start },
             { xAxis: area.end }

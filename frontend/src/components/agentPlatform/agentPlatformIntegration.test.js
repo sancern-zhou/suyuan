@@ -26,7 +26,7 @@ test('sidebar exposes smart query and opens the AI query agent workspace', async
   assert.match(sidebar, /handleModuleSelect\('query-dashboard'\)/)
   assert.match(sidebar, /id: 'query-dashboard',[\s\S]*name: '智能问数'/)
   assert.match(sidebar, /queryDashboardMode[\s\S]*'jiangsu_query'[\s\S]*'query'/)
-  assert.match(analysisView, /case 'query-dashboard':[\s\S]*store\.switchMode\(queryAgentMode\)/)
+  assert.match(analysisView, /case 'query-dashboard':[\s\S]*store\.enterModeConversation\(queryAgentMode\)/)
   assert.match(analysisView, /queryAgentMode = .*'jiangsu_query'.*'query'/)
 })
 

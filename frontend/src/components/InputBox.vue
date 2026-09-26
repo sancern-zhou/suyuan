@@ -4,11 +4,11 @@
       <div v-if="quickPrompts.length" class="smart-event-quick-prompts" aria-label="常用问题">
         <button
           v-for="prompt in quickPrompts"
-          :key="prompt"
+          :key="prompt.label"
           type="button"
           :disabled="disabled || isAnalyzing"
-          @click="sendQuickPrompt(prompt)"
-        >{{ prompt }}</button>
+          @click="fillQuickPrompt(prompt.prompt)"
+        >{{ prompt.label }}</button>
       </div>
       <div v-if="selectedSkill || selectedFileRefs.length" class="composer-selection-bar">
         <button
@@ -289,6 +289,7 @@ import { uploadChatFile, validateFile, createImagePreview, getFileUrl } from '@/
 import { transcribeVoice } from '@/services/voiceApi.js'
 import { getPendingSteeringDisplay } from '@/components/inputBoxPendingSteering.js'
 import { getSkillsList } from '@/api/skillsManagement.js'
+import { getInputQuickPrompts } from '@/api/coordinatorConfig.js'
 import { getSession, getSessionResources } from '@/api/session.js'
 import { withComposerShortcutGuide } from '@/components/inputBoxPlaceholder.js'
 import {
@@ -367,43 +368,53 @@ const emit = defineEmits(['update:modelValue', 'send', 'pause', 'update:useReran
 const textareaRef = ref(null)
 const fileInputRef = ref(null)
 const localValue = ref(props.modelValue)
+
+// 输入框上方常用问题：运行时接口（后台可维护）优先，加载失败时回退到内置默认。
+const BUILTIN_QUICK_PROMPTS = {
+  smart_event_external: ['今日识别结果', '每周事件统计', '待办统计', '数据影响诊断'],
+  smart_event_instrument: ['今日故障识别结果', '故障原因研判', '历史故障查询', '故障响应跟踪'],
+  ops: [
+    '查询本周的故障工单审核情况',
+    '对今天的待审核故障工单进行审核',
+    '对上周的例行工单进行审核'
+  ],
+  smart_inspection: ['执行全网巡检', '对高淳淳溪站点巡检'],
+  operations_analysis: ['运维风险监管分析', '日常运维监管分析'],
+  jiangsu_query: [
+    '南京有哪些省控站点',
+    '站点的运维单位和运维负责人',
+    '苏力有运维哪些站点',
+    '苏力的运维人员信息'
+  ]
+}
+const runtimeQuickPrompts = ref(null)
 const quickPrompts = computed(() => {
-  if (props.agentMode === 'smart_event_external') {
-    return ['今日识别结果', '每周事件统计', '待办统计', '数据影响诊断']
+  const mode = props.agentMode
+  if (Array.isArray(runtimeQuickPrompts.value)) {
+    return runtimeQuickPrompts.value
+      .filter(item => item.mode === mode)
+      .map(item => ({ label: item.label, prompt: item.prompt || item.label }))
   }
-  if (props.agentMode === 'smart_event_instrument') {
-    return ['今日故障识别结果', '故障原因研判', '历史故障查询', '故障响应跟踪']
-  }
-  if (props.agentMode === 'ops') {
-    return [
-      '查询本周的故障工单审核情况',
-      '对今天的待审核故障工单进行审核',
-      '对上周的例行工单进行审核'
-    ]
-  }
-  if (props.agentMode === 'smart_inspection') {
-    return ['执行全网巡检', '对高淳淳溪站点巡检']
-  }
-  if (props.agentMode === 'operations_analysis') {
-    return ['运维风险监管分析', '日常运维监管分析']
-  }
-  if (props.agentMode === 'jiangsu_query') {
-    return [
-      '南京有哪些省控站点',
-      '站点的运维单位和运维负责人',
-      '苏力有运维哪些站点',
-      '苏力的运维人员信息'
-    ]
-  }
-  return []
+  return (BUILTIN_QUICK_PROMPTS[mode] || []).map(text => ({ label: text, prompt: text }))
 })
-const sendQuickPrompt = (query) => {
+const fillQuickPrompt = (query) => {
   if (!query || props.disabled || props.isAnalyzing) return
-  emit('send', {
-    query,
-    modelTier: getEffectiveModelTier(modelTier.value, activeModelTierMode.value)
+  localValue.value = query
+  nextTick(() => {
+    const textarea = textareaRef.value
+    if (!textarea) return
+    textarea.focus()
+    const end = textarea.value.length
+    textarea.setSelectionRange(end, end)
   })
 }
+getInputQuickPrompts()
+  .then(data => {
+    if (Array.isArray(data?.items)) runtimeQuickPrompts.value = data.items
+  })
+  .catch(error => {
+    console.warn('[InputBox] quick prompts fetch failed, keep built-in list:', error)
+  })
 const showKnowledgeBaseSelector = ref(false)
 const activeTrigger = ref(null)
 const highlightedPaletteIndex = ref(0)
@@ -1952,17 +1963,16 @@ defineExpose({
 .smart-event-quick-prompts button {
   min-height: 30px;
   padding: 6px 14px;
-  border: 1px solid #b7d7ef;
+  border: 1px solid #000;
   border-radius: 4px;
-  background: var(--bg-container);
-  color: #1769aa;
+  background: transparent;
+  color: #000;
   font-size: 12px;
   line-height: 1.25;
   cursor: pointer;
 }
 
 .smart-event-quick-prompts button:hover:not(:disabled) {
-  border-color: var(--color-primary);
   background: #f0f7ff;
 }
 

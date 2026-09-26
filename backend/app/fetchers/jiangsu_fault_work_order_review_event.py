@@ -971,7 +971,9 @@ def _qc_task_refs(
     for row in qc_history.get("data") or []:
         if not isinstance(row, dict):
             continue
-        r_id = _find_first(row, {"rId", "RId", "rid", "id"})
+        # 质控状态接口要求平台 rId（UUID）；历史行里的数字 id 不是任务标识，
+        # 且行内键序 id 在 rId 之前，必须先精确匹配 rId 再回退 id。
+        r_id = _find_first(row, {"rId", "RId", "rid"}) or _find_first(row, {"id"})
         r_start = _find_first(row, {"rStart", "RStart", "startTime", "sStart"})
         end_time = _find_first(row, {"endTime", "EndTime", "finishTime", "finish_time"})
         pollutant = str(
@@ -1954,6 +1956,15 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
         }
         evidence_path = event_dir / "review_evidence_pack.json"
         self._write_json(evidence_path, evidence)
+        # 同步落入工单审核工作台（拆分存储），任务会话右侧工作台与研判回写依赖该条目；
+        # 失败只降级（工作台列表缺这一单），不阻断事件发布。
+        try:
+            from app.services.jiangsu_work_order_review_ingest import ingest_event_evidence
+
+            ingest_event_evidence(evidence, event_dir=event_dir)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("work_order_review_workbench_ingest_failed",
+                           event_id=event_id, working_order_code=code, error=str(exc))
         event = TaskEvent(
             event_id=event_id,
             event_type=route["event_type"],

@@ -201,7 +201,7 @@ test('regional comparison renders target and peer time series instead of raw rec
 
 
 test('stored list is displayed before the background refresh resolves', async () => {
-  const body = source.match(/const loadEvents = async \(page = 1\) => \{([\s\S]*?)\n\}\n\nconst resetFilters/)[1]
+  const body = source.match(/const loadEvents = async \(page = 1\) => \{([\s\S]*?)\r?\n\}\r?\n\r?\nconst resetFilters/)[1]
   const loading = { value: false }
   const events = { value: [] }
   let backgroundStarted = false
@@ -229,7 +229,7 @@ test('stored list is displayed before the background refresh resolves', async ()
 
 test('category entry filters event types on the server instead of in the browser', () => {
   assert.match(source, /const categoryEventTypes = computed\(\(\) => CATEGORY_TYPES\[props\.category\] \|\| null\)/)
-  const body = source.match(/const loadEvents = async \(page = 1\) => \{([\s\S]*?)\n\}\n\nconst resetFilters/)[1]
+  const body = source.match(/const loadEvents = async \(page = 1\) => \{([\s\S]*?)\r?\n\}\r?\n\r?\nconst resetFilters/)[1]
   assert.match(body, /event_types: selectedEventTypes\.value\.length \? selectedEventTypes\.value : undefined/)
   assert.doesNotMatch(body, /event_type:/)
   assert.match(source, /const filteredEvents = computed\(\(\) => events\.value\)/)
@@ -237,7 +237,7 @@ test('category entry filters event types on the server instead of in the browser
 
 test('entry preselects the whole category so the UI matches the queried scope', () => {
   assert.match(source, /selectedEventTypes\.value = \[\.\.\.\(categoryEventTypes\.value \|\| \[\]\)\]/)
-  assert.match(source, /watch\(\(\) => props\.category, \(\) => \{\n  selectedEventTypes\.value = \[\.\.\.\(categoryEventTypes\.value \|\| \[\]\)\]\n  loadEvents\(\)\n\}\)/)
+  assert.match(source, /watch\(\(\) => props\.category, \(\) => \{\r?\n  selectedEventTypes\.value = \[\.\.\.\(categoryEventTypes\.value \|\| \[\]\)\]\r?\n  loadEvents\(\)\r?\n\}\)/)
   assert.match(source, /picked\.length === 1 \? picked\[0\] : `\$\{picked\[0\]\} 等 \$\{picked\.length\} 类`/)
 })
 
@@ -254,7 +254,7 @@ test('event type dropdown collapses to an all-types trigger with checkbox menu',
 })
 
 test('agent event_type and event_types filters backfill the multi-select', () => {
-  const body = source.match(/if \(command\.type === 'show_event_list'([\s\S]*?)\n  \}\n\}, \{ deep: true, immediate: true \}\)/)[1]
+  const body = source.match(/if \(command\.type === 'show_event_list'([\s\S]*?)\r?\n  \}\r?\n\}, \{ deep: true, immediate: true \}\)/)[1]
   assert.match(body, /Array\.isArray\(filters\.event_types\) && filters\.event_types\.length/)
   assert.match(body, /String\(filters\.event_type \|\| filters\.type \|\| ''\)\.trim\(\) \? \[String\(filters\.event_type \|\| filters\.type\)\.trim\(\)\] : \[\]/)
   assert.match(body, /selectedEventTypes\.value = commandTypes\.length \? commandTypes : \[\.\.\.\(categoryEventTypes\.value \|\| \[\]\)\]/)

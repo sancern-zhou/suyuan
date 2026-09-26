@@ -35,10 +35,6 @@ export async function fetchWorkOrderReviewAttachmentUrl(code, index) {
   return URL.createObjectURL(await response.blob())
 }
 
-export async function submitWorkOrderReviewOperation(code, { action, comment = '', intervalsConfirmed = false }) {
-  return parse(await authFetch(`${BASE}/${encodeURIComponent(code)}/operations`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, comment, intervals_confirmed: intervalsConfirmed }),
-  }))
-}
+// 人工操作（反馈/退回/归档）已从工作台移除，统一走任务调度中心审核卡片
+// （/api/task-reviews/{id}/decision）；后端 operations 端点保留兼容旧入口。
+

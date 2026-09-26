@@ -105,9 +105,7 @@
       @delete-scheduled-task="deleteScheduledTask"
       @restore-execution-session="handleSessionRestoreAndClosePanel"
       @open-smart-event-task="handleSmartEventTaskOpen"
-      @open-smart-event-task-side="handleSmartEventSideTaskOpen"
       @close-smart-event-panel="handleSmartEventPanelClose"
-      @close-smart-event-task="handleSmartEventTaskClose"
       @close-work-order-review-panel="handleWorkOrderReviewPanelClose"
       @close-device-control-panel="handleDeviceControlPanelClose"
       @select-review="handleTodoReviewOpen"
@@ -394,10 +392,6 @@ const handleSmartEventPanelClose = () => {
   leftSidebarCollapsed.value = false
 }
 
-const handleSmartEventTaskClose = () => {
-  taskWorkspaceTask.value = null
-}
-
 // AI 取证命令驱动的故障工单审核页面在右侧面板打开，保留对话供用户继续交互
 const openWorkOrderReviewSidePanel = () => {
   workspace.value = 'chat'
@@ -454,7 +448,7 @@ watch(currentModeMessages, messages => {
   openDeviceControlSidePanel()
 }, { deep: true })
 
-watch(currentModeMessages, messages => {
+const applyWorkOrderReviewCommand = messages => {
   const command = extractWorkOrderReviewCommand(messages)
   if (!command) return
   const commandKey = JSON.stringify(command)
@@ -462,7 +456,17 @@ watch(currentModeMessages, messages => {
   lastWorkOrderReviewCommandKey.value = commandKey
   workOrderReviewCommand.value = command
   openWorkOrderReviewSidePanel()
-}, { deep: true })
+}
+
+watch(currentModeMessages, applyWorkOrderReviewCommand, { deep: true })
+
+// 会话恢复完成后补一次复核：恢复链路的 messages watch 可能在最终消息数组
+// 落定前触发（模式切换/重置与 setMessages 同批刷新），历史会话里的工作区
+// 命令会被漏掉，导致重新进入任务会话时右侧工作台不展开。
+const reconcileWorkspaceCommands = async () => {
+  await nextTick()
+  applyWorkOrderReviewCommand(currentModeMessages.value)
+}
 
 watch(currentModeMessages, messages => {
   const command = extractSmartEventWorkspaceCommand(messages)
@@ -470,13 +474,23 @@ watch(currentModeMessages, messages => {
   const commandKey = JSON.stringify(command)
   if (commandKey === lastSmartEventCommandKey.value) return
   lastSmartEventCommandKey.value = commandKey
+  if (command.type === 'open_task') {
+    // 智能事件 tab 只保留事件列表/详情，任务执行记录统一走整页任务工作区；
+    // open_task 不写入 smartEventCommand，避免面板挂载时重放旧命令抢视图
+    if (suppressSmartEventCommandOpen.value) {
+      suppressSmartEventCommandOpen.value = false
+      return
+    }
+    if (command.task_id) handleSmartEventTaskOpen({ task_id: command.task_id })
+    return
+  }
   smartEventCommand.value = command
   if (suppressSmartEventCommandOpen.value) {
     // 待办卡进入对话回放时保留会话视图，不被历史工作区命令切走
     suppressSmartEventCommandOpen.value = false
     return
   }
-  if (['show_event_list', 'filter_event_list', 'open_event_detail', 'focus_evidence', 'compare_events', 'show_operation_history', 'open_task'].includes(command.type)) {
+  if (['show_event_list', 'filter_event_list', 'open_event_detail', 'focus_evidence', 'compare_events', 'show_operation_history'].includes(command.type)) {
     openSmartEventSidePanel()
   }
 }, { deep: true })
@@ -511,11 +525,10 @@ const handleAgentSelect = async (mode) => {
       if (runningSessionId) {
         store._activateSession(runningSessionId, mode)
       } else {
-        store.switchMode(mode)
+        store.enterModeConversation(mode)
       }
     } else {
-      store.switchMode(mode)
-      store.reset()
+      store.enterModeConversation(mode)
     }
     hideManagementPanel()
     resetPanelState()
@@ -557,6 +570,7 @@ const handleSessionRestoreAndClosePanel = async (sessionId) => {
   if (restored) {
     hideManagementPanel()
     workspace.value = 'chat'
+    await reconcileWorkspaceCommands()
   }
   return restored
 }
@@ -641,7 +655,7 @@ const resolveSmartEventTask = async (eventTask) => {
   return null
 }
 
-// 事件中心（管理面板）里的任务卡片：维持整页任务工作区展示
+// 事件中心任务卡片（整页与右侧面板共用）：统一整页打开任务工作区
 const handleSmartEventTaskOpen = async (eventTask) => {
   const task = await resolveSmartEventTask(eventTask)
   if (!task) return
@@ -649,14 +663,6 @@ const handleSmartEventTaskOpen = async (eventTask) => {
   workspace.value = 'chat'
   showManagementPanel('task-workspace')
   rightPanelVisible.value = false
-}
-
-// 右侧面板（AI 命令驱动）里的任务卡片：留在右侧面板，对话窗口不收起
-const handleSmartEventSideTaskOpen = async (eventTask) => {
-  const task = await resolveSmartEventTask(eventTask)
-  if (!task) return
-  taskWorkspaceTask.value = task
-  openSmartEventSidePanel()
 }
 
 const handleSidebarAction = async (actionId) => {
@@ -714,7 +720,7 @@ const handleSidebarAction = async (actionId) => {
       'device-control': 'device_control',
       'station-fault-diagnosis': 'station_fault_diagnosis'
     }[actionId]
-    if (store.currentMode !== targetMode) store.switchMode(targetMode)
+    store.enterModeConversation(targetMode)
     if (actionId === 'device-control') {
       activeRightTab.value = 'device-control'
       rightPanelVisible.value = true
@@ -729,7 +735,7 @@ const handleSidebarAction = async (actionId) => {
     hideManagementPanel()
     resetPanelState()
     workspace.value = 'chat'
-    if (store.currentMode !== 'ops') store.switchMode('ops')
+    store.enterModeConversation('ops')
     openWorkOrderReviewSidePanel()
     return
   }
@@ -741,7 +747,7 @@ const handleSidebarAction = async (actionId) => {
     resetPanelState()
     workspace.value = 'chat'
     const targetMode = actionId === 'smart-event-instrument' ? 'smart_event_instrument' : 'smart_event_external'
-    if (store.currentMode !== targetMode) store.switchMode(targetMode)
+    store.enterModeConversation(targetMode)
     activeRightTab.value = 'smart-event'
     rightPanelVisible.value = true
     leftSidebarCollapsed.value = true
@@ -752,7 +758,7 @@ const handleSidebarAction = async (actionId) => {
   switch (actionId) {
     case 'query-dashboard':
       if (!await confirmResourcePreviewLeave()) return
-      store.switchMode(queryAgentMode)
+      store.enterModeConversation(queryAgentMode)
       hideManagementPanel()
       resetPanelState()
       break
@@ -763,6 +769,10 @@ const handleSidebarAction = async (actionId) => {
     case 'skills-management':
       console.log('[ReactAnalysisView] Showing skills-management panel')
       showManagementPanel('skills-management')
+      break
+    case 'quick-prompts-management':
+      console.log('[ReactAnalysisView] Showing quick-prompts-management panel')
+      showManagementPanel('quick-prompts-management')
       break
     case 'knowledge-base':
       console.log('[ReactAnalysisView] Showing knowledge-base panel')
