@@ -13,6 +13,13 @@ from app.utils.path_config import resolve_agent_path
 def build_report_from_evidence(
     manifest_path: str, agent_text: dict[str, Any], *, amap_key: str | None = None
 ) -> str:
+    payload, resolved_key = load_report_payload_from_evidence(manifest_path, agent_text, amap_key=amap_key)
+    return build_html_report(payload, amap_key=resolved_key)
+
+
+def load_report_payload_from_evidence(
+    manifest_path: str, agent_text: dict[str, Any], *, amap_key: str | None = None
+) -> tuple[dict[str, Any], str]:
     manifest_file = resolve_agent_path(manifest_path)
     manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
     if amap_key is None:
@@ -43,12 +50,12 @@ def build_report_from_evidence(
             raise ValueError(f"Missing Agent event analysis for {event['event_id']}")
     if not isinstance(agent_text.get("conclusion"), str) or not agent_text["conclusion"].strip():
         raise ValueError("Agent conclusion is required")
-    return build_html_report({
+    return {
         "target_date": manifest["target_date"], "events": events, "maps": maps,
         "summary_text": agent_text.get("summary_text") or "", "event_analysis": analyses,
         "conclusion": agent_text["conclusion"], "method": event_data.get("method") or "",
         "provenance": provenance.get("source_provenance") or {},
-    }, amap_key=amap_key)
+    }, amap_key
 
 
 def _text(value: Any) -> str:
@@ -108,6 +115,35 @@ def _comparison_table(event: dict[str, Any], unit: str) -> str:
         f"<th>浓度({unit})</th><th>对比</th></tr></thead>"
         f"<tbody>{target_row}{neighbor_rows}</tbody></table></div>"
     )
+
+
+def render_map_widgets(maps: list[dict[str, Any]]) -> str:
+    return "".join(
+        f"<section class='map-card'><div class='map-title'><h3>{_text(item['pollutant'])} 时序变化地图{'（NO₂小时浓度代理）' if item['pollutant'] == 'NOX' else ''}</h3>"
+        f"<div class='basemap-switch' role='group' aria-label='底图切换'><button id='base-satellite-{i}' class='selected' type='button'>卫星影像</button>"
+        f"<button id='base-light-{i}' type='button'>简洁地图</button><button id='base-terrain-{i}' type='button'>3D地形</button></div></div>"
+        f"<div class='map-stage'><div id='map-{i}' class='map'></div><div class='map-hud'>"
+        f"<strong id='hud-time-{i}'>—</strong><span id='hud-alert-{i}'>等待数据</span></div></div>"
+        f"<div class='playback'><button id='play-{i}' type='button'>▶ 播放</button><button id='pause-{i}' type='button'>❚❚ 暂停</button>"
+        f"<label>速度 <select id='speed-{i}'><option value='1500'>0.7×</option><option value='1000' selected>1×</option>"
+        f"<option value='500'>2×</option></select></label><span id='time-{i}' class='playback-time'>—</span>"
+        f"<input id='slider-{i}' type='range' min='0' max='0' value='0' aria-label='逐小时时间轴'></div>"
+        f"<div id='timeline-{i}' class='timeline' role='group' aria-label='24小时时序横幅'></div>"
+        f"<div class='map-legend'><span>低</span><i class='legend-gradient'></i><span>高</span>"
+        f"<strong id='legend-{i}'></strong><span class='legend-alert'><b></b>告警国控站</span></div>"
+        f"<p id='status-{i}' class='muted'>正在加载高德地图...</p><p id='active-{i}' class='muted'></p></section>"
+        for i, item in enumerate(maps)
+    )
+
+
+def render_map_script(maps: list[dict[str, Any]], events: list[dict[str, Any]], amap_key: str) -> str:
+    map_json = json.dumps(maps, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c")
+    event_json = json.dumps([{"event_id": e["event_id"], "station_id": e["station_id"], "pollutant": e["pollutant"]}
+                             for e in events], ensure_ascii=False).replace("<", "\\u003c")
+    url_json = json.dumps(f"https://webapi.amap.com/maps?v=2.1Beta&key={amap_key}&plugin=AMap.Scale")
+    fallback_url_json = json.dumps(f"https://webapi.amap.com/maps?v=2.0&key={amap_key}&plugin=AMap.Scale")
+    return (MAP_SCRIPT.replace("__MAP_DATA__", map_json).replace("__EVENT_DATA__", event_json)
+            .replace("__AMAP_URL__", url_json).replace("__AMAP_FALLBACK_URL__", fallback_url_json))
 
 
 def build_html_report(payload: dict[str, Any], *, amap_key: str) -> str:
@@ -177,22 +213,7 @@ def build_html_report(payload: dict[str, Any], *, amap_key: str) -> str:
         f"｜{_text(key[1])}（{len(items)}次过程）</h3>{''.join(items)}</section>"
         for i, (key, items) in enumerate(by_station_pollutant.items(), 1)
     )
-    map_html = "".join(
-        f"<section class='map-card'><div class='map-title'><h3>{_text(item['pollutant'])} 时序变化地图{'（NO₂小时浓度代理）' if item['pollutant'] == 'NOX' else ''}</h3>"
-        f"<div class='basemap-switch' role='group' aria-label='底图切换'><button id='base-satellite-{i}' class='selected' type='button'>卫星影像</button>"
-        f"<button id='base-light-{i}' type='button'>简洁地图</button><button id='base-terrain-{i}' type='button'>3D地形</button></div></div>"
-        f"<div class='map-stage'><div id='map-{i}' class='map'></div><div class='map-hud'>"
-        f"<strong id='hud-time-{i}'>—</strong><span id='hud-alert-{i}'>等待数据</span></div></div>"
-        f"<div class='playback'><button id='play-{i}' type='button'>▶ 播放</button><button id='pause-{i}' type='button'>❚❚ 暂停</button>"
-        f"<label>速度 <select id='speed-{i}'><option value='1500'>0.7×</option><option value='1000' selected>1×</option>"
-        f"<option value='500'>2×</option></select></label><span id='time-{i}' class='playback-time'>—</span>"
-        f"<input id='slider-{i}' type='range' min='0' max='0' value='0' aria-label='逐小时时间轴'></div>"
-        f"<div id='timeline-{i}' class='timeline' role='group' aria-label='24小时时序横幅'></div>"
-        f"<div class='map-legend'><span>低</span><i class='legend-gradient'></i><span>高</span>"
-        f"<strong id='legend-{i}'></strong><span class='legend-alert'><b></b>告警国控站</span></div>"
-        f"<p id='status-{i}' class='muted'>正在加载高德地图...</p><p id='active-{i}' class='muted'></p></section>"
-        for i, item in enumerate(maps)
-    )
+    map_html = render_map_widgets(maps)
     body = (
         "<section class='main'><h1>许昌市空气质量回顾分析日报</h1>"
         f"<p>报告日期：{_text(payload.get('target_date'))}</p></section>"
@@ -206,14 +227,7 @@ def build_html_report(payload: dict[str, Any], *, amap_key: str) -> str:
         + map_html + "</section>"
         + f"<section class='main'><h2>四、结论</h2><p>{_text(payload.get('conclusion'))}</p></section>"
     )
-    # Escape HTML-sensitive characters in data before embedding in a script.
-    map_json = json.dumps(maps, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c")
-    event_json = json.dumps([{"event_id": e["event_id"], "station_id": e["station_id"], "pollutant": e["pollutant"]}
-                             for e in events], ensure_ascii=False).replace("<", "\\u003c")
-    url_json = json.dumps(f"https://webapi.amap.com/maps?v=2.1Beta&key={amap_key}&plugin=AMap.Scale")
-    fallback_url_json = json.dumps(f"https://webapi.amap.com/maps?v=2.0&key={amap_key}&plugin=AMap.Scale")
-    script = (MAP_SCRIPT.replace("__MAP_DATA__", map_json).replace("__EVENT_DATA__", event_json)
-              .replace("__AMAP_URL__", url_json).replace("__AMAP_FALLBACK_URL__", fallback_url_json))
+    script = render_map_script(maps, events, amap_key)
     return HTML_HEAD + body + "</main><script>" + script + "</script></body></html>"
 
 

@@ -1,11 +1,12 @@
 {
   "task_id": "task_xuchang_station_daily_source_report",
   "name": "许昌市昨日污染回顾分析",
-  "description": "每日按《许昌市空气质量回顾分析日报》模板，汇总场景一告警 episode、乡镇站区域响应、气象和周边城市证据，生成交互 HTML 回顾报告。",
+  "description": "每日按日报模板生成可选择 HTML 或 Word 导出的 QMD 同源报告包。",
   "execution_mode": "custom",
   "tool_names": [
     "read_file",
-    "execute_python"
+    "execute_python",
+    "create_report_package"
   ],
   "skill_id": "xuchang_station_daily_source_report",
   "knowledge_base_binding": null,
@@ -46,6 +47,6 @@
     "enabled": true,
     "title": "昨日污染回顾"
   },
-  "prompt": "你是许昌市昨日污染回顾分析 Agent。严格遵循 xuchang_station_daily_source_report Skill 和日报模板。事件 payload 的 evidence_package_path 是 manifest.json；先读 manifest 指向的 report_brief.json 和 event_brief.json，不扫描目录。Fetcher 已将同站同污染物重叠、接续或仅隔1个无告警小时的告警 episode 合并成 event_brief.events[]；一、持续升高基本情况的次数、清单及二、持续升高原因分析的逐次过程必须使用这同一份合并事件，不把原始 episode 计为多次。event_brief 已预计算每次事件的告警前参考小时值、峰值、末值、上升幅度、主导上风向、乡镇站距离/方位/时段均值及与目标站对比；直接引用，不自己用 Python 重算。请为每个 event_id 写一段审慎的 event_analysis；若事件含 segments，需分别比较各段证据，结合风向、周边浓度、区域响应和气象证据讨论可能机制与不足；风向缺测或无净上升时如实写明，不作确定污染来源或贡献率判断。报告保留标题与日期、一持续升高基本情况、二持续升高原因分析、四结论。第二章按国控站点和污染物归组，跨短空档事件逐段展示升幅、风向及上风向站点对比，保留上风向乡镇站事实表；该章另插入每种告警污染物一张真实高德底图和逐小时时间轴，不按国控站重复地图。Agent 不再为地图或每个小时生成阶段说明；不要输出 stages。地图数据 pollutant_maps.json 仅供 HTML 组装程序读取，不读入模型上下文。agent_text 只包含 summary_text、conclusion 和 event_analysis（以 event_id 为键的字典）。如需细分原始 episode 证据，按 source_episode_ids 选择性读 stage_brief 或区域响应文件；不要逐事件反复 execute_python 探测。最后只调用一次 execute_python：用 artifact_path(filename) 获取输出路径，调用 app.scenarios.xuchang_daily_review.html_report.build_report_from_evidence(manifest_path, agent_text)，将 HTML 写入输出路径并打印路径。地图公开 Key 在 manifest.render_config_path 中，由组装函数自行读取；不要搜索 Key、.env、源码、部署目录或沙箱路径。缺配置明确失败并提示重生成证据包。execute_python 自动发布预览与下载资源，不调用 create_html_artifact。不生成 Word。交付前确认 HTML 文件已生成、合并事件数和分析段落数一致、地图数等于污染物数。最终只返回报告路径、验收结果与不超过80字摘要。",
+  "prompt": "你是许昌市昨日污染回顾分析 Agent。严格遵循 xuchang_station_daily_source_report Skill 和日报模板。事件 payload 的 evidence_package_path 是 manifest.json；先读其 report_brief.json 与 event_brief.json，不扫描目录。第一章、第二章均按已合并 event_brief.events[] 统计和分析；同站同污染物重叠、接续或只隔1个无告警小时的 episode 仅算一次。升幅、上风向、乡镇站浓度/距离/方位及同期对比都直接使用预计算证据；为每个 event_id 写审慎的 event_analysis，含 segments 时逐段比较，缺测或无净上升如实说明，不作确定来源归因。正文固定标题与日期、一持续升高基本情况、二持续升高原因分析、四结论；第二章保留事实表，HTML 每污染物一张真实高德交互地图，Word 每污染物一张同源逐小时静态趋势图。地图与表格均由程序组装，Agent 不写地图代码或逐小时说明。pollutant_maps.json 仅由组装程序读取，不放入模型上下文。agent_text 只含 summary_text、conclusion、event_analysis。先读 backend/app/tools/report/report_package/references/index.md。最后只调用一次 execute_python：先从 uuid 导入 uuid4，用 artifact_path(f'xuchang_review_{uuid4().hex}.qmd') 取得唯一输出路径，再用 app.scenarios.xuchang_daily_review.qmd_report.write_qmd_report_from_evidence(manifest_path, agent_text, output_path) 生成完整 QMD 和资源，并打印返回的 JSON。execute_python 会移动沙箱文件；stdout JSON 中的 source_qmd_path 与 assets[].path 是失效的临时路径。必须从同次工具返回的 data.files/file_paths 中按 source_qmd_name 和 assets[].name 精确匹配已发布路径，替换全部临时路径，缺少任何文件则报错。再只调用一次 create_report_package，传 report_id、匹配后的 source_qmd_path 和 assets，output_formats=['html','docx','share_html']，title='许昌市空气质量回顾分析日报'，report_type='government'。高德公开 Key 从 manifest.render_config_path 由组装程序读取，不搜索 Key、.env、源码、部署或沙箱路径。不要使用 create_html_artifact、render_report_package 或直接生成 DOCX。检查合并事件数与分析数一致、每种污染物各有一张 HTML 地图和 Word 静态图、HTML 预览、可独立下载的 share_html 和 DOCX 均已渲染验收。成功时返回报告 ID、验收结果和简短摘要；失败时返回具体阶段及原因。",
   "timeout_seconds": 1800
 }
