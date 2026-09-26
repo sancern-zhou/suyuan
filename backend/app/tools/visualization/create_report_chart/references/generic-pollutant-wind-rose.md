@@ -64,3 +64,5 @@ Raw records may be used when field names are supplied:
 - `pollutant_name`
 - `unit`
 - `direction_bins`
+- `show_colorbar` (default `false`; set `true` only when the right-side
+  concentration color scale is explicitly required)

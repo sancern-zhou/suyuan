@@ -38,3 +38,13 @@ def test_normalize_static_qmd_converts_quotes_around_mixed_chinese_numeric_text(
     assert '"厂家备案参数0-4.096V"' not in normalized
     assert "FPI品牌“厂家备案参数0-4.096V”" in normalized
     assert "SHARP5030“最高加热温度60℃”" in normalized
+
+
+def test_normalize_static_qmd_uses_fullwidth_tilde_for_numeric_ranges():
+    qmd = "| 时段 | 9/25 |\n|---|---|\n| 02~08时 | 一般 |\n| `02~08` | 一般 |\n\n```text\n02~08时\n```\n"
+
+    normalized = _normalize_static_qmd(qmd)
+
+    assert "02～08时" in normalized
+    assert "`02~08`" in normalized
+    assert "```text\n02~08时\n```" in normalized

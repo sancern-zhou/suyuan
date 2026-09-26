@@ -46,6 +46,14 @@ def render_station_directory(catalog: dict[str, Any]) -> str:
         "",
     ]
 
+    hidden_count = int(catalog.get("hidden_station_count") or 0)
+    if hidden_count:
+        lines.append(
+            f"> 注：中台另有 {hidden_count} 个已登记但长期无数据上报的街道站，"
+            "暂未列入本目录；待恢复数据上报后自动纳入。"
+        )
+        lines.append("")
+
     districts = catalog.get("districts") or []
     lines.append(f"## 区县（{len(districts)}）")
     lines.append("")
@@ -70,7 +78,7 @@ def render_station_directory(catalog: dict[str, Any]) -> str:
     lines.append("")
 
     regular = catalog.get("regular_stations") or []
-    lines.append(f"## 常规站（{len(regular)}）")
+    lines.append(f"## 国控站（{len(regular)}）")
     lines.append("")
     lines.append("| 站点名称 | 站点编码 | 唯一编码 | 类型 | 归属区县 | 地址 |")
     lines.append("| --- | --- | --- | --- | --- | --- |")
@@ -300,7 +308,7 @@ async def _seed_graph_deterministic(
                         for alias in (item["station_code"], item.get("unique_code") or "")
                         if alias
                     ],
-                    description="许昌市常规空气监测站",
+                    description="许昌市国控空气监测站",
                     attributes={
                         "station_code": item["station_code"],
                         "station_type": "regular",

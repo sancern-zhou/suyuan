@@ -278,6 +278,17 @@ class AgentRuntime:
                 yield event
             return
 
+        if action_type == "INTERNAL_COMPACTION":
+            logger.warning(
+                "internal_compaction_response_suppressed",
+                iteration=state.iteration,
+                reason=action.get("reason"),
+            )
+            # The compact result is runtime state, not a user response. Returning
+            # lets the outer loop issue the next planning request without emitting
+            # a completion or persisting the leaked summary.
+            return
+
         if action_type in ("TOOL_CALL", "TOOL_CALLS"):
             self._raise_if_cancelled()
             suppressed_observation = self._suppressed_housekeeping_observation(state, action)

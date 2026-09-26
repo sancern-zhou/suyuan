@@ -21,7 +21,9 @@ class ConversationPersistenceService:
         # Thought events are runtime/debug progress. They may be streamed to the
         # UI, but keeping them in restored transcripts causes the model to treat
         # prior intermediate text as conversational history.
-        return message.get("type") != "thought"
+        # Compact summaries are provider-visible runtime state, not a user-facing
+        # transcript entry. They are restored through llm_compact_state instead.
+        return message.get("type") not in {"thought", "compact_memory"}
 
     def _persistent_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return [

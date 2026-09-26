@@ -4,15 +4,13 @@
 authenticated session: the login page serves an RSA public key, the username /
 password / captcha are RSA-encrypted (JSEncrypt, UTF-8 + PKCS#1 v1.5) and the
 captcha image is solved with ddddocr. Station minute/hour grids also need a
-short-lived page token from ``/PageTK/GetPageToken``; day and city endpoints
-do not use it.
+short-lived page token from ``/PageTK/GetPageToken``; the city hour endpoint
+does not use it.
 
 Supported data kinds and production口径 (per接口接入说明):
 - minute      站点5分钟  /FiveMinQuery/GetFiveMinDataForGrid   Act+gp, PageTK
 - hour        站点小时   /HourQuery/GetHourDataForGrid         App+Act+gp, PageTK
-- day         站点日均   /DayQuery/GetDayDataForGrid           App+Act+gp, standard=AQI
 - city_hour   城市小时   /CityHour/GetCityHourData             isApp=true+Act
-- city_day    城市日均   /CityDayQuery/GetCityDayQuery         SubstitutionBack+Act
 
 City endpoints may legitimately return ``Data=[]`` until the platform's city
 aggregation job produces rows; empty results are logged, not treated as errors.
@@ -41,8 +39,6 @@ from app.integrations.xcai_station_sql import xcai_connection_string
 
 logger = structlog.get_logger()
 
-MISSING = -99
-
 # ---- response field maps -------------------------------------------------
 
 # 站点分钟/小时：污染物字段带 Value 后缀，标记字段带 Mark 后缀。
@@ -57,19 +53,6 @@ STATION_GRID_MAP = {
     "O3_8hMark": "o3_8h_mark", "Pm1Mark": "pm1_mark",
 }
 
-# 站点日均：字段为大写污染物名，标记为 <污染物>Mark。
-STATION_DAY_MAP = {
-    "Aqi": "aqi", "Api": "api",
-    "SO2": "so2", "NO": "no_val", "NO2": "no2", "NOx": "nox",
-    "O3": "o3", "CO": "co", "PM10": "pm10", "PM2_5": "pm25",
-    "O3_8h": "o3_8h", "PM1": "pm1",
-    "SO2Mark": "so2_mark", "NOMark": "no_mark", "NO2Mark": "no2_mark",
-    "NOxMark": "nox_mark", "O3Mark": "o3_mark", "COMark": "co_mark",
-    "PM10Mark": "pm10_mark", "PM2_5Mark": "pm25_mark",
-    "O3_8hMark": "o3_8h_mark", "PM1Mark": "pm1_mark",
-    "PrimaryPollutant": "pollutant", "Type": "quality_type", "Level": "quality_level",
-}
-
 # 城市小时：含第二组评价字段。
 CITY_HOUR_MAP = {
     "AQI": "aqi", "Quality": "quality", "PrimaryPollutant": "pollutant",
@@ -79,37 +62,9 @@ CITY_HOUR_MAP = {
     "AQI_2": "aqi_2", "Quality_2": "quality_2", "PrimaryPollutant_2": "pollutant_2",
 }
 
-# 城市日均：标记字段为 <污染物>_Mark。
-CITY_DAY_MAP = {
-    "AQI": "aqi", "PrimaryPollutant": "pollutant",
-    "Type": "quality_type", "Level": "quality_level", "Description": "description",
-    "SO2": "so2", "NO": "no_val", "NO2": "no2", "NOx": "nox",
-    "O3": "o3", "O3_1h": "o3_1h", "O3_8h": "o3_8h", "CO": "co",
-    "PM10": "pm10", "PM2_5": "pm25", "PM1": "pm1",
-    "SO2_Mark": "so2_mark", "NO_Mark": "no_mark", "NO2_Mark": "no2_mark",
-    "NOx_Mark": "nox_mark", "O3_Mark": "o3_mark", "O3_1h_Mark": "o3_1h_mark",
-    "O3_8h_Mark": "o3_8h_mark", "CO_Mark": "co_mark",
-    "PM10_Mark": "pm10_mark", "PM2_5_Mark": "pm25_mark", "PM1_Mark": "pm1_mark",
-}
-
-MARK_COLUMNS = {
-    name for name in (
-        list(STATION_GRID_MAP.values())
-        + list(STATION_DAY_MAP.values())
-        + list(CITY_DAY_MAP.values())
-    ) if name.endswith("_mark")
-}
-
-# 站点日均接口的气态/颗粒物字段以 mg/m3 返回（页面展示时乘 1000）。
-# 已实测核对：day pm25=0.015 对应同日小时均值 15.375 μg/m3；CO 与 AQI 不缩放。
-# 落库统一换算为 μg/m3，与分钟/小时表一致；None/-99 跳过。
-DAY_UNIT_SCALE_FIELDS = ("so2", "no_val", "no2", "nox", "o3", "o3_8h", "pm10", "pm25", "pm1")
-
 STATION_TABLE = "dbo.dat_zhongda_station_minute"
 STATION_HOUR_TABLE = "dbo.dat_zhongda_station_hour"
-STATION_DAY_TABLE = "dbo.dat_zhongda_station_day"
 CITY_HOUR_TABLE = "dbo.dat_zhongda_city_hour"
-CITY_DAY_TABLE = "dbo.dat_zhongda_city_day"
 
 
 def _number(value: Any) -> float | None:
@@ -140,11 +95,6 @@ def _parse_time(value: Any) -> datetime | None:
 def _fmt_window(dt: datetime) -> str:
     # 平台时间格式：yyyy/M/d H:mm（月/日不补零）
     return f"{dt.year}/{dt.month}/{dt.day} {dt.hour}:{dt.minute:02d}"
-
-
-def _fmt_date(dt: datetime) -> str:
-    # 日均接口日期格式：yyyy/MM/dd（补零）
-    return f"{dt.year}/{dt.month:02d}/{dt.day:02d}"
 
 
 def _apply_map(row: dict[str, Any], field_map: dict[str, str]) -> dict[str, Any]:
@@ -395,7 +345,7 @@ class _ZhongdaBaseFetcher(DataFetcher):
     data_kind = "minute"
 
     def __init__(self, *, name: str, description: str, schedule: str) -> None:
-        super().__init__(name=name, description=description, schedule=schedule, version="1.2.0")
+        super().__init__(name=name, description=description, schedule=schedule, version="1.3.0")
         self._zhongda_client: ZhongdaSession | None = None
 
     def _client(self) -> ZhongdaSession:
@@ -458,8 +408,7 @@ class _ZhongdaBaseFetcher(DataFetcher):
         return {
             "kind": self.data_kind,
             "saved": len(records),
-            "window": f"{records[0].get('time_point') or records[0].get('data_date')} ~ "
-                      f"{records[-1].get('time_point') or records[-1].get('data_date')}",
+            "window": f"{records[0].get('time_point')} ~ {records[-1].get('time_point')}",
         }
 
     async def fetch_and_store(self) -> dict[str, Any]:
@@ -500,33 +449,6 @@ def _station_grid_columns() -> list[str]:
 _STATION_GRID_UNIQUE = ["station_code", "time_point", "data_table_type", "parameter_type"]
 
 
-def _station_day_columns() -> list[str]:
-    cols = [
-        "id BIGINT IDENTITY PRIMARY KEY",
-        "station_code NVARCHAR(32) NOT NULL",
-        "station_name NVARCHAR(128)",
-        "unique_code NVARCHAR(32)",
-        "area NVARCHAR(64)",
-        "data_date DATE NOT NULL",
-        "standard NVARCHAR(8)",
-        "data_source_type NVARCHAR(16)",
-        "data_table_type NVARCHAR(8)",
-        "parameter_type NVARCHAR(8)",
-    ]
-    for col in STATION_DAY_MAP.values():
-        if col.endswith("_mark"):
-            cols.append(f"{col} NVARCHAR(16)")
-        elif col in ("pollutant", "quality_type", "quality_level"):
-            cols.append(f"{col} NVARCHAR(64)")
-        else:
-            cols.append(f"{col} FLOAT")
-    cols.append("create_time DATETIME DEFAULT GETDATE()")
-    return cols
-
-
-_STATION_DAY_UNIQUE = ["station_code", "data_date", "data_table_type", "parameter_type"]
-
-
 def _city_hour_columns() -> list[str]:
     cols = [
         "id BIGINT IDENTITY PRIMARY KEY",
@@ -551,32 +473,8 @@ def _city_hour_columns() -> list[str]:
 _CITY_HOUR_UNIQUE = ["area", "time_point", "data_type_plan", "data_table_type"]
 
 
-def _city_day_columns() -> list[str]:
-    cols = [
-        "id BIGINT IDENTITY PRIMARY KEY",
-        "area NVARCHAR(64) NOT NULL",
-        "city_code NVARCHAR(32)",
-        "data_date DATE NOT NULL",
-        "data_type_plan NVARCHAR(8)",
-        "data_source_type NVARCHAR(32)",
-        "data_table_type NVARCHAR(8)",
-    ]
-    for col in CITY_DAY_MAP.values():
-        if col.endswith("_mark"):
-            cols.append(f"{col} NVARCHAR(16)")
-        elif col in ("pollutant", "quality_type", "quality_level", "description"):
-            cols.append(f"{col} NVARCHAR(128)")
-        else:
-            cols.append(f"{col} FLOAT")
-    cols.append("create_time DATETIME DEFAULT GETDATE()")
-    return cols
-
-
-_CITY_DAY_UNIQUE = ["area", "data_date", "data_type_plan", "data_source_type"]
-
-
 class XuchangZhongdaStationFetcher(_ZhongdaBaseFetcher):
-    """Persist 中大 platform station minute/hour/day observations."""
+    """Persist 中大 platform station minute/hour observations."""
 
     TABLE_SPECS = {
         "minute": {
@@ -589,16 +487,11 @@ class XuchangZhongdaStationFetcher(_ZhongdaBaseFetcher):
             "columns": _station_grid_columns(),
             "unique": _STATION_GRID_UNIQUE,
         },
-        "day": {
-            "table": STATION_DAY_TABLE,
-            "columns": _station_day_columns(),
-            "unique": _STATION_DAY_UNIQUE,
-        },
     }
 
     def __init__(self, data_kind: str = "minute") -> None:
-        if data_kind not in ("minute", "hour", "day"):
-            raise ValueError("data_kind must be 'minute', 'hour' or 'day'")
+        if data_kind not in ("minute", "hour"):
+            raise ValueError("data_kind must be 'minute' or 'hour'")
         meta = {
             "minute": (
                 "xuchang_zhongda_station_minute_fetcher",
@@ -612,11 +505,6 @@ class XuchangZhongdaStationFetcher(_ZhongdaBaseFetcher):
                 "抓取中大平台许昌市站点小时数据",
                 "10 * * * *",
             ),
-            "day": (
-                "xuchang_zhongda_station_day_fetcher",
-                "抓取中大平台许昌市站点日均数据（审核后）",
-                "35 1 * * *",
-            ),
         }[data_kind]
         super().__init__(name=meta[0], description=meta[1], schedule=meta[2])
         self.data_kind = data_kind
@@ -624,42 +512,29 @@ class XuchangZhongdaStationFetcher(_ZhongdaBaseFetcher):
     def _endpoint(self) -> tuple[str, str | None, str | None]:
         if self.data_kind == "minute":
             return "FiveMinQuery/GetFiveMinDataForGrid", "GetFiveMinDataForGrid", "FiveMinQuery"
-        if self.data_kind == "hour":
-            return "HourQuery/GetHourDataForGrid", "GetHourDataForGrid", "HourQuery"
-        return "DayQuery/GetDayDataForGrid", None, None
+        return "HourQuery/GetHourDataForGrid", "GetHourDataForGrid", "HourQuery"
 
     def _window(self) -> tuple[datetime, datetime]:
         now = datetime.now().replace(second=0, microsecond=0)
         if self.data_kind == "minute":
             return now - timedelta(minutes=25), now
-        if self.data_kind == "hour":
-            end = now.replace(minute=0)
-            # 日污染回顾在次日读取前一整天原始小时数据；每次小时任务
-            # 回填 26 小时，保证跨日运行和平台延迟不会留下空白日。
-            return end - timedelta(hours=26), end
-        end = now.replace(hour=0, minute=0)
-        start = end - timedelta(days=settings.zhongda_day_lookback_days)
-        return start, end
+        end = now.replace(minute=0)
+        # 日污染回顾在次日读取前一整天原始小时数据；每次小时任务
+        # 回填 26 小时，保证跨日运行和平台延迟不会留下空白日。
+        return end - timedelta(hours=26), end
 
     def _query_params(self, start: datetime, end: datetime) -> dict:
         params: dict[str, Any] = {
             "stationCode": settings.zhongda_station_codes,
             "parameterType": settings.zhongda_parameter_type,
             "dataTableType": settings.zhongda_data_table_type,
+            "startTime": _fmt_window(start),
+            "endTime": _fmt_window(end),
         }
-        if self.data_kind in ("minute", "hour"):
-            params["startTime"] = _fmt_window(start)
-            params["endTime"] = _fmt_window(end)
-            if self.data_kind == "hour":
-                # 小时数据要求及时性，使用原始口径；审核数据可能滞后。
-                params["dataSourceType"] = settings.zhongda_hour_data_source_type
-                params["hasMark"] = "Yes"
-        else:
-            params["standard"] = "AQI"
-            params["dataSourceType"] = settings.zhongda_data_source_type
-            params["DataTypePlan"] = settings.zhongda_data_type_plan
-            params["startTime"] = _fmt_date(start)
-            params["endTime"] = _fmt_date(end)
+        if self.data_kind == "hour":
+            # 小时数据要求及时性，使用原始口径；审核数据可能滞后。
+            params["dataSourceType"] = settings.zhongda_hour_data_source_type
+            params["hasMark"] = "Yes"
         return params
 
     def fetch_rows(self) -> list[dict[str, Any]]:
@@ -669,50 +544,26 @@ class XuchangZhongdaStationFetcher(_ZhongdaBaseFetcher):
             endpoint, self._query_params(start, end), controller, action
         )
         records: list[dict[str, Any]] = []
-        if self.data_kind == "day":
-            for row in raw:
-                station_code = str(row.get("StationCode") or "").strip()
-                data_date = _parse_time(row.get("Date"))
-                if not station_code or data_date is None:
-                    continue
-                record = {
-                    "station_code": station_code,
-                    "station_name": str(row.get("PositionName") or "").strip(),
-                    "unique_code": str(row.get("UniqueCode") or "").strip() or None,
-                    "area": str(row.get("Area") or "").strip(),
-                    "data_date": data_date.date(),
-                    "standard": "AQI",
-                    "data_source_type": settings.zhongda_data_source_type,
-                    "data_table_type": settings.zhongda_data_table_type,
-                    "parameter_type": settings.zhongda_parameter_type,
-                }
-                record.update(_apply_map(row, STATION_DAY_MAP))
-                for col in DAY_UNIT_SCALE_FIELDS:
-                    value = record.get(col)
-                    if value is not None and value != MISSING:
-                        record[col] = value * 1000
-                records.append(record)
-        else:
-            for row in raw:
-                station_code = str(row.get("StationCode") or "").strip()
-                time_point = _parse_time(row.get("TimePoint"))
-                if not station_code or time_point is None:
-                    continue
-                record = {
-                    "station_code": station_code,
-                    "station_name": str(row.get("StationName") or "").strip(),
-                    "area": str(row.get("Area") or "").strip(),
-                    "time_point": time_point,
-                    "data_table_type": settings.zhongda_data_table_type,
-                    "parameter_type": settings.zhongda_parameter_type,
-                }
-                record.update(_apply_map(row, STATION_GRID_MAP))
-                records.append(record)
+        for row in raw:
+            station_code = str(row.get("StationCode") or "").strip()
+            time_point = _parse_time(row.get("TimePoint"))
+            if not station_code or time_point is None:
+                continue
+            record = {
+                "station_code": station_code,
+                "station_name": str(row.get("StationName") or "").strip(),
+                "area": str(row.get("Area") or "").strip(),
+                "time_point": time_point,
+                "data_table_type": settings.zhongda_data_table_type,
+                "parameter_type": settings.zhongda_parameter_type,
+            }
+            record.update(_apply_map(row, STATION_GRID_MAP))
+            records.append(record)
         return records
 
 
 class XuchangZhongdaCityFetcher(_ZhongdaBaseFetcher):
-    """Persist 中大 platform city hour/day observations.
+    """Persist 中大 platform city hour observations.
 
     City endpoints can lag behind station data.  Each run therefore re-queries
     the full previous-day-to-current-hour window; the table unique key makes
@@ -725,69 +576,40 @@ class XuchangZhongdaCityFetcher(_ZhongdaBaseFetcher):
             "columns": _city_hour_columns(),
             "unique": _CITY_HOUR_UNIQUE,
         },
-        "city_day": {
-            "table": CITY_DAY_TABLE,
-            "columns": _city_day_columns(),
-            "unique": _CITY_DAY_UNIQUE,
-        },
     }
 
     def __init__(self, data_kind: str = "city_hour") -> None:
-        if data_kind not in ("city_hour", "city_day"):
-            raise ValueError("data_kind must be 'city_hour' or 'city_day'")
-        meta = {
-            "city_hour": (
-                "xuchang_zhongda_city_hour_fetcher",
-                "抓取中大平台城市小时数据（审核后）",
-                "20 * * * *",
-            ),
-            "city_day": (
-                "xuchang_zhongda_city_day_fetcher",
-                "抓取中大平台城市日均数据（替代回算）",
-                "50 1 * * *",
-            ),
-        }[data_kind]
-        super().__init__(name=meta[0], description=meta[1], schedule=meta[2])
+        if data_kind != "city_hour":
+            raise ValueError("data_kind must be 'city_hour'")
+        super().__init__(
+            name="xuchang_zhongda_city_hour_fetcher",
+            description="抓取中大平台城市小时数据（审核后）",
+            schedule="20 * * * *",
+        )
         self.data_kind = data_kind
 
     def _endpoint(self) -> tuple[str, str | None, str | None]:
-        if self.data_kind == "city_hour":
-            return "CityHour/GetCityHourData", None, None
-        return "CityDayQuery/GetCityDayQuery", None, None
+        return "CityHour/GetCityHourData", None, None
 
     def _window(self) -> tuple[datetime, datetime]:
         now = datetime.now().replace(second=0, microsecond=0)
-        if self.data_kind == "city_hour":
-            # 城市聚合通常晚于站点小时数据生成。每小时重查“昨天 00:00
-            # 至当前小时（含当前小时）”，迟到数据可在后续轮次补齐；
-            # _store 使用唯一键 upsert，重复小时不会产生重复记录。
-            current_hour = now.replace(minute=0)
-            start = (current_hour - timedelta(days=1)).replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
-            end = current_hour + timedelta(hours=1)
-            return start, end
-        end = now.replace(hour=0, minute=0)
-        start = end - timedelta(days=settings.zhongda_city_day_lookback_days)
+        # 城市聚合通常晚于站点小时数据生成。每小时重查“昨天 00:00
+        # 至当前小时（含当前小时）”，迟到数据可在后续轮次补齐；
+        # _store 使用唯一键 upsert，重复小时不会产生重复记录。
+        current_hour = now.replace(minute=0)
+        start = (current_hour - timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        end = current_hour + timedelta(hours=1)
         return start, end
 
     def _query_params(self, plan: str, start: datetime, end: datetime) -> dict:
-        act = settings.zhongda_data_table_type
-        if self.data_kind == "city_hour":
-            return {
-                "DataTypePlan": plan,
-                "isApp": "true",
-                "start": _fmt_window(start),
-                "end": _fmt_window(end),
-                "dataTableType": act,
-            }
         return {
             "DataTypePlan": plan,
-            "startTime": _fmt_date(start),
-            "endTime": _fmt_date(end),
-            "dataSourceType": "SubstitutionBack",
-            "dataTableType": act,
-            "isCoverData": 1,
+            "isApp": "true",
+            "start": _fmt_window(start),
+            "end": _fmt_window(end),
+            "dataTableType": settings.zhongda_data_table_type,
         }
 
     def fetch_rows(self) -> list[dict[str, Any]]:
@@ -815,38 +637,21 @@ class XuchangZhongdaCityFetcher(_ZhongdaBaseFetcher):
             raw_count=len(raw),
         )
         records: list[dict[str, Any]] = []
-        if self.data_kind == "city_hour":
-            for row in raw:
-                area = str(row.get("Area") or "").strip()
-                time_point = _parse_time(row.get("TimePoint"))
-                if not area or time_point is None:
-                    continue
-                record = {
-                    "area": area,
-                    "city_code": str(row.get("CityCode") or "").strip() or None if row.get("CityCode") is not None else None,
-                    "province": str(row.get("Province") or "").strip() or None,
-                    "province_code": str(row.get("ProvinceCode") or "").strip() or None,
-                    "time_point": time_point,
-                    "data_type_plan": plan_for_date(time_point),
-                    "is_app": "true",
-                    "data_table_type": settings.zhongda_data_table_type,
-                }
-                record.update(_apply_map(row, CITY_HOUR_MAP))
-                records.append(record)
-        else:
-            for row in raw:
-                area = str(row.get("Area") or "").strip()
-                data_date = _parse_time(row.get("Date"))
-                if not area or data_date is None:
-                    continue
-                record = {
-                    "area": area,
-                    "city_code": str(row.get("CityCode") or "").strip() or None if row.get("CityCode") is not None else None,
-                    "data_date": data_date.date(),
-                    "data_type_plan": plan_for_date(data_date),
-                    "data_source_type": "SubstitutionBack",
-                    "data_table_type": settings.zhongda_data_table_type,
-                }
-                record.update(_apply_map(row, CITY_DAY_MAP))
-                records.append(record)
+        for row in raw:
+            area = str(row.get("Area") or "").strip()
+            time_point = _parse_time(row.get("TimePoint"))
+            if not area or time_point is None:
+                continue
+            record = {
+                "area": area,
+                "city_code": str(row.get("CityCode") or "").strip() or None if row.get("CityCode") is not None else None,
+                "province": str(row.get("Province") or "").strip() or None,
+                "province_code": str(row.get("ProvinceCode") or "").strip() or None,
+                "time_point": time_point,
+                "data_type_plan": plan_for_date(time_point),
+                "is_app": "true",
+                "data_table_type": settings.zhongda_data_table_type,
+            }
+            record.update(_apply_map(row, CITY_HOUR_MAP))
+            records.append(record)
         return records

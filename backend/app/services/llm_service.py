@@ -19,6 +19,7 @@ import httpx
 from app.utils.llm_context_logger import get_llm_context_logger
 from app.services.llm_failover import (
     LLMFailoverError,
+    LLMResponseRejectedError,
     classify_llm_failure,
     get_cooldown_failure,
     get_llm_pool_semaphore,
@@ -1383,8 +1384,16 @@ class LLMService:
             )
             return await call()
 
-    async def _run_anthropic_with_fallback(self, operation: str, call):
-        """Run an Anthropic-compatible request with configured model fallback."""
+    async def _run_anthropic_with_fallback(self, operation: str, call, validate=None):
+        """Run an Anthropic-compatible request with configured model fallback.
+
+        ``validate`` optionally receives the raw result of each attempt and
+        returns ``None`` when the response is acceptable, or a non-empty
+        reason string to reject it. Rejected responses move the current
+        request to the next fallback candidate (without marking the provider
+        as cooldown); when every candidate is rejected a
+        :class:`LLMResponseRejectedError` carrying the last reason is raised.
+        """
         original_state = self._snapshot_provider_state()
         candidates = parse_fallback_candidates(
             original_state["provider"],
@@ -1420,6 +1429,10 @@ class LLMService:
 
                 try:
                     result = await self._run_llm_request_with_global_limit(operation, call)
+                    if validate is not None:
+                        rejection = validate(result)
+                        if rejection:
+                            raise LLMResponseRejectedError(str(rejection))
                     if attempts:
                         logger.warning(
                             "llm_fallback_candidate_succeeded",
@@ -1428,6 +1441,28 @@ class LLMService:
                             attempts=summarize_attempts(attempts),
                         )
                     return result
+                except LLMResponseRejectedError as exc:
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": "invalid_response",
+                        "status": None,
+                        "code": None,
+                        "error": exc.reason,
+                    })
+                    has_next = index < len(candidates)
+                    logger.warning(
+                        "llm_fallback_candidate_rejected",
+                        provider=self.provider,
+                        model=self.model,
+                        reason="invalid_response",
+                        has_next=has_next,
+                        error=exc.reason[:300],
+                    )
+                    if not has_next:
+                        exc.attempts = summarize_attempts(attempts)
+                        raise
+                    continue
                 except Exception as exc:
                     failure = classify_llm_failure(exc)
                     attempts.append({
@@ -3103,6 +3138,7 @@ class LLMService:
         provider: Optional[str] = None,
         model: Optional[str] = None,
         auto_profile: Optional[str] = None,
+        validate: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """Anthropic 格式聊天，支持原生工具调用
 
@@ -3114,6 +3150,8 @@ class LLMService:
             max_tokens: 最大输出 token 数
             temperature: 温度参数
             system: 系统提示词（Anthropic API 使用单独的 system 参数）
+            validate: 可选校验回调，接收每次尝试的原始响应；返回 None 表示
+                接受响应，返回非空字符串表示拒绝该响应并切换到下一个备用模型
 
         Returns:
             {
@@ -3131,6 +3169,7 @@ class LLMService:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     system=system,
+                    validate=validate,
                 )
             finally:
                 self._schedule_provider_override_service_close(override_service)
@@ -3143,6 +3182,7 @@ class LLMService:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     system=system,
+                    validate=validate,
                 )
 
         try:
@@ -3187,6 +3227,7 @@ class LLMService:
             response = await self._run_anthropic_with_fallback(
                 "llm_chat",
                 create_message,
+                validate=validate,
             )
 
             # The Chat-Completions adapter already returns the normalized

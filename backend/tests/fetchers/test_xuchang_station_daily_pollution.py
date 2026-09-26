@@ -51,10 +51,10 @@ class _FakeConnection:
         pass
 
 
-def test_load_city_daily_rows_merges_zhongda_and_publish_history(monkeypatch):
+def test_load_city_daily_rows_uses_publish_history_for_all_cities(monkeypatch):
     result_sets = [
-        [("许昌市", "411000", date(2026, 9, 19), 42.0, 72.0)],
         [
+            ("许昌市", "411000", datetime(2026, 9, 19), "42", "72"),
             ("郑州市", "410100", datetime(2026, 9, 19), "51", "75"),
             ("开封市", "410200", datetime(2026, 9, 19), "52", "100"),
         ],
@@ -72,22 +72,22 @@ def test_load_city_daily_rows_merges_zhongda_and_publish_history(monkeypatch):
 
     rows = fetcher.load_city_daily_rows(date(2026, 9, 19))
 
-    zhongda_sql, publish_sql = connection._cursor.executed
-    assert "dat_zhongda_city_day" in zhongda_sql
+    (publish_sql,) = connection._cursor.executed
     assert "CityDayAQIPublishHistory" in publish_sql
+    assert "dat_zhongda_city_day" not in publish_sql
     assert [row["city"] for row in rows] == ["许昌市", "郑州市", "开封市"]
-    assert rows[0]["data_source"] == "zhongda_city_day"
+    assert all(row["data_source"] == "city_day_publish_history" for row in rows)
     assert rows[0]["pm25"] == 42.0
-    peers = rows[1:]
-    assert all(row["data_source"] == "city_day_publish_history" for row in peers)
-    assert peers[0]["pm25"] == 51.0 and peers[1]["pm10"] == 100.0
+    assert rows[1]["pm25"] == 51.0 and rows[2]["pm10"] == 100.0
 
     ranking = build_city_daily_ranking(rows, date(2026, 9, 19))
     assert ranking["city_count"] == 3
     assert ranking["xuchang"]["pm25"] == 42.0
+    assert ranking["xuchang"]["value_source"] == "city_day_publish_history"
     assert ranking["xuchang"]["pm25_rank"] == 3
     assert ranking["xuchang"]["pm25_median"] == 51.0
     assert "CityDayAQIPublishHistory" in ranking["source"]
+    assert "dat_zhongda_city_day" not in ranking["source"]
 
 
 @pytest.fixture(autouse=True)
@@ -197,37 +197,6 @@ def _write_scenario_one_fixtures(registry):
     )
 
 
-def test_load_city_daily_rows_falls_back_to_publish_history_for_xuchang(monkeypatch):
-    result_sets = [
-        [],
-        [("许昌市", "411000", datetime(2026, 9, 19), "59", "92")],
-        [
-            ("郑州市", "410100", datetime(2026, 9, 19), "51", "75"),
-        ],
-    ]
-    connection = _FakeConnection(result_sets)
-    monkeypatch.setattr(
-        "app.fetchers.xuchang_station_daily_pollution.xcai_connection_string", lambda: "dsn=fake"
-    )
-    monkeypatch.setattr(
-        "app.fetchers.xuchang_station_daily_pollution.pyodbc",
-        types.SimpleNamespace(connect=lambda dsn, timeout=30: connection),
-    )
-    fetcher = XuchangStationDailyPollutionFetcher()
-
-    rows = fetcher.load_city_daily_rows(date(2026, 9, 19))
-
-    assert len(connection._cursor.executed) == 3
-    assert rows[0]["city"] == "许昌市"
-    assert rows[0]["data_source"] == "city_day_publish_history_xuchang_fallback"
-    assert rows[0]["pm25"] == 59.0
-
-    ranking = build_city_daily_ranking(rows, date(2026, 9, 19))
-    assert ranking["xuchang"]["pm25"] == 59.0
-    assert ranking["xuchang"]["value_source"] == "city_day_publish_history_xuchang_fallback"
-    assert ranking["xuchang"]["pm25_rank"] == 1
-
-
 class _TaskService:
     def __init__(self):
         self.events = []
@@ -276,6 +245,7 @@ def _build_fetcher(monkeypatch, tmp_path, task_service, township_loader=_townshi
 @pytest.mark.asyncio
 async def test_fetcher_consumes_scenario_one_episodes(monkeypatch, tmp_path):
     _write_scenario_one_fixtures(tmp_path)
+    monkeypatch.setattr("app.fetchers.xuchang_station_daily_pollution.settings.amap_public_key", "public-test-key")
     task_service = _TaskService()
     fetcher = _build_fetcher(monkeypatch, tmp_path, task_service)
 
@@ -285,42 +255,83 @@ async def test_fetcher_consumes_scenario_one_episodes(monkeypatch, tmp_path):
     payload = task_service.events[0].payload
     assert payload["alert_source_status"] == "found"
     assert payload["episode_count"] == 1
-    assert "XC001(PM2.5" in payload["alert_episode_anchors"][0]
+    assert "XC001(PM2.5" in payload["alert_event_anchors"][0]
     # 事件 payload 只携带摘要与路径，不内嵌全量证据数据。
     assert len(task_service.events[0].model_dump_json()) < 2000
 
     evidence = json.loads(
         (tmp_path / "xuchang_station_daily_reviews" / "20260805" / "manifest.json").read_text(encoding="utf-8")
     )
-    assert evidence["schema_version"] == "xuchang_station_daily_review/v5"
+    assert evidence["schema_version"] == "xuchang_station_daily_review/v7"
     assert evidence["alert_source"]["status"] == "found"
     assert "cities" not in evidence
     assert "meteorology_chart_paths" not in evidence
     assert "city_mean_meteorology_chart_path" not in evidence
     assert "city_daily_rankings" in evidence["evidence_files"]
+    render_config = json.loads((tmp_path / "xuchang_station_daily_reviews" / "20260805" / "render_config.json").read_text(encoding="utf-8"))
+    assert render_config == {"map_provider": "amap", "public_key": "public-test-key"}
+    assert evidence["render_config_path"].endswith("/render_config.json")
     city_daily = json.loads(
         (tmp_path / "xuchang_station_daily_reviews" / "20260805" / "city_daily_rankings.json").read_text(encoding="utf-8")
     )
     assert city_daily["city_daily_ranking"]["xuchang"]["pm25_rank"] == 2
     assert city_daily["city_daily_ranking"]["xuchang"]["pm10_rank"] == 2
     assert "cities" not in city_daily["city_daily_ranking"]
-    episode = evidence["episodes"][0]
+    assert "episodes" not in evidence
+    assert evidence["episode_count"] == 1
+    files = evidence["evidence_files"]
+    assert {"report_brief", "event_brief", "stage_brief", "episodes", "station_responses", "regional_responses", "temporal_responses", "spatial_responses", "transport_responses", "report_facts", "pollutant_maps"} <= files.keys()
+    assert "map_hourly" not in files
+    day_dir = tmp_path / "xuchang_station_daily_reviews" / "20260805"
+    brief_path = day_dir / "report_brief.json"
+    brief = json.loads(brief_path.read_text(encoding="utf-8"))
+    assert brief["episode_count"] == 1
+    assert brief["alert_list"][0]["station_name"] == "目标站"
+    assert brief["meteorology_intervals"]["nmc"]["record_count"] == 2
+    assert "event_brief.json" in brief["field_guide"]["merged_alert_events"]
+    assert brief_path.stat().st_size < 20_000
+    stage_path = day_dir / "stage_brief.json"
+    stage_brief = json.loads(stage_path.read_text(encoding="utf-8"))
+    assert stage_brief["episode_count"] == 1
+    assert isinstance(stage_brief["episodes"][0]["nearby_township_examples"], list)
+    assert stage_brief["episodes"][0]["target_response"]["during"]["mean"] == 60.0
+    assert stage_path.stat().st_size < 100_000
+    episode = json.loads((day_dir / "episodes.json").read_text(encoding="utf-8"))["episodes"][0]
     assert episode["analysis_status"] == "new"
     assert episode["episode_id"].startswith("xuchang-station-deviation-episode-")
-    assert episode["regional_co_rise"]["classification"] == "regional_co_rise"
-    assert episode["transport_consistency"]["conclusion"] == "neighbor_lead_rise"
-    assert episode["source_features"] == [{
+    assert "spatial_map" not in episode
+    regional = json.loads((day_dir / "regional_responses.json").read_text(encoding="utf-8"))["episodes"][0]
+    transport = json.loads((day_dir / "transport_responses.json").read_text(encoding="utf-8"))["episodes"][0]
+    assert regional["regional_co_rise"]["classification"] == "regional_co_rise"
+    assert transport["transport_consistency"]["conclusion"] == "neighbor_lead_rise"
+    source_detail = json.loads((day_dir / "source_features.json").read_text(encoding="utf-8"))["episodes"][0]
+    assert source_detail["source_features"] == [{
         "status": "calculated", "sample_count": 12, "classification": "biomass_burning",
     }]
+    station_response = json.loads((day_dir / "station_responses.json").read_text(encoding="utf-8"))["episodes"][0]
     township_responses = [
-        item for item in episode["station_response_by_window"]
+        item for item in station_response["stations"]
         if item["station_type"] == "township"
     ]
     assert township_responses
     assert all(item["coordinate_status"] == "missing_coordinates" for item in township_responses)
-    assert episode["spatial_gradient"]["coordinate_coverage"]["township"] == "missing_coordinates"
+    spatial = json.loads((day_dir / "spatial_responses.json").read_text(encoding="utf-8"))["episodes"][0]
+    assert "spatial_map" in spatial
+    assert spatial["spatial_gradient"]["coordinate_coverage"]["township"] == "missing_coordinates"
     assert episode["alert_anchor"]["peak_value"] == 60.0
     assert "source_evidence_package_path" not in episode
+    facts = json.loads((day_dir / "report_facts.json").read_text(encoding="utf-8"))
+    assert facts["episode_count"] == 1
+    assert facts["episodes"][0]["transport_conclusion"] == "neighbor_lead_rise"
+    event_data = json.loads((day_dir / "event_brief.json").read_text(encoding="utf-8"))
+    assert event_data["event_count"] == 1
+    assert event_data["events"][0]["source_episode_ids"] == [episode["episode_id"]]
+    assert event_data["events"][0]["peak_rise_absolute"] == 40
+    assert event_data["events"][0]["reference_time"] == "2026-08-05T10:00:00"
+    map_data = json.loads((day_dir / "pollutant_maps.json").read_text(encoding="utf-8"))
+    assert map_data["pollutant_count"] == 1
+    assert map_data["maps"][0]["pollutant"] == "PM2.5"
+    assert map_data["maps"][0]["frames"]
     meteorology = json.loads(
         (tmp_path / "xuchang_station_daily_reviews" / "20260805" / "meteorology.json").read_text(encoding="utf-8")
     )
@@ -351,8 +362,10 @@ async def test_fetcher_without_scenario_one_events_records_not_found(monkeypatch
     evidence = json.loads(
         (tmp_path / "xuchang_station_daily_reviews" / "20260805" / "manifest.json").read_text(encoding="utf-8")
     )
-    assert evidence["episodes"] == []
-    assert evidence["report_summary"]["alert_source_status"] == "not_found"
+    assert evidence["episode_count"] == 0
+    assert "episodes" not in evidence
+    summary = json.loads((tmp_path / "xuchang_station_daily_reviews" / "20260805" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["report_summary"]["alert_source_status"] == "not_found"
     assert "meteorology_chart_paths" not in evidence
     assert "city_mean_meteorology_chart_path" not in evidence
 

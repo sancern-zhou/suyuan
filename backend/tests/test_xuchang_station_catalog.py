@@ -135,6 +135,52 @@ def test_split_township_name_supports_zone_alias():
     assert split_township_name("未知站点", DISTRICT_NAMES) == ("", "未知站点")
 
 
+def test_hidden_stations_manifest_has_september_street_stations():
+    hidden = catalog_module.load_hidden_stations()
+
+    assert len(hidden) == 31
+    assert all(code.upper().endswith("B") for code in hidden)
+    assert hidden["1015B"] == "建安区昌盛街道办事处"
+    assert hidden["1001B"] == "魏都区丁庄街道办事处"
+
+
+def test_build_catalog_excludes_hidden_townships(fake_catalog, monkeypatch):
+    monkeypatch.setattr(
+        catalog_module,
+        "load_hidden_stations",
+        lambda: {"1107B": "长葛市和尚桥镇"},
+    )
+
+    catalog = build_catalog()
+
+    codes = {item["station_code"] for item in catalog["townships"]}
+    assert "1107B" not in codes
+    assert {"1037B", "1050B"} <= codes
+    assert catalog["hidden_station_count"] == 1
+
+
+def test_resolve_stations_skips_hidden_township(fake_catalog, monkeypatch):
+    monkeypatch.setattr(
+        catalog_module,
+        "load_hidden_stations",
+        lambda: {"1037B": "示范区尚集镇"},
+    )
+    catalog = load_catalog(force_refresh=True)
+
+    assert resolve_stations(catalog, station_names=["尚集"]) == []
+    assert resolve_stations(catalog, station_codes=["1037B"]) == []
+
+
+def test_render_station_directory_notes_hidden_stations(fake_catalog):
+    catalog = load_catalog()
+    catalog["hidden_station_count"] = 31
+
+    markdown = render_station_directory(catalog)
+
+    assert "31 个已登记但长期无数据上报的街道站" in markdown
+    assert "暂未列入本目录" in markdown
+
+
 def test_build_catalog_with_fake_client(fake_catalog):
     catalog = build_catalog()
 

@@ -94,6 +94,8 @@ class DatabaseTaskResultStorage:
             "document_paths": result.document_paths,
             "evidence_package_paths": result.evidence_package_paths,
             "report_refs": result.report_refs,
+            "broadcast_message": result.broadcast_message,
+            "broadcast_image_paths": result.broadcast_image_paths,
             "trigger_type": result.trigger_type,
             "event_id": result.event_id,
             "event_type": result.event_type,
@@ -206,6 +208,64 @@ class DatabaseTaskResultStorage:
             total = int((await session.execute(count_stmt)).scalar() or 0)
         return records, total
 
+    def facets(
+        self,
+        *,
+        task_id: Optional[str] = None,
+        task_ids: Optional[List[str]] = None,
+    ) -> dict:
+        """Distinct station/pollutant values for filter dropdowns."""
+        return self._run(self._facets(task_id=task_id, task_ids=task_ids))
+
+    async def _facets(
+        self,
+        *,
+        task_id: Optional[str],
+        task_ids: Optional[List[str]],
+    ) -> dict:
+        from sqlalchemy import func, select
+
+        from app.db.models.scheduled_task_result_db import ScheduledTaskResultDB
+
+        conditions = []
+        if task_id:
+            conditions.append(ScheduledTaskResultDB.task_id == task_id)
+        if task_ids:
+            conditions.append(ScheduledTaskResultDB.task_id.in_(list(task_ids)))
+
+        stations: dict[str, dict] = {}
+        pollutants: list[str] = []
+        async with self._session() as session:
+            station_stmt = select(
+                ScheduledTaskResultDB.station_id,
+                func.max(ScheduledTaskResultDB.station_name),
+            ).where(
+                ScheduledTaskResultDB.station_id.isnot(None),
+                ScheduledTaskResultDB.station_id != "",
+                *conditions,
+            ).group_by(ScheduledTaskResultDB.station_id)
+            for station_id, station_name in (await session.execute(station_stmt)).all():
+                stations[str(station_id)] = {
+                    "station_id": str(station_id),
+                    "station_name": str(station_name) if station_name else "",
+                }
+
+            pollutant_stmt = select(
+                ScheduledTaskResultDB.pollutant
+            ).where(
+                ScheduledTaskResultDB.pollutant.isnot(None),
+                ScheduledTaskResultDB.pollutant != "",
+                *conditions,
+            ).distinct()
+            pollutants = [
+                str(value)
+                for value in (await session.execute(pollutant_stmt)).scalars().all()
+            ]
+        return {
+            "stations": [stations[key] for key in sorted(stations)],
+            "pollutants": sorted(pollutants),
+        }
+
     @staticmethod
     def _conditions(
         model,
@@ -259,6 +319,8 @@ class DatabaseTaskResultStorage:
             document_paths=row.document_paths or [],
             evidence_package_paths=row.evidence_package_paths or [],
             report_refs=row.report_refs or [],
+            broadcast_message=row.broadcast_message,
+            broadcast_image_paths=row.broadcast_image_paths or [],
             trigger_type=row.trigger_type,
             event_id=row.event_id,
             event_type=row.event_type,

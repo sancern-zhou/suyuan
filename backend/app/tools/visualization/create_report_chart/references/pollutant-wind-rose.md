@@ -52,4 +52,6 @@ hard-code dataset file paths.
 - `unit`
 - `time_resolution`
 - `use_six_level`
+- `show_colorbar` (default `false`; set `true` only when the right-side
+  concentration color scale is explicitly required)
 - `font_scale`

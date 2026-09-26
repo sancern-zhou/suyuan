@@ -1,9 +1,9 @@
-"""许昌常规站（国控等）经纬度补全
+"""许昌国控站经纬度补全
 
 中台 `station` 表对许昌站点未登记经纬度，导致国控站在站点目录里
 `longitude/latitude` 为 null。本模块从 XcAiDb 的站点镜像表
 （`dat_station_hour` / `dat_station_day`）按站点名匹配读取经纬度，
-供目录构建时补全常规站坐标。
+供目录构建时补全国控站坐标。
 """
 
 from __future__ import annotations

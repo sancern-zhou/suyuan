@@ -241,6 +241,7 @@ def _render_pollutant_wind_rose(
         output_context=output_context,
         target_width_in=WORD_TARGET_WIDTH_IN,
         font_scale=options.get("font_scale"),
+        show_colorbar=_bool_option(data, options, "show_colorbar", False),
     )
     visual = _cache_base64_image(image_base64, chart_id or f"pollutant_wind_rose_{pollutant_name}", title)
 
@@ -259,6 +260,7 @@ def _render_pollutant_wind_rose(
             "unit": unit,
             "valid_point_count": len(wind_directions),
             "use_six_level": bool(options.get("use_six_level", data.get("use_six_level", True))),
+            "show_colorbar": _bool_option(data, options, "show_colorbar", False),
         },
         "summary": f"报告图表已生成：{title}。",
     }
@@ -351,6 +353,7 @@ def _render_generic_pollutant_wind_rose(
         wind_speeds=wind_speeds,
         concentrations=concentrations,
         direction_bins=direction_bins,
+        show_colorbar=_bool_option(data, options, "show_colorbar", False),
     )
     visual = _cache_base64_image(image_base64, chart_id or f"generic_pollutant_wind_rose_{pollutant_name}", title)
     return {
@@ -367,6 +370,7 @@ def _render_generic_pollutant_wind_rose(
             "unit": unit,
             "direction_bin_count": direction_bins,
             "valid_point_count": valid_count,
+            "show_colorbar": _bool_option(data, options, "show_colorbar", False),
         },
         "summary": f"报告图表已生成：{title}。",
     }
@@ -565,6 +569,7 @@ def _render_generic_wind_rose_image(
     wind_speeds: Sequence[float],
     concentrations: Sequence[float],
     direction_bins: int,
+    show_colorbar: bool = False,
 ) -> tuple[str, int]:
     valid = [
         (float(direction) % 360, float(speed), float(concentration))
@@ -597,10 +602,11 @@ def _render_generic_wind_rose_image(
     ax.set_title(str(normalize_matplotlib_label_text(title)), fontsize=14, fontweight="bold", pad=18)
     ax.set_rlabel_position(135)
     ax.tick_params(labelsize=9)
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=vmax))
-    sm.set_array([])
-    cbar = fig.colorbar(sm, ax=ax, shrink=0.72, pad=0.1)
-    cbar.set_label(str(normalize_matplotlib_label_text(f"{pollutant_name} ({unit})")), fontsize=10)
+    if show_colorbar:
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=vmax))
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=ax, shrink=0.72, pad=0.1)
+        cbar.set_label(str(normalize_matplotlib_label_text(f"{pollutant_name} ({unit})")), fontsize=10)
     ax.text(
         0.5,
         -0.08,
@@ -764,6 +770,17 @@ def _int_option(data: Dict[str, Any], options: Dict[str, Any], key: str) -> int 
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _bool_option(data: Dict[str, Any], options: Dict[str, Any], key: str, default: bool = False) -> bool:
+    value = data.get(key, options.get(key, default))
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
 
 
 def _cache_base64_image(image_base64: str, chart_id: str, title: str) -> Dict[str, Any]:

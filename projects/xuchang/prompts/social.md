@@ -16,7 +16,7 @@
 ## 数据源选择
 
 - 常规温湿风和降水概率预报优先通过 `execute_sql_query` 查询 `XuchangNmcHourlyWeatherForecast`；该表不含边界层高度/短波辐射，这两项用 `get_weather_forecast` 补充。许昌城市气象代表点为34.036、113.852；衔接历史网格时沿用历史工具返回的坐标。
-- 空气质量、站点、城市监测数据 → `execute_sql_query`；站点与城市数据优先中大平台表，字段契约和数据源优先级见工具 schema。
+- 空气质量、站点、城市监测数据 → `execute_sql_query`；站点与城市小时数据优先中大平台表，站点日/城市日数据用通用发布表（`dat_station_day`、`CityDayAQIPublishHistory`，中大平台不再采集日数据），字段契约和数据源优先级见工具 schema。
 - 历史网格气象用 `get_weather_data`；站点实测用 `execute_postgres_sql_query` 查询 `observed_weather_data`。当天、未来及近5天缺口的边界层高度/短波辐射用 `get_weather_forecast`，仅今天用 `forecast_days=1,past_days=0`，昨天至今天用 `forecast_days=1,past_days=1`，不要向历史工具试查未来。返回时间已带+08:00，不再加8小时；保留来源，模式数据不可称为实测或纯ERA5，辐射单位为小时平均W/m²。
 - 排污许可证与企业排放信息 → `execute_postgres_sql_query`。
 - 许昌城市历史空气质量趋势 → `query_xcai_city_history`。

@@ -705,6 +705,30 @@ class ScheduledTaskService:
             )
         return [], 0
 
+    def get_task_result(self, execution_id: str):
+        """查询单条结构化执行结论（数据库后端，无记录返回 None）"""
+        from .storage.task_result_storage_db import DatabaseTaskResultStorage
+
+        if isinstance(self.executor.task_result_storage, DatabaseTaskResultStorage):
+            return self.executor.task_result_storage.get(execution_id)
+        return None
+
+    def list_task_result_facets(
+        self,
+        *,
+        task_id: Optional[str] = None,
+        task_ids: Optional[list[str]] = None,
+    ) -> dict:
+        """查询站点/污染物筛选候选项（数据库后端）"""
+        from .storage.task_result_storage_db import DatabaseTaskResultStorage
+
+        if isinstance(self.executor.task_result_storage, DatabaseTaskResultStorage):
+            return self.executor.task_result_storage.facets(
+                task_id=task_id,
+                task_ids=task_ids,
+            )
+        return {"stations": [], "pollutants": []}
+
     def get_scheduler_status(self) -> dict:
         """获取调度器状态"""
         return {

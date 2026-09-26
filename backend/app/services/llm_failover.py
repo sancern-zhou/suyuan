@@ -46,6 +46,19 @@ class LLMFailoverError(Exception):
         super().__init__(f"All LLM fallback candidates failed: {summary}")
 
 
+class LLMResponseRejectedError(Exception):
+    """Raised when a response completes but fails caller-side validation.
+
+    Unlike transport failures this does not mark the provider as cooldown;
+    only the current request moves on to the next fallback candidate.
+    """
+
+    def __init__(self, reason: str, attempts: Optional[list[dict]] = None):
+        self.reason = reason
+        self.attempts = attempts or []
+        super().__init__(reason)
+
+
 _pool_semaphores: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _pool_semaphore_limits: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _cooldowns: dict[str, tuple[float, LLMFailure]] = {}

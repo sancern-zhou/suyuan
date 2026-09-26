@@ -541,6 +541,23 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
                 error=str(e),
             )
 
+    if is_project_tool_enabled(
+        context,
+        "xuchang-air-quality",
+        "query_xuchang_emission_inventory",
+    ):
+        try:
+            from app.tools.xuchang.emission_inventory.tool import XuchangEmissionInventoryTool
+
+            registry.register(XuchangEmissionInventoryTool(), priority=102)
+            logger.info("tool_loaded", tool="query_xuchang_emission_inventory")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="query_xuchang_emission_inventory",
+                error=str(e),
+            )
+
     try:
         # Import PM2.5/PM10颗粒物PMF工具
         from app.tools.analysis.calculate_pm_pmf.tool import CalculatePMFTool

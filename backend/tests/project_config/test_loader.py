@@ -102,9 +102,7 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "xuchang_transport_analysis_fetcher",
         "xuchang_zhongda_station_minute_fetcher",
         "xuchang_zhongda_station_hour_fetcher",
-        "xuchang_zhongda_station_day_fetcher",
         "xuchang_zhongda_city_hour_fetcher",
-        "xuchang_zhongda_city_day_fetcher",
         "gems_xuchang_image_fetcher",
     ]
     # 广东数据源工具已收敛为项目专属（共享白名单不含、默认不注册），

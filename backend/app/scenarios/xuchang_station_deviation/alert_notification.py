@@ -391,6 +391,19 @@ def _build_llm_evidence(package: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _extract_response_text(response: Any) -> str:
+    """Pull the text blocks out of an Anthropic-shaped dict or SDK response."""
+    content_blocks = response.get("content", []) if isinstance(response, dict) else []
+    text_parts = []
+    for block in content_blocks:
+        if isinstance(block, dict):
+            if block.get("type") == "text" and block.get("text"):
+                text_parts.append(str(block["text"]))
+        elif getattr(block, "type", None) == "text" and getattr(block, "text", None):
+            text_parts.append(str(block.text))
+    return "\n".join(text_parts)
+
+
 async def _generate_station_alert_message(
     package: dict[str, Any], task: Any, history_section: str | None = None
 ) -> str:
@@ -418,6 +431,13 @@ async def _generate_station_alert_message(
         f"```json\n{evidence}\n```"
     )
     tier = getattr(task, "model_tier", "auto") or "auto"
+
+    def _reject_empty_notice_text(response: Any) -> str | None:
+        message = llm_service.clean_thinking_tags(_extract_response_text(response)).strip()
+        if not message:
+            return "LLM 未生成告警通报正文（空响应）"
+        return None
+
     with llm_service.use_model_tier(tier):
         response = await llm_service.chat_anthropic(
             [
@@ -425,17 +445,9 @@ async def _generate_station_alert_message(
             ],
             system=system_prompt,
             max_tokens=4000,
+            validate=_reject_empty_notice_text,
         )
-    content_blocks = response.get("content", []) if isinstance(response, dict) else []
-    text_parts = []
-    for block in content_blocks:
-        if isinstance(block, dict):
-            if block.get("type") == "text" and block.get("text"):
-                text_parts.append(str(block["text"]))
-        elif getattr(block, "type", None) == "text" and getattr(block, "text", None):
-            text_parts.append(str(block.text))
-    message = "\n".join(text_parts)
-    message = llm_service.clean_thinking_tags(str(message or "")).strip()
+    message = llm_service.clean_thinking_tags(_extract_response_text(response)).strip()
     if not message:
         raise RuntimeError("LLM 未生成告警通报正文")
     return message

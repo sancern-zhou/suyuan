@@ -43,6 +43,22 @@ POLLUTANT_COLUMNS = {
 }
 POLLUTANT_SOURCES = {"PM2.5": "hour", "PM10": "minute", "SO2": "minute", "NO2": "minute", "CO": "minute", "O3": "minute", "NOX": "minute"}
 OBSERVED_INDICATORS = {"PM2.5": "PM2.5", "PM10": "PM10", "SO2": "SO2", "NO2": "NO2", "CO": "CO", "O3": "O3", "NOX": "NO2"}
+# 中台历史编码与当前国控编码的稳定映射。告警、episode 和任务结果只使用
+# canonical id，避免小时表与中大 5 分钟表把同一站点拆成两条记录。
+STATION_ID_ALIASES = {
+    "2398A": "1003A",
+    "3134A": "1005A",
+    "3338A": "1009A",
+    "4180A": "1011A",
+}
+CANONICAL_STATION_NAMES = {
+    "1003A": "开发区",
+    "1005A": "市一中",
+    "1008A": "许昌学院",
+    "1009A": "芙蓉广场",
+    "1011A": "新元大道996号",
+    "1012A": "望田路111号",
+}
 DEFAULT_ABSOLUTE_DELTA_THRESHOLDS = {
     "PM2.5": 10.0,
     "PM10": 10.0,
@@ -159,6 +175,27 @@ def _float(value: Any) -> float | None:
 
 def _has_mark(value: Any) -> bool:
     return value is not None and str(value).strip() != ""
+
+
+def canonical_station_identity(station_id: Any, station_name: Any = None) -> tuple[str, str]:
+    raw_id = str(station_id or "").strip()
+    canonical_id = STATION_ID_ALIASES.get(raw_id, raw_id)
+    canonical_name = CANONICAL_STATION_NAMES.get(canonical_id)
+    if not canonical_name:
+        canonical_name = str(station_name or canonical_id).strip()
+        canonical_name = canonical_name.split("（", 1)[0].split("(", 1)[0].strip()
+    return canonical_id, canonical_name
+
+
+def normalize_station_row(row: dict[str, Any]) -> dict[str, Any]:
+    canonical_id, canonical_name = canonical_station_identity(
+        row.get("station_id"), row.get("name") or row.get("station_name")
+    )
+    row["station_id"] = canonical_id
+    row["name"] = canonical_name
+    row["station_name"] = canonical_name
+    row["canonical_station_id"] = canonical_id
+    return row
 
 
 def _observed_indicator(pollutant: Any) -> str:
@@ -421,6 +458,7 @@ class XuchangStationDeviationAlertService:
         )
         for row in hour_rows:
             row["data_source"] = "hour"
+            normalize_station_row(row)
 
         # Keep the current completed slot for detection and retain 24h of
         # minute history so composition features have enough samples.
@@ -453,6 +491,7 @@ class XuchangStationDeviationAlertService:
         )
         for row in minute_rows:
             row["data_source"] = "minute"
+            normalize_station_row(row)
             station = resolve_station(row, hour_rows)
             row["lon"] = station["longitude"] if station else None
             row["lat"] = station["latitude"] if station else None

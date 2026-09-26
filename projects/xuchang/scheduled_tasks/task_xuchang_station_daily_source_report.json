@@ -1,18 +1,25 @@
 {
   "task_id": "task_xuchang_station_daily_source_report",
   "name": "许昌市昨日污染回顾分析",
-  "description": "每日汇总场景一告警episode证据包，结合乡镇站区域响应、中大源城市日均排名、中大发布城市小时数据和NMC/ERA5气象，生成约500字的许昌市昨日污染综合回顾。",
+  "description": "每日按《许昌市空气质量回顾分析日报》模板，汇总场景一告警 episode、乡镇站区域响应、气象和周边城市证据，生成交互 HTML 回顾报告。",
   "execution_mode": "custom",
-  "tool_names": ["read_file", "execute_python", "create_report_package"],
+  "tool_names": [
+    "read_file",
+    "execute_python"
+  ],
   "skill_id": "xuchang_station_daily_source_report",
   "knowledge_base_binding": null,
   "trigger_type": "event",
   "schedule_type": null,
   "event_type": "xuchang.station_daily_pollution.review_completed",
-  "event_filters": {"city": "许昌市"},
-  "report_template_path": "/home/xckj/suyuan/backend/backend_data_registry/uploads/401ecbb4-c402-4f55-b37c-331e7a88b49d.docx",
+  "event_filters": {
+    "city": "许昌市"
+  },
+  "report_template_path": "/home/xckj/suyuan/backend/backend_data_registry/uploads/2d1aabdc-ca0a-4bcd-9166-07d38a5e595b.docx",
   "no_hourly_alert_sections": [],
-  "target_user_ids": ["app:android:android_demo"],
+  "target_user_ids": [
+    "app:android:android_demo"
+  ],
   "broadcast_enabled": true,
   "enabled": true,
   "run_at": null,
@@ -30,8 +37,15 @@
   "owner_user_id": "system",
   "owner_username": "scheduled-task",
   "owner_display_name": "定时任务",
-  "tags": ["xuchang", "daily_review", "daily_review_report"],
-  "workspace_entry": {"enabled": true, "title": "昨日污染回顾"},
-  "prompt": "你是许昌市昨日污染回顾分析 Agent。严格遵循已注入的 xuchang_station_daily_source_report Skill，按 Define、Frame、Collect、Validate、Analyze、Synthesize、Compose、Review、Deliver 的工作方法完成任务；流程可按证据和任务复杂度裁剪，分析中发现口径或数据问题时允许回退修正。事件 payload 提供 evidence_package_path，先读取 manifest，再按需读取证据文件。只使用 Fetcher 已生成的证据，不重新查询数据库、抓取数据、判定告警、计算阈值或补算缺失数据。正文采用最多三段：1、昨日告警概览；2、污染成因回顾分析（只选择当日证据支持且有解释力的内容）；3、其他（历史趋势、关键发现、数据缺口或建议确有价值时才写）。正文约500字但不为填满结构而增加内容，区分事实、推断和建议，所有关键结论可回溯。只调用一次 create_report_package 完成报告包创建、HTML/Word 渲染和验收。最终对话仅返回报告ID、实际路径、验收结果和不超过80字的摘要，完整结论写入报告，不在对话中重复展开。",
+  "tags": [
+    "xuchang",
+    "daily_review",
+    "daily_review_report"
+  ],
+  "workspace_entry": {
+    "enabled": true,
+    "title": "昨日污染回顾"
+  },
+  "prompt": "你是许昌市昨日污染回顾分析 Agent。严格遵循 xuchang_station_daily_source_report Skill 和日报模板。事件 payload 的 evidence_package_path 是 manifest.json；先读 manifest 指向的 report_brief.json 和 event_brief.json，不扫描目录。Fetcher 已将同站同污染物重叠、接续或仅隔1个无告警小时的告警 episode 合并成 event_brief.events[]；一、持续升高基本情况的次数、清单及二、持续升高原因分析的逐次过程必须使用这同一份合并事件，不把原始 episode 计为多次。event_brief 已预计算每次事件的告警前参考小时值、峰值、末值、上升幅度、主导上风向、乡镇站距离/方位/时段均值及与目标站对比；直接引用，不自己用 Python 重算。请为每个 event_id 写一段审慎的 event_analysis；若事件含 segments，需分别比较各段证据，结合风向、周边浓度、区域响应和气象证据讨论可能机制与不足；风向缺测或无净上升时如实写明，不作确定污染来源或贡献率判断。报告保留标题与日期、一持续升高基本情况、二持续升高原因分析、四结论。第二章按国控站点和污染物归组，跨短空档事件逐段展示升幅、风向及上风向站点对比，保留上风向乡镇站事实表；该章另插入每种告警污染物一张真实高德底图和逐小时时间轴，不按国控站重复地图。Agent 不再为地图或每个小时生成阶段说明；不要输出 stages。地图数据 pollutant_maps.json 仅供 HTML 组装程序读取，不读入模型上下文。agent_text 只包含 summary_text、conclusion 和 event_analysis（以 event_id 为键的字典）。如需细分原始 episode 证据，按 source_episode_ids 选择性读 stage_brief 或区域响应文件；不要逐事件反复 execute_python 探测。最后只调用一次 execute_python：用 artifact_path(filename) 获取输出路径，调用 app.scenarios.xuchang_daily_review.html_report.build_report_from_evidence(manifest_path, agent_text)，将 HTML 写入输出路径并打印路径。地图公开 Key 在 manifest.render_config_path 中，由组装函数自行读取；不要搜索 Key、.env、源码、部署目录或沙箱路径。缺配置明确失败并提示重生成证据包。execute_python 自动发布预览与下载资源，不调用 create_html_artifact。不生成 Word。交付前确认 HTML 文件已生成、合并事件数和分析段落数一致、地图数等于污染物数。最终只返回报告路径、验收结果与不超过80字摘要。",
   "timeout_seconds": 1800
 }

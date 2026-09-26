@@ -29,20 +29,6 @@ export const deleteScheduledTask = (store, task) => (
 )
 
 
-export const loadScheduledTaskExecutions = (store, task, options = {}) => (
-  store.fetchTaskExecutions(requireTaskId(task), options)
-)
-
-
-export const sortExecutionsNewestFirst = (executions = []) => (
-  [...executions].sort((left, right) => {
-    const leftTime = Date.parse(left?.started_at || '') || 0
-    const rightTime = Date.parse(right?.started_at || '') || 0
-    return rightTime - leftTime
-  })
-)
-
-
 const EXECUTION_STATUS_META = {
   pending: { key: 'pending', label: '等待执行' },
   running: { key: 'running', label: '执行中' },
@@ -55,10 +41,4 @@ const EXECUTION_STATUS_META = {
 
 export const executionStatusMeta = (status) => (
   EXECUTION_STATUS_META[status] || { key: 'unknown', label: '未知' }
-)
-
-
-export const canRestoreExecution = (execution) => (
-  execution?.conversation_available !== false &&
-  typeof execution?.session_id === 'string' && execution.session_id.trim().length > 0
 )

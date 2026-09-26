@@ -28,6 +28,7 @@ backend:
     - get_gems_image
     - get_sentinel5p_image
     - analyze_xuchang_upwind_permit_sources
+    - query_xuchang_emission_inventory
     - query_airdata_platform
     - airdata_calc_report_summary
     - xuchang_station_catalog
@@ -89,6 +90,9 @@ backend:
       - query_national_city_air_quality
       - resolve_station_geo
       - meteorological_trajectory_analysis
+      # 许昌源清单与上风向企业分析（企业排放清单 + 排污许可证合并筛查）
+      - query_xuchang_emission_inventory
+      - analyze_xuchang_upwind_permit_sources
       - create_report_chart
       - execute_python
       - read_file
@@ -156,9 +160,7 @@ backend:
     - xuchang_transport_analysis_fetcher
     - xuchang_zhongda_station_minute_fetcher
     - xuchang_zhongda_station_hour_fetcher
-    - xuchang_zhongda_station_day_fetcher
     - xuchang_zhongda_city_hour_fetcher
-    - xuchang_zhongda_city_day_fetcher
     - gems_xuchang_image_fetcher
   weather_history:
     bootstrap_days: 90

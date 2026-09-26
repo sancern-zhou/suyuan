@@ -149,6 +149,12 @@ cd /home/xckj/suyuan/backend
 
 ## 双项目同时部署（本机布局）
 
+### 配置文件归属
+
+本 README 与 `AGENTS.md` 是跨项目共享的部署说明，不是某个项目的运行配置。`backend/.env` 和 `backend/.env.jiangsu-ops` 都是实例级环境文件：前者只供风清气智/main 工作树使用，后者只供 `project/jiangsu-ops` 工作树使用；web 与对应 worker 必须使用同一个环境文件。部署时以目标工作树中实际存在的环境文件为准，不能因为说明中列出文件名就跨工作树复用，也不能用一个项目的 `.env` 替代另一个项目的 `.env.jiangsu-ops`。
+
+许昌分析若运行在 `xuchang` 分支，应使用该工作树实际配置的环境文件（当前通常为 `backend/.env`），并按许昌端口和 worker 配置启动；只有切换到真实存在的江苏运维工作树并确认其 `.env.jiangsu-ops` 后，才能执行江苏运维部署。
+
 同一工作树同一时刻只有一套 `frontend/dist`，因此双项目同时在线使用两个部署目录：
 
 - `/home/xckj/suyuan-main`：main 分支工作树，构建 `PROJECT=default`，由它启动 `suyuan-nginx`（5174 → 8000）。首次创建：`git worktree add /home/xckj/suyuan-main main`，并复用主树依赖：`ln -s /home/xckj/suyuan/frontend/node_modules /home/xckj/suyuan-main/frontend/node_modules`。

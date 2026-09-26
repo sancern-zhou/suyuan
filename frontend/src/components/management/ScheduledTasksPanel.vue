@@ -7,8 +7,8 @@
       </button>
       <div v-else class="panel-actions">
         <button class="panel-btn small" @click="closeExecutionHistory">返回任务列表</button>
-        <button class="panel-btn small primary" :disabled="executionHistoryLoading" @click="refreshExecutionHistory">
-          {{ executionHistoryLoading ? '刷新中...' : '刷新' }}
+        <button class="panel-btn small primary" :disabled="resultsRefreshing" @click="refreshExecutionHistory">
+          {{ resultsRefreshing ? '刷新中...' : '刷新' }}
         </button>
       </div>
     </div>
@@ -98,72 +98,11 @@
     </div>
 
     <div v-else class="execution-history-view">
-      <div v-if="executionHistoryLoading" class="execution-history-state">
-        <span class="execution-history-spinner">⏳</span>
-        <p>加载执行记录...</p>
-      </div>
-
-      <div v-else-if="executionHistoryError" class="execution-history-state error">
-        <p>{{ executionHistoryError }}</p>
-        <button class="panel-btn small" @click="refreshExecutionHistory">重试</button>
-      </div>
-
-      <div v-else-if="executionHistory.length === 0" class="execution-history-state">
-        <span class="execution-history-empty-icon">📭</span>
-        <p>暂无执行记录</p>
-      </div>
-
-      <div v-else class="execution-history-list">
-        <button
-          v-for="execution in executionHistory"
-          :key="execution.execution_id"
-          type="button"
-          class="execution-history-item"
-          :class="{ disabled: !canRestoreExecution(execution) }"
-          :disabled="!canRestoreExecution(execution)"
-          :title="canRestoreExecution(execution) ? '查看执行对话' : '该记录未生成会话'"
-          @click="restoreExecutionSession(execution)"
-        >
-          <span class="execution-history-main">
-            <span :class="['execution-status', `status-${executionStatusMeta(execution.status).key}`]">
-              {{ executionStatusMeta(execution.status).label }}
-            </span>
-            <span class="execution-time">{{ formatExecutionTime(execution.started_at) }}</span>
-            <span class="execution-duration">{{ formatExecutionDuration(execution.duration_seconds) }}</span>
-          </span>
-          <span class="execution-history-meta">
-            <span>{{ execution.status || 'pending' }}</span>
-            <span>{{ execution.trigger_type === 'event' ? '事件触发' : '定时触发' }}</span>
-            <span v-if="execution.session_id">会话 {{ shortSessionId(execution.session_id) }}</span>
-            <span v-else>未生成会话</span>
-          </span>
-          <span v-if="execution.error_message" class="execution-error-summary">
-            {{ execution.error_message }}
-          </span>
-        </button>
-      </div>
-      <nav
-        v-if="!executionHistoryLoading && executionHistoryPagination.totalPages > 1"
-        class="execution-history-pagination"
-        aria-label="执行记录分页"
-      >
-        <button
-          type="button"
-          class="panel-btn small"
-          :disabled="executionHistoryPagination.page <= 1"
-          @click="changeExecutionHistoryPage(executionHistoryPagination.page - 1)"
-        >上一页</button>
-        <span>
-          第 {{ executionHistoryPagination.page }} / {{ executionHistoryPagination.totalPages }} 页，
-          共 {{ executionHistoryPagination.total }} 条
-        </span>
-        <button
-          type="button"
-          class="panel-btn small"
-          :disabled="executionHistoryPagination.page >= executionHistoryPagination.totalPages"
-          @click="changeExecutionHistoryPage(executionHistoryPagination.page + 1)"
-        >下一页</button>
-      </nav>
+      <ScheduledTaskResultsView
+        ref="resultsViewRef"
+        :task="selectedHistoryTask"
+        @restore-execution-session="$emit('restore-execution-session', $event)"
+      />
     </div>
 
     <!-- 新建/编辑任务弹窗 -->
@@ -587,18 +526,13 @@
 import { computed, ref } from 'vue'
 import MarkdownIt from 'markdown-it'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
+import ScheduledTaskResultsView from './ScheduledTaskResultsView.vue'
 import {
   applyExecutionMode,
   applyTriggerDefaults,
   buildTaskPayload,
   selectableSocialUsers
 } from './scheduledTaskForm.js'
-import {
-  canRestoreExecution,
-  executionStatusMeta,
-  loadScheduledTaskExecutions,
-  sortExecutionsNewestFirst
-} from './scheduledTaskActions.js'
 
 // Props
 defineProps({
@@ -636,10 +570,8 @@ const creatingTask = ref(false)
 const editingTaskId = ref(null)
 const formError = ref('')
 const selectedHistoryTask = ref(null)
-const executionHistory = ref([])
-const executionHistoryLoading = ref(false)
-const executionHistoryError = ref('')
-const executionHistoryPagination = ref({ page: 1, pageSize: 10, total: 0, totalPages: 0 })
+const resultsViewRef = ref(null)
+const resultsRefreshing = ref(false)
 
 const eventTypes = computed(() => scheduledTasksStore.eventTypes)
 const socialUsers = computed(() => selectableSocialUsers(scheduledTasksStore.socialUsers))
@@ -752,56 +684,22 @@ const loadAvailableWorkflows = async () => {
   }
 }
 
-const refreshExecutionHistory = async (requestedPage = executionHistoryPagination.value.page) => {
+const refreshExecutionHistory = async () => {
   if (!selectedHistoryTask.value) return
-  const page = Number.isInteger(requestedPage)
-    ? requestedPage
-    : executionHistoryPagination.value.page
-  executionHistoryLoading.value = true
-  executionHistoryError.value = ''
+  resultsRefreshing.value = true
   try {
-    const result = await loadScheduledTaskExecutions(
-      scheduledTasksStore,
-      selectedHistoryTask.value,
-      { page, pageSize: executionHistoryPagination.value.pageSize }
-    )
-    executionHistory.value = sortExecutionsNewestFirst(result.executions)
-    executionHistoryPagination.value = {
-      page: result.page,
-      pageSize: result.pageSize,
-      total: result.total,
-      totalPages: result.totalPages
-    }
-  } catch (error) {
-    console.error('Failed to fetch task executions:', error)
-    executionHistoryError.value = '执行记录加载失败，请重试'
+    resultsViewRef.value?.reload()
   } finally {
-    executionHistoryLoading.value = false
+    resultsRefreshing.value = false
   }
 }
 
-const openExecutionHistory = async (task) => {
+const openExecutionHistory = (task) => {
   selectedHistoryTask.value = task
-  executionHistory.value = []
-  executionHistoryPagination.value = { page: 1, pageSize: 10, total: 0, totalPages: 0 }
-  await refreshExecutionHistory(1)
 }
 
 const closeExecutionHistory = () => {
   selectedHistoryTask.value = null
-  executionHistory.value = []
-  executionHistoryError.value = ''
-  executionHistoryPagination.value = { page: 1, pageSize: 10, total: 0, totalPages: 0 }
-}
-
-const changeExecutionHistoryPage = page => {
-  if (page < 1 || page > executionHistoryPagination.value.totalPages) return
-  refreshExecutionHistory(page)
-}
-
-const restoreExecutionSession = (execution) => {
-  if (!canRestoreExecution(execution)) return
-  emit('restore-execution-session', execution.session_id)
 }
 
 // ===== 历史执行记忆弹窗 =====
@@ -1010,20 +908,6 @@ const saveCaseEdit = async () => {
   }
 }
 
-const formatExecutionTime = (timestamp) => {
-  if (!timestamp) return '时间未知'
-  const date = new Date(timestamp)
-  if (Number.isNaN(date.getTime())) return '时间无效'
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  })
-}
-
 const formatExecutionDuration = (seconds) => {
   if (seconds == null) return '耗时计算中'
   const value = Number(seconds)
@@ -1033,8 +917,6 @@ const formatExecutionDuration = (seconds) => {
   const remainingSeconds = Math.round(value % 60)
   return `${minutes} 分 ${remainingSeconds} 秒`
 }
-
-const shortSessionId = (sessionId) => sessionId.slice(0, 8)
 
 // Methods
 const getScheduledTaskLabel = (type) => {
@@ -1567,86 +1449,6 @@ const saveTask = async () => {
   min-height: 240px;
 }
 
-.execution-history-state {
-  display: flex;
-  min-height: 240px;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: var(--text-2);
-  text-align: center;
-}
-
-.execution-history-state.error {
-  color: var(--color-danger);
-}
-
-.execution-history-state p {
-  margin: 0;
-}
-
-.execution-history-spinner,
-.execution-history-empty-icon {
-  font-size: 30px;
-}
-
-.execution-history-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.execution-history-pagination {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  margin-top: 16px;
-  color: var(--text-2);
-  font-size: 12px;
-}
-
-.execution-history-item {
-  width: 100%;
-  padding: 14px 16px;
-  border: 1px solid #dbe3ea;
-  border-radius: 8px;
-  background: var(--bg-container);
-  color: var(--text-1);
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.execution-history-item:hover:not(:disabled) {
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow-2);
-}
-
-.execution-history-item.disabled {
-  cursor: not-allowed;
-  opacity: 0.68;
-}
-
-.execution-history-main,
-.execution-history-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-
-.execution-history-main {
-  margin-bottom: 8px;
-}
-
-.execution-history-meta {
-  color: var(--text-2);
-  font-size: 12px;
-}
-
 .execution-status {
   display: inline-flex;
   padding: 3px 9px;
@@ -1676,28 +1478,6 @@ const saveTask = async () => {
 .status-unknown {
   background: var(--border-2);
   color: var(--text-2);
-}
-
-.execution-time {
-  font-weight: 500;
-  color: var(--text-1);
-}
-
-.execution-duration {
-  color: var(--text-2);
-  font-size: 12px;
-}
-
-.execution-error-summary {
-  display: block;
-  margin-top: 9px;
-  padding: 8px 10px;
-  border-left: 3px solid #dc2626;
-  background: #fff5f5;
-  color: var(--color-danger);
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
 }
 
 .modal-backdrop {

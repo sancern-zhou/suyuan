@@ -15,9 +15,12 @@ class ContextCompressor:
     """上下文压缩器（使用 LLM）"""
 
     COMPACT_MEMORY_PREFIX = (
-        "Runtime memory summary from earlier turns.\n"
-        "This is compressed context, not ground truth.\n"
-        "The session history and persisted files remain authoritative; re-read data or files when exact details matter.\n\n"
+        "<compact_memory_context>\n"
+        "This is an internal runtime summary from earlier turns, not a user message or a new task.\n"
+        "Use it only as context for continuing the original task. Do not quote, repeat, or present this summary to the user.\n"
+        "The session history and persisted files remain authoritative; re-read data or files when exact details matter.\n"
+        "</compact_memory_context>\n"
+        "Runtime memory summary from earlier turns.\n\n"
     )
     ANCHOR_LABEL = "[压缩保留的原始任务锚点]"
     ANCHOR_PREFIX = ANCHOR_LABEL + "\n"
@@ -286,7 +289,7 @@ Older history to compress:
             msg.get("type") == "compact_memory"
             or (
                 isinstance(content, str)
-                and content.startswith(self.COMPACT_MEMORY_PREFIX)
+                and content.lstrip().startswith("<compact_memory_context>")
             )
         )
 
@@ -370,6 +373,10 @@ Older history to compress:
             "metadata": {
                 "compact_memory": True,
                 "compression_type": "harness_summary",
+                "source": "agent_runtime",
+                "ui_visibility": "hidden",
+                "transcript_visibility": "hidden",
+                "provider_visibility": "visible",
                 "original_count": original_count,
                 "compacted_group_count": compacted_group_count,
                 "kept_group_count": kept_group_count,

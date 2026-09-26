@@ -28,11 +28,9 @@ def test_execute_sql_query_schema_embeds_reusable_frequent_table_contracts():
     assert "NO浓度列名是no_val" in description
     assert "-99为平台无效值" in description
 
-    assert "dat_zhongda_station_day" in description
-    assert "时间为data_date（DATE类型）" in description
+    assert "dat_zhongda_station_day" not in description
+    assert "dat_zhongda_city_day" not in description
     assert "dat_zhongda_city_hour" in description
-    assert "dat_zhongda_city_day" in description
-    assert "SubstitutionBack" in description
     assert "城市表由平台聚合任务生成，可能为空" in description
     assert "2026-01-01起为'155th'" in description
     assert "用错规划期会返回空" in description
@@ -45,9 +43,9 @@ def test_execute_sql_query_schema_embeds_reusable_frequent_table_contracts():
     assert "cityname仅用于此预报表" in description
 
     assert "XuchangNmcHourlyWeatherForecast" in description
-    assert "优先查询NMC气象预报数据" in description
-    assert "Open-Meteo预报数据（OpenMeteoAirQualityForecast72h）作为补充" in description
-    assert "禁止把它当作气象预报来源" in description
+    assert "优先查询NMC逐小时气象预报" in description
+    assert "历史网格用get_weather_data" in description
+    assert "不要向这些表试查不存在的字段" in description
     assert "气象字段：temperature（℃）" in description
     assert "3小时间隔" in description
 

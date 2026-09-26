@@ -3,7 +3,7 @@
 
 数据源为大气环境监测数据接口中台：
 - 乡镇站：v_t_d_src 视图 distinct（站点编码为自定义编码，归属区县从站点名称前缀解析）
-- 常规站（国控等）：station 表 areacode=411000
+- 国控站：station 表 areacode=411000
 - 区县：region 表 4110 前缀 level>=3
 
 目录构建结果缓存到 data registry，TTL 默认 7 天。
@@ -44,6 +44,7 @@ CACHE_DIR_NAME = "xuchang_station_catalog"
 CACHE_FILE_NAME = "catalog_cache.json"
 CACHE_TTL_HOURS = 168.0
 TOWNSHIP_COORDINATES_FILE = Path(__file__).with_name("township_coordinates.tsv")
+HIDDEN_STATIONS_FILE = Path(__file__).with_name("hidden_stations.txt")
 
 
 class StationCatalogError(RuntimeError):
@@ -106,6 +107,31 @@ def load_township_coordinates() -> dict[str, dict[str, Any]]:
     return coordinates
 
 
+@lru_cache(maxsize=1)
+def load_hidden_stations() -> dict[str, str]:
+    """加载暂时隐藏的站点清单（编码 -> 站点名称）。
+
+    用于排除中台已登记但长期无数据上报的街道站；清单文件带注释说明
+    隐藏原因与恢复办法，站点恢复上报后删除对应行即可恢复展示。
+    """
+    hidden: dict[str, str] = {}
+    try:
+        lines = HIDDEN_STATIONS_FILE.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        logger.warning("xuchang_hidden_stations_read_failed", error=str(exc))
+        return hidden
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        code, _, comment = stripped.partition("#")
+        code = code.strip()
+        if code:
+            hidden[code.upper()] = comment.strip()
+    return hidden
+
+
 def normalize_districts(region_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     districts: list[dict[str, Any]] = []
     for row in region_rows:
@@ -128,10 +154,15 @@ def normalize_townships(
 ) -> list[dict[str, Any]]:
     townships: dict[str, dict[str, Any]] = {}
     coordinate_rows = coordinate_rows or {}
+    hidden = load_hidden_stations()
+    hidden_hits: list[str] = []
     for row in rows:
         code = str(row.get("code") or "").strip()
         name = str(row.get("name") or "").strip()
         if not code or not name or code in townships:
+            continue
+        if code.upper() in hidden:
+            hidden_hits.append(code)
             continue
         district, town = split_township_name(name, district_names)
         coordinate = coordinate_rows.get(_normalize_station_name(name)) or coordinate_rows.get(
@@ -150,6 +181,12 @@ def normalize_townships(
             "coordinate_source": "township_coordinates.xlsx" if coordinate else None,
             "data_source": f"airdata_platform:{TOWNSHIP_SOURCE_VIEW}",
         }
+    if hidden_hits:
+        logger.info(
+            "xuchang_townships_hidden_filtered",
+            count=len(hidden_hits),
+            codes=hidden_hits,
+        )
     return sorted(
         townships.values(), key=lambda item: (item["district"], item["station_name"])
     )
@@ -188,7 +225,7 @@ def normalize_regular_stations(
             "district": districts_by_code.get(str(row.get("areacode") or "").strip(), ""),
             "city": CITY_NAME,
             "station_type": "regular",
-            "type_name": STATION_TYPE_NAME_MAP.get(type_id, "常规站"),
+            "type_name": STATION_TYPE_NAME_MAP.get(type_id, "国控站"),
             "longitude": longitude,
             "latitude": latitude,
             "address": str(row.get("address") or "").strip(),
@@ -235,6 +272,7 @@ def build_catalog() -> dict[str, Any]:
         "regular_stations": normalize_regular_stations(
             station_rows, districts, station_coordinates
         ),
+        "hidden_station_count": len(load_hidden_stations()),
     }
 
 

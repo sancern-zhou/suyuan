@@ -168,6 +168,48 @@ def normalize_chinese_ascii_quotes(text: str) -> str:
     return "".join(normalized)
 
 
+_NUMERIC_ASCII_RANGE_RE = re.compile(r"(?<=\d)\s*~\s*(?=\d)")
+
+
+def normalize_markdown_numeric_ranges(text: str) -> str:
+    """Keep numeric ranges as prose instead of Pandoc subscript syntax."""
+    if "~" not in text:
+        return text
+
+    lines = text.splitlines(keepends=True)
+    normalized: list[str] = []
+    fence_char = ""
+    fence_length = 0
+    fence_pattern = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})")
+    inline_code_pattern = re.compile(r"(`+[^`]*`+)")
+
+    for line in lines:
+        fence_match = fence_pattern.match(line)
+        if fence_char:
+            normalized.append(line)
+            closing_fence = re.fullmatch(
+                rf" {{0,3}}{re.escape(fence_char)}{{{fence_length},}}[ \t]*(?:\r?\n)?",
+                line,
+            )
+            if closing_fence:
+                fence_char = ""
+                fence_length = 0
+            continue
+        if fence_match:
+            fence = fence_match.group("fence")
+            fence_char = fence[0]
+            fence_length = len(fence)
+            normalized.append(line)
+            continue
+
+        parts = inline_code_pattern.split(line)
+        for index in range(0, len(parts), 2):
+            parts[index] = _NUMERIC_ASCII_RANGE_RE.sub("～", parts[index])
+        normalized.append("".join(parts))
+
+    return "".join(normalized)
+
+
 class ReportRenderError(RuntimeError):
     """Raised when Quarto rendering fails."""
 
@@ -599,8 +641,9 @@ class QuartoReportRenderer:
         sanitized = pattern.sub("", text) if has_placeholder_reference_doc else text
         sanitized, structure_changed = _disable_docx_quarto_auto_structure(sanitized)
         quote_normalized = normalize_chinese_ascii_quotes(sanitized)
-        quotes_changed = quote_normalized != sanitized
-        sanitized = quote_normalized
+        range_normalized = normalize_markdown_numeric_ranges(quote_normalized)
+        quotes_changed = range_normalized != sanitized
+        sanitized = range_normalized
         if has_placeholder_reference_doc:
             sanitized = re.sub(
                 r"(?m)^(\s*)docx:\s*\n(?=(?:\1\S|\S|---))",

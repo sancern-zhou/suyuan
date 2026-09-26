@@ -42,6 +42,8 @@ _EVIDENCE_PATH_KEYS = (
     "evidence_path",
 )
 
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+
 
 def _first_str(*values: Any) -> str | None:
     for value in values:
@@ -97,6 +99,15 @@ def _dimension(
     attributes: dict[str, Any],
     attribute_keys: tuple[str, ...],
 ) -> str | None:
+    # Event attributes are produced by the deterministic workflow and are the
+    # authoritative identity for stations; historical LLM summaries may carry
+    # stale aliases or display suffixes.
+    if case_field == "station_name":
+        return (
+            _first_str(*(attributes.get(key) for key in attribute_keys))
+            or _dimension_from_distilled(case, distilled_field)
+            or _dimension_from_case(case, case_field)
+        )
     return (
         _dimension_from_distilled(case, distilled_field)
         or _dimension_from_case(case, case_field)
@@ -166,6 +177,26 @@ def _extract_conclusion(execution: TaskExecution, case: dict | None) -> tuple[st
         if response:
             return response[:CONCLUSION_MAX_CHARS], "agent_response"
     return None, "none"
+
+
+def _extract_broadcast_content(agent_result: dict | None) -> tuple[str | None, list[str]]:
+    """Extract delivered broadcast text and images, excluding report documents."""
+    result = agent_result or {}
+    workflow = result.get("workflow_result") if isinstance(result.get("workflow_result"), dict) else {}
+    message = _first_str(workflow.get("final_message"), result.get("broadcast_message"), result.get("final_message"))
+    details = workflow.get("tool_call_details") if isinstance(workflow.get("tool_call_details"), dict) else {}
+    candidates = details.get("media") or result.get("broadcast_media") or []
+    images: list[str] = []
+    seen: set[str] = set()
+    for value in candidates:
+        if not isinstance(value, str) or not value.strip():
+            continue
+        normalized = value.strip().replace("\\", "/")
+        if Path(normalized).suffix.lower() not in _IMAGE_SUFFIXES or normalized in seen:
+            continue
+        seen.add(normalized)
+        images.append(normalized)
+    return message, images
 
 
 def _iter_media_paths(agent_result: dict | None) -> list[str]:
@@ -271,6 +302,7 @@ def extract_task_result(
     attributes = _event_attributes(event)
     conclusion, conclusion_source = _extract_conclusion(execution, case)
     document_paths, report_refs = _extract_document_paths(agent_result, execution)
+    broadcast_message, broadcast_image_paths = _extract_broadcast_content(agent_result)
 
     return TaskResult(
         execution_id=execution.execution_id,
@@ -297,6 +329,8 @@ def extract_task_result(
         document_paths=document_paths,
         evidence_package_paths=_extract_evidence_paths(case, attributes, agent_result),
         report_refs=report_refs,
+        broadcast_message=broadcast_message,
+        broadcast_image_paths=broadcast_image_paths,
         trigger_type=execution.trigger_type,
         event_id=execution.event_id,
         event_type=execution.event_type,

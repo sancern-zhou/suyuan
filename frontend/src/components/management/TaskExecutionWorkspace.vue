@@ -3,171 +3,31 @@
     <header class="workspace-header">
       <div>
         <h2>{{ task?.workspace_entry?.title || task?.name || '告警溯源' }}</h2>
-        <p class="workspace-description">按执行日期查看分析记录和文件产物</p>
+        <p class="workspace-description">按执行日期查看分析结论、报告与文件产物</p>
       </div>
       <button v-if="showBackButton" type="button" class="back-button" @click="$emit('close')">返回</button>
     </header>
 
-    <div v-if="loading" class="state">正在加载分析记录...</div>
-    <div v-else-if="error" class="state error">{{ error }}</div>
-    <div v-else-if="normalizedExecutions.length === 0" class="state">暂无分析记录</div>
-    <div v-else class="workspace-body">
-      <div class="record-groups">
-      <section v-for="group in groupedExecutions" :key="group.date" class="record-group">
-        <h3>{{ group.label }}</h3>
-        <div class="record-list">
-          <article
-            v-for="record in group.records"
-            :key="record.execution_id"
-            class="record-card"
-            :class="{ selected: selectedRecord?.execution_id === record.execution_id }"
-            @click="selectRecord(record)"
-          >
-            <div class="record-main">
-              <strong>{{ formatExecutionTitle(record) }}</strong>
-              <span :class="['status', `status-${statusMeta(record.status).key}`]">{{ statusMeta(record.status).label }}</span>
-            </div>
-            <div class="record-meta">
-              <span>{{ record.status || 'pending' }}</span>
-              <span v-if="record.duration_seconds">耗时 {{ formatDuration(record.duration_seconds) }}</span>
-              <span v-if="isWorkflowRecord(record)">工作流结果</span>
-              <span v-else-if="canOpenConversation(record)">可打开对话</span>
-            </div>
-            <div class="artifacts">
-              <span v-for="artifact in record.artifacts" :key="artifact" class="artifact-chip">文件 {{ artifact }}</span>
-              <span v-if="record.artifacts.length === 0" class="no-artifact">暂无文件产物</span>
-            </div>
-          </article>
-        </div>
-      </section>
-      </div>
-      <aside v-if="selectedRecord" class="record-detail" aria-live="polite">
-        <div class="detail-header"><div><p class="detail-eyebrow">{{ isWorkflowRecord(selectedRecord) ? '工作流执行结果' : 'Agent 执行结果' }}</p><h3>{{ formatExecutionTitle(selectedRecord) }}</h3></div><button v-if="canOpenConversation(selectedRecord)" type="button" class="detail-action" @click="restore(selectedRecord)">打开对话</button></div>
-        <div class="detail-meta"><span :class="['status', `status-${statusMeta(selectedRecord.status).key}`]">{{ statusMeta(selectedRecord.status).label }}</span><span v-if="selectedRecord.completed_at">完成于 {{ formatDateTime(selectedRecord.completed_at) }}</span></div>
-        <div v-if="selectedRecord.error_message" class="detail-error">{{ selectedRecord.error_message }}</div>
-        <section class="result-section"><h4>最终返回</h4><div v-if="selectedRecord.result_message" class="result-message">{{ selectedRecord.result_message }}</div><p v-else class="detail-empty">该执行没有保存可展示的返回正文。</p></section>
-        <section class="result-section"><h4>文件产物</h4><div v-if="selectedRecord.artifacts.length" class="detail-artifacts"><span v-for="artifact in selectedRecord.artifacts" :key="artifact" class="artifact-chip">{{ artifact }}</span></div><p v-else class="detail-empty">本次执行没有文件产物。</p></section>
-        <section v-if="selectedRecord.artifactUrls.length" class="result-section"><h4>附件预览</h4><div class="artifact-previews"><a v-for="(url, index) in selectedRecord.artifactUrls" :key="url" :href="url" target="_blank" rel="noopener" class="artifact-preview"><img :src="url" :alt="selectedRecord.artifacts[index] || `附件 ${index + 1}`" loading="lazy" /></a></div></section>
-      </aside>
-      <nav v-if="pagination.totalPages > 1" class="pagination" aria-label="执行记录分页">
-        <button type="button" :disabled="loading || pagination.page <= 1" @click="changePage(pagination.page - 1)">
-          上一页
-        </button>
-        <span>第 {{ pagination.page }} / {{ pagination.totalPages }} 页，共 {{ pagination.total }} 条</span>
-        <button type="button" :disabled="loading || pagination.page >= pagination.totalPages" @click="changePage(pagination.page + 1)">
-          下一页
-        </button>
-      </nav>
-    </div>
+    <ScheduledTaskResultsView
+      ref="resultsViewRef"
+      :task="task"
+      @restore-execution-session="$emit('restore-execution-session', $event)"
+    />
   </section>
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
-import { useScheduledTasksStore } from '@/stores/scheduledTasks'
-import { gatewayUrl } from '@/auth/http.js'
+import { ref } from 'vue'
+import ScheduledTaskResultsView from './ScheduledTaskResultsView.vue'
 
-const props = defineProps({
+defineProps({
   task: { type: Object, default: null },
   // 嵌入右侧面板时显示“返回”按钮，整页管理面板模式保持原有展示
   showBackButton: { type: Boolean, default: false }
 })
-const emit = defineEmits(['close', 'restore-execution-session'])
-const store = useScheduledTasksStore()
-const executions = ref([])
-const loading = ref(false)
-const error = ref('')
-const pagination = ref({ page: 1, pageSize: 10, total: 0, totalPages: 0 })
-const selectedRecord = ref(null)
+defineEmits(['close', 'restore-execution-session'])
 
-const statusMap = {
-  success: { key: 'success', label: '成功' },
-  failed: { key: 'failed', label: '失败' },
-  running: { key: 'running', label: '执行中' },
-  pending: { key: 'pending', label: '等待执行' },
-  timeout: { key: 'failed', label: '超时' },
-  cancelled: { key: 'failed', label: '已取消' }
-}
-
-const normalizedExecutions = computed(() => executions.value.map(execution => ({
-  ...execution,
-  artifacts: Array.isArray(execution.artifacts) ? execution.artifacts : []
-  ,artifactUrls: Array.isArray(execution.artifact_urls) ? execution.artifact_urls.map(gatewayUrl) : []
-})))
-const groupedExecutions = computed(() => {
-  const groups = new Map()
-  for (const record of normalizedExecutions.value) {
-    const date = record.started_at ? new Date(record.started_at) : null
-    const key = date && !Number.isNaN(date.getTime())
-      ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-      : 'unknown'
-    if (!groups.has(key)) groups.set(key, [])
-    groups.get(key).push(record)
-  }
-  return [...groups.entries()].map(([date, records]) => ({
-    date,
-    label: date === 'unknown' ? '日期未知' : date,
-    records
-  }))
-})
-const statusMeta = status => statusMap[status] || { key: 'unknown', label: '未知' }
-const formatExecutionTitle = (record) => {
-  const taskName = record?.task_name || props.task?.name || '分析任务'
-  const date = record?.started_at ? new Date(record.started_at) : null
-  if (!date || Number.isNaN(date.getTime())) return taskName
-
-  const pad = part => String(part).padStart(2, '0')
-  const executionTime = [
-    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
-    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-  ].join(' ')
-  return `${executionTime} ${taskName}`
-}
-const formatDuration = seconds => seconds < 60 ? `${Math.round(seconds)}秒` : `${Math.floor(seconds / 60)}分${Math.round(seconds % 60)}秒`
-const isWorkflowRecord = record => record?.conversation_available === false || props.task?.execution_mode === 'workflow'
-const canOpenConversation = record => record?.conversation_available !== false && Boolean(record?.session_id) && !isWorkflowRecord(record)
-const formatDateTime = value => { const date = value ? new Date(value) : null; return date && !Number.isNaN(date.getTime()) ? date.toLocaleString('zh-CN', { hour12: false }) : '时间未知' }
-const selectRecord = record => { selectedRecord.value = record }
-const restore = record => { if (record.session_id) emit('restore-execution-session', record.session_id) }
-
-const load = async (page = 1) => {
-  const taskId = props.task?.task_id
-  if (!taskId) {
-    executions.value = []
-    error.value = ''
-    pagination.value = { page: 1, pageSize: 10, total: 0, totalPages: 0 }
-    return
-  }
-
-  loading.value = true
-  error.value = ''
-  try {
-    const result = await store.fetchTaskExecutions(taskId, {
-      page,
-      pageSize: pagination.value.pageSize
-    })
-    executions.value = result.executions
-    selectedRecord.value = null
-    pagination.value = {
-      page: result.page,
-      pageSize: result.pageSize,
-      total: result.total,
-      totalPages: result.totalPages
-    }
-  } catch (err) {
-    console.error(`Failed to fetch executions for scheduled task ${taskId}:`, err)
-    error.value = '分析记录加载失败，请重试'
-  } finally {
-    loading.value = false
-  }
-}
-
-const changePage = page => {
-  if (page < 1 || page > pagination.value.totalPages || page === pagination.value.page) return
-  load(page)
-}
-
-watch(() => props.task?.task_id, () => load(1), { immediate: true })
+const resultsViewRef = ref(null)
 </script>
 
 <style scoped>
@@ -175,31 +35,7 @@ watch(() => props.task?.task_id, () => load(1), { immediate: true })
 .workspace-header { display: flex; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
 .back-button { flex: none; align-self: flex-start; min-height: 30px; border: 1px solid var(--border-2); border-radius: 6px; background: var(--bg-container); color: var(--text-1); cursor: pointer; padding: 4px 12px; font-size: 12px; }
 .back-button:hover { border-color: var(--color-primary); color: var(--color-primary); }
-.eyebrow { margin: 0; color: var(--color-primary); font-size: 13px; }
 h2 { margin: 4px 0; font-size: 22px; color: #17223b; }
 .workspace-description { margin: 0; color: var(--text-2); }
-.record-list { display: grid; gap: 10px; }
-.record-card { display: block; width: 100%; border: 1px solid var(--border-2); border-radius: 8px; background: var(--bg-container); padding: 15px 17px; text-align: left; cursor: pointer; }
-.record-card:hover:not(:disabled) { border-color: var(--color-primary-hover); background: var(--color-primary-bg); }
-.record-card:disabled { opacity: .65; cursor: not-allowed; }
-.record-card.selected { border-color: var(--color-primary); background: var(--color-primary-bg); }
-.record-main, .record-meta, .artifacts { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-.record-main strong { min-width: 100px; color: #17223b; font-size: 16px; }
-.record-meta, .no-artifact { color: var(--text-2); font-size: 13px; }
-.status { margin-left: auto; font-size: 13px; font-weight: 600; }
-.status-success { color: #16803c; }.status-failed { color: var(--color-danger); }.status-running { color: var(--color-primary); }.status-pending, .status-unknown { color: var(--text-2); }
-.record-group + .record-group { margin-top: 22px; }
-.record-group h3 { margin: 0 0 9px; color: var(--text-1); font-size: 15px; }
-.record-meta { margin-top: 8px; }
-.artifacts { margin-top: 11px; }
-.artifact-chip { padding: 4px 8px; border-radius: 4px; background: #eef5ff; color: #275a9a; font-size: 12px; }
-.state { padding: 48px; color: var(--text-2); text-align: center; }.state.error { color: var(--color-danger); }
-.pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 14px; margin-top: 20px; color: var(--text-2); font-size: 13px; }
-.pagination button { min-width: 72px; padding: 6px 10px; border: 1px solid var(--border-2); border-radius: 6px; background: var(--bg-container); color: var(--text-1); cursor: pointer; }
-.pagination button:disabled { opacity: .45; cursor: not-allowed; }
-.workspace-body { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); gap: 18px; }
-.record-detail { align-self: start; position: sticky; top: 0; padding: 18px; border: 1px solid #dbe5f0; border-radius: 8px; background: var(--bg-container); }
-.detail-header { display: flex; justify-content: space-between; gap: 12px; }.detail-eyebrow { margin: 0; color: var(--color-primary); font-size: 12px; }.record-detail h3 { margin: 4px 0 0; color: #17223b; font-size: 17px; }.detail-action { border: 0; border-radius: 5px; padding: 7px 10px; background: var(--color-primary); color: var(--bg-container); cursor: pointer; }.detail-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; color: var(--text-2); font-size: 12px; }.detail-error { margin-top: 12px; color: var(--color-danger); }.result-section { margin-top: 18px; }.result-section h4 { margin: 0 0 8px; color: var(--text-1); font-size: 13px; }.result-message { white-space: pre-wrap; color: #1e293b; font-size: 13px; line-height: 1.6; }.detail-empty { margin: 0; color: #94a3b8; font-size: 12px; }.detail-artifacts, .artifact-previews { display: flex; flex-wrap: wrap; gap: 8px; }.artifact-preview img { display: block; width: 96px; height: 72px; object-fit: cover; border-radius: 4px; border: 1px solid #dbe5f0; }
-@media (max-width: 900px) { .workspace-body { grid-template-columns: 1fr; }.record-detail { position: static; } }
-@media (max-width: 700px) { .task-workspace { padding: 18px; }.status { margin-left: 0; } }
+@media (max-width: 700px) { .task-workspace { padding: 18px; } }
 </style>

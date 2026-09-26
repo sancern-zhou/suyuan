@@ -148,11 +148,7 @@ def _configured_fetchers(project_context):
         "xuchang_zhongda_station_minute_fetcher": XuchangZhongdaStationFetcher,
         "xuchang_zhongda_station_hour_fetcher":
             lambda: XuchangZhongdaStationFetcher(data_kind="hour"),
-        "xuchang_zhongda_station_day_fetcher":
-            lambda: XuchangZhongdaStationFetcher(data_kind="day"),
         "xuchang_zhongda_city_hour_fetcher": XuchangZhongdaCityFetcher,
-        "xuchang_zhongda_city_day_fetcher":
-            lambda: XuchangZhongdaCityFetcher(data_kind="city_day"),
         "gems_xuchang_image_fetcher": GemsImageFetcher,
     }
     configured = project_context.manifest.backend.fetchers

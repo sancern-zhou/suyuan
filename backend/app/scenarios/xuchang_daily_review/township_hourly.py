@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from app.tools.xuchang.airdata_platform.client import (
@@ -11,6 +11,7 @@ from app.tools.xuchang.airdata_platform.client import (
     get_airdata_platform_client,
 )
 from app.tools.xuchang.station_catalog.catalog import split_township_name
+from app.tools.xuchang.station_catalog.catalog import load_township_coordinates
 
 TOWNSHIP_HOURLY_VIEW = "v_t_h_src"
 TOWNSHIP_DATA_SOURCE = f"airdata_platform:{TOWNSHIP_HOURLY_VIEW}"
@@ -54,15 +55,27 @@ def load_township_hourly_rows(
     """
     try:
         client = client_factory()
-        result = client.query_all(
-            TOWNSHIP_HOURLY_VIEW,
-            filters=[
-                {"field": "timepoint", "operator": "gte", "value": start.strftime("%Y-%m-%d %H:%M:%S")},
-                {"field": "timepoint", "operator": "lte", "value": end.strftime("%Y-%m-%d %H:%M:%S")},
-            ],
-            selected_fields=list(TOWNSHIP_HOURLY_FIELDS),
-            max_rows=MAX_TOWNSHIP_ROWS,
-        )
+        # Keep each remote query bounded.  The platform materializes the
+        # filtered view in a temporary table; episode windows spanning several
+        # days can exhaust that table even when the final result is small.
+        raw_rows: dict[tuple[str, str], dict[str, Any]] = {}
+        chunk_start = start
+        while chunk_start <= end:
+            chunk_end = min(chunk_start + timedelta(days=1) - timedelta(seconds=1), end)
+            result = client.query_all(
+                TOWNSHIP_HOURLY_VIEW,
+                filters=[
+                    {"field": "timepoint", "operator": "gte", "value": chunk_start.strftime("%Y-%m-%d %H:%M:%S")},
+                    {"field": "timepoint", "operator": "lte", "value": chunk_end.strftime("%Y-%m-%d %H:%M:%S")},
+                ],
+                selected_fields=list(TOWNSHIP_HOURLY_FIELDS),
+                max_rows=MAX_TOWNSHIP_ROWS,
+            )
+            for raw in result.get("rows") or []:
+                key = (str(raw.get("code") or ""), str(raw.get("timepoint") or ""))
+                if key[0] and key[1]:
+                    raw_rows[key] = raw
+            chunk_start = chunk_end + timedelta(seconds=1)
     except Exception as exc:  # platform/network failures must not kill the review
         return {
             "status": "not_available",
@@ -71,13 +84,17 @@ def load_township_hourly_rows(
             "rows": [],
         }
     rows: list[dict[str, Any]] = []
-    for raw in result.get("rows") or []:
+    coordinate_rows = load_township_coordinates()
+    for raw in raw_rows.values():
         data_time = _parse_timepoint(raw.get("timepoint"))
         station_id = str(raw.get("code") or "").strip()
         name = str(raw.get("name") or "").strip()
         if data_time is None or not station_id:
             continue
         district, _town = split_township_name(name, list(DISTRICT_NAMES))
+        coordinate = coordinate_rows.get("".join(name.split())) or coordinate_rows.get(
+            "".join(_town.split())
+        ) or {}
         rows.append({
             "station_id": station_id,
             "name": name,
@@ -91,8 +108,9 @@ def load_township_hourly_rows(
             "o3": _number(raw.get("o3")),
             "aqi": _number(raw.get("aqi")),
             "station_type": "township",
-            "lat": None,
-            "lon": None,
+            "lat": coordinate.get("latitude"),
+            "lon": coordinate.get("longitude"),
+            "coordinate_source": "xuchang_station_catalog:township_coordinates.tsv" if coordinate else None,
         })
     station_ids = {row["station_id"] for row in rows}
     return {
@@ -101,5 +119,6 @@ def load_township_hourly_rows(
         "source": TOWNSHIP_DATA_SOURCE,
         "query_window": {"start": start.isoformat(), "end": end.isoformat()},
         "station_count": len(station_ids),
+        "coordinate_count": sum(1 for row in rows if row.get("lat") is not None and row.get("lon") is not None),
         "rows": rows,
     }

@@ -44,6 +44,7 @@
   - 风清气智（main 共享项目，工作树 `/home/xckj/suyuan-main`）：前端 5174（容器 `suyuan-nginx`，挂载该工作树 `frontend/dist`）→ 后端 8000（`backend/.env`，用 `backend/restart_server.sh` 重启）+ 配套 worker（内部端口 8011）。
   - 江苏运维（project/jiangsu-ops 分支，工作树 `/home/xckj/suyuan`）：前端 5175（容器 `suyuan-nginx-jiangsu`，挂载该工作树 `frontend/dist`）→ 后端 8001（`backend/.env.jiangsu-ops`）+ 配套 worker（`python -m app.worker --env-file .env.jiangsu-ops`，内部端口 8012）。
   - 两个 Nginx 容器禁止挂载同一个 `frontend/dist`；风清气智 web/worker 固定从 `/home/xckj/suyuan-main/backend` 启动并使用该目录下的 `backend_data_registry`，江苏运维 web/worker 从 `/home/xckj/suyuan/backend` 启动并使用项目专属 registry。
+- 配置文件归属必须按工作树确认，不能把环境文件当作跨项目共享配置：`AGENTS.md`、`deploy/nginx/README.md` 和代码中的默认配置属于共享说明/代码层；`backend/.env`、`backend/.env.jiangsu-ops` 是各自部署实例的运行环境文件，只能由对应工作树的 web 与 worker 成对使用。当前工作树若不存在某个环境文件，不得据文档假定它存在或用另一个项目的环境文件替代。
   - 每个项目的 web 进程与 worker 进程必须成对启动（worker 缺失时 fetchers/scheduled-tasks 等接口会 503）。
 - 所有部署环境的 `DATA_REGISTRY_DIR` 必须在对应后端环境文件中显式配置为绝对路径；同一项目的 web 与 worker 必须使用同一个值。禁止依赖工作树位置推导持久化目录，切换工作树前须先运行 `python -m app.utils.deployment_preflight --env-file <env-file>` 校验。
 - 前端部署后必须确认构建产物包含统一资源接口，并且不再包含旧接口：

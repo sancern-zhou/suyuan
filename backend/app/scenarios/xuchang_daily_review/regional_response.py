@@ -350,6 +350,18 @@ def spatial_gradient(
     neighbor_responses: list[dict[str, Any]],
 ) -> dict[str, Any]:
     target_lat, target_lon = target_response.get("lat"), target_response.get("lon")
+    township_items = [item for item in neighbor_responses if item.get("station_type") == "township"]
+    township_with_coordinates = any(
+        item.get("lat") is not None and item.get("lon") is not None for item in township_items
+    )
+    township_without_coordinates = any(
+        item.get("lat") is None or item.get("lon") is None for item in township_items
+    )
+    township_coverage = (
+        "available" if township_with_coordinates and not township_without_coordinates else
+        "partial" if township_with_coordinates else
+        "missing_coordinates"
+    )
     if target_lat is None or target_lon is None:
         return {
             "spatial_status": "insufficient_coordinates",
@@ -358,7 +370,7 @@ def spatial_gradient(
                 "regular": "available" if any(
                     item["coordinate_status"] == "available" for item in neighbor_responses
                 ) else "missing",
-                "township": "missing_coordinates",
+                "township": township_coverage,
                 "provincial": "not_integrated",
             },
             "township_note": "乡镇站无坐标，仅做浓度变化与区县汇总，不参与距离/方位/梯度计算",
@@ -433,7 +445,7 @@ def spatial_gradient(
         },
         "coordinate_coverage": {
             "regular": "available",
-            "township": "missing_coordinates",
+            "township": township_coverage,
             "provincial": "not_integrated",
         },
         "neighbor_geometry": geometry,
@@ -597,7 +609,7 @@ def calculate_regional_response(
             continue
         township_by_id[station_id] = {
             "station_id": station_id, "name": row.get("name"), "station_type": "township",
-            "district": row.get("district"), "lat": None, "lon": None,
+            "district": row.get("district"), "lat": row.get("lat"), "lon": row.get("lon"),
         }
     all_rows = list(regular_rows) + list(township_rows)
     target_response = classify_station_response(
@@ -614,6 +626,43 @@ def calculate_regional_response(
     regional = regional_classification(target_response, neighbor_responses)
     lead_lag = temporal_lead_lag(neighbor_responses, anchor["episode_start"])
     spatial = spatial_gradient(target_response, neighbor_responses)
+    geometry_by_id = {
+        item["station_id"]: item
+        for item in spatial.get("neighbor_geometry", [])
+    }
+    map_records = []
+    for item in [target_response, *neighbor_responses]:
+        if item.get("lat") is None or item.get("lon") is None:
+            continue
+        during = item.get("during") or {}
+        geometry = geometry_by_id.get(item["station_id"], {})
+        target_mean = (target_response.get("during") or {}).get("mean")
+        concentration = during.get("mean")
+        map_records.append({
+            "station_id": item["station_id"],
+            "station_name": item.get("station_name"),
+            "station_type": item.get("station_type"),
+            "district": item.get("district"),
+            "longitude": item["lon"],
+            "latitude": item["lat"],
+            "concentration": concentration,
+            "comparison": (
+                "target" if item.get("is_target") else
+                "higher_than_target" if concentration is not None and target_mean is not None and concentration > target_mean else
+                "lower_or_equal_target"
+            ),
+            "distance_km": geometry.get("distance_km"),
+            "bearing_deg": geometry.get("bearing_deg_from_target"),
+            "during_delta": item.get("during_delta"),
+            "during_classification": item.get("during_classification"),
+        })
+    spatial_map = {
+        "status": "ready" if map_records else "no_coordinates",
+        "target_station_id": target_response["station_id"],
+        "pollutant": pollutant,
+        "records": map_records,
+        "line_rule": "连接目标国控点与有坐标乡镇站，仅表示空间对比关系，不表示污染贡献率",
+    }
     if not anchor.get("peak_time") and target_response["during"]["status"] == "ok":
         during_values = {
             hour: value for hour, value in _series(all_rows, target_id, series_key).items()
@@ -641,6 +690,7 @@ def calculate_regional_response(
         "regional_co_rise": regional,
         "temporal_lead_lag": lead_lag,
         "spatial_gradient": spatial,
+        "spatial_map": spatial_map,
         "township_district_summary": district_summary(neighbor_responses),
         "transport_consistency": transport_consistency(regional, lead_lag, spatial),
     }
