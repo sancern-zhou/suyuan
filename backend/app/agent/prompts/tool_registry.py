@@ -38,6 +38,13 @@ PROJECT_SCOPED_TOOL_NAMES = frozenset({
     "get_5min_data",
 })
 
+# Registered for internal orchestration and maintenance only. These tools must
+# never be published in an Agent mode, including project-defined modes.
+AGENT_INTERNAL_TOOL_NAMES = frozenset({
+    "render_report_package",
+    "validate_report_package",
+})
+
 # ===== 助手模式工具 =====
 ASSISTANT_TOOL_NAMES = [
     "list_session_resources",
@@ -52,9 +59,6 @@ ASSISTANT_TOOL_NAMES = [
     "grep",
     "create_html_artifact",
     "create_report_package",
-    "publish_report",
-    "render_report_package",
-    "validate_report_package",
     # 轻量数据计算与网页检索抓取。
     "execute_python",
     "web_search",
@@ -198,9 +202,6 @@ REPORT_TOOL_NAMES = [
     "execute_python",
     # 报告产物收口
     "create_report_package",
-    "publish_report",
-    "render_report_package",
-    "validate_report_package",
     # 报告工作流可按结构化任务协议委托专家分析
     "call_sub_agent",
     "run_agent_workflow",
@@ -242,7 +243,6 @@ BOARD_TOOL_NAMES = [
 OPS_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-    "jiangsu_smart_event_workspace",
     # 技能发现与按需读取
     "list_skills",
     "view_skill",
@@ -256,9 +256,6 @@ OPS_TOOL_NAMES = [
     "execute_ops_sql_query",
     # 审核正式报告生成与验收
     "create_report_package",
-    "publish_report",
-    "render_report_package",
-    "validate_report_package",
     # 子 Agent 复核
     "call_sub_agent",
     # 代码执行
@@ -306,8 +303,6 @@ SOCIAL_TOOL_NAMES = [
     # 正式报告生成与收口
     "create_report_chart",
     "create_report_package",
-    "publish_report",
-    "validate_report_package",
     # 网络搜索
     "web_search",
     "web_fetch",
@@ -418,7 +413,7 @@ def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
     将工具名称列表转换为字典格式（向后兼容）。
     字典保留插入顺序，因此列表顺序就是模式工具顺序。
     """
-    names = list(tool_names)
+    names = [name for name in tool_names if name not in AGENT_INTERNAL_TOOL_NAMES]
     if "list_session_resources" in names and "read_session_resource" not in names:
         names.insert(names.index("list_session_resources") + 1, "read_session_resource")
     return {name: "" for name in names}
@@ -429,74 +424,6 @@ PPT_TOOLS = _build_tool_dict(PPT_TOOL_NAMES)
 EXPERT_TOOLS = _build_tool_dict(EXPERT_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
 KNOWLEDGE_TOOLS = _build_tool_dict(KNOWLEDGE_TOOL_NAMES)
-JIANGSU_QUERY_TOOLS = _build_tool_dict([
-    "list_session_resources",
-    "publish_session_file",
-    "jiangsu_fetch_city_data",
-    "jiangsu_fetch_district_data",
-    "jiangsu_fetch_station_data",
-    "jiangsu_fetch_station_directory",
-    "jiangsu_query_statistics",
-    "jiangsu_fetch_alarm_records",
-    "get_weather_data",
-    "get_weather_forecast",
-    "get_current_weather",
-    "get_observed_meteorology",
-    "execute_sql_query",
-    "create_report_chart",
-    "execute_echarts_python",
-    "execute_python",
-])
-SMART_INSPECTION_TOOLS = _build_tool_dict([
-    "jiangsu_smart_event_workspace",
-    "jiangsu_query_operations_graph",
-    "jiangsu_fetch_network_inspection_summary",
-    "jiangsu_fetch_alarm_records",
-    "jiangsu_fetch_auto_inspection",
-    "jiangsu_fetch_station_alarm_logs",
-    "jiangsu_fetch_station_environment_history",
-    "jiangsu_fetch_station_directory",
-    "jiangsu_fetch_qc_task_history",
-    "jiangsu_fetch_qc_task_status",
-    "jiangsu_fetch_qc_run_logs",
-    "jiangsu_fetch_qc_monitoring_curve",
-    "knowledge_graph_query",
-])
-OPERATIONS_ANALYSIS_TOOLS = _build_tool_dict([
-    "jiangsu_query_operations_graph",
-    "jiangsu_fetch_attendance_records",
-    "jiangsu_fetch_station_directory",
-    "knowledge_graph_query",
-])
-DEVICE_CONTROL_TOOLS = _build_tool_dict([
-    "jiangsu_get_device_control_state",
-    "jiangsu_prepare_device_control",
-    "jiangsu_execute_device_control",
-    "jiangsu_fetch_station_directory",
-    "jiangsu_fetch_qc_task_history",
-    "jiangsu_fetch_qc_task_status",
-    "jiangsu_fetch_qc_run_logs",
-    "jiangsu_fetch_qc_monitoring_curve",
-    "jiangsu_query_operations_graph",
-    "knowledge_graph_query",
-])
-STATION_FAULT_DIAGNOSIS_TOOLS = _build_tool_dict([
-    "jiangsu_smart_event_workspace",
-    "knowledge_qa_workflow",
-    "knowledge_document_reader",
-    "jiangsu_fetch_station_data",
-    "jiangsu_fetch_station_directory",
-    "jiangsu_fetch_alarm_records",
-    "jiangsu_fetch_station_alarm_logs",
-    "jiangsu_fetch_fault_work_orders",
-    "jiangsu_fetch_auto_inspection",
-    "jiangsu_fetch_qc_task_history",
-    "jiangsu_fetch_qc_task_status",
-    "jiangsu_fetch_qc_run_logs",
-    "jiangsu_fetch_qc_monitoring_curve",
-    "jiangsu_query_operations_graph",
-    "knowledge_graph_query",
-])
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
 CHART_TOOLS = _build_tool_dict(CHART_TOOL_NAMES)
 BOARD_TOOLS = _build_tool_dict(BOARD_TOOL_NAMES)
@@ -516,8 +443,6 @@ PPT_TOOL_ORDER = PPT_TOOL_NAMES
 EXPERT_TOOL_ORDER = EXPERT_TOOL_NAMES
 QUERY_TOOL_ORDER = QUERY_TOOL_NAMES
 KNOWLEDGE_TOOL_ORDER = KNOWLEDGE_TOOL_NAMES
-JIANGSU_QUERY_TOOL_ORDER = list(JIANGSU_QUERY_TOOLS)
-SMART_INSPECTION_TOOL_ORDER = list(SMART_INSPECTION_TOOLS)
 REPORT_TOOL_ORDER = REPORT_TOOL_NAMES
 CHART_TOOL_ORDER = CHART_TOOL_NAMES
 BOARD_TOOL_ORDER = BOARD_TOOL_NAMES
@@ -544,15 +469,6 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "expert": EXPERT_TOOLS,
         "query": QUERY_TOOLS,
         "knowledge": KNOWLEDGE_TOOLS,
-        "jiangsu_query": JIANGSU_QUERY_TOOLS,
-        "smart_inspection": SMART_INSPECTION_TOOLS,
-        "operations_analysis": OPERATIONS_ANALYSIS_TOOLS,
-        "device_control": DEVICE_CONTROL_TOOLS,
-        "station_fault_diagnosis": STATION_FAULT_DIAGNOSIS_TOOLS,
-        # Smart-event entry points are separate modes so their prompts/tool
-        # surfaces can diverge without changing the shared event store.
-        "smart_event_external": STATION_FAULT_DIAGNOSIS_TOOLS,
-        "smart_event_instrument": STATION_FAULT_DIAGNOSIS_TOOLS,
         "report": REPORT_TOOLS,
         "social": SOCIAL_TOOLS,
         "enforcement_exam": ENFORCEMENT_EXAM_TOOLS,
