@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -476,18 +477,31 @@ class QuartoReportRenderer:
         output_path = report_dir / "report.export.html"
         qmd_path = self.get_qmd_path(report_id)
         self._validate_render_qmd(report_dir, qmd_path)
-        self._run_quarto(
-            report_dir,
-            [
-                "render",
-                "report.qmd",
-                "--to",
-                "html",
-                "--output",
-                output_path.name,
-                "--embed-resources",
-            ],
-        )
+        # Quarto removes report_files when rendering an embedded HTML output.
+        # Keep the preview's external assets intact for later validation/viewing.
+        preview_assets = report_dir / "report_files"
+        with tempfile.TemporaryDirectory(prefix="quarto-share-assets-") as scratch:
+            saved_assets = Path(scratch) / "report_files"
+            if preview_assets.is_dir():
+                shutil.copytree(preview_assets, saved_assets)
+            try:
+                self._run_quarto(
+                    report_dir,
+                    [
+                        "render",
+                        "report.qmd",
+                        "--to",
+                        "html",
+                        "--output",
+                        output_path.name,
+                        "--embed-resources",
+                    ],
+                )
+            finally:
+                if saved_assets.is_dir():
+                    if preview_assets.exists():
+                        shutil.rmtree(preview_assets)
+                    shutil.copytree(saved_assets, preview_assets)
         if not output_path.is_file():
             raise ReportRenderError("Quarto did not produce the standalone HTML report")
         return output_path
