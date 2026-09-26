@@ -125,7 +125,7 @@ class ScheduledTaskExecutor:
         only sees the inline event clues and silently reports captured evidence
         as missing.
         """
-        names: list[str] = ["read_file", "submit_task_review"]
+        names: list[str] = ["read_file"]
         if task.broadcast_enabled:
             names.append(SCHEDULED_BROADCAST_TOOL)
         if (
@@ -588,9 +588,13 @@ class ScheduledTaskExecutor:
         broadcast_user_names: list[str] | None = None,
         history_section: str | None = None,
     ) -> str:
-        sections = [prompt, "需要人工确认或处置的分析结论，统一调用 submit_task_review 提交待办；"
-                    "使用稳定业务编号 subject_id 和明确 category，按工具结构填写结论、检查项、数据影响与证据。"
-                    "工具成功保存才表示已创建待办；普通回复、任务执行成功不会生成待办。无需人工处理的任务不提交。"]
+        sections = [prompt]
+        if "submit_task_review" in (task.tool_names or []):
+            sections.append(
+                "需要人工确认或处置的分析结论，统一调用 submit_task_review 提交待办；"
+                "使用稳定业务编号 subject_id 和明确 category，按工具结构填写结论、检查项、数据影响与证据。"
+                "工具成功保存才表示已创建待办；普通回复、任务执行成功不会生成待办。无需人工处理的任务不提交。"
+            )
         sections.append(
             """## 后台定时任务执行约束
 - 本次是后台无人值守的定时任务执行；任务名称、任务描述、执行指令、调度和筛选条件均视为用户已提前配置并确认。

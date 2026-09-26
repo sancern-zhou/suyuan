@@ -165,7 +165,7 @@ async def test_event_agent_mode_survives_conversation_persistence():
         "review_subject_bound": False,
         "expected_subject_id": None,
     }
-    assert manager.existing.metadata["scheduled_task_tools"] == ["submit_task_review"]
+    assert manager.existing.metadata["scheduled_task_tools"] == []
     assert catalog.registrations[0]["mode"] == "station_fault_diagnosis"
 
 
