@@ -52,6 +52,13 @@ PROJECT_SCOPED_TOOL_NAMES = frozenset({
     "get_5min_data",
 })
 
+# Registered for internal orchestration and maintenance only. These tools must
+# never be published in an Agent mode, including project-defined modes.
+AGENT_INTERNAL_TOOL_NAMES = frozenset({
+    "render_report_package",
+    "validate_report_package",
+})
+
 # ===== 助手模式工具 =====
 ASSISTANT_TOOL_NAMES = [
     "list_session_resources",
@@ -414,7 +421,11 @@ def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
     将工具名称列表转换为字典格式（向后兼容）。
     字典保留插入顺序，因此列表顺序就是模式工具顺序。
     """
-    names = [name for name in tool_names if name not in AGENT_HIDDEN_TOOL_NAMES]
+    names = [
+        name
+        for name in tool_names
+        if name not in AGENT_HIDDEN_TOOL_NAMES and name not in AGENT_INTERNAL_TOOL_NAMES
+    ]
     if "list_session_resources" in names and "read_session_resource" not in names:
         names.insert(names.index("list_session_resources") + 1, "read_session_resource")
     return {name: "" for name in names}

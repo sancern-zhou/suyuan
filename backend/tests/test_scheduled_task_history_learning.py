@@ -472,7 +472,6 @@ class TestExecutorIntegration:
         assert "## 历史案例主动检索" not in calls[0]["prompt"]
         assert calls[0]["kwargs"]["extra_tool_names"] == [
             "read_file",
-            "submit_task_review",
             "search_scheduled_task_history",
         ]
         scheduled_context = calls[0]["kwargs"]["runtime_metadata"]["scheduled_task"]

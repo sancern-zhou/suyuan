@@ -13,12 +13,15 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 from app.services.image_cache import get_image_cache
 from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
 from app.tools.visualization.create_report_chart.text_layout import (
+    WORD_FONT_SOURCE_WIDTH_IN,
     TextLayoutRegistry,
     govern_text_layout,
 )
+from app.tools.visualization.create_report_chart.theme import REPORT_THEME, SERIES_COLORS, theme_color
 from app.tools.visualization.create_report_chart.validation import ChartDataError
 from app.utils.font_utils import (
     apply_font_to_figure,
@@ -75,6 +78,10 @@ def render_report_chart(
     style_profile: str,
     options: Dict[str, Any],
 ) -> Dict[str, Any]:
+    if chart_type in {"bar", "horizontal_bar"} and _chart_item_count(data) > 20:
+        return _render_auto_split_bar_chart(
+            chart_id, chart_type, title, data, output_context, style_profile, options
+        )
     if isinstance(data.get("charts"), list) and len(data["charts"]) > 1:
         return _render_split_charts(chart_id, title, data["charts"], output_context, style_profile, options)
 
@@ -87,6 +94,43 @@ def render_report_chart(
         style_profile=style_profile,
         options=options,
     )
+
+
+def _render_auto_split_bar_chart(
+    chart_id: str | None,
+    chart_type: str,
+    title: str,
+    data: Dict[str, Any],
+    output_context: str,
+    style_profile: str,
+    options: Dict[str, Any],
+) -> Dict[str, Any]:
+    labels = list(data.get("labels") or data.get("categories") or data.get("x") or [])
+    chunks: list[Dict[str, Any]] = []
+    for start in range(0, len(labels), 20):
+        end = start + 20
+        child = dict(data)
+        key = "labels" if "labels" in data else "categories" if "categories" in data else "x"
+        child[key] = labels[start:end]
+        series = data.get("series")
+        if isinstance(series, list):
+            child["series"] = [
+                {
+                    **item,
+                    ("data" if "data" in item else "values"): [
+                        (item.get("data") if "data" in item else item.get("values"))[index]
+                        for index in range(start, min(end, len(item.get("data") or item.get("values") or [])))
+                    ],
+                }
+                for item in series
+            ]
+        else:
+            value_key = "values" if "values" in data else "y"
+            child[value_key] = list(data.get(value_key) or [])[start:end]
+        chunks.append({"chart_type": chart_type, "title": f"{title}（{start // 20 + 1}）", "data": child})
+    result = _render_split_charts(chart_id, title, chunks, output_context, style_profile, options)
+    result["metadata"]["auto_split"] = {"item_count": len(labels), "chunk_size": 20}
+    return result
 
 
 def _render_split_charts(
@@ -149,6 +193,8 @@ def _render_single_chart(
 ) -> Dict[str, Any]:
     warnings: List[str] = []
     applied_chart_type = _normalize_chart_type(chart_type)
+    _validate_annotations(options)
+    data, data_metadata = _prepare_chart_data(data, applied_chart_type, options)
     labels = _string_list(data.get("labels") or data.get("categories") or data.get("x") or [])
 
     if applied_chart_type == "bar":
@@ -174,7 +220,7 @@ def _render_single_chart(
     if applied_chart_type not in GENERAL_CHART_TYPES:
         raise ChartDataError(f"不支持的 chart_type：{chart_type}。")
 
-    fig, ax = _create_figure(output_context, style_profile)
+    fig, ax = _create_figure(output_context, style_profile, data, applied_chart_type)
     try:
         return _render_general_chart_figure(
             fig=fig,
@@ -188,6 +234,7 @@ def _render_single_chart(
             style_profile=style_profile,
             options=options,
             warnings=warnings,
+            data_metadata=data_metadata,
         )
     finally:
         plt.close(fig)
@@ -205,10 +252,12 @@ def _render_general_chart_figure(
     style_profile: str,
     options: Dict[str, Any],
     warnings: List[str],
+    data_metadata: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     text_registry = TextLayoutRegistry()
     _apply_fonts()
     metadata = {
+        "theme_version": "report_v2",
         "requested_chart_type": chart_type,
         "applied_chart_type": applied_chart_type,
         "output_context": output_context,
@@ -216,6 +265,8 @@ def _render_general_chart_figure(
         "target_width_in": WORD_TARGET_WIDTH_IN if output_context == "word" else None,
         "estimated_final_label_font_pt": 11,
     }
+    if data_metadata:
+        metadata.update(data_metadata)
 
     if applied_chart_type == "horizontal_bar":
         draw_metadata = _draw_horizontal_bar(ax, title, data, options)
@@ -278,15 +329,29 @@ def _render_general_chart_figure(
 
     metadata.update(draw_metadata)
     warnings.extend(draw_metadata.get("layout_warnings", []))
+    _register_untracked_axis_texts(fig, text_registry)
     option_warnings, option_metadata = _apply_common_options(ax, options, text_registry)
     warnings.extend(option_warnings)
     if "normalized_text" in option_metadata:
         metadata.setdefault("normalized_text", {}).update(option_metadata.pop("normalized_text"))
     metadata.update(option_metadata)
 
-    legend_layout = _position_legends_below_plot(fig)
+    _finalize_axes_theme(ax)
+
+    note_metadata = _draw_notes(fig, options)
+    if note_metadata:
+        metadata["notes"] = note_metadata
+
+    notes_present = bool(_normalized_notes(options))
+    legend_layout = _position_legends_below_plot(fig, notes_present=notes_present)
     metadata["legend_layout"] = legend_layout
-    layout_rect = (0.0, legend_layout["reserved_bottom_fraction"], 1.0, 1.0)
+    note_reserved_fraction = 0.11 if notes_present else 0.0
+    layout_rect = (
+        0.0,
+        max(legend_layout["reserved_bottom_fraction"], note_reserved_fraction),
+        1.0,
+        1.0,
+    )
     try:
         fig.tight_layout(pad=1.1, rect=layout_rect)
     except Exception:
@@ -300,6 +365,10 @@ def _render_general_chart_figure(
     warnings.extend(layout_warnings)
     metadata["text_layout"] = text_layout_metadata
 
+    quality_checks = _collect_quality_checks(fig, text_layout_metadata)
+    metadata["quality_checks"] = quality_checks
+    warnings.extend(quality_checks["warnings"])
+
     visual = _cache_figure(fig, chart_id or title, title)
 
     return {
@@ -312,14 +381,235 @@ def _render_general_chart_figure(
     }
 
 
-def _create_figure(output_context: str, style_profile: str):
+def _create_figure(
+    output_context: str,
+    style_profile: str,
+    data: Dict[str, Any] | None = None,
+    chart_type: str | None = None,
+):
     if output_context == "word":
         width = WORD_SOURCE_WIDTH_IN
-        height = WORD_SOURCE_HEIGHT_IN if style_profile != "compact" else 4.4
+        item_count = _chart_item_count(data or {})
+        height = (
+            max(4.2, min(12.0, 0.46 * item_count + 1.5))
+            if chart_type in {"horizontal_bar", "bar"} and item_count
+            else WORD_SOURCE_HEIGHT_IN
+        )
+        if style_profile == "compact":
+            height = min(height, 5.2)
     else:
         width = 7.2
         height = 4.6
-    return plt.subplots(figsize=(width, height), dpi=180)
+    # Keep the historical source DPI for layout measurements; the published
+    # PNG uses the governed report DPI in _cache_figure.
+    fig, ax = plt.subplots(figsize=(width, height), dpi=180)
+    _apply_axes_theme(ax)
+    return fig, ax
+
+
+def _apply_axes_theme(ax) -> None:
+    """Apply the report theme's quiet axes treatment to every standard chart."""
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.spines["bottom"].set_color(theme_color("grid"))
+    ax.spines["bottom"].set_linewidth(0.8)
+    ax.tick_params(axis="both", which="major", length=0, colors=theme_color("tick"))
+    ax.set_axisbelow(True)
+
+
+def _finalize_axes_theme(ax) -> None:
+    """Normalize artists created by individual renderers to report tokens."""
+    # Keep the existing source-size baseline for text-layout governance. The
+    # Word target-width conversion produces the configured report size later.
+    ax.title.set_fontsize(_source_font(15))
+    ax.title.set_fontweight("bold")
+    ax.title.set_color(theme_color("title"))
+    for label in (*ax.get_xticklabels(), *ax.get_yticklabels()):
+        label.set_color(theme_color("tick"))
+    for label in (ax.xaxis.label, ax.yaxis.label):
+        label.set_color(theme_color("axis"))
+        label.set_fontsize(REPORT_THEME["font_sizes"]["axis"])
+
+
+def _chart_item_count(data: Dict[str, Any]) -> int:
+    labels = data.get("labels") or data.get("categories") or data.get("x") or []
+    return len(labels) if isinstance(labels, list) else 0
+
+
+def _prepare_chart_data(
+    data: Dict[str, Any], chart_type: str, options: Dict[str, Any]
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Apply semantic data policies before a renderer draws the chart."""
+    if chart_type not in {"bar", "horizontal_bar", "stacked_bar", "percent_stacked_bar"}:
+        return data, {}
+    policy = options.get("data_policy") or {}
+    sort_mode = str(policy.get("sort") or "none").lower() if isinstance(policy, dict) else "none"
+    if sort_mode not in {"none", "ascending", "descending"}:
+        raise ChartDataError("data_policy.sort 只允许 none、ascending 或 descending。")
+    if sort_mode == "none":
+        return data, {}
+    labels = list(data.get("labels") or data.get("categories") or data.get("x") or [])
+    if not labels:
+        return data, {}
+    series = data.get("series")
+    if isinstance(series, list) and series:
+        sortable = list(series[0].get("data") or series[0].get("values") or [])
+    else:
+        sortable = list(data.get("values") or data.get("y") or [])
+    if len(sortable) != len(labels):
+        return data, {}
+    order = sorted(range(len(labels)), key=lambda index: float(sortable[index]), reverse=sort_mode == "descending")
+    normalized = dict(data)
+    key = "labels" if "labels" in data else "categories" if "categories" in data else "x"
+    normalized[key] = [labels[index] for index in order]
+    if isinstance(series, list) and series:
+        normalized["series"] = [
+            {
+                **item,
+                ("data" if "data" in item else "values"): [
+                    (item.get("data") if "data" in item else item.get("values"))[index]
+                    for index in order
+                ],
+            }
+            for item in series
+        ]
+    else:
+        value_key = "values" if "values" in data else "y" if "y" in data else "values"
+        normalized[value_key] = [sortable[index] for index in order]
+    return normalized, {"data_policy": {"sort": sort_mode}}
+
+
+def _annotation_config(options: Dict[str, Any], kind: str, target: str) -> Dict[str, Any] | None:
+    annotations = options.get("annotations")
+    if annotations is None and kind == "value" and target in {"bars", "stacked_bars"}:
+        return {"kind": kind, "target": target, "format": "auto", "filter": "all", "placement": "auto", "unit": options.get("unit")}
+    if not isinstance(annotations, list):
+        return None
+    for item in annotations:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("kind") or "") == kind and str(item.get("target") or target) == target:
+            return item
+    return None
+
+
+def _format_annotation_value(value: float, config: Dict[str, Any]) -> str:
+    template = str(config.get("format") or "auto")
+    if template == "auto":
+        if math.isclose(value, round(value), abs_tol=1e-9):
+            return f"{value:,.0f}"
+        formatted = f"{value:,.2f}".rstrip("0").rstrip(".")
+        if str(config.get("unit") or "") in {"%", "％"}:
+            formatted += "%"
+        return formatted
+    try:
+        return template.format(value=value)
+    except (KeyError, ValueError, IndexError):
+        return _format_annotation_value(value, {"format": "auto"})
+
+
+def _format_numeric_tick(value: float, _position: float) -> str:
+    if math.isclose(value, round(value), abs_tol=1e-9):
+        return f"{value:,.0f}"
+    return f"{value:,.2f}".rstrip("0").rstrip(".")
+
+
+def _validate_annotations(options: Dict[str, Any]) -> None:
+    annotations = options.get("annotations")
+    if annotations is None:
+        return
+    if not isinstance(annotations, list):
+        raise ChartDataError("annotations 必须是数组。")
+    for index, item in enumerate(annotations):
+        if not isinstance(item, dict):
+            raise ChartDataError(f"annotations[{index}] 必须是对象。")
+        kind = str(item.get("kind") or "")
+        if kind != "value":
+            raise ChartDataError(
+                f"annotations[{index}].kind 当前只支持 value，暂不支持 {kind or '空值'}。"
+            )
+        target = str(item.get("target") or "bars")
+        if target not in {"bars", "stacked_bars"}:
+            raise ChartDataError(f"annotations[{index}].target 只支持 bars 或 stacked_bars。")
+        placement = str(item.get("placement") or "auto")
+        if placement != "auto":
+            raise ChartDataError(f"annotations[{index}].placement 当前只支持 auto。")
+        if item.get("format") is not None and not isinstance(item.get("format"), str):
+            raise ChartDataError(f"annotations[{index}].format 必须是字符串。")
+
+
+def _register_untracked_axis_texts(fig, registry: TextLayoutRegistry) -> None:
+    registered = {id(item.artist) for item in registry.items}
+    for axis_index, ax in enumerate(fig.axes):
+        for text in ax.texts:
+            if id(text) in registered or not str(text.get_text()).strip():
+                continue
+            registry.register(text, role="data_label", domain=f"data_labels:{axis_index}", priority=50.0)
+
+
+def _annotation_indices(values: Sequence[float], config: Dict[str, Any]) -> set[int]:
+    raw_filter = config.get("filter", "all")
+    if raw_filter == "all":
+        return set(range(len(values)))
+    if isinstance(raw_filter, dict) and raw_filter.get("type") == "top_n":
+        try:
+            count = max(0, min(len(values), int(raw_filter.get("value", 0))))
+        except (TypeError, ValueError):
+            return set()
+        return {index for index, _ in sorted(enumerate(values), key=lambda item: item[1], reverse=True)[:count]}
+    return set()
+
+
+def _draw_bar_value_labels(ax, bars, values: Sequence[float], config: Dict[str, Any]) -> int:
+    shown = _annotation_indices(values, config)
+    for index, (bar, value) in enumerate(zip(bars, values, strict=True)):
+        if index not in shown:
+            continue
+        height = float(bar.get_height())
+        y = bar.get_y() + height
+        offset = max(abs(value) * REPORT_THEME["label_padding_fraction"], 0.01)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            y + offset if value >= 0 else y - offset,
+            _format_annotation_value(value, config),
+            ha="center",
+            va="bottom" if value >= 0 else "top",
+            fontsize=REPORT_THEME["font_sizes"]["data_label"],
+            fontweight="bold",
+            color=bar.get_facecolor(),
+            clip_on=False,
+        )
+    return len(shown)
+
+
+def _draw_notes(fig, options: Dict[str, Any]) -> List[str]:
+    notes = _normalized_notes(options)
+    if not notes:
+        return []
+    note_artist = fig.text(
+        0.01,
+        0.032,
+        "；".join(notes),
+        ha="left",
+        va="bottom",
+        fontsize=REPORT_THEME["font_sizes"]["note"],
+        color=theme_color("note"),
+    )
+    existing = list(getattr(fig, "_report_note_artists", []))
+    existing.append(note_artist)
+    fig._report_note_artists = existing
+    return notes
+
+
+def _normalized_notes(options: Dict[str, Any]) -> List[str]:
+    raw_notes = options.get("notes")
+    if isinstance(raw_notes, str):
+        notes = [raw_notes] if raw_notes.strip() else []
+    elif isinstance(raw_notes, list):
+        notes = [str(item).strip() for item in raw_notes if str(item).strip()]
+    else:
+        notes = []
+    return notes
 
 
 def _apply_fonts() -> None:
@@ -353,7 +643,7 @@ def _apply_font_to_figure(fig) -> None:
 
 
 def _source_font(final_pt: float) -> float:
-    return final_pt * WORD_SOURCE_WIDTH_IN / WORD_TARGET_WIDTH_IN
+    return final_pt * WORD_FONT_SOURCE_WIDTH_IN / WORD_TARGET_WIDTH_IN
 
 
 def _line_width(options: Dict[str, Any], default: float = 2.0) -> float:
@@ -367,7 +657,7 @@ def _line_width(options: Dict[str, Any], default: float = 2.0) -> float:
     return width
 
 
-def _position_legends_below_plot(fig) -> Dict[str, Any]:
+def _position_legends_below_plot(fig, *, notes_present: bool = False) -> Dict[str, Any]:
     """Move axes legends into a measured band below the plotting area."""
     legends = []
     for axis_index, ax in enumerate(fig.axes):
@@ -386,7 +676,8 @@ def _position_legends_below_plot(fig) -> Dict[str, Any]:
 
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
-    next_anchor = 0.015
+    # Keep the legend above the provenance note when both are present.
+    next_anchor = 0.075 if notes_present else 0.015
     items = []
     for axis_index, ax, legend in legends:
         handles = list(legend.legend_handles)
@@ -481,25 +772,54 @@ def _draw_bar(ax, title: str, data: Dict[str, Any], options: Dict[str, Any]) -> 
     labels, series = _extract_labeled_series(data, "bar")
     positions = list(range(len(labels)))
     title = str(normalize_matplotlib_label_text(title))
+    emphasis = options.get("emphasis") if isinstance(options.get("emphasis"), dict) else {}
+    emphasized = set(emphasis.get("items") or []) if isinstance(emphasis, dict) else set()
     if len(series) == 1:
-        ax.bar(positions, series[0]["values"], color="#3f7fb5", label=series[0]["name"])
+        values = series[0]["values"]
+        has_both_signs = any(value < 0 for value in values) and any(value >= 0 for value in values)
+        colors = [
+            (
+                theme_color("primary")
+                if label in emphasized or (not emphasized and has_both_signs and value >= 0)
+                else theme_color("danger")
+                if not emphasized and has_both_signs and value < 0
+                else theme_color("secondary")
+            )
+            for label, value in zip(labels, values, strict=True)
+        ]
+        bars = ax.bar(positions, series[0]["values"], color=colors, width=REPORT_THEME["bar_width"], label=series[0]["name"])
         bar_mode = "single"
     else:
         width = min(0.8 / len(series), 0.32)
         offset_start = -width * (len(series) - 1) / 2
+        bars = []
         for index, item in enumerate(series):
             offsets = [pos + offset_start + index * width for pos in positions]
-            ax.bar(offsets, item["values"], width=width, label=item["name"])
+            bars.extend(ax.bar(offsets, item["values"], width=width, color=SERIES_COLORS[index % len(SERIES_COLORS)], label=item["name"]))
         bar_mode = "grouped"
         if options.get("legend", True):
             ax.legend(fontsize=_source_font(9.5), frameon=False)
     tick_metadata = _apply_x_tick_labels(ax, positions, labels, options)
-    ax.set_title(title, fontsize=_source_font(15), fontweight="bold", pad=14)
+    ax.set_title(title, fontsize=REPORT_THEME["font_sizes"]["title"], color=theme_color("title"), loc="left", fontweight="bold", pad=14)
     ax.tick_params(axis="both", labelsize=_source_font(10.5))
-    ax.grid(axis="y", alpha=0.25, linestyle="--")
+    ax.yaxis.set_major_formatter(FuncFormatter(_format_numeric_tick))
+    ax.grid(axis="y", color=theme_color("grid"), linewidth=REPORT_THEME["grid_linewidth"], linestyle="-", alpha=1)
+    annotation = _annotation_config(options, "value", "bars")
+    explicit_annotations = isinstance(options.get("annotations"), list)
+    annotation_count = (
+        _draw_bar_value_labels(
+            ax,
+            bars,
+            [item for series_item in series for item in series_item["values"]],
+            annotation,
+        )
+        if annotation and (len(series) == 1 or explicit_annotations)
+        else 0
+    )
     return {
         "series_count": len(series),
         "bar_mode": bar_mode,
+        "annotation_count": annotation_count,
         "normalized_text": _normalized_text_metadata(title, series),
         **tick_metadata,
     }
@@ -512,14 +832,16 @@ def _draw_horizontal_bar(ax, title: str, data: Dict[str, Any], options: Dict[str
     y_positions = list(range(len(wrapped)))
 
     if len(series) == 1:
-        ax.barh(y_positions, series[0]["values"], color="#3f7fb5", label=series[0]["name"])
+        colors = [theme_color("primary") if not options.get("emphasis", {}).get("items") or label in set(options.get("emphasis", {}).get("items") or []) else theme_color("secondary") for label in labels]
+        bars = ax.barh(y_positions, series[0]["values"], color=colors, height=REPORT_THEME["bar_width"], label=series[0]["name"])
         bar_mode = "horizontal"
     else:
         height = min(0.8 / len(series), 0.32)
         offset_start = -height * (len(series) - 1) / 2
+        bars = []
         for index, item in enumerate(series):
             offsets = [pos + offset_start + index * height for pos in y_positions]
-            ax.barh(offsets, item["values"], height=height, label=item["name"])
+            bars.extend(ax.barh(offsets, item["values"], height=height, color=SERIES_COLORS[index % len(SERIES_COLORS)], label=item["name"]))
         bar_mode = "grouped_horizontal"
         if options.get("legend", True):
             ax.legend(fontsize=_source_font(9.5), frameon=False)
@@ -527,15 +849,23 @@ def _draw_horizontal_bar(ax, title: str, data: Dict[str, Any], options: Dict[str
     ax.set_yticks(y_positions)
     ax.set_yticklabels(wrapped, fontsize=_source_font(10.5))
     ax.invert_yaxis()
-    ax.set_title(title, fontsize=_source_font(15), fontweight="bold", pad=14)
+    ax.set_title(title, fontsize=REPORT_THEME["font_sizes"]["title"], color=theme_color("title"), loc="left", fontweight="bold", pad=14)
     ax.tick_params(axis="x", labelsize=_source_font(10.5))
-    ax.grid(axis="x", alpha=0.25, linestyle="--")
-    if len(series) == 1:
-        for y, value in zip(y_positions, series[0]["values"]):
-            ax.text(value, y, f" {value:g}", va="center", fontsize=_source_font(10))
+    ax.xaxis.set_major_formatter(FuncFormatter(_format_numeric_tick))
+    ax.grid(axis="x", color=theme_color("grid"), linewidth=REPORT_THEME["grid_linewidth"], linestyle="-", alpha=1)
+    annotation = _annotation_config(options, "value", "bars")
+    annotation_count = 0
+    if annotation and len(series) == 1:
+        shown = _annotation_indices(series[0]["values"], annotation)
+        for index, (bar, value) in enumerate(zip(bars, series[0]["values"], strict=True)):
+            if index not in shown:
+                continue
+            ax.text(value, bar.get_y() + bar.get_height() / 2, f" {_format_annotation_value(value, annotation)}", va="center", fontsize=REPORT_THEME["font_sizes"]["data_label"], fontweight="bold", color=bar.get_facecolor(), clip_on=False)
+            annotation_count += 1
     return {
         "series_count": len(series),
         "bar_mode": bar_mode,
+        "annotation_count": annotation_count,
         "normalized_text": _normalized_text_metadata(title, series),
     }
 
@@ -911,6 +1241,32 @@ def _layout_warnings(fig) -> List[str]:
     return warnings
 
 
+def _collect_quality_checks(fig, text_layout_metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Record lightweight render checks for downstream report validation."""
+    artist_count = 0
+    for ax in fig.axes:
+        artist_count += len(ax.patches)
+        artist_count += len(ax.lines)
+        artist_count += len(ax.collections)
+        artist_count += len(ax.images)
+        artist_count += len(ax.containers)
+
+    warnings: List[str] = []
+    if artist_count == 0:
+        warnings.append("empty_plot_artists")
+
+    layout_status = str(text_layout_metadata.get("status", "unknown"))
+    if layout_status not in {"resolved", "degraded"}:
+        warnings.append("text_layout_not_resolved")
+
+    return {
+        "artist_count": artist_count,
+        "has_plot_artists": artist_count > 0,
+        "text_layout_status": layout_status,
+        "warnings": _dedupe(warnings),
+    }
+
+
 def _cache_figure(fig, chart_id: str, title: str) -> Dict[str, Any]:
     buffer = BytesIO()
     _apply_font_to_figure(fig)
@@ -919,12 +1275,14 @@ def _cache_figure(fig, chart_id: str, title: str) -> Dict[str, Any]:
         for ax in fig.axes
         if (legend := ax.get_legend()) is not None and legend.get_visible()
     ]
+    note_artists = list(getattr(fig, "_report_note_artists", []))
     fig.savefig(
         buffer,
         format="png",
         bbox_inches="tight",
-        bbox_extra_artists=visible_legends,
-        dpi=180,
+        bbox_extra_artists=[*visible_legends, *note_artists],
+        pad_inches=0.18,
+        dpi=int(REPORT_THEME["dpi"]),
     )
     encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
     image_id = _safe_chart_id(chart_id)

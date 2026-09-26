@@ -134,13 +134,14 @@ async def test_create_report_package_renders_validates_and_presents_in_one_call(
     result = await tool.execute(
         report_id="one_call",
         qmd_content="# 一次收口报告\n",
+        output_formats=["html", "docx"],
     )
 
     assert result["success"] is True
-    assert result["data"]["quality_gate"] == {"passed": True, "errors": []}
-    assert result["data"]["package_validation"]["html_exists"] is True
-    assert result["data"]["package_validation"]["docx_exists"] is True
-    assert {item["resource_key"] for item in result["resources"]} == {"qmd", "html", "docx"}
+    assert result["data"]["pipeline"]["render"]["success"] is True
+    assert result["data"]["pipeline"]["render"]["requested_formats"] == ["html", "docx"]
+    assert result["data"]["pipeline"]["validation"]["success"] is True
+    assert {"qmd", "docx"} <= {item["resource_key"] for item in result["resources"]}
     assert result["presentation"] == {
         "action": "open",
         "resource_key": "html",

@@ -77,7 +77,7 @@ def test_ops_mode_keeps_call_sub_agent_for_general_ops_tasks():
     assert "agent_case_library" in tools
 
 
-def test_ops_mode_exposes_report_package_tools():
+def test_ops_mode_exposes_only_create_report_package():
     tools = get_tools_by_mode("ops")
 
     assert "create_report_chart" not in tools
@@ -94,15 +94,13 @@ def test_ops_prompt_generates_and_validates_audit_reports_directly():
     assert "call_sub_agent(target_mode='ops')" not in prompt
     assert "ops_audit_submit_review" not in prompt
     assert "report_ready=false" in prompt
-    assert "create_report_package" in prompt
-    assert "只调用一次 `create_report_package`" in prompt
+    assert "create_report_package" not in prompt
     assert "render_report_package" not in prompt
     assert "validate_report_package" not in prompt
-    assert "不要把正式报告委托给 `report` 子Agent" in prompt
     assert "当前模式直接完成数据抽取、规则/语义复核、结果落盘和运维工单审核正式报告" in prompt
 
 
-def test_social_mode_exposes_report_package_tools_for_main_agent_reporting(monkeypatch):
+def test_social_mode_exposes_only_create_report_package_for_reporting(monkeypatch):
     from config.settings import settings
 
     monkeypatch.setattr(settings, "project_id", "default")
@@ -110,6 +108,7 @@ def test_social_mode_exposes_report_package_tools_for_main_agent_reporting(monke
 
     assert "create_report_chart" in tools
     assert "create_report_package" in tools
+    assert "render_report_package" not in tools
     assert "validate_report_package" not in tools
 
 

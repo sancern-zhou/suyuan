@@ -444,69 +444,14 @@ def _unsupported_r_qmd_result(report_id: str, unsupported_r_features: List[str])
     }
 
 
-def _validate_report_package(
-    report_id: str,
-    *,
-    require_html: bool = True,
-    require_docx: bool = True,
-) -> Dict[str, Any]:
-    """Run the deterministic package checks used by create and legacy validate."""
-    safe_id = _safe_report_id(report_id)
-    try:
-        report_dir = quarto_report_renderer.get_report_dir(safe_id)
-    except ValueError as exc:
-        return {"success": False, "data": {"error": str(exc)}, "summary": "报告ID无效"}
-
-    qmd_content = _read_qmd(report_dir)
-    checks = {
-        "report_id": safe_id,
-        "report_dir": str(report_dir),
-        "qmd_exists": (report_dir / "report.qmd").exists(),
-        "meta_exists": (report_dir / "meta.json").exists(),
-        "report_data_exists": (report_dir / "report_data.json").exists(),
-        "html_exists": (report_dir / "report.html").exists(),
-        "docx_exists": (report_dir / "report.docx").exists(),
-        "image_refs": _validate_image_refs(report_dir, qmd_content),
-    }
-    errors = []
-    if not checks["qmd_exists"]:
-        errors.append("缺少 report.qmd")
-    if require_html and not checks["html_exists"]:
-        errors.append("缺少 report.html")
-    if require_docx and not checks["docx_exists"]:
-        errors.append("缺少 report.docx")
-    if checks["html_exists"] and checks["docx_exists"]:
-        from app.services.report.html_docx_bridge import RenderedHtmlReport
-
-        try:
-            report = RenderedHtmlReport(report_dir / "report.html")
-            checks["docx_tables"] = report.validate(report_dir / "report.docx")
-        except (ValueError, OSError) as exc:
-            errors.append(f"DOCX table validation failed: {exc}")
-    if checks["image_refs"]["missing"]:
-        errors.append(f"图片引用缺失: {', '.join(checks['image_refs']['missing'][:5])}")
-    if checks["image_refs"]["api_image_refs"]:
-        errors.append("qmd 包含 /api/image/ 引用，建议改为报告包内相对图片路径以保证 Word/PPT 导出")
-
-    checks["errors"] = errors
-    if checks["image_refs"]["issues"]:
-        checks["error"] = format_report_image_validation_error(checks["image_refs"])
-    return {
-        "success": not errors,
-        "data": checks,
-        "metadata": {"generator": "validate_report_package", "schema_version": "report_package.v1"},
-        "summary": "报告包验收通过" if not errors else "报告包验收发现问题：" + "；".join(errors),
-    }
-
-
 class CreateReportPackageTool(LLMTool):
-    """Create, render, validate, publish, and present a ReportPackage."""
+    """Create a standard ReportPackage and optionally render HTML preview."""
 
     def __init__(self):
         super().__init__(
             name="create_report_package",
             description=(
-                "一次完成正式 Quarto ReportPackage 的创建、HTML/Word 渲染、验收和预览发布；调用前读 "
+                "创建正式 Quarto ReportPackage；调用前读 "
                 "backend/app/tools/report/report_package/references/index.md。"
                 "禁止 R 和 /api/image；资源传真实路径到 assets。"
             ),
@@ -594,13 +539,21 @@ class CreateReportPackageTool(LLMTool):
                     },
                     "render_html": {
                         "type": "boolean",
-                        "description": "渲染 HTML 预览。",
+                        "description": "兼容参数；未传 output_formats 时决定是否渲染 HTML。",
                         "default": True,
                     },
-                    "render_docx": {
-                        "type": "boolean",
-                        "description": "渲染正式 Word 下载稿。",
-                        "default": True,
+                    "output_formats": {
+                        "type": "array",
+                        "description": (
+                            "在本次创建调用内完成渲染的格式；正式交付可传 "
+                            "['html', 'docx']，无需再调用 render_report_package。"
+                        ),
+                        "items": {
+                            "type": "string",
+                            "enum": ["html", "docx", "pdf", "share_html"],
+                        },
+                        "default": ["html"],
+                        "uniqueItems": True,
                     },
                 },
                 # qmd_content is mandatory for LLM callers; source_qmd_path/qmd_path
@@ -623,13 +576,27 @@ class CreateReportPackageTool(LLMTool):
         report_data: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         render_html: bool = True,
-        render_docx: bool | None = None,
+        output_formats: Optional[List[str]] = None,
         **kwargs,
     ) -> Dict[str, Any]:
         safe_id = _safe_report_id(report_id)
-        # Preserve the old programmatic `render_html=False` fast path while the
-        # LLM-facing default always produces both final formats in one call.
-        should_render_docx = render_html if render_docx is None else bool(render_docx)
+        requested_formats = list(
+            dict.fromkeys(output_formats if output_formats is not None else (["html"] if render_html else []))
+        )
+        unsupported_formats = [
+            item
+            for item in requested_formats
+            if item not in {"html", "docx", "pdf", "share_html"}
+        ]
+        if unsupported_formats:
+            return {
+                "success": False,
+                "data": {
+                    "error": f"Unsupported output formats: {', '.join(unsupported_formats)}",
+                    "report_id": safe_id,
+                },
+                "summary": "报告包创建失败：包含不支持的输出格式。",
+            }
 
         # Older callers supplied only the path of the QMD written by
         # write_file.  Keep that workflow working instead of allowing Python
@@ -834,12 +801,10 @@ format:
             }
 
         html_preview = None
-        html_path = None
-        docx_path = None
-        render_errors = []
-        if render_html:
+        render_error = None
+        if "html" in requested_formats:
             if validation.get("missing"):
-                render_errors.append(f"Missing local image refs: {', '.join(validation['missing'])}")
+                render_error = f"Missing local image refs: {', '.join(validation['missing'])}"
                 logger.warning(
                     "create_report_package_image_refs_missing",
                     report_id=safe_id,
@@ -856,23 +821,8 @@ format:
                         increment_version=False,
                     )
                 except Exception as exc:
-                    render_errors.append(f"HTML render failed: {exc}")
-                    logger.warning("create_report_package_html_render_failed", report_id=safe_id, error=str(exc))
-
-        if should_render_docx:
-            try:
-                docx_path = quarto_report_renderer.render_docx(safe_id)
-            except Exception as exc:
-                render_errors.append(f"DOCX render failed: {exc}")
-                logger.warning("create_report_package_docx_render_failed", report_id=safe_id, error=str(exc))
-
-        package_validation = _validate_report_package(
-            safe_id,
-            require_html=render_html,
-            require_docx=should_render_docx,
-        )
-        package_errors = list(package_validation.get("data", {}).get("errors") or [])
-        quality_errors = list(dict.fromkeys([*render_errors, *package_errors]))
+                    render_error = str(exc)
+                    logger.warning("create_report_package_html_render_failed", report_id=safe_id, error=render_error)
 
         data = {
             "report_id": safe_id,
@@ -881,11 +831,6 @@ format:
             "file_type": "report",
             "generator": "create_report_package",
             "validation": validation,
-            "package_validation": package_validation.get("data", {}),
-            "quality_gate": {
-                "passed": not quality_errors,
-                "errors": quality_errors,
-            },
             "copied_assets": copied_assets,
             "version": meta.get("version"),
         }
@@ -897,9 +842,29 @@ format:
                 "file_type": "report",
                 "schema_version": "report_package.v1",
             }
-        if quality_errors:
-            data["render_error"] = "；".join(render_errors) if render_errors else None
-            data["error"] = "；".join(quality_errors)
+        if render_error:
+            data["render_error"] = render_error
+            data["error"] = render_error
+
+        render_results: Dict[str, Dict[str, Any]] = {}
+        render_errors: List[str] = []
+        if not render_error:
+            for output_format in requested_formats:
+                if output_format == "html":
+                    continue
+                format_result = await RenderReportPackageTool().execute(
+                    report_id=safe_id,
+                    format=output_format,
+                )
+                render_results[output_format] = format_result
+                if not format_result.get("success"):
+                    render_errors.append(
+                        format_result.get("summary")
+                        or str((format_result.get("data") or {}).get("error"))
+                        or f"Failed to render {output_format}"
+                    )
+        if render_results:
+            data["render_results"] = render_results
 
         attach_document_resources(
             data,
@@ -911,15 +876,53 @@ format:
             generator="create_report_package",
             metadata={"report_id": safe_id},
         )
-        if docx_path and Path(docx_path).is_file():
-            attach_report_package_resources(
-                data,
-                qmd_path,
-                report_id=safe_id,
-                html_path=html_path,
-                docx_path=docx_path,
-                generator="create_report_package",
+        resources = data.setdefault("resources", [])
+        resource_keys = {
+            (item.get("resource_key"), item.get("file_path"), item.get("format"))
+            for item in resources
+            if isinstance(item, dict)
+        }
+        for format_result in render_results.values():
+            for resource in format_result.get("resources", []):
+                if not isinstance(resource, dict):
+                    continue
+                key = (
+                    resource.get("resource_key"),
+                    resource.get("file_path"),
+                    resource.get("format"),
+                )
+                if key not in resource_keys:
+                    resources.append(resource)
+                    resource_keys.add(key)
+
+        final_validation = await ValidateReportPackageTool().execute(
+            report_id=safe_id,
+            require_html="html" in requested_formats and not bool(render_error),
+            require_docx=(
+                bool({"docx", "pdf"} & set(requested_formats))
+                and not bool(render_errors)
+            ),
+        )
+        validation_error = None
+        if not final_validation.get("success"):
+            validation_error = (
+                final_validation.get("summary")
+                or str((final_validation.get("data") or {}).get("error"))
+                or "report package validation failed"
             )
+        pipeline_errors = [error for error in [render_error, *render_errors, validation_error] if error]
+        pipeline_error = "; ".join(pipeline_errors) if pipeline_errors else None
+        data["pipeline"] = {
+            "create": {"success": True},
+            "render": {
+                "success": not bool(render_error or render_errors),
+                "requested_formats": requested_formats,
+                "results": render_results,
+            },
+            "validation": final_validation,
+        }
+        if pipeline_error:
+            data["error"] = pipeline_error
         primary_artifact_path = str(html_path) if html_preview and html_path else str(qmd_path)
         resume_context = build_artifact_resume_context(
             data,
@@ -935,40 +938,20 @@ format:
                 "primary_artifact_path": primary_artifact_path,
             },
         )
-        referenced_paths = [qmd_path]
-        for candidate in (source_qmd, html_path, docx_path):
-            if candidate is not None and Path(candidate).is_file() and Path(candidate) not in referenced_paths:
-                referenced_paths.append(Path(candidate))
-        refs = {
-            "files": [{"path": str(path)} for path in referenced_paths],
-            "artifacts": [
-                {
-                    "file_path": str(path),
-                    "format": path.suffix.lstrip(".") or None,
-                }
-                for path in referenced_paths
-            ],
-        }
 
         return {
-            "success": not quality_errors,
+            "success": not bool(pipeline_error),
             "data": data,
             "resources": data.get("resources", []),
-            "refs": refs,
-            "presentation": {
-                "action": "open",
-                "resource_key": "html" if html_preview else "qmd",
-                "target_tab": "document",
-            },
             **resume_context,
             "metadata": {"generator": "create_report_package", "schema_version": "report_package.v1"},
             "summary": (
-                f"报告包创建或验收失败：{'；'.join(quality_errors)}。请按错误提示修复后重新调用本工具。"
-                if quality_errors
+                f"报告包创建或验收失败：{pipeline_error}。请按错误提示修复后重新打包。"
+                if pipeline_error
                 else (
-                    f"报告包已创建并验收通过：{safe_id}。HTML/Word 已生成，预览和下载由右侧文档面板处理。"
+                    f"报告包已创建、渲染并验收通过：{safe_id}。右侧预览和下载资源已发布。"
                     if html_preview
-                    else f"报告包已创建并验收通过：{safe_id}。右侧文档面板显示QMD预览。"
+                    else f"报告包已创建并验收通过：{safe_id}。未请求 HTML 预览。"
                 )
             ),
         }
@@ -1133,8 +1116,49 @@ class ValidateReportPackageTool(LLMTool):
         require_docx: bool = False,
         **kwargs,
     ) -> Dict[str, Any]:
-        return _validate_report_package(
-            report_id,
-            require_html=require_html,
-            require_docx=require_docx,
-        )
+        safe_id = _safe_report_id(report_id)
+        try:
+            report_dir = quarto_report_renderer.get_report_dir(safe_id)
+        except ValueError as exc:
+            return {"success": False, "data": {"error": str(exc)}, "summary": "报告ID无效"}
+
+        qmd_content = _read_qmd(report_dir)
+        checks = {
+            "report_id": safe_id,
+            "report_dir": str(report_dir),
+            "qmd_exists": (report_dir / "report.qmd").exists(),
+            "meta_exists": (report_dir / "meta.json").exists(),
+            "report_data_exists": (report_dir / "report_data.json").exists(),
+            "html_exists": (report_dir / "report.html").exists(),
+            "docx_exists": (report_dir / "report.docx").exists(),
+            "image_refs": _validate_image_refs(report_dir, qmd_content),
+        }
+        errors = []
+        if not checks["qmd_exists"]:
+            errors.append("缺少 report.qmd")
+        if require_html and not checks["html_exists"]:
+            errors.append("缺少 report.html")
+        if require_docx and not checks["docx_exists"]:
+            errors.append("缺少 report.docx")
+        if checks["html_exists"] and checks["docx_exists"]:
+            from app.services.report.html_docx_bridge import RenderedHtmlReport
+
+            try:
+                report = RenderedHtmlReport(report_dir / "report.html")
+                checks["docx_tables"] = report.validate(report_dir / "report.docx")
+            except (ValueError, OSError) as exc:
+                errors.append(f"DOCX table validation failed: {exc}")
+        if checks["image_refs"]["missing"]:
+            errors.append(f"图片引用缺失: {', '.join(checks['image_refs']['missing'][:5])}")
+        if checks["image_refs"]["api_image_refs"]:
+            errors.append("qmd 包含 /api/image/ 引用，建议改为报告包内相对图片路径以保证 Word/PPT 导出")
+
+        checks["errors"] = errors
+        if checks["image_refs"]["issues"]:
+            checks["error"] = format_report_image_validation_error(checks["image_refs"])
+        return {
+            "success": not errors,
+            "data": checks,
+            "metadata": {"generator": "validate_report_package", "schema_version": "report_package.v1"},
+            "summary": "报告包验收通过" if not errors else "报告包验收发现问题：" + "；".join(errors),
+        }

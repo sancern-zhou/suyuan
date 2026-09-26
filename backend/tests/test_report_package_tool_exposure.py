@@ -3,13 +3,14 @@ from app.tools import create_global_tool_registry
 from app.tools.report.report_package.tool import CreateReportPackageTool
 
 
-def test_render_report_package_is_registered_globally():
+def test_report_maintenance_tools_are_registered_globally():
     registry = create_global_tool_registry()
 
     assert "render_report_package" in registry.list_tools()
+    assert "validate_report_package" in registry.list_tools()
 
 
-def test_legacy_report_tools_are_not_exposed_to_assistant_mode():
+def test_only_create_report_package_is_exposed_to_assistant_mode():
     assistant_tools = get_tools_by_mode("assistant")
     assistant_order = get_tool_order("assistant")
 
@@ -18,6 +19,21 @@ def test_legacy_report_tools_are_not_exposed_to_assistant_mode():
     assert "validate_report_package" not in assistant_tools
     assert "render_report_package" not in assistant_order
     assert "validate_report_package" not in assistant_order
+
+
+def test_project_mode_cannot_expose_report_maintenance_tools(monkeypatch):
+    monkeypatch.setattr(
+        "app.agent.prompts.tool_registry._get_project_tool_names_by_mode",
+        lambda mode: [
+            "create_report_package",
+            "render_report_package",
+            "validate_report_package",
+        ],
+    )
+
+    tools = get_tools_by_mode("project_report")
+
+    assert list(tools) == ["create_report_package"]
 
 
 def test_create_report_package_schema_points_to_real_reference_path():
