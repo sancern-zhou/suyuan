@@ -7,6 +7,7 @@ from typing import Any
 
 from app.scenarios.xuchang_daily_review.episodes import normalize_hour
 from app.scenarios.xuchang_daily_review.regional_response import POLLUTANT_SERIES_KEY, _haversine_km
+from app.scenarios.xuchang_daily_review.report_events import _value, _direction
 
 
 def build_map_frames(
@@ -75,9 +76,30 @@ def build_map_frames(
     return {"episode_count": len(episodes), "episodes": episodes}
 
 
+def build_hourly_map_weather(weather_rows: list[dict[str, Any]], target_date: str) -> dict[str, Any]:
+    """Align NMC hourly wind observations to Shanghai local map hours."""
+    weather_by_hour = {}
+    for row in weather_rows:
+        hour = normalize_hour(row.get("time"))
+        if hour is None or hour.date().isoformat() != target_date:
+            continue
+        speed = _value(row.get("wind_speed_10m"))
+        direction = _value(row.get("wind_direction_10m"))
+        if direction is not None and direction > 360:
+            direction = None
+        weather_by_hour[hour.isoformat()] = {
+            "station_name": "许昌气象站", "source": row.get("data_source") or "NMC",
+            "wind_speed_ms": speed, "wind_direction_deg": direction,
+            "wind_direction_name": _direction(direction) if direction is not None else None,
+            "calm": speed is not None and speed < 0.5,
+        }
+    return weather_by_hour
+
+
 def build_pollutant_map_frames(
     events: list[dict[str, Any]], regular_rows: list[dict[str, Any]],
     township_rows: list[dict[str, Any]], target_date: str,
+    weather_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """One full-day timeline per alerted pollutant, regardless of target station."""
     pollutants = sorted({str(event["pollutant"]) for event in events})
@@ -96,6 +118,7 @@ def build_pollutant_map_frames(
         hour = normalize_hour(row.get("data_time"))
         if hour is not None and hour.date().isoformat() == target_date:
             rows_by_hour.setdefault(hour.isoformat(), []).append(row)
+    weather_by_hour = build_hourly_map_weather(weather_rows or [], target_date)
     maps = []
     for pollutant in pollutants:
         field = POLLUTANT_SERIES_KEY.get(pollutant)
@@ -133,7 +156,8 @@ def build_pollutant_map_frames(
                              for interval in (event.get("alert_intervals") or [{
                                  "start_time": event["start_time"], "end_time": event["end_time"],
                              }]))]
-            frames.append({"time": hour, "records": list(records.values()), "active_event_ids": active})
+            frames.append({"time": hour, "records": list(records.values()), "active_event_ids": active,
+                           "weather": weather_by_hour.get(hour)})
         all_values.sort()
         low = all_values[int((len(all_values) - 1) * 0.1)] if all_values else 0
         high = all_values[int((len(all_values) - 1) * 0.9)] if all_values else 1

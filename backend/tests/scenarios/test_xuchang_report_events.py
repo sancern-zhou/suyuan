@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from app.scenarios.xuchang_daily_review.map_frames import build_pollutant_map_frames
+from app.scenarios.xuchang_daily_review.map_frames import build_hourly_map_weather, build_pollutant_map_frames
 from app.scenarios.xuchang_daily_review.report_events import build_report_events
 
 
@@ -12,6 +12,18 @@ def _analysis(episode_id, station_id, start, end=None, pollutant="PM10"):
                          "episode_end": f"2026-09-25T{(end or start):02d}:00:00"},
         "target_response": {"lat": 34.0, "lon": 113.8},
     }
+
+
+def test_hourly_map_wind_timezone_calm_and_invalid_direction():
+    weather = build_hourly_map_weather([
+        {"time": "2026-09-25T02:00:00+00:00", "wind_speed_10m": 3, "wind_direction_10m": 315},
+        {"time": "2026-09-25T11:00:00", "wind_speed_10m": 0, "wind_direction_10m": None},
+        {"time": "2026-09-25T12:00:00", "wind_speed_10m": -1, "wind_direction_10m": 999},
+    ], "2026-09-25")
+    assert weather["2026-09-25T10:00:00"]["wind_direction_name"] == "西北"
+    assert weather["2026-09-25T11:00:00"]["calm"] is True
+    assert weather["2026-09-25T12:00:00"]["wind_direction_deg"] is None
+    assert weather["2026-09-25T12:00:00"]["wind_speed_ms"] is None
 
 
 def _row(station_id, hour, value, lat, lon, station_type="regular"):
@@ -54,13 +66,16 @@ def test_one_unalerted_hour_merges_but_retains_segments_and_map_gap():
     assert merged["upwind_township_stations"][0]["concentration_mean"] == 40
     assert merged["upwind_township_stations"][0]["vs_target"] == "高于"
 
-    maps = build_pollutant_map_frames(evidence["events"], regular, township, "2026-09-25")
+    maps = build_pollutant_map_frames(evidence["events"], regular, township, "2026-09-25", weather)
     assert maps["pollutant_count"] == 1
     assert len(maps["maps"][0]["frames"]) == 24
     assert maps["maps"][0]["frames"][10]["active_event_ids"] == [merged["event_id"]]
     assert maps["maps"][0]["frames"][12]["active_event_ids"] == []
     assert maps["maps"][0]["frames"][13]["active_event_ids"] == [merged["event_id"]]
     assert len(maps["maps"][0]["frames"][10]["records"]) == 4
+    assert maps["maps"][0]["frames"][10]["weather"]["wind_speed_ms"] == 2
+    assert maps["maps"][0]["frames"][10]["weather"]["wind_direction_name"] == "北"
+    assert maps["maps"][0]["frames"][12]["weather"] is None
 
 
 def test_longer_gap_and_different_pollutant_remain_separate():

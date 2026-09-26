@@ -793,7 +793,8 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
             "transport_responses": {"target_date": result["target_date"], "episodes": transport_responses},
             "report_facts": report_facts,
             "pollutant_maps": {"target_date": result["target_date"], **build_pollutant_map_frames(
-                report_events["events"], station_rows, township_result.get("rows") or [], result["target_date"]
+                report_events["events"], station_rows, township_result.get("rows") or [], result["target_date"],
+                result.get("meteorology") or [],
             )},
             "meteorology": meteorology_payload,
             "source_features": {

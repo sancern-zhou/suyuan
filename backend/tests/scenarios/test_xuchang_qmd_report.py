@@ -35,7 +35,7 @@ def _payload():
 
 
 def test_qmd_keeps_fixed_chapters_and_format_specific_maps():
-    qmd = build_qmd_report(_payload(), {"PM10": "timeline_1_PM10.png"})
+    qmd = build_qmd_report(_payload())
     assert "## 一、持续升高基本情况" in qmd
     assert "## 二、持续升高原因分析" in qmd
     assert "## 四、结论" in qmd
@@ -46,7 +46,9 @@ def test_qmd_keeps_fixed_chapters_and_format_specific_maps():
     assert 'when-format="docx"' not in qmd
     assert "base-satellite-0" in qmd
     assert "assets/xuchang_map.js" in qmd
-    assert "assets/charts/timeline_1_PM10.png" in qmd
+    assert "assets/charts/" not in qmd
+    assert "逐小时站点浓度趋势" not in qmd
+    assert "hud-wind-0" in qmd
     assert "number-sections: false" in qmd
     assert ".map-hud" in _map_css()
 
@@ -61,7 +63,7 @@ def test_qmd_writer_returns_packaging_paths(tmp_path, monkeypatch):
     assert result["report_id"] == "xuchang_daily_review_20260925"
     assert result["event_count"] == result["pollutant_count"] == 1
     assert Path(result["source_qmd_path"]).is_file()
-    assert len(result["assets"]) == 3
+    assert len(result["assets"]) == 2
     assert all(Path(item["path"]).is_file() for item in result["assets"])
     assert "v=2.1Beta" in (tmp_path / "xuchang_map_review.js").read_text()
 
@@ -83,7 +85,7 @@ def test_qmd_writer_keeps_css_when_no_alerts(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(shutil.which("quarto") is None, reason="Quarto is not installed")
-async def test_qmd_package_renders_interactive_html_and_static_word(tmp_path, monkeypatch):
+async def test_qmd_package_renders_interactive_html_and_word_without_charts(tmp_path, monkeypatch):
     from app.services.quarto_report_renderer import QuartoReportRenderer
     from app.tools.report.report_package import tool as package_tool
 
@@ -104,7 +106,8 @@ async def test_qmd_package_renders_interactive_html_and_static_word(tmp_path, mo
     html = (report_dir / "report.html").read_text(encoding="utf-8")
     assert "base-satellite-0" in html
     assert "assets/xuchang_map_review.js" in html
-    assert "assets/charts/timeline_1_PM10_review.png" in html
+    assert "assets/charts/" not in html
+    assert "hud-wind-0" in html
     shared_html = (report_dir / "report.export.html").read_text(encoding="utf-8")
     assert "base-satellite-0" in shared_html
     assert "public-test-key" in shared_html
@@ -113,5 +116,6 @@ async def test_qmd_package_renders_interactive_html_and_static_word(tmp_path, mo
     with zipfile.ZipFile(report_dir / "report.docx") as archive:
         xml = archive.read("word/document.xml").decode("utf-8")
         assert "北部乡镇站同期浓度较高" in xml
-        assert any(name.startswith("word/media/") for name in archive.namelist())
+        assert not any(name.startswith("word/media/") for name in archive.namelist())
+        assert "污染物时序变化地图" not in xml
         assert "base-satellite-0" not in xml

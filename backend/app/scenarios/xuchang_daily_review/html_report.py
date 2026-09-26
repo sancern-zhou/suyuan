@@ -39,6 +39,15 @@ def load_report_payload_from_evidence(
     provenance = json.loads(resolve_agent_path(files["provenance"]).read_text(encoding="utf-8"))
     events = event_data.get("events") or []
     maps = map_data.get("maps") or []
+    if files.get("meteorology"):
+        from .map_frames import build_hourly_map_weather
+
+        weather_data = json.loads(resolve_agent_path(files["meteorology"]).read_text(encoding="utf-8"))
+        hourly_weather = build_hourly_map_weather(weather_data.get("meteorology") or [], manifest["target_date"])
+        for item in maps:
+            for frame in item.get("frames") or []:
+                if "weather" not in frame:
+                    frame["weather"] = hourly_weather.get(frame["time"])
     if len(events) != event_data.get("event_count") or len(events) != manifest.get("episode_count"):
         raise ValueError("Merged event counts disagree between manifest and evidence")
     if len(maps) != map_data.get("pollutant_count") or {m["pollutant"] for m in maps} != {e["pollutant"] for e in events}:
@@ -123,7 +132,8 @@ def render_map_widgets(maps: list[dict[str, Any]]) -> str:
         f"<div class='basemap-switch' role='group' aria-label='底图切换'><button id='base-satellite-{i}' class='selected' type='button'>卫星影像</button>"
         f"<button id='base-light-{i}' type='button'>简洁地图</button><button id='base-terrain-{i}' type='button'>3D地形</button></div></div>"
         f"<div class='map-stage'><div id='map-{i}' class='map'></div><div class='map-hud'>"
-        f"<strong id='hud-time-{i}'>—</strong><span id='hud-alert-{i}'>等待数据</span></div></div>"
+        f"<strong id='hud-time-{i}'>—</strong><span id='hud-alert-{i}'>等待数据</span>"
+        f"<span id='hud-wind-{i}'>许昌气象站 · 小时风暂无数据</span></div></div>"
         f"<div class='playback'><button id='play-{i}' type='button'>▶ 播放</button><button id='pause-{i}' type='button'>❚❚ 暂停</button>"
         f"<label>速度 <select id='speed-{i}'><option value='1500'>0.7×</option><option value='1000' selected>1×</option>"
         f"<option value='500'>2×</option></select></label><span id='time-{i}' class='playback-time'>—</span>"
@@ -327,6 +337,12 @@ function draw(i,index){
  const timestamp=frame.time.replace('T',' ').slice(0,16);
  el('time-'+i).textContent=timestamp+'（'+(index+1)+'/'+item.frames.length+'）';
  el('hud-time-'+i).textContent=timestamp;
+ const weather=frame.weather;
+ const windDirection=weather&&weather.calm?'静风':weather&&weather.wind_direction_name?
+  weather.wind_direction_name+'风（来向 '+weather.wind_direction_deg+'°）':'风向缺测';
+ const windSpeed=weather&&weather.wind_speed_ms!=null?weather.wind_speed_ms+' m/s':'风速缺测';
+ el('hud-wind-'+i).textContent=weather?(weather.station_name||'许昌气象站')+' · '+windDirection+' · '+windSpeed:
+  '许昌气象站 · 小时风暂无数据';
  el('hud-alert-'+i).textContent=active.size?active.size+' 次告警过程 · '+(playing[i]?'播放中':'已暂停'):'当前小时无告警 · '+(playing[i]?'播放中':'已暂停');
  const names=[...new Set((frame.records||[]).filter(r=>activeStations.has(String(r.station_id))).map(r=>r.station_name||r.station_id))];
  el('active-'+i).textContent=names.length?'当前告警国控站：'+names.join('、'):'当前小时无该污染物告警国控站';

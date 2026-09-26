@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import math
 import re
 from pathlib import Path
-from statistics import mean
 from typing import Any
 
 from .html_report import (
@@ -105,11 +103,13 @@ def _map_css() -> str:
         ".xuchang-report-maps{max-width:1280px;margin:0 auto}"
         "section.map-card{background:#fff;border:1px solid #d9e2ec;margin:16px 0;padding:18px;border-radius:10px}"
         "button,select{font:inherit}\n.map-card{" + css.split(".map-card{", 1)[1]
+        + ".map-hud{max-width:calc(100% - 28px);box-sizing:border-box}.map-hud span{overflow-wrap:anywhere}"
+        + "@media print{.xuchang-html-only{display:none}}"
     )
 
 
 def build_qmd_report(
-    payload: dict[str, Any], chart_names: dict[str, str], *,
+    payload: dict[str, Any], *,
     css_name: str = "xuchang_map.css", js_name: str = "xuchang_map.js",
 ) -> str:
     events = payload.get("events") or []
@@ -153,57 +153,20 @@ def build_qmd_report(
             lines.append(_event_body(event, payload["event_analysis"][event["event_id"]]))
     if not events:
         lines.extend(["昨日无可分析告警过程。", ""])
-    lines.extend(["### 污染物时序变化图", ""])
     if maps:
         lines.extend([
-            "HTML 版为真实高德地图，逐小时显示有效站点；红色光环标识当前小时告警国控站，"
-            "站点填色采用全天固定浓度色阶。两种版本均展示同一证据的静态小时浓度趋势。", "",
             '::: {.content-visible when-format="html"}',
-            '<div class="xuchang-report-maps">', render_map_widgets(maps), "</div>",
+            '<div class="xuchang-report-maps xuchang-html-only">',
+            "<h3>污染物时序变化地图</h3>",
+            "<p>HTML 版为真实高德地图，逐小时显示有效站点；红色光环标识当前小时告警国控站，"
+            "站点填色采用全天固定浓度色阶，地图同步标注许昌气象站小时风向（来向）和风速。</p>",
+            render_map_widgets(maps), "</div>",
             f'<script src="assets/{js_name}"></script>', ":::", "",
         ])
-        for item in maps:
-            pollutant = str(item["pollutant"])
-            lines.extend([f"**{pollutant} 逐小时站点浓度趋势**", "",
-                          f"![{pollutant} 逐小时站点浓度趋势](assets/charts/{chart_names[pollutant]})", ""])
-    else:
-        lines.extend(["昨日无告警污染物地图。", ""])
     lines.extend(["## 四、结论", "", str(payload.get("conclusion") or ""), ""])
     return "\n".join(lines)
 
 
-def _write_timeline_chart(item: dict[str, Any], path: Path) -> None:
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    frames = item.get("frames") or []
-    hourly_mean = []
-    hourly_max = []
-    for frame in frames:
-        values = [float(record["concentration"]) for record in frame.get("records") or []
-                  if record.get("concentration") is not None
-                  and math.isfinite(float(record["concentration"]))]
-        hourly_mean.append(mean(values) if values else math.nan)
-        hourly_max.append(max(values) if values else math.nan)
-    fig, ax = plt.subplots(figsize=(9.2, 3.5), dpi=150)
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("#f7fafc")
-    hours = range(len(frames))
-    ax.plot(hours, hourly_mean, color="#168a9c", linewidth=2, marker="o", markersize=2.5, label="Station mean")
-    ax.plot(hours, hourly_max, color="#d97745", linewidth=1.6, label="Station max")
-    for index, frame in enumerate(frames):
-        if frame.get("active_event_ids"):
-            ax.axvspan(index - .45, index + .45, color="#e44843", alpha=.11, linewidth=0)
-    ax.set_xticks(list(range(0, len(frames), 3)) or [0],
-                  [frames[index]["time"][11:16] for index in range(0, len(frames), 3)] or ["00:00"])
-    ax.set_xlim(-.5, max(len(frames) - .5, .5))
-    ax.set_ylabel("mg/m³" if item["pollutant"] == "CO" else "μg/m³")
-    ax.grid(axis="y", color="#d9e2ec", alpha=.8)
-    ax.legend(frameon=False, loc="upper left", ncol=2)
-    fig.tight_layout()
-    fig.savefig(path, bbox_inches="tight")
-    plt.close(fig)
 
 
 def write_qmd_report_from_evidence(
@@ -215,7 +178,6 @@ def write_qmd_report_from_evidence(
     output.parent.mkdir(parents=True, exist_ok=True)
     maps = payload["maps"]
     assets: list[dict[str, str]] = []
-    chart_names: dict[str, str] = {}
     suffix = re.sub(r"[^A-Za-z0-9_-]", "_", output.stem)
     css_name = f"xuchang_map_{suffix}.css"
     js_name = f"xuchang_map_{suffix}.js"
@@ -226,14 +188,7 @@ def write_qmd_report_from_evidence(
         js_path = output.parent / js_name
         js_path.write_text(render_map_script(maps, payload["events"], amap_key), encoding="utf-8")
         assets.append({"path": str(js_path), "type": "asset", "name": js_path.name})
-        for index, item in enumerate(maps, 1):
-            safe_name = re.sub(r"[^A-Za-z0-9_-]", "_", str(item["pollutant"]))
-            filename = f"timeline_{index}_{safe_name}_{suffix}.png"
-            image_path = output.parent / filename
-            _write_timeline_chart(item, image_path)
-            chart_names[item["pollutant"]] = filename
-            assets.append({"path": str(image_path), "type": "image", "name": filename})
-    output.write_text(build_qmd_report(payload, chart_names, css_name=css_name, js_name=js_name), encoding="utf-8")
+    output.write_text(build_qmd_report(payload, css_name=css_name, js_name=js_name), encoding="utf-8")
     report_id = "xuchang_daily_review_" + str(payload["target_date"]).replace("-", "")
     return {"report_id": report_id, "source_qmd_path": str(output),
             "source_qmd_name": output.name, "assets": assets,

@@ -1,10 +1,13 @@
 import json
+import shutil
+import subprocess
 
 import pytest
 
 from app.scenarios.xuchang_daily_review.html_report import (
     build_html_report,
     build_report_from_evidence,
+    render_map_script,
 )
 
 
@@ -31,6 +34,35 @@ def _map():
         "records": [{"station_id": "1005A", "station_name": "市一中",
                      "longitude": 113.8, "latitude": 34.0, "concentration": 30}],
     }]}
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is not installed")
+def test_map_playback_updates_hourly_wind_without_stale_values():
+    item = _map()
+    item["frames"] = [
+        {"time": "2026-09-25T10:00:00", "records": [], "weather": {
+            "station_name": "许昌气象站", "wind_speed_ms": 3.2,
+            "wind_direction_name": "西北", "wind_direction_deg": 315, "calm": False}},
+        {"time": "2026-09-25T11:00:00", "records": [], "weather": {
+            "wind_speed_ms": 0.2, "wind_direction_name": "南", "wind_direction_deg": 180, "calm": True}},
+        {"time": "2026-09-25T12:00:00", "records": [], "weather": None},
+    ]
+    script = render_map_script([item], [], "test-key").replace("initControls();if(MAPS.length)loadMap();", "")
+    setup = """
+const window={matchMedia:()=>({matches:false})};
+const nodes=new Map();
+const document={getElementById(id){if(!nodes.has(id))nodes.set(id,{
+ textContent:'',value:0,children:[],querySelectorAll:()=>[]});return nodes.get(id)}};
+"""
+    checks = """
+draw(0,0);
+if(!el('hud-wind-0').textContent.includes('西北风（来向 315°） · 3.2 m/s'))throw Error('wind');
+draw(0,1);
+if(!el('hud-wind-0').textContent.includes('静风 · 0.2 m/s'))throw Error('calm');
+draw(0,2);
+if(el('hud-wind-0').textContent!=='许昌气象站 · 小时风暂无数据')throw Error('stale wind');
+"""
+    subprocess.run([shutil.which("node"), "-e", setup + script + checks], check=True, capture_output=True, text=True)
 
 
 def test_html_report_keeps_chapter_text_static_and_maps_per_pollutant():
@@ -101,6 +133,8 @@ def test_assembler_reads_merged_events_and_requires_every_analysis(tmp_path):
         "event_brief": {"event_count": 1, "events": [_event()]},
         "pollutant_maps": {"pollutant_count": 1, "maps": [_map()]},
         "provenance": {"source_provenance": {"station_hourly": "test"}},
+        "meteorology": {"meteorology": [{"time": "2026-09-25T02:00:00+00:00",
+                                          "wind_speed_10m": 3.2, "wind_direction_10m": 315}]},
     }.items():
         path = tmp_path / (name + ".json")
         path.write_text(json.dumps(content, ensure_ascii=False), encoding="utf-8")
@@ -116,6 +150,9 @@ def test_assembler_reads_merged_events_and_requires_every_analysis(tmp_path):
     }, amap_key="test-key")
     assert "合并后1次告警" in output
     assert "北部乡镇站高于目标站" in output
+    assert '"wind_speed_ms":3.2' in output
+    assert '"wind_direction_name":"西北"' in output
+    assert "hud-wind-0" in output
     render_config = tmp_path / "render_config.json"
     render_config.write_text(json.dumps({"public_key": "public-test-key"}), encoding="utf-8")
     manifest.write_text(json.dumps({"target_date": "2026-09-25", "episode_count": 1,
