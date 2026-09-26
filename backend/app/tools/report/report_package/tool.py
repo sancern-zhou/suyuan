@@ -482,9 +482,10 @@ class CreateReportPackageTool(LLMTool):
                     "source_qmd_path": {
                         "type": "string",
                         "description": (
-                            "可编辑的原始 QMD 文件路径，仅作为来源元数据记录；不会直接覆盖"
-                            "报告包内 report.qmd。HTML、DOCX 和 QMD 下载始终使用经 assets "
-                            "复制及路径规范化后的报告包发布稿。"
+                            "程序化定时任务可传入已生成的完整 QMD 文件路径，代替 "
+                            "qmd_content；提供 qmd_content 时仅作为来源元数据记录。"
+                            "不会直接覆盖报告包内 report.qmd。HTML、DOCX 和 QMD 下载"
+                            "始终使用经 assets 复制及路径规范化后的报告包发布稿。"
                         ),
                     },
                     "title": {"type": "string", "description": "报告标题，可选。"},
@@ -558,10 +559,11 @@ class CreateReportPackageTool(LLMTool):
                         "uniqueItems": True,
                     },
                 },
-                # qmd_content is mandatory for LLM callers; source_qmd_path/qmd_path
-                # are only accepted for backwards compatibility with scheduled jobs
-                # that call execute() programmatically (bypassing this schema).
-                "required": ["report_id", "qmd_content"],
+                "required": ["report_id"],
+                "anyOf": [
+                    {"required": ["qmd_content"]},
+                    {"required": ["source_qmd_path"]},
+                ],
             },
         }
 
