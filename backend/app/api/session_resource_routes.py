@@ -440,6 +440,7 @@ async def get_session_resource_content(
         if target.name.startswith("xuchang_air_quality_daily_review_"):
             # This standalone report embeds AMap JSAPI and an inline timeline.
             # Keep the relaxation scoped to its generated report filename.
+            headers["Cache-Control"] = "private, no-store"
             headers["Content-Security-Policy"] = (
                 "default-src 'self'; img-src 'self' data: blob: https:; "
                 "style-src 'self' 'unsafe-inline' https:; "

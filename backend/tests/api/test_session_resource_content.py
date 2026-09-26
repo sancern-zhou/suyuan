@@ -283,6 +283,7 @@ async def test_xuchang_map_report_preview_allows_amap_and_inline_timeline(tmp_pa
     )
 
     policy = response.headers["content-security-policy"]
+    assert response.headers["cache-control"] == "private, no-store"
     assert "'unsafe-inline'" in policy
     assert "'unsafe-eval'" in policy
     assert "https://webapi.amap.com" in policy
