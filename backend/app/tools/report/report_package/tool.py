@@ -939,10 +939,39 @@ format:
             },
         )
 
+        referenced_paths = [str(qmd_path)]
+        for candidate in (source_qmd, html_path if html_preview else None):
+            if candidate is not None and Path(candidate).is_file():
+                candidate_path = str(Path(candidate))
+                if candidate_path not in referenced_paths:
+                    referenced_paths.append(candidate_path)
+        for format_result in render_results.values():
+            rendered_path = (format_result.get("data") or {}).get("path")
+            if format_result.get("success") and rendered_path and Path(rendered_path).is_file():
+                rendered_path = str(Path(rendered_path))
+                if rendered_path not in referenced_paths:
+                    referenced_paths.append(rendered_path)
+        refs = {
+            "files": [{"path": path} for path in referenced_paths],
+            "artifacts": [
+                {
+                    "file_path": path,
+                    "format": Path(path).suffix.lstrip(".") or None,
+                }
+                for path in referenced_paths
+            ],
+        }
+
         return {
             "success": not bool(pipeline_error),
             "data": data,
             "resources": data.get("resources", []),
+            "refs": refs,
+            "presentation": {
+                "action": "open",
+                "resource_key": "html" if html_preview else "qmd",
+                "target_tab": "document",
+            },
             **resume_context,
             "metadata": {"generator": "create_report_package", "schema_version": "report_package.v1"},
             "summary": (
