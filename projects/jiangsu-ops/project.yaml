@@ -230,6 +230,7 @@ backend:
       - jiangsu_smart_event_workspace
       - jiangsu_prepare_fault_work_order
       - submit_task_review
+      - create_report_package
     smart_event_instrument:
       - read_file
       - jiangsu_smart_event_workspace
@@ -238,6 +239,7 @@ backend:
       - jiangsu_fetch_review_evidence
       - jiangsu_prepare_fault_work_order
       - submit_task_review
+      - create_report_package
     # 知识问答以授权知识库为主，允许读取已注册的会话资源，并按需联网补充。
     knowledge:
       - knowledge_qa_workflow
@@ -249,6 +251,7 @@ backend:
       - write_file
       - web_search
       - web_fetch
+      - create_report_package
     # 江苏社交模式独立声明工具面，不继承共享“风清气智”的社交工具集合。
     # 移动端仅开放用户隔离能力、江苏只读业务查询和成果发布能力。
     social:
@@ -289,6 +292,7 @@ backend:
       - get_current_weather
       - create_report_chart
       - execute_echarts_python
+      - create_report_package
     jiangsu_query:
       - list_session_resources
       - publish_session_file
@@ -312,6 +316,7 @@ backend:
       - create_report_chart
       - execute_echarts_python
       - execute_python
+      - create_report_package
     # 2026-09-23 专家研判场景暂时下线（方案未定）：模式已从 agent_modes 移除，
     # 此键改名后不再被任何模式命中；恢复时把键名改回 expert 并在 agent_modes 加回。
     expert_offline:
@@ -354,6 +359,7 @@ backend:
       - write_file
       - list_directory
       - search_files
+      - create_report_package
     ops:
       # 2026-09 工具面瘦身后仅保留故障工单审核、例行工单审核与最小只读补查所需工具；
       # 移除项（城市/区县/统计/地理解析、智能事件工作台、图谱、报告图表）经项目评审：
@@ -412,6 +418,7 @@ backend:
       - knowledge_graph_query
       # 江苏运维主题数据集受控SQL（本地 mart 语义层）
       - execute_jiangsu_mart_sql
+      - create_report_package
     # 分析到站记录和空间台账，不能替代工单、告警处置等确定性流程约束。
     operations_analysis:
       - read_file
@@ -462,6 +469,7 @@ backend:
       - jiangsu_fetch_qc_monitoring_curve
       - jiangsu_query_operations_graph
       - knowledge_graph_query
+      - create_report_package
     station_fault_diagnosis:
       - read_file
       - edit_file
@@ -485,6 +493,7 @@ backend:
       # 江苏运维主题数据集受控SQL（本地 mart 语义层）
       - execute_jiangsu_mart_sql
       - jiangsu_prepare_fault_work_order
+      - create_report_package
   mode_prompt_files:
     assistant: projects/jiangsu-ops/prompts/assistant.md
     knowledge: projects/jiangsu-ops/prompts/knowledge.md

@@ -17,6 +17,7 @@ EXPECTED_TOOLS = [
     "write_file",
     "web_search",
     "web_fetch",
+    "create_report_package",
 ]
 
 
