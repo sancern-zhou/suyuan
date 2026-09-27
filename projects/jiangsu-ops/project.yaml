@@ -222,8 +222,6 @@ backend:
       - create_report_chart
       - create_report_package
       - publish_report
-      - render_report_package
-      - validate_report_package
       - manage_editable_ppt
       - create_pptx_with_ppt_master
       - validate_pptx
@@ -383,10 +381,9 @@ backend:
       - view_skill
       - submit_task_review
       # 例行工单审核正式报告与子代理复核仍依赖以下工具，暂保留。
+      # render/validate_report_package 自上游合并后由 create_report_package 内部渲染，仅 custom 任务经全局注册表可调。
       - create_report_package
       - publish_report
-      - render_report_package
-      - validate_report_package
       - jiangsu_query_operations_graph
       - knowledge_graph_query
       # 江苏运维主题数据集受控SQL（本地 mart 语义层）
@@ -445,8 +442,6 @@ backend:
       - create_report_chart
       - execute_python
       - create_report_package
-      - render_report_package
-      - validate_report_package
       - publish_report
       - knowledge_graph_query
       # 江苏运维主题数据集受控SQL（本地 mart 语义层）

@@ -23,8 +23,6 @@ EXPECTED_TOOLS = [
     "create_report_chart",
     "create_report_package",
     "publish_report",
-    "render_report_package",
-    "validate_report_package",
     "manage_editable_ppt",
     "create_pptx_with_ppt_master",
     "validate_pptx",

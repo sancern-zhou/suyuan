@@ -143,7 +143,7 @@ class ScheduledTaskConversationPersistence:
                 "scheduled_execution_id": execution.execution_id,
                 "scheduled_task_name": task.name,
                 "scheduled_task_context": self._scheduled_task_context(task, execution),
-                "scheduled_task_tools": ["submit_task_review"],
+                "scheduled_task_tools": ["submit_task_review"] if "submit_task_review" in (task.tool_names or []) else [],
             },
         )
         self.transcript_persistence.apply_complete(
