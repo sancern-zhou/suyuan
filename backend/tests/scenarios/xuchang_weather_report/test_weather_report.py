@@ -69,6 +69,8 @@ def test_returning_wind_grade_is_preserved_and_empty_sources_keep_template():
         narrative["outlook"][key] = "当日预报未提供。"
     qmd = qmd_report.build_qmd(facts, narrative, None)
     assert "无法生成七日连续气象图" in qmd
+    assert "02～08时" in qmd
+    assert "02~08时" not in qmd
     assert qmd_report.validate_qmd_structure(qmd, has_chart=False)["outlook_rows"] == 8
 
 

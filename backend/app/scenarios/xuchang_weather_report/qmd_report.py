@@ -158,7 +158,7 @@ def build_qmd(facts: dict[str, Any], agent_text: dict[str, Any], chart_name: str
     slots = ("02~08时", "08~14时", "14~20时", "20~02时")
     matrix_rows = []
     for slot in slots:
-        cells = [_td(slot)]
+        cells = [_td(slot.replace("~", "～"))]
         for day in facts["matrix"]:
             data = day["slots"][slot]
             suffix = "（部分覆盖）" if data["sample_count"] and not data["complete"] else ""
@@ -254,7 +254,7 @@ def validate_qmd_structure(qmd: str, *, has_chart: bool) -> dict[str, Any]:
         if count is not None and len(table)-(0 if index == 3 else 1) != count: raise ValueError(f"第{index+1}张表行数不符合模板")
     if reader.tables[1][0][0] != "时段" or len(reader.tables[1][0]) != 8:
         raise ValueError("扩散矩阵表头不符合模板")
-    if [row[0] for row in reader.tables[1][1:]] != ["02~08时", "08~14时", "14~20时", "20~02时"]:
+    if [row[0] for row in reader.tables[1][1:]] != ["02～08时", "08～14时", "14～20时", "20～02时"]:
         raise ValueError("扩散矩阵时段不符合模板")
     if qmd.count("![未来7天气象小时变化]") != (1 if has_chart else 0):
         raise ValueError("七日连续气象图数量错误")
