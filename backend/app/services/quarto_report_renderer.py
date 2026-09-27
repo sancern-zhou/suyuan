@@ -169,11 +169,13 @@ def normalize_chinese_ascii_quotes(text: str) -> str:
     return "".join(normalized)
 
 
-_NUMERIC_ASCII_RANGE_RE = re.compile(r"(?<=\d)\s*~\s*(?=\d)")
+_NUMERIC_ASCII_RANGE_RE = re.compile(
+    r"(?<=[0-9%\u3400-\u9fff])\s*~\s*(?=[0-9\u3400-\u9fff])"
+)
 
 
 def normalize_markdown_numeric_ranges(text: str) -> str:
-    """Keep numeric ranges as prose instead of Pandoc subscript syntax."""
+    """Keep report ranges as prose instead of Pandoc subscript syntax."""
     if "~" not in text:
         return text
 
@@ -181,8 +183,8 @@ def normalize_markdown_numeric_ranges(text: str) -> str:
     normalized: list[str] = []
     fence_char = ""
     fence_length = 0
-    fence_pattern = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})")
-    inline_code_pattern = re.compile(r"(`+[^`]*`+)")
+    fence_pattern = re.compile(r"^ {0,3}(?P<fence>\x60{3,}|~{3,})")
+    inline_code_pattern = re.compile(r"(\x60+[^\x60]*\x60+)")
 
     for line in lines:
         fence_match = fence_pattern.match(line)

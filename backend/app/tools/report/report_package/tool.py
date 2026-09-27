@@ -22,6 +22,7 @@ from app.services.quarto_report_renderer import (
     inspect_report_image_refs,
     normalize_markdown_numeric_ranges,
     normalize_chinese_ascii_quotes,
+    normalize_markdown_numeric_ranges,
     quarto_report_renderer,
 )
 from app.services.report_preview_refresh import (

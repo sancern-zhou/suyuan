@@ -14,6 +14,7 @@ import structlog
 from app.services.quarto_report_renderer import (
     MARKDOWN_IMAGE_PATTERN,
     markdown_image_path,
+    normalize_markdown_numeric_ranges,
     quarto_report_renderer,
 )
 
@@ -104,7 +105,9 @@ def _initialize_transient_source_preview(qmd_path: Path, report_dir: Path) -> No
     """Create a disposable package for presenting an otherwise unmapped QMD."""
     source_dir = qmd_path.parent.resolve()
     report_dir.mkdir(parents=True, exist_ok=True)
-    text = qmd_path.read_text(encoding="utf-8", errors="replace")
+    text = normalize_markdown_numeric_ranges(
+        qmd_path.read_text(encoding="utf-8", errors="replace")
+    )
     (report_dir / "report.qmd").write_text(text, encoding="utf-8")
 
     for match in MARKDOWN_IMAGE_PATTERN.finditer(text):
