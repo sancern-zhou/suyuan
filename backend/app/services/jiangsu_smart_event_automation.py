@@ -175,7 +175,11 @@ class JiangsuSmartEventAutomation:
                 continue
             candidates.append(event)
         candidates.sort(key=lambda event: event.get("evidence_checked_at") or "")
-        results["evidence"] = await service._collect_event_evidence(store, candidates[:config["evidence_batch_size"]])
+        try:
+            results["evidence"] = await service._collect_event_evidence(store, candidates[:config["evidence_batch_size"]])
+        except Exception as exc:  # noqa: BLE001 - 证据刷新落库冲突不阻塞本轮派发；下轮 tick 会按需重试
+            results["evidence"] = {"status": "failed", "error": str(exc)}
+            results["status"] = "partial"
         try:
             results["ai_queue"] = await self.dispatch_queue(now=now)
         except Exception as exc:
@@ -189,7 +193,7 @@ class JiangsuSmartEventAutomation:
         ``human_only=True`` 时只派发人工反馈/审核退回产生的增量卡，用于演示
         冻结等暂停自动抓取的场景：人工动作仍应执行，但不派生自动卡。
         """
-        from app.services.jiangsu_smart_event import SMART_EVENT_TASK_ID, _is_archived, detect_data_clue_tags
+        from app.services.jiangsu_smart_event import SMART_EVENT_TASK_ID, _is_archived
         from app.scheduled_tasks import get_scheduled_task_service
         service = self.service
         config = service.load_config()
@@ -214,7 +218,7 @@ class JiangsuSmartEventAutomation:
                 if _is_archived(event):
                     continue
                 package = event.get("evidence_package") or {}
-                update_initial_assessment(event, package, detect_data_clue_tags(event, package, config))
+                update_initial_assessment(event, package)
                 event["evidence_signature"] = evidence_signature(package)
                 related = [card for card in cards if card.get("event_id") == event["event_id"] and card.get("task_type") == "ai_judgment"]
                 if not related or (event.get("pending_delta") and all(card.get("status") in {"已完成", "已取消"} for card in related)):

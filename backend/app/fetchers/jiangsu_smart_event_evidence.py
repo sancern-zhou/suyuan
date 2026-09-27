@@ -340,36 +340,52 @@ def _power_environment_alarms(result: Any) -> list[dict[str, Any]]:
     return rows
 
 
-def _filter_station_alarm_noise(result: Any) -> Any:
-    """站房设备告警与数采报警同源混入自监控噪声（数据库/进程资源类），入包前复用同一诊断过滤器剔除。"""
+def _package_station_alarm_result(result: Any) -> Any:
+    """站房设备告警入包副本：剔除自监控噪声，明细裁剪为动环类。
+
+    站房设备告警（GetAlarmLogsAsync）与数采报警（GetAlarmLogListAsync）同源，
+    是同一告警表的两个投影，通用明细由数采报警源按事件自然日提供；这里只保留
+    数采报警接口没有的部分：平台分类统计（alarmStatistics）、设备状态位
+    （alarmState）与动环（动力环境）类明细。返回新对象、不原地改写共享结果——
+    动环历史门控消费的是同一 task 的完整结果，入包裁剪不得影响门控。
+    """
     if not isinstance(result, dict) or not isinstance(result.get("data"), list):
         return result
+    if result.get("success") is False:
+        return result
     source_count = 0
-    kept_count = 0
+    diagnostic_count = 0
+    env_count = 0
+    new_data: list[Any] = []
     for item in result["data"]:
         if not isinstance(item, dict) or not isinstance(item.get("result"), dict):
+            new_data.append(item)
             continue
         inner = item["result"]
         rows, stats = filter_diagnostic_alarm_rows(inner.get("alarmLogs") or [])
-        inner["alarmLogs"] = rows
+        env_rows = [row for row in rows if _is_power_environment_alarm(row)]
         source_count += stats["source_record_count"]
-        kept_count += stats["diagnostic_record_count"]
-    suppressed = source_count - kept_count
-    if not suppressed:
-        return result
-    metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
-    metadata["record_count"] = kept_count
+        diagnostic_count += stats["diagnostic_record_count"]
+        env_count += len(env_rows)
+        new_data.append({**item, "result": {**inner, "alarmLogs": env_rows}})
+    suppressed = source_count - diagnostic_count
+    metadata = dict(result.get("metadata")) if isinstance(result.get("metadata"), dict) else {}
+    metadata["record_count"] = env_count
     metadata["alarm_filter"] = {
         "source_record_count": source_count,
-        "diagnostic_record_count": kept_count,
+        "diagnostic_record_count": diagnostic_count,
         "suppressed_record_count": suppressed,
     }
-    result["metadata"] = metadata
-    result["summary"] = (
-        f"站房告警查询完成：保留 {kept_count} 条诊断告警，"
-        f"过滤 {suppressed} 条非诊断性系统告警。"
+    metadata["station_alarm_trim"] = {
+        "power_environment_record_count": env_count,
+        "note": "站房设备告警与数采报警同源，入包仅保留动环明细与分类统计/设备状态位；通用明细见数采报警源。",
+    }
+    packaged = {**result, "data": new_data, "metadata": metadata}
+    packaged["summary"] = (
+        f"站房告警查询完成：诊断告警 {diagnostic_count} 条（过滤非诊断系统告警 {suppressed} 条），"
+        f"与数采报警同源，入包仅保留动环明细 {env_count} 条及分类统计/设备状态位。"
     )
-    return result
+    return packaged
 
 
 def _qc_record_is_severe(row: Any) -> bool:
@@ -1178,7 +1194,7 @@ class JiangsuSmartEventEvidenceFetcher:
             if "station_alarm" in fetch_set:
 
                 async def station_alarm_source() -> dict[str, Any]:
-                    return _filter_station_alarm_noise(await station_alarm_task)
+                    return _package_station_alarm_result(await station_alarm_task)
 
                 sources["station_alarm"] = station_alarm_source()
         if "monitoring" in fetch_set:
@@ -1268,7 +1284,7 @@ class JiangsuSmartEventEvidenceFetcher:
             "仪器状态仅在事件窗口命中目标污染物仪器告警时抓取；告警回看七天并按恢复时间判断重叠，查询失败不视为无告警。",
             "动环历史仅在站房设备告警日志出现动环（动力环境）类告警时抓取。",
             "质控操作记录仅保留严重告警类型（不合格/超差等非合格结果）。",
-            "站房设备告警接口原生仅返回查询当日数据。",
+            "站房设备告警接口原生仅返回查询当日数据，且与数采报警同源；入包仅保留动环明细与分类统计/设备状态位，通用明细见数采报警源。",
             "平台告警源已移除：原 ALMsummary 仓储无平台 API 可查。",
             "合规工单按事件涉及自然日查询，用于判断同站点同日操作是否能够解释异常线索。",
             "区域对比按同区县省控站点取原始记录；全市其余省控站点仅计算事件窗口均值与差值，不落原始记录。",

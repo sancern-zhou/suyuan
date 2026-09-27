@@ -29,10 +29,7 @@ from uuid import uuid4
 import structlog
 
 from app.config.config_manager import config_manager
-from app.fetchers.jiangsu_smart_event_evidence import (
-    POLLUTANT_FIELDS,
-    JiangsuSmartEventEvidenceFetcher,
-)
+from app.fetchers.jiangsu_smart_event_evidence import JiangsuSmartEventEvidenceFetcher
 from app.scheduled_tasks.models import TaskEvent
 from app.services.jiangsu_smart_event_automation import (
     AUTOMATION_DEFAULTS,
@@ -42,6 +39,7 @@ from app.services.jiangsu_smart_event_automation import (
     update_initial_assessment,
 )
 from app.services.jiangsu_smart_event_store import SCHEMA as EVENT_STORE_SCHEMA
+from app.services.jiangsu_smart_event_store import EventStoreConflict
 from app.services.jiangsu_smart_event_store import JiangsuEventPackages
 from app.tools.jiangsu.alarm_records import JiangsuAlarmRecordsTool
 from app.utils.path_config import format_agent_path, get_data_registry, resolve_agent_path
@@ -155,11 +153,6 @@ COMPLIANCE_TAG_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("进站记录", ("进站", "巡检", "现场检查", "保养", "例行", "维护")),
 )
 
-# 小时浓度超限参考阈值（μg/m³）；CO 上游单位不确定，默认不检测，可通过配置启用。
-DEFAULT_HOUR_LIMITS: dict[str, Any] = {
-    "SO2": 150, "NO2": 200, "O3": 200, "PM10": 150, "PM2.5": 75, "CO": None,
-}
-
 DEFAULT_CONFIG: dict[str, Any] = {
     **AUTOMATION_DEFAULTS,
     "version": 1,
@@ -180,9 +173,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "数据异常",
     ],
     "ai_event_type_dictionary": list(AI_EVENT_TYPES),
-    "data_anomaly_threshold_pct": 20,
     "pm_rise_threshold_pct": 20,
-    "pollutant_hour_limits": dict(DEFAULT_HOUR_LIMITS),
 }
 
 
@@ -308,10 +299,28 @@ def _initial_event_name(site_name: Any, tag_name: Any) -> str:
 
 
 def _bucket_key(event: dict[str, Any]) -> tuple[str, str] | None:
-    """同站点 + 事件开始时间所在自然日 构成同日合并键。"""
+    """同站点 + 最早报警线索（子站报警标签）所在自然日 构成同日合并键。
+
+    不能用 event_start_time：证据检测会把开始时间向前扩到扫描窗口内最早异常
+    （回看 24h，常跨零点到前一天），用它取自然日会让存量桶的键漂移到前一天，
+    新告警（按告警日取键）永远匹配不上。报警标签锚定告警发生时间、只在合并
+    时增加，最早一条不变，键稳定。无报警标签的事件回退 event_start_time。
+    """
     site = str(event.get("site_id") or "").strip()
+    if not site:
+        return None
+    alarm_starts = [
+        parsed for parsed in (
+            _parse_time(tag.get("tag_start_time"))
+            for tag in event.get("clue_tags", []) or []
+            if isinstance(tag, dict) and tag.get("tag_source") == "子站报警"
+        )
+        if parsed is not None
+    ]
+    if alarm_starts:
+        return site, min(alarm_starts).astimezone().date().isoformat()
     start = _parse_time(event.get("event_start_time"))
-    if not site or start is None:
+    if start is None:
         return None
     return site, start.astimezone().date().isoformat()
 
@@ -328,200 +337,6 @@ def _event_fingerprint(event: dict[str, Any]) -> str:
         sort_keys=True,
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
-
-
-def _compact_tags(tags: list[dict[str, Any]], *, max_items: int = 30) -> list[dict[str, Any]]:
-    """Compact clue tags for inline embedding into evidence packages."""
-    if not tags:
-        return []
-    compact: list[dict[str, Any]] = []
-    for tag in tags[:max_items]:
-        if not isinstance(tag, dict):
-            continue
-        compact.append({
-            key: (str(value)[:160] if isinstance(value, str) else value)
-            for key, value in tag.items()
-            if key in {
-                "tag_id", "tag_source", "tag_category", "tag_name", "tag_object",
-                "tag_start_time", "tag_end_time", "tag_display_text",
-            }
-        })
-    return compact
-
-
-def _hour_value(record: dict[str, Any], canonical: str) -> float | None:
-    aliases = next((fields for name, fields in POLLUTANT_FIELDS if name == canonical), (canonical,))
-    for alias in aliases:
-        if alias in record:
-            raw = record.get(alias)
-            try:
-                number = float(raw)
-            except (TypeError, ValueError):
-                return None
-            if number != number or number <= -900:
-                return None
-            return number
-    return None
-
-
-def _detection_tag(
-    event_id: str, *, source: str, category: str, name: str, obj: str,
-    start: str | None, end: str | None, note: str,
-) -> dict[str, Any]:
-    tag_id = f"detect:{event_id}:{category}:{name}:{obj}"
-    return {
-        "tag_id": tag_id,
-        "tag_source": source,
-        "tag_category": category,
-        "tag_name": name,
-        "tag_object": obj,
-        "tag_start_time": start,
-        "tag_end_time": end,
-        "tag_confidence": None,
-        "clue_id": tag_id,
-        "tag_display_text": f"{category}：{name}" + (f"（{note}）" if note else ""),
-        "detected": True,
-    }
-
-
-def detect_data_clue_tags(
-    event: dict[str, Any], package: dict[str, Any], config: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """基于证据包小时数据检测断数/超限/异常数据线索标签（V3.0 5.2/5.4/5.5）。
-
-    检测标签的 tag_id 是确定性的：同一事件同一异常只会生成一个标签，
-    重复抓取证据不会导致标签无限增长或证据指纹反复失效。
-    """
-    monitoring = ((package.get("sources") or {}).get("monitoring") or {})
-    hour_records = (
-        (monitoring.get("data") or {}).get("station_hour") or {}
-    ).get("data") if isinstance(monitoring.get("data"), dict) else None
-    hour_records = hour_records if isinstance(hour_records, list) else []
-    if not hour_records:
-        return []
-    event_id = str(event.get("event_id"))
-    windows = package.get("time_windows") if isinstance(package.get("time_windows"), dict) else {}
-    # 检测标签时间锚定事件窗口（告警起止），避免把合并桶的结束时间拉伸到自然日末尾；
-    # 旧包回退 day/query 窗口。
-    scope = (
-        windows.get("event") if isinstance(windows.get("event"), dict) else
-        windows.get("day") if isinstance(windows.get("day"), dict) else
-        windows.get("query") if isinstance(windows.get("query"), dict) else {}
-    )
-    start_text, end_text = scope.get("start"), scope.get("end")
-    tags: list[dict[str, Any]] = []
-    threshold_pct = float(config.get("data_anomaly_threshold_pct") or 20) / 100.0
-    limits_raw = config.get("pollutant_hour_limits") if isinstance(config.get("pollutant_hour_limits"), dict) else {}
-    limits = {**DEFAULT_HOUR_LIMITS, **limits_raw}
-
-    series: list[tuple[str | None, dict[str, float | None]]] = []
-    for record in hour_records:
-        if not isinstance(record, dict):
-            continue
-        time_text = str(record.get("timePoint") or "") or None
-        series.append((time_text, {name: _hour_value(record, name) for name, _ in POLLUTANT_FIELDS}))
-    if not series:
-        return []
-
-    # ---- 断数检测 ----
-    station_factor_threshold = int(config.get("station_missing_factor_threshold") or 2)
-    multi_threshold = int(config.get("multi_instrument_threshold") or 2)
-    per_factor_missing: dict[str, int] = {name: 0 for name, _ in POLLUTANT_FIELDS}
-    max_hour_missing_factors = 0
-    for _, values in series:
-        missing = [name for name, value in values.items() if value is None]
-        max_hour_missing_factors = max(max_hour_missing_factors, len(missing))
-        for name in missing:
-            per_factor_missing[name] += 1
-    if max_hour_missing_factors >= station_factor_threshold:
-        tags.append(_detection_tag(
-            event_id, source="断数报警", category="断数", name="站点级断数",
-            obj=str(event.get("site_name") or event.get("site_id") or ""),
-            start=start_text, end=end_text,
-            note=f"单小时最多 {max_hour_missing_factors} 项污染物同时缺失",
-        ))
-    elif max_hour_missing_factors >= multi_threshold:
-        tags.append(_detection_tag(
-            event_id, source="断数报警", category="断数", name="多仪器断数",
-            obj=str(event.get("site_name") or event.get("site_id") or ""),
-            start=start_text, end=end_text,
-            note=f"单小时 {max_hour_missing_factors} 项污染物同时缺失",
-        ))
-    else:
-        for name, missing_hours in per_factor_missing.items():
-            if missing_hours > 0:
-                tags.append(_detection_tag(
-                    event_id, source="断数报警", category="断数", name="单仪器断数",
-                    obj=name, start=start_text, end=end_text,
-                    note=f"{name} 缺失 {missing_hours} 个小时值",
-                ))
-
-    # ---- 超限 / 负值 / 恒值 / 突变检测 ----
-    for name, _ in POLLUTANT_FIELDS:
-        limit = limits.get(name)
-        values = [(time, values.get(name)) for time, values in series]
-        present = [(time, value) for time, value in values if value is not None]
-        if not present:
-            continue
-        if limit is not None:
-            exceed = [value for _, value in present if value > float(limit)]
-            if exceed:
-                tags.append(_detection_tag(
-                    event_id, source="超限报警", category="超限", name="浓度超限",
-                    obj=name, start=start_text, end=end_text,
-                    note=f"{name} 最高 {max(exceed):g} 超过阈值 {float(limit):g}",
-                ))
-        negatives = [value for _, value in present if value < 0]
-        if negatives:
-            tags.append(_detection_tag(
-                event_id, source="异常数据识别", category="数据", name="负值或无效值",
-                obj=name, start=start_text, end=end_text,
-                note=f"{name} 出现 {len(negatives)} 个负值/无效值",
-            ))
-        flat_run = 1
-        max_flat = 1
-        for index in range(1, len(present)):
-            if abs(present[index][1] - present[index - 1][1]) < 0.1 and abs(present[index][1]) > 0.1:
-                flat_run += 1
-                max_flat = max(max_flat, flat_run)
-            else:
-                flat_run = 1
-        if max_flat >= 4:
-            tags.append(_detection_tag(
-                event_id, source="异常数据识别", category="数据", name="恒值异常",
-                obj=name, start=start_text, end=end_text,
-                note=f"{name} 连续 {max_flat} 小时几乎不变",
-            ))
-        for index in range(1, len(present)):
-            previous_value = present[index - 1][1]
-            current_value = present[index][1]
-            delta = abs(current_value - previous_value)
-            if delta >= max(threshold_pct * abs(previous_value), 5.0):
-                name_text = "数据突升" if current_value > previous_value else "数据突降"
-                tags.append(_detection_tag(
-                    event_id, source="异常数据识别", category="数据", name=name_text,
-                    obj=name, start=present[index][0], end=present[index][0],
-                    note=f"{name} 由 {previous_value:g} 变为 {current_value:g}",
-                ))
-                break
-
-    # ---- 区域离群检测（依赖区域差值，存在时才检测） ----
-    comparison = (package.get("sources") or {}).get("comparison")
-    deltas = comparison.get("regional_deltas") if isinstance(comparison, dict) else None
-    if isinstance(deltas, dict):
-        for name, pct in (deltas.get("nearby_station_delta_pct") or {}).items():
-            if pct is not None and abs(float(pct)) >= float(config.get("data_anomaly_threshold_pct") or 20):
-                delta_value = (deltas.get("nearby_station_delta") or {}).get(name)
-                if delta_value is not None and abs(float(delta_value)) >= 5:
-                    direction = "高于" if float(delta_value) > 0 else "低于"
-                    tags.append(_detection_tag(
-                        event_id, source="异常数据识别", category="数据", name="离群异常",
-                        obj=name, start=start_text, end=end_text,
-                        note=f"{name} 较周边站点{direction} {abs(float(pct)):g}%",
-                    ))
-    return tags
-
-
 def normalize_compliance_tag(record: dict[str, Any], *, source_hint: str = "工单") -> dict[str, Any] | None:
     """把运维工单/质控/门禁记录归一为 V3.0 合规线索标签。"""
     if not isinstance(record, dict):
@@ -1133,7 +948,24 @@ class JiangsuSmartEventService:
         land on an already-judged bucket, a pending delta is recorded and an
         incremental AI task card reuses the previous conversation.
         """
+        # 落库是乐观锁（updated_at 比对）：加载与保存之间若有并发写
+        # （如同进程 AI 结果回写），重载最新库态重新合并后再试，
+        # 避免整轮告警同步报废丢窗口。
+        for attempt in range(3):
+            try:
+                return self._upsert_events_once(incoming, actor=actor)
+            except EventStoreConflict:
+                if attempt == 2:
+                    raise
+        raise EventStoreConflict("smart_event_upsert_exhausted")
+
+    def _upsert_events_once(
+        self, incoming: list[dict[str, Any]], *, actor: dict[str, Any] | None = None
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], list[str], list[str]]:
         store = self._load_store()
+        # DB 模式下 _migrate_same_day_store 不随加载触发（文件模式专属路径），
+        # 在每次告警落库前自愈一次：把历史上被拆开的同站点同日事件收拢成单桶。
+        self._migrate_same_day_store(store)
         existing = {str(item.get("event_id")): item for item in store.get("events", []) if isinstance(item, dict)}
         tasks = [item for item in store.get("tasks", []) if isinstance(item, dict)]
         buckets: dict[tuple[str, str], dict[str, Any]] = {}
@@ -1262,20 +1094,11 @@ class JiangsuSmartEventService:
             target.setdefault("evidence", {})["package"] = package
             target["updated_at"] = datetime.now().astimezone().isoformat()
             if package.get("status") in {"success", "partial"}:
-                # 证据就绪后基于小时数据检测断数/超限/异常线索并挂靠回事件桶；
-                # 检测标签具有确定性 tag_id，随后再计算证据指纹避免反复失效。
-                detected = detect_data_clue_tags(target, package, self.load_config())
-                if detected:
-                    self._attach_tags_to_bucket(
-                        store, target, detected,
-                        actor={"user_id": "system", "username": "data-detection"},
-                    )
-                    package["detected_clue_tags"] = _compact_tags(detected)
                 # 记录证据指纹；事件窗口或线索变化后指纹失效，触发重新抓取。
                 target["evidence_fingerprint"] = _event_fingerprint(target) if unchanged else fingerprint
             else:
                 target.pop("evidence_fingerprint", None)
-            update_initial_assessment(target, package, detected)
+            update_initial_assessment(target, package)
             target["evidence_signature"] = evidence_signature(package)
             if evidence_changed and self._bucket_judged(target) and package.get("status") in {"success", "partial"}:
                 target.setdefault("pending_delta", {}).update({"evidence_changed": True,
@@ -1522,7 +1345,12 @@ class JiangsuSmartEventService:
             "source_metadata": fetched["source_metadata"],
             "synced_at": datetime.now().astimezone().isoformat(),
         }
-        await self.asave_store(store)
+        try:
+            await self.asave_store(store)
+        except EventStoreConflict:
+            # last_sync 只是同步信息标记；并发写抢先落库时跳过即可，
+            # 事件数据已在 _upsert_events 内（带重试）持久化。
+            pass
         return {
             "events": fetched["events"],
             "stored_event_count": len(store.get("events", [])),
@@ -1577,6 +1405,8 @@ class JiangsuSmartEventService:
             except Exception:  # noqa: BLE001 - 合规挂靠失败不阻塞告警同步
                 return
             for row in (result.get("data") or []) if isinstance(result, dict) else []:
+                if not isinstance(row, dict):
+                    continue
                 station = str(row.get("stationCode") or row.get("code") or "").strip()
                 tag = normalize_compliance_tag(row, source_hint="工单")
                 if station and tag:
@@ -1592,6 +1422,8 @@ class JiangsuSmartEventService:
             except Exception:  # noqa: BLE001
                 return
             for row in (result.get("data") or []) if isinstance(result, dict) else []:
+                if not isinstance(row, dict):
+                    continue
                 station = str(row.get("stationCode") or row.get("code") or "").strip()
                 tag = normalize_compliance_tag(row, source_hint="质控")
                 if station and tag:
@@ -1608,6 +1440,8 @@ class JiangsuSmartEventService:
                 rows = (result.get("data") or []) if isinstance(result, dict) else []
                 seen: set[str] = set()
                 for row in rows:
+                    if not isinstance(row, dict):
+                        continue
                     person = str(row.get("personName") or "").strip()
                     if not person or (person, station) in seen:
                         continue

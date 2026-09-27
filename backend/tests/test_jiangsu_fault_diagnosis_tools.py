@@ -18,7 +18,25 @@ from app.tools.jiangsu.fault_diagnosis import (
     JiangsuReviewEvidenceTool,
     JiangsuStationAlarmLogsTool,
     JiangsuStationEnvironmentHistoryTool,
+    _project_alarms,
 )
+
+
+def test_project_alarms_keeps_real_api_fields():
+    projection = _project_alarms({"alarm_logs": [
+        {"alarmGrade": "一般告警", "alarmStatus": "1", "alarmTime": "2026-09-24 06:02:11",
+         "alarmType": 11214, "description": "【电磁阀前压力】数值：125.419300",
+         "stationCode": "3015A", "stationName": "睢宁永安路"},
+    ]}, cap=5)
+
+    assert projection["recent"] == [{
+        "alarmTime": "2026-09-24 06:02:11",
+        "description": "【电磁阀前压力】数值：125.419300",
+        "alarmType": 11214,
+        "alarmGrade": "一般告警",
+        "stationName": "睢宁永安路",
+        "stationCode": "3015A",
+    }]
 
 
 def test_station_fault_diagnosis_exposes_only_read_only_evidence_and_knowledge_tools():

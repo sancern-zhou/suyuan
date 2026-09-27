@@ -13,13 +13,9 @@ from app.services.jiangsu_smart_event import (
     normalize_alarm_event,
     persist_scheduled_task_result,
     normalize_compliance_tag,
-    detect_data_clue_tags,
     NAMING_LABELS,
     COMPLIANCE_TAG_RULES,
-    DEFAULT_HOUR_LIMITS,
-    _compact_tags,
     _primary_tag,
-    _detection_tag,
 )
 
 
@@ -1072,163 +1068,6 @@ def test_normalize_compliance_tag_unmatched_returns_none():
 
 
 # ---------------------------------------------------------------------------
-# Phase 4: detect_data_clue_tags (missing / exceed / anomaly / outlier)
-# ---------------------------------------------------------------------------
-
-
-def _make_event(event_id="evt-1", site_name="示例站", site_id="A"):
-    return {"event_id": event_id, "site_name": site_name, "site_id": site_id}
-
-
-def _make_hour_records(records):
-    return {"monitoring": {"data": {"station_hour": {"data": records}}}, "gaps": []}
-
-
-def _make_package(station_hour_data, regional_deltas=None):
-    pkg = {
-        "status": "success",
-        "sources": _make_hour_records(station_hour_data),
-        "time_windows": {
-            "event": {"start": "2026-09-09 10:00:00", "end": "2026-09-09 11:00:00"},
-            "day": {"start": "2026-09-09 00:00:00", "end": "2026-09-09 23:00:00"},
-        },
-    }
-    if regional_deltas is not None:
-        pkg["sources"]["comparison"] = {"regional_deltas": regional_deltas}
-    return pkg
-
-
-def _config(**overrides):
-    base = {
-        "station_missing_factor_threshold": 2,
-        "multi_instrument_threshold": 2,
-        "data_anomaly_threshold_pct": 20,
-        "pollutant_hour_limits": {**DEFAULT_HOUR_LIMITS},
-    }
-    base.update(overrides)
-    return base
-
-
-def test_detect_missing_station_level_multiple_pollutants_missing():
-    records = [
-        {"timePoint": "2026-09-09 10:00:00", "SO2": 10.0, "NO2": None, "PM10": None, "PM2_5": None, "O3": 5.0, "CO": 0.5},
-        {"timePoint": "2026-09-09 11:00:00", "SO2": 12.0, "NO2": None, "PM10": None, "PM2_5": None, "O3": 6.0, "CO": 0.6},
-    ]
-    tags = detect_data_clue_tags(_make_event(), _make_package(records), _config())
-    names = [t["tag_name"] for t in tags]
-    assert "站点级断数" in names
-    assert "多仪器断数" not in names
-    assert "单仪器断数" not in names
-
-
-def test_detect_missing_multi_instrument():
-    records = [
-        {"timePoint": "2026-09-09 10:00:00", "SO2": 10.0, "NO2": None, "PM10": None, "PM2_5": 3.0, "O3": 5.0, "CO": 0.5},
-    ]
-    tags = detect_data_clue_tags(_make_event(), _make_package(records), _config(station_missing_factor_threshold=3))
-    names = [t["tag_name"] for t in tags]
-    assert "多仪器断数" in names
-    assert "站点级断数" not in names
-
-
-def test_detect_missing_single_instrument():
-    records = [
-        {"timePoint": "2026-09-09 10:00:00", "SO2": 10.0, "NO2": 20.0, "PM10": 30.0, "PM2_5": 15.0, "O3": 5.0, "CO": None},
-    ]
-    tags = detect_data_clue_tags(_make_event(), _make_package(records), _config())
-    names = [t["tag_name"] for t in tags]
-    assert "单仪器断数" in names
-    assert "站点级断数" not in names
-    assert "多仪器断数" not in names
-
-
-def test_detect_exceed_tag():
-    records = [
-        {"timePoint": "2026-09-09 10:00:00", "SO2": 200.0, "NO2": 10.0, "PM10": 10.0, "PM2_5": 5.0, "O3": 5.0, "CO": 0.5},
-        {"timePoint": "2026-09-09 11:00:00", "SO2": 50.0, "NO2": 10.0, "PM10": 10.0, "PM2_5": 5.0, "O3": 5.0, "CO": 0.5},
-    ]
-    tags = detect_data_clue_tags(_make_event(), _make_package(records), _config())
-    exceed = [t for t in tags if t["tag_name"] == "浓度超限" and t["tag_object"] == "SO2"]
-    assert len(exceed) == 1
-    assert "200" in exceed[0]["tag_display_text"]
-
-
-def test_detect_negative_value():
-    records = [
-        {"timePoint": "2026-09-09 10:00:00", "SO2": -5.0, "NO2": 10.0, "PM10": 10.0, "PM2_5": 5.0, "O3": 5.0, "CO": 0.5},
-    ]
-    tags = detect_data_clue_tags(_make_event(), _make_package(records), _config())
-    neg = [t for t in tags if t["tag_name"] == "负值或无效值"]
-    assert len(neg) == 1
-
-
-def test_detect_flatline_anomaly():
-    records = [
-        {"timePoint": f"2026-09-09 {h:02d}:00:00", "SO2": 42.0, "NO2": 10.0 + h, "PM10": 30.0 + h, "PM2_5": 15.0 + h, "O3": 5.0 + h, "CO": 0.5 + h * 0.1}
-        for h in range(5)
-    ]
-    tags = detect_data_clue_tags(_make_event(), _make_package(records), _config())
-    flat = [t for t in tags if t["tag_name"] == "恒值异常"]
-    assert len(flat) == 1
-    assert flat[0]["tag_object"] == "SO2"
-
-
-def test_detect_spike_anomaly():
-    records = [
-        {"timePoint": "2026-09-09 08:00:00", "SO2": 10.0, "NO2": 10.0, "PM10": 10.0, "PM2_5": 5.0, "O3": 5.0, "CO": 0.5},
-        {"timePoint": "2026-09-09 09:00:00", "SO2": 50.0, "NO2": 10.0, "PM10": 10.0, "PM2_5": 5.0, "O3": 5.0, "CO": 0.5},
-    ]
-    tags = detect_data_clue_tags(_make_event(), _make_package(records), _config())
-    spike = [t for t in tags if t["tag_name"] == "数据突升"]
-    assert len(spike) == 1
-    assert spike[0]["tag_object"] == "SO2"
-
-
-def test_detect_drop_anomaly():
-    records = [
-        {"timePoint": "2026-09-09 08:00:00", "SO2": 50.0, "NO2": 10.0, "PM10": 10.0, "PM2_5": 5.0, "O3": 5.0, "CO": 0.5},
-        {"timePoint": "2026-09-09 09:00:00", "SO2": 10.0, "NO2": 10.0, "PM10": 10.0, "PM2_5": 5.0, "O3": 5.0, "CO": 0.5},
-    ]
-    tags = detect_data_clue_tags(_make_event(), _make_package(records), _config())
-    drop = [t for t in tags if t["tag_name"] == "数据突降"]
-    assert len(drop) == 1
-
-
-def test_detect_outlier_from_regional_deltas():
-    records = [
-        {"timePoint": "2026-09-09 10:00:00", "SO2": 10.0, "NO2": 100.0, "PM10": 10.0, "PM2_5": 5.0, "O3": 5.0, "CO": 0.5},
-    ]
-    deltas = {
-        "nearby_station_delta": {"NO2": 80.0},
-        "nearby_station_delta_pct": {"NO2": 30.0},
-        "city_rest_delta": {"NO2": 60.0},
-        "city_rest_delta_pct": {"NO2": 25.0},
-    }
-    tags = detect_data_clue_tags(_make_event(), _make_package(records, deltas), _config())
-    outlier = [t for t in tags if t["tag_name"] == "离群异常"]
-    assert len(outlier) == 1
-    assert outlier[0]["tag_object"] == "NO2"
-
-
-def test_detect_no_records_returns_empty():
-    tags = detect_data_clue_tags(_make_event(), _make_package([]), _config())
-    assert tags == []
-
-
-def test_detect_noisy_records_skipped():
-    records = [
-        {"timePoint": "2026-09-09 10:00:00", "SO2": 10.0, "NO2": 10.0, "PM10": 10.0, "PM2_5": 10.0, "O3": 10.0, "CO": None},
-    ]
-    tags = detect_data_clue_tags(_make_event(), _make_package(records), _config())
-    names = [t["tag_name"] for t in tags]
-    assert "站点级断数" not in names
-    assert "多仪器断数" not in names
-    single = [t for t in tags if t["tag_name"] == "单仪器断数"]
-    assert len(single) == 1
-    assert single[0]["tag_object"] == "CO"
-
-
-# ---------------------------------------------------------------------------
 # Phase 4: _attach_tags_to_bucket
 # ---------------------------------------------------------------------------
 
@@ -1414,31 +1253,6 @@ async def test_sync_compliance_clues_unmatched_orders_not_attached(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Phase 4: _compact_tags
-# ---------------------------------------------------------------------------
-
-
-def test_compact_tags_limits_fields_and_truncates():
-    tags = [{"tag_id": "t1", "tag_name": "x" * 200, "tag_source": "告警", "tag_category": "告警",
-             "tag_display_text": "x" * 300, "irrelevant_field": "should_be_excluded",
-             "tag_object": "site", "tag_start_time": "2026-09-09 10:00:00",
-             "tag_end_time": "2026-09-09 10:00:00", "tag_confidence": 0.9, "clue_id": "x"}]
-    compact = _compact_tags(tags)
-    assert len(compact) == 1
-    item = compact[0]
-    assert "irrelevant_field" not in item
-    assert "tag_confidence" not in item
-    assert len(item["tag_name"]) == 160
-    assert len(item["tag_display_text"]) == 160
-
-
-def test_compact_tags_empty_input():
-    assert _compact_tags([]) == []
-    assert _compact_tags(None) == []
-    assert _compact_tags([None, 123]) == []
-
-
-# ---------------------------------------------------------------------------
 # Phase 4: fetcher integration — alarm sync calls compliance sync
 # ---------------------------------------------------------------------------
 
@@ -1455,59 +1269,6 @@ async def test_alarm_sync_fetcher_calls_compliance_sync(tmp_path, monkeypatch):
     assert all(item["status"] in {"no_buckets", "synced"} for item in result["compliance_sync"])
 
 
-# ---------------------------------------------------------------------------
-# Phase 4: evidence detection integration — _collect_event_evidence calls detect
-# ---------------------------------------------------------------------------
-
-
-class EvidenceWithHourDataFetcher:
-    def __init__(self, hour_data):
-        self.hour_data = hour_data
-        self.fetched = []
-
-    async def fetch(self, event, **kwargs):
-        self.fetched.append(event.get("event_id"))
-        return {
-            "status": "success",
-            "sources": {
-                "monitoring": {"data": {"station_hour": {"data": self.hour_data}}},
-            },
-            "gaps": [],
-        }
-
-
-@pytest.mark.asyncio
-async def test_collect_event_evidence_attaches_detection_tags(tmp_path):
-    hour_data = [
-        {"timePoint": "2026-09-09 10:00:00", "SO2": -5.0, "NO2": 10.0, "PM10": 10.0, "PM2.5": 5.0, "O3": 5.0, "CO": 0.5},
-    ]
-    evidence = EvidenceWithHourDataFetcher(hour_data)
-    tool = SameDayAlarmsTool()
-    service = JiangsuSmartEventService(tool, data_root=tmp_path, evidence_fetcher=evidence)
-    store = service._load_store()
-    bucket = {
-        "event_id": "evt-detect", "site_name": "示例站", "site_id": "A",
-        "alarm_time": "2026-09-09T08:00:00+08:00",
-        "event_start_time": "2026-09-09T08:00:00+08:00", "event_end_time": "2026-09-09T08:00:00+08:00",
-        "clue_tags": [], "primary_clue_tag": None, "clue_count": 0,
-        "event_status": "未研判", "created_at": "2026-09-09T08:00:00+08:00", "updated_at": "2026-09-09T08:00:00+08:00",
-    }
-    store["events"] = [bucket]
-    service._save_store(store)
-
-    result = await service.collect_event_evidence("evt-detect")
-    assert result["collected"] == 1
-
-    reloaded = service._load_store()
-    reloaded_bucket = reloaded["events"][0]
-    tag_names = [t["tag_name"] for t in reloaded_bucket["clue_tags"]]
-    assert "负值或无效值" in tag_names
-    assert reloaded_bucket.get("evidence_fingerprint") is not None
-    persisted = json.loads(service._evidence_package_path("evt-detect").read_text())
-    assert persisted["detected_clue_tags"] == reloaded_bucket["evidence_package"]["detected_clue_tags"]
-
-
-@pytest.mark.asyncio
 async def test_sync_collects_each_bucket_once_and_reuses_unchanged_evidence(tmp_path):
     evidence = FakeEvidenceFetcher()
     tool = SameDayAlarmsTool()
