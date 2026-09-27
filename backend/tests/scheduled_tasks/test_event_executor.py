@@ -529,6 +529,7 @@ async def test_custom_broadcast_task_adds_broadcast_tool_at_runtime(tmp_path, mo
     assert requested_tools == [
         "execute_python",
         "read_file",
+        "submit_task_review",
         "broadcast_social_users",
     ]
 

@@ -76,7 +76,7 @@ class ScheduledTaskConversationPersistence:
             "scheduled_execution_id": execution.execution_id,
             "scheduled_task_name": task.name,
             "scheduled_task_context": self._scheduled_task_context(task, execution),
-            "scheduled_task_tools": ["submit_task_review"] if "submit_task_review" in (task.tool_names or []) else [],
+            "scheduled_task_tools": ["submit_task_review"],
         })
 
         existing = await self.session_manager.load_session(session.session_id)
@@ -143,7 +143,7 @@ class ScheduledTaskConversationPersistence:
                 "scheduled_execution_id": execution.execution_id,
                 "scheduled_task_name": task.name,
                 "scheduled_task_context": self._scheduled_task_context(task, execution),
-                "scheduled_task_tools": ["submit_task_review"] if "submit_task_review" in (task.tool_names or []) else [],
+                "scheduled_task_tools": ["submit_task_review"],
             },
         )
         self.transcript_persistence.apply_complete(
@@ -300,7 +300,7 @@ class ScheduledTaskConversationPersistence:
                 "scheduled_execution_id": execution.execution_id,
                 "scheduled_task_name": task.name,
                 "scheduled_task_context": self._scheduled_task_context(task, execution),
-                "scheduled_task_tools": ["submit_task_review"] if "submit_task_review" in (task.tool_names or []) else [],
+                "scheduled_task_tools": ["submit_task_review"],
             },
         )
         replace_transcript = getattr(

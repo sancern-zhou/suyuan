@@ -124,8 +124,13 @@ class ScheduledTaskExecutor:
         skills instruct the agent to read them directly. Without it the agent
         only sees the inline event clues and silently reports captured evidence
         as missing.
+
+        ``submit_task_review`` is an optional tool: prompts and skills decide
+        when a human-confirmable review card is warranted, so tasks never have
+        to declare it in ``tool_names`` and tasks that produce no reviews
+        simply never call it.
         """
-        names: list[str] = ["read_file"]
+        names: list[str] = ["read_file", "submit_task_review"]
         if task.broadcast_enabled:
             names.append(SCHEDULED_BROADCAST_TOOL)
         if (
