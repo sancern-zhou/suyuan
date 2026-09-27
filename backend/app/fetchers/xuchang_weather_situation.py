@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import structlog
@@ -15,6 +16,19 @@ from app.scheduled_tasks.models import TaskEvent
 
 logger = structlog.get_logger()
 TZ = ZoneInfo("Asia/Shanghai")
+
+
+async def build_weather_evidence_event(_task=None) -> TaskEvent:
+    """Build a current snapshot for either the scheduled or manual report."""
+    now = datetime.now(TZ)
+    package = await asyncio.to_thread(write_evidence_package, now.date())
+    return TaskEvent(
+        event_id=f"xuchang-weather-{now:%Y%m%d}-{now:%H%M%S}-{uuid4().hex[:8]}",
+        event_type=EVENT_TYPE,
+        occurred_at=now,
+        attributes={"city": "许昌市", "start_date": package["start_date"]},
+        payload={"city": "许昌市", **package, "evidence_package_path": package["manifest_path"]},
+    )
 
 
 class XuchangAirQualityForecastFetcher(CityAirQualityForecastFetcher):
@@ -33,16 +47,9 @@ class XuchangWeatherSituationEvidenceFetcher(DataFetcher):
                          schedule="5 8 * * 1", version="1.0.0")
 
     async def fetch_and_store(self) -> dict:
-        now = datetime.now(TZ)
-        package = await asyncio.to_thread(write_evidence_package, now.date())
-        event = TaskEvent(
-            event_id=f"xuchang-weather-{now:%Y%m%d}-{now:%H%M%S}",
-            event_type=EVENT_TYPE, occurred_at=now,
-            attributes={"city": "许昌市", "start_date": package["start_date"]},
-            payload={"city": "许昌市", **package, "evidence_package_path": package["manifest_path"]},
-        )
+        event = await build_weather_evidence_event()
         from app.scheduled_tasks import get_scheduled_task_service
 
         await get_scheduled_task_service().publish_event(event)
-        logger.info("xuchang_weather_evidence_published", **package)
-        return package
+        logger.info("xuchang_weather_evidence_published", **event.payload)
+        return event.payload

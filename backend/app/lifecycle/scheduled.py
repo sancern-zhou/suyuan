@@ -26,9 +26,14 @@ def register_project_workflow_handlers(project: str) -> None:
     from app.scheduled_tasks.workflow_tasks import register_workflow_handler
 
     if project == "xuchang":
+        from app.fetchers.xuchang_weather_situation import build_weather_evidence_event
+        from app.scenarios.xuchang_weather_report.constants import EVENT_TYPE
+        from app.scheduled_tasks.event_builders import register_manual_event_builder
         from app.scenarios.xuchang_station_deviation.alert_notification import (
             run_station_alert_workflow,
         )
+
+        register_manual_event_builder(EVENT_TYPE, build_weather_evidence_event)
 
         async def run_xuchang_station_alert(
             task: Any,
