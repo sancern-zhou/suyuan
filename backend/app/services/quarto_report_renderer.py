@@ -170,7 +170,7 @@ def normalize_chinese_ascii_quotes(text: str) -> str:
 
 
 _NUMERIC_ASCII_RANGE_RE = re.compile(
-    r"(?<=[0-9%\u3400-\u9fff])\s*~\s*(?=[0-9\u3400-\u9fff])"
+    r"(?<=[0-9%\u3400-\u9fff])\s*~\s*(?=[0-9\u3400-\u9fff]|<\d|&lt;\d)"
 )
 
 
