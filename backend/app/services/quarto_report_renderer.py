@@ -506,7 +506,11 @@ class QuartoReportRenderer:
                 docx_path = report_dir / "report.docx"
                 image_cleanup = normalize_docx_image_paragraphs(docx_path)
                 logger.info("quarto_docx_image_paragraphs_normalized", **image_cleanup)
-                style_cleanup = finalize_government_docx(docx_path)
+                preserve_template = self._qmd_preserve_template_structure(qmd_path)
+                style_cleanup = finalize_government_docx(
+                    docx_path, add_toc=not preserve_template,
+                    number_headings=not preserve_template,
+                )
                 logger.info("quarto_docx_government_style_finalized", **style_cleanup)
                 return docx_path
             except ReportRenderError:
@@ -535,7 +539,11 @@ class QuartoReportRenderer:
             if self._qmd_has_usable_reference_doc(qmd_path):
                 args.extend(["--reference-doc", self._qmd_reference_doc_values(qmd_path)[0]])
             self._run_quarto(report_dir, args)
-            finalize_government_docx(candidate)
+            preserve_template = self._qmd_preserve_template_structure(qmd_path)
+            finalize_government_docx(
+                candidate, add_toc=not preserve_template,
+                number_headings=not preserve_template,
+            )
             html_report.apply_styles(candidate)
             output = report_dir / "report.docx"
             candidate.replace(output)
@@ -574,6 +582,14 @@ class QuartoReportRenderer:
         if end_index < 0:
             return ""
         return text[3:end_index]
+
+    def _qmd_preserve_template_structure(self, qmd_path: Path) -> bool:
+        """Honor an explicit fixed-template opt-out of DOCX TOC and renumbering."""
+        header = self._read_qmd_front_matter(qmd_path)
+        return bool(re.search(
+            r"^preserve-template-structure\s*:\s*true\s*$",
+            header, flags=re.IGNORECASE | re.MULTILINE,
+        ))
 
     def _qmd_reference_doc_values(self, qmd_path: Path) -> list[str]:
         """Return reference-doc values from qmd YAML front matter."""
