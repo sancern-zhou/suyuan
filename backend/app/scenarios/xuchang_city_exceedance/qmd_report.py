@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.utils.path_config import resolve_agent_path
 
 TITLE = "许昌市城市超标污染快速溯源分析报告"
+TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _local_stamp(value: Any) -> datetime | None:
+    try:
+        stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return stamp.astimezone(TZ) if stamp.tzinfo else stamp.replace(tzinfo=TZ)
 
 
 def _cell(value: Any) -> str:
@@ -44,12 +55,27 @@ def build_qmd_report(evidence: dict[str, Any], agent_text: dict[str, Any]) -> st
     screening = evidence.get("enterprise_screening") or {}
     pollutant = str(evidence.get("target_pollutant") or "")
     unit = "指数" if pollutant == "AQI" else "μg/m³"
-    process_rows = [row for row in evidence.get("station_hourly") or []
-                    if window.get("start") <= row.get("data_time", "") <= window.get("last_trigger_hour", "")]
+    start = _local_stamp(window.get("start"))
+    end = _local_stamp(window.get("last_trigger_hour")) or start
     field = {"PM2.5": "pm25", "PM10": "pm10", "O3": "o3", "AQI": "aqi"}.get(pollutant)
-    concentrations = [(row.get("data_time"), float(row[field])) for row in process_rows
-                      if field and row.get(field) is not None]
+    concentrations = []
+    if start and end and field:
+        for row in evidence.get("station_hourly") or []:
+            hour = _local_stamp(row.get("data_time"))
+            if hour is None or not start <= hour <= end:
+                continue
+            try:
+                concentrations.append((hour.isoformat(), float(row[field])))
+            except (KeyError, TypeError, ValueError):
+                continue
     peak = max(concentrations, key=lambda item: item[1]) if concentrations else None
+    rule_labels = {
+        "published_hourly_aqi": "连续小时发布AQI≥101",
+        "pm25_business_high": "PM2.5业务高值≥75 μg/m³",
+        "station_peer_deviation": "站点相对同期同类站偏高",
+    }
+    actual_rules = sorted({item.get("rule") for item in trigger.get("rules") or [] if item.get("rule")})
+    trigger_basis = "；".join(rule_labels.get(rule, rule) for rule in actual_rules)
     lines = [
         "---", f'title: "{TITLE}"', f'date: "{evidence.get("target_date") or ""}"',
         "format:", "  html:", "    toc: false", "    number-sections: false",
@@ -67,7 +93,7 @@ def build_qmd_report(evidence: dict[str, Any], agent_text: dict[str, Any]) -> st
             ("峰值时间", peak[0] if peak else None),
             ("目标站有效小时", quality.get("target_valid_hours")),
             ("气象有效小时", quality.get("meteorology_hours")),
-            ("判定依据", trigger.get("standard")),
+            ("判定依据", trigger_basis or trigger.get("standard")),
         ]), "",
         "## 二、空气质量时空特征", "",
         str(agent_text.get("air_quality_analysis") or "站点时空差异仅作为筛查线索。"), "",

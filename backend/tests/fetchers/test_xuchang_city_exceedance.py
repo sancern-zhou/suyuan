@@ -10,7 +10,7 @@ import pytest
 
 from app.scenarios.xuchang_city_exceedance.candidate_screening import screen_inventory_candidates
 from app.scenarios.xuchang_city_exceedance.process import detect_processes
-from app.scenarios.xuchang_city_exceedance.qmd_report import write_qmd_report_from_evidence
+from app.scenarios.xuchang_city_exceedance.qmd_report import build_qmd_report, write_qmd_report_from_evidence
 from app.scenarios.xuchang_transport_escalation.service import XuchangTransportEscalationService
 from app.fetchers.xuchang_city_exceedance import XuchangCityExceedanceFetcher
 from app.fetchers.xuchang_city_exceedance import _temperature
@@ -122,6 +122,56 @@ def test_negative_temperature_is_valid_meteorological_evidence():
     assert _temperature(-4.5) == -4.5
 
 
+def test_report_peak_includes_start_hour_when_source_timestamp_is_naive():
+    evidence = {
+        "target_pollutant": "PM2.5",
+        "process_window": {"start": "2026-09-22T08:00:00+08:00",
+                           "last_trigger_hour": "2026-09-22T09:00:00+08:00"},
+        "trigger": {"rules": [{"rule": "published_hourly_aqi"}]},
+        "station_hourly": [
+            {"data_time": "2026-09-22T08:00:00", "pm25": 64},
+            {"data_time": "2026-09-22T09:00:00", "pm25": 63},
+        ],
+    }
+    report = build_qmd_report(evidence, {})
+    assert "64.0 μg/m³" in report
+    assert "2026-09-22T08:00:00+08:00" in report
+    assert "连续小时发布AQI≥101" in report
+
+
+def test_national_hour_loader_normalizes_historical_station_codes(monkeypatch, tmp_path):
+    columns = ("station_id", "name", "lon", "lat", "aqi", "pollutant",
+               "pm25", "pm10", "o3", "no2", "so2", "co", "data_time")
+    hour = datetime(2026, 9, 26, 10)
+
+    class Cursor:
+        description = [(column,) for column in columns]
+
+        def execute(self, query, params):
+            assert "2398A" in params and "1003A" in params
+            assert params[0] == "411000"
+
+        def fetchall(self):
+            return [("2398A", "开发区", 113.79, 33.99, 105, "PM2.5",
+                     82, 100, 50, 20, 5, 0.7, hour)]
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("app.fetchers.xuchang_city_exceedance.pyodbc.connect",
+                        lambda *args, **kwargs: Connection())
+    fetcher = XuchangCityExceedanceFetcher(
+        analysis_service=XuchangTransportEscalationService(output_root=tmp_path))
+    rows = fetcher.load_national(hour, hour)
+    assert len(rows) == 1
+    assert rows[0]["station_id"] == "1003A"
+    assert rows[0]["source_station_id"] == "2398A"
+
+
 @pytest.mark.asyncio
 async def test_process_job_writes_brief_map_asset_and_publishes_completed_event(monkeypatch, tmp_path):
     class Runner:
@@ -192,7 +242,7 @@ async def test_fetcher_queues_hourly_process_without_daily_evaluation(monkeypatc
     now = datetime(2026, 9, 27, 12, 20, tzinfo=TZ)
     fetcher = XuchangCityExceedanceFetcher(
         analysis_service=service, now_factory=lambda: now,
-        township_loader=lambda start, end: {"status": "available", "rows": []},
+        township_loader=lambda start, end: {"status": "not_available", "reason": "timeout", "rows": []},
     )
     rows = [_row("1003A", datetime(2026, 9, 27, hour), aqi=108, pm25=80)
             for hour in (10, 11)]
@@ -212,3 +262,4 @@ async def test_fetcher_queues_hourly_process_without_daily_evaluation(monkeypatc
     job = next(iter(service._load_state()["jobs"].values()))
     assert job["window_policy"] == "last_six_trigger_hours_with_six_preprocess_controls"
     assert "daily_value" not in job
+    assert job["township_and_provincial_transport"]["township_source_reason"] == "timeout"

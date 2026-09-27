@@ -28,7 +28,14 @@ from app.scheduled_tasks.models import TaskEvent
 
 logger = structlog.get_logger()
 TZ = ZoneInfo("Asia/Shanghai")
-NATIONAL_STATION_IDS = ("1003A", "1005A", "1008A", "1009A", "1011A", "1012A")
+# dat_station_hour still uses historical codes for the six national sites;
+# normalize them to the IDs used by the current station catalog and reports.
+NATIONAL_SOURCE_TO_CANONICAL = {
+    "2398A": "1003A", "3134A": "1005A", "3337A": "1008A",
+    "3338A": "1009A", "4180A": "1011A", "4259A": "1012A",
+}
+NATIONAL_STATION_IDS = (*NATIONAL_SOURCE_TO_CANONICAL,
+                        *NATIONAL_SOURCE_TO_CANONICAL.values())
 CONFIRMED_EVENT = "xuchang.city_pollution_episode.confirmed"
 REQUESTED_EVENT = "xuchang.city_source_analysis.requested"
 REGIONAL_CITIES = ("郑州市", "开封市", "平顶山市", "漯河市", "周口市", "商丘市", "驻马店市")
@@ -79,7 +86,7 @@ def _station_summary(rows: list[dict[str, Any]], field: str) -> list[dict[str, A
             "district": anchor.get("district"), "lat": anchor.get("lat"), "lon": anchor.get("lon"),
             "valid_hours": len(valid), "mean": round(sum(item[1] for item in valid) / len(valid), 2),
             "peak": max(item[1] for item in valid),
-            "peak_time": max(valid, key=lambda item: item[1])[0].isoformat(),
+            "peak_time": _local(max(valid, key=lambda item: item[1])[0]).replace(tzinfo=TZ).isoformat(),
         })
     return sorted(result, key=lambda item: item["mean"], reverse=True)
 
@@ -111,7 +118,16 @@ class XuchangCityExceedanceFetcher(DataFetcher):
                 ["411000", *NATIONAL_STATION_IDS, start, end],
             )
             columns = [item[0] for item in cursor.description]
-            return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+            normalized = {}
+            for raw in cursor.fetchall():
+                row = dict(zip(columns, raw, strict=True))
+                source_id = str(row["station_id"])
+                row["station_id"] = NATIONAL_SOURCE_TO_CANONICAL.get(source_id, source_id)
+                row["source_station_id"] = source_id
+                key = (row["station_id"], row["data_time"])
+                if key not in normalized or source_id == row["station_id"]:
+                    normalized[key] = row
+            return list(normalized.values())
         finally:
             connection.close()
 
@@ -191,7 +207,7 @@ class XuchangCityExceedanceFetcher(DataFetcher):
             peer_rows = [row for row in national if _in_window(row.get("data_time"), start, end)]
             try:
                 regional_rows = self.load_regional(start, end)
-                regional_status = "available"
+                regional_status = "available" if regional_rows else "not_available:empty_window"
             except Exception as exc:
                 regional_rows, regional_status = [], f"not_available:{type(exc).__name__}"
             meteo = await self.load_meteorology(start, end)
@@ -214,11 +230,14 @@ class XuchangCityExceedanceFetcher(DataFetcher):
                 "trigger": {"rules": process["triggers"], "hours": process["trigger_hours"],
                             "standard": process["data_standard"]},
                 "hourly_rows": hourly_rows,
-                "station_hourly": [{**row, "data_time": row["data_time"].isoformat()} for row in station_rows],
+                "station_hourly": [{**row, "data_time": _local(row["data_time"]).replace(tzinfo=TZ).isoformat()}
+                                   for row in station_rows],
                 "meteorology_evidence": meteo,
                 "township_and_provincial_transport": {
                     "status": "available" if nearby_townships or regional_rows else "not_available",
                     "township_source_status": township_result.get("status"),
+                    "township_source_reason": township_result.get("reason"),
+                    "township_source": township_result.get("source"),
                     "regional_source_status": regional_status,
                     "national_station_summary": _station_summary(peer_rows, field),
                     "township_station_summary": _station_summary(nearby_townships, field),
