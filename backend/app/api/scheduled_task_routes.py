@@ -21,6 +21,7 @@ from app.scheduled_tasks import (
     TriggerType,
 )
 from app.scheduled_tasks.models import WorkspaceEntry, HistoryLearningConfig
+from app.scheduled_tasks.event_builders import get_manual_event_builder
 from app.scheduled_tasks.storage.task_case_storage import (
     MemoryVersionConflictError,
     TaskCaseStorage,
@@ -733,7 +734,8 @@ async def execute_task_now(
         _require_task_access(task, user)
 
         if task.trigger_type == TriggerType.EVENT:
-            event = service.claim_storage.latest_event(task.event_type or "")
+            builder = get_manual_event_builder(task.event_type or "")
+            event = (await builder(task)) if builder else service.claim_storage.latest_event(task.event_type or "")
             if not event:
                 raise HTTPException(
                     status_code=409,
@@ -742,7 +744,7 @@ async def execute_task_now(
             dispatch = await service.publish_event(
                 event,
                 wait=False,
-                force_retry=True,
+                force_retry=builder is None,
                 target_task_id=task_id,
             )
             if not dispatch.accepted_task_ids:
