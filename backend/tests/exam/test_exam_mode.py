@@ -18,6 +18,7 @@ def test_enforcement_exam_has_only_the_minimal_tools():
         "web_search",
         "web_fetch",
         "schedule_task",
+        "create_report_package",
     ]
     assert get_tool_order("enforcement_exam") == list(tools)
     assert "bash" not in tools

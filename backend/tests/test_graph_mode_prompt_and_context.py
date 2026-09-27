@@ -34,6 +34,7 @@ def test_graph_mode_exposes_existing_safe_tools_only():
         "grep",
         "list_directory",
         "search_files",
+        "create_report_package",
     ]
     assert "execute_python" not in tools
     assert "write_file" not in tools
@@ -52,6 +53,7 @@ def test_graph_mode_tool_order_matches_registry_order():
         "grep",
         "list_directory",
         "search_files",
+        "create_report_package",
     ]
 
 

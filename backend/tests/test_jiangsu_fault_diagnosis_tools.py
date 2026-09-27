@@ -56,6 +56,7 @@ def test_station_fault_diagnosis_exposes_only_read_only_evidence_and_knowledge_t
         "jiangsu_fetch_qc_monitoring_curve",
         "jiangsu_query_operations_graph",
         "knowledge_graph_query",
+        "create_report_package",
     ]
 
 
