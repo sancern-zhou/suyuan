@@ -51,3 +51,10 @@ async def test_tool_rejects_missing_execution_context():
     tool = ListSessionResourcesTool(service=object())
     result = await tool.execute(context=None)
     assert result["success"] is False
+
+
+def test_schema_guides_chart_image_reuse():
+    schema = ListSessionResourcesTool(service=object()).get_function_schema()
+    assert "chart-image" in schema["description"]
+    assert "file_path" in schema["description"]
+    assert "chart-image" in schema["parameters"]["properties"]["logical_key"]["description"]

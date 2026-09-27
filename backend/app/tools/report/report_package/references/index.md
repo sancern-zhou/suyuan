@@ -7,8 +7,8 @@
 1. 准备完整 `report.qmd`，包含 YAML front matter 和正文。
 2. 图表、图片、表格使用真实本地文件路径传入 `assets`。
 3. QMD 中引用报告包内相对路径，例如 `assets/charts/chart_01.png` 或 `assets/table_01.csv`。
-4. 调用 `create_report_package` 保存报告包并渲染 HTML 预览。
-5. 调用 `validate_report_package` 检查 `report.qmd`、图片引用、HTML 预览和导出产物。
+4. 调用 `create_report_package` 保存报告包；可指定 `output_formats: ["html", "docx"]`，一次渲染并验收两种导出。程序化定时任务若已生成完整 QMD 文件，可传 `source_qmd_path` 代替 `qmd_content`；真实资源文件仍需列入 `assets`。
+5. 检查工具返回的 `report.qmd`、图片引用、HTML 预览和导出产物验收结果；需要独立复验时再调用 `validate_report_package`。
 
 ## QMD Rules
 

@@ -26,6 +26,13 @@ def test_scheduled_task_prompt_marks_unattended_execution():
     assert "任务名称、任务描述、执行指令、调度和筛选条件均视为用户已提前配置并确认" in prompt
     assert "不要以“请确认”“等待用户确认”“确认后继续”等形式中途结束" in prompt
     assert "必须在本次执行内直接调用并等待工具返回" in prompt
+    assert "submit_task_review" not in prompt
+
+    selected = task.model_copy(update={"tool_names": ["submit_task_review"]})
+    selected_prompt = ScheduledTaskExecutor._build_task_prompt(
+        selected.prompt, task=selected, execution_id="exec_selected_review",
+    )
+    assert "submit_task_review" in selected_prompt
 
 
 def test_scheduled_parent_context_marks_expert_sub_agent_unattended():

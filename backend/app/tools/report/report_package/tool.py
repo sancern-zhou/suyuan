@@ -480,9 +480,10 @@ class CreateReportPackageTool(LLMTool):
                     "source_qmd_path": {
                         "type": "string",
                         "description": (
-                            "可编辑的原始 QMD 文件路径，仅作为来源元数据记录；不会直接覆盖"
-                            "报告包内 report.qmd。HTML、DOCX 和 QMD 下载始终使用经 assets "
-                            "复制及路径规范化后的报告包发布稿。"
+                            "程序化定时任务可传入已生成的完整 QMD 文件路径，代替 "
+                            "qmd_content；提供 qmd_content 时仅作为来源元数据记录。"
+                            "不会直接覆盖报告包内 report.qmd。HTML、DOCX 和 QMD 下载"
+                            "始终使用经 assets 复制及路径规范化后的报告包发布稿。"
                         ),
                     },
                     "title": {"type": "string", "description": "报告标题，可选。"},
@@ -502,7 +503,12 @@ class CreateReportPackageTool(LLMTool):
                     },
                     "assets": {
                         "type": "array",
-                        "description": "真实文件路径或 {path,type,name}；见 references/index.md。",
+                        "description": (
+                            "真实文件路径或 {path,type,name}；见 references/index.md。"
+                            "复用当前会话已有 ECharts 图表时，先用 list_session_resources"
+                            "(logical_key=chart-image) 取得 PNG 的 file_path，作为 image asset；"
+                            "qmd_content 中使用报告包内的相对图片路径。"
+                        ),
                         "items": {
                             "oneOf": [
                                 {
@@ -534,14 +540,28 @@ class CreateReportPackageTool(LLMTool):
                     },
                     "render_html": {
                         "type": "boolean",
-                        "description": "渲染 HTML 预览。",
+                        "description": "兼容参数；未传 output_formats 时决定是否渲染 HTML。",
                         "default": True,
                     },
+                    "output_formats": {
+                        "type": "array",
+                        "description": (
+                            "在本次创建调用内完成渲染的格式；正式交付可传 "
+                            "['html', 'docx']，无需再调用 render_report_package。"
+                        ),
+                        "items": {
+                            "type": "string",
+                            "enum": ["html", "docx", "pdf", "share_html"],
+                        },
+                        "default": ["html"],
+                        "uniqueItems": True,
+                    },
                 },
-                # qmd_content is mandatory for LLM callers; source_qmd_path/qmd_path
-                # are only accepted for backwards compatibility with scheduled jobs
-                # that call execute() programmatically (bypassing this schema).
-                "required": ["report_id", "qmd_content"],
+                "required": ["report_id"],
+                "anyOf": [
+                    {"required": ["qmd_content"]},
+                    {"required": ["source_qmd_path"]},
+                ],
             },
         }
 
@@ -558,9 +578,27 @@ class CreateReportPackageTool(LLMTool):
         report_data: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         render_html: bool = True,
+        output_formats: Optional[List[str]] = None,
         **kwargs,
     ) -> Dict[str, Any]:
         safe_id = _safe_report_id(report_id)
+        requested_formats = list(
+            dict.fromkeys(output_formats if output_formats is not None else (["html"] if render_html else []))
+        )
+        unsupported_formats = [
+            item
+            for item in requested_formats
+            if item not in {"html", "docx", "pdf", "share_html"}
+        ]
+        if unsupported_formats:
+            return {
+                "success": False,
+                "data": {
+                    "error": f"Unsupported output formats: {', '.join(unsupported_formats)}",
+                    "report_id": safe_id,
+                },
+                "summary": "报告包创建失败：包含不支持的输出格式。",
+            }
 
         # Older callers supplied only the path of the QMD written by
         # write_file.  Keep that workflow working instead of allowing Python
@@ -765,7 +803,7 @@ format:
 
         html_preview = None
         render_error = None
-        if render_html:
+        if "html" in requested_formats:
             if validation.get("missing"):
                 render_error = f"Missing local image refs: {', '.join(validation['missing'])}"
                 logger.warning(
@@ -809,6 +847,26 @@ format:
             data["render_error"] = render_error
             data["error"] = render_error
 
+        render_results: Dict[str, Dict[str, Any]] = {}
+        render_errors: List[str] = []
+        if not render_error:
+            for output_format in requested_formats:
+                if output_format == "html":
+                    continue
+                format_result = await RenderReportPackageTool().execute(
+                    report_id=safe_id,
+                    format=output_format,
+                )
+                render_results[output_format] = format_result
+                if not format_result.get("success"):
+                    render_errors.append(
+                        format_result.get("summary")
+                        or str((format_result.get("data") or {}).get("error"))
+                        or f"Failed to render {output_format}"
+                    )
+        if render_results:
+            data["render_results"] = render_results
+
         attach_document_resources(
             data,
             qmd_path,
@@ -819,6 +877,53 @@ format:
             generator="create_report_package",
             metadata={"report_id": safe_id},
         )
+        resources = data.setdefault("resources", [])
+        resource_keys = {
+            (item.get("resource_key"), item.get("file_path"), item.get("format"))
+            for item in resources
+            if isinstance(item, dict)
+        }
+        for format_result in render_results.values():
+            for resource in format_result.get("resources", []):
+                if not isinstance(resource, dict):
+                    continue
+                key = (
+                    resource.get("resource_key"),
+                    resource.get("file_path"),
+                    resource.get("format"),
+                )
+                if key not in resource_keys:
+                    resources.append(resource)
+                    resource_keys.add(key)
+
+        final_validation = await ValidateReportPackageTool().execute(
+            report_id=safe_id,
+            require_html="html" in requested_formats and not bool(render_error),
+            require_docx=(
+                bool({"docx", "pdf"} & set(requested_formats))
+                and not bool(render_errors)
+            ),
+        )
+        validation_error = None
+        if not final_validation.get("success"):
+            validation_error = (
+                final_validation.get("summary")
+                or str((final_validation.get("data") or {}).get("error"))
+                or "report package validation failed"
+            )
+        pipeline_errors = [error for error in [render_error, *render_errors, validation_error] if error]
+        pipeline_error = "; ".join(pipeline_errors) if pipeline_errors else None
+        data["pipeline"] = {
+            "create": {"success": True},
+            "render": {
+                "success": not bool(render_error or render_errors),
+                "requested_formats": requested_formats,
+                "results": render_results,
+            },
+            "validation": final_validation,
+        }
+        if pipeline_error:
+            data["error"] = pipeline_error
         primary_artifact_path = str(html_path) if html_preview and html_path else str(qmd_path)
         resume_context = build_artifact_resume_context(
             data,
@@ -836,18 +941,18 @@ format:
         )
 
         return {
-            "success": not bool(render_error),
+            "success": not bool(pipeline_error),
             "data": data,
             "resources": data.get("resources", []),
             **resume_context,
             "metadata": {"generator": "create_report_package", "schema_version": "report_package.v1"},
             "summary": (
-                f"报告包创建失败：{render_error}。请按错误提示修复后重新打包。"
-                if render_error
+                f"报告包创建或验收失败：{pipeline_error}。请按错误提示修复后重新打包。"
+                if pipeline_error
                 else (
-                    f"报告包已创建：{safe_id}。右侧预览已生成，预览和下载由右侧文档面板处理。"
+                    f"报告包已创建、渲染并验收通过：{safe_id}。右侧预览和下载资源已发布。"
                     if html_preview
-                    else f"报告包已创建：{safe_id}。HTML预览尚未生成，右侧文档面板显示QMD预览。"
+                    else f"报告包已创建并验收通过：{safe_id}。未请求 HTML 预览。"
                 )
             ),
         }

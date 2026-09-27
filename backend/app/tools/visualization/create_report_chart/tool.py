@@ -53,6 +53,10 @@ class CreateReportChartTool(LLMTool):
             "weather_timeseries 仅绘制单日风向、风速、温度、降水概率、湿度五要素，禁止叠加污染物或跨日期叠加；"
             "仅 wind_timeseries/明确的组合图允许在气象背景上叠加污染物序列。"
             "如需复杂/自定义图表（3D图/多子图/科研图表），请使用 execute_python + matplotlib/seaborn/plotly。"
+            "生成的静态图在对话正文展示，不进入右侧交互图面板；"
+            "单独交付图表时可在最终答复中用 [[chart:<visual_id>]] 控制位置，visual_id 取返回的 visuals.id，"
+            "未指定位置的图由前端追加到本轮答复末尾。制作正式报告时图表仍可作为报告素材复用，"
+            "报告包内部配图不会自动逐张追加到对话。不要自行拼图片 URL 或本地路径。"
         )
         function_schema = {
             "name": "create_report_chart",
@@ -132,7 +136,10 @@ class CreateReportChartTool(LLMTool):
                         "description": "视觉密度配置，默认 report。",
                     },
                     "notes": {
-                        "type": "string",
+                        "oneOf": [
+                            {"type": "string"},
+                            {"type": "array", "items": {"type": "string"}},
+                        ],
                         "description": "图表意图、单位或口径。",
                     },
                     "options": {
@@ -149,6 +156,38 @@ class CreateReportChartTool(LLMTool):
                             "temperature_field/precipitation_probability_field/humidity_field。"
                             "复杂视觉规则请先读取引用文档。"
                         ),
+                    },
+                    "data_policy": {
+                        "type": "object",
+                        "description": (
+                            "数据语义策略。当前支持 sort：none、ascending、descending；"
+                            "工具会同步重排 labels 与所有 series。"
+                        ),
+                        "properties": {
+                            "sort": {"type": "string", "enum": ["none", "ascending", "descending"]}
+                        },
+                        "additionalProperties": False,
+                    },
+                    "emphasis": {
+                        "type": "object",
+                        "description": (
+                            "语义高亮配置。items 指定需要强调的分类；工具使用统一主题色，"
+                            "不接受任意颜色值。"
+                        ),
+                        "properties": {
+                            "items": {"type": "array", "items": {"type": "string"}},
+                            "mode": {"type": "string", "enum": ["primary", "muted"]},
+                        },
+                        "additionalProperties": False,
+                    },
+                    "annotations": {
+                        "type": "array",
+                        "description": (
+                            "声明式标识层。当前标准渲染器支持 value，后续可扩展 percent、threshold、callout；"
+                            "工具负责位置、避让和越界处理。柱状图数值标识可使用 "
+                            "{kind:'value', target:'bars', format:'auto', placement:'auto'}。"
+                        ),
+                        "items": {"type": "object"},
                     },
                 },
                 "required": ["chart_type", "title"],
@@ -177,11 +216,22 @@ class CreateReportChartTool(LLMTool):
         file_path: Optional[str] = None,
         output_context: str = "word",
         style_profile: str = "report",
-        notes: Optional[str] = None,
+        notes: Optional[Any] = None,
         options: Optional[Dict[str, Any]] = None,
+        data_policy: Optional[Dict[str, Any]] = None,
+        emphasis: Optional[Dict[str, Any]] = None,
+        annotations: Optional[list[Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         opts = dict(options or {})
+        if data_policy is not None:
+            opts["data_policy"] = dict(data_policy)
+        if emphasis is not None:
+            opts["emphasis"] = dict(emphasis)
+        if annotations is not None:
+            opts["annotations"] = list(annotations)
+        if notes is not None:
+            opts["notes"] = notes
         metadata = {
             "tool_name": self.name,
             "schema_version": "report_chart.v1",

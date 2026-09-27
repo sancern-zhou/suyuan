@@ -38,6 +38,13 @@ PROJECT_SCOPED_TOOL_NAMES = frozenset({
     "get_5min_data",
 })
 
+# Registered for internal orchestration and maintenance only. These tools must
+# never be published in an Agent mode, including project-defined modes.
+AGENT_INTERNAL_TOOL_NAMES = frozenset({
+    "render_report_package",
+    "validate_report_package",
+})
+
 # ===== 助手模式工具 =====
 ASSISTANT_TOOL_NAMES = [
     "list_session_resources",
@@ -53,8 +60,6 @@ ASSISTANT_TOOL_NAMES = [
     "create_html_artifact",
     "create_report_package",
     "publish_report",
-    "render_report_package",
-    "validate_report_package",
     # 轻量数据计算与网页检索抓取。
     "execute_python",
     "web_search",
@@ -199,8 +204,6 @@ REPORT_TOOL_NAMES = [
     # 报告产物收口
     "create_report_package",
     "publish_report",
-    "render_report_package",
-    "validate_report_package",
     # 报告工作流可按结构化任务协议委托专家分析
     "call_sub_agent",
     "run_agent_workflow",
@@ -257,8 +260,6 @@ OPS_TOOL_NAMES = [
     # 审核正式报告生成与验收
     "create_report_package",
     "publish_report",
-    "render_report_package",
-    "validate_report_package",
     # 子 Agent 复核
     "call_sub_agent",
     # 代码执行
@@ -307,7 +308,6 @@ SOCIAL_TOOL_NAMES = [
     "create_report_chart",
     "create_report_package",
     "publish_report",
-    "validate_report_package",
     # 网络搜索
     "web_search",
     "web_fetch",
@@ -418,7 +418,7 @@ def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
     将工具名称列表转换为字典格式（向后兼容）。
     字典保留插入顺序，因此列表顺序就是模式工具顺序。
     """
-    names = list(tool_names)
+    names = [name for name in tool_names if name not in AGENT_INTERNAL_TOOL_NAMES]
     if "list_session_resources" in names and "read_session_resource" not in names:
         names.insert(names.index("list_session_resources") + 1, "read_session_resource")
     return {name: "" for name in names}

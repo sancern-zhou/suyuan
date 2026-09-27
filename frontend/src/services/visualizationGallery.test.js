@@ -11,21 +11,23 @@ const visual = (overrides = {}) => ({
   ...overrides
 })
 
-test('shows chart and image groups in first-produced order', () => {
+test('shows only interactive charts in first-produced order', () => {
   const items = visualizationGalleryItems([
     visual({ resource_id: 'new', group_id: 'new', created_at: '2026-08-02T11:00:00Z' }),
-    visual({ resource_id: 'old', group_id: 'old', renderer: 'image', format: 'png', created_at: '2026-08-02T09:00:00Z' })
+    visual({ resource_id: 'old', group_id: 'old', created_at: '2026-08-02T09:00:00Z' }),
+    visual({ resource_id: 'static', group_id: 'static', renderer: 'image', format: 'png' }),
+    visual({ resource_id: 'static-chart', group_id: 'static-chart', interactive: false })
   ])
   assert.deepEqual(items.map(item => item.group.group_id), ['old', 'new'])
 })
 
-test('keeps one card per group and uses its preferred preview', () => {
+test('keeps one interactive chart card per group with an image rendition', () => {
   const items = visualizationGalleryItems([
     visual(),
     visual({ resource_id: 'chart-1-image', relation: 'rendition', renderer: 'image', format: 'png' })
   ])
   assert.equal(items.length, 1)
-  assert.equal(items[0].resource.resource_id, 'chart-1-image')
+  assert.equal(items[0].resource.resource_id, 'chart-1')
 })
 
 test('can include an explicitly opened visual attachment', () => {

@@ -883,7 +883,6 @@ async def analyze_stream(
                     or not persisted_context.get("task_id")
                     or not persisted_context.get("execution_id")
                     or not isinstance(persisted_tools, list)
-                    or not persisted_tools
                     or any(not isinstance(name, str) or not name for name in persisted_tools)
                 ):
                     raise HTTPException(status_code=409, detail="scheduled_context_incomplete")

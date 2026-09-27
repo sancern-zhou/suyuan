@@ -1,6 +1,14 @@
 from datetime import datetime
 
-from app.tools.report.report_package.tool import _normalize_static_qmd
+from app.tools.report.report_package.tool import CreateReportPackageTool, _normalize_static_qmd
+
+
+def test_create_report_package_accepts_qmd_source_path_in_schema():
+    schema = CreateReportPackageTool().function_schema["parameters"]
+    assert schema["required"] == ["report_id"]
+    assert {tuple(choice["required"]) for choice in schema["anyOf"]} == {
+        ("qmd_content",), ("source_qmd_path",),
+    }
 
 
 def test_normalize_static_qmd_removes_r_only_template_markup():

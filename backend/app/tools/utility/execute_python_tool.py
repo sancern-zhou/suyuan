@@ -2917,6 +2917,9 @@ def merge_excel_with_charts(file_paths, output_path):
                 "执行环境相互隔离，不得将自行写入、拼接或猜测得到的中间数据路径交给后续工具。"
                 "生成 Excel、Word、PDF 等交付文件必须先调用 artifact_path(filename) 获取输出路径并保存；"
                 "正式报告静态图表优先使用 create_report_chart；流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
+                "生成的静态图只在对话正文展示，不进入右侧交互图面板；"
+                "最终答复可用 [[chart:<visual_id>]] 将图片放在相应分析旁，visual_id 取工具返回的 visuals.id，"
+                "未指定位置的图片由前端追加到本轮答复末尾。不要自行拼图片 URL 或本地路径。"
                 "生成文件会自动归档并发布到会话资源目录；必须复用返回的 file_path，"
                 "不得自行构造资源路径，也不要再调用 publish_session_file；默认超时30秒。"
             ),
@@ -2966,6 +2969,8 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "① 正式报告Word/QMD静态图表 → 优先使用 create_report_chart；"
             "② 前端交互式图表/复杂数据可视化 → 使用 execute_echarts_python；"
             "③ 复杂Python绘图（3D/科研图/多子图） → 使用 execute_python + matplotlib/seaborn/plotly。"
+            "成功时会尝试为交互图登记同组 PNG 资源；复用到文档时用 list_session_resources 查找 chart-image。"
+            "最终答复需要控制图表位置时，可使用 [[chart:<visual_id>]] 占位符；未指定位置的图表由前端统一补充。"
             "通用计算和文件生成仍使用 execute_python。"
         )
 
@@ -3025,6 +3030,16 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
         result.setdefault("metadata", {})
         result["metadata"]["tool_name"] = "execute_echarts_python"
         result["metadata"]["visuals_count"] = len(echarts_visuals)
+        for visual in echarts_visuals:
+            try:
+                from app.tools.visualization.echarts_snapshot import render_echarts_png
+
+                image_path = await asyncio.to_thread(
+                    render_echarts_png, visual["data"], visual["id"]
+                )
+                visual["local_path"] = str(image_path)
+            except Exception as exc:
+                logger.warning("echarts_snapshot_failed", visual_id=visual.get("id"), error=str(exc))
         result.setdefault("resources", []).extend(
             resources_for_visuals(echarts_visuals, tool_name=self.name)
         )
@@ -3043,7 +3058,17 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                 "每次调用是独立环境；读取输入文件须通过 input_files 声明，代码中的同名列表提供校验后的绝对路径。"
                 "仅用于图表模式的 ECharts 输出：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
-                "图表通过统一会话资源目录发布和预览，不返回独立图片 URL。"
+                "图表通过统一会话资源目录发布；成功生成的 PNG 衍生资源标记为 chart-image。"
+                "同一图表有两种展示：PNG 静态图可嵌入对话正文，ECharts 交互图可在右侧面板查看。"
+                "对话展示由前端自动完成，不要在回复中拼图片 URL 或输出本地路径。"
+                "需要控制图表在最终 Markdown 中的位置时，使用 [[chart:<visual_id>]] 占位符；"
+                "visual_id 必须来自本次工具返回的 visuals.id，前端会将占位符替换为对应 PNG。"
+                "未使用占位符的成功图表仍会由前端追加到最终答复末尾。"
+                "若答复正文已嵌入静态图，应围绕图表说明结论；需要提及交互功能时，说明右侧面板可查看交互版本，"
+                "不要只说图表已在右侧面板展示，以免误导用户忽略正文中的图。"
+                "将已有交互图放入 Word/QMD 时，调用 list_session_resources，设置 logical_key=chart-image、"
+                "tool_name=execute_echarts_python，从结果取得 file_path 作为文档图片输入；"
+                "若没有 chart-image，说明静态渲染未成功，可使用 create_report_chart 生成报告图片。"
                 "多图时输出多行纯 JSON。禁止输出 CHART_1: 前缀、Markdown 代码块、解释文字包裹 JSON。"
                 "数据分析、清洗、中间计算和文件生成请使用 execute_python。"
             ),

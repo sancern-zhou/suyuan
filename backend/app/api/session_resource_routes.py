@@ -129,6 +129,13 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
     }
+    if item.resource_key in {"chart-spec", "chart-image"}:
+        dto["visual_id"] = item.metadata.get("visual_id")
+    if item.resource_key == "chart-spec":
+        dto["interactive"] = item.metadata.get("interactive", (
+            item.metadata.get("type") != "image"
+            and item.tool_name not in {"execute_python", "create_report_chart"}
+        ))
     board_id = _board_id_from_resource(item)
     if board_id:
         dto["board_id"] = board_id
@@ -430,11 +437,24 @@ async def get_session_resource_content(
         "Access-Control-Allow-Origin": "*",
     }
     if media_type == "text/html":
-        headers["Content-Security-Policy"] = (
-            "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-            "script-src 'self' 'unsafe-inline'; font-src 'self' data:; "
-            "object-src 'none'; base-uri 'none'"
-        )
+        if target.name.startswith("xuchang_air_quality_daily_review_"):
+            # This standalone report embeds AMap JSAPI and an inline timeline.
+            # Keep the relaxation scoped to its generated report filename.
+            headers["Cache-Control"] = "private, no-store"
+            headers["Content-Security-Policy"] = (
+                "default-src 'self'; img-src 'self' data: blob: https:; "
+                "style-src 'self' 'unsafe-inline' https:; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+                "https://webapi.amap.com https://restapi.amap.com https://a.amap.com; "
+                "connect-src 'self' https:; font-src 'self' data: https:; "
+                "worker-src 'self' blob:; object-src 'none'; base-uri 'none'"
+            )
+        else:
+            headers["Content-Security-Policy"] = (
+                "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+                "script-src 'self' 'unsafe-inline'; font-src 'self' data:; "
+                "object-src 'none'; base-uri 'none'"
+            )
     filename = target.name if asset_path is not None else (resource.label or target.name)
     response = FileResponse(
         path=target,
