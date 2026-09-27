@@ -21,6 +21,7 @@ from app.services.quarto_report_renderer import (
     format_report_image_validation_error,
     inspect_report_image_refs,
     normalize_chinese_ascii_quotes,
+    normalize_markdown_numeric_ranges,
     quarto_report_renderer,
 )
 from app.services.report_preview_refresh import (
@@ -410,6 +411,7 @@ def _normalize_static_qmd(qmd_content: str) -> str:
         flags=re.IGNORECASE,
     )
     normalized = normalize_chinese_ascii_quotes(normalized)
+    normalized = normalize_markdown_numeric_ranges(normalized)
     return normalized
 
 

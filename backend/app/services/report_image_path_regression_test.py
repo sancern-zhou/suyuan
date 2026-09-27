@@ -418,6 +418,20 @@ def test_standalone_source_preview_initializes_a_transient_package(tmp_path, mon
     assert (report_dir / "chart.png").read_bytes() == b"png"
 
 
+def test_standalone_source_preview_normalizes_weather_ranges(tmp_path):
+    source_qmd = tmp_path / "draft" / "report.qmd"
+    source_qmd.parent.mkdir()
+    source_qmd.write_text("湿度48%~58%，等级良~轻度污染。\n", encoding="utf-8")
+    report_dir = tmp_path / "reports" / "source_preview"
+
+    preview_refresh._initialize_transient_source_preview(source_qmd, report_dir)
+
+    assert source_qmd.read_text(encoding="utf-8") == "湿度48%~58%，等级良~轻度污染。\n"
+    assert (report_dir / "report.qmd").read_text(encoding="utf-8") == (
+        "湿度48%～58%，等级良～轻度污染。\n"
+    )
+
+
 @pytest.mark.asyncio
 async def test_real_quarto_renders_normalized_image_into_html_and_docx(tmp_path, monkeypatch):
     report_root = tmp_path / "reports"
