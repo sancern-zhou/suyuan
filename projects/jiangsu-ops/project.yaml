@@ -490,6 +490,8 @@ backend:
       # 江苏运维主题数据集受控SQL（本地 mart 语义层）
       - execute_jiangsu_mart_sql
       - jiangsu_prepare_fault_work_order
+      # 上游 c1dff0a6 起 submit_task_review 不再运行时注入，模式任务须经模式白名单显式提供。
+      - submit_task_review
   mode_prompt_files:
     assistant: projects/jiangsu-ops/prompts/assistant.md
     knowledge: projects/jiangsu-ops/prompts/knowledge.md
