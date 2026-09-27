@@ -47,14 +47,14 @@ test('results view filters executions by date, station, and pollutant', () => {
 })
 
 
-test('results view defaults the date filter to today when entering the page', () => {
+test('results view defaults to the last three calendar days on entry and reset', () => {
   const source = readSource('./ScheduledTaskResultsView.vue')
 
-  assert.match(source, /function todayStr\(\)/)
-  assert.match(source, /startDate: todayStr\(\)/)
-  assert.match(source, /endDate: todayStr\(\)/)
-  assert.match(source, /filters\.startDate = todayStr\(\)/)
-  assert.match(source, /filters\.endDate = todayStr\(\)/)
+  assert.match(source, /now\.setDate\(now\.getDate\(\) - daysAgo\)/)
+  assert.match(source, /startDate: dateStr\(2\)/)
+  assert.match(source, /endDate: dateStr\(\)/)
+  assert.equal((source.match(/filters\.startDate = dateStr\(2\)/g) || []).length, 2)
+  assert.equal((source.match(/filters\.endDate = dateStr\(\)/g) || []).length, 2)
 })
 
 

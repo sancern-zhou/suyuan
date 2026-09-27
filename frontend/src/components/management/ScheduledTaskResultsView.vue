@@ -188,15 +188,16 @@ const emit = defineEmits(['restore-execution-session'])
 
 const store = useScheduledTasksStore()
 
-function todayStr() {
+function dateStr(daysAgo = 0) {
   const now = new Date()
+  now.setDate(now.getDate() - daysAgo)
   const pad = part => String(part).padStart(2, '0')
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
 }
 
 const filters = reactive({
-  startDate: todayStr(),
-  endDate: todayStr(),
+  startDate: dateStr(2),
+  endDate: dateStr(),
   stationId: '',
   pollutant: ''
 })
@@ -369,8 +370,8 @@ function applyFilters() {
 }
 
 function resetFilters() {
-  filters.startDate = todayStr()
-  filters.endDate = todayStr()
+  filters.startDate = dateStr(2)
+  filters.endDate = dateStr()
   filters.stationId = ''
   filters.pollutant = ''
   load(1)
@@ -386,8 +387,8 @@ function reload() {
 }
 
 watch(() => props.task?.task_id, () => {
-  filters.startDate = todayStr()
-  filters.endDate = todayStr()
+  filters.startDate = dateStr(2)
+  filters.endDate = dateStr()
   filters.stationId = ''
   filters.pollutant = ''
   pagination.value = { page: 1, pageSize: props.pageSize, total: 0, totalPages: 0 }

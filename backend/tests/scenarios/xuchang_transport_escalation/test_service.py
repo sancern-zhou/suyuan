@@ -217,7 +217,11 @@ async def test_pending_job_outputs_diagnosis_enterprises_and_two_maps(tmp_path):
     assert output["cwt"]["sample_groups"] == {"pollution": 24, "control": 6}
     assert Path(output["cwt"]["archive_path"]).exists()
     assert output["transport_corridors"]
-    assert output["enterprise_screening"]["enterprises"][0]["enterprise_name"] == "测试企业"
+    # 场景三不再自动执行企业筛查，企业核查延迟到最终报告分析层
+    # （专家模式经 query_xuchang_emission_inventory / 轨迹坐标交叉核查）。
+    assert output["enterprise_screening"]["status"] == "not_run"
+    assert output["enterprise_screening"]["reason"] == "enterprise_review_is_deferred_to_final_analysis_layer"
+    assert output["enterprise_screening"]["enterprises"] == []
     assert {item["role"] for item in output["visualizations"]} == {
         "regional_trajectory_corridor_map",
         "local_enterprise_coverage_map",
