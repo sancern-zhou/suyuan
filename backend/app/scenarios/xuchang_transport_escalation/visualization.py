@@ -302,7 +302,7 @@ def generate_transport_maps(
         transform=projection,
     )
     ax.set_title(
-        f"许昌市{pollutant}近地层轨迹覆盖企业分布\n"
+        f"许昌市{pollutant}近地层轨迹" + ("覆盖企业分布\n" if enterprises else "分布\n") +
         f"回溯{local_config['max_age_hours']:.0f}小时 / 高度不超过{local_config['max_height_m']:.0f}米 / "
         f"筛查缓冲区{local_config['buffer_km']:.0f}公里"
     )
@@ -317,7 +317,7 @@ def generate_transport_maps(
             "type": "image",
             "role": "local_enterprise_coverage_map",
             "path": local_path,
-            "title": "近地层轨迹覆盖企业分布图",
+            "title": "近地层轨迹覆盖企业分布图" if enterprises else "近地层轨迹分布图",
         }
     )
     return artifacts

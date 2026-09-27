@@ -77,6 +77,7 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "get_gems_image",
         "get_sentinel5p_image",
         "analyze_xuchang_upwind_permit_sources",
+        "query_xuchang_emission_inventory",
         "query_airdata_platform",
         "airdata_calc_report_summary",
         "xuchang_station_catalog",
@@ -94,9 +95,12 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "xuchang_daily_attainment_forecast_fetcher",
         "xuchang_annual_attainment_forecast_fetcher",
         "xuchang_cnemc_station_hour_fetcher",
+        "xuchang_city_exceedance_fetcher",
         "xuchang_henan_month_year_accumulate_fetcher",
         "xuchang_nmc_hourly_forecast_fetcher",
         "xuchang_weather_com_daily_forecast_fetcher",
+        "xuchang_air_quality_forecast_fetcher",
+        "xuchang_weather_situation_evidence_fetcher",
         "xuchang_station_deviation_alert_fetcher",
         "xuchang_station_daily_pollution_fetcher",
         "xuchang_transport_analysis_fetcher",
@@ -113,6 +117,7 @@ def test_xuchang_project_composes_shared_and_customer_modules():
     assert context.manifest.scheduled_tasks == [
         "task_xuchang_station_deviation_alert",
         "task_xuchang_station_daily_source_report",
+        "task_xuchang_station_daily_source_analysis_report",
         "task_xuchang_weekly_weather_situation_report",
     ]
     assert context.manifest.knowledge.collections == ["xuchang"]

@@ -11,6 +11,24 @@ class EventDefinition(BaseModel):
 
 
 _EVENT_DEFINITIONS = {
+    "xuchang.city_pollution_episode.confirmed": EventDefinition(
+        event_type="xuchang.city_pollution_episode.confirmed",
+        label="许昌城市污染过程触发",
+        description="国控站小时发布AQI持续轻度污染或站点相对偏差已识别",
+        filter_fields=["city", "station_id", "target_pollutant"],
+    ),
+    "xuchang.city_source_analysis.requested": EventDefinition(
+        event_type="xuchang.city_source_analysis.requested",
+        label="许昌城市污染过程溯源已请求",
+        description="逐小时污染过程已生成唯一的轨迹与气象诊断任务",
+        filter_fields=["city", "station_id", "target_pollutant"],
+    ),
+    "xuchang.city_source_analysis.completed": EventDefinition(
+        event_type="xuchang.city_source_analysis.completed",
+        label="许昌城市污染过程溯源已完成",
+        description="逐小时污染过程的确定性证据包已冻结并可生成独立报告",
+        filter_fields=["city", "station_id", "target_pollutant", "diagnosis"],
+    ),
     "xuchang.daily_attainment.predicted_exceedance": EventDefinition(
         event_type="xuchang.daily_attainment.predicted_exceedance",
         label="许昌市日达标预测超标",

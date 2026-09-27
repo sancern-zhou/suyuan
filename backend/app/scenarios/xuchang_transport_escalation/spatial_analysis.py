@@ -38,6 +38,8 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 ENTERPRISE_FILTERS = {
     "PM2.5": {"max_height_m": 500.0, "max_age_hours": 24.0, "buffer_km": 5.0},
+    "PM10": {"max_height_m": 500.0, "max_age_hours": 24.0, "buffer_km": 5.0},
+    "AQI": {"max_height_m": 500.0, "max_age_hours": 24.0, "buffer_km": 5.0},
     "O3": {"max_height_m": 500.0, "max_age_hours": 24.0, "buffer_km": 10.0},
     "NOX": {"max_height_m": 300.0, "max_age_hours": 12.0, "buffer_km": 3.0},
 }

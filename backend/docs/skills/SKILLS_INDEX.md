@@ -9,4 +9,5 @@
 - [天气形势与污染扩散分析](weather_analysis_expert.md) - 按参考 DOCX 的章节、表头和逐日卡片生成许昌未来7天详细分析及第8—15天展望，以表格和图片为主、短句为辅。Agent 自主研判天气过程和风险，最终展示结构必须遵守本技能。
 - [许昌市达标预测 Skill](xuchang_attainment_prediction.md) - 暂无描述
 - [许昌市昨日污染回顾分析 Skill](xuchang_station_daily_source_report.md) - 暂无描述
+- [许昌市城市超标污染溯源报告 Skill](xuchang_city_exceedance_source_report.md) - 面向许昌逐小时污染过程的独立溯源报告，以冻结证据包形成审慎的机制分析和核查建议。
 - [生态环境招投标市场分析](生态环境招投标市场分析.md) - 面向广东旭诚科技有限公司市场分析人员和大气环境产品经理的可追溯分析报告工作流，覆盖招投标市场研究、数据分析、洞察提炼和 Word/PPT/HTML/Excel 交付。

@@ -1,19 +1,18 @@
 {
   "task_id": "task_xuchang_station_daily_source_analysis_report",
-  "name": "许昌市城市超标污染溯源分析",
-  "description": "仅在城市超标污染事件完成场景二分析后触发，针对超标站点和污染过程生成城市超标污染溯源分析报告，不承担每日污染回顾。",
+  "name": "许昌市城市超标污染快速溯源",
+  "description": "仅在逐小时污染过程证据冻结后触发，生成独立溯源报告。",
   "execution_mode": "custom",
   "tool_names": [
     "read_file",
     "execute_python",
-    "create_report_chart",
     "create_report_package"
   ],
-  "skill_id": "xuchang_station_daily_source_report",
+  "skill_id": "xuchang_city_exceedance_source_report",
   "knowledge_base_binding": null,
   "trigger_type": "event",
   "schedule_type": null,
-  "event_type": "xuchang.station_daily_source_analysis.completed",
+  "event_type": "xuchang.city_source_analysis.completed",
   "event_filters": {
     "city": "许昌市"
   },
@@ -37,14 +36,14 @@
   "owner_display_name": "定时任务",
   "tags": [
     "xuchang",
-    "station_daily_pollution",
-    "scenario_2",
+    "city_exceedance",
+    "hourly_episode",
     "event_triggered_report"
   ],
   "workspace_entry": {
     "enabled": true,
     "title": "城市超标污染溯源"
   },
-  "prompt": "你是许昌市城市超标污染溯源分析报告 Agent。本任务仅在城市超标污染事件完成场景二分析后执行，不是每日污染回顾，也不负责无超标日的例行分析。报告对象是本次城市超标污染过程及其关联站点，必须围绕超标时段、污染演变、气象条件、区域响应、传输线索和源特征形成溯源判断。\n\n1. 使用 read_file 读取事件 payload 中的 evidence_package_path，不重新查询数据库、不重新抓取数据、不重新判定告警、不重新运行轨迹模型，也不得改写证据包。\n2. 以证据包中的确定性计算结果为唯一事实依据；围绕本次超标过程归纳，不生成全市每日回顾。\n3. 复用已有图表，不重绘；execute_python 仅用于单项定向核验。\n4. 乡镇站不参与告警计算，只用于区域响应分析。无坐标或样本不足时不输出空间方向和确定传输结论；不得将源特征写成具体企业、源区或贡献率。\n5. 正文不得出现内部字段、代码值、事件标识、任务标识或冗长方法说明；数据缺失时用简短业务语言说明无法形成判断，不得臆测。\n6. 只调用一次 create_report_package 创建 report_id={analysis_id}-report，由该工具完成 QMD、HTML、DOCX 生成和图片引用验收。\n7. 必须等待报告生成和验收完成后再结束。最终简要返回报告 ID、超标污染过程结论、实际路径和验收结果；失败时返回具体失败阶段和原因。",
+  "prompt": "你是许昌市城市超标污染快速溯源报告 Agent。严格遵循 xuchang_city_exceedance_source_report Skill。本任务只处理事件 payload 指向的单个逐小时污染过程，不生成昨日污染回顾，也不重新判定告警。\n1. 使用 read_file 读取 evidence_package_path 指向的 report-brief JSON。先检查 schema_version=xuchang_city_source_analysis/v1、process_window、trigger、data_quality 和各证据状态；不得扫描目录、重新抓取、改写证据或再次运行 HYSPLIT。\n2. 仅对有数据的国控站、乡镇站、周边城市、气象与轨迹证据形成审慎分析。区分发布 AQI、业务高值与法定日均限值。后向轨迹和 CWT 只用于可能的传输线索；不写本地/外来百分比、未经核实的企业责任或未执行的筛查结果。缺测时说明边界，不臆测。\n3. agent_text 仅填写 summary_text、air_quality_analysis、meteorology_analysis、transport_analysis、local_source_analysis、conclusion 六个简短业务段落。已有事实表由确定性组装器生成，禁止自行补造指标和坐标。\n4. 先读 backend/app/tools/report/report_package/references/index.md。最后只调用一次 execute_python：from uuid import uuid4；调用 app.scenarios.xuchang_city_exceedance.qmd_report.write_qmd_report_from_evidence(evidence_path, agent_text, artifact_path(f'xuchang_exceedance_{uuid4().hex}.qmd'))，打印返回 JSON。stdout 中的 source_qmd_path 是临时路径；从同一次工具结果 data.files/file_paths 中按 source_qmd_name 精确查找发布路径，缺失即报错。\n5. 只调用一次 create_report_package，传返回的 report_id、发布后的 source_qmd_path、返回的 assets、output_formats=['html','docx','share_html']、title='许昌市城市超标污染快速溯源分析报告'、report_type='government'。验收 HTML 预览、DOCX 和独立 HTML 后再结束，返回报告 ID、过程结论和验收结果。",
   "timeout_seconds": 1800
 }
