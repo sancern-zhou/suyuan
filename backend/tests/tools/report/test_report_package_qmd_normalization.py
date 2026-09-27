@@ -56,3 +56,12 @@ def test_normalize_static_qmd_handles_weather_ranges_without_touching_code():
     assert "| 78%～93% | 较好～优 |" in normalized
     assert "\x6048%~58%\x60 和 \\~ 保持原样" in normalized
     assert "\x60\x60\x60text\n78%~93%\n\x60\x60\x60" in normalized
+
+
+def test_normalize_static_qmd_keeps_original_numeric_range_coverage():
+    qmd = "| 时段 |\n|---|\n| 02~08时 |\n\x6002~08\x60\n"
+
+    normalized = _normalize_static_qmd(qmd)
+
+    assert "02～08时" in normalized
+    assert "\x6002~08\x60" in normalized
