@@ -75,6 +75,9 @@ async def start_scheduled_task_service() -> None:
             task_ids=context.manifest.scheduled_tasks,
             service=service,
         )
+        if context.manifest.project == "xuchang":
+            from app.scenarios.xuchang_weather_report.task_migration import migrate_weather_task
+            migrate_weather_task(service)
         start_service()
         logger.info("scheduled_task_service_started", project_tasks_synced=synced)
     except Exception as e:

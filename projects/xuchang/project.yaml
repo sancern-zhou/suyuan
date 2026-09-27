@@ -153,6 +153,8 @@ backend:
     - xuchang_henan_month_year_accumulate_fetcher
     - xuchang_nmc_hourly_forecast_fetcher
     - xuchang_weather_com_daily_forecast_fetcher
+    - xuchang_air_quality_forecast_fetcher
+    - xuchang_weather_situation_evidence_fetcher
     - xuchang_station_deviation_alert_fetcher
     - xuchang_station_daily_pollution_fetcher
     # 备用功能，暂不启用：场景二站点日污染超标确认与溯源任务触发
