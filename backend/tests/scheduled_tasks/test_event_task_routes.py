@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from app.api import scheduled_task_routes as routes
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
+from app.scheduled_tasks.models import TaskEvent
 
 
 class FakeUser:
@@ -458,6 +459,64 @@ def test_execute_now_returns_immediately_without_waiting(monkeypatch):
     assert response.status_code == 202
     assert response.json()["success"] is True
     assert service.started_task_ids == [task_id]
+
+
+def test_manual_event_builder_creates_fresh_event_without_recorded_history(monkeypatch):
+    client, service = _client(monkeypatch)
+    task = routes.ScheduledTask(
+        task_id="weather-manual",
+        name="Weather report",
+        description="Weather report",
+        prompt="Generate report",
+        trigger_type="event",
+        event_type="weather.evidence_ready",
+        event_filters={"city": "Xuchang"},
+    )
+    service.tasks[task.task_id] = task
+    generated = TaskEvent(
+        event_id="weather-fresh-1",
+        event_type=task.event_type,
+        attributes={"city": "Xuchang"},
+        payload={"evidence_package_path": "backend/data/weather/manifest.json"},
+    )
+    calls = []
+
+    async def build_event(received_task):
+        assert received_task is task
+        return generated
+
+    async def publish_event(event, **kwargs):
+        calls.append((event, kwargs))
+        return SimpleNamespace(accepted_task_ids=[task.task_id], matched_task_ids=[task.task_id])
+
+    monkeypatch.setattr(routes, "get_manual_event_builder", lambda event_type: build_event)
+    service.claim_storage = SimpleNamespace(latest_event=lambda _: (_ for _ in ()).throw(AssertionError("replayed old event")))
+    service.publish_event = publish_event
+
+    response = client.post(f"/api/scheduled-tasks/{task.task_id}/execute")
+
+    assert response.status_code == 202
+    assert calls == [(generated, {"wait": False, "force_retry": False, "target_task_id": task.task_id})]
+
+
+def test_manual_event_without_builder_or_history_keeps_conflict(monkeypatch):
+    client, service = _client(monkeypatch)
+    task = routes.ScheduledTask(
+        task_id="ordinary-event",
+        name="Ordinary event",
+        description="Ordinary event",
+        prompt="Generate report",
+        trigger_type="event",
+        event_type="ordinary.event",
+    )
+    service.tasks[task.task_id] = task
+    monkeypatch.setattr(routes, "get_manual_event_builder", lambda event_type: None)
+    service.claim_storage = SimpleNamespace(latest_event=lambda _: None)
+
+    response = client.post(f"/api/scheduled-tasks/{task.task_id}/execute")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "No recorded event available for manual execution"
 
 
 def test_task_result_and_model_configuration_create_update(monkeypatch):
