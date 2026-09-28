@@ -115,6 +115,7 @@ class WorkflowCoordinator:
             self.graph.add_task(node.task_id, dependencies=node.dependencies)
         self.node_specs = {node.task_id: node for node in self.definition.nodes}
         self.node_results: Dict[str, Any] = {}
+        self.node_sessions: Dict[str, str] = {}
         self.node_errors: Dict[str, str] = {}
         self.node_lineage: Dict[str, Dict[str, Any]] = {}
         self.status = "queued"
@@ -216,6 +217,7 @@ class WorkflowCoordinator:
             "cancel_reason": self.cancel_reason,
             "graph": self.graph.snapshot(),
             "node_results": dict(self.node_results),
+            "node_sessions": dict(self.node_sessions),
             "node_errors": dict(self.node_errors),
             "node_lineage": dict(self.node_lineage),
             "workflow_run_id": self.workflow_run.run_id if hasattr(self, "workflow_run") else None,
@@ -235,6 +237,10 @@ class WorkflowCoordinator:
                 result = self.executor(node, dependency_results, node_run.attempt)
                 if inspect.isawaitable(result):
                     result = await result
+            metadata = result.get("metadata") if isinstance(result, dict) else None
+            child_session_id = metadata.get("session_id") if isinstance(metadata, dict) else None
+            if isinstance(child_session_id, str) and child_session_id:
+                self.node_sessions[task_id] = child_session_id
             if self._result_failed(result):
                 raise RuntimeError(self._result_error(result))
             self.node_results[task_id] = result
@@ -277,6 +283,7 @@ class WorkflowCoordinator:
         self.cancel_requested = bool(snapshot.get("cancel_requested"))
         self.cancel_reason = str(snapshot.get("cancel_reason") or "")
         self.node_results = dict(snapshot.get("node_results") or {})
+        self.node_sessions = dict(snapshot.get("node_sessions") or {})
         self.node_errors = {str(key): str(value) for key, value in (snapshot.get("node_errors") or {}).items()}
         self.node_lineage = {
             str(key): dict(value)

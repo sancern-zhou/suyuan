@@ -758,7 +758,8 @@ class CallSubAgentTool(LLMTool):
                                 else None
                             ),
                         ):
-                            turn_events.append(event)
+                            # Capture the actual streaming time for later latency review.
+                            turn_events.append({**event, "_recorded_at": datetime.now().isoformat()})
                 return turn_events
 
             result_events = await run_child_turn(
@@ -1538,6 +1539,32 @@ class CallSubAgentTool(LLMTool):
                 "updated_at": datetime.now().isoformat(),
             })
             session.metadata["workflow"] = workflow
+            # Keep a compact, durable trace beside the child transcript. Raw tool
+            # inputs and outputs can be large or sensitive and are deliberately omitted.
+            history = list(session.metadata.get("execution_history") or [])
+            for event in result_events:
+                kind = event.get("type")
+                if kind not in {"tool_call", "tool_result", "agent_finish"}:
+                    continue
+                data = event.get("data") or {}
+                if not isinstance(data, dict):
+                    data = {}
+                entry = {"sequence": len(history) + 1, "type": kind}
+                timestamp = event.get("_recorded_at") or event.get("timestamp")
+                if timestamp:
+                    entry["timestamp"] = str(timestamp)
+                if kind in {"tool_call", "tool_result"}:
+                    entry["tool_name"] = str(
+                        data.get("tool_name") or data.get("name") or event.get("generator")
+                        or event.get("tool") or "unknown"
+                    )[:120]
+                if kind == "tool_result":
+                    result = data.get("result")
+                    entry["success"] = not bool(data.get("is_error")) and not (
+                        isinstance(result, dict) and result.get("success") is False
+                    )
+                history.append(entry)
+            session.metadata["execution_history"] = history
         session.conversation_history.append({
             "role": "assistant",
             "content": assistant_answer,

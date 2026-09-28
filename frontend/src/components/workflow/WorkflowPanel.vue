@@ -62,10 +62,38 @@
           <div class="section-heading"><h4>执行图</h4><span>{{ liveLabel }}</span></div>
           <div class="dag" aria-label="工作流节点执行图">
             <div v-for="node in nodes" :key="node.task_id" class="dag-node" :class="`node-${statusMeta(node.status).key}`">
-              <div class="node-title"><span class="node-status" aria-hidden="true"></span><strong>{{ nodeTitle(node) }}</strong></div>
-              <small v-if="node.dependencies?.length">依赖：{{ node.dependencies.map(shortId).join('、') }}</small>
-              <small v-else>入口节点</small>
-              <span class="node-status-label">{{ statusMeta(node.status).label }}</span>
+              <button class="node-toggle" type="button" :aria-expanded="selectedNodeId === node.task_id" @click="selectNode(node.task_id)">
+                <span class="node-title"><span class="node-status" aria-hidden="true"></span><strong>{{ nodeTitle(node) }}</strong></span>
+                <small v-if="node.dependencies?.length">依赖：{{ node.dependencies.map(shortId).join('、') }}</small>
+                <small v-else>入口节点</small>
+                <span class="node-status-label">{{ statusMeta(node.status).label }} · {{ nodeDuration(node.task_id) }}</span>
+              </button>
+              <div v-if="selectedNodeId === node.task_id" class="node-detail">
+                <p v-if="nodeHistoryLoading && !nodeHistory">正在读取节点历史...</p>
+                <p v-if="nodeHistoryError" class="history-error">{{ nodeHistoryError }}</p>
+                <template v-if="nodeHistory">
+                  <p class="node-meta">{{ nodeHistory.child_mode || '子 Agent' }} · {{ nodeHistory.child_session_id || '尚无子会话' }}</p>
+                  <h5>执行记录</h5>
+                  <ol v-if="nodeTimeline.length" class="event-list">
+                    <li v-for="item in nodeTimeline" :key="item.key">
+                      <span class="event-time">{{ formatTime(item.timestamp) }}</span><span>{{ item.label }}</span>
+                    </li>
+                  </ol>
+                  <p v-else class="history-empty">暂无执行记录</p>
+                  <template v-if="nodeHistory.execution_history?.length">
+                    <h5>工具轨迹</h5>
+                    <ol class="event-list">
+                      <li v-for="item in nodeHistory.execution_history" :key="item.sequence">
+                        <span class="event-time">{{ item.timestamp ? formatTime(item.timestamp) : '#' + item.sequence }}</span><span>{{ toolEventLabel(item) }}</span>
+                      </li>
+                    </ol>
+                    <button v-if="nodeHistory.has_more" type="button" class="more-button" @click="loadMoreNodeHistory">加载更多记录</button>
+                  </template>
+                  <template v-if="nodeHistory.answer">
+                    <h5>子 Agent 结果</h5><div class="node-answer">{{ nodeHistory.answer }}</div>
+                  </template>
+                </template>
+              </div>
             </div>
           </div>
         </section>
@@ -96,6 +124,7 @@ import {
   followSessionWorkflow,
   getSessionWorkflow,
   getSessionWorkflowEvents,
+  getSessionWorkflowNodeHistory,
   listSessionWorkflows,
   resumeSessionWorkflow
 } from '@/services/workflowApi.js'
@@ -110,6 +139,11 @@ const detailLoading = ref(false)
 const error = ref('')
 const streamController = ref(null)
 const emptyRefreshTimer = ref(null)
+const selectedNodeId = ref('')
+const nodeHistory = ref(null)
+const nodeHistoryLoading = ref(false)
+const nodeHistoryError = ref('')
+let snapshotTimer = null
 
 const statusMap = {
   queued: { key: 'pending', label: '排队中' },
@@ -149,6 +183,78 @@ const canCancel = computed(() => ['queued', 'running'].includes(String(selectedS
 const canResume = computed(() => ['failed', 'running', 'queued'].includes(String(selectedStatus.value)))
 const recentEvents = computed(() => events.value.slice(-20).reverse())
 const liveLabel = computed(() => selectedWorkflow.value?.active ? '实时更新中' : '已结束')
+const lifecycleLabels = {
+  'task.created': '任务已创建',
+  'task.running': '开始执行',
+  'task.succeeded': '执行完成',
+  'task.failed': '执行失败',
+  'task.cancelled': '任务已取消',
+  'task.child_turn_completed': '子 Agent 完成一轮分析',
+  'task.lineage_attached': '已关联上游结果',
+  'task.contract_bound': '已绑定结果协议',
+  'task.resources_imported': '已导入数据资源'
+}
+const nodeTimeline = computed(() => {
+  if (!nodeHistory.value) return []
+  const entries = [
+    ...(nodeHistory.value.node_events || []).map(item => ({ ...item, source: 'node' })),
+    ...(nodeHistory.value.child_events || []).map(item => ({ ...item, source: 'child' }))
+  ]
+  return entries.sort((a, b) => String(a.timestamp || '').localeCompare(String(b.timestamp || '')))
+    .map(item => ({
+      key: item.source + '-' + item.sequence,
+      timestamp: item.timestamp,
+      label: (item.source === 'node' ? '节点' : '子 Agent') + '：' + (lifecycleLabels[item.type] || item.type) + '（' + statusMeta(item.status).label + '）'
+    }))
+})
+
+function nodeDuration(taskId) {
+  const rows = selectedWorkflow.value?.snapshot?.runtime?.events || []
+  const own = rows.filter(item => item.task_id === taskId && item.timestamp)
+  if (!own.length) return '未开始'
+  const running = own.find(item => item.event_type === 'task.running') || own[0]
+  const start = new Date(running.timestamp).getTime()
+  const end = new Date(own.at(-1).timestamp).getTime()
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return '耗时未知'
+  const elapsed = Math.max(0, Math.round((end - start) / 1000))
+  return elapsed < 60 ? elapsed + ' 秒' : Math.floor(elapsed / 60) + ' 分 ' + elapsed % 60 + ' 秒'
+}
+
+function toolEventLabel(item) {
+  if (item.type === 'agent_finish') return '子 Agent 已完成回答'
+  if (item.type === 'tool_call') return '调用 ' + (item.tool_name || '工具')
+  return (item.tool_name || '工具') + (item.success ? ' 执行成功' : ' 执行失败')
+}
+
+async function selectNode(taskId) {
+  if (selectedNodeId.value === taskId) { selectedNodeId.value = ''; return }
+  selectedNodeId.value = taskId
+  nodeHistory.value = null
+  nodeHistoryError.value = ''
+  nodeHistoryLoading.value = true
+  const workflowId = selectedId.value
+  try {
+    const history = await getSessionWorkflowNodeHistory(props.sessionId, workflowId, taskId)
+    if (selectedId.value === workflowId && selectedNodeId.value === taskId) nodeHistory.value = history
+  } catch (err) {
+    if (selectedId.value === workflowId && selectedNodeId.value === taskId) nodeHistoryError.value = err?.message || '节点历史加载失败'
+  } finally {
+    if (selectedId.value === workflowId && selectedNodeId.value === taskId) nodeHistoryLoading.value = false
+  }
+}
+
+async function loadMoreNodeHistory() {
+  if (!nodeHistory.value?.has_more || nodeHistoryLoading.value) return
+  nodeHistoryLoading.value = true
+  try {
+    const previous = nodeHistory.value
+    const after = previous.execution_history.at(-1)?.sequence || 0
+    const next = await getSessionWorkflowNodeHistory(props.sessionId, selectedId.value, selectedNodeId.value, { after })
+    nodeHistory.value = { ...next, execution_history: [...previous.execution_history, ...next.execution_history] }
+  } catch (err) {
+    nodeHistoryError.value = err?.message || '更多节点记录加载失败'
+  } finally { nodeHistoryLoading.value = false }
+}
 
 function nodeTitle(node) {
   return node.payload?.goal || node.task_id || '未命名节点'
@@ -159,7 +265,8 @@ function eventKey(event) {
 }
 
 function eventLabel(event) {
-  if (event.type === 'runtime' && event.event) return event.event.message || `${event.event.type || '节点事件'}：${event.event.task_id || ''}`
+  if (event.event_type) return event.event_type + '：' + (event.task_id || '')
+  if (event.type === 'runtime' && event.event) return event.event.message || (event.event.event_type || '节点事件') + '：' + (event.event.task_id || '')
   const labels = { 'workflow.queued': '工作流已排队', 'workflow.running': '工作流开始执行', 'workflow.terminal': `工作流${statusMeta(event.status).label}` }
   return labels[event.type] || event.message || event.type || '工作流状态更新'
 }
@@ -216,6 +323,7 @@ async function refresh() {
 }
 
 async function selectWorkflow(workflowId, reload = true) {
+  if (selectedId.value !== workflowId) { selectedNodeId.value = ''; nodeHistory.value = null }
   selectedId.value = workflowId
   detailLoading.value = true
   error.value = ''
@@ -238,6 +346,8 @@ async function selectWorkflow(workflowId, reload = true) {
 }
 
 function stopStream() {
+  if (snapshotTimer) clearTimeout(snapshotTimer)
+  snapshotTimer = null
   streamController.value?.abort()
   streamController.value = null
 }
@@ -251,6 +361,20 @@ async function startStream(workflowId, afterEventId = '0-0') {
       signal: controller.signal,
       onEvent: event => {
         events.value.push(event)
+        if (event.type === 'runtime' && !snapshotTimer) {
+          snapshotTimer = setTimeout(async () => {
+            snapshotTimer = null
+            if (selectedId.value !== workflowId || controller.signal.aborted) return
+            try {
+              selectedWorkflow.value = await getSessionWorkflow(props.sessionId, workflowId)
+              if (selectedNodeId.value) {
+                const taskId = selectedNodeId.value
+                const history = await getSessionWorkflowNodeHistory(props.sessionId, workflowId, taskId)
+                if (selectedId.value === workflowId && selectedNodeId.value === taskId) nodeHistory.value = history
+              }
+            } catch { /* Stream remains active. */ }
+          }, 500)
+        }
         if (event.type === 'workflow.terminal') {
           selectedWorkflow.value = { ...selectedWorkflow.value, active: false, job_status: event.status, snapshot: { ...selectedWorkflow.value?.snapshot, status: event.status } }
         }
@@ -288,6 +412,8 @@ watch(() => props.sessionId, () => {
   selectedId.value = ''
   selectedWorkflow.value = null
   events.value = []
+  selectedNodeId.value = ''
+  nodeHistory.value = null
   if (props.sessionId) refresh()
 })
 
@@ -341,6 +467,14 @@ onBeforeUnmount(() => {
 .dag-node.node-success { border-left-color: #1f9d69; }
 .dag-node.node-running { border-left-color: #2778c9; }
 .dag-node.node-failed { border-left-color: #d04444; }
+.node-toggle { display: block; width: 100%; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; }
+.node-toggle:focus-visible { outline: 2px solid #2778c9; outline-offset: 3px; }
+.node-detail { margin: 10px 0 0 16px; padding: 10px; border-top: 1px solid #e7edf4; color: #526173; font-size: 11px; overflow-wrap: anywhere; }
+.node-detail h5 { margin: 12px 0 6px; font-size: 11px; color: #31445b; }
+.node-meta, .history-empty { color: #8290a0; }
+.history-error { color: #b42318; }
+.node-answer { max-height: 240px; overflow: auto; white-space: pre-wrap; line-height: 1.5; }
+.more-button { margin-top: 8px; padding: 4px 8px; border: 1px solid #cbd8e5; border-radius: 5px; background: #fff; color: #315b84; cursor: pointer; }
 .node-title { display: flex; align-items: center; gap: 8px; }
 .node-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .dag-node small { display: block; margin: 5px 0 0 16px; overflow: hidden; color: #7b899a; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
