@@ -30,12 +30,8 @@ def _workflow_snapshots(metadata: dict[str, Any]) -> dict[str, dict[str, Any]]:
         return {
             str(key): dict(value)
             for key, value in values.items()
-            if isinstance(value, dict)
+            if isinstance(value, dict) and value.get("workflow_id")
         }
-    # Compatibility with snapshots written before multi-workflow indexing.
-    legacy = metadata.get("workflow_coordinator")
-    if isinstance(legacy, dict) and legacy.get("workflow_id"):
-        return {str(legacy["workflow_id"]): dict(legacy)}
     return {}
 
 
@@ -187,11 +183,11 @@ async def workflow_node_history(
         raise HTTPException(status_code=404, detail="workflow_not_found")
     if task_id not in (snapshot.get("graph") or {}):
         raise HTTPException(status_code=404, detail="node_not_found")
-    result = (snapshot.get("node_results") or {}).get(task_id)
-    result_metadata = result.get("metadata") if isinstance(result, dict) else {}
-    child_id = (snapshot.get("node_sessions") or {}).get(task_id) or (
-        result_metadata.get("session_id") if isinstance(result_metadata, dict) else None
-    )
+    child_id = (snapshot.get("node_sessions") or {}).get(task_id)
+    if not isinstance(child_id, str) or not child_id:
+        if (snapshot.get("graph") or {}).get(task_id, {}).get("status") in {"queued", "pending", "running"}:
+            return _node_history(snapshot, task_id, None, after, limit)
+        raise HTTPException(status_code=404, detail="node_history_not_found")
     child = (get_child_session_manager().load_session(child_id)
              if isinstance(child_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,200}", child_id)
              else None)
@@ -200,6 +196,8 @@ async def workflow_node_history(
         if (not child.is_sub_agent_session or workflow.get("parent_task_id") != workflow_id
                 or workflow.get("task_id") != task_id):
             child = None
+    if child is None:
+        raise HTTPException(status_code=404, detail="node_history_not_found")
     return _node_history(snapshot, task_id, child, after, limit)
 
 

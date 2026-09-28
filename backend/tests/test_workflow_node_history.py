@@ -43,7 +43,7 @@ def test_node_history_resolves_only_parent_linked_child(monkeypatch):
     snapshot = {
         "workflow_id": "wf",
         "graph": {"wf:air": {"status": "succeeded"}},
-        "node_results": {"wf:air": {"metadata": {"session_id": child.session_id}}},
+        "node_sessions": {"wf:air": child.session_id},
         "runtime": {"events": [{"sequence": 2, "task_id": "wf:air", "event_type": "task.succeeded"}]},
     }
     parent = SimpleNamespace(metadata={"workflow_coordinators": {"wf": snapshot}})
@@ -71,8 +71,19 @@ def test_node_history_resolves_only_parent_linked_child(monkeypatch):
         asyncio.run(lookup(task_id="other"))
     assert missing.value.status_code == 404
 
-    child.metadata["workflow"]["parent_task_id"] = "another-workflow"
+    snapshot["node_sessions"] = {}
+    with pytest.raises(HTTPException) as legacy:
+        asyncio.run(lookup())
+    assert legacy.value.status_code == 404
+    snapshot["graph"]["wf:air"]["status"] = "running"
     assert asyncio.run(lookup())["child_session_id"] is None
+    snapshot["graph"]["wf:air"]["status"] = "succeeded"
+    snapshot["node_sessions"]["wf:air"] = child.session_id
+
+    child.metadata["workflow"]["parent_task_id"] = "another-workflow"
+    with pytest.raises(HTTPException) as unlinked:
+        asyncio.run(lookup())
+    assert unlinked.value.status_code == 404
 
     with pytest.raises(HTTPException) as forbidden:
         asyncio.run(workflow_routes.workflow_node_history(
