@@ -27,6 +27,30 @@ test('replaces chart placeholders with the matching image resource', () => {
   assert.deepEqual([...rendered.usedResourceIds], ['image-a'])
 })
 
+test('restored answer resolves explicit chart placeholders without tool-result visuals', () => {
+  const visualId = 'echarts_1790562701562753777_2'
+  const content = '按许昌逐小时风向分扇区统计各市PM2.5均值：\n\n[[chart:' + visualId + ']]'
+  const final = { id: 'final', type: 'final', content }
+  const messages = [
+    { id: 'user', type: 'user' },
+    { id: 'restored-tool', type: 'tool_result', data: {
+      tool_name: 'execute_echarts_python', result: {}
+    } },
+    final
+  ]
+  const resource = {
+    resource_id: 'image-wind', resource_key: 'chart-image', visual_id: visualId,
+    status: 'active', label: '风向分扇区浓度', content_url: '/wind.png'
+  }
+  const images = inlineChartImages(final, messages, [resource], content)
+  assert.deepEqual(images, [resource])
+  assert.equal(
+    renderChartPlaceholders(content, images).content,
+    '按许昌逐小时风向分扇区统计各市PM2.5均值：\n\n![风向分扇区浓度](/wind.png)'
+  )
+  assert.deepEqual(inlineChartImages(final, messages, [{ ...resource, status: 'inactive' }], content), [])
+})
+
 test('keeps unknown chart placeholders for a later resource update', () => {
   assert.equal(renderChartPlaceholders('[[chart:missing]]', []).content, '[[chart:missing]]')
 })
