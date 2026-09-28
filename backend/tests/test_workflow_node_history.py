@@ -41,6 +41,7 @@ def test_node_history_resolves_only_parent_linked_child(monkeypatch):
         conversation_history=[{"role": "assistant", "content": "空气数据摘要"}],
     )
     snapshot = {
+        "workflow_id": "wf",
         "graph": {"wf:air": {"status": "succeeded"}},
         "node_results": {"wf:air": {"metadata": {"session_id": child.session_id}}},
         "runtime": {"events": [{"sequence": 2, "task_id": "wf:air", "event_type": "task.succeeded"}]},
