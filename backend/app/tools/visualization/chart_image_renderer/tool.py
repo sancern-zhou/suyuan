@@ -149,6 +149,10 @@ class ChartImageRenderer(LLMTool):
             
             # Step 2: 确保输出目录存在
             OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+            from app.utils.echarts_legend import ensure_echarts_legend
+
+            echarts_option = ensure_echarts_legend(echarts_option)
             
             # 统一图例/坐标轴布局，避免图例与横坐标刻度重叠
             from app.utils.echarts_layout import normalize_echarts_layout
