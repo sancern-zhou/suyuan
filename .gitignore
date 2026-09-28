@@ -229,6 +229,7 @@ backend/docs/skills/*
 !backend/docs/skills/archify.md
 !backend/docs/skills/xuchang_city_exceedance_source_report.md
 !backend/docs/skills/SKILLS_INDEX.md
+!backend/docs/skills/analysis_report_workflow.md
 !backend/docs/skills/生态环境招投标市场分析.md
 scripts/
 !/.github/scripts/
