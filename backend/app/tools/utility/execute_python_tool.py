@@ -1654,9 +1654,12 @@ def artifact_path(filename: str) -> str:
         generator: str,
     ) -> List[Dict[str, Any]]:
         """Convert parsed ECharts options into frontend visuals."""
+        from app.utils.echarts_legend import ensure_echarts_legend
+
         visuals: List[Dict[str, Any]] = []
         for index, echarts_data in enumerate(echarts_options):
             try:
+                echarts_data = ensure_echarts_legend(echarts_data)
                 echarts_data["textStyle"] = {
                     **(echarts_data.get("textStyle") or {}),
                     "fontFamily": BROWSER_CHART_FONT_FAMILY,
