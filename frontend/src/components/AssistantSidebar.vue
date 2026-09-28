@@ -29,16 +29,6 @@
           </div>
         </button>
         <button
-          class="module-card"
-          type="button"
-          @click="handleModuleSelect('restart-session')"
-        >
-          <span class="module-icon" v-html="getModuleIcon('restart-session')"></span>
-          <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">新建对话</p>
-          </div>
-        </button>
-        <button
           v-for="mode in sidebarAgentModeEntries"
           :key="mode.id"
           class="module-card"
@@ -378,14 +368,6 @@ const allModules = [
     isAction: true
   },
   {
-    id: 'restart-session',
-    name: '新建对话',
-    abbr: '新建对话',
-    desc: '清空对话，开始新分析',
-    badge: '操作',
-    isAction: true
-  },
-  {
     id: 'query-dashboard',
     name: '智能问数',
     abbr: '问数',
@@ -519,12 +501,6 @@ const moduleIcons = {
       <path d="m4.5 8 7.5 4.2L19.5 8" />
       <path d="M12 12.2v8" />
       <path d="m8.5 6 7 4" />
-    </svg>
-  `,
-  'restart-session': `
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 5v14" />
-      <path d="M5 12h14" />
     </svg>
   `,
   'query-dashboard': `

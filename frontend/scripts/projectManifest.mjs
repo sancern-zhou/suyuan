@@ -19,6 +19,7 @@ const AGENT_MODE_OVERRIDE_KEYS = new Set([
   'icon_paths',
   'iconPaths'
 ])
+const AGENT_SCENE_OVERRIDE_KEYS = new Set(['mode_ids', 'modeIds'])
 
 
 function readYaml(path) {
@@ -81,6 +82,34 @@ function normalizeAgentModeOverrides(value = {}) {
 }
 
 
+function normalizeAgentSceneOverrides(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('frontend.agent_scene_overrides must be an object')
+  }
+  const overrides = {}
+  for (const [sceneId, rawOverride] of Object.entries(value)) {
+    if (!AGENT_SCENE_IDS.has(sceneId)) throw new Error(`unknown agent scene override: ${sceneId}`)
+    if (!rawOverride || typeof rawOverride !== 'object' || Array.isArray(rawOverride)) {
+      throw new Error(`frontend.agent_scene_overrides.${sceneId} must be an object`)
+    }
+    for (const key of Object.keys(rawOverride)) {
+      if (!AGENT_SCENE_OVERRIDE_KEYS.has(key)) {
+        throw new Error(`unknown agent scene override field: ${sceneId}.${key}`)
+      }
+    }
+    const modeIds = uniqueStrings(
+      rawOverride.mode_ids ?? rawOverride.modeIds ?? [],
+      `frontend.agent_scene_overrides.${sceneId}.mode_ids`
+    )
+    for (const modeId of modeIds) {
+      if (!AGENT_MODE_IDS.has(modeId)) throw new Error(`unknown agent mode: ${modeId}`)
+    }
+    overrides[sceneId] = { modeIds }
+  }
+  return overrides
+}
+
+
 export function loadProjectBuildConfig({ projectId, repoRoot }) {
   if (!IDENTIFIER.test(projectId)) {
     throw new Error(`invalid project identifier: ${projectId}`)
@@ -138,6 +167,7 @@ export function loadProjectBuildConfig({ projectId, repoRoot }) {
       agentModes,
       defaultAgentMode,
       agentModeOverrides: normalizeAgentModeOverrides(manifest.frontend?.agent_mode_overrides),
+      agentSceneOverrides: normalizeAgentSceneOverrides(manifest.frontend?.agent_scene_overrides),
       agentPlatformLayout,
       agentScenes,
       sidebarAgentModes

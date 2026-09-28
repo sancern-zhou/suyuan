@@ -19,10 +19,12 @@ frontend:
   agent_platform_layout: scenes
   agent_scenes:
     - monitoring
-  sidebar_agent_modes:
-    - query
-    - knowledge
-    - expert
+  # 监测分析分组在共享卡片基础上补充知识问答入口（统一从智能体平台进入）。
+  agent_scene_overrides:
+    monitoring:
+      mode_ids: [query, knowledge, expert, report, chart]
+  # 侧边栏不再展示智能体模式快捷入口，统一由智能体平台页进入。
+  sidebar_agent_modes: []
 backend:
   tools:
     - get_gems_image

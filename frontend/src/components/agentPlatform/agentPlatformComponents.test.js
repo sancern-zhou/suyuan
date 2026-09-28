@@ -84,6 +84,13 @@ test('scene catalog honors the project scene whitelist', async () => {
   assert.match(source, /AGENT_SCENES\.filter\(scene => sceneIds\.includes\(scene\.id\)\)/)
 })
 
+test('scene catalog applies project scene card overrides on top of the shared scenes', async () => {
+  const source = await readComponent('AgentPlatform.vue')
+
+  assert.match(source, /projectConfig\.agentSceneOverrides\?\.\[scene\.id\]/)
+  assert.match(source, /override\?\.modeIds\?\.length \? \{ \.\.\.scene, modeIds: override\.modeIds \} : scene/)
+})
+
 test('empty chat resolves complete welcome copy from the selected agent catalog entry', async () => {
   const source = await readComponent('../ReActMessageList.vue')
 

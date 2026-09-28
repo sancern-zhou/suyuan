@@ -183,7 +183,11 @@ const props = defineProps({
     type: Array,
     default: () => {
       const sceneIds = projectConfig.agentScenes
-      return sceneIds.length ? AGENT_SCENES.filter(scene => sceneIds.includes(scene.id)) : AGENT_SCENES
+      const scenes = sceneIds.length ? AGENT_SCENES.filter(scene => sceneIds.includes(scene.id)) : AGENT_SCENES
+      return scenes.map(scene => {
+        const override = projectConfig.agentSceneOverrides?.[scene.id]
+        return override?.modeIds?.length ? { ...scene, modeIds: override.modeIds } : scene
+      })
     }
   },
   layout: { type: String, default: () => projectConfig.agentPlatformLayout },
