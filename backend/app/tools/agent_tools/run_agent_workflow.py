@@ -157,6 +157,36 @@ def format_upstream_handles(dependency_results: Mapping[str, Any]) -> str:
     )
 
 
+def format_upstream_summaries(dependency_results: Mapping[str, Any]) -> str:
+    """Pass conclusions and evidence references, never raw child tool traces."""
+    summaries = []
+    for task_id, result in (dependency_results or {}).items():
+        envelope = _result_envelope(result)
+        if not envelope:
+            continue
+        summaries.append({
+            "source_task_id": str(task_id),
+            "status": envelope.get("status"),
+            "summary": str(envelope.get("summary") or "")[:2000],
+            "evidence": [
+                {key: item.get(key) for key in ("ref_id", "kind", "label", "source_task_id")
+                 if item.get(key) is not None}
+                for item in envelope.get("evidence") or []
+                if isinstance(item, Mapping)
+            ],
+            "uncertainties": [str(item) for item in envelope.get("uncertainties") or []],
+            "data_gaps": [str(item) for item in envelope.get("data_gaps") or []],
+        })
+    if not summaries:
+        return ""
+    return (
+        "## 上游节点结论摘要\n"
+        "上游资源和文件已通过工作流资源目录导入当前会话，可直接读取；"
+        "以下仅是上游结论和证据索引。不要根据摘要重新查询同一数据源：\n"
+        + json.dumps(summaries, ensure_ascii=False, default=str)
+        + "\n"
+    )
+
 class RunAgentWorkflowTool(LLMTool):
     """Coordinator entry point for report/assistant orchestration."""
 
@@ -275,11 +305,7 @@ class RunAgentWorkflowTool(LLMTool):
                         for task_id, result in dependency_results.items()
                         for handle in collect_result_handles(task_id, result)
                     ]
-                    upstream = format_upstream_handles(dependency_results)
-                    upstream += (
-                        "\n上游节点结构化结果（只使用其中已提供的证据，不要臆造缺失信息）：\n"
-                        + json.dumps(dependency_results, ensure_ascii=False, default=str)
-                    )
+                    upstream = format_upstream_summaries(dependency_results)
                 else:
                     upstream_handles = []
                 context_text = str(payload.get("context") or "") + upstream

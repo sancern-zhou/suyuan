@@ -77,7 +77,16 @@ async def test_run_agent_workflow_passes_upstream_file_handles_to_dependent_node
                 "status": "success",
                 "success": True,
                 "result": kwargs["goal"],
-                "data": data,
+                "data": {
+                    **data,
+                    "result_envelope": {
+                        "status": "completed",
+                        "summary": "已完成空气质量查询",
+                        "evidence": [{"ref_id": "air-1", "kind": "table"}],
+                        "uncertainties": [],
+                        "data_gaps": [],
+                    },
+                },
             }
 
     monkeypatch.setattr(
@@ -103,9 +112,11 @@ async def test_run_agent_workflow_passes_upstream_file_handles_to_dependent_node
     assert result["success"] is True
     merge_call = next(call for call in calls if call["goal"] == "交叉分析")
     context = merge_call["context_str"]
-    assert "## 上游节点产物" in context
-    assert "backend/data/查询空气质量.json" in context
-    assert "禁止对同一数据源重复查询" in context
+    assert "## 上游节点结论摘要" in context
+    assert "已完成空气质量查询" in context
+    assert "backend/data/查询空气质量.json" not in context
+    assert "tool_calls" not in context
+    assert "不要根据摘要重新查询同一数据源" in context
     assert merge_call["_upstream_handles"][0]["handle_type"] == "file_path"
 
 
@@ -148,8 +159,8 @@ async def test_run_agent_workflow_dispatches_parallel_nodes_and_injects_dependen
     assert result["success"] is True
     assert result["data"]["status"] == "succeeded"
     merge_call = next(call for call in calls if call["goal"] == "交叉分析")
-    assert "分析空气质量" in merge_call["context_str"]
-    assert "分析气象条件" in merge_call["context_str"]
+    assert "分析空气质量" not in merge_call["context_str"]
+    assert "分析气象条件" not in merge_call["context_str"]
     assert all(call["_force_isolated_session"] is True for call in calls)
 
 
