@@ -185,7 +185,7 @@ const sendGraphMessage = async () => {
   gap: 12px;
   padding: 28px;
   text-align: center;
-  color: #64748b;
+  color: var(--text-2);
 }
 
 .graph-chat-empty h3 {
@@ -212,8 +212,8 @@ const sendGraphMessage = async () => {
   padding: 6px 10px;
   border: 1px solid #dbe3ef;
   border-radius: 999px;
-  background: #fff;
-  color: #475569;
+  background: var(--bg-container);
+  color: var(--text-2);
   cursor: pointer;
   font-size: 12px;
 }
@@ -229,8 +229,8 @@ const sendGraphMessage = async () => {
   z-index: 2;
   flex: 0 0 auto;
   padding: 12px;
-  border-top: 1px solid #e2e8f0;
-  background: #fff;
+  border-top: 1px solid var(--border-2);
+  background: var(--bg-container);
   box-shadow: 0 -8px 18px rgba(15, 23, 42, 0.06);
 }
 
@@ -240,7 +240,7 @@ const sendGraphMessage = async () => {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 8px;
-  color: #64748b;
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -253,14 +253,14 @@ const sendGraphMessage = async () => {
 
 .graph-chat-context strong {
   flex: 0 0 auto;
-  color: #475569;
+  color: var(--text-2);
   font-weight: 600;
 }
 
 .graph-chat-input-shell {
   border: 1px solid #d9e2ef;
   border-radius: 8px;
-  background: #fff;
+  background: var(--bg-container);
   overflow: hidden;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
@@ -277,7 +277,7 @@ const sendGraphMessage = async () => {
   resize: none;
   border: 0;
   padding: 11px 12px 6px;
-  color: #111827;
+  color: var(--text-1);
   font-family: inherit;
   font-size: 14px;
   line-height: 1.5;
@@ -285,7 +285,7 @@ const sendGraphMessage = async () => {
 }
 
 .graph-chat-input-shell textarea:disabled {
-  background: #f8fafc;
+  background: var(--bg-muted);
   color: #94a3b8;
   cursor: not-allowed;
 }
@@ -304,9 +304,9 @@ const sendGraphMessage = async () => {
   flex: 0 0 auto;
   min-width: 64px;
   min-height: 30px;
-  border: 1px solid #2563eb;
+  border: 1px solid var(--color-primary);
   border-radius: 6px;
-  background: #2563eb;
+  background: var(--color-primary);
   color: white;
   cursor: pointer;
   font-size: 13px;

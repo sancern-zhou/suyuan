@@ -28,26 +28,71 @@ backend:
     - get_gems_image
     - get_sentinel5p_image
     - analyze_xuchang_upwind_permit_sources
+    - query_xuchang_emission_inventory
+    - query_airdata_platform
+    - airdata_calc_report_summary
+    - xuchang_station_catalog
   agent_mode_tools:
+    query:
+      - list_session_resources
+      - read_session_resource
+      - publish_session_file
+      - grep
+      - read_file
+      - write_file
+      - edit_file
+      - list_directory
+      - search_files
+      - list_skills
+      - view_skill
+      - get_weather_data
+      - get_current_weather
+      - get_weather_forecast
+      - query_xcai_city_history
+      - execute_sql_query
+      - execute_postgres_sql_query
+      - execute_echarts_python
+      - create_report_chart
+      - knowledge_graph_query
+      - resolve_station_geo
+      - query_national_province_air_quality
+      - query_national_city_air_quality
+      - query_airdata_platform
+      - airdata_calc_report_summary
+      - xuchang_station_catalog
+      - resolve_map_data_asset
+      - create_map_point_asset
+      - spatial_analysis
+      - spatial_interpolation
+      - visual_interaction
+      - get_map_program_receipt
+      - wait_map_program_receipt
+      - execute_python
     expert:
       - list_session_resources
       - read_session_resource
       - publish_session_file
+      - knowledge_qa_workflow
+      - knowledge_document_reader
       - get_weather_data
       - get_weather_forecast
       - get_universal_meteorology
       - get_current_weather
       - get_weather_situation_map
-      - get_platform_weather_image
-      - get_satellite_data
-      - get_gems_image
-      - get_sentinel5p_image
-      - get_fire_hotspots
       - query_xcai_city_history
       - execute_sql_query
       - execute_postgres_sql_query
-      - analyze_upwind_enterprises
+      # 许昌数据查询工具（中台 + 全国空气质量 + 站点定位）
+      - query_airdata_platform
+      - airdata_calc_report_summary
+      - xuchang_station_catalog
+      - query_national_province_air_quality
+      - query_national_city_air_quality
+      - resolve_station_geo
       - meteorological_trajectory_analysis
+      # 许昌源清单与上风向企业分析（企业排放清单 + 排污许可证合并筛查）
+      - query_xuchang_emission_inventory
+      - analyze_xuchang_upwind_permit_sources
       - create_report_chart
       - execute_python
       - read_file
@@ -56,26 +101,22 @@ backend:
       - grep
       - list_directory
       - search_files
-      - broadcast_social_users
+      - list_skills
+      - view_skill
     report:
       - list_session_resources
       - read_session_resource
       - publish_session_file
-      - execute_sql_query
-      - execute_postgres_sql_query
+      # 报告主 Agent 通过 DAG 委托 query/expert 子节点执行数据任务
       - read_file
       - write_file
       - edit_file
-      - grep
-      - list_directory
-      - search_files
-      - bash
       - create_report_chart
       - execute_python
       - create_report_package
-      - render_report_package
-      - validate_report_package
-      - broadcast_social_users
+      - run_agent_workflow
+      - list_skills
+      - view_skill
     social:
       - list_session_resources
       - read_session_resource
@@ -93,23 +134,10 @@ backend:
       - web_fetch
       - schedule_task
       - send_notification
+  # 广东数据源工具已改为项目专属（共享白名单不含、默认不注册），无需再逐项禁用；
+  # 仅保留非项目工具的显式禁用项。
   disabled_tools:
-    - query_gd_suncere
-    - query_gd_suncere_city_hour
-    - query_gd_suncere_station_hour_new
-    - query_gd_suncere_station_day_new
-    - query_gd_suncere_regional_comparison
-    - query_gd_suncere_city_day
-    - query_gd_suncere_district_day
-    - query_gd_suncere_district_report
-    - query_gd_suncere_report_compare
-    - analyze_city_pollutant_rankings
-    - get_5min_data
     - get_observed_meteorology
-    - query_city_standard_report
-    - query_city_standard_yoy_report
-    - query_station_standard_report
-    - query_station_standard_yoy_report
   mode_prompt_files:
     query: projects/xuchang/prompts/query.md
     knowledge: projects/xuchang/prompts/knowledge.md
@@ -122,16 +150,20 @@ backend:
     - xuchang_daily_attainment_forecast_fetcher
     - xuchang_annual_attainment_forecast_fetcher
     - xuchang_cnemc_station_hour_fetcher
+    - xuchang_city_exceedance_fetcher
     - xuchang_henan_month_year_accumulate_fetcher
     - xuchang_nmc_hourly_forecast_fetcher
     - xuchang_weather_com_daily_forecast_fetcher
+    - xuchang_air_quality_forecast_fetcher
+    - xuchang_weather_situation_evidence_fetcher
     - xuchang_station_deviation_alert_fetcher
     - xuchang_station_daily_pollution_fetcher
+    # 备用功能，暂不启用：场景二站点日污染超标确认与溯源任务触发
+    # - xuchang_station_daily_exceedance_fetcher
+    - xuchang_transport_analysis_fetcher
     - xuchang_zhongda_station_minute_fetcher
     - xuchang_zhongda_station_hour_fetcher
-    - xuchang_zhongda_station_day_fetcher
     - xuchang_zhongda_city_hour_fetcher
-    - xuchang_zhongda_city_day_fetcher
     - gems_xuchang_image_fetcher
   weather_history:
     bootstrap_days: 90
@@ -163,4 +195,5 @@ knowledge:
 scheduled_tasks:
   - task_xuchang_station_deviation_alert
   - task_xuchang_station_daily_source_report
+  - task_xuchang_station_daily_source_analysis_report
   - task_xuchang_weekly_weather_situation_report

@@ -74,7 +74,7 @@ class TestParseSharedExperiences:
 
 **分类**：workflow
 **标签**：O3, 上风向, 企业排查
-**工具**：app.tools.analysis.analyze_upwind
+**工具**：app.tools.analysis.meteorological_trajectory_analysis
 **贡献者**：e5f6g7h8
 **创建时间**：2026-03-27
 **使用次数**：8
@@ -85,7 +85,7 @@ class TestParseSharedExperiences:
 ### 解决流程
 1. 获取气象数据：`get_weather_data` 获取风向风速
 2. 后向轨迹：使用HYSPLIT模型计算48小时后向向轨迹
-3. 上风向企业：`analyze_upwind_enterprises` 筛选上风向20km内的化工企业
+3. 后向轨迹：使用 `meteorological_trajectory_analysis` 计算传输路径
 4. 优先排查：VOCs排放量大、距离近的企业
 
 ### 经验教训
@@ -194,7 +194,7 @@ class TestSearchExperiences:
 
 **分类**：workflow
 **标签**：O3, 上风向, 企业排查
-**工具**：app.tools.analysis.analyze_upwind
+**工具**：app.tools.analysis.meteorological_trajectory_analysis
 **贡献者**：e5f6g7h8
 **创建时间**：2026-03-27
 **使用次数**：8

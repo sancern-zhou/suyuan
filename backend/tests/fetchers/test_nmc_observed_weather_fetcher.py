@@ -112,7 +112,7 @@ async def test_fetcher_stores_passedchart_rows_for_configured_city():
         }
     )
     repo = FakeRepo()
-    stations = {key: NMC_CITY_STATIONS[key] for key in ("yuncheng", "xuchang")}
+    stations = {"xuchang": NMC_CITY_STATIONS["xuchang"]}
     fetcher = NMCObservedWeatherFetcher(
         client=client,
         repo=repo,
@@ -166,7 +166,6 @@ async def test_fetcher_continues_when_one_city_fails():
         }
     )
     repo = FakeRepo()
-    stations = {key: NMC_CITY_STATIONS[key] for key in ("yuncheng", "xuchang")}
     fetcher = NMCObservedWeatherFetcher(
         client=client,
         repo=repo,
@@ -179,7 +178,7 @@ async def test_fetcher_continues_when_one_city_fails():
 
     assert result["saved"] == 1
     assert result["failed_cities"] == 1
-    assert [point.station_id for point in repo.saved] == ["ZzMTA"]
+    assert [point.station_id for point in repo.saved] == ["57089"]
 
 
 def test_henan_nmc_station_catalog_covers_all_prefecture_level_cities():

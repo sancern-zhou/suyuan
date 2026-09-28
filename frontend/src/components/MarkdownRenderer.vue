@@ -25,6 +25,7 @@ import {
   renderDeferredApiImage
 } from './markdownApiImages.js'
 import { normalizeRestoredContent } from '@/stores/sessionContent.js'
+import { wrapBracketMath } from '@/services/markdownBracketMath.js'
 import { sanitizeRichHtml } from '@/utils/sanitize.js'
 
 // 预处理后的内容
@@ -266,15 +267,7 @@ const renderedHtml = computed(() => {
     return `$${match}$`
   })
 
-  // 【增强】识别方括号中的数学表达式 [公式内容]
-  // ✅ 排除 Markdown 链接格式：[text](url)，避免误判
-  content = content.replace(/\[([^\]]*?(?:\\[a-zA-Z]+|_[a-zA-Z0-9]+|\^[a-zA-Z0-9\{\}]+|\\frac|\\sum|\\int|\\prod|\\cdot|\\times|\\div|\\pm|\\mp|\\le|\\ge|\\ne|\\approx|\\equiv|\\partial|\\nabla|\\Delta|\\lambda|\\alpha|\\beta|\\gamma|\\delta|\\theta|\\pi|\\infty|\\sqrt|\{[^\]]*\})[^\]]*?)\](?!\()/g, (match, formula) => {
-    // 如果方括号内容看起来像数学公式，用 $ 包裹
-    if (formula.includes('\\') || formula.includes('^') || formula.includes('_') || formula.includes('frac') || formula.includes('sum') || formula.includes('int')) {
-      return `$$${formula}$$`  // 使用 $$ 作为行间公式
-    }
-    return match  // 不是公式，保持原样
-  })
+  content = wrapBracketMath(content)
 
   // 【调试】检查是否包含base64图片
   const base64Matches = content.match(/!\[.*?\]\(data:image\/png;base64,[^\)]+\)/g)
@@ -420,21 +413,21 @@ const handleImageClick = (e) => {
     font-size: 24px;
     font-weight: 600;
     margin: 16px 0 12px;
-    color: #1976D2;
+    color: var(--color-primary);
   }
   
   :deep(h2) {
     font-size: 20px;
     font-weight: 600;
     margin: 14px 0 10px;
-    color: #1976D2;
+    color: var(--color-primary);
   }
   
   :deep(h3) {
     font-size: 18px;
     font-weight: 600;
     margin: 12px 0 8px;
-    color: #333;
+    color: var(--text-1);
   }
   
   :deep(p) {
@@ -465,16 +458,16 @@ const handleImageClick = (e) => {
   
   :deep(strong) {
     font-weight: 600;
-    color: #1976D2;
+    color: var(--color-primary);
   }
   
   :deep(em) {
     font-style: italic;
-    color: #666;
+    color: var(--text-2);
   }
   
   :deep(code) {
-    background: #f5f5f5;
+    background: var(--bg-hover);
     padding: 2px 6px;
     border-radius: 3px;
     font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
@@ -483,7 +476,7 @@ const handleImageClick = (e) => {
   }
   
   :deep(a) {
-    color: #1976D2;
+    color: var(--color-primary);
     text-decoration: none;
     
     &:hover {
@@ -492,10 +485,10 @@ const handleImageClick = (e) => {
   }
   
   :deep(blockquote) {
-    border-left: 4px solid #e0e0e0;
+    border-left: 4px solid var(--border-2);
     padding-left: 12px;
     margin: 12px 0;
-    color: #666;
+    color: var(--text-2);
     font-style: italic;
   }
 
@@ -504,10 +497,10 @@ const handleImageClick = (e) => {
     max-width: 100%;  // 最大可以是100%页面宽度
     margin: 16px auto;  // 居中显示
     overflow-x: auto;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--border-2);
     border-radius: 10px;
     box-shadow: inset 0 0 0 1px rgba(255,255,255,0.3);
-    background: linear-gradient(180deg, #ffffff 0%, #f8f9ff 100%);
+    background: linear-gradient(180deg, var(--bg-container) 0%, #f8f9ff 100%);
   }
 
   // 图片样式 - 无边框样式
@@ -548,7 +541,7 @@ const handleImageClick = (e) => {
   :deep(.md-image-caption) {
     margin-top: 8px;
     font-size: 12px;
-    color: #666;
+    color: var(--text-2);
     font-style: italic;
   }
 
@@ -599,8 +592,8 @@ const handleImageClick = (e) => {
   :deep(th),
   :deep(td) {
     padding: 10px 14px;
-    border-right: 1px solid #e5e7eb;
-    border-bottom: 1px solid #e5e7eb;
+    border-right: 1px solid var(--border-2);
+    border-bottom: 1px solid var(--border-2);
     text-align: left;
     font-size: 13px;
     line-height: 1.5;
@@ -641,7 +634,7 @@ const handleImageClick = (e) => {
   :deep(.katex-display) {
     margin: 16px 0;
     padding: 12px;
-    background: #f8f9fa;
+    background: var(--bg-muted);
     border-radius: 6px;
     overflow-x: auto;
     text-align: center;
@@ -658,7 +651,7 @@ const handleImageClick = (e) => {
   }
 
   :deep(.katex .mop) {
-    color: #1976d2;
+    color: var(--color-primary);
   }
 
   :deep(.katex .mrel) {
@@ -666,11 +659,11 @@ const handleImageClick = (e) => {
   }
 
   :deep(.katex .mbin) {
-    color: #ff9800;
+    color: var(--color-warning);
   }
 
   :deep(.katex .mpunct) {
-    color: #666;
+    color: var(--text-2);
   }
 
   // 分数样式
@@ -714,7 +707,7 @@ const handleImageClick = (e) => {
     display: inline-block;
     width: 8px;
     height: 16px;
-    background-color: #1976D2;
+    background-color: var(--color-primary);
     margin-left: 2px;
     animation: blink 1s step-end infinite;
     vertical-align: middle;

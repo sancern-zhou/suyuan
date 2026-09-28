@@ -284,7 +284,7 @@ const formatFullTime = (timestamp) => {
   align-items: center;
   margin-bottom: 20px;
   padding-bottom: 15px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--border-2);
   flex-wrap: wrap;
   gap: 10px;
   flex-shrink: 0;
@@ -294,7 +294,7 @@ const formatFullTime = (timestamp) => {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-1);
 }
 
 .panel-actions {
@@ -306,9 +306,9 @@ const formatFullTime = (timestamp) => {
 
 .panel-btn {
   padding: 6px 12px;
-  border: 1px solid #1976d2;
+  border: 1px solid var(--color-primary);
   background: white;
-  color: #1976d2;
+  color: var(--color-primary);
   border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
@@ -316,7 +316,7 @@ const formatFullTime = (timestamp) => {
 }
 
 .panel-btn:hover:not(:disabled) {
-  background: #1976d2;
+  background: var(--color-primary);
   color: white;
 }
 
@@ -331,44 +331,44 @@ const formatFullTime = (timestamp) => {
 }
 
 .panel-btn.danger {
-  border-color: #dc3545;
-  color: #dc3545;
+  border-color: var(--color-danger);
+  color: var(--color-danger);
 }
 
 .panel-btn.danger:hover:not(:disabled) {
-  background: #dc3545;
+  background: var(--color-danger);
   color: white;
 }
 
 .session-case-action {
   flex-shrink: 0;
   padding: 5px 10px;
-  border: 1px solid #1976d2;
+  border: 1px solid var(--color-primary);
   border-radius: 4px;
   background: white;
-  color: #1976d2;
+  color: var(--color-primary);
   font-size: 12px;
   cursor: pointer;
 }
 
 .session-case-action:hover {
-  background: #1976d2;
+  background: var(--color-primary);
   color: white;
 }
 
 .session-delete-action {
   flex-shrink: 0;
   padding: 5px 10px;
-  border: 1px solid #dc3545;
+  border: 1px solid var(--color-danger);
   border-radius: 4px;
   background: white;
-  color: #dc3545;
+  color: var(--color-danger);
   font-size: 12px;
   cursor: pointer;
 }
 
 .session-delete-action:hover {
-  background: #dc3545;
+  background: var(--color-danger);
   color: white;
 }
 
@@ -400,7 +400,7 @@ const formatFullTime = (timestamp) => {
 .session-stats {
   display: flex;
   gap: 15px;
-  background: #f8f9fa;
+  background: var(--bg-muted);
   border-radius: 8px;
   padding: 15px;
   flex-shrink: 0;
@@ -429,12 +429,12 @@ const formatFullTime = (timestamp) => {
 .session-stat-value {
   font-size: 18px;
   font-weight: 600;
-  color: #1976d2;
+  color: var(--color-primary);
 }
 
 .session-stat-label {
   font-size: 12px;
-  color: #6c757d;
+  color: var(--text-2);
 }
 
 .session-list {
@@ -459,7 +459,7 @@ const formatFullTime = (timestamp) => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #495057;
+  color: var(--text-2);
   font-size: 13px;
   cursor: pointer;
 }
@@ -478,7 +478,7 @@ const formatFullTime = (timestamp) => {
 .selection-clear-btn {
   border: none;
   background: transparent;
-  color: #1976d2;
+  color: var(--color-primary);
   font-size: 12px;
   cursor: pointer;
 }
@@ -491,7 +491,7 @@ const formatFullTime = (timestamp) => {
 .session-empty {
   text-align: center;
   padding: 40px 20px;
-  color: #6c757d;
+  color: var(--text-2);
 }
 
 .session-spinner {
@@ -511,7 +511,7 @@ const formatFullTime = (timestamp) => {
   align-items: center;
   gap: 12px;
   background: white;
-  border: 1px solid #dee2e6;
+  border: 1px solid var(--border-2);
   border-radius: 8px;
   padding: 12px 15px;
   cursor: pointer;
@@ -519,9 +519,9 @@ const formatFullTime = (timestamp) => {
 }
 
 .session-item:hover {
-  border-color: #1976d2;
-  background: #f8f9fa;
-  box-shadow: 0 2px 8px rgba(25, 118, 210, 0.15);
+  border-color: var(--color-primary);
+  background: var(--bg-muted);
+  box-shadow: var(--shadow-2);
 }
 
 .session-info {
@@ -544,7 +544,7 @@ const formatFullTime = (timestamp) => {
   align-items: center;
   gap: 10px;
   font-size: 12px;
-  color: #6c757d;
+  color: var(--text-2);
 }
 
 .session-status {
@@ -594,8 +594,8 @@ const formatFullTime = (timestamp) => {
 }
 
 .status-error {
-  color: #b42318;
-  background: #fff1f0;
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
   border-color: #ffccc7;
 }
 </style>

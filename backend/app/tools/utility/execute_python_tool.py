@@ -48,6 +48,7 @@ from app.utils.path_config import (
     get_python_output_dir,
     get_reports_dir,
     resolve_agent_path,
+    is_agent_sensitive_path,
 )
 from app.utils.font_utils import BROWSER_CHART_FONT_FAMILY, get_font_manager
 
@@ -81,7 +82,7 @@ class ExecutePythonTool(LLMTool):
             description=(
                 "执行 Python 代码，用于数据处理、数值计算、Excel/文件处理、"
                 "⭐ **自定义图表生成**：matplotlib/seaborn/plotly/bokeh 绘制复杂/3D/科研图表。"
-                "每次调用是独立环境；用 load_data(file_path) 读取会话数据文件，"
+                "每次调用是独立环境；读取输入文件须通过 input_files 声明，声明的路径可在代码中通过 input_files 列表访问；用 load_data(file_path) 读取会话数据文件，"
                 "跨调用或跨工具复用结构化结果必须用 save_data(...) 保存，并原样复用其返回的 file_path；"
                 "不得将自行写入或推断得到的中间数据路径传给后续工具。"
                 "生成 Excel、Word、PDF 等交付文件时必须先调用 artifact_path(filename) 获取输出路径，"
@@ -93,7 +94,7 @@ class ExecutePythonTool(LLMTool):
                 "生成文件由工具自动归档并返回可复用路径。"
             ),
             category=ToolCategory.QUERY,
-            version="1.0.3",
+            version="1.1.0",
             requires_context=True  # ✅ 需要上下文以支持数据访问功能
         )
 
@@ -137,6 +138,7 @@ class ExecutePythonTool(LLMTool):
                 is_file_reader = (
                     func_name in {"open", "io.open", "get_raw_data", "load_data"}
                     or leaf_name.startswith("read_")
+                    or func_name in {"Path.read_text", "Path.read_bytes"}
                     or func_name in {"pd.load", "np.load"}
                 )
                 if is_file_reader and node.args:
@@ -161,8 +163,44 @@ class ExecutePythonTool(LLMTool):
             return assigned_strings.get(node.id)
         return None
 
-    def _build_allowed_data_files_payload(self, code: str, context) -> str:
+    def _validate_input_files(self, input_files, context) -> Optional[List[str]]:
+        """Resolve declared files without treating a declaration as authorization."""
+        if input_files is None:
+            return None  # Compatibility with existing literal-path callers.
+        if not isinstance(input_files, list) or len(input_files) > 256:
+            raise ValueError("input_files 必须是最多256项的文件路径数组")
+        if not input_files:
+            return []
+        if context is None:
+            raise ValueError("声明输入文件需要当前会话上下文")
+        try:
+            session_dir = resolve_agent_path(context.data_manager.memory.session.data_dir)
+        except (AttributeError, TypeError, ValueError):
+            session_dir = None
+        authorized = {
+            resolve_agent_path(path)
+            for path in [*(getattr(context, "available_file_paths", []) or []),
+                         *(getattr(context, "authorized_input_paths", []) or [])]
+            if path
+        }
+        resolved_files = []
+        for index, raw in enumerate(input_files):
+            if not isinstance(raw, str) or not raw.strip():
+                raise ValueError(f"input_files[{index}] 必须是非空文件路径")
+            path = resolve_agent_path(raw)
+            in_session = session_dir is not None and path.is_relative_to(session_dir)
+            if is_agent_sensitive_path(path) or (path not in authorized and not in_session):
+                raise ValueError(f"input_files[{index}] 不属于当前会话或已授权输入文件")
+            if not path.is_file():
+                raise ValueError(f"input_files[{index}] 文件不存在或不是普通文件")
+            if str(path) not in resolved_files:
+                resolved_files.append(str(path))
+        return resolved_files
+
+    def _build_allowed_data_files_payload(self, code: str, context, input_files=None) -> str:
         """Build a small allowlist; the child loads data instead of embedding it in code."""
+        if input_files is not None:
+            return json.dumps(input_files, ensure_ascii=False)
         session_data_dir = resolve_agent_path(context.data_manager.memory.session.data_dir)
         available_paths = {
             str(resolve_agent_path(path))
@@ -194,6 +232,7 @@ class ExecutePythonTool(LLMTool):
         context=None,
         code: str = None,
         timeout: Optional[int] = None,
+        input_files: Optional[List[str]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -202,6 +241,7 @@ class ExecutePythonTool(LLMTool):
         Args:
             code: Python 代码
             timeout: 超时时间（秒），默认 30 秒
+            input_files: 本次需要读取的已授权文件，代码内可通过同名列表访问。
 
         Returns:
             {
@@ -227,6 +267,16 @@ class ExecutePythonTool(LLMTool):
                 "summary": "缺少代码参数"
             }
 
+        try:
+            declared_inputs = self._validate_input_files(input_files, context)
+        except (ValueError, OSError) as exc:
+            return {
+                "status": "failed", "success": False,
+                "error_code": "INVALID_INPUT_FILES", "error": str(exc),
+                "summary": f"输入文件声明无效：{exc}", "data": None,
+                "metadata": {"tool_name": self.name},
+            }
+
         # ✅ 确保图表目录存在（每次执行时都检查）
         os.makedirs(self.CHARTS_DIR, exist_ok=True)
 
@@ -243,8 +293,9 @@ class ExecutePythonTool(LLMTool):
         try:
             # 只在独立子进程中执行，且不修改 Web worker 的全局 cwd。
             original_code = code
+            code = "input_files = " + json.dumps(declared_inputs or [], ensure_ascii=False) + "\n" + code
             code = self._inject_artifact_path_helper(code)
-            code = self._inject_data_context(code, context)
+            code = self._inject_data_context(code, context, input_files=declared_inputs)
             code = self._inject_matplotlib_save_support(code)
             code = self._inject_excel_helpers(code)
 
@@ -263,6 +314,7 @@ class ExecutePythonTool(LLMTool):
                 timeout or self.default_timeout,
                 working_dir=temp_dir,
                 context=context,
+                input_files=declared_inputs,
             )
 
             # ✅ 从 output 中提取用户保存的文件路径（绝对路径保存的文件）
@@ -738,6 +790,7 @@ class ExecutePythonTool(LLMTool):
         *,
         working_dir: str,
         context=None,
+        input_files=None,
     ) -> Dict[str, Any]:
         """在独立沙箱进程组中执行代码，同时保持 Web worker 事件循环可运行。"""
         # 写入脚本文件
@@ -759,6 +812,7 @@ class ExecutePythonTool(LLMTool):
             working_dir=working_dir,
             timeout=timeout,
             context=context,
+            input_files=input_files,
         )
         if sandbox_spec is None:
             return {
@@ -860,6 +914,7 @@ class ExecutePythonTool(LLMTool):
         working_dir: str,
         timeout: int,
         context=None,
+        input_files=None,
     ) -> Optional[Tuple[List[str], List[Tuple[Path, Path, set[str]]], List[Path]]]:
         """构建 fail-closed Bubblewrap 沙箱命令。
 
@@ -936,6 +991,9 @@ class ExecutePythonTool(LLMTool):
             command.extend(["--unsetenv", name])
         safe_env = {
             "PATH": f"{python_env}/bin:/usr/bin:/bin",
+            # Expose only the application package mounted below.  Secrets,
+            # sessions and the data registry are intentionally not mounted.
+            "PYTHONPATH": str(Path(PROJECT_ROOT) / "backend"),
             "HOME": "/tmp",
             "TMPDIR": "/tmp",
             "MPLCONFIGDIR": "/tmp/matplotlib",
@@ -957,6 +1015,32 @@ class ExecutePythonTool(LLMTool):
         mounted_destinations = set()
         sync_dirs: List[Tuple[Path, Path, set[str]]] = []
         relative_input_mounts: List[Path] = []
+        # Read-write bind destinations whose host staging directories are
+        # synced back to persistent storage after the run. A read-only bind
+        # targeting one of these subtrees would be materialized by bwrap as a
+        # mountpoint placeholder inside the host staging directory, and the
+        # post-run sync would then publish that placeholder over the real
+        # file (this silently truncated persisted chart images).
+        synced_rw_bind_destinations: list[Path] = []
+        read_only_bind_destinations: list[Path] = []
+
+        # Business calculation code may import the backend application
+        # package, but the sandbox must not receive the project root, .env
+        # files, session history, or the persistent data registry.  Authorized
+        # data files continue to be staged separately below.
+        backend_root = Path(PROJECT_ROOT) / "backend"
+        staged_backend_root = Path(working_dir) / "backend_runtime"
+        for source in (backend_root / "app", backend_root / "config"):
+            if not source.is_dir():
+                continue
+            relative = source.relative_to(backend_root)
+            staged_source = staged_backend_root / relative
+            shutil.copytree(source, staged_source, dirs_exist_ok=True)
+            self._append_bubblewrap_parent_dirs(command, source)
+            command.extend(["--ro-bind", str(staged_source), str(source)])
+            mounted_destinations.add(str(source))
+            read_only_bind_destinations.append(source)
+
         context_paths = list(
             dict.fromkeys(
                 [
@@ -970,7 +1054,10 @@ class ExecutePythonTool(LLMTool):
             )
         )
         requested_paths = self._find_data_file_accesses(code)
-        candidate_paths = list(dict.fromkeys([*context_paths, *requested_paths]))
+        candidate_paths = (
+            list(input_files) if input_files is not None
+            else list(dict.fromkeys([*context_paths, *requested_paths]))
+        )
         try:
             if session_data_dir and session_data_dir.is_dir():
                 staged_session_dir = Path(working_dir) / "session_data"
@@ -989,6 +1076,7 @@ class ExecutePythonTool(LLMTool):
                     original_relative_paths.add(str(relative_path))
 
                 mounted_destinations.add(str(session_data_dir))
+                synced_rw_bind_destinations.append(session_data_dir)
                 sync_dirs.append((staged_session_dir, session_data_dir, original_relative_paths))
 
             # The data registry is the agent's shared read-only data area. It
@@ -1007,16 +1095,32 @@ class ExecutePythonTool(LLMTool):
             # images so the writable output mount does not hide prior assets.
             images_dir = Path(get_images_dir()).resolve()
             staged_images_dir = Path(working_dir) / "images_output"
-            if images_dir.is_dir():
-                shutil.copytree(images_dir, staged_images_dir, dirs_exist_ok=True)
-            else:
-                staged_images_dir.mkdir(parents=True, exist_ok=True)
+            staged_images_dir.mkdir(parents=True, exist_ok=True)
+            # Authorized candidate inputs under the images directory are
+            # pre-staged here instead of being ro-bound at their host paths:
+            # the images bind above already backs that subtree, so an extra
+            # bind would be materialized as a host-side mountpoint placeholder
+            # in this staging directory and then synced over the real file.
+            staged_images_original_paths: set[str] = set()
+            for value in candidate_paths:
+                source_path = resolve_agent_path(value)
+                if not source_path.is_file():
+                    continue
+                try:
+                    relative_input = source_path.relative_to(images_dir)
+                except ValueError:
+                    continue
+                staged_input = staged_images_dir / relative_input
+                staged_input.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_path, staged_input)
+                staged_images_original_paths.add(str(relative_input))
             self._append_bubblewrap_parent_dirs(command, images_dir)
             command.extend(["--bind", str(staged_images_dir), str(images_dir)])
             mounted_destinations.add(str(images_dir))
-            command.extend(["--bind", str(staged_images_dir), "/sandbox/backend/backend_data_registry/images"])
-            mounted_destinations.add("/sandbox/backend/backend_data_registry/images")
-            sync_dirs.append((staged_images_dir, images_dir, set()))
+            synced_rw_bind_destinations.append(images_dir)
+            sync_dirs.append(
+                (staged_images_dir, images_dir, staged_images_original_paths)
+            )
 
             preferred_font_path = Path(get_font_manager().FONT_FILE_PATHS[0]).resolve()
             if preferred_font_path.is_file():
@@ -1033,11 +1137,14 @@ class ExecutePythonTool(LLMTool):
                 path = resolve_agent_path(value)
                 if not path.exists():
                     continue
-                if (
-                    raw_path.is_absolute()
-                    and session_data_dir
-                    and (path == session_data_dir or session_data_dir in path.parents)
+                if any(
+                    path == synced_destination or synced_destination in path.parents
+                    for synced_destination in synced_rw_bind_destinations
                 ):
+                    # Already visible through the synced rw staging bind (and
+                    # pre-staged above); a read-only bind here would be
+                    # materialized as a host-side mountpoint inside the
+                    # staging directory.
                     continue
                 if raw_path.is_absolute():
                     destination_path = path
@@ -1066,6 +1173,7 @@ class ExecutePythonTool(LLMTool):
                     shutil.copy2(path, staged_input)
                 if raw_path.is_absolute():
                     self._append_bubblewrap_parent_dirs(command, path.parent)
+                    read_only_bind_destinations.append(path)
                 command.extend(["--ro-bind", str(staged_input), destination])
                 mounted_destinations.add(destination)
 
@@ -1083,6 +1191,23 @@ class ExecutePythonTool(LLMTool):
             return None
 
         command.extend([str(python_env / "bin/python"), "/sandbox/script.py"])
+
+        # Fail closed on mount overlap: a read-only bind whose destination
+        # falls inside a synced read-write staging bind would be materialized
+        # as a host-side mountpoint placeholder and published by the post-run
+        # sync, silently overwriting persistent files.
+        for read_only_destination in read_only_bind_destinations:
+            for synced_destination in synced_rw_bind_destinations:
+                if read_only_destination == synced_destination or (
+                    synced_destination in read_only_destination.parents
+                ):
+                    logger.error(
+                        "execute_python_sandbox_mount_overlap_rejected",
+                        read_only_bind=str(read_only_destination),
+                        synced_rw_bind=str(synced_destination),
+                    )
+                    return None
+
         return command, sync_dirs, relative_input_mounts
 
     @staticmethod
@@ -1130,7 +1255,13 @@ class ExecutePythonTool(LLMTool):
                 dirs[:] = [
                     name
                     for name in dirs
-                    if name not in {"inputs", "session_data", "images_output"}
+                    if name not in {
+                        "inputs",
+                        "session_data",
+                        "images_output",
+                        "_suyuan_assets",
+                        "backend_runtime",
+                    }
                 ]
             # 跳过 __pycache__ 目录
             if '__pycache__' in dirs:
@@ -1531,9 +1662,14 @@ def artifact_path(filename: str) -> str:
         generator: str,
     ) -> List[Dict[str, Any]]:
         """Convert parsed ECharts options into frontend visuals."""
+        from app.utils.echarts_layout import normalize_echarts_layout
+        from app.utils.echarts_legend import ensure_echarts_legend
+
         visuals: List[Dict[str, Any]] = []
         for index, echarts_data in enumerate(echarts_options):
             try:
+                echarts_data = ensure_echarts_legend(echarts_data)
+                echarts_data = normalize_echarts_layout(echarts_data)
                 echarts_data["textStyle"] = {
                     **(echarts_data.get("textStyle") or {}),
                     "fontFamily": BROWSER_CHART_FONT_FAMILY,
@@ -1582,7 +1718,7 @@ def artifact_path(filename: str) -> str:
             return echarts_title.get("text", f"{chart_type.upper()}图表")
         return echarts_title or f"{chart_type.upper()}图表"
 
-    def _inject_data_context(self, code: str, context) -> str:
+    def _inject_data_context(self, code: str, context, input_files=None) -> str:
         """
         注入基于会话文件路径的数据访问上下文。
 
@@ -1604,7 +1740,7 @@ def artifact_path(filename: str) -> str:
             has_data_manager=context.data_manager is not None
         )
 
-        allowed_data_files_payload = self._build_allowed_data_files_payload(code, context)
+        allowed_data_files_payload = self._build_allowed_data_files_payload(code, context, input_files)
         resolved_session_dir = resolve_agent_path(context.data_manager.memory.session.data_dir)
         resolved_session_dir.mkdir(parents=True, exist_ok=True)
         session_data_dir = json.dumps(str(resolved_session_dir), ensure_ascii=False)
@@ -2720,7 +2856,9 @@ def merge_excel_with_charts(file_paths, output_path):
                 "如果任务只是查看文件、搜索文本、检查进程或调用现成 CLI，优先使用 bash；"
                 "需要循环、条件分支、解析转换、程序化处理或可靠地产出文件时，优先使用 execute_python。"
                 "复杂用法先阅读 backend/app/tools/utility/execute_python_manual.md。"
-                "每次调用是独立环境；用 load_data(file_path) 读取会话数据文件，"
+                "每次调用是独立环境，变量和文件挂载不跨调用保留；每次读取输入文件都须通过 input_files 声明。"
+                "声明文件经会话权限校验后挂载，代码中的 input_files 列表提供规范化绝对路径，支持循环读取和路径运算。"
+                "用 load_data(file_path) 读取会话数据文件，"
                 "跨调用或交给其他工具使用的结构化结果必须调用 save_data(...)，"
                 "并原样复用 save_data 返回的 file_path。"
                 "执行后必须检查success、error_code和data.data_file_paths：只有经过文件校验的路径才可继续传递。"
@@ -2729,12 +2867,21 @@ def merge_excel_with_charts(file_paths, output_path):
                 "执行环境相互隔离，不得将自行写入、拼接或猜测得到的中间数据路径交给后续工具。"
                 "生成 Excel、Word、PDF 等交付文件必须先调用 artifact_path(filename) 获取输出路径并保存；"
                 "正式报告静态图表优先使用 create_report_chart；流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
+                "生成的静态图只在对话正文展示，不进入右侧交互图面板；"
+                "最终答复可用 [[chart:<visual_id>]] 将图片放在相应分析旁，visual_id 取工具返回的 visuals.id，"
+                "未指定位置的图片由前端追加到本轮答复末尾。不要自行拼图片 URL 或本地路径。"
                 "生成文件会自动归档并发布到会话资源目录；必须复用返回的 file_path，"
                 "不得自行构造资源路径，也不要再调用 publish_session_file；默认超时30秒。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "input_files": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "maxItems": 256,
+                        "description": "本次需要读取的输入文件路径，读取文件时必须声明；只允许当前会话数据文件或已授权资源文件，不接受目录。相对路径以项目根目录为准。代码中的 input_files 为校验后的绝对路径列表。无需读取文件时可省略。"
+                    },
                     "code": {
                         "type": "string",
                         "description": (
@@ -2772,6 +2919,8 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "① 正式报告Word/QMD静态图表 → 优先使用 create_report_chart；"
             "② 前端交互式图表/复杂数据可视化 → 使用 execute_echarts_python；"
             "③ 复杂Python绘图（3D/科研图/多子图） → 使用 execute_python + matplotlib/seaborn/plotly。"
+            "成功时会尝试为交互图登记同组 PNG 资源；复用到文档时用 list_session_resources 查找 chart-image。"
+            "最终答复需要控制图表位置时，可使用 [[chart:<visual_id>]] 占位符；未指定位置的图表由前端统一补充。"
             "通用计算和文件生成仍使用 execute_python。"
         )
 
@@ -2831,6 +2980,16 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
         result.setdefault("metadata", {})
         result["metadata"]["tool_name"] = "execute_echarts_python"
         result["metadata"]["visuals_count"] = len(echarts_visuals)
+        for visual in echarts_visuals:
+            try:
+                from app.tools.visualization.echarts_snapshot import render_echarts_png
+
+                image_path = await asyncio.to_thread(
+                    render_echarts_png, visual["data"], visual["id"]
+                )
+                visual["local_path"] = str(image_path)
+            except Exception as exc:
+                logger.warning("echarts_snapshot_failed", visual_id=visual.get("id"), error=str(exc))
         result.setdefault("resources", []).extend(
             resources_for_visuals(echarts_visuals, tool_name=self.name)
         )
@@ -2846,15 +3005,34 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                 "首次使用前必须先调用 read_file 阅读 "
                 "backend/app/tools/utility/execute_echarts_python_manual.md。"
                 "使用工具返回的 file_path，代码中通过系统注入的 load_data(file_path) 获取数据。"
+                "每次调用是独立环境；读取输入文件须通过 input_files 声明，代码中的同名列表提供校验后的绝对路径。"
                 "仅用于图表模式的 ECharts 输出：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
-                "图表通过统一会话资源目录发布和预览，不返回独立图片 URL。"
+                "布局要求：图例（legend）水平置于横坐标刻度下方（不得与刻度重叠），"
+                "纵轴名称（yAxis.name）置于图表左侧，横轴名称（xAxis.name）置于横轴右侧。"
+                "图表通过统一会话资源目录发布；成功生成的 PNG 衍生资源标记为 chart-image。"
+                "同一图表有两种展示：PNG 静态图可嵌入对话正文，ECharts 交互图可在右侧面板查看。"
+                "对话展示由前端自动完成，不要在回复中拼图片 URL 或输出本地路径。"
+                "需要控制图表在最终 Markdown 中的位置时，使用 [[chart:<visual_id>]] 占位符；"
+                "visual_id 必须来自本次工具返回的 visuals.id，前端会将占位符替换为对应 PNG。"
+                "未使用占位符的成功图表仍会由前端追加到最终答复末尾。"
+                "若答复正文已嵌入静态图，应围绕图表说明结论；需要提及交互功能时，说明右侧面板可查看交互版本，"
+                "不要只说图表已在右侧面板展示，以免误导用户忽略正文中的图。"
+                "将已有交互图放入 Word/QMD 时，调用 list_session_resources，设置 logical_key=chart-image、"
+                "tool_name=execute_echarts_python，从结果取得 file_path 作为文档图片输入；"
+                "若没有 chart-image，说明静态渲染未成功，可使用 create_report_chart 生成报告图片。"
                 "多图时输出多行纯 JSON。禁止输出 CHART_1: 前缀、Markdown 代码块、解释文字包裹 JSON。"
                 "数据分析、清洗、中间计算和文件生成请使用 execute_python。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "input_files": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "maxItems": 256,
+                        "description": "本次需要读取的当前会话或已授权输入文件路径；每次调用重新声明，不接受目录，代码中通过 input_files 列表访问。"
+                    },
                     "code": {
                         "type": "string",
                         "description": (

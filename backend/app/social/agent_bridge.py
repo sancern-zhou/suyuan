@@ -1025,7 +1025,7 @@ class AgentBridge:
             await append_session_transcript_for_mode(session, mode=self.mode)
 
             if session_id not in self.agent._session_store:
-                self.agent._session_store[session_id] = {}
+                self.agent._session_store[session_id] = {"last_used": datetime.utcnow()}
             self.agent._session_store[session_id]["display_history_persisted"] = True
 
             logger.info(

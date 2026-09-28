@@ -233,6 +233,18 @@ rules:
     default_severity: 高
     scope: RF_HY_O3VALUEPASS/RF_Q_GASEOUSMULTIPOINT_CO/RF_Q_GASEOUSMULTIPOINT_NO2/RF_Q_GASEOUSMULTIPOINT_O3/RF_Q_GASEOUSMULTIPOINT_SO2
     rationale: 同一站点同类气体多点校准或 O3 数值通过表的仪器量程应保持连续一致；若当前量程与上一条同站点同类表单量程不一致，应复核是否填错、设备变更或量程调整未留痕。
+  - rule_id: RF_MULTIPOINT_LINEARITY_OUT_OF_RANGE
+    name: 多点校准线性指标超出范围
+    category: 表单数值逻辑
+    default_severity: 高
+    scope: RF_Q_GASEOUSMULTIPOINT_*
+    rationale: 多点线性校准结果的斜率应处于 0.95~1.05 之间，相关系数应大于 0.999；超出范围说明线性标定结果可能不合格或存在填报错误。
+  - rule_id: RF_MULTIPOINT_INTERCEPT_OUT_OF_RANGE
+    name: 多点校准截距超出满量程1%
+    category: 表单数值逻辑
+    default_severity: 高
+    scope: RF_Q_GASEOUSMULTIPOINT_*
+    rationale: 多点线性校准结果的截距绝对值应不大于满量程的1%，否则说明标定结果可能不合格或存在填报错误。满量程缺失或无法解析时跳过。
   - rule_id: RF_CALIBRATION_DATE_EXPIRED
     name: RF 表单校准有效期异常
     category: 时间合理性
@@ -262,7 +274,7 @@ rules:
     category: 附件读数一致性
     default_severity: 高
     scope: RF_HY_O3VALUEPASS/WO_COMMONFILE
-    rationale: O3量值传递表的斜率、截距、改变率及上级标准型号、设备号、序列号、传递日期、公式和有效期应与XLS附件按标签提取的值一致。
+    rationale: O3量值传递表的斜率、截距、改变率、传递日期、公式和有效期应与XLS附件按标签提取的值一致；上级标准型号、设备号和序列号不纳入此项比对。
   - rule_id: ATTACHMENT_MULTIPOINT_WATERMARK_REVIEW
     name: 多点校准附件水印和站点名称待复核
     category: 附件质量问题

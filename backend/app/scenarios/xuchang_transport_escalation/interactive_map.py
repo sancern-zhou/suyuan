@@ -185,6 +185,15 @@ def build_transport_map_programs(
         pollutant=pollutant,
     )
     enterprises = _enterprise_features(enterprise_screening)
+    screening_run = bool(
+        enterprise_screening
+        and enterprise_screening.get("status") not in {None, "not_run"}
+    )
+    enterprise_intent = (
+        f"展示{station_name}{pollutant}近地轨迹覆盖企业"
+        if screening_run
+        else f"展示{station_name}{pollutant}近地轨迹（企业筛查未执行，未纳入企业要素）"
+    )
     return {
         "regional": _program(
             program_id=f"{job_id}-regional",
@@ -194,10 +203,10 @@ def build_transport_map_programs(
         ),
         "enterprise": _program(
             program_id=f"{job_id}-enterprise",
-            intent=f"展示{station_name}{pollutant}近地轨迹覆盖企业",
+            intent=enterprise_intent,
             receptor=receptor,
             trajectory_features=trajectories,
-            enterprise_features=enterprises,
+            enterprise_features=enterprises if screening_run else None,
         ),
     }
 

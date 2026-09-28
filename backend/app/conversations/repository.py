@@ -5,7 +5,7 @@ from datetime import datetime
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
-from app.db.database import async_session
+from app.db.session_database import session_async_session as async_session
 
 from .models import ConversationCatalogDB
 from .schemas import ConversationCatalogRecord, ConversationSource

@@ -591,16 +591,21 @@ class CityAirQualityForecastClient:
         return payload
 
 
-MERGE_CURRENT_AIR_QUALITY_SQL = """
+BEIJING_DATETIME_SQL = (
+    "CAST(GETDATE() AT TIME ZONE 'UTC' AT TIME ZONE 'China Standard Time' AS DATETIME)"
+)
+BEIJING_DATE_SQL = f"CAST({BEIJING_DATETIME_SQL} AS DATE)"
+
+MERGE_CURRENT_AIR_QUALITY_SQL = f"""
 MERGE CurrentAirQuality AS target
-USING (SELECT ? AS CityID) AS source
+USING (SELECT ? AS CityID, {BEIJING_DATETIME_SQL} AS UpdateTime) AS source
 ON target.CityID = source.CityID
 WHEN MATCHED THEN
     UPDATE SET
         AQI = ?, PM25 = ?, PM10 = ?, O3 = ?, SO2 = ?, NO2 = ?, CO = ?,
         AQILevel = ?, MaxPollution = ?, Tips = ?, TipsLevel = ?,
         WeatherCondition = ?, Temperature = ?, WindPower = ?, Humidity = ?,
-        RecordTime = ?, UpdateTime = GETDATE(),
+        RecordTime = ?, UpdateTime = source.UpdateTime,
         CityCenterLongitude = ?, CityCenterLatitude = ?,
         TodayCondition = ?, TodayMinAqi = ?, TodayMaxAqi = ?, TodayMaxPollution = ?,
         TodayConditionIco = ?, TodayTemp = ?, TodayTips = ?, TodayTipsLevel = ?,
@@ -611,52 +616,53 @@ WHEN NOT MATCHED THEN
            WeatherCondition, Temperature, WindPower, Humidity, RecordTime,
            CityCenterLongitude, CityCenterLatitude,
            TodayCondition, TodayMinAqi, TodayMaxAqi, TodayMaxPollution, TodayConditionIco, TodayTemp, TodayTips, TodayTipsLevel,
-           TomorrowCondition, TomorrowMinAqi, TomorrowMaxAqi, TomorrowMaxPollution, TomorrowConditionIco, TomorrowTemp, TomorrowTips, TomorrowTipsLevel)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+           TomorrowCondition, TomorrowMinAqi, TomorrowMaxAqi, TomorrowMaxPollution, TomorrowConditionIco, TomorrowTemp, TomorrowTips, TomorrowTipsLevel,
+           UpdateTime)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, source.UpdateTime);
 """
 
-MERGE_AQI_TREND_24H_SQL = """
+MERGE_AQI_TREND_24H_SQL = f"""
 MERGE AQITrend24H AS target
-USING (SELECT ? AS CityID, ? AS Time, ? AS AQIValue, ? AS SequenceID, CAST(GETDATE() AS DATE) AS UpdateDate) AS source
+USING (SELECT ? AS CityID, ? AS Time, ? AS AQIValue, ? AS SequenceID, {BEIJING_DATE_SQL} AS UpdateDate, {BEIJING_DATETIME_SQL} AS UpdateTime) AS source
 ON target.CityID = source.CityID AND target.Time = source.Time AND target.UpdateDate = source.UpdateDate
 WHEN MATCHED THEN
-    UPDATE SET AQIValue = source.AQIValue, SequenceID = source.SequenceID, UpdateTime = GETDATE()
+    UPDATE SET AQIValue = source.AQIValue, SequenceID = source.SequenceID, UpdateTime = source.UpdateTime
 WHEN NOT MATCHED THEN
-    INSERT (CityID, Time, AQIValue, SequenceID)
-    VALUES (source.CityID, source.Time, source.AQIValue, source.SequenceID);
+    INSERT (CityID, Time, AQIValue, SequenceID, UpdateTime)
+    VALUES (source.CityID, source.Time, source.AQIValue, source.SequenceID, source.UpdateTime);
 """
 
-MERGE_WEATHER_FORECAST_7DAY_SQL = """
+MERGE_WEATHER_FORECAST_7DAY_SQL = f"""
 MERGE WeatherForecast7Day AS target
 USING (SELECT ? AS CityCode, ? AS cityname, ? AS TimePoint, ? AS DayTitle, ? AS MinAqi, ? AS MaxAqi, ? AS MaxPollution,
               ? AS WeatherCondition, ? AS ConditionIco, ? AS Temperature, ? AS WindLevel, ? AS WindDirection,
-              CAST(GETDATE() AS DATE) AS UpdateDate) AS source
+              {BEIJING_DATE_SQL} AS UpdateDate, {BEIJING_DATETIME_SQL} AS UpdateTime) AS source
 ON target.CityCode = source.CityCode AND target.TimePoint = source.TimePoint AND target.UpdateDate = source.UpdateDate
 WHEN MATCHED THEN
     UPDATE SET cityname = source.cityname, DayTitle = source.DayTitle, MinAqi = source.MinAqi, MaxAqi = source.MaxAqi,
               MaxPollution = source.MaxPollution, WeatherCondition = source.WeatherCondition,
               ConditionIco = source.ConditionIco, Temperature = source.Temperature,
-              WindLevel = source.WindLevel, WindDirection = source.WindDirection, UpdateTime = GETDATE()
+              WindLevel = source.WindLevel, WindDirection = source.WindDirection, UpdateTime = source.UpdateTime
 WHEN NOT MATCHED THEN
     INSERT (CityCode, cityname, DayTitle, TimePoint, MinAqi, MaxAqi, MaxPollution,
-           WeatherCondition, ConditionIco, Temperature, WindLevel, WindDirection)
+           WeatherCondition, ConditionIco, Temperature, WindLevel, WindDirection, UpdateTime)
     VALUES (source.CityCode, source.cityname, source.DayTitle, source.TimePoint, source.MinAqi, source.MaxAqi, source.MaxPollution,
-           source.WeatherCondition, source.ConditionIco, source.Temperature, source.WindLevel, source.WindDirection);
+           source.WeatherCondition, source.ConditionIco, source.Temperature, source.WindLevel, source.WindDirection, source.UpdateTime);
 """
 
-MERGE_HOURLY_WEATHER_SQL = """
+MERGE_HOURLY_WEATHER_SQL = f"""
 MERGE HourlyWeather AS target
-USING (SELECT ? AS CityID, ? AS Time, ? AS Temperature, ? AS WeatherIco, CAST(GETDATE() AS DATE) AS UpdateDate) AS source
+USING (SELECT ? AS CityID, ? AS Time, ? AS Temperature, ? AS WeatherIco, {BEIJING_DATE_SQL} AS UpdateDate, {BEIJING_DATETIME_SQL} AS UpdateTime) AS source
 ON target.CityID = source.CityID AND target.Time = source.Time AND target.UpdateDate = source.UpdateDate
 WHEN MATCHED THEN
-    UPDATE SET Temperature = source.Temperature, WeatherIco = source.WeatherIco, UpdateTime = GETDATE()
+    UPDATE SET Temperature = source.Temperature, WeatherIco = source.WeatherIco, UpdateTime = source.UpdateTime
 WHEN NOT MATCHED THEN
-    INSERT (CityID, Time, Temperature, WeatherIco)
-    VALUES (source.CityID, source.Time, source.Temperature, source.WeatherIco);
+    INSERT (CityID, Time, Temperature, WeatherIco, UpdateTime)
+    VALUES (source.CityID, source.Time, source.Temperature, source.WeatherIco, source.UpdateTime);
 """
 
 ENSURE_TABLES_SQL = (
-    """
+    f"""
 IF OBJECT_ID(N'dbo.CurrentAirQuality', N'U') IS NULL
 BEGIN
     CREATE TABLE CurrentAirQuality (
@@ -678,7 +684,7 @@ BEGIN
         WindPower NVARCHAR(50),
         Humidity NVARCHAR(10),
         RecordTime NVARCHAR(50),
-        UpdateTime DATETIME DEFAULT GETDATE(),
+        UpdateTime DATETIME DEFAULT {BEIJING_DATETIME_SQL},
         CityCenterLongitude FLOAT,
         CityCenterLatitude FLOAT,
         TodayCondition NVARCHAR(100),
@@ -703,7 +709,7 @@ BEGIN
     CREATE INDEX IX_CurrentAirQuality_AQI ON CurrentAirQuality(AQI);
 END
 """,
-    """
+    f"""
 IF OBJECT_ID(N'dbo.AQITrend24H', N'U') IS NULL
 BEGIN
     CREATE TABLE AQITrend24H (
@@ -712,15 +718,15 @@ BEGIN
         Time NVARCHAR(10) NOT NULL,
         AQIValue INT,
         SequenceID INT,
-        UpdateDate DATE DEFAULT CAST(GETDATE() AS DATE),
-        UpdateTime DATETIME DEFAULT GETDATE(),
+        UpdateDate DATE DEFAULT {BEIJING_DATE_SQL},
+        UpdateTime DATETIME DEFAULT {BEIJING_DATETIME_SQL},
         CONSTRAINT UK_AQITrend24H_CityTimeDate UNIQUE (CityID, Time, UpdateDate)
     );
     CREATE INDEX IX_AQITrend24H_CityID ON AQITrend24H(CityID);
     CREATE INDEX IX_AQITrend24H_UpdateDate ON AQITrend24H(UpdateDate);
 END
 """,
-    """
+    f"""
 IF OBJECT_ID(N'dbo.WeatherForecast7Day', N'U') IS NULL
 BEGIN
     CREATE TABLE WeatherForecast7Day (
@@ -737,8 +743,8 @@ BEGIN
         Temperature NVARCHAR(50),
         WindLevel NVARCHAR(10),
         WindDirection NVARCHAR(50),
-        UpdateDate DATE DEFAULT CAST(GETDATE() AS DATE),
-        UpdateTime DATETIME DEFAULT GETDATE(),
+        UpdateDate DATE DEFAULT {BEIJING_DATE_SQL},
+        UpdateTime DATETIME DEFAULT {BEIJING_DATETIME_SQL},
         CONSTRAINT UK_WeatherForecast7Day_CityDateUpdate UNIQUE (CityCode, TimePoint, UpdateDate)
     );
     CREATE INDEX IX_WeatherForecast7Day_CityCode ON WeatherForecast7Day(CityCode);
@@ -747,7 +753,7 @@ BEGIN
     CREATE INDEX IX_WeatherForecast7Day_UpdateDate ON WeatherForecast7Day(UpdateDate);
 END
 """,
-    """
+    f"""
 IF OBJECT_ID(N'dbo.HourlyWeather', N'U') IS NULL
 BEGIN
     CREATE TABLE HourlyWeather (
@@ -756,8 +762,8 @@ BEGIN
         Time NVARCHAR(10) NOT NULL,
         Temperature NVARCHAR(10),
         WeatherIco INT,
-        UpdateDate DATE DEFAULT CAST(GETDATE() AS DATE),
-        UpdateTime DATETIME DEFAULT GETDATE(),
+        UpdateDate DATE DEFAULT {BEIJING_DATE_SQL},
+        UpdateTime DATETIME DEFAULT {BEIJING_DATETIME_SQL},
         CONSTRAINT UK_HourlyWeather_CityTimeDate UNIQUE (CityID, Time, UpdateDate)
     );
     CREATE INDEX IX_HourlyWeather_CityID ON HourlyWeather(CityID);

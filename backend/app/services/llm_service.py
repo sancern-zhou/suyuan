@@ -19,6 +19,7 @@ import httpx
 from app.utils.llm_context_logger import get_llm_context_logger
 from app.services.llm_failover import (
     LLMFailoverError,
+    LLMResponseRejectedError,
     classify_llm_failure,
     get_cooldown_failure,
     get_llm_pool_semaphore,
@@ -45,6 +46,14 @@ _llm_request_state: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
 )
 _model_tier_rotation_lock = threading.Lock()
 _model_tier_rotation_offsets: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], int] = {}
+
+_llm_opencode_session_id: ContextVar[Optional[str]] = ContextVar(
+    "llm_opencode_session_id",
+    default=None,
+)
+
+# OpenCode Go 客户端标识：专属 User-Agent，替代通用 httpx SDK 标识
+OPENCODE_GO_USER_AGENT = "suyuan-agent/1.0"
 
 
 def _rotate_model_tier_candidates(tier: str, candidates: list):
@@ -306,16 +315,14 @@ class LLMService:
                 state["selection_source"] = "tier"
                 state["model_tier"] = tier
             if tier_config.strip():
-                candidates = parse_fallback_candidates("", "", tier_config)
                 candidates = [
                     candidate
-                    for candidate in candidates
-                    if candidate.provider and candidate.provider.lower() != "glm"
+                    for candidate in parse_fallback_candidates("", "", tier_config)
+                    if candidate.provider
                 ]
                 if not candidates:
                     raise ValueError(
-                        f"No non-GLM candidates configured for model tier: {tier}. "
-                        "Flash/Pro tiers must use providers such as mimo or deepseek."
+                        f"No candidates configured for model tier: {tier}."
                     )
                 rotation_offset = 0
                 if load_balance:
@@ -374,6 +381,21 @@ class LLMService:
             return
         with self.use_model_tier(model_tier, load_balance=True):
             yield
+
+    @contextmanager
+    def use_opencode_session(self, session_id: Optional[str]):
+        """Set the OpenCode Go routing session id for LLM calls in this context.
+
+        OpenCode Go 网关要求每段对话发送稳定的 x-opencode-session 会话 ID，
+        用于请求路由与提示词缓存。
+        """
+        token = _llm_opencode_session_id.set(
+            str(session_id) if session_id else None
+        )
+        try:
+            yield
+        finally:
+            _llm_opencode_session_id.reset(token)
 
     @contextmanager
     def use_auto_profile(self, auto_profile: Optional[str]):
@@ -1177,13 +1199,29 @@ class LLMService:
             "model_env": "AGNES_MODEL",
             "model_default": "agnes-2.0-flash",
         },
+        # OpenCode Go 订阅（https://opencode.ai/zen/go，OpenAI Chat Completions 兼容协议）
+        "go": {
+            "url_env": "GO_BASE_URL",
+            "url_default": "https://opencode.ai/zen/go/v1",
+            "key_env": "GO_API_KEY",
+            "model_env": "GO_MODEL",
+            "model_default": "deepseek-v4.1-flash",
+        },
+        # 备用 OpenCode Go 订阅（同一网关，独立 key，用于分散限流）
+        "go2": {
+            "url_env": "GO2_BASE_URL",
+            "url_default": "https://opencode.ai/zen/go/v1",
+            "key_env": "GO2_API_KEY",
+            "model_env": "GO2_MODEL",
+            "model_default": "deepseek-v4.1-flash",
+        },
         # 智谱 GLM Coding Plan（OpenAI + Anthropic 兼容协议）
         "glm": {
             "url_env": "GLM_BASE_URL",
             "url_default": "https://open.bigmodel.cn/api/coding/paas/v4",
             "key_env": "GLM_API_KEY",
             "model_env": "GLM_MODEL",
-            "model_default": "glm-4.7",
+            "model_default": "glm-5.3-flash",
         },
         # 中科曙光 SCNET Token Plan（Anthropic 兼容协议）
         "scnet": {
@@ -1195,7 +1233,13 @@ class LLMService:
         },
     }
 
-    def __init__(self):
+    @property
+    def request_timeout_seconds(self) -> float:
+        override = getattr(self, "_request_timeout_seconds", None)
+        return override if override is not None else float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+
+    def __init__(self, *, request_timeout_seconds: Optional[float] = None):
+        self._request_timeout_seconds = request_timeout_seconds
         # 优先使用 settings 中的配置，确保与 .env 文件一致
         self.provider = settings.llm_provider.lower()
         self.temperature = settings.llm_temperature
@@ -1340,8 +1384,16 @@ class LLMService:
             )
             return await call()
 
-    async def _run_anthropic_with_fallback(self, operation: str, call):
-        """Run an Anthropic-compatible request with configured model fallback."""
+    async def _run_anthropic_with_fallback(self, operation: str, call, validate=None):
+        """Run an Anthropic-compatible request with configured model fallback.
+
+        ``validate`` optionally receives the raw result of each attempt and
+        returns ``None`` when the response is acceptable, or a non-empty
+        reason string to reject it. Rejected responses move the current
+        request to the next fallback candidate (without marking the provider
+        as cooldown); when every candidate is rejected a
+        :class:`LLMResponseRejectedError` carrying the last reason is raised.
+        """
         original_state = self._snapshot_provider_state()
         candidates = parse_fallback_candidates(
             original_state["provider"],
@@ -1377,6 +1429,10 @@ class LLMService:
 
                 try:
                     result = await self._run_llm_request_with_global_limit(operation, call)
+                    if validate is not None:
+                        rejection = validate(result)
+                        if rejection:
+                            raise LLMResponseRejectedError(str(rejection))
                     if attempts:
                         logger.warning(
                             "llm_fallback_candidate_succeeded",
@@ -1385,6 +1441,28 @@ class LLMService:
                             attempts=summarize_attempts(attempts),
                         )
                     return result
+                except LLMResponseRejectedError as exc:
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": "invalid_response",
+                        "status": None,
+                        "code": None,
+                        "error": exc.reason,
+                    })
+                    has_next = index < len(candidates)
+                    logger.warning(
+                        "llm_fallback_candidate_rejected",
+                        provider=self.provider,
+                        model=self.model,
+                        reason="invalid_response",
+                        has_next=has_next,
+                        error=exc.reason[:300],
+                    )
+                    if not has_next:
+                        exc.attempts = summarize_attempts(attempts)
+                        raise
+                    continue
                 except Exception as exc:
                     failure = classify_llm_failure(exc)
                     attempts.append({
@@ -1533,6 +1611,24 @@ class LLMService:
             if not self.model:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_agnes_model_fallback_to_env", model=self.model)
+
+        elif self.provider in {"go", "go2"}:
+            prefix = self.provider
+            self.api_mode = getattr(settings, f"{prefix}_api_mode", "chat_completions")
+            self.base_url = (
+                getattr(settings, f"{prefix}_base_url", None)
+                or os.getenv(config["url_env"])
+                or config["url_default"]
+            )
+            self.api_key = (
+                getattr(settings, f"{prefix}_api_key", None)
+                or os.getenv(config["key_env"])
+                or ""
+            )
+            self.model = getattr(settings, f"{prefix}_model", None)
+            if not self.model:
+                self.model = os.getenv(config["model_env"], config["model_default"])
+                logger.debug("llm_go_model_fallback_to_env", provider=prefix, model=self.model)
 
         elif self.provider == "glm":
             self.api_mode = getattr(settings, "glm_api_mode", "anthropic_messages")
@@ -1684,7 +1780,7 @@ class LLMService:
                     )
                     return
 
-                request_timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+                request_timeout = self.request_timeout_seconds
                 if self.provider == "mimo":
                     # MiMo's Anthropic-compatible endpoint accepts the SDK's
                     # standard API-key authentication. Passing api_key=None and
@@ -1756,6 +1852,13 @@ class LLMService:
         # 如果配置了API key，则添加Authorization header
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+
+        # OpenCode Go 网关要求：专属 User-Agent + 稳定会话头（缺失会被拒绝）
+        if self.provider in {"go", "go2"}:
+            headers["User-Agent"] = OPENCODE_GO_USER_AGENT
+            headers["x-opencode-session"] = (
+                _llm_opencode_session_id.get() or f"suyuan-{os.getpid()}"
+            )
 
         return url, headers
 
@@ -2318,7 +2421,7 @@ class LLMService:
 
         for attempt in range(max_retries):
             try:
-                timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+                timeout = self.request_timeout_seconds
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     response = await client.post(url, headers=headers, json=payload)
                     response.raise_for_status()
@@ -2952,7 +3055,7 @@ class LLMService:
             messages_count=len(payload["messages"]),
             has_tools=bool(payload.get("tools")),
         )
-        timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+        timeout = self.request_timeout_seconds
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
@@ -3009,7 +3112,7 @@ class LLMService:
             has_tools=bool(payload.get("tools")),
         )
         adapter = ChatCompletionsStreamAdapter(model=self.model)
-        timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+        timeout = self.request_timeout_seconds
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream("POST", url, headers=headers, json=payload) as response:
                 response.raise_for_status()
@@ -3035,6 +3138,7 @@ class LLMService:
         provider: Optional[str] = None,
         model: Optional[str] = None,
         auto_profile: Optional[str] = None,
+        validate: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """Anthropic 格式聊天，支持原生工具调用
 
@@ -3046,6 +3150,8 @@ class LLMService:
             max_tokens: 最大输出 token 数
             temperature: 温度参数
             system: 系统提示词（Anthropic API 使用单独的 system 参数）
+            validate: 可选校验回调，接收每次尝试的原始响应；返回 None 表示
+                接受响应，返回非空字符串表示拒绝该响应并切换到下一个备用模型
 
         Returns:
             {
@@ -3063,6 +3169,7 @@ class LLMService:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     system=system,
+                    validate=validate,
                 )
             finally:
                 self._schedule_provider_override_service_close(override_service)
@@ -3075,6 +3182,7 @@ class LLMService:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     system=system,
+                    validate=validate,
                 )
 
         try:
@@ -3119,6 +3227,7 @@ class LLMService:
             response = await self._run_anthropic_with_fallback(
                 "llm_chat",
                 create_message,
+                validate=validate,
             )
 
             # The Chat-Completions adapter already returns the normalized

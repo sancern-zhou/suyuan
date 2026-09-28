@@ -1,0 +1,49 @@
+{
+  "task_id": "task_xuchang_station_daily_source_analysis_report",
+  "name": "许昌市城市超标污染快速溯源",
+  "description": "仅在逐小时污染过程证据冻结后触发，生成独立溯源报告。",
+  "execution_mode": "custom",
+  "tool_names": [
+    "read_file",
+    "execute_python",
+    "create_report_package"
+  ],
+  "skill_id": "xuchang_city_exceedance_source_report",
+  "knowledge_base_binding": null,
+  "trigger_type": "event",
+  "schedule_type": null,
+  "event_type": "xuchang.city_source_analysis.completed",
+  "event_filters": {
+    "city": "许昌市"
+  },
+  "target_user_ids": [],
+  "broadcast_enabled": false,
+  "enabled": true,
+  "run_at": null,
+  "interval_minutes": null,
+  "hour": null,
+  "minute": null,
+  "created_at": "2026-08-24T23:00:00+08:00",
+  "updated_at": "2026-09-19T00:00:00+08:00",
+  "last_run_at": null,
+  "next_run_at": null,
+  "total_runs": 0,
+  "success_runs": 0,
+  "failed_runs": 0,
+  "created_by": "system",
+  "owner_user_id": "system",
+  "owner_username": "scheduled-task",
+  "owner_display_name": "定时任务",
+  "tags": [
+    "xuchang",
+    "city_exceedance",
+    "hourly_episode",
+    "event_triggered_report"
+  ],
+  "workspace_entry": {
+    "enabled": true,
+    "title": "城市超标污染溯源"
+  },
+  "prompt": "你是许昌市城市超标污染快速溯源报告 Agent。严格遵循 xuchang_city_exceedance_source_report Skill。本任务只处理事件 payload 指向的单个逐小时污染过程，不生成昨日污染回顾，也不重新判定告警。\n1. 使用 read_file 读取 evidence_package_path 指向的 report-brief JSON。先检查 schema_version=xuchang_city_source_analysis/v1、process_window、trigger、data_quality 和各证据状态；不得扫描目录、重新抓取、改写证据或再次运行 HYSPLIT。\n2. 仅对有数据的国控站、乡镇站、周边城市、气象与轨迹证据形成审慎分析。区分发布 AQI、业务高值与法定日均限值。后向轨迹和 CWT 只用于可能的传输线索；不写本地/外来百分比、未经核实的企业责任或未执行的筛查结果。缺测时说明边界，不臆测。\n3. agent_text 仅填写 summary_text、air_quality_analysis、meteorology_analysis、transport_analysis、local_source_analysis、conclusion 六个简短业务段落。已有事实表由确定性组装器生成，禁止自行补造指标和坐标。\n4. 先读 backend/app/tools/report/report_package/references/index.md。最后只调用一次 execute_python：from uuid import uuid4；调用 app.scenarios.xuchang_city_exceedance.qmd_report.write_qmd_report_from_evidence(evidence_path, agent_text, artifact_path(f'xuchang_exceedance_{uuid4().hex}.qmd'))，打印返回 JSON。stdout 中的 source_qmd_path 是临时路径；从同一次工具结果 data.files/file_paths 中按 source_qmd_name 精确查找发布路径，缺失即报错。\n5. 只调用一次 create_report_package，传返回的 report_id、发布后的 source_qmd_path、返回的 assets、output_formats=['html','docx','share_html']、title='许昌市城市超标污染快速溯源分析报告'、report_type='government'。验收 HTML 预览、DOCX 和独立 HTML 后再结束，返回报告 ID、过程结论和验收结果。",
+  "timeout_seconds": 1800
+}

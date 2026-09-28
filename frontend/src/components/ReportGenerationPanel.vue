@@ -312,23 +312,23 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #fff;
+  background: var(--bg-container);
 }
 
 .panel-header {
   padding: 16px 20px;
-  border-bottom: 1px solid #e8e8e8;
+  border-bottom: 1px solid var(--border-2);
 
   h3 {
     margin: 0 0 4px;
     font-size: 18px;
-    color: #1f2a44;
+    color: var(--text-1);
   }
 
   .subtitle {
     margin: 0;
     font-size: 13px;
-    color: #7a86a0;
+    color: var(--text-3);
   }
 }
 
@@ -349,7 +349,7 @@ onMounted(() => {
   h4 {
     margin: 0 0 12px;
     font-size: 14px;
-    color: #1f2a44;
+    color: var(--text-1);
     font-weight: 600;
   }
 }
@@ -375,7 +375,7 @@ onMounted(() => {
   }
 
   &.active {
-    border-color: #1976d2;
+    border-color: var(--color-primary);
     background: #e9f3ff;
   }
 
@@ -389,19 +389,19 @@ onMounted(() => {
     h5 {
       margin: 0 0 4px;
       font-size: 14px;
-      color: #1f2a44;
+      color: var(--text-1);
     }
 
     p {
       margin: 0;
       font-size: 12px;
-      color: #7a86a0;
+      color: var(--text-3);
     }
   }
 }
 
 .upload-area {
-  border: 2px dashed #d9d9d9;
+  border: 2px dashed var(--border-3);
   border-radius: 8px;
   padding: 32px;
   text-align: center;
@@ -409,8 +409,8 @@ onMounted(() => {
   transition: all 0.2s;
 
   &:hover {
-    border-color: #1976d2;
-    background: #f5f5f5;
+    border-color: var(--color-primary);
+    background: var(--bg-hover);
   }
 
   .upload-content {
@@ -421,12 +421,12 @@ onMounted(() => {
 
     p {
       margin: 0;
-      color: #666;
+      color: var(--text-2);
       font-size: 14px;
 
       &.upload-hint {
         font-size: 12px;
-        color: #999;
+        color: var(--text-3);
         margin-top: 4px;
       }
     }
@@ -438,14 +438,14 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 8px 12px;
-  background: #f0f0f0;
+  background: var(--border-1);
   border-radius: 4px;
   margin-top: 8px;
 
   button {
     border: none;
-    background: #ff4d4f;
-    color: #fff;
+    background: var(--color-danger);
+    color: var(--bg-container);
     width: 20px;
     height: 20px;
     border-radius: 50%;
@@ -474,7 +474,7 @@ onMounted(() => {
   }
 
   &.selected {
-    border-color: #1976d2;
+    border-color: var(--color-primary);
     background: #e9f3ff;
   }
 
@@ -482,13 +482,13 @@ onMounted(() => {
     h5 {
       margin: 0 0 4px;
       font-size: 14px;
-      color: #1f2a44;
+      color: var(--text-1);
     }
 
     p {
       margin: 0;
       font-size: 12px;
-      color: #7a86a0;
+      color: var(--text-3);
     }
   }
 
@@ -499,7 +499,7 @@ onMounted(() => {
 
     .usage-count {
       font-size: 11px;
-      color: #999;
+      color: var(--text-3);
     }
   }
 }
@@ -517,12 +517,12 @@ onMounted(() => {
 
   label {
     font-size: 12px;
-    color: #666;
+    color: var(--text-2);
   }
 
   input {
     padding: 8px;
-    border: 1px solid #d9d9d9;
+    border: 1px solid var(--border-3);
     border-radius: 4px;
     font-size: 14px;
   }
@@ -547,7 +547,7 @@ onMounted(() => {
 
   span {
     font-size: 14px;
-    color: #1f2a44;
+    color: var(--text-1);
   }
 }
 
@@ -558,8 +558,8 @@ onMounted(() => {
 .generate-btn {
   width: 100%;
   padding: 12px 24px;
-  background: #1976d2;
-  color: #fff;
+  background: var(--color-primary);
+  color: var(--bg-container);
   border: none;
   border-radius: 8px;
   font-size: 16px;
@@ -568,11 +568,11 @@ onMounted(() => {
   transition: all 0.2s;
 
   &:hover:not(:disabled) {
-    background: #1565c0;
+    background: var(--color-primary-active);
   }
 
   &:disabled {
-    background: #ccc;
+    background: var(--border-3);
     cursor: not-allowed;
   }
 }
@@ -583,17 +583,17 @@ onMounted(() => {
   h4 {
     margin: 0 0 12px;
     font-size: 14px;
-    color: #1f2a44;
+    color: var(--text-1);
     font-weight: 600;
   }
 
   .report-preview {
     max-height: 400px;
     overflow-y: auto;
-    border: 1px solid #e8e8e8;
+    border: 1px solid var(--border-2);
     border-radius: 8px;
     padding: 16px;
-    background: #fafafa;
+    background: var(--bg-muted);
   }
 
   .preview-actions {
@@ -603,15 +603,15 @@ onMounted(() => {
 
     button {
       padding: 8px 16px;
-      border: 1px solid #d9d9d9;
+      border: 1px solid var(--border-3);
       border-radius: 6px;
-      background: #fff;
+      background: var(--bg-container);
       cursor: pointer;
       transition: all 0.2s;
 
       &:hover {
-        border-color: #1976d2;
-        color: #1976d2;
+        border-color: var(--color-primary);
+        color: var(--color-primary);
       }
     }
   }
@@ -621,7 +621,7 @@ onMounted(() => {
 .empty-state {
   text-align: center;
   padding: 24px;
-  color: #999;
+  color: var(--text-3);
   font-size: 14px;
 }
 </style>

@@ -351,6 +351,8 @@ class TrajectoryRunner:
         """Build NOAA jobs from exact Scenario 1 event hours."""
         profiles = {
             "PM2.5": {"hours": 48, "heights": [100, 500, 1000]},
+            "PM10": {"hours": 48, "heights": [100, 500, 1000]},
+            "AQI": {"hours": 48, "heights": [100, 500, 1000]},
             "O3": {"hours": 48, "heights": [100, 500, 1000]},
             "NOX": {"hours": 24, "heights": [100, 300, 500]},
         }

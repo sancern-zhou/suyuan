@@ -28,6 +28,8 @@ logger = structlog.get_logger()
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
 REQUESTED_EVENT_TYPE = "xuchang.station_daily_source_analysis.requested"
 COMPLETED_EVENT_TYPE = "xuchang.station_daily_source_analysis.completed"
+PROCESS_REQUESTED_EVENT_TYPE = "xuchang.city_source_analysis.requested"
+PROCESS_COMPLETED_EVENT_TYPE = "xuchang.city_source_analysis.completed"
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,8 @@ class PollutantTransportProfile:
 
 POLLUTANT_TRANSPORT_PROFILES = {
     "PM2.5": PollutantTransportProfile(48, (100, 500, 1000), 6, 500),
+    "PM10": PollutantTransportProfile(48, (100, 500, 1000), 6, 500),
+    "AQI": PollutantTransportProfile(48, (100, 500, 1000), 6, 500),
     "O3": PollutantTransportProfile(48, (100, 500, 1000), 6, 500),
     "NOX": PollutantTransportProfile(24, (100, 300, 500), 6, 300),
 }
@@ -200,6 +204,83 @@ class XuchangTransportEscalationService:
             "reason": "scenario_3_requires_confirmed_station_daily_exceedance",
             "job": None,
         }
+
+    def ingest_process_exceedance(self, event: dict[str, Any]) -> dict[str, Any]:
+        """Queue one bounded trajectory job for a confirmed hourly process."""
+        pollutant = str(event.get("target_pollutant") or "")
+        if pollutant not in POLLUTANT_TRANSPORT_PROFILES:
+            return {"status": "ignored", "reason": "unsupported_pollutant", "job": None}
+        if event.get("status") != "confirmed" or not event.get("process_window"):
+            return {"status": "ignored", "reason": "unconfirmed_process", "job": None}
+        if int(event.get("valid_hours") or 0) < 1:
+            return {"status": "ignored", "reason": "missing_receptor_concentrations", "job": None}
+        try:
+            start_hour = _parse_hour(event["process_window"]["start"])
+            lat, lon = float(event["lat"]), float(event["lon"])
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                raise ValueError("invalid coordinates")
+        except (KeyError, TypeError, ValueError):
+            return {"status": "ignored", "reason": "invalid_process_identity", "job": None}
+        station_id = str(event.get("station_id") or "").strip()
+        if not station_id:
+            return {"status": "ignored", "reason": "missing_station_id", "job": None}
+        trigger_hours = sorted({_parse_hour(value).isoformat() for value in event.get("trigger", {}).get("hours", [])})
+        if not trigger_hours:
+            return {"status": "ignored", "reason": "missing_trigger_hours", "job": None}
+        event_hours = trigger_hours[-6:]
+        analysis_id = str(event.get("event_id") or "").strip()
+        if not analysis_id:
+            analysis_id = f"xuchang-city-{start_hour:%Y%m%d%H}-{station_id}-{pollutant.lower().replace('.', '')}"
+        job_id = f"{analysis_id}-analysis"
+        control_hours = [(start_hour - timedelta(hours=offset)).isoformat()
+                         for offset in range(CONTROL_LOOKBACK_HOURS, 0, -1)]
+        concentration_by_hour = {}
+        for item in event.get("hourly_rows") or []:
+            try:
+                concentration_by_hour[_parse_hour(item["time"]).isoformat()] = float(item["concentration"])
+            except (KeyError, TypeError, ValueError):
+                continue
+        profile = POLLUTANT_TRANSPORT_PROFILES[pollutant]
+        with self._lock:
+            state = self._load_state()
+            if analysis_id in state["process_analyses"]:
+                return {"status": "duplicate", "analysis": state["process_analyses"][analysis_id], "job": None}
+            analysis = {"analysis_id": analysis_id, "status": "pending", "city": "许昌市",
+                        "station_id": station_id, "station_type": event.get("station_type"),
+                        "target_pollutant": pollutant, "process_window": event["process_window"],
+                        "job_id": job_id}
+            job = {
+                "job_id": job_id, "event_id": job_id,
+                "event_type": PROCESS_REQUESTED_EVENT_TYPE,
+                "completed_event_type": PROCESS_COMPLETED_EVENT_TYPE,
+                "status": "pending", "attempts": 0,
+                "created_at": datetime.now(TZ_SHANGHAI).isoformat(),
+                "process_id": analysis_id, "analysis_id": analysis_id,
+                "parent_event_ids": [event.get("event_id")],
+                "city": "许昌市", "station_id": station_id,
+                "station_name": event.get("station_name") or station_id,
+                "station_type": event.get("station_type"),
+                "lat": lat, "lon": lon, "target_date": start_hour.date().isoformat(),
+                "target_pollutant": pollutant,
+                "observed_indicator": "小时发布AQI或业务高值/站点偏差",
+                "process_window": event["process_window"], "trigger": event.get("trigger"),
+                "station_hourly": event.get("station_hourly") or [],
+                "township_and_provincial_transport": event.get("township_and_provincial_transport"),
+                "meteorology_evidence": event.get("meteorology_evidence"),
+                "data_quality": event.get("data_quality") or {},
+                "valid_hours": event.get("valid_hours"), "data_rate": event.get("data_rate"),
+                "event_hours": event_hours,
+                "event_concentrations": {hour: concentration_by_hour.get(hour) for hour in event_hours},
+                "control_event_hours": control_hours,
+                "window_policy": "last_six_trigger_hours_with_six_preprocess_controls",
+                "backtrack_hours": profile.backtrack_hours,
+                "heights_m_agl": list(profile.heights_m_agl), "meteo_source": self.meteo_source,
+            }
+            state["process_analyses"][analysis_id] = analysis
+            state["jobs"][job_id] = job
+            state["updated_at"] = datetime.now(TZ_SHANGHAI).isoformat()
+            self._save_state(state)
+        return {"status": "requested", "analysis": analysis, "job": job}
 
     def ingest_daily_exceedance(self, event: dict[str, Any]) -> dict[str, Any]:
         """Create one idempotent daily analysis for station, pollutant and date."""
@@ -386,13 +467,35 @@ class XuchangTransportEscalationService:
                     "reason": "enterprise_review_is_deferred_to_final_analysis_layer",
                     "enterprises": [],
                 }
+                if job.get("process_window"):
+                    try:
+                        from app.scenarios.xuchang_city_exceedance.candidate_screening import (
+                            screen_inventory_candidates,
+                        )
+                        enterprise_screening = screen_inventory_candidates(
+                            receptor_lat=float(job["lat"]), receptor_lon=float(job["lon"]),
+                            pollutant=job["target_pollutant"],
+                            meteorology_rows=(job.get("meteorology_evidence") or {}).get("rows") or [],
+                            trigger_hours=job["event_hours"],
+                        )
+                    except Exception as exc:
+                        logger.exception("xuchang_city_candidate_screening_failed", job_id=job["job_id"])
+                        enterprise_screening = {"status": "not_run",
+                                                "reason": f"screening_error:{type(exc).__name__}",
+                                                "enterprises": []}
+                # Legacy map renderers expect permit-match fields that the
+                # inventory-only field-check candidates deliberately lack.
+                map_screening = (
+                    {"status": "not_run", "enterprises": []}
+                    if job.get("process_window") else enterprise_screening
+                )
                 output_dir = self._output_dir(job)
                 map_artifacts = generate_transport_maps(
                     output_dir=output_dir,
                     job_id=job["job_id"],
                     endpoints=endpoints,
                     corridors=corridors,
-                    enterprise_screening=enterprise_screening,
+                    enterprise_screening=map_screening,
                     receptor_lat=float(job["lat"]),
                     receptor_lon=float(job["lon"]),
                     pollutant=job["target_pollutant"],
@@ -403,7 +506,7 @@ class XuchangTransportEscalationService:
                     pollutant=job["target_pollutant"],
                     endpoints=endpoints,
                     corridors=corridors,
-                    enterprise_screening=enterprise_screening,
+                    enterprise_screening=map_screening,
                     receptor_lat=float(job["lat"]),
                     receptor_lon=float(job["lon"]),
                 )
@@ -475,10 +578,13 @@ class XuchangTransportEscalationService:
             quality=quality,
         )
         return {
-            "schema_version": "xuchang_station_daily_source_analysis/v3",
+            "schema_version": (
+                "xuchang_city_source_analysis/v1" if job.get("process_window")
+                else "xuchang_station_daily_source_analysis/v3"
+            ),
             "status": "completed" if quality["status"] == "sufficient" else "insufficient_evidence",
             "event_id": job["event_id"],
-            "event_type": COMPLETED_EVENT_TYPE,
+            "event_type": job.get("completed_event_type", COMPLETED_EVENT_TYPE),
             "process_id": job["process_id"],
             "analysis_id": job.get("analysis_id", job["process_id"]),
             "parent_event_ids": job["parent_event_ids"],
@@ -487,12 +593,15 @@ class XuchangTransportEscalationService:
             "station_name": job["station_name"],
             "target_pollutant": job["target_pollutant"],
             "target_date": job.get("target_date"),
+            "station_type": job.get("station_type"),
+            "process_window": job.get("process_window"),
+            "trigger": job.get("trigger"),
             "daily_evaluation": {
                 "value": job.get("daily_value"),
                 "limit": job.get("limit"),
                 "valid_hours": job.get("valid_hours"),
                 "data_rate": job.get("data_rate"),
-                "status": "hourly_station_high_value",
+                "status": "hourly_pollution_process" if job.get("process_window") else "hourly_station_high_value",
             },
             "station_hourly": job.get("station_hourly", []),
             "hourly_alerts": job.get("hourly_alerts", []),
@@ -552,7 +661,7 @@ class XuchangTransportEscalationService:
         job: dict[str, Any],
         trajectory_cache: dict[str, Any],
     ) -> dict[str, Any]:
-        if job["target_pollutant"] != "PM2.5":
+        if job["target_pollutant"] != "PM2.5" or job.get("station_type") == "township":
             return {
                 "status": "not_enabled_for_pollutant",
                 "enabled_pollutants": ["PM2.5"],
@@ -845,6 +954,8 @@ class XuchangTransportEscalationService:
             job["result_status"] = output["status"]
             job["output_path"] = output["output_path"]
             analysis = state.get("daily_analyses", {}).get(job.get("analysis_id"))
+            if analysis is None:
+                analysis = state.get("process_analyses", {}).get(job.get("analysis_id"))
             if analysis is not None:
                 analysis["status"] = "completed"
                 analysis["result_status"] = output["status"]
@@ -861,6 +972,8 @@ class XuchangTransportEscalationService:
                 "pending_retry" if int(job.get("attempts", 0)) < self.max_attempts else "failed"
             )
             analysis = state.get("daily_analyses", {}).get(job.get("analysis_id"))
+            if analysis is None:
+                analysis = state.get("process_analyses", {}).get(job.get("analysis_id"))
             if analysis is not None:
                 analysis["status"] = job["status"]
                 analysis["last_error"] = error
@@ -869,7 +982,21 @@ class XuchangTransportEscalationService:
     def _write_output(self, job: dict[str, Any], output: dict[str, Any]) -> Path:
         path = self._output_dir(job) / f"{job['job_id']}.json"
         output["output_path"] = format_agent_path(path)
-        output["evidence_package_path"] = output["output_path"]
+        if job.get("process_window"):
+            brief_path = path.with_name(f"{job['job_id']}-report-brief.json")
+            brief_fields = (
+                "schema_version", "analysis_id", "status", "city", "station_id", "station_name",
+                "station_type", "target_pollutant", "target_date", "process_window", "trigger",
+                "station_hourly", "meteorology_evidence", "township_and_provincial_transport",
+                "data_quality", "trajectory_quality", "transport_diagnosis", "transport_corridors",
+                "trajectory_clustering_readiness", "cwt", "enterprise_screening", "visualizations", "generated_at",
+            )
+            brief = {key: output.get(key) for key in brief_fields}
+            brief["full_evidence_path"] = format_agent_path(path)
+            self._write_json(brief_path, brief)
+            output["evidence_package_path"] = format_agent_path(brief_path)
+        else:
+            output["evidence_package_path"] = output["output_path"]
         self._write_json(path, output)
         return path
 
@@ -885,6 +1012,7 @@ class XuchangTransportEscalationService:
                 "active_processes": {},
                 "process_history": [],
                 "daily_analyses": {},
+                "process_analyses": {},
                 "jobs": {},
             }
         try:
@@ -896,6 +1024,7 @@ class XuchangTransportEscalationService:
         state.setdefault("active_processes", {})
         state.setdefault("process_history", [])
         state.setdefault("daily_analyses", {})
+        state.setdefault("process_analyses", {})
         state.setdefault("jobs", {})
         return state
 

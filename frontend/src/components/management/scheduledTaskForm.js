@@ -61,12 +61,18 @@ export const applyExecutionMode = (form, mode) => {
 
 export const buildTaskPayload = (form) => {
   const isEvent = form.trigger_type === 'event'
-  const instruction = String(form.description || '').trim()
   const payload = {
     name: String(form.name || '').trim(),
-    description: instruction,
+    description: String(form.description || '').trim(),
     execution_mode: form.execution_mode || 'assistant',
-    model_tier: form.model_tier || 'auto',
+    model_tier: form.model_tier || 'flash',
+    result_requirements: (form.result_requirements || []).map(rule => ({
+      field: String(rule.field || '').trim(),
+      label: String(rule.label || '').trim(),
+      required: rule.required !== false,
+      ...(rule.required_when && Object.keys(rule.required_when).length ? { required_when: { ...rule.required_when } } : {}),
+      allowed_values: String(rule.allowedValuesText || '').split(/[,，\n]/).map(value => value.trim()).filter(Boolean)
+    })),
     skill_id: String(form.skill_id || '').trim() || null,
     trigger_type: isEvent ? 'event' : 'schedule',
     schedule_type: isEvent ? null : form.schedule_type,
@@ -75,7 +81,7 @@ export const buildTaskPayload = (form) => {
     broadcast_enabled: Boolean(form.broadcast_enabled),
     target_user_ids: form.broadcast_enabled ? [...(form.target_user_ids || [])] : [],
     enabled: Boolean(form.enabled),
-    prompt: instruction,
+    prompt: String(form.agent_prompt || form.description || '').trim(),
     timeout_seconds: isEvent ? 1800 : 1800,
     tags: String(form.tagsText || '')
       .split(',')
@@ -94,9 +100,6 @@ export const buildTaskPayload = (form) => {
     max_recent_cases: Number(form.historyMaxRecentCases) || 3,
     memory_char_budget: Number(form.historyMemoryCharBudget) || 4000,
     active_retrieval_enabled: Boolean(form.historyActiveRetrievalEnabled)
-    ,case_filter_by_city: Boolean(form.historyCaseFilterByCity)
-    ,case_filter_by_station: Boolean(form.historyCaseFilterByStation)
-    ,case_filter_by_pollutant: Boolean(form.historyCaseFilterByPollutant)
   }
 
   if (payload.execution_mode === 'custom') {
@@ -107,7 +110,7 @@ export const buildTaskPayload = (form) => {
 
   if (payload.execution_mode === 'workflow') {
     payload.workflow_name = String(form.workflow_name || '').trim() || null
-    payload.workflow_args = {}
+    payload.workflow_args = { ...(form.workflow_args || {}) }
   }
 
   if (!isEvent && form.schedule_type === 'once') {

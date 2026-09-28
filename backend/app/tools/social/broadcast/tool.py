@@ -42,6 +42,10 @@ class BroadcastSocialUsersTool(LLMTool):
                         "items": {"type": "string"},
                         "description": "可选媒体路径或URL",
                         "default": []
+                    },
+                    "report_type": {
+                        "type": "string",
+                        "description": "可选。仅当广播包含最终报告文档（如 PDF/DOCX/PPTX/XLSX）时填写，用于登记到报告成果；普通广播不要填写"
                     }
                 },
                 "required": ["message", "target_user_names"]
@@ -61,6 +65,7 @@ class BroadcastSocialUsersTool(LLMTool):
         message: str = None,
         target_user_names: Optional[List[str]] = None,
         media: Optional[List[str]] = None,
+        report_type: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
         if not message:
@@ -95,6 +100,7 @@ class BroadcastSocialUsersTool(LLMTool):
                     "event_id": broadcast_id,
                     "event_type": "assistant.broadcast",
                     "execution_id": broadcast_id,
+                    "report_type": report_type.strip() if report_type and report_type.strip() else None,
                 },
             )
 

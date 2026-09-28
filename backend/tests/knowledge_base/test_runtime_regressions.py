@@ -49,6 +49,11 @@ async def test_document_queue_forwards_processing_options(monkeypatch):
             finally:
                 captured["model_context_active"] = False
 
+        @contextmanager
+        def use_opencode_session(self, session_id):
+            captured["session_id"] = session_id
+            yield
+
     class FakeDB:
         async def execute(self, statement):
             return SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id="doc1"))
@@ -89,6 +94,7 @@ async def test_document_queue_forwards_processing_options(monkeypatch):
         "llm_mode": "online",
     }
     assert captured["tier"] == "flash"
+    assert captured["session_id"] == "kb-doc-doc1"
     assert captured["model_context_active"] is False
     assert captured["closed"] is True
 

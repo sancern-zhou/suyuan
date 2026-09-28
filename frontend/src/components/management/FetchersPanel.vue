@@ -235,21 +235,21 @@ const getFetcherStatusText = (status) => {
   align-items: center;
   margin-bottom: 20px;
   padding-bottom: 15px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--border-2);
 }
 
 .panel-header h3 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-1);
 }
 
 .panel-btn {
   padding: 6px 12px;
-  border: 1px solid #1976d2;
+  border: 1px solid var(--color-primary);
   background: white;
-  color: #1976d2;
+  color: var(--color-primary);
   border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
@@ -257,7 +257,7 @@ const getFetcherStatusText = (status) => {
 }
 
 .panel-btn:hover:not(:disabled) {
-  background: #1976d2;
+  background: var(--color-primary);
   color: white;
 }
 
@@ -272,31 +272,31 @@ const getFetcherStatusText = (status) => {
 }
 
 .panel-btn.primary {
-  background: #1976d2;
+  background: var(--color-primary);
   color: white;
 }
 
 .panel-btn.primary:hover:not(:disabled) {
-  background: #1565c0;
+  background: var(--color-primary-active);
 }
 
 .panel-btn.warning {
-  border-color: #ff9800;
-  color: #ff9800;
+  border-color: var(--color-warning);
+  color: var(--color-warning);
 }
 
 .panel-btn.warning:hover:not(:disabled) {
-  background: #ff9800;
+  background: var(--color-warning);
   color: white;
 }
 
 .panel-btn.success {
-  border-color: #4caf50;
-  color: #4caf50;
+  border-color: var(--color-success);
+  color: var(--color-success);
 }
 
 .panel-btn.success:hover:not(:disabled) {
-  background: #4caf50;
+  background: var(--color-success);
   color: white;
 }
 
@@ -307,7 +307,7 @@ const getFetcherStatusText = (status) => {
 }
 
 .fetchers-status-card {
-  background: #f8f9fa;
+  background: var(--bg-muted);
   border-radius: 8px;
   padding: 15px;
 }
@@ -316,7 +316,7 @@ const getFetcherStatusText = (status) => {
   margin: 0 0 12px 0;
   font-size: 14px;
   font-weight: 600;
-  color: #495057;
+  color: var(--text-2);
 }
 
 .status-grid {
@@ -336,7 +336,7 @@ const getFetcherStatusText = (status) => {
 
 .status-item .label {
   font-size: 13px;
-  color: #6c757d;
+  color: var(--text-2);
 }
 
 .status-item .status-value {
@@ -349,11 +349,11 @@ const getFetcherStatusText = (status) => {
 }
 
 .status-item .status-value.stopped {
-  color: #dc3545;
+  color: var(--color-danger);
 }
 
 .era5-card {
-  background: #e3f2fd;
+  background: var(--color-primary-bg);
   border-radius: 8px;
   padding: 15px;
 }
@@ -362,13 +362,13 @@ const getFetcherStatusText = (status) => {
   margin: 0 0 8px 0;
   font-size: 14px;
   font-weight: 600;
-  color: #1565c0;
+  color: var(--color-primary-active);
 }
 
 .era5-desc {
   margin: 0 0 12px 0;
   font-size: 12px;
-  color: #6c757d;
+  color: var(--text-2);
 }
 
 .era5-controls {
@@ -386,7 +386,7 @@ const getFetcherStatusText = (status) => {
 
 .date-input-group label {
   font-size: 13px;
-  color: #495057;
+  color: var(--text-2);
 }
 
 .date-input {
@@ -424,7 +424,7 @@ const getFetcherStatusText = (status) => {
 
 .result-title {
   font-weight: 500;
-  color: #495057;
+  color: var(--text-2);
 }
 
 .result-details {
@@ -440,12 +440,12 @@ const getFetcherStatusText = (status) => {
 }
 
 .result-row .label {
-  color: #6c757d;
+  color: var(--text-2);
 }
 
 .result-row .value {
   font-weight: 500;
-  color: #495057;
+  color: var(--text-2);
 }
 
 .result-row .success-text {
@@ -453,11 +453,11 @@ const getFetcherStatusText = (status) => {
 }
 
 .result-row .error-text {
-  color: #dc3545;
+  color: var(--color-danger);
 }
 
 .fetchers-list-section {
-  background: #f8f9fa;
+  background: var(--bg-muted);
   border-radius: 8px;
   padding: 15px;
 }
@@ -473,7 +473,7 @@ const getFetcherStatusText = (status) => {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
-  color: #495057;
+  color: var(--text-2);
 }
 
 .fetcher-loading {
@@ -488,7 +488,7 @@ const getFetcherStatusText = (status) => {
   width: 30px;
   height: 30px;
   border: 3px solid #f3f3f3;
-  border-top: 3px solid #1976d2;
+  border-top: 3px solid var(--color-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -500,7 +500,7 @@ const getFetcherStatusText = (status) => {
 
 .fetcher-loading p {
   margin: 0;
-  color: #6c757d;
+  color: var(--text-2);
   font-size: 14px;
 }
 
@@ -524,7 +524,7 @@ const getFetcherStatusText = (status) => {
 
 .fetcher-card {
   background: white;
-  border: 1px solid #dee2e6;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   padding: 12px;
 }
@@ -590,17 +590,17 @@ const getFetcherStatusText = (status) => {
 }
 
 .info-row .label {
-  color: #6c757d;
+  color: var(--text-2);
 }
 
 .info-row .value {
-  color: #495057;
+  color: var(--text-2);
 }
 
 .info-row code.schedule {
   padding: 2px 6px;
-  background: #f8f9fa;
-  border: 1px solid #dee2e6;
+  background: var(--bg-muted);
+  border: 1px solid var(--border-2);
   border-radius: 3px;
   font-size: 11px;
 }

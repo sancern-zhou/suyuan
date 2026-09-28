@@ -33,7 +33,8 @@ def test_default_keywords_include_only_high_precision_project_terms():
         "环境监控中心",
         "污染源在线监控",
         "空气自动站",
-        "水质自动站",
+        "大气监测",
+        "大气污染防控",
         "VOCs走航",
         "噪声自动监测",
     ]

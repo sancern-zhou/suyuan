@@ -13,10 +13,20 @@ from app.tools.visualization.create_report_chart.tool import (
 from app.tools.visualization.create_report_chart.renderer import (
     _cache_figure,
     _create_figure,
+    _draw_dual_axis_line,
     _draw_line,
     _position_legends_below_plot,
     select_chinese_font,
 )
+from app.tools.visualization.create_report_chart.theme import SERIES_COLORS
+from config.settings import settings
+
+
+@pytest.fixture(autouse=True)
+def _use_guangdong_default_project(monkeypatch):
+    """This module covers the full shared chart catalog, including
+    Guangdong-only types, so pin the active project to the default."""
+    monkeypatch.setattr(settings, "project_id", "default")
 
 
 def test_schema_stays_compact_and_points_to_progressive_references():
@@ -36,13 +46,16 @@ def test_schema_stays_compact_and_points_to_progressive_references():
         "style_profile",
         "notes",
         "options",
+        "data_policy",
+        "emphasis",
+        "annotations",
     }
     assert schema["parameters"]["required"] == ["chart_type", "title"]
     assert schema["parameters"]["anyOf"] == [
         {"required": ["data"]},
         {"required": ["file_path"]},
     ]
-    assert len(str(schema)) < 7000
+    assert len(str(schema)) < 10000
     assert "references/index.md" in schema["description"]
     assert "两层规范" in schema["description"]
     assert "无需另读输入、A4 或布局规范" in schema["description"]
@@ -69,6 +82,7 @@ def test_schema_stays_compact_and_points_to_progressive_references():
         "step_line",
         "error_bar",
         "pollutant_calendar",
+        "wind_rose",
             "generic_pollutant_wind_rose",
             "wind_timeseries",
             "weather_timeseries",
@@ -92,6 +106,29 @@ def test_schema_stays_compact_and_points_to_progressive_references():
     assert "reference_lines" in properties["options"]["description"]
     assert "wind_direction_convention" in properties["options"]["description"]
     assert "east_u/north_v" in properties["options"]["description"]
+
+
+@pytest.mark.asyncio
+async def test_bar_theme_supports_semantic_annotations_sorting_and_notes():
+    result = await CreateReportChartTool().execute(
+        chart_id="bar_theme_v2_case",
+        chart_type="bar",
+        title="城市金额",
+        data={"labels": ["甲", "乙", "丙"], "values": [10, 30, 20]},
+        data_policy={"sort": "descending"},
+        emphasis={"items": ["乙"], "mode": "primary"},
+        annotations=[
+            {"kind": "value", "target": "bars", "format": "{value:,.1f}", "placement": "auto"}
+        ],
+        notes=["按去重后口径", "单位：万元"],
+    )
+
+    assert result["success"] is True
+    metadata = result["data"]["metadata"]
+    assert metadata["theme_version"] == "report_v2"
+    assert metadata["data_policy"] == {"sort": "descending"}
+    assert metadata["annotation_count"] == 3
+    assert metadata["notes"] == ["按去重后口径", "单位：万元"]
 
 
 @pytest.mark.asyncio
@@ -127,6 +164,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
         "pareto_chart",
         "comparison_charts",
         "pollutant_calendar",
+        "wind_rose",
         "generic_pollutant_wind_rose",
             "wind_timeseries",
             "weather_timeseries",
@@ -143,6 +181,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
     pollutant_wind_rose_text = Path(paths["pollutant_wind_rose"]).read_text(encoding="utf-8")
     pollutant_calendar_text = Path(paths["pollutant_calendar"]).read_text(encoding="utf-8")
     generic_wind_rose_text = Path(paths["generic_pollutant_wind_rose"]).read_text(encoding="utf-8")
+    wind_rose_text = Path(paths["wind_rose"]).read_text(encoding="utf-8")
     wind_timeseries_text = Path(paths["wind_timeseries"]).read_text(encoding="utf-8")
     henan_city_map_text = Path(paths["henan_city_map"]).read_text(encoding="utf-8")
     index_text = Path(paths["index"]).read_text(encoding="utf-8")
@@ -152,6 +191,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
     assert "广东省专用" in pollutant_wind_rose_text
     assert "pollutant_calendar" in pollutant_calendar_text
     assert "generic_pollutant_wind_rose" in generic_wind_rose_text
+    assert "wind_rose" in wind_rose_text
     assert "wind_timeseries" in wind_timeseries_text
     assert "meteorological_from" in wind_timeseries_text
     assert "henan_city_map" in henan_city_map_text
@@ -412,6 +452,36 @@ async def test_generic_pollutant_wind_rose_renders_non_guangdong_distribution():
     assert result["data"]["metadata"]["direction_bin_count"] == 8
     assert result["data"]["metadata"]["valid_point_count"] == len(wind_directions)
     assert Path(result["visuals"][0]["local_path"]).exists()
+
+
+@pytest.mark.asyncio
+async def test_wind_rose_renders_without_pollutant_concentrations():
+    wind_directions = list(range(0, 360, 30)) * 2
+    wind_speeds = [0.2 + (index % 6) * 0.8 for index in range(len(wind_directions))]
+    result = await CreateReportChartTool().execute(
+        chart_id="wind_rose_without_pollutant_case",
+        chart_type="wind_rose",
+        title="许昌市风向风速玫瑰图",
+        data={"wind_directions": wind_directions, "wind_speeds": wind_speeds},
+    )
+
+    assert result["success"] is True
+    assert result["data"]["metadata"]["applied_chart_type"] == "wind_rose"
+    assert result["data"]["metadata"]["valid_point_count"] == len(wind_directions)
+    assert result["data"]["metadata"]["calm_point_count"] > 0
+    assert Path(result["visuals"][0]["local_path"]).exists()
+
+
+@pytest.mark.asyncio
+async def test_wind_rose_rejects_mismatched_arrays():
+    result = await CreateReportChartTool().execute(
+        chart_type="wind_rose",
+        title="风玫瑰图",
+        data={"wind_directions": [0, 90], "wind_speeds": [1]},
+    )
+
+    assert result["success"] is False
+    assert "长度必须一致" in result["error"]
 
 
 @pytest.mark.asyncio
@@ -833,6 +903,29 @@ async def test_stacked_area_renders_multi_pollutant_contribution_trend():
     assert result["data"]["metadata"]["series_count"] == 3
     assert result["data"]["metadata"]["stack_mode"] == "area"
     assert Path(result["visuals"][0]["local_path"]).exists()
+
+
+def test_dual_axis_line_uses_distinct_series_colors_across_axes():
+    fig, ax = plt.subplots()
+    try:
+        _draw_dual_axis_line(
+            ax,
+            "PM2.5与风速",
+            {
+                "labels": ["09-22", "09-23"],
+                "series": [
+                    {"name": "PM2.5", "values": [59, 65], "axis": "left"},
+                    {"name": "风速", "values": [1.62, 1.60], "axis": "right"},
+                ],
+            },
+            {"legend": True},
+        )
+        left_color = ax.lines[0].get_color()
+        right_color = fig.axes[1].lines[0].get_color()
+        assert (left_color, right_color) == SERIES_COLORS[:2]
+        assert left_color != right_color
+    finally:
+        plt.close(fig)
 
 
 @pytest.mark.asyncio

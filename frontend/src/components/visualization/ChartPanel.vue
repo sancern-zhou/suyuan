@@ -42,8 +42,9 @@
 import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import 'echarts-gl'  // 引入echarts-gl扩展库以支持3D图表
-import { cloneEChartsOption, sanitizeCompleteRadarOption } from '../../utils/echartsOptionSanitizer'
+import { cloneEChartsOption, ensureEChartsLegend, sanitizeCompleteRadarOption } from '../../utils/echartsOptionSanitizer'
 import { applyPreferredChartFont } from '../../services/chartTypography'
+import { CHART_PRIMARY, CHART_TEXT_1, CHART_TEXT_2, CHART_COLORS, CHART_PRIMARY_FILL } from '../../services/chart/chartColors'
 
 const props = defineProps({
   data: {
@@ -407,14 +408,23 @@ const detectAndOptimizeEChartsConfig = (chartData, chartType = null) => {
  * @returns {Object} 优化后的配置
  */
 const optimizeChartLayout = (option) => {
-  const optimized = cloneEChartsOption(option)
+  const optimized = ensureEChartsLegend(cloneEChartsOption(option))
 
   console.log('[optimizeChartLayout] 开始优化，图表类型:', option.series?.[0]?.type || 'unknown', '有极坐标:', !!option.polar)
 
   // 标题高度估算（包含 padding）- 增加间距
   const TITLE_HEIGHT = 50
-  const LEGEND_HEIGHT = 35
+  const LEGEND_HEIGHT = 25
   const TITLE_PADDING = 20
+  const X_AXIS_LABEL_HEIGHT = 24
+  const LAYOUT_GAP = 0
+  const DEFAULT_BOTTOM_LEGEND_OFFSET = 35
+  const MIN_BOTTOM_LEGEND_OFFSET = 35
+
+  // 容器高度用于把百分比边距换算成像素，保证 grid 预留空间可计算
+  const containerHeight = chartContainer.value?.clientHeight
+    || parseInt(dynamicHeight.value, 10)
+    || 400
 
   // 优化标题位置：确保标题与图表内容有间距
   if (optimized.title) {
@@ -429,12 +439,18 @@ const optimizeChartLayout = (option) => {
     }
   }
 
-  // 优化图例位置：确保图例不与标题重叠
+  // 优化图例位置：确保图例不与标题、横坐标刻度重叠
+  // 底部图例距离容器底部的像素偏移；null 表示图例不在底部
+  let bottomLegendOffset = null
   if (optimized.legend) {
     const legend = optimized.legend
+    const hasTop = legend.top !== undefined && legend.top !== null
+    const hasBottom = legend.bottom !== undefined && legend.bottom !== null
+    const hasLeft = legend.left !== undefined && legend.left !== null
+    const hasRight = legend.right !== undefined && legend.right !== null
 
     // 如果图例在顶部，强制调整位置
-    if (legend.top && typeof legend.top === 'string' && legend.top.includes('%')) {
+    if (hasTop && typeof legend.top === 'string' && legend.top.includes('%')) {
       const topValue = parseInt(legend.top)
       if (topValue < 15) {
         // 图例位置太靠上，容易与标题重叠
@@ -443,65 +459,90 @@ const optimizeChartLayout = (option) => {
           top: '18%'
         }
       }
-    } else if (legend.top && typeof legend.top === 'number' && legend.top < 60) {
+    } else if (hasTop && typeof legend.top === 'number' && legend.top < 60) {
       // 图例位置数值太小，调整到 65
       optimized.legend = {
         ...legend,
         top: 65
       }
     }
-    // 如果图例在底部，确保有足够空间
-    else if (legend.bottom) {
-      // 强制设置底部图例位置
+    // 底部图例：换算成像素，笛卡尔图抬到距底部至少 35px，避免贴边
+    else if (hasBottom) {
+      if (typeof legend.bottom === 'number') {
+        bottomLegendOffset = legend.bottom
+      } else if (typeof legend.bottom === 'string' && legend.bottom.includes('%')) {
+        bottomLegendOffset = Math.round(containerHeight * parseInt(legend.bottom) / 100)
+      } else {
+        bottomLegendOffset = DEFAULT_BOTTOM_LEGEND_OFFSET
+      }
+      if (optimized.grid) {
+        bottomLegendOffset = Math.max(bottomLegendOffset, MIN_BOTTOM_LEGEND_OFFSET)
+      }
       optimized.legend = {
         ...legend,
-        bottom: '15%'  // 容器变大后，使用百分比更合适
+        bottom: bottomLegendOffset
       }
     }
-    // 如果图例没有设置位置，默认放底部
-    else if (!legend.top && !legend.bottom && !legend.left && !legend.right) {
+    // 图例没有设置位置且不在侧边时，默认放底部
+    else if (!hasLeft && !hasRight) {
+      bottomLegendOffset = DEFAULT_BOTTOM_LEGEND_OFFSET
       optimized.legend = {
         ...legend,
-        bottom: '15%'
+        bottom: bottomLegendOffset
       }
     }
   }
 
-  // 优化 grid 位置：为标题和图例预留空间
+  // 优化 grid 位置：为标题、底部图例和横坐标刻度预留空间
   if (optimized.grid) {
     const minTop = TITLE_HEIGHT + TITLE_PADDING
 
-    // 处理 grid 数组（多 grid 配置，如日历热力图）
-    if (Array.isArray(optimized.grid)) {
-      optimized.grid = optimized.grid.map(g => {
-        if (typeof g.top === 'string' && g.top.includes('%')) {
-          const topValue = parseInt(g.top)
-          if (topValue < 15) {
-            return { ...g, top: '18%' }
-          }
-        } else if (typeof g.top !== 'number' || g.top < minTop) {
-          return { ...g, top: minTop }
+    const adjustTop = (g) => {
+      if (typeof g.top === 'string' && g.top.includes('%')) {
+        const topValue = parseInt(g.top)
+        if (topValue < 15) {
+          return { ...g, top: '18%' }
         }
         return g
-      })
+      }
+      if (typeof g.top !== 'number' || g.top < minTop) {
+        return { ...g, top: minTop }
+      }
+      return g
+    }
+
+    // 底部图例必须位于横坐标刻度（以及横轴名称）下方，据此反推 grid.bottom
+    const reserveBottomForLegend = (g) => {
+      if (bottomLegendOffset === null) {
+        return g
+      }
+      // 横轴名称在轴末端（默认）时与底部图例同一行、位于最右侧，无需额外占行；
+      // 只有居中显示的横轴名称才需要在刻度下方单独预留一行。
+      const xAxes = Array.isArray(optimized.xAxis)
+        ? optimized.xAxis
+        : (optimized.xAxis ? [optimized.xAxis] : [])
+      const namedAxes = xAxes.filter(axis => axis && axis.name
+        && ['middle', 'center'].includes(axis.nameLocation || 'end'))
+      const axisNameSpace = namedAxes.length
+        ? Math.max(...namedAxes.map(axis => axis.nameGap || 15)) + 16
+        : 0
+      const requiredBottom = bottomLegendOffset + LEGEND_HEIGHT
+        + X_AXIS_LABEL_HEIGHT + axisNameSpace + LAYOUT_GAP
+      const currentBottom = typeof g.bottom === 'number'
+        ? g.bottom
+        : (typeof g.bottom === 'string' && g.bottom.includes('%')
+            ? Math.round(containerHeight * parseInt(g.bottom) / 100)
+            : 0)
+      return { ...g, bottom: Math.max(currentBottom, requiredBottom) }
+    }
+
+    // 处理 grid 数组（多 grid 配置，如日历热力图）
+    if (Array.isArray(optimized.grid)) {
+      optimized.grid = optimized.grid.map(g => reserveBottomForLegend(adjustTop(g)))
     }
     // 处理单个 grid 对象
     else {
-      const grid = optimized.grid
-      if (typeof grid.top === 'string' && grid.top.includes('%')) {
-        const topValue = parseInt(grid.top)
-        if (topValue < 15) {
-          optimized.grid = {
-            ...grid,
-            top: '18%'
-          }
-        }
-      } else {
-        optimized.grid = {
-          ...grid,
-          top: minTop
-        }
-      }
+      optimized.grid = reserveBottomForLegend(adjustTop(optimized.grid))
     }
   }
 
@@ -786,9 +827,9 @@ const buildBarOption = (chartData, title, meta) => {
       type: 'bar',
       data: s.data,
       itemStyle: {
-        color: ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272'][index % 6]
+        color: CHART_COLORS[index % CHART_COLORS.length]
       },
-      emphasis: { itemStyle: { color: '#91cc75' } }
+      emphasis: { itemStyle: { color: CHART_COLORS[1] } }
     }))
   } else if (yData && yData.length > 0) {
     // 单序列格式：y: [...]
@@ -797,8 +838,8 @@ const buildBarOption = (chartData, title, meta) => {
       name: title || '数据',
       type: 'bar',
       data: yData,
-      itemStyle: { color: '#5470c6' },
-      emphasis: { itemStyle: { color: '#91cc75' } }
+      itemStyle: { color: CHART_COLORS[0] },
+      emphasis: { itemStyle: { color: CHART_COLORS[1] } }
     }]
   }
 
@@ -975,7 +1016,7 @@ const buildLineOption = (chartData, title, meta) => {
       showSymbol: false,
       emphasis: { focus: 'series' },
       itemStyle: {
-        color: ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272'][index % 6]
+        color: CHART_COLORS[index % CHART_COLORS.length]
       },
       lineStyle: { width: 1 }
     }))
@@ -989,7 +1030,7 @@ const buildLineOption = (chartData, title, meta) => {
       smooth: true,
       showSymbol: false,
       emphasis: { focus: 'series' },
-      itemStyle: { color: '#5470c6' },
+      itemStyle: { color: CHART_COLORS[0] },
       lineStyle: { width: 1 }
     }]
   }
@@ -1026,8 +1067,8 @@ const buildLineOption = (chartData, title, meta) => {
       height: 24,
       bottom: 5,
       borderColor: '#ddd',
-      fillerColor: 'rgba(25, 118, 210, 0.15)',
-      handleStyle: { color: '#1976d2' },
+      fillerColor: CHART_PRIMARY_FILL,
+      handleStyle: { color: CHART_PRIMARY },
       textStyle: { fontSize: 10 },
       brushSelect: false
     },
@@ -1111,7 +1152,7 @@ const buildRadarOption = (chartData, title, meta) => {
     seriesData = [{
       value: values,
       name: title || '控制效果',
-      itemStyle: { color: '#5470c6' }
+      itemStyle: { color: CHART_COLORS[0] }
     }]
   }
 
@@ -1399,7 +1440,7 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
   const otherSeries = series.filter(s => s.type !== 'wind')
   
   // 颜色方案
-  const colors = ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272']
+  const colors = CHART_COLORS.slice(0, 6)
   
   // 构建ECharts系列
   const chartSeries = []
@@ -1418,7 +1459,7 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
       showSymbol: true,
       symbol: 'circle',
       symbolSize: 6,
-      itemStyle: { color: '#5470c6' },
+      itemStyle: { color: CHART_COLORS[0] },
       lineStyle: { width: 1 },
       emphasis: { focus: 'series' }
     })
@@ -1438,7 +1479,7 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
           symbolSize: [8, 14],
           symbolRotate: arrowAngle - 90,  // ECharts箭头默认朝右，需要调整
           itemStyle: { 
-            color: '#1976d2',
+            color: CHART_PRIMARY,
             borderColor: '#fff',
             borderWidth: 1
           },
@@ -1465,7 +1506,7 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
       symbol: 'arrow',
       symbolSize: [8, 14],
       itemStyle: { 
-        color: '#1976d2',
+        color: CHART_PRIMARY,
         borderColor: '#fff',
         borderWidth: 1
       },
@@ -1486,10 +1527,10 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
   
   // 颜色映射
   const colorMap = {
-    '温度': '#ee6666',
-    '降水': '#73c0de',
-    '湿度': '#91cc75',
-    '云量': '#fac858'
+    '温度': CHART_COLORS[3],
+    '降水': CHART_PRIMARY,
+    '湿度': CHART_COLORS[1],
+    '云量': CHART_COLORS[2]
   }
   
   // 其他气象要素系列
@@ -1520,7 +1561,7 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
       type: 'value',
       name: '风速/温度/降水',
       position: 'left',
-      axisLine: { show: true, lineStyle: { color: '#5470c6' } },
+      axisLine: { show: true, lineStyle: { color: CHART_PRIMARY } },
       axisLabel: { formatter: '{value}' },
       splitLine: { show: true, lineStyle: { type: 'dashed' } }
     },
@@ -1530,7 +1571,7 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
       position: 'right',
       min: 0,
       max: 100,
-      axisLine: { show: true, lineStyle: { color: '#91cc75' } },
+      axisLine: { show: true, lineStyle: { color: CHART_COLORS[1] } },
       axisLabel: { formatter: '{value}%' },
       splitLine: { show: false }
     }
@@ -1550,8 +1591,8 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
       height: 24,
       bottom: 5,
       borderColor: '#ddd',
-      fillerColor: 'rgba(25, 118, 210, 0.15)',
-      handleStyle: { color: '#1976d2' },
+      fillerColor: CHART_PRIMARY_FILL,
+      handleStyle: { color: CHART_PRIMARY },
       textStyle: { fontSize: 10 },
       brushSelect: false
     },
@@ -1576,7 +1617,7 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
       left: 'center',
       top: 5,
       textStyle: { fontSize: 16, fontWeight: 'bold' },
-      subtextStyle: { fontSize: 12, color: '#666' }
+      subtextStyle: { fontSize: 12, color: CHART_TEXT_2 }
     },
     tooltip: {
       trigger: 'axis',
@@ -1595,7 +1636,7 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
           if (wd !== undefined) {
             const dirNames = ['北风', '东北风', '东风', '东南风', '南风', '西南风', '西风', '西北风']
             const dirIdx = Math.round(wd / 45) % 8
-            result += `<span style="color:#1976d2">▲</span> 风向: ${dirNames[dirIdx]} (${wd}°)<br/>`
+            result += `<span style="color:var(--color-primary)">▲</span> 风向: ${dirNames[dirIdx]} (${wd}°)<br/>`
           }
         }
         return result
@@ -1641,8 +1682,8 @@ const buildPressurePblOption = (chartData, title, meta) => {
   const series = chartData.series || []
 
   // 颜色配置
-  const pressureColor = '#5470c6'  // 蓝色 - 气压
-  const pblColor = '#ee6666'       // 红色 - 边界层高度
+  const pressureColor = CHART_PRIMARY // 蓝色 - 气压
+  const pblColor = CHART_COLORS[3] // 红色 - 边界层高度
 
   // 提取气压数据，计算合适的Y轴范围
   const pressureSeries = series.find(s => s.name === '气压')
@@ -1712,8 +1753,8 @@ const buildPressurePblOption = (chartData, title, meta) => {
       height: 24,
       bottom: 5,
       borderColor: '#ddd',
-      fillerColor: 'rgba(25, 118, 210, 0.15)',
-      handleStyle: { color: '#1976d2' },
+      fillerColor: CHART_PRIMARY_FILL,
+      handleStyle: { color: CHART_PRIMARY },
       textStyle: { fontSize: 10 },
       brushSelect: false
     },
@@ -1801,7 +1842,7 @@ const buildStackedTimeseriesOption = (chartData, title, meta) => {
       smooth: s.smooth !== false,
       showSymbol: false,
       itemStyle: s.itemStyle || {
-        color: ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#ff9f7f', '#3ba272'][index % 8]
+        color: CHART_COLORS[index % CHART_COLORS.length]
       },
       lineStyle: { width: 1 },
       emphasis: { focus: 'series' },
@@ -1832,8 +1873,8 @@ const buildStackedTimeseriesOption = (chartData, title, meta) => {
       type: 'value',
       name: '离子浓度 (μg/m³)',
       position: 'left',
-      axisLine: { show: true, lineStyle: { color: '#5470c6' } },
-      axisLabel: { formatter: '{value}', color: '#5470c6' },
+      axisLine: { show: true, lineStyle: { color: CHART_PRIMARY } },
+      axisLabel: { formatter: '{value}', color: CHART_PRIMARY },
       splitLine: { show: true, lineStyle: { type: 'dashed' } }
     },
     {
@@ -1858,8 +1899,8 @@ const buildStackedTimeseriesOption = (chartData, title, meta) => {
       height: 24,
       bottom: 5,
       borderColor: '#ddd',
-      fillerColor: 'rgba(25, 118, 210, 0.15)',
-      handleStyle: { color: '#1976d2' },
+      fillerColor: CHART_PRIMARY_FILL,
+      handleStyle: { color: CHART_PRIMARY },
       textStyle: { fontSize: 10 },
       brushSelect: false
     },
@@ -1984,7 +2025,7 @@ const buildScatter3dOption = (chartData, title, meta) => {
       data: points,
       emphasis: {
         itemStyle: {
-          color: '#ee6666'
+          color: CHART_COLORS[3]
         }
       }
     }]
@@ -2102,12 +2143,12 @@ const buildLine3dOption = (chartData, title, meta) => {
       type: 'line3D',
       data: trajectory,
       lineStyle: {
-        color: '#5470c6',
+        color: CHART_PRIMARY,
         width: 3
       },
       emphasis: {
         lineStyle: {
-          color: '#ee6666',
+          color: CHART_COLORS[3],
           width: 5
         }
       }
@@ -2169,7 +2210,7 @@ const buildBar3dOption = (chartData, title, meta) => {
       data: bars.map(bar => [bar.x, bar.y, bar.z]),
       emphasis: {
         itemStyle: {
-          color: '#ee6666'
+          color: CHART_COLORS[3]
         }
       }
     }]
@@ -2240,7 +2281,7 @@ const buildVolume3dOption = (chartData, title, meta) => {
       symbolSize: 2,
       emphasis: {
         itemStyle: {
-          color: '#ee6666'
+          color: CHART_COLORS[3]
         }
       }
     }]
@@ -2293,7 +2334,7 @@ const buildProfileOption = (chartData, title, meta) => {
       symbol: 'circle',
       symbolSize: 6,
       itemStyle: {
-        color: ['#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272'][index % 6]
+        color: CHART_COLORS[index % CHART_COLORS.length]
       },
       emphasis: {
         focus: 'series'
@@ -2315,8 +2356,7 @@ const buildFacetTimeseriesOption = (chartData, title, meta) => {
 
   // 站点颜色映射
   const stationColors = [
-    '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de',
-    '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc', '#ff9f7f'
+    ...CHART_COLORS
   ]
 
   // 构建 ECharts grid 配置（垂直分面：每个 facet 一个子图上下排列）
@@ -2353,7 +2393,7 @@ const buildFacetTimeseriesOption = (chartData, title, meta) => {
         bottom: `${bottomPercent}%`,
         show: true,
         borderWidth: 1,
-        borderColor: '#eee'
+        borderColor: '#e8e8e8'
       })
 
       // 每个 facet 的 x 轴 - 添加 id 以便 series 正确绑定
@@ -2406,7 +2446,7 @@ const buildFacetTimeseriesOption = (chartData, title, meta) => {
         textStyle: {
           fontSize: 12,
           fontWeight: 'bold',
-          color: '#333'
+          color: CHART_TEXT_1
         }
       })
     })
@@ -2430,8 +2470,8 @@ const buildFacetTimeseriesOption = (chartData, title, meta) => {
       height: 24,
       bottom: 5,
       borderColor: '#ddd',
-      fillerColor: 'rgba(25, 118, 210, 0.15)',
-      handleStyle: { color: '#1976d2' },
+      fillerColor: CHART_PRIMARY_FILL,
+      handleStyle: { color: CHART_PRIMARY },
       textStyle: { fontSize: 10 },
       brushSelect: false
     },
@@ -3018,13 +3058,13 @@ defineExpose({
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #999;
+  color: var(--text-3);
   font-size: 14px;
   gap: 8px;
 
   .debug-info {
     font-size: 11px;
-    color: #ccc;
+    color: var(--border-3);
     font-family: monospace;
     max-width: 90%;
     word-break: break-all;
@@ -3046,7 +3086,7 @@ defineExpose({
   position: fixed;
   z-index: 100000;  // 非常高的 z-index，确保在浏览器原生菜单之上
   min-width: 160px;
-  background: #fff;
+  background: var(--bg-container);
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.1);
   padding: 6px 0;
@@ -3059,25 +3099,25 @@ defineExpose({
     padding: 10px 16px;
     cursor: pointer;
     font-size: 14px;
-    color: #333;
+    color: var(--text-1);
     transition: all 0.15s;
 
     svg {
       flex-shrink: 0;
-      color: #666;
+      color: var(--text-2);
     }
 
     &:hover {
-      background: #f5f5f5;
-      color: #1976d2;
+      background: var(--bg-hover);
+      color: var(--color-primary);
 
       svg {
-        color: #1976d2;
+        color: var(--color-primary);
       }
     }
 
     &:active {
-      background: #e8e8e8;
+      background: var(--border-2);
     }
   }
 }

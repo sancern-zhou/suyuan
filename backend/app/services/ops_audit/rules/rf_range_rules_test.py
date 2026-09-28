@@ -184,7 +184,7 @@ def test_nox_reference_pmt_out_of_spec_carries_abnormal_handling_for_semantic_re
         "WORKINGORDERCODE": "WO-NOX-PMT",
         "DEVICEBRAND": "FPI",
         "POLLUTANTTYPE": "NOX",
-        "PMTCHECKVALUE": "0.002",
+        "PMTCHECKVALUE": "-0.002",
         "EXCEPTIONHANDLINGRECORD": "检查发现参考PMT偏低，已清洁光室并复测恢复正常。",
     }
 
@@ -208,7 +208,7 @@ def test_nox_reference_pmt_out_of_spec_carries_field_row_explanation():
         "WORKINGORDERCODE": "CH2606051780652736334",
         "DEVICEBRAND": "FPI",
         "POLLUTANTTYPE": "NOX",
-        "PMTCHECKVALUE": "0.002",
+        "PMTCHECKVALUE": "-0.002",
         "PMTCHECKROW": "表格范围有误",
     }
 
@@ -265,3 +265,19 @@ def test_nox_esa_sample_pressure_with_hpa_does_not_report_unit_mismatch():
     check_rf_range_values(order, [("RF_W_GASEOUSCHECK_NOX", form)], issues)
 
     assert [issue.rule_id for issue in issues] == []
+
+
+def test_fpi_ranges_follow_2020_parameter_sheet():
+    cases = [
+        ("RF_W_GASEOUSCHECK_O3", {"DEVICEBRAND": "聚光", "POLLUTANTTYPE": "O3", "CYLLCHECKVALUE": "1000"}, False),
+        ("RF_W_GASEOUSCHECK_O3", {"DEVICEBRAND": "聚光", "POLLUTANTTYPE": "O3", "CYLLCHECKVALUE": "1201"}, True),
+        ("RF_W_GASEOUSCHECK_CO", {"DEVICEBRAND": "FPI", "POLLUTANTTYPE": "CO", "JGCHECKVALUE": "1.2"}, False),
+        ("RF_W_GASEOUSCHECK_CO", {"DEVICEBRAND": "FPI", "POLLUTANTTYPE": "CO", "JGCHECKVALUE": "0.5"}, True),
+        ("RF_W_PMCHECK", {"DEVICEBRAND": "聚光", "POLLUTANTTYPE": "PM10", "MAINFLOWVALUE": "16.0"}, False),
+        ("RF_W_PMCHECK", {"DEVICEBRAND": "聚光", "POLLUTANTTYPE": "PM10", "MAINFLOWVALUE": "18.0"}, True),
+    ]
+    for table, form, expected_issue in cases:
+        issues = []
+        check_rf_range_values({"WORKINGORDERCODE": "WO-FPI-SHEET"}, [(table, form)], issues)
+        has_range_issue = any(issue.rule_id == "RF_RANGE_OUT_OF_SPEC" for issue in issues)
+        assert has_range_issue is expected_issue, (table, form, issues)

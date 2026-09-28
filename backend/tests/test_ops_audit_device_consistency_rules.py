@@ -335,7 +335,7 @@ def test_merge_device_history_deduplicates_orders_and_indexes_forms():
     assert [table for table, _ in forms_by_code["WO-HISTORY"]] == ["RF_W_GASEOUSCHECK_CO"]
 
 
-def test_run_rules_and_inspect_surface_device_consistency_issue(tmp_path):
+def test_run_rules_does_not_surface_disabled_device_consistency_rule(tmp_path):
     dataset = {
         "orders": [_order("WO-CURRENT")],
         "details": [
@@ -374,7 +374,6 @@ def test_run_rules_and_inspect_surface_device_consistency_issue(tmp_path):
     )
 
     assert run_result["success"] is True
-    assert run_result["device_consistency_issue_count"] == 1
+    assert run_result["device_consistency_issue_count"] == 0
     assert inspect_result["success"] is True
-    assert inspect_result["count"] == 1
-    assert inspect_result["items"][0]["working_order_code"] == "WO-CURRENT"
+    assert inspect_result["count"] == 0

@@ -1,6 +1,6 @@
 from dataclasses import replace
 from datetime import UTC, datetime
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -93,9 +93,20 @@ def test_selected_skill_context_is_injected_once_for_every_mode(mode):
     builder = SimplifiedContextBuilder(Mock(), Mock(), {})
     builder.current_mode = mode
     builder.selected_skill_context = "selected-skill-marker"
-    prompt = builder._build_system_prompt()
-    assert prompt.count("selected-skill-marker") == 1
-    assert "<selected_skill>" in prompt
+    with patch(
+        "app.agent.prompts.prompt_builder.build_react_system_prompt",
+        return_value="mode-marker",
+    ):
+        system_prompt = builder._build_system_prompt()
+        user_conversation = builder._build_user_conversation(
+            query="分析数据",
+            iteration=1,
+            latest_observation="",
+            conversation_history=[],
+        )
+    assert system_prompt.count("selected-skill-marker") == 0
+    assert user_conversation.count("selected-skill-marker") == 1
+    assert "<selected_skill>" in user_conversation
 
 
 def test_fixed_policy_context_is_injected_outside_compressible_history():

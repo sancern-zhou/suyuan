@@ -21,9 +21,9 @@ REMARK_SEMANTIC_JSON_PROMPT = (
     "只判断备注是否合理说明了未提供清洗照片或证据不足的原因。"
     "problem_description 必须具体描述备注存在或不存在的问题，不要输出固定整改建议。"
     "仅输出JSON，不要输出解释。格式为："
-    "{\"judgment_type\":\"missing|placeholder|unrelated|contradictory|valid\","
-    "\"is_complete\":bool,\"has_cause\":bool,\"has_action\":bool,\"has_result\":bool,"
-    "\"problem_description\":string,\"confidence\":number}"
+    '{"judgment_type":"missing|placeholder|unrelated|contradictory|valid",'
+    '"is_complete":bool,"has_cause":bool,"has_action":bool,"has_result":bool,'
+    '"problem_description":string,"confidence":number}'
 )
 
 REMARK_BATCH_SEMANTIC_JSON_PROMPT = (
@@ -50,11 +50,20 @@ REMARK_BATCH_SEMANTIC_JSON_PROMPT = (
     "应只判断备注或上下文是否合理说明了未提供清洗照片、照片缺失、附件无法上传或其他证据不足的业务原因；"
     "如果没有合理说明，应判为不完整；如果说明合理，应判为完整。"
     "每个输入项必须独立判断，不得用同一工单其他RF表或其他字段的备注替代当前异常项说明。"
+    "完整返回所有review_item_id，不得只返回工单号。备注中的厂家备案/报备参数、设备无该功能、"
+    "无该显示项目等均是相关说明，不得判为unrelated。区分真实异常已有处置说明与规则适用性受到质疑："
+    "已处理、已维修不否定异常事实，abnormal_fact_assessment填unchanged；"
+    "备注提出厂家范围、单位或设备功能与通用规则不符时，结合当前项evidence中的设备型号、仪器类型和字段核验。"
+    "仅当证据明确给出当前设备身份，且备注明确说明设备无该功能、无该显示、非该类仪器或字段不适用时，"
+    "abnormal_fact_assessment填not_applicable；只有备注说法但设备证据不足时填needs_verification；"
+    "其他情况填unchanged。三种情况都要给出abnormal_fact_reason。不得仅凭笼统备注宣称设备完全正常，"
+    "也不得把待核验的适用性问题当成已确认违规。"
     "problem_description 必须具体描述当前review_item_id对应备注的问题，不要输出固定整改建议。"
     "仅输出JSON，不要输出解释。格式为："
-    "{\"results\":[{\"review_item_id\":string,\"working_order_code\":string,"
-    "\"judgment_type\":\"missing|placeholder|unrelated|contradictory|valid\",\"is_complete\":bool,\"has_cause\":bool,"
-    "\"has_action\":bool,\"has_result\":bool,\"problem_description\":string,\"confidence\":number}]}"
+    '{"results":[{"review_item_id":string,"working_order_code":string,'
+    '"judgment_type":"missing|placeholder|unrelated|contradictory|valid","is_complete":bool,"has_cause":bool,'
+    '"has_action":bool,"has_result":bool,"problem_description":string,"confidence":number,'
+    '"abnormal_fact_assessment":"unchanged|not_applicable|needs_verification","abnormal_fact_reason":string}]}'
 )
 
 ORDER_DESCRIPTION_SEMANTIC_JSON_PROMPT = (
@@ -64,8 +73,8 @@ ORDER_DESCRIPTION_SEMANTIC_JSON_PROMPT = (
     "如果虽然主表内容泛化，但工单类型/周期和RF表已经清楚表明是例行检查任务，可判为充分或不作为最终问题。"
     "problem_description 必须说明主表描述是否存在具体问题，不要输出固定整改建议。"
     "仅输出JSON，不要输出解释。格式为："
-    "{\"is_sufficient\":bool,\"has_task_object\":bool,\"has_task_type\":bool,"
-    "\"reason\":string,\"problem_description\":string,\"confidence\":number}"
+    '{"is_sufficient":bool,"has_task_object":bool,"has_task_type":bool,'
+    '"reason":string,"problem_description":string,"confidence":number}'
 )
 
 ATTACHMENT_QUALITY_JSON_PROMPT = (
@@ -73,18 +82,18 @@ ATTACHMENT_QUALITY_JSON_PROMPT = (
     "证书重点检查是否只是封面或首页，报告重点检查目录是否更新。"
     "problem_description 必须具体描述附件内容问题，不要输出固定整改建议。"
     "仅输出JSON，不要输出解释。格式为："
-    "{\"is_complete\":bool,\"issues\":[string],\"problem_description\":string,\"confidence\":number}"
+    '{"is_complete":bool,"issues":[string],"problem_description":string,"confidence":number}'
 )
 
 PHOTO_WATERMARK_JSON_PROMPT = (
     "请判断照片OCR文本中是否包含水印及日期。仅输出JSON，不要输出解释。格式为："
-    "{\"has_watermark\":bool,\"has_date\":bool,\"date_text\":string,\"problem_description\":string,\"confidence\":number}"
+    '{"has_watermark":bool,"has_date":bool,"date_text":string,"problem_description":string,"confidence":number}'
 )
 
 VALUE_CONSISTENCY_JSON_PROMPT = (
     "请判断附件中的读数与表单值是否一致。仅输出JSON，不要输出解释。格式为："
-    "{\"is_consistent\":bool,\"attachment_value\":string,\"form_value\":string,\"difference\":number,"
-    "\"problem_description\":string,\"confidence\":number}"
+    '{"is_consistent":bool,"attachment_value":string,"form_value":string,"difference":number,'
+    '"problem_description":string,"confidence":number}'
 )
 
 FILENAME_SEMANTIC_JSON_PROMPT = (
@@ -92,9 +101,9 @@ FILENAME_SEMANTIC_JSON_PROMPT = (
     "不要推断图片内容，不要做OCR，不要因为扩展名是图片就认为覆盖具体证据类型。"
     "可根据中文业务含义、同义表达、缩写和上下文归类。"
     "仅输出JSON，不要输出解释。格式为："
-    "{\"covered_types\":{string:[string]},\"missing_types\":[string],"
-    "\"uncertain_types\":[string],\"evidence\":[{\"type\":string,\"filenames\":[string],\"reason\":string}],"
-    "\"confidence\":number}"
+    '{"covered_types":{string:[string]},"missing_types":[string],'
+    '"uncertain_types":[string],"evidence":[{"type":string,"filenames":[string],"reason":string}],'
+    '"confidence":number}'
 )
 
 FILENAME_BATCH_SEMANTIC_JSON_PROMPT = (
@@ -105,10 +114,10 @@ FILENAME_BATCH_SEMANTIC_JSON_PROMPT = (
     "不要推断图片内容，不要做OCR，不要因为扩展名是图片就认为覆盖具体证据类型。"
     "可根据中文业务含义、同义表达、缩写和上下文归类。"
     "仅输出JSON，不要输出解释。格式为："
-    "{\"results\":[{\"working_order_code\":string,\"is_exempt\":bool,\"exemption_reason\":string,"
-    "\"covered_types\":{string:[string]},"
-    "\"missing_types\":[string],\"uncertain_types\":[string],"
-    "\"evidence\":[{\"type\":string,\"filenames\":[string],\"reason\":string}],\"confidence\":number}]}"
+    '{"results":[{"working_order_code":string,"is_exempt":bool,"exemption_reason":string,'
+    '"covered_types":{string:[string]},'
+    '"missing_types":[string],"uncertain_types":[string],'
+    '"evidence":[{"type":string,"filenames":[string],"reason":string}],"confidence":number}]}'
 )
 
 NO_DEVICE_EXPLANATION_JSON_PROMPT = (
@@ -117,7 +126,7 @@ NO_DEVICE_EXPLANATION_JSON_PROMPT = (
     "在 RF_W_OTHERDEVICECHECK 中，运行情况只写'无'可视为无对应设备；"
     "如果文本只写'/'、'正常'等低信息内容，或只描述状态但无法解释型号占位原因，应判为说明不足。"
     "仅输出JSON，不要输出解释。格式为："
-    "{\"is_explained\":bool,\"reason\":string,\"problem_description\":string,\"confidence\":number}"
+    '{"is_explained":bool,"reason":string,"problem_description":string,"confidence":number}'
 )
 
 NO_DEVICE_BATCH_JSON_PROMPT = (
@@ -128,8 +137,8 @@ NO_DEVICE_BATCH_JSON_PROMPT = (
     "如果文本只写'/'、'正常'等低信息内容，或只描述运行状态但无法解释型号占位原因，应判为说明不足。"
     "problem_description 必须具体说明设备类型、型号占位值、运行情况文本之间的逻辑矛盾或说明不足，不要输出固定整改建议。"
     "仅输出JSON，不要输出解释。格式为："
-    "{\"results\":[{\"item_id\":string,\"is_explained\":bool,\"reason\":string,"
-    "\"problem_description\":string,\"confidence\":number}]}"
+    '{"results":[{"item_id":string,"is_explained":bool,"reason":string,'
+    '"problem_description":string,"confidence":number}]}'
 )
 
 PM_TAPE_USAGE_BATCH_JSON_PROMPT = (
@@ -147,7 +156,7 @@ PM_TAPE_USAGE_BATCH_JSON_PROMPT = (
     "判为不规范时，problem_description 必须引用具体 field_label 和 field_value，说明为什么当前填写无法核查耗材剩余量、负载或处置状态；"
     "判为规范时，problem_description 应简要说明该内容如何支撑耗材状态判断。不要输出固定整改建议。"
     "仅输出JSON，不要输出解释。格式为："
-    "{\"results\":[{\"item_id\":string,\"is_valid\":bool,\"reason\":string,\"problem_description\":string}]}"
+    '{"results":[{"item_id":string,"is_valid":bool,"reason":string,"problem_description":string}]}'
 )
 
 ORDER_DESCRIPTION_BATCH_JSON_PROMPT = (
@@ -157,6 +166,6 @@ ORDER_DESCRIPTION_BATCH_JSON_PROMPT = (
     "如果虽然主表内容泛化，但工单类型/周期和RF表已经清楚表明是例行检查任务，可判为充分或不作为最终问题。"
     "problem_description 必须说明主表描述是否存在具体问题，不要输出固定整改建议。"
     "仅输出JSON，不要输出解释。格式为："
-    "{\"results\":[{\"working_order_code\":string,\"is_sufficient\":bool,\"has_task_object\":bool,"
-    "\"has_task_type\":bool,\"reason\":string,\"problem_description\":string,\"confidence\":number}]}"
+    '{"results":[{"working_order_code":string,"is_sufficient":bool,"has_task_object":bool,'
+    '"has_task_type":bool,"reason":string,"problem_description":string,"confidence":number}]}'
 )

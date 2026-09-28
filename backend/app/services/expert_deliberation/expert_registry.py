@@ -71,7 +71,6 @@ def get_default_experts() -> list[ExpertCard]:
                 "query_gd_suncere_city_hour",
                 "query_gd_suncere_station_hour_new",
                 "meteorological_trajectory_analysis",
-                "analyze_upwind_enterprises",
                 "analyze_trajectory_sources",
             ],
         ),

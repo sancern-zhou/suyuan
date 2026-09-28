@@ -264,3 +264,35 @@ async def test_session_resource_preview_ticket_allows_only_bound_content_subtree
     assert inherited.status_code == 200
     assert wrong_resource.status_code == 401
     assert service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_session_resource_path_ticket_allows_bound_content_subtree():
+    app, service = _app()
+    ticket = ShareAccessService("test-preview-secret", ttl_seconds=60).issue(
+        "session-resource",
+        resource_preview_identity("session-1", "resource-1"),
+    )
+
+    entry = await _get(
+        app,
+        f"/api/sessions/session-1/resources/resource-1/content/_t/{ticket}/",
+    )
+    asset = await _get(
+        app,
+        f"/api/sessions/session-1/resources/resource-1/content/_t/{ticket}/report_files/quarto.js",
+    )
+    wrong_resource = await _get(
+        app,
+        f"/api/sessions/session-1/resources/resource-2/content/_t/{ticket}/",
+    )
+    no_ticket = await _get(
+        app,
+        "/api/sessions/session-1/resources/resource-1/content/_t/not-valid/report_files/quarto.js",
+    )
+
+    assert entry.status_code == 200
+    assert asset.status_code == 200
+    assert wrong_resource.status_code == 401
+    assert no_ticket.status_code == 401
+    assert service.calls == []

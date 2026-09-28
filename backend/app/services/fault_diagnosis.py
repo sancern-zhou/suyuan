@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo
 
 import structlog
 
+from app.utils.path_config import get_data_registry
+
 logger = structlog.get_logger()
 
 
@@ -418,8 +420,4 @@ class FaultDiagnosisService:
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
     def _default_output_root(self) -> Path:
-        return (
-            Path(__file__).resolve().parents[2]
-            / "backend_data_registry"
-            / "pollution_process_events"
-        )
+        return get_data_registry() / "pollution_process_events"

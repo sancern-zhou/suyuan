@@ -70,9 +70,12 @@ export function usePanelManagement(store = null) {
       (Array.isArray(msg?.data?.sources) && msg.data.sources.length > 0) ||
       (Array.isArray(msg?.sources) && msg.sources.length > 0)
     )
+    const hasPendingFeedback = Boolean(store.currentState?.pendingHumanFeedback?.items?.length)
 
-    return resourceSummary.value.hasArtifacts || !!explicitAttachment.value || hasSources
+    return resourceSummary.value.hasArtifacts || !!explicitAttachment.value || hasSources || hasPendingFeedback
   })
+
+  const hasPendingFeedback = computed(() => Boolean(store?.currentState?.pendingHumanFeedback?.items?.length))
 
   /**
    * 检测是否有知识溯源信息
@@ -330,6 +333,14 @@ export function usePanelManagement(store = null) {
       }
     }, { immediate: true })
 
+    watch(hasPendingFeedback, (newValue, oldValue) => {
+      if (newValue && !oldValue) {
+        activeRightTab.value = 'feedback'
+        if (!rightPanelDismissed.value) rightPanelVisible.value = true
+        leftSidebarCollapsed.value = true
+      }
+    }, { immediate: true })
+
     // 监听右侧面板显示状态
     watch([hasVizContent, knowledgePanelVisible], ([artifacts, knowledge]) => {
       const shouldShow = artifacts || knowledge
@@ -383,6 +394,7 @@ export function usePanelManagement(store = null) {
     vizPanelStyle,
     hasVizContent,
     hasKnowledgeSources,
+    hasPendingFeedback,
     resourceSummary,
 
     // 方法

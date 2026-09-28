@@ -11,6 +11,7 @@ from app.scenarios.xuchang_transport_escalation import (
     COMPLETED_EVENT_TYPE,
     XuchangTransportEscalationService,
 )
+from app.scenarios.xuchang_transport_escalation.service import PROCESS_COMPLETED_EVENT_TYPE
 from app.scheduled_tasks.models import TaskEvent
 
 logger = structlog.get_logger()
@@ -21,23 +22,24 @@ class XuchangTransportAnalysisFetcher(DataFetcher):
         super().__init__(
             name="xuchang_transport_analysis_fetcher",
             description="许昌场景三NOAA后向轨迹与本地输送诊断",
-            schedule="25 * * * *",
-            version="3.0.0",
+            schedule="*/15 * * * *",
+            version="3.1.0",
         )
         self.service = service or XuchangTransportEscalationService()
 
     async def fetch_and_store(self) -> dict[str, Any]:
-        results = await self.service.run_pending(limit=1)
+        results = await self.service.run_pending(limit=2)
         if results:
             from app.scheduled_tasks import get_scheduled_task_service
 
             task_service = get_scheduled_task_service()
             for result in results:
-                if result.get("event_type") != COMPLETED_EVENT_TYPE:
+                event_type = result.get("event_type")
+                if event_type not in {COMPLETED_EVENT_TYPE, PROCESS_COMPLETED_EVENT_TYPE}:
                     continue
                 await task_service.publish_event(TaskEvent(
                     event_id=result["event_id"],
-                    event_type=COMPLETED_EVENT_TYPE,
+                    event_type=event_type,
                     occurred_at=result["generated_at"],
                     attributes={
                         "city": result["city"],
@@ -51,6 +53,7 @@ class XuchangTransportAnalysisFetcher(DataFetcher):
                         "station_id": result["station_id"],
                         "station_name": result["station_name"],
                         "target_date": result["target_date"],
+                        "process_window": result.get("process_window"),
                         "target_pollutant": result["target_pollutant"],
                         "status": result["status"],
                         "diagnosis": result["transport_diagnosis"]["classification"],

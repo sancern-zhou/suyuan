@@ -64,7 +64,7 @@ const formatTime = (timestamp) => {
 <style lang="scss" scoped>
 .agent-message {
   padding: 16px 0;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-1);
   animation: fadeIn 0.3s;
 }
 
@@ -78,30 +78,30 @@ const formatTime = (timestamp) => {
 
 .sender {
   font-weight: 600;
-  color: #666;
+  color: var(--text-2);
 }
 
 .timestamp {
-  color: #999;
+  color: var(--text-3);
   font-size: 12px;
 }
 
 .link {
-  color: #ccc;
+  color: var(--border-3);
   text-decoration: none;
   font-size: 11px;
   margin-left: auto;
   transition: color 0.2s;
 
   &:hover {
-    color: #1976D2;
+    color: var(--color-primary);
   }
 }
 
 .message-content {
   font-size: 15px;
   line-height: 1.6;
-  color: #333;
+  color: var(--text-1);
 }
 
 .text {
@@ -113,18 +113,18 @@ const formatTime = (timestamp) => {
   padding: 12px;
   background: transparent;
   border-radius: 6px;
-  border-left: 3px solid #FF9800;
+  border-left: 3px solid var(--color-warning);
   font-size: 13px;
 
   summary {
     cursor: pointer;
-    color: #666;
+    color: var(--text-2);
     font-weight: 500;
     outline: none;
     user-select: none;
 
     &:hover {
-      color: #1976D2;
+      color: var(--color-primary);
     }
   }
 
@@ -132,7 +132,7 @@ const formatTime = (timestamp) => {
     margin-top: 8px;
     white-space: pre-wrap;
     font-family: 'Courier New', monospace;
-    color: #555;
+    color: var(--text-2);
     max-height: 300px;
     overflow-y: auto;
   }

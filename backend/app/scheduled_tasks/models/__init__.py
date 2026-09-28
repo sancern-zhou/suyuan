@@ -2,6 +2,7 @@
 from .task import ScheduledTask, ScheduleType, TriggerType, WorkspaceEntry, HistoryLearningConfig
 from .event import TaskEvent
 from .execution import TaskExecution, ExecutionStatus, StepExecution
+from .result import TaskResult
 
 __all__ = [
     "ScheduledTask",
@@ -13,4 +14,5 @@ __all__ = [
     "TaskExecution",
     "ExecutionStatus",
     "StepExecution",
+    "TaskResult",
 ]

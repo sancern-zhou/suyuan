@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 import structlog
 import asyncio
 from app.kingbase_dialect import register_kingbase_dialect
+from app.db.pool_config import pool_int
 
 load_dotenv()
 register_kingbase_dialect()
@@ -31,8 +32,8 @@ DATABASE_URL = _normalize_async_database_url(
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,  # Set to True for SQL query logging
-    pool_size=20,        # 增加到20个连接（支持更多并发查询）
-    max_overflow=30,     # 增加到30个溢出连接（峰值时最多50个连接）
+    pool_size=pool_int("DATABASE_POOL_SIZE", 20),
+    max_overflow=pool_int("DATABASE_MAX_OVERFLOW", 30),
     pool_pre_ping=True,  # Verify connections before using
     pool_recycle=300,    # Recycle connections after 5 minutes
     pool_timeout=120,    # 增加到120秒（给更多时间等待连接）
@@ -268,6 +269,9 @@ async def init_db():
     # before create_all runs.
     import app.social.models  # noqa: F401
     import app.social.report_models  # noqa: F401
+    import app.db.models.scheduled_task_execution_db  # noqa: F401
+    import app.db.models.scheduled_task_result_db  # noqa: F401
+    import app.db.models.xuchang_station_alert_episode_db  # noqa: F401
     # Web Agent conversation persistence uses SessionDB / SessionMessageDB.
     # Import it before create_all so isolated project databases receive the
     # required `sessions` tables on their first startup as well.

@@ -159,10 +159,14 @@ class XuchangStationDeviationAlertFetcher(DataFetcher):
                     event_id=event_id,
                     event_type=EVENT_TYPE,
                     occurred_at=primary["occurred_at"],
-                    attributes={"city": primary["city"], "target_pollutant": primary["target_pollutant"], "station_id": station_id},
+                    attributes={
+                        "city": primary["city"],
+                        "target_pollutant": primary["target_pollutant"],
+                        "station_id": station_id,
+                        "station_name": primary.get("station_name") or station_id,
+                    },
                     payload=payload,
                 ))
         result["closed_episodes"] = closed_episodes
         logger.info("xuchang_station_deviation_alert_completed", alert_count=len(result["alerts"]), target_hour=result["target_hour"])
         return result
-

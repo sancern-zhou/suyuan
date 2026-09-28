@@ -33,6 +33,22 @@ export const cloneEChartsOption = (value) => {
   return cloned
 }
 
+// Older saved chart options may have several named series but no legend.
+export const ensureEChartsLegend = (option) => {
+  if (!option || typeof option !== 'object' || 'legend' in option ||
+      !('xAxis' in option) || !('yAxis' in option) || !Array.isArray(option.series)) {
+    return option
+  }
+  const names = [...new Set(option.series
+    .map(series => series?.name)
+    .filter(name => typeof name === 'string' && name.trim()))]
+  if (names.length < 2) return option
+
+  option.legend = { data: names, orient: 'horizontal', bottom: 35 }
+  if (!option.grid) option.grid = { bottom: 84, containLabel: true }
+  return option
+}
+
 const sanitizeRadarOptionLayer = (option) => {
   if (!option || typeof option !== 'object') {
     return option

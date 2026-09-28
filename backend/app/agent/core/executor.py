@@ -307,6 +307,20 @@ class ToolExecutor:
                 for publication in publications
                 for stored in publication.resources
             ]
+            presentation = value.get("presentation") if isinstance(value, dict) else None
+            preferred_resource_key = (
+                str(presentation.get("resource_key") or "").strip()
+                if isinstance(presentation, dict)
+                else ""
+            )
+            focused_resource = next(
+                (
+                    stored
+                    for stored in stored_resources
+                    if preferred_resource_key and stored.resource_key == preferred_resource_key
+                ),
+                None,
+            )
             if self.resource_context_builder is not None:
                 self.resource_context_builder.session_resource_context = project_agent_resource_map(
                     stored_resources,
@@ -318,6 +332,9 @@ class ToolExecutor:
                     publication.catalog_version for publication in publications
                 ),
                 "resource_ids": [stored.resource_id for stored in stored_resources],
+                "focus_resource_id": (
+                    focused_resource.resource_id if focused_resource is not None else None
+                ),
                 "rejected": rejected,
             }
 
@@ -1026,7 +1043,7 @@ class ToolExecutor:
             context.user_identifier = self.user_identifier
             context.runtime_metadata = dict(self.runtime_metadata)
             context.scheduled_task_context = self.runtime_metadata.get("scheduled_task")
-            context.authorized_input_paths = list(self.authorized_input_paths)
+            context.set_authorized_input_paths(self.authorized_input_paths)
 
             logger.debug(
                 "execution_context_created",

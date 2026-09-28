@@ -33,12 +33,12 @@ const props = defineProps({
 <style lang="scss" scoped>
 .user-message {
   padding: 16px 0;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-1);
   animation: fadeIn 0.3s;
 }
 
 .message-content {
-  background: #E3F2FD;
+  background: var(--color-primary-bg);
   padding: 12px 16px;
   border-radius: 8px;
   display: inline-block;
@@ -50,7 +50,7 @@ const props = defineProps({
 .text {
   font-size: 15px;
   line-height: 1.6;
-  color: #333;
+  color: var(--text-1);
   white-space: pre-wrap;
 }
 </style>

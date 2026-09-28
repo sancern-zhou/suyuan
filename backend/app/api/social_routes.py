@@ -444,25 +444,10 @@ async def get_weixin_qrcode(
         if not weixin_channel:
             raise HTTPException(status_code=404, detail="WeChat channel not enabled")
 
-        # Get QR code path from channel
+        # Get QR code path from channel; 未就绪时如实返回 404，不生成占位二维码。
         qr_path = getattr(weixin_channel, "_current_qr_code_path", None)
         if not qr_path or not qr_path.exists():
-            # Try to trigger QR code generation
-            from fastapi.responses import Response
-            import qrcode
-            from io import BytesIO
-
-            # Generate a placeholder QR code
-            qr = qrcode.QRCode(version=1, box_size=10, border=4)
-            qr.add_data("https://github.com")
-            qr.make(fit=True)
-
-            img = qr.make_image(fill_color="black", back_color="white")
-            buffer = BytesIO()
-            img.save(buffer, format="PNG")
-            buffer.seek(0)
-
-            return Response(content=buffer.getvalue(), media_type="image/png")
+            raise HTTPException(status_code=404, detail="WeChat login QR code is not available yet")
 
         # Return QR code image
         from fastapi.responses import FileResponse

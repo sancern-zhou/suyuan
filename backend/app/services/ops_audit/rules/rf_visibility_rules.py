@@ -17,7 +17,7 @@ VISIBILITY_TABLES = {
 }
 NO_DEVICE_KEYWORDS = ("无能见度设备", "无能见度仪", "无设备", "未配置", "无须见度设备")
 DEVICE_FIELDS = ("DEVICEMODEL", "DEVICECODE", "DEMODEL", "DEBQDD", "DEXISHU")
-SKIP_VALUES = {"", "/", "-", "无", "不适用", "none", "null", "nan"}
+SKIP_VALUES = {"", "/", "-", "?", "？", "无", "不适用", "none", "null", "nan"}
 NON_VISIBILITY_MODELS = ("49i", "49ips", "48i", "43i", "42i")
 
 
@@ -56,6 +56,11 @@ def check_rf_visibility_values(
             "working_order_code": order.get("WORKINGORDERCODE"),
             "rf_table": table,
             "remark": form.get("REMARK"),
+            "remark_candidates": {
+                field: form.get(field)
+                for field in ("REMARK", "JIAOZHUNRESULT", "OTHERVALUE")
+                if field in form
+            },
             "conflicts": conflicts,
         }
         first = conflicts[0]
@@ -82,4 +87,3 @@ def _conflict_type(value: str) -> str:
     if any(model in normalized for model in NON_VISIBILITY_MODELS):
         return "non_visibility_model"
     return "field_filled_when_no_device"
-

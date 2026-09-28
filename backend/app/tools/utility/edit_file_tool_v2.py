@@ -35,7 +35,7 @@ from app.services.document_preview_refresh import refresh_preview_for_managed_do
 from app.tools.artifact_utils import attach_mutated_document_resources
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
-from app.utils.path_config import BACKEND_ROOT, TEMP_ROOT, is_agent_protected_write_path, is_path_within, resolve_agent_path
+from app.utils.path_config import BACKEND_ROOT, TEMP_ROOT, get_data_registry, is_agent_protected_write_path, is_path_within, resolve_agent_path
 import structlog
 
 logger = structlog.get_logger()
@@ -318,15 +318,15 @@ class EditFileToolV2(LLMTool):
 - old_string 在文件中不存在时会提供详细诊断信息
 - old_string 在文件中出现多次且 replace_all=False 时报错
 - 自动处理引号规范化和trailing空格
-- 路径限制：项目后端目录及 /tmp 目录
+- 路径限制：项目后端目录、配置的持久化数据目录及 /tmp 目录
 """,
             category=ToolCategory.QUERY,
             version="2.0.0",
             requires_context=False
         )
 
-        # 路径从项目根解析，但编辑权限仍限定在后端和临时目录。
-        self.allowed_dirs = [BACKEND_ROOT.resolve(), TEMP_ROOT]
+        # 持久化目录可能位于代码工作树之外，必须使用部署配置。
+        self.allowed_dirs = [BACKEND_ROOT.resolve(), get_data_registry(), TEMP_ROOT]
 
         # 文件读取状态管理器
         self.read_state = get_file_read_state()

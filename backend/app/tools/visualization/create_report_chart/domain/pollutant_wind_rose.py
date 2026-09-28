@@ -184,6 +184,7 @@ def generate_pollution_rose_contour(
     font_scale: FontScale = None,
     output_context: OutputContext = "word",
     target_width_in: float = DEFAULT_WORD_IMAGE_WIDTH_IN,
+    show_colorbar: bool = False,
 ) -> str:
     """
     生成极坐标热力型污染玫瑰图（matplotlib平滑方案）
@@ -229,6 +230,7 @@ def generate_pollution_rose_contour(
                     默认normal
         output_context: 输出载体，默认word/report/print；screen/html场景可显式传"screen"
         target_width_in: Word/QMD导出时图片最终插入宽度，默认5.8英寸（A4正文宽度留余量）
+        show_colorbar: 是否绘制右侧浓度色阶图例（colorbar），默认False（不绘制）
 
     Returns:
         base64编码的PNG图片
@@ -652,21 +654,24 @@ def generate_pollution_rose_contour(
         )
 
         # 添加色阶等级标签到颜色条
-        cbar = plt.colorbar(contour, ax=ax, pad=0.1)
+        cbar = None
+        if show_colorbar:
+            cbar = plt.colorbar(contour, ax=ax, pad=0.1)
 
-        # 设置颜色条刻度：显示完整的浓度限值数值
-        # 使用FixedLocator确保刻度位置固定在阈值处
-        from matplotlib.ticker import FixedLocator
-        cbar.locator = FixedLocator(thresholds)
-        cbar.update_ticks()
-        cbar.set_ticklabels([str(t) for t in thresholds], fontsize=fonts.colorbar_tick)
+            # 设置颜色条刻度：显示完整的浓度限值数值
+            # 使用FixedLocator确保刻度位置固定在阈值处
+            from matplotlib.ticker import FixedLocator
+            cbar.locator = FixedLocator(thresholds)
+            cbar.update_ticks()
+            cbar.set_ticklabels([str(t) for t in thresholds], fontsize=fonts.colorbar_tick)
 
         logger.info(
             "polar_contour_six_level_colorbar_created",
             pollutant=pollutant_name,
             thresholds=thresholds,
             colorbar_range="full",
-            extend_mode="both"
+            extend_mode="both",
+            show_colorbar=show_colorbar,
         )
 
     else:
@@ -690,13 +695,14 @@ def generate_pollution_rose_contour(
         )
 
         # 添加颜色条
-        cbar = plt.colorbar(contour, ax=ax, pad=0.1)
+        cbar = plt.colorbar(contour, ax=ax, pad=0.1) if show_colorbar else None
 
     # 设置颜色条标签
-    cbar.set_label(
-        normalize_matplotlib_label_text(f'{pollutant_name}浓度 ({unit})'),
-        fontsize=fonts.colorbar_label,
-    )
+    if cbar is not None:
+        cbar.set_label(
+            normalize_matplotlib_label_text(f'{pollutant_name}浓度 ({unit})'),
+            fontsize=fonts.colorbar_label,
+        )
 
     # 设置极坐标轴
     ax.set_theta_zero_location('N')  # 0度在北方

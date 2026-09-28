@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import structlog
 
+from app.utils.path_config import resolve_agent_path
+
 if TYPE_CHECKING:
     from app.agent.context.data_context_manager import DataContextManager
     from app.agent.context.typed_data_handle import TypedDataHandle
@@ -81,6 +83,32 @@ class ExecutionContext:
             iteration=iteration,
             has_task_list=task_list is not None,
         )
+
+    def set_authorized_input_paths(self, paths: List[str]) -> None:
+        """Authorize exact catalog-backed inputs for sandbox and data helpers.
+
+        Session data loaders normally reject another session's path. Workflow
+        handoffs first register those paths in the downstream session's durable
+        resource catalog, then call this method so typed data helpers can use the
+        same explicitly authorized files without weakening global isolation.
+        """
+        normalized: List[str] = []
+        for value in paths or []:
+            if not value:
+                continue
+            try:
+                path = str(resolve_agent_path(value))
+            except (OSError, ValueError):
+                continue
+            if path not in normalized:
+                normalized.append(path)
+        self.authorized_input_paths = normalized
+
+        session = getattr(getattr(self.data_manager, "memory", None), "session", None)
+        data_files = getattr(session, "data_files", None)
+        if isinstance(data_files, dict):
+            for path in normalized:
+                data_files.setdefault(path, path)
 
     def get_data(
         self,
@@ -312,6 +340,8 @@ class ExecutionContext:
         # Copy over the tracking attributes
         copied.current_file_path = updates.get("current_file_path", self.current_file_path)
         copied.available_file_paths = list(updates.get("available_file_paths", self.available_file_paths))
-        copied.authorized_input_paths = list(updates.get("authorized_input_paths", self.authorized_input_paths))
+        copied.set_authorized_input_paths(
+            list(updates.get("authorized_input_paths", self.authorized_input_paths))
+        )
 
         return copied

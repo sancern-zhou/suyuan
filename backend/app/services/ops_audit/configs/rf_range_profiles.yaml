@@ -117,11 +117,32 @@ co_weekly_check_profiles:
     brand_aliases:
       LD: ["LD", "力合", "力合科技"]
     fields:
+      - key: sample_pressure
+        label: 采样压力
+        field: CYYLCHECKVALUE
+        ranges:
+          FPI: {min: 7, max: 15, unit: psia}
+      - key: sample_flow
+        label: 采样流量
+        field: CYLLCHECKVALUE
+        ranges:
+          FPI: {min: 400, max: 1200, unit: sccm}
+      - key: optical_temperature
+        label: 气体室温度
+        field: GSWDCHECKVALUE
+        ranges:
+          FPI: {min: 46, max: 50, unit: ℃}
+      - key: slope
+        label: 斜率
+        field: YLCHECKVALUE
+        ranges:
+          FPI: {min: 0.7, max: 1.3}
       - key: offset
         label: 截距
         field: JGCHECKVALUE
         ranges:
           LD: {min: -5, max: 5, unit: mV}
+          FPI: {min: 1, max: 1.5, unit: ppm}
 
 o3_weekly_check_profiles:
   RF_W_GASEOUSCHECK_O3:
@@ -178,7 +199,7 @@ o3_weekly_check_profiles:
         ranges: &o3_flow_ranges
           API: {min: 720, max: 880, unit: ml/min}
           EC: {min: 0.25, max: 0.55, unit: LPM}
-          FPI: {min: 720, max: 880, unit: SCCM}
+          FPI: {min: 400, max: 1200, unit: SCCM}
           THERMO: {min: 0.400, max: 1.400, unit: L/min}
           TH: {min: 300, max: 1200, unit: ml/min}
           DASIBI: {min: 1.2, max: 1.7, unit: L/min}
@@ -201,7 +222,7 @@ o3_weekly_check_profiles:
         field: YLCHECKVALUE
         ranges:
           API: {min: -0.5, max: 2.5}
-          FPI: {min: 0.85, max: 1.15}
+          FPI: {min: 0.7, max: 1.3}
           THERMO: {min: 0.500, max: 2.000}
           TH: {min: 0.5, max: 2}
           XH: {min: 0.5, max: 1.5}
@@ -237,7 +258,7 @@ nox_weekly_check_profiles:
         ranges:
           API: {min: 450, max: 550, unit: ml/min}
           EC: {min: 0.35, max: 0.7, unit: SLPM}
-          FPI: {min: 350, max: 650, unit: sccm}
+          FPI: {min: 400, max: 600, unit: sccm}
           THERMO: {min: 0.350, max: 0.900, unit: L/min}
           TH: {min: 300, max: 800, unit: ml/min}
           DASIBI: {min: 0.15, max: 0.5, unit: L/min}
@@ -247,7 +268,7 @@ nox_weekly_check_profiles:
         field: CYLLIANGCHECKVALUE
         ranges:
           API: {min: 65, max: 95, unit: ml/min}
-          FPI: {min: 72, max: 88, unit: scc}
+          FPI: {min: 60, max: 100, unit: sccm}
           THERMO: {min: 50, operator: ">=", unit: mL/min}
           TH: {min: 30, max: 120, unit: ml/min}
           XH: {min: 65, max: 95, unit: ml/min}
@@ -258,7 +279,7 @@ nox_weekly_check_profiles:
         ranges:
           API: {min: 0, max: 5000, unit: mV}
           ESA: {min: 0, max: 9999, unit: mV}
-          FPI: {min: 1.5, max: 4.096, unit: V}
+          FPI: {min: 0, max: 4.096, unit: V}
           XH: {min: -100, max: 5000, unit: mV}
       - key: high_voltage
         label: 高压电源
@@ -266,7 +287,7 @@ nox_weekly_check_profiles:
         ranges:
           API: {min: 450, max: 900, unit: V}
           EC: {min: 640, max: 700, unit: V}
-          FPI: {min: 450, max: 900, unit: V}
+          FPI: {min: 400, max: 1200, unit: V}
           ESA: {min: 500, max: 950, unit: V}
           THERMO: {min: -1200, max: 0, unit: V}
           TH: {min: -1100, max: -500, unit: V}
@@ -277,7 +298,7 @@ nox_weekly_check_profiles:
         ranges:
           API: {min: 49, max: 51, unit: ℃}
           EC: {min: 47, max: 53, unit: ℃}
-          FPI: {min: 49, max: 51, unit: ℃}
+          FPI: {min: 48, max: 52, unit: ℃}
           DASIBI: {min: 42.5, max: 43.5, unit: ℃}
           THERMO: {min: 48, max: 52, unit: ℃}
           TH: {min: 45, max: 55, unit: ℃}
@@ -297,7 +318,7 @@ nox_weekly_check_profiles:
         field: FYSHICHECKVALUE
         ranges:
           API: {max: 10, operator: "<", unit: In-Hg-A}
-          FPI: {min: 0, max: 15, unit: psia}
+          FPI: {min: 0, max: 6, unit: psia}
           ESA: {min: 133, max: 433, unit: mV}
       - key: sample_pressure
         label: 采样压力
@@ -305,7 +326,7 @@ nox_weekly_check_profiles:
         ranges:
           API: {min: 25, max: 30, unit: In-Hg-A}
           EC: {min: 75, max: 375, unit: TORR}
-          FPI: {min: 0, max: 15, unit: psia}
+          FPI: {min: 7, max: 15, unit: psia}
           ESA: {min: 408, max: 610, unit: mV}
           THERMO: {min: 150, max: 300, unit: mmHg}
           TH: {min: 60, max: 110, unit: kPa}
@@ -316,7 +337,7 @@ nox_weekly_check_profiles:
         field: NOXYLCHECKVALUE
         ranges: &nox_slope_ranges
           API: {min: 0.7, max: 1.3}
-          FPI: {min: 0.85, max: 1.15}
+          FPI: {min: 0.7, max: 1.3}
           THERMO: {min: 0.500, max: 2.000}
           TH: {min: 0.5, max: 2}
           XH: {min: 0.7, max: 1.3}
@@ -377,7 +398,7 @@ so2_weekly_check_profiles:
           API: {min: 585, max: 715, unit: ml/min}
           TH: {min: 300, max: 800, unit: ml/min}
           DASIBI: {min: 0.5, max: 0.8, unit: L/min}
-          FPI: {min: 580, max: 720, unit: sccm}
+          FPI: {min: 350, max: 1000, unit: sccm}
           THERMO: {min: 0.350, max: 0.750, unit: L/min}
           EC: {min: 0.4, max: 0.8, unit: SLPM}
           XH: {min: 585, max: 715, unit: ml/min}
@@ -386,7 +407,7 @@ so2_weekly_check_profiles:
         field: PMTCHECKVALUE
         ranges:
           API: {min: 0, max: 5000, unit: mV}
-          FPI: {min: 1.5, max: 4.096, unit: V}
+          FPI: {min: 0, max: 4.096, unit: V}
           EC: {min: 11.6, max: 12.2, unit: V}
           XH: {min: 0, max: 5000, unit: mV}
           DASIBI: {min: 0, max: 200, unit: mV}
@@ -395,7 +416,7 @@ so2_weekly_check_profiles:
         field: ZWDCHECKVALUE
         ranges:
           API: {min: 700, max: 4000, unit: mV}
-          FPI: {min: 1.5, max: 4.096, unit: V}
+          FPI: {min: 1, max: 4.096, unit: V}
           THERMO: {min: 40, max: 100, unit: "%"}
           TH: {min: 300, max: 5000, unit: mV}
           DASIBI: {min: 3.5, max: 9.0, unit: V}
@@ -406,7 +427,7 @@ so2_weekly_check_profiles:
         field: YLCHECKVALUE
         ranges:
           API: {min: 0.7, max: 1.3}
-          FPI: {min: 0.85, max: 1.15}
+          FPI: {min: 0.7, max: 1.3}
           THERMO: {min: 0.500, max: 2.000}
           TH: {min: 0.4, max: 2}
           XH: {min: 0.5, max: 1.5}
@@ -435,7 +456,7 @@ so2_weekly_check_profiles:
         field: FYCHECKVALUE
         ranges:
           API: {min: 49, max: 51, unit: ℃}
-          FPI: {min: 45, max: 55, unit: ℃}
+          FPI: {min: 48, max: 52, unit: ℃}
           TH: {min: 45, max: 55, unit: ℃}
           THERMO: {min: 43, max: 47, unit: ℃}
           DASIBI: {min: 32, max: 45, unit: ℃}
@@ -450,12 +471,14 @@ pm_weekly_check_profiles:
     pollutant_values: ["PM10", "PM2.5", "PM25"]
     brand_aliases:
       THERMO: ["THERMO", "Thermo", "TE", "赛默飞", "热电", "赛默飞世尔"]
+      FPI: ["FPI", "聚光"]
     fields:
       - key: main_flow
         label: 流量(Main Flow)
         field: MAINFLOWVALUE
         ranges:
           THERMO: {min: 15.87, max: 17.54, unit: L/min}
+          FPI: {min: 15.84, max: 17.50, unit: L/min}
       - key: air_temperature
         label: 采样管温度(Air.Temp)
         field: AIRTEMPVALUE

@@ -49,7 +49,7 @@ def test_query_prompt_keeps_architecture_rules_not_tool_or_ui_details():
     assert "业务默认值、区域口径和评价标准以工具 schema、工具返回和问数记忆为准" in prompt
     assert "知识类问题先查可用资料，不编造" in prompt
     assert "最终回复先用一到三句话给出可朗读核心结论" in prompt
-    assert "专注结构化数据查询" in prompt
+    assert "能力范围仅为广东省环境数据查询" in prompt
 
 
 def test_tool_schema_and_query_memory_own_moved_policy_text():

@@ -410,7 +410,7 @@ def get_social_user_registry() -> SocialUserRegistry:
     global _registry
     if _registry is None:
         if os.getenv("DATABASE_URL"):
-            from app.db.database import async_session
+            from app.db.session_database import session_async_session as async_session
 
             _registry = SocialUserRegistry(session_factory=async_session)
         else:

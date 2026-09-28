@@ -166,9 +166,10 @@ class EKMAVisualizer:
             O3_max = np.max(o3_values)
             O3_min = np.min(o3_values)
 
-            # 如果没有NOx数据，使用模拟值
+            # 缺少NOx数据时不得编造，直接放弃生成
             if len(nox_values) == 0:
-                nox_values = [v * 0.5 for v in vocs_values]  # 模拟NOx
+                logger.warning("[EKMAVisualizer] 缺少NOx数据，无法生成EKMA图")
+                return None
             NOx_max = np.percentile(nox_values, 95) if nox_values else np.max(nox_values)
             NOx_min = np.percentile(nox_values, 5) if nox_values else np.min(nox_values)
 
@@ -325,7 +326,9 @@ class EKMAVisualizer:
             O3_current = np.mean(o3_values)
 
             if len(nox_values) == 0:
-                nox_values = [v * 0.5 for v in vocs_values[:min_len]]
+                logger.warning("[EKMAVisualizer] 缺少NOx数据，无法生成减排情景分析")
+                return None
+            nox_values = nox_values[:min_len]
 
             # 计算基准排放（95百分位）
             VOCs_95 = np.percentile(vocs_values, 95)
@@ -454,7 +457,8 @@ class EKMAVisualizer:
             o3_values = o3_values[:min_len]
 
             if len(nox_values) == 0:
-                nox_values = [v * 0.5 for v in vocs_values[:min_len]]
+                logger.warning("[EKMAVisualizer] 缺少NOx数据，无法生成臭氧平衡图")
+                return None
             nox_values = nox_values[:min_len]
 
             # 计算VOCs/NOx比值

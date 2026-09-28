@@ -113,6 +113,25 @@ def test_parameter_normalization():
     print("✅ 新参数覆盖旧参数")
 
 
+def test_child_human_feedback_is_forwarded_to_parent_result():
+    tool = CallSubAgentTool()
+    feedback = {
+        "feedback_id": "ops-audit:hash",
+        "scenario": "ops_work_order_audit",
+        "required": True,
+        "items": [{"item_id": "issue-1", "kind": "issue"}],
+    }
+
+    extracted = tool._extract_human_feedback([
+        {
+            "type": "tool_result",
+            "data": {"result": {"data": {"human_feedback": feedback}}},
+        }
+    ])
+
+    assert extracted == feedback
+
+
 def test_build_child_system_prompt():
     """测试子Agent系统提示生成"""
     print("\n=== 测试 3: 子Agent系统提示生成 ===")

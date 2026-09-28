@@ -71,3 +71,37 @@ def test_xuchang_forecast_retains_nmc_and_allows_open_meteo_radiation_supplement
     assert "get_weather_forecast" not in context.manifest.backend.disabled_tools
     assert "open_meteo_air_quality_forecast" not in context.manifest.backend.fetchers
     assert "xuchang_nmc_hourly_forecast_fetcher" in context.manifest.backend.fetchers
+
+
+def test_xuchang_expert_mode_exposes_project_data_query_tools():
+    context = load_project_context("xuchang")
+    expert_tools = context.manifest.backend.agent_mode_tools["expert"]
+
+    assert {
+        "query_airdata_platform",
+        "airdata_calc_report_summary",
+        "xuchang_station_catalog",
+        "query_national_province_air_quality",
+        "query_national_city_air_quality",
+        "resolve_station_geo",
+    }.issubset(expert_tools)
+
+
+def test_xuchang_expert_mode_drops_retired_analysis_tools():
+    context = load_project_context("xuchang")
+    expert_tools = set(context.manifest.backend.agent_mode_tools["expert"])
+
+    assert {
+        "analyze_upwind_enterprises",
+        "calculate_pm_pmf",
+        "calculate_vocs_pmf",
+        "analyze_trajectory_sources",
+        "calculate_reconstruction",
+        "calculate_carbon",
+        "calculate_soluble",
+        "calculate_crustal",
+        "calculate_trace",
+        "predict_air_quality",
+        "generate_map",
+    }.isdisjoint(expert_tools)
+    assert "meteorological_trajectory_analysis" in expert_tools

@@ -53,8 +53,8 @@ TodoWrite(items=[...])  # 不推荐
 
 1. **气象专家**（weather_expert）
    - 提示词文件：`backend/config/prompts/weather_expert.md`
-   - 专长：气象条件分析、大气边界层、扩散条件、轨迹传输、上风向企业
-   - 工具：get_weather_data, get_weather_forecast, meteorological_trajectory_analysis, analyze_upwind_enterprises
+   - 专长：气象条件分析、大气边界层、扩散条件、轨迹传输
+   - 工具：get_weather_data, get_weather_forecast, meteorological_trajectory_analysis
 
 2. **化学专家**（chemical_expert）
    - 提示词文件：
@@ -89,7 +89,7 @@ call_sub_agent(
 
 ---
 
-## 📝 完整任务列表（6个核心任务）
+## 📝 完整任务列表（5个核心任务）
 
 ### 任务1：获取城市空气质量数据
 
@@ -188,9 +188,8 @@ call_sub_agent(
     3. 生成专业的气象条件分析报告（MD格式），包含：
        - 大气扩散能力诊断
        - 光化学污染气象条件
-       - 轨迹传输路径分析
-       - 上风向企业污染源识别
-       - 不利扩散条件识别
+        - 轨迹传输路径分析
+        - 不利扩散条件识别
        - 天气系统与环流
        - 气象预报与污染潜势
        - 控制建议与应对方案
@@ -301,76 +300,7 @@ TodoWrite(items=[{
 
 ---
 
-### 任务4：上风向企业分析【气象专家子Agent】
-
-**目标**：分析上风向潜在污染企业
-
-**专家**：气象专家（weather_expert）
-
-**工具调用**：
-```python
-call_sub_agent(
-    target_mode="expert",
-    task_description=f"""
-    分析上风向潜在污染企业。
-
-    **站点信息**：
-    - 站点名称：{station_name}
-    - 经纬度：({lat}, {lon})
-    - 分析日期：{date}
-
-    **分析要求**：
-    1. 读取专家提示词文件：backend/config/prompts/weather_expert.md
-    2. 使用轨迹分析结果进行企业分析：
-       a) analyze_upwind_enterprises - 上风向企业分析
-          - lat: {lat}
-          - lon: {lon}
-          - analysis_date: {date}
-    3. 生成企业分析报告（MD格式），包含：
-       - 企业分布与影响评估
-       - 企业分级管控建议（5km/20km/50km）
-       - TOP10高影响污染源清单
-    4. 生成企业分布地图
-    """,
-    context_data={
-        "expert_prompt_file": "backend/config/prompts/weather_expert.md",
-        "data_ids": ["trajectory_analysis:xxx"]  # 从任务3获取
-    }
-)
-```
-
-**输出**：
-- `data_id`: "enterprise_analysis:xxx"
-- 分析内容：上风向企业分析报告（MD格式）+ 企业分布地图
-
-**阶段性报告**：
-```markdown
-## 4. 上风向企业分析报告
-
-### 4.1 企业分布与影响评估
-{气象专家生成的企业分析内容}
-
-### 4.2 TOP10高影响污染源
-{气象专家生成的TOP10清单}
-
-![企业分布图](/api/image/xxx)
-```
-
-**依赖**：任务3完成
-
-**可选**：是（如无企业数据可跳过）
-
-**TodoWrite示例**：
-```python
-TodoWrite(items=[{
-    'content': '上风向企业分析（气象专家）',
-    'status': 'in_progress'
-}])
-```
-
----
-
-### 任务5：污染物组分分析【化学专家子Agent】
+### 任务4：污染物组分分析【化学专家子Agent】
 
 **目标**：分析污染物组分，推断污染来源（包含PMF/OBM等深度分析）
 
@@ -483,21 +413,21 @@ call_sub_agent(
 
 **阶段性报告**：
 ```markdown
-## 5. 污染物组分分析报告
+## 4. 污染物组分分析报告
 
-### 5.1 组分特征分析
+### 4.1 组分特征分析
 {化学专家生成的组分分析内容}
 
-### 5.2 PMF源解析结果
+### 4.2 PMF源解析结果
 {化学专家生成的PMF分析内容}
 
-### 5.3 二次生成评估
+### 4.3 二次生成评估
 {化学专家生成的二次生成分析内容}
 
 ![组分分析图](/api/image/xxx)
 ```
 
-**依赖**：任务1完成（可与任务2-4并行）
+**依赖**：任务1完成（可与任务2-3并行）
 
 **可选**：是（如无数据可跳过）
 
@@ -511,7 +441,7 @@ TodoWrite(items=[{
 
 ---
 
-### 任务6：生成综合报告【报告专家子Agent】
+### 任务5：生成综合报告【报告专家子Agent】
 
 **目标**：汇总所有专家分析，生成综合溯源报告
 
@@ -535,8 +465,7 @@ call_sub_agent(
        - station_info:xxx（任务1）
        - weather_analysis:xxx（任务2）
        - trajectory_analysis:xxx（任务3）
-       - enterprise_analysis:xxx（任务4）
-       - component_analysis:xxx（任务5）
+       - component_analysis:xxx（任务4）
     3. 汇总所有专家的章节内容
     4. 生成综合溯源结论：
        - 主要来源识别
@@ -554,8 +483,7 @@ call_sub_agent(
             "station_info:xxx",      # 从任务1获取
             "weather_analysis:xxx",   # 从任务2获取
             "trajectory_analysis:xxx", # 从任务3获取
-            "enterprise_analysis:xxx", # 从任务4获取
-            "component_analysis:xxx"  # 从任务5获取
+            "component_analysis:xxx"  # 从任务4获取
         ]
     }
 )
@@ -583,28 +511,25 @@ call_sub_agent(
 ## 3. 后向轨迹分析报告
 {任务3的阶段性报告}
 
-## 4. 上风向企业分析报告
+## 4. 污染物组分分析报告
 {任务4的阶段性报告}
-
-## 5. 污染物组分分析报告
-{任务5的阶段性报告}
 
 ---
 
-## 6. 综合溯源结论
+## 5. 综合溯源结论
 
-### 6.1 主要来源识别
+### 5.1 主要来源识别
 {报告专家生成的综合结论}
 
-### 6.2 关键影响因素
+### 5.2 关键影响因素
 {报告专家生成的因素分析}
 
-## 7. 管控建议
+## 6. 管控建议
 
-### 7.1 近期管控措施（应急响应）
+### 6.1 近期管控措施（应急响应）
 {报告专家生成的应急建议}
 
-### 7.2 中长期管控建议（根本治理）
+### 6.2 中长期管控建议（根本治理）
 {报告专家生成的长期建议}
 ```
 
@@ -639,7 +564,6 @@ TodoWrite(items=[
     {'content': '定位站点：广州', 'status': 'pending'},
     {'content': '气象数据分析（气象专家）', 'status': 'pending'},
     {'content': '后向轨迹分析（气象专家）', 'status': 'pending'},
-    {'content': '上风向企业分析（气象专家）', 'status': 'pending'},
     {'content': '污染物组分分析（化学专家）', 'status': 'pending'},
     {'content': '生成综合报告（报告专家）', 'status': 'pending'}
 ])
@@ -659,7 +583,6 @@ TodoWrite(items=[
 [ ] 定位站点：广州
 [ ] 气象数据分析（🌤️ 气象专家）
 [ ] 后向轨迹分析（🛰️ 气象专家）
-[ ] 上风向企业分析（🛰️ 气象专家）
 [ ] 污染物组分分析（🧪 化学专家）
 [ ] 生成综合报告（📝 报告专家）
 
@@ -713,11 +636,11 @@ TodoWrite(items=[..., {'content': '气象数据分析（气象专家）', 'statu
 # 生成阶段性报告（MD格式）
 ```
 
-**继续执行任务3-5...**
+**继续执行任务3-4...**
 
-**执行任务6**：
+**执行任务5**：
 ```python
-# 标记任务6为进行中
+# 标记任务5为进行中
 TodoWrite(items=[..., {'content': '生成综合报告（报告专家）', 'status': 'in_progress'}])
 
 # 调用报告专家子Agent
@@ -730,7 +653,7 @@ call_sub_agent(
     }
 )
 
-# 标记任务6完成
+# 标记任务5完成
 TodoWrite(items=[..., {'content': '生成综合报告（报告专家）', 'status': 'completed'}])
 
 # 输出最终报告
@@ -774,9 +697,8 @@ TodoWrite(items=[..., {'content': '生成综合报告（报告专家）', 'statu
 - 任务1（定位站点）：~5秒
 - 任务2（气象数据分析）：~30秒
 - 任务3（后向轨迹分析）：~60秒
-- 任务4（上风向企业分析）：~10秒
-- 任务5（污染物组分分析）：~60秒
-- 任务6（生成综合报告）：~15秒
+- 任务4（污染物组分分析）：~60秒
+- 任务5（生成综合报告）：~15秒
 
 **总计**：约3分钟
 

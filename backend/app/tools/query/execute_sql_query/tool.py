@@ -43,9 +43,7 @@ MONITORING_SQL_TABLES = [
     'dat_weather_hour',
     'dat_zhongda_station_minute',
     'dat_zhongda_station_hour',
-    'dat_zhongda_station_day',
     'dat_zhongda_city_hour',
-    'dat_zhongda_city_day',
     'HenanCityAccumulateRanking',
     'WeatherForecast7Day',
     'city_168_statistics_new_standard',
@@ -77,9 +75,7 @@ XUCHANG_MONITORING_SQL_TABLES = [
     'dat_station_hour',
     'dat_zhongda_station_minute',
     'dat_zhongda_station_hour',
-    'dat_zhongda_station_day',
     'dat_zhongda_city_hour',
-    'dat_zhongda_city_day',
     'HenanCityAccumulateRanking',
     'WeatherForecast7Day',
     'city_168_statistics_new_standard',
@@ -100,12 +96,12 @@ AIR_QUALITY_SCHEMA_GUIDE = (
     "执行前必须替换为上下文中的实际值，不得把模板变量原样写入SQL。"
     "若上下文缺少名称与代码的映射，应补充地理上下文；describe_table只能查询字段，不能提供该映射。"
     "不同表的城市字段不同，禁止跨表套用字段名。"
-    "\n【数据源优先级】站点小时/站点日/城市小时/城市日数据同时存在通用发布表"
-    "（dat_station_hour、dat_station_day、CityAQIPublishHistory、CityDayAQIPublishHistory）"
-    "和中大平台表（dat_zhongda_station_hour、dat_zhongda_station_day、dat_zhongda_city_hour、"
-    "dat_zhongda_city_day）两个来源时，优先查询中大平台表（dat_zhongda_*）——中大源为审核后数据，"
+    "\n【数据源优先级】站点小时/城市小时数据同时存在通用发布表"
+    "（dat_station_hour、CityAQIPublishHistory）和中大平台表（dat_zhongda_station_hour、"
+    "dat_zhongda_city_hour）两个来源时，优先查询中大平台表（dat_zhongda_*）——中大源为审核后数据，"
     "准确性更高。仅当中大表不覆盖所需时间（如城市聚合滞后约1天）或字段缺失时，再用通用发布表补充。"
-    "站点5分钟数据（dat_zhongda_station_minute）为中大独有，无此冲突。"
+    "站点日/城市日数据仅有通用发布表（dat_station_day、CityDayAQIPublishHistory），"
+    "中大平台不再采集日数据。站点5分钟数据（dat_zhongda_station_minute）为中大独有，无此冲突。"
     "\n【预报数据源优先级】查询未来逐小时气象预报（温度、湿度、风向风速、气压、降水概率、天气现象）时，"
     "优先查询NMC逐小时气象预报（XuchangNmcHourlyWeatherForecast，中央气象台官方预报，7天×3小时间隔）；"
     "中国天气网日预报归入NMC同源数据。"
@@ -137,13 +133,14 @@ AIR_QUALITY_SCHEMA_GUIDE = (
     "Area = N'{city_name}'或CityCode = {city_code}；"
     "时间字段为TimePoint；日均字段为PM2_5_24h, PM10_24h, O3_8h_24h, "
     "NO2_24h, SO2_24h, CO_24h；其他字段为AQI, PrimaryPollutant, Quality。"
-    "注意：与dat_zhongda_city_day数据重复，优先使用中大表（审核后数据），本表仅作补充。"
+    "城市日数据仅此表提供（中大平台不再采集日数据）。"
             "\n- dat_station_hour（站点小时）和dat_station_day（站点日）："
             "城市字段为city_area_code，按行政区代码筛选：city_area_code = '{city_code}'；"
             "站点字段为station_id, name, lon, lat；时间字段为data_time；"
             "污染物字段使用小写：aqi, aqi_level, pm25, pm10, o3, no2, so2, co, pollutant；"
             "dat_station_day另有O38h字段。没有cityname、CityID、Area、CityCode。"
-            "注意：与dat_zhongda_station_hour/dat_zhongda_station_day数据重复，优先使用中大表（审核后数据），本表仅作补充。"
+            "注意：dat_station_hour与dat_zhongda_station_hour数据重复，优先使用中大表（审核后数据），"
+            "本表仅作补充；站点日数据仅本表提供。"
             "\n- dat_zhongda_station_minute（中大平台站点5分钟）和dat_zhongda_station_hour（中大平台站点小时）："
             "城市字段为area，按城市全称筛选：area = N'{city_name}'；"
             "站点字段为station_code（平台内部编码，数字+字母如'1003A'）和station_name；时间字段为time_point；"
@@ -160,25 +157,19 @@ AIR_QUALITY_SCHEMA_GUIDE = (
             "FROM dbo.dat_zhongda_station_minute WHERE area = N'{city_name}' "
             "AND data_table_type = 'Act' AND parameter_type = 'gp' AND time_point >= '2026-08-26 18:00' "
             "ORDER BY time_point DESC。"
-            "\n- dat_zhongda_station_day（中大平台站点日均，审核后）："
-            "城市/站点/口径字段与分钟表规则一致（area=N'{city_name}'、station_code、data_table_type、parameter_type），"
-            "但时间为data_date（DATE类型），另有unique_code、standard='AQI'、data_source_type='App'、"
-            "pollutant（首要污染物）、quality_type（类别）、quality_level（等级）；"
-            "污染物单位已统一换算为μg/m3（CO为mg/m3），与分钟/小时表一致；-99仍为无效值需排除。"
-            "\n- dat_zhongda_city_hour（中大平台城市小时）和dat_zhongda_city_day（中大平台城市日均）："
+            "\n- dat_zhongda_city_hour（中大平台城市小时，审核后）："
             "城市字段为area（按城市全称筛选area = N'{city_name}'），另有city_code、province字段；"
-            "city_hour时间为time_point，city_day时间为data_date；"
-            "两表均含data_type_plan（评价规划期，按数据时间互斥分区："
+            "时间为time_point；"
+            "含data_type_plan（评价规划期，按数据时间互斥分区："
             "2026-01-01起为'155th'十五五，2021~2025为'145th'十四五，更早为'135th'；"
             "查询2026年数据必须加data_type_plan = '155th'，用错规划期会返回空）；"
-            "city_day另有data_source_type='SubstitutionBack'（替代回算）和description。"
-            "字段为小写污染物列：so2, no_val, no2, nox, o3, co, pm10, pm25, pm1，city_day另有o3_1h、o3_8h；"
-            "评价字段city_hour为aqi/quality/pollutant，city_day为aqi/pollutant/quality_type/quality_level；"
-            "两表均含第二组评价字段（aqi_2/quality_2/pollutant_2或pm10_2/pm25_2，city_day无quality_2）；"
-            "city_day质量标记列为<污染物>_mark形式（如so2_mark、pm2_5_mark）；"
-            "城市表数值为平台返回原值（当前无数据，单位未经核实，跨表统计前先抽样核对）。"
-            "城市表无效占位值为-999（区别于站点表的-99），统计前必须排除（如AND aqi <> -999）。"
+            "字段为小写污染物列：so2, no_val, no2, nox, o3, co, pm10, pm25, pm1；"
+            "评价字段为aqi/quality/pollutant，"
+            "另有第二组评价字段（aqi_2/quality_2/pollutant_2或pm10_2/pm25_2）；"
+            "数值为平台返回原值（当前无数据，单位未经核实，跨表统计前先抽样核对）。"
+            "无效占位值为-999（区别于站点表的-99），统计前必须排除（如AND aqi <> -999）。"
             "注意：城市表由平台聚合任务生成，可能为空，查询无结果不代表SQL错误。"
+            "站点日/城市日数据中大平台不再采集，请改用dat_station_day、CityDayAQIPublishHistory。"
             "\n- HenanCityAccumulateRanking（河南省城市月/年累计空气质量排名）："
             "period_type区分monthly（月累计）/yearly（年累计），period为YYYY-MM或YYYY；"
             "城市字段为city，按全称筛选如city = N'郑州'；排名为city_rank（1最优）；"
@@ -316,7 +307,6 @@ OPS_SQL_TABLES = [
 
 TENDER_SQL_TABLES = [
     'tender_notices',
-    'tender_notice_contents',
     'tender_candidates',
     'tender_fetch_runs',
 ]
@@ -964,13 +954,13 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
             "\n【XcAiDb数据库-空气质量】"
             "\n- WeatherForecast7Day：7天空气质量预报（全国319城，含MinAqi/MaxAqi/MaxPollution/WeatherCondition/Temperature/WindLevel/WindDirection/TimePoint）"
             "\n- XuchangNmcHourlyWeatherForecast：NMC中央气象台未来7天×3小时间隔气象预报（温/湿/风/气压/降水概率/天气现象，气象预报优先源）"
-            "\n- CityDayAQIPublishHistory：城市日空气质量历史数据（次选，优先中大表）"
+            "\n- CityDayAQIPublishHistory：城市日空气质量历史数据"
             "\n- CityAQIPublishHistory：城市小时空气质量历史数据（次选，优先中大表）"
             "\n- CurrentAirQuality：当前空气质量"
-            "\n- dat_station_hour/dat_station_day：站点小时/日数据（次选，优先中大表）"
+            "\n- dat_station_hour：站点小时数据（次选，优先中大表）"
+            "\n- dat_station_day：站点日数据"
             "\n- dat_zhongda_station_minute/dat_zhongda_station_hour：中大平台站点5分钟/小时数据（含质量标记列，-99为无效值）"
-            "\n- dat_zhongda_station_day：中大平台站点日均（审核后）"
-            "\n- dat_zhongda_city_hour/dat_zhongda_city_day：中大平台城市小时/日均（可能为空，需空结果容错）"
+            "\n- dat_zhongda_city_hour：中大平台城市小时（可能为空，需空结果容错）"
             "\n- HenanCityAccumulateRanking：河南省城市月/年累计空气质量排名（period_type区分月/年累计）"
             "\n【统计预计算表】"
             "\n- city_168_statistics_new_standard/city_168_statistics_old_standard：168城市空气质量统计；"
@@ -994,9 +984,9 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
                 "\n- XuchangWeatherComDailyForecast：中国天气网许昌城区1-15日日气象预报"
                 "\n- CurrentAirQuality：许昌当前空气质量及今明两天预报摘要"
                 "\n- CityAQIPublishHistory/CityDayAQIPublishHistory：城市小时/日空气质量历史"
-                "\n- dat_zhongda_station_minute/dat_zhongda_station_hour/dat_zhongda_station_day：中大平台站点数据"
-                "\n- dat_zhongda_city_hour/dat_zhongda_city_day：中大平台城市数据"
-                "\n- dat_station_hour/dat_station_day：通用站点数据（中大表缺失时补充）"
+                "\n- dat_zhongda_station_minute/dat_zhongda_station_hour：中大平台站点5分钟/小时数据"
+                "\n- dat_zhongda_city_hour：中大平台城市小时数据"
+                "\n- dat_station_hour/dat_station_day：通用站点小时/日数据（站点小时在中大表缺失时补充；站点日仅此来源）"
                 "\n- HenanCityAccumulateRanking：河南省城市月/年累计空气质量排名"
                 "\n- city_168_statistics_new_standard/city_168_statistics_old_standard：168城市统计"
                 "\n- province_statistics_new_standard/province_statistics_old_standard：省级空气质量统计"
@@ -1126,19 +1116,25 @@ class ExecuteTenderSQLQueryTool(BaseSQLQueryTool):
     def __init__(self):
         schema_description = (
             "招投标数据SQL Server查询工具。支持二选一：describe_table查看表结构，或sql执行SELECT查询。"
-            "用于助手模式查询已抓取、初筛、详情清洗并入库的招标公告和中标公告。"
+            "用于通用助手查询已入库招标、中标、候选和更正公告，包含仅有列表信息及已补充完整详情的记录。"
             "只能查询下方列出的招投标白名单表；禁止查询其他业务库表。"
             "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回1000条。"
             "SQL Server语法：中文字符串必须加N前缀，如 N'生态环境局'；分页/限制用TOP，不支持LIMIT。"
             "database默认为XcAiDb。"
             "\n\n常用表说明："
             "\n- tender_notices：清洗后的目标公告主表，也是回答“某天有多少条招投标公告/有哪些公告”的最终事实表。包含title、notice_type、project_name、purchaser、winning_bidder、budget_amount、winning_amount、province、city、publish_date、project_category、summary、key_requirements_json、extraction_meta_json等字段。"
-            "\n- tender_notice_contents：公告原文内容表，按url关联tender_notices，包含raw_content等大文本字段。"
-            "\n- tender_candidates：列表页候选公告表，用于判断初筛和补录闭环状态。accepted候选表示已通过初筛；accepted候选LEFT JOIN tender_notices后n.url IS NULL的数量，才表示仍缺详情/仍未入库。"
+            "\n- 公告内容已合并到tender_notices，不再查询tender_notice_contents。raw_content为正文/列表文本；detail_fetched_at非空表示已获取知了详情，空值不能视为完整正文。detail_json保存详情API的data和meta，attachment_urls_json为附件JSON数组，detail_cost_units为最近一次详情请求积分，detail_fetched_at为UTC时间。"
+            "\n- 查询具体项目先SELECT TOP 20 id,bid_id,title,purchaser,publish_date,url,detail_fetched_at FROM tender_notices WHERE title LIKE N'%具体项目名%' ORDER BY publish_date DESC；需要服务要求、技术指标、标段明细等正文信息时，将确认的bid_id传给zhiliao_tender_detail工具，工具自动获取并入库，多个同名公告应先确认，不猜测。"
+            "\n- 列表统计不要SELECT *或读取大型raw_content/detail_json；仅选择所需独立列。money为API原始元金额，money_wan为原始万元金额；最终中标金额仍用winning_amount_wan_yuan，元金额可由它乘10000。"
+            "\n- tender_candidates：列表页候选公告表，用于判断初筛和补录闭环状态。accepted候选表示已通过初筛或保留策略，不能据此认定与核心业务相关；accepted候选LEFT JOIN tender_notices后n.url IS NULL的数量，才表示仍缺详情/仍未入库。"
+            "\n- API信息已有独立列：county区县、bid_id、caller_id、agency_name、winner_names中标/候选供应商原始列表、winner_ids、winner_moneys原始元金额列表、sm_names标的物列表、brand_names品牌列表、tender_names等；采购单位仍用purchaser，公告链接用url，省市用province/city。"
+            "\n- 分类优先读取独立列business_type、content_tags、classification_status、notice_stage；原始副本仍保留在extraction_meta_json.classification。content_tags、winner_names、sm_names、brand_names等独立列为JSON数组，可用OPENJSON展开后精确匹配和GROUP BY统计；一次只展开所需数组，避免多个数组笛卡尔积。"
+            "\n- winner_names包括API候选供应商，统计最终中标须筛选notice_stage='final_result'并按公告ID去重；统计金额用winning_amount_wan_yuan，不使用含义未确认的money/money_wan。不要把公告数当项目数，也不要把候选或更正金额重复计入中标合计。"
+            "\n- 知了API回补与旧千里马记录可能包含同一公告。统计知了回补范围时增加bid_id IS NOT NULL，并按bid_id去重；跨来源统计须先明确去重口径，不直接累加两个来源的公告数。"
             "\n- tender_fetch_runs：抓取执行日志表，可能保留初次失败、补录中断、重试成功等多轮历史记录。它只用于排障，不是最终业务状态；不要累加saved_notices，不要仅因旧run存在detail_fetch_failures就判断补录未完成。"
             "\n\n判断口径："
             "\n- 最终入库数量：只统计tender_notices，按publish_date去重后的事实表结果为准。"
-            "\n- 补录是否完成：统计accepted候选中尚未在tender_notices出现的数量；为0表示已通过详情页抓取/复核闭环，即使历史run仍有失败日志。"
+            "\n- 补录是否完成：统计accepted候选中尚未在tender_notices出现的数量；为0表示已入库闭环，即使历史run仍有失败日志；不表示已获取详情或所有业务分类均确认，仍需查看classification_status。"
             "\n- run状态解读：tender_fetch_runs.status=partial_failed/failed/interrupted只说明该执行批次有错误或被中断，不代表该日期最终未完成；需要结合最终入库和accepted_missing_notice判断。"
             "\n\n常见查询："
             "\n- 某日最终入库公告：SELECT TOP 50 title, notice_type, purchaser, publish_date FROM tender_notices WHERE publish_date = '2026-07-01' ORDER BY id DESC"
@@ -1146,6 +1142,16 @@ class ExecuteTenderSQLQueryTool(BaseSQLQueryTool):
             "\n- 某日候选初筛统计：SELECT filter_status, decision_source, COUNT(*) AS cnt FROM tender_candidates WHERE publish_date = '2026-07-01' GROUP BY filter_status, decision_source"
             "\n- 最近执行日志排障：SELECT TOP 10 id, target_date, status, total_candidates, detail_fetch_failures, saved_notices, started_at, finished_at FROM tender_fetch_runs ORDER BY started_at DESC"
             "\n\n提示：使用describe_table可查看白名单表的完整字段结构。"
+        )
+        from app.services.tenders.taxonomy import BUSINESS_TYPES, CONTENT_TAGS
+        schema_description += (
+            "\n- business_type类型合法值：" + "、".join(BUSINESS_TYPES) + "。"
+            "\n- content_tags内容标签合法值：" + "、".join(CONTENT_TAGS) + "。"
+            "\n- classification_status为classified或needs_review；待复核记录也保留，除非用户指定不要默认过滤。"
+            "notice_stage为final_result最终结果、candidate候选、correction更正、contract合同、tender招标、other或unknown。"
+            "\n- 分类查询示例：SELECT TOP 50 bid_id,title,business_type,content_tags,publish_date FROM tender_notices WHERE business_type=N'运维服务' ORDER BY publish_date DESC。"
+            "\n- 标签查询示例：SELECT TOP 50 n.bid_id,n.title,n.publish_date FROM tender_notices n WHERE EXISTS (SELECT 1 FROM OPENJSON(n.content_tags) t WHERE t.value=N'AI') ORDER BY n.publish_date DESC。"
+            "\n- 省份城市区县用province/city/county；供应商名称匹配用winner_names的OPENJSON，不把包含候选的原始名单都当最终中标。日期区间建议publish_date>=开始日期 AND publish_date<下月首日。"
         )
         super().__init__(
             tool_name="execute_tender_sql_query",

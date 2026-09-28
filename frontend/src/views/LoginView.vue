@@ -118,9 +118,9 @@ onMounted(refreshCaptcha)
   place-items: center;
   padding: 32px 20px;
   background:
-    radial-gradient(circle at 18% 20%, rgba(0, 215, 174, 0.18), transparent 32%),
-    radial-gradient(circle at 82% 80%, rgba(0, 117, 214, 0.2), transparent 34%),
-    #f5faf9;
+    radial-gradient(circle at 18% 20%, var(--color-primary-ring), transparent 32%),
+    radial-gradient(circle at 82% 80%, rgba(10, 146, 228, 0.14), transparent 34%),
+    var(--bg-layout);
 }
 
 .login-card {
@@ -142,7 +142,7 @@ onMounted(refreshCaptcha)
 
 .brand-mark img { width: 100%; height: 100%; object-fit: cover; }
 .login-copy { margin: 24px 0 30px; }
-.eyebrow { margin: 0 0 8px; color: #008f91; font-size: 12px; font-weight: 800; letter-spacing: 0.16em; }
+.eyebrow { margin: 0 0 8px; color: var(--color-primary-active); font-size: 12px; font-weight: 800; letter-spacing: 0.16em; }
 h1 { margin: 0; color: #173b43; font-size: 28px; }
 .login-copy > p:last-child { margin: 12px 0 0; color: #668087; line-height: 1.65; }
 form { display: grid; gap: 10px; }
@@ -156,7 +156,7 @@ input {
   outline: none;
   font: inherit;
 }
-input:focus { border-color: #009a9e; box-shadow: 0 0 0 3px rgba(0, 154, 158, 0.12); }
+input:focus { border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-ring); }
 .captcha-row { display: grid; grid-template-columns: minmax(0, 1fr) 132px; gap: 10px; }
 .captcha-refresh {
   height: 48px;
@@ -175,13 +175,13 @@ button {
   border: 0;
   border-radius: 11px;
   color: white;
-  background: linear-gradient(120deg, #00a982, #007fc4);
+  background: var(--gradient-brand);
   font: inherit;
   font-weight: 750;
   cursor: pointer;
 }
 button:disabled { cursor: wait; opacity: 0.58; }
-.error { margin: 8px 0 0; color: #c13a3a; font-size: 14px; }
+.error { margin: 8px 0 0; color: var(--color-danger); font-size: 14px; }
 
 @media (max-width: 520px) {
   .login-card { padding: 30px 24px; border-radius: 18px; }

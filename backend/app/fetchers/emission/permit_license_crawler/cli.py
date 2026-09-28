@@ -9,6 +9,7 @@ from .client import PermitPlatformClient, PlatformBlockedError
 from .crawler import XuchangPermitCrawler
 from .repository import PermitRepository
 from .storage import FileStorage
+from app.utils.path_config import get_data_registry
 
 
 def validate_args(args: argparse.Namespace) -> None:
@@ -40,11 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--storage-root",
         type=Path,
-        default=Path("backend")
-        / "backend_data_registry"
-        / "permit_licenses"
-        / "河南省"
-        / "许昌市",
+        default=get_data_registry() / "permit_licenses" / "河南省" / "许昌市",
     )
     parser.add_argument(
         "--project-root",

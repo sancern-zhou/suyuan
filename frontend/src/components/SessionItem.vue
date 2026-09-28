@@ -165,8 +165,8 @@ const handleDelete = () => {
 
 <style scoped>
 .session-item {
-  background: #fff;
-  border: 1px solid #e0e0e0;
+  background: var(--bg-container);
+  border: 1px solid var(--border-2);
   border-radius: 8px;
   margin-bottom: 12px;
   overflow: hidden;
@@ -188,7 +188,7 @@ const handleDelete = () => {
 }
 
 .session-header:hover {
-  background: #f8f9fa;
+  background: var(--bg-muted);
 }
 
 .header-left {
@@ -207,7 +207,7 @@ const handleDelete = () => {
 .session-query {
   font-size: 14px;
   font-weight: 500;
-  color: #333;
+  color: var(--text-1);
   margin-bottom: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -218,12 +218,12 @@ const handleDelete = () => {
   display: flex;
   gap: 12px;
   font-size: 12px;
-  color: #666;
+  color: var(--text-2);
 }
 
 .session-id {
   font-family: monospace;
-  background: #f0f0f0;
+  background: var(--border-1);
   padding: 2px 6px;
   border-radius: 3px;
 }
@@ -234,7 +234,7 @@ const handleDelete = () => {
 }
 
 .session-time {
-  color: #888;
+  color: var(--text-3);
 }
 
 .header-right {
@@ -243,14 +243,14 @@ const handleDelete = () => {
 
 .expand-icon {
   font-size: 12px;
-  color: #888;
+  color: var(--text-3);
 }
 
 /* 会话详情 */
 .session-details {
   padding: 16px;
-  background: #f8f9fa;
-  border-top: 1px solid #e0e0e0;
+  background: var(--bg-muted);
+  border-top: 1px solid var(--border-2);
 }
 
 .detail-row {
@@ -266,13 +266,13 @@ const handleDelete = () => {
 
 .detail-label {
   font-weight: 500;
-  color: #666;
+  color: var(--text-2);
   width: 80px;
   flex-shrink: 0;
 }
 
 .detail-value {
-  color: #333;
+  color: var(--text-1);
 }
 
 /* 统计信息 */
@@ -288,21 +288,21 @@ const handleDelete = () => {
   flex-direction: column;
   align-items: center;
   padding: 12px;
-  background: #fff;
+  background: var(--bg-container);
   border-radius: 6px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
 }
 
 .stat-label {
   font-size: 11px;
-  color: #888;
+  color: var(--text-3);
   margin-bottom: 4px;
 }
 
 .stat-value {
   font-size: 18px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-1);
 }
 
 /* 操作按钮 */
@@ -332,27 +332,27 @@ const handleDelete = () => {
 }
 
 .btn-primary {
-  background: #2196f3;
+  background: var(--color-primary);
   color: white;
 }
 
 .btn-primary:hover {
-  background: #1976d2;
+  background: var(--color-primary);
 }
 
 .btn-secondary {
-  background: #fff;
-  color: #666;
-  border: 1px solid #e0e0e0;
+  background: var(--bg-container);
+  color: var(--text-2);
+  border: 1px solid var(--border-2);
 }
 
 .btn-secondary:hover {
-  background: #f5f5f5;
-  border-color: #d0d0d0;
+  background: var(--bg-hover);
+  border-color: var(--border-3);
 }
 
 .btn-danger {
-  background: #fff;
+  background: var(--bg-container);
   color: #f44336;
   border: 1px solid #ffcdd2;
 }

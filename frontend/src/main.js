@@ -6,7 +6,9 @@ import { useAuthStore } from './auth/authStore.js'
 import { installAuthGuard } from './auth/routerGuard.js'
 import { initializeAuthStore } from './auth/runtimeConfig.js'
 import { registerVitePreloadRecovery } from './services/vitePreloadRecovery.js'
+import './styles/tokens.css'
 import './styles/main.scss'
+import './styles/components.scss'
 
 registerVitePreloadRecovery()
 

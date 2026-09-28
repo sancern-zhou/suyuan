@@ -113,6 +113,7 @@ def test_pm_sample_tube_temperature_emits_fact_and_explanation_review():
                 "RF_W_PMCHECK",
                 {
                     "WORKINGORDERCODE": "WO-PM-TEMP",
+                    "DEVICEMODEL": "1020",
                     "AIRTEMPVALUE": "/",
                     "AIRTEMPISNORMAL": "否",
                     "AIRTEMPEXCEPTION": "等待配件",
@@ -126,9 +127,12 @@ def test_pm_sample_tube_temperature_emits_fact_and_explanation_review():
         "RF_PM_SAMPLE_TUBE_TEMP_ABNORMAL",
         "RF_ABNORMAL_VALUE_NO_REMARK",
     ]
+    fact_evidence = json.loads(issues[0].evidence)
+    assert fact_evidence["device_model"] == "1020"
     companion_evidence = json.loads(issues[1].evidence)
     assert companion_evidence["reason_rule_id"] == "RF_PM_SAMPLE_TUBE_TEMP_ABNORMAL"
     assert companion_evidence["remark_candidates"]["AIRTEMPEXCEPTION"] == "等待配件"
+    assert companion_evidence["abnormal_evidence"]["device_model"] == "1020"
 
 
 def test_abnormal_result_field_emits_fact_even_when_field_contains_context():
@@ -154,3 +158,34 @@ def test_abnormal_result_field_emits_fact_even_when_field_contains_context():
     ]
     companion_evidence = json.loads(issues[1].evidence)
     assert companion_evidence["remark_candidates"]["WEATHERSITUATION"] == "气象仪故障通讯失败，已处理并返厂维修"
+
+
+def test_in_progress_repair_text_counts_as_remark_context():
+    issues = []
+    check_rf_abnormal_remarks(
+        {"WORKINGORDERCODE": "WO-REPAIRING"},
+        [
+            (
+                "RF_W_OTHERDEVICECHECK",
+                {
+                    "WORKINGORDERCODE": "WO-REPAIRING",
+                    "WEATHERDEVICEMODEL": "WS-1",
+                    "WEATHERSITUATION": "气象仪故障通讯失败，气象仪返厂维修中；",
+                },
+            )
+        ],
+        issues,
+    )
+
+    assert [issue.rule_id for issue in issues] == [
+        "RF_ABNORMAL_RESULT_FIELD",
+        "RF_ABNORMAL_VALUE_NO_REMARK",
+    ]
+    companion_evidence = json.loads(issues[1].evidence)
+    assert (
+        companion_evidence["remark_candidates"]["WEATHERSITUATION"]
+        == "气象仪故障通讯失败，气象仪返厂维修中；"
+    )
+    assert companion_evidence["needs_semantic_review"] is True
+    assert "需语义判断" in issues[1].message
+    assert "未填写有效备注" not in issues[1].message

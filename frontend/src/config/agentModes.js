@@ -228,7 +228,7 @@ export const AGENT_SCENES = Object.freeze([
     id: 'monitoring',
     name: '监测分析',
     description: '环境数据研判与成果输出',
-    modeIds: ['query', 'knowledge', 'expert', 'report', 'chart'],
+    modeIds: ['query', 'expert', 'report', 'chart'],
     iconPaths: [
       { tone: 'primary', d: 'M4 5v14h16' },
       { tone: 'primary', d: 'm6.5 14 3-3 3 2 3.5-6 3 2' },

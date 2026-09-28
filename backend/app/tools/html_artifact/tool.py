@@ -11,6 +11,7 @@ from app.tools.artifact_utils import (
 )
 from app.services.html_artifact_service import html_artifact_service
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.utils.path_config import format_agent_path
 
 
 DECK_ASSET_ROOT = Path(__file__).resolve().parent / "deck_assets"
@@ -21,20 +22,21 @@ GUIZANG_SCRIPTS = DECK_ASSET_ROOT / "guizang_scripts"
 
 def guizang_deck_asset_paths() -> Dict[str, str]:
     """Return stable local paths Agent can read before composing HTML decks."""
-    return {
-        "template_magazine": str(GUIZANG_ASSETS / "template.html"),
-        "template_swiss": str(GUIZANG_ASSETS / "template-swiss.html"),
-        "layouts_magazine": str(GUIZANG_REFERENCES / "layouts.md"),
-        "layouts_swiss": str(GUIZANG_REFERENCES / "layouts-swiss.md"),
-        "themes_magazine": str(GUIZANG_REFERENCES / "themes.md"),
-        "themes_swiss": str(GUIZANG_REFERENCES / "themes-swiss.md"),
-        "index": str(GUIZANG_REFERENCES / "index.md"),
-        "checklist": str(GUIZANG_REFERENCES / "checklist.md"),
-        "swiss_layout_lock": str(GUIZANG_REFERENCES / "swiss-layout-lock.md"),
-        "image_prompts": str(GUIZANG_REFERENCES / "image-prompts.md"),
-        "screenshot_framing": str(GUIZANG_REFERENCES / "screenshot-framing.md"),
-        "validate_swiss": str(GUIZANG_SCRIPTS / "validate-swiss-deck.mjs"),
+    paths = {
+        "template_magazine": GUIZANG_ASSETS / "template.html",
+        "template_swiss": GUIZANG_ASSETS / "template-swiss.html",
+        "layouts_magazine": GUIZANG_REFERENCES / "layouts.md",
+        "layouts_swiss": GUIZANG_REFERENCES / "layouts-swiss.md",
+        "themes_magazine": GUIZANG_REFERENCES / "themes.md",
+        "themes_swiss": GUIZANG_REFERENCES / "themes-swiss.md",
+        "index": GUIZANG_REFERENCES / "index.md",
+        "checklist": GUIZANG_REFERENCES / "checklist.md",
+        "swiss_layout_lock": GUIZANG_REFERENCES / "swiss-layout-lock.md",
+        "image_prompts": GUIZANG_REFERENCES / "image-prompts.md",
+        "screenshot_framing": GUIZANG_REFERENCES / "screenshot-framing.md",
+        "validate_swiss": GUIZANG_SCRIPTS / "validate-swiss-deck.mjs",
     }
+    return {name: format_agent_path(path) for name, path in paths.items()}
 
 
 class CreateHtmlArtifactTool(LLMTool):

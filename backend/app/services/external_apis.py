@@ -3,7 +3,6 @@ Client wrappers for external API services.
 """
 from typing import List, Dict, Any, Optional
 from app.utils.http_client import http_client
-from app.schemas.upwind import WindData
 from config.settings import settings
 from app.config.config_manager import config_manager
 import structlog
@@ -699,117 +698,7 @@ class MeteorologicalAPIClient:
             return []
 
 
-class UpwindAnalysisAPIClient:
-    """Client for upwind enterprise analysis API."""
-
-    def __init__(self):
-        self.base_url = settings.upwind_analysis_api_url
-
-    async def analyze_upwind_enterprises(
-        self,
-        station_name: str,
-        winds: List[WindData],
-        search_range_km: float = 5.0,
-        max_enterprises: int = 10,
-        top_n: int = 10,
-        map_type: str = "normal",
-        mode: str = "topn_mixed",
-    ) -> Dict[str, Any]:
-        """
-        Analyze upwind enterprises based on wind data.
-
-        Args:
-            station_name: Station name
-            winds: List of wind data points
-            search_range_km: Search range in kilometers
-            max_enterprises: Maximum enterprises to analyze
-            top_n: Top N enterprises to return
-            map_type: Map type (normal/satellite)
-            mode: Analysis mode (topn_mixed/all)
-
-        Returns:
-            Analysis result with public_url and enterprise list
-        """
-        try:
-            url = f"{self.base_url}/api/external/wind/upwind-and-map"
-            winds_data = [
-                {"time": w.time, "wd_deg": w.wd_deg, "ws_ms": w.ws_ms}
-                for w in winds
-            ]
-            json_data = {
-                "station_name": station_name,
-                "winds": winds_data,
-                "search_range_km": search_range_km,
-                "max_enterprises": max_enterprises,
-                "map_type": map_type,
-                "mode": mode,
-                "top_n": top_n,
-            }
-            
-            # Debug: Print first few wind data points
-            import json as json_lib
-            print(f"\n[UPWIND API] Preparing request to: {url}")
-            print(f"Station: {station_name}")
-            print(f"Winds count: {len(winds)}")
-            print(f"First 3 winds data:")
-            for i, w in enumerate(winds_data[:3]):
-                print(f"  [{i}] {json_lib.dumps(w, ensure_ascii=False)}")
-            print(f"Request parameters: search_range={search_range_km}km, max_enterprises={max_enterprises}, top_n={top_n}, mode={mode}")
-            
-            logger.info(
-                "upwind_api_request",
-                url=url,
-                station=station_name,
-                winds_count=len(winds),
-                search_range=search_range_km,
-                first_wind=winds_data[0] if winds_data else None,
-            )
-            
-            response = await http_client.post(url, json_data=json_data)
-            
-            # Log response details
-            if isinstance(response, dict):
-                filtered_count = len(response.get("filtered", []))
-                has_url = bool(response.get("public_url"))
-                status = response.get("status", "unknown")
-                
-                logger.info(
-                    "upwind_api_response",
-                    station=station_name,
-                    status=status,
-                    filtered_count=filtered_count,
-                    has_url=has_url,
-                )
-                
-                # Warn if no enterprises found
-                if filtered_count == 0:
-                    logger.warning(
-                        "upwind_no_enterprises",
-                        station=station_name,
-                        search_range=search_range_km,
-                        message="No enterprises found in upwind direction",
-                    )
-            else:
-                logger.warning(
-                    "upwind_invalid_response_type",
-                    station=station_name,
-                    response_type=type(response).__name__,
-                )
-            
-            return response
-        except Exception as e:
-            logger.error(
-                "upwind_analysis_failed",
-                station=station_name,
-                error=str(e),
-                error_type=type(e).__name__,
-                url=f"{self.base_url}/api/external/wind/upwind-and-map",
-            )
-            return {}
-
-
 # Global client instances
 station_api = StationAPIClient()
 monitoring_api = MonitoringDataAPIClient()
 weather_api = MeteorologicalAPIClient()
-upwind_api = UpwindAnalysisAPIClient()

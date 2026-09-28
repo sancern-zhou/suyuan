@@ -121,6 +121,19 @@ def test_planner_preserves_dashboard_metadata_json_as_plain_answer():
     assert "answer_evidence" not in action
 
 
+def test_planner_suppresses_leaked_compact_summary():
+    planner = ReActPlanner(llm_client=object())
+    result = planner._parse_accumulated_blocks([
+        {
+            "type": "text",
+            "text": "# 工作记忆压缩（内部上下文）\n\n## Goal\n- continue",
+        }
+    ])
+
+    assert result["action"]["type"] == "INTERNAL_COMPACTION"
+    assert result["action"]["answer"] == ""
+
+
 def test_planner_preserves_marked_metadata_block_by_default_for_non_query_modes():
     planner = ReActPlanner(llm_client=object())
     text = (

@@ -820,7 +820,7 @@ watch(() => props.boardId, () => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: #fff;
+  background: var(--bg-container);
 }
 
 .board-toolbar {
@@ -831,8 +831,8 @@ watch(() => props.boardId, () => {
   gap: 10px;
   min-height: 48px;
   padding: 8px 10px;
-  border-bottom: 1px solid #edf1f7;
-  background: #fff;
+  border-bottom: 1px solid var(--bg-muted);
+  background: var(--bg-container);
 }
 
 .board-title {
@@ -857,8 +857,8 @@ watch(() => props.boardId, () => {
   padding: 5px 9px;
   border: 1px solid #d7e1ec;
   border-radius: 6px;
-  background: #fff;
-  color: #526173;
+  background: var(--bg-container);
+  color: var(--text-2);
   cursor: pointer;
   font-size: 12px;
   line-height: 1.2;
@@ -868,7 +868,7 @@ watch(() => props.boardId, () => {
 .board-btn:hover {
   border-color: #b8d4f0;
   background: #f5f9fd;
-  color: #1976D2;
+  color: var(--color-primary);
 }
 
 .drawio-canvas-shell {
@@ -895,8 +895,8 @@ watch(() => props.boardId, () => {
 .file-history-section {
   flex: 0 0 auto;
   padding: 10px 12px;
-  border-top: 1px solid #edf1f7;
-  background: #fafafa;
+  border-top: 1px solid var(--bg-muted);
+  background: var(--bg-muted);
 }
 
 .file-history-header {
@@ -915,7 +915,7 @@ watch(() => props.boardId, () => {
 }
 
 .section-title {
-  color: #526173;
+  color: var(--text-2);
   font-size: 13px;
   font-weight: 600;
 }
@@ -942,7 +942,7 @@ watch(() => props.boardId, () => {
   padding: 6px 8px;
   border: 1px solid transparent;
   border-radius: 4px;
-  background: #fff;
+  background: var(--bg-container);
   color: inherit;
   cursor: pointer;
   font-size: 12px;
@@ -950,8 +950,8 @@ watch(() => props.boardId, () => {
 }
 
 .history-item:hover:not(:disabled) {
-  border-color: #d8e8fb;
-  background: #f8fbff;
+  border-color: var(--color-primary-bg-hover);
+  background: var(--color-primary-bg);
 }
 
 .history-item:disabled {
@@ -1012,7 +1012,7 @@ watch(() => props.boardId, () => {
   padding: 6px;
   border: 1px solid #e5eaf0;
   border-radius: 5px;
-  background: #fff;
+  background: var(--bg-container);
   color: inherit;
   font: inherit;
   text-align: left;
@@ -1049,14 +1049,14 @@ watch(() => props.boardId, () => {
   background: #edf2f7;
 }
 
-.quality-status.status-passed { background: #e8f5e9; color: #2e7d32; }
+.quality-status.status-passed { background: var(--color-success-bg); color: var(--color-success); }
 .quality-status.status-warning { background: #fff3e0; color: #a15c00; }
 .quality-status.status-failed { background: #ffebee; color: #b3261e; }
 .quality-summary { color: #7b8796; }
 
 .history-icon {
   flex: 0 0 auto;
-  color: #1976D2;
+  color: var(--color-primary);
   font-size: 14px;
 }
 
@@ -1065,7 +1065,7 @@ watch(() => props.boardId, () => {
   flex: 1;
   flex-direction: column;
   min-width: 0;
-  color: #333;
+  color: var(--text-1);
 }
 
 .history-file-name,
@@ -1083,7 +1083,7 @@ watch(() => props.boardId, () => {
 
 .history-time {
   flex: 0 0 auto;
-  color: #999;
+  color: var(--text-3);
   font-size: 11px;
 }
 
@@ -1092,12 +1092,12 @@ watch(() => props.boardId, () => {
   width: 100%;
   min-height: 0;
   border: 0;
-  background: #fff;
+  background: var(--bg-container);
 }
 
 .board-save-status {
   align-self: center;
-  color: #1677ff;
+  color: var(--color-primary);
   font-size: 12px;
   white-space: nowrap;
 }

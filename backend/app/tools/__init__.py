@@ -16,7 +16,6 @@ LLM Tools
    - get_5min_data - 5分钟数据查询（站点污染物浓度和气象数据）
 
 2. Analysis Tools - 分析工具（执行计算和分析）
-   - analyze_upwind_enterprises - 上风向企业分析（广东省）
    - calculate_pm_pmf - PM2.5/PM10颗粒物PMF源解析（广东省超级站）
    - calculate_vocs_pmf - VOCs挥发性有机物PMF源解析（仅用于臭氧溯源）
 
@@ -257,98 +256,45 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_jining_regular_stations", error=str(e))
 
-    # 广东省 Suncere API 查询工具（许昌项目禁用，避免误路由到广东数据源）
-    if not is_project_tool_disabled(context, "query_gd_suncere"):
+    # 广东省 Suncere API 查询工具（项目专属，默认不注册；
+    # 需要的项目在 manifest 的 modules 中启用 legacy 并在 backend.tools 中声明）
+    gd_suncere_tool_registrations = (
+        ("query_gd_suncere_city_hour", "QueryGDSuncereCityHourTool", 32),
+        ("query_gd_suncere_station_hour_new", "QueryGDSuncereStationHourTool", 33),
+        ("query_gd_suncere_station_day_new", "QueryGDSuncereStationDayTool", 34),
+        ("query_gd_suncere_regional_comparison", "QueryGDSuncereRegionalComparisonTool", 35),
+        ("query_gd_suncere_city_day", "QueryGDSuncereCityDayTool", 36),
+        ("query_gd_suncere_district_day", "QueryGDSuncereDistrictDayTool", 36),
+        ("query_gd_suncere_district_report", "QueryGDSuncereDistrictReportTool", 37),
+        ("query_gd_suncere_report_compare", "QueryGDSuncereReportCompareTool", 38),
+    )
+    gd_legacy_module = "app.tools.query.query_gd_suncere.tool_wrapper"
+    if is_project_tool_enabled(context, "legacy", "query_gd_suncere"):
+        for tool_name, class_name, priority in gd_suncere_tool_registrations:
+            try:
+                module = __import__(gd_legacy_module, fromlist=[class_name])
+                registry.register(getattr(module, class_name)(), priority=priority)
+                logger.info("tool_loaded", tool=tool_name)
+            except ImportError as e:
+                logger.warning("tool_import_failed", tool=tool_name, error=str(e))
 
+    gd_standard_report_registrations = (
+        ("query_city_standard_report", "app.tools.query.query_city_standard_report.tool", "QueryCityStandardReportTool", 39),
+        ("query_city_standard_yoy_report", "app.tools.query.query_city_standard_report.tool", "QueryCityStandardYoyReportTool", 39),
+        ("query_station_standard_report", "app.tools.query.query_station_standard_report.tool", "QueryStationStandardReportTool", 43),
+        ("query_station_standard_yoy_report", "app.tools.query.query_station_standard_report.tool", "QueryStationStandardYoyReportTool", 44),
+    )
+    for tool_name, module_name, class_name, priority in gd_standard_report_registrations:
+        if not is_project_tool_enabled(context, "legacy", tool_name):
+            continue
         try:
-            from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereCityHourTool
-            registry.register(QueryGDSuncereCityHourTool(), priority=32)
-            logger.info("tool_loaded", tool="query_gd_suncere_city_hour")
+            module = __import__(module_name, fromlist=[class_name])
+            registry.register(getattr(module, class_name)(), priority=priority)
+            logger.info("tool_loaded", tool=tool_name)
         except ImportError as e:
-            logger.warning("tool_import_failed", tool="query_gd_suncere_city_hour", error=str(e))
+            logger.warning("tool_import_failed", tool=tool_name, error=str(e))
 
-        try:
-            from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereStationHourTool
-            registry.register(QueryGDSuncereStationHourTool(), priority=33)
-            logger.info("tool_loaded", tool="query_gd_suncere_station_hour")
-        except ImportError as e:
-            logger.warning("tool_import_failed", tool="query_gd_suncere_station_hour", error=str(e))
-
-        try:
-            from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereStationDayTool
-            registry.register(QueryGDSuncereStationDayTool(), priority=34)
-            logger.info("tool_loaded", tool="query_gd_suncere_station_day")
-        except ImportError as e:
-            logger.warning("tool_import_failed", tool="query_gd_suncere_station_day", error=str(e))
-
-        try:
-            from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereRegionalComparisonTool
-            registry.register(QueryGDSuncereRegionalComparisonTool(), priority=35)
-            logger.info("tool_loaded", tool="query_gd_suncere_regional_comparison")
-        except ImportError as e:
-            logger.warning("tool_import_failed", tool="query_gd_suncere_regional_comparison", error=str(e))
-
-        try:
-            from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereCityDayTool
-            registry.register(QueryGDSuncereCityDayTool(), priority=36)
-            logger.info("tool_loaded", tool="query_gd_suncere_city_day")
-        except ImportError as e:
-            logger.warning("tool_import_failed", tool="query_gd_suncere_city_day", error=str(e))
-
-        try:
-            from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereDistrictDayTool
-            registry.register(QueryGDSuncereDistrictDayTool(), priority=36)
-            logger.info("tool_loaded", tool="query_gd_suncere_district_day")
-        except ImportError as e:
-            logger.warning("tool_import_failed", tool="query_gd_suncere_district_day", error=str(e))
-
-        try:
-            from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereDistrictReportTool
-            registry.register(QueryGDSuncereDistrictReportTool(), priority=37)
-            logger.info("tool_loaded", tool="query_gd_suncere_district_report")
-        except ImportError as e:
-            logger.warning("tool_import_failed", tool="query_gd_suncere_district_report", error=str(e))
-
-        try:
-            from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereReportCompareTool
-            registry.register(QueryGDSuncereReportCompareTool(), priority=38)
-            logger.info("tool_loaded", tool="query_gd_suncere_report_compare")
-        except ImportError as e:
-            logger.warning("tool_import_failed", tool="query_gd_suncere_report_compare", error=str(e))
-
-    if not is_project_tool_disabled(context, "query_city_standard_report"):
-        try:
-            from app.tools.query.query_city_standard_report.tool import QueryCityStandardReportTool
-            registry.register(QueryCityStandardReportTool(), priority=39)
-            logger.info("tool_loaded", tool="query_city_standard_report")
-        except ImportError as e:
-            logger.warning("tool_import_failed", tool="query_city_standard_report", error=str(e))
-
-    if not is_project_tool_disabled(context, "query_city_standard_yoy_report"):
-        try:
-            from app.tools.query.query_city_standard_report.tool import QueryCityStandardYoyReportTool
-            registry.register(QueryCityStandardYoyReportTool(), priority=39)
-            logger.info("tool_loaded", tool="query_city_standard_yoy_report")
-        except ImportError as e:
-            logger.warning("tool_import_failed", tool="query_city_standard_yoy_report", error=str(e))
-
-    if not is_project_tool_disabled(context, "query_station_standard_report"):
-        try:
-            from app.tools.query.query_station_standard_report.tool import QueryStationStandardReportTool
-            registry.register(QueryStationStandardReportTool(), priority=43)
-            logger.info("tool_loaded", tool="query_station_standard_report")
-        except ImportError as e:
-            logger.warning("tool_import_failed", tool="query_station_standard_report", error=str(e))
-
-    if not is_project_tool_disabled(context, "query_station_standard_yoy_report"):
-        try:
-            from app.tools.query.query_station_standard_report.tool import QueryStationStandardYoyReportTool
-            registry.register(QueryStationStandardYoyReportTool(), priority=44)
-            logger.info("tool_loaded", tool="query_station_standard_yoy_report")
-        except ImportError as e:
-            logger.warning("tool_import_failed", tool="query_station_standard_yoy_report", error=str(e))
-
-    if not is_project_tool_disabled(context, "analyze_city_pollutant_rankings"):
+    if is_project_tool_enabled(context, "legacy", "analyze_city_pollutant_rankings"):
         try:
             from app.tools.query.city_pollutant_rankings.tool import CityPollutantRankingsTool
             registry.register(CityPollutantRankingsTool(), priority=45)
@@ -412,6 +358,68 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
                 error=str(e),
             )
 
+    # 许昌项目专属：大气环境监测数据接口中台查询工具
+    if is_project_tool_enabled(
+        context,
+        "xuchang-air-quality",
+        "query_airdata_platform",
+    ):
+        try:
+            from app.tools.xuchang.airdata_platform.tool import QueryAirDataPlatformTool
+
+            registry.register(QueryAirDataPlatformTool(), priority=48)
+            logger.info("tool_loaded", tool="query_airdata_platform")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="query_airdata_platform",
+                error=str(e),
+            )
+
+    if is_project_tool_enabled(
+        context,
+        "xuchang-air-quality",
+        "airdata_calc_report_summary",
+    ):
+        try:
+            from app.tools.xuchang.airdata_platform.tool import AirDataCalcReportSummaryTool
+
+            registry.register(AirDataCalcReportSummaryTool(), priority=48)
+            logger.info("tool_loaded", tool="airdata_calc_report_summary")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="airdata_calc_report_summary",
+                error=str(e),
+            )
+
+    if is_project_tool_enabled(
+        context,
+        "xuchang-air-quality",
+        "xuchang_station_catalog",
+    ):
+        try:
+            from app.services.station_directory import get_station_directory_registry
+            from app.tools.xuchang.station_catalog.provider import (
+                XuchangStationCatalogProvider,
+            )
+            from app.tools.xuchang.station_catalog.tool import XuchangStationCatalogTool
+
+            station_provider = XuchangStationCatalogProvider()
+            get_station_directory_registry().register(
+                station_provider, projects=[context.manifest.project]
+            )
+            registry.register(
+                XuchangStationCatalogTool(provider=station_provider), priority=48
+            )
+            logger.info("tool_loaded", tool="xuchang_station_catalog")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="xuchang_station_catalog",
+                error=str(e),
+            )
+
     # XcAiDb SQL Server 城市历史数据查询工具
     try:
         from app.tools.query.query_xcai_city_history.tool import QueryXcAiCityHistoryTool
@@ -441,18 +449,17 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.warning("tool_import_failed", tool="execute_postgres_sql_query", error=str(e))
 
     try:
-        from app.tools.query.qianlima_realtime_tender.tool import QianlimaRealtimeTenderTool
-        registry.register(QianlimaRealtimeTenderTool(), priority=46)
-        logger.info("tool_loaded", tool="qianlima_realtime_tender")
+        from app.tools.query.zhiliao_tender_detail.tool import ZhiliaoTenderDetailTool
+        registry.register(ZhiliaoTenderDetailTool(), priority=46)
+        logger.info("tool_loaded", tool="zhiliao_tender_detail")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="qianlima_realtime_tender", error=str(e))
+        logger.warning("tool_import_failed", tool="zhiliao_tender_detail", error=str(e))
 
     try:
         from app.tools.analysis.ops_work_order_audit.tool import (
             OpsAuditFetchDatasetTool,
             OpsAuditInspectTool,
             OpsAuditRunRulesTool,
-            OpsAuditSubmitReviewTool,
         )
         registry.register(OpsAuditFetchDatasetTool(), priority=48)
         logger.info("tool_loaded", tool="ops_audit_fetch_dataset")
@@ -460,8 +467,6 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.info("tool_loaded", tool="ops_audit_run_rules")
         registry.register(OpsAuditInspectTool(), priority=50)
         logger.info("tool_loaded", tool="ops_audit_inspect")
-        registry.register(OpsAuditSubmitReviewTool(), priority=51)
-        logger.info("tool_loaded", tool="ops_audit_submit_review")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="ops_audit_tools", error=str(e))
 
@@ -486,8 +491,8 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="resolve_station_geo", error=str(e))
 
-    # 5分钟数据查询工具
-    if not is_project_tool_disabled(context, "get_5min_data"):
+    # 5分钟数据查询工具（项目专属，默认不注册）
+    if is_project_tool_enabled(context, "legacy", "get_5min_data"):
         try:
             from app.tools.query.get_5min_data.tool import Get5MinDataTool
             registry.register(Get5MinDataTool(), priority=48)
@@ -517,13 +522,6 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     # Analysis Tools（分析工具）
     # ========================================
 
-    try:
-        from app.tools.analysis.analyze_upwind_enterprises.tool import AnalyzeUpwindEnterprisesTool
-        registry.register(AnalyzeUpwindEnterprisesTool(), priority=100)
-        logger.info("tool_loaded", tool="analyze_upwind_enterprises")
-    except (ImportError, KeyError) as e:
-        logger.warning("tool_import_failed", tool="analyze_upwind_enterprises", error=str(e))
-
     if is_project_tool_enabled(
         context,
         "xuchang-air-quality",
@@ -540,6 +538,23 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
             logger.warning(
                 "tool_import_failed",
                 tool="analyze_xuchang_upwind_permit_sources",
+                error=str(e),
+            )
+
+    if is_project_tool_enabled(
+        context,
+        "xuchang-air-quality",
+        "query_xuchang_emission_inventory",
+    ):
+        try:
+            from app.tools.xuchang.emission_inventory.tool import XuchangEmissionInventoryTool
+
+            registry.register(XuchangEmissionInventoryTool(), priority=102)
+            logger.info("tool_loaded", tool="query_xuchang_emission_inventory")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="query_xuchang_emission_inventory",
                 error=str(e),
             )
 
@@ -852,6 +867,9 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     # Scheduled Tasks Tools（定时任务工具）
     # ========================================
 
+    from app.tools.task_management.submit_task_review import SubmitTaskReviewTool
+    registry.register(SubmitTaskReviewTool(), priority=359)
+
     try:
         from app.tools.scheduled_tasks import create_scheduled_task_tool
         registry.register(create_scheduled_task_tool, priority=360)  # 修复: 700->360
@@ -874,6 +892,22 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.info("tool_loaded", tool="search_scheduled_task_history")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="search_scheduled_task_history", error=str(e))
+
+    try:
+        from app.tools.scheduled_tasks import query_scheduled_task_results_tool
+        registry.register(
+            query_scheduled_task_results_tool,
+            priority=366,
+            metadata={
+                "data_type": "scheduled_task_results",
+                "requires_handle": False,
+                "supports_batch": False,
+                "system_managed": True,
+            },
+        )
+        logger.info("tool_loaded", tool="query_scheduled_task_results")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_scheduled_task_results", error=str(e))
 
     # ========================================
     # Social Mode Tools（社交模式工具 - 呼吸式Agent）
@@ -948,6 +982,13 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.info("tool_loaded", tool="remove_memory")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="remove_memory", error=str(e))
+
+    try:
+        from app.tools.utility.agent_case_library_tool import AgentCaseLibraryTool
+        registry.register(AgentCaseLibraryTool(), priority=374)
+        logger.info("tool_loaded", tool="agent_case_library")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="agent_case_library", error=str(e))
 
     try:
         from app.tools.social.web_search.tool import WebSearchTool
@@ -1040,11 +1081,14 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
 
     try:
         from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
+        from app.tools.agent_tools.run_agent_workflow import RunAgentWorkflowTool
         # 注意：CallSubAgentTool需要延迟初始化（在ReActLoop中注入依赖）
         # 这里创建一个占位符工具，真实的工具实例在executor中创建
         call_sub_agent_tool = CallSubAgentTool()
         registry.register(call_sub_agent_tool, priority=385)  # 修复: 900->385
         logger.info("tool_loaded", tool="call_sub_agent")
+        registry.register(RunAgentWorkflowTool(), priority=387)
+        logger.info("tool_loaded", tool="run_agent_workflow")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="call_sub_agent", error=str(e))
 

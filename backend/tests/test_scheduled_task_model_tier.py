@@ -12,9 +12,9 @@ def test_model_tier_round_trip(tier):
     assert UpdateTaskRequest(model_tier=tier).model_dump(exclude_unset=True) == {'model_tier': tier}
 
 
-def test_legacy_task_defaults_to_auto():
+def test_legacy_task_defaults_to_flash():
     task = ScheduledTask(task_id='legacy', name='test', description='test', prompt='test', schedule_type='daily_8am')
-    assert task.model_tier == 'auto'
+    assert task.model_tier == 'flash'
     assert 'model_tier' not in UpdateTaskRequest(name='renamed').model_dump(exclude_unset=True)
 
 

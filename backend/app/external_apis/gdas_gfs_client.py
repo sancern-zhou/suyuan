@@ -352,69 +352,12 @@ class GDASGFSClient:
         Returns:
             Path: 转换后的ARL文件路径
         """
-        try:
-            import xarray as xr
-            import numpy as np
-            from datetime import datetime
-
-            if output_dir is None:
-                output_dir = self.storage_path / "hysplit_format"
-
-            output_dir.mkdir(parents=True, exist_ok=True)
-
-            # 读取GDAS NetCDF文件
-            gdas_files = gdas_data.get("files", [])
-            if not gdas_files:
-                raise ValueError("No GDAS files to convert")
-
-            # 使用第一个文件作为主文件
-            gdas_file = gdas_files[0]
-
-            logger.info(
-                "converting_to_hysplit",
-                gdas_file=str(gdas_file),
-                output_dir=str(output_dir)
-            )
-
-            # 打开NetCDF文件
-            with xr.open_dataset(gdas_file) as ds:
-                # 提取变量
-                data_vars = {}
-                for var in self.gdas_variables:
-                    if var in ds.data_vars:
-                        data_vars[var] = ds[var]
-
-                # 构建HYSPLIT格式数据
-                hysplit_data = {
-                    "time": ds.time.values,
-                    "lat": ds.lat.values,
-                    "lon": ds.lon.values,
-                    "lev": ds.level.values,
-                    "data": data_vars
-                }
-
-                # 生成输出文件名
-                date_str = gdas_data.get("data_date", "unknown")
-                hour_str = gdas_data.get("forecast_hours", 0)
-                output_file = output_dir / f"gdas_{date_str}_{hour_str:02d}hr.arl"
-
-                # 保存为ARL格式（简化版，实际需要更复杂的转换）
-                self._save_arl_format(hysplit_data, output_file)
-
-                logger.info(
-                    "hysplit_conversion_complete",
-                    output_file=str(output_file)
-                )
-
-                return output_file
-
-        except Exception as e:
-            logger.error(
-                "hysplit_conversion_failed",
-                error=str(e),
-                exc_info=True
-            )
-            raise
+        # 本仓库未实现 GRIB2→ARL 转换，历史上曾用 JSON 冒充 ARL 文件，已移除。
+        raise NotImplementedError(
+            "本仓库未提供 GRIB2→HYSPLIT ARL 的转换能力；"
+            "请使用 NOAA ARL 归档的真实 ARL 文件（MeteoDataManager），"
+            "或集成外部 grib2arl 工具后再调用。"
+        )
 
     async def _download_file(
         self,
@@ -533,35 +476,6 @@ class GDASGFSClient:
                 json.dump(cache_data, f)
         except Exception as e:
             logger.warning("cache_save_failed", cache_key=cache_key, error=str(e))
-
-    def _save_arl_format(self, data: Dict[str, Any], output_file: Path):
-        """保存为ARL格式（简化实现）"""
-        # 实际的ARL格式转换非常复杂，需要：
-        # 1. 读取GDAS/GFS的GRIB2格式
-        # 2. 转换为HYSPLIT的ARL格式
-        # 3. 处理压缩和索引
-
-        # 这里提供简化实现
-        import json
-
-        with open(output_file.with_suffix(".json"), "w") as f:
-            json.dump({
-                "metadata": {
-                    "format": "HYSPLIT_ARL_simulation",
-                    "description": "模拟ARL格式数据（实际需要GRIB2到ARL的转换）",
-                    "time": str(data["time"]),
-                    "lat_range": [float(data["lat"].min()), float(data["lat"].max())],
-                    "lon_range": [float(data["lon"].min()), float(data["lon"].max())],
-                    "levels": len(data["lev"])
-                },
-                "data_keys": list(data["data"].keys())
-            }, f, indent=2)
-
-        logger.info(
-            "arl_format_saved",
-            output_file=str(output_file),
-            note="JSON模拟格式，实际需要GRIB2转换"
-        )
 
     def get_installation_instructions(self) -> str:
         """获取安装说明"""

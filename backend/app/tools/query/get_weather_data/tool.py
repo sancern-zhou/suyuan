@@ -1,10 +1,12 @@
 """
 Get Weather Data Tool
+
 LLM可调用的气象数据查询工具
 
 功能：
 - 查询指定位置和时间范围的历史气象数据
-- 仅支持ERA5再分析数据；地面观测站小时数据请使用 execute_postgres_sql_query 查询 observed_weather_data 表
+- 支持ERA5再分析数据
+- 支持观测站数据
 """
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -63,15 +65,21 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
    - 精确查询：提供 lat, lon
    - 无需提供 station_id
 
-【本工具仅支持历史网格数据】
-- 地面观测站逐小时数据（如许昌站小时观测）请使用 execute_postgres_sql_query 查询 observed_weather_data 表
+2. data_type="observed"：
+   - 城市查询：提供 city 或 cities，工具内部解析该城市的观测站
+   - 精确查询：提供 station_id
+   - 不能用 lat/lon 替代观测站或城市
+
+【禁止的调用方式】
+- data_type="observed" 但只提供 lat/lon ❌
+- data_type="era5" 但只提供 station_id ❌
 
 【返回格式】
 {
     "success": bool,              # 查询是否成功
     "file_path": string,            # 数据ID（下游工具通过 context.get_data() 获取）
     "has_data": bool,             # 是否有实际数据
-    "data_type": "era5",          # 查询的数据类型
+    "data_type": "era5|observed", # 查询的数据类型
     "count": int,                 # 记录数量
     "summary": str                # 结果摘要（含数据质量信息）
 }""",
@@ -80,8 +88,8 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
                 "properties": {
                     "data_type": {
                         "type": "string",
-                        "enum": ["era5"],
-                        "description": "era5=历史网格库（兼容名称，实际模型见data_source）；当天/未来用get_weather_forecast；站点实测用execute_postgres_sql_query"
+                        "enum": ["era5", "observed"],
+                        "description": "era5=历史网格库（兼容名称，实际模型见data_source）；当天/未来用get_weather_forecast。observed=站点实测"
                     },
                     "lat": {
                         "type": "number",
@@ -91,9 +99,13 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
                         "type": "number",
                         "description": "历史网格查询经度，与lat配套；请求坐标不保证上游实际模型网格"
                     },
+                    "station_id": {
+                        "type": "string",
+                        "description": "气象站ID（观测数据精确查询使用，如'54511'）"
+                    },
                     "city": {
                         "type": "string",
-                        "description": "单个城市名称。工具内部解析ERA5代表点，如'南京市'"
+                        "description": "单个城市名称。工具内部解析ERA5代表点或观测站，如'南京市'"
                     },
                     "cities": {
                         "type": "array",
@@ -119,7 +131,7 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
             description="Query stored historical weather; use get_weather_forecast for today, future and recent gaps",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="1.2.0"
+            version="1.1.0"
         )
 
         # Context-Aware V2: 设置需要 context 参数
@@ -137,6 +149,7 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
         end_time: str,
         lat: Optional[float] = None,
         lon: Optional[float] = None,
+        station_id: Optional[str] = None,
         city: Optional[str] = None,
         cities: Optional[List[str]] = None,
         **kwargs
@@ -145,11 +158,12 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
         执行气象数据查询（统一数据格式）
 
         Args:
-            data_type: 数据类型（仅支持 era5）
+            data_type: 数据类型（era5 或 observed）
             start_time: 开始时间（ISO 8601格式）
             end_time: 结束时间（ISO 8601格式）
-            lat: 纬度（ERA5精确查询必需）
-            lon: 经度（ERA5精确查询必需）
+            lat: 纬度（ERA5查询必需）
+            lon: 经度（ERA5查询必需）
+            station_id: 气象站ID（observed查询必需）
             city: 单个城市名称，由工具内部解析查询目标
             cities: 城市名称列表，由工具内部批量解析查询目标
 
@@ -175,36 +189,36 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
                 cities=cities,
             )
 
-            if data_type != "era5":
+            requested_cities = self._clean_cities(city=city, cities=cities)
+            backfill = await self._prepare_history(requested_cities, lat, lon, start_dt, end_dt) if data_type == "era5" else None
+            if requested_cities:
+                result = await self._query_by_cities(
+                    context=context,
+                    data_type=data_type,
+                    cities=requested_cities,
+                    start_time=start_dt,
+                    end_time=end_dt,
+                )
+                return self._finish_history(result, backfill, requested_cities, start_dt, end_dt)
+
+            if data_type == "era5":
+                result = await self._query_era5(context, lat, lon, start_dt, end_dt)
+                return self._finish_history(result, backfill, [], start_dt, end_dt)
+            elif data_type == "observed":
+                return await self._query_observed(context, station_id, start_dt, end_dt)
+            else:
                 from app.schemas.unified import UnifiedData, DataType, DataStatus, DataMetadata
                 return UnifiedData(
                     status=DataStatus.FAILED,
                     success=False,
-                    error=(
-                        f"不支持的数据类型: {data_type}。本工具仅支持ERA5再分析数据；"
-                        "地面观测站小时数据请使用 execute_postgres_sql_query 查询 observed_weather_data 表"
-                    ),
+                    error=f"不支持的数据类型: {data_type}",
                     data=[],
                     metadata=DataMetadata(
                         data_type=DataType.WEATHER,
                         source="weather_repo"
                     ),
-                    summary=(
-                        f"[ERROR] 不支持的数据类型: {data_type}。"
-                        "观测站数据请改用 execute_postgres_sql_query(observed_weather_data)"
-                    )
+                    summary=f"[ERROR] 不支持的数据类型: {data_type}"
                 ).dict()
-
-            requested_cities = self._clean_cities(city=city, cities=cities)
-            backfill = await self._prepare_history(requested_cities, lat, lon, start_dt, end_dt)
-            if requested_cities:
-                result = await self._query_era5_cities(
-                    context, requested_cities, start_dt, end_dt
-                )
-                return self._finish_history(result, backfill, requested_cities, start_dt, end_dt)
-
-            result = await self._query_era5(context, lat, lon, start_dt, end_dt)
-            return self._finish_history(result, backfill, [], start_dt, end_dt)
 
         except Exception as e:
             logger.error(
@@ -337,6 +351,29 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
                 result.append(normalized)
         return result
 
+    async def _query_by_cities(
+        self,
+        *,
+        context,
+        data_type: str,
+        cities: List[str],
+        start_time: datetime,
+        end_time: datetime,
+    ) -> Dict[str, Any]:
+        if data_type == "era5":
+            return await self._query_era5_cities(
+                context, cities, start_time, end_time
+            )
+        if data_type == "observed":
+            return await self._query_observed_cities(
+                context, cities, start_time, end_time
+            )
+        return self._city_query_failure(
+            data_type=data_type,
+            cities=cities,
+            error=f"不支持的数据类型: {data_type}",
+        )
+
     async def _query_era5_cities(
         self,
         context,
@@ -377,6 +414,86 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
 
         return self._combine_city_results(
             context=context,
+            data_type="era5",
+            requested_cities=cities,
+            results=results,
+            unresolved_cities=unresolved,
+            targets=targets,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
+    async def _query_observed_cities(
+        self,
+        context,
+        cities: List[str],
+        start_time: datetime,
+        end_time: datetime,
+    ) -> Dict[str, Any]:
+        db_stations = await self.repo.get_active_stations_by_cities(cities)
+        results: List[Dict[str, Any]] = []
+        unresolved: List[str] = []
+        targets: List[Dict[str, Any]] = []
+
+        for requested_city in cities:
+            target = resolve_weather_city_target(requested_city)
+            canonical_city = target.city if target else normalize_city_name(requested_city)
+            stations: Dict[str, Dict[str, Any]] = {}
+
+            if target:
+                for station in target.observed_stations:
+                    stations[station.station_id] = {
+                        "station_id": station.station_id,
+                        "station_name": station.station_name,
+                        "lat": station.lat,
+                        "lon": station.lon,
+                        "provider": station.provider,
+                    }
+
+            for station in db_stations.get(normalize_city_name(requested_city), []):
+                stations.setdefault(
+                    station.station_id,
+                    {
+                        "station_id": station.station_id,
+                        "station_name": station.station_name,
+                        "lat": station.lat,
+                        "lon": station.lon,
+                        "provider": station.data_provider,
+                    },
+                )
+
+            if not stations:
+                unresolved.append(requested_city)
+                continue
+
+            city_results: List[Dict[str, Any]] = []
+            for station in stations.values():
+                result = await self._query_observed(
+                    None,
+                    station["station_id"],
+                    start_time,
+                    end_time,
+                    city=canonical_city,
+                )
+                city_results.append(result)
+                targets.append({"city": canonical_city, **station})
+
+            results.append(
+                {
+                    "city": canonical_city,
+                    "result": {
+                        "data": [
+                            record
+                            for station_result in city_results
+                            for record in station_result.get("data", [])
+                        ]
+                    },
+                }
+            )
+
+        return self._combine_city_results(
+            context=context,
+            data_type="observed",
             requested_cities=cities,
             results=results,
             unresolved_cities=unresolved,
@@ -389,6 +506,7 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
         self,
         *,
         context,
+        data_type: str,
         requested_cities: List[str],
         results: List[Dict[str, Any]],
         unresolved_cities: List[str],
@@ -425,7 +543,7 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
             status = "partial" if unresolved_cities or no_data_cities else "success"
             summary = (
                 f"[OK] 查询到 {len(resolved_cities)} 个城市的 {len(combined)} 条"
-                "历史网格气象数据"
+                f"{data_type}气象数据"
             )
         elif resolved_cities:
             status = "empty"
@@ -439,16 +557,15 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
         if no_data_cities:
             summary += f"；无数据城市：{', '.join(no_data_cities)}"
 
-        summary += "；时间已为北京时间（+08:00），勿再加8小时；风速m/s；来源见data_source"
+        if data_type == "era5":
+            summary += "；时间已为北京时间（+08:00），勿再加8小时；风速m/s；来源见data_source"
 
         return {
             "status": "partial" if warnings and combined else status,
             "success": bool(combined),
             "warnings": warnings,
-            "data_complete": True,
-            "record_count": len(combined),
-            "returned_records": len(combined),
-            "data_structure": weather_data_structure(len(combined), len(combined), False),
+            **({"data_complete": True, "record_count": len(combined), "returned_records": len(combined),
+                "data_structure": weather_data_structure(len(combined), len(combined), False)} if data_type == "era5" else {}),
             "data": combined,
             "file_path": saved_file_path,
             "metadata": {
@@ -457,21 +574,41 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
                 "generator": "get_weather_data",
                 "scenario": "weather_analysis",
                 "data_type": "weather",
-                "weather_data_type": "era5",
+                "weather_data_type": data_type,
                 "record_count": len(combined),
-                "source": "era5_reanalysis",
+                "source": "era5_reanalysis" if data_type == "era5" else "observed_station",
                 "requested_cities": requested_cities,
                 "resolved_cities": resolved_cities,
                 "unresolved_cities": unresolved_cities,
                 "no_data_cities": no_data_cities,
                 "targets": targets,
                 "time_range": {
-                    "start": weather_output_time(start_time),
-                    "end": weather_output_time(end_time),
+                    "start": weather_output_time(start_time) if data_type == "era5" else start_time.isoformat(),
+                    "end": weather_output_time(end_time) if data_type == "era5" else end_time.isoformat(),
                 },
-                **weather_output_metadata(combined),
+                **(weather_output_metadata(combined) if data_type == "era5" else {}),
             },
             "summary": summary,
+        }
+
+    @staticmethod
+    def _city_query_failure(
+        *, data_type: str, cities: List[str], error: str
+    ) -> Dict[str, Any]:
+        return {
+            "status": "failed",
+            "success": False,
+            "error": error,
+            "data": [],
+            "file_path": None,
+            "metadata": {
+                "schema_version": "v2.0",
+                "schema_type": "weather",
+                "generator": "get_weather_data",
+                "weather_data_type": data_type,
+                "requested_cities": cities,
+            },
+            "summary": f"[ERROR] {error}",
         }
 
     async def _query_era5(
@@ -714,6 +851,219 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
                 "quality_report": quality_report.dict(),  # ✅ 【优化3】数据质量报告
                 "sample_record": sample_record,  # ✅ 数据样本
                 **weather_output_metadata(standardized_records),
+            },
+            "summary": summary
+        }
+
+    async def _query_observed(
+        self,
+        context,
+        station_id: Optional[str],
+        start_time: datetime,
+        end_time: datetime,
+        city: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """查询观测数据（统一格式）"""
+        from app.schemas.unified import (
+            UnifiedData, DataType, DataStatus, DataMetadata, UnifiedDataRecord
+        )
+
+        if not station_id:
+            return UnifiedData(
+                status=DataStatus.FAILED,
+                success=False,
+                error="观测数据查询需要提供 city/cities 或 station_id 参数",
+                data=[],
+                metadata=DataMetadata(
+                    data_type=DataType.WEATHER,
+                    source="weather_repo"
+                ),
+                summary="[ERROR] 观测数据查询参数错误"
+            ).dict()
+
+        # 查询数据库
+        data = await self.repo.get_observed_data(station_id, start_time, end_time)
+
+        # 转换为UnifiedDataRecord格式
+        records = []
+        for record in data:
+            # 提取气象测量值，处理None值
+            # 对于None值，使用NaN表示缺失数据
+            import math
+
+            measurements = {
+                "temperature_2m": record.temperature_2m if record.temperature_2m is not None else math.nan,
+                "relative_humidity_2m": record.relative_humidity_2m if record.relative_humidity_2m is not None else math.nan,
+                "dew_point_2m": record.dew_point_2m if record.dew_point_2m is not None else math.nan,
+                "wind_speed_10m": record.wind_speed_10m if record.wind_speed_10m is not None else math.nan,
+                "wind_direction_10m": record.wind_direction_10m if record.wind_direction_10m is not None else math.nan,
+                "surface_pressure": record.surface_pressure if record.surface_pressure is not None else math.nan,
+                "precipitation": record.precipitation if record.precipitation is not None else math.nan,
+                "cloud_cover": record.cloud_cover if record.cloud_cover is not None else math.nan,
+                "visibility": record.visibility if record.visibility is not None else math.nan,
+            }
+
+            records.append(UnifiedDataRecord(
+                timestamp=record.time,
+                station_name=record.station_name or station_id,
+                lat=record.lat,
+                lon=record.lon,
+                measurements=measurements,
+                dimensions={"city": city, "station_id": station_id},
+            ))
+
+        logger.info("observed_query_successful", records=len(records))
+
+        # 【UDF v2.0】使用data_standardizer标准化数据
+        # 将UnifiedDataRecord转换为字典进行标准化
+        records_dict_list = []
+        for record in records:
+            record_dict = {
+                "timestamp": record.timestamp,
+                "station_name": record.station_name,
+                "station_id": station_id,
+                "city": city,
+                "lat": record.lat,
+                "lon": record.lon,
+                "temperature_2m": record.measurements.get("temperature_2m"),
+                "relative_humidity_2m": record.measurements.get("relative_humidity_2m"),
+                "dew_point_2m": record.measurements.get("dew_point_2m"),
+                "wind_speed_10m": record.measurements.get("wind_speed_10m"),
+                "wind_direction_10m": record.measurements.get("wind_direction_10m"),
+                "surface_pressure": record.measurements.get("surface_pressure"),
+                "precipitation": record.measurements.get("precipitation"),
+                "cloud_cover": record.measurements.get("cloud_cover"),
+                "visibility": record.measurements.get("visibility")
+            }
+            records_dict_list.append(record_dict)
+
+        # 使用全局数据标准化器标准化数据
+        data_standardizer = get_data_standardizer()
+        standardized_records = data_standardizer.standardize(records_dict_list)
+
+        logger.info(
+            "observed_data_standardized",
+            original_count=len(records),
+            standardized_count=len(standardized_records)
+        )
+
+        # 构建元数据
+        metadata = DataMetadata(
+            data_type=DataType.WEATHER,
+            record_count=len(standardized_records),
+            station_name=station_id,
+            city=city,
+            source="observed_station",
+            time_range={
+                "start": start_time.isoformat(),
+                "end": end_time.isoformat()
+            },
+            quality_score=0.9 if standardized_records else 0.0
+        )
+
+        summary = f"[OK] 查询到站点 {station_id} 的 {len(standardized_records)} 条观测气象数据"
+        if standardized_records:
+            summary += f"（{start_time.date()} 至 {end_time.date()}）"
+        else:
+            summary = f"[WARN] 数据库中没有站点 {station_id} 在 {start_time.date()} 至 {end_time.date()} 期间的观测气象数据"
+
+        # 【UDF v2.0】提取数据特征用于Agent推荐图表
+        data_features = DataFeaturesExtractor.extract_features(
+            standardized_records,
+            schema_type="weather"
+        )
+
+        # 【优化3】数据质量验证（在返回前验证数据质量）
+        from app.utils.data_quality_validator import get_data_quality_validator
+        quality_validator = get_data_quality_validator()
+
+        quality_report = quality_validator.validate_data(
+            data=standardized_records,
+            schema_type="weather",
+            required_fields=["timestamp", "station_name"],  # 观测数据需要时间戳和站点名
+            min_records=1
+        )
+
+        logger.info(
+            "observed_data_quality_validation",
+            quality_level=quality_report.quality_level.value,
+            is_valid=quality_report.is_valid,
+            issues=quality_report.issues
+        )
+
+        # 根据质量报告更新summary
+        quality_suffix = ""
+        if quality_report.quality_level.value == "EXCELLENT":
+            quality_suffix = " (数据质量: 优秀)"
+        elif quality_report.quality_level.value == "GOOD":
+            quality_suffix = " (数据质量: 良好)"
+        elif quality_report.quality_level.value == "ACCEPTABLE":
+            quality_suffix = f" (数据质量: 可接受，{quality_report.issues[0] if quality_report.issues else ''})"
+        elif quality_report.quality_level.value == "POOR":
+            quality_suffix = f" (数据质量: 较差，{quality_report.issues[0] if quality_report.issues else ''})"
+
+        summary = summary + quality_suffix
+
+        # 【Context-Aware V2】使用 context.save_data() 保存数据
+        saved_file_path = None  # 初始化变量
+        if standardized_records and context is not None:
+            try:
+                # save_data() 返回字符串 ID
+                saved_file_path = context.save_data(
+                    data=standardized_records,
+                    schema="weather"
+                )
+                logger.info(
+                    "observed_data_saved_to_context",
+                    file_path=saved_file_path,
+                    record_count=len(standardized_records)
+                )
+            except Exception as e:
+                logger.warning(
+                    "observed_data_save_failed",
+                    error=str(e),
+                    message="将继续使用本地file_path，但下游工具可能无法通过context获取数据"
+                )
+
+        final_file_path = saved_file_path
+
+        if final_file_path:
+            summary = f"{summary}，文件路径: {final_file_path}。"
+
+        # 更新 metadata 中的 file_path
+        metadata = DataMetadata(
+            file_path=final_file_path,
+            data_type=DataType.WEATHER,
+            record_count=len(standardized_records),
+            station_name=station_id,
+            city=city,
+            source="observed_station",
+            time_range={
+                "start": start_time.isoformat(),
+                "end": end_time.isoformat()
+            },
+            quality_score=0.9 if standardized_records else 0.0
+        )
+
+        sample_record = standardized_records[0] if standardized_records else None
+
+        # 【UDF v2.0】返回标准化数据
+        return {
+            "status": "success",
+            "success": len(standardized_records) > 0,
+            "data": standardized_records,
+            "file_path": final_file_path,
+            "metadata": {
+                **metadata.dict(),
+                "schema_version": "v2.0",  # UDF v2.0 标记
+                "schema_type": "weather",  # ✅ Agent推荐图表的关键字段
+                "generator": "get_weather_data",  # ✅ 工具名称
+                "scenario": "weather_analysis",  # ✅ 场景标识
+                "field_mapping_applied": True,
+                "field_mapping_info": data_standardizer.get_field_mapping_info(),
+                "data_features": data_features,  # ✅ 数据特征摘要（帮助Agent推荐图表）
+                "quality_report": quality_report.dict(),  # ✅ 【优化3】数据质量报告
+                "sample_record": sample_record  # ✅ 数据样本
             },
             "summary": summary
         }

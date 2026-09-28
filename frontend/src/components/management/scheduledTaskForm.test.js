@@ -242,10 +242,7 @@ test('history learning defaults to enabled with fallback params', () => {
     enabled: true,
     max_recent_cases: 3,
     memory_char_budget: 4000,
-    active_retrieval_enabled: false,
-    case_filter_by_city: false,
-    case_filter_by_station: false,
-    case_filter_by_pollutant: false
+    active_retrieval_enabled: false
   })
 })
 
@@ -313,12 +310,19 @@ test('event trigger defaults to social execution and broadcasting', () => {
   assert.equal(form.event_type, 'xuchang.station_deviation.alert_created')
 })
 
+test('task payload preserves each model tier and defaults legacy forms to flash', () => {
+  for (const tier of ['auto', 'flash', 'pro']) {
+    assert.equal(buildTaskPayload({ model_tier: tier }).model_tier, tier)
+  }
+  assert.equal(buildTaskPayload({}).model_tier, 'flash')
+})
+
 
 test('event trigger keeps workflow mode untouched', () => {
   const form = {
     trigger_type: 'schedule',
     execution_mode: 'workflow',
-    workflow_name: 'xuchang_station_deviation_alert',
+    workflow_name: 'demo_workflow',
     broadcast_enabled: false,
     event_type: ''
   }
@@ -327,27 +331,26 @@ test('event trigger keeps workflow mode untouched', () => {
 
   assert.equal(form.trigger_type, 'event')
   assert.equal(form.execution_mode, 'workflow')
-  assert.equal(form.workflow_name, 'xuchang_station_deviation_alert')
+  assert.equal(form.workflow_name, 'demo_workflow')
 })
 
 
 test('workflow payload carries the selected workflow and switching modes clears it', () => {
   const payload = buildTaskPayload({
-    name: '站点快速告警',
-    description: '确定性告警通报',
+    name: '确定性工作流值守',
+    description: '确定性值守结论',
     execution_mode: 'workflow',
-    workflow_name: 'xuchang_station_deviation_alert',
-    trigger_type: 'event',
-    event_type: 'xuchang.station_deviation.alert_created',
-    broadcast_enabled: true,
-    target_user_ids: ['app:android:android_demo'],
+    workflow_name: 'demo_workflow',
+    workflow_args: { period: 'day' },
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
     enabled: true
   })
 
-  assert.equal(payload.workflow_name, 'xuchang_station_deviation_alert')
-  assert.deepEqual(payload.workflow_args, {})
+  assert.equal(payload.workflow_name, 'demo_workflow')
+  assert.deepEqual(payload.workflow_args, { period: 'day' })
 
-  const form = { execution_mode: 'workflow', workflow_name: 'xuchang_station_deviation_alert' }
+  const form = { execution_mode: 'workflow', workflow_name: 'demo_workflow' }
   applyExecutionMode(form, 'assistant')
   assert.equal(form.workflow_name, '')
 
@@ -363,9 +366,23 @@ test('workflow payload carries the selected workflow and switching modes clears 
   assert.equal(Object.hasOwn(cleared, 'workflow_args'), false)
 })
 
-test('task payload preserves each model tier and defaults legacy forms to auto', () => {
-  for (const tier of ['auto', 'flash', 'pro']) {
-    assert.equal(buildTaskPayload({ model_tier: tier }).model_tier, tier)
-  }
-  assert.equal(buildTaskPayload({}).model_tier, 'auto')
+
+test('task payload preserves tier and serializes editable result requirements', () => {
+  const result = buildTaskPayload({ model_tier: 'pro', result_requirements: [
+    { field: 'sections.suggested_level', label: '等级', required: true, allowedValuesText: 'P0，P1,P2' },
+    { field: 'sections.note', label: '说明', required: false, allowedValuesText: '' }
+  ] })
+  assert.equal(result.model_tier, 'pro')
+  assert.deepEqual(result.result_requirements, [
+    { field: 'sections.suggested_level', label: '等级', required: true, allowed_values: ['P0', 'P1', 'P2'] },
+    { field: 'sections.note', label: '说明', required: false, allowed_values: [] }
+  ])
+  assert.equal(buildTaskPayload({}).model_tier, 'flash')
+})
+
+
+test('editing a task retains conditional result validation', () => {
+  const result = buildTaskPayload({ result_requirements: [{ field: 'sections.analysis', label: '分析', required: true,
+    required_when: { 'sections.impact': 'yes' }, allowedValuesText: '' }] })
+  assert.deepEqual(result.result_requirements[0].required_when, { 'sections.impact': 'yes' })
 })

@@ -221,6 +221,74 @@ def test_generic_remark_batch_failure_keeps_each_review_item_separate():
 
     assert set(results) == {"WO-FAIL::ITEM::0", "WO-FAIL::ITEM::1"}
     assert all(result["judgment"] == "needs_followup" for result in results.values())
+    # 待复核项必须携带 review_item_id，才能投影进待确认面板并被人工反馈消除。
+    assert all(result["review_item_id"] for result in results.values())
+
+
+def test_pm_tape_needs_followup_result_carries_review_item_id(monkeypatch):
+    monkeypatch.setattr(reviewer, "_call_semantic_llm_json", lambda *args, **kwargs: None)
+    audit_record = {"audit_level": "需语义复核", "workflow_steps": []}
+    order = {"WORKINGORDERCODE": "WO-TAPE", "ORDERTITLE": "周检"}
+    task = {
+        "working_order_code": "WO-TAPE",
+        "station_id": "ST-1",
+        "order_type": "Check",
+        "maintenance_type": "Week",
+        "review_kind": "remark_semantics",
+        "semantic_focus": ["RF_PM_TAPE_USAGE_INVALID"],
+        "review_issues": [
+            {
+                "rule_id": "RF_PM_TAPE_USAGE_INVALID",
+                "field": "rf.RF_W_PMCHECK.TAPEUSAGEDISPOSAL",
+                "message": "颗粒物周检纸带使用量及处置情况需复核: 足够一周使用",
+                "evidence": json.dumps(
+                    {
+                        "working_order_code": "WO-TAPE",
+                        "rf_table": "RF_W_PMCHECK",
+                        "pollutant_type": "PM10",
+                        "field": "TAPEUSAGEDISPOSAL",
+                        "field_label": "纸带使用量及处置情况",
+                        "value": "足够一周使用",
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        ],
+        "evidence_summary": {
+            "sample_issues": [
+                {
+                    "rule_id": "RF_PM_TAPE_USAGE_INVALID",
+                    "field": "rf.RF_W_PMCHECK.TAPEUSAGEDISPOSAL",
+                    "message": "颗粒物周检纸带使用量及处置情况需复核: 足够一周使用",
+                    "evidence": json.dumps(
+                        {
+                            "working_order_code": "WO-TAPE",
+                            "rf_table": "RF_W_PMCHECK",
+                            "pollutant_type": "PM10",
+                            "field": "TAPEUSAGEDISPOSAL",
+                            "field_label": "纸带使用量及处置情况",
+                            "value": "足够一周使用",
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+            ]
+        },
+    }
+
+    results = reviewer._review_pm_tape_usage_tasks_batch(
+        [task],
+        {"WO-TAPE": audit_record},
+        {"WO-TAPE": order},
+        {"WO-TAPE": []},
+        {"WO-TAPE": []},
+    )
+
+    needs_followup = [r for r in results.values() if r.get("judgment") == "needs_followup"]
+    assert needs_followup, results
+    for result in needs_followup:
+        assert result["review_item_id"]
+        assert "耗材使用/处置情况语义复核未完成" in result["conclusion"]
 
 
 def test_field_level_range_note_clears_abnormal_value_remark_review(monkeypatch):

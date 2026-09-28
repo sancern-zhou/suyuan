@@ -258,7 +258,9 @@ async def test_save_notice_uses_compact_notice_table_and_content_table(monkeypat
     assert "environment_relevance" not in compact_notice_sql
     assert "project_category" in compact_notice_sql
     assert "extraction_meta_json" in compact_notice_sql
-    assert "tender_notice_contents" in content_sql
+    assert "UPDATE tender_notices" in content_sql
+    assert "detail_fetched_at IS NULL" in content_sql
+    assert "tender_notice_contents" not in content_sql
 
 
 def test_notice_values_clamps_amount_text_and_numeric_precision():

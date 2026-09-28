@@ -48,7 +48,7 @@ class ScheduledTaskService:
     ):
         # 初始化存储层
         self.task_storage = task_storage or TaskStorage()
-        self.execution_storage = execution_storage or ExecutionStorage()
+        self.execution_storage = execution_storage or self._default_execution_storage()
         self.claim_storage = claim_storage or EventClaimStorage()
         self.event_delivery = event_delivery or EventTaskDelivery()
         self._recover_interrupted_executions()
@@ -90,6 +90,22 @@ class ScheduledTaskService:
 
         self._started = False
         self._event_tasks: set[asyncio.Task] = set()
+
+    @staticmethod
+    def _default_execution_storage():
+        """Choose the execution backend, preferring the database when configured.
+
+        The import stays local so the legacy JSON store remains importable in
+        deployments without a database.
+        """
+        from .storage.execution_storage_db import (
+            DatabaseExecutionStorage,
+            execution_db_enabled,
+        )
+
+        if execution_db_enabled():
+            return DatabaseExecutionStorage()
+        return ExecutionStorage()
 
     def _recover_interrupted_executions(self) -> None:
         """Close execution records left running by a previous worker process."""
@@ -656,6 +672,62 @@ class ScheduledTaskService:
     def get_statistics(self, task_id: Optional[str] = None, days: int = 7):
         """获取统计信息"""
         return self.execution_storage.get_statistics(task_id=task_id, days=days)
+
+    def list_task_results(
+        self,
+        *,
+        task_id: Optional[str] = None,
+        task_ids: Optional[list[str]] = None,
+        city: Optional[str] = None,
+        station_id: Optional[str] = None,
+        pollutant: Optional[str] = None,
+        status: Optional[str] = None,
+        started_after=None,
+        started_before=None,
+        page: int = 1,
+        page_size: int = 20,
+    ):
+        """查询结构化执行结论（数据库后端）"""
+        from .storage.task_result_storage_db import DatabaseTaskResultStorage
+
+        if isinstance(self.executor.task_result_storage, DatabaseTaskResultStorage):
+            return self.executor.task_result_storage.query_page(
+                task_id=task_id,
+                task_ids=task_ids,
+                city=city,
+                station_id=station_id,
+                pollutant=pollutant,
+                status=status,
+                started_after=started_after,
+                started_before=started_before,
+                page=page,
+                page_size=page_size,
+            )
+        return [], 0
+
+    def get_task_result(self, execution_id: str):
+        """查询单条结构化执行结论（数据库后端，无记录返回 None）"""
+        from .storage.task_result_storage_db import DatabaseTaskResultStorage
+
+        if isinstance(self.executor.task_result_storage, DatabaseTaskResultStorage):
+            return self.executor.task_result_storage.get(execution_id)
+        return None
+
+    def list_task_result_facets(
+        self,
+        *,
+        task_id: Optional[str] = None,
+        task_ids: Optional[list[str]] = None,
+    ) -> dict:
+        """查询站点/污染物筛选候选项（数据库后端）"""
+        from .storage.task_result_storage_db import DatabaseTaskResultStorage
+
+        if isinstance(self.executor.task_result_storage, DatabaseTaskResultStorage):
+            return self.executor.task_result_storage.facets(
+                task_id=task_id,
+                task_ids=task_ids,
+            )
+        return {"stations": [], "pollutants": []}
 
     def get_scheduler_status(self) -> dict:
         """获取调度器状态"""

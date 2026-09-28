@@ -277,7 +277,13 @@ class DocumentProcessingQueue:
                 raise ValueError(f"Document not found: {task.doc_id}")
 
             # 统一状态机负责 Chunk、图谱事实和 Outbox，不再直接写向量。
-            await service.ingest_document(task.doc_id, **task.processing_options)
+            from app.services.llm_service import llm_service
+            from config.settings import settings
+
+            with llm_service.use_balanced_model_tier(
+                settings.knowledge_base_llm_model_tier
+            ), llm_service.use_opencode_session(f"kb-doc-{task.doc_id}"):
+                await service.ingest_document(task.doc_id, **task.processing_options)
 
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.utcnow()

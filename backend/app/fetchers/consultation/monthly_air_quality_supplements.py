@@ -27,6 +27,7 @@ from app.tools.query.get_particulate_components.tool import GetParticulateCompon
 from app.agent.context.data_context_manager import DataContextManager
 from app.db.session_repository import SessionRepository
 from app.utils.component_station_directory import PM25_DOMAIN, VOCS_DOMAIN, resolve_component_station_names
+from app.utils.path_config import get_data_registry
 
 
 class MonthlyAirQualitySupplements:
@@ -80,7 +81,7 @@ class MonthlyAirQualitySupplements:
 
         # 输出目录（尝试使用原始路径，如果权限问题则使用备用路径）
         primary_output_dir = Path(f"/tmp/A会商文件/{year}年{month:02d}月")
-        backup_output_dir = Path(f"backend_data_registry/月度补充数据/{year}年{month:02d}月")
+        backup_output_dir = get_data_registry() / "月度补充数据" / f"{year}年{month:02d}月"
 
         try:
             primary_output_dir.mkdir(parents=True, exist_ok=True)

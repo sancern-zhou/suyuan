@@ -1,6 +1,44 @@
 import json
 
+from app.agent.memory.agent_case_library import AgentCaseLibrary
 from app.services.ops_audit.semantic import prompts, reviewer
+
+
+def test_semantic_context_uses_agent_maintained_cases_and_changes_cache_key(
+    tmp_path,
+    monkeypatch,
+):
+    library = AgentCaseLibrary("ops", base_dir=tmp_path / "ops")
+    library.append({
+        "case_id": "case-1",
+        "scenario": "ops_work_order_audit",
+        "title": "METONE字段不适用",
+        "user_feedback": "用户确认排除采样管温度问题",
+        "lesson": "仅在同型号、同字段且当前设备证据明确时判为不适用",
+        "tags": ["METONE", "字段不适用"],
+    })
+    monkeypatch.setattr(reviewer, "AgentCaseLibrary", lambda _mode: library)
+
+    first_context = reviewer._context_with_agent_case_guidance({"rule_id": "RF_PM_TEMP"})
+    first_key = reviewer._cache_key("remark", "无此项", first_context)
+    guidance = first_context["agent_case_guidance"]
+
+    assert guidance["source"] == "agent_maintained_user_feedback_cases"
+    assert guidance["cases"][0]["case_id"] == "case-1"
+    assert "同型号" in guidance["cases"][0]["lesson"]
+
+    library.append({
+        "case_id": "case-2",
+        "scenario": "ops_work_order_audit",
+        "title": "另一条反馈案例",
+        "user_feedback": "用户确认纳入",
+        "lesson": "当前证据明确异常时保留问题",
+        "tags": ["保留"],
+    })
+    second_context = reviewer._context_with_agent_case_guidance({"rule_id": "RF_PM_TEMP"})
+    second_key = reviewer._cache_key("remark", "无此项", second_context)
+
+    assert second_key != first_key
 
 
 def test_review_text_includes_rf_field_row_explanations():
@@ -43,7 +81,7 @@ def test_review_text_includes_rf_handling_record_explanations():
     assert "RF_W_GASEOUSCHECK_NOX.异常时处理记录:厂家文件范围：0～4.096 v" in text
 
 
-def test_remark_batch_payload_includes_issue_evidence_summary(monkeypatch):
+def test_remark_batch_payload_includes_issue_evidence(monkeypatch):
     captured = {}
 
     def fake_call(prompt, text, *, context=None):
@@ -77,9 +115,9 @@ def test_remark_batch_payload_includes_issue_evidence_summary(monkeypatch):
                 "rf_table": "RF_W_GASEOUSCHECK_NOX",
                 "reason_rule_id": "RF_RANGE_OUT_OF_SPEC",
                 "abnormal_field": "rf.RF_W_GASEOUSCHECK_NOX.PMTCHECKVALUE",
-                "abnormal_message": "NOx周检参考PMT信号检查值(0.018)超出FPI品牌正常范围(1.5-4.096 V)",
+                "abnormal_message": "NOx周检参考PMT信号检查值需结合现场记录复核",
                 "remark_candidates": {
-                    "EXCEPTIONHANDLINGRECORD": "厂家文件范围：0～4.096 v"
+                    "EXCEPTIONHANDLINGRECORD": "现场记录待确认"
                 },
                 "needs_semantic_review": True,
             },
@@ -107,8 +145,10 @@ def test_remark_batch_payload_includes_issue_evidence_summary(monkeypatch):
     payload = json.loads(captured["text"])
     item = payload["items"][0]
     assert captured["prompt"] == prompts.REMARK_BATCH_SEMANTIC_JSON_PROMPT
-    assert item["evidence_summary"]["sample_issues"][0]["evidence"]
-    assert "厂家文件范围：0～4.096 v" in item["evidence_summary"]["sample_issues"][0]["evidence"]
+    assert item["issue"]["evidence"]
+    assert item["issue"]["evidence"]["remark_candidates"] == {
+        "EXCEPTIONHANDLINGRECORD": "现场记录待确认"
+    }
     assert result["WO-NOX-PMT"]["judgment"] == "cleared"
 
 

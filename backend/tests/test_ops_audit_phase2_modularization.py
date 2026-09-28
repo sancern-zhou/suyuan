@@ -168,7 +168,7 @@ def test_review_user_empty_is_not_flagged():
     assert "RF_REVIEW_EMPTY" not in ids
 
 
-def test_device_identity_consistency_uses_history_evidence():
+def test_device_identity_consistency_is_disabled_in_audit_pipeline():
     dataset = {
         "orders": [
             {
@@ -259,11 +259,9 @@ def test_device_identity_consistency_uses_history_evidence():
         if issue["rule_id"] == "RF_DEVICE_IDENTITY_INCONSISTENT"
     ]
 
-    assert audit["summary"]["device_consistency_issue_count"] == 1
-    assert device_issues
-    assert device_issues[0]["field"] == "device_identity.model"
-    assert "WO-HISTORY" in device_issues[0]["evidence"]
-    assert "RF_DEVICE_IDENTITY_INCONSISTENT" in {
+    assert audit["summary"]["device_consistency_issue_count"] == 0
+    assert device_issues == []
+    assert "RF_DEVICE_IDENTITY_INCONSISTENT" not in {
         issue["rule_id"] for issue in current["candidate_issues"]
     }
     assert "RF_DEVICE_IDENTITY_INCONSISTENT" not in {
@@ -564,5 +562,8 @@ def test_rule_engine_persists_audit_outputs(tmp_path):
     assert (tmp_path / "latest_finished_work_orders_deterministic_audit.json").exists()
     assert (tmp_path / "latest_finished_work_orders_semantic_candidates.json").exists()
     assert (tmp_path / "latest_finished_work_orders_final_issue_list.json").exists()
+    assert (tmp_path / "latest_finished_work_orders_report_input.json").exists()
+    assert result["report_input_path"].endswith("latest_finished_work_orders_report_input.json")
+    assert "review_input_path" not in result
     assert "final_issue_list_path" in result
     assert result["summary"]["audit_level_counts"]

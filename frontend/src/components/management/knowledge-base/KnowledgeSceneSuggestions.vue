@@ -53,5 +53,5 @@ watch(() => props.kbId, load)
 </script>
 
 <style scoped>
-.scene-suggestions { display: grid; gap: 8px; padding: 12px; border: 1px solid #f0c36d; border-radius: 8px; background: #fffaf0; }.scene-suggestions header { display: flex; justify-content: space-between; gap: 12px; }.scene-suggestions header span, small { color: #667085; }.scene-suggestions article { display: flex; justify-content: space-between; gap: 16px; padding-top: 8px; border-top: 1px solid #f3dfb8; }.scene-suggestions p { margin: 4px 0; }.actions { display: flex; gap: 6px; align-items: center; }.actions button { white-space: nowrap; }.secondary { background: white; }.error { color: #b42318; }
+.scene-suggestions { display: grid; gap: 8px; padding: 12px; border: 1px solid #f0c36d; border-radius: 8px; background: #fffaf0; }.scene-suggestions header { display: flex; justify-content: space-between; gap: 12px; }.scene-suggestions header span, small { color: var(--text-2); }.scene-suggestions article { display: flex; justify-content: space-between; gap: 16px; padding-top: 8px; border-top: 1px solid #f3dfb8; }.scene-suggestions p { margin: 4px 0; }.actions { display: flex; gap: 6px; align-items: center; }.actions button { white-space: nowrap; }.secondary { background: white; }.error { color: var(--color-danger); }
 </style>

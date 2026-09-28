@@ -222,7 +222,7 @@ h2 {
   padding: 12px;
   border: 1px solid rgba(32, 49, 58, 0.1);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--bg-container);
 }
 
 .metric-label,
@@ -241,7 +241,7 @@ strong {
 }
 
 .metric-error {
-  color: #b42318;
+  color: var(--color-danger);
   font-size: 13px;
   line-height: 1.4;
   overflow-wrap: anywhere;

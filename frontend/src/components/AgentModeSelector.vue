@@ -190,7 +190,7 @@ const selectMode = (mode) => {
   position: relative;
   min-height: 30px;
   padding: 4px 10px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   background: white;
   color: #4a5568;

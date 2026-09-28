@@ -86,7 +86,7 @@ const formatTime = (timestamp) => {
   width: 400px;
   max-height: 600px;
   background: white;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 1000;
@@ -97,11 +97,11 @@ const formatTime = (timestamp) => {
 
 .debug-header {
   padding: 12px 16px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-1);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: #fafafa;
+  background: var(--bg-muted);
   border-radius: 8px 8px 0 0;
 }
 
@@ -109,20 +109,20 @@ const formatTime = (timestamp) => {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-1);
 }
 
 .debug-header button {
   padding: 4px 12px;
   border: none;
-  background: #f5f5f5;
+  background: var(--bg-hover);
   border-radius: 4px;
   font-size: 12px;
   cursor: pointer;
   transition: all 0.2s;
 
   &:hover {
-    background: #e0e0e0;
+    background: var(--border-2);
   }
 }
 
@@ -145,7 +145,7 @@ const formatTime = (timestamp) => {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: #666;
+  color: var(--text-2);
 }
 
 .debug-section pre {
@@ -158,13 +158,13 @@ const formatTime = (timestamp) => {
   white-space: pre-wrap;
   max-height: 200px;
   overflow-y: auto;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
 }
 
 .copy-btn {
   align-self: flex-start;
   padding: 4px 12px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
   background: white;
   border-radius: 4px;
   font-size: 12px;
@@ -172,8 +172,8 @@ const formatTime = (timestamp) => {
   transition: all 0.2s;
 
   &:hover {
-    border-color: #1976D2;
-    color: #1976D2;
+    border-color: var(--color-primary);
+    color: var(--color-primary);
   }
 }
 
@@ -190,7 +190,7 @@ const formatTime = (timestamp) => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
 }
 
 .call-header {
@@ -201,7 +201,7 @@ const formatTime = (timestamp) => {
 
 .call-header strong {
   font-size: 13px;
-  color: #333;
+  color: var(--text-1);
 }
 
 .status-badge {
@@ -212,13 +212,13 @@ const formatTime = (timestamp) => {
 }
 
 .status-badge.success {
-  background: #E8F5E9;
-  color: #2E7D32;
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 
 .status-badge.running {
-  background: #E3F2FD;
-  color: #1565C0;
+  background: var(--color-primary-bg);
+  color: var(--color-primary-active);
 }
 
 .status-badge.pending {
@@ -234,19 +234,19 @@ const formatTime = (timestamp) => {
 .tool-call pre {
   margin: 0;
   font-size: 11px;
-  color: #666;
+  color: var(--text-2);
   max-height: 100px;
 }
 
 .timestamp {
   font-size: 11px;
-  color: #999;
+  color: var(--text-3);
 }
 
 .empty-calls {
   text-align: center;
   padding: 20px;
-  color: #999;
+  color: var(--text-3);
   font-size: 13px;
 }
 </style>

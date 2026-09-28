@@ -191,9 +191,8 @@ def _meteorology_sentence(evidence: dict[str, Any], occurred_at: str) -> str:
     return (
         f"{station_name}气象站{_fmt_time(latest.get('time'))}观测："
         f"风来{_wind_bearing(latest.get('wind_direction_10m'))}方向（{_fmt(latest.get('wind_direction_10m'), 0)}°），"
-        f"风速{_fmt(latest.get('wind_speed_10m'))}，"
-        f"气温{_fmt(latest.get('temperature_2m'))}℃，相对湿度{_fmt(latest.get('relative_humidity_2m'), 0)}%；"
-        "以上为告警时次实测，不使用未来预报。"
+        f"风速{_fmt(latest.get('wind_speed_10m'))} m/s，"
+        f"气温{_fmt(latest.get('temperature_2m'))}℃，相对湿度{_fmt(latest.get('relative_humidity_2m'), 0)}%。"
     )
 
 
@@ -391,6 +390,62 @@ def _build_llm_evidence(package: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _extract_response_text(response: Any) -> str:
+    """Pull the text blocks out of an Anthropic-shaped dict or SDK response."""
+    content_blocks = response.get("content", []) if isinstance(response, dict) else []
+    text_parts = []
+    for block in content_blocks:
+        if isinstance(block, dict):
+            if block.get("type") == "text" and block.get("text"):
+                text_parts.append(str(block["text"]))
+        elif getattr(block, "type", None) == "text" and getattr(block, "text", None):
+            text_parts.append(str(block.text))
+    return "\n".join(text_parts)
+
+
+def compose_station_alert_fallback_message(package: dict[str, Any]) -> str:
+    """Use verified episode facts when every model candidate fails."""
+    items = package.get("alerts") or []
+    if not items:
+        raise RuntimeError("证据包不含告警因子，无法生成通报")
+    primary = items[0].get("alert") or {}
+    if not all(primary.get(key) is not None for key in (
+        "occurred_at", "target_pollutant", "station_value", "rule"
+    )):
+        raise RuntimeError("证据包缺少关键告警事实，无法生成通报")
+
+    station = (
+        primary.get("station_name") or package.get("station_name")
+        or primary.get("station_id") or package.get("station_id") or "未知站点"
+    )
+    granularity = "小时" if primary.get("measurement_granularity") == "hour" else "5分钟"
+    pollutant = str(primary["target_pollutant"])
+    rule = str(primary["rule"])
+    measurements = (
+        _rise_sentence(primary) if rule.startswith("six_consecutive")
+        else _deviation_sentence(primary)
+    )
+    overview = (
+        f"{_fmt_time(primary['occurred_at'])}，{station}发生"
+        f"{RULE_LABELS.get(rule, '站点异常告警')}："
+        f"{pollutant}（{granularity}数据）{measurements}。"
+    )
+    if len(items) > 1:
+        others = "、".join(
+            f"{(item.get('alert') or {}).get('target_pollutant', '未知因子')}"
+            f"实测{_fmt((item.get('alert') or {}).get('station_value'))}"
+            for item in items[1:]
+        )
+        overview += f"同站另有{others}告警。"
+
+    evidence = items[0].get("evidence") or {}
+    weather_qc = (
+        f"{_meteorology_sentence(evidence, str(primary['occurred_at']))}"
+        f"{_qc_sentence(evidence)}"
+    )
+    return f"一、告警概况\n{overview}\n二、气象与质控\n{weather_qc}"
+
+
 async def _generate_station_alert_message(
     package: dict[str, Any], task: Any, history_section: str | None = None
 ) -> str:
@@ -418,26 +473,38 @@ async def _generate_station_alert_message(
         f"```json\n{evidence}\n```"
     )
     tier = getattr(task, "model_tier", "auto") or "auto"
-    with llm_service.use_model_tier(tier):
-        response = await llm_service.chat_anthropic(
-            [
-                {"role": "user", "content": user_prompt},
-            ],
-            system=system_prompt,
-            max_tokens=4000,
+
+    def _reject_empty_notice_text(response: Any) -> str | None:
+        message = llm_service.clean_thinking_tags(_extract_response_text(response)).strip()
+        if not message:
+            return "LLM 未生成告警通报正文（空响应）"
+        return None
+
+    try:
+        with llm_service.use_model_tier(tier):
+            response = await llm_service.chat_anthropic(
+                [{"role": "user", "content": user_prompt}],
+                system=system_prompt,
+                max_tokens=4000,
+                validate=_reject_empty_notice_text,
+            )
+    except Exception as exc:
+        message = compose_station_alert_fallback_message(package)
+        logger.warning(
+            "xuchang_station_alert_notice_template_fallback",
+            reason=type(exc).__name__,
+            error=str(exc)[:300],
+            station_id=package.get("station_id"),
         )
-    content_blocks = response.get("content", []) if isinstance(response, dict) else []
-    text_parts = []
-    for block in content_blocks:
-        if isinstance(block, dict):
-            if block.get("type") == "text" and block.get("text"):
-                text_parts.append(str(block["text"]))
-        elif getattr(block, "type", None) == "text" and getattr(block, "text", None):
-            text_parts.append(str(block.text))
-    message = "\n".join(text_parts)
-    message = llm_service.clean_thinking_tags(str(message or "")).strip()
+        return message
+    message = llm_service.clean_thinking_tags(_extract_response_text(response)).strip()
     if not message:
-        raise RuntimeError("LLM 未生成告警通报正文")
+        logger.warning(
+            "xuchang_station_alert_notice_template_fallback",
+            reason="empty_response",
+            station_id=package.get("station_id"),
+        )
+        return compose_station_alert_fallback_message(package)
     return message
 
 
@@ -455,7 +522,21 @@ async def run_station_alert_workflow(
         raise RuntimeError("事件 payload 缺少 evidence_package_path，工作流无法执行")
 
     package = await asyncio.to_thread(_load_package, package_path)
-    message = await _generate_station_alert_message(package, task, history_section)
+    # Reserve time for factual fallback and delivery before the task-level deadline.
+    notice_timeout = max(1, int(getattr(task, "timeout_seconds", 120) or 120) - 30)
+    try:
+        message = await asyncio.wait_for(
+            _generate_station_alert_message(package, task, history_section),
+            timeout=notice_timeout,
+        )
+    except asyncio.TimeoutError:
+        message = compose_station_alert_fallback_message(package)
+        logger.warning(
+            "xuchang_station_alert_notice_template_fallback",
+            reason="model_timeout",
+            timeout_seconds=notice_timeout,
+            station_id=package.get("station_id"),
+        )
     media = await asyncio.to_thread(_collect_media, package)
 
     output = EventTaskOutput(
@@ -492,6 +573,7 @@ async def run_station_alert_workflow(
         "tool_call_details": {
             "recipients": [row.get("user_id") for row in delivery_results],
             "media_count": len(media),
+            "media": media,
             "evidence_package_path": package_path,
         },
     }

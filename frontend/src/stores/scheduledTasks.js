@@ -137,6 +137,63 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       };
     },
 
+    async fetchTaskResults({
+      taskId,
+      page = 1,
+      pageSize = 10,
+      startDate = '',
+      endDate = '',
+      stationId = '',
+      pollutant = ''
+    } = {}) {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize)
+      });
+      if (taskId) params.set('task_id', taskId);
+      if (startDate) params.set('start', `${startDate}T00:00:00`);
+      if (endDate) params.set('end', `${endDate}T23:59:59`);
+      if (stationId) params.set('station_id', stationId);
+      if (pollutant) params.set('pollutant', pollutant);
+      const response = await authFetch(`${API_BASE}/results?${params}`, {
+        clearOnUnauthorized: false
+      });
+      if (!response.ok) throw new Error('Failed to fetch task results');
+      const data = await response.json();
+      return {
+        results: Array.isArray(data?.results) ? data.results : [],
+        total: Number(data?.total) || 0,
+        page: Number(data?.page) || page,
+        pageSize: Number(data?.page_size) || pageSize,
+        totalPages: Number(data?.total_pages) || 0
+      };
+    },
+
+    async fetchTaskResultFacets(taskId = '') {
+      const params = new URLSearchParams();
+      if (taskId) params.set('task_id', taskId);
+      const suffix = params.toString() ? `?${params}` : '';
+      const response = await authFetch(`${API_BASE}/results/facets${suffix}`, {
+        clearOnUnauthorized: false
+      });
+      if (!response.ok) throw new Error('Failed to fetch task result facets');
+      const data = await response.json();
+      return {
+        stations: Array.isArray(data?.stations) ? data.stations : [],
+        pollutants: Array.isArray(data?.pollutants) ? data.pollutants : []
+      };
+    },
+
+    async fetchTaskReportFormats(executionId) {
+      const response = await authFetch(
+        `${API_BASE}/results/${encodeURIComponent(executionId)}/report/formats`,
+        { clearOnUnauthorized: false }
+      );
+      if (!response.ok) throw new Error('Failed to fetch report formats');
+      const data = await response.json();
+      return Array.isArray(data?.formats) ? data.formats : [];
+    },
+
     async fetchTaskHistoryCases(taskId, { limit = 50 } = {}) {
       const params = new URLSearchParams({ limit: String(limit) });
       const response = await authFetch(`${API_BASE}/${taskId}/history/cases?${params}`);
@@ -183,12 +240,17 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     async updateTaskHistoryCase(taskId, executionId, caseData) {
       const response = await authFetch(`${API_BASE}/${taskId}/history/cases/${encodeURIComponent(executionId)}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({ case: caseData })
       });
-      if (!response.ok) throw new Error(await responseErrorMessage(response, '案例保存失败'));
-      const data = await response.json();
-      return data.case || caseData;
+      if (!response.ok) {
+        const error = new Error(await responseErrorMessage(response, '案例保存失败'));
+        error.status = response.status;
+        throw error;
+      }
+      return response.json();
     },
 
     async fetchRecentExecutions({ page = 1, pageSize = 10 } = {}) {

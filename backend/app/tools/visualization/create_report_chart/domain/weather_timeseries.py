@@ -133,9 +133,9 @@ def render_weather_timeseries(*, title: str, data: dict[str, Any], options: dict
     handles, legend_labels = [], []
     for target in (ax, wind_ax):
         h, l = target.get_legend_handles_labels(); handles.extend(h); legend_labels.extend(l)
-    ax.legend(handles, legend_labels, loc="lower center", bbox_to_anchor=(0.5, 1.08), fontsize=8, frameon=False, ncol=4)
+    ax.legend(handles, legend_labels, loc="upper center", bbox_to_anchor=(0.5, -0.18), fontsize=10, frameon=False, ncol=4)
     fig.suptitle(str(title), fontsize=14, fontweight="bold", y=0.995)
-    fig.subplots_adjust(left=0.12, right=0.88, top=0.78, bottom=0.16)
+    fig.subplots_adjust(left=0.12, right=0.88, top=0.93, bottom=0.16)
     apply_font_to_figure(fig)
     output = BytesIO(); fig.savefig(output, format="png", dpi=180, bbox_inches="tight"); plt.close(fig)
     return base64.b64encode(output.getvalue()).decode("ascii"), {"valid_point_count": valid_point_count, "multi_day": multi_day, "day_count": len(days), "gap_count": gap_count, "line_width": width, "date": ts[0].date().isoformat(), "start_time": ts[0].isoformat(sep=" "), "end_time": ts[-1].isoformat(sep=" "), "area_count": len(areas)}, []

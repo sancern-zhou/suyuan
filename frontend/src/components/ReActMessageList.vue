@@ -184,11 +184,18 @@
           <!-- 【Vue 3 最佳实践】使用 key 强制重新渲染 -->
           <MarkdownRenderer
             :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}-${message.renderVersion || 0}`"
-            :content="contentToString(getMessageContent(message))"
+            :content="renderedMessageContent(message)"
             :streaming="message.streaming === true"
           />
         </div>
-        <div class="message-content" v-else>{{ contentToString(getMessageContent(message)) }}</div>
+        <div class="message-content" v-else>{{ renderedMessageContent(message) }}</div>
+        <div v-if="!message.streaming && inlineImagesForFinal(message).length" class="message-content inline-chart-images">
+          <MarkdownRenderer
+            v-for="image in inlineImagesForFinal(message)"
+            :key="image.resource_id"
+            :content="`![${image.label.replace(/[\\[\\]\\\\]/g, '')}](${image.content_url})`"
+          />
+        </div>
 
         <!-- 多专家系统：直接显示报告内容，无额外装饰 -->
         <div v-if="message.data?.expert_results?.report && reportContentCacheMap.get(message.data.expert_results.report)" class="expert-report-content">
@@ -222,15 +229,15 @@
         <!-- AI回复操作栏：用时统计 + 复制按钮 -->
         <div v-if="showAgentMessageFooter(message)" class="agent-message-footer">
           <span
-            v-if="getFinalDurationText(message)"
+            v-if="!isAnalyzing && getFinalDurationText(message)"
             class="agent-message-duration"
-            title="AI 回复总用时"
+            title="任务总用时"
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="12" cy="12" r="9" />
               <path d="M12 7.5V12l3 2" />
             </svg>
-            <span>用时 {{ getFinalDurationText(message) }}</span>
+            <span>任务用时 {{ getFinalDurationText(message) }}</span>
           </span>
           <div class="agent-message-tools">
             <button
@@ -260,14 +267,14 @@
     </div>
 
     <div
-      v-if="showThinkingPlaceholder"
-      class="thinking-placeholder"
+      v-if="isAnalyzing"
+      class="task-progress-status"
       role="status"
       aria-live="polite"
-      aria-label="AI 正在思考"
+      aria-label="任务执行中"
     >
       <span class="thinking-indicator" aria-hidden="true"></span>
-      <span>正在思考</span>
+      <span>任务执行中，完成后显示总用时</span>
     </div>
 
     <!-- 当前轮实时分析过程：默认折叠，用户可点击展开查看 -->
@@ -372,13 +379,13 @@ import {
 import { getAgentMode } from '@/config/agentModes.js'
 import { projectConfig } from '@/config/projectConfig.js'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import { inlineChartImages, renderChartPlaceholders } from '@/services/inlineChartImages.js'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import {
   getExecutingProcessMessages,
   getMessageType,
   getUnifiedProcessMessages as collectUnifiedProcessMessages,
-  isProcessMessage,
-  isWaitingForAgentResponse
+  isProcessMessage
 } from './reactAnalysis/messageProcessGrouping.js'
 
 const reactStore = useReactStore()
@@ -475,6 +482,24 @@ const props = defineProps({
 
 const emit = defineEmits(['load-more', 'preview-message-attachment'])
 const sessionResourceStore = useSessionResourceStore()
+const chartResourcesForMessage = message => inlineChartImages(
+  message,
+  props.messages,
+  sessionResourceStore.activeSessionId === props.sessionId
+    ? sessionResourceStore.activeSessionState?.resources
+    : [],
+  contentToString(getMessageContent(message))
+)
+const renderedMessageContent = message => {
+  const content = contentToString(getMessageContent(message))
+  if (!content.includes('[[chart:')) return content
+  return renderChartPlaceholders(content, chartResourcesForMessage(message)).content
+}
+const inlineImagesForFinal = message => {
+  const resources = chartResourcesForMessage(message)
+  const rendered = renderChartPlaceholders(contentToString(getMessageContent(message)), resources)
+  return resources.filter(resource => !rendered.usedResourceIds.has(resource.resource_id))
+}
 
 const messagesContainer = ref(null)
 const messagesContent = ref(null)
@@ -721,10 +746,6 @@ const displayedMessages = computed(() => {
   })
 })
 
-const showThinkingPlaceholder = computed(() => (
-  isWaitingForAgentResponse(props.messages, props.isAnalyzing)
-))
-
 // 【新增】details展开状态管理（用于控制<details>的open属性）
 const expandedProcessIds = ref(new Set())
 
@@ -883,7 +904,7 @@ const copyAgentMessage = async (message) => {
   }
 }
 
-// 【新增】AI回复用时统计：优先使用store在完成时记录的response_duration_ms，
+// 任务总用时：优先使用生命周期终态时记录的response_duration_ms，
 // 否则用 final 消息与其前最近 user 消息的时间戳差值（历史消息恢复场景）
 const formatResponseDuration = (durationMs) => {
   if (!Number.isFinite(durationMs) || durationMs < 0) return ''
@@ -1398,7 +1419,6 @@ const formatSectionTitle = (key) => {
     '1_overall_assessment': '总体评估',
     '2_meteorological_analysis': '气象分析',
     '3_chemical_diagnostics': '化学诊断',
-    '4_upwind_enterprises': '上风向企业',
     '5_control_recommendations': '控制建议',
     '6_risk_assessment': '风险评估',
     'executive_summary': '执行摘要',
@@ -1495,8 +1515,8 @@ const downloadPreviewedImage = async () => {
   }
 
   &::-webkit-scrollbar-thumb {
-    background: #d0d0d0;
-    border-radius: 3px;
+    background: var(--scrollbar-thumb);
+    border-radius: 4px;
   }
 }
 
@@ -1516,18 +1536,18 @@ const downloadPreviewedImage = async () => {
 
 .load-more-btn {
   padding: 8px 20px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
   border-radius: 20px;
-  background: #f8f9fa;
-  color: #666;
+  background: var(--bg-muted);
+  color: var(--text-2);
   font-size: 13px;
   cursor: pointer;
   transition: all 0.2s ease;
 
   &:hover {
-    background: #e9ecef;
-    border-color: #d0d0d0;
-    color: #333;
+    background: var(--bg-hover);
+    border-color: var(--border-3);
+    color: var(--text-1);
   }
 }
 
@@ -1535,15 +1555,15 @@ const downloadPreviewedImage = async () => {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #999;
+  color: var(--text-3);
   font-size: 13px;
 
   .spinner {
     display: inline-block;
     width: 14px;
     height: 14px;
-    border: 2px solid #e0e0e0;
-    border-top-color: #999;
+    border: 2px solid var(--border-2);
+    border-top-color: var(--text-3);
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
   }
@@ -1569,7 +1589,7 @@ const downloadPreviewedImage = async () => {
   width: min(760px, 100%);
   margin: auto;
   padding: 36px 20px;
-  color: #526173;
+  color: var(--text-2);
 
   h2 {
     color: #24324a;
@@ -1596,7 +1616,7 @@ const downloadPreviewedImage = async () => {
   }
 
   .welcome-capability {
-    color: #35425f;
+    color: var(--text-1);
     font-size: 13px;
     line-height: 1.6;
     text-align: center;
@@ -1621,11 +1641,11 @@ const downloadPreviewedImage = async () => {
   justify-content: center;
   width: 34px;
   height: 34px;
-  border: 1px solid #d8deea;
+  border: 1px solid var(--border-2);
   border-radius: 999px;
-  color: #526173;
+  color: var(--text-2);
   background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 6px 18px rgba(31, 45, 68, 0.14);
+  box-shadow: var(--shadow-1);
   cursor: pointer;
   transition: color 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
 
@@ -1640,7 +1660,7 @@ const downloadPreviewedImage = async () => {
   }
 
   &:hover {
-    color: #1976D2;
+    color: var(--color-primary);
     border-color: #90CAF9;
     transform: translate(-50%, -1px);
   }
@@ -1663,16 +1683,16 @@ const downloadPreviewedImage = async () => {
     position: relative;
 
     &:hover {
-      background: #f8fbff;
+      background: var(--color-primary-bg);
     }
 
     // 选中状态
     &.selected {
-      background: #e3f2fd;
-      border-left: 3px solid #1976d2;
+      background: var(--color-primary-bg);
+      border-left: 3px solid var(--color-primary);
 
       &:hover {
-        background: #e3f2fd;
+        background: var(--color-primary-bg);
       }
     }
 
@@ -1701,9 +1721,10 @@ const downloadPreviewedImage = async () => {
 .user-message {
   position: relative;
   padding: 10px 16px;
-  background: #f5f5f5;
-  border-radius: 18px;
-  border: 1px solid #e0e0e0;
+  background: var(--bg-bubble-user);
+  border-radius: var(--radius-lg);
+  border-top-right-radius: 2px;
+  border: 1px solid var(--border-2);
   margin-left: auto;
   margin-right: 0;
   align-self: flex-end;
@@ -1742,7 +1763,7 @@ const downloadPreviewedImage = async () => {
         width: 5px;
         height: 5px;
         border-radius: 50%;
-        background: #64748b;
+        background: var(--text-2);
         opacity: 0.42;
         animation: message-pending-steering-pulse 1.2s ease-in-out infinite;
 
@@ -1778,7 +1799,7 @@ const downloadPreviewedImage = async () => {
     padding: 0;
     border: none;
     background: transparent;
-    color: #1976D2;
+    color: var(--color-primary);
     font-size: 12px;
     line-height: 1.4;
     cursor: pointer;
@@ -1812,7 +1833,7 @@ const downloadPreviewedImage = async () => {
     justify-content: center;
     width: 26px;
     height: 26px;
-    border: 1px solid #d8deea;
+    border: 1px solid var(--border-2);
     border-radius: 6px;
     color: #627089;
     background: rgba(255, 255, 255, 0.92);
@@ -1830,13 +1851,13 @@ const downloadPreviewedImage = async () => {
     }
 
     &:hover {
-      color: #1976D2;
+      color: var(--color-primary);
       border-color: #90CAF9;
-      background: #fff;
+      background: var(--bg-container);
     }
 
     &.copied {
-      color: #2e7d32;
+      color: var(--color-success);
       border-color: #a5d6a7;
       background: #f1f8f4;
     }
@@ -1846,7 +1867,7 @@ const downloadPreviewedImage = async () => {
     margin-top: 8px;
     padding: 4px 8px;
     background: rgba(255, 152, 0, 0.1);
-    border: 1px solid #FF9800;
+    border: 1px solid var(--color-warning);
     border-radius: 4px;
     display: inline-flex;
     align-items: center;
@@ -1880,11 +1901,12 @@ const downloadPreviewedImage = async () => {
 
 .agent-message.final {
   padding: 10px 16px;
-  background: transparent;
-  border-radius: 8px;
+  background: var(--bg-hover);
+  border-radius: var(--radius-lg);
+  border-top-left-radius: 2px;
   margin-left: 0;
   margin-right: 0;
-  border-left: none;
+  border: 1px solid var(--border-2);
   max-width: 100%;
   font-size: 14px;
   line-height: 1.6;
@@ -1892,8 +1914,8 @@ const downloadPreviewedImage = async () => {
   .expert-system-info {
     margin-top: 12px;
     padding: 12px;
-    background: rgba(66, 165, 245, 0.08);
-    border: 1px solid rgba(66, 165, 245, 0.3);
+    background: var(--color-primary-bg);
+    border: 1px solid var(--color-primary-bg-hover);
     border-radius: 8px;
 
     .expert-badge {
@@ -1901,7 +1923,7 @@ const downloadPreviewedImage = async () => {
       align-items: center;
       gap: 6px;
       padding: 4px 8px;
-      background: rgba(66, 165, 245, 0.15);
+      background: var(--color-primary-bg);
       border-radius: 4px;
       margin-bottom: 8px;
 
@@ -1912,7 +1934,7 @@ const downloadPreviewedImage = async () => {
       .badge-text {
         font-size: 12px;
         font-weight: 500;
-        color: #1976D2;
+        color: var(--color-primary);
       }
     }
 
@@ -1925,7 +1947,7 @@ const downloadPreviewedImage = async () => {
 
       .expert-label {
         font-size: 12px;
-        color: #666;
+        color: var(--text-2);
         font-weight: 500;
       }
 
@@ -1935,7 +1957,7 @@ const downloadPreviewedImage = async () => {
         border: 1px solid rgba(76, 175, 80, 0.3);
         border-radius: 12px;
         font-size: 12px;
-        color: #2E7D32;
+        color: var(--color-success);
         white-space: nowrap;
       }
     }
@@ -1946,7 +1968,7 @@ const downloadPreviewedImage = async () => {
       h4 {
         font-size: 13px;
         margin: 0 0 6px 0;
-        color: #333;
+        color: var(--text-1);
         font-weight: 600;
       }
 
@@ -1957,7 +1979,7 @@ const downloadPreviewedImage = async () => {
         li {
           font-size: 12px;
           line-height: 1.6;
-          color: #555;
+          color: var(--text-2);
           margin-bottom: 4px;
         }
       }
@@ -1969,7 +1991,7 @@ const downloadPreviewedImage = async () => {
       h4 {
         font-size: 13px;
         margin: 0 0 8px 0;
-        color: #333;
+        color: var(--text-1);
         font-weight: 600;
       }
 
@@ -1977,7 +1999,7 @@ const downloadPreviewedImage = async () => {
         margin-bottom: 10px;
         padding: 8px;
         background: rgba(255, 255, 255, 0.5);
-        border: 1px solid rgba(66, 165, 245, 0.2);
+        border: 1px solid var(--color-primary-bg-hover);
         border-radius: 6px;
 
         &:last-child {
@@ -1990,7 +2012,7 @@ const downloadPreviewedImage = async () => {
           gap: 8px;
           margin-bottom: 6px;
           padding-bottom: 6px;
-          border-bottom: 1px solid rgba(66, 165, 245, 0.2);
+          border-bottom: 1px solid var(--color-primary-bg-hover);
 
           .expert-summary-icon {
             font-size: 16px;
@@ -1999,13 +2021,13 @@ const downloadPreviewedImage = async () => {
           .expert-summary-name {
             font-size: 12px;
             font-weight: 600;
-            color: #1976D2;
+            color: var(--color-primary);
             flex: 1;
           }
 
           .expert-confidence {
             font-size: 11px;
-            color: #2E7D32;
+            color: var(--color-success);
             font-weight: 500;
           }
         }
@@ -2016,27 +2038,27 @@ const downloadPreviewedImage = async () => {
             padding: 8px;
             background: rgba(255, 255, 255, 0.6);
             border-radius: 4px;
-            border-left: 2px solid #1976D2;
+            border-left: 2px solid var(--color-primary);
 
             // 继承MarkdownRenderer的样式，但调整字体大小
             :deep(h1) {
               font-size: 14px;
               font-weight: 600;
-              color: #1976D2;
+              color: var(--color-primary);
               margin: 0 0 8px 0;
             }
 
             :deep(h2) {
               font-size: 13px;
               font-weight: 600;
-              color: #1976D2;
+              color: var(--color-primary);
               margin: 10px 0 6px 0;
             }
 
             :deep(h3) {
               font-size: 12px;
               font-weight: 600;
-              color: #333;
+              color: var(--text-1);
               margin: 8px 0 4px 0;
             }
 
@@ -2069,28 +2091,28 @@ const downloadPreviewedImage = async () => {
 
             :deep(strong) {
               font-weight: 600;
-              color: #333;
+              color: var(--text-1);
             }
           }
 
           .expert-summary-text {
             font-size: 12px;
             line-height: 1.6;
-            color: #555;
+            color: var(--text-2);
             margin: 0 0 6px 0;
           }
 
           .expert-key-findings {
-            background: rgba(66, 165, 245, 0.05);
+            background: var(--color-primary-bg);
             border-radius: 4px;
             padding: 6px 8px;
-            border-left: 2px solid #1976D2;
+            border-left: 2px solid var(--color-primary);
 
             .findings-label {
               display: inline-block;
               font-size: 11px;
               font-weight: 600;
-              color: #1976D2;
+              color: var(--color-primary);
               margin-bottom: 4px;
             }
 
@@ -2101,7 +2123,7 @@ const downloadPreviewedImage = async () => {
               li {
                 font-size: 11px;
                 line-height: 1.5;
-                color: #666;
+                color: var(--text-2);
                 margin-bottom: 2px;
 
                 &:last-child {
@@ -2117,29 +2139,29 @@ const downloadPreviewedImage = async () => {
               padding: 10px;
               background: rgba(255, 255, 255, 0.8);
               border-radius: 6px;
-              border-left: 3px solid #1976D2;
+              border-left: 3px solid var(--color-primary);
 
               // Markdown内容样式
               :deep(h1) {
                 font-size: 16px;
                 font-weight: 600;
-                color: #1976D2;
+                color: var(--color-primary);
                 margin: 0 0 12px 0;
                 padding-bottom: 6px;
-                border-bottom: 2px solid #1976D2;
+                border-bottom: 2px solid var(--color-primary);
               }
 
               :deep(h2) {
                 font-size: 14px;
                 font-weight: 600;
-                color: #1976D2;
+                color: var(--color-primary);
                 margin: 16px 0 8px 0;
               }
 
               :deep(h3) {
                 font-size: 13px;
                 font-weight: 600;
-                color: #333;
+                color: var(--text-1);
                 margin: 12px 0 6px 0;
               }
 
@@ -2170,25 +2192,25 @@ const downloadPreviewedImage = async () => {
                 th, td {
                   font-size: 11px;
                   padding: 6px 8px;
-                  border: 1px solid #ddd;
+                  border: 1px solid var(--border-3);
                   text-align: left;
                 }
 
                 th {
-                  background-color: #f5f5f5;
+                  background-color: var(--bg-hover);
                   font-weight: 600;
-                  color: #1976D2;
+                  color: var(--color-primary);
                 }
               }
 
               :deep(strong) {
                 font-weight: 600;
-                color: #333;
+                color: var(--text-1);
               }
 
               :deep(em) {
                 font-style: italic;
-                color: #666;
+                color: var(--text-2);
               }
             }
 
@@ -2197,12 +2219,12 @@ const downloadPreviewedImage = async () => {
               padding: 10px;
               background: rgba(255, 255, 255, 0.8);
               border-radius: 6px;
-              border-left: 3px solid #1976D2;
+              border-left: 3px solid var(--color-primary);
 
               .section-title {
                 font-size: 13px;
                 font-weight: 600;
-                color: #1976D2;
+                color: var(--color-primary);
                 margin: 0 0 8px 0;
               }
 
@@ -2223,11 +2245,11 @@ const downloadPreviewedImage = async () => {
                   margin-bottom: 6px;
                   .subsection-key {
                     font-weight: 500;
-                    color: #666;
+                    color: var(--text-2);
                     margin-right: 6px;
                   }
                   .subsection-value {
-                    color: #333;
+                    color: var(--text-1);
                   }
                 }
               }
@@ -2252,9 +2274,9 @@ const downloadPreviewedImage = async () => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--text-size-xs);
   line-height: 1;
-  color: #8a97ab;
+  color: var(--text-3);
   user-select: none;
   white-space: nowrap;
 
@@ -2325,11 +2347,11 @@ const downloadPreviewedImage = async () => {
   border-radius: 0;
   background: transparent;
   font-size: 14px;
-  color: #35425f;
+  color: var(--text-1);
 
   summary {
     cursor: pointer;
-    color: #35425f;
+    color: var(--text-1);
     font-weight: 500;
     font-size: 13px;
     user-select: none;
@@ -2364,13 +2386,13 @@ const downloadPreviewedImage = async () => {
   }
 }
 
-.thinking-placeholder {
+.task-progress-status {
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 6px 0 10px;
   padding: 9px 12px;
-  color: #35425f;
+  color: var(--text-1);
   font-size: 13px;
   font-weight: 500;
   line-height: 1.6;
@@ -2438,7 +2460,7 @@ const downloadPreviewedImage = async () => {
   .event-text {
     flex: 1;
     line-height: 1.6;
-    color: #35425f;
+    color: var(--text-1);
 
     .tool-use-main {
       display: flex;
@@ -2446,7 +2468,7 @@ const downloadPreviewedImage = async () => {
       gap: 8px;
       flex-wrap: wrap;
       font-weight: 500;
-      color: #35425f;
+      color: var(--text-1);
     }
 
     .tool-use-details {
@@ -2455,7 +2477,7 @@ const downloadPreviewedImage = async () => {
       details {
         summary {
           cursor: pointer;
-          color: #526173;
+          color: var(--text-2);
           font-size: 12px;
           user-select: none;
           padding: 4px 8px;
@@ -2467,8 +2489,8 @@ const downloadPreviewedImage = async () => {
         pre {
           margin-top: 8px;
           padding: 8px;
-          background: #f8fafc;
-          border: 1px solid #edf1f7;
+          background: var(--bg-muted);
+          border: 1px solid var(--bg-muted);
           border-radius: 4px;
           font-size: 12px;
           overflow-x: auto;
@@ -2479,10 +2501,10 @@ const downloadPreviewedImage = async () => {
     .tool-result-summary {
       margin-top: 8px;
       padding: 8px;
-      background: #f8fafc;
+      background: var(--bg-muted);
       border-radius: 4px;
       font-size: 13px;
-      color: #526173;
+      color: var(--text-2);
     }
 
   }
@@ -2507,7 +2529,7 @@ const downloadPreviewedImage = async () => {
     height: auto;
     border-radius: 6px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-    border: 1px solid #e0e0e0;
+    border: 1px solid var(--border-2);
     display: block;
   }
 }
@@ -2529,7 +2551,7 @@ const downloadPreviewedImage = async () => {
   border: none;
   border-radius: 0;
   overflow: hidden;
-  color: #35425f;
+  color: var(--text-1);
   background: transparent;
 
   > summary {
@@ -2540,12 +2562,12 @@ const downloadPreviewedImage = async () => {
     text-align: left;
     display: block;
     user-select: none;
-    color: #526173;
+    color: var(--text-2);
     background: transparent;
 
     &:hover {
       background: transparent;
-      color: #1976D2;
+      color: var(--color-primary);
     }
   }
 
@@ -2581,7 +2603,7 @@ const downloadPreviewedImage = async () => {
 
       .process-text {
         font-size: 12px;
-        color: #526173;
+        color: var(--text-2);
         line-height: 1.5;
         word-break: break-word;
       }
@@ -2600,7 +2622,7 @@ const downloadPreviewedImage = async () => {
     }
 
     .process-tool-name {
-      color: #35425f;
+      color: var(--text-1);
       font-size: 12px;
       font-weight: 500;
     }
@@ -2614,7 +2636,7 @@ const downloadPreviewedImage = async () => {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 500;
-  color: #526173;
+  color: var(--text-2);
   background: #f2f6fb;
 }
 
@@ -2624,7 +2646,7 @@ const downloadPreviewedImage = async () => {
 
   > summary {
     cursor: pointer;
-    color: #526173;
+    color: var(--text-2);
     font-size: 12px;
     user-select: none;
   }
@@ -2634,8 +2656,8 @@ const downloadPreviewedImage = async () => {
     overflow: auto;
     margin: 6px 0 0;
     padding: 8px;
-    background: #f8fafc;
-    border: 1px solid #edf1f7;
+    background: var(--bg-muted);
+    border: 1px solid var(--bg-muted);
     border-radius: 4px;
     font-size: 12px;
     line-height: 1.5;
@@ -2664,8 +2686,8 @@ const downloadPreviewedImage = async () => {
   width: 72px;
   height: 54px;
   border-radius: 7px;
-  border: 1px solid #d8deea;
-  background: #fff;
+  border: 1px solid var(--border-2);
+  background: var(--bg-container);
   cursor: pointer;
   object-fit: cover;
   transition: opacity 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
@@ -2684,9 +2706,9 @@ const downloadPreviewedImage = async () => {
   height: 30px;
   min-width: 0;
   padding: 0 9px;
-  background: #ffffff;
+  background: var(--bg-container);
   border-radius: 999px;
-  border: 1px solid #d8deea;
+  border: 1px solid var(--border-2);
   max-width: 100%;
   color: #5f6f89;
 }
@@ -2696,7 +2718,7 @@ const downloadPreviewedImage = async () => {
 }
 
 .clickable-attachment:focus-visible {
-  outline: 2px solid #1976d2;
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 
@@ -2719,7 +2741,7 @@ const downloadPreviewedImage = async () => {
   white-space: nowrap;
   font-size: 12px;
   line-height: 1;
-  color: #526173;
+  color: var(--text-2);
 }
 
 @media (max-width: 768px) {

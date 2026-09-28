@@ -26,7 +26,7 @@ def test_default_project_loads_legacy_module():
         "ops",
     ]
     assert context.manifest.frontend.agent_platform_layout == "scenes"
-    assert context.manifest.backend.tools == []
+    assert context.manifest.backend.tools  # project-scoped tools declared explicitly
     assert context.manifest.backend.fetchers_enabled is True
     assert context.manifest.backend.mode_prompt_files == {}
     assert context.manifest.knowledge.collections == []
@@ -77,12 +77,16 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "get_gems_image",
         "get_sentinel5p_image",
         "analyze_xuchang_upwind_permit_sources",
+        "query_xuchang_emission_inventory",
+        "query_airdata_platform",
+        "airdata_calc_report_summary",
+        "xuchang_station_catalog",
     ]
     assert context.manifest.backend.agent_mode_tools["expert"][-1] == (
-        "broadcast_social_users"
+        "view_skill"
     )
     assert context.manifest.backend.agent_mode_tools["report"][-1] == (
-        "broadcast_social_users"
+        "view_skill"
     )
     assert context.manifest.backend.fetchers == [
         "city_weather_history",
@@ -91,39 +95,29 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "xuchang_daily_attainment_forecast_fetcher",
         "xuchang_annual_attainment_forecast_fetcher",
         "xuchang_cnemc_station_hour_fetcher",
+        "xuchang_city_exceedance_fetcher",
         "xuchang_henan_month_year_accumulate_fetcher",
         "xuchang_nmc_hourly_forecast_fetcher",
         "xuchang_weather_com_daily_forecast_fetcher",
+        "xuchang_air_quality_forecast_fetcher",
+        "xuchang_weather_situation_evidence_fetcher",
         "xuchang_station_deviation_alert_fetcher",
         "xuchang_station_daily_pollution_fetcher",
+        "xuchang_transport_analysis_fetcher",
         "xuchang_zhongda_station_minute_fetcher",
         "xuchang_zhongda_station_hour_fetcher",
-        "xuchang_zhongda_station_day_fetcher",
         "xuchang_zhongda_city_hour_fetcher",
-        "xuchang_zhongda_city_day_fetcher",
         "gems_xuchang_image_fetcher",
     ]
+    # 广东数据源工具已收敛为项目专属（共享白名单不含、默认不注册），
+    # 许昌不再需要逐项禁用；仅保留非项目工具的显式禁用项。
     assert context.manifest.backend.disabled_tools == [
-        "query_gd_suncere",
-        "query_gd_suncere_city_hour",
-        "query_gd_suncere_station_hour_new",
-        "query_gd_suncere_station_day_new",
-        "query_gd_suncere_regional_comparison",
-        "query_gd_suncere_city_day",
-        "query_gd_suncere_district_day",
-        "query_gd_suncere_district_report",
-        "query_gd_suncere_report_compare",
-        "analyze_city_pollutant_rankings",
-        "get_5min_data",
         "get_observed_meteorology",
-        "query_city_standard_report",
-        "query_city_standard_yoy_report",
-        "query_station_standard_report",
-        "query_station_standard_yoy_report",
     ]
     assert context.manifest.scheduled_tasks == [
         "task_xuchang_station_deviation_alert",
         "task_xuchang_station_daily_source_report",
+        "task_xuchang_station_daily_source_analysis_report",
         "task_xuchang_weekly_weather_situation_report",
     ]
     assert context.manifest.knowledge.collections == ["xuchang"]
@@ -152,10 +146,12 @@ def test_xuchang_project_enables_only_declared_satellite_tools():
     assert not tools_module.is_project_tool_enabled(
         context, "satellite", "undeclared_satellite_tool"
     )
-    assert tools_module.is_project_tool_disabled(
+    # 项目专属工具不再依赖 disabled_tools 屏蔽：未声明即不注册。
+    assert not tools_module.is_project_tool_disabled(
         context, "analyze_city_pollutant_rankings"
     )
-    assert tools_module.is_project_tool_disabled(context, "get_5min_data")
+    assert not tools_module.is_project_tool_disabled(context, "get_5min_data")
+    assert not tools_module.is_project_tool_enabled(context, "legacy", "get_5min_data")
 
 
 def test_unknown_module_fails_closed(tmp_path: Path):

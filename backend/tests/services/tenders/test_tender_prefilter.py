@@ -48,6 +48,15 @@ def test_prefilter_rejects_real_noise_patterns_before_llm():
         assert decision.is_relevant is False
 
 
+def test_office_organization_does_not_reject_environment_service():
+    rule = TenderRelevanceFilter()
+    for title in ["生态环境保护委员会办公室空气质量保障项目中标公告",
+                  "市级机关办公区空气质量检测服务中标公告"]:
+        assert rule.prefilter_decision(TenderCandidate(title=title, url="test")) is None
+    assert rule.prefilter_decision(TenderCandidate(
+        title="生态环境局办公家具采购中标公告", url="test")).is_relevant is False
+
+
 def test_prefilter_rejects_generic_department_support_projects():
     relevance_filter = TenderRelevanceFilter()
     titles = [

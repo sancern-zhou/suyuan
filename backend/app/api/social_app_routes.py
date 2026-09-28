@@ -14,7 +14,8 @@ import mimetypes
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Literal
+from urllib.parse import quote
 
 import structlog
 from aiohttp import WSMsgType
@@ -467,11 +468,17 @@ def _report_payload(row) -> dict:
         mime = str(item.get("mime_type") or mimetypes.guess_type(name)[0] or "application/octet-stream")
         encoded = quote(row.report_id, safe="")
         content_url = f"/api/social/app/report-results/{encoded}/attachments/{index}"
-        attachments.append({"file_id": f"report-{row.report_id}-{index}", "filename": name, "name": name,
-                            "type": "image" if mime.startswith("image/") else "document",
-                            "file_type": "image" if mime.startswith("image/") else "document",
-                            "mime_type": mime, "url": content_url, "preview_url": content_url,
-                            "download_url": f"{content_url}?disposition=attachment"})
+        preview_url = content_url
+        if Path(name).suffix.lower() in {".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}:
+            preview_url = f"{content_url}/preview"
+        attachment_payload = {"file_id": f"report-{row.report_id}-{index}", "filename": name, "name": name,
+                              "type": "image" if mime.startswith("image/") else "document",
+                              "file_type": "image" if mime.startswith("image/") else "document",
+                              "mime_type": mime, "url": content_url, "preview_url": preview_url,
+                              "download_url": f"{content_url}?disposition=attachment"}
+        if preview_url != content_url:
+            attachment_payload["preview_mime_type"] = "application/pdf"
+        attachments.append(attachment_payload)
     payload["attachments"] = attachments
     return payload
 
@@ -595,6 +602,44 @@ async def app_report_attachment(report_id: str, attachment_index: int, dispositi
     filename = str(attachment.get("filename") or attachment.get("name") or target.name)
     media_type = str(attachment.get("mime_type") or mimetypes.guess_type(filename)[0] or "application/octet-stream")
     return FileResponse(target, media_type=media_type, filename=filename, content_disposition_type=disposition)
+
+
+@router.get("/report-results/{report_id}/attachments/{attachment_index}/preview")
+async def app_report_attachment_preview(
+    report_id: str,
+    attachment_index: int,
+    identity: AppIdentity = Depends(require_app_identity),
+) -> FileResponse:
+    """Serve a PDF preview for an Office report attachment."""
+    import asyncio
+
+    from app.api.upload_routes import _office_pdf_preview
+    from app.social.report_service import get_report
+
+    row = await get_report(identity.social_user_id, report_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="report_not_found")
+    attachments = row.attachments or []
+    if attachment_index < 0 or attachment_index >= len(attachments) or not isinstance(attachments[attachment_index], dict):
+        raise HTTPException(status_code=404, detail="report_attachment_not_found")
+    attachment = attachments[attachment_index]
+    target = Path(str(attachment.get("path") or "").strip()).expanduser().resolve()
+    try:
+        target.relative_to(get_data_registry().expanduser().resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="report_attachment_forbidden") from exc
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="report_attachment_missing")
+    if target.suffix.lower() not in {".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}:
+        raise HTTPException(status_code=404, detail="report_preview_not_supported")
+    cached = target.with_suffix(".preview.pdf")
+    if not cached.is_file():
+        preview = await asyncio.to_thread(_office_pdf_preview, str(target))
+        if preview is None:
+            raise HTTPException(status_code=503, detail="report_preview_generation_failed")
+        cached = preview
+    filename = str(attachment.get("filename") or attachment.get("name") or target.name)
+    return FileResponse(cached, media_type="application/pdf", filename=f"{Path(filename).stem}.pdf")
 
 
 @router.post("/broadcasts/{message_id}/read")

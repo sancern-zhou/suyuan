@@ -23,6 +23,7 @@ class RouterSpec:
 
 
 ROUTER_REGISTRY = [
+    RouterSpec("app.api.task_review_routes", description="Unified human task review", owner="core"),
     RouterSpec(
         "app.api.project_config_routes",
         description="Project runtime configuration",
@@ -36,6 +37,7 @@ ROUTER_REGISTRY = [
     ),
     RouterSpec("app.api.admin", description="Admin interface"),
     RouterSpec("app.api.agent", description="ReAct Agent API"),
+    RouterSpec("app.api.human_feedback_routes", description="Agent human feedback"),
     RouterSpec("app.api.routes", prefix="/api", description="Basic API routes"),
     RouterSpec("app.api.query_dashboard_routes", prefix="/api", description="Query dashboard API"),
     RouterSpec("app.api.knowledge_base_routes", prefix="/api", description="Knowledge Base API"),
@@ -46,6 +48,7 @@ ROUTER_REGISTRY = [
     RouterSpec("app.api.monitoring", description="LLM monitoring"),
     RouterSpec("app.api.image_routes", prefix="/api", description="Image cache API"),
     RouterSpec("app.api.session_routes", description="Session management"),
+    RouterSpec("app.api.workflow_routes", description="Agent workflow inspection and cancellation"),
     RouterSpec(
         "app.api.session_resource_routes",
         description="Session resource delivery",

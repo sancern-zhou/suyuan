@@ -16,7 +16,11 @@ class ListSessionResourcesTool(LLMTool):
             category=ToolCategory.QUERY,
             function_schema={
                 "name": "list_session_resources",
-                "description": "列出当前会话保存的资源引用，不读取资源正文",
+                "description": (
+                    "列出当前会话保存的资源引用，不读取资源正文。复用 ECharts 图表图片制作文档时，"
+                    "设置 logical_key=chart-image、tool_name=execute_echarts_python，"
+                    "取结果中的 file_path；只有需要完整 locator 时才设置 include_locator=true。"
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -25,10 +29,16 @@ class ListSessionResourcesTool(LLMTool):
                         "label": {"type": "string"},
                         "tool_name": {"type": "string"},
                         "run_id": {"type": "string"},
-                        "logical_key": {"type": "string"},
+                        "logical_key": {
+                            "type": "string",
+                            "description": "资源键，如 chart-image（ECharts 的 PNG 衍生图片）。",
+                        },
                         "query": {"type": "string", "description": "按名称、摘要或逻辑键搜索"},
                         "cursor": {"type": "string"},
-                        "include_locator": {"type": "boolean", "default": False},
+                        "include_locator": {
+                            "type": "boolean", "default": False,
+                            "description": "是否额外返回完整 locator；文件资源默认已返回 file_path。",
+                        },
                         "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
                     },
                     "required": [],

@@ -17,7 +17,6 @@ class StubEnhancer:
             "main_pollutant_branch": "pm",
             "target_station": {"station_name": "高值站"},
             "trajectory": {"status": "success", "file": "trajectory_analysis.json"},
-            "upwind_enterprises": {"status": "success", "file": "upwind_enterprises.json"},
             "component_analysis": {"status": "success", "branch": "pm", "outputs": []},
             "analysis_errors": [],
         }

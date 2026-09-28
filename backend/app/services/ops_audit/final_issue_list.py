@@ -60,17 +60,91 @@ def build_final_issue_list(
                 seen.add(key)
                 items.append(item)
 
+    semantic_excluded_items = _apply_semantic_fact_reviews(items, semantic_review_results or {})
     _assign_issue_ids(items)
+    _assign_issue_ids(semantic_excluded_items)
     return {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "purpose": "final_issue_list_for_reporting",
         "issue_count": len(items),
-        "affected_order_count": len({item["working_order_code"] for item in items if item.get("working_order_code")}),
+        "affected_order_count": len(
+            {item["working_order_code"] for item in items if item.get("working_order_code")}
+        ),
         "stage_counts": _count_by(items, "review_stage"),
         "component_counts": _count_present_by(items, "issue_component"),
         "rule_counts": _count_by(items, "rule_id"),
         "items": items,
+        "semantic_excluded_count": len(semantic_excluded_items),
+        "semantic_excluded_items": semantic_excluded_items,
+        "pending_semantic_reviews": [
+            {
+                key: result.get(key)
+                for key in ("review_item_id", "working_order_code", "semantic_focus", "conclusion")
+            }
+            for result in (semantic_review_results or {}).get("results", [])
+            if result.get("judgment") == "needs_followup"
+        ],
     }
+
+
+def _apply_semantic_fact_reviews(
+    items: list[dict[str, Any]],
+    results: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Apply semantic applicability conclusions to their linked fact items."""
+
+    excluded_groups: dict[str, dict[str, Any]] = {}
+    for result in results.get("results", []):
+        source = result.get("source_issue") or {}
+        if source.get("rule_id") != ABNORMAL_WITHOUT_EXPLANATION_RULE_ID:
+            continue
+        group = issue_link_metadata(source, working_order_code=result.get("working_order_code"))
+        group_id = group.get("issue_group_id")
+        if not group_id:
+            continue
+        assessment = result.get("abnormal_fact_assessment")
+        if result.get("judgment") == "cleared" and assessment == "not_applicable":
+            excluded_groups[group_id] = result
+            continue
+        for item in items:
+            if item.get("issue_group_id") != group_id or not is_abnormal_fact_rule(
+                item.get("rule_id")
+            ):
+                continue
+            item["remark_review_status"] = result.get("judgment")
+            item["semantic_conclusion"] = result.get("conclusion")
+            item["semantic_remark_review"] = result.get("remark_review")
+            disputed = assessment == "needs_verification"
+            incomplete = result.get("judgment") == "needs_followup"
+            if disputed or incomplete:
+                item["needs_manual_review"] = True
+                item["review_stage"] = "manual_evidence_review"
+                item["reason"] = result.get("abnormal_fact_reason") or result.get("conclusion")
+                item["review_status"] = "needs_followup"
+
+    excluded: list[dict[str, Any]] = []
+    retained: list[dict[str, Any]] = []
+    for item in items:
+        result = excluded_groups.get(str(item.get("issue_group_id") or ""))
+        if result and (
+            is_abnormal_fact_rule(item.get("rule_id"))
+            or item.get("rule_id") == ABNORMAL_WITHOUT_EXPLANATION_RULE_ID
+        ):
+            excluded.append(
+                {
+                    **item,
+                    "semantic_exclusion": {
+                        "assessment": "not_applicable",
+                        "reason": result.get("abnormal_fact_reason") or result.get("conclusion"),
+                        "review_item_id": result.get("review_item_id"),
+                        "confidence": result.get("confidence"),
+                    },
+                }
+            )
+        else:
+            retained.append(item)
+    items[:] = retained
+    return excluded
 
 
 def _should_exclude_issue(issue: dict[str, Any]) -> bool:
@@ -162,7 +236,9 @@ def _attach_range_decision_evidence(
     """Expose the range comparison without requiring consumers to parse evidence JSON."""
 
     values = evidence.get("out_of_spec_values")
-    range_value = values[0] if isinstance(values, list) and values and isinstance(values[0], dict) else {}
+    range_value = (
+        values[0] if isinstance(values, list) and values and isinstance(values[0], dict) else {}
+    )
     observed = evidence.get("observed_value")
     expected = evidence.get("expected_range")
     if not isinstance(observed, dict) or not isinstance(expected, dict):
@@ -173,7 +249,9 @@ def _attach_range_decision_evidence(
             "normalized_value": range_value.get("value"),
             "raw_unit": range_value.get("raw_unit"),
             "normalized_unit": range_value.get("unit"),
-            "unit_conversion_applied": _units_differ(range_value.get("raw_unit"), range_value.get("unit")),
+            "unit_conversion_applied": _units_differ(
+                range_value.get("raw_unit"), range_value.get("unit")
+            ),
         }
         expected = {
             "min": range_value.get("min"),
@@ -186,7 +264,9 @@ def _attach_range_decision_evidence(
     item["decision_evidence"] = {
         "brand": evidence.get("brand"),
         "field": evidence.get("field") or range_value.get("field") or item.get("rf_field"),
-        "field_label": evidence.get("field_label") or range_value.get("label") or item.get("field_label"),
+        "field_label": evidence.get("field_label")
+        or range_value.get("label")
+        or item.get("field_label"),
         "raw_value": observed.get("raw_value"),
         "normalized_value": observed.get("normalized_value"),
         "raw_unit": observed.get("raw_unit"),
@@ -446,7 +526,10 @@ def _effective_remark_judgment(
 ) -> str:
     if not entries:
         return "missing"
-    if all(entry["value"].strip() in {"/", "-", "--", "无", "未填", "不适用", "无备注", "暂无"} for entry in entries):
+    if all(
+        entry["value"].strip() in {"/", "-", "--", "无", "未填", "不适用", "无备注", "暂无"}
+        for entry in entries
+    ):
         return "placeholder"
     if semantic_judgment in {"missing", "placeholder", "unrelated", "contradictory", "valid"}:
         return semantic_judgment
@@ -469,9 +552,7 @@ def _attach_semantic_supplement(
     source_issue: dict[str, Any] | None = None,
 ) -> None:
     semantic_message = (
-        _specialized_semantic_source_message(source_issue)
-        if source_issue is not None
-        else None
+        _specialized_semantic_source_message(source_issue) if source_issue is not None else None
     ) or _semantic_problem_description(result)
     if semantic_message:
         item["semantic_message"] = semantic_message
@@ -522,7 +603,9 @@ def _flow_visual_issue_can_promote(issue: dict[str, Any]) -> bool:
     comparisons = evidence.get("comparisons")
     if not isinstance(comparisons, list):
         return False
-    mismatches = [item for item in comparisons if isinstance(item, dict) and item.get("status") == "mismatch"]
+    mismatches = [
+        item for item in comparisons if isinstance(item, dict) and item.get("status") == "mismatch"
+    ]
     if not mismatches:
         return False
     return all(_flow_visual_mismatch_has_strong_evidence(item) for item in mismatches)
@@ -673,10 +756,14 @@ def _rf_table_from_evidence(evidence: dict[str, Any]) -> str | None:
     if isinstance(comparisons, list):
         tables = sorted(
             {
-                str(comparison.get("current_table") or comparison.get("compare_table") or "").strip()
+                str(
+                    comparison.get("current_table") or comparison.get("compare_table") or ""
+                ).strip()
                 for comparison in comparisons
                 if isinstance(comparison, dict)
-                and str(comparison.get("current_table") or comparison.get("compare_table") or "").strip()
+                and str(
+                    comparison.get("current_table") or comparison.get("compare_table") or ""
+                ).strip()
             }
         )
         if len(tables) == 1:

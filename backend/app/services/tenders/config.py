@@ -15,7 +15,8 @@ DEFAULT_TENDER_KEYWORDS = [
     "环境监控中心",
     "污染源在线监控",
     "空气自动站",
-    "水质自动站",
+    "大气监测",
+    "大气污染防控",
     "VOCs走航",
     "噪声自动监测",
 ]
@@ -75,3 +76,4 @@ class TenderFetcherConfig:
     qianlima_base_url: str = "https://www.qianlima.com"
     qianlima_headless: bool = True
     enable_llm: bool = True
+    classification_only: bool = True

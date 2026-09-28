@@ -19,13 +19,15 @@ import structlog
 from app.services.ops_work_order_audit_engine import (
     OUTPUT_DIR,
 )
-from app.services.ops_audit.dataset_fetcher import DatasetFetchRequest, fetch_ops_audit_dataset as modular_fetch_ops_audit_dataset
+from app.services.ops_audit.dataset_fetcher import (
+    DatasetFetchRequest,
+    fetch_ops_audit_dataset as modular_fetch_ops_audit_dataset,
+)
 from app.services.ops_audit.rule_engine import (
     inspect_rule_engine,
     list_rule_catalog as modular_list_rule_catalog,
     run_rule_engine as modular_run_rule_engine,
 )
-from app.services.ops_audit.review_artifacts import apply_review_decisions
 
 logger = structlog.get_logger()
 
@@ -248,7 +250,9 @@ class OpsWorkOrderAuditConfig:
     """Configuration for a deterministic work order audit run."""
 
     limit: int = 200
-    order_statuses: Optional[list[str]] = None  # 工单状态列表，支持 Finish/Doing/Wait/Invalid，不填默认查所有状态工单
+    order_statuses: Optional[list[str]] = (
+        None  # 工单状态列表，支持 Finish/Doing/Wait/Invalid，不填默认查所有状态工单
+    )
     create_time_start: Optional[str] = None
     create_time_end: Optional[str] = None
     finish_time_start: Optional[str] = None
@@ -261,6 +265,8 @@ class OpsWorkOrderAuditConfig:
     output_dir: Optional[Path] = None
     input_dataset_path: Optional[Path] = None
     evidence_level: str = "summary"
+    enable_visual: bool = True
+    enable_non_visual: bool = True
     persist_dataset: bool = True
     persist_outputs: bool = True
 
@@ -306,6 +312,7 @@ def run_ops_audit_rules(
     persist_outputs: bool = True,
     evidence_level: str = "summary",
     enable_visual: bool = True,
+    enable_non_visual: bool = True,
 ) -> dict[str, Any]:
     """Run audit rules against an existing dataset and assemble final issues."""
     resolved_dataset_path = dataset_path.resolve()
@@ -316,6 +323,7 @@ def run_ops_audit_rules(
         persist_outputs=persist_outputs,
         evidence_level=evidence_level,
         enable_visual=enable_visual,
+        enable_non_visual=enable_non_visual,
     )
     result["dataset_path"] = str(resolved_dataset_path)
     result["calibration_questions"] = [
@@ -349,26 +357,9 @@ def inspect_ops_audit(
     )
 
 
-def review_ops_audit_issues(
-    final_issue_list_path: Path,
-    decisions: list[dict[str, Any]],
-    *,
-    expected_source_sha256: str,
-    reviewer: dict[str, Any] | None = None,
-    output_dir: Path | None = None,
+def run_ops_work_order_deterministic_audit(
+    config: Optional[OpsWorkOrderAuditConfig] = None,
 ) -> dict[str, Any]:
-    """Persist complete review decisions and build the report-only projection."""
-
-    return apply_review_decisions(
-        final_issue_list_path,
-        decisions,
-        expected_source_sha256=expected_source_sha256,
-        reviewer=reviewer,
-        output_dir=output_dir,
-    )
-
-
-def run_ops_work_order_deterministic_audit(config: Optional[OpsWorkOrderAuditConfig] = None) -> dict[str, Any]:
     """Run the complete deterministic audit chain.
 
     Chain:
@@ -387,6 +378,8 @@ def run_ops_work_order_deterministic_audit(config: Optional[OpsWorkOrderAuditCon
             output_dir=config.output_dir or OUTPUT_DIR,
             persist_outputs=config.persist_outputs,
             evidence_level="summary",
+            enable_visual=config.enable_visual,
+            enable_non_visual=config.enable_non_visual,
         )
         result["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         result["coverage"] = _dataset_coverage(dataset)
@@ -406,6 +399,8 @@ def run_ops_work_order_deterministic_audit(config: Optional[OpsWorkOrderAuditCon
         output_dir=config.output_dir or OUTPUT_DIR,
         persist_outputs=config.persist_outputs,
         evidence_level="summary",
+        enable_visual=config.enable_visual,
+        enable_non_visual=config.enable_non_visual,
     )
     result["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     result["audit_window"] = fetch_result.get("audit_window")
@@ -416,6 +411,7 @@ def run_ops_work_order_deterministic_audit(config: Optional[OpsWorkOrderAuditCon
         "audit_json": result.get("audit_result_path"),
         "semantic_candidates": result.get("semantic_candidates_path"),
         "semantic_review_tasks": result.get("semantic_review_tasks_path"),
+        "report_input": result.get("report_input_path"),
     }
     return result
 
@@ -430,8 +426,12 @@ def _count_field(records: list[dict[str, Any]], field: str) -> dict[str, int]:
 
 def _dataset_coverage(dataset: dict[str, Any]) -> dict[str, Any]:
     orders = dataset.get("orders", [])
-    create_times = sorted(str(order.get("CREATETIME")) for order in orders if order.get("CREATETIME"))
-    finish_times = sorted(str(order.get("FINISHTIME")) for order in orders if order.get("FINISHTIME"))
+    create_times = sorted(
+        str(order.get("CREATETIME")) for order in orders if order.get("CREATETIME")
+    )
+    finish_times = sorted(
+        str(order.get("FINISHTIME")) for order in orders if order.get("FINISHTIME")
+    )
     station_ids = {str(order.get("STATIONID")) for order in orders if order.get("STATIONID")}
     return {
         "query_info": dataset.get("query_info", {}),
@@ -494,7 +494,9 @@ def _finalize_rule_group(group: dict[str, dict[str, Any]]) -> list[dict[str, Any
         order_codes = item.pop("affected_order_codes")
         item["affected_order_count"] = len(order_codes)
         finalized.append(item)
-    return sorted(finalized, key=lambda item: (item["affected_order_count"], item["hit_count"]), reverse=True)
+    return sorted(
+        finalized, key=lambda item: (item["affected_order_count"], item["hit_count"]), reverse=True
+    )
 
 
 def _build_dataset_filter(config: OpsWorkOrderAuditConfig) -> WorkOrderDatasetFilter:
@@ -542,9 +544,17 @@ def _representative_issues(audit: dict[str, Any], limit: int) -> list[dict[str, 
     representatives = []
     seen_rules: set[str] = set()
     for record in audit.get("records", []):
-        if not (record.get("deterministic_issues") or record.get("candidate_issues") or record.get("issues")):
+        if not (
+            record.get("deterministic_issues")
+            or record.get("candidate_issues")
+            or record.get("issues")
+        ):
             continue
-        issue = (record.get("deterministic_issues") or record.get("candidate_issues") or record.get("issues"))[0]
+        issue = (
+            record.get("deterministic_issues")
+            or record.get("candidate_issues")
+            or record.get("issues")
+        )[0]
         rule_id = issue.get("rule_id")
         if rule_id in seen_rules and len(representatives) >= limit:
             continue
@@ -566,7 +576,9 @@ def _representative_issues(audit: dict[str, Any], limit: int) -> list[dict[str, 
     return representatives
 
 
-def _review_samples(audit: dict[str, Any], dataset: Optional[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+def _review_samples(
+    audit: dict[str, Any], dataset: Optional[dict[str, Any]], limit: int
+) -> list[dict[str, Any]]:
     business_review = _business_review_summary(audit)
     records = audit.get("records", [])
     samples = []
@@ -599,7 +611,9 @@ def _review_samples(audit: dict[str, Any], dataset: Optional[dict[str, Any]], li
     return samples
 
 
-def _build_inspection_item(record: dict[str, Any], dataset: Optional[dict[str, Any]], focus_rule_id: Optional[str] = None) -> dict[str, Any]:
+def _build_inspection_item(
+    record: dict[str, Any], dataset: Optional[dict[str, Any]], focus_rule_id: Optional[str] = None
+) -> dict[str, Any]:
     code = record.get("working_order_code")
     issues = record.get("issues", [])
     if focus_rule_id:
@@ -629,7 +643,9 @@ def _build_inspection_item(record: dict[str, Any], dataset: Optional[dict[str, A
         return item
 
     orders = [order for order in dataset.get("orders", []) if order.get("WORKINGORDERCODE") == code]
-    details = [detail for detail in dataset.get("details", []) if detail.get("WORKINGORDERCODE") == code]
+    details = [
+        detail for detail in dataset.get("details", []) if detail.get("WORKINGORDERCODE") == code
+    ]
     rf_rows = []
     for table, rows in dataset.get("rf_forms", {}).items():
         for row in rows:
