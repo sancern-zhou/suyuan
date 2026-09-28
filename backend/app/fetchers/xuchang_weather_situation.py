@@ -1,4 +1,4 @@
-"""Publish a prepared weather outlook evidence package on Monday morning."""
+"""Publish a prepared weather outlook evidence package every morning."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ class XuchangWeatherSituationEvidenceFetcher(DataFetcher):
     def __init__(self) -> None:
         super().__init__(name="xuchang_weather_situation_evidence_fetcher",
                          description="许昌未来天气与污染扩散报告证据快照",
-                         schedule="5 8 * * 1", version="1.0.0")
+                         schedule="45 8 * * *", version="1.0.0")
 
     async def fetch_and_store(self) -> dict:
         event = await build_weather_evidence_event()

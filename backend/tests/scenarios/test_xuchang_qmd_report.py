@@ -80,7 +80,18 @@ def test_qmd_writer_keeps_css_when_no_alerts(tmp_path, monkeypatch):
     result = write_qmd_report_from_evidence("manifest.json", {}, str(tmp_path / "review.qmd"))
     assert result["event_count"] == result["pollutant_count"] == 0
     assert [item["name"] for item in result["assets"]] == ["xuchang_map_review.css"]
-    assert "昨日未识别告警过程" in Path(result["source_qmd_path"]).read_text()
+    assert "昨日没有出现小时告警污染" in Path(result["source_qmd_path"]).read_text()
+
+
+def test_qmd_distinguishes_missing_hourly_data_from_no_process():
+    payload = _payload()
+    payload.update(events=[], maps=[], event_analysis={}, alert_source_status="data_unavailable")
+    qmd = build_qmd_report(payload)
+    assert "昨日小时数据不可用，无法判定持续快速抬升" in qmd
+    assert "专项分析缺少触发证据" in qmd
+    payload["alert_source_status"] = "insufficient_data"
+    qmd = build_qmd_report(payload)
+    assert "连续有效小时样本不足，无法判定" in qmd
 
 
 @pytest.mark.asyncio

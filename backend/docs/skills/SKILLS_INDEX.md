@@ -8,6 +8,6 @@
 - [示例2](routine_monitoring_analysis_expert.md) - 用于空气质量分析中的常规监测事实梳理、AQI 口径判断、污染物变化分析、区域同步性分析和风险提示。该 skill 专注于业务知识和分析逻辑，不绑定具体城市、文件名、报告模板或子 Agent 返回格式。
 - [天气形势与污染扩散分析](weather_analysis_expert.md) - 按参考 DOCX 的章节、表头和逐日卡片生成许昌未来7天详细分析及第8—15天展望，以表格和图片为主、短句为辅。Agent 自主研判天气过程和风险，最终展示结构必须遵守本技能。
 - [许昌市达标预测 Skill](xuchang_attainment_prediction.md) - 暂无描述
-- [许昌市昨日污染回顾分析 Skill](xuchang_station_daily_source_report.md) - 暂无描述
+- [许昌市昨日污染回顾分析 Skill](xuchang_station_daily_source_report.md) - 以站点小时浓度连续快速抬升过程为日报专项分析对象，分钟告警仅作匹配线索；使用 Fetcher 冻结的确定性证据生成 QMD 报告。
 - [许昌市城市超标污染溯源报告 Skill](xuchang_city_exceedance_source_report.md) - 面向许昌逐小时污染过程的独立溯源报告，以冻结证据包形成审慎的机制分析和核查建议。
 - [生态环境招投标市场分析](生态环境招投标市场分析.md) - 面向广东旭诚科技有限公司市场分析人员和大气环境产品经理的可追溯分析报告工作流，覆盖招投标市场研究、数据分析、洞察提炼和 Word/PPT/HTML/Excel 交付。

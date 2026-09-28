@@ -61,6 +61,7 @@ def load_report_payload_from_evidence(
         raise ValueError("Agent conclusion is required")
     return {
         "target_date": manifest["target_date"], "events": events, "maps": maps,
+        "alert_source_status": (manifest.get("alert_source") or {}).get("status"),
         "summary_text": agent_text.get("summary_text") or "", "event_analysis": analyses,
         "conclusion": agent_text["conclusion"], "method": event_data.get("method") or "",
         "provenance": provenance.get("source_provenance") or {},
@@ -160,6 +161,15 @@ def build_html_report(payload: dict[str, Any], *, amap_key: str) -> str:
     events = payload.get("events") or []
     maps = payload.get("maps") or []
     analysis = payload.get("event_analysis") or {}
+    gap_message = {
+        "data_unavailable": "昨日小时数据不可用，无法判定持续快速抬升。",
+        "insufficient_data": "昨日连续有效小时样本不足，无法判定持续快速抬升。",
+    }.get(payload.get("alert_source_status"))
+    default_summary = (
+        gap_message
+        if gap_message
+        else (f"昨日识别持续快速抬升小时过程 {len(events)} 次。" if events else "昨日没有出现小时告警污染。")
+    )
     rows = []
     by_station_pollutant: dict[tuple[str, str], list[str]] = {}
     station_names: dict[tuple[str, str], str] = {}
@@ -197,16 +207,19 @@ def build_html_report(payload: dict[str, Any], *, amap_key: str) -> str:
                 + "".join(segment_html)
             )
         else:
+            clues = event.get("minute_clues") or []
+            clue_times = sorted({time for clue in clues for time in clue.get("matched_times") or []})
+            clue_text = "；匹配分钟线索：" + "、".join(_time(time) for time in clue_times) if clue_times else "；无匹配分钟线索"
             facts = (
                 f"<p>过程跨度：{_text(_time(event.get('start_time')))}—{_text(_time(event.get('end_time')))}；"
                 f"浓度{proxy_note}：{_text(change)} {unit}；峰值时间：{_text(_time(event.get('peak_time')))}；"
                 f"事件内峰值较{_text(event.get('reference_kind') or '参考小时')}变化 {_number(event.get('peak_rise_absolute'))} {unit}"
                 f"（{_text(f'{ratio:g}%' if ratio is not None else '基数为零或缺测')}）；"
-                f"末值 {_number(event.get('end_concentration'))} {unit}；主导上风向：{_wind_text(event)}。</p>"
+                f"末值 {_number(event.get('end_concentration'))} {unit}；主导上风向：{_wind_text(event)}{_text(clue_text)}。</p>"
                 + _comparison_table(event, unit)
             )
         detail = (
-            f"<article><h4>告警时段｜{_text(_alert_times(event))}</h4>"
+            f"<article><h4>小时抬升时段｜{_text(_alert_times(event))}</h4>"
             + facts
             + "<p class='muted'>浓度为相应时段有效小时均值；对比采用双方同期有效小时，缺测时比较口径可能与整段均值不同。</p>"
             + f"<p class='analysis'>{_text(analysis.get(event['event_id'], ''))}</p></article>"
@@ -216,7 +229,8 @@ def build_html_report(payload: dict[str, Any], *, amap_key: str) -> str:
         by_station_pollutant.setdefault(group_key, []).append(detail)
     basic_table = ("<div class='table-scroll'><table class='facts-table'><thead><tr><th>站点</th><th>污染物</th><th>升高时段</th>"
                    "<th>浓度变化</th><th>升幅</th><th>绝对增量</th></tr></thead><tbody>" +
-                   "".join(rows) + "</tbody></table></div>") if rows else "<p>昨日未识别告警过程。</p>"
+                   "".join(rows) + "</tbody></table></div>") if rows else (
+                   f"<p>{_text(gap_message)}</p>" if gap_message else "<p>昨日没有出现小时告警污染。</p>")
     station_html = "".join(
         f"<section class='station'><h3>2.{i} "
         f"{_text(station_names[key] if station_names[key].endswith('站') else station_names[key] + '站')}"
@@ -228,11 +242,11 @@ def build_html_report(payload: dict[str, Any], *, amap_key: str) -> str:
         "<section class='main'><h1>许昌市空气质量回顾分析日报</h1>"
         f"<p>报告日期：{_text(payload.get('target_date'))}</p></section>"
         "<section class='main'><h2>一、持续升高基本情况</h2>"
-        f"<p>{_text(payload.get('summary_text') or f'昨日合并后识别告警过程 {len(events)} 次。')}</p>"
-        + basic_table + "<p class='muted'>同站同污染物告警重叠、接续或仅隔1个无告警小时合并为一次；表中列出实际告警时段，过程统计覆盖合并后的时间跨度。浓度变化及绝对增量为过程内峰值相对告警前一小时有效值的变化，该小时缺测时退用过程内首个有效小时值。CO 单位为 mg/m³，其余为 μg/m³。</p></section>"
+        f"<p>{_text(payload.get('summary_text') or default_summary)}</p>"
+        + basic_table + "<p class='muted'>仅将连续2或3小时严格升高、末值至少为初值1.5倍且达到污染物绝对增量门槛的小时过程列入；重叠命中窗口合并。分钟告警只作为同站同污染物的时间匹配线索，不单独触发。CO 单位为 mg/m³，其余为 μg/m³。</p></section>"
         + "<section class='main'><h2>二、持续升高原因分析</h2>"
         "<p class='muted'>风向为观测风来向。上风向候选仅表示方位与风向一致，不单独证明污染传输或来源。</p>"
-        + (station_html or "<p>昨日无可分析告警过程。</p>")
+        + (station_html or ("<p>昨日小时数据不足，专项分析缺少触发证据。</p>" if gap_message else "<p>昨日没有出现小时告警污染。</p>"))
         + "<h3>污染物时序变化地图</h3><p class='muted'>每种告警污染物一张真实高德地图；逐小时显示有效站点，红色光环标识当前小时处于告警过程的国控站。站点填色表示该污染物浓度，色阶在全天保持一致。地图仅展示观测事实。</p>"
         + map_html + "</section>"
         + f"<section class='main'><h2>四、结论</h2><p>{_text(payload.get('conclusion'))}</p></section>"

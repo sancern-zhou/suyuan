@@ -99,6 +99,15 @@ def test_html_report_keeps_chapter_text_static_and_maps_per_pollutant():
     assert "tbody tr:nth-child(even)" in report
 
 
+def test_html_report_describes_valid_day_without_hourly_alerts_plainly():
+    report = build_html_report({
+        "target_date": "2026-09-25", "events": [], "maps": [],
+        "alert_source_status": "not_found", "conclusion": "昨日没有出现小时告警污染。",
+    }, amap_key="test-key")
+    assert "昨日没有出现小时告警污染。" in report
+    assert "未命中" not in report
+
+
 def test_html_groups_station_pollutant_and_shows_each_interrupted_segment():
     first = _event()
     second_segment = _event("segment-b")

@@ -1,15 +1,12 @@
-"""Build the yesterday Xuchang daily review from Scenario-1 episodes.
+"""Build yesterday’s Xuchang review from station hourly rises and minute clues.
 
-The review is a read-only consumer of ``xuchang.station_deviation`` episodes:
-it never recomputes alerts, never republishes confirmed/requested events and
-never adds township stations to the alert baseline. It loads surrounding
-station hourly data (regular + township), computes the deterministic regional
-response per episode and writes one evidence package for the report Agent.
-"""
+The fetcher performs deterministic selection, regional analysis and evidence
+storage. The report Agent only reads compact frozen evidence."""
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections.abc import Callable, Iterable
 from datetime import date, datetime, time, timedelta
@@ -27,7 +24,9 @@ from app.integrations.xcai_station_sql import xcai_connection_string
 from app.scenarios.xuchang_daily_review.episodes import (
     DailyReviewAnalysisState,
     load_episode_anchors,
+    normalize_hour,
 )
+from app.scenarios.xuchang_daily_review.hourly_rise import SERIES_FIELDS, attach_minute_clues, detect_hourly_rises
 from app.scenarios.xuchang_daily_review.map_frames import build_pollutant_map_frames
 from app.scenarios.xuchang_daily_review.report_events import build_report_events
 from app.scenarios.xuchang_daily_review.regional_response import (
@@ -36,6 +35,7 @@ from app.scenarios.xuchang_daily_review.regional_response import (
     calculate_regional_response,
 )
 from app.scenarios.xuchang_daily_review.township_hourly import load_township_hourly_rows
+from app.scenarios.xuchang_station_deviation.service import STATION_ID_ALIASES, canonical_station_identity
 from app.scheduled_tasks.models import TaskEvent
 from app.utils.path_config import format_agent_path, get_data_registry
 
@@ -63,9 +63,8 @@ HENAN_CITY_NAMES = {
     "信阳市", "周口市", "驻马店市", "济源市",
 }
 XUCHANG_ERA5_GRID_POINT = (34.0, 113.75)
-SCHEMA_VERSION = "xuchang_station_daily_review/v7"
+SCHEMA_VERSION = "xuchang_station_daily_review/v8"
 REGIONAL_ANALYSIS_VERSION = "regional_response_with_township_coordinates/v2"
-WINDOW_EXTENSION_HOURS = 3
 
 
 def _number(value: Any) -> float | None:
@@ -148,8 +147,9 @@ def build_report_summary(
 ) -> dict[str, Any]:
     """Precompute compact, deterministic facts used by the report Agent."""
     station_stats: dict[str, dict[str, Any]] = {}
-    for station_id in sorted({str(row.get("station_id")) for row in station_rows if row.get("station_id")}):
-        rows = [row for row in station_rows if str(row.get("station_id")) == station_id]
+    daily_rows = [row for row in station_rows if (normalize_hour(row.get("data_time")) or datetime.min).date() == target_date]
+    for station_id in sorted({str(row.get("station_id")) for row in daily_rows if row.get("station_id")}):
+        rows = [row for row in daily_rows if str(row.get("station_id")) == station_id]
         values = [_number(row.get("pm25")) for row in rows]
         values = [value for value in values if value is not None]
         if not values:
@@ -242,6 +242,8 @@ def build_report_brief(result: dict[str, Any]) -> dict[str, Any]:
         "alert_source_status": summary["alert_source_status"],
         "episode_count": summary["episode_count"],
         "alert_list": summary["episodes"],
+        "hourly_data_coverage": result["input_data_summary"]["hourly_data_coverage"],
+        "hourly_quality_note": result["input_data_summary"]["hourly_quality_note"],
         "station_pm25_statistics": summary["station_pm25_statistics"],
         "regional_city_pm25_statistics": summary["regional_city_pm25_statistics"],
         "meteorology_intervals": {
@@ -257,8 +259,9 @@ def build_report_brief(result: dict[str, Any]) -> dict[str, Any]:
             "basic_situation": "report_brief.json:alert_list / episode_count",
             "station_and_city_pm25": "report_brief.json:station_pm25_statistics / regional_city_pm25_statistics",
             "weather_overview": "report_brief.json:meteorology_intervals",
-            "merged_alert_events": "event_brief.json:events[] (两个章节共用；alert_intervals 为实际告警段，跨短空档事件的 segments[] 保留各段升幅、风向和上风向乡镇站对比)",
-            "episode_windows_and_neighbors": "stage_brief.json:episodes[] (原始 episode 级辅助证据；按 episode_id 匹配)",
+            "merged_alert_events": "event_brief.json:events[] (两个章节共用；小时起点、峰值、升幅、分钟线索、上风向乡镇站对比均已计算)",
+            "hourly_selection": "hourly_rise_detection.json:规则版本、窗口统计及入选过程的小时观测；不含全日原始行",
+            "episode_windows_and_neighbors": "stage_brief.json:episodes[] (小时过程级辅助证据；按 episode_id 匹配)",
             "township_and_regional_response": "regional_responses.json:episodes[]",
             "hourly_weather_if_needed": "meteorology.json:meteorology / meteorology_era5",
             "spatial_and_transport_if_needed": "spatial_responses.json / transport_responses.json:episodes[]",
@@ -402,9 +405,9 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
     ) -> None:
         super().__init__(
             name="xuchang_station_daily_pollution_fetcher",
-            description="许昌昨日污染回顾：消费场景一episode并计算乡镇站区域响应与传输线索",
+            description="许昌昨日污染回顾：小时快速抬升过程为主，场景一分钟告警为线索",
             schedule="5 2 * * *",
-            version="4.0.0",
+            version="5.0.0",
         )
         self.now_factory = now_factory
         self.township_loader = township_loader
@@ -428,17 +431,18 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
                 """,
                 [start, end, *codes],
             )
-            return [
-                {
-                    "station_id": row[0], "name": row[1], "pm25": row[2],
-                    "pm10": row[3], "o3": row[4], "no2": row[5], "so2": row[6],
-                    "co": row[7], "data_time": row[8],
-                    "lat": STATION_COORDINATES.get(str(row[0]), (None, None))[0],
-                    "lon": STATION_COORDINATES.get(str(row[0]), (None, None))[1],
+            rows = []
+            for row in cursor.fetchall():
+                station_id, name = canonical_station_identity(row[0], row[1])
+                rows.append({
+                    "station_id": station_id, "name": name, "source_station_id": str(row[0]),
+                    "pm25": row[2], "pm10": row[3], "o3": row[4], "no2": row[5],
+                    "so2": row[6], "co": row[7], "data_time": row[8],
+                    "lat": STATION_COORDINATES.get(station_id, (None, None))[0],
+                    "lon": STATION_COORDINATES.get(station_id, (None, None))[1],
                     "station_type": "regular", "data_source": "zhongda_raw_hour",
-                }
-                for row in cursor.fetchall()
-            ]
+                })
+            return rows
         finally:
             connection.close()
 
@@ -513,18 +517,6 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
             evidence_root=registry / "xuchang_station_deviation_alerts",
         )
 
-    def _query_window(
-        self, anchors: list[dict[str, Any]], target_date: date
-    ) -> tuple[datetime, datetime]:
-        day_start = datetime.combine(target_date, time.min)
-        if not anchors:
-            return day_start, day_start + timedelta(days=1)
-        starts = [datetime.fromisoformat(anchor["episode_start"]) for anchor in anchors]
-        ends = [datetime.fromisoformat(anchor["episode_end"]) for anchor in anchors]
-        window_start = min(starts).replace(tzinfo=None) - timedelta(hours=WINDOW_EXTENSION_HOURS)
-        window_end = max(ends).replace(tzinfo=None) + timedelta(hours=WINDOW_EXTENSION_HOURS + 1)
-        return window_start, window_end
-
     async def _build_meteorology_block(
         self, result: dict[str, Any], target_date: date
     ) -> None:
@@ -583,12 +575,33 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
     async def fetch_and_store(self) -> dict[str, Any]:
         now = self.now_factory()
         target_date = now.astimezone(TZ_SHANGHAI).date() - timedelta(days=1)
-        anchors_result = self._episode_anchors(target_date)
-        anchors = anchors_result["episodes"]
-        query_start, query_end = self._query_window(anchors, target_date)
-        station_codes: set[str] = set(TARGET_STATION_CODES)
-        station_codes.update(str(anchor["station_id"]) for anchor in anchors)
+        day_start = datetime.combine(target_date, time.min)
+        # Three hours for the trigger, three more for regional background;
+        # keep the three post-event hours when observations are available.
+        query_start = day_start - timedelta(hours=6)
+        query_end = day_start + timedelta(days=1, hours=3)
+        station_codes: set[str] = set(TARGET_STATION_CODES) | set(STATION_ID_ALIASES)
         station_rows = self.load_rows(query_start, query_end, station_codes)
+        hourly_detection = detect_hourly_rises(station_rows, target_date)
+        anchors = hourly_detection["events"]
+        daily_station_row_count = sum((normalize_hour(row.get("data_time")) or datetime.min).date() == target_date for row in station_rows)
+        valid_hour_count = sum(hourly_detection["valid_target_hours"].values())
+        alert_status = (
+            "found" if anchors else "data_unavailable" if valid_hour_count == 0
+            else "insufficient_data" if hourly_detection["valid_windows"] == 0 else "not_found"
+        )
+        hourly_coverage = {
+            pollutant: {
+                "valid_station_hours": sum(count for key, count in hourly_detection["valid_target_hours"].items() if key.endswith(f":{pollutant}")),
+                "stations_with_data": sum(count > 0 for key, count in hourly_detection["valid_target_hours"].items() if key.endswith(f":{pollutant}")),
+            }
+            for pollutant in SERIES_FIELDS
+        }
+        anchors_result = self._episode_anchors(target_date)
+        previous_anchors_result = self._episode_anchors(target_date - timedelta(days=1))
+        source_anchors = {item["episode_id"]: item for item in previous_anchors_result["episodes"]}
+        source_anchors.update({item["episode_id"]: item for item in anchors_result["episodes"]})
+        attach_minute_clues(anchors, list(source_anchors.values()))
         regional_rows = self.load_regional_hourly_rows(target_date)
         city_daily_rows = self.load_city_daily_rows(target_date)
         city_daily_ranking = build_city_daily_ranking(city_daily_rows, target_date)
@@ -600,7 +613,9 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
         )
         episode_analyses = []
         for anchor in anchors:
-            analysis_version = f"{anchor['evidence_version']}:{REGIONAL_ANALYSIS_VERSION}"
+            clue_payload = {key: anchor[key] for key in ("minute_clues", "source_features", "source_episode_ids")}
+            clue_version = hashlib.sha256(json.dumps(clue_payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:12]
+            analysis_version = f"{anchor['evidence_version']}:{clue_version}:{REGIONAL_ANALYSIS_VERSION}"
             base_analysis_id = (
                 f"xuchang-daily-review-{target_date:%Y%m%d}-{anchor['episode_id']}"
             )
@@ -638,15 +653,19 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
             "target_date": target_date.isoformat(),
             "review_scope": {
                 "mode": "always",
-                "description": "无论昨日是否存在城市超标或场景一告警，均执行昨日数据抓取和确定性分析；告警仅作为事件锚点复用",
+                "description": "每天执行；仅以连续2或3小时严格上升且相对/绝对增量双达标的站点小时过程启动专项分析，分钟告警仅作同站同污染物线索",
             },
             "alert_source": {
-                "status": anchors_result["status"],
+                "status": alert_status,
+                "kind": "hourly_rise",
+                "rule_version": hourly_detection["rule_version"],
+                "scenario_one_status": anchors_result["status"],
                 "episode_source": anchors_result.get("episode_source"),
                 "accepted_alert_event_types": anchors_result["accepted_alert_event_types"],
                 "episode_state_path": anchors_result["state_path"],
-                "note": "昨日回顾只消费场景一告警episode，不重新判定告警",
+                "note": "小时原始浓度独立判定日回顾过程；场景一事件仅为分钟线索，不产生新的日回顾过程",
             },
+            "hourly_rise_detection": hourly_detection,
             "episodes": episode_analyses,
             "township_data": {
                 "status": township_result.get("status"),
@@ -662,7 +681,8 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
             # calculation scope only. The report Agent receives deterministic
             # summaries, not a large row-level payload.
             "input_data_summary": {
-                "regular_station_row_count": len(station_rows),
+                "regular_station_row_count": daily_station_row_count,
+                "hourly_data_coverage": hourly_coverage,
                 "township_station_row_count": len(township_result.get("rows") or []),
                 "regional_city_row_count": len(regional_rows),
                 "regular_station_count": len({str(row.get("station_id")) for row in station_rows if row.get("station_id")}),
@@ -670,6 +690,7 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
                 "township_coordinate_count": township_result.get("coordinate_count") or 0,
                 "regional_city_count": len({str(row.get("city")) for row in regional_rows if row.get("city")}),
                 "note": "原始小时行仅用于数据脚本确定性计算，不写入报告 Agent 证据包",
+                "hourly_quality_note": "小时表当前查询不含专门质控标识；判定排除缺测、负值、非有限值与冲突重复小时，若上游补充污染物标记则同时排除被标记值",
             },
             "report_summary": build_report_summary(
                 station_rows, regional_rows, episode_analyses, target_date
@@ -677,7 +698,7 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
             "source_features_summary": build_source_features_summary(episode_analyses),
             "city_daily_ranking": city_daily_ranking,
             "source_provenance": {
-                "alert_episodes": "场景一站点快速污染抬升告警episode（xuchang_station_deviation）",
+                "alert_episodes": "场景一站点快速污染抬升分钟episode，仅作小时过程线索",
                 "station_hourly": "中大源原始站点小时数据（dbo.dat_zhongda_station_hour）",
                 "township_hourly": "大气环境监测数据接口中台（v_t_h_src 乡镇小时-原始）",
                 "regional_city_hourly": "城市发布小时数据（dbo.CityAQIPublishHistory）",
@@ -688,14 +709,15 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
         }
         await self._build_meteorology_block(result, target_date)
 
-        # The same merged event list drives both the basic-situation count and
-        # the chapter-two narrative. Scenario-1 episodes remain source records.
+        # Both report chapters read the same selected hourly process list.
         report_events = build_report_events(
             episode_analyses, station_rows, township_result.get("rows") or [],
             result.get("meteorology") or [],
         )
         result["report_events"] = report_events
-        result["report_summary"]["raw_episode_count"] = result["report_summary"]["episode_count"]
+        minute_source_ids = {source_id for anchor in anchors for source_id in anchor["source_episode_ids"]}
+        result["report_summary"]["raw_episode_count"] = len(minute_source_ids)
+        result["report_summary"]["alert_source_status"] = alert_status
         result["report_summary"]["episode_count"] = report_events["event_count"]
         result["report_summary"]["episodes"] = [
             {key: event.get(key) for key in (
@@ -778,6 +800,16 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
             })
         report_facts = {"target_date": result["target_date"], **build_report_facts(agent_episodes)}
         component_payloads = {
+            "hourly_rise_detection": {
+                **{key: value for key, value in hourly_detection.items() if key != "events"},
+                "events": [{key: anchor.get(key) for key in (
+                    "episode_id", "station_id", "station_name", "target_pollutant",
+                    "rise_reference_time", "episode_start", "episode_end", "hourly_observations",
+                    "qualified_windows", "start_concentration", "end_concentration",
+                    "rise_absolute", "rise_percent", "minimum_absolute_rise", "duration_hours",
+                    "source_episode_ids", "minute_clues", "evidence_version",
+                )} for anchor in anchors],
+            },
             "report_brief": build_report_brief(result),
             "event_brief": {"target_date": result["target_date"], **report_events},
             "stage_brief": {"target_date": result["target_date"], **build_stage_brief(report_facts)},
@@ -836,20 +868,23 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
             "review_scope": result["review_scope"],
             "alert_source": result["alert_source"],
             "episode_count": report_events["event_count"],
-            "raw_episode_count": len(agent_episodes),
+            "raw_episode_count": len(minute_source_ids),
+            "hourly_process_count": report_events["event_count"],
+            "minute_clue_episode_count": len(minute_source_ids),
             "evidence_files": component_paths,
             "render_config_path": format_agent_path(render_config_path),
         }
         review_path.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
         )
-        analyzed = episode_analyses
         review_payload = {
             "city": "许昌市",
             "target_date": result["target_date"],
-            "alert_source_status": anchors_result["status"],
+            "alert_source_status": alert_status,
             "episode_count": report_events["event_count"],
-            "raw_episode_count": len(analyzed),
+            "raw_episode_count": len(minute_source_ids),
+            "hourly_process_count": report_events["event_count"],
+            "minute_clue_episode_count": len(minute_source_ids),
             "alert_event_anchors": [
                 f"{event['station_id']}({event['pollutant']},"
                 f"{event['start_time'][:16]}~{event['end_time'][:16]})"
@@ -874,8 +909,8 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
         logger.info(
             "xuchang_station_daily_pollution_completed",
             target_date=result["target_date"],
-            alert_source_status=anchors_result["status"],
+            alert_source_status=alert_status,
             merged_event_count=report_events["event_count"],
-            raw_episode_count=len(analyzed),
+            raw_episode_count=len(minute_source_ids),
         )
         return result

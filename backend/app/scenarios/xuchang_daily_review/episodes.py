@@ -1,10 +1,7 @@
-"""Read Scenario-1 episodes as the sole alert source for the daily review.
+"""Read Scenario-1 episodes as supporting minute-event clues for daily review.
 
-The review never recomputes alerts. It consumes the persistent episode state
-written by ``xuchang_station_deviation`` (fed by the ``alert_created`` and
-``episode_closed`` events) and resolves each episode's source evidence package
-for traceability.
-"""
+The hourly rise detector is the sole daily-review trigger. Scenario-1 state
+and source evidence provide precise clue times and provenance when available."""
 
 from __future__ import annotations
 
@@ -228,6 +225,18 @@ def build_anchor(
         "peak_time": peak_time,
         "peak_value": peak_value,
         "parent_alert_event_ids": list(episode.get("event_ids") or []),
+        "source_started_at": episode.get("started_at"),
+        "source_last_seen_at": episode.get("last_seen_at"),
+        "source_alert_times": [str(alert["occurred_at"]) for alert in alerts if alert.get("occurred_at")],
+        "source_alerts": [
+            {"event_id": alert.get("event_id"), "occurred_at": alert.get("occurred_at"),
+             "source_features": {
+                 key: alert["pollutant_source_features"].get(key)
+                 for key in ("status", "sample_count", "required_samples", "classification", "components", "flags", "reason")
+                 if key in alert["pollutant_source_features"]
+             } if isinstance(alert.get("pollutant_source_features"), dict) else None}
+            for alert in alerts if alert.get("occurred_at")
+        ],
         "hour_count": episode.get("hour_count"),
         "source_evidence_package_path": source_evidence.get("path"),
         "source_evidence_status": source_evidence.get("status"),

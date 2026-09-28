@@ -54,7 +54,7 @@ def _event_body(event: dict[str, Any], analysis: str) -> str:
     unit = "mg/m³" if pollutant == "CO" else "μg/m³"
     proxy = "（NO₂小时浓度代理）" if pollutant == "NOX" else ""
     segments = event.get("segments") or []
-    lines = [f"#### 告警时段｜{_alert_times(event)}", ""]
+    lines = [f"#### 小时抬升时段｜{_alert_times(event)}", ""]
     if segments:
         lines.extend([
             f"过程跨度：{_time(event.get('start_time'))}—{_time(event.get('end_time'))}；"
@@ -79,6 +79,8 @@ def _event_body(event: dict[str, Any], analysis: str) -> str:
     else:
         rise = event.get("peak_rise_percent")
         rise_text = f"{rise:g}%" if rise is not None else "基数为零或缺测"
+        clue_times = sorted({time for clue in event.get("minute_clues") or [] for time in clue.get("matched_times") or []})
+        clue_text = "、".join(_time(time) for time in clue_times) if clue_times else "无匹配分钟线索"
         lines.extend([
             f"过程跨度：{_time(event.get('start_time'))}—{_time(event.get('end_time'))}；"
             f"浓度{proxy}：{_number(event.get('start_concentration'))} → "
@@ -87,7 +89,7 @@ def _event_body(event: dict[str, Any], analysis: str) -> str:
             f"事件内峰值较{event.get('reference_kind') or '参考小时'}变化 "
             f"{_number(event.get('peak_rise_absolute'))} {unit}（{rise_text}）；"
             f"末值 {_number(event.get('end_concentration'))} {unit}；"
-            f"主导上风向：{_wind_text(event)}。", "",
+            f"主导上风向：{_wind_text(event)}；分钟线索：{clue_text}。", "",
             _neighbor_table(event, unit), "",
         ])
     lines.extend([
@@ -115,13 +117,22 @@ def build_qmd_report(
     events = payload.get("events") or []
     maps = payload.get("maps") or []
     date = str(payload.get("target_date") or "")
+    gap_message = {
+        "data_unavailable": "昨日小时数据不可用，无法判定持续快速抬升。",
+        "insufficient_data": "昨日连续有效小时样本不足，无法判定持续快速抬升。",
+    }.get(payload.get("alert_source_status"))
+    default_summary = (
+        gap_message
+        if gap_message
+        else (f"昨日识别持续快速抬升小时过程 {len(events)} 次。" if events else "昨日没有出现小时告警污染。")
+    )
     lines = [
         "---", f'title: "{TITLE}"', f'date: "{date}"',
         "format:", "  html:", "    toc: false", "    number-sections: false",
         "    page-layout: full", f"    css: assets/{css_name}",
         "  docx:", "    toc: false", "    number-sections: false", "---", "",
         f"报告日期：{date}", "", "## 一、持续升高基本情况", "",
-        str(payload.get("summary_text") or f"昨日合并后识别告警过程 {len(events)} 次。"), "",
+        str(payload.get("summary_text") or default_summary), "",
     ]
     if events:
         rows = []
@@ -134,11 +145,11 @@ def build_qmd_report(
             ))
         lines.extend([_table(COLS_BASIC, rows, {4, 5}), ""])
     else:
-        lines.extend(["昨日未识别告警过程。", ""])
+        lines.extend([gap_message or "昨日没有出现小时告警污染。", ""])
     lines.extend([
-        "同站同污染物告警重叠、接续或仅隔1个无告警小时合并为一次；表中列出实际告警时段，"
-        "过程统计覆盖合并后的时间跨度。浓度变化及绝对增量为过程内峰值相对告警前一小时有效值的变化，"
-        "该小时缺测时退用过程内首个有效小时值。CO 单位为 mg/m³，其余为 μg/m³。", "",
+        "仅将连续2或3小时严格升高、末值至少为初值1.5倍且达到污染物绝对增量门槛的小时过程列入；"
+        "重叠命中窗口合并，分钟告警只作为同站同污染物的时间匹配线索，不单独触发。"
+        "CO 单位为 mg/m³，其余为 μg/m³。", "",
         "## 二、持续升高原因分析", "",
         "风向为观测风来向。上风向候选仅表示方位与风向一致，不单独证明污染传输或来源。", "",
     ])
@@ -152,7 +163,7 @@ def build_qmd_report(
         for event in group:
             lines.append(_event_body(event, payload["event_analysis"][event["event_id"]]))
     if not events:
-        lines.extend(["昨日无可分析告警过程。", ""])
+        lines.extend(["昨日小时数据不足，专项分析缺少触发证据。" if gap_message else "昨日没有出现小时告警污染。", ""])
     if maps:
         lines.extend([
             '::: {.content-visible when-format="html"}',

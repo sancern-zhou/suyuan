@@ -90,6 +90,24 @@ def test_load_city_daily_rows_uses_publish_history_for_all_cities(monkeypatch):
     assert "dat_zhongda_city_day" not in ranking["source"]
 
 
+def test_load_hourly_rows_normalizes_legacy_station_id(monkeypatch):
+    connection = _FakeConnection([[
+        ("2398A", "旧站名", 20, 30, 40, 15, 5, 0.4, datetime(2026, 9, 25, 9)),
+    ]])
+    monkeypatch.setattr(
+        "app.fetchers.xuchang_station_daily_pollution.xcai_connection_string", lambda: "dsn=fake"
+    )
+    monkeypatch.setattr(
+        "app.fetchers.xuchang_station_daily_pollution.pyodbc",
+        types.SimpleNamespace(connect=lambda dsn, timeout=30: connection),
+    )
+    fetcher = XuchangStationDailyPollutionFetcher()
+    rows = fetcher.load_rows(datetime(2026, 9, 25, 8), datetime(2026, 9, 25, 10), {"2398A"})
+    assert rows[0]["station_id"] == "1003A"
+    assert rows[0]["source_station_id"] == "2398A"
+    assert rows[0]["name"] == "开发区"
+
+
 @pytest.fixture(autouse=True)
 def _use_file_episode_state(monkeypatch):
     monkeypatch.setenv("XUCHANG_STATION_EPISODE_STORAGE", "file")
@@ -98,9 +116,9 @@ def _use_file_episode_state(monkeypatch):
 def _hourly_rows():
     rows = []
     profiles = {
-        "XC001": (34.03, 113.85, {8: 20, 9: 20, 10: 20, 11: 60, 12: 55, 13: 50, 14: 45}),
-        "XC002": (34.10, 113.90, {8: 20, 9: 20, 10: 40, 11: 50, 12: 45, 13: 40, 14: 35}),
-        "XC003": (34.20, 114.00, {8: 20, 9: 20, 10: 40, 11: 45, 12: 40, 13: 35, 14: 30}),
+        "XC001": (34.03, 113.85, {8: 20, 9: 20, 10: 35, 11: 60, 12: 55, 13: 50, 14: 45}),
+        "XC002": (34.10, 113.90, {8: 20, 9: 20, 10: 20, 11: 50, 12: 45, 13: 40, 14: 35}),
+        "XC003": (34.20, 114.00, {8: 20, 9: 20, 10: 20, 11: 45, 12: 40, 13: 35, 14: 30}),
         "XC004": (34.05, 113.70, {8: 20, 9: 20, 10: 20, 11: 25, 12: 22, 13: 20, 14: 20}),
     }
     for station_id, (lat, lon, values) in profiles.items():
@@ -197,6 +215,26 @@ def _write_scenario_one_fixtures(registry):
     )
 
 
+def _make_scenario_one_minute_pm10(registry):
+    _write_scenario_one_fixtures(registry)
+    alerts_dir = registry / "xuchang_station_deviation_alerts"
+    state_path = alerts_dir / "episode_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    source = state["history"][0]
+    source.update({
+        "target_pollutant": "PM10", "measurement_granularity": "5min",
+        "alert_type": "station_deviation", "started_at": "2026-08-05T10:35:00+08:00",
+        "last_seen_at": "2026-08-05T10:35:00+08:00",
+    })
+    state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    evidence_path = next((alerts_dir / "20260805").glob("*.evidence.json"))
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    evidence["alerts"][0]["alert"].update({
+        "target_pollutant": "PM10", "occurred_at": "2026-08-05T10:35:00+08:00",
+    })
+    evidence_path.write_text(json.dumps(evidence, ensure_ascii=False), encoding="utf-8")
+
+
 class _TaskService:
     def __init__(self):
         self.events = []
@@ -243,7 +281,7 @@ def _build_fetcher(monkeypatch, tmp_path, task_service, township_loader=_townshi
 
 
 @pytest.mark.asyncio
-async def test_fetcher_consumes_scenario_one_episodes(monkeypatch, tmp_path):
+async def test_fetcher_selects_hourly_rise_without_scenario_one_clue(monkeypatch, tmp_path):
     _write_scenario_one_fixtures(tmp_path)
     monkeypatch.setattr("app.fetchers.xuchang_station_daily_pollution.settings.amap_public_key", "public-test-key")
     task_service = _TaskService()
@@ -262,7 +300,7 @@ async def test_fetcher_consumes_scenario_one_episodes(monkeypatch, tmp_path):
     evidence = json.loads(
         (tmp_path / "xuchang_station_daily_reviews" / "20260805" / "manifest.json").read_text(encoding="utf-8")
     )
-    assert evidence["schema_version"] == "xuchang_station_daily_review/v7"
+    assert evidence["schema_version"] == "xuchang_station_daily_review/v8"
     assert evidence["alert_source"]["status"] == "found"
     assert "cities" not in evidence
     assert "meteorology_chart_paths" not in evidence
@@ -280,13 +318,15 @@ async def test_fetcher_consumes_scenario_one_episodes(monkeypatch, tmp_path):
     assert "episodes" not in evidence
     assert evidence["episode_count"] == 1
     files = evidence["evidence_files"]
-    assert {"report_brief", "event_brief", "stage_brief", "episodes", "station_responses", "regional_responses", "temporal_responses", "spatial_responses", "transport_responses", "report_facts", "pollutant_maps"} <= files.keys()
+    assert {"hourly_rise_detection", "report_brief", "event_brief", "stage_brief", "episodes", "station_responses", "regional_responses", "temporal_responses", "spatial_responses", "transport_responses", "report_facts", "pollutant_maps"} <= files.keys()
     assert "map_hourly" not in files
     day_dir = tmp_path / "xuchang_station_daily_reviews" / "20260805"
     brief_path = day_dir / "report_brief.json"
     brief = json.loads(brief_path.read_text(encoding="utf-8"))
     assert brief["episode_count"] == 1
-    assert brief["alert_list"][0]["station_name"] == "目标站"
+    assert brief["alert_list"][0]["station_name"] == "站点XC001"
+    assert brief["hourly_data_coverage"]["PM2.5"]["stations_with_data"] == 4
+    assert "质控" in brief["hourly_quality_note"]
     assert brief["meteorology_intervals"]["nmc"]["record_count"] == 2
     assert "event_brief.json" in brief["field_guide"]["merged_alert_events"]
     assert brief_path.stat().st_size < 20_000
@@ -294,20 +334,18 @@ async def test_fetcher_consumes_scenario_one_episodes(monkeypatch, tmp_path):
     stage_brief = json.loads(stage_path.read_text(encoding="utf-8"))
     assert stage_brief["episode_count"] == 1
     assert isinstance(stage_brief["episodes"][0]["nearby_township_examples"], list)
-    assert stage_brief["episodes"][0]["target_response"]["during"]["mean"] == 60.0
+    assert stage_brief["episodes"][0]["target_response"]["during"]["mean"] == 47.5
     assert stage_path.stat().st_size < 100_000
     episode = json.loads((day_dir / "episodes.json").read_text(encoding="utf-8"))["episodes"][0]
     assert episode["analysis_status"] == "new"
-    assert episode["episode_id"].startswith("xuchang-station-deviation-episode-")
+    assert episode["episode_id"].startswith("hourly-rise-")
     assert "spatial_map" not in episode
     regional = json.loads((day_dir / "regional_responses.json").read_text(encoding="utf-8"))["episodes"][0]
     transport = json.loads((day_dir / "transport_responses.json").read_text(encoding="utf-8"))["episodes"][0]
     assert regional["regional_co_rise"]["classification"] == "regional_co_rise"
-    assert transport["transport_consistency"]["conclusion"] == "neighbor_lead_rise"
+    assert transport["transport_consistency"]["conclusion"] == "regional_co_rise"
     source_detail = json.loads((day_dir / "source_features.json").read_text(encoding="utf-8"))["episodes"][0]
-    assert source_detail["source_features"] == [{
-        "status": "calculated", "sample_count": 12, "classification": "biomass_burning",
-    }]
+    assert source_detail["source_features"] == []
     station_response = json.loads((day_dir / "station_responses.json").read_text(encoding="utf-8"))["episodes"][0]
     township_responses = [
         item for item in station_response["stations"]
@@ -322,12 +360,34 @@ async def test_fetcher_consumes_scenario_one_episodes(monkeypatch, tmp_path):
     assert "source_evidence_package_path" not in episode
     facts = json.loads((day_dir / "report_facts.json").read_text(encoding="utf-8"))
     assert facts["episode_count"] == 1
-    assert facts["episodes"][0]["transport_conclusion"] == "neighbor_lead_rise"
+    assert facts["episodes"][0]["transport_conclusion"] == "regional_co_rise"
     event_data = json.loads((day_dir / "event_brief.json").read_text(encoding="utf-8"))
     assert event_data["event_count"] == 1
-    assert event_data["events"][0]["source_episode_ids"] == [episode["episode_id"]]
+    assert event_data["events"][0]["source_episode_ids"] == []
+    assert event_data["events"][0]["minute_clue_count"] == 0
+    assert event_data["events"][0]["hourly_observations"] == [
+        {"time": "2026-08-05T09:00:00", "concentration": 20.0},
+        {"time": "2026-08-05T10:00:00", "concentration": 35.0},
+        {"time": "2026-08-05T11:00:00", "concentration": 60.0},
+    ]
     assert event_data["events"][0]["peak_rise_absolute"] == 40
-    assert event_data["events"][0]["reference_time"] == "2026-08-05T10:00:00"
+    assert event_data["events"][0]["reference_time"] == "2026-08-05T09:00:00"
+    selection = json.loads((day_dir / "hourly_rise_detection.json").read_text(encoding="utf-8"))
+    assert selection["event_count"] == 1
+    assert selection["events"][0]["qualified_windows"]
+    assert len(selection["events"][0]["hourly_observations"]) == 3
+    assert "full_day_rows" not in selection
+    from app.scenarios.xuchang_daily_review.qmd_report import write_qmd_report_from_evidence
+
+    built = write_qmd_report_from_evidence(
+        str(day_dir / "manifest.json"),
+        {"summary_text": "昨日发现一次小时抬升。", "conclusion": "继续观察。",
+         "event_analysis": {event_data["events"][0]["event_id"]: "结合区域事实继续核查。"}},
+        str(tmp_path / "actual_review.qmd"),
+    )
+    qmd = (tmp_path / "actual_review.qmd").read_text(encoding="utf-8")
+    assert built["event_count"] == 1
+    assert "小时抬升时段" in qmd and "结合区域事实继续核查" in qmd
     map_data = json.loads((day_dir / "pollutant_maps.json").read_text(encoding="utf-8"))
     assert map_data["pollutant_count"] == 1
     assert map_data["maps"][0]["pollutant"] == "PM2.5"
@@ -341,14 +401,12 @@ async def test_fetcher_consumes_scenario_one_episodes(monkeypatch, tmp_path):
     source_features = json.loads(
         (tmp_path / "xuchang_station_daily_reviews" / "20260805" / "source_features.json").read_text(encoding="utf-8")
     )
-    assert source_features["source_features_summary"]["record_count"] == 1
-    assert source_features["source_features_summary"]["classification_counts"] == {
-        "biomass_burning": 1,
-    }
+    assert source_features["source_features_summary"]["record_count"] == 0
+    assert source_features["source_features_summary"]["classification_counts"] == {}
 
 
 @pytest.mark.asyncio
-async def test_fetcher_without_scenario_one_events_records_not_found(monkeypatch, tmp_path):
+async def test_fetcher_without_scenario_one_events_still_selects_hourly_rise(monkeypatch, tmp_path):
     task_service = _TaskService()
     fetcher = _build_fetcher(monkeypatch, tmp_path, task_service)
 
@@ -356,18 +414,80 @@ async def test_fetcher_without_scenario_one_events_records_not_found(monkeypatch
 
     assert [event.event_type for event in task_service.events] == [DAILY_REVIEW_EVENT_TYPE]
     payload = task_service.events[0].payload
-    assert payload["alert_source_status"] == "not_found"
-    assert payload["episode_count"] == 0
-    assert result["episodes"] == []
+    assert payload["alert_source_status"] == "found"
+    assert payload["episode_count"] == 1
+    assert result["episodes"]
     evidence = json.loads(
         (tmp_path / "xuchang_station_daily_reviews" / "20260805" / "manifest.json").read_text(encoding="utf-8")
     )
-    assert evidence["episode_count"] == 0
+    assert evidence["episode_count"] == 1
     assert "episodes" not in evidence
     summary = json.loads((tmp_path / "xuchang_station_daily_reviews" / "20260805" / "summary.json").read_text(encoding="utf-8"))
-    assert summary["report_summary"]["alert_source_status"] == "not_found"
+    assert summary["report_summary"]["alert_source_status"] == "found"
     assert "meteorology_chart_paths" not in evidence
     assert "city_mean_meteorology_chart_path" not in evidence
+
+
+@pytest.mark.asyncio
+async def test_minute_only_alert_does_not_trigger_daily_process(monkeypatch, tmp_path):
+    _make_scenario_one_minute_pm10(tmp_path)
+    task_service = _TaskService()
+    fetcher = _build_fetcher(monkeypatch, tmp_path, task_service)
+    monkeypatch.setattr(fetcher, "load_rows", lambda start, end, codes: [
+        {**row, "pm25": 20, "pm10": 20} for row in _hourly_rows()
+    ])
+    result = await fetcher.fetch_and_store()
+    assert result["alert_source"]["scenario_one_status"] == "found"
+    assert result["report_events"]["event_count"] == 0
+    assert task_service.events[0].payload["alert_source_status"] == "not_found"
+    day_dir = tmp_path / "xuchang_station_daily_reviews" / "20260805"
+    assert json.loads((day_dir / "event_brief.json").read_text())["events"] == []
+
+
+@pytest.mark.asyncio
+async def test_matching_minute_clue_is_frozen_with_hourly_process(monkeypatch, tmp_path):
+    _make_scenario_one_minute_pm10(tmp_path)
+    task_service = _TaskService()
+    fetcher = _build_fetcher(monkeypatch, tmp_path, task_service)
+    monkeypatch.setattr(fetcher, "load_rows", lambda start, end, codes: [
+        {**row, "pm10": row["pm25"], "pm25": 20} for row in _hourly_rows()
+    ])
+    result = await fetcher.fetch_and_store()
+    assert result["report_events"]["event_count"] == 1
+    assert result["report_summary"]["raw_episode_count"] == 1
+    day_dir = tmp_path / "xuchang_station_daily_reviews" / "20260805"
+    event = json.loads((day_dir / "event_brief.json").read_text())["events"][0]
+    assert event["pollutant"] == "PM10"
+    assert event["minute_clue_count"] == 1
+    assert event["minute_clues"][0]["matched_times"] == ["2026-08-05T10:35:00"]
+    assert event["minute_clues"][0]["event_ids"] == ["ev-11"]
+    assert event["source_episode_ids"] == [result["episodes"][0]["alert_anchor"]["source_episode_ids"][0]]
+    assert json.loads((day_dir / "source_features.json").read_text())["source_features_summary"]["record_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_missing_hourly_data_has_explicit_status(monkeypatch, tmp_path):
+    task_service = _TaskService()
+    fetcher = _build_fetcher(monkeypatch, tmp_path, task_service)
+    monkeypatch.setattr(fetcher, "load_rows", lambda start, end, codes: [])
+    result = await fetcher.fetch_and_store()
+    assert result["report_events"]["event_count"] == 0
+    assert task_service.events[0].payload["alert_source_status"] == "data_unavailable"
+    day_dir = tmp_path / "xuchang_station_daily_reviews" / "20260805"
+    assert json.loads((day_dir / "report_brief.json").read_text())["alert_source_status"] == "data_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_sparse_hourly_data_is_inconclusive_not_clean_day(monkeypatch, tmp_path):
+    task_service = _TaskService()
+    fetcher = _build_fetcher(monkeypatch, tmp_path, task_service)
+    monkeypatch.setattr(fetcher, "load_rows", lambda start, end, codes: [
+        row for row in _hourly_rows() if row["data_time"].hour == 11
+    ])
+    result = await fetcher.fetch_and_store()
+    assert result["hourly_rise_detection"]["valid_windows"] == 0
+    assert result["report_events"]["event_count"] == 0
+    assert task_service.events[0].payload["alert_source_status"] == "insufficient_data"
 
 
 @pytest.mark.asyncio

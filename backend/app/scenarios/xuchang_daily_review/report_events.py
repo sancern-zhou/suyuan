@@ -1,4 +1,7 @@
-"""Deterministic facts for chapter two of the Xuchang daily review."""
+"""Build deterministic report facts from selected hourly processes.
+
+The older Scenario-1 grouping remains for compatibility with historical
+evidence, while new daily hourly-rise anchors retain their own boundaries."""
 
 from __future__ import annotations
 
@@ -60,11 +63,10 @@ def build_report_events(
     analyses: list[dict[str, Any]], regular_rows: list[dict[str, Any]],
     township_rows: list[dict[str, Any]], weather_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Merge same-station/pollutant alerts across at most one unalerted hour.
+    """Project hourly process anchors into bounded report facts.
 
-    An event is anchored to Scenario-1 alerts. No new alerts are inferred from
-    station concentrations. Overlapping, next-hour, and one-hour-interrupted
-    episodes join one event; actual alert intervals are retained separately.
+    Historical Scenario-1 anchors retain their legacy gap-merge behavior;
+    daily_hourly_rise anchors are already selected and must remain separate.
     """
     groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for analysis in analyses:
@@ -79,7 +81,9 @@ def build_report_events(
     for (station_id, pollutant), candidates in groups.items():
         candidates.sort(key=lambda item: (item["start"], item["end"]))
         for candidate in candidates:
-            if grouped and grouped[-1]["station_id"] == station_id and grouped[-1]["pollutant"] == pollutant and candidate["start"] <= grouped[-1]["end"] + timedelta(hours=MAX_UNALERTED_GAP_HOURS + 1):
+            if (grouped and candidate["analysis"].get("alert_anchor", {}).get("alert_type") != "daily_hourly_rise"
+                and grouped[-1]["station_id"] == station_id and grouped[-1]["pollutant"] == pollutant
+                and candidate["start"] <= grouped[-1]["end"] + timedelta(hours=MAX_UNALERTED_GAP_HOURS + 1)):
                 grouped[-1]["end"] = max(grouped[-1]["end"], candidate["end"])
                 grouped[-1]["analyses"].append(candidate["analysis"])
             else:
@@ -170,12 +174,23 @@ def build_report_events(
                        "station_name": station_name, "pollutant": group["pollutant"],
                        "measurement_pollutant": "NO2" if group["pollutant"] == "NOX" else group["pollutant"],
                        "start_time": group["start"].isoformat(), "end_time": group["end"].isoformat(),
-                       "source_episode_ids": [item.get("episode_id") for item in group["analyses"]],
+                       "source_episode_ids": (
+                           list(anchor.get("source_episode_ids") or [])
+                           if anchor.get("alert_type") == "daily_hourly_rise"
+                           else [item.get("episode_id") for item in group["analyses"]]
+                       ),
+                       "hourly_rise_rule": anchor.get("rule_version"),
+                       "duration_hours": anchor.get("duration_hours"),
+                       "minimum_absolute_rise": anchor.get("minimum_absolute_rise"),
+                       "qualified_windows": anchor.get("qualified_windows") or [],
+                       "hourly_observations": anchor.get("hourly_observations") or [],
+                       "minute_clues": anchor.get("minute_clues") or [],
+                       "minute_clue_count": len(anchor.get("minute_clues") or []),
                        "alert_intervals": [{"start_time": item["start"].isoformat(), "end_time": item["end"].isoformat()} for item in alert_intervals],
                        "alert_hour_count": len(alert_hours), "gap_hour_count": len(hours) - len(alert_hours),
                        "valid_target_hours": len(target_values),
                        "reference_time": reference_time.isoformat() if reference_time else None,
-                       "reference_kind": "告警前一小时" if preceding_value is not None else "事件内首个有效小时",
+                       "reference_kind": ("过程起点小时" if anchor.get("alert_type") == "daily_hourly_rise" else "告警前一小时") if preceding_value is not None else "事件内首个有效小时",
                        "start_concentration": first_value, "end_concentration": last_value,
                        "peak_concentration": peak_value, "peak_time": peak_hour.isoformat() if peak_hour else None,
                        "peak_rise_absolute": rise,
@@ -193,5 +208,15 @@ def build_report_events(
                 segment.pop("event_id")
                 segments.append(segment)
             events[-1]["segments"] = segments
-    return {"event_count": len(events), "events": events,
-            "method": "同一国控站同一污染物，场景一告警 episode 重叠、下一小时接续或中间仅隔1个无告警小时即合并；不跨站或污染物合并。保留实际告警时段，过程统计覆盖合并后的时间跨度。升幅=过程内峰值-告警前一小时有效值；该小时缺测则用过程内首个有效小时值。"}
+    hourly_mode = all(
+        (analysis.get("alert_anchor") or {}).get("alert_type") == "daily_hourly_rise"
+        for analysis in analyses
+    )
+    method = (
+        "日回顾只选连续2或3小时逐小时严格升高、末值至少为初值1.5倍且满足污染物绝对增量门槛的过程；"
+        "同站同污染物重叠命中窗口合并。场景一分钟告警仅在同站同污染物且时间落入小时过程时作为线索关联，"
+        "不单独触发。升幅=过程末值减起点小时值。"
+        if hourly_mode else
+        "历史场景一告警按同站同污染物合并相邻 episode，保留实际告警段与无告警空档。"
+    )
+    return {"event_count": len(events), "events": events, "method": method}

@@ -1,4 +1,4 @@
-"""Episode-anchored deterministic regional response and transport evidence.
+"""Hourly-process-anchored regional response and transport evidence.
 
 Implements 昨日污染回顾乡镇站区域响应与传输确定性计算方案 §4-§8:
 before/during/after windows, per-station co-rise, temporal lead/lag,
@@ -25,8 +25,8 @@ WINDOW_BEFORE_HOURS = 3
 WINDOW_AFTER_HOURS = 3
 WINDOW_MINIMUM_SAMPLES = {"before": 2, "during": 1, "after": 2}
 WINDOW_POLICY_NOTE = (
-    "before/after 背景窗至少需要 2 个有效小时样本；during 窗为 episode 本身"
-    "（场景一 0.5h 不活跃关闭策略下通常为单个告警小时），至少 1 个有效小时样本。"
+    "before/after 背景窗至少需要 2 个有效小时样本；during 窗为入选小时抬升过程，"
+    "至少 1 个有效小时样本；区域响应阈值独立于日回顾触发阈值。"
 )
 THRESHOLD_VERSION = REGIONAL_RESPONSE_PROFILE
 REGIONAL_RISE_THRESHOLDS: dict[str, dict[str, float]] = {
@@ -563,9 +563,21 @@ def calculate_regional_response(
             "episode_status": anchor.get("episode_status"),
             "alert_type": anchor.get("alert_type"),
             "measurement_granularity": anchor.get("measurement_granularity"),
+            "rise_reference_time": anchor.get("rise_reference_time"),
+            "start_concentration": anchor.get("start_concentration"),
+            "end_concentration": anchor.get("end_concentration"),
+            "rise_absolute": anchor.get("rise_absolute"),
+            "rise_percent": anchor.get("rise_percent"),
+            "duration_hours": anchor.get("duration_hours"),
+            "minimum_absolute_rise": anchor.get("minimum_absolute_rise"),
+            "qualified_windows": anchor.get("qualified_windows", []),
+            "hourly_observations": anchor.get("hourly_observations", []),
+            "source_episode_ids": anchor.get("source_episode_ids", []),
+            "minute_clues": anchor.get("minute_clues", []),
+            "rule_version": anchor.get("rule_version"),
         },
         "data_sources": {
-            "regular_stations": "dbo.dat_zhongda_station_hour（场景一告警基线同源）",
+            "regular_stations": "dbo.dat_zhongda_station_hour（小时抬升判定同源）",
             "township_stations": "大气环境监测数据接口中台 v_t_h_src（乡镇小时-原始）",
             "provincial_stations": "not_integrated",
         },
