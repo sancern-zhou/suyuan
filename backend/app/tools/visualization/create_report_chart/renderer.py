@@ -932,7 +932,14 @@ def _draw_dual_axis_line(ax, title: str, data: Dict[str, Any], options: Dict[str
         axis_name = str(item.get("axis") or item.get("y_axis") or ("right" if index == 2 else "left")).lower()
         axis_name = "right" if axis_name in {"right", "secondary", "y2"} else "left"
         target_ax = right_ax if axis_name == "right" else ax
-        target_ax.plot(positions, values, marker="o", linewidth=_line_width(options), label=name)
+        target_ax.plot(
+            positions,
+            values,
+            marker="o",
+            linewidth=_line_width(options),
+            color=SERIES_COLORS[(index - 1) % len(SERIES_COLORS)],
+            label=name,
+        )
         axis_counts[axis_name] += 1
         normalized_series.append({"name": name, "values": values})
     tick_metadata = _apply_x_tick_labels(ax, positions, labels, options)

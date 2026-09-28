@@ -13,10 +13,12 @@ from app.tools.visualization.create_report_chart.tool import (
 from app.tools.visualization.create_report_chart.renderer import (
     _cache_figure,
     _create_figure,
+    _draw_dual_axis_line,
     _draw_line,
     _position_legends_below_plot,
     select_chinese_font,
 )
+from app.tools.visualization.create_report_chart.theme import SERIES_COLORS
 from config.settings import settings
 
 
@@ -901,6 +903,29 @@ async def test_stacked_area_renders_multi_pollutant_contribution_trend():
     assert result["data"]["metadata"]["series_count"] == 3
     assert result["data"]["metadata"]["stack_mode"] == "area"
     assert Path(result["visuals"][0]["local_path"]).exists()
+
+
+def test_dual_axis_line_uses_distinct_series_colors_across_axes():
+    fig, ax = plt.subplots()
+    try:
+        _draw_dual_axis_line(
+            ax,
+            "PM2.5与风速",
+            {
+                "labels": ["09-22", "09-23"],
+                "series": [
+                    {"name": "PM2.5", "values": [59, 65], "axis": "left"},
+                    {"name": "风速", "values": [1.62, 1.60], "axis": "right"},
+                ],
+            },
+            {"legend": True},
+        )
+        left_color = ax.lines[0].get_color()
+        right_color = fig.axes[1].lines[0].get_color()
+        assert (left_color, right_color) == SERIES_COLORS[:2]
+        assert left_color != right_color
+    finally:
+        plt.close(fig)
 
 
 @pytest.mark.asyncio
