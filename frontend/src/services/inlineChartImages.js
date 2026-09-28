@@ -5,11 +5,15 @@ export function inlineChartImages(finalMessage, messages, resources, content = '
     .filter(resource => resource.resource_key === 'chart-image' && resource.status === 'active')
     .map(resource => [resource.visual_id, resource]))
   const seen = new Set()
+  // Restored messages omit bulky tool-result visuals. Explicit placeholders
+  // still identify their image through the session resource catalog.
+  const referencedResources = [...String(content).matchAll(/\[\[chart:([A-Za-z0-9_-]{1,100})\]\]/g)]
+    .map(([, visualId]) => imageByVisualId.get(visualId))
   const processMessages = getUnifiedProcessMessages(finalMessage, messages)
   const hasReportPackage = processMessages.some(message =>
     message.data?.tool_name === 'create_report_package'
   )
-  return processMessages
+  const processResources = processMessages
     .filter(message => getMessageType(message) === 'tool_result'
       && message.data?.tool_name !== 'create_report_package'
       && Array.isArray(message.data?.result?.visuals))
@@ -23,6 +27,7 @@ export function inlineChartImages(finalMessage, messages, resources, content = '
       && !(resource?.content_url && content.includes(resource.content_url))
     )
     .map(({ resource }) => resource)
+  return [...referencedResources, ...processResources]
     .filter(resource => {
       if (!resource?.content_url || seen.has(resource.resource_id)) return false
       seen.add(resource.resource_id)
