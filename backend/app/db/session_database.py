@@ -15,6 +15,7 @@ from app.db.database import (
     DATABASE_URL,
     _normalize_async_database_url,
 )
+from app.db.pool_config import pool_int
 
 import os
 
@@ -25,8 +26,8 @@ SESSION_DATABASE_URL = _normalize_async_database_url(
 session_engine = create_async_engine(
     SESSION_DATABASE_URL,
     echo=False,
-    pool_size=20,
-    max_overflow=30,
+    pool_size=pool_int("SESSION_DATABASE_POOL_SIZE", 20),
+    max_overflow=pool_int("SESSION_DATABASE_MAX_OVERFLOW", 30),
     pool_pre_ping=True,
     pool_recycle=300,
     pool_timeout=120,

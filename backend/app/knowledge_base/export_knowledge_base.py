@@ -21,6 +21,7 @@ from uuid import uuid4
 import aiofiles
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from app.db.pool_config import pool_int
 from sqlalchemy.orm import declarative_base
 
 # Qdrant
@@ -72,8 +73,8 @@ class KnowledgeBaseExporter:
         self.db_engine = create_async_engine(
             DATABASE_URL,
             echo=False,
-            pool_size=5,
-            max_overflow=10,
+            pool_size=pool_int("KNOWLEDGE_EXPORT_DATABASE_POOL_SIZE", 5),
+            max_overflow=pool_int("KNOWLEDGE_EXPORT_DATABASE_MAX_OVERFLOW", 10),
             pool_pre_ping=True,
             pool_recycle=300
         )
