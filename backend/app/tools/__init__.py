@@ -128,6 +128,9 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     registry = ToolRegistry(registry_name="global")
     context = context or load_project_context(settings.project_id)
 
+    from app.tools.social.ask_user_question_tool import AskUserQuestionTool
+    registry.register(AskUserQuestionTool(), priority=5)
+
     # ========================================
     # Query Tools（查询工具）
     # ========================================

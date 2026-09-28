@@ -549,7 +549,7 @@ class OpenAICompatibleTenderLLMClient:
             client_kwargs["base_url"] = self.base_url
         client_kwargs["timeout"] = float(os.getenv("TENDER_LLM_TIMEOUT_SECONDS", "120"))
         client_kwargs["max_retries"] = 0
-        if getattr(self, "provider", "") == "go":
+        if getattr(self, "provider", "") in {"go", "go2"}:
             client_kwargs["default_headers"] = {
                 "User-Agent": os.getenv("OPENCODE_GO_USER_AGENT", "suyuan-agent/1.0"),
                 "x-opencode-session": os.getenv("TENDER_LLM_OPENCODE_SESSION")

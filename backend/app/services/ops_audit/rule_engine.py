@@ -43,6 +43,7 @@ def run_rule_engine(
     evidence_level: str = "summary",
     enable_visual: bool = True,
     enable_non_visual: bool = True,
+    visual_rule_id: str | None = None,
 ) -> dict[str, Any]:
     """Run selected audit rule families, classify issues, and persist outputs."""
 
@@ -53,6 +54,7 @@ def run_rule_engine(
         enable_visual=enable_visual,
         enable_non_visual=enable_non_visual,
         visual_evidence_dir=output_dir / "visual_evidence" / "multipoint_curves",
+        visual_rule_id=visual_rule_id,
     )
     audit["evidence"] = build_dataset_evidence(dataset, audit=audit, evidence_level=evidence_level)
     semantic_candidates = build_semantic_candidates(audit)
@@ -115,6 +117,7 @@ def run_rule_engine(
         "audit_info": audit.get("audit_info", {}),
         "enable_visual": enable_visual,
         "enable_non_visual": enable_non_visual,
+        "visual_rule_id": visual_rule_id,
         "semantic_candidate_count": semantic_candidates.get("candidate_count", 0),
         "semantic_review_task_count": semantic_review_tasks.get("task_count", 0),
         "semantic_review_result_count": semantic_review_results.get("result_count", 0),

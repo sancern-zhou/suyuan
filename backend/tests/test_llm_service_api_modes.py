@@ -467,6 +467,30 @@ def test_opencode_go_headers_require_session_and_user_agent(monkeypatch):
     assert after_headers["x-opencode-session"].startswith("suyuan-")
 
 
+def test_second_opencode_go_plan_uses_go_gateway_headers(monkeypatch):
+    service = LLMService()
+    monkeypatch.setattr(settings, "go2_api_key", "go2-key")
+    monkeypatch.setattr(settings, "go2_base_url", "https://go2.example/v1")
+    monkeypatch.setattr(settings, "go2_model", "deepseek-v4.1-flash")
+    monkeypatch.setattr(settings, "go2_api_mode", "chat_completions")
+    service.provider = "go2"
+    service._load_provider_config()
+
+    assert service.api_key == "go2-key"
+    assert service.base_url == "https://go2.example/v1"
+    assert service.model == "deepseek-v4.1-flash"
+    assert service.api_mode == "chat_completions"
+
+    _, default_headers = service._get_request_config()
+    assert default_headers["x-opencode-session"].startswith("suyuan-")
+    assert default_headers["User-Agent"] == "suyuan-agent/1.0"
+
+    with service.use_opencode_session("sess-go2"):
+        _, headers = service._get_request_config()
+        assert headers["x-opencode-session"] == "sess-go2"
+        assert headers["User-Agent"] == "suyuan-agent/1.0"
+
+
 def test_non_go_providers_do_not_send_opencode_headers():
     service = LLMService()
 
@@ -481,11 +505,18 @@ def test_ocr_configuration_follows_global_bailian_model(monkeypatch):
     from app.services.ops_audit.semantic import ocr_adapter
 
     monkeypatch.setenv("BAILIAN_API_KEY", "bailian-key")
-    monkeypatch.setenv("BAILIAN_VISION_MODEL", "retired-vision-model")
     monkeypatch.setattr(settings, "bailian_model", "global-auto-model")
 
-    assert ocr_adapter._resolve_bailian_api_key() == "bailian-key"
-    assert ocr_adapter._resolve_bailian_model("flow_visual") == "global-auto-model"
+    class _Service:
+        provider = "bailian"
+        model = "global-auto-model"
+        base_url = "https://example.test/anthropic"
+        api_key = "bailian-key"
+
+    monkeypatch.setattr(ocr_adapter, "settings", settings)
+    monkeypatch.setattr("app.services.llm_service.llm_service", _Service())
+    assert ocr_adapter._resolve_target("flow_visual")["api_key"] == "bailian-key"
+    assert ocr_adapter._resolve_target("flow_visual")["model"] == "global-auto-model"
 
 
 def test_visual_runtimes_use_expected_ocr_backend():

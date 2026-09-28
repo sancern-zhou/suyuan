@@ -54,6 +54,9 @@ _llm_opencode_session_id: ContextVar[Optional[str]] = ContextVar(
 # OpenCode Go 客户端标识：专属 User-Agent，替代通用 httpx SDK 标识
 OPENCODE_GO_USER_AGENT = "suyuan-agent/1.0"
 
+# OpenCode Go 订阅 provider：go 为原有套餐，go2 为第二个套餐（可配置更高优先级）
+OPENCODE_GO_PROVIDERS = frozenset({"go", "go2"})
+
 
 def _rotate_model_tier_candidates(tier: str, candidates: list):
     """Rotate a tier chain so concurrent KB calls do not share one primary."""
@@ -1206,6 +1209,14 @@ class LLMService:
             "model_env": "GO_MODEL",
             "model_default": "deepseek-v4.1-flash",
         },
+        # 第二个 OpenCode Go 订阅套餐；在模型链中排在 go 之前即可获得更高优先级
+        "go2": {
+            "url_env": "GO2_BASE_URL",
+            "url_default": "https://opencode.ai/zen/go/v1",
+            "key_env": "GO2_API_KEY",
+            "model_env": "GO2_MODEL",
+            "model_default": "deepseek-v4.1-flash",
+        },
         # 智谱 GLM Coding Plan（OpenAI + Anthropic 兼容协议）
         "glm": {
             "url_env": "GLM_BASE_URL",
@@ -1569,19 +1580,19 @@ class LLMService:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_agnes_model_fallback_to_env", model=self.model)
 
-        elif self.provider == "go":
-            self.api_mode = getattr(settings, "go_api_mode", "chat_completions")
+        elif self.provider in OPENCODE_GO_PROVIDERS:
+            self.api_mode = getattr(settings, f"{self.provider}_api_mode", "chat_completions")
             self.base_url = (
-                settings.go_base_url
+                getattr(settings, f"{self.provider}_base_url", None)
                 or os.getenv(config["url_env"])
                 or config["url_default"]
             )
             self.api_key = (
-                settings.go_api_key
+                getattr(settings, f"{self.provider}_api_key", None)
                 or os.getenv(config["key_env"])
                 or ""
             )
-            self.model = settings.go_model
+            self.model = getattr(settings, f"{self.provider}_model", None)
             if not self.model:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_go_model_fallback_to_env", model=self.model)
@@ -1810,7 +1821,7 @@ class LLMService:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         # OpenCode Go 网关要求：专属 User-Agent + 稳定会话头（缺失会被拒绝）
-        if self.provider == "go":
+        if self.provider in OPENCODE_GO_PROVIDERS:
             headers["User-Agent"] = OPENCODE_GO_USER_AGENT
             headers["x-opencode-session"] = (
                 _llm_opencode_session_id.get() or f"suyuan-{os.getpid()}"

@@ -139,7 +139,25 @@
 
       <!-- Agent消息（最终答案） -->
       <!-- 移除 v-once 以支持流式更新 -->
-      <div v-else-if="getMessageType(message) === 'final'" class="message agent-message final">
+      <div
+        v-else-if="getMessageType(message) === 'final'"
+        class="message agent-message final"
+        :class="{
+          'question-handoff-message': getStructuredQuestionForFinal(message, messages),
+          'question-followup-message': followsStructuredQuestion(message, messages)
+        }"
+      >
+        <div v-if="getStructuredQuestionForFinal(message, messages)" class="question-handoff">
+          <div class="question-handoff-title">需要你的选择</div>
+          <div
+            v-for="(question, questionIndex) in getStructuredQuestionForFinal(message, messages).questions"
+            :key="questionIndex"
+            class="question-handoff-item"
+          >
+            <span class="question-handoff-index">{{ questionIndex + 1 }}.</span>
+            <span>{{ question.question }}</span>
+          </div>
+        </div>
         <!-- 统一折叠区域：显示该final之前的所有过程消息 -->
         <details
           v-if="getProcessItemsForFinal(message, messages).length > 0"
@@ -180,7 +198,7 @@
           </div>
         </details>
 
-        <div class="message-content" v-if="useMarkdown">
+        <div class="message-content" v-if="!getStructuredQuestionForFinal(message, messages) && useMarkdown">
           <!-- 【Vue 3 最佳实践】使用 key 强制重新渲染 -->
           <MarkdownRenderer
             :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}-${message.renderVersion || 0}`"
@@ -188,7 +206,7 @@
             :streaming="message.streaming === true"
           />
         </div>
-        <div class="message-content" v-else>{{ renderedMessageContent(message) }}</div>
+        <div class="message-content" v-else-if="!getStructuredQuestionForFinal(message, messages)">{{ renderedMessageContent(message) }}</div>
         <div v-if="!message.streaming && inlineImagesForFinal(message).length" class="message-content inline-chart-images">
           <MarkdownRenderer
             v-for="image in inlineImagesForFinal(message)"
@@ -363,8 +381,10 @@ import MarkdownRenderer from './MarkdownRenderer.vue'
 import { inlineChartImages, renderChartPlaceholders } from '@/services/inlineChartImages.js'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import {
+  followsStructuredQuestion,
   getExecutingProcessMessages,
   getMessageType,
+  getStructuredQuestionForFinal,
   getUnifiedProcessMessages as collectUnifiedProcessMessages,
   isProcessMessage,
   isWaitingForAgentResponse
@@ -2202,6 +2222,40 @@ const downloadPreviewedImage = async () => {
       }
     }
   }
+}
+
+.agent-message.final.question-handoff-message,
+.agent-message.final.question-followup-message {
+  width: fit-content;
+  max-width: min(100%, 860px);
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.question-handoff {
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+
+.question-handoff-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.question-handoff-item {
+  display: flex;
+  gap: 6px;
+  color: var(--text-2);
+}
+
+.question-handoff-index {
+  flex: none;
+}
+
+.question-handoff-message .process-collapse {
+  margin: 4px 0 0;
 }
 
 // 【新增】AI回复用时统计

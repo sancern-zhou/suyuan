@@ -20,6 +20,8 @@ ATTACHMENT_PROFILE = load_attachment_requirements()
 PM_MEMBRANE_VISUAL_RULE_TABLES = {"RF_Q_PM10RUNSTATUSCHECK", "RF_Q_PM25RUNSTATUSCHECK"}
 PM_TEMP_PRESSURE_VISUAL_RULE_TABLES = {"RF_Q_PMPRESSURE"}
 FLOW_PHOTO_WATERMARK_TIME_RULE_ID = "ATTACHMENT_FLOW_PHOTO_WATERMARK_TIME_MISMATCH"
+CLEANING_PHOTO_TIME_RULE_ID = "ATTACHMENT_TW_CLEANING_PHOTO_TIME_OUTSIDE_MAINTENANCE"
+HALFYEAR_STATION_PHOTO_DATE_RULE_ID = "ATTACHMENT_HY_STATION_PHOTO_DATE_OUTSIDE_MAINTENANCE"
 O3_TRANSFER_SIX_POINT_RULE_ID = "ATTACHMENT_O3_TRANSFER_SIX_POINT_REVIEW"
 FLOW_VISUAL_RULE_TABLES = {
     "RF_TW_PmFlowCalibrate",
@@ -40,6 +42,7 @@ OCR_RULE_IDS = {
     "ATTACHMENT_PM_TEMP_PRESSURE_VALUE_MISMATCH",
     O3_TRANSFER_SIX_POINT_RULE_ID,
     FLOW_PHOTO_WATERMARK_TIME_RULE_ID,
+    HALFYEAR_STATION_PHOTO_DATE_RULE_ID,
     "RF_REFERENCE_FLOWMETER_CERT_DATE_MISMATCH",
 }
 
@@ -74,6 +77,43 @@ def check_attachment_ocr_quality(
         run_flow_visual_task(task, issues)
 
 
+def build_halfyear_station_photo_tasks(
+    order: dict[str, Any],
+    forms: list[tuple[str, dict[str, Any]]],
+    details: list[dict[str, Any]],
+    attachments: list[dict[str, Any]],
+    wo_commonfiles: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if (
+        order.get("DDWORKINGORDERTYPE") != "Check"
+        or order.get("MAINTENANCETYPE") != "HalfYear"
+        or not any(table == "RF_HY_STATIONDEVICEMAINTAIN" and not form.get("_query_error") for table, form in forms)
+    ):
+        return []
+    windows = []
+    for detail in details:
+        if detail.get("PROCESSSTEP") != "CheckOrder":
+            continue
+        start = _parse_datetime_value(detail.get("PROCESSSTARTDATETIME"))
+        end = _parse_datetime_value(detail.get("PROCESSENDDATETIME"))
+        if start and end and start <= end:
+            windows.append((start.date(), end.date()))
+    if not windows:
+        return []
+    items = _attachment_items(attachments, wo_commonfiles)
+    photos = [
+        item for item in items
+        if str(item.get("typecode") or "").upper().startswith("RF_HY_STATIONDEVICEMAINTAIN")
+        and "photo" in set(item.get("types", []))
+        and item.get("source_path")
+    ]
+    max_items = max(1, int(os.getenv("OPS_AUDIT_OCR_MAX_ATTACHMENTS_PER_ORDER", "12") or "12"))
+    return [
+        {"task_type": "halfyear_station_photo_date", "order": order, "item": item, "windows": windows}
+        for item in photos[:max_items]
+    ]
+
+
 def build_flow_visual_tasks(
     order: dict[str, Any],
     forms: list[tuple[str, dict[str, Any]]],
@@ -94,7 +134,9 @@ def build_flow_visual_tasks(
     flow_items = [
         item
         for item in prioritized_items
-        if "photo" in set(item.get("types", [])) and _is_flow_visual_candidate(item)
+        if "photo" in set(item.get("types", []))
+        and _is_flow_visual_candidate(item)
+        and _monthly_flow_photo_brand_allowed(forms, item)
     ]
     tasks = []
     for item in flow_items[:max_items]:
@@ -107,10 +149,148 @@ def build_flow_visual_tasks(
 def run_flow_visual_task(task: dict[str, Any], issues: list[Issue]) -> None:
     """Run one pre-filtered flow-photo vision task."""
 
+    if task.get("task_type") == "two_week_cleaning_photo_time":
+        _check_two_week_cleaning_photo_time(task, issues)
+        return
+    if task.get("task_type") == "halfyear_station_photo_date":
+        _check_halfyear_station_photo_date(task, issues)
+        return
     if task.get("task_type") == "reference_flowmeter_certificate":
         _check_reference_flowmeter_certificate(task["order"], task["forms"], task, issues)
         return
     _check_flow_visual_values(task["order"], task["forms"], task["item"], issues)
+
+
+def build_two_week_cleaning_photo_tasks(
+    order: dict[str, Any],
+    forms: list[tuple[str, dict[str, Any]]],
+    details: list[dict[str, Any]],
+    attachments: list[dict[str, Any]],
+    wo_commonfiles: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if (
+        order.get("DDWORKINGORDERTYPE") != "Check"
+        or order.get("MAINTENANCETYPE") != "TwoWeek"
+        or not any(table == "RF_TW_CleanCuttingHead" and not form.get("_query_error") for table, form in forms)
+    ):
+        return []
+
+    windows = []
+    for detail in details:
+        if detail.get("PROCESSSTEP") != "CheckOrder":
+            continue
+        start = _parse_datetime_value(detail.get("PROCESSSTARTDATETIME"))
+        end = _parse_datetime_value(detail.get("PROCESSENDDATETIME"))
+        if start and end and start <= end:
+            windows.append((start, end))
+    if not windows:
+        return []
+
+    items = _attachment_items(attachments, wo_commonfiles)
+    photos = [
+        item for item in items
+        if str(item.get("typecode") or "").upper().startswith("RF_TW_CLEANCUTTINGHEAD")
+        and "photo" in set(item.get("types", []))
+        and item.get("source_path")
+    ]
+    max_items = max(1, int(os.getenv("OPS_AUDIT_OCR_MAX_ATTACHMENTS_PER_ORDER", "12") or "12"))
+    return [
+        {"task_type": "two_week_cleaning_photo_time", "order": order, "item": item, "windows": windows}
+        for item in photos[:max_items]
+    ]
+
+
+def _check_two_week_cleaning_photo_time(task: dict[str, Any], issues: list[Issue]) -> None:
+    item = task["item"]
+    result = extract_attachment_json(
+        str(item["source_path"]),
+        provider="flow_visual",
+        task="two_week_cleaning_photo_time",
+        prompt=(
+            "读取这张清洗维护照片上现场打卡水印中的拍摄日期和时刻。"
+            "只根据图片可见水印，不根据文件名、上传时间或其他文字猜测。"
+            "看不清时返回null。只输出JSON："
+            '{"watermark_datetime":"YYYY-MM-DD HH:MM:SS或null",'
+            '"watermark_text":"原始水印文字或空","watermark_confidence":0到1}'
+        ),
+    )
+    if result.get("status") != "success":
+        return
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    confidence = _float_or_none(data.get("watermark_confidence"))
+    captured_at = _parse_watermark_datetime(data)
+    if confidence is None or confidence < 0.85 or captured_at is None:
+        return
+    if any(start <= captured_at <= end for start, end in task["windows"]):
+        return
+
+    evidence = {
+        "working_order_code": task["order"].get("WORKINGORDERCODE"),
+        "rf_table": "RF_TW_CleanCuttingHead",
+        "filename": item.get("filename"),
+        "source": item.get("source_path"),
+        "watermark_text": data.get("watermark_text"),
+        "captured_at": captured_at.isoformat(sep=" "),
+        "watermark_confidence": confidence,
+        "maintenance_windows": [
+            {"start": start.isoformat(sep=" "), "end": end.isoformat(sep=" ")}
+            for start, end in task["windows"]
+        ],
+    }
+    add_issue(
+        issues,
+        CLEANING_PHOTO_TIME_RULE_ID,
+        "附件时间一致性",
+        "中",
+        "attachment.RF_TW_CleanCuttingHead.watermark_datetime",
+        f"两周清洗照片打卡时间{captured_at.strftime('%Y-%m-%d %H:%M:%S')}不在维护时段内",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
+
+
+def _check_halfyear_station_photo_date(task: dict[str, Any], issues: list[Issue]) -> None:
+    item = task["item"]
+    result = extract_attachment_json(
+        str(item["source_path"]),
+        provider="flow_visual",
+        task="halfyear_station_photo_date",
+        prompt=(
+            "读取站点设备维护照片中现场打卡水印的日期。只根据图片可见水印识别，"
+            "不根据文件名、上传时间或其他文字猜测；看不清时返回null。只输出JSON："
+            '{"watermark_date":"YYYY-MM-DD或null","watermark_text":"原始水印文字或空",'
+            '"watermark_confidence":0到1}'
+        ),
+    )
+    if result.get("status") != "success":
+        return
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    confidence = _float_or_none(data.get("watermark_confidence"))
+    captured = _parse_date_value(data.get("watermark_date")) or _parse_date_value(data.get("watermark_text"))
+    if confidence is None or confidence < 0.85 or captured is None:
+        return
+    if any(start <= captured <= end for start, end in task["windows"]):
+        return
+    evidence = {
+        "working_order_code": task["order"].get("WORKINGORDERCODE"),
+        "rf_table": "RF_HY_STATIONDEVICEMAINTAIN",
+        "filename": item.get("filename"),
+        "source": item.get("source_path"),
+        "watermark_date": captured.isoformat(),
+        "watermark_text": data.get("watermark_text"),
+        "watermark_confidence": confidence,
+        "maintenance_date_windows": [
+            {"start": start.isoformat(), "end": end.isoformat()} for start, end in task["windows"]
+        ],
+    }
+    add_issue(
+        issues,
+        HALFYEAR_STATION_PHOTO_DATE_RULE_ID,
+        "附件时间一致性",
+        "中",
+        "attachment.RF_HY_STATIONDEVICEMAINTAIN.watermark_date",
+        f"站点设备半年维护照片水印日期{captured.isoformat()}不在维护日期范围内",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
 
 
 def _check_certificate(order: dict[str, Any], item: dict[str, Any], issues: list[Issue]) -> None:
@@ -636,6 +816,8 @@ def _check_gas_flow_display_visual(
     item: dict[str, Any],
     issues: list[Issue],
 ) -> None:
+    if table == "RF_M_GASEOUSFLOWCHECK" and not _monthly_flow_brand_allowed(form):
+        return
     display_rule_enabled = _flow_visual_rule_enabled("ATTACHMENT_GAS_FLOW_DISPLAY_VALUE_MISMATCH")
     measured_rule_enabled = _flow_visual_rule_enabled("ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH")
     if not display_rule_enabled and not measured_rule_enabled:
@@ -683,10 +865,6 @@ def _check_gas_flow_display_visual(
 
     display_values = data.get("display_values") if isinstance(data.get("display_values"), dict) else {}
     measured_values = data.get("measured_values") if isinstance(data.get("measured_values"), dict) else {}
-    display_components = data.get("display_components") if isinstance(data.get("display_components"), dict) else {}
-    display_units = data.get("display_units") if isinstance(data.get("display_units"), dict) else {}
-    measured_units = data.get("measured_units") if isinstance(data.get("measured_units"), dict) else {}
-    fallback_unit = data.get("unit")
     display_comparisons = []
     measured_comparisons = []
     photo_value_role = _gas_flow_photo_value_role(item)
@@ -696,27 +874,13 @@ def _check_gas_flow_display_visual(
             if filename_pollutants and gas not in filename_pollutants:
                 continue
             if photo_value_role != "measured":
-                if _should_skip_monthly_thermo_o3_display_comparison(
-                    table,
-                    form,
-                    gas,
-                    display_components.get(gas),
-                ):
-                    continue
-                display_value = _monthly_gas_flow_display_value(
-                    table,
-                    form,
-                    gas,
-                    display_values.get(gas),
-                    display_components.get(gas),
-                )
+                display_value = display_values.get(gas)
                 display_comparisons.extend(
                     _compare_visual_value(
                         gas,
                         display_value,
                         form,
                         [f"DISPLAYVALUE{gas}"],
-                        visual_unit=display_units.get(gas) or fallback_unit,
                     )
                 )
             if photo_value_role != "display":
@@ -725,13 +889,11 @@ def _check_gas_flow_display_visual(
                         gas,
                         form,
                         measured_values.get(gas),
-                        measured_units.get(gas) or fallback_unit,
                         (
                             display_values.get(gas)
                             if photo_value_role == "measured" and measured_values.get(gas) is not None
                             else None
                         ),
-                        display_units.get(gas) or fallback_unit,
                     )
                 )
     elif table == "RF_Q_GaseousFlowCheck":
@@ -742,7 +904,6 @@ def _check_gas_flow_display_visual(
                     display_values.get(point),
                     form,
                     [f"DF_Valuve_{point}"],
-                    visual_unit=display_units.get(point) or fallback_unit,
                 )
             )
             measured_comparisons.extend(
@@ -751,7 +912,6 @@ def _check_gas_flow_display_visual(
                     measured_values.get(point),
                     form,
                     [f"RF_Valuve_{point}"],
-                    visual_unit=measured_units.get(point) or fallback_unit,
                 )
             )
 
@@ -1132,8 +1292,6 @@ def _compare_visual_value(
     visual_value: Any,
     form: dict[str, Any],
     candidate_fields: list[str],
-    *,
-    visual_unit: Any = None,
 ) -> list[dict[str, Any]]:
     visual_number = _parse_number(visual_value)
     if visual_number is None:
@@ -1145,29 +1303,16 @@ def _compare_visual_value(
         form_number = _parse_number(form_value)
         if form_number is None:
             continue
-        comparable_candidates = _flow_value_candidates_for_comparison(
-            visual_number,
-            visual_unit,
-            form_number,
-            form_value=form_value,
-            form=form,
-            field=field,
-            label=label,
-        )
-        comparable_visual = next(
-            (candidate for candidate in comparable_candidates if _numbers_close(candidate, form_number)),
-            comparable_candidates[0],
-        )
-        matched = _numbers_close(comparable_visual, form_number)
+        matched = _numbers_close(visual_number, form_number)
         comparisons.append(
             {
                 "label": label,
                 "field": field,
-                "visual_value": comparable_visual,
+                "visual_value": visual_number,
                 "raw_visual_value": visual_number,
-                "visual_unit": str(visual_unit or ""),
+                "visual_unit": "",
                 "form_value": form_number,
-                "difference": round(abs(comparable_visual - form_number), 6),
+                "difference": round(abs(visual_number - form_number), 6),
                 "status": "matched" if matched else "mismatch",
             }
         )
@@ -1176,74 +1321,32 @@ def _compare_visual_value(
     return comparisons
 
 
-def _monthly_gas_flow_display_value(
-    table: str,
-    form: dict[str, Any],
-    gas: str,
-    display_value: Any,
-    display_components: Any,
-) -> Any:
-    if table != "RF_M_GASEOUSFLOWCHECK" or gas != "O3" or not _is_thermo_brand(form):
-        return display_value
-    component_sum = _sum_flow_a_b_components(display_components)
-    if component_sum is None:
-        return display_value
-    return component_sum
+def _monthly_flow_brand_allowed(form: dict[str, Any]) -> bool:
+    brand = str(form.get("DEVICEBRAND") or form.get("BRAND") or "").strip().upper()
+    if not brand:
+        return False
+    return "API" in brand or brand == "TE" or brand.startswith("TE ") or brand in {"THERMO", "热电"}
 
 
-def _should_skip_monthly_thermo_o3_display_comparison(
-    table: str,
-    form: dict[str, Any],
-    gas: str,
-    display_components: Any,
+def _monthly_flow_photo_brand_allowed(
+    forms: list[tuple[str, dict[str, Any]]], item: dict[str, Any]
 ) -> bool:
-    if table != "RF_M_GASEOUSFLOWCHECK" or gas != "O3" or not _is_thermo_brand(form):
-        return False
-    return _sum_flow_a_b_components(display_components) is None
-
-
-def _is_thermo_brand(form: dict[str, Any]) -> bool:
-    brand_text = str(form.get("DEVICEBRAND") or form.get("BRAND") or "").strip()
-    if not brand_text:
-        return False
-    brand_upper = brand_text.upper()
-    return "THERMO" in brand_upper or brand_upper in {"TE", "热电"}
-
-
-def _sum_flow_a_b_components(components: Any) -> float | None:
-    if not isinstance(components, list):
-        return None
-    flow_a = None
-    flow_b = None
-    for component in components:
-        if not isinstance(component, dict):
-            continue
-        label = str(component.get("label") or "")
-        value = _parse_number(component.get("value"))
-        if value is None:
-            continue
-        normalized_label = label.upper().replace(" ", "")
-        if "流量A" in label or "FLOWA" in normalized_label:
-            flow_a = value
-        elif "流量B" in label or "FLOWB" in normalized_label:
-            flow_b = value
-    if flow_a is None or flow_b is None:
-        return None
-    return round(flow_a + flow_b, 6)
+    if not _is_monthly_gaseous_flow_attachment(item):
+        return True
+    monthly_forms = [form for table, form in forms if table == "RF_M_GASEOUSFLOWCHECK" and not form.get("_query_error")]
+    return any(_monthly_flow_brand_allowed(form) for form in monthly_forms)
 
 
 def _compare_monthly_measured_flow_candidates(
     gas: str,
     form: dict[str, Any],
     measured_value: Any,
-    measured_unit: Any,
     alternate_value: Any = None,
-    alternate_unit: Any = None,
 ) -> list[dict[str, Any]]:
     field = f"MEASUREDVALUE{gas}"
-    comparisons = _compare_visual_value(gas, measured_value, form, [field], visual_unit=measured_unit)
+    comparisons = _compare_visual_value(gas, measured_value, form, [field])
     if alternate_value is not None:
-        comparisons.extend(_compare_visual_value(gas, alternate_value, form, [field], visual_unit=alternate_unit))
+        comparisons.extend(_compare_visual_value(gas, alternate_value, form, [field]))
     if any(item.get("status") == "matched" for item in comparisons):
         return [item for item in comparisons if item.get("status") == "matched"]
     return comparisons
@@ -1514,74 +1617,6 @@ def _parse_date_value(value: Any) -> date | None:
         return None
 
 
-def _normalize_flow_value_for_comparison(
-    visual_number: float,
-    visual_unit: Any,
-    form_number: float,
-    *,
-    form_value: Any = None,
-    form: dict[str, Any] | None = None,
-    field: str = "",
-    label: str = "",
-) -> float:
-    unit = _normalize_flow_unit(visual_unit)
-    form_unit = _infer_form_flow_unit(form_value, form, field, label)
-    if unit == "L/min" and form_unit == "L/h":
-        return round(visual_number * 60, 6)
-    if unit == "ml/min" and form_unit == "L/h":
-        return round(visual_number / 1000 * 60, 6)
-    if unit == "L/h" and form_unit == "L/min":
-        return round(visual_number / 60, 6)
-    if unit == "L/h" and form_unit == "ml/min":
-        return round(visual_number / 60 * 1000, 6)
-    if unit == "L/min" and form_unit == "ml/min":
-        return visual_number * 1000
-    if unit == "ml/min" and form_unit == "L/min":
-        return visual_number / 1000
-    if unit == "L/min" and form_unit is None and abs(form_number) >= 10 and abs(visual_number) < 10:
-        return visual_number * 1000
-    if unit == "ml/min" and form_unit is None and abs(form_number) < 10 and abs(visual_number) >= 10:
-        return visual_number / 1000
-    return visual_number
-
-
-def _flow_value_candidates_for_comparison(
-    visual_number: float,
-    visual_unit: Any,
-    form_number: float,
-    *,
-    form_value: Any = None,
-    form: dict[str, Any] | None = None,
-    field: str = "",
-    label: str = "",
-) -> list[float]:
-    primary = _normalize_flow_value_for_comparison(
-        visual_number,
-        visual_unit,
-        form_number,
-        form_value=form_value,
-        form=form,
-        field=field,
-        label=label,
-    )
-    candidates = [primary]
-    unit = _normalize_flow_unit(visual_unit)
-    form_unit = _infer_form_flow_unit(form_value, form, field, label)
-    if unit in {"L/min", "ml/min"} and form_unit in {"L/min", "ml/min"}:
-        candidates.append(visual_number)
-    if form_unit is None:
-        candidates.append(visual_number)
-        if unit == "L/h":
-            candidates.append(round(visual_number / 60, 6))
-        elif unit == "L/min":
-            candidates.append(round(visual_number * 60, 6))
-    deduped = []
-    for candidate in candidates:
-        if not any(_numbers_close(candidate, existing) for existing in deduped):
-            deduped.append(candidate)
-    return deduped
-
-
 def _normalize_pm_temp_pressure_value_for_comparison(
     label: str,
     visual_number: float,
@@ -1609,54 +1644,6 @@ def _decimal_places(value: Any) -> int:
     if not match or match.group(1) is None:
         return 0
     return len(match.group(1))
-
-
-def _normalize_flow_unit(unit: Any) -> str | None:
-    text = str(unit or "").strip().lower().replace(" ", "")
-    if not text:
-        return None
-    text = text.replace("／", "/")
-    if text in {"mlpm", "sccm", "ml/min", "mlmin", "cc/m", "cc/min", "ccm", "毫升/分钟", "毫升每分钟"}:
-        return "ml/min"
-    if text in {"l/h", "lph", "lh", "l/hr", "l/hour", "升/小时", "升每小时"}:
-        return "L/h"
-    if text in {"lpm", "slpm", "slm", "l/min", "lmin", "sl/min", "升/分钟", "升每分钟"}:
-        return "L/min"
-    if "ml" in text or "cc" in text:
-        return "ml/min"
-    if "l/h" in text or "lph" in text or "l/hr" in text or "l/hour" in text:
-        return "L/h"
-    if "lpm" in text or "l/min" in text or "slm" in text:
-        return "L/min"
-    return None
-
-
-def _infer_form_flow_unit(form_value: Any, form: dict[str, Any] | None, field: str, label: str) -> str | None:
-    value_unit = _normalize_flow_unit(form_value)
-    if value_unit:
-        return value_unit
-    if not form:
-        return None
-    range_field = _monthly_gas_flow_range_field(field, label)
-    if range_field:
-        range_text = str(form.get(range_field) or "").strip().lower().replace(" ", "")
-        range_text = range_text.replace("／", "/")
-        if _normalize_flow_unit(range_text):
-            return _normalize_flow_unit(range_text)
-        if "/h" in range_text or "1/h" in range_text:
-            return "L/h"
-        if "/min" in range_text:
-            return "L/min"
-    return None
-
-
-def _monthly_gas_flow_range_field(field: str, label: str) -> str | None:
-    upper_field = str(field or "").upper()
-    upper_label = str(label or "").upper()
-    for gas in ("SO2", "NO2", "CO", "O3"):
-        if upper_field.endswith(gas) or upper_label == gas:
-            return f"FLOWRANG{gas}"
-    return None
 
 
 def _gas_flow_photo_value_role(item: dict[str, Any]) -> str | None:

@@ -448,6 +448,22 @@ class Settings(BaseSettings):
         default="chat_completions",
         description="OpenCode Go API protocol mode: chat_completions"
     )
+    go2_api_key: Optional[str] = Field(
+        default=None,
+        description="Second OpenCode Go subscription API key (higher priority when listed first)",
+    )
+    go2_base_url: str = Field(
+        default="https://opencode.ai/zen/go/v1",
+        description="Second OpenCode Go OpenAI-compatible API base URL",
+    )
+    go2_model: str = Field(
+        default="deepseek-v4.1-flash",
+        description="Default second OpenCode Go model used by Flash tier",
+    )
+    go2_api_mode: str = Field(
+        default="chat_completions",
+        description="Second OpenCode Go API protocol mode: chat_completions",
+    )
     voice_mimo_base_url: str = Field(
         default="https://api.xiaomimimo.com/v1",
         description="Xiaomi Mimo OpenAI-compatible base URL for ASR/TTS"
@@ -580,12 +596,6 @@ class Settings(BaseSettings):
         description="Cooldown seconds for transiently failing LLM providers"
     )
 
-    mimo_vl_api_key: Optional[str] = Field(default=None, description="Mimo VL API key for flow visual checks")
-    mimo_vl_base_url: Optional[str] = Field(
-        default=None,
-        description="Mimo VL OpenAI-compatible API base URL"
-    )
-    mimo_vl_model: str = Field(default="mimo-v2.5", description="Mimo VL model name")
     ops_attachment_root: Optional[str] = Field(default=None, description="Local root used to resolve /WebFiles attachments")
     attachment_root: Optional[str] = Field(default=None, description="Fallback local attachment root")
     ops_attachment_base_url: Optional[str] = Field(default=None, description="Base URL used to resolve /WebFiles attachments")
@@ -1004,6 +1014,14 @@ class Settings(BaseSettings):
                 "base_url": self.go_base_url,
                 "model": self.go_model,
                 "api_mode": self.go_api_mode,
+            }
+        elif self.llm_provider == "go2":
+            return {
+                "provider": "go2",
+                "api_key": self.go2_api_key,
+                "base_url": self.go2_base_url,
+                "model": self.go2_model,
+                "api_mode": self.go2_api_mode,
             }
         elif self.llm_provider == "glm":
             return {
