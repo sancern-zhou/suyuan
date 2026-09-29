@@ -421,6 +421,8 @@ format:
                 str(resolved_path),
                 content=normalized_content,
                 file_size=resolved_path.stat().st_size,
+                file_mtime_ns=resolved_path.stat().st_mtime_ns,
+                file_inode=getattr(resolved_path.stat(), "st_ino", None),
                 encoding=encoding
             )
 
@@ -538,9 +540,16 @@ format:
         if read_record is None:
             return {"valid": True}  # 已经在 _check_pre_read 中处理
 
+        stat = file_path.stat()
+        fingerprint_changed = (
+            read_record.file_mtime_ns is not None
+            and (stat.st_mtime_ns != read_record.file_mtime_ns
+                 or stat.st_size != read_record.file_size
+                 or (read_record.file_inode is not None and stat.st_ino != read_record.file_inode))
+        )
         current_mtime = get_file_modification_time(file_path)
 
-        if current_mtime > read_record.timestamp:
+        if fingerprint_changed or current_mtime > read_record.timestamp:
             # 时间戳表明文件被修改，进行内容验证
             if read_record.is_full_read and read_record.content:
                 try:

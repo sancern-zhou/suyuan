@@ -5,9 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
+from contextvars import ContextVar
 
 from app.agent.memory.agent_case_library import AgentCaseLibrary
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+
+_case_context: ContextVar[str | None] = ContextVar(
+    "agent_case_library_context", default=None
+)
 
 
 class AgentCaseLibraryTool(LLMTool):
@@ -56,10 +61,12 @@ class AgentCaseLibraryTool(LLMTool):
     @classmethod
     def set_case_context(cls, mode: str) -> None:
         cls._current_mode = mode
+        _case_context.set(mode)
 
     @classmethod
     def clear_case_context(cls) -> None:
         cls._current_mode = None
+        _case_context.set(None)
 
     async def execute(
         self,
@@ -74,7 +81,7 @@ class AgentCaseLibraryTool(LLMTool):
         source_refs: list[str] | None = None,
         **_: Any,
     ) -> dict[str, Any]:
-        mode = self._current_mode
+        mode = _case_context.get() or self._current_mode
         if not mode:
             return {"success": False, "error": "case_library_context_missing"}
         library = AgentCaseLibrary(mode)

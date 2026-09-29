@@ -13,6 +13,7 @@
 3. 检测并发编辑冲突
 """
 import time
+import os
 from pathlib import Path
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
@@ -42,6 +43,8 @@ class ReadTimestamp:
     limit: Optional[int] = None
     is_partial_view: bool = False
     file_size: int = 0
+    file_mtime_ns: Optional[int] = None
+    file_inode: Optional[int] = None
     encoding: str = "utf-8"
 
     @property
@@ -83,6 +86,8 @@ class FileReadStateManager:
         limit: Optional[int] = None,
         is_partial_view: bool = False,
         file_size: int = 0,
+        file_mtime_ns: Optional[int] = None,
+        file_inode: Optional[int] = None,
         encoding: str = "utf-8"
     ) -> None:
         """
@@ -105,6 +110,8 @@ class FileReadStateManager:
                 limit=limit,
                 is_partial_view=is_partial_view,
                 file_size=file_size,
+                file_mtime_ns=file_mtime_ns,
+                file_inode=file_inode,
                 encoding=encoding
             )
 
@@ -247,3 +254,62 @@ def reset_file_read_state() -> None:
         _global_instance = None
 
     logger.info("file_read_state_manager_reset")
+
+
+def restore_read_state_from_history(
+    messages: list[dict[str, Any]],
+    state: Optional[FileReadStateManager] = None,
+) -> int:
+    """Restore only verified complete reads from persisted tool history.
+
+    Persisted history may contain paged reads or stale tool results. Those are
+    intentionally ignored; an edit must still perform a fresh read in either
+    case. The metadata shape is deliberately small and JSON serializable.
+    """
+    manager = state or get_file_read_state()
+    restored = 0
+
+    def visit(value: Any) -> None:
+        nonlocal restored
+        if isinstance(value, dict):
+            metadata = value.get("read_state")
+            if isinstance(metadata, dict):
+                _restore_entry(metadata, manager)
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    def _restore_entry(metadata: dict[str, Any], manager: FileReadStateManager) -> None:
+        nonlocal restored
+        if metadata.get("tool") != "read_file":
+            return
+        if metadata.get("is_partial_view") or metadata.get("offset", 0) != 0 or metadata.get("limit") is not None:
+            return
+        path = metadata.get("path")
+        content = metadata.get("content")
+        if not isinstance(path, str) or not isinstance(content, str):
+            return
+        try:
+            stat = os.stat(path)
+        except OSError:
+            return
+        if metadata.get("size") != stat.st_size:
+            return
+        if metadata.get("mtime_ns") is not None and metadata.get("mtime_ns") != stat.st_mtime_ns:
+            return
+        if metadata.get("inode") is not None and metadata.get("inode") != getattr(stat, "st_ino", None):
+            return
+        manager.set(
+            path,
+            content=content,
+            file_size=stat.st_size,
+            file_mtime_ns=stat.st_mtime_ns,
+            file_inode=getattr(stat, "st_ino", None),
+            encoding=str(metadata.get("encoding") or "utf-8"),
+        )
+        restored += 1
+
+    visit(messages)
+    return restored
