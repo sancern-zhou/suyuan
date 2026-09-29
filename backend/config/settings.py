@@ -96,23 +96,6 @@ class Settings(BaseSettings):
     jiangsu_device_control_confirmation_ttl_seconds: int = Field(default=300, ge=30, le=1800)
     jiangsu_work_order_draft_ttl_hours: int = Field(default=48, ge=1, le=720)
 
-    # 中大空气质量联网监测管理平台（许昌市站点 5 分钟/小时数据）。
-    # 账号密码通过环境变量注入，禁止写入代码或提交到仓库。
-    zhongda_api_base_url: str = Field(default="http://125.45.235.130:81")
-    zhongda_username: str = Field(default="")
-    zhongda_password: str = Field(default="")
-    zhongda_station_codes: str = Field(
-        default="1003A,1005A,1008A,1009A,1011A,1012A",
-        description="平台内部站点编码，逗号分隔",
-    )
-    zhongda_data_table_type: str = Field(default="Act", description="Act=实况；Std=标况")
-    zhongda_parameter_type: str = Field(default="gp", description="gp=常规污染物；mp=气象；gh=温室气体")
-    zhongda_hour_data_source_type: str = Field(
-        default="Src", description="站点小时抓取口径：Src=原始；App=审核后"
-    )
-    zhongda_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
-    zhongda_login_retries: int = Field(default=8, ge=1, le=30, description="验证码 OCR 重试次数")
-
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse CORS origins string into list."""
@@ -884,87 +867,6 @@ class Settings(BaseSettings):
         default="yes",
         description="Trust server cert without validation; set no after installing a CA-signed cert",
     )
-
-    # DataCrawler MySQL Configuration (long-history monitoring database)
-    crawler_mysql_host: str = Field(
-        default="127.0.0.1",
-        description="DataCrawler MySQL host"
-    )
-    crawler_mysql_port: int = Field(
-        default=13307,
-        description="DataCrawler MySQL port"
-    )
-    crawler_mysql_user: str = Field(
-        default="root",
-        description="DataCrawler MySQL username"
-    )
-    crawler_mysql_password: str = Field(
-        default="",
-        description="DataCrawler MySQL password"
-    )
-    crawler_mysql_database: str = Field(
-        default="DataCrawler",
-        description="DataCrawler MySQL database name"
-    )
-
-    @property
-    def crawler_mysql_url(self) -> str:
-        """SQLAlchemy URL for the crawler MySQL database (aiomysql async driver)."""
-        from urllib.parse import quote
-
-        return (
-            "mysql+aiomysql://"
-            f"{quote(self.crawler_mysql_user)}:{quote(self.crawler_mysql_password)}"
-            f"@{self.crawler_mysql_host}:{self.crawler_mysql_port}"
-            f"/{self.crawler_mysql_database}?charset=utf8mb4"
-        )
-
-    # Big_Data SQL Server Configuration (企业运输管控平台，大数据局对接库)
-    bigdata_sqlserver_host: str = Field(
-        default="222.143.158.143",
-        description="Big_Data SQL Server host"
-    )
-    bigdata_sqlserver_port: int = Field(
-        default=20125,
-        description="Big_Data SQL Server port"
-    )
-    bigdata_sqlserver_user: str = Field(
-        default="dsj",
-        description="Big_Data SQL Server username"
-    )
-    bigdata_sqlserver_password: str = Field(
-        default="",
-        description="Big_Data SQL Server password"
-    )
-    bigdata_sqlserver_database: str = Field(
-        default="Big_Data",
-        description="Big_Data SQL Server database name"
-    )
-    bigdata_sqlserver_driver: str = Field(
-        default="ODBC Driver 17 for SQL Server",
-        description="Big_Data SQL Server ODBC driver name",
-    )
-    bigdata_sqlserver_encrypt: str = Field(
-        default="no",
-        description="Big_Data ODBC Encrypt flag",
-    )
-    bigdata_sqlserver_trust_server_certificate: str = Field(
-        default="yes",
-        description="Big_Data trust server cert flag",
-    )
-
-    @property
-    def bigdata_sqlserver_connection_string(self) -> str:
-        """ODBC connection string for the Big_Data SQL Server instance."""
-        return (
-            f"DRIVER={{{self.bigdata_sqlserver_driver}}};"
-            f"SERVER={self.bigdata_sqlserver_host},{self.bigdata_sqlserver_port};"
-            f"DATABASE={self.bigdata_sqlserver_database};"
-            f"UID={self.bigdata_sqlserver_user};"
-            f"PWD={{{self.bigdata_sqlserver_password}}};"
-            f"Encrypt={self.bigdata_sqlserver_encrypt};"
-            f"TrustServerCertificate={self.bigdata_sqlserver_trust_server_certificate};"
-        )
 
     @property
     def sqlserver_connection_string(self) -> str:
