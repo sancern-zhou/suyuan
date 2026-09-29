@@ -66,6 +66,7 @@
       :is-analyzing="isAnalyzing"
       :placeholder="inputPlaceholder"
       :assistant-mode="assistantMode"
+      :agent-mode="agentMode"
       :use-reranker="useReranker"
       @send="$emit('send', $event)"
       @pause="$emit('pause')"
