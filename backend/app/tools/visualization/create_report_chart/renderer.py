@@ -24,16 +24,14 @@ from app.tools.visualization.create_report_chart.text_layout import (
 from app.tools.visualization.create_report_chart.theme import REPORT_THEME, SERIES_COLORS, theme_color
 from app.tools.visualization.create_report_chart.validation import ChartDataError
 from app.utils.chart_legend import position_legends_below_plot, visible_legends
-from app.utils.font_utils import (
-    apply_font_to_figure,
-    chinese_font_prop,
-    configure_chinese_font,
-)
+from app.utils.font_utils import chinese_font_prop, select_preferred_chinese_font_path
 
 
 WORD_TARGET_WIDTH_IN = 5.8
 WORD_SOURCE_WIDTH_IN = 8.2
 WORD_SOURCE_HEIGHT_IN = 5.2
+_CHINESE_FONT_PROP = None
+
 GENERAL_CHART_TYPES = {
     "bar",
     "horizontal_bar",
@@ -59,11 +57,9 @@ SPECIALIZED_CHART_TYPES = {
     "aqi_calendar",
     "pollutant_wind_rose",
     "pollutant_calendar",
-    "wind_rose",
     "generic_pollutant_wind_rose",
     "wind_timeseries",
     "weather_timeseries",
-    "henan_city_map",
 }
 CHART_TYPE_ALIASES = {"timeseries": "line"}
 
@@ -612,33 +608,39 @@ def _normalized_notes(options: Dict[str, Any]) -> List[str]:
 
 
 def _apply_fonts() -> None:
-    configure_chinese_font()
+    font_prop = _chinese_font_prop()
+    family = font_prop.get_name() if font_prop is not None else "Droid Sans Fallback"
+    plt.rcParams["font.family"] = "sans-serif"
+    plt.rcParams["font.sans-serif"] = [family, "Noto Sans CJK SC", "Droid Sans Fallback", "DejaVu Sans"]
+    plt.rcParams["axes.unicode_minus"] = False
 
 
 def select_chinese_font() -> str | None:
-    font_prop = chinese_font_prop()
-    if font_prop is None:
-        return None
-    try:
-        from matplotlib import font_manager
-
-        return font_manager.findfont(font_prop, fallback_to_default=False)
-    except Exception:
-        return None
+    font_path = select_preferred_chinese_font_path()
+    return str(font_path) if font_path is not None else None
 
 
 def _chinese_font_prop():
-    return chinese_font_prop()
+    global _CHINESE_FONT_PROP
+    if _CHINESE_FONT_PROP is not None:
+        return _CHINESE_FONT_PROP
+    _CHINESE_FONT_PROP = chinese_font_prop()
+    return _CHINESE_FONT_PROP
 
 
 def _apply_font_to_figure(fig) -> None:
+    font_prop = _chinese_font_prop()
     for text in fig.findobj(match=lambda obj: hasattr(obj, "set_fontproperties")):
         try:
             if hasattr(text, "get_text") and hasattr(text, "set_text"):
                 text.set_text(str(normalize_matplotlib_label_text(text.get_text())))
+            if font_prop is None:
+                continue
+            current_size = text.get_fontsize()
+            text.set_fontproperties(font_prop)
+            text.set_fontsize(current_size)
         except Exception:
             continue
-    apply_font_to_figure(fig)
 
 
 def _source_font(final_pt: float) -> float:
@@ -811,7 +813,7 @@ def _draw_line(ax, title: str, data: Dict[str, Any], options: Dict[str, Any]) ->
     title = str(normalize_matplotlib_label_text(title))
     positions = list(range(len(x)))
     for index, item in enumerate(series):
-        ax.plot(positions, item["values"], marker="o", linewidth=_line_width(options), label=item["name"])
+        ax.plot(positions, item["values"], marker="o", linewidth=2, label=item["name"])
     tick_metadata = _apply_x_tick_labels(ax, positions, x, options)
     ax.set_title(title, fontsize=_source_font(15), fontweight="bold", pad=14)
     ax.tick_params(axis="both", labelsize=_source_font(10.5))
@@ -872,7 +874,7 @@ def _draw_dual_axis_line(ax, title: str, data: Dict[str, Any], options: Dict[str
             positions,
             values,
             marker="o",
-            linewidth=_line_width(options),
+            linewidth=2,
             color=SERIES_COLORS[(index - 1) % len(SERIES_COLORS)],
             label=name,
         )
