@@ -37,6 +37,7 @@ from app.scenarios.xuchang_daily_review.regional_response import (
 from app.scenarios.xuchang_daily_review.township_hourly import load_township_hourly_rows
 from app.scenarios.xuchang_station_deviation.service import STATION_ID_ALIASES, canonical_station_identity
 from app.scheduled_tasks.models import TaskEvent
+from app.services.weather_history import configured_history_service
 from app.utils.path_config import format_agent_path, get_data_registry
 
 logger = structlog.get_logger()
@@ -517,6 +518,23 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
             evidence_root=registry / "xuchang_station_deviation_alerts",
         )
 
+    async def _refresh_era5_grid(self, target_date: date) -> None:
+        """Online backfill of the report day before reading grid weather.
+
+        The rolling collection job runs on Beijing mornings, so a 02:05 report
+        would otherwise read the previous day's evening hours as missing even
+        when the provider has already published them.
+        """
+        service = configured_history_service()
+        if service is None:
+            return
+        await service.refresh(
+            XUCHANG_ERA5_GRID_POINT[0],
+            XUCHANG_ERA5_GRID_POINT[1],
+            datetime.combine(target_date, time.min, tzinfo=TZ_SHANGHAI),
+            datetime.combine(target_date, time.max, tzinfo=TZ_SHANGHAI),
+        )
+
     async def _build_meteorology_block(
         self, result: dict[str, Any], target_date: date
     ) -> None:
@@ -535,6 +553,7 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
         ]
         era5_rows: list[dict[str, Any]] = []
         try:
+            await self._refresh_era5_grid(target_date)
             era5_data = await WeatherRepository().get_weather_data(
                 XUCHANG_ERA5_GRID_POINT[0],
                 XUCHANG_ERA5_GRID_POINT[1],

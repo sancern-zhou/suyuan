@@ -31,6 +31,7 @@ from app.scenarios.xuchang_station_deviation.source_features import (
 )
 from app.scenarios.xuchang_transport_escalation import XuchangTransportEscalationService
 from app.scheduled_tasks.models import TaskEvent
+from app.services.weather_history import configured_history_service
 
 logger = structlog.get_logger()
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -637,6 +638,11 @@ class XuchangStationDailyExceedanceFetcher(DataFetcher):
         start = datetime.combine(target_date, time.min, tzinfo=TZ_SHANGHAI)
         end = datetime.combine(target_date, time.max, tzinfo=TZ_SHANGHAI)
         lat, lon = XUCHANG_ERA5_GRID_POINT
+        service = configured_history_service()
+        if service is not None:
+            # The rolling collection job only lands on Beijing mornings; pull
+            # the report day directly so BLH/cloud cover are not read missing.
+            await service.refresh(lat, lon, start, end)
         rows = await WeatherRepository().get_weather_data(lat, lon, start, end)
         evidence_rows = []
         for item in rows:

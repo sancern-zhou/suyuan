@@ -349,3 +349,36 @@ async def test_fetcher_without_exceedance_publishes_nothing(monkeypatch):
 
     assert result["events"] == []
     assert task_service.events == []
+
+
+@pytest.mark.asyncio
+async def test_load_era5_hourly_refreshes_grid_before_read(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    refresh = AsyncMock()
+    monkeypatch.setattr(
+        "app.fetchers.xuchang_station_daily_exceedance.configured_history_service",
+        lambda: SimpleNamespace(refresh=refresh),
+    )
+
+    class _Repo:
+        async def get_weather_data(self, lat, lon, start, end):
+            return []
+
+    monkeypatch.setattr(
+        "app.db.repositories.weather_repo.WeatherRepository", _Repo
+    )
+    fetcher = XuchangStationDailyExceedanceFetcher(
+        analysis_service=_AnalysisService(),
+        now_factory=lambda: datetime(2026, 8, 6, 2, tzinfo=TZ_SHANGHAI),
+    )
+
+    rows = await fetcher.load_era5_hourly(date(2026, 8, 5))
+
+    assert rows == []
+    refresh.assert_awaited_once_with(
+        34.0, 113.75,
+        datetime(2026, 8, 5, 0, 0, tzinfo=TZ_SHANGHAI),
+        datetime(2026, 8, 5, 23, 59, 59, 999999, tzinfo=TZ_SHANGHAI),
+    )
