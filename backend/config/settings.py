@@ -885,6 +885,87 @@ class Settings(BaseSettings):
         description="Trust server cert without validation; set no after installing a CA-signed cert",
     )
 
+    # DataCrawler MySQL Configuration (long-history monitoring database)
+    crawler_mysql_host: str = Field(
+        default="127.0.0.1",
+        description="DataCrawler MySQL host"
+    )
+    crawler_mysql_port: int = Field(
+        default=13307,
+        description="DataCrawler MySQL port"
+    )
+    crawler_mysql_user: str = Field(
+        default="root",
+        description="DataCrawler MySQL username"
+    )
+    crawler_mysql_password: str = Field(
+        default="",
+        description="DataCrawler MySQL password"
+    )
+    crawler_mysql_database: str = Field(
+        default="DataCrawler",
+        description="DataCrawler MySQL database name"
+    )
+
+    @property
+    def crawler_mysql_url(self) -> str:
+        """SQLAlchemy URL for the crawler MySQL database (aiomysql async driver)."""
+        from urllib.parse import quote
+
+        return (
+            "mysql+aiomysql://"
+            f"{quote(self.crawler_mysql_user)}:{quote(self.crawler_mysql_password)}"
+            f"@{self.crawler_mysql_host}:{self.crawler_mysql_port}"
+            f"/{self.crawler_mysql_database}?charset=utf8mb4"
+        )
+
+    # Big_Data SQL Server Configuration (企业运输管控平台，大数据局对接库)
+    bigdata_sqlserver_host: str = Field(
+        default="222.143.158.143",
+        description="Big_Data SQL Server host"
+    )
+    bigdata_sqlserver_port: int = Field(
+        default=20125,
+        description="Big_Data SQL Server port"
+    )
+    bigdata_sqlserver_user: str = Field(
+        default="dsj",
+        description="Big_Data SQL Server username"
+    )
+    bigdata_sqlserver_password: str = Field(
+        default="",
+        description="Big_Data SQL Server password"
+    )
+    bigdata_sqlserver_database: str = Field(
+        default="Big_Data",
+        description="Big_Data SQL Server database name"
+    )
+    bigdata_sqlserver_driver: str = Field(
+        default="ODBC Driver 17 for SQL Server",
+        description="Big_Data SQL Server ODBC driver name",
+    )
+    bigdata_sqlserver_encrypt: str = Field(
+        default="no",
+        description="Big_Data ODBC Encrypt flag",
+    )
+    bigdata_sqlserver_trust_server_certificate: str = Field(
+        default="yes",
+        description="Big_Data trust server cert flag",
+    )
+
+    @property
+    def bigdata_sqlserver_connection_string(self) -> str:
+        """ODBC connection string for the Big_Data SQL Server instance."""
+        return (
+            f"DRIVER={{{self.bigdata_sqlserver_driver}}};"
+            f"SERVER={self.bigdata_sqlserver_host},{self.bigdata_sqlserver_port};"
+            f"DATABASE={self.bigdata_sqlserver_database};"
+            f"UID={self.bigdata_sqlserver_user};"
+            f"PWD={{{self.bigdata_sqlserver_password}}};"
+            f"Encrypt={self.bigdata_sqlserver_encrypt};"
+            f"TrustServerCertificate={self.bigdata_sqlserver_trust_server_certificate};"
+        )
+
     @property
     def sqlserver_connection_string(self) -> str:
         """

@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from app.services.ops_audit.models import Issue
 from app.services.ops_audit.rules.rf_formula_rules import check_rf_formula_values
 from app.services.ops_audit.rules.rf_humidity_rules import check_rf_environment_humidity_values
@@ -10,6 +12,7 @@ from app.services.ops_audit.rules.rf_time_rules import check_rf_time_ranges
 from app.services.ops_audit.rules.rf_visibility_rules import check_rf_visibility_values
 from app.services.ops_audit.rules.lifecycle_rules import check_lifecycle_closure
 from app.services.ops_audit.rules.rf_abnormal_remark_rules import check_rf_abnormal_remarks
+from app.services.ops_work_order_audit_engine import audit_dataset
 
 
 def _order(code="CH_TEST", station_id="S1"):
@@ -51,6 +54,161 @@ def test_two_week_pm_flow_calibrate_ignores_date_when_check_time_is_inside_time_
     check_rf_time_ranges(_order("CH2605131778673426846"), [("RF_TW_PmFlowCalibrate", form)], issues)
 
     assert "RF_CHECK_TIME_OUTSIDE_RANGE" not in _issue_ids(issues)
+
+
+@pytest.mark.parametrize(
+    ("end_time", "expected_issue"),
+    [
+        ("05 13 2026  1:31PM", True),
+        ("05 13 2026  1:32PM", True),
+        ("05 13 2026  1:33PM", False),
+        ("05 13 2026  1:29PM", True),
+        (None, False),
+    ],
+)
+def test_two_week_flow_check_requires_more_than_two_minutes(end_time, expected_issue):
+    order = {**_order(), "DDWORKINGORDERTYPE": "Check", "MAINTENANCETYPE": "TwoWeek"}
+    form = {
+        "CHECKDATE": "2026-05-13 13:31:00",
+        "CheckSdt": "05 13 2026  1:30PM",
+        "CheckEdt": end_time,
+    }
+    issues: list[Issue] = []
+
+    check_rf_time_ranges(order, [("RF_TW_PmFlowCheck", form)], issues)
+
+    matched = [issue for issue in issues if issue.rule_id == "RF_TWO_WEEK_FLOW_DURATION_TOO_SHORT"]
+    assert bool(matched) is expected_issue
+    if end_time == "05 13 2026  1:32PM":
+        assert json.loads(matched[0].evidence)["duration_minutes"] == 2
+
+
+def test_two_week_flow_check_still_flags_check_time_outside_window():
+    order = {**_order(), "DDWORKINGORDERTYPE": "Check", "MAINTENANCETYPE": "TwoWeek"}
+    form = {
+        "CHECKDATE": "2026-05-13 13:35:00",
+        "CheckSdt": "05 13 2026  1:30PM",
+        "CheckEdt": "05 13 2026  1:32PM",
+    }
+    issues: list[Issue] = []
+
+    check_rf_time_ranges(order, [("RF_TW_PmFlowCheck", form)], issues)
+
+    assert {"RF_CHECK_TIME_OUTSIDE_RANGE", "RF_TWO_WEEK_FLOW_DURATION_TOO_SHORT"} <= _issue_ids(issues)
+
+
+@pytest.mark.parametrize(
+    ("order_type", "maintenance_type", "table"),
+    [
+        ("Fault", "TwoWeek", "RF_TW_PmFlowCheck"),
+        ("Check", "Month", "RF_TW_PmFlowCheck"),
+        ("Check", "TwoWeek", "RF_TW_PmFlowCalibrate"),
+    ],
+)
+def test_two_week_flow_duration_only_applies_to_matching_orders(order_type, maintenance_type, table):
+    order = {**_order(), "DDWORKINGORDERTYPE": order_type, "MAINTENANCETYPE": maintenance_type}
+    form = {"CheckSdt": "05 13 2026  1:30PM", "CheckEdt": "05 13 2026  1:31PM"}
+    issues: list[Issue] = []
+
+    check_rf_time_ranges(order, [(table, form)], issues)
+
+    assert "RF_TWO_WEEK_FLOW_DURATION_TOO_SHORT" not in _issue_ids(issues)
+
+
+def test_two_week_flow_duration_is_reported_as_deterministic_audit_issue():
+    order = {**_order(), "DDWORKINGORDERTYPE": "Check", "MAINTENANCETYPE": "TwoWeek"}
+    dataset = {
+        "orders": [order],
+        "details": [],
+        "rf_forms": {
+            "RF_TW_PmFlowCheck": [{
+                "WORKINGORDERCODE": order["WORKINGORDERCODE"],
+                "CHECKDATE": "2026-05-13 13:31:00",
+                "CheckSdt": "05 13 2026  1:30PM",
+                "CheckEdt": "05 13 2026  1:32PM",
+            }],
+        },
+        "attachments": [],
+        "wo_commonfile": [],
+        "devices": [],
+    }
+
+    audit = audit_dataset(dataset, enable_visual=False)
+
+    assert "RF_TWO_WEEK_FLOW_DURATION_TOO_SHORT" in {
+        issue["rule_id"] for issue in audit["records"][0]["deterministic_issues"]
+    }
+
+
+@pytest.mark.parametrize(
+    ("station_out", "expected_issue"),
+    [
+        ("2026-05-13 10:09:59", True),
+        ("2026-05-13 10:10:00", True),
+        ("2026-05-13 10:10:01", False),
+        ("2026-05-13 09:59:00", True),
+        (None, False),
+    ],
+)
+def test_weekly_inspection_requires_more_than_ten_minutes_in_station(station_out, expected_issue):
+    order = {**_order(), "DDWORKINGORDERTYPE": "Check", "MAINTENANCETYPE": "Week"}
+    form = {
+        "STATIONINTIME": "2026-05-13 10:00:00",
+        "STATIONOUTTIME": station_out,
+    }
+    issues: list[Issue] = []
+
+    check_rf_time_ranges(order, [("RF_W_INSPECTIONSUMMARY", form)], issues)
+
+    matched = [issue for issue in issues if issue.rule_id == "RF_WEEKLY_STATION_DURATION_TOO_SHORT"]
+    assert bool(matched) is expected_issue
+    if station_out == "2026-05-13 10:10:00":
+        assert json.loads(matched[0].evidence)["duration_minutes"] == 10
+
+
+@pytest.mark.parametrize(
+    ("order_type", "maintenance_type", "table"),
+    [
+        ("Fault", "Week", "RF_W_INSPECTIONSUMMARY"),
+        ("Check", "Month", "RF_W_INSPECTIONSUMMARY"),
+        ("Check", "Week", "RF_W_INSPECTION"),
+    ],
+)
+def test_station_duration_rule_only_applies_to_weekly_inspection_orders(order_type, maintenance_type, table):
+    order = {**_order(), "DDWORKINGORDERTYPE": order_type, "MAINTENANCETYPE": maintenance_type}
+    form = {
+        "STATIONINTIME": "2026-05-13 10:00:00",
+        "STATIONOUTTIME": "2026-05-13 10:01:00",
+    }
+    issues: list[Issue] = []
+
+    check_rf_time_ranges(order, [(table, form)], issues)
+
+    assert "RF_WEEKLY_STATION_DURATION_TOO_SHORT" not in _issue_ids(issues)
+
+
+def test_weekly_station_duration_is_reported_as_deterministic_audit_issue():
+    order = {**_order(), "DDWORKINGORDERTYPE": "Check", "MAINTENANCETYPE": "Week"}
+    dataset = {
+        "orders": [order],
+        "details": [],
+        "rf_forms": {
+            "RF_W_INSPECTIONSUMMARY": [{
+                "WORKINGORDERCODE": order["WORKINGORDERCODE"],
+                "STATIONINTIME": "2026-05-13 10:00:00",
+                "STATIONOUTTIME": "2026-05-13 10:02:00",
+            }],
+        },
+        "attachments": [],
+        "wo_commonfile": [],
+        "devices": [],
+    }
+
+    audit = audit_dataset(dataset, enable_visual=False)
+
+    assert "RF_WEEKLY_STATION_DURATION_TOO_SHORT" in {
+        issue["rule_id"] for issue in audit["records"][0]["deterministic_issues"]
+    }
 
 
 def test_pm_week_sample_tube_temperature_status_yes_is_normal_without_remark():

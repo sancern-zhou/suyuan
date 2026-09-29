@@ -340,12 +340,15 @@ class BaseSQLQueryTool(LLMTool):
         allowed_tables: List[str],
         default_database: str = "XcAiDb",
         allow_information_schema_sql: bool = True,
+        allowed_databases: Optional[List[str]] = None,
     ):
         """初始化工具"""
 
         self.tool_name = tool_name
         self.default_database = default_database
         self.allow_information_schema_sql = allow_information_schema_sql
+        # 未显式声明时保持历史行为（XcAi 服务器上的两个库）。
+        self.allowed_databases = allowed_databases or ["XcAiDb", "AirPollutionAnalysis"]
         self.sql_validator = SQLValidator(max_limit=1000, allowed_tables=allowed_tables)
 
         function_schema = {
@@ -365,7 +368,7 @@ class BaseSQLQueryTool(LLMTool):
                     "database": {
                         "type": "string",
                         "description": f"数据库名称，默认{default_database}",
-                        "enum": ["XcAiDb", "AirPollutionAnalysis"]
+                        "enum": self.allowed_databases
                     },
                     "limit": {
                         "type": "integer",
@@ -428,11 +431,11 @@ class BaseSQLQueryTool(LLMTool):
             database = self.default_database
 
         # 验证数据库名称
-        if database not in ["XcAiDb", "AirPollutionAnalysis"]:
+        if database not in self.allowed_databases:
             return {
                 "success": False,
                 "data": None,
-                "summary": f"不支持的数据库名称 '{database}'。支持的数据库：XcAiDb、AirPollutionAnalysis"
+                "summary": f"不支持的数据库名称 '{database}'。支持的数据库：{'、'.join(self.allowed_databases)}"
             }
 
         # 判断是查看表结构还是执行SQL

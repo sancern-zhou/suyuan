@@ -209,7 +209,7 @@ def test_pm_flow_before_photo_matches_pm25_before_standard_value(monkeypatch):
     assert issues == []
 
 
-def test_monthly_gas_flow_measured_photo_converts_lpm_to_lh_without_display_issue(monkeypatch):
+def test_monthly_gas_flow_measured_photo_compares_raw_value_without_conversion(monkeypatch):
     def fake_ocr(source, *, provider, task, prompt):
         assert "SLPM" in prompt
         assert "SCCM" in prompt
@@ -238,9 +238,10 @@ def test_monthly_gas_flow_measured_photo_converts_lpm_to_lh_without_display_issu
                     "RF_M_GASEOUSFLOWCHECK",
                     {
                         "WORKINGORDERCODE": "WO-GAS-FLOW",
+                        "DEVICEBRAND": "API",
                         "FLOWRANGCO": "50±5l/h",
-                        "DISPLAYVALUECO": "42.74",
-                        "MEASUREDVALUECO": "42.78",
+                        "DISPLAYVALUECO": "0.713",
+                        "MEASUREDVALUECO": "0.713",
                     },
                 )
             ],
@@ -369,6 +370,7 @@ def test_monthly_gas_flow_measured_photo_does_not_create_display_mismatch(monkey
                     "RF_M_GASEOUSFLOWCHECK",
                     {
                         "WORKINGORDERCODE": "WO-GAS-FLOW",
+                        "DEVICEBRAND": "API",
                         "FLOWRANGCO": "50±5l/h",
                         "DISPLAYVALUECO": "42.74",
                         "MEASUREDVALUECO": "99.99",
@@ -388,7 +390,7 @@ def test_monthly_gas_flow_measured_photo_does_not_create_display_mismatch(monkey
     evidence = json.loads(issues[0].evidence)
     comparison = evidence["comparisons"][0]
     assert comparison["field"] == "MEASUREDVALUECO"
-    assert comparison["visual_value"] == 42.78
+    assert comparison["visual_value"] == 0.713
 
 
 def test_monthly_gas_flow_short_measured_filename_skips_display_comparison(monkeypatch):
@@ -908,7 +910,7 @@ def test_default_visual_allowlist_suppresses_gas_display_mismatch(monkeypatch):
     assert issues == []
 
 
-def test_monthly_thermo_o3_display_uses_flow_a_plus_b(monkeypatch):
+def test_monthly_te_o3_display_compares_raw_display_value(monkeypatch):
     def fake_extract_attachment_json(source, *, provider, task, prompt):
         assert "流量A" in prompt
         assert "流量B" in prompt
@@ -942,7 +944,7 @@ def test_monthly_thermo_o3_display_uses_flow_a_plus_b(monkeypatch):
             "forms": [
                 (
                     "RF_M_GASEOUSFLOWCHECK",
-                    {"DEVICEBRAND": "热电", "DISPLAYVALUEO3": "1.138"},
+                    {"DEVICEBRAND": "TE", "DISPLAYVALUEO3": "0.572"},
                 )
             ],
             "item": {
@@ -958,7 +960,7 @@ def test_monthly_thermo_o3_display_uses_flow_a_plus_b(monkeypatch):
     assert issues == []
 
 
-def test_monthly_thermo_o3_display_skips_when_components_are_incomplete(monkeypatch):
+def test_monthly_te_o3_display_uses_raw_value_when_components_are_incomplete(monkeypatch):
     seen_prompt = {}
 
     def fake_extract_attachment_json(source, *, provider, task, prompt):
@@ -988,7 +990,7 @@ def test_monthly_thermo_o3_display_skips_when_components_are_incomplete(monkeypa
             "forms": [
                 (
                     "RF_M_GASEOUSFLOWCHECK",
-                    {"DEVICEBRAND": "TE", "DISPLAYVALUEO3": "1.394"},
+                    {"DEVICEBRAND": "TE", "DISPLAYVALUEO3": "0.698"},
                 )
             ],
             "item": {
@@ -1005,7 +1007,7 @@ def test_monthly_thermo_o3_display_skips_when_components_are_incomplete(monkeypa
     assert "不能同时识别流量A和流量B" in seen_prompt["text"]
 
 
-def test_monthly_non_thermo_o3_display_does_not_sum_flow_a_plus_b(monkeypatch):
+def test_monthly_non_api_te_brand_skips_flow_identification(monkeypatch):
     _enable_flow_visual_rules(monkeypatch, "ATTACHMENT_GAS_FLOW_DISPLAY_VALUE_MISMATCH")
 
     def fake_extract_attachment_json(source, *, provider, task, prompt):
@@ -1052,9 +1054,7 @@ def test_monthly_non_thermo_o3_display_does_not_sum_flow_a_plus_b(monkeypatch):
         issues,
     )
 
-    assert len(issues) == 1
-    assert issues[0].rule_id == "ATTACHMENT_GAS_FLOW_DISPLAY_VALUE_MISMATCH"
-    assert "O3 图片值 0.572" in issues[0].message
+    assert issues == []
 
 
 def test_quarter_gas_flow_attachment_does_not_compare_monthly_form(monkeypatch):

@@ -983,6 +983,9 @@ class AgentRuntime:
         """Hide housekeeping tools after terminal/no-progress state updates."""
         suppressed = set(state.suppress_tool_names_next_turn)
         state.suppress_tool_names_next_turn.clear()
+        runtime_metadata = getattr(self.executor, "runtime_metadata", {}) or {}
+        if runtime_metadata.get("scheduled_task") or runtime_metadata.get("agent_depth", 0) > 0:
+            suppressed.add("ask_user_question")
         return suppressed
 
     def _suppressed_housekeeping_observation(
@@ -1246,13 +1249,17 @@ class AgentRuntime:
     ) -> Optional[Dict[str, Any]]:
         if not isinstance(observation, dict):
             return None
-        metadata = observation.get("metadata")
-        if not isinstance(metadata, dict):
-            return None
-        interaction = metadata.get("interaction_required")
-        if not isinstance(interaction, dict) or interaction.get("kind") != "approval":
-            return None
-        return interaction
+        results = [observation]
+        results.extend(
+            item.get("result") for item in (observation.get("tool_results") or [])
+            if isinstance(item, dict)
+        )
+        for result in results:
+            metadata = result.get("metadata") if isinstance(result, dict) else None
+            interaction = metadata.get("interaction_required") if isinstance(metadata, dict) else None
+            if isinstance(interaction, dict) and interaction.get("kind") in {"approval", "structured_question"}:
+                return interaction
+        return None
 
     async def _finish_for_interaction(
         self,
@@ -1260,9 +1267,13 @@ class AgentRuntime:
         planner_result: PlannerResult,
         interaction: Dict[str, Any],
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """End this run cleanly while the client waits for an approval."""
+        """End this run with a paired tool result while awaiting the user."""
         self._ensure_user_message_written(state)
-        state.response_text = "已暂停，等待用户审批后继续。"
+        state.response_text = (
+            "已暂停，等待用户回答后继续。"
+            if interaction.get("kind") == "structured_question"
+            else "已暂停，等待用户审批后继续。"
+        )
         state.task_completed = True
         yield self.events.interaction_required(state, interaction)
         async for event in self.finalizer.complete(

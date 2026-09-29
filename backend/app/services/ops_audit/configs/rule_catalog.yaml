@@ -17,6 +17,12 @@ rules:
     default_severity: 高
     scope: working_orders/working_order_details
     rationale: 流程应包含审核、复核或检查步骤以形成闭环。
+  - rule_id: WO_MONTHLY_DYNAMIC_CALIBRATION_DURATION_TOO_SHORT
+    name: 月度动态校准维护处理时长未超过5分钟
+    category: 时间合理性
+    default_severity: 高
+    scope: Check/Month/working_order_details.CheckOrder
+    rationale: 月度动态校准维护工单的检查处理步骤，应根据流程开始与结束时间持续超过5分钟；间隔小于或等于5分钟属于异常。
   - rule_id: LIFECYCLE_FINISH_NEAR_DEADLINE
     name: 工单临近计划截止时间完成
     category: 生命周期闭环风险
@@ -89,6 +95,36 @@ rules:
     default_severity: 高
     scope: RF_*
     rationale: 检查时间应落在表单记录的开始时间与结束时间之间。
+  - rule_id: RF_WEEKLY_STATION_DURATION_TOO_SHORT
+    name: 每周巡检进出站房时间未超过10分钟
+    category: 时间合理性
+    default_severity: 高
+    scope: Check/Week/RF_W_INSPECTIONSUMMARY
+    rationale: 每周巡检工单应在站房停留超过10分钟；根据巡检汇总表进站与出站时间计算，间隔小于或等于10分钟属于异常。
+  - rule_id: RF_TWO_WEEK_FLOW_DURATION_TOO_SHORT
+    name: 两周流量检查起止时间未超过2分钟
+    category: 时间合理性
+    default_severity: 高
+    scope: Check/TwoWeek/RF_TW_PmFlowCheck
+    rationale: 两周颗粒物流量检查的检查时间应处于开始与结束时段内，且开始到结束的间隔须严格超过2分钟；间隔小于或等于2分钟属于异常。
+  - rule_id: RF_MULTIPOINT_DURATION_TOO_SHORT
+    name: 多点校准单点持续时间不足7分钟
+    category: 时间合理性
+    default_severity: 高
+    scope: RF_Q_GASEOUSMULTIPOINT_*
+    rationale: 多点校准零点及各浓度档位的开始到结束间隔至少7分钟；仅核对成对填写且可解析的起止时间。
+  - rule_id: ATTACHMENT_TW_CLEANING_PHOTO_TIME_OUTSIDE_MAINTENANCE
+    name: 两周清洗维护照片打卡时间不在维护时段内
+    category: 附件时间一致性
+    default_severity: 中
+    scope: Check/TwoWeek/RF_TW_CleanCuttingHead/清洗照片
+    rationale: 清洗照片中可高置信识别的打卡水印时间应在工单检查处理步骤的开始与结束时间内。
+  - rule_id: ATTACHMENT_HY_STATION_PHOTO_DATE_OUTSIDE_MAINTENANCE
+    name: 站点设备半年维护照片日期不在维护日期范围内
+    category: 附件时间一致性
+    default_severity: 中
+    scope: Check/HalfYear/RF_HY_STATIONDEVICEMAINTAIN/维护照片
+    rationale: 通过阿里云多模态 OCR 读取维护照片水印日期，仅比较日期；照片日期应落在工单检查处理步骤的开始日期与结束日期之间。
   - rule_id: RF_RANGE_VALUE_MISSING
     name: RF 表单应检项目检查值为空
     category: 表单完整性
@@ -166,13 +202,13 @@ rules:
     category: 附件读数一致性
     default_severity: 高
     scope: RF_M_GASEOUSFLOWCHECK/RF_Q_GaseousFlowCheck/气体流量检查照片
-    rationale: 通过多模态识别直接读取仪器面板显示流量值，并与表单显示值字段比对，避免把水印时间、编号或量程误识别为读数。
+    rationale: 仅对 API/TE 品牌气体分析仪，通过多模态识别读取仪器面板显示流量值，并与表单显示值字段按原始数值直接比对；其他品牌跳过识别。
   - rule_id: ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH
     name: 气体流量检查照片流量计测量值与表单值不一致
     category: 附件读数一致性
     default_severity: 高
     scope: RF_M_GASEOUSFLOWCHECK/气体流量检查测量值照片
-    rationale: 通过多模态识别读取外接流量计或质量流量计测量值，并与表单 MEASUREDVALUE* 字段比对；支持 LPM/L/min 与 ml/min/cc/min 的单位换算。
+    rationale: 仅对 API/TE 品牌气体分析仪，通过多模态识别读取外接流量计或质量流量计测量值，并与表单 MEASUREDVALUE* 字段按原始数值直接比对；其他品牌跳过识别。
   - rule_id: ATTACHMENT_FLOW_PHOTO_WATERMARK_TIME_MISMATCH
     name: 流量照片水印时间与工单时间不一致
     category: 附件时间一致性

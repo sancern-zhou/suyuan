@@ -503,12 +503,11 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         tools = _build_tool_dict(project_tool_names)
     else:
         extra_tool_names = _get_project_extra_tool_names_by_mode(mode)
-        if extra_tool_names:
-            base_names = list(mode_mapping[mode].keys())
-            merged_names = base_names + [name for name in extra_tool_names if name not in base_names]
-            tools = _build_tool_dict(merged_names)
-        else:
-            tools = mode_mapping[mode]
+        base_names = list(mode_mapping[mode].keys())
+        if mode in {"assistant", "ppt", "expert", "query", "knowledge", "report", "chart", "board", "ops", "graph"}:
+            base_names.append("ask_user_question")
+        merged_names = base_names + [name for name in (extra_tool_names or []) if name not in base_names]
+        tools = _build_tool_dict(merged_names)
 
     disabled_tools = _get_project_disabled_tool_names()
     if not disabled_tools:

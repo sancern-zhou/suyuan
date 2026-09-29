@@ -19,7 +19,6 @@ import httpx
 from app.utils.llm_context_logger import get_llm_context_logger
 from app.services.llm_failover import (
     LLMFailoverError,
-    LLMResponseRejectedError,
     classify_llm_failure,
     get_cooldown_failure,
     get_llm_pool_semaphore,
@@ -54,6 +53,9 @@ _llm_opencode_session_id: ContextVar[Optional[str]] = ContextVar(
 
 # OpenCode Go 客户端标识：专属 User-Agent，替代通用 httpx SDK 标识
 OPENCODE_GO_USER_AGENT = "suyuan-agent/1.0"
+
+# OpenCode Go 订阅 provider：go 为原有套餐，go2 为第二个套餐（可配置更高优先级）
+OPENCODE_GO_PROVIDERS = frozenset({"go", "go2"})
 
 
 def _rotate_model_tier_candidates(tier: str, candidates: list):
@@ -1207,7 +1209,7 @@ class LLMService:
             "model_env": "GO_MODEL",
             "model_default": "deepseek-v4.1-flash",
         },
-        # 备用 OpenCode Go 订阅（同一网关，独立 key，用于分散限流）
+        # 第二个 OpenCode Go 订阅套餐；在模型链中排在 go 之前即可获得更高优先级
         "go2": {
             "url_env": "GO2_BASE_URL",
             "url_default": "https://opencode.ai/zen/go/v1",
@@ -1384,16 +1386,8 @@ class LLMService:
             )
             return await call()
 
-    async def _run_anthropic_with_fallback(self, operation: str, call, validate=None):
-        """Run an Anthropic-compatible request with configured model fallback.
-
-        ``validate`` optionally receives the raw result of each attempt and
-        returns ``None`` when the response is acceptable, or a non-empty
-        reason string to reject it. Rejected responses move the current
-        request to the next fallback candidate (without marking the provider
-        as cooldown); when every candidate is rejected a
-        :class:`LLMResponseRejectedError` carrying the last reason is raised.
-        """
+    async def _run_anthropic_with_fallback(self, operation: str, call):
+        """Run an Anthropic-compatible request with configured model fallback."""
         original_state = self._snapshot_provider_state()
         candidates = parse_fallback_candidates(
             original_state["provider"],
@@ -1429,10 +1423,6 @@ class LLMService:
 
                 try:
                     result = await self._run_llm_request_with_global_limit(operation, call)
-                    if validate is not None:
-                        rejection = validate(result)
-                        if rejection:
-                            raise LLMResponseRejectedError(str(rejection))
                     if attempts:
                         logger.warning(
                             "llm_fallback_candidate_succeeded",
@@ -1441,28 +1431,6 @@ class LLMService:
                             attempts=summarize_attempts(attempts),
                         )
                     return result
-                except LLMResponseRejectedError as exc:
-                    attempts.append({
-                        "provider": self.provider,
-                        "model": self.model,
-                        "reason": "invalid_response",
-                        "status": None,
-                        "code": None,
-                        "error": exc.reason,
-                    })
-                    has_next = index < len(candidates)
-                    logger.warning(
-                        "llm_fallback_candidate_rejected",
-                        provider=self.provider,
-                        model=self.model,
-                        reason="invalid_response",
-                        has_next=has_next,
-                        error=exc.reason[:300],
-                    )
-                    if not has_next:
-                        exc.attempts = summarize_attempts(attempts)
-                        raise
-                    continue
                 except Exception as exc:
                     failure = classify_llm_failure(exc)
                     attempts.append({
@@ -1612,23 +1580,22 @@ class LLMService:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_agnes_model_fallback_to_env", model=self.model)
 
-        elif self.provider in {"go", "go2"}:
-            prefix = self.provider
-            self.api_mode = getattr(settings, f"{prefix}_api_mode", "chat_completions")
+        elif self.provider in OPENCODE_GO_PROVIDERS:
+            self.api_mode = getattr(settings, f"{self.provider}_api_mode", "chat_completions")
             self.base_url = (
-                getattr(settings, f"{prefix}_base_url", None)
+                getattr(settings, f"{self.provider}_base_url", None)
                 or os.getenv(config["url_env"])
                 or config["url_default"]
             )
             self.api_key = (
-                getattr(settings, f"{prefix}_api_key", None)
+                getattr(settings, f"{self.provider}_api_key", None)
                 or os.getenv(config["key_env"])
                 or ""
             )
-            self.model = getattr(settings, f"{prefix}_model", None)
+            self.model = getattr(settings, f"{self.provider}_model", None)
             if not self.model:
                 self.model = os.getenv(config["model_env"], config["model_default"])
-                logger.debug("llm_go_model_fallback_to_env", provider=prefix, model=self.model)
+                logger.debug("llm_go_model_fallback_to_env", model=self.model)
 
         elif self.provider == "glm":
             self.api_mode = getattr(settings, "glm_api_mode", "anthropic_messages")
@@ -1854,7 +1821,7 @@ class LLMService:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         # OpenCode Go 网关要求：专属 User-Agent + 稳定会话头（缺失会被拒绝）
-        if self.provider in {"go", "go2"}:
+        if self.provider in OPENCODE_GO_PROVIDERS:
             headers["User-Agent"] = OPENCODE_GO_USER_AGENT
             headers["x-opencode-session"] = (
                 _llm_opencode_session_id.get() or f"suyuan-{os.getpid()}"
@@ -3138,7 +3105,6 @@ class LLMService:
         provider: Optional[str] = None,
         model: Optional[str] = None,
         auto_profile: Optional[str] = None,
-        validate: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """Anthropic 格式聊天，支持原生工具调用
 
@@ -3150,8 +3116,6 @@ class LLMService:
             max_tokens: 最大输出 token 数
             temperature: 温度参数
             system: 系统提示词（Anthropic API 使用单独的 system 参数）
-            validate: 可选校验回调，接收每次尝试的原始响应；返回 None 表示
-                接受响应，返回非空字符串表示拒绝该响应并切换到下一个备用模型
 
         Returns:
             {
@@ -3169,7 +3133,6 @@ class LLMService:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     system=system,
-                    validate=validate,
                 )
             finally:
                 self._schedule_provider_override_service_close(override_service)
@@ -3182,7 +3145,6 @@ class LLMService:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     system=system,
-                    validate=validate,
                 )
 
         try:
@@ -3227,7 +3189,6 @@ class LLMService:
             response = await self._run_anthropic_with_fallback(
                 "llm_chat",
                 create_message,
-                validate=validate,
             )
 
             # The Chat-Completions adapter already returns the normalized

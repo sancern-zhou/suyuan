@@ -99,6 +99,101 @@ def test_audit_dataset_runs_flow_visual_tasks_by_default(monkeypatch):
     assert calls == {"build": 1, "run": 1}
 
 
+def test_audit_dataset_excludes_finished_order_when_all_rf_forms_mark_it_void(monkeypatch):
+    def fail_visual_task(*args, **kwargs):
+        raise AssertionError("void order must not schedule visual review")
+
+    monkeypatch.setattr(ops_work_order_audit_engine, "build_flow_visual_tasks", fail_visual_task)
+    dataset = {
+        "orders": [{"WORKINGORDERCODE": "CH2609161789520132942", "DDWORKINGORDERSTATUS": "Finish"}],
+        "rf_forms": {
+            "RF_Q_GASEOUSMULTIPOINT_CO": [{
+                "WORKINGORDERCODE": "CH2609161789520132942",
+                "REMARKS": "工单作废",
+                "LINGDIANSDTDATE": "2026-09-18 08:58:00",
+                "LINGDIANEDTDATE": "2026-09-18 08:58:00",
+            }],
+            "RF_Q_GASEOUSMULTIPOINT_O3": [{
+                "WORKINGORDERCODE": "CH2609161789520132942",
+                "REMARKS": "工单作废",
+            }],
+        },
+    }
+
+    audit = audit_dataset(dataset)
+
+    assert audit["records"] == []
+    assert audit["summary"]["excluded_void_order_count"] == 1
+    assert audit["audit_info"]["order_count"] == 0
+
+
+def test_audit_dataset_excludes_invalid_status_and_keeps_partially_void_forms():
+    dataset = {
+        "orders": [
+            {"WORKINGORDERCODE": "WO-INVALID", "DDWORKINGORDERSTATUS": "Invalid"},
+            {"WORKINGORDERCODE": "WO-PARTIAL", "DDWORKINGORDERSTATUS": "Finish"},
+        ],
+        "rf_forms": {
+            "RF_Q_GASEOUSMULTIPOINT_CO": [
+                {"WORKINGORDERCODE": "WO-PARTIAL", "REMARKS": "工单作废"},
+            ],
+            "RF_Q_GASEOUSMULTIPOINT_O3": [
+                {"WORKINGORDERCODE": "WO-PARTIAL", "REMARKS": "正常"},
+            ],
+        },
+    }
+
+    audit = audit_dataset(dataset, enable_visual=False)
+
+    assert [record["working_order_code"] for record in audit["records"]] == ["WO-PARTIAL"]
+    assert audit["summary"]["excluded_void_order_count"] == 1
+
+
+def test_audit_dataset_excludes_order_when_one_form_explicitly_says_this_order_is_void():
+    dataset = {
+        "orders": [{"WORKINGORDERCODE": "WO-VOID", "DDWORKINGORDERSTATUS": "Finish"}],
+        "rf_forms": {
+            "RF_Q_GASEOUSMULTIPOINT_CO": [
+                {"WORKINGORDERCODE": "WO-VOID", "REMARKS": "此工单作废"},
+            ],
+            "RF_HY_O3VALUEPASS": [
+                {"WORKINGORDERCODE": "WO-VOID", "REMARKS": ""},
+            ],
+        },
+    }
+
+    audit = audit_dataset(dataset, enable_visual=False)
+
+    assert audit["records"] == []
+    assert audit["summary"]["excluded_void_order_count"] == 1
+
+
+def test_audit_dataset_excludes_void_history_from_cross_order_rules(monkeypatch):
+    captured = {}
+
+    def capture_history(source):
+        captured["history"] = source["device_history"]
+        return [], {}
+
+    monkeypatch.setattr(ops_work_order_audit_engine, "merge_device_history", capture_history)
+    dataset = {
+        "orders": [{"WORKINGORDERCODE": "WO-CURRENT", "DDWORKINGORDERSTATUS": "Finish"}],
+        "device_history": {
+            "orders": [{"WORKINGORDERCODE": "WO-OLD", "DDWORKINGORDERSTATUS": "Finish"}],
+            "rf_forms": {
+                "RF_Q_GASEOUSMULTIPOINT_CO": [
+                    {"WORKINGORDERCODE": "WO-OLD", "REMARKS": "工单作废"},
+                ],
+            },
+        },
+    }
+
+    audit_dataset(dataset, enable_visual=False)
+
+    assert captured["history"]["orders"] == []
+    assert captured["history"]["rf_forms"]["RF_Q_GASEOUSMULTIPOINT_CO"] == []
+
+
 def test_audit_dataset_can_run_visual_rules_only(monkeypatch):
     calls = {"visual_build": 0, "visual_run": 0}
 

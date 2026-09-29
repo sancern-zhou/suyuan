@@ -326,6 +326,7 @@ def _context_summary_record(result: Dict[str, Any]) -> Dict[str, Any]:
         "pending_review_count": result.get("pending_review_count", 0),
         "report_issue_count": result.get("report_issue_count", 0),
         "enable_visual": result.get("enable_visual", True),
+        "visual_rule_id": result.get("visual_rule_id"),
         "enable_non_visual": result.get("enable_non_visual", True),
         "classification_counts": result.get("summary", {}).get("audit_level_counts", {}),
         "semantic_candidate_count": result.get("semantic_candidate_count", 0),
@@ -413,6 +414,7 @@ def _run_ops_audit_rules_with_lock(
     evidence_level: str,
     enable_visual: bool,
     enable_non_visual: bool,
+    visual_rule_id: Optional[str],
 ) -> Dict[str, Any]:
     effective_output_dir = (output_dir or dataset_path.parent).resolve()
     effective_output_dir.mkdir(parents=True, exist_ok=True)
@@ -425,6 +427,7 @@ def _run_ops_audit_rules_with_lock(
             evidence_level=evidence_level,
             enable_visual=enable_visual,
             enable_non_visual=enable_non_visual,
+            visual_rule_id=visual_rule_id,
         )
 
 
@@ -465,6 +468,21 @@ class OpsAuditRunRulesTool(LLMTool):
                             "description": "是否执行流程、表单字段、数值、附件清单、XLS及跨工单等非视觉规则；默认 true。传 false 且 enable_visual=true 时仅执行视觉审核。",
                             "default": True,
                         },
+                        "visual_rule_id": {
+                            "type": "string",
+                            "description": "可选。单独触发一个视觉识别规则；传入后本次只构建和输出该规则的多模态审核任务。",
+                            "enum": [
+                                "ATTACHMENT_PM_FLOW_CALIBRATION_VALUE_MISMATCH",
+                                "ATTACHMENT_GAS_FLOW_DISPLAY_VALUE_MISMATCH",
+                                "ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH",
+                                "ATTACHMENT_FLOW_PHOTO_WATERMARK_TIME_MISMATCH",
+                                "ATTACHMENT_MULTIPOINT_GRADIENT_REVIEW",
+                                "ATTACHMENT_MULTIPOINT_WATERMARK_REVIEW",
+                                "ATTACHMENT_O3_TRANSFER_SIX_POINT_REVIEW",
+                                "ATTACHMENT_TW_CLEANING_PHOTO_TIME_OUTSIDE_MAINTENANCE",
+                                "ATTACHMENT_HY_STATION_PHOTO_DATE_OUTSIDE_MAINTENANCE",
+                            ],
+                        },
                     },
                     "required": ["dataset_path"],
                 },
@@ -481,6 +499,7 @@ class OpsAuditRunRulesTool(LLMTool):
         evidence_level: str = "summary",
         enable_visual: bool = True,
         enable_non_visual: bool = True,
+        visual_rule_id: Optional[str] = None,
         **_: Any,
     ) -> Dict[str, Any]:
         if not dataset_path:
@@ -509,6 +528,7 @@ class OpsAuditRunRulesTool(LLMTool):
                 evidence_level=evidence_level,
                 enable_visual=visual_enabled,
                 enable_non_visual=non_visual_enabled,
+                visual_rule_id=str(visual_rule_id).strip() if visual_rule_id else None,
             )
             if context and hasattr(context, "save_data"):
                 result["file_path"] = context.save_data(

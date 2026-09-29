@@ -67,6 +67,9 @@ asyncpg==0.30.0
 sqlalchemy[asyncio]==2.0.35
 alembic==1.13.3
 
+# MySQL (DataCrawler long-history monitoring database)
+aiomysql==0.2.0
+
 # Scheduling
 apscheduler==3.10.4
 
