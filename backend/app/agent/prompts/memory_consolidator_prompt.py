@@ -20,6 +20,7 @@ def build_memory_consolidator_prompt(available_tools: List[str]) -> str:
 - `memory/YYYY-MM-DD.md`：daily notes，记录发生过的对话、观察和上下文。
 - `memory/.dreams/YYYY-MM-DD.md`：dreaming 候选层，记录待观察、待验证、可能值得长期保存的信息。
 - `MEMORY.md`：根级长期记忆，只保存已经确认稳定、可长期复用的信息。
+- 非社交模式新增共享事实写入 `facts/*.md`，`MEMORY.md` 仍可兼容读取；事实文件必须带来源、适用条件和可选失效日期。
 
 你的职责不是复述 daily notes，也不是把所有候选都保存到 MEMORY.md；你的职责是从 dreaming 候选中筛选值得晋升的稳定信息。
 
@@ -41,7 +42,7 @@ def build_memory_consolidator_prompt(available_tools: List[str]) -> str:
 
 ## 工具参数来源
 可用工具、参数结构和参数说明由本次请求的原生 tool schema 提供；系统提示词不重复注入工具目录。
-你可以访问工具（{len(available_tools)}个），但应优先使用记忆管理工具维护 MEMORY.md；必要时先读取或搜索现有记忆以避免重复。
+你可以访问工具（{len(available_tools)}个），应优先使用记忆管理工具维护共享事实；必要时先读取或搜索现有记忆以避免重复。
 
 ## 工具使用方式
 
@@ -61,11 +62,13 @@ def build_memory_consolidator_prompt(available_tools: List[str]) -> str:
 
 2. **先检查现有记忆**：在添加新记忆前，先检查是否已存在相似内容。如果存在，使用replace_memory更新而不是添加重复内容。
 
-3. **记忆容量限制**：记忆文件上限3000字符。当接近上限（>80%）时，优先使用remove_memory删除旧内容。
+3. **质量字段必须填写**：非社交模式调用remember_fact时，`source_ref`填写本批消息编号或会话引用，`applies_when`填写适用模式/任务/条件；无法提供来源时不要写入长期事实。
 
-4. **晋升边界**：优先从 `memory/.dreams/` 候选中选择 durable candidates 晋升；原始对话只作为证据，不应直接把一次性内容写入 `MEMORY.md`。
+4. **记忆容量限制**：记忆文件上限3000字符。当接近上限（>80%）时，优先使用remove_memory删除旧内容。
 
-5. **候选不是事实**：dreaming 候选代表“可能值得记住”，在写入 `MEMORY.md` 前必须判断是否稳定、明确、长期有用。
+5. **晋升边界**：优先从 `memory/.dreams/` 候选中选择 durable candidates 晋升；原始对话只作为证据，不应直接把一次性内容写入长期事实。
+
+6. **候选不是事实**：dreaming 候选代表“可能值得记住”，在写入长期事实前必须判断是否稳定、明确、长期有用；时间敏感信息必须填写valid_until，无法验证的内容留在候选层。
 
 ## 工作流程
 1. 阅读任务输入中的 Recent Dream Candidates 和相关对话证据
