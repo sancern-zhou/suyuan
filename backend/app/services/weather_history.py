@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 import fcntl
 import hashlib
 import json
@@ -17,7 +17,7 @@ import structlog
 
 from app.db.repositories.weather_repo import WeatherRepository
 from app.external_apis.openmeteo_client import OpenMeteoClient
-from app.utils.weather_time import OPEN_METEO_SOURCE, weather_query_time
+from app.utils.weather_time import BEIJING, OPEN_METEO_SOURCE, weather_query_time
 
 logger = structlog.get_logger()
 HOUR = timedelta(hours=1)
@@ -152,16 +152,33 @@ class WeatherHistoryService:
         rows = await self.repo.get_weather_data(lat, lon, start, end)
         return coverage(rows, start, end)
 
+    async def refresh(self, lat, lon, start, end, *, timeout=30.0):
+        """Best-effort online backfill before a report reads the window.
+
+        Same as repair() but bounded by a timeout and never raises: report
+        fetchers call it so the requested day uses whatever the provider has
+        already published, and fall back to the background queue otherwise.
+        """
+        try:
+            async with asyncio.timeout(timeout):
+                return await self.repair(lat, lon, start, end)
+        except Exception as exc:
+            logger.warning("weather_history_refresh_failed", lat=lat, lon=lon, error=str(exc))
+            return None
+
     def submit(self, points, start, end):
-        # Today belongs to the forecast tool. Archive requests stop at yesterday UTC.
-        end = min(weather_query_time(end).date(), datetime.now(timezone.utc).date() - timedelta(days=1))
-        start = weather_query_time(start).date()
+        # Today belongs to the forecast tool. Report windows are Beijing days,
+        # so archive requests stop at yesterday Beijing: before 08:00 local the
+        # UTC clamp would silently drop the previous evening's hours.
+        end = min(weather_query_time(end).astimezone(BEIJING).date(),
+                  datetime.now(BEIJING).date() - timedelta(days=1))
+        start = weather_query_time(start).astimezone(BEIJING).date()
         if start > end:
             return None
         return self.jobs.submit(points, start, end)
 
     def schedule_collection(self):
-        end = datetime.now(timezone.utc).date() - timedelta(days=1)
+        end = datetime.now(BEIJING).date() - timedelta(days=1)
         marker = self.jobs.root / "bootstrap.json"
         fingerprint = hashlib.sha256(json.dumps(self.points(), sort_keys=True).encode()).hexdigest()
         previous = json.loads(marker.read_text()) if marker.exists() else {}
@@ -198,8 +215,8 @@ class WeatherHistoryService:
                     try:
                         lat, lon = grid_point(point["lat"], point["lon"])
                         result = await self.repair(lat, lon,
-                            datetime.combine(first, datetime.min.time(), timezone.utc),
-                            datetime.combine(last, datetime.min.time(), timezone.utc) + 23 * HOUR)
+                            datetime.combine(first, datetime.min.time(), tzinfo=BEIJING),
+                            datetime.combine(last, datetime.min.time(), tzinfo=BEIJING) + 23 * HOUR)
                         if result["missing_hours"]:
                             failed += 1
                             error = f'{point["city"]}: {result["missing_hours"]} missing hours'
