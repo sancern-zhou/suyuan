@@ -207,3 +207,4 @@ scheduled_tasks:
   - task_xuchang_station_daily_source_report
   - task_xuchang_station_daily_source_analysis_report
   - task_xuchang_weekly_weather_situation_report
+  - task_xuchang_mee_cnemc_weekly_news
