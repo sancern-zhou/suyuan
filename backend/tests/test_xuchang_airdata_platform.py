@@ -15,6 +15,7 @@ from app.tools.xuchang.airdata_platform.client import (
 from app.tools.xuchang.airdata_platform.tool import (
     AirDataCalcReportSummaryTool,
     QueryAirDataPlatformTool,
+    _round_bankers_1,
 )
 
 
@@ -377,13 +378,28 @@ async def test_report_tool_strips_compare_fields_and_projects_by_default(monkeyp
 
     assert result["success"] is True
     row = result["data"][0]
-    assert "PM2_5_Curr_ForNow" in row
+    assert row["PM2_5_Curr_ForNow_R1"] == "45.6"  # 45.5650890000 银行家算法保留一位小数
+    assert "PM2_5_Curr" not in row
+    assert "PM2_5_Curr_ForNow" not in row
     assert "CompositeIndex" in row
     assert not any(k.endswith(("_Compare", "_Increase", "_ChangeType")) for k in row)
     assert "PM25ExcessDays" not in row  # 白名单外字段被投影掉
     metadata = result["metadata"]
     assert metadata["include_compare"] is False
     assert metadata["total_fields"] > metadata["preview_fields"]
+
+
+def test_round_bankers_1_half_to_even():
+    assert _round_bankers_1("45.5650890000") == "45.6"
+    assert _round_bankers_1("45.55") == "45.6"  # 半分位向偶数舍入：5→6
+    assert _round_bankers_1("45.45") == "45.4"  # 半分位向偶数舍入：5→4
+    assert _round_bankers_1("45.85") == "45.8"
+    assert _round_bankers_1("46") == "46.0"
+    assert _round_bankers_1("0.05") == "0.0"
+    assert _round_bankers_1("—") is None
+    assert _round_bankers_1("") is None
+    assert _round_bankers_1(None) is None
+    assert _round_bankers_1("abc") is None
 
 
 @pytest.mark.asyncio
@@ -401,15 +417,100 @@ async def test_report_tool_include_compare_keeps_yoy_fields(monkeypatch):
     )
 
     row = result["data"][0]
-    assert "PM2_5_Curr_ForNow_Compare" in row
-    assert "PM2_5_Curr_ForNow_Increase" in row
-    assert "PM2_5_Curr_ForNow_ChangeType" in row
+    assert "PM2_5_Curr_ForNow_Compare" not in row  # PM2.5 双口径同比字段只进落盘视图，不进上下文
+    assert "PM2_5_Curr_ForNow_Increase" not in row
+    assert "PM2_5_Curr_ForNow_ChangeType" not in row
+    assert row["PM2_5_Curr_ForNow_R1"] == "45.6"
     assert "CompositeIndex_Compare" in row
     # 非浓度列只带 _Compare，不带变幅与变幅类型
     assert "FineDays_Compare" in row
     assert "FineDays_Increase" not in row
     assert "FineDays_ChangeType" not in row
     assert result["metadata"]["include_compare"] is True
+
+
+@pytest.mark.asyncio
+async def test_report_tool_cross_caliber_auto_fills_compare(monkeypatch):
+    current_row = {
+        "TimePoint": "2026-08",
+        "CityCode": "411000",
+        "UniqueCode": "411000",
+        "PM2_5_Curr": "21",
+        "PM2_5_Curr_Compare": "—",
+        "PM2_5_Curr_Increase": "—",
+        "PM2_5_Curr_ChangeType": "Rate",
+        "PM2_5_Curr_ForNow": "20.7741940000",
+        "PM2_5_Curr_ForNow_Compare": "—",
+        "PM2_5_Curr_ForNow_Increase": "—",
+        "PM2_5_Curr_ForNow_ChangeType": "Rate",
+    }
+    compare_row = {
+        "TimePoint": "2025-08",
+        "CityCode": "411000",
+        "UniqueCode": "411000",
+        "PM2_5_Curr": "15",
+        "PM2_5_Curr_ForNow": "17.4000000000",
+    }
+    queried_tables = []
+
+    def handler(url, json=None, headers=None, timeout=None):
+        table = json["timeRanges"][0]["inputTableName"]
+        queried_tables.append(table)
+        data = [compare_row] if table.endswith("145") else [current_row]
+        return httpx.Response(200, json=_envelope(data))
+
+    _patch_post(monkeypatch, handler)
+
+    result = await AirDataCalcReportSummaryTool().execute(
+        start_time="2026-08-01",
+        end_time="2026-08-31",
+        input_table_name="view_dat_city_day_substitutionback_pantype155",
+        year=2025,
+        area_type=2,
+        report_time_type=4,
+        include_compare=True,
+    )
+
+    assert any(t.endswith("145") for t in queried_tables)
+    row = result["data"][0]
+    # 上下文 PM2.5 统一为 R1 口径：原始双口径同比不进上下文，R1 同比由全精度值换算
+    assert "PM2_5_Curr_Compare" not in row
+    assert "PM2_5_Curr_ForNow_Compare" not in row
+    assert row["PM2_5_Curr_ForNow_R1"] == "20.8"
+    assert row["PM2_5_Curr_ForNow_R1_Compare"] == "17.4"
+    assert row["PM2_5_Curr_ForNow_R1_Increase"] == "19.5"
+    assert row["PM2_5_Curr_ForNow_R1_ChangeType"] == "Rate"
+    metadata = result["metadata"]
+    assert metadata["compare_source"] == "auto_cross_caliber_145"
+    assert metadata["compare_table_name"].endswith("145")
+    assert metadata["compare_time_range"] == "2025-08-01 ~ 2025-08-31"
+    assert "145" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_report_tool_cross_caliber_skips_when_platform_has_compare(monkeypatch):
+    row = _report_row()
+    row["TimePoint"] = "2026-08"
+    queried_tables = []
+
+    def handler(url, json=None, headers=None, timeout=None):
+        queried_tables.append(json["timeRanges"][0]["inputTableName"])
+        return httpx.Response(200, json=_envelope([row]))
+
+    _patch_post(monkeypatch, handler)
+
+    result = await AirDataCalcReportSummaryTool().execute(
+        start_time="2026-08-01",
+        end_time="2026-08-31",
+        input_table_name="view_dat_city_day_substitutionback_pantype155",
+        year=2025,
+        area_type=2,
+        report_time_type=4,
+        include_compare=True,
+    )
+
+    assert len(queried_tables) == 1  # 平台已给出同比，不再补查
+    assert "compare_source" not in result["metadata"]
 
 
 @pytest.mark.asyncio
@@ -428,6 +529,27 @@ async def test_report_tool_need_keys_passthrough_skips_projection(captured):
 
     assert captured["payload"]["needKeys"] == ["PM25ExcessDays"]
     assert set(result["data"][0]) == {"PM25ExcessDays"}
+    assert result["metadata"]["need_keys_passthrough"] is True
+
+
+@pytest.mark.asyncio
+async def test_report_tool_need_keys_passthrough_computes_pm25_rounded(captured):
+    captured["response"] = _envelope([_report_row()])
+
+    result = await AirDataCalcReportSummaryTool().execute(
+        start_time="2025-01-01",
+        end_time="2025-12-31",
+        input_table_name="view_dat_station_day_app_pantype145",
+        year=2024,
+        area_type=0,
+        report_time_type=7,
+        need_keys=["PM2_5_Curr_ForNow_R1", "PM25ExcessDays"],
+    )
+
+    assert captured["payload"]["needKeys"] == ["PM2_5_Curr_ForNow_R1", "PM25ExcessDays"]
+    row = result["data"][0]
+    assert row["PM2_5_Curr_ForNow_R1"] == "45.6"
+    assert row["PM25ExcessDays"] == "92"
     assert result["metadata"]["need_keys_passthrough"] is True
 
 
@@ -457,8 +579,11 @@ async def test_report_tool_saves_stripped_full_data_with_context(captured):
     assert result["file_path"] == "report-data-id"
     assert result["metadata"]["file_path"] == "report-data-id"
     saved_row = context.saved["data"][0]
-    # 落盘的是剥离同比后的完整当期数据：白名单外字段保留，同比字段剥离
+    # 落盘的是剥离同比后的完整当期数据：白名单外字段与 PM2.5 双口径原始值保留
     assert saved_row["PM25ExcessDays"] == "92"
+    assert saved_row["PM2_5_Curr"] == "46"
+    assert saved_row["PM2_5_Curr_ForNow"] == "45.5650890000"
+    assert "PM2_5_Curr_ForNow_R1" not in saved_row
     assert "PM2_5_Curr_ForNow_Compare" not in saved_row
     assert "PM2_5_Curr_ForNow_Compare" not in context.saved["metadata"]["columns"]
     assert "PM25ExcessDays" in context.saved["metadata"]["columns"]
