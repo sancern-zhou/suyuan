@@ -119,14 +119,12 @@ def test_client_forces_utf8_decoding():
 class _Cursor:
     def __init__(self):
         self.statements = []
-        self.batches = []
+        self.merge_executions = []
 
     def execute(self, statement, *args):
         self.statements.append(statement)
-
-    def executemany(self, statement, rows):
-        self.statements.append(statement)
-        self.batches.extend(rows)
+        if args and "MERGE" in statement:
+            self.merge_executions.append(args)
 
     def close(self):
         return None
@@ -181,7 +179,7 @@ async def test_fetcher_parses_and_persists_hourly_forecast(monkeypatch):
         or "MERGE" in statement
         for statement in connection.cursor_instance.statements
     )
-    assert len(connection.cursor_instance.batches) == 6
+    assert len(connection.cursor_instance.merge_executions) == 6
     assert connection.committed is True
     assert connection.closed is True
 

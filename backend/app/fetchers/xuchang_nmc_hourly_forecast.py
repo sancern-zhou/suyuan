@@ -401,8 +401,11 @@ class XuchangNmcHourlyForecastStorage:
         cursor = conn.cursor()
         try:
             self.ensure_table(cursor)
-            cursor.fast_executemany = True
-            cursor.executemany(merge_sql, rows)
+            # FreeTDS 驱动（libtdsodbc.so，aarch64）在 fast_executemany/executemany
+            # 路径的 SQLExecute 中会段错误（每小时40分触发 worker SEGV，见 systemd
+            # coredump），因此这里必须逐条 execute；行数很小（约56行/站），性能无影响。
+            for row in rows:
+                cursor.execute(merge_sql, row)
             conn.commit()
             return len(rows)
         except Exception:

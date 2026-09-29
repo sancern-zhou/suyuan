@@ -52,8 +52,9 @@ backend:
       - get_weather_forecast
       - query_xcai_city_history
       - execute_sql_query
+      - execute_crawler_sql_query
+      - execute_bigdata_sql_query
       - execute_postgres_sql_query
-      - execute_echarts_python
       - create_report_chart
       - knowledge_graph_query
       - resolve_station_geo
@@ -76,6 +77,8 @@ backend:
       - get_weather_situation_map
       - query_xcai_city_history
       - execute_sql_query
+      - execute_crawler_sql_query
+      - execute_bigdata_sql_query
       - execute_postgres_sql_query
       # 许昌数据查询工具（中台 + 全国空气质量 + 站点定位）
       - query_airdata_platform
@@ -89,6 +92,8 @@ backend:
       - query_xuchang_emission_inventory
       - analyze_xuchang_upwind_permit_sources
       - create_report_chart
+      # 正式报告收口：保存 QMD、渲染 HTML/Word、验收并触发右侧预览
+      - create_report_package
       - execute_python
       - read_file
       - write_file
@@ -117,6 +122,8 @@ backend:
       - read_session_resource
       - publish_session_file
       - execute_sql_query
+      - execute_crawler_sql_query
+      - execute_bigdata_sql_query
       - execute_postgres_sql_query
       - query_xcai_city_history
       - get_weather_data
