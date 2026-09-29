@@ -72,6 +72,32 @@ grep -R "resources?presentation_type=document" dist/assets
 docker exec suyuan-nginx nginx -s reload
 ```
 
+## 统一入口子路径部署的构建基路径（易错）
+
+仓库里有两种 Nginx 布局，前端 `.env.standalone` 的两个基址必须与之一一对应，否则构建能成功但页面白屏或“后端没有连接”：
+
+| 模板 | 前端路径 | 后端 API 路径 | `VITE_APP_BASE_PATH` | `VITE_API_BASE_URL` |
+| --- | --- | --- | --- | --- |
+| `deploy/nginx/templates/default.conf.template`（独立入口） | `/` | `/api/suyuan/` | `/` | `/api/suyuan` |
+| `deploy/nginx/templates-local/default.conf`（统一入口，本机 5174 在用） | `/suyuan/` | `/suyuan/api/suyuan/` | `/suyuan/` | `/suyuan/api/suyuan` |
+
+统一入口布局下 `/` 全部代理给 platform-web（旧资源中心），只有 `/suyuan/*` 归溯源前端、`/suyuan/api/suyuan/*` 归溯源后端。基址配错时的典型症状：
+
+- `VITE_APP_BASE_PATH` 错为 `/`：页面引用 `/assets/...`，请求落入 platform-web 返回 HTML，浏览器报 `Failed to load module script ... MIME type "text/html"`；
+- `VITE_API_BASE_URL` 错为 `/api/suyuan`：API 请求同样落入 platform-web，返回 Java 网关 404 JSON（`{"path":...,"status":404}`），前端表现为后端不可达。
+
+构建前先确认目标 Nginx 使用的模板，再核对 `frontend/.env.standalone`；发布后必须验证：
+
+```bash
+# 页面引用带 /suyuan 前缀的资源
+curl -fsS http://127.0.0.1:5174/suyuan/ | grep -o '/suyuan/assets/index[^\"]*'
+# API 打到溯源后端（FastAPI；未登录返回 401 authentication_required 而不是 Java 404）
+curl -s http://127.0.0.1:5174/suyuan/api/suyuan/sessions | head -c 120
+# JS/CSS 的 MIME 类型必须是 application/javascript、text/css
+curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' \
+  http://127.0.0.1:5174/suyuan/assets/<index-hash>.js
+```
+
 ## Android 社交 App 路由
 
 当某个分支需要给 Android App 提供对话、会话和广播收件箱能力时，Nginx 模板必须把下面两条前缀原样转发到后端：
