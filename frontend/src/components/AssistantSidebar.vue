@@ -422,6 +422,16 @@ const allModules = [
     requiredModule: 'legacy'
   },
   {
+    id: 'quick-prompts-management',
+    name: '常用问题',
+    abbr: '常用',
+    desc: '维护首页和输入框常用问题',
+    badge: '管理',
+    isAction: true,
+    adminOnly: true,
+    requiredModule: 'legacy'
+  },
+  {
     id: 'fetchers',
     name: '数据管理',
     abbr: '数据',
@@ -482,6 +492,7 @@ const sidebarAgentModeEntries = projectConfig.sidebarAgentModes
 const SETTINGS_MODULE_IDS = Object.freeze([
   'session-history',
   'skills-management',
+  'quick-prompts-management',
   'scheduled-tasks',
   'tools-management',
   'file-manager',
