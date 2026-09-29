@@ -258,6 +258,37 @@ def test_query_tool_schema_documents_data_source_priority_and_new_standard_defau
     assert "数据源声明" in description
 
 
+def test_query_tool_schema_forbids_aggregating_hourly_daily_into_monthly_annual():
+    description = QueryAirDataPlatformTool().function_schema["description"]
+
+    assert "禁止用小时数据、日数据自行汇总或计算月度、季度、半年、年度统计值" in description
+    assert "airdata_calc_report_summary" in description
+    assert "不得自行汇总代替报表" in description
+
+
+def test_report_tool_schema_states_official_caliber_no_cross_check():
+    description = QueryAirDataPlatformTool().function_schema["description"]
+
+    assert "官方口径" in description
+    assert "唯一权威来源" in description
+    assert "交叉比对" in description
+    assert "交叉校验" not in description
+
+
+def test_report_tool_schema_forbids_aggregating_hourly_daily_into_monthly_annual():
+    tool = AirDataCalcReportSummaryTool()
+    description = tool.function_schema["description"]
+
+    assert "本接口是许昌月度及以上统计的唯一来源" in description
+    assert "禁止用小时数据、日数据自行汇总或计算月度、季度、半年、年度统计值" in description
+    assert "不得用自行汇总的结果代替或修正平台报表" in description
+    assert "不得改用明细数据自行计算" in description
+    assert (
+        "月报用 4、年报用 7"
+        in tool.function_schema["parameters"]["properties"]["report_time_type"]["description"]
+    )
+
+
 def test_report_tool_schema_documents_data_source_priority_and_new_standard_default():
     tool = AirDataCalcReportSummaryTool()
     description = tool.function_schema["description"]
@@ -268,6 +299,7 @@ def test_report_tool_schema_documents_data_source_priority_and_new_standard_defa
     assert "第一优先级" in description
     assert "ns_type 默认 2（国标二/新国标）" in description
     assert "数据源声明" in description
+    assert "唯一权威来源" in description
     assert (
         "默认 2，不要改为 1"
         in tool.function_schema["parameters"]["properties"]["ns_type"]["description"]
