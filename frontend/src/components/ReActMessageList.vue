@@ -1869,7 +1869,7 @@ const downloadPreviewedImage = async () => {
   border-top-left-radius: 2px;
   margin-left: 0;
   margin-right: 0;
-  border: 1px solid var(--border-2);
+  border: none;
   max-width: 100%;
   font-size: 14px;
   line-height: 1.6;
