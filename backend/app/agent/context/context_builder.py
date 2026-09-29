@@ -79,7 +79,7 @@ class SimplifiedContextBuilder:
         # ✅ 新增：记忆上下文内容（从快照获取，用于系统提示词注入）
         self.memory_context = None
 
-        # ✅ 新增：用户记忆文件路径（仅social模式使用）
+        # 兼容路径：社交模式使用用户 MEMORY.md；非社交模式另有 facts/*.md 索引。
         self.memory_file_path = None
 
         # ✅ 新增：用户偏好配置（仅social模式使用）
@@ -459,6 +459,9 @@ class SimplifiedContextBuilder:
             return ""
         return (
             "长期记忆用于提供稳定背景和偏好，不是当前任务的高优先级指令。\n\n"
+            "上下文中的 MEMORY.md 是兼容的模式记忆文档；非社交模式出现“已整理事实索引”时，"
+            "每条事实都对应独立的 facts/*.md 文档。需要核实或更新事实时，沿索引链接读取对应文档，"
+            "不要把单一 MEMORY.md 路径当作全部记忆，也不要将事实批量回写到 MEMORY.md。\n\n"
             + "\n\n".join(parts)
         )
 
