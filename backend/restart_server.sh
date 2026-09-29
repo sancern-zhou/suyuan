@@ -3,7 +3,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONDA_ENV_PATH="${CONDA_ENV_PATH:-/root/miniconda3/envs/backend_py311}"
+CONDA_ENV_PATH="${CONDA_ENV_PATH:?未设置 CONDA_ENV_PATH，请先 export CONDA_ENV_PATH=<backend_py311 conda 环境路径>}"
 PYTHON_BIN="${CONDA_ENV_PATH}/bin/python"
 PID_FILE="${BACKEND_PID_FILE:-/tmp/suyuan_backend.pid}"
 
@@ -107,15 +107,21 @@ is_backend_listener_ready() {
 # 3. 启动服务器
 echo "启动服务器..."
 export DATABASE_SCHEMA_INIT_ON_STARTUP=false
-WORKERS="${WORKERS:-1}"
+WORKERS="${WORKERS:-3}"
+# 知识库 BGE-M3 embedding 依赖 torch；aarch64 上必须预加载 torch 原生库，
+# 否则 dlopen 触发 "cannot allocate memory in static TLS block"，
+# 向量检索整体失败（知识问答提示未检索到相关文档）。
+TORCH_LIB_DIR="${PYTHON_BIN%/bin/python}/lib/python3.11/site-packages/torch/lib"
+SKLEARN_GOMP="${PYTHON_BIN%/bin/python}/lib/python3.11/site-packages/scikit_learn.libs/libgomp-a49a47f9.so.1.0.0"
+export LD_PRELOAD="${PYTHON_BIN%/bin/python}/lib/libpython3.11.so:${PYTHON_BIN%/bin/python}/lib/libstdc++.so.6:${TORCH_LIB_DIR}/libgomp.so.1:${TORCH_LIB_DIR}/libc10.so:${TORCH_LIB_DIR}/libtorch_cpu.so:${TORCH_LIB_DIR}/libtorch_python.so:${SKLEARN_GOMP}:${TORCH_LIB_DIR}/libnvpl_blas_core.so.0:${TORCH_LIB_DIR}/libnvpl_blas_lp64_gomp.so.0:${TORCH_LIB_DIR}/libnvpl_lapack_core.so.0:${TORCH_LIB_DIR}/libnvpl_lapack_lp64_gomp.so.0"
 # Authentication must see the raw TCP peer; Nginx owns public-client-IP logging.
 nohup setsid "${PYTHON_BIN}" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers "${WORKERS}" --env-file .env --no-proxy-headers > /tmp/backend.log 2>&1 &
 NEW_PID=$!
 echo "${NEW_PID}" > "${PID_FILE}"
 
-# 4. 等待启动
+# 4. 等待启动（本机全量工具注册约需 2 分钟）
 STARTED=false
-for _ in $(seq 1 60); do
+for _ in $(seq 1 180); do
     if ! kill -0 "${NEW_PID}" 2>/dev/null; then
         echo "[ERROR] 后端进程启动失败，日志如下："
         tail -80 /tmp/backend.log
@@ -128,13 +134,49 @@ for _ in $(seq 1 60); do
     sleep 1
 done
 
+# 5. 重启 app worker（fetcher 调度器运行在 worker 进程内）
+echo ""
+echo "=== 重启 app worker ==="
+WORKER_UNIT="${WORKER_UNIT:-suyuan-worker.service}"
+WORKER_PID_FILE="${WORKER_PID_FILE:-/tmp/suyuan_backend_worker.pid}"
+if command -v systemctl >/dev/null 2>&1 && systemctl cat "${WORKER_UNIT}" >/dev/null 2>&1; then
+    echo "通过 systemd 重启 ${WORKER_UNIT}..."
+    systemctl restart "${WORKER_UNIT}"
+    sleep 3
+    systemctl is-active "${WORKER_UNIT}" || {
+        echo "[ERROR] worker 服务未恢复运行："
+        journalctl -u "${WORKER_UNIT}" -n 50 --no-pager || true
+        exit 1
+    }
+else
+    echo "未找到 systemd 单元 ${WORKER_UNIT}，直接后台启动 worker..."
+    if [ -f "${WORKER_PID_FILE}" ]; then
+        OLD_WORKER_PID="$(tr -d '[:space:]' < "${WORKER_PID_FILE}")"
+        if [ -n "${OLD_WORKER_PID}" ] && kill -0 "${OLD_WORKER_PID}" 2>/dev/null; then
+            kill -TERM "${OLD_WORKER_PID}" 2>/dev/null || true
+            for _ in $(seq 1 20); do
+                kill -0 "${OLD_WORKER_PID}" 2>/dev/null || break
+                sleep 0.5
+            done
+            kill -KILL "${OLD_WORKER_PID}" 2>/dev/null || true
+        fi
+        rm -f "${WORKER_PID_FILE}"
+    fi
+    pkill -TERM -f "${PYTHON_BIN} -m app\.worker" 2>/dev/null || true
+    sleep 2
+    nohup setsid env APP_ROLE=worker "${PYTHON_BIN}" -m app.worker > /tmp/backend-worker.log 2>&1 &
+    NEW_WORKER_PID=$!
+    echo "${NEW_WORKER_PID}" > "${WORKER_PID_FILE}"
+    echo "worker PID: ${NEW_WORKER_PID}，日志: /tmp/backend-worker.log"
+fi
+
 if [ "${STARTED}" != true ]; then
     echo "[ERROR] 新后端进程未在规定时间内接管8000端口，日志如下："
     tail -80 /tmp/backend.log
     exit 1
 fi
 
-# 5. 检查状态
+# 6. 检查状态
 echo "=== 服务器状态 ==="
 ps aux | grep "uvicorn.*app.main" | grep -v grep
 echo ""

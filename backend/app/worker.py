@@ -65,6 +65,11 @@ from app.lifecycle.startup import run_startup
 configure_logging()
 logger = structlog.get_logger()
 
+# LD_PRELOAD 只服务于主进程提前映射 torch 原生库（aarch64 TLS 规避）；
+# 清除它以免泄露到子进程（bubblewrap 沙箱等被迫加载 CUDA 库而启动失败）。
+if os.environ.pop("LD_PRELOAD", None):
+    logger.info("ld_preload_cleared_for_child_processes")
+
 
 async def main() -> None:
     stop_event = asyncio.Event()
