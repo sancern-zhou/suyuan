@@ -104,6 +104,36 @@ def test_custom_runtime_stops_if_a_selected_tool_becomes_unavailable():
         AgentRuntime._enforce_custom_tool_terminal_rules(state, {}, records)
 
 
+def test_custom_runtime_allows_first_missing_tool_call_for_self_correction():
+    state = RunState(session_id="s", user_query="run", mode="custom")
+    records = [{
+        "tool_name": "read",
+        "tool_input": {"path": "backend/backend_data_registry/x/manifest.json"},
+        "result": {
+            "success": False,
+            "error": "工具不存在: read",
+            "available_tools": ["read_file", "execute_python"],
+        },
+    }]
+
+    AgentRuntime._enforce_custom_tool_terminal_rules(state, {}, records)
+
+    assert state.last_missing_tool_signature is not None
+
+
+def test_custom_runtime_terminates_on_repeated_identical_missing_tool_call():
+    state = RunState(session_id="s", user_query="run", mode="custom")
+    records = [{
+        "tool_name": "read",
+        "tool_input": {"path": "backend/x/manifest.json"},
+        "result": {"success": False, "error": "工具不存在: read"},
+    }]
+
+    AgentRuntime._enforce_custom_tool_terminal_rules(state, {}, records)
+    with pytest.raises(CustomAgentTerminalError, match="工具不存在且重复调用"):
+        AgentRuntime._enforce_custom_tool_terminal_rules(state, {}, records)
+
+
 @pytest.mark.parametrize("message", [
     "HTTP 400 Bad Request",
     "status code: 400 invalid request",

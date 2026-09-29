@@ -361,6 +361,21 @@ class ToolExecutor:
             )
             return {"durable": False, "error": "resource_persistence_failed", "rejected": rejected}
 
+    # 模型偶发把工具名写成常见简称（如 read/write/edit/list），
+    # 在判"工具不存在"前先尝试映射到注册表中的正式工具名。
+    TOOL_NAME_ALIASES: Dict[str, str] = {
+        "read": "read_file",
+        "write": "write_file",
+        "edit": "edit_file",
+        "list": "list_directory",
+    }
+
+    def _resolve_tool_alias(self, tool_name: str) -> Optional[str]:
+        candidate = self.TOOL_NAME_ALIASES.get(str(tool_name).strip().lower())
+        if candidate and candidate in self.tool_registry:
+            return candidate
+        return None
+
     async def execute_tool(
         self,
         tool_name: str,
@@ -412,6 +427,16 @@ class ToolExecutor:
         )
 
         # Step 1: 验证工具存在
+        if tool_name not in self.tool_registry:
+            resolved_name = self._resolve_tool_alias(tool_name)
+            if resolved_name is not None:
+                logger.warning(
+                    "tool_name_alias_resolved",
+                    requested_tool=tool_name,
+                    resolved_tool=resolved_name
+                )
+                tool_name = resolved_name
+
         if tool_name not in self.tool_registry:
             # 🔍 调试日志：工具不存在时详细输出注册表状态
             available_tools = list(self.tool_registry.keys())
