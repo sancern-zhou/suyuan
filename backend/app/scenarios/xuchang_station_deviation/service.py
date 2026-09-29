@@ -50,6 +50,7 @@ STATION_ID_ALIASES = {
     "3134A": "1005A",
     "3338A": "1009A",
     "4180A": "1011A",
+    "4259A": "1012A",
 }
 CANONICAL_STATION_NAMES = {
     "1003A": "开发区",
