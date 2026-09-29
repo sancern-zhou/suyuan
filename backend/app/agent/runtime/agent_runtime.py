@@ -1151,10 +1151,29 @@ class AgentRuntime:
     ) -> None:
         if state.mode != "custom":
             return
+        missing = next((
+            record for record in records
+            if isinstance(record.get("result"), dict)
+            and str(record["result"].get("error", "")).startswith("工具不存在:")
+        ), None)
+        if missing is not None:
+            # 模型写错工具名（该工具从未注册）不属于工具状态变化：把错误和
+            # available_tools 回传给模型自我纠正；仅当相同调用重复出现时才终止。
+            signature = json.dumps(
+                {"tool": missing.get("tool_name"), "args": missing.get("tool_input", {})},
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            )
+            if state.last_missing_tool_signature == signature:
+                raise CustomAgentTerminalError(
+                    f"custom Agent 工具不存在且重复调用: {missing['result'].get('error')}"
+                )
+            state.last_missing_tool_signature = signature
         unavailable = next((
             record for record in records
             if isinstance(record.get("result"), dict)
-            and str(record["result"].get("error", "")).startswith(("工具不可用:", "工具不存在:"))
+            and str(record["result"].get("error", "")).startswith("工具不可用:")
         ), None)
         if unavailable is not None:
             raise CustomAgentTerminalError(
