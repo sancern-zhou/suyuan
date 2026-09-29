@@ -1766,7 +1766,7 @@ def load_data(file_path: str):
         input_path = __DataContextPath(__AGENT_PROJECT_ROOT__) / input_path
     resolved_path = str(input_path.resolve())
     if resolved_path not in __ALLOWED_DATA_FILES__:
-        raise RuntimeError(f"未找到会话数据文件: {file_path}")
+        raise RuntimeError(f"未找到会话数据文件: {file_path}；请将该文件路径加入本次 execute_python 调用的 input_files 参数后重试（挂载不跨调用保留）")
     with open(resolved_path, 'r', encoding='utf-8') as data_file:
         return __data_context_json.load(data_file)
 
@@ -2715,6 +2715,11 @@ def merge_excel_with_charts(file_paths, output_path):
                 suggestions.append("• **运算符不支持**: 操作数类型不匹配")
                 suggestions.append("• **解决方案**: 检查变量类型，使用 `type()` 查看类型，使用 `int()`/`float()`/`str()` 转换")
 
+            elif "bad operand type for unary" in error_msg:
+                suggestions.append("• **一元运算符类型错误**: 常见于对 pandas 布尔列使用 `~` 取反，但该列因含 NaN 已被上转型为 float/object（如整行赋值 `df.loc[i] = dict` 混入 None/NaN）")
+                suggestions.append("• **解决方案**: 取反前确保布尔 dtype，或改用等价比较")
+                suggestions.append("• **示例修复**: `(~df['flag'].fillna(False)).sum()` 或 `df['flag'].eq(False).sum()`；布尔标志列也可改用 0/1 整数列避免上转型")
+
             elif "not subscriptable" in error_msg:
                 suggestions.append("• **不可下标访问**: 尝试对非列表/字典类型使用索引")
                 suggestions.append("• **解决方案**: 检查变量是否为列表或字典，使用 `list()` 或 `dict()` 转换")
@@ -2738,6 +2743,11 @@ def merge_excel_with_charts(file_paths, output_path):
             elif "I/O operation on closed file" in error_msg:
                 suggestions.append("• **文件已关闭**: 尝试操作已关闭的文件对象")
                 suggestions.append("• **解决方案**: 确保文件在 `with` 块内操作，或重新打开文件")
+
+            elif "nan to integer" in error_msg.lower():
+                suggestions.append("• **NaN 转整数失败**: 对含缺失值（NaN）的数值列调用了 `int()`/`astype(int)`")
+                suggestions.append("• **解决方案**: 使用可空整型 `Int64`，或先处理缺失值再转换")
+                suggestions.append("• **示例修复**: `df['col'].astype('Int64')`；单个值先判空 `int(v) if pd.notna(v) else None`")
 
         elif error_type == "AttributeError":
             if "'NoneType' object has no attribute" in error_msg:
@@ -2768,6 +2778,11 @@ def merge_excel_with_charts(file_paths, output_path):
             suggestions.append("• **常见原因**: 括号不匹配、冒号缺失、缩进错误")
             suggestions.append("• **解决方案**: 检查括号、引号是否配对，检查缩进是否正确")
 
+        # 基于错误内容的补充建议（不依赖错误类型分类）
+        if "未找到会话数据文件" in error_msg:
+            suggestions.append("• **输入文件未挂载**: 沙箱只挂载本次调用 input_files 参数中声明的文件，挂载不跨调用保留")
+            suggestions.append("• **解决方案**: 把报错中提到的文件路径加入本次 execute_python 调用的 input_files 数组后重试")
+
         # 如果没有特定建议，提供通用建议
         if not suggestions:
             suggestions.append("• **检查代码**: 仔细阅读错误信息，定位问题代码")
@@ -2795,8 +2810,8 @@ def merge_excel_with_charts(file_paths, output_path):
 
         # 常见 Python 错误模式
         patterns = [
-            r"(NameError|TypeError|ValueError|KeyError|AttributeError|IndexError|FileNotFoundError|ZeroDivisionError|SyntaxError): (.+)",
-            r"Traceback \(most recent call last\):\s+.*\s+(NameError|TypeError|ValueError|KeyError|AttributeError|IndexError|FileNotFoundError|ZeroDivisionError|SyntaxError): (.+)",
+            r"(NameError|TypeError|ValueError|KeyError|AttributeError|IndexError|FileNotFoundError|ZeroDivisionError|SyntaxError|RuntimeError): (.+)",
+            r"Traceback \(most recent call last\):\s+.*\s+(NameError|TypeError|ValueError|KeyError|AttributeError|IndexError|FileNotFoundError|ZeroDivisionError|SyntaxError|RuntimeError): (.+)",
         ]
 
         for pattern in patterns:
