@@ -458,7 +458,7 @@ const handleImageClick = (e) => {
   
   :deep(strong) {
     font-weight: 600;
-    color: var(--color-primary);
+    color: inherit;
   }
   
   :deep(em) {
@@ -472,7 +472,7 @@ const handleImageClick = (e) => {
     border-radius: 3px;
     font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
     font-size: 13px;
-    color: #d63384;
+    color: #405868;
   }
   
   :deep(a) {
