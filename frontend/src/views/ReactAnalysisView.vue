@@ -506,6 +506,9 @@ const handleSidebarAction = async (actionId) => {
       console.log('[ReactAnalysisView] Showing skills-management panel')
       showManagementPanel('skills-management')
       break
+    case 'quick-prompts-management':
+      showManagementPanel('quick-prompts-management')
+      break
     case 'knowledge-base':
       console.log('[ReactAnalysisView] Showing knowledge-base panel')
       showManagementPanel('knowledge-base')
