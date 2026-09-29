@@ -6,11 +6,16 @@
 
 from pathlib import Path
 from typing import Dict, Any
+from contextvars import ContextVar
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.agent.memory.curated_facts import CuratedFactStore
 
 logger = structlog.get_logger(__name__)
+_memory_context: ContextVar[tuple[str | None, str | None]] = ContextVar(
+    "remember_fact_memory_context", default=(None, None)
+)
 
 
 class RememberFactTool(LLMTool):
@@ -53,12 +58,14 @@ class RememberFactTool(LLMTool):
         """
         cls._current_mode = mode
         cls._current_user_id = user_id
+        _memory_context.set((mode, user_id))
 
     @classmethod
     def clear_memory_context(cls):
         """清除记忆上下文"""
         cls._current_mode = None
         cls._current_user_id = None
+        _memory_context.set((None, None))
 
     def _build_schema(self) -> Dict[str, Any]:
         """构建工具schema"""
@@ -83,13 +90,19 @@ class RememberFactTool(LLMTool):
                         "default": 3,
                         "minimum": 1,
                         "maximum": 5
-                    }
+                    },
+                    "source_ref": {"type": "string", "description": "来源消息或会话引用，必须可核验。"},
+                    "applies_when": {"type": "string", "description": "该事实适用的模式、任务或条件。"},
+                    "valid_until": {"type": "string", "description": "可选失效日期，格式 YYYY-MM-DD。"}
                 },
                 "required": ["fact", "category"]
             }
         }
 
-    async def execute(self, fact: str, category: str, priority: int = 3, **kwargs) -> Dict[str, Any]:
+    async def execute(
+        self, fact: str, category: str, priority: int = 3,
+        source_ref: str = "", applies_when: str = "", valid_until: str = "", **kwargs
+    ) -> Dict[str, Any]:
         """
         执行记忆添加
 
@@ -112,6 +125,16 @@ class RememberFactTool(LLMTool):
             }
 
         try:
+            current_mode, current_user_id = _memory_context.get()
+            current_mode = current_mode or self._current_mode
+            current_user_id = current_user_id or self._current_user_id
+            if current_mode and current_mode != "social":
+                store = CuratedFactStore(self._get_memory_file_path_object().parent)
+                result = store.add(
+                    fact=fact, category=category, source_ref=source_ref,
+                    applies_when=applies_when, valid_until=valid_until,
+                )
+                return {"success": True, "summary": f"记忆事实{result['status']}: {fact[:50]}", **result}
             # 获取当前MEMORY.md大小
             memory_file = Path(memory_file_path)
             if memory_file.exists():
@@ -167,8 +190,9 @@ class RememberFactTool(LLMTool):
         """
         try:
             # 1. 优先使用类变量中存储的上下文
-            mode = self._current_mode or 'social'
-            user_id = self._current_user_id
+            current_mode, current_user_id = _memory_context.get()
+            mode = current_mode or self._current_mode or 'social'
+            user_id = current_user_id or self._current_user_id
 
             # 2. 社交模式：使用与 social/memory_store.py 一致的用户隔离路径
             if mode == 'social':
@@ -206,6 +230,9 @@ class RememberFactTool(LLMTool):
                 error=str(e)
             )
             return None
+
+    def _get_memory_file_path_object(self) -> Path:
+        return Path(self._get_memory_file_path())
 
     def _append_fact(self, memory_file: Path, category: str, fact: str) -> None:
         """

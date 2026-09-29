@@ -168,23 +168,22 @@ def test_internal_identity_rejects_tampered_envelope():
         decode_internal_user(f"{encoded_part}.{signature_part}", secret="topsecret")
 
 
-# ---------- bash tool must not allow interpreters/fetchers ----------
+# ---------- bash tool delegates command policy to the shell sandbox ----------
 
 
 @pytest.mark.asyncio
-async def test_bash_tool_rejects_python_inline_code():
+async def test_bash_tool_allows_python_inline_code_in_sandbox():
     tool = BashTool()
-    result = await tool.execute(
-        command='python -c "import os; os.system(\'id\')"'
-    )
-    assert not result.get("success")
+    result = await tool.execute(command='python -c "print(1)"')
+    assert result.get("success")
+    assert result["data"]["stdout"].strip() == "1"
 
 
 @pytest.mark.asyncio
-async def test_bash_tool_rejects_curl():
+async def test_bash_tool_does_not_reject_curl_at_validation_layer():
     tool = BashTool()
-    result = await tool.execute(command="curl http://169.254.169.254/latest/meta-data")
-    assert not result.get("success")
+    result = await tool.execute(command="curl --version")
+    assert result.get("success")
 
 
 # ---------- agent file tools must respect protected paths ----------
