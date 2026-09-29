@@ -349,6 +349,10 @@ const props = defineProps({
     type: String,
     default: 'general-agent'
   },
+  agentMode: {
+    type: String,
+    default: ''
+  },
   useReranker: {
     type: Boolean,
     default: false
@@ -365,7 +369,10 @@ const textareaRef = ref(null)
 const fileInputRef = ref(null)
 const localValue = ref(props.modelValue)
 const runtimeQuickPrompts = ref([])
-const quickPrompts = computed(() => runtimeQuickPrompts.value.filter(item => item.mode === props.assistantMode))
+const quickPrompts = computed(() => {
+  const activeMode = props.agentMode || props.assistantMode
+  return runtimeQuickPrompts.value.filter(item => item.mode === activeMode)
+})
 const fillQuickPrompt = value => {
   if (!value || props.disabled || props.isAnalyzing) return
   localValue.value = value
