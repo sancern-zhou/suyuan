@@ -243,6 +243,37 @@ def test_tool_schemas():
     assert "include_compare" in report_tool.function_schema["parameters"]["properties"]
 
 
+def test_query_tool_schema_documents_data_source_priority_and_new_standard_default():
+    description = QueryAirDataPlatformTool().function_schema["description"]
+
+    assert "中大平台审核后数据" in description
+    assert "长历史采集库" in description
+    assert "大气监测接口中台" in description
+    assert "中大国发平台" in description
+    assert "第一优先级" in description
+    assert "国标2（新国标）" in description
+    assert "2026-01-01 及以后用 v_c_d_sb_155" in description
+    assert "2021-07-01~2025-12-31 用 v_c_d_sb_145" in description
+    assert "不要用 v_c_d_src_155" in description
+    assert "数据源声明" in description
+
+
+def test_report_tool_schema_documents_data_source_priority_and_new_standard_default():
+    tool = AirDataCalcReportSummaryTool()
+    description = tool.function_schema["description"]
+
+    assert "中大平台审核后数据" in description
+    assert "长历史采集库" in description
+    assert "中大国发平台" in description
+    assert "第一优先级" in description
+    assert "ns_type 默认 2（国标二/新国标）" in description
+    assert "数据源声明" in description
+    assert (
+        "默认 2，不要改为 1"
+        in tool.function_schema["parameters"]["properties"]["ns_type"]["description"]
+    )
+
+
 def test_xuchang_registers_airdata_tools():
     context = load_project_context("xuchang")
 
