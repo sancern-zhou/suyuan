@@ -23,6 +23,7 @@ from app.tools.visualization.create_report_chart.text_layout import (
 )
 from app.tools.visualization.create_report_chart.theme import REPORT_THEME, SERIES_COLORS, theme_color
 from app.tools.visualization.create_report_chart.validation import ChartDataError
+from app.utils.chart_legend import position_legends_below_plot, visible_legends
 from app.utils.font_utils import chinese_font_prop, select_preferred_chinese_font_path
 
 
@@ -30,8 +31,6 @@ WORD_TARGET_WIDTH_IN = 5.8
 WORD_SOURCE_WIDTH_IN = 8.2
 WORD_SOURCE_HEIGHT_IN = 5.2
 _CHINESE_FONT_PROP = None
-LEGEND_MAX_COLUMNS = 4
-LEGEND_MAX_RESERVED_FRACTION = 0.26
 
 GENERAL_CHART_TYPES = {
     "bar",
@@ -661,68 +660,7 @@ def _line_width(options: Dict[str, Any], default: float = 2.0) -> float:
 
 def _position_legends_below_plot(fig, *, notes_present: bool = False) -> Dict[str, Any]:
     """Move axes legends into a measured band below the plotting area."""
-    legends = []
-    for axis_index, ax in enumerate(fig.axes):
-        legend = ax.get_legend()
-        if legend is None or not legend.get_visible() or not legend.get_texts():
-            continue
-        legends.append((axis_index, ax, legend))
-
-    if not legends:
-        return {
-            "position": "none",
-            "legend_count": 0,
-            "reserved_bottom_fraction": 0.0,
-            "items": [],
-        }
-
-    fig.canvas.draw()
-    renderer = fig.canvas.get_renderer()
-    # Keep the legend above the provenance note when both are present.
-    next_anchor = 0.075 if notes_present else 0.015
-    items = []
-    for axis_index, ax, legend in legends:
-        handles = list(legend.legend_handles)
-        labels = [text.get_text() for text in legend.get_texts()]
-        item_count = len(labels)
-        columns = min(LEGEND_MAX_COLUMNS, item_count)
-        legend_options = {
-            "fontsize": min(float(text.get_fontsize()) for text in legend.get_texts()),
-            "frameon": legend.get_frame_on(),
-            "loc": "lower center",
-            "bbox_to_anchor": (0.5, next_anchor),
-            "bbox_transform": fig.transFigure,
-            "borderaxespad": 0.0,
-            "ncol": columns,
-        }
-        title = legend.get_title().get_text()
-        if title:
-            legend_options["title"] = title
-        legend.remove()
-        legend = ax.legend(handles, labels, **legend_options)
-        legend.set_in_layout(False)
-        fig.canvas.draw()
-
-        bbox = legend.get_window_extent(renderer=renderer)
-        height_fraction = bbox.height / max(float(fig.bbox.height), 1.0)
-        next_anchor += height_fraction + 0.012
-        items.append({
-            "axis_index": axis_index,
-            "item_count": item_count,
-            "columns": columns,
-        })
-
-    required_fraction = next_anchor + 0.015
-    return {
-        "position": "outside_bottom",
-        "legend_count": len(legends),
-        "reserved_bottom_fraction": min(
-            LEGEND_MAX_RESERVED_FRACTION,
-            required_fraction,
-        ),
-        "required_bottom_fraction": required_fraction,
-        "items": items,
-    }
+    return position_legends_below_plot(fig, notes_present=notes_present)
 
 
 def _apply_x_tick_labels(ax, positions: Sequence[int], labels: Sequence[str], options: Dict[str, Any]) -> Dict[str, Any]:
@@ -1277,17 +1215,13 @@ def _collect_quality_checks(fig, text_layout_metadata: Dict[str, Any]) -> Dict[s
 def _cache_figure(fig, chart_id: str, title: str) -> Dict[str, Any]:
     buffer = BytesIO()
     _apply_font_to_figure(fig)
-    visible_legends = [
-        legend
-        for ax in fig.axes
-        if (legend := ax.get_legend()) is not None and legend.get_visible()
-    ]
+    legends = visible_legends(fig)
     note_artists = list(getattr(fig, "_report_note_artists", []))
     fig.savefig(
         buffer,
         format="png",
         bbox_inches="tight",
-        bbox_extra_artists=[*visible_legends, *note_artists],
+        bbox_extra_artists=[*legends, *note_artists],
         pad_inches=0.18,
         dpi=int(REPORT_THEME["dpi"]),
     )
