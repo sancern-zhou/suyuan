@@ -448,6 +448,22 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="execute_postgres_sql_query", error=str(e))
 
+    # MySQL 采集库长历史数据查询工具（站点/城市小时、逐日、PM2.5 年均值）
+    try:
+        from app.tools.query.execute_crawler_sql_query.tool import ExecuteCrawlerSQLQueryTool
+        registry.register(ExecuteCrawlerSQLQueryTool(), priority=47)
+        logger.info("tool_loaded", tool="execute_crawler_sql_query")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="execute_crawler_sql_query", error=str(e))
+
+    # 企业运输管控平台 Big_Data SQL Server 查询工具（道闸违规/在线/通行记录）
+    try:
+        from app.tools.query.execute_bigdata_sql_query.tool import ExecuteBigDataSQLQueryTool
+        registry.register(ExecuteBigDataSQLQueryTool(), priority=47)
+        logger.info("tool_loaded", tool="execute_bigdata_sql_query")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="execute_bigdata_sql_query", error=str(e))
+
     try:
         from app.tools.query.zhiliao_tender_detail.tool import ZhiliaoTenderDetailTool
         registry.register(ZhiliaoTenderDetailTool(), priority=46)

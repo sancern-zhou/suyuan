@@ -56,6 +56,8 @@ backend:
       - execute_bigdata_sql_query
       - execute_postgres_sql_query
       - create_report_chart
+      # 网页交互式 ECharts 图表（用户未指定静态报告插图时优先）
+      - execute_echarts_python
       - knowledge_graph_query
       - resolve_station_geo
       - query_national_province_air_quality
