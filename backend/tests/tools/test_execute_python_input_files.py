@@ -75,3 +75,46 @@ def test_authorized_external_input_and_schema(tmp_path):
     schema = tool.get_function_schema()
     assert 'input_files' in schema['parameters']['properties']
     assert '独立环境' in schema['description']
+
+
+def test_registry_evidence_file_is_declared_input(tmp_path, monkeypatch):
+    """Scenario product files under the data registry are valid declared inputs."""
+    registry_root = tmp_path / 'registry'
+    evidence_dir = registry_root / 'xuchang_weather_situation' / '20260928_demo'
+    evidence_dir.mkdir(parents=True)
+    manifest = evidence_dir / 'manifest.json'
+    manifest.write_text('{"schema_version": "weather.evidence.v1"}', encoding='utf-8')
+    monkeypatch.setattr(
+        'app.tools.utility.execute_python_tool.agent_declared_input_roots',
+        lambda: [registry_root],
+    )
+    context = context_for(tmp_path / 'session')
+    assert ExecutePythonTool()._validate_input_files([str(manifest)], context) == [str(manifest)]
+
+
+@pytest.mark.asyncio
+async def test_cross_session_registry_file_reads_and_error_self_correction(tmp_path, monkeypatch):
+    """Another session's registry data file is readable; rejection explains the policy."""
+    registry_root = tmp_path / 'registry'
+    other_session_data = registry_root / 'sessions' / 'agent_session_other' / 'data'
+    other_session_data.mkdir(parents=True)
+    payload = other_session_data / 'air_quality_unified--demo.json'
+    payload.write_text('[{"pm25": 42}]', encoding='utf-8')
+    monkeypatch.setattr(
+        'app.tools.utility.execute_python_tool.agent_declared_input_roots',
+        lambda: [registry_root],
+    )
+    tool = ExecutePythonTool()
+    context = context_for(tmp_path / 'session')
+    result = await tool.execute(
+        context=context, input_files=[str(payload)],
+        code="import json\nrows = json.load(open(input_files[0]))\nprint('PM25', rows[0]['pm25'])\n")
+    assert result['success'] is True, result
+    assert 'PM25 42' in result['data']['output']
+
+    sensitive = tmp_path / 'session' / '.env'
+    sensitive.write_text('SECRET=1', encoding='utf-8')
+    denied = await tool.execute(
+        context=context, input_files=[str(sensitive)], code="raise AssertionError('must not execute')")
+    assert denied['success'] is False and denied['error_code'] == 'INVALID_INPUT_FILES'
+    assert '敏感文件' in denied['error']
