@@ -236,12 +236,7 @@ async def test_execute_python_keeps_qmd_downloadable_when_render_fails(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_execute_echarts_python_publishes_interactive_spec_and_png(monkeypatch, tmp_path):
-    from app.tools.visualization import echarts_snapshot
-
-    image_path = tmp_path / "chart.png"
-    image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
-    monkeypatch.setattr(echarts_snapshot, "render_echarts_png", lambda option, visual_id: image_path)
+async def test_execute_echarts_python_publishes_only_interactive_spec():
     result = await ExecuteEChartsPythonTool().execute(
         code=(
             "import json\n"
@@ -257,12 +252,11 @@ async def test_execute_echarts_python_publishes_interactive_spec_and_png(monkeyp
     resources = [
         ResourceDeclaration.model_validate(item) for item in result["resources"]
     ]
-    assert [resource.resource_key for resource in resources] == ["chart-spec", "chart-image"]
+    assert [resource.resource_key for resource in resources] == ["chart-spec"]
     assert resources[0].kind.value == "visual"
     assert resources[0].renderer.value == "chart"
-    assert resources[1].renderer.value == "image"
-    assert resources[1].relation.value == "rendition"
-    assert {cap.value for cap in resources[1].capabilities} == {"preview", "download"}
+    assert resources[0].metadata["interactive"] is True
+    assert "local_path" not in result["visuals"][0]
     assert "image_url" not in result["visuals"][0]
     assert "/api/image/" not in result["summary"]
 

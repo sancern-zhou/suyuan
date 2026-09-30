@@ -6,7 +6,7 @@ import { inlineChartImages, renderChartPlaceholders } from './inlineChartImages.
 test('only embeds image renditions produced by the final response tool calls', () => {
   const user = { id: 'user', type: 'user' }
   const tool = { id: 'tool', type: 'tool_result', data: {
-    tool_name: 'execute_echarts_python', result: { visuals: [{ id: 'chart-a' }] }
+    tool_name: 'execute_python', result: { visuals: [{ id: 'chart-a' }] }
   } }
   const final = { id: 'final', type: 'final' }
   const resources = [
@@ -28,13 +28,13 @@ test('replaces chart placeholders with the matching image resource', () => {
 })
 
 test('restored answer resolves explicit chart placeholders without tool-result visuals', () => {
-  const visualId = 'echarts_1790562701562753777_2'
+  const visualId = 'python_1790562701562753777_2'
   const content = '按许昌逐小时风向分扇区统计各市PM2.5均值：\n\n[[chart:' + visualId + ']]'
   const final = { id: 'final', type: 'final', content }
   const messages = [
     { id: 'user', type: 'user' },
     { id: 'restored-tool', type: 'tool_result', data: {
-      tool_name: 'execute_echarts_python', result: {}
+      tool_name: 'execute_python', result: {}
     } },
     final
   ]
@@ -55,7 +55,7 @@ test('keeps unknown chart placeholders for a later resource update', () => {
   assert.equal(renderChartPlaceholders('[[chart:missing]]', []).content, '[[chart:missing]]')
 })
 
-test('embeds static Python and report charts from the current answer', () => {
+test('embeds static Python and business charts from the current answer', () => {
   const user = { id: 'user', type: 'user' }
   const python = { id: 'python', type: 'tool_result', data: {
     tool_name: 'execute_python', result: { visuals: [{ id: 'python-chart' }] }
@@ -90,4 +90,37 @@ test('embeds static Python and report charts from the current answer', () => {
     inlineChartImages(final, [user, reportChart, final], resources, '![图](/report-chart.png)'),
     []
   )
+})
+
+test('keeps interactive ECharts out of the answer body even when an image is present', () => {
+  const user = { id: 'user', type: 'user' }
+  const tool = { id: 'tool', type: 'tool_result', data: {
+    tool_name: 'execute_echarts_python', result: { visuals: [{ id: 'chart-a' }] }
+  } }
+  const final = { id: 'final', type: 'final' }
+  const image = {
+    resource_id: 'image-a', resource_key: 'chart-image', visual_id: 'chart-a',
+    status: 'active', content_url: '/a.png'
+  }
+  const chart = {
+    resource_id: 'spec-a', resource_key: 'chart-spec', visual_id: 'chart-a',
+    status: 'active', interactive: true
+  }
+  const content = '结果\n[[chart:chart-a]]'
+  assert.deepEqual(inlineChartImages(final, [user, tool, final], [image], content), [])
+  assert.deepEqual(inlineChartImages(final, [user, final], [image, chart], content), [])
+  assert.equal(renderChartPlaceholders(content, [], [chart]).content, '结果\n')
+})
+
+test('interactive chart exclusion preserves static images in mixed results', () => {
+  const user = { id: 'user', type: 'user' }
+  const final = { id: 'final', type: 'final' }
+  const resources = [
+    { resource_id: 'interactive', resource_key: 'chart-spec', visual_id: 'interactive', interactive: true },
+    { resource_id: 'static-image', resource_key: 'chart-image', visual_id: 'static', status: 'active', content_url: '/static.png' }
+  ]
+  const content = '[[chart:interactive]]\n[[chart:static]]'
+  const images = inlineChartImages(final, [user, final], resources, content)
+  assert.deepEqual(images.map(image => image.visual_id), ['static'])
+  assert.equal(renderChartPlaceholders(content, images, resources).content, '\n![static](/static.png)')
 })
