@@ -92,7 +92,7 @@ def test_xuchang_social_mode_uses_lightweight_query_toolset(monkeypatch):
         "query_xcai_city_history",
         "get_weather_data",
         "execute_python",
-        "create_report_chart",
+        "create_business_chart",
         "knowledge_qa_workflow",
         "knowledge_document_reader",
         "web_search",

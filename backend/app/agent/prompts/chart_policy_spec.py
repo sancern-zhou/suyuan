@@ -22,15 +22,16 @@ def test_chart_priority_applies_to_default_and_project_prompts(monkeypatch, mode
         assert "辅助需要交互探索" in policy
 
 
-def test_business_chart_is_exposed_once_and_legacy_config_resolves():
+def test_business_chart_is_exposed_once_under_canonical_name():
     tool = CreateReportChartTool()
     assert tool.name == "create_business_chart"
     assert tool.get_function_schema()["name"] == tool.name
-    names = _build_tool_dict(["create_report_chart", "create_business_chart"])
+    names = _build_tool_dict(["create_business_chart"])
     assert list(names) == ["create_business_chart"]
     registry = object.__new__(ToolRegistry)
     registry._tools = {tool.name: {"tool": tool, "function_schema": tool.get_function_schema()}}
     registry._priority_order = [(213, tool.name)]
-    assert registry.get_tool("create_report_chart") is tool
-    assert registry.get_tool_data("create_report_chart") is registry.get_tool_data(tool.name)
+    assert registry.get_tool("create_business_chart") is tool
+    assert registry.get_tool_data("create_business_chart") is registry.get_tool_data(tool.name)
+    assert registry.get_tool("create_report_chart") is None
     assert registry.list_tools() == ["create_business_chart"]

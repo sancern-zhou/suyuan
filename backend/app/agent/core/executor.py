@@ -368,7 +368,6 @@ class ToolExecutor:
         "write": "write_file",
         "edit": "edit_file",
         "list": "list_directory",
-        "create_report_chart": "create_business_chart",
     }
 
     def _resolve_tool_alias(self, tool_name: str) -> Optional[str]:

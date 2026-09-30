@@ -5,7 +5,7 @@ SKILL_METADATA = {
     "analysis_report_workflow": {
         "enabled": True,
         "aliases": ["分析报告工作流", "报告生成工作流", "通用报告技能"],
-        "required_tools": ["read_file", "execute_python", "create_report_chart"],
+        "required_tools": ["read_file", "execute_python", "create_business_chart"],
     },
     "archify": {
         "enabled": True,

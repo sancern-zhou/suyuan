@@ -10,7 +10,6 @@
 """
 
 from typing import Dict, Iterable, List
-from app.tools.base.tool_names import canonical_tool_name
 
 # 工具实现可由显式后端工作流继续使用，但不得向任何 Agent 暴露。
 AGENT_HIDDEN_TOOL_NAMES = frozenset({
@@ -429,7 +428,7 @@ def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
     字典保留插入顺序，因此列表顺序就是模式工具顺序。
     """
     names = [
-        canonical_tool_name(name)
+        name
         for name in tool_names
         if name not in AGENT_HIDDEN_TOOL_NAMES and name not in AGENT_INTERNAL_TOOL_NAMES
     ]
