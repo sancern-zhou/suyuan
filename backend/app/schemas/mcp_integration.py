@@ -403,7 +403,7 @@ tool_chain = [
         }
     },
     {
-        "tool": "create_report_chart",
+        "tool": "create_business_chart",
         "depends_on": "calculate_pmf",  # 依赖PMF结果
         "params": {
             "chart_type": "pie",

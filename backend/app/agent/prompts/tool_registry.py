@@ -10,6 +10,7 @@
 """
 
 from typing import Dict, Iterable, List
+from app.tools.base.tool_names import canonical_tool_name
 
 # ========================================
 # 工具有序白名单（仅包含工具名称）
@@ -89,7 +90,7 @@ PPT_TOOL_NAMES = [
     "list_directory",
     "search_files",
     # 图表、图片检查和必要计算
-    "create_report_chart",
+    "create_business_chart",
     "execute_python",
     # 用户材料、知识库与外部资料
     "knowledge_qa_workflow",
@@ -119,7 +120,8 @@ EXPERT_TOOL_NAMES = [
     # 分析工具
     "meteorological_trajectory_analysis",
     # 可视化
-    "create_report_chart",
+    "create_business_chart",
+    "execute_echarts_python",
     # 代码执行
     "execute_python",
     # 文件操作
@@ -169,7 +171,7 @@ QUERY_TOOL_NAMES = [
     # === 数值计算工具 ===
     "execute_python",
     # === 图表生成工具 ===
-    "create_report_chart",
+    "create_business_chart",
     "execute_echarts_python",
 ]
 
@@ -198,8 +200,9 @@ REPORT_TOOL_NAMES = [
     "list_directory",
     "search_files",
     "bash",
-    "create_report_chart",
+    "create_business_chart",
     "execute_python",
+    "execute_echarts_python",
     # 报告产物收口
     "create_report_package",
     # 报告工作流可按结构化任务协议委托专家分析
@@ -220,7 +223,7 @@ CHART_TOOL_NAMES = [
     "search_files",
     "bash",
     # 代码执行和原生多模态视觉参考
-    "create_report_chart",
+    "create_business_chart",
     "execute_python",
     "execute_echarts_python",
     # 数据查询工具
@@ -301,7 +304,7 @@ SOCIAL_TOOL_NAMES = [
     "execute_python",
     "call_sub_agent",
     # 正式报告生成与收口
-    "create_report_chart",
+    "create_business_chart",
     "create_report_package",
     # 网络搜索
     "web_search",
@@ -413,7 +416,7 @@ def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
     将工具名称列表转换为字典格式（向后兼容）。
     字典保留插入顺序，因此列表顺序就是模式工具顺序。
     """
-    names = [name for name in tool_names if name not in AGENT_INTERNAL_TOOL_NAMES]
+    names = [canonical_tool_name(name) for name in tool_names if name not in AGENT_INTERNAL_TOOL_NAMES]
     if "list_session_resources" in names and "read_session_resource" not in names:
         names.insert(names.index("list_session_resources") + 1, "read_session_resource")
     return {name: "" for name in names}

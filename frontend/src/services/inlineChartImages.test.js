@@ -61,7 +61,7 @@ test('embeds static Python and report charts from the current answer', () => {
     tool_name: 'execute_python', result: { visuals: [{ id: 'python-chart' }] }
   } }
   const reportChart = { id: 'report-chart', type: 'tool_result', data: {
-    tool_name: 'create_report_chart', result: { visuals: [{ id: 'report-chart' }] }
+    tool_name: 'create_business_chart', result: { visuals: [{ id: 'report-chart' }] }
   } }
   const final = { id: 'final', type: 'final' }
   const resources = ['python-chart', 'report-chart'].map(id => ({

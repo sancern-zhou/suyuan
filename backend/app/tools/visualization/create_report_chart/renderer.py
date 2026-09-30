@@ -1154,7 +1154,7 @@ def _draw_specialized_placeholder(ax, title: str, chart_type: str, data: Dict[st
     ax.text(
         0.5,
         0.5,
-        f"{chart_type}\n通过 create_report_chart 统一入口路由",
+        f"{chart_type}\n通过 create_business_chart 统一入口路由",
         ha="center",
         va="center",
         fontsize=_source_font(12),

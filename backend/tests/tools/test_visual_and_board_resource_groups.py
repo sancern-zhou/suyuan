@@ -32,7 +32,7 @@ def test_chart_spec_and_image_are_one_resource_group(tmp_path, monkeypatch):
                     "payload": {"series": [1, 2], "image_url": "/api/image/chart-1"},
                 }
             ],
-            tool_name="create_report_chart",
+            tool_name="create_business_chart",
         )
     )
     by_key = {resource.resource_key: resource for resource in resources}
