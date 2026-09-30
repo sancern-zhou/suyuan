@@ -151,7 +151,7 @@ def test_legend_requires_meaningful_labels():
 
 
 def test_business_calendar_shares_official_colors_and_2026_breakpoints():
-    from app.tools.visualization.create_report_chart.domain.aqi_calendar import (
+    from app.tools.visualization.create_business_chart.domain.aqi_calendar import (
         AQI_COLOR_MAP, calculate_iaqi, get_aqi_color, get_text_color,
     )
     assert list(AQI_COLOR_MAP.values())[:6] == list(AQI_COLORS)

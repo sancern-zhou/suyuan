@@ -50,8 +50,8 @@ from app.utils.path_config import (
     resolve_agent_path,
     is_agent_sensitive_path,
 )
-from app.utils.font_utils import BROWSER_CHART_FONT_FAMILY, get_font_manager
-from app.tools.visualization.create_report_chart.theme import REPORT_THEME, SERIES_COLORS, matplotlib_report_style
+from app.utils.font_utils import BROWSER_CHART_FONT_FAMILY, select_preferred_chinese_font_path, get_font_manager
+from app.tools.visualization.create_business_chart.theme import REPORT_THEME, SERIES_COLORS, matplotlib_report_style
 
 logger = structlog.get_logger()
 

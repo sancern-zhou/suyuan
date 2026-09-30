@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import file_products, resources_for_visuals
 from app.tools.resource_refs import build_data_file_ref, build_file_ref, build_visual_ref, merge_refs
-from app.tools.visualization.create_report_chart.renderer import ChartDataError, SPECIALIZED_CHART_TYPES
+from app.tools.visualization.create_business_chart.renderer import ChartDataError, SPECIALIZED_CHART_TYPES
 from app.utils.path_config import format_agent_path
 
 
@@ -70,7 +70,7 @@ def available_chart_types(project_id: str | None = None) -> list[str]:
     return [name for name in ALL_CHART_TYPES if chart_type_enabled(name, project_id)]
 
 
-def report_chart_reference_paths() -> Dict[str, str]:
+def business_chart_reference_paths() -> Dict[str, str]:
     paths = {
         "index": str(REFERENCE_DIR / "index.md"),
         "pollutant_calendar": str(REFERENCE_DIR / "pollutant-calendar.md"),
@@ -87,11 +87,11 @@ def report_chart_reference_paths() -> Dict[str, str]:
     return {name: format_agent_path(path) for name, path in paths.items()}
 
 
-class CreateReportChartTool(LLMTool):
+class CreateBusinessChartTool(LLMTool):
     """Create static charts for documented business scenarios."""
 
     def __init__(self):
-        reference_paths = report_chart_reference_paths()
+        reference_paths = business_chart_reference_paths()
         description = (
             "业务图表工具：绘制特定业务图型和固定模板（风玫瑰、污染日历、气象时序等），支持已有预定义图型。"
             "匹配本工具已支持的专用业务图型时，所有模式必须使用 create_business_chart，禁止用 Python/ECharts 重绘替代；"
@@ -219,11 +219,11 @@ class CreateReportChartTool(LLMTool):
             opts["notes"] = notes
         metadata = {
             "tool_name": self.name,
-            "schema_version": "report_chart.v1",
+            "schema_version": "business_chart.v1",
             "chart_type": chart_type,
             "output_context": output_context or "word",
             "style_profile": style_profile or "report",
-            "reference_paths": report_chart_reference_paths(),
+            "reference_paths": business_chart_reference_paths(),
         }
         if chart_type and not chart_type_enabled(chart_type):
             fallback = _SCOPED_CHART_TYPE_FALLBACKS.get(chart_type)
@@ -281,9 +281,9 @@ class CreateReportChartTool(LLMTool):
         try:
             chart_data = self._resolve_chart_data(data=data, file_path=file_path, context=context)
 
-            from app.tools.visualization.create_report_chart.renderer import render_report_chart
+            from app.tools.visualization.create_business_chart.renderer import render_business_chart
 
-            rendered = render_report_chart(
+            rendered = render_business_chart(
                 chart_id=chart_id,
                 chart_type=chart_type,
                 title=title,
@@ -435,7 +435,7 @@ class CreateReportChartTool(LLMTool):
                         type="image",
                         format=path.suffix.lstrip(".") or None,
                         size=path.stat().st_size if path.exists() else None,
-                        usage="report_chart",
+                        usage="business_chart",
                         preferred_for=["read_file", "list_session_resources"],
                         visual_id=visual_id,
                     )

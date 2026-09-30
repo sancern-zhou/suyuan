@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 import pyodbc
 
 from app.tools.query.query_xcai_city_history.sql_client import get_sql_server_client
-from app.tools.visualization.create_report_chart.domain.weather_timeseries import render_weather_timeseries
+from app.tools.visualization.create_business_chart.domain.weather_timeseries import render_weather_timeseries
 from app.utils.path_config import format_agent_path, get_data_registry
 from .constants import EVENT_TYPE, SCHEMA, WEEKDAYS
 

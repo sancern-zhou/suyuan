@@ -11,8 +11,8 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
 
-from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
-from app.tools.visualization.create_report_chart.validation import ChartDataError
+from app.tools.visualization.create_business_chart.text import normalize_matplotlib_label_text
+from app.tools.visualization.create_business_chart.validation import ChartDataError
 from app.utils.font_utils import apply_font_to_figure, configure_chinese_font
 
 
@@ -25,7 +25,7 @@ def render_wind_timeseries(
     style_profile: str,
 ) -> tuple[str, dict[str, Any], list[str]]:
     prepared, warnings = _prepare_data(data, options)
-    from app.tools.visualization.create_report_chart.renderer import _line_width
+    from app.tools.visualization.create_business_chart.renderer import _line_width
     line_width = _line_width(options, default=1.0)
     timestamps = prepared["timestamps"]
     east_u = np.asarray(prepared["east_u"], dtype=float)

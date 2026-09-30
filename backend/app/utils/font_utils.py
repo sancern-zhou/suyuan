@@ -214,7 +214,16 @@ def select_preferred_chinese_font_path() -> Path | None:
 
 def chinese_font_prop() -> fm.FontProperties | None:
     """Return the preferred Chinese font, aligned with create_business_chart."""
-    font_name = get_font_manager().preferred_font_name()
+    font_manager = get_font_manager()
+    for font_path in font_manager.FONT_FILE_PATHS:
+        if not font_path.exists():
+            continue
+        try:
+            fm.fontManager.addfont(str(font_path))
+            return fm.FontProperties(fname=str(font_path))
+        except Exception as exc:
+            logger.debug(f"注册字体文件失败 {font_path}: {exc}")
+    font_name = font_manager._find_best_chinese_font()
     if font_name:
         return fm.FontProperties(family=[font_name])
     return None

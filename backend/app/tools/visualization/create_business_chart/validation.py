@@ -4,7 +4,7 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
-from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
+from app.tools.visualization.create_business_chart.text import normalize_matplotlib_label_text
 
 
 class ChartDataError(ValueError):

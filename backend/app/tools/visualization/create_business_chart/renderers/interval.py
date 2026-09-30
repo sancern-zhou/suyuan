@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
-from app.tools.visualization.create_report_chart.validation import (
+from app.tools.visualization.create_business_chart.text import normalize_matplotlib_label_text
+from app.tools.visualization.create_business_chart.validation import (
     ChartDataError,
     finite_numbers,
     require_labels,
@@ -18,7 +18,7 @@ PALETTE = ["#3f7fb5", "#d17a3a"]
 def draw_range_line(
     ax, title: str, data: dict[str, Any], options: dict[str, Any]
 ) -> dict[str, Any]:
-    from app.tools.visualization.create_report_chart.renderer import (
+    from app.tools.visualization.create_business_chart.renderer import (
         _apply_x_tick_labels,
         _source_font,
     )
@@ -88,7 +88,7 @@ def _interval_overlap_ratio(
 
 
 def draw_error_bar(ax, title: str, data: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
-    from app.tools.visualization.create_report_chart.renderer import (
+    from app.tools.visualization.create_business_chart.renderer import (
         _apply_x_tick_labels,
         _source_font,
     )

@@ -11,7 +11,7 @@ from typing import Any
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon as MplPolygon
 
-from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
+from app.tools.visualization.create_business_chart.text import normalize_matplotlib_label_text
 from app.utils.font_utils import apply_font_to_figure, configure_chinese_font
 
 HENAN_CITY_CENTERS = {

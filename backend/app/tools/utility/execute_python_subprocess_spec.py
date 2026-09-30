@@ -10,7 +10,7 @@ from matplotlib import font_manager
 from app.agent.resources.contracts import ResourceDeclaration
 from app.tools.utility.execute_python_tool import ExecuteEChartsPythonTool, ExecutePythonTool
 from app.utils.font_utils import select_preferred_chinese_font_path
-from app.tools.visualization.create_report_chart.theme import REPORT_THEME, SERIES_COLORS
+from app.tools.visualization.create_business_chart.theme import REPORT_THEME, SERIES_COLORS
 
 
 def test_python_execution_tools_are_pinned_to_sandbox():

@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from app.tools.visualization.create_report_chart.renderer import (
+from app.tools.visualization.create_business_chart.renderer import (
     ChartDataError,
-    render_report_chart,
+    render_business_chart,
 )
-from app.tools.visualization.create_report_chart.tool import CreateReportChartTool
+from app.tools.visualization.create_business_chart.tool import CreateBusinessChartTool
 
 
 GENERIC_TYPES = [
@@ -27,7 +27,7 @@ async def test_generic_types_are_rejected_before_loading_or_rendering(chart_type
         def get_data_payload(self, file_path):
             pytest.fail("Unsupported charts must not load input files")
 
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         context=Context(), chart_type=chart_type, title="Unsupported chart",
         file_path="/session/data/chart.json", options={"dry_run": dry_run},
     )
@@ -41,7 +41,7 @@ async def test_generic_types_are_rejected_before_loading_or_rendering(chart_type
 @pytest.mark.asyncio
 @pytest.mark.parametrize("dry_run", [False, True])
 async def test_nested_charts_cannot_bypass_type_restrictions(dry_run):
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         chart_type="pollutant_calendar", title="Nested request",
         data={"charts": [{"chart_type": "bar", "data": {"values": [1]}}]},
         options={"dry_run": dry_run},
@@ -57,7 +57,7 @@ async def test_nested_charts_loaded_from_file_are_rejected():
         def get_data_payload(self, file_path):
             return {"charts": [{"chart_type": "bar", "data": {"values": [1]}}]}
 
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         context=Context(), chart_type="pollutant_calendar", title="Nested file",
         file_path="/session/data/chart.json",
     )
@@ -69,14 +69,14 @@ async def test_nested_charts_loaded_from_file_are_rejected():
 @pytest.mark.parametrize("chart_type", GENERIC_TYPES)
 def test_public_renderer_rejects_generic_types(chart_type):
     with pytest.raises(ChartDataError, match="execute_python"):
-        render_report_chart(chart_id="unsupported", chart_type=chart_type,
+        render_business_chart(chart_id="unsupported", chart_type=chart_type,
                             title="Unsupported", data={"values": [1]},
                             output_context="word", style_profile="report", options={})
 
 
 @pytest.mark.asyncio
 async def test_weather_template_still_renders_and_publishes_image():
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         chart_type="weather_timeseries", title="Weather forecast",
         data={"records": [
             {"forecast_time": f"2026-05-01 {hour:02d}:00:00",

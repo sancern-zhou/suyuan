@@ -4,7 +4,7 @@ from app.agent.prompts.expert_prompt import build_expert_prompt
 from app.agent.prompts.query_prompt import build_query_prompt
 from app.agent.prompts.report_prompt import build_report_prompt
 from app.tools.utility.execute_python_tool import ExecutePythonTool, ExecuteEChartsPythonTool
-from app.tools.visualization.create_report_chart.tool import CreateReportChartTool
+from app.tools.visualization.create_business_chart.tool import CreateBusinessChartTool
 
 
 def test_execute_python_schema_describes_general_capability_and_bash_boundary():
@@ -45,7 +45,7 @@ def test_environment_constraints_use_existing_tool_description():
     assert "风向箭头须明确来向/去向" in description
 
 
-@pytest.mark.parametrize("tool_class", [ExecutePythonTool, ExecuteEChartsPythonTool, CreateReportChartTool])
+@pytest.mark.parametrize("tool_class", [ExecutePythonTool, ExecuteEChartsPythonTool, CreateBusinessChartTool])
 def test_business_chart_requirement_precedes_mode_defaults_in_tool_descriptions(tool_class):
     tool = tool_class()
     for description in (tool.description, tool.get_function_schema()["description"]):

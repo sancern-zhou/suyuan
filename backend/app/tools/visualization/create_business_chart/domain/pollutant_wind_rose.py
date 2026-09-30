@@ -26,7 +26,7 @@ from app.tools.visualization.font_sizing import (
     OutputContext,
     resolve_matplotlib_font_sizes,
 )
-from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
+from app.tools.visualization.create_business_chart.text import normalize_matplotlib_label_text
 from app.utils.path_config import get_datasets_dir
 from app.utils.font_utils import apply_font_to_figure
 
