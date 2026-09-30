@@ -24,6 +24,13 @@ def test_python_is_primary_report_plotting_tool_with_shared_style():
     assert "专家/报告模式的静态分析和正式报告图表优先使用 execute_python" in schema["description"]
     assert "问数模式绘图优先使用 execute_echarts_python" in schema["description"]
     assert "无需用户预先指定" in schema["description"]
+    assert "默认一个独立图表一个图片文件" in schema["description"]
+    assert "一次调用可保存多张图" in schema["description"]
+    assert "仅联合阅读确有必要或用户明确要求时使用多子图" in schema["description"]
+    code_description = schema["parameters"]["properties"]["code"]["description"]
+    assert "5.8 英寸插入宽度" in code_description
+    assert "最终刻度/图例一般不小于 9 pt" in code_description
+    assert "dpi=240" in code_description
     assert "apply_report_style()" in schema["parameters"]["properties"]["code"]["description"]
     assert "正式报告静态图表优先使用 create_business_chart" not in schema["description"]
 

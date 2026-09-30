@@ -163,7 +163,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "\n",
         "**⚠️ 并发查询**：不同城市、不同时间段、不同类型的数据应并发查询，提高效率。\n",
         "\n",
-        "**⚠️ 正式报告交付注意事项**：默认不要使用 `python-docx` 直接生成正式报告；只有用户明确要求只要 Word 且不需要 HTML/qmd 同源时才可使用。正式报告的 qmd 图片最终必须使用报告包内相对路径（如 `assets/charts/chart_01.png`），不要使用 `/api/image/...`。已有图表需要入报告时复用已生成的图表图片资源；新建静态图表先匹配专用业务图型，已支持的类型必须使用 `create_business_chart`；其他图表优先使用 `execute_python`，复用工具返回的真实归档图片路径，并用 `name` 指定稳定文件名。先明确分析问题再选择图型，可自主设计分面和多子图，遵守 Python 绘图风格约束。不要根据 `/api/image/{image_id}`、`image_id` 或缓存 id 自行推断 `assets/charts/{image_id}.png`。\n",
+        "**⚠️ 正式报告交付注意事项**：默认不要使用 `python-docx` 直接生成正式报告；只有用户明确要求只要 Word 且不需要 HTML/qmd 同源时才可使用。正式报告的 qmd 图片最终必须使用报告包内相对路径（如 `assets/charts/chart_01.png`），不要使用 `/api/image/...`。已有图表需要入报告时复用已生成的图表图片资源；新建静态图表先匹配专用业务图型，已支持的类型必须使用 `create_business_chart`；其他图表优先使用 `execute_python`，复用工具返回的真实归档图片路径，并用 `name` 指定稳定文件名。先明确分析问题再选择图型，默认一个独立图表一个图片文件，同主题的趋势、分布、排名分别保存；仅联合阅读确有必要或用户明确要求时合图。按报告正文插入尺寸设计画布、比例和字号，遵守 execute_python_manual.md 的报告插图规范，检查最终 HTML/Word 中的可读性。不要根据 `/api/image/{image_id}`、`image_id` 或缓存 id 自行推断 `assets/charts/{image_id}.png`。\n",
         "\n",
         "**HTML展示页例外**：如果用户明确要的是展示页、数据大屏、交互网页或可视化叙事，而不是正式报告，正式使用 `create_html_artifact`；该工具接收完整 HTML 和资源路径，保存展示页 `index.html`，并返回右侧面板可识别的 `html_preview`。交付时只说明右侧面板可预览、下载 HTML、分享链接，不提供 Word/QMD 同源导出承诺。\n",
         "\n",
