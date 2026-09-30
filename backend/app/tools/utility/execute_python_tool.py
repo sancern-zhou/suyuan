@@ -51,7 +51,7 @@ from app.utils.path_config import (
     is_agent_sensitive_path,
 )
 from app.utils.font_utils import BROWSER_CHART_FONT_FAMILY, select_preferred_chinese_font_path
-from app.tools.visualization.create_report_chart.theme import REPORT_THEME, SERIES_COLORS, matplotlib_report_style
+from app.tools.visualization.create_business_chart.theme import REPORT_THEME, SERIES_COLORS, matplotlib_report_style
 
 logger = structlog.get_logger()
 
@@ -89,8 +89,8 @@ class ExecutePythonTool(LLMTool):
                 "生成 Excel、Word、PDF 等交付文件时必须先调用 artifact_path(filename) 获取输出路径，"
                 "再保存到该路径；工具会自动归档并返回真实 file_path。"
                 "⚠️ **图表选择策略**："
-                "① 专家/报告模式绘图 → 优先使用 execute_python，自动应用统一报告主题；问数模式绘图优先使用 execute_echarts_python；"
-                "② 特定业务图型或固定模板（风玫瑰、污染日历、气象时序等）→ 使用 create_business_chart；"
+                "① 已支持的专用业务图型 → 所有模式必须使用 create_business_chart，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具；"
+                "② 其他通用/自定义图：专家/报告模式优先使用 execute_python，自动应用统一报告主题；问数模式优先使用 execute_echarts_python；"
                 "③ 流程图/架构图/步骤图 → 使用 call_sub_agent(target_mode='board') 调用画板Agent生成draw.io图片文件。"
                 "生成文件由工具自动归档并返回可复用路径。"
             ),
@@ -1997,6 +1997,10 @@ import os
 from matplotlib.figure import Figure
 from matplotlib.text import Text
 import matplotlib.pyplot as _suyuan_plt
+from app.utils.environment_charts import (
+    AQI_COLORS, AQI_LABELS, MISSING_COLOR, aqi_color, pollutant_color,
+    get_environment_limit, get_pollutant_scale, add_standard_limit, legend_below,
+)
 
 REPORT_THEME = __SUYUAN_REPORT_THEME__
 SERIES_COLORS = __SUYUAN_SERIES_COLORS__
@@ -2900,10 +2904,12 @@ def merge_excel_with_charts(file_paths, output_path):
                 "气象数据合并须用带时区的datetime对象作为键；先读取完整file_path，再做去重、截止时间过滤和缺失检查，禁止从首尾样本推断缺失。"
                 "执行环境相互隔离，不得将自行写入、拼接或猜测得到的中间数据路径交给后续工具。"
                 "生成 Excel、Word、PDF 等交付文件必须先调用 artifact_path(filename) 获取输出路径并保存；"
-                "专家/报告模式的静态分析和正式报告图表优先使用 execute_python；问数模式绘图优先使用 execute_echarts_python。"
-                "create_business_chart 用于特定业务图型或固定模板。"
+                "已支持的专用业务图型在所有模式必须使用 create_business_chart，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具。"
+                "其他图表：专家/报告模式的静态分析和正式报告图表优先使用 execute_python；问数模式绘图优先使用 execute_echarts_python。"
                 "绘图前阅读 execute_python_manual.md 的风格约束；matplotlib/seaborn 自动应用与报告图表一致的主题，"
-                "可按分析需要自主选择分面、多子图和组合图，无需用户预先指定。"
+                "可按分析需要自主选择图型，无需用户预先指定；默认一个独立图表一个图片文件，同主题的趋势、分布、排名分别保存。"
+                "一次调用可保存多张图；仅联合阅读确有必要或用户明确要求时使用多子图，并保证报告插入后的可读性。"
+                "专家/报告静态图按报告正文插入尺寸设计画布、比例和字号，详见手册报告插图尺寸与比例。"
                 "流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
                 "生成的静态图只在对话正文展示，不进入右侧交互图面板；"
                 "最终答复可用 [[chart:<visual_id>]] 将图片放在相应分析旁，visual_id 取工具返回的 visuals.id，"
@@ -2926,7 +2932,15 @@ def merge_excel_with_charts(file_paths, output_path):
                             "要执行的 Python 代码。matplotlib 图片可用 save_chart(fig, filename) 或 fig.savefig(path) 保存；"
                             "matplotlib 中文字体由系统自动设置，不要显式设置 SimHei、DejaVu Sans 等不支持中文的字体；"
                             "工具默认应用共享报告配色、字号和轴线风格；可使用 REPORT_THEME、SERIES_COLORS、theme_color(role)。"
-                            "seaborn.set_theme 后须在创建图表前调用 apply_report_style() 恢复主题；图型、画布和布局按分析需要设计。"
+                            "环境图遵守手册环境绘图约束：等级色按适用标准，图例默认在下方；"
+                            "浓度对比有适用限值时标出标准线，明确污染物、单位、平均时间、等级和数据日期。"
+                            "可直接使用 aqi_color、pollutant_color、get_pollutant_scale、get_environment_limit、add_standard_limit、legend_below；"
+                            "小时值不得直接按日均限值判断达标，缺失不填零，预测与实测区分。"
+                            "风向箭头须明确来向/去向，按真实角度绘制；等长方向箭头与按风速缩放的矢量箭头必须区分。"
+                            "seaborn.set_theme 后须在创建图表前调用 apply_report_style() 恢复主题。"
+                            "默认一个独立图表一个图片文件，可在一次调用中分别保存多个 Figure；仅联合阅读确有必要或用户明确要求时合图。"
+                            "报告图显式设置 figsize，未知模板时按约 5.8 英寸插入宽度设计，常规单图可用 (6.0, 3.8)。"
+                            "最终刻度/图例一般不小于 9 pt，PNG 显式用 save_chart(..., dpi=240)，按手册检查缩放后可读性。"
                             "结构化结果若需被后续调用或其他工具读取，代码必须使用 path = save_data(data, schema=...)；"
                             "只能向后续工具传递该返回值，不能传递其他文件写入方式产生的中间路径。"
                             "Excel、Word、PDF 等交付文件必须先使用 output_path = artifact_path(filename)，"
@@ -2955,12 +2969,12 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "执行 Python 代码并将 stdout 中的一行一个纯 JSON ECharts option 转换为前端交互式图表。"
             "用于生成前端交互式 ECharts 图表（柱状图/折线图/散点图/饼图/3D图/地图等）。"
             "⚠️ **图表选择策略**："
-            "① 问数模式绘图 → 优先使用 execute_echarts_python；特定业务模板使用 create_business_chart 辅助；"
-            "专家/报告模式绘图 → 优先使用 execute_python，交互探索可使用 execute_echarts_python 辅助；"
+            "① 已支持的专用业务图型 → 所有模式必须使用 create_business_chart，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具；"
+            "其他通用图：问数模式优先使用 execute_echarts_python；专家/报告模式优先使用 execute_python，ECharts 辅助交互探索；"
             "② 前端交互式图表/复杂数据可视化 → 使用 execute_echarts_python；"
-            "③ 深度分析、分面和多子图 → 使用 execute_python + matplotlib/seaborn。"
-            "成功时会尝试为交互图登记同组 PNG 资源；复用到文档时用 list_session_resources 查找 chart-image。"
-            "最终答复需要控制图表位置时，可使用 [[chart:<visual_id>]] 占位符；未指定位置的图表由前端统一补充。"
+            "③ 深度分析与报告静态图 → 使用 execute_python + matplotlib/seaborn，默认一个独立图表一个图片文件。"
+            "只发布交互图资源，在右侧面板展示；不生成静态图片，不插入对话正文，不使用 [[chart:...]] 占位符。"
+            "需要正文或报告静态图时，通用图通过 execute_python 绘制，已支持的业务图型必须使用 create_business_chart。"
             "通用计算和文件生成仍使用 execute_python。"
         )
 
@@ -3020,16 +3034,6 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
         result.setdefault("metadata", {})
         result["metadata"]["tool_name"] = "execute_echarts_python"
         result["metadata"]["visuals_count"] = len(echarts_visuals)
-        for visual in echarts_visuals:
-            try:
-                from app.tools.visualization.echarts_snapshot import render_echarts_png
-
-                image_path = await asyncio.to_thread(
-                    render_echarts_png, visual["data"], visual["id"]
-                )
-                visual["local_path"] = str(image_path)
-            except Exception as exc:
-                logger.warning("echarts_snapshot_failed", visual_id=visual.get("id"), error=str(exc))
         result.setdefault("resources", []).extend(
             resources_for_visuals(echarts_visuals, tool_name=self.name)
         )
@@ -3043,23 +3047,17 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "description": (
                 "执行 Python 代码生成 ECharts 图表配置，并返回标准 visuals 给前端渲染。"
                 "问数模式的主要绘图工具；专家/报告模式中作为交互探索的辅助工具，主要绘图使用 execute_python。"
+                "已支持的专用业务图型在所有模式必须使用 create_business_chart，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具。"
                 "首次使用前必须先调用 read_file 阅读 "
                 "backend/app/tools/utility/execute_echarts_python_manual.md。"
                 "使用工具返回的 file_path，代码中通过系统注入的 load_data(file_path) 获取数据。"
                 "每次调用是独立环境；读取输入文件须通过 input_files 声明，代码中的同名列表提供校验后的绝对路径。"
                 "仅输出 ECharts 图表配置：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
-                "图表通过统一会话资源目录发布；成功生成的 PNG 衍生资源标记为 chart-image。"
-                "同一图表有两种展示：PNG 静态图可嵌入对话正文，ECharts 交互图可在右侧面板查看。"
-                "对话展示由前端自动完成，不要在回复中拼图片 URL 或输出本地路径。"
-                "需要控制图表在最终 Markdown 中的位置时，使用 [[chart:<visual_id>]] 占位符；"
-                "visual_id 必须来自本次工具返回的 visuals.id，前端会将占位符替换为对应 PNG。"
-                "未使用占位符的成功图表仍会由前端追加到最终答复末尾。"
-                "若答复正文已嵌入静态图，应围绕图表说明结论；需要提及交互功能时，说明右侧面板可查看交互版本，"
-                "不要只说图表已在右侧面板展示，以免误导用户忽略正文中的图。"
-                "将已有交互图放入 Word/QMD 时，调用 list_session_resources，设置 logical_key=chart-image、"
-                "tool_name=execute_echarts_python，从结果取得 file_path 作为文档图片输入；"
-                "若没有 chart-image，说明静态渲染未成功，可使用 execute_python 生成报告图片；特定模板可使用 create_business_chart。"
+                "图表通过统一会话资源目录发布为 chart-spec，只在右侧面板展示交互图。"
+                "不生成静态图片，不在对话正文插图，不使用 [[chart:...]] 占位符或拼接图片 URL。"
+                "正文说明分析结论，可告知用户在右侧面板查看交互图。"
+                "需要正文或 Word/QMD 报告静态图时，通用图通过 execute_python 绘制，已支持的业务图型必须使用 create_business_chart。"
                 "多图时输出多行纯 JSON。禁止输出 CHART_1: 前缀、Markdown 代码块、解释文字包裹 JSON。"
                 "数据分析、清洗、中间计算和文件生成请使用 execute_python。"
             ),

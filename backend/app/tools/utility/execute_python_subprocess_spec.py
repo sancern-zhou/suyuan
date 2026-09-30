@@ -10,12 +10,36 @@ from matplotlib import font_manager
 from app.agent.resources.contracts import ResourceDeclaration
 from app.tools.utility.execute_python_tool import ExecuteEChartsPythonTool, ExecutePythonTool
 from app.utils.font_utils import select_preferred_chinese_font_path
-from app.tools.visualization.create_report_chart.theme import REPORT_THEME, SERIES_COLORS
+from app.tools.visualization.create_business_chart.theme import REPORT_THEME, SERIES_COLORS
 
 
 def test_python_execution_tools_are_pinned_to_sandbox():
     assert ExecutePythonTool().execution_engine == "bubblewrap"
     assert ExecuteEChartsPythonTool().execution_engine == "bubblewrap"
+
+
+@pytest.mark.asyncio
+async def test_environment_chart_helpers_are_available_in_python_sandbox():
+    result = await ExecutePythonTool().execute(
+        code="""
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(8, 5))
+ax.plot([1, 2, 3], [30, 70, 45], label='PM2.5 daily')
+ax.set_xlabel('Date')
+ax.set_ylabel('PM2.5 (ug/m3)')
+context = dict(pollutant='PM2.5', average_time='24h', observed_on='2026-05-01', unit='ug/m3')
+assert pollutant_color(60, **context) == '#FFFF00'
+assert get_pollutant_scale(**context)['concentration_breakpoints'][2] == 60
+line = add_standard_limit(ax, data_average_time='24h', grade=2, **context)
+assert line.environment_standard['value'] == 60
+legend = legend_below(ax, ncols=1)
+assert len(legend.get_texts()) == 2
+save_chart(fig, 'environment-standard.png')
+""",
+        timeout=30,
+    )
+    assert result["success"] is True, result
+    assert any(item["resource_key"] == "chart-image" for item in result["resources"])
 
 
 @pytest.mark.asyncio
@@ -236,12 +260,7 @@ async def test_execute_python_keeps_qmd_downloadable_when_render_fails(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_execute_echarts_python_publishes_interactive_spec_and_png(monkeypatch, tmp_path):
-    from app.tools.visualization import echarts_snapshot
-
-    image_path = tmp_path / "chart.png"
-    image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
-    monkeypatch.setattr(echarts_snapshot, "render_echarts_png", lambda option, visual_id: image_path)
+async def test_execute_echarts_python_publishes_only_interactive_spec():
     result = await ExecuteEChartsPythonTool().execute(
         code=(
             "import json\n"
@@ -257,12 +276,11 @@ async def test_execute_echarts_python_publishes_interactive_spec_and_png(monkeyp
     resources = [
         ResourceDeclaration.model_validate(item) for item in result["resources"]
     ]
-    assert [resource.resource_key for resource in resources] == ["chart-spec", "chart-image"]
+    assert [resource.resource_key for resource in resources] == ["chart-spec"]
     assert resources[0].kind.value == "visual"
     assert resources[0].renderer.value == "chart"
-    assert resources[1].renderer.value == "image"
-    assert resources[1].relation.value == "rendition"
-    assert {cap.value for cap in resources[1].capabilities} == {"preview", "download"}
+    assert resources[0].metadata["interactive"] is True
+    assert "local_path" not in result["visuals"][0]
     assert "image_url" not in result["visuals"][0]
     assert "/api/image/" not in result["summary"]
 
