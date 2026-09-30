@@ -28,7 +28,7 @@ def test_xuchang_query_prompt_combines_query_and_chart_workflows():
     assert "## 问数生图工作流" in prompt
     assert "先调用数据查询工具取得可追溯结果" in prompt
     assert "用户已经提供完整数据时，不再调用数据查询工具" in prompt
-    assert "网页交互查看的图表" in prompt
+    assert "网页交互查看的 ECharts 图表" in prompt
 
 
 def test_xuchang_social_prompt_targets_mobile_query_workflow():

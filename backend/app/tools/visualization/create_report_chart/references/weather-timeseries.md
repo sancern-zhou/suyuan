@@ -29,3 +29,18 @@ the reported source direction. It is not quantized to cardinal directions.
 Named regions are shaded without overlaying different days. Set
 `options.line_width` to a positive number when many lines require a thinner or
 thicker stroke.
+
+North wind points down, east wind points left, south wind points up and west
+wind points right. This template uses equal-length direction arrows; their
+length does not represent wind speed. Wind speed has its own labeled series.
+Do not use quantized eight-direction text glyphs or stretch arrow direction
+with time/temperature axis scales.
+Zero wind speed is shown as a hollow calm-wind circle, without a direction
+arrow. Missing direction or speed is not replaced with an invented arrow;
+negative wind speed is rejected.
+Dense direction arrows are uniformly thinned to leave readable space; all
+valid observations remain in the weather curves. Output metadata records
+`direction_arrow_count` and `calm_point_count`.
+
+This supported business template must use `create_business_chart` in every
+mode. Python may prepare input data, but must not redraw a substitute template.

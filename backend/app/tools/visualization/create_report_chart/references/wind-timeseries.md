@@ -41,7 +41,8 @@ fields explicitly:
   "time_field": "time",
   "wind_speed_field": "ws",
   "wind_direction_field": "wd",
-  "concentration_field": "PM2.5"
+  "concentration_field": "PM2.5",
+  "wind_direction_convention": "meteorological_from"
 }
 ```
 
@@ -58,6 +59,17 @@ fields explicitly:
   direction convention is inferred.
 - Wind vectors are automatically thinned when the series is dense. Use
   `max_vectors` only when a specific arrow density is required.
+- Arrows point toward motion: meteorological north wind points down, east wind
+  points left, south wind points up and west wind points right. Wind-rose
+  sectors still represent the direction wind comes from.
+- This template uses true `u/v` vectors, so arrow length also represents wind
+  speed under a fixed renderer scale, with a labeled wind-speed quiver key.
+  Pure direction arrows in custom charts
+  must instead have equal lengths in display/point coordinates, independent of
+  wind speed and axis ranges. Do not replace actual angles with eight-direction
+  text glyphs. Calm wind has no defined direction; missing direction is not calm.
+- This supported business template must use `create_business_chart` in every
+  mode; Python may prepare its input, but must not redraw a substitute template.
 - Do not include figure numbers in the chart title.
 
 ## Useful Options
