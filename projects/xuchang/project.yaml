@@ -55,7 +55,7 @@ backend:
       - execute_crawler_sql_query
       - execute_bigdata_sql_query
       - execute_postgres_sql_query
-      - create_report_chart
+      - create_business_chart
       # 网页交互式 ECharts 图表（用户未指定静态报告插图时优先）
       - execute_echarts_python
       - knowledge_graph_query
@@ -93,7 +93,7 @@ backend:
       # 许昌源清单与上风向企业分析（企业排放清单 + 排污许可证合并筛查）
       - query_xuchang_emission_inventory
       - analyze_xuchang_upwind_permit_sources
-      - create_report_chart
+      - create_business_chart
       # 正式报告收口：保存 QMD、渲染 HTML/Word、验收并触发右侧预览
       - create_report_package
       - execute_python
@@ -113,7 +113,7 @@ backend:
       - read_file
       - write_file
       - edit_file
-      - create_report_chart
+      - create_business_chart
       - execute_python
       - create_report_package
       - run_agent_workflow
@@ -131,7 +131,7 @@ backend:
       - get_weather_data
       - get_weather_forecast
       - execute_python
-      - create_report_chart
+      - create_business_chart
       - knowledge_qa_workflow
       - knowledge_document_reader
       - web_search
