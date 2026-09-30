@@ -1,7 +1,7 @@
 # AQI Calendar Design
 
 Use `aqi_calendar` only for the Guangdong Province month-level AQI calendar.
-This is a 广东省专用 chart type routed through `create_report_chart`, not a
+This is a 广东省专用 chart type routed through `create_business_chart`, not a
 general calendar and not an ECharts calendar option. For other provinces,
 cities, stations, or non-AQI pollutants, use `pollutant_calendar`.
 

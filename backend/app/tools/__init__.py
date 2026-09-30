@@ -21,16 +21,16 @@ LLM Tools
 
 3. Visualization Tools - 可视化工具（生成图表和地图配置）
    - execute_echarts_python - 生成前端交互式 ECharts 图表
-   - create_report_chart - 绘制特定业务图型和固定报告模板
+   - create_business_chart - 绘制特定业务图型和固定报告模板
    - generate_map - 生成高德地图配置
 
 4. Task Management Tools - 任务管理工具（housekeeping状态管理）
    - TaskCreate / TaskUpdate / TaskList / TaskGet - 增量管理当前会话任务清单
 
 **工具选择决策：**
-- 前端交互式图表 → execute_echarts_python
-- 静态分析和正式报告图表 → execute_python（共享报告主题）
-- 特定业务图型和固定报告模板 → create_report_chart
+- 问数模式主要绘图、前端交互式图表 → execute_echarts_python
+- 专家/报告模式主要绘图 → execute_python（共享报告主题）
+- 特定业务图型和固定报告模板 → create_business_chart
 """
 
 import structlog
@@ -38,6 +38,7 @@ import structlog
 from app.project_config.loader import load_project_context
 from app.project_config.models import ProjectContext
 from app.tools.base.registry import ToolRegistry
+from app.tools.base.tool_names import canonical_tool_name
 from config.settings import settings
 
 logger = structlog.get_logger()
@@ -68,7 +69,9 @@ def is_project_tool_enabled(
 
 def is_project_tool_disabled(context: ProjectContext, tool_name: str) -> bool:
     """Return whether the active project explicitly disables a shared tool."""
-    return tool_name in context.manifest.backend.disabled_tools
+    return canonical_tool_name(tool_name) in {
+        canonical_tool_name(name) for name in context.manifest.backend.disabled_tools
+    }
 
 
 def _register_gis_tools(registry: ToolRegistry) -> None:
@@ -683,9 +686,9 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     try:
         from app.tools.visualization.create_report_chart import CreateReportChartTool
         registry.register(CreateReportChartTool(), priority=213)
-        logger.info("tool_loaded", tool="create_report_chart")
+        logger.info("tool_loaded", tool="create_business_chart")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="create_report_chart", error=str(e))
+        logger.warning("tool_import_failed", tool="create_business_chart", error=str(e))
 
     # ========================================
     # Utility Tools（实用工具）

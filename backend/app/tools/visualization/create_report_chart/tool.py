@@ -45,8 +45,8 @@ class CreateReportChartTool(LLMTool):
     def __init__(self):
         reference_paths = report_chart_reference_paths()
         description = (
-            "绘制特定场景的报告图表和固定业务模板（风玫瑰、污染日历、气象时序等），支持已有预定义图型。"
-            "通用静态图和深度分析图优先使用 execute_python，按分析问题自主设计；本工具用于匹配现成图型契约的场景。"
+            "业务图表工具：绘制特定业务图型和固定模板（风玫瑰、污染日历、气象时序等），支持已有预定义图型。"
+            "本工具辅助绘制匹配现成契约的业务图型；问数模式主要使用 execute_echarts_python，专家/报告模式主要使用 execute_python。"
             f"采用两层规范：先读公共入口 references/index.md={reference_paths['index']}，"
             "再且仅按选定 chart_type 读取一份对应图型文档；无需另读输入、A4 或布局规范。"
             "必须通过 data 或 file_path 至少提供一种数据输入。"
@@ -60,7 +60,7 @@ class CreateReportChartTool(LLMTool):
             "报告包内部配图不会自动逐张追加到对话。不要自行拼图片 URL 或本地路径。"
         )
         function_schema = {
-            "name": "create_report_chart",
+            "name": "create_business_chart",
             "description": description,
             "parameters": {
                 "type": "object",
@@ -199,7 +199,7 @@ class CreateReportChartTool(LLMTool):
             },
         }
         super().__init__(
-            name="create_report_chart",
+            name="create_business_chart",
             description=description,
             category=ToolCategory.VISUALIZATION,
             function_schema=function_schema,
@@ -263,7 +263,7 @@ class CreateReportChartTool(LLMTool):
                     "has_inline_data": data is not None,
                     "notes": notes,
                 },
-                "summary": "报告图表请求已按 create_report_chart 统一入口解析；dry_run 未生成图片。",
+                "summary": "业务图表请求已按 create_business_chart 统一入口解析；dry_run 未生成图片。",
             }
             self._attach_resume_context(result, file_path=file_path)
             result["resources"] = file_products(
@@ -313,7 +313,7 @@ class CreateReportChartTool(LLMTool):
                 "metadata": metadata,
                 "data": rendered,
                 "visuals": rendered.get("visuals", []),
-                "summary": rendered.get("summary", "报告图表已生成。"),
+                "summary": rendered.get("summary", "业务图表已生成。"),
             }
             self._attach_resume_context(result, file_path=file_path)
             result["resources"] = resources_for_visuals(
@@ -336,7 +336,7 @@ class CreateReportChartTool(LLMTool):
         if not file_path:
             raise ChartDataError("必须提供 data 或 file_path 作为图表数据输入。")
         if context is None:
-            raise ChartDataError("使用 file_path 调用 create_report_chart 需要 ExecutionContext。")
+            raise ChartDataError("使用 file_path 调用 create_business_chart 需要 ExecutionContext。")
 
         try:
             payload_loader = getattr(context, "get_data_payload", None)
@@ -364,7 +364,7 @@ class CreateReportChartTool(LLMTool):
         if isinstance(loaded, list) and all(isinstance(item, dict) for item in loaded):
             return {"records": loaded}
         raise ChartDataError(
-            f"file_path {file_path} 未保存为 create_report_chart 可直接使用的图表数据对象；"
+            f"file_path {file_path} 未保存为 create_business_chart 可直接使用的图表数据对象；"
             "请先整理为 labels+values、x+y 或单序列 series 数据。"
         )
 
@@ -389,7 +389,7 @@ class CreateReportChartTool(LLMTool):
                 "file_path": file_path,
             },
             "visuals": [],
-            "summary": f"报告图表生成失败：{error}",
+            "summary": f"业务图表生成失败：{error}",
         }
 
     def _attach_resume_context(

@@ -134,7 +134,7 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
     if item.resource_key == "chart-spec":
         dto["interactive"] = item.metadata.get("interactive", (
             item.metadata.get("type") != "image"
-            and item.tool_name not in {"execute_python", "create_report_chart"}
+            and item.tool_name not in {"execute_python", "create_business_chart", "create_report_chart"}
         ))
     board_id = _board_id_from_resource(item)
     if board_id:

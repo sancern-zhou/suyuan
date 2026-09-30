@@ -37,5 +37,5 @@ def test_expert_mode_keeps_trajectory_and_report_tools():
     tools = get_tools_by_mode("expert")
 
     assert "meteorological_trajectory_analysis" in tools
-    assert "create_report_chart" in tools
+    assert "create_business_chart" in tools
     assert "execute_sql_query" in tools

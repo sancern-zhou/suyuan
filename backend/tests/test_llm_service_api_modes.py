@@ -980,7 +980,7 @@ def test_chat_completions_payload_uses_tool_choice_without_prompt_guardrails(mon
         messages=[{"role": "user", "content": "生成图表"}],
         tools=[
             {
-                "name": "create_report_chart",
+                "name": "create_business_chart",
                 "description": "Create a chart",
                 "input_schema": {
                     "type": "object",
@@ -999,7 +999,7 @@ def test_chat_completions_payload_uses_tool_choice_without_prompt_guardrails(mon
     )
 
     assert payload["tool_choice"] == "auto"
-    assert payload["tools"][0]["function"]["name"] == "create_report_chart"
+    assert payload["tools"][0]["function"]["name"] == "create_business_chart"
     assert payload["messages"][0] == {"role": "system", "content": "你是助手"}
 
 
@@ -1030,7 +1030,7 @@ async def test_chat_completions_retries_malformed_tool_arguments_with_named_tool
                                         "id": "call_bad",
                                         "type": "function",
                                         "function": {
-                                            "name": "create_report_chart",
+                                            "name": "create_business_chart",
                                             "arguments": "{",
                                         },
                                     }
@@ -1054,7 +1054,7 @@ async def test_chat_completions_retries_malformed_tool_arguments_with_named_tool
                                     "id": "call_ok",
                                     "type": "function",
                                     "function": {
-                                        "name": "create_report_chart",
+                                        "name": "create_business_chart",
                                         "arguments": '{"title":"AQI","data":{}}',
                                     },
                                 }
@@ -1080,7 +1080,7 @@ async def test_chat_completions_retries_malformed_tool_arguments_with_named_tool
         messages=[{"role": "user", "content": "生成图表"}],
         tools=[
             {
-                "name": "create_report_chart",
+                "name": "create_business_chart",
                 "description": "Create a chart",
                 "input_schema": {
                     "type": "object",
@@ -1101,7 +1101,7 @@ async def test_chat_completions_retries_malformed_tool_arguments_with_named_tool
     assert captured_payloads[0]["messages"][0] == {"role": "system", "content": "你是助手"}
     assert captured_payloads[1]["tool_choice"] == {
         "type": "function",
-        "function": {"name": "create_report_chart"},
+        "function": {"name": "create_business_chart"},
     }
     assert captured_payloads[1]["messages"][0] == {"role": "system", "content": "你是助手"}
     assert result["stop_reason"] == "tool_use"

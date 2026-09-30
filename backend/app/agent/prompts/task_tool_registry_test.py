@@ -80,7 +80,7 @@ def test_ops_mode_keeps_call_sub_agent_for_general_ops_tasks():
 def test_ops_mode_exposes_only_create_report_package():
     tools = get_tools_by_mode("ops")
 
-    assert "create_report_chart" not in tools
+    assert "create_business_chart" not in tools
     assert "create_report_package" in tools
     assert "render_report_package" not in tools
     assert "validate_report_package" not in tools
@@ -103,7 +103,7 @@ def test_ops_prompt_generates_and_validates_audit_reports_directly():
 def test_social_mode_exposes_only_create_report_package_for_reporting():
     tools = get_tools_by_mode("social")
 
-    assert "create_report_chart" in tools
+    assert "create_business_chart" in tools
     assert "create_report_package" in tools
     assert "render_report_package" not in tools
     assert "validate_report_package" not in tools
@@ -111,7 +111,7 @@ def test_social_mode_exposes_only_create_report_package_for_reporting():
 
 def test_social_prompt_prefers_main_agent_report_generation():
     prompt = build_social_prompt(
-        ["create_report_chart", "create_report_package", "call_sub_agent"],
+        ["create_business_chart", "create_report_package", "call_sub_agent"],
     )
 
     assert "正式报告、QMD、Word 和报告包由当前主 Agent 直接完成" in prompt
@@ -147,7 +147,7 @@ def test_assistant_prompt_is_a_workspace_router():
     assert "promote_to_workspace=true" in prompt
     assert "只表示本次委托使用的专家执行器" in prompt
     assert "单轮架构图或流程图可以直接委托" in prompt
-    assert "create_report_chart" not in prompt
+    assert "create_business_chart" not in prompt
     assert "execute_python" not in prompt
     assert "create_diagram_artifact" not in prompt
 

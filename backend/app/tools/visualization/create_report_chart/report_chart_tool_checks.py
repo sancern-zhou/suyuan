@@ -27,7 +27,7 @@ def test_schema_stays_compact_and_points_to_progressive_references():
     schema = tool.get_function_schema()
     properties = schema["parameters"]["properties"]
 
-    assert schema["name"] == "create_report_chart"
+    assert schema["name"] == "create_business_chart"
     assert set(properties) == {
         "chart_id",
         "chart_type",
@@ -227,7 +227,7 @@ async def test_specialized_chart_type_routes_through_unified_tool_metadata():
     )
 
     assert result["success"] is True
-    assert result["metadata"]["tool_name"] == "create_report_chart"
+    assert result["metadata"]["tool_name"] == "create_business_chart"
     assert result["metadata"]["chart_type"] == "aqi_calendar"
     assert result["data"]["render_mode"] == "dry_run"
 
