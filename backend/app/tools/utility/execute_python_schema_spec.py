@@ -1,4 +1,10 @@
-from app.tools.utility.execute_python_tool import ExecutePythonTool
+import pytest
+
+from app.agent.prompts.expert_prompt import build_expert_prompt
+from app.agent.prompts.query_prompt import build_query_prompt
+from app.agent.prompts.report_prompt import build_report_prompt
+from app.tools.utility.execute_python_tool import ExecutePythonTool, ExecuteEChartsPythonTool
+from app.tools.visualization.create_report_chart.tool import CreateReportChartTool
 
 
 def test_execute_python_schema_describes_general_capability_and_bash_boundary():
@@ -29,3 +35,22 @@ def test_environment_constraints_use_existing_tool_description():
     for helper in ("aqi_color", "pollutant_color", "get_pollutant_scale",
                    "get_environment_limit", "add_standard_limit", "legend_below"):
         assert helper in description
+    assert "风向箭头须明确来向/去向" in description
+
+
+@pytest.mark.parametrize("tool_class", [ExecutePythonTool, ExecuteEChartsPythonTool, CreateReportChartTool])
+def test_business_chart_requirement_precedes_mode_defaults_in_tool_descriptions(tool_class):
+    tool = tool_class()
+    for description in (tool.description, tool.get_function_schema()["description"]):
+        normalized = description.replace("`", "")
+        assert "必须使用 create_business_chart" in normalized
+        assert "禁止用 Python/ECharts 重绘替代" in normalized
+        assert "优先于模式默认工具" in normalized
+
+
+@pytest.mark.parametrize("builder", [build_query_prompt, build_expert_prompt, build_report_prompt])
+def test_business_chart_requirement_is_in_existing_mode_prompts(builder):
+    prompt = builder(["execute_python", "execute_echarts_python", "create_business_chart"])
+    assert "已支持的专用业务图型必须使用 `create_business_chart`" in prompt
+    assert "禁止用 Python/ECharts 重绘替代" in prompt
+    assert "优先于模式默认工具" in prompt

@@ -79,12 +79,13 @@ def render_wind_timeseries(
         vector_x = [timestamps[index] for index in vector_indices]
         vector_u = east_u[vector_indices]
         vector_v = north_v[vector_indices]
+        moving = np.hypot(vector_u, vector_v) > 0
         peak_speed = max(float(np.nanmax(wind_speeds)), 1.0)
-        vector_ax.quiver(
-            mdates.date2num(vector_x),
-            np.zeros(len(vector_indices)),
-            vector_u,
-            vector_v,
+        vectors = vector_ax.quiver(
+            np.asarray(mdates.date2num(vector_x))[moving],
+            np.zeros(int(moving.sum())),
+            vector_u[moving],
+            vector_v[moving],
             angles="uv",
             scale_units="height",
             scale=peak_speed * 7.0,
@@ -95,6 +96,15 @@ def render_wind_timeseries(
             headaxislength=3.8,
             pivot="tail",
         )
+        if moving.any():
+            vector_ax.quiverkey(
+                vectors, 0.93, 0.86, peak_speed, f"{peak_speed:g} {wind_speed_unit}（气流去向）",
+                labelpos="W", coordinates="axes", fontproperties={"size": 7},
+            )
+        if (~moving).any():
+            vector_ax.scatter(np.asarray(vector_x, dtype=object)[~moving], np.zeros(int((~moving).sum())),
+                              facecolors="none", edgecolors="#D94841", s=16)
+            vector_ax.text(0.012, 0.05, "空心圆：静风，方向未定义", transform=vector_ax.transAxes, fontsize=7)
         vector_ax.axhline(0, color="#9AA0A6", linewidth=0.65)
         vector_ax.set_ylim(-1, 1)
         vector_ax.set_yticks([])
@@ -149,7 +159,8 @@ def render_wind_timeseries(
                 "wind_direction_convention": prepared["wind_direction_convention"],
                 "input_mode": prepared["input_mode"],
                 "valid_point_count": len(timestamps),
-                "rendered_vector_count": len(vector_indices),
+                "rendered_vector_count": int(moving.sum()),
+                "calm_point_count": int((wind_speeds == 0).sum()),
                 "start_time": timestamps[0].isoformat(sep=" "),
                 "end_time": timestamps[-1].isoformat(sep=" "),
             },

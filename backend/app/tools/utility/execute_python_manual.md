@@ -6,11 +6,13 @@
 
 ## 适用场景
 
-绘图按模式选择：问数模式以 `execute_echarts_python` 为主，`create_business_chart` 辅助特定业务图型，Python 负责计算、整理和自定义静态图；专家和报告模式以 `execute_python` 为主，业务模板及交互图为辅助。模式优先级先于通用工具描述。
+绘图先匹配业务图型，再按模式选择通用工具。属于已支持的六种专用业务图型时，必须使用 `create_business_chart`，此规则优先于模式默认绘图工具。六种图型为 `aqi_calendar`、`pollutant_calendar`、`pollutant_wind_rose`、`generic_pollutant_wind_rose`、`wind_timeseries`、`weather_timeseries`。其他通用或自定义图表：问数模式以 `execute_echarts_python` 为主；专家和报告模式以 `execute_python` 为主，ECharts 辅助交互探索。
+
+不得用 Python 或 ECharts 重新实现这些业务模板来绕过专用工具；需要数据准备时可先用 Python 清洗、计算并 `save_data`，再交给业务工具。组合报告可复用业务工具生成的图片素材。专用工具不可用、调用失败或输入不足时，先补齐数据、修正调用或说明限制，不自动换工具重画同一模板。尚未支持的新业务图型及超出现有契约的自定义分析图可使用 Python，并明确与现成业务图型的区别；不能仅通过改名规避规则。
 
 - 数据处理：`pandas`、`numpy`、`scipy`。
 - Excel 读取、修改和生成：优先使用 `openpyxl`，读取分析可用 `pandas`。
-- 主要静态绘图：使用 `matplotlib` / `seaborn` 生成日常分析、深度分析和正式报告图表，通过 `save_chart` 保存并自动归档。特定业务图型或固定模板使用 `create_business_chart`；交互探索使用 `execute_echarts_python`。
+- 主要静态绘图：使用 `matplotlib` / `seaborn` 生成通用分析和自定义报告图表，通过 `save_chart` 保存并自动归档。已支持的专用业务图型必须使用 `create_business_chart`；交互探索使用 `execute_echarts_python`。
 - 报告中间资源生成：图表、表格、结构化 JSON、qmd 草稿片段。
 - 一次性 Office 文件生成：仅当用户明确要求 Word/Excel 文件，且不需要 qmd 同源报告包时使用。
 - 自定义统计：仅当专用查询/统计工具无法直接满足时使用。
@@ -21,7 +23,7 @@
 
 标准流程：
 
-1. 用查询工具和 `execute_python` 完成计算、表格整理和正式报告静态绘图；匹配特定业务模板时使用 `create_business_chart`。
+1. 用查询工具和 `execute_python` 完成计算、表格整理和通用报告静态绘图；匹配已支持的专用业务图型时必须使用 `create_business_chart`。
 2. 准备 `report.qmd` 内容，图片最终使用报告包内相对路径，例如 `assets/charts/chart_01.png`。
    不要根据 `/api/image/{image_id}` 或缓存 id 推断这个路径；应把真实图片文件路径传给
    `create_report_package.assets`，必要时用 `name` 指定 `chart_01.png`，由报告包工具复制并规范化引用。
@@ -109,7 +111,7 @@ backend/backend_data_registry/reports/{report_id}.qmd
 
 ## Python 绘图风格约束
 
-Python 是专家和报告模式的主要绘图工具，图型由分析问题和数据条件决定；问数模式以 ECharts 为主。正式报告图与 `create_business_chart` 共用 `REPORT_THEME` 和 `SERIES_COLORS`，matplotlib/seaborn 的默认主题在执行前自动注入。
+Python 是专家和报告模式的主要通用绘图工具，图型由分析问题和数据条件决定；问数模式通用图以 ECharts 为主。已支持的专用业务图型在所有模式中必须使用 `create_business_chart`。正式报告图与业务图表共用 `REPORT_THEME` 和 `SERIES_COLORS`，matplotlib/seaborn 的默认主题在执行前自动注入。
 
 - 字体：系统自动选择支持中文的字体，与报告图表一致；不要硬编码 SimHei 或用不支持中文的字体替代。
 - 字号：标题 14 pt、轴标签 11 pt、刻度/图例 9.8 pt、数据标签 10.5 pt、注释 8.5 pt。报告嵌入缩放后仍须可读，必要时增大字号或拆分图表。
@@ -141,6 +143,20 @@ Python 是专家和报告模式的主要绘图工具，图型由分析问题和�
 - 当前仅内置环境空气六项基本污染物及 GB 3095/HJ 633 的 2026 版本，不保留 2012 版口径。数据/情景日期须不早于 2026-03-01；GB 3095 至 2030 年底使用过渡限值，2031 年起使用正式限值。跨阶段时间序列须拆分或绘制分段限值，不能用一条横线覆盖整个时期。早于实施日的数据会报错，不自动套用现行标准。
 - CO 内置单位为 `mg/m3`，其余为 `ug/m3`（亦接受 `μg/m³`）；单位不符会报错，须先换算数据。负值、无穷值拒绝映射，`None`/`NaN` 为缺失。IAQI 配色助手对浓度按 GB/T 8170 修约后映射并向上取整；按 HJ 633—2026，SO₂ 小时值超过 800 μg/m³ 时 IAQI 按 200 计，O₃ 8 小时值超过 800 μg/m³ 时按 300 计，不能随意归为最高等级。
 - 内置助手不替代数据完整性、采样有效性、参比状态及统计口径检查。小时 PM 浓度在 2026 版可以映射实时 IAQI，但 GB 3095 未因此产生 PM 小时达标限值。水、土壤、噪声、排放及地方标准须先核实相应版本和适用条件，不能套用环境空气限值或 AQI 色阶。
+
+### 风向箭头绘制
+
+- 气象风向为风的“来向”，以正北为 0°，顺时针增加：90° 东风、180° 南风、270° 西风。输送箭头表示气流“去向”：北风箭头向下，东风向左，南风向上，西风向右。图例或图注明确“箭头指向气流去向”。风玫瑰扇区表示来向，不应随箭头规则翻转扇区。
+- 气象来向角 θ 转换为东向/北向分量：`u = -speed * sin(radians(θ))`、`v = -speed * cos(radians(θ))`。数学去向角以正东为 0°、逆时针增加，使用 `u = speed*cos(θ)`、`v = speed*sin(θ)`。必须确认输入约定，不根据字段名猜测；已提供 `east_u/north_v` 时不重复反向。角度统一到 `[0, 360)`，不把风向角直接做普通算术平均。
+- **仅表示方向的箭头**：使用真实角度旋转的细长等长箭头，默认长度约 18 pt、线宽约 0.7 pt。可使用 `DrawingArea` + `FancyArrowPatch` + `AnnotationBbox`，在点坐标中绘制箭头，在图上锚定位置；中心两端为 `(cx ± L*u/(2*speed), cy ± L*v/(2*speed))`。箭头大小与风速、时间跨度、y 轴范围无关，不使用八方向文字箭头字符替代真实角度。时序方向箭头排列在固定水平行（如 y=0.95 的 axes 坐标），密集时按统一间隔抽稀，不能靠缩短箭头表示缺测。
+- **同时表示风速的矢量箭头**：使用真实 `u/v` 分量，箭头方向与长度分别表达去向和风速；时间轴和浓度轴单位不一致时使用 `quiver(..., angles='uv', ...)` 保持屏幕中的真实方向，固定缩放规则，并添加带 `m/s` 单位的 `quiverkey`。不得把风速矢量和等长方向箭头混用而不说明长度含义。现有业务模板的固定缩放口径由业务工具负责。
+- `angles='xy'` 适用于坐标与分量具有一致空间含义的矢量场；需要正确长宽比或投影转换，不能直接把 `m/s` 分量当作经纬度增量。地图箭头必须考虑投影和局地北向，不能无条件将屏幕上方视为正北。图中标明坐标方向或提供必要的方位说明。
+- 静风不能凭角度画出确定方向：按数据来源的静风判据显示空心圆/“静风”标记并解释；无静风判据时至少将零风速视为无定义方向。缺失/无效方向不画箭头，缺失与静风分开表示。不擅自用最近方向填补缺失，风速不得为负。
+- 常规输送箭头的箭头尖指向运动方向；气象风羽采用另一套来向与风速符号惯例，须明确说明，不能仅改变箭头头部假装成标准风羽。
+- 风场污染物叠加时序必须调用 `create_business_chart(chart_type='wind_timeseries', ...)`；气象五要素时序必须调用 `create_business_chart(chart_type='weather_timeseries', ...)`。上述 Python 方法用于业务工具尚未覆盖的自定义图，不用于重新实现现成模板。
+- 交付前核对四个基本方向、任意斜向、静风、缺失及抽稀情况；改变画布比例和坐标范围后检查箭头角度与长度含义是否保持一致。
+
+风向定义参考 [NOAA 风向术语](https://forecast.weather.gov/glossary.php?word=wind+direction)；绘图坐标与长度参数参考 [Matplotlib Quiver](https://matplotlib.org/stable/api/_as_gen/matplotlib.quiver.Quiver.html)。
 
 ### 数据表达与交付检查
 

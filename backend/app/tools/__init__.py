@@ -30,7 +30,7 @@ LLM Tools
 **工具选择决策：**
 - 问数模式主要绘图、前端交互式图表 → execute_echarts_python
 - 专家/报告模式主要绘图 → execute_python（共享报告主题）
-- 特定业务图型和固定报告模板 → create_business_chart
+- 已支持的专用业务图型 → 所有模式必须使用 create_business_chart，优先于模式默认工具
 """
 
 import structlog

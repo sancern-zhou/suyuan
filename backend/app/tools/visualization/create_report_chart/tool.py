@@ -33,7 +33,8 @@ class CreateReportChartTool(LLMTool):
         reference_paths = report_chart_reference_paths()
         description = (
             "业务图表工具：绘制特定业务图型和固定模板（风玫瑰、污染日历、气象时序等），支持已有预定义图型。"
-            "本工具辅助绘制匹配现成契约的业务图型；问数模式主要使用 execute_echarts_python，专家/报告模式主要使用 execute_python。"
+            "匹配本工具已支持的专用业务图型时，所有模式必须使用 create_business_chart，禁止用 Python/ECharts 重绘替代；"
+            "此规则优先于模式默认工具。其他通用/自定义图表：问数模式主要使用 execute_echarts_python，专家/报告模式主要使用 execute_python。"
             f"采用两层规范：先读公共入口 references/index.md={reference_paths['index']}，"
             "再且仅按选定 chart_type 读取一份对应图型文档；无需另读输入、A4 或布局规范。"
             "必须通过 data 或 file_path 至少提供一种数据输入。"
@@ -42,7 +43,7 @@ class CreateReportChartTool(LLMTool):
             "问数交互图使用 execute_echarts_python，静态分析及报告图使用 execute_python。"
             "weather_timeseries 绘制连续 1–7 天风向、风速、温度、降水概率、湿度五要素，禁止叠加污染物或重叠不同日期曲线；"
             "气象背景叠加污染物使用 wind_timeseries；纯风向频率图使用 Python，不得用占位浓度制作污染物风玫瑰。"
-            "图型契约不应限制分析维度；自由组合、分面、多子图和科研图表使用 execute_python + matplotlib/seaborn。"
+            "现成业务图可作为组合报告素材复用；尚未覆盖的自定义分析、分面、多子图和科研图表使用 execute_python + matplotlib/seaborn。"
             "生成的静态图在对话正文展示，不进入右侧交互图面板；"
             "单独交付图表时可在最终答复中用 [[chart:<visual_id>]] 控制位置，visual_id 取返回的 visuals.id，"
             "未指定位置的图由前端追加到本轮答复末尾。制作正式报告时图表仍可作为报告素材复用，"

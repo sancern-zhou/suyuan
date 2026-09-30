@@ -61,11 +61,13 @@ single-chart specifications selected by the routing table below.
   `chart_type: "weather_timeseries"`. This type supports 1–7 consecutive days
   on a continuous time axis. Do not overlay pollutants or overlap daily curves.
 
-Use `execute_python` as the primary static chart tool for analysis and formal
-reports, with the shared report theme. Use `create_business_chart` for specific
-business chart types and fixed templates that match the documented contracts.
-Query mode primarily uses `execute_echarts_python`; business chart templates
-are supplementary. Expert and report modes primarily use `execute_python`.
+First match the six supported business types. In every mode, these types MUST
+use `create_business_chart`; do not reimplement their templates in Python or
+ECharts. This requirement takes precedence over mode defaults. Python may
+prepare input data, and report compositions may reuse business chart images.
+For other general or custom types, query mode primarily uses
+`execute_echarts_python`; expert and report modes primarily use `execute_python`
+with the shared report theme.
 Choose analytical dimensions before selecting a chart; use Python for custom
 combinations, facets and multi-panel comparisons.
 

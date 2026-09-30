@@ -9,6 +9,7 @@ from typing import Any
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from matplotlib.offsetbox import AnnotationBbox, DrawingArea
 from matplotlib.patches import FancyArrowPatch
 import numpy as np
@@ -39,6 +40,8 @@ def render_weather_timeseries(*, title: str, data: dict[str, Any], options: dict
             values = [float(record.get(fields[key])) if record.get(fields[key]) is not None else np.nan for key in ("speed", "direction", "temperature", "precipitation", "humidity")]
         except (TypeError, ValueError):
             continue
+        if np.isfinite(values[0]) and values[0] < 0:
+            raise ChartDataError("weather_timeseries 的风速不能为负数。")
         rows.append((timestamp, *values))
     if not rows:
         raise ChartDataError("weather_timeseries 没有可绘制的有效记录。")
@@ -72,7 +75,8 @@ def render_weather_timeseries(*, title: str, data: dict[str, Any], options: dict
     fig, ax = plt.subplots(1, 1, figsize=(14 if multi_day else 8.2, 5.8 if output_context == "word" else 5.4), dpi=180)
     wind_ax = ax.twinx()
     colors = {"speed": "#356AE6", "temperature": "#D97706", "precipitation": "#8A5AB5", "humidity": "#159A9C"}
-    valid_dir = np.isfinite(direction)
+    valid_dir = np.isfinite(direction) & np.isfinite(speed) & (speed > 0)
+    calm = np.isfinite(speed) & (speed == 0)
     ax.plot(ts, temperature, color=colors["temperature"], linewidth=width, marker="o", markersize=2.5, label="温度 (℃)")
     ax.plot(ts, humidity, color=colors["humidity"], linewidth=width, marker="o", markersize=2.5, label="湿度 (%)")
     ax.plot(ts, precipitation, color=colors["precipitation"], linewidth=width, marker="s", markersize=2.5, label="降水概率 (%)")
@@ -88,7 +92,12 @@ def render_weather_timeseries(*, title: str, data: dict[str, Any], options: dict
     # Meteorological direction is the direction the wind comes *from*.
     # Draw a true-degree arrow pointing toward where it goes; do not quantize
     # to cardinal glyphs, which loses information and is font-dependent.
-    for value, timestamp in zip(direction[valid_dir], np.asarray(ts, dtype=object)[valid_dir], strict=True):
+    arrow_indices = np.flatnonzero(valid_dir)
+    max_arrows = max(1, int(fig.get_figwidth() * 72 * 0.76 / 26))
+    arrow_stride = max(1, int(np.ceil(len(arrow_indices) / max_arrows)))
+    arrow_indices = arrow_indices[::arrow_stride]
+    for index in arrow_indices:
+        value, timestamp = direction[index], ts[index]
         angle = np.deg2rad(float(value) % 360.0 + 180.0)
         dx = 9.0 * np.sin(angle)
         dy = 9.0 * np.cos(angle)
@@ -107,6 +116,11 @@ def render_weather_timeseries(*, title: str, data: dict[str, Any], options: dict
             xycoords=ax.get_xaxis_transform(), frameon=False,
             box_alignment=(0.5, 0.5), pad=0, annotation_clip=False,
         ))
+    if calm.any():
+        ax.plot(np.asarray(ts, dtype=object)[calm], np.full(int(calm.sum()), 0.95),
+                transform=ax.get_xaxis_transform(), linestyle="none", marker="o",
+                markersize=4, markerfacecolor="none", color="#B7791F",
+                label="静风（方向未定义）")
     areas = options.get("areas") or data.get("areas") or options.get("risk_periods") or data.get("risk_periods") or []
     for period in areas:
         try:
@@ -133,12 +147,15 @@ def render_weather_timeseries(*, title: str, data: dict[str, Any], options: dict
     handles, legend_labels = [], []
     for target in (ax, wind_ax):
         h, l = target.get_legend_handles_labels(); handles.extend(h); legend_labels.extend(l)
+    if valid_dir.any():
+        handles.append(Line2D([], [], marker=">", linestyle="none", color="#B7791F", markersize=5))
+        legend_labels.append("风向（等长箭头，指向气流去向）")
     ax.legend(handles, legend_labels, loc="lower center", bbox_to_anchor=(0.5, 1.08), fontsize=8, frameon=False, ncol=4)
     fig.suptitle(str(title), fontsize=14, fontweight="bold", y=0.995)
     fig.subplots_adjust(left=0.12, right=0.88, top=0.78, bottom=0.16)
     apply_font_to_figure(fig)
     output = BytesIO(); fig.savefig(output, format="png", dpi=180, bbox_inches="tight"); plt.close(fig)
-    return base64.b64encode(output.getvalue()).decode("ascii"), {"valid_point_count": valid_point_count, "multi_day": multi_day, "day_count": len(days), "gap_count": gap_count, "line_width": width, "date": ts[0].date().isoformat(), "start_time": ts[0].isoformat(sep=" "), "end_time": ts[-1].isoformat(sep=" "), "area_count": len(areas)}, []
+    return base64.b64encode(output.getvalue()).decode("ascii"), {"valid_point_count": valid_point_count, "multi_day": multi_day, "day_count": len(days), "gap_count": gap_count, "line_width": width, "date": ts[0].date().isoformat(), "start_time": ts[0].isoformat(sep=" "), "end_time": ts[-1].isoformat(sep=" "), "area_count": len(areas), "direction_arrow_count": len(arrow_indices), "calm_point_count": int(calm.sum())}, []
 
 
 def _parse_time(value: Any) -> datetime:
