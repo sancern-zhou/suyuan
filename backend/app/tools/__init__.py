@@ -68,7 +68,7 @@ def is_project_tool_enabled(
 
 def is_project_tool_disabled(context: ProjectContext, tool_name: str) -> bool:
     """Return whether the active project explicitly disables a shared tool."""
-    return tool_name in set(context.manifest.backend.disabled_tools)
+    return tool_name in context.manifest.backend.disabled_tools
 
 
 def _register_gis_tools(registry: ToolRegistry) -> None:

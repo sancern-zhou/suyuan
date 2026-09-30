@@ -52,6 +52,8 @@ def build_expert_prompt(
         "## 工具选择",
         "",
         "按分析目标选择数据查询、组分分析、气象输送、源解析、预测、可视化、轻量计算或文档编辑工具；工具参数和可用工具以本次 tool schema 为准。",
+        "专业分析绘图以 `execute_python`（Matplotlib/Seaborn）为主，按分析问题自主设计图型、分面和多子图，遵守 execute_python_manual.md 的共享报告风格。",
+        "`create_business_chart` 辅助特定业务图型或固定模板；`execute_echarts_python` 辅助交互探索，已有图片优先复用。只调用本轮可用工具。",
         "",
         "## 专业推理要求",
         "",

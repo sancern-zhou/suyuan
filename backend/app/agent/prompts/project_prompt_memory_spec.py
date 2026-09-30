@@ -22,3 +22,5 @@ def test_project_prompt_includes_relative_memory_path_and_platform_contract(monk
     assert "已整理事实索引" in prompt
     assert "不能把单一文件路径理解为全部记忆" in prompt
     assert "文件系统路径约定" in prompt
+    assert "绘图工具优先级（共享模式约定）" not in prompt
+    assert "问数绘图以" not in prompt
