@@ -7,7 +7,7 @@ ReAct系统提示词构建器（多模式架构）
 from typing import Literal, List, Optional
 from .assistant_prompt import build_assistant_prompt
 from .ppt_prompt import build_ppt_prompt
-from .expert_prompt import build_expert_prompt
+from .expert_prompt import build_expert_analysis_prompt, build_expert_meteorology_prompt, build_expert_prompt
 from .query_prompt import build_query_prompt
 from .knowledge_prompt import build_knowledge_prompt
 from .report_prompt import build_report_prompt
@@ -84,6 +84,8 @@ AgentMode = Literal[
     "assistant",
     "ppt",
     "expert",
+    "expert_meteorology",
+    "expert_analysis",
     "query",
     "knowledge",
     "report",
@@ -182,6 +184,10 @@ def build_react_system_prompt(
         return _with_platform_contracts(build_ppt_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "expert":
         return _with_platform_contracts(build_expert_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "expert_meteorology":
+        return _with_platform_contracts(build_expert_meteorology_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "expert_analysis":
+        return _with_platform_contracts(build_expert_analysis_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "query":
         return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "knowledge":
