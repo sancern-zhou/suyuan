@@ -49,11 +49,8 @@ HUMAN_FEEDBACK_CONTRACT = (
 )
 
 
-def _with_platform_contracts(prompt: str, mode: str | None = None) -> str:
-    from .chart_policy import chart_policy_for_mode
-
-    chart_policy = chart_policy_for_mode(mode)
-    return f"{prompt.rstrip()}\n\n{FILESYSTEM_PATH_CONTRACT}\n\n{HUMAN_FEEDBACK_CONTRACT}\n\n{chart_policy}".rstrip()
+def _with_platform_contracts(prompt: str) -> str:
+    return f"{prompt.rstrip()}\n\n{FILESYSTEM_PATH_CONTRACT}\n\n{HUMAN_FEEDBACK_CONTRACT}"
 
 
 def _with_memory_file_contract(prompt: str, memory_file_path: Optional[str]) -> str:
@@ -157,32 +154,29 @@ def build_react_system_prompt(
         has_board_context=board_context is not None,
     )
 
-    def finalize_prompt(prompt: str) -> str:
-        return _with_platform_contracts(prompt, mode)
-
     project_prompt = load_project_mode_prompt(mode)
     if project_prompt is not None:
-        return finalize_prompt(
+        return _with_platform_contracts(
             _with_memory_file_contract(project_prompt, memory_file_path)
         )
 
     # 根据模式构建Prompt（✅ 统一传递所有路径和上下文）
     if mode == "custom":
-        return finalize_prompt(build_custom_prompt(filtered_tools))
+        return _with_platform_contracts(build_custom_prompt(filtered_tools))
     if mode == "assistant":
-        return finalize_prompt(build_assistant_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_assistant_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "ppt":
-        return finalize_prompt(build_ppt_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_ppt_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "expert":
-        return finalize_prompt(build_expert_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_expert_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "query":
-        return finalize_prompt(build_query_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "knowledge":
-        return finalize_prompt(build_knowledge_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_knowledge_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "report":
-        return finalize_prompt(build_report_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_report_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "social":
-        return finalize_prompt(build_social_prompt(
+        return _with_platform_contracts(build_social_prompt(
             filtered_tools,
             user_preferences,
             memory_file_path,
@@ -196,35 +190,35 @@ def build_react_system_prompt(
             backend_host,
         ))
     elif mode == "enforcement_exam":
-        return finalize_prompt(build_enforcement_exam_prompt(
+        return _with_platform_contracts(build_enforcement_exam_prompt(
             filtered_tools,
             user_preferences=user_preferences,
             user_context=user_context,
         ))
     elif mode == "chart":
-        return finalize_prompt(build_chart_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_chart_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "board":
-        return finalize_prompt(build_board_prompt(
+        return _with_platform_contracts(build_board_prompt(
             filtered_tools,
             memory_context,
             memory_file_path,
             board_context,
         ))
     elif mode == "ops":
-        return finalize_prompt(build_ops_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_ops_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "graph":
-        return finalize_prompt(build_graph_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_graph_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "deliberation_meteorology":
-        return finalize_prompt(build_deliberation_meteorology_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_deliberation_meteorology_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "deliberation_monitoring":
-        return finalize_prompt(build_deliberation_monitoring_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_deliberation_monitoring_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "deliberation_chemistry":
-        return finalize_prompt(build_deliberation_chemistry_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_deliberation_chemistry_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "deliberation_reviewer":
-        return finalize_prompt(build_deliberation_reviewer_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_deliberation_reviewer_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "memory_consolidator":
         from .memory_consolidator_prompt import build_memory_consolidator_prompt
-        return finalize_prompt(build_memory_consolidator_prompt(filtered_tools))
+        return _with_platform_contracts(build_memory_consolidator_prompt(filtered_tools))
     else:
         raise ValueError(f"Unknown mode: {mode}")
 

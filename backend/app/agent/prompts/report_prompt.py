@@ -152,6 +152,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "可用工具、参数结构和参数说明由本次请求的原生 tool schema 提供；系统提示词只保留报告生成的业务流程约束。\n",
         "\n",
         "**关键约束**：读取DOCX参考文档使用 `read_file`；正式报告静态数据图表优先使用 `execute_python`，共用报告图表主题；特定业务图型和固定模板使用 `create_business_chart`；正式报告最终交付必须使用 `create_report_package` 收口；当前不暴露既有 Word 文档编辑工具。\n",
+        "需要交互探索时可用 `execute_echarts_python` 辅助；已有图表图片优先复用，工具可用性和参数以本轮 tool schema 为准。\n",
         "\n",
         *city_pollutant_ranking_guidance,
         "**⚠️ 默认城市范围**：如果用户没有指定城市，则默认查询广东省21个地级市（广州、深圳、珠海、佛山、惠州、东莞、中山、江门、肇庆、汕头、韶关、湛江、茂名、梅州、汕尾、河源、阳江、清远、潮州、揭阳、云浮）。\n",

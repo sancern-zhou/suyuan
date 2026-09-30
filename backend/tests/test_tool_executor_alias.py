@@ -28,3 +28,16 @@ def test_report_chart_legacy_name_resolves_only_when_business_tool_available():
     assert executor._resolve_tool_alias("create_report_chart") == "create_business_chart"
     limited = _executor_with_registry(["execute_python"])
     assert limited._resolve_tool_alias("create_report_chart") is None
+
+
+def test_legacy_business_chart_configuration_exposes_only_canonical_name():
+    from app.agent.prompts.tool_registry import _build_tool_dict
+    from app.tools.base.registry import ToolRegistry
+
+    names = _build_tool_dict(["create_report_chart", "create_business_chart"])
+    assert list(names) == ["create_business_chart"]
+    registry = object.__new__(ToolRegistry)
+    tool = object()
+    registry._tools = {"create_business_chart": {"tool": tool}}
+    assert registry.get_tool("create_report_chart") is tool
+    assert registry.get_tool_data("create_report_chart") is registry.get_tool_data("create_business_chart")
