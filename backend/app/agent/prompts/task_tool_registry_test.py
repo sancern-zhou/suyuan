@@ -45,7 +45,10 @@ def test_assistant_mode_does_not_expose_diagram_artifact_tool():
     assert "create_diagram_artifact" not in ASSISTANT_TOOL_ORDER
 
 
-def test_weather_image_tool_is_reserved_for_expert_mode():
+def test_weather_image_tool_is_reserved_for_expert_mode(monkeypatch):
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "project_id", "default")
     assert "get_platform_weather_image" not in get_tools_by_mode("assistant")
     assert "get_platform_weather_image" in get_tools_by_mode("expert")
 
