@@ -22,23 +22,19 @@ from app.fetchers.xuchang_station_daily_exceedance import (
 )
 from app.integrations.xcai_station_sql import xcai_connection_string
 from app.scenarios.xuchang_city_exceedance.process import POLLUTANT_FIELDS, detect_processes
+from app.scenarios.xuchang_city_exceedance.station_catalog import (
+    NATIONAL_SOURCE_TO_CANONICAL,
+    NATIONAL_STATION_IDS,
+    REGIONAL_CITIES,
+)
 from app.scenarios.xuchang_daily_review.township_hourly import load_township_hourly_rows
 from app.scenarios.xuchang_transport_escalation.service import XuchangTransportEscalationService
 from app.scheduled_tasks.models import TaskEvent
 
 logger = structlog.get_logger()
 TZ = ZoneInfo("Asia/Shanghai")
-# dat_station_hour still uses historical codes for the six national sites;
-# normalize them to the IDs used by the current station catalog and reports.
-NATIONAL_SOURCE_TO_CANONICAL = {
-    "2398A": "1003A", "3134A": "1005A", "3337A": "1008A",
-    "3338A": "1009A", "4180A": "1011A", "4259A": "1012A",
-}
-NATIONAL_STATION_IDS = (*NATIONAL_SOURCE_TO_CANONICAL,
-                        *NATIONAL_SOURCE_TO_CANONICAL.values())
 CONFIRMED_EVENT = "xuchang.city_pollution_episode.confirmed"
 REQUESTED_EVENT = "xuchang.city_source_analysis.requested"
-REGIONAL_CITIES = ("郑州市", "开封市", "平顶山市", "漯河市", "周口市", "商丘市", "驻马店市")
 
 
 def _value(value: Any) -> float | None:

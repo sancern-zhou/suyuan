@@ -82,19 +82,41 @@ def test_process_ingestion_is_idempotent_and_uses_only_trigger_hours(tmp_path):
     assert len(service._load_state()["jobs"]) == 1
 
 
-def test_enterprise_candidates_are_only_upwind_field_checks():
+def test_enterprise_candidates_rank_by_emission_distance_decay_score():
     hours = ["2026-09-27T07:00:00+08:00", "2026-09-27T08:00:00+08:00"]
     meteo = [{"time": hour, "wind_direction_10m": 90, "wind_speed_10m_ms": 2}
              for hour in hours]
-    records = [{"enterprise_name": "上风向企业", "latitude": 34.0, "longitude": 113.81,
-                "industry_category": "建材", "inventory_period": "2024"},
-               {"enterprise_name": "下风向企业", "latitude": 34.0, "longitude": 113.79}]
+    records = [
+        {"enterprise_name": "近处中排企业", "latitude": 34.0, "longitude": 113.83,
+         "industry_category": "建材", "district": "建安区", "inventory_period": "2024",
+         "inventory_emissions": {"emission_pm25": 500.0}},
+        {"enterprise_name": "远处低排企业", "latitude": 34.0, "longitude": 113.6,
+         "industry_category": "热电", "district": "禹州市",
+         "inventory_emissions": {"emission_pm25": 800.0}},
+        {"enterprise_name": "零排企业", "latitude": 34.0, "longitude": 113.81,
+         "inventory_emissions": {"emission_pm25": 0.0}},
+    ]
     result = screen_inventory_candidates(
         receptor_lat=34.0, receptor_lon=113.8, pollutant="PM2.5",
-        meteorology_rows=meteo, trigger_hours=hours, records=records)
-    assert result["candidate_count"] == 1
-    assert result["enterprises"][0]["enterprise_name"] == "上风向企业"
-    assert "contribution_percent" not in result["enterprises"][0]
+        meteorology_rows=meteo, trigger_hours=hours, records=records,
+        high_value_point={"lat": 34.02, "lon": 113.82})
+    assert result["status"] == "screened"
+    assert [item["enterprise_name"] for item in result["enterprises"]] == [
+        "近处中排企业", "远处低排企业"]
+    top = result["enterprises"][0]
+    assert top["in_upwind_sector"] is True
+    assert top["district"] == "建安区"
+    assert top["distance_to_high_value_km"] is not None
+    assert "贡献率" in result["interpretation_limit"]
+    # 风向扇区是标注信息：静风下仍给出排序清单
+    calm = screen_inventory_candidates(
+        receptor_lat=34.0, receptor_lon=113.8, pollutant="PM2.5",
+        meteorology_rows=[{"time": hour, "wind_direction_10m": 90, "wind_speed_10m_ms": 0.2}
+                          for hour in hours],
+        trigger_hours=hours, records=records)
+    assert calm["status"] == "screened"
+    assert calm["enterprises"][0]["in_upwind_sector"] is False
+    assert "contribution_percent" not in calm["enterprises"][0]
     assert screen_inventory_candidates(
         receptor_lat=34.0, receptor_lon=113.8, pollutant="AQI",
         meteorology_rows=meteo, trigger_hours=hours, records=records)["status"] == "not_run"

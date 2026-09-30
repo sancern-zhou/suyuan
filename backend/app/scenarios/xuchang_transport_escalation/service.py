@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 import structlog
 
 from app.tools.analysis.trajectory_source_analysis.trajectory_runner import TrajectoryRunner
+from app.scenarios.xuchang_city_exceedance.candidate_screening import screen_inventory_candidates
 from app.utils.path_config import format_agent_path, get_data_registry
 
 from .cwt_analysis import XuchangStationConcentrationLoader, calculate_wcwt
@@ -400,6 +401,12 @@ class XuchangTransportEscalationService:
                 },
                 "data_quality": event.get("data_quality") or {},
                 "peer_station_daily": list(event.get("peer_station_daily") or []),
+                "national_hourly": list(event.get("national_hourly") or []),
+                "township_hourly": list(event.get("township_hourly") or []),
+                "regional_hourly": list(event.get("regional_hourly") or []),
+                "city_day_statistics": event.get("city_day_statistics")
+                or {"status": "not_available", "reason": "city_day_statistics_not_computed"},
+                "township_source": event.get("township_source") or {},
                 "event_hours": event_hours,
                 "event_concentrations": {
                     hour: concentrations.get(hour) for hour in event_hours
@@ -467,28 +474,26 @@ class XuchangTransportEscalationService:
                     "reason": "enterprise_review_is_deferred_to_final_analysis_layer",
                     "enterprises": [],
                 }
-                if job.get("process_window"):
-                    try:
-                        from app.scenarios.xuchang_city_exceedance.candidate_screening import (
-                            screen_inventory_candidates,
-                        )
-                        enterprise_screening = screen_inventory_candidates(
-                            receptor_lat=float(job["lat"]), receptor_lon=float(job["lon"]),
-                            pollutant=job["target_pollutant"],
-                            meteorology_rows=(job.get("meteorology_evidence") or {}).get("rows") or [],
-                            trigger_hours=job["event_hours"],
-                        )
-                    except Exception as exc:
-                        logger.exception("xuchang_city_candidate_screening_failed", job_id=job["job_id"])
-                        enterprise_screening = {"status": "not_run",
-                                                "reason": f"screening_error:{type(exc).__name__}",
-                                                "enterprises": []}
+                try:
+                    if job.get("process_window"):
+                        high_value_point = None
+                    else:
+                        high_value_point = (job.get("city_day_statistics") or {}).get("peak_township")
+                    enterprise_screening = screen_inventory_candidates(
+                        receptor_lat=float(job["lat"]), receptor_lon=float(job["lon"]),
+                        pollutant=job["target_pollutant"],
+                        meteorology_rows=(job.get("meteorology_evidence") or {}).get("rows") or [],
+                        trigger_hours=job["event_hours"],
+                        high_value_point=high_value_point,
+                    )
+                except Exception as exc:
+                    logger.exception("xuchang_city_candidate_screening_failed", job_id=job["job_id"])
+                    enterprise_screening = {"status": "not_run",
+                                            "reason": f"screening_error:{type(exc).__name__}",
+                                            "enterprises": []}
                 # Legacy map renderers expect permit-match fields that the
-                # inventory-only field-check candidates deliberately lack.
-                map_screening = (
-                    {"status": "not_run", "enterprises": []}
-                    if job.get("process_window") else enterprise_screening
-                )
+                # inventory-only screening-score candidates deliberately lack.
+                map_screening = {"status": "not_run", "enterprises": []}
                 output_dir = self._output_dir(job)
                 map_artifacts = generate_transport_maps(
                     output_dir=output_dir,
@@ -517,6 +522,22 @@ class XuchangTransportEscalationService:
                         programs=map_programs,
                     )
                 )
+                if not job.get("process_window"):
+                    try:
+                        from app.scenarios.xuchang_city_exceedance.report_charts import (
+                            generate_city_report_charts,
+                        )
+                        map_artifacts.extend(generate_city_report_charts(
+                            output_dir=output_dir, job_id=job["job_id"],
+                            pollutant=job["target_pollutant"],
+                            national_hourly=job.get("national_hourly") or [],
+                            city_day_statistics=job.get("city_day_statistics") or {},
+                            meteorology_rows=(job.get("meteorology_evidence") or {}).get("rows") or [],
+                            regional_hourly=job.get("regional_hourly") or [],
+                            enterprise_screening=enterprise_screening,
+                        ))
+                    except Exception:
+                        logger.exception("xuchang_city_report_charts_failed", job_id=job["job_id"])
                 output = self._build_output(
                     job,
                     trajectory_result,
@@ -615,6 +636,11 @@ class XuchangTransportEscalationService:
             "local_source_indicators": job.get("local_source_indicators"),
             "data_quality": job.get("data_quality", {}),
             "peer_station_daily": job.get("peer_station_daily", []),
+            "national_hourly": job.get("national_hourly", []),
+            "township_hourly": job.get("township_hourly", []),
+            "regional_hourly": job.get("regional_hourly", []),
+            "city_day_statistics": job.get("city_day_statistics"),
+            "township_source": job.get("township_source"),
             "observed_indicator": job.get("observed_indicator"),
             "trajectory_request": {
                 "event_hours": pollution_event_hours,

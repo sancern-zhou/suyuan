@@ -294,6 +294,7 @@ async def test_execute_python_timeout_is_a_tool_failure():
 
     assert result["success"] is False
     assert result["status"] == "failed"
+    assert result["error_code"] == "PYTHON_TIMEOUT"
     assert result["data"]["error"] == "执行超时"
     assert result["data"]["engine"] == "bubblewrap"
 
@@ -539,3 +540,80 @@ async def test_execute_python_run_never_truncates_persisted_images(
     published = images_dir / "新图表.png"
     assert published.is_file()
     assert published.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def _agent_context(tmp_path: Path, session_id: str = "agent-session"):
+    return SimpleNamespace(
+        session_id=session_id,
+        available_file_paths=[],
+        authorized_input_paths=[],
+        data_manager=SimpleNamespace(
+            memory=SimpleNamespace(session=SimpleNamespace(data_dir=tmp_path)),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_context_does_not_enforce_runtime_guidance_gate(tmp_path):
+    result = await ExecutePythonTool().execute(
+        context=_agent_context(tmp_path),
+        code="print('schema-guided')",
+        timeout=10,
+    )
+    assert result["success"] is True, result
+    assert "schema-guided" in result["data"]["output"]
+
+
+@pytest.mark.asyncio
+async def test_same_session_python_calls_are_serialized(monkeypatch, tmp_path):
+    tool = ExecutePythonTool()
+    active = 0
+    peak = 0
+
+    async def fake_execute(*args, **kwargs):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.05)
+        active -= 1
+        return {"success": True}
+
+    monkeypatch.setattr(tool, "_execute_unlocked", fake_execute)
+    context = _agent_context(tmp_path)
+    await asyncio.gather(
+        tool.execute(context=context, code="print(1)"),
+        tool.execute(context=context, code="print(2)"),
+    )
+    assert peak == 1
+
+
+@pytest.mark.asyncio
+async def test_stdout_capture_is_bounded_and_not_published_as_artifact():
+    result = await ExecutePythonTool().execute(code="print('x' * 400000)", timeout=10)
+    assert result["success"] is True, result
+    execution = result["data"]["execution"]
+    assert execution["stdout_bytes"] > 256 * 1024
+    assert execution["stdout_truncated"] is True
+    assert len(result["data"]["output"]) < 270_000
+    assert not any(Path(path).name in {"stdout.log", "stderr.log"} for path in result["data"]["files"])
+
+
+@pytest.mark.asyncio
+async def test_python_traceback_maps_to_original_user_line():
+    result = await ExecutePythonTool().execute(
+        code="value = 1\nraise ValueError('mapped line')\n",
+        timeout=10,
+    )
+    details = result["data"]["error_details"]
+    assert result["success"] is False
+    assert details["line_number"] == 2
+    assert details["raw_line_number"] > details["line_number"]
+    assert "raise ValueError" in details["code_context"]
+
+
+def test_dynamic_loader_mapping_failure_is_bootstrap_error():
+    details = ExecutePythonTool()._parse_subprocess_error(
+        "libtorch.so: failed to map segment from shared object",
+        "import torch",
+    )
+    assert details["error_type"] == "SandboxBootstrapError"

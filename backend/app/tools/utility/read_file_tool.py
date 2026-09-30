@@ -35,8 +35,7 @@ from app.tools.utility.file_read_state import get_file_read_state
 from app.tools.resource_refs import build_file_ref
 from app.utils.path_config import (
     PROJECT_ROOT,
-    TEMP_ROOT,
-    get_data_registry,
+    agent_content_read_roots,
     is_agent_sensitive_path,
     is_path_within,
     resolve_agent_path,
@@ -113,7 +112,8 @@ class ReadFileTool(LLMTool):
         # Agent 相对路径统一从仓库根目录解析。
         self.working_dir = PROJECT_ROOT
         # 持久化目录由部署配置决定，可能位于代码工作树之外。
-        self.allowed_dirs = [PROJECT_ROOT, get_data_registry(), TEMP_ROOT]
+        # 读取边界统一由 path_config.agent_content_read_roots() 维护。
+        self.allowed_dirs = agent_content_read_roots()
         self.max_image_size = 5 * 1024 * 1024  # 5MB
         self.max_pdf_size = 50 * 1024 * 1024  # 50MB
         self.max_docx_size = 20 * 1024 * 1024  # 20MB
