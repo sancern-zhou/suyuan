@@ -195,6 +195,44 @@ async def _ensure_session_resources_schema(conn) -> None:
     logger.info("session_resources_schema_ensured")
 
 
+async def _ensure_coordinator_quick_prompts_schema(conn) -> None:
+    """Create the runtime quick-prompt table and scope uniqueness index."""
+    if conn.dialect.name != "postgresql":
+        return
+    statements = (
+        """
+        CREATE TABLE IF NOT EXISTS coordinator_quick_prompts (
+            id SERIAL PRIMARY KEY,
+            project_id VARCHAR(100) NOT NULL,
+            surface VARCHAR(16) NOT NULL DEFAULT 'home',
+            label VARCHAR(30) NOT NULL,
+            prompt TEXT NOT NULL,
+            mode VARCHAR(100),
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_by VARCHAR(255),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        ALTER TABLE coordinator_quick_prompts
+            ADD COLUMN IF NOT EXISTS surface VARCHAR(16) NOT NULL DEFAULT 'home'
+        """,
+        """
+        ALTER TABLE coordinator_quick_prompts
+            DROP CONSTRAINT IF EXISTS uq_coordinator_quick_prompts_project_label
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_coordinator_quick_prompts_scope_label
+            ON coordinator_quick_prompts (project_id, surface, COALESCE(mode, ''), label)
+        """,
+    )
+    for statement in statements:
+        await conn.execute(text(statement))
+    logger.info("coordinator_quick_prompts_schema_ensured")
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency for FastAPI endpoints to get database session.
@@ -280,6 +318,7 @@ async def init_db():
     import app.knowledge_base.graph_build_models  # noqa: F401
     import app.boards.models  # noqa: F401
     import app.exam.models  # noqa: F401
+    import app.db.coordinator_quick_prompt_model  # noqa: F401
 
     async with engine.begin() as conn:
         dialect_name = getattr(getattr(conn, "dialect", None), "name", "")
@@ -291,6 +330,7 @@ async def init_db():
         await _ensure_uploaded_files_schema(conn)
         await _ensure_social_binding_schema(conn)
         await _ensure_session_resources_schema(conn)
+        await _ensure_coordinator_quick_prompts_schema(conn)
     logger.info("database_initialized")
 
 

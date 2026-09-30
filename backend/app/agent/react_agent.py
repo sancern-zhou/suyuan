@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 import uuid
 import structlog
 import asyncio
+import hashlib
 import json
 
 from .memory.hybrid_manager import HybridMemoryManager
@@ -43,6 +44,14 @@ logger = structlog.get_logger()
 
 SOCIAL_MEMORY_MODES = {"social", "enforcement_exam"}
 HUMAN_FEEDBACK_DETAILS_MARKER = "本次反馈明细（请据此总结经验）："
+MEMORY_CONSOLIDATION_BATCH_SIZE = 10
+MEMORY_CONSOLIDATION_TRIGGER_COUNT = 50
+MEMORY_TOOL_NAMES = {"remember_fact", "replace_memory", "remove_memory"}
+
+
+def _memory_message_hash(message: Dict[str, Any]) -> str:
+    payload = json.dumps(message, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _is_human_feedback_resume(user_query: str) -> bool:
@@ -78,6 +87,31 @@ def _human_feedback_learning_mode(user_query: str, fallback: str) -> str:
     except (ImportError, ValueError):
         return fallback
     return learning_mode
+
+
+def _contains_explicit_memory_signal(messages: List[Dict[str, Any]]) -> bool:
+    """Detect successful or attempted direct memory operations in recent turns."""
+    for message in reversed(messages[-20:]):
+        if not isinstance(message, dict):
+            continue
+        names = set()
+        for key in ("name", "tool_name"):
+            value = message.get(key)
+            if isinstance(value, str):
+                names.add(value)
+        tool_calls = message.get("tool_calls") or message.get("content")
+        if isinstance(tool_calls, list):
+            for item in tool_calls:
+                if not isinstance(item, dict):
+                    continue
+                function = item.get("function")
+                if isinstance(function, dict):
+                    names.add(function.get("name"))
+                names.add(item.get("name"))
+                names.add(item.get("tool_name"))
+        if names & MEMORY_TOOL_NAMES:
+            return True
+    return False
 
 
 class ReActAgent:
@@ -277,6 +311,10 @@ class ReActAgent:
         # ✅ 改用细粒度锁（按 session_id 分组），不同 session 可以并发
         self._session_locks: Dict[str, asyncio.Lock] = {}
         self._global_lock = asyncio.Lock()  # 用于保护 _session_locks 字典本身
+        self._memory_consolidation_locks: Dict[str, asyncio.Lock] = {}
+        self._memory_consolidation_tasks: Dict[str, asyncio.Task] = {}
+        self._memory_consolidation_pending: Dict[str, Dict[tuple[str, str], bool]] = {}
+        self._memory_consolidation_state_lock = asyncio.Lock()
 
         # ✅ 新增：记忆管理器
         self.enable_memory = enable_memory
@@ -430,6 +468,10 @@ class ReActAgent:
                     mode=memory_mode
                 )
                 memory_context = memory_store.get_memory_context()  # 从快照获取记忆
+                from .memory.curated_facts import CuratedFactStore
+                curated_index = CuratedFactStore(memory_store.workspace).index()
+                if curated_index:
+                    memory_context = f"{memory_context}\n\n{curated_index}" if memory_context else curated_index
 
         # ✅ 统一：记录记忆注入日志
         if memory_context:
@@ -510,6 +552,9 @@ class ReActAgent:
         latest_resource_version: int | None = None
         resource_failures: list[dict[str, Any]] = []
         published_resource_ids: list[str] = []
+        consolidation_message_start = (
+            len(memory_manager.session.get_messages_for_llm()) if memory_manager else 0
+        )
 
         # ✅ 创建记忆快照
         # 社交模式：使用外部传入的 social_memory_store
@@ -891,13 +936,18 @@ class ReActAgent:
             if unified_user_id and manual_mode and manual_mode not in SOCIAL_MEMORY_MODES:
                 try:
                     learning_mode = _human_feedback_learning_mode(user_query, manual_mode)
-                    asyncio.create_task(
-                        self._background_memory_consolidation(
-                            actual_session_id,
-                            unified_user_id,
-                            learning_mode,
-                            force=_is_human_feedback_resume(user_query),
-                        )
+                    current_messages = memory_manager.session.get_messages_for_llm() if memory_manager else []
+                    explicit_memory_signal = _contains_explicit_memory_signal(
+                        current_messages[consolidation_message_start:]
+                    )
+                    self._schedule_memory_consolidation(
+                        actual_session_id,
+                        unified_user_id,
+                        learning_mode,
+                        force=(
+                            _is_human_feedback_resume(user_query)
+                            or explicit_memory_signal
+                        ),
                     )
                 except Exception as e:
                     logger.warning(
@@ -1017,6 +1067,52 @@ class ReActAgent:
     # 记忆整合方法（统一记忆系统 - Agent模式）
     # ========================================================================
 
+    def _ensure_memory_consolidation_state(self) -> None:
+        if not hasattr(self, "_memory_consolidation_locks"):
+            self._memory_consolidation_locks = {}
+        if not hasattr(self, "_memory_consolidation_tasks"):
+            self._memory_consolidation_tasks = {}
+        if not hasattr(self, "_memory_consolidation_pending"):
+            self._memory_consolidation_pending = {}
+        if not hasattr(self, "_memory_consolidation_state_lock"):
+            self._memory_consolidation_state_lock = asyncio.Lock()
+
+    def _schedule_memory_consolidation(
+        self,
+        session_id: str,
+        unified_user_id: str,
+        mode: str,
+        *,
+        force: bool = False,
+    ) -> None:
+        """Coalesce background requests while preserving per-mode ordering."""
+        self._ensure_memory_consolidation_state()
+        pending = self._memory_consolidation_pending.setdefault(mode, {})
+        key = (session_id, unified_user_id)
+        pending[key] = pending.get(key, False) or force
+        task = self._memory_consolidation_tasks.get(mode)
+        if task is None or task.done():
+            self._memory_consolidation_tasks[mode] = asyncio.create_task(
+                self._drain_memory_consolidation_queue(mode)
+            )
+
+    async def _drain_memory_consolidation_queue(self, mode: str) -> None:
+        self._ensure_memory_consolidation_state()
+        while True:
+            async with self._memory_consolidation_state_lock:
+                pending = self._memory_consolidation_pending.get(mode, {})
+                if not pending:
+                    self._memory_consolidation_tasks.pop(mode, None)
+                    return
+                (session_id, unified_user_id), force = pending.popitem()
+            await self._background_memory_consolidation(
+                session_id, unified_user_id, mode, force=force
+            )
+
+    def _memory_consolidation_lock_for(self, mode: str) -> asyncio.Lock:
+        self._ensure_memory_consolidation_state()
+        return self._memory_consolidation_locks.setdefault(mode, asyncio.Lock())
+
     async def _background_memory_consolidation(
         self,
         session_id: str,
@@ -1061,85 +1157,71 @@ class ReActAgent:
 
             # 2. 常规按消息数量整合；人工反馈续跑需要立即交给整合 Agent，
             #    由 LLM 决定哪些反馈值得沉淀，不在这里硬编码记忆或案例内容。
-            offset = await self.memory_manager.get_consolidation_offset(unified_user_id)
-            new_message_count = max(0, len(messages) - offset)
+            async with self._memory_consolidation_lock_for(mode):
+                cursor = await self.memory_manager.get_consolidation_cursor(mode, session_id)
+                offset = cursor["offset"]
+                if offset > len(messages) or (
+                    offset > 0 and _memory_message_hash(messages[offset - 1]) != cursor["boundary_hash"]
+                ):
+                    logger.info("memory_consolidation_history_changed", session_id=session_id, mode=mode)
+                    offset = 0
+                pending_count = len(messages) - offset
+                if not force and pending_count < MEMORY_CONSOLIDATION_TRIGGER_COUNT:
+                    return
+                if force and pending_count == 0:
+                    offset = max(0, len(messages) - MEMORY_CONSOLIDATION_BATCH_SIZE)
 
-            should_consolidate = force or new_message_count >= 50
+                logger.info(
+                    "memory_consolidation_triggered",
+                    session_id=session_id,
+                    messages_to_consolidate=len(messages) - offset,
+                )
+                user_id = unified_user_id.split(':')[1] if ':' in unified_user_id else None
 
-            if not should_consolidate:
-                return
-
-            logger.info(
-                "memory_consolidation_triggered",
-                session_id=session_id,
-                messages_to_consolidate=new_message_count
-            )
-
-            # 3. 获取现有记忆内容和文件路径
-            memory_store = await self.memory_manager.get_user_memory(
-                user_id=unified_user_id,
-                mode=mode
-            )
-            existing_memory = memory_store.read_long_term() if memory_store.memory_file.exists() else ""
-            memory_file_path = str(memory_store.memory_file.resolve()) if memory_store.memory_file.exists() else ""
-
-            # 计算记忆文件字符数
-            current_size = len(existing_memory)
-            max_size = 3000  # 与工具中的限制一致
-
-            # 4. 构建整合提示词（包含现有记忆、文件路径和字符限制）
-            consolidation_messages = (
-                messages[-10:]
-                if force
-                else messages[offset:]
-            )
-            consolidation_prompt = self._build_consolidation_prompt(
-                consolidation_messages,
-                mode,
-                existing_memory,
-                memory_file_path
-            )
-
-            # 5. 设置记忆上下文（供记忆工具使用）
-            # 解析unified_user_id获取模式信息
-            # unified_user_id格式：{mode}:{user_identifier}:{shared|unique}
-            user_id = unified_user_id.split(':')[1] if ':' in unified_user_id else None
-
-            # 设置记忆上下文（类变量）
-            RememberFactTool.set_memory_context(mode, user_id)
-            ReplaceMemoryTool.set_memory_context(mode, user_id)
-            RemoveMemoryTool.set_memory_context(mode, user_id)
-            AgentCaseLibraryTool.set_case_context(mode)
-
-            # 6. 创建记忆整合Agent
-            from .memory_consolidator_factory import create_memory_consolidator_agent
-            consolidator_agent = create_memory_consolidator_agent()
-
-            # 7. 异步执行整合
-            async for event in consolidator_agent.analyze(
-                user_query=consolidation_prompt,
-                session_id=f"{session_id}_consolidation",
-                manual_mode="memory_consolidator"
-            ):
-                if event.get("type") == "complete":
-                    await self.memory_manager.set_consolidation_offset(
-                        unified_user_id,
-                        len(messages)
+                for start in range(offset, len(messages), MEMORY_CONSOLIDATION_BATCH_SIZE):
+                    RememberFactTool.set_memory_context(mode, user_id)
+                    ReplaceMemoryTool.set_memory_context(mode, user_id)
+                    RemoveMemoryTool.set_memory_context(mode, user_id)
+                    AgentCaseLibraryTool.set_case_context(mode)
+                    end = min(start + MEMORY_CONSOLIDATION_BATCH_SIZE, len(messages))
+                    batch = messages[start:end]
+                    memory_store = await self.memory_manager.get_user_memory(
+                        user_id=unified_user_id, mode=mode
+                    )
+                    existing_memory = (
+                        memory_store.read_long_term() if memory_store.memory_file.exists() else ""
+                    )
+                    prompt = self._build_consolidation_prompt(
+                        batch, mode, existing_memory, str(memory_store.memory_file.resolve()),
+                        source_session_id=session_id, start_index=start,
+                    )
+                    from .memory_consolidator_factory import create_memory_consolidator_agent
+                    consolidator_agent = create_memory_consolidator_agent()
+                    completed = False
+                    async for event in consolidator_agent.analyze(
+                        user_query=prompt,
+                        session_id=f"{session_id}_consolidation_{start}_{end}",
+                        manual_mode="memory_consolidator",
+                    ):
+                        if event.get("type") == "complete":
+                            completed = True
+                            break
+                        if event.get("type") in {"error", "fatal_error"}:
+                            logger.warning(
+                                "background_memory_consolidation_failed",
+                                session_id=session_id, mode=mode, batch_start=start,
+                                error=event.get("data", {}).get("error"),
+                            )
+                            break
+                    if not completed:
+                        break
+                    await self.memory_manager.set_consolidation_cursor(
+                        mode, session_id, end, _memory_message_hash(messages[end - 1])
                     )
                     logger.info(
-                        "background_memory_consolidation_completed",
-                        session_id=session_id,
-                        mode=mode,
-                        messages_processed=new_message_count
+                        "background_memory_consolidation_batch_completed",
+                        session_id=session_id, mode=mode, batch_start=start, batch_end=end,
                     )
-                    break
-                elif event.get("type") == "error":
-                    logger.warning(
-                        "background_memory_consolidation_failed",
-                        session_id=session_id,
-                        error=event.get("data", {}).get("error")
-                    )
-                    break
 
         except Exception as e:
             logger.exception(
@@ -1149,7 +1231,6 @@ class ReActAgent:
                 error=str(e)
             )
         finally:
-            # 8. 清除记忆上下文（无论成功或失败）
             try:
                 RememberFactTool.clear_memory_context()
                 ReplaceMemoryTool.clear_memory_context()
@@ -1164,7 +1245,10 @@ class ReActAgent:
         messages: List[Dict[str, Any]],
         mode: str,
         existing_memory: str = "",
-        memory_file_path: str = ""
+        memory_file_path: str = "",
+        *,
+        source_session_id: str = "",
+        start_index: int = 0,
     ) -> str:
         """
         构建记忆整合提示词
@@ -1178,10 +1262,10 @@ class ReActAgent:
         Returns:
             整合提示词
         """
-        conversation_text = "\n".join([
-            f"{msg.get('role', 'unknown')}: {msg.get('content', '')}"
-            for msg in messages[-10:]  # 只使用最近10条
-        ])
+        conversation_text = "\n".join(
+            f"[{start_index + index + 1}] {msg.get('role', 'unknown')}: {msg.get('content', '')}"
+            for index, msg in enumerate(messages)
+        )
 
         # 计算记忆文件字符数
         current_size = len(existing_memory) if existing_memory else 0
@@ -1235,6 +1319,7 @@ class ReActAgent:
         # 添加对话内容和任务
         prompt_parts.extend([
             "## 对话内容",
+            f"来源会话：{source_session_id}" if source_session_id else "",
             conversation_text,
             "",
             "**任务**：",
@@ -1385,6 +1470,11 @@ class ReActAgent:
                         # ✅ 立即加载历史消息到 memory_manager.session
                         if saved_session.conversation_history:
                             memory_manager.session.load_history_messages(saved_session.conversation_history)
+                            from app.tools.utility.file_read_state import restore_read_state_from_history
+
+                            restored_read_states = restore_read_state_from_history(
+                                saved_session.conversation_history
+                            )
                             if isinstance(saved_session.metadata, dict):
                                 source_until_sequence = saved_session.metadata.get("llm_source_until_sequence")
                                 if isinstance(source_until_sequence, int):
@@ -1393,6 +1483,7 @@ class ReActAgent:
                                 "react_session_history_loaded",
                                 session_id=session_id,
                                 message_count=len(saved_session.conversation_history),
+                                restored_read_states=restored_read_states,
                                 llm_source_until_sequence=getattr(
                                     memory_manager.session,
                                     "llm_source_until_sequence",

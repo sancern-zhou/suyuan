@@ -12,6 +12,7 @@ Session支持：
 """
 
 from contextlib import nullcontext
+import asyncio
 import json
 from typing import Dict, Any, Literal, Optional, List
 import structlog
@@ -35,6 +36,8 @@ from app.agent.workflow.protocol import (
 )
 from app.agent.workflow.runtime import WorkflowRuntime
 from app.agent.workflow.actors import child_actor_registry
+from app.agent.workflow.profiles import get_agent_profile, merge_denied_tools
+from app.agent.workflow.background_tasks import background_task_registry
 from app.utils.path_config import format_agent_path, resolve_agent_path
 
 logger = structlog.get_logger()
@@ -75,6 +78,11 @@ class CallSubAgentTool(LLMTool):
                         "type": "string",
                     "enum": ["assistant", "query", "report", "social", "chart", "expert", "ops", "board", "ppt"],
                     "description": "目标 Agent 模式。query 仅处理广东省环境数据查询及相关统计导出，不处理招投标、中标、企业采购、普通Excel或省外/全国数据查询；招投标由通用助手直接使用专用工具完成。"
+                    },
+                    "profile": {
+                        "type": "string",
+                        "enum": ["general-purpose", "orchestrator", "explore"],
+                        "description": "子Agent能力 profile；默认按 target_mode 选择。",
                     },
                     # ✅ 新设计：goal（必需）- 原始任务描述
                     "goal": {
@@ -164,14 +172,26 @@ class CallSubAgentTool(LLMTool):
                     },
                     "allow_child_delegation": {
                         "type": "boolean",
-                        "description": "是否允许子Agent继续调用子Agent，默认允许但仍受嵌套深度限制。"
+                        "description": "是否允许子Agent继续调用子Agent；未指定时按 profile 决定，普通 profile 默认禁止。"
                     },
                     "deadline_at": {
                         "type": "string",
                         "description": "可选的工作流截止时间，ISO-8601 格式；超时后任务进入 cancelled。"
+                    },
+                    "run_in_background": {
+                        "type": "boolean",
+                        "description": "后台任务协议字段；返回任务句柄并由工作流快照追踪。"
+                    },
+                    "background_task_id": {
+                        "type": "string",
+                        "description": "查询已启动的后台子Agent任务。"
+                    },
+                    "cancel_background_task": {
+                        "type": "boolean",
+                        "description": "取消 background_task_id 指定的后台任务。"
                     }
                 },
-                "required": ["target_mode"]  # ✅ 改为：target_mode必需，goal和task_description二选一
+                "required": ["target_mode"]
             }
         }
 
@@ -189,7 +209,69 @@ class CallSubAgentTool(LLMTool):
         self.llm_planner = llm_planner
         self.tool_executor = tool_executor
 
-    async def execute(
+    async def execute(self, context: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
+        """Run a child Agent, optionally returning a background task handle."""
+        background_task_id = kwargs.get("background_task_id")
+        if background_task_id:
+            record = (
+                background_task_registry.cancel(background_task_id)
+                if kwargs.get("cancel_background_task")
+                else background_task_registry.get(background_task_id)
+            )
+            return {
+                "status": "success" if record else "failed",
+                "success": bool(record),
+                "result": record or f"后台任务不存在: {background_task_id}",
+                "data": {
+                    "background_task": record,
+                    "events": background_task_registry.events(task_id=background_task_id),
+                } if record else {},
+                "metadata": {"schema_version": "workflow.v1", "generator": "call_sub_agent"},
+                "summary": "后台任务状态已返回" if record else "后台任务不存在",
+            }
+        if not kwargs.get("target_mode"):
+            return {
+                "status": "failed",
+                "success": False,
+                "result": "缺少必需参数：target_mode",
+                "data": {},
+                "metadata": {"schema_version": "v2.0", "generator": "call_sub_agent"},
+                "summary": "参数验证失败",
+            }
+        run_in_background = bool(kwargs.get("run_in_background", False))
+        if not run_in_background:
+            return await self._execute_foreground(context=context, **kwargs)
+
+        task_id = kwargs.get("task_id") or f"task-{uuid.uuid4().hex}"
+        foreground_kwargs = dict(kwargs)
+        foreground_kwargs["task_id"] = task_id
+        foreground_kwargs["run_in_background"] = False
+        task = asyncio.create_task(self._execute_foreground(context=context, **foreground_kwargs))
+        record = background_task_registry.launch(
+            task_id,
+            task,
+            metadata={
+                "target_mode": kwargs.get("target_mode"),
+                "parent_task_id": kwargs.get("parent_task_id"),
+                "description": (kwargs.get("goal") or kwargs.get("task_description") or "")[:120],
+            },
+        )
+        return {
+            "status": "async_launched",
+            "success": True,
+            "result": "子Agent已转入后台执行。",
+            "data": {"background_task": record},
+            "metadata": {
+                "schema_version": "workflow.v1",
+                "generator": "call_sub_agent",
+                "task_id": task_id,
+                "background_task_id": task_id,
+                "can_query_status": True,
+            },
+            "summary": "后台子Agent已启动",
+        }
+
+    async def _execute_foreground(
         self,
         context: Optional[Any] = None,  # ✅ ExecutionContext（放在第一位）
         target_mode: AgentMode = None,
@@ -212,8 +294,10 @@ class CallSubAgentTool(LLMTool):
         workflow_run_id: Optional[str] = None,
         allowed_tool_names: Optional[List[str]] = None,
         denied_tool_names: Optional[List[str]] = None,
-        allow_child_delegation: bool = True,
+        allow_child_delegation: Optional[bool] = None,
         deadline_at: Optional[str] = None,
+        profile: Optional[str] = None,
+        run_in_background: bool = False,
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
         """
@@ -578,13 +662,18 @@ class CallSubAgentTool(LLMTool):
                     },
                 )
 
+            agent_profile = get_agent_profile(target_mode, profile=profile)
             mode_tool_names = set(get_tools_by_mode(target_mode).keys())
             if selected_child_skill:
                 mode_tool_names.update(selected_child_skill.required_tools or [])
             capability_policy = build_child_capability_policy(
                 allowed_tools=(allowed_tool_names if allowed_tool_names is not None else mode_tool_names),
-                denied_tools=denied_tool_names,
-                allow_delegation=allow_child_delegation,
+                denied_tools=merge_denied_tools(agent_profile, denied_tool_names),
+                allow_delegation=(
+                    agent_profile.allow_delegation
+                    if allow_child_delegation is None
+                    else bool(allow_child_delegation and agent_profile.allow_delegation)
+                ),
             )
 
             # 3. 构建子 Agent 请求：ReActAgent 会自行构建系统提示，因此把任务、
@@ -860,6 +949,9 @@ class CallSubAgentTool(LLMTool):
                 "session_id": session_id,
                 "is_new_session": is_new_session
             }
+            enhanced_metadata["agent_profile"] = agent_profile.name
+            enhanced_metadata["capability_policy"] = capability_policy.to_dict()
+            enhanced_metadata["run_in_background"] = bool(run_in_background)
             if task_id:
                 enhanced_metadata["task_id"] = task_id
             enhanced_metadata["workflow_run_id"] = workflow_run.run_id
@@ -1064,7 +1156,7 @@ class CallSubAgentTool(LLMTool):
                 "- 错误示例：❌ '更新Excel文件'\n"
             ),
             "social": "\n专注完成上述社交平台任务。\n",
-            "query": "\n仅处理广东省环境数据查询及相关统计导出。先核对任务范围；招投标、中标、普通业务表格或省外/全国查询超出职责时，向父助手说明，不尝试绕过工具权限。范围内任务选择合适工具和参数完成。\n",
+            "query": "\n数据查询任务：仅处理广东省环境数据查询及相关统计导出。先核对任务范围；招投标、中标、普通业务表格或省外/全国查询超出职责时，向父助手说明，不尝试绕过工具权限。范围内任务选择合适工具和参数完成。\n",
             "report": "\n专注完成上述报告生成任务。\n",
             "ops": "\n专注完成上述运维管理任务，围绕工单查询、审核判断、异常分析和闭环建议给出结构化结果。\n",
             "code": "\n专注完成上述编程任务。\n",

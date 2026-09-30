@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 import asyncio
 from pathlib import Path
+from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import structlog
@@ -231,6 +232,7 @@ class AgentRuntime:
     async def _run_iteration(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
         context_result, conversation_history = await self._build_context(state)
         attachments = self._effective_attachments(state)
+        self._record_visual_context(state, attachments)
         if supports_native_multimodal(state.mode) and attachments:
             from .multimodal import build_anthropic_user_content, build_persisted_user_content
 
@@ -335,6 +337,75 @@ class AgentRuntime:
         if state.pending_attachments:
             attachments.extend(state.pending_attachments)
         return attachments
+
+    def _record_visual_context(
+        self,
+        state: RunState,
+        attachments: List[Dict[str, Any]],
+    ) -> None:
+        """Persist lightweight visual references without persisting image bytes.
+
+        Native image blocks are current planner inputs. The session metadata is
+        only an index for later turns and recovery; it is never appended to
+        every prompt automatically.
+        """
+        memory = getattr(self, "memory", None)
+        if not attachments or not hasattr(memory, "session"):
+            return
+        metadata = getattr(memory.session, "metadata", None)
+        if not isinstance(metadata, dict):
+            return
+        existing = metadata.setdefault("visual_context", [])
+        if not isinstance(existing, list):
+            existing = []
+            metadata["visual_context"] = existing
+
+        now = datetime.now().isoformat()
+        for attachment in attachments:
+            if not isinstance(attachment, dict) or attachment.get("type") != "image":
+                continue
+            path_value = attachment.get("local_path") or attachment.get("path")
+            resource_id = attachment.get("resource_id") or attachment.get("ref_id")
+            key = (
+                f"resource:{resource_id}" if resource_id else
+                f"path:{path_value}" if path_value else
+                f"name:{attachment.get('name') or 'image'}"
+            )
+            fingerprint: Dict[str, Any] = {}
+            if path_value:
+                try:
+                    stat = Path(str(path_value)).stat()
+                    fingerprint = {
+                        "size": stat.st_size,
+                        "mtime_ns": stat.st_mtime_ns,
+                        "inode": getattr(stat, "st_ino", None),
+                    }
+                except OSError:
+                    pass
+            entry = next((item for item in existing if isinstance(item, dict) and item.get("key") == key), None)
+            if entry is None:
+                entry = {
+                    "key": key,
+                    "type": "image",
+                    "name": attachment.get("name") or "image",
+                    "mime_type": attachment.get("mime_type") or attachment.get("content_type"),
+                    **({"resource_id": resource_id} if resource_id else {}),
+                    **({"path": path_value} if path_value else {}),
+                    "seen_count": 0,
+                }
+                existing.append(entry)
+            entry.update({
+                "last_attached_at": now,
+                "last_attached_run_id": state.run_id,
+                "last_attached_iteration": state.iteration,
+                "seen_count": int(entry.get("seen_count") or 0) + 1,
+                **({"fingerprint": fingerprint} if fingerprint else {}),
+            })
+
+        # Keep session metadata bounded while retaining the most recently used
+        # visual references for recovery and explicit re-attachment.
+        existing.sort(key=lambda item: str(item.get("last_attached_at") or ""))
+        del existing[:-32]
 
     def _consume_effective_attachments(self, state: RunState) -> None:
         for attachment in self._effective_attachments(state):
@@ -480,6 +551,7 @@ class AgentRuntime:
             return
 
         state.pending_attachments.extend(filtered_attachments)
+        self._record_visual_context(state, filtered_attachments)
         logger.info(
             "multimodal_attachments_captured_from_tool",
             session_id=state.session_id,
@@ -650,6 +722,7 @@ class AgentRuntime:
             safe_attachments: List[Dict[str, str]] = []
             if item.attachments:
                 state.pending_attachments.extend(item.attachments)
+                self._record_visual_context(state, item.attachments)
                 attachment_count += len(item.attachments)
                 safe_attachments = self._resource_attachment_refs(item.attachments)
                 content = self._append_attachment_summary(content, item.attachments)
@@ -1151,10 +1224,29 @@ class AgentRuntime:
     ) -> None:
         if state.mode != "custom":
             return
+        missing = next((
+            record for record in records
+            if isinstance(record.get("result"), dict)
+            and str(record["result"].get("error", "")).startswith("工具不存在:")
+        ), None)
+        if missing is not None:
+            # 模型写错工具名（该工具从未注册）不属于工具状态变化：把错误和
+            # available_tools 回传给模型自我纠正；仅当相同调用重复出现时才终止。
+            signature = json.dumps(
+                {"tool": missing.get("tool_name"), "args": missing.get("tool_input", {})},
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            )
+            if state.last_missing_tool_signature == signature:
+                raise CustomAgentTerminalError(
+                    f"custom Agent 工具不存在且重复调用: {missing['result'].get('error')}"
+                )
+            state.last_missing_tool_signature = signature
         unavailable = next((
             record for record in records
             if isinstance(record.get("result"), dict)
-            and str(record["result"].get("error", "")).startswith(("工具不可用:", "工具不存在:"))
+            and str(record["result"].get("error", "")).startswith("工具不可用:")
         ), None)
         if unavailable is not None:
             raise CustomAgentTerminalError(

@@ -157,6 +157,12 @@ save_chart(fig, "trend_chart.png")
 - 使用变量前检查 `None`。
 - 超时默认 30 秒，复杂任务应拆分或提高 `timeout`。
 
+## pandas dtype 陷阱
+
+- **布尔列取反报错**（`TypeError: bad operand type for unary ~`）：整行赋值 `df.loc[i] = dict` 或合并时混入 `None`/`NaN`，会把 bool 列上转型为 object/float，此后 `~df['col']` 失败。预防：布尔标志列赋值后固定 `df['col'] = df['col'].astype(bool)`（有缺失时先 `fillna(False)`），或干脆改用 0/1 整数列；取反/计数用 `df['col'].eq(False)` 等比较写法替代 `~`。
+- **NaN 转整数报错**（`ValueError: cannot convert float NaN to integer`）：含缺失值的数值列不能用 `int()`/`astype(int)`。预防：转整数一律用可空整型 `df['col'].astype('Int64')`；单个值先判空 `int(v) if pd.notna(v) else None`。
+- **输入文件未挂载**（`RuntimeError: 未找到会话数据文件`）：`load_data()` 只能读取本次调用 `input_files` 参数中声明的文件，挂载不跨调用保留；每次调用都需重新声明全部要读的路径。
+
 ## 一次性 DOCX 最小示例
 
 ```python

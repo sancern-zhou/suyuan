@@ -289,3 +289,7 @@ id_rsa*
 id_ed25519*
 *credentials*.json
 *secrets*.yaml
+
+# 本机部署专属（不入 git）
+迁移包/
+deploy/nginx/templates-local/

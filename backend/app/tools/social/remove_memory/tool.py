@@ -6,11 +6,16 @@
 
 from pathlib import Path
 from typing import Dict, Any
+from contextvars import ContextVar
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.agent.memory.curated_facts import CuratedFactStore
 
 logger = structlog.get_logger(__name__)
+_memory_context: ContextVar[tuple[str | None, str | None]] = ContextVar(
+    "remove_memory_context", default=(None, None)
+)
 
 
 class RemoveMemoryTool(LLMTool):
@@ -44,12 +49,14 @@ class RemoveMemoryTool(LLMTool):
         """设置当前的记忆上下文（由记忆整合Agent调用）"""
         cls._current_mode = mode
         cls._current_user_id = user_id
+        _memory_context.set((mode, user_id))
 
     @classmethod
     def clear_memory_context(cls):
         """清除记忆上下文"""
         cls._current_mode = None
         cls._current_user_id = None
+        _memory_context.set((None, None))
 
     def _build_schema(self) -> Dict[str, Any]:
         """构建工具schema"""
@@ -95,6 +102,17 @@ class RemoveMemoryTool(LLMTool):
             }
 
         try:
+            current_mode, current_user_id = _memory_context.get()
+            current_mode = current_mode or self._current_mode
+            current_user_id = current_user_id or self._current_user_id
+            if current_mode and current_mode != "social":
+                store = CuratedFactStore(Path(self._get_memory_file_path()).parent)
+                result = store.remove(old_text, category)
+                return {
+                    "success": result == "removed",
+                    "status": result,
+                    "summary": f"共享事实删除结果：{result}",
+                }
             memory_file = Path(memory_file_path)
 
             if not memory_file.exists():
@@ -151,8 +169,9 @@ class RemoveMemoryTool(LLMTool):
         """
         try:
             # 使用类变量中存储的上下文
-            mode = self._current_mode or 'social'
-            user_id = self._current_user_id
+            current_mode, current_user_id = _memory_context.get()
+            mode = current_mode or self._current_mode or 'social'
+            user_id = current_user_id or self._current_user_id
 
             # 社交模式：使用与 social/memory_store.py 一致的用户隔离路径
             if mode == 'social':
