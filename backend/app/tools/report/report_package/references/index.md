@@ -15,7 +15,7 @@
 - 不写 R 代码块；计算和制图先用 Python 或专用图表工具完成。
 - 不在最终 QMD 中使用 `/api/image/{image_id}`、`image_id`、base64 或本地绝对路径。
 - 不根据缓存 ID 猜测 `assets/charts/{image_id}.png`；由工具复制真实文件并规范化引用。
-- 需要静态正式图表时优先用 `create_report_chart`，再把返回的真实文件路径传给 `assets`。
+- 静态正式图表优先用 `execute_python`，特定业务图型或固定模板用 `create_report_chart`；把工具返回的真实归档图片路径传给 `assets`，已有图片优先复用。
 
 ### YAML 目录与编号配置（重要）
 

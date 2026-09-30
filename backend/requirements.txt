@@ -27,6 +27,7 @@ defusedxml>=0.7.1  # Safe XML parsing (protects against XML attacks)
 
 # Visualization
 matplotlib==3.9.2
+seaborn==0.13.2
 cartopy==0.23.0  # For trajectory analysis and visualization
 
 # LLM Integration
