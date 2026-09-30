@@ -659,7 +659,7 @@ def generate_calendar_from_data_id(
     示例：
     ---
     >>> # 推荐用法：返回图片URL
-    >>> from app.tools.visualization.create_report_chart.domain.aqi_calendar import generate_calendar_from_data_id
+    >>> from app.tools.visualization.create_business_chart.domain.aqi_calendar import generate_calendar_from_data_id
     >>>
     >>> image_url = generate_calendar_from_data_id(
     ...     data_id="air_quality_unified:v1:xxx",

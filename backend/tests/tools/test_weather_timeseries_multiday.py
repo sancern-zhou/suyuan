@@ -3,8 +3,8 @@ from datetime import datetime, timedelta
 import numpy as np
 import pytest
 
-from app.tools.visualization.create_report_chart.domain import weather_timeseries as weather
-from app.tools.visualization.create_report_chart.validation import ChartDataError
+from app.tools.visualization.create_business_chart.domain import weather_timeseries as weather
+from app.tools.visualization.create_business_chart.validation import ChartDataError
 
 
 def records(count=56):
@@ -112,7 +112,7 @@ def test_negative_wind_speed_is_not_drawn_as_a_valid_forecast():
 @pytest.mark.parametrize('speeds', [[0, 2, 0], [0, 0, 0]])
 def test_wind_vectors_explain_speed_scale_and_separate_calm(monkeypatch, speeds):
     from matplotlib.quiver import QuiverKey
-    from app.tools.visualization.create_report_chart.domain import wind_timeseries as wind
+    from app.tools.visualization.create_business_chart.domain import wind_timeseries as wind
 
     figures = []
     original = wind._figure_to_base64

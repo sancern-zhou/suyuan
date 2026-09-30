@@ -15,14 +15,14 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 from app.services.image_cache import get_image_cache
-from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
-from app.tools.visualization.create_report_chart.text_layout import (
+from app.tools.visualization.create_business_chart.text import normalize_matplotlib_label_text
+from app.tools.visualization.create_business_chart.text_layout import (
     WORD_FONT_SOURCE_WIDTH_IN,
     TextLayoutRegistry,
     govern_text_layout,
 )
-from app.tools.visualization.create_report_chart.theme import REPORT_THEME, SERIES_COLORS, theme_color
-from app.tools.visualization.create_report_chart.validation import ChartDataError
+from app.tools.visualization.create_business_chart.theme import REPORT_THEME, SERIES_COLORS, theme_color
+from app.tools.visualization.create_business_chart.validation import ChartDataError
 from app.utils.chart_legend import position_legends_below_plot, visible_legends
 from app.utils.font_utils import chinese_font_prop, select_preferred_chinese_font_path
 
@@ -64,7 +64,7 @@ SPECIALIZED_CHART_TYPES = {
 CHART_TYPE_ALIASES = {"timeseries": "line"}
 
 
-def render_report_chart(
+def render_business_chart(
     chart_id: str | None,
     chart_type: str,
     title: str,
@@ -201,7 +201,7 @@ def _render_single_chart(
             warnings.append("crowded_categorical_labels_horizontal_bar")
 
     if applied_chart_type in SPECIALIZED_CHART_TYPES:
-        from app.tools.visualization.create_report_chart.specialized import render_specialized_chart
+        from app.tools.visualization.create_business_chart.specialized import render_specialized_chart
 
         return render_specialized_chart(
             chart_id=chart_id,
@@ -290,7 +290,7 @@ def _render_general_chart_figure(
     elif applied_chart_type == "boxplot":
         draw_metadata = _draw_boxplot(ax, title, data, options)
     elif applied_chart_type in {"combo", "pareto"}:
-        from app.tools.visualization.create_report_chart.renderers.combo import draw_combo, draw_pareto
+        from app.tools.visualization.create_business_chart.renderers.combo import draw_combo, draw_pareto
 
         draw_metadata = (
             draw_combo(ax, title, data, options)
@@ -298,7 +298,7 @@ def _render_general_chart_figure(
             else draw_pareto(ax, title, data, options)
         )
     elif applied_chart_type in {"range_line", "error_bar"}:
-        from app.tools.visualization.create_report_chart.renderers.interval import draw_error_bar, draw_range_line
+        from app.tools.visualization.create_business_chart.renderers.interval import draw_error_bar, draw_range_line
 
         draw_metadata = (
             draw_range_line(ax, title, data, options)
@@ -306,7 +306,7 @@ def _render_general_chart_figure(
             else draw_error_bar(ax, title, data, options)
         )
     elif applied_chart_type in {"waterfall", "diverging_bar", "step_line"}:
-        from app.tools.visualization.create_report_chart.renderers.analytical import (
+        from app.tools.visualization.create_business_chart.renderers.analytical import (
             draw_diverging_bar,
             draw_step_line,
             draw_waterfall,
@@ -1463,7 +1463,7 @@ def _validate_xy_lengths(chart_type: str, labels: Sequence[Any], values: Sequenc
 def _safe_chart_id(value: str) -> str:
     safe = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in str(value).strip())
     safe = safe.strip("_")
-    return safe[:80] or f"report_chart_{uuid.uuid4().hex[:10]}"
+    return safe[:80] or f"business_chart_{uuid.uuid4().hex[:10]}"
 
 
 def _dedupe(values: Sequence[str]) -> List[str]:

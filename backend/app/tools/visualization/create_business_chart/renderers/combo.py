@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
-from app.tools.visualization.create_report_chart.validation import (
+from app.tools.visualization.create_business_chart.text import normalize_matplotlib_label_text
+from app.tools.visualization.create_business_chart.validation import (
     ChartDataError,
     finite_number,
     finite_numbers,
@@ -17,7 +17,7 @@ PALETTE = ["#3f7fb5", "#d17a3a", "#4e9a73", "#8a6bb8", "#c6535f", "#6f8798"]
 
 
 def draw_combo(ax, title: str, data: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
-    from app.tools.visualization.create_report_chart.renderer import (
+    from app.tools.visualization.create_business_chart.renderer import (
         _apply_x_tick_labels,
         _source_font,
     )
@@ -198,7 +198,7 @@ def draw_combo(ax, title: str, data: dict[str, Any], options: dict[str, Any]) ->
 
 
 def draw_pareto(ax, title: str, data: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
-    from app.tools.visualization.create_report_chart.renderer import _source_font
+    from app.tools.visualization.create_business_chart.renderer import _source_font
 
     labels = require_labels(data, "pareto")
     values = finite_numbers(data.get("values"), "pareto.values", nonnegative=True)

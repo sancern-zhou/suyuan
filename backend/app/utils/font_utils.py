@@ -212,7 +212,7 @@ def select_preferred_chinese_font_path() -> Path | None:
 
 
 def chinese_font_prop() -> fm.FontProperties | None:
-    """Return the preferred Chinese font, aligned with create_report_chart."""
+    """Return the preferred Chinese font, aligned with create_business_chart."""
     font_manager = get_font_manager()
     for font_path in font_manager.FONT_FILE_PATHS:
         if not font_path.exists():

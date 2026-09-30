@@ -7,11 +7,11 @@ from PIL import Image
 
 from app.utils.font_utils import get_font_manager
 from app.utils.path_config import resolve_agent_path
-from app.tools.visualization.create_report_chart.tool import (
-    CreateReportChartTool,
-    report_chart_reference_paths,
+from app.tools.visualization.create_business_chart.tool import (
+    CreateBusinessChartTool,
+    business_chart_reference_paths,
 )
-from app.tools.visualization.create_report_chart.renderer import (
+from app.tools.visualization.create_business_chart.renderer import (
     _cache_figure,
     _create_figure,
     _draw_dual_axis_line,
@@ -19,11 +19,11 @@ from app.tools.visualization.create_report_chart.renderer import (
     _position_legends_below_plot,
     select_chinese_font,
 )
-from app.tools.visualization.create_report_chart.theme import SERIES_COLORS
+from app.tools.visualization.create_business_chart.theme import SERIES_COLORS
 
 
 def test_schema_stays_compact_and_points_to_progressive_references():
-    tool = CreateReportChartTool()
+    tool = CreateBusinessChartTool()
 
     schema = tool.get_function_schema()
     properties = schema["parameters"]["properties"]
@@ -69,7 +69,7 @@ def test_schema_stays_compact_and_points_to_progressive_references():
 
 
 def test_reference_paths_include_specialized_chart_type_documents():
-    paths = report_chart_reference_paths()
+    paths = business_chart_reference_paths()
 
     expected_keys = {
         "index", "pollutant_calendar", "generic_pollutant_wind_rose",
@@ -124,7 +124,7 @@ def test_renderer_selects_existing_chinese_font_file_when_available():
 
 
 def test_label_normalization_converts_ionic_superscripts_and_subscripts_to_mathtext():
-    from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
+    from app.tools.visualization.create_business_chart.text import normalize_matplotlib_label_text
 
     assert (
         normalize_matplotlib_label_text("各城市PM2.5中SO₄²⁻/NO₃⁻比值对比")
@@ -135,7 +135,7 @@ def test_label_normalization_converts_ionic_superscripts_and_subscripts_to_matht
 
 @pytest.mark.asyncio
 async def test_specialized_chart_type_routes_through_unified_tool_metadata():
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         chart_type="aqi_calendar",
         title="AQI 日历",
         data={"dates": ["2026-01-01"], "aqi": [80]},
@@ -149,8 +149,8 @@ async def test_specialized_chart_type_routes_through_unified_tool_metadata():
 
 
 @pytest.mark.asyncio
-async def test_report_chart_returns_resource_refs_and_resume_hints():
-    result = await CreateReportChartTool().execute(
+async def test_business_chart_returns_resource_refs_and_resume_hints():
+    result = await CreateBusinessChartTool().execute(
         chart_id="resource_refs_case",
         chart_type="pollutant_calendar",
         title="资源协议测试图",
@@ -170,7 +170,7 @@ async def test_report_chart_returns_resource_refs_and_resume_hints():
     ]
     assert result["refs"]["files"][0]["path"] == str(image_path)
     assert result["refs"]["files"][0]["type"] == "image"
-    assert result["refs"]["files"][0]["usage"] == "report_chart"
+    assert result["refs"]["files"][0]["usage"] == "business_chart"
     assert result["refs"]["visuals"][0]["tool_path"] == str(image_path)
     assert result["llm_resume"]["source_file_path"] == "/configured/data/root/sessions/agent_session_test/data/resource-refs.json"
     assert result["llm_resume"]["generated_visuals"][0]["tool_path"] == str(image_path)
@@ -180,7 +180,7 @@ async def test_report_chart_returns_resource_refs_and_resume_hints():
 
 @pytest.mark.asyncio
 async def test_aqi_calendar_renders_prepared_city_data_map():
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         chart_id="aqi_calendar_inline_case",
         chart_type="aqi_calendar",
         title="AQI 日历",
@@ -212,7 +212,7 @@ async def test_aqi_calendar_renders_records_loaded_from_context_file_path():
         {"city": "深圳", "date": "2026-05-02", "aqi": 51},
     ]
 
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         context=FakeChartContext(records),
         chart_id="aqi_calendar_file_path_case",
         chart_type="aqi_calendar",
@@ -235,7 +235,7 @@ async def test_pollutant_wind_rose_renders_prepared_arrays():
     wind_speeds = [1 + (index % 8) * 0.35 for index in range(len(wind_directions))]
     concentrations = [35 + (index % 12) * 4 for index in range(len(wind_directions))]
 
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         chart_id="pollutant_wind_rose_inline_case",
         chart_type="pollutant_wind_rose",
         title="PM10 污染物风玫瑰图",
@@ -269,7 +269,7 @@ async def test_pollutant_wind_rose_renders_records_loaded_from_context_file_path
             }
         )
 
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         context=FakeChartContext(records),
         chart_id="pollutant_wind_rose_file_path_case",
         chart_type="pollutant_wind_rose",
@@ -288,7 +288,7 @@ async def test_pollutant_wind_rose_renders_records_loaded_from_context_file_path
 
 @pytest.mark.asyncio
 async def test_pollutant_calendar_renders_generic_single_region_daily_values():
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         chart_id="pollutant_calendar_generic_case",
         chart_type="pollutant_calendar",
         title="PM₂.₅月度日历图",
@@ -319,7 +319,7 @@ async def test_generic_pollutant_wind_rose_renders_non_guangdong_distribution():
     wind_speeds = [1 + (index % 6) * 0.4 for index in range(len(wind_directions))]
     concentrations = [20 + (index % 8) * 5 for index in range(len(wind_directions))]
 
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         chart_id="generic_pollutant_wind_rose_case",
         chart_type="generic_pollutant_wind_rose",
         title="PM₂.₅通用污染物风玫瑰图",
@@ -342,7 +342,7 @@ async def test_generic_pollutant_wind_rose_renders_non_guangdong_distribution():
 @pytest.mark.asyncio
 async def test_wind_timeseries_renders_speed_direction_and_pm25_arrays():
     timestamps = [f"2026-05-01 {hour:02d}:00:00" for hour in range(24)]
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         chart_id="wind_timeseries_pm25_case",
         chart_type="wind_timeseries",
         title="风场与PM2.5浓度变化",
@@ -381,7 +381,7 @@ async def test_wind_timeseries_renders_custom_pollutant_records_from_file_path()
         }
         for hour in range(8)
     ]
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         context=FakeChartContext(records),
         chart_id="wind_timeseries_o3_case",
         chart_type="wind_timeseries",
@@ -408,7 +408,7 @@ async def test_wind_timeseries_renders_custom_pollutant_records_from_file_path()
 
 
 def test_wind_timeseries_converts_meteorological_direction_to_components():
-    from app.tools.visualization.create_report_chart.domain.wind_timeseries import (
+    from app.tools.visualization.create_business_chart.domain.wind_timeseries import (
         _components_from_speed_direction,
     )
 
@@ -424,7 +424,7 @@ def test_wind_timeseries_converts_meteorological_direction_to_components():
 
 @pytest.mark.asyncio
 async def test_wind_timeseries_requires_explicit_direction_convention_for_angles():
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         chart_type="wind_timeseries",
         title="风场与PM2.5浓度变化",
         data={
@@ -441,7 +441,7 @@ async def test_wind_timeseries_requires_explicit_direction_convention_for_angles
 
 @pytest.mark.asyncio
 async def test_wind_timeseries_plots_supplied_components_without_direction_assumption():
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         chart_id="wind_timeseries_components_case",
         chart_type="wind_timeseries",
         title="风场与PM10浓度变化",
@@ -485,7 +485,7 @@ def test_dual_axis_line_uses_distinct_series_colors_across_axes():
 
 @pytest.mark.asyncio
 async def test_missing_data_and_file_path_returns_input_contract_error():
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         chart_type="pollutant_calendar",
         title="缺少数据输入",
     )
@@ -497,7 +497,7 @@ async def test_missing_data_and_file_path_returns_input_contract_error():
 
 @pytest.mark.asyncio
 async def test_file_path_without_context_returns_tool_error():
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         chart_type="pollutant_calendar",
         title="file_path 趋势",
         file_path="chart_data:v1:abc",
@@ -518,7 +518,7 @@ class FakeChartContext:
 
 @pytest.mark.asyncio
 async def test_file_path_loads_chart_payload_from_context():
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         context=FakeChartContext({"year": 2026, "month": 5, "values": [{"date": "2026-05-01", "value": 18}]}),
         chart_id="file_path_case",
         chart_type="pollutant_calendar",
@@ -533,7 +533,7 @@ async def test_file_path_loads_chart_payload_from_context():
 
 @pytest.mark.asyncio
 async def test_runtime_positional_context_call_does_not_conflict_with_chart_type():
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         FakeChartContext({"year": 2026, "month": 5, "values": [{"date": "2026-05-01", "value": 18}]}),
         chart_id="runtime_context_case",
         chart_type="pollutant_calendar",

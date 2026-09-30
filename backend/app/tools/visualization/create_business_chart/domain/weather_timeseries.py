@@ -14,8 +14,8 @@ from matplotlib.offsetbox import AnnotationBbox, DrawingArea
 from matplotlib.patches import FancyArrowPatch
 import numpy as np
 
-from app.tools.visualization.create_report_chart.renderer import _line_width
-from app.tools.visualization.create_report_chart.validation import ChartDataError
+from app.tools.visualization.create_business_chart.renderer import _line_width
+from app.tools.visualization.create_business_chart.validation import ChartDataError
 from app.utils.font_utils import apply_font_to_figure, configure_chinese_font
 
 

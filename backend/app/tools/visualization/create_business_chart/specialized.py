@@ -12,8 +12,8 @@ import numpy as np
 
 from app.utils.font_utils import apply_font_to_figure, configure_chinese_font
 from app.services.image_cache import get_image_cache
-from app.tools.visualization.create_report_chart.renderer import ChartDataError, WORD_TARGET_WIDTH_IN
-from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
+from app.tools.visualization.create_business_chart.renderer import ChartDataError, WORD_TARGET_WIDTH_IN
+from app.tools.visualization.create_business_chart.text import normalize_matplotlib_label_text
 
 
 def render_specialized_chart(
@@ -37,7 +37,7 @@ def render_specialized_chart(
     if chart_type == "wind_timeseries":
         return _render_wind_timeseries(chart_id, title, data, output_context, style_profile, options)
     if chart_type == "weather_timeseries":
-        from app.tools.visualization.create_report_chart.domain.weather_timeseries import (
+        from app.tools.visualization.create_business_chart.domain.weather_timeseries import (
             render_weather_timeseries,
         )
 
@@ -69,7 +69,7 @@ def _render_wind_timeseries(
     style_profile: str,
     options: Dict[str, Any],
 ) -> Dict[str, Any]:
-    from app.tools.visualization.create_report_chart.domain.wind_timeseries import (
+    from app.tools.visualization.create_business_chart.domain.wind_timeseries import (
         render_wind_timeseries,
     )
 
@@ -109,7 +109,7 @@ def _render_aqi_calendar(
     output_context: str,
     options: Dict[str, Any],
 ) -> Dict[str, Any]:
-    from app.tools.visualization.create_report_chart.domain.aqi_calendar import (
+    from app.tools.visualization.create_business_chart.domain.aqi_calendar import (
         AQICalendarRenderer,
         GUANGDONG_CITIES,
         _process_city_data_impl,
@@ -175,7 +175,7 @@ def _render_pollutant_wind_rose(
     output_context: str,
     options: Dict[str, Any],
 ) -> Dict[str, Any]:
-    from app.tools.visualization.create_report_chart.domain.pollutant_wind_rose import (
+    from app.tools.visualization.create_business_chart.domain.pollutant_wind_rose import (
         aggregate_by_time,
         generate_pollution_rose_contour,
     )

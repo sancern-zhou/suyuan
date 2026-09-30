@@ -681,8 +681,8 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.warning("tool_import_failed", tool="accept_drawio_board_candidate", error=str(e))
 
     try:
-        from app.tools.visualization.create_report_chart import CreateReportChartTool
-        registry.register(CreateReportChartTool(), priority=213)
+        from app.tools.visualization.create_business_chart import CreateBusinessChartTool
+        registry.register(CreateBusinessChartTool(), priority=213)
         logger.info("tool_loaded", tool="create_business_chart")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="create_business_chart", error=str(e))

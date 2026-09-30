@@ -8,7 +8,7 @@ from app.tools.resource_declarations import (
     generated_file_products,
     resources_for_visuals,
 )
-from app.tools.visualization.create_report_chart.tool import CreateReportChartTool
+from app.tools.visualization.create_business_chart.tool import CreateBusinessChartTool
 
 
 def validate(resources):
@@ -112,14 +112,14 @@ def test_generated_image_is_previewable_resource(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_create_report_chart_publishes_visual_and_image_resources(tmp_path, monkeypatch):
+async def test_create_business_chart_publishes_visual_and_image_resources(tmp_path, monkeypatch):
     image = tmp_path / "generated-chart.png"
     image.write_bytes(b"png")
     monkeypatch.setattr(
         "app.tools.resource_declarations.get_data_registry", lambda: tmp_path
     )
     monkeypatch.setattr(
-        "app.tools.visualization.create_report_chart.renderer.render_report_chart",
+        "app.tools.visualization.create_business_chart.renderer.render_business_chart",
         lambda **_kwargs: {
             "visuals": [{
                 "id": "generated-chart",
@@ -131,7 +131,7 @@ async def test_create_report_chart_publishes_visual_and_image_resources(tmp_path
         },
     )
 
-    result = await CreateReportChartTool().execute(
+    result = await CreateBusinessChartTool().execute(
         chart_type="pollutant_calendar",
         title="Generated chart",
         data={"values": [{"date": "2026-05-01", "value": 18}]},
@@ -147,7 +147,7 @@ async def test_create_report_chart_publishes_visual_and_image_resources(tmp_path
     assert resources[1].renderer.value == "image"
 
 
-def test_create_report_chart_loads_structured_object_from_file_payload():
+def test_create_business_chart_loads_structured_object_from_file_payload():
     expected = {"labels": ["A", "B"], "values": [1, 2]}
 
     class Context:
@@ -155,7 +155,7 @@ def test_create_report_chart_loads_structured_object_from_file_payload():
             assert file_path == "/session/data/chart-input.json"
             return expected
 
-    actual = CreateReportChartTool()._resolve_chart_data(
+    actual = CreateBusinessChartTool()._resolve_chart_data(
         data=None,
         file_path="/session/data/chart-input.json",
         context=Context(),
