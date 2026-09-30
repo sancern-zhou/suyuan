@@ -38,7 +38,6 @@ import structlog
 from app.project_config.loader import load_project_context
 from app.project_config.models import ProjectContext
 from app.tools.base.registry import ToolRegistry
-from app.tools.base.tool_names import canonical_tool_name
 from config.settings import settings
 
 logger = structlog.get_logger()
@@ -69,9 +68,7 @@ def is_project_tool_enabled(
 
 def is_project_tool_disabled(context: ProjectContext, tool_name: str) -> bool:
     """Return whether the active project explicitly disables a shared tool."""
-    return canonical_tool_name(tool_name) in {
-        canonical_tool_name(name) for name in context.manifest.backend.disabled_tools
-    }
+    return tool_name in set(context.manifest.backend.disabled_tools)
 
 
 def _register_gis_tools(registry: ToolRegistry) -> None:
