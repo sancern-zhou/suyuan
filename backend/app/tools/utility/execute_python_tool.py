@@ -41,12 +41,15 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_refs import build_data_file_ref, build_file_ref, build_visual_ref, merge_refs
 from app.utils.path_config import (
     PROJECT_ROOT,
+    agent_declared_input_roots,
+    describe_agent_read_policy,
     format_agent_path,
     get_charts_dir,
     get_data_registry,
     get_images_dir,
     get_python_output_dir,
     get_reports_dir,
+    is_path_within,
     resolve_agent_path,
     is_agent_sensitive_path,
 )
@@ -165,7 +168,14 @@ class ExecutePythonTool(LLMTool):
         return None
 
     def _validate_input_files(self, input_files, context) -> Optional[List[str]]:
-        """Resolve declared files without treating a declaration as authorization."""
+        """Resolve declared files without treating a declaration as authorization.
+
+        Authorization follows the one shared read policy in
+        ``path_config``: session files, run-authorized catalog paths and the
+        read-only data registry. Content-read surfaces (``read_file`` etc.)
+        share the same sensitive-path veto so the documented policy can never
+        drift from the enforced one.
+        """
         if input_files is None:
             return None  # Compatibility with existing literal-path callers.
         if not isinstance(input_files, list) or len(input_files) > 256:
@@ -184,16 +194,29 @@ class ExecutePythonTool(LLMTool):
                          *(getattr(context, "authorized_input_paths", []) or [])]
             if path
         }
+        declared_input_roots = agent_declared_input_roots()
         resolved_files = []
         for index, raw in enumerate(input_files):
             if not isinstance(raw, str) or not raw.strip():
                 raise ValueError(f"input_files[{index}] 必须是非空文件路径")
             path = resolve_agent_path(raw)
             in_session = session_dir is not None and path.is_relative_to(session_dir)
-            if is_agent_sensitive_path(path) or (path not in authorized and not in_session):
-                raise ValueError(f"input_files[{index}] 不属于当前会话或已授权输入文件")
+            if is_agent_sensitive_path(path):
+                raise ValueError(f"input_files[{index}] 指向敏感文件（密钥/凭据/.env 等），拒绝读取")
+            if path not in authorized and not in_session and not is_path_within(path, declared_input_roots):
+                logger.warning(
+                    "execute_python_input_file_rejected",
+                    declared_path=raw,
+                    resolved_path=str(path),
+                    session_dir=str(session_dir) if session_dir else None,
+                    authorized_count=len(authorized),
+                )
+                raise ValueError(
+                    f"input_files[{index}] 不可授权读取: {format_agent_path(path)}；"
+                    f"{describe_agent_read_policy()}"
+                )
             if not path.is_file():
-                raise ValueError(f"input_files[{index}] 文件不存在或不是普通文件")
+                raise ValueError(f"input_files[{index}] 文件不存在或不是普通文件: {format_agent_path(path)}")
             if str(path) not in resolved_files:
                 resolved_files.append(str(path))
         return resolved_files
@@ -944,7 +967,10 @@ class ExecutePythonTool(LLMTool):
         command = [
             prlimit,
             f"--cpu={max(1, timeout + 2)}",
-            "--as=2147483648",
+            # 地址空间上限需要容纳 numpy/pandas 之外的大型 mmap 库（如 torch 的
+            # libcublasLt），RLIMIT_AS 过小会让动态加载器报 "failed to map
+            # segment"。可用 PYTHON_SANDBOX_RLIMIT_AS 覆盖（字节）。
+            f"--as={self._sandbox_address_space_limit()}",
             "--fsize=104857600",
             "--nofile=256",
             "--nproc=128",
@@ -1041,6 +1067,31 @@ class ExecutePythonTool(LLMTool):
             command.extend(["--ro-bind", str(staged_source), str(source)])
             mounted_destinations.add(str(source))
             read_only_bind_destinations.append(source)
+
+        # Repo-style `backend.app.*` imports must keep working inside the
+        # sandbox even though only `app`/`config` are exposed there. Stage a
+        # tiny alias package at `<backend>/backend` so both import styles
+        # resolve to the same code; scenario docs stay authoritative for the
+        # preferred `app.*` style.
+        shim_init = staged_backend_root / "backend_pkg" / "__init__.py"
+        shim_init.parent.mkdir(parents=True, exist_ok=True)
+        shim_init.write_text(
+            "import sys\n"
+            "\n"
+            "try:\n"
+            "    import app as _app\n"
+            "except Exception:  # pragma: no cover - app always mounted in practice\n"
+            "    _app = None\n"
+            "if _app is not None:\n"
+            "    sys.modules.setdefault('backend.app', _app)\n"
+            "    sys.modules[__name__].app = _app\n",
+            encoding="utf-8",
+        )
+        backend_pkg_mount = backend_root / "backend"
+        self._append_bubblewrap_parent_dirs(command, backend_pkg_mount)
+        command.extend(["--ro-bind", str(shim_init.parent), str(backend_pkg_mount)])
+        mounted_destinations.add(str(backend_pkg_mount))
+        read_only_bind_destinations.append(backend_pkg_mount)
 
         context_paths = list(
             dict.fromkeys(
@@ -1210,6 +1261,26 @@ class ExecutePythonTool(LLMTool):
                     return None
 
         return command, sync_dirs, relative_input_mounts
+
+    @staticmethod
+    def _sandbox_address_space_limit() -> int:
+        """Sandbox RLIMIT_AS in bytes; env-overridable, 4 GiB default.
+
+        RLIMIT_AS caps *address space*, not resident memory. Large mmap-backed
+        shared libraries (torch's libcublasLt 等) reserve hundreds of MB of
+        address space at load time, so a tight cap makes the dynamic loader
+        fail with "failed to map segment from shared object" long before real
+        memory pressure. 4 GiB keeps heavy imports workable while still
+        bounding runaway allocations; deployments may tighten via
+        ``PYTHON_SANDBOX_RLIMIT_AS``.
+        """
+        raw = os.getenv("PYTHON_SANDBOX_RLIMIT_AS", "").strip()
+        if raw:
+            try:
+                return max(256 * 1024 * 1024, int(raw))
+            except ValueError:
+                logger.warning("execute_python_sandbox_rlimit_as_invalid", value=raw)
+        return 4 * 1024 * 1024 * 1024
 
     @staticmethod
     def _sync_sandbox_session_outputs(
@@ -2806,6 +2877,9 @@ def merge_excel_with_charts(file_paths, output_path):
             suggestions.append("• **输入文件未挂载**: 沙箱只挂载本次调用 input_files 参数中声明的文件，挂载不跨调用保留")
             suggestions.append("• **解决方案**: 把报错中提到的文件路径加入本次 execute_python 调用的 input_files 数组后重试")
 
+        if "No module named 'backend'" in error_msg or "No module named 'backend." in error_msg:
+            suggestions.append("• **导入路径**: 沙箱内应用包名为 `app`，推荐 `from app.xxx import ...`；`backend.app.*` 已自动兼容映射，但新代码请统一使用 `app.*`")
+
         # 如果没有特定建议，提供通用建议
         if not suggestions:
             suggestions.append("• **检查代码**: 仔细阅读错误信息，定位问题代码")
@@ -2826,6 +2900,27 @@ def merge_excel_with_charts(file_paths, output_path):
             包含错误详情的字典
         """
         import re
+
+        # 沙箱引导/环境级失败优先于 Python 异常模式：动态加载器、bubblewrap
+        # 自身或资源限制失败不会产生 Python traceback，归为独立类型以便监控
+        # 区分"代码 bug"与"沙箱环境问题"。
+        if "error while loading shared libraries" in stderr or re.search(r"\bbwrap:", stderr):
+            return {
+                "error_type": "SandboxBootstrapError",
+                "error_message": (
+                    "❌ 沙箱环境错误\n\n"
+                    f"**错误类型**: SandboxBootstrapError\n"
+                    f"**错误信息**: {stderr.strip()[:800]}\n\n"
+                    "**💡 修复建议**:\n"
+                    "• 这是沙箱运行环境问题而非代码逻辑问题\n"
+                    "• 动态库映射失败通常与地址空间限制相关，可在部署环境调大 PYTHON_SANDBOX_RLIMIT_AS 后重试\n"
+                    "• 若持续出现，请通过运维渠道反馈，不要反复原样重试\n"
+                ),
+                "summary": f"❌ 沙箱环境错误: {stderr.strip()[:200]}",
+                "line_number": None,
+                "code_context": "",
+                "suggestions": "调整 PYTHON_SANDBOX_RLIMIT_AS 或反馈运维；避免原样重试",
+            }
 
         # 尝试提取错误类型和错误消息
         error_type = "UnknownError"
@@ -2924,7 +3019,7 @@ def merge_excel_with_charts(file_paths, output_path):
                         "type": "array",
                         "items": {"type": "string", "minLength": 1},
                         "maxItems": 256,
-                        "description": "本次需要读取的输入文件路径，读取文件时必须声明；只允许当前会话数据文件或已授权资源文件，不接受目录。相对路径以项目根目录为准。代码中的 input_files 为校验后的绝对路径列表。无需读取文件时可省略。"
+                        "description": "本次需要读取的输入文件路径，读取文件时必须声明；" + describe_agent_read_policy() + "不接受目录。相对路径以项目根目录为准。代码中的 input_files 为校验后的绝对路径列表。无需读取文件时可省略。"
                     },
                     "code": {
                         "type": "string",
@@ -3072,7 +3167,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                         "type": "array",
                         "items": {"type": "string", "minLength": 1},
                         "maxItems": 256,
-                        "description": "本次需要读取的当前会话或已授权输入文件路径；每次调用重新声明，不接受目录，代码中通过 input_files 列表访问。"
+                        "description": "本次需要读取的输入文件路径，每次调用重新声明，不接受目录，代码中通过 input_files 列表访问。" + describe_agent_read_policy()
                     },
                     "code": {
                         "type": "string",
