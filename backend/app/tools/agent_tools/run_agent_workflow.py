@@ -11,7 +11,6 @@ import structlog
 from app.agent.workflow.resource_handoff import result_resource_declarations
 from app.agent.workflow.target_mode_contract import build_target_mode_contract, target_mode_values
 from app.agent.workflow.coordinator import WorkflowCoordinator, WorkflowNodeSpec
-from app.agent.workflow.templates import build_report_analysis_manifest, build_report_analysis_workflow
 from app.agent.workflow.registry import active_workflow_registry
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
@@ -19,29 +18,32 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 logger = structlog.get_logger(__name__)
 
 
-REPORT_TEMPLATE_EXAMPLE = (
-    '{"workflow_template": "report_analysis_v1", "max_concurrency": 4, "template_options": {'
-    '"workflow_id": "air-quality-report", '
-    '"source_tasks": ['
+WORKFLOW_DAG_EXAMPLE = (
+    '{"workflow": {"workflow_id": "air-quality-report", "nodes": ['
     '{"task_id": "air-data", "target_mode": "query", "goal": "查询指定区域和时间范围的空气质量数据"}, '
-    '{"task_id": "weather-data", "target_mode": "expert", "goal": "分析同期气象条件及其影响"}], '
-    '"synthesis_task": {"task_id": "synthesis", "target_mode": "expert", '
-    '"goal": "基于上游结果完成交叉分析，输出报告提纲、结论、证据和缺口"}}}'
+    '{"task_id": "weather-data", "target_mode": "query", "goal": "查询同期地面气象观测数据"}, '
+    '{"task_id": "cross-analysis", "target_mode": "expert", '
+    '"goal": "基于上游数据完成交叉归因，输出结论、证据和缺口", '
+    '"dependencies": ["air-data", "weather-data"]}]}, "max_concurrency": 4}'
 )
 
 WORKFLOW_SCHEMA_DESCRIPTION = (
     "提交一个有向无环 Agent 工作流（DAG）：节点可并行执行，只有依赖节点成功后才会执行下游节点；"
-    "适合多源数据分析、交叉验证和分阶段报告任务。"
-    "报告任务使用 workflow_template='report_analysis_v1'，并在 template_options 中提供 "
-    "source_tasks（无依赖的 query/expert 节点，并行执行）、synthesis_task（有依赖的 expert 节点，等待全部上游成功并输出报告就绪简报）。"
-    "报告 DAG 禁止 report 子节点；父报告 Agent 是唯一成稿者。模板只向父 Agent 返回状态、节点错误和精简的 report_analysis，"
-    "完整快照在服务端留存，避免父 Agent 对子节点结果做重复全量复核。每个节点必须有唯一 task_id、target_mode、goal，"
-    "goal 写清时间范围、区域、指标口径和预期输出；多源任务把无依赖查询拆成独立 source 节点以并行执行，"
-    "有依赖关系的节点用 dependencies 表达，不靠文字约定顺序。"
-    "expert 节点必须提供 task_contract（protocol_version=workflow.v1、task_type=expert_analysis、question、"
-    "decision_context、scope、required_evidence、deliverables）和 result_schema（要求 status、findings、evidence、"
-    "uncertainties、data_gaps，finding 通过 evidence id 回溯证据）；节点可用 max_attempts 设置重试次数（1-3）。"
-    f"示例：{REPORT_TEMPLATE_EXAMPLE}\n\n"
+    "适合多源数据分析、交叉验证和分阶段报告任务。编排完全由你自主决定：按分析问题规划节点数量、"
+    "每个节点的 target_mode 与 goal；无依赖的数据/分析节点并行执行，需要上游产物或结论的节点用 "
+    "dependencies 表达，不靠文字约定顺序。每个节点必须有唯一 task_id、target_mode、goal，"
+    "goal 写清时间范围、区域、指标口径和预期输出；把无依赖的取数拆成独立节点以并行执行。"
+    "领域拆分建议：气象条件、输送通道、静稳/边界层形势拆 expert_meteorology；浓度特征、超标统计、"
+    "组分解读、成因研判拆 expert_analysis，二者可并行；交叉归因放在依赖它们的研判节点，"
+    "或由你自己整合（整合阶段禁止重新取数）。"
+    "DAG 禁止 report 子节点；报告模式父 Agent 是唯一成稿者。"
+    "工具返回每个节点的 result_envelope（status/summary/evidence/artifacts/data_gaps）与血缘清单，"
+    "据此判断覆盖范围与缺口并整合结论，不要对子节点过程做重复全量复核。"
+    "expert 族节点（expert/expert_meteorology/expert_analysis）必须提供 task_contract（protocol_version=workflow.v1、"
+    "task_type=expert_analysis、question、decision_context、scope、required_evidence、deliverables）和 "
+    "result_schema（要求 status、findings、evidence、uncertainties、data_gaps，finding 通过 evidence id 回溯证据）；"
+    "节点可用 max_attempts 设置重试次数（1-3）。"
+    f"示例：{WORKFLOW_DAG_EXAMPLE}\n\n"
     f"{build_target_mode_contract()}"
 )
 
@@ -205,8 +207,9 @@ class RunAgentWorkflowTool(LLMTool):
                         "workflow": {
                             "type": "object",
                             "description": (
-                                "完整 DAG 定义：{workflow_id, version, nodes:[{task_id, target_mode, goal, context, "
-                                "dependencies, task_contract, result_schema, max_attempts}]}。与 workflow_template 二选一。"
+                                "完整 DAG 定义：{workflow_id, version?, nodes:[{task_id, target_mode, goal, context, "
+                                "dependencies, task_contract, result_schema, max_attempts}]}. "
+                                "编排由你自主规划；无依赖节点并行，依赖用 dependencies 表达。"
                             ),
                             "properties": {
                                 "workflow_id": {"type": "string"},
@@ -235,18 +238,6 @@ class RunAgentWorkflowTool(LLMTool):
                             },
                             "required": ["workflow_id", "nodes"],
                         },
-                        "workflow_template": {
-                            "type": "string",
-                            "enum": ["report_analysis_v1"],
-                            "description": "可选标准模板；选择 report_analysis_v1 时使用 template_options 构建报告 DAG。",
-                        },
-                        "template_options": {
-                            "type": "object",
-                            "description": (
-                                "report_analysis_v1 的模板参数：{source_tasks:[...], synthesis_task:{...]}；"
-                                "不接受 delivery_tasks，结构与示例见工具说明。"
-                            ),
-                        },
                         "max_concurrency": {
                             "type": "integer",
                             "minimum": 1,
@@ -258,7 +249,7 @@ class RunAgentWorkflowTool(LLMTool):
                             "description": "可选的上次运行快照；传入后从中断位置恢复。",
                         },
                     },
-                    "required": [],
+                    "required": ["workflow"],
                 },
             },
             version="1.0.0",
@@ -268,25 +259,12 @@ class RunAgentWorkflowTool(LLMTool):
         self,
         context: Optional[Any] = None,
         workflow: Optional[Mapping[str, Any]] = None,
-        workflow_template: Optional[str] = None,
-        template_options: Optional[Mapping[str, Any]] = None,
         max_concurrency: int = 4,
         snapshot: Optional[Mapping[str, Any]] = None,
         **_: Any,
     ) -> Dict[str, Any]:
-        is_report_template = workflow_template == "report_analysis_v1"
         if not isinstance(workflow, Mapping):
-            if workflow_template != "report_analysis_v1" or not isinstance(template_options, Mapping):
-                return self._failure("请提供 workflow 定义，或使用 report_analysis_v1 模板及 template_options")
-            try:
-                workflow = build_report_analysis_workflow(
-                    workflow_id=str(template_options.get("workflow_id") or "report-workflow"),
-                    source_tasks=template_options.get("source_tasks") or [],
-                    synthesis_task=template_options.get("synthesis_task") or {},
-                    delivery_tasks=template_options.get("delivery_tasks") or [],
-                )
-            except (TypeError, ValueError) as exc:
-                return self._failure(f"报告工作流模板参数无效：{exc}")
+            return self._failure("请提供 workflow DAG 定义（workflow_id + nodes）")
         try:
             definition = dict(workflow)
             nodes = [dict(node) for node in definition.get("nodes") or []]
@@ -347,28 +325,18 @@ class RunAgentWorkflowTool(LLMTool):
             if pending_persistence:
                 await asyncio.gather(*pending_persistence, return_exceptions=True)
             succeeded = snapshot["status"] == "succeeded"
-            report_analysis = build_report_analysis_manifest(snapshot) if is_report_template else None
             resources = result_resource_declarations(
                 str(snapshot["workflow_id"]),
                 snapshot["node_results"],
             )
-            if is_report_template:
-                result_data = {
-                    "workflow_id": snapshot["workflow_id"],
-                    "status": snapshot["status"],
-                    "node_errors": snapshot["node_errors"],
-                    "report_analysis": report_analysis,
-                }
-            else:
-                result_data = {
-                    "workflow_id": snapshot["workflow_id"],
-                    "status": snapshot["status"],
-                    "node_results": snapshot["node_results"],
-                    "node_errors": snapshot["node_errors"],
-                    "node_lineage": snapshot["node_lineage"],
-                    "report_analysis": report_analysis,
-                    "snapshot": snapshot,
-                }
+            result_data = {
+                "workflow_id": snapshot["workflow_id"],
+                "status": snapshot["status"],
+                "node_results": snapshot["node_results"],
+                "node_errors": snapshot["node_errors"],
+                "node_lineage": snapshot["node_lineage"],
+                "snapshot": snapshot,
+            }
             return {
                 "status": "success" if succeeded else snapshot["status"],
                 "success": succeeded,

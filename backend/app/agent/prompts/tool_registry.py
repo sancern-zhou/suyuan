@@ -146,6 +146,45 @@ EXPERT_TOOL_NAMES = [
     "search_files",
 ]
 
+# ===== 气象专家模式工具（报告 DAG 子专家，精简配置） =====
+# 只保留气象研判必需工具；污染物/组分工具不进入本白名单。
+EXPERT_METEOROLOGY_TOOL_NAMES = [
+    "list_session_resources",
+    "publish_session_file",
+    # 上游产物复用与中间产物落地
+    "read_file",
+    "write_file",
+    # 气象数据
+    "get_observed_meteorology",
+    "get_weather_forecast",
+    "get_current_weather",
+    "get_platform_weather_image",
+    # 输送分析
+    "meteorological_trajectory_analysis",
+    "resolve_station_geo",
+    "execute_sql_query",
+    # 计算与绘图
+    "execute_python",
+]
+
+# ===== 常规分析专家模式工具（报告 DAG 子专家，精简配置） =====
+# 只保留监测数据研判必需工具；气象/轨迹工具不进入本白名单。
+# 注意：组分数据工具（get_vocs_data 等）在 AGENT_HIDDEN_TOOL_NAMES 中，不对 Agent 暴露。
+EXPERT_ANALYSIS_TOOL_NAMES = [
+    "list_session_resources",
+    "publish_session_file",
+    # 上游产物复用与中间产物落地
+    "read_file",
+    "write_file",
+    # 监测数据
+    "query_xcai_city_history",
+    "query_national_city_air_quality",
+    "execute_sql_query",
+    # 计算与可视化
+    "execute_python",
+    "create_business_chart",
+]
+
 # ===== 问数模式工具 =====
 QUERY_TOOL_NAMES = [
     "list_session_resources",
@@ -440,6 +479,8 @@ def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
 ASSISTANT_TOOLS = _build_tool_dict(ASSISTANT_TOOL_NAMES)
 PPT_TOOLS = _build_tool_dict(PPT_TOOL_NAMES)
 EXPERT_TOOLS = _build_tool_dict(EXPERT_TOOL_NAMES)
+EXPERT_METEOROLOGY_TOOLS = _build_tool_dict(EXPERT_METEOROLOGY_TOOL_NAMES)
+EXPERT_ANALYSIS_TOOLS = _build_tool_dict(EXPERT_ANALYSIS_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
 KNOWLEDGE_TOOLS = _build_tool_dict(KNOWLEDGE_TOOL_NAMES)
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
@@ -476,7 +517,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     根据模式获取工具有序白名单。
 
     Args:
-        mode: "assistant" | "ppt" | "expert" | "query" | "report" | "social" | "enforcement_exam" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
+        mode: "assistant" | "ppt" | "expert" | "expert_meteorology" | "expert_analysis" | "query" | "report" | "social" | "enforcement_exam" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
 
     Returns:
         工具字典 {tool_name: ""}，key 顺序即工具顺序。
@@ -485,6 +526,8 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "assistant": ASSISTANT_TOOLS,
         "ppt": PPT_TOOLS,
         "expert": EXPERT_TOOLS,
+        "expert_meteorology": EXPERT_METEOROLOGY_TOOLS,
+        "expert_analysis": EXPERT_ANALYSIS_TOOLS,
         "query": QUERY_TOOLS,
         "knowledge": KNOWLEDGE_TOOLS,
         "report": REPORT_TOOLS,

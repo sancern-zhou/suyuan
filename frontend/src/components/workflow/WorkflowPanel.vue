@@ -72,7 +72,7 @@
                 <p v-if="nodeHistoryLoading && !nodeHistory">正在读取节点历史...</p>
                 <p v-if="nodeHistoryError" class="history-error">{{ nodeHistoryError }}</p>
                 <template v-if="nodeHistory">
-                  <p class="node-meta">{{ nodeHistory.child_mode || '子 Agent' }} · {{ nodeHistory.child_session_id || '尚无子会话' }}</p>
+                  <p class="node-meta">{{ modeLabel(nodeHistory.child_mode) }} · {{ nodeHistory.child_session_id || '尚无子会话' }}</p>
                   <h5>执行记录</h5>
                   <ol v-if="nodeTimeline.length" class="event-list">
                     <li v-for="item in nodeTimeline" :key="item.key">
@@ -254,6 +254,21 @@ async function loadMoreNodeHistory() {
   } catch (err) {
     nodeHistoryError.value = err?.message || '更多节点记录加载失败'
   } finally { nodeHistoryLoading.value = false }
+}
+
+const MODE_LABELS = {
+  query: '问数',
+  expert: '专家分析',
+  expert_meteorology: '气象专家',
+  expert_analysis: '常规分析专家',
+  report: '报告',
+  chart: '图表',
+  knowledge: '知识'
+}
+
+function modeLabel(mode) {
+  if (!mode) return '子 Agent'
+  return MODE_LABELS[mode] || mode
 }
 
 function nodeTitle(node) {

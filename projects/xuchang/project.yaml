@@ -105,6 +105,37 @@ backend:
       - search_files
       - list_skills
       - view_skill
+    # 报告 DAG 气象专家子模式：仅气象研判工具（共享白名单被本项目 manifest 接管）
+    expert_meteorology:
+      - list_session_resources
+      - read_session_resource
+      - publish_session_file
+      - read_file
+      - write_file
+      - get_weather_data
+      - get_weather_forecast
+      - get_universal_meteorology
+      - get_current_weather
+      - get_weather_situation_map
+      - meteorological_trajectory_analysis
+      - resolve_station_geo
+      - execute_sql_query
+      - execute_python
+    # 报告 DAG 常规分析专家子模式：仅监测数据研判工具，气象归因引用上游气象节点
+    expert_analysis:
+      - list_session_resources
+      - read_session_resource
+      - publish_session_file
+      - read_file
+      - write_file
+      - query_xcai_city_history
+      - query_airdata_platform
+      - airdata_calc_report_summary
+      - xuchang_station_catalog
+      - query_national_city_air_quality
+      - execute_sql_query
+      - execute_python
+      - create_business_chart
     report:
       - list_session_resources
       - read_session_resource

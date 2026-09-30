@@ -8,24 +8,30 @@ from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
 from app.tools.agent_tools.run_agent_workflow import RunAgentWorkflowTool
 
 
-def test_run_agent_workflow_schema_documents_report_dag_example():
+def test_run_agent_workflow_schema_documents_free_form_dag():
     schema = RunAgentWorkflowTool().get_function_schema()
     description = schema["description"]
+    properties = schema["parameters"]["properties"]
 
     for token in (
-        "report_analysis_v1",
-        "source_tasks",
-        "synthesis_task",
+        "自主决定",
+        "nodes",
+        "dependencies",
         "task_contract",
         "result_schema",
-        "dependencies",
+        "expert_meteorology",
+        "expert_analysis",
     ):
         assert token in description
 
-    properties = schema["parameters"]["properties"]
-    assert "source_tasks" in properties["template_options"]["description"]
-    assert "不接受 delivery_tasks" in properties["template_options"]["description"]
-    assert "max_concurrency" in properties
+    assert "workflow" in properties
+    assert "workflow_template" not in properties
+    assert "template_options" not in properties
+    assert schema["parameters"]["required"] == ["workflow"]
+    node_schema = properties["workflow"]["properties"]["nodes"]["items"]["properties"]
+    assert {"query", "expert", "report"}.issubset(set(node_schema["target_mode"]["enum"]))
+    call_target_mode = CallSubAgentTool().get_function_schema()["parameters"]["properties"]["target_mode"]
+    assert call_target_mode["enum"] == node_schema["target_mode"]["enum"]
 
 
 def test_run_agent_workflow_schema_documents_target_mode_contract():
@@ -177,7 +183,7 @@ async def test_run_agent_workflow_rejects_invalid_nodes():
 
 
 @pytest.mark.asyncio
-async def test_run_agent_workflow_accepts_report_analysis_template(monkeypatch):
+async def test_run_agent_workflow_returns_node_envelopes(monkeypatch):
     calls = []
 
     class FakeSubAgentTool:
@@ -204,23 +210,33 @@ async def test_run_agent_workflow_accepts_report_analysis_template(monkeypatch):
         staticmethod(lambda: FakeSubAgentTool()),
     )
     result = await RunAgentWorkflowTool().execute(
-        workflow_template="report_analysis_v1",
-        template_options={
-            "workflow_id": "report-template-1",
-            "source_tasks": [
+        workflow={
+            "workflow_id": "report-1",
+            "nodes": [
                 {"task_id": "air", "target_mode": "expert", "goal": "空气分析"},
                 {"task_id": "weather", "target_mode": "expert", "goal": "气象分析"},
+                {
+                    "task_id": "synthesis",
+                    "target_mode": "expert",
+                    "goal": "交叉分析",
+                    "dependencies": ["air", "weather"],
+                },
             ],
-            "synthesis_task": {"target_mode": "expert", "goal": "交叉分析", "require_lineage": True},
         },
     )
     assert result["success"] is True
-    assert result["data"]["report_analysis"]["status"] == "completed"
-    assert result["data"]["report_analysis"]["synthesis_task_id"] == "synthesis"
-    assert "node_results" not in result["data"]
-    assert "node_lineage" not in result["data"]
-    assert "snapshot" not in result["data"]
+    assert result["data"]["status"] == "succeeded"
+    assert result["data"]["node_results"]["air"]["data"]["result_envelope"]["status"] == "completed"
+    assert result["data"]["node_errors"] == {}
+    assert set(result["data"]["node_lineage"]) == {"air", "weather", "synthesis"}
     assert all(call["target_mode"] != "report" for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_run_agent_workflow_requires_workflow_definition():
+    result = await RunAgentWorkflowTool().execute()
+    assert result["success"] is False
+    assert "workflow" in result["result"]
 
 
 @pytest.mark.asyncio
