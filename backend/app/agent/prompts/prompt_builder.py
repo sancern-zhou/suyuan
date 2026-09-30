@@ -60,7 +60,11 @@ def _with_memory_file_contract(prompt: str, memory_file_path: Optional[str]) -> 
         f"{prompt.rstrip()}\n\n"
         "## 长期记忆文件\n"
         f"- 当前模式长期记忆文件路径：`{memory_file_path}`。\n"
-        "- 仅可操作此路径，不得读取或修改其他模式的 MEMORY.md。"
+        "- 仅可操作此路径，不得读取或修改其他模式的 MEMORY.md。\n"
+        "- 非社交模式的长期事实也可能保存在 `facts/*.md`；上下文中的“已整理事实索引”"
+        "会列出每条事实的文件链接、来源和适用条件。需要核实或更新某条事实时，"
+        "先沿索引链接读取对应文档，再使用记忆工具维护该事实，不要把事实批量回写到 MEMORY.md。\n"
+        "- `MEMORY.md` 是兼容的模式记忆文档；索引中的事实文档与它分别管理，不能把单一文件路径理解为全部记忆。"
     )
 
 AgentMode = Literal[
