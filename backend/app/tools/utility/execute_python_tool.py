@@ -32,6 +32,7 @@ import re
 import ast
 import json
 import signal
+import weakref
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 import structlog
@@ -57,6 +58,22 @@ from app.utils.font_utils import BROWSER_CHART_FONT_FAMILY, select_preferred_chi
 from app.tools.visualization.create_business_chart.theme import REPORT_THEME, SERIES_COLORS, matplotlib_report_style
 
 logger = structlog.get_logger()
+
+_EXECUTION_LOCKS: weakref.WeakValueDictionary[tuple[int, str], asyncio.Lock] = weakref.WeakValueDictionary()
+_MAX_CAPTURE_BYTES = 256 * 1024
+
+
+def _execution_lock_for(context) -> Optional[asyncio.Lock]:
+    """Serialize executions sharing a session's writable artifact namespace."""
+    if context is None:
+        return None
+    session = getattr(getattr(getattr(context, "data_manager", None), "memory", None), "session", None)
+    session_dir = getattr(session, "data_dir", None)
+    session_key = str(session_dir or getattr(context, "session_id", "")).strip()
+    if not session_key:
+        return None
+    key = (id(asyncio.get_running_loop()), session_key)
+    return _EXECUTION_LOCKS.setdefault(key, asyncio.Lock())
 
 
 class ExecutePythonTool(LLMTool):
@@ -91,6 +108,11 @@ class ExecutePythonTool(LLMTool):
                 "不得将自行写入或推断得到的中间数据路径传给后续工具。"
                 "生成 Excel、Word、PDF 等交付文件时必须先调用 artifact_path(filename) 获取输出路径，"
                 "再保存到该路径；工具会自动归档并返回真实 file_path。"
+                "Agent 须在调用前按场景使用 read_file(path=...) 阅读对应规范："
+                "数据处理/Excel 读取 backend/app/tools/utility/execute_python_data_manual.md，"
+                "静态图表读取 backend/app/tools/utility/execute_python_chart_manual.md，"
+                "报告/Office 交付读取 backend/app/tools/utility/execute_python_report_manual.md；"
+                "混合任务须阅读全部命中的场景规范。"
                 "⚠️ **图表选择策略**："
                 "① 已支持的专用业务图型 → 所有模式必须使用 create_business_chart，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具；"
                 "② 其他通用/自定义图：专家/报告模式优先使用 execute_python，自动应用统一报告主题；问数模式优先使用 execute_echarts_python；"
@@ -251,7 +273,16 @@ class ExecutePythonTool(LLMTool):
             requested_paths.append(resolved_path)
         return json.dumps(list(dict.fromkeys(requested_paths)), ensure_ascii=False)
 
-    async def execute(
+    async def execute(self, context=None, code: str = None, timeout: Optional[int] = None,
+                      input_files: Optional[List[str]] = None, **kwargs) -> Dict[str, Any]:
+        """Run one Python call while protecting the session output namespace."""
+        lock = _execution_lock_for(context)
+        if lock is None:
+            return await self._execute_unlocked(context, code, timeout, input_files, **kwargs)
+        async with lock:
+            return await self._execute_unlocked(context, code, timeout, input_files, **kwargs)
+
+    async def _execute_unlocked(
         self,
         context=None,
         code: str = None,
@@ -339,6 +370,7 @@ class ExecutePythonTool(LLMTool):
                 working_dir=temp_dir,
                 context=context,
                 input_files=declared_inputs,
+                original_code=original_code,
             )
 
             # ✅ 从 output 中提取用户保存的文件路径（绝对路径保存的文件）
@@ -815,6 +847,7 @@ class ExecutePythonTool(LLMTool):
         working_dir: str,
         context=None,
         input_files=None,
+        original_code: Optional[str] = None,
     ) -> Dict[str, Any]:
         """在独立沙箱进程组中执行代码，同时保持 Web worker 事件循环可运行。"""
         # 写入脚本文件
@@ -847,32 +880,51 @@ class ExecutePythonTool(LLMTool):
             }
         command, sandbox_sync_dirs, relative_input_mounts = sandbox_spec
 
-        # 执行代码
+        user_code_start_line = self._user_code_start_line(code, original_code)
+        runtime_logs = Path(working_dir) / "runtime_logs"
+        runtime_logs.mkdir(parents=True, exist_ok=True)
+        stdout_path = runtime_logs / "stdout.log"
+        stderr_path = runtime_logs / "stderr.log"
+
+        # 文件承接 stdout/stderr，避免 communicate() 无界缓冲撑高 Web worker 内存。
         process = None
+        cgroup_path = None
+        cgroup_diagnostics: Dict[str, Any] = {"configured": False, "applied": False}
         try:
-            process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=working_dir,
-                start_new_session=True,
+            with stdout_path.open("wb") as stdout_file, stderr_path.open("wb") as stderr_file:
+                process = subprocess.Popen(
+                    command,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    cwd=working_dir,
+                    start_new_session=True,
+                )
+                cgroup_path, cgroup_diagnostics = self._attach_cgroup(process.pid)
+                logger.info(
+                    "execute_python_subprocess_started",
+                    pid=process.pid,
+                    script_size=len(code),
+                    timeout_seconds=timeout,
+                    sandbox=self.execution_engine,
+                    cgroup=cgroup_diagnostics,
+                )
+                await asyncio.to_thread(process.wait, timeout=timeout)
+
+            stdout, stdout_truncated, stdout_bytes = self._read_capped_text(
+                stdout_path, _MAX_CAPTURE_BYTES
             )
-            logger.info(
-                "execute_python_subprocess_started",
-                pid=process.pid,
-                script_size=len(code),
-                timeout_seconds=timeout,
-                sandbox=self.execution_engine,
+            stderr, stderr_truncated, stderr_bytes = self._read_capped_text(
+                stderr_path, _MAX_CAPTURE_BYTES, keep_tail=True
             )
-            stdout, stderr = await asyncio.to_thread(process.communicate, timeout=timeout)
             self._sync_sandbox_session_outputs(sandbox_sync_dirs)
             logger.info(
                 "execute_python_subprocess_completed",
                 pid=process.pid,
                 returncode=process.returncode,
-                stdout_size=len(stdout or ""),
-                stderr_size=len(stderr or ""),
+                stdout_size=stdout_bytes,
+                stderr_size=stderr_bytes,
+                stdout_truncated=stdout_truncated,
+                stderr_truncated=stderr_truncated,
             )
 
             declared_data_paths = self._extract_python_data_file_paths(stdout or "")
@@ -883,24 +935,47 @@ class ExecutePythonTool(LLMTool):
             # 截断输出
             if len(output) > self.max_output_size:
                 output = output[:self.max_output_size] + "\n... (输出被截断)"
+            elif stdout_truncated or stderr_truncated:
+                output += "\n... (stdout/stderr 已按沙箱输出上限截断)"
+
+            diagnostics = {
+                "exit_code": process.returncode,
+                "stdout_bytes": stdout_bytes,
+                "stderr_bytes": stderr_bytes,
+                "stdout_truncated": stdout_truncated,
+                "stderr_truncated": stderr_truncated,
+                "timed_out": False,
+                "cgroup": cgroup_diagnostics,
+            }
 
             # 如果执行失败，尝试解析错误信息
             if process.returncode != 0:
-                error_info = self._parse_subprocess_error(stderr, code)
+                error_info = self._parse_subprocess_error(
+                    stderr,
+                    code,
+                    original_code=original_code,
+                    user_code_start_line=user_code_start_line,
+                )
+                error_code = (
+                    "SANDBOX_BOOTSTRAP_FAILED"
+                    if error_info["error_type"] == "SandboxBootstrapError"
+                    else "PYTHON_EXECUTION_FAILED"
+                )
                 return {
                     "status": "failed",
                     "success": False,
-                    "error_code": "PYTHON_EXECUTION_FAILED",
+                    "error_code": error_code,
                     "error": error_info["error_message"],
                     "data": {"error": error_info["error_message"], "error_details": error_info, "output": output,
-                             "declared_data_file_paths": declared_data_paths},
+                             "declared_data_file_paths": declared_data_paths, "execution": diagnostics},
                     "summary": error_info["summary"]
                 }
 
             return {
                 "status": "success",
                 "success": True,
-                "data": {"output": output, "declared_data_file_paths": declared_data_paths},
+                "data": {"output": output, "declared_data_file_paths": declared_data_paths,
+                         "execution": diagnostics},
                 "summary": "✅ 工具已执行完成，计算任务已完成"
             }
 
@@ -908,19 +983,40 @@ class ExecutePythonTool(LLMTool):
             if process is not None:
                 logger.warning("execute_python_subprocess_timeout", pid=process.pid)
                 self._terminate_process_group(process)
-                await asyncio.to_thread(process.communicate)
+                await asyncio.to_thread(process.wait)
+            stdout, stdout_truncated, stdout_bytes = self._read_capped_text(
+                stdout_path, _MAX_CAPTURE_BYTES
+            )
+            stderr, stderr_truncated, stderr_bytes = self._read_capped_text(
+                stderr_path, _MAX_CAPTURE_BYTES, keep_tail=True
+            )
             return {
                 "status": "failed",
                 "success": False,
-                "data": {"error": "执行超时"},
+                "error_code": "PYTHON_TIMEOUT",
+                "error": "执行超时",
+                "data": {
+                    "error": "执行超时",
+                    "output": stdout + (("\n错误输出:\n" + stderr) if stderr else ""),
+                    "execution": {
+                        "exit_code": process.returncode if process is not None else None,
+                        "stdout_bytes": stdout_bytes,
+                        "stderr_bytes": stderr_bytes,
+                        "stdout_truncated": stdout_truncated,
+                        "stderr_truncated": stderr_truncated,
+                        "timed_out": True,
+                        "cgroup": cgroup_diagnostics,
+                    },
+                },
                 "summary": "执行超时"
             }
         except asyncio.CancelledError:
             if process is not None and process.poll() is None:
                 self._terminate_process_group(process)
-                await asyncio.to_thread(process.communicate)
+                await asyncio.to_thread(process.wait)
             raise
         finally:
+            self._cleanup_cgroup(cgroup_path)
             for mountpoint in sorted(relative_input_mounts, key=lambda item: len(item.parts), reverse=True):
                 try:
                     if mountpoint.is_dir():
@@ -1308,6 +1404,79 @@ class ExecutePythonTool(LLMTool):
         except ProcessLookupError:
             pass
 
+    @staticmethod
+    def _read_capped_text(path: Path, limit: int, *, keep_tail: bool = False) -> Tuple[str, bool, int]:
+        """Read bounded UTF-8 output without buffering an untrusted stream in RAM."""
+        try:
+            total = path.stat().st_size
+            with path.open("rb") as handle:
+                if keep_tail and total > limit:
+                    handle.seek(-limit, os.SEEK_END)
+                payload = handle.read(limit)
+        except OSError:
+            return "", False, 0
+        return payload.decode("utf-8", errors="replace"), total > limit, total
+
+    @staticmethod
+    def _user_code_start_line(code: str, original_code: Optional[str]) -> Optional[int]:
+        if not original_code:
+            return None
+        offset = code.rfind(original_code)
+        if offset < 0:
+            return None
+        return code[:offset].count("\n") + 1
+
+    @staticmethod
+    def _attach_cgroup(pid: int) -> Tuple[Optional[Path], Dict[str, Any]]:
+        """Optionally place the sandbox in a delegated cgroup v2 subtree."""
+        parent_raw = os.getenv("PYTHON_SANDBOX_CGROUP_PARENT", "").strip()
+        if not parent_raw:
+            return None, {"configured": False, "applied": False}
+        parent = Path(parent_raw)
+        leaf = parent / f"exec-{pid}"
+        diagnostics: Dict[str, Any] = {
+            "configured": True,
+            "applied": False,
+            "parent": str(parent),
+        }
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+            leaf.mkdir()
+            limits = {
+                "memory.max": os.getenv("PYTHON_SANDBOX_CGROUP_MEMORY_MAX", str(2 * 1024**3)),
+                "memory.swap.max": os.getenv("PYTHON_SANDBOX_CGROUP_SWAP_MAX", "0"),
+                "pids.max": os.getenv("PYTHON_SANDBOX_CGROUP_PIDS_MAX", "128"),
+            }
+            for filename, value in limits.items():
+                target = leaf / filename
+                if target.exists():
+                    target.write_text(str(value), encoding="ascii")
+            (leaf / "cgroup.procs").write_text(str(pid), encoding="ascii")
+            diagnostics.update({"applied": True, "path": str(leaf), "limits": limits})
+            return leaf, diagnostics
+        except OSError as exc:
+            logger.warning(
+                "execute_python_cgroup_attach_failed",
+                pid=pid,
+                error=str(exc),
+                parent=str(parent),
+            )
+            try:
+                leaf.rmdir()
+            except OSError:
+                pass
+            diagnostics["error"] = str(exc)
+            return None, diagnostics
+
+    @staticmethod
+    def _cleanup_cgroup(path: Optional[Path]) -> None:
+        if path is None:
+            return
+        try:
+            path.rmdir()
+        except OSError as exc:
+            logger.warning("execute_python_cgroup_cleanup_failed", path=str(path), error=str(exc))
+
     def _find_generated_files(self, temp_dir: str) -> list:
         """查找生成的文件（排除临时文件）"""
         generated_files = []
@@ -1324,6 +1493,7 @@ class ExecutePythonTool(LLMTool):
                         "images_output",
                         "_suyuan_assets",
                         "backend_runtime",
+                        "runtime_logs",
                     }
                 ]
             # 跳过 __pycache__ 目录
@@ -2888,7 +3058,14 @@ def merge_excel_with_charts(file_paths, output_path):
 
         return "\n".join(suggestions)
 
-    def _parse_subprocess_error(self, stderr: str, code: str) -> Dict[str, str]:
+    def _parse_subprocess_error(
+        self,
+        stderr: str,
+        code: str,
+        *,
+        original_code: Optional[str] = None,
+        user_code_start_line: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """
         解析 subprocess 模式的错误信息
 
@@ -2904,7 +3081,14 @@ def merge_excel_with_charts(file_paths, output_path):
         # 沙箱引导/环境级失败优先于 Python 异常模式：动态加载器、bubblewrap
         # 自身或资源限制失败不会产生 Python traceback，归为独立类型以便监控
         # 区分"代码 bug"与"沙箱环境问题"。
-        if "error while loading shared libraries" in stderr or re.search(r"\bbwrap:", stderr):
+        bootstrap_markers = (
+            "error while loading shared libraries",
+            "failed to map segment from shared object",
+            "cannot allocate memory",
+            "prlimit: failed",
+        )
+        stderr_lower = stderr.lower()
+        if any(marker in stderr_lower for marker in bootstrap_markers) or re.search(r"\bbwrap:", stderr):
             return {
                 "error_type": "SandboxBootstrapError",
                 "error_message": (
@@ -2928,8 +3112,8 @@ def merge_excel_with_charts(file_paths, output_path):
 
         # 常见 Python 错误模式
         patterns = [
-            r"(NameError|TypeError|ValueError|KeyError|AttributeError|IndexError|FileNotFoundError|ZeroDivisionError|SyntaxError|RuntimeError): (.+)",
-            r"Traceback \(most recent call last\):\s+.*\s+(NameError|TypeError|ValueError|KeyError|AttributeError|IndexError|FileNotFoundError|ZeroDivisionError|SyntaxError|RuntimeError): (.+)",
+            r"(NameError|TypeError|ValueError|KeyError|AttributeError|IndexError|FileNotFoundError|ZeroDivisionError|SyntaxError|RuntimeError|ImportError|ModuleNotFoundError|PermissionError|OSError|MemoryError): (.+)",
+            r"Traceback \(most recent call last\):\s+.*\s+(NameError|TypeError|ValueError|KeyError|AttributeError|IndexError|FileNotFoundError|ZeroDivisionError|SyntaxError|RuntimeError|ImportError|ModuleNotFoundError|PermissionError|OSError|MemoryError): (.+)",
         ]
 
         for pattern in patterns:
@@ -2940,18 +3124,23 @@ def merge_excel_with_charts(file_paths, output_path):
                 break
 
         # 提取行号
-        line_number = None
-        line_match = re.search(r'File "<string>", line (\d+)', stderr)
-        if line_match:
-            line_number = int(line_match.group(1))
+        raw_line_number = None
+        line_matches = re.findall(r'File "(?:<string>|[^"]*script\.py)", line (\d+)', stderr)
+        if line_matches:
+            raw_line_number = int(line_matches[-1])
+        line_number = raw_line_number
+        if raw_line_number and user_code_start_line and original_code:
+            mapped = raw_line_number - user_code_start_line + 1
+            if 1 <= mapped <= len(original_code.splitlines()):
+                line_number = mapped
 
         # 获取错误行的代码上下文
         code_context = ""
         if line_number:
-            code_lines = code.split('\n')
+            code_lines = (original_code or code).split('\n')
             if 0 < line_number <= len(code_lines):
                 error_line = code_lines[line_number - 1].strip()
-                code_context = f"错误行代码（第{line_number}行）: {error_line}"
+                code_context = f"用户代码错误行（第{line_number}行）: {error_line}"
 
         # 获取修复建议
         suggestions = self._get_error_suggestions(error_type, error_msg, code_context)
@@ -2972,6 +3161,7 @@ def merge_excel_with_charts(file_paths, output_path):
             "error_message": detailed_error,
             "summary": f"❌ 执行失败: {error_type} - {error_msg}",
             "line_number": line_number,
+            "raw_line_number": raw_line_number,
             "code_context": code_context,
             "suggestions": suggestions
         }
@@ -2988,7 +3178,11 @@ def merge_excel_with_charts(file_paths, output_path):
                 "通过 load_data(file_path) 加载，较大计算结果通过 save_data(...) 保存为新的 file_path，避免直接输出大量明细。"
                 "如果任务只是查看文件、搜索文本、检查进程或调用现成 CLI，优先使用 bash；"
                 "需要循环、条件分支、解析转换、程序化处理或可靠地产出文件时，优先使用 execute_python。"
-                "复杂用法先阅读 backend/app/tools/utility/execute_python_manual.md。"
+                "Agent 必须在调用 execute_python 前按任务用途调用 read_file(path=...) 阅读对应规范："
+                "数据处理/Excel 使用 backend/app/tools/utility/execute_python_data_manual.md；"
+                "matplotlib/seaborn 静态图使用 backend/app/tools/utility/execute_python_chart_manual.md；"
+                "报告、QMD、DOCX、PPTX、PDF 使用 backend/app/tools/utility/execute_python_report_manual.md；"
+                "混合任务或代码同时覆盖多个场景时，须阅读全部命中的规范。"
                 "每次调用是独立环境，变量和文件挂载不跨调用保留；每次读取输入文件都须通过 input_files 声明。"
                 "声明文件经会话权限校验后挂载，代码中的 input_files 列表提供规范化绝对路径，支持循环读取和路径运算。"
                 "用 load_data(file_path) 读取会话数据文件，"
@@ -3001,7 +3195,7 @@ def merge_excel_with_charts(file_paths, output_path):
                 "生成 Excel、Word、PDF 等交付文件必须先调用 artifact_path(filename) 获取输出路径并保存；"
                 "已支持的专用业务图型在所有模式必须使用 create_business_chart，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具。"
                 "其他图表：专家/报告模式的静态分析和正式报告图表优先使用 execute_python；问数模式绘图优先使用 execute_echarts_python。"
-                "绘图前阅读 execute_python_manual.md 的风格约束；matplotlib/seaborn 自动应用与报告图表一致的主题，"
+                "绘图前阅读 backend/app/tools/utility/execute_python_chart_manual.md；matplotlib/seaborn 自动应用与报告图表一致的主题，"
                 "可按分析需要自主选择图型，无需用户预先指定；默认一个独立图表一个图片文件，同主题的趋势、分布、排名分别保存。"
                 "一次调用可保存多张图；仅联合阅读确有必要或用户明确要求时使用多子图，并保证报告插入后的可读性。"
                 "专家/报告静态图按报告正文插入尺寸设计画布、比例和字号，详见手册报告插图尺寸与比例。"
@@ -3027,7 +3221,7 @@ def merge_excel_with_charts(file_paths, output_path):
                             "要执行的 Python 代码。matplotlib 图片可用 save_chart(fig, filename) 或 fig.savefig(path) 保存；"
                             "matplotlib 中文字体由系统自动设置，不要显式设置 SimHei、DejaVu Sans 等不支持中文的字体；"
                             "工具默认应用共享报告配色、字号和轴线风格；可使用 REPORT_THEME、SERIES_COLORS、theme_color(role)。"
-                            "环境图遵守手册环境绘图约束：等级色按适用标准，图例默认在下方；"
+                            "环境图遵守 backend/app/tools/utility/execute_python_chart_manual.md：等级色按适用标准，图例默认在下方；"
                             "浓度对比有适用限值时标出标准线，明确污染物、单位、平均时间、等级和数据日期。"
                             "可直接使用 aqi_color、pollutant_color、get_pollutant_scale、get_environment_limit、add_standard_limit、legend_below；"
                             "小时值不得直接按日均限值判断达标，缺失不填零，预测与实测区分。"
@@ -3035,7 +3229,7 @@ def merge_excel_with_charts(file_paths, output_path):
                             "seaborn.set_theme 后须在创建图表前调用 apply_report_style() 恢复主题。"
                             "默认一个独立图表一个图片文件，可在一次调用中分别保存多个 Figure；仅联合阅读确有必要或用户明确要求时合图。"
                             "报告图显式设置 figsize，未知模板时按约 5.8 英寸插入宽度设计，常规单图可用 (6.0, 3.8)。"
-                            "最终刻度/图例一般不小于 9 pt，PNG 显式用 save_chart(..., dpi=240)，按手册检查缩放后可读性。"
+                            "最终刻度/图例一般不小于 9 pt，PNG 显式用 save_chart(..., dpi=240)，按 backend/app/tools/utility/execute_python_chart_manual.md 检查缩放后可读性。"
                             "结构化结果若需被后续调用或其他工具读取，代码必须使用 path = save_data(data, schema=...)；"
                             "只能向后续工具传递该返回值，不能传递其他文件写入方式产生的中间路径。"
                             "Excel、Word、PDF 等交付文件必须先使用 output_path = artifact_path(filename)，"
