@@ -6,30 +6,16 @@ from typing import Any, Dict, Optional
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import file_products, resources_for_visuals
 from app.tools.resource_refs import build_data_file_ref, build_file_ref, build_visual_ref, merge_refs
-from app.tools.visualization.create_report_chart.renderer import ChartDataError
+from app.tools.visualization.create_report_chart.renderer import ChartDataError, SPECIALIZED_CHART_TYPES
+from app.utils.path_config import format_agent_path
 
 
 REFERENCE_DIR = Path(__file__).resolve().parent / "references"
 
 
 def report_chart_reference_paths() -> Dict[str, str]:
-    return {
+    paths = {
         "index": str(REFERENCE_DIR / "index.md"),
-        "pie_rules": str(REFERENCE_DIR / "pie-rules.md"),
-        "bar_chart": str(REFERENCE_DIR / "bar-chart.md"),
-        "line_chart": str(REFERENCE_DIR / "line-chart.md"),
-        "scatter_chart": str(REFERENCE_DIR / "scatter-chart.md"),
-        "stacked_area": str(REFERENCE_DIR / "stacked-area.md"),
-        "dual_axis_line": str(REFERENCE_DIR / "dual-axis-line.md"),
-        "stacked_bar": str(REFERENCE_DIR / "stacked-bar.md"),
-        "histogram": str(REFERENCE_DIR / "histogram.md"),
-        "correlation_heatmap": str(REFERENCE_DIR / "correlation-heatmap.md"),
-        "boxplot": str(REFERENCE_DIR / "boxplot.md"),
-        "combo_chart": str(REFERENCE_DIR / "combo-chart.md"),
-        "range_and_error": str(REFERENCE_DIR / "range-and-error.md"),
-        "waterfall_chart": str(REFERENCE_DIR / "waterfall-chart.md"),
-        "pareto_chart": str(REFERENCE_DIR / "pareto-chart.md"),
-        "comparison_charts": str(REFERENCE_DIR / "comparison-charts.md"),
         "pollutant_calendar": str(REFERENCE_DIR / "pollutant-calendar.md"),
         "generic_pollutant_wind_rose": str(REFERENCE_DIR / "generic-pollutant-wind-rose.md"),
         "wind_timeseries": str(REFERENCE_DIR / "wind-timeseries.md"),
@@ -37,10 +23,11 @@ def report_chart_reference_paths() -> Dict[str, str]:
         "aqi_calendar": str(REFERENCE_DIR / "aqi-calendar.md"),
         "pollutant_wind_rose": str(REFERENCE_DIR / "pollutant-wind-rose.md"),
     }
+    return {name: format_agent_path(path) for name, path in paths.items()}
 
 
 class CreateReportChartTool(LLMTool):
-    """Create static report charts for QMD/Word output."""
+    """Create static charts for documented business scenarios."""
 
     def __init__(self):
         reference_paths = report_chart_reference_paths()
@@ -50,9 +37,11 @@ class CreateReportChartTool(LLMTool):
             f"采用两层规范：先读公共入口 references/index.md={reference_paths['index']}，"
             "再且仅按选定 chart_type 读取一份对应图型文档；无需另读输入、A4 或布局规范。"
             "必须通过 data 或 file_path 至少提供一种数据输入。"
-            "⚠️ **适用范围**：标准报告图表（bar/line/scatter/pie/histogram等）；"
-            "weather_timeseries 仅绘制单日风向、风速、温度、降水概率、湿度五要素，禁止叠加污染物或跨日期叠加；"
-            "仅 wind_timeseries/明确的组合图允许在气象背景上叠加污染物序列。"
+            "仅支持污染物/AQI 日历、污染物风玫瑰、风场污染物叠加时序和气象五要素时序。"
+            "常规柱状、折线、散点、饼图、分布、热力图及自定义组合图不由本工具绘制；"
+            "问数交互图使用 execute_echarts_python，静态分析及报告图使用 execute_python。"
+            "weather_timeseries 绘制连续 1–7 天风向、风速、温度、降水概率、湿度五要素，禁止叠加污染物或重叠不同日期曲线；"
+            "气象背景叠加污染物使用 wind_timeseries；纯风向频率图使用 Python，不得用占位浓度制作污染物风玫瑰。"
             "图型契约不应限制分析维度；自由组合、分面、多子图和科研图表使用 execute_python + matplotlib/seaborn。"
             "生成的静态图在对话正文展示，不进入右侧交互图面板；"
             "单独交付图表时可在最终答复中用 [[chart:<visual_id>]] 控制位置，visual_id 取返回的 visuals.id，"
@@ -71,46 +60,16 @@ class CreateReportChartTool(LLMTool):
                     },
                     "chart_type": {
                         "type": "string",
-                        "enum": [
-                            "bar",
-                            "horizontal_bar",
-                            "line",
-                            "timeseries",
-                            "scatter",
-                            "pie",
-                            "stacked_area",
-                            "dual_axis_line",
-                            "stacked_bar",
-                            "percent_stacked_bar",
-                            "histogram",
-                            "correlation_heatmap",
-                            "boxplot",
-                            "combo",
-                            "range_line",
-                            "waterfall",
-                            "pareto",
-                            "diverging_bar",
-                            "step_line",
-                            "error_bar",
-                            "pollutant_calendar",
-                            "generic_pollutant_wind_rose",
-                            "wind_timeseries",
-                            "weather_timeseries",
-                            "aqi_calendar",
-                            "pollutant_wind_rose",
-                        ],
-                        "description": "图表类型。",
+                        "enum": sorted(SPECIALIZED_CHART_TYPES),
+                        "description": "业务场景图型，仅支持列出的专用类型。",
                     },
                     "title": {"type": "string", "description": "图表标题。"},
                     "data": {
                         "type": "object",
                         "description": (
                             "结构化图表数据，不是 ECharts option。"
-                            "line/bar/pie 推荐传 labels+values 或 x+y；"
-                            "单序列可传 series[0].data 或 series[0].values。"
-                            "line/bar 支持多序列 series，每个序列使用 name + data/values。"
-                            "combo 使用 labels + series[{name,type,values,axis,stack}]，type 仅 bar/line。"
-                            "普通图表不会自动推断任意 records 的横轴、纵轴或系列字段。"
+                            "按对应业务图型文档提供 records、日期与污染物浓度数组、风向风速与真实浓度数组等。"
+                            "输入必须符合选定图型的业务口径；不接收常规图型或 charts 嵌套多图请求。"
                             "与 file_path 同时提供时，data 用于渲染，file_path 仅用于来源追踪。"
                         ),
                     },
@@ -122,7 +81,7 @@ class CreateReportChartTool(LLMTool):
                             "execute_python 产生的结构化数据必须先通过 save_data(...) 保存，"
                             "此处只能传入 save_data 返回的 file_path，不能传入执行环境内自行写入的中间路径。"
                             "未提供 data 时，工具通过 ExecutionContext 自动读取，"
-                            "Agent 无需调用 get_raw_data；普通图表的数据资产应已整理为目标图型结构。"
+                            "Agent 无需调用 get_raw_data；数据资产应符合目标业务图型契约。"
                             "与 data 同时提供时仅用于来源追踪。"
                         ),
                     },
@@ -146,8 +105,7 @@ class CreateReportChartTool(LLMTool):
                     "options": {
                         "type": "object",
                         "description": (
-                            "少量图型参数；支持 x_label、y_label、unit、legend、reference_lines；"
-                            "组合图支持 left_y_label/right_y_label 和 left_unit/right_unit。"
+                            "专用图型参数，以对应业务文档为准；污染物风玫瑰支持字段映射、方向分箱和风速分箱。"
                             "wind_timeseries 使用风速/风向角时必须显式提供 "
                             "wind_direction_convention（meteorological_from 或 mathematical_to）；"
                             "直接提供 east_u/north_v 时无需该参数。"
@@ -157,38 +115,6 @@ class CreateReportChartTool(LLMTool):
                             "temperature_field/precipitation_probability_field/humidity_field。"
                             "复杂视觉规则请先读取引用文档。"
                         ),
-                    },
-                    "data_policy": {
-                        "type": "object",
-                        "description": (
-                            "数据语义策略。当前支持 sort：none、ascending、descending；"
-                            "工具会同步重排 labels 与所有 series。"
-                        ),
-                        "properties": {
-                            "sort": {"type": "string", "enum": ["none", "ascending", "descending"]}
-                        },
-                        "additionalProperties": False,
-                    },
-                    "emphasis": {
-                        "type": "object",
-                        "description": (
-                            "语义高亮配置。items 指定需要强调的分类；工具使用统一主题色，"
-                            "不接受任意颜色值。"
-                        ),
-                        "properties": {
-                            "items": {"type": "array", "items": {"type": "string"}},
-                            "mode": {"type": "string", "enum": ["primary", "muted"]},
-                        },
-                        "additionalProperties": False,
-                    },
-                    "annotations": {
-                        "type": "array",
-                        "description": (
-                            "声明式标识层。当前标准渲染器支持 value，后续可扩展 percent、threshold、callout；"
-                            "工具负责位置、避让和越界处理。柱状图数值标识可使用 "
-                            "{kind:'value', target:'bars', format:'auto', placement:'auto'}。"
-                        ),
-                        "items": {"type": "object"},
                     },
                 },
                 "required": ["chart_type", "title"],
@@ -203,7 +129,7 @@ class CreateReportChartTool(LLMTool):
             description=description,
             category=ToolCategory.VISUALIZATION,
             function_schema=function_schema,
-            version="0.2.0",
+            version="0.3.0",
             requires_context=True,
         )
 
@@ -219,18 +145,9 @@ class CreateReportChartTool(LLMTool):
         style_profile: str = "report",
         notes: Optional[Any] = None,
         options: Optional[Dict[str, Any]] = None,
-        data_policy: Optional[Dict[str, Any]] = None,
-        emphasis: Optional[Dict[str, Any]] = None,
-        annotations: Optional[list[Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         opts = dict(options or {})
-        if data_policy is not None:
-            opts["data_policy"] = dict(data_policy)
-        if emphasis is not None:
-            opts["emphasis"] = dict(emphasis)
-        if annotations is not None:
-            opts["annotations"] = list(annotations)
         if notes is not None:
             opts["notes"] = notes
         metadata = {
@@ -241,6 +158,17 @@ class CreateReportChartTool(LLMTool):
             "style_profile": style_profile or "report",
             "reference_paths": report_chart_reference_paths(),
         }
+        if chart_type not in SPECIALIZED_CHART_TYPES:
+            return self._failed_result(
+                f"create_business_chart 不支持图型 {chart_type!r}；仅支持专用业务图型。"
+                "常规问数交互图请使用 execute_echarts_python，静态分析和报告图请使用 execute_python。",
+                metadata, chart_type, title, file_path,
+            )
+        if isinstance(data, dict) and "charts" in data:
+            return self._failed_result(
+                "不接收 charts 嵌套多图请求；专用业务图分别调用，自定义组合图使用 execute_python。",
+                metadata, chart_type, title, file_path,
+            )
         if data is None and not file_path:
             return self._failed_result(
                 "必须提供 data 或 file_path 作为图表数据输入。",
@@ -365,7 +293,7 @@ class CreateReportChartTool(LLMTool):
             return {"records": loaded}
         raise ChartDataError(
             f"file_path {file_path} 未保存为 create_business_chart 可直接使用的图表数据对象；"
-            "请先整理为 labels+values、x+y 或单序列 series 数据。"
+            "请先整理为对应业务图型文档要求的数据对象。"
         )
 
     def _failed_result(

@@ -1,7 +1,7 @@
 # Pollutant Calendar Design
 
 Use `pollutant_calendar` for a generic month-level pollutant calendar for any
-province, city, station, or pollutant. This is the general chart type. Do not
+province, city, station, or pollutant. This is a business calendar template. Do not
 use the Guangdong-specific `aqi_calendar` outside Guangdong AQI calendar
 reports.
 
@@ -38,4 +38,3 @@ or one station per image.
 - `month`
 - `pollutant`
 - `unit`
-

@@ -73,12 +73,12 @@ def render_report_chart(
     style_profile: str,
     options: Dict[str, Any],
 ) -> Dict[str, Any]:
-    if chart_type in {"bar", "horizontal_bar"} and _chart_item_count(data) > 20:
-        return _render_auto_split_bar_chart(
-            chart_id, chart_type, title, data, output_context, style_profile, options
+    if chart_type not in SPECIALIZED_CHART_TYPES:
+        raise ChartDataError(
+            f"create_business_chart 不支持图型 {chart_type!r}；常规交互图使用 execute_echarts_python，静态图使用 execute_python。"
         )
-    if isinstance(data.get("charts"), list) and len(data["charts"]) > 1:
-        return _render_split_charts(chart_id, title, data["charts"], output_context, style_profile, options)
+    if "charts" in data:
+        raise ChartDataError("不接收 charts 嵌套多图请求；专用业务图分别调用，自定义组合图使用 execute_python。")
 
     return _render_single_chart(
         chart_id=chart_id,
