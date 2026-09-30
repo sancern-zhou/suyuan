@@ -31,6 +31,21 @@ def test_xuchang_query_prompt_combines_query_and_chart_workflows():
     assert "网页交互查看的 ECharts 图表" in prompt
 
 
+def test_xuchang_report_prompt_uses_dynamic_workflow_contract():
+    context = load_project_context("xuchang")
+    prompt = load_project_mode_prompt("report", context)
+
+    assert prompt is not None
+    assert "run_agent_workflow(workflow=" in prompt
+    assert "data.node_results" in prompt
+    assert "data.node_lineage" in prompt
+    assert "expert_meteorology" in prompt
+    assert "expert_analysis" in prompt
+    assert "report_analysis_v1" not in prompt
+    assert "data.report_analysis" not in prompt
+    assert "template_options" not in prompt
+
+
 def test_xuchang_social_prompt_targets_mobile_query_workflow():
     context = load_project_context("xuchang")
     prompt = load_project_mode_prompt("social", context)

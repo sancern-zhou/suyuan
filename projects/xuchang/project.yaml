@@ -121,6 +121,7 @@ backend:
       - resolve_station_geo
       - execute_sql_query
       - execute_python
+      - create_business_chart
     # 报告 DAG 常规分析专家子模式：仅监测数据研判工具，气象归因引用上游气象节点
     expert_analysis:
       - list_session_resources
