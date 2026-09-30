@@ -24,6 +24,8 @@ class WorkflowNodeSpec:
     dependencies: tuple[str, ...] = ()
     payload: Dict[str, Any] = field(default_factory=dict)
     max_attempts: int = 1
+    max_iterations: Optional[int] = None
+    timeout_seconds: Optional[float] = None
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "WorkflowNodeSpec":
@@ -41,11 +43,21 @@ class WorkflowNodeSpec:
         for key in ("target_mode", "goal", "context", "task_contract", "result_schema", "require_lineage"):
             if key in value and key not in payload:
                 payload[key] = value[key]
+        raw_max_iterations = value.get("max_iterations")
+        max_iterations = int(raw_max_iterations) if raw_max_iterations is not None else None
+        if max_iterations is not None and max_iterations < 1:
+            raise ValueError("workflow node max_iterations must be at least 1")
+        raw_timeout_seconds = value.get("timeout_seconds")
+        timeout_seconds = float(raw_timeout_seconds) if raw_timeout_seconds is not None else None
+        if timeout_seconds is not None and timeout_seconds <= 0:
+            raise ValueError("workflow node timeout_seconds must be greater than 0")
         return cls(
             task_id=task_id,
             dependencies=dependencies,
             payload=payload,
             max_attempts=max(1, int(value.get("max_attempts") or 1)),
+            max_iterations=max_iterations,
+            timeout_seconds=timeout_seconds,
         )
 
 
@@ -83,6 +95,8 @@ class WorkflowDefinition:
                     "dependencies": list(node.dependencies),
                     "payload": dict(node.payload),
                     "max_attempts": node.max_attempts,
+                    "max_iterations": node.max_iterations,
+                    "timeout_seconds": node.timeout_seconds,
                 }
                 for node in self.nodes
             ],
@@ -234,9 +248,17 @@ class WorkflowCoordinator:
         dependency_results = {dependency: self.node_results.get(dependency) for dependency in node.dependencies}
         try:
             async with self.governor:
-                result = self.executor(node, dependency_results, node_run.attempt)
-                if inspect.isawaitable(result):
-                    result = await result
+                async def execute_node() -> Any:
+                    result = self.executor(node, dependency_results, node_run.attempt)
+                    if inspect.isawaitable(result):
+                        return await result
+                    return result
+
+                if node.timeout_seconds is None:
+                    result = await execute_node()
+                else:
+                    async with asyncio.timeout(node.timeout_seconds):
+                        result = await execute_node()
             metadata = result.get("metadata") if isinstance(result, dict) else None
             child_session_id = metadata.get("session_id") if isinstance(metadata, dict) else None
             if isinstance(child_session_id, str) and child_session_id:
@@ -266,8 +288,13 @@ class WorkflowCoordinator:
             self.runtime.request_cancel(node_run.run_id, reason=self.cancel_reason or "workflow cancelled")
             raise
         except Exception as exc:
-            self.node_errors[task_id] = str(exc)
-            self.runtime.transition(node_run.run_id, "failed", payload={"error": str(exc)})
+            error = (
+                f"workflow node timed out after {node.timeout_seconds:g}s"
+                if isinstance(exc, TimeoutError) and node.timeout_seconds is not None
+                else str(exc)
+            )
+            self.node_errors[task_id] = error
+            self.runtime.transition(node_run.run_id, "failed", payload={"error": error})
             if node_run.attempt < node_run.max_attempts:
                 self.graph.set_status(task_id, "pending")
                 self.runtime.start(node_run.run_id)

@@ -60,7 +60,23 @@ logger = structlog.get_logger()
 session_manager = get_session_manager()
 
 # ⚠️ 支持多种模式：assistant, query, report, social, chart, expert, ops
-AgentMode = Literal["assistant", "query", "report", "social", "chart", "expert", "ops", "board", "ppt", "knowledge"]
+AgentMode = Literal[
+    "assistant", "query", "report", "social", "chart", "expert",
+    "expert_meteorology", "expert_analysis", "ops", "board", "ppt", "knowledge",
+]
+
+_DEFAULT_CHILD_MAX_ITERATIONS = {
+    "expert_meteorology": 15,
+    "expert_analysis": 20,
+    "expert": 30,
+}
+
+
+def _resolve_child_max_iterations(target_mode: str, requested: Optional[int]) -> int:
+    default = _DEFAULT_CHILD_MAX_ITERATIONS.get(str(target_mode), 120)
+    if requested is None:
+        return default
+    return max(1, min(int(requested), 120))
 
 
 class CallSubAgentTool(LLMTool):
@@ -169,6 +185,12 @@ class CallSubAgentTool(LLMTool):
                         "minimum": 0,
                         "maximum": 2,
                         "description": "结构化结果校验失败时的自动修复轮数，默认1，最多2轮。"
+                    },
+                    "max_iterations": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 120,
+                        "description": "本次子 Agent 最大推理轮次；未指定时按专家类型使用较小默认值。",
                     },
                     "workflow_run_id": {
                         "type": "string",
@@ -305,6 +327,7 @@ class CallSubAgentTool(LLMTool):
         task_contract: Optional[Dict[str, Any]] = None,
         result_schema: Optional[Dict[str, Any]] = None,
         repair_attempts: int = 1,
+        max_iterations: Optional[int] = None,
         workflow_run_id: Optional[str] = None,
         allowed_tool_names: Optional[List[str]] = None,
         denied_tool_names: Optional[List[str]] = None,
@@ -777,8 +800,9 @@ class CallSubAgentTool(LLMTool):
             child_registry = capability_policy.filter_registry(
                 tool_executor.tool_registry if tool_executor else None
             )
+            iteration_limit = _resolve_child_max_iterations(target_mode, max_iterations)
             sub_agent = ReActAgent(
-                max_iterations=120,  # 子Agent默认120次迭代
+                max_iterations=iteration_limit,
                 enable_memory=True,  # ✅ 启用记忆（子Agent会自动创建 UnifiedMemoryManager）
                 tool_registry=child_registry  # 子 Agent 只获得策略允许的工具
             )
@@ -909,6 +933,7 @@ class CallSubAgentTool(LLMTool):
                 status=final_result["status"],
                 answer_length=len(final_result.get("answer", "")),
                 iterations=len([e for e in result_events if e.get("type") == "tool_call"]),
+                max_iterations=iteration_limit,
                 session_id=session_id
             )
 

@@ -118,6 +118,28 @@ def test_coordinator_cancels_pending_nodes():
     asyncio.run(run())
 
 
+def test_coordinator_times_out_node_and_records_clear_error():
+    async def run():
+        async def execute(node, dependencies, attempt):
+            await asyncio.sleep(1)
+            return {"ok": True}
+
+        coordinator = WorkflowCoordinator(
+            {
+                "workflow_id": "timeout-1",
+                "nodes": [{"task_id": "expert", "timeout_seconds": 0.01}],
+            },
+            executor=execute,
+        )
+        result = await coordinator.run()
+        assert result["status"] == "failed"
+        assert result["graph"]["expert"]["status"] == "failed"
+        assert "timed out after 0.01s" in result["node_errors"]["expert"]
+        assert result["definition"]["nodes"][0]["timeout_seconds"] == 0.01
+
+    asyncio.run(run())
+
+
 def test_coordinator_records_strict_node_lineage():
     async def run():
         async def execute(node, dependencies, attempt):

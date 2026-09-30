@@ -18,6 +18,13 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 logger = structlog.get_logger(__name__)
 
 
+_DEFAULT_EXPERT_NODE_LIMITS = {
+    "expert_meteorology": {"max_iterations": 15, "timeout_seconds": 300},
+    "expert_analysis": {"max_iterations": 20, "timeout_seconds": 360},
+    "expert": {"max_iterations": 30, "timeout_seconds": 480},
+}
+
+
 WORKFLOW_DAG_EXAMPLE = (
     '{"workflow": {"workflow_id": "air-quality-report", "nodes": ['
     '{"task_id": "air-data", "target_mode": "query", "goal": "查询指定区域和时间范围的空气质量数据"}, '
@@ -42,7 +49,8 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "expert 族节点（expert/expert_meteorology/expert_analysis）必须提供 task_contract（protocol_version=workflow.v1、"
     "task_type=expert_analysis、question、decision_context、scope、required_evidence、deliverables）和 "
     "result_schema（要求 status、findings、evidence、uncertainties、data_gaps，finding 通过 evidence id 回溯证据）；"
-    "节点可用 max_attempts 设置重试次数（1-3）。"
+    "节点可用 max_attempts 设置重试次数（1-3），用 max_iterations 限制子 Agent 推理轮次，"
+    "用 timeout_seconds 设置节点硬超时；气象和常规分析节点应使用短轮次和有限超时。"
     f"示例：{WORKFLOW_DAG_EXAMPLE}\n\n"
     f"{build_target_mode_contract()}"
 )
@@ -208,7 +216,8 @@ class RunAgentWorkflowTool(LLMTool):
                             "type": "object",
                             "description": (
                                 "完整 DAG 定义：{workflow_id, version?, nodes:[{task_id, target_mode, goal, context, "
-                                "dependencies, task_contract, result_schema, max_attempts}]}. "
+                                "dependencies, task_contract, result_schema, max_attempts, max_iterations, "
+                                "timeout_seconds}]}. "
                                 "编排由你自主规划；无依赖节点并行，依赖用 dependencies 表达。"
                             ),
                             "properties": {
@@ -231,6 +240,18 @@ class RunAgentWorkflowTool(LLMTool):
                                             "task_contract": {"type": "object"},
                                             "result_schema": {"type": "object"},
                                             "max_attempts": {"type": "integer", "minimum": 1, "maximum": 3},
+                                            "max_iterations": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 120,
+                                                "description": "子 Agent 最大推理轮次；气象专家建议15，常规分析专家建议20。",
+                                            },
+                                            "timeout_seconds": {
+                                                "type": "number",
+                                                "minimum": 30,
+                                                "maximum": 1800,
+                                                "description": "节点硬超时秒数；到期后取消正在运行的子 Agent 和工具。",
+                                            },
                                         },
                                         "required": ["task_id", "target_mode", "goal"],
                                     },
@@ -271,6 +292,10 @@ class RunAgentWorkflowTool(LLMTool):
             for node in nodes:
                 if not node.get("target_mode") or not node.get("goal"):
                     return self._failure(f"节点 {node.get('task_id') or '<unknown>'} 缺少 target_mode 或 goal")
+                limits = _DEFAULT_EXPERT_NODE_LIMITS.get(str(node.get("target_mode")))
+                if limits:
+                    node.setdefault("max_iterations", limits["max_iterations"])
+                    node.setdefault("timeout_seconds", limits["timeout_seconds"])
             definition["nodes"] = nodes
             sub_agent_tool = self._build_sub_agent_tool()
 
@@ -296,6 +321,7 @@ class RunAgentWorkflowTool(LLMTool):
                     parent_task_id=str(definition["workflow_id"]),
                     task_contract=payload.get("task_contract"),
                     result_schema=payload.get("result_schema"),
+                    max_iterations=node.max_iterations,
                     # A coordinator node always emits a lineage manifest.  The
                     # template can opt into strict result-envelope checking.
                     repair_attempts=max(0, min(node.max_attempts - 1, 2)),

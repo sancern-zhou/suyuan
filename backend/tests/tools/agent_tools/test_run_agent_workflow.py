@@ -25,6 +25,9 @@ def test_run_agent_workflow_schema_documents_free_form_dag():
         assert token in description
 
     assert "workflow" in properties
+    node_properties = properties["workflow"]["properties"]["nodes"]["items"]["properties"]
+    assert node_properties["max_iterations"]["maximum"] == 120
+    assert node_properties["timeout_seconds"]["minimum"] == 30
     assert "workflow_template" not in properties
     assert "template_options" not in properties
     assert schema["parameters"]["required"] == ["workflow"]
@@ -40,7 +43,7 @@ def test_run_agent_workflow_schema_documents_target_mode_contract():
     target_mode = schema["parameters"]["properties"]["workflow"]["properties"]["nodes"]["items"]["properties"]["target_mode"]
 
     assert "能力与工具边界" in description
-    assert "禁止同一数据源" in description
+    assert "同源数据由一个节点获取，后续节点通过 dependencies 复用" in description
     assert {"query", "expert", "report"}.issubset(set(target_mode["enum"]))
     call_target_mode = CallSubAgentTool().get_function_schema()["parameters"]["properties"]["target_mode"]
     assert call_target_mode["enum"] == target_mode["enum"]
@@ -168,6 +171,47 @@ async def test_run_agent_workflow_dispatches_parallel_nodes_and_injects_dependen
     assert "分析空气质量" not in merge_call["context_str"]
     assert "分析气象条件" not in merge_call["context_str"]
     assert all(call["_force_isolated_session"] is True for call in calls)
+    assert all(call["max_iterations"] == 30 for call in calls)
+    assert all(
+        node["timeout_seconds"] == 480
+        for node in result["data"]["snapshot"]["definition"]["nodes"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_agent_workflow_applies_domain_expert_limits(monkeypatch):
+    calls = []
+
+    class FakeSubAgentTool:
+        async def execute(self, **kwargs):
+            calls.append(kwargs)
+            return {"status": "success", "success": True, "result": "ok", "data": {}}
+
+    monkeypatch.setattr(
+        RunAgentWorkflowTool,
+        "_build_sub_agent_tool",
+        staticmethod(lambda: FakeSubAgentTool()),
+    )
+    result = await RunAgentWorkflowTool().execute(
+        workflow={
+            "workflow_id": "specialist-limits",
+            "nodes": [
+                {"task_id": "weather", "target_mode": "expert_meteorology", "goal": "气象分析"},
+                {"task_id": "analysis", "target_mode": "expert_analysis", "goal": "常规分析"},
+            ],
+        },
+    )
+
+    assert result["success"] is True
+    by_mode = {call["target_mode"]: call for call in calls}
+    assert by_mode["expert_meteorology"]["max_iterations"] == 15
+    assert by_mode["expert_analysis"]["max_iterations"] == 20
+    definitions = {
+        node["payload"]["target_mode"]: node
+        for node in result["data"]["snapshot"]["definition"]["nodes"]
+    }
+    assert definitions["expert_meteorology"]["timeout_seconds"] == 300
+    assert definitions["expert_analysis"]["timeout_seconds"] == 360
 
 
 @pytest.mark.asyncio

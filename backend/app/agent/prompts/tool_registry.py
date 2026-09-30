@@ -165,6 +165,7 @@ EXPERT_METEOROLOGY_TOOL_NAMES = [
     "execute_sql_query",
     # 计算与绘图
     "execute_python",
+    "create_business_chart",
 ]
 
 # ===== 常规分析专家模式工具（报告 DAG 子专家，精简配置） =====

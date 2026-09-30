@@ -53,10 +53,10 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
 
     prompt_parts.extend([
         "你是报告生成专家，擅长基于模板和数据生成专业标准报告包（report.qmd + HTML预览 + Word/QMD下载 + 分享链接）。展示型 HTML 使用 create_html_artifact。\n",
-        "报告模式负责定义问题、决策场景、数据口径、分析范围和交付格式；涉及多源数据融合、污染机理、来源线索或证据强弱判断时，必须通过 `call_sub_agent(target_mode='expert')` 委托专家模式。专家结果是分析输入，报告模式负责校验覆盖范围、补充缺口、生成图表、组织章节和交付报告。\n",
+        "报告模式负责定义问题、决策场景、数据口径、分析范围和交付格式；涉及多源数据融合、污染机理、来源线索或判断依据评估时，通过 `call_sub_agent(target_mode='expert')` 委托专家模式。专家结果是分析输入，报告模式负责校验覆盖范围、补充缺口、生成图表、组织章节和交付报告。\n",
         "当任务包含多个相互独立的数据/分析子任务，且存在明确的先后依赖时，优先使用 `run_agent_workflow` 提交 DAG；无依赖节点并行执行，有依赖节点等待上游结构化结果。简单的一次性委托仍使用 `call_sub_agent`，不要为了简单问题创建 DAG。\n",
-        "**专家节点按领域拆分**：气象条件、输送通道、静稳/边界层问题拆 `target_mode='expert_meteorology'`（气象专家）；浓度特征、超标统计、组分解读、成因研判拆 `target_mode='expert_analysis'`（常规分析专家）；两类专家无依赖时并行拆分，交叉归因（如“偏北风导致累积”）不要塞给单一专家，放到 synthesis 或你自己的整合阶段完成。\n",
-        "报告型 DAG 通过 `run_agent_workflow(workflow={workflow_id, nodes:[...]})` 提交，编排由你自主规划：无依赖的取数/研判节点并行执行，需要上游产物或结论的节点用 dependencies 表达；气象条件、输送通道、静稳形势拆 `target_mode='expert_meteorology'`，浓度特征、超标统计、组分解读拆 `target_mode='expert_analysis'`，二者可并行；需要交叉归因时增加一个依赖全部上游的研判节点，或由你直接整合各源节点结论（整合阶段只做研判与撰写、禁止重新取数、控制在 5 轮以内）。工作流会为每个节点生成血缘清单，不能绕过证据和产物引用。\n",
+        "**专家节点按领域拆分**：气象条件、输送通道、静稳/边界层问题拆 `target_mode='expert_meteorology'`（气象专家）；六参数浓度、AQI、首要污染物、超标统计和时空变化拆 `target_mode='expert_analysis'`（常规分析专家）；当前常规分析专家不承担离子、碳组分、地壳元素或 VOCs/OFP 分析。两类专家无依赖时并行拆分，交叉归因（如“偏北风导致累积”）放到 synthesis 或你自己的整合阶段完成。\n",
+        "报告型 DAG 通过 `run_agent_workflow(workflow={workflow_id, nodes:[...]})` 提交，编排由你自主规划：无依赖的取数/研判节点并行执行，需要上游产物或结论的节点用 dependencies 表达；气象条件、输送通道、静稳形势拆 `target_mode='expert_meteorology'`，六参数浓度、AQI、超标统计和时空变化拆 `target_mode='expert_analysis'`，二者可并行；离子、碳组分、地壳元素或 VOCs/OFP 分析保留给后续独立组分专家。需要交叉归因时增加一个依赖全部上游的研判节点，或由你直接整合各源节点结论；整合阶段复用上游数据，聚焦研判与撰写并控制在 5 轮以内。工作流为每个节点生成血缘清单，结论引用对应证据和产物。\n",
         "报告 DAG 完成后必须检查返回的 `data.node_results` 中各节点的 result_envelope：确认 status、findings、evidence 与 data_gaps；存在缺口时先补齐或明确告知用户，不得把不完整的报告包当作最终交付。\n",
         "委托专家时必须传入 `task_id`、`parent_task_id`、`task_contract` 和 `result_schema`，不得只发送一句泛化的“请分析一下”。专家结果校验失败或状态为 `needs_more_evidence` 时，先补充调用专家，再进入成稿。\n",
         "`task_contract` 至少包含 `protocol_version=workflow.v1`、`task_type=expert_analysis`、`question`、`decision_context`、`scope`、`required_evidence` 和 `deliverables`。`result_schema` 至少要求 `status`（completed/completed_with_gaps/needs_more_evidence/failed）、`findings`、`evidence`、`uncertainties`、`data_gaps` 五个字段；finding 要能通过 evidence id 回溯证据。\n",

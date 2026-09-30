@@ -14,8 +14,8 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
         "outputs": "结构化数据文件（file_path）。",
     },
     "expert": {
-        "positioning": "专家 Agent：面向机制、成因与证据强弱的专业研判。",
-        "scope": "气象/遥感/轨迹/源解析等专业分析、证据解释与置信度评估。",
+        "positioning": "专家 Agent：面向机制、成因与判断依据的专业研判。",
+        "scope": "气象/遥感/轨迹/源解析等专业分析、证据解释、适用条件和证据缺口说明。",
         "boundary": "不负责报告排版与报告包收口。",
         "outputs": "结论 + 证据 + 不确定性（findings/evidence）。",
         "warning": (
@@ -26,21 +26,21 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
     "expert_meteorology": {
         "positioning": "气象专家 Agent：面向气象条件与输送过程的专业研判。",
         "scope": "地面/高空观测与预报气象、边界层与静稳条件、后向轨迹与输送通道、气象型归类、污染潜势的气象条件评估。",
-        "boundary": "不解读污染物浓度与组分的化学成因，不做源解析定量，不产出报告包。",
-        "outputs": "气象事实、输送与气象型结论 + 证据 + 不确定性（findings/evidence）。",
+        "boundary": "职责聚焦气象条件与输送过程；污染物化学成因、源解析定量和报告包分别交由对应专家与主报告 Agent。",
+        "outputs": "结构化气象结论、证据与不确定性；内容较长时可附一份已发布的 Markdown 分析备忘录。",
         "warning": (
             "气象专家只拥有气象数据工具；同一数据源若已有 query 节点产出，"
-            "必须用 dependencies 复用其 file_path，禁止重复取数。"
+            "通过 dependencies 复用已有 file_path，并以该产物作为同源数据的首选依据。"
         ),
     },
     "expert_analysis": {
         "positioning": "常规分析专家 Agent：面向空气质量监测数据的专业研判。",
-        "scope": "六参数浓度特征与超标统计、组分/碳/地壳/VOCs 数据解读、时空对比、本地累积与区域输送的初步研判、证据强弱评估。",
-        "boundary": "气象归因引用上游气象节点结论或标注数据缺口，不自行跑轨迹与预报；不做源解析定量建模，不产出报告包。",
-        "outputs": "结论 + 证据 + 不确定性（findings/evidence）。",
+        "scope": "六参数浓度特征与超标统计、AQI 与首要污染物变化、站点和城市时空对比、污染过程分段、本地累积与区域同步性的初步研判、判断依据和证据缺口说明。",
+        "boundary": "职责聚焦常规监测数据；离子、碳组分、地壳元素、VOCs/OFP 由后续组分专家承担，气象判断引用上游气象节点，源解析定量和报告包由对应节点完成。",
+        "outputs": "结构化监测分析结论、证据与不确定性；内容较长时可附一份已发布的 Markdown 分析备忘录。",
         "warning": (
             "常规分析专家不配置气象与轨迹工具；需要气象结论时依赖 expert_meteorology 上游节点，"
-            "同一数据源若已有 query 节点产出，必须用 dependencies 复用其 file_path，禁止重复取数。"
+            "同一数据源已有 query 节点产出时，通过 dependencies 复用其 file_path。"
         ),
     },
     "report": {
@@ -95,10 +95,10 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
 
 _ROUTING_RULES = (
     "选择规则：数据事实用 query；机制/成因用 expert；成稿交付用 report；"
-    "气象条件、输送通道与静稳形势用 expert_meteorology，浓度特征/组分/超标统计用 expert_analysis，"
+    "气象条件、输送通道与静稳形势用 expert_meteorology，六参数浓度/AQI/超标与时空变化用 expert_analysis；组分分析预留给独立专家模式，"
     "二者可并行拆分，交叉归因（如气象导致累积）在 synthesis 或报告整合阶段完成；"
     "expert 需要 query 的数据时，把对应 query 节点写入 dependencies 并复用其 file_path；"
-    "无依赖的 source 节点并行且会话隔离，拿不到彼此数据；禁止同一数据源由 query 与 expert 各查一遍。"
+    "无依赖的 source 节点并行且会话隔离；同源数据由一个节点获取，后续节点通过 dependencies 复用。"
 )
 
 
