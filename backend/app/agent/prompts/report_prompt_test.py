@@ -14,8 +14,11 @@ def test_report_prompt_explains_when_to_use_agent_workflow_dag():
     prompt = build_report_prompt(["run_agent_workflow"])
 
     assert "run_agent_workflow" in prompt
-    assert "无依赖节点并行执行" in prompt
-    assert "report_analysis_v1" in prompt
+    assert "无依赖" in prompt and "并行执行" in prompt
+    assert "dependencies" in prompt
+    assert "expert_meteorology" in prompt
+    assert "expert_analysis" in prompt
+    assert "node_results" in prompt
 
 
 def test_report_prompt_uses_python_as_primary_chart_tool():

@@ -52,6 +52,8 @@ MODE_PROFILES = {
     "social": "orchestrator",
     "chart": "general-purpose",
     "expert": "general-purpose",
+    "expert_meteorology": "general-purpose",
+    "expert_analysis": "general-purpose",
     "ops": "orchestrator",
     "board": "orchestrator",
     "ppt": "general-purpose",

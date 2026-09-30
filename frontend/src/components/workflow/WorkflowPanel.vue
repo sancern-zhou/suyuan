@@ -72,7 +72,7 @@
                 <p v-if="nodeHistoryLoading && !nodeHistory">正在读取节点历史...</p>
                 <p v-if="nodeHistoryError" class="history-error">{{ nodeHistoryError }}</p>
                 <template v-if="nodeHistory">
-                  <p class="node-meta">{{ nodeHistory.child_mode || '子 Agent' }} · {{ nodeHistory.child_session_id || '尚无子会话' }}</p>
+                  <p class="node-meta">{{ modeLabel(nodeHistory.child_mode) }} · {{ nodeHistory.child_session_id || '尚无子会话' }}</p>
                   <h5>执行记录</h5>
                   <ol v-if="nodeTimeline.length" class="event-list">
                     <li v-for="item in nodeTimeline" :key="item.key">
@@ -138,6 +138,7 @@ const loading = ref(false)
 const detailLoading = ref(false)
 const error = ref('')
 const streamController = ref(null)
+const emptyRefreshTimer = ref(null)
 const selectedNodeId = ref('')
 const nodeHistory = ref(null)
 const nodeHistoryLoading = ref(false)
@@ -255,6 +256,21 @@ async function loadMoreNodeHistory() {
   } finally { nodeHistoryLoading.value = false }
 }
 
+const MODE_LABELS = {
+  query: '问数',
+  expert: '专家分析',
+  expert_meteorology: '气象专家',
+  expert_analysis: '常规分析专家',
+  report: '报告',
+  chart: '图表',
+  knowledge: '知识'
+}
+
+function modeLabel(mode) {
+  if (!mode) return '子 Agent'
+  return MODE_LABELS[mode] || mode
+}
+
 function nodeTitle(node) {
   return node.payload?.goal || node.task_id || '未命名节点'
 }
@@ -280,22 +296,39 @@ function nodeSnapshotFromWorkflow(item) {
   return item?.snapshot || {}
 }
 
+function stopEmptyRefresh() {
+  if (emptyRefreshTimer.value !== null) {
+    window.clearInterval(emptyRefreshTimer.value)
+    emptyRefreshTimer.value = null
+  }
+}
+
+function startEmptyRefresh() {
+  if (emptyRefreshTimer.value !== null) return
+  emptyRefreshTimer.value = window.setInterval(() => {
+    if (!loading.value && props.sessionId) refresh()
+  }, 2000)
+}
+
 async function refresh() {
-  if (!props.sessionId) return
+  if (!props.sessionId || loading.value) return
   loading.value = true
   error.value = ''
   try {
     const payload = await listSessionWorkflows(props.sessionId)
     workflows.value = Array.isArray(payload?.workflows) ? payload.workflows : []
     if (selectedId.value && workflows.value.some(item => item.workflow_id === selectedId.value)) {
+      stopEmptyRefresh()
       await selectWorkflow(selectedId.value, false)
     } else if (workflows.value.length) {
+      stopEmptyRefresh()
       const preferred = workflows.value.find(item => item.active) || workflows.value[0]
       await selectWorkflow(preferred.workflow_id, false)
     } else {
       selectedId.value = ''
       selectedWorkflow.value = null
       stopStream()
+      startEmptyRefresh()
     }
   } catch (err) {
     error.value = err?.message || '工作流列表加载失败'
@@ -389,6 +422,7 @@ async function runAction(action, fallback) {
 
 watch(() => props.sessionId, () => {
   stopStream()
+  stopEmptyRefresh()
   workflows.value = []
   selectedId.value = ''
   selectedWorkflow.value = null
@@ -399,7 +433,10 @@ watch(() => props.sessionId, () => {
 })
 
 onMounted(() => { if (props.sessionId) refresh() })
-onBeforeUnmount(stopStream)
+onBeforeUnmount(() => {
+  stopStream()
+  stopEmptyRefresh()
+})
 </script>
 
 <style scoped>
