@@ -19,6 +19,30 @@ def test_python_execution_tools_are_pinned_to_sandbox():
 
 
 @pytest.mark.asyncio
+async def test_environment_chart_helpers_are_available_in_python_sandbox():
+    result = await ExecutePythonTool().execute(
+        code="""
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(8, 5))
+ax.plot([1, 2, 3], [30, 70, 45], label='PM2.5 daily')
+ax.set_xlabel('Date')
+ax.set_ylabel('PM2.5 (ug/m3)')
+context = dict(pollutant='PM2.5', average_time='24h', observed_on='2026-05-01', unit='ug/m3')
+assert pollutant_color(60, **context) == '#FFFF00'
+assert get_pollutant_scale(**context)['concentration_breakpoints'][2] == 60
+line = add_standard_limit(ax, data_average_time='24h', grade=2, **context)
+assert line.environment_standard['value'] == 60
+legend = legend_below(ax, ncols=1)
+assert len(legend.get_texts()) == 2
+save_chart(fig, 'environment-standard.png')
+""",
+        timeout=30,
+    )
+    assert result["success"] is True, result
+    assert any(item["resource_key"] == "chart-image" for item in result["resources"])
+
+
+@pytest.mark.asyncio
 async def test_python_report_theme_preserves_custom_multiplot_and_exports_png():
     import json
 

@@ -1997,6 +1997,10 @@ import os
 from matplotlib.figure import Figure
 from matplotlib.text import Text
 import matplotlib.pyplot as _suyuan_plt
+from app.utils.environment_charts import (
+    AQI_COLORS, AQI_LABELS, MISSING_COLOR, aqi_color, pollutant_color,
+    get_environment_limit, get_pollutant_scale, add_standard_limit, legend_below,
+)
 
 REPORT_THEME = __SUYUAN_REPORT_THEME__
 SERIES_COLORS = __SUYUAN_SERIES_COLORS__
@@ -2926,6 +2930,10 @@ def merge_excel_with_charts(file_paths, output_path):
                             "要执行的 Python 代码。matplotlib 图片可用 save_chart(fig, filename) 或 fig.savefig(path) 保存；"
                             "matplotlib 中文字体由系统自动设置，不要显式设置 SimHei、DejaVu Sans 等不支持中文的字体；"
                             "工具默认应用共享报告配色、字号和轴线风格；可使用 REPORT_THEME、SERIES_COLORS、theme_color(role)。"
+                            "环境图遵守手册环境绘图约束：等级色按适用标准，图例默认在下方；"
+                            "浓度对比有适用限值时标出标准线，明确污染物、单位、平均时间、等级和数据日期。"
+                            "可直接使用 aqi_color、pollutant_color、get_pollutant_scale、get_environment_limit、add_standard_limit、legend_below；"
+                            "小时值不得直接按日均限值判断达标，缺失不填零，预测与实测区分。"
                             "seaborn.set_theme 后须在创建图表前调用 apply_report_style() 恢复主题；图型、画布和布局按分析需要设计。"
                             "结构化结果若需被后续调用或其他工具读取，代码必须使用 path = save_data(data, schema=...)；"
                             "只能向后续工具传递该返回值，不能传递其他文件写入方式产生的中间路径。"

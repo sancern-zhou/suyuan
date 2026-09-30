@@ -46,6 +46,7 @@ data/
 *.parquet
 !app/schemas/**/*.json
 !app/services/tenders/zhiliao_strategy.json
+!config/environment_chart_standards.json
 
 # Temporary cache
 *.png
