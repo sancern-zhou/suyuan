@@ -129,7 +129,8 @@ class CreateReportChartTool(LLMTool):
     def __init__(self):
         reference_paths = report_chart_reference_paths()
         description = (
-            "创建正式报告（Word/QMD）静态图表，支持多种预定义分析图表类型。"
+            "绘制特定场景的报告图表和固定业务模板（风玫瑰、污染日历、气象时序等），支持已有预定义图型。"
+            "通用静态图和深度分析图优先使用 execute_python，按分析问题自主设计；本工具用于匹配现成图型契约的场景。"
             f"采用两层规范：先读公共入口 references/index.md={reference_paths['index']}，"
             "再且仅按选定 chart_type 读取一份对应图型文档；无需另读输入、A4 或布局规范。"
             "必须通过 data 或 file_path 至少提供一种数据输入。"
@@ -138,7 +139,7 @@ class CreateReportChartTool(LLMTool):
             "仅 wind_timeseries/明确的组合图允许在气象背景上叠加污染物序列。"
             "纯风向风速频率图使用 `wind_rose`；含污染物浓度的风玫瑰图才使用 "
             "`generic_pollutant_wind_rose` 或项目专用 `pollutant_wind_rose`，禁止用占位浓度替代。"
-            "如需复杂/自定义图表（3D图/科研图表），请使用 execute_python + matplotlib/seaborn/plotly。"
+            "图型契约不应限制分析维度；自由组合、分面、多子图和科研图表使用 execute_python + matplotlib/seaborn。"
             "生成的静态图在对话正文展示，不进入右侧交互图面板；"
             "单独交付图表时可在最终答复中用 [[chart:<visual_id>]] 控制位置，visual_id 取返回的 visuals.id，"
             "未指定位置的图由前端追加到本轮答复末尾。制作正式报告时图表仍可作为报告素材复用，"

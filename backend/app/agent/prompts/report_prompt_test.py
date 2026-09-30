@@ -54,3 +54,12 @@ def test_report_prompt_applies_xuchang_audience_and_content_constraints():
     assert "禁止出现内部接口名、工具名、字段名" in prompt
     assert "不确定性与数据缺口" in prompt
     assert "数据来源、统计时段与口径说明统一放在报告最后" in prompt
+
+
+def test_report_prompt_uses_python_as_primary_chart_tool():
+    prompt = build_report_prompt(["execute_python", "create_report_chart", "create_report_package"])
+
+    assert "正式报告静态数据图表优先用 `execute_python`" in prompt
+    assert "可自主设计分面和多子图" in prompt
+    assert "特定业务图型和固定模板用 `create_report_chart`" in prompt
+    assert "正式报告用 `create_report_chart` 生成静态数据图表" not in prompt

@@ -44,3 +44,48 @@ SERIES_COLORS = (
 
 def theme_color(role: str, fallback: str | None = None) -> str:
     return str(REPORT_THEME["colors"].get(role, fallback or REPORT_THEME["colors"]["primary"]))
+
+
+def matplotlib_report_style() -> dict:
+    """Shared defaults for Python figures; layout remains analysis-specific."""
+    colors = REPORT_THEME["colors"]
+    sizes = REPORT_THEME["font_sizes"]
+    return {
+        "figure.figsize": (7.2, 4.6),
+        "figure.dpi": REPORT_THEME["dpi"],
+        "figure.facecolor": "white",
+        "savefig.dpi": REPORT_THEME["dpi"],
+        "savefig.facecolor": "white",
+        "savefig.bbox": "tight",
+        "font.size": sizes["axis"],
+        "text.color": colors["body"],
+        "axes.facecolor": "white",
+        "axes.titlesize": sizes["title"],
+        "axes.titleweight": "bold",
+        "axes.titlecolor": colors["title"],
+        "axes.titlelocation": "left",
+        "axes.titlepad": 14,
+        "axes.labelsize": sizes["axis"],
+        "axes.labelcolor": colors["axis"],
+        "axes.edgecolor": colors["grid"],
+        "axes.linewidth": 0.8,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.spines.left": False,
+        "axes.axisbelow": True,
+        "axes.grid": False,
+        "axes.unicode_minus": False,
+        "xtick.labelsize": sizes["tick"],
+        "ytick.labelsize": sizes["tick"],
+        "xtick.color": colors["tick"],
+        "ytick.color": colors["tick"],
+        "xtick.major.size": 0,
+        "ytick.major.size": 0,
+        "grid.color": colors["grid"],
+        "grid.linewidth": REPORT_THEME["grid_linewidth"],
+        "grid.linestyle": "-",
+        "grid.alpha": 1.0,
+        "legend.fontsize": sizes["tick"],
+        "legend.frameon": False,
+        "lines.linewidth": 2.0,
+    }
