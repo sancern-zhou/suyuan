@@ -12,7 +12,7 @@ echo "=========================================="
 echo ""
 
 # Use the project conda environment.
-CONDA_ENV_PATH="${CONDA_ENV_PATH:-/root/miniconda3/envs/backend_py311}"
+CONDA_ENV_PATH="${CONDA_ENV_PATH:?未设置 CONDA_ENV_PATH，请先 export CONDA_ENV_PATH=<backend_py311 conda 环境路径>}"
 PYTHON_BIN="${CONDA_ENV_PATH}/bin/python"
 
 if [ ! -x "${PYTHON_BIN}" ]; then
@@ -52,7 +52,7 @@ echo ""
 # Start the server
 APP_ROLE="${APP_ROLE:-web}"
 export APP_ROLE
-WORKERS="${WORKERS:-4}"
+WORKERS="${WORKERS:-3}"
 echo "[INFO] Starting role=${APP_ROLE} with ${WORKERS} worker(s)"
 # Persisted resource paths must remain stable across Git worktrees.
 "${PYTHON_BIN}" -m app.utils.deployment_preflight --env-file .env

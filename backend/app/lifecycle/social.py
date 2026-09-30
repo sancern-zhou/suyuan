@@ -28,16 +28,16 @@ async def start_social_platform_service(app: FastAPI) -> None:
 
         social_config = SocialConfig.load_from_yaml(settings.social_config_path)
 
-        if not any([social_config.qq.enabled, social_config.weixin.enabled]):
-            logger.info("social_platform_disabled", reason="no_platforms_enabled")
-            return
-
         message_bus = MessageBus()
 
         from app.social.message_bus_singleton import set_message_bus
 
         set_message_bus(message_bus)
         logger.info("global_message_bus_set")
+
+        if not any([social_config.qq.enabled, social_config.weixin.enabled]):
+            logger.info("social_platform_disabled", reason="no_platforms_enabled")
+            return
 
         session_mapper = SessionMapper()
         await session_mapper.load()

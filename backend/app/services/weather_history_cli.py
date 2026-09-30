@@ -33,9 +33,10 @@ async def main():
                 points = [p for p in points if p["city"].removesuffix("市") in wanted]
                 if len(points) != len(wanted):
                     parser.error("Unknown city in project weather_history points")
-            from datetime import datetime, timezone
-            if args.end_date >= datetime.now(timezone.utc).date():
-                parser.error("Archive jobs must end before today UTC")
+            from datetime import datetime
+            from app.utils.weather_time import BEIJING
+            if args.end_date >= datetime.now(BEIJING).date():
+                parser.error("Archive jobs must end before today Beijing")
             print(json.dumps(history.jobs.submit(points, args.start_date, args.end_date), ensure_ascii=False))
         elif args.action == "run":
             if not 1 <= args.max_chunks <= 1000:

@@ -149,6 +149,10 @@ class ChartImageRenderer(LLMTool):
             
             # Step 2: 确保输出目录存在
             OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+            from app.utils.echarts_legend import ensure_echarts_legend
+
+            echarts_option = ensure_echarts_legend(echarts_option)
             
             # Step 3: 生成输出文件名
             image_filename = f"chart_{uuid.uuid4().hex[:12]}.png"

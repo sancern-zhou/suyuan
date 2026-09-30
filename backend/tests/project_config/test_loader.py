@@ -64,7 +64,7 @@ def test_jiangxi_project_disables_data_fetchers():
         "query_jiangxi_noise_station_compliance",
     ]
     query_tools = context.manifest.backend.agent_mode_tools["query"]
-    assert "create_report_chart" in query_tools
+    assert "create_business_chart" in query_tools
     assert "execute_echarts_python" in query_tools
     assert "get_jiangxi_noise_data" not in query_tools
     expert_tools = context.manifest.backend.agent_mode_tools["expert"]

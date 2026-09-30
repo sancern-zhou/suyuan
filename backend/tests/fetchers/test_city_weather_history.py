@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -5,10 +6,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.project_config.models import WeatherHistoryConfig
+from app.services import weather_history
 from app.services.weather_history import (
     HistoryJobs, WeatherHistoryService, coverage, grid_point,
 )
-from app.utils.weather_time import OPEN_METEO_SOURCE
+from app.utils.weather_time import BEIJING, OPEN_METEO_SOURCE
 
 START = datetime(2026, 8, 1, tzinfo=timezone.utc)
 
@@ -86,3 +88,31 @@ def test_invalid_config_and_oversized_job_are_rejected(tmp_path):
         WeatherHistoryConfig(points=[{"city": "A", "province": "B", "lat": 100, "lon": 0}])
     with pytest.raises(ValueError):
         HistoryJobs(tmp_path).submit([], START.date(), (START + timedelta(days=366)).date())
+
+
+@pytest.mark.asyncio
+async def test_jobs_use_beijing_day_windows(tmp_path, monkeypatch):
+    fixed = datetime(2026, 9, 29, 2, 5, tzinfo=BEIJING)
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed.astimezone(tz) if tz else fixed
+
+    monkeypatch.setattr(weather_history, "datetime", FixedDatetime)
+    service = WeatherHistoryService(configuration(), project_id="test", root=tmp_path)
+    service.repair = AsyncMock(return_value={"missing_hours": 0})
+    service.submit(
+        service.points(),
+        datetime(2026, 9, 22, tzinfo=BEIJING),
+        datetime(2026, 9, 29, 10, tzinfo=BEIJING),
+    )
+    payload = json.loads(service.jobs.pending()[0]["payload"])
+    # 北京 9/29 凌晨请求“昨日”：clamp 到北京 9/28 整日，而不是 UTC 9/27（丢昨日白天）。
+    assert payload["end"] == "2026-09-28"
+    await service.run_pending()
+    service.repair.assert_awaited_once_with(
+        34.0, 113.75,
+        datetime(2026, 9, 22, 0, 0, tzinfo=BEIJING),
+        datetime(2026, 9, 28, 23, 0, tzinfo=BEIJING),
+    )

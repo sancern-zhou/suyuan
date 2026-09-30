@@ -438,7 +438,7 @@ def test_stream_adapter_does_not_treat_pseudo_tool_markup_as_tool_call():
                     {
                         "delta": {
                             "reasoning_content": (
-                                "create_report_chart</arg_value>"
+                                "create_business_chart</arg_value>"
                                 "<arg_key>chart_type</arg_key>"
                             )
                         },
@@ -486,7 +486,7 @@ def test_stream_adapter_raises_when_tool_call_arguments_remain_malformed_at_fini
                                 "id": "call_bad",
                                 "type": "function",
                                 "function": {
-                                    "name": "create_report_chart",
+                                    "name": "create_business_chart",
                                     "arguments": "{",
                                 },
                             }
@@ -501,5 +501,5 @@ def test_stream_adapter_raises_when_tool_call_arguments_remain_malformed_at_fini
     with pytest.raises(ToolCallArgumentsError) as exc_info:
         adapter.finish()
 
-    assert exc_info.value.tool_name == "create_report_chart"
+    assert exc_info.value.tool_name == "create_business_chart"
     assert exc_info.value.tool_call_id == "call_bad"

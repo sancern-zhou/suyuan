@@ -40,10 +40,10 @@ def _native_multimodal_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any
     multimodal_schema["description"] = (
         "读取文件或目录内容，支持文本分页、PDF、DOCX、PPTX、Word XML、Markdown。"
         "不要读取查询或分析工具返回的会话数据文件：少量结果已由查询工具完整返回，大量结果的处理使用 execute_python，避免占用模型上下文。"
-        "图片文件默认按普通文件读取；只有明确需要查看历史或工具生成的本地图片时，才设置 as_multimodal_attachment=true。"
+        "图片文件默认以原生多模态附件返回；如需兼容旧的 OCR/图片分析流程，才设置 as_multimodal_attachment=false。"
         "PDF/DOCX/PPTX 默认会生成前端可查看的预览；预览失败不影响文本读取。"
         "Excel文件不由 read_file 读取，需使用 execute_python。"
-        "大文本默认100KB限制，超限会截断并提示用 grep 或 offset/limit 分页。"
+        "大文本默认100KB限制；分页读取按行范围读取，避免为小范围请求加载整个文件。"
         "不返回base64，避免浪费上下文。"
     )
     properties = multimodal_schema.get("parameters", {}).get("properties", {})
@@ -51,8 +51,8 @@ def _native_multimodal_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any
     properties.pop("analysis_type", None)
     properties["as_multimodal_attachment"] = {
         "type": "boolean",
-        "description": "所有Agent模式均支持原生多模态；仅在需要查看历史或工具生成的本地图片时设置为 true。本轮用户上传图片已经由输入自动挂载，不需要再读取。",
-        "default": False,
+        "description": "所有Agent模式均支持原生多模态；默认返回图片附件。仅在需要使用旧 OCR/图片分析流程时设置为 false。本轮用户上传图片已经由输入自动挂载，不需要再读取。",
+        "default": True,
     }
     return multimodal_schema
 

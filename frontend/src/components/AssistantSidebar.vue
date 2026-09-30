@@ -557,7 +557,7 @@ const allModules = [
     id: 'quick-prompts-management',
     name: '常用问题',
     abbr: '常用',
-    desc: '维护首页快捷提问按钮',
+    desc: '维护首页和输入框常用问题',
     badge: '管理',
     isAction: true,
     adminOnly: true,

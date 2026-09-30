@@ -17,8 +17,8 @@ class ListSessionResourcesTool(LLMTool):
             function_schema={
                 "name": "list_session_resources",
                 "description": (
-                    "列出当前会话保存的资源引用，不读取资源正文。复用 ECharts 图表图片制作文档时，"
-                    "设置 logical_key=chart-image、tool_name=execute_echarts_python，"
+                    "列出当前会话保存的资源引用，不读取资源正文。复用 Python 或业务图表工具生成的静态图片制作文档时，"
+                    "设置 logical_key=chart-image，并按生成工具筛选；"
                     "取结果中的 file_path；只有需要完整 locator 时才设置 include_locator=true。"
                 ),
                 "parameters": {
@@ -31,7 +31,7 @@ class ListSessionResourcesTool(LLMTool):
                         "run_id": {"type": "string"},
                         "logical_key": {
                             "type": "string",
-                            "description": "资源键，如 chart-image（ECharts 的 PNG 衍生图片）。",
+                            "description": "资源键，如 chart-image（静态图表图片）或 chart-spec（图表配置）。",
                         },
                         "query": {"type": "string", "description": "按名称、摘要或逻辑键搜索"},
                         "cursor": {"type": "string"},

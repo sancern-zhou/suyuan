@@ -4,7 +4,7 @@
       <div v-if="quickPrompts.length" class="smart-event-quick-prompts" aria-label="常用问题">
         <button
           v-for="prompt in quickPrompts"
-          :key="prompt.label"
+          :key="prompt.id || prompt.label"
           type="button"
           :disabled="disabled || isAnalyzing"
           @click="fillQuickPrompt(prompt.prompt)"
@@ -278,7 +278,7 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, computed } from 'vue'
+import { ref, watch, nextTick, computed, onMounted } from 'vue'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useReactStore } from '@/stores/reactStore'
 import { AGENT_MODE_IDS } from '@/config/agentModes.js'

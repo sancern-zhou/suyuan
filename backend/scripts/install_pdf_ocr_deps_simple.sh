@@ -9,7 +9,8 @@ echo ""
 
 # 激活conda环境
 echo "激活conda环境: backend_py311"
-source /root/miniconda3/etc/profile.d/conda.sh
+CONDA_BASE="${CONDA_BASE:?未设置 CONDA_BASE，请先 export CONDA_BASE=<miniconda 安装目录>}"
+source "${CONDA_BASE}/etc/profile.d/conda.sh"
 conda activate backend_py311
 
 if [ $? -ne 0 ]; then

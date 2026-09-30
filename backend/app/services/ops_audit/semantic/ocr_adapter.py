@@ -1,4 +1,4 @@
-"""OCR adapter for attachment review via Bailian's Anthropic-compatible API."""
+"""Multimodal attachment adapter using the active task LLM configuration."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import mimetypes
 import os
 import re
 from pathlib import Path
-from threading import Lock
 from urllib.parse import urljoin, urlparse
 from typing import Any
 
@@ -19,19 +18,14 @@ from config.settings import settings
 from app.services.bailian_multimodal import call_bailian_vision_sync
 
 
-BAILIAN_BASE_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic"
-MIMO_VL_BASE_URL = "https://api.xiaomimimo.com/v1"
 DEFAULT_TIMEOUT_SECONDS = 30
 
 from app.services.ops_audit.remote_fetch import guarded_get  # noqa: E402
 DEFAULT_FLOW_VISUAL_TIMEOUT_SECONDS = 90
 DEFAULT_PROMPT = "请识别图片中的所有文字内容，按原文输出，不要添加任何解释。"
-DEFAULT_MIMO_MODEL = "mimo-v2.5"
 PDF_FIRST_PAGE_RENDER_DPI = 180
 _OCR_CACHE: dict[tuple[str, str, int, int], dict[str, Any]] = {}
 _OCR_CACHE_LIMIT = 64
-_FLOW_PROVIDER_LOCK = Lock()
-_FLOW_PROVIDER_INDEX = 0
 
 
 def extract_attachment_text(source: str, *, provider: str | None = None) -> dict[str, Any]:
@@ -178,87 +172,21 @@ def _normalize_mode(provider: str | None) -> str:
 
 
 def _resolve_target(mode: str) -> dict[str, str]:
-    if mode == "flow_visual":
-        return _select_flow_visual_target()
-    return _bailian_target(mode)
+    from app.services.llm_service import llm_service
 
-
-def _select_flow_visual_target() -> dict[str, str]:
-    providers = _flow_visual_providers()
-    if not providers:
-        return _bailian_target("general")
-
-    global _FLOW_PROVIDER_INDEX
-    with _FLOW_PROVIDER_LOCK:
-        target = providers[_FLOW_PROVIDER_INDEX % len(providers)]
-        _FLOW_PROVIDER_INDEX += 1
-        return target
-
-
-def _flow_visual_providers() -> list[dict[str, str]]:
-    raw = os.getenv("OPS_AUDIT_FLOW_VISUAL_PROVIDERS", "bailian")
-    names = [item.strip().lower() for item in raw.split(",") if item.strip()]
-    targets: list[dict[str, str]] = []
-    for name in names:
-        if name == "bailian":
-            targets.append(_bailian_target("flow_visual"))
-        elif name in {"mimo", "mimo_vl", "mimo-vl"}:
-            targets.append(_mimo_target())
-    return targets
+    return {
+        "provider": llm_service.provider,
+        "model": llm_service.model,
+        "base_url": llm_service.base_url,
+        "api_key": llm_service.api_key,
+    }
 
 
 def flow_visual_provider_summary() -> list[dict[str, Any]]:
-    """Return provider/model settings used by flow-photo vision checks."""
+    """Return the active shared LLM provider/model used by visual checks."""
 
-    summary = []
-    for target in _flow_visual_providers():
-        summary.append(
-            {
-                "provider": target["provider"],
-                "model": target["model"],
-                "base_url": target["base_url"],
-            }
-        )
-    return summary
-
-
-def _bailian_target(mode: str) -> dict[str, str]:
-    return {
-        "provider": "bailian",
-        "model": _resolve_bailian_model(mode),
-        "base_url": _resolve_bailian_base_url(),
-        "api_key": _resolve_bailian_api_key(),
-    }
-
-
-def _mimo_target() -> dict[str, str]:
-    return {
-        "provider": "mimo",
-        "model": str(
-            os.getenv("MIMO_VL_MODEL")
-            or os.getenv("OPS_AUDIT_FLOW_VISUAL_MIMO_MODEL")
-            or getattr(settings, "mimo_vl_model", "")
-            or DEFAULT_MIMO_MODEL
-        ).strip(),
-        "base_url": _normalize_openai_base_url(
-            str(
-                os.getenv("MIMO_VL_BASE_URL")
-                or getattr(settings, "mimo_vl_base_url", "")
-                or getattr(settings, "mimo_base_url", "")
-                or MIMO_VL_BASE_URL
-            ).strip()
-        ),
-        "api_key": str(
-            os.getenv("MIMO_VL_API_KEY")
-            or getattr(settings, "mimo_vl_api_key", "")
-            or getattr(settings, "mimo_api_key", "")
-            or ""
-        ).strip(),
-    }
-
-
-def _resolve_bailian_model(mode: str) -> str:
-    return str(settings.bailian_model).strip()
+    target = _resolve_target("flow_visual")
+    return [{key: target[key] for key in ("provider", "model", "base_url")}]
 
 
 def _request_timeout_seconds(mode: str) -> int:
@@ -269,22 +197,6 @@ def _request_timeout_seconds(mode: str) -> int:
         return max(1, int(raw)) if raw else DEFAULT_FLOW_VISUAL_TIMEOUT_SECONDS
     except (TypeError, ValueError):
         return DEFAULT_FLOW_VISUAL_TIMEOUT_SECONDS
-
-
-def _resolve_bailian_base_url() -> str:
-    return str(os.getenv("BAILIAN_BASE_URL") or settings.bailian_base_url or BAILIAN_BASE_URL).strip()
-
-
-def _resolve_bailian_api_key() -> str:
-    key = os.getenv("BAILIAN_API_KEY") or settings.bailian_api_key or ""
-    return str(key).strip()
-
-
-def _normalize_openai_base_url(base_url: str) -> str:
-    value = (base_url or MIMO_VL_BASE_URL).strip().rstrip("/")
-    if value.endswith("/anthropic"):
-        return value[: -len("/anthropic")] + "/v1"
-    return value
 
 
 def _resolve_source(source: str) -> dict[str, Any]:

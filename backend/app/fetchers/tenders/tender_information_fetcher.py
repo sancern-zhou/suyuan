@@ -128,20 +128,39 @@ class TenderInformationFetcher(DataFetcher):
     def _default_llm(self):
         clients: list[tuple[Any, int]] = []
         screening_client_index = 1
-        go_api_key = settings.go_api_key
-        if go_api_key:
-            clients.append(
-                (
-                    OpenAICompatibleTenderLLMClient(
-                        api_key=go_api_key,
-                        base_url=settings.go_base_url,
-                        model=settings.go_model,
-                        provider="go",
-                        api_mode=settings.go_api_mode,
-                    ),
-                    settings.tender_llm_concurrency,
-                )
+        # 第二个 OpenCode Go 套餐优先于原有 go 套餐；两者都排在其他 provider 之前。
+        go_plans = (
+            (
+                "go2",
+                settings.go2_api_key,
+                settings.go2_base_url,
+                settings.go2_model,
+                settings.go2_api_mode,
+            ),
+            (
+                "go",
+                settings.go_api_key,
+                settings.go_base_url,
+                settings.go_model,
+                settings.go_api_mode,
+            ),
+        )
+        go_clients = [
+            (
+                OpenAICompatibleTenderLLMClient(
+                    api_key=api_key,
+                    base_url=base_url,
+                    model=model,
+                    provider=provider,
+                    api_mode=api_mode,
+                ),
+                settings.tender_llm_concurrency,
             )
+            for provider, api_key, base_url, model, api_mode in go_plans
+            if api_key
+        ]
+        if go_clients:
+            clients.extend(go_clients)
             screening_client_index = 0
         agnes_api_key = settings.agnes_api_key
         if agnes_api_key:

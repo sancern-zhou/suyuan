@@ -682,7 +682,9 @@ def _format_cover_page(doc: DocumentObject) -> bool:
     return True
 
 
-def finalize_government_docx(docx_path: str | Path, *, add_toc: bool = True) -> dict:
+def finalize_government_docx(
+    docx_path: str | Path, *, add_toc: bool = True, number_headings: bool = True,
+) -> dict:
     """Normalize Quarto DOCX output to the project's government-report profile."""
     path = Path(docx_path)
     if not path.exists() or path.suffix.lower() != ".docx":
@@ -705,7 +707,7 @@ def finalize_government_docx(docx_path: str | Path, *, add_toc: bool = True) -> 
     cover_formatted = _format_cover_page(doc)
     figure_captions = _format_figure_captions(doc)
 
-    heading_numbers = _apply_heading_numbering(doc)
+    heading_numbers = _apply_heading_numbering(doc) if number_headings else 0
     image_paragraphs = 0
     for paragraph in doc.paragraphs:
         if paragraph_has_drawing(paragraph):

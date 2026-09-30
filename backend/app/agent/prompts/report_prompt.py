@@ -151,7 +151,8 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "\n",
         "可用工具、参数结构和参数说明由本次请求的原生 tool schema 提供；系统提示词只保留报告生成的业务流程约束。\n",
         "\n",
-        "**关键约束**：读取DOCX参考文档使用 `read_file`；正式报告静态数据图表优先使用 `create_report_chart`，计算和表格整理可使用 `execute_python`；正式报告最终交付必须使用 `create_report_package` 收口；当前不暴露既有 Word 文档编辑工具。\n",
+        "**关键约束**：读取DOCX参考文档使用 `read_file`；已支持的专用业务图型必须使用 `create_business_chart`，禁止用 Python/ECharts 重绘替代，此规则优先于模式默认工具；其他正式报告静态数据图表优先使用 `execute_python`，共用报告图表主题；正式报告最终交付必须使用 `create_report_package` 收口；当前不暴露既有 Word 文档编辑工具。\n",
+        "需要交互探索时可用 `execute_echarts_python` 辅助；已有图表图片优先复用，工具可用性和参数以本轮 tool schema 为准。\n",
         "\n",
         *city_pollutant_ranking_guidance,
         "**⚠️ 默认城市范围**：如果用户没有指定城市，则默认查询广东省21个地级市（广州、深圳、珠海、佛山、惠州、东莞、中山、江门、肇庆、汕头、韶关、湛江、茂名、梅州、汕尾、河源、阳江、清远、潮州、揭阳、云浮）。\n",
@@ -162,7 +163,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "\n",
         "**⚠️ 并发查询**：不同城市、不同时间段、不同类型的数据应并发查询，提高效率。\n",
         "\n",
-        "**⚠️ 正式报告交付注意事项**：默认不要使用 `python-docx` 直接生成正式报告；只有用户明确要求只要 Word 且不需要 HTML/qmd 同源时才可使用。正式报告的 qmd 图片最终必须使用报告包内相对路径（如 `assets/charts/chart_01.png`），不要使用 `/api/image/...`。已有图表需要入报告时复用已生成的图表图片资源；新建正式报告静态图表优先使用 `create_report_chart` 返回的真实图片路径，并用 `name` 指定稳定文件名；仅在 `create_report_chart` 无法覆盖时才使用 `execute_python` 生成图片资源。不要根据 `/api/image/{image_id}`、`image_id` 或缓存 id 自行推断 `assets/charts/{image_id}.png`。\n",
+        "**⚠️ 正式报告交付注意事项**：默认不要使用 `python-docx` 直接生成正式报告；只有用户明确要求只要 Word 且不需要 HTML/qmd 同源时才可使用。正式报告的 qmd 图片最终必须使用报告包内相对路径（如 `assets/charts/chart_01.png`），不要使用 `/api/image/...`。已有图表需要入报告时复用已生成的图表图片资源；新建静态图表先匹配专用业务图型，已支持的类型必须使用 `create_business_chart`；其他图表优先使用 `execute_python`，复用工具返回的真实归档图片路径，并用 `name` 指定稳定文件名。先明确分析问题再选择图型，默认一个独立图表一个图片文件，同主题的趋势、分布、排名分别保存；仅联合阅读确有必要或用户明确要求时合图。按报告正文插入尺寸设计画布、比例和字号，遵守 execute_python_chart_manual.md 的报告插图规范，并遵守 execute_python_report_manual.md 的交付流程，检查最终 HTML/Word 中的可读性。不要根据 `/api/image/{image_id}`、`image_id` 或缓存 id 自行推断 `assets/charts/{image_id}.png`。\n",
         "\n",
         "**HTML展示页例外**：如果用户明确要的是展示页、数据大屏、交互网页或可视化叙事，而不是正式报告，正式使用 `create_html_artifact`；该工具接收完整 HTML 和资源路径，保存展示页 `index.html`，并返回右侧面板可识别的 `html_preview`。交付时只说明右侧面板可预览、下载 HTML、分享链接，不提供 Word/QMD 同源导出承诺。\n",
         "\n",
@@ -223,7 +224,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "- ⚠️ **避免生成超长代码**：如果代码超过500字符，JSON可能被截断，建议拆分为多个步骤\n",
         "- ⚠️ **Python无状态**：每次 `execute_python` 都是独立环境，不保留上次脚本变量、函数或 DataFrame\n",
         "- ⚠️ **显式保存中间结果**：后续还要复用的核验表、映射表、DataFrame 必须调用 `save_data(...)` 保存为数据文件，后续脚本用 `load_data(file_path)` 读取\n",
-        "- ⚠️ **不要用 execute_python 直接交付正式报告**：正式报告静态图表优先使用 `create_report_chart`，execute_python 主要用于计算和整理资源；正式报告使用 `create_report_package`\n",
+        "- ⚠️ **正式报告交付**：已支持的专用业务图型必须使用 create_business_chart；execute_python 是其他静态绘图和计算的主要工具；最终报告使用 `create_report_package`\n",
         "- ⚠️ **打印中间资源路径**：如生成图表/表格资源，代码中添加 print 语句输出路径，便于传给 `create_report_package`\n",
     ])
 

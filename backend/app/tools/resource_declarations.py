@@ -20,6 +20,14 @@ def _media_type(path: Path) -> str:
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
 
 
+def _data_display_name(path: Path) -> str:
+    """外置数据文件名为 schema--uuid.json，展示时去掉随机后缀。"""
+    stem = path.stem
+    if "--" in stem:
+        return f"{stem.split('--', 1)[0]}{path.suffix.lower()}"
+    return path.name
+
+
 def _inferred_preview_contract(path: Path) -> tuple[str, tuple[str, ...]]:
     suffix = path.suffix.lower()
     renderer_by_suffix = {
@@ -247,7 +255,7 @@ def data_file_resource(
         "resource_key": "primary:data",
         "relation": "primary",
         "role": role,
-        "label": label or resolved.name,
+        "label": label or _data_display_name(resolved),
         "locator": {"path": str(resolved)},
         "format": _file_format(resolved),
         "media_type": _media_type(resolved),
@@ -426,7 +434,7 @@ def resources_for_visuals(
                 "type": visual.get("type") or payload.get("type"),
                 "visual_id": visual_id,
                 "interactive": (
-                    tool_name not in {"execute_python", "create_report_chart"}
+                    tool_name not in {"execute_python", "create_business_chart"}
                     and (visual.get("type") or payload.get("type")) != "image"
                 ),
             },

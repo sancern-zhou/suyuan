@@ -267,6 +267,7 @@ class OpsWorkOrderAuditConfig:
     evidence_level: str = "summary"
     enable_visual: bool = True
     enable_non_visual: bool = True
+    visual_rule_id: Optional[str] = None
     persist_dataset: bool = True
     persist_outputs: bool = True
 
@@ -313,6 +314,7 @@ def run_ops_audit_rules(
     evidence_level: str = "summary",
     enable_visual: bool = True,
     enable_non_visual: bool = True,
+    visual_rule_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Run audit rules against an existing dataset and assemble final issues."""
     resolved_dataset_path = dataset_path.resolve()
@@ -324,6 +326,7 @@ def run_ops_audit_rules(
         evidence_level=evidence_level,
         enable_visual=enable_visual,
         enable_non_visual=enable_non_visual,
+        visual_rule_id=visual_rule_id,
     )
     result["dataset_path"] = str(resolved_dataset_path)
     result["calibration_questions"] = [
@@ -380,6 +383,7 @@ def run_ops_work_order_deterministic_audit(
             evidence_level="summary",
             enable_visual=config.enable_visual,
             enable_non_visual=config.enable_non_visual,
+            visual_rule_id=config.visual_rule_id,
         )
         result["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         result["coverage"] = _dataset_coverage(dataset)
@@ -401,6 +405,7 @@ def run_ops_work_order_deterministic_audit(
         evidence_level="summary",
         enable_visual=config.enable_visual,
         enable_non_visual=config.enable_non_visual,
+        visual_rule_id=config.visual_rule_id,
     )
     result["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     result["audit_window"] = fetch_result.get("audit_window")

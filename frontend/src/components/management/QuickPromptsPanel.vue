@@ -19,3 +19,4 @@ defineEmits(['close'])
   background: white;
 }
 </style>
+

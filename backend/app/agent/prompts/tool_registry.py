@@ -90,7 +90,7 @@ PPT_TOOL_NAMES = [
     "list_directory",
     "search_files",
     # 图表、图片检查和必要计算
-    "create_report_chart",
+    "create_business_chart",
     "execute_python",
     # 用户材料、知识库与外部资料
     "knowledge_qa_workflow",
@@ -122,7 +122,8 @@ EXPERT_TOOL_NAMES = [
     # 分析工具
     "meteorological_trajectory_analysis",
     # 可视化
-    "create_report_chart",
+    "create_business_chart",
+    "execute_echarts_python",
     # 代码执行
     "execute_python",
     # 文件操作
@@ -174,7 +175,7 @@ QUERY_TOOL_NAMES = [
     # === 数值计算工具 ===
     "execute_python",
     # === 图表生成工具 ===
-    "create_report_chart",
+    "create_business_chart",
     "execute_echarts_python",
     # 正式报告包（HTML/DOCX/QMD）生成
     "create_report_package",
@@ -207,8 +208,9 @@ REPORT_TOOL_NAMES = [
     "list_directory",
     "search_files",
     "bash",
-    "create_report_chart",
+    "create_business_chart",
     "execute_python",
+    "execute_echarts_python",
     # 报告产物收口
     "create_report_package",
     "publish_report",
@@ -230,7 +232,7 @@ CHART_TOOL_NAMES = [
     "search_files",
     "bash",
     # 代码执行和原生多模态视觉参考
-    "create_report_chart",
+    "create_business_chart",
     "execute_python",
     "execute_echarts_python",
     # 数据查询工具
@@ -319,7 +321,7 @@ SOCIAL_TOOL_NAMES = [
     "execute_python",
     "call_sub_agent",
     # 正式报告生成与收口
-    "create_report_chart",
+    "create_business_chart",
     "create_report_package",
     "publish_report",
     # 网络搜索
@@ -611,11 +613,10 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         return _build_tool_dict(project_tool_names)
 
     extra_tool_names = _get_project_extra_tool_names_by_mode(mode)
-    if not extra_tool_names:
-        return mode_mapping[mode]
-
     base_names = list(mode_mapping[mode].keys())
-    merged_names = base_names + [name for name in extra_tool_names if name not in base_names]
+    if mode in {"assistant", "ppt", "expert", "query", "knowledge", "report", "chart", "board", "ops", "graph"}:
+        base_names.append("ask_user_question")
+    merged_names = base_names + [name for name in (extra_tool_names or []) if name not in base_names]
     return _build_tool_dict(merged_names)
 
 

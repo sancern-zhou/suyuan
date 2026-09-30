@@ -98,3 +98,24 @@ export const getUnifiedProcessMessages = (finalMessage, allMessages = []) => {
 
   return [...beforeFinal, ...afterFinal]
 }
+
+export const getStructuredQuestionForFinal = (finalMessage, allMessages = []) => {
+  const result = getUnifiedProcessMessages(finalMessage, allMessages)
+    .find(message => getMessageType(message) === 'tool_result'
+      && message?.data?.tool_name === 'ask_user_question'
+      && message?.data?.result?.metadata?.interaction_required?.kind === 'structured_question')
+  return result?.data?.result?.metadata?.interaction_required || null
+}
+
+export const followsStructuredQuestion = (finalMessage, allMessages = []) => {
+  const finalIndex = allMessages.findIndex(message =>
+    (finalMessage?.id && message.id === finalMessage.id) || message === finalMessage
+  )
+  if (finalIndex < 0) return false
+  for (let index = finalIndex - 1; index >= 0; index--) {
+    if (getMessageType(allMessages[index]) === 'final') {
+      return Boolean(getStructuredQuestionForFinal(allMessages[index], allMessages))
+    }
+  }
+  return false
+}

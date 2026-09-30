@@ -189,3 +189,12 @@ format:
     assert "number-sections: false" in prepared_text
     assert "docx:\n    toc: false\n    number-sections: false" in prepared_text
     assert prepared != qmd_path
+
+
+def test_fixed_template_front_matter_is_explicit_opt_in(tmp_path):
+    qmd_path = tmp_path / "report.qmd"
+    renderer = QuartoReportRenderer(tmp_path)
+    qmd_path.write_text("---\npreserve-template-structure: true\n---\n\n## 一、固定标题\n", encoding="utf-8")
+    assert renderer._qmd_preserve_template_structure(qmd_path)
+    qmd_path.write_text("---\nformat: docx\n---\n\n## 一、固定标题\n", encoding="utf-8")
+    assert not renderer._qmd_preserve_template_structure(qmd_path)

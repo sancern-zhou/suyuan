@@ -715,6 +715,25 @@ def _display_evidence(item: dict[str, Any]) -> list[dict[str, Any]]:
             if text:
                 display.append({"text": text})
 
+    images = item.get("evidence_images")
+    if not isinstance(images, list):
+        images = evidence.get("evidence_images")
+    if isinstance(images, list):
+        for image in images:
+            if not isinstance(image, dict) or image.get("status") != "success":
+                continue
+            relative_path = str(image.get("relative_path") or "").strip().replace("\\", "/")
+            if not relative_path:
+                continue
+            filename = str(image.get("filename") or Path(relative_path).name)
+            display.append({
+                "type": "image",
+                "filename": filename,
+                "path": relative_path,
+                "markdown": f"![视觉证据：{filename}]({relative_path})",
+                "text": f"视觉证据图片：{filename}",
+            })
+
     if not display:
         fallback = _rule_evidence_text(evidence)
         if fallback:
