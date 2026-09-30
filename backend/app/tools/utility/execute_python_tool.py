@@ -2959,8 +2959,8 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "专家/报告模式绘图 → 优先使用 execute_python，交互探索可使用 execute_echarts_python 辅助；"
             "② 前端交互式图表/复杂数据可视化 → 使用 execute_echarts_python；"
             "③ 深度分析、分面和多子图 → 使用 execute_python + matplotlib/seaborn。"
-            "成功时会尝试为交互图登记同组 PNG 资源；复用到文档时用 list_session_resources 查找 chart-image。"
-            "最终答复需要控制图表位置时，可使用 [[chart:<visual_id>]] 占位符；未指定位置的图表由前端统一补充。"
+            "只发布交互图资源，在右侧面板展示；不生成静态图片，不插入对话正文，不使用 [[chart:...]] 占位符。"
+            "需要正文或报告静态图时，复用查询数据，通过 execute_python 或 create_business_chart 绘制。"
             "通用计算和文件生成仍使用 execute_python。"
         )
 
@@ -3020,16 +3020,6 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
         result.setdefault("metadata", {})
         result["metadata"]["tool_name"] = "execute_echarts_python"
         result["metadata"]["visuals_count"] = len(echarts_visuals)
-        for visual in echarts_visuals:
-            try:
-                from app.tools.visualization.echarts_snapshot import render_echarts_png
-
-                image_path = await asyncio.to_thread(
-                    render_echarts_png, visual["data"], visual["id"]
-                )
-                visual["local_path"] = str(image_path)
-            except Exception as exc:
-                logger.warning("echarts_snapshot_failed", visual_id=visual.get("id"), error=str(exc))
         result.setdefault("resources", []).extend(
             resources_for_visuals(echarts_visuals, tool_name=self.name)
         )
@@ -3049,17 +3039,10 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                 "每次调用是独立环境；读取输入文件须通过 input_files 声明，代码中的同名列表提供校验后的绝对路径。"
                 "仅输出 ECharts 图表配置：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
-                "图表通过统一会话资源目录发布；成功生成的 PNG 衍生资源标记为 chart-image。"
-                "同一图表有两种展示：PNG 静态图可嵌入对话正文，ECharts 交互图可在右侧面板查看。"
-                "对话展示由前端自动完成，不要在回复中拼图片 URL 或输出本地路径。"
-                "需要控制图表在最终 Markdown 中的位置时，使用 [[chart:<visual_id>]] 占位符；"
-                "visual_id 必须来自本次工具返回的 visuals.id，前端会将占位符替换为对应 PNG。"
-                "未使用占位符的成功图表仍会由前端追加到最终答复末尾。"
-                "若答复正文已嵌入静态图，应围绕图表说明结论；需要提及交互功能时，说明右侧面板可查看交互版本，"
-                "不要只说图表已在右侧面板展示，以免误导用户忽略正文中的图。"
-                "将已有交互图放入 Word/QMD 时，调用 list_session_resources，设置 logical_key=chart-image、"
-                "tool_name=execute_echarts_python，从结果取得 file_path 作为文档图片输入；"
-                "若没有 chart-image，说明静态渲染未成功，可使用 execute_python 生成报告图片；特定模板可使用 create_business_chart。"
+                "图表通过统一会话资源目录发布为 chart-spec，只在右侧面板展示交互图。"
+                "不生成静态图片，不在对话正文插图，不使用 [[chart:...]] 占位符或拼接图片 URL。"
+                "正文说明分析结论，可告知用户在右侧面板查看交互图。"
+                "需要正文或 Word/QMD 报告静态图时，复用原始数据，通过 execute_python 或 create_business_chart 绘制。"
                 "多图时输出多行纯 JSON。禁止输出 CHART_1: 前缀、Markdown 代码块、解释文字包裹 JSON。"
                 "数据分析、清洗、中间计算和文件生成请使用 execute_python。"
             ),

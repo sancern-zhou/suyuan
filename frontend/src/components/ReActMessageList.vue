@@ -484,22 +484,23 @@ const props = defineProps({
 
 const emit = defineEmits(['load-more', 'preview-message-attachment'])
 const sessionResourceStore = useSessionResourceStore()
+const currentSessionResources = () => sessionResourceStore.activeSessionId === props.sessionId
+  ? sessionResourceStore.activeSessionState?.resources || []
+  : []
 const chartResourcesForMessage = message => inlineChartImages(
   message,
   props.messages,
-  sessionResourceStore.activeSessionId === props.sessionId
-    ? sessionResourceStore.activeSessionState?.resources
-    : [],
+  currentSessionResources(),
   contentToString(getMessageContent(message))
 )
 const renderedMessageContent = message => {
   const content = contentToString(getMessageContent(message))
   if (!content.includes('[[chart:')) return content
-  return renderChartPlaceholders(content, chartResourcesForMessage(message)).content
+  return renderChartPlaceholders(content, chartResourcesForMessage(message), currentSessionResources()).content
 }
 const inlineImagesForFinal = message => {
   const resources = chartResourcesForMessage(message)
-  const rendered = renderChartPlaceholders(contentToString(getMessageContent(message)), resources)
+  const rendered = renderChartPlaceholders(contentToString(getMessageContent(message)), resources, currentSessionResources())
   return resources.filter(resource => !rendered.usedResourceIds.has(resource.resource_id))
 }
 
