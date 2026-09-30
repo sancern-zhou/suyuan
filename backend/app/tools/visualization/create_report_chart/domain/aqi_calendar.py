@@ -22,29 +22,15 @@ import base64
 import structlog
 
 from app.tools.visualization.font_sizing import FontScale, resolve_font_scale
+from app.utils.environment_charts import AQI_COLORS, MISSING_COLOR, aqi_color, pollutant_iaqi
 
 logger = structlog.get_logger()
 
-# IAQI断点表（HJ 633-2026新标准）
-IAQI_BREAKPOINTS_NEW = {
-    'SO2': [(0, 0), (50, 50), (150, 100), (475, 150), (800, 200), (1600, 300), (2100, 400), (2620, 500)],
-    'NO2': [(0, 0), (40, 50), (80, 100), (180, 150), (280, 200), (565, 300), (750, 400), (940, 500)],
-    'PM10': [(0, 0), (50, 50), (150, 100), (250, 150), (350, 200), (420, 300), (500, 400), (600, 500)],
-    'CO': [(0, 0), (2, 50), (4, 100), (14, 150), (24, 200), (36, 300), (48, 400), (60, 500)],
-    'O3_8h': [(0, 0), (100, 50), (160, 100), (215, 150), (265, 200), (800, 300)],
-    'PM2_5': [(0, 0), (35, 50), (75, 100), (115, 150), (150, 200), (250, 300), (350, 400), (500, 500)]
-}
-
-# 颜色等级映射（中等浅度版本）
-AQI_COLOR_MAP = {
-    'excellent': '#4CFF4C',    # 0-50: 优（中浅绿色）
-    'good': '#FFFF66',         # 51-100: 良（中浅黄色）
-    'lightly': '#FF9933',      # 101-150: 轻度污染（中浅橙色）
-    'moderately': '#FF6666',   # 151-200: 中度污染（中浅红色）
-    'heavily': '#B33366',      # 201-300: 重度污染（中浅紫色）
-    'severely': '#993333',     # 301-500: 严重污染（中浅褐红色）
-    'missing': '#DDDDDD'       # 缺失数据（中浅灰色）
-}
+# HJ 633 appendix-A colors are shared with Python charts.
+AQI_COLOR_MAP = dict(zip(
+    ('excellent', 'good', 'lightly', 'moderately', 'heavily', 'severely'), AQI_COLORS
+))
+AQI_COLOR_MAP['missing'] = MISSING_COLOR
 
 # 广东省21个城市
 GUANGDONG_CITIES = [
@@ -58,7 +44,7 @@ def _scaled_font_size(base_size: int, font_scale: FontScale = None) -> int:
     return int(round(base_size * resolve_font_scale(font_scale)))
 
 
-def calculate_iaqi(concentration: float, pollutant: str) -> int:
+def calculate_iaqi(concentration: float, pollutant: str) -> Optional[int]:
     """计算污染物IAQI（基于HJ 633-2026新标准）
 
     Args:
@@ -68,30 +54,11 @@ def calculate_iaqi(concentration: float, pollutant: str) -> int:
     Returns:
         IAQI值（整数）
     """
-    if concentration is None or concentration <= 0:
-        return 0
-
-    # 特殊处理：O3_8h > 800时，IAQI固定为300
-    if pollutant == 'O3_8h' and concentration > 800:
-        return 300
-
-    breakpoints = IAQI_BREAKPOINTS_NEW.get(pollutant, [])
-    if not breakpoints:
-        return 0
-
-    # 分段线性插值
-    for i in range(len(breakpoints) - 1):
-        bp_lo, iaqi_lo = breakpoints[i]
-        bp_hi, iaqi_hi = breakpoints[i + 1]
-
-        if bp_lo <= concentration <= bp_hi:
-            if bp_hi == bp_lo:
-                return iaqi_hi
-            iaqi = (iaqi_hi - iaqi_lo) / (bp_hi - bp_lo) * (concentration - bp_lo) + iaqi_lo
-            import math
-            return math.ceil(iaqi)
-
-    return breakpoints[-1][1]
+    return pollutant_iaqi(
+        concentration, pollutant='O3' if pollutant == 'O3_8h' else pollutant,
+        average_time='daily_max_8h' if pollutant == 'O3_8h' else '24h',
+        observed_on='2026-03-01', unit='mg/m3' if pollutant == 'CO' else 'ug/m3',
+    )
 
 
 def get_aqi_color(aqi_value: Optional[int]) -> str:
@@ -103,21 +70,7 @@ def get_aqi_color(aqi_value: Optional[int]) -> str:
     Returns:
         颜色代码（十六进制）
     """
-    if aqi_value is None:
-        return AQI_COLOR_MAP['missing']
-
-    if aqi_value <= 50:
-        return AQI_COLOR_MAP['excellent']
-    elif aqi_value <= 100:
-        return AQI_COLOR_MAP['good']
-    elif aqi_value <= 150:
-        return AQI_COLOR_MAP['lightly']
-    elif aqi_value <= 200:
-        return AQI_COLOR_MAP['moderately']
-    elif aqi_value <= 300:
-        return AQI_COLOR_MAP['heavily']
-    else:
-        return AQI_COLOR_MAP['severely']
+    return aqi_color(aqi_value)
 
 
 def get_text_color(background_color: str) -> str:
@@ -129,10 +82,11 @@ def get_text_color(background_color: str) -> str:
     Returns:
         文字颜色（'black' 或 'white'）
     """
-    light_colors = ['#FFFF00', '#D3D3D3']  # 黄色、灰色用黑色文字
-    if background_color in light_colors:
-        return 'black'
-    return 'white'
+    rgb = [int(background_color[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+    linear = [value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+              for value in rgb]
+    luminance = sum(value * weight for value, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+    return 'black' if luminance > 0.179 else 'white'
 
 
 def setup_chinese_font():
@@ -417,11 +371,10 @@ class AQICalendarRenderer:
 
                 # 在每个网格中显示AQI值（移除单元格大小限制）
                 if aqi_value is not None:
-                    # 统一使用黑色，与城市名称字体一致（默认sans-serif字体）
                     font_size = _scaled_font_size(12, font_scale)  # 与网格高度一致
                     ax.text(x + cell_width/2, y + cell_height/2, str(aqi_value),
                            ha='center', va='center',
-                           fontsize=font_size, color='black', weight='normal')
+                           fontsize=font_size, color=get_text_color(color), weight='normal')
 
     def add_color_legend(self, fig: plt.Figure, font_scale: FontScale = None) -> None:
         """添加右侧垂直颜色图例
@@ -478,7 +431,7 @@ class AQICalendarRenderer:
             legend_ax.text(0.45, y_center, range_text,
                           ha='center', va='center',
                           fontsize=legend_font_size,
-                          color='black')
+                          color=get_text_color(color))
 
     def render_calendar(
         self,

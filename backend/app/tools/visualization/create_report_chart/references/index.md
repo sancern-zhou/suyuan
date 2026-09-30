@@ -34,6 +34,15 @@ single-chart specifications selected by the routing table below.
   `execute_python` for static analysis and report charts.
 - Wind roses require real pollutant concentrations. For pure wind-frequency
   roses, use `execute_python`; never invent placeholder concentrations.
+- Environmental figures must explain colors and symbols with a legend,
+  colorbar or direct labels. Series legends normally go below the plot.
+  AQI/IAQI grade colors follow HJ 633-2026 appendix A, shared with Python's
+  `app.utils.environment_charts`; do not replace them with theme series colors.
+  Concentration grades require pollutant-specific averaging periods and
+  breakpoints, and are distinct from GB 3095 compliance limits.
+  Where a limit is applicable, label its standard, phase, grade, averaging
+  period, value and unit. Do not judge hourly compliance against daily limits.
+  Missing values are not zero; distinguish forecasts from observations.
 
 ## Domain Chart Routing
 

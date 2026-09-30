@@ -20,3 +20,12 @@ def test_python_is_primary_report_plotting_tool_with_shared_style():
     assert "无需用户预先指定" in schema["description"]
     assert "apply_report_style()" in schema["parameters"]["properties"]["code"]["description"]
     assert "正式报告静态图表优先使用 create_business_chart" not in schema["description"]
+
+
+def test_environment_constraints_use_existing_tool_description():
+    description = ExecutePythonTool().get_function_schema()["parameters"]["properties"]["code"]["description"]
+    assert "图例默认在下方" in description
+    assert "小时值不得直接按日均限值判断达标" in description
+    for helper in ("aqi_color", "pollutant_color", "get_pollutant_scale",
+                   "get_environment_limit", "add_standard_limit", "legend_below"):
+        assert helper in description
