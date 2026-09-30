@@ -1,6 +1,6 @@
 # execute_echarts_python 工具指导手册
 
-首次使用 `execute_echarts_python` 前应阅读本手册。后续调用可根据任务只重读相关章节。
+工具 Schema 要求 Agent 在使用 `execute_echarts_python` 前通过 `read_file` 阅读本手册。该要求由 Agent 按任务场景执行，工具运行时代码不检测阅读状态，也不会因此阻断执行；后续调用可根据任务只重读相关章节。
 
 ## 使用边界
 

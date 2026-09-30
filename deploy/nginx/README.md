@@ -173,6 +173,19 @@ cd /home/xckj/suyuan/backend
 
 `start.sh`、`restart_server.sh` 与 `python -m app.worker` 都会自动执行该校验；校验失败时禁止绕过这些入口直接启动服务。迁移数据目录时，必须同时迁移文件并事务性更新数据库 locator，不能只修改环境变量。
 
+### execute_python cgroup（可选）
+
+需要对 Python 沙箱施加真实内存和进程总量限制时，可为 web/worker 服务委派一个 cgroup v2 子树，并在对应环境文件中配置：
+
+```dotenv
+PYTHON_SANDBOX_CGROUP_PARENT=/sys/fs/cgroup/suyuan-execute-python
+PYTHON_SANDBOX_CGROUP_MEMORY_MAX=2147483648
+PYTHON_SANDBOX_CGROUP_SWAP_MAX=0
+PYTHON_SANDBOX_CGROUP_PIDS_MAX=128
+```
+
+父目录必须位于 `/sys/fs/cgroup` 下且对服务进程可写。部署预检会验证 cgroup v2 和委派路径；每次执行的返回值 `data.execution.cgroup` 会说明是否成功挂载。未配置时继续使用 Bubblewrap namespace 与 `prlimit`，不会因此改变注册表文件读取策略。
+
 ## 双项目同时部署（本机布局）
 
 ### 配置文件归属
