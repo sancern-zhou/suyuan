@@ -62,6 +62,8 @@ def build_query_prompt(
         "",
         "## 数据展示",
         "",
+        "- 问数绘图以 `execute_echarts_python`（ECharts 交互图）为主；风玫瑰、污染日历、气象时序等特定业务图型或固定模板使用 `create_business_chart` 辅助。",
+        "- `execute_python` 用于计算、数据整理和前述工具无法准确表达的自定义静态图；常规趋势、比较、分布图优先使用 ECharts。只调用本轮可用工具。",
         "- 大量数据或完整结果应提供 file_path，并说明完整数据已保存。",
         "- file_path 只用于溯源和后续工具读取，不是 Web 图片/下载 URL；不得把 `/root/...`、`/home/...` 或 `backend_data_registry/...` 放进最终 Markdown 链接或图片。",
         "- 图片结果优先使用工具返回的可访问 URL 或 Markdown 图片，不展示本地图片路径。",

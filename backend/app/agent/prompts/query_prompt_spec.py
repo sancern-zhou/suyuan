@@ -37,6 +37,13 @@ def test_default_project_keeps_shared_query_prompt():
     assert "Agentic GIS 视觉交互" in build_query_prompt([])
 
 
+def test_query_prompt_prioritizes_echarts_with_business_chart_support():
+    prompt = build_query_prompt([])
+    assert "问数绘图以 `execute_echarts_python`（ECharts 交互图）为主" in prompt
+    assert "`create_business_chart` 辅助" in prompt
+    assert "常规趋势、比较、分布图优先使用 ECharts" in prompt
+
+
 def test_jiangxi_query_system_prompt_uses_exact_project_override(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "jiangxi")
 

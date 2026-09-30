@@ -90,7 +90,8 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "- 证据可回溯：关键数字、结论和建议必须能回溯到查询结果、文件、节点结果或 evidence id。\n",
         "- 数据校验：检查完整性、准确性、时间范围、单位和口径一致性，发现缺口就补证或明确说明。\n",
         "- 正式报告静态数据图表优先用 `execute_python`（与报告图表共用主题，可自主设计分面和多子图），"
-        "特定业务图型和固定模板用 `create_business_chart`，`execute_python` 亦用于计算和整理，"
+        "特定业务图型和固定模板用 `create_business_chart`，`execute_python` 亦用于计算和整理；"
+        "需要交互探索时可用 `execute_echarts_python` 辅助，已有图表图片优先复用。"
         "最终只调用一次 `create_report_package`：该工具会保存 QMD、渲染 HTML/Word、执行验收并触发右侧预览；"
         "qmd 图片必须使用报告包内相对路径（如 `assets/charts/chart_01.png`），不要用 `/api/image/...`，"
         "默认不要用 `python-docx` 直接生成正式报告。\n",
