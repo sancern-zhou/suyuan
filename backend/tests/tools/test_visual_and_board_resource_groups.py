@@ -123,7 +123,7 @@ async def test_create_report_chart_publishes_visual_and_image_resources(tmp_path
         lambda **_kwargs: {
             "visuals": [{
                 "id": "generated-chart",
-                "type": "bar",
+                "type": "pollutant_calendar",
                 "title": "Generated chart",
                 "local_path": str(image),
             }],
@@ -132,9 +132,9 @@ async def test_create_report_chart_publishes_visual_and_image_resources(tmp_path
     )
 
     result = await CreateReportChartTool().execute(
-        chart_type="bar",
+        chart_type="pollutant_calendar",
         title="Generated chart",
-        data={"labels": ["A"], "values": [1]},
+        data={"values": [{"date": "2026-05-01", "value": 18}]},
     )
     resources = validate(result["resources"])
 

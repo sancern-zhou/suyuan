@@ -1,10 +1,9 @@
 # Generic Pollutant Wind Rose Design
 
-Use `generic_pollutant_wind_rose` for pollutant concentration by wind direction
-outside Guangdong-specific report templates. For a pure meteorological wind
-rose with no pollutant, use `wind_rose`. Do not use the Guangdong-specific `pollutant_wind_rose`
-outside Guangdong reports. Projects other than the Guangdong default do not
-expose `pollutant_wind_rose` at all; always use `generic_pollutant_wind_rose`.
+Use `generic_pollutant_wind_rose` for pollutant wind rose, pollution
+rose, or pollutant concentration by wind direction outside Guangdong-specific
+report templates. Do not use the Guangdong-specific `pollutant_wind_rose`
+outside Guangdong reports.
 
 The chart needs wind direction, wind speed and one real pollutant concentration for
 the same observation. Wind and pollutant often come from different tools
@@ -53,6 +52,9 @@ Raw records may be used when field names are supplied:
 ## Design Rules
 
 - Use one pollutant per image.
+- Concentrations must come from real pollutant observations. Use
+  `execute_python` for pure wind-frequency roses; do not supply placeholder
+  concentrations to reuse this template.
 - Use `pollutant_name` and `unit` options instead of embedding units in every
   label.
 - Use `direction_bins` only when the report needs a specific directional
