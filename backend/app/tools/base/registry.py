@@ -13,7 +13,6 @@ import structlog
 
 # 导入工具类别枚举
 from app.tools.base.tool_interface import ToolCategory
-from app.tools.base.tool_names import canonical_tool_name
 from app.services.tool_statistics_store import ToolStatisticsStore, get_tool_statistics_store
 
 logger = structlog.get_logger()
@@ -186,12 +185,12 @@ class ToolRegistry:
 
     def get_tool(self, tool_name: str):
         """获取指定工具"""
-        tool_data = self._tools.get(canonical_tool_name(tool_name))
+        tool_data = self._tools.get(tool_name)
         return tool_data["tool"] if tool_data else None
 
     def get_tool_data(self, tool_name: str) -> Optional[Dict[str, Any]]:
         """获取工具完整数据（工具+Schema+元数据）"""
-        return self._tools.get(canonical_tool_name(tool_name))
+        return self._tools.get(tool_name)
 
     def get_input_adapter(self, tool_name: str) -> Dict[str, Any]:
         """输入适配已废弃；保留空返回兼容旧调用。"""
@@ -284,7 +283,6 @@ class ToolRegistry:
         Returns:
             Any: 工具执行结果
         """
-        tool_name = canonical_tool_name(tool_name)
         tool_data = self._tools.get(tool_name)
         if not tool_data:
             logger.error("tool_not_found", tool=tool_name)

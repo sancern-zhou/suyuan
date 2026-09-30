@@ -138,11 +138,10 @@ def test_chart_catalog_exposes_interactivity_for_current_and_existing_resources(
     assert "tool_name" not in static
 
 
-@pytest.mark.parametrize("tool_name", ["create_report_chart", "create_business_chart"])
-def test_business_chart_catalog_preserves_legacy_static_resource_semantics(tool_name):
+def test_business_chart_catalog_defaults_to_static_resource():
     item = session_resource_routes.resource_dto(
         "session-1",
-        stored_resource(resource_key="chart-spec", renderer="chart", tool_name=tool_name,
+        stored_resource(resource_key="chart-spec", renderer="chart", tool_name="create_business_chart",
                         metadata={"visual_id": "static-chart"}),
     )
     assert item["interactive"] is False

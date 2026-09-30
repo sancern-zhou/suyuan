@@ -10,7 +10,6 @@
 """
 
 from typing import Dict, Iterable, List
-from app.tools.base.tool_names import canonical_tool_name
 
 # ========================================
 # 工具有序白名单（仅包含工具名称）
@@ -416,7 +415,7 @@ def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
     将工具名称列表转换为字典格式（向后兼容）。
     字典保留插入顺序，因此列表顺序就是模式工具顺序。
     """
-    names = [canonical_tool_name(name) for name in tool_names if name not in AGENT_INTERNAL_TOOL_NAMES]
+    names = [name for name in tool_names if name not in AGENT_INTERNAL_TOOL_NAMES]
     if "list_session_resources" in names and "read_session_resource" not in names:
         names.insert(names.index("list_session_resources") + 1, "read_session_resource")
     return {name: "" for name in names}

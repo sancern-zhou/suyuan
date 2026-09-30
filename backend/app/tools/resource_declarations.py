@@ -426,7 +426,7 @@ def resources_for_visuals(
                 "type": visual.get("type") or payload.get("type"),
                 "visual_id": visual_id,
                 "interactive": (
-                    tool_name not in {"execute_python", "create_business_chart", "create_report_chart"}
+                    tool_name not in {"execute_python", "create_business_chart"}
                     and (visual.get("type") or payload.get("type")) != "image"
                 ),
             },
