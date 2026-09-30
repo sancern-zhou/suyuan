@@ -11,3 +11,11 @@ def test_execute_python_schema_describes_general_capability_and_bash_boundary():
     assert "查看文件、搜索文本、检查进程或调用现成 CLI" in description
     assert "优先使用 bash" in description
     assert "不限制于数据分析、Excel或可视化" in description
+
+
+def test_python_is_primary_report_plotting_tool_with_shared_style():
+    schema = ExecutePythonTool().get_function_schema()
+    assert "静态分析和正式报告图表优先使用 execute_python" in schema["description"]
+    assert "无需用户预先指定" in schema["description"]
+    assert "apply_report_style()" in schema["parameters"]["properties"]["code"]["description"]
+    assert "正式报告静态图表优先使用 create_report_chart" not in schema["description"]

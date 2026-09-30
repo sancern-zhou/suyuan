@@ -21,7 +21,7 @@ LLM Tools
 
 3. Visualization Tools - 可视化工具（生成图表和地图配置）
    - execute_echarts_python - 生成前端交互式 ECharts 图表
-   - create_report_chart - 生成正式报告静态图表
+   - create_report_chart - 绘制特定业务图型和固定报告模板
    - generate_map - 生成高德地图配置
 
 4. Task Management Tools - 任务管理工具（housekeeping状态管理）
@@ -29,7 +29,8 @@ LLM Tools
 
 **工具选择决策：**
 - 前端交互式图表 → execute_echarts_python
-- QMD/Word/HTML 正式报告静态图表 → create_report_chart
+- 静态分析和正式报告图表 → execute_python（共享报告主题）
+- 特定业务图型和固定报告模板 → create_report_chart
 """
 
 import structlog

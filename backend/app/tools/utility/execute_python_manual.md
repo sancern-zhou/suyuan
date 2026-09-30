@@ -8,7 +8,7 @@
 
 - 数据处理：`pandas`、`numpy`、`scipy`。
 - Excel 读取、修改和生成：优先使用 `openpyxl`，读取分析可用 `pandas`。
-- 临时图表或调试图片生成：`matplotlib`，保存图片到 `backend/backend_data_registry/`。正式报告静态图表优先使用 `create_report_chart`。
+- 主要静态绘图：使用 `matplotlib` / `seaborn` 生成日常分析、深度分析和正式报告图表，通过 `save_chart` 保存并自动归档。特定业务图型或固定模板使用 `create_report_chart`；交互探索使用 `execute_echarts_python`。
 - 报告中间资源生成：图表、表格、结构化 JSON、qmd 草稿片段。
 - 一次性 Office 文件生成：仅当用户明确要求 Word/Excel 文件，且不需要 qmd 同源报告包时使用。
 - 自定义统计：仅当专用查询/统计工具无法直接满足时使用。
@@ -19,7 +19,7 @@
 
 标准流程：
 
-1. 用查询工具和 `execute_python` 完成计算、表格整理；正式报告静态图表用 `create_report_chart` 生成。
+1. 用查询工具和 `execute_python` 完成计算、表格整理和正式报告静态绘图；匹配特定业务模板时使用 `create_report_chart`。
 2. 准备 `report.qmd` 内容，图片最终使用报告包内相对路径，例如 `assets/charts/chart_01.png`。
    不要根据 `/api/image/{image_id}` 或缓存 id 推断这个路径；应把真实图片文件路径传给
    `create_report_package.assets`，必要时用 `name` 指定 `chart_01.png`，由报告包工具复制并规范化引用。
@@ -105,9 +105,20 @@ backend/backend_data_registry/reports/{report_id}.qmd
 
 生成正式报告时，调用 `create_report_package`，不要把本地绝对路径作为最终交付方式。
 
-## matplotlib 图片保存
+## Python 绘图风格约束
 
-`execute_python` 只负责运行代码和捕获图片保存路径，不负责报告图表字体、字号、画布或布局设计。正式报告图表请改用 `create_report_chart`。
+Python 是主要静态绘图工具，图型由分析问题和数据条件决定。正式报告图与 `create_report_chart` 共用 `REPORT_THEME` 和 `SERIES_COLORS`，matplotlib/seaborn 的默认主题在执行前自动注入。
+
+- 字体：系统自动选择支持中文的字体，与报告图表一致；不要硬编码 SimHei 或用不支持中文的字体替代。
+- 字号：标题 14 pt、轴标签 11 pt、刻度/图例 9.8 pt、数据标签 10.5 pt、注释 8.5 pt。报告嵌入缩放后仍须可读，必要时增大字号或拆分图表。
+- 配色：常规系列使用 `SERIES_COLORS`；强调、风险、正向和背景色使用 `theme_color('primary'/'warning'/'danger'/'positive'/'grid')`。相同变量跨图颜色一致；连续浓度或有正负含义的热力图允许选用合适的顺序或发散色图，并提供色标和单位。
+- 版式：白底、标题左对齐、弱化轴线、轻网格、无图例边框；避免装饰背景和无分析必要的 3D。默认画布 7.2 × 4.6 英寸，按数据密度和报告版面调整比例。
+- 导出：默认 160 DPI，白底、紧边界；细节密集或印刷场景可提高 DPI。使用 `save_chart(fig, filename)` 返回值和工具最终归档路径交付资源，不自行拼接存储路径。
+- 标题不写“图1”等编号，编号由报告层负责；轴标签包含单位，说明时间范围、样本口径、缺失处理和数据来源。相关关系不直接解释为因果，不编造贡献率或置信区间。
+- `seaborn.set_theme()` 会覆盖默认设置，须在创建 Figure 前调用 `apply_report_style()` 恢复主题。工具也注入 `REPORT_THEME`、`SERIES_COLORS` 和 `theme_color()`，可直接复用；保存时保留代码选择的图型和布局。
+- 交付前查看生成图，检查中文缺字、裁切、标签重叠、图例遮挡和报告缩放后的可读性；出现问题先调整再入报告。
+
+## matplotlib 图片保存
 
 ```python
 import matplotlib
@@ -116,15 +127,20 @@ import matplotlib.pyplot as plt
 
 fig, ax = plt.subplots()
 ax.plot([1, 2, 3], [1, 4, 9])
-save_chart(fig, "debug_chart.png")
+ax.set_title("指标变化趋势")
+ax.set_xlabel("日期")
+ax.set_ylabel("浓度 (ug/m$^3$)")
+ax.grid(axis="y")
+save_chart(fig, "trend_chart.png")
 ```
 
 ## 图表组织规则
 
 - 默认一张图片只表达一个核心图表或一个分析问题。
-- 除非用户明确要求“多子图”“组合图”“仪表盘”“一页多图对比”，不要在单个 Figure 中使用 `subplot`、`subplots` 或多个 `Axes` 拼接多个图表。
-- 同一数据源可以支持多个分析视角，但应先选择与用户问题最相关的一张图。
-- 确需多个独立图表时，分别保存为多个图片文件，例如 `trend_pm25.png`、`ranking_city.png`，不要合并进单张图片。
+- Agent 可根据分析问题自主选择分面、多子图、共享坐标轴和复杂组合，无需用户提前提出；图表类型枚举不应限制分析维度。
+- 先明确每个分析问题和证据，再选择图表；不要为了增加图表数量重复表达同一结论。
+- 同一问题下的站点、时段或情景对比可以合为多子图，统一尺度、图例和单位；独立分析问题分别保存，例如 `trend_pm25.png`、`ranking_city.png`。
+- 多子图须保证最终版面可读，拥挤时减少子图、增加高度或拆图，避免用缩小字号容纳过量内容。
 - 单个坐标轴中的多条折线、多组柱或多系列散点用于对比是允许的；这属于一个图表，不属于多图拼接。
 
 ## Excel 规则

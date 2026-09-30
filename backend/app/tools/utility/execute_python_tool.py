@@ -51,6 +51,7 @@ from app.utils.path_config import (
     is_agent_sensitive_path,
 )
 from app.utils.font_utils import BROWSER_CHART_FONT_FAMILY, select_preferred_chinese_font_path
+from app.tools.visualization.create_report_chart.theme import REPORT_THEME, SERIES_COLORS, matplotlib_report_style
 
 logger = structlog.get_logger()
 
@@ -81,15 +82,15 @@ class ExecutePythonTool(LLMTool):
             name="execute_python",
             description=(
                 "执行 Python 代码，用于数据处理、数值计算、Excel/文件处理、"
-                "⭐ **自定义图表生成**：matplotlib/seaborn/plotly/bokeh 绘制复杂/3D/科研图表。"
+                "⭐ **主要绘图工具**：matplotlib/seaborn 绘制日常分析、深度分析及正式报告图表。"
                 "每次调用是独立环境；读取输入文件须通过 input_files 声明，声明的路径可在代码中通过 input_files 列表访问；用 load_data(file_path) 读取会话数据文件，"
                 "跨调用或跨工具复用结构化结果必须用 save_data(...) 保存，并原样复用其返回的 file_path；"
                 "不得将自行写入或推断得到的中间数据路径传给后续工具。"
                 "生成 Excel、Word、PDF 等交付文件时必须先调用 artifact_path(filename) 获取输出路径，"
                 "再保存到该路径；工具会自动归档并返回真实 file_path。"
                 "⚠️ **图表选择策略**："
-                "① 标准报告图表（bar/line/scatter/pile/histogram等）→ 优先使用 create_report_chart；"
-                "② 复杂/自定义图表（3D图/多子图/任意极坐标/科研图表）→ 使用 execute_python + matplotlib/seaborn/plotly；"
+                "① 静态分析和正式报告图表 → 优先使用 execute_python，自动应用统一报告主题；"
+                "② 特定业务图型或固定模板（风玫瑰、污染日历、气象时序等）→ 使用 create_report_chart；"
                 "③ 流程图/架构图/步骤图 → 使用 call_sub_agent(target_mode='board') 调用画板Agent生成draw.io图片文件。"
                 "生成文件由工具自动归档并返回可复用路径。"
             ),
@@ -1982,8 +1983,10 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
         return converted_code
 
     def _inject_matplotlib_save_support(self, code: str) -> str:
-        """Inject only matplotlib image save detection and save_chart()."""
-        has_matplotlib_import = "import matplotlib" in code or "from matplotlib" in code
+        """Inject shared report styling and image publication helpers."""
+        has_matplotlib_import = any(
+            token in code for token in ("import matplotlib", "from matplotlib", "import seaborn", "from seaborn")
+        )
         if not has_matplotlib_import:
             logger.debug("matplotlib_save_injection_skipped", reason="no matplotlib import")
             return code
@@ -1993,6 +1996,20 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
 import os
 from matplotlib.figure import Figure
 from matplotlib.text import Text
+import matplotlib.pyplot as _suyuan_plt
+
+REPORT_THEME = __SUYUAN_REPORT_THEME__
+SERIES_COLORS = __SUYUAN_SERIES_COLORS__
+
+def theme_color(role, fallback=None):
+    return REPORT_THEME['colors'].get(role, fallback or REPORT_THEME['colors']['primary'])
+
+def apply_report_style():
+    '''在创建 Figure 前应用共享主题；seaborn.set_theme 后可再次调用。'''
+    _suyuan_plt.rcParams.update(__SUYUAN_REPORT_STYLE__)
+    _suyuan_plt.rcParams['axes.prop_cycle'] = _suyuan_plt.cycler(color=SERIES_COLORS)
+
+apply_report_style()
 
 _SUYUAN_CHINESE_FONT_PROP = None
 _SUYUAN_FONT_WARNING_EMITTED = False
@@ -2146,10 +2163,10 @@ def _suyuan_patched_figure_savefig(self, fname, *args, **kwargs):
 _suyuan_patched_figure_savefig._suyuan_original_savefig = _suyuan_original_figure_savefig
 Figure.savefig = _suyuan_patched_figure_savefig
 
-def save_chart(fig, filename, dpi=150, bbox_inches='tight', facecolor='white'):
+def save_chart(fig, filename, dpi=None, bbox_inches='tight', facecolor='white'):
     '''
     保存 matplotlib 图表并输出 CHART_SAVED 标记，便于工具登记统一资源。
-    本函数不修改字体、字号、画布、布局或其他视觉设计。
+    默认使用共享报告 DPI，保留分析代码选择的图型、字号和布局。
     '''
     charts_dir = __SUYUAN_IMAGES_DIR__
     try:
@@ -2166,14 +2183,18 @@ def save_chart(fig, filename, dpi=150, bbox_inches='tight', facecolor='white'):
     _suyuan_original_figure_savefig(
         fig,
         filepath,
-        dpi=dpi,
+        dpi=REPORT_THEME['dpi'] if dpi is None else dpi,
         bbox_inches=bbox_inches,
         facecolor=facecolor,
     )
     _suyuan_emit_chart_saved(filepath)
     return filepath
 
-""".replace("__SUYUAN_IMAGES_DIR__", images_dir_literal)
+""".replace("__SUYUAN_IMAGES_DIR__", images_dir_literal).replace(
+            "__SUYUAN_REPORT_THEME__", repr(REPORT_THEME)
+        ).replace("__SUYUAN_SERIES_COLORS__", repr(SERIES_COLORS)).replace(
+            "__SUYUAN_REPORT_STYLE__", repr(matplotlib_report_style())
+        )
 
         injected_code = save_support_code + "\n" + code
         logger.info(
@@ -2879,7 +2900,10 @@ def merge_excel_with_charts(file_paths, output_path):
                 "气象数据合并须用带时区的datetime对象作为键；先读取完整file_path，再做去重、截止时间过滤和缺失检查，禁止从首尾样本推断缺失。"
                 "执行环境相互隔离，不得将自行写入、拼接或猜测得到的中间数据路径交给后续工具。"
                 "生成 Excel、Word、PDF 等交付文件必须先调用 artifact_path(filename) 获取输出路径并保存；"
-                "正式报告静态图表优先使用 create_report_chart；流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
+                "静态分析和正式报告图表优先使用 execute_python；create_report_chart 用于特定业务图型或固定模板。"
+                "绘图前阅读 execute_python_manual.md 的风格约束；matplotlib/seaborn 自动应用与报告图表一致的主题，"
+                "可按分析需要自主选择分面、多子图和组合图，无需用户预先指定。"
+                "流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
                 "生成的静态图只在对话正文展示，不进入右侧交互图面板；"
                 "最终答复可用 [[chart:<visual_id>]] 将图片放在相应分析旁，visual_id 取工具返回的 visuals.id，"
                 "未指定位置的图片由前端追加到本轮答复末尾。不要自行拼图片 URL 或本地路径。"
@@ -2900,7 +2924,8 @@ def merge_excel_with_charts(file_paths, output_path):
                         "description": (
                             "要执行的 Python 代码。matplotlib 图片可用 save_chart(fig, filename) 或 fig.savefig(path) 保存；"
                             "matplotlib 中文字体由系统自动设置，不要显式设置 SimHei、DejaVu Sans 等不支持中文的字体；"
-                            "工具只捕获保存路径，不接管图表字号、画布或布局。"
+                            "工具默认应用共享报告配色、字号和轴线风格；可使用 REPORT_THEME、SERIES_COLORS、theme_color(role)。"
+                            "seaborn.set_theme 后须在创建图表前调用 apply_report_style() 恢复主题；图型、画布和布局按分析需要设计。"
                             "结构化结果若需被后续调用或其他工具读取，代码必须使用 path = save_data(data, schema=...)；"
                             "只能向后续工具传递该返回值，不能传递其他文件写入方式产生的中间路径。"
                             "Excel、Word、PDF 等交付文件必须先使用 output_path = artifact_path(filename)，"
@@ -2929,9 +2954,9 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "执行 Python 代码并将 stdout 中的一行一个纯 JSON ECharts option 转换为前端交互式图表。"
             "用于生成前端交互式 ECharts 图表（柱状图/折线图/散点图/饼图/3D图/地图等）。"
             "⚠️ **图表选择策略**："
-            "① 正式报告Word/QMD静态图表 → 优先使用 create_report_chart；"
+            "① 静态分析和正式报告Word/QMD图表 → 优先使用 execute_python；特定业务模板使用 create_report_chart；"
             "② 前端交互式图表/复杂数据可视化 → 使用 execute_echarts_python；"
-            "③ 复杂Python绘图（3D/科研图/多子图） → 使用 execute_python + matplotlib/seaborn/plotly。"
+            "③ 深度分析、分面和多子图 → 使用 execute_python + matplotlib/seaborn。"
             "成功时会尝试为交互图登记同组 PNG 资源；复用到文档时用 list_session_resources 查找 chart-image。"
             "最终答复需要控制图表位置时，可使用 [[chart:<visual_id>]] 占位符；未指定位置的图表由前端统一补充。"
             "通用计算和文件生成仍使用 execute_python。"
@@ -3031,7 +3056,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                 "不要只说图表已在右侧面板展示，以免误导用户忽略正文中的图。"
                 "将已有交互图放入 Word/QMD 时，调用 list_session_resources，设置 logical_key=chart-image、"
                 "tool_name=execute_echarts_python，从结果取得 file_path 作为文档图片输入；"
-                "若没有 chart-image，说明静态渲染未成功，可使用 create_report_chart 生成报告图片。"
+                "若没有 chart-image，说明静态渲染未成功，可使用 execute_python 生成报告图片；特定模板可使用 create_report_chart。"
                 "多图时输出多行纯 JSON。禁止输出 CHART_1: 前缀、Markdown 代码块、解释文字包裹 JSON。"
                 "数据分析、清洗、中间计算和文件生成请使用 execute_python。"
             ),

@@ -69,9 +69,11 @@ single-chart specifications selected by the routing table below.
   `chart_type: "weather_timeseries"`. This type is single-day and must not
   overlay pollution series or data from different dates.
 
-Use `create_report_chart` for formal report images. Use `execute_python` only
-for upstream data preparation or cases that require arbitrary Python beyond the
-documented chart contracts.
+Use `execute_python` as the primary static chart tool for analysis and formal
+reports, with the shared report theme. Use `create_report_chart` for specific
+business chart types and fixed templates that match the documented contracts.
+Choose analytical dimensions before selecting a chart; use Python for custom
+combinations, facets and multi-panel comparisons.
 
 Only pollution-aware chart types may overlay pollutant data on meteorological
 backgrounds. Do not use `weather_timeseries` for such overlays.

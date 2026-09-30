@@ -10,11 +10,77 @@ from matplotlib import font_manager
 from app.agent.resources.contracts import ResourceDeclaration
 from app.tools.utility.execute_python_tool import ExecuteEChartsPythonTool, ExecutePythonTool
 from app.utils.font_utils import select_preferred_chinese_font_path
+from app.tools.visualization.create_report_chart.theme import REPORT_THEME, SERIES_COLORS
 
 
 def test_python_execution_tools_are_pinned_to_sandbox():
     assert ExecutePythonTool().execution_engine == "bubblewrap"
     assert ExecuteEChartsPythonTool().execution_engine == "bubblewrap"
+
+
+@pytest.mark.asyncio
+async def test_python_report_theme_preserves_custom_multiplot_and_exports_png():
+    import json
+
+    result = await ExecutePythonTool().execute(
+        code="""
+import json
+import matplotlib.pyplot as plt
+from PIL import Image
+fig, axes = plt.subplots(1, 2, figsize=(8, 4), layout='constrained')
+line, = axes[0].plot([1, 2, 3], [3, 5, 4])
+axes[0].set_title('Trend')
+axes[1].bar(['A', 'B'], [4, 6], color=theme_color('warning'))
+axes[1].set_title('Comparison')
+axes[1].set_ylabel('Value', fontsize=13)
+path = save_chart(fig, 'python-report-theme.png')
+with Image.open(path) as image:
+    dpi = image.info['dpi'][0]
+print('THEME=' + json.dumps({
+    'line_color': line.get_color(),
+    'title_size': axes[0].title.get_fontsize(),
+    'axis_color': axes[0].spines['bottom'].get_edgecolor(),
+    'top_visible': axes[0].spines['top'].get_visible(),
+    'custom_size': axes[1].yaxis.label.get_fontsize(),
+    'canvas': fig.get_size_inches().tolist(),
+    'axes_count': len(fig.axes), 'dpi': dpi,
+}))
+""",
+        timeout=15,
+    )
+    assert result["success"] is True, result
+    output = result["data"]["output"]
+    values = json.loads(next(line[6:] for line in output.splitlines() if line.startswith("THEME=")))
+    assert values["line_color"] == SERIES_COLORS[0]
+    assert values["title_size"] == REPORT_THEME["font_sizes"]["title"]
+    from matplotlib.colors import to_rgba
+    assert values["axis_color"] == list(to_rgba(REPORT_THEME["colors"]["grid"]))
+    assert values["top_visible"] is False
+    assert values["custom_size"] == 13
+    assert values["canvas"] == [8, 4]
+    assert values["axes_count"] == 2
+    assert values["dpi"] == pytest.approx(REPORT_THEME["dpi"], abs=0.1)
+    image_resources = [item for item in result["resources"] if item["resource_key"] == "chart-image"]
+    assert len(image_resources) == 1
+
+
+@pytest.mark.asyncio
+async def test_seaborn_only_script_can_restore_shared_report_style():
+    result = await ExecutePythonTool().execute(
+        code="""
+import seaborn as sns
+sns.set_theme(style='darkgrid')
+apply_report_style()
+ax = sns.lineplot(x=[1, 2, 3], y=[3, 5, 4])
+assert ax.get_facecolor() == (1, 1, 1, 1)
+assert ax.lines[0].get_color() == SERIES_COLORS[0]
+ax.set_title('Seaborn report chart')
+save_chart(ax.figure, 'seaborn-report-theme.png')
+""",
+        timeout=15,
+    )
+    assert result["success"] is True, result
+    assert any(item["resource_key"] == "chart-image" for item in result["resources"])
 
 
 @pytest.mark.asyncio

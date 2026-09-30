@@ -16,3 +16,10 @@ def test_report_prompt_explains_when_to_use_agent_workflow_dag():
     assert "run_agent_workflow" in prompt
     assert "无依赖节点并行执行" in prompt
     assert "report_analysis_v1" in prompt
+
+
+def test_report_prompt_uses_python_as_primary_chart_tool():
+    prompt = build_report_prompt(["execute_python", "create_report_chart", "create_report_package"])
+    assert "正式报告静态数据图表优先使用 `execute_python`" in prompt
+    assert "可自主设计分面和多子图" in prompt
+    assert "仅在 `create_report_chart` 无法覆盖时" not in prompt
