@@ -10,6 +10,7 @@
 """
 
 from typing import Dict, Iterable, List
+from app.tools.base.tool_names import canonical_tool_name
 
 # 工具实现可由显式后端工作流继续使用，但不得向任何 Agent 暴露。
 AGENT_HIDDEN_TOOL_NAMES = frozenset({
@@ -103,7 +104,7 @@ PPT_TOOL_NAMES = [
     "list_directory",
     "search_files",
     # 图表、图片检查和必要计算
-    "create_report_chart",
+    "create_business_chart",
     "execute_python",
     # 用户材料、知识库与外部资料
     "knowledge_qa_workflow",
@@ -133,7 +134,8 @@ EXPERT_TOOL_NAMES = [
     # 分析工具
     "meteorological_trajectory_analysis",
     # 可视化
-    "create_report_chart",
+    "create_business_chart",
+    "execute_echarts_python",
     # 代码执行
     "execute_python",
     # 文件操作
@@ -183,7 +185,7 @@ QUERY_TOOL_NAMES = [
     # === 数值计算工具 ===
     "execute_python",
     # === 图表生成工具 ===
-    "create_report_chart",
+    "create_business_chart",
     "execute_echarts_python",
 ]
 
@@ -207,9 +209,14 @@ REPORT_TOOL_NAMES = [
     "read_file",
     "write_file",
     "edit_file",
-    # 报告主 Agent 负责图表、整理和产物收口
-    "create_report_chart",
+    "grep",
+    "list_directory",
+    "search_files",
+    "bash",
+    "create_business_chart",
     "execute_python",
+    "execute_echarts_python",
+    # 报告产物收口
     "create_report_package",
     # 报告主 Agent 统一通过 DAG 委托子 Agent
     "run_agent_workflow",
@@ -228,7 +235,7 @@ CHART_TOOL_NAMES = [
     "search_files",
     "bash",
     # 代码执行和原生多模态视觉参考
-    "create_report_chart",
+    "create_business_chart",
     "execute_python",
     "execute_echarts_python",
     # 数据查询工具
@@ -309,7 +316,7 @@ SOCIAL_TOOL_NAMES = [
     "execute_python",
     "call_sub_agent",
     # 正式报告生成与收口
-    "create_report_chart",
+    "create_business_chart",
     "create_report_package",
     # 网络搜索
     "web_search",
@@ -422,7 +429,7 @@ def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
     字典保留插入顺序，因此列表顺序就是模式工具顺序。
     """
     names = [
-        name
+        canonical_tool_name(name)
         for name in tool_names
         if name not in AGENT_HIDDEN_TOOL_NAMES and name not in AGENT_INTERNAL_TOOL_NAMES
     ]

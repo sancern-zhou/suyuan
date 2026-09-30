@@ -171,7 +171,7 @@ const scenarios = [
     longDescription: '适合快速了解区域气象条件，自动生成时序图、风向玫瑰图等基础可视化内容。包含温度、湿度、风速风向等核心气象要素。',
     tools: [
       'get_weather_data',
-      'create_report_chart'
+      'create_business_chart'
     ],
     features: [
       'ERA5历史气象数据',
@@ -191,7 +191,7 @@ const scenarios = [
     tools: [
       'get_weather_data',
       'get_current_weather',
-      'create_report_chart'
+      'create_business_chart'
     ],
     features: [
       '历史 + 实时天气',
@@ -231,7 +231,7 @@ const scenarios = [
       'get_fire_hotspots',
       'get_dust_data',
       'meteorological_trajectory_analysis',
-      'create_report_chart'
+      'create_business_chart'
     ],
     features: [
       '火点数据监测',

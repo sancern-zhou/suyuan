@@ -30,7 +30,7 @@ class FontManager:
 
     # 字体配置优先级（从高到低）
     FONT_FALLBACK_CHAIN = [
-        'FZXiaoBiaoSong-B05S',  # 方正小标宋，create_report_chart优先字体
+        'FZXiaoBiaoSong-B05S',  # 方正小标宋，create_business_chart优先字体
         'GB_XBS_GB18030',       # 国标小标宋，Linux部署常见小标宋字体
         'GB_XBS_GBT2312',
         # Linux 系统字体

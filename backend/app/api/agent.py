@@ -669,7 +669,7 @@ async def analyze_stream(
 
     - Visualization Tools:
       - execute_echarts_python - 交互式 ECharts 图表生成
-      - create_report_chart - 正式报告静态图表生成
+      - create_business_chart - 特定业务图型和固定模板绘制
       - generate_map - 地图生成
 
     **助手模式**:

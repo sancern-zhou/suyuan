@@ -16,7 +16,7 @@ def test_ppt_mode_exposes_focused_editable_presentation_tools():
         "validate_pptx",
         "read_file",
         "edit_file",
-        "create_report_chart",
+        "create_business_chart",
         "web_search",
     }.issubset(tools)
     assert {

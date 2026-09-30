@@ -8,7 +8,7 @@ from app.tools.visualization.create_report_chart.text import normalize_matplotli
 
 
 class ChartDataError(ValueError):
-    """User-facing create_report_chart data validation error."""
+    """User-facing create_business_chart data validation error."""
 
 
 def require_labels(data: dict[str, Any], chart_type: str) -> list[str]:

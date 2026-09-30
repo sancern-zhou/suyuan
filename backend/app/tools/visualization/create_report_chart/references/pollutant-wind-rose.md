@@ -1,7 +1,7 @@
 # Pollutant Wind Rose Design
 
 Use `pollutant_wind_rose` only for the Guangdong Province pollutant wind rose
-style. This is a 广东省专用 chart type routed through `create_report_chart`.
+style. This is a 广东省专用 chart type routed through `create_business_chart`.
 For other provinces, cities, stations, or generic wind-direction pollutant
 distribution, use `generic_pollutant_wind_rose`.
 

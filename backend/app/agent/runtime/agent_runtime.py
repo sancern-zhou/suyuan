@@ -469,7 +469,7 @@ class AgentRuntime:
         """
         visual_tools = {
             "create_pptx_with_ppt_master",
-            "create_report_chart",
+            "create_business_chart",
             "create_drawio_board",
             "render_drawio_board_candidate",
             "edit_file",

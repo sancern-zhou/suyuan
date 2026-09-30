@@ -89,7 +89,7 @@ def test_retired_chart_modules_and_runtime_references_are_removed():
 
 def test_current_chart_tools_remain_exposed_after_legacy_cleanup():
     assert "execute_echarts_python" in tool_registry.CHART_TOOL_NAMES
-    assert "create_report_chart" in tool_registry.CHART_TOOL_NAMES
+    assert "create_business_chart" in tool_registry.CHART_TOOL_NAMES
 
 
 def test_query_mode_can_generate_charts_and_chart_mode_cannot_query_business_data():

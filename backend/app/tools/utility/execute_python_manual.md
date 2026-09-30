@@ -6,9 +6,11 @@
 
 ## 适用场景
 
+绘图按模式选择：问数模式以 `execute_echarts_python` 为主，`create_business_chart` 辅助特定业务图型，Python 负责计算、整理和自定义静态图；专家和报告模式以 `execute_python` 为主，业务模板及交互图为辅助。模式优先级先于通用工具描述。
+
 - 数据处理：`pandas`、`numpy`、`scipy`。
 - Excel 读取、修改和生成：优先使用 `openpyxl`，读取分析可用 `pandas`。
-- 主要静态绘图：使用 `matplotlib` / `seaborn` 生成日常分析、深度分析和正式报告图表，通过 `save_chart` 保存并自动归档。特定业务图型或固定模板使用 `create_report_chart`；交互探索使用 `execute_echarts_python`。
+- 主要静态绘图：使用 `matplotlib` / `seaborn` 生成日常分析、深度分析和正式报告图表，通过 `save_chart` 保存并自动归档。特定业务图型或固定模板使用 `create_business_chart`；交互探索使用 `execute_echarts_python`。
 - 报告中间资源生成：图表、表格、结构化 JSON、qmd 草稿片段。
 - 一次性 Office 文件生成：仅当用户明确要求 Word/Excel 文件，且不需要 qmd 同源报告包时使用。
 - 自定义统计：仅当专用查询/统计工具无法直接满足时使用。
@@ -19,7 +21,7 @@
 
 标准流程：
 
-1. 用查询工具和 `execute_python` 完成计算、表格整理和正式报告静态绘图；匹配特定业务模板时使用 `create_report_chart`。
+1. 用查询工具和 `execute_python` 完成计算、表格整理和正式报告静态绘图；匹配特定业务模板时使用 `create_business_chart`。
 2. 准备 `report.qmd` 内容，图片最终使用报告包内相对路径，例如 `assets/charts/chart_01.png`。
    不要根据 `/api/image/{image_id}` 或缓存 id 推断这个路径；应把真实图片文件路径传给
    `create_report_package.assets`，必要时用 `name` 指定 `chart_01.png`，由报告包工具复制并规范化引用。
@@ -107,7 +109,7 @@ backend/backend_data_registry/reports/{report_id}.qmd
 
 ## Python 绘图风格约束
 
-Python 是主要静态绘图工具，图型由分析问题和数据条件决定。正式报告图与 `create_report_chart` 共用 `REPORT_THEME` 和 `SERIES_COLORS`，matplotlib/seaborn 的默认主题在执行前自动注入。
+Python 是专家和报告模式的主要绘图工具，图型由分析问题和数据条件决定；问数模式以 ECharts 为主。正式报告图与 `create_business_chart` 共用 `REPORT_THEME` 和 `SERIES_COLORS`，matplotlib/seaborn 的默认主题在执行前自动注入。
 
 - 字体：系统自动选择支持中文的字体，与报告图表一致；不要硬编码 SimHei 或用不支持中文的字体替代。
 - 字号：标题 14 pt、轴标签 11 pt、刻度/图例 9.8 pt、数据标签 10.5 pt、注释 8.5 pt。报告嵌入缩放后仍须可读，必要时增大字号或拆分图表。

@@ -1,6 +1,6 @@
-# Report Chart Reference Index
+# Business Chart Reference Index
 
-`create_report_chart` uses two reference layers only:
+`create_business_chart` uses two reference layers only:
 
 1. Read this common contract once for the chart task.
 2. After selecting `chart_type`, read exactly one matching chart document below.
@@ -75,8 +75,10 @@ single-chart specifications selected by the routing table below.
   use `chart_type: "henan_city_map"`.
 
 Use `execute_python` as the primary static chart tool for analysis and formal
-reports, with the shared report theme. Use `create_report_chart` for specific
+reports, with the shared report theme. Use `create_business_chart` for specific
 business chart types and fixed templates that match the documented contracts.
+Query mode primarily uses `execute_echarts_python`; business chart templates
+are supplementary. Expert and report modes primarily use `execute_python`.
 Choose analytical dimensions before selecting a chart; use Python for custom
 combinations, facets and multi-panel comparisons.
 
