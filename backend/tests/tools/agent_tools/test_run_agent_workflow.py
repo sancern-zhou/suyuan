@@ -8,6 +8,15 @@ from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
 from app.tools.agent_tools.run_agent_workflow import RunAgentWorkflowTool
 
 
+@pytest.fixture(autouse=True)
+def _isolated_workflow_cache(tmp_path, monkeypatch):
+    """节点成果缓存指向临时目录：测试不读写真实 registry 缓存。"""
+    monkeypatch.setattr(
+        "app.agent.workflow.result_cache._cache_root",
+        lambda: tmp_path / "workflow_cache",
+    )
+
+
 def test_run_agent_workflow_schema_documents_free_form_dag():
     schema = RunAgentWorkflowTool().get_function_schema()
     description = schema["description"]
@@ -339,3 +348,88 @@ async def test_persist_parent_snapshot_ignores_missing_session(monkeypatch):
     RunAgentWorkflowTool._persist_parent_snapshot(context, {"workflow_id": "wf-x"})
     pending = list(getattr(context, "workflow_persistence_tasks", set()))
     await asyncio.gather(*pending)
+
+
+@pytest.mark.asyncio
+async def test_report_mode_enforces_node_mode_whitelist():
+    async def fail_submit(**kwargs):
+        raise AssertionError("sub agent must not be invoked")
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        RunAgentWorkflowTool,
+        "_build_sub_agent_tool",
+        staticmethod(lambda: SimpleNamespace(execute=fail_submit)),
+    )
+    try:
+        context = SimpleNamespace(runtime_mode="report", session_id="report_session_x")
+        result = await RunAgentWorkflowTool().execute(
+            context=context,
+            workflow={
+                "workflow_id": "report-1",
+                "nodes": [
+                    {"task_id": "met", "target_mode": "expert_meteorology", "goal": "气象研判"},
+                    {"task_id": "legacy", "target_mode": "expert", "goal": "综合研判"},
+                    {"task_id": "viz", "target_mode": "chart", "goal": "出图"},
+                ],
+            },
+        )
+    finally:
+        monkeypatch.undo()
+    assert result["success"] is False
+    assert "仅允许 target_mode" in result["result"]
+    assert "legacy" in result["result"] and "viz" in result["result"]
+
+
+@pytest.mark.asyncio
+async def test_non_report_mode_allows_expert_nodes(monkeypatch):
+    async def fake_execute(self, **kwargs):
+        return {
+            "status": "success",
+            "success": True,
+            "result": kwargs["goal"],
+            "data": {"result_envelope": {"status": "completed", "summary": kwargs["goal"], "evidence": [], "artifacts": []}},
+        }
+
+    monkeypatch.setattr(CallSubAgentTool, "execute", fake_execute)
+    context = SimpleNamespace(runtime_mode="assistant", session_id="assistant_session_x")
+    result = await RunAgentWorkflowTool().execute(
+        context=context,
+        workflow={
+            "workflow_id": "assistant-1",
+            "nodes": [
+                {"task_id": "air", "target_mode": "expert", "goal": "综合研判"},
+            ],
+        },
+    )
+    assert result["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_report_mode_allows_whitelisted_modes(monkeypatch):
+    calls = []
+
+    async def fake_execute(self, **kwargs):
+        calls.append(kwargs["target_mode"])
+        return {
+            "status": "success",
+            "success": True,
+            "result": kwargs["goal"],
+            "data": {"result_envelope": {"status": "completed", "summary": kwargs["goal"], "evidence": [], "artifacts": []}},
+        }
+
+    monkeypatch.setattr(CallSubAgentTool, "execute", fake_execute)
+    context = SimpleNamespace(runtime_mode="report", session_id="report_session_x")
+    result = await RunAgentWorkflowTool().execute(
+        context=context,
+        workflow={
+            "workflow_id": "report-wl",
+            "nodes": [
+                {"task_id": "air", "target_mode": "query", "goal": "取数"},
+                {"task_id": "met", "target_mode": "expert_meteorology", "goal": "气象研判"},
+                {"task_id": "air-expert", "target_mode": "expert_analysis", "goal": "数据研判"},
+            ],
+        },
+    )
+    assert result["success"] is True
+    assert set(calls) == {"query", "expert_meteorology", "expert_analysis"}

@@ -789,6 +789,21 @@ class CallSubAgentTool(LLMTool):
                     imported_resource_refs
                 ),
             )
+            # 结构化交付：节点带 result_schema 时注入 submit_result 工具，
+            # 参数结构即 schema（函数调用约束），替代"最终回复输出 JSON"的提示词约定。
+            submit_tool = None
+            if isinstance(result_schema, dict) and result_schema:
+                from app.tools.agent_tools.submit_result_tool import SubmitResultTool
+
+                submit_tool = SubmitResultTool(result_schema)
+                child_registry["submit_result"] = submit_tool
+                child_request_prompt = (
+                    child_request_prompt.rstrip()
+                    + "\n\n## 结果交付协议\n"
+                    + "分析完成后必须调用 `submit_result` 工具提交结构化结果（字段结构见工具定义），"
+                    + "然后用一句话简述结论即可结束。未调用 submit_result 直接结束视为未完成交付，"
+                    + "将触发重试。\n"
+                )
             logger.debug(
                 "child_request_prompt_built",
                 target_mode=target_mode,
@@ -894,7 +909,15 @@ class CallSubAgentTool(LLMTool):
             )
 
             # 7. 提取最终结果；结构化协议失败时在同一 child runtime 上做有限修复。
-            final_result = self._extract_final_result(result_events)
+            # 优先取 submit_result 工具提交的信封（结构化交付），文本答案仅作回退。
+            submitted_result = self._extract_submitted_result(result_events)
+            if isinstance(submitted_result, dict):
+                final_result = {
+                    "status": "success",
+                    "answer": json.dumps(submitted_result, ensure_ascii=False),
+                }
+            else:
+                final_result = self._extract_final_result(result_events)
             if workflow_runtime.check_deadline(workflow_run.run_id):
                 final_result = {
                     **final_result,
@@ -920,14 +943,30 @@ class CallSubAgentTool(LLMTool):
                         "task.result_repair_requested",
                         payload={"repair_index": repair_index + 1, "errors": validation_errors},
                     )
-                    repair_prompt = (
-                        "上一轮结果未通过结构化结果协议校验。请保留已完成的证据和分析，"
-                        "只修复输出格式或缺失字段，并在 ```json 代码块中重新提交完整 JSON。\n"
-                        f"校验错误：{json.dumps(validation_errors, ensure_ascii=False)}\n"
-                        f"结果协议：{json.dumps(result_schema, ensure_ascii=False)}"
-                    )
+                    if submitted_result is not None:
+                        repair_prompt = (
+                            "上一轮提交的 submit_result 未通过结构化结果协议校验。"
+                            "请保留已完成的证据和分析，调用 `submit_result` 重新提交，"
+                            "只修正下列校验错误列出的字段，其余字段保持已提交值。\n"
+                            f"校验错误：{json.dumps(validation_errors, ensure_ascii=False)}\n"
+                            f"结果协议：{json.dumps(result_schema, ensure_ascii=False)}"
+                        )
+                    else:
+                        repair_prompt = (
+                            "任务已执行完毕，但你尚未调用 `submit_result` 提交结构化结果。"
+                            "请基于已完成的证据和分析，立即调用 `submit_result` 提交结果信封，"
+                            "字段结构见工具定义，不要重新执行分析。\n"
+                            f"结果协议：{json.dumps(result_schema, ensure_ascii=False)}"
+                        )
                     result_events.extend(await run_child_turn(repair_prompt))
-                    final_result = self._extract_final_result(result_events)
+                    submitted_result = self._extract_submitted_result(result_events)
+                    if isinstance(submitted_result, dict):
+                        final_result = {
+                            "status": "success",
+                            "answer": json.dumps(submitted_result, ensure_ascii=False),
+                        }
+                    else:
+                        final_result = self._extract_final_result(result_events)
                     structured_result, validation_errors = self._validate_structured_result(
                         final_result.get("answer", ""), result_schema
                     )
@@ -1321,6 +1360,32 @@ class CallSubAgentTool(LLMTool):
             parent_resource_lines=parent_resource_lines,
             scheduled_task_context=scheduled_task_context,
         )
+
+    def _extract_submitted_result(self, events: list) -> Optional[Dict[str, Any]]:
+        """从事件流提取最近一次 submit_result 工具提交的结构化信封（倒序取最新）。"""
+        for event in reversed(events):
+            if event.get("type") != "tool_call":
+                continue
+            name = (
+                event.get("tool")
+                or event.get("tool_name")
+                or event.get("name")
+            )
+            if name != "submit_result":
+                continue
+            payload = (
+                event.get("args")
+                or event.get("arguments")
+                or event.get("input")
+                or {}
+            )
+            if isinstance(payload, dict):
+                result = payload.get("result")
+                if isinstance(result, dict):
+                    return result
+                if payload:
+                    return payload
+        return None
 
     def _extract_final_result(self, events: list) -> Dict:
         """从事件流中提取最终结果"""

@@ -18,6 +18,9 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 logger = structlog.get_logger(__name__)
 
+# 报告编排的节点模式白名单：领域拆分后的最小集（其他模式不对报告 DAG 暴露）
+REPORT_NODE_ALLOWED_MODES = frozenset({"query", "expert_meteorology", "expert_analysis"})
+
 
 _DEFAULT_EXPERT_NODE_LIMITS = {
     "expert_meteorology": {"max_iterations": 15, "timeout_seconds": 300},
@@ -41,12 +44,19 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "每个节点的 target_mode 与 goal；无依赖的数据/分析节点并行执行，需要上游产物或结论的节点用 "
     "dependencies 表达，不靠文字约定顺序。每个节点必须有唯一 task_id、target_mode、goal，"
     "goal 写清时间范围、区域、指标口径和预期输出；把无依赖的取数拆成独立节点以并行执行。"
+    "节点可用可选 phase 字段打用户可读的阶段名（如'取数与质检'/'气象分箱研判'/'整合成稿'），"
+    "同阶段节点共用一个名字，面板按阶段分组展示故事线；用业务语言命名，不用编排术语。"
     "领域拆分建议：气象条件、输送通道、静稳/边界层形势拆 expert_meteorology；浓度特征、超标统计、"
-    "组分解读、成因研判拆 expert_analysis，二者可并行；交叉归因放在依赖它们的研判节点，"
-    "或由你自己整合（整合阶段禁止重新取数）。"
+    "组分解读、成因研判拆 expert_analysis，二者可并行；交叉归因由你自己整合（整合阶段禁止重新取数）。"
+    "报告编排的子节点白名单：仅 query / expert_meteorology / expert_analysis 三种模式，"
+    "其他模式（含综合 expert）不对报告 DAG 暴露。"
     "**交付物粒度硬约束**：每个节点的 goal/task_contract 枚举的必交项不超过 5 项；"
     "超出时继续拆分为多个并行节点（每个子节点轮数预算 ~20），不要把大工单塞给单一节点——"
     "节点轮数随交付物数量线性膨胀，每多一项约多 2 分钟。"
+    "**⚠️ 图表随节点并行产出**：报告需要的分析图表（分箱图、相关性热力图、时序对比等）"
+    "必须在对应子节点的 goal/task_contract 中明确要求，由子 Agent 在分析的同时一并生成；"
+    "子节点交付的图表文件会在上游产物清单中回传，父 Agent 只做复用与排版，"
+    "禁止在 DAG 完成后再由父 Agent 重新绘制分析图表——那是串行追加的整段时间。"
     "DAG 禁止 report 子节点；报告模式父 Agent 是唯一成稿者。"
     "工具返回每个节点的 result_envelope（status/summary/evidence/artifacts/data_gaps）与血缘清单，"
     "据此判断覆盖范围与缺口并整合结论，不要对子节点过程做重复全量复核。"
@@ -247,6 +257,10 @@ class RunAgentWorkflowTool(LLMTool):
                                             "task_contract": {"type": "object"},
                                             "result_schema": {"type": "object"},
                                             "max_attempts": {"type": "integer", "minimum": 1, "maximum": 3},
+                                            "phase": {
+                                                "type": "string",
+                                                "description": "可选阶段名（用户可读的业务语言），同阶段节点共用一个名字",
+                                            },
                                             "max_iterations": {
                                                 "type": "integer",
                                                 "minimum": 1,
@@ -305,10 +319,43 @@ class RunAgentWorkflowTool(LLMTool):
                 if limits:
                     node.setdefault("max_iterations", limits["max_iterations"])
                     node.setdefault("timeout_seconds", limits["timeout_seconds"])
+            # 报告编排的节点模式白名单：领域拆分后的最小集，其余模式不对报告 DAG 暴露
+            runtime_mode = str(getattr(context, "runtime_mode", "") or "")
+            if runtime_mode == "report":
+                disallowed_nodes = [
+                    str(node.get("task_id") or "<unknown>")
+                    for node in nodes
+                    if str(node.get("target_mode") or "") not in REPORT_NODE_ALLOWED_MODES
+                ]
+                if disallowed_nodes:
+                    return self._failure(
+                        "报告编排的子节点仅允许 target_mode：query / expert_meteorology / expert_analysis。"
+                        "取数用 query；气象/输送问题拆 expert_meteorology；浓度/组分/超标问题拆 expert_analysis；"
+                        "交叉归因由父报告 Agent 自行整合，不使用其他任何模式作为子节点。"
+                        f"越界节点：{', '.join(disallowed_nodes)}"
+                    )
             definition["nodes"] = nodes
+            # 节点成果缓存：同 workflow 重提时复用命中节点（依赖闭包完整才复用）
+            from app.agent.workflow.result_cache import select_reusable_nodes, store_node_result
+            from app.agent.workflow.journal import WorkflowJournal
+
+            workflow_journal = WorkflowJournal()
+            workflow_id_str = str(definition["workflow_id"])
+            completed_results = select_reusable_nodes(workflow_id_str, nodes)
+            if completed_results:
+                logger.info(
+                    "workflow_cache_nodes_reused",
+                    workflow_id=workflow_id_str,
+                    tasks=sorted(completed_results),
+                )
             sub_agent_tool = self._build_sub_agent_tool()
 
-            async def execute_node(node: WorkflowNodeSpec, dependency_results: Mapping[str, Any], attempt: int):
+            async def execute_node(
+                node: WorkflowNodeSpec,
+                dependency_results: Mapping[str, Any],
+                attempt: int,
+                retry_context: Optional[Mapping[str, Any]] = None,
+            ):
                 payload = node.payload
                 upstream = ""
                 if dependency_results:
@@ -321,6 +368,25 @@ class RunAgentWorkflowTool(LLMTool):
                 else:
                     upstream_handles = []
                 context_text = str(payload.get("context") or "") + upstream
+                # 重试续用上次的子会话：失败原因与已交付进度写入上下文
+                retry_session_id = None
+                if retry_context:
+                    retry_session_id = str(retry_context.get("session_id") or "") or None
+                    previous_error = str(retry_context.get("error") or "")[:300]
+                    if retry_session_id or previous_error:
+                        context_text += (
+                            "\n## 重试说明\n"
+                            f"上一轮执行未通过结果校验：{previous_error or '未交付结构化结果'}。\n"
+                            "该会话保留了上轮已完成的工作，请在其基础上修正并交付，不要从零重做。\n"
+                        )
+                    progress = retry_context.get("progress") or {}
+                    delivered = progress.get("delivered_files") or []
+                    if delivered:
+                        context_text += (
+                            "上一轮已交付文件（可直接复用，勿重复生成）：\n"
+                            + "\n".join(f"- {path}" for path in delivered)
+                            + "\n请核对剩余交付物并继续完成。\n"
+                        )
                 return await sub_agent_tool.execute(
                     context=context,
                     target_mode=payload["target_mode"],
@@ -331,9 +397,10 @@ class RunAgentWorkflowTool(LLMTool):
                     task_contract=payload.get("task_contract"),
                     result_schema=payload.get("result_schema"),
                     max_iterations=node.max_iterations,
-                    # A coordinator node always emits a lineage manifest.  The
-                    # template can opt into strict result-envelope checking.
-                    repair_attempts=max(0, min(node.max_attempts - 1, 2)),
+                    session_id=retry_session_id,
+                    # 结构化修复轮独立于节点重试预算：修复在同会话内进行，
+                    # 成本 ~1 分钟且保住全部已有工作，只要带 result_schema 就值得跑满 2 轮。
+                    repair_attempts=2 if payload.get("result_schema") else max(0, min(node.max_attempts - 1, 2)),
                     _force_isolated_session=True,
                     _upstream_handles=upstream_handles,
                 )
@@ -344,6 +411,8 @@ class RunAgentWorkflowTool(LLMTool):
                 max_concurrency=max(1, min(int(max_concurrency or 4), 8)),
                 snapshot=snapshot,
                 persist=lambda current: self._persist_parent_snapshot(context, current),
+                completed_results=completed_results,
+                journal=workflow_journal,
             )
             await active_workflow_registry.register(
                 str(definition["workflow_id"]),
@@ -360,6 +429,19 @@ class RunAgentWorkflowTool(LLMTool):
             if pending_persistence:
                 await asyncio.gather(*pending_persistence, return_exceptions=True)
             succeeded = snapshot["status"] == "succeeded"
+            if succeeded:
+                # 全部成功后才写缓存：部分失败的结果不污染缓存
+                for cached_node in nodes:
+                    cached_task_id = str(cached_node.get("task_id") or "")
+                    cached_result = snapshot["node_results"].get(cached_task_id)
+                    if isinstance(cached_result, Mapping):
+                        store_node_result(
+                            workflow_id_str,
+                            cached_task_id,
+                            str(cached_node.get("goal") or ""),
+                            str(cached_node.get("target_mode") or ""),
+                            cached_result,
+                        )
             resources = result_resource_declarations(
                 str(snapshot["workflow_id"]),
                 snapshot["node_results"],
