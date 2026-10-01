@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import json
 from typing import Any, Dict, Mapping, Optional
 
@@ -215,9 +216,9 @@ class RunAgentWorkflowTool(LLMTool):
                         "workflow": {
                             "type": "object",
                             "description": (
-                                "完整 DAG 定义：{workflow_id, version?, nodes:[{task_id, target_mode, goal, context, "
+                                "完整 DAG 定义：{workflow_id?, version?, nodes:[{task_id, target_mode, goal, context, "
                                 "dependencies, task_contract, result_schema, max_attempts, max_iterations, "
-                                "timeout_seconds}]}. "
+                                "timeout_seconds}]}. workflow_id 缺省时自动生成。"
                                 "编排由你自主规划；无依赖节点并行，依赖用 dependencies 表达。"
                             ),
                             "properties": {
@@ -257,7 +258,7 @@ class RunAgentWorkflowTool(LLMTool):
                                     },
                                 },
                             },
-                            "required": ["workflow_id", "nodes"],
+                            "required": ["nodes"],
                         },
                         "max_concurrency": {
                             "type": "integer",
@@ -288,6 +289,8 @@ class RunAgentWorkflowTool(LLMTool):
             return self._failure("请提供 workflow DAG 定义（workflow_id + nodes）")
         try:
             definition = dict(workflow)
+            if not str(definition.get("workflow_id") or "").strip():
+                definition["workflow_id"] = f"workflow-{int(time.time() * 1000)}"
             nodes = [dict(node) for node in definition.get("nodes") or []]
             for node in nodes:
                 if not node.get("target_mode") or not node.get("goal"):
