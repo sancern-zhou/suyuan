@@ -28,7 +28,7 @@ from app.agent.session.workspace_routing import (
 )
 from app.agent.selection_context import load_skill_selection
 from app.agent.prompts.tool_registry import get_tools_by_mode
-from app.agent.workflow.capabilities import build_child_capability_policy
+from app.agent.workflow.capabilities import MEMORY_EDIT_TOOL_NAMES, build_child_capability_policy
 from app.agent.workflow.resource_handoff import (
     import_workflow_handles,
     result_resource_declarations,
@@ -66,9 +66,11 @@ AgentMode = Literal[
 ]
 
 _DEFAULT_CHILD_MAX_ITERATIONS = {
-    "expert_meteorology": 15,
-    "expert_analysis": 20,
-    "expert": 30,
+    # 计算密集型专家任务（聚合、分箱、相关性）在 15-20 轮内常常收不完，
+    # 适度放宽；工作流重试还会在此基础上自动扩容（见 coordinator）。
+    "expert_meteorology": 20,
+    "expert_analysis": 28,
+    "expert": 40,
 }
 
 
@@ -705,6 +707,7 @@ class CallSubAgentTool(LLMTool):
             if selected_child_skill:
                 mode_tool_names.update(selected_child_skill.required_tools or [])
             capability_policy = build_child_capability_policy(
+                target_mode=target_mode,
                 allowed_tools=(allowed_tool_names if allowed_tool_names is not None else mode_tool_names),
                 denied_tools=merge_denied_tools(agent_profile, denied_tool_names),
                 allow_delegation=(
@@ -866,7 +869,11 @@ class CallSubAgentTool(LLMTool):
                                 else None
                             ),
                             extra_tool_names=(
-                                selected_child_skill.required_tools
+                                [
+                                    name
+                                    for name in (selected_child_skill.required_tools or [])
+                                    if name not in MEMORY_EDIT_TOOL_NAMES
+                                ]
                                 if include_skill and selected_child_skill
                                 else None
                             ),

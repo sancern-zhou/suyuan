@@ -72,10 +72,36 @@ def test_domain_expert_profiles_disallow_delegation():
         assert profile.allow_delegation is False
 
 
+def test_child_agents_have_no_memory_edit_tools():
+    """子 Agent 不配置记忆编辑工具：中途写记忆每次烧一整轮，沉淀交给记忆整合器。"""
+    from app.agent.workflow.capabilities import (
+        MEMORY_EDIT_TOOL_NAMES,
+        build_child_capability_policy,
+    )
+
+    for mode in ("expert_meteorology", "expert_analysis", "query", "expert"):
+        policy = build_child_capability_policy(
+            target_mode=mode,
+            allowed_tools=list(get_tools_by_mode(mode)) + sorted(MEMORY_EDIT_TOOL_NAMES),
+        )
+        filtered = policy.filter_registry({name: object() for name in sorted(MEMORY_EDIT_TOOL_NAMES)})
+        assert set(filtered) == set(), f"{mode} 子 Agent 不应持有记忆编辑工具: {sorted(filtered)}"
+    assert "remember_fact" in policy.denied_tools
+
+    # 记忆整合器本身不受限
+    consolidator = build_child_capability_policy(
+        target_mode="memory_consolidator",
+        allowed_tools=["remember_fact"],
+    )
+    assert "remember_fact" not in consolidator.denied_tools
+
+
 def test_domain_expert_iteration_defaults_are_bounded():
-    assert _resolve_child_max_iterations("expert_meteorology", None) == 15
-    assert _resolve_child_max_iterations("expert_analysis", None) == 20
-    assert _resolve_child_max_iterations("expert", None) == 30
+    # 计算密集型专家任务的默认轮数已放宽（分箱/相关性 15-20 轮收不完），
+    # 工作流重试还会在此基础上按 50% 自动扩容（见 coordinator）。
+    assert _resolve_child_max_iterations("expert_meteorology", None) == 20
+    assert _resolve_child_max_iterations("expert_analysis", None) == 28
+    assert _resolve_child_max_iterations("expert", None) == 40
     assert _resolve_child_max_iterations("expert_analysis", 12) == 12
     assert _resolve_child_max_iterations("expert_analysis", 999) == 120
 

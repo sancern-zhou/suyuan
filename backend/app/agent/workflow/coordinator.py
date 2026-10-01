@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dataclasses_replace
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional
 import uuid
+
+import structlog
 
 from .graph import WorkflowConcurrencyGovernor, WorkflowGraph
 from .lineage import build_node_lineage, validate_node_lineage
 from .runtime import TERMINAL_STATUSES, WorkflowRuntime
+
+logger = structlog.get_logger()
 
 
 NodeExecutor = Callable[["WorkflowNodeSpec", Mapping[str, Any], int], Any]
@@ -26,6 +30,29 @@ class WorkflowNodeSpec:
     max_attempts: int = 1
     max_iterations: Optional[int] = None
     timeout_seconds: Optional[float] = None
+
+    # 重试预算递增：每次重试在原预算上放大 50%（迭代封顶 120、超时封顶 1 小时）。
+    # 首次尝试保持调用方设定的紧凑预算；预算耗尽型失败（慢任务被杀）重试时
+    # 给更多余量，避免"同预算重试→再失败→累计更久"的浪费模式。
+    RETRY_BUDGET_STEP = 0.5
+    MAX_ITERATIONS_CAP = 120
+    MAX_TIMEOUT_SECONDS_CAP = 3600.0
+
+    def expanded_budget(self, attempt: int) -> "WorkflowNodeSpec":
+        """返回第 attempt 次尝试（attempt 从 1 计）使用的预算副本。"""
+        if attempt <= 1:
+            return self
+        factor = 1.0 + self.RETRY_BUDGET_STEP * (attempt - 1)
+        kwargs: Dict[str, Any] = {"payload": dict(self.payload)}
+        if self.max_iterations is not None:
+            scaled_iterations = min(
+                self.MAX_ITERATIONS_CAP, max(1, round(self.max_iterations * factor))
+            )
+            kwargs["max_iterations"] = scaled_iterations
+            kwargs["payload"]["max_iterations"] = scaled_iterations
+        if self.timeout_seconds is not None:
+            kwargs["timeout_seconds"] = min(self.timeout_seconds * factor, self.MAX_TIMEOUT_SECONDS_CAP)
+        return dataclasses_replace(self, **kwargs)
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "WorkflowNodeSpec":
@@ -246,18 +273,29 @@ class WorkflowCoordinator:
         self.graph.set_status(task_id, "running")
         self.runtime.start(node_run.run_id)
         dependency_results = {dependency: self.node_results.get(dependency) for dependency in node.dependencies}
+        # 预算耗尽型失败重试时放宽迭代/超时预算（首试保持调用方原设定）
+        attempt = max(1, int(node_run.attempt or 1))
+        effective_node = node.expanded_budget(attempt)
+        if attempt > 1 and effective_node is not node:
+            logger.info(
+                "workflow_retry_budget_expanded",
+                task_id=task_id,
+                attempt=attempt,
+                max_iterations=effective_node.max_iterations,
+                timeout_seconds=effective_node.timeout_seconds,
+            )
         try:
             async with self.governor:
                 async def execute_node() -> Any:
-                    result = self.executor(node, dependency_results, node_run.attempt)
+                    result = self.executor(effective_node, dependency_results, node_run.attempt)
                     if inspect.isawaitable(result):
                         return await result
                     return result
 
-                if node.timeout_seconds is None:
+                if effective_node.timeout_seconds is None:
                     result = await execute_node()
                 else:
-                    async with asyncio.timeout(node.timeout_seconds):
+                    async with asyncio.timeout(effective_node.timeout_seconds):
                         result = await execute_node()
             metadata = result.get("metadata") if isinstance(result, dict) else None
             child_session_id = metadata.get("session_id") if isinstance(metadata, dict) else None
@@ -289,8 +327,8 @@ class WorkflowCoordinator:
             raise
         except Exception as exc:
             error = (
-                f"workflow node timed out after {node.timeout_seconds:g}s"
-                if isinstance(exc, TimeoutError) and node.timeout_seconds is not None
+                f"workflow node timed out after {effective_node.timeout_seconds:g}s"
+                if isinstance(exc, TimeoutError) and effective_node.timeout_seconds is not None
                 else str(exc)
             )
             self.node_errors[task_id] = error

@@ -197,3 +197,43 @@ def test_coordinator_resume_retries_failed_node_from_snapshot():
         assert calls == [2]
 
     asyncio.run(run())
+
+
+def test_coordinator_expands_node_budget_on_retry():
+    async def run():
+        seen = []
+
+        async def execute(node, dependencies, attempt):
+            seen.append(
+                (attempt, node.max_iterations, node.timeout_seconds, node.payload.get("max_iterations"))
+            )
+            if attempt == 1:
+                raise RuntimeError("budget exhausted")
+            return {"ok": True}
+
+        coordinator = WorkflowCoordinator(
+            {
+                "workflow_id": "budget-1",
+                "nodes": [
+                    {
+                        "task_id": "binning",
+                        "max_attempts": 2,
+                        "max_iterations": 20,
+                        "timeout_seconds": 600,
+                    }
+                ],
+            },
+            executor=execute,
+        )
+        result = await coordinator.run()
+        assert result["status"] == "succeeded"
+        # 首试保持原预算，重试放大 50%（迭代 20→30、超时 600→900）
+        assert seen == [
+            (1, 20, 600, None),
+            (2, 30, 900.0, 30),
+        ]
+        # 定义保持原值：扩容只作用于当次执行，不污染快照
+        assert result["definition"]["nodes"][0]["max_iterations"] == 20
+        assert result["definition"]["nodes"][0]["timeout_seconds"] == 600
+
+    asyncio.run(run())
