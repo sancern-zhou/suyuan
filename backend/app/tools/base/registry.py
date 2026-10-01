@@ -243,6 +243,7 @@ class ToolRegistry:
         *,
         success: bool,
         execution_time: float | None = None,
+        error_summary: str | None = None,
     ) -> Dict[str, Any]:
         """记录一次工具执行"""
         if tool_name not in self._tools:
@@ -252,6 +253,7 @@ class ToolRegistry:
             tool_name,
             success=success,
             execution_time=execution_time,
+            error_summary=error_summary,
         )
         self._stats[tool_name] = stats
         return stats
@@ -264,8 +266,13 @@ class ToolRegistry:
             execution_time=execution_time,
         )
 
-    def record_failure(self, tool_name: str, execution_time: float | None = None):
-        """记录失败"""
+    def record_failure(
+        self,
+        tool_name: str,
+        execution_time: float | None = None,
+        error_summary: str | None = None,
+    ):
+        """记录失败（error_summary 会进入该工具的最近错误环形缓冲）"""
         return self.record_execution(
             tool_name,
             success=False,

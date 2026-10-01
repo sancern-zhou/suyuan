@@ -241,10 +241,21 @@ async def call_llm_tool(tool_name: str, *args, **kwargs) -> Dict[str, Any]:
         # 标准化返回格式（符合UDF v1.0）
         execution_time = (datetime.now() - start_time).total_seconds()
         public_result = _standardize_tool_result(tool_name, result, execution_time)
+        result_success = bool(public_result.get("success", False))
+        result_error_summary = ""
+        if not result_success:
+            # 工具未抛异常但返回失败（如 SQL 白名单拒绝、参数校验失败）：
+            # 摘要进入统计的最近错误环形缓冲，供后续针对性优化。
+            result_error_summary = str(
+                public_result.get("error")
+                or public_result.get("summary")
+                or ""
+            ).strip()[:180]
         global_tool_registry.record_execution(
             tool_name,
-            success=bool(public_result.get("success", False)),
+            success=result_success,
             execution_time=execution_time,
+            error_summary=result_error_summary or None,
         )
         public_result = persist_large_inline_data(
             public_result,
@@ -268,6 +279,7 @@ async def call_llm_tool(tool_name: str, *args, **kwargs) -> Dict[str, Any]:
             tool_name,
             success=False,
             execution_time=execution_time,
+            error_summary=f"{type(e).__name__}: {str(e)[:180]}",
         )
 
         return {
