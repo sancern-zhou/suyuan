@@ -27,6 +27,7 @@ from .deliberation_prompt import (
     build_deliberation_reviewer_prompt,
 )
 from .tool_registry import get_tools_by_mode
+from .data_source_map import render_data_source_map
 import structlog
 
 logger = structlog.get_logger()
@@ -104,7 +105,30 @@ AgentMode = Literal[
 ]
 
 
+# 数据源地图对取数/研判/编排模式生效；纯产出型模式（ppt/board 等）不需要。
+DATA_SOURCE_MAP_MODES = {"query", "expert", "expert_meteorology", "expert_analysis", "report"}
+
+
+def _with_data_source_map(prompt: str, mode: str) -> str:
+    if mode not in DATA_SOURCE_MAP_MODES:
+        return prompt
+    source_map = render_data_source_map()
+    if not source_map:
+        return prompt
+    return f"{prompt.rstrip()}\n\n{source_map}".rstrip() + "\n"
+
+
 def build_react_system_prompt(
+    mode: AgentMode,
+    *args,
+    **kwargs,
+) -> str:
+    """构建模式系统提示词，并按模式追加数据源地图（若 registry 已配置）。"""
+    prompt = _build_react_system_prompt(mode, *args, **kwargs)
+    return _with_data_source_map(prompt, str(mode))
+
+
+def _build_react_system_prompt(
     mode: AgentMode,
     available_tools: Optional[List[str]] = None,
     user_preferences: Optional[dict] = None,
