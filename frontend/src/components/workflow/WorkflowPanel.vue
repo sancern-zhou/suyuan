@@ -76,13 +76,14 @@
                 <div class="dag-column-label">阶段 {{ columnIndex + 1 }}<span>{{ column.length }} 个节点</span></div>
                 <div v-for="node in column" :key="node.task_id" class="dag-node" :class="`node-${statusMeta(node.status).key}`">
               <button class="node-toggle" type="button" :aria-expanded="selectedNodeId === node.task_id" @click="selectNode(node.task_id)">
-                <span class="node-title"><span class="node-status" aria-hidden="true"></span><strong>{{ nodeTitle(node) }}</strong></span>
+                <span class="node-title"><span class="node-status" aria-hidden="true"></span><strong :title="node.task_id">{{ nodeTitle(node) }}</strong><span class="node-mode">{{ modeLabel(node.payload?.target_mode) }}</span></span>
+                <span class="node-summary" :title="nodeGoal(node)">{{ nodeGoal(node) }}</span>
                 <span class="node-flags"><small v-if="node.cached || node.reused">已复用</small><small v-if="node.attempt > 1">第 {{ node.attempt }} 次尝试</small></span>
-                <small v-if="node.dependencies?.length">依赖：{{ node.dependencies.map(shortId).join('、') }}</small>
-                <small v-else>入口节点</small>
-                <span class="node-status-label">{{ statusMeta(node.status).label }} · {{ nodeDuration(node.task_id) }}</span>
+                <span class="node-footer"><small>{{ dependencyLabel(node) }}</small><span class="node-status-label">{{ statusMeta(node.status).label }} · {{ nodeDuration(node.task_id) }}</span></span>
               </button>
               <div v-if="selectedNodeId === node.task_id" class="node-detail">
+                <h5>完整任务</h5>
+                <p class="node-goal">{{ nodeGoal(node) }}</p>
                 <p v-if="nodeHistoryLoading && !nodeHistory">正在读取节点历史...</p>
                 <p v-if="nodeHistoryError" class="history-error">{{ nodeHistoryError }}</p>
                 <template v-if="nodeHistory">
@@ -212,13 +213,13 @@ const dagColumns = computed(() => {
 })
 const dagCanvas = computed(() => ({
   width: Math.max(220, dagColumns.value.length * 252),
-  height: Math.max(180, Math.max(...dagColumns.value.map(column => column.length), 1) * 132 + 54)
+  height: Math.max(180, Math.max(...dagColumns.value.map(column => column.length), 1) * 146 + 54)
 }))
 const dagEdges = computed(() => {
   const positions = new Map()
   dagColumns.value.forEach((column, columnIndex) => {
     column.forEach((node, rowIndex) => {
-      positions.set(node.task_id, { x: columnIndex * 252, y: rowIndex * 132 + 42 })
+      positions.set(node.task_id, { x: columnIndex * 252, y: rowIndex * 146 + 42 })
     })
   })
   return nodes.value.flatMap(node => (node.dependencies || []).flatMap(dependency => {
@@ -231,7 +232,7 @@ const dagEdges = computed(() => {
     return [{
       key: dependency + '->' + node.task_id,
       status: statusMeta(node.status).key,
-      path: `M ${startX} ${from.y + 46} C ${midX} ${from.y + 46}, ${midX} ${to.y + 46}, ${endX} ${to.y + 46}`
+      path: `M ${startX} ${from.y + 54} C ${midX} ${from.y + 54}, ${midX} ${to.y + 54}, ${endX} ${to.y + 54}`
     }]
   }))
 })
@@ -355,7 +356,20 @@ function modeLabel(mode) {
 }
 
 function nodeTitle(node) {
-  return node.payload?.goal || node.task_id || '未命名节点'
+  const explicit = node.payload?.title || node.title || node.phase || node.payload?.phase
+  if (explicit) return String(explicit)
+  return String(node.task_id || '未命名节点').replace(/[-_]+/g, ' ')
+}
+
+function nodeGoal(node) {
+  return String(node.payload?.goal || node.goal || '未提供任务说明')
+}
+
+function dependencyLabel(node) {
+  const dependencies = node.dependencies || []
+  if (!dependencies.length) return '入口节点'
+  if (dependencies.length === 1) return `上游：${shortId(dependencies[0]).slice(0, 18)}`
+  return `${dependencies.length} 个上游节点`
 }
 
 function eventKey(event) {
@@ -569,7 +583,7 @@ onBeforeUnmount(() => {
 .dag-column { display: grid; align-content: start; gap: 12px; min-width: 220px; }
 .dag-column-label { display: flex; justify-content: space-between; margin: 0 2px 2px; color: #7b899a; font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .dag-column-label span { font-weight: 400; text-transform: none; }
-.dag-node { min-height: 92px; padding: 9px 10px; border: 1px solid #dfe7ef; border-left: 3px solid #94a3b8; border-radius: 6px; background: #fff; box-shadow: 0 2px 5px rgba(36, 50, 71, .04); }
+.dag-node { min-height: 108px; padding: 10px; border: 1px solid #dfe7ef; border-left: 3px solid #94a3b8; border-radius: 6px; background: #fff; box-shadow: 0 2px 5px rgba(36, 50, 71, .04); }
 .dag-node.node-success { border-left-color: #1f9d69; }
 .dag-node.node-running { border-left-color: #2778c9; }
 .dag-node.node-failed { border-left-color: #d04444; }
@@ -583,16 +597,20 @@ onBeforeUnmount(() => {
 .node-meta, .history-empty { color: #8290a0; }
 .history-error { color: #b42318; }
 .node-answer { max-height: 240px; overflow: auto; white-space: pre-wrap; line-height: 1.5; }
+.node-goal { margin: 0; color: #405269; line-height: 1.55; white-space: normal; }
 .lineage-list { display: grid; gap: 4px; color: #526173; }
 .lineage-list span { overflow-wrap: anywhere; }
 .more-button { margin-top: 8px; padding: 4px 8px; border: 1px solid #cbd8e5; border-radius: 5px; background: #fff; color: #315b84; cursor: pointer; }
 .node-title { display: flex; align-items: center; gap: 8px; }
-.node-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.node-title strong { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.node-mode { flex: 0 0 auto; color: #66778b; font-size: 9px; }
+.node-summary { display: -webkit-box; min-height: 32px; margin: 7px 0 0 16px; overflow: hidden; color: #66778b; font-size: 10px; line-height: 16px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .node-flags { display: flex; gap: 5px; margin: 5px 0 0 16px; }
 .node-flags small { display: inline-block; margin: 0; padding: 2px 5px; border-radius: 3px; background: #e8f5f4; color: #0f7173; font-size: 9px; }
 .node-flags small + small { background: #f1ebff; color: #6d42b5; }
-.dag-node small { display: block; margin: 5px 0 0 16px; overflow: hidden; color: #7b899a; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.node-status-label { display: block; margin: 5px 0 0 16px; color: #617184; font-size: 10px; }
+.dag-node small { display: block; min-width: 0; margin: 0; overflow: hidden; color: #7b899a; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.node-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0 0 16px; }
+.node-status-label { flex: 0 0 auto; color: #617184; font-size: 10px; }
 .event-list { display: grid; gap: 7px; margin: 8px 0 0; padding: 0; list-style: none; }
 .event-list li { display: flex; gap: 9px; color: #526173; font-size: 11px; }
 .event-time { flex: 0 0 58px; color: #8a98a8; font-variant-numeric: tabular-nums; }
