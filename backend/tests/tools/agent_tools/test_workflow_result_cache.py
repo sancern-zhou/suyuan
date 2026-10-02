@@ -55,6 +55,32 @@ def test_select_reusable_respects_dependency_closure(tmp_path, monkeypatch):
     assert set(reusable) == {"air"}
 
 
+def test_dependency_result_change_invalidates_downstream_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "app.agent.workflow.result_cache._cache_root", lambda: tmp_path / "workflow_cache"
+    )
+    from app.agent.workflow.result_cache import result_fingerprint
+
+    source = {"rows": [1]}
+    derived = {"summary": "from source"}
+    store_node_result("wf-dep", "source", "取数据", "query", source)
+    store_node_result(
+        "wf-dep",
+        "derived",
+        "汇总",
+        "expert_analysis",
+        derived,
+        dependency_hashes={"source": result_fingerprint(source)},
+    )
+    nodes = [
+        {"task_id": "source", "target_mode": "query", "goal": "取数据", "dependencies": []},
+        {"task_id": "derived", "target_mode": "expert_analysis", "goal": "汇总", "dependencies": ["source"]},
+    ]
+    assert set(select_reusable_nodes("wf-dep", nodes)) == {"source", "derived"}
+    store_node_result("wf-dep", "source", "取数据", "query", {"rows": [2]})
+    assert set(select_reusable_nodes("wf-dep", nodes)) == {"source"}
+
+
 def test_oversize_result_is_not_cached(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "app.agent.workflow.result_cache._cache_root", lambda: tmp_path / "workflow_cache"

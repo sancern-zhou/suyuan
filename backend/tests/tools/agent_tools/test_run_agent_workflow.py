@@ -58,6 +58,32 @@ def test_run_agent_workflow_schema_documents_target_mode_contract():
     assert call_target_mode["enum"] == target_mode["enum"]
 
 
+def test_run_agent_workflow_schema_requires_one_question_per_expert_node():
+    schema = RunAgentWorkflowTool().get_function_schema()
+    description = schema["description"]
+    assert "一个专家节点只能回答一个分析问题" in description
+    assert "deliverables 最多 3 项" in description
+
+
+@pytest.mark.asyncio
+async def test_run_agent_workflow_rejects_overloaded_expert_node():
+    result = await RunAgentWorkflowTool().execute(
+        workflow={
+            "workflow_id": "overloaded-expert",
+            "nodes": [{
+                "task_id": "analysis-all",
+                "target_mode": "expert_analysis",
+                "goal": "完成所有分析",
+                "task_contract": {
+                    "deliverables": ["相关性", "超标统计", "时空对比", "趋势图"],
+                },
+            }],
+        },
+    )
+    assert result["success"] is False
+    assert "超过专家节点上限" in result["result"]
+
+
 def test_call_sub_agent_extracts_current_tool_result_file_handles():
     events = [{
         "type": "tool_result",

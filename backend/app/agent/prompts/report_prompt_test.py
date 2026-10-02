@@ -19,6 +19,8 @@ def test_report_prompt_explains_when_to_use_agent_workflow_dag():
     assert "expert_meteorology" in prompt
     assert "expert_analysis" in prompt
     assert "node_results" in prompt
+    assert "一个专家节点只回答一个分析问题" in prompt
+    assert "同一领域有 N 个相互独立的问题" in prompt
 
 
 def test_report_prompt_uses_python_as_primary_chart_tool():
