@@ -33,8 +33,8 @@ WORKFLOW_DAG_EXAMPLE = (
     '{"workflow": {"workflow_id": "air-quality-report", "nodes": ['
     '{"task_id": "air-data", "target_mode": "query", "goal": "查询指定区域和时间范围的空气质量数据"}, '
     '{"task_id": "weather-data", "target_mode": "query", "goal": "查询同期地面气象观测数据"}, '
-    '{"task_id": "cross-analysis", "target_mode": "expert", '
-    '"goal": "基于上游数据完成交叉归因，输出结论、证据和缺口", '
+    '{"task_id": "cause-analysis", "target_mode": "expert_analysis", '
+    '"goal": "基于上游数据完成污染成因研判，输出结论、证据和缺口", '
     '"dependencies": ["air-data", "weather-data"]}]}, "max_concurrency": 4}'
 )
 
