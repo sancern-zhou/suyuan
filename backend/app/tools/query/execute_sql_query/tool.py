@@ -761,6 +761,21 @@ class BaseSQLQueryTool(LLMTool):
                 sql_preview=sql[:100]
             )
 
+            sqlstate = str(e.args[0]) if e.args else ""
+            if "42S02" in sqlstate or "Invalid object name" in error_msg:
+                # 表不存在：SQL Server 白名单只有城市口径表，站点数据在采集库
+                return {
+                    "success": False,
+                    "data": [],
+                    "summary": (
+                        f"SQL执行失败: {error_msg}。"
+                        "本工具（SQL Server）白名单仅城市口径表，没有站点表，"
+                        "也不存在 dat_station_hour 等采集表；"
+                        "站点小时/日历史、城市长历史请改用 execute_crawler_sql_query，"
+                        "字段以其描述中的表字段契约为准。"
+                    ),
+                }
+
             # 提取表名
             table_name = self._extract_table_name(sql)
             hint = ""
