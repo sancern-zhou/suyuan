@@ -313,6 +313,8 @@ backend:
       - execute_sql_query
       # 江苏运维主题数据集受控SQL（本地 mart 语义层）
       - execute_jiangsu_mart_sql
+      # 指标语义层（Cube Core REST, 口径唯一免SQL; 2026-10-02）
+      - jiangsu_query_metrics
       - create_report_chart
       - execute_echarts_python
       - execute_python
@@ -394,6 +396,8 @@ backend:
       - knowledge_graph_query
       # 江苏运维主题数据集受控SQL（本地 mart 语义层）
       - execute_jiangsu_mart_sql
+      # 指标语义层（Cube Core REST, 口径唯一免SQL; 2026-10-02）
+      - jiangsu_query_metrics
       - create_report_chart
       - call_sub_agent
     # 站房巡检的业务查询仍为只读；巡检执行、工单生成与派发仍需后续单独评审。
@@ -418,6 +422,8 @@ backend:
       - knowledge_graph_query
       # 江苏运维主题数据集受控SQL（本地 mart 语义层）
       - execute_jiangsu_mart_sql
+      # 指标语义层（Cube Core REST, 口径唯一免SQL; 2026-10-02）
+      - jiangsu_query_metrics
       - create_report_package
     # 分析到站记录和空间台账，不能替代工单、告警处置等确定性流程约束。
     operations_analysis:
@@ -453,6 +459,8 @@ backend:
       - knowledge_graph_query
       # 江苏运维主题数据集受控SQL（本地 mart 语义层）
       - execute_jiangsu_mart_sql
+      # 指标语义层（Cube Core REST, 口径唯一免SQL; 2026-10-02）
+      - jiangsu_query_metrics
     # 设备反控仅允许固定指令集。所有执行动作必须先生成待确认指令，再由用户明确确认。
     device_control:
       - read_file
@@ -492,6 +500,8 @@ backend:
       - knowledge_graph_query
       # 江苏运维主题数据集受控SQL（本地 mart 语义层）
       - execute_jiangsu_mart_sql
+      # 指标语义层（Cube Core REST, 口径唯一免SQL; 2026-10-02）
+      - jiangsu_query_metrics
       - jiangsu_prepare_fault_work_order
       - create_report_package
   mode_prompt_files:

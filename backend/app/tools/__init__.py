@@ -449,6 +449,14 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="execute_jiangsu_mart_sql", error=str(e))
 
+    # 江苏运维指标语义层（部署新增 2026-10-02: Cube Core REST, 口径唯一免SQL）
+    try:
+        from app.tools.query.jiangsu_cube_metrics.tool import JiangsuQueryMetricsTool
+        registry.register(JiangsuQueryMetricsTool(), priority=47)
+        logger.info("tool_loaded", tool="jiangsu_query_metrics")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="jiangsu_query_metrics", error=str(e))
+
     # 智能事件中心 PostgreSQL 结构化查询工具（按模式注入事件中心表白名单）。
     if is_project_tool_enabled(context, "legacy", "execute_smart_event_sql_query"):
         try:
