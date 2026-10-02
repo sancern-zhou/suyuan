@@ -23,30 +23,54 @@ _CACHE: Optional[List[dict[str, Any]]] = None
 
 
 def _catalog_path() -> Path:
+    """部署 registry 覆盖路径（部署数据，不入 git；兼容既有调用与测试）。"""
     from config.settings import settings
 
     return Path(settings.data_registry_dir) / CATALOG_FILENAME
 
 
+def _config_catalog_path() -> Path:
+    """随代码入库的基准目录（backend/config/data_source_catalog.yaml）。"""
+    return Path(__file__).resolve().parents[3] / "config" / CATALOG_FILENAME
+
+
+def _candidate_paths() -> List[Path]:
+    """查找顺序：部署 registry 覆盖优先，config 基准回落。"""
+    return [_catalog_path(), _config_catalog_path()]
+
+
 def load_data_source_catalog(*, refresh: bool = False) -> List[dict[str, Any]]:
-    """加载并校验数据源目录；缺失/损坏时返回空列表并记录日志。"""
+    """加载数据源目录；全部候选缺失/损坏时返回空列表并记录日志。"""
     global _CACHE
     if _CACHE is not None and not refresh:
         return _CACHE
 
-    path = _catalog_path()
     raw: Any = []
-    try:
-        import yaml
+    loaded_from: Optional[Path] = None
+    for path in _candidate_paths():
+        try:
+            import yaml
 
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or []
-    except FileNotFoundError:
-        logger.info("data_source_catalog_missing", path=str(path))
-    except Exception as exc:  # noqa: BLE001 — 目录损坏时降级为无地图
-        logger.warning("data_source_catalog_load_failed", path=str(path), error=str(exc))
+            raw = yaml.safe_load(path.read_text(encoding="utf-8")) or []
+        except FileNotFoundError:
+            continue
+        except Exception as exc:  # noqa: BLE001 — 目录损坏时尝试下一个候选
+            logger.warning("data_source_catalog_load_failed", path=str(path), error=str(exc))
+            continue
+        loaded_from = path
+        break
+
+    if loaded_from is None:
+        logger.info(
+            "data_source_catalog_missing",
+            candidates=[str(path) for path in _candidate_paths()],
+        )
 
     if isinstance(raw, dict):
         raw = raw.get("sources") or []
+
+    if loaded_from is not None:
+        logger.info("data_source_catalog_loaded", path=str(loaded_from))
 
     entries: List[dict[str, Any]] = []
     for item in raw if isinstance(raw, list) else []:

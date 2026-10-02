@@ -49,7 +49,11 @@ sources:
 
 
 def test_render_map_empty_when_catalog_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(data_source_map, "_catalog_path", lambda: tmp_path / "absent.yaml")
+    monkeypatch.setattr(
+        data_source_map,
+        "_candidate_paths",
+        lambda: [tmp_path / "absent.yaml"],
+    )
     assert render_data_source_map() == ""
 
 
@@ -92,3 +96,30 @@ def test_deployment_catalog_references_registered_tools():
         assert global_tool_registry.get_tool(primary) is not None, (
             f"数据源地图引用了未注册工具: {primary}（条目: {item.get('domain')}）"
         )
+
+
+def test_config_fallback_loads_when_registry_absent(tmp_path, monkeypatch):
+    """registry 覆盖缺失时回落到随代码入库的 config 基准目录。"""
+    config_path = data_source_map._config_catalog_path()
+    if not config_path.exists():
+        pytest.skip("config 基准目录未入库")
+    monkeypatch.setattr(
+        data_source_map,
+        "_candidate_paths",
+        lambda: [tmp_path / "absent.yaml", config_path],
+    )
+    entries = load_data_source_catalog(refresh=True)
+    assert entries, "config 基准目录存在但未解析出有效条目"
+
+
+def test_config_baseline_covers_key_routing_domains():
+    """入库基准必须包含踩坑迭代出的关键路由域（防回退）。"""
+    config_path = data_source_map._config_catalog_path()
+    assert config_path.exists(), "data_source_catalog.yaml 必须随代码入库"
+    domains = {
+        str(item.get("domain") or "")
+        for item in load_data_source_catalog(refresh=True)
+    }
+    assert any("国控" in d for d in domains)
+    assert any("预报" in d for d in domains)
+    assert any("气象" in d for d in domains)
