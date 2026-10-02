@@ -258,6 +258,8 @@ async function loadMoreNodeHistory() {
 
 const MODE_LABELS = {
   query: '问数',
+  query_monitoring: '监测问数',
+  query_forecast: '预报问数',
   expert: '专家分析',
   expert_meteorology: '气象专家',
   expert_analysis: '常规分析专家',

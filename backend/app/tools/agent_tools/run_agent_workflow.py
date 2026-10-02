@@ -18,8 +18,7 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 logger = structlog.get_logger(__name__)
 
-# 报告编排的节点模式白名单：领域拆分后的最小集（其他模式不对报告 DAG 暴露）
-REPORT_NODE_ALLOWED_MODES = frozenset({"query", "expert_meteorology", "expert_analysis"})
+# 报告 DAG 专家节点集合：这些模式必须提供 task_contract 并受交付物粒度校验
 EXPERT_NODE_MODES = frozenset({"expert_meteorology", "expert_analysis"})
 MAX_EXPERT_NODE_DELIVERABLES = 3
 
@@ -28,13 +27,16 @@ _DEFAULT_EXPERT_NODE_LIMITS = {
     "expert_meteorology": {"max_iterations": 15, "timeout_seconds": 300},
     "expert_analysis": {"max_iterations": 20, "timeout_seconds": 360},
     "expert": {"max_iterations": 30, "timeout_seconds": 480},
+    # 报告 DAG 问数子节点：取数与轻量整理，紧凑预算控制时长
+    "query_monitoring": {"max_iterations": 12, "timeout_seconds": 420},
+    "query_forecast": {"max_iterations": 12, "timeout_seconds": 420},
 }
 
 
 WORKFLOW_DAG_EXAMPLE = (
     '{"workflow": {"workflow_id": "air-quality-report", "nodes": ['
-    '{"task_id": "air-data", "target_mode": "query", "goal": "查询指定区域和时间范围的空气质量数据"}, '
-    '{"task_id": "weather-data", "target_mode": "query", "goal": "查询同期地面气象观测数据"}, '
+    '{"task_id": "air-data", "target_mode": "query_monitoring", "goal": "查询指定区域和时间范围的空气质量监测数据"}, '
+    '{"task_id": "weather-data", "target_mode": "query_forecast", "goal": "获取同期地面气象观测与预报数据"}, '
     '{"task_id": "cause-analysis", "target_mode": "expert_analysis", '
     '"goal": "基于上游数据完成污染成因研判，输出结论、证据和缺口", '
     '"dependencies": ["air-data", "weather-data"]}]}, "max_concurrency": 4}'
@@ -48,10 +50,12 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "goal 写清时间范围、区域、指标口径和预期输出；把无依赖的取数拆成独立节点以并行执行。"
     "节点可用可选 phase 字段打用户可读的阶段名（如'取数与质检'/'气象分箱研判'/'整合成稿'），"
     "同阶段节点共用一个名字，面板按阶段分组展示故事线；用业务语言命名，不用编排术语。"
-    "领域拆分建议：气象条件、输送通道、静稳/边界层形势拆 expert_meteorology；浓度特征、超标统计、"
-    "组分解读、成因研判拆 expert_analysis，二者可并行；交叉归因由你自己整合（整合阶段禁止重新取数）。"
-    "报告编排的子节点白名单：仅 query / expert_meteorology / expert_analysis 三种模式，"
-    "其他模式（含综合 expert）不对报告 DAG 暴露。"
+    "领域拆分建议：监测历史取数（小时/日历史、AQI 与六参数、站点目录、全国对比）拆 query_monitoring，"
+    "气象实况/预报与空气质量预报数据拆 query_forecast，二者可并行；"
+    "气象条件、输送通道、静稳/边界层形势拆 expert_meteorology；浓度特征、超标统计、"
+    "组分解读、成因研判拆 expert_analysis；交叉归因由你自己整合（整合阶段禁止重新取数）。"
+    "报告编排禁止综合问数（query）子节点：监测历史用 query_monitoring，气象与预报用 query_forecast；"
+    "综合 expert 也不对报告 DAG 暴露。"
     "**交付物粒度硬约束**：每个节点承载 2~3 项强耦合必交物（最多 5 项）；"
     "一个专家节点只能回答一个分析问题；计算结果、对应图表和证据摘要可以算同一问题的交付物。"
     "**同域多节点并行是默认模式**——同一领域的多个独立子分析拆成多个同 mode 节点"
@@ -331,20 +335,20 @@ class RunAgentWorkflowTool(LLMTool):
                 granularity_error = self._validate_expert_node_granularity(node)
                 if granularity_error:
                     return self._failure(granularity_error)
-            # 报告编排的节点模式白名单：领域拆分后的最小集，其余模式不对报告 DAG 暴露
+            # 报告编排不再暴露综合问数：监测历史用 query_monitoring，气象与预报用 query_forecast
             runtime_mode = str(getattr(context, "runtime_mode", "") or "")
             if runtime_mode == "report":
                 disallowed_nodes = [
                     str(node.get("task_id") or "<unknown>")
                     for node in nodes
-                    if str(node.get("target_mode") or "") not in REPORT_NODE_ALLOWED_MODES
+                    if str(node.get("target_mode") or "") == "query"
                 ]
                 if disallowed_nodes:
                     return self._failure(
-                        "报告编排的子节点仅允许 target_mode：query / expert_meteorology / expert_analysis。"
-                        "取数用 query；气象/输送问题拆 expert_meteorology；浓度/组分/超标问题拆 expert_analysis；"
-                        "交叉归因由父报告 Agent 自行整合，不使用其他任何模式作为子节点。"
-                        f"越界节点：{', '.join(disallowed_nodes)}"
+                        "报告编排不再使用综合问数（query）子节点："
+                        "监测历史数据（小时/日历史、AQI 与六参数、站点目录、全国对比）用 query_monitoring；"
+                        "气象实况/预报与空气质量预报数据用 query_forecast。"
+                        f"请改写节点：{', '.join(disallowed_nodes)}"
                     )
             definition["nodes"] = nodes
             # 节点成果缓存：同 workflow 重提时复用命中节点（依赖闭包完整才复用）

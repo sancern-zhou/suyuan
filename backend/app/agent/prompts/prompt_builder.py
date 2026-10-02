@@ -9,6 +9,7 @@ from .assistant_prompt import build_assistant_prompt
 from .ppt_prompt import build_ppt_prompt
 from .expert_prompt import build_expert_analysis_prompt, build_expert_meteorology_prompt, build_expert_prompt
 from .query_prompt import build_query_prompt
+from .query_data_prompt import build_query_forecast_prompt, build_query_monitoring_prompt
 from .knowledge_prompt import build_knowledge_prompt
 from .report_prompt import build_report_prompt
 from .social_prompt import build_social_prompt
@@ -88,6 +89,8 @@ AgentMode = Literal[
     "expert_meteorology",
     "expert_analysis",
     "query",
+    "query_monitoring",
+    "query_forecast",
     "knowledge",
     "report",
     "social",
@@ -106,7 +109,7 @@ AgentMode = Literal[
 
 
 # 数据源地图对取数/研判/编排模式生效；纯产出型模式（ppt/board 等）不需要。
-DATA_SOURCE_MAP_MODES = {"query", "expert", "expert_meteorology", "expert_analysis", "report"}
+DATA_SOURCE_MAP_MODES = {"query", "query_monitoring", "query_forecast", "expert", "expert_meteorology", "expert_analysis", "report"}
 
 
 def _with_data_source_map(prompt: str, mode: str) -> str:
@@ -214,6 +217,10 @@ def _build_react_system_prompt(
         return _with_platform_contracts(build_expert_analysis_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "query":
         return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "query_monitoring":
+        return _with_platform_contracts(build_query_monitoring_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "query_forecast":
+        return _with_platform_contracts(build_query_forecast_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "knowledge":
         return _with_platform_contracts(build_knowledge_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "report":

@@ -420,11 +420,67 @@ async def test_report_mode_allows_whitelisted_modes(monkeypatch):
         workflow={
             "workflow_id": "report-wl",
             "nodes": [
-                {"task_id": "air", "target_mode": "query", "goal": "取数"},
+                {"task_id": "air", "target_mode": "query_monitoring", "goal": "监测取数"},
                 {"task_id": "met", "target_mode": "expert_meteorology", "goal": "气象研判"},
                 {"task_id": "air-expert", "target_mode": "expert_analysis", "goal": "数据研判"},
             ],
         },
     )
     assert result["success"] is True
-    assert set(calls) == {"query", "expert_meteorology", "expert_analysis"}
+    assert set(calls) == {"query_monitoring", "expert_meteorology", "expert_analysis"}
+
+
+@pytest.mark.asyncio
+async def test_report_mode_rejects_generic_query_nodes(monkeypatch):
+    """报告编排不再暴露综合问数：query 节点整单拒绝并指路 query_monitoring/query_forecast。"""
+    executed = []
+
+    async def fake_execute(self, **kwargs):
+        executed.append(kwargs["target_mode"])
+        raise AssertionError("sub agent must not be invoked")
+
+    monkeypatch.setattr(CallSubAgentTool, "execute", fake_execute)
+    context = SimpleNamespace(runtime_mode="report", session_id="report_session_x")
+    result = await RunAgentWorkflowTool().execute(
+        context=context,
+        workflow={
+            "workflow_id": "report-query",
+            "nodes": [
+                {"task_id": "air", "target_mode": "query", "goal": "取数"},
+            ],
+        },
+    )
+    assert result["success"] is False
+    assert "query_monitoring" in result["result"]
+    assert "query_forecast" in result["result"]
+    assert "air" in result["result"]
+    assert executed == []
+
+
+@pytest.mark.asyncio
+async def test_non_report_mode_still_allows_generic_query(monkeypatch):
+    """非报告父模式（assistant/social 等）仍可使用综合 query。"""
+    calls = []
+
+    async def fake_execute(self, **kwargs):
+        calls.append(kwargs["target_mode"])
+        return {
+            "status": "success",
+            "success": True,
+            "result": kwargs["goal"],
+            "data": {"result_envelope": {"status": "completed", "summary": kwargs["goal"], "evidence": [], "artifacts": []}},
+        }
+
+    monkeypatch.setattr(CallSubAgentTool, "execute", fake_execute)
+    context = SimpleNamespace(runtime_mode="assistant", session_id="assistant_session_x")
+    result = await RunAgentWorkflowTool().execute(
+        context=context,
+        workflow={
+            "workflow_id": "assistant-wf",
+            "nodes": [
+                {"task_id": "air", "target_mode": "query", "goal": "取数"},
+            ],
+        },
+    )
+    assert result["success"] is True
+    assert calls == ["query"]

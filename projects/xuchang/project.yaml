@@ -137,6 +137,40 @@ backend:
       - execute_sql_query
       - execute_python
       - create_business_chart
+    # 报告 DAG 常规空气质量监测问数子模式：仅监测历史取数与核算工具，
+    # 不做研判（研判归 expert_analysis），综合 query 不对报告 DAG 暴露
+    query_monitoring:
+      - list_session_resources
+      - read_session_resource
+      - publish_session_file
+      - read_file
+      - write_file
+      - query_xcai_city_history
+      - execute_sql_query
+      - execute_crawler_sql_query
+      - execute_postgres_sql_query
+      - query_airdata_platform
+      - xuchang_station_catalog
+      - query_national_city_air_quality
+      - resolve_station_geo
+      - execute_python
+      - create_business_chart
+    # 报告 DAG 气象与空气质量预报问数子模式：仅气象实况/预报与预报产品取数工具
+    query_forecast:
+      - list_session_resources
+      - read_session_resource
+      - publish_session_file
+      - read_file
+      - write_file
+      - get_weather_data
+      - get_current_weather
+      - get_weather_forecast
+      - query_airdata_platform
+      - xuchang_station_catalog
+      - resolve_station_geo
+      - execute_postgres_sql_query
+      - execute_python
+      - create_business_chart
     report:
       - list_session_resources
       - read_session_resource

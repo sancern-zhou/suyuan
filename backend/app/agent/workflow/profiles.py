@@ -48,6 +48,8 @@ PROFILES = {
 MODE_PROFILES = {
     "assistant": "orchestrator",
     "query": "general-purpose",
+    "query_monitoring": "general-purpose",
+    "query_forecast": "general-purpose",
     "report": "orchestrator",
     "social": "orchestrator",
     "chart": "general-purpose",
