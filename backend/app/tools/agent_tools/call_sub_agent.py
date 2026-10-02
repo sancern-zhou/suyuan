@@ -71,9 +71,9 @@ _DEFAULT_CHILD_MAX_ITERATIONS = {
     "expert_meteorology": 20,
     "expert_analysis": 28,
     "expert": 40,
-    # 问数子模式只取数与轻量整理：紧凑预算控制时长与上下文膨胀。
-    "query_monitoring": 12,
-    "query_forecast": 12,
+    # 固定问数工作流由运行时限制为最多四轮。
+    "query_monitoring": 4,
+    "query_forecast": 4,
 }
 
 

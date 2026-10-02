@@ -181,9 +181,8 @@ EXPERT_ANALYSIS_TOOL_NAMES = [
     "query_xcai_city_history",
     "query_national_city_air_quality",
     "execute_sql_query",
-    # 计算与可视化
+    # 可选归一化计算
     "execute_python",
-    "create_business_chart",
 ]
 
 # ===== 问数模式工具 =====
@@ -233,6 +232,7 @@ QUERY_TOOL_NAMES = [
 # 气象/预报/轨迹工具不进入本白名单。
 QUERY_MONITORING_TOOL_NAMES = [
     "list_session_resources",
+    "read_session_resource",
     "publish_session_file",
     # 上游产物复用与中间产物落地
     "read_file",
@@ -243,18 +243,19 @@ QUERY_MONITORING_TOOL_NAMES = [
     "execute_crawler_sql_query",
     "execute_postgres_sql_query",
     "query_airdata_platform",
+    "airdata_calc_report_summary",
     "xuchang_station_catalog",
     "query_national_city_air_quality",
     "resolve_station_geo",
-    # 计算与可视化
+    # 可选归一化计算
     "execute_python",
-    "create_business_chart",
 ]
 
 # 气象与空气质量预报问数：只保留气象实况/预报与预报产品取数必需工具；
 # 监测历史统计工具不进入本白名单。
 QUERY_FORECAST_TOOL_NAMES = [
     "list_session_resources",
+    "read_session_resource",
     "publish_session_file",
     # 上游产物复用与中间产物落地
     "read_file",
@@ -272,7 +273,6 @@ QUERY_FORECAST_TOOL_NAMES = [
     "execute_python",
     "create_business_chart",
 ]
-
 # ===== 知识问答模式工具 =====
 # 知识库检索为主；按需读取已注册的会话资源，并用网页搜索/抓取补充知识库不足。
 KNOWLEDGE_TOOL_NAMES = [

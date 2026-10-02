@@ -1,8 +1,4 @@
-"""报告 DAG 问数子模式系统提示词（query_monitoring / query_forecast）。
-
-与综合 query 模式解耦：面向报告编排的专职取数 agent，只交付数据与口径，
-不做研判、不成稿。工具白名单在 tool_registry 中按领域精简配置。
-"""
+"""System prompts for fixed report-DAG data acquisition modes."""
 
 from typing import List, Optional
 
@@ -14,8 +10,7 @@ def _common_part(
 ) -> List[str]:
     prompt_parts: List[str] = []
     if memory_context and memory_context.strip():
-        prompt_parts.append(memory_context.strip())
-        prompt_parts.append("")
+        prompt_parts.extend([memory_context.strip(), ""])
     if memory_file_path:
         prompt_parts.extend([
             f"记忆文件路径：{memory_file_path}",
@@ -27,25 +22,21 @@ def _common_part(
         "",
         "## 查询原则",
         "",
-        "- 需要数据时调用工具取数；工具结果已覆盖任务范围时立即整理交付，不重复查询。",
-        "- SQL 字段名以工具描述内嵌的表字段契约为准（大小写敏感），写 SQL 前逐字核对；",
-        "  查询失败返回的错误会附该表真实字段清单，直接据此修正重试，不要再调用 describe_table 试探。",
+        "- 运行时按固定工作流推进：批量取数、可选归一化质检、交付；严格执行当前阶段说明。",
+        "- 首个取数阶段一次规划完整范围，相互独立的查询必须在同一轮发出多个工具调用。",
+        "- 同一数据库内可用一条 JOIN/UNION/CTE 查询；不同数据库或接口分别调用对应工具。",
+        "- 禁止多语句 SQL，禁止为了探查而逐表串行调用。首轮失败时只修复失败项，不重查成功项。",
+        "- SQL 字段名以工具描述内嵌的表字段契约为准（大小写敏感）；",
+        "  查询失败返回真实字段清单时直接修正，不再调用 describe_table 试探。",
         "- 时间范围、区域口径、指标口径在交付时显式说明；缺失数据如实说明，不编造。",
         "- 工具参数以本轮可用工具 schema 为准，不伪造工具调用。",
         "",
         "## 交付要求",
         "",
-        "- 结果落盘为结构化文件（CSV/JSON），最终回复给出 file_path 与字段说明。",
+        "- 优先复用查询工具自动生成的结构化文件，最终回复给出 file_path 与字段说明。",
         "- 大结果集只回复样例与 file_path，说明总行数、时间范围和字段清单。",
-        "- 用三句话以内概括数据要点（可选），不展开分析推断——研判由专家模式完成。",
-        "",
-        "## 效率约束",
-        "",
-        "- **多表探查一次完成**：用一条 SQL（JOIN/UNION/多结果集）覆盖全部需要的表和口径，"
-        "或把相互独立的查询在同一轮并发发出（单轮多工具调用）；禁止一表一查地串行试探。",
-        "- **质检一轮完成**：缺失/覆盖率/口径一致性用同一个 python 脚本算完，"
-        "不要按表或按天拆成多轮。",
-        "- 目标 3~4 轮交付：1 轮并发探查 → 1 轮质检脚本 → 1 轮落盘交付；超过 6 轮视为任务书执行偏差。",
+        "- 归一化阶段仅在确需合并文件或补充质量统计时调用一次 execute_python。",
+        "- 用三句话以内概括数据要点（可选），不展开分析推断；研判由专家模式完成。",
         "- 中间文件写到本会话工作目录，不要依赖 /tmp 跨轮传递。",
     ])
     return prompt_parts
@@ -56,7 +47,8 @@ def build_query_monitoring_prompt(
     memory_context: Optional[str] = None,
     memory_file_path: Optional[str] = None,
 ) -> str:
-    """常规空气质量监测问数 Agent 系统提示词。"""
+    """Build the monitoring-data acquisition prompt."""
+    del available_tools
     prompt_parts = _common_part(
         "你是常规空气质量监测问数 Agent（报告编排子节点），负责国控/省控监测数据的取数与统计核算。",
         memory_context,
@@ -78,9 +70,10 @@ def build_query_forecast_prompt(
     memory_context: Optional[str] = None,
     memory_file_path: Optional[str] = None,
 ) -> str:
-    """气象与空气质量预报问数 Agent 系统提示词。"""
+    """Build the weather and air-quality forecast acquisition prompt."""
+    del available_tools
     prompt_parts = _common_part(
-        "你是气象与空气质量预报问数 Agent（报告编排子节点），负责气象实况/预报与空气质量预报产品的取数整理。",
+        "你是气象与空气质量预报问数 Agent（报告编排子节点），负责气象实况、气象预报与空气质量预报产品的取数整理。",
         memory_context,
         memory_file_path,
     )
@@ -90,7 +83,7 @@ def build_query_forecast_prompt(
         "",
         "- 承接：气象实况与多时效预报取数、空气质量预报产品查询、预报要素时间序列落盘。",
         "- 交付预报数据时必须标注起报时间（如可得）与预报时效，混合多起报批次时分别说明。",
-        "- 不承接：监测历史统计核算（query_monitoring）、静稳/输送等气象研判（expert_meteorology）、报告成稿。",
-        "- 预报数据的可变性说明（如未来时效越高越不确定）可附一句提示，不做形势结论。",
+        "- 不承接：监测历史统计核算（query_monitoring）、静稳或输送研判（expert_meteorology）、报告成稿。",
+        "- 可附一句预报时效不确定性提示，不做形势结论。",
     ])
     return "\n".join(prompt_parts)

@@ -143,7 +143,8 @@ class ToolRegistry:
             "registered_at": datetime.now().isoformat(),
             "version": getattr(tool, 'version', '1.0.0'),
             "category": getattr(tool, 'category', None),
-            "requires_context": getattr(tool, 'requires_context', False)
+            "requires_context": getattr(tool, 'requires_context', False),
+            "concurrency_policy": getattr(tool, 'concurrency_policy', "serial"),
         }
 
         self._tools[tool_name] = tool_data

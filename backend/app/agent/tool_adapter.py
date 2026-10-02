@@ -709,6 +709,10 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
             tool_data = global_tool_registry.get_tool_data(name)
             description = tool_data.get("metadata", {}).get("description", f"Call {name} tool")
             tool_wrapper.__doc__ = description
+            tool = tool_data.get("tool")
+            if tool is not None:
+                tool_wrapper.is_read_only = tool.is_read_only
+                tool_wrapper.concurrency_policy = tool.concurrency_policy
             return tool_wrapper
 
         tool_wrapper = make_tool_wrapper(tool_name)
@@ -725,6 +729,8 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
 
     get_observed_weather_wrapper.__name__ = "get_observed_weather"
     get_observed_weather_wrapper.__doc__ = get_observed_weather.__doc__
+    get_observed_weather_wrapper.is_read_only = lambda _args=None: True
+    get_observed_weather_wrapper.concurrency_policy = "parallel_read"
     tool_registry["get_observed_weather"] = get_observed_weather_wrapper
 
     # 🔍 调试日志：输出最终工具注册表

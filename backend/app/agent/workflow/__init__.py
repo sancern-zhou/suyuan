@@ -25,6 +25,12 @@ from .coordinator import WorkflowCoordinator, WorkflowDefinition, WorkflowNodeSp
 from .lineage import build_node_lineage, validate_node_lineage
 from .registry import ActiveWorkflow, ActiveWorkflowRegistry, active_workflow_registry
 from .jobs import WorkflowJob, WorkflowJobStore, get_workflow_job_store
+from .catalog import (
+    FixedWorkflowDefinition,
+    WorkflowCatalog,
+    WorkflowPhaseDefinition,
+    workflow_catalog,
+)
 
 __all__ = [
     "EXPERT_ANALYSIS_RESULT_SCHEMA",
@@ -60,4 +66,8 @@ __all__ = [
     "WorkflowJob",
     "WorkflowJobStore",
     "get_workflow_job_store",
+    "FixedWorkflowDefinition",
+    "WorkflowCatalog",
+    "WorkflowPhaseDefinition",
+    "workflow_catalog",
 ]

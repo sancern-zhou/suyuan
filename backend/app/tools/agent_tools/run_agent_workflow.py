@@ -29,14 +29,13 @@ REPORT_NODE_ALLOWED_MODES = frozenset({
     "expert_analysis",
 })
 
-
 _DEFAULT_EXPERT_NODE_LIMITS = {
     "expert_meteorology": {"max_iterations": 15, "timeout_seconds": 300},
     "expert_analysis": {"max_iterations": 20, "timeout_seconds": 360},
     "expert": {"max_iterations": 30, "timeout_seconds": 480},
-    # 报告 DAG 问数子节点：取数与轻量整理，紧凑预算控制时长
-    "query_monitoring": {"max_iterations": 12, "timeout_seconds": 420},
-    "query_forecast": {"max_iterations": 12, "timeout_seconds": 420},
+    # 固定问数流程由运行时约束为最多四轮。
+    "query_monitoring": {"max_iterations": 4, "timeout_seconds": 420},
+    "query_forecast": {"max_iterations": 4, "timeout_seconds": 420},
 }
 
 
@@ -63,9 +62,10 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "组分解读、成因研判拆 expert_analysis；交叉归因由你自己整合（整合阶段禁止重新取数）。"
     "报告编排禁止综合问数（query）子节点：监测历史用 query_monitoring，气象与预报用 query_forecast；"
     "综合 expert 也不对报告 DAG 暴露。"
-    "**问数节点轮次硬约束**：取数节点必须多表探查一次完成——一条 SQL 覆盖全部表和口径，"
+    "**问数节点轮次硬约束**：固定工作流由运行时控制为最多 4 轮且失败项最多补查一次；"
+    "取数节点必须多表探查一次完成——同库数据用一条合法的 JOIN/UNION/CTE SQL 覆盖所需表和口径，"
     "或独立查询在同一轮并发发出（单轮多工具调用），禁止逐表串行试探；"
-    "缺失/口径质检用一个 python 脚本轮完成；目标 3~4 轮交付。"
+    "禁止多语句 SQL；缺失/口径质检最多用一个 python 脚本完成。"
     "**交付物粒度硬约束**：每个节点承载 2~3 项强耦合必交物（最多 5 项）；"
     "一个专家节点只能回答一个分析问题；计算结果、对应图表和证据摘要可以算同一问题的交付物。"
     "**同域多节点并行是默认模式**——同一领域的多个独立子分析拆成多个同 mode 节点"

@@ -21,8 +21,9 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
         "positioning": "常规空气质量监测问数 Agent：面向国控/省控监测数据的取数与核算。",
         "scope": "城市与站点小时/日历史、AQI 与六参数统计核算、同比环比、站点目录、全国城市对比、数据质量核对。",
         "boundary": "只取数与统计核算，不做气象归因与污染成因研判（归 expert_meteorology/expert_analysis），不产出报告包。",
-        "outputs": "结构化数据文件（file_path）+ 数据口径与时间范围说明。",
+        "outputs": "结构化数据文件（file_path）+ 数据口径、时间范围和缺口说明。",
         "warning": (
+            "运行时限定批量取数、可选归一化、交付三个阶段，最多一次失败项补查。"
             "SQL 字段以工具描述内嵌表契约为准（大小写敏感）；"
             "查询失败返回的错误会附真实字段清单，直接据此修正重试。"
         ),
@@ -32,7 +33,10 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
         "scope": "气象实况与多时效预报取数、空气质量预报产品查询、预报要素时间序列落盘、起报时间与时效标注。",
         "boundary": "只取数与轻量整理，不做气象条件研判与污染潜势评估（归 expert_meteorology），不产出报告包。",
         "outputs": "结构化数据文件（file_path）+ 起报时间/时效/要素口径说明。",
-        "warning": "预报数据的分析结论（如静稳形势、扩散条件）由 expert_meteorology 完成，本模式只交付数据。",
+        "warning": (
+            "运行时限定批量取数、可选归一化、交付三个阶段，最多一次失败项补查。"
+            "预报数据的分析结论（如静稳形势、扩散条件）由 expert_meteorology 完成，本模式只交付数据。"
+        ),
     },
     "expert": {
         "positioning": "专家 Agent：面向机制、成因与判断依据的专业研判。",
