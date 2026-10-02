@@ -2092,7 +2092,7 @@ class LLMService:
 
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(timeout=self.provider_http_timeout(streaming=True)) as client:
+                async with httpx.AsyncClient(timeout=self.provider_http_timeout(streaming=True, total=timeout)) as client:
                     async with client.stream("POST", url, headers=headers, json=payload) as response:
                         response.raise_for_status()
 
@@ -2229,7 +2229,7 @@ class LLMService:
 
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(timeout=self.provider_http_timeout(streaming=True)) as client:
+                async with httpx.AsyncClient(timeout=self.provider_http_timeout(streaming=True, total=timeout)) as client:
                     async with client.stream("POST", url, headers=headers, json=payload) as response:
                         response.raise_for_status()
 
