@@ -58,6 +58,15 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
     """Execute read-only SQL against the DataCrawler MySQL long-history database."""
 
     def __init__(self) -> None:
+        from app.tools.query.execute_crawler_sql_query.table_contracts import (
+            render_table_contracts,
+        )
+
+        contracts_block = render_table_contracts()
+        if not contracts_block:
+            contracts_block = (
+                "\n\n表字段契约缺失：写 SQL 前必须先用 describe_table 确认字段名与大小写。"
+            )
         schema_description = (
             "大气监测采集库（MySQL）只读 SQL 查询工具，提供中台接口未覆盖的长历史数据："
             "站点/城市逐小时与逐日历史、PM2.5 年均值、站点目录。"
@@ -66,27 +75,7 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
             "只允许 SELECT，禁止 INSERT/UPDATE/DELETE/DDL、注释和多语句；"
             f"使用 LIMIT 分页，最大返回 {MAX_LIMIT} 条。"
             "不确定字段时先调用 describe_table，不要查询 information_schema。"
-            "\n\n表说明（时间跨度按当前库数据为准）："
-            "\n- StationHour（站点小时，2016-01 起）：站点字段 StationCode/StationName/"
-            "UniqueCode/Area；时间字段 TimePoint；数值字段 Aqi、Api、So2Value、NoValue、"
-            "No2Value、NoxValue、O3Value、CoValue、Pm10Value、Pm25Value、O3_8HValue、"
-            "Pm1Value；每个数值字段有同名审核标记列 *Mark；口径字段 DataSourceType/"
-            "DataTableType（如 Src原始/App审核、145/155 审核口径）。"
-            "\n- CityHour（城市小时，2020-07 起）：城市字段 Area/CityCode/Province；"
-            "时间字段 TimePoint；数值字段 AQI、SO2、NO2、NO、NOx、CO、O3、PM10、PM10_2、"
-            "PM2_5、PM2_5_2、PM1（带 _2 后缀为第二口径）；等级字段 Quality/PrimaryPollutant；"
-            "口径字段 DataTableType/DataTypePlan/IsApp。"
-            "\n- StationDay（站点日，2018-09 起）：时间字段 Date 为字符串 'YYYY-MM-DD'，"
-            "比较时写成 Date >= '2024-01-01'；站点字段 StationCode/UniqueCode/PositionName/"
-            "Area/CityCode；数值字段 Aqi、SO2、NO2、NO、NOx、O3、CO、PM10、PM2_5、O3_8h、"
-            "PM1 及同名 *Mark 审核标记；口径字段 DataTableType/DataSourceType/DataTypePlan。"
-            "\n- CityDay（城市日，2018-09 起）：时间字段 Date；城市字段 Area/CityCode；"
-            "日均数值字段 AQI/AQI_2、SO2、NO2、NO、NOx、O3_1h、O3_8h、CO、PM10/PM10_2、"
-            "PM2_5/PM2_5_2、PM1 及 *_Mark 审核标记；等级字段 Type/Level/Description"
-            "（_2 后缀为第二口径）、PrimaryPollutant(_2)。"
-            "\n- CityYearPm25Avg（城市 PM2.5 年均值，2014-2025）：CityCode/CityName/Year/"
-            "ActualPm25Avg（实际年均值）/StandardPm25Avg（标准年均值）；数值 -99 表示无数据。"
-            "\n- Station（站点目录）：StationCode/StationName/Address/Longitude/Latitude。"
+            f"{contracts_block}"
             "\n注意：以上表都在同一个 MySQL 采集库，可跨表 JOIN；"
             "与 SQL Server 历史库、PostgreSQL 主库不支持跨库 JOIN。"
             "\n\n示例："
@@ -229,13 +218,58 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
             rows = await self._run_query(safe_sql, tables=referenced_tables)
         except Exception as exc:
             logger.error("crawler_sql_query_failed", error=str(exc), sql_preview=normalized_sql[:200])
+            summary = f"查询失败: {exc}。"
+            if self._is_column_error(exc):
+                hint = self._columns_hint(referenced_tables)
+                if hint:
+                    summary += (
+                        "\n涉及表的真实字段（大小写以此为准，直接据此修正 SQL 重试，"
+                        "无需再调用 describe_table）：\n" + hint
+                    )
+                else:
+                    summary += "字段不确定时请先调用 describe_table。"
+            else:
+                summary += "字段不确定时请先调用 describe_table。"
             return {
                 "success": False,
                 "data": [],
-                "summary": f"查询失败: {exc}。字段不确定时请先调用 describe_table。",
+                "summary": summary,
             }
 
         return self._format_result(rows, normalized_sql, effective_limit, context)
+
+    @staticmethod
+    def _is_column_error(exc: Exception) -> bool:
+        """MySQL 1054 Unknown column / 1054 类错误识别。"""
+        original = getattr(exc, "orig", None)
+        if original is not None and getattr(original, "args", None):
+            if str(original.args[0]) == "1054":
+                return True
+        text = str(exc)
+        return "1054" in text or "Unknown column" in text
+
+    def _columns_hint(self, tables: Optional[list]) -> str:
+        """渲染涉及表的真实字段清单（优先取契约文件，逐表限量防刷屏）。"""
+        from app.tools.query.execute_crawler_sql_query.table_contracts import table_columns
+
+        lines: list[str] = []
+        for table in (tables or [])[:4]:
+            columns = table_columns(str(table))
+            display_name = str(table)
+            if not columns:
+                # sql_validator.extract_tables 会把表名转小写，这里按大小写不敏感回查
+                for candidate in CRAWLER_SQL_TABLES:
+                    if candidate.lower() == str(table).lower():
+                        columns = table_columns(candidate)
+                        display_name = candidate
+                        break
+            if not columns:
+                continue
+            rendered = ", ".join(columns)
+            if len(rendered) > 700:
+                rendered = rendered[:700] + " …"
+            lines.append(f"{display_name}: {rendered}")
+        return "\n".join(lines)
 
     @staticmethod
     def _resolve_limit(limit: Optional[int]) -> int:
