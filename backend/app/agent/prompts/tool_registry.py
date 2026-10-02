@@ -231,6 +231,7 @@ QUERY_TOOL_NAMES = [
 # ===== Fixed report-DAG data acquisition modes =====
 QUERY_MONITORING_TOOL_NAMES = [
     "list_session_resources",
+    "read_session_resource",
     "publish_session_file",
     "read_file",
     "write_file",
@@ -248,6 +249,7 @@ QUERY_MONITORING_TOOL_NAMES = [
 
 QUERY_FORECAST_TOOL_NAMES = [
     "list_session_resources",
+    "read_session_resource",
     "publish_session_file",
     "read_file",
     "write_file",
