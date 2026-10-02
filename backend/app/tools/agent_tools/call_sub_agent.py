@@ -789,6 +789,20 @@ class CallSubAgentTool(LLMTool):
                     imported_resource_refs
                 ),
             )
+            logger.debug(
+                "child_request_prompt_built",
+                target_mode=target_mode,
+                prompt_preview=child_request_prompt[:200] if child_request_prompt else ""
+            )
+
+            # 4. 创建临时子Agent实例（复用父Agent的配置）
+            # ⚠️ 关键：使用 ReActAgent.analyze() 以获得完整的记忆增强功能
+            # ⚠️ 不传递 memory_manager，让子Agent自己创建 UnifiedMemoryManager
+
+            # 所有模式统一使用 ReActAgent；专家模式通过工具注册表中的原子工具/工作流工具完成分析。
+            child_registry = capability_policy.filter_registry(
+                tool_executor.tool_registry if tool_executor else None
+            )
             # 结构化交付：节点带 result_schema 时注入 submit_result 工具，
             # 参数结构即 schema（函数调用约束），替代"最终回复输出 JSON"的提示词约定。
             submit_tool = None
@@ -804,20 +818,6 @@ class CallSubAgentTool(LLMTool):
                     + "然后用一句话简述结论即可结束。未调用 submit_result 直接结束视为未完成交付，"
                     + "将触发重试。\n"
                 )
-            logger.debug(
-                "child_request_prompt_built",
-                target_mode=target_mode,
-                prompt_preview=child_request_prompt[:200] if child_request_prompt else ""
-            )
-
-            # 4. 创建临时子Agent实例（复用父Agent的配置）
-            # ⚠️ 关键：使用 ReActAgent.analyze() 以获得完整的记忆增强功能
-            # ⚠️ 不传递 memory_manager，让子Agent自己创建 UnifiedMemoryManager
-
-            # 所有模式统一使用 ReActAgent；专家模式通过工具注册表中的原子工具/工作流工具完成分析。
-            child_registry = capability_policy.filter_registry(
-                tool_executor.tool_registry if tool_executor else None
-            )
             iteration_limit = _resolve_child_max_iterations(target_mode, max_iterations)
             sub_agent = ReActAgent(
                 max_iterations=iteration_limit,

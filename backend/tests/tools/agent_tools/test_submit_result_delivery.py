@@ -57,3 +57,15 @@ def test_extract_submitted_result_tolerates_flat_payload():
         {"type": "tool_call", "name": "submit_result", "arguments": {"status": "completed", "findings": []}}
     ]
     assert tool._extract_submitted_result(events) == {"status": "completed", "findings": []}
+
+
+def test_submit_result_injection_follows_child_registry_assignment():
+    """回归守卫：注入点必须位于 child_registry 赋值之后（曾因前向引用炸过生产）。"""
+    import inspect
+
+    from app.tools.agent_tools import call_sub_agent as mod
+
+    src = inspect.getsource(mod)
+    assert src.index("child_registry = capability_policy.filter_registry") < src.index(
+        'child_registry["submit_result"] = submit_tool'
+    )
