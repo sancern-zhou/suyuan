@@ -61,7 +61,7 @@ session_manager = get_session_manager()
 
 # ⚠️ 支持多种模式：assistant, query, report, social, chart, expert, ops
 AgentMode = Literal[
-    "assistant", "query", "report", "social", "chart", "expert",
+    "assistant", "query", "query_monitoring", "query_forecast", "report", "social", "chart", "expert",
     "expert_meteorology", "expert_analysis", "ops", "board", "ppt", "knowledge",
 ]
 
@@ -69,6 +69,9 @@ _DEFAULT_CHILD_MAX_ITERATIONS = {
     "expert_meteorology": 15,
     "expert_analysis": 20,
     "expert": 30,
+    # Fixed query workflows are runtime-bounded to four phases/turns.
+    "query_monitoring": 4,
+    "query_forecast": 4,
 }
 
 
@@ -417,6 +420,21 @@ class CallSubAgentTool(LLMTool):
         try:
             # 获取父Agent模式
             parent_mode = self._get_parent_mode(context)
+            if parent_mode == "report" and target_mode == "query":
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "result": (
+                        "报告 Agent 不调用综合 query 子代理：监测历史数据用 "
+                        "query_monitoring，气象与预报数据用 query_forecast。"
+                    ),
+                    "data": {},
+                    "metadata": {
+                        "schema_version": "workflow.v1",
+                        "generator": "call_sub_agent",
+                    },
+                    "summary": "报告编排不允许综合问数子代理",
+                }
             runtime_metadata = dict(getattr(context, "runtime_metadata", {}) or {}) if context is not None else {}
             agent_depth = int(runtime_metadata.get("agent_depth", 0) or 0)
             max_agent_depth = int(runtime_metadata.get("max_agent_depth", 2) or 2)

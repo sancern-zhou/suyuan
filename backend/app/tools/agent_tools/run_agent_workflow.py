@@ -17,19 +17,27 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 logger = structlog.get_logger(__name__)
 
+REPORT_NODE_ALLOWED_MODES = frozenset({
+    "query_monitoring",
+    "query_forecast",
+    "expert_meteorology",
+    "expert_analysis",
+})
 
 _DEFAULT_EXPERT_NODE_LIMITS = {
     "expert_meteorology": {"max_iterations": 15, "timeout_seconds": 300},
     "expert_analysis": {"max_iterations": 20, "timeout_seconds": 360},
     "expert": {"max_iterations": 30, "timeout_seconds": 480},
+    "query_monitoring": {"max_iterations": 4, "timeout_seconds": 420},
+    "query_forecast": {"max_iterations": 4, "timeout_seconds": 420},
 }
 
 
 WORKFLOW_DAG_EXAMPLE = (
     '{"workflow": {"workflow_id": "air-quality-report", "nodes": ['
-    '{"task_id": "air-data", "target_mode": "query", "goal": "查询指定区域和时间范围的空气质量数据"}, '
-    '{"task_id": "weather-data", "target_mode": "query", "goal": "查询同期地面气象观测数据"}, '
-    '{"task_id": "cross-analysis", "target_mode": "expert", '
+    '{"task_id": "air-data", "target_mode": "query_monitoring", "goal": "查询指定区域和时间范围的空气质量数据"}, '
+    '{"task_id": "weather-data", "target_mode": "query_forecast", "goal": "查询同期气象观测与预报数据"}, '
+    '{"task_id": "cross-analysis", "target_mode": "expert_analysis", '
     '"goal": "基于上游数据完成交叉归因，输出结论、证据和缺口", '
     '"dependencies": ["air-data", "weather-data"]}]}, "max_concurrency": 4}'
 )
@@ -40,10 +48,12 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "每个节点的 target_mode 与 goal；无依赖的数据/分析节点并行执行，需要上游产物或结论的节点用 "
     "dependencies 表达，不靠文字约定顺序。每个节点必须有唯一 task_id、target_mode、goal，"
     "goal 写清时间范围、区域、指标口径和预期输出；把无依赖的取数拆成独立节点以并行执行。"
-    "领域拆分建议：气象条件、输送通道、静稳/边界层形势拆 expert_meteorology；浓度特征、超标统计、"
+    "领域拆分建议：监测历史取数拆 query_monitoring，气象实况和预报取数拆 query_forecast，二者可并行；"
+    "气象条件、输送通道、静稳/边界层形势拆 expert_meteorology；浓度特征、超标统计、"
     "组分解读、成因研判拆 expert_analysis，二者可并行；交叉归因放在依赖它们的研判节点，"
     "或由你自己整合（整合阶段禁止重新取数）。"
-    "DAG 禁止 report 子节点；报告模式父 Agent 是唯一成稿者。"
+    "报告 DAG 禁止综合 query、综合 expert 和 report 子节点；报告模式父 Agent 是唯一成稿者。"
+    "query_monitoring/query_forecast 由运行时执行固定取数流程，最多 4 轮，失败项最多补查一次。"
     "工具返回每个节点的 result_envelope（status/summary/evidence/artifacts/data_gaps）与血缘清单，"
     "据此判断覆盖范围与缺口并整合结论，不要对子节点过程做重复全量复核。"
     "expert 族节点（expert/expert_meteorology/expert_analysis）必须提供 task_contract（protocol_version=workflow.v1、"
@@ -303,6 +313,19 @@ class RunAgentWorkflowTool(LLMTool):
                 granularity_error = self._validate_expert_node_granularity(node)
                 if granularity_error:
                     return self._failure(granularity_error)
+            runtime_mode = str(getattr(context, "runtime_mode", "") or "")
+            if runtime_mode == "report":
+                disallowed = [
+                    str(node.get("task_id") or "<unknown>")
+                    for node in nodes
+                    if str(node.get("target_mode") or "") not in REPORT_NODE_ALLOWED_MODES
+                ]
+                if disallowed:
+                    return self._failure(
+                        "报告 DAG 节点仅允许 query_monitoring、query_forecast、"
+                        "expert_meteorology、expert_analysis；越界节点："
+                        + ", ".join(disallowed)
+                    )
             definition["nodes"] = nodes
             sub_agent_tool = self._build_sub_agent_tool()
 

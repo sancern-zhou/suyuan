@@ -12,6 +12,24 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
         "scope": "SQL/平台数据/站点与报表查询、同比环比、分组聚合、数据质量核对。",
         "boundary": "不做机制研判与成因推断，不产出正式报告包。",
         "outputs": "结构化数据文件（file_path）。",
+        "warning": (
+            "报告 Agent 不调用综合 query 子代理；监测历史数据使用 query_monitoring，"
+            "气象实况和预报使用 query_forecast。"
+        ),
+    },
+    "query_monitoring": {
+        "positioning": "常规空气质量监测问数 Agent：固定流程获取国控/省控监测数据。",
+        "scope": "城市与站点小时/日历史、AQI 与六参数统计、同比环比、站点目录、全国城市对比和数据质量核对。",
+        "boundary": "只取数与统计核算，不做气象归因、污染成因研判或报告成稿。",
+        "outputs": "结构化数据文件（file_path）+ 数据口径、时间范围和缺口说明。",
+        "warning": "运行时限定批量取数、可选归一化、交付三个阶段，最多一次失败项补查。",
+    },
+    "query_forecast": {
+        "positioning": "气象与空气质量预报问数 Agent：固定流程获取气象实况和预报产品。",
+        "scope": "气象实况、多时效气象预报、空气质量预报、时间序列落盘和起报时效标注。",
+        "boundary": "只取数与轻量整理，不做静稳、输送或污染潜势研判，不产出报告包。",
+        "outputs": "结构化数据文件（file_path）+ 起报时间、预报时效和要素口径说明。",
+        "warning": "运行时限定批量取数、可选归一化、交付三个阶段，最多一次失败项补查。",
     },
     "expert": {
         "positioning": "专家 Agent：面向机制、成因与判断依据的专业研判。",
@@ -94,10 +112,12 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
 }
 
 _ROUTING_RULES = (
-    "选择规则：数据事实用 query；机制/成因用 expert；成稿交付用 report；"
+    "选择规则：机制/成因用 expert；成稿交付用 report；"
+    "监测历史数据事实用 query_monitoring，气象实况/预报与空气质量预报用 query_forecast；"
+    "综合 query 仅限非报告父模式使用；"
     "气象条件、输送通道与静稳形势用 expert_meteorology，六参数浓度/AQI/超标与时空变化用 expert_analysis；组分分析预留给独立专家模式，"
     "二者可并行拆分，交叉归因（如气象导致累积）在 synthesis 或报告整合阶段完成；"
-    "expert 需要 query 的数据时，把对应 query 节点写入 dependencies 并复用其 file_path；"
+    "expert 需要 query 系数据时，把对应问数节点写入 dependencies 并复用其 file_path；"
     "无依赖的 source 节点并行且会话隔离；同源数据由一个节点获取，后续节点通过 dependencies 复用。"
 )
 
