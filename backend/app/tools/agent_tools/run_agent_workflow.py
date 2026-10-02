@@ -49,11 +49,15 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "expert 族节点（expert/expert_meteorology/expert_analysis）必须提供 task_contract（protocol_version=workflow.v1、"
     "task_type=expert_analysis、question、decision_context、scope、required_evidence、deliverables）和 "
     "result_schema（要求 status、findings、evidence、uncertainties、data_gaps，finding 通过 evidence id 回溯证据）；"
+    "一个专家节点只能回答一个分析问题，task_contract.deliverables 最多 3 项；独立问题必须拆为并行节点。"
     "节点可用 max_attempts 设置重试次数（1-3），用 max_iterations 限制子 Agent 推理轮次，"
     "用 timeout_seconds 设置节点硬超时；气象和常规分析节点应使用短轮次和有限超时。"
     f"示例：{WORKFLOW_DAG_EXAMPLE}\n\n"
     f"{build_target_mode_contract()}"
 )
+
+EXPERT_NODE_MODES = frozenset({"expert_meteorology", "expert_analysis"})
+MAX_EXPERT_NODE_DELIVERABLES = 3
 
 
 def _result_envelope(result: Any) -> Mapping[str, Any]:
@@ -296,6 +300,9 @@ class RunAgentWorkflowTool(LLMTool):
                 if limits:
                     node.setdefault("max_iterations", limits["max_iterations"])
                     node.setdefault("timeout_seconds", limits["timeout_seconds"])
+                granularity_error = self._validate_expert_node_granularity(node)
+                if granularity_error:
+                    return self._failure(granularity_error)
             definition["nodes"] = nodes
             sub_agent_tool = self._build_sub_agent_tool()
 
@@ -380,6 +387,26 @@ class RunAgentWorkflowTool(LLMTool):
             return self._failure(f"工作流定义无效：{exc}")
         except Exception as exc:
             return self._failure(f"工作流执行失败：{exc}")
+
+    @staticmethod
+    def _validate_expert_node_granularity(node: Mapping[str, Any]) -> Optional[str]:
+        mode = str(node.get("target_mode") or "")
+        if mode not in EXPERT_NODE_MODES:
+            return None
+        contract = node.get("task_contract")
+        if not isinstance(contract, Mapping):
+            return None
+        deliverables = contract.get("deliverables")
+        if deliverables is None:
+            return None
+        if not isinstance(deliverables, list):
+            return f"节点 {node.get('task_id') or '<unknown>'} 的 task_contract.deliverables 必须是数组"
+        if len(deliverables) > MAX_EXPERT_NODE_DELIVERABLES:
+            return (
+                f"节点 {node.get('task_id') or '<unknown>'} 包含 {len(deliverables)} 项交付物，"
+                f"超过专家节点上限 {MAX_EXPERT_NODE_DELIVERABLES}；请拆成多个并行 {mode} 节点。"
+            )
+        return None
 
     @staticmethod
     def _build_sub_agent_tool():
