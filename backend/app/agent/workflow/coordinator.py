@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
+import json
 from dataclasses import dataclass, field, replace as dataclasses_replace
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional
 import uuid
@@ -135,6 +137,12 @@ class WorkflowDefinition:
             ],
         }
 
+    def fingerprint(self) -> str:
+        serialized = json.dumps(
+            self.to_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:24]
+
 
 class WorkflowCoordinator:
     """Run a static DAG with bounded concurrency and resumable state."""
@@ -158,6 +166,7 @@ class WorkflowCoordinator:
         self.executor = executor
         self.persist = persist
         self.journal = journal
+        self.definition_hash = self.definition.fingerprint()
         self.graph = WorkflowGraph()
         for node in self.definition.nodes:
             self.graph.add_task(node.task_id)
@@ -169,6 +178,7 @@ class WorkflowCoordinator:
         self.node_errors: Dict[str, str] = {}
         self.node_lineage: Dict[str, Dict[str, Any]] = {}
         self.node_progress: Dict[str, Any] = {}
+        self.node_input_hashes: Dict[str, str] = {}
         self.status = "queued"
         self._persistence_ready = False
         self.cancel_requested = False
@@ -334,6 +344,7 @@ class WorkflowCoordinator:
             "version": 1,
             "workflow_id": self.definition.workflow_id,
             "definition": self.definition.to_dict(),
+            "definition_hash": self.definition_hash,
             "status": self.status,
             "cancel_requested": self.cancel_requested,
             "cancel_reason": self.cancel_reason,
@@ -342,6 +353,7 @@ class WorkflowCoordinator:
             "node_sessions": dict(self.node_sessions),
             "node_errors": dict(self.node_errors),
             "node_progress": dict(self.node_progress),
+            "node_input_hashes": dict(self.node_input_hashes),
             "node_lineage": dict(self.node_lineage),
             "workflow_run_id": self.workflow_run.run_id if hasattr(self, "workflow_run") else None,
             "runtime": self.runtime.snapshot() if hasattr(self, "runtime") else {},
@@ -354,6 +366,23 @@ class WorkflowCoordinator:
             raise RuntimeError(f"workflow runtime missing node run: {task_id}")
         self.graph.set_status(task_id, "running")
         self.runtime.start(node_run.run_id)
+        dependency_results = {dependency: self.node_results.get(dependency) for dependency in node.dependencies}
+        input_payload = {
+            "task_id": task_id,
+            "attempt": node_run.attempt,
+            "payload": node.payload,
+            "dependencies": dependency_results,
+        }
+        input_hash = hashlib.sha256(
+            json.dumps(
+                input_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()[:24]
+        self.node_input_hashes[task_id] = input_hash
         self._journal_event(
             "node.started",
             task_id=task_id,
@@ -361,8 +390,8 @@ class WorkflowCoordinator:
             target_mode=node.payload.get("target_mode"),
             phase=node.payload.get("phase"),
             goal=str(node.payload.get("goal") or "")[:200],
+            input_hash=input_hash,
         )
-        dependency_results = {dependency: self.node_results.get(dependency) for dependency in node.dependencies}
         # 预算耗尽型失败重试时放宽迭代/超时预算（首试保持调用方原设定）
         attempt = max(1, int(node_run.attempt or 1))
         effective_node = node.expanded_budget(attempt)
@@ -489,6 +518,13 @@ class WorkflowCoordinator:
         self.node_sessions = dict(snapshot.get("node_sessions") or {})
         self.node_errors = {str(key): str(value) for key, value in (snapshot.get("node_errors") or {}).items()}
         self.node_progress = dict(snapshot.get("node_progress") or {})
+        snapshot_definition_hash = str(snapshot.get("definition_hash") or "")
+        if snapshot_definition_hash and snapshot_definition_hash != self.definition_hash:
+            raise ValueError("workflow snapshot definition does not match current workflow")
+        self.node_input_hashes = {
+            str(key): str(value)
+            for key, value in (snapshot.get("node_input_hashes") or {}).items()
+        }
         self.node_lineage = {
             str(key): dict(value)
             for key, value in (snapshot.get("node_lineage") or {}).items()

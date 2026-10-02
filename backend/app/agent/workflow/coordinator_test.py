@@ -207,6 +207,24 @@ def test_coordinator_resume_retries_failed_node_from_snapshot():
     asyncio.run(run())
 
 
+def test_coordinator_rejects_snapshot_for_changed_definition():
+    first = WorkflowCoordinator(
+        {"workflow_id": "fingerprint-1", "nodes": [{"task_id": "source", "goal": "原始目标"}]},
+        executor=lambda *args: {"success": True},
+    )
+    snapshot = first.snapshot()
+    try:
+        WorkflowCoordinator(
+            {"workflow_id": "fingerprint-1", "nodes": [{"task_id": "source", "goal": "修改后的目标"}]},
+            executor=lambda *args: {"success": True},
+            snapshot=snapshot,
+        )
+    except ValueError as exc:
+        assert "definition" in str(exc)
+    else:
+        raise AssertionError("changed workflow definition must not reuse a snapshot")
+
+
 def test_coordinator_expands_node_budget_on_retry():
     async def run():
         seen = []
