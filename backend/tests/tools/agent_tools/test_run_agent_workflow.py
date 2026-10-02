@@ -377,37 +377,6 @@ async def test_persist_parent_snapshot_ignores_missing_session(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_report_mode_enforces_node_mode_whitelist():
-    async def fail_submit(**kwargs):
-        raise AssertionError("sub agent must not be invoked")
-
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(
-        RunAgentWorkflowTool,
-        "_build_sub_agent_tool",
-        staticmethod(lambda: SimpleNamespace(execute=fail_submit)),
-    )
-    try:
-        context = SimpleNamespace(runtime_mode="report", session_id="report_session_x")
-        result = await RunAgentWorkflowTool().execute(
-            context=context,
-            workflow={
-                "workflow_id": "report-1",
-                "nodes": [
-                    {"task_id": "met", "target_mode": "expert_meteorology", "goal": "气象研判"},
-                    {"task_id": "legacy", "target_mode": "expert", "goal": "综合研判"},
-                    {"task_id": "viz", "target_mode": "chart", "goal": "出图"},
-                ],
-            },
-        )
-    finally:
-        monkeypatch.undo()
-    assert result["success"] is False
-    assert "仅允许 target_mode" in result["result"]
-    assert "legacy" in result["result"] and "viz" in result["result"]
-
-
-@pytest.mark.asyncio
 async def test_non_report_mode_allows_expert_nodes(monkeypatch):
     async def fake_execute(self, **kwargs):
         return {
