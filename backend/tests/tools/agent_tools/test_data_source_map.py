@@ -32,6 +32,7 @@ sources:
     route: tool
     locator: get_weather_data
     usage: "lat/lon + past_days 取历史"
+    granularity: 逐小时/逐日
     caveats: "平台 SQL 库无气象实况表"
   - domain: 空气质量（国控站点历史数据）
     route: sql
@@ -44,6 +45,7 @@ sources:
     assert "## 数据源地图" in rendered
     assert "**气象（历史实况/再分析）** → `get_weather_data`" in rendered
     assert "lat/lon + past_days 取历史" in rendered
+    assert "粒度：逐小时/逐日" in rendered
     assert "注意：平台 SQL 库无气象实况表" in rendered
     assert "**空气质量（国控站点历史数据）** → `city_aqi_publish_history`" in rendered
 
@@ -123,3 +125,11 @@ def test_config_baseline_covers_key_routing_domains():
     assert any("国控" in d for d in domains)
     assert any("预报" in d for d in domains)
     assert any("气象" in d for d in domains)
+
+
+def test_granularity_is_injected_into_agent_system_prompt():
+    from app.agent.prompts.prompt_builder import build_react_system_prompt
+
+    prompt = build_react_system_prompt("query_monitoring")
+
+    assert "粒度：逐小时/逐日/逐年" in prompt

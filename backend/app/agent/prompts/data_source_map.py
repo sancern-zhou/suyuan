@@ -103,6 +103,9 @@ def render_data_source_map() -> str:
         if usage:
             line += f"：{usage}"
         lines.append(line)
+        granularity = str(item.get("granularity") or "").strip()
+        if granularity:
+            lines.append(f"  - 粒度：{granularity}")
         caveats = str(item.get("caveats") or "").strip()
         if caveats:
             lines.append(f"  - 注意：{caveats}")
