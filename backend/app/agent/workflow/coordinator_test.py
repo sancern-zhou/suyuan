@@ -8,7 +8,7 @@ def test_coordinator_runs_independent_nodes_in_parallel_and_respects_dependencie
         started = []
         finished = []
 
-        async def execute(node, dependencies, attempt, retry_context=None):
+        async def execute(node, dependencies, attempt):
             started.append(node.task_id)
             await asyncio.sleep(0.01)
             finished.append(node.task_id)
@@ -42,7 +42,7 @@ def test_coordinator_retries_node_and_persists_a_resumable_snapshot():
         attempts = []
         snapshots = []
 
-        async def execute(node, dependencies, attempt, retry_context=None):
+        async def execute(node, dependencies, attempt):
             attempts.append(attempt)
             if len(attempts) == 1:
                 raise RuntimeError("temporary")
@@ -72,7 +72,7 @@ def test_coordinator_retries_node_and_persists_a_resumable_snapshot():
 
 
 def test_coordinator_keeps_failed_node_child_link_for_history():
-    async def execute(node, dependencies, attempt, retry_context=None):
+    async def execute(node, dependencies, attempt):
         return {
             "success": False,
             "summary": "child failed",
@@ -93,7 +93,7 @@ def test_coordinator_cancels_pending_nodes():
     async def run():
         release = asyncio.Event()
 
-        async def execute(node, dependencies, attempt, retry_context=None):
+        async def execute(node, dependencies, attempt):
             await release.wait()
             return {"ok": True}
 
@@ -120,10 +120,7 @@ def test_coordinator_cancels_pending_nodes():
 
 def test_coordinator_times_out_node_and_records_clear_error():
     async def run():
-        attempts = []
-
-        async def execute(node, dependencies, attempt, retry_context=None):
-            attempts.append((attempt, node.timeout_seconds, retry_context))
+        async def execute(node, dependencies, attempt):
             await asyncio.sleep(1)
             return {"ok": True}
 
@@ -137,20 +134,15 @@ def test_coordinator_times_out_node_and_records_clear_error():
         result = await coordinator.run()
         assert result["status"] == "failed"
         assert result["graph"]["expert"]["status"] == "failed"
-        # 默认 max_attempts=2：最终错误来自扩容后的第 2 次尝试（0.01×1.5）
-        assert "timed out after 0.015s" in result["node_errors"]["expert"]
+        assert "timed out after 0.01s" in result["node_errors"]["expert"]
         assert result["definition"]["nodes"][0]["timeout_seconds"] == 0.01
-        # 两次尝试：首试原预算，重试扩容且携带失败原因与子会话续跑信息
-        assert attempts[0] == (1, 0.01, None)
-        assert attempts[1][0] == 2 and attempts[1][1] == 0.015
-        assert attempts[1][2] is not None
 
     asyncio.run(run())
 
 
 def test_coordinator_records_strict_node_lineage():
     async def run():
-        async def execute(node, dependencies, attempt, retry_context=None):
+        async def execute(node, dependencies, attempt):
             return {
                 "status": "success",
                 "success": True,
@@ -195,7 +187,7 @@ def test_coordinator_resume_retries_failed_node_from_snapshot():
         failed["runtime"]["runs"]["resume-1:source"]["attempt"] = 1
         calls = []
 
-        async def execute(node, dependencies, attempt, retry_context=None):
+        async def execute(node, dependencies, attempt):
             calls.append(attempt)
             return {"success": True}
 
@@ -203,138 +195,5 @@ def test_coordinator_resume_retries_failed_node_from_snapshot():
         result = await resumed.run()
         assert result["status"] == "succeeded"
         assert calls == [2]
-
-    asyncio.run(run())
-
-
-def test_coordinator_rejects_snapshot_for_changed_definition():
-    first = WorkflowCoordinator(
-        {"workflow_id": "fingerprint-1", "nodes": [{"task_id": "source", "goal": "原始目标"}]},
-        executor=lambda *args: {"success": True},
-    )
-    snapshot = first.snapshot()
-    try:
-        WorkflowCoordinator(
-            {"workflow_id": "fingerprint-1", "nodes": [{"task_id": "source", "goal": "修改后的目标"}]},
-            executor=lambda *args: {"success": True},
-            snapshot=snapshot,
-        )
-    except ValueError as exc:
-        assert "definition" in str(exc)
-    else:
-        raise AssertionError("changed workflow definition must not reuse a snapshot")
-
-
-def test_coordinator_expands_node_budget_on_retry():
-    async def run():
-        seen = []
-
-        async def execute(node, dependencies, attempt, retry_context=None):
-            seen.append(
-                (
-                    attempt,
-                    node.max_iterations,
-                    node.timeout_seconds,
-                    node.payload.get("max_iterations"),
-                    retry_context,
-                )
-            )
-            if attempt == 1:
-                # 生产失败形态：返回 failed 结果（metadata 携带子会话 id）
-                return {
-                    "status": "failed",
-                    "success": False,
-                    "result": "budget exhausted",
-                    "metadata": {"session_id": "child-session-1"},
-                }
-            return {"ok": True}
-
-        coordinator = WorkflowCoordinator(
-            {
-                "workflow_id": "budget-1",
-                "nodes": [
-                    {
-                        "task_id": "binning",
-                        "max_attempts": 2,
-                        "max_iterations": 20,
-                        "timeout_seconds": 600,
-                    }
-                ],
-            },
-            executor=execute,
-        )
-        result = await coordinator.run()
-        assert result["status"] == "succeeded"
-        # 首试保持原预算且无重试上下文；重试放大 50%（迭代 20→30、超时 600→900）
-        # 并携带上次失败原因与会话，供子 Agent 在已有工作基础上修正
-        assert len(seen) == 2
-        assert seen[0][:4] == (1, 20, 600, None)
-        assert seen[0][4] is None
-        assert seen[1][:4] == (2, 30, 900.0, 30)
-        assert seen[1][4]["error"] == "budget exhausted"
-        assert seen[1][4]["session_id"]
-        # 定义保持原值：扩容只作用于当次执行，不污染快照
-        assert result["definition"]["nodes"][0]["max_iterations"] == 20
-        assert result["definition"]["nodes"][0]["timeout_seconds"] == 600
-
-    asyncio.run(run())
-
-
-def test_coordinator_injects_completed_results_and_journal():
-    async def run():
-        executed = []
-
-        async def execute(node, dependencies, attempt, retry_context=None):
-            executed.append(node.task_id)
-            return {"status": "success", "data": {"result_envelope": {"status": "completed"}}}
-
-        class FakeJournal:
-            def __init__(self):
-                self.events = []
-
-            def append(self, **kwargs):
-                self.events.append(kwargs)
-
-        cached_result = {
-            "status": "success",
-            "data": {"result_envelope": {"status": "completed"}},
-        }
-        journal = FakeJournal()
-        coordinator = WorkflowCoordinator(
-            {
-                "workflow_id": "cache-1",
-                "nodes": [
-                    {
-                        "task_id": "air",
-                        "target_mode": "query",
-                        "goal": "取数",
-                        "require_lineage": False,
-                    },
-                    {
-                        "task_id": "analysis",
-                        "target_mode": "expert_analysis",
-                        "goal": "研判",
-                        "dependencies": ["air"],
-                        "require_lineage": False,
-                        "phase": "研判阶段",
-                    },
-                ],
-            },
-            executor=execute,
-            completed_results={"air": cached_result},
-            journal=journal,
-        )
-        result = await coordinator.run()
-        assert result["status"] == "succeeded"
-        # air 命中缓存未执行；analysis 正常执行
-        assert executed == ["analysis"]
-        assert result["node_results"]["air"] == cached_result
-        event_types = [e["event_type"] for e in journal.events]
-        assert "node.started" in event_types
-        assert "node.succeeded" in event_types
-        assert "workflow.succeeded" in event_types
-        # phase 透传进 journal 事件（位于 payload 内）
-        started = next(e for e in journal.events if e["event_type"] == "node.started" and e["task_id"] == "analysis")
-        assert started["payload"]["phase"] == "研判阶段"
 
     asyncio.run(run())
