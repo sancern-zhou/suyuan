@@ -35,8 +35,10 @@ MAX_TOOL_RESULT_JSON_CHARS = 20_000
 # to the model verbatim (the tool's own output limits bound them). Only stale
 # turns fall back to the compacted history form. A per-request budget keeps
 # multi-read runs from flooding the context; oldest results downgrade first.
-MAX_FRESH_TOOL_RESULT_CHARS = 120_000
-MAX_FRESH_SINGLE_TOOL_RESULT_CHARS = 120_000
+MAX_FRESH_TOOL_RESULT_CHARS = 48_000
+MAX_FRESH_SINGLE_TOOL_RESULT_CHARS = 24_000
+# 新鲜窗口之外（历史更早处）的超大工具结果块收缩为存根的阈值
+STALE_RESULT_KEEP_CHARS = 4_000
 
 
 def _serialize_tool_result_json(value: Any) -> str:
@@ -274,11 +276,38 @@ def _sample_sequence(items: List[Any], max_items: int = MAX_TOOL_RESULT_RECORDS)
     return items[:head_count] + items[-tail_count:]
 
 
-def _truncate_string(value: str, max_chars: int = MAX_TOOL_RESULT_STRING_CHARS) -> str:
+def _truncate_head_tail(value: str, max_chars: int) -> str:
+    """头尾保留截断：结论/错误信息常在尾部，纯头部截断会丢关键信息。"""
     if len(value) <= max_chars:
         return value
     omitted = len(value) - max_chars
-    return f"{value[:max_chars]}\n\n...[truncated {omitted} chars]"
+    marker = f"\n...[truncated {omitted} chars]\n"
+    keep = max_chars - len(marker)
+    head = keep * 2 // 3
+    tail = keep - head
+    return f"{value[:head]}{marker}{value[len(value) - tail:]}"
+
+
+def _truncate_string(value: str, max_chars: int = MAX_TOOL_RESULT_STRING_CHARS) -> str:
+    return _truncate_head_tail(value, max_chars)
+
+
+def _fresh_budgets() -> "tuple[int, int]":
+    """新鲜窗口投影预算（总/单结果），可被 settings 覆盖，缺省用模块常量。"""
+    try:
+        from config.settings import settings
+
+        budget = int(
+            getattr(settings, "llm_fresh_tool_result_budget_chars", 0)
+            or MAX_FRESH_TOOL_RESULT_CHARS
+        )
+        single = int(
+            getattr(settings, "llm_fresh_tool_result_single_max_chars", 0)
+            or MAX_FRESH_SINGLE_TOOL_RESULT_CHARS
+        )
+        return budget, single
+    except Exception:  # noqa: BLE001 — 配置不可用时退回常量
+        return MAX_FRESH_TOOL_RESULT_CHARS, MAX_FRESH_SINGLE_TOOL_RESULT_CHARS
 
 
 def _compact_tool_result_value(value: Any, *, path: str = "") -> Any:
@@ -1617,7 +1646,8 @@ class SessionMemory:
         their blocks (oldest results downgrade first).
         """
         fresh_start = self._fresh_window_start_index(turns)
-        remaining = MAX_FRESH_TOOL_RESULT_CHARS
+        budget, single_max = _fresh_budgets()
+        remaining = budget
         plan: Dict[int, Dict[str, str]] = {}
         eligible_blocks = 0
         injected_blocks = 0
@@ -1649,7 +1679,9 @@ class SessionMemory:
                     serialized = _serialize_tool_result_json(raw)
                 except Exception:
                     continue
-                if len(serialized) > MAX_FRESH_SINGLE_TOOL_RESULT_CHARS:
+                if len(serialized) > single_max:
+                    # 超大结果退回存储的结构化压缩形式（合法 JSON、字段被限长），
+                    # 比截断出的断头 JSON 更利于模型使用。
                     continue
                 if len(serialized) > remaining:
                     continue
@@ -1669,9 +1701,66 @@ class SessionMemory:
                 injected_blocks=injected_blocks,
                 downgraded_blocks=eligible_blocks - injected_blocks,
                 injected_chars=injected_chars,
-                budget_chars=MAX_FRESH_TOOL_RESULT_CHARS,
+                budget_chars=budget,
             )
         return plan
+
+    def _plan_stale_result_downgrade(
+        self,
+        turns: List["ConversationTurn"],
+        fresh_plan: Dict[int, Dict[str, str]],
+    ) -> Dict[int, Dict[str, str]]:
+        """把新鲜窗口之外的超大 tool_result 块收缩为存根。
+
+        子 agent 多轮循环中 36 个工具结果全量驻留历史是上下文膨胀的主因
+        （实测单会话 11 万+ tokens）。存根保留 summary/file_path/data_id，
+        模型需要完整数据时按 file_path 重新读取，而不是重复查询。
+        """
+        plan: Dict[int, Dict[str, str]] = {}
+        for index, turn in enumerate(turns):
+            if index in fresh_plan:
+                continue
+            if turn.type != "tool_result" or not isinstance(turn.content, list):
+                continue
+            for block in turn.content:
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                    continue
+                content = block.get("content")
+                if not isinstance(content, str) or len(content) <= STALE_RESULT_KEEP_CHARS:
+                    continue
+                stub = self._result_stub(content)
+                plan.setdefault(index, {})[block.get("tool_use_id")] = stub
+        return plan
+
+    @staticmethod
+    def _result_stub(content: str) -> str:
+        summary = ""
+        file_path = ""
+        data_id = ""
+        try:
+            payload = json.loads(content)
+            if isinstance(payload, dict):
+                summary = str(payload.get("summary") or "")[:300]
+                file_path = str(payload.get("file_path") or "")
+                data = payload.get("data")
+                if isinstance(data, dict):
+                    file_path = file_path or str(data.get("file_path") or "")
+        except Exception:  # noqa: BLE001 — 非结构化内容直接整体截断
+            summary = _truncate_head_tail(content, 300)
+        stub: Dict[str, Any] = {
+            "tool_result_truncated": True,
+            "summary": summary,
+            "note": (
+                "早期工具结果已摘要化以控制上下文长度；"
+                "需要完整数据时按 file_path/data_id 用 read_file/load_data 读取，"
+                "不要让上游重复执行查询。"
+            ),
+        }
+        if file_path:
+            stub["file_path"] = file_path
+        if data_id:
+            stub["data_id"] = data_id
+        return json.dumps(stub, ensure_ascii=False)
 
     def get_messages_for_llm(self, *, repair_strategy: str = "api_safe") -> List[Dict[str, Any]]:
         """
@@ -1701,6 +1790,11 @@ class SessionMemory:
         all_turns = self.conversation_history
         messages = []
         fresh_raw_plan = self._plan_fresh_raw_injection(all_turns)
+        stale_downgrade_plan = self._plan_stale_result_downgrade(all_turns, fresh_raw_plan)
+        projection_plan: Dict[int, Dict[str, str]] = {}
+        for plan_part in (stale_downgrade_plan, fresh_raw_plan):
+            for turn_index, turn_plan in plan_part.items():
+                projection_plan.setdefault(turn_index, {}).update(turn_plan)
 
         for turn_index, turn in enumerate(all_turns):
             # ✅ 如果 content 已经是 Anthropic content blocks 格式，直接使用
@@ -1714,7 +1808,7 @@ class SessionMemory:
 
                 # tool_result blocks 必须放在 user 消息中（Anthropic API 规范）
                 if "tool_result" in content_types:
-                    turn_plan = fresh_raw_plan.get(turn_index)
+                    turn_plan = projection_plan.get(turn_index)
                     if turn_plan:
                         # Fresh run: project verbatim tool results. Blocks are
                         # copied so the stored (compacted) history stays intact
