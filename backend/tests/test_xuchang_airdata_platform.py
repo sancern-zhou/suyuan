@@ -1,4 +1,7 @@
 """许昌专属：大气环境监测数据接口中台查询工具测试"""
+import asyncio
+import threading
+
 import httpx
 import pytest
 
@@ -6,6 +9,7 @@ from app.agent.prompts.tool_registry import get_tool_order
 from app.project_config.loader import load_project_context
 from app.tools import create_global_tool_registry
 from app.tools.xuchang.airdata_platform import client as client_module
+from app.tools.xuchang.airdata_platform import tool as tool_module
 from app.tools.xuchang.airdata_platform.client import (
     AirDataPlatformClient,
     AirDataPlatformError,
@@ -162,6 +166,78 @@ def test_query_all_marks_truncation_beyond_max_rows(monkeypatch):
 
     assert len(result["rows"]) == 250
     assert result["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_query_tool_does_not_block_event_loop(monkeypatch):
+    started = threading.Event()
+    release = threading.Event()
+
+    class FakeClient:
+        def query_all(self, *_args, **_kwargs):
+            started.set()
+            release.wait(timeout=2)
+            return {
+                "rows": [],
+                "total": 0,
+                "pages_fetched": 1,
+                "truncated": False,
+            }
+
+    monkeypatch.setattr(
+        tool_module,
+        "get_airdata_platform_client",
+        lambda: FakeClient(),
+    )
+    task = asyncio.create_task(QueryAirDataPlatformTool().execute(api_code="region"))
+
+    for _ in range(100):
+        if started.is_set():
+            break
+        await asyncio.sleep(0.001)
+
+    assert started.is_set()
+    assert not task.done()
+    release.set()
+    result = await task
+    assert result["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_report_summary_tool_does_not_block_event_loop(monkeypatch):
+    started = threading.Event()
+    release = threading.Event()
+
+    class FakeClient:
+        def calc_report_summary(self, **_kwargs):
+            started.set()
+            release.wait(timeout=2)
+            return []
+
+    monkeypatch.setattr(
+        tool_module,
+        "get_airdata_platform_client",
+        lambda: FakeClient(),
+    )
+    task = asyncio.create_task(
+        AirDataCalcReportSummaryTool().execute(
+            start_time="2026-09-01",
+            end_time="2026-09-30",
+            input_table_name="view_dat_station_day_app_pantype155",
+            year=2025,
+        )
+    )
+
+    for _ in range(100):
+        if started.is_set():
+            break
+        await asyncio.sleep(0.001)
+
+    assert started.is_set()
+    assert not task.done()
+    release.set()
+    result = await task
+    assert result["success"] is True
 
 
 def test_business_error_raises_with_platform_message(captured):

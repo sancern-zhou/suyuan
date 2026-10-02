@@ -6,6 +6,7 @@
   默认只回传当期值常用字段投影（PM2.5 为 PM2_5_Curr_ForNow_R1，银行家算法保留一位小数），
   同比字段需 include_compare=true；完整数据（含 PM2_5_Curr/PM2_5_Curr_ForNow 双口径原始值）落盘 file_path
 """
+import asyncio
 import json
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any, Optional
@@ -482,7 +483,8 @@ class QueryAirDataPlatformTool(LLMTool):
             filterable = get_filterable_fields(api_code)
             effective_max_rows = min(max(int(max_rows or 2000), 1), 5000)
             client = get_airdata_platform_client()
-            result = client.query_all(
+            result = await asyncio.to_thread(
+                client.query_all,
                 api_code,
                 filters=filters,
                 selected_fields=selected_fields,
@@ -791,7 +793,8 @@ class AirDataCalcReportSummaryTool(LLMTool):
         )
         try:
             client = get_airdata_platform_client()
-            data = client.calc_report_summary(
+            data = await asyncio.to_thread(
+                client.calc_report_summary,
                 start_time=start_time,
                 end_time=end_time,
                 input_table_name=input_table_name,
@@ -826,7 +829,8 @@ class AirDataCalcReportSummaryTool(LLMTool):
             compare_requested = bool(include_compare) or bool(
                 need_keys and any(str(k).endswith(REPORT_COMPARE_SUFFIXES) for k in need_keys)
             )
-            cross_caliber_info = self._maybe_fill_cross_caliber_compare(
+            cross_caliber_info = await asyncio.to_thread(
+                self._maybe_fill_cross_caliber_compare,
                 client=client,
                 data=data,
                 include_compare=compare_requested,
