@@ -3,6 +3,7 @@
 import json
 
 from app.agent.workflow.result_cache import (
+    _node_path,
     goal_hash,
     load_node_result,
     select_reusable_nodes,
@@ -68,12 +69,33 @@ def test_corrupt_cache_file_fails_soft(tmp_path, monkeypatch):
         "app.agent.workflow.result_cache._cache_root", lambda: tmp_path / "workflow_cache"
     )
     store_node_result("wf-1", "met", "g", "query", {"r": 1})
-    path = tmp_path / "workflow_cache" / "wf-1" / "met.json"
+    path = _node_path("wf-1", "met")
     path.write_text("{broken", encoding="utf-8")
     assert load_node_result("wf-1", "met", "g", "query") is None
     # 坏文件不影响再次写入
     assert store_node_result("wf-1", "met", "g2", "query", {"r": 2})
     assert json.loads(path.read_text(encoding="utf-8"))["result"] == {"r": 2}
+
+
+def test_raw_ids_colliding_after_sanitization_stay_separate(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "app.agent.workflow.result_cache._cache_root", lambda: tmp_path / "workflow_cache"
+    )
+    # 旧实现仅做字符过滤："wf/1" 与 "wf1" 会映射到同一条路径互相覆盖
+    store_node_result("wf/1", "met", "g", "query", {"v": 1})
+    store_node_result("wf1", "met", "g", "query", {"v": 2})
+    assert load_node_result("wf/1", "met", "g", "query") == {"v": 1}
+    assert load_node_result("wf1", "met", "g", "query") == {"v": 2}
+
+
+def test_path_components_stay_within_cache_root(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "app.agent.workflow.result_cache._cache_root", lambda: tmp_path / "workflow_cache"
+    )
+    path = _node_path("../../escape", "..")
+    resolved = path.resolve()
+    assert resolved.is_relative_to((tmp_path / "workflow_cache").resolve())
+    assert path.exists() is False
 
 
 def test_workflow_journal_roundtrip(tmp_path):

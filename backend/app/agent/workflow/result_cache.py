@@ -36,9 +36,15 @@ def goal_hash(goal: str, target_mode: str) -> str:
 
 
 def _node_path(workflow_id: str, task_id: str) -> Path:
-    safe_wf = "".join(ch for ch in str(workflow_id) if ch.isalnum() or ch in "-_.") or "wf"
-    safe_task = "".join(ch for ch in str(task_id) if ch.isalnum() or ch in "-_.") or "task"
-    return _cache_root() / safe_wf / f"{safe_task}.json"
+    def component(value: Any, fallback: str) -> str:
+        # 可读前缀 + 全量原文哈希：仅过滤字符会产生碰撞（如 "wf/1" 与 "wf1"），
+        # 且 "."、".." 等目录语义字符本身就有越界风险；哈希保证一一对应。
+        text = str(value or "")
+        readable = "".join(ch for ch in text if ch.isalnum() or ch in "-_")[:32]
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+        return f"{readable or fallback}-{digest}"
+
+    return _cache_root() / component(workflow_id, "wf") / f"{component(task_id, 'task')}.json"
 
 
 def store_node_result(
