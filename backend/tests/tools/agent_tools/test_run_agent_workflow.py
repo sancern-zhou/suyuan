@@ -458,6 +458,26 @@ async def test_report_mode_rejects_generic_query_nodes(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_report_mode_rejects_non_dag_specialist_nodes(monkeypatch):
+    """报告 DAG 不能借节点模式绕过取数/领域专家白名单。"""
+    async def fake_execute(self, **kwargs):
+        raise AssertionError("sub agent must not be invoked")
+
+    monkeypatch.setattr(CallSubAgentTool, "execute", fake_execute)
+    context = SimpleNamespace(runtime_mode="report", session_id="report_session_x")
+    result = await RunAgentWorkflowTool().execute(
+        context=context,
+        workflow={
+            "workflow_id": "report-invalid-mode",
+            "nodes": [{"task_id": "writer", "target_mode": "report", "goal": "成稿"}],
+        },
+    )
+    assert result["success"] is False
+    assert "writer" in result["result"]
+    assert "仅允许" in result["result"]
+
+
+@pytest.mark.asyncio
 async def test_non_report_mode_still_allows_generic_query(monkeypatch):
     """非报告父模式（assistant/social 等）仍可使用综合 query。"""
     calls = []

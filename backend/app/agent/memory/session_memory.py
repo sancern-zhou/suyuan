@@ -1737,14 +1737,30 @@ class SessionMemory:
         summary = ""
         file_path = ""
         data_id = ""
+
+        def first_value(value: Any, keys: tuple[str, ...]) -> str:
+            if not isinstance(value, dict):
+                return ""
+            for key in keys:
+                candidate = value.get(key)
+                if candidate:
+                    return str(candidate)
+            return ""
+
         try:
             payload = json.loads(content)
             if isinstance(payload, dict):
                 summary = str(payload.get("summary") or "")[:300]
-                file_path = str(payload.get("file_path") or "")
+                file_path = first_value(payload, ("file_path", "report_file_path"))
+                data_id = first_value(payload, ("data_id", "report_data_id"))
                 data = payload.get("data")
                 if isinstance(data, dict):
                     file_path = file_path or str(data.get("file_path") or "")
+                    data_id = data_id or first_value(data, ("data_id", "report_data_id"))
+                    result = data.get("result")
+                    if isinstance(result, dict):
+                        file_path = file_path or first_value(result, ("file_path", "report_file_path"))
+                        data_id = data_id or first_value(result, ("data_id", "report_data_id"))
         except Exception:  # noqa: BLE001 — 非结构化内容直接整体截断
             summary = _truncate_head_tail(content, 300)
         stub: Dict[str, Any] = {

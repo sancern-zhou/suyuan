@@ -117,6 +117,15 @@ def test_stale_oversized_result_downgraded_to_stub(tmp_path):
     assert len(contents[0]) <= 1_500
 
 
+def test_stale_result_stub_preserves_nested_data_id():
+    content = json.dumps({
+        "summary": "已生成数据集",
+        "data": {"result": {"data_id": "air_quality:v1:abc123"}},
+    }, ensure_ascii=False)
+    stub = json.loads(SessionMemory._result_stub(content))
+    assert stub["data_id"] == "air_quality:v1:abc123"
+
+
 def test_budget_downgrades_oldest_result_first(tmp_path):
     session = _make_session(tmp_path)
     text = "X" * 20_000  # 单个不超上限，靠总预算触发降级

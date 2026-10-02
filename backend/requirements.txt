@@ -70,6 +70,7 @@ alembic==1.13.3
 
 # MySQL (DataCrawler long-history monitoring database)
 aiomysql==0.2.0
+pymysql==1.1.1
 
 # Scheduling
 apscheduler==3.10.4

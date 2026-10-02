@@ -21,6 +21,13 @@ logger = structlog.get_logger(__name__)
 # 报告 DAG 专家节点集合：这些模式必须提供 task_contract 并受交付物粒度校验
 EXPERT_NODE_MODES = frozenset({"expert_meteorology", "expert_analysis"})
 MAX_EXPERT_NODE_DELIVERABLES = 3
+# 报告父 Agent 只允许取数与领域专家节点，禁止子节点越权成稿或再次编排。
+REPORT_NODE_ALLOWED_MODES = frozenset({
+    "query_monitoring",
+    "query_forecast",
+    "expert_meteorology",
+    "expert_analysis",
+})
 
 
 _DEFAULT_EXPERT_NODE_LIMITS = {
@@ -335,20 +342,21 @@ class RunAgentWorkflowTool(LLMTool):
                 granularity_error = self._validate_expert_node_granularity(node)
                 if granularity_error:
                     return self._failure(granularity_error)
-            # 报告编排不再暴露综合问数：监测历史用 query_monitoring，气象与预报用 query_forecast
+            # 报告编排只暴露领域取数与专家节点，禁止综合模式或产出型模式越权。
             runtime_mode = str(getattr(context, "runtime_mode", "") or "")
             if runtime_mode == "report":
                 disallowed_nodes = [
                     str(node.get("task_id") or "<unknown>")
                     for node in nodes
-                    if str(node.get("target_mode") or "") == "query"
+                    if str(node.get("target_mode") or "") not in REPORT_NODE_ALLOWED_MODES
                 ]
                 if disallowed_nodes:
                     return self._failure(
-                        "报告编排不再使用综合问数（query）子节点："
-                        "监测历史数据（小时/日历史、AQI 与六参数、站点目录、全国对比）用 query_monitoring；"
-                        "气象实况/预报与空气质量预报数据用 query_forecast。"
-                        f"请改写节点：{', '.join(disallowed_nodes)}"
+                        "报告 DAG 子节点仅允许 query_monitoring / query_forecast / "
+                        "expert_meteorology / expert_analysis；"
+                        "监测历史用 query_monitoring，气象与预报用 query_forecast，"
+                        "其他模式不得作为报告子节点。"
+                        f"越界节点：{', '.join(disallowed_nodes)}"
                     )
             definition["nodes"] = nodes
             # 节点成果缓存：同 workflow 重提时复用命中节点（依赖闭包完整才复用）
