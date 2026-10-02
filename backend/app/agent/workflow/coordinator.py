@@ -85,7 +85,9 @@ class WorkflowNodeSpec:
             task_id=task_id,
             dependencies=dependencies,
             payload=payload,
-            max_attempts=max(1, int(value.get("max_attempts") or 1)),
+            # 默认允许一次自动重试：重试续用子会话 + 预算扩容 + 失败原因反馈，
+            # 成本远低于失败后由主 Agent 从头重提整个工作流。
+            max_attempts=max(1, int(value.get("max_attempts") or 2)),
             max_iterations=max_iterations,
             timeout_seconds=timeout_seconds,
             phase=phase,
@@ -273,8 +275,17 @@ class WorkflowCoordinator:
                 continue
             if all(node.status == "succeeded" for node in self._graph_nodes()):
                 self.status = "succeeded"
-                self.runtime.transition(self.workflow_run.run_id, "succeeded")
-                self._journal_event("workflow.succeeded")
+                # 收尾记账（transition/journal/快照）fail-soft：记账异常绝不能
+                # 卡死已成功的工作流返回（曾疑似因此挂起过一次运行）。
+                try:
+                    self.runtime.transition(self.workflow_run.run_id, "succeeded")
+                    self._journal_event("workflow.succeeded")
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "workflow_completion_bookkeeping_failed",
+                        workflow_id=str(self.definition.workflow_id),
+                        error=str(exc),
+                    )
                 break
             if any(node.status == "failed" for node in self._graph_nodes()):
                 self.status = "failed"
@@ -289,10 +300,19 @@ class WorkflowCoordinator:
             # A pending graph with no active or ready nodes is inconsistent.
             self.status = "failed"
             self.node_errors["__workflow__"] = "workflow has no runnable nodes"
-            self.runtime.transition(self.workflow_run.run_id, "failed", payload={"error": self.node_errors["__workflow__"]})
+            try:
+                self.runtime.transition(self.workflow_run.run_id, "failed", payload={"error": self.node_errors["__workflow__"]})
+            except Exception as exc:  # noqa: BLE001
+                logger.error("workflow_failure_transition_failed", error=str(exc))
+            self._journal_event("workflow.failed", error=self.node_errors["__workflow__"])
             break
 
-        self._persist_snapshot(self.snapshot())
+        # 收尾快照 fail-soft：落库失败不能吞掉已完成的工作流返回
+        self._journal_event("workflow.settled", status=self.status)
+        try:
+            self._persist_snapshot(self.snapshot())
+        except Exception as exc:  # noqa: BLE001
+            logger.error("workflow_final_persist_failed", workflow_id=str(self.definition.workflow_id), error=str(exc))
         return self.snapshot()
 
     async def cancel(self, *, reason: str = "workflow cancelled") -> Dict[str, Any]:

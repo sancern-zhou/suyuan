@@ -120,7 +120,10 @@ def test_coordinator_cancels_pending_nodes():
 
 def test_coordinator_times_out_node_and_records_clear_error():
     async def run():
+        attempts = []
+
         async def execute(node, dependencies, attempt, retry_context=None):
+            attempts.append((attempt, node.timeout_seconds, retry_context))
             await asyncio.sleep(1)
             return {"ok": True}
 
@@ -134,8 +137,13 @@ def test_coordinator_times_out_node_and_records_clear_error():
         result = await coordinator.run()
         assert result["status"] == "failed"
         assert result["graph"]["expert"]["status"] == "failed"
-        assert "timed out after 0.01s" in result["node_errors"]["expert"]
+        # 默认 max_attempts=2：最终错误来自扩容后的第 2 次尝试（0.01×1.5）
+        assert "timed out after 0.015s" in result["node_errors"]["expert"]
         assert result["definition"]["nodes"][0]["timeout_seconds"] == 0.01
+        # 两次尝试：首试原预算，重试扩容且携带失败原因与子会话续跑信息
+        assert attempts[0] == (1, 0.01, None)
+        assert attempts[1][0] == 2 and attempts[1][1] == 0.015
+        assert attempts[1][2] is not None
 
     asyncio.run(run())
 
