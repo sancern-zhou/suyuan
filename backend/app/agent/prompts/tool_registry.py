@@ -181,8 +181,9 @@ EXPERT_ANALYSIS_TOOL_NAMES = [
     "query_xcai_city_history",
     "query_national_city_air_quality",
     "execute_sql_query",
-    # 可选归一化计算
+    # 计算与可视化
     "execute_python",
+    "create_business_chart",
 ]
 
 # ===== 问数模式工具 =====
@@ -269,9 +270,8 @@ QUERY_FORECAST_TOOL_NAMES = [
     "xuchang_station_catalog",
     "resolve_station_geo",
     "execute_postgres_sql_query",
-    # 计算与可视化
+    # 可选归一化计算
     "execute_python",
-    "create_business_chart",
 ]
 # ===== 知识问答模式工具 =====
 # 知识库检索为主；按需读取已注册的会话资源，并用网页搜索/抓取补充知识库不足。
