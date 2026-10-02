@@ -56,14 +56,28 @@
           <div><span>已完成</span><strong>{{ nodeStats.succeeded }}</strong></div>
           <div><span>执行中</span><strong>{{ nodeStats.running }}</strong></div>
           <div><span>失败</span><strong>{{ nodeStats.failed }}</strong></div>
+          <div><span>等待上游</span><strong>{{ nodeStats.blocked }}</strong></div>
+          <div><span>已复用</span><strong>{{ nodeStats.reused }}</strong></div>
         </div>
 
         <section class="detail-section">
           <div class="section-heading"><h4>执行图</h4><span>{{ liveLabel }}</span></div>
-          <div class="dag" aria-label="工作流节点执行图">
-            <div v-for="node in nodes" :key="node.task_id" class="dag-node" :class="`node-${statusMeta(node.status).key}`">
+          <div class="dag-canvas" aria-label="工作流节点执行图">
+            <svg class="dag-edges" :viewBox="`0 0 ${dagCanvas.width} ${dagCanvas.height}`" role="img" aria-label="节点依赖关系">
+              <defs>
+                <marker id="workflow-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                  <path d="M0,0 L8,4 L0,8 z" fill="currentColor" />
+                </marker>
+              </defs>
+              <path v-for="edge in dagEdges" :key="edge.key" class="dag-edge" :class="`edge-${edge.status}`" :d="edge.path" marker-end="url(#workflow-arrow)" />
+            </svg>
+            <div class="dag-grid" :style="{ width: dagCanvas.width + 'px', height: dagCanvas.height + 'px', gridTemplateColumns: `repeat(${dagColumns.length}, 220px)` }">
+              <div v-for="(column, columnIndex) in dagColumns" :key="columnIndex" class="dag-column">
+                <div class="dag-column-label">阶段 {{ columnIndex + 1 }}<span>{{ column.length }} 个节点</span></div>
+                <div v-for="node in column" :key="node.task_id" class="dag-node" :class="`node-${statusMeta(node.status).key}`">
               <button class="node-toggle" type="button" :aria-expanded="selectedNodeId === node.task_id" @click="selectNode(node.task_id)">
                 <span class="node-title"><span class="node-status" aria-hidden="true"></span><strong>{{ nodeTitle(node) }}</strong></span>
+                <span class="node-flags"><small v-if="node.cached || node.reused">已复用</small><small v-if="node.attempt > 1">第 {{ node.attempt }} 次尝试</small></span>
                 <small v-if="node.dependencies?.length">依赖：{{ node.dependencies.map(shortId).join('、') }}</small>
                 <small v-else>入口节点</small>
                 <span class="node-status-label">{{ statusMeta(node.status).label }} · {{ nodeDuration(node.task_id) }}</span>
@@ -92,7 +106,14 @@
                   <template v-if="nodeHistory.answer">
                     <h5>子 Agent 结果</h5><div class="node-answer">{{ nodeHistory.answer }}</div>
                   </template>
+                  <template v-if="nodeDependencies(node).length || nodeArtifacts(node).length">
+                    <h5>数据血缘</h5>
+                    <div v-if="nodeDependencies(node).length" class="lineage-list"><span v-for="item in nodeDependencies(node)" :key="item">输入：{{ item }}</span></div>
+                    <div v-if="nodeArtifacts(node).length" class="lineage-list"><span v-for="item in nodeArtifacts(node)" :key="item">产物：{{ item }}</span></div>
+                  </template>
                 </template>
+              </div>
+            </div>
               </div>
             </div>
           </div>
@@ -152,6 +173,10 @@ const statusMap = {
   succeeded: { key: 'success', label: '已完成' },
   success: { key: 'success', label: '已完成' },
   failed: { key: 'failed', label: '失败' },
+  blocked: { key: 'blocked', label: '等待上游' },
+  retrying: { key: 'retrying', label: '重试中' },
+  cached: { key: 'cached', label: '已复用' },
+  reused: { key: 'cached', label: '已复用' },
   cancelled: { key: 'cancelled', label: '已取消' }
 }
 
@@ -167,7 +192,47 @@ const nodes = computed(() => {
   return Object.entries(graph).map(([taskId, node]) => ({
     ...definitionMap.get(taskId),
     ...node,
-    error: snapshot.node_errors?.[taskId]
+    error: snapshot.node_errors?.[taskId],
+    lineage: snapshot.node_lineage?.[taskId]
+  }))
+})
+const dagColumns = computed(() => {
+  const remaining = new Map(nodes.value.map(node => [node.task_id, node]))
+  const placed = new Set()
+  const columns = []
+  while (remaining.size) {
+    const ready = [...remaining.values()].filter(node =>
+      (node.dependencies || []).every(dependency => placed.has(dependency) || !remaining.has(dependency))
+    )
+    const column = ready.length ? ready : [...remaining.values()]
+    columns.push(column)
+    column.forEach(node => { placed.add(node.task_id); remaining.delete(node.task_id) })
+  }
+  return columns
+})
+const dagCanvas = computed(() => ({
+  width: Math.max(220, dagColumns.value.length * 252),
+  height: Math.max(180, Math.max(...dagColumns.value.map(column => column.length), 1) * 132 + 54)
+}))
+const dagEdges = computed(() => {
+  const positions = new Map()
+  dagColumns.value.forEach((column, columnIndex) => {
+    column.forEach((node, rowIndex) => {
+      positions.set(node.task_id, { x: columnIndex * 252, y: rowIndex * 132 + 42 })
+    })
+  })
+  return nodes.value.flatMap(node => (node.dependencies || []).flatMap(dependency => {
+    const from = positions.get(dependency)
+    const to = positions.get(node.task_id)
+    if (!from || !to) return []
+    const startX = from.x + 220
+    const endX = to.x
+    const midX = startX + Math.max(18, (endX - startX) / 2)
+    return [{
+      key: dependency + '->' + node.task_id,
+      status: statusMeta(node.status).key,
+      path: `M ${startX} ${from.y + 46} C ${midX} ${from.y + 46}, ${midX} ${to.y + 46}, ${endX} ${to.y + 46}`
+    }]
   }))
 })
 const nodeStats = computed(() => nodes.value.reduce((stats, node) => {
@@ -176,13 +241,31 @@ const nodeStats = computed(() => nodes.value.reduce((stats, node) => {
   if (key === 'success') stats.succeeded += 1
   if (key === 'running') stats.running += 1
   if (key === 'failed') stats.failed += 1
+  if (key === 'blocked' || key === 'pending') stats.blocked += 1
+  if (key === 'cached') stats.reused += 1
   return stats
-}, { total: 0, succeeded: 0, running: 0, failed: 0 }))
+}, { total: 0, succeeded: 0, running: 0, failed: 0, blocked: 0, reused: 0 }))
 const failedNodes = computed(() => nodes.value.filter(node => statusMeta(node.status).key === 'failed'))
 const canCancel = computed(() => ['queued', 'running'].includes(String(selectedStatus.value)))
 const canResume = computed(() => ['failed', 'running', 'queued'].includes(String(selectedStatus.value)))
 const recentEvents = computed(() => events.value.slice(-20).reverse())
 const liveLabel = computed(() => selectedWorkflow.value?.active ? '实时更新中' : '已结束')
+
+function nodeDependencies(node) {
+  const lineage = node?.lineage || selectedWorkflow.value?.snapshot?.node_lineage?.[node?.task_id] || {}
+  return (node?.dependencies || lineage?.dependencies || []).map(shortId)
+}
+
+function nodeArtifacts(node) {
+  const result = selectedWorkflow.value?.snapshot?.node_results?.[node?.task_id]
+  const data = result?.data || result || {}
+  const paths = [
+    ...(data.file_paths || []),
+    ...(data.report_file_paths || []),
+    ...(data.artifacts || []).map(item => item?.path || item?.locator?.path || item?.name).filter(Boolean)
+  ]
+  return [...new Set(paths.map(String))].slice(0, 6)
+}
 const lifecycleLabels = {
   'task.created': '任务已创建',
   'task.running': '开始执行',
@@ -479,11 +562,22 @@ onBeforeUnmount(() => {
 .detail-section { margin-top: 18px; }
 .section-heading h4, .detail-section > h4 { font-size: 13px; }
 .section-heading span { color: #8290a0; font-size: 11px; }
-.dag { display: grid; gap: 8px; margin-top: 8px; }
-.dag-node { padding: 9px 10px; border: 1px solid #dfe7ef; border-left: 3px solid #94a3b8; border-radius: 6px; background: #fff; }
+.dag-canvas { position: relative; margin-top: 8px; overflow: auto; padding: 4px 4px 12px; border: 1px solid #e1e8f0; border-radius: 8px; background: #f5f8fb; }
+.dag-grid { position: relative; z-index: 1; display: grid; grid-auto-flow: column; gap: 32px; padding: 0 8px 8px; }
+.dag-edges { position: absolute; z-index: 0; top: 0; left: 0; min-width: 100%; min-height: 100%; overflow: visible; color: #9eafc1; pointer-events: none; }
+.dag-edge { fill: none; stroke: currentColor; stroke-width: 1.6; opacity: .85; }
+.dag-edge.edge-running { color: #2778c9; stroke-width: 2.2; }
+.dag-edge.edge-failed { color: #d04444; }
+.dag-column { display: grid; align-content: start; gap: 12px; min-width: 220px; }
+.dag-column-label { display: flex; justify-content: space-between; margin: 0 2px 2px; color: #7b899a; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.dag-column-label span { font-weight: 400; text-transform: none; }
+.dag-node { min-height: 92px; padding: 9px 10px; border: 1px solid #dfe7ef; border-left: 3px solid #94a3b8; border-radius: 6px; background: #fff; box-shadow: 0 2px 5px rgba(36, 50, 71, .04); }
 .dag-node.node-success { border-left-color: #1f9d69; }
 .dag-node.node-running { border-left-color: #2778c9; }
 .dag-node.node-failed { border-left-color: #d04444; }
+.dag-node.node-blocked { border-left-color: #c58a1c; }
+.dag-node.node-retrying { border-left-color: #8b5cf6; }
+.dag-node.node-cached { border-left-color: #0f8b8d; }
 .node-toggle { display: block; width: 100%; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; }
 .node-toggle:focus-visible { outline: 2px solid #2778c9; outline-offset: 3px; }
 .node-detail { margin: 10px 0 0 16px; padding: 10px; border-top: 1px solid #e7edf4; color: #526173; font-size: 11px; overflow-wrap: anywhere; }
@@ -491,9 +585,14 @@ onBeforeUnmount(() => {
 .node-meta, .history-empty { color: #8290a0; }
 .history-error { color: #b42318; }
 .node-answer { max-height: 240px; overflow: auto; white-space: pre-wrap; line-height: 1.5; }
+.lineage-list { display: grid; gap: 4px; color: #526173; }
+.lineage-list span { overflow-wrap: anywhere; }
 .more-button { margin-top: 8px; padding: 4px 8px; border: 1px solid #cbd8e5; border-radius: 5px; background: #fff; color: #315b84; cursor: pointer; }
 .node-title { display: flex; align-items: center; gap: 8px; }
 .node-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.node-flags { display: flex; gap: 5px; margin: 5px 0 0 16px; }
+.node-flags small { display: inline-block; margin: 0; padding: 2px 5px; border-radius: 3px; background: #e8f5f4; color: #0f7173; font-size: 9px; }
+.node-flags small + small { background: #f1ebff; color: #6d42b5; }
 .dag-node small { display: block; margin: 5px 0 0 16px; overflow: hidden; color: #7b899a; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .node-status-label { display: block; margin: 5px 0 0 16px; color: #617184; font-size: 10px; }
 .event-list { display: grid; gap: 7px; margin: 8px 0 0; padding: 0; list-style: none; }
