@@ -24,7 +24,9 @@ def test_query_submode_whitelists_are_lean_and_disjoint():
 
     assert "execute_crawler_sql_query" in monitoring
     assert "query_xcai_city_history" in monitoring
-    assert "xuchang_station_catalog" in monitoring
+    # 站点目录解析工具不进入问数流程：Station 表 SQL 即可取目录，避免串行轮次
+    assert "xuchang_station_catalog" not in monitoring
+    assert "resolve_station_geo" not in monitoring
     assert not monitoring & {"get_weather_data", "get_weather_forecast", "get_current_weather"}
 
     assert "get_weather_forecast" in forecast
@@ -55,7 +57,7 @@ def test_station_and_city_submodes_split_tool_whitelists():
     station = set(QUERY_MONITORING_STATION_TOOL_NAMES)
     city = set(QUERY_MONITORING_CITY_TOOL_NAMES)
 
-    assert station == {"execute_crawler_sql_query", "xuchang_station_catalog", "resolve_station_geo", "execute_python"}
+    assert station == {"execute_crawler_sql_query", "execute_python"}
     assert {"query_xcai_city_history", "execute_sql_query", "query_airdata_platform"} <= city
     assert "query_national_city_air_quality" in city
     assert "get_weather_data" not in station | city

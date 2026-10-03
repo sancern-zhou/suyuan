@@ -29,16 +29,13 @@ _MONITORING_QUERY_TOOLS = (
     "execute_postgres_sql_query",
     "query_airdata_platform",
     "airdata_calc_report_summary",
-    "xuchang_station_catalog",
     "query_national_city_air_quality",
-    "resolve_station_geo",
 )
 
-# 站点层级问数：只查采集库站点表 + 站点目录/地理信息。
+# 站点层级问数：只查采集库站点表（Station 表即站点目录，编码/名称/坐标一条 SQL 可得）；
+# 站点目录解析工具会引入"先解析目录再查询"的串行轮次，不进入问数固定流程。
 _MONITORING_STATION_QUERY_TOOLS = (
     "execute_crawler_sql_query",
-    "xuchang_station_catalog",
-    "resolve_station_geo",
 )
 
 # 城市层级问数：城市小时/日/年均值 + SQL Server 城市发布历史 + 中台接口。

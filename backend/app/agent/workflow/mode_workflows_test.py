@@ -32,13 +32,10 @@ def test_station_and_city_query_modes_split_by_table_level():
     progress = {}
 
     assert station is not None and city is not None
-    assert allowed_tools(station, progress) == {
-        "execute_crawler_sql_query",
-        "xuchang_station_catalog",
-        "resolve_station_geo",
-    }
+    assert allowed_tools(station, progress) == {"execute_crawler_sql_query"}
     assert "query_xcai_city_history" in allowed_tools(city, progress)
-    assert "xuchang_station_catalog" not in allowed_tools(city, progress)
+    assert "xuchang_station_catalog" not in allowed_tools(station, progress)
+    assert "resolve_station_geo" not in allowed_tools(city, progress)
 
     station_acquire = current_phase(station, progress).description
     city_acquire = current_phase(city, progress).description

@@ -238,16 +238,15 @@ QUERY_MONITORING_TOOL_NAMES = [
     # 上游产物复用与中间产物落地
     "read_file",
     "write_file",
-    # 监测数据取数
+    # 监测数据取数（站点目录解析工具不进入问数流程：目录可由 Station 表 SQL 直接获取，
+    # 避免先解析目录再查询的串行轮次；综合 query/expert 模式仍保留）
     "query_xcai_city_history",
     "execute_sql_query",
     "execute_crawler_sql_query",
     "execute_postgres_sql_query",
     "query_airdata_platform",
     "airdata_calc_report_summary",
-    "xuchang_station_catalog",
     "query_national_city_air_quality",
-    "resolve_station_geo",
     # 可选归一化计算
     "execute_python",
 ]
@@ -274,13 +273,12 @@ QUERY_FORECAST_TOOL_NAMES = [
     "execute_python",
 ]
 
-# 站点层级监测问数：只查采集库站点表 + 站点目录/地理信息；
-# 城市层级表与城市口径接口不进入本白名单。
+# 站点层级监测问数：只查采集库站点表（Station 表即站点目录，编码/名称/坐标一条 SQL 可得）；
+# 站点目录解析工具（xuchang_station_catalog/resolve_station_geo）会引入
+# "先解析目录再查询"的串行轮次，且解析链路服务的中台接口不在本流程内，不进入本白名单。
 QUERY_MONITORING_STATION_TOOL_NAMES = [
     # 站点层级取数（采集库 StationHour/StationDay/Station）
     "execute_crawler_sql_query",
-    "xuchang_station_catalog",
-    "resolve_station_geo",
     # 可选归一化计算
     "execute_python",
 ]
