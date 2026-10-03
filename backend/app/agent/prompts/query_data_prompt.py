@@ -81,8 +81,9 @@ def build_query_monitoring_station_prompt(
         "",
         "## 能力边界",
         "",
-        "- 聚焦：国控站点小时/日历史（StationHour/StationDay）、站点目录与地理信息、站点口径六参数统计。",
-        "- 主要数据：采集库站点层级表 StationHour/StationDay/Station，表字段契约见工具描述，逐字核对后再写 SQL。",
+        "- 聚焦：国控站与乡镇站小时/日历史、站点目录与归属区县、站点口径六参数统计。",
+        "- 国控站：采集库 StationHour/StationDay 直接 SQL 查询（名称/区域 LIKE 过滤，无需解析目录），字段契约见工具描述，逐字核对后再写 SQL。",
+        "- 乡镇站/中台口径：先用 `xuchang_station_catalog` 解析站点编码（支持名称模糊与按区县展开），再调 `query_airdata_platform`（filters 用 field=code, operator=in）查询；不要凭猜测把乡镇名称当编码。",
         "- 城市口径数据与全国对比优先由 query_monitoring_city 承接；气象取数（query_forecast）与污染成因研判（expert_meteorology/expert_analysis）不承接。",
         "- 收到越界委派时，在交付说明中注明越界部分并交回父 Agent 处理。",
     ])

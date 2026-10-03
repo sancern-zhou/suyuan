@@ -29,12 +29,13 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
         ),
     },
     "query_monitoring_station": {
-        "positioning": "站点层级监测问数 Agent：面向国控站点小时/日历史与站点目录的取数与核算。",
-        "scope": "站点小时/日历史（StationHour/StationDay）、站点目录与地理信息、站点口径六参数统计、站点数据质量核对。",
+        "positioning": "站点层级监测问数 Agent：面向国控站与乡镇站小时/日历史、站点目录的取数与核算。",
+        "scope": "国控站小时/日历史（StationHour/StationDay）、乡镇站与中台口径数据、按区县/名称解析站点目录、站点口径六参数统计、站点数据质量核对。",
         "boundary": "聚焦站点层级取数与统计核算，城市口径任务优先归 query_monitoring_city；不做气象归因与污染成因研判，不产出报告包。",
         "outputs": "结构化数据文件（file_path）+ 站点清单、数据口径、时间范围和缺口说明。",
         "warning": (
             "运行时限定批量取数、可选归一化、交付三个阶段，最多一次失败项补查。"
+            "国控站直接 SQL 查询无需解析目录；乡镇站编码不可猜，先 xuchang_station_catalog 解析再调 query_airdata_platform。"
             "站点表字段契约已注入上下文，写 SQL 前逐字核对，不要试探字段。"
         ),
     },

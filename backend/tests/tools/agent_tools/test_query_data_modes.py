@@ -24,8 +24,9 @@ def test_query_submode_whitelists_are_lean_and_disjoint():
 
     assert "execute_crawler_sql_query" in monitoring
     assert "query_xcai_city_history" in monitoring
-    # 站点目录解析工具不进入问数流程：Station 表 SQL 即可取目录，避免串行轮次
-    assert "xuchang_station_catalog" not in monitoring
+    # 目录解析与中台工具成对配置（乡镇站编码链路）；广东站点目录工具不进入
+    assert "xuchang_station_catalog" in monitoring
+    assert "query_airdata_platform" in monitoring
     assert "resolve_station_geo" not in monitoring
     assert not monitoring & {"get_weather_data", "get_weather_forecast", "get_current_weather"}
 
@@ -57,7 +58,15 @@ def test_station_and_city_submodes_split_tool_whitelists():
     station = set(QUERY_MONITORING_STATION_TOOL_NAMES)
     city = set(QUERY_MONITORING_CITY_TOOL_NAMES)
 
-    assert station == {"execute_crawler_sql_query", "execute_python"}
+    assert station == {
+        "execute_crawler_sql_query",
+        "xuchang_station_catalog",
+        "query_airdata_platform",
+        "execute_python",
+    }
+    # 乡镇站链路成对配置：城市模式有中台工具但无目录工具（站点任务归站点模式）
+    assert "query_airdata_platform" in city
+    assert "xuchang_station_catalog" not in city
     assert {"query_xcai_city_history", "execute_sql_query", "query_airdata_platform"} <= city
     assert "query_national_city_air_quality" in city
     assert "get_weather_data" not in station | city
@@ -111,7 +120,9 @@ def test_station_and_city_prompts_declare_table_level_boundary():
     station = build_query_monitoring_station_prompt(["execute_crawler_sql_query", "execute_python"])
     city = build_query_monitoring_city_prompt(["execute_crawler_sql_query", "execute_python"])
 
-    assert "站点层级" in station and "StationHour/StationDay/Station" in station
+    assert "站点层级" in station and "StationHour/StationDay" in station
+    assert "乡镇站" in station
+    assert "xuchang_station_catalog" in station and "query_airdata_platform" in station
     assert "query_monitoring_city" in station
     assert "城市层级" in city and "CityHour/CityDay/CityYearPm25Avg" in city
     assert "query_monitoring_station" in city

@@ -28,14 +28,17 @@ _MONITORING_QUERY_TOOLS = (
     "execute_crawler_sql_query",
     "execute_postgres_sql_query",
     "query_airdata_platform",
+    "xuchang_station_catalog",
     "airdata_calc_report_summary",
     "query_national_city_air_quality",
 )
 
-# 站点层级问数：只查采集库站点表（Station 表即站点目录，编码/名称/坐标一条 SQL 可得）；
-# 站点目录解析工具会引入"先解析目录再查询"的串行轮次，不进入问数固定流程。
+# 站点层级问数：国控站走采集库 SQL；乡镇站/中台口径走"目录解析编码 → 中台查询"
+# （编码不可猜，该串行为必要轮次）。目录工具与中台工具必须成对配置。
 _MONITORING_STATION_QUERY_TOOLS = (
     "execute_crawler_sql_query",
+    "xuchang_station_catalog",
+    "query_airdata_platform",
 )
 
 # 城市层级问数：城市小时/日/年均值 + SQL Server 城市发布历史 + 中台接口。
@@ -152,8 +155,10 @@ for _definition in (
         _MONITORING_STATION_QUERY_TOOLS,
         "国控站点层级空气质量监测固定问数流程",
         scope_line=(
-            "聚焦站点层级取数：站点小时/日历史、站点目录与站点口径统计，"
-            "主要使用采集库 StationHour/StationDay/Station 表。"
+            "聚焦站点层级取数：国控站小时/日历史用采集库 SQL 直接查询"
+            "（StationHour/StationDay，按名称或区域 LIKE 过滤，无需解析目录）；"
+            "乡镇站与中台口径数据先用 xuchang_station_catalog 解析编码"
+            "（支持按名称模糊、按区县展开下辖站点），再调 query_airdata_platform 查询。"
         ),
         context_block=_table_contract_block(_STATION_CONTRACT_TABLES),
     ),
