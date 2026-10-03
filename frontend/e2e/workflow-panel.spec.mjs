@@ -30,7 +30,7 @@ test('workflow is an ordered list and child agent opens in a review view', async
       const completed = historyReads > 1
       return route.fulfill({ json: {
         task_id: 'analysis', status: completed ? 'succeeded' : 'running', child_session_id: 'report__to__expert__1', child_mode: 'expert_analysis',
-        progress: { label: completed ? '正在整理最终回复' : '正在调用 air_quality', tool_calls: 1, tool_results: completed ? 1 : 0, failed_tools: 0 },
+        progress: { label: completed ? '分析已完成' : '正在调用 air_quality', tool_calls: 1, tool_results: completed ? 1 : 0, failed_tools: 0 },
         conversation: [{ id: 'q', role: 'user', content: '分析污染变化与成因' }, ...(completed ? [{ id: 'a', role: 'assistant', content: 'PM2.5 在静稳时段明显累积。' }] : [])],
         node_events: [{ sequence: 1, type: 'task.running', status: 'running', timestamp: '2026-10-03T08:00:00Z' }], child_events: [],
         execution_history: [{ sequence: 1, type: 'tool_call', tool_name: 'air_quality', timestamp: '2026-10-03T08:00:02Z' }, ...(completed ? [{ sequence: 2, type: 'tool_result', tool_name: 'air_quality', success: true, timestamp: '2026-10-03T08:00:05Z' }] : [])], has_more: false
@@ -53,6 +53,7 @@ test('workflow is an ordered list and child agent opens in a review view', async
   await expect(page.getByRole('article', { name: '子 Agent 对话审查' })).toBeVisible()
   await expect(page.getByText('正在调用 air_quality')).toBeVisible()
   await expect(page.getByText('调用中')).toBeVisible()
+  await page.screenshot({ path: test.info().outputPath('subagent-live.png') })
   await expect(page.getByText('PM2.5 在静稳时段明显累积。')).toBeVisible({ timeout: 4_000 })
   await expect(page.locator('.activity-main small')).toHaveText('已完成')
   await page.screenshot({ path: test.info().outputPath('subagent-review.png') })
