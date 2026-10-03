@@ -24,6 +24,8 @@ MAX_EXPERT_NODE_DELIVERABLES = 3
 # 报告父 Agent 只允许取数与领域专家节点，禁止子节点越权成稿或再次编排。
 REPORT_NODE_ALLOWED_MODES = frozenset({
     "query_monitoring",
+    "query_monitoring_station",
+    "query_monitoring_city",
     "query_forecast",
     "expert_meteorology",
     "expert_analysis",
@@ -35,6 +37,8 @@ _DEFAULT_EXPERT_NODE_LIMITS = {
     "expert": {"max_iterations": 30, "timeout_seconds": 480},
     # 固定问数流程由运行时约束为最多四轮。
     "query_monitoring": {"max_iterations": 4, "timeout_seconds": 420},
+    "query_monitoring_station": {"max_iterations": 4, "timeout_seconds": 420},
+    "query_monitoring_city": {"max_iterations": 4, "timeout_seconds": 420},
     "query_forecast": {"max_iterations": 4, "timeout_seconds": 420},
 }
 
@@ -56,11 +60,12 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "goal 写清时间范围、区域、指标口径和预期输出；把无依赖的取数拆成独立节点以并行执行。"
     "节点可用可选 phase 字段打用户可读的阶段名（如'取数与质检'/'气象分箱研判'/'整合成稿'），"
     "同阶段节点共用一个名字，面板按阶段分组展示故事线；用业务语言命名，不用编排术语。"
-    "领域拆分建议：监测历史取数（小时/日历史、AQI 与六参数、站点目录、全国对比）拆 query_monitoring，"
-    "气象实况/预报与空气质量预报数据拆 query_forecast，二者可并行；"
+    "领域拆分建议：监测历史取数按层级拆分——站点小时/日与站点目录拆 query_monitoring_station，"
+    "城市口径与全国对比拆 query_monitoring_city，层级混合才用 query_monitoring；"
+    "气象实况/预报与空气质量预报数据拆 query_forecast，与监测节点可并行；"
     "气象条件、输送通道、静稳/边界层形势拆 expert_meteorology；浓度特征、超标统计、"
     "组分解读、成因研判拆 expert_analysis；交叉归因由你自己整合（整合阶段禁止重新取数）。"
-    "报告编排禁止综合问数（query）子节点：监测历史用 query_monitoring，气象与预报用 query_forecast；"
+    "报告编排禁止综合问数（query）子节点：监测历史按层级拆 query_monitoring_station / query_monitoring_city，气象与预报用 query_forecast；"
     "综合 expert 也不对报告 DAG 暴露。"
     "**问数节点轮次硬约束**：固定工作流由运行时控制为最多 4 轮且失败项最多补查一次；"
     "取数节点必须多表探查一次完成——同库数据用一条合法的 JOIN/UNION/CTE SQL 覆盖所需表和口径，"
@@ -355,10 +360,11 @@ class RunAgentWorkflowTool(LLMTool):
                 ]
                 if disallowed_nodes:
                     return self._failure(
-                        "报告 DAG 子节点仅允许 query_monitoring / query_forecast / "
+                        "报告 DAG 子节点仅允许 query_monitoring / query_monitoring_station / "
+                        "query_monitoring_city / query_forecast / "
                         "expert_meteorology / expert_analysis；"
-                        "监测历史用 query_monitoring，气象与预报用 query_forecast，"
-                        "其他模式不得作为报告子节点。"
+                        "监测历史按层级拆 query_monitoring_station（站点）或 query_monitoring_city（城市），"
+                        "气象与预报用 query_forecast，其他模式不得作为报告子节点。"
                         f"越界节点：{', '.join(disallowed_nodes)}"
                     )
             definition["nodes"] = nodes

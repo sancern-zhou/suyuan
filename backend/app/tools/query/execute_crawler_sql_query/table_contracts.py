@@ -87,20 +87,33 @@ def _split_values(names: List[str]) -> Dict[str, List[str]]:
     return {"values": values, "review": review, "bookkeeping": bookkeeping}
 
 
-def render_table_contracts() -> str:
-    """渲染为工具描述中的紧凑契约文本；无契约时返回空串。"""
+def render_table_contracts(table_names: Optional[List[str]] = None) -> str:
+    """渲染为工具描述中的紧凑契约文本；无契约时返回空串。
+
+    table_names 指定时只渲染这些表（问数模式按站点/城市层级注入上下文用）。
+    """
     contracts = load_table_contracts()
     if not contracts:
         return ""
+
+    all_tables = contracts["tables"]
+    if table_names is None:
+        selected_tables = list(all_tables.keys())
+    else:
+        selected_tables = [
+            str(name) for name in table_names
+            if isinstance(all_tables.get(name), dict)
+        ]
+        if not selected_tables:
+            return ""
 
     lines = [
         "",
         "## 表字段契约（由真实库生成，字段大小写与命名以此为准，写 SQL 前逐字核对）",
         "",
     ]
-    for table, info in contracts["tables"].items():
-        if not isinstance(info, dict):
-            continue
+    for table in selected_tables:
+        info = all_tables[table]
         parts = [f"- **{table}**"]
         time_cols = info.get("time_columns") or []
         if time_cols:

@@ -273,6 +273,31 @@ QUERY_FORECAST_TOOL_NAMES = [
     # 可选归一化计算
     "execute_python",
 ]
+
+# 站点层级监测问数：只查采集库站点表 + 站点目录/地理信息；
+# 城市层级表与城市口径接口不进入本白名单。
+QUERY_MONITORING_STATION_TOOL_NAMES = [
+    # 站点层级取数（采集库 StationHour/StationDay/Station）
+    "execute_crawler_sql_query",
+    "xuchang_station_catalog",
+    "resolve_station_geo",
+    # 可选归一化计算
+    "execute_python",
+]
+
+# 城市层级监测问数：城市小时/日/年均值 + SQL Server 城市发布历史 + 中台接口；
+# 站点层级表不进入本白名单（工具内仍可查，由阶段提示约束表层级）。
+QUERY_MONITORING_CITY_TOOL_NAMES = [
+    "query_xcai_city_history",
+    "execute_sql_query",
+    "execute_crawler_sql_query",
+    "execute_postgres_sql_query",
+    "query_airdata_platform",
+    "airdata_calc_report_summary",
+    "query_national_city_air_quality",
+    # 可选归一化计算
+    "execute_python",
+]
 # ===== 知识问答模式工具 =====
 # 知识库检索为主；按需读取已注册的会话资源，并用网页搜索/抓取补充知识库不足。
 KNOWLEDGE_TOOL_NAMES = [
@@ -528,6 +553,8 @@ EXPERT_TOOLS = _build_tool_dict(EXPERT_TOOL_NAMES)
 EXPERT_METEOROLOGY_TOOLS = _build_tool_dict(EXPERT_METEOROLOGY_TOOL_NAMES)
 EXPERT_ANALYSIS_TOOLS = _build_tool_dict(EXPERT_ANALYSIS_TOOL_NAMES)
 QUERY_MONITORING_TOOLS = _build_tool_dict(QUERY_MONITORING_TOOL_NAMES)
+QUERY_MONITORING_STATION_TOOLS = _build_tool_dict(QUERY_MONITORING_STATION_TOOL_NAMES)
+QUERY_MONITORING_CITY_TOOLS = _build_tool_dict(QUERY_MONITORING_CITY_TOOL_NAMES)
 QUERY_FORECAST_TOOLS = _build_tool_dict(QUERY_FORECAST_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
 KNOWLEDGE_TOOLS = _build_tool_dict(KNOWLEDGE_TOOL_NAMES)
@@ -565,7 +592,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     根据模式获取工具有序白名单。
 
     Args:
-        mode: "assistant" | "ppt" | "expert" | "expert_meteorology" | "expert_analysis" | "query" | "query_monitoring" | "query_forecast" | "report" | "social" | "enforcement_exam" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
+        mode: "assistant" | "ppt" | "expert" | "expert_meteorology" | "expert_analysis" | "query" | "query_monitoring" | "query_monitoring_station" | "query_monitoring_city" | "query_forecast" | "report" | "social" | "enforcement_exam" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
 
     Returns:
         工具字典 {tool_name: ""}，key 顺序即工具顺序。
@@ -577,6 +604,8 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "expert_meteorology": EXPERT_METEOROLOGY_TOOLS,
         "expert_analysis": EXPERT_ANALYSIS_TOOLS,
         "query_monitoring": QUERY_MONITORING_TOOLS,
+        "query_monitoring_station": QUERY_MONITORING_STATION_TOOLS,
+        "query_monitoring_city": QUERY_MONITORING_CITY_TOOLS,
         "query_forecast": QUERY_FORECAST_TOOLS,
         "query": QUERY_TOOLS,
         "knowledge": KNOWLEDGE_TOOLS,

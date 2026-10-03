@@ -26,6 +26,34 @@ def test_query_modes_are_registered_as_fixed_agent_workflows():
     ]
 
 
+def test_station_and_city_query_modes_split_by_table_level():
+    station = get_mode_workflow("query_monitoring_station")
+    city = get_mode_workflow("query_monitoring_city")
+    progress = {}
+
+    assert station is not None and city is not None
+    assert allowed_tools(station, progress) == {
+        "execute_crawler_sql_query",
+        "xuchang_station_catalog",
+        "resolve_station_geo",
+    }
+    assert "query_xcai_city_history" in allowed_tools(city, progress)
+    assert "xuchang_station_catalog" not in allowed_tools(city, progress)
+
+    station_acquire = current_phase(station, progress).description
+    city_acquire = current_phase(city, progress).description
+    # 表契约直接注入 acquire 阶段说明，避免模型猜字段
+    assert "StationHour" in station_acquire and "StationDay" in station_acquire
+    assert "CityHour" in city_acquire and "CityYearPm25Avg" in city_acquire
+    # 城市契约只注入城市表字段；站点独有字段（如 UniqueCode）不出现
+    assert "UniqueCode" not in city_acquire
+    # 层级拆分是功能聚焦而非硬禁止
+    assert "禁止查询" not in station_acquire and "禁止查询" not in city_acquire
+    # 会话资源工具不再进入 acquire 阶段
+    assert "list_session_resources" not in allowed_tools(station, progress)
+    assert "read_session_resource" not in allowed_tools(city, progress)
+
+
 def test_query_workflow_advances_after_successful_batch():
     definition = get_mode_workflow("query_monitoring")
     progress = {}

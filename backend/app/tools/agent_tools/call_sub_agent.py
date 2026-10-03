@@ -61,7 +61,7 @@ session_manager = get_session_manager()
 
 # ⚠️ 支持多种模式：assistant, query, report, social, chart, expert, ops
 AgentMode = Literal[
-    "assistant", "query", "query_monitoring", "query_forecast", "report", "social", "chart", "expert",
+    "assistant", "query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "report", "social", "chart", "expert",
     "expert_meteorology", "expert_analysis", "ops", "board", "ppt", "knowledge",
 ]
 
@@ -73,6 +73,8 @@ _DEFAULT_CHILD_MAX_ITERATIONS = {
     "expert": 40,
     # 固定问数工作流由运行时限制为最多四轮。
     "query_monitoring": 4,
+    "query_monitoring_station": 4,
+    "query_monitoring_city": 4,
     "query_forecast": 4,
 }
 

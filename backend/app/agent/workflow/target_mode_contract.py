@@ -24,8 +24,28 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
         "outputs": "结构化数据文件（file_path）+ 数据口径、时间范围和缺口说明。",
         "warning": (
             "运行时限定批量取数、可选归一化、交付三个阶段，最多一次失败项补查。"
-            "SQL 字段以工具描述内嵌表契约为准（大小写敏感）；"
-            "查询失败返回的错误会附真实字段清单，直接据此修正重试。"
+            "SQL 字段以上下文内嵌表契约为准（大小写敏感）；查询失败返回的错误会附真实字段清单，直接据此修正。"
+            "报告 DAG 中层级明确时优先拆分为 query_monitoring_station（站点）与 query_monitoring_city（城市）。"
+        ),
+    },
+    "query_monitoring_station": {
+        "positioning": "站点层级监测问数 Agent：面向国控站点小时/日历史与站点目录的取数与核算。",
+        "scope": "站点小时/日历史（StationHour/StationDay）、站点目录与地理信息、站点口径六参数统计、站点数据质量核对。",
+        "boundary": "聚焦站点层级取数与统计核算，城市口径任务优先归 query_monitoring_city；不做气象归因与污染成因研判，不产出报告包。",
+        "outputs": "结构化数据文件（file_path）+ 站点清单、数据口径、时间范围和缺口说明。",
+        "warning": (
+            "运行时限定批量取数、可选归一化、交付三个阶段，最多一次失败项补查。"
+            "站点表字段契约已注入上下文，写 SQL 前逐字核对，不要试探字段。"
+        ),
+    },
+    "query_monitoring_city": {
+        "positioning": "城市层级监测问数 Agent：面向城市小时/日历史、城市发布历史与全国对比的取数与核算。",
+        "scope": "城市小时/日历史与年均值（CityHour/CityDay/CityYearPm25Avg）、城市发布历史、中台接口、全国城市对比、城市口径统计核算。",
+        "boundary": "聚焦城市层级取数与统计核算，站点明细任务优先归 query_monitoring_station；不做气象归因与污染成因研判，不产出报告包。",
+        "outputs": "结构化数据文件（file_path）+ 城市清单、数据口径、时间范围和缺口说明。",
+        "warning": (
+            "运行时限定批量取数、可选归一化、交付三个阶段，最多一次失败项补查。"
+            "城市表字段契约已注入上下文，写 SQL 前逐字核对，不要试探字段。"
         ),
     },
     "query_forecast": {
@@ -120,7 +140,9 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
 
 _ROUTING_RULES = (
     "选择规则：机制/成因用 expert；成稿交付用 report；"
-    "监测历史数据事实用 query_monitoring，气象实况/预报与空气质量预报数据用 query_forecast；"
+    "监测历史数据事实按层级拆分：站点小时/日与站点目录用 query_monitoring_station，"
+    "城市口径与全国对比用 query_monitoring_city，层级混合时才用 query_monitoring；"
+    "气象实况/预报与空气质量预报数据用 query_forecast；"
     "综合 query 仅限非报告父模式（assistant/social 等）使用，报告 DAG 禁止；"
     "气象条件、输送通道与静稳形势用 expert_meteorology，六参数浓度/AQI/超标与时空变化用 expert_analysis；组分分析预留给独立专家模式，"
     "二者可并行拆分，交叉归因（如气象导致累积）在 synthesis 或报告整合阶段完成；"

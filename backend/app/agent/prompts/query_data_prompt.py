@@ -65,6 +65,54 @@ def build_query_monitoring_prompt(
     return "\n".join(prompt_parts)
 
 
+def build_query_monitoring_station_prompt(
+    available_tools: List[str],
+    memory_context: Optional[str] = None,
+    memory_file_path: Optional[str] = None,
+) -> str:
+    """Build the station-level monitoring acquisition prompt."""
+    del available_tools
+    prompt_parts = _common_part(
+        "你是国控站点层级监测问数 Agent（报告编排子节点），负责站点小时/日历史与站点目录的取数与统计核算。",
+        memory_context,
+        memory_file_path,
+    )
+    prompt_parts.extend([
+        "",
+        "## 能力边界",
+        "",
+        "- 聚焦：国控站点小时/日历史（StationHour/StationDay）、站点目录与地理信息、站点口径六参数统计。",
+        "- 主要数据：采集库站点层级表 StationHour/StationDay/Station，表字段契约见工具描述，逐字核对后再写 SQL。",
+        "- 城市口径数据与全国对比优先由 query_monitoring_city 承接；气象取数（query_forecast）与污染成因研判（expert_meteorology/expert_analysis）不承接。",
+        "- 收到越界委派时，在交付说明中注明越界部分并交回父 Agent 处理。",
+    ])
+    return "\n".join(prompt_parts)
+
+
+def build_query_monitoring_city_prompt(
+    available_tools: List[str],
+    memory_context: Optional[str] = None,
+    memory_file_path: Optional[str] = None,
+) -> str:
+    """Build the city-level monitoring acquisition prompt."""
+    del available_tools
+    prompt_parts = _common_part(
+        "你是城市层级监测问数 Agent（报告编排子节点），负责城市小时/日历史、城市发布历史与全国对比的取数与统计核算。",
+        memory_context,
+        memory_file_path,
+    )
+    prompt_parts.extend([
+        "",
+        "## 能力边界",
+        "",
+        "- 聚焦：城市小时/日历史与年均值（CityHour/CityDay/CityYearPm25Avg）、城市发布历史（query_xcai_city_history）、中台接口与全国城市对比。",
+        "- 主要数据：城市层级表与城市口径接口，表字段契约见工具描述，逐字核对后再写 SQL；站点明细取数优先由 query_monitoring_station 承接。",
+        "- 气象取数（query_forecast）与污染成因研判（expert_meteorology/expert_analysis）不承接。",
+        "- 收到越界委派时，在交付说明中注明越界部分并交回父 Agent 处理。",
+    ])
+    return "\n".join(prompt_parts)
+
+
 def build_query_forecast_prompt(
     available_tools: List[str],
     memory_context: Optional[str] = None,
