@@ -25,7 +25,7 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
         "warning": (
             "运行时限定批量取数、可选归一化、交付三个阶段，最多一次失败项补查。"
             "SQL 字段以上下文内嵌表契约为准（大小写敏感）；查询失败返回的错误会附真实字段清单，直接据此修正。"
-            "报告 DAG 中层级明确时优先拆分为 query_monitoring_station（站点）与 query_monitoring_city（城市）。"
+            "报告 DAG 已禁用本模式：层级不明确时报告 Agent 先向用户确认口径，再拆分为 query_monitoring_station / query_monitoring_city。"
         ),
     },
     "query_monitoring_station": {
@@ -142,7 +142,8 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
 _ROUTING_RULES = (
     "选择规则：机制/成因用 expert；成稿交付用 report；"
     "监测历史数据事实按层级拆分：站点小时/日与站点目录用 query_monitoring_station，"
-    "城市口径与全国对比用 query_monitoring_city，层级混合时才用 query_monitoring；"
+    "城市口径与全国对比用 query_monitoring_city；层级混合拆成站点+城市两个节点，"
+    "层级不明确先向用户确认口径，不要用 query_monitoring 兜底（报告 DAG 已禁用，仅限非报告父模式直接委托）；"
     "气象实况/预报与空气质量预报数据用 query_forecast；"
     "综合 query 仅限非报告父模式（assistant/social 等）使用，报告 DAG 禁止；"
     "气象条件、输送通道与静稳形势用 expert_meteorology，六参数浓度/AQI/超标与时空变化用 expert_analysis；组分分析预留给独立专家模式，"

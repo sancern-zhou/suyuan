@@ -21,9 +21,9 @@ logger = structlog.get_logger(__name__)
 # 报告 DAG 专家节点集合：这些模式必须提供 task_contract 并受交付物粒度校验
 EXPERT_NODE_MODES = frozenset({"expert_meteorology", "expert_analysis"})
 MAX_EXPERT_NODE_DELIVERABLES = 3
-# 报告父 Agent 只允许取数与领域专家节点，禁止子节点越权成稿或再次编排。
+# 报告父 Agent 只允许层级化问数与领域专家节点，禁止子节点越权成稿或再次编排；
+# 综合问数 query_monitoring 不再兜底：层级不明确由报告 Agent 先向用户确认。
 REPORT_NODE_ALLOWED_MODES = frozenset({
-    "query_monitoring",
     "query_monitoring_station",
     "query_monitoring_city",
     "query_forecast",
@@ -36,7 +36,6 @@ _DEFAULT_EXPERT_NODE_LIMITS = {
     "expert_analysis": {"max_iterations": 20, "timeout_seconds": 360},
     "expert": {"max_iterations": 30, "timeout_seconds": 480},
     # 固定问数流程由运行时约束为最多四轮。
-    "query_monitoring": {"max_iterations": 4, "timeout_seconds": 420},
     "query_monitoring_station": {"max_iterations": 4, "timeout_seconds": 420},
     "query_monitoring_city": {"max_iterations": 4, "timeout_seconds": 420},
     "query_forecast": {"max_iterations": 4, "timeout_seconds": 420},
@@ -45,7 +44,7 @@ _DEFAULT_EXPERT_NODE_LIMITS = {
 
 WORKFLOW_DAG_EXAMPLE = (
     '{"workflow": {"workflow_id": "air-quality-report", "nodes": ['
-    '{"task_id": "air-data", "target_mode": "query_monitoring", "goal": "查询指定区域和时间范围的空气质量监测数据"}, '
+    '{"task_id": "station-data", "target_mode": "query_monitoring_station", "goal": "查询指定站点和时间范围的站点小时监测数据"}, '
     '{"task_id": "weather-data", "target_mode": "query_forecast", "goal": "获取同期地面气象观测与预报数据"}, '
     '{"task_id": "cause-analysis", "target_mode": "expert_analysis", '
     '"goal": "基于上游数据完成污染成因研判，输出结论、证据和缺口", '
@@ -61,11 +60,13 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "节点可用可选 phase 字段打用户可读的阶段名（如'取数与质检'/'气象分箱研判'/'整合成稿'），"
     "同阶段节点共用一个名字，面板按阶段分组展示故事线；用业务语言命名，不用编排术语。"
     "领域拆分建议：监测历史取数按层级拆分——站点小时/日与站点目录拆 query_monitoring_station，"
-    "城市口径与全国对比拆 query_monitoring_city，层级混合才用 query_monitoring；"
+    "城市口径与全国对比拆 query_monitoring_city；层级混合拆成站点+城市两个节点，"
+    "层级不明确先向用户确认口径，禁止用 query_monitoring 兜底；"
     "气象实况/预报与空气质量预报数据拆 query_forecast，与监测节点可并行；"
     "气象条件、输送通道、静稳/边界层形势拆 expert_meteorology；浓度特征、超标统计、"
     "组分解读、成因研判拆 expert_analysis；交叉归因由你自己整合（整合阶段禁止重新取数）。"
-    "报告编排禁止综合问数（query）子节点：监测历史按层级拆 query_monitoring_station / query_monitoring_city，气象与预报用 query_forecast；"
+    "报告编排禁止综合问数（query / query_monitoring）子节点：监测历史按层级拆 query_monitoring_station（站点）或 "
+    "query_monitoring_city（城市），层级不明确先向用户确认口径；气象与预报用 query_forecast；"
     "综合 expert 也不对报告 DAG 暴露。"
     "**问数节点轮次硬约束**：固定工作流由运行时控制为最多 4 轮且失败项最多补查一次；"
     "取数节点必须多表探查一次完成——同库数据用一条合法的 JOIN/UNION/CTE SQL 覆盖所需表和口径，"
@@ -360,10 +361,11 @@ class RunAgentWorkflowTool(LLMTool):
                 ]
                 if disallowed_nodes:
                     return self._failure(
-                        "报告 DAG 子节点仅允许 query_monitoring / query_monitoring_station / "
+                        "报告 DAG 子节点仅允许 query_monitoring_station / "
                         "query_monitoring_city / query_forecast / "
                         "expert_meteorology / expert_analysis；"
                         "监测历史按层级拆 query_monitoring_station（站点）或 query_monitoring_city（城市），"
+                        "层级不明确先向用户确认口径，不要使用综合问数 query_monitoring 兜底；"
                         "气象与预报用 query_forecast，其他模式不得作为报告子节点。"
                         f"越界节点：{', '.join(disallowed_nodes)}"
                     )

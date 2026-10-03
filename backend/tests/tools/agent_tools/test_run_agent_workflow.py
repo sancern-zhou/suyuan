@@ -451,7 +451,7 @@ async def test_report_mode_allows_whitelisted_modes(monkeypatch):
         workflow={
             "workflow_id": "report-wl",
             "nodes": [
-                {"task_id": "air", "target_mode": "query_monitoring", "goal": "监测取数"},
+                {"task_id": "air", "target_mode": "query_monitoring_station", "goal": "站点监测取数"},
                 {"task_id": "met", "target_mode": "expert_meteorology", "goal": "气象研判",
                  "task_contract": {"protocol_version": "workflow.v1", "question": "静稳形势",
                                    "deliverables": ["静稳指数与输送通道结论"]}},
@@ -462,7 +462,35 @@ async def test_report_mode_allows_whitelisted_modes(monkeypatch):
         },
     )
     assert result["success"] is True
-    assert set(calls) == {"query_monitoring", "expert_meteorology", "expert_analysis"}
+    assert set(calls) == {"query_monitoring_station", "expert_meteorology", "expert_analysis"}
+
+
+@pytest.mark.asyncio
+async def test_report_mode_rejects_generic_monitoring_nodes(monkeypatch):
+    """报告编排不再使用综合问数兜底：query_monitoring 节点整单拒绝并要求先确认层级。"""
+    executed = []
+
+    async def fake_execute(self, **kwargs):
+        executed.append(kwargs["target_mode"])
+        raise AssertionError("sub agent must not be invoked")
+
+    monkeypatch.setattr(CallSubAgentTool, "execute", fake_execute)
+    context = SimpleNamespace(runtime_mode="report", session_id="report_session_x")
+    result = await RunAgentWorkflowTool().execute(
+        context=context,
+        workflow={
+            "workflow_id": "report-monitoring",
+            "nodes": [
+                {"task_id": "air", "target_mode": "query_monitoring", "goal": "监测取数"},
+            ],
+        },
+    )
+    assert result["success"] is False
+    assert "query_monitoring_station" in result["result"]
+    assert "query_monitoring_city" in result["result"]
+    assert "向用户确认" in result["result"]
+    assert "air" in result["result"]
+    assert executed == []
 
 
 @pytest.mark.asyncio
