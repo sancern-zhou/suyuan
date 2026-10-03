@@ -18,21 +18,14 @@ sources:
     locator: city_aqi_publish_history / CityDayAQIPublishHistory / CityAQIPublishHistory
     usage: "execute_sql_query 白名单表；字段口径 PM2.5=pM2_5_Decimal、臭氧8小时=o3_8h"
     granularity: 逐小时/逐日（仅城市口径）
-    caveats: "该城市发布历史数据域仅城市口径；国控站点小时/日长历史直接用 execute_crawler_sql_query，不要在 execute_sql_query 中试探 dat_station_hour/dat_station_day"
+    caveats: "仅城市口径，无任何站点表；站点小时/日历史直接用 execute_crawler_sql_query，不要在本工具试探站点表名"
 
-  - domain: 气象与空气质量预报
+  - domain: 气象（历史实况与预报）及空气质量预报
     route: tool
     locator: get_weather_data / get_weather_forecast / query_airdata_platform
-    usage: "气象实况与多时效预报用 get_weather_data/get_weather_forecast；空气质量预报产品用 query_airdata_platform；交付时标注起报时间与时效"
+    usage: "历史实况回看与多时效预报用 get_weather_data/get_weather_forecast（lat/lon + past_days/hourly/daily）；空气质量预报产品用 query_airdata_platform；交付时标注起报时间与时效"
     granularity: 逐小时/3小时间隔/逐日
-    caveats: "预报数据的静稳/扩散形势研判归 expert_meteorology；平台 SQL 库均无气象实况表，禁止在其中寻找气象数据"
-
-  - domain: 气象（历史实况/再分析）
-    route: tool
-    locator: get_weather_data
-    usage: "历史气象回看首选（query/expert 模式均可用）；lat/lon + past_days 取历史，hourly/daily 选粒度；专家模式另有 get_universal_meteorology"
-    granularity: 逐小时/逐日
-    caveats: "平台 SQL 库（execute_sql_query/execute_crawler_sql_query/execute_postgres_sql_query）均无气象实况表，禁止在其中寻找气象数据"
+    caveats: "预报数据的静稳/扩散形势研判归 expert_meteorology；平台 SQL 库（execute_sql_query/execute_crawler_sql_query/execute_postgres_sql_query）均无气象实况表，禁止在其中寻找气象数据"
 
   - domain: 空气质量（全国城市对比）
     route: tool
