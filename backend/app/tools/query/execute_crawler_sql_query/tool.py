@@ -31,7 +31,7 @@ CRAWLER_SQL_TABLES = [
     "Station",
 ]
 
-MAX_LIMIT = 1000
+MAX_LIMIT = 5000
 DEFAULT_LIMIT = 50
 
 _engine = None
@@ -107,7 +107,7 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
                         "minimum": 1,
                         "maximum": MAX_LIMIT,
                         "default": DEFAULT_LIMIT,
-                        "description": "未在 SQL 中指定 LIMIT 时使用的返回上限；最大 1000。",
+                        "description": f"未在 SQL 中指定 LIMIT 时使用的返回上限；最大 {MAX_LIMIT}。",
                     },
                 },
             },
@@ -288,7 +288,7 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
 
         limit_match = re.search(r"\blimit\s+(\d+)\b", sql, re.IGNORECASE)
         if not limit_match:
-            return "", "LIMIT 必须是 1 到 1000 的整数。"
+            return "", f"LIMIT 必须是 1 到 {MAX_LIMIT} 的整数。"
         limit_value = int(limit_match.group(1))
         if limit_value < 1:
             return "", "LIMIT 必须大于 0。"
