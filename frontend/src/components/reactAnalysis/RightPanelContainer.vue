@@ -197,7 +197,7 @@
 
       <WorkflowPanel
         v-if="activeTab === 'workflow' && sessionId"
-        class="panel-content"
+        class="panel-content workflow-panel-host"
         :session-id="sessionId"
       />
 
