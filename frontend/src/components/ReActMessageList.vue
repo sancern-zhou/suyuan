@@ -284,15 +284,18 @@
       </div>
     </div>
 
-    <div
-      v-if="isAnalyzing"
-      class="task-progress-status"
-      role="status"
-      aria-live="polite"
-      aria-label="任务执行中"
-    >
+    <div v-if="isAnalyzing" class="task-progress-status" aria-label="Agent 任务进度">
       <span class="thinking-indicator" aria-hidden="true"></span>
-      <span>任务执行中，完成后显示总用时</span>
+      <div class="task-progress-copy">
+        <div class="task-progress-main">
+          <span class="task-progress-stage" role="status" aria-live="polite">{{ currentProgressStatus }}</span>
+          <span class="task-progress-elapsed" aria-live="off">{{ runningElapsedText }}</span>
+        </div>
+        <div v-if="currentProgressTip" class="task-progress-tip">
+          <span>小技巧</span>
+          <span>{{ currentProgressTip }}</span>
+        </div>
+      </div>
     </div>
 
     <!-- 当前轮实时分析过程：默认折叠，用户可点击展开查看 -->
@@ -396,6 +399,11 @@ import {
 } from '@/services/messageAttachmentPreview.js'
 import { getAgentMode } from '@/config/agentModes.js'
 import { projectConfig } from '@/config/projectConfig.js'
+import {
+  formatRunningElapsed,
+  getAgentProgressStatus,
+  selectAgentProgressTip
+} from './agentPlatform/agentProgressPresentation.js'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import { inlineChartImages, renderChartPlaceholders } from '@/services/inlineChartImages.js'
 import AuthenticatedImage from './AuthenticatedImage.vue'
@@ -1155,6 +1163,42 @@ const buildProcessItems = (messages, options = {}) => {
 }
 
 const liveProcessItems = computed(() => buildProcessItems(executingProcessMessages.value))
+const runningElapsedSeconds = ref(0)
+const progressTipSeed = ref(0)
+let progressStartedAt = 0
+let progressTimer = null
+
+const currentProgressStatus = computed(() => getAgentProgressStatus(liveProcessItems.value, props.agentMode))
+const runningElapsedText = computed(() => formatRunningElapsed(runningElapsedSeconds.value))
+const currentProgressTip = computed(() => {
+  if (runningElapsedSeconds.value < 6) return ''
+  const rotationIndex = Math.floor((runningElapsedSeconds.value - 6) / 10)
+  return selectAgentProgressTip(props.agentMode, rotationIndex, progressTipSeed.value)
+})
+
+const stopProgressTimer = () => {
+  if (progressTimer !== null) window.clearInterval(progressTimer)
+  progressTimer = null
+}
+
+const startProgressTimer = () => {
+  stopProgressTimer()
+  progressStartedAt = Date.now()
+  runningElapsedSeconds.value = 0
+  const latestUser = [...props.messages].reverse().find(message => getMessageType(message) === 'user')
+  progressTipSeed.value = String(latestUser?.id || props.sessionId || props.agentMode)
+    .split('')
+    .reduce((total, char) => total + char.charCodeAt(0), 0)
+  progressTimer = window.setInterval(() => {
+    runningElapsedSeconds.value = Math.floor((Date.now() - progressStartedAt) / 1000)
+  }, 1000)
+}
+
+watch(() => [props.isAnalyzing, props.sessionId], ([analyzing, sessionId], previous = []) => {
+  const [wasAnalyzing, previousSessionId] = previous
+  if (analyzing && (!wasAnalyzing || sessionId !== previousSessionId)) startProgressTimer()
+  else if (!analyzing) stopProgressTimer()
+}, { immediate: true })
 
 const getProcessItemsForFinal = (finalMessage, allMessages) => {
   return buildProcessItems(getUnifiedProcessMessages(finalMessage, allMessages), { finalized: true })
@@ -1298,6 +1342,7 @@ watch(
 // 清理滚动事件监听
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
+  stopProgressTimer()
   if (copiedUserMessageTimer) {
     clearTimeout(copiedUserMessageTimer)
   }
@@ -2444,15 +2489,52 @@ const downloadPreviewedImage = async () => {
 
 .task-progress-status {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 10px;
   margin: 6px 0 10px;
-  padding: 9px 12px;
+  padding: 10px 12px;
   color: var(--text-1);
   font-size: 13px;
-  font-weight: 500;
   line-height: 1.6;
   animation: fadeIn 0.2s;
+}
+
+.task-progress-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.task-progress-main {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+}
+
+.task-progress-stage {
+  font-weight: 600;
+}
+
+.task-progress-elapsed {
+  color: var(--text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-progress-tip {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.task-progress-tip > span:first-child {
+  color: var(--primary-color, #2878ff);
+  font-weight: 600;
 }
 
 .thinking-indicator {
@@ -2461,6 +2543,7 @@ const downloadPreviewedImage = async () => {
   flex: 0 0 10px;
   border-radius: 50%;
   background: #6f7f97;
+  margin-top: 6px;
   animation: thinking-indicator-pulse 1.2s ease-in-out infinite;
 }
 
