@@ -14,7 +14,7 @@ Session支持：
 from contextlib import nullcontext
 import asyncio
 import json
-from typing import Dict, Any, Literal, Optional, List
+from typing import Dict, Any, Callable, Literal, Optional, List
 import structlog
 from datetime import datetime
 import uuid
@@ -341,6 +341,7 @@ class CallSubAgentTool(LLMTool):
         profile: Optional[str] = None,
         run_in_background: bool = False,
         _upstream_handles: Optional[List[Dict[str, Any]]] = None,
+        _on_session_started: Optional[Callable[[str], None]] = None,
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
         """
@@ -687,11 +688,20 @@ class CallSubAgentTool(LLMTool):
                     query=effective_goal,
                     parent_mode=parent_mode,
                     child_mode=target_mode,
+                    task_id=effective_task_id,
+                    parent_task_id=parent_task_id,
                     snapshot=snapshot,
                 )
 
             workflow_runtime.set_persist(persist_workflow_snapshot)
             persist_workflow_snapshot(workflow_runtime.snapshot())
+            self._persist_turn_start(
+                session_id=session_id,
+                user_query=effective_goal,
+                task_id=effective_task_id,
+            )
+            if _on_session_started is not None:
+                _on_session_started(session_id)
             if workflow_runtime.check_deadline(workflow_run.run_id):
                 return {
                     "status": "cancelled",
@@ -914,7 +924,13 @@ class CallSubAgentTool(LLMTool):
                             ),
                         ):
                             # Capture the actual streaming time for later latency review.
-                            turn_events.append({**event, "_recorded_at": datetime.now().isoformat()})
+                            recorded_event = {
+                                **event,
+                                "_recorded_at": datetime.now().isoformat(),
+                                "_trace_id": uuid.uuid4().hex,
+                            }
+                            turn_events.append(recorded_event)
+                            self._persist_execution_event(session_id, recorded_event)
                 return turn_events
 
             result_events = await run_child_turn(
@@ -1696,6 +1712,64 @@ class CallSubAgentTool(LLMTool):
         """生成子Agent session_id"""
         return f"{parent_mode}__to__{child_mode}__{uuid.uuid4().hex}"
 
+    @staticmethod
+    def _compact_execution_event(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        kind = event.get("type")
+        if kind not in {"tool_call", "tool_result", "agent_finish"}:
+            return None
+        data = event.get("data") or {}
+        if not isinstance(data, dict):
+            data = {}
+        entry: Dict[str, Any] = {"type": kind}
+        trace_id = event.get("_trace_id")
+        if trace_id:
+            entry["id"] = str(trace_id)
+        timestamp = event.get("_recorded_at") or event.get("timestamp")
+        if timestamp:
+            entry["timestamp"] = str(timestamp)
+        if kind in {"tool_call", "tool_result"}:
+            entry["tool_name"] = str(
+                data.get("tool_name") or data.get("name") or event.get("generator")
+                or event.get("tool") or "unknown"
+            )[:120]
+        if kind == "tool_result":
+            result = data.get("result")
+            entry["success"] = not bool(data.get("is_error")) and not (
+                isinstance(result, dict) and result.get("success") is False
+            )
+        return entry
+
+    @staticmethod
+    def _persist_turn_start(*, session_id: str, user_query: str, task_id: str) -> None:
+        """Make the current task visible while the child is still running."""
+        session = session_manager.get_session(session_id)
+        if session is None:
+            return
+        last = session.conversation_history[-1] if session.conversation_history else {}
+        if last.get("role") != "user" or last.get("content") != user_query:
+            session.conversation_history.append({
+                "id": f"{task_id}:user:{uuid.uuid4().hex}",
+                "role": "user",
+                "content": user_query,
+                "timestamp": datetime.now().isoformat(),
+            })
+            session_manager.append_session_transcript(session, update_timestamp=True)
+
+    @classmethod
+    def _persist_execution_event(cls, session_id: str, event: Dict[str, Any]) -> None:
+        """Append one sanitized tool event so inspectors can follow live progress."""
+        entry = cls._compact_execution_event(event)
+        if entry is None:
+            return
+        session = session_manager.get_session(session_id)
+        if session is None:
+            return
+        history = list(session.metadata.get("execution_history") or [])
+        entry["sequence"] = int(history[-1].get("sequence") or 0) + 1 if history else 1
+        history.append(entry)
+        session.metadata["execution_history"] = history[-500:]
+        session_manager.save_session_metadata(session, update_timestamp=True)
+
     def _update_session(
         self,
         session_id: str,
@@ -1727,11 +1801,13 @@ class CallSubAgentTool(LLMTool):
             )
 
         # 添加对话历史
-        session.conversation_history.append({
-            "role": "user",
-            "content": user_query,
-            "timestamp": datetime.now().isoformat()
-        })
+        last_message = session.conversation_history[-1] if session.conversation_history else {}
+        if last_message.get("role") != "user" or last_message.get("content") != user_query:
+            session.conversation_history.append({
+                "role": "user",
+                "content": user_query,
+                "timestamp": datetime.now().isoformat()
+            })
 
         if task_id or parent_task_id or task_contract or result_schema:
             workflow = dict(session.metadata.get("workflow") or {})
@@ -1751,27 +1827,12 @@ class CallSubAgentTool(LLMTool):
             # Keep a compact, durable trace beside the child transcript. Raw tool
             # inputs and outputs can be large or sensitive and are deliberately omitted.
             history = list(session.metadata.get("execution_history") or [])
+            persisted_ids = {str(item.get("id")) for item in history if item.get("id")}
             for event in result_events:
-                kind = event.get("type")
-                if kind not in {"tool_call", "tool_result", "agent_finish"}:
+                entry = self._compact_execution_event(event)
+                if entry is None or entry.get("id") in persisted_ids:
                     continue
-                data = event.get("data") or {}
-                if not isinstance(data, dict):
-                    data = {}
-                entry = {"sequence": len(history) + 1, "type": kind}
-                timestamp = event.get("_recorded_at") or event.get("timestamp")
-                if timestamp:
-                    entry["timestamp"] = str(timestamp)
-                if kind in {"tool_call", "tool_result"}:
-                    entry["tool_name"] = str(
-                        data.get("tool_name") or data.get("name") or event.get("generator")
-                        or event.get("tool") or "unknown"
-                    )[:120]
-                if kind == "tool_result":
-                    result = data.get("result")
-                    entry["success"] = not bool(data.get("is_error")) and not (
-                        isinstance(result, dict) and result.get("success") is False
-                    )
+                entry["sequence"] = int(history[-1].get("sequence") or 0) + 1 if history else 1
                 history.append(entry)
             session.metadata["execution_history"] = history
         session.conversation_history.append({
@@ -1803,6 +1864,8 @@ class CallSubAgentTool(LLMTool):
         query: str,
         parent_mode: str,
         child_mode: str,
+        task_id: str,
+        parent_task_id: Optional[str],
         snapshot: Dict[str, Any],
     ) -> None:
         """Persist runtime state independently from the final transcript."""
@@ -1818,4 +1881,14 @@ class CallSubAgentTool(LLMTool):
                 is_sub_agent_session=True,
             )
         session.metadata["workflow_runtime"] = snapshot
+        workflow = dict(session.metadata.get("workflow") or {})
+        workflow.update({
+            "protocol_version": "workflow.v1",
+            "task_id": task_id,
+            "parent_task_id": parent_task_id,
+            "status": "running",
+            "workflow_runtime": snapshot,
+            "updated_at": datetime.now().isoformat(),
+        })
+        session.metadata["workflow"] = workflow
         session_manager.save_session_metadata(session, update_timestamp=True)

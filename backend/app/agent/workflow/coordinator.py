@@ -568,6 +568,13 @@ class WorkflowCoordinator:
         if self.persist and self._persistence_ready:
             self.persist(self.snapshot())
 
+    def bind_node_session(self, task_id: str, session_id: str) -> None:
+        """Expose a running child session before its node returns."""
+        if task_id not in self.node_specs or not session_id:
+            return
+        self.node_sessions[task_id] = session_id
+        self._persist_snapshot({})
+
     def _graph_nodes(self):
         return [self.graph._nodes[node.task_id] for node in self.definition.nodes]
 

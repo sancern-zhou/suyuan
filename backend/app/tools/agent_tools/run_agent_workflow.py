@@ -434,6 +434,9 @@ class RunAgentWorkflowTool(LLMTool):
                     repair_attempts=2 if payload.get("result_schema") else max(0, min(node.max_attempts - 1, 2)),
                     _force_isolated_session=True,
                     _upstream_handles=upstream_handles,
+                    _on_session_started=lambda child_session_id: coordinator.bind_node_session(
+                        node.task_id, child_session_id
+                    ),
                 )
 
             coordinator = WorkflowCoordinator(

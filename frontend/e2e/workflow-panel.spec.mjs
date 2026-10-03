@@ -5,7 +5,7 @@ const definitions = [
   { task_id: 'weather', title: '气象数据', target_mode: 'query_forecast', goal: '获取同期气象数据' },
   { task_id: 'analysis', title: '污染分析', target_mode: 'expert_analysis', goal: '分析污染变化与成因', dependencies: ['monitoring', 'weather'] }
 ]
-const graph = Object.fromEntries(definitions.map(node => [node.task_id, { status: 'succeeded', dependencies: node.dependencies || [] }]))
+const graph = Object.fromEntries(definitions.map(node => [node.task_id, { status: node.task_id === 'analysis' ? 'running' : 'succeeded', dependencies: node.dependencies || [] }]))
 const workflow = {
   workflow_id: 'workflow-review', status: 'succeeded', job_status: 'succeeded', active: false,
   snapshot: {
@@ -16,6 +16,7 @@ const workflow = {
 }
 
 test('workflow is an ordered list and child agent opens in a review view', async ({ page }) => {
+  let historyReads = 0
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname
     if (!path.startsWith('/api/')) return route.continue()
@@ -24,12 +25,17 @@ test('workflow is an ordered list and child agent opens in a review view', async
     if (path.endsWith('/resources')) return route.fulfill({ json: { resources: [], total: 0, resource_version: 0 } })
     if (path.endsWith('/workflows')) return route.fulfill({ json: { workflows: [workflow], total: 1 } })
     if (path.endsWith('/events')) return route.fulfill({ json: { events: [] } })
-    if (path.endsWith('/nodes/analysis/history')) return route.fulfill({ json: {
-      task_id: 'analysis', status: 'succeeded', child_session_id: 'report__to__expert__1', child_mode: 'expert_analysis',
-      conversation: [{ id: 'q', role: 'user', content: '分析污染变化与成因' }, { id: 'a', role: 'assistant', content: 'PM2.5 在静稳时段明显累积。' }],
-      node_events: [{ sequence: 1, type: 'task.running', status: 'running', timestamp: '2026-10-03T08:00:00Z' }], child_events: [],
-      execution_history: [{ sequence: 1, type: 'tool_call', tool_name: 'air_quality' }, { sequence: 2, type: 'tool_result', tool_name: 'air_quality', success: true }], has_more: false
-    } })
+    if (path.endsWith('/nodes/analysis/history')) {
+      historyReads += 1
+      const completed = historyReads > 1
+      return route.fulfill({ json: {
+        task_id: 'analysis', status: completed ? 'succeeded' : 'running', child_session_id: 'report__to__expert__1', child_mode: 'expert_analysis',
+        progress: { label: completed ? '正在整理最终回复' : '正在调用 air_quality', tool_calls: 1, tool_results: completed ? 1 : 0, failed_tools: 0 },
+        conversation: [{ id: 'q', role: 'user', content: '分析污染变化与成因' }, ...(completed ? [{ id: 'a', role: 'assistant', content: 'PM2.5 在静稳时段明显累积。' }] : [])],
+        node_events: [{ sequence: 1, type: 'task.running', status: 'running', timestamp: '2026-10-03T08:00:00Z' }], child_events: [],
+        execution_history: [{ sequence: 1, type: 'tool_call', tool_name: 'air_quality', timestamp: '2026-10-03T08:00:02Z' }, ...(completed ? [{ sequence: 2, type: 'tool_result', tool_name: 'air_quality', success: true, timestamp: '2026-10-03T08:00:05Z' }] : [])], has_more: false
+      } })
+    }
     return route.fulfill({ json: { sessions: [], stats: {}, tasks: [], items: [], data: [] } })
   })
 
@@ -45,8 +51,10 @@ test('workflow is an ordered list and child agent opens in a review view', async
 
   await page.getByRole('button', { name: /污染分析/ }).click()
   await expect(page.getByRole('article', { name: '子 Agent 对话审查' })).toBeVisible()
-  await expect(page.getByText('PM2.5 在静稳时段明显累积。')).toBeVisible()
-  await expect(page.getByText('调用 air_quality')).toBeVisible()
+  await expect(page.getByText('正在调用 air_quality')).toBeVisible()
+  await expect(page.getByText('调用中')).toBeVisible()
+  await expect(page.getByText('PM2.5 在静稳时段明显累积。')).toBeVisible({ timeout: 4_000 })
+  await expect(page.locator('.activity-main small')).toHaveText('已完成')
   await page.screenshot({ path: test.info().outputPath('subagent-review.png') })
 
   await page.setViewportSize({ width: 390, height: 844 })
