@@ -84,6 +84,33 @@ async def test_run_agent_workflow_rejects_overloaded_expert_node():
     assert "超过专家节点上限" in result["result"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("node,expect", [
+    (
+        {"task_id": "met-all", "target_mode": "expert_meteorology", "goal": "气象集中研判"},
+        "缺少 task_contract",
+    ),
+    (
+        {"task_id": "analysis-all", "target_mode": "expert_analysis", "goal": "集中研判",
+         "task_contract": {"protocol_version": "workflow.v1", "question": "成因"}},
+        "缺少 deliverables",
+    ),
+    (
+        {"task_id": "analysis-empty", "target_mode": "expert_analysis", "goal": "集中研判",
+         "task_contract": {"protocol_version": "workflow.v1", "question": "成因", "deliverables": []}},
+        "为空",
+    ),
+])
+async def test_report_expert_node_requires_contract_with_deliverables(node, expect):
+    """专家节点必须携带 task_contract.deliverables（1~3 项），缺失即整单拒绝。"""
+    result = await RunAgentWorkflowTool().execute(
+        workflow={"workflow_id": "granularity", "nodes": [node]},
+    )
+    assert result["success"] is False
+    assert expect in result["result"]
+    assert "拆" in result["result"]
+
+
 def test_call_sub_agent_extracts_current_tool_result_file_handles():
     events = [{
         "type": "tool_result",
@@ -231,8 +258,12 @@ async def test_run_agent_workflow_applies_domain_expert_limits(monkeypatch):
         workflow={
             "workflow_id": "specialist-limits",
             "nodes": [
-                {"task_id": "weather", "target_mode": "expert_meteorology", "goal": "气象分析"},
-                {"task_id": "analysis", "target_mode": "expert_analysis", "goal": "常规分析"},
+                {"task_id": "weather", "target_mode": "expert_meteorology", "goal": "气象分析",
+                 "task_contract": {"protocol_version": "workflow.v1", "question": "静稳形势",
+                                   "deliverables": ["静稳指数"]}},
+                {"task_id": "analysis", "target_mode": "expert_analysis", "goal": "常规分析",
+                 "task_contract": {"protocol_version": "workflow.v1", "question": "超标统计",
+                                   "deliverables": ["超标频次统计"]}},
             ],
         },
     )
@@ -421,8 +452,12 @@ async def test_report_mode_allows_whitelisted_modes(monkeypatch):
             "workflow_id": "report-wl",
             "nodes": [
                 {"task_id": "air", "target_mode": "query_monitoring", "goal": "监测取数"},
-                {"task_id": "met", "target_mode": "expert_meteorology", "goal": "气象研判"},
-                {"task_id": "air-expert", "target_mode": "expert_analysis", "goal": "数据研判"},
+                {"task_id": "met", "target_mode": "expert_meteorology", "goal": "气象研判",
+                 "task_contract": {"protocol_version": "workflow.v1", "question": "静稳形势",
+                                   "deliverables": ["静稳指数与输送通道结论"]}},
+                {"task_id": "air-expert", "target_mode": "expert_analysis", "goal": "数据研判",
+                 "task_contract": {"protocol_version": "workflow.v1", "question": "超标统计",
+                                   "deliverables": ["超标频次与时空对比"]}},
             ],
         },
     )

@@ -518,29 +518,44 @@ class RunAgentWorkflowTool(LLMTool):
 
     @staticmethod
     def _validate_expert_node_granularity(node: Mapping[str, Any]) -> Optional[str]:
-        """Reject expert nodes that bundle too many independent deliverables.
+        """Enforce one-question-per-expert-node with a bounded deliverables list.
 
-        The model is free to omit task_contract for legacy/simple calls. When it
-        provides deliverables, the list is an executable planning signal and is
-        bounded so one specialist cannot become a serial mini-workflow.
+        提示词约束已被证实不足以阻止集中分配（实测单节点被塞 4-5 个分析问题，
+        研判拖到 25+ 轮）：报告 DAG 内的专家节点必须携带 task_contract.deliverables
+        （1~MAX_EXPERT_NODE_DELIVERABLES 项），缺失即整单拒绝并指导拆分。
         """
         mode = str(node.get("target_mode") or "")
         if mode not in EXPERT_NODE_MODES:
             return None
+        task_id = str(node.get("task_id") or "<unknown>")
         contract = node.get("task_contract")
         if not isinstance(contract, Mapping):
-            return None
+            return (
+                f"专家节点 {task_id} 缺少 task_contract：每个专家节点必须且只能回答一个分析问题，"
+                f"请在 task_contract 中给出 protocol_version=workflow.v1、question 和 "
+                f"deliverables（1~{MAX_EXPERT_NODE_DELIVERABLES} 项）；"
+                f"若有多个独立分析问题，必须拆成多个并行 {mode} 节点。"
+            )
         deliverables = contract.get("deliverables")
         if deliverables is None:
-            return None
+            return (
+                f"专家节点 {task_id} 的 task_contract 缺少 deliverables："
+                f"必须列出 1~{MAX_EXPERT_NODE_DELIVERABLES} 项交付物以界定该节点回答的单一分析问题；"
+                "多个独立问题请拆成多个并行节点。"
+            )
         if not isinstance(deliverables, list):
             return (
-                f"节点 {node.get('task_id') or '<unknown>'} 的 task_contract.deliverables 必须是数组；"
+                f"节点 {task_id} 的 task_contract.deliverables 必须是数组；"
                 "每个专家节点只允许描述一个分析问题。"
+            )
+        if len(deliverables) == 0:
+            return (
+                f"节点 {task_id} 的 task_contract.deliverables 为空："
+                f"至少给出 1 项交付物；多个独立问题请拆成多个并行 {mode} 节点。"
             )
         if len(deliverables) > MAX_EXPERT_NODE_DELIVERABLES:
             return (
-                f"节点 {node.get('task_id') or '<unknown>'} 包含 {len(deliverables)} 项交付物，"
+                f"节点 {task_id} 包含 {len(deliverables)} 项交付物，"
                 f"超过专家节点上限 {MAX_EXPERT_NODE_DELIVERABLES}；请按独立分析问题拆成多个并行"
                 f" {mode} 节点，并用 dependencies 表达真正的先后关系。"
             )
