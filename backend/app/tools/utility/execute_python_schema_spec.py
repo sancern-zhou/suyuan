@@ -17,11 +17,11 @@ def test_execute_python_schema_describes_general_capability_and_bash_boundary():
     assert "查看文件、搜索文本、检查进程或调用现成 CLI" in description
     assert "优先使用 bash" in description
     assert "不限制于数据分析、Excel或可视化" in description
-    assert "backend/app/tools/utility/execute_python_data_manual.md" in description
-    assert "backend/app/tools/utility/execute_python_chart_manual.md" in description
-    assert "backend/app/tools/utility/execute_python_report_manual.md" in description
-    assert "read_file(path=...)" in description
-    assert "混合任务" in description
+    assert "backend/app/tools/utility/ 下的 execute_python_data_manual.md" in description
+    assert "execute_python_chart_manual.md" in description
+    assert "execute_python_report_manual.md" in description
+    assert "配备 read_file 的模式" in description
+    assert "问数模式直接编写脚本即可" in description
 
 
 def test_python_is_primary_report_plotting_tool_with_shared_style():
