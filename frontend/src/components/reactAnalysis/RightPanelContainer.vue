@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="viz-wrapper" :style="panelStyle">
+  <div v-if="visible" class="viz-wrapper" :class="{ 'workflow-active': activeTab === 'workflow' }" :style="panelStyle">
     <!-- 报告生成专家 -->
     <template v-if="assistantMode === 'report-generation-expert'">
       <div class="right-panel-tabs" role="tablist" aria-label="报告资源面板">
@@ -377,6 +377,10 @@ const handleBoardSnapshotConfirm = (snapshot) => {
   height: 100%;
   background: #f8fafc;
   border-left: 1px solid #edf1f7;
+}
+
+.viz-wrapper.workflow-active {
+  min-width: min(360px, calc(100vw - 64px));
 }
 
 .right-panel-tabs {
