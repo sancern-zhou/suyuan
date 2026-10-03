@@ -15,6 +15,7 @@ Tool Adapter for ReAct Agent - 单一注册源适配器
 from typing import Dict, Any, List, Optional, Callable, Tuple
 from datetime import datetime
 import copy
+import re
 import structlog
 from app.agent.context.data_result_policy import (
     persist_large_inline_data,
@@ -33,6 +34,44 @@ from app.agent.runtime.mode_capabilities import supports_native_multimodal
 logger = structlog.get_logger()
 
 NATIVE_MULTIMODAL_HIDDEN_TOOLS = frozenset({"analyze_image"})
+
+# 固定问数工作流模式：不暴露 read_file，execute_python 的手册引用对其是无效指引。
+QUERY_WORKFLOW_MODES = frozenset({
+    "query_monitoring",
+    "query_monitoring_station",
+    "query_monitoring_city",
+    "query_forecast",
+})
+
+
+def _remove_manual_sentences(text: str) -> str:
+    """去掉文本中引用规范手册/read_file 的句子（问数模式无该工具）。"""
+    sentences = re.split(r"(?<=[。])", text)
+    kept = [
+        sentence for sentence in sentences
+        if sentence and ".md" not in sentence and "手册" not in sentence and "read_file" not in sentence
+    ]
+    return "".join(kept).strip()
+
+
+def _query_mode_execute_python_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """问数子 Agent 的 execute_python schema：剥离规范手册/read_file 引用。
+
+    与 _native_multimodal_read_file_schema 同款的多模式 schema 适配：
+    其他模式仍使用原始描述，问数模式看到的手册指引被整体移除。
+    """
+    adapted = copy.deepcopy(schema)
+    adapted["description"] = _remove_manual_sentences(str(adapted.get("description") or ""))
+    parameters = adapted.get("parameters")
+    code_property = (parameters or {}).get("properties", {}).get("code")
+    if isinstance(code_property, dict) and code_property.get("description"):
+        code_property = dict(code_property)
+        code_property["description"] = _remove_manual_sentences(str(code_property["description"]))
+        properties = dict(parameters["properties"])
+        properties["code"] = code_property
+        adapted["parameters"] = {**parameters, "properties": properties}
+    return adapted
+
 
 def _native_multimodal_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     """Expose native multimodal image attachment while hiding legacy image analysis."""
@@ -792,6 +831,8 @@ def get_tool_schemas(
             schema = tool.get_function_schema()
             if supports_native_multimodal(mode) and tool.name == "read_file":
                 schema = _native_multimodal_read_file_schema(schema)
+            if mode in QUERY_WORKFLOW_MODES and tool.name == "execute_python":
+                schema = _query_mode_execute_python_schema(schema)
             schemas.append(schema)
 
     # ========================================

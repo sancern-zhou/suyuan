@@ -24,6 +24,35 @@ def test_execute_python_schema_describes_general_capability_and_bash_boundary():
     assert "问数模式直接编写脚本即可" in description
 
 
+def test_query_mode_execute_python_schema_strips_manual_references():
+    from app.agent.tool_adapter import _query_mode_execute_python_schema
+
+    base = ExecutePythonTool().get_function_schema()
+    adapted = _query_mode_execute_python_schema(base)
+
+    assert ".md" not in adapted["description"]
+    assert "read_file" not in adapted["description"]
+    assert "手册" not in adapted["description"]
+    assert "load_data(file_path)" in adapted["description"]
+    code_description = adapted["parameters"]["properties"]["code"]["description"]
+    assert ".md" not in code_description
+    # 原始 schema 不被就地修改，其他模式不受影响
+    assert "execute_python_data_manual.md" in base["description"]
+    assert "配备 read_file 的模式" in base["description"]
+
+
+def test_station_mode_tool_schemas_apply_query_adaptation():
+    from app.agent.tool_adapter import get_tool_schemas
+
+    schemas = get_tool_schemas(
+        mode="query_monitoring_station",
+        allowed_tool_names=["execute_python"],
+    )
+    assert len(schemas) == 1 and schemas[0]["name"] == "execute_python"
+    assert ".md" not in schemas[0]["description"]
+    assert "read_file" not in schemas[0]["description"]
+
+
 def test_python_is_primary_report_plotting_tool_with_shared_style():
     schema = ExecutePythonTool().get_function_schema()
     assert "专家/报告模式的静态分析和正式报告图表优先使用 execute_python" in schema["description"]
