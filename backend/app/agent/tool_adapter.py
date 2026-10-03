@@ -711,8 +711,14 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
             tool_wrapper.__doc__ = description
             tool = tool_data.get("tool")
             if tool is not None:
-                tool_wrapper.is_read_only = tool.is_read_only
-                tool_wrapper.concurrency_policy = tool.concurrency_policy
+                # WorkflowTool 系（quick_trace 等）不继承 LLMTool，可能没有
+                # 并发语义属性；工作流编排有副作用，缺省按串行/非只读处理。
+                tool_wrapper.is_read_only = getattr(
+                    tool, "is_read_only", lambda _args=None: False
+                )
+                tool_wrapper.concurrency_policy = getattr(
+                    tool, "concurrency_policy", "serial"
+                )
             return tool_wrapper
 
         tool_wrapper = make_tool_wrapper(tool_name)
