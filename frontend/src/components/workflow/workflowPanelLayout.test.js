@@ -12,6 +12,7 @@ test('workflow uses an ordered stage list instead of a connection diagram', asyn
   assert.match(source, /并行 \$\{stage\.length\} 个节点/)
   assert.match(source, /dependencyLabel\(node\)/)
   assert.doesNotMatch(source, /dag-edges|dag-canvas|<svg/)
+  assert.doesNotMatch(source, /summary-grid|nodeStats/)
 })
 
 test('clicking a node opens a dedicated child agent conversation review', async () => {
