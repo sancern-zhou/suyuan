@@ -51,6 +51,7 @@ test('workflow is an ordered list and child agent opens in a review view', async
 
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByRole('article', { name: '子 Agent 对话审查' })).toBeVisible()
+  expect((await page.locator('.workflow-panel').boundingBox()).width).toBeGreaterThanOrEqual(300)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await page.screenshot({ path: test.info().outputPath('subagent-review-mobile.png') })
 
