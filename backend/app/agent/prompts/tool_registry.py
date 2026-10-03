@@ -235,8 +235,8 @@ QUERY_MONITORING_TOOL_NAMES = [
     "list_session_resources",
     "read_session_resource",
     "publish_session_file",
-    # 上游产物复用与中间产物落地
-    "read_file",
+    # 上游产物复用与中间产物落地（read_file 不进问数流程：
+    # 质检/合并用 execute_python，读上游结果用 read_session_resource）
     "write_file",
     # 监测数据取数（目录解析工具与中台工具成对配置，服务乡镇站编码链路；
     # 综合兜底模式同样保留）
@@ -258,8 +258,7 @@ QUERY_FORECAST_TOOL_NAMES = [
     "list_session_resources",
     "read_session_resource",
     "publish_session_file",
-    # 上游产物复用与中间产物落地
-    "read_file",
+    # 上游产物复用与中间产物落地（read_file 不进问数流程，同上）
     "write_file",
     # 气象实况与预报取数
     "get_weather_data",

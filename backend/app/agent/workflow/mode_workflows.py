@@ -64,8 +64,15 @@ _FORECAST_QUERY_TOOLS = (
 
 _NORMALIZE_TOOLS = (
     "execute_python",
-    "read_file",
     "read_session_resource",
+    "write_file",
+    "publish_session_file",
+)
+
+# normalize 只有"真正动手"的工具才推进阶段（单轮预算）；读结果文件属于输入动作，
+# 不消耗唯一一轮，避免读手册/预览把归一化机会烧掉。
+_NORMALIZE_ADVANCE_TOOLS = (
+    "execute_python",
     "write_file",
     "publish_session_file",
 )
@@ -124,7 +131,7 @@ def _query_definition(
                     "才调用一次 execute_python；否则直接交付。禁止新增数据源查询。"
                 ),
                 allowed_tools=_NORMALIZE_TOOLS,
-                advance_tools=_NORMALIZE_TOOLS,
+                advance_tools=_NORMALIZE_ADVANCE_TOOLS,
                 max_attempts=1,
                 allow_completion=True,
             ),
