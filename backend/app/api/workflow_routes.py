@@ -73,6 +73,17 @@ def _node_history(snapshot: dict[str, Any], task_id: str, child: Any | None, aft
     child_runtime = workflow.get("workflow_runtime") or {}
     child_events = [event for event in child_runtime.get("events") or [] if isinstance(event, dict)][-100:]
     trace = (child.metadata or {}).get("execution_history") or [] if child is not None else []
+    conversation = []
+    if child is not None:
+        for index, message in enumerate(child.conversation_history[-100:]):
+            if not isinstance(message, dict) or message.get("role") not in {"user", "assistant"}:
+                continue
+            conversation.append({
+                "id": str(message.get("id") or f"{task_id}:{index}"),
+                "role": message["role"],
+                "content": message.get("content") or "",
+                "timestamp": message.get("timestamp"),
+            })
     events = [
         {"sequence": int(event.get("sequence") or 0),
          "type": str(event.get("event_type") or "unknown"),
@@ -86,6 +97,7 @@ def _node_history(snapshot: dict[str, Any], task_id: str, child: Any | None, aft
         "status": (snapshot.get("graph") or {}).get(task_id, {}).get("status"),
         "child_session_id": child.session_id if child is not None else None,
         "child_mode": child.child_mode if child is not None else None,
+        "conversation": conversation,
         "answer": next((str(message.get("content") or "") for message in reversed(child.conversation_history)
                         if message.get("role") == "assistant"), "") if child is not None else "",
         "node_events": events,

@@ -41,12 +41,12 @@
       </div>
       <ResourceProductsPanel
         v-if="activeTab === 'files' && sessionId"
-        class="panel-content"
+        class="panel-content workflow-panel-host"
         @open-resource-tab="handleTabChange"
       />
       <WorkflowPanel
         v-if="activeTab === 'workflow' && sessionId"
-        class="panel-content"
+        class="panel-content workflow-panel-host"
         :session-id="sessionId"
       />
       <ReportGenerationPanel
@@ -455,5 +455,11 @@ const handleBoardSnapshotConfirm = (snapshot) => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+.panel-content.workflow-panel-host {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 </style>
