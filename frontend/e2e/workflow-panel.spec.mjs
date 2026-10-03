@@ -41,12 +41,18 @@ test('workflow is an ordered list and child agent opens in a review view', async
   await expect(page.locator('.workflow-stage').first()).toContainText('并行 2 个节点')
   await expect(page.locator('.workflow-stage').nth(1)).toContainText('上游：监测数据、气象数据')
   await expect(page.locator('.workflow-panel svg')).toHaveCount(0)
+  await page.screenshot({ path: test.info().outputPath('workflow-list.png') })
 
   await page.getByRole('button', { name: /污染分析/ }).click()
   await expect(page.getByRole('article', { name: '子 Agent 对话审查' })).toBeVisible()
   await expect(page.getByText('PM2.5 在静稳时段明显累积。')).toBeVisible()
   await expect(page.getByText('调用 air_quality')).toBeVisible()
   await page.screenshot({ path: test.info().outputPath('subagent-review.png') })
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.getByRole('article', { name: '子 Agent 对话审查' })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.screenshot({ path: test.info().outputPath('subagent-review-mobile.png') })
 
   await page.getByRole('button', { name: '执行列表' }).click()
   await expect(page.locator('.workflow-stage-list')).toBeVisible()
