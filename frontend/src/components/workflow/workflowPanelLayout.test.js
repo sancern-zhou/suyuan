@@ -24,7 +24,10 @@ test('clicking a node opens a dedicated child agent conversation review', async 
   assert.match(source, /nodeHistory\.value\?\.conversation/)
   assert.match(source, /refreshNodeHistory/)
   assert.match(source, /closeNodeInspection/)
-  assert.match(source, /执行过程/)
+  assert.match(source, /class="process-message"/)
+  assert.match(source, /window\.setInterval\(refreshNodeHistory, 1200\)/)
+  assert.match(source, /toolActivities/)
+  assert.doesNotMatch(source, /模型思维|思维链/)
 })
 
 test('workflow panel owns a vertical scroll container', async () => {
