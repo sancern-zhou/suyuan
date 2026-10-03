@@ -38,7 +38,11 @@ def test_node_history_resolves_only_parent_linked_child(monkeypatch):
                 {"sequence": 2, "type": "tool_result", "tool_name": "air_quality", "success": True},
             ],
         },
-        conversation_history=[{"role": "assistant", "content": "空气数据摘要"}],
+        conversation_history=[
+            {"id": "question", "role": "user", "content": "查询空气数据", "private": "hidden"},
+            {"id": "answer", "role": "assistant", "content": "空气数据摘要"},
+            {"role": "system", "content": "internal prompt"},
+        ],
     )
     snapshot = {
         "workflow_id": "wf",
@@ -62,6 +66,10 @@ def test_node_history_resolves_only_parent_linked_child(monkeypatch):
 
     first = asyncio.run(lookup())
     assert first["answer"] == "空气数据摘要"
+    assert first["conversation"] == [
+        {"id": "question", "role": "user", "content": "查询空气数据", "timestamp": None},
+        {"id": "answer", "role": "assistant", "content": "空气数据摘要", "timestamp": None},
+    ]
     assert first["has_more"] is True
     assert [item["sequence"] for item in first["execution_history"]] == [1]
     assert [item["sequence"] for item in asyncio.run(lookup(after=1))["execution_history"]] == [2]

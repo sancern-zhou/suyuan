@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="viz-wrapper" :style="panelStyle">
+  <div v-if="visible" class="viz-wrapper" :class="{ 'workflow-active': activeTab === 'workflow' }" :style="panelStyle">
     <!-- 报告生成专家 -->
     <template v-if="assistantMode === 'report-generation-expert'">
       <div class="right-panel-tabs" role="tablist" aria-label="报告资源面板">
@@ -41,12 +41,12 @@
       </div>
       <ResourceProductsPanel
         v-if="activeTab === 'files' && sessionId"
-        class="panel-content"
+        class="panel-content workflow-panel-host"
         @open-resource-tab="handleTabChange"
       />
       <WorkflowPanel
         v-if="activeTab === 'workflow' && sessionId"
-        class="panel-content"
+        class="panel-content workflow-panel-host"
         :session-id="sessionId"
       />
       <ReportGenerationPanel
@@ -379,6 +379,10 @@ const handleBoardSnapshotConfirm = (snapshot) => {
   border-left: 1px solid #edf1f7;
 }
 
+.viz-wrapper.workflow-active {
+  min-width: min(360px, calc(100vw - 64px));
+}
+
 .right-panel-tabs {
   display: flex;
   flex-shrink: 0;
@@ -455,5 +459,11 @@ const handleBoardSnapshotConfirm = (snapshot) => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+.panel-content.workflow-panel-host {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 </style>
