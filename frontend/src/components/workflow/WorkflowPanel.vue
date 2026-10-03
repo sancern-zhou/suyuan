@@ -66,7 +66,6 @@
               </section>
             </div>
           </section>
-          <section v-if="events.length" class="detail-section"><div class="section-heading"><h4>运行事件</h4><span>最近 {{ Math.min(events.length, 20) }} 条</span></div><ol class="event-list"><li v-for="event in recentEvents" :key="eventKey(event)"><span class="event-time">{{ formatTime(event.created_at || event.timestamp) }}</span><span>{{ eventLabel(event) }}</span></li></ol></section>
           <section v-if="failedNodes.length" class="detail-section errors-section"><h4>失败节点</h4><p v-for="node in failedNodes" :key="node.task_id">{{ nodeTitle(node) }}：{{ node.error || '节点执行失败' }}</p></section>
         </article>
       </template>
@@ -103,7 +102,7 @@ const nodeStages = computed(() => {
 })
 const failedNodes = computed(() => nodes.value.filter(node => statusMeta(node.status).key === 'failed'))
 const canCancel = computed(() => ['queued', 'running'].includes(String(selectedStatus.value))); const canResume = computed(() => ['failed', 'running', 'queued'].includes(String(selectedStatus.value)))
-const recentEvents = computed(() => events.value.slice(-20).reverse()); const liveLabel = computed(() => selectedWorkflow.value?.active ? '实时更新中' : '已结束'); const nodeConversation = computed(() => nodeHistory.value?.conversation || [])
+const liveLabel = computed(() => selectedWorkflow.value?.active ? '实时更新中' : '已结束'); const nodeConversation = computed(() => nodeHistory.value?.conversation || [])
 const nodeTimeline = computed(() => {
   if (!nodeHistory.value) return []
   const entries = [...(nodeHistory.value.node_events || []).map(item => ({ ...item, source: 'node' })), ...(nodeHistory.value.child_events || []).map(item => ({ ...item, source: 'child' }))]
@@ -119,8 +118,6 @@ function dependencyLabel(node) { const dependencies = nodeDependencies(node); re
 function nodeDuration(taskId) { const own = (selectedWorkflow.value?.snapshot?.runtime?.events || []).filter(item => item.task_id === taskId && item.timestamp); if (!own.length) return '未开始'; const start = new Date((own.find(item => item.event_type === 'task.running') || own[0]).timestamp).getTime(); const end = new Date(own.at(-1).timestamp).getTime(); if (!Number.isFinite(start) || !Number.isFinite(end)) return '耗时未知'; const elapsed = Math.max(0, Math.round((end - start) / 1000)); return elapsed < 60 ? elapsed + ' 秒' : Math.floor(elapsed / 60) + ' 分 ' + elapsed % 60 + ' 秒' }
 function messageContent(content) { if (typeof content === 'string') return content; if (Array.isArray(content)) return content.filter(item => item?.type === 'text' || typeof item === 'string').map(item => typeof item === 'string' ? item : item.text || '').join('\n'); return content && typeof content === 'object' ? String(content.text || content.content || '') : String(content || '') }
 function toolEventLabel(item) { if (item.type === 'agent_finish') return '子 Agent 已完成回答'; if (item.type === 'tool_call') return '调用 ' + (item.tool_name || '工具'); return (item.tool_name || '工具') + (item.success ? ' 执行成功' : ' 执行失败') }
-function eventKey(event) { return event.event_id || `${event.sequence || ''}-${event.type || ''}-${event.created_at || ''}` }
-function eventLabel(event) { if (event.event_type) return event.event_type + '：' + (event.task_id || ''); if (event.type === 'runtime' && event.event) return event.event.message || (event.event.event_type || '节点事件') + '：' + (event.event.task_id || ''); const labels = { 'workflow.queued': '工作流已排队', 'workflow.running': '工作流开始执行', 'workflow.terminal': `工作流${statusMeta(event.status).label}` }; return labels[event.type] || event.message || event.type || '工作流状态更新' }
 function formatTime(value) { if (!value) return '--'; const date = new Date(value); return Number.isNaN(date.getTime()) ? '--' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }
 
 async function selectNode(taskId) { selectedNodeId.value = taskId; nodeHistory.value = null; nodeHistoryError.value = ''; await refreshNodeHistory() }
