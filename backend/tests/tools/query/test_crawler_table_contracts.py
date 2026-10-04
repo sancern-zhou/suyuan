@@ -210,3 +210,4 @@ def test_externalized_result_includes_exact_data_shape(monkeypatch):
 def test_data_shape_builder_marks_inferred_source():
     shape = build_data_shape({"ratio": "float"}, 2, "inferred")
     assert shape["source"] == "inferred"
+

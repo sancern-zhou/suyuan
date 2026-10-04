@@ -75,6 +75,20 @@ def test_query_workflow_advances_after_successful_batch():
     assert can_complete(definition, progress) is True
 
 
+def test_empty_result_is_delivered_as_no_data_not_failure():
+    definition = get_mode_workflow("query_monitoring_station")
+    progress = {}
+
+    # 0 行是无数据而非查询失败：不触发修复轮，正常推进阶段
+    observe_tool_results(definition, progress, [{
+        "tool_name": "execute_crawler_sql_query",
+        "result": {"success": True, "count": 0, "data": []},
+    }])
+
+    assert current_phase(definition, progress).name == "normalize"
+    assert "0 行" in definition.phases[0].description
+
+
 def test_session_input_tools_do_not_consume_acquisition_attempts():
     definition = get_mode_workflow("query_monitoring")
     progress = {}

@@ -43,15 +43,52 @@ QUERY_WORKFLOW_MODES = frozenset({
     "query_forecast",
 })
 
+# 问数模式下的 SQL 查询工具：数据形状已随结果注入上下文，
+# describe_table 参数与相关指引不再暴露。
+QUERY_WORKFLOW_SQL_TOOLS = frozenset({
+    "execute_crawler_sql_query",
+    "execute_sql_query",
+    "execute_postgres_sql_query",
+})
 
-def _remove_manual_sentences(text: str) -> str:
-    """去掉文本中引用规范手册/read_file 的句子（问数模式无该工具）。"""
+
+def _strip_sentences(text: str, keywords: tuple[str, ...]) -> str:
+    """按句剥离包含任一关键词的句子（关键词命中即整句移除）。"""
     sentences = re.split(r"(?<=[。])", text)
     kept = [
         sentence for sentence in sentences
-        if sentence and ".md" not in sentence and "手册" not in sentence and "read_file" not in sentence
+        if sentence and not any(keyword in sentence for keyword in keywords)
     ]
     return "".join(kept).strip()
+
+
+def _remove_manual_sentences(text: str) -> str:
+    """去掉文本中引用规范手册/read_file 的句子（问数模式无该工具）。"""
+    return _strip_sentences(text, (".md", "手册", "read_file"))
+
+
+def _query_mode_sql_query_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """问数子 Agent 的 SQL 查询 schema：剥离 describe_table 参数与相关指引。
+
+    数据形状已随查询结果注入上下文，describe_table 的"先看结构再查询"流程
+    对问数模式是多余轮次；其他模式仍使用原始 schema。
+    """
+    adapted = copy.deepcopy(schema)
+    parameters = adapted.get("parameters") if isinstance(adapted.get("parameters"), dict) else {}
+    properties = parameters.get("properties")
+    if isinstance(properties, dict) and "describe_table" in properties:
+        properties = {key: value for key, value in properties.items() if key != "describe_table"}
+        adapted["parameters"] = {**parameters, "properties": properties}
+    required = adapted.get("parameters", {}).get("required")
+    if isinstance(required, list) and "describe_table" in required:
+        adapted["parameters"] = {
+            **adapted["parameters"],
+            "required": [item for item in required if item != "describe_table"],
+        }
+    adapted["description"] = _strip_sentences(
+        str(adapted.get("description") or ""), ("describe_table",)
+    )
+    return adapted
 
 
 def _query_mode_execute_python_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -835,6 +872,8 @@ def get_tool_schemas(
                 schema = _native_multimodal_read_file_schema(schema)
             if mode in QUERY_WORKFLOW_MODES and tool.name == "execute_python":
                 schema = _query_mode_execute_python_schema(schema)
+            if mode in QUERY_WORKFLOW_MODES and tool.name in QUERY_WORKFLOW_SQL_TOOLS:
+                schema = _query_mode_sql_query_schema(schema)
             schemas.append(schema)
 
     # ========================================

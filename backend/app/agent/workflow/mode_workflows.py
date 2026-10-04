@@ -105,6 +105,8 @@ def _query_definition(
         "不同数据库或接口使用多个工具调用；同库关联数据使用一条合法的 JOIN/UNION/CTE 查询。"
         "禁止多语句 SQL，禁止取数前逐表探查或健康检查，质量统计只留到归一化阶段。"
         "若首轮有失败，第二轮只修复失败项，不得重查成功项或扩大范围。"
+        "查询结果为 0 行属于无数据：如实说明时间范围与缺口即可，不要怀疑表结构，"
+        "也不要重查或试探字段。"
     )
     if scope_line:
         acquire_description = f"{scope_line}\n{acquire_description}"

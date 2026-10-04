@@ -53,6 +53,29 @@ def test_station_mode_tool_schemas_apply_query_adaptation():
     assert "read_file" not in schemas[0]["description"]
 
 
+def test_query_mode_sql_schemas_hide_describe_table():
+    from app.agent.tool_adapter import _query_mode_sql_query_schema, get_tool_schemas
+    from app.tools.query.execute_crawler_sql_query.tool import ExecuteCrawlerSQLQueryTool
+    from app.tools.query.execute_postgres_sql_query.tool import ExecutePostgresSQLQueryTool
+
+    for tool in (ExecuteCrawlerSQLQueryTool(), ExecutePostgresSQLQueryTool()):
+        base = tool.get_function_schema()
+        adapted = _query_mode_sql_query_schema(base)
+        assert "describe_table" not in adapted["parameters"]["properties"]
+        assert "describe_table" not in adapted["description"]
+        assert "sql" in adapted["parameters"]["properties"]
+        # 原始 schema 不被就地修改
+        assert "describe_table" in base["parameters"]["properties"]
+
+    schemas = get_tool_schemas(
+        mode="query_monitoring_station",
+        allowed_tool_names=["execute_crawler_sql_query"],
+    )
+    assert len(schemas) == 1
+    assert "describe_table" not in schemas[0]["parameters"]["properties"]
+    assert "describe_table" not in schemas[0]["description"]
+
+
 def test_python_is_primary_report_plotting_tool_with_shared_style():
     schema = ExecutePythonTool().get_function_schema()
     assert "专家/报告模式的静态分析和正式报告图表优先使用 execute_python" in schema["description"]
