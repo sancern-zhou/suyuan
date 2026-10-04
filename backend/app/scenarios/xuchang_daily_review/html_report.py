@@ -17,17 +17,55 @@ def build_report_from_evidence(
     return build_html_report(payload, amap_key=resolved_key)
 
 
+def _read_amap_key(manifest: dict[str, Any]) -> str:
+    config_path = manifest.get("render_config_path")
+    if not config_path:
+        raise ValueError("Missing render_config_path; regenerate the evidence package")
+    config = json.loads(resolve_agent_path(config_path).read_text(encoding="utf-8"))
+    amap_key = config.get("public_key") or ""
+    if not amap_key:
+        raise ValueError("AMAP_PUBLIC_KEY is required for the real map")
+    return amap_key
+
+
+def _attach_frame_weather(manifest: dict[str, Any], files: dict[str, Any], maps: list[dict[str, Any]]) -> None:
+    if files.get("meteorology"):
+        from .map_frames import build_hourly_map_weather
+
+        weather_data = json.loads(resolve_agent_path(files["meteorology"]).read_text(encoding="utf-8"))
+        hourly_weather = build_hourly_map_weather(weather_data.get("meteorology") or [], manifest["target_date"])
+        for item in maps:
+            for frame in item.get("frames") or []:
+                if "weather" not in frame:
+                    frame["weather"] = hourly_weather.get(frame["time"])
+
+
+def load_map_payload_from_evidence(manifest_path: str) -> tuple[dict[str, Any], str]:
+    """Load events and pollutant maps for the standalone map deliverable; no agent text required."""
+    manifest = json.loads(resolve_agent_path(manifest_path).read_text(encoding="utf-8"))
+    amap_key = _read_amap_key(manifest)
+    files = manifest.get("evidence_files") or {}
+    required = {"event_brief", "pollutant_maps"}
+    if not required.issubset(files):
+        raise ValueError(f"Missing evidence files: {sorted(required - files.keys())}; regenerate the evidence package")
+    event_data = json.loads(resolve_agent_path(files["event_brief"]).read_text(encoding="utf-8"))
+    map_data = json.loads(resolve_agent_path(files["pollutant_maps"]).read_text(encoding="utf-8"))
+    events = event_data.get("events") or []
+    maps = map_data.get("maps") or []
+    _attach_frame_weather(manifest, files, maps)
+    if len(events) != event_data.get("event_count") or len(events) != manifest.get("episode_count"):
+        raise ValueError("Merged event counts disagree between manifest and evidence")
+    if len(maps) != map_data.get("pollutant_count") or {m["pollutant"] for m in maps} != {e["pollutant"] for e in events}:
+        raise ValueError("Pollutant maps do not match merged events")
+    return {"target_date": manifest["target_date"], "events": events, "maps": maps}, amap_key
+
+
 def load_report_payload_from_evidence(
     manifest_path: str, agent_text: dict[str, Any], *, amap_key: str | None = None
 ) -> tuple[dict[str, Any], str]:
     manifest_file = resolve_agent_path(manifest_path)
     manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-    if amap_key is None:
-        config_path = manifest.get("render_config_path")
-        if not config_path:
-            raise ValueError("Missing render_config_path; regenerate the evidence package")
-        config = json.loads(resolve_agent_path(config_path).read_text(encoding="utf-8"))
-        amap_key = config.get("public_key") or ""
+    amap_key = _read_amap_key(manifest) if amap_key is None else amap_key
     if not amap_key:
         raise ValueError("AMAP_PUBLIC_KEY is required for the real map")
     files = manifest.get("evidence_files") or {}
@@ -39,15 +77,7 @@ def load_report_payload_from_evidence(
     provenance = json.loads(resolve_agent_path(files["provenance"]).read_text(encoding="utf-8"))
     events = event_data.get("events") or []
     maps = map_data.get("maps") or []
-    if files.get("meteorology"):
-        from .map_frames import build_hourly_map_weather
-
-        weather_data = json.loads(resolve_agent_path(files["meteorology"]).read_text(encoding="utf-8"))
-        hourly_weather = build_hourly_map_weather(weather_data.get("meteorology") or [], manifest["target_date"])
-        for item in maps:
-            for frame in item.get("frames") or []:
-                if "weather" not in frame:
-                    frame["weather"] = hourly_weather.get(frame["time"])
+    _attach_frame_weather(manifest, files, maps)
     if len(events) != event_data.get("event_count") or len(events) != manifest.get("episode_count"):
         raise ValueError("Merged event counts disagree between manifest and evidence")
     if len(maps) != map_data.get("pollutant_count") or {m["pollutant"] for m in maps} != {e["pollutant"] for e in events}:

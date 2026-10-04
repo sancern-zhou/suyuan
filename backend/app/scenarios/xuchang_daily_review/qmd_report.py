@@ -13,6 +13,7 @@ from .html_report import (
     _number,
     _time,
     _wind_text,
+    load_map_payload_from_evidence,
     load_report_payload_from_evidence,
     render_map_script,
     render_map_widgets,
@@ -20,6 +21,7 @@ from .html_report import (
 
 
 TITLE = "许昌市空气质量回顾分析日报"
+MAP_TITLE = "污染物时序变化地图"
 COLS_BASIC = ("站点", "污染物", "升高时段", "浓度变化", "升幅", "绝对增量")
 COLS_NEIGHBOR = ("类型", "站名", "距离(km)", "方位", "浓度", "对比")
 
@@ -113,6 +115,7 @@ def _map_css() -> str:
 def build_qmd_report(
     payload: dict[str, Any], *,
     css_name: str = "xuchang_map.css", js_name: str = "xuchang_map.js",
+    include_maps: bool = False,
 ) -> str:
     events = payload.get("events") or []
     maps = payload.get("maps") or []
@@ -164,11 +167,11 @@ def build_qmd_report(
             lines.append(_event_body(event, payload["event_analysis"][event["event_id"]]))
     if not events:
         lines.extend(["昨日小时数据不足，专项分析缺少触发证据。" if gap_message else "昨日没有出现小时告警污染。", ""])
-    if maps:
+    if include_maps and maps:
         lines.extend([
             '::: {.content-visible when-format="html"}',
             '<div class="xuchang-report-maps xuchang-html-only">',
-            "<h3>污染物时序变化地图</h3>",
+            f"<h3>{MAP_TITLE}</h3>",
             "<p>HTML 版为真实高德地图，逐小时显示有效站点；红色光环标识当前小时告警国控站，"
             "站点填色采用全天固定浓度色阶，地图同步标注许昌气象站小时风向（来向）和风速。</p>",
             render_map_widgets(maps), "</div>",
@@ -181,9 +184,13 @@ def build_qmd_report(
 
 
 def write_qmd_report_from_evidence(
-    manifest_path: str, agent_text: dict[str, Any], output_path: str
+    manifest_path: str, agent_text: dict[str, Any], output_path: str, *, include_maps: bool = False
 ) -> dict[str, Any]:
-    """Write QMD and deterministic assets; return paths for create_report_package."""
+    """Write QMD and deterministic assets; return paths for create_report_package.
+
+    The daily report embeds no map by default; the interactive map is only
+    rendered after the user explicitly confirms, via write_map_only_report_from_evidence.
+    """
     payload, amap_key = load_report_payload_from_evidence(manifest_path, agent_text)
     output = Path(output_path).expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -195,12 +202,50 @@ def write_qmd_report_from_evidence(
     css_path = output.parent / css_name
     css_path.write_text(_map_css(), encoding="utf-8")
     assets.append({"path": str(css_path), "type": "asset", "name": css_path.name})
-    if maps:
+    if include_maps and maps:
         js_path = output.parent / js_name
         js_path.write_text(render_map_script(maps, payload["events"], amap_key), encoding="utf-8")
         assets.append({"path": str(js_path), "type": "asset", "name": js_path.name})
-    output.write_text(build_qmd_report(payload, css_name=css_name, js_name=js_name), encoding="utf-8")
+    output.write_text(
+        build_qmd_report(payload, css_name=css_name, js_name=js_name, include_maps=include_maps),
+        encoding="utf-8",
+    )
     report_id = "xuchang_daily_review_" + str(payload["target_date"]).replace("-", "")
     return {"report_id": report_id, "source_qmd_path": str(output),
             "source_qmd_name": output.name, "assets": assets,
             "event_count": len(payload["events"]), "pollutant_count": len(maps)}
+
+
+def write_map_only_report_from_evidence(manifest_path: str, output_path: str) -> dict[str, Any]:
+    """Write the standalone pollutant timeline map QMD (HTML only) after user confirmation."""
+    payload, amap_key = load_map_payload_from_evidence(manifest_path)
+    output = Path(output_path).expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    events = payload["events"]
+    maps = payload["maps"]
+    suffix = re.sub(r"[^A-Za-z0-9_-]", "_", output.stem)
+    css_name = f"xuchang_map_only_{suffix}.css"
+    js_name = f"xuchang_map_only_{suffix}.js"
+    css_path = output.parent / css_name
+    css_path.write_text(_map_css(), encoding="utf-8")
+    assets: list[dict[str, str]] = [{"path": str(css_path), "type": "asset", "name": css_path.name}]
+    js_path = output.parent / js_name
+    js_path.write_text(render_map_script(maps, events, amap_key), encoding="utf-8")
+    assets.append({"path": str(js_path), "type": "asset", "name": js_path.name})
+    date = str(payload["target_date"] or "")
+    lines = [
+        "---", f'title: "{MAP_TITLE}"', f'date: "{date}"',
+        "format:", "  html:", "    toc: false", "    number-sections: false",
+        "    page-layout: full", f"    css: assets/{css_name}", "---", "",
+        f"报告日期：{date}", "",
+        '<div class="xuchang-report-maps">',
+        "<p>每种告警污染物一张真实高德地图，逐小时显示有效站点；红色光环标识当前小时告警国控站，"
+        "站点填色采用全天固定浓度色阶，地图同步标注许昌气象站小时风向（来向）和风速。</p>",
+        render_map_widgets(maps), "</div>",
+        f'<script src="assets/{js_name}"></script>', "",
+    ]
+    output.write_text("\n".join(lines), encoding="utf-8")
+    report_id = "xuchang_daily_review_maps_" + str(payload["target_date"]).replace("-", "")
+    return {"report_id": report_id, "source_qmd_path": str(output),
+            "source_qmd_name": output.name, "assets": assets,
+            "event_count": len(events), "pollutant_count": len(maps)}

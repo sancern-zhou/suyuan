@@ -7,6 +7,7 @@ import pytest
 from app.scenarios.xuchang_daily_review.qmd_report import (
     _map_css,
     build_qmd_report,
+    write_map_only_report_from_evidence,
     write_qmd_report_from_evidence,
 )
 
@@ -34,7 +35,7 @@ def _payload():
     }
 
 
-def test_qmd_keeps_fixed_chapters_and_format_specific_maps():
+def test_qmd_report_has_no_map_section_by_default():
     qmd = build_qmd_report(_payload())
     assert "## 一、持续升高基本情况" in qmd
     assert "## 二、持续升高原因分析" in qmd
@@ -42,15 +43,23 @@ def test_qmd_keeps_fixed_chapters_and_format_specific_maps():
     assert qmd.count("| 站点 | 污染物 | 升高时段 |") == 1
     assert "建安区苏桥镇" in qmd
     assert "北部乡镇站同期浓度较高" in qmd
+    assert "污染物时序变化地图" not in qmd
+    assert "base-satellite-0" not in qmd
+    assert "when-format" not in qmd
+    assert "assets/charts/" not in qmd
+    assert "逐小时站点浓度趋势" not in qmd
+    assert "number-sections: false" in qmd
+    assert ".map-hud" in _map_css()
+
+
+def test_qmd_report_keeps_maps_only_when_requested():
+    qmd = build_qmd_report(_payload(), include_maps=True)
+    assert "污染物时序变化地图" in qmd
     assert 'when-format="html"' in qmd
     assert 'when-format="docx"' not in qmd
     assert "base-satellite-0" in qmd
     assert "assets/xuchang_map.js" in qmd
-    assert "assets/charts/" not in qmd
-    assert "逐小时站点浓度趋势" not in qmd
     assert "hud-wind-0" in qmd
-    assert "number-sections: false" in qmd
-    assert ".map-hud" in _map_css()
 
 
 def test_qmd_writer_returns_packaging_paths(tmp_path, monkeypatch):
@@ -63,9 +72,15 @@ def test_qmd_writer_returns_packaging_paths(tmp_path, monkeypatch):
     assert result["report_id"] == "xuchang_daily_review_20260925"
     assert result["event_count"] == result["pollutant_count"] == 1
     assert Path(result["source_qmd_path"]).is_file()
-    assert len(result["assets"]) == 2
+    assert [item["name"] for item in result["assets"]] == ["xuchang_map_review.css"]
     assert all(Path(item["path"]).is_file() for item in result["assets"])
-    assert "v=2.1Beta" in (tmp_path / "xuchang_map_review.js").read_text()
+    assert not (tmp_path / "xuchang_map_review.js").exists()
+
+    built = write_qmd_report_from_evidence(
+        "manifest.json", {}, str(tmp_path / "review_maps.qmd"), include_maps=True)
+    assert [item["name"] for item in built["assets"]] == [
+        "xuchang_map_review_maps.css", "xuchang_map_review_maps.js"]
+    assert "v=2.1Beta" in (tmp_path / "xuchang_map_review_maps.js").read_text()
 
 
 def test_qmd_writer_keeps_css_when_no_alerts(tmp_path, monkeypatch):
@@ -94,6 +109,27 @@ def test_qmd_distinguishes_missing_hourly_data_from_no_process():
     assert "连续有效小时样本不足，无法判定" in qmd
 
 
+def test_map_only_writer_builds_standalone_package(tmp_path, monkeypatch):
+    payload = {"target_date": "2026-09-25",
+               "events": _payload()["events"], "maps": _payload()["maps"]}
+    monkeypatch.setattr(
+        "app.scenarios.xuchang_daily_review.qmd_report.load_map_payload_from_evidence",
+        lambda *_args, **_kwargs: (payload, "public-test-key"),
+    )
+    result = write_map_only_report_from_evidence("manifest.json", str(tmp_path / "maps.qmd"))
+    assert result["report_id"] == "xuchang_daily_review_maps_20260925"
+    assert result["event_count"] == result["pollutant_count"] == 1
+    assert [item["name"] for item in result["assets"]] == [
+        "xuchang_map_only_maps.css", "xuchang_map_only_maps.js"]
+    assert all(Path(item["path"]).is_file() for item in result["assets"])
+    qmd = Path(result["source_qmd_path"]).read_text()
+    assert 'title: "污染物时序变化地图"' in qmd
+    assert "base-satellite-0" in qmd
+    assert "hud-wind-0" in qmd
+    assert "assets/xuchang_map_only_maps.js" in qmd
+    assert "## 一、持续升高基本情况" not in qmd
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(shutil.which("quarto") is None, reason="Quarto is not installed")
 async def test_qmd_package_renders_interactive_html_and_word_without_charts(tmp_path, monkeypatch):
@@ -105,7 +141,8 @@ async def test_qmd_package_renders_interactive_html_and_word_without_charts(tmp_
         "app.scenarios.xuchang_daily_review.qmd_report.load_report_payload_from_evidence",
         lambda *_args, **_kwargs: (payload, "public-test-key"),
     )
-    built = write_qmd_report_from_evidence("manifest.json", {}, str(tmp_path / "review.qmd"))
+    built = write_qmd_report_from_evidence(
+        "manifest.json", {}, str(tmp_path / "review.qmd"), include_maps=True)
     renderer = QuartoReportRenderer(report_root=tmp_path / "reports")
     monkeypatch.setattr(package_tool, "quarto_report_renderer", renderer)
     result = await package_tool.CreateReportPackageTool().execute(
