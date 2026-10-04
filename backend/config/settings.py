@@ -592,6 +592,14 @@ class Settings(BaseSettings):
         default=45.0,
         description="Max silent wait for the first streaming chunk from an LLM provider; also the per-chunk idle gap for streams"
     )
+    llm_fresh_tool_result_budget_chars: int = Field(
+        default=48_000,
+        description="Char budget for projecting the current run's raw tool results into LLM history; lower values cut per-round latency for multi-iteration agents"
+    )
+    llm_fresh_tool_result_single_max_chars: int = Field(
+        default=24_000,
+        description="Per-result char cap above which a tool result falls back to its compacted history form instead of verbatim projection"
+    )
     llm_fallbacks: str = Field(
         default="doubao/gpt-5.6-luna,bailian/qwen3.8-max,deepseek/deepseek-v4-pro",
         description="Comma-separated fallback models, e.g. bailian/qwen3.8-max"
