@@ -1747,6 +1747,7 @@ class SessionMemory:
                     return str(candidate)
             return ""
 
+
         try:
             payload = json.loads(content)
             if isinstance(payload, dict):

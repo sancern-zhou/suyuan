@@ -560,6 +560,12 @@ class Settings(BaseSettings):
             "and thinking-block history on 2026-10-04."
         )
     )
+    go_disable_thinking: bool = Field(
+        default=True,
+        description=(
+            "Enable tiered thinking policy for Go/Go2 gateways: flash models and subagents disable thinking, PRO models keep gateway-default thinking."
+        ),
+    )
     scnet_model: str = Field(
         default="Qwen3.8-Max",
         description="Sugon SCNET model name"

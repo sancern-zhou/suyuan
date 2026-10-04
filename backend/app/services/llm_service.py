@@ -3058,7 +3058,7 @@ class LLMService:
                 should_disable_thinking,
             )
 
-            disable, reason = should_disable_thinking(self.model, settings.scnet_disable_thinking)
+            disable, reason = should_disable_thinking(self.model, settings.go_disable_thinking)
             if disable:
                 payload["enable_thinking"] = False
             logger.info(

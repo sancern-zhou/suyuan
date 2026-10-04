@@ -106,7 +106,7 @@ def test_go_provider_payload_follows_policy(monkeypatch):
             stream=False,
         )
 
-    monkeypatch.setattr(settings, "scnet_disable_thinking", True)
+    monkeypatch.setattr(settings, "go_disable_thinking", True)
     # flash 档（deepseek-v4.1-flash）：关闭
     assert build("deepseek-v4.1-flash")["enable_thinking"] is False
     # pro 档 + 主 agent：不干预（网关默认开启）
@@ -117,3 +117,6 @@ def test_go_provider_payload_follows_policy(monkeypatch):
         assert build("deepseek-v4-pro")["enable_thinking"] is False
     finally:
         reset_agent_caller_tier(token)
+
+    monkeypatch.setattr(settings, "go_disable_thinking", False)
+    assert "enable_thinking" not in build("deepseek-v4.1-flash")

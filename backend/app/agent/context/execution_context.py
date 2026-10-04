@@ -294,6 +294,7 @@ class ExecutionContext:
             except (OSError, ValueError, TypeError):
                 logger.warning("data_shape_sidecar_write_failed", file_path=resolved)
 
+
     def get_handle(self, file_path: str) -> TypedDataHandle:
         """
         Get data handle without loading full data.

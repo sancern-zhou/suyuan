@@ -1,4 +1,4 @@
-"""思考模式策略：按模型档位与调用方类型决定 scnet 请求是否关闭思考。
+"""思考模式策略：按模型档位与调用方类型决定网关请求是否关闭思考。
 
 档位规则：
 - flash 档模型（模型名含 flash）：思考默认关闭
@@ -35,7 +35,7 @@ def model_tier(model: str) -> str:
 
 
 def should_disable_thinking(model: str, master_switch: bool) -> tuple[bool, str]:
-    """返回 (是否关闭思考, 原因标签)。仅供 scnet 非 deepseek 模型分支调用。"""
+    """返回 (是否关闭思考, 原因标签)。供 SCNET 和 Go/Go2 网关复用。"""
     if not master_switch:
         return False, "master_switch_off"
     tier = model_tier(model)
