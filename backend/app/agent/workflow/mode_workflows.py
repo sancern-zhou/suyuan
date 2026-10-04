@@ -69,6 +69,8 @@ def _query_definition(
                     "一次规划完整取数范围，并在同一轮发出全部相互独立的查询。"
                     "不同数据库或接口使用多个工具调用；同库关联数据使用一条合法的 JOIN/UNION/CTE 查询。"
                     "禁止多语句 SQL。若首轮有失败，第二轮只修复失败项，不得重查成功项或扩大范围。"
+                    "查询结果为 0 行属于无数据：如实说明时间范围与缺口即可，不要怀疑表结构，"
+                    "也不要重查或试探字段。"
                 ),
                 allowed_tools=tuple(dict.fromkeys((*_SESSION_INPUT_TOOLS, *query_tools))),
                 advance_tools=query_tools,
