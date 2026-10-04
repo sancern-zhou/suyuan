@@ -584,6 +584,14 @@ class Settings(BaseSettings):
         default=180.0,
         description="Timeout in seconds for LLM provider requests"
     )
+    llm_connect_timeout_seconds: float = Field(
+        default=10.0,
+        description="TCP/TLS connect timeout for LLM provider requests"
+    )
+    llm_first_token_timeout_seconds: float = Field(
+        default=45.0,
+        description="Max silent wait for the first streaming chunk from an LLM provider; also the per-chunk idle gap for streams"
+    )
     llm_fallbacks: str = Field(
         default="doubao/gpt-5.6-luna,bailian/qwen3.8-max,deepseek/deepseek-v4-pro",
         description="Comma-separated fallback models, e.g. bailian/qwen3.8-max"

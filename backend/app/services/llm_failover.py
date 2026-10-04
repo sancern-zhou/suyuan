@@ -189,6 +189,8 @@ def classify_llm_failure(err: object) -> LLMFailure:
     lower = message.lower()
     name = type(err).__name__
 
+    if isinstance(err, LLMResponseRejectedError):
+        return LLMFailure("invalid_response", None, None, err.reason)
     if is_context_overflow_message(message):
         return LLMFailure("context_overflow", status, code, message)
     if is_media_fetch_failure_message(message):
@@ -220,6 +222,7 @@ def should_fallback(failure: LLMFailure) -> bool:
         "billing",
         "format",
         "auth",
+        "invalid_response",
         "unknown",
     }
 

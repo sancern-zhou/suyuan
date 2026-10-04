@@ -1081,12 +1081,25 @@ class AgentRuntime:
 
         names = list(get_tools_by_mode(state.mode).keys())
         names.extend(self.config.extra_tool_names or [])
+        # 结构化交付：call_sub_agent 给带 result_schema 的子会话动态注入
+        # submit_result（不在模式白名单里）。它已注入 child registry 时必须
+        # 进入候选名单，否则阶段过滤会把交付工具整体滤掉。
+        executor = getattr(self, "executor", None)
+        executor_registry = getattr(executor, "tool_registry", None) or {}
+        if "submit_result" in executor_registry:
+            names.append("submit_result")
         workflow_definition = get_mode_workflow(state.mode)
         if workflow_definition:
             phase_tools = fixed_workflow_allowed_tools(
                 workflow_definition, state.fixed_workflow_progress
             )
-            names = [name for name in names if name in phase_tools]
+            # submit_result 由 call_sub_agent 按结果协议动态注入 child registry，
+            # 不在模式白名单里；它是交付边界工具，任何阶段都必须保持可见，
+            # 否则带 result_schema 的问数节点无法结构化交付。
+            names = [
+                name for name in names
+                if name in phase_tools or name == "submit_result"
+            ]
         elif not self.config.extra_tool_names:
             return None
         return list(dict.fromkeys(names))
@@ -1101,7 +1114,11 @@ class AgentRuntime:
             return None
         allowed = fixed_workflow_allowed_tools(definition, state.fixed_workflow_progress)
         requested = [name for name, _ in self._planner_action_tool_calls(action)]
-        blocked = [name for name in requested if name not in allowed]
+        # submit_result 是交付边界工具（见 _allowed_tool_names_for_state），全阶段放行。
+        blocked = [
+            name for name in requested
+            if name not in allowed and name != "submit_result"
+        ]
         if not blocked:
             return None
         phase = fixed_workflow_current_phase(definition, state.fixed_workflow_progress)

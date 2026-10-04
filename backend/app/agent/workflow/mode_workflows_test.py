@@ -125,3 +125,38 @@ def test_agent_runtime_filters_tools_by_fixed_workflow_phase():
 
     state.fixed_workflow_progress = {"phase_index": 2}
     assert runtime._allowed_tool_names_for_state(state) == []
+
+
+def test_fixed_workflow_whitelist_keeps_submit_result_visible():
+    """submit_result 是交付边界工具：任何阶段不得被阶段白名单过滤或拦截。"""
+    runtime = AgentRuntime.__new__(AgentRuntime)
+    runtime.config = SimpleNamespace(extra_tool_names=None)
+    # 模拟 call_sub_agent 给带 result_schema 的子会话注入交付工具
+    runtime.executor = SimpleNamespace(
+        tool_registry={"submit_result": object(), "execute_sql_query": object()}
+    )
+    state = RunState(session_id="fw-test", user_query="取数", mode="query_monitoring")
+    state.fixed_workflow_progress = {}
+
+    # acquire 阶段：取数工具可见，submit_result 虽不在 phase_tools 但必须保留
+    names = runtime._allowed_tool_names_for_state(state)
+    assert names is not None
+    assert "execute_sql_query" in names
+    assert "submit_result" in names
+    assert "execute_python" not in names
+
+    # 推进到 deliver 阶段（工具空集）：submit_result 仍然可见
+    definition = get_mode_workflow("query_monitoring")
+    state.fixed_workflow_progress = {"phase_index": len(definition.phases) - 1}
+    names = runtime._allowed_tool_names_for_state(state)
+    assert names == ["submit_result"]
+
+    # 阶段拦截观察器同样放行 submit_result
+    action = {"type": "TOOL_CALL", "tool": "submit_result", "args": {"result": {}}}
+    observation = runtime._fixed_workflow_blocked_observation(state, action)
+    assert observation is None
+
+    blocked_action = {"type": "TOOL_CALL", "tool": "execute_sql_query", "args": {"sql": "SELECT 1"}}
+    blocked = runtime._fixed_workflow_blocked_observation(state, blocked_action)
+    assert blocked is not None
+    assert "execute_sql_query" in blocked["data"]["blocked_tools"]

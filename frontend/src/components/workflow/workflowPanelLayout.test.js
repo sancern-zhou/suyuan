@@ -35,7 +35,7 @@ test('workflow panel owns a vertical scroll container', async () => {
   const hostSource = await readComponent('../reactAnalysis/RightPanelContainer.vue')
 
   assert.match(workflowSource, /\.workflow-panel\s*\{[^}]*height:\s*100%[^}]*overflow:\s*auto/)
-  assert.equal((hostSource.match(/class="panel-content workflow-panel-host"/g) || []).length, 2)
+  assert.equal((hostSource.match(/class="panel-content workflow-panel-host"/g) || []).length, 3)
   assert.match(hostSource, /\.panel-content\.workflow-panel-host\s*\{[^}]*overflow-y:\s*auto/)
   assert.match(hostSource, /\.viz-wrapper\.workflow-active\s*\{[^}]*min-width:/)
 })
