@@ -30,11 +30,21 @@ def resource_access_path(item: StoredResource) -> str:
     return str(resolved)
 
 
+def _data_shape_fragment(metadata: dict) -> str:
+    """数据资源的形状行（来自外置时的 data_shape 元数据）；缺失返回空串。"""
+    from app.agent.context.data_shape import render_shape_line
+
+    shape = metadata.get("data_shape") if isinstance(metadata, dict) else None
+    if not isinstance(shape, dict) or not shape.get("columns"):
+        return ""
+    return render_shape_line(shape)
+
+
 def project_agent_resource_map(
     resources: Iterable[StoredResource],
     *,
     query: str = "",
-    max_chars: int = 1800,
+    max_chars: int = 2400,
     max_items: int = 12,
 ) -> str:
     """Return a bounded, directly actionable index without resource bodies."""
@@ -82,8 +92,9 @@ def project_agent_resource_map(
     ]
     included = 0
     for item, roles in projected_items:
-        summary = str((item.metadata or {}).get("summary") or "").strip().replace("\n", " ")[:120]
-        mime = str((item.metadata or {}).get("mime_type") or "")
+        metadata = item.metadata or {}
+        summary = str(metadata.get("summary") or "").strip().replace("\n", " ")[:120]
+        mime = str(metadata.get("mime_type") or "")
         details = "; ".join(part for part in (mime, summary) if part)
         line = f"- {item.resource_id} | roles={','.join(roles)} | {item.kind} | {item.label}"
         access_path = resource_access_path(item)
@@ -91,6 +102,9 @@ def project_agent_resource_map(
             line += f" | path={access_path}"
         if details:
             line += f" | {details}"
+        shape_line = _data_shape_fragment(metadata)
+        if shape_line:
+            line += f" | data_shape: {shape_line}"
         if len("\n".join([*lines, line])) > max_chars or included >= max_items:
             break
         lines.append(line)

@@ -237,6 +237,19 @@ class ExecutionContext:
 
         return file_path
 
+    def get_data_shape(self, file_path: str) -> Optional[Dict[str, Any]]:
+        """返回已保存数据文件的 data_shape 元数据（未记录时 None）。"""
+        try:
+            handle = self.get_handle(file_path)
+        except Exception:
+            return None
+        metadata = getattr(handle, "metadata", None)
+        if isinstance(metadata, dict):
+            shape = metadata.get("data_shape")
+            if isinstance(shape, dict):
+                return shape
+        return None
+
     def get_handle(self, file_path: str) -> TypedDataHandle:
         """
         Get data handle without loading full data.

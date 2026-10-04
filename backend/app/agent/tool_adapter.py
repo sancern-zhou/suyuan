@@ -439,6 +439,8 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
             "source_report_file_path",
             "source_report_file_paths",
             "visual_ids",
+            "data_shape",
+            "data_shapes",
         )
         for key in passthrough_fields:
             if key in result:
