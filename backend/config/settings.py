@@ -606,11 +606,17 @@ class Settings(BaseSettings):
     )
     llm_flash_models: str = Field(
         default="doubao/gpt-5.6-luna,bailian/deepseek-v4-flash-0731,deepseek/deepseek-v4-flash",
-        description="Comma-separated Flash model priority chain, e.g. doubao/gpt-5.6-luna,bailian/deepseek-v4-flash-0731,deepseek/deepseek-v4-flash"
+        description=(
+            "Deprecated (2026-10): tiers share the primary model chain; "
+            "flash/pro now only toggle thinking. Kept for env-file compatibility."
+        ),
     )
     llm_pro_models: str = Field(
         default="bailian/deepseek-v4-pro,deepseek/deepseek-v4-pro",
-        description="Comma-separated Pro model priority chain, e.g. bailian/deepseek-v4-pro,deepseek/deepseek-v4-pro"
+        description=(
+            "Deprecated (2026-10): tiers share the primary model chain; "
+            "flash/pro now only toggle thinking. Kept for env-file compatibility."
+        ),
     )
     llm_multimodal_models: str = Field(
         default="",
