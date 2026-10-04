@@ -236,7 +236,7 @@ async def test_run_agent_workflow_dispatches_parallel_nodes_and_injects_dependen
     assert all(call["max_iterations"] == 30 for call in calls)
     assert all(
         node["timeout_seconds"] == 480
-        for node in result["data"]["snapshot"]["definition"]["nodes"]
+        for node in result["data"]["node_results"].values()
     )
 
 
@@ -272,12 +272,11 @@ async def test_run_agent_workflow_applies_domain_expert_limits(monkeypatch):
     by_mode = {call["target_mode"]: call for call in calls}
     assert by_mode["expert_meteorology"]["max_iterations"] == 15
     assert by_mode["expert_analysis"]["max_iterations"] == 20
-    definitions = {
-        node["payload"]["target_mode"]: node
-        for node in result["data"]["snapshot"]["definition"]["nodes"]
-    }
-    assert definitions["expert_meteorology"]["timeout_seconds"] == 300
-    assert definitions["expert_analysis"]["timeout_seconds"] == 360
+    views = result["data"]["node_results"]
+    assert views["weather"]["target_mode"] == "expert_meteorology"
+    assert views["weather"]["timeout_seconds"] == 300
+    assert views["analysis"]["target_mode"] == "expert_analysis"
+    assert views["analysis"]["timeout_seconds"] == 360
 
 
 @pytest.mark.asyncio
@@ -336,7 +335,7 @@ async def test_run_agent_workflow_returns_node_envelopes(monkeypatch):
     )
     assert result["success"] is True
     assert result["data"]["status"] == "succeeded"
-    assert result["data"]["node_results"]["air"]["data"]["result_envelope"]["status"] == "completed"
+    assert result["data"]["node_results"]["air"]["result_envelope"]["status"] == "completed"
     assert result["data"]["node_errors"] == {}
     assert set(result["data"]["node_lineage"]) == {"air", "weather", "synthesis"}
     assert all(call["target_mode"] != "report" for call in calls)
@@ -347,6 +346,119 @@ async def test_run_agent_workflow_requires_workflow_definition():
     result = await RunAgentWorkflowTool().execute()
     assert result["success"] is False
     assert "workflow" in result["result"]
+
+
+@pytest.mark.asyncio
+async def test_run_agent_workflow_returns_compact_view_and_persists_full_results(monkeypatch, tmp_path):
+    """父 Agent 只拿紧凑视图（findings 数值+句柄），全文落盘并登记资源。"""
+    import json as _json
+
+    monkeypatch.setattr(
+        "app.utils.path_config.get_sessions_dir",
+        lambda: tmp_path / "sessions",
+    )
+    embedded_json = (
+        "```json\n"
+        + _json.dumps({
+            "status": "completed_with_gaps",
+            "findings": [{"statement": "内嵌重复，不应进摘要"}],
+            "padding": "x" * 5000,
+        }, ensure_ascii=False)
+        + "\n```"
+    )
+    answer = "## 核心判断\n\n无轻度以上污染。\n\n" + embedded_json
+
+    class FakeSubAgentTool:
+        async def execute(self, **kwargs):
+            return {
+                "status": "success",
+                "success": True,
+                "result": answer,
+                "data": {
+                    "file_paths": [
+                        "backend/backend_data_registry/sessions/child/data/memo.md"
+                    ],
+                    "resource_refs": [{
+                        "resource_id": "res-1",
+                        "source_session_id": "child-1",
+                    }],
+                    "structured_result": {
+                        "status": "completed_with_gaps",
+                        "findings": [
+                            {"statement": "PM2.5 与 CO 小时相关系数 r=0.62", "evidence_ids": ["ev-1"]},
+                            {"statement": "污染峰值出现在 09-30 14时、58.5 μg/m³"},
+                        ],
+                        "evidence": [{"ref_id": "ev-1", "kind": "table", "label": "相关矩阵"}],
+                    },
+                    "result_envelope": {
+                        "status": "completed_with_gaps",
+                        "summary": "分析完成。\n" + embedded_json,
+                        "evidence": [],
+                        "data_gaps": ["组分数据缺测"],
+                    },
+                },
+                "metadata": {
+                    "iterations": 3,
+                    "thought": "t" * 3000,
+                    "capability_policy": {"a": 1},
+                },
+            }
+
+    monkeypatch.setattr(
+        RunAgentWorkflowTool,
+        "_build_sub_agent_tool",
+        staticmethod(lambda: FakeSubAgentTool()),
+    )
+    context = SimpleNamespace(runtime_mode="report", session_id="report_session_x")
+    result = await RunAgentWorkflowTool().execute(
+        context=context,
+        workflow={
+            "workflow_id": "compact-1",
+            "nodes": [{
+                "task_id": "corr",
+                "target_mode": "expert_analysis",
+                "goal": "相关性分析",
+                "max_iterations": 20,
+                "timeout_seconds": 360,
+                "task_contract": {
+                    "protocol_version": "workflow.v1",
+                    "question": "相关性",
+                    "deliverables": ["相关矩阵"],
+                },
+            }],
+        },
+    )
+
+    assert result["success"] is True
+    data = result["data"]
+    assert "snapshot" not in data
+    view = data["node_results"]["corr"]
+    findings_text = _json.dumps(view["result_envelope"]["findings"], ensure_ascii=False)
+    assert "r=0.62" in findings_text
+    assert "58.5" in findings_text
+    assert "```json" not in view["result_envelope"]["summary"]
+    assert view["resource_ids"] == ["res-1"]
+    assert view["iterations"] == 3
+    assert view["max_iterations"] == 20
+    assert view["result_envelope"]["data_gaps"] == ["组分数据缺测"]
+    assert "thought" not in _json.dumps(view, ensure_ascii=False)
+    # 全文落盘到统一资源目录并登记为会话资源
+    assert data["full_results"]["path"].endswith("workflow_compact-1_node_results.json")
+    declared = [
+        item for item in result["resources"]
+        if item.get("metadata", {}).get("workflow_id") == "compact-1"
+    ]
+    assert declared and declared[0]["kind"] == "data"
+    full_path = (
+        tmp_path / "sessions" / "agent_session_report_session_x" / "data"
+        / "workflow_compact-1_node_results.json"
+    )
+    full = _json.loads(full_path.read_text(encoding="utf-8"))
+    assert (
+        full["node_results"]["corr"]["data"]["structured_result"]["findings"][0]["statement"]
+        == "PM2.5 与 CO 小时相关系数 r=0.62"
+    )
+    assert full["node_results"]["corr"]["metadata"]["thought"] == "t" * 3000
 
 
 @pytest.mark.asyncio

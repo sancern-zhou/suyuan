@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import re
 import time
 import json
 from typing import Any, Dict, Mapping, Optional
 
 import structlog
 
+from app.agent.workflow.protocol import strip_embedded_json_blocks
 from app.agent.workflow.resource_handoff import result_resource_declarations
 from app.agent.workflow.target_mode_contract import build_target_mode_contract, target_mode_values
 from app.agent.workflow.coordinator import WorkflowCoordinator, WorkflowNodeSpec
@@ -83,7 +86,10 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "子节点交付的图表文件会在上游产物清单中回传，父 Agent 只做复用与排版，"
     "禁止在 DAG 完成后再由父 Agent 重新绘制分析图表——那是串行追加的整段时间。"
     "DAG 禁止 report 子节点；报告模式父 Agent 是唯一成稿者。"
-    "工具返回每个节点的 result_envelope（status/summary/evidence/artifacts/data_gaps）与血缘清单，"
+    "工具返回每个节点的紧凑 result_envelope（status/summary/findings/evidence/data_gaps）与血缘清单："
+    "findings 是报告取数来源，其中的数值可直接引用；"
+    "各节点完整结果已落盘并在 full_results.path，确需更多细节时用 read_file 对该文件一次整读，"
+    "禁止分页反复读同一文件。"
     "据此判断覆盖范围与缺口并整合结论，不要对子节点过程做重复全量复核。"
     "expert 族节点（expert/expert_meteorology/expert_analysis）必须提供 task_contract（protocol_version=workflow.v1、"
     "task_type=expert_analysis、question、decision_context、scope、required_evidence、deliverables）和 "
@@ -240,6 +246,126 @@ def format_upstream_summaries(dependency_results: Mapping[str, Any]) -> str:
         + json.dumps(summaries, ensure_ascii=False, default=str)
         + "\n"
     )
+
+
+# 父 Agent 紧凑视图预算：findings（数值结论）必须进上下文，其余全文走落盘文件。
+_PARENT_NODE_SUMMARY_CHARS = 2000
+_PARENT_NODE_FINDINGS_CHARS = 4000
+_PARENT_NODE_EVIDENCE_ITEMS = 20
+
+_FENCED_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*[\s\S]*?```", re.IGNORECASE)
+
+
+def _cap_plain_text(value: Any, limit: int) -> str:
+    return " ".join(strip_embedded_json_blocks(value).split())[:limit]
+
+
+def _compact_findings(structured_result: Mapping[str, Any]) -> list:
+    """返回 findings（关键数值结论），超预算时截断并注明完整版位置。"""
+    findings = structured_result.get("findings")
+    if not isinstance(findings, list):
+        return []
+    kept: list = []
+    used = 0
+    for item in findings:
+        rendered = (
+            item if isinstance(item, str)
+            else json.dumps(item, ensure_ascii=False, default=str)
+        )
+        if kept and used + len(rendered) > _PARENT_NODE_FINDINGS_CHARS:
+            kept.append({
+                "note": (
+                    f"findings 超出父上下文预算（已保留 {len(kept)}/{len(findings)} 条），"
+                    "完整版见 full_results.path"
+                )
+            })
+            break
+        kept.append(dict(item) if isinstance(item, Mapping) else str(item))
+        used += len(rendered) + 1
+    return kept
+
+
+def compact_parent_node_result(
+    task_id: str,
+    node_result: Any,
+    *,
+    target_mode: str,
+    max_iterations: Any = None,
+    timeout_seconds: Any = None,
+) -> Dict[str, Any]:
+    """构建返回给父 Agent 的单节点紧凑视图。
+
+    只保留结论与取数所需字段（summary/findings/evidence/data_gaps/句柄），
+    完整节点结果（含结构化输出全文、思考过程、工具轨迹）落盘到
+    full_results.path，父 Agent 需要细节时一次性整读。
+    """
+    envelope = _result_envelope(node_result)
+    data = node_result.get("data") if isinstance(node_result.get("data"), Mapping) else {}
+    structured = (
+        data.get("structured_result")
+        if isinstance(data.get("structured_result"), Mapping)
+        else {}
+    )
+    metadata = (
+        node_result.get("metadata")
+        if isinstance(node_result.get("metadata"), Mapping)
+        else {}
+    )
+    summary_source = envelope.get("summary") or node_result.get("result") or ""
+
+    evidence_items = [
+        item for item in (envelope.get("evidence") or [])
+        if isinstance(item, Mapping)
+    ] or [
+        item for item in (structured.get("evidence") or [])
+        if isinstance(item, Mapping)
+    ]
+    evidence_view = [
+        {
+            key: item.get(key)
+            for key in ("ref_id", "id", "kind", "label", "source_task_id")
+            if item.get(key) is not None
+        }
+        for item in evidence_items[:_PARENT_NODE_EVIDENCE_ITEMS]
+    ]
+    artifacts_view = []
+    for item in (envelope.get("artifacts") or [])[:_PARENT_NODE_EVIDENCE_ITEMS]:
+        if isinstance(item, Mapping):
+            artifacts_view.append({
+                key: item.get(key)
+                for key in ("kind", "name", "url", "resource_id")
+                if item.get(key) is not None
+            })
+        elif item:
+            artifacts_view.append({"kind": "artifact", "name": str(item)})
+
+    return {
+        "task_id": task_id,
+        "target_mode": target_mode,
+        "status": node_result.get("status") or envelope.get("status"),
+        "iterations": metadata.get("iterations"),
+        "max_iterations": max_iterations,
+        "timeout_seconds": timeout_seconds,
+        "result_envelope": {
+            "status": envelope.get("status"),
+            "summary": _cap_plain_text(summary_source, _PARENT_NODE_SUMMARY_CHARS),
+            "findings": _compact_findings(structured),
+            "evidence": evidence_view,
+            "uncertainties": [
+                str(item) for item in (envelope.get("uncertainties") or [])[:10]
+            ],
+            "data_gaps": [
+                str(item) for item in (envelope.get("data_gaps") or [])[:10]
+            ],
+            "artifacts": artifacts_view,
+        },
+        "file_paths": [str(p) for p in (data.get("file_paths") or [])[:20]],
+        "resource_ids": [
+            str(ref.get("resource_id"))
+            for ref in (data.get("resource_refs") or [])
+            if isinstance(ref, Mapping) and ref.get("resource_id")
+        ][:20],
+    }
 
 class RunAgentWorkflowTool(LLMTool):
     """Coordinator entry point for report/assistant orchestration."""
@@ -493,13 +619,40 @@ class RunAgentWorkflowTool(LLMTool):
                 str(snapshot["workflow_id"]),
                 snapshot["node_results"],
             )
+            session_id = getattr(context, "session_id", None) if context is not None else None
+            full_results = self._write_full_results(session_id, str(snapshot["workflow_id"]), snapshot)
+            if full_results and full_results.get("declaration"):
+                resources = [*resources, full_results["declaration"]]
+            # 父 Agent 只拿紧凑视图：结论摘要 + findings 数值 + 文件句柄；
+            # 完整节点结果已落盘（full_results.path），不再内联 snapshot/node 全文。
+            node_views = {
+                str(node.get("task_id") or ""): compact_parent_node_result(
+                    str(node.get("task_id") or ""),
+                    snapshot["node_results"][str(node.get("task_id") or "")],
+                    target_mode=str(node.get("target_mode") or ""),
+                    max_iterations=node.get("max_iterations"),
+                    timeout_seconds=node.get("timeout_seconds"),
+                )
+                for node in nodes
+                if isinstance(snapshot["node_results"].get(str(node.get("task_id") or "")), Mapping)
+            }
             result_data = {
                 "workflow_id": snapshot["workflow_id"],
                 "status": snapshot["status"],
-                "node_results": snapshot["node_results"],
+                "node_results": node_views,
                 "node_errors": snapshot["node_errors"],
                 "node_lineage": snapshot["node_lineage"],
-                "snapshot": snapshot,
+                "full_results": (
+                    {
+                        "path": full_results["path"],
+                        "note": (
+                            "各节点完整结果（结构化输出全文、工具轨迹、文件句柄）。"
+                            "envelope.findings 已含关键数值；确需更多细节时用 read_file "
+                            "对本文件一次整读，不要分页反复读。"
+                        ),
+                    }
+                    if full_results else None
+                ),
             }
             return {
                 "status": "success" if succeeded else snapshot["status"],
@@ -518,6 +671,62 @@ class RunAgentWorkflowTool(LLMTool):
             return self._failure(f"工作流定义无效：{exc}")
         except Exception as exc:
             return self._failure(f"工作流执行失败：{exc}")
+
+    @staticmethod
+    def _write_full_results(
+        session_id: Optional[str],
+        workflow_id: str,
+        snapshot: Mapping[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """把完整节点结果写入统一资源目录并登记为会话资源。
+
+        对照 ZCode 的后台子代理契约：大结果落盘（outputFile），父上下文只拿
+        指针；落盘失败不影响工作流返回（指针置空即可）。
+        """
+        if not session_id:
+            return None
+        try:
+            from app.tools.resource_declarations import primary_file
+            from app.utils.path_config import format_agent_path, get_sessions_dir
+
+            target_dir = get_sessions_dir() / f"agent_session_{session_id}" / "data"
+            target_dir.mkdir(parents=True, exist_ok=True)
+            path = target_dir / f"workflow_{workflow_id}_node_results.json"
+            payload = {
+                "workflow_id": workflow_id,
+                "status": snapshot.get("status"),
+                "definition": snapshot.get("definition") or {},
+                "node_results": snapshot.get("node_results") or {},
+                "node_errors": snapshot.get("node_errors") or {},
+                "node_lineage": snapshot.get("node_lineage") or {},
+            }
+            path.write_text(
+                json.dumps(payload, ensure_ascii=False, default=str),
+                encoding="utf-8",
+            )
+            declaration = primary_file(
+                path,
+                group_key=(
+                    "run_agent_workflow:file:"
+                    + hashlib.sha256(str(path).encode()).hexdigest()[:16]
+                ),
+                tool_name="run_agent_workflow",
+                role="output",
+                label=f"工作流完整结果 {workflow_id}",
+                metadata={"workflow_id": workflow_id},
+            )
+            declaration["kind"] = "data"
+            declaration["format"] = "json"
+            return {"path": format_agent_path(path), "declaration": declaration}
+        except Exception as exc:
+            # 落盘只是父上下文的补充通道，失败不能拖垮工作流返回。
+            logger.warning(
+                "workflow_full_results_persist_failed",
+                workflow_id=workflow_id,
+                session_id=session_id,
+                error=str(exc),
+            )
+            return None
 
     @staticmethod
     def _build_sub_agent_tool():

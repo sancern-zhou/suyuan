@@ -41,6 +41,7 @@ from app.agent.workflow.target_mode_contract import (
 from app.agent.workflow.protocol import (
     build_result_envelope,
     extract_structured_result,
+    strip_embedded_json_blocks,
     validate_result_schema,
 )
 from app.agent.workflow.runtime import WorkflowRuntime
@@ -1061,7 +1062,9 @@ class CallSubAgentTool(LLMTool):
                     if final_result["status"] == "cancelled"
                     else "failed"
                 ),
-                summary=final_result.get("answer", "")[:1000],
+                # 摘要只留散文：答案里内嵌的 ```json 结构化块已在
+                # structured_result 单独传递，粘贴进摘要是纯重复。
+                summary=strip_embedded_json_blocks(final_result.get("answer", ""))[:1000],
                 outputs=(
                     structured_result
                     if isinstance(structured_result, dict)

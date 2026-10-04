@@ -128,6 +128,7 @@ Older history to compress:
     # 工具输出截断配置
     MAX_OBSERVATION_CHARS = 3000  # observation 最大字符数
     MAX_TOOL_RESULT_CHARS = 5000  # tool_result 最大字符数
+    WORKFLOW_RESULT_DIGEST_CHARS = 8000  # 工作流结果保真摘要上限
 
     # 保护段配置
     PROTECTED_TURNS = 2  # 保留最近 N 轮对话不压缩
@@ -211,9 +212,83 @@ Older history to compress:
                 text = str(content)
 
         text = " ".join(text.split())
+        if self._is_workflow_result_text(text):
+            return self._workflow_result_digest(text)
         if len(text) <= max_chars:
             return text
         return text[: max_chars - 16].rstrip() + "...[truncated]"
+
+    @staticmethod
+    def _is_workflow_result_text(text: str) -> bool:
+        return '"full_results"' in text or '"result_envelope"' in text
+
+    def _workflow_result_digest(self, text: str) -> str:
+        """工作流工具结果的保真摘要：保留 findings 数值与 full_results 指针。
+
+        上下文压缩把工具结果泛化成摘要时，报告取数所需的数值会丢失，
+        迫使父 Agent 分页重读同一批文件。工作流结果改为按节点渲染
+        envelope 关键字段（findings/data_gaps/文件句柄/落盘指针），
+        数值原文进压缩记忆，"数字在哪个文件"永不丢。
+        """
+        try:
+            payload = json.loads(text)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return text[: self.MAX_TOOL_RESULT_CHARS] + "...[truncated]"
+        if not isinstance(payload, dict):
+            return text[: self.MAX_TOOL_RESULT_CHARS] + "...[truncated]"
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        nodes = data.get("node_results") if isinstance(data.get("node_results"), dict) else {}
+        lines = [
+            f"workflow_result workflow_id={data.get('workflow_id')} status={data.get('status')}"
+        ]
+        full_results = data.get("full_results")
+        if isinstance(full_results, dict) and full_results.get("path"):
+            lines.append(f"full_results_path={full_results['path']}")
+        for task_id, view in nodes.items():
+            if not isinstance(view, dict):
+                continue
+            envelope = (
+                view.get("result_envelope")
+                if isinstance(view.get("result_envelope"), dict)
+                else {}
+            )
+            structured = (
+                view.get("data", {}).get("structured_result")
+                if isinstance(view.get("data"), dict)
+                and isinstance(view.get("data", {}).get("structured_result"), dict)
+                else {}
+            )
+            findings = envelope.get("findings") or structured.get("findings") or []
+            data_gaps = envelope.get("data_gaps") or structured.get("data_gaps") or []
+            file_paths = (
+                view.get("file_paths")
+                or (view.get("data", {}) or {}).get("file_paths")
+                or []
+            )
+            lines.append(
+                f"[{task_id}] mode={view.get('target_mode')} status={view.get('status')}"
+                f" summary={str(envelope.get('summary') or view.get('result') or '')[:400]}"
+            )
+            if findings:
+                lines.append(
+                    f"[{task_id}] findings="
+                    + json.dumps(findings, ensure_ascii=False, default=str)[:2000]
+                )
+            if data_gaps:
+                lines.append(
+                    f"[{task_id}] data_gaps="
+                    + json.dumps(data_gaps, ensure_ascii=False, default=str)[:500]
+                )
+            if file_paths:
+                lines.append(
+                    f"[{task_id}] file_paths="
+                    + json.dumps(file_paths[:10], ensure_ascii=False, default=str)
+                )
+        digest = "\n".join(lines)
+        if len(digest) > self.WORKFLOW_RESULT_DIGEST_CHARS:
+            digest = digest[: self.WORKFLOW_RESULT_DIGEST_CHARS - 20] + "\n...[digest truncated]"
+        return digest
 
     def _normalize_anchor_text(self, text: str) -> str:
         normalized = str(text or "").strip()
