@@ -38,13 +38,17 @@ def test_node_history_resolves_only_parent_linked_child(monkeypatch):
                 {"sequence": 2, "type": "tool_result", "tool_name": "air_quality", "success": True},
             ],
         },
-        conversation_history=[{"role": "assistant", "content": "空气数据摘要"}],
+        conversation_history=[
+            {"id": "question", "role": "user", "content": "查询空气数据", "private": "hidden"},
+            {"id": "answer", "role": "assistant", "content": "空气数据摘要"},
+            {"role": "system", "content": "internal prompt"},
+        ],
     )
     snapshot = {
         "workflow_id": "wf",
-        "graph": {"wf:air": {"status": "succeeded"}},
-        "node_sessions": {"wf:air": child.session_id},
-        "runtime": {"events": [{"sequence": 2, "task_id": "wf:air", "event_type": "task.succeeded"}]},
+        "graph": {"air": {"status": "succeeded"}},
+        "node_sessions": {"air": child.session_id},
+        "runtime": {"events": [{"sequence": 2, "task_id": "air", "event_type": "task.succeeded"}]},
     }
     parent = SimpleNamespace(metadata={"workflow_coordinators": {"wf": snapshot}})
 
@@ -55,14 +59,24 @@ def test_node_history_resolves_only_parent_linked_child(monkeypatch):
     monkeypatch.setattr(workflow_routes, "get_child_session_manager", lambda: SimpleNamespace(load_session=lambda _: child))
     catalog = Catalog()
 
-    async def lookup(task_id="wf:air", after=0, limit=1):
+    async def lookup(task_id="air", after=0, limit=1):
         return await workflow_routes.workflow_node_history(
             "parent", "wf", task_id, after, limit, user=object(), catalog=catalog
         )
 
     first = asyncio.run(lookup())
     assert first["answer"] == "空气数据摘要"
+    assert first["conversation"] == [
+        {"id": "question", "role": "user", "content": "查询空气数据", "timestamp": None},
+        {"id": "answer", "role": "assistant", "content": "空气数据摘要", "timestamp": None},
+    ]
     assert first["has_more"] is True
+    assert first["progress"] == {
+        "label": "分析已完成",
+        "tool_calls": 1,
+        "tool_results": 1,
+        "failed_tools": 0,
+    }
     assert [item["sequence"] for item in first["execution_history"]] == [1]
     assert [item["sequence"] for item in asyncio.run(lookup(after=1))["execution_history"]] == [2]
     assert catalog.reads == ["parent", "parent"]
@@ -75,10 +89,10 @@ def test_node_history_resolves_only_parent_linked_child(monkeypatch):
     with pytest.raises(HTTPException) as legacy:
         asyncio.run(lookup())
     assert legacy.value.status_code == 404
-    snapshot["graph"]["wf:air"]["status"] = "running"
+    snapshot["graph"]["air"]["status"] = "running"
     assert asyncio.run(lookup())["child_session_id"] is None
-    snapshot["graph"]["wf:air"]["status"] = "succeeded"
-    snapshot["node_sessions"]["wf:air"] = child.session_id
+    snapshot["graph"]["air"]["status"] = "succeeded"
+    snapshot["node_sessions"]["air"] = child.session_id
 
     child.metadata["workflow"]["parent_task_id"] = "another-workflow"
     with pytest.raises(HTTPException) as unlinked:
@@ -87,7 +101,7 @@ def test_node_history_resolves_only_parent_linked_child(monkeypatch):
 
     with pytest.raises(HTTPException) as forbidden:
         asyncio.run(workflow_routes.workflow_node_history(
-            "parent", "wf", "wf:air", 0, 1, user=object(), catalog=Catalog(allowed=False)
+            "parent", "wf", "air", 0, 1, user=object(), catalog=Catalog(allowed=False)
         ))
     assert forbidden.value.status_code == 403
 
@@ -120,3 +134,43 @@ def test_child_execution_trace_persists_without_tool_payloads(tmp_path, monkeypa
     ]
     contents = (tmp_path / "social__to__query__trace.json").read_text()
     assert "secret-input" not in contents and "secret-output" not in contents
+
+
+def test_child_execution_trace_is_visible_while_running(tmp_path, monkeypatch):
+    manager = SessionManager(storage_base_path=str(tmp_path))
+    monkeypatch.setattr(call_sub_agent, "session_manager", manager)
+    tool = call_sub_agent.CallSubAgentTool()
+    tool._persist_workflow_snapshot(
+        session_id="report__to__query__live",
+        query="查询实时数据",
+        parent_mode="report",
+        child_mode="query_monitoring",
+        task_id="wf:monitor",
+        parent_task_id="wf",
+        snapshot={"events": []},
+    )
+    tool._persist_turn_start(
+        session_id="report__to__query__live",
+        user_query="查询实时数据",
+        task_id="wf:monitor",
+    )
+    tool._persist_execution_event("report__to__query__live", {
+        "type": "tool_call",
+        "generator": "air_quality",
+        "args": {"private": "secret-input"},
+        "_trace_id": "trace-1",
+        "_recorded_at": "2026-10-03T08:00:00Z",
+    })
+
+    saved = manager.load_session("report__to__query__live")
+    assert saved.metadata["workflow"]["status"] == "running"
+    assert saved.metadata["workflow"]["parent_task_id"] == "wf"
+    assert saved.conversation_history[0]["content"] == "查询实时数据"
+    assert saved.metadata["execution_history"] == [{
+        "type": "tool_call",
+        "id": "trace-1",
+        "timestamp": "2026-10-03T08:00:00Z",
+        "tool_name": "air_quality",
+        "sequence": 1,
+    }]
+    assert "secret-input" not in (tmp_path / "report__to__query__live.json").read_text()

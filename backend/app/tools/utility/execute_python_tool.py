@@ -530,6 +530,9 @@ class ExecutePythonTool(LLMTool):
                 result["data"]["data_file_paths"] = python_data_paths
                 result.setdefault("metadata", {})
                 result["metadata"]["data_file_paths"] = python_data_paths
+                shapes = self._extract_python_data_shapes(result["data"].get("output", ""))
+                if shapes:
+                    result["data_shapes"] = shapes
                 if result.get("success", False):
                     result["summary"] = (
                         f"{result.get('summary', '✅ 工具已执行完成')} | "
@@ -939,6 +942,7 @@ class ExecutePythonTool(LLMTool):
             )
 
             declared_data_paths = self._extract_python_data_file_paths(stdout or "")
+            data_shapes = self._extract_python_data_shapes(stdout or "")
             output = stdout or ""
             if stderr:
                 output += f"\n错误输出:\n{stderr}"
@@ -987,7 +991,8 @@ class ExecutePythonTool(LLMTool):
                 "success": True,
                 "data": {"output": output, "declared_data_file_paths": declared_data_paths,
                          "execution": diagnostics},
-                "summary": "✅ 工具已执行完成，计算任务已完成"
+                "summary": "✅ 工具已执行完成，计算任务已完成",
+                **({"data_shapes": data_shapes} if data_shapes else {}),
             }
 
         except subprocess.TimeoutExpired:
@@ -1812,6 +1817,19 @@ def artifact_path(filename: str) -> str:
                 refs.append(match)
         return refs
 
+    def _extract_python_data_shapes(self, output: str) -> Dict[str, Dict[str, Any]]:
+        """Extract per-file data_shape printed by the injected save_data() helper."""
+        if not output:
+            return {}
+        shapes: Dict[str, Dict[str, Any]] = {}
+        for match in re.findall(r"PYTHON_DATA_FILE_SHAPE:([^\s]+\.json):(\{.*\})", output):
+            path, payload = match
+            try:
+                shapes[path] = json.loads(payload)
+            except Exception:
+                continue
+        return shapes
+
     def _extract_echarts_format(self, output: str) -> dict:
         """Backward-compatible single-option extractor."""
         options = self._extract_echarts_formats(output)
@@ -2060,6 +2078,46 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
     file_path = __SESSION_PREFIX__ + "/" + filename
     __ALLOWED_DATA_FILES__.add(str(absolute_path.resolve()))
     print(f"PYTHON_DATA_FILE_SAVED:{file_path}")
+
+    # data_shape：真实列名/读回类型/行数，随工具结果返回 LLM 上下文
+    try:
+        row_count = len(payload) if isinstance(payload, list) else 1
+        columns_with_types = {}
+        is_frame = False
+        try:
+            import pandas as _pd
+            if isinstance(data, _pd.DataFrame):
+                is_frame = True
+                for _name in data.columns:
+                    _dtype = str(data[_name].dtype)
+                    if _dtype.startswith('datetime'):
+                        columns_with_types[str(_name)] = 'datetime-str'
+                    elif _dtype in ('int64', 'int32'):
+                        columns_with_types[str(_name)] = 'int'
+                    elif _dtype in ('float64', 'float32'):
+                        columns_with_types[str(_name)] = 'float'
+                    elif _dtype == 'bool':
+                        columns_with_types[str(_name)] = 'bool'
+                    else:
+                        columns_with_types[str(_name)] = 'str'
+        except Exception:
+            is_frame = False
+        if not is_frame and isinstance(payload, list) and payload and isinstance(payload[0], dict):
+            for _name, _value in payload[0].items():
+                columns_with_types[str(_name)] = (
+                    'bool' if isinstance(_value, bool)
+                    else 'int' if isinstance(_value, int)
+                    else 'float' if isinstance(_value, float)
+                    else 'str'
+                )
+        shape = {
+            'columns': [{'name': n, 'type': t} for n, t in columns_with_types.items()],
+            'row_count': row_count,
+            'source': 'dataframe' if is_frame else 'inferred',
+        }
+        print("PYTHON_DATA_FILE_SHAPE:" + file_path + ":" + json.dumps(shape, ensure_ascii=False))
+    except Exception:
+        pass
     return file_path
 
 # ===== 数据访问上下文注入完成 =====

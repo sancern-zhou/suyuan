@@ -46,6 +46,15 @@ class LLMFailoverError(Exception):
         super().__init__(f"All LLM fallback candidates failed: {summary}")
 
 
+class LLMResponseRejectedError(Exception):
+    """Response completed but failed caller-side validation."""
+
+    def __init__(self, reason: str, attempts: Optional[list[dict]] = None):
+        self.reason = reason
+        self.attempts = attempts or []
+        super().__init__(reason)
+
+
 _pool_semaphores: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _pool_semaphore_limits: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _cooldowns: dict[str, tuple[float, LLMFailure]] = {}
@@ -189,6 +198,8 @@ def classify_llm_failure(err: object) -> LLMFailure:
     lower = message.lower()
     name = type(err).__name__
 
+    if isinstance(err, LLMResponseRejectedError):
+        return LLMFailure("invalid_response", None, None, err.reason)
     if is_context_overflow_message(message):
         return LLMFailure("context_overflow", status, code, message)
     if is_media_fetch_failure_message(message):
@@ -220,6 +231,7 @@ def should_fallback(failure: LLMFailure) -> bool:
         "billing",
         "format",
         "auth",
+        "invalid_response",
         "unknown",
     }
 

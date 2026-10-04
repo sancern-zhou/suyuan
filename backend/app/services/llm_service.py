@@ -12,13 +12,14 @@ import threading
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Dict, Any, Optional, Tuple, AsyncGenerator, List
+from typing import Callable, Dict, Any, Optional, Tuple, AsyncGenerator, List
 import structlog
 from config.settings import settings
 import httpx
 from app.utils.llm_context_logger import get_llm_context_logger
 from app.services.llm_failover import (
     LLMFailoverError,
+    LLMResponseRejectedError,
     classify_llm_failure,
     get_cooldown_failure,
     get_llm_pool_semaphore,
@@ -783,12 +784,40 @@ class LLMService:
                 )
         else:
             api_params["messages"] = self._strip_thinking_blocks(sanitized_messages)
-            logger.info(
-                "extended_thinking_skipped",
-                provider=self.provider,
-                model=self.model,
-                reason="Not a real Anthropic API",
-            )
+            if self.provider == "scnet" and not is_deepseek:
+                from app.services.llm_thinking_policy import (
+                    get_agent_caller_tier,
+                    should_disable_thinking,
+                )
+
+                disable, reason = should_disable_thinking(self.model, settings.scnet_disable_thinking)
+                if disable:
+                    # SCNET Qwen 默认开启思考且无法限制长度（实测出现过 26853 字符
+                    # thinking / 289s 生成轮）。thinking=disabled 已实测带 tools、
+                    # 历史含 thinking 块时均返回 200 且真实关闭（2026-10-04）。
+                    api_params["thinking"] = {"type": "disabled"}
+                    logger.info(
+                        "scnet_thinking_mode_disabled",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=reason,
+                        caller_tier=get_agent_caller_tier(),
+                    )
+                else:
+                    logger.info(
+                        "scnet_thinking_kept",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=reason,
+                        caller_tier=get_agent_caller_tier(),
+                    )
+            else:
+                logger.info(
+                    "extended_thinking_skipped",
+                    provider=self.provider,
+                    model=self.model,
+                    reason="Not a real Anthropic API",
+                )
 
         if system:
             api_params["system"] = system
@@ -1240,6 +1269,32 @@ class LLMService:
         override = getattr(self, "_request_timeout_seconds", None)
         return override if override is not None else float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
 
+    @property
+    def connect_timeout_seconds(self) -> float:
+        return float(getattr(settings, "llm_connect_timeout_seconds", 10.0) or 10.0)
+
+    @property
+    def first_token_timeout_seconds(self) -> float:
+        return float(getattr(settings, "llm_first_token_timeout_seconds", 45.0) or 45.0)
+
+    def provider_http_timeout(self, *, streaming: bool = False, total: Optional[float] = None) -> httpx.Timeout:
+        """Build an httpx.Timeout for provider requests.
+
+        ``connect`` is short so a hanging endpoint fails over in seconds instead
+        of burning the full request timeout. ``read`` doubles as the
+        first-token/idle-chunk guard for streaming calls; non-streaming calls
+        keep the full request timeout because the response body arrives in one
+        silent chunk after generation completes.
+        """
+        request_timeout = float(total) if total is not None else self.request_timeout_seconds
+        connect_timeout = min(self.connect_timeout_seconds, request_timeout)
+        read_timeout = (
+            min(self.first_token_timeout_seconds, request_timeout)
+            if streaming
+            else request_timeout
+        )
+        return httpx.Timeout(request_timeout, connect=connect_timeout, read=read_timeout)
+
     def __init__(self, *, request_timeout_seconds: Optional[float] = None):
         self._request_timeout_seconds = request_timeout_seconds
         # 优先使用 settings 中的配置，确保与 .env 文件一致
@@ -1443,7 +1498,10 @@ class LLMService:
                     })
                     if failure.reason == "context_overflow":
                         raise
-                    if should_fallback(failure):
+                    # Response rejections are request-scoped (e.g. empty
+                    # output): move to the next candidate without poisoning
+                    # the provider for later requests.
+                    if should_fallback(failure) and failure.reason != "invalid_response":
                         mark_provider_cooldown(self.provider, failure)
                     has_next = index < len(candidates)
                     logger.warning(
@@ -1457,6 +1515,8 @@ class LLMService:
                         error=failure.message[:300],
                     )
                     if not has_next or not should_fallback(failure):
+                        if isinstance(exc, LLMResponseRejectedError) and not exc.attempts:
+                            exc.attempts = list(attempts)
                         raise
             raise LLMFailoverError(summarize_attempts(attempts))
         except Exception:
@@ -1764,7 +1824,7 @@ class LLMService:
                     )
                     return
 
-                request_timeout = self.request_timeout_seconds
+                request_timeout = self.provider_http_timeout()
                 if self.provider == "mimo":
                     # MiMo's Anthropic-compatible endpoint accepts the SDK's
                     # standard API-key authentication. Passing api_key=None and
@@ -1960,7 +2020,7 @@ class LLMService:
                 full_content = ""
 
                 # 🔥 使用流式API（600秒超时）
-                async with httpx.AsyncClient(timeout=stream_timeout) as client:
+                async with httpx.AsyncClient(timeout=self.provider_http_timeout(streaming=True, total=stream_timeout)) as client:
                     async with client.stream("POST", url, headers=headers, json=payload) as response:
                         response.raise_for_status()
 
@@ -2077,7 +2137,7 @@ class LLMService:
 
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
+                async with httpx.AsyncClient(timeout=self.provider_http_timeout(streaming=True, total=timeout)) as client:
                     async with client.stream("POST", url, headers=headers, json=payload) as response:
                         response.raise_for_status()
 
@@ -2214,7 +2274,7 @@ class LLMService:
 
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
+                async with httpx.AsyncClient(timeout=self.provider_http_timeout(streaming=True, total=timeout)) as client:
                     async with client.stream("POST", url, headers=headers, json=payload) as response:
                         response.raise_for_status()
 
@@ -2405,7 +2465,7 @@ class LLMService:
 
         for attempt in range(max_retries):
             try:
-                timeout = self.request_timeout_seconds
+                timeout = self.provider_http_timeout()
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     response = await client.post(url, headers=headers, json=payload)
                     response.raise_for_status()
@@ -3007,6 +3067,27 @@ class LLMService:
             payload["enable_thinking"] = False
             if stream:
                 payload["stream_options"] = {"include_usage": True}
+        elif self.provider in ("go", "go2"):
+            # Go 网关（DeepSeek 上游）默认开启思考：实测无参数时推理可吃满
+            # max_tokens 导致正文为空；enable_thinking=false 实测生效（2026-10-04）。
+            from app.services.llm_thinking_policy import (
+                get_agent_caller_tier,
+                should_disable_thinking,
+            )
+
+            disable, reason = should_disable_thinking(self.model, settings.go_disable_thinking)
+            if disable:
+                payload["enable_thinking"] = False
+            logger.info(
+                "go_thinking_mode",
+                provider=self.provider,
+                model=self.model,
+                disabled=disable,
+                reason=reason,
+                caller_tier=get_agent_caller_tier(),
+            )
+            if stream:
+                payload["stream_options"] = {"include_usage": True}
         return payload
 
     @staticmethod
@@ -3039,7 +3120,7 @@ class LLMService:
             messages_count=len(payload["messages"]),
             has_tools=bool(payload.get("tools")),
         )
-        timeout = self.request_timeout_seconds
+        timeout = self.provider_http_timeout()
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
@@ -3096,7 +3177,7 @@ class LLMService:
             has_tools=bool(payload.get("tools")),
         )
         adapter = ChatCompletionsStreamAdapter(model=self.model)
-        timeout = self.request_timeout_seconds
+        timeout = self.provider_http_timeout(streaming=True)
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream("POST", url, headers=headers, json=payload) as response:
                 response.raise_for_status()
@@ -3122,6 +3203,7 @@ class LLMService:
         provider: Optional[str] = None,
         model: Optional[str] = None,
         auto_profile: Optional[str] = None,
+        validate: Optional[Callable[[Any], Optional[str]]] = None,
     ) -> Dict[str, Any]:
         """Anthropic 格式聊天，支持原生工具调用
 
@@ -3133,6 +3215,9 @@ class LLMService:
             max_tokens: 最大输出 token 数
             temperature: 温度参数
             system: 系统提示词（Anthropic API 使用单独的 system 参数）
+            validate: 可选响应校验回调，返回 None 表示通过；返回错误文案时
+                当前候选被判为 invalid_response 并切换下一个 fallback 候选，
+                全部候选被拒绝时抛出 LLMResponseRejectedError。
 
         Returns:
             {
@@ -3150,6 +3235,7 @@ class LLMService:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     system=system,
+                    validate=validate,
                 )
             finally:
                 self._schedule_provider_override_service_close(override_service)
@@ -3162,6 +3248,7 @@ class LLMService:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     system=system,
+                    validate=validate,
                 )
 
         try:
@@ -3202,6 +3289,16 @@ class LLMService:
                     has_tools=bool(api_params.get("tools")),
                 )
                 return await self.anthropic_client.messages.create(**api_params)
+
+            if validate is not None:
+                base_create_message = create_message
+
+                async def create_message():
+                    response = await base_create_message()
+                    rejection = validate(response)
+                    if rejection:
+                        raise LLMResponseRejectedError(str(rejection))
+                    return response
 
             response = await self._run_anthropic_with_fallback(
                 "llm_chat",
@@ -3472,7 +3569,10 @@ class LLMService:
                             operation="anthropic_stream",
                             wait_ms=round((time.monotonic() - pool_wait_started) * 1000, 2),
                         )
-                        async with self.anthropic_client.messages.stream(**api_params) as stream:
+                        async with self.anthropic_client.messages.stream(
+                            **api_params,
+                            timeout=self.provider_http_timeout(streaming=True),
+                        ) as stream:
                             async for event in stream:
                                 event_type = event.type
 

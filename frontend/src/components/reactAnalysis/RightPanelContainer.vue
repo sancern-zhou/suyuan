@@ -1,7 +1,7 @@
 <template>
   <div
     v-if="visible"
-    :class="['viz-wrapper', { 'full-bleed-resource-panel': fullBleedVisualizationPanel }]"
+    :class="['viz-wrapper', { 'full-bleed-resource-panel': fullBleedVisualizationPanel, 'workflow-active': activeTab === 'workflow' }]"
     :style="resolvedPanelStyle"
   >
     <!-- 报告生成专家 -->
@@ -47,12 +47,12 @@
       </div>
       <ResourceProductsPanel
         v-if="activeTab === 'files' && sessionId"
-        class="panel-content"
+        class="panel-content workflow-panel-host"
         @open-resource-tab="handleTabChange"
       />
       <WorkflowPanel
         v-if="activeTab === 'workflow' && sessionId"
-        class="panel-content"
+        class="panel-content workflow-panel-host"
         :session-id="sessionId"
       />
       <ReportGenerationPanel
@@ -235,7 +235,7 @@
 
       <WorkflowPanel
         v-if="activeTab === 'workflow' && sessionId"
-        class="panel-content"
+        class="panel-content workflow-panel-host"
         :session-id="sessionId"
       />
 
@@ -558,6 +558,10 @@ const handleBoardSnapshotConfirm = (snapshot) => {
   border-left: 0;
 }
 
+.viz-wrapper.workflow-active {
+  min-width: min(360px, calc(100vw - 64px));
+}
+
 .right-panel-tabs {
   display: flex;
   flex-shrink: 0;
@@ -660,5 +664,11 @@ const handleBoardSnapshotConfirm = (snapshot) => {
   width: 100%;
   height: 100%;
   margin: 0;
+}
+
+.panel-content.workflow-panel-host {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 </style>

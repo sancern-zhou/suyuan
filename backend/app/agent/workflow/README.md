@@ -39,3 +39,18 @@ result schemas.  The shared runtime owns scheduling, persistence, retries,
 repair states, cancellation, capability filtering, and observability.  New
 modes should call the runtime through the existing handoff tool rather than
 implementing another parent/child execution path.
+
+## Fixed workflow catalog
+
+`catalog.py` is the shared registry for bounded Agent-mode workflows and
+deterministic scheduled workflows. Both entry points publish a versioned
+definition made of named phases; they differ only in their adapter:
+
+- Agent-mode workflows let the model choose tool arguments while the runtime
+  owns phase transitions, visible tools, retry bounds, and completion.
+- Scheduled workflows bind a deterministic handler and continue to run without
+  starting an Agent.
+
+Latency-sensitive query modes are defined in `mode_workflows.py`. They use a
+bounded acquire/normalize/deliver flow, so report DAG nodes and future scheduled
+jobs can share the same execution policy instead of copying prompt conventions.

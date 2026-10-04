@@ -63,6 +63,10 @@ def test_coordinator_retries_node_and_persists_a_resumable_snapshot():
         )
         assert restored.snapshot()["node_results"]["fetch"] == {"ok": True}
         assert snapshots
+        assert all(
+            snapshot.get("workflow_id") == "retry-1" and "definition" in snapshot
+            for snapshot in snapshots
+        )
 
     asyncio.run(run())
 
@@ -83,6 +87,34 @@ def test_coordinator_keeps_failed_node_child_link_for_history():
     assert snapshot["status"] == "failed"
     assert snapshot["node_sessions"]["air"] == "social__to__query__failed"
     assert "air" not in snapshot["node_results"]
+
+
+def test_coordinator_persists_child_link_while_node_is_running():
+    async def run():
+        snapshots = []
+        linked = asyncio.Event()
+        release = asyncio.Event()
+        coordinator = None
+
+        async def execute(node, dependencies, attempt, retry_context=None):
+            coordinator.bind_node_session(node.task_id, "report__to__query__live")
+            linked.set()
+            await release.wait()
+            return {"ok": True, "metadata": {"session_id": "report__to__query__live"}}
+
+        coordinator = WorkflowCoordinator(
+            {"workflow_id": "live-1", "nodes": [{"task_id": "air"}]},
+            executor=execute,
+            persist=snapshots.append,
+        )
+        task = asyncio.create_task(coordinator.run())
+        await linked.wait()
+        assert snapshots[-1]["graph"]["air"]["status"] == "running"
+        assert snapshots[-1]["node_sessions"]["air"] == "report__to__query__live"
+        release.set()
+        await task
+
+    asyncio.run(run())
 
 
 def test_coordinator_cancels_pending_nodes():
@@ -110,6 +142,28 @@ def test_coordinator_cancels_pending_nodes():
         result = await task
         assert result["status"] == "cancelled"
         assert result["graph"]["downstream"]["status"] == "cancelled"
+
+    asyncio.run(run())
+
+
+def test_coordinator_times_out_node_and_records_clear_error():
+    async def run():
+        async def execute(node, dependencies, attempt):
+            await asyncio.sleep(1)
+            return {"ok": True}
+
+        coordinator = WorkflowCoordinator(
+            {
+                "workflow_id": "timeout-1",
+                "nodes": [{"task_id": "expert", "timeout_seconds": 0.01}],
+            },
+            executor=execute,
+        )
+        result = await coordinator.run()
+        assert result["status"] == "failed"
+        assert result["graph"]["expert"]["status"] == "failed"
+        assert "timed out after 0.01s" in result["node_errors"]["expert"]
+        assert result["definition"]["nodes"][0]["timeout_seconds"] == 0.01
 
     asyncio.run(run())
 

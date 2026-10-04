@@ -478,11 +478,33 @@ class ToolExecutor:
                     for item in declared
                     if isinstance(item, dict) and isinstance(item.get("locator"), dict)
                 }
-                declared.extend(
-                    data_file_resource(file_path, tool_name=tool_name)
-                    for file_path in execution_context.available_file_paths
-                    if file_path not in declared_paths
+                result_shapes = (
+                    observation.get("data_shapes")
+                    if isinstance(observation.get("data_shapes"), dict)
+                    else {}
                 )
+                get_context_shape = getattr(execution_context, "get_data_shape", None)
+                for file_path in execution_context.available_file_paths:
+                    if file_path in declared_paths:
+                        continue
+                    shape = result_shapes.get(file_path) or next(
+                        (
+                            value
+                            for key, value in result_shapes.items()
+                            if file_path.endswith(key) or key.endswith(file_path)
+                        ),
+                        None,
+                    )
+                    if shape is None and callable(get_context_shape):
+                        shape = get_context_shape(file_path)
+                    declaration_metadata = {"data_shape": shape} if isinstance(shape, dict) else None
+                    declared.append(
+                        data_file_resource(
+                            file_path,
+                            tool_name=tool_name,
+                            metadata=declaration_metadata,
+                        )
+                    )
 
             tracking = await self._persist_boundary_resources(
                 tool_name=tool_name,

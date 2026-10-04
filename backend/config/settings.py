@@ -533,6 +533,22 @@ class Settings(BaseSettings):
         default="https://api.scnet.cn/api/llm/anthropic",
         description="Sugon SCNET Anthropic-compatible API base URL"
     )
+    scnet_disable_thinking: bool = Field(
+        default=True,
+        description=(
+            "Disable thinking mode for SCNET Qwen models (thinking: disabled via "
+            "Anthropic protocol). SCNET enables thinking by default and Qwen3 "
+            "occasionally generates 20k+ char reasoning (observed 289s turns), "
+            "which blows per-node wall-clock budgets. Verified 200 with tools "
+            "and thinking-block history on 2026-10-04."
+        )
+    )
+    go_disable_thinking: bool = Field(
+        default=True,
+        description=(
+            "Enable tiered thinking policy for Go/Go2 gateways: flash models and subagents disable thinking, PRO models keep gateway-default thinking."
+        ),
+    )
     scnet_model: str = Field(
         default="Qwen3.8-Max",
         description="Sugon SCNET model name"
@@ -567,6 +583,22 @@ class Settings(BaseSettings):
     llm_request_timeout_seconds: float = Field(
         default=300.0,
         description="Timeout in seconds for LLM provider requests"
+    )
+    llm_connect_timeout_seconds: float = Field(
+        default=10.0,
+        description="TCP/TLS connect timeout for LLM provider requests"
+    )
+    llm_first_token_timeout_seconds: float = Field(
+        default=45.0,
+        description="Max silent wait for the first streaming chunk from an LLM provider; also the per-chunk idle gap for streams"
+    )
+    llm_fresh_tool_result_budget_chars: int = Field(
+        default=48_000,
+        description="Char budget for projecting the current run's raw tool results into LLM history; lower values cut per-round latency for multi-iteration agents"
+    )
+    llm_fresh_tool_result_single_max_chars: int = Field(
+        default=24_000,
+        description="Per-result char cap above which a tool result falls back to its compacted history form instead of verbatim projection"
     )
     llm_fallbacks: str = Field(
         default="doubao/gpt-5.6-luna,bailian/qwen3.8-max,deepseek/deepseek-v4-pro",
