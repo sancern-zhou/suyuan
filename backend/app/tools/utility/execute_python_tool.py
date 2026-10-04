@@ -531,6 +531,9 @@ class ExecutePythonTool(LLMTool):
                 shapes = self._extract_python_data_shapes(result["data"].get("output", ""))
                 if shapes:
                     result["data_shapes"] = shapes
+                    register_shapes = getattr(context, "register_data_shapes", None)
+                    if callable(register_shapes):
+                        register_shapes(shapes)
                 if result.get("success", False):
                     result["summary"] = (
                         f"{result.get('summary', '✅ 工具已执行完成')} | "
@@ -930,6 +933,9 @@ class ExecutePythonTool(LLMTool):
 
             declared_data_paths = self._extract_python_data_file_paths(stdout or "")
             data_shapes = self._extract_python_data_shapes(stdout or "")
+            register_shapes = getattr(context, "register_data_shapes", None)
+            if data_shapes and callable(register_shapes):
+                register_shapes(data_shapes)
             output = stdout or ""
             if stderr:
                 output += f"\n错误输出:\n{stderr}"

@@ -98,3 +98,43 @@ def test_resource_map_appends_data_shape_for_data_resources():
     assert "StationName:varchar" in rendered
     assert "864行" in rendered
     assert rendered.count("data_shape:") == 1
+
+
+def test_execution_context_persists_shapes_for_external_file_writers(tmp_path):
+    from app.agent.context.execution_context import ExecutionContext
+
+    data_file = tmp_path / "result.json"
+    data_file.write_text('[{"value": 1.5}]', encoding="utf-8")
+    context = ExecutionContext("s1", 1, object())
+    shape = build_data_shape({"value": "float"}, 3, "inferred")
+    context.register_data_shapes({str(data_file): shape})
+
+    fresh_context = ExecutionContext("s1", 2, object())
+    assert fresh_context.get_data_shape(str(data_file)) == shape
+
+
+def test_execution_context_infers_shape_for_interface_records(tmp_path):
+    from app.agent.context.execution_context import ExecutionContext
+
+    class DataManager:
+        def __init__(self):
+            self.metadata = None
+
+        def save_data(self, **kwargs):
+            self.metadata = kwargs["metadata"]
+            return str(tmp_path / "interface-result.json")
+
+    manager = DataManager()
+    context = ExecutionContext("s1", 1, manager)
+    context.save_data(
+        [{"timepoint": "2026-10-04 10:00", "pm2_5": 35.5}],
+        schema="interface_query",
+    )
+
+    shape = manager.metadata["data_shape"]
+    assert shape["source"] == "inferred"
+    assert shape["row_count"] == 1
+    assert shape["columns"] == [
+        {"name": "timepoint", "type": "str"},
+        {"name": "pm2_5", "type": "float"},
+    ]

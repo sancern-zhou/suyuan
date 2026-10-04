@@ -14,6 +14,9 @@ Key Benefits:
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import structlog
@@ -74,6 +77,7 @@ class ExecutionContext:
         # Durable session inputs (uploads etc.) authorized for sandbox staging.
         # Separate from available_file_paths, which doubles as output declarations.
         self.authorized_input_paths: List[str] = []
+        self._data_shapes: Dict[str, Dict[str, Any]] = {}
         self.runtime_metadata: Dict[str, Any] = {}
         self.scheduled_task_context: Optional[Dict[str, Any]] = None
 
@@ -214,11 +218,23 @@ class ExecutionContext:
             session_id=self.session_id
         )
 
+        effective_metadata = dict(metadata or {})
+        if "data_shape" not in effective_metadata and isinstance(data, Sequence) and data:
+            records = [item for item in data if isinstance(item, Mapping)]
+            if len(records) == len(data):
+                from app.agent.context.data_shape import shape_from_records
+
+                effective_metadata["data_shape"] = shape_from_records(
+                    records,
+                    len(records),
+                    source="inferred",
+                )
+
         file_path = self.data_manager.save_data(
             data=data,
             schema=schema,
             field_stats=field_stats,
-            metadata=metadata
+            metadata=effective_metadata,
         )
 
         if not file_path:
@@ -239,6 +255,18 @@ class ExecutionContext:
 
     def get_data_shape(self, file_path: str) -> Optional[Dict[str, Any]]:
         """返回已保存数据文件的 data_shape 元数据（未记录时 None）。"""
+        if file_path in self._data_shapes:
+            return self._data_shapes[file_path]
+        try:
+            sidecar = Path(resolve_agent_path(file_path)).with_suffix(".data_shape.json")
+            if sidecar.is_file():
+                with sidecar.open(encoding="utf-8") as stream:
+                    shape = json.load(stream)
+                if isinstance(shape, dict):
+                    self._data_shapes[file_path] = shape
+                    return shape
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            pass
         try:
             handle = self.get_handle(file_path)
         except Exception:
@@ -249,6 +277,22 @@ class ExecutionContext:
             if isinstance(shape, dict):
                 return shape
         return None
+
+    def register_data_shapes(self, shapes: Dict[str, Dict[str, Any]]) -> None:
+        """Register shapes discovered by tools that write files outside DataContextManager."""
+        for file_path, shape in (shapes or {}).items():
+            if not isinstance(shape, dict):
+                continue
+            try:
+                resolved = str(resolve_agent_path(file_path))
+            except (OSError, ValueError):
+                resolved = str(file_path)
+            self._data_shapes[resolved] = shape
+            try:
+                sidecar = Path(resolved).with_suffix(".data_shape.json")
+                sidecar.write_text(json.dumps(shape, ensure_ascii=False), encoding="utf-8")
+            except (OSError, ValueError, TypeError):
+                logger.warning("data_shape_sidecar_write_failed", file_path=resolved)
 
     def get_handle(self, file_path: str) -> TypedDataHandle:
         """
@@ -353,6 +397,7 @@ class ExecutionContext:
         # Copy over the tracking attributes
         copied.current_file_path = updates.get("current_file_path", self.current_file_path)
         copied.available_file_paths = list(updates.get("available_file_paths", self.available_file_paths))
+        copied._data_shapes = dict(self._data_shapes)
         copied.set_authorized_input_paths(
             list(updates.get("authorized_input_paths", self.authorized_input_paths))
         )

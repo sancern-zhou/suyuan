@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import structlog
 
+from app.agent.context.data_shape import shape_from_records
+
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 from .client import (
@@ -511,6 +513,7 @@ class QueryAirDataPlatformTool(LLMTool):
 
             file_path = None
             if context is not None and len(rows) > PREVIEW_ROW_LIMIT:
+                data_shape = shape_from_records(rows, len(rows), source="inferred")
                 file_path = context.save_data(
                     data=rows,
                     schema="airdata_platform_query",
@@ -519,6 +522,7 @@ class QueryAirDataPlatformTool(LLMTool):
                         "api_code": api_code,
                         "filters": filters,
                         "total": result["total"],
+                        "data_shape": data_shape,
                     },
                 )
                 logger.info(
@@ -527,7 +531,7 @@ class QueryAirDataPlatformTool(LLMTool):
                     record_count=len(rows),
                 )
 
-            return _describe_result(
+            response = _describe_result(
                 rows,
                 result["total"],
                 result["truncated"],
@@ -536,6 +540,9 @@ class QueryAirDataPlatformTool(LLMTool):
                 f"接口 {api_code} 查询成功，",
                 file_path=file_path,
             )
+            if file_path:
+                response["data_shape"] = data_shape
+            return response
         except AirDataPlatformError as exc:
             return self._failed(api_code, str(exc))
         except Exception as exc:
@@ -874,6 +881,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
 
             file_path = None
             if context is not None and (rows_truncated or fields_omitted):
+                data_shape = shape_from_records(filtered, full_count, source="inferred")
                 file_path = context.save_data(
                     data=filtered,
                     schema="airdata_calc_report_summary",
@@ -888,6 +896,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
                         "columns": sorted(filtered[0].keys()) if filtered else [],
                         "record_count": full_count,
                         **cross_caliber_metadata,
+                        "data_shape": data_shape,
                     },
                 )
 
@@ -905,6 +914,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
                 metadata["truncated"] = True
             if file_path:
                 metadata["file_path"] = file_path
+                metadata["data_shape"] = data_shape
 
             summary_parts = [f"报表统计成功，共 {full_count} 条"]
             if cross_caliber_info:
@@ -927,6 +937,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
                 "metadata": metadata,
                 "summary": "，".join(summary_parts),
                 **({"file_path": file_path} if file_path else {}),
+                **({"data_shape": data_shape} if file_path else {}),
             }
         except AirDataPlatformError as exc:
             return self._failed(str(exc))
