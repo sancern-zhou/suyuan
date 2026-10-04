@@ -771,16 +771,31 @@ class LLMService:
                     reason="Same tool call continuation, preserving thinking blocks (filtered redacted_thinking)",
                 )
             else:
-                # SCNET rejects explicit thinking=disabled with HTTP 400.
-                # Keep history cleanup, but let its gateway choose the mode.
-                if self.provider != "scnet":
+                # 2026-10-04 实测：scnet DeepSeek-V4.1-Flash 接受 thinking=disabled
+                # （含 thinking 历史+tools 连续 4 次返回 200 且无 thinking 块），
+                # 旧的 HTTP 400 结论针对已下线的旧模型。scnet 按模型档位走分级策略，
+                # 其余 provider 新用户轮次一律关闭。
+                if self.provider == "scnet":
+                    from app.services.llm_thinking_policy import (
+                        get_agent_caller_tier,
+                        should_disable_thinking,
+                    )
+
+                    disable, reason = should_disable_thinking(self.model, settings.scnet_disable_thinking)
+                    caller_tier = get_agent_caller_tier()
+                else:
+                    disable, reason = True, "new_turn"
+                    caller_tier = None
+                if disable:
                     api_params["thinking"] = {"type": "disabled"}
                 api_params["messages"] = self._strip_thinking_blocks(sanitized_messages)
                 logger.info(
                     "deepseek_new_turn_thinking_normalized",
                     provider=self.provider,
                     model=self.model,
-                    reason="New user turn: strip thinking history; omit thinking override for SCNET",
+                    reason=reason,
+                    disabled=disable,
+                    caller_tier=caller_tier,
                 )
         else:
             api_params["messages"] = self._strip_thinking_blocks(sanitized_messages)
