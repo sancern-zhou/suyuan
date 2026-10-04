@@ -783,12 +783,40 @@ class LLMService:
                 )
         else:
             api_params["messages"] = self._strip_thinking_blocks(sanitized_messages)
-            logger.info(
-                "extended_thinking_skipped",
-                provider=self.provider,
-                model=self.model,
-                reason="Not a real Anthropic API",
-            )
+            if self.provider == "scnet" and not is_deepseek:
+                from app.services.llm_thinking_policy import (
+                    get_agent_caller_tier,
+                    should_disable_thinking,
+                )
+
+                disable, reason = should_disable_thinking(self.model, settings.scnet_disable_thinking)
+                if disable:
+                    # SCNET Qwen 默认开启思考且无法限制长度（实测出现过 26853 字符
+                    # thinking / 289s 生成轮）。thinking=disabled 已实测带 tools、
+                    # 历史含 thinking 块时均返回 200 且真实关闭（2026-10-04）。
+                    api_params["thinking"] = {"type": "disabled"}
+                    logger.info(
+                        "scnet_thinking_mode_disabled",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=reason,
+                        caller_tier=get_agent_caller_tier(),
+                    )
+                else:
+                    logger.info(
+                        "scnet_thinking_kept",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=reason,
+                        caller_tier=get_agent_caller_tier(),
+                    )
+            else:
+                logger.info(
+                    "extended_thinking_skipped",
+                    provider=self.provider,
+                    model=self.model,
+                    reason="Not a real Anthropic API",
+                )
 
         if system:
             api_params["system"] = system
@@ -2988,6 +3016,27 @@ class LLMService:
             payload["tool_choice"] = tool_choice or "auto"
         if self.provider == "deepseek":
             payload["enable_thinking"] = False
+            if stream:
+                payload["stream_options"] = {"include_usage": True}
+        elif self.provider in ("go", "go2"):
+            # Go 网关（DeepSeek 上游）默认开启思考：实测无参数时推理可吃满
+            # max_tokens 导致正文为空；enable_thinking=false 实测生效（2026-10-04）。
+            from app.services.llm_thinking_policy import (
+                get_agent_caller_tier,
+                should_disable_thinking,
+            )
+
+            disable, reason = should_disable_thinking(self.model, settings.go_disable_thinking)
+            if disable:
+                payload["enable_thinking"] = False
+            logger.info(
+                "go_thinking_mode",
+                provider=self.provider,
+                model=self.model,
+                disabled=disable,
+                reason=reason,
+                caller_tier=get_agent_caller_tier(),
+            )
             if stream:
                 payload["stream_options"] = {"include_usage": True}
         return payload

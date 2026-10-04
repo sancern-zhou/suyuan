@@ -533,6 +533,22 @@ class Settings(BaseSettings):
         default="https://api.scnet.cn/api/llm/anthropic",
         description="Sugon SCNET Anthropic-compatible API base URL"
     )
+    scnet_disable_thinking: bool = Field(
+        default=True,
+        description=(
+            "Disable thinking mode for SCNET Qwen models (thinking: disabled via "
+            "Anthropic protocol). SCNET enables thinking by default and Qwen3 "
+            "occasionally generates 20k+ char reasoning (observed 289s turns), "
+            "which blows per-node wall-clock budgets. Verified 200 with tools "
+            "and thinking-block history on 2026-10-04."
+        )
+    )
+    go_disable_thinking: bool = Field(
+        default=True,
+        description=(
+            "Enable tiered thinking policy for Go/Go2 gateways: flash models and subagents disable thinking, PRO models keep gateway-default thinking."
+        ),
+    )
     scnet_model: str = Field(
         default="Qwen3.8-Max",
         description="Sugon SCNET model name"

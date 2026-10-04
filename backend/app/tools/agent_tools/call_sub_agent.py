@@ -279,13 +279,13 @@ class CallSubAgentTool(LLMTool):
             }
         run_in_background = bool(kwargs.get("run_in_background", False))
         if not run_in_background:
-            return await self._execute_foreground(context=context, **kwargs)
+            return await self._execute_foreground_as_subagent(context=context, **kwargs)
 
         task_id = kwargs.get("task_id") or f"task-{uuid.uuid4().hex}"
         foreground_kwargs = dict(kwargs)
         foreground_kwargs["task_id"] = task_id
         foreground_kwargs["run_in_background"] = False
-        task = asyncio.create_task(self._execute_foreground(context=context, **foreground_kwargs))
+        task = asyncio.create_task(self._execute_foreground_as_subagent(context=context, **foreground_kwargs))
         record = background_task_registry.launch(
             task_id,
             task,
@@ -309,6 +309,19 @@ class CallSubAgentTool(LLMTool):
             },
             "summary": "后台子Agent已启动",
         }
+
+    async def _execute_foreground_as_subagent(self, **kwargs):
+        """以 subagent 调用方档位执行子 Agent（思考策略按此关闭慢思考）。"""
+        from app.services.llm_thinking_policy import (
+            reset_agent_caller_tier,
+            set_agent_caller_tier,
+        )
+
+        token = set_agent_caller_tier("subagent")
+        try:
+            return await self._execute_foreground(**kwargs)
+        finally:
+            reset_agent_caller_tier(token)
 
     async def _execute_foreground(
         self,
