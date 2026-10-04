@@ -1,40 +1,467 @@
-# 采集库（DataCrawler MySQL）白名单表契约
-# 由真实库 information_schema 生成（2026-10-02）；字段大小写以此为准，新增字段需重新生成。
-# 工具描述由本文件渲染；部署可用 backend_data_registry/data_table_contracts.yaml 覆盖。
 tables:
   StationHour:
-    time_columns: ["TimePoint"]
-    dimension_columns: ["StationCode", "StationName", "UniqueCode", "Area"]
-    value_columns: ["Id", "PrimaryPollutant", "Type", "Level", "Aqi", "Api", "So2Value", "NoValue", "No2Value", "NoxValue", "O3Value", "CoValue", "Pm10Value", "Pm25Value", "O3_8HValue", "Pm1Value", "Pressure", "Temperature", "Humidity", "WindDirection", "WindSpeed", "Rainfall", "RainIntensity", "Evaporation", "EvaporationRate", "Sunshine", "SunshineHours", "Visibility", "SolarRadiation", "CO2", "Methane"]
-    mark_columns: ["So2Mark", "NoMark", "No2Mark", "NoxMark", "O3Mark", "CoMark", "Pm10Mark", "Pm25Mark", "O3_8hMark", "Pm1Mark", "PressureMark", "TemperatureMark", "HumidityMark", "WindDirectionMark", "WindSpeedMark", "RainfallMark", "RainIntensityMark", "EvaporationMark", "EvaporationRateMark", "SunshineMark", "SunshineHoursMark", "VisibilityMark", "SolarRadiationMark", "CO2Mark", "MethaneMark"]
-    caliber_columns: ["DataSourceType", "DataTableType"]
+    time_columns:
+    - TimePoint
+    dimension_columns:
+    - StationCode
+    - StationName
+    - UniqueCode
+    - Area
+    value_columns:
+    - Id
+    - PrimaryPollutant
+    - Type
+    - Level
+    - Aqi
+    - Api
+    - So2Value
+    - NoValue
+    - No2Value
+    - NoxValue
+    - O3Value
+    - CoValue
+    - Pm10Value
+    - Pm25Value
+    - O3_8HValue
+    - Pm1Value
+    - Pressure
+    - Temperature
+    - Humidity
+    - WindDirection
+    - WindSpeed
+    - Rainfall
+    - RainIntensity
+    - Evaporation
+    - EvaporationRate
+    - Sunshine
+    - SunshineHours
+    - Visibility
+    - SolarRadiation
+    - CO2
+    - Methane
+    mark_columns:
+    - So2Mark
+    - NoMark
+    - No2Mark
+    - NoxMark
+    - O3Mark
+    - CoMark
+    - Pm10Mark
+    - Pm25Mark
+    - O3_8hMark
+    - Pm1Mark
+    - PressureMark
+    - TemperatureMark
+    - HumidityMark
+    - WindDirectionMark
+    - WindSpeedMark
+    - RainfallMark
+    - RainIntensityMark
+    - EvaporationMark
+    - EvaporationRateMark
+    - SunshineMark
+    - SunshineHoursMark
+    - VisibilityMark
+    - SolarRadiationMark
+    - CO2Mark
+    - MethaneMark
+    caliber_columns:
+    - DataSourceType
+    - DataTableType
+    column_types:
+      Id: bigint
+      DataSourceType: varchar
+      DataTableType: varchar
+      TimePoint: datetime
+      StationCode: varchar
+      StationName: varchar
+      UniqueCode: varchar
+      Area: varchar
+      PrimaryPollutant: varchar
+      Type: varchar
+      Level: varchar
+      Aqi: int
+      Api: int
+      So2Value: double
+      NoValue: double
+      No2Value: double
+      NoxValue: double
+      O3Value: double
+      CoValue: double
+      Pm10Value: double
+      Pm25Value: double
+      O3_8HValue: double
+      Pm1Value: double
+      So2Mark: varchar
+      NoMark: varchar
+      No2Mark: varchar
+      NoxMark: varchar
+      O3Mark: varchar
+      CoMark: varchar
+      Pm10Mark: varchar
+      Pm25Mark: varchar
+      O3_8hMark: varchar
+      Pm1Mark: varchar
+      Pressure: double
+      Temperature: double
+      Humidity: double
+      WindDirection: double
+      WindSpeed: double
+      Rainfall: double
+      RainIntensity: double
+      Evaporation: double
+      EvaporationRate: double
+      Sunshine: double
+      SunshineHours: double
+      Visibility: double
+      SolarRadiation: double
+      PressureMark: varchar
+      TemperatureMark: varchar
+      HumidityMark: varchar
+      WindDirectionMark: varchar
+      WindSpeedMark: varchar
+      RainfallMark: varchar
+      RainIntensityMark: varchar
+      EvaporationMark: varchar
+      EvaporationRateMark: varchar
+      SunshineMark: varchar
+      SunshineHoursMark: varchar
+      VisibilityMark: varchar
+      SolarRadiationMark: varchar
+      CO2: double
+      Methane: double
+      CO2Mark: varchar
+      MethaneMark: varchar
   CityHour:
-    time_columns: ["TimePoint"]
-    dimension_columns: ["CityCode", "Province", "Area"]
-    value_columns: ["Id", "ProvinceCode", "SO2", "NO2", "NO", "NOx", "PM10", "PM10_2", "CO", "O3", "PM2_5", "PM2_5_2", "PM1", "AQI", "PrimaryPollutant", "Quality", "AQI_2", "PrimaryPollutant_2", "Quality_2"]
+    time_columns:
+    - TimePoint
+    dimension_columns:
+    - CityCode
+    - Province
+    - Area
+    value_columns:
+    - Id
+    - ProvinceCode
+    - SO2
+    - NO2
+    - 'NO'
+    - NOx
+    - PM10
+    - PM10_2
+    - CO
+    - O3
+    - PM2_5
+    - PM2_5_2
+    - PM1
+    - AQI
+    - PrimaryPollutant
+    - Quality
+    - AQI_2
+    - PrimaryPollutant_2
+    - Quality_2
     mark_columns: []
-    caliber_columns: ["DataTableType", "DataTypePlan", "IsApp"]
+    caliber_columns:
+    - DataTableType
+    - DataTypePlan
+    - IsApp
+    column_types:
+      Id: bigint
+      DataTableType: varchar
+      DataTypePlan: varchar
+      IsApp: bit
+      TimePoint: datetime
+      CityCode: varchar
+      ProvinceCode: varchar
+      Province: varchar
+      Area: varchar
+      SO2: double
+      NO2: double
+      'NO': double
+      NOx: double
+      PM10: double
+      PM10_2: double
+      CO: double
+      O3: double
+      PM2_5: double
+      PM2_5_2: double
+      PM1: double
+      AQI: double
+      PrimaryPollutant: varchar
+      Quality: varchar
+      AQI_2: double
+      PrimaryPollutant_2: varchar
+      Quality_2: varchar
   StationDay:
-    time_columns: ["Date"]
-    dimension_columns: ["PositionName", "CityCode", "UniqueCode", "StationCode", "Area"]
-    value_columns: ["Id", "Description", "PrimaryPollutant", "Type", "Level", "Aqi", "Api", "SO2", "NO2", "O3", "CO", "PM10", "PM2_5", "O3_8h", "PM1", "NO", "NOx", "Pressure", "Temperature", "Humidity", "WindDirection", "WindSpeed", "Rainfall", "RainIntensity", "Evaporation", "EvaporationRate", "Sunshine", "SunshineHours", "Visibility", "SolarRadiation", "CO2", "Methane", "VDayAqiSrc"]
-    mark_columns: ["SO2Mark", "NO2Mark", "NOMark", "NOxMark", "O3Mark", "COMark", "PM10Mark", "PM1Mark", "PM2_5Mark", "O3_8hMark", "PressureMark", "TemperatureMark", "HumidityMark", "WindDirectionMark", "WindSpeedMark", "RainfallMark", "RainIntensityMark", "EvaporationMark", "EvaporationRateMark", "SunshineMark", "SunshineHoursMark", "VisibilityMark", "SolarRadiationMark", "CO2Mark", "MethaneMark"]
-    caliber_columns: ["DataTableType", "DataSourceType", "DataTypePlan"]
+    time_columns:
+    - Date
+    dimension_columns:
+    - PositionName
+    - CityCode
+    - UniqueCode
+    - StationCode
+    - Area
+    value_columns:
+    - Id
+    - Description
+    - PrimaryPollutant
+    - Type
+    - Level
+    - Aqi
+    - Api
+    - SO2
+    - NO2
+    - O3
+    - CO
+    - PM10
+    - PM2_5
+    - O3_8h
+    - PM1
+    - 'NO'
+    - NOx
+    - Pressure
+    - Temperature
+    - Humidity
+    - WindDirection
+    - WindSpeed
+    - Rainfall
+    - RainIntensity
+    - Evaporation
+    - EvaporationRate
+    - Sunshine
+    - SunshineHours
+    - Visibility
+    - SolarRadiation
+    - CO2
+    - Methane
+    - VDayAqiSrc
+    mark_columns:
+    - SO2Mark
+    - NO2Mark
+    - NOMark
+    - NOxMark
+    - O3Mark
+    - COMark
+    - PM10Mark
+    - PM1Mark
+    - PM2_5Mark
+    - O3_8hMark
+    - PressureMark
+    - TemperatureMark
+    - HumidityMark
+    - WindDirectionMark
+    - WindSpeedMark
+    - RainfallMark
+    - RainIntensityMark
+    - EvaporationMark
+    - EvaporationRateMark
+    - SunshineMark
+    - SunshineHoursMark
+    - VisibilityMark
+    - SolarRadiationMark
+    - CO2Mark
+    - MethaneMark
+    caliber_columns:
+    - DataTableType
+    - DataSourceType
+    - DataTypePlan
+    column_types:
+      Id: bigint
+      DataTableType: varchar
+      DataSourceType: varchar
+      DataTypePlan: varchar
+      PositionName: varchar
+      CityCode: varchar
+      UniqueCode: varchar
+      StationCode: varchar
+      Description: varchar
+      Area: varchar
+      Date: varchar
+      PrimaryPollutant: varchar
+      Type: varchar
+      Level: varchar
+      Aqi: int
+      Api: int
+      SO2: double
+      NO2: double
+      O3: double
+      CO: double
+      PM10: double
+      PM2_5: double
+      O3_8h: double
+      PM1: double
+      'NO': double
+      NOx: double
+      SO2Mark: varchar
+      NO2Mark: varchar
+      NOMark: varchar
+      NOxMark: varchar
+      O3Mark: varchar
+      COMark: varchar
+      PM10Mark: varchar
+      PM1Mark: varchar
+      PM2_5Mark: varchar
+      O3_8hMark: varchar
+      Pressure: double
+      Temperature: double
+      Humidity: double
+      WindDirection: double
+      WindSpeed: double
+      Rainfall: double
+      RainIntensity: double
+      Evaporation: double
+      EvaporationRate: double
+      Sunshine: double
+      SunshineHours: double
+      Visibility: double
+      SolarRadiation: double
+      PressureMark: varchar
+      TemperatureMark: varchar
+      HumidityMark: varchar
+      WindDirectionMark: varchar
+      WindSpeedMark: varchar
+      RainfallMark: varchar
+      RainIntensityMark: varchar
+      EvaporationMark: varchar
+      EvaporationRateMark: varchar
+      SunshineMark: varchar
+      SunshineHoursMark: varchar
+      VisibilityMark: varchar
+      SolarRadiationMark: varchar
+      CO2: double
+      Methane: double
+      CO2Mark: varchar
+      MethaneMark: varchar
+      VDayAqiSrc: varchar
   CityDay:
-    time_columns: ["Date"]
-    dimension_columns: ["Area", "CityCode"]
-    value_columns: ["Id", "AQI", "AQI_2", "CO", "CreateTime", "Description", "Description_2", "SourceId", "Level", "Level_2", "NO", "NO2", "NOx", "O3_1h", "O3_8h", "PM1", "PM2_5", "PM2_5_2", "PM10", "PM10_2", "PrimaryPollutant", "PrimaryPollutant_2", "SO2", "Type", "Type_2", "UpdateTime"]
-    mark_columns: ["CO_Mark", "NO2_Mark", "NO_Mark", "NOx_Mark", "O3_1h_Mark", "O3_8h_Mark", "PM1_Mark", "PM2_5_2_Mark", "PM2_5_Mark", "PM10_2_Mark", "PM10_Mark", "SO2_Mark"]
-    caliber_columns: ["DataTableType", "DataSourceType", "DataTypePlan"]
+    time_columns:
+    - Date
+    dimension_columns:
+    - Area
+    - CityCode
+    value_columns:
+    - Id
+    - AQI
+    - AQI_2
+    - CO
+    - CreateTime
+    - Description
+    - Description_2
+    - SourceId
+    - Level
+    - Level_2
+    - 'NO'
+    - NO2
+    - NOx
+    - O3_1h
+    - O3_8h
+    - PM1
+    - PM2_5
+    - PM2_5_2
+    - PM10
+    - PM10_2
+    - PrimaryPollutant
+    - PrimaryPollutant_2
+    - SO2
+    - Type
+    - Type_2
+    - UpdateTime
+    mark_columns:
+    - CO_Mark
+    - NO2_Mark
+    - NO_Mark
+    - NOx_Mark
+    - O3_1h_Mark
+    - O3_8h_Mark
+    - PM1_Mark
+    - PM2_5_2_Mark
+    - PM2_5_Mark
+    - PM10_2_Mark
+    - PM10_Mark
+    - SO2_Mark
+    caliber_columns:
+    - DataTableType
+    - DataSourceType
+    - DataTypePlan
+    column_types:
+      Id: bigint
+      DataTableType: varchar
+      DataSourceType: varchar
+      DataTypePlan: varchar
+      AQI: int
+      AQI_2: int
+      Area: varchar
+      CO: double
+      CO_Mark: varchar
+      CityCode: varchar
+      CreateTime: datetime
+      Date: datetime
+      Description: varchar
+      Description_2: varchar
+      SourceId: int
+      Level: varchar
+      Level_2: varchar
+      'NO': double
+      NO2: double
+      NO2_Mark: varchar
+      NO_Mark: varchar
+      NOx: double
+      NOx_Mark: varchar
+      O3_1h: double
+      O3_1h_Mark: varchar
+      O3_8h: double
+      O3_8h_Mark: varchar
+      PM1: double
+      PM1_Mark: varchar
+      PM2_5: double
+      PM2_5_2: double
+      PM2_5_2_Mark: varchar
+      PM2_5_Mark: varchar
+      PM10: double
+      PM10_2: double
+      PM10_2_Mark: varchar
+      PM10_Mark: varchar
+      PrimaryPollutant: varchar
+      PrimaryPollutant_2: varchar
+      SO2: double
+      SO2_Mark: varchar
+      Type: varchar
+      Type_2: varchar
+      UpdateTime: datetime
   CityYearPm25Avg:
-    time_columns: ["Year"]
-    dimension_columns: ["CityCode", "CityName"]
-    value_columns: ["Id", "ActualPm25Avg", "StandardPm25Avg"]
+    time_columns:
+    - Year
+    dimension_columns:
+    - CityCode
+    - CityName
+    value_columns:
+    - Id
+    - ActualPm25Avg
+    - StandardPm25Avg
     mark_columns: []
     caliber_columns: []
+    column_types:
+      Id: bigint
+      CityCode: varchar
+      CityName: varchar
+      Year: int
+      ActualPm25Avg: double
+      StandardPm25Avg: double
   Station:
     time_columns: []
-    dimension_columns: ["StationCode", "StationName", "Address", "Longitude", "Latitude"]
-    value_columns: ["Id"]
+    dimension_columns:
+    - StationCode
+    - StationName
+    - Address
+    - Longitude
+    - Latitude
+    value_columns:
+    - Id
     mark_columns: []
     caliber_columns: []
+    column_types:
+      Id: bigint
+      StationCode: varchar
+      StationName: varchar
+      Address: varchar
+      Longitude: double
+      Latitude: double

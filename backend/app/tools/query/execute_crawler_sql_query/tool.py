@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.agent.context.data_shape import shape_summary_suffix
 from app.utils.sql_validator import SQLValidator
 
 if TYPE_CHECKING:
@@ -236,7 +237,7 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
                 "summary": summary,
             }
 
-        return self._format_result(rows, normalized_sql, effective_limit, context)
+        return self._format_result(rows, normalized_sql, effective_limit, context, tables=referenced_tables)
 
     @staticmethod
     def _is_column_error(exc: Exception) -> bool:
@@ -315,8 +316,10 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
         sql: str,
         limit: int,
         context: Optional["ExecutionContext"],
+        tables: Optional[list[str]] = None,
     ) -> dict[str, Any]:
         columns = list(rows[0]) if rows else []
+        data_shape = self._build_data_shape(columns, rows, len(rows), tables)
         if context and len(rows) > 24:
             try:
                 data_id = context.save_data(
@@ -328,6 +331,7 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
                         "row_count": len(rows),
                         "columns": columns,
                         "limit": limit,
+                        "data_shape": data_shape,
                     },
                 )
                 sample = rows[:12] + rows[-12:]
@@ -337,7 +341,8 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
                     "data_id": data_id,
                     "count": len(rows),
                     "sample_count": len(sample),
-                    "summary": f"查询到 {len(rows)} 条记录，完整结果已保存，当前返回 24 条样例。",
+                    "summary": f"查询到 {len(rows)} 条记录，完整结果已保存，当前返回 24 条样例。{shape_summary_suffix(data_shape)}",
+                    "data_shape": data_shape,
                     "metadata": {"columns": columns, "externalized": True},
                 }
             except Exception as exc:
@@ -347,9 +352,37 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
             "success": True,
             "data": rows,
             "count": len(rows),
-            "summary": f"查询到 {len(rows)} 条记录。",
+            "summary": f"查询到 {len(rows)} 条记录。{shape_summary_suffix(data_shape)}",
+            "data_shape": data_shape,
             "metadata": {"columns": columns, "externalized": False},
         }
+
+    def _build_data_shape(
+        self,
+        columns: list[str],
+        rows: list[dict[str, Any]],
+        row_count: int,
+        tables: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
+        """库侧精确类型优先（表契约），派生/跨表列回退样本推断。"""
+        from app.agent.context.data_shape import (
+            build_data_shape,
+            infer_column_types,
+        )
+        from app.tools.query.execute_crawler_sql_query.table_contracts import (
+            table_column_types,
+        )
+
+        exact_types: dict[str, str] = {}
+        for table_name in tables or CRAWLER_SQL_TABLES:
+            exact_types.update(table_column_types(str(table_name)))
+        inferred_types = infer_column_types(rows, columns)
+        columns_with_types = {
+            str(name): exact_types.get(str(name)) or inferred_types.get(str(name), "str")
+            for name in columns
+        }
+        source = "db" if exact_types else "inferred"
+        return build_data_shape(columns_with_types, row_count, source)
 
     @staticmethod
     def _serialize_row(row: dict[str, Any]) -> dict[str, Any]:

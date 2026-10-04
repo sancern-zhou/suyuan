@@ -138,6 +138,27 @@ def render_table_contracts(table_names: Optional[List[str]] = None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def table_column_types(table_name: str) -> dict[str, str]:
+    """返回某表的精确列类型（来自 information_schema）；未知表返回空 dict。
+
+    表名大小写不敏感匹配（SQL 校验器提取的表名统一小写）。
+    """
+    contracts = load_table_contracts()
+    if not contracts:
+        return {}
+    info = contracts["tables"].get(table_name)
+    if info is None:
+        lowered = str(table_name).lower()
+        for key, value in contracts["tables"].items():
+            if key.lower() == lowered:
+                info = value
+                break
+    if not isinstance(info, dict):
+        return {}
+    types = info.get("column_types")
+    return {str(name): str(dtype) for name, dtype in types.items()} if isinstance(types, dict) else {}
+
+
 def reset_cache() -> None:
     """测试与配置热更新辅助。"""
     global _CACHE

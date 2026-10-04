@@ -11,6 +11,11 @@ import pyodbc
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.agent.context.data_shape import (
+    build_data_shape,
+    infer_column_types,
+    shape_summary_suffix,
+)
 from app.utils.sql_validator import SQLValidator
 
 if TYPE_CHECKING:
@@ -380,6 +385,7 @@ class BaseSQLQueryTool(LLMTool):
         # 未显式声明时保持历史行为（XcAi 服务器上的两个库）。
         self.allowed_databases = allowed_databases or ["XcAiDb", "AirPollutionAnalysis"]
         self.sql_validator = SQLValidator(max_limit=1000, allowed_tables=allowed_tables)
+        self._table_types_cache: Dict[str, Dict[str, str]] = {}
         self.alternate_table_hints = {
             table.lower(): hint
             for table, hint in (alternate_table_hints or {}).items()
@@ -734,6 +740,8 @@ class BaseSQLQueryTool(LLMTool):
             # 4. 数据外部化：超过24条记录时采样
             sample_data = results
             file_path = None
+            data_shape = self._build_data_shape(results, sql, database)
+            shape_suffix = shape_summary_suffix(data_shape)
 
             if context and len(results) > 24:
                 try:
@@ -752,7 +760,8 @@ class BaseSQLQueryTool(LLMTool):
                             "sql": sql,
                             "row_count": len(results),
                             "columns": columns,
-                            "limit": limit
+                            "limit": limit,
+                            "data_shape": data_shape,
                         }
                     )
 
@@ -777,7 +786,8 @@ class BaseSQLQueryTool(LLMTool):
                         "file_path": file_path,    # 完整数据文件路径
                         "count": len(results),
                         "sample_count": len(sample_data),
-                        "summary": f"查询到{len(results)}条记录（已外部化，返回样本{len(sample_data)}条）",
+                        "summary": f"查询到{len(results)}条记录（已外部化，返回样本{len(sample_data)}条）{shape_suffix}",
+                        "data_shape": data_shape,
                         "metadata": {
                             "database": database,
                             "columns": columns,
@@ -796,7 +806,8 @@ class BaseSQLQueryTool(LLMTool):
                 "data": results,
                 "file_path": file_path,
                 "count": len(results),
-                "summary": f"查询到{len(results)}条记录",
+                "summary": f"查询到{len(results)}条记录{shape_suffix}",
+                "data_shape": data_shape,
                 "metadata": {
                     "hint": "如果结果中包含英文代码值（如Fault、Check等），请转换为中文向用户展示"
                 }
@@ -966,6 +977,42 @@ class BaseSQLQueryTool(LLMTool):
         except Exception as e:
             logger.error("获取数据库配置失败", error=str(e))
             raise
+
+    def _build_data_shape(self, results: list, sql: str, database: str) -> Dict[str, Any]:
+        """information_schema 精确类型优先（按表缓存），派生列回退样本推断。"""
+        import re as _re
+
+        try:
+            tables = self.sql_validator.extract_tables(sql)
+            exact_types: Dict[str, str] = {}
+            for table in tables:
+                table = str(table)
+                if not _re.fullmatch(r"[A-Za-z0-9_\.]+", table):
+                    continue
+                if table not in self._table_types_cache:
+                    try:
+                        rows = self._execute_query(
+                            "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+                            f"WHERE TABLE_NAME = '{table}'",
+                            database,
+                        )
+                        self._table_types_cache[table] = {
+                            str(row["COLUMN_NAME"]): str(row["DATA_TYPE"]) for row in rows
+                        }
+                    except Exception:
+                        self._table_types_cache[table] = {}
+                exact_types.update(self._table_types_cache.get(table) or {})
+            columns = list(results[0].keys()) if results else []
+            inferred = infer_column_types(results, columns)
+            columns_with_types = {
+                str(name): exact_types.get(str(name)) or inferred.get(str(name), "str")
+                for name in columns
+            }
+            return build_data_shape(
+                columns_with_types, len(results), "db" if exact_types else "inferred"
+            )
+        except Exception:
+            return build_data_shape(infer_column_types(results), len(results), "inferred")
 
     def _execute_query(self, sql: str, database: str) -> list:
         """执行SQL查询"""

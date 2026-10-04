@@ -4,7 +4,9 @@ import json
 
 import pytest
 
+from app.agent.context.data_shape import build_data_shape
 from app.tools.query.execute_crawler_sql_query import table_contracts
+from app.tools.query.execute_crawler_sql_query.table_contracts import table_column_types
 from app.tools.query.execute_crawler_sql_query.table_contracts import (
     load_table_contracts,
     render_table_contracts,
@@ -169,3 +171,42 @@ def test_deployment_contract_matches_crawler_whitelist():
         assert "StationName" not in names or table in {"StationHour", "Station"}, (
             f"{table} 契约包含 StationName，但真实库该表无此列"
         )
+
+
+def test_contract_column_types_available_for_whitelist_tables():
+    """重生成后的契约包含 information_schema 精确类型（data_shape 依赖）。"""
+    contracts = load_table_contracts(refresh=True)
+    if contracts is None:
+        pytest.skip("未配置 data_table_contracts.yaml")
+    types = table_column_types("StationHour")
+    assert types, "StationHour 缺少 column_types"
+    assert types.get("TimePoint") == "datetime"
+    assert types.get("Aqi") in {"int", "bigint", "float", "double", "decimal"}
+
+
+def test_externalized_result_includes_exact_data_shape(monkeypatch):
+    """外置结果的 data_shape 使用契约精确类型，派生列标注推断。"""
+    tool = ExecuteCrawlerSQLQueryTool()
+    rows = [
+        {"TimePoint": "2026-10-03 08:00:00", "StationName": "许昌", "ratio": 0.5},
+        {"TimePoint": "2026-10-03 09:00:00", "StationName": "郑州", "ratio": 0.6},
+    ]
+    result = tool._format_result(
+        rows,
+        "SELECT TimePoint, StationName, Aqi/100.0 AS ratio FROM StationHour",
+        1000,
+        None,
+        tables=["StationHour"],
+    )
+    shape = result["data_shape"]
+    assert shape["source"] == "db"
+    types = {item["name"]: item["type"] for item in shape["columns"]}
+    assert types["TimePoint"] == "datetime"
+    assert types["StationName"] == "varchar"
+    assert types["ratio"] == "float"
+    assert "数据形状" in result["summary"]
+
+
+def test_data_shape_builder_marks_inferred_source():
+    shape = build_data_shape({"ratio": "float"}, 2, "inferred")
+    assert shape["source"] == "inferred"
