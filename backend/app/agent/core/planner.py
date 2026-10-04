@@ -425,28 +425,47 @@ class ReActPlanner:
                         # 解析完整的 tool_use input JSON
                         tool_input = current_tool_block.get("input", {})
                         if current_tool_block["input_json"]:
+                            raw_input_json = current_tool_block["input_json"]
                             try:
-                                tool_input = json.loads(current_tool_block["input_json"])
+                                tool_input = json.loads(raw_input_json)
                             except json.JSONDecodeError as exc:
-                                raw_input_json = current_tool_block["input_json"]
-                                logger.warning(
-                                    "tool_use_input_json_parse_failed",
-                                    tool_name=current_tool_block["name"],
-                                    raw_json_length=len(raw_input_json),
-                                    raw_json_head=raw_input_json[:500],
-                                    raw_json_tail=raw_input_json[-2000:],
-                                    error=str(exc),
-                                )
-                                current_blocks.append({
-                                    "type": "text",
-                                    "text": (
-                                        f"Tool call for {current_tool_block['name']} was not executed because "
-                                        "the streamed tool input JSON was malformed. Retry with a smaller tool "
-                                        "input or write large payloads to a file and pass the file path."
-                                    ),
-                                })
-                                current_tool_block = None
-                                continue
+                                # 无思考模型流式长载荷的常见伪影：合法 JSON 后多吐
+                                # 冗余字符（实测为单个多余 `}`）。Extra data 时用
+                                # raw_decode 取第一个完整 JSON 值恢复调用，尾部丢弃。
+                                recovered = None
+                                if isinstance(exc, json.JSONDecodeError) and str(exc).startswith("Extra data"):
+                                    try:
+                                        recovered, _ = json.JSONDecoder().raw_decode(raw_input_json)
+                                    except json.JSONDecodeError:
+                                        recovered = None
+                                if isinstance(recovered, dict):
+                                    tool_input = recovered
+                                    logger.warning(
+                                        "tool_use_input_json_recovered_extra_data",
+                                        tool_name=current_tool_block["name"],
+                                        raw_json_length=len(raw_input_json),
+                                        raw_json_tail=raw_input_json[-200:],
+                                        error=str(exc),
+                                    )
+                                else:
+                                    logger.warning(
+                                        "tool_use_input_json_parse_failed",
+                                        tool_name=current_tool_block["name"],
+                                        raw_json_length=len(raw_input_json),
+                                        raw_json_head=raw_input_json[:500],
+                                        raw_json_tail=raw_input_json[-2000:],
+                                        error=str(exc),
+                                    )
+                                    current_blocks.append({
+                                        "type": "text",
+                                        "text": (
+                                            f"Tool call for {current_tool_block['name']} was not executed because "
+                                            "the streamed tool input JSON was malformed. Retry with a smaller tool "
+                                            "input or write large payloads to a file and pass the file path."
+                                        ),
+                                    })
+                                    current_tool_block = None
+                                    continue
 
                         tool_block = {
                             "type": "tool_use",
