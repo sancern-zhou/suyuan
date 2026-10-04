@@ -38,10 +38,10 @@ _DEFAULT_EXPERT_NODE_LIMITS = {
     "expert_meteorology": {"max_iterations": 15, "timeout_seconds": 300},
     "expert_analysis": {"max_iterations": 20, "timeout_seconds": 360},
     "expert": {"max_iterations": 30, "timeout_seconds": 480},
-    # 固定问数流程由运行时约束为最多四轮。
-    "query_monitoring_station": {"max_iterations": 4, "timeout_seconds": 420},
-    "query_monitoring_city": {"max_iterations": 4, "timeout_seconds": 420},
-    "query_forecast": {"max_iterations": 4, "timeout_seconds": 420},
+    # 固定问数流程由运行时约束为最多四轮；墙钟 600s 容纳慢查询与重试。
+    "query_monitoring_station": {"max_iterations": 4, "timeout_seconds": 600},
+    "query_monitoring_city": {"max_iterations": 4, "timeout_seconds": 600},
+    "query_forecast": {"max_iterations": 4, "timeout_seconds": 600},
 }
 
 
