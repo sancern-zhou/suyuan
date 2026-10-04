@@ -28,6 +28,7 @@ from app.services.llm_failover import (
     should_fallback,
     summarize_attempts,
 )
+from app.services.llm_thinking_policy import reset_request_tier, set_request_tier
 from app.services.chat_completions_adapter import (
     ChatCompletionsStreamAdapter,
     ToolCallArgumentsError,
@@ -44,8 +45,6 @@ _llm_request_state: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
     "llm_request_state",
     default=None,
 )
-_model_tier_rotation_lock = threading.Lock()
-_model_tier_rotation_offsets: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], int] = {}
 
 _llm_opencode_session_id: ContextVar[Optional[str]] = ContextVar(
     "llm_opencode_session_id",
@@ -57,22 +56,6 @@ OPENCODE_GO_USER_AGENT = "suyuan-agent/1.0"
 
 # OpenCode Go 订阅 provider：go 为原有套餐，go2 为第二个套餐（可配置更高优先级）
 OPENCODE_GO_PROVIDERS = frozenset({"go", "go2"})
-
-
-def _rotate_model_tier_candidates(tier: str, candidates: list):
-    """Rotate a tier chain so concurrent KB calls do not share one primary."""
-    if len(candidates) < 2:
-        return candidates, 0
-
-    signature = tuple(
-        (candidate.provider, candidate.model or "")
-        for candidate in candidates
-    )
-    key = (tier, signature)
-    with _model_tier_rotation_lock:
-        offset = _model_tier_rotation_offsets.get(key, 0) % len(candidates)
-        _model_tier_rotation_offsets[key] = offset + 1
-    return candidates[offset:] + candidates[:offset], offset
 
 
 class LLMService:
@@ -265,7 +248,6 @@ class LLMService:
 
         profile = (auto_profile or "").strip().lower()
         profile_config = {
-            "flash": getattr(settings, "llm_flash_models", "") or "",
             "multimodal": getattr(settings, "llm_multimodal_models", "") or "",
         }.get(profile)
         if profile_config and profile_config.strip():
@@ -296,72 +278,25 @@ class LLMService:
         *,
         load_balance: bool = False,
     ):
-        """Temporarily select the primary model for the current async request."""
-        tier = (model_tier or "").strip().lower()
-        if not tier or tier == "auto":
-            yield
-            return
+        """Temporarily select the thinking tier for the current async request.
 
-        tier_config = {
-            "flash": getattr(settings, "llm_flash_models", "") or "",
-            "pro": getattr(settings, "llm_pro_models", "") or "",
-        }.get(tier)
-        if tier_config is None:
+        挡位只决定思考开关（flash 关 / pro 开，auto 按调用方角色），
+        模型链共用主配置（primary + LLM_FALLBACKS），不再按挡位切换供应商。
+        """
+        tier = (model_tier or "").strip().lower()
+        if tier and tier not in ("auto", "flash", "pro"):
             raise ValueError(f"Unsupported model tier: {model_tier}")
 
-        from app.services.llm_failover import parse_fallback_candidates
-
         token = _llm_request_state.set({})
+        tier_token = set_request_tier(tier)
         try:
             state = _llm_request_state.get()
-            if state is not None:
+            if state is not None and tier:
                 state["selection_source"] = "tier"
                 state["model_tier"] = tier
-            if tier_config.strip():
-                candidates = [
-                    candidate
-                    for candidate in parse_fallback_candidates("", "", tier_config)
-                    if candidate.provider
-                ]
-                if not candidates:
-                    raise ValueError(
-                        f"No candidates configured for model tier: {tier}."
-                    )
-                rotation_offset = 0
-                if load_balance:
-                    candidates, rotation_offset = _rotate_model_tier_candidates(
-                        tier,
-                        candidates,
-                    )
-                    if state is not None:
-                        state["load_balanced"] = True
-                        state["rotation_offset"] = rotation_offset
-                primary = candidates[0]
-                self.provider = primary.provider
-                self._load_provider_config()
-                if primary.model:
-                    self.model = primary.model
-                fallback_items = [
-                    f"{candidate.provider}/{candidate.model}" if candidate.model else candidate.provider
-                    for candidate in candidates[1:]
-                ]
-                self.request_fallbacks = ",".join(fallback_items)
-            else:
-                self.provider = settings.llm_provider.lower()
-                self._load_provider_config()
-                self.request_fallbacks = None
-            logger.info(
-                "llm_request_model_tier_selected",
-                tier=tier,
-                load_balanced=load_balance,
-                rotation_offset=(state or {}).get("rotation_offset", 0),
-                provider=self.provider,
-                model=self.model,
-                base_url=self.base_url,
-                fallbacks=self.request_fallbacks,
-            )
             yield
         finally:
+            reset_request_tier(tier_token)
             temporary_client = self.anthropic_client
             _llm_request_state.reset(token)
             if temporary_client is not None:
@@ -411,6 +346,10 @@ class LLMService:
         if not profile or profile == "default":
             yield
             return
+        if profile == "flash":
+            # 挡位改制后 flash 复用主配置链，仅思考开关不同，无独立 profile。
+            yield
+            return
 
         active_state = _llm_request_state.get()
         if (
@@ -422,7 +361,6 @@ class LLMService:
             return
 
         profile_configs = {
-            "flash": getattr(settings, "llm_flash_models", "") or "",
             "multimodal": getattr(settings, "llm_multimodal_models", "") or "",
         }
         profile_config = profile_configs.get(profile)
@@ -771,26 +709,54 @@ class LLMService:
                     reason="Same tool call continuation, preserving thinking blocks (filtered redacted_thinking)",
                 )
             else:
-                # SCNET rejects explicit thinking=disabled with HTTP 400.
-                # Keep history cleanup, but let its gateway choose the mode.
-                if self.provider != "scnet":
+                # 2026-10-04 实测：scnet DeepSeek-V4.1-Flash 接受 thinking=disabled
+                # （含 thinking 历史+tools 连续 4 次返回 200 且无 thinking 块），
+                # 旧的 HTTP 400 结论针对已下线的旧模型。scnet 按模型档位走分级策略，
+                # 其余 provider 新用户轮次一律关闭。
+                if self.provider == "scnet":
+                    from app.services.llm_thinking_policy import (
+                        get_agent_caller_tier,
+                        get_request_tier,
+                        should_disable_thinking,
+                    )
+
+                    (
+                        disable,
+                        reason,
+                    ) = should_disable_thinking(
+                        settings.scnet_disable_thinking,
+                        request_tier=get_request_tier(),
+                        caller_tier=get_agent_caller_tier(),
+                    )
+                    caller_tier = get_agent_caller_tier()
+                else:
+                    disable, reason = True, "new_turn"
+                    caller_tier = None
+                if disable:
                     api_params["thinking"] = {"type": "disabled"}
                 api_params["messages"] = self._strip_thinking_blocks(sanitized_messages)
                 logger.info(
                     "deepseek_new_turn_thinking_normalized",
                     provider=self.provider,
                     model=self.model,
-                    reason="New user turn: strip thinking history; omit thinking override for SCNET",
+                    reason=reason,
+                    disabled=disable,
+                    caller_tier=caller_tier,
                 )
         else:
             api_params["messages"] = self._strip_thinking_blocks(sanitized_messages)
             if self.provider == "scnet" and not is_deepseek:
                 from app.services.llm_thinking_policy import (
                     get_agent_caller_tier,
+                    get_request_tier,
                     should_disable_thinking,
                 )
 
-                disable, reason = should_disable_thinking(self.model, settings.scnet_disable_thinking)
+                disable, reason = should_disable_thinking(
+                    settings.scnet_disable_thinking,
+                    request_tier=get_request_tier(),
+                    caller_tier=get_agent_caller_tier(),
+                )
                 if disable:
                     # SCNET Qwen 默认开启思考且无法限制长度（实测出现过 26853 字符
                     # thinking / 289s 生成轮）。thinking=disabled 已实测带 tools、
@@ -3072,10 +3038,15 @@ class LLMService:
             # max_tokens 导致正文为空；enable_thinking=false 实测生效（2026-10-04）。
             from app.services.llm_thinking_policy import (
                 get_agent_caller_tier,
+                get_request_tier,
                 should_disable_thinking,
             )
 
-            disable, reason = should_disable_thinking(self.model, settings.go_disable_thinking)
+            disable, reason = should_disable_thinking(
+                settings.go_disable_thinking,
+                request_tier=get_request_tier(),
+                caller_tier=get_agent_caller_tier(),
+            )
             if disable:
                 payload["enable_thinking"] = False
             logger.info(

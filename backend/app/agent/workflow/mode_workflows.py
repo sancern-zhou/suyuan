@@ -91,7 +91,10 @@ def _query_definition(
             WorkflowPhaseDefinition(
                 name="deliver",
                 description=(
-                    "停止调用工具，直接交付 file_path、字段说明、时间与区域口径、记录数以及数据缺口。"
+                    "停止调用工具，直接输出最终交付文本。本轮请求没有携带任何工具，"
+                    "任何工具调用或调用标记语法（如 DSML/XML/JSON 标签）都会失败或被当作正文，"
+                    "导致交付失败。file_path 引用上方工具结果中已保存的路径即可，无需执行代码验证；"
+                    "同时给出字段说明、时间与区域口径、记录数以及数据缺口。"
                     "不做机制分析，不重新查询。"
                 ),
                 allowed_tools=(),
@@ -140,12 +143,18 @@ def render_phase_prompt(
     phase = current_phase(definition, progress)
     attempt = int(progress.get("phase_attempt") or 0) + 1
     remaining = max(phase.max_attempts - attempt + 1, 0)
-    return (
+    prompt = (
         f"## 固定工作流阶段：{phase.name}\n"
         f"{phase.description}\n"
         f"这是本阶段第 {attempt}/{phase.max_attempts} 次机会，剩余 {remaining} 次。"
         "运行时只暴露本阶段允许的工具，并负责推进阶段；不要自行重复或回退阶段。"
     )
+    if not phase.allowed_tools:
+        prompt += (
+            "硬性约束：本轮请求 tools 为空，你必须直接输出一段纯文本答案；"
+            "输出任何工具调用（含手写调用标记）都会导致本轮失败。"
+        )
+    return prompt
 
 
 def allowed_tools(

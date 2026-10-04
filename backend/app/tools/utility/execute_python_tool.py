@@ -40,6 +40,7 @@ import structlog
 from app.tools.artifact_utils import attach_rendered_qmd_report_resources
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_refs import build_data_file_ref, build_file_ref, build_visual_ref, merge_refs
+from app.agent.context.data_shape import MAX_SHAPE_COLUMNS
 from app.utils.path_config import (
     PROJECT_ROOT,
     agent_declared_input_roots,
@@ -530,7 +531,10 @@ class ExecutePythonTool(LLMTool):
                 result["data"]["data_file_paths"] = python_data_paths
                 result.setdefault("metadata", {})
                 result["metadata"]["data_file_paths"] = python_data_paths
-                shapes = self._extract_python_data_shapes(result["data"].get("output", ""))
+                shapes = self._prefer_sidecar_data_shapes(
+                    self._extract_python_data_shapes(result["data"].get("output", "")),
+                    context,
+                )
                 if shapes:
                     result["data_shapes"] = shapes
                 if result.get("success", False):
@@ -942,7 +946,10 @@ class ExecutePythonTool(LLMTool):
             )
 
             declared_data_paths = self._extract_python_data_file_paths(stdout or "")
-            data_shapes = self._extract_python_data_shapes(stdout or "")
+            data_shapes = self._prefer_sidecar_data_shapes(
+                self._extract_python_data_shapes(stdout or ""),
+                context,
+            )
             output = stdout or ""
             if stderr:
                 output += f"\n错误输出:\n{stderr}"
@@ -1830,6 +1837,33 @@ def artifact_path(filename: str) -> str:
                 continue
         return shapes
 
+    def _prefer_sidecar_data_shapes(
+        self,
+        shapes: Dict[str, Dict[str, Any]],
+        context: Any,
+    ) -> Dict[str, Dict[str, Any]]:
+        """stdout 里的形状可能是截断版；sidecar（<file>.data_shape.json）有全量时优先。
+
+        截断形状仅在沙箱 sidecar 写入失败时兜底，保证资源元数据拿到完整列清单。
+        """
+        if not shapes or not context:
+            return shapes
+        get_data_shape = getattr(context, "get_data_shape", None)
+        if not callable(get_data_shape):
+            return shapes
+        resolved: Dict[str, Dict[str, Any]] = {}
+        for file_path, shape in shapes.items():
+            try:
+                full_shape = get_data_shape(file_path)
+            except Exception:
+                full_shape = None
+            resolved[file_path] = (
+                full_shape
+                if isinstance(full_shape, dict) and full_shape.get("columns")
+                else shape
+            )
+        return resolved
+
     def _extract_echarts_format(self, output: str) -> dict:
         """Backward-compatible single-option extractor."""
         options = self._extract_echarts_formats(output)
@@ -2115,7 +2149,20 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
             'row_count': row_count,
             'source': 'dataframe' if is_frame else 'inferred',
         }
-        print("PYTHON_DATA_FILE_SHAPE:" + file_path + ":" + json.dumps(shape, ensure_ascii=False))
+        # 全量形状写 sidecar（<file>.data_shape.json）供资源元数据/下游 DAG 复用；
+        # stdout 只打截断版（前 __MAX_SHAPE_COLUMNS__ 列 + 总列数），避免宽表把几 KB
+        # JSON 灌进 LLM 上下文。
+        try:
+            absolute_path.with_suffix('.data_shape.json').write_text(
+                json.dumps(shape, ensure_ascii=False), encoding='utf-8')
+        except Exception:
+            pass
+        shape_view = dict(shape)
+        _shape_columns = shape_view.get('columns') or []
+        if len(_shape_columns) > __MAX_SHAPE_COLUMNS__:
+            shape_view['columns_total'] = len(_shape_columns)
+            shape_view['columns'] = _shape_columns[:__MAX_SHAPE_COLUMNS__]
+        print("PYTHON_DATA_FILE_SHAPE:" + file_path + ":" + json.dumps(shape_view, ensure_ascii=False))
     except Exception:
         pass
     return file_path
@@ -2130,6 +2177,9 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
         context_injection_code = context_injection_code.replace("__SESSION_DATA_DIR__", session_data_dir)
         context_injection_code = context_injection_code.replace("__SESSION_PREFIX__", session_prefix)
         context_injection_code = context_injection_code.replace("__AGENT_PROJECT_ROOT__", repr(str(PROJECT_ROOT)))
+        context_injection_code = context_injection_code.replace(
+            "__MAX_SHAPE_COLUMNS__", str(int(MAX_SHAPE_COLUMNS))
+        )
 
         # 在代码开头插入上下文代码
         injected_code = context_injection_code + code

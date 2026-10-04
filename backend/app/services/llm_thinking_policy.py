@@ -1,10 +1,10 @@
-"""思考模式策略：按模型档位与调用方类型决定网关请求是否关闭思考。
+"""思考模式策略：按请求挡位与调用方类型决定网关请求是否关闭思考。
 
-档位规则：
-- flash 档模型（模型名含 flash）：思考默认关闭
-- PRO 档模型：思考默认开启（不传 thinking 参数，网关默认）
-- 调用方叠加：子 agent（call_sub_agent，含工作流节点）一律关闭思考，
-  与模型档位无关——问数/专家子节点的轮间慢思考会击穿节点墙钟预算。
+挡位规则（方案B，与具体模型名无关——两挡共用同一模型链）：
+- 用户挡位 flash（快速模式）：思考关闭
+- 用户挡位 pro（深度思考）：思考保持（不传 thinking 参数，网关默认）
+- 挡位 auto / 未设置：主 agent 保持思考；子 agent（call_sub_agent，
+  含工作流节点）一律关闭——固定流程节点求快，轮间慢思考会击穿节点墙钟预算。
 """
 
 from __future__ import annotations
@@ -12,8 +12,11 @@ from __future__ import annotations
 from contextvars import ContextVar
 
 _caller_tier_var: ContextVar[str | None] = ContextVar("llm_caller_tier", default=None)
+_request_tier_var: ContextVar[str | None] = ContextVar("llm_request_tier", default=None)
 
 SUBAGENT_TIER = "subagent"
+FLASH_TIER = "flash"
+PRO_TIER = "pro"
 
 
 def set_agent_caller_tier(tier: str):
@@ -29,18 +32,34 @@ def get_agent_caller_tier() -> str | None:
     return _caller_tier_var.get()
 
 
-def model_tier(model: str) -> str:
-    """模型档位：名称含 flash 为 flash 档，其余为 pro 档。"""
-    return "flash" if "flash" in str(model or "").lower() else "pro"
+def set_request_tier(tier: str | None):
+    """绑定当前请求的模型挡位（flash/pro/auto）；返回 token 供 reset。"""
+    normalized = (tier or "").strip().lower() or None
+    return _request_tier_var.set(normalized)
 
 
-def should_disable_thinking(model: str, master_switch: bool) -> tuple[bool, str]:
-    """返回 (是否关闭思考, 原因标签)。供 SCNET 和 Go/Go2 网关复用。"""
+def reset_request_tier(token) -> None:
+    _request_tier_var.reset(token)
+
+
+def get_request_tier() -> str | None:
+    return _request_tier_var.get()
+
+
+def should_disable_thinking(
+    master_switch: bool,
+    request_tier: str | None = None,
+    caller_tier: str | None = None,
+) -> tuple[bool, str]:
+    """返回 (是否关闭思考, 原因标签)。挡位决定开关，与具体模型名无关。"""
     if not master_switch:
         return False, "master_switch_off"
-    tier = model_tier(model)
-    if tier == "flash":
-        return True, "flash_tier"
-    if get_agent_caller_tier() == SUBAGENT_TIER:
+    if (caller_tier or "").strip().lower() == SUBAGENT_TIER:
         return True, "subagent_auto"
-    return False, "pro_tier"
+    tier = (request_tier or "").strip().lower()
+    if tier == FLASH_TIER:
+        return True, "flash_tier"
+    if tier == PRO_TIER:
+        return False, "pro_tier"
+    # auto / 未设置：主 agent 保持思考（网关默认），由网关侧预算兜底
+    return False, "auto_tier"

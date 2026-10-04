@@ -171,13 +171,13 @@
                 title="选择本次对话使用的模型"
               >
                 <option value="auto">自动</option>
-                <option value="flash">Flash</option>
-                <option value="pro">Pro</option>
+                <option value="flash">快速模式</option>
+                <option value="pro">深度思考</option>
               </select>
               <div class="model-tier-tooltip">
-                <span v-if="modelTier === 'flash'" class="tooltip-text">快速模式，适合日常问数、对话</span>
-                <span v-if="modelTier === 'pro'" class="tooltip-text">专家模式，适合报告生成、深度分析等复杂任务</span>
-                <span v-if="modelTier === 'auto'" class="tooltip-text">自动根据任务复杂度选择模型</span>
+                <span v-if="modelTier === 'flash'" class="tooltip-text">快速模式：关闭深度思考，响应快，适合日常问数、数据查询和简单对话</span>
+                <span v-if="modelTier === 'pro'" class="tooltip-text">深度思考：开启逐步推理，更严谨，适合报告生成、深度分析和复杂研判</span>
+                <span v-if="modelTier === 'auto'" class="tooltip-text">自动：主对话默认深度思考，子任务自动使用快速模式，无需手动选择</span>
               </div>
             </div>
 
