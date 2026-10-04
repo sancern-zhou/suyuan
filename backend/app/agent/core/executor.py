@@ -24,12 +24,43 @@ import traceback
 import asyncio
 import time
 
+from app.utils.path_config import resolve_agent_path
+
 if TYPE_CHECKING:
     from app.agent.memory.hybrid_manager import HybridMemoryManager
     from app.agent.context.data_context_manager import DataContextManager
     from app.agent.context.execution_context import ExecutionContext
 
 logger = structlog.get_logger()
+
+
+def _canonical_agent_path(path: str) -> str:
+    """归一化 Agent 路径为绝对路径字符串；非法路径原样返回。"""
+    try:
+        return str(resolve_agent_path(path))
+    except (OSError, ValueError):
+        return str(path or "")
+
+
+def _match_result_shape(
+    result_shapes: Dict[str, Any],
+    file_path: str,
+) -> Optional[Dict[str, Any]]:
+    """按归一化后的绝对路径精确匹配工具结果里解析出的 data_shape。
+
+    禁止前后缀模糊匹配（如 "xx11.csv" 会误配 "1.csv" 的形状）——
+    给 LLM 看的元数据错比缺更糟。
+    """
+    if not isinstance(result_shapes, dict):
+        return None
+    exact = result_shapes.get(file_path)
+    if isinstance(exact, dict):
+        return exact
+    target = _canonical_agent_path(file_path)
+    for key, value in result_shapes.items():
+        if isinstance(value, dict) and _canonical_agent_path(key) == target:
+            return value
+    return None
 
 
 class ToolExecutor:
@@ -504,14 +535,7 @@ class ToolExecutor:
                 for file_path in execution_context.available_file_paths:
                     if file_path in declared_paths:
                         continue
-                    shape = result_shapes.get(file_path) or next(
-                        (
-                            value
-                            for key, value in result_shapes.items()
-                            if file_path.endswith(key) or key.endswith(file_path)
-                        ),
-                        None,
-                    )
+                    shape = _match_result_shape(result_shapes, file_path)
                     if shape is None and callable(get_context_shape):
                         shape = get_context_shape(file_path)
                     declaration_metadata = {"data_shape": shape} if isinstance(shape, dict) else None

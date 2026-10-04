@@ -5,6 +5,7 @@ from datetime import datetime
 import pytest
 
 from app.agent.context.data_shape import (
+    TableTypesCache,
     build_data_shape,
     dataframe_column_types,
     infer_column_types,
@@ -40,6 +41,25 @@ def test_render_shape_line_truncates_long_column_lists():
     assert "col_19" not in line
 
 
+def test_render_shape_line_without_columns_returns_row_count_only():
+    shape = build_data_shape({}, 0, "inferred")
+    assert render_shape_line(shape) == "0行"
+    assert shape_summary_suffix(shape) == "数据形状：0行"
+
+
+def test_render_shape_line_honors_columns_total_from_truncated_shape():
+    shape = {
+        "columns": [{"name": f"col_{i}", "type": "str"} for i in range(4)],
+        "columns_total": 40,
+        "row_count": 7,
+        "source": "inferred",
+    }
+    line = render_shape_line(shape)
+    assert "…共 40 列" in line
+    assert "col_3:str" in line
+    assert "col_4" not in line
+
+
 def test_shape_summary_suffix_empty_without_shape():
     assert shape_summary_suffix(None) == ""
     assert shape_summary_suffix({"columns": []}) == ""
@@ -60,6 +80,61 @@ def test_dataframe_column_types_mark_datetime_as_readback_string():
     types = dataframe_column_types(frame)
     assert types["TimePoint"] == "datetime-str"
     assert types["Aqi"] == "int"
+
+
+def test_table_types_cache_split_schema():
+    assert TableTypesCache._split_schema("air_quality") == (None, "air_quality")
+    assert TableTypesCache._split_schema("archive.air_quality") == ("archive", "air_quality")
+    assert TableTypesCache._split_schema("db.archive.air_quality") == ("db.archive", "air_quality")
+
+
+class _StubResult:
+    def mappings(self):
+        return iter([])
+
+
+class _StubConnection:
+    def __init__(self, recorder):
+        self._recorder = recorder
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def execute(self, query, params):
+        self._recorder.append((str(query), params))
+        return _StubResult()
+
+
+class _StubEngine:
+    def __init__(self, recorder):
+        self._recorder = recorder
+
+    def connect(self):
+        return _StubConnection(self._recorder)
+
+
+@pytest.mark.asyncio
+async def test_table_types_cache_load_filters_by_schema():
+    recorded = []
+    cache = TableTypesCache()
+    engine = _StubEngine(recorded)
+
+    await cache.load(engine, "air_quality", schema="public")
+    statement, params = recorded[-1]
+    assert "table_schema = :table_schema" in statement
+    assert params == {"table_name": "air_quality", "table_schema": "public"}
+
+    await cache.load(engine, "air_quality")
+    statement, params = recorded[-1]
+    assert "table_schema = current_schema()" in statement
+    assert params == {"table_name": "air_quality"}
+
+    await cache.load(engine, "archive.air_quality")
+    statement, params = recorded[-1]
+    assert params == {"table_name": "air_quality", "table_schema": "archive"}
 
 
 def test_resource_map_appends_data_shape_for_data_resources():

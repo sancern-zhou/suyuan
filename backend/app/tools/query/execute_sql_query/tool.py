@@ -740,7 +740,7 @@ class BaseSQLQueryTool(LLMTool):
             # 4. 数据外部化：超过24条记录时采样
             sample_data = results
             file_path = None
-            data_shape = self._build_data_shape(results, sql, database)
+            data_shape = await self._build_data_shape(results, sql, database)
             shape_suffix = shape_summary_suffix(data_shape)
 
             if context and len(results) > 24:
@@ -978,8 +978,12 @@ class BaseSQLQueryTool(LLMTool):
             logger.error("获取数据库配置失败", error=str(e))
             raise
 
-    def _build_data_shape(self, results: list, sql: str, database: str) -> Dict[str, Any]:
-        """information_schema 精确类型优先（按表缓存），派生列回退样本推断。"""
+    async def _build_data_shape(self, results: list, sql: str, database: str) -> Dict[str, Any]:
+        """information_schema 精确类型优先（按 库+schema+表 缓存），派生列回退样本推断。
+
+        与主查询一致走 asyncio.to_thread：首查未缓存表的元数据查询同样可能
+        因网络抖动阻塞，不能卡住事件循环上的其他并行问数节点。
+        """
         import re as _re
 
         try:
@@ -989,19 +993,26 @@ class BaseSQLQueryTool(LLMTool):
                 table = str(table)
                 if not _re.fullmatch(r"[A-Za-z0-9_\.]+", table):
                     continue
-                if table not in self._table_types_cache:
+                parts = table.split(".")
+                table_name = parts[-1]
+                # 显式 schema 前缀优先；未限定时按 SQL Server 默认 schema 解析，
+                # 防止同库跨 schema（乃至跨库同表名经缓存串味）互相污染列类型。
+                schema_name = parts[-2] if len(parts) >= 2 else "dbo"
+                cache_key = f"{database}|{table}"
+                if cache_key not in self._table_types_cache:
                     try:
-                        rows = self._execute_query(
+                        rows = await asyncio.to_thread(
+                            self._execute_query,
                             "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
-                            f"WHERE TABLE_NAME = '{table}'",
+                            f"WHERE TABLE_NAME = '{table_name}' AND TABLE_SCHEMA = '{schema_name}'",
                             database,
                         )
-                        self._table_types_cache[table] = {
+                        self._table_types_cache[cache_key] = {
                             str(row["COLUMN_NAME"]): str(row["DATA_TYPE"]) for row in rows
                         }
                     except Exception:
-                        self._table_types_cache[table] = {}
-                exact_types.update(self._table_types_cache.get(table) or {})
+                        self._table_types_cache[cache_key] = {}
+                exact_types.update(self._table_types_cache.get(cache_key) or {})
             columns = list(results[0].keys()) if results else []
             inferred = infer_column_types(results, columns)
             columns_with_types = {
