@@ -428,10 +428,13 @@ class ReActPlanner:
                             try:
                                 tool_input = json.loads(current_tool_block["input_json"])
                             except json.JSONDecodeError as exc:
+                                raw_input_json = current_tool_block["input_json"]
                                 logger.warning(
                                     "tool_use_input_json_parse_failed",
                                     tool_name=current_tool_block["name"],
-                                    raw_json=current_tool_block["input_json"][:200],
+                                    raw_json_length=len(raw_input_json),
+                                    raw_json_head=raw_input_json[:500],
+                                    raw_json_tail=raw_input_json[-2000:],
                                     error=str(exc),
                                 )
                                 current_blocks.append({
