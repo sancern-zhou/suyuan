@@ -34,17 +34,20 @@ logger = structlog.get_logger()
 # 单一事实源(本文件内): 结构化目录 → 渲染进工具描述。改口径时四处同步:
 # datasets/*.yaml ↔ dbt models ↔ cube/schema/*.js ↔ 此处。
 CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
+    # WorkOrder 仅覆盖故障工单(宽表过滤 ordertype='Fault'); 例行单不入宽表, 巡检走 Inspection。
+    # 响应/恢复类指标依赖故障单流程节点(FaultProcess)与关联告警, 定义上即故障单专属;
+    # 全部指标结论均须注明为故障单口径(2026-10-06 收敛)。
     "WorkOrder": {
         "measures": [
-            {"name": "count", "title": "工单量"},
-            {"name": "overdueCount", "title": "超期工单数"},
-            {"name": "overdueRate", "title": "超期率%(分母=全部工单,约85%偏高是平台僵尸单现状)"},
-            {"name": "responseEvaluable", "title": "可评估响应的工单数(有到场节点,约14%)"},
-            {"name": "responseWithin2hCount", "title": "2小时内到场工单数"},
-            {"name": "responseWithin2hRate", "title": "2小时响应率%(分母=可评估单,须注明占比)"},
-            {"name": "recoverEvaluable", "title": "可评估恢复的工单数(有已解除关联告警,约27%)"},
-            {"name": "recoverWithin4hCount", "title": "4小时内恢复工单数"},
-            {"name": "recoverWithin4hRate", "title": "4小时恢复率%(分母=可评估单,须注明占比)"},
+            {"name": "count", "title": "故障工单量(仅Fault类型)"},
+            {"name": "overdueCount", "title": "超期故障工单数"},
+            {"name": "overdueRate", "title": "超期率%(分母=全部故障工单,约85%偏高是平台僵尸单现状)"},
+            {"name": "responseEvaluable", "title": "可评估响应的故障工单数(有到场节点,约14%)"},
+            {"name": "responseWithin2hCount", "title": "2小时内到场故障工单数"},
+            {"name": "responseWithin2hRate", "title": "2小时响应率%(仅故障单,分母=可评估单,须注明占比)"},
+            {"name": "recoverEvaluable", "title": "可评估恢复的故障工单数(有已解除关联告警,约27%)"},
+            {"name": "recoverWithin4hCount", "title": "4小时内恢复故障工单数"},
+            {"name": "recoverWithin4hRate", "title": "4小时恢复率%(仅故障单,分母=可评估单,须注明占比)"},
             {"name": "repeatFaultCount", "title": "30天重复故障工单数"},
             {"name": "repeatFaultRate", "title": "30天重复故障率%"},
             {"name": "avgResponseMinutes", "title": "平均响应时长(分钟)"},
@@ -59,7 +62,7 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "stationName", "title": "站点名"},
             {"name": "orderStatus", "title": "工单状态(处理中/已完成)"},
             {"name": "urgency", "title": "紧急程度"},
-            {"name": "orderType", "title": "工单类型"},
+            {"name": "orderType", "title": "工单类型(本cube仅故障单Fault,保留作口径核对)"},
             {"name": "isOverdue", "title": "是否超期"},
             {"name": "isRepeatFault", "title": "是否重复故障"},
             {"name": "repeatBasis", "title": "重复故障判定维度"},

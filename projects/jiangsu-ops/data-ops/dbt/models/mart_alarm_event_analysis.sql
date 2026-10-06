@@ -17,7 +17,7 @@
 -- 口径:
 --   告警持续 = removetime - alarmtime; 处理时长 = handletime - alarmtime
 --   状态翻译: ddalarmstate 1=未处理 3=已解除(经数据验证: 状态3全部有解除时间)
---   关联工单 = 告警发生后 24h 内同站创建的工单数(来自 mart_work_order_analysis)
+--   关联工单 = 告警发生后 24h 内同站创建的故障工单数(来自 mart_work_order_analysis, 仅Fault口径)
 --   alarmlevel 翻译: urgent=紧急 secondary=中级 commonly=一般(按平台惯例, 待业务确认)
 -- 刷新: 全量重建, 依赖 mart_work_order_analysis 先刷新(dbt ref 依赖保证顺序)
 -- ============================================================

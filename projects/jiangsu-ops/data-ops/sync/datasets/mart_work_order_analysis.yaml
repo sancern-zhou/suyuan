@@ -10,6 +10,9 @@ grain: 一行 = 一张故障工单（源表 mtc_WorkingOrder.Id）
 freshness_slo: 5分钟
 data_as_of: 由工具运行时返回 refreshed_at 最大值
 known_caveats:
+  - 范围仅故障工单：dbt 模型显式过滤 ordertype='Fault'(2026-10-06 收敛)；例行单(巡检/现场检查/
+    校准/质控等)与故障单同存于源表但不入本表，巡检任务项统计见 mart_inspection_analysis。
+    本表超期率/工单量等结论均只代表故障单口径，不得表述为全部工单口径
   - 派单/到站为代理口径：CH_Check 节点开始=派单，首个 FaultProcess 开始=到站；派单缺失回退工单创建时间
   - 2小时响应(is_response_within_2h)仅对有到场节点的工单可评估(约14%)；当前流程数据中
     CH_Check 与 FaultProcess 节点不同时出现，实际代理为创建→到站；审核关闭类工单无到场概念
@@ -23,7 +26,7 @@ columns:
   - {name: id, business: 工单源ID(主键)}
   - {name: working_order_code, business: 工单号}
   - {name: order_title, business: 工单标题}
-  - {name: order_type, business: 工单类型}
+  - {name: order_type, business: 工单类型, note: 本表过滤后恒为 Fault(故障单), 保留该列仅为口径核对}
   - {name: order_status, business: 状态原始值, enum: {Doing: 处理中, Finish: 已完成, Invalid: 已作废}}
   - {name: order_status_cn, business: 状态中文名}
   - {name: urgency_type, business: 紧急程度}
@@ -71,4 +74,5 @@ guide: >-
   process_minutes/repair_minutes/is_overdue(按plan_finish_time)/
   is_repeat_fault(同站同设备30天)/repeat_fault_basis/repeat_count_30d/alarm_count_1d/node_count。
   注意：派单/到站为工作流节点代理口径；平台存在大量长期未闭环单，超期率~85%是数据现状；
+  本表仅故障工单(ordertype='Fault')，例行单不入表，工单量/超期率等结论须注明为故障单口径；
   SLA 统计须注明可评估工单占比，不得把不可评估单计入分母。

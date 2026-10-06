@@ -3,7 +3,8 @@ dataset: mart_alarm_event_analysis
 description: >
   江苏站点告警事件数据集。一行=一条站点告警（2026-07-01 起，源 alm_summary）。
   含告警级别/状态（已翻译）、生命周期时间、持续与处理时长、是否未处理、
-  告警后24小时内同站关联工单数。用于告警分析、告警→工单转化、未处理告警督办。
+  告警后24小时内同站关联故障工单数（关联自 mart_work_order_analysis，仅Fault口径）。
+  用于告警分析、告警→工单转化、未处理告警督办。
 owner: 江苏运维平台组
 grain: 一行 = 一条站点告警（alm_summary.Id）
 freshness_slo: 5分钟

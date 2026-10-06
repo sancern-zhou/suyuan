@@ -1,4 +1,6 @@
 // 工单语义模型 — 口径唯一来源: sync/datasets/mart_work_order_analysis.yaml + dbt 模型
+// 范围: 仅故障工单(dbt 过滤 ordertype='Fault', 2026-10-06 收敛); 例行单(巡检/校准等)不入本表,
+// 巡检任务项走 Inspection cube。工单量/超期率等结论均只代表故障单口径。
 // 注意两个"可评估分母"口径: 2h响应率仅对有到场节点单(约14%), 4h恢复率仅对有已解除
 // 关联告警单(约27%)。rate 类指标返回百分数(0-100)。
 cube(`WorkOrder`, {

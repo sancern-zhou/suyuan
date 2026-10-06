@@ -25,6 +25,7 @@
 --             is_recover_within_4h: 恢复距建单<=4小时(无关联告警解除则不可评估)
 --   超期     = FinishTime>PlanFinishTime; 未完成且 now()>PlanFinishTime 亦为超期; Invalid 不计
 --   重复故障 = 同站同设备, 本单创建前 30 天内存在其他工单
+-- 范围     = 仅故障工单(ordertype='Fault'); 例行单不入本表(2026-10-06 收敛, 见文末 where)
 -- 关联告警 = 工单创建前 24h 内同站 alm_summary 条数（代理口径）
 -- 刷新: 全量重建（数据量 <2 万行, 5 分钟一次成本可忽略）
 -- ============================================================
@@ -133,4 +134,8 @@ left join lateral (
     order by a.alarmtime desc
     limit 1
 ) rc on true
-where w.orderstatus <> 'Invalid' or w.finishtime is not null
+-- 范围(2026-10-06): 仅故障工单(ordertype='Fault')。例行单(巡检/现场检查/校准/质控等)
+-- 与故障单同存于源表 mtc_WorkingOrder, 但响应/恢复/重复故障指标均以故障单节点为前提,
+-- 例行单不入本表; 例行巡检任务项见 mart_inspection_analysis。
+where w.ordertype = 'Fault'
+  and (w.orderstatus <> 'Invalid' or w.finishtime is not null)
