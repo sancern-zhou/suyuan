@@ -257,44 +257,6 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_jining_regular_stations", error=str(e))
 
-    # 广东省 Suncere API 查询工具（项目专属，默认不注册；
-    # 需要的项目在 manifest 的 modules 中启用 legacy 并在 backend.tools 中声明）
-    gd_suncere_tool_registrations = (
-        ("query_gd_suncere_city_hour", "QueryGDSuncereCityHourTool", 32),
-        ("query_gd_suncere_station_hour_new", "QueryGDSuncereStationHourTool", 33),
-        ("query_gd_suncere_station_day_new", "QueryGDSuncereStationDayTool", 34),
-        ("query_gd_suncere_regional_comparison", "QueryGDSuncereRegionalComparisonTool", 35),
-        ("query_gd_suncere_city_day", "QueryGDSuncereCityDayTool", 36),
-        ("query_gd_suncere_district_day", "QueryGDSuncereDistrictDayTool", 36),
-        ("query_gd_suncere_district_report", "QueryGDSuncereDistrictReportTool", 37),
-        ("query_gd_suncere_report_compare", "QueryGDSuncereReportCompareTool", 38),
-    )
-    gd_legacy_module = "app.tools.query.query_gd_suncere.tool_wrapper"
-    if is_project_tool_enabled(context, "legacy", "query_gd_suncere"):
-        for tool_name, class_name, priority in gd_suncere_tool_registrations:
-            try:
-                module = __import__(gd_legacy_module, fromlist=[class_name])
-                registry.register(getattr(module, class_name)(), priority=priority)
-                logger.info("tool_loaded", tool=tool_name)
-            except ImportError as e:
-                logger.warning("tool_import_failed", tool=tool_name, error=str(e))
-
-    gd_standard_report_registrations = (
-        ("query_city_standard_report", "app.tools.query.query_city_standard_report.tool", "QueryCityStandardReportTool", 39),
-        ("query_city_standard_yoy_report", "app.tools.query.query_city_standard_report.tool", "QueryCityStandardYoyReportTool", 39),
-        ("query_station_standard_report", "app.tools.query.query_station_standard_report.tool", "QueryStationStandardReportTool", 43),
-        ("query_station_standard_yoy_report", "app.tools.query.query_station_standard_report.tool", "QueryStationStandardYoyReportTool", 44),
-    )
-    for tool_name, module_name, class_name, priority in gd_standard_report_registrations:
-        if not is_project_tool_enabled(context, "legacy", tool_name):
-            continue
-        try:
-            module = __import__(module_name, fromlist=[class_name])
-            registry.register(getattr(module, class_name)(), priority=priority)
-            logger.info("tool_loaded", tool=tool_name)
-        except ImportError as e:
-            logger.warning("tool_import_failed", tool=tool_name, error=str(e))
-
     if is_project_tool_enabled(context, "legacy", "analyze_city_pollutant_rankings"):
         try:
             from app.tools.query.city_pollutant_rankings.tool import CityPollutantRankingsTool

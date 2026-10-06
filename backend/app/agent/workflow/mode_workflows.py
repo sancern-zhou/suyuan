@@ -58,7 +58,6 @@ _FORECAST_QUERY_TOOLS = (
     "get_weather_forecast",
     "query_airdata_platform",
     "xuchang_station_catalog",
-    "resolve_station_geo",
     "execute_postgres_sql_query",
 )
 
