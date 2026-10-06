@@ -24,6 +24,7 @@ import traceback
 import asyncio
 import time
 
+from app.agent.context.data_shape import compact_shape
 from app.utils.path_config import resolve_agent_path
 
 if TYPE_CHECKING:
@@ -538,7 +539,12 @@ class ToolExecutor:
                     shape = _match_result_shape(result_shapes, file_path)
                     if shape is None and callable(get_context_shape):
                         shape = get_context_shape(file_path)
-                    declaration_metadata = {"data_shape": shape} if isinstance(shape, dict) else None
+                    # 资源声明随 observation 进入模型上下文，形状统一用紧凑副本
+                    declaration_metadata = (
+                        {"data_shape": compact_shape(shape)}
+                        if isinstance(shape, dict)
+                        else None
+                    )
                     declared.append(
                         data_file_resource(
                             file_path,
