@@ -101,3 +101,37 @@ async def test_worker_canonical_definition_is_accepted_without_changing_fingerpr
     dispatched = await tool.execute(context=context, workflow=queued["definition"], snapshot=queued)
     assert dispatched["success"], dispatched
     assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_partial_tool_delivery_passes_gaps_to_child_and_can_extend(tool_setup, monkeypatch):
+    tool, context, calls, _ = tool_setup
+    original = tool._build_sub_agent_tool()
+
+    class Child:
+        async def execute(self, **kwargs):
+            if kwargs["goal"] == "fetch weather":
+                raise ValueError("weather unavailable")
+            return await original.execute(**kwargs)
+
+    monkeypatch.setattr(tool, "_build_sub_agent_tool", lambda: Child())
+    first = await tool.execute(context=context, workflow={"workflow_id": "partial", "nodes": [
+        {"task_id": "air", "target_mode": "query_monitoring_city", "goal": "fetch air"},
+        {"task_id": "weather", "target_mode": "query_forecast", "goal": "fetch weather", "required": False},
+        {"task_id": "merge", "target_mode": "query_monitoring_city", "goal": "summarize air", "dependencies": ["air", "weather"], "dependency_policy": "allow_partial"},
+    ]})
+    assert first["status"] == "partial"
+    assert first["success"] is True
+    from app.agent.core.tool_result import result_envelope_indicates_error
+    assert not result_envelope_indicates_error(first)
+    assert first["data"]["delivery"]["deliverable"] is True
+    assert "weather unavailable" in calls[-1]["context_str"]
+    assert first["data"]["node_statuses"]["weather"] == "failed"
+    second = await tool.execute(context=context, workflow={"workflow_id": "partial"}, extension={
+        "expected_revision": 0, "reason": "supplement evidence", "nodes": [{
+            "task_id": "supplement", "target_mode": "query_forecast", "goal": "fetch supplement", "dependencies": ["air"],
+        }],
+    })
+    assert second["data"]["revision"] == 1
+    assert second["status"] == "partial"
+    assert len(calls) == 3

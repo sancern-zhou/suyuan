@@ -264,7 +264,7 @@ class WorkflowJobStore:
         self, workflow_id: str, *, lease_token: str, status: str,
         result: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        if status not in {"succeeded", "failed", "cancelled"}:
+        if status not in {"succeeded", "partial", "failed", "cancelled"}:
             raise ValueError(f"invalid terminal workflow status: {status}")
         await self._lease_write(
             workflow_id, lease_token, "finish", json.dumps(dict(result or {}), ensure_ascii=False, default=str),

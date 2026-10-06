@@ -49,6 +49,11 @@ def build_delegation_contract(mode: str, available_tools: list[str]) -> str:
         "才由父 Agent 决定补图：再次调用 run_agent_workflow，workflow 只传原 workflow_id，"
         "extension 传 expected_revision（使用上次返回的 revision）、reason 和新 nodes。"
         "新节点可依赖已完成节点；不得修改旧节点、重复已有任务或突破累计预算。\n"
+        "已知条件用 when 控制分支，条件未满足的任务不启动；条件引用直接上游的结构化结果。"
+        "辅助节点可设 required=false；下游显式 dependency_policy=allow_partial 才能消费部分成功结果。"
+        "收到 partial 时按 delivery.gaps 交付已有成果并说明限制；关键证据失败不能形成完整结论。"
+        "输入资源用 input_contracts 校验字段、单位、粒度、时间覆盖和范围，产物可设 output_contract。"
+        "资源缺失或不兼容先说明缺口、决定是否补图，不让下游默认重新取数。\n"
     )
     if mode == "expert":
         return common + (

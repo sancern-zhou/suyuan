@@ -85,7 +85,7 @@
               </section>
             </div>
           </section>
-          <section v-if="failedNodes.length" class="detail-section errors-section"><h4>失败节点</h4><p v-for="node in failedNodes" :key="node.task_id">{{ nodeTitle(node) }}：{{ node.error || '节点执行失败' }}</p></section>
+          <section v-if="deliveryGaps.length" class="detail-section errors-section"><h4>{{ selectedStatus === 'partial' ? '已有成果可交付，仍有证据缺口' : '未完成任务与证据缺口' }}</h4><p v-if="selectedStatus === 'partial'">可以使用已完成成果；相关结论需保留以下限制。补充任务可在对话中交给助手继续处理。</p><p v-for="(gap, index) in deliveryGaps" :key="`${gap.task_id}-${index}`">{{ nodeTitle({ task_id: gap.task_id }) }}：{{ gap.reason || '缺少证据' }}</p></section>
         </article>
       </template>
     </template>
@@ -96,6 +96,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import { cancelSessionWorkflow, followSessionWorkflow, getSessionWorkflow, getSessionWorkflowEvents, getSessionWorkflowNodeHistory, listSessionWorkflows, resumeSessionWorkflow } from '@/services/workflowApi.js'
+import { workflowCanResume, workflowGaps } from './workflowState.js'
 
 const props = defineProps({ sessionId: { type: String, default: '' } })
 const workflows = ref([]); const selectedId = ref(''); const selectedWorkflow = ref(null); const events = ref([])
@@ -105,7 +106,7 @@ const panelRef = ref(null)
 let snapshotTimer = null
 let nodePollTimer = null
 
-const statusMap = { queued: { key: 'pending', label: '排队中' }, pending: { key: 'pending', label: '等待执行' }, running: { key: 'running', label: '执行中' }, succeeded: { key: 'success', label: '已完成' }, success: { key: 'success', label: '已完成' }, failed: { key: 'failed', label: '失败' }, blocked: { key: 'blocked', label: '等待上游' }, retrying: { key: 'retrying', label: '重试中' }, cached: { key: 'cached', label: '已复用' }, reused: { key: 'cached', label: '已复用' }, cancelled: { key: 'cancelled', label: '已取消' } }
+const statusMap = { queued: { key: 'pending', label: '排队中' }, pending: { key: 'pending', label: '等待执行' }, running: { key: 'running', label: '执行中' }, succeeded: { key: 'success', label: '已完成' }, success: { key: 'success', label: '已完成' }, partial: { key: 'partial', label: '部分完成' }, skipped: { key: 'skipped', label: '无需执行' }, failed: { key: 'failed', label: '失败' }, blocked: { key: 'blocked', label: '缺少上游证据' }, retrying: { key: 'retrying', label: '重试中' }, cached: { key: 'cached', label: '已复用' }, reused: { key: 'cached', label: '已复用' }, cancelled: { key: 'cancelled', label: '已取消' } }
 const modeLabels = { query: '问数', query_monitoring: '监测查询', query_monitoring_station: '站点监测查询', query_monitoring_city: '城市监测查询', query_forecast: '预报查询', expert: '专家分析', expert_meteorology: '气象专家', expert_analysis: '常规分析专家', report: '报告', chart: '图表', knowledge: '知识' }
 const statusMeta = status => statusMap[String(status || '').toLowerCase()] || { key: 'unknown', label: '未知' }
 const shortId = value => String(value || '').replace(/^workflow[-_:]?/, '').slice(0, 32)
@@ -121,8 +122,8 @@ const nodeStages = computed(() => {
   while (remaining.size) { const ready = [...remaining.values()].filter(node => (node.dependencies || []).every(dependency => placed.has(dependency) || !remaining.has(dependency))); const stage = ready.length ? ready : [...remaining.values()]; stages.push(stage); stage.forEach(node => { placed.add(node.task_id); remaining.delete(node.task_id) }) }
   return stages
 })
-const failedNodes = computed(() => nodes.value.filter(node => statusMeta(node.status).key === 'failed'))
-const canCancel = computed(() => ['queued', 'running'].includes(String(selectedStatus.value))); const canResume = computed(() => ['failed', 'running', 'queued'].includes(String(selectedStatus.value)))
+const deliveryGaps = computed(() => workflowGaps(selectedWorkflow.value?.snapshot))
+const canCancel = computed(() => ['queued', 'running'].includes(String(selectedStatus.value))); const canResume = computed(() => workflowCanResume(selectedWorkflow.value?.snapshot, String(selectedStatus.value)))
 const liveLabel = computed(() => selectedWorkflow.value?.active ? '实时更新中' : '已结束')
 const nodeConversation = computed(() => nodeHistory.value?.conversation || [])
 const nodeUserMessages = computed(() => {
@@ -214,6 +215,7 @@ onMounted(() => { if (props.sessionId) refresh() }); onBeforeUnmount(() => { sto
 .state, .detail-state { padding: 30px 18px; color: #6c7b8e; text-align: center; }.state.error { color: #b42318; }.empty { display: grid; gap: 6px; }.empty strong { color: #36485e; }
 .workflow-list { display: grid; gap: 6px; padding: 12px; border-bottom: 1px solid #e5ebf2; }.workflow-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px; border: 1px solid transparent; border-radius: 7px; background: #fff; color: inherit; text-align: left; cursor: pointer; }.workflow-item:hover, .workflow-item.selected { border-color: #bcd5ee; background: #f2f7fc; }
 .status-dot, .node-status { display: inline-block; flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }.status-success, .node-success .node-status { background: #16845b; }.status-running, .node-running .node-status { background: #2778c9; box-shadow: 0 0 0 3px #dceeff; }.status-failed, .node-failed .node-status { background: #d04444; }.status-blocked, .node-blocked .node-status { background: #c58a1c; }.status-cancelled, .node-cancelled .node-status { background: #7b8794; }
+.status-partial { background: #c58a1c; }.status-skipped, .node-skipped .node-status { background: #7b8794; }
 .workflow-item-main { display: grid; gap: 3px; min-width: 0; flex: 1; }.workflow-item-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }.workflow-item-main small { color: #7b899a; font-size: 11px; }.live-badge { padding: 2px 6px; border-radius: 4px; background: #e4f1ff; color: #2169a8; font-size: 10px; }
 .workflow-detail { padding: 16px; }.detail-header h3 { font-size: 17px; }.detail-actions { display: flex; gap: 6px; }.button, .more-button { min-height: 30px; padding: 5px 10px; border: 1px solid #cbd8e5; border-radius: 6px; background: #fff; color: #315b84; cursor: pointer; }.button.danger { border-color: #efc2c2; color: #b42318; }
 .detail-section { margin-top: 20px; }.section-heading h3, .section-heading h4, .detail-section > h4 { font-size: 13px; }.section-heading span { color: #8290a0; font-size: 11px; }

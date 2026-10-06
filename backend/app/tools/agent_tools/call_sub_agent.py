@@ -360,6 +360,7 @@ class CallSubAgentTool(LLMTool):
         profile: Optional[str] = None,
         run_in_background: bool = False,
         _upstream_handles: Optional[List[Dict[str, Any]]] = None,
+        _input_contracts: Optional[List[Dict[str, Any]]] = None,
         _on_session_started: Optional[Callable[[str], None]] = None,
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
@@ -781,6 +782,7 @@ class CallSubAgentTool(LLMTool):
 
             handoff_resource_service = getattr(tool_executor, "resource_service", None)
             imported_resource_refs: List[Dict[str, Any]] = []
+            resource_contract_warnings: List[Dict[str, Any]] = []
             parent_resource_handles = await self._collect_parent_resource_handles(context)
             upstream_group_ids = {
                 (str(item.get("source_session_id") or ""), str(item.get("group_id") or ""))
@@ -827,6 +829,15 @@ class CallSubAgentTool(LLMTool):
                         ],
                     },
                 )
+
+            # Validate the imported catalog, not just requested handles. A stale
+            # or missing group must fail before the child starts model calls.
+            if _input_contracts:
+                from app.agent.workflow.resource_contract import assert_resource_contracts, check_resource_contracts
+                assert_resource_contracts(_input_contracts, imported_resource_refs)
+                resource_contract_warnings = [item for item in check_resource_contracts(_input_contracts, imported_resource_refs) if not item["required"]]
+                if resource_contract_warnings:
+                    effective_context = (effective_context or "") + "\n资源导入后发现可选证据缺口：" + json.dumps(resource_contract_warnings, ensure_ascii=False) + "\n仅基于可用证据交付并明确限制，不重新取数。"
 
             # 3. 构建子 Agent 请求：ReActAgent 会自行构建系统提示，因此把任务、
             # 补充上下文和规范化后的工作目录作为本轮用户请求一起传入。
@@ -1058,6 +1069,8 @@ class CallSubAgentTool(LLMTool):
                 "image_paths": self._extract_image_paths(result_events),  # 本地路径（文件操作）
                 "tool_calls": self._extract_tool_calls(result_events)
             }
+            if resource_contract_warnings:
+                structured_data["resource_contract_warnings"] = resource_contract_warnings
             if handoff_resource_service is None:
                 from app.agent.resources.resource_service import SessionResourceService
 
@@ -1234,6 +1247,7 @@ class CallSubAgentTool(LLMTool):
             }
 
         except Exception as e:
+            from app.agent.workflow.resource_contract import ResourceContractError
             if workflow_runtime is not None:
                 try:
                     run = workflow_run
@@ -1255,7 +1269,7 @@ class CallSubAgentTool(LLMTool):
                 "status": "failed",
                 "success": False,
                 "result": f"子Agent执行失败：{str(e)}",
-                "data": {},
+                "data": ({"resource_contract_violations": e.violations} if isinstance(e, ResourceContractError) else {}),
                 "metadata": {
                     "schema_version": "v2.0",
                     "generator": "call_sub_agent"

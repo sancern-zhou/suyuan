@@ -59,6 +59,17 @@ async def enqueue(store, snapshot=None):
 
 
 @pytest.mark.asyncio
+async def test_partial_is_persisted_as_terminal_without_recovery(isolated_redis):
+    store = WorkflowJobStore(isolated_redis, prefix="partial")
+    await enqueue(store)
+    job = await store.claim()
+    await store.finish("wf", status="partial", result={"delivery": {"deliverable": True}}, lease_token=job.lease_token)
+    assert (await store.get("wf")).status == "partial"
+    assert await store.recover_expired() == 0
+    assert (await store.read_events("wf"))[-1][1]["status"] == "partial"
+
+
+@pytest.mark.asyncio
 async def test_concurrent_enqueues_and_claims_have_one_owner(isolated_redis):
     stores = [WorkflowJobStore(isolated_redis, prefix="race") for _ in range(12)]
     await asyncio.gather(*(enqueue(store) for store in stores))

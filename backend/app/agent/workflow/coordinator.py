@@ -18,6 +18,8 @@ import structlog
 from .graph import WorkflowConcurrencyGovernor, WorkflowGraph
 from .lineage import build_node_lineage, validate_node_lineage
 from .runtime import TERMINAL_STATUSES, WorkflowRuntime
+from .routing import validate_condition, evaluate_condition
+from .resource_contract import ResourceContractError, validate_contract_definition, assert_resource_contracts, check_resource_contracts, result_handles
 
 logger = structlog.get_logger()
 
@@ -36,6 +38,11 @@ class WorkflowNodeSpec:
     max_iterations: Optional[int] = None
     timeout_seconds: Optional[float] = None
     phase: Optional[str] = None
+    required: bool = True
+    dependency_policy: str = "all_success"
+    when: Optional[Dict[str, Any]] = None
+    input_contracts: tuple[Dict[str, Any], ...] = ()
+    output_contract: Optional[Dict[str, Any]] = None
 
     # 重试预算递增：每次重试在原预算上放大 50%（迭代封顶 120、超时封顶 1 小时）。
     # 首次尝试保持调用方设定的紧凑预算；预算耗尽型失败（慢任务被杀）重试时
@@ -86,6 +93,23 @@ class WorkflowNodeSpec:
         timeout_seconds = float(raw_timeout_seconds) if raw_timeout_seconds is not None else None
         if timeout_seconds is not None and timeout_seconds <= 0:
             raise ValueError("workflow node timeout_seconds must be greater than 0")
+        required = value.get("required", True)
+        if not isinstance(required, bool):
+            raise ValueError("workflow node required must be boolean")
+        policy = value.get("dependency_policy", "all_success")
+        if policy not in {"all_success", "allow_partial"}:
+            raise ValueError("invalid workflow dependency_policy")
+        when = value.get("when")
+        if when is not None:
+            validate_condition(when, dependencies)
+        contracts = value.get("input_contracts") or []
+        if not isinstance(contracts, list):
+            raise ValueError("input_contracts must be a list")
+        for contract in contracts:
+            validate_contract_definition(contract, dependencies)
+        output_contract = value.get("output_contract")
+        if output_contract is not None:
+            validate_contract_definition(output_contract)
         return cls(
             task_id=task_id,
             dependencies=dependencies,
@@ -96,6 +120,11 @@ class WorkflowNodeSpec:
             max_iterations=max_iterations,
             timeout_seconds=timeout_seconds,
             phase=phase,
+            required=required,
+            dependency_policy=policy,
+            when=dict(when) if when is not None else None,
+            input_contracts=tuple(dict(contract) for contract in contracts),
+            output_contract=dict(output_contract) if output_contract is not None else None,
         )
 
 
@@ -149,6 +178,11 @@ class WorkflowDefinition:
                     "max_attempts": node.max_attempts,
                     "max_iterations": node.max_iterations,
                     "timeout_seconds": node.timeout_seconds,
+                    **({"required": False} if not node.required else {}),
+                    **({"dependency_policy": node.dependency_policy} if node.dependency_policy != "all_success" else {}),
+                    **({"when": node.when} if node.when is not None else {}),
+                    **({"input_contracts": list(node.input_contracts)} if node.input_contracts else {}),
+                    **({"output_contract": node.output_contract} if node.output_contract is not None else {}),
                 }
                 for node in self.nodes
             ],
@@ -200,6 +234,10 @@ class WorkflowCoordinator:
         self.node_lineage: Dict[str, Dict[str, Any]] = {}
         self.node_progress: Dict[str, Any] = {}
         self.node_input_hashes: Dict[str, str] = {}
+        self.node_decisions: Dict[str, Dict[str, Any]] = {}
+        self.node_input_gaps: Dict[str, List[Dict[str, Any]]] = {}
+        self.node_contract_errors: Dict[str, List[Dict[str, Any]]] = {}
+        self.node_retryable: Dict[str, bool] = {}
         self.status = "queued"
         self._persistence_ready = False
         self.cancel_requested = False
@@ -232,7 +270,30 @@ class WorkflowCoordinator:
         self._prepare_snapshot_resume(snapshot)
         # 节点成果缓存复用：注入的节点标记为 succeeded 并构建血缘，
         # run 循环自动跳过（依赖闭包完整性由调用方保证，此处只做血缘校验兜底）。
-        for cached_task_id, cached_result in (completed_results or {}).items():
+        cache_candidates = dict(completed_results or {})
+        changed = True
+        while changed:
+            changed = False
+            for task_id, result in list(cache_candidates.items()):
+                spec = self.node_specs.get(task_id)
+                if spec is None:
+                    cache_candidates.pop(task_id)
+                    changed = True
+                    continue
+                available = {**self.node_results, **cache_candidates}
+                try:
+                    if any(dep not in available for dep in spec.dependencies):
+                        raise ValueError("cached dependency unavailable")
+                    inputs = [handle for dep in spec.dependencies for handle in result_handles(dep, available[dep])]
+                    if check_resource_contracts(list(spec.input_contracts), inputs):
+                        raise ValueError("cached input resource unavailable or incompatible")
+                    if spec.output_contract is not None:
+                        if check_resource_contracts([spec.output_contract], result_handles(task_id, result)):
+                            raise ValueError("cached output resource unavailable or incompatible")
+                except ValueError:
+                    cache_candidates.pop(task_id)
+                    changed = True
+        for cached_task_id, cached_result in cache_candidates.items():
             cached_node = self.node_specs.get(str(cached_task_id))
             if cached_node is None:
                 continue
@@ -253,6 +314,11 @@ class WorkflowCoordinator:
                     task_id=str(cached_task_id),
                     errors=cached_lineage_errors,
                 )
+                continue
+            try:
+                if cached_node.output_contract is not None:
+                    assert_resource_contracts([cached_node.output_contract], result_handles(str(cached_task_id), cached_result))
+            except ValueError:
                 continue
             self.graph.set_status(str(cached_task_id), "succeeded")
             self.node_results[str(cached_task_id)] = cached_result
@@ -315,6 +381,96 @@ class WorkflowCoordinator:
             time.monotonic() - self._run_started if self._run_started is not None else 0
         )
 
+    def delivery(self) -> Dict[str, Any]:
+        gaps = [{"task_id": node.task_id, "required": self.node_specs[node.task_id].required,
+                 "status": node.status, "reason": self.node_errors.get(node.task_id, "upstream unavailable")}
+                for node in self._graph_nodes() if node.status in {"failed", "blocked"}]
+        gaps += [{"task_id": task_id, "required": False, "status": "resource_gap", "reason": str(item["details"])}
+                 for task_id, errors in self.node_contract_errors.items() for item in errors if not item.get("required", True)]
+        retryable = [node.task_id for node in self._graph_nodes() if node.status == "failed"
+                     and (run := self.runtime.find_run(task_id=node.task_id)) is not None
+                     and run.attempt < run.max_attempts and self.node_retryable.get(node.task_id, True)] if hasattr(self, "runtime") and not self.budget_state.get("exhausted") else []
+        return {"deliverable": self.status in {"succeeded", "partial"}, "complete": self.status == "succeeded",
+                "available_nodes": sorted(self.node_results), "gaps": gaps,
+                "skipped_nodes": [node.task_id for node in self._graph_nodes() if node.status == "skipped"],
+                "retryable_nodes": retryable,
+                "next_actions": (["deliver_with_gaps", "extend_missing_evidence"] if self.status == "partial" else
+                                 ["repair_required_evidence"] if self.status == "failed" else []) +
+                                (["resume_remaining_attempts"] if retryable else [])}
+
+    def _ready_tasks(self) -> List[str]:
+        """Resolve settled edges before scheduling, including unselected branches."""
+        changed = True
+        while changed:
+            changed = False
+            for task_id, spec in self.node_specs.items():
+                node = self.graph._nodes[task_id]
+                if node.status != "pending" or task_id in self._active_tasks:
+                    continue
+                states = {dep: self.graph._nodes[dep].status for dep in spec.dependencies}
+                if any(status not in {"succeeded", "failed", "blocked", "skipped", "cancelled"} for status in states.values()):
+                    continue
+                unavailable = {dep: status for dep, status in states.items() if status != "succeeded"}
+                skip_reason = None
+                block_reason = None
+                if spec.dependency_policy == "all_success":
+                    if any(status in {"failed", "blocked", "cancelled"} for status in unavailable.values()):
+                        block_reason = "dependency failed"
+                    elif unavailable:
+                        skip_reason = "upstream branch was not selected"
+                elif states and not any(status == "succeeded" for status in states.values()):
+                    if all(status == "skipped" for status in states.values()):
+                        skip_reason = "all upstream branches were not selected"
+                    else:
+                        block_reason = "no successful upstream evidence"
+                if block_reason:
+                    node.status = "blocked"
+                    self.node_errors[task_id] = block_reason
+                    self._journal_event("node.blocked", task_id=task_id, dependencies=unavailable)
+                    changed = True
+                    continue
+                if skip_reason is None and spec.when is not None:
+                    try:
+                        selected = evaluate_condition(spec.when, self.node_results)
+                        self.node_decisions[task_id] = {"selected": selected, "condition": spec.when}
+                        if not selected:
+                            skip_reason = "condition did not select this branch"
+                    except ValueError as exc:
+                        node.status = "failed"
+                        self.node_errors[task_id] = str(exc)
+                        self.node_retryable[task_id] = False
+                        run = self.runtime.find_run(task_id=task_id)
+                        self.runtime.start(run.run_id)
+                        self.runtime.transition(run.run_id, "failed", payload={"error": str(exc), "stage": "routing"})
+                        self.node_decisions[task_id] = {"selected": None, "error": str(exc), "condition": spec.when}
+                        changed = True
+                        continue
+                if skip_reason:
+                    node.status = "skipped"
+                    self.node_decisions[task_id] = {**self.node_decisions.get(task_id, {}), "selected": False, "reason": skip_reason}
+                    self.runtime.transition(self.runtime.find_run(task_id=task_id).run_id, "skipped", payload={"reason": skip_reason})
+                    self._journal_event("node.skipped", task_id=task_id, reason=skip_reason)
+                    changed = True
+                elif unavailable:
+                    self.node_input_gaps[task_id] = [{"task_id": dep, "status": status,
+                                                     "reason": self.node_errors.get(dep, "branch not selected")}
+                                                    for dep, status in unavailable.items()]
+                else:
+                    self.node_input_gaps.pop(task_id, None)
+                if not skip_reason:
+                    for dependency in spec.dependencies:
+                        for violation in self.node_contract_errors.get(dependency, []):
+                            if not violation.get("required", True):
+                                self.node_input_gaps.setdefault(task_id, []).append({
+                                    "task_id": dependency, "status": "resource_gap", "reason": str(violation["details"]),
+                                })
+        self._persist_snapshot({})
+        return sorted(task_id for task_id, node in self.graph._nodes.items()
+                      if node.status == "pending" and task_id not in self._active_tasks
+                      and all(self.graph._nodes[dep].status in (
+                          {"succeeded"} if self.node_specs[task_id].dependency_policy == "all_success"
+                          else {"succeeded", "failed", "blocked", "skipped", "cancelled"}) for dep in node.dependencies))
+
     def extend(self, nodes: Iterable[Mapping[str, Any]], *, expected_revision: int, reason: str) -> None:
         """Append a validated DAG between parent rounds; completed nodes are immutable."""
         if self._active_tasks or self.status == "running":
@@ -358,7 +514,7 @@ class WorkflowCoordinator:
         self._persist_snapshot({})
 
     async def _run(self) -> Dict[str, Any]:
-        if self.status == "succeeded":
+        if self.status in {"succeeded", "partial"}:
             return self.snapshot()
         self.status = "running"
         self.runtime.start(self.workflow_run.run_id)
@@ -369,7 +525,7 @@ class WorkflowCoordinator:
             if self.cancel_requested:
                 await self.cancel(reason=self.cancel_reason or "workflow cancelled")
                 break
-            ready = [task_id for task_id in self.graph.ready_tasks() if task_id not in self._active_tasks]
+            ready = self._ready_tasks()
             for task_id in ready:
                 self._active_tasks[task_id] = asyncio.create_task(self._run_node(task_id))
             if self._active_tasks:
@@ -388,13 +544,15 @@ class WorkflowCoordinator:
                         if not self.cancel_requested:
                             raise
                 continue
-            if all(node.status == "succeeded" for node in self._graph_nodes()):
-                self.status = "succeeded"
+            if all(node.status in {"succeeded", "skipped", "failed", "blocked"} for node in self._graph_nodes()):
+                required_failure = any(node.status in {"failed", "blocked"} and self.node_specs[node.task_id].required for node in self._graph_nodes())
+                incomplete = any(node.status in {"failed", "blocked"} for node in self._graph_nodes()) or bool(self.delivery()["gaps"])
+                self.status = "failed" if required_failure or self.budget_state.get("exhausted") or (incomplete and not self.node_results) else "partial" if incomplete else "succeeded"
                 # 收尾记账（transition/journal/快照）fail-soft：记账异常绝不能
                 # 卡死已成功的工作流返回（曾疑似因此挂起过一次运行）。
                 try:
-                    self.runtime.transition(self.workflow_run.run_id, "succeeded")
-                    self._journal_event("workflow.succeeded")
+                    self.runtime.transition(self.workflow_run.run_id, self.status, payload={"node_errors": dict(self.node_errors)})
+                    self._journal_event(f"workflow.{self.status}")
                 except Exception as exc:  # noqa: BLE001
                     logger.error(
                         "workflow_completion_bookkeeping_failed",
@@ -462,6 +620,11 @@ class WorkflowCoordinator:
             "node_progress": dict(self.node_progress),
             "node_input_hashes": dict(self.node_input_hashes),
             "node_lineage": dict(self.node_lineage),
+            "node_decisions": dict(self.node_decisions),
+            "node_input_gaps": dict(self.node_input_gaps),
+            "node_contract_errors": dict(self.node_contract_errors),
+            "node_retryable": dict(self.node_retryable),
+            "delivery": self.delivery(),
             "workflow_run_id": self.workflow_run.run_id if hasattr(self, "workflow_run") else None,
             "runtime": self.runtime.snapshot() if hasattr(self, "runtime") else {},
         }
@@ -473,7 +636,7 @@ class WorkflowCoordinator:
             raise RuntimeError(f"workflow runtime missing node run: {task_id}")
         self.graph.set_status(task_id, "running")
         self.runtime.start(node_run.run_id)
-        dependency_results = {dependency: self.node_results.get(dependency) for dependency in node.dependencies}
+        dependency_results = {dependency: self.node_results[dependency] for dependency in node.dependencies if dependency in self.node_results}
         input_payload = {
             "task_id": task_id,
             "attempt": node_run.attempt,
@@ -534,6 +697,16 @@ class WorkflowCoordinator:
                 previous_error=str(previous_error)[:200] if previous_error else None,
             )
         try:
+            self.node_contract_errors.pop(task_id, None)
+            input_handles = [handle for dependency, result in dependency_results.items() for handle in result_handles(dependency, result)]
+            violations = check_resource_contracts(list(node.input_contracts), input_handles)
+            if violations:
+                self.node_contract_errors[task_id] = violations
+                self.node_input_gaps.setdefault(task_id, []).extend(
+                    {"task_id": item["source_task_id"], "status": "resource_gap", "reason": str(item["details"])}
+                    for item in violations if not item["required"]
+                )
+                assert_resource_contracts(list(node.input_contracts), input_handles)
             async with self.governor:
                 executions = self.budget_state.setdefault("executions", {})
                 if executions.get(task_id, 0):
@@ -572,6 +745,11 @@ class WorkflowCoordinator:
                     self.node_progress[task_id] = {"delivered_files": delivered}
             if self._result_failed(result):
                 raise RuntimeError(self._result_error(result))
+            if node.output_contract is not None:
+                warnings = check_resource_contracts([node.output_contract], result_handles(task_id, result))
+                if warnings:
+                    self.node_contract_errors.setdefault(task_id, []).extend(warnings)
+                assert_resource_contracts([node.output_contract], result_handles(task_id, result))
             self.node_results[task_id] = result
             lineage = build_node_lineage(
                 task_id=task_id,
@@ -589,6 +767,9 @@ class WorkflowCoordinator:
                 raise RuntimeError(f"node lineage validation failed: {lineage_errors}")
             self.node_lineage[task_id] = lineage
             self.node_errors.pop(task_id, None)
+            if not self.node_contract_errors.get(task_id):
+                self.node_contract_errors.pop(task_id, None)
+            self.node_retryable.pop(task_id, None)
             self.graph.set_status(task_id, "succeeded")
             self.runtime.transition(node_run.run_id, "succeeded")
             self._journal_event(
@@ -613,11 +794,14 @@ class WorkflowCoordinator:
                 else str(exc)
             )
             self.node_errors[task_id] = error
+            if isinstance(exc, ResourceContractError):
+                self.node_contract_errors[task_id] = exc.violations
             self.runtime.transition(node_run.run_id, "failed", payload={"error": error})
             retrying = (
                 node_run.attempt < node_run.max_attempts
                 and not isinstance(exc, (ValueError, TypeError, PermissionError, NotImplementedError))
             )
+            self.node_retryable[task_id] = retrying
             self._journal_event(
                 "node.failed",
                 task_id=task_id,
@@ -647,6 +831,10 @@ class WorkflowCoordinator:
         self.node_sessions = dict(snapshot.get("node_sessions") or {})
         self.node_errors = {str(key): str(value) for key, value in (snapshot.get("node_errors") or {}).items()}
         self.node_progress = dict(snapshot.get("node_progress") or {})
+        self.node_decisions = dict(snapshot.get("node_decisions") or {})
+        self.node_input_gaps = dict(snapshot.get("node_input_gaps") or {})
+        self.node_contract_errors = dict(snapshot.get("node_contract_errors") or {})
+        self.node_retryable = dict(snapshot.get("node_retryable") or {})
         snapshot_definition_hash = str(snapshot.get("definition_hash") or "")
         if snapshot_definition_hash and snapshot_definition_hash != self.definition_hash:
             raise ValueError("workflow snapshot definition does not match current workflow")
@@ -682,15 +870,22 @@ class WorkflowCoordinator:
                 continue
             if node.status != "failed":
                 continue
+            if not self.node_retryable.get(node.task_id, True):
+                continue
             run = runtime_runs.get(self._node_run_id(node.task_id, snapshot)) or {}
             if int(run.get("attempt") or 0) < int(
                 run.get("max_attempts") or self.node_specs[node.task_id].max_attempts
             ):
                 node.status = "pending"
-        if self.status == "failed" and any(node.status == "pending" for node in self._graph_nodes()):
+        if self.status in {"failed", "partial"} and any(node.status == "pending" for node in self._graph_nodes()):
             # Older snapshots created the parent with one attempt. Allow one
             # explicit resume while preserving per-node retry budgets.
-            self.workflow_run.max_attempts = max(self.workflow_run.max_attempts, 2)
+            if self.workflow_run.status == "partial":
+                self.workflow_run = self.runtime.create_run(task_id=self.definition.workflow_id)
+                for node in self.definition.nodes:
+                    self.runtime.register_child(self.workflow_run.run_id, node.task_id)
+            else:
+                self.workflow_run.max_attempts = max(self.workflow_run.max_attempts, 2)
             self.status = "queued"
         self.node_errors.pop("__workflow__", None)
 
