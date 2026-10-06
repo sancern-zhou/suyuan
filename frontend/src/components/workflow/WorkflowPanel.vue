@@ -107,7 +107,7 @@ let snapshotTimer = null
 let nodePollTimer = null
 
 const statusMap = { queued: { key: 'pending', label: '排队中' }, pending: { key: 'pending', label: '等待执行' }, running: { key: 'running', label: '执行中' }, succeeded: { key: 'success', label: '已完成' }, success: { key: 'success', label: '已完成' }, partial: { key: 'partial', label: '部分完成' }, skipped: { key: 'skipped', label: '无需执行' }, failed: { key: 'failed', label: '失败' }, blocked: { key: 'blocked', label: '缺少上游证据' }, retrying: { key: 'retrying', label: '重试中' }, cached: { key: 'cached', label: '已复用' }, reused: { key: 'cached', label: '已复用' }, cancelled: { key: 'cancelled', label: '已取消' } }
-const modeLabels = { query: '问数', query_monitoring: '监测查询', query_forecast: '预报查询', expert: '专家分析', expert_meteorology: '气象专家', expert_analysis: '常规分析专家', report: '报告', chart: '图表', knowledge: '知识' }
+const modeLabels = { query: '问数', query_monitoring: '监测查询', query_monitoring_station: '站点监测查询', query_monitoring_city: '城市监测查询', query_forecast: '预报查询', expert: '专家分析', expert_meteorology: '气象专家', expert_analysis: '常规分析专家', report: '报告', chart: '图表', knowledge: '知识' }
 const statusMeta = status => statusMap[String(status || '').toLowerCase()] || { key: 'unknown', label: '未知' }
 const shortId = value => String(value || '').replace(/^workflow[-_:]?/, '').slice(0, 32)
 const nodeCount = snapshot => Object.keys(snapshot?.graph || snapshot?.definition?.nodes || {}).length
