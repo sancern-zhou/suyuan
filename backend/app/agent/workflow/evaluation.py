@@ -119,6 +119,8 @@ class EvaluationRunner:
             path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
             self.paths[name] = format_agent_path(path)
         self.metrics = RunMetrics()
+        from app.agent.workflow.registry import ActiveWorkflowRegistry
+        self.workflow_registry = ActiveWorkflowRegistry()
         self.workflow_calls = 0
 
     def schemas(self, mode: str, *, parent: bool) -> list[dict]:
@@ -185,6 +187,9 @@ class EvaluationRunner:
                 runner = self
                 class FixtureWorkflowTool(RunAgentWorkflowTool):
                     @staticmethod
+                    def _build_workflow_registry():
+                        return runner.workflow_registry
+                    @staticmethod
                     def _build_sub_agent_tool():
                         return runner
                     @staticmethod
@@ -217,7 +222,11 @@ class EvaluationRunner:
                     await self.dispatch("read_file", {"path": path}, mode=mode, parent=False)
                 result = {"facts": {}, "evidence": paths, "summary": "upstream data reused"}
             else:
-                result = await self.model_loop(mode, kwargs["goal"] + "\n" + kwargs.get("context_str", ""), parent=False)
+                # Production call_sub_agent imports these handles into the child's
+                # resource catalog. This isolated adapter must expose them explicitly.
+                handles = kwargs.get("_upstream_handles", [])
+                upstream = "\n上游已交付资源（原样使用file_path，不把task_id当文件名）：\n" + json.dumps(handles, ensure_ascii=False) if handles else ""
+                result = await self.model_loop(mode, kwargs["goal"] + "\n" + kwargs.get("context_str", "") + upstream, parent=False)
             paths = [path for path in result.get("evidence", []) if path in self.paths.values()]
             structured = {"findings": [{"statement": f"{key}={value}"} for key, value in result.get("facts", {}).items()],
                           "evidence": [{"id": path, "kind": "file"} for path in paths],

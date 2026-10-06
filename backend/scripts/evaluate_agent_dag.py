@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import statistics
+import subprocess
 from pathlib import Path
 import tempfile
 
@@ -48,7 +49,7 @@ async def main() -> int:
     isolated_root = Path(tempfile.mkdtemp(prefix="suyuan-dag-eval-"))
     os.environ["DATA_REGISTRY_DIR"] = str(isolated_root / "registry")
     from app.agent.workflow.evaluation import EvaluationRunner, ReplayChildModel, default_cases
-    from app.utils.path_config import resolve_agent_path, format_agent_path
+    from app.utils.path_config import PROJECT_ROOT, resolve_agent_path, format_agent_path
     output = resolve_agent_path(args.output_dir) if args.output_dir else isolated_root / "results"
     output.mkdir(parents=True, exist_ok=False)
     cases = default_cases()
@@ -58,6 +59,8 @@ async def main() -> int:
             parser.error(f"unknown cases: {sorted(unknown)}")
         cases = [case for case in cases if case.name in args.case]
     model = ReplayChildModel()
+    revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT,
+                              text=True, capture_output=True, check=True).stdout.strip()
     if args.backend == "live":
         from app.services.llm_service import LLMService
         model = LLMService(request_timeout_seconds=min(args.timeout, 90))
@@ -72,6 +75,9 @@ async def main() -> int:
                     row["repeat"] = repeat
                     runs.append(row)
                     report = {"schema_version": "agent-dag-eval.v1", "backend": args.backend,
+                              "code_revision": revision,
+                              "initial_model": getattr(model, "model", None),
+                              "initial_provider": getattr(model, "provider", None),
                               "scope": "bounded evaluation loop + production DAG tool; fixture business tools; no ReAct memory/SSE/session persistence",
                               "runs": runs}
                     (output / "results.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

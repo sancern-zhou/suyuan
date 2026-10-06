@@ -598,7 +598,8 @@ class RunAgentWorkflowTool(LLMTool):
                 completed_results=completed_results,
                 journal=workflow_journal,
             )
-            await active_workflow_registry.register(
+            workflow_registry = self._build_workflow_registry()
+            await workflow_registry.register(
                 str(definition["workflow_id"]),
                 coordinator,
                 session_id=getattr(context, "session_id", None) if context is not None else None,
@@ -606,7 +607,7 @@ class RunAgentWorkflowTool(LLMTool):
             try:
                 snapshot = await coordinator.run()
             finally:
-                await active_workflow_registry.unregister(
+                await workflow_registry.unregister(
                     str(definition["workflow_id"]), coordinator
                 )
             pending_persistence = list(getattr(context, "workflow_persistence_tasks", set())) if context is not None else []
@@ -746,6 +747,10 @@ class RunAgentWorkflowTool(LLMTool):
                 error=str(exc),
             )
             return None
+
+    @staticmethod
+    def _build_workflow_registry():
+        return active_workflow_registry
 
     @staticmethod
     def _build_sub_agent_tool():

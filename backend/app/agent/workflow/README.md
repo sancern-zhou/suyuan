@@ -124,7 +124,8 @@ run_agent_workflow、依赖调度、资源交接和结果压缩。未覆盖完�
 固定问数阶段、记忆、SSE、子会话持久化，不能直接外推生产吞吐或质量。
 仅 replay 使用显式金标准回放，它只用于链路测试，不衡量模型质量。
 
-每次运行隔离 journal/cache/log，输出 results.json 与 comparison.md。
+每次运行隔离 journal/cache/log，活动工作流登记使用本地 registry，
+不访问部署 Redis；输出 results.json 与 comparison.md，记录代码提交和初始模型配置。
 模型看不到金标准数值；校验数值、实际已访问来源、证据覆盖和因果边界。
 统计供应商实报 Token、模型调用、耗时、重复取数、节点数与并行峰值；
 缺失 usage 保留 null，失败/超时保留在比较中。结果解释与结论证据绑定需人工复核。
