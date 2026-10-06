@@ -276,6 +276,18 @@ class ScheduledTaskService:
         # 删除执行记录
         self.execution_storage.delete_by_task(task_id)
 
+        try:
+            from .storage.task_result_storage_db import task_result_db_enabled
+
+            if task_result_db_enabled():
+                self.executor.task_result_storage.delete_by_task(task_id)
+        except Exception as cleanup_error:  # noqa: BLE001 - cleanup must not block task deletion
+            logger.warning(
+                "scheduled_task_result_cleanup_failed",
+                task_id=task_id,
+                error=str(cleanup_error),
+            )
+
         # 删除任务专属历史执行记忆（案例库 + 长期记忆）
         try:
             TaskCaseStorage(task_id).delete()
@@ -688,9 +700,15 @@ class ScheduledTaskService:
         page_size: int = 20,
     ):
         """查询结构化执行结论（数据库后端）"""
-        from .storage.task_result_storage_db import DatabaseTaskResultStorage
+        from .storage.task_result_storage_db import (
+            DatabaseTaskResultStorage,
+            task_result_db_enabled,
+        )
 
-        if isinstance(self.executor.task_result_storage, DatabaseTaskResultStorage):
+        if task_result_db_enabled() and isinstance(
+            self.executor.task_result_storage,
+            DatabaseTaskResultStorage,
+        ):
             return self.executor.task_result_storage.query_page(
                 task_id=task_id,
                 task_ids=task_ids,
@@ -707,9 +725,15 @@ class ScheduledTaskService:
 
     def get_task_result(self, execution_id: str):
         """查询单条结构化执行结论（数据库后端，无记录返回 None）"""
-        from .storage.task_result_storage_db import DatabaseTaskResultStorage
+        from .storage.task_result_storage_db import (
+            DatabaseTaskResultStorage,
+            task_result_db_enabled,
+        )
 
-        if isinstance(self.executor.task_result_storage, DatabaseTaskResultStorage):
+        if task_result_db_enabled() and isinstance(
+            self.executor.task_result_storage,
+            DatabaseTaskResultStorage,
+        ):
             return self.executor.task_result_storage.get(execution_id)
         return None
 
@@ -720,9 +744,15 @@ class ScheduledTaskService:
         task_ids: Optional[list[str]] = None,
     ) -> dict:
         """查询站点/污染物筛选候选项（数据库后端）"""
-        from .storage.task_result_storage_db import DatabaseTaskResultStorage
+        from .storage.task_result_storage_db import (
+            DatabaseTaskResultStorage,
+            task_result_db_enabled,
+        )
 
-        if isinstance(self.executor.task_result_storage, DatabaseTaskResultStorage):
+        if task_result_db_enabled() and isinstance(
+            self.executor.task_result_storage,
+            DatabaseTaskResultStorage,
+        ):
             return self.executor.task_result_storage.facets(
                 task_id=task_id,
                 task_ids=task_ids,

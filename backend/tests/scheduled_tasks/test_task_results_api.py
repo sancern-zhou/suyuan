@@ -36,7 +36,7 @@ def _result(**overrides) -> TaskResult:
         status="success",
         started_at=datetime(2026, 9, 1, 8, 0, 0),
         completed_at=datetime(2026, 9, 1, 8, 5, 0),
-        city="许昌市",
+        city="示例市",
         station_id="station-1",
         station_name="监测一站",
         pollutant="PM2.5",
@@ -221,6 +221,20 @@ def test_result_file_endpoint_serves_recorded_path():
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_result_file_endpoint_rejects_paths_outside_agent_read_roots():
+    temp_dir = Path(tempfile.mkdtemp())
+    try:
+        for app, _service, _task, records, _dir in _make_app(temp_dir):
+            records[0].document_paths = ["/etc/passwd"]
+            resp = _client(app).get(
+                "/api/scheduled-tasks/results/exec-1/files/documents/0"
+            )
+            assert resp.status_code == 404
+            records[0].document_paths = []
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_result_report_endpoint_serves_html_and_assets():
     temp_dir = Path(tempfile.mkdtemp())
     try:
@@ -321,6 +335,20 @@ def test_report_formats_lists_available_exports_with_download_urls():
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_report_formats_rejects_result_after_source_task_is_deleted():
+    temp_dir = Path(tempfile.mkdtemp())
+    try:
+        for app, service, task, records, _dir in _make_app(temp_dir):
+            records[0].report_refs = [{"kind": "report", "ref": "report-abc"}]
+            service.task_storage.delete(task.task_id)
+            resp = _client(app).get(
+                "/api/scheduled-tasks/results/exec-1/report/formats"
+            )
+            assert resp.status_code == 404
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_result_content_requires_ticket_for_anonymous_requests():
     temp_dir = Path(tempfile.mkdtemp())
     try:
@@ -410,9 +438,18 @@ def test_report_accepts_path_segment_ticket_without_user():
                 assert resp.headers["content-disposition"].startswith("inline")
                 assert "webapi.amap.com" not in resp.headers["content-security-policy"]
 
+                # 相对资源继承同一路径票据
+                resp = client.get(
+                    f"/api/scheduled-tasks/results/exec-1/report/_t/{ticket}/chart.png"
+                )
+                assert resp.status_code == 200
+                assert resp.content == b"png-bytes"
+
                 map_dir = reports_root / "xuchang_daily_review_demo"
                 map_dir.mkdir()
-                (map_dir / "report.html").write_text("<html>map</html>", encoding="utf-8")
+                (map_dir / "report.html").write_text(
+                    "<html>map</html>", encoding="utf-8"
+                )
                 records[0].report_refs = [{"kind": "report", "ref": map_dir.name}]
                 map_resp = client.get(
                     f"/api/scheduled-tasks/results/exec-1/report/_t/{ticket}/report.html"
@@ -422,13 +459,6 @@ def test_report_accepts_path_segment_ticket_without_user():
                 assert "https://*.amap.com" in map_csp
                 assert "https://*.autonavi.com" in map_csp
                 records[0].report_refs = [{"kind": "report", "ref": "report-abc"}]
-
-                # 相对资源继承同一路径票据
-                resp = client.get(
-                    f"/api/scheduled-tasks/results/exec-1/report/_t/{ticket}/chart.png"
-                )
-                assert resp.status_code == 200
-                assert resp.content == b"png-bytes"
 
                 # 错误票据仍拒绝
                 resp = client.get(
