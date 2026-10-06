@@ -106,8 +106,10 @@ class AgentRuntime:
         await run_ownership_registry.register(state.session_id, state.run_id)
         await steering_registry.register(state.session_id, state.run_id, state.mode)
         try:
-            async for event in self._run_locked(state, initial_messages):
-                yield self._with_run_identity(state, event)
+            from app.services.model_trajectory import trajectory_scope
+            with trajectory_scope(state.session_id, run_id=state.run_id):
+                async for event in self._run_locked(state, initial_messages):
+                    yield self._with_run_identity(state, event)
         finally:
             await steering_registry.unregister(state.session_id, state.run_id)
 

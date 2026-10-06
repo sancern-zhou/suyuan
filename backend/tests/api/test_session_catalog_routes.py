@@ -37,6 +37,7 @@ def make_client(user=None, catalog=None, adapters=None):
         ("GET", "/api/sessions/other"),
         ("POST", "/api/sessions/other/restore"),
         ("GET", "/api/sessions/other/messages"),
+        ("GET", "/api/sessions/other/model-trajectory"),
         ("POST", "/api/sessions/other/save"),
         ("POST", "/api/sessions/other/case"),
         ("DELETE", "/api/sessions/other/case"),
@@ -59,6 +60,24 @@ def test_auto_save_checks_catalog_before_loading_source_session():
 
     assert response.status_code == 404
     assert response.json()["detail"] == "session_not_found"
+
+
+def test_model_trajectory_endpoint_reads_only_authorized_session_and_validates_limit(monkeypatch, tmp_path):
+    from app.services import model_trajectory
+    store = model_trajectory.ModelTrajectoryStore(tmp_path)
+    monkeypatch.setattr(model_trajectory, "ModelTrajectoryStore", lambda: store)
+
+    class Catalog:
+        async def require_read(self, session_id, user):
+            assert session_id == "owned"
+            assert user.id == "u1"
+
+    record = {"session_id": "owned", "root_session_id": "owned", "request_id": "001", "request": {"system": "full system prompt"}}
+    store.write(record)
+    response = make_client(catalog=Catalog()).get("/api/sessions/owned/model-trajectory?limit=1")
+    assert response.status_code == 200
+    assert response.json()["records"] == [record]
+    assert make_client(catalog=Catalog()).get("/api/sessions/owned/model-trajectory?limit=101").status_code == 422
 
 
 def test_cleanup_is_admin_only():

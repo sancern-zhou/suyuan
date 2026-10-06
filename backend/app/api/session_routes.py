@@ -4,7 +4,7 @@
 提供会话保存、恢复、列表、删除等API端点。
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from typing import Optional, Any, Dict, List
 from datetime import datetime
 import structlog
@@ -346,6 +346,22 @@ async def unmark_session_case(
         "message": f"Session {session_id} removed from case library",
         "session": session.model_dump(mode='json')
     }
+
+
+@router.get("/{session_id}/model-trajectory")
+async def get_model_trajectory(
+    session_id: str,
+    before: Optional[str] = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    await catalog.require_read(session_id, user)
+    import asyncio
+    from app.services.model_trajectory import ModelTrajectoryStore
+    return await asyncio.to_thread(
+        ModelTrajectoryStore().read, session_id, before=before, limit=limit
+    )
 
 
 @router.get("/{session_id}/messages")

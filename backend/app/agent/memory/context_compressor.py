@@ -7,6 +7,7 @@
 from typing import List, Dict, Any
 import json
 import structlog
+from app.services.model_trajectory import trajectory_source
 
 logger = structlog.get_logger()
 
@@ -487,6 +488,7 @@ Older history to compress:
         )
         return [boundary_msg] + anchor_messages + recent_messages
 
+    @trajectory_source('compact')
     async def _harness_compact(
         self,
         messages_to_compress: List[Dict[str, Any]],
