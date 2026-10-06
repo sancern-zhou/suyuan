@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -459,6 +460,25 @@ async def test_run_agent_workflow_returns_compact_view_and_persists_full_results
         == "PM2.5 与 CO 小时相关系数 r=0.62"
     )
     assert full["node_results"]["corr"]["metadata"]["thought"] == "t" * 3000
+
+
+def test_full_results_filename_cannot_escape_session_directory(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "app.utils.path_config.get_sessions_dir",
+        lambda: tmp_path / "sessions",
+    )
+
+    result = RunAgentWorkflowTool._write_full_results(
+        "session-1",
+        "/../../outside",
+        {"workflow_id": "/../../outside", "status": "succeeded"},
+    )
+
+    assert result is not None
+    path = (tmp_path / "sessions" / "agent_session_session-1" / "data").resolve()
+    written = Path(result["path"]).resolve()
+    assert path in written.parents
+    assert written.name.startswith("workflow_id-")
 
 
 @pytest.mark.asyncio

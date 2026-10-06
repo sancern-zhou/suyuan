@@ -70,9 +70,9 @@ async def _run_job(job: WorkflowJob, store: Any) -> None:
             max_concurrency=job.snapshot.get("max_concurrency", 4),
         ))
         result = await execution_task
-        final_snapshot = ((result.get("data") or {}).get("snapshot") or {}) if isinstance(result, dict) else {}
-        if final_snapshot:
-            emit(final_snapshot)
+        # run_agent_workflow returns a compact parent view. The complete terminal
+        # snapshot is delivered through workflow_event_sink by the tool, so do not
+        # reintroduce it into the parent result just for worker compatibility.
         await snapshots.join()
         if lease_lost.is_set():
             return

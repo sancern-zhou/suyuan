@@ -275,6 +275,7 @@ _PARENT_NODE_FINDINGS_CHARS = 4000
 _PARENT_NODE_EVIDENCE_ITEMS = 20
 
 _FENCED_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*[\s\S]*?```", re.IGNORECASE)
+_SAFE_WORKFLOW_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 
 
 def _cap_plain_text(value: Any, limit: int) -> str:
@@ -830,7 +831,15 @@ class RunAgentWorkflowTool(LLMTool):
 
             target_dir = get_sessions_dir() / f"agent_session_{session_id}" / "data"
             target_dir.mkdir(parents=True, exist_ok=True)
-            path = target_dir / f"workflow_{workflow_id}_node_results.json"
+            # workflow_id is model/user supplied. Keep normal IDs readable, but
+            # never allow separators or traversal components into session data.
+            if _SAFE_WORKFLOW_ID_RE.fullmatch(workflow_id):
+                file_stem = workflow_id
+            else:
+                file_stem = "id-" + hashlib.sha256(workflow_id.encode()).hexdigest()[:24]
+            path = (target_dir / f"workflow_{file_stem}_node_results.json").resolve()
+            if target_dir.resolve() not in path.parents:
+                raise ValueError("workflow result path escaped session data directory")
             payload = {
                 "workflow_id": workflow_id,
                 "status": snapshot.get("status"),
@@ -974,9 +983,6 @@ class RunAgentWorkflowTool(LLMTool):
                         mode=mode,
                         update_timestamp=True,
                     )
-                    event_sink = getattr(context, "workflow_event_sink", None)
-                    if callable(event_sink):
-                        event_sink(dict(snapshot))
                 except Exception as exc:
                     # Checkpointing must never turn a successfully running node into
                     # a failed node; the coordinator still returns the in-memory
@@ -988,6 +994,13 @@ class RunAgentWorkflowTool(LLMTool):
                         error=str(exc),
                     )
                     return
+                finally:
+                    # Durable workers need the terminal snapshot even if session
+                    # metadata persistence is unavailable. Resource persistence
+                    # remains best-effort, but event delivery must not depend on it.
+                    event_sink = getattr(context, "workflow_event_sink", None)
+                    if callable(event_sink):
+                        event_sink(dict(snapshot))
 
         try:
             loop = asyncio.get_running_loop()
