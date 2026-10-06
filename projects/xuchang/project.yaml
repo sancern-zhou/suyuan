@@ -36,6 +36,8 @@ backend:
     - xuchang_station_catalog
   agent_mode_tools:
     query:
+      - run_agent_workflow
+      - call_sub_agent
       - list_session_resources
       - read_session_resource
       - publish_session_file
@@ -67,6 +69,8 @@ backend:
       - xuchang_station_catalog
       - execute_python
     expert:
+      - run_agent_workflow
+      - call_sub_agent
       - list_session_resources
       - read_session_resource
       - publish_session_file
