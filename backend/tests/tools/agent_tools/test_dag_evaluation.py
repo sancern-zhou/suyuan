@@ -1,5 +1,6 @@
 """Gold scoring and controlled comparison must not turn failures into wins."""
 import pytest
+from types import SimpleNamespace
 
 from app.agent.workflow.evaluation import EvaluationRunner, ReplayChildModel, default_cases, score_result
 
@@ -57,3 +58,21 @@ async def test_child_cannot_call_dag_or_read_another_cases_file(tmp_path):
         await runner.dispatch("run_agent_workflow", {}, mode="query_monitoring_city", parent=False)
     with pytest.raises(ValueError, match="fixture files"):
         await runner.business_tool("read_file", {"path": "/tmp/other.json"})
+
+
+@pytest.mark.asyncio
+async def test_live_loop_accepts_sdk_content_blocks_and_actual_usage(tmp_path):
+    class SdkBlock:
+        def model_dump(self, **kwargs):
+            return {"type": "tool_use", "id": "done", "name": "submit_evaluation",
+                    "input": {"facts": {}, "evidence": [], "summary": "no data"}}
+    class Model:
+        async def chat_anthropic(self, **kwargs):
+            return {"content": [SdkBlock()], "model": "test-model",
+                    "usage": {"input_tokens": 10, "output_tokens": 5}}
+    runner = EvaluationRunner(default_cases()[0], "direct", tmp_path / "sdk", Model())
+    result = await runner.run(backend="live", timeout=1)
+    assert result["error"] is None
+    assert result["llm_calls"] == 1
+    assert result["usage"]["input_tokens"] == 10
+    assert not result["quality"]["passed"]

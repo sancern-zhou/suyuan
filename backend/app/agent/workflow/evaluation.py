@@ -247,7 +247,8 @@ class EvaluationRunner:
                     "output_tokens": usage.get("output_tokens", usage.get("completion_tokens")),
                     "cache_read_tokens": usage.get("cache_read_input_tokens", 0) or 0,
                     "cache_creation_tokens": usage.get("cache_creation_input_tokens", 0) or 0})
-            content = response.get("content") or []
+            content = [block.model_dump(exclude_none=True) if hasattr(block, "model_dump") else block
+                       for block in (response.get("content") or [])]
             messages.append({"role": "assistant", "content": content})
             results, final = [], None
             for block in content:
