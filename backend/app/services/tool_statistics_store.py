@@ -15,6 +15,8 @@ from app.utils.path_config import get_data_registry, resolve_agent_path
 
 logger = structlog.get_logger()
 
+RECENT_ERRORS_LIMIT = 10
+
 
 class ToolStatisticsStore:
     """Persist tool execution statistics across processes."""
@@ -39,6 +41,7 @@ class ToolStatisticsStore:
             "avg_execution_time": 0.0,
             "last_execution_at": None,
             "updated_at": None,
+            "recent_errors": [],
         }
 
     @contextmanager
@@ -97,6 +100,12 @@ class ToolStatisticsStore:
             normalized["avg_execution_time"] = normalized["success_duration_total"] / normalized["success"]
         else:
             normalized["avg_execution_time"] = float(stats.get("avg_execution_time", 0.0) or 0.0)
+        raw_recent_errors = stats.get("recent_errors")
+        normalized["recent_errors"] = [
+            item
+            for item in (raw_recent_errors if isinstance(raw_recent_errors, list) else [])
+            if isinstance(item, dict) and item.get("summary")
+        ][-RECENT_ERRORS_LIMIT:]
         return normalized
 
     def ensure_tool(self, tool_name: str) -> Dict[str, Any]:
@@ -115,6 +124,7 @@ class ToolStatisticsStore:
         *,
         success: bool,
         execution_time: float | None = None,
+        error_summary: str | None = None,
     ) -> Dict[str, Any]:
         with self._lock:
             with self._locked():
@@ -130,6 +140,12 @@ class ToolStatisticsStore:
                         entry["avg_execution_time"] = entry["success_duration_total"] / entry["success"]
                 else:
                     entry["failed"] += 1
+                    summary = (error_summary or "").strip()
+                    if summary:
+                        entry["recent_errors"] = (
+                            entry["recent_errors"]
+                            + [{"at": datetime.utcnow().isoformat(), "summary": summary[:180]}]
+                        )[-RECENT_ERRORS_LIMIT:]
                 entry["last_execution_at"] = datetime.utcnow().isoformat()
                 entry["updated_at"] = entry["last_execution_at"]
                 stats[tool_name] = entry
