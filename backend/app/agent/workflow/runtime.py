@@ -21,17 +21,21 @@ TASK_STATUSES = (
     "succeeded",
     "failed",
     "cancelled",
+    "skipped",
+    "partial",
 )
-TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
+TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "skipped", "partial"}
 
 _ALLOWED_TRANSITIONS = {
-    "queued": {"running", "cancelled"},
-    "running": {"waiting", "repairing", "succeeded", "failed", "cancelled"},
+    "queued": {"running", "cancelled", "skipped"},
+    "running": {"waiting", "repairing", "succeeded", "failed", "cancelled", "partial"},
     "waiting": {"running", "repairing", "failed", "cancelled"},
     "repairing": {"running", "succeeded", "failed", "cancelled"},
     "succeeded": set(),
     "failed": {"queued", "cancelled"},
     "cancelled": set(),
+    "skipped": set(),
+    "partial": set(),
 }
 
 

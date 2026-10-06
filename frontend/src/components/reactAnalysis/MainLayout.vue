@@ -5,7 +5,6 @@
       :activeModule="activeModule"
       :collapsed="leftSidebarCollapsed"
       :task-workspace-entries="taskWorkspaceEntries"
-      @update:collapsed="handleCollapseChange"
       @update:activeModule="handleActiveModuleChange"
       @select="handleAssistantSelect"
       @action="handleSidebarAction"
@@ -55,9 +54,12 @@
         :show-management-panel="!!managementPanel"
         :right-panel-expanded="rightPanelExpanded"
         :has-viz-content="hasVizContent"
+        :left-sidebar-collapsed="leftSidebarCollapsed"
         @send="handleSend"
         @pause="handlePause"
         @update:useReranker="handleRerankerChange"
+        @toggle-left-sidebar="handleToggleLeftSidebar"
+        @new-conversation="handleNewConversation"
         @drag-over="handleChatAreaDragOver"
         @drag-leave="handleChatAreaDragLeave"
         @drop="handleChatAreaDrop"
@@ -65,6 +67,7 @@
         @load-more="handleLoadMore"
         @preview-message-attachment="handleMessageAttachmentPreview"
         @toggle-viz-panel="handleToggleVizPanel"
+        @open-trajectory="handleTabChange('trajectory')"
         @new-web-conversation="$emit('new-web-conversation')"
         @resolve-interaction="$emit('resolve-interaction', $event)"
         @close-interaction="$emit('close-interaction')"
@@ -162,8 +165,8 @@
         </div>
         <!-- 宽度调整器 -->
         <WidthResizer
-          v-if="rightPanelVisible"
-        :visible="rightPanelVisible"
+          v-if="rightPanelShown"
+        :visible="rightPanelShown"
         :is-dragging="isDragging"
         @start-drag="handleStartDrag"
         @stop-drag="handleStopDrag"
@@ -172,8 +175,10 @@
 
         <!-- 右侧面板 -->
         <RightPanelContainer
-          v-if="rightPanelVisible"
-        :visible="rightPanelVisible"
+          v-if="rightPanelShown"
+        :visible="rightPanelShown"
+        :workflow-available="hasWorkflowContent"
+        :trajectory-available="hasTrajectoryContent"
         :knowledge-panel-visible="knowledgePanelVisible"
         :active-tab="activeRightTab"
         :panel-style="vizPanelStyle"
@@ -199,7 +204,8 @@
 </template>
 
 <script setup>
-import { defineAsyncComponent, ref, computed, watch } from 'vue'
+import { defineAsyncComponent, ref, computed, watch, onBeforeUnmount } from 'vue'
+import { listSessionWorkflows } from '@/services/workflowApi.js'
 import AssistantSidebar from '@/components/AssistantSidebar.vue'
 import AgentPlatform from '@/components/agentPlatform/AgentPlatform.vue'
 import { projectConfig } from '@/config/projectConfig.js'
@@ -490,12 +496,32 @@ const emit = defineEmits([
 const layoutRef = ref(null)
 
 // 右侧面板展开状态（用于ChatArea的展开/隐藏按钮）
-const rightPanelExpanded = ref(true)
+const rightPanelExpanded = computed(() => rightPanelShown.value)
+const hasWorkflowContent = ref(false)
+const hasTrajectoryContent = computed(() => Boolean(props.sessionId) && props.messages.some(message =>
+  ['thought', 'tool_use', 'tool_result', 'final', 'assistant'].includes(message.type)
+  || message.role === 'assistant'
+))
+let workflowCheckTimer, workflowGeneration = 0
+watch(() => [props.sessionId, props.messages.length, props.isAnalyzing], ([sessionId], previous) => {
+  const generation = ++workflowGeneration
+  clearTimeout(workflowCheckTimer)
+  if (sessionId !== previous?.[0]) hasWorkflowContent.value = false
+  if (!sessionId) return
+  workflowCheckTimer = setTimeout(async () => {
+    try {
+      const result = await listSessionWorkflows(sessionId)
+      if (generation === workflowGeneration) hasWorkflowContent.value = Boolean(result?.workflows?.length)
+    } catch { /* A failed availability check must not open an empty panel. */ }
+  }, 250)
+}, { immediate: true })
+onBeforeUnmount(() => { workflowGeneration++; clearTimeout(workflowCheckTimer) })
 
 // 计算是否有可视化内容（用于显示/隐藏ChatArea中的按钮）
 const hasVizContent = computed(() => {
-  return Boolean(props.sessionId) || props.rightPanelVisible || props.hasResourceContent
+  return props.hasResourceContent || hasWorkflowContent.value || hasTrajectoryContent.value || knowledgeSources.value.length > 0 || Boolean(props.humanFeedback?.items?.length)
 })
+const rightPanelShown = computed(() => props.rightPanelVisible && hasVizContent.value)
 
 // 计算知识溯源数据
 const knowledgeSources = computed(() => {
@@ -535,14 +561,14 @@ watch(layoutRef, (newEl) => {
   emit('update:layout-ref', newEl)
 })
 
-// 同步右侧面板展开状态
-watch(() => props.rightPanelVisible, (newValue) => {
-  rightPanelExpanded.value = newValue
-}, { immediate: true })
-
 // 事件处理
-const handleCollapseChange = (value) => {
-  emit('update:leftSidebarCollapsed', value)
+const handleToggleLeftSidebar = () => {
+  emit('update:leftSidebarCollapsed', !props.leftSidebarCollapsed)
+}
+
+// 对话区「更多功能」菜单：新建对话复用侧边栏的 restart-session 动作
+const handleNewConversation = () => {
+  emit('sidebar-action', 'restart-session')
 }
 
 const handleActiveModuleChange = (value) => {
@@ -619,7 +645,7 @@ const handleBoardSnapshotConfirm = (snapshot) => {
 
 // 处理右侧面板展开/隐藏
 const handleToggleVizPanel = () => {
-  rightPanelExpanded.value = !rightPanelExpanded.value
+  if (!hasVizContent.value) return
   // 通知父组件切换右侧面板状态
   emit('toggle-viz-panel')
 }

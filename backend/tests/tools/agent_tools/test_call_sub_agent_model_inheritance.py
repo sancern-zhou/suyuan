@@ -37,6 +37,35 @@ def _context(parent_llm_service, model_chain=None):
 
 
 @pytest.mark.asyncio
+async def test_stale_upstream_resource_cannot_trigger_child_model_or_refetch(monkeypatch, tmp_path):
+    from app.agent.resources.resource_service import SessionResourceService
+    constructed = []
+
+    class FakeReActAgent:
+        def __init__(self, **kwargs):
+            constructed.append(kwargs)
+            raise AssertionError("child must not start with missing contracted input")
+
+    monkeypatch.setattr("app.agent.react_agent.ReActAgent", FakeReActAgent)
+    monkeypatch.setattr("app.agent.workflow.resource_handoff.get_data_registry", lambda: tmp_path)
+    source = tmp_path / "air.json"
+    source.write_text('[{"pm25": 42}]', encoding="utf-8")
+    context = _context(SimpleNamespace(provider="test", model="test", request_fallbacks=""))
+    context.tool_executor.resource_service = SessionResourceService.in_memory()
+    tool = CallSubAgentTool()
+    monkeypatch.setattr(tool, "_update_session", lambda **kwargs: None)
+    result = await tool.execute(
+        context=context, target_mode="ops", goal="reuse upstream only", force_new_session=True,
+        _upstream_handles=[{"source_task_id": "air", "source_session_id": "source", "resource_id": "stale", "file_path": str(source)},
+                           {"source_task_id": "air", "file_path": str(source)}],
+        _input_contracts=[{"source_task_id": "air", "fields": ["pm25"]}],
+    )
+    assert constructed == []
+    assert result["success"] is False
+    assert result["data"]["resource_contract_violations"][0]["code"] == "resource_missing"
+
+
+@pytest.mark.asyncio
 async def test_sub_agent_explicitly_inherits_parent_model_chain(monkeypatch):
     parent_service = SimpleNamespace(
         provider="bailian",

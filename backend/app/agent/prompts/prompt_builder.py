@@ -9,7 +9,11 @@ from .assistant_prompt import build_assistant_prompt
 from .ppt_prompt import build_ppt_prompt
 from .expert_prompt import build_expert_analysis_prompt, build_expert_meteorology_prompt, build_expert_prompt
 from .query_prompt import build_query_prompt
-from .query_data_prompt import build_query_forecast_prompt, build_query_monitoring_prompt
+from .query_data_prompt import (
+    build_query_forecast_prompt, build_query_monitoring_prompt,
+    build_query_monitoring_station_prompt, build_query_monitoring_city_prompt,
+)
+from app.agent.workflow.delegation import build_delegation_contract
 from .knowledge_prompt import build_knowledge_prompt
 from .report_prompt import build_report_prompt
 from .social_prompt import build_social_prompt
@@ -89,6 +93,8 @@ AgentMode = Literal[
     "expert_analysis",
     "query",
     "query_monitoring",
+    "query_monitoring_station",
+    "query_monitoring_city",
     "query_forecast",
     "knowledge",
     "report",
@@ -176,6 +182,7 @@ def build_react_system_prompt(
     if project_prompt is not None:
         return _with_platform_contracts(
             _with_memory_file_contract(project_prompt, memory_file_path)
+            + build_delegation_contract(mode, filtered_tools)
         )
 
     # 根据模式构建Prompt（✅ 统一传递所有路径和上下文）
@@ -186,15 +193,21 @@ def build_react_system_prompt(
     elif mode == "ppt":
         return _with_platform_contracts(build_ppt_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "expert":
-        return _with_platform_contracts(build_expert_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_expert_prompt(filtered_tools, memory_context, memory_file_path)
+                                        + build_delegation_contract(mode, filtered_tools))
     elif mode == "expert_meteorology":
         return _with_platform_contracts(build_expert_meteorology_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "expert_analysis":
         return _with_platform_contracts(build_expert_analysis_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "query":
-        return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path)
+                                        + build_delegation_contract(mode, filtered_tools))
     elif mode == "query_monitoring":
         return _with_platform_contracts(build_query_monitoring_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "query_monitoring_station":
+        return _with_platform_contracts(build_query_monitoring_station_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "query_monitoring_city":
+        return _with_platform_contracts(build_query_monitoring_city_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "query_forecast":
         return _with_platform_contracts(build_query_forecast_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "knowledge":

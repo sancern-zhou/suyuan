@@ -20,37 +20,15 @@ AGENT_HIDDEN_TOOL_NAMES = frozenset({
     "calculate_crustal", "calculate_trace", "predict_air_quality",
     "generate_map",
     "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "query_gd_suncere_city_hour", "query_gd_suncere_city_day",
-    "query_gd_suncere_district_day", "query_gd_suncere_district_report",
-    "query_gd_suncere_station_hour_new",
 })
 
 # ========================================
 # 工具有序白名单（仅包含工具名称）
 # ========================================
 
-# 广东省数据源工具（项目专属）。这些工具依赖广东联网接口/数据库，
-# 不允许进入任何共享模式白名单：
-# - 工具实例仅在项目 manifest 声明启用时注册（app/tools/__init__.py）；
-# - 项目通过 manifest 的 backend.agent_mode_extra_tools 按模式追加。
-# 守卫测试：backend/tests/test_project_scoped_tools.py
-PROJECT_SCOPED_TOOL_NAMES = frozenset({
-    "query_gd_suncere",
-    "query_gd_suncere_city_hour",
-    "query_gd_suncere_station_hour_new",
-    "query_gd_suncere_station_day_new",
-    "query_gd_suncere_regional_comparison",
-    "query_gd_suncere_city_day",
-    "query_gd_suncere_district_day",
-    "query_gd_suncere_district_report",
-    "query_gd_suncere_report_compare",
-    "query_city_standard_report",
-    "query_city_standard_yoy_report",
-    "query_station_standard_report",
-    "query_station_standard_yoy_report",
-    "analyze_city_pollutant_rankings",
-    "get_5min_data",
-})
+# Project manifests may append tools to a mode without changing the shared
+# baseline.  The shared registry itself contains no project data-source names.
+PROJECT_SCOPED_TOOL_NAMES = frozenset()
 
 # Registered for internal orchestration and maintenance only. These tools must
 # never be published in an Agent mode, including project-defined modes.
@@ -115,6 +93,8 @@ PPT_TOOL_NAMES = [
 
 # ===== 专家模式工具 =====
 EXPERT_TOOL_NAMES = [
+    "run_agent_workflow",
+    "call_sub_agent",
     "list_session_resources",
     "publish_session_file",
     # 知识库检索与命中文档上下文阅读
@@ -188,6 +168,8 @@ EXPERT_ANALYSIS_TOOL_NAMES = [
 
 # ===== 问数模式工具 =====
 QUERY_TOOL_NAMES = [
+    "run_agent_workflow",
+    "call_sub_agent",
     "list_session_resources",
     "publish_session_file",
     # === 源码查看工具 ===
@@ -228,41 +210,76 @@ QUERY_TOOL_NAMES = [
     "execute_echarts_python",
 ]
 
-# ===== Fixed report-DAG data acquisition modes =====
+# ===== 报告 DAG 问数子模式工具（精简配置，核心取数集） =====
+# 常规空气质量监测问数：只保留监测历史取数与核算必需工具；
+# 气象/预报/轨迹工具不进入本白名单。
 QUERY_MONITORING_TOOL_NAMES = [
     "list_session_resources",
     "read_session_resource",
     "publish_session_file",
-    "read_file",
+    # 上游产物复用与中间产物落地（read_file 不进问数流程：
+    # 质检/合并用 execute_python，读上游结果用 read_session_resource）
     "write_file",
+    # 监测数据取数（目录解析工具与中台工具成对配置，服务乡镇站编码链路；
+    # 综合兜底模式同样保留）
+    "query_xcai_city_history",
+    "execute_sql_query",
+    "execute_crawler_sql_query",
+    "execute_postgres_sql_query",
+    "query_airdata_platform",
+    "xuchang_station_catalog",
+    "airdata_calc_report_summary",
+    "query_national_city_air_quality",
+    # 可选归一化计算
+    "execute_python",
+]
+
+# 气象与空气质量预报问数：只保留气象实况/预报与预报产品取数必需工具；
+# 监测历史统计工具不进入本白名单。
+QUERY_FORECAST_TOOL_NAMES = [
+    "list_session_resources",
+    "read_session_resource",
+    "publish_session_file",
+    # 上游产物复用与中间产物落地（read_file 不进问数流程，同上）
+    "write_file",
+    # 气象实况与预报取数
+    "get_weather_data",
+    "get_current_weather",
+    "get_weather_forecast",
+    # 空气质量预报产品与站点定位
+    "query_airdata_platform",
+    "xuchang_station_catalog",
+    "resolve_station_geo",
+    "execute_postgres_sql_query",
+    # 可选归一化计算
+    "execute_python",
+]
+
+# 站点层级监测问数：国控站走采集库 SQL（Station 表即站点目录）；乡镇站/中台口径
+# 走"目录解析编码 → 中台查询"（编码不可猜，必要串行），目录工具与中台工具成对配置。
+QUERY_MONITORING_STATION_TOOL_NAMES = [
+    # 站点层级取数（采集库 StationHour/StationDay/Station）
+    "execute_crawler_sql_query",
+    # 乡镇站/中台口径链路（先 xuchang_station_catalog 解析编码，再查询）
+    "xuchang_station_catalog",
+    "query_airdata_platform",
+    # 可选归一化计算
+    "execute_python",
+]
+
+# 城市层级监测问数：城市小时/日/年均值 + SQL Server 城市发布历史 + 中台接口；
+# 站点层级表不进入本白名单（工具内仍可查，由阶段提示约束表层级）。
+QUERY_MONITORING_CITY_TOOL_NAMES = [
     "query_xcai_city_history",
     "execute_sql_query",
     "execute_crawler_sql_query",
     "execute_postgres_sql_query",
     "query_airdata_platform",
     "airdata_calc_report_summary",
-    "xuchang_station_catalog",
     "query_national_city_air_quality",
-    "resolve_station_geo",
+    # 可选归一化计算
     "execute_python",
 ]
-
-QUERY_FORECAST_TOOL_NAMES = [
-    "list_session_resources",
-    "read_session_resource",
-    "publish_session_file",
-    "read_file",
-    "write_file",
-    "get_weather_data",
-    "get_current_weather",
-    "get_weather_forecast",
-    "query_airdata_platform",
-    "xuchang_station_catalog",
-    "resolve_station_geo",
-    "execute_postgres_sql_query",
-    "execute_python",
-]
-
 # ===== 知识问答模式工具 =====
 # 知识库检索为主；按需读取已注册的会话资源，并用网页搜索/抓取补充知识库不足。
 KNOWLEDGE_TOOL_NAMES = [
@@ -518,6 +535,8 @@ EXPERT_TOOLS = _build_tool_dict(EXPERT_TOOL_NAMES)
 EXPERT_METEOROLOGY_TOOLS = _build_tool_dict(EXPERT_METEOROLOGY_TOOL_NAMES)
 EXPERT_ANALYSIS_TOOLS = _build_tool_dict(EXPERT_ANALYSIS_TOOL_NAMES)
 QUERY_MONITORING_TOOLS = _build_tool_dict(QUERY_MONITORING_TOOL_NAMES)
+QUERY_MONITORING_STATION_TOOLS = _build_tool_dict(QUERY_MONITORING_STATION_TOOL_NAMES)
+QUERY_MONITORING_CITY_TOOLS = _build_tool_dict(QUERY_MONITORING_CITY_TOOL_NAMES)
 QUERY_FORECAST_TOOLS = _build_tool_dict(QUERY_FORECAST_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
 KNOWLEDGE_TOOLS = _build_tool_dict(KNOWLEDGE_TOOL_NAMES)
@@ -555,7 +574,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     根据模式获取工具有序白名单。
 
     Args:
-        mode: "assistant" | "ppt" | "expert" | "expert_meteorology" | "expert_analysis" | "query" | "query_monitoring" | "query_forecast" | "report" | "social" | "enforcement_exam" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
+        mode: "assistant" | "ppt" | "expert" | "expert_meteorology" | "expert_analysis" | "query" | "query_monitoring" | "query_monitoring_station" | "query_monitoring_city" | "query_forecast" | "report" | "social" | "enforcement_exam" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
 
     Returns:
         工具字典 {tool_name: ""}，key 顺序即工具顺序。
@@ -567,6 +586,8 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "expert_meteorology": EXPERT_METEOROLOGY_TOOLS,
         "expert_analysis": EXPERT_ANALYSIS_TOOLS,
         "query_monitoring": QUERY_MONITORING_TOOLS,
+        "query_monitoring_station": QUERY_MONITORING_STATION_TOOLS,
+        "query_monitoring_city": QUERY_MONITORING_CITY_TOOLS,
         "query_forecast": QUERY_FORECAST_TOOLS,
         "query": QUERY_TOOLS,
         "knowledge": KNOWLEDGE_TOOLS,

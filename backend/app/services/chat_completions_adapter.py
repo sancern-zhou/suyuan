@@ -310,6 +310,8 @@ def convert_chat_response_to_anthropic(response: Dict[str, Any]) -> Dict[str, An
         "usage": {
             "input_tokens": usage.get("prompt_tokens", 0),
             "output_tokens": usage.get("completion_tokens", 0),
+            **({"cache_read_input_tokens": (usage.get("prompt_tokens_details") or {}).get("cached_tokens", usage.get("prompt_cache_hit_tokens", 0))}
+               if usage.get("prompt_tokens_details") or "prompt_cache_hit_tokens" in usage else {}),
         },
         "stop_reason": map_finish_reason(choice.get("finish_reason")),
     }
@@ -487,7 +489,11 @@ class ChatCompletionsStreamAdapter:
                 "type": "message_delta",
                 "data": {
                     "stop_reason": map_finish_reason(self.finish_reason),
-                    "usage": {"output_tokens": self.usage.get("completion_tokens", 0)},
+                    "usage": {
+                        "input_tokens": self.usage.get("prompt_tokens", 0),
+                        "output_tokens": self.usage.get("completion_tokens", 0),
+                        "cache_read_input_tokens": (self.usage.get("prompt_tokens_details") or {}).get("cached_tokens", self.usage.get("prompt_cache_hit_tokens", 0)),
+                    },
                 },
             }
         )
