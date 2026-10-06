@@ -115,10 +115,16 @@ export function usePanelManagement(store = null) {
   }
 
   const changeRightTab = async tab => {
-    if (!tab || tab === activeRightTab.value) return true
+    if (!tab) return true
+    if (tab === activeRightTab.value && tab !== 'trajectory') return true
     if (!await confirmResourcePreviewLeave()) return false
     activeRightTab.value = tab
     activeTabUserSelected.value = true
+    if (tab === 'trajectory') {
+      rightPanelVisible.value = true
+      rightPanelDismissed.value = false
+      leftSidebarCollapsed.value = true
+    }
     return true
   }
 

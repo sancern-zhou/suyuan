@@ -17,6 +17,10 @@
       <span class="toggle-icon">{{ rightPanelExpanded ? '»' : '«' }}</span>
     </button>
 
+    <div v-if="sessionId && !showManagementPanel" class="conversation-actions">
+      <button type="button" @click="$emit('open-trajectory')">查看调用轨迹</button>
+    </div>
+
     <!-- 管理面板插槽 -->
     <div v-show="showManagementPanel" class="management-panel-container">
       <slot name="management-panels"></slot>
@@ -190,7 +194,8 @@ const emit = defineEmits([
   'new-web-conversation',
   'preview-message-attachment',
   'resolve-interaction',
-  'close-interaction'
+  'close-interaction',
+  'open-trajectory'
 ])
 
 const inputBoxRef = ref(null)
@@ -258,6 +263,9 @@ defineExpose({
 </script>
 
 <style scoped>
+.conversation-actions { display: flex; justify-content: flex-end; padding: 6px 20px; }
+.conversation-actions button { border: 0; background: transparent; color: var(--text-2); cursor: pointer; font-size: 12px; padding: 5px 8px; border-radius: 6px; }
+.conversation-actions button:hover { background: var(--bg-muted); color: var(--text-1); }
 .chat-area {
   flex: 1;
   min-height: 0;

@@ -1,5 +1,11 @@
 <template>
   <div v-if="visible" class="viz-wrapper" :class="{ 'workflow-active': activeTab === 'workflow' }" :style="panelStyle">
+    <div v-if="sessionId" class="trajectory-tab-bar">
+      <button type="button" :class="['tab-btn', { active: activeTab === 'trajectory' }]" :aria-pressed="activeTab === 'trajectory'" @click="handleTabChange('trajectory')">调用轨迹</button>
+      <button v-if="activeTab === 'trajectory'" type="button" class="tab-btn" @click="handleTabChange('files')">返回资源面板</button>
+    </div>
+    <ExecutionTrajectoryPanel v-if="activeTab === 'trajectory'" class="panel-content" :session-id="sessionId" :messages="messages" />
+    <template v-else>
     <!-- 报告生成专家 -->
     <template v-if="assistantMode === 'report-generation-expert'">
       <div class="right-panel-tabs" role="tablist" aria-label="报告资源面板">
@@ -210,6 +216,7 @@
         @submit="$emit('submit-human-feedback', $event)"
       />
     </template>
+    </template>
   </div>
 </template>
 
@@ -222,6 +229,7 @@ import ResourcePreviewHost from '@/components/resources/ResourcePreviewHost.vue'
 import VisualizationGallery from '@/components/resources/VisualizationGallery.vue'
 import HumanFeedbackPanel from './HumanFeedbackPanel.vue'
 import WorkflowPanel from '@/components/workflow/WorkflowPanel.vue'
+import ExecutionTrajectoryPanel from './ExecutionTrajectoryPanel.vue'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { summarizeRightPanelResources } from '@/components/resources/rightPanelResources.js'
 import { buildResourceGroups, targetTab } from '@/services/resourceGroups.js'
@@ -370,6 +378,7 @@ const handleBoardSnapshotConfirm = (snapshot) => {
 </script>
 
 <style scoped>
+.trajectory-tab-bar { flex-shrink: 0; padding: 6px 12px; border-bottom: 1px solid var(--border-2, #edf1f7); }
 .viz-wrapper {
   display: flex;
   flex-direction: column;

@@ -65,6 +65,7 @@
         @load-more="handleLoadMore"
         @preview-message-attachment="handleMessageAttachmentPreview"
         @toggle-viz-panel="handleToggleVizPanel"
+        @open-trajectory="handleTabChange('trajectory')"
         @new-web-conversation="$emit('new-web-conversation')"
         @resolve-interaction="$emit('resolve-interaction', $event)"
         @close-interaction="$emit('close-interaction')"

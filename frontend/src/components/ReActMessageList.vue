@@ -32,7 +32,7 @@
       </div>
     </div>
 
-    <!-- 对话消息：过程消息由实时过程区和final内折叠区统一渲染 -->
+    <!-- 对话消息：过程事件留在运行状态中，不作为独立轨迹插入对话。 -->
     <div v-for="(message, index) in displayedMessages" :key="message.id" class="message-wrapper"
       :class="{
         'has-sources': getMessageType(message) === 'final' && (message.data?.sources?.length > 0 || message.sources?.length > 0),
@@ -158,45 +158,15 @@
             <span>{{ question.question }}</span>
           </div>
         </div>
-        <!-- 统一折叠区域：显示该final之前的所有过程消息 -->
-        <details
+        <div
           v-if="getProcessItemsForFinal(message, messages).length > 0"
-          class="process-collapse"
-          :open="isProcessExpanded(message.id)"
-          @toggle="handleProcessToggle(message.id, $event)"
+          class="assistant-process-summary"
+          role="status"
+          aria-label="本次回答的执行状态"
         >
-          <summary>查看分析过程 ({{ getProcessItemsForFinal(message, messages).length }} 个步骤)</summary>
-          <div class="process-content">
-            <div
-              v-for="item in getProcessItemsForFinal(message, messages)"
-              :key="item.id"
-              class="process-item"
-              :class="`process-item-${item.kind}`"
-            >
-              <div v-if="item.kind === 'thought'" class="process-thought">
-                <span class="process-label">思考</span>
-                <div class="process-text">{{ item.content }}</div>
-              </div>
-
-              <div v-else-if="item.kind === 'tool'" class="process-tool">
-                <div class="process-tool-header">
-                  <span class="process-label">工具</span>
-                  <span class="process-tool-name">{{ item.toolName }}</span>
-                  <span class="process-status" :class="`status-${item.status}`">{{ getProcessStatusText(item.status) }}</span>
-                </div>
-                <div v-if="item.summary" class="process-text">{{ item.summary }}</div>
-                <details v-if="hasProcessValue(item.input)" class="process-details">
-                  <summary>参数</summary>
-                  <pre>{{ formatProcessValue(item.input) }}</pre>
-                </details>
-                <details v-if="hasProcessValue(item.result) && !item.resultHidden" class="process-details">
-                  <summary>结果详情</summary>
-                  <pre>{{ formatProcessValue(item.result) }}</pre>
-                </details>
-              </div>
-            </div>
-          </div>
-        </details>
+          <span class="assistant-process-summary-dot" aria-hidden="true"></span>
+          <span>{{ getProcessSummaryText(message, messages) }}</span>
+        </div>
 
         <div class="message-content" v-if="!getStructuredQuestionForFinal(message, messages) && useMarkdown">
           <!-- 【Vue 3 最佳实践】使用 key 强制重新渲染 -->
@@ -278,48 +248,6 @@
         </div>
       </div>
     </div>
-
-    <!-- 当前轮实时分析过程：默认折叠，用户可点击展开查看 -->
-    <details
-      v-if="liveProcessItems.length > 0"
-      class="live-process-details"
-      :open="isLiveProcessExpanded"
-      @toggle="handleLiveProcessToggle"
-    >
-      <summary>分析过程中 ({{ liveProcessItems.length }} 个步骤)</summary>
-      <div class="live-process-content">
-
-      <div
-        v-for="item in liveProcessItems"
-        :key="item.id"
-        class="live-process-item"
-        :class="`live-process-${item.kind} status-${item.status || 'default'}`"
-      >
-        <div v-if="item.kind === 'thought'" class="event-content">
-          <div class="event-icon">思考</div>
-          <div class="event-text">
-            <div class="thought-main">{{ item.content }}</div>
-          </div>
-        </div>
-
-        <div v-else-if="item.kind === 'tool'" class="event-content">
-          <div class="event-icon">工具</div>
-          <div class="event-text">
-            <div class="tool-use-main">
-              <span>{{ item.toolName }}</span>
-              <span class="process-status" :class="`status-${item.status}`">{{ getProcessStatusText(item.status) }}</span>
-            </div>
-            <div v-if="item.summary" class="tool-result-summary">{{ item.summary }}</div>
-            <div v-if="hasProcessValue(item.input)" class="tool-use-details">
-              <details>
-                <summary>查看参数</summary>
-                <pre>{{ formatProcessValue(item.input) }}</pre>
-              </details>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div></details>
 
       </div>
     </div>
@@ -1143,6 +1071,16 @@ watch(() => [props.isAnalyzing, props.sessionId], ([analyzing, sessionId], previ
 
 const getProcessItemsForFinal = (finalMessage, allMessages) => {
   return buildProcessItems(getUnifiedProcessMessages(finalMessage, allMessages), { finalized: true })
+}
+
+// ZCode-style transcript projection: expose only a compact completion marker in chat.
+// Tool arguments, results, and thought text stay out of the conversation surface.
+const getProcessSummaryText = (finalMessage, allMessages) => {
+  const items = getProcessItemsForFinal(finalMessage, allMessages)
+  const toolCount = items.filter(item => item.kind === 'tool').length
+  const failedCount = items.filter(item => item.kind === 'tool' && item.status === 'error').length
+  if (failedCount > 0) return `分析完成 · ${toolCount} 个工具调用 · ${failedCount} 个步骤失败`
+  return toolCount > 0 ? `分析完成 · ${toolCount} 个工具调用` : '分析完成'
 }
 
 const getProcessStatusText = (status) => {
@@ -2377,6 +2315,24 @@ const downloadPreviewedImage = async () => {
   font-size: 13px;
   line-height: 1.6;
   animation: fadeIn 0.2s;
+}
+
+.assistant-process-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 2px 0 10px;
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.assistant-process-summary-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--text-3);
 }
 
 .task-progress-copy {
