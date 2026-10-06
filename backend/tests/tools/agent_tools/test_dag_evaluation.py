@@ -79,3 +79,32 @@ async def test_live_loop_accepts_sdk_content_blocks_and_actual_usage(tmp_path):
     assert result["llm_calls"] == 1
     assert result["usage"]["input_tokens"] == 10
     assert not result["quality"]["passed"]
+
+
+@pytest.mark.asyncio
+async def test_live_child_receives_explicit_upstream_file_handles(tmp_path):
+    seen = []
+    class Model:
+        async def chat_anthropic(self, **kwargs):
+            seen.append(kwargs["messages"][0]["content"])
+            return {"content": [{"type": "tool_use", "id": "done", "name": "submit_evaluation",
+                                 "input": {"facts": {}, "evidence": [], "summary": "received"}}]}
+    runner = EvaluationRunner(default_cases()[0], "dag", tmp_path / "handles", Model())
+    path = runner.paths["air_甲市"]
+    await runner.execute(target_mode="expert_analysis", goal="analyze upstream",
+                         _upstream_handles=[{"source_task_id": "air", "file_path": path}])
+    assert path in seen[0]
+    assert "不把task_id当文件名" in seen[0]
+
+
+@pytest.mark.asyncio
+async def test_evaluation_dag_never_uses_deployment_workflow_registry(tmp_path, monkeypatch):
+    class DeploymentRegistry:
+        async def register(self, *args, **kwargs):
+            pytest.fail("evaluation must not register with deployment Redis")
+    monkeypatch.setattr("app.tools.agent_tools.run_agent_workflow.active_workflow_registry", DeploymentRegistry())
+    runner = EvaluationRunner(default_cases()[0], "dag", tmp_path / "isolated", ReplayChildModel())
+    assert runner.workflow_registry._store is None
+    result = await runner.run(backend="replay", timeout=2)
+    assert result["quality"]["passed"]
+    assert await runner.workflow_registry.list() == []
