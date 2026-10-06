@@ -5,7 +5,6 @@
       :activeModule="activeModule"
       :collapsed="leftSidebarCollapsed"
       :task-workspace-entries="taskWorkspaceEntries"
-      @update:collapsed="handleCollapseChange"
       @update:activeModule="handleActiveModuleChange"
       @select="handleAssistantSelect"
       @action="handleSidebarAction"
@@ -55,9 +54,12 @@
         :show-management-panel="!!managementPanel"
         :right-panel-expanded="rightPanelExpanded"
         :has-viz-content="hasVizContent"
+        :left-sidebar-collapsed="leftSidebarCollapsed"
         @send="handleSend"
         @pause="handlePause"
         @update:useReranker="handleRerankerChange"
+        @toggle-left-sidebar="handleToggleLeftSidebar"
+        @new-conversation="handleNewConversation"
         @drag-over="handleChatAreaDragOver"
         @drag-leave="handleChatAreaDragLeave"
         @drop="handleChatAreaDrop"
@@ -560,8 +562,13 @@ watch(layoutRef, (newEl) => {
 })
 
 // 事件处理
-const handleCollapseChange = (value) => {
-  emit('update:leftSidebarCollapsed', value)
+const handleToggleLeftSidebar = () => {
+  emit('update:leftSidebarCollapsed', !props.leftSidebarCollapsed)
+}
+
+// 对话区「更多功能」菜单：新建对话复用侧边栏的 restart-session 动作
+const handleNewConversation = () => {
+  emit('sidebar-action', 'restart-session')
 }
 
 const handleActiveModuleChange = (value) => {

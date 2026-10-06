@@ -6,19 +6,128 @@
     @dragleave.prevent="handleDragLeave"
     @drop.prevent="handleDrop"
   >
-    <!-- 可视化面板折叠/展开按钮 -->
-    <button
-      v-if="hasVizContent"
-      class="viz-toggle-btn"
-      :class="{ expanded: rightPanelExpanded }"
-      @click="handleToggleVizPanel"
-      :title="rightPanelExpanded ? '隐藏右侧面板' : '显示右侧面板'"
-    >
-      <span class="toggle-icon">{{ rightPanelExpanded ? '»' : '«' }}</span>
-    </button>
+    <!-- 顶部功能区：左侧为侧边栏收起/展开按钮，右侧为右侧面板开关和更多功能菜单 -->
+    <div class="conversation-actions">
+      <button
+        type="button"
+        class="sidebar-toggle-btn"
+        @click="handleToggleSidebar"
+        :title="leftSidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+        :aria-label="leftSidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+      >
+        <svg class="sidebar-toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect width="18" height="18" x="3" y="3" rx="2" />
+          <path d="M9 3v18" />
+          <path v-if="leftSidebarCollapsed" d="m14 9 3 3-3 3" />
+          <path v-else d="m16 15-3-3 3-3" />
+        </svg>
+      </button>
 
-    <div v-if="sessionId && !showManagementPanel" class="conversation-actions">
-      <button type="button" @click="$emit('open-trajectory')">查看调用轨迹</button>
+      <div class="actions-right-group">
+        <button
+          v-if="hasVizContent"
+          type="button"
+          class="panel-toggle-btn"
+          @click="handleToggleVizPanel"
+          :title="rightPanelExpanded ? '隐藏右侧面板' : '显示右侧面板'"
+          :aria-label="rightPanelExpanded ? '隐藏右侧面板' : '显示右侧面板'"
+        >
+          <svg class="panel-toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <rect width="18" height="18" x="3" y="3" rx="2" />
+            <path d="M15 3v18" />
+            <path v-if="rightPanelExpanded" d="m8 9 3 3-3 3" />
+            <path v-else d="m10 15-3-3 3-3" />
+          </svg>
+        </button>
+
+        <div ref="moreMenuRootRef" class="more-menu-root">
+          <button
+            type="button"
+            class="more-menu-trigger"
+            :class="{ active: moreMenuOpen }"
+            @click="toggleMoreMenu"
+            title="更多功能"
+            aria-label="更多功能"
+            :aria-expanded="moreMenuOpen"
+            aria-haspopup="menu"
+          >
+            <svg class="more-menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="1" />
+              <circle cx="19" cy="12" r="1" />
+              <circle cx="5" cy="12" r="1" />
+            </svg>
+          </button>
+  
+          <transition name="more-menu-fade">
+            <div v-if="moreMenuOpen" class="more-menu" role="menu">
+              <button
+                type="button"
+                class="more-menu-item"
+                role="menuitem"
+                :disabled="!sessionId"
+                :title="sessionId ? '' : '当前没有进行中的会话'"
+                @click="handleMenuAction('trajectory')"
+              >
+                <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m10.586 5.414-5.172 5.172" />
+                  <path d="m18.586 13.414-5.172 5.172" />
+                  <path d="M6 12h12" />
+                  <circle cx="12" cy="20" r="2" />
+                  <circle cx="12" cy="4" r="2" />
+                  <circle cx="20" cy="12" r="2" />
+                  <circle cx="4" cy="12" r="2" />
+                </svg>
+                <span>查看调用轨迹</span>
+              </button>
+              <button
+                type="button"
+                class="more-menu-item"
+                role="menuitem"
+                :disabled="!sessionId"
+                :title="sessionId ? '' : '当前没有进行中的会话'"
+                @click="handleMenuAction('copy-session-id')"
+              >
+                <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                </svg>
+                <span>{{ copySessionIdLabel }}</span>
+              </button>
+              <button
+                type="button"
+                class="more-menu-item"
+                role="menuitem"
+                :disabled="!exportableMessages.length"
+                :title="exportableMessages.length ? '' : '当前没有可导出的对话内容'"
+                @click="handleMenuAction('export-conversation')"
+              >
+                <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 15V3" />
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <path d="m7 10 5 5 5-5" />
+                </svg>
+                <span>导出对话记录</span>
+              </button>
+  
+              <div class="more-menu-separator" role="separator"></div>
+  
+              <button
+                type="button"
+                class="more-menu-item"
+                role="menuitem"
+                @click="handleMenuAction('new-conversation')"
+              >
+                <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z" />
+                  <path d="M12 8v6" />
+                  <path d="M9 11h6" />
+                </svg>
+                <span>新建对话</span>
+              </button>
+            </div>
+          </transition>
+        </div>
+      </div>
     </div>
 
     <!-- 管理面板插槽 -->
@@ -80,7 +189,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
 import ReActMessageList from '@/components/ReActMessageList.vue'
 import InputBox from '@/components/InputBox.vue'
 import AgentInteractionDialog from './dialogs/AgentInteractionDialog.vue'
@@ -171,6 +280,10 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  leftSidebarCollapsed: {
+    type: Boolean,
+    default: false
+  },
   readOnly: {
     type: Boolean,
     default: false
@@ -195,7 +308,9 @@ const emit = defineEmits([
   'preview-message-attachment',
   'resolve-interaction',
   'close-interaction',
-  'open-trajectory'
+  'open-trajectory',
+  'toggle-left-sidebar',
+  'new-conversation'
 ])
 
 const inputBoxRef = ref(null)
@@ -226,6 +341,112 @@ const handleMessageClick = (messageId) => {
 
 const handleToggleVizPanel = () => {
   emit('toggle-viz-panel')
+}
+
+const handleToggleSidebar = () => {
+  emit('toggle-left-sidebar')
+}
+
+// ===== 更多功能菜单（参考 ZCode 的 Ellipsis 下拉菜单） =====
+const moreMenuRootRef = ref(null)
+const moreMenuOpen = ref(false)
+const sessionCopied = ref(false)
+let sessionCopiedTimer = null
+let moreMenuOutsideHandler = null
+let moreMenuKeydownHandler = null
+
+const copySessionIdLabel = computed(() => (sessionCopied.value ? '已复制会话 ID' : '复制会话 ID'))
+
+// 可导出的对话消息（用户提问与助手回答）
+const exportableMessages = computed(() => (props.messages || []).filter(message => {
+  if (message.type === 'user') return Boolean(String(message.content || '').trim())
+  if (message.type === 'assistant' || message.type === 'final') return Boolean(String(message.content || '').trim())
+  return false
+}))
+
+const toggleMoreMenu = () => {
+  if (moreMenuOpen.value) {
+    closeMoreMenu()
+    return
+  }
+  moreMenuOpen.value = true
+  moreMenuOutsideHandler = (event) => {
+    if (moreMenuRootRef.value && !moreMenuRootRef.value.contains(event.target)) closeMoreMenu()
+  }
+  moreMenuKeydownHandler = (event) => {
+    if (event.key === 'Escape') closeMoreMenu()
+  }
+  document.addEventListener('mousedown', moreMenuOutsideHandler)
+  document.addEventListener('keydown', moreMenuKeydownHandler)
+}
+
+const closeMoreMenu = () => {
+  moreMenuOpen.value = false
+  if (moreMenuOutsideHandler) {
+    document.removeEventListener('mousedown', moreMenuOutsideHandler)
+    moreMenuOutsideHandler = null
+  }
+  if (moreMenuKeydownHandler) {
+    document.removeEventListener('keydown', moreMenuKeydownHandler)
+    moreMenuKeydownHandler = null
+  }
+}
+
+onBeforeUnmount(() => {
+  closeMoreMenu()
+  clearTimeout(sessionCopiedTimer)
+})
+
+const handleMenuAction = async (action) => {
+  closeMoreMenu()
+  if (action === 'trajectory') {
+    emit('open-trajectory')
+    return
+  }
+  if (action === 'copy-session-id') {
+    if (!props.sessionId) return
+    try {
+      await navigator.clipboard.writeText(props.sessionId)
+      sessionCopied.value = true
+      clearTimeout(sessionCopiedTimer)
+      sessionCopiedTimer = setTimeout(() => { sessionCopied.value = false }, 2000)
+    } catch (error) {
+      console.error('Failed to copy session id:', error)
+    }
+    return
+  }
+  if (action === 'export-conversation') {
+    exportConversation()
+    return
+  }
+  if (action === 'new-conversation') {
+    emit('new-conversation')
+  }
+}
+
+const exportConversation = () => {
+  const lines = []
+  lines.push(`# 对话记录${props.sessionId ? `（${props.sessionId}）` : ''}`)
+  lines.push('')
+  lines.push(`> 导出时间：${new Date().toLocaleString()}`)
+  lines.push('')
+  for (const message of exportableMessages.value) {
+    const isUser = message.type === 'user'
+    lines.push(`## ${isUser ? '用户' : '助手'}`)
+    lines.push('')
+    lines.push(String(message.content || '').trim())
+    lines.push('')
+  }
+
+  const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `conversation-${props.sessionId || new Date().toISOString().slice(0, 10)}.md`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 const handleDragOver = (e) => {
@@ -263,9 +484,148 @@ defineExpose({
 </script>
 
 <style scoped>
-.conversation-actions { display: flex; justify-content: flex-end; padding: 6px 20px; }
-.conversation-actions button { border: 0; background: transparent; color: var(--text-2); cursor: pointer; font-size: 12px; padding: 5px 8px; border-radius: 6px; }
-.conversation-actions button:hover { background: var(--bg-muted); color: var(--text-1); }
+.conversation-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 20px;
+}
+
+.sidebar-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.sidebar-toggle-btn:hover {
+  background: var(--bg-muted);
+  color: var(--text-1);
+}
+
+.sidebar-toggle-icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.more-menu-root {
+  position: relative;
+  display: inline-flex;
+}
+
+.more-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.more-menu-trigger:hover,
+.more-menu-trigger.active {
+  background: var(--bg-muted);
+  color: var(--text-1);
+}
+
+.more-menu-icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.more-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 1200;
+  min-width: 180px;
+  padding: 6px;
+  background: var(--bg-container, #fff);
+  border: 1px solid var(--border-3, #e5e7eb);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.more-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-1, #1f2937);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background-color 0.15s;
+}
+
+.more-menu-item:hover:not(:disabled) {
+  background: var(--bg-muted, #f1f5f9);
+}
+
+.more-menu-item:disabled {
+  color: #b0b9cc;
+  cursor: not-allowed;
+}
+
+.menu-item-icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.more-menu-separator {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border-3, #e5e7eb);
+}
+
+.more-menu-fade-enter-active,
+.more-menu-fade-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.more-menu-fade-enter-from,
+.more-menu-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
 .chat-area {
   flex: 1;
   min-height: 0;
@@ -283,47 +643,40 @@ defineExpose({
   border: 2px dashed var(--color-primary);
 }
 
-.viz-toggle-btn {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  transform: translateY(-50%);
-  z-index: 1000;
-  width: 20px;
-  height: 80px;
-  background: var(--bg-hover);
-  color: var(--text-2);
-  border: 1px solid var(--border-3);
-  border-radius: 4px 0 0 4px;
-  cursor: pointer;
+.actions-right-group {
   display: flex;
   align-items: center;
+  gap: 4px;
+}
+
+.panel-toggle-btn {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
-  transition: all 0.3s;
-  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
-  font-weight: bold;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background-color 0.2s, color 0.2s;
 }
 
-.viz-toggle-btn:hover {
-  background: #e6e6e6;
-  transform: translateY(-50%) scale(1.05);
-  box-shadow: -2px 0 12px rgba(0, 0, 0, 0.15);
-  border-color: #bbb;
+.panel-toggle-btn:hover {
+  background: var(--bg-muted);
+  color: var(--text-1);
 }
 
-.viz-toggle-btn.expanded {
-  right: 0;
-  border-radius: 4px 0 0 4px;
-}
-
-.viz-toggle-btn:not(.expanded) {
-  right: 0;
-  border-radius: 0 4px 4px 0;
-}
-
-.toggle-icon {
-  font-size: 14px;
-  font-weight: bold;
+.panel-toggle-icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .management-panel-container {

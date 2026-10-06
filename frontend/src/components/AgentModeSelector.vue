@@ -74,22 +74,6 @@
     </button>
     <button
       class="mode-button"
-      :class="{ active: store.currentMode === 'chart', running: isModeRunning('chart') }"
-      @click="selectMode('chart')"
-      title="图表"
-    >
-      <span v-if="isModeRunning('chart')" class="running-indicator">●</span>
-      <svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M5 19V5" />
-        <path d="M5 19h14" />
-        <path d="M9 16v-5" />
-        <path d="M13 16V8" />
-        <path d="M17 16v-3" />
-      </svg>
-      <span>图表</span>
-    </button>
-    <button
-      class="mode-button"
       :class="{ active: store.currentMode === 'board', running: isModeRunning('board') }"
       @click="selectMode('board')"
       title="画板"
@@ -134,7 +118,7 @@ const props = defineProps({
   modelValue: {
     type: String,
     default: 'assistant',
-    validator: (value) => ['assistant', 'ppt', 'expert', 'query', 'knowledge', 'report', 'chart', 'board', 'ops'].includes(value)
+    validator: (value) => ['assistant', 'ppt', 'expert', 'query', 'knowledge', 'report', 'board', 'ops'].includes(value)
   }
 })
 
@@ -160,8 +144,7 @@ const getModeLabel = (mode) => {
     'expert': '专家',
     'query': '问数生图',
     'report': '报告',
-      'chart': '图表',
-      'board': '画板',
+    'board': '画板',
     'ops': '运维'
   }
   return labelMap[mode] || mode
