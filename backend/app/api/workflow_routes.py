@@ -356,6 +356,8 @@ async def resume_workflow(
     snapshot = _workflow_snapshots(dict(session.metadata or {})).get(workflow_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="workflow_not_found")
+    if (snapshot.get("budget_state") or {}).get("exhausted"):
+        raise HTTPException(status_code=409, detail="workflow_budget_exhausted")
     if snapshot.get("status") == "cancelled":
         raise HTTPException(status_code=409, detail="cancelled_workflow_cannot_resume")
     if snapshot.get("status") not in {"failed", "running", "queued"}:

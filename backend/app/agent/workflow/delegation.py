@@ -45,6 +45,10 @@ def build_delegation_contract(mode: str, available_tools: list[str]) -> str:
         "有上游输入时填写 dependencies，复用 file_path 和资源引用；父 Agent 完成跨源合并、"
         "核算、最终回答及用户交互，同源数据由一个节点获取。"
         "精简子 Agent 工具集固定，不再次编排。\n"
+        "检查节点结果中的 data_gaps，只有缺口影响结论且现有查询不能直接补齐时，"
+        "才由父 Agent 决定补图：再次调用 run_agent_workflow，workflow 只传原 workflow_id，"
+        "extension 传 expected_revision（使用上次返回的 revision）、reason 和新 nodes。"
+        "新节点可依赖已完成节点；不得修改旧节点、重复已有任务或突破累计预算。\n"
     )
     if mode == "expert":
         return common + (
