@@ -40,14 +40,14 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
     "WorkOrder": {
         "measures": [
             {"name": "count", "title": "故障工单量(仅Fault类型)"},
-            {"name": "overdueCount", "title": "超期故障工单数"},
-            {"name": "overdueRate", "title": "超期率%(分母=全部故障工单,约85%偏高是平台僵尸单现状)"},
-            {"name": "responseEvaluable", "title": "可评估响应的故障工单数(有到场节点,约14%)"},
+            {"name": "overdueCount", "title": "超期故障工单数(故障单无计划完成时间,恒0不可评估,勿用)"},
+            {"name": "overdueRate", "title": "超期率%(故障单无计划完成时间,恒0;历史~85%系含例行单旧口径,勿用)"},
+            {"name": "responseEvaluable", "title": "可评估响应的故障工单数(故障单均有到场节点,全量可评估)"},
             {"name": "responseWithin2hCount", "title": "2小时内到场故障工单数"},
-            {"name": "responseWithin2hRate", "title": "2小时响应率%(仅故障单,分母=可评估单,须注明占比)"},
-            {"name": "recoverEvaluable", "title": "可评估恢复的故障工单数(有已解除关联告警,约27%)"},
+            {"name": "responseWithin2hRate", "title": "2小时响应率%(故障单全量可评估)"},
+            {"name": "recoverEvaluable", "title": "可评估恢复的故障工单数(有已解除关联告警,约47%)"},
             {"name": "recoverWithin4hCount", "title": "4小时内恢复故障工单数"},
-            {"name": "recoverWithin4hRate", "title": "4小时恢复率%(仅故障单,分母=可评估单,须注明占比)"},
+            {"name": "recoverWithin4hRate", "title": "4小时恢复率%(分母=可评估单约47%,须注明占比)"},
             {"name": "repeatFaultCount", "title": "30天重复故障工单数"},
             {"name": "repeatFaultRate", "title": "30天重复故障率%"},
             {"name": "avgResponseMinutes", "title": "平均响应时长(分钟)"},
@@ -63,9 +63,9 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "orderStatus", "title": "工单状态(处理中/已完成)"},
             {"name": "urgency", "title": "紧急程度"},
             {"name": "orderType", "title": "工单类型(本cube仅故障单Fault,保留作口径核对)"},
-            {"name": "isOverdue", "title": "是否超期"},
+            {"name": "isOverdue", "title": "是否超期(故障单无计划完成时间,恒false不可评估,勿用)"},
             {"name": "isRepeatFault", "title": "是否重复故障"},
-            {"name": "repeatBasis", "title": "重复故障判定维度"},
+            {"name": "repeatBasis", "title": "重复故障判定维度(故障单均填设备,恒为站点+设备)"},
             {"name": "createTime", "title": "创建时间(时间维度)"},
             {"name": "finishTime", "title": "完成时间(时间维度)"},
         ],
@@ -138,9 +138,9 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "highRiskCount", "title": "高风险站点数(当前快照)"},
             {"name": "midRiskCount", "title": "中风险站点数(当前快照)"},
             {"name": "totalOrders30d", "title": "近30天故障工单总数(站点合计)"},
-            {"name": "totalOverdue30d", "title": "近30天超期故障工单总数(站点合计)"},
+            {"name": "totalOverdue30d", "title": "近30天超期故障工单总数(故障单无计划完成时间,恒0勿用)"},
             {"name": "totalRepeatFault30d", "title": "近30天重复故障工单总数(站点合计)"},
-            {"name": "avgOverdueRate30d", "title": "近30天超期率均值%(站点均值,分母=故障工单)"},
+            {"name": "avgOverdueRate30d", "title": "近30天超期率均值%(故障单无计划完成时间,恒0勿用)"},
             {"name": "avgResponseMinutes30d", "title": "近30天平均响应时长分钟(仅可评估站点,覆盖率约15%)"},
             {"name": "totalAlarms7d", "title": "近7天告警总数(站点合计)"},
             {"name": "totalAlarms30d", "title": "近30天告警总数(站点合计)"},
@@ -163,7 +163,7 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "activeStations", "title": "活跃站点数(去重)"},
             {"name": "createdSum", "title": "新建故障工单数"},
             {"name": "finishedSum", "title": "完成故障工单数"},
-            {"name": "overdueCreatedSum", "title": "新建且超期故障工单数"},
+            {"name": "overdueCreatedSum", "title": "新建且超期故障工单数(故障单无计划完成时间,恒0勿用)"},
             {"name": "alarmsSum", "title": "告警数"},
             {"name": "signinsSum", "title": "到站签到数(源数据稀疏)"},
         ],
@@ -273,9 +273,10 @@ class JiangsuQueryMetricsTool(LLMTool):
         function_schema = {
             "name": self.tool_name,
             "description": (
-                "查询江苏运维指标(语义层,口径唯一):工单量/超期率/2h响应率/4h恢复率/重复故障率、"
-                "告警量/未处理率/转工单率、质控合格率、巡检完成率、站点健康与风险分级、"
+                "查询江苏运维指标(语义层,口径唯一):故障工单量/2h响应率/4h恢复率/重复故障率、"
+                "告警量/未处理率/转工单率、质控合格率、巡检完成率/超期率、站点健康与风险分级、"
                 "站点日趋势(工单/告警计数)、设备生命周期事件、质控任务安排与过期积压等。"
+                "注意: 工单超期对故障单不适用(无计划完成时间,恒0),工单超期统计勿用本工具的 WorkOrder.overdueRate。"
                 "传 measures+dimensions+时间范围即可,不需要写SQL;"
                 "同一问题的数字与 execute_jiangsu_mart_sql 口径一致。"
                 + _render_guide()
@@ -285,7 +286,7 @@ class JiangsuQueryMetricsTool(LLMTool):
                 "properties": {
                     "measures": {
                         "type": "array", "items": {"type": "string"},
-                        "description": "度量成员,如 ['WorkOrder.overdueRate','WorkOrder.count'],须同一Cube",
+                        "description": "度量成员,如 ['WorkOrder.responseWithin2hRate','WorkOrder.count'],须同一Cube",
                     },
                     "dimensions": {
                         "type": "array", "items": {"type": "string"},

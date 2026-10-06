@@ -35,7 +35,7 @@ cd /d E:\Tools\suyuan-jiangsu\cube
 for /f %t in ('node gen-token.js') do set TOKEN=%t
 curl -X POST http://127.0.0.1:4610/cubejs-api/v1/load ^
   -H "Authorization: %TOKEN%" -H "Content-Type: application/json" ^
-  -d "{\"query\":{\"measures\":[\"WorkOrder.overdueRate\"],\"dimensions\":[\"WorkOrder.cityName\"]}}"
+  -d "{\"query\":{\"measures\":[\"WorkOrder.responseWithin2hRate\",\"WorkOrder.count\"],\"dimensions\":[\"WorkOrder.cityName\"]}}"
 ```
 
 PowerShell/Python 消费同理：先 `POST /cubejs-api/v1/login`（body `{"token": "<API_SECRET>"}`）

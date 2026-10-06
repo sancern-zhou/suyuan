@@ -14,8 +14,8 @@ from app.tools.query.jiangsu_cube_metrics.tool import JiangsuQueryMetricsTool  #
 async def main() -> None:
     tool = JiangsuQueryMetricsTool()
     cases = [
-        ("T1 按市超期率",
-         dict(measures=["WorkOrder.count", "WorkOrder.overdueRate"],
+        ("T1 按市工单量与2h响应率",
+         dict(measures=["WorkOrder.count", "WorkOrder.responseWithin2hRate"],
               dimensions=["WorkOrder.cityName"], order={"WorkOrder.count": "desc"}, limit=5)),
         ("T2 近7日趋势",
          dict(measures=["WorkOrder.count"], time_dimension="WorkOrder.createTime",

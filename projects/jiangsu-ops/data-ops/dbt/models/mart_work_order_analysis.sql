@@ -17,14 +17,15 @@
 --   响应时长 = 派单→到站; 代理: 派单=CH_Check 节点开始, 到站=首个 FaultProcess 开始
 --             派单缺失回退 CreateTime (contract 中标注 fallback)
 --             注: 当前流程数据中 CH_Check 与 FaultProcess 不同时出现,
---             实际响应代理 = 创建→到站, 仅对有到场节点(约14%)的工单可评估
+--             实际响应代理 = 创建→到站; 故障单均有到场节点, 全量可评估(2026-10 实测)
 --   2小时响应  = is_response_within_2h: 响应时长<=120分钟(仅到场单可评估)
 --   4小时处置  = 数据恢复正常(业务确认 2026-09-22); 代理 = 同站告警解除时间
 --             (alm_summary.removetime, 平台规则判定, 断数/恒值/超标类统一适用),
---             取建单前1小时至后7天内、解除时间在建单之后的最早告警解除;
+--             取建单前24h~后1h内同站最近一条已解除告警(解除时间须在建单之后);
 --             is_recover_within_4h: 恢复距建单<=4小时(无关联告警解除则不可评估)
 --   超期     = FinishTime>PlanFinishTime; 未完成且 now()>PlanFinishTime 亦为超期; Invalid 不计
---   重复故障 = 同站同设备, 本单创建前 30 天内存在其他工单
+--             注: 故障单无计划完成时间(2026-10 实测全空), 本口径对故障单恒不可评估(is_overdue 恒 false)
+--   重复故障 = 同站同设备, 本单创建前 30 天内存在其他故障工单(窗口仅统计故障单, 2026-10-07 收敛)
 -- 范围     = 仅故障工单(ordertype='Fault'); 例行单不入本表(2026-10-06 收敛, 见文末 where)
 -- 关联告警 = 工单创建前 24h 内同站 alm_summary 条数（代理口径）
 -- 刷新: 全量重建（数据量 <2 万行, 5 分钟一次成本可忽略）
@@ -108,6 +109,8 @@ left join (
     group by workingordercode
 ) n on n.workingordercode = w.workingordercode
 left join (
+    -- 重复故障回看窗口(2026-10-07): 仅统计故障单, 与本表 Fault 口径一致;
+    -- 若计入例行单会抬高 repeat_count_30d 并可能制造幻影重复标记
     select w2.id,
            count(*) over (partition by w2.stationcode, nullif(w2.deviceid, 0)
                           order by w2.createtime
@@ -115,6 +118,7 @@ left join (
                                     and interval '1 microsecond' preceding) as repeat_count_30d
     from {{ source('jiangsu_ods', 'mtc_working_order') }} w2
     where w2.orderstatus <> 'Invalid'
+      and w2.ordertype = 'Fault'
 ) rp on rp.id = w.id
 left join lateral (
     select count(*) as alarm_count
