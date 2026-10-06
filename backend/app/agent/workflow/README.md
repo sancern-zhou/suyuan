@@ -110,3 +110,22 @@ Redis 队列操作的原子性不替代数据库事务，也不提供跨系统�
 覆盖并发入队/领取、最新快照恢复、旧领取令牌隔离、事件去重、
 pop/claim 中断、心跳与回收竞争及失去租约后的执行取消。
 未配置测试二进制时明确跳过这些集成测试。
+
+### 问数/专家受控评测
+
+从项目根运行 `PYTHONPATH=backend python -m scripts.evaluate_agent_dag --backend replay`。
+真实模型试运行使用 `--backend live`，可通过 `--env-file /绝对路径/backend/.env`
+显式选择本实例的模型配置。`--case` 可指定 single_city、multi_city、air_weather；
+`--repeats 3` 交替 direct/DAG 顺序，`--timeout 180` 设置每次执行硬超时。
+
+评测使用固定合成数据，不查询业务库；业务工具 schema 为评测用最小替身，
+以真实模式白名单限制工具。父/子模型采用有界工具调用循环，DAG 仍走
+run_agent_workflow、依赖调度、资源交接和结果压缩。未覆盖完整生产 ReAct、
+固定问数阶段、记忆、SSE、子会话持久化，不能直接外推生产吞吐或质量。
+仅 replay 使用显式金标准回放，它只用于链路测试，不衡量模型质量。
+
+每次运行隔离 journal/cache/log，输出 results.json 与 comparison.md。
+模型看不到金标准数值；校验数值、实际已访问来源、证据覆盖和因果边界。
+统计供应商实报 Token、模型调用、耗时、重复取数、节点数与并行峰值；
+缺失 usage 保留 null，失败/超时保留在比较中。结果解释与结论证据绑定需人工复核。
+已有输出目录拒绝覆盖。单次样本不用于自动确定预算或委派阈值。
