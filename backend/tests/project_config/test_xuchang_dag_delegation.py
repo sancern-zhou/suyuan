@@ -14,5 +14,8 @@ def test_xuchang_parent_overrides_enable_bounded_delegation(monkeypatch):
         prompt = build_react_system_prompt(mode, available_tools=list(tools))
         assert "精简子 Agent 与依赖工作流" in prompt
         assert "query_monitoring_station" in prompt
+        if mode == "expert":
+            assert "作为专家父 Agent" in prompt
+            assert "应说明需要由主Agent拆分和调度" not in prompt
     for mode in LEAF_MODES:
         assert not {"run_agent_workflow", "call_sub_agent"}.intersection(get_tools_by_mode(mode))
