@@ -6,7 +6,7 @@ import pytest
 from app.agent.prompts.prompt_builder import build_react_system_prompt
 from app.agent.prompts.tool_registry import get_tools_by_mode
 from app.agent.workflow.capabilities import build_child_capability_policy
-from app.agent.workflow.delegation import LEAF_MODES, delegation_error
+from app.agent.workflow.delegation import LEAF_MODES, build_delegation_contract, delegation_error
 from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
 from app.tools.agent_tools.run_agent_workflow import RunAgentWorkflowTool
 
@@ -23,7 +23,9 @@ def test_parent_tools_and_project_prompt_receive_delegation_guidance(monkeypatch
         assert "精简子 Agent 与依赖工作流" in prompt
         assert "query_monitoring_station" in prompt
     assert "expert_meteorology" in build_react_system_prompt("expert")
-    assert "expert_meteorology" not in build_react_system_prompt("query")
+    # Data-source catalogs can mention expert routing; only the delegation contract
+    # determines which child types the query parent is authorized to call.
+    assert "expert_meteorology" not in build_delegation_contract("query", ["run_agent_workflow"])
     assert "精简子 Agent 与依赖工作流" not in build_react_system_prompt("query", available_tools=["execute_python"])
 
 
