@@ -44,7 +44,7 @@
       </div>
       <ResourceProductsPanel
         v-if="activeTab === 'files' && sessionId"
-        class="panel-content workflow-panel-host"
+        class="panel-content workflow-panel-host files-panel-host"
         @open-resource-tab="handleTabChange"
       />
       <WorkflowPanel
@@ -201,7 +201,7 @@
 
       <ResourceProductsPanel
         v-if="activeTab === 'files' && sessionId"
-        class="panel-content"
+        class="panel-content files-panel-host"
         @open-resource-tab="handleTabChange"
       />
 
@@ -477,7 +477,8 @@ const handleBoardSnapshotConfirm = (snapshot) => {
   overflow: hidden;
 }
 
-.panel-content.workflow-panel-host {
+.panel-content.workflow-panel-host,
+.panel-content.files-panel-host {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
