@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import inspect
 import json
+import random
 from dataclasses import dataclass, field, replace as dataclasses_replace
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional
 import uuid
@@ -255,6 +256,17 @@ class WorkflowCoordinator:
             logger.warning("workflow_journal_append_failed", event_type=event_type, error=str(exc))
 
     async def run(self) -> Dict[str, Any]:
+        try:
+            return await self._run()
+        finally:
+            # Parent request cancellation must not leave child tasks running.
+            for task in self._active_tasks.values():
+                task.cancel()
+            if self._active_tasks:
+                await asyncio.gather(*self._active_tasks.values(), return_exceptions=True)
+                self._active_tasks.clear()
+
+    async def _run(self) -> Dict[str, Any]:
         if self.status == "succeeded":
             return self.snapshot()
         self.status = "running"
@@ -275,7 +287,9 @@ class WorkflowCoordinator:
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 for task in completed:
-                    task_id = next(key for key, value in self._active_tasks.items() if value is task)
+                    task_id = next((key for key, value in self._active_tasks.items() if value is task), None)
+                    if task_id is None:
+                        continue
                     self._active_tasks.pop(task_id, None)
                     try:
                         await task
@@ -305,7 +319,7 @@ class WorkflowCoordinator:
                     node_errors={k: str(v)[:200] for k, v in self.node_errors.items()},
                     progress={k: v for k, v in self.node_progress.items()},
                 )
-                self._cancel_pending("dependency failed")
+                self._block_pending("dependency failed")
                 break
             # A pending graph with no active or ready nodes is inconsistent.
             self.status = "failed"
@@ -412,7 +426,7 @@ class WorkflowCoordinator:
             )
         # 重试续用上次的子会话：带上失败原因与已交付进度，子 Agent 在已有工作基础上修正
         retry_context = None
-        if attempt > 1:
+        if attempt > 1 or task_id in self.node_sessions:
             previous_error = self.node_errors.get(task_id)
             retry_context = {
                 "session_id": self.node_sessions.get(task_id),
@@ -471,6 +485,7 @@ class WorkflowCoordinator:
                 self.node_results.pop(task_id, None)
                 raise RuntimeError(f"node lineage validation failed: {lineage_errors}")
             self.node_lineage[task_id] = lineage
+            self.node_errors.pop(task_id, None)
             self.graph.set_status(task_id, "succeeded")
             self.runtime.transition(node_run.run_id, "succeeded")
             self._journal_event(
@@ -480,8 +495,13 @@ class WorkflowCoordinator:
                 delivered_files=(self.node_progress.get(task_id) or {}).get("delivered_files"),
             )
         except asyncio.CancelledError:
-            self.graph.set_status(task_id, "cancelled")
-            self.runtime.request_cancel(node_run.run_id, reason=self.cancel_reason or "workflow cancelled")
+            if self.cancel_requested:
+                self.graph.set_status(task_id, "cancelled")
+                self.runtime.request_cancel(node_run.run_id, reason=self.cancel_reason or "workflow cancelled")
+            else:
+                # Shutdown/disconnection is resumable; explicit user cancel is terminal.
+                self.graph.set_status(task_id, "pending")
+                self._persist_snapshot({})
             raise
         except Exception as exc:
             error = (
@@ -491,7 +511,10 @@ class WorkflowCoordinator:
             )
             self.node_errors[task_id] = error
             self.runtime.transition(node_run.run_id, "failed", payload={"error": error})
-            retrying = node_run.attempt < node_run.max_attempts
+            retrying = (
+                node_run.attempt < node_run.max_attempts
+                and not isinstance(exc, (ValueError, TypeError, PermissionError, NotImplementedError))
+            )
             self._journal_event(
                 "node.failed",
                 task_id=task_id,
@@ -501,6 +524,9 @@ class WorkflowCoordinator:
                 progress=self.node_progress.get(task_id),
             )
             if retrying:
+                # Transient failures back off; contract repair reuses the child session.
+                if isinstance(exc, (ConnectionError, TimeoutError)):
+                    await asyncio.sleep(min(8.0, 0.25 * 2 ** (attempt - 1)) + random.uniform(0, 0.1))
                 self.graph.set_status(task_id, "pending")
                 self.runtime.start(node_run.run_id)
             else:
@@ -543,6 +569,14 @@ class WorkflowCoordinator:
             return
         runtime_runs = self.runtime.snapshot().get("runs") or {}
         for node in self._graph_nodes():
+            # Older snapshots used cancelled for dependency blocking.
+            if node.status == "blocked" or (
+                node.status == "cancelled"
+                and self.node_errors.get(node.task_id) == "dependency failed"
+            ):
+                node.status = "pending"
+                self.node_errors.pop(node.task_id, None)
+                continue
             if node.status != "failed":
                 continue
             run = runtime_runs.get(self._node_run_id(node.task_id, snapshot)) or {}
@@ -555,6 +589,7 @@ class WorkflowCoordinator:
             # explicit resume while preserving per-node retry budgets.
             self.workflow_run.max_attempts = max(self.workflow_run.max_attempts, 2)
             self.status = "queued"
+        self.node_errors.pop("__workflow__", None)
 
     def _persist_snapshot(self, _runtime_snapshot: Dict[str, Any]) -> None:
         """Persist one complete coordinator snapshot.
@@ -582,6 +617,12 @@ class WorkflowCoordinator:
         for node in self._graph_nodes():
             if node.status == "pending":
                 node.status = "cancelled"
+                self.node_errors.setdefault(node.task_id, reason)
+
+    def _block_pending(self, reason: str) -> None:
+        for node in self._graph_nodes():
+            if node.status == "pending":
+                node.status = "blocked"
                 self.node_errors.setdefault(node.task_id, reason)
 
     def _node_run_id(self, task_id: str, snapshot: Mapping[str, Any]) -> str:

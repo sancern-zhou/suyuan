@@ -7,6 +7,7 @@ import hashlib
 import re
 import time
 import json
+import uuid
 from typing import Any, Dict, Mapping, Optional
 
 import structlog
@@ -16,6 +17,7 @@ from app.agent.workflow.resource_handoff import result_resource_declarations
 from app.agent.workflow.target_mode_contract import build_target_mode_contract, target_mode_values
 from app.agent.workflow.coordinator import WorkflowCoordinator, WorkflowNodeSpec
 from app.agent.workflow.registry import active_workflow_registry
+from app.agent.workflow.delegation import delegation_error
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 
@@ -51,12 +53,13 @@ WORKFLOW_DAG_EXAMPLE = (
     '{"task_id": "weather-data", "target_mode": "query_forecast", "goal": "获取同期地面气象观测与预报数据"}, '
     '{"task_id": "cause-analysis", "target_mode": "expert_analysis", '
     '"goal": "基于上游数据完成污染成因研判，输出结论、证据和缺口", '
-    '"dependencies": ["air-data", "weather-data"]}]}, "max_concurrency": 4}'
+    '"dependencies": ["station-data", "weather-data"]}]}, "max_concurrency": 4}'
 )
 
 WORKFLOW_SCHEMA_DESCRIPTION = (
     "提交一个有向无环 Agent 工作流（DAG）：节点可并行执行，只有依赖节点成功后才会执行下游节点；"
-    "适合多源数据分析、交叉验证和分阶段报告任务。编排完全由你自主决定：按分析问题规划节点数量、"
+    "适合问数、专家研判、多源数据分析和分阶段报告任务。query 父模式可用站点/城市/预报取数节点；"
+    "expert 父模式还可用气象/常规分析专家节点；精简子节点不再次编排。编排完全由你自主决定：按分析问题规划节点数量、"
     "每个节点的 target_mode 与 goal；无依赖的数据/分析节点并行执行，需要上游产物或结论的节点用 "
     "dependencies 表达，不靠文字约定顺序。每个节点必须有唯一 task_id、target_mode、goal，"
     "goal 写清时间范围、区域、指标口径和预期输出；把无依赖的取数拆成独立节点以并行执行。"
@@ -476,7 +479,15 @@ class RunAgentWorkflowTool(LLMTool):
                 if granularity_error:
                     return self._failure(granularity_error)
             # 报告编排只暴露领域取数与专家节点，禁止综合模式或产出型模式越权。
-            runtime_mode = str(getattr(context, "runtime_mode", "") or "")
+            runtime_mode = str(
+                getattr(context, "runtime_mode", None)
+                or getattr(context, "manual_mode", None)
+                or getattr(getattr(context, "memory_manager", None), "mode", "")
+                or ""
+            )
+            boundary_error = delegation_error(runtime_mode, [str(node.get("target_mode") or "") for node in nodes])
+            if boundary_error:
+                return self._failure(boundary_error)
             if runtime_mode == "report":
                 disallowed_nodes = [
                     str(node.get("task_id") or "<unknown>")
@@ -497,6 +508,8 @@ class RunAgentWorkflowTool(LLMTool):
             # 节点成果缓存：同 workflow 重提时复用命中节点（依赖闭包完整才复用）
             from app.agent.workflow.result_cache import (
                 result_fingerprint,
+                cache_namespace,
+                node_signature,
                 select_reusable_nodes,
                 store_node_result,
             )
@@ -504,7 +517,9 @@ class RunAgentWorkflowTool(LLMTool):
 
             workflow_journal = WorkflowJournal()
             workflow_id_str = str(definition["workflow_id"])
-            completed_results = select_reusable_nodes(workflow_id_str, nodes)
+            parent_session_id = getattr(context, "session_id", None)
+            cache_id = cache_namespace(str(parent_session_id or uuid.uuid4().hex), workflow_id_str)
+            completed_results = select_reusable_nodes(cache_id, nodes, validate_signatures=True)
             if completed_results:
                 logger.info(
                     "workflow_cache_nodes_reused",
@@ -576,7 +591,10 @@ class RunAgentWorkflowTool(LLMTool):
                 executor=execute_node,
                 max_concurrency=max(1, min(int(max_concurrency or 4), 8)),
                 snapshot=snapshot,
-                persist=lambda current: self._persist_parent_snapshot(context, current),
+                persist=lambda current: self._persist_parent_snapshot(context, {
+                    **current, "parent_mode": runtime_mode,
+                    "max_concurrency": max(1, min(int(max_concurrency or 4), 8)),
+                }),
                 completed_results=completed_results,
                 journal=workflow_journal,
             )
@@ -595,18 +613,19 @@ class RunAgentWorkflowTool(LLMTool):
             if pending_persistence:
                 await asyncio.gather(*pending_persistence, return_exceptions=True)
             succeeded = snapshot["status"] == "succeeded"
-            if succeeded:
-                # 全部成功后才写缓存：部分失败的结果不污染缓存
+            if parent_session_id:
+                # Reuse individually validated successes even if another branch failed.
                 for cached_node in nodes:
                     cached_task_id = str(cached_node.get("task_id") or "")
                     cached_result = snapshot["node_results"].get(cached_task_id)
                     if isinstance(cached_result, Mapping):
                         store_node_result(
-                            workflow_id_str,
+                            cache_id,
                             cached_task_id,
                             str(cached_node.get("goal") or ""),
                             str(cached_node.get("target_mode") or ""),
                             cached_result,
+                            signature=node_signature(cached_node),
                             dependency_hashes={
                                 str(dependency): result_fingerprint(
                                     snapshot["node_results"][str(dependency)]

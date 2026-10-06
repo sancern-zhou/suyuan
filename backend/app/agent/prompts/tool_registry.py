@@ -115,6 +115,8 @@ PPT_TOOL_NAMES = [
 
 # ===== 专家模式工具 =====
 EXPERT_TOOL_NAMES = [
+    "run_agent_workflow",
+    "call_sub_agent",
     "list_session_resources",
     "publish_session_file",
     # 知识库检索与命中文档上下文阅读
@@ -188,6 +190,8 @@ EXPERT_ANALYSIS_TOOL_NAMES = [
 
 # ===== 问数模式工具 =====
 QUERY_TOOL_NAMES = [
+    "run_agent_workflow",
+    "call_sub_agent",
     "list_session_resources",
     "publish_session_file",
     # === 源码查看工具 ===

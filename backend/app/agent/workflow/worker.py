@@ -29,15 +29,30 @@ async def _run_job(job: WorkflowJob, store: Any) -> None:
                 return
             try:
                 await store.publish_snapshot(job.workflow_id, snapshot)
+            except Exception as exc:
+                logger.warning("workflow_event_publish_failed", workflow_id=job.workflow_id, error=str(exc))
             finally:
                 snapshots.task_done()
 
     event_task = asyncio.create_task(persist_events())
+    async def maintain_lease() -> None:
+        while True:
+            await asyncio.sleep(max(1, getattr(store, "lease_seconds", 900) / 3))
+            try:
+                await store.heartbeat(job.workflow_id)
+            except Exception as exc:
+                logger.warning("workflow_heartbeat_failed", workflow_id=job.workflow_id, error=str(exc))
+
+    heartbeat_task = asyncio.create_task(maintain_lease())
     try:
         result = await RunAgentWorkflowTool().execute(
-            context=SimpleNamespace(session_id=job.session_id, workflow_event_sink=emit),
+            context=SimpleNamespace(
+                session_id=job.session_id, workflow_event_sink=emit,
+                runtime_mode=job.snapshot.get("parent_mode") or None,
+            ),
             workflow=job.definition,
             snapshot=job.snapshot,
+            max_concurrency=job.snapshot.get("max_concurrency", 4),
         )
         final_snapshot = ((result.get("data") or {}).get("snapshot") or {}) if isinstance(result, dict) else {}
         if final_snapshot:
@@ -54,6 +69,8 @@ async def _run_job(job: WorkflowJob, store: Any) -> None:
         logger.exception("workflow_job_failed", workflow_id=job.workflow_id, error=str(exc))
         await store.finish(job.workflow_id, status="failed", result={"error": str(exc)})
     finally:
+        heartbeat_task.cancel()
+        await asyncio.gather(heartbeat_task, return_exceptions=True)
         await snapshots.put(None)
         await event_task
 
