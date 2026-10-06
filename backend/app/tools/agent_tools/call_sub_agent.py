@@ -900,10 +900,14 @@ class CallSubAgentTool(LLMTool):
 
             # 子Agent必须继承父Agent本次请求已经选定的完整模型优先级链。
             # 先快照再进入新上下文，避免子Agent的 Auto 多模态 profile 重选模型链。
+            # 注意：use_provider_chain 是 @contextmanager，单次使用；修复轮会
+            # 多次进入 with，必须保存参数、每轮新建（复用同一对象会在
+            # _GeneratorContextManager.__enter__ 的 del self.args 处抛
+            # AttributeError: '_GeneratorContextManager' object has no attribute 'args'）。
             parent_llm_service = getattr(llm_planner, "llm_service", None)
             child_planner = getattr(sub_agent, "planner", None)
             child_llm_service = getattr(child_planner, "llm_service", None)
-            model_chain_context = nullcontext()
+            model_chain_context_factory = nullcontext
             if parent_llm_service is not None and child_llm_service is not None:
                 inherited_chain = getattr(tool_executor, "llm_model_chain", None)
                 if inherited_chain:
@@ -912,7 +916,7 @@ class CallSubAgentTool(LLMTool):
                     parent_provider = parent_llm_service.provider
                     parent_model = parent_llm_service.model
                     parent_fallbacks = parent_llm_service.request_fallbacks
-                model_chain_context = child_llm_service.use_provider_chain(
+                model_chain_context_factory = lambda: child_llm_service.use_provider_chain(
                     parent_provider,
                     parent_model,
                     parent_fallbacks,
@@ -937,7 +941,7 @@ class CallSubAgentTool(LLMTool):
             ) -> List[Dict[str, Any]]:
                 turn_events: List[Dict[str, Any]] = []
                 async with child_actor_registry.lease(actor_key):
-                    with model_chain_context:
+                    with model_chain_context_factory():
                         async for event in sub_agent.analyze(
                             user_query=prompt,
                             session_id=session_id if session_id else None,
