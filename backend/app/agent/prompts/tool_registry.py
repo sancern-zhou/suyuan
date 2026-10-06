@@ -20,37 +20,15 @@ AGENT_HIDDEN_TOOL_NAMES = frozenset({
     "calculate_crustal", "calculate_trace", "predict_air_quality",
     "generate_map",
     "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "query_gd_suncere_city_hour", "query_gd_suncere_city_day",
-    "query_gd_suncere_district_day", "query_gd_suncere_district_report",
-    "query_gd_suncere_station_hour_new",
 })
 
 # ========================================
 # 工具有序白名单（仅包含工具名称）
 # ========================================
 
-# 广东省数据源工具（项目专属）。这些工具依赖广东联网接口/数据库，
-# 不允许进入任何共享模式白名单：
-# - 工具实例仅在项目 manifest 声明启用时注册（app/tools/__init__.py）；
-# - 项目通过 manifest 的 backend.agent_mode_extra_tools 按模式追加。
-# 守卫测试：backend/tests/test_project_scoped_tools.py
-PROJECT_SCOPED_TOOL_NAMES = frozenset({
-    "query_gd_suncere",
-    "query_gd_suncere_city_hour",
-    "query_gd_suncere_station_hour_new",
-    "query_gd_suncere_station_day_new",
-    "query_gd_suncere_regional_comparison",
-    "query_gd_suncere_city_day",
-    "query_gd_suncere_district_day",
-    "query_gd_suncere_district_report",
-    "query_gd_suncere_report_compare",
-    "query_city_standard_report",
-    "query_city_standard_yoy_report",
-    "query_station_standard_report",
-    "query_station_standard_yoy_report",
-    "analyze_city_pollutant_rankings",
-    "get_5min_data",
-})
+# Project manifests may append tools to a mode without changing the shared
+# baseline.  The shared registry itself contains no project data-source names.
+PROJECT_SCOPED_TOOL_NAMES = frozenset()
 
 # Registered for internal orchestration and maintenance only. These tools must
 # never be published in an Agent mode, including project-defined modes.

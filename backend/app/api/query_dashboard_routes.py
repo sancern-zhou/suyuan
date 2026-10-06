@@ -5,7 +5,6 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.schemas.query_dashboard import DashboardOverviewResponse
 import json
 
 from app.agent.context.data_files import get_data_root, resolve_data_path
@@ -14,7 +13,6 @@ from app.auth.models import CurrentUser
 from app.conversations.repository import ConversationCatalogRepository
 from app.services.map_program_receipts import map_program_receipt_store
 from app.services.query_dashboard_map_data import dataset_to_geojson_features
-from app.services.query_dashboard_service import QueryDashboardService
 
 router = APIRouter(prefix="/query-dashboard", tags=["query-dashboard"])
 
@@ -22,16 +20,6 @@ router = APIRouter(prefix="/query-dashboard", tags=["query-dashboard"])
 class MapProgramReceiptRequest(BaseModel):
     session_id: str = Field(min_length=1)
     receipt: dict[str, Any]
-
-
-def get_query_dashboard_service() -> QueryDashboardService:
-    return QueryDashboardService()
-
-
-def _parse_include(include: str | None) -> list[str] | None:
-    if not include:
-        return None
-    return [item.strip() for item in include.split(",") if item.strip()]
 
 
 async def _require_session_access(
@@ -58,14 +46,6 @@ async def _require_data_file_access(path, user: CurrentUser) -> None:
         session_dir = parts[1]
         if session_dir.startswith("agent_session_"):
             await _require_session_access(session_dir.removeprefix("agent_session_"), user)
-
-
-@router.get("/guangdong-overview", response_model=DashboardOverviewResponse)
-def get_guangdong_overview(
-    include: str | None = Query(default=None),
-    service: QueryDashboardService = Depends(get_query_dashboard_service),
-) -> DashboardOverviewResponse:
-    return service.build_guangdong_overview(include=_parse_include(include))
 
 
 @router.get("/map-data")
