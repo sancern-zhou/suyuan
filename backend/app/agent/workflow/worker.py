@@ -80,7 +80,8 @@ async def _run_job(job: WorkflowJob, store: Any) -> None:
             job.workflow_id,
             lease_token=job.lease_token,
             status=(
-                "succeeded" if isinstance(result, dict) and result.get("success")
+                "partial" if isinstance(result, dict) and result.get("status") == "partial"
+                else "succeeded" if isinstance(result, dict) and result.get("success")
                 else "cancelled" if isinstance(result, dict) and result.get("status") == "cancelled"
                 else "failed"
             ),

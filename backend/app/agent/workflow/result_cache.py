@@ -41,6 +41,7 @@ def node_signature(node: Mapping[str, Any]) -> str:
         **{key: node.get(key) for key in (
             "target_mode", "goal", "context", "task_contract", "result_schema", "require_lineage",
         )},
+        **{key: node[key] for key in ("when", "required", "dependency_policy", "input_contracts", "output_contract") if key in node},
     })
 
 

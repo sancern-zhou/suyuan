@@ -103,3 +103,17 @@ async def test_explicit_workflow_cancellation_remains_terminal_cancelled(monkeyp
     store = _Store()
     await _run_job(WorkflowJob("wf", "s", {}, {}, lease_token="current"), store)
     assert store.finished == [("wf", "cancelled")]
+
+
+@pytest.mark.asyncio
+async def test_partial_delivery_is_a_terminal_worker_result(monkeypatch):
+    from app.tools.agent_tools.run_agent_workflow import RunAgentWorkflowTool
+
+    async def execute(self, **kwargs):
+        kwargs["context"].workflow_event_sink({"status": "partial"})
+        return {"status": "partial", "success": True, "data": {"delivery": {"deliverable": True, "complete": False}}}
+
+    monkeypatch.setattr(RunAgentWorkflowTool, "execute", execute)
+    store = _Store()
+    await _run_job(WorkflowJob("wf", "s", {}, {}, lease_token="current"), store)
+    assert store.finished == [("wf", "partial")]

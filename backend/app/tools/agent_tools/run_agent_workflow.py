@@ -18,10 +18,20 @@ from app.agent.workflow.target_mode_contract import build_target_mode_contract, 
 from app.agent.workflow.coordinator import WorkflowCoordinator, WorkflowNodeSpec
 from app.agent.workflow.registry import active_workflow_registry
 from app.agent.workflow.delegation import delegation_error
+from app.agent.workflow.resource_contract import ResourceContractError
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 
 logger = structlog.get_logger(__name__)
+
+RESOURCE_CONTRACT_PROPERTIES = {
+    "kind": {"type": "string"}, "format": {"type": "string"},
+    "fields": {"type": "array", "items": {"type": "string"}},
+    "units": {"type": "object", "additionalProperties": {"type": "string"}},
+    "granularity": {"type": "string"}, "scope": {"type": "object"},
+    "time_range": {"type": "object", "properties": {"start": {"type": "string"}, "end": {"type": "string"}}, "required": ["start", "end"]},
+    "required": {"type": "boolean", "description": "默认 true；false 表示不兼容时允许缺少此资源，但仍明确交付缺口。"},
+}
 
 # 报告 DAG 专家节点集合：这些模式必须提供 task_contract 并受交付物粒度校验
 EXPERT_NODE_MODES = frozenset({"expert_meteorology", "expert_analysis"})
@@ -104,6 +114,14 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "重试时预算自动放宽：迭代与超时各放大 50%（迭代封顶 120、超时封顶 1 小时），"
     "专家节点 task_contract.deliverables 最多 3 项；超过 3 项必须拆成多个并行节点。"
     "因此首试可给紧凑预算，把余量留给重试。"
+    "条件节点用 when 声明 source_task_id（必须是直接依赖）、path（上游结果的点分路径）、op、value；"
+    "支持 all/any/not 组合；条件为假会跳过该分支，缺少比较证据会报告失败，不猜测真假。"
+    "辅助节点显式 required=false；下游只有 dependency_policy=allow_partial 才能消费部分上游，"
+    "且至少需要一个成功上游。工具返回 partial 时参考 delivery.gaps，交付已有成果并说明缺口；"
+    "不能把缺失数据当作零、编造结论或默认重新取数。关键节点失败仍阻断完整交付。"
+    "input_contracts 按 source_task_id 校验上游资源，output_contract 校验本节点产物；"
+    "可约束 kind/format/fields/units/granularity/time_range/scope。字段尽可能从文件核对，"
+    "单位、粒度、时间覆盖和范围依赖资源 metadata.data_contract；缺失元数据不会自动假定满足要求。"
     f"示例：{WORKFLOW_DAG_EXAMPLE}\n\n"
     f"{build_target_mode_contract()}"
 )
@@ -414,6 +432,19 @@ class RunAgentWorkflowTool(LLMTool):
                                     "items": {
                                         "type": "object",
                                         "properties": {
+                                            "required": {"type": "boolean", "description": "默认 true，关键节点；辅助节点失败仍允许部分交付时设 false。"},
+                                            "dependency_policy": {"type": "string", "enum": ["all_success", "allow_partial"], "description": "默认所有上游成功；allow_partial 等待上游全部结束后消费成功结果，并显式携带缺口。"},
+                                            "when": {
+                                                "type": "object", "description": "上游完成后判断分支；也可用 all/any/not 组合叶条件。路径相对于节点完整结果，如 data.result_envelope.outputs.exceedance_count；上游 result_schema 必须要求该字段。",
+                                                "properties": {
+                                                    "source_task_id": {"type": "string"}, "path": {"type": "string"},
+                                                    "op": {"type": "string", "enum": ["eq", "ne", "gt", "ge", "lt", "le", "contains", "nonempty", "exists"]},
+                                                    "value": {}, "all": {"type": "array", "items": {"type": "object"}},
+                                                    "any": {"type": "array", "items": {"type": "object"}}, "not": {"type": "object"},
+                                                },
+                                            },
+                                            "input_contracts": {"type": "array", "items": {"type": "object", "properties": {**RESOURCE_CONTRACT_PROPERTIES, "source_task_id": {"type": "string"}}, "required": ["source_task_id"]}},
+                                            "output_contract": {"type": "object", "properties": RESOURCE_CONTRACT_PROPERTIES},
                                             "task_id": {"type": "string"},
                                             "target_mode": {
                                                 "type": "string",
@@ -497,7 +528,7 @@ class RunAgentWorkflowTool(LLMTool):
                 snapshot = await self._load_parent_snapshot(context, str(definition["workflow_id"]))
                 if not snapshot:
                     return self._failure("当前父会话中未找到工作流快照，不能补图")
-                if snapshot.get("status") not in {"succeeded", "failed"}:
+                if snapshot.get("status") not in {"succeeded", "partial", "failed"}:
                     return self._failure("只能给已经结束一轮执行的工作流补图")
                 definition = dict(snapshot["definition"])
                 added_nodes = [dict(node) for node in extension.get("nodes") or []]
@@ -561,6 +592,16 @@ class RunAgentWorkflowTool(LLMTool):
             parent_session_id = getattr(context, "session_id", None)
             cache_id = cache_namespace(str(parent_session_id or uuid.uuid4().hex), workflow_id_str)
             completed_results = {} if snapshot else select_reusable_nodes(cache_id, nodes, validate_signatures=True)
+            for cached_node in nodes:
+                task_id = str(cached_node.get("task_id") or "")
+                sources = list(cached_node.get("dependencies") or []) if cached_node.get("input_contracts") else []
+                if cached_node.get("output_contract") is not None:
+                    sources.append(task_id)
+                # A cached descriptor cannot prove that a catalog entry is
+                # still active. These nodes must perform a fresh import/check.
+                if any(handle.get("handle_type") == "session_resource" for source in sources
+                       for handle in collect_result_handles(str(source), completed_results.get(str(source)))):
+                    completed_results.pop(task_id, None)
             if completed_results:
                 logger.info(
                     "workflow_cache_nodes_reused",
@@ -587,6 +628,11 @@ class RunAgentWorkflowTool(LLMTool):
                 else:
                     upstream_handles = []
                 context_text = str(payload.get("context") or "") + upstream
+                input_gaps = coordinator.node_input_gaps.get(node.task_id)
+                if input_gaps:
+                    context_text += "\n## 上游证据缺口\n" + json.dumps(input_gaps, ensure_ascii=False) + "\n仅基于成功上游交付带限制的结论；缺失数据不是零，不重新查询缺失来源。\n"
+                if node.input_contracts or node.output_contract is not None:
+                    context_text += "\n## 资源契约\n" + json.dumps({"inputs": list(node.input_contracts), "output": node.output_contract}, ensure_ascii=False) + "\n单位、粒度、范围等必须来自真实数据元信息；不要按预期契约伪造元数据。\n"
                 # 重试续用上次的子会话：失败原因与已交付进度写入上下文
                 retry_session_id = None
                 if retry_context:
@@ -606,7 +652,7 @@ class RunAgentWorkflowTool(LLMTool):
                             + "\n".join(f"- {path}" for path in delivered)
                             + "\n请核对剩余交付物并继续完成。\n"
                         )
-                return await sub_agent_tool.execute(
+                result = await sub_agent_tool.execute(
                     context=context,
                     target_mode=payload["target_mode"],
                     goal=payload["goal"],
@@ -622,10 +668,19 @@ class RunAgentWorkflowTool(LLMTool):
                     repair_attempts=2 if payload.get("result_schema") else max(0, min(node.max_attempts - 1, 2)),
                     _force_isolated_session=True,
                     _upstream_handles=upstream_handles,
+                    **({"_input_contracts": list(node.input_contracts)} if node.input_contracts else {}),
                     _on_session_started=lambda child_session_id: coordinator.bind_node_session(
                         node.task_id, child_session_id
                     ),
                 )
+                violations = (result.get("data") or {}).get("resource_contract_violations") if isinstance(result, Mapping) else None
+                if violations:
+                    raise ResourceContractError(violations)
+                warnings = (result.get("data") or {}).get("resource_contract_warnings") if isinstance(result, Mapping) else None
+                if warnings:
+                    current_warnings = coordinator.node_contract_errors.setdefault(node.task_id, [])
+                    current_warnings.extend(item for item in warnings if item not in current_warnings)
+                return result
 
             coordinator = WorkflowCoordinator(
                 definition,
@@ -656,7 +711,7 @@ class RunAgentWorkflowTool(LLMTool):
                         or latest != snapshot
                     ):
                         raise ValueError("workflow revision conflict")
-                    if latest.get("status") not in {"succeeded", "failed"}:
+                    if latest.get("status") not in {"succeeded", "partial", "failed"}:
                         raise ValueError("cannot extend a running workflow")
                     coordinator.extend(added_nodes, expected_revision=extension["expected_revision"], reason=extension["reason"])
                     nodes += added_nodes
@@ -716,6 +771,11 @@ class RunAgentWorkflowTool(LLMTool):
                 "status": snapshot["status"],
                 "revision": snapshot.get("revision", 0),
                 "budget_state": snapshot.get("budget_state", {}),
+                "delivery": snapshot.get("delivery", {}),
+                "node_statuses": {task_id: node["status"] for task_id, node in snapshot["graph"].items()},
+                "node_decisions": snapshot.get("node_decisions", {}),
+                "node_input_gaps": snapshot.get("node_input_gaps", {}),
+                "node_contract_errors": snapshot.get("node_contract_errors", {}),
                 "node_results": node_views,
                 "node_errors": snapshot["node_errors"],
                 "node_lineage": snapshot["node_lineage"],
@@ -733,15 +793,17 @@ class RunAgentWorkflowTool(LLMTool):
             }
             return {
                 "status": "success" if succeeded else snapshot["status"],
-                "success": succeeded,
-                "result": "工作流已完成" if succeeded else "工作流未完成",
+                # A usable partial delivery is a valid tool observation; do not
+                # trigger generic tool-error handling or hide its resources.
+                "success": snapshot["status"] in {"succeeded", "partial"},
+                "result": "工作流已完成" if succeeded else "部分任务完成，可交付已有成果并说明缺口" if snapshot["status"] == "partial" else "工作流未完成",
                 "data": result_data,
                 "metadata": {
                     "schema_version": "workflow.v1",
                     "generator": "run_agent_workflow",
                     "workflow_id": snapshot["workflow_id"],
                 },
-                "summary": "工作流执行完成" if succeeded else "工作流执行失败或被取消",
+                "summary": "工作流执行完成" if succeeded else "工作流部分完成，存在证据缺口" if snapshot["status"] == "partial" else "工作流执行失败或被取消",
                 "resources": resources,
             }
         except (TypeError, ValueError, KeyError) as exc:
