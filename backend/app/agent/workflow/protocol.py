@@ -9,6 +9,18 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 WORKFLOW_PROTOCOL_VERSION = "workflow.v1"
 
+_FENCED_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*[\s\S]*?```", re.IGNORECASE)
+
+
+def strip_embedded_json_blocks(text: Any) -> str:
+    """去掉答案里内嵌的 ```json 结构化块。
+
+    子 Agent 未交付 submit_result 时会把结构化 JSON 粘贴进最终答案；
+    structured_result 已单独传递，摘要（envelope.summary / 父视图）里
+    再带一遍是纯重复（实测单次工作流返回因此膨胀数十 KB）。
+    """
+    return _FENCED_JSON_BLOCK_RE.sub(" ", str(text or ""))
+
 # The shared envelope is intentionally domain-neutral.  Mode-specific schemas
 # (for example the expert analysis schema below) are carried inside this
 # envelope as a task's ``result_schema``.

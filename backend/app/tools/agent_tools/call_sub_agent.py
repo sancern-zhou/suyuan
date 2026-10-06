@@ -29,6 +29,7 @@ from app.agent.session.workspace_routing import (
 from app.agent.selection_context import load_skill_selection
 from app.agent.prompts.tool_registry import get_tools_by_mode
 from app.agent.workflow.capabilities import build_child_capability_policy
+from app.agent.workflow.delegation import LEAF_MODES, delegation_error
 from app.agent.workflow.resource_handoff import (
     import_workflow_handles,
     result_resource_declarations,
@@ -62,6 +63,7 @@ session_manager = get_session_manager()
 # ⚠️ 支持多种模式：assistant, query, report, social, chart, expert, ops
 AgentMode = Literal[
     "assistant", "query", "query_monitoring", "query_forecast", "report", "social", "chart", "expert",
+    "query_monitoring_station", "query_monitoring_city",
     "expert_meteorology", "expert_analysis", "ops", "board", "ppt", "knowledge",
 ]
 
@@ -71,6 +73,8 @@ _DEFAULT_CHILD_MAX_ITERATIONS = {
     "expert": 30,
     # Fixed query workflows are runtime-bounded to four phases/turns.
     "query_monitoring": 4,
+    "query_monitoring_station": 4,
+    "query_monitoring_city": 4,
     "query_forecast": 4,
 }
 
@@ -434,6 +438,13 @@ class CallSubAgentTool(LLMTool):
         try:
             # 获取父Agent模式
             parent_mode = self._get_parent_mode(context)
+            boundary_error = delegation_error(parent_mode, [str(target_mode)])
+            if boundary_error:
+                return {
+                    "status": "failed", "success": False, "result": boundary_error,
+                    "data": {}, "metadata": {"generator": "call_sub_agent"},
+                    "summary": boundary_error,
+                }
             if parent_mode == "report" and target_mode == "query":
                 return {
                     "status": "failed",
@@ -746,12 +757,17 @@ class CallSubAgentTool(LLMTool):
             if selected_child_skill:
                 mode_tool_names.update(selected_child_skill.required_tools or [])
             capability_policy = build_child_capability_policy(
-                allowed_tools=(allowed_tool_names if allowed_tool_names is not None else mode_tool_names),
+                target_mode=target_mode,
+                allowed_tools=(
+                    mode_tool_names & set(allowed_tool_names)
+                    if target_mode in LEAF_MODES and allowed_tool_names is not None
+                    else allowed_tool_names if allowed_tool_names is not None else mode_tool_names
+                ),
                 denied_tools=merge_denied_tools(agent_profile, denied_tool_names),
                 allow_delegation=(
-                    agent_profile.allow_delegation
+                    target_mode not in LEAF_MODES and agent_profile.allow_delegation
                     if allow_child_delegation is None
-                    else bool(allow_child_delegation and agent_profile.allow_delegation)
+                    else bool(target_mode not in LEAF_MODES and allow_child_delegation and agent_profile.allow_delegation)
                 ),
             )
 
@@ -1621,6 +1637,8 @@ class CallSubAgentTool(LLMTool):
 
     def _get_parent_mode(self, context: Optional[Any]) -> str:
         """从context获取父Agent模式"""
+        if getattr(context, "runtime_mode", None):
+            return context.runtime_mode
         if context and hasattr(context, 'manual_mode'):
             return context.manual_mode
         # 尝试从memory_manager获取

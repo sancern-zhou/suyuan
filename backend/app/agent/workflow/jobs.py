@@ -13,6 +13,35 @@ import redis.asyncio as redis
 from config.settings import settings
 
 
+_ENQUEUE_SCRIPT = """
+local session = redis.call('HGET', KEYS[1], 'session_id')
+if session and session ~= ARGV[2] then return -1 end
+local status = redis.call('HGET', KEYS[1], 'status')
+if status == 'queued' or status == 'running' then return 0 end
+redis.call('HSET', KEYS[1], 'job_id', ARGV[1], 'workflow_id', ARGV[1],
+    'session_id', ARGV[2], 'status', 'queued', 'payload', ARGV[3],
+    'snapshot', ARGV[4], 'updated_at', ARGV[5], 'last_sequence', '0')
+redis.call('EXPIRE', KEYS[1], ARGV[6])
+redis.call('RPUSH', KEYS[2], ARGV[1])
+return 1
+"""
+
+_CLAIM_SCRIPT = """
+if redis.call('HGET', KEYS[1], 'status') ~= 'queued' then return 0 end
+redis.call('HSET', KEYS[1], 'status', 'running', 'owner', ARGV[1], 'updated_at', ARGV[2])
+return 1
+"""
+
+_RECOVER_SCRIPT = """
+local status = redis.call('HGET', KEYS[1], 'status')
+local updated = redis.call('HGET', KEYS[1], 'updated_at')
+if status ~= ARGV[1] or updated ~= ARGV[2] then return 0 end
+redis.call('HSET', KEYS[1], 'status', 'queued', 'updated_at', ARGV[3])
+redis.call('RPUSH', KEYS[2], ARGV[4])
+return 1
+"""
+
+
 @dataclass(frozen=True)
 class WorkflowJob:
     workflow_id: str
@@ -51,29 +80,22 @@ class WorkflowJobStore:
         snapshot: Mapping[str, Any],
     ) -> WorkflowJob:
         key = self.state_key(workflow_id)
-        current = await self.redis.hgetall(key)
-        current_status = str(current.get("status") or "")
-        if current_status in {"queued", "running"}:
-            return self._decode_job(current)
         payload = {
             "session_id": session_id,
             "workflow_id": workflow_id,
             "definition": dict(definition),
             "snapshot": dict(snapshot),
         }
-        await self.redis.hset(
-            key,
-            mapping={
-                "job_id": workflow_id,
-                "session_id": session_id,
-                "workflow_id": workflow_id,
-                "status": "queued",
-                "payload": json.dumps(payload, ensure_ascii=False, default=str),
-                "updated_at": str(time.time()),
-            },
+        accepted = await self.redis.eval(
+            _ENQUEUE_SCRIPT, 2, key, self.queue_key,
+            workflow_id, session_id, json.dumps(payload, ensure_ascii=False, default=str),
+            json.dumps(dict(snapshot), ensure_ascii=False, default=str),
+            str(time.time()), self.lease_seconds * 4,
         )
-        await self.redis.expire(key, self.lease_seconds * 4)
-        await self.redis.rpush(self.queue_key, workflow_id)
+        if accepted == -1:
+            raise ValueError("workflow belongs to another session")
+        if accepted == 0:
+            return self._decode_job(await self.redis.hgetall(key))
         await self.publish_event(workflow_id, {"type": "workflow.queued", "status": "queued"})
         return WorkflowJob(workflow_id, session_id, dict(definition), dict(snapshot), "queued", workflow_id)
 
@@ -84,13 +106,12 @@ class WorkflowJobStore:
         workflow_id = item[1]
         if isinstance(workflow_id, bytes):
             workflow_id = workflow_id.decode()
-        values = await self.redis.hgetall(self.state_key(workflow_id))
-        if str(values.get("status") or "") != "queued":
-            return None
-        await self.redis.hset(
-            self.state_key(workflow_id),
-            mapping={"status": "running", "owner": self.worker_id, "updated_at": str(time.time())},
+        accepted = await self.redis.eval(
+            _CLAIM_SCRIPT, 1, self.state_key(workflow_id), self.worker_id, str(time.time()),
         )
+        if not accepted:
+            return None
+        values = await self.redis.hgetall(self.state_key(workflow_id))
         await self.publish_event(workflow_id, {"type": "workflow.running", "status": "running"})
         values["status"] = "running"
         return self._decode_job(values)
@@ -101,7 +122,8 @@ class WorkflowJobStore:
         now = time.time()
         async for key in self.redis.scan_iter(match=f"{self.prefix}:state:*"):
             values = await self.redis.hgetall(key)
-            if str(values.get("status") or "") != "running":
+            status = str(values.get("status") or "")
+            if status not in {"running", "queued"}:
                 continue
             updated_at = float(values.get("updated_at") or 0)
             if now - updated_at <= self.lease_seconds:
@@ -109,8 +131,12 @@ class WorkflowJobStore:
             workflow_id = str(values.get("workflow_id") or "")
             if not workflow_id:
                 continue
-            await self.redis.hset(key, mapping={"status": "queued", "updated_at": str(now)})
-            await self.redis.rpush(self.queue_key, workflow_id)
+            accepted = await self.redis.eval(
+                _RECOVER_SCRIPT, 2, key, self.queue_key,
+                status, values.get("updated_at") or "0", str(now), workflow_id,
+            )
+            if not accepted:
+                continue
             await self.publish_event(workflow_id, {"type": "workflow.recovered", "status": "queued"})
             recovered += 1
         return recovered
@@ -147,8 +173,23 @@ class WorkflowJobStore:
         result = await self.redis.xadd(self.event_key(workflow_id), values, maxlen=5000, approximate=True)
         return result.decode() if isinstance(result, bytes) else str(result)
 
-    async def read_events(self, workflow_id: str, *, after_id: str = "0-0", block_ms: int = 0, count: int = 100) -> list[tuple[str, dict[str, Any]]]:
-        result = await self.redis.xread({self.event_key(workflow_id): after_id}, count=max(1, count), block=max(0, block_ms))
+    async def read_events(
+        self,
+        workflow_id: str,
+        *,
+        after_id: str = "0-0",
+        block_ms: Optional[int] = None,
+        count: int = 100,
+    ) -> list[tuple[str, dict[str, Any]]]:
+        # Redis interprets BLOCK 0 as an infinite wait.  A normal snapshot
+        # lookup must return immediately when no stream exists; only the SSE
+        # follow path supplies a positive polling timeout.
+        block = None if block_ms is None or block_ms <= 0 else block_ms
+        result = await self.redis.xread(
+            {self.event_key(workflow_id): after_id},
+            count=max(1, count),
+            block=block,
+        )
         if not result:
             return []
         rows = []
@@ -184,11 +225,15 @@ class WorkflowJobStore:
         if isinstance(raw, bytes):
             raw = raw.decode()
         payload = json.loads(raw)
+        latest = values.get("snapshot")
+        if isinstance(latest, bytes):
+            latest = latest.decode()
+        snapshot = json.loads(latest) if latest else payload.get("snapshot") or {}
         return WorkflowJob(
             workflow_id=str(payload.get("workflow_id") or values.get("workflow_id") or ""),
             session_id=str(payload.get("session_id") or values.get("session_id") or ""),
             definition=dict(payload.get("definition") or {}),
-            snapshot=dict(payload.get("snapshot") or {}),
+            snapshot=dict(snapshot),
             status=str(values.get("status") or "queued"),
             job_id=str(values.get("job_id") or payload.get("workflow_id") or ""),
         )

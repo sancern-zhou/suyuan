@@ -26,8 +26,11 @@ def test_fixed_query_modes_are_registered_and_bounded():
 def test_monitoring_prompt_describes_runtime_owned_fixed_flow():
     prompt = build_react_system_prompt("query_monitoring")
     assert "固定工作流" in prompt
-    assert "同一轮发出多个工具调用" in prompt
-    assert "禁止多语句 SQL" in prompt
+
+    from app.agent.workflow.mode_workflows import get_mode_workflow
+    acquire = get_mode_workflow("query_monitoring").phases[0].description
+    assert "同一轮发出全部相互独立的查询" in acquire
+    assert "禁止多语句 SQL" in acquire
 
 
 def test_forecast_prompt_preserves_forecast_provenance_boundary():
