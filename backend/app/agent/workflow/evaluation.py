@@ -48,7 +48,7 @@ def default_cases() -> list[EvaluationCase]:
         EvaluationCase("multi_city", "query", "对比甲市、乙市、丙市2026年9月1日至3日PM2.5三日均值（键 mean_甲市、mean_乙市、mean_丙市），计算最高与最低均值之差（键 spread）。",
                        {f"air_{city}": value for city, value in air.items()},
                        {"mean_甲市": 20, "mean_乙市": 40, "mean_丙市": 30, "spread": 20}, tuple(f"air_{city}" for city in air)),
-        EvaluationCase("air_weather", "expert", "研判甲市2026年9月1日至3日PM2.5与风速的关系：计算PM2.5均值（mean_pm25）、风速均值（mean_wind）、Pearson相关系数（correlation），对齐日期并说明能否据此认定因果。",
+        EvaluationCase("air_weather", "expert", "研判甲市2026年9月1日至3日逐日PM2.5日均值与逐日平均风速的关系：计算PM2.5均值（mean_pm25）、风速均值（mean_wind）、Pearson相关系数（correlation），对齐日期并说明能否据此认定因果。不要改用逐小时口径。",
                        {"air_甲市": air["甲市"], "weather_甲市": weather},
                        {"mean_pm25": 20, "mean_wind": 2, "correlation": -1}, ("air_甲市", "weather_甲市"), True),
     ]
@@ -58,7 +58,7 @@ FINAL_SCHEMA = {
     "type": "object", "required": ["facts", "evidence", "summary"],
     "properties": {
         "facts": {"type": "object", "additionalProperties": {"type": "number"}},
-        "evidence": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "array", "description": "原样复制已取得的file_path；只放路径，不附括号、来源说明或Markdown。说明写入summary。", "items": {"type": "string"}},
         "summary": {"type": "string"},
         "causal_claim": {"type": "string", "enum": ["not_established", "established", "not_applicable"]},
     },
@@ -131,9 +131,9 @@ class EvaluationRunner:
                 if name in names:
                     schemas.append(tool_schema(name, description, {"type": "object", "properties": {
                         "cities": {"type": "array", "items": {"type": "string"}}}, "required": ["cities"]}))
-            if "read_file" in names:
-                schemas.append(tool_schema("read_file", "读取已交付的评测数据文件，优先复用上游 file_path，避免重复取数。", {
-                    "type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}))
+        if "read_file" in names:
+            schemas.append(tool_schema("read_file", "读取已交付的评测数据文件，优先复用上游 file_path，避免重复取数。", {
+                "type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}))
         if parent and self.variant == "dag":
             if "run_agent_workflow" not in names:
                 raise ValueError("DAG delegation is disabled by this project's parent whitelist")
@@ -208,7 +208,16 @@ class EvaluationRunner:
         self.metrics.active_children += 1
         self.metrics.peak_children = max(self.metrics.peak_children, self.metrics.active_children)
         try:
-            result = await self.model_loop(mode, kwargs["goal"] + "\n" + kwargs.get("context_str", ""), parent=False)
+            if isinstance(self.model, ReplayChildModel) and kwargs["goal"] == "analysis":
+                # Exercise the real dependency handle handoff without reacquiring data.
+                paths = [handle["file_path"] for handle in kwargs.get("_upstream_handles", []) if handle.get("file_path")]
+                if len(set(paths)) != len(self.case.required_sources):
+                    raise ValueError("upstream evidence handles are incomplete")
+                for path in paths:
+                    await self.dispatch("read_file", {"path": path}, mode=mode, parent=False)
+                result = {"facts": {}, "evidence": paths, "summary": "upstream data reused"}
+            else:
+                result = await self.model_loop(mode, kwargs["goal"] + "\n" + kwargs.get("context_str", ""), parent=False)
             paths = [path for path in result.get("evidence", []) if path in self.paths.values()]
             structured = {"findings": [{"statement": f"{key}={value}"} for key, value in result.get("facts", {}).items()],
                           "evidence": [{"id": path, "kind": "file"} for path in paths],
@@ -289,6 +298,9 @@ class EvaluationRunner:
         else:
             nodes = [{"task_id": name, "target_mode": "query_forecast" if name.startswith("weather") else "query_monitoring_city",
                       "goal": name, "task_contract": {"deliverables": ["data"]}} for name in self.case.datasets]
+            if self.case.mode == "expert":
+                nodes.append({"task_id": "analysis", "target_mode": "expert_analysis", "goal": "analysis",
+                              "dependencies": list(self.case.datasets), "task_contract": {"deliverables": ["analysis"]}})
             await self.dispatch("run_agent_workflow", {"workflow": {"nodes": nodes}}, mode=self.case.mode, parent=True)
         return {"facts": self.case.expected, "evidence": list(self.paths.values()), "summary": "deterministic replay",
                 "causal_claim": "not_established" if self.case.no_causality else "not_applicable"}
