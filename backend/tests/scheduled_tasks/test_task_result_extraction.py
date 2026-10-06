@@ -19,7 +19,13 @@ def _execution(**overrides) -> TaskExecution:
                 step_id="task",
                 status=ExecutionStatus.SUCCESS,
                 agent_prompt="prompt",
-                agent_response="结论：昨日 PM2.5 未超标。报告：/tmp/report.docx",
+                agent_response=(
+                    "市一中站CO空间偏高，实测0.421毫克/立方米，周边均值0.195，判定本地累积。\n"
+                    "\n"
+                    "**执行结果**\n"
+                    "- 报告ID: xuchang_daily_review_20261005\n"
+                    "- 报告: /tmp/report.docx"
+                ),
             )
         ],
     )
@@ -78,9 +84,31 @@ def test_extraction_falls_back_to_event_attributes():
     assert result.station_id == "station-42"
     assert result.station_name == "测试站"
     assert result.pollutant == "O3"
-    assert result.conclusion == "结论：昨日 PM2.5 未超标。报告：/tmp/report.docx"
+    assert result.conclusion == "市一中站CO空间偏高，实测0.421毫克/立方米，周边均值0.195，判定本地累积。"
     assert result.conclusion_source == "agent_response"
     assert result.document_paths == ["/tmp/report.docx"]
+
+
+def test_conclusion_fallback_skips_blank_lines_and_truncates():
+    long_line = "长" * 300
+    execution = _execution(
+        steps=[
+            StepExecution(
+                step_id="task",
+                status=ExecutionStatus.SUCCESS,
+                agent_prompt="prompt",
+                agent_response=f"\n  \n{long_line}\n第二行",
+            )
+        ],
+    )
+    result = extract_task_result(
+        execution=execution,
+        event=None,
+        agent_result=None,
+        case=None,
+    )
+    assert result.conclusion == "长" * 200
+    assert result.conclusion_source == "agent_response"
 
 
 def test_extraction_collects_images_and_documents():
