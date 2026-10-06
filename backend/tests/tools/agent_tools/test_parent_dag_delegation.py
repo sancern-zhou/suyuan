@@ -22,6 +22,8 @@ def test_parent_tools_and_project_prompt_receive_delegation_guidance(monkeypatch
         assert "项目职责边界" in prompt
         assert "精简子 Agent 与依赖工作流" in prompt
         assert "query_monitoring_station" in prompt
+        assert "能一次批量取数时优先批量查询" in prompt
+        assert "DAG 会增加模型调用" in prompt
     assert "expert_meteorology" in build_react_system_prompt("expert")
     # Data-source catalogs can mention expert routing; only the delegation contract
     # determines which child types the query parent is authorized to call.

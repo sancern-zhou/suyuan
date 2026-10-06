@@ -34,8 +34,11 @@ def build_delegation_contract(mode: str, available_tools: list[str]) -> str:
         return ""
     common = (
         "\n\n## 精简子 Agent 与依赖工作流\n"
-        "简单且数据单一的任务直接使用本模式工具完成；独立的多源、多区域或多时段任务，"
-        "使用 run_agent_workflow 按任务依赖并行执行。一次性委托可使用 call_sub_agent。"
+        "简单任务直接使用本模式工具完成。同源、同口径的多城市或多时段查询，"
+        "能一次批量取数时优先批量查询，不按城市或日期机械拆成多个 Agent。"
+        "需要独立专业处理、隔离较大上下文或存在明确依赖的子任务，且工作量值得委派时，"
+        "使用 run_agent_workflow 按任务依赖并行执行；DAG 会增加模型调用与结果整合成本。"
+        "一次性委托可使用 call_sub_agent；已有数据优先交给子 Agent 分析，不重复取数。"
         "每个节点保留用户的地域、时间范围、指标口径和交付要求，不通过委派扩大本模式职责。"
         "站点数据使用 query_monitoring_station，城市数据与城市对比使用 query_monitoring_city，"
         "气象实况与预报数据使用 query_forecast；跨层级拆成独立节点。"

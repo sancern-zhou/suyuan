@@ -1,6 +1,5 @@
 """Gold scoring and controlled comparison must not turn failures into wins."""
 import pytest
-from types import SimpleNamespace
 
 from app.agent.workflow.evaluation import EvaluationRunner, ReplayChildModel, default_cases, score_result
 
@@ -36,7 +35,9 @@ async def test_replay_exercises_both_paths_without_fake_token_counts(index, tmp_
         assert result["quality"]["passed"]
         assert result["duplicate_acquisitions"] == 0
         assert result["usage"]["input_tokens"] is None
-        assert result["node_count"] == (len(case.datasets) if variant == "dag" else 0)
+        assert result["node_count"] == (len(case.datasets) + int(case.mode == "expert") if variant == "dag" else 0)
+        if variant == "dag" and case.mode == "expert":
+            assert sum(call["tool"] == "read_file" for call in result["tool_calls"]) == 2
 
 
 @pytest.mark.asyncio
@@ -58,6 +59,8 @@ async def test_child_cannot_call_dag_or_read_another_cases_file(tmp_path):
         await runner.dispatch("run_agent_workflow", {}, mode="query_monitoring_city", parent=False)
     with pytest.raises(ValueError, match="fixture files"):
         await runner.business_tool("read_file", {"path": "/tmp/other.json"})
+    assert "read_file" in {tool["name"] for tool in runner.schemas("query", parent=True)}
+    assert "read_file" not in {tool["name"] for tool in runner.schemas("query_monitoring_city", parent=False)}
 
 
 @pytest.mark.asyncio
