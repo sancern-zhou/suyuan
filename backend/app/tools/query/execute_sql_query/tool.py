@@ -6,6 +6,7 @@
 """
 
 from typing import Dict, Any, Optional, TYPE_CHECKING, List
+import asyncio
 import pyodbc
 import structlog
 
@@ -440,7 +441,7 @@ class BaseSQLQueryTool(LLMTool):
 
         # 判断是查看表结构还是执行SQL
         if describe_table:
-            return self._describe_table(describe_table, database)
+            return await asyncio.to_thread(self._describe_table, describe_table, database)
         else:
             return await self._execute_sql_query(sql, database, limit, context)
 
@@ -672,7 +673,9 @@ class BaseSQLQueryTool(LLMTool):
             safe_sql = self._sanitize_limit_for_sqlserver(sql, limit)
 
             # 3. 执行查询
-            results = self._execute_query(safe_sql, database)
+            # pyodbc is synchronous. Run it outside the Agent event loop so
+            # independent read-only query tools can actually execute in parallel.
+            results = await asyncio.to_thread(self._execute_query, safe_sql, database)
 
             logger.info(
                 "sql_query_success",

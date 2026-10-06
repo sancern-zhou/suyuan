@@ -40,6 +40,7 @@ import structlog
 from app.tools.artifact_utils import attach_rendered_qmd_report_resources
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_refs import build_data_file_ref, build_file_ref, build_visual_ref, merge_refs
+from app.agent.context.data_shape import MAX_SHAPE_COLUMNS
 from app.utils.path_config import (
     PROJECT_ROOT,
     agent_declared_input_roots,
@@ -530,6 +531,12 @@ class ExecutePythonTool(LLMTool):
                 result["data"]["data_file_paths"] = python_data_paths
                 result.setdefault("metadata", {})
                 result["metadata"]["data_file_paths"] = python_data_paths
+                shapes = self._prefer_sidecar_data_shapes(
+                    self._extract_python_data_shapes(result["data"].get("output", "")),
+                    context,
+                )
+                if shapes:
+                    result["data_shapes"] = shapes
                 if result.get("success", False):
                     result["summary"] = (
                         f"{result.get('summary', '✅ 工具已执行完成')} | "
@@ -939,6 +946,10 @@ class ExecutePythonTool(LLMTool):
             )
 
             declared_data_paths = self._extract_python_data_file_paths(stdout or "")
+            data_shapes = self._prefer_sidecar_data_shapes(
+                self._extract_python_data_shapes(stdout or ""),
+                context,
+            )
             output = stdout or ""
             if stderr:
                 output += f"\n错误输出:\n{stderr}"
@@ -987,7 +998,8 @@ class ExecutePythonTool(LLMTool):
                 "success": True,
                 "data": {"output": output, "declared_data_file_paths": declared_data_paths,
                          "execution": diagnostics},
-                "summary": "✅ 工具已执行完成，计算任务已完成"
+                "summary": "✅ 工具已执行完成，计算任务已完成",
+                **({"data_shapes": data_shapes} if data_shapes else {}),
             }
 
         except subprocess.TimeoutExpired:
@@ -1812,6 +1824,46 @@ def artifact_path(filename: str) -> str:
                 refs.append(match)
         return refs
 
+    def _extract_python_data_shapes(self, output: str) -> Dict[str, Dict[str, Any]]:
+        """Extract per-file data_shape printed by the injected save_data() helper."""
+        if not output:
+            return {}
+        shapes: Dict[str, Dict[str, Any]] = {}
+        for match in re.findall(r"PYTHON_DATA_FILE_SHAPE:([^\s]+\.json):(\{.*\})", output):
+            path, payload = match
+            try:
+                shapes[path] = json.loads(payload)
+            except Exception:
+                continue
+        return shapes
+
+    def _prefer_sidecar_data_shapes(
+        self,
+        shapes: Dict[str, Dict[str, Any]],
+        context: Any,
+    ) -> Dict[str, Dict[str, Any]]:
+        """stdout 里的形状可能是截断版；sidecar（<file>.data_shape.json）有全量时优先。
+
+        截断形状仅在沙箱 sidecar 写入失败时兜底，保证资源元数据拿到完整列清单。
+        """
+        if not shapes or not context:
+            return shapes
+        get_data_shape = getattr(context, "get_data_shape", None)
+        if not callable(get_data_shape):
+            return shapes
+        resolved: Dict[str, Dict[str, Any]] = {}
+        for file_path, shape in shapes.items():
+            try:
+                full_shape = get_data_shape(file_path)
+            except Exception:
+                full_shape = None
+            resolved[file_path] = (
+                full_shape
+                if isinstance(full_shape, dict) and full_shape.get("columns")
+                else shape
+            )
+        return resolved
+
     def _extract_echarts_format(self, output: str) -> dict:
         """Backward-compatible single-option extractor."""
         options = self._extract_echarts_formats(output)
@@ -2060,6 +2112,59 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
     file_path = __SESSION_PREFIX__ + "/" + filename
     __ALLOWED_DATA_FILES__.add(str(absolute_path.resolve()))
     print(f"PYTHON_DATA_FILE_SAVED:{file_path}")
+
+    # data_shape：真实列名/读回类型/行数，随工具结果返回 LLM 上下文
+    try:
+        row_count = len(payload) if isinstance(payload, list) else 1
+        columns_with_types = {}
+        is_frame = False
+        try:
+            import pandas as _pd
+            if isinstance(data, _pd.DataFrame):
+                is_frame = True
+                for _name in data.columns:
+                    _dtype = str(data[_name].dtype)
+                    if _dtype.startswith('datetime'):
+                        columns_with_types[str(_name)] = 'datetime-str'
+                    elif _dtype in ('int64', 'int32'):
+                        columns_with_types[str(_name)] = 'int'
+                    elif _dtype in ('float64', 'float32'):
+                        columns_with_types[str(_name)] = 'float'
+                    elif _dtype == 'bool':
+                        columns_with_types[str(_name)] = 'bool'
+                    else:
+                        columns_with_types[str(_name)] = 'str'
+        except Exception:
+            is_frame = False
+        if not is_frame and isinstance(payload, list) and payload and isinstance(payload[0], dict):
+            for _name, _value in payload[0].items():
+                columns_with_types[str(_name)] = (
+                    'bool' if isinstance(_value, bool)
+                    else 'int' if isinstance(_value, int)
+                    else 'float' if isinstance(_value, float)
+                    else 'str'
+                )
+        shape = {
+            'columns': [{'name': n, 'type': t} for n, t in columns_with_types.items()],
+            'row_count': row_count,
+            'source': 'dataframe' if is_frame else 'inferred',
+        }
+        # 全量形状写 sidecar（<file>.data_shape.json）供资源元数据/下游 DAG 复用；
+        # stdout 只打截断版（前 __MAX_SHAPE_COLUMNS__ 列 + 总列数），避免宽表把几 KB
+        # JSON 灌进 LLM 上下文。
+        try:
+            absolute_path.with_suffix('.data_shape.json').write_text(
+                json.dumps(shape, ensure_ascii=False), encoding='utf-8')
+        except Exception:
+            pass
+        shape_view = dict(shape)
+        _shape_columns = shape_view.get('columns') or []
+        if len(_shape_columns) > __MAX_SHAPE_COLUMNS__:
+            shape_view['columns_total'] = len(_shape_columns)
+            shape_view['columns'] = _shape_columns[:__MAX_SHAPE_COLUMNS__]
+        print("PYTHON_DATA_FILE_SHAPE:" + file_path + ":" + json.dumps(shape_view, ensure_ascii=False))
+    except Exception:
+        pass
     return file_path
 
 # ===== 数据访问上下文注入完成 =====
@@ -2072,6 +2177,9 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
         context_injection_code = context_injection_code.replace("__SESSION_DATA_DIR__", session_data_dir)
         context_injection_code = context_injection_code.replace("__SESSION_PREFIX__", session_prefix)
         context_injection_code = context_injection_code.replace("__AGENT_PROJECT_ROOT__", repr(str(PROJECT_ROOT)))
+        context_injection_code = context_injection_code.replace(
+            "__MAX_SHAPE_COLUMNS__", str(int(MAX_SHAPE_COLUMNS))
+        )
 
         # 在代码开头插入上下文代码
         injected_code = context_injection_code + code

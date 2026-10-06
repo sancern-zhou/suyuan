@@ -14,7 +14,7 @@ Session支持：
 from contextlib import nullcontext
 import asyncio
 import json
-from typing import Dict, Any, Literal, Optional, List
+from typing import Dict, Any, Callable, Literal, Optional, List
 import structlog
 from datetime import datetime
 import uuid
@@ -29,6 +29,15 @@ from app.agent.session.workspace_routing import (
 from app.agent.selection_context import load_skill_selection
 from app.agent.prompts.tool_registry import get_tools_by_mode
 from app.agent.workflow.capabilities import build_child_capability_policy
+from app.agent.workflow.resource_handoff import (
+    import_workflow_handles,
+    result_resource_declarations,
+    stored_resource_ref,
+)
+from app.agent.workflow.target_mode_contract import (
+    build_target_mode_contract,
+    target_mode_values,
+)
 from app.agent.workflow.protocol import (
     build_result_envelope,
     extract_structured_result,
@@ -38,7 +47,12 @@ from app.agent.workflow.runtime import WorkflowRuntime
 from app.agent.workflow.actors import child_actor_registry
 from app.agent.workflow.profiles import get_agent_profile, merge_denied_tools
 from app.agent.workflow.background_tasks import background_task_registry
-from app.utils.path_config import format_agent_path, resolve_agent_path
+from app.utils.path_config import (
+    format_agent_path,
+    get_data_registry,
+    is_path_within,
+    resolve_agent_path,
+)
 
 logger = structlog.get_logger()
 
@@ -46,7 +60,26 @@ logger = structlog.get_logger()
 session_manager = get_session_manager()
 
 # ⚠️ 支持多种模式：assistant, query, report, social, chart, expert, ops
-AgentMode = Literal["assistant", "query", "report", "social", "chart", "expert", "ops", "board", "ppt"]
+AgentMode = Literal[
+    "assistant", "query", "query_monitoring", "query_forecast", "report", "social", "chart", "expert",
+    "expert_meteorology", "expert_analysis", "ops", "board", "ppt", "knowledge",
+]
+
+_DEFAULT_CHILD_MAX_ITERATIONS = {
+    "expert_meteorology": 15,
+    "expert_analysis": 20,
+    "expert": 30,
+    # Fixed query workflows are runtime-bounded to four phases/turns.
+    "query_monitoring": 4,
+    "query_forecast": 4,
+}
+
+
+def _resolve_child_max_iterations(target_mode: str, requested: Optional[int]) -> int:
+    default = _DEFAULT_CHILD_MAX_ITERATIONS.get(str(target_mode), 120)
+    if requested is None:
+        return default
+    return max(1, min(int(requested), 120))
 
 
 class CallSubAgentTool(LLMTool):
@@ -76,8 +109,8 @@ class CallSubAgentTool(LLMTool):
                 "properties": {
                     "target_mode": {
                         "type": "string",
-                    "enum": ["assistant", "query", "report", "social", "chart", "expert", "ops", "board", "ppt"],
-                    "description": "目标 Agent 模式。query 仅处理广东省环境数据查询及相关统计导出，不处理招投标、中标、企业采购、普通Excel或省外/全国数据查询；招投标由通用助手直接使用专用工具完成。"
+                        "enum": target_mode_values(),
+                        "description": "目标 Agent 模式。能力与工具边界：" + build_target_mode_contract(),
                     },
                     "profile": {
                         "type": "string",
@@ -155,6 +188,12 @@ class CallSubAgentTool(LLMTool):
                         "minimum": 0,
                         "maximum": 2,
                         "description": "结构化结果校验失败时的自动修复轮数，默认1，最多2轮。"
+                    },
+                    "max_iterations": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 120,
+                        "description": "本次子 Agent 最大推理轮次；未指定时按专家类型使用较小默认值。",
                     },
                     "workflow_run_id": {
                         "type": "string",
@@ -240,13 +279,13 @@ class CallSubAgentTool(LLMTool):
             }
         run_in_background = bool(kwargs.get("run_in_background", False))
         if not run_in_background:
-            return await self._execute_foreground(context=context, **kwargs)
+            return await self._execute_foreground_as_subagent(context=context, **kwargs)
 
         task_id = kwargs.get("task_id") or f"task-{uuid.uuid4().hex}"
         foreground_kwargs = dict(kwargs)
         foreground_kwargs["task_id"] = task_id
         foreground_kwargs["run_in_background"] = False
-        task = asyncio.create_task(self._execute_foreground(context=context, **foreground_kwargs))
+        task = asyncio.create_task(self._execute_foreground_as_subagent(context=context, **foreground_kwargs))
         record = background_task_registry.launch(
             task_id,
             task,
@@ -271,6 +310,19 @@ class CallSubAgentTool(LLMTool):
             "summary": "后台子Agent已启动",
         }
 
+    async def _execute_foreground_as_subagent(self, **kwargs):
+        """以 subagent 调用方档位执行子 Agent（思考策略按此关闭慢思考）。"""
+        from app.services.llm_thinking_policy import (
+            reset_agent_caller_tier,
+            set_agent_caller_tier,
+        )
+
+        token = set_agent_caller_tier("subagent")
+        try:
+            return await self._execute_foreground(**kwargs)
+        finally:
+            reset_agent_caller_tier(token)
+
     async def _execute_foreground(
         self,
         context: Optional[Any] = None,  # ✅ ExecutionContext（放在第一位）
@@ -291,6 +343,7 @@ class CallSubAgentTool(LLMTool):
         task_contract: Optional[Dict[str, Any]] = None,
         result_schema: Optional[Dict[str, Any]] = None,
         repair_attempts: int = 1,
+        max_iterations: Optional[int] = None,
         workflow_run_id: Optional[str] = None,
         allowed_tool_names: Optional[List[str]] = None,
         denied_tool_names: Optional[List[str]] = None,
@@ -298,6 +351,8 @@ class CallSubAgentTool(LLMTool):
         deadline_at: Optional[str] = None,
         profile: Optional[str] = None,
         run_in_background: bool = False,
+        _upstream_handles: Optional[List[Dict[str, Any]]] = None,
+        _on_session_started: Optional[Callable[[str], None]] = None,
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
         """
@@ -379,6 +434,21 @@ class CallSubAgentTool(LLMTool):
         try:
             # 获取父Agent模式
             parent_mode = self._get_parent_mode(context)
+            if parent_mode == "report" and target_mode == "query":
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "result": (
+                        "报告 Agent 不调用综合 query 子代理：监测历史数据用 "
+                        "query_monitoring，气象与预报数据用 query_forecast。"
+                    ),
+                    "data": {},
+                    "metadata": {
+                        "schema_version": "workflow.v1",
+                        "generator": "call_sub_agent",
+                    },
+                    "summary": "报告编排不允许综合问数子代理",
+                }
             runtime_metadata = dict(getattr(context, "runtime_metadata", {}) or {}) if context is not None else {}
             agent_depth = int(runtime_metadata.get("agent_depth", 0) or 0)
             max_agent_depth = int(runtime_metadata.get("max_agent_depth", 2) or 2)
@@ -627,11 +697,20 @@ class CallSubAgentTool(LLMTool):
                     query=effective_goal,
                     parent_mode=parent_mode,
                     child_mode=target_mode,
+                    task_id=effective_task_id,
+                    parent_task_id=parent_task_id,
                     snapshot=snapshot,
                 )
 
             workflow_runtime.set_persist(persist_workflow_snapshot)
             persist_workflow_snapshot(workflow_runtime.snapshot())
+            self._persist_turn_start(
+                session_id=session_id,
+                user_query=effective_goal,
+                task_id=effective_task_id,
+            )
+            if _on_session_started is not None:
+                _on_session_started(session_id)
             if workflow_runtime.check_deadline(workflow_run.run_id):
                 return {
                     "status": "cancelled",
@@ -676,9 +755,57 @@ class CallSubAgentTool(LLMTool):
                 ),
             )
 
+            handoff_resource_service = getattr(tool_executor, "resource_service", None)
+            imported_resource_refs: List[Dict[str, Any]] = []
+            parent_resource_handles = await self._collect_parent_resource_handles(context)
+            upstream_group_ids = {
+                (str(item.get("source_session_id") or ""), str(item.get("group_id") or ""))
+                for item in (_upstream_handles or [])
+                if item.get("source_session_id") and item.get("group_id")
+            }
+            parent_resource_handles = [
+                item
+                for item in parent_resource_handles
+                if (
+                    str(item.get("source_session_id") or ""),
+                    str(item.get("group_id") or ""),
+                ) not in upstream_group_ids
+            ]
+            imported_parent_resource_refs: List[Dict[str, Any]] = []
+            if _upstream_handles or parent_resource_handles:
+                if handoff_resource_service is None:
+                    from app.agent.resources.resource_service import SessionResourceService
+
+                    handoff_resource_service = SessionResourceService.database()
+                if parent_resource_handles:
+                    imported_parent_resource_refs = await import_workflow_handles(
+                        handoff_resource_service,
+                        target_session_id=str(session_id),
+                        run_id=workflow_run.run_id,
+                        handles=parent_resource_handles,
+                    )
+                if _upstream_handles:
+                    imported_resource_refs = await import_workflow_handles(
+                        handoff_resource_service,
+                        target_session_id=str(session_id),
+                        run_id=workflow_run.run_id,
+                        handles=_upstream_handles,
+                    )
+                workflow_runtime.append(
+                    workflow_run.run_id,
+                    "task.resources_imported",
+                    payload={
+                        "requested_count": len(_upstream_handles or []) + len(parent_resource_handles),
+                        "imported_count": len(imported_resource_refs) + len(imported_parent_resource_refs),
+                        "resource_ids": [
+                            item["resource_id"]
+                            for item in [*imported_parent_resource_refs, *imported_resource_refs]
+                        ],
+                    },
+                )
+
             # 3. 构建子 Agent 请求：ReActAgent 会自行构建系统提示，因此把任务、
             # 补充上下文和规范化后的工作目录作为本轮用户请求一起传入。
-            parent_resource_lines = await self._collect_parent_resource_lines(context)
             scheduled_task_context = (
                 getattr(context, "scheduled_task_context", None)
                 if context is not None
@@ -689,11 +816,16 @@ class CallSubAgentTool(LLMTool):
                 context=effective_context,
                 workspace_path=effective_workspace,
                 target_mode=target_mode,
-                parent_resource_lines=parent_resource_lines,
+                parent_resource_lines=self._format_imported_resource_lines(
+                    imported_parent_resource_refs
+                ),
                 scheduled_task_context=scheduled_task_context,
                 skill_id=selected_child_skill.skill_id if selected_child_skill else None,
                 task_contract=task_contract,
                 result_schema=result_schema,
+                upstream_resource_lines=self._format_imported_resource_lines(
+                    imported_resource_refs
+                ),
             )
             logger.debug(
                 "child_request_prompt_built",
@@ -709,8 +841,9 @@ class CallSubAgentTool(LLMTool):
             child_registry = capability_policy.filter_registry(
                 tool_executor.tool_registry if tool_executor else None
             )
+            iteration_limit = _resolve_child_max_iterations(target_mode, max_iterations)
             sub_agent = ReActAgent(
-                max_iterations=120,  # 子Agent默认120次迭代
+                max_iterations=iteration_limit,
                 enable_memory=True,  # ✅ 启用记忆（子Agent会自动创建 UnifiedMemoryManager）
                 tool_registry=child_registry  # 子 Agent 只获得策略允许的工具
             )
@@ -780,7 +913,13 @@ class CallSubAgentTool(LLMTool):
                             ),
                         ):
                             # Capture the actual streaming time for later latency review.
-                            turn_events.append({**event, "_recorded_at": datetime.now().isoformat()})
+                            recorded_event = {
+                                **event,
+                                "_recorded_at": datetime.now().isoformat(),
+                                "_trace_id": uuid.uuid4().hex,
+                            }
+                            turn_events.append(recorded_event)
+                            self._persist_execution_event(session_id, recorded_event)
                 return turn_events
 
             result_events = await run_child_turn(
@@ -841,6 +980,7 @@ class CallSubAgentTool(LLMTool):
                 status=final_result["status"],
                 answer_length=len(final_result.get("answer", "")),
                 iterations=len([e for e in result_events if e.get("type") == "tool_call"]),
+                max_iterations=iteration_limit,
                 session_id=session_id
             )
 
@@ -851,6 +991,15 @@ class CallSubAgentTool(LLMTool):
                 "image_paths": self._extract_image_paths(result_events),  # 本地路径（文件操作）
                 "tool_calls": self._extract_tool_calls(result_events)
             }
+            if handoff_resource_service is None:
+                from app.agent.resources.resource_service import SessionResourceService
+
+                handoff_resource_service = SessionResourceService.database()
+            structured_data["resource_refs"] = await self._collect_resource_refs(
+                result_events,
+                session_id=str(session_id),
+                service=handoff_resource_service,
+            )
             if result_schema:
                 structured_data["structured_result"] = structured_result
                 structured_data["validation_errors"] = validation_errors
@@ -869,8 +1018,14 @@ class CallSubAgentTool(LLMTool):
                     else {"answer": final_result.get("answer", "")}
                 ),
                 artifacts=[
-                    {"kind": "file", "path": path}
-                    for path in structured_data["file_paths"]
+                    {
+                        "kind": ref.get("kind") or "artifact",
+                        "resource_id": ref["resource_id"],
+                        "source_session_id": ref["source_session_id"],
+                        "name": ref.get("label"),
+                        **({"path": ref["file_path"]} if ref.get("file_path") else {}),
+                    }
+                    for ref in structured_data["resource_refs"]
                 ] + [
                     {"kind": "chart", "url": url}
                     for url in structured_data["chart_urls"]
@@ -989,6 +1144,10 @@ class CallSubAgentTool(LLMTool):
             if "reasoning" in final_result.get("data", {}):
                 enhanced_metadata["reasoning"] = final_result["data"]["reasoning"]
 
+            resources = result_resource_declarations(
+                str(parent_task_id or effective_task_id),
+                {effective_task_id: {"data": structured_data}},
+            )
             return {
                 "status": "success" if succeeded else ("invalid_result" if validation_errors else final_result["status"]),
                 "success": succeeded,
@@ -1001,7 +1160,8 @@ class CallSubAgentTool(LLMTool):
                     else f"{self._get_mode_name(target_mode)}结果未通过结构化协议校验"
                     if validation_errors
                     else f"{self._get_mode_name(target_mode)}执行失败"
-                )
+                ),
+                "resources": resources,
             }
 
         except Exception as e:
@@ -1034,12 +1194,12 @@ class CallSubAgentTool(LLMTool):
                 "summary": "任务执行失败"
             }
 
-    async def _collect_parent_resource_lines(self, context) -> List[str]:
-        """列出父会话已登记文件资源，供子 Agent 直接按路径读取。
+    async def _collect_parent_resource_handles(self, context) -> List[Dict[str, Any]]:
+        """Collect path-backed parent resources for child-session import.
 
-        子 Agent 使用独立 session_id，查不到父会话的资源目录；把父会话
-        catalog 中的真实文件路径随任务一起下发，子 Agent 的沙箱会按
-        白名单把这些文件 ro-bind 进执行环境。
+        The child uses an isolated session and therefore cannot read the parent
+        catalog directly. Returning typed handles lets the runtime register the
+        same resource groups in the child before its sandbox is configured.
         """
         try:
             executor = getattr(context, "tool_executor", None)
@@ -1049,25 +1209,22 @@ class CallSubAgentTool(LLMTool):
                 return []
 
             from app.agent.resources.resource_map import resource_access_path
-            from app.utils.path_config import get_data_registry
-
-            registry_root = str(get_data_registry())
             page = await service.list_resources(parent_session_id, limit=500)
-            lines = []
+            handles = []
             seen_paths = set()
             for stored in page.resources:
-                if stored.kind not in {"file", "artifact"}:
-                    continue
                 access_path = resource_access_path(stored)
-                if not access_path or not access_path.startswith(registry_root):
+                if not access_path or not is_path_within(
+                    resolve_agent_path(access_path), [get_data_registry()]
+                ):
                     continue
                 if access_path in seen_paths:
                     continue
                 seen_paths.add(access_path)
-                lines.append(f"- {stored.label} -> {access_path}")
-                if len(lines) >= 50:
+                handles.append(stored_resource_ref(stored))
+                if len(handles) >= 50:
                     break
-            return lines
+            return handles
         except Exception as exc:
             logger.warning("parent_resource_transfer_failed", error=str(exc))
             return []
@@ -1083,6 +1240,7 @@ class CallSubAgentTool(LLMTool):
         skill_id: Optional[str] = None,
         task_contract: Optional[Dict[str, Any]] = None,
         result_schema: Optional[Dict[str, Any]] = None,
+        upstream_resource_lines: Optional[List[str]] = None,
     ) -> str:
         """
         构建子 Agent 本轮请求（分离 goal、补充上下文和工作目录）
@@ -1140,6 +1298,11 @@ class CallSubAgentTool(LLMTool):
             parts.append("**父会话可用文件**（可直接按路径读取，勿编造其他路径）:\n")
             parts.extend(parent_resource_lines)
             parts.append("")
+
+        if upstream_resource_lines:
+            parts.append("## 上游依赖资源（已登记到当前子会话，可直接复用）\n")
+            parts.extend(upstream_resource_lines)
+            parts.append("禁止对这些资源已经覆盖的数据重复查询。\n")
 
         # 添加工作目录（如果有）
         if workspace_path and workspace_path.strip():
@@ -1262,26 +1425,101 @@ class CallSubAgentTool(LLMTool):
         return structured_result, validate_result_schema(structured_result, schema)
 
     def _extract_file_paths(self, events: list) -> list:
-        """从事件流中提取所有file_path"""
-        file_paths = []
+        """Extract file handles from current tool_result and legacy events."""
+        file_paths: List[str] = []
+
+        def add(value: Any) -> None:
+            values = value if isinstance(value, list) else [value]
+            for item in values:
+                if isinstance(item, str) and item.strip() and item not in file_paths:
+                    file_paths.append(item)
+
+        def collect(mapping: Any) -> None:
+            if not isinstance(mapping, dict):
+                return
+            for key in (
+                "file_path",
+                "report_file_path",
+                "file_paths",
+                "report_file_paths",
+                "data_file_paths",
+            ):
+                add(mapping.get(key))
+            metadata = mapping.get("metadata")
+            if isinstance(metadata, dict):
+                for key in ("file_path", "report_file_path", "file_paths", "report_file_paths"):
+                    add(metadata.get(key))
+            resources = mapping.get("resources")
+            if isinstance(resources, list):
+                for resource in resources:
+                    if isinstance(resource, dict):
+                        locator = resource.get("locator")
+                        if isinstance(locator, dict):
+                            add(locator.get("path"))
+
         for event in events:
-            # 从observation中提取
             if event.get("type") == "observation":
-                if "file_path" in event:
-                    file_paths.append(event["file_path"])
-                # 从data字段中提取
-                if "data" in event and isinstance(event["data"], dict):
-                    if "file_path" in event["data"]:
-                        file_paths.append(event["data"]["file_path"])
-                    # 从data字段中的file_paths数组提取
-                    if "file_paths" in event["data"] and isinstance(event["data"]["file_paths"], list):
-                        file_paths.extend(event["data"]["file_paths"])
-                    # 从 metadata.file_path 中提取
-                    if "metadata" in event["data"] and isinstance(event["data"]["metadata"], dict):
-                        metadata = event["data"]["metadata"]
-                        if isinstance(metadata.get("file_path"), str):
-                            file_paths.append(metadata["file_path"])
-        return list(set(file_paths))  # 去重
+                collect(event)
+                collect(event.get("data"))
+            elif event.get("type") == "tool_result":
+                data = event.get("data")
+                collect(data)
+                result = data.get("result") if isinstance(data, dict) else None
+                collect(result)
+                collect(result.get("data") if isinstance(result, dict) else None)
+        return file_paths
+
+    @staticmethod
+    def _format_imported_resource_lines(refs: List[Dict[str, Any]]) -> List[str]:
+        lines = []
+        for ref in refs:
+            details = [
+                f"resource_id={ref['resource_id']}",
+                f"kind={ref.get('kind') or 'unknown'}",
+            ]
+            if ref.get("file_path"):
+                details.append(f"file_path={ref['file_path']}")
+            lines.append(f"- {ref.get('label') or ref['resource_id']} | " + " | ".join(details))
+        return lines
+
+    @staticmethod
+    def _extract_resource_ids(events: list) -> List[str]:
+        resource_ids: List[str] = []
+
+        def add(values: Any) -> None:
+            if not isinstance(values, list):
+                return
+            for value in values:
+                text = str(value or "").strip()
+                if text and text not in resource_ids:
+                    resource_ids.append(text)
+
+        for event in events:
+            data = event.get("data") if isinstance(event, dict) else None
+            if not isinstance(data, dict):
+                continue
+            add(data.get("changed_resource_ids"))
+            result = data.get("result")
+            if not isinstance(result, dict):
+                continue
+            tracking = result.get("resource_tracking")
+            if isinstance(tracking, dict) and tracking.get("durable") is True:
+                add(tracking.get("resource_ids"))
+        return resource_ids
+
+    async def _collect_resource_refs(
+        self,
+        events: list,
+        *,
+        session_id: str,
+        service: Any,
+    ) -> List[Dict[str, Any]]:
+        refs: List[Dict[str, Any]] = []
+        for resource_id in self._extract_resource_ids(events):
+            stored = await service.get_resource(session_id, resource_id, status="active")
+            if stored is not None:
+                refs.append(stored_resource_ref(stored))
+        return refs
 
     def _extract_chart_urls(self, events: list) -> list:
         """从事件流中提取所有图表URL（用于前端渲染）"""
@@ -1413,6 +1651,64 @@ class CallSubAgentTool(LLMTool):
         """生成子Agent session_id"""
         return f"{parent_mode}__to__{child_mode}__{uuid.uuid4().hex}"
 
+    @staticmethod
+    def _compact_execution_event(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        kind = event.get("type")
+        if kind not in {"tool_call", "tool_result", "agent_finish"}:
+            return None
+        data = event.get("data") or {}
+        if not isinstance(data, dict):
+            data = {}
+        entry: Dict[str, Any] = {"type": kind}
+        trace_id = event.get("_trace_id")
+        if trace_id:
+            entry["id"] = str(trace_id)
+        timestamp = event.get("_recorded_at") or event.get("timestamp")
+        if timestamp:
+            entry["timestamp"] = str(timestamp)
+        if kind in {"tool_call", "tool_result"}:
+            entry["tool_name"] = str(
+                data.get("tool_name") or data.get("name") or event.get("generator")
+                or event.get("tool") or "unknown"
+            )[:120]
+        if kind == "tool_result":
+            result = data.get("result")
+            entry["success"] = not bool(data.get("is_error")) and not (
+                isinstance(result, dict) and result.get("success") is False
+            )
+        return entry
+
+    @staticmethod
+    def _persist_turn_start(*, session_id: str, user_query: str, task_id: str) -> None:
+        """Make the current task visible while the child is still running."""
+        session = session_manager.get_session(session_id)
+        if session is None:
+            return
+        last = session.conversation_history[-1] if session.conversation_history else {}
+        if last.get("role") != "user" or last.get("content") != user_query:
+            session.conversation_history.append({
+                "id": f"{task_id}:user:{uuid.uuid4().hex}",
+                "role": "user",
+                "content": user_query,
+                "timestamp": datetime.now().isoformat(),
+            })
+            session_manager.append_session_transcript(session, update_timestamp=True)
+
+    @classmethod
+    def _persist_execution_event(cls, session_id: str, event: Dict[str, Any]) -> None:
+        """Append one sanitized tool event so inspectors can follow live progress."""
+        entry = cls._compact_execution_event(event)
+        if entry is None:
+            return
+        session = session_manager.get_session(session_id)
+        if session is None:
+            return
+        history = list(session.metadata.get("execution_history") or [])
+        entry["sequence"] = int(history[-1].get("sequence") or 0) + 1 if history else 1
+        history.append(entry)
+        session.metadata["execution_history"] = history[-500:]
+        session_manager.save_session_metadata(session, update_timestamp=True)
+
     def _update_session(
         self,
         session_id: str,
@@ -1444,11 +1740,13 @@ class CallSubAgentTool(LLMTool):
             )
 
         # 添加对话历史
-        session.conversation_history.append({
-            "role": "user",
-            "content": user_query,
-            "timestamp": datetime.now().isoformat()
-        })
+        last_message = session.conversation_history[-1] if session.conversation_history else {}
+        if last_message.get("role") != "user" or last_message.get("content") != user_query:
+            session.conversation_history.append({
+                "role": "user",
+                "content": user_query,
+                "timestamp": datetime.now().isoformat()
+            })
 
         if task_id or parent_task_id or task_contract or result_schema:
             workflow = dict(session.metadata.get("workflow") or {})
@@ -1468,27 +1766,12 @@ class CallSubAgentTool(LLMTool):
             # Keep a compact, durable trace beside the child transcript. Raw tool
             # inputs and outputs can be large or sensitive and are deliberately omitted.
             history = list(session.metadata.get("execution_history") or [])
+            persisted_ids = {str(item.get("id")) for item in history if item.get("id")}
             for event in result_events:
-                kind = event.get("type")
-                if kind not in {"tool_call", "tool_result", "agent_finish"}:
+                entry = self._compact_execution_event(event)
+                if entry is None or entry.get("id") in persisted_ids:
                     continue
-                data = event.get("data") or {}
-                if not isinstance(data, dict):
-                    data = {}
-                entry = {"sequence": len(history) + 1, "type": kind}
-                timestamp = event.get("_recorded_at") or event.get("timestamp")
-                if timestamp:
-                    entry["timestamp"] = str(timestamp)
-                if kind in {"tool_call", "tool_result"}:
-                    entry["tool_name"] = str(
-                        data.get("tool_name") or data.get("name") or event.get("generator")
-                        or event.get("tool") or "unknown"
-                    )[:120]
-                if kind == "tool_result":
-                    result = data.get("result")
-                    entry["success"] = not bool(data.get("is_error")) and not (
-                        isinstance(result, dict) and result.get("success") is False
-                    )
+                entry["sequence"] = int(history[-1].get("sequence") or 0) + 1 if history else 1
                 history.append(entry)
             session.metadata["execution_history"] = history
         session.conversation_history.append({
@@ -1520,6 +1803,8 @@ class CallSubAgentTool(LLMTool):
         query: str,
         parent_mode: str,
         child_mode: str,
+        task_id: str,
+        parent_task_id: Optional[str],
         snapshot: Dict[str, Any],
     ) -> None:
         """Persist runtime state independently from the final transcript."""
@@ -1535,4 +1820,14 @@ class CallSubAgentTool(LLMTool):
                 is_sub_agent_session=True,
             )
         session.metadata["workflow_runtime"] = snapshot
+        workflow = dict(session.metadata.get("workflow") or {})
+        workflow.update({
+            "protocol_version": "workflow.v1",
+            "task_id": task_id,
+            "parent_task_id": parent_task_id,
+            "status": "running",
+            "workflow_runtime": snapshot,
+            "updated_at": datetime.now().isoformat(),
+        })
+        session.metadata["workflow"] = workflow
         session_manager.save_session_metadata(session, update_timestamp=True)

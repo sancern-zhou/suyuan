@@ -73,19 +73,54 @@ def _node_history(snapshot: dict[str, Any], task_id: str, child: Any | None, aft
     child_runtime = workflow.get("workflow_runtime") or {}
     child_events = [event for event in child_runtime.get("events") or [] if isinstance(event, dict)][-100:]
     trace = (child.metadata or {}).get("execution_history") or [] if child is not None else []
+    trace = [item for item in trace if isinstance(item, dict)]
+    conversation = []
+    if child is not None:
+        for index, message in enumerate(child.conversation_history[-100:]):
+            if not isinstance(message, dict) or message.get("role") not in {"user", "assistant"}:
+                continue
+            conversation.append({
+                "id": str(message.get("id") or f"{task_id}:{index}"),
+                "role": message["role"],
+                "content": message.get("content") or "",
+                "timestamp": message.get("timestamp"),
+            })
     events = [
         {"sequence": int(event.get("sequence") or 0),
          "type": str(event.get("event_type") or "unknown"),
          "status": event.get("status"), "timestamp": event.get("timestamp"), "source": "node"}
         for event in runtime_events
     ]
+    tool_calls = sum(1 for item in trace if item.get("type") == "tool_call")
+    tool_results = [item for item in trace if item.get("type") == "tool_result"]
+    latest_trace = trace[-1] if trace else None
+    node_status = (snapshot.get("graph") or {}).get(task_id, {}).get("status")
+    if node_status in {"succeeded", "success", "cached", "reused"}:
+        progress_label = "分析已完成"
+    elif node_status in {"failed", "cancelled"}:
+        progress_label = "分析已结束"
+    elif latest_trace and latest_trace.get("type") == "tool_call":
+        progress_label = f"正在调用 {latest_trace.get('tool_name') or '工具'}"
+    elif latest_trace and latest_trace.get("type") == "tool_result":
+        progress_label = f"已完成 {latest_trace.get('tool_name') or '工具'}"
+    elif latest_trace and latest_trace.get("type") == "agent_finish":
+        progress_label = "正在整理最终回复"
+    else:
+        progress_label = "正在分析任务"
     # Child event sequences live in a separate journal. Return each journal
     # separately so pagination remains stable across retries and restarts.
     return {
         "task_id": task_id,
-        "status": (snapshot.get("graph") or {}).get(task_id, {}).get("status"),
+        "status": node_status,
         "child_session_id": child.session_id if child is not None else None,
         "child_mode": child.child_mode if child is not None else None,
+        "progress": {
+            "label": progress_label,
+            "tool_calls": tool_calls,
+            "tool_results": len(tool_results),
+            "failed_tools": sum(1 for item in tool_results if item.get("success") is False),
+        },
+        "conversation": conversation,
         "answer": next((str(message.get("content") or "") for message in reversed(child.conversation_history)
                         if message.get("role") == "assistant"), "") if child is not None else "",
         "node_events": events,
@@ -93,10 +128,10 @@ def _node_history(snapshot: dict[str, Any], task_id: str, child: Any | None, aft
                           "type": str(event.get("event_type") or "unknown"),
                           "status": event.get("status"), "timestamp": event.get("timestamp")}
                          for event in child_events],
-        "execution_history": [dict(item) for item in trace if isinstance(item, dict)
-                              and int(item.get("sequence") or 0) > after][:limit],
-        "has_more": sum(1 for item in trace if isinstance(item, dict)
-                        and int(item.get("sequence") or 0) > after) > limit,
+        "execution_history": [dict(item) for item in trace
+                              if int(item.get("sequence") or 0) > after][:limit],
+        "has_more": sum(1 for item in trace
+                        if int(item.get("sequence") or 0) > after) > limit,
     }
 
 
@@ -193,8 +228,10 @@ async def workflow_node_history(
              else None)
     if child is not None:
         workflow = (child.metadata or {}).get("workflow") or {}
+        child_task_id = workflow.get("task_id")
+        valid_task_ids = {task_id, f"{workflow_id}:{task_id}"}
         if (not child.is_sub_agent_session or workflow.get("parent_task_id") != workflow_id
-                or workflow.get("task_id") != task_id):
+                or child_task_id not in valid_task_ids):
             child = None
     if child is None:
         raise HTTPException(status_code=404, detail="node_history_not_found")

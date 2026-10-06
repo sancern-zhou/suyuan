@@ -97,3 +97,55 @@ def test_load_data_resolves_project_paths_without_using_cwd(monkeypatch, tmp_pat
     context.available_file_paths = [str(source)]
     code = module.ExecutePythonTool()._inject_data_context("assert load_data('backend/registry/data/input.json') == [{'value': 0}]", context)
     exec(code, {})
+
+
+@pytest.mark.asyncio
+async def test_save_data_prints_truncated_shape_and_keeps_full_sidecar(monkeypatch, tmp_path):
+    import re
+
+    from app.agent.context import data_files
+
+    registry = tmp_path / "registry"
+    session_dir = registry / "sessions" / "test" / "data"
+    session_dir.mkdir(parents=True)
+    monkeypatch.setattr(module, "get_data_registry", lambda: registry)
+    monkeypatch.setattr(data_files, "get_data_registry", lambda: registry)
+
+    def fake_get_data_shape(path):
+        sidecar = resolve_agent_path(path).with_suffix(".data_shape.json")
+        if sidecar.is_file():
+            return json.loads(sidecar.read_text())
+        return None
+
+    context = session_context(session_dir, get_data_shape=fake_get_data_shape)
+    tool = module.ExecutePythonTool()
+    code = (
+        "row = {f'col_{i}': i for i in range(40)}\n"
+        "saved = save_data([row], schema='wide')\n"
+        "print('SAVED', saved)\n"
+    )
+    result = await tool.execute(context=context, code=code)
+    assert result["success"] is True, result
+
+    [saved_path] = result["data"]["data_file_paths"]
+    output = result["data"]["output"]
+
+    # stdout 只带截断形状：前 12 列 + columns_total，宽表不得灌爆 LLM 上下文
+    shape_line = re.search(r"PYTHON_DATA_FILE_SHAPE:\S+:(\{.*\})", output)
+    assert shape_line, output
+    printed = json.loads(shape_line.group(1))
+    assert len(printed["columns"]) == module.MAX_SHAPE_COLUMNS
+    assert printed["columns_total"] == 40
+    assert "col_39" not in output
+    assert len(output) < 2000
+
+    # sidecar 保存全量形状
+    sidecar = resolve_agent_path(saved_path).with_suffix(".data_shape.json")
+    full_shape = json.loads(sidecar.read_text())
+    assert len(full_shape["columns"]) == 40
+    assert "columns_total" not in full_shape
+
+    # 结果里的 data_shapes 优先采用 sidecar 全量形状
+    registered = result["data_shapes"][saved_path]
+    assert len(registered["columns"]) == 40
+    assert "columns_total" not in registered

@@ -11,6 +11,20 @@
 
 from typing import Dict, Iterable, List
 
+# 工具实现可由显式后端工作流继续使用，但不得向任何 Agent 暴露。
+AGENT_HIDDEN_TOOL_NAMES = frozenset({
+    "aggregate_data",
+    "calculate_pmf", "calculate_pm_pmf", "calculate_vocs_pmf",
+    "analyze_trajectory_sources",
+    "calculate_reconstruction", "calculate_carbon", "calculate_soluble",
+    "calculate_crustal", "calculate_trace", "predict_air_quality",
+    "generate_map",
+    "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
+    "query_gd_suncere_city_hour", "query_gd_suncere_city_day",
+    "query_gd_suncere_district_day", "query_gd_suncere_district_report",
+    "query_gd_suncere_station_hour_new",
+})
+
 # ========================================
 # 工具有序白名单（仅包含工具名称）
 # ========================================
@@ -137,6 +151,46 @@ EXPERT_TOOL_NAMES = [
     "create_report_package",
 ]
 
+# ===== 气象专家模式工具（报告 DAG 子专家，精简配置） =====
+# 只保留气象研判必需工具；污染物/组分工具不进入本白名单。
+EXPERT_METEOROLOGY_TOOL_NAMES = [
+    "list_session_resources",
+    "publish_session_file",
+    # 上游产物复用与中间产物落地
+    "read_file",
+    "write_file",
+    # 气象数据
+    "get_observed_meteorology",
+    "get_weather_forecast",
+    "get_current_weather",
+    "get_platform_weather_image",
+    # 输送分析
+    "meteorological_trajectory_analysis",
+    "resolve_station_geo",
+    "execute_sql_query",
+    # 计算与绘图
+    "execute_python",
+    "create_business_chart",
+]
+
+# ===== 常规分析专家模式工具（报告 DAG 子专家，精简配置） =====
+# 只保留监测数据研判必需工具；气象/轨迹工具不进入本白名单。
+# 注意：组分数据工具（get_vocs_data 等）在 AGENT_HIDDEN_TOOL_NAMES 中，不对 Agent 暴露。
+EXPERT_ANALYSIS_TOOL_NAMES = [
+    "list_session_resources",
+    "publish_session_file",
+    # 上游产物复用与中间产物落地
+    "read_file",
+    "write_file",
+    # 监测数据
+    "query_xcai_city_history",
+    "query_national_city_air_quality",
+    "execute_sql_query",
+    # 计算与可视化
+    "execute_python",
+    "create_business_chart",
+]
+
 # ===== 问数模式工具 =====
 QUERY_TOOL_NAMES = [
     "list_session_resources",
@@ -181,6 +235,41 @@ QUERY_TOOL_NAMES = [
     "create_report_package",
 ]
 
+# ===== Fixed report-DAG data acquisition modes =====
+QUERY_MONITORING_TOOL_NAMES = [
+    "list_session_resources",
+    "read_session_resource",
+    "publish_session_file",
+    "read_file",
+    "write_file",
+    "query_xcai_city_history",
+    "execute_sql_query",
+    "execute_crawler_sql_query",
+    "execute_postgres_sql_query",
+    "query_airdata_platform",
+    "airdata_calc_report_summary",
+    "xuchang_station_catalog",
+    "query_national_city_air_quality",
+    "resolve_station_geo",
+    "execute_python",
+]
+
+QUERY_FORECAST_TOOL_NAMES = [
+    "list_session_resources",
+    "read_session_resource",
+    "publish_session_file",
+    "read_file",
+    "write_file",
+    "get_weather_data",
+    "get_current_weather",
+    "get_weather_forecast",
+    "query_airdata_platform",
+    "xuchang_station_catalog",
+    "resolve_station_geo",
+    "execute_postgres_sql_query",
+    "execute_python",
+]
+
 # ===== 知识问答模式工具 =====
 # 知识库检索为主；按需读取已注册的会话资源，并用网页搜索/抓取补充知识库不足。
 KNOWLEDGE_TOOL_NAMES = [
@@ -197,10 +286,9 @@ KNOWLEDGE_TOOL_NAMES = [
 # ===== 报告模式工具 =====
 REPORT_TOOL_NAMES = [
     "list_session_resources",
+    "read_session_resource",
     "publish_session_file",
-    # 数据查询
-    "execute_sql_query",
-    # 文件和执行
+    # 读取参考资料、报告草稿与记忆；编辑交付物与记忆，数据查询由 DAG 子节点完成
     "read_file",
     "write_file",
     "edit_file",
@@ -213,9 +301,7 @@ REPORT_TOOL_NAMES = [
     "execute_echarts_python",
     # 报告产物收口
     "create_report_package",
-    "publish_report",
-    # 报告工作流可按结构化任务协议委托专家分析
-    "call_sub_agent",
+    # 报告主 Agent 统一通过 DAG 委托子 Agent
     "run_agent_workflow",
 ]
 
@@ -445,7 +531,11 @@ def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
     将工具名称列表转换为字典格式（向后兼容）。
     字典保留插入顺序，因此列表顺序就是模式工具顺序。
     """
-    names = [name for name in tool_names if name not in AGENT_INTERNAL_TOOL_NAMES]
+    names = [
+        name
+        for name in tool_names
+        if name not in AGENT_HIDDEN_TOOL_NAMES and name not in AGENT_INTERNAL_TOOL_NAMES
+    ]
     if "list_session_resources" in names and "read_session_resource" not in names:
         names.insert(names.index("list_session_resources") + 1, "read_session_resource")
     return {name: "" for name in names}
@@ -454,6 +544,10 @@ def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
 ASSISTANT_TOOLS = _build_tool_dict(ASSISTANT_TOOL_NAMES)
 PPT_TOOLS = _build_tool_dict(PPT_TOOL_NAMES)
 EXPERT_TOOLS = _build_tool_dict(EXPERT_TOOL_NAMES)
+EXPERT_METEOROLOGY_TOOLS = _build_tool_dict(EXPERT_METEOROLOGY_TOOL_NAMES)
+EXPERT_ANALYSIS_TOOLS = _build_tool_dict(EXPERT_ANALYSIS_TOOL_NAMES)
+QUERY_MONITORING_TOOLS = _build_tool_dict(QUERY_MONITORING_TOOL_NAMES)
+QUERY_FORECAST_TOOLS = _build_tool_dict(QUERY_FORECAST_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
 KNOWLEDGE_TOOLS = _build_tool_dict(KNOWLEDGE_TOOL_NAMES)
 JIANGSU_QUERY_TOOLS = _build_tool_dict([
@@ -568,7 +662,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     根据模式获取工具有序白名单。
 
     Args:
-        mode: "assistant" | "ppt" | "expert" | "query" | "report" | "social" | "enforcement_exam" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
+        mode: "assistant" | "ppt" | "expert" | "expert_meteorology" | "expert_analysis" | "query" | "query_monitoring" | "query_forecast" | "report" | "social" | "enforcement_exam" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
 
     Returns:
         工具字典 {tool_name: ""}，key 顺序即工具顺序。
@@ -577,6 +671,10 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "assistant": ASSISTANT_TOOLS,
         "ppt": PPT_TOOLS,
         "expert": EXPERT_TOOLS,
+        "expert_meteorology": EXPERT_METEOROLOGY_TOOLS,
+        "expert_analysis": EXPERT_ANALYSIS_TOOLS,
+        "query_monitoring": QUERY_MONITORING_TOOLS,
+        "query_forecast": QUERY_FORECAST_TOOLS,
         "query": QUERY_TOOLS,
         "knowledge": KNOWLEDGE_TOOLS,
         "report": REPORT_TOOLS,
@@ -598,14 +696,19 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         raise ValueError(f"Unknown mode: {mode}")
 
     if project_tool_names is not None:
-        return _build_tool_dict(project_tool_names)
+        tools = _build_tool_dict(project_tool_names)
+    else:
+        extra_tool_names = _get_project_extra_tool_names_by_mode(mode)
+        base_names = list(mode_mapping[mode].keys())
+        if mode in {"assistant", "ppt", "expert", "query", "knowledge", "report", "chart", "board", "ops", "graph"}:
+            base_names.append("ask_user_question")
+        merged_names = base_names + [name for name in (extra_tool_names or []) if name not in base_names]
+        tools = _build_tool_dict(merged_names)
 
-    extra_tool_names = _get_project_extra_tool_names_by_mode(mode)
-    base_names = list(mode_mapping[mode].keys())
-    if mode in {"assistant", "ppt", "expert", "query", "knowledge", "report", "chart", "board", "ops", "graph"}:
-        base_names.append("ask_user_question")
-    merged_names = base_names + [name for name in (extra_tool_names or []) if name not in base_names]
-    return _build_tool_dict(merged_names)
+    disabled_tools = _get_project_disabled_tool_names()
+    if not disabled_tools:
+        return tools
+    return {name: description for name, description in tools.items() if name not in disabled_tools}
 
 
 def _load_project_context():
@@ -642,6 +745,19 @@ def _get_project_extra_tool_names_by_mode(mode: str) -> list[str]:
     except Exception:
         return []
     return context.manifest.backend.agent_mode_extra_tools.get(mode, [])
+
+
+def _get_project_disabled_tool_names() -> frozenset[str]:
+    """Return tools that the active project must not expose to agents."""
+    from app.project_config.loader import ProjectConfigError
+
+    try:
+        context = _load_project_context()
+    except ProjectConfigError:
+        raise
+    except Exception:
+        return frozenset()
+    return frozenset(context.manifest.backend.disabled_tools)
 
 
 def get_tool_order(mode: str) -> List[str]:
