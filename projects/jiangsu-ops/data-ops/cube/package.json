@@ -1,0 +1,14 @@
+{
+  "name": "jiangsu-cube",
+  "version": "0.1.0",
+  "private": true,
+  "description": "江苏运维语义层(Cube Core) — 指标口径唯一定义, 供智能体/前端经 REST 取数",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@cubejs-backend/postgres-driver": "^0.35.81",
+    "@cubejs-backend/server": "^0.35.81",
+    "express": "^4.21.2"
+  }
+}

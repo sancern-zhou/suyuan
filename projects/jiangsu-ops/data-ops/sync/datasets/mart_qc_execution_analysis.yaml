@@ -1,0 +1,50 @@
+# 数据集契约：mart_qc_execution_analysis
+dataset: mart_qc_execution_analysis
+description: >
+  江苏质控执行结果数据集。一行 = 一条质控任务执行结果（站点×污染物×零点/跨度检查），
+  数据窗口 2026-07-01 起（用户确认口径），约 21,750 行。合格判定直接采用平台
+  qc_historyresult.result 文本（合格/不合格），不重算判定规则。
+  用于质控合格率统计、不合格站点排名、按城市/污染物/任务类型分组分析。
+  源表 air_province_data.dbo.qc_historyresult（id 自增增量，5 分钟同步）。
+owner: 江苏运维平台组
+grain: 一行 = 一条质控任务执行结果
+freshness_slo: 30分钟（5分钟增量+宽表重建；源数据每日约08:00批量入库前一日结果）
+known_caveats:
+  - 质控仅覆盖约 23 个站点（省控质控试点范围），统计结果不能外推到全网 1509 站
+  - 任务类型仅两种：零点检查、跨度检查（各约 50%）
+  - is_qualified 由 result_cn='合格' 推导；判定阈值（inaccuracy 与 target 的限值）未本地重算
+  - 窗口按 create_time（入库时间）引导，个别 6 月末执行、7 月初入库的结果会包含在内（约265条）
+  - 站点经 uniquecode 关联 bsd_station；截至 2026-09-22 关联覆盖率 100%
+  - 7/1 之前的历史不同步；单站下钻（rId→状态/运行日志/监测曲线）走平台 API 工具
+columns:
+  - {name: id, business: 源记录ID(主键)}
+  - {name: uniquecode, business: 站点唯一编码}
+  - {name: station_code, business: 平台站点编码}
+  - {name: station_name, business: 站点名称}
+  - {name: city_code, business: 城市行政区码}
+  - {name: city_name, business: 城市名}
+  - {name: pollutant, business: 污染物(SO2/NOx/O3等)}
+  - {name: task_type, business: 任务类型(零点检查/跨度检查)}
+  - {name: result_cn, business: 平台判定文本(合格/不合格)}
+  - {name: is_qualified, business: 是否合格(布尔,由result_cn推导)}
+  - {name: qc_date, business: 执行日期(start_time取日)}
+  - {name: start_time, business: 执行开始时间}
+  - {name: end_time, business: 执行结束时间}
+  - {name: target_value, business: 目标值(跨度气浓度,零点为0)}
+  - {name: relevant_value, business: 响应值(仪器读数)}
+  - {name: inaccuracy, business: 相对误差}
+  - {name: relative_error, business: 相对误差(备用列,常为空)}
+  - {name: rid, business: 质控任务号(API下钻用)}
+  - {name: source_create_time, business: 源库入库时间}
+  - {name: synced_at, business: 重建时间}
+access:
+  tool: execute_jiangsu_mart_sql
+  role: agent_reader
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  维度 station_code/station_name/city_name/pollutant/task_type(零点检查/跨度检查)；
+  结果 result_cn(平台原始判定文本：合格/不合格)/is_qualified(布尔)；
+  时间 qc_date(执行日)/start_time/end_time/source_create_time；
+  证据 target_value/relevant_value/inaccuracy/relative_error/rid(下钻号)。
+  质控合格率统计、不合格站点排名查本表；注意质控仅覆盖约23个站点，不能代表全网；
+  单站质控下钻(运行日志/监测曲线)走平台API工具，本表只做统计。

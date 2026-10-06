@@ -1,0 +1,44 @@
+# 数据集契约：mart_alarm_event_analysis
+dataset: mart_alarm_event_analysis
+description: >
+  江苏站点告警事件数据集。一行=一条站点告警（2026-07-01 起，源 alm_summary）。
+  含告警级别/状态（已翻译）、生命周期时间、持续与处理时长、是否未处理、
+  告警后24小时内同站关联工单数。用于告警分析、告警→工单转化、未处理告警督办。
+owner: 江苏运维平台组
+grain: 一行 = 一条站点告警（alm_summary.Id）
+freshness_slo: 5分钟
+known_caveats:
+  - 仅含 alm_summary 站点告警；mot_alarm 平台监控告警无站点编码暂未纳入（需平台组确认 refid 语义）
+  - alarmlevel 中文映射按平台惯例（urgent=紧急/secondary=中级/commonly=一般），待业务确认
+  - ddalarmstate 1=未处理 3=已解除 已通过解除时间字段验证
+columns:
+  - {name: id, business: 告警源ID(主键)}
+  - {name: station_code, business: 站点编码}
+  - {name: station_name, business: 站点名称}
+  - {name: city_name, business: 城市名}
+  - {name: device_id, business: 设备ID}
+  - {name: alarm_content, business: 告警内容}
+  - {name: alarm_level, business: 级别原始值}
+  - {name: alarm_level_cn, business: 级别中文名}
+  - {name: alarm_state, business: 状态原始值}
+  - {name: alarm_state_cn, business: 状态中文, enum: {未处理: 需处置, 已解除: 已恢复}}
+  - {name: rule_type, business: 告警规则类型}
+  - {name: alarm_time, business: 告警时间}
+  - {name: handle_time, business: 处理时间}
+  - {name: remove_time, business: 解除时间}
+  - {name: duration_minutes, business: 告警持续时长(分钟), calc: 解除-发生}
+  - {name: handle_minutes, business: 处理时长(分钟), calc: 处理-发生}
+  - {name: is_unresolved, business: 是否未处理}
+  - {name: linked_work_orders_24h, business: 告警后24h内同站新建工单数}
+  - {name: source_updated_at, business: 源最后更新时间}
+  - {name: refreshed_at, business: 本表刷新时间}
+allowed_filters: [station_code, station_name, city_name, alarm_level_cn, alarm_state_cn, alarm_time, is_unresolved, rule_type]
+example_questions:
+  - 各市当前未处理告警数量排名？
+  - 江宁九龙湖站最近的告警都在报什么问题？
+  - 本月告警转工单的转化率（有 linked_work_orders_24h 的占比）？
+  - 哪些站点平均告警持续时间最长？
+join_notes: 单表即得；站点风险汇总见 mart_station_device_health
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  维度 station_code/station_name/city_name/alarm_level_cn(紧急/中级/一般)/alarm_state_cn(未处理/已解除)/rule_type/alarm_content；时间 alarm_time/handle_time/remove_time；指标 duration_minutes/handle_minutes/is_unresolved/linked_work_orders_24h。

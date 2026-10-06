@@ -1,0 +1,48 @@
+# 数据集契约：mart_performance_analysis
+dataset: mart_performance_analysis
+description: >
+  江苏站点月度考核数据集。一行 = 站点×月（2026-07 起，约 600 行，每日 02:30 全量重建）。
+  两率考核（设备正常运行率/数据准确率，源 opa_performance_tworate）与三项评分
+  （运维分/质控分/档案分/总分，源 opa_performance_qaqc）按站点+月份合成一张宽表。
+owner: 江苏运维平台组
+grain: 一行 = 站点×月
+freshness_slo: 26小时
+known_caveats:
+  - 重要·窗口内(2026-07起)无实际填报数据：全表均为占位值(-99/满分模板)。源库最新实际填报为
+    2025-04(两率)与 2024-08(评分)。考核场景的统计结果当前为空，必须向用户如实说明数据现状，
+    不得用占位值构造结论；平台恢复填报后本表自动生效
+  - 当月未结算的行评分为占位值 -99，已清洗为 NULL；is_settled 仅反映两率是否出数(validdays>0)
+  - 两表月份覆盖不同：tworate 缺 2026-07/08 行(源库即如此)，这两月两率列为空但 qaqc 评分可能有值
+  - qaqc 评分月中常为满分模板占位(如 20/20/10/50)，月度结算后才反映真实考核
+  - 运维单位(departmentname)为第三方运维公司名
+columns:
+  - {name: tworate_id, business: 两率表源ID}
+  - {name: qaqc_id, business: 评分表源ID}
+  - {name: perf_month, business: 考核月份(月初日期)}
+  - {name: station_code, business: 平台站点编码}
+  - {name: station_name, business: 站点名称}
+  - {name: city_code, business: 城市行政区码(经dim_station)}
+  - {name: city_name, business: 城市名}
+  - {name: operation_unit, business: 运维单位(第三方公司名)}
+  - {name: validdays, business: 有效天数}
+  - {name: is_settled, business: 当月是否已结算(布尔)}
+  - {name: device_working_rate, business: 设备正常运行率(-99已转NULL)}
+  - {name: deviceworkingdescription, business: 设备正常运行率说明}
+  - {name: data_accuracy_rate, business: 数据准确率(-99已转NULL)}
+  - {name: dataaccuracydescription, business: 数据准确率说明}
+  - {name: daily_operation_score, business: 运维分(-99已转NULL)}
+  - {name: qaqc_score, business: 质控分(-99已转NULL)}
+  - {name: archive_score, business: 档案分(-99已转NULL)}
+  - {name: total_score, business: 总分(-99已转NULL)}
+  - {name: synced_at, business: 重建时间}
+access:
+  tool: execute_jiangsu_mart_sql
+  role: agent_reader
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  一行=站点×月。perf_month/station_code/station_name/city_name/operation_unit(运维单位)；
+  两率 device_working_rate(设备正常运行率)/data_accuracy_rate(数据准确率)/validdays；
+  评分 daily_operation_score(运维分)/qaqc_score(质控分)/archive_score(档案分)/total_score(总分)。
+  重要：-99 占位已清洗为 NULL，is_settled=false 表示两率未出数。
+  数据现状：2026-07 以来窗口内无实际填报(最新实际为2025-04)，当前统计基本为空，如实说明；
+  平台恢复填报后，两率达标/不达标排名、考核分数趋势、按运维单位汇总查本表。

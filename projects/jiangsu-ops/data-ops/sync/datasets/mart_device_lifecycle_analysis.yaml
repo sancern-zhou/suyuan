@@ -1,0 +1,52 @@
+# 数据集契约：mart_device_lifecycle_analysis
+dataset: mart_device_lifecycle_analysis
+description: >
+  设备生命周期事件流数据集。一行 = 一条设备生命周期事件（2026-07-01 起），
+  每日 02:30 全量，窗口内约 700 行。
+  事件来源 = 状态变更日志 log_device（启用/故障/维修/备机/校准/停用等状态流转，
+  可关联故障工单号）∪ 报废审批 dev_scrap（报废理由与审批结果）。
+  回答"最近一周/一月设备周期发生了什么：哪些设备启用、故障维修、转备机、停用、报废"，
+  备机更换及时性分析查 DeviceSpare 状态流转。
+  源表 opa_product_data.dbo.log_device + dbo.DEV_SCRAP（每日全量）。
+owner: 江苏运维平台组
+grain: 一行 = 一条生命周期事件（event_id：log_* 或 scrap_*）
+freshness_slo: 26小时（每日全量）
+known_caveats:
+  - state_after/event_type 为平台原始枚举（如 DeviceSpare=转为备机、DeviceFault=转故障、
+    DeviceRepair=维修事件），中文语义按此理解但以平台为准，不得编造其他含义
+  - 日志窗口自 2026-07-01，更早的启用/故障历史不可查；报废事件为全量（行数极少）
+  - 部分事件无站点码（event_station 空）且回退设备台账归属站；个别设备已不在台账（孤儿 deviceid），
+    device_code/station_code 为空属正常
+  - remarks 常见"故障单：现场维修站点的故障设备"等，working_order_code 可关联
+    mart_work_order_analysis 看处置详情
+columns:
+  - {name: event_id, business: 事件ID(log_*/scrap_* 主键)}
+  - {name: event_source, business: 事件来源(log_device=状态变更日志/dev_scrap=报废审批)}
+  - {name: event_time, business: 事件时间}
+  - {name: device_id, business: 设备ID}
+  - {name: device_code, business: 设备编码}
+  - {name: station_code, business: 站点编码(事件站点优先,回退台账归属站)}
+  - {name: station_name, business: 站点名称(经dim_station)}
+  - {name: city_code, business: 城市行政区码(经dim_station)}
+  - {name: city_name, business: 城市名(经dim_station)}
+  - {name: device_type, business: 设备类型码}
+  - {name: device_type_name, business: 设备类型名(如 O3分析仪)}
+  - {name: device_model_id, business: 设备型号ID(可关联 dim_device_parameter 查参数阈值)}
+  - {name: state_after, business: 变更后状态枚举(DeviceNormal/DeviceFault/DeviceSpare/…)}
+  - {name: event_type, business: 事件动作枚举(DeviceStart/DeviceRepair/DeviceStop/…)}
+  - {name: remarks, business: 备注(如 故障单：现场维修站点的故障设备)}
+  - {name: working_order_code, business: 关联故障工单号}
+  - {name: scrap_reason, business: 报废理由(仅报废行)}
+  - {name: approve_result, business: 报废审批结果(仅报废行)}
+  - {name: synced_at, business: 重建时间}
+access:
+  tool: execute_jiangsu_mart_sql
+  role: agent_reader
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  event_id/event_source/event_time/device_code/station_code/station_name/city_name/device_type_name/
+  device_model_id/state_after/event_type/remarks/working_order_code/scrap_reason。
+  设备生命周期/设备周期/备机更换/启停报废类问题一律查本表, 不要用 dim_device.use_date 代替生命周期。
+  DeviceSpare=转为备机, DeviceFault=转故障, DeviceStart/DeviceStop=启用/停用, DeviceRepair=维修;
+  报废行 event_source='dev_scrap' 带 scrap_reason。working_order_code 关联 mart_work_order_analysis 看处置。
+  时间窗口≥2026-07-01。同站 DeviceSpare 流转间隔=备机更换周期的近似口径(注明估算性质)。

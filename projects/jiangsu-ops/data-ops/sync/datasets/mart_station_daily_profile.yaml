@@ -1,0 +1,33 @@
+# 数据集契约：mart_station_daily_profile
+dataset: mart_station_daily_profile
+description: >
+  江苏站点日概况数据集。一行=站点×日（2026-07-01 起，仅含有活动记录的站点日）。
+  含当日新建/完成/超期工单数、当日告警数、到站签到数。用于全网态势时间序列、
+  趋势与同期对比、异常日识别。
+owner: 江苏运维平台组
+grain: 一行 = 站点 × 自然日
+freshness_slo: 1天（每日 02:30 后刷新，含当日截至刷新时点数据）
+known_caveats:
+  - 当日数据在次日刷新前不完整（工单按创建时间落盘）
+  - attendance_signins 依赖源考勤表，7月以来源数据仅11条，近乎为空
+columns:
+  - {name: profile_date, business: 日期}
+  - {name: station_code, business: 站点编码}
+  - {name: station_name, business: 站点名称}
+  - {name: city_name, business: 城市名}
+  - {name: work_orders_created, business: 当日新建工单数}
+  - {name: work_orders_finished, business: 当日完成工单数}
+  - {name: overdue_orders_created, business: 当日新建且超期的工单数}
+  - {name: alarms, business: 当日告警数}
+  - {name: attendance_signins, business: 当日到站签到数(源数据稀疏)}
+  - {name: refreshed_at, business: 本表刷新时间}
+allowed_filters: [profile_date, station_code, station_name, city_name]
+example_questions:
+  - 最近7天全省每日告警总量趋势？
+  - 9月与8月各市月度工单量对比？
+  - 昨天哪些站点告警超过20条？
+  - 全省站点活跃度（有事件站点数）周环比
+join_notes: 单表即得；如需当前时点状态用 mart_station_device_health
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  profile_date/station_code/city_name/work_orders_created/work_orders_finished/overdue_orders_created/alarms/attendance_signins(源数据稀疏)。趋势/对比类问题查本表，当日数据次日凌晨才完整。

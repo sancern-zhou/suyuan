@@ -1,0 +1,41 @@
+# 数据集契约：dim_station
+dataset: dim_station
+description: >
+  江苏站点目录一致性维度表。一行 = 一个站点（全省 1509 站全量），
+  随 jiangsu_ods.bsd_station 每 5 分钟同步后重建（交换式，无空窗）。
+  统一站点/城市维度：所有宽表的站点与城市归属都应经本表关联；
+  bsd_city 的多层级 code 重复只在本表做一次 DISTINCT ON 去重。
+owner: 江苏运维平台组
+grain: 一行 = 一个站点（station_code）
+freshness_slo: 30分钟
+known_caveats:
+  - city_name 按 areacode 前4位映射地级市；行政区划调整时依赖源库 bsd_city 更新
+  - uniquecode 是质控等子系统关联键（qc_historyresult 无 stationcode，须经本表换算）
+  - 历史上历史站点（historycode/historyname 非空）仍按当前编码保留一行
+columns:
+  - {name: station_code, business: 平台站点编码(主键口径)}
+  - {name: station_name, business: 站点名称(positionname)}
+  - {name: uniquecode, business: 站点唯一编码(质控等子系统关联键)}
+  - {name: city_code, business: 城市行政区码(areacode)}
+  - {name: city_name, business: 城市名(已去重映射)}
+  - {name: towncode, business: 乡镇码}
+  - {name: longitude, business: 经度}
+  - {name: latitude, business: 纬度}
+  - {name: address, business: 地址}
+  - {name: station_type_id, business: 站点类型ID}
+  - {name: status, business: 启用状态}
+  - {name: is_monitor, business: 是否监测站}
+  - {name: is_contrast, business: 是否对照站}
+  - {name: manager, business: 管理人}
+  - {name: builddate, business: 建站日期}
+  - {name: stoptime, business: 停用时间}
+  - {name: updatetime, business: 源更新时间}
+  - {name: synced_at, business: 重建时间}
+access:
+  tool: execute_jiangsu_mart_sql
+  role: agent_reader
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  station_code(主键)/station_name/uniquecode/city_code/city_name/longitude/latitude/
+  station_type_id/status/is_monitor/is_contrast/address。
+  查站点名录、站点与城市归属、经纬度用本表；各宽表可用 station_code 或 uniquecode 关联本表补维度。

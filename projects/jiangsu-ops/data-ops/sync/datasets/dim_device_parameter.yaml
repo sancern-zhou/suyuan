@@ -1,0 +1,41 @@
+# 数据集契约：dim_device_parameter
+dataset: dim_device_parameter
+description: >
+  设备型号健康参数阈值维度表。一行 = 一个设备型号的一个受检参数及其上下限/预警限，
+  每日 02:30 全量，428 行（38 型号 × 参数，参数名非空的行）。
+  补充 alm_rule（污染指标告警阈值）之外的"设备健康参数"维度：
+  故障诊断时按站点设备的型号取参数核对清单，结合监测曲线/巡检读数判断硬件越限。
+  源表 air_province_bsd.dbo.bsd_moniter_parameter（每日全量，开 SCD2 快照）。
+owner: 江苏运维平台组
+grain: 一行 = 设备型号 × 受检参数（(devicemodel_id, parameterid) 源粒度唯一）
+freshness_slo: 26小时（每日全量）
+known_caveats:
+  - 源库 statusname(参数名) 约 37% 为空，这些行未进本表；参数名以 statusname 为准
+  - warntype=Range 为量程型参数（看 toplimit/lowlimit），State 为状态型参数（10 个，
+    限值可能为空，按是否在正常状态判断）
+  - devicemodel_id 与 dim_device.device_model_id 关联；model_device_count 为全省该型号设备数
+  - parameterid(178 个) 与参数名(121 个) 数量不一致，参数名字典来源待平台确认
+columns:
+  - {name: devicemodel, business: 设备型号ID(原始文本)}
+  - {name: devicemodel_id, business: 设备型号ID(数值, join dim_device.device_model_id)}
+  - {name: parameterid, business: 参数ID}
+  - {name: parameter_name, business: 参数名(如 采样流量/光室温度/转换炉温度)}
+  - {name: series, business: 系列号}
+  - {name: toplimit, business: 上限}
+  - {name: lowlimit, business: 下限}
+  - {name: warn_top_limit, business: 预警上限}
+  - {name: warn_low_limit, business: 预警下限}
+  - {name: unit, business: 单位}
+  - {name: warntype, business: 预警类型(Range=量程型/State=状态型)}
+  - {name: description, business: 参数说明(截断500字符)}
+  - {name: model_device_count, business: 全省该型号设备数}
+  - {name: synced_at, business: 重建时间}
+access:
+  tool: execute_jiangsu_mart_sql
+  role: agent_reader
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  devicemodel_id/parameterid/parameter_name/toplimit/lowlimit/warn_top_limit/warn_low_limit/unit/warntype/model_device_count。
+  诊断站点设备故障或生成巡检核对清单时, 先由 dim_device(按站点)取 device_model_id, 再查本表该型号的
+  参数清单与正常范围; 结合监测曲线/巡检读数判断越限。alm_rule 管污染指标告警阈值, 本表管设备健康参数。
+  warntype=Range 看上下限, State 为状态型(限值可能为空)。不得把本表参数越限直接说成数据超标。

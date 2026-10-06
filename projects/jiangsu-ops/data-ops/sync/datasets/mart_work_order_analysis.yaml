@@ -1,0 +1,74 @@
+# 数据集契约：mart_work_order_analysis
+# 本文件三用：治理文档 / describe_ops_dataset 返回 / Agent 提示词 schema 卡片
+dataset: mart_work_order_analysis
+description: >
+  江苏故障工单分析数据集。一行=一张故障工单（2026-07-01 起，已作废单未纳入）。
+  含站点/城市/设备维度、工单流转时间、预计算指标（响应/处理/修复时长、超期、
+  30天重复故障）和创建前24h关联告警数。数据来自运维平台每日同步。
+owner: 江苏运维平台组
+grain: 一行 = 一张故障工单（源表 mtc_WorkingOrder.Id）
+freshness_slo: 5分钟
+data_as_of: 由工具运行时返回 refreshed_at 最大值
+known_caveats:
+  - 派单/到站为代理口径：CH_Check 节点开始=派单，首个 FaultProcess 开始=到站；派单缺失回退工单创建时间
+  - 2小时响应(is_response_within_2h)仅对有到场节点的工单可评估(约14%)；当前流程数据中
+    CH_Check 与 FaultProcess 节点不同时出现，实际代理为创建→到站；审核关闭类工单无到场概念
+  - 4小时处置(is_recover_within_4h)=数据恢复正常(业务口径 2026-09-22 确认)，代理为触发告警解除：
+    取建单前24h~后1h内同站最近一条已解除告警，恢复耗时从告警发生起算；平台规则判定对
+    断数/恒值/超标类统一适用；约27%工单可评估(其余无已解除的关联告警)；恢复均值的82小时为数据现状
+  - 85% 工单未填设备ID，其重复故障判定为"仅站点"维度，见 repeat_fault_basis 列
+  - 平台存在大量长期未闭环的处理中工单，超期率(约85%)是数据现状不是统计错误
+  - 窗口自 2026-07-01，更早历史不可查；同比/年度分析不支持
+columns:
+  - {name: id, business: 工单源ID(主键)}
+  - {name: working_order_code, business: 工单号}
+  - {name: order_title, business: 工单标题}
+  - {name: order_type, business: 工单类型}
+  - {name: order_status, business: 状态原始值, enum: {Doing: 处理中, Finish: 已完成, Invalid: 已作废}}
+  - {name: order_status_cn, business: 状态中文名}
+  - {name: urgency_type, business: 紧急程度}
+  - {name: station_code, business: 站点编码}
+  - {name: station_name, business: 站点名称}
+  - {name: city_code, business: 城市行政区码}
+  - {name: city_name, business: 城市名, note: 按 bsd_station.areacode 前4位映射地级市}
+  - {name: device_id, business: 设备ID, note: 空=工单未关联设备}
+  - {name: operation_unit_id, business: 运维单位ID}
+  - {name: create_time, business: 创建时间}
+  - {name: dispatch_time, business: 派单时间(代理=CH_Check开始, 缺失回退创建时间前值为空)}
+  - {name: arrival_time, business: 到站时间(代理=首个FaultProcess开始)}
+  - {name: finish_time, business: 完成时间}
+  - {name: plan_finish_time, business: 计划完成时间}
+  - {name: current_point, business: 当前流程节点}
+  - {name: node_count, business: 流转节点数}
+  - {name: response_minutes, business: 响应时长(分钟), calc: 派单→到站, 口径确认: 2026-09-21}
+  - {name: process_minutes, business: 处理时长(分钟), calc: 到站→完成}
+  - {name: repair_minutes, business: 修复时长(分钟), calc: 创建→完成}
+  - {name: is_response_within_2h, business: 2小时内到站(布尔), calc: 响应时长<=120分钟, 口径确认: 2026-09-22, note: 仅到场单可评估(~14%)}
+  - {name: trigger_alarm_time, business: 关联触发告警发生时间}
+  - {name: recovery_time, business: 数据恢复正常时间(触发告警解除时间)}
+  - {name: recovery_hours, business: 恢复耗时(小时), calc: 告警解除-告警发生}
+  - {name: is_recover_within_4h, business: 4小时内数据恢复(布尔), calc: 恢复耗时<=4小时, 口径确认: 2026-09-22, note: 约27%可评估}
+  - {name: is_overdue, business: 是否超期, calc: 完成晚于计划 或 未完成且已过计划(作废单不计), 口径确认: 2026-09-21}
+  - {name: is_repeat_fault, business: 是否30天内重复故障, calc: 同站同设备本单创建前30天内存在其他工单, 口径确认: 2026-09-21}
+  - {name: repeat_fault_basis, business: 重复故障判定维度, enum: {站点+设备: 工单含设备ID, 仅站点(工单未填设备): 按站点判定}}
+  - {name: repeat_count_30d, business: 前30天同维度工单数}
+  - {name: alarm_count_1d, business: 创建前24小时同站告警数(alm_summary)}
+  - {name: source_updated_at, business: 源系统最后更新时间}
+  - {name: refreshed_at, business: 本表刷新时间}
+allowed_filters: [station_code, station_name, city_name, order_status, order_type, urgency_type, create_time, finish_time, is_overdue, is_repeat_fault, repeat_fault_basis]
+example_questions:
+  - 最近7天各市工单量和超期率排名？
+  - 苏州哪些站点30天内重复故障超过3次？
+  - 本月平均响应时长最长的5个站点？
+  - 当前处理中且已超期的工单按城市分组统计
+join_notes: 单表即得，无需 join；明细节点请用 mart_work_order_node_detail（二期）
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  维度 working_order_code/station_code/station_name/city_name/device_id/order_type/order_status_cn(处理中/已完成/已作废)/urgency_type；
+  时间 create_time/dispatch_time/arrival_time/finish_time/plan_finish_time；
+  指标 response_minutes(响应=派单→到站)/is_response_within_2h(2小时到站,仅到场单可评估~14%)/
+  trigger_alarm_time/recovery_time(数据恢复正常=触发告警解除)/recovery_hours/is_recover_within_4h(4小时恢复,~27%可评估)/
+  process_minutes/repair_minutes/is_overdue(按plan_finish_time)/
+  is_repeat_fault(同站同设备30天)/repeat_fault_basis/repeat_count_30d/alarm_count_1d/node_count。
+  注意：派单/到站为工作流节点代理口径；平台存在大量长期未闭环单，超期率~85%是数据现状；
+  SLA 统计须注明可评估工单占比，不得把不可评估单计入分母。

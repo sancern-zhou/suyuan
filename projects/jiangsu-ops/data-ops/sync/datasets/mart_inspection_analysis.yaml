@@ -1,0 +1,49 @@
+# 数据集契约：mart_inspection_analysis
+dataset: mart_inspection_analysis
+description: >
+  江苏巡检完成数据集。一行 = 一条巡检任务项（pw_TaskItem，站点×设备×周期），
+  数据窗口 2026-07-01 起（按 UpdateTime 引导），约 21,300 行，5 分钟增量。
+  巡检周期类型：周/月/季/半年/年。用于巡检完成率、超期未完成、按人员/单位完成量、
+  巡检转工单率分析。源表 opa_product_data.dbo.pw_TaskItem。
+owner: 江苏运维平台组
+grain: 一行 = 一条巡检任务项
+freshness_slo: 30分钟
+known_caveats:
+  - status 0/1/2 按数据分布推断为 未开始/处理中/已完成（94%已完成），语义待业务确认
+  - is_overdue = 计划周期结束日(plan_end_date)已过仍未完成；plan 窗口来自 pw_Task（每日全量），
+    当日新任务项可能短暂关联不到周期行
+  - has_linked_order 约97%（巡检项完成生成故障/巡检工单，WorkingOrderCode 关联）
+  - 窗口按 UpdateTime>=2026-07-01 引导，含少量 6 月前创建但近期更新的任务项
+columns:
+  - {name: id, business: 源记录ID(主键)}
+  - {name: uniquecode, business: 站点唯一编码}
+  - {name: station_code, business: 平台站点编码(经dim_station)}
+  - {name: station_name, business: 站点名称}
+  - {name: city_code, business: 城市行政区码}
+  - {name: city_name, business: 城市名}
+  - {name: rule_type, business: 周期类型原始值(Week/Month/Quarter/HalfYear/Year)}
+  - {name: rule_type_cn, business: 周期类型中文(周巡检/月巡检/季巡检/半年巡检/年巡检)}
+  - {name: pollutant_type, business: 污染物类型}
+  - {name: task_user_name, business: 处理人}
+  - {name: status, business: 状态原始值(0/1/2)}
+  - {name: status_cn, business: 状态中文(未开始/处理中/已完成,待业务确认)}
+  - {name: is_finished, business: 是否已完成(布尔)}
+  - {name: working_order_code, business: 关联工单号}
+  - {name: has_linked_order, business: 是否已转工单(布尔)}
+  - {name: task_date, business: 任务日期}
+  - {name: create_time, business: 创建时间}
+  - {name: finish_time, business: 完成时间}
+  - {name: plan_start_date, business: 计划周期开始日}
+  - {name: plan_end_date, business: 计划周期结束日}
+  - {name: is_overdue, business: 是否超期(周期已结束未完成)}
+  - {name: synced_at, business: 重建时间}
+access:
+  tool: execute_jiangsu_mart_sql
+  role: agent_reader
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  维度 station_code/station_name/city_name/rule_type_cn(周巡检/月巡检/季巡检/半年巡检/年巡检)/
+  task_user_name/pollutant_type；时间 task_date/plan_start_date/plan_end_date/finish_time；
+  指标 status_cn(未开始/处理中/已完成，语义待业务确认)/is_finished/is_overdue(周期结束未完成)/
+  has_linked_order(巡检转工单)/working_order_code。
+  巡检完成率、超期未完成、按人员完成量、巡检转工单率查本表。

@@ -1,0 +1,100 @@
+version: 2
+sources:
+- name: jiangsu_ods
+  schema: jiangsu_ods
+  database: suyuan_jiangsu
+  description: SQL Server 原库经 sync_table.py 同步落地的 ODS 层(sync_config.json 为表清单事实源, 本文件由 gen_dbt_artifacts.py
+    生成)。fact 表窗口自 2026-07-01, 更早历史不可查。
+  tables:
+  - name: alm_rule
+    description: 告警规则配置(每日全量, 无更新时间列 → 见 snapshots/alm_rule.sql)
+  - name: alm_summary
+    description: 站点告警汇总(5分钟增量)
+  - name: bsd_city
+    description: 地市字典(code 多层级重复, join 必须去重)
+  - name: bsd_device
+    description: 设备台账字典(每日全量)
+  - name: bsd_devicetype
+    description: 设备类型字典(Code→Name, 27行; dim_device.device_type_name 的来源)
+  - name: bsd_maintenanceunit
+  - name: bsd_moniter_parameter
+    description: 设备型号健康参数阈值字典(每日全量, 上下限/预警限; 供 dim_device_parameter; 开SCD2快照)
+  - name: bsd_region
+  - name: bsd_station
+    description: 站点目录字典(5分钟增量)
+    loaded_at_field: updatetime
+    freshness:
+      warn_after:
+        count: 24
+        period: hour
+  - name: bsd_supply
+    description: 质控耗材台账(每日全量; 滤膜/硅胶/纸带, 挂站点; 数量与工单字段源库大面积为空)
+  - name: bsd_usergroup
+  - name: bsd_usergroup_station
+  - name: bsd_usergroup_station_devicetype
+  - name: bsd_usergroup_user
+  - name: dev_scrap
+    description: 设备报废审批(每日全量, 行数极少; 设备生命周期终点, 配合 log_device)
+  - name: log_device
+    description: 设备生命周期状态变更日志(每日全量, 窗口≥2026-07-01; deviceidstate×eventstate 状态流转, WorkingOrderCode 可关联故障工单;
+      2026-10-04 新纳入, 解锁备机更换及时性场景)
+  - name: mot_alarm
+  - name: mtc_blackout
+    description: 停电报备单(每日全量)
+  - name: mtc_dataentry
+  - name: mtc_dataentry_data
+  - name: mtc_fault
+  - name: mtc_faultcontent
+  - name: mtc_faultcontentitem
+  - name: mtc_taskitem
+  - name: mtc_working_order
+    description: 故障工单主表(5分钟增量, UpdateTime)
+    loaded_at_field: updatetime
+    freshness:
+      warn_after:
+        count: 24
+        period: hour
+  - name: mtc_working_order_detail
+    description: 工单流转节点明细(5分钟增量)
+    loaded_at_field: updatetime
+    freshness:
+      warn_after:
+        count: 24
+        period: hour
+  - name: opa_kq_attendance
+    description: 考勤签到(增量, 8月以来仅8条为源库现状)
+  - name: opa_performance_qaqc
+    description: 月度三项评分(每日全量)
+  - name: opa_performance_tworate
+    description: 月度两率考核(每日全量)
+  - name: opa_qcqa_deduction
+  - name: opa_user_info
+  - name: pw_task
+    description: 巡检任务定义(每日全量)
+  - name: pw_taskitem
+    description: 巡检任务项(5分钟增量)
+    loaded_at_field: updatetime
+    freshness:
+      warn_after:
+        count: 24
+        period: hour
+  - name: qa_standardmaterialstorage
+  - name: qc_arrangeresult
+    description: 质控任务安排(每日全量)
+  - name: qc_backorderarrangelog
+    description: 质控补测/回调安排日志(每日全量, 窗口≥2026-07-01; state/datatype 枚举语义待平台确认; 补测风暴预警与质控闭环下游)
+  - name: qc_historymonthresultoverview
+  - name: qc_historyresult
+    description: 质控执行结果(5分钟增量)
+    loaded_at_field: create_time
+    freshness:
+      warn_after:
+        count: 24
+        period: hour
+  - name: qc_task
+  - name: rf_common
+    description: 非故障工单表单体 rFCommon 矩阵(5分钟增量, ops_audit 取数源)
+  - name: rf_ruleitem
+  - name: wfl_workflow
+  - name: wfl_workflowtask
+  - name: wo_commonfile
