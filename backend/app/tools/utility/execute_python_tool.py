@@ -2364,6 +2364,7 @@ import matplotlib.pyplot as _suyuan_plt
 from app.utils.environment_charts import (
     AQI_COLORS, AQI_LABELS, MISSING_COLOR, aqi_color, pollutant_color,
     get_environment_limit, get_pollutant_scale, add_standard_limit, legend_below,
+    figure_content_overflow,
 )
 
 REPORT_THEME = __SUYUAN_REPORT_THEME__
@@ -2455,6 +2456,18 @@ def _suyuan_normalize_matplotlib_label_text(value):
         ('CO₂', 'CO$_2$'),
         ('CH₄', 'CH$_4$'),
         ('N₂O', 'N$_2$O'),
+        ('SO₄²⁻', 'SO$_4^{2-}$'),
+        ('NO₃⁻', 'NO$_3^-$'),
+        ('NH₄⁺', 'NH$_4^+$'),
+        ('SO₄', 'SO$_4$'),
+        ('NO₃', 'NO$_3$'),
+        ('NH₄', 'NH$_4$'),
+        ('Ca²⁺', 'Ca$^{2+}$'),
+        ('Mg²⁺', 'Mg$^{2+}$'),
+        ('K⁺', 'K$^+$'),
+        ('Na⁺', 'Na$^+$'),
+        ('Cl⁻', 'Cl$^-$'),
+        ('F⁻', 'F$^-$'),
         ('μg/m³', 'μg/m$^3$'),
         ('ug/m³', 'ug/m$^3$'),
         ('/m³', '/m$^3$'),
@@ -2474,6 +2487,27 @@ def _suyuan_normalize_matplotlib_figure_text(fig):
             normalized = _suyuan_normalize_matplotlib_label_text(original)
             if normalized != original:
                 text.set_text(normalized)
+    except Exception:
+        pass
+    try:
+        import functools as _suyuan_functools
+        for ax in fig.axes:
+            for axis in (ax.xaxis, ax.yaxis):
+                for formatter in (axis.get_major_formatter(), axis.get_minor_formatter()):
+                    seq = getattr(formatter, 'seq', None)
+                    if isinstance(seq, list):
+                        formatter.seq = [
+                            _suyuan_normalize_matplotlib_label_text(item) if isinstance(item, str) else item
+                            for item in seq
+                        ]
+                    func = getattr(formatter, 'func', None)
+                    if isinstance(func, _suyuan_functools.partial):
+                        mappings = [arg for arg in func.args if isinstance(arg, dict)]
+                        mappings.extend(value for value in (func.keywords or {}).values() if isinstance(value, dict))
+                        for mapping in mappings:
+                            for key, value in mapping.items():
+                                if isinstance(value, str):
+                                    mapping[key] = _suyuan_normalize_matplotlib_label_text(value)
     except Exception:
         pass
 
@@ -2512,6 +2546,11 @@ def _suyuan_patched_figure_savefig(self, fname, *args, **kwargs):
     _suyuan_configure_matplotlib_chinese_font()
     _suyuan_normalize_matplotlib_figure_text(self)
     _suyuan_apply_chinese_font_to_figure(self)
+    try:
+        if kwargs.get('bbox_inches') is None and figure_content_overflow(self):
+            kwargs['bbox_inches'] = 'tight'
+    except Exception:
+        pass
     result = _suyuan_original_figure_savefig(self, fname, *args, **kwargs)
     _suyuan_emit_chart_saved(fname)
     return result

@@ -24,7 +24,7 @@ from app.tools.visualization.create_business_chart.text_layout import (
 from app.tools.visualization.create_business_chart.theme import REPORT_THEME, SERIES_COLORS, theme_color
 from app.tools.visualization.create_business_chart.validation import ChartDataError
 from app.utils.chart_legend import position_legends_below_plot, visible_legends
-from app.utils.font_utils import chinese_font_prop, select_preferred_chinese_font_path
+from app.utils.font_utils import chinese_font_prop, normalize_figure_text, select_preferred_chinese_font_path
 
 
 WORD_TARGET_WIDTH_IN = 5.8
@@ -631,6 +631,7 @@ def _chinese_font_prop():
 
 
 def _apply_font_to_figure(fig) -> None:
+    normalize_figure_text(fig, normalize_matplotlib_label_text)
     font_prop = _chinese_font_prop()
     for text in fig.findobj(match=lambda obj: hasattr(obj, "set_fontproperties")):
         try:

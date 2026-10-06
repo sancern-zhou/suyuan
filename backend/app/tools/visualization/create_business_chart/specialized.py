@@ -560,6 +560,26 @@ def _render_generic_calendar_image(
     return _figure_to_base64(fig)
 
 
+def _polar_rlabel_angle(theta_radians: "np.ndarray", heights: "np.ndarray", fallback_deg: float = 135.0) -> float:
+    """径向刻度标签放在柱体最矮的方向，避免压在高值扇形上。"""
+    try:
+        if len(theta_radians) == 0 or len(heights) == 0:
+            return fallback_deg
+        return float(np.rad2deg(float(theta_radians[int(np.argmin(heights))])))
+    except Exception:
+        return fallback_deg
+
+
+def _set_rlabel_background(fig, ax, alpha: float = 0.8) -> None:
+    """给极坐标径向刻度标签加白色底框，即使贴到色块上也保持可读。"""
+    try:
+        fig.canvas.draw()
+        for text in ax.yaxis.get_ticklabels():
+            text.set_bbox(dict(facecolor="white", edgecolor="none", alpha=alpha, pad=1.0))
+    except Exception:
+        pass
+
+
 def _render_generic_wind_rose_image(
     title: str,
     pollutant_name: str,
@@ -599,7 +619,7 @@ def _render_generic_wind_rose_image(
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
     ax.set_title(str(normalize_matplotlib_label_text(title)), fontsize=14, fontweight="bold", pad=18)
-    ax.set_rlabel_position(135)
+    ax.set_rlabel_position(_polar_rlabel_angle(theta, radii))
     ax.tick_params(labelsize=9)
     if show_colorbar:
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=vmax))
@@ -615,6 +635,7 @@ def _render_generic_wind_rose_image(
         va="top",
         fontsize=9,
     )
+    _set_rlabel_background(fig, ax)
     fig.tight_layout(pad=1.0)
     return _figure_to_base64(fig), len(valid)
 
@@ -734,12 +755,13 @@ def _render_wind_rose_image(
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
     ax.set_title(str(normalize_matplotlib_label_text(title)), fontsize=14, fontweight="bold", pad=18)
-    ax.set_rlabel_position(135)
+    ax.set_rlabel_position(_polar_rlabel_angle(theta, bottom))
     ax.set_ylabel("频率 (%)", labelpad=28)
     ax.tick_params(labelsize=9)
     ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.18), ncol=3, fontsize=8, frameon=False)
     ax.text(0.5, -0.29, f"有效点位: {total}；静风(<0.5 m/s): {calm_count} ({calm_count / total * 100:.1f}%)；方向分箱: {direction_bins}",
             transform=ax.transAxes, ha="center", va="top", fontsize=8)
+    _set_rlabel_background(fig, ax)
     fig.tight_layout(pad=1.0)
     return _figure_to_base64(fig), total, calm_count
 
@@ -798,7 +820,7 @@ def _cache_base64_image(image_base64: str, chart_id: str, title: str) -> Dict[st
 
 def _figure_to_base64(fig) -> str:
     buffer = BytesIO()
-    apply_font_to_figure(fig)
+    apply_font_to_figure(fig, normalize_matplotlib_label_text)
     fig.savefig(buffer, format="png", bbox_inches="tight", dpi=180)
     plt.close(fig)
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
