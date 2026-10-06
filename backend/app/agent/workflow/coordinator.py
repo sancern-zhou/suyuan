@@ -7,6 +7,8 @@ import hashlib
 import inspect
 import json
 import random
+import math
+import time
 from dataclasses import dataclass, field, replace as dataclasses_replace
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional
 import uuid
@@ -102,6 +104,7 @@ class WorkflowDefinition:
     workflow_id: str
     nodes: tuple[WorkflowNodeSpec, ...]
     version: str = "1"
+    budget: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "WorkflowDefinition":
@@ -119,10 +122,23 @@ class WorkflowDefinition:
             graph.add_task(node.task_id)
         for node in nodes:
             graph.add_task(node.task_id, dependencies=node.dependencies)
-        return cls(workflow_id=workflow_id, nodes=nodes, version=str(value.get("version") or "1"))
+        budget = dict(value.get("budget") or {})
+        defaults = {"max_nodes": 32, "max_extensions": 3, "max_retries": 16, "timeout_seconds": 3600.0}
+        if set(budget) - set(defaults):
+            raise ValueError("unknown workflow budget field")
+        for key, raw in budget.items():
+            number = float(raw)
+            if not math.isfinite(number) or number < (0 if key in {"max_extensions", "max_retries", "timeout_seconds"} else 1) or (key == "timeout_seconds" and number == 0):
+                raise ValueError(f"invalid workflow budget: {key}")
+            if key != "timeout_seconds" and number != int(number):
+                raise ValueError(f"workflow budget {key} must be an integer")
+            budget[key] = number if key == "timeout_seconds" else int(number)
+        if len(nodes) > budget.get("max_nodes", defaults["max_nodes"]):
+            raise ValueError("workflow node budget exceeded")
+        return cls(workflow_id=workflow_id, nodes=nodes, version=str(value.get("version") or "1"), budget=budget)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "workflow_id": self.workflow_id,
             "version": self.version,
             "nodes": [
@@ -137,6 +153,10 @@ class WorkflowDefinition:
                 for node in self.nodes
             ],
         }
+        # Preserve fingerprints of existing definitions/checkpoints.
+        if self.budget:
+            result["budget"] = dict(self.budget)
+        return result
 
     def fingerprint(self) -> str:
         serialized = json.dumps(
@@ -186,6 +206,9 @@ class WorkflowCoordinator:
         self.cancel_reason = ""
         self._active_tasks: Dict[str, asyncio.Task] = {}
         snapshot = snapshot or {}
+        self.revision = int(snapshot.get("revision") or 0)
+        self.budget_state = dict(snapshot.get("budget_state") or {})
+        self._run_started: Optional[float] = None
         self._restore(snapshot)
         self.governor = WorkflowConcurrencyGovernor(max_concurrency)
         self.runtime = WorkflowRuntime(
@@ -256,8 +279,20 @@ class WorkflowCoordinator:
             logger.warning("workflow_journal_append_failed", event_type=event_type, error=str(exc))
 
     async def run(self) -> Dict[str, Any]:
+        if self.budget_state.get("exhausted"):
+            return self.snapshot()
+        self._run_started = time.monotonic()
         try:
-            return await self._run()
+            remaining = self.definition.budget.get("timeout_seconds", 3600.0) - float(self.budget_state.get("elapsed_seconds", 0))
+            async with asyncio.timeout(max(0, remaining)):
+                await self._run()
+        except TimeoutError:
+            self.budget_state["exhausted"] = "timeout_seconds"
+            self.node_errors["__budget__"] = "workflow total active time budget exceeded"
+            self.status = "failed"
+            if self.workflow_run.status not in TERMINAL_STATUSES:
+                self.runtime.transition(self.workflow_run.run_id, "failed", payload={"error": self.node_errors["__budget__"]})
+            self._journal_event("workflow.budget_exhausted", limit="timeout_seconds")
         finally:
             # Parent request cancellation must not leave child tasks running.
             for task in self._active_tasks.values():
@@ -265,6 +300,62 @@ class WorkflowCoordinator:
             if self._active_tasks:
                 await asyncio.gather(*self._active_tasks.values(), return_exceptions=True)
                 self._active_tasks.clear()
+            self.budget_state["elapsed_seconds"] = self._elapsed_seconds()
+            self._run_started = None
+            if self.budget_state.get("exhausted"):
+                self._block_pending(self.node_errors.get("__budget__", "workflow budget exhausted"))
+            try:
+                self._persist_snapshot({})
+            except Exception as exc:
+                logger.error("workflow_final_persist_failed", error=str(exc))
+        return self.snapshot()
+
+    def _elapsed_seconds(self) -> float:
+        return float(self.budget_state.get("elapsed_seconds", 0)) + (
+            time.monotonic() - self._run_started if self._run_started is not None else 0
+        )
+
+    def extend(self, nodes: Iterable[Mapping[str, Any]], *, expected_revision: int, reason: str) -> None:
+        """Append a validated DAG between parent rounds; completed nodes are immutable."""
+        if self._active_tasks or self.status == "running":
+            raise ValueError("cannot extend a running workflow")
+        if self.cancel_requested or self.status == "cancelled" or self.budget_state.get("exhausted"):
+            raise ValueError("cannot extend a cancelled or budget-exhausted workflow")
+        if expected_revision != self.revision:
+            raise ValueError("workflow revision conflict")
+        if not str(reason).strip():
+            raise ValueError("workflow extension reason is required")
+        additions = list(nodes)
+        if not additions:
+            raise ValueError("workflow extension requires new nodes")
+        if self.revision >= self.definition.budget.get("max_extensions", 3):
+            raise ValueError("workflow extension budget exceeded")
+        candidate = self.definition.to_dict()
+        candidate["nodes"] += additions
+        validated = WorkflowDefinition.from_mapping(candidate)
+        # All graph/ID/budget checks precede mutation.
+        self.definition = validated
+        self.definition_hash = validated.fingerprint()
+        self.revision += 1
+        new_nodes = validated.nodes[len(self.node_specs):]
+        self._persistence_ready = False
+        try:
+            self.workflow_run = self.runtime.create_run(task_id=validated.workflow_id)
+            for node in new_nodes:
+                self.graph.add_task(node.task_id)
+                self.node_specs[node.task_id] = node
+            for node in new_nodes:
+                self.graph.add_task(node.task_id, dependencies=node.dependencies)
+                self.runtime.create_run(task_id=node.task_id, parent_task_id=validated.workflow_id,
+                                        run_id=f"{validated.workflow_id}:{node.task_id}", max_attempts=node.max_attempts)
+            for node in validated.nodes:
+                self.runtime.register_child(self.workflow_run.run_id, node.task_id)
+            self.status = "queued"
+        finally:
+            self._persistence_ready = True
+        self._journal_event("workflow.extended", revision=self.revision, reason=reason,
+                            added_tasks=[node.task_id for node in new_nodes])
+        self._persist_snapshot({})
 
     async def _run(self) -> Dict[str, Any]:
         if self.status == "succeeded":
@@ -359,6 +450,8 @@ class WorkflowCoordinator:
             "workflow_id": self.definition.workflow_id,
             "definition": self.definition.to_dict(),
             "definition_hash": self.definition_hash,
+            "revision": self.revision,
+            "budget_state": {**self.budget_state, "elapsed_seconds": self._elapsed_seconds()},
             "status": self.status,
             "cancel_requested": self.cancel_requested,
             "cancel_reason": self.cancel_reason,
@@ -442,6 +535,16 @@ class WorkflowCoordinator:
             )
         try:
             async with self.governor:
+                executions = self.budget_state.setdefault("executions", {})
+                if executions.get(task_id, 0):
+                    retries = int(self.budget_state.get("retries_used", 0))
+                    if retries >= self.definition.budget.get("max_retries", 16):
+                        self.budget_state["exhausted"] = "max_retries"
+                        self.node_errors["__budget__"] = "workflow total retry budget exceeded"
+                        raise ValueError("workflow total retry budget exceeded")
+                    self.budget_state["retries_used"] = retries + 1
+                executions[task_id] = executions.get(task_id, 0) + 1
+                self._persist_snapshot({})
                 async def execute_node() -> Any:
                     result = self.executor(
                         effective_node, dependency_results, node_run.attempt, retry_context
@@ -565,7 +668,7 @@ class WorkflowCoordinator:
 
     def _prepare_snapshot_resume(self, snapshot: Mapping[str, Any]) -> None:
         """Normalize a failed snapshot before scheduling retryable nodes."""
-        if not snapshot or self.cancel_requested or self.status == "cancelled":
+        if not snapshot or self.cancel_requested or self.status == "cancelled" or self.budget_state.get("exhausted"):
             return
         runtime_runs = self.runtime.snapshot().get("runs") or {}
         for node in self._graph_nodes():

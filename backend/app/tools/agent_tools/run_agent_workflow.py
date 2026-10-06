@@ -392,10 +392,23 @@ class RunAgentWorkflowTool(LLMTool):
                                 "dependencies, task_contract, result_schema, max_attempts, max_iterations, "
                                 "timeout_seconds}]}. workflow_id 缺省时自动生成。"
                                 "编排由你自主规划；无依赖节点并行，依赖用 dependencies 表达。"
+                                "新建时提供 nodes；补图时只提供 workflow_id，并传 extension。"
+                                "budget 可限制累计 timeout_seconds/max_nodes/max_retries/max_extensions，"
+                                "默认 3600秒/32/16/3。"
                             ),
                             "properties": {
                                 "workflow_id": {"type": "string"},
                                 "version": {"type": "string"},
+                                "budget": {
+                                    "type": "object",
+                                    "properties": {
+                                        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
+                                        "max_nodes": {"type": "integer", "minimum": 1},
+                                        "max_retries": {"type": "integer", "minimum": 0},
+                                        "max_extensions": {"type": "integer", "minimum": 0},
+                                    },
+                                    "additionalProperties": False,
+                                },
                                 "nodes": {
                                     "type": "array",
                                     "items": {
@@ -434,7 +447,6 @@ class RunAgentWorkflowTool(LLMTool):
                                     },
                                 },
                             },
-                            "required": ["nodes"],
                         },
                         "max_concurrency": {
                             "type": "integer",
@@ -445,6 +457,16 @@ class RunAgentWorkflowTool(LLMTool):
                         "snapshot": {
                             "type": "object",
                             "description": "可选的上次运行快照；传入后从中断位置恢复。",
+                        },
+                        "extension": {
+                            "type": "object",
+                            "description": "父 Agent 检查缺口后在两轮之间补图；从当前父会话加载快照，保留已完成节点。禁止改旧节点或给运行中的图补图。",
+                            "properties": {
+                                "expected_revision": {"type": "integer", "minimum": 0},
+                                "reason": {"type": "string"},
+                                "nodes": {"type": "array", "items": {"type": "object"}},
+                            },
+                            "required": ["expected_revision", "reason", "nodes"],
                         },
                     },
                     "required": ["workflow"],
@@ -459,6 +481,7 @@ class RunAgentWorkflowTool(LLMTool):
         workflow: Optional[Mapping[str, Any]] = None,
         max_concurrency: int = 4,
         snapshot: Optional[Mapping[str, Any]] = None,
+        extension: Optional[Mapping[str, Any]] = None,
         **_: Any,
     ) -> Dict[str, Any]:
         if not isinstance(workflow, Mapping):
@@ -467,8 +490,24 @@ class RunAgentWorkflowTool(LLMTool):
             definition = dict(workflow)
             if not str(definition.get("workflow_id") or "").strip():
                 definition["workflow_id"] = f"workflow-{int(time.time() * 1000)}"
-            nodes = [dict(node) for node in definition.get("nodes") or []]
-            for node in nodes:
+            added_nodes = []
+            if extension is not None:
+                if not isinstance(extension, Mapping) or snapshot is not None or definition.get("nodes") or definition.get("budget"):
+                    return self._failure("补图只接受 workflow_id + extension，并使用当前父会话中的可信快照")
+                snapshot = await self._load_parent_snapshot(context, str(definition["workflow_id"]))
+                if not snapshot:
+                    return self._failure("当前父会话中未找到工作流快照，不能补图")
+                if snapshot.get("status") not in {"succeeded", "failed"}:
+                    return self._failure("只能给已经结束一轮执行的工作流补图")
+                definition = dict(snapshot["definition"])
+                added_nodes = [dict(node) for node in extension.get("nodes") or []]
+            # Worker checkpoints use canonical nested payloads; accept both formats.
+            def normalize(node: Mapping[str, Any]) -> Dict[str, Any]:
+                spec = WorkflowNodeSpec.from_mapping(node)
+                return {**dict(node), **spec.payload, "task_id": spec.task_id}
+            nodes = [normalize(node) for node in definition.get("nodes") or []]
+            added_nodes = [normalize(node) for node in added_nodes]
+            for node in [*nodes, *added_nodes]:
                 if not node.get("target_mode") or not node.get("goal"):
                     return self._failure(f"节点 {node.get('task_id') or '<unknown>'} 缺少 target_mode 或 goal")
                 limits = _DEFAULT_EXPERT_NODE_LIMITS.get(str(node.get("target_mode")))
@@ -485,13 +524,15 @@ class RunAgentWorkflowTool(LLMTool):
                 or getattr(getattr(context, "memory_manager", None), "mode", "")
                 or ""
             )
-            boundary_error = delegation_error(runtime_mode, [str(node.get("target_mode") or "") for node in nodes])
+            if extension is not None and snapshot.get("parent_mode") != runtime_mode:
+                return self._failure("补图的父模式必须与原工作流一致")
+            boundary_error = delegation_error(runtime_mode, [str(node.get("target_mode") or "") for node in [*nodes, *added_nodes]])
             if boundary_error:
                 return self._failure(boundary_error)
             if runtime_mode == "report":
                 disallowed_nodes = [
                     str(node.get("task_id") or "<unknown>")
-                    for node in nodes
+                    for node in [*nodes, *added_nodes]
                     if str(node.get("target_mode") or "") not in REPORT_NODE_ALLOWED_MODES
                 ]
                 if disallowed_nodes:
@@ -519,7 +560,7 @@ class RunAgentWorkflowTool(LLMTool):
             workflow_id_str = str(definition["workflow_id"])
             parent_session_id = getattr(context, "session_id", None)
             cache_id = cache_namespace(str(parent_session_id or uuid.uuid4().hex), workflow_id_str)
-            completed_results = select_reusable_nodes(cache_id, nodes, validate_signatures=True)
+            completed_results = {} if snapshot else select_reusable_nodes(cache_id, nodes, validate_signatures=True)
             if completed_results:
                 logger.info(
                     "workflow_cache_nodes_reused",
@@ -605,14 +646,28 @@ class RunAgentWorkflowTool(LLMTool):
                 session_id=getattr(context, "session_id", None) if context is not None else None,
             )
             try:
+                if extension is not None:
+                    # Check again under the live registry claim: a preceding
+                    # parent round may have finished while this call was loading.
+                    latest = await self._load_parent_snapshot(context, str(definition["workflow_id"]))
+                    if (
+                        not latest
+                        or latest.get("revision", 0) != extension["expected_revision"]
+                        or latest != snapshot
+                    ):
+                        raise ValueError("workflow revision conflict")
+                    if latest.get("status") not in {"succeeded", "failed"}:
+                        raise ValueError("cannot extend a running workflow")
+                    coordinator.extend(added_nodes, expected_revision=extension["expected_revision"], reason=extension["reason"])
+                    nodes += added_nodes
                 snapshot = await coordinator.run()
             finally:
+                pending_persistence = list(getattr(context, "workflow_persistence_tasks", set())) if context is not None else []
+                if pending_persistence:
+                    await asyncio.gather(*pending_persistence, return_exceptions=True)
                 await workflow_registry.unregister(
                     str(definition["workflow_id"]), coordinator
                 )
-            pending_persistence = list(getattr(context, "workflow_persistence_tasks", set())) if context is not None else []
-            if pending_persistence:
-                await asyncio.gather(*pending_persistence, return_exceptions=True)
             succeeded = snapshot["status"] == "succeeded"
             if parent_session_id:
                 # Reuse individually validated successes even if another branch failed.
@@ -659,6 +714,8 @@ class RunAgentWorkflowTool(LLMTool):
             result_data = {
                 "workflow_id": snapshot["workflow_id"],
                 "status": snapshot["status"],
+                "revision": snapshot.get("revision", 0),
+                "budget_state": snapshot.get("budget_state", {}),
                 "node_results": node_views,
                 "node_errors": snapshot["node_errors"],
                 "node_lineage": snapshot["node_lineage"],
@@ -747,6 +804,17 @@ class RunAgentWorkflowTool(LLMTool):
                 error=str(exc),
             )
             return None
+
+    @staticmethod
+    async def _load_parent_snapshot(context: Any, workflow_id: str) -> Optional[Mapping[str, Any]]:
+        session_id = getattr(context, "session_id", None)
+        if not session_id:
+            return None
+        from app.agent.session.session_resolver import load_session_for_mode
+        session = await load_session_for_mode(session_id, mode=getattr(context, "runtime_mode", None), include_messages=False)
+        if session is None:
+            return None
+        return (session.metadata.get("workflow_coordinators") or {}).get(workflow_id)
 
     @staticmethod
     def _build_workflow_registry():
