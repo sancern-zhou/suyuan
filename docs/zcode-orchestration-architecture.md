@@ -3,6 +3,8 @@
 本文回答一个问题：**ZCode（本仓库开发所用的 AI 编码助手）内部有没有 DAG 工作流？** 结论先行：
 
 > **ZCode 没有显式的依赖 DAG 工作流引擎**——代码中不存在 `WorkflowGraph`、`ready_tasks()`、拓扑排序这类结构（全量代码检索无一处字面 "DAG"）。它的多任务编排走的是另一条路：**中央调度器（任务队列 + cron 自动化 + 错峰调度）+ 主 agent 动态派生子 agent（后台运行、消息传递、扁平任务清单）**，依赖关系不建图，而是由模型在上下文中推理。
+>
+> ⚠️ **此结论已过时，仅对本文考察的 3.11.2 桌面版成立**。开源仓库（[zai-org/ZCode](https://github.com/zai-org/ZCode) main，v3.14.3）已包含一套完整的动态工作流引擎：模型编写 TypeScript 编排脚本，编译期从数据流**静态恢复依赖图**（术语是 site/causality/actor graph，不叫 DAG——这正是按 "DAG" 关键词检索漏掉它的原因）。详见 [zcode-dynamic-workflow.md](zcode-dynamic-workflow.md)。
 
 - 考察对象：ZCode Desktop **3.11.2**（build `89817f5b`，2026-09-04），安装于 `D:\zcode`
 - 考察方法：解析 Electron 应用包 `resources/app.asar`，提取 `out/host`、`out/scheduler`、`out/main` 三个 bundle 做静态分析；结合本机运行时目录（`~/.zcode/cli`）与 harness 外部契约交叉验证。bundle 为压缩产物，个别实现细节以行为为准。
