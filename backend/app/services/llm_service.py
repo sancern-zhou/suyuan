@@ -17,6 +17,7 @@ import structlog
 from config.settings import settings
 import httpx
 from app.utils.llm_context_logger import get_llm_context_logger
+from app.services.model_trajectory import trace_model_call, update_trajectory_provider, plain
 from app.services.llm_failover import (
     LLMFailoverError,
     LLMResponseRejectedError,
@@ -1821,6 +1822,7 @@ class LLMService:
 
     def _get_request_config(self) -> Tuple[str, Dict[str, str]]:
         """获取请求配置（URL, headers）"""
+        update_trajectory_provider(self)
         # 🔍 调试日志：验证 base_url
         if not self.base_url:
             logger.error(
@@ -1855,6 +1857,7 @@ class LLMService:
 
         return url, headers
 
+    @trace_model_call
     async def chat(
         self,
         messages: list,
@@ -2038,6 +2041,7 @@ class LLMService:
         # 理论上不会到达这里，但为了类型检查完整性
         raise last_error
 
+    @trace_model_call
     async def chat_streaming(
         self,
         messages: list,
@@ -2136,6 +2140,7 @@ class LLMService:
         # 理论上不会到达这里
         raise last_error
 
+    @trace_model_call
     async def chat_streaming_with_status(
         self,
         messages: list,
@@ -3007,6 +3012,8 @@ class LLMService:
             "temperature": temperature,
         }
         payload["stream"] = stream
+        if stream:
+            payload["stream_options"] = {"include_usage": True}
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         if converted_tools:
@@ -3147,6 +3154,7 @@ class LLMService:
         for event in adapter.finish():
             yield event
 
+    @trace_model_call
     async def chat_anthropic(
         self,
         messages: List[Dict[str, str]],
@@ -3242,6 +3250,7 @@ class LLMService:
                     messages_count=len(api_params.get("messages", [])),
                     has_tools=bool(api_params.get("tools")),
                 )
+                update_trajectory_provider(self)
                 return await self.anthropic_client.messages.create(**api_params)
 
             if validate is not None:
@@ -3269,7 +3278,7 @@ class LLMService:
             result = {
                 "content": response.content,
                 "model": response.model,
-                "usage": {
+                "usage": plain(response.usage) if hasattr(response.usage, "model_dump") else {
                     "input_tokens": response.usage.input_tokens,
                     "output_tokens": response.usage.output_tokens
                 },
@@ -3366,6 +3375,7 @@ class LLMService:
             )
             raise
 
+    @trace_model_call
     async def chat_anthropic_streaming(
         self,
         messages: List[Dict[str, str]],
@@ -3534,7 +3544,8 @@ class LLMService:
                                     yield {
                                         "type": "message_start",
                                         "data": {
-                                            "usage": {
+                                            "model": getattr(event.message, "model", self.model),
+                                            "usage": plain(event.message.usage) if hasattr(event.message.usage, "model_dump") else {
                                                 "input_tokens": event.message.usage.input_tokens,
                                                 "output_tokens": event.message.usage.output_tokens,
                                             }

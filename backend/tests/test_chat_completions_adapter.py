@@ -355,7 +355,7 @@ def test_stream_adapter_converts_reasoning_text_and_tool_call_events():
         "type": "message_delta",
         "data": {
             "stop_reason": "tool_use",
-            "usage": {"output_tokens": 10},
+            "usage": {"input_tokens": 20, "output_tokens": 10, "cache_read_input_tokens": 0},
         },
     }
     assert events[-1] == {"type": "message_stop", "data": {}}

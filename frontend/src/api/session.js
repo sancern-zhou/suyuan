@@ -93,6 +93,12 @@ export async function getSessionMessages(sessionId, beforeSequence, limit = 30) 
   return await request(`${BASE_URL}/${sessionId}/messages?${params}`)
 }
 
+export async function getModelTrajectory(sessionId, before, limit = 50) {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (before) params.set('before', before)
+  return request(`${BASE_URL}/${encodeURIComponent(sessionId)}/model-trajectory?${params}`)
+}
+
 /**
  * 获取当前对话可通过 @ 引用的上传文件和 Agent 生成文件。
  */

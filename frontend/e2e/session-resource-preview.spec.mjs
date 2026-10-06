@@ -427,13 +427,13 @@ test('spreadsheet unsaved edits block tab changes and panel closing', async ({ p
   await expect(page.locator('.cell-input').first()).toHaveValue('Keep this edit')
 })
 
-test('empty resource tabs are disabled', async ({ page }) => {
+test('empty resource tabs are hidden', async ({ page }) => {
   await mockApplication(page, fixtures[0])
   await page.goto('/session/e2e')
   await openResourcePanel(page)
 
-  await expect(page.getByRole('tab', { name: /可视化/ })).toBeDisabled()
-  await expect(page.getByRole('tab', { name: /溯源/ })).toBeDisabled()
+  await expect(page.getByRole('tab', { name: /可视化/ })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: /溯源/ })).toHaveCount(0)
   await expect(page.getByRole('tab', { name: /文档/ })).toBeEnabled()
 })
 
