@@ -1,9 +1,12 @@
 <template>
-  <section class="trajectory-panel" aria-label="会话调用轨迹">
+  <div class="trajectory-host">
+  <ModelTrajectoryPanel v-if="!showExecution" :session-id="sessionId" :messages="messages" @show-execution="showExecution = true" />
+  <section v-else class="trajectory-panel" aria-label="会话执行记录">
     <header>
       <div><h3>调用轨迹</h3><p>{{ entries.length }} 条记录 · {{ toolCount }} 个工具调用</p></div>
       <button type="button" :disabled="loading" @click="refresh">{{ loading ? '加载中…' : '刷新' }}</button>
       <button type="button" @click="expanded = !expanded">{{ expanded ? '全部收起' : '全部展开' }}</button>
+      <button type="button" @click="showExecution = false">模型调用</button>
     </header>
     <input v-model="query" type="search" placeholder="搜索工具、参数或结果" aria-label="搜索调用轨迹" />
     <p v-if="error" class="trajectory-error" role="alert">{{ error }}</p>
@@ -27,15 +30,18 @@
       </details>
     </div>
   </section>
+  </div>
 </template>
 
 <script setup>
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { getSessionMessages } from '@/api/session.js'
 import { buildTrajectoryEntries, formatTrajectoryValue, mergeTrajectoryMessages } from './executionTrajectory.js'
+import ModelTrajectoryPanel from './ModelTrajectoryPanel.vue'
 
 const props = defineProps({ sessionId: { type: String, default: '' }, messages: { type: Array, default: () => [] } })
 const saved = ref([])
+const showExecution = ref(false)
 const query = ref('')
 const expanded = ref(false)
 const loading = ref(false)
@@ -73,6 +79,7 @@ const refresh = () => fetchPage()
 const loadOlder = () => fetchPage(oldestSequence.value)
 watch(() => props.sessionId, () => {
   requestVersion++
+  showExecution.value = false
   saved.value = []
   query.value = ''
   expanded.value = false
@@ -80,12 +87,14 @@ watch(() => props.sessionId, () => {
   oldestSequence.value = null
   loading.value = false
   error.value = ''
-  refresh()
 }, { immediate: true })
+watch(showExecution, visible => { if (visible) refresh() })
 onBeforeUnmount(() => { requestVersion++ })
 </script>
 
 <style scoped>
+.trajectory-host { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.trajectory-host > * { flex: 1; min-height: 0; }
 .trajectory-panel { min-height: 0; overflow: auto; padding: 16px; color: var(--text-1); background: var(--bg-primary, #fff); }
 header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 header > div { flex: 1; }

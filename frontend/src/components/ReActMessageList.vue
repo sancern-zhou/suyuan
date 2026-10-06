@@ -159,13 +159,27 @@
           </div>
         </div>
         <div
-          v-if="getProcessItemsForFinal(message, messages).length > 0"
+          v-if="!message.streaming && (getProcessItemsForFinal(message, messages).length > 0 || getFinalDurationText(message))"
           class="assistant-process-summary"
-          role="status"
-          aria-label="本次回答的执行状态"
         >
-          <span class="assistant-process-summary-dot" aria-hidden="true"></span>
-          <span>{{ getProcessSummaryText(message, messages) }}</span>
+          <button
+            v-if="getThoughtItemsForFinal(message).length"
+            type="button"
+            class="thought-summary-toggle"
+            :aria-expanded="!!isProcessExpanded(message.id)"
+            @click.stop="toggleThoughtExpanded(message.id)"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7.5V12l3 2" /></svg>
+            <span>{{ getProcessSummaryText(message, messages) }}</span>
+            <span aria-hidden="true">{{ isProcessExpanded(message.id) ? '⌃' : '⌄' }}</span>
+          </button>
+          <span v-else class="thought-summary-toggle">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7.5V12l3 2" /></svg>
+            <span>{{ getProcessSummaryText(message, messages) }}</span>
+          </span>
+        </div>
+        <div v-if="isProcessExpanded(message.id)" class="assistant-thought-content">
+          <div v-for="thought in getThoughtItemsForFinal(message)" :key="thought.id">{{ thought.content }}</div>
         </div>
 
         <div class="message-content" v-if="!getStructuredQuestionForFinal(message, messages) && useMarkdown">
@@ -214,18 +228,6 @@
           </div>
         </div>
 
-        <!-- 【新增】AI回复用时统计 -->
-        <div
-          v-if="!message.streaming && getFinalDurationText(message)"
-          class="agent-message-duration"
-          title="AI 回复总用时"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M12 7.5V12l3 2" />
-          </svg>
-          <span>用时 {{ getFinalDurationText(message) }}</span>
-        </div>
       </div>
 
       <!-- 错误消息 -->
@@ -235,6 +237,10 @@
       </div>
     </div>
 
+    <details v-if="isAnalyzing && liveThoughtItems.length" class="assistant-live-thoughts">
+      <summary>查看思考内容</summary>
+      <div class="assistant-thought-content"><div v-for="thought in liveThoughtItems" :key="thought.id">{{ thought.content }}</div></div>
+    </details>
     <div v-if="isAnalyzing" class="task-progress-status" aria-label="Agent 任务进度">
       <span class="thinking-indicator" aria-hidden="true"></span>
       <div class="task-progress-copy">
@@ -686,9 +692,12 @@ const displayedMessages = computed(() => {
 
 // 【新增】details展开状态管理（用于控制<details>的open属性）
 const expandedProcessIds = ref(new Set())
-
-// 【新增】实时分析过程展开状态（默认折叠）
-const isLiveProcessExpanded = ref(false)
+const toggleThoughtExpanded = messageId => {
+  const next = new Set(expandedProcessIds.value)
+  if (next.has(messageId)) next.delete(messageId)
+  else next.add(messageId)
+  expandedProcessIds.value = next
+}
 
 const expandedUserMessageIds = ref(new Set())
 const copiedUserMessageId = ref(null)
@@ -696,35 +705,9 @@ const USER_MESSAGE_PREVIEW_LENGTH = 320
 const USER_MESSAGE_PREVIEW_LINES = 6
 let copiedUserMessageTimer = null
 
-// 【新增】全局初始加载标志，用于强制所有 details 在初次加载时折叠
-const isInitialLoad = ref(true)
-
 // 【新增】判断final消息的过程区域是否应该展开
 const isProcessExpanded = (messageId) => {
-  // 【关键修复】初次加载时，强制所有 details 折叠
-  if (isInitialLoad.value) {
-    // console.log('[ReActMessageList] isProcessExpanded: initial load, forcing collapse')
-    return undefined
-  }
-
-  // 处理 messageId 为 undefined 或 null 的情况
-  if (!messageId) {
-    // console.log('[ReActMessageList] isProcessExpanded: messageId is empty, returning undefined (collapsed)')
-    return undefined
-  }
-
-  const isExpanded = expandedProcessIds.value.has(messageId)
-  // console.log('[ReActMessageList] isProcessExpanded:', {
-  //   messageId,
-  //   isExpanded,
-  //   expandedIds: Array.from(expandedProcessIds.value)
-  // })
-
-  if (isExpanded) {
-    return true
-  } else {
-    return undefined  // 返回 undefined 确保 details 折叠
-  }
+  return Boolean(messageId && expandedProcessIds.value.has(messageId))
 }
 
 const getMessageContent = (message) => message?.content ?? message?.content_preview ?? ''
@@ -830,7 +813,7 @@ const finalDurationTextMap = computed(() => {
     const message = msgs[i]
     if (getMessageType(message) !== 'final') continue
 
-    const precomputed = Number(message.data?.response_duration_ms)
+    const precomputed = message.data?.response_duration_ms == null ? NaN : Number(message.data.response_duration_ms)
     let durationMs = Number.isFinite(precomputed) ? precomputed : null
 
     if (durationMs === null) {
@@ -859,24 +842,6 @@ const finalDurationTextMap = computed(() => {
 })
 
 const getFinalDurationText = (message) => finalDurationTextMap.value.get(message?.id) || ''
-
-// 【新增】处理details的toggle事件
-const handleProcessToggle = (messageId, event) => {
-  // event.target 是 <details> 元素
-  // event.target.open 表示当前状态（toggle之后的状态）
-  if (event.target.open) {
-    expandedProcessIds.value.add(messageId)
-  } else {
-    expandedProcessIds.value.delete(messageId)
-  }
-}
-
-// 【新增】处理实时分析过程的toggle事件
-const handleLiveProcessToggle = (event) => {
-  // event.target 是 <details> 元素
-  // event.target.open 表示当前状态（toggle之后的状态）
-  isLiveProcessExpanded.value = event.target.open
-}
 
 const getProcessCorrelationId = (message) => {
   const data = message?.data || {}
@@ -1032,6 +997,7 @@ const buildProcessItems = (messages, options = {}) => {
 }
 
 const liveProcessItems = computed(() => buildProcessItems(executingProcessMessages.value))
+const liveThoughtItems = computed(() => liveProcessItems.value.filter(item => item.kind === 'thought'))
 const runningElapsedSeconds = ref(0)
 const progressTipSeed = ref(0)
 let progressStartedAt = 0
@@ -1073,14 +1039,15 @@ const getProcessItemsForFinal = (finalMessage, allMessages) => {
   return buildProcessItems(getUnifiedProcessMessages(finalMessage, allMessages), { finalized: true })
 }
 
-// ZCode-style transcript projection: expose only a compact completion marker in chat.
-// Tool arguments, results, and thought text stay out of the conversation surface.
+const getThoughtItemsForFinal = message => getProcessItemsForFinal(message, props.messages).filter(item => item.kind === 'thought')
+
 const getProcessSummaryText = (finalMessage, allMessages) => {
   const items = getProcessItemsForFinal(finalMessage, allMessages)
   const toolCount = items.filter(item => item.kind === 'tool').length
   const failedCount = items.filter(item => item.kind === 'tool' && item.status === 'error').length
-  if (failedCount > 0) return `分析完成 · ${toolCount} 个工具调用 · ${failedCount} 个步骤失败`
-  return toolCount > 0 ? `分析完成 · ${toolCount} 个工具调用` : '分析完成'
+  const duration = getFinalDurationText(finalMessage)
+  const summary = `${duration ? `用时${duration}完成` : '已完成'} · ${toolCount}个工具调用`
+  return failedCount > 0 ? `${summary} · ${failedCount}个步骤失败` : summary
 }
 
 const getProcessStatusText = (status) => {
@@ -1208,11 +1175,6 @@ watch(
 
     if (isFirstLoad || isBulkLoad) {
       expandedProcessIds.value.clear()
-      isInitialLoad.value = true
-
-      setTimeout(() => {
-        isInitialLoad.value = false
-      }, 3000)
     }
   },
   { deep: true }
@@ -2327,13 +2289,12 @@ const downloadPreviewedImage = async () => {
   line-height: 1.4;
 }
 
-.assistant-process-summary-dot {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 6px;
-  border-radius: 50%;
-  background: var(--text-3);
-}
+.thought-summary-toggle { display: inline-flex; align-items: center; gap: 7px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; }
+button.thought-summary-toggle { cursor: pointer; }
+.thought-summary-toggle svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.assistant-thought-content { color: var(--text-2); font-size: 12px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 12px; padding: 8px 12px; border-left: 2px solid var(--border-2, #e2e8f0); }
+.assistant-thought-content > div + div { margin-top: 8px; }
+.assistant-live-thoughts summary { cursor: pointer; color: var(--text-3); font-size: 12px; margin-bottom: 8px; }
 
 .task-progress-copy {
   display: grid;

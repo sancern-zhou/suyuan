@@ -289,6 +289,8 @@ export function usePanelManagement(store = null) {
         const summary = resourceSummary.value
         if (sessionId !== previousSessionId) {
           previousSessionId = sessionId
+          rightPanelVisible.value = false
+          activeRightTab.value = 'files'
           activeTabUserSelected.value = false
           rightPanelDismissed.value = false
         }

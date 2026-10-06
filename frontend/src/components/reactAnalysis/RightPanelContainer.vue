@@ -1,15 +1,11 @@
 <template>
   <div v-if="visible" class="viz-wrapper" :class="{ 'workflow-active': activeTab === 'workflow' }" :style="panelStyle">
-    <div v-if="sessionId" class="trajectory-tab-bar">
-      <button type="button" :class="['tab-btn', { active: activeTab === 'trajectory' }]" :aria-pressed="activeTab === 'trajectory'" @click="handleTabChange('trajectory')">调用轨迹</button>
-      <button v-if="activeTab === 'trajectory'" type="button" class="tab-btn" @click="handleTabChange('files')">返回资源面板</button>
-    </div>
-    <ExecutionTrajectoryPanel v-if="activeTab === 'trajectory'" class="panel-content" :session-id="sessionId" :messages="messages" />
-    <template v-else>
     <!-- 报告生成专家 -->
     <template v-if="assistantMode === 'report-generation-expert'">
       <div class="right-panel-tabs" role="tablist" aria-label="报告资源面板">
+        <button v-if="trajectoryAvailable" :class="['tab-btn', { active: activeTab === 'trajectory' }]" role="tab" :aria-selected="activeTab === 'trajectory'" @click="handleTabChange('trajectory')"><span>调用轨迹</span></button>
         <button
+          v-if="documentAvailable"
           :class="['tab-btn', { active: activeTab === 'document' }]"
           role="tab"
           :aria-selected="activeTab === 'document'"
@@ -19,6 +15,7 @@
           <span v-if="documentCount > 0" class="tab-count">{{ documentCount }}</span>
         </button>
         <button
+          v-if="fileProductCount > 0 || explicitTarget"
           :class="['tab-btn', { active: activeTab === 'files' }]"
           role="tab"
           :aria-selected="activeTab === 'files'"
@@ -56,11 +53,11 @@
         :session-id="sessionId"
       />
       <ReportGenerationPanel
-        v-else-if="!['feedback', 'workflow'].includes(activeTab)"
+        v-else-if="!['feedback', 'workflow', 'files', 'trajectory'].includes(activeTab)"
         :assistant-mode="assistantMode"
       />
       <HumanFeedbackPanel
-        v-else
+        v-else-if="activeTab === 'feedback'"
         class="panel-content"
         :feedback="humanFeedback"
         :submitting="humanFeedbackSubmitting"
@@ -73,7 +70,12 @@
     <template v-else>
       <!-- 标签页切换按钮 -->
       <div v-if="showTabs" class="right-panel-tabs" role="tablist" aria-label="右侧资源面板">
+        <button v-if="trajectoryAvailable" :class="['tab-btn', { active: activeTab === 'trajectory' }]" role="tab" :aria-selected="activeTab === 'trajectory'" @click="handleTabChange('trajectory')">
+          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="6" r="2"/><circle cx="19" cy="18" r="2"/><path d="M7 6h6a4 4 0 0 1 0 8H9a4 4 0 0 0 0 8h8"/></svg>
+          <span>调用轨迹</span>
+        </button>
         <button
+          v-if="visualizationAvailable"
           :class="['tab-btn', { active: activeTab === 'visualization' }]"
           role="tab"
           :aria-selected="activeTab === 'visualization'"
@@ -91,6 +93,7 @@
           <span v-if="visualizationCount > 0" class="tab-count">{{ visualizationCount }}</span>
         </button>
         <button
+          v-if="documentAvailable"
           :class="['tab-btn', { active: activeTab === 'document' }]"
           role="tab"
           :aria-selected="activeTab === 'document'"
@@ -107,6 +110,7 @@
           <span v-if="documentCount > 0" class="tab-count">{{ documentCount }}</span>
         </button>
         <button
+          v-if="knowledgeCount > 0"
           :class="['tab-btn', { active: activeTab === 'knowledge' }]"
           role="tab"
           :aria-selected="activeTab === 'knowledge'"
@@ -123,7 +127,7 @@
           <span v-if="knowledgeCount > 0" class="tab-count">{{ knowledgeCount }}</span>
         </button>
         <button
-          v-if="sessionId"
+          v-if="fileProductCount > 0 || explicitTarget"
           :class="['tab-btn', { active: activeTab === 'files' }]"
           role="tab"
           :aria-selected="activeTab === 'files'"
@@ -216,7 +220,7 @@
         @submit="$emit('submit-human-feedback', $event)"
       />
     </template>
-    </template>
+    <ExecutionTrajectoryPanel v-if="activeTab === 'trajectory' && sessionId" class="panel-content" :session-id="sessionId" :messages="messages" />
   </div>
 </template>
 
@@ -235,6 +239,8 @@ import { summarizeRightPanelResources } from '@/components/resources/rightPanelR
 import { buildResourceGroups, targetTab } from '@/services/resourceGroups.js'
 
 const props = defineProps({
+  workflowAvailable: { type: Boolean, default: false },
+  trajectoryAvailable: { type: Boolean, default: false },
   visible: {
     type: Boolean,
     default: false
@@ -328,7 +334,7 @@ const explicitTarget = computed(() => {
 
 const showTabs = computed(() => {
   // 只要有任意一个面板可见，就显示标签页切换按钮
-  return workflowAvailable.value || resourceSummary.value.hasArtifacts || props.knowledgePanelVisible || showBoardTab.value || feedbackAvailable.value
+  return props.trajectoryAvailable || workflowAvailable.value || resourceSummary.value.hasArtifacts || !!explicitTarget.value || props.knowledgePanelVisible || showBoardTab.value || feedbackAvailable.value
 })
 
 const fileProductCount = computed(() => resourceSummary.value.counts.files)
@@ -336,16 +342,15 @@ const visualizationCount = computed(() => resourceSummary.value.counts.visualiza
 const documentCount = computed(() => resourceSummary.value.counts.document)
 const visualizationAvailable = computed(() => visualizationCount.value > 0 || explicitTarget.value === 'visualization')
 const documentAvailable = computed(() => documentCount.value > 0 || explicitTarget.value === 'document')
-const workflowAvailable = computed(() => Boolean(props.sessionId))
+const workflowAvailable = computed(() => props.workflowAvailable)
 
 const knowledgeCount = computed(() => props.knowledgeSources?.length || 0)
 const feedbackCount = computed(() => props.humanFeedback?.items?.length || 0)
 const feedbackAvailable = computed(() => feedbackCount.value > 0)
 
 watch(
-  () => [props.assistantMode, props.activeTab, visualizationAvailable.value, documentAvailable.value, knowledgeCount.value, showBoardTab.value, feedbackAvailable.value, workflowAvailable.value],
-  ([mode, tab, visualizations, documents, knowledge, board, feedback, workflow]) => {
-    if (mode === 'report-generation-expert') return
+  () => [props.activeTab, visualizationAvailable.value, documentAvailable.value, knowledgeCount.value, showBoardTab.value, feedbackAvailable.value, workflowAvailable.value, props.trajectoryAvailable, fileProductCount.value, explicitTarget.value],
+  ([tab, visualizations, documents, knowledge, board, feedback, workflow, trajectory, files, explicit]) => {
     const unavailable = (
       (tab === 'visualization' && !visualizations)
       || (tab === 'document' && !documents)
@@ -353,8 +358,11 @@ watch(
       || (tab === 'board' && !board)
       || (tab === 'feedback' && !feedback)
       || (tab === 'workflow' && !workflow)
+      || (tab === 'trajectory' && !trajectory)
+      || (tab === 'files' && !files && !explicit)
     )
-    if (unavailable) emit('tab-change', 'files')
+    const fallback = explicit || (files ? 'files' : documents ? 'document' : visualizations ? 'visualization' : knowledge ? 'knowledge' : feedback ? 'feedback' : workflow ? 'workflow' : trajectory ? 'trajectory' : '')
+    if (unavailable && fallback) emit('tab-change', fallback)
   },
   { immediate: true }
 )
@@ -378,7 +386,6 @@ const handleBoardSnapshotConfirm = (snapshot) => {
 </script>
 
 <style scoped>
-.trajectory-tab-bar { flex-shrink: 0; padding: 6px 12px; border-bottom: 1px solid var(--border-2, #edf1f7); }
 .viz-wrapper {
   display: flex;
   flex-direction: column;
