@@ -8,7 +8,7 @@ from typing import Any
 
 import structlog
 
-from .jobs import WorkflowJob, get_workflow_job_store
+from .jobs import WorkflowJob, WorkflowLeaseLost, get_workflow_job_store
 
 logger = structlog.get_logger()
 
@@ -17,6 +17,13 @@ async def _run_job(job: WorkflowJob, store: Any) -> None:
     from app.tools.agent_tools.run_agent_workflow import RunAgentWorkflowTool
 
     snapshots: asyncio.Queue = asyncio.Queue()
+    lease_lost = asyncio.Event()
+    execution_task: asyncio.Task | None = None
+
+    def lose_lease() -> None:
+        lease_lost.set()
+        if execution_task is not None:
+            execution_task.cancel()
 
     def emit(snapshot: dict[str, Any]) -> None:
         snapshots.put_nowait(snapshot)
@@ -28,7 +35,10 @@ async def _run_job(job: WorkflowJob, store: Any) -> None:
                 snapshots.task_done()
                 return
             try:
-                await store.publish_snapshot(job.workflow_id, snapshot)
+                if not lease_lost.is_set():
+                    await store.publish_snapshot(job.workflow_id, snapshot, lease_token=job.lease_token)
+            except WorkflowLeaseLost:
+                lose_lease()
             except Exception as exc:
                 logger.warning("workflow_event_publish_failed", workflow_id=job.workflow_id, error=str(exc))
             finally:
@@ -39,13 +49,18 @@ async def _run_job(job: WorkflowJob, store: Any) -> None:
         while True:
             await asyncio.sleep(max(1, getattr(store, "lease_seconds", 900) / 3))
             try:
-                await store.heartbeat(job.workflow_id)
+                await store.heartbeat(job.workflow_id, lease_token=job.lease_token)
+            except WorkflowLeaseLost:
+                lose_lease()
+                return
             except Exception as exc:
                 logger.warning("workflow_heartbeat_failed", workflow_id=job.workflow_id, error=str(exc))
 
     heartbeat_task = asyncio.create_task(maintain_lease())
     try:
-        result = await RunAgentWorkflowTool().execute(
+        # Check ownership before starting any child tool or model call.
+        await store.heartbeat(job.workflow_id, lease_token=job.lease_token)
+        execution_task = asyncio.create_task(RunAgentWorkflowTool().execute(
             context=SimpleNamespace(
                 session_id=job.session_id, workflow_event_sink=emit,
                 runtime_mode=job.snapshot.get("parent_mode") or None,
@@ -53,22 +68,43 @@ async def _run_job(job: WorkflowJob, store: Any) -> None:
             workflow=job.definition,
             snapshot=job.snapshot,
             max_concurrency=job.snapshot.get("max_concurrency", 4),
-        )
+        ))
+        result = await execution_task
         final_snapshot = ((result.get("data") or {}).get("snapshot") or {}) if isinstance(result, dict) else {}
         if final_snapshot:
             emit(final_snapshot)
         await snapshots.join()
+        if lease_lost.is_set():
+            return
         await store.finish(
             job.workflow_id,
-            status="succeeded" if isinstance(result, dict) and result.get("success") else "failed",
+            lease_token=job.lease_token,
+            status=(
+                "succeeded" if isinstance(result, dict) and result.get("success")
+                else "cancelled" if isinstance(result, dict) and result.get("status") == "cancelled"
+                else "failed"
+            ),
             result=result if isinstance(result, dict) else {"result": str(result)},
         )
     except asyncio.CancelledError:
+        if lease_lost.is_set():
+            logger.warning("workflow_lease_lost", workflow_id=job.workflow_id)
+            return
         raise
+    except WorkflowLeaseLost:
+        lose_lease()
+        logger.warning("workflow_lease_lost", workflow_id=job.workflow_id)
     except Exception as exc:
         logger.exception("workflow_job_failed", workflow_id=job.workflow_id, error=str(exc))
-        await store.finish(job.workflow_id, status="failed", result={"error": str(exc)})
+        # Persistence failures can outlive a lease; never report failure as its new owner.
+        try:
+            await store.finish(job.workflow_id, lease_token=job.lease_token, status="failed", result={"error": str(exc)})
+        except WorkflowLeaseLost:
+            lose_lease()
     finally:
+        if execution_task is not None and not execution_task.done():
+            execution_task.cancel()
+            await asyncio.gather(execution_task, return_exceptions=True)
         heartbeat_task.cancel()
         await asyncio.gather(heartbeat_task, return_exceptions=True)
         await snapshots.put(None)
