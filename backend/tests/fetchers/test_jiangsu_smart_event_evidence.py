@@ -3,8 +3,8 @@ import pytest
 from app.fetchers.jiangsu_smart_event_evidence import (
     JiangsuSmartEventEvidenceFetcher,
     _compact_result,
-    _filter_station_alarm_noise,
     _instrument_pollutant_codes,
+    _package_station_alarm_result,
     _profile,
     _project_instrument_status,
     _project_monitoring_result,
@@ -161,8 +161,8 @@ def _station_alarm_result_with_noise():
     return {
         "success": True,
         "status": "success",
-        "summary": "站房告警查询完成：并发查询 1 个站点，返回 5 条告警记录。",
-        "metadata": {"record_count": 5},
+        "summary": "站房告警查询完成：并发查询 1 个站点，返回 6 条告警记录。",
+        "metadata": {"record_count": 6},
         "data": [{
             "station": {"station_code": "3011A"},
             "result": {"alarmLogs": [
@@ -172,40 +172,51 @@ def _station_alarm_result_with_noise():
                 # catalog 缺失时按文案兜底过滤。
                 {"AlarmType": 0, "Description": "【数据库有高IO占用】数值：36381"},
                 {"AlarmType": 750, "Description": "SO2 分析仪状态异常"},
-            ]},
+                {"AlarmType": 1216, "Description": "【站房温度】数值：30.1"},
+            ],
+                "alarmStatistics": [{"name": "仪器状态", "count": 1}, {"name": "动力环境", "count": 1}],
+                "alarmState": {"staTemp": 1},
+            },
             "success": True,
         }],
     }
 
 
-def test_station_alarm_noise_filter_removes_self_monitoring_rows():
-    filtered = _filter_station_alarm_noise(_station_alarm_result_with_noise())
-    rows = filtered["data"][0]["result"]["alarmLogs"]
-    assert [row["AlarmType"] for row in rows] == [750]
-    assert filtered["metadata"]["record_count"] == 1
-    assert filtered["metadata"]["alarm_filter"] == {
-        "source_record_count": 5,
-        "diagnostic_record_count": 1,
+def test_station_alarm_packaging_trims_to_power_environment_detail():
+    packaged = _package_station_alarm_result(_station_alarm_result_with_noise())
+    rows = packaged["data"][0]["result"]["alarmLogs"]
+    assert [row["AlarmType"] for row in rows] == [1216]
+    # 数采报警接口没有的统计与状态位原样保留。
+    inner = packaged["data"][0]["result"]
+    assert inner["alarmStatistics"] == [{"name": "仪器状态", "count": 1}, {"name": "动力环境", "count": 1}]
+    assert inner["alarmState"] == {"staTemp": 1}
+    assert packaged["metadata"]["record_count"] == 1
+    assert packaged["metadata"]["alarm_filter"] == {
+        "source_record_count": 6,
+        "diagnostic_record_count": 2,
         "suppressed_record_count": 4,
     }
-    assert "过滤 4 条" in filtered["summary"]
+    assert packaged["metadata"]["station_alarm_trim"]["power_environment_record_count"] == 1
+    assert "同源" in packaged["summary"]
 
 
-def test_station_alarm_noise_filter_keeps_result_without_suppression():
-    result = {
-        "success": True,
-        "status": "empty",
-        "summary": "站房告警查询完成：并发查询 1 个站点，返回 0 条告警记录。",
-        "metadata": {"record_count": 0},
-        "data": [{"station": {"station_code": "3011A"}, "result": {"alarmLogs": []}, "success": True}],
-    }
-    assert _filter_station_alarm_noise(result) is result
+def test_station_alarm_packaging_does_not_mutate_shared_gate_result():
+    source = _station_alarm_result_with_noise()
+    packaged = _package_station_alarm_result(source)
+    # 动环门控消费的是同一 task 的完整结果：入包裁剪不得改写共享对象。
+    gate_rows = source["data"][0]["result"]["alarmLogs"]
+    assert [row["AlarmType"] for row in gate_rows] == [231, 212, 622, 0, 750, 1216]
+    assert packaged is not source
+
+
+def test_station_alarm_packaging_passthrough_failed_result():
     failed = {"success": False, "status": "failed", "summary": "站房告警查询失败", "data": []}
-    assert _filter_station_alarm_noise(failed) is failed
+    assert _package_station_alarm_result(failed) is failed
+    assert _package_station_alarm_result(None) is None
 
 
 @pytest.mark.asyncio
-async def test_fetch_wires_station_alarm_noise_filter(monkeypatch):
+async def test_fetch_wires_station_alarm_packaging(monkeypatch):
     class StubStationAlarmTool:
         async def execute(self, **kwargs):
             return _station_alarm_result_with_noise()
@@ -247,8 +258,10 @@ async def test_fetch_wires_station_alarm_noise_filter(monkeypatch):
 
     source = package["sources"]["station_alarm"]
     rows = source["data"][0]["result"]["alarmLogs"]
-    assert [row["AlarmType"] for row in rows] == [750]
+    # 通用明细（750 仪器状态）交由数采报警源承载，站房源只留动环明细。
+    assert [row["AlarmType"] for row in rows] == [1216]
     assert source["metadata"]["alarm_filter"]["suppressed_record_count"] == 4
+    assert source["metadata"]["station_alarm_trim"]["power_environment_record_count"] == 1
 
 
 def test_power_environment_alarm_classification():

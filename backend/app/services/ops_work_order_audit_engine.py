@@ -50,7 +50,14 @@ from app.services.ops_audit.rules.attachment_rules import (  # noqa: E402
     attachment_review_candidate_rule_ids,
     check_attachment_requirements,
 )
-from app.services.ops_audit.rules.attachment_ocr_rules import build_flow_visual_tasks, run_flow_visual_task  # noqa: E402
+from app.services.ops_audit.rules.attachment_ocr_rules import (  # noqa: E402
+    PM_MEMBRANE_VISUAL_RULE_TABLES,
+    PM_TEMP_PRESSURE_VISUAL_RULE_TABLES,
+    build_flow_visual_tasks,
+    build_two_week_cleaning_photo_tasks,
+    build_halfyear_station_photo_tasks,
+    run_flow_visual_task,
+)
 from app.services.ops_audit.rules.multipoint_curve_visual_rules import (  # noqa: E402
     build_multipoint_curve_visual_tasks,
     run_multipoint_curve_visual_task,
@@ -1693,8 +1700,14 @@ def _run_flow_visual_tasks(
 ) -> None:
     total = len(tasks)
     concurrency = max(1, int(os.getenv("OPS_AUDIT_FLOW_VISUAL_CONCURRENCY", "8") or "8"))
+    selected_rule_ids = {str(task.get("visual_rule_id") or "").strip() for task in tasks}
+    if selected_rule_ids - {""}:
+        concurrency = 1
     concurrency = min(concurrency, max(total, 1))
     provider_limits = flow_visual_provider_summary()
+    active_target = provider_limits[0] if provider_limits else {}
+    for task in tasks:
+        task["llm_target"] = active_target
     logger.info(
         "ops_audit_flow_visual_tasks_selected candidate_image_count=%s concurrency=%s providers=%s",
         total,
@@ -1757,11 +1770,93 @@ def _run_flow_visual_tasks(
 
 def _run_one_flow_visual_task(task: dict[str, Any]) -> list[Issue]:
     issues: list[Issue] = []
-    if task.get("task_type") == "multipoint_curve_visual":
+    target = task.get("llm_target") or {}
+    if target.get("provider") and target.get("model"):
+        from app.services.llm_service import llm_service
+
+        with llm_service.use_provider_model(target["provider"], target["model"]):
+            if task.get("task_type") == "multipoint_curve_visual":
+                run_multipoint_curve_visual_task(task, issues)
+            else:
+                run_flow_visual_task(task, issues)
+    elif task.get("task_type") == "multipoint_curve_visual":
         run_multipoint_curve_visual_task(task, issues)
     else:
         run_flow_visual_task(task, issues)
+    selected_rule_id = str(task.get("visual_rule_id") or "").strip()
+    if selected_rule_id:
+        issues = [issue for issue in issues if issue.rule_id == selected_rule_id]
     return issues
+
+
+def _select_visual_tasks(tasks: list[dict[str, Any]], visual_rule_id: str | None) -> list[dict[str, Any]]:
+    selected = str(visual_rule_id or "").strip()
+    if not selected:
+        return tasks
+    selected_tasks = []
+    for task in tasks:
+        task_rules = set(task.get("visual_rule_ids") or [])
+        if not task_rules:
+            task_rules = _visual_rule_ids_for_task(task)
+        if selected not in task_rules:
+            continue
+        task["visual_rule_id"] = selected
+        selected_tasks.append(task)
+    return selected_tasks
+
+
+def _visual_rule_ids_for_task(task: dict[str, Any]) -> set[str]:
+    task_type = task.get("task_type")
+    if task_type == "two_week_cleaning_photo_time":
+        return {"ATTACHMENT_TW_CLEANING_PHOTO_TIME_OUTSIDE_MAINTENANCE"}
+    if task_type == "halfyear_station_photo_date":
+        return {"ATTACHMENT_HY_STATION_PHOTO_DATE_OUTSIDE_MAINTENANCE"}
+    if task_type == "multipoint_curve_visual":
+        return {"ATTACHMENT_MULTIPOINT_GRADIENT_REVIEW", "ATTACHMENT_MULTIPOINT_WATERMARK_REVIEW"}
+    tables = {str(table) for table, _ in task.get("forms", [])}
+    if "RF_TW_PmFlowCalibrate" in tables:
+        return {"ATTACHMENT_PM_FLOW_CALIBRATION_VALUE_MISMATCH"}
+    if "RF_HY_O3VALUEPASS" in tables:
+        return {"ATTACHMENT_O3_TRANSFER_SIX_POINT_REVIEW"}
+    if tables & {"RF_M_GASEOUSFLOWCHECK", "RF_Q_GaseousFlowCheck"}:
+        return {
+            "ATTACHMENT_GAS_FLOW_DISPLAY_VALUE_MISMATCH",
+            "ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH",
+            "ATTACHMENT_FLOW_PHOTO_WATERMARK_TIME_MISMATCH",
+        }
+    if tables & PM_MEMBRANE_VISUAL_RULE_TABLES:
+        return {"ATTACHMENT_PM_MEMBRANE_VALUE_MISMATCH"}
+    if tables & PM_TEMP_PRESSURE_VISUAL_RULE_TABLES:
+        return {"ATTACHMENT_PM_TEMP_PRESSURE_VALUE_MISMATCH"}
+    return set()
+
+
+def _is_void_order(order: dict[str, Any], forms: list[tuple[str, dict[str, Any]]]) -> bool:
+    if str(order.get("DDWORKINGORDERSTATUS") or "").strip().lower() == "invalid":
+        return True
+
+    order_void_remark = re.compile(r"(?:此|本|该)工单(?:已)?作废[。！!\s]*")
+    void_remark = re.compile(r"(?:此|本|该)?工单(?:已)?作废[。！!\s]*|(?:已)?作废[。！!\s]*")
+    if any(
+        void_remark.fullmatch(str(order.get(field) or "").strip())
+        for field in ("ORDERTITLE", "ORDERCONTENT")
+    ):
+        return True
+
+    valid_forms = [form for _, form in forms if not form.get("_query_error")]
+    if any(
+        order_void_remark.fullmatch(str(form.get(field) or "").strip())
+        for form in valid_forms
+        for field in ("REMARKS", "REMARK")
+    ):
+        return True
+    return bool(valid_forms) and all(
+        any(
+            void_remark.fullmatch(str(form.get(field) or "").strip())
+            for field in ("REMARKS", "REMARK")
+        )
+        for form in valid_forms
+    )
 
 
 def audit_dataset(
@@ -1770,6 +1865,7 @@ def audit_dataset(
     enable_visual: bool = True,
     enable_non_visual: bool = True,
     visual_evidence_dir: Path | None = None,
+    visual_rule_id: str | None = None,
 ) -> dict[str, Any]:
     visual_evidence_dir = (visual_evidence_dir or (OUTPUT_DIR / "visual_evidence" / "multipoint_curves")).resolve()
     details_by_code = defaultdict(list)
@@ -1794,16 +1890,64 @@ def audit_dataset(
             code = form.get("WORKINGORDERCODE")
             if code:
                 forms_by_code[code].append((table, form))
+    void_current_codes = {
+        str(order["WORKINGORDERCODE"])
+        for order in dataset.get("orders", [])
+        if order.get("WORKINGORDERCODE") and _is_void_order(order, forms_by_code.get(order["WORKINGORDERCODE"], []))
+    }
+    history = dataset.get("device_history") or {}
+    history_forms_by_code = defaultdict(list)
+    for table, forms in history.get("rf_forms", {}).items():
+        for form in forms:
+            if form.get("WORKINGORDERCODE"):
+                history_forms_by_code[str(form["WORKINGORDERCODE"])].append((table, form))
+    void_history_codes = {
+        str(order["WORKINGORDERCODE"])
+        for order in history.get("orders", [])
+        if order.get("WORKINGORDERCODE")
+        and _is_void_order(order, history_forms_by_code.get(str(order["WORKINGORDERCODE"]), []))
+    }
+    void_order_codes = void_current_codes | void_history_codes
+    audit_source = dataset
+    if void_order_codes:
+        audit_source = {
+            **dataset,
+            "orders": [
+                order for order in dataset.get("orders", [])
+                if str(order.get("WORKINGORDERCODE")) not in void_order_codes
+            ],
+            "rf_forms": {
+                table: [
+                    form for form in forms
+                    if str(form.get("WORKINGORDERCODE")) not in void_order_codes
+                ]
+                for table, forms in dataset.get("rf_forms", {}).items()
+            },
+            "device_history": {
+                **history,
+                "orders": [
+                    order for order in history.get("orders", [])
+                    if str(order.get("WORKINGORDERCODE")) not in void_order_codes
+                ],
+                "rf_forms": {
+                    table: [
+                        form for form in forms
+                        if str(form.get("WORKINGORDERCODE")) not in void_order_codes
+                    ]
+                    for table, forms in history.get("rf_forms", {}).items()
+                },
+            },
+        }
     attachments_by_code = _group_records_by_order_code(dataset.get("attachments", []), ["refid", "REFID", "remark", "REMARK"])
     wo_commonfile_by_code = _group_records_by_order_code(dataset.get("wo_commonfile", []), ["REFID", "refid"])
     all_orders_for_device_consistency: list[dict[str, Any]] = []
     all_forms_by_code: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     o3_history_conflicts_by_code: dict[str, list[Issue]] = {}
     if enable_non_visual:
-        all_orders_for_device_consistency, all_forms_by_code = merge_device_history(dataset)
+        all_orders_for_device_consistency, all_forms_by_code = merge_device_history(audit_source)
         current_order_codes = {
             str(order.get("WORKINGORDERCODE"))
-            for order in dataset.get("orders", [])
+            for order in audit_source.get("orders", [])
             if order.get("WORKINGORDERCODE")
         }
         o3_history_conflicts_by_code = build_o3_upper_standard_history_conflicts(
@@ -1815,7 +1959,7 @@ def audit_dataset(
     record_issues_by_code: dict[str, list[Issue]] = {}
     flow_visual_tasks: list[dict[str, Any]] = []
     attachment_read_cache: dict[tuple[Any, ...], dict[str, Any]] = {}
-    for order in dataset.get("orders", []):
+    for order in audit_source.get("orders", []):
         code = order.get("WORKINGORDERCODE")
         station_meta = station_meta_by_id.get(str(order.get("STATIONID") or ""), {})
         issues: list[Issue] = list(o3_history_conflicts_by_code.get(str(code), []))
@@ -1898,7 +2042,27 @@ def audit_dataset(
             )
             for task in order_flow_tasks:
                 task["working_order_code"] = code
-            flow_visual_tasks.extend(order_flow_tasks)
+            flow_visual_tasks.extend(_select_visual_tasks(order_flow_tasks, visual_rule_id))
+            cleaning_photo_tasks = build_two_week_cleaning_photo_tasks(
+                order,
+                forms,
+                details,
+                attachments_by_code.get(str(code), []),
+                wo_commonfile_by_code.get(str(code), []),
+            )
+            for task in cleaning_photo_tasks:
+                task["working_order_code"] = code
+            flow_visual_tasks.extend(_select_visual_tasks(cleaning_photo_tasks, visual_rule_id))
+            halfyear_station_photo_tasks = build_halfyear_station_photo_tasks(
+                order,
+                forms,
+                details,
+                attachments_by_code.get(str(code), []),
+                wo_commonfile_by_code.get(str(code), []),
+            )
+            for task in halfyear_station_photo_tasks:
+                task["working_order_code"] = code
+            flow_visual_tasks.extend(_select_visual_tasks(halfyear_station_photo_tasks, visual_rule_id))
             multipoint_tasks = build_multipoint_curve_visual_tasks(
                 order,
                 forms,
@@ -1908,7 +2072,7 @@ def audit_dataset(
             )
             for task in multipoint_tasks:
                 task["working_order_code"] = code
-            flow_visual_tasks.extend(multipoint_tasks)
+            flow_visual_tasks.extend(_select_visual_tasks(multipoint_tasks, visual_rule_id))
         record_issues_by_code[str(code)] = issues
         issues_for_record = [issue for issue in dedupe_issues(issues) if not is_excluded_rule(issue.rule_id)]
         attachment_review_rules = sorted(
@@ -1999,15 +2163,18 @@ def audit_dataset(
         "audit_info": {
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "order_count": len(records),
+            "excluded_void_order_count": len(void_current_codes),
             "rule_stage": (
                 "deterministic_and_candidate_classification"
                 if enable_non_visual
                 else ("visual_only" if enable_visual else "rules_disabled")
             ),
             "enable_visual": enable_visual,
+            "visual_rule_id": visual_rule_id,
             "enable_non_visual": enable_non_visual,
         },
         "summary": {
+            "excluded_void_order_count": len(void_current_codes),
             "audit_level_counts": dict(level_counter),
             "severity_counts": dict(severity_counter),
             "category_counts": dict(category_counter),
@@ -2244,6 +2411,7 @@ def main() -> None:
     parser.add_argument("--order-type", action="append", dest="order_types")
     parser.add_argument("--maintenance-type", action="append", dest="maintenance_types")
     parser.add_argument("--working-order-code", action="append", dest="working_order_codes")
+    parser.add_argument("--visual-rule-id", help="仅触发一个多模态视觉规则")
     parser.add_argument("--input", type=Path, help="Use an existing fetched dataset JSON instead of querying SQL Server")
     parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR)
     args = parser.parse_args()
@@ -2270,7 +2438,7 @@ def main() -> None:
             encoding="utf-8",
         )
 
-    audit = audit_dataset(dataset)
+    audit = audit_dataset(dataset, visual_rule_id=args.visual_rule_id)
     (args.output_dir / "latest_finished_work_orders_deterministic_audit.json").write_text(
         json.dumps(audit, ensure_ascii=False, indent=2),
         encoding="utf-8",

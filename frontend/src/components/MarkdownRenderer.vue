@@ -25,6 +25,7 @@ import {
   renderDeferredApiImage
 } from './markdownApiImages.js'
 import { normalizeRestoredContent } from '@/stores/sessionContent.js'
+import { wrapBracketMath } from '@/services/markdownBracketMath.js'
 import { sanitizeRichHtml } from '@/utils/sanitize.js'
 
 // 预处理后的内容
@@ -266,15 +267,7 @@ const renderedHtml = computed(() => {
     return `$${match}$`
   })
 
-  // 【增强】识别方括号中的数学表达式 [公式内容]
-  // ✅ 排除 Markdown 链接格式：[text](url)，避免误判
-  content = content.replace(/\[([^\]]*?(?:\\[a-zA-Z]+|_[a-zA-Z0-9]+|\^[a-zA-Z0-9\{\}]+|\\frac|\\sum|\\int|\\prod|\\cdot|\\times|\\div|\\pm|\\mp|\\le|\\ge|\\ne|\\approx|\\equiv|\\partial|\\nabla|\\Delta|\\lambda|\\alpha|\\beta|\\gamma|\\delta|\\theta|\\pi|\\infty|\\sqrt|\{[^\]]*\})[^\]]*?)\](?!\()/g, (match, formula) => {
-    // 如果方括号内容看起来像数学公式，用 $ 包裹
-    if (formula.includes('\\') || formula.includes('^') || formula.includes('_') || formula.includes('frac') || formula.includes('sum') || formula.includes('int')) {
-      return `$$${formula}$$`  // 使用 $$ 作为行间公式
-    }
-    return match  // 不是公式，保持原样
-  })
+  content = wrapBracketMath(content)
 
   // 【调试】检查是否包含base64图片
   const base64Matches = content.match(/!\[.*?\]\(data:image\/png;base64,[^\)]+\)/g)
@@ -465,7 +458,7 @@ const handleImageClick = (e) => {
   
   :deep(strong) {
     font-weight: 600;
-    color: var(--color-primary);
+    color: inherit;
   }
   
   :deep(em) {
@@ -479,7 +472,7 @@ const handleImageClick = (e) => {
     border-radius: 3px;
     font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
     font-size: 13px;
-    color: #d63384;
+    color: #405868;
   }
   
   :deep(a) {

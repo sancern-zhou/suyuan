@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 import structlog
 
 from app.db.database import async_session
-from app.db.models.coordinator_quick_prompt_db import CoordinatorQuickPromptDB
+from app.db.coordinator_quick_prompt_model import CoordinatorQuickPromptDB
 
 logger = structlog.get_logger()
 

@@ -26,3 +26,12 @@ test('ignores message-shaped legacy fields because the selector accepts resource
   assert.equal(summary.counts.document, 0)
   assert.equal(summary.hasArtifacts, false)
 })
+
+test('does not count static charts as interactive visualizations', () => {
+  const summary = summarizeRightPanelResources([
+    item({ resource_id: 'static', group_id: 'static', kind: 'visual', role: 'output', renderer: 'chart', interactive: false }),
+    item({ resource_id: 'image', group_id: 'static', relation: 'rendition', renderer: 'image', format: 'png' })
+  ])
+  assert.equal(summary.counts.visualization, 0)
+  assert.equal(summary.counts.files, 1)
+})

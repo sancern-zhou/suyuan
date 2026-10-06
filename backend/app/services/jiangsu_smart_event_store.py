@@ -21,7 +21,7 @@ HEAVY_FIELDS = {"evidence", "evidence_package", "judgment_history", "operation_r
 EVIDENCE_STUB_FIELDS = {
     "event_id", "schema_version", "package_version", "status", "collected_at",
     "profile", "gaps", "source_status", "missing_sources", "required_sources",
-    "detected_clue_tags", "system_assessment",
+    "system_assessment",
     "ai_judgment", "judgment_status", "judgment_updated_at", "ai_structured_judgment",
 }
 

@@ -21,6 +21,7 @@ def test_default_llm_prefers_opencode_go_when_configured(monkeypatch):
     monkeypatch.setattr(settings, "go_base_url", "https://go.example/v1")
     monkeypatch.setattr(settings, "go_model", "deepseek-v4.1-flash")
     monkeypatch.setattr(settings, "go_api_mode", "chat_completions")
+    monkeypatch.setattr(settings, "go2_api_key", None)
     monkeypatch.setattr(settings, "agnes_api_key", None)
     monkeypatch.setattr(settings, "bailian_api_key", None)
     monkeypatch.setattr(settings, "tender_secondary_llm_api_key", None)
@@ -39,12 +40,53 @@ def test_default_llm_prefers_opencode_go_when_configured(monkeypatch):
     }
 
 
+def test_default_llm_prefers_second_opencode_go_plan(monkeypatch):
+    created = []
+
+    class FakeLLMClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            created.append(self)
+
+    monkeypatch.setattr(
+        fetcher_module,
+        "OpenAICompatibleTenderLLMClient",
+        FakeLLMClient,
+    )
+    monkeypatch.setattr(settings, "go2_api_key", "go2-key")
+    monkeypatch.setattr(settings, "go2_base_url", "https://go2.example/v1")
+    monkeypatch.setattr(settings, "go2_model", "deepseek-v4.1-flash")
+    monkeypatch.setattr(settings, "go2_api_mode", "chat_completions")
+    monkeypatch.setattr(settings, "go_api_key", "go-key")
+    monkeypatch.setattr(settings, "go_base_url", "https://go.example/v1")
+    monkeypatch.setattr(settings, "go_model", "deepseek-v4.1-flash")
+    monkeypatch.setattr(settings, "go_api_mode", "chat_completions")
+    monkeypatch.setattr(settings, "agnes_api_key", None)
+    monkeypatch.setattr(settings, "bailian_api_key", None)
+    monkeypatch.setattr(settings, "tender_secondary_llm_api_key", None)
+    monkeypatch.setattr(settings, "tender_llm_concurrency", 5)
+
+    pool = TenderInformationFetcher()._default_llm()
+
+    assert isinstance(pool, TenderLLMClientPool)
+    assert pool.screening_client_index == 0
+    assert [client.kwargs["provider"] for client in created] == ["go2", "go"]
+    assert created[0].kwargs == {
+        "api_key": "go2-key",
+        "base_url": "https://go2.example/v1",
+        "model": "deepseek-v4.1-flash",
+        "provider": "go2",
+        "api_mode": "chat_completions",
+    }
+
+
 def test_default_llm_builds_agnes_primary_and_bailian_secondary_with_bailian_screening(
     monkeypatch,
 ):
     created = []
 
     monkeypatch.setattr(settings, "go_api_key", None)
+    monkeypatch.setattr(settings, "go2_api_key", None)
 
     class FakeLLMClient:
         def __init__(self, **kwargs):

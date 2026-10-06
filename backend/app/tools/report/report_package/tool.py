@@ -21,6 +21,7 @@ from app.services.quarto_report_renderer import (
     format_report_image_validation_error,
     inspect_report_image_refs,
     normalize_chinese_ascii_quotes,
+    normalize_markdown_numeric_ranges,
     quarto_report_renderer,
 )
 from app.services.report_preview_refresh import (
@@ -410,6 +411,7 @@ def _normalize_static_qmd(qmd_content: str) -> str:
         flags=re.IGNORECASE,
     )
     normalized = normalize_chinese_ascii_quotes(normalized)
+    normalized = normalize_markdown_numeric_ranges(normalized)
     return normalized
 
 
@@ -480,9 +482,10 @@ class CreateReportPackageTool(LLMTool):
                     "source_qmd_path": {
                         "type": "string",
                         "description": (
-                            "可编辑的原始 QMD 文件路径，仅作为来源元数据记录；不会直接覆盖"
-                            "报告包内 report.qmd。HTML、DOCX 和 QMD 下载始终使用经 assets "
-                            "复制及路径规范化后的报告包发布稿。"
+                            "程序化定时任务可传入已生成的完整 QMD 文件路径，代替 "
+                            "qmd_content；提供 qmd_content 时仅作为来源元数据记录。"
+                            "不会直接覆盖报告包内 report.qmd。HTML、DOCX 和 QMD 下载"
+                            "始终使用经 assets 复制及路径规范化后的报告包发布稿。"
                         ),
                     },
                     "title": {"type": "string", "description": "报告标题，可选。"},
@@ -502,7 +505,13 @@ class CreateReportPackageTool(LLMTool):
                     },
                     "assets": {
                         "type": "array",
-                        "description": "真实文件路径或 {path,type,name}；见 references/index.md。",
+                        "description": (
+                            "真实文件路径或 {path,type,name}；见 references/index.md。"
+                            "复用 Python 或业务图表工具生成的静态图片时，用 list_session_resources"
+                            "(logical_key=chart-image) 取得图片的 file_path，作为 image asset；"
+                            "ECharts 仅提供右侧交互图，报告配图须复用原始数据重新绘制静态图；"
+                            "qmd_content 中使用报告包内的相对图片路径。"
+                        ),
                         "items": {
                             "oneOf": [
                                 {
@@ -551,10 +560,11 @@ class CreateReportPackageTool(LLMTool):
                         "uniqueItems": True,
                     },
                 },
-                # qmd_content is mandatory for LLM callers; source_qmd_path/qmd_path
-                # are only accepted for backwards compatibility with scheduled jobs
-                # that call execute() programmatically (bypassing this schema).
-                "required": ["report_id", "qmd_content"],
+                "required": ["report_id"],
+                "anyOf": [
+                    {"required": ["qmd_content"]},
+                    {"required": ["source_qmd_path"]},
+                ],
             },
         }
 

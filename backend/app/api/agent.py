@@ -28,6 +28,7 @@ from app.agent.session.workspace_routing import (
     is_workspace_promotion,
 )
 from app.agent.session.conversation_persistence import ConversationPersistenceService
+from app.agent.user_questions import format_answers, validate_answers
 from app.agent.runtime.cancellation import PauseCheckpointError, cancellation_registry
 from app.agent.runtime.steering import steering_registry
 from app.agent.runtime.ownership import run_ownership_registry
@@ -522,6 +523,7 @@ class AgentInteractionResolution(BaseModel):
 
     decision: Literal["approve", "reject", "answer"]
     response: Optional[str] = Field(default=None, max_length=4000)
+    answers: Optional[List[Dict[str, Any]]] = None
 
 
 async def persist_new_web_session(
@@ -667,7 +669,7 @@ async def analyze_stream(
 
     - Visualization Tools:
       - execute_echarts_python - 交互式 ECharts 图表生成
-      - create_report_chart - 正式报告静态图表生成
+      - create_business_chart - 特定业务图型和固定模板绘制
       - generate_map - 地图生成
 
     **助手模式**:
@@ -883,7 +885,6 @@ async def analyze_stream(
                     or not persisted_context.get("task_id")
                     or not persisted_context.get("execution_id")
                     or not isinstance(persisted_tools, list)
-                    or not persisted_tools
                     or any(not isinstance(name, str) or not name for name in persisted_tools)
                 ):
                     raise HTTPException(status_code=409, detail="scheduled_context_incomplete")
@@ -1177,7 +1178,19 @@ async def analyze_stream(
 
                         if event_type == "interaction_required":
                             interaction_data = event.get("data") or {}
-                            if is_workspace_approval_required(interaction_data):
+                            if interaction_data.get("kind") == "structured_question":
+                                interaction = {
+                                    "interaction_id": f"interaction_{uuid.uuid4().hex}",
+                                    "kind": "structured_question",
+                                    "title": interaction_data.get("title") or "需要你的选择",
+                                    "questions": interaction_data["questions"],
+                                    "mode": request.mode,
+                                }
+                                session.metadata["pending_interaction"] = interaction
+                                if not await session_manager.save_session_metadata(session):
+                                    raise RuntimeError("interaction_request_save_failed")
+                                event["data"] = {**interaction, "session_id": actual_session_id, "run_id": latest_event_run_id}
+                            elif is_workspace_approval_required(interaction_data):
                                 pending_request = bind_workspace_request_to_source_query(
                                     interaction_data["pending_request"],
                                     original_query,
@@ -1628,12 +1641,25 @@ async def resolve_agent_interaction(
     if not isinstance(pending, dict) or pending.get("interaction_id") != interaction_id:
         raise HTTPException(status_code=404, detail="interaction_not_found")
 
+    resume_query = None
+    validated_answers = None
+    if pending.get("kind") == "structured_question":
+        if request.decision == "answer":
+            try:
+                validated_answers = validate_answers(pending["questions"], request.answers or [])
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            resume_query = format_answers(pending["questions"], validated_answers)
+        elif request.decision != "reject":
+            raise HTTPException(status_code=422, detail="invalid_question_decision")
+
     promotion = pending.get("promotion") if isinstance(pending.get("promotion"), dict) else None
     session.metadata.pop("pending_interaction", None)
     session.metadata["last_interaction"] = {
         "interaction_id": interaction_id,
         "decision": request.decision,
         "response": request.response,
+        "answers": validated_answers,
         "resolved_at": datetime.now(timezone.utc).isoformat(),
     }
     if request.decision == "approve" and is_workspace_promotion(promotion):
@@ -1652,6 +1678,8 @@ async def resolve_agent_interaction(
         "interaction_id": interaction_id,
         "decision": request.decision,
         "workspace_mode": session.metadata.get("workspace_mode"),
+        "resume_query": resume_query,
+        "mode": pending.get("mode"),
         "pending_request": (
             pending.get("pending_request")
             if request.decision == "approve" and isinstance(pending, dict)

@@ -6,6 +6,8 @@
 
 先使用 jiangsu_smart_event_workspace 按站点、时间和仪器故障事件类型查询，再读取事件详情和证据。重点核验仪器告警与状态、断数/恒值、质控记录、供电与站房环境、监测时序和区域对比。反馈、归档和维修派单前必须确认目标事件及依据；不得把单次异常或证据缺失直接判定为仪器故障。
 
+污染低值、颗粒物倒挂类阈值告警（告警内容已写明触发条件，直接引用其中数值）优先核验采样与分析模块、校准记录和设备状态报警；倒挂在物理上不成立，单站孤立出现时提高仪器故障假设，多站同步出现时先核查数据链路再下结论。
+
 用户查询历史故障或需要追溯处置进展时：智能事件侧用 jiangsu_smart_event_workspace 的 filter_event_list 按时间/状态过滤，用 show_operation_history 查看事件处置、派单与反馈记录（返回的 operation_records 可直接引用）；运维平台侧的历史故障工单用 jiangsu_fetch_fault_work_orders 查询清单，需要复核具体工单时再用 jiangsu_fetch_fault_work_order_detail。
 
 ## 面向用户与表达规范（强制）

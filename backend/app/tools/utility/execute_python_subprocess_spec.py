@@ -10,11 +10,101 @@ from matplotlib import font_manager
 from app.agent.resources.contracts import ResourceDeclaration
 from app.tools.utility.execute_python_tool import ExecuteEChartsPythonTool, ExecutePythonTool
 from app.utils.font_utils import select_preferred_chinese_font_path
+from app.tools.visualization.create_business_chart.theme import REPORT_THEME, SERIES_COLORS
 
 
 def test_python_execution_tools_are_pinned_to_sandbox():
     assert ExecutePythonTool().execution_engine == "bubblewrap"
     assert ExecuteEChartsPythonTool().execution_engine == "bubblewrap"
+
+
+@pytest.mark.asyncio
+async def test_environment_chart_helpers_are_available_in_python_sandbox():
+    result = await ExecutePythonTool().execute(
+        code="""
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(8, 5))
+ax.plot([1, 2, 3], [30, 70, 45], label='PM2.5 daily')
+ax.set_xlabel('Date')
+ax.set_ylabel('PM2.5 (ug/m3)')
+context = dict(pollutant='PM2.5', average_time='24h', observed_on='2026-05-01', unit='ug/m3')
+assert pollutant_color(60, **context) == '#FFFF00'
+assert get_pollutant_scale(**context)['concentration_breakpoints'][2] == 60
+line = add_standard_limit(ax, data_average_time='24h', grade=2, **context)
+assert line.environment_standard['value'] == 60
+legend = legend_below(ax, ncols=1)
+assert len(legend.get_texts()) == 2
+save_chart(fig, 'environment-standard.png')
+""",
+        timeout=30,
+    )
+    assert result["success"] is True, result
+    assert any(item["resource_key"] == "chart-image" for item in result["resources"])
+
+
+@pytest.mark.asyncio
+async def test_python_report_theme_preserves_custom_multiplot_and_exports_png():
+    import json
+
+    result = await ExecutePythonTool().execute(
+        code="""
+import json
+import matplotlib.pyplot as plt
+from PIL import Image
+fig, axes = plt.subplots(1, 2, figsize=(8, 4), layout='constrained')
+line, = axes[0].plot([1, 2, 3], [3, 5, 4])
+axes[0].set_title('Trend')
+axes[1].bar(['A', 'B'], [4, 6], color=theme_color('warning'))
+axes[1].set_title('Comparison')
+axes[1].set_ylabel('Value', fontsize=13)
+path = save_chart(fig, 'python-report-theme.png')
+with Image.open(path) as image:
+    dpi = image.info['dpi'][0]
+print('THEME=' + json.dumps({
+    'line_color': line.get_color(),
+    'title_size': axes[0].title.get_fontsize(),
+    'axis_color': axes[0].spines['bottom'].get_edgecolor(),
+    'top_visible': axes[0].spines['top'].get_visible(),
+    'custom_size': axes[1].yaxis.label.get_fontsize(),
+    'canvas': fig.get_size_inches().tolist(),
+    'axes_count': len(fig.axes), 'dpi': dpi,
+}))
+""",
+        timeout=15,
+    )
+    assert result["success"] is True, result
+    output = result["data"]["output"]
+    values = json.loads(next(line[6:] for line in output.splitlines() if line.startswith("THEME=")))
+    assert values["line_color"] == SERIES_COLORS[0]
+    assert values["title_size"] == REPORT_THEME["font_sizes"]["title"]
+    from matplotlib.colors import to_rgba
+    assert values["axis_color"] == list(to_rgba(REPORT_THEME["colors"]["grid"]))
+    assert values["top_visible"] is False
+    assert values["custom_size"] == 13
+    assert values["canvas"] == [8, 4]
+    assert values["axes_count"] == 2
+    assert values["dpi"] == pytest.approx(REPORT_THEME["dpi"], abs=0.1)
+    image_resources = [item for item in result["resources"] if item["resource_key"] == "chart-image"]
+    assert len(image_resources) == 1
+
+
+@pytest.mark.asyncio
+async def test_seaborn_only_script_can_restore_shared_report_style():
+    result = await ExecutePythonTool().execute(
+        code="""
+import seaborn as sns
+sns.set_theme(style='darkgrid')
+apply_report_style()
+ax = sns.lineplot(x=[1, 2, 3], y=[3, 5, 4])
+assert ax.get_facecolor() == (1, 1, 1, 1)
+assert ax.lines[0].get_color() == SERIES_COLORS[0]
+ax.set_title('Seaborn report chart')
+save_chart(ax.figure, 'seaborn-report-theme.png')
+""",
+        timeout=15,
+    )
+    assert result["success"] is True, result
+    assert any(item["resource_key"] == "chart-image" for item in result["resources"])
 
 
 @pytest.mark.asyncio
@@ -170,7 +260,7 @@ async def test_execute_python_keeps_qmd_downloadable_when_render_fails(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_execute_echarts_python_publishes_interactive_catalog_spec_only():
+async def test_execute_echarts_python_publishes_only_interactive_spec():
     result = await ExecuteEChartsPythonTool().execute(
         code=(
             "import json\n"
@@ -183,12 +273,14 @@ async def test_execute_echarts_python_publishes_interactive_catalog_spec_only():
     )
 
     assert result["success"] is True
-    [resource] = [
+    resources = [
         ResourceDeclaration.model_validate(item) for item in result["resources"]
     ]
-    assert resource.resource_key == "chart-spec"
-    assert resource.kind.value == "visual"
-    assert resource.renderer.value == "chart"
+    assert [resource.resource_key for resource in resources] == ["chart-spec"]
+    assert resources[0].kind.value == "visual"
+    assert resources[0].renderer.value == "chart"
+    assert resources[0].metadata["interactive"] is True
+    assert "local_path" not in result["visuals"][0]
     assert "image_url" not in result["visuals"][0]
     assert "/api/image/" not in result["summary"]
 
@@ -202,6 +294,7 @@ async def test_execute_python_timeout_is_a_tool_failure():
 
     assert result["success"] is False
     assert result["status"] == "failed"
+    assert result["error_code"] == "PYTHON_TIMEOUT"
     assert result["data"]["error"] == "执行超时"
     assert result["data"]["engine"] == "bubblewrap"
 
@@ -447,3 +540,80 @@ async def test_execute_python_run_never_truncates_persisted_images(
     published = images_dir / "新图表.png"
     assert published.is_file()
     assert published.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def _agent_context(tmp_path: Path, session_id: str = "agent-session"):
+    return SimpleNamespace(
+        session_id=session_id,
+        available_file_paths=[],
+        authorized_input_paths=[],
+        data_manager=SimpleNamespace(
+            memory=SimpleNamespace(session=SimpleNamespace(data_dir=tmp_path)),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_context_does_not_enforce_runtime_guidance_gate(tmp_path):
+    result = await ExecutePythonTool().execute(
+        context=_agent_context(tmp_path),
+        code="print('schema-guided')",
+        timeout=10,
+    )
+    assert result["success"] is True, result
+    assert "schema-guided" in result["data"]["output"]
+
+
+@pytest.mark.asyncio
+async def test_same_session_python_calls_are_serialized(monkeypatch, tmp_path):
+    tool = ExecutePythonTool()
+    active = 0
+    peak = 0
+
+    async def fake_execute(*args, **kwargs):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.05)
+        active -= 1
+        return {"success": True}
+
+    monkeypatch.setattr(tool, "_execute_unlocked", fake_execute)
+    context = _agent_context(tmp_path)
+    await asyncio.gather(
+        tool.execute(context=context, code="print(1)"),
+        tool.execute(context=context, code="print(2)"),
+    )
+    assert peak == 1
+
+
+@pytest.mark.asyncio
+async def test_stdout_capture_is_bounded_and_not_published_as_artifact():
+    result = await ExecutePythonTool().execute(code="print('x' * 400000)", timeout=10)
+    assert result["success"] is True, result
+    execution = result["data"]["execution"]
+    assert execution["stdout_bytes"] > 256 * 1024
+    assert execution["stdout_truncated"] is True
+    assert len(result["data"]["output"]) < 270_000
+    assert not any(Path(path).name in {"stdout.log", "stderr.log"} for path in result["data"]["files"])
+
+
+@pytest.mark.asyncio
+async def test_python_traceback_maps_to_original_user_line():
+    result = await ExecutePythonTool().execute(
+        code="value = 1\nraise ValueError('mapped line')\n",
+        timeout=10,
+    )
+    details = result["data"]["error_details"]
+    assert result["success"] is False
+    assert details["line_number"] == 2
+    assert details["raw_line_number"] > details["line_number"]
+    assert "raise ValueError" in details["code_context"]
+
+
+def test_dynamic_loader_mapping_failure_is_bootstrap_error():
+    details = ExecutePythonTool()._parse_subprocess_error(
+        "libtorch.so: failed to map segment from shared object",
+        "import torch",
+    )
+    assert details["error_type"] == "SandboxBootstrapError"

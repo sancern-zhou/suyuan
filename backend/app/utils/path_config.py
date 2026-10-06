@@ -92,6 +92,66 @@ def is_agent_protected_write_path(path: str | Path) -> bool:
     return any(resolved.is_relative_to(root.resolve()) for root in protected_roots)
 
 
+def agent_content_read_roots() -> list[Path]:
+    """Roots any agent file-read surface (read_file/glob/list_directory) may read.
+
+    One canonical boundary for tools that return file *content* or listings to
+    the model. Never use it for write authorization (see
+    :func:`is_agent_protected_write_path`) or for sandbox input staging (see
+    :func:`agent_declared_input_roots`).
+    """
+    return [PROJECT_ROOT, TEMP_ROOT, get_data_registry()]
+
+
+def agent_declared_input_roots() -> list[Path]:
+    """Extra roots a sandboxed tool may stage as declared inputs.
+
+    ``execute_python``-style ``input_files`` declarations are authorized through
+    this boundary **plus** caller-side contextual additions (the current
+    session data directory and run-authorized catalog paths). It is tighter
+    than :func:`agent_content_read_roots`: temporary directories are excluded
+    so cross-process staging files cannot be smuggled into the sandbox.
+    """
+    return [get_data_registry()]
+
+
+def is_agent_readable_path(
+    path: str | Path,
+    *,
+    extra_allowed: Iterable[str | Path] = (),
+    roots: Iterable[str | Path] | None = None,
+) -> bool:
+    """Shared read authorization: sensitive-path veto plus root membership.
+
+    Every agent file-read surface must route through this predicate (or
+    :func:`is_path_within` on :func:`agent_content_read_roots`) so the policy
+    lives in exactly one place.
+    """
+    resolved = Path(path).expanduser().resolve()
+    if is_agent_sensitive_path(resolved):
+        return False
+    if roots is None:
+        roots = agent_content_read_roots()
+    if is_path_within(resolved, roots):
+        return True
+    return is_path_within(resolved, extra_allowed)
+
+
+def describe_agent_read_policy() -> str:
+    """Canonical policy text for tool schemas and self-correction error messages.
+
+    Keep this as the single source of truth; validation errors and tool
+    descriptions must render this text instead of hand-written variants so the
+    documented policy can never drift from the enforced one.
+    """
+    return (
+        f"可读取范围：本会话数据目录、本次运行已授权的资源文件、"
+        f"数据注册表 {format_agent_path(get_data_registry())}/ 下的只读文件"
+        f"（含各会话数据目录与场景产物目录）；禁止：.env/密钥等敏感文件与临时目录。"
+        f"声明前可用 list_session_resources 或 list_directory 确认路径。"
+    )
+
+
 def format_agent_path(path: str | Path) -> str:
     """Format a filesystem path for Agent output without an ambiguous base.
 

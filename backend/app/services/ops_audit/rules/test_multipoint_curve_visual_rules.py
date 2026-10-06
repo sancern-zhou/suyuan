@@ -394,9 +394,15 @@ def test_multipoint_review_rule_is_enabled_cataloged_and_not_hard_error():
 
 
 def test_flow_visual_follows_global_bailian_model(monkeypatch):
-    monkeypatch.setattr(ocr_adapter.settings, "bailian_model", "qwen3.8-max-preview")
+    class _Service:
+        provider = "bailian"
+        model = "qwen3.8-max-preview"
+        base_url = "https://example.test/anthropic"
+        api_key = "key"
 
-    assert ocr_adapter._resolve_bailian_model("flow_visual") == "qwen3.8-max-preview"
+    monkeypatch.setattr("app.services.llm_service.llm_service", _Service())
+
+    assert ocr_adapter.flow_visual_provider_summary()[0]["model"] == "qwen3.8-max-preview"
 
 
 def test_flow_visual_uses_longer_configurable_timeout(monkeypatch):

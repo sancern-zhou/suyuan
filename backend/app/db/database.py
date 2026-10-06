@@ -196,15 +196,30 @@ async def _ensure_session_resources_schema(conn) -> None:
 
 
 async def _ensure_coordinator_quick_prompts_schema(conn) -> None:
-    """Upgrade the pre-surface coordinator_quick_prompts table in place.
+    """Create the runtime quick-prompt table and scope uniqueness index.
 
-    Adds the ``surface`` column (existing rows are home-surface prompts) and
-    widens label uniqueness from (project_id, label) to
-    (project_id, surface, label).
+    Also upgrades the pre-surface table in place: adds the ``surface``
+    column (existing rows are home-surface prompts) and widens label
+    uniqueness to (project_id, surface, label).
     """
     if conn.dialect.name != "postgresql":
         return
     statements = (
+        """
+        CREATE TABLE IF NOT EXISTS coordinator_quick_prompts (
+            id SERIAL PRIMARY KEY,
+            project_id VARCHAR(100) NOT NULL,
+            surface VARCHAR(16) NOT NULL DEFAULT 'home',
+            label VARCHAR(30) NOT NULL,
+            prompt TEXT NOT NULL,
+            mode VARCHAR(100),
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_by VARCHAR(255),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
         """
         ALTER TABLE coordinator_quick_prompts
             ADD COLUMN IF NOT EXISTS surface VARCHAR(16) NOT NULL DEFAULT 'home'
@@ -302,7 +317,6 @@ async def init_db():
     import app.social.report_models  # noqa: F401
     import app.conversations.models  # noqa: F401
     import app.db.models.scheduled_task_execution_db  # noqa: F401
-    import app.db.models.coordinator_quick_prompt_db  # noqa: F401
     # Web Agent conversation persistence uses SessionDB / SessionMessageDB.
     # Import it before create_all so isolated project databases receive the
     # required `sessions` tables on their first startup as well.
@@ -317,6 +331,7 @@ async def init_db():
     import app.db.models.task_review_db  # noqa: F401
     import app.db.models.smart_event_db  # noqa: F401
     import app.db.report_package_model  # noqa: F401
+    import app.db.coordinator_quick_prompt_model  # noqa: F401
 
     async with engine.begin() as conn:
         dialect_name = getattr(getattr(conn, "dialect", None), "name", "")

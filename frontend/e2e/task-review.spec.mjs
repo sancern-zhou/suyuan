@@ -63,11 +63,41 @@ test('scheduler classifies generic todos by task type, opens shared review and r
   await expect(reviewRows.first()).toContainText('站点告警需确认')
   await page.getByLabel('任务类型').selectOption('工单审核')
   await expect(reviewRows).toHaveCount(2)
-  await page.getByRole('button', { name: '查看详情' }).click()
+  await page.getByRole('button', { name: '查看详情' }).first().click()
   await page.getByLabel('审核意见', { exact: true }).fill('已核验')
   await page.getByRole('button', { name: '确认归档' }).click()
   await page.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(reviewRows).toHaveCount(1)
   await expect(reviewRows.first()).toContainText('恒值异常需确认')
+  expect(errors).toEqual([])
+})
+
+test('scheduler defaults completion-date filter to the last three days', async ({ page }) => {
+  const daysAgo = n => new Date(Date.now() - n * 86_400_000).toISOString()
+  const records = [
+    { ...structuredClone(base), title: '今日完成需确认', updated_at: daysAgo(0) },
+    { ...structuredClone(base), review_id: 'review_789', title: '四天前完成需确认', updated_at: daysAgo(4) },
+  ]
+  const errors = []
+  page.on('pageerror', error => errors.push(error.message))
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url())
+    if (url.pathname.endsWith('/task-reviews')) return route.fulfill({ json: { reviews: records, total: records.length } })
+    return route.fulfill({ status: 404, json: { detail: 'unexpected request' } })
+  })
+  await page.route('**/__scheduler_default_dates__', route => route.fulfill({ contentType: 'text/html', body: `<div id="app" data-scheduler="true" style="height:900px"></div><script type="module" src="/e2e/taskReviewHarness.js"></script>` }))
+  await page.goto('/__scheduler_default_dates__')
+  // 完成日期默认近三日（含今天）：4 天前的审核结果默认隐藏，把开始日期放宽到 4 天前才出现。
+  const reviewRows = page.locator('.review-list tbody tr')
+  await expect(reviewRows).toHaveCount(1)
+  await expect(reviewRows.first()).toContainText('今日完成需确认')
+  const localDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const start = new Date(); start.setDate(start.getDate() - 2)
+  const dates = page.locator('.filter-bar input[type="date"]')
+  await expect(dates.nth(0)).toHaveValue(localDay(start))
+  await expect(dates.nth(1)).toHaveValue(localDay(new Date()))
+  const fourDaysAgo = new Date(); fourDaysAgo.setDate(fourDaysAgo.getDate() - 4)
+  await dates.nth(0).fill(localDay(fourDaysAgo))
+  await expect(reviewRows).toHaveCount(2)
   expect(errors).toEqual([])
 })

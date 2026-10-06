@@ -54,7 +54,8 @@ const renderKey = computed(() => (
 const isFullBleedResource = computed(() => isTaskReviewVisual(props.resource))
 const downloadTarget = computed(() => props.group.primary?.download_url
   ? props.group.primary
-  : props.resource)
+  : props.group.resources?.find(resource => resource.resource_key === 'chart-image'
+    && resource.status === 'active' && resource.download_url) || props.resource)
 
 const retry = () => {
   renderError.value = ''

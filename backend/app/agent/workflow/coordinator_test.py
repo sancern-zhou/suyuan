@@ -67,6 +67,24 @@ def test_coordinator_retries_node_and_persists_a_resumable_snapshot():
     asyncio.run(run())
 
 
+def test_coordinator_keeps_failed_node_child_link_for_history():
+    async def execute(node, dependencies, attempt):
+        return {
+            "success": False,
+            "summary": "child failed",
+            "metadata": {"session_id": "social__to__query__failed"},
+        }
+
+    coordinator = WorkflowCoordinator(
+        {"workflow_id": "failure-1", "nodes": [{"task_id": "air"}]},
+        executor=execute,
+    )
+    snapshot = asyncio.run(coordinator.run())
+    assert snapshot["status"] == "failed"
+    assert snapshot["node_sessions"]["air"] == "social__to__query__failed"
+    assert "air" not in snapshot["node_results"]
+
+
 def test_coordinator_cancels_pending_nodes():
     async def run():
         release = asyncio.Event()

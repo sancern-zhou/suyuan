@@ -12,6 +12,19 @@ from app.services.ops_audit.rules.base import add_issue
 
 RF_FIELD_PROFILES = load_rf_field_profiles()
 TIME_ONLY_WINDOW_TABLES = {"RF_TW_PmFlowCalibrate", "RF_TW_PmFlowCheck"}
+WEEKLY_STATION_MINUTES = 10
+TWO_WEEK_FLOW_CHECK_MINUTES = 2
+MULTIPOINT_MINUTES = 7
+MULTIPOINT_TABLES = {
+    "RF_Q_GASEOUSMULTIPOINT_CO",
+    "RF_Q_GASEOUSMULTIPOINT_NO2",
+    "RF_Q_GASEOUSMULTIPOINT_O3",
+    "RF_Q_GASEOUSMULTIPOINT_SO2",
+}
+MULTIPOINT_TIME_FIELDS = [
+    ("零点", "LINGDIANSDTDATE", "LINGDIANEDTDATE"),
+    *((f"{point}%", f"MCLSDTDATE{point}", f"MCLEDTDATE{point}") for point in (10, 20, 40, 60, 80)),
+]
 
 def check_rf_time_ranges(
     order: dict[str, Any],
@@ -32,8 +45,134 @@ def check_rf_time_ranges(
             continue
 
         _check_time_outside_range(order, table, form, issues)
+        _check_weekly_station_duration(order, table, form, issues)
+        _check_two_week_flow_duration(order, table, form, issues)
+        _check_multipoint_duration(order, table, form, issues)
 
     _check_finish_near_deadline(order, forms, issues)
+
+
+def _check_weekly_station_duration(
+    order: dict[str, Any],
+    table: str,
+    form: dict[str, Any],
+    issues: list[Issue],
+) -> None:
+    if (
+        table != "RF_W_INSPECTIONSUMMARY"
+        or order.get("DDWORKINGORDERTYPE") != "Check"
+        or order.get("MAINTENANCETYPE") != "Week"
+    ):
+        return
+
+    station_in = _parse_time(form.get("STATIONINTIME"))
+    station_out = _parse_time(form.get("STATIONOUTTIME"))
+    if not station_in or not station_out:
+        return
+
+    duration_minutes = (station_out - station_in).total_seconds() / 60
+    if duration_minutes > WEEKLY_STATION_MINUTES:
+        return
+
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "station_in_time": _format_time(station_in),
+        "station_out_time": _format_time(station_out),
+        "duration_minutes": round(duration_minutes, 2),
+        "required_minutes_exclusive": WEEKLY_STATION_MINUTES,
+    }
+    add_issue(
+        issues,
+        "RF_WEEKLY_STATION_DURATION_TOO_SHORT",
+        "时间合理性",
+        "高",
+        f"rf.{table}.STATIONINTIME/STATIONOUTTIME",
+        f"每周巡检进出站房间隔{duration_minutes:.2f}分钟，未超过{WEEKLY_STATION_MINUTES}分钟",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
+
+
+def _check_two_week_flow_duration(
+    order: dict[str, Any],
+    table: str,
+    form: dict[str, Any],
+    issues: list[Issue],
+) -> None:
+    if (
+        table != "RF_TW_PmFlowCheck"
+        or order.get("DDWORKINGORDERTYPE") != "Check"
+        or order.get("MAINTENANCETYPE") != "TwoWeek"
+    ):
+        return
+
+    start_time = _parse_time(form.get("CheckSdt"))
+    end_time = _parse_time(form.get("CheckEdt"))
+    if not start_time or not end_time:
+        return
+
+    duration_minutes = (end_time - start_time).total_seconds() / 60
+    if duration_minutes > TWO_WEEK_FLOW_CHECK_MINUTES:
+        return
+
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "check_time": _format_time(_parse_time(form.get("CHECKDATE"))),
+        "start_time": _format_time(start_time),
+        "end_time": _format_time(end_time),
+        "duration_minutes": round(duration_minutes, 2),
+        "required_minutes_exclusive": TWO_WEEK_FLOW_CHECK_MINUTES,
+    }
+    add_issue(
+        issues,
+        "RF_TWO_WEEK_FLOW_DURATION_TOO_SHORT",
+        "时间合理性",
+        "高",
+        f"rf.{table}.CheckSdt/CheckEdt",
+        f"两周流量检查起止间隔{duration_minutes:.2f}分钟，未超过{TWO_WEEK_FLOW_CHECK_MINUTES}分钟",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
+
+
+def _check_multipoint_duration(
+    order: dict[str, Any],
+    table: str,
+    form: dict[str, Any],
+    issues: list[Issue],
+) -> None:
+    if table not in MULTIPOINT_TABLES:
+        return
+
+    for point, start_field, end_field in MULTIPOINT_TIME_FIELDS:
+        start_time = _parse_time(form.get(start_field))
+        end_time = _parse_time(form.get(end_field))
+        if not start_time or not end_time:
+            continue
+        duration_minutes = (end_time - start_time).total_seconds() / 60
+        if duration_minutes >= MULTIPOINT_MINUTES:
+            continue
+
+        evidence = {
+            "working_order_code": order.get("WORKINGORDERCODE"),
+            "rf_table": table,
+            "point": point,
+            "start_field": start_field,
+            "end_field": end_field,
+            "start_time": _format_time(start_time),
+            "end_time": _format_time(end_time),
+            "duration_minutes": round(duration_minutes, 2),
+            "minimum_minutes_inclusive": MULTIPOINT_MINUTES,
+        }
+        add_issue(
+            issues,
+            "RF_MULTIPOINT_DURATION_TOO_SHORT",
+            "时间合理性",
+            "高",
+            f"rf.{table}.{start_field}/{end_field}",
+            f"多点校准{point}起止间隔{duration_minutes:.2f}分钟，少于{MULTIPOINT_MINUTES}分钟",
+            json.dumps(evidence, ensure_ascii=False, default=str),
+        )
 
 
 def _check_time_outside_range(

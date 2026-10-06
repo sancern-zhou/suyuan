@@ -1,11 +1,14 @@
 # execute_echarts_python 工具指导手册
 
-首次使用 `execute_echarts_python` 前应阅读本手册。后续调用可根据任务只重读相关章节。
+工具 Schema 要求 Agent 在使用 `execute_echarts_python` 前通过 `read_file` 阅读本手册。该要求由 Agent 按任务场景执行，工具运行时代码不检测阅读状态，也不会因此阻断执行；后续调用可根据任务只重读相关章节。
 
 ## 使用边界
 
-- 前端交互式 ECharts 图表使用 `execute_echarts_python`。
-- 正式报告 Word/QMD 中的静态图表优先使用 `create_report_chart`。
+- 所有模式先匹配专用业务图型：属于 `create_business_chart` 已支持的六种图型时，必须使用 `create_business_chart`，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具。数据准备可使用 Python。
+- 其他通用或自定义图表，问数模式以 `execute_echarts_python` 为主要绘图工具；Python 负责计算、整理和自定义静态图。
+- 专家和报告模式以 `execute_python` 为主要绘图工具，ECharts 辅助交互探索；前端交互式 ECharts 图表使用 `execute_echarts_python`。
+- 交互图只登记 `chart-spec` 资源，在右侧面板展示；不生成 PNG，不在正文自动插图，不使用 `[[chart:...]]` 占位符。正文说明核心结论，可提示用户在右侧面板查看交互图。
+- 正文或正式报告 Word/QMD 所需通用静态图使用 `execute_python`，已支持的专用业务图型必须使用 `create_business_chart`；需要把问数结果写入报告时复用原始数据绘制静态图或复用业务工具图片。
 - 数据清洗、中间计算、文件生成和 matplotlib/seaborn/plotly 绘图使用 `execute_python`。
 
 ## 标准数据访问流程

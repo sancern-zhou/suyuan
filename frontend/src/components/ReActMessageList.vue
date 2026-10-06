@@ -138,7 +138,25 @@
 
       <!-- Agent消息（最终答案） -->
       <!-- 移除 v-once 以支持流式更新 -->
-      <div v-else-if="getMessageType(message) === 'final'" class="message agent-message final">
+      <div
+        v-else-if="getMessageType(message) === 'final'"
+        class="message agent-message final"
+        :class="{
+          'question-handoff-message': getStructuredQuestionForFinal(message, messages),
+          'question-followup-message': followsStructuredQuestion(message, messages)
+        }"
+      >
+        <div v-if="getStructuredQuestionForFinal(message, messages)" class="question-handoff">
+          <div class="question-handoff-title">需要你的选择</div>
+          <div
+            v-for="(question, questionIndex) in getStructuredQuestionForFinal(message, messages).questions"
+            :key="questionIndex"
+            class="question-handoff-item"
+          >
+            <span class="question-handoff-index">{{ questionIndex + 1 }}.</span>
+            <span>{{ question.question }}</span>
+          </div>
+        </div>
         <!-- 统一折叠区域：显示该final之前的所有过程消息 -->
         <details
           v-if="getProcessItemsForFinal(message, messages).length > 0"
@@ -179,15 +197,22 @@
           </div>
         </details>
 
-        <div class="message-content" v-if="useMarkdown">
+        <div class="message-content" v-if="!getStructuredQuestionForFinal(message, messages) && useMarkdown">
           <!-- 【Vue 3 最佳实践】使用 key 强制重新渲染 -->
           <MarkdownRenderer
             :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}-${message.renderVersion || 0}`"
-            :content="contentToString(getMessageContent(message))"
+            :content="renderedMessageContent(message)"
             :streaming="message.streaming === true"
           />
         </div>
-        <div class="message-content" v-else>{{ contentToString(getMessageContent(message)) }}</div>
+        <div class="message-content" v-else-if="!getStructuredQuestionForFinal(message, messages)">{{ renderedMessageContent(message) }}</div>
+        <div v-if="!message.streaming && inlineImagesForFinal(message).length" class="message-content inline-chart-images">
+          <MarkdownRenderer
+            v-for="image in inlineImagesForFinal(message)"
+            :key="image.resource_id"
+            :content="`![${image.label.replace(/[\\[\\]\\\\]/g, '')}](${image.content_url})`"
+          />
+        </div>
 
         <!-- 多专家系统：直接显示报告内容，无额外装饰 -->
         <div v-if="message.data?.expert_results?.report && reportContentCacheMap.get(message.data.expert_results.report)" class="expert-report-content">
@@ -352,10 +377,13 @@ import {
 import { getAgentMode } from '@/config/agentModes.js'
 import { projectConfig } from '@/config/projectConfig.js'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import { inlineChartImages, renderChartPlaceholders } from '@/services/inlineChartImages.js'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import {
+  followsStructuredQuestion,
   getExecutingProcessMessages,
   getMessageType,
+  getStructuredQuestionForFinal,
   getUnifiedProcessMessages as collectUnifiedProcessMessages,
   isProcessMessage,
   isWaitingForAgentResponse
@@ -455,6 +483,25 @@ const props = defineProps({
 
 const emit = defineEmits(['load-more', 'preview-message-attachment'])
 const sessionResourceStore = useSessionResourceStore()
+const currentSessionResources = () => sessionResourceStore.activeSessionId === props.sessionId
+  ? sessionResourceStore.activeSessionState?.resources || []
+  : []
+const chartResourcesForMessage = message => inlineChartImages(
+  message,
+  props.messages,
+  currentSessionResources(),
+  contentToString(getMessageContent(message))
+)
+const renderedMessageContent = message => {
+  const content = contentToString(getMessageContent(message))
+  if (!content.includes('[[chart:')) return content
+  return renderChartPlaceholders(content, chartResourcesForMessage(message), currentSessionResources()).content
+}
+const inlineImagesForFinal = message => {
+  const resources = chartResourcesForMessage(message)
+  const rendered = renderChartPlaceholders(contentToString(getMessageContent(message)), resources, currentSessionResources())
+  return resources.filter(resource => !rendered.usedResourceIds.has(resource.resource_id))
+}
 
 const messagesContainer = ref(null)
 const messagesContent = ref(null)
@@ -1814,6 +1861,7 @@ const downloadPreviewedImage = async () => {
   border-top-left-radius: 2px;
   margin-left: 0;
   margin-right: 0;
+  border: none;
   max-width: 100%;
   font-size: 14px;
   line-height: 1.6;
@@ -2166,6 +2214,40 @@ const downloadPreviewedImage = async () => {
       }
     }
   }
+}
+
+.agent-message.final.question-handoff-message,
+.agent-message.final.question-followup-message {
+  width: fit-content;
+  max-width: min(100%, 860px);
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.question-handoff {
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+
+.question-handoff-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.question-handoff-item {
+  display: flex;
+  gap: 6px;
+  color: var(--text-2);
+}
+
+.question-handoff-index {
+  flex: none;
+}
+
+.question-handoff-message .process-collapse {
+  margin: 4px 0 0;
 }
 
 // 【新增】AI回复用时统计

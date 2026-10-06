@@ -155,9 +155,14 @@ const localDay = value => {
   return formatLocalDay(d)
 }
 const todayStr = () => formatLocalDay(new Date())
-// 完成日期默认当天，任务类型默认故障工单审核，避免默认翻到其他类型/历史数据
+const daysAgoStr = n => {
+  const d = new Date()
+  d.setDate(d.getDate() - n)
+  return formatLocalDay(d)
+}
+// 完成日期默认近三日（含今天），任务类型默认故障工单审核，避免默认翻到其他类型/更久历史数据
 const DEFAULT_TASK_TYPE = '工单审核'
-const defaultFilters = () => ({ startDate: todayStr(), endDate: todayStr(), taskType: DEFAULT_TASK_TYPE, decision: '' })
+const defaultFilters = () => ({ startDate: daysAgoStr(2), endDate: todayStr(), taskType: DEFAULT_TASK_TYPE, decision: '' })
 const filters = ref(defaultFilters())
 const page = ref(1)
 const filteredTasks = computed(() => todoTasks.value.filter(task => {
@@ -176,7 +181,7 @@ const pagedTasks = computed(() =>
 const totalPages = computed(() => Math.max(1, Math.ceil(filteredTasks.value.length / PAGE_SIZE)))
 const hasActiveFilters = computed(() => {
   const f = filters.value
-  return Boolean(f.decision || f.taskType !== DEFAULT_TASK_TYPE || f.startDate !== todayStr() || f.endDate !== todayStr())
+  return Boolean(f.decision || f.taskType !== DEFAULT_TASK_TYPE || f.startDate !== daysAgoStr(2) || f.endDate !== todayStr())
 })
 const resetFilters = () => { filters.value = defaultFilters() }
 watch(filters, () => { page.value = 1 }, { deep: true })

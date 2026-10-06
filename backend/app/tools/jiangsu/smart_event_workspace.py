@@ -49,7 +49,22 @@ EVENT_SUMMARY_FIELDS = (
     "ai_suggested_level",
     "latest_occurrence_time",
     "event_start_time",
+    "alarm_content",
+    "primary_clue_tag",
+    "source_alarm_rule_type",
 )
+
+# 列表摘要与详情返回的线索文本上限：线索标签文本已含设备、报警内容与阈值。
+MAX_LIST_CLUE_TEXTS = 20
+MAX_DETAIL_CLUE_TEXTS = 40
+
+
+def _clue_texts(event: dict[str, Any], cap: int) -> list[str]:
+    tags = [tag for tag in event.get("clue_tags", []) or [] if isinstance(tag, dict)]
+    return [
+        str(tag.get("tag_display_text") or tag.get("tag_name") or tag.get("tag_id") or "").strip()
+        for tag in tags[:cap]
+    ]
 
 
 def _first_value(filters: dict[str, Any], *keys: str) -> str | None:
@@ -98,6 +113,8 @@ class JiangsuSmartEventWorkspaceTool(LLMTool):
                     "工具会在 events 中返回带 event_id 的事件摘要，再据此调用 open_event_detail / focus_evidence / "
                     "compare_events / show_operation_history；open_task 可传 event_id 自动定位其关联任务。"
                     "show_operation_history 会同时在 operation_records 中返回该事件的处置/派单/反馈记录，可直接引用其内容回答。"
+                    "事件摘要在 alarm_content 携带原始报警内容、clue_texts 携带逐条线索文本；"
+                    "open_event_detail 返回完整原文（含报警设备、报警文本与阈值），回答报警细节时直接引用，不要声称读不到。"
                     "不要用该工具修改事件或确认处置。"
                 ),
                 "parameters": {
@@ -187,11 +204,13 @@ class JiangsuSmartEventWorkspaceTool(LLMTool):
                 )[:20],
                 "total": sum(int(item.get("total") or 0) for item in payloads),
             }
-        events = [
-            {key: value for key, value in value_dict.items() if key in EVENT_SUMMARY_FIELDS}
-            for value_dict in payload.get("events", [])
-            if isinstance(value_dict, dict)
-        ]
+        events = []
+        for value_dict in payload.get("events", []):
+            if not isinstance(value_dict, dict):
+                continue
+            projected = {key: value for key, value in value_dict.items() if key in EVENT_SUMMARY_FIELDS}
+            projected["clue_texts"] = _clue_texts(value_dict, MAX_LIST_CLUE_TEXTS)
+            events.append(projected)
         return {
             "events": events,
             "total": payload.get("total", len(events)),
@@ -244,6 +263,26 @@ class JiangsuSmartEventWorkspaceTool(LLMTool):
                 for task in tasks
             ]
             summary_text = "已打开事件关联的任务卡片，tasks 返回了 task_id。"
+        elif command == "open_event_detail":
+            event = await JiangsuSmartEventService().get_event(str(event_id).strip())
+            if event is None:
+                return {"status": "failed", "success": False, "summary": f"未找到事件 {event_id}。"}
+            data["event"] = {
+                "event_id": event.get("event_id"),
+                "event_name": event.get("event_name") or event.get("initial_event_name"),
+                "site_name": event.get("site_name"),
+                "event_status": event.get("event_status"),
+                "event_start_time": event.get("event_start_time"),
+                "latest_occurrence_time": event.get("latest_occurrence_time"),
+                "alarm_content": event.get("alarm_content"),
+                "primary_clue_tag": event.get("primary_clue_tag"),
+                "source_alarm_rule_type": event.get("source_alarm_rule_type"),
+                "clue_texts": _clue_texts(event, MAX_DETAIL_CLUE_TEXTS),
+            }
+            summary_text = (
+                f"已打开事件 {event_id} 详情。event.alarm_content 与 event.clue_texts 是原始报警内容与逐条线索文本"
+                "（含报警设备、报警文本与阈值），可直接引用回答；超过上限的线索以面板展示为准。"
+            )
         elif command == "show_operation_history":
             event = await JiangsuSmartEventService().get_event(str(event_id).strip())
             if event is None:

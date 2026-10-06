@@ -5,6 +5,7 @@
 误用未闭环的分析链路。
 """
 from app.agent.prompts.tool_registry import EXPERT_TOOL_NAMES, get_tools_by_mode
+from app.agent.prompts.expert_prompt import build_expert_prompt
 
 
 RETIRED_EXPERT_TOOLS = [
@@ -37,5 +38,12 @@ def test_expert_mode_keeps_trajectory_and_report_tools():
     tools = get_tools_by_mode("expert")
 
     assert "meteorological_trajectory_analysis" in tools
-    assert "create_report_chart" in tools
+    assert "create_business_chart" in tools
     assert "execute_sql_query" in tools
+
+
+def test_expert_prompt_prioritizes_python_for_analysis_charts():
+    prompt = build_expert_prompt([])
+    assert "专业分析绘图以 `execute_python`（Matplotlib/Seaborn）为主" in prompt
+    assert "`create_business_chart` 辅助" in prompt
+    assert "`execute_echarts_python` 辅助交互探索" in prompt

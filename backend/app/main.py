@@ -2,6 +2,9 @@
 
 from contextlib import asynccontextmanager
 
+import os
+import structlog
+
 from fastapi import FastAPI
 
 from app.core.exception_handlers import register_exception_handlers
@@ -15,6 +18,14 @@ from config.settings import settings
 
 
 configure_logging()
+logger = structlog.get_logger()
+
+# LD_PRELOAD（由 restart_server.sh 注入）仅用于让本进程提前映射 torch 原生库，
+# 规避 aarch64 静态 TLS 缺陷。主进程完成映射后必须从环境中移除，
+# 否则会泄露到子进程：bubblewrap 沙箱、node 快照、quarto 等会因被迫加载
+# CUDA 巨型库（如 libcublasLt.so.13）而启动失败。
+if os.environ.pop("LD_PRELOAD", None):
+    logger.info("ld_preload_cleared_for_child_processes")
 
 
 @asynccontextmanager

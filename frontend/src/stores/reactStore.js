@@ -738,16 +738,27 @@ export const useReactStore = defineStore('react', {
       return true
     },
 
-    async resolvePendingInteraction({ decision, response = null } = {}) {
+    async resolvePendingInteraction({ decision, response = null, answers = null } = {}) {
       const interactionState = this.currentState
       const interaction = interactionState?.pendingInteraction
       if (!interaction?.interaction_id || !interaction.session_id) return false
       const resolution = await resolveAgentInteraction(
         interaction.session_id,
         interaction.interaction_id,
-        { decision, response }
+        { decision, response, answers }
       )
       interactionState.pendingInteraction = null
+      if (interaction.kind === 'structured_question') {
+        if (decision === 'answer' && resolution?.resume_query) {
+          await this.startAnalysis(resolution.resume_query, {
+            agentMode: resolution.mode || interaction.mode || interactionState.mode || this.currentMode,
+            synthetic: true,
+            syntheticMeta: { source: 'structured_question_resume', interaction_id: interaction.interaction_id },
+            queuedAlreadyShown: true
+          })
+        }
+        return true
+      }
       if (decision === 'approve' && interaction.promotion) {
         const promoted = this.promoteToWorkspace({
           ...interaction.promotion,

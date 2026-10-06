@@ -42,7 +42,7 @@
 import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import 'echarts-gl'  // 引入echarts-gl扩展库以支持3D图表
-import { cloneEChartsOption, sanitizeCompleteRadarOption } from '../../utils/echartsOptionSanitizer'
+import { cloneEChartsOption, ensureEChartsLegend, sanitizeCompleteRadarOption } from '../../utils/echartsOptionSanitizer'
 import { applyPreferredChartFont } from '../../services/chartTypography'
 import { CHART_PRIMARY, CHART_TEXT_1, CHART_TEXT_2, CHART_COLORS, CHART_PRIMARY_FILL } from '../../services/chart/chartColors'
 
@@ -409,7 +409,7 @@ const detectAndOptimizeEChartsConfig = (chartData, chartType = null) => {
  * @returns {Object} 优化后的配置
  */
 const optimizeChartLayout = (option) => {
-  const optimized = cloneEChartsOption(option)
+  const optimized = ensureEChartsLegend(cloneEChartsOption(option))
 
   console.log('[optimizeChartLayout] 开始优化，图表类型:', option.series?.[0]?.type || 'unknown', '有极坐标:', !!option.polar)
 

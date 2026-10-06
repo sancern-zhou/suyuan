@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.agent.session import get_session_manager
+from app.agent.session.session_manager import get_session_manager as get_child_session_manager
 from app.agent.workflow.registry import active_workflow_registry
 from app.agent.workflow.jobs import get_workflow_job_store
 from app.auth.dependencies import require_current_user
@@ -28,12 +30,8 @@ def _workflow_snapshots(metadata: dict[str, Any]) -> dict[str, dict[str, Any]]:
         return {
             str(key): dict(value)
             for key, value in values.items()
-            if isinstance(value, dict)
+            if isinstance(value, dict) and value.get("workflow_id")
         }
-    # Compatibility with snapshots written before multi-workflow indexing.
-    legacy = metadata.get("workflow_coordinator")
-    if isinstance(legacy, dict) and legacy.get("workflow_id"):
-        return {str(legacy["workflow_id"]): dict(legacy)}
     return {}
 
 
@@ -64,6 +62,42 @@ def _has_retryable_nodes(snapshot: dict[str, Any]) -> bool:
 async def _load_session(session_id: str):
     value = get_session_manager().load_session(session_id)
     return await value if inspect.isawaitable(value) else value
+
+
+def _node_history(snapshot: dict[str, Any], task_id: str, child: Any | None, after: int, limit: int) -> dict[str, Any]:
+    """Project persisted node facts into a bounded, UI-friendly history."""
+    runtime = snapshot.get("runtime") or {}
+    runtime_events = [event for event in runtime.get("events") or []
+                      if isinstance(event, dict) and event.get("task_id") == task_id][-100:]
+    workflow = (child.metadata or {}).get("workflow") or {} if child is not None else {}
+    child_runtime = workflow.get("workflow_runtime") or {}
+    child_events = [event for event in child_runtime.get("events") or [] if isinstance(event, dict)][-100:]
+    trace = (child.metadata or {}).get("execution_history") or [] if child is not None else []
+    events = [
+        {"sequence": int(event.get("sequence") or 0),
+         "type": str(event.get("event_type") or "unknown"),
+         "status": event.get("status"), "timestamp": event.get("timestamp"), "source": "node"}
+        for event in runtime_events
+    ]
+    # Child event sequences live in a separate journal. Return each journal
+    # separately so pagination remains stable across retries and restarts.
+    return {
+        "task_id": task_id,
+        "status": (snapshot.get("graph") or {}).get(task_id, {}).get("status"),
+        "child_session_id": child.session_id if child is not None else None,
+        "child_mode": child.child_mode if child is not None else None,
+        "answer": next((str(message.get("content") or "") for message in reversed(child.conversation_history)
+                        if message.get("role") == "assistant"), "") if child is not None else "",
+        "node_events": events,
+        "child_events": [{"sequence": int(event.get("sequence") or 0),
+                          "type": str(event.get("event_type") or "unknown"),
+                          "status": event.get("status"), "timestamp": event.get("timestamp")}
+                         for event in child_events],
+        "execution_history": [dict(item) for item in trace if isinstance(item, dict)
+                              and int(item.get("sequence") or 0) > after][:limit],
+        "has_more": sum(1 for item in trace if isinstance(item, dict)
+                        and int(item.get("sequence") or 0) > after) > limit,
+    }
 
 
 @router.get("")
@@ -127,6 +161,44 @@ async def get_workflow(
         "job_status": job.status if job is not None else None,
         "snapshot": snapshot,
     }
+
+
+@router.get("/{workflow_id}/nodes/{task_id}/history")
+async def workflow_node_history(
+    session_id: str,
+    workflow_id: str,
+    task_id: str,
+    after: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    """Read a child trace only through an authorized parent workflow and node."""
+    await catalog.require_read(session_id, user)
+    session = await _load_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    snapshot = _workflow_snapshots(dict(session.metadata or {})).get(workflow_id)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="workflow_not_found")
+    if task_id not in (snapshot.get("graph") or {}):
+        raise HTTPException(status_code=404, detail="node_not_found")
+    child_id = (snapshot.get("node_sessions") or {}).get(task_id)
+    if not isinstance(child_id, str) or not child_id:
+        if (snapshot.get("graph") or {}).get(task_id, {}).get("status") in {"queued", "pending", "running"}:
+            return _node_history(snapshot, task_id, None, after, limit)
+        raise HTTPException(status_code=404, detail="node_history_not_found")
+    child = (get_child_session_manager().load_session(child_id)
+             if isinstance(child_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,200}", child_id)
+             else None)
+    if child is not None:
+        workflow = (child.metadata or {}).get("workflow") or {}
+        if (not child.is_sub_agent_session or workflow.get("parent_task_id") != workflow_id
+                or workflow.get("task_id") != task_id):
+            child = None
+    if child is None:
+        raise HTTPException(status_code=404, detail="node_history_not_found")
+    return _node_history(snapshot, task_id, child, after, limit)
 
 
 @router.get("/{workflow_id}/events")

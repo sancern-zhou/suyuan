@@ -35,6 +35,14 @@ export async function getSessionWorkflowEvents(sessionId, workflowId, { after = 
   )
 }
 
+export async function getSessionWorkflowNodeHistory(sessionId, workflowId, taskId, { after = 0, limit = 50 } = {}) {
+  const params = new URLSearchParams({ after: String(after), limit: String(limit) })
+  return readJson(
+    await authFetch(workflowBase(sessionId) + '/' + encodeURIComponent(workflowId) + '/nodes/' + encodeURIComponent(taskId) + '/history?' + params),
+    '节点历史加载失败'
+  )
+}
+
 export async function cancelSessionWorkflow(sessionId, workflowId) {
   return readJson(
     await authFetch(`${workflowBase(sessionId)}/${encodeURIComponent(workflowId)}/cancel`, { method: 'POST' }),

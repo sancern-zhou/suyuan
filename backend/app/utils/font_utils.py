@@ -29,7 +29,7 @@ class FontManager:
 
     # 字体配置优先级（从高到低）
     FONT_FALLBACK_CHAIN = [
-        'FZXiaoBiaoSong-B05S',  # 方正小标宋，create_report_chart优先字体
+        'FZXiaoBiaoSong-B05S',  # 方正小标宋，create_business_chart优先字体
         'GB_XBS_GB18030',       # 国标小标宋，Linux部署常见小标宋字体
         'GB_XBS_GBT2312',
         # Linux 系统字体
@@ -221,7 +221,7 @@ def select_preferred_chinese_font_path() -> Path | None:
 
 
 def chinese_font_prop() -> fm.FontProperties | None:
-    """Return the preferred Chinese font, aligned with create_report_chart."""
+    """Return the preferred Chinese font, aligned with create_business_chart."""
     font_manager = get_font_manager()
     for font_path in font_manager.FONT_FILE_PATHS:
         if not font_path.exists():

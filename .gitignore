@@ -227,7 +227,9 @@ backend/docs/skills/*
 !backend/docs/skills/ops_work_order_audit/
 !backend/docs/skills/ops_work_order_audit/**
 !backend/docs/skills/archify.md
+!backend/docs/skills/xuchang_city_exceedance_source_report.md
 !backend/docs/skills/SKILLS_INDEX.md
+!backend/docs/skills/analysis_report_workflow.md
 !backend/docs/skills/生态环境招投标市场分析.md
 scripts/
 !/.github/scripts/
@@ -290,4 +292,8 @@ id_ed25519*
 # Launcher icons are source assets and must remain versioned despite the
 # repository-wide generated-image rule above.
 !android-native/app/src/main/res/**/*.png
-backend/.tmp-pytest/ 
+backend/.tmp-pytest/
+
+# 本机部署专属（不入 git）
+迁移包/
+deploy/nginx/templates-local/

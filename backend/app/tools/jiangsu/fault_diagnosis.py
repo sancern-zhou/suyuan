@@ -2251,7 +2251,9 @@ def _project_alarms(payload: dict[str, Any], cap: int = 5) -> dict[str, Any]:
         if isinstance(log, dict):
             projection["recent"].append({
                 key: log.get(key) for key in ("alarmTime", "time", "alarmContent", "content",
-                                              "alarmLevel", "level", "alarmName", "name")
+                                              "description", "alarmType", "alarmGrade",
+                                              "alarmLevel", "level", "alarmName", "name",
+                                              "stationName", "stationCode")
                 if log.get(key) is not None
             })
     return projection

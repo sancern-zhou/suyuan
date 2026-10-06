@@ -65,19 +65,21 @@ async def test_memory_caching():
 
 
 async def test_consolidation_offset():
-    """测试整合偏移量"""
+    """整合进度按模式与会话持久保存。"""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         manager = UnifiedMemoryManager(base_workspace=str(tmp_path))
 
-        # 初始偏移量
-        offset = await manager.get_consolidation_offset("test_user")
-        assert offset == 0
-
-        # 设置偏移量
-        await manager.set_consolidation_offset("test_user", 10)
-        offset = await manager.get_consolidation_offset("test_user")
-        assert offset == 10
+        assert await manager.get_consolidation_cursor("expert", "session_a") == {
+            "offset": 0, "boundary_hash": ""
+        }
+        await manager.set_consolidation_cursor("expert", "session_a", 10, "digest")
+        restarted = UnifiedMemoryManager(base_workspace=str(tmp_path))
+        assert await restarted.get_consolidation_cursor("expert", "session_a") == {
+            "offset": 10, "boundary_hash": "digest"
+        }
+        assert (await restarted.get_consolidation_cursor("expert", "session_b"))["offset"] == 0
+        assert (await restarted.get_consolidation_cursor("query", "session_a"))["offset"] == 0
         print("✓ 整合偏移量测试通过")
 
 

@@ -16,6 +16,7 @@ def test_operations_analysis_exposes_live_relationship_graph_first():
         "jiangsu_fetch_attendance_records",
         "jiangsu_fetch_station_directory",
         "knowledge_graph_query",
+        "create_report_package",
     ]
 
 
