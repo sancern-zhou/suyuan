@@ -729,6 +729,19 @@ const buildOption = () => {
     if (optimized.radiusAxis?.name) {
       console.log('[ChartPanel] radiusAxis名称:', optimized.radiusAxis.name)
     }
+    if ((chartContainer.value?.clientWidth || 1000) < 600) {
+      const axes = Array.isArray(optimized.xAxis) ? optimized.xAxis : optimized.xAxis ? [optimized.xAxis] : []
+      axes.forEach(axis => { axis.axisLabel = { ...axis.axisLabel, hideOverlap: true, fontSize: 10 } })
+      const legends = Array.isArray(optimized.legend) ? optimized.legend : optimized.legend ? [optimized.legend] : []
+      legends.forEach(legend => {
+        legend.type = 'scroll'; legend.textStyle = { ...legend.textStyle, fontSize: 10 }
+        if (!Array.isArray(optimized.grid)) { delete legend.top; legend.bottom = 8; legend.left = 'center' }
+      })
+      if (optimized.grid && !Array.isArray(optimized.grid)) {
+        optimized.grid = { ...optimized.grid, bottom: Math.max(72, Number(optimized.grid.bottom) || 0), containLabel: true }
+      }
+      if (optimized.tooltip) optimized.tooltip = { ...optimized.tooltip, confine: true }
+    }
     return applyPreferredChartFont(optimized)
   } catch (error) {
     console.error('[ChartPanel] buildOption 错误:', error)

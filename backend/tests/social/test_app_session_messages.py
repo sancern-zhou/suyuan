@@ -152,3 +152,28 @@ def test_app_messages_rejects_unknown_scheduled_session(monkeypatch):
     response = _client().get("/api/social/app/sessions/scheduled_task_missing_20261007_080000_abcd1234/messages")
     assert response.status_code == 404
     assert response.json()["detail"] == "session_not_found"
+
+
+def test_chart_descriptor_exposes_layout_identity_without_server_path():
+    resource = SimpleNamespace(resource_id="r1", label="趋势图", format="json",
+        media_type="application/json", renderer="chart", resource_key="chart-spec",
+        metadata={"visual_id": "v1", "interactive": True}, locator={"path": "/private/chart.json"})
+    descriptor = social_app_routes._app_resource_descriptor("s1", resource)
+    assert descriptor["visual_id"] == "v1"
+    assert descriptor["interactive"] is True
+    assert descriptor["resource_key"] == "chart-spec"
+    assert "/private" not in str(descriptor)
+
+
+def test_app_resource_list_accepts_authorized_web_session(monkeypatch):
+    row = _web_row()
+    class Catalog:
+        async def require_read(self, session_id, user):
+            return row
+    async def descriptors(session_id, ids):
+        return [{"file_id": "r1", "visual_id": "v1", "interactive": True}]
+    monkeypatch.setattr(social_app_routes, "get_conversation_catalog", lambda: Catalog())
+    monkeypatch.setattr(social_app_routes, "_app_resource_descriptors", descriptors)
+    response = _client().get(f"/api/social/app/sessions/{row.session_id}/resources")
+    assert response.status_code == 200
+    assert response.json()["resources"][0]["visual_id"] == "v1"
