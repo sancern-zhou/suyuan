@@ -217,3 +217,14 @@ def test_unrecoverable_requires_attributable_confirmation(tmp_path):
     confirmation['evidence']='工单TEST-001的核实记录'
     r=generate_report(cfg,now=end+timedelta(minutes=30),root=tmp_path,refresh=False)
     assert json.load(open(r['report_input_path']))['entries'][0]['backfill_status']=='无法回补'
+
+
+def test_pending_rechecks_skip_already_filled_intervals(tmp_path):
+    store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
+    end=BASE+timedelta(days=1)
+    absent={('B',h) for h in hours(BASE,BASE+timedelta(hours=2))}
+    absent.update(('B',h) for h in hours(BASE+timedelta(hours=20),BASE+timedelta(hours=22)))
+    ingest(store,BASE,end,rows(BASE,end,missing=absent))
+    intervals=store.pending_hours()
+    assert len(intervals)==2
+    assert all(local_time(i['end'])-local_time(i['start'])==timedelta(hours=1) for i in intervals)

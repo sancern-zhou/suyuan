@@ -168,10 +168,20 @@ class MonitorStore:
 
     def pending_hours(self):
         with self.connect() as db:
-            return [dict(row) for row in db.execute('''SELECT s.city,c.source,MIN(c.hour) AS start,
-                MAX(c.hour) AS end FROM cells c JOIN stations s ON s.code=c.code
+            rows = list(db.execute('''SELECT DISTINCT s.city,c.source,c.hour
+                FROM cells c JOIN stations s ON s.code=c.code
                 WHERE c.first_missing_at IS NOT NULL AND c.data_complete=0 AND s.active=1
-                GROUP BY s.city,c.source''')]
+                ORDER BY s.city,c.source,c.hour'''))
+        intervals = []
+        for row in rows:
+            if (intervals and intervals[-1]['city'] == row['city']
+                and intervals[-1]['source'] == row['source']
+                and local_time(row['hour']) - local_time(intervals[-1]['end']) == timedelta(hours=1)):
+                intervals[-1]['end'] = row['hour']
+            else:
+                intervals.append({'city':row['city'], 'source':row['source'],
+                                  'start':row['hour'], 'end':row['hour']})
+        return intervals
 
     def report(self, end, *, national_sources, provincial_source, threshold=4):
         end = local_time(end)
