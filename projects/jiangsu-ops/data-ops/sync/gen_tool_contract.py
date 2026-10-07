@@ -5,9 +5,9 @@
 （backend/app/tools/query/jiangsu_ops_sql_query/contract.txt）是本脚本的生成物。
 
 用法:
-  python gen_tool_contract.py            # 生成并写入 contract.txt
-  python gen_tool_contract.py --check    # 校验 contract.txt 是否与 yaml 一致（漂移检测）
-  python gen_tool_contract.py --print    # 仅打印生成结果，不写文件
+  PYTHONPATH=backend python projects/jiangsu-ops/data-ops/sync/gen_tool_contract.py            # 生成并写入 contract.txt
+  PYTHONPATH=backend python projects/jiangsu-ops/data-ops/sync/gen_tool_contract.py --check    # 校验 contract.txt 是否与 yaml 一致（漂移检测）
+  PYTHONPATH=backend python projects/jiangsu-ops/data-ops/sync/gen_tool_contract.py --print    # 仅打印生成结果，不写文件
 
 退出码: --check 不一致时返回 1（供 dq_check / 调度日志判别）。
 """
@@ -22,8 +22,10 @@ try:
 except ImportError:  # pragma: no cover
     yaml = None
 
-YAML_DIR = r"E:\Tools\suyuan-jiangsu\sync\datasets"
-TARGET_PATH = r"E:\suyuan\backend\app\tools\query\jiangsu_ops_sql_query\contract.txt"
+from app.utils.path_config import resolve_agent_path, format_agent_path
+
+YAML_DIR = resolve_agent_path("projects/jiangsu-ops/data-ops/sync/datasets")
+TARGET_PATH = resolve_agent_path("backend/app/tools/query/jiangsu_ops_sql_query/contract.txt")
 
 # 表在契约文本与白名单中的显示顺序（新表按语义插入到合适位置）
 TABLE_ORDER = [
@@ -57,7 +59,7 @@ FOOTER = (
 
 FILE_HEADER = (
     "# generated from sync/datasets/*.yaml by gen_tool_contract.py — DO NOT EDIT BY HAND\n"
-    "# 单一来源: E:\\Tools\\suyuan-jiangsu\\sync\\datasets\\*.yaml；漂移检测见 dq_check.py\n"
+    "# 单一来源: projects/jiangsu-ops/data-ops/sync/datasets/*.yaml；漂移检测见 dq_check.py\n"
 )
 
 
@@ -127,7 +129,7 @@ def main() -> int:
         print("CONTRACT DRIFT: contract.txt differs from datasets/*.yaml — run gen_tool_contract.py")
         return 1
     io.open(TARGET_PATH, "w", encoding="utf-8", newline="\n").write(content)
-    print("written:", TARGET_PATH, "bytes:", len(content.encode("utf-8")))
+    print("written:", format_agent_path(TARGET_PATH), "bytes:", len(content.encode("utf-8")))
     return 0
 
 

@@ -204,6 +204,53 @@ backend:
     - jiangsu_ops_audit_run_rules
   # 江苏项目按模式向工单审核、故障诊断和其他运维智能体暴露经评审的工具。
   # 该白名单同时用于提示词和函数 schema；新增工具必须经过项目评审后加入。
+  # 内部子模式仅由 operations_analysis 委派，不出现在前台。
+  agent_workflow_modes:
+    jiangsu_ops_data:
+      positioning: 运维数据准备
+      scope: 批量指标、受控明细与数据对齐；统一时间、站点、分母与截至时间
+      boundary: 只取数和确定性整理，不作风险认定、不生成正式报告
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
+      max_iterations: 8
+      timeout_seconds: 180
+      max_deliverables: 3
+    jiangsu_ops_regular_analysis:
+      positioning: 常态监管专题分析
+      scope: 复用共享数据回答一个人员覆盖、故障处置、告警、巡检或质控问题
+      boundary: 不重新查询业务来源、不作因果或责任认定、不成稿
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用；分析图表随节点交付
+      max_iterations: 12
+      timeout_seconds: 300
+      max_deliverables: 3
+    jiangsu_ops_risk_analysis:
+      positioning: 风险线索专题分析
+      require_counter_evidence: true
+      scope: 复用共享数据核验一个风险假设，列支持证据、反证与替代解释
+      boundary: 证据不足只报线索和缺口，不认定违规、不自行补查或成稿
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用；分析图表随节点交付
+      max_iterations: 14
+      timeout_seconds: 360
+      max_deliverables: 3
+    jiangsu_ops_evidence:
+      positioning: 定向证据核验
+      scope: 按明确站点、工单、窗口核验实时记录和历史明细
+      boundary: 只读定向补证，不做全网扫描、不扩范围、不提交审核或执行设备控制
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
+      max_iterations: 8
+      timeout_seconds: 180
+      max_deliverables: 3
+  agent_workflow_parents:
+    operations_analysis:
+      child_modes:
+        - jiangsu_ops_data
+        - jiangsu_ops_regular_analysis
+        - jiangsu_ops_risk_analysis
+        - jiangsu_ops_evidence
+      max_concurrency: 3
+      max_nodes: 12
+      max_retries: 3
+      max_extensions: 2
+      timeout_seconds: 1200
   agent_mode_tools:
     # 通用助手不继承共享默认工具面；仅开放经项目评审的会话资源、文件、
     # 知识检索、网络补充和成果生成能力，不含 shell、浏览器和子Agent调用。
@@ -427,6 +474,10 @@ backend:
       - create_report_package
     # 分析到站记录和空间台账，不能替代工单、告警处置等确定性流程约束。
     operations_analysis:
+      - run_agent_workflow
+      - list_session_resources
+      - read_session_resource
+      - publish_session_file
       - read_file
       - edit_file
       - write_file
@@ -452,7 +503,7 @@ backend:
       - jiangsu_fetch_qc_task_history
       - jiangsu_fetch_qc_task_status
       # 报告出具链路。
-      - create_report_chart
+      - create_business_chart
       - execute_python
       - create_report_package
       - publish_report
@@ -504,7 +555,59 @@ backend:
       - jiangsu_query_metrics
       - jiangsu_prepare_fault_work_order
       - create_report_package
+    jiangsu_ops_data:
+      - list_session_resources
+      - read_session_resource
+      - read_file
+      - write_file
+      - publish_session_file
+      - jiangsu_query_metrics
+      - execute_jiangsu_mart_sql
+      - execute_smart_event_sql_query
+      - jiangsu_fetch_attendance_records
+      - jiangsu_fetch_station_directory
+      - jiangsu_query_operations_graph
+      - jiangsu_query_statistics
+      - jiangsu_fetch_station_data
+      - jiangsu_analyze_work_order_tracks
+      - execute_python
+    jiangsu_ops_regular_analysis:
+      - list_session_resources
+      - read_session_resource
+      - read_file
+      - write_file
+      - publish_session_file
+      - execute_python
+      - create_business_chart
+    jiangsu_ops_risk_analysis:
+      - list_session_resources
+      - read_session_resource
+      - read_file
+      - write_file
+      - publish_session_file
+      - execute_python
+      - create_business_chart
+    jiangsu_ops_evidence:
+      - list_session_resources
+      - read_session_resource
+      - read_file
+      - write_file
+      - publish_session_file
+      - jiangsu_query_operations_graph
+      - jiangsu_fetch_station_directory
+      - jiangsu_fetch_fault_work_orders
+      - jiangsu_fetch_fault_work_order_detail
+      - jiangsu_fetch_alarm_records
+      - jiangsu_fetch_station_alarm_logs
+      - jiangsu_fetch_station_environment_history
+      - jiangsu_fetch_attendance_records
+      - jiangsu_fetch_station_data
+      - execute_python
   mode_prompt_files:
+    jiangsu_ops_data: projects/jiangsu-ops/prompts/internal/jiangsu_ops_data.md
+    jiangsu_ops_regular_analysis: projects/jiangsu-ops/prompts/internal/jiangsu_ops_regular_analysis.md
+    jiangsu_ops_risk_analysis: projects/jiangsu-ops/prompts/internal/jiangsu_ops_risk_analysis.md
+    jiangsu_ops_evidence: projects/jiangsu-ops/prompts/internal/jiangsu_ops_evidence.md
     assistant: projects/jiangsu-ops/prompts/assistant.md
     knowledge: projects/jiangsu-ops/prompts/knowledge.md
     jiangsu_query: projects/jiangsu-ops/prompts/jiangsu_query.md
