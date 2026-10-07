@@ -93,6 +93,28 @@ class WeatherHistoryConfig(StrictModel):
         return self
 
 
+class WorkflowModeManifest(StrictModel):
+    positioning: str = Field(min_length=1)
+    scope: str = Field(min_length=1)
+    boundary: str = Field(min_length=1)
+    outputs: str = Field(min_length=1)
+    max_iterations: int = Field(default=12, ge=1, le=120)
+    timeout_seconds: int = Field(default=240, ge=1, le=3600)
+    max_deliverables: int = Field(default=3, ge=1, le=5)
+    require_counter_evidence: bool = False
+
+
+class WorkflowParentManifest(StrictModel):
+    child_modes: list[str] = Field(min_length=1)
+    max_concurrency: int = Field(default=3, ge=1, le=8)
+    max_nodes: int = Field(default=12, ge=1, le=32)
+    max_retries: int = Field(default=3, ge=0, le=16)
+    max_extensions: int = Field(default=2, ge=0, le=3)
+    timeout_seconds: int = Field(default=900, ge=1, le=3600)
+
+    _valid_child_modes = field_validator("child_modes")(unique)
+
+
 class BackendManifest(StrictModel):
     tools: list[str] = Field(default_factory=list)
     disabled_tools: list[str] = Field(default_factory=list)
@@ -110,6 +132,28 @@ class BackendManifest(StrictModel):
     # shared list so projects can enable their own tools per mode without
     # re-declaring the shared baseline.
     agent_mode_extra_tools: dict[str, list[str]] = Field(default_factory=dict)
+    agent_workflow_modes: dict[str, WorkflowModeManifest] = Field(default_factory=dict)
+    agent_workflow_parents: dict[str, WorkflowParentManifest] = Field(default_factory=dict)
+
+    _valid_workflow_modes = field_validator("agent_workflow_modes")(valid_identifier_map)
+    _valid_workflow_parents = field_validator("agent_workflow_parents")(valid_identifier_map)
+
+    @model_validator(mode="after")
+    def validate_workflow_modes(self):
+        children = set(self.agent_workflow_modes)
+        if children & set(self.agent_workflow_parents):
+            raise ValueError("workflow child modes cannot be parents")
+        for mode in children:
+            if not self.agent_mode_tools.get(mode) or mode not in self.mode_prompt_files:
+                raise ValueError(f"workflow child {mode} requires explicit tools and prompt")
+            if {"call_sub_agent", "run_agent_workflow"} & set(self.agent_mode_tools[mode]):
+                raise ValueError(f"workflow child {mode} cannot delegate")
+        for mode, policy in self.agent_workflow_parents.items():
+            if set(policy.child_modes) - children:
+                raise ValueError(f"workflow parent {mode} references undeclared child modes")
+            if "run_agent_workflow" not in self.agent_mode_tools.get(mode, []):
+                raise ValueError(f"workflow parent {mode} requires run_agent_workflow")
+        return self
 
     _unique_tools = field_validator("tools")(unique)
     _unique_disabled_tools = field_validator("disabled_tools")(unique)
@@ -160,6 +204,12 @@ class ProjectManifest(StrictModel):
     _valid_project = field_validator("project")(validate_identifier)
     _unique_modules = field_validator("modules")(unique)
     _unique_tasks = field_validator("scheduled_tasks")(unique)
+
+    @model_validator(mode="after")
+    def validate_internal_workflow_modes(self):
+        if set(self.frontend.agent_modes) & set(self.backend.agent_workflow_modes):
+            raise ValueError("internal workflow children cannot be frontend modes")
+        return self
 
 
 class ModuleManifest(StrictModel):

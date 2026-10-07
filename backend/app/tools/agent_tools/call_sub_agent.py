@@ -29,7 +29,7 @@ from app.agent.session.workspace_routing import (
 from app.agent.selection_context import load_skill_selection
 from app.agent.prompts.tool_registry import get_tools_by_mode
 from app.agent.workflow.capabilities import MEMORY_EDIT_TOOL_NAMES, build_child_capability_policy
-from app.agent.workflow.delegation import LEAF_MODES, delegation_error
+from app.agent.workflow.delegation import is_leaf_mode, delegation_error
 
 from app.agent.workflow.resource_handoff import (
     import_workflow_handles,
@@ -98,6 +98,15 @@ class CallSubAgentTool(LLMTool):
     - Social Agent调用Query Agent：call_sub_agent(target_mode="query", ...)
     - 助手Agent调用其他Agent：call_sub_agent(target_mode="...", ...)
     """
+
+    def get_function_schema(self):
+        from copy import deepcopy
+
+        schema = deepcopy(super().get_function_schema())
+        target = schema["parameters"]["properties"]["target_mode"]
+        target["enum"] = target_mode_values()
+        target["description"] = build_target_mode_contract()
+        return schema
 
     def __init__(
         self,
@@ -450,6 +459,14 @@ class CallSubAgentTool(LLMTool):
                     "data": {}, "metadata": {"generator": "call_sub_agent"},
                     "summary": boundary_error,
                 }
+            from app.agent.workflow.project_policy import prepare_node
+
+            project_node = {"target_mode": target_mode, "task_contract": task_contract,
+                            "result_schema": result_schema, "max_iterations": max_iterations}
+            prepare_node(project_node)
+            task_contract = project_node.get("task_contract")
+            result_schema = project_node.get("result_schema")
+            max_iterations = project_node.get("max_iterations")
             # 报告 Agent 不再使用综合问数子代理：监测历史走 query_monitoring，
             # 气象与预报走 query_forecast（schema 枚举为全局共享，此处按父模式守卫）。
 
@@ -762,21 +779,21 @@ class CallSubAgentTool(LLMTool):
 
             agent_profile = get_agent_profile(target_mode, profile=profile)
             mode_tool_names = set(get_tools_by_mode(target_mode).keys())
-            if selected_child_skill:
+            if selected_child_skill and not is_leaf_mode(target_mode):
                 mode_tool_names.update(selected_child_skill.required_tools or [])
             capability_policy = build_child_capability_policy(
                 target_mode=target_mode,
                 allowed_tools=(
                     mode_tool_names & set(allowed_tool_names)
-                    if target_mode in LEAF_MODES and allowed_tool_names is not None
+                    if is_leaf_mode(target_mode) and allowed_tool_names is not None
                     else allowed_tool_names if allowed_tool_names is not None else mode_tool_names
                 ),
 
                 denied_tools=merge_denied_tools(agent_profile, denied_tool_names),
                 allow_delegation=(
-                    target_mode not in LEAF_MODES and agent_profile.allow_delegation
+                    not is_leaf_mode(target_mode) and agent_profile.allow_delegation
                     if allow_child_delegation is None
-                    else bool(target_mode not in LEAF_MODES and allow_child_delegation and agent_profile.allow_delegation)
+                    else bool(not is_leaf_mode(target_mode) and allow_child_delegation and agent_profile.allow_delegation)
                 ),
             )
 

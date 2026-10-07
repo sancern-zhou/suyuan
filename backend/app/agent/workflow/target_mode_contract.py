@@ -155,13 +155,26 @@ _ROUTING_RULES = (
 
 def target_mode_values() -> list[str]:
     """已登记契约的 target_mode 取值（顺序稳定）。"""
-    return list(TARGET_MODE_CONTRACTS.keys())
+    return list(_active_contracts())
+
+
+def _active_contracts():
+    from app.agent.workflow.project_policy import child_modes
+
+    project = child_modes()
+    overlap = set(project) & set(TARGET_MODE_CONTRACTS)
+    if overlap:
+        raise ValueError(f"project workflow modes shadow shared modes: {sorted(overlap)}")
+    return {**TARGET_MODE_CONTRACTS, **{
+        name: policy.model_dump(include={"positioning", "scope", "boundary", "outputs"})
+        for name, policy in project.items()
+    }}
 
 
 def build_target_mode_contract() -> str:
     """构建 target_mode 能力/工具边界契约文本（供工具 schema 使用）。"""
     lines = ["子 Agent（target_mode）能力与工具边界："]
-    for mode, spec in TARGET_MODE_CONTRACTS.items():
+    for mode, spec in _active_contracts().items():
         parts = [f"- {mode}：{spec['positioning']}"]
         if spec.get("scope"):
             parts.append(f"能做：{spec['scope']}")
