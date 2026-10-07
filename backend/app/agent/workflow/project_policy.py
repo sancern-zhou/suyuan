@@ -96,6 +96,7 @@ def prepare_node(node):
             for field in ("counter_evidence", "alternative_explanations")
         })
     node["result_schema"] = schema
+    node["task_contract"] = {**dict(contract), "result_schema": deepcopy(schema)}
 
 
 def apply_workflow_limits(parent_mode, definition, max_concurrency):
