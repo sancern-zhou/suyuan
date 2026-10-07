@@ -778,6 +778,10 @@ def _app_resource_descriptor(session_id: str, resource, *, preview_resource=None
         "url": f"/api/social/app/sessions/{session_id}/resources/{resource.resource_id}/content",
         "download_url": f"/api/social/app/sessions/{session_id}/resources/{resource.resource_id}/content",
         "format": resource.format,
+        "renderer": resource.renderer,
+        "resource_key": resource.resource_key,
+        "visual_id": str(resource.metadata.get("visual_id") or ""),
+        "interactive": resource.metadata.get("interactive") is True,
     }
     if preview_resource is not None:
         descriptor["preview_url"] = f"/api/social/app/sessions/{session_id}/resources/{preview_resource.resource_id}/content"
@@ -867,6 +871,8 @@ async def _app_resource_descriptors(session_id: str, resource_ids: list[str]) ->
             str(descriptor.get("filename") or descriptor.get("name") or "").strip().lower(),
             str(descriptor.get("mime_type") or descriptor.get("format") or "").strip().lower(),
         )
+        if descriptor.get("resource_key") == "chart-spec":
+            key = (descriptor["file_id"], "chart-spec")
         if not key[0]:
             continue
         current = deduplicated.get(key)
@@ -1097,9 +1103,7 @@ async def _authorize_scheduled_session_row(catalog, session_id: str, user, exc: 
     return row
 
 
-@router.get("/sessions/{session_id}/messages")
-async def app_session_messages(session_id: str, identity: AppIdentity = Depends(require_app_identity)) -> dict:
-    """Restore the latest messages for an App-owned conversation."""
+async def _readable_app_session_row(session_id: str, identity: AppIdentity):
     catalog = get_conversation_catalog()
     user = identity.as_current_user()
     try:
@@ -1108,6 +1112,13 @@ async def app_session_messages(session_id: str, identity: AppIdentity = Depends(
         row = await _authorize_scheduled_session_row(catalog, session_id, user, exc)
     if row.source not in (ConversationSource.SOCIAL, ConversationSource.WEB):
         raise HTTPException(status_code=404, detail="session_not_found")
+    return row
+
+
+@router.get("/sessions/{session_id}/messages")
+async def app_session_messages(session_id: str, identity: AppIdentity = Depends(require_app_identity)) -> dict:
+    """Restore the latest messages for an App-owned conversation."""
+    row = await _readable_app_session_row(session_id, identity)
     from app.conversations.adapters import get_conversation_adapters
 
     restored = await get_conversation_adapters().get(row.source).restore(
@@ -1123,19 +1134,12 @@ async def app_session_messages(session_id: str, identity: AppIdentity = Depends(
     else:
         payload = restored.get("normalized_session") or {}
     history = list(payload.get("conversation_history") or [])
-    # Resource outputs are stored in the session resource catalog separately
-    # from the text transcript. Project them onto the latest assistant turn so
-    # the Android history view can render generated images/files as well.
+    # Restore explicit chart references on their own turns; legacy files stay
+    # on the latest reply when no placement was saved in the text transcript.
     try:
         descriptors = await _app_resource_descriptors(session_id, [])
-        if descriptors:
-            for item in reversed(history):
-                role = str(item.get("role") or item.get("type") or "").lower() if isinstance(item, dict) else ""
-                if role in {"assistant", "final"}:
-                    existing = item.get("attachments") if isinstance(item.get("attachments"), list) else []
-                    known = {str(value.get("file_id") or value.get("resource_id") or value.get("url") or "") for value in existing if isinstance(value, dict)}
-                    item["attachments"] = existing + [value for value in descriptors if value["file_id"] not in known]
-                    break
+        from app.social.inline_charts import attach_reply_resources
+        attach_reply_resources(history, descriptors)
     except Exception as exc:
         logger.warning("app_session_resources_restore_failed", session_id=session_id, error=str(exc))
     return {"session_id": session_id, "messages": history}
@@ -1147,9 +1151,7 @@ async def app_session_resources(
     identity: AppIdentity = Depends(require_app_identity),
 ) -> dict:
     """List user-visible generated resources for the Android App."""
-    row = await get_conversation_catalog().require_read(session_id, identity.as_current_user())
-    if row.source != ConversationSource.SOCIAL:
-        raise HTTPException(status_code=404, detail="session_not_found")
+    await _readable_app_session_row(session_id, identity)
     return {
         "session_id": session_id,
         "resources": await _app_resource_descriptors(session_id, []),
@@ -1163,9 +1165,7 @@ async def app_session_resource_content(
     identity: AppIdentity = Depends(require_app_identity),
 ) -> FileResponse:
     """Serve generated resource bytes to the authenticated Android App."""
-    row = await get_conversation_catalog().require_read(session_id, identity.as_current_user())
-    if row.source != ConversationSource.SOCIAL:
-        raise HTTPException(status_code=404, detail="session_not_found")
+    await _readable_app_session_row(session_id, identity)
     resource = await SessionResourceService.database().get_resource(session_id, resource_id, status="active")
     if resource is None or resource.role not in {"output", "report", "attachment"} or resource.kind not in {"data", "file", "artifact", "visual"}:
         raise HTTPException(status_code=404, detail="resource_not_found")

@@ -7,7 +7,7 @@
 - 所有模式先匹配专用业务图型：属于 `create_business_chart` 已支持的六种图型时，必须使用 `create_business_chart`，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具。数据准备可使用 Python。
 - 其他通用或自定义图表，问数模式以 `execute_echarts_python` 为主要绘图工具；Python 负责计算、整理和自定义静态图。
 - 专家和报告模式以 `execute_python` 为主要绘图工具，ECharts 辅助交互探索；前端交互式 ECharts 图表使用 `execute_echarts_python`。
-- 交互图只登记 `chart-spec` 资源，在右侧面板展示；不生成 PNG，不在正文自动插图，不使用 `[[chart:...]]` 占位符。正文说明核心结论，可提示用户在右侧面板查看交互图。
+- 交互图登记 `chart-spec` 资源，Web 与 App 在最终回复中使用同一组件渲染。最终回复使用 `[[chart:<visual_id>]]` 控制位置，ID 必须取本次工具返回的 `visuals.id`。每个标记独占一行，与上下文空行分隔；按分析逻辑组织“说明—图表—结论”，支持多图穿插。禁止编造 ID、输出配置 JSON/HTML 或要求用户去右侧面板寻找图表。
 - 正文或正式报告 Word/QMD 所需通用静态图使用 `execute_python`，已支持的专用业务图型必须使用 `create_business_chart`；需要把问数结果写入报告时复用原始数据绘制静态图或复用业务工具图片。
 - 数据清洗、中间计算、文件生成和 matplotlib/seaborn/plotly 绘图使用 `execute_python`。
 

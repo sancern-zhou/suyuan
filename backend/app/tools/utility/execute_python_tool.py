@@ -3370,7 +3370,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "其他通用图：问数模式优先使用 execute_echarts_python；专家/报告模式优先使用 execute_python，ECharts 辅助交互探索；"
             "② 前端交互式图表/复杂数据可视化 → 使用 execute_echarts_python；"
             "③ 深度分析与报告静态图 → 使用 execute_python + matplotlib/seaborn，默认一个独立图表一个图片文件。"
-            "只发布交互图资源，在右侧面板展示；不生成静态图片，不插入对话正文，不使用 [[chart:...]] 占位符。"
+            "交互图通过统一资源发布；最终回复使用 [[chart:<visual_id>]] 在相关分析段落之间插入图表，visual_id 取返回的 visuals.id。"
             "需要正文或报告静态图时，通用图通过 execute_python 绘制，已支持的业务图型必须使用 create_business_chart。"
             "通用计算和文件生成仍使用 execute_python。"
         )
@@ -3434,7 +3434,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
         result.setdefault("resources", []).extend(
             resources_for_visuals(echarts_visuals, tool_name=self.name)
         )
-        result["summary"] = f"✅ ECharts 图表生成完成：{len(echarts_visuals)} 个"
+        result["summary"] = f"✅ ECharts 图表生成完成：{len(echarts_visuals)} 个。最终回复使用 [[chart:<visual_id>]] 按分析顺序插入图表，ID 取 visuals.id。"
         return result
 
     def get_function_schema(self) -> Dict[str, Any]:
@@ -3451,9 +3451,10 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                 "每次调用是独立环境；读取输入文件须通过 input_files 声明，代码中的同名列表提供校验后的绝对路径。"
                 "仅输出 ECharts 图表配置：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
-                "图表通过统一会话资源目录发布为 chart-spec，只在右侧面板展示交互图。"
-                "不生成静态图片，不在对话正文插图，不使用 [[chart:...]] 占位符或拼接图片 URL。"
-                "正文说明分析结论，可告知用户在右侧面板查看交互图。"
+                "图表通过统一会话资源目录发布为 chart-spec，Web 与 App 共用交互图表。"
+                "最终回复必须用 [[chart:<visual_id>]] 安排图表位置，visual_id 必须取工具返回的 visuals.id，不得编造。"
+                "每个标记独占一行并与上下段落空行分隔；按分析逻辑交替组织文字与图表，每张图后说明结论。"
+                "不在正文输出配置 JSON、HTML 或拼接图片 URL；不要要求用户到右侧面板寻找图表。"
                 "需要正文或 Word/QMD 报告静态图时，通用图通过 execute_python 绘制，已支持的业务图型必须使用 create_business_chart。"
                 "多图时输出多行纯 JSON。禁止输出 CHART_1: 前缀、Markdown 代码块、解释文字包裹 JSON。"
                 "数据分析、清洗、中间计算和文件生成请使用 execute_python。"
