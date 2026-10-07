@@ -24,6 +24,7 @@ def test_scheduled_task_prompt_marks_unattended_execution():
 
     assert "后台无人值守的定时任务执行" in prompt
     assert "任务名称、任务描述、执行指令、调度和筛选条件均视为用户已提前配置并确认" in prompt
+    assert "最终回复的第一行必须是一句话业务结论" in prompt
     assert "不要以“请确认”“等待用户确认”“确认后继续”等形式中途结束" in prompt
     assert "必须在本次执行内直接调用并等待工具返回" in prompt
     assert "submit_task_review" not in prompt

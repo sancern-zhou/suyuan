@@ -1,3 +1,7 @@
+import asyncio
+
+import pyodbc
+
 from app.tools.query.execute_sql_query.tool import ExecuteOpsSQLQueryTool, ExecuteSQLQueryTool
 from app.utils.sql_validator import SQLValidator
 
@@ -107,3 +111,38 @@ def test_execute_sql_query_allows_henan_city_accumulate_ranking_table():
         is_valid, error = tool.sql_validator.validate(sql)
 
         assert is_valid, error
+
+
+def test_xuchang_sql_tool_routes_crawler_station_history_before_execution():
+    tool = ExecuteSQLQueryTool(project_id="xuchang")
+
+    assert "dat_station_hour" not in tool.sql_validator.ALLOWED_TABLES
+    assert "dat_station_day" not in tool.sql_validator.ALLOWED_TABLES
+    assert "dat_zhongda_station_hour" in tool.sql_validator.ALLOWED_TABLES
+
+    result = asyncio.run(
+        tool.execute(sql="SELECT TOP 1 * FROM dbo.dat_station_hour")
+    )
+
+    assert result["success"] is False
+    assert "execute_crawler_sql_query" in result["summary"]
+
+
+def test_missing_city_table_does_not_get_station_crawler_hint(monkeypatch):
+    tool = ExecuteSQLQueryTool(project_id="xuchang")
+
+    def _raise_missing_table(sql, database):
+        raise pyodbc.ProgrammingError(
+            "42S02",
+            "[42S02] Invalid object name 'CityAQIPublishHistory'",
+        )
+
+    monkeypatch.setattr(tool, "_execute_query", _raise_missing_table)
+    result = asyncio.run(
+        tool.execute(sql="SELECT TOP 1 * FROM dbo.CityAQIPublishHistory")
+    )
+
+    assert result["success"] is False
+    assert "SQL执行失败" in result["summary"]
+    assert "execute_crawler_sql_query" not in result["summary"]
+    assert "describe_table='CityAQIPublishHistory'" in result["summary"]

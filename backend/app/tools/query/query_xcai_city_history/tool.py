@@ -12,6 +12,7 @@ XcAiDb城市历史数据查询工具
 返回格式：UDF v2.0标准（包含file_path供下游工具使用）
 """
 from typing import Dict, Any, List, TYPE_CHECKING
+import asyncio
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
@@ -118,11 +119,12 @@ class QueryXcAiCityHistoryTool(LLMTool):
                 raise ValueError(f"不支持的数据类型: {data_type}")
 
             # Step 2: 执行SQL查询
-            raw_records = self.sql_client.query(
+            raw_records = await asyncio.to_thread(
+                self.sql_client.query,
                 cities=cities,
                 start_time=start_time,
                 end_time=end_time,
-                table=table_name
+                table=table_name,
             )
 
             if not raw_records:

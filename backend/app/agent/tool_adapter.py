@@ -15,6 +15,7 @@ Tool Adapter for ReAct Agent - 单一注册源适配器
 from typing import Dict, Any, List, Optional, Callable, Tuple
 from datetime import datetime
 import copy
+import re
 import structlog
 from app.agent.context.data_result_policy import (
     persist_large_inline_data,
@@ -34,16 +35,91 @@ logger = structlog.get_logger()
 
 NATIVE_MULTIMODAL_HIDDEN_TOOLS = frozenset({"analyze_image"})
 
+# 固定问数工作流模式：不暴露 read_file，execute_python 的手册引用对其是无效指引。
+QUERY_WORKFLOW_MODES = frozenset({
+    "query_monitoring",
+    "query_monitoring_station",
+    "query_monitoring_city",
+    "query_forecast",
+})
+
+# 问数模式下的 SQL 查询工具：数据形状已随结果注入上下文，
+# describe_table 参数与相关指引不再暴露。
+QUERY_WORKFLOW_SQL_TOOLS = frozenset({
+    "execute_crawler_sql_query",
+    "execute_sql_query",
+    "execute_postgres_sql_query",
+})
+
+
+def _strip_sentences(text: str, keywords: tuple[str, ...]) -> str:
+    """按句剥离包含任一关键词的句子（关键词命中即整句移除）。"""
+    sentences = re.split(r"(?<=[。])", text)
+    kept = [
+        sentence for sentence in sentences
+        if sentence and not any(keyword in sentence for keyword in keywords)
+    ]
+    return "".join(kept).strip()
+
+
+def _remove_manual_sentences(text: str) -> str:
+    """去掉文本中引用规范手册/read_file 的句子（问数模式无该工具）。"""
+    return _strip_sentences(text, (".md", "手册", "read_file"))
+
+
+def _query_mode_sql_query_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """问数子 Agent 的 SQL 查询 schema：剥离 describe_table 参数与相关指引。
+
+    数据形状已随查询结果注入上下文，describe_table 的"先看结构再查询"流程
+    对问数模式是多余轮次；其他模式仍使用原始 schema。
+    """
+    adapted = copy.deepcopy(schema)
+    parameters = adapted.get("parameters") if isinstance(adapted.get("parameters"), dict) else {}
+    properties = parameters.get("properties")
+    if isinstance(properties, dict) and "describe_table" in properties:
+        properties = {key: value for key, value in properties.items() if key != "describe_table"}
+        adapted["parameters"] = {**parameters, "properties": properties}
+    required = adapted.get("parameters", {}).get("required")
+    if isinstance(required, list) and "describe_table" in required:
+        adapted["parameters"] = {
+            **adapted["parameters"],
+            "required": [item for item in required if item != "describe_table"],
+        }
+    adapted["description"] = _strip_sentences(
+        str(adapted.get("description") or ""), ("describe_table",)
+    )
+    return adapted
+
+
+def _query_mode_execute_python_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """问数子 Agent 的 execute_python schema：剥离规范手册/read_file 引用。
+
+    与 _native_multimodal_read_file_schema 同款的多模式 schema 适配：
+    其他模式仍使用原始描述，问数模式看到的手册指引被整体移除。
+    """
+    adapted = copy.deepcopy(schema)
+    adapted["description"] = _remove_manual_sentences(str(adapted.get("description") or ""))
+    parameters = adapted.get("parameters")
+    code_property = (parameters or {}).get("properties", {}).get("code")
+    if isinstance(code_property, dict) and code_property.get("description"):
+        code_property = dict(code_property)
+        code_property["description"] = _remove_manual_sentences(str(code_property["description"]))
+        properties = dict(parameters["properties"])
+        properties["code"] = code_property
+        adapted["parameters"] = {**parameters, "properties": properties}
+    return adapted
+
+
 def _native_multimodal_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     """Expose native multimodal image attachment while hiding legacy image analysis."""
     multimodal_schema = copy.deepcopy(schema)
     multimodal_schema["description"] = (
         "读取文件或目录内容，支持文本分页、PDF、DOCX、PPTX、Word XML、Markdown。"
         "不要读取查询或分析工具返回的会话数据文件：少量结果已由查询工具完整返回，大量结果的处理使用 execute_python，避免占用模型上下文。"
-        "图片文件默认按普通文件读取；只有明确需要查看历史或工具生成的本地图片时，才设置 as_multimodal_attachment=true。"
+        "图片文件默认以原生多模态附件返回；如需兼容旧的 OCR/图片分析流程，才设置 as_multimodal_attachment=false。"
         "PDF/DOCX/PPTX 默认会生成前端可查看的预览；预览失败不影响文本读取。"
         "Excel文件不由 read_file 读取，需使用 execute_python。"
-        "大文本默认100KB限制，超限会截断并提示用 grep 或 offset/limit 分页。"
+        "大文本默认100KB限制；分页读取按行范围读取，避免为小范围请求加载整个文件。"
         "不返回base64，避免浪费上下文。"
     )
     properties = multimodal_schema.get("parameters", {}).get("properties", {})
@@ -51,8 +127,8 @@ def _native_multimodal_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any
     properties.pop("analysis_type", None)
     properties["as_multimodal_attachment"] = {
         "type": "boolean",
-        "description": "所有Agent模式均支持原生多模态；仅在需要查看历史或工具生成的本地图片时设置为 true。本轮用户上传图片已经由输入自动挂载，不需要再读取。",
-        "default": False,
+        "description": "所有Agent模式均支持原生多模态；默认返回图片附件。仅在需要使用旧 OCR/图片分析流程时设置为 false。本轮用户上传图片已经由输入自动挂载，不需要再读取。",
+        "default": True,
     }
     return multimodal_schema
 
@@ -241,10 +317,21 @@ async def call_llm_tool(tool_name: str, *args, **kwargs) -> Dict[str, Any]:
         # 标准化返回格式（符合UDF v1.0）
         execution_time = (datetime.now() - start_time).total_seconds()
         public_result = _standardize_tool_result(tool_name, result, execution_time)
+        result_success = bool(public_result.get("success", False))
+        result_error_summary = ""
+        if not result_success:
+            # 工具未抛异常但返回失败（如 SQL 白名单拒绝、参数校验失败）：
+            # 摘要进入统计的最近错误环形缓冲，供后续针对性优化。
+            result_error_summary = str(
+                public_result.get("error")
+                or public_result.get("summary")
+                or ""
+            ).strip()[:180]
         global_tool_registry.record_execution(
             tool_name,
-            success=bool(public_result.get("success", False)),
+            success=result_success,
             execution_time=execution_time,
+            error_summary=result_error_summary or None,
         )
         public_result = persist_large_inline_data(
             public_result,
@@ -268,6 +355,7 @@ async def call_llm_tool(tool_name: str, *args, **kwargs) -> Dict[str, Any]:
             tool_name,
             success=False,
             execution_time=execution_time,
+            error_summary=f"{type(e).__name__}: {str(e)[:180]}",
         )
 
         return {
@@ -439,6 +527,8 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
             "source_report_file_path",
             "source_report_file_paths",
             "visual_ids",
+            "data_shape",
+            "data_shapes",
         )
         for key in passthrough_fields:
             if key in result:
@@ -697,6 +787,16 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
             tool_data = global_tool_registry.get_tool_data(name)
             description = tool_data.get("metadata", {}).get("description", f"Call {name} tool")
             tool_wrapper.__doc__ = description
+            tool = tool_data.get("tool")
+            if tool is not None:
+                # WorkflowTool 系（quick_trace 等）不继承 LLMTool，可能没有
+                # 并发语义属性；工作流编排有副作用，缺省按串行/非只读处理。
+                tool_wrapper.is_read_only = getattr(
+                    tool, "is_read_only", lambda _args=None: False
+                )
+                tool_wrapper.concurrency_policy = getattr(
+                    tool, "concurrency_policy", "serial"
+                )
             return tool_wrapper
 
         tool_wrapper = make_tool_wrapper(tool_name)
@@ -713,6 +813,8 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
 
     get_observed_weather_wrapper.__name__ = "get_observed_weather"
     get_observed_weather_wrapper.__doc__ = get_observed_weather.__doc__
+    get_observed_weather_wrapper.is_read_only = lambda _args=None: True
+    get_observed_weather_wrapper.concurrency_policy = "parallel_read"
     tool_registry["get_observed_weather"] = get_observed_weather_wrapper
 
     # 🔍 调试日志：输出最终工具注册表
@@ -768,6 +870,10 @@ def get_tool_schemas(
             schema = tool.get_function_schema()
             if supports_native_multimodal(mode) and tool.name == "read_file":
                 schema = _native_multimodal_read_file_schema(schema)
+            if mode in QUERY_WORKFLOW_MODES and tool.name == "execute_python":
+                schema = _query_mode_execute_python_schema(schema)
+            if mode in QUERY_WORKFLOW_MODES and tool.name in QUERY_WORKFLOW_SQL_TOOLS:
+                schema = _query_mode_sql_query_schema(schema)
             schemas.append(schema)
 
     # ========================================

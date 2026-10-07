@@ -46,17 +46,19 @@ def agent(facts):
     }
 
 
-def test_evidence_separates_batches_and_keeps_missingness():
+def test_evidence_uses_latest_batch_without_mixing_and_keeps_missingness():
     data = sources(missing_wind=True)
     data["aq"] = [{**row, "UpdateDate": "2026-09-27"} for row in data["aq"]]
+    data["aq"] += [{**row, "MinAqi": 99, "MaxAqi": 199, "UpdateDate": "2026-09-26"} for row in data["aq"]]
     data["outlook"][0]["fetched_at"] = "2026-09-27 06:20:00"
     facts = evidence.build_evidence(START, data)
     assert len(facts["days"]) == 7
-    assert facts["days"][0]["aqi_grade"] == "未提供"
+    assert facts["days"][0]["aqi_grade"] == "优～良"
+    assert facts["days"][0]["aqi_min"] == 45
     assert facts["days"][0]["wind_mean_complete"] is False
     assert "fetched_at" not in facts["outlook"][0]
     assert not facts["risk_periods"]
-    assert any("空气质量预报" in note for note in facts["warnings"])
+    assert any("空气质量预报" in note and "2026-09-27" in note for note in facts["warnings"])
 
 
 def test_returning_wind_grade_is_preserved_and_empty_sources_keep_template():

@@ -21,6 +21,7 @@ test('default project enables core and legacy', () => {
     agentModes: ['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops'],
     defaultAgentMode: 'assistant',
     agentModeOverrides: {},
+    agentSceneOverrides: {},
     agentPlatformLayout: 'scenes',
     agentScenes: [],
     sidebarAgentModes: ['query']
@@ -36,7 +37,10 @@ test('xuchang project enables only its declared business modules', () => {
   assert.equal(config.frontend.defaultAgentMode, 'query')
   assert.equal(config.frontend.agentPlatformLayout, 'scenes')
   assert.deepEqual(config.frontend.agentScenes, ['monitoring'])
-  assert.deepEqual(config.frontend.sidebarAgentModes, ['query', 'knowledge', 'expert'])
+  assert.deepEqual(config.frontend.agentSceneOverrides, {
+    monitoring: { modeIds: ['query', 'knowledge', 'expert', 'report', 'chart'] }
+  })
+  assert.deepEqual(config.frontend.sidebarAgentModes, [])
 })
 
 test('jiangxi project uses the reduced noise interface', () => {
@@ -93,5 +97,45 @@ test('sidebar agent modes must be declared agent modes', () => {
   assert.throws(
     () => loadProjectBuildConfig({ projectId: 'demo', repoRoot: tempRoot }),
     /must be declared in frontend\.agent_modes/
+  )
+})
+
+test('unknown agent scene override ids fail validation', () => {
+  const tempRoot = resolve(import.meta.dirname, '../../../tmp/opencode/manifest-test')
+  mkdirSync(resolve(tempRoot, 'projects/demo'), { recursive: true })
+  mkdirSync(resolve(tempRoot, 'modules'), { recursive: true })
+  writeFileSync(resolve(tempRoot, 'projects/demo/project.yaml'), [
+    'schema_version: 1',
+    'project: demo',
+    'frontend:',
+    '  agent_scene_overrides:',
+    '    parking:',
+    '      mode_ids: [query]',
+    ''
+  ].join('\n'))
+
+  assert.throws(
+    () => loadProjectBuildConfig({ projectId: 'demo', repoRoot: tempRoot }),
+    /unknown agent scene override/
+  )
+})
+
+test('agent scene override mode ids must reference known modes', () => {
+  const tempRoot = resolve(import.meta.dirname, '../../../tmp/opencode/manifest-test')
+  mkdirSync(resolve(tempRoot, 'projects/demo'), { recursive: true })
+  mkdirSync(resolve(tempRoot, 'modules'), { recursive: true })
+  writeFileSync(resolve(tempRoot, 'projects/demo/project.yaml'), [
+    'schema_version: 1',
+    'project: demo',
+    'frontend:',
+    '  agent_scene_overrides:',
+    '    monitoring:',
+    '      mode_ids: [query, parking]',
+    ''
+  ].join('\n'))
+
+  assert.throws(
+    () => loadProjectBuildConfig({ projectId: 'demo', repoRoot: tempRoot }),
+    /unknown agent mode/
   )
 })

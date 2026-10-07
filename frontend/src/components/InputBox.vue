@@ -1,6 +1,15 @@
 <template>
   <div class="input-area">
-    <div class="input-container">
+    <div class="input-container" :class="{ 'has-quick-prompts': quickPrompts.length }">
+      <div v-if="quickPrompts.length" class="quick-prompts" aria-label="常用问题">
+        <button
+          v-for="prompt in quickPrompts"
+          :key="prompt.id || prompt.label"
+          type="button"
+          :disabled="disabled || isAnalyzing"
+          @click="fillQuickPrompt(prompt.prompt)"
+        >{{ prompt.label }}</button>
+      </div>
       <div v-if="selectedSkill || selectedFileRefs.length" class="composer-selection-bar">
         <button
           v-if="selectedSkill"
@@ -162,13 +171,13 @@
                 title="选择本次对话使用的模型"
               >
                 <option value="auto">自动</option>
-                <option value="flash">Flash</option>
-                <option value="pro">Pro</option>
+                <option value="flash">快速模式</option>
+                <option value="pro">深度思考</option>
               </select>
               <div class="model-tier-tooltip">
-                <span v-if="modelTier === 'flash'" class="tooltip-text">快速模式，适合日常问数、对话</span>
-                <span v-if="modelTier === 'pro'" class="tooltip-text">专家模式，适合报告生成、深度分析等复杂任务</span>
-                <span v-if="modelTier === 'auto'" class="tooltip-text">自动根据任务复杂度选择模型</span>
+                <span v-if="modelTier === 'flash'" class="tooltip-text">快速模式：关闭深度思考，响应快，适合日常问数、数据查询和简单对话</span>
+                <span v-if="modelTier === 'pro'" class="tooltip-text">深度思考：开启逐步推理，更严谨，适合报告生成、深度分析和复杂研判</span>
+                <span v-if="modelTier === 'auto'" class="tooltip-text">自动：主对话默认深度思考，子任务自动使用快速模式，无需手动选择</span>
               </div>
             </div>
 
@@ -269,7 +278,7 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, computed } from 'vue'
+import { ref, watch, nextTick, computed, onMounted } from 'vue'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useReactStore } from '@/stores/reactStore'
 import { AGENT_MODE_IDS } from '@/config/agentModes.js'
@@ -280,6 +289,7 @@ import { uploadChatFile, validateFile, createImagePreview, getFileUrl } from '@/
 import { transcribeVoice } from '@/services/voiceApi.js'
 import { getPendingSteeringDisplay } from '@/components/inputBoxPendingSteering.js'
 import { getSkillsList } from '@/api/skillsManagement.js'
+import { getInputQuickPrompts } from '@/api/coordinatorConfig.js'
 import { getSession, getSessionResources } from '@/api/session.js'
 import { withComposerShortcutGuide } from '@/components/inputBoxPlaceholder.js'
 import {
@@ -339,6 +349,10 @@ const props = defineProps({
     type: String,
     default: 'general-agent'
   },
+  agentMode: {
+    type: String,
+    default: ''
+  },
   useReranker: {
     type: Boolean,
     default: false
@@ -354,6 +368,25 @@ const emit = defineEmits(['update:modelValue', 'send', 'pause', 'update:useReran
 const textareaRef = ref(null)
 const fileInputRef = ref(null)
 const localValue = ref(props.modelValue)
+const runtimeQuickPrompts = ref([])
+const quickPrompts = computed(() => {
+  const activeMode = props.agentMode || props.assistantMode
+  return runtimeQuickPrompts.value.filter(item => item.mode === activeMode)
+})
+const fillQuickPrompt = value => {
+  if (!value || props.disabled || props.isAnalyzing) return
+  localValue.value = value
+  emit('update:modelValue', value)
+  nextTick(() => textareaRef.value?.focus())
+}
+onMounted(async () => {
+  try {
+    const data = await getInputQuickPrompts()
+    runtimeQuickPrompts.value = Array.isArray(data?.items) ? data.items : []
+  } catch (error) {
+    console.warn('[InputBox] quick prompts fetch failed:', error)
+  }
+})
 const showKnowledgeBaseSelector = ref(false)
 const activeTrigger = ref(null)
 const highlightedPaletteIndex = ref(0)
@@ -1277,6 +1310,38 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.input-container.has-quick-prompts {
+  gap: 3px;
+}
+
+.quick-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+.quick-prompts button {
+  padding: 5px 10px;
+  border: 1px solid #d8deea;
+  border-radius: 6px;
+  background: #fff;
+  color: #526173;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.quick-prompts button:hover:not(:disabled) {
+  border-color: #1976d2;
+  color: #1976d2;
+}
+
+.quick-prompts button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
 }
 
 .composer-selection-bar {

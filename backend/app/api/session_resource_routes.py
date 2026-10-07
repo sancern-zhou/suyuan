@@ -42,7 +42,9 @@ from app.utils.path_config import get_data_registry
 logger = structlog.get_logger()
 router = APIRouter(prefix="/api/sessions", tags=["session-resources"])
 USER_VISIBLE_RESOURCE_ROLES = {"output", "report", "attachment"}
-USER_VISIBLE_RESOURCE_KINDS = {"file", "artifact", "visual"}
+# 与移动端资源列表保持一致（social_app_routes._app_resource_descriptors）：
+# 外置数据文件（save_data 落盘的查询/中间结果）同样对用户可见、可下载。
+USER_VISIBLE_RESOURCE_KINDS = {"data", "file", "artifact", "visual"}
 
 
 class RenderResourceRequest(BaseModel):
@@ -134,7 +136,7 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
     if item.resource_key == "chart-spec":
         dto["interactive"] = item.metadata.get("interactive", (
             item.metadata.get("type") != "image"
-            and item.tool_name not in {"execute_python", "create_report_chart"}
+            and item.tool_name not in {"execute_python", "create_business_chart"}
         ))
     board_id = _board_id_from_resource(item)
     if board_id:

@@ -6,10 +6,16 @@
 """
 
 from typing import Dict, Any, Optional, TYPE_CHECKING, List
+import asyncio
 import pyodbc
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.agent.context.data_shape import (
+    build_data_shape,
+    infer_column_types,
+    shape_summary_suffix,
+)
 from app.utils.sql_validator import SQLValidator
 
 if TYPE_CHECKING:
@@ -71,8 +77,6 @@ XUCHANG_MONITORING_SQL_TABLES = [
     'dbo.XuchangNmcHourlyWeatherForecast',
     'XuchangWeatherComDailyForecast',
     'dbo.XuchangWeatherComDailyForecast',
-    'dat_station_day',
-    'dat_station_hour',
     'dat_zhongda_station_minute',
     'dat_zhongda_station_hour',
     'dat_zhongda_city_hour',
@@ -203,6 +207,36 @@ AIR_QUALITY_SCHEMA_GUIDE = (
     "按city_code='101180401'（许昌城区）筛选，forecast_date为预报日期；字段包括weather_text、temp_max、temp_min、"
     "wind_direction_day、wind_direction_night、wind_force和fetched_at。"
 )
+
+
+XUCHANG_CRAWLER_TABLE_HINTS = {
+    "dat_station_hour": (
+        "许昌国控站点小时/日长历史不通过 execute_sql_query 查询；"
+        "请改用 execute_crawler_sql_query，并按其工具描述中的真实表字段契约生成查询。"
+    ),
+    "dat_station_day": (
+        "许昌国控站点小时/日长历史不通过 execute_sql_query 查询；"
+        "请改用 execute_crawler_sql_query，并按其工具描述中的真实表字段契约生成查询。"
+    ),
+}
+
+
+def _build_xuchang_schema_guide() -> str:
+    """移除许昌不可用的 SQL Server 站点长历史契约，并写明替代路由。"""
+    guide = AIR_QUALITY_SCHEMA_GUIDE
+    priority_start = guide.index("\n【数据源优先级】")
+    forecast_start = guide.index("\n【预报数据源优先级】")
+    xuchang_priority = (
+        "\n【数据源优先级】国控站点小时/日长历史与城市长历史使用 "
+        "execute_crawler_sql_query；不要在本工具查询 dat_station_hour/dat_station_day。"
+        "中大平台站点5分钟/小时数据仍使用本工具的 dat_zhongda_station_minute/"
+        "dat_zhongda_station_hour。"
+    )
+    guide = guide[:priority_start] + xuchang_priority + guide[forecast_start:]
+
+    station_start = guide.index("\n- dat_station_hour（站点小时）和dat_station_day（站点日）：")
+    zhongda_start = guide.index("\n- dat_zhongda_station_minute", station_start)
+    return guide[:station_start] + guide[zhongda_start:]
 
 
 OPS_SQL_TABLES = [
@@ -340,13 +374,22 @@ class BaseSQLQueryTool(LLMTool):
         allowed_tables: List[str],
         default_database: str = "XcAiDb",
         allow_information_schema_sql: bool = True,
+        allowed_databases: Optional[List[str]] = None,
+        alternate_table_hints: Optional[Dict[str, str]] = None,
     ):
         """初始化工具"""
 
         self.tool_name = tool_name
         self.default_database = default_database
         self.allow_information_schema_sql = allow_information_schema_sql
+        # 未显式声明时保持历史行为（XcAi 服务器上的两个库）。
+        self.allowed_databases = allowed_databases or ["XcAiDb", "AirPollutionAnalysis"]
         self.sql_validator = SQLValidator(max_limit=1000, allowed_tables=allowed_tables)
+        self._table_types_cache: Dict[str, Dict[str, str]] = {}
+        self.alternate_table_hints = {
+            table.lower(): hint
+            for table, hint in (alternate_table_hints or {}).items()
+        }
 
         function_schema = {
             "name": tool_name,
@@ -365,7 +408,7 @@ class BaseSQLQueryTool(LLMTool):
                     "database": {
                         "type": "string",
                         "description": f"数据库名称，默认{default_database}",
-                        "enum": ["XcAiDb", "AirPollutionAnalysis"]
+                        "enum": self.allowed_databases
                     },
                     "limit": {
                         "type": "integer",
@@ -428,16 +471,23 @@ class BaseSQLQueryTool(LLMTool):
             database = self.default_database
 
         # 验证数据库名称
-        if database not in ["XcAiDb", "AirPollutionAnalysis"]:
+        if database not in self.allowed_databases:
             return {
                 "success": False,
                 "data": None,
-                "summary": f"不支持的数据库名称 '{database}'。支持的数据库：XcAiDb、AirPollutionAnalysis"
+                "summary": f"不支持的数据库名称 '{database}'。支持的数据库：{'、'.join(self.allowed_databases)}"
             }
 
         # 判断是查看表结构还是执行SQL
         if describe_table:
-            return self._describe_table(describe_table, database)
+            alternate_hint = self._alternate_table_hint([describe_table])
+            if alternate_hint:
+                return {
+                    "success": False,
+                    "data": None,
+                    "summary": alternate_hint,
+                }
+            return await asyncio.to_thread(self._describe_table, describe_table, database)
         else:
             return await self._execute_sql_query(sql, database, limit, context)
 
@@ -659,17 +709,26 @@ class BaseSQLQueryTool(LLMTool):
                     error=error_msg,
                     sql_preview=sql[:100]
                 )
+                alternate_hint = self._alternate_table_hint(
+                    self.sql_validator.extract_tables(sql)
+                )
                 return {
                     "success": False,
                     "data": [],
-                    "summary": f"SQL验证失败: {error_msg}。请使用 {self.tool_name}(describe_table='表名', database='{database}') 查看正确的表结构信息。"
+                    "summary": alternate_hint or (
+                        f"SQL验证失败: {error_msg}。请使用 "
+                        f"{self.tool_name}(describe_table='表名', database='{database}') "
+                        "查看正确的表结构信息。"
+                    ),
                 }
 
             # 2. 添加TOP子句（SQL Server使用TOP而非LIMIT）
             safe_sql = self._sanitize_limit_for_sqlserver(sql, limit)
 
             # 3. 执行查询
-            results = self._execute_query(safe_sql, database)
+            # pyodbc is synchronous. Run it outside the Agent event loop so
+            # independent read-only query tools can actually execute in parallel.
+            results = await asyncio.to_thread(self._execute_query, safe_sql, database)
 
             logger.info(
                 "sql_query_success",
@@ -681,6 +740,8 @@ class BaseSQLQueryTool(LLMTool):
             # 4. 数据外部化：超过24条记录时采样
             sample_data = results
             file_path = None
+            data_shape = await self._build_data_shape(results, sql, database)
+            shape_suffix = shape_summary_suffix(data_shape)
 
             if context and len(results) > 24:
                 try:
@@ -699,7 +760,8 @@ class BaseSQLQueryTool(LLMTool):
                             "sql": sql,
                             "row_count": len(results),
                             "columns": columns,
-                            "limit": limit
+                            "limit": limit,
+                            "data_shape": data_shape,
                         }
                     )
 
@@ -724,7 +786,8 @@ class BaseSQLQueryTool(LLMTool):
                         "file_path": file_path,    # 完整数据文件路径
                         "count": len(results),
                         "sample_count": len(sample_data),
-                        "summary": f"查询到{len(results)}条记录（已外部化，返回样本{len(sample_data)}条）",
+                        "summary": f"查询到{len(results)}条记录（已外部化，返回样本{len(sample_data)}条）{shape_suffix}",
+                        "data_shape": data_shape,
                         "metadata": {
                             "database": database,
                             "columns": columns,
@@ -743,7 +806,8 @@ class BaseSQLQueryTool(LLMTool):
                 "data": results,
                 "file_path": file_path,
                 "count": len(results),
-                "summary": f"查询到{len(results)}条记录",
+                "summary": f"查询到{len(results)}条记录{shape_suffix}",
+                "data_shape": data_shape,
                 "metadata": {
                     "hint": "如果结果中包含英文代码值（如Fault、Check等），请转换为中文向用户展示"
                 }
@@ -757,6 +821,17 @@ class BaseSQLQueryTool(LLMTool):
                 error=error_msg,
                 sql_preview=sql[:100]
             )
+
+            sqlstate = str(e.args[0]) if e.args else ""
+            alternate_hint = self._alternate_table_hint(
+                self.sql_validator.extract_tables(sql)
+            )
+            if alternate_hint and ("42S02" in sqlstate or "Invalid object name" in error_msg):
+                return {
+                    "success": False,
+                    "data": [],
+                    "summary": f"SQL执行失败: {error_msg}。{alternate_hint}",
+                }
 
             # 提取表名
             table_name = self._extract_table_name(sql)
@@ -866,17 +941,24 @@ class BaseSQLQueryTool(LLMTool):
 
     def _extract_table_name(self, sql: str) -> Optional[str]:
         """从SQL中提取表名"""
-        import re
-        sql_lower = sql.lower()
+        referenced_tables = self.sql_validator.extract_tables(sql)
+        for referenced_table in referenced_tables:
+            for allowed_table in self.sql_validator.ALLOWED_TABLES:
+                normalized_allowed = allowed_table.split(".")[-1].lower()
+                if (
+                    referenced_table.lower() == normalized_allowed
+                    and not allowed_table.lower().startswith("information_schema")
+                ):
+                    return allowed_table
 
-        # 尝试提取FROM后的表名
-        from_match = re.search(r'\bfrom\s+(\w+)', sql_lower)
-        if from_match:
-            table = from_match.group(1)
-            # 检查是否在白名单中（排除系统视图）
-            if table in self.sql_validator.ALLOWED_TABLES and not table.startswith('information_schema'):
-                return table
+        return None
 
+    def _alternate_table_hint(self, table_names: List[str]) -> Optional[str]:
+        for table_name in table_names:
+            normalized = table_name.strip().strip("[]").split(".")[-1].strip("[]").lower()
+            hint = self.alternate_table_hints.get(normalized)
+            if hint:
+                return hint
         return None
 
     def _get_connection_string(self, database: str) -> str:
@@ -895,6 +977,53 @@ class BaseSQLQueryTool(LLMTool):
         except Exception as e:
             logger.error("获取数据库配置失败", error=str(e))
             raise
+
+    async def _build_data_shape(self, results: list, sql: str, database: str) -> Dict[str, Any]:
+        """information_schema 精确类型优先（按 库+schema+表 缓存），派生列回退样本推断。
+
+        与主查询一致走 asyncio.to_thread：首查未缓存表的元数据查询同样可能
+        因网络抖动阻塞，不能卡住事件循环上的其他并行问数节点。
+        """
+        import re as _re
+
+        try:
+            tables = self.sql_validator.extract_tables(sql)
+            exact_types: Dict[str, str] = {}
+            for table in tables:
+                table = str(table)
+                if not _re.fullmatch(r"[A-Za-z0-9_\.]+", table):
+                    continue
+                parts = table.split(".")
+                table_name = parts[-1]
+                # 显式 schema 前缀优先；未限定时按 SQL Server 默认 schema 解析，
+                # 防止同库跨 schema（乃至跨库同表名经缓存串味）互相污染列类型。
+                schema_name = parts[-2] if len(parts) >= 2 else "dbo"
+                cache_key = f"{database}|{table}"
+                if cache_key not in self._table_types_cache:
+                    try:
+                        rows = await asyncio.to_thread(
+                            self._execute_query,
+                            "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+                            f"WHERE TABLE_NAME = '{table_name}' AND TABLE_SCHEMA = '{schema_name}'",
+                            database,
+                        )
+                        self._table_types_cache[cache_key] = {
+                            str(row["COLUMN_NAME"]): str(row["DATA_TYPE"]) for row in rows
+                        }
+                    except Exception:
+                        self._table_types_cache[cache_key] = {}
+                exact_types.update(self._table_types_cache.get(cache_key) or {})
+            columns = list(results[0].keys()) if results else []
+            inferred = infer_column_types(results, columns)
+            columns_with_types = {
+                str(name): exact_types.get(str(name)) or inferred.get(str(name), "str")
+                for name in columns
+            }
+            return build_data_shape(
+                columns_with_types, len(results), "db" if exact_types else "inferred"
+            )
+        except Exception:
+            return build_data_shape(infer_column_types(results), len(results), "inferred")
 
     def _execute_query(self, sql: str, database: str) -> list:
         """执行SQL查询"""
@@ -943,7 +1072,7 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
                 table for table in allowed_tables
                 if table.lower() not in {"openmeteoairqualityforecast72h", "dbo.openmeteoairqualityforecast72h"}
             ]
-        schema_guide = AIR_QUALITY_SCHEMA_GUIDE
+        schema_guide = _build_xuchang_schema_guide() if is_xuchang else AIR_QUALITY_SCHEMA_GUIDE
         schema_description = (
             "监测数据SQL Server查询工具。支持二选一：describe_table查看表结构，或sql执行SELECT查询。"
             "高频表优先使用下方已确认的字段契约直接生成SQL；其他表字段不确定时再用describe_table动态查询。"
@@ -986,7 +1115,7 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
                 "\n- CityAQIPublishHistory/CityDayAQIPublishHistory：城市小时/日空气质量历史"
                 "\n- dat_zhongda_station_minute/dat_zhongda_station_hour：中大平台站点5分钟/小时数据"
                 "\n- dat_zhongda_city_hour：中大平台城市小时数据"
-                "\n- dat_station_hour/dat_station_day：通用站点小时/日数据（站点小时在中大表缺失时补充；站点日仅此来源）"
+                "\n- 国控站点小时/日长历史：改用 execute_crawler_sql_query，本工具不开放 dat_station_hour/dat_station_day"
                 "\n- HenanCityAccumulateRanking：河南省城市月/年累计空气质量排名"
                 "\n- city_168_statistics_new_standard/city_168_statistics_old_standard：168城市统计"
                 "\n- province_statistics_new_standard/province_statistics_old_standard：省级空气质量统计"
@@ -999,6 +1128,7 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
             schema_description=schema_description,
             allowed_tables=allowed_tables,
             default_database="XcAiDb",
+            alternate_table_hints=XUCHANG_CRAWLER_TABLE_HINTS if is_xuchang else None,
         )
 
 

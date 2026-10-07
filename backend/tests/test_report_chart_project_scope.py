@@ -1,10 +1,10 @@
 import pytest
 
-from app.tools.visualization.create_report_chart.tool import (
-    CreateReportChartTool,
+from app.tools.visualization.create_business_chart.tool import (
+    CreateBusinessChartTool,
     available_chart_types,
     chart_type_enabled,
-    report_chart_reference_paths,
+    business_chart_reference_paths,
 )
 from config.settings import settings
 
@@ -25,9 +25,11 @@ def test_guangdong_chart_types_are_scoped_to_default(chart_type, fallback):
     assert fallback in available_chart_types("xuchang")
 
 
-def test_xuchang_reference_paths_hide_guangdong_chart_types():
-    xuchang_paths = report_chart_reference_paths("xuchang")
-    default_paths = report_chart_reference_paths("default")
+def test_xuchang_reference_paths_hide_guangdong_chart_types(monkeypatch):
+    monkeypatch.setattr(settings, "project_id", "xuchang")
+    xuchang_paths = business_chart_reference_paths()
+    monkeypatch.setattr(settings, "project_id", "default")
+    default_paths = business_chart_reference_paths()
 
     for chart_type, fallback in SCOPED_CHART_TYPES.items():
         assert chart_type not in xuchang_paths
@@ -37,7 +39,7 @@ def test_xuchang_reference_paths_hide_guangdong_chart_types():
 
 def test_xuchang_schema_omits_guangdong_chart_types(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "xuchang")
-    tool = CreateReportChartTool()
+    tool = CreateBusinessChartTool()
 
     enum = tool.get_function_schema()["parameters"]["properties"]["chart_type"]["enum"]
     for chart_type, fallback in SCOPED_CHART_TYPES.items():
@@ -47,7 +49,7 @@ def test_xuchang_schema_omits_guangdong_chart_types(monkeypatch):
 
 def test_default_schema_keeps_guangdong_chart_types(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "default")
-    tool = CreateReportChartTool()
+    tool = CreateBusinessChartTool()
 
     enum = tool.get_function_schema()["parameters"]["properties"]["chart_type"]["enum"]
     for chart_type, fallback in SCOPED_CHART_TYPES.items():
@@ -59,7 +61,7 @@ def test_default_schema_keeps_guangdong_chart_types(monkeypatch):
 @pytest.mark.parametrize("chart_type, fallback", SCOPED_CHART_TYPES.items())
 async def test_xuchang_rejects_guangdong_chart_type_calls(monkeypatch, chart_type, fallback):
     monkeypatch.setattr(settings, "project_id", "xuchang")
-    tool = CreateReportChartTool()
+    tool = CreateBusinessChartTool()
 
     result = await tool.execute(
         chart_type=chart_type,

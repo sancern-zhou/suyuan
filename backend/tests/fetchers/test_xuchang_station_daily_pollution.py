@@ -1,6 +1,7 @@
 import json
 import types
 from datetime import date, datetime
+from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -265,6 +266,10 @@ def _build_fetcher(monkeypatch, tmp_path, task_service, township_loader=_townshi
     monkeypatch.setattr(
         "app.fetchers.xuchang_station_daily_pollution.WeatherRepository", _WeatherRepository
     )
+    monkeypatch.setattr(
+        "app.fetchers.xuchang_station_daily_pollution.configured_history_service",
+        lambda: None,
+    )
     monkeypatch.setattr("app.scheduled_tasks.get_scheduled_task_service", lambda: task_service)
     fetcher = XuchangStationDailyPollutionFetcher(
         now_factory=lambda: datetime(2026, 8, 6, 2, 5, tzinfo=TZ_SHANGHAI),
@@ -526,3 +531,38 @@ async def test_township_failure_degrades_without_breaking_review(monkeypatch, tm
     assert episode["regional_co_rise"]["classification"] in {
         "regional_co_rise", "local_target_only", "insufficient_evidence",
     }
+
+
+@pytest.mark.asyncio
+async def test_meteorology_block_refreshes_era5_before_read(monkeypatch):
+    refresh = AsyncMock()
+    monkeypatch.setattr(
+        "app.fetchers.xuchang_station_daily_pollution.configured_history_service",
+        lambda: types.SimpleNamespace(refresh=refresh),
+    )
+
+    class _Repo:
+        async def get_observed_data(self, station_id, start, end):
+            return []
+
+        async def get_weather_data(self, lat, lon, start, end):
+            return []
+
+    monkeypatch.setattr(
+        "app.fetchers.xuchang_station_daily_pollution.WeatherRepository", _Repo
+    )
+    fetcher = XuchangStationDailyPollutionFetcher(
+        now_factory=lambda: datetime(2026, 8, 6, 2, 5, tzinfo=TZ_SHANGHAI),
+    )
+
+    result = {}
+    await fetcher._build_meteorology_block(result, TARGET_DAY)
+
+    # 读库前先对报告日做在线补采，边界层/云量不能因后台任务未跑到而整段缺测。
+    refresh.assert_awaited_once_with(
+        34.0, 113.75,
+        datetime(2026, 8, 5, 0, 0, tzinfo=TZ_SHANGHAI),
+        datetime(2026, 8, 5, 23, 59, 59, 999999, tzinfo=TZ_SHANGHAI),
+    )
+    assert result["meteorology_era5"] == []
+    assert result["meteorology_coverage"]["era5_grid_point"] == {"lat": 34.0, "lon": 113.75}

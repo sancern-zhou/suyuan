@@ -49,7 +49,9 @@ def test_minute_sql_join_uses_xuchang_name_not_foreign_id(tmp_path):
     service._query = lambda *args: next(replies)
     rows, _ = service.load_station_rows(datetime(2026, 9, 9, 14, 20))
     assert rows[-1]["station_id"] == "1005A"
-    assert rows[-1]["canonical_station_id"] == "3134A"
+    # hour 行先经 STATION_ID_ALIASES 归一（3134A→1005A），按名称 join 后
+    # canonical_station_id 应该是本地规范 id，国控码不得泄漏到结果里。
+    assert rows[-1]["canonical_station_id"] == "1005A"
     assert rows[-1]["lat"] == 34.0339
 
 

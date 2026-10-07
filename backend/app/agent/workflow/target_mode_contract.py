@@ -12,15 +12,81 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
         "scope": "SQL/平台数据/站点与报表查询、同比环比、分组聚合、数据质量核对。",
         "boundary": "不做机制研判与成因推断，不产出正式报告包。",
         "outputs": "结构化数据文件（file_path）。",
+        "warning": (
+            "报告 Agent（report 父模式）不再调用综合 query 子代理："
+            "监测历史数据改用 query_monitoring，气象与预报数据改用 query_forecast。"
+        ),
+    },
+    "query_monitoring": {
+        "positioning": "常规空气质量监测问数 Agent：面向国控/省控监测数据的取数与核算。",
+        "scope": "城市与站点小时/日历史、AQI 与六参数统计核算、同比环比、站点目录、全国城市对比、数据质量核对。",
+        "boundary": "只取数与统计核算，不做气象归因与污染成因研判（归 expert_meteorology/expert_analysis），不产出报告包。",
+        "outputs": "结构化数据文件（file_path）+ 数据口径、时间范围和缺口说明。",
+        "warning": (
+            "运行时限定批量取数、可选归一化、交付三个阶段，最多一次失败项补查。"
+            "SQL 字段以上下文内嵌表契约为准（大小写敏感）；查询失败返回的错误会附真实字段清单，直接据此修正。"
+            "报告 DAG 已禁用本模式：层级不明确时报告 Agent 先向用户确认口径，再拆分为 query_monitoring_station / query_monitoring_city。"
+        ),
+    },
+    "query_monitoring_station": {
+        "positioning": "站点层级监测问数 Agent：面向国控站与乡镇站小时/日历史、站点目录的取数与核算。",
+        "scope": "国控站小时/日历史（StationHour/StationDay）、乡镇站与中台口径数据、按区县/名称解析站点目录、站点口径六参数统计、站点数据质量核对。",
+        "boundary": "聚焦站点层级取数与统计核算，城市口径任务优先归 query_monitoring_city；不做气象归因与污染成因研判，不产出报告包。",
+        "outputs": "结构化数据文件（file_path）+ 站点清单、数据口径、时间范围和缺口说明。",
+        "warning": (
+            "运行时限定批量取数、可选归一化、交付三个阶段，最多一次失败项补查。"
+            "国控站直接 SQL 查询无需解析目录；乡镇站编码不可猜，先 xuchang_station_catalog 解析再调 query_airdata_platform。"
+            "站点表字段契约已注入上下文，写 SQL 前逐字核对，不要试探字段。"
+        ),
+    },
+    "query_monitoring_city": {
+        "positioning": "城市层级监测问数 Agent：面向城市小时/日历史、城市发布历史与全国对比的取数与核算。",
+        "scope": "城市小时/日历史与年均值（CityHour/CityDay/CityYearPm25Avg）、城市发布历史、中台接口、全国城市对比、城市口径统计核算。",
+        "boundary": "聚焦城市层级取数与统计核算，站点明细任务优先归 query_monitoring_station；不做气象归因与污染成因研判，不产出报告包。",
+        "outputs": "结构化数据文件（file_path）+ 城市清单、数据口径、时间范围和缺口说明。",
+        "warning": (
+            "运行时限定批量取数、可选归一化、交付三个阶段，最多一次失败项补查。"
+            "城市表字段契约已注入上下文，写 SQL 前逐字核对，不要试探字段。"
+        ),
+    },
+    "query_forecast": {
+        "positioning": "气象与空气质量预报问数 Agent：面向气象与预报产品的取数与整理。",
+        "scope": "气象实况与多时效预报取数、空气质量预报产品查询、预报要素时间序列落盘、起报时间与时效标注。",
+        "boundary": "只取数与轻量整理，不做气象条件研判与污染潜势评估（归 expert_meteorology），不产出报告包。",
+        "outputs": "结构化数据文件（file_path）+ 起报时间/时效/要素口径说明。",
+        "warning": (
+            "运行时限定批量取数、可选归一化、交付三个阶段，最多一次失败项补查。"
+            "预报数据的分析结论（如静稳形势、扩散条件）由 expert_meteorology 完成，本模式只交付数据。"
+        ),
     },
     "expert": {
-        "positioning": "专家 Agent：面向机制、成因与证据强弱的专业研判。",
-        "scope": "气象/遥感/轨迹/源解析等专业分析、证据解释与置信度评估。",
+        "positioning": "专家 Agent：面向机制、成因与判断依据的专业研判。",
+        "scope": "气象/遥感/轨迹/源解析等专业分析、证据解释、适用条件和证据缺口说明。",
         "boundary": "不负责报告排版与报告包收口。",
         "outputs": "结论 + 证据 + 不确定性（findings/evidence）。",
         "warning": (
             "专家自身也具备取数工具；同一数据源若已有 query 节点产出，"
             "必须用 dependencies 复用其 file_path，禁止重复取数。"
+        ),
+    },
+    "expert_meteorology": {
+        "positioning": "气象专家 Agent：面向气象条件与输送过程的专业研判。",
+        "scope": "地面/高空观测与预报气象、边界层与静稳条件、后向轨迹与输送通道、气象型归类、污染潜势的气象条件评估。",
+        "boundary": "职责聚焦气象条件与输送过程；污染物化学成因、源解析定量和报告包分别交由对应专家与主报告 Agent。",
+        "outputs": "结构化气象结论、证据与不确定性；内容较长时可附一份已发布的 Markdown 分析备忘录。",
+        "warning": (
+            "气象专家只拥有气象数据工具；同一数据源若已有 query 节点产出，"
+            "通过 dependencies 复用已有 file_path，并以该产物作为同源数据的首选依据。"
+        ),
+    },
+    "expert_analysis": {
+        "positioning": "常规分析专家 Agent：面向空气质量监测数据的专业研判。",
+        "scope": "六参数浓度特征与超标统计、AQI 与首要污染物变化、站点和城市时空对比、污染过程分段、本地累积与区域同步性的初步研判、判断依据和证据缺口说明。",
+        "boundary": "职责聚焦常规监测数据；离子、碳组分、地壳元素、VOCs/OFP 由后续组分专家承担，气象判断引用上游气象节点，源解析定量和报告包由对应节点完成。",
+        "outputs": "结构化监测分析结论、证据与不确定性；内容较长时可附一份已发布的 Markdown 分析备忘录。",
+        "warning": (
+            "常规分析专家不配置气象与轨迹工具；需要气象结论时依赖 expert_meteorology 上游节点，"
+            "同一数据源已有 query 节点产出时，通过 dependencies 复用其 file_path。"
         ),
     },
     "report": {
@@ -74,9 +140,16 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
 }
 
 _ROUTING_RULES = (
-    "选择规则：数据事实用 query；机制/成因用 expert；成稿交付用 report；"
-    "expert 需要 query 的数据时，把对应 query 节点写入 dependencies 并复用其 file_path；"
-    "无依赖的 source 节点并行且会话隔离，拿不到彼此数据；禁止同一数据源由 query 与 expert 各查一遍。"
+    "选择规则：机制/成因用 expert；成稿交付用 report；"
+    "监测历史数据事实按层级拆分：站点小时/日与站点目录用 query_monitoring_station，"
+    "城市口径与全国对比用 query_monitoring_city；层级混合拆成站点+城市两个节点，"
+    "层级不明确先向用户确认口径，不要用 query_monitoring 兜底（报告 DAG 已禁用，仅限非报告父模式直接委托）；"
+    "气象实况/预报与空气质量预报数据用 query_forecast；"
+    "综合 query 仅限非报告父模式（assistant/social 等）使用，报告 DAG 禁止；"
+    "气象条件、输送通道与静稳形势用 expert_meteorology，六参数浓度/AQI/超标与时空变化用 expert_analysis；组分分析预留给独立专家模式，"
+    "二者可并行拆分，交叉归因（如气象导致累积）在 synthesis 或报告整合阶段完成；"
+    "expert 需要 query 系数据时，把对应问数节点写入 dependencies 并复用其 file_path；"
+    "无依赖的 source 节点并行且会话隔离；同源数据由一个节点获取，后续节点通过 dependencies 复用。"
 )
 
 

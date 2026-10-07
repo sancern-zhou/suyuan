@@ -143,7 +143,8 @@ class ToolRegistry:
             "registered_at": datetime.now().isoformat(),
             "version": getattr(tool, 'version', '1.0.0'),
             "category": getattr(tool, 'category', None),
-            "requires_context": getattr(tool, 'requires_context', False)
+            "requires_context": getattr(tool, 'requires_context', False),
+            "concurrency_policy": getattr(tool, 'concurrency_policy', "serial"),
         }
 
         self._tools[tool_name] = tool_data
@@ -243,6 +244,7 @@ class ToolRegistry:
         *,
         success: bool,
         execution_time: float | None = None,
+        error_summary: str | None = None,
     ) -> Dict[str, Any]:
         """记录一次工具执行"""
         if tool_name not in self._tools:
@@ -252,6 +254,7 @@ class ToolRegistry:
             tool_name,
             success=success,
             execution_time=execution_time,
+            error_summary=error_summary,
         )
         self._stats[tool_name] = stats
         return stats
@@ -264,8 +267,13 @@ class ToolRegistry:
             execution_time=execution_time,
         )
 
-    def record_failure(self, tool_name: str, execution_time: float | None = None):
-        """记录失败"""
+    def record_failure(
+        self,
+        tool_name: str,
+        execution_time: float | None = None,
+        error_summary: str | None = None,
+    ):
+        """记录失败（error_summary 会进入该工具的最近错误环形缓冲）"""
         return self.record_execution(
             tool_name,
             success=False,

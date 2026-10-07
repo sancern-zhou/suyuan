@@ -21,9 +21,9 @@ def _result(index: int, task_id: str = "task-1", **overrides) -> TaskResult:
         status="success",
         started_at=datetime.now() - timedelta(days=1) + timedelta(minutes=index),
         completed_at=datetime.now() - timedelta(days=1) + timedelta(minutes=index, seconds=30),
-        city="许昌市",
+        city="示例市",
         station_id=f"station-{index}",
-        station_name="许昌ymc",
+        station_name="监测站A",
         pollutant="PM2.5",
         conclusion=f"结论 {index}",
         conclusion_source="distilled",
@@ -85,6 +85,11 @@ def test_task_result_storage_roundtrip_and_filters(tmp_path):
         records, total = storage.query_page(pollutant="PM2.5", page=1, page_size=2)
         assert total == 3
         assert len(records) == 2
+
+        records, total = storage.query_page(task_ids=[])
+        assert records == []
+        assert total == 0
+        assert storage.facets(task_ids=[]) == {"stations": [], "pollutants": []}
 
         record = storage.get("execution-0")
         assert record is not None

@@ -41,7 +41,7 @@ from app.scheduled_tasks.custom_agent import (
     validate_custom_tool_names,
 )
 from app.agent.selection_context import describe_skill_item, load_skill_selection
-from app.utils.path_config import resolve_agent_path
+from app.utils.path_config import is_agent_readable_path, resolve_agent_path
 
 router = APIRouter(prefix="/api/scheduled-tasks", tags=["scheduled-tasks"])
 
@@ -92,11 +92,11 @@ class UpdateTaskRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     execution_mode: Optional[str] = None
+    workflow_name: Optional[str] = None
+    workflow_args: Optional[Dict[str, Any]] = None
     model_tier: Optional[Literal["auto", "flash", "pro"]] = None
     result_requirements: Optional[List[ResultFieldRequirement]] = None
     tool_names: Optional[List[str]] = None
-    workflow_name: Optional[str] = None
-    workflow_args: Optional[Dict[str, Any]] = None
     skill_id: Optional[str] = None
     trigger_type: Optional[TriggerType] = None
     schedule_type: Optional[ScheduleType] = None
@@ -185,10 +185,6 @@ class UpdateTaskMemoryRequest(BaseModel):
     """人工编辑长期记忆请求"""
     content: str = Field(..., min_length=1, description="记忆 Markdown 全文")
     expected_version: int = Field(..., ge=0, description="编辑时读取到的记忆版本")
-
-class UpdateTaskCaseRequest(BaseModel):
-    """人工编辑案例库中的一条案例。"""
-    case: Dict[str, Any] = Field(..., description="案例 JSON 内容")
 
 
 class UpdateTaskCaseRequest(BaseModel):
@@ -800,7 +796,7 @@ async def get_task_result_file(
         path = resolve_agent_path(str(paths[index]))
     except (OSError, ValueError):
         raise HTTPException(status_code=404, detail="Artifact not found")
-    if not path.is_file():
+    if not is_agent_readable_path(path) or not path.is_file():
         raise HTTPException(status_code=404, detail="Artifact not found")
     media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     return FileResponse(
@@ -836,8 +832,9 @@ async def list_task_result_report_formats(
     if result is None:
         raise HTTPException(status_code=404, detail="Task result not found")
     task = service.get_task(result.task_id)
-    if task is not None:
-        _require_task_access(task, user)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task result not found")
+    _require_task_access(task, user)
 
     report_dir = _result_report_dir(result)
     formats: List[Dict[str, Any]] = []
@@ -909,8 +906,7 @@ async def get_task_result_report(
     }
     if media_type == "text/html" and disposition == "inline":
         if report_dir.name.startswith("xuchang_daily_review_"):
-            # Interactive AMap needs JSAPI, tile images and HTTPS data requests.
-            # Keep third-party access scoped to this report family.
+            # Interactive AMap access is limited to the Xuchang daily report family.
             headers["Content-Security-Policy"] = (
                 "default-src 'self'; img-src 'self' data: blob: https:; "
                 "style-src 'self' 'unsafe-inline' https:; "
@@ -1297,27 +1293,6 @@ async def get_task_history_memory(
             meta=storage.read_meta(),
             case_count=storage.case_count(),
         )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.put("/{task_id}/history/cases/{execution_id}")
-async def update_task_history_case(
-    task_id: str,
-    execution_id: str,
-    request: UpdateTaskCaseRequest,
-    user: CurrentUser = Depends(require_current_user),
-):
-    """人工修订任务案例，供用户纠正自动沉淀的执行结论。"""
-    try:
-        storage = _get_task_case_storage(task_id, user)
-        if not storage.update_case(execution_id, request.case):
-            raise HTTPException(status_code=404, detail="案例不存在")
-        cases = storage.recent_cases(200)
-        cases.reverse()
-        return {"case": next((item for item in cases if str(item.get("execution_id")) == execution_id), request.case)}
     except HTTPException:
         raise
     except Exception as e:

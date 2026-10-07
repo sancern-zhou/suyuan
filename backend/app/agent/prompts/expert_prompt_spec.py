@@ -36,8 +36,11 @@ def test_hidden_tools_are_not_exposed_by_any_agent_mode():
 
 
 def test_expert_prompt_requires_weather_forecast_and_remote_sensing_evidence_checks():
-    prompt = build_expert_prompt([])
+    """许昌专家提示词由项目覆盖文件提供（expert.md），共享 expert_prompt 仅保留通用骨架。"""
+    from app.agent.prompts.project_prompt import load_project_mode_prompt
 
+    prompt = load_project_mode_prompt("expert")
+    assert prompt is not None
     assert "遥感-气象空气质量分析专家" in prompt
     assert "未来风险" in prompt
     assert "遥感来源" in prompt

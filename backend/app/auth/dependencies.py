@@ -28,3 +28,14 @@ def current_user_is_admin(
     user: CurrentUser = Depends(require_current_user),
 ) -> bool:
     return user.is_admin
+
+
+def require_admin_user(
+    user: CurrentUser = Depends(require_current_user),
+) -> CurrentUser:
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="admin_required",
+        )
+    return user

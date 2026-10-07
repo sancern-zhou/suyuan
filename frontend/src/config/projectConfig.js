@@ -21,6 +21,12 @@ export function createProjectConfig(value) {
       })
     ])
   ))
+  const agentSceneOverrides = Object.freeze(Object.fromEntries(
+    Object.entries(value.frontend.agentSceneOverrides || {}).map(([scene, override]) => [
+      scene,
+      Object.freeze({ modeIds: Object.freeze([...(override.modeIds || [])]) })
+    ])
+  ))
   return Object.freeze({
     schemaVersion: value.schemaVersion,
     project: value.project,
@@ -31,6 +37,7 @@ export function createProjectConfig(value) {
     agentModeIds,
     defaultAgentMode,
     agentModeOverrides,
+    agentSceneOverrides,
     agentPlatformLayout: value.frontend.agentPlatformLayout || 'scenes',
     agentScenes: Object.freeze([...(value.frontend.agentScenes || [])]),
     sidebarAgentModes: Object.freeze([...(value.frontend.sidebarAgentModes || ['query'])]),
@@ -52,9 +59,10 @@ const injected = typeof __SUYUAN_PROJECT_CONFIG__ === 'undefined'
         theme: 'default',
         brandName: '风清气智',
         features: {},
-        agentModes: ['assistant', 'ppt', 'expert', 'query', 'knowledge', 'report', 'chart', 'board', 'ops'],
+        agentModes: ['assistant', 'ppt', 'expert', 'query', 'knowledge', 'report', 'board', 'ops'],
         defaultAgentMode: 'assistant',
         agentModeOverrides: {},
+        agentSceneOverrides: {},
         agentPlatformLayout: 'scenes',
         agentScenes: [],
         sidebarAgentModes: ['query']

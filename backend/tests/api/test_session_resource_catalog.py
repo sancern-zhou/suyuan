@@ -88,7 +88,7 @@ async def test_catalog_exposes_delivery_contract_without_physical_locator(monkey
 
 
 @pytest.mark.asyncio
-async def test_catalog_does_not_project_agent_internal_sources_data_or_urls(monkeypatch):
+async def test_catalog_projects_data_rows_but_not_agent_internal_sources_or_urls(monkeypatch):
     resources = [
         stored_resource(resource_id="attachment", role="attachment"),
         stored_resource(resource_id="source", role="source"),
@@ -113,7 +113,9 @@ async def test_catalog_does_not_project_agent_internal_sources_data_or_urls(monk
         "session-1", user=object(), catalog=Catalog()
     )
 
-    assert [item["resource_id"] for item in response["resources"]] == ["attachment"]
+    # 数据外置文件（kind=data）与移动端资源列表保持一致，对用户可见；
+    # agent 输入来源（source）和 URL 类资源仍然不投影。
+    assert [item["resource_id"] for item in response["resources"]] == ["attachment", "data"]
 
 
 def test_catalog_uses_group_renderer_filters_and_has_no_presentation_type():
@@ -125,7 +127,7 @@ def test_catalog_uses_group_renderer_filters_and_has_no_presentation_type():
 def test_chart_catalog_exposes_interactivity_for_current_and_existing_resources():
     static = session_resource_routes.resource_dto(
         "session-1",
-        stored_resource(resource_key="chart-spec", renderer="chart", tool_name="create_report_chart",
+        stored_resource(resource_key="chart-spec", renderer="chart", tool_name="create_business_chart",
                         metadata={"visual_id": "static-1", "type": "image"}),
     )
     interactive = session_resource_routes.resource_dto(
@@ -136,6 +138,15 @@ def test_chart_catalog_exposes_interactivity_for_current_and_existing_resources(
     assert static["interactive"] is False
     assert interactive["interactive"] is True
     assert "tool_name" not in static
+
+
+def test_business_chart_catalog_defaults_to_static_resource():
+    item = session_resource_routes.resource_dto(
+        "session-1",
+        stored_resource(resource_key="chart-spec", renderer="chart", tool_name="create_business_chart",
+                        metadata={"visual_id": "static-chart"}),
+    )
+    assert item["interactive"] is False
 
 
 def test_directory_artifact_content_url_carries_ticket_in_path():

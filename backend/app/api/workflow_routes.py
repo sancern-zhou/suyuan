@@ -32,6 +32,9 @@ def _workflow_snapshots(metadata: dict[str, Any]) -> dict[str, dict[str, Any]]:
             for key, value in values.items()
             if isinstance(value, dict) and value.get("workflow_id")
         }
+    legacy = metadata.get("workflow_coordinator")
+    if isinstance(legacy, dict) and legacy.get("workflow_id"):
+        return {str(legacy["workflow_id"]): dict(legacy)}
     return {}
 
 
@@ -54,6 +57,8 @@ def _has_retryable_nodes(snapshot: dict[str, Any]) -> bool:
             continue
         if str(run.get("status") or "") != "failed":
             continue
+        if not (snapshot.get("node_retryable") or {}).get(run.get("task_id"), True):
+            continue
         if int(run.get("attempt") or 0) < int(run.get("max_attempts") or 1):
             return True
     return False
@@ -73,19 +78,54 @@ def _node_history(snapshot: dict[str, Any], task_id: str, child: Any | None, aft
     child_runtime = workflow.get("workflow_runtime") or {}
     child_events = [event for event in child_runtime.get("events") or [] if isinstance(event, dict)][-100:]
     trace = (child.metadata or {}).get("execution_history") or [] if child is not None else []
+    trace = [item for item in trace if isinstance(item, dict)]
+    conversation = []
+    if child is not None:
+        for index, message in enumerate(child.conversation_history[-100:]):
+            if not isinstance(message, dict) or message.get("role") not in {"user", "assistant"}:
+                continue
+            conversation.append({
+                "id": str(message.get("id") or f"{task_id}:{index}"),
+                "role": message["role"],
+                "content": message.get("content") or "",
+                "timestamp": message.get("timestamp"),
+            })
     events = [
         {"sequence": int(event.get("sequence") or 0),
          "type": str(event.get("event_type") or "unknown"),
          "status": event.get("status"), "timestamp": event.get("timestamp"), "source": "node"}
         for event in runtime_events
     ]
+    tool_calls = sum(1 for item in trace if item.get("type") == "tool_call")
+    tool_results = [item for item in trace if item.get("type") == "tool_result"]
+    latest_trace = trace[-1] if trace else None
+    node_status = (snapshot.get("graph") or {}).get(task_id, {}).get("status")
+    if node_status in {"succeeded", "success", "cached", "reused"}:
+        progress_label = "分析已完成"
+    elif node_status in {"failed", "cancelled", "skipped", "blocked"}:
+        progress_label = "分析已结束"
+    elif latest_trace and latest_trace.get("type") == "tool_call":
+        progress_label = f"正在调用 {latest_trace.get('tool_name') or '工具'}"
+    elif latest_trace and latest_trace.get("type") == "tool_result":
+        progress_label = f"已完成 {latest_trace.get('tool_name') or '工具'}"
+    elif latest_trace and latest_trace.get("type") == "agent_finish":
+        progress_label = "正在整理最终回复"
+    else:
+        progress_label = "正在分析任务"
     # Child event sequences live in a separate journal. Return each journal
     # separately so pagination remains stable across retries and restarts.
     return {
         "task_id": task_id,
-        "status": (snapshot.get("graph") or {}).get(task_id, {}).get("status"),
+        "status": node_status,
         "child_session_id": child.session_id if child is not None else None,
         "child_mode": child.child_mode if child is not None else None,
+        "progress": {
+            "label": progress_label,
+            "tool_calls": tool_calls,
+            "tool_results": len(tool_results),
+            "failed_tools": sum(1 for item in tool_results if item.get("success") is False),
+        },
+        "conversation": conversation,
         "answer": next((str(message.get("content") or "") for message in reversed(child.conversation_history)
                         if message.get("role") == "assistant"), "") if child is not None else "",
         "node_events": events,
@@ -93,10 +133,10 @@ def _node_history(snapshot: dict[str, Any], task_id: str, child: Any | None, aft
                           "type": str(event.get("event_type") or "unknown"),
                           "status": event.get("status"), "timestamp": event.get("timestamp")}
                          for event in child_events],
-        "execution_history": [dict(item) for item in trace if isinstance(item, dict)
-                              and int(item.get("sequence") or 0) > after][:limit],
-        "has_more": sum(1 for item in trace if isinstance(item, dict)
-                        and int(item.get("sequence") or 0) > after) > limit,
+        "execution_history": [dict(item) for item in trace
+                              if int(item.get("sequence") or 0) > after][:limit],
+        "has_more": sum(1 for item in trace
+                        if int(item.get("sequence") or 0) > after) > limit,
     }
 
 
@@ -185,7 +225,7 @@ async def workflow_node_history(
         raise HTTPException(status_code=404, detail="node_not_found")
     child_id = (snapshot.get("node_sessions") or {}).get(task_id)
     if not isinstance(child_id, str) or not child_id:
-        if (snapshot.get("graph") or {}).get(task_id, {}).get("status") in {"queued", "pending", "running"}:
+        if (snapshot.get("graph") or {}).get(task_id, {}).get("status") in {"queued", "pending", "running", "skipped", "blocked", "failed"}:
             return _node_history(snapshot, task_id, None, after, limit)
         raise HTTPException(status_code=404, detail="node_history_not_found")
     child = (get_child_session_manager().load_session(child_id)
@@ -193,8 +233,10 @@ async def workflow_node_history(
              else None)
     if child is not None:
         workflow = (child.metadata or {}).get("workflow") or {}
+        child_task_id = workflow.get("task_id")
+        valid_task_ids = {task_id, f"{workflow_id}:{task_id}"}
         if (not child.is_sub_agent_session or workflow.get("parent_task_id") != workflow_id
-                or workflow.get("task_id") != task_id):
+                or child_task_id not in valid_task_ids):
             child = None
     if child is None:
         raise HTTPException(status_code=404, detail="node_history_not_found")
@@ -269,7 +311,7 @@ async def workflow_events(
                     cursor = max(cursor, int(event.get("sequence") or cursor))
                     yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
             status = str((current or {}).get("status") or "")
-            if status in {"succeeded", "failed", "cancelled"}:
+            if status in {"succeeded", "partial", "failed", "cancelled"}:
                 yield f"data: {json.dumps({'type': 'workflow.terminal', 'status': status, 'sequence': cursor}, ensure_ascii=False)}\n\n"
                 return
             if asyncio.get_running_loop().time() >= deadline:
@@ -319,11 +361,13 @@ async def resume_workflow(
     snapshot = _workflow_snapshots(dict(session.metadata or {})).get(workflow_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="workflow_not_found")
+    if (snapshot.get("budget_state") or {}).get("exhausted"):
+        raise HTTPException(status_code=409, detail="workflow_budget_exhausted")
     if snapshot.get("status") == "cancelled":
         raise HTTPException(status_code=409, detail="cancelled_workflow_cannot_resume")
-    if snapshot.get("status") not in {"failed", "running", "queued"}:
+    if snapshot.get("status") not in {"failed", "partial", "running", "queued"}:
         raise HTTPException(status_code=409, detail="workflow_not_resumable")
-    if snapshot.get("status") == "failed" and not _has_retryable_nodes(snapshot):
+    if snapshot.get("status") in {"failed", "partial"} and not _has_retryable_nodes(snapshot):
         raise HTTPException(status_code=409, detail="workflow_retry_budget_exhausted")
     if await active_workflow_registry.get(workflow_id) is not None:
         raise HTTPException(status_code=409, detail="workflow_already_active")

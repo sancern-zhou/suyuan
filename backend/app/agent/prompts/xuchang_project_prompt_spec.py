@@ -28,7 +28,22 @@ def test_xuchang_query_prompt_combines_query_and_chart_workflows():
     assert "## 问数生图工作流" in prompt
     assert "先调用数据查询工具取得可追溯结果" in prompt
     assert "用户已经提供完整数据时，不再调用数据查询工具" in prompt
-    assert "网页交互查看的图表" in prompt
+    assert "网页交互查看的 ECharts 图表" in prompt
+
+
+def test_xuchang_report_prompt_uses_dynamic_workflow_contract():
+    context = load_project_context("xuchang")
+    prompt = load_project_mode_prompt("report", context)
+
+    assert prompt is not None
+    assert "run_agent_workflow(workflow=" in prompt
+    assert "data.node_results" in prompt
+    assert "data.node_lineage" in prompt
+    assert "expert_meteorology" in prompt
+    assert "expert_analysis" in prompt
+    assert "report_analysis_v1" not in prompt
+    assert "data.report_analysis" not in prompt
+    assert "template_options" not in prompt
 
 
 def test_xuchang_social_prompt_targets_mobile_query_workflow():
@@ -105,3 +120,12 @@ def test_xuchang_expert_mode_drops_retired_analysis_tools():
         "generate_map",
     }.isdisjoint(expert_tools)
     assert "meteorological_trajectory_analysis" in expert_tools
+
+
+def test_xuchang_agent_mode_tools_exclude_platform_weather_image():
+    """许昌项目不接入平台天气图片工具：所有模式白名单均不得包含 get_platform_weather_image。"""
+    context = load_project_context("xuchang")
+    mode_tools = context.manifest.backend.agent_mode_tools
+
+    for mode, tools in mode_tools.items():
+        assert "get_platform_weather_image" not in tools, f"{mode} 模式不应暴露 get_platform_weather_image"

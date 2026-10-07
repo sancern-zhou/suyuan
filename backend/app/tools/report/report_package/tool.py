@@ -508,8 +508,9 @@ class CreateReportPackageTool(LLMTool):
                         "type": "array",
                         "description": (
                             "真实文件路径或 {path,type,name}；见 references/index.md。"
-                            "复用当前会话已有 ECharts 图表时，先用 list_session_resources"
-                            "(logical_key=chart-image) 取得 PNG 的 file_path，作为 image asset；"
+                            "复用 Python 或业务图表工具生成的静态图片时，用 list_session_resources"
+                            "(logical_key=chart-image) 取得图片的 file_path，作为 image asset；"
+                            "ECharts 仅提供右侧交互图，报告配图须复用原始数据重新绘制静态图；"
                             "qmd_content 中使用报告包内的相对图片路径。"
                         ),
                         "items": {

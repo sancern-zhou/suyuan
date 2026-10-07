@@ -32,7 +32,7 @@
       </div>
     </div>
 
-    <!-- 对话消息：过程消息由实时过程区和final内折叠区统一渲染 -->
+    <!-- 对话消息：过程事件留在运行状态中，不作为独立轨迹插入对话。 -->
     <div v-for="(message, index) in displayedMessages" :key="message.id" class="message-wrapper"
       :class="{
         'has-sources': getMessageType(message) === 'final' && (message.data?.sources?.length > 0 || message.sources?.length > 0),
@@ -139,48 +139,50 @@
 
       <!-- Agent消息（最终答案） -->
       <!-- 移除 v-once 以支持流式更新 -->
-      <div v-else-if="getMessageType(message) === 'final'" class="message agent-message final">
-        <!-- 统一折叠区域：显示该final之前的所有过程消息 -->
-        <details
-          v-if="getProcessItemsForFinal(message, messages).length > 0"
-          class="process-collapse"
-          :open="isProcessExpanded(message.id)"
-          @toggle="handleProcessToggle(message.id, $event)"
-        >
-          <summary>查看分析过程 ({{ getProcessItemsForFinal(message, messages).length }} 个步骤)</summary>
-          <div class="process-content">
-            <div
-              v-for="item in getProcessItemsForFinal(message, messages)"
-              :key="item.id"
-              class="process-item"
-              :class="`process-item-${item.kind}`"
-            >
-              <div v-if="item.kind === 'thought'" class="process-thought">
-                <span class="process-label">思考</span>
-                <div class="process-text">{{ item.content }}</div>
-              </div>
-
-              <div v-else-if="item.kind === 'tool'" class="process-tool">
-                <div class="process-tool-header">
-                  <span class="process-label">工具</span>
-                  <span class="process-tool-name">{{ item.toolName }}</span>
-                  <span class="process-status" :class="`status-${item.status}`">{{ getProcessStatusText(item.status) }}</span>
-                </div>
-                <div v-if="item.summary" class="process-text">{{ item.summary }}</div>
-                <details v-if="hasProcessValue(item.input)" class="process-details">
-                  <summary>参数</summary>
-                  <pre>{{ formatProcessValue(item.input) }}</pre>
-                </details>
-                <details v-if="hasProcessValue(item.result) && !item.resultHidden" class="process-details">
-                  <summary>结果详情</summary>
-                  <pre>{{ formatProcessValue(item.result) }}</pre>
-                </details>
-              </div>
-            </div>
+      <div
+        v-else-if="getMessageType(message) === 'final'"
+        class="message agent-message final"
+        :class="{
+          'question-handoff-message': getStructuredQuestionForFinal(message, messages),
+          'question-followup-message': followsStructuredQuestion(message, messages)
+        }"
+      >
+        <div v-if="getStructuredQuestionForFinal(message, messages)" class="question-handoff">
+          <div class="question-handoff-title">需要你的选择</div>
+          <div
+            v-for="(question, questionIndex) in getStructuredQuestionForFinal(message, messages).questions"
+            :key="questionIndex"
+            class="question-handoff-item"
+          >
+            <span class="question-handoff-index">{{ questionIndex + 1 }}.</span>
+            <span>{{ question.question }}</span>
           </div>
-        </details>
+        </div>
+        <div
+          v-if="!message.streaming && (getProcessItemsForFinal(message, messages).length > 0 || getFinalDurationText(message))"
+          class="assistant-process-summary"
+        >
+          <button
+            v-if="getThoughtItemsForFinal(message).length"
+            type="button"
+            class="thought-summary-toggle"
+            :aria-expanded="!!isProcessExpanded(message.id)"
+            @click.stop="toggleThoughtExpanded(message.id)"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7.5V12l3 2" /></svg>
+            <span>{{ getProcessSummaryText(message, messages) }}</span>
+            <span aria-hidden="true">{{ isProcessExpanded(message.id) ? '⌃' : '⌄' }}</span>
+          </button>
+          <span v-else class="thought-summary-toggle">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7.5V12l3 2" /></svg>
+            <span>{{ getProcessSummaryText(message, messages) }}</span>
+          </span>
+        </div>
+        <div v-if="isProcessExpanded(message.id)" class="assistant-thought-content">
+          <div v-for="thought in getThoughtItemsForFinal(message)" :key="thought.id">{{ thought.content }}</div>
+        </div>
 
-        <div class="message-content" v-if="useMarkdown">
+        <div class="message-content" v-if="!getStructuredQuestionForFinal(message, messages) && useMarkdown">
           <!-- 【Vue 3 最佳实践】使用 key 强制重新渲染 -->
           <MarkdownRenderer
             :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}-${message.renderVersion || 0}`"
@@ -188,7 +190,7 @@
             :streaming="message.streaming === true"
           />
         </div>
-        <div class="message-content" v-else>{{ renderedMessageContent(message) }}</div>
+        <div class="message-content" v-else-if="!getStructuredQuestionForFinal(message, messages)">{{ renderedMessageContent(message) }}</div>
         <div v-if="!message.streaming && inlineImagesForFinal(message).length" class="message-content inline-chart-images">
           <MarkdownRenderer
             v-for="image in inlineImagesForFinal(message)"
@@ -226,19 +228,8 @@
           </div>
         </div>
 
-        <!-- AI回复操作栏：用时统计 + 复制按钮 -->
+        <!-- AI回复操作栏：复制按钮（用时统一由上方过程摘要展示） -->
         <div v-if="showAgentMessageFooter(message)" class="agent-message-footer">
-          <span
-            v-if="!isAnalyzing && getFinalDurationText(message)"
-            class="agent-message-duration"
-            title="任务总用时"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="9" />
-              <path d="M12 7.5V12l3 2" />
-            </svg>
-            <span>任务用时 {{ getFinalDurationText(message) }}</span>
-          </span>
           <div class="agent-message-tools">
             <button
               class="agent-message-tool-button"
@@ -266,58 +257,23 @@
       </div>
     </div>
 
-    <div
-      v-if="isAnalyzing"
-      class="task-progress-status"
-      role="status"
-      aria-live="polite"
-      aria-label="任务执行中"
-    >
+    <details v-if="isAnalyzing && liveThoughtItems.length" class="assistant-live-thoughts">
+      <summary>查看思考内容</summary>
+      <div class="assistant-thought-content"><div v-for="thought in liveThoughtItems" :key="thought.id">{{ thought.content }}</div></div>
+    </details>
+    <div v-if="isAnalyzing" class="task-progress-status" aria-label="Agent 任务进度">
       <span class="thinking-indicator" aria-hidden="true"></span>
-      <span>任务执行中，完成后显示总用时</span>
-    </div>
-
-    <!-- 当前轮实时分析过程：默认折叠，用户可点击展开查看 -->
-    <details
-      v-if="liveProcessItems.length > 0"
-      class="live-process-details"
-      :open="isLiveProcessExpanded"
-      @toggle="handleLiveProcessToggle"
-    >
-      <summary>分析过程中 ({{ liveProcessItems.length }} 个步骤)</summary>
-      <div class="live-process-content">
-
-      <div
-        v-for="item in liveProcessItems"
-        :key="item.id"
-        class="live-process-item"
-        :class="`live-process-${item.kind} status-${item.status || 'default'}`"
-      >
-        <div v-if="item.kind === 'thought'" class="event-content">
-          <div class="event-icon">思考</div>
-          <div class="event-text">
-            <div class="thought-main">{{ item.content }}</div>
-          </div>
+      <div class="task-progress-copy">
+        <div class="task-progress-main">
+          <span class="task-progress-stage" role="status" aria-live="polite">{{ currentProgressStatus }}</span>
+          <span class="task-progress-elapsed" aria-live="off">{{ runningElapsedText }}</span>
         </div>
-
-        <div v-else-if="item.kind === 'tool'" class="event-content">
-          <div class="event-icon">工具</div>
-          <div class="event-text">
-            <div class="tool-use-main">
-              <span>{{ item.toolName }}</span>
-              <span class="process-status" :class="`status-${item.status}`">{{ getProcessStatusText(item.status) }}</span>
-            </div>
-            <div v-if="item.summary" class="tool-result-summary">{{ item.summary }}</div>
-            <div v-if="hasProcessValue(item.input)" class="tool-use-details">
-              <details>
-                <summary>查看参数</summary>
-                <pre>{{ formatProcessValue(item.input) }}</pre>
-              </details>
-            </div>
-          </div>
+        <div v-if="currentProgressTip" class="task-progress-tip">
+          <span>小技巧</span>
+          <span>{{ currentProgressTip }}</span>
         </div>
       </div>
-    </div></details>
+    </div>
 
       </div>
     </div>
@@ -378,12 +334,19 @@ import {
 } from '@/services/messageAttachmentPreview.js'
 import { getAgentMode } from '@/config/agentModes.js'
 import { projectConfig } from '@/config/projectConfig.js'
+import {
+  formatRunningElapsed,
+  getAgentProgressStatus,
+  selectAgentProgressTip
+} from './agentPlatform/agentProgressPresentation.js'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import { inlineChartImages, renderChartPlaceholders } from '@/services/inlineChartImages.js'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import {
+  followsStructuredQuestion,
   getExecutingProcessMessages,
   getMessageType,
+  getStructuredQuestionForFinal,
   getUnifiedProcessMessages as collectUnifiedProcessMessages,
   isProcessMessage
 } from './reactAnalysis/messageProcessGrouping.js'
@@ -482,22 +445,23 @@ const props = defineProps({
 
 const emit = defineEmits(['load-more', 'preview-message-attachment'])
 const sessionResourceStore = useSessionResourceStore()
+const currentSessionResources = () => sessionResourceStore.activeSessionId === props.sessionId
+  ? sessionResourceStore.activeSessionState?.resources || []
+  : []
 const chartResourcesForMessage = message => inlineChartImages(
   message,
   props.messages,
-  sessionResourceStore.activeSessionId === props.sessionId
-    ? sessionResourceStore.activeSessionState?.resources
-    : [],
+  currentSessionResources(),
   contentToString(getMessageContent(message))
 )
 const renderedMessageContent = message => {
   const content = contentToString(getMessageContent(message))
   if (!content.includes('[[chart:')) return content
-  return renderChartPlaceholders(content, chartResourcesForMessage(message)).content
+  return renderChartPlaceholders(content, chartResourcesForMessage(message), currentSessionResources()).content
 }
 const inlineImagesForFinal = message => {
   const resources = chartResourcesForMessage(message)
-  const rendered = renderChartPlaceholders(contentToString(getMessageContent(message)), resources)
+  const rendered = renderChartPlaceholders(contentToString(getMessageContent(message)), resources, currentSessionResources())
   return resources.filter(resource => !rendered.usedResourceIds.has(resource.resource_id))
 }
 
@@ -748,9 +712,12 @@ const displayedMessages = computed(() => {
 
 // 【新增】details展开状态管理（用于控制<details>的open属性）
 const expandedProcessIds = ref(new Set())
-
-// 【新增】实时分析过程展开状态（默认折叠）
-const isLiveProcessExpanded = ref(false)
+const toggleThoughtExpanded = messageId => {
+  const next = new Set(expandedProcessIds.value)
+  if (next.has(messageId)) next.delete(messageId)
+  else next.add(messageId)
+  expandedProcessIds.value = next
+}
 
 const expandedUserMessageIds = ref(new Set())
 const copiedUserMessageId = ref(null)
@@ -758,35 +725,9 @@ const USER_MESSAGE_PREVIEW_LENGTH = 320
 const USER_MESSAGE_PREVIEW_LINES = 6
 let copiedUserMessageTimer = null
 
-// 【新增】全局初始加载标志，用于强制所有 details 在初次加载时折叠
-const isInitialLoad = ref(true)
-
 // 【新增】判断final消息的过程区域是否应该展开
 const isProcessExpanded = (messageId) => {
-  // 【关键修复】初次加载时，强制所有 details 折叠
-  if (isInitialLoad.value) {
-    // console.log('[ReActMessageList] isProcessExpanded: initial load, forcing collapse')
-    return undefined
-  }
-
-  // 处理 messageId 为 undefined 或 null 的情况
-  if (!messageId) {
-    // console.log('[ReActMessageList] isProcessExpanded: messageId is empty, returning undefined (collapsed)')
-    return undefined
-  }
-
-  const isExpanded = expandedProcessIds.value.has(messageId)
-  // console.log('[ReActMessageList] isProcessExpanded:', {
-  //   messageId,
-  //   isExpanded,
-  //   expandedIds: Array.from(expandedProcessIds.value)
-  // })
-
-  if (isExpanded) {
-    return true
-  } else {
-    return undefined  // 返回 undefined 确保 details 折叠
-  }
+  return Boolean(messageId && expandedProcessIds.value.has(messageId))
 }
 
 const getMessageContent = (message) => message?.content ?? message?.content_preview ?? ''
@@ -927,7 +868,7 @@ const finalDurationTextMap = computed(() => {
     const message = msgs[i]
     if (getMessageType(message) !== 'final') continue
 
-    const precomputed = Number(message.data?.response_duration_ms)
+    const precomputed = message.data?.response_duration_ms == null ? NaN : Number(message.data.response_duration_ms)
     let durationMs = Number.isFinite(precomputed) ? precomputed : null
 
     if (durationMs === null) {
@@ -961,24 +902,6 @@ const getFinalDurationText = (message) => finalDurationTextMap.value.get(message
 const showAgentMessageFooter = (message) => (
   message?.streaming !== true && !!contentToString(getMessageContent(message)).trim()
 )
-
-// 【新增】处理details的toggle事件
-const handleProcessToggle = (messageId, event) => {
-  // event.target 是 <details> 元素
-  // event.target.open 表示当前状态（toggle之后的状态）
-  if (event.target.open) {
-    expandedProcessIds.value.add(messageId)
-  } else {
-    expandedProcessIds.value.delete(messageId)
-  }
-}
-
-// 【新增】处理实时分析过程的toggle事件
-const handleLiveProcessToggle = (event) => {
-  // event.target 是 <details> 元素
-  // event.target.open 表示当前状态（toggle之后的状态）
-  isLiveProcessExpanded.value = event.target.open
-}
 
 const getProcessCorrelationId = (message) => {
   const data = message?.data || {}
@@ -1134,9 +1057,57 @@ const buildProcessItems = (messages, options = {}) => {
 }
 
 const liveProcessItems = computed(() => buildProcessItems(executingProcessMessages.value))
+const liveThoughtItems = computed(() => liveProcessItems.value.filter(item => item.kind === 'thought'))
+const runningElapsedSeconds = ref(0)
+const progressTipSeed = ref(0)
+let progressStartedAt = 0
+let progressTimer = null
+
+const currentProgressStatus = computed(() => getAgentProgressStatus(liveProcessItems.value, props.agentMode))
+const runningElapsedText = computed(() => formatRunningElapsed(runningElapsedSeconds.value))
+const currentProgressTip = computed(() => {
+  if (runningElapsedSeconds.value < 6) return ''
+  const rotationIndex = Math.floor((runningElapsedSeconds.value - 6) / 10)
+  return selectAgentProgressTip(props.agentMode, rotationIndex, progressTipSeed.value)
+})
+
+const stopProgressTimer = () => {
+  if (progressTimer !== null) window.clearInterval(progressTimer)
+  progressTimer = null
+}
+
+const startProgressTimer = () => {
+  stopProgressTimer()
+  progressStartedAt = Date.now()
+  runningElapsedSeconds.value = 0
+  const latestUser = [...props.messages].reverse().find(message => getMessageType(message) === 'user')
+  progressTipSeed.value = String(latestUser?.id || props.sessionId || props.agentMode)
+    .split('')
+    .reduce((total, char) => total + char.charCodeAt(0), 0)
+  progressTimer = window.setInterval(() => {
+    runningElapsedSeconds.value = Math.floor((Date.now() - progressStartedAt) / 1000)
+  }, 1000)
+}
+
+watch(() => [props.isAnalyzing, props.sessionId], ([analyzing, sessionId], previous = []) => {
+  const [wasAnalyzing, previousSessionId] = previous
+  if (analyzing && (!wasAnalyzing || sessionId !== previousSessionId)) startProgressTimer()
+  else if (!analyzing) stopProgressTimer()
+}, { immediate: true })
 
 const getProcessItemsForFinal = (finalMessage, allMessages) => {
   return buildProcessItems(getUnifiedProcessMessages(finalMessage, allMessages), { finalized: true })
+}
+
+const getThoughtItemsForFinal = message => getProcessItemsForFinal(message, props.messages).filter(item => item.kind === 'thought')
+
+const getProcessSummaryText = (finalMessage, allMessages) => {
+  const items = getProcessItemsForFinal(finalMessage, allMessages)
+  const toolCount = items.filter(item => item.kind === 'tool').length
+  const failedCount = items.filter(item => item.kind === 'tool' && item.status === 'error').length
+  const duration = getFinalDurationText(finalMessage)
+  const summary = `${duration ? `用时${duration}完成` : '已完成'} · ${toolCount}个工具调用`
+  return failedCount > 0 ? `${summary} · ${failedCount}个步骤失败` : summary
 }
 
 const getProcessStatusText = (status) => {
@@ -1264,11 +1235,6 @@ watch(
 
     if (isFirstLoad || isBulkLoad) {
       expandedProcessIds.value.clear()
-      isInitialLoad.value = true
-
-      setTimeout(() => {
-        isInitialLoad.value = false
-      }, 3000)
     }
   },
   { deep: true }
@@ -1277,6 +1243,7 @@ watch(
 // 清理滚动事件监听
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
+  stopProgressTimer()
   if (copiedUserMessageTimer) {
     clearTimeout(copiedUserMessageTimer)
   }
@@ -1906,7 +1873,7 @@ const downloadPreviewedImage = async () => {
   border-top-left-radius: 2px;
   margin-left: 0;
   margin-right: 0;
-  border: 1px solid var(--border-2);
+  border: none;
   max-width: 100%;
   font-size: 14px;
   line-height: 1.6;
@@ -2270,6 +2237,41 @@ const downloadPreviewedImage = async () => {
   min-height: 26px;
 }
 
+.agent-message.final.question-handoff-message,
+.agent-message.final.question-followup-message {
+  width: fit-content;
+  max-width: min(100%, 860px);
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.question-handoff {
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+
+.question-handoff-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.question-handoff-item {
+  display: flex;
+  gap: 6px;
+  color: var(--text-2);
+}
+
+.question-handoff-index {
+  flex: none;
+}
+
+.question-handoff-message .process-collapse {
+  margin: 4px 0 0;
+}
+
+// 【新增】AI回复用时统计
 .agent-message-duration {
   display: inline-flex;
   align-items: center;
@@ -2388,15 +2390,69 @@ const downloadPreviewedImage = async () => {
 
 .task-progress-status {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 10px;
   margin: 6px 0 10px;
-  padding: 9px 12px;
+  padding: 10px 12px;
   color: var(--text-1);
   font-size: 13px;
-  font-weight: 500;
   line-height: 1.6;
   animation: fadeIn 0.2s;
+}
+
+.assistant-process-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 2px 0 10px;
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.thought-summary-toggle { display: inline-flex; align-items: center; gap: 7px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; }
+button.thought-summary-toggle { cursor: pointer; }
+.thought-summary-toggle svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.assistant-thought-content { color: var(--text-2); font-size: 12px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 12px; padding: 8px 12px; border-left: 2px solid var(--border-2, #e2e8f0); }
+.assistant-thought-content > div + div { margin-top: 8px; }
+.assistant-live-thoughts summary { cursor: pointer; color: var(--text-3); font-size: 12px; margin-bottom: 8px; }
+
+.task-progress-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.task-progress-main {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+}
+
+.task-progress-stage {
+  font-weight: 600;
+}
+
+.task-progress-elapsed {
+  color: var(--text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-progress-tip {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.task-progress-tip > span:first-child {
+  color: var(--primary-color, #2878ff);
+  font-weight: 600;
 }
 
 .thinking-indicator {
@@ -2405,6 +2461,7 @@ const downloadPreviewedImage = async () => {
   flex: 0 0 10px;
   border-radius: 50%;
   background: #6f7f97;
+  margin-top: 6px;
   animation: thinking-indicator-pulse 1.2s ease-in-out infinite;
 }
 

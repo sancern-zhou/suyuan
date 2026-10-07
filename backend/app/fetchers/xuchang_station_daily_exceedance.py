@@ -16,6 +16,7 @@ features``）。分析规则全部内嵌在证据字段中，供报告层直接�
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Iterable
 from datetime import date, datetime, time, timedelta
 from typing import Any
@@ -26,11 +27,19 @@ import structlog
 
 from app.fetchers.base.fetcher_interface import DataFetcher
 from app.integrations.xcai_station_sql import xcai_connection_string
+from app.scenarios.xuchang_city_exceedance.process_stats import compute_city_day_statistics
+from app.scenarios.xuchang_city_exceedance.station_catalog import (
+    NATIONAL_SOURCE_TO_CANONICAL,
+    NATIONAL_STATION_IDS,
+    REGIONAL_CITIES,
+)
+from app.scenarios.xuchang_daily_review.township_hourly import load_township_hourly_rows
 from app.scenarios.xuchang_station_deviation.source_features import (
     calculate_pollutant_source_features,
 )
 from app.scenarios.xuchang_transport_escalation import XuchangTransportEscalationService
 from app.scheduled_tasks.models import TaskEvent
+from app.services.weather_history import configured_history_service
 
 logger = structlog.get_logger()
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -637,6 +646,11 @@ class XuchangStationDailyExceedanceFetcher(DataFetcher):
         start = datetime.combine(target_date, time.min, tzinfo=TZ_SHANGHAI)
         end = datetime.combine(target_date, time.max, tzinfo=TZ_SHANGHAI)
         lat, lon = XUCHANG_ERA5_GRID_POINT
+        service = configured_history_service()
+        if service is not None:
+            # The rolling collection job only lands on Beijing mornings; pull
+            # the report day directly so BLH/cloud cover are not read missing.
+            await service.refresh(lat, lon, start, end)
         rows = await WeatherRepository().get_weather_data(lat, lon, start, end)
         evidence_rows = []
         for item in rows:
@@ -686,6 +700,84 @@ class XuchangStationDailyExceedanceFetcher(DataFetcher):
             })
         return evidence_rows
 
+    def load_city_national_hourly(self, target_date: date) -> list[dict[str, Any]]:
+        """Load full-day hourly rows for all six national stations.
+
+        dat_station_hour keeps the historical codes; rows are normalized to
+        the canonical catalog IDs so reports can group by station directly.
+        """
+        start = datetime.combine(target_date, time.min)
+        end = start + timedelta(days=1)
+        placeholders = ", ".join("?" for _ in NATIONAL_STATION_IDS)
+        connection = pyodbc.connect(xcai_connection_string(), timeout=30)
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                f"""SELECT station_id, name, lon, lat, aqi, pollutant,
+                           pm25, pm10, o3, no2, so2, co, data_time
+                    FROM dbo.dat_station_hour
+                    WHERE city_area_code = ? AND station_id IN ({placeholders})
+                      AND data_time >= ? AND data_time < ?
+                    ORDER BY data_time, station_id""",
+                ["411000", *NATIONAL_STATION_IDS, start, end],
+            )
+            columns = [item[0] for item in cursor.description]
+            normalized: dict[tuple[str, datetime], dict[str, Any]] = {}
+            for raw in cursor.fetchall():
+                row = dict(zip(columns, raw, strict=True))
+                source_id = str(row["station_id"])
+                row["station_id"] = NATIONAL_SOURCE_TO_CANONICAL.get(source_id, source_id)
+                row["source_station_id"] = source_id
+                key = (row["station_id"], row["data_time"])
+                if key not in normalized or source_id == row["station_id"]:
+                    normalized[key] = row
+            return [
+                {**row, "data_time": row["data_time"].isoformat()}
+                for row in normalized.values()
+            ]
+        finally:
+            connection.close()
+
+    def load_regional_hourly(self, target_date: date) -> list[dict[str, Any]]:
+        """Load full-day published hourly PM2.5/PM10/O3 for surrounding cities."""
+        start = datetime.combine(target_date, time.min)
+        end = start + timedelta(days=1)
+        placeholders = ", ".join("?" for _ in REGIONAL_CITIES)
+        connection = pyodbc.connect(xcai_connection_string(), timeout=30)
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                f"""SELECT Area, TimePoint, PM2_5, PM10, O3
+                    FROM dbo.CityAQIPublishHistory
+                    WHERE TimePoint >= ? AND TimePoint < ? AND Area IN ({placeholders})
+                    ORDER BY Area, TimePoint""",
+                [start, end, *REGIONAL_CITIES],
+            )
+            return [
+                {
+                    "station_id": row[0], "name": row[0],
+                    "data_time": row[1].isoformat() if isinstance(row[1], datetime) else str(row[1]),
+                    "pm25": row[2], "pm10": row[3], "o3": row[4],
+                }
+                for row in cursor.fetchall()
+            ]
+        finally:
+            connection.close()
+
+    def load_township_hourly(self, target_date: date) -> dict[str, Any]:
+        """Load full-day township hourly rows with districts and coordinates."""
+        start = datetime.combine(target_date, time.min)
+        end = start + timedelta(days=1)
+        result = load_township_hourly_rows(start, end)
+        rows = []
+        for row in result.get("rows") or []:
+            data_time = row.get("data_time")
+            rows.append({
+                **row,
+                "data_time": data_time.isoformat() if isinstance(data_time, datetime) else data_time,
+            })
+        return {**result, "rows": rows}
+
     async def fetch_and_store(self) -> dict[str, Any]:
         now = self.now_factory()
         target_date = now.astimezone(TZ_SHANGHAI).date() - timedelta(days=1)
@@ -696,6 +788,11 @@ class XuchangStationDailyExceedanceFetcher(DataFetcher):
             observed_rows = await self.load_observed_hourly(target_date)
             merged_rows, source_coverage = merge_meteo_rows(observed_rows, era5_rows)
             station_hourly_rows = self.load_station_hourly(target_date, alert_station_ids)
+            national_hourly_rows = self.load_city_national_hourly(target_date)
+            regional_hourly_rows = self.load_regional_hourly(target_date)
+            township_result = await asyncio.to_thread(self.load_township_hourly, target_date)
+            township_hourly_rows = township_result.get("rows") or []
+            statistics_by_pollutant: dict[str, dict[str, Any]] = {}
             boundary_layer_analysis = analyze_boundary_layer(merged_rows)
             cloud_cover_analysis = analyze_cloud_cover(merged_rows)
             inversion_analysis = analyze_temperature_inversion(merged_rows)
@@ -705,6 +802,22 @@ class XuchangStationDailyExceedanceFetcher(DataFetcher):
                     row for row in station_hourly_rows
                     if str(row.get("station_id")) == station_id
                 ]
+                pollutant = str(event["target_pollutant"])
+                if pollutant not in statistics_by_pollutant:
+                    statistics_by_pollutant[pollutant] = compute_city_day_statistics(
+                        national_hourly_rows, township_hourly_rows,
+                        regional_hourly_rows, merged_rows, pollutant=pollutant,
+                    )
+                event["national_hourly"] = national_hourly_rows
+                event["township_hourly"] = township_hourly_rows
+                event["regional_hourly"] = regional_hourly_rows
+                event["city_day_statistics"] = statistics_by_pollutant[pollutant]
+                event["township_source"] = {
+                    "status": township_result.get("status"),
+                    "reason": township_result.get("reason"),
+                    "source": township_result.get("source"),
+                    "station_count": township_result.get("station_count"),
+                }
                 event["pollutant_source_features"] = calculate_pollutant_source_features(
                     station_hourly_rows, station_id
                 )
@@ -747,6 +860,9 @@ class XuchangStationDailyExceedanceFetcher(DataFetcher):
                     "expected_hourly_rows": 24,
                     "hourly_completeness_ratio": round(min(len(station_rows) / 24, 1.0), 3),
                     "meteorology_hours": len(merged_rows),
+                    "national_station_rows": len(national_hourly_rows),
+                    "township_rows": len(township_hourly_rows),
+                    "regional_rows": len(regional_hourly_rows),
                     "daily_value_status": "confirmed",
                 }
 

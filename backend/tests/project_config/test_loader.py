@@ -50,7 +50,11 @@ def test_jiangxi_project_disables_data_fetchers():
     assert context.manifest.backend.fetchers_enabled is False
     assert context.manifest.backend.gis_tools_enabled is False
     assert context.manifest.backend.mode_prompt_files == {}
-    assert context.manifest.backend.tools == ["get_jiangxi_noise_data"]
+    assert context.manifest.backend.tools == [
+        "get_jiangxi_noise_data",
+    ]
+    # Jiangxi 工具收敛为 get_jiangxi_noise_data 后不再声明模式级工具列表。
+    assert context.manifest.backend.agent_mode_tools == {}
 
 
 def test_xuchang_project_composes_shared_and_customer_modules():
@@ -119,6 +123,7 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "task_xuchang_station_daily_source_report",
         "task_xuchang_station_daily_source_analysis_report",
         "task_xuchang_weekly_weather_situation_report",
+        "task_xuchang_mee_cnemc_weekly_news",
     ]
     assert context.manifest.knowledge.collections == ["xuchang"]
 

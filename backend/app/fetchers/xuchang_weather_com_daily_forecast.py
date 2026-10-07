@@ -155,8 +155,11 @@ class XuchangWeatherComDailyForecastStorage:
                 wind_direction_night NVARCHAR(32) NULL, wind_force NVARCHAR(32) NULL,
                 fetched_at DATETIME2 NOT NULL, created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(), updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
                 CONSTRAINT UX_{self.table_name}_CityDate UNIQUE (city_code, forecast_date));""")
-            cursor.fast_executemany = True
-            cursor.executemany(sql, values)
+            # FreeTDS 驱动（libtdsodbc.so，aarch64）在 fast_executemany/executemany
+            # 路径的 SQLExecute 中会段错误（worker SEGV，见 systemd coredump），
+            # 与 xuchang_nmc_hourly_forecast 相同，这里必须逐条 execute；仅15行，性能无影响。
+            for row in values:
+                cursor.execute(sql, row)
             conn.commit()
             return len(values)
         except Exception:

@@ -1,7 +1,6 @@
 import base64
 import io
 import json
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -284,16 +283,18 @@ def test_every_agent_mode_uses_normal_auto_chain(mode):
 
 @pytest.mark.parametrize("tier", ["flash", "pro"])
 def test_removed_multimodal_profile_does_not_override_model_tier(monkeypatch, tier):
+    """挡位改制后 flash/pro 共用主配置链，不再解析专用模型链。"""
     service = LLMService()
     monkeypatch.setattr(
         settings,
         f"llm_{tier}_models",
         "deepseek/deepseek-v4-flash",
     )
+    expected = (service.provider, service.model)
 
     with service.use_model_tier(tier):
-        assert service.provider == "deepseek"
-        assert service.model == "deepseek-v4-flash"
+        assert (service.provider, service.model) == expected
+        assert service.request_fallbacks is None
 
 
 def test_inherited_chain_takes_priority_over_multimodal_profile(monkeypatch):
@@ -473,6 +474,30 @@ def test_opencode_go_headers_require_session_and_user_agent(monkeypatch):
     assert after_headers["x-opencode-session"].startswith("suyuan-")
 
 
+def test_second_opencode_go_plan_uses_go_gateway_headers(monkeypatch):
+    service = LLMService()
+    monkeypatch.setattr(settings, "go2_api_key", "go2-key")
+    monkeypatch.setattr(settings, "go2_base_url", "https://go2.example/v1")
+    monkeypatch.setattr(settings, "go2_model", "deepseek-v4.1-flash")
+    monkeypatch.setattr(settings, "go2_api_mode", "chat_completions")
+    service.provider = "go2"
+    service._load_provider_config()
+
+    assert service.api_key == "go2-key"
+    assert service.base_url == "https://go2.example/v1"
+    assert service.model == "deepseek-v4.1-flash"
+    assert service.api_mode == "chat_completions"
+
+    _, default_headers = service._get_request_config()
+    assert default_headers["x-opencode-session"].startswith("suyuan-")
+    assert default_headers["User-Agent"] == "suyuan-agent/1.0"
+
+    with service.use_opencode_session("sess-go2"):
+        _, headers = service._get_request_config()
+        assert headers["x-opencode-session"] == "sess-go2"
+        assert headers["User-Agent"] == "suyuan-agent/1.0"
+
+
 def test_non_go_providers_do_not_send_opencode_headers():
     service = LLMService()
 
@@ -487,11 +512,18 @@ def test_ocr_configuration_follows_global_bailian_model(monkeypatch):
     from app.services.ops_audit.semantic import ocr_adapter
 
     monkeypatch.setenv("BAILIAN_API_KEY", "bailian-key")
-    monkeypatch.setenv("BAILIAN_VISION_MODEL", "retired-vision-model")
     monkeypatch.setattr(settings, "bailian_model", "global-auto-model")
 
-    assert ocr_adapter._resolve_bailian_api_key() == "bailian-key"
-    assert ocr_adapter._resolve_bailian_model("flow_visual") == "global-auto-model"
+    class _Service:
+        provider = "bailian"
+        model = "global-auto-model"
+        base_url = "https://example.test/anthropic"
+        api_key = "bailian-key"
+
+    monkeypatch.setattr(ocr_adapter, "settings", settings)
+    monkeypatch.setattr("app.services.llm_service.llm_service", _Service())
+    assert ocr_adapter._resolve_target("flow_visual")["api_key"] == "bailian-key"
+    assert ocr_adapter._resolve_target("flow_visual")["model"] == "global-auto-model"
 
 
 def test_visual_runtimes_use_expected_ocr_backend():
@@ -552,34 +584,30 @@ def test_ocr_adapter_keeps_mimo_on_openai_protocol(tmp_path, monkeypatch):
     assert captured["base_url"] == "https://mimo.example/v1"
 
 
-@pytest.mark.parametrize(
-    ("tier", "chain", "expected_model"),
-    [
-        ("pro", "bailian/deepseek-v4-pro,mimo/mimo-v2.5", "deepseek-v4-pro"),
-        ("flash", "bailian/qwen3.6-flash,mimo/mimo-v2.5", "qwen3.6-flash"),
-    ],
-)
-def test_model_tiers_select_bailian_first(monkeypatch, tier, chain, expected_model):
+@pytest.mark.parametrize("tier", ["flash", "pro"])
+def test_model_tiers_share_primary_chain(monkeypatch, tier):
+    """挡位改制后不再按挡位切链：主配置原样保留，仅思考开关不同。"""
     monkeypatch.setattr(settings, "llm_provider", "deepseek")
     monkeypatch.setattr(settings, "bailian_api_key", "bailian-key")
-    monkeypatch.setattr(settings, f"llm_{tier}_models", chain)
+    monkeypatch.setattr(settings, f"llm_{tier}_models", "bailian/qwen3.6-flash,mimo/mimo-v2.5")
 
     service = LLMService()
 
     with service.use_model_tier(tier):
-        assert service.provider == "bailian"
-        assert service.model == expected_model
-        assert service.request_fallbacks == "mimo/mimo-v2.5"
+        assert service.provider == "deepseek"
+        assert service.model == settings.deepseek_model
+        assert service.request_fallbacks is None
 
 
-def test_balanced_model_tier_rotates_primary_and_failover_order(monkeypatch):
+def test_balanced_model_tier_no_longer_rotates_chain(monkeypatch):
+    """挡位改制后同一链上无轮换需求：balanced 选择退化为普通挡位绑定。"""
     service = LLMService()
     monkeypatch.setattr(
         settings,
         "llm_flash_models",
         "alpha/model-a,beta/model-b,gamma/model-c",
     )
-    monkeypatch.setattr(service, "_load_provider_config", lambda: None)
+    expected = (service.provider, service.model, service.request_fallbacks)
 
     selections = []
     for _ in range(4):
@@ -588,37 +616,10 @@ def test_balanced_model_tier_rotates_primary_and_failover_order(monkeypatch):
                 (service.provider, service.model, service.request_fallbacks)
             )
 
-    assert selections == [
-        ("alpha", "model-a", "beta/model-b,gamma/model-c"),
-        ("beta", "model-b", "gamma/model-c,alpha/model-a"),
-        ("gamma", "model-c", "alpha/model-a,beta/model-b"),
-        ("alpha", "model-a", "beta/model-b,gamma/model-c"),
-    ]
+    assert selections == [expected] * 4
 
 
-def test_balanced_model_tier_distributes_concurrent_calls_evenly(monkeypatch):
-    service = LLMService()
-    monkeypatch.setattr(
-        settings,
-        "llm_flash_models",
-        "concurrent-a/model-a,concurrent-b/model-b,concurrent-c/model-c",
-    )
-    monkeypatch.setattr(service, "_load_provider_config", lambda: None)
-    service.anthropic_client = None
-
-    def select_primary():
-        with service.use_balanced_model_tier("flash"):
-            return service.provider
-
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        selections = list(executor.map(lambda _: select_primary(), range(30)))
-
-    assert selections.count("concurrent-a") == 10
-    assert selections.count("concurrent-b") == 10
-    assert selections.count("concurrent-c") == 10
-
-
-def test_balanced_model_tier_keeps_nested_document_affinity(monkeypatch):
+def test_balanced_model_tier_keeps_nested_affinity(monkeypatch):
     service = LLMService()
     monkeypatch.setattr(
         settings,
@@ -965,7 +966,7 @@ def test_chat_completions_payload_uses_tool_choice_without_prompt_guardrails(mon
         messages=[{"role": "user", "content": "生成图表"}],
         tools=[
             {
-                "name": "create_report_chart",
+                "name": "create_business_chart",
                 "description": "Create a chart",
                 "input_schema": {
                     "type": "object",
@@ -984,7 +985,7 @@ def test_chat_completions_payload_uses_tool_choice_without_prompt_guardrails(mon
     )
 
     assert payload["tool_choice"] == "auto"
-    assert payload["tools"][0]["function"]["name"] == "create_report_chart"
+    assert payload["tools"][0]["function"]["name"] == "create_business_chart"
     assert payload["messages"][0] == {"role": "system", "content": "你是助手"}
 
 
@@ -1015,7 +1016,7 @@ async def test_chat_completions_retries_malformed_tool_arguments_with_named_tool
                                         "id": "call_bad",
                                         "type": "function",
                                         "function": {
-                                            "name": "create_report_chart",
+                                            "name": "create_business_chart",
                                             "arguments": "{",
                                         },
                                     }
@@ -1039,7 +1040,7 @@ async def test_chat_completions_retries_malformed_tool_arguments_with_named_tool
                                     "id": "call_ok",
                                     "type": "function",
                                     "function": {
-                                        "name": "create_report_chart",
+                                        "name": "create_business_chart",
                                         "arguments": '{"title":"AQI","data":{}}',
                                     },
                                 }
@@ -1065,7 +1066,7 @@ async def test_chat_completions_retries_malformed_tool_arguments_with_named_tool
         messages=[{"role": "user", "content": "生成图表"}],
         tools=[
             {
-                "name": "create_report_chart",
+                "name": "create_business_chart",
                 "description": "Create a chart",
                 "input_schema": {
                     "type": "object",
@@ -1086,7 +1087,7 @@ async def test_chat_completions_retries_malformed_tool_arguments_with_named_tool
     assert captured_payloads[0]["messages"][0] == {"role": "system", "content": "你是助手"}
     assert captured_payloads[1]["tool_choice"] == {
         "type": "function",
-        "function": {"name": "create_report_chart"},
+        "function": {"name": "create_business_chart"},
     }
     assert captured_payloads[1]["messages"][0] == {"role": "system", "content": "你是助手"}
     assert result["stop_reason"] == "tool_use"

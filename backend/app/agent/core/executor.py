@@ -24,12 +24,43 @@ import traceback
 import asyncio
 import time
 
+from app.utils.path_config import resolve_agent_path
+
 if TYPE_CHECKING:
     from app.agent.memory.hybrid_manager import HybridMemoryManager
     from app.agent.context.data_context_manager import DataContextManager
     from app.agent.context.execution_context import ExecutionContext
 
 logger = structlog.get_logger()
+
+
+def _canonical_agent_path(path: str) -> str:
+    """归一化 Agent 路径为绝对路径字符串；非法路径原样返回。"""
+    try:
+        return str(resolve_agent_path(path))
+    except (OSError, ValueError):
+        return str(path or "")
+
+
+def _match_result_shape(
+    result_shapes: Dict[str, Any],
+    file_path: str,
+) -> Optional[Dict[str, Any]]:
+    """按归一化后的绝对路径精确匹配工具结果里解析出的 data_shape。
+
+    禁止前后缀模糊匹配（如 "xx11.csv" 会误配 "1.csv" 的形状）——
+    给 LLM 看的元数据错比缺更糟。
+    """
+    if not isinstance(result_shapes, dict):
+        return None
+    exact = result_shapes.get(file_path)
+    if isinstance(exact, dict):
+        return exact
+    target = _canonical_agent_path(file_path)
+    for key, value in result_shapes.items():
+        if isinstance(value, dict) and _canonical_agent_path(key) == target:
+            return value
+    return None
 
 
 class ToolExecutor:
@@ -361,6 +392,21 @@ class ToolExecutor:
             )
             return {"durable": False, "error": "resource_persistence_failed", "rejected": rejected}
 
+    # 模型偶发把工具名写成常见简称（如 read/write/edit/list），
+    # 在判"工具不存在"前先尝试映射到注册表中的正式工具名。
+    TOOL_NAME_ALIASES: Dict[str, str] = {
+        "read": "read_file",
+        "write": "write_file",
+        "edit": "edit_file",
+        "list": "list_directory",
+    }
+
+    def _resolve_tool_alias(self, tool_name: str) -> Optional[str]:
+        candidate = self.TOOL_NAME_ALIASES.get(str(tool_name).strip().lower())
+        if candidate and candidate in self.tool_registry:
+            return candidate
+        return None
+
     async def execute_tool(
         self,
         tool_name: str,
@@ -412,6 +458,16 @@ class ToolExecutor:
         )
 
         # Step 1: 验证工具存在
+        if tool_name not in self.tool_registry:
+            resolved_name = self._resolve_tool_alias(tool_name)
+            if resolved_name is not None:
+                logger.warning(
+                    "tool_name_alias_resolved",
+                    requested_tool=tool_name,
+                    resolved_tool=resolved_name
+                )
+                tool_name = resolved_name
+
         if tool_name not in self.tool_registry:
             # 🔍 调试日志：工具不存在时详细输出注册表状态
             available_tools = list(self.tool_registry.keys())
@@ -470,11 +526,26 @@ class ToolExecutor:
                     for item in declared
                     if isinstance(item, dict) and isinstance(item.get("locator"), dict)
                 }
-                declared.extend(
-                    data_file_resource(file_path, tool_name=tool_name)
-                    for file_path in execution_context.available_file_paths
-                    if file_path not in declared_paths
+                result_shapes = (
+                    observation.get("data_shapes")
+                    if isinstance(observation.get("data_shapes"), dict)
+                    else {}
                 )
+                get_context_shape = getattr(execution_context, "get_data_shape", None)
+                for file_path in execution_context.available_file_paths:
+                    if file_path in declared_paths:
+                        continue
+                    shape = _match_result_shape(result_shapes, file_path)
+                    if shape is None and callable(get_context_shape):
+                        shape = get_context_shape(file_path)
+                    declaration_metadata = {"data_shape": shape} if isinstance(shape, dict) else None
+                    declared.append(
+                        data_file_resource(
+                            file_path,
+                            tool_name=tool_name,
+                            metadata=declaration_metadata,
+                        )
+                    )
 
             tracking = await self._persist_boundary_resources(
                 tool_name=tool_name,

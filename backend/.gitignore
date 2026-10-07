@@ -31,8 +31,9 @@ env/
 .venv5/
 .venv6/
 
-# Models (large binary files)
-models/
+# Models (large binary files) — anchored to backend/models/ only;
+# app/**/models/ are source-code packages and must stay tracked.
+/models/
 *.bin
 *.safetensors
 *.onnx
@@ -46,6 +47,7 @@ data/
 *.parquet
 !app/schemas/**/*.json
 !app/services/tenders/zhiliao_strategy.json
+!config/environment_chart_standards.json
 
 # Temporary cache
 *.png

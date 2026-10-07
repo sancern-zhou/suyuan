@@ -50,6 +50,7 @@ STATION_ID_ALIASES = {
     "3134A": "1005A",
     "3338A": "1009A",
     "4180A": "1011A",
+    "4259A": "1012A",
 }
 CANONICAL_STATION_NAMES = {
     "1003A": "开发区",
@@ -524,6 +525,7 @@ class XuchangStationDeviationAlertService:
             import matplotlib
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
+            from app.utils.chart_legend import position_legends_below_plot, visible_legends
             from app.utils.font_utils import apply_font_to_figure, configure_chinese_font, chinese_font_prop
             configure_chinese_font()
             chinese_font = chinese_font_prop()
@@ -609,11 +611,22 @@ class XuchangStationDeviationAlertService:
         ax.set_ylabel("浓度", fontproperties=chinese_font)
         ax.grid(True, alpha=0.25)
         ax.legend(loc="best", fontsize=8, ncol=3, prop=chinese_font)
-        apply_font_to_figure(fig)
         fig.autofmt_xdate()
+        # Dispatch charts keep the legend under the x-axis, matching the report
+        # chart tool, so it never covers the station curves.
+        legend_layout = position_legends_below_plot(fig)
+        fig.tight_layout(pad=1.1, rect=(0.0, legend_layout["reserved_bottom_fraction"], 1.0, 1.0))
+        apply_font_to_figure(fig)
         path = self.output_root / "charts" / f"{alert['event_id']}.png"
         path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(path, bbox_inches="tight")
+        # The relocated legend is excluded from the layout engine, so it has to
+        # be handed to ``bbox_inches="tight"`` explicitly or the export crops it.
+        fig.savefig(
+            path,
+            bbox_inches="tight",
+            bbox_extra_artists=[*visible_legends(fig)],
+            pad_inches=0.18,
+        )
         plt.close(fig)
         return path
 

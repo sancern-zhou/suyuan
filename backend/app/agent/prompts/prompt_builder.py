@@ -7,8 +7,15 @@ ReAct系统提示词构建器（多模式架构）
 from typing import Literal, List, Optional
 from .assistant_prompt import build_assistant_prompt
 from .ppt_prompt import build_ppt_prompt
-from .expert_prompt import build_expert_prompt
+from .expert_prompt import build_expert_analysis_prompt, build_expert_meteorology_prompt, build_expert_prompt
 from .query_prompt import build_query_prompt
+from .query_data_prompt import (
+    build_query_forecast_prompt,
+    build_query_monitoring_city_prompt,
+    build_query_monitoring_prompt,
+    build_query_monitoring_station_prompt,
+)
+from app.agent.workflow.delegation import build_delegation_contract
 from .knowledge_prompt import build_knowledge_prompt
 from .report_prompt import build_report_prompt
 from .social_prompt import build_social_prompt
@@ -16,6 +23,7 @@ from .chart_prompt import build_chart_prompt
 from .board_prompt import build_board_prompt
 from .ops_prompt import build_ops_prompt
 from .graph_prompt import build_graph_prompt
+from .enforcement_exam_prompt import build_enforcement_exam_prompt
 from .custom_prompt import build_custom_prompt
 from .project_prompt import load_project_mode_prompt
 from app.utils.path_config import format_agent_path, resolve_agent_path
@@ -26,6 +34,7 @@ from .deliberation_prompt import (
     build_deliberation_reviewer_prompt,
 )
 from .tool_registry import get_tools_by_mode
+from .data_source_map import render_data_source_map
 import structlog
 
 logger = structlog.get_logger()
@@ -62,7 +71,7 @@ def _with_platform_contracts(prompt: str) -> str:
         f"{prompt.rstrip()}\n\n"
         f"{AUDIENCE_CONTRACT}\n\n"
         f"{FILESYSTEM_PATH_CONTRACT}\n\n{HUMAN_FEEDBACK_CONTRACT}"
-    )
+    ).rstrip()
 
 
 def _with_memory_file_contract(prompt: str, memory_file_path: Optional[str]) -> str:
@@ -72,14 +81,24 @@ def _with_memory_file_contract(prompt: str, memory_file_path: Optional[str]) -> 
         f"{prompt.rstrip()}\n\n"
         "## 长期记忆文件\n"
         f"- 当前模式长期记忆文件路径：`{memory_file_path}`。\n"
-        "- 仅可操作此路径，不得读取或修改其他模式的 MEMORY.md。"
+        "- 仅可操作此路径，不得读取或修改其他模式的 MEMORY.md。\n"
+        "- 非社交模式的长期事实也可能保存在 `facts/*.md`；上下文中的“已整理事实索引”"
+        "会列出每条事实的文件链接、来源和适用条件。需要核实或更新某条事实时，"
+        "先沿索引链接读取对应文档，再使用记忆工具维护该事实，不要把事实批量回写到 MEMORY.md。\n"
+        "- `MEMORY.md` 是兼容的模式记忆文档；索引中的事实文档与它分别管理，不能把单一文件路径理解为全部记忆。"
     )
 
 AgentMode = Literal[
     "assistant",
     "ppt",
     "expert",
+    "expert_meteorology",
+    "expert_analysis",
     "query",
+    "query_monitoring",
+    "query_monitoring_station",
+    "query_monitoring_city",
+    "query_forecast",
     "knowledge",
     "report",
     "social",
@@ -97,7 +116,30 @@ AgentMode = Literal[
 ]
 
 
+# 数据源地图对取数/研判/编排模式生效；纯产出型模式（ppt/board 等）不需要。
+DATA_SOURCE_MAP_MODES = {"query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "expert", "expert_meteorology", "expert_analysis", "report"}
+
+
+def _with_data_source_map(prompt: str, mode: str) -> str:
+    if mode not in DATA_SOURCE_MAP_MODES:
+        return prompt
+    source_map = render_data_source_map()
+    if not source_map:
+        return prompt
+    return f"{prompt.rstrip()}\n\n{source_map}".rstrip() + "\n"
+
+
 def build_react_system_prompt(
+    mode: AgentMode,
+    *args,
+    **kwargs,
+) -> str:
+    """构建模式系统提示词，并按模式追加数据源地图（若 registry 已配置）。"""
+    prompt = _build_react_system_prompt(mode, *args, **kwargs)
+    return _with_data_source_map(prompt, str(mode))
+
+
+def _build_react_system_prompt(
     mode: AgentMode,
     available_tools: Optional[List[str]] = None,
     user_preferences: Optional[dict] = None,
@@ -166,6 +208,7 @@ def build_react_system_prompt(
     if project_prompt is not None:
         return _with_platform_contracts(
             _with_memory_file_contract(project_prompt, memory_file_path)
+            + build_delegation_contract(mode, filtered_tools)
         )
 
     # 根据模式构建Prompt（✅ 统一传递所有路径和上下文）
@@ -176,9 +219,23 @@ def build_react_system_prompt(
     elif mode == "ppt":
         return _with_platform_contracts(build_ppt_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "expert":
-        return _with_platform_contracts(build_expert_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_expert_prompt(filtered_tools, memory_context, memory_file_path)
+                                        + build_delegation_contract(mode, filtered_tools))
+    elif mode == "expert_meteorology":
+        return _with_platform_contracts(build_expert_meteorology_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "expert_analysis":
+        return _with_platform_contracts(build_expert_analysis_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "query":
-        return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path)
+                                        + build_delegation_contract(mode, filtered_tools))
+    elif mode == "query_monitoring":
+        return _with_platform_contracts(build_query_monitoring_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "query_monitoring_station":
+        return _with_platform_contracts(build_query_monitoring_station_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "query_monitoring_city":
+        return _with_platform_contracts(build_query_monitoring_city_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "query_forecast":
+        return _with_platform_contracts(build_query_forecast_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "knowledge":
         return _with_platform_contracts(build_knowledge_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "report":
@@ -198,7 +255,6 @@ def build_react_system_prompt(
             backend_host,
         ))
     elif mode == "enforcement_exam":
-        from .enforcement_exam_prompt import build_enforcement_exam_prompt
         return _with_platform_contracts(build_enforcement_exam_prompt(
             filtered_tools,
             user_preferences=user_preferences,

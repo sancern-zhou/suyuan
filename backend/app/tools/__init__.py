@@ -21,15 +21,16 @@ LLM Tools
 
 3. Visualization Tools - 可视化工具（生成图表和地图配置）
    - execute_echarts_python - 生成前端交互式 ECharts 图表
-   - create_report_chart - 生成正式报告静态图表
+   - create_business_chart - 绘制特定业务图型和固定报告模板
    - generate_map - 生成高德地图配置
 
 4. Task Management Tools - 任务管理工具（housekeeping状态管理）
    - TaskCreate / TaskUpdate / TaskList / TaskGet - 增量管理当前会话任务清单
 
 **工具选择决策：**
-- 前端交互式图表 → execute_echarts_python
-- QMD/Word/HTML 正式报告静态图表 → create_report_chart
+- 问数模式主要绘图、前端交互式图表 → execute_echarts_python
+- 专家/报告模式主要绘图 → execute_python（共享报告主题）
+- 已支持的专用业务图型 → 所有模式必须使用 create_business_chart，优先于模式默认工具
 """
 
 import structlog
@@ -256,44 +257,6 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_jining_regular_stations", error=str(e))
 
-    # 广东省 Suncere API 查询工具（项目专属，默认不注册；
-    # 需要的项目在 manifest 的 modules 中启用 legacy 并在 backend.tools 中声明）
-    gd_suncere_tool_registrations = (
-        ("query_gd_suncere_city_hour", "QueryGDSuncereCityHourTool", 32),
-        ("query_gd_suncere_station_hour_new", "QueryGDSuncereStationHourTool", 33),
-        ("query_gd_suncere_station_day_new", "QueryGDSuncereStationDayTool", 34),
-        ("query_gd_suncere_regional_comparison", "QueryGDSuncereRegionalComparisonTool", 35),
-        ("query_gd_suncere_city_day", "QueryGDSuncereCityDayTool", 36),
-        ("query_gd_suncere_district_day", "QueryGDSuncereDistrictDayTool", 36),
-        ("query_gd_suncere_district_report", "QueryGDSuncereDistrictReportTool", 37),
-        ("query_gd_suncere_report_compare", "QueryGDSuncereReportCompareTool", 38),
-    )
-    gd_legacy_module = "app.tools.query.query_gd_suncere.tool_wrapper"
-    if is_project_tool_enabled(context, "legacy", "query_gd_suncere"):
-        for tool_name, class_name, priority in gd_suncere_tool_registrations:
-            try:
-                module = __import__(gd_legacy_module, fromlist=[class_name])
-                registry.register(getattr(module, class_name)(), priority=priority)
-                logger.info("tool_loaded", tool=tool_name)
-            except ImportError as e:
-                logger.warning("tool_import_failed", tool=tool_name, error=str(e))
-
-    gd_standard_report_registrations = (
-        ("query_city_standard_report", "app.tools.query.query_city_standard_report.tool", "QueryCityStandardReportTool", 39),
-        ("query_city_standard_yoy_report", "app.tools.query.query_city_standard_report.tool", "QueryCityStandardYoyReportTool", 39),
-        ("query_station_standard_report", "app.tools.query.query_station_standard_report.tool", "QueryStationStandardReportTool", 43),
-        ("query_station_standard_yoy_report", "app.tools.query.query_station_standard_report.tool", "QueryStationStandardYoyReportTool", 44),
-    )
-    for tool_name, module_name, class_name, priority in gd_standard_report_registrations:
-        if not is_project_tool_enabled(context, "legacy", tool_name):
-            continue
-        try:
-            module = __import__(module_name, fromlist=[class_name])
-            registry.register(getattr(module, class_name)(), priority=priority)
-            logger.info("tool_loaded", tool=tool_name)
-        except ImportError as e:
-            logger.warning("tool_import_failed", tool=tool_name, error=str(e))
-
     if is_project_tool_enabled(context, "legacy", "analyze_city_pollutant_rankings"):
         try:
             from app.tools.query.city_pollutant_rankings.tool import CityPollutantRankingsTool
@@ -447,6 +410,22 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.info("tool_loaded", tool="execute_postgres_sql_query")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="execute_postgres_sql_query", error=str(e))
+
+    # MySQL 采集库长历史数据查询工具（站点/城市小时、逐日、PM2.5 年均值）
+    try:
+        from app.tools.query.execute_crawler_sql_query.tool import ExecuteCrawlerSQLQueryTool
+        registry.register(ExecuteCrawlerSQLQueryTool(), priority=47)
+        logger.info("tool_loaded", tool="execute_crawler_sql_query")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="execute_crawler_sql_query", error=str(e))
+
+    # 企业运输管控平台 Big_Data SQL Server 查询工具（道闸违规/在线/通行记录）
+    try:
+        from app.tools.query.execute_bigdata_sql_query.tool import ExecuteBigDataSQLQueryTool
+        registry.register(ExecuteBigDataSQLQueryTool(), priority=47)
+        logger.info("tool_loaded", tool="execute_bigdata_sql_query")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="execute_bigdata_sql_query", error=str(e))
 
     try:
         from app.tools.query.zhiliao_tender_detail.tool import ZhiliaoTenderDetailTool
@@ -688,11 +667,11 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.warning("tool_import_failed", tool="accept_drawio_board_candidate", error=str(e))
 
     try:
-        from app.tools.visualization.create_report_chart import CreateReportChartTool
-        registry.register(CreateReportChartTool(), priority=213)
-        logger.info("tool_loaded", tool="create_report_chart")
+        from app.tools.visualization.create_business_chart import CreateBusinessChartTool
+        registry.register(CreateBusinessChartTool(), priority=213)
+        logger.info("tool_loaded", tool="create_business_chart")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="create_report_chart", error=str(e))
+        logger.warning("tool_import_failed", tool="create_business_chart", error=str(e))
 
     # ========================================
     # Utility Tools（实用工具）

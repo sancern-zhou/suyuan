@@ -364,8 +364,8 @@ async def test_explicit_tool_image_read_can_reopen_a_consumed_reference(tmp_path
         "mime_type": "image/png",
     }
     planner = FakePlanner(actions=[
-        {"type": "TOOL_CALL", "tool": "create_report_chart", "args": {}},
-        {"type": "TOOL_CALL", "tool": "create_report_chart", "args": {}},
+        {"type": "TOOL_CALL", "tool": "create_business_chart", "args": {}},
+        {"type": "TOOL_CALL", "tool": "create_business_chart", "args": {}},
     ])
     runtime = AgentRuntime.__new__(AgentRuntime)
     runtime.config = AgentRuntimeConfig(

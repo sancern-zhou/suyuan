@@ -13,6 +13,7 @@ from sqlalchemy import text
 from app.db.database import engine
 from app.db.weather_database import weather_engine
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.agent.context.data_shape import shape_summary_suffix
 from app.utils.sql_validator import SQLValidator
 
 if TYPE_CHECKING:
@@ -45,6 +46,9 @@ class ExecutePostgresSQLQueryTool(LLMTool):
     """Execute read-only SQL against the configured PostgreSQL/KingbaseES databases."""
 
     def __init__(self) -> None:
+        from app.agent.context.data_shape import TableTypesCache
+
+        self._table_types_cache = TableTypesCache()
         schema_description = (
             "PostgreSQL/KingbaseES 只读 SQL 查询工具。支持两类数据："
             "许昌市企业排污许可证数据（主库）和气象站逐小时地面观测数据（独立气象库，"
@@ -230,7 +234,13 @@ class ExecutePostgresSQLQueryTool(LLMTool):
                 "summary": f"查询失败: {exc}。字段不确定时请先调用 describe_table。",
             }
 
-        return self._format_result(rows, normalized_sql, effective_limit, context)
+        data_shape = await self._build_data_shape(
+            list(rows[0].keys()) if rows else [],
+            rows,
+            len(rows),
+            referenced_tables,
+        )
+        return self._format_result(rows, normalized_sql, effective_limit, context, data_shape=data_shape)
 
     @staticmethod
     def _resolve_limit(limit: Optional[int]) -> int:
@@ -280,14 +290,40 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             result = await connection.execute(text(sql), parameters or {})
             return [self._serialize_row(dict(row)) for row in result.mappings()]
 
+    async def _build_data_shape(
+        self,
+        columns: list[str],
+        rows: list[dict[str, Any]],
+        row_count: int,
+        tables: list[str],
+    ) -> dict[str, Any]:
+        """information_schema 精确类型优先，派生列回退样本推断。"""
+        from app.agent.context.data_shape import (
+            build_data_shape,
+            infer_column_types,
+        )
+
+        exact_types: dict[str, str] = {}
+        for table_name in tables:
+            exact_types.update(await self._table_types_cache.load(self._select_engine([table_name]), table_name))
+        inferred_types = infer_column_types(rows, columns)
+        columns_with_types = {
+            str(name): exact_types.get(str(name)) or inferred_types.get(str(name), "str")
+            for name in columns
+        }
+        source = "db" if exact_types else "inferred"
+        return build_data_shape(columns_with_types, row_count, source)
+
     def _format_result(
         self,
         rows: list[dict[str, Any]],
         sql: str,
         limit: int,
         context: Optional["ExecutionContext"],
+        data_shape: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         columns = list(rows[0]) if rows else []
+        suffix = shape_summary_suffix(data_shape)
         if context and len(rows) > 24:
             try:
                 data_id = context.save_data(
@@ -299,6 +335,7 @@ class ExecutePostgresSQLQueryTool(LLMTool):
                         "row_count": len(rows),
                         "columns": columns,
                         "limit": limit,
+                        "data_shape": data_shape,
                     },
                 )
                 sample = rows[:12] + rows[-12:]
@@ -308,7 +345,8 @@ class ExecutePostgresSQLQueryTool(LLMTool):
                     "data_id": data_id,
                     "count": len(rows),
                     "sample_count": len(sample),
-                    "summary": f"查询到 {len(rows)} 条记录，完整结果已保存，当前返回 24 条样例。",
+                    "summary": f"查询到 {len(rows)} 条记录，完整结果已保存，当前返回 24 条样例。{suffix}",
+                    "data_shape": data_shape,
                     "metadata": {"columns": columns, "externalized": True},
                 }
             except Exception as exc:
@@ -318,7 +356,8 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             "success": True,
             "data": rows,
             "count": len(rows),
-            "summary": f"查询到 {len(rows)} 条记录。",
+            "summary": f"查询到 {len(rows)} 条记录。{suffix}",
+            "data_shape": data_shape,
             "metadata": {"columns": columns, "externalized": False},
         }
 

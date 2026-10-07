@@ -59,3 +59,14 @@ def test_execute_sql_query_schema_keeps_describe_table_for_unlisted_fields():
     description = ExecuteSQLQueryTool().get_function_schema()["description"]
 
     assert "仅当需要契约未列出的字段，或数据库返回字段错误时，才调用describe_table" in description
+
+
+def test_xuchang_schema_routes_station_long_history_to_crawler():
+    tool = ExecuteSQLQueryTool(project_id="xuchang")
+    description = tool.get_function_schema()["description"]
+
+    assert "改用 execute_crawler_sql_query" in description
+    assert "dat_station_hour" not in tool.sql_validator.ALLOWED_TABLES
+    assert "dat_station_day" not in tool.sql_validator.ALLOWED_TABLES
+    assert "dat_zhongda_station_hour" in tool.sql_validator.ALLOWED_TABLES
+    assert "dat_station_hour（站点小时）和dat_station_day（站点日）" not in description

@@ -35,8 +35,8 @@ def _alert(hour: int, *, event_id: str | None = None, pollutant: str = "PM2.5") 
     }
 
 
-def _daily_event(*, pollutant: str = "PM2.5") -> dict:
-    return {
+def _daily_event(*, pollutant: str = "PM2.5", enriched: bool = False) -> dict:
+    event = {
         "event_id": f"daily-XC001-{pollutant}",
         "status": "confirmed",
         "occurred_at": "2026-08-06T00:00:00+08:00",
@@ -53,6 +53,67 @@ def _daily_event(*, pollutant: str = "PM2.5") -> dict:
         "source_granularity": "station_day",
         "source_table": "dbo.dat_station_day",
     }
+    if enriched:
+        event["meteorology_evidence"] = {"status": "available", "rows": [_meteo_row(hour) for hour in range(24)]}
+        event["national_hourly"] = _national_hourly()
+        event["township_hourly"] = _township_hourly()
+        event["regional_hourly"] = _regional_hourly()
+        from app.scenarios.xuchang_city_exceedance.process_stats import compute_city_day_statistics
+
+        event["city_day_statistics"] = compute_city_day_statistics(
+            event["national_hourly"], event["township_hourly"],
+            event["regional_hourly"], event["meteorology_evidence"]["rows"],
+            pollutant=pollutant,
+        )
+    return event
+
+
+def _meteo_row(hour: int) -> dict:
+    from math import radians, cos, sin
+
+    return {
+        "time": f"2026-08-05T{hour:02d}:00:00+08:00",
+        "relative_humidity_2m": 95.0 if hour < 9 else 50.0,
+        "wind_speed_10m_ms": 0.3 if hour < 9 else 2.5,
+        "wind_direction_10m": 175.0,
+        "temperature_2m": 22.0,
+        "precipitation": 0.0,
+    }
+
+
+def _national_hourly() -> list[dict]:
+    return [
+        {
+            "station_id": "1003A", "name": "测试国控站", "lat": 34.03, "lon": 113.85,
+            "data_time": f"2026-08-05T{hour:02d}:00:00",
+            "pm25": 80.0 + hour % 6, "pm10": 95.0, "o3": 70.0,
+            "no2": 40.0 + hour % 3, "so2": 9.0, "co": 0.8,
+        }
+        for hour in range(24)
+    ]
+
+
+def _township_hourly() -> list[dict]:
+    return [
+        {
+            "station_id": "T1", "name": "某镇站", "district": "建安区",
+            "lat": 34.05, "lon": 113.83,
+            "data_time": f"2026-08-05T{hour:02d}:00:00",
+            "pm25": 85.0 + hour % 4, "pm10": 100.0, "o3": 65.0,
+        }
+        for hour in range(24)
+    ]
+
+
+def _regional_hourly() -> list[dict]:
+    return [
+        {
+            "station_id": "郑州市", "name": "郑州市",
+            "data_time": f"2026-08-05T{hour:02d}:00:00",
+            "pm25": 70.0 + hour % 5, "pm10": 90.0, "o3": 60.0,
+        }
+        for hour in range(24)
+    ]
 
 
 def _trajectory_endpoints(backtrack_hours: int = 48, batch_count: int = 2) -> list[dict]:
@@ -189,14 +250,31 @@ def test_quality_gate_requires_complete_trajectory_series():
 
 
 @pytest.mark.asyncio
-async def test_pending_job_outputs_diagnosis_enterprises_and_two_maps(tmp_path):
+async def test_pending_job_outputs_diagnosis_enterprises_and_two_maps(monkeypatch, tmp_path):
     runner = FakeTrajectoryRunner()
     service = XuchangTransportEscalationService(
         output_root=tmp_path,
         trajectory_runner=runner,
         enterprise_screener=FakeEnterpriseScreener(),
     )
-    service.ingest_daily_exceedance(_daily_event())
+    monkeypatch.setattr(
+        "app.scenarios.xuchang_transport_escalation.service.screen_inventory_candidates",
+        lambda **kwargs: {
+            "status": "screened", "wind": {"status": "insufficient_wind", "valid_hours": 0},
+            "ranking_basis": "清单年排放量/(1+距离/10km)距离衰减筛查得分，仅排序现场核查顺序",
+            "enterprises": [
+                {"enterprise_name": "测试化工", "industry_category": "石化与化工",
+                 "district": "建安区", "screening_score": 812.5, "annual_inventory_tonnes": 1200.0,
+                 "distance_km": 4.07, "bearing_deg": 168.0, "in_upwind_sector": False,
+                 "distance_to_high_value_km": 2.5},
+            ],
+            "interpretation_limit": (
+                "筛查得分只是核查顺序参考，不代表同期排放、贡献率或企业责任；"
+                "风向扇区为标注信息，不构成筛选门槛"
+            ),
+        },
+    )
+    service.ingest_daily_exceedance(_daily_event(enriched=True))
 
     results = await service.run_pending()
 
@@ -217,18 +295,22 @@ async def test_pending_job_outputs_diagnosis_enterprises_and_two_maps(tmp_path):
     assert output["cwt"]["sample_groups"] == {"pollution": 24, "control": 6}
     assert Path(output["cwt"]["archive_path"]).exists()
     assert output["transport_corridors"]
-    # 场景三不再自动执行企业筛查，企业核查延迟到最终报告分析层
-    # （专家模式经 query_xuchang_emission_inventory / 轨迹坐标交叉核查）。
-    assert output["enterprise_screening"]["status"] == "not_run"
-    assert output["enterprise_screening"]["reason"] == "enterprise_review_is_deferred_to_final_analysis_layer"
-    assert output["enterprise_screening"]["enterprises"] == []
-    assert {item["role"] for item in output["visualizations"]} == {
-        "regional_trajectory_corridor_map",
-        "local_enterprise_coverage_map",
-        "regional_interactive_map",
-        "enterprise_interactive_map",
-    }
+    # 日尺度任务的企业筛查基于清单距离衰减得分排序（供报告层引用），
+    # 不再由轨迹自动执行；风向扇区只是标注信息。
+    assert output["enterprise_screening"]["status"] == "screened"
+    assert output["enterprise_screening"]["enterprises"][0]["enterprise_name"] == "测试化工"
+    assert "贡献率" in output["enterprise_screening"]["interpretation_limit"]
+    roles = {item["role"] for item in output["visualizations"]}
+    assert {"regional_trajectory_corridor_map", "local_enterprise_coverage_map",
+            "regional_interactive_map", "enterprise_interactive_map",
+            "national_station_hourly_curves", "urban_district_hourly_comparison",
+            "meteorology_hourly_panel", "regional_city_hourly_comparison",
+            "regional_city_daypart_comparison", "pollutant_correlation_heatmap",
+            "township_daily_spatial_distribution",
+            "enterprise_screening_top10"} <= roles
     assert all(Path(item["path"]).exists() for item in output["visualizations"])
+    assert output["city_day_statistics"]["status"] == "available"
+    assert output["city_day_statistics"]["peak_township"]["station_name"] == "某镇站"
     assert output["map_program"]["renderer"] == "amap-compatible"
     assert set(output["map_programs"]) == {"regional", "enterprise"}
     regional_layers = output["map_programs"]["regional"]["state"]["layers"]

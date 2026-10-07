@@ -84,6 +84,13 @@ test('scene catalog honors the project scene whitelist', async () => {
   assert.match(source, /AGENT_SCENES\.filter\(scene => sceneIds\.includes\(scene\.id\)\)/)
 })
 
+test('scene catalog applies project scene card overrides on top of the shared scenes', async () => {
+  const source = await readComponent('AgentPlatform.vue')
+
+  assert.match(source, /projectConfig\.agentSceneOverrides\?\.\[scene\.id\]/)
+  assert.match(source, /override\?\.modeIds\?\.length \? \{ \.\.\.scene, modeIds: override\.modeIds \} : scene/)
+})
+
 test('empty chat resolves complete welcome copy from the selected agent catalog entry', async () => {
   const source = await readComponent('../ReActMessageList.vue')
 
@@ -103,10 +110,13 @@ test('welcome capabilities render as centered plain text instead of styled butto
   assert.match(source, /\.welcome-capability[\s\S]*text-align: center/)
 })
 
-test('chat keeps task duration hidden until the task reaches a terminal state', async () => {
+test('chat shows live task status and keeps final duration for the terminal state', async () => {
   const source = await readComponent('../ReActMessageList.vue')
 
   assert.match(source, /v-if="!isAnalyzing && getFinalDurationText\(message\)"/)
   assert.match(source, /class="task-progress-status"/)
-  assert.match(source, /任务执行中，完成后显示总用时/)
+  assert.match(source, /currentProgressStatus/)
+  assert.match(source, /runningElapsedText/)
+  assert.match(source, /currentProgressTip/)
+  assert.doesNotMatch(source, /任务执行中，完成后显示总用时/)
 })

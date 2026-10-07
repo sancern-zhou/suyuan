@@ -550,6 +550,22 @@ class Settings(BaseSettings):
         default="https://api.scnet.cn/api/llm/anthropic",
         description="Sugon SCNET Anthropic-compatible API base URL"
     )
+    scnet_disable_thinking: bool = Field(
+        default=True,
+        description=(
+            "Disable thinking mode for SCNET Qwen models (thinking: disabled via "
+            "Anthropic protocol). SCNET enables thinking by default and Qwen3 "
+            "occasionally generates 20k+ char reasoning (observed 289s turns), "
+            "which blows per-node wall-clock budgets. Verified 200 with tools "
+            "and thinking-block history on 2026-10-04."
+        )
+    )
+    go_disable_thinking: bool = Field(
+        default=True,
+        description=(
+            "Enable tiered thinking policy for Go/Go2 gateways: flash models and subagents disable thinking, PRO models keep gateway-default thinking."
+        ),
+    )
     scnet_model: str = Field(
         default="Qwen3.8-Max",
         description="Sugon SCNET model name"
@@ -585,17 +601,39 @@ class Settings(BaseSettings):
         default=180.0,
         description="Timeout in seconds for LLM provider requests"
     )
+    llm_connect_timeout_seconds: float = Field(
+        default=10.0,
+        description="TCP/TLS connect timeout for LLM provider requests"
+    )
+    llm_first_token_timeout_seconds: float = Field(
+        default=45.0,
+        description="Max silent wait for the first streaming chunk from an LLM provider; also the per-chunk idle gap for streams"
+    )
+    llm_fresh_tool_result_budget_chars: int = Field(
+        default=48_000,
+        description="Char budget for projecting the current run's raw tool results into LLM history; lower values cut per-round latency for multi-iteration agents"
+    )
+    llm_fresh_tool_result_single_max_chars: int = Field(
+        default=24_000,
+        description="Per-result char cap above which a tool result falls back to its compacted history form instead of verbatim projection"
+    )
     llm_fallbacks: str = Field(
         default="doubao/gpt-5.6-luna,bailian/qwen3.8-max,deepseek/deepseek-v4-pro",
         description="Comma-separated fallback models, e.g. bailian/qwen3.8-max"
     )
     llm_flash_models: str = Field(
         default="doubao/gpt-5.6-luna,bailian/deepseek-v4-flash-0731,deepseek/deepseek-v4-flash",
-        description="Comma-separated Flash model priority chain, e.g. doubao/gpt-5.6-luna,bailian/deepseek-v4-flash-0731,deepseek/deepseek-v4-flash"
+        description=(
+            "Deprecated (2026-10): tiers share the primary model chain; "
+            "flash/pro now only toggle thinking. Kept for env-file compatibility."
+        ),
     )
     llm_pro_models: str = Field(
         default="bailian/deepseek-v4-pro,deepseek/deepseek-v4-pro",
-        description="Comma-separated Pro model priority chain, e.g. bailian/deepseek-v4-pro,deepseek/deepseek-v4-pro"
+        description=(
+            "Deprecated (2026-10): tiers share the primary model chain; "
+            "flash/pro now only toggle thinking. Kept for env-file compatibility."
+        ),
     )
     llm_multimodal_models: str = Field(
         default="",
@@ -884,6 +922,87 @@ class Settings(BaseSettings):
         default="yes",
         description="Trust server cert without validation; set no after installing a CA-signed cert",
     )
+
+    # DataCrawler MySQL Configuration (long-history monitoring database)
+    crawler_mysql_host: str = Field(
+        default="127.0.0.1",
+        description="DataCrawler MySQL host"
+    )
+    crawler_mysql_port: int = Field(
+        default=13307,
+        description="DataCrawler MySQL port"
+    )
+    crawler_mysql_user: str = Field(
+        default="root",
+        description="DataCrawler MySQL username"
+    )
+    crawler_mysql_password: str = Field(
+        default="",
+        description="DataCrawler MySQL password"
+    )
+    crawler_mysql_database: str = Field(
+        default="DataCrawler",
+        description="DataCrawler MySQL database name"
+    )
+
+    @property
+    def crawler_mysql_url(self) -> str:
+        """SQLAlchemy URL for the crawler MySQL database (aiomysql async driver)."""
+        from urllib.parse import quote
+
+        return (
+            "mysql+aiomysql://"
+            f"{quote(self.crawler_mysql_user)}:{quote(self.crawler_mysql_password)}"
+            f"@{self.crawler_mysql_host}:{self.crawler_mysql_port}"
+            f"/{self.crawler_mysql_database}?charset=utf8mb4"
+        )
+
+    # Big_Data SQL Server Configuration (企业运输管控平台，大数据局对接库)
+    bigdata_sqlserver_host: str = Field(
+        default="222.143.158.143",
+        description="Big_Data SQL Server host"
+    )
+    bigdata_sqlserver_port: int = Field(
+        default=20125,
+        description="Big_Data SQL Server port"
+    )
+    bigdata_sqlserver_user: str = Field(
+        default="dsj",
+        description="Big_Data SQL Server username"
+    )
+    bigdata_sqlserver_password: str = Field(
+        default="",
+        description="Big_Data SQL Server password"
+    )
+    bigdata_sqlserver_database: str = Field(
+        default="Big_Data",
+        description="Big_Data SQL Server database name"
+    )
+    bigdata_sqlserver_driver: str = Field(
+        default="ODBC Driver 17 for SQL Server",
+        description="Big_Data SQL Server ODBC driver name",
+    )
+    bigdata_sqlserver_encrypt: str = Field(
+        default="no",
+        description="Big_Data ODBC Encrypt flag",
+    )
+    bigdata_sqlserver_trust_server_certificate: str = Field(
+        default="yes",
+        description="Big_Data trust server cert flag",
+    )
+
+    @property
+    def bigdata_sqlserver_connection_string(self) -> str:
+        """ODBC connection string for the Big_Data SQL Server instance."""
+        return (
+            f"DRIVER={{{self.bigdata_sqlserver_driver}}};"
+            f"SERVER={self.bigdata_sqlserver_host},{self.bigdata_sqlserver_port};"
+            f"DATABASE={self.bigdata_sqlserver_database};"
+            f"UID={self.bigdata_sqlserver_user};"
+            f"PWD={{{self.bigdata_sqlserver_password}}};"
+            f"Encrypt={self.bigdata_sqlserver_encrypt};"
+            f"TrustServerCertificate={self.bigdata_sqlserver_trust_server_certificate};"
+        )
 
     @property
     def sqlserver_connection_string(self) -> str:

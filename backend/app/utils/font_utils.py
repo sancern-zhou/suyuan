@@ -8,6 +8,9 @@
 4. 跨平台支持（Linux/Windows/macOS）
 """
 
+import functools
+import re
+
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
@@ -18,6 +21,69 @@ import logging
 from app.utils.path_config import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
+
+_UNICODE_SUBSUP_RE = re.compile("[\u2070-\u209f\u00b2\u00b3\u00b9\u207a\u207b]")
+
+
+def _normalize_dict_mapping_strs(mapping: Any, label_normalizer: Any) -> None:
+    if isinstance(mapping, dict):
+        for key, value in mapping.items():
+            if isinstance(value, str):
+                mapping[key] = str(label_normalizer(value))
+
+
+def _normalize_formatter_labels(formatter: Any, label_normalizer: Any) -> None:
+    """归一化 formatter 内部保存的刻度标签序列。
+
+    draw/savefig 时刻度文本由 formatter 重新生成，只改 Tick 的 Text 对象会被
+    原始序列覆盖。matplotlib 3.9 的 set_xticklabels 用
+    FuncFormatter(functools.partial(_format_with_dict, {位置: 标签})) 保存标签，
+    旧版本/其他路径用 FixedFormatter.seq，这里两种载体都处理。
+    """
+    seq = getattr(formatter, "seq", None)
+    if isinstance(seq, list):
+        formatter.seq = [str(label_normalizer(item)) if isinstance(item, str) else item for item in seq]
+    func = getattr(formatter, "func", None)
+    if isinstance(func, functools.partial):
+        for arg in func.args:
+            _normalize_dict_mapping_strs(arg, label_normalizer)
+        for value in (func.keywords or {}).values():
+            _normalize_dict_mapping_strs(value, label_normalizer)
+
+
+def normalize_figure_text(fig: Any, label_normalizer: Any) -> List[str]:
+    """按 label_normalizer 归一化图中所有文本，返回仍含 Unicode 上下标的残留文本。
+
+    除普通 Text 对象外，必须同时处理坐标轴 formatter 的内部序列：
+    draw/savefig 时刻度文本由 formatter 重新生成，只改 Text 对象会被
+    原始序列覆盖，Unicode 下标黑框问题会复发。
+    残留字符说明当前字体缺字形，渲染时会显示为黑色矩形（tofu）。
+    """
+    residual: List[str] = []
+    try:
+        for text in fig.findobj(match=matplotlib.text.Text):
+            original = text.get_text()
+            try:
+                normalized = str(label_normalizer(original))
+                if normalized != original:
+                    text.set_text(normalized)
+            except Exception:
+                pass
+            current = text.get_text()
+            if isinstance(current, str) and _UNICODE_SUBSUP_RE.search(current):
+                residual.append(current)
+    except Exception:
+        pass
+    try:
+        for ax in fig.axes:
+            for axis in (ax.xaxis, ax.yaxis):
+                for formatter in (axis.get_major_formatter(), axis.get_minor_formatter()):
+                    _normalize_formatter_labels(formatter, label_normalizer)
+    except Exception:
+        pass
+    if residual:
+        logger.warning(f"normalize_figure_text 残留 Unicode 上下标字符，可能渲染为黑框: {residual}")
+    return residual
 
 BROWSER_CHART_FONT_FAMILY = (
     "FZXiaoBiaoSong-B05S, 方正小标宋简体, PingFang SC, Hiragino Sans GB, "
@@ -30,7 +96,7 @@ class FontManager:
 
     # 字体配置优先级（从高到低）
     FONT_FALLBACK_CHAIN = [
-        'FZXiaoBiaoSong-B05S',  # 方正小标宋，create_report_chart优先字体
+        'FZXiaoBiaoSong-B05S',  # 方正小标宋，create_business_chart优先字体
         'GB_XBS_GB18030',       # 国标小标宋，Linux部署常见小标宋字体
         'GB_XBS_GBT2312',
         # Linux 系统字体
@@ -213,15 +279,26 @@ def select_preferred_chinese_font_path() -> Path | None:
 
 
 def chinese_font_prop() -> fm.FontProperties | None:
-    """Return the preferred Chinese font, aligned with create_report_chart."""
-    font_name = get_font_manager().preferred_font_name()
+    """Return the preferred Chinese font, aligned with create_business_chart."""
+    font_manager = get_font_manager()
+    for font_path in font_manager.FONT_FILE_PATHS:
+        if not font_path.exists():
+            continue
+        try:
+            fm.fontManager.addfont(str(font_path))
+            return fm.FontProperties(fname=str(font_path))
+        except Exception as exc:
+            logger.debug(f"注册字体文件失败 {font_path}: {exc}")
+    font_name = font_manager._find_best_chinese_font()
     if font_name:
         return fm.FontProperties(family=[font_name])
     return None
 
 
-def apply_font_to_figure(fig: Any) -> None:
+def apply_font_to_figure(fig: Any, label_normalizer: Any = None) -> None:
     """Apply the configured Chinese font to all text objects in a matplotlib figure."""
+    if label_normalizer is not None:
+        normalize_figure_text(fig, label_normalizer)
     prop = chinese_font_prop()
     if prop is None:
         return

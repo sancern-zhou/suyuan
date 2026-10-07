@@ -82,6 +82,8 @@ class RunState:
     suppress_tool_names_current_turn: set[str] = field(default_factory=set)
     last_tool_turn_housekeeping_only: bool = False
     last_loop_block_signature: Optional[str] = None
+    last_missing_tool_signature: Optional[str] = None
+    fixed_workflow_progress: Dict[str, Any] = field(default_factory=dict)
 
     def timestamp(self) -> str:
         return datetime.now().isoformat()

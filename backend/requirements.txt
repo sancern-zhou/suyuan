@@ -27,6 +27,7 @@ defusedxml>=0.7.1  # Safe XML parsing (protects against XML attacks)
 
 # Visualization
 matplotlib==3.9.2
+seaborn==0.13.2
 cartopy==0.23.0  # For trajectory analysis and visualization
 
 # LLM Integration
@@ -66,6 +67,10 @@ aioodbc==0.5.0
 asyncpg==0.30.0
 sqlalchemy[asyncio]==2.0.35
 alembic==1.13.3
+
+# MySQL (DataCrawler long-history monitoring database)
+aiomysql==0.2.0
+pymysql==1.1.1
 
 # Scheduling
 apscheduler==3.10.4

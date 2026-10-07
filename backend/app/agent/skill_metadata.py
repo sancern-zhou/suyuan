@@ -5,7 +5,7 @@ SKILL_METADATA = {
     "analysis_report_workflow": {
         "enabled": True,
         "aliases": ["分析报告工作流", "报告生成工作流", "通用报告技能"],
-        "required_tools": ["read_file", "execute_python", "create_report_chart"],
+        "required_tools": ["read_file", "execute_python", "create_business_chart"],
     },
     "archify": {
         "enabled": True,
@@ -34,7 +34,7 @@ SKILL_METADATA = {
         "aliases": ["故障工单分析"],
         "required_tools": [
             "ops_audit_fetch_dataset", "execute_ops_sql_query", "execute_python",
-            "create_report_chart", "create_report_package",
+            "create_business_chart", "create_report_package",
         ],
     },
     "operation_availability_root_cause_analysis": {
@@ -83,7 +83,7 @@ SKILL_METADATA = {
     "广东省空气质量形势分析汇报PPT": {
         "enabled": True,
         "aliases": [],
-        "required_tools": ["create_report_chart", "create_pptx_with_ppt_master"],
+        "required_tools": ["create_business_chart", "create_pptx_with_ppt_master"],
     },
     "抓取生态环境部全国环境空气质量状况页面和图片技能": {
         "enabled": True,
@@ -97,7 +97,7 @@ SKILL_METADATA = {
             "call_sub_agent", "search_files", "read_file", "read_docx",
             "list_session_resources", "web_search", "web_fetch", "write_file",
             "execute_tender_sql_query", "query_national_province_air_quality",
-            "query_national_city_air_quality", "execute_python", "create_report_chart",
+            "query_national_city_air_quality", "execute_python", "create_business_chart",
             "create_report_package",
         ],
     },

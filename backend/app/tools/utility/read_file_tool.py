@@ -3,7 +3,7 @@ ReadFile 工具 - 统一文件读取入口（支持分页、大小限制、多�
 
 让 LLM 能够读取本地文件系统中的文件：
 - 文本文件：支持分页读取，智能大小限制
-- 图片文件：自动调用 Vision API 进行内容分析
+- 图片文件：默认返回原生多模态附件
 - Word XML：智能分层读取（自动推断最优模式）
 - PDF 文件：委托给 parse_pdf 工具（支持OCR、表格、图片提取）
 - DOCX 文件：委托给 read_docx 工具进行结构化读取
@@ -35,8 +35,7 @@ from app.tools.utility.file_read_state import get_file_read_state
 from app.tools.resource_refs import build_file_ref
 from app.utils.path_config import (
     PROJECT_ROOT,
-    TEMP_ROOT,
-    get_data_registry,
+    agent_content_read_roots,
     is_agent_sensitive_path,
     is_path_within,
     resolve_agent_path,
@@ -86,6 +85,12 @@ class ReadFileTool(LLMTool):
     # 文本文件默认大小限制（100KB）
     DEFAULT_MAX_SIZE = 100 * 1024
 
+    UNSUPPORTED_BINARY_EXTENSIONS = {
+        ".7z", ".a", ".bin", ".bz2", ".class", ".dll", ".dmg", ".dylib",
+        ".exe", ".gz", ".jar", ".o", ".pyc", ".rar", ".so", ".tar", ".tgz",
+        ".wasm", ".zip",
+    }
+
     # 建议分页行数（用于大文件提示；未显式传 limit 时不自动分页）
     DEFAULT_LIMIT = 1000
 
@@ -94,6 +99,7 @@ class ReadFileTool(LLMTool):
             name="read_file",
             description=(
                 "读取已有的文档、源码、配置、图片或目录；大文本用 grep 或 offset/limit；"
+                "图片默认以原生多模态附件返回，不调用 OCR；需要兼容旧流程时显式关闭附件。"
                 ".json/.csv/.xlsx 等结构化数据文件改用 execute_python（load_data 或 json.load）读取，不要用 read_file；不返回base64。"
                 "不从知识库导出原文、不注册资源、也不创建统一预览；知识库原文必须调用 knowledge_document_reader。"
                 "不要读取查询或分析工具返回的会话数据文件；少量结果已由查询工具完整返回，大量结果使用 execute_python 处理。"
@@ -106,7 +112,8 @@ class ReadFileTool(LLMTool):
         # Agent 相对路径统一从仓库根目录解析。
         self.working_dir = PROJECT_ROOT
         # 持久化目录由部署配置决定，可能位于代码工作树之外。
-        self.allowed_dirs = [PROJECT_ROOT, get_data_registry(), TEMP_ROOT]
+        # 读取边界统一由 path_config.agent_content_read_roots() 维护。
+        self.allowed_dirs = agent_content_read_roots()
         self.max_image_size = 5 * 1024 * 1024  # 5MB
         self.max_pdf_size = 50 * 1024 * 1024  # 50MB
         self.max_docx_size = 20 * 1024 * 1024  # 20MB
@@ -121,7 +128,7 @@ class ReadFileTool(LLMTool):
         limit: Optional[int] = None,
         max_size: int = DEFAULT_MAX_SIZE,
         encoding: str = "utf-8",
-        auto_analyze: bool = True,
+        auto_analyze: Optional[bool] = None,
         analysis_type: str = "analyze",
         pages: Optional[str] = None,
         raw_mode: bool = False,
@@ -130,7 +137,7 @@ class ReadFileTool(LLMTool):
         extract_tables: bool = True,
         extract_images: bool = False,
         enable_preview: bool = False,
-        as_multimodal_attachment: bool = False,
+        as_multimodal_attachment: Optional[bool] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -142,7 +149,7 @@ class ReadFileTool(LLMTool):
             limit: 文本行数或DOCX非空段落数（默认不限制；大文件应显式分页读取）
             max_size: 最大文件大小（字节，默认100KB）
             encoding: 文本文件编码（默认 utf-8）
-            auto_analyze: 是否自动分析图片（默认 True）
+            auto_analyze: 兼容参数；传入该参数即使用旧图片处理流程，默认不传时走原生附件
             analysis_type: 图片分析类型（ocr/describe/chart/analyze，默认 analyze）
             pages: PDF/DOCX 页面范围（如 "1-5", "3", "10-20"）
             raw_mode: 是否返回原始内容（Word XML 专用，默认 False）
@@ -151,12 +158,16 @@ class ReadFileTool(LLMTool):
             extract_tables: PDF是否提取表格（默认 True）
             extract_images: PDF是否提取图片（默认 False）
             enable_preview: 内部兼容参数；统一资源预览不由 read_file 创建
-            as_multimodal_attachment: 图片文件是否返回原生多模态附件（所有Agent模式可用）
+            as_multimodal_attachment: 图片文件是否返回原生多模态附件（默认 True；显式 auto_analyze=True 时兼容旧分析流程）
 
         Returns:
             简化格式：{"success": bool, "data": dict, "summary": str}
         """
         try:
+            # Keep old direct callers that pass auto_analyze=True working while
+            # making the normal image path native multimodal by default.
+            if as_multimodal_attachment is None:
+                as_multimodal_attachment = auto_analyze is None
             # 1. 解析文件路径
             resolved_path = self._resolve_path(path)
             if not resolved_path:
@@ -174,6 +185,13 @@ class ReadFileTool(LLMTool):
                     "summary": "文件不存在"
                 }
 
+            if resolved_path.is_char_device() or resolved_path.is_block_device() or resolved_path.is_fifo():
+                return {
+                    "success": False,
+                    "data": {"error": "不允许读取设备文件或 FIFO，避免阻塞或产生无限输出"},
+                    "summary": "不支持读取设备文件"
+                }
+
             # 2.5. 检查是否为目录
             if resolved_path.is_dir():
                 result = await self._list_directory(resolved_path)
@@ -182,6 +200,13 @@ class ReadFileTool(LLMTool):
             # 3. 获取文件信息
             file_size = resolved_path.stat().st_size
             file_ext = resolved_path.suffix.lower()
+
+            if file_ext in self.UNSUPPORTED_BINARY_EXTENSIONS:
+                return {
+                    "success": False,
+                    "data": {"error": f"不支持直接读取二进制文件: {file_ext}，请使用对应的专业工具"},
+                    "summary": f"不支持的二进制文件: {file_ext}"
+                }
 
             # 4. 判断文件类型并读取
             is_image = file_ext in self.IMAGE_EXTENSIONS
@@ -280,6 +305,8 @@ class ReadFileTool(LLMTool):
             if isinstance(value, dict):
                 if parent_key == "attachments":
                     return value
+                if parent_key == "read_state":
+                    return value
                 cleaned: Dict[str, Any] = {}
                 for key, item in value.items():
                     if key == "refs":
@@ -372,9 +399,23 @@ class ReadFileTool(LLMTool):
 
             effective_limit = limit
 
-            # 读取文件内容
+            # Read only the requested range for paged reads. This avoids loading
+            # a large file into memory just to return a small slice.
+            full_content: Optional[str] = None
+            selected_lines = []
+            total_lines = 0
             try:
-                full_content = file_path.read_text(encoding=encoding)
+                if effective_limit is None:
+                    full_content = file_path.read_text(encoding=encoding)
+                    lines = full_content.splitlines()
+                    total_lines = len(lines)
+                    selected_lines = lines[offset:]
+                else:
+                    with file_path.open("r", encoding=encoding, newline=None) as handle:
+                        for line_number, line in enumerate(handle):
+                            total_lines = line_number + 1
+                            if offset <= line_number < offset + effective_limit:
+                                selected_lines.append(line.rstrip("\r\n"))
             except UnicodeDecodeError:
                 return {
                     "success": False,
@@ -382,16 +423,8 @@ class ReadFileTool(LLMTool):
                     "summary": f"文本编码错误: {file_path.name}"
                 }
 
-            # 分割成行
-            lines = full_content.splitlines()
-            total_lines = len(lines)
-
-            # 计算实际读取范围
-            start_line = offset
-            end_line = min(offset + effective_limit, total_lines) if effective_limit is not None else total_lines
-
-            # 提取指定范围的内容
-            selected_lines = lines[start_line:end_line]
+            start_line = min(offset, total_lines)
+            end_line = min(offset + len(selected_lines), total_lines)
             content = "\n".join(selected_lines)
 
             # 检查是否需要截断
@@ -447,7 +480,7 @@ class ReadFileTool(LLMTool):
                 summary = f"读取成功: {file_path.name} ({file_size} bytes, {total_lines} 行)"
 
             # 记录读取状态（用于edit_file预读验证）
-            is_full_read = not is_truncated
+            is_full_read = not is_truncated and offset == 0
             read_state = get_file_read_state()
             read_state.set(
                 str(file_path),
@@ -456,6 +489,8 @@ class ReadFileTool(LLMTool):
                 limit=limit if not is_full_read else None,
                 is_partial_view=not is_full_read,
                 file_size=file_size,
+                file_mtime_ns=file_path.stat().st_mtime_ns,
+                file_inode=getattr(file_path.stat(), "st_ino", None),
                 encoding=encoding
             )
 
@@ -463,6 +498,20 @@ class ReadFileTool(LLMTool):
                 "success": True,
                 "data": data,
                 "refs": {"files": [file_ref]},
+                "metadata": {
+                    "read_state": {
+                        "tool": self.name,
+                        "path": str(file_path),
+                        "content": full_content if is_full_read else content,
+                        "offset": offset,
+                        "limit": limit,
+                        "is_partial_view": not is_full_read,
+                        "size": file_size,
+                        "mtime_ns": file_path.stat().st_mtime_ns,
+                        "inode": getattr(file_path.stat(), "st_ino", None),
+                        "encoding": encoding,
+                    }
+                },
                 "llm_resume": llm_resume,
                 "summary": summary
             }
@@ -1502,8 +1551,8 @@ class ReadFileTool(LLMTool):
                     },
                     "auto_analyze": {
                         "type": "boolean",
-                        "description": "分析图片",
-                        "default": True
+                        "description": "兼容参数：关闭原生图片附件后是否调用 OCR/图片分析",
+                        "default": False
                     },
                     "analysis_type": {
                         "type": "string",
@@ -1538,6 +1587,11 @@ class ReadFileTool(LLMTool):
                     "max_paragraphs": {
                         "type": "integer",
                         "description": "段落上限"
+                    },
+                    "as_multimodal_attachment": {
+                        "type": "boolean",
+                        "description": "图片默认以原生多模态附件返回；设为 false 才使用旧的图片分析流程",
+                        "default": True
                     }
                 },
                 "required": ["path"]

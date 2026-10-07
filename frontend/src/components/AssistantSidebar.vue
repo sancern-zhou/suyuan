@@ -8,9 +8,9 @@
           </div>
         </div>
       </template>
-      <button class="collapse-btn" type="button" @click="toggleCollapse" :title="isCollapsed ? '展开' : '收起'">
-        <span class="collapse-icon" :class="{ collapsed: isCollapsed }"></span>
-      </button>
+      <div v-else class="brand-mark" :title="projectConfig.brandName">
+        {{ brandInitial }}
+      </div>
     </div>
 
     <!-- 核心工作入口固定在 header 下方 -->
@@ -26,16 +26,6 @@
           <span class="module-icon" v-html="getModuleIcon('agent-platform')"></span>
           <div v-if="!isCollapsed" class="module-info">
             <p class="module-title">智能体平台</p>
-          </div>
-        </button>
-        <button
-          class="module-card"
-          type="button"
-          @click="handleModuleSelect('restart-session')"
-        >
-          <span class="module-icon" v-html="getModuleIcon('restart-session')"></span>
-          <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">新建对话</p>
           </div>
         </button>
         <button
@@ -232,7 +222,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:activeModule', 'select', 'action', 'loadSession', 'update:collapsed'])
+const emit = defineEmits(['update:activeModule', 'select', 'action', 'loadSession'])
 
 // 内部折叠状态，优先使用外部传入的props
 const isCollapsed = ref(props.collapsed)
@@ -243,12 +233,6 @@ const closeSettingsMenu = () => {
 }
 const toggleSettingsMenu = () => {
   settingsMenuOpen.value = !settingsMenuOpen.value
-}
-const toggleCollapse = () => {
-  closeSettingsMenu()
-  const newValue = !isCollapsed.value
-  isCollapsed.value = newValue
-  emit('update:collapsed', newValue)
 }
 
 // 监听外部props变化
@@ -262,6 +246,8 @@ const userDisplayName = computed(() => {
   return String(name).trim() || '当前用户'
 })
 const userInitial = computed(() => Array.from(userDisplayName.value)[0] || '用')
+
+const brandInitial = computed(() => Array.from(projectConfig.brandName || '')[0] || '')
 
 const recentSessions = ref([])
 const refreshingSessions = ref(false)
@@ -378,14 +364,6 @@ const allModules = [
     isAction: true
   },
   {
-    id: 'restart-session',
-    name: '新建对话',
-    abbr: '新建对话',
-    desc: '清空对话，开始新分析',
-    badge: '操作',
-    isAction: true
-  },
-  {
     id: 'query-dashboard',
     name: '智能问数',
     abbr: '问数',
@@ -437,6 +415,16 @@ const allModules = [
     desc: '查看和管理技能文档',
     badge: '管理',
     isAction: true,
+    requiredModule: 'legacy'
+  },
+  {
+    id: 'quick-prompts-management',
+    name: '常用问题',
+    abbr: '常用',
+    desc: '维护首页和输入框常用问题',
+    badge: '管理',
+    isAction: true,
+    adminOnly: true,
     requiredModule: 'legacy'
   },
   {
@@ -500,6 +488,7 @@ const sidebarAgentModeEntries = projectConfig.sidebarAgentModes
 const SETTINGS_MODULE_IDS = Object.freeze([
   'session-history',
   'skills-management',
+  'quick-prompts-management',
   'scheduled-tasks',
   'tools-management',
   'file-manager',
@@ -519,12 +508,6 @@ const moduleIcons = {
       <path d="m4.5 8 7.5 4.2L19.5 8" />
       <path d="M12 12.2v8" />
       <path d="m8.5 6 7 4" />
-    </svg>
-  `,
-  'restart-session': `
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 5v14" />
-      <path d="M5 12h14" />
     </svg>
   `,
   'query-dashboard': `
@@ -826,40 +809,18 @@ onUnmounted(() => {
   }
 }
 
-.collapse-btn {
-  background: transparent;
-  border: none;
+.brand-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  cursor: pointer;
-  margin-left: auto;
+  width: 32px;
+  height: 32px;
   border-radius: 8px;
-
-  &:hover {
-    background: #eef4fb;
-  }
-
-  .collapsed & {
-    margin: 0;
-  }
-}
-
-.collapse-icon {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-left: 2px solid #9aa6c1;
-  border-bottom: 2px solid #9aa6c1;
-  transform: rotate(45deg);
-  transition: transform 0.2s;
-
-  &.collapsed {
-    transform: rotate(-135deg);
-  }
+  background: #e8f0fe;
+  color: #2f5fd0;
+  font-size: 16px;
+  font-weight: 600;
+  user-select: none;
 }
 
 .module-list {
@@ -1259,10 +1220,6 @@ onUnmounted(() => {
   .recent-sessions-section,
   .user-identity {
     display: none;
-  }
-
-  .collapse-btn {
-    margin: 0;
   }
 
   .primary-navigation,

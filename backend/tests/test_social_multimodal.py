@@ -241,7 +241,7 @@ def test_social_read_file_schema_exposes_multimodal_attachment_for_images():
 
     properties = read_file_schema["parameters"]["properties"]
     assert "as_multimodal_attachment" in properties
-    assert properties["as_multimodal_attachment"]["default"] is False
+    assert properties["as_multimodal_attachment"]["default"] is True
     assert "multimodal_attachment" in str(read_file_schema)
 
 
@@ -250,7 +250,7 @@ def test_non_social_read_file_schema_exposes_opt_in_multimodal_attachment():
     read_file_schema = next(schema for schema in schemas if schema["name"] == "read_file")
 
     properties = read_file_schema["parameters"]["properties"]
-    assert properties["as_multimodal_attachment"]["default"] is False
+    assert properties["as_multimodal_attachment"]["default"] is True
     assert "multimodal_attachment" in str(read_file_schema)
 
 

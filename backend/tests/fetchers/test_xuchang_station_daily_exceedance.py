@@ -74,6 +74,42 @@ def _station_hourly(station_id="XC001", *, pm25=60.0, pm10=80.0, so2=8.0, no2=30
     ]
 
 
+def _national_hourly():
+    return [
+        {
+            "station_id": "1003A", "name": "测试国控站", "lat": 34.03, "lon": 113.85,
+            "data_time": datetime(2026, 8, 5, hour).isoformat(),
+            "pm25": 55.0 + hour % 5, "pm10": 80.0, "o3": 90.0,
+            "no2": 30.0, "so2": 8.0, "co": 0.6,
+        }
+        for hour in range(24)
+    ]
+
+
+def _regional_hourly():
+    return [
+        {
+            "station_id": "郑州市", "name": "郑州市",
+            "data_time": datetime(2026, 8, 5, hour).isoformat(),
+            "pm25": 45.0 + hour % 4, "pm10": 70.0, "o3": 88.0,
+        }
+        for hour in range(24)
+    ]
+
+
+def _township_hourly():
+    return [
+        {
+            "station_id": "T1", "name": "某镇站", "district": "建安区",
+            "lat": 34.05, "lon": 113.83,
+            "data_time": datetime(2026, 8, 5, hour).isoformat(),
+            "pm25": 65.0 + hour % 3, "pm10": 85.0, "so2": 6.0, "no2": 25.0,
+            "co": 0.5, "o3": 85.0,
+        }
+        for hour in range(24)
+    ]
+
+
 def test_daily_exceedance_triggers_one_event_per_pollutant():
     result = evaluate_station_daily_pollution(_rows(), target_date=date(2026, 8, 5))
 
@@ -273,6 +309,13 @@ async def test_fetcher_publishes_confirmation_and_request_with_evidence(monkeypa
     )
     monkeypatch.setattr(fetcher, "load_rows", lambda target_date: _rows())
     monkeypatch.setattr(fetcher, "load_station_hourly", lambda d, ids: _station_hourly())
+    monkeypatch.setattr(fetcher, "load_city_national_hourly", lambda d: _national_hourly())
+    monkeypatch.setattr(fetcher, "load_regional_hourly", lambda d: _regional_hourly())
+    monkeypatch.setattr(
+        fetcher, "load_township_hourly",
+        lambda d: {"status": "available", "source": "test", "station_count": 1,
+                   "rows": _township_hourly()},
+    )
     monkeypatch.setattr(
         fetcher, "load_era5_hourly", lambda d: _async_value(_meteo_rows(rh=90.0))
     )
@@ -316,6 +359,18 @@ async def test_fetcher_publishes_confirmation_and_request_with_evidence(monkeypa
     assert len(pm25_event["hourly_rows"]) == 24
     assert pm25_event["hourly_rows"][0]["concentration"] == 60.0
     assert pm25_event["data_quality"]["hourly_completeness_ratio"] == 1.0
+    assert pm25_event["data_quality"]["township_rows"] == 24
+    assert pm25_event["data_quality"]["regional_rows"] == 24
+    assert pm25_event["city_day_statistics"]["status"] == "available"
+    assert pm25_event["city_day_statistics"]["peak_township"]["station_name"] == "某镇站"
+    assert pm25_event["city_day_statistics"]["coverage"]["national_stations"] == 1
+    assert len(pm25_event["national_hourly"]) == 24
+    assert all(isinstance(row["data_time"], str) for row in pm25_event["national_hourly"])
+    assert all(isinstance(row["data_time"], str) for row in pm25_event["township_hourly"])
+    o3_event = next(
+        event for event in result["events"] if event["target_pollutant"] == "O3"
+    )
+    assert o3_event["city_day_statistics"]["pollutant"] == "O3"
     assert all(
         payload["scenario_2"]["status"] == "requested"
         for payload in (
@@ -349,3 +404,36 @@ async def test_fetcher_without_exceedance_publishes_nothing(monkeypatch):
 
     assert result["events"] == []
     assert task_service.events == []
+
+
+@pytest.mark.asyncio
+async def test_load_era5_hourly_refreshes_grid_before_read(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    refresh = AsyncMock()
+    monkeypatch.setattr(
+        "app.fetchers.xuchang_station_daily_exceedance.configured_history_service",
+        lambda: SimpleNamespace(refresh=refresh),
+    )
+
+    class _Repo:
+        async def get_weather_data(self, lat, lon, start, end):
+            return []
+
+    monkeypatch.setattr(
+        "app.db.repositories.weather_repo.WeatherRepository", _Repo
+    )
+    fetcher = XuchangStationDailyExceedanceFetcher(
+        analysis_service=_AnalysisService(),
+        now_factory=lambda: datetime(2026, 8, 6, 2, tzinfo=TZ_SHANGHAI),
+    )
+
+    rows = await fetcher.load_era5_hourly(date(2026, 8, 5))
+
+    assert rows == []
+    refresh.assert_awaited_once_with(
+        34.0, 113.75,
+        datetime(2026, 8, 5, 0, 0, tzinfo=TZ_SHANGHAI),
+        datetime(2026, 8, 5, 23, 59, 59, 999999, tzinfo=TZ_SHANGHAI),
+    )

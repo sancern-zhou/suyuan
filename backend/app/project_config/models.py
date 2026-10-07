@@ -35,6 +35,16 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class CoordinatorQuickPrompt(StrictModel):
+    label: str
+    prompt: str
+    mode: str | None = None
+
+
+class CoordinatorManifest(StrictModel):
+    quick_prompts: list[CoordinatorQuickPrompt] = Field(default_factory=list)
+
+
 class FrontendManifest(StrictModel):
     theme: str = "default"
     brand_name: str = "风清气智"
@@ -43,13 +53,16 @@ class FrontendManifest(StrictModel):
     default_agent_mode: str | None = None
     agent_mode_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
     agent_platform_layout: Literal["scenes", "environment-grid"] = "scenes"
+    coordinator: CoordinatorManifest | None = None
     agent_scenes: list[str] = Field(default_factory=list)
+    agent_scene_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
     sidebar_agent_modes: list[str] = Field(default_factory=list)
 
     _unique_agent_modes = field_validator("agent_modes")(unique)
     _unique_agent_scenes = field_validator("agent_scenes")(unique)
     _unique_sidebar_agent_modes = field_validator("sidebar_agent_modes")(unique)
     _valid_agent_mode_overrides = field_validator("agent_mode_overrides")(valid_identifier_map)
+    _valid_agent_scene_overrides = field_validator("agent_scene_overrides")(valid_identifier_map)
 
     @model_validator(mode="after")
     def validate_default_agent_mode(self):

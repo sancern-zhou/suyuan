@@ -844,8 +844,11 @@ class SQLForecastStorage:
         cursor = conn.cursor()
         try:
             self.ensure_table(cursor)
-            cursor.fast_executemany = True
-            cursor.executemany(merge_sql, rows)
+            # FreeTDS 驱动（libtdsodbc.so，aarch64）在 fast_executemany/executemany
+            # 路径的 SQLExecute 中会段错误（worker SEGV），必须逐条 execute，
+            # 与 xuchang_nmc_hourly_forecast 的处理一致。
+            for row in rows:
+                cursor.execute(merge_sql, row)
             conn.commit()
             return len(rows)
         except Exception:

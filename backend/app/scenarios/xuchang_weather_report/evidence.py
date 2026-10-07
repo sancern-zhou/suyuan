@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 import pyodbc
 
 from app.tools.query.query_xcai_city_history.sql_client import get_sql_server_client
-from app.tools.visualization.create_report_chart.domain.weather_timeseries import render_weather_timeseries
+from app.tools.visualization.create_business_chart.domain.weather_timeseries import render_weather_timeseries
 from app.utils.path_config import format_agent_path, get_data_registry
 from .constants import EVENT_TYPE, SCHEMA, WEEKDAYS
 
@@ -169,7 +169,7 @@ def build_evidence(start: date, sources: dict[str, list[dict[str, Any]]], *, now
     phase = _dt(nmc[0]).hour % 3 if nmc else None
     aq_rows = sources.get("aq", [])
     aq_batch = max((str(row.get("UpdateDate") or "") for row in aq_rows), default="")
-    aq = {str(row["TimePoint"])[:10]: row for row in aq_rows if str(row.get("UpdateDate") or "") == start.isoformat()}
+    aq = {str(row["TimePoint"])[:10]: row for row in aq_rows if str(row.get("UpdateDate") or "") == aq_batch}
     outlook_rows = sources.get("outlook", [])
     outlook = {str(row["forecast_date"])[:10]: row for row in outlook_rows
                if str(row.get("fetched_at") or "")[:10] == start.isoformat()}
@@ -239,7 +239,8 @@ def build_evidence(start: date, sources: dict[str, list[dict[str, Any]]], *, now
     elif str(nmc[0].get("publish_time") or "")[:10] < start.isoformat(): warnings.append("NMC气象预报发布批次早于执行日")
     if nmc and len({_dt(row).date() for row in nmc}) < 7:
         warnings.append(f"NMC气象预报仅覆盖{len({_dt(row).date() for row in nmc})}/7天")
-    if aq_batch != start.isoformat(): warnings.append("空气质量预报无执行日发布批次，AQI字段留空")
+    if not aq_batch: warnings.append("空气质量预报无可用批次，AQI字段留空")
+    elif aq_batch != start.isoformat(): warnings.append(f"空气质量预报无执行日发布批次，使用最近批次（{aq_batch}）")
     if len(aq) < 7: warnings.append(f"空气质量预报仅覆盖{len(aq)}/7天")
     if len(outlook) < 8: warnings.append(f"第8—15天当日更新预报仅覆盖{len(outlook)}/8天")
     return {"schema_version": SCHEMA, "start_date": start.isoformat(), "generated_at": now.isoformat(),

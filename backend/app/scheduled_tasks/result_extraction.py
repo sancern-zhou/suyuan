@@ -17,7 +17,7 @@ from .models.event import TaskEvent
 from .models.execution import TaskExecution
 from .models.result import TaskResult
 
-CONCLUSION_MAX_CHARS = 8000
+CONCLUSION_FIRST_LINE_MAX_CHARS = 200
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 _DOCUMENT_EXTENSIONS = {".docx", ".pdf", ".xlsx", ".xls", ".csv", ".pptx"}
@@ -165,17 +165,33 @@ def _extract_evidence_paths(
     return paths
 
 
+def _first_nonempty_line(text: str) -> str | None:
+    """回退结论只取首个非空行：提示词约束 agent 首行输出一句话业务结论。"""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:CONCLUSION_FIRST_LINE_MAX_CHARS]
+    return None
+
+
 def _extract_conclusion(execution: TaskExecution, case: dict | None) -> tuple[str | None, str]:
     case_conclusion = _first_str((case or {}).get("conclusion"))
     if case_conclusion:
         return case_conclusion, "distilled"
+    distilled = (case or {}).get("distilled")
+    if isinstance(distilled, dict):
+        distilled_conclusion = _first_str(distilled.get("case_brief"))
+        if distilled_conclusion:
+            return distilled_conclusion, "distilled"
     case_summary = _first_str((case or {}).get("summary"))
     if case_summary:
         return case_summary, "summary"
     if execution.steps:
         response = _first_str(execution.steps[-1].agent_response)
         if response:
-            return response[:CONCLUSION_MAX_CHARS], "agent_response"
+            first_line = _first_nonempty_line(response)
+            if first_line:
+                return first_line, "agent_response"
     return None, "none"
 
 

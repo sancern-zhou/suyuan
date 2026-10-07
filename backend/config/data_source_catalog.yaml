@@ -1,0 +1,33 @@
+# 数据源地图：Agent 取数路由知识（单一事实源）
+# 规则（Anthropic context engineering：最小高信号集）：
+# - 只收录实际踩过坑或高频使用的数据域，按失败模式迭代，禁止穷举
+# - route=tool 的 locator 必须是已注册工具名（守卫测试校验）
+# - 字段细节不进地图，由 describe_table / 工具 schema 按需提供
+# - 工具名或表名变更时必须同步更新本文件
+
+sources:
+  - domain: 空气质量（国控站点/城市长历史，2016 起）
+    route: tool
+    locator: execute_crawler_sql_query
+    usage: "采集库 MySQL：StationHour/CityHour/StationDay/CityDay/CityYearPm25Avg/Station；字段契约见工具描述（由真实库生成，大小写敏感）"
+    granularity: 逐小时/逐日/逐年
+    caveats: "审核标记列命名跨表不一致（StationDay=COMark、CityDay=CO_Mark）；查询失败的返回会附真实字段清单，直接据此修正"
+
+  - domain: 空气质量（国控城市发布历史，SQL Server 白名单）
+    route: sql
+    locator: city_aqi_publish_history / CityDayAQIPublishHistory / CityAQIPublishHistory
+    usage: "execute_sql_query 白名单表；字段口径 PM2.5=pM2_5_Decimal、臭氧8小时=o3_8h"
+    granularity: 逐小时/逐日（仅城市口径）
+    caveats: "仅城市口径，无任何站点表；站点小时/日历史直接用 execute_crawler_sql_query，不要在本工具试探站点表名"
+
+  - domain: 气象（历史实况与预报）及空气质量预报
+    route: tool
+    locator: get_weather_data / get_weather_forecast / query_airdata_platform
+    usage: "历史实况回看与多时效预报用 get_weather_data/get_weather_forecast（lat/lon + past_days/hourly/daily）；空气质量预报产品用 query_airdata_platform；交付时标注起报时间与时效"
+    granularity: 逐小时/3小时间隔/逐日
+    caveats: "预报数据的静稳/扩散形势研判归 expert_meteorology；平台 SQL 库（execute_sql_query/execute_crawler_sql_query/execute_postgres_sql_query）均无气象实况表，禁止在其中寻找气象数据"
+
+  - domain: 空气质量（全国城市对比）
+    route: tool
+    locator: query_national_city_air_quality
+    usage: "全国城市六参数浓度与 AQI 对比、排名类分析"

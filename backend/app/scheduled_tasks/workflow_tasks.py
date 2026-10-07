@@ -17,23 +17,43 @@ import inspect
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from app.agent.workflow.catalog import (
+    FixedWorkflowDefinition,
+    WorkflowPhaseDefinition,
+    workflow_catalog,
+)
+
 from .models import ScheduledTask
 from .models.event import TaskEvent
 from .models.execution import TaskExecution
 
 WorkflowHandler = Callable[..., Awaitable[dict[str, Any]]]
 
-_WORKFLOW_HANDLERS: dict[str, WorkflowHandler] = {}
-
-
-def register_workflow_handler(name: str, handler: WorkflowHandler) -> None:
-    """Register a deterministic handler for one workflow name."""
-    _WORKFLOW_HANDLERS[name] = handler
+def register_workflow_handler(
+    name: str,
+    handler: WorkflowHandler,
+    *,
+    version: str = "1",
+    description: str = "",
+) -> None:
+    """Register a deterministic handler in the shared workflow catalog."""
+    workflow_catalog.register(FixedWorkflowDefinition(
+        name=name,
+        entrypoint="scheduled_task",
+        version=version,
+        description=description,
+        phases=(WorkflowPhaseDefinition(
+            name="execute",
+            description=description or "执行确定性业务工作流并交付结果。",
+            allow_completion=True,
+        ),),
+        handler=handler,
+    ))
 
 
 def registered_workflows() -> list[str]:
     """Names of all registered deterministic workflows, sorted for UI display."""
-    return sorted(_WORKFLOW_HANDLERS)
+    return workflow_catalog.names("scheduled_task")
 
 
 async def execute_workflow_task(
@@ -44,7 +64,8 @@ async def execute_workflow_task(
 ) -> dict[str, Any]:
     if not task.workflow_name:
         raise RuntimeError("workflow task 未配置 workflow_name")
-    handler = _WORKFLOW_HANDLERS.get(task.workflow_name)
+    definition = workflow_catalog.get("scheduled_task", task.workflow_name)
+    handler = definition.handler if definition is not None else None
     if handler is None:
         raise RuntimeError(f"未注册的 workflow：{task.workflow_name}")
     parameters = inspect.signature(handler).parameters

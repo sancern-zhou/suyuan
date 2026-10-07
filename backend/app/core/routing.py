@@ -20,6 +20,7 @@ class RouterSpec:
     description: str = ""
     owner: str = "legacy"
     requires_scheduled_tasks: bool = False
+    required_feature: str | None = None
 
 
 ROUTER_REGISTRY = [
@@ -27,6 +28,17 @@ ROUTER_REGISTRY = [
     RouterSpec(
         "app.api.project_config_routes",
         description="Project runtime configuration",
+        owner="core",
+    ),
+    RouterSpec(
+        "app.api.coordinator_config_routes",
+        description="Coordinator quick prompts runtime read",
+        owner="core",
+    ),
+    RouterSpec(
+        "app.api.coordinator_config_routes",
+        attr="admin_router",
+        description="Coordinator quick prompts admin CRUD",
         owner="core",
     ),
     RouterSpec(
@@ -39,7 +51,7 @@ ROUTER_REGISTRY = [
     RouterSpec("app.api.agent", description="ReAct Agent API"),
     RouterSpec("app.api.human_feedback_routes", description="Agent human feedback"),
     RouterSpec("app.api.routes", prefix="/api", description="Basic API routes"),
-    RouterSpec("app.api.query_dashboard_routes", prefix="/api", description="Query dashboard API"),
+    RouterSpec("app.api.query_dashboard_routes", prefix="/api", description="Map data API"),
     RouterSpec("app.api.knowledge_base_routes", prefix="/api", description="Knowledge Base API"),
     RouterSpec("app.api.knowledge_graph_routes", prefix="/api", description="Knowledge Graph API"),
     RouterSpec("app.api.knowledge_scene_routes", prefix="/api", description="Knowledge Scene API"),
@@ -94,12 +106,15 @@ def select_router_specs(
     enabled_modules: frozenset[str],
     *,
     scheduled_tasks_enabled: bool = True,
+    enabled_features: dict[str, bool] | None = None,
 ) -> list[RouterSpec]:
+    enabled_features = enabled_features or {}
     return [
         spec
         for spec in specs
         if spec.owner in enabled_modules
         and (scheduled_tasks_enabled or not spec.requires_scheduled_tasks)
+        and (spec.required_feature is None or enabled_features.get(spec.required_feature, False))
     ]
 
 
@@ -112,6 +127,7 @@ def include_routers(app: FastAPI) -> None:
         ROUTER_REGISTRY,
         context.enabled_modules,
         scheduled_tasks_enabled=context.manifest.scheduled_tasks_enabled,
+        enabled_features=context.manifest.frontend.features,
     ):
         try:
             module = import_module(spec.module)
