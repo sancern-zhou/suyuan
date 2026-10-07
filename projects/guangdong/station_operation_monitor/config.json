@@ -2148,5 +2148,6 @@
   "organization": "广东省生态环境监测中心",
   "roster_provenance": "广东分支9a92e1542现有站点映射：候选名单，待核实现行在运范围",
   "unrecoverable_confirmations": [],
-  "template_path": "projects/guangdong/station_operation_monitor/template.docx"
+  "template_path": "projects/guangdong/station_operation_monitor/template.docx",
+  "template_sha256": "1edae132549c31332f6cc472561c461ffa45ae9049bc1f81f08a0c82a4ddc6db"
 }

@@ -11,7 +11,7 @@
   "hour": 10,
   "minute": 30,
   "enabled": true,
-  "prompt": "每天北京时间10:30开始执行广东国控和省控站点运行监控日报。\n1. 调用 station_operation_daily(action=\"report\")，由工具刷新原始小时数据、保存快照并确定性计算昨日10:00至今日10:00的24个小时结束标签。\n2. 使用工具的全量计算结果和已生成Word；不重新依据展示样本、城市聚合数据或语言模型主观判断离线、恢复和回补。\n3. 连续缺数超过4小时纳入日报；前日及更早仍未恢复、待回补的事件持续跟进，分别说明最新数据返回情况和历史回补情况。\n4. 国控回补以已配置来源中任一来源完整补齐缺失时段六参数为已回补；当前独立发布源尚未接入，必须保留单源说明。省控区分已回补、待回补、无法回补；无法回补必须有已提供的核实原因和证据。\n5. 查询失败、无记录候选站点、质量标记含义及设备离线原因不作猜测；保留工具给出的数据来源、在运名单待核实和历史快照覆盖限制。\n6. report_ready=false时交付明确标注待核实的Word，说明取数异常；不得声称所有站点正常。工具失败时报告失败及原因，不生成或编造日报内容。\n7. 工具已声明Word资源，直接交付该资源并简述异常数量与跟进事项，遵照示例的正文及国控、省控附表结构。不对外发送，不调用子Agent。",
+  "prompt": "执行已绑定的 station-operation-daily Skill，调用 station_operation_daily(action=\"report\") 完成本日数据生成和原模板 Word 交付。必须检查 report_ready 及 format_validation_path；保留来源限制与历史未结跟进。工具失败不得编造日报。",
   "timeout_seconds": 1800,
   "created_by": "system",
   "owner_user_id": "system",
@@ -26,5 +26,6 @@
   },
   "history_learning": {
     "enabled": false
-  }
+  },
+  "skill_id": "station-operation-daily"
 }
