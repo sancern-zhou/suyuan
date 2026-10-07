@@ -349,6 +349,7 @@ class ToolExecutor:
                     publication.catalog_version for publication in publications
                 ),
                 "resource_ids": [stored.resource_id for stored in stored_resources],
+                "resource_group_ids": sorted({stored.group_id for stored in stored_resources}),
                 "rejected": rejected,
             }
 

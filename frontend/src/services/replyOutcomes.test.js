@@ -20,3 +20,7 @@ test('referenced chart hides its whole group and unreferenced chart is folded', 
 test('hides data and intermediate files', () => {
   assert.equal(replyOutcomes(message, [message], [resource('a','a','json'), { ...resource('b','b','csv'), kind: 'data' }]).files.length, 0)
 })
+test('updated report versions retain the owning reply through stable group IDs', () => {
+  const final = { ...message, data: { resource_group_ids: ['report'] } }
+  assert.equal(replyOutcomes(final, [final], [resource('new','report','docx','resource-edit')]).files.length, 1)
+})

@@ -43,6 +43,7 @@ class ResourceEventResult:
     changed_resource_ids: list[str] = field(default_factory=list)
     rejected: list[dict[str, str]] = field(default_factory=list)
     focus_resource_id: str | None = None
+    changed_group_ids: list[str] = field(default_factory=list)
 
     def changed_event(self, session_id: str, run_id: str) -> dict[str, Any]:
         data = {
@@ -50,6 +51,7 @@ class ResourceEventResult:
             "run_id": run_id,
             "resource_version": self.catalog_version,
             "changed_resource_ids": self.changed_resource_ids,
+            "resource_group_ids": self.changed_group_ids,
             **({"rejected": self.rejected} if self.rejected else {}),
         }
         if self.focus_resource_id:
@@ -109,6 +111,7 @@ async def persist_tool_result_resources(
         return ResourceEventResult(
             catalog_version=int(tracking.get("version") or 0),
             changed_resource_ids=resource_ids,
+            changed_group_ids=list(tracking.get("resource_group_ids") or []),
             rejected=list(tracking.get("rejected") or []),
             focus_resource_id=resource_ids[0] if focus_requested and resource_ids else None,
         )
@@ -150,6 +153,7 @@ async def persist_tool_result_resources(
     return ResourceEventResult(
         catalog_version=max(item.catalog_version for item in published),
         changed_resource_ids=[resource.resource_id for resource in changed_resources],
+        changed_group_ids=sorted({resource.group_id for resource in changed_resources}),
         rejected=rejected,
         focus_resource_id=(
             focus_resource.resource_id
