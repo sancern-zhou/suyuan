@@ -523,7 +523,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import MarkdownIt from 'markdown-it'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
 import ScheduledTaskResultsView from './ScheduledTaskResultsView.vue'
@@ -535,7 +535,7 @@ import {
 } from './scheduledTaskForm.js'
 
 // Props
-defineProps({
+const props = defineProps({
   tasks: {
     type: Array,
     default: () => []
@@ -572,6 +572,16 @@ const formError = ref('')
 const selectedHistoryTask = ref(null)
 const resultsViewRef = ref(null)
 const resultsRefreshing = ref(false)
+
+watch(() => props.tasks, (tasks) => {
+  const current = selectedHistoryTask.value
+  if (!current) return
+  const exists = (Array.isArray(tasks) ? tasks : []).some(task => task?.task_id === current.task_id)
+  if (!exists) {
+    selectedHistoryTask.value = null
+    resultsViewRef.value = null
+  }
+})
 
 const eventTypes = computed(() => scheduledTasksStore.eventTypes)
 const socialUsers = computed(() => selectableSocialUsers(scheduledTasksStore.socialUsers))

@@ -83,6 +83,19 @@ async def run_startup(app: FastAPI) -> None:
                 "database_dependent_services_skipped",
                 services=["knowledge_base_processing_queue"],
             )
+        try:
+            from app.project_config.loader import load_project_context
+            from config.settings import settings as app_settings
+
+            if load_project_context(app_settings.project_id).manifest.scheduled_tasks_enabled:
+                from app.scheduled_tasks import init_service
+
+                init_service(recover_interrupted=False)
+        except Exception as e:
+            logger.warning(
+                "scheduled_task_service_init_skipped_for_web_role",
+                error=str(e),
+            )
         logger.info(
             "background_services_skipped_for_web_role",
             app_role=app_role,
