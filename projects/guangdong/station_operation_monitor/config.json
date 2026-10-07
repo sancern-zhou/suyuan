@@ -1,0 +1,2152 @@
+{
+  "stations": [
+    {
+      "code": "1084A",
+      "name": "东城主山（十三五）",
+      "city": "东莞",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1085A",
+      "name": "南城元岭（十三五）",
+      "city": "东莞",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1086A",
+      "name": "莞城梨川",
+      "city": "东莞",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1087A",
+      "name": "东城石井",
+      "city": "东莞",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1088A",
+      "name": "南城西平",
+      "city": "东莞",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1438A",
+      "name": "东莞常平",
+      "city": "东莞",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4573A",
+      "name": "万江金泰",
+      "city": "东莞",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4634A",
+      "name": "南城元岭",
+      "city": "东莞",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4639A",
+      "name": "东城主山",
+      "city": "东莞",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "9162A",
+      "name": "教育路1号",
+      "city": "东莞",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "9193A",
+      "name": "长怡路1号",
+      "city": "东莞",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "9194A",
+      "name": "裕兴路",
+      "city": "东莞",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1089A",
+      "name": "华柏园",
+      "city": "中山",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1090A",
+      "name": "张溪",
+      "city": "中山",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1091A",
+      "name": "紫马岭",
+      "city": "中山",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4567A",
+      "name": "中山南区",
+      "city": "中山",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1101A",
+      "name": "文笔（十三五）",
+      "city": "云浮",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1102A",
+      "name": "牧羊",
+      "city": "云浮",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4582A",
+      "name": "文笔",
+      "city": "云浮",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1020A",
+      "name": "南海子站",
+      "city": "佛山",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1038A",
+      "name": "湾梁",
+      "city": "佛山",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1039A",
+      "name": "华材职中",
+      "city": "佛山",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1040A",
+      "name": "南海气象局",
+      "city": "佛山",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1041A",
+      "name": "顺德苏岗",
+      "city": "佛山",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1042A",
+      "name": "容桂街道办（十三五）",
+      "city": "佛山",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1043A",
+      "name": "高明孔堂",
+      "city": "佛山",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1044A",
+      "name": "三水监测站",
+      "city": "佛山",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1045A",
+      "name": "三水云东海",
+      "city": "佛山",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4574A",
+      "name": "容桂街道办",
+      "city": "佛山",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1001A",
+      "name": "广雅中学",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1002A",
+      "name": "市五中",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1004A",
+      "name": "广东商学院",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1005A",
+      "name": "市八十六中",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1006A",
+      "name": "番禺中学",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1007A",
+      "name": "花都师范",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1008A",
+      "name": "市监测站",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1009A",
+      "name": "九龙镇镇龙",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1010A",
+      "name": "麓湖",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1145A",
+      "name": "体育西",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1333A",
+      "name": "白云嘉禾",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1418A",
+      "name": "白云竹料",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1419A",
+      "name": "从化良口",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1420A",
+      "name": "从化街口",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1421A",
+      "name": "番禺大学城",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1423A",
+      "name": "花都梯面",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1426A",
+      "name": "南沙黄阁",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1429A",
+      "name": "增城荔城",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4561A",
+      "name": "黄埔科学城",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4564A",
+      "name": "南沙街",
+      "city": "广州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1064A",
+      "name": "河南岸金山湖子站",
+      "city": "惠州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1065A",
+      "name": "下埔横江三路子站",
+      "city": "惠州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1066A",
+      "name": "江北云山西路子站",
+      "city": "惠州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1067A",
+      "name": "惠阳区承修路船湖子站",
+      "city": "惠州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1068A",
+      "name": "大亚湾管委会子站",
+      "city": "惠州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4569A",
+      "name": "惠阳秋长",
+      "city": "惠州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1096A",
+      "name": "新兴",
+      "city": "揭阳",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1097A",
+      "name": "西马",
+      "city": "揭阳",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1098A",
+      "name": "东兴",
+      "city": "揭阳",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1099A",
+      "name": "渔湖",
+      "city": "揭阳",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1069A",
+      "name": "梅江月梅",
+      "city": "梅州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1070A",
+      "name": "梅县新城",
+      "city": "梅州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1071A",
+      "name": "环境监控中心",
+      "city": "梅州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4565A",
+      "name": "梅龙",
+      "city": "梅州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1032A",
+      "name": "金平子站",
+      "city": "汕头",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1033A",
+      "name": "龙湖子站",
+      "city": "汕头",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1034A",
+      "name": "濠江子站",
+      "city": "汕头",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1035A",
+      "name": "澄海子站",
+      "city": "汕头",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1036A",
+      "name": "潮阳子站",
+      "city": "汕头",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1037A",
+      "name": "潮南子站（十三五）",
+      "city": "汕头",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4562A",
+      "name": "潮南峡山",
+      "city": "汕头",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4571A",
+      "name": "潮南子站",
+      "city": "汕头",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1072A",
+      "name": "市环保局",
+      "city": "汕尾",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1073A",
+      "name": "市政府",
+      "city": "汕尾",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1074A",
+      "name": "新城中学",
+      "city": "汕尾",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1049A",
+      "name": "东湖",
+      "city": "江门",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1103A",
+      "name": "北街",
+      "city": "江门",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1104A",
+      "name": "西区",
+      "city": "江门",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1105A",
+      "name": "圭峰西",
+      "city": "江门",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1455A",
+      "name": "江海富民",
+      "city": "江门",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1459A",
+      "name": "新会银湖",
+      "city": "江门",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1076A",
+      "name": "东埔",
+      "city": "河源",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1077A",
+      "name": "老城",
+      "city": "河源",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1017A",
+      "name": "通心岭子站",
+      "city": "深圳",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1018A",
+      "name": "洪湖",
+      "city": "深圳",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1019A",
+      "name": "华侨城",
+      "city": "深圳",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1021A",
+      "name": "盐田",
+      "city": "深圳",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1022A",
+      "name": "龙岗",
+      "city": "深圳",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1023A",
+      "name": "西乡（十三五）",
+      "city": "深圳",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1024A",
+      "name": "南澳",
+      "city": "深圳",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1025A",
+      "name": "葵涌",
+      "city": "深圳",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1026A",
+      "name": "梅沙",
+      "city": "深圳",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1027A",
+      "name": "观澜",
+      "city": "深圳",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4560A",
+      "name": "坪山",
+      "city": "深圳",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4575A",
+      "name": "西乡",
+      "city": "深圳",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1082A",
+      "name": "凤城街办",
+      "city": "清远",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1278A",
+      "name": "技师学院",
+      "city": "清远",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1462A",
+      "name": "清新太和",
+      "city": "清远",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4566A",
+      "name": "清城东城",
+      "city": "清远",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1050A",
+      "name": "湛江影剧院",
+      "city": "湛江",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1051A",
+      "name": "市环境监测站",
+      "city": "湛江",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1052A",
+      "name": "环保局宿舍",
+      "city": "湛江",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1053A",
+      "name": "霞山游泳场",
+      "city": "湛江",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1054A",
+      "name": "麻章区环保局",
+      "city": "湛江",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1055A",
+      "name": "坡头区环保局",
+      "city": "湛江",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1262A",
+      "name": "市政府",
+      "city": "潮州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "9156A",
+      "name": "档案局",
+      "city": "潮州",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1028A",
+      "name": "吉大",
+      "city": "珠海",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1029A",
+      "name": "前山",
+      "city": "珠海",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1030A",
+      "name": "唐家",
+      "city": "珠海",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1031A",
+      "name": "斗门",
+      "city": "珠海",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1546A",
+      "name": "金湾",
+      "city": "珠海",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1060A",
+      "name": "睦岗子站",
+      "city": "肇庆",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1061A",
+      "name": "城中子站",
+      "city": "肇庆",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1062A",
+      "name": "坑口子站",
+      "city": "肇庆",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1503A",
+      "name": "鼎湖凤凰",
+      "city": "肇庆",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1504A",
+      "name": "高要湖西",
+      "city": "肇庆",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1056A",
+      "name": "电白南海",
+      "city": "茂名",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1057A",
+      "name": "茂石化七小",
+      "city": "茂名",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1058A",
+      "name": "健康路",
+      "city": "茂名",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1059A",
+      "name": "高岭",
+      "city": "茂名",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1498A",
+      "name": "电白水东",
+      "city": "茂名",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1080A",
+      "name": "马南垌",
+      "city": "阳江",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1491A",
+      "name": "阳东陶然",
+      "city": "阳江",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4570A",
+      "name": "两阳中学",
+      "city": "阳江",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1012A",
+      "name": "市八中",
+      "city": "韶关",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1013A",
+      "name": "碧湖山庄（十三五）",
+      "city": "韶关",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1014A",
+      "name": "园林处",
+      "city": "韶关",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1015A",
+      "name": "韶关学院",
+      "city": "韶关",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1016A",
+      "name": "曲江监测站",
+      "city": "韶关",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4572A",
+      "name": "碧湖山庄",
+      "city": "韶关",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "9172A",
+      "name": "韶关学院",
+      "city": "韶关",
+      "type": "国控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1263A",
+      "name": "豪岗小学",
+      "city": "东莞",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1439A",
+      "name": "东莞麻涌",
+      "city": "东莞",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1440A",
+      "name": "东莞松山湖",
+      "city": "东莞",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1441A",
+      "name": "东莞塘厦",
+      "city": "东莞",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1092A",
+      "name": "长江旅游区",
+      "city": "中山",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1451A",
+      "name": "中山民众",
+      "city": "中山",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1452A",
+      "name": "中山南朗",
+      "city": "中山",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1453A",
+      "name": "中山三乡",
+      "city": "中山",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1454A",
+      "name": "中山小榄",
+      "city": "中山",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1100A",
+      "name": "新市府",
+      "city": "云浮",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1252A",
+      "name": "罗定罗光",
+      "city": "云浮",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1505A",
+      "name": "罗定兴华",
+      "city": "云浮",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1506A",
+      "name": "罗定沿江",
+      "city": "云浮",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1507A",
+      "name": "新兴南外",
+      "city": "云浮",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1508A",
+      "name": "郁南城西",
+      "city": "云浮",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1509A",
+      "name": "云安都杨",
+      "city": "云浮",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1446A",
+      "name": "高明杨和",
+      "city": "佛山",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1448A",
+      "name": "三水南山",
+      "city": "佛山",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1449A",
+      "name": "顺德伦教",
+      "city": "佛山",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1450A",
+      "name": "佛山新城",
+      "city": "佛山",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "9049A",
+      "name": "南海西樵",
+      "city": "佛山",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1011A",
+      "name": "帽峰山森林公园",
+      "city": "广州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1106A",
+      "name": "从化天湖",
+      "city": "广州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1107A",
+      "name": "南沙科大",
+      "city": "广州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1111A",
+      "name": "南沙大稳",
+      "city": "广州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1114A",
+      "name": "花都竹洞",
+      "city": "广州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1422A",
+      "name": "海珠湖",
+      "city": "广州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1424A",
+      "name": "黄埔永和",
+      "city": "广州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1425A",
+      "name": "荔湾芳村",
+      "city": "广州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1427A",
+      "name": "天河五山",
+      "city": "广州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1428A",
+      "name": "增城派潭",
+      "city": "广州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1517A",
+      "name": "南沙科大",
+      "city": "广州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1110A",
+      "name": "惠阳金果湾",
+      "city": "惠州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1113A",
+      "name": "博罗石下",
+      "city": "惠州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1476A",
+      "name": "博罗罗阳",
+      "city": "惠州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1478A",
+      "name": "惠东莲花地",
+      "city": "惠州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1479A",
+      "name": "龙门县龙城",
+      "city": "惠州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1480A",
+      "name": "仲恺陈江",
+      "city": "惠州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1484A",
+      "name": "惠来惠城",
+      "city": "惠州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1483A",
+      "name": "产业园龙尾",
+      "city": "揭阳",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1486A",
+      "name": "揭西河婆",
+      "city": "揭阳",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1487A",
+      "name": "普宁城北",
+      "city": "揭阳",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1488A",
+      "name": "普宁城东",
+      "city": "揭阳",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1260A",
+      "name": "丰顺八乡山",
+      "city": "梅州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1396A",
+      "name": "大埔湖寮",
+      "city": "梅州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1416A",
+      "name": "丰顺汤坑",
+      "city": "梅州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1472A",
+      "name": "蕉岭镇山",
+      "city": "梅州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1473A",
+      "name": "平远大道",
+      "city": "梅州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1474A",
+      "name": "五华水寨",
+      "city": "梅州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1475A",
+      "name": "兴宁南坛",
+      "city": "梅州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1127A",
+      "name": "南澳县子站",
+      "city": "汕头",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1464A",
+      "name": "南澳后宅",
+      "city": "汕头",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1393A",
+      "name": "陆河河田",
+      "city": "汕尾",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1406A",
+      "name": "陆丰迎仙桥",
+      "city": "汕尾",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1407A",
+      "name": "海丰牛黄山",
+      "city": "汕尾",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1112A",
+      "name": "鹤山双桥",
+      "city": "江门",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1116A",
+      "name": "鹤山花果山",
+      "city": "江门",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1117A",
+      "name": "台山端芬",
+      "city": "江门",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1348A",
+      "name": "恩平东华",
+      "city": "江门",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1456A",
+      "name": "江海中沙",
+      "city": "江门",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1457A",
+      "name": "开平卫民",
+      "city": "江门",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1458A",
+      "name": "台山上朗",
+      "city": "江门",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1075A",
+      "name": "源西",
+      "city": "河源",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1465A",
+      "name": "东源东江",
+      "city": "河源",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1466A",
+      "name": "和平新华",
+      "city": "河源",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1467A",
+      "name": "连平连中",
+      "city": "河源",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1468A",
+      "name": "连平东园",
+      "city": "河源",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1469A",
+      "name": "龙川同德",
+      "city": "河源",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1470A",
+      "name": "龙川老隆",
+      "city": "河源",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1471A",
+      "name": "紫金紫城",
+      "city": "河源",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "9102A",
+      "name": "和平南堤",
+      "city": "河源",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "9121A",
+      "name": "埔前",
+      "city": "河源",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "9122A",
+      "name": "永安",
+      "city": "河源",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1301A",
+      "name": "鹤山南山",
+      "city": "深圳",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1430A",
+      "name": "宝安福永",
+      "city": "深圳",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1434A",
+      "name": "坪山田心山",
+      "city": "深圳",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4554A",
+      "name": "龙华民治",
+      "city": "深圳",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4556A",
+      "name": "福田莲花",
+      "city": "深圳",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4557A",
+      "name": "龙岗横岗",
+      "city": "深圳",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "9099A",
+      "name": "新湖街道",
+      "city": "深圳",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1081A",
+      "name": "环保大楼",
+      "city": "清远",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1398A",
+      "name": "阳山城南",
+      "city": "清远",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1399A",
+      "name": "阳山城北",
+      "city": "清远",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1400A",
+      "name": "连山金山",
+      "city": "清远",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1401A",
+      "name": "连山广德",
+      "city": "清远",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1402A",
+      "name": "连南城西",
+      "city": "清远",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1403A",
+      "name": "连南城东",
+      "city": "清远",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1404A",
+      "name": "连州城西",
+      "city": "清远",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1405A",
+      "name": "连州城东",
+      "city": "清远",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1460A",
+      "name": "佛冈沿江",
+      "city": "清远",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1461A",
+      "name": "清城银盏",
+      "city": "清远",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1463A",
+      "name": "英德城南",
+      "city": "清远",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "4568A",
+      "name": "清新太和",
+      "city": "清远",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1253A",
+      "name": "徐闻海安",
+      "city": "湛江",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1493A",
+      "name": "雷州朝南",
+      "city": "湛江",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1494A",
+      "name": "廉江新兴",
+      "city": "湛江",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1495A",
+      "name": "遂溪建设",
+      "city": "湛江",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1496A",
+      "name": "吴川梅岭",
+      "city": "湛江",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1497A",
+      "name": "徐闻东方路",
+      "city": "湛江",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "9134A",
+      "name": "海大",
+      "city": "湛江",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "9135A",
+      "name": "东南子站",
+      "city": "湛江",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "9136A",
+      "name": "东山子站",
+      "city": "湛江",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "9150A",
+      "name": "石头村",
+      "city": "湛江",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1093A",
+      "name": "西园路",
+      "city": "潮州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1481A",
+      "name": "潮安庵北",
+      "city": "潮州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1482A",
+      "name": "饶平城北",
+      "city": "潮州",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1280A",
+      "name": "高新知青",
+      "city": "珠海",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1442A",
+      "name": "金湾红旗",
+      "city": "珠海",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1443A",
+      "name": "高栏南水",
+      "city": "珠海",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1063A",
+      "name": "七星岩子站",
+      "city": "肇庆",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1272A",
+      "name": "广宁庄前西",
+      "city": "肇庆",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1279A",
+      "name": "四会城中",
+      "city": "肇庆",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1284A",
+      "name": "封开府前",
+      "city": "肇庆",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1288A",
+      "name": "德庆香山",
+      "city": "肇庆",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1346A",
+      "name": "怀集文昌",
+      "city": "肇庆",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1347A",
+      "name": "怀集三江口",
+      "city": "肇庆",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1377A",
+      "name": "信宜新尚",
+      "city": "茂名",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1499A",
+      "name": "高州教育",
+      "city": "茂名",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1500A",
+      "name": "高州红荔",
+      "city": "茂名",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1501A",
+      "name": "化州博龙",
+      "city": "茂名",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1502A",
+      "name": "信宜六谢",
+      "city": "茂名",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1078A",
+      "name": "鸳鸯湖",
+      "city": "阳江",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1489A",
+      "name": "海陵闸坡",
+      "city": "阳江",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1490A",
+      "name": "阳春城东",
+      "city": "阳江",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1492A",
+      "name": "阳西城区",
+      "city": "阳江",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1394A",
+      "name": "新丰丰城",
+      "city": "韶关",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1395A",
+      "name": "翁源龙仙",
+      "city": "韶关",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1408A",
+      "name": "南雄雄州",
+      "city": "韶关",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1409A",
+      "name": "仁化丹霞",
+      "city": "韶关",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1410A",
+      "name": "乳源乳城",
+      "city": "韶关",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1411A",
+      "name": "乐昌乐城",
+      "city": "韶关",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1435A",
+      "name": "始兴丹凤",
+      "city": "韶关",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1436A",
+      "name": "武江白芒",
+      "city": "韶关",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    },
+    {
+      "code": "1437A",
+      "name": "浈江十里亭",
+      "city": "韶关",
+      "type": "省控",
+      "active": false,
+      "confirmed": false
+    }
+  ],
+  "sources": [
+    {
+      "name": "省控监测小时接口",
+      "base_url": "http://113.108.142.147:20161",
+      "token_endpoint": "/api/airprovinceproduct/AirCityBaseCommon/GetExternalApiToken",
+      "hour_endpoint": "/api/airprovinceproduct/airdata/DATStationHour/GetDATStationHourDisplayListAsync",
+      "username_env": "GD_SUNCERE_API_USERNAME",
+      "password_env": "GD_SUNCERE_API_PASSWORD",
+      "headers": {
+        "SysCode": "SunAirProvince"
+      },
+      "data_type": 0,
+      "ns_type": 2
+    }
+  ],
+  "national_sources": [
+    "省控监测小时接口"
+  ],
+  "provincial_source": "省控监测小时接口",
+  "collection_cron": "25 * * * *",
+  "arrival_grace_minutes": 20,
+  "bootstrap_hours": 48,
+  "lookback_hours": 6,
+  "report_title": "广东省空气质量国控和省控站点运行监控日报",
+  "organization": "广东省生态环境监测中心",
+  "roster_provenance": "广东分支9a92e1542现有站点映射：候选名单，待核实现行在运范围",
+  "unrecoverable_confirmations": [],
+  "template_path": "projects/guangdong/station_operation_monitor/template.docx"
+}
