@@ -649,6 +649,13 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="create_business_chart", error=str(e))
 
+    try:
+        from app.tools.analysis.station_operation_daily import StationOperationDailyTool
+        registry.register(StationOperationDailyTool(), priority=298)
+        logger.info("tool_loaded", tool="station_operation_daily")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="station_operation_daily", error=str(e))
+
     # ========================================
     # Utility Tools（实用工具）
     # ========================================
