@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import json
 import mimetypes
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -1248,12 +1249,41 @@ async def delete_app_session(
     return {"session_id": session_id, "deleted": bool(deleted)}
 
 
+_SCHEDULED_SESSION_RE = re.compile(r"^scheduled_task_(?P<task_id>.+)_\d{8}_\d{6}_[0-9a-fA-F]{8}$")
+
+
+def _scheduled_session_task_id(session_id: str) -> str | None:
+    match = _SCHEDULED_SESSION_RE.match(session_id)
+    return match.group("task_id") if match else None
+
+
+async def _authorize_scheduled_session_row(catalog, session_id: str, user, exc: HTTPException):
+    """定时任务会话在目录中的 owner 是 system，改按任务可见性授权。"""
+    if exc.status_code != 404 or not session_id.startswith("scheduled_task_"):
+        raise exc
+    from app.api.scheduled_task_routes import get_scheduled_task_service, _require_task_view
+
+    task_id = _scheduled_session_task_id(session_id)
+    task = get_scheduled_task_service().get_task(task_id) if task_id else None
+    if task is None:
+        raise HTTPException(status_code=404, detail="session_not_found") from exc
+    _require_task_view(task, user)
+    row = await catalog.find(session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="session_not_found") from exc
+    return row
+
+
 @router.get("/sessions/{session_id}/messages")
 async def app_session_messages(session_id: str, identity: AppIdentity = Depends(require_app_identity)) -> dict:
     """Restore the latest messages for an App-owned conversation."""
     catalog = get_conversation_catalog()
-    row = await catalog.require_read(session_id, identity.as_current_user())
-    if row.source != ConversationSource.SOCIAL:
+    user = identity.as_current_user()
+    try:
+        row = await catalog.require_read(session_id, user)
+    except HTTPException as exc:
+        row = await _authorize_scheduled_session_row(catalog, session_id, user, exc)
+    if row.source not in (ConversationSource.SOCIAL, ConversationSource.WEB):
         raise HTTPException(status_code=404, detail="session_not_found")
     from app.conversations.adapters import get_conversation_adapters
 
@@ -1262,7 +1292,13 @@ async def app_session_messages(session_id: str, identity: AppIdentity = Depends(
     )
     if not restored:
         return {"session_id": session_id, "messages": []}
-    payload = restored.get("normalized_session") or {}
+    if row.source == ConversationSource.WEB:
+        session = restored.get("session")
+        if session is None:
+            return {"session_id": session_id, "messages": []}
+        payload = session.model_dump(mode="json")
+    else:
+        payload = restored.get("normalized_session") or {}
     history = list(payload.get("conversation_history") or [])
     # Resource outputs are stored in the session resource catalog separately
     # from the text transcript. Project them onto the latest assistant turn so
