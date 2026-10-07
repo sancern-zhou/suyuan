@@ -30,3 +30,12 @@ def test_report_prompt_uses_python_as_primary_chart_tool():
     assert "仅联合阅读确有必要或用户明确要求时合图" in prompt
     assert "按报告正文插入尺寸设计画布、比例和字号" in prompt
     assert "仅在 `create_business_chart` 无法覆盖时" not in prompt
+
+
+def test_report_prompt_keeps_hourly_data_queries_conservative():
+    prompt = build_report_prompt(["run_agent_workflow"])
+
+    assert "小时数据保守取数" in prompt
+    assert "最近一周以内的小时数据" in prompt
+    assert "不要抓取完整周期的小时数据" in prompt
+    assert "重点污染日" in prompt

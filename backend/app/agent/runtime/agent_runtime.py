@@ -106,8 +106,10 @@ class AgentRuntime:
         await run_ownership_registry.register(state.session_id, state.run_id)
         await steering_registry.register(state.session_id, state.run_id, state.mode)
         try:
-            async for event in self._run_locked(state, initial_messages):
-                yield self._with_run_identity(state, event)
+            from app.services.model_trajectory import trajectory_scope
+            with trajectory_scope(state.session_id, run_id=state.run_id):
+                async for event in self._run_locked(state, initial_messages):
+                    yield self._with_run_identity(state, event)
         finally:
             await steering_registry.unregister(state.session_id, state.run_id)
 
@@ -304,6 +306,17 @@ class AgentRuntime:
                 return
             async for event in self._complete_response(state, planner_result, action.get("answer", "")):
                 yield event
+            return
+
+        if action_type == "INTERNAL_COMPACTION":
+            logger.warning(
+                "internal_compaction_response_suppressed",
+                iteration=state.iteration,
+                reason=action.get("reason"),
+            )
+            # The compact result is runtime state, not a user response. Returning
+            # lets the outer loop issue the next planning request without emitting
+            # a completion or persisting the leaked summary.
             return
 
         if action_type in ("TOOL_CALL", "TOOL_CALLS"):
@@ -891,6 +904,23 @@ class AgentRuntime:
             mode=state.mode,
             allowed_tool_names=allowed_tool_names,
         )
+        # 动态注入的工具（如 call_sub_agent 按 result_schema 注入的 submit_result）
+        # 只存在于本 executor 的注册表，不在 global_tool_registry，
+        # get_tool_schemas 拿不到其 schema；这里从注册表补齐，否则模型
+        # 函数调用列表里看不到交付工具，永远无法结构化交付。
+        present = {
+            (schema.get("name") or schema.get("function", {}).get("name"))
+            for schema in tool_schemas
+        }
+        executor_registry = getattr(self.executor, "tool_registry", None) or {}
+        for name in allowed_tool_names or []:
+            if not name or name in present or name not in executor_registry:
+                continue
+            dynamic_tool = executor_registry[name]
+            getter = getattr(dynamic_tool, "get_function_schema", None)
+            schema = getter() if callable(getter) else getattr(dynamic_tool, "function_schema", None)
+            if isinstance(schema, dict) and schema.get("name"):
+                tool_schemas.append(schema)
         suppressed_tool_names = self._tool_names_to_suppress(state)
         state.suppress_tool_names_current_turn = suppressed_tool_names
         if suppressed_tool_names:

@@ -28,7 +28,9 @@ from app.agent.session.workspace_routing import (
 )
 from app.agent.selection_context import load_skill_selection
 from app.agent.prompts.tool_registry import get_tools_by_mode
-from app.agent.workflow.capabilities import build_child_capability_policy
+from app.agent.workflow.capabilities import MEMORY_EDIT_TOOL_NAMES, build_child_capability_policy
+from app.agent.workflow.delegation import LEAF_MODES, delegation_error
+
 from app.agent.workflow.resource_handoff import (
     import_workflow_handles,
     result_resource_declarations,
@@ -41,6 +43,7 @@ from app.agent.workflow.target_mode_contract import (
 from app.agent.workflow.protocol import (
     build_result_envelope,
     extract_structured_result,
+    strip_embedded_json_blocks,
     validate_result_schema,
 )
 from app.agent.workflow.runtime import WorkflowRuntime
@@ -61,16 +64,21 @@ session_manager = get_session_manager()
 
 # ⚠️ 支持多种模式：assistant, query, report, social, chart, expert, ops
 AgentMode = Literal[
-    "assistant", "query", "query_monitoring", "query_forecast", "report", "social", "chart", "expert",
+    "assistant", "query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "report", "social", "chart", "expert",
+
     "expert_meteorology", "expert_analysis", "ops", "board", "ppt", "knowledge",
 ]
 
 _DEFAULT_CHILD_MAX_ITERATIONS = {
-    "expert_meteorology": 15,
-    "expert_analysis": 20,
-    "expert": 30,
-    # Fixed query workflows are runtime-bounded to four phases/turns.
+    # 计算密集型专家任务（聚合、分箱、相关性）在 15-20 轮内常常收不完，
+    # 适度放宽；工作流重试还会在此基础上自动扩容（见 coordinator）。
+    "expert_meteorology": 20,
+    "expert_analysis": 28,
+    "expert": 40,
+    # 固定问数工作流由运行时限制为最多四轮。
     "query_monitoring": 4,
+    "query_monitoring_station": 4,
+    "query_monitoring_city": 4,
     "query_forecast": 4,
 }
 
@@ -352,6 +360,7 @@ class CallSubAgentTool(LLMTool):
         profile: Optional[str] = None,
         run_in_background: bool = False,
         _upstream_handles: Optional[List[Dict[str, Any]]] = None,
+        _input_contracts: Optional[List[Dict[str, Any]]] = None,
         _on_session_started: Optional[Callable[[str], None]] = None,
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
@@ -434,13 +443,23 @@ class CallSubAgentTool(LLMTool):
         try:
             # 获取父Agent模式
             parent_mode = self._get_parent_mode(context)
+            boundary_error = delegation_error(parent_mode, [str(target_mode)])
+            if boundary_error:
+                return {
+                    "status": "failed", "success": False, "result": boundary_error,
+                    "data": {}, "metadata": {"generator": "call_sub_agent"},
+                    "summary": boundary_error,
+                }
+            # 报告 Agent 不再使用综合问数子代理：监测历史走 query_monitoring，
+            # 气象与预报走 query_forecast（schema 枚举为全局共享，此处按父模式守卫）。
+
             if parent_mode == "report" and target_mode == "query":
                 return {
                     "status": "failed",
                     "success": False,
                     "result": (
-                        "报告 Agent 不调用综合 query 子代理：监测历史数据用 "
-                        "query_monitoring，气象与预报数据用 query_forecast。"
+                        "报告 Agent 不再调用综合问数（query）子代理："
+                        "监测历史数据用 query_monitoring，气象与预报数据用 query_forecast。"
                     ),
                     "data": {},
                     "metadata": {
@@ -746,17 +765,24 @@ class CallSubAgentTool(LLMTool):
             if selected_child_skill:
                 mode_tool_names.update(selected_child_skill.required_tools or [])
             capability_policy = build_child_capability_policy(
-                allowed_tools=(allowed_tool_names if allowed_tool_names is not None else mode_tool_names),
+                target_mode=target_mode,
+                allowed_tools=(
+                    mode_tool_names & set(allowed_tool_names)
+                    if target_mode in LEAF_MODES and allowed_tool_names is not None
+                    else allowed_tool_names if allowed_tool_names is not None else mode_tool_names
+                ),
+
                 denied_tools=merge_denied_tools(agent_profile, denied_tool_names),
                 allow_delegation=(
-                    agent_profile.allow_delegation
+                    target_mode not in LEAF_MODES and agent_profile.allow_delegation
                     if allow_child_delegation is None
-                    else bool(allow_child_delegation and agent_profile.allow_delegation)
+                    else bool(target_mode not in LEAF_MODES and allow_child_delegation and agent_profile.allow_delegation)
                 ),
             )
 
             handoff_resource_service = getattr(tool_executor, "resource_service", None)
             imported_resource_refs: List[Dict[str, Any]] = []
+            resource_contract_warnings: List[Dict[str, Any]] = []
             parent_resource_handles = await self._collect_parent_resource_handles(context)
             upstream_group_ids = {
                 (str(item.get("source_session_id") or ""), str(item.get("group_id") or ""))
@@ -804,6 +830,15 @@ class CallSubAgentTool(LLMTool):
                     },
                 )
 
+            # Validate the imported catalog, not just requested handles. A stale
+            # or missing group must fail before the child starts model calls.
+            if _input_contracts:
+                from app.agent.workflow.resource_contract import assert_resource_contracts, check_resource_contracts
+                assert_resource_contracts(_input_contracts, imported_resource_refs)
+                resource_contract_warnings = [item for item in check_resource_contracts(_input_contracts, imported_resource_refs) if not item["required"]]
+                if resource_contract_warnings:
+                    effective_context = (effective_context or "") + "\n资源导入后发现可选证据缺口：" + json.dumps(resource_contract_warnings, ensure_ascii=False) + "\n仅基于可用证据交付并明确限制，不重新取数。"
+
             # 3. 构建子 Agent 请求：ReActAgent 会自行构建系统提示，因此把任务、
             # 补充上下文和规范化后的工作目录作为本轮用户请求一起传入。
             scheduled_task_context = (
@@ -841,6 +876,21 @@ class CallSubAgentTool(LLMTool):
             child_registry = capability_policy.filter_registry(
                 tool_executor.tool_registry if tool_executor else None
             )
+            # 结构化交付：节点带 result_schema 时注入 submit_result 工具，
+            # 参数结构即 schema（函数调用约束），替代"最终回复输出 JSON"的提示词约定。
+            submit_tool = None
+            if isinstance(result_schema, dict) and result_schema:
+                from app.tools.agent_tools.submit_result_tool import SubmitResultTool
+
+                submit_tool = SubmitResultTool(result_schema)
+                child_registry["submit_result"] = submit_tool
+                child_request_prompt = (
+                    child_request_prompt.rstrip()
+                    + "\n\n## 结果交付协议\n"
+                    + "分析完成后必须调用 `submit_result` 工具提交结构化结果（字段结构见工具定义），"
+                    + "然后用一句话简述结论即可结束。未调用 submit_result 直接结束视为未完成交付，"
+                    + "将触发重试。\n"
+                )
             iteration_limit = _resolve_child_max_iterations(target_mode, max_iterations)
             sub_agent = ReActAgent(
                 max_iterations=iteration_limit,
@@ -850,10 +900,14 @@ class CallSubAgentTool(LLMTool):
 
             # 子Agent必须继承父Agent本次请求已经选定的完整模型优先级链。
             # 先快照再进入新上下文，避免子Agent的 Auto 多模态 profile 重选模型链。
+            # 注意：use_provider_chain 是 @contextmanager，单次使用；修复轮会
+            # 多次进入 with，必须保存参数、每轮新建（复用同一对象会在
+            # _GeneratorContextManager.__enter__ 的 del self.args 处抛
+            # AttributeError: '_GeneratorContextManager' object has no attribute 'args'）。
             parent_llm_service = getattr(llm_planner, "llm_service", None)
             child_planner = getattr(sub_agent, "planner", None)
             child_llm_service = getattr(child_planner, "llm_service", None)
-            model_chain_context = nullcontext()
+            model_chain_context_factory = nullcontext
             if parent_llm_service is not None and child_llm_service is not None:
                 inherited_chain = getattr(tool_executor, "llm_model_chain", None)
                 if inherited_chain:
@@ -862,7 +916,7 @@ class CallSubAgentTool(LLMTool):
                     parent_provider = parent_llm_service.provider
                     parent_model = parent_llm_service.model
                     parent_fallbacks = parent_llm_service.request_fallbacks
-                model_chain_context = child_llm_service.use_provider_chain(
+                model_chain_context_factory = lambda: child_llm_service.use_provider_chain(
                     parent_provider,
                     parent_model,
                     parent_fallbacks,
@@ -887,7 +941,7 @@ class CallSubAgentTool(LLMTool):
             ) -> List[Dict[str, Any]]:
                 turn_events: List[Dict[str, Any]] = []
                 async with child_actor_registry.lease(actor_key):
-                    with model_chain_context:
+                    with model_chain_context_factory():
                         async for event in sub_agent.analyze(
                             user_query=prompt,
                             session_id=session_id if session_id else None,
@@ -907,7 +961,11 @@ class CallSubAgentTool(LLMTool):
                                 else None
                             ),
                             extra_tool_names=(
-                                selected_child_skill.required_tools
+                                [
+                                    name
+                                    for name in (selected_child_skill.required_tools or [])
+                                    if name not in MEMORY_EDIT_TOOL_NAMES
+                                ]
                                 if include_skill and selected_child_skill
                                 else None
                             ),
@@ -934,7 +992,15 @@ class CallSubAgentTool(LLMTool):
             )
 
             # 7. 提取最终结果；结构化协议失败时在同一 child runtime 上做有限修复。
-            final_result = self._extract_final_result(result_events)
+            # 优先取 submit_result 工具提交的信封（结构化交付），文本答案仅作回退。
+            submitted_result = self._extract_submitted_result(result_events)
+            if isinstance(submitted_result, dict):
+                final_result = {
+                    "status": "success",
+                    "answer": json.dumps(submitted_result, ensure_ascii=False),
+                }
+            else:
+                final_result = self._extract_final_result(result_events)
             if workflow_runtime.check_deadline(workflow_run.run_id):
                 final_result = {
                     **final_result,
@@ -960,14 +1026,30 @@ class CallSubAgentTool(LLMTool):
                         "task.result_repair_requested",
                         payload={"repair_index": repair_index + 1, "errors": validation_errors},
                     )
-                    repair_prompt = (
-                        "上一轮结果未通过结构化结果协议校验。请保留已完成的证据和分析，"
-                        "只修复输出格式或缺失字段，并在 ```json 代码块中重新提交完整 JSON。\n"
-                        f"校验错误：{json.dumps(validation_errors, ensure_ascii=False)}\n"
-                        f"结果协议：{json.dumps(result_schema, ensure_ascii=False)}"
-                    )
+                    if submitted_result is not None:
+                        repair_prompt = (
+                            "上一轮提交的 submit_result 未通过结构化结果协议校验。"
+                            "请保留已完成的证据和分析，调用 `submit_result` 重新提交，"
+                            "只修正下列校验错误列出的字段，其余字段保持已提交值。\n"
+                            f"校验错误：{json.dumps(validation_errors, ensure_ascii=False)}\n"
+                            f"结果协议：{json.dumps(result_schema, ensure_ascii=False)}"
+                        )
+                    else:
+                        repair_prompt = (
+                            "任务已执行完毕，但你尚未调用 `submit_result` 提交结构化结果。"
+                            "请基于已完成的证据和分析，立即调用 `submit_result` 提交结果信封，"
+                            "字段结构见工具定义，不要重新执行分析。\n"
+                            f"结果协议：{json.dumps(result_schema, ensure_ascii=False)}"
+                        )
                     result_events.extend(await run_child_turn(repair_prompt))
-                    final_result = self._extract_final_result(result_events)
+                    submitted_result = self._extract_submitted_result(result_events)
+                    if isinstance(submitted_result, dict):
+                        final_result = {
+                            "status": "success",
+                            "answer": json.dumps(submitted_result, ensure_ascii=False),
+                        }
+                    else:
+                        final_result = self._extract_final_result(result_events)
                     structured_result, validation_errors = self._validate_structured_result(
                         final_result.get("answer", ""), result_schema
                     )
@@ -991,6 +1073,8 @@ class CallSubAgentTool(LLMTool):
                 "image_paths": self._extract_image_paths(result_events),  # 本地路径（文件操作）
                 "tool_calls": self._extract_tool_calls(result_events)
             }
+            if resource_contract_warnings:
+                structured_data["resource_contract_warnings"] = resource_contract_warnings
             if handoff_resource_service is None:
                 from app.agent.resources.resource_service import SessionResourceService
 
@@ -1011,7 +1095,9 @@ class CallSubAgentTool(LLMTool):
                     if final_result["status"] == "cancelled"
                     else "failed"
                 ),
-                summary=final_result.get("answer", "")[:1000],
+                # 摘要只留散文：答案里内嵌的 ```json 结构化块已在
+                # structured_result 单独传递，粘贴进摘要是纯重复。
+                summary=strip_embedded_json_blocks(final_result.get("answer", ""))[:1000],
                 outputs=(
                     structured_result
                     if isinstance(structured_result, dict)
@@ -1165,6 +1251,7 @@ class CallSubAgentTool(LLMTool):
             }
 
         except Exception as e:
+            from app.agent.workflow.resource_contract import ResourceContractError
             if workflow_runtime is not None:
                 try:
                     run = workflow_run
@@ -1186,7 +1273,7 @@ class CallSubAgentTool(LLMTool):
                 "status": "failed",
                 "success": False,
                 "result": f"子Agent执行失败：{str(e)}",
-                "data": {},
+                "data": ({"resource_contract_violations": e.violations} if isinstance(e, ResourceContractError) else {}),
                 "metadata": {
                     "schema_version": "v2.0",
                     "generator": "call_sub_agent"
@@ -1361,6 +1448,32 @@ class CallSubAgentTool(LLMTool):
             parent_resource_lines=parent_resource_lines,
             scheduled_task_context=scheduled_task_context,
         )
+
+    def _extract_submitted_result(self, events: list) -> Optional[Dict[str, Any]]:
+        """从事件流提取最近一次 submit_result 工具提交的结构化信封（倒序取最新）。"""
+        for event in reversed(events):
+            if event.get("type") != "tool_call":
+                continue
+            name = (
+                event.get("tool")
+                or event.get("tool_name")
+                or event.get("name")
+            )
+            if name != "submit_result":
+                continue
+            payload = (
+                event.get("args")
+                or event.get("arguments")
+                or event.get("input")
+                or {}
+            )
+            if isinstance(payload, dict):
+                result = payload.get("result")
+                if isinstance(result, dict):
+                    return result
+                if payload:
+                    return payload
+        return None
 
     def _extract_final_result(self, events: list) -> Dict:
         """从事件流中提取最终结果"""
@@ -1621,6 +1734,8 @@ class CallSubAgentTool(LLMTool):
 
     def _get_parent_mode(self, context: Optional[Any]) -> str:
         """从context获取父Agent模式"""
+        if getattr(context, "runtime_mode", None):
+            return context.runtime_mode
         if context and hasattr(context, 'manual_mode'):
             return context.manual_mode
         # 尝试从memory_manager获取

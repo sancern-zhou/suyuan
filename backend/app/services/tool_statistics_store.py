@@ -15,11 +15,13 @@ from app.utils.path_config import get_data_registry, resolve_agent_path
 
 logger = structlog.get_logger()
 
+RECENT_ERRORS_LIMIT = 10
+
 
 class ToolStatisticsStore:
     """Persist tool execution statistics across processes."""
 
-    RECENT_ERRORS_LIMIT = 5
+    MAX_RECENT_ERRORS = RECENT_ERRORS_LIMIT
 
     def __init__(self, base_dir: str | Path | None = None) -> None:
         root = resolve_agent_path(base_dir) if base_dir else get_data_registry()
@@ -41,7 +43,6 @@ class ToolStatisticsStore:
             "avg_execution_time": 0.0,
             "last_execution_at": None,
             "updated_at": None,
-            "last_error_summary": None,
             "recent_errors": [],
         }
 
@@ -97,18 +98,20 @@ class ToolStatisticsStore:
         normalized["success_duration_total"] = float(stored_duration_total or 0.0)
         normalized["last_execution_at"] = stats.get("last_execution_at")
         normalized["updated_at"] = stats.get("updated_at")
-        normalized["last_error_summary"] = stats.get("last_error_summary")
-        stored_recent_errors = stats.get("recent_errors")
-        if isinstance(stored_recent_errors, list):
-            normalized["recent_errors"] = [
-                item for item in stored_recent_errors if isinstance(item, dict)
-            ][-self.RECENT_ERRORS_LIMIT:]
-        else:
-            normalized["recent_errors"] = []
         if normalized["success"] > 0:
             normalized["avg_execution_time"] = normalized["success_duration_total"] / normalized["success"]
         else:
             normalized["avg_execution_time"] = float(stats.get("avg_execution_time", 0.0) or 0.0)
+        raw_recent_errors = stats.get("recent_errors")
+        normalized["recent_errors"] = [
+            {
+                **item,
+                "summary": str(item.get("summary") or item.get("error"))[:180],
+                "error": str(item.get("error") or item.get("summary"))[:200],
+            }
+            for item in (raw_recent_errors if isinstance(raw_recent_errors, list) else [])
+            if isinstance(item, dict) and (item.get("summary") or item.get("error"))
+        ][-RECENT_ERRORS_LIMIT:]
         return normalized
 
     def ensure_tool(self, tool_name: str) -> Dict[str, Any]:
@@ -143,17 +146,17 @@ class ToolStatisticsStore:
                         entry["avg_execution_time"] = entry["success_duration_total"] / entry["success"]
                 else:
                     entry["failed"] += 1
-                    if error_summary:
-                        summary = str(error_summary).strip()[:200]
-                        if summary:
-                            entry["last_error_summary"] = summary
-                            entry["recent_errors"] = (
-                                entry.get("recent_errors", [])
-                                + [{
-                                    "at": datetime.utcnow().isoformat(),
-                                    "summary": summary,
-                                }]
-                            )[-self.RECENT_ERRORS_LIMIT:]
+                    summary = (error_summary or "").strip()
+                    if summary:
+                        entry["recent_errors"] = (
+                            entry["recent_errors"]
+                            + [{
+                                "at": datetime.utcnow().isoformat(),
+                                "summary": summary[:180],
+                                "error": summary[:200],
+                                "duration": round(float(execution_time), 3) if execution_time is not None else None,
+                            }]
+                        )[-RECENT_ERRORS_LIMIT:]
                 entry["last_execution_at"] = datetime.utcnow().isoformat()
                 entry["updated_at"] = entry["last_execution_at"]
                 stats[tool_name] = entry

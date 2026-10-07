@@ -32,6 +32,9 @@ def _workflow_snapshots(metadata: dict[str, Any]) -> dict[str, dict[str, Any]]:
             for key, value in values.items()
             if isinstance(value, dict) and value.get("workflow_id")
         }
+    legacy = metadata.get("workflow_coordinator")
+    if isinstance(legacy, dict) and legacy.get("workflow_id"):
+        return {str(legacy["workflow_id"]): dict(legacy)}
     return {}
 
 
@@ -53,6 +56,8 @@ def _has_retryable_nodes(snapshot: dict[str, Any]) -> bool:
         if not isinstance(run, dict) or not run.get("parent_task_id"):
             continue
         if str(run.get("status") or "") != "failed":
+            continue
+        if not (snapshot.get("node_retryable") or {}).get(run.get("task_id"), True):
             continue
         if int(run.get("attempt") or 0) < int(run.get("max_attempts") or 1):
             return True
@@ -97,7 +102,7 @@ def _node_history(snapshot: dict[str, Any], task_id: str, child: Any | None, aft
     node_status = (snapshot.get("graph") or {}).get(task_id, {}).get("status")
     if node_status in {"succeeded", "success", "cached", "reused"}:
         progress_label = "分析已完成"
-    elif node_status in {"failed", "cancelled"}:
+    elif node_status in {"failed", "cancelled", "skipped", "blocked"}:
         progress_label = "分析已结束"
     elif latest_trace and latest_trace.get("type") == "tool_call":
         progress_label = f"正在调用 {latest_trace.get('tool_name') or '工具'}"
@@ -220,7 +225,7 @@ async def workflow_node_history(
         raise HTTPException(status_code=404, detail="node_not_found")
     child_id = (snapshot.get("node_sessions") or {}).get(task_id)
     if not isinstance(child_id, str) or not child_id:
-        if (snapshot.get("graph") or {}).get(task_id, {}).get("status") in {"queued", "pending", "running"}:
+        if (snapshot.get("graph") or {}).get(task_id, {}).get("status") in {"queued", "pending", "running", "skipped", "blocked", "failed"}:
             return _node_history(snapshot, task_id, None, after, limit)
         raise HTTPException(status_code=404, detail="node_history_not_found")
     child = (get_child_session_manager().load_session(child_id)
@@ -306,7 +311,7 @@ async def workflow_events(
                     cursor = max(cursor, int(event.get("sequence") or cursor))
                     yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
             status = str((current or {}).get("status") or "")
-            if status in {"succeeded", "failed", "cancelled"}:
+            if status in {"succeeded", "partial", "failed", "cancelled"}:
                 yield f"data: {json.dumps({'type': 'workflow.terminal', 'status': status, 'sequence': cursor}, ensure_ascii=False)}\n\n"
                 return
             if asyncio.get_running_loop().time() >= deadline:
@@ -356,11 +361,13 @@ async def resume_workflow(
     snapshot = _workflow_snapshots(dict(session.metadata or {})).get(workflow_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="workflow_not_found")
+    if (snapshot.get("budget_state") or {}).get("exhausted"):
+        raise HTTPException(status_code=409, detail="workflow_budget_exhausted")
     if snapshot.get("status") == "cancelled":
         raise HTTPException(status_code=409, detail="cancelled_workflow_cannot_resume")
-    if snapshot.get("status") not in {"failed", "running", "queued"}:
+    if snapshot.get("status") not in {"failed", "partial", "running", "queued"}:
         raise HTTPException(status_code=409, detail="workflow_not_resumable")
-    if snapshot.get("status") == "failed" and not _has_retryable_nodes(snapshot):
+    if snapshot.get("status") in {"failed", "partial"} and not _has_retryable_nodes(snapshot):
         raise HTTPException(status_code=409, detail="workflow_retry_budget_exhausted")
     if await active_workflow_registry.get(workflow_id) is not None:
         raise HTTPException(status_code=409, detail="workflow_already_active")

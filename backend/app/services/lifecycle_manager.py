@@ -21,12 +21,6 @@ from app.fetchers.consultation import (  # 会商文件批量更新、月度完�
 from app.fetchers.consultation.annual_ytd import (
     AnnualYtdConsultationFileFetcher,  # 年度累计会商文件
 )
-from app.fetchers.consultation.monthly_supplement_fetchers import (
-    MonthlyDistrictPollutantRankingFetcher,
-    MonthlyMeteorologySupportFetcher,
-    MonthlyPollutionEventsComponentsFetcher,
-    MonthlyStationHighValuesFetcher,
-)
 from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
 from app.fetchers.jiangsu_data_audit_review_event import (
     JiangsuDataAuditReviewEventFetcher,
@@ -146,10 +140,6 @@ def _configured_fetchers(project_context):
         "consultation": ConsultationFileFetcher,
         "monthly_consultation": MonthlyConsultationFileFetcher,
         "annual_ytd_consultation": AnnualYtdConsultationFileFetcher,
-        "monthly_district_pollutant_ranking": MonthlyDistrictPollutantRankingFetcher,
-        "monthly_station_high_values": MonthlyStationHighValuesFetcher,
-        "monthly_pollution_events_components": MonthlyPollutionEventsComponentsFetcher,
-        "monthly_meteorology_support": MonthlyMeteorologySupportFetcher,
     }
     configured = project_context.manifest.backend.fetchers
     history_config = project_context.manifest.backend.weather_history

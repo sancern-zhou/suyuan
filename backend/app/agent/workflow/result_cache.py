@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
+import time
 import structlog
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
@@ -23,6 +26,23 @@ logger = structlog.get_logger()
 CACHE_DIRNAME = "workflow_cache"
 # 单节点结果缓存上限：超过则跳过缓存（大体积产物走 registry 文件，不进缓存）
 MAX_RESULT_BYTES = 512 * 1024
+MAX_CACHE_AGE_SECONDS = 3600
+
+
+def cache_namespace(session_id: str, workflow_id: str) -> str:
+    """Result reuse is scoped to the owning parent conversation."""
+    return hashlib.sha256(f"{session_id}|{workflow_id}".encode()).hexdigest()
+
+
+def node_signature(node: Mapping[str, Any]) -> str:
+    """Invalidate results when task meaning or its output contract changes."""
+    return result_fingerprint({
+        "version": 2,
+        **{key: node.get(key) for key in (
+            "target_mode", "goal", "context", "task_contract", "result_schema", "require_lineage",
+        )},
+        **{key: node[key] for key in ("when", "required", "dependency_policy", "input_contracts", "output_contract") if key in node},
+    })
 
 
 def _cache_root() -> Path:
@@ -67,6 +87,7 @@ def store_node_result(
     result: Mapping[str, Any],
     *,
     dependency_hashes: Optional[Mapping[str, str]] = None,
+    signature: Optional[str] = None,
 ) -> bool:
     """成功节点结果落盘；过大或写入失败返回 False（不阻断）。"""
     try:
@@ -81,10 +102,20 @@ def store_node_result(
             "target_mode": target_mode,
             "result_hash": result_fingerprint(result),
             "dependency_hashes": dict(dependency_hashes or {}),
-            "stored_at": Path(path).stat().st_mtime if path.exists() else None,
+            "stored_at": time.time(),
+            "signature": signature,
             "result": result,
         }
-        path.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
+        # Readers must see either the previous complete entry or the new one.
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as stream:
+                temporary = stream.name
+                json.dump(payload, stream, ensure_ascii=False, default=str)
+            os.replace(temporary, path)
+        finally:
+            if temporary and os.path.exists(temporary):
+                os.unlink(temporary)
         return True
     except Exception as exc:  # noqa: BLE001 — 缓存写入失败不影响执行
         logger.warning("workflow_cache_store_failed", task_id=task_id, error=str(exc))
@@ -120,6 +151,7 @@ def _load_node_entry(
     task_id: str,
     goal: str,
     target_mode: str,
+    signature: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     path = _node_path(workflow_id, task_id)
     try:
@@ -129,6 +161,11 @@ def _load_node_entry(
     if not isinstance(payload, dict):
         return None
     if payload.get("goal_hash") != goal_hash(goal, target_mode):
+        return None
+    if signature is not None and payload.get("signature") != signature:
+        return None
+    stored_at = payload.get("stored_at")
+    if not isinstance(stored_at, (int, float)) or not 0 <= time.time() - stored_at <= MAX_CACHE_AGE_SECONDS:
         return None
     result = payload.get("result")
     result_hash = payload.get("result_hash")
@@ -149,6 +186,8 @@ def _load_node_entry(
 def select_reusable_nodes(
     workflow_id: str,
     nodes: Iterable[Mapping[str, Any]],
+    *,
+    validate_signatures: bool = False,
 ) -> Dict[str, Dict[str, Any]]:
     """按依赖闭包选择可复用节点：节点命中且全部上游也命中才算可复用。
 
@@ -174,6 +213,7 @@ def select_reusable_nodes(
                 task_id,
                 str(node.get("goal") or ""),
                 str(node.get("target_mode") or ""),
+                node_signature(node) if validate_signatures else None,
             )
             if entry is None:
                 continue

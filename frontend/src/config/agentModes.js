@@ -156,28 +156,6 @@ export const AGENT_MODES = Object.freeze([
     ]
   },
   {
-    id: 'chart',
-    name: '图表创作智能体',
-    shortName: '图表',
-    description: '生成数据图表及专题可视化内容',
-    welcome: {
-      description: '根据数据结构和表达目标创作清晰、准确的专业图表，让趋势、对比和业务关系更直观。',
-      features: [
-        '识别数据特征并推荐合适的图表类型',
-        '生成趋势、对比、分布、地图和专题图表',
-        '输出 ECharts 与适合报告使用的静态图表',
-        '调整配色、标题、标注和整体版式'
-      ],
-    },
-    tags: ['数据图表', '流程图'],
-    accent: '#d24d77',
-    iconPaths: [
-      'M4 4.5v15h16',
-      'm5 16 4-5 4 3 6-8',
-      'M9 11a1 1 0 1 0 0 .01M13 14a1 1 0 1 0 0 .01M19 6a1 1 0 1 0 0 .01'
-    ]
-  },
-  {
     id: 'board',
     name: '画板创作智能体',
     shortName: '画板',
@@ -341,7 +319,7 @@ export const AGENT_SCENES = Object.freeze([
     id: 'monitoring',
     name: '监测分析',
     description: '环境数据研判与成果输出',
-    modeIds: ['query', 'jiangsu_query', 'expert', 'report', 'chart'],
+    modeIds: ['query', 'jiangsu_query', 'expert', 'report'],
     iconPaths: [
       { tone: 'primary', d: 'M4 5v14h16' },
       { tone: 'primary', d: 'm6.5 14 3-3 3 2 3.5-6 3 2' },

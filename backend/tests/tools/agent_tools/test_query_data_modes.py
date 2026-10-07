@@ -24,7 +24,10 @@ def test_query_submode_whitelists_are_lean_and_disjoint():
 
     assert "execute_crawler_sql_query" in monitoring
     assert "query_xcai_city_history" in monitoring
+    # 目录解析与中台工具成对配置（乡镇站编码链路）；广东站点目录工具不进入
     assert "xuchang_station_catalog" in monitoring
+    assert "query_airdata_platform" in monitoring
+    assert "resolve_station_geo" not in monitoring
     assert not monitoring & {"get_weather_data", "get_weather_forecast", "get_current_weather"}
 
     assert "get_weather_forecast" in forecast
@@ -46,6 +49,40 @@ def test_query_submodes_resolve_via_get_tools_by_mode():
         assert "call_sub_agent" not in tools
 
 
+def test_station_and_city_submodes_split_tool_whitelists():
+    from app.agent.prompts.tool_registry import (
+        QUERY_MONITORING_CITY_TOOL_NAMES,
+        QUERY_MONITORING_STATION_TOOL_NAMES,
+    )
+
+    station = set(QUERY_MONITORING_STATION_TOOL_NAMES)
+    city = set(QUERY_MONITORING_CITY_TOOL_NAMES)
+
+    assert station == {
+        "execute_crawler_sql_query",
+        "xuchang_station_catalog",
+        "query_airdata_platform",
+        "execute_python",
+    }
+    # 乡镇站链路成对配置：城市模式有中台工具但无目录工具（站点任务归站点模式）
+    assert "query_airdata_platform" in city
+    assert "xuchang_station_catalog" not in city
+    assert {"query_xcai_city_history", "execute_sql_query", "query_airdata_platform"} <= city
+    assert "query_national_city_air_quality" in city
+    assert "get_weather_data" not in station | city
+
+    for mode in ("query_monitoring_station", "query_monitoring_city"):
+        tools = get_tools_by_mode(mode)
+        assert tools, mode
+        assert "execute_crawler_sql_query" in tools
+        assert "call_sub_agent" not in tools
+
+    profile_station = get_agent_profile("query_monitoring_station")
+    profile_city = get_agent_profile("query_monitoring_city")
+    assert profile_station.allow_delegation is False
+    assert profile_city.allow_delegation is False
+
+
 def test_query_submode_profiles_forbid_delegation():
     for mode in ("query_monitoring", "query_forecast"):
         profile = get_agent_profile(mode)
@@ -55,19 +92,40 @@ def test_query_submode_profiles_forbid_delegation():
 def test_query_submodes_registered_in_contract():
     values = target_mode_values()
     assert "query_monitoring" in values
+    assert "query_monitoring_station" in values
+    assert "query_monitoring_city" in values
     assert "query_forecast" in values
 
     contract = build_target_mode_contract()
-    assert "query_monitoring" in contract
-    assert "query_forecast" in contract
+    assert "query_monitoring_station" in contract
+    assert "query_monitoring_city" in contract
     assert "报告" in contract
 
 
 def test_query_submode_default_iteration_budgets():
     assert _resolve_child_max_iterations("query_monitoring", None) == 4
+    assert _resolve_child_max_iterations("query_monitoring_station", None) == 4
+    assert _resolve_child_max_iterations("query_monitoring_city", None) == 4
     assert _resolve_child_max_iterations("query_forecast", None) == 4
     assert _resolve_child_max_iterations("query_monitoring", 50) == 50
     assert _resolve_child_max_iterations("query_monitoring", 500) == 120
+
+
+def test_station_and_city_prompts_declare_table_level_boundary():
+    from app.agent.prompts.query_data_prompt import (
+        build_query_monitoring_city_prompt,
+        build_query_monitoring_station_prompt,
+    )
+
+    station = build_query_monitoring_station_prompt(["execute_crawler_sql_query", "execute_python"])
+    city = build_query_monitoring_city_prompt(["execute_crawler_sql_query", "execute_python"])
+
+    assert "站点层级" in station and "StationHour/StationDay" in station
+    assert "乡镇站" in station
+    assert "xuchang_station_catalog" in station and "query_airdata_platform" in station
+    assert "query_monitoring_city" in station
+    assert "城市层级" in city and "CityHour/CityDay/CityYearPm25Avg" in city
+    assert "query_monitoring_station" in city
 
 
 def test_monitoring_prompt_boundaries():

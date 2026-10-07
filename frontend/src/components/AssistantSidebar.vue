@@ -8,9 +8,9 @@
           </div>
         </div>
       </template>
-      <button class="collapse-btn" type="button" @click="toggleCollapse" :title="isCollapsed ? '展开' : '收起'">
-        <span class="collapse-icon" :class="{ collapsed: isCollapsed }"></span>
-      </button>
+      <div v-else class="brand-mark" :title="projectConfig.brandName">
+        {{ brandInitial }}
+      </div>
     </div>
 
     <!-- 核心工作入口固定在 header 下方 -->
@@ -315,7 +315,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:activeModule', 'select', 'action', 'loadSession', 'update:collapsed'])
+const emit = defineEmits(['update:activeModule', 'select', 'action', 'loadSession'])
 
 // 内部折叠状态，优先使用外部传入的props
 const isCollapsed = ref(props.collapsed)
@@ -326,13 +326,6 @@ const closeSettingsMenu = () => {
 }
 const toggleSettingsMenu = () => {
   settingsMenuOpen.value = !settingsMenuOpen.value
-}
-const toggleCollapse = () => {
-  closeSettingsMenu()
-  closeQuickEntry()
-  const newValue = !isCollapsed.value
-  isCollapsed.value = newValue
-  emit('update:collapsed', newValue)
 }
 
 // 监听外部props变化
@@ -347,6 +340,8 @@ const userDisplayName = computed(() => {
   return String(name).trim() || '当前用户'
 })
 const userInitial = computed(() => Array.from(userDisplayName.value)[0] || '用')
+
+const brandInitial = computed(() => Array.from(projectConfig.brandName || '')[0] || '')
 
 const recentSessions = ref([])
 const refreshingSessions = ref(false)
@@ -1016,40 +1011,18 @@ onUnmounted(() => {
   }
 }
 
-.collapse-btn {
-  background: transparent;
-  border: none;
+.brand-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  cursor: pointer;
-  margin-left: auto;
+  width: 32px;
+  height: 32px;
   border-radius: 8px;
-
-  &:hover {
-    background: var(--sidebar-hover);
-  }
-
-  .collapsed & {
-    margin: 0;
-  }
-}
-
-.collapse-icon {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-left: 2px solid #9aa6c1;
-  border-bottom: 2px solid #9aa6c1;
-  transform: rotate(45deg);
-  transition: transform 0.2s;
-
-  &.collapsed {
-    transform: rotate(-135deg);
-  }
+  background: #e8f0fe;
+  color: #2f5fd0;
+  font-size: 16px;
+  font-weight: 600;
+  user-select: none;
 }
 
 .module-list {
@@ -1520,10 +1493,6 @@ onUnmounted(() => {
   .recent-sessions-section,
   .user-identity {
     display: none;
-  }
-
-  .collapse-btn {
-    margin: 0;
   }
 
   .primary-navigation,

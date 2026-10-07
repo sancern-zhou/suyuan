@@ -13,8 +13,9 @@
     <!-- 报告生成专家 -->
     <template v-if="assistantMode === 'report-generation-expert'">
       <div class="right-panel-tabs" role="tablist" aria-label="报告资源面板">
+        <button v-if="trajectoryAvailable" :class="['tab-btn', { active: activeTab === 'trajectory' }]" role="tab" :aria-selected="activeTab === 'trajectory'" @click="handleTabChange('trajectory')"><span>调用轨迹</span></button>
         <button
-          v-if="documentCount > 0"
+          v-if="documentAvailable"
           :class="['tab-btn', { active: activeTab === 'document' }]"
           role="tab"
           :aria-selected="activeTab === 'document'"
@@ -24,7 +25,7 @@
           <span v-if="documentCount > 0" class="tab-count">{{ documentCount }}</span>
         </button>
         <button
-          v-if="fileProductCount > 0"
+          v-if="fileProductCount > 0 || explicitTarget"
           :class="['tab-btn', { active: activeTab === 'files' }]"
           role="tab"
           :aria-selected="activeTab === 'files'"
@@ -53,7 +54,7 @@
       </div>
       <ResourceProductsPanel
         v-if="activeTab === 'files' && sessionId"
-        class="panel-content workflow-panel-host"
+        class="panel-content workflow-panel-host files-panel-host"
         @open-resource-tab="handleTabChange"
       />
       <WorkflowPanel
@@ -62,11 +63,11 @@
         :session-id="sessionId"
       />
       <ReportGenerationPanel
-        v-else-if="!['feedback', 'workflow'].includes(activeTab)"
+        v-else-if="!['feedback', 'workflow', 'files', 'trajectory'].includes(activeTab)"
         :assistant-mode="assistantMode"
       />
       <HumanFeedbackPanel
-        v-else
+        v-else-if="activeTab === 'feedback'"
         class="panel-content"
         :feedback="humanFeedback"
         :submitting="humanFeedbackSubmitting"
@@ -78,7 +79,11 @@
     <!-- 其他模式：可视化面板 + Office文档预览面板 + 知识溯源面板 -->
     <template v-else>
       <!-- 标签页切换按钮 -->
-      <div v-if="showTabs && !fullBleedVisualizationPanel" class="right-panel-tabs" role="tablist" aria-label="右侧资源面板">
+      <div v-if="showTabs" class="right-panel-tabs" role="tablist" aria-label="右侧资源面板">
+        <button v-if="trajectoryAvailable" :class="['tab-btn', { active: activeTab === 'trajectory' }]" role="tab" :aria-selected="activeTab === 'trajectory'" @click="handleTabChange('trajectory')">
+          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="6" r="2"/><circle cx="19" cy="18" r="2"/><path d="M7 6h6a4 4 0 0 1 0 8H9a4 4 0 0 0 0 8h8"/></svg>
+          <span>调用轨迹</span>
+        </button>
         <button
           v-if="visualizationAvailable"
           :class="['tab-btn', { active: activeTab === 'visualization' }]"
@@ -129,7 +134,7 @@
           <span v-if="knowledgeCount > 0" class="tab-count">{{ knowledgeCount }}</span>
         </button>
         <button
-          v-if="fileProductCount > 0"
+          v-if="fileProductCount > 0 || explicitTarget"
           :class="['tab-btn', { active: activeTab === 'files' }]"
           role="tab"
           :aria-selected="activeTab === 'files'"
@@ -235,7 +240,7 @@
 
       <ResourceProductsPanel
         v-if="activeTab === 'files' && sessionId"
-        class="panel-content"
+        class="panel-content files-panel-host"
         @open-resource-tab="handleTabChange"
       />
 
@@ -282,6 +287,7 @@
         @close="$emit('close-device-control-panel')"
       />
     </template>
+    <ExecutionTrajectoryPanel v-if="activeTab === 'trajectory' && sessionId" class="panel-content" :session-id="sessionId" :messages="messages" />
   </div>
 </template>
 
@@ -298,7 +304,7 @@ import SmartEventCenterPanel from '@/components/management/SmartEventCenterPanel
 import WorkOrderReviewCenterPanel from '@/components/management/WorkOrderReviewCenterPanel.vue'
 import WorkflowPanel from '@/components/workflow/WorkflowPanel.vue'
 import { projectConfig } from '@/config/projectConfig.js'
-import { listSessionWorkflows } from '@/services/workflowApi.js'
+import ExecutionTrajectoryPanel from './ExecutionTrajectoryPanel.vue'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { summarizeRightPanelResources } from '@/components/resources/rightPanelResources.js'
 import { buildResourceGroups, targetTab } from '@/services/resourceGroups.js'
@@ -306,6 +312,8 @@ import { visualizationGalleryItems } from '@/services/visualizationGallery.js'
 import { isTaskReviewVisual } from '@/services/visualizationTypes.js'
 
 const props = defineProps({
+  workflowAvailable: { type: Boolean, default: false },
+  trajectoryAvailable: { type: Boolean, default: false },
   visible: {
     type: Boolean,
     default: false
@@ -456,7 +464,7 @@ const smartEventCategory = computed(() => {
 
 const showTabs = computed(() => {
   // 只要有任意一个面板可见，就显示标签页切换按钮
-  return workflowAvailable.value || visualizationAvailable.value || documentAvailable.value || fileProductCount.value > 0 || knowledgeCount.value > 0 || props.knowledgePanelVisible || showBoardTab.value || feedbackAvailable.value || smartEventAvailable.value || workOrderReviewAvailable.value || deviceControlAvailable.value
+  return props.trajectoryAvailable || workflowAvailable.value || resourceSummary.value.hasArtifacts || !!explicitTarget.value || props.knowledgePanelVisible || showBoardTab.value || feedbackAvailable.value || smartEventAvailable.value || workOrderReviewAvailable.value || deviceControlAvailable.value
 })
 
 const fileProductCount = computed(() => resourceSummary.value.counts.files)
@@ -464,69 +472,30 @@ const visualizationCount = computed(() => resourceSummary.value.counts.visualiza
 const documentCount = computed(() => resourceSummary.value.counts.document)
 const visualizationAvailable = computed(() => visualizationCount.value > 0 || explicitTarget.value === 'visualization')
 const documentAvailable = computed(() => documentCount.value > 0 || explicitTarget.value === 'document')
-// 工作流 TAB 跟随会话实际数据：探测到工作流才显示。工作流由后端异步创建，
-// 面板打开期间 15s 轮询一次，保证会话中途新起的工作流能及时出现。
-const sessionWorkflowCount = ref(0)
-const workflowProbed = ref(false)
-let workflowProbeTimer = null
-let workflowProbeToken = 0
-
-async function probeSessionWorkflows() {
-  const token = ++workflowProbeToken
-  const sessionId = props.sessionId
-  if (!sessionId) {
-    sessionWorkflowCount.value = 0
-    workflowProbed.value = true
-    return
-  }
-  try {
-    const payload = await listSessionWorkflows(sessionId)
-    if (token !== workflowProbeToken) return
-    sessionWorkflowCount.value = Array.isArray(payload?.workflows) ? payload.workflows.length : 0
-    workflowProbed.value = true
-  } catch {
-    // 探测失败保留上次结果，避免 TAB 显隐因瞬时错误抖动
-  }
-}
-
-watch(() => props.sessionId, () => {
-  workflowProbed.value = false
-  probeSessionWorkflows()
-})
-
-onMounted(() => {
-  probeSessionWorkflows()
-  workflowProbeTimer = setInterval(probeSessionWorkflows, 15000)
-})
-
-onBeforeUnmount(() => {
-  if (workflowProbeTimer) clearInterval(workflowProbeTimer)
-  workflowProbeTimer = null
-})
-
-const workflowAvailable = computed(() => Boolean(props.sessionId) && sessionWorkflowCount.value > 0)
+const workflowAvailable = computed(() => props.workflowAvailable)
 
 const knowledgeCount = computed(() => props.knowledgeSources?.length || 0)
 const feedbackCount = computed(() => props.humanFeedback?.items?.length || 0)
 const feedbackAvailable = computed(() => feedbackCount.value > 0)
 
 watch(
-  () => [props.assistantMode, props.activeTab, visualizationAvailable.value, documentAvailable.value, knowledgeCount.value, showBoardTab.value, feedbackAvailable.value, workflowAvailable.value, workflowProbed.value],
-  ([mode, tab, visualizations, documents, knowledge, board, feedback, workflow, workflowSettled]) => {
-    if (mode === 'report-generation-expert') return
+  () => [props.activeTab, visualizationAvailable.value, documentAvailable.value, knowledgeCount.value, showBoardTab.value, feedbackAvailable.value, workflowAvailable.value, props.trajectoryAvailable, fileProductCount.value, explicitTarget.value],
+  ([tab, visualizations, documents, knowledge, board, feedback, workflow, trajectory, files, explicit]) => {
     const unavailable = (
       (tab === 'visualization' && !visualizations)
       || (tab === 'document' && !documents)
       || (tab === 'knowledge' && knowledge === 0)
       || (tab === 'board' && !board)
       || (tab === 'feedback' && !feedback)
-      || (tab === 'files' && fileProductCount.value === 0)
+      || (tab === 'workflow' && !workflow)
+      || (tab === 'trajectory' && !trajectory)
+      || (tab === 'files' && !files && !explicit)
       || (tab === 'smart-event' && !smartEventAvailable.value)
       || (tab === 'work-order-review' && !workOrderReviewAvailable.value)
       || (tab === 'device-control' && !deviceControlAvailable.value)
-      || (tab === 'workflow' && workflowSettled && !workflow)
     )
-    if (unavailable) emit('tab-change', 'files')
+    const fallback = explicit || (files ? 'files' : documents ? 'document' : visualizations ? 'visualization' : knowledge ? 'knowledge' : feedback ? 'feedback' : workflow ? 'workflow' : trajectory ? 'trajectory' : '')
+    if (unavailable && fallback) emit('tab-change', fallback)
   },
   { immediate: true }
 )
@@ -672,7 +641,8 @@ const handleBoardSnapshotConfirm = (snapshot) => {
   margin: 0;
 }
 
-.panel-content.workflow-panel-host {
+.panel-content.workflow-panel-host,
+.panel-content.files-panel-host {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;

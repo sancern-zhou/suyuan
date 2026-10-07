@@ -17,8 +17,10 @@ from ..models.execution import (
     ExecutionStatus
 )
 from ..storage import TaskStorage, ExecutionStorage
+from ..storage import DatabaseTaskResultStorage, task_result_db_enabled
 from ..storage.task_case_storage import TaskCaseStorage
 from ..history_learning import build_history_section, finalize_execution
+from ..result_extraction import extract_task_result
 from ..conversation_persistence import ScheduledTaskConversationPersistence
 
 logger = structlog.get_logger()
@@ -96,6 +98,7 @@ class ScheduledTaskExecutor:
         execution_storage: ExecutionStorage,
         agent_factory: Optional[callable] = None,
         conversation_persistence=None,
+        task_result_storage=None,
     ):
         self.task_storage = task_storage
         self.execution_storage = execution_storage
@@ -103,6 +106,7 @@ class ScheduledTaskExecutor:
         self.conversation_persistence = (
             conversation_persistence or ScheduledTaskConversationPersistence()
         )
+        self.task_result_storage = task_result_storage or DatabaseTaskResultStorage()
         self._persisted_execution_ids: set[str] = set()
         self._case_storages: dict[str, TaskCaseStorage] = {}
 
@@ -331,9 +335,10 @@ class ScheduledTaskExecutor:
 
             # 历史记忆收尾：案例入库与长期记忆维护完成前，本次执行不算结束；
             # 收尾自身失败只记录告警，不改变执行结果。
+            result_case = None
             if case_storage is not None:
                 try:
-                    await finalize_execution(
+                    result_case = await finalize_execution(
                         task=task,
                         execution=execution,
                         event=event,
@@ -347,6 +352,22 @@ class ScheduledTaskExecutor:
                         execution_id=execution.execution_id,
                         error=str(learn_error),
                     )
+
+            try:
+                self._persist_task_result(
+                    task=task,
+                    execution=execution,
+                    event=event,
+                    agent_result=collected,
+                    case=result_case,
+                )
+            except Exception as result_error:  # noqa: BLE001 - result persistence is fail-soft
+                logger.warning(
+                    "scheduled_task_result_persist_failed",
+                    task_id=task.task_id,
+                    execution_id=execution.execution_id,
+                    error=str(result_error),
+                )
 
             # 保存最终状态
             self.execution_storage.update(execution)
@@ -665,6 +686,7 @@ class ScheduledTaskExecutor:
             )
         sections.append(
             """## 后台定时任务执行约束
+- 最终回复第一行必须是简洁的业务结论；禁止仅用“任务已完成”“报告已生成”等流程状态充当结论。若任务要求严格 JSON，则本条不适用。
 - 本次是后台无人值守的定时任务执行；任务名称、任务描述、执行指令、调度和筛选条件均视为用户已提前配置并确认。
 - 不要以“请确认”“等待用户确认”“确认后继续”等形式中途结束；需要计划、自检或复核时，在本次执行内自行完成后继续下一步。
 - 如果任务流程要求调用子 Agent 审核、复核或生成交接产物，必须在本次执行内直接调用并等待工具返回，不要先向用户展示方案等待确认。
@@ -696,6 +718,25 @@ class ScheduledTaskExecutor:
 - 广播工具执行完成后，正常简要说明执行结果，不需要返回 JSON。""" % names
             )
         return "\n\n".join(sections)
+
+    def _persist_task_result(
+        self,
+        *,
+        task: ScheduledTask,
+        execution: TaskExecution,
+        event: TaskEvent | None,
+        agent_result: dict | None,
+        case: dict | None,
+    ) -> None:
+        if not task_result_db_enabled():
+            return
+        result = extract_task_result(
+            execution=execution,
+            event=event,
+            agent_result=agent_result,
+            case=case,
+        )
+        self.task_result_storage.upsert(result)
 
     def _generate_execution_id(self, task_id: str) -> str:
         """生成执行ID"""
