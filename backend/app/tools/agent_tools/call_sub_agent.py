@@ -464,6 +464,7 @@ class CallSubAgentTool(LLMTool):
             project_node = {"target_mode": target_mode, "task_contract": task_contract,
                             "result_schema": result_schema, "max_iterations": max_iterations}
             prepare_node(project_node)
+            task_contract = project_node.get("task_contract")
             result_schema = project_node.get("result_schema")
             max_iterations = project_node.get("max_iterations")
             # 报告 Agent 不再使用综合问数子代理：监测历史走 query_monitoring，

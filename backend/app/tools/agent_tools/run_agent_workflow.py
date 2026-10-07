@@ -545,7 +545,11 @@ class RunAgentWorkflowTool(LLMTool):
             # Worker checkpoints use canonical nested payloads; accept both formats.
             def normalize(node: Mapping[str, Any]) -> Dict[str, Any]:
                 spec = WorkflowNodeSpec.from_mapping(node)
-                return {**dict(node), **spec.payload, "task_id": spec.task_id}
+                normalized = {**dict(node), **spec.payload, "task_id": spec.task_id}
+                # Flatten worker payloads before enforcing policy; a stale nested
+                # schema must not take precedence over the validated definition.
+                normalized.pop("payload", None)
+                return normalized
             nodes = [normalize(node) for node in definition.get("nodes") or []]
             added_nodes = [normalize(node) for node in added_nodes]
             for node in [*nodes, *added_nodes]:
