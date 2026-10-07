@@ -92,6 +92,10 @@ data class UploadedAttachment(
     val resourceKey: String = "",
     val visualId: String = "",
     val interactive: Boolean = false,
+    val groupId: String = "",
+    val resourceKind: String = "",
+    val resourceRole: String = "",
+    val format: String = "",
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("file_id", fileId)
@@ -104,6 +108,10 @@ data class UploadedAttachment(
         put("resource_key", resourceKey)
         put("visual_id", visualId)
         put("interactive", interactive)
+        put("group_id", groupId)
+        put("kind", resourceKind)
+        put("role", resourceRole)
+        put("format", format)
         previewUrl?.let { put("preview_url", it) }
         previewMimeType?.let { put("preview_mime_type", it) }
         downloadUrl?.let { put("download_url", it) }
@@ -163,6 +171,10 @@ data class UploadedAttachment(
                 resourceKey = item.optString("resource_key", ""),
                 visualId = item.optString("visual_id", ""),
                 interactive = item.optBoolean("interactive", false),
+                groupId = item.optString("group_id", ""),
+                resourceKind = item.optString("kind", ""),
+                resourceRole = item.optString("role", ""),
+                format = item.optString("format", ""),
             )
         }
     }

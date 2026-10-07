@@ -1087,9 +1087,6 @@ private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: 
                         // A blinking cursor keeps the streaming state visible during quiet intervals.
                         StreamingCursor()
                     }
-                    val visibleAttachments = if (message.attachments.any(::isImageAttachment)) {
-                        message.attachments.filterNot { it.mimeType.equals("application/json", ignoreCase = true) && !isImageAttachment(it) }
-                    } else message.attachments
                     val placedCharts = blocks.mapNotNull {
                         when (it) {
                             is ReplyBlock.Chart -> it.attachment.fileId
@@ -1097,10 +1094,8 @@ private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: 
                             else -> null
                         }
                     }.toSet()
-                    visibleAttachments.filterNot { it.fileId in placedCharts }.forEach { attachment ->
-                        if (isInteractiveChart(attachment)) InlineChart(attachment, state, viewModel)
-                        else AttachmentView(attachment, state, viewModel, context, inlineImage = attachment.resourceKey == "chart-image")
-                    }
+                    if (isUser) message.attachments.forEach { AttachmentView(it, state, viewModel, context) }
+                    else if (!message.streaming) ReplyOutcomeCards(message.attachments, placedCharts, state, viewModel)
                 }
             }
         }
@@ -1373,19 +1368,25 @@ internal fun AttachmentView(attachment: UploadedAttachment, state: AppUiState, v
         return
     }
     var showPreview by remember(attachment.fileId) { mutableStateOf(false) }
-    LaunchedEffect(attachment.fileId) { viewModel.loadAttachmentPreview(attachment) }
+    LaunchedEffect(attachment.fileId, showPreview) { if (showPreview) viewModel.loadAttachmentPreview(attachment) }
     Row(
         Modifier
             .padding(top = 6.dp)
-            .widthIn(min = 210.dp, max = 280.dp)
-            .clip(RoundedCornerShape(9.dp))
-            .background(SuyuanColors.panel)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White)
+            .border(1.dp, Color(0xFFE8EAED), RoundedCornerShape(12.dp))
             .clickable { showPreview = true }
-            .padding(horizontal = 9.dp, vertical = 7.dp),
+            .padding(horizontal = 14.dp, vertical = 15.dp),
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
     ) {
-        FileTypeBadge(attachment.filename)
-        Text(attachment.filename, color = SuyuanColors.text, fontSize = 12.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(start = 9.dp).weight(1f))
+        FileTypeBadge(attachment.filename, attachment.format)
+        Column(Modifier.padding(start = 12.dp).weight(1f)) {
+            Text(attachment.filename, color = SuyuanColors.text, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            val formats = (listOf(attachment.format.ifBlank { attachment.filename.substringAfterLast('.', "文件") }) + attachment.variants.map { it.format }).distinct().joinToString(" · ") { it.uppercase() }
+            Text("$formats · 点击查看", color = SuyuanColors.secondaryText, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+        }
+        Icon(painterResource(R.drawable.ic_chevron_right), contentDescription = null, tint = Color(0xFFB8BDC4), modifier = Modifier.size(17.dp))
     }
     if (showPreview) {
         Dialog(onDismissRequest = { showPreview = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -1441,8 +1442,8 @@ internal fun AttachmentView(attachment: UploadedAttachment, state: AppUiState, v
 }
 
 @Composable
-private fun FileTypeBadge(filename: String) {
-    val ext = filename.substringAfterLast('.', "file").uppercase().take(4)
+private fun FileTypeBadge(filename: String, format: String = "") {
+    val ext = format.ifBlank { filename.substringAfterLast('.', "file") }.uppercase().take(4)
     val tint = when (ext) {
         "PDF" -> Color(0xFFE74C3C)
         "DOC", "DOCX" -> Color(0xFF2478D4)
@@ -1450,7 +1451,7 @@ private fun FileTypeBadge(filename: String) {
         "PPT", "PPTX" -> Color(0xFFE67E22)
         else -> SuyuanColors.primary
     }
-    Surface(color = tint, shape = RoundedCornerShape(5.dp), modifier = Modifier.size(42.dp)) {
+    Surface(color = tint, shape = RoundedCornerShape(6.dp), modifier = Modifier.size(width = 44.dp, height = 52.dp)) {
         Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
             Text(ext, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
         }
