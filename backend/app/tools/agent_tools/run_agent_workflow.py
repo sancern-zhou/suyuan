@@ -392,6 +392,15 @@ def compact_parent_node_result(
 class RunAgentWorkflowTool(LLMTool):
     """Coordinator entry point for report/assistant orchestration."""
 
+    def get_function_schema(self):
+        from copy import deepcopy
+
+        schema = deepcopy(super().get_function_schema())
+        properties = schema["parameters"]["properties"]
+        properties["workflow"]["properties"]["nodes"]["items"]["properties"]["target_mode"]["enum"] = target_mode_values()
+        schema["description"] = WORKFLOW_SCHEMA_DESCRIPTION + "\n当前项目能力契约优先于通用领域拆分建议：\n" + build_target_mode_contract()
+        return schema
+
     def __init__(self) -> None:
         super().__init__(
             name="run_agent_workflow",
@@ -577,6 +586,11 @@ class RunAgentWorkflowTool(LLMTool):
                         "气象与预报用 query_forecast，其他模式不得作为报告子节点。"
                         f"越界节点：{', '.join(disallowed_nodes)}"
                     )
+            from app.agent.workflow.project_policy import prepare_node, apply_workflow_limits
+
+            for node in [*nodes, *added_nodes]:
+                prepare_node(node)
+            max_concurrency = apply_workflow_limits(runtime_mode, definition, max_concurrency)
             definition["nodes"] = nodes
             # 节点成果缓存：同 workflow 重提时复用命中节点（依赖闭包完整才复用）
             from app.agent.workflow.result_cache import (

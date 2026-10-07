@@ -59,12 +59,14 @@ class WorkflowNodeSpec:
         kwargs: Dict[str, Any] = {"payload": dict(self.payload)}
         if self.max_iterations is not None:
             scaled_iterations = min(
-                self.MAX_ITERATIONS_CAP, max(1, round(self.max_iterations * factor))
+                self.MAX_ITERATIONS_CAP, self.payload.get("iteration_cap", self.MAX_ITERATIONS_CAP),
+                max(1, round(self.max_iterations * factor))
             )
             kwargs["max_iterations"] = scaled_iterations
             kwargs["payload"]["max_iterations"] = scaled_iterations
         if self.timeout_seconds is not None:
-            kwargs["timeout_seconds"] = min(self.timeout_seconds * factor, self.MAX_TIMEOUT_SECONDS_CAP)
+            kwargs["timeout_seconds"] = min(self.timeout_seconds * factor, self.MAX_TIMEOUT_SECONDS_CAP,
+                                           self.payload.get("timeout_cap", self.MAX_TIMEOUT_SECONDS_CAP))
         return dataclasses_replace(self, **kwargs)
 
     @classmethod
@@ -80,7 +82,7 @@ class WorkflowNodeSpec:
         payload = dict(value.get("payload") or {})
         # Allow concise node definitions while keeping the coordinator's
         # execution contract stable.
-        for key in ("target_mode", "goal", "context", "task_contract", "result_schema", "require_lineage", "phase"):
+        for key in ("target_mode", "goal", "context", "task_contract", "result_schema", "require_lineage", "phase", "iteration_cap", "timeout_cap"):
             if key in value and key not in payload:
                 payload[key] = value[key]
         raw_phase = str(value.get("phase") or "").strip()

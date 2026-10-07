@@ -65,6 +65,12 @@ MODE_PROFILES = {
 
 
 def get_agent_profile(mode: Optional[str], *, profile: Optional[str] = None) -> AgentProfile:
+    from app.agent.workflow.project_policy import child_modes, parent_policy
+
+    if str(mode or "") in child_modes():
+        return PROFILES["general-purpose"]
+    if parent_policy(str(mode or "")) is not None:
+        return PROFILES["orchestrator"]
     key = profile or MODE_PROFILES.get(str(mode or ""), "general-purpose")
     return PROFILES.get(key, PROFILES["general-purpose"])
 
