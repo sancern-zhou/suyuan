@@ -870,6 +870,9 @@ def get_tool_schemas(
             if allowed_tools is not None and tool.name not in allowed_tools:
                 continue
             schema = tool.get_function_schema()
+            if tool.name in {"run_agent_workflow", "call_sub_agent"} and mode:
+                from app.agent.workflow.project_policy import scope_delegation_schema
+                schema = scope_delegation_schema(schema, mode)
             if supports_native_multimodal(mode) and tool.name == "read_file":
                 schema = _native_multimodal_read_file_schema(schema)
             if mode in QUERY_WORKFLOW_MODES and tool.name == "execute_python":
