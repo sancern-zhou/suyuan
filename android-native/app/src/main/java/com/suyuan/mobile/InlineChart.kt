@@ -22,17 +22,20 @@ import java.io.ByteArrayInputStream
 internal sealed class ReplyBlock {
     data class Text(val content: String) : ReplyBlock()
     data class Chart(val attachment: UploadedAttachment) : ReplyBlock()
+    data class Image(val attachment: UploadedAttachment) : ReplyBlock()
 }
 
 internal fun chartReplyBlocks(content: String, attachments: List<UploadedAttachment>): List<ReplyBlock> {
-    val charts = attachments.filter(::isInteractiveChart)
+    // Resolve images as well as ECharts; an interactive spec wins over its thumbnail.
+    val charts = attachments.filter { isInteractiveChart(it) || isImageAttachment(it) }
+        .sortedBy { if (isInteractiveChart(it)) 1 else 0 }
         .flatMap { listOf(it.fileId to it, it.visualId to it) }.toMap()
     val blocks = mutableListOf<ReplyBlock>()
     var start = 0
     Regex("\\[\\[chart:([A-Za-z0-9_-]{1,100})\\]\\]").findAll(content).forEach { match ->
         val chart = charts[match.groupValues[1]] ?: return@forEach
         if (match.range.first > start) blocks += ReplyBlock.Text(content.substring(start, match.range.first))
-        blocks += ReplyBlock.Chart(chart)
+        blocks += if (isInteractiveChart(chart)) ReplyBlock.Chart(chart) else ReplyBlock.Image(chart)
         start = match.range.last + 1
     }
     if (start < content.length || blocks.isEmpty()) blocks += ReplyBlock.Text(content.substring(start))

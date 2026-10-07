@@ -1079,6 +1079,7 @@ private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: 
                                     MarkdownContent(block.content, if (isUser) SuyuanColors.primary else SuyuanColors.text)
                                 }
                                 is ReplyBlock.Chart -> InlineChart(block.attachment, state, viewModel)
+                                is ReplyBlock.Image -> AttachmentView(block.attachment, state, viewModel, context, inlineImage = true)
                             }
                         }
                     }
@@ -1089,10 +1090,16 @@ private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: 
                     val visibleAttachments = if (message.attachments.any(::isImageAttachment)) {
                         message.attachments.filterNot { it.mimeType.equals("application/json", ignoreCase = true) && !isImageAttachment(it) }
                     } else message.attachments
-                    val placedCharts = blocks.filterIsInstance<ReplyBlock.Chart>().map { it.attachment.fileId }.toSet()
+                    val placedCharts = blocks.mapNotNull {
+                        when (it) {
+                            is ReplyBlock.Chart -> it.attachment.fileId
+                            is ReplyBlock.Image -> it.attachment.fileId
+                            else -> null
+                        }
+                    }.toSet()
                     visibleAttachments.filterNot { it.fileId in placedCharts }.forEach { attachment ->
                         if (isInteractiveChart(attachment)) InlineChart(attachment, state, viewModel)
-                        else AttachmentView(attachment, state, viewModel, context)
+                        else AttachmentView(attachment, state, viewModel, context, inlineImage = attachment.resourceKey == "chart-image")
                     }
                 }
             }
@@ -1316,7 +1323,7 @@ private fun AttachmentTray(state: AppUiState, viewModel: AppViewModel, context: 
 }
 
 @Composable
-internal fun AttachmentView(attachment: UploadedAttachment, state: AppUiState, viewModel: AppViewModel, context: android.content.Context) {
+internal fun AttachmentView(attachment: UploadedAttachment, state: AppUiState, viewModel: AppViewModel, context: android.content.Context, inlineImage: Boolean = false) {
     val preview = state.attachmentPreviews[attachment.fileId]
     val isImage = isImageAttachment(attachment)
     if (isImage) {
@@ -1331,10 +1338,10 @@ internal fun AttachmentView(attachment: UploadedAttachment, state: AppUiState, v
                     bitmap = imageBitmap, contentDescription = attachment.filename,
                     modifier = Modifier
                         .padding(top = 6.dp)
-                        .size(88.dp)
+                        .then(if (inlineImage) Modifier.fillMaxWidth().aspectRatio(bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1)) else Modifier.size(88.dp))
                         .clip(RoundedCornerShape(10.dp))
                         .clickable { showViewer = true },
-                    contentScale = ContentScale.Crop,
+                    contentScale = if (inlineImage) ContentScale.Fit else ContentScale.Crop,
                 )
                 if (showViewer) {
                     Dialog(onDismissRequest = { showViewer = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
