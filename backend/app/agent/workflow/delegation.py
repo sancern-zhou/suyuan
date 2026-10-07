@@ -13,10 +13,22 @@ PARENT_CHILD_MODES = {"query": QUERY_CHILD_MODES, "expert": EXPERT_CHILD_MODES}
 DELEGATION_TOOLS = frozenset({"call_sub_agent", "run_agent_workflow"})
 
 
+def is_leaf_mode(mode: str) -> bool:
+    from app.agent.workflow.project_policy import child_modes
+
+    return mode in LEAF_MODES or mode in child_modes()
+
+
 def delegation_error(parent_mode: str, target_modes: list[str]) -> str | None:
-    if parent_mode in LEAF_MODES:
+    from app.agent.workflow.project_policy import child_modes, parent_policy
+
+    if is_leaf_mode(parent_mode):
         return f"精简子 Agent {parent_mode} 只执行本节点任务，不支持再次委派或 DAG 编排。"
-    allowed = PARENT_CHILD_MODES.get(parent_mode)
+    project_policy = parent_policy(parent_mode)
+    allowed = set(project_policy.child_modes) if project_policy else PARENT_CHILD_MODES.get(parent_mode)
+    project_targets = set(target_modes) & set(child_modes())
+    if project_targets and project_policy is None:
+        return "项目内部子 Agent 只允许由已配置的父模式委派。"
     if allowed is None:
         return None
     invalid = sorted(set(target_modes) - allowed)
@@ -30,6 +42,26 @@ def delegation_error(parent_mode: str, target_modes: list[str]) -> str | None:
 
 def build_delegation_contract(mode: str, available_tools: list[str]) -> str:
     """Include guidance only for an enabled parent, including project overrides."""
+    from app.agent.workflow.project_policy import parent_policy
+
+    policy = parent_policy(mode)
+    if policy and DELEGATION_TOOLS.intersection(available_tools):
+        from app.agent.workflow.target_mode_contract import build_target_mode_contract
+
+        return (
+            "\n\n## 项目内部工作流\n"
+            "简单问题直接完成；只有独立问题、上下文隔离或明确依赖值得委派时才使用 DAG。"
+            "同源同口径批量取数，已有资源优先复用；按独立问题拆分，不按城市或日期机械拆分。"
+            "一个分析节点回答一个问题，任务契约写明 question、scope、required_evidence、"
+            "deliverables、protocol_version=workflow.v1；结论、证据、缺口和所需图表一起交付。"
+            "依赖使用 dependencies；已知分支使用 when；结束后仅对影响结论的缺口追加 extension，"
+            "附 expected_revision、reason、nodes，复用已有成果，不固定增加全面复核节点。"
+            "关键证据失败限制结论范围，缺失不等于零；父模式负责用户交互、整合及正式报告。"
+            f"允许子模式：{', '.join(policy.child_modes)}。"
+            f"并发最多 {policy.max_concurrency}，累计节点 {policy.max_nodes}、重试 {policy.max_retries}、"
+            f"补图 {policy.max_extensions} 次，总时长 {policy.timeout_seconds} 秒。\n"
+            + build_target_mode_contract()
+        )
     if mode not in PARENT_CHILD_MODES or not DELEGATION_TOOLS.intersection(available_tools):
         return ""
     common = (

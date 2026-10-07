@@ -208,6 +208,28 @@ def validate_result_schema(value: Any, schema: Mapping[str, Any]) -> List[Dict[s
                 visit(item, spec["items"], f"{path}[{index}]")
 
     visit(value, schema, "$")
+    if schema.get("x-evidence-references") and isinstance(value, Mapping):
+        evidence = value.get("evidence", [])
+        evidence = evidence if isinstance(evidence, list) else []
+        ids = set()
+        for index, item in enumerate(evidence):
+            if not isinstance(item, Mapping):
+                continue
+            evidence_id = item.get("id")
+            if not isinstance(evidence_id, str) or not evidence_id.strip() or evidence_id in ids:
+                violations.append({"path": f"$.evidence[{index}].id", "expected": "unique nonempty id", "got": str(evidence_id)})
+            else:
+                ids.add(evidence_id)
+            for field in ("source", "locator"):
+                if not isinstance(item.get(field), str) or not item[field].strip():
+                    violations.append({"path": f"$.evidence[{index}].{field}", "expected": "nonempty source reference", "got": "missing"})
+        findings = value.get("findings", [])
+        for index, finding in enumerate(findings if isinstance(findings, list) else []):
+            if not isinstance(finding, Mapping):
+                continue
+            refs = finding.get("evidence_ids")
+            if not isinstance(refs, list) or not refs or any(not isinstance(ref, str) or ref not in ids for ref in refs):
+                violations.append({"path": f"$.findings[{index}].evidence_ids", "expected": "nonempty references to evidence ids", "got": str(refs)})
     return violations
 
 
