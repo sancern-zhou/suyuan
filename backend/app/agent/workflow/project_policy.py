@@ -19,6 +19,33 @@ def parent_policy(mode):
     return active_backend().agent_workflow_parents.get(mode)
 
 
+def scope_delegation_schema(schema, parent_mode):
+    """Expose only the configured child roles to a project orchestrator."""
+    policy = parent_policy(parent_mode)
+    if policy is None:
+        return schema
+    schema = deepcopy(schema)
+    properties = schema["parameters"]["properties"]
+    if schema["name"] == "call_sub_agent":
+        target = properties["target_mode"]
+    else:
+        target = properties["workflow"]["properties"]["nodes"]["items"]["properties"]["target_mode"]
+    target["enum"] = list(policy.child_modes)
+    contracts = child_modes()
+    description = "\n".join(
+        f"{mode}: {contracts[mode].positioning}；{contracts[mode].scope}；边界：{contracts[mode].boundary}"
+        for mode in policy.child_modes
+    )
+    target["description"] = description
+    schema["description"] = (
+        "项目内部子 Agent 工作流：按独立问题分配任务，dependencies 复用共享资源，"
+        "无依赖节点并行，已知条件用 when，首轮结束后仅对具体缺口使用 extension 补图。"
+        "节点 task_contract 必须含 protocol_version=workflow.v1、question、scope、required_evidence、"
+        "deliverables（最多三项）。父 Agent 整合并成稿，简单问题直接执行。\n" + description
+    )
+    return schema
+
+
 def prepare_node(node):
     """Require a bounded question and structured evidence before starting a child."""
     policy = child_modes().get(str(node.get("target_mode") or ""))
