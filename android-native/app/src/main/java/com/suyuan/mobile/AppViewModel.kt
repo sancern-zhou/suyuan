@@ -60,6 +60,7 @@ data class AppUiState(
     val reportLoading: Boolean = false,
     val reportError: String? = null,
     val scheduledTasks: List<ScheduledTask> = emptyList(),
+    val scheduledTasksLoading: Boolean = false,
 ) {
     val loggedIn: Boolean get() = token.isNotBlank()
 }
@@ -863,7 +864,12 @@ class AppViewModel(
     }
 
     fun refreshScheduledTasks() {
-        viewModelScope.launch { runCatching { repository.scheduledTasks(_state.value.token) }.onSuccess { _state.value = _state.value.copy(scheduledTasks = it) } }
+        viewModelScope.launch {
+            _state.value = _state.value.copy(scheduledTasksLoading = true)
+            runCatching { repository.scheduledTasks(_state.value.token) }
+                .onSuccess { _state.value = _state.value.copy(scheduledTasks = it, scheduledTasksLoading = false) }
+                .onFailure { _state.value = _state.value.copy(scheduledTasksLoading = false) }
+        }
     }
 
     fun markReportRead(report: ReportResult) {

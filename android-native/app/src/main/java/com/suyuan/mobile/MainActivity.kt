@@ -875,9 +875,13 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
 private fun ReportPanel(state: AppUiState, viewModel: AppViewModel) {
     var reportType by rememberSaveable { mutableStateOf("") }
     var expandedId by rememberSaveable { mutableStateOf<String?>(null) }
-    val taskCards = if (state.scheduledTasks.isNotEmpty()) state.scheduledTasks else state.reportResults.map { ScheduledTask(it.taskId, it.taskName.ifBlank { it.reportType.ifBlank { "未命名任务" } }, it.reportType) }.distinctBy { it.name }
+    val taskCards = state.scheduledTasks
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
-        if (taskCards.isNotEmpty()) {
+        if (state.scheduledTasksLoading) {
+            Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { CircularProgressIndicator(color = SuyuanColors.primary, strokeWidth = 2.dp) }
+        } else if (taskCards.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text("暂无定时任务成果", color = SuyuanColors.secondaryText, fontSize = 15.sp) }
+        } else {
             Text("任务列表", color = SuyuanColors.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(vertical = 8.dp))
             taskCards.forEach { task ->
                 Surface(shape = RoundedCornerShape(12.dp), tonalElevation = 1.dp, color = Color.White, modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
@@ -891,39 +895,37 @@ private fun ReportPanel(state: AppUiState, viewModel: AppViewModel) {
                     }
                 }
             }
-        }
-        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            OutlinedTextField(value = reportType, onValueChange = { reportType = it }, singleLine = true, label = { Text("任务类型/名称") }, modifier = Modifier.weight(1f))
-            TextButton(onClick = { viewModel.refreshReports(reportType.trim().ifBlank { null }) }) { Text("筛选") }
-        }
-        if (state.scheduledTasks.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                OutlinedTextField(value = reportType, onValueChange = { reportType = it }, singleLine = true, label = { Text("任务类型/名称") }, modifier = Modifier.weight(1f))
+                TextButton(onClick = { viewModel.refreshReports(reportType.trim().ifBlank { null }) }) { Text("筛选") }
+            }
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                state.scheduledTasks.forEach { task ->
+                taskCards.forEach { task ->
                     Text(task.name, color = SuyuanColors.secondaryText, fontSize = 11.sp, modifier = Modifier.clip(RoundedCornerShape(14.dp)).border(1.dp, SuyuanColors.border, RoundedCornerShape(14.dp)).clickable { reportType = task.name; viewModel.refreshReports(task.name) }.padding(horizontal = 10.dp, vertical = 6.dp))
                 }
             }
-        }
-        if (state.reportLoading) {
-            Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { CircularProgressIndicator(color = SuyuanColors.primary, strokeWidth = 2.dp) }
-        } else if (state.reportError != null && state.reportResults.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text(state.reportError, color = SuyuanColors.error, fontSize = 14.sp) }
-        } else if (state.reportResults.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text("暂无定时任务成果", color = SuyuanColors.secondaryText, fontSize = 15.sp) }
-        } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
-                items(state.reportResults, key = { it.reportId }) { report ->
-                    val expanded = expandedId == report.reportId
-                    Surface(color = if (expanded) SuyuanColors.panel else Color.White, shape = RoundedCornerShape(12.dp), tonalElevation = 1.dp, modifier = Modifier.fillMaxWidth().clickable { expandedId = if (expanded) null else report.reportId; viewModel.markReportRead(report) }) {
-                        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-                            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                                Text(report.title, color = SuyuanColors.text, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-                                if (!report.read) Text("未读", color = SuyuanColors.primary, fontSize = 11.sp)
+            if (state.reportLoading) {
+                Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { CircularProgressIndicator(color = SuyuanColors.primary, strokeWidth = 2.dp) }
+            } else if (state.reportError != null && state.reportResults.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text(state.reportError, color = SuyuanColors.error, fontSize = 14.sp) }
+            } else if (state.reportResults.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text("暂无定时任务成果", color = SuyuanColors.secondaryText, fontSize = 15.sp) }
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
+                    items(state.reportResults, key = { it.reportId }) { report ->
+                        val expanded = expandedId == report.reportId
+                        Surface(color = if (expanded) SuyuanColors.panel else Color.White, shape = RoundedCornerShape(12.dp), tonalElevation = 1.dp, modifier = Modifier.fillMaxWidth().clickable { expandedId = if (expanded) null else report.reportId; viewModel.markReportRead(report) }) {
+                            Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                    Text(report.title, color = SuyuanColors.text, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                                    if (!report.read) Text("未读", color = SuyuanColors.primary, fontSize = 11.sp)
+                                }
+                                Text("${report.reportType} · ${report.generatedAt?.replace('T', ' ')?.take(16) ?: ""}", color = SuyuanColors.secondaryText, fontSize = 11.sp, modifier = Modifier.padding(top = 5.dp))
+                                if (expanded) {
+                                    if (report.summary.isNotBlank()) MarkdownContent(report.summary, SuyuanColors.text)
+                                    report.attachments.forEach { attachment -> AttachmentView(attachment, state, viewModel, LocalContext.current) }
+                                } else Text(report.summary.replace(Regex("\\s+"), " ").trim(), color = SuyuanColors.text, fontSize = 13.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(top = 7.dp))
                             }
-                            Text("${report.reportType} · ${report.generatedAt?.replace('T', ' ')?.take(16) ?: ""}", color = SuyuanColors.secondaryText, fontSize = 11.sp, modifier = Modifier.padding(top = 5.dp))
-                            if (expanded) {
-                                if (report.summary.isNotBlank()) MarkdownContent(report.summary, SuyuanColors.text)
-                                report.attachments.forEach { attachment -> AttachmentView(attachment, state, viewModel, LocalContext.current) }
-                            } else Text(report.summary.replace(Regex("\\s+"), " ").trim(), color = SuyuanColors.text, fontSize = 13.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(top = 7.dp))
                         }
                     }
                 }
