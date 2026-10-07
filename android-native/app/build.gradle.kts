@@ -60,3 +60,16 @@ dependencies {
     implementation(libs.getui.gtc)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
+
+// Consume the shared frontend build, retaining only the chart entry's dependencies.
+val chartAssets = layout.buildDirectory.dir("generated/chartAssets")
+val packageChartRenderer by tasks.registering(Exec::class) {
+    val frontend = rootProject.projectDir.parentFile.resolve("frontend")
+    inputs.dir(frontend.resolve("dist"))
+    inputs.file(frontend.resolve("scripts/packageChartRenderer.mjs"))
+    outputs.dir(chartAssets)
+    commandLine("node", frontend.resolve("scripts/packageChartRenderer.mjs").absolutePath,
+        frontend.resolve("dist").absolutePath, chartAssets.get().asFile.resolve("charts").absolutePath)
+}
+android.sourceSets.getByName("main").assets.srcDir(chartAssets)
+tasks.named("preBuild").configure { dependsOn(packageChartRenderer) }

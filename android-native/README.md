@@ -11,6 +11,12 @@
 
 构建并安装示例：
 
+App 的回复内图表复用 Web 的 `ChartPanel`，打包前先在仓库 `frontend/` 执行
+`npm install`（首次）和 `npm run build:standalone`。Gradle 自动从该次构建的
+`dist/.vite/manifest.json` 提取 `chart.html` 及其依赖，打包进 App；不需要 CDN。
+Agent 使用独立一行的 `[[chart:<visual_id>]]` 决定图表位置，Web/App 均支持。
+后端须同步部署图表资源元数据和历史引用恢复更新，旧后端仍将 JSON 作为普通附件返回。
+
 ```powershell
 .\build-debug.ps1 -Install
 ```

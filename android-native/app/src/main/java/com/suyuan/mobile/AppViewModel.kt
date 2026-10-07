@@ -47,6 +47,8 @@ data class AppUiState(
     val expandedAttachments: Set<String> = emptySet(),
     val attachmentPreviews: Map<String, AttachmentPreview> = emptyMap(),
     val loading: Boolean = false,
+    val workStatus: String? = null,
+    val workStartedAtMs: Long? = null,
     val error: String? = null,
     val broadcastMessages: List<BroadcastMessage> = emptyList(),
     val unreadBroadcastCount: Int = 0,
@@ -79,6 +81,24 @@ private data class PendingTurn(
     val mode: String,
     val modelTier: String,
 )
+
+private fun defaultWorkStatus(mode: String) = when (mode) {
+    "query" -> "正在准备查询和核验数据"
+    "knowledge" -> "正在定位相关知识和依据"
+    else -> "正在组织专业分析思路"
+}
+
+private fun workStatusForTool(toolName: String): String = when {
+    toolName.contains(Regex("search|browse|web|retriev|knowledge", RegexOption.IGNORE_CASE)) -> "正在检索并核验相关资料"
+    toolName.contains(Regex("query|sql|database|dataset|monitor|forecast", RegexOption.IGNORE_CASE)) -> "正在查询并核验数据"
+    toolName.contains(Regex("chart|visual|plot|image", RegexOption.IGNORE_CASE)) -> "正在生成可视化结果"
+    toolName.contains(Regex("report|document|docx|pdf|ppt|slide", RegexOption.IGNORE_CASE)) -> "正在组织交付内容"
+    toolName.contains(Regex("read|file|attachment|resource", RegexOption.IGNORE_CASE)) -> "正在读取任务资料"
+    toolName.contains(Regex("write|save|export|download", RegexOption.IGNORE_CASE)) -> "正在整理任务成果"
+    toolName.contains(Regex("weather|meteorolog", RegexOption.IGNORE_CASE)) -> "正在分析气象条件"
+    toolName.contains(Regex("gis|map|spatial|station", RegexOption.IGNORE_CASE)) -> "正在处理空间信息"
+    else -> "正在执行分析步骤"
+}
 
 class AppViewModel(
     private val repository: SocialAppRepository,
@@ -115,7 +135,7 @@ class AppViewModel(
         val current = _state.value
         if (current.mode == mode && current.sessionId != null) return
         current.sessionId?.let { modeSessionIds[current.mode] = it }
-        _state.value = current.copy(mode = mode, sessionId = null, messages = emptyList(), draft = "", attachments = emptyList(), error = null, loading = true)
+        _state.value = current.copy(mode = mode, sessionId = null, messages = emptyList(), draft = "", attachments = emptyList(), error = null, loading = true, workStatus = null, workStartedAtMs = null)
         val existingId = modeSessionIds[mode]
         if (existingId != null) {
             _state.value = _state.value.copy(loading = false)
@@ -137,7 +157,7 @@ class AppViewModel(
         // stream continues to be persisted in the background and is ignored
         // by the new conversation UI until the user reopens that session.
         val current = _state.value
-        _state.value = current.copy(sessionId = null, draft = "", messages = emptyList(), attachments = emptyList(), error = null, loading = false)
+        _state.value = current.copy(sessionId = null, draft = "", messages = emptyList(), attachments = emptyList(), error = null, loading = false, workStatus = null, workStartedAtMs = null)
         viewModelScope.launch {
             runCatching { repository.createSession(current.token) }
                 .onSuccess { session ->
@@ -154,7 +174,7 @@ class AppViewModel(
     fun loadSession(session: SessionInfo) {
         val current = _state.value
         if (current.loading) return
-        _state.value = current.copy(sessionId = session.sessionId, draft = "", messages = emptyList(), attachments = emptyList(), loading = true, error = null)
+        _state.value = current.copy(sessionId = session.sessionId, draft = "", messages = emptyList(), attachments = emptyList(), loading = true, error = null, workStatus = null, workStartedAtMs = null)
         viewModelScope.launch {
             runCatching { repository.messages(current.token, session.sessionId) }
                 .onSuccess { messages -> _state.value = _state.value.copy(messages = messages, loading = false) }
@@ -329,6 +349,8 @@ class AppViewModel(
         _state.value = current.copy(
             draft = "",
             loading = true,
+            workStatus = defaultWorkStatus(current.mode),
+            workStartedAtMs = android.os.SystemClock.elapsedRealtime(),
             error = null,
             attachments = emptyList(),
             messages = current.messages + userMessage,
@@ -349,7 +371,7 @@ class AppViewModel(
                 _state.value = _state.value.copy(loading = true)
                 ensureStreamWorker()
             } else {
-                _state.value = _state.value.copy(loading = false)
+                _state.value = _state.value.copy(loading = false, workStatus = null, workStartedAtMs = null)
             }
         }
     }
@@ -361,6 +383,9 @@ class AppViewModel(
         var answerId: String? = null
         var outputAttachments: List<UploadedAttachment> = emptyList()
         val turnStartedAt = android.os.SystemClock.elapsedRealtime()
+        if (current.sessionId == turnSessionId) {
+            _state.value = current.copy(workStatus = defaultWorkStatus(turn.mode), workStartedAtMs = turnStartedAt)
+        }
         var toolCount = 0
         runCatching {
             repository.stream(current.token, turn.query, turnSessionId, turn.attachments, turn.mode, turn.modelTier).collect { event ->
@@ -392,6 +417,7 @@ class AppViewModel(
                         // Session selection is handled before this guard.
                     }
                     "thought" -> {
+                        updateWorkStatus("正在梳理分析思路")
                         val data = runCatching { org.json.JSONObject(event.data) }.getOrNull()
                         val content = data?.optString("thought").orEmpty().trim()
                         // The backend may emit a progress-only thought event. Do not
@@ -402,6 +428,7 @@ class AppViewModel(
                         }
                     }
                     "thinking_delta" -> {
+                        updateWorkStatus("正在梳理分析思路")
                         val data = runCatching { org.json.JSONObject(event.data) }.getOrNull()
                         val chunk = data?.optString("chunk").orEmpty()
                         if (chunk.trim().isNotEmpty()) {
@@ -414,6 +441,7 @@ class AppViewModel(
                         }
                     }
                     "thinking_content" -> {
+                        updateWorkStatus("正在梳理分析思路")
                         // The backend emits this aggregate form for providers
                         // that expose reasoning only when a thinking block closes.
                         // Merge it into the same mobile thought row used by deltas.
@@ -430,6 +458,7 @@ class AppViewModel(
                         }
                     }
                     "resources_changed" -> {
+                        updateWorkStatus("正在整理任务成果")
                         val data = runCatching { org.json.JSONObject(event.data) }.getOrNull()
                         val incoming = data?.let { parseAttachments(it) }.orEmpty()
                         if (incoming.isNotEmpty()) {
@@ -440,9 +469,14 @@ class AppViewModel(
                         }
                     }
                     // Tool calls/results are intentionally hidden in the mobile view.
-                    "tool_use" -> toolCount += 1
-                    "tool_result" -> Unit
+                    "tool_use" -> {
+                        toolCount += 1
+                        val data = runCatching { org.json.JSONObject(event.data) }.getOrNull()
+                        updateWorkStatus(workStatusForTool(data?.optString("tool_name").orEmpty()))
+                    }
+                    "tool_result" -> updateWorkStatus("已找到一批线索，正在继续核验")
                     "streaming_text" -> {
+                        updateWorkStatus("正在组织最终回复")
                         val data = runCatching { org.json.JSONObject(event.data) }.getOrNull()
                         val chunk = data?.optString("chunk").orEmpty()
                         if (chunk.isNotEmpty()) {
@@ -458,6 +492,7 @@ class AppViewModel(
                         }
                     }
                     "complete" -> {
+                        _state.value = _state.value.copy(workStatus = null, workStartedAtMs = null)
                         val data = runCatching { org.json.JSONObject(event.data) }.getOrNull()
                         val answer = data?.optString("answer").orEmpty()
                         val incomingAttachments = mergeAttachments(outputAttachments, data?.let { parseAttachments(it) }.orEmpty())
@@ -477,6 +512,7 @@ class AppViewModel(
                         collapseThoughts()
                     }
                     "fatal_error", "incomplete", "interrupted" -> {
+                        _state.value = _state.value.copy(workStatus = null, workStartedAtMs = null)
                         val data = runCatching { org.json.JSONObject(event.data) }.getOrNull()
                         val error = data?.optString("error").orEmpty()
                             .ifBlank { data?.optString("reason").orEmpty() }
@@ -495,6 +531,14 @@ class AppViewModel(
             }
         }
         if (answerId != null && _state.value.sessionId == turnSessionId) updateMessage(answerId!!) { it.copy(streaming = false) }
+        if (_state.value.sessionId == turnSessionId) {
+            _state.value = _state.value.copy(workStatus = null, workStartedAtMs = null)
+        }
+    }
+
+    private fun updateWorkStatus(status: String) {
+        val current = _state.value
+        if (current.workStatus != status) _state.value = current.copy(workStatus = status)
     }
 
     private fun upsertMessage(message: ChatMessage) {
@@ -588,7 +632,10 @@ class AppViewModel(
                     val isText = attachment.mimeType.startsWith("text/") ||
                         attachment.mimeType.contains("json") ||
                         extension in setOf("txt", "md", "markdown", "qmd", "csv", "json", "html", "htm", "xml", "log")
-                    val text = if (!isImage && isText) bytes.toString(Charsets.UTF_8).take(12000) else null
+                    val text = if (!isImage && isText) {
+                        val decoded = bytes.toString(Charsets.UTF_8)
+                        if (isInteractiveChart(attachment)) decoded else decoded.take(12000)
+                    } else null
                     _state.value = _state.value.copy(attachmentPreviews = _state.value.attachmentPreviews + (id to AttachmentPreview(text = text, imageBytes = if (isImage) bytes else null, pdfBytes = if (!isImage && isPdf) bytes else null)))
                 }
                 .onFailure { failure ->
@@ -662,7 +709,7 @@ class AppViewModel(
         pendingTurns.removeAll { it.sessionId == session }
         // Update the UI before the cancellation request so the stop button
         // responds immediately even if the gateway takes time to acknowledge.
-        _state.value = current.copy(loading = false)
+        _state.value = current.copy(loading = false, workStatus = null, workStartedAtMs = null)
         if (session == null) return
         streamJob?.cancel()
         streamJob = null

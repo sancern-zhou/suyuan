@@ -88,6 +88,10 @@ data class UploadedAttachment(
     val downloadUrl: String? = null,
     val resourceRef: String?,
     val variants: List<AttachmentVariant> = emptyList(),
+    val renderer: String = "",
+    val resourceKey: String = "",
+    val visualId: String = "",
+    val interactive: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("file_id", fileId)
@@ -96,6 +100,10 @@ data class UploadedAttachment(
         put("type", fileType)
         put("mime_type", mimeType)
         put("url", url)
+        put("renderer", renderer)
+        put("resource_key", resourceKey)
+        put("visual_id", visualId)
+        put("interactive", interactive)
         previewUrl?.let { put("preview_url", it) }
         previewMimeType?.let { put("preview_mime_type", it) }
         downloadUrl?.let { put("download_url", it) }
@@ -151,10 +159,17 @@ data class UploadedAttachment(
                 downloadUrl = item.optString("download_url", "").ifBlank { null },
                 resourceRef = ref,
                 variants = variants,
+                renderer = item.optString("renderer", ""),
+                resourceKey = item.optString("resource_key", ""),
+                visualId = item.optString("visual_id", ""),
+                interactive = item.optBoolean("interactive", false),
             )
         }
     }
 }
+
+fun isInteractiveChart(attachment: UploadedAttachment): Boolean =
+    attachment.renderer == "chart" && attachment.resourceKey == "chart-spec" && attachment.interactive
 
 fun isImageAttachment(attachment: UploadedAttachment): Boolean {
     if (attachment.mimeType.startsWith("image/", ignoreCase = true) || attachment.fileType.equals("image", ignoreCase = true)) return true

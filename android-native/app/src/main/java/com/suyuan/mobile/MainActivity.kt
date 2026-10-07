@@ -1,4 +1,6 @@
 package com.suyuan.mobile
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 
 import android.Manifest
 import android.content.ContentValues
@@ -262,6 +264,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     var showHistory by remember { mutableStateOf(false) }
     var showBroadcasts by remember { mutableStateOf(false) }
     var showReports by remember { mutableStateOf(false) }
+    var selectedTaskId by remember { mutableStateOf<String?>(null) }
     val voiceClient = remember { RealtimeVoiceClient(BuildConfig.API_BASE_URL) }
     DisposableEffect(voiceClient) {
         onDispose { voiceClient.stop() }
@@ -355,26 +358,28 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             showHistory = showHistory,
             showBroadcasts = showBroadcasts,
             showReports = showReports,
+            taskTitles = state.scheduledTasks.map { it.taskId to it.name },
+            onSelectTask = { selectedTaskId = it },
             onHistory = { showHistory = true; showBroadcasts = false; showReports = false },
             onBack = { showHistory = false; showBroadcasts = false; showReports = false },
             onBroadcasts = { showBroadcasts = true; showHistory = false; showReports = false; viewModel.openBroadcasts() },
-                onReports = { showReports = true; showHistory = false; showBroadcasts = false; viewModel.refreshScheduledTasks() },
+                onReports = { selectedTaskId = null; showReports = true; showHistory = false; showBroadcasts = false; viewModel.refreshScheduledTasks() },
             unreadBroadcastCount = state.unreadBroadcastCount,
             unreadReportCount = state.reportUnreadCount,
             onNew = { showHistory = false; showBroadcasts = false; showReports = false; viewModel.newConversation() },
         )
         if (showReports) {
-            ScheduledTaskPanel(state, viewModel, onSession = { showReports = false })
+            ScheduledTaskPanel(state, viewModel, selectedTaskId, onSession = { showReports = false })
         } else if (showBroadcasts) {
             BroadcastPanel(state, viewModel, onBack = { showBroadcasts = false })
         } else if (showHistory) {
             HistoryPanel(state, viewModel, onBack = { showHistory = false })
-        } else Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+        } else Column(Modifier.fillMaxSize()) {
             if (state.unreadBroadcastCount > 0) {
                 Surface(
                     color = SuyuanColors.primary.copy(alpha = .08f),
                     shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp).clickable { showBroadcasts = true; viewModel.openBroadcasts() },
+                    modifier = Modifier.padding(horizontal = 12.dp).fillMaxWidth().padding(top = 6.dp).clickable { showBroadcasts = true; viewModel.openBroadcasts() },
                 ) {
                     Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                         Icon(painterResource(R.drawable.ic_broadcast), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(18.dp))
@@ -383,14 +388,15 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                 }
             }
             val conversationListState = rememberLazyListState()
-            val waitingForAssistant = state.loading && state.messages.lastOrNull()?.kind == "user"
+            val visibleMessages = state.messages.filterNot { it.kind == "thought" }
+            val showingWorkStatus = state.workStatus != null
             var initiallyScrolledSession by remember { mutableStateOf<String?>(null) }
-            LaunchedEffect(state.messages.size, state.messages.lastOrNull()?.content?.length, state.messages.lastOrNull()?.kind, waitingForAssistant) {
+            LaunchedEffect(state.messages.size, state.messages.lastOrNull()?.content?.length, state.messages.lastOrNull()?.kind, showingWorkStatus) {
                 if (state.messages.isNotEmpty()) {
-                    val lastIndex = state.messages.lastIndex
+                    val lastIndex = visibleMessages.lastIndex
                     val visibleLast = conversationListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
                     val lastMessageIsNewUserInput = state.messages.lastOrNull()?.kind == "user"
-                    val targetIndex = lastIndex + if (waitingForAssistant) 1 else 0
+                    val targetIndex = lastIndex + if (showingWorkStatus) 1 else 0
                     val isFirstRestore = !state.sessionId.isNullOrBlank() && initiallyScrolledSession != state.sessionId
                     if (isFirstRestore || lastMessageIsNewUserInput || visibleLast == null || visibleLast >= lastIndex - 1) {
                         conversationListState.scrollToItem(targetIndex)
@@ -407,22 +413,24 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             ) {
                 if (state.messages.isEmpty()) {
                     item { EmptyChatState(loading = state.loading, mode = state.mode, onModeSelected = viewModel::selectMode) }
-                } else items(state.messages.filterNot { it.kind == "thought" }, key = { it.id }) {
+                } else items(visibleMessages, key = { it.id }) {
                     ChatMessageView(it, state, viewModel)
                 }
-                if (waitingForAssistant) {
-                    item(key = "thinking-indicator") { ThinkingIndicator() }
+                if (showingWorkStatus) {
+                    item(key = "working-status") {
+                        WorkingStatusIndicator(state.workStatus.orEmpty(), state.mode, state.workStartedAtMs)
+                    }
                 }
             }
         val canCancel = state.loading && state.sessionId != null
         if (state.attachments.isNotEmpty()) {
-            AttachmentTray(state, viewModel, context)
+            Column(Modifier.padding(horizontal = 12.dp)) { AttachmentTray(state, viewModel, context) }
         }
         Surface(
             color = Color.White,
             shape = RoundedCornerShape(22.dp),
             tonalElevation = 0.dp,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.padding(horizontal = 12.dp).fillMaxWidth()
                 .shadow(8.dp, RoundedCornerShape(22.dp), ambientColor = Color(0x22000000), spotColor = Color(0x18000000))
                 .border(1.dp, Color(0xFFE7E9EE), RoundedCornerShape(22.dp))
                 .padding(vertical = 8.dp)
@@ -618,6 +626,8 @@ private fun AppTopBar(
     showHistory: Boolean,
     showBroadcasts: Boolean,
     showReports: Boolean,
+    taskTitles: List<Pair<String, String>>,
+    onSelectTask: (String) -> Unit,
     onHistory: () -> Unit,
     onBack: () -> Unit,
     onBroadcasts: () -> Unit,
@@ -626,6 +636,7 @@ private fun AppTopBar(
     unreadReportCount: Int,
     onNew: () -> Unit,
 ) {
+    var taskMenuExpanded by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().background(Color.White).statusBarsPadding().padding(horizontal = 18.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
@@ -657,7 +668,18 @@ private fun AppTopBar(
                 }
             }
         }
-        IconButton(onClick = onNew) {
+        if (showReports) {
+            Box {
+                IconButton(onClick = { taskMenuExpanded = true }) {
+                    Icon(painterResource(R.drawable.ic_menu), contentDescription = "切换任务", tint = SuyuanColors.text)
+                }
+                DropdownMenu(expanded = taskMenuExpanded, onDismissRequest = { taskMenuExpanded = false }) {
+                    taskTitles.forEach { (id, title) ->
+                        DropdownMenuItem(text = { Text(title) }, onClick = { onSelectTask(id); taskMenuExpanded = false })
+                    }
+                }
+            }
+        } else if (!showBroadcasts) IconButton(onClick = onNew) {
             Icon(painterResource(R.drawable.ic_new_chat), contentDescription = "新建对话", tint = SuyuanColors.text, modifier = Modifier.size(28.dp))
         }
     }
@@ -894,23 +916,62 @@ private fun EmptyChatState(loading: Boolean = false, mode: String = "expert", on
 }
 
 @Composable
-private fun ThinkingIndicator() {
-    Row(
-        Modifier.fillMaxWidth().padding(start = 8.dp, top = 2.dp, bottom = 6.dp),
-        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-    ) {
-        CircularProgressIndicator(
-            color = SuyuanColors.secondaryText,
-            strokeWidth = 2.dp,
-            modifier = Modifier.size(15.dp),
-        )
-        Text(
-            "正在思考…",
-            color = SuyuanColors.secondaryText,
-            fontSize = 13.sp,
-            modifier = Modifier.padding(start = 7.dp),
-        )
+private fun WorkingStatusIndicator(status: String, mode: String, startedAtMs: Long?) {
+    var elapsedSeconds by remember(startedAtMs) { mutableIntStateOf(0) }
+    LaunchedEffect(startedAtMs) {
+        while (startedAtMs != null) {
+            elapsedSeconds = ((android.os.SystemClock.elapsedRealtime() - startedAtMs) / 1000L).coerceAtLeast(0).toInt()
+            delay(1000)
+        }
     }
+    val transition = rememberInfiniteTransition(label = "work-status")
+    val dotAlpha by transition.animateFloat(
+        initialValue = .35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse),
+        label = "work-status-dot",
+    )
+    val tips = progressTips(mode)
+    val tip = if (elapsedSeconds < 6 || tips.isEmpty()) "" else {
+        val rotation = (elapsedSeconds - 6) / 10
+        tips[(rotation + (mode.hashCode() and Int.MAX_VALUE)) % tips.size]
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(start = 8.dp, top = 4.dp, end = 8.dp, bottom = 8.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.Top,
+    ) {
+        Box(Modifier.padding(top = 6.dp).size(9.dp).clip(CircleShape).background(SuyuanColors.secondaryText.copy(alpha = dotAlpha)))
+        Column(Modifier.padding(start = 9.dp)) {
+            Column {
+                Text(status, color = SuyuanColors.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(formatWorkElapsed(elapsedSeconds), color = SuyuanColors.secondaryText, fontSize = 11.sp, modifier = Modifier.padding(start = 8.dp, bottom = 1.dp))
+            }
+            if (tip.isNotBlank()) {
+                Text("小技巧  $tip", color = SuyuanColors.secondaryText, fontSize = 11.sp, lineHeight = 17.sp, modifier = Modifier.padding(top = 4.dp))
+            }
+        }
+    }
+}
+
+private fun formatWorkElapsed(seconds: Int): String {
+    if (seconds < 60) return "已进行 ${seconds} 秒"
+    val minutes = seconds / 60
+    val rest = seconds % 60
+    return if (rest == 0) "已进行 ${minutes} 分" else "已进行 ${minutes} 分 ${rest} 秒"
+}
+
+private fun progressTips(mode: String): List<String> {
+    val modeTips = when (mode) {
+        "query" -> listOf("指定时间范围、区域、指标和统计口径，查询结果会更准确", "需要对比分析时，可以同时说明基准时段和排序方式")
+        "knowledge" -> listOf("指定知识库、文档或章节范围，可以减少无关检索", "需要核验结论时，可以要求同时给出原文依据")
+        else -> listOf("说明决策场景和约束条件，有助于获得更可执行的建议", "复杂研判可以要求区分事实、推断和不确定性")
+    }
+    return modeTips + listOf(
+        "说明目标、可用资料和输出格式，Agent 会更快对齐需求",
+        "复杂任务可以分步提出，先确认方向再继续完善",
+        "提供一个满意的参考样例，通常比抽象描述更有效",
+        "日常查询可用快速模式，复杂研判建议使用深度思考",
+    )
 }
 
 private fun modeTitle(mode: String): String = when (mode) {
@@ -938,10 +999,10 @@ private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: 
     val context = LocalContext.current
     val isUser = message.kind == "user"
     val horizontal = if (isUser) Arrangement.End else Arrangement.Start
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = horizontal) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = if (isUser) 12.dp else 0.dp, vertical = 4.dp), horizontalArrangement = horizontal) {
         val bubbleShape = RoundedCornerShape(18.dp)
         val messageModifier = Modifier
-            .widthIn(max = if (isUser) 330.dp else 390.dp)
+            .then(if (isUser) Modifier.widthIn(max = 330.dp) else Modifier.fillMaxWidth())
             .then(
                 if (isUser) {
                     Modifier
@@ -950,7 +1011,7 @@ private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: 
                         .border(1.dp, SuyuanColors.primary.copy(alpha = .42f), bubbleShape)
                 } else Modifier
             )
-            .padding(horizontal = 14.dp, vertical = 7.dp)
+            .padding(horizontal = if (isUser) 14.dp else 0.dp, vertical = 7.dp)
         Column(messageModifier) {
             when (message.kind) {
                 "thought" -> {
@@ -1009,9 +1070,17 @@ private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: 
                     Text(message.content, color = SuyuanColors.error, fontSize = 13.sp, lineHeight = 19.sp)
                 }
                 else -> {
-                    ProcessSummary(message)
+                    Column(Modifier.padding(horizontal = if (isUser) 0.dp else 14.dp)) { ProcessSummary(message) }
+                    val blocks = if (isUser) listOf(ReplyBlock.Text(message.content)) else chartReplyBlocks(message.content, message.attachments)
                     if (message.content.isNotBlank()) {
-                        MarkdownContent(message.content, if (isUser) SuyuanColors.primary else SuyuanColors.text)
+                        blocks.forEach { block ->
+                            when (block) {
+                                is ReplyBlock.Text -> Column(Modifier.padding(horizontal = if (isUser) 0.dp else 14.dp)) {
+                                    MarkdownContent(block.content, if (isUser) SuyuanColors.primary else SuyuanColors.text)
+                                }
+                                is ReplyBlock.Chart -> InlineChart(block.attachment, state, viewModel)
+                            }
+                        }
                     }
                     if (message.streaming) {
                         // A blinking cursor keeps the streaming state visible during quiet intervals.
@@ -1020,8 +1089,10 @@ private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: 
                     val visibleAttachments = if (message.attachments.any(::isImageAttachment)) {
                         message.attachments.filterNot { it.mimeType.equals("application/json", ignoreCase = true) && !isImageAttachment(it) }
                     } else message.attachments
-                    visibleAttachments.forEach { attachment ->
-                        AttachmentView(attachment, state, viewModel, context)
+                    val placedCharts = blocks.filterIsInstance<ReplyBlock.Chart>().map { it.attachment.fileId }.toSet()
+                    visibleAttachments.filterNot { it.fileId in placedCharts }.forEach { attachment ->
+                        if (isInteractiveChart(attachment)) InlineChart(attachment, state, viewModel)
+                        else AttachmentView(attachment, state, viewModel, context)
                     }
                 }
             }
@@ -1602,7 +1673,7 @@ private fun saveImageToGallery(context: android.content.Context, bytes: ByteArra
         .getOrElse { resolver.delete(uri, null, null); false }
 }
 
-private object SuyuanColors {
+internal object SuyuanColors {
     val primary = Color(0xFF007AFF)
     val background = Color.White
     val panel = Color(0xFFF7F7F9)

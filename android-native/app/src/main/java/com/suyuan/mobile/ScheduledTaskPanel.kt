@@ -23,50 +23,37 @@ import org.json.JSONObject
 import java.util.Calendar
 
 @Composable
-fun ScheduledTaskPanel(state: AppUiState, viewModel: AppViewModel, onSession: () -> Unit) {
+fun ScheduledTaskPanel(state: AppUiState, viewModel: AppViewModel, requestedTaskId: String?, onSession: () -> Unit) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
-    var type by rememberSaveable { mutableStateOf("") }
-    var query by rememberSaveable { mutableStateOf("") }
     var start by rememberSaveable { mutableStateOf("") }
     var end by rememberSaveable { mutableStateOf("") }
     var station by rememberSaveable { mutableStateOf("") }
     var pollutant by rememberSaveable { mutableStateOf("") }
     var detail by remember { mutableStateOf<JSONObject?>(null) }
+    var filtersExpanded by rememberSaveable { mutableStateOf(false) }
     var reportUrl by remember { mutableStateOf<String?>(null) }
     val selected = state.scheduledTasks.firstOrNull { it.taskId == selectedId }
     fun reload(page: Int = 1) { selectedId?.let { viewModel.queryTaskResults(it, page, start, end, station, pollutant) } }
+    LaunchedEffect(state.scheduledTasks, requestedTaskId) {
+        val target = requestedTaskId ?: selectedId ?: state.scheduledTasks.firstOrNull()?.taskId
+        if (target != null && target != selectedId) {
+            selectedId = target
+            start = ""; end = ""; station = ""; pollutant = ""
+            viewModel.queryTaskResults(target)
+        }
+    }
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
-        Row(Modifier.fillMaxWidth()) {
-            Text(selected?.name?.let { "$it · 执行记录" } ?: "任务工作区", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).padding(top = 12.dp))
-            TextButton(onClick = { if (selectedId == null) viewModel.refreshScheduledTasks() else reload() }) { Text("刷新") }
-            if (selectedId != null) TextButton(onClick = { selectedId = null }) { Text("返回") }
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            TextButton(onClick = { filtersExpanded = !filtersExpanded }, enabled = selectedId != null) { Text(if (filtersExpanded) "收起筛选" else "筛选执行记录") }
+            TextButton(onClick = { reload() }, enabled = selectedId != null) { Text("刷新") }
         }
         state.taskError?.let { Text(it, color = Color(0xFFB42318), fontSize = 12.sp, modifier = Modifier.padding(vertical = 8.dp)) }
         if (selectedId == null) {
-            Text("${state.scheduledTasks.size} 个任务 · ${state.scheduledTasks.count { it.enabled }} 个已启用", fontSize = 12.sp, color = Color.Gray)
-            OutlinedTextField(query, { query = it }, label = { Text("搜索任务名称或描述") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
-            Row(Modifier.horizontalScroll(rememberScrollState())) {
-                (listOf("") + state.scheduledTasks.map { it.taskType }.distinct()).forEach { key ->
-                    FilterChip(selected = type == key, onClick = { type = key }, label = { Text(if (key.isBlank()) "全部类型" else taskTypeLabel(key)) }, modifier = Modifier.padding(end = 6.dp))
-                }
-            }
-            if (state.scheduledTasksLoading) CircularProgressIndicator(Modifier.padding(16.dp))
-            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(vertical = 12.dp)) {
-                val tasks = state.scheduledTasks.filter { (type.isBlank() || it.taskType == type) && (query.isBlank() || it.name.contains(query, true) || it.description.contains(query, true)) }
-                if (tasks.isEmpty() && !state.scheduledTasksLoading && state.taskError == null) item { Text("暂无可查看的任务", color = Color.Gray) }
-                items(tasks, key = { it.taskId }) { task ->
-                    Surface(color = Color.White, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().border(1.dp, Color(0xFFE5E7EB), RoundedCornerShape(12.dp))) {
-                        Column(Modifier.padding(14.dp)) {
-                            Row { Text(task.name, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, modifier = Modifier.weight(1f)); Text(if (task.enabled) "已启用" else "已停用", fontSize = 12.sp, color = Color.Gray) }
-                            Text(taskTypeLabel(task.taskType), color = Color(0xFF007AFF), fontSize = 12.sp, modifier = Modifier.padding(vertical = 6.dp))
-                            if (task.description.isNotBlank()) Text(task.description, fontSize = 13.sp, color = Color.Gray)
-                            Text("成功 ${task.successRuns}/${task.totalRuns} · 下次执行 ${task.nextRunAt?.replace('T', ' ')?.take(16) ?: "—"}", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
-                            TextButton(onClick = { selectedId = task.taskId; start = ""; end = ""; station = ""; pollutant = ""; viewModel.queryTaskResults(task.taskId) }) { Text("查看执行记录") }
-                        }
-                    }
-                }
+            Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                CircularProgressIndicator()
             }
         } else {
+            if (filtersExpanded) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TaskDateFilter("开始日期", start, { start = it }, Modifier.weight(1f))
                 TaskDateFilter("结束日期", end, { end = it }, Modifier.weight(1f))
@@ -81,29 +68,23 @@ fun ScheduledTaskPanel(state: AppUiState, viewModel: AppViewModel, onSession: ()
                 TextButton(onClick = { start = ""; end = ""; station = ""; pollutant = ""; reload() }) { Text("重置") }
                 TextButton(onClick = { reload() }, enabled = !state.taskResultsLoading) { Text("查询") }
             }
-            Text("左右滑动查看完整列表", fontSize = 11.sp, color = Color.Gray)
+            }
             if (state.taskResultsLoading) CircularProgressIndicator(Modifier.padding(16.dp))
-            Column(Modifier.weight(1f).horizontalScroll(rememberScrollState()).width(1100.dp)) {
-                Row(Modifier.background(Color(0xFFF3F5F8)).padding(vertical = 10.dp)) {
-                    listOf("时间" to 145, "状态" to 75, "城市" to 70, "站点" to 130, "污染物" to 75, "结论" to 340, "产物" to 80, "操作" to 185).forEach { (label, width) -> TaskCell(label, width) }
-                }
-                LazyColumn {
-                    if (state.taskResults.isEmpty() && !state.taskResultsLoading && state.taskError == null) item { Text("暂无符合条件的执行结果", Modifier.padding(16.dp)) }
-                    items(state.taskResults, key = { it.optString("execution_id") }) { record ->
-                        Row(Modifier.fillMaxWidth().border(.5.dp, Color(0xFFE5E7EB)).padding(vertical = 10.dp)) {
-                            TaskCell(record.text("completed_at").ifBlank { record.text("started_at") }.replace('T', ' ').take(16), 145)
-                            TaskCell(taskStatusLabel(record.text("status")), 75)
-                            TaskCell(record.text("city"), 70)
-                            TaskCell(record.text("station_name").ifBlank { record.text("station_id") }, 130)
-                            TaskCell(record.text("pollutant"), 75)
-                            TaskCell(record.text("conclusion").take(300), 340)
-                            TaskCell("图 ${record.optJSONArray("image_paths")?.length() ?: 0}\n文 ${record.optJSONArray("document_paths")?.length() ?: 0}", 80)
-                            Column(Modifier.width(185.dp)) {
-                                if (record.optBoolean("has_report")) TextButton(onClick = { reportUrl = BuildConfig.API_BASE_URL.trimEnd('/') + "/api/scheduled-tasks/results/${record.text("execution_id")}/report/_t/${record.text("preview_ticket")}/report.html" }) { Text("查看报告") }
-                                TextButton(onClick = { detail = record }) { Text(if (record.optBoolean("has_broadcast")) "结论 / 广播内容" else "查看结论") }
-                                val session = record.text("session_id")
-                                if (session.isNotBlank()) TextButton(onClick = { viewModel.loadSession(SessionInfo(session, "expert", selected?.name ?: "任务会话")); onSession() }) { Text("进入会话") }
-                            }
+            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(vertical = 10.dp)) {
+                if (state.taskResults.isEmpty() && !state.taskResultsLoading && state.taskError == null) item { Text("暂无符合条件的执行结果", Modifier.padding(16.dp)) }
+                items(state.taskResults, key = { it.optString("execution_id") }) { record ->
+                    Surface(color = Color.White, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().border(1.dp, Color(0xFFE5E7EB), RoundedCornerShape(14.dp))) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(record.text("completed_at").ifBlank { record.text("started_at") }.replace('T', ' ').take(16), fontSize = 13.sp, color = Color.Gray)
+                            Text(taskStatusLabel(record.text("status")), fontSize = 13.sp, color = Color(0xFF007AFF))
+                            val location = listOf(record.text("city"), record.text("station_name").ifBlank { record.text("station_id") }, record.text("pollutant")).filter { it.isNotBlank() }.joinToString(" · ")
+                            if (location.isNotBlank()) Text(location, fontSize = 14.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium)
+                            Text(record.text("conclusion").ifBlank { "暂无结论" }, fontSize = 14.sp, lineHeight = 23.sp, maxLines = 4, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            Text("图片 ${record.optJSONArray("image_paths")?.length() ?: 0} 个 · 文档 ${record.optJSONArray("document_paths")?.length() ?: 0} 个", fontSize = 12.sp, color = Color.Gray)
+                            TextButton(onClick = { detail = record }, modifier = Modifier.fillMaxWidth()) { Text(if (record.optBoolean("has_broadcast")) "查看完整结论与广播" else "查看完整结论") }
+                            if (record.optBoolean("has_report")) OutlinedButton(onClick = { reportUrl = BuildConfig.API_BASE_URL.trimEnd('/') + "/api/scheduled-tasks/results/${record.text("execution_id")}/report/_t/${record.text("preview_ticket")}/report.html" }, modifier = Modifier.fillMaxWidth()) { Text("查看报告") }
+                            val session = record.text("session_id")
+                            if (session.isNotBlank()) OutlinedButton(onClick = { viewModel.loadSession(SessionInfo(session, "expert", selected?.name ?: "任务会话")); onSession() }, modifier = Modifier.fillMaxWidth()) { Text("进入会话") }
                         }
                     }
                 }
@@ -141,7 +122,7 @@ fun ScheduledTaskPanel(state: AppUiState, viewModel: AppViewModel, onSession: ()
             Surface(Modifier.fillMaxSize().padding(8.dp), color = Color.White) {
                 Column {
                     TextButton(onClick = { reportUrl = null }) { Text("关闭报告") }
-                    AndroidView(factory = { WebView(it).apply { settings.javaScriptEnabled = false; loadUrl(target) } }, modifier = Modifier.weight(1f).fillMaxWidth())
+                    AndroidView(factory = { WebView(it).apply { settings.javaScriptEnabled = false; settings.useWideViewPort = true; settings.loadWithOverviewMode = true; settings.builtInZoomControls = true; settings.displayZoomControls = false; loadUrl(target) } }, modifier = Modifier.weight(1f).fillMaxWidth())
                 }
             }
         }
@@ -151,8 +132,6 @@ fun ScheduledTaskPanel(state: AppUiState, viewModel: AppViewModel, onSession: ()
 private fun JSONObject.text(key: String) = optString(key).takeIf { it != "null" }.orEmpty()
 private fun taskTypeLabel(value: String) = when (value) { "event" -> "事件任务"; "schedule", "scheduled" -> "定时任务"; else -> value }
 private fun taskStatusLabel(value: String) = when (value) { "success", "completed" -> "成功"; "failed", "error" -> "失败"; "running" -> "执行中"; else -> value }
-@Composable
-private fun TaskCell(value: String, width: Int) { Text(value.ifBlank { "—" }, Modifier.width(width.dp).padding(horizontal = 8.dp), fontSize = 12.sp, lineHeight = 18.sp) }
 @Composable
 private fun TaskDateFilter(label: String, value: String, onChange: (String) -> Unit, modifier: Modifier) {
     val context = LocalContext.current
