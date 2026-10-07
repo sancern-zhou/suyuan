@@ -195,7 +195,9 @@ def generate_report(config=None, *, date=None, now=None, root=None, refresh=True
     report_input.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
     from .word import write_word
     word_path = write_word(data, config, output / '站点运行监控日报.docx')
+    format_validation = word_path.with_suffix('.format.json') if config.get('template_path') else None
     return {'success': True, 'report_ready': data['report_ready'],
+            'format_validation_path': format_agent_path(format_validation) if format_validation else None,
             'report_input_path': format_agent_path(report_input), 'word_path': format_agent_path(word_path),
             'station_counts': data['station_counts'], 'incident_count': len(data['entries']),
             'unverified_station_count': len(data['unverified_stations']),

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
+import json
+from pathlib import Path
 
 from docx import Document
 from docx.text.paragraph import Paragraph
@@ -118,7 +121,11 @@ def incident_text(entry):
 
 
 def write_template_word(data, config, path):
-    document = Document(resolve_agent_path(config['template_path']))
+    template_path = resolve_agent_path(config['template_path'])
+    digest = hashlib.sha256(template_path.read_bytes()).hexdigest()
+    if config.get('template_sha256') and config['template_sha256'] != digest:
+        raise ValueError('日报模板版本校验失败')
+    document = Document(template_path)
     paragraphs = document.paragraphs
     # This layout adapter deliberately validates the supplied Guangdong report structure.
     if (len(paragraphs) < 20 or len(document.tables) != 2
@@ -204,4 +211,36 @@ def write_template_word(data, config, path):
     for error in data['collection_errors']:
         add_note('取数异常：' + '；'.join(str(v) for v in error.values()))
     document.save(path)
+    validation = validate_template_format(template_path, path)
+    validation['template_sha256'] = digest
+    Path(path).with_suffix('.format.json').write_text(
+        json.dumps(validation, ensure_ascii=False, indent=2), encoding='utf-8')
     return path
+
+
+def validate_template_format(template_path, output_path):
+    """Validate stable layout invariants, allowing variable body content and row counts."""
+    template = Document(template_path)
+    output = Document(output_path)
+    checks = {}
+    checks['sections'] = [s._sectPr.xml for s in template.sections] == [s._sectPr.xml for s in output.sections]
+    checks['headers_footers'] = len(template.sections) == len(output.sections) and all(
+        a.header._element.xml == b.header._element.xml and a.footer._element.xml == b.footer._element.xml
+        for a, b in zip(template.sections, output.sections))
+    checks['titles'] = len(output.paragraphs) >= 5 and all(
+        template.paragraphs[i]._p.xml == output.paragraphs[i]._p.xml for i in (0, 1))
+    checks['date_issuer_styles'] = len(output.paragraphs) >= 5 and all(
+        template.paragraphs[i]._p.pPr.xml == output.paragraphs[i]._p.pPr.xml
+        and template.paragraphs[i].runs[0]._r.rPr.xml == output.paragraphs[i].runs[0]._r.rPr.xml
+        for i in (2, 3))
+    checks['divider'] = len(output.paragraphs) >= 5 and template.paragraphs[4]._p.xml == output.paragraphs[4]._p.xml
+    checks['tables'] = len(template.tables) == len(output.tables) == 2 and all(
+        a._tbl.tblPr.xml == b._tbl.tblPr.xml and a._tbl.tblGrid.xml == b._tbl.tblGrid.xml
+        and a.rows[0]._tr.xml == b.rows[0]._tr.xml
+        for a, b in zip(template.tables, output.tables))
+    checks['table_titles'] = all(
+        any(p._p.xml == template.paragraphs[i]._p.xml for p in output.paragraphs) for i in (16, 18))
+    failures = [name for name, passed in checks.items() if not passed]
+    if failures:
+        raise ValueError('日报格式校验失败：' + '、'.join(failures))
+    return {'passed': True, 'checks': checks}
