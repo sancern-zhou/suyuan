@@ -52,6 +52,9 @@ def test_app_messages_restore_scheduled_task_web_session(monkeypatch):
                 "session_id": catalog_row.session_id,
                 "conversation_history": [
                     {"type": "user", "content": "任务输入"},
+                    {"role": "assistant", "type": "tool_use", "content": "调用工具: read_file"},
+                    {"role": "user", "type": "tool_result", "content": "读取成功"},
+                    {"type": "thought", "content": "分析思路"},
                     {"type": "final", "role": "assistant", "content": "任务结论"},
                 ],
             })
@@ -68,8 +71,7 @@ def test_app_messages_restore_scheduled_task_web_session(monkeypatch):
     response = _client().get(f"/api/social/app/sessions/{row.session_id}/messages")
     assert response.status_code == 200
     messages = response.json()["messages"]
-    assert messages[0]["content"] == "任务输入"
-    assert messages[1]["content"] == "任务结论"
+    assert [message["content"] for message in messages] == ["任务输入", "分析思路", "任务结论"]
 
 
 def test_app_messages_still_rejects_non_social_non_web_sources(monkeypatch):

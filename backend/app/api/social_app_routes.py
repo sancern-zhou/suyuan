@@ -1263,6 +1263,19 @@ async def delete_app_session(
 
 _SCHEDULED_SESSION_RE = re.compile(r"^scheduled_task_(?P<task_id>.+)_\d{8}_\d{6}_[0-9a-fA-F]{8}$")
 
+# Android 端会话恢复只展示对话轮次：用户输入、思考与最终结论。
+# 执行过程（tool_use/tool_result/process 等）与 Web 端共享存储，但不下发。
+_MOBILE_VISIBLE_HISTORY_TYPES = {
+    "user",
+    "final",
+    "thought",
+    "thinking",
+    "error",
+    "fatal_error",
+    "incomplete",
+    "interrupted",
+}
+
 
 def _scheduled_session_task_id(session_id: str) -> str | None:
     match = _SCHEDULED_SESSION_RE.match(session_id)
@@ -1316,7 +1329,12 @@ async def app_session_messages(session_id: str, identity: AppIdentity = Depends(
         payload = session.model_dump(mode="json")
     else:
         payload = restored.get("normalized_session") or {}
-    history = list(payload.get("conversation_history") or [])
+    history = [
+        item
+        for item in list(payload.get("conversation_history") or [])
+        if not isinstance(item, dict)
+        or str(item.get("type") or item.get("role") or "").lower() in _MOBILE_VISIBLE_HISTORY_TYPES
+    ]
     # Match explicit chart references and run/resource identities to their turns.
     # Unattributed legacy files remain in the catalog, not on the latest reply.
     try:
