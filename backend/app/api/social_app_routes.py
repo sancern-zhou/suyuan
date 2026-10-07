@@ -782,6 +782,11 @@ def _app_resource_descriptor(session_id: str, resource, *, preview_resource=None
         "resource_key": resource.resource_key,
         "visual_id": str(resource.metadata.get("visual_id") or ""),
         "interactive": resource.metadata.get("interactive") is True,
+        "group_id": str(getattr(resource, "group_id", "") or ""),
+        "run_id": str(getattr(resource, "run_id", "") or ""),
+        "relation": str(getattr(resource, "relation", "") or ""),
+        "role": str(getattr(resource, "role", "") or ""),
+        "kind": str(getattr(resource, "kind", "") or ""),
     }
     if preview_resource is not None:
         descriptor["preview_url"] = f"/api/social/app/sessions/{session_id}/resources/{preview_resource.resource_id}/content"
@@ -868,7 +873,7 @@ async def _app_resource_descriptors(session_id: str, resource_ids: list[str]) ->
     deduplicated: dict[tuple[str, str], dict] = {}
     for descriptor in descriptors:
         key = (
-            str(descriptor.get("filename") or descriptor.get("name") or "").strip().lower(),
+            str(descriptor.get("group_id") or descriptor.get("run_id") or "") + ":" + str(descriptor.get("filename") or descriptor.get("name") or "").strip().lower(),
             str(descriptor.get("mime_type") or descriptor.get("format") or "").strip().lower(),
         )
         if descriptor.get("resource_key") in {"chart-spec", "chart-image"}:
@@ -935,6 +940,7 @@ async def _stream_events(
                     final_attachments = list(streamed_resources)
                     if final_attachments:
                         event_data["attachments"] = final_attachments
+                        event_data["resource_run_ids"] = sorted({item["run_id"] for item in final_attachments if item.get("run_id")})
                     display_history.append({
                         "type": "final",
                         "role": "assistant",
@@ -1134,8 +1140,8 @@ async def app_session_messages(session_id: str, identity: AppIdentity = Depends(
     else:
         payload = restored.get("normalized_session") or {}
     history = list(payload.get("conversation_history") or [])
-    # Restore explicit chart references on their own turns; legacy files stay
-    # on the latest reply when no placement was saved in the text transcript.
+    # Match explicit chart references and run/resource identities to their turns.
+    # Unattributed legacy files remain in the catalog, not on the latest reply.
     try:
         descriptors = await _app_resource_descriptors(session_id, [])
         from app.social.inline_charts import attach_reply_resources

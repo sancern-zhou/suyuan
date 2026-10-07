@@ -817,6 +817,9 @@ class ReActAgent:
 
                 if event.get("type") in {"complete", "incomplete", "interrupted", "fatal_error"}:
                     terminal_data = event.setdefault("data", {})
+                    if active_run_id:
+                        terminal_data.setdefault("run_id", str(active_run_id))
+                    terminal_data["resource_ids"] = list(dict.fromkeys(published_resource_ids))
                     if latest_resource_version is not None:
                         terminal_data["resource_version"] = latest_resource_version
                     if resource_failures:

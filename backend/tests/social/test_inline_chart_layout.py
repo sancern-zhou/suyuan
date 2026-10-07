@@ -33,9 +33,24 @@ class InlineChartLayoutTests(unittest.TestCase):
                    {"type": "final", "content": "[[chart:v1]] [[chart:v1]]", "attachments": [resource]}]
         attach_reply_resources(history, [resource, {"file_id": "document"}])
         self.assertNotIn("attachments", history[0])
-        self.assertEqual([r["file_id"] for r in history[1]["attachments"]], ["r1", "document"])
+        self.assertEqual([r["file_id"] for r in history[1]["attachments"]], ["r1"])
 
     def test_missing_reference_does_not_replace_text(self):
         history = [{"type": "final", "content": "[[chart:missing]]"}]
         attach_reply_resources(history, [])
         self.assertEqual(history[0]["content"], "[[chart:missing]]")
+
+    def test_run_resources_go_to_their_own_reply_not_the_latest(self):
+        history = [{"type": "user"}, {"type": "tool_result", "data": {"run_id": "run1"}},
+                   {"type": "final", "content": "第一轮"}, {"type": "user"},
+                   {"type": "final", "data": {"run_id": "run2"}, "content": "第二轮"}]
+        resources = [{"file_id": "f1", "run_id": "run1"}, {"file_id": "f2", "run_id": "run2"}, {"file_id": "unknown"}]
+        attach_reply_resources(history, resources)
+        self.assertEqual(history[2]["attachments"], [resources[0]])
+        self.assertEqual(history[4]["attachments"], [resources[1]])
+
+    def test_tool_messages_with_assistant_role_do_not_claim_final_resources(self):
+        history = [{"type": "tool_result", "role": "assistant", "data": {"run_id": "r1"}}, {"type": "final"}]
+        attach_reply_resources(history, [{"file_id": "document", "run_id": "r1"}])
+        self.assertNotIn("attachments", history[0])
+        self.assertEqual(history[1]["attachments"][0]["file_id"], "document")
