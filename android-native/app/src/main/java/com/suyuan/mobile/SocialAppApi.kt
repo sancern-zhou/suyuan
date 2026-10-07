@@ -49,7 +49,7 @@ data class ReportResult(
     val read: Boolean, val attachments: List<UploadedAttachment> = emptyList(),
 )
 data class ReportInbox(val reports: List<ReportResult>, val unreadCount: Int, val nextCursor: String? = null, val hasMore: Boolean = false)
-data class ScheduledTask(val taskId: String, val name: String, val taskType: String, val enabled: Boolean = true)
+data class ScheduledTask(val taskId: String, val name: String, val taskType: String, val enabled: Boolean = true, val description: String = "", val nextRunAt: String? = null, val totalRuns: Int = 0, val successRuns: Int = 0, val broadcastEnabled: Boolean = false)
 data class ChatMessage(
     val id: String,
     val kind: String,
@@ -565,7 +565,7 @@ class SocialAppApi(
         response.use {
             if (!it.isSuccessful) throw ApiException(it.code, "定时任务加载失败 (${it.code})")
             val array = org.json.JSONArray(it.body?.string().orEmpty())
-            buildList { for (i in 0 until array.length()) { val item = array.optJSONObject(i) ?: continue; val task = item.optJSONObject("task") ?: item; add(ScheduledTask(task.optString("task_id", task.optString("id")), task.optString("name", "未命名任务"), task.optString("task_type", task.optString("trigger_type", "scheduled")), task.optBoolean("enabled", true))) } }
+            buildList { for (i in 0 until array.length()) { val item = array.optJSONObject(i) ?: continue; val task = item.optJSONObject("task") ?: item; add(ScheduledTask(task.optString("task_id", task.optString("id")), task.optString("name", "未命名任务"), task.optString("task_type", task.optString("trigger_type", "scheduled")), task.optBoolean("enabled", true), task.optString("description"), item.optString("next_run_time").ifBlank { task.optString("next_run_at").ifBlank { null } }, task.optInt("total_runs"), task.optInt("success_runs"), task.optBoolean("broadcast_enabled"))) } }
         }
     }
 

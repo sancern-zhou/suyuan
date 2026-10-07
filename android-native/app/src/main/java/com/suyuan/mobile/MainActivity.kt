@@ -200,7 +200,7 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
         horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
     ) {
         androidx.compose.foundation.Image(
-            painter = painterResource(com.suyuan.mobile.R.drawable.ic_launcher),
+            painter = painterResource(com.suyuan.mobile.R.mipmap.ic_launcher),
             contentDescription = "许昌环境Agent",
             modifier = Modifier.size(88.dp).clip(RoundedCornerShape(22.dp)),
             contentScale = ContentScale.Crop,
@@ -429,6 +429,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                 .imePadding()
                 .navigationBarsPadding(),
         ) {
+            Column {
             Row(
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -556,7 +557,6 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                     }
                 }
             }
-        }
             Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("auto" to "自动", "fast" to "快速模式", "deep" to "深度思考").forEach { (tier, label) ->
                     val selected = state.modelTier == tier
@@ -566,6 +566,8 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                             .clickable { viewModel.selectModelTier(tier) }.padding(horizontal = 12.dp, vertical = 6.dp))
                 }
             }
+            }
+        }
         (state.error ?: localError)?.let { Text(it, color = SuyuanColors.error, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp)) }
         }
     }
@@ -636,12 +638,12 @@ private fun AppTopBar(
             if (showBroadcasts) {
                 Text("广播消息", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
             } else if (showReports) {
-                Icon(painterResource(R.drawable.ic_file), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(22.dp))
+                Icon(painterResource(R.drawable.ic_history), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(22.dp))
                 Text("定时任务", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
             } else if (!showHistory) {
                 Box {
                     IconButton(onClick = onBroadcasts) {
-                        Icon(painterResource(R.drawable.ic_campaign), contentDescription = "广播消息", tint = SuyuanColors.text)
+                        Icon(painterResource(R.drawable.ic_broadcast), contentDescription = "广播消息", tint = SuyuanColors.text)
                     }
                     if (unreadBroadcastCount > 0) {
                         Box(Modifier.size(8.dp).clip(CircleShape).background(SuyuanColors.error).align(androidx.compose.ui.Alignment.TopEnd))
@@ -649,7 +651,7 @@ private fun AppTopBar(
                 }
                 IconButton(onClick = onReports) {
                     Box {
-                        Icon(painterResource(R.drawable.ic_file), contentDescription = "定时任务", tint = SuyuanColors.text)
+                        Icon(painterResource(R.drawable.ic_history), contentDescription = "定时任务", tint = SuyuanColors.text)
                         if (unreadReportCount > 0) Box(Modifier.size(8.dp).clip(CircleShape).background(SuyuanColors.error).align(androidx.compose.ui.Alignment.TopEnd))
                     }
                 }
@@ -873,7 +875,23 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
 private fun ReportPanel(state: AppUiState, viewModel: AppViewModel) {
     var reportType by rememberSaveable { mutableStateOf("") }
     var expandedId by rememberSaveable { mutableStateOf<String?>(null) }
+    val taskCards = if (state.scheduledTasks.isNotEmpty()) state.scheduledTasks else state.reportResults.map { ScheduledTask(it.taskId, it.taskName.ifBlank { it.reportType.ifBlank { "未命名任务" } }, it.reportType) }.distinctBy { it.name }
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+        if (taskCards.isNotEmpty()) {
+            Text("任务列表", color = SuyuanColors.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(vertical = 8.dp))
+            taskCards.forEach { task ->
+                Surface(shape = RoundedCornerShape(12.dp), tonalElevation = 1.dp, color = Color.White, modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                    Column(Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            Text(task.name, color = SuyuanColors.text, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                            Text(if (task.enabled) "运行中" else "已停用", color = if (task.enabled) SuyuanColors.primary else SuyuanColors.secondaryText, fontSize = 11.sp)
+                        }
+                        if (task.description.isNotBlank()) Text(task.description, color = SuyuanColors.secondaryText, fontSize = 12.sp, maxLines = 2, modifier = Modifier.padding(top = 5.dp))
+                        Text("${task.taskType} · 成功 ${task.successRuns}/${task.totalRuns}${task.nextRunAt?.let { " · 下次 ${it.replace('T', ' ').take(16)}" } ?: ""}", color = SuyuanColors.secondaryText, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+                    }
+                }
+            }
+        }
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             OutlinedTextField(value = reportType, onValueChange = { reportType = it }, singleLine = true, label = { Text("任务类型/名称") }, modifier = Modifier.weight(1f))
             TextButton(onClick = { viewModel.refreshReports(reportType.trim().ifBlank { null }) }) { Text("筛选") }
