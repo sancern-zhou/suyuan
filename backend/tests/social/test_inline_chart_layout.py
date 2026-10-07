@@ -3,6 +3,22 @@ from app.social.inline_charts import attach_reply_resources
 
 
 class InlineChartLayoutTests(unittest.TestCase):
+    def test_static_image_beats_its_spec_and_stays_on_the_referenced_turn(self):
+        spec = {"file_id": "s1", "visual_id": "v1", "resource_key": "chart-spec", "interactive": False}
+        image = {"file_id": "i1", "visual_id": "v1", "mime_type": "image/png"}
+        for resources in ([spec, image], [image, spec]):
+            history = [{"type": "final", "content": "[[chart:v1]]"}, {"type": "final", "content": "下一轮"}]
+            attach_reply_resources(history, resources)
+            self.assertEqual(history[0]["attachments"], [image])
+            self.assertEqual(history[1]["attachments"], [])
+
+    def test_interactive_spec_beats_its_image_rendition(self):
+        spec = {"file_id": "s1", "visual_id": "v1", "resource_key": "chart-spec", "interactive": True}
+        image = {"file_id": "i1", "visual_id": "v1", "mime_type": "image/png"}
+        history = [{"type": "final", "content": "[[chart:v1]]"}]
+        attach_reply_resources(history, [spec, image])
+        self.assertEqual(history[0]["attachments"], [spec])
+
     def test_history_restores_each_chart_on_its_own_turn(self):
         history = [{"type": "final", "content": "结论一\n[[chart:v1]]"},
                    {"role": "assistant", "content": "结论二\n[[chart:r2]]"}]

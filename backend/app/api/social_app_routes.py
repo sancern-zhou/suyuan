@@ -1033,8 +1033,8 @@ async def _app_resource_descriptors(session_id: str, resource_ids: list[str]) ->
             str(descriptor.get("filename") or descriptor.get("name") or "").strip().lower(),
             str(descriptor.get("mime_type") or descriptor.get("format") or "").strip().lower(),
         )
-        if descriptor.get("resource_key") == "chart-spec":
-            key = (descriptor["file_id"], "chart-spec")
+        if descriptor.get("resource_key") in {"chart-spec", "chart-image"}:
+            key = (descriptor["file_id"], descriptor["resource_key"])
         if not key[0]:
             continue
         current = deduplicated.get(key)

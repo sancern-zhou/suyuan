@@ -165,6 +165,20 @@ def test_chart_descriptor_exposes_layout_identity_without_server_path():
     assert "/private" not in str(descriptor)
 
 
+def test_static_charts_with_same_filename_keep_distinct_visual_ids(monkeypatch):
+    import asyncio
+    resources = [SimpleNamespace(resource_id=rid, role="output", kind="file", relation="rendition",
+        parent_resource_id=None, label="趋势.png", format="png", media_type="image/png",
+        renderer="image", resource_key="chart-image", metadata={"visual_id": vid})
+        for rid, vid in [("r1", "v1"), ("r2", "v2")]]
+    class Service:
+        async def list_resources(self, *args, **kwargs):
+            return SimpleNamespace(resources=resources)
+    monkeypatch.setattr(social_app_routes.SessionResourceService, "database", lambda: Service())
+    result = asyncio.run(social_app_routes._app_resource_descriptors("s1", []))
+    assert [item["visual_id"] for item in result] == ["v1", "v2"]
+
+
 def test_app_resource_list_accepts_authorized_web_session(monkeypatch):
     row = _web_row()
     class Catalog:
