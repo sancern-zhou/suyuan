@@ -14,7 +14,7 @@ import mimetypes
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Literal
 
 import structlog
 from aiohttp import WSMsgType
