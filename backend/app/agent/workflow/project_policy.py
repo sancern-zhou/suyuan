@@ -32,6 +32,8 @@ def prepare_node(node):
             raise ValueError(f"项目子节点 task_contract 缺少 {field}")
     if contract.get("protocol_version") != "workflow.v1":
         raise ValueError("项目子节点协议必须为 workflow.v1")
+    if not isinstance(contract["question"], str) or not contract["question"].strip():
+        raise ValueError("项目子节点 question 必须为非空字符串")
     if not isinstance(contract["scope"], Mapping):
         raise ValueError("项目子节点 scope 必须为对象，包含时间、站点范围及口径")
     for field in ("required_evidence", "deliverables"):
@@ -59,6 +61,13 @@ def prepare_node(node):
         "type": "object", "required": ["id", "source", "locator"],
         "properties": {key: {"type": "string"} for key in ("id", "source", "locator")},
     }
+    if policy.require_counter_evidence:
+        finding = schema["properties"]["findings"]["items"]
+        finding["required"] += ["counter_evidence", "alternative_explanations"]
+        finding["properties"].update({
+            field: {"type": "array", "items": {"type": "string"}}
+            for field in ("counter_evidence", "alternative_explanations")
+        })
     node["result_schema"] = schema
 
 
