@@ -112,6 +112,7 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         "resource_id": item.resource_id,
         "ref_id": item.resource_id,
         "group_id": item.group_id,
+        "run_id": item.run_id,
         "parent_resource_id": item.parent_resource_id,
         "resource_key": item.resource_key,
         "relation": item.relation,

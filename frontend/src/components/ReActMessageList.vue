@@ -194,13 +194,8 @@
           </template>
         </div>
         <div class="message-content" v-else-if="!getStructuredQuestionForFinal(message, messages)">{{ renderedMessageContent(message) }}</div>
-        <div v-if="!message.streaming && inlineImagesForFinal(message).length" class="message-content inline-chart-images">
-          <MarkdownRenderer
-            v-for="image in inlineImagesForFinal(message)"
-            :key="image.resource_id"
-            :content="`![${image.label.replace(/[\\[\\]\\\\]/g, '')}](${image.content_url})`"
-          />
-        </div>
+        <ReplyOutcomeCards v-if="!message.streaming" :message="message" :messages="messages" :resources="currentSessionResources()"
+          @preview="resourceId => emit('preview-message-attachment', { sessionId: props.sessionId, resourceId })" />
 
         <!-- 多专家系统：直接显示报告内容，无额外装饰 -->
         <div v-if="message.data?.expert_results?.report && reportContentCacheMap.get(message.data.expert_results.report)" class="expert-report-content">
@@ -344,6 +339,7 @@ import {
 } from './agentPlatform/agentProgressPresentation.js'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import InlineChartCard from './InlineChartCard.vue'
+import ReplyOutcomeCards from './ReplyOutcomeCards.vue'
 import { inlineChartBlocks } from '@/services/inlineChartBlocks.js'
 import { inlineChartImages, renderChartPlaceholders } from '@/services/inlineChartImages.js'
 import AuthenticatedImage from './AuthenticatedImage.vue'
@@ -465,11 +461,6 @@ const renderedMessageContent = message => {
   return renderChartPlaceholders(content, chartResourcesForMessage(message), currentSessionResources()).content
 }
 const messageLayoutBlocks = message => inlineChartBlocks(contentToString(getMessageContent(message)), currentSessionResources())
-const inlineImagesForFinal = message => {
-  const resources = chartResourcesForMessage(message)
-  const rendered = renderChartPlaceholders(contentToString(getMessageContent(message)), resources, currentSessionResources())
-  return resources.filter(resource => !rendered.usedResourceIds.has(resource.resource_id))
-}
 
 const messagesContainer = ref(null)
 const messagesContent = ref(null)
