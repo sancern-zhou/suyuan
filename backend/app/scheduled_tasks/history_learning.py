@@ -495,8 +495,9 @@ async def maybe_consolidate_daily_memory(
         )
         return True
     except Exception as error:  # noqa: BLE001 - memory maintenance must not fail execution
+        # 保留当日 memory_consolidation_in_progress_date 占位：失败后当天不再
+        # 随执行重试（避免对故障 LLM 的重复无效调用），次日自然恢复可认领。
         latest_meta = storage.read_meta()
-        latest_meta.pop("memory_consolidation_in_progress_date", None)
         storage.write_meta(
             {
                 **latest_meta,
