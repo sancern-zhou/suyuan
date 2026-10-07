@@ -1175,3 +1175,56 @@ async def steer_session(
     await _ensure_session(request, identity, session_id)
     accepted = await steering_registry.add_input(session_id, payload.message)
     return {"session_id": session_id, "accepted": bool(accepted)}
+
+
+@router.get("/scheduled-tasks")
+async def app_scheduled_tasks(identity: AppIdentity = Depends(require_app_identity)):
+    from app.api.scheduled_task_routes import list_tasks
+    return await list_tasks(enabled_only=False, user=identity.as_current_user())
+
+
+@router.get("/scheduled-tasks/results")
+async def app_scheduled_results(
+    task_id: str, page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=100),
+    start: datetime | None = None, end: datetime | None = None,
+    station_id: str | None = None, pollutant: str | None = None,
+    identity: AppIdentity = Depends(require_app_identity),
+):
+    from app.api.scheduled_task_routes import (
+        get_scheduled_task_service, _require_task_view, _result_preview_ticket,
+        _result_report_dir, TaskResultItem, TaskResultListResponse,
+    )
+    import math
+    service = get_scheduled_task_service()
+    task = service.get_task(task_id)
+    if task is None:
+        raise HTTPException(404, "Task not found")
+    _require_task_view(task, identity.as_current_user())
+    records, total = service.list_task_results(
+        task_id=task_id, station_id=station_id, pollutant=pollutant,
+        started_after=start, started_before=end, page=page, page_size=page_size,
+    )
+    items = []
+    for record in records:
+        item = TaskResultItem(**record.model_dump())
+        item.preview_ticket = _result_preview_ticket(record.execution_id)
+        item.has_report = _result_report_dir(record) is not None
+        item.has_broadcast = bool(item.broadcast_message or item.broadcast_image_paths)
+        item.broadcast_image_urls = [
+            f"/api/scheduled-tasks/results/{record.execution_id}/files/broadcast_images/{i}?preview_ticket={item.preview_ticket}"
+            for i in range(len(record.broadcast_image_paths or []))
+        ]
+        items.append(item)
+    return TaskResultListResponse(results=items, total=total, page=page,
+                                  page_size=page_size, total_pages=math.ceil(total / page_size))
+
+
+@router.get("/scheduled-tasks/facets")
+async def app_scheduled_facets(task_id: str, identity: AppIdentity = Depends(require_app_identity)):
+    from app.api.scheduled_task_routes import get_scheduled_task_service, _require_task_view
+    service = get_scheduled_task_service()
+    task = service.get_task(task_id)
+    if task is None:
+        raise HTTPException(404, "Task not found")
+    _require_task_view(task, identity.as_current_user())
+    return service.list_task_result_facets(task_id=task_id)
