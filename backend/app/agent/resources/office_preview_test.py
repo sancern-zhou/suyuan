@@ -121,6 +121,41 @@ def test_conversion_failure_keeps_original_declarations(tmp_path):
     assert result == [primary]
 
 
+def test_attaches_pdf_preview_for_xlsx_primary(tmp_path):
+    xlsx = tmp_path / "统计表.xlsx"
+    xlsx.write_bytes(b"xlsx-bytes")
+    primary = ResourceDeclaration(
+        kind=ResourceKind.FILE,
+        group_key="analysis:current",
+        resource_key="xlsx",
+        relation=ResourceRelation.PRIMARY,
+        role=ResourceRole.OUTPUT,
+        label="统计表.xlsx",
+        locator=ResourceLocator(path=str(xlsx)),
+        format="xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        renderer=ResourceRenderer.SPREADSHEET,
+        capabilities={ResourceCapability.PREVIEW, ResourceCapability.DOWNLOAD},
+    )
+
+    async def run():
+        return await attach_office_preview_declarations([primary])
+
+    original = office_preview._convert_to_pdf
+    office_preview._convert_to_pdf = _fake_converter(pdf_dir=tmp_path)
+    try:
+        result = asyncio.run(run())
+    finally:
+        office_preview._convert_to_pdf = original
+
+    assert len(result) == 2
+    preview = result[1]
+    assert preview.relation is ResourceRelation.PREVIEW
+    assert preview.parent_key == primary.resource_key
+    assert preview.format == "pdf"
+    assert preview.locator.path.endswith("统计表.pdf")
+
+
 def test_non_office_primary_is_untouched(tmp_path):
     docx = tmp_path / "数据.csv"
     docx.write_text("a,b\n1,2")

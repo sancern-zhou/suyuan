@@ -1,9 +1,9 @@
 """Office 交付物发布时自动生成 PDF 预览衍生。
 
-App 端没有 docx/pptx 渲染能力，预览依赖 `relation="preview"` 的 PDF 子资源。
-此前 `generated_file_products` 对 docx/pptx 只登记 download 能力，导致
-App 端对话里生成的 Office 报告点预览时提示"暂无可用预览"。本模块在资源
-发布管线中补齐：primary 为 Office 文档且组内尚无 preview 时，用 LibreOffice
+App 端没有 docx/xlsx/pptx 渲染能力，预览依赖 `relation="preview"` 的 PDF 子资源。
+此前 `generated_file_products` 对 docx/pptx/xlsx 只登记 download 或表格能力，
+导致 App 端对话里生成的 Office 报告/表格点预览时提示"暂无可用预览"。本模块在
+资源发布管线中补齐：primary 为 Office 文档且组内尚无 preview 时，用 LibreOffice
 (soffice) 离线转换为 PDF，并追加 preview 声明，与 primary 同组发布。
 """
 
@@ -26,7 +26,7 @@ from .contracts import (
 
 logger = structlog.get_logger()
 
-_OFFICE_SUFFIXES = {".docx", ".doc", ".pptx", ".ppt"}
+_OFFICE_SUFFIXES = {".docx", ".doc", ".pptx", ".ppt", ".xlsx", ".xls"}
 _CONVERT_TIMEOUT_SECONDS = 120
 _PREVIEW_DIRNAME = "__previews"
 
