@@ -560,12 +560,33 @@ class SocialAppApi(
         }
     }
 
+    suspend fun taskResults(token: String, taskId: String, page: Int, start: String, end: String, station: String, pollutant: String): JSONObject = withContext(Dispatchers.IO) {
+        val params = linkedMapOf("task_id" to taskId, "page" to page.toString(), "page_size" to "10")
+        if (start.isNotBlank()) params["start"] = "${start}T00:00:00"
+        if (end.isNotBlank()) params["end"] = "${end}T23:59:59"
+        if (station.isNotBlank()) params["station_id"] = station
+        if (pollutant.isNotBlank()) params["pollutant"] = pollutant
+        taskQuery(token, "results", params)
+    }
+
+    suspend fun taskFacets(token: String, taskId: String): JSONObject = withContext(Dispatchers.IO) {
+        taskQuery(token, "facets", mapOf("task_id" to taskId))
+    }
+
+    private fun taskQuery(token: String, endpoint: String, params: Map<String, String>): JSONObject {
+        val query = params.entries.joinToString("&") { "${it.key}=${java.net.URLEncoder.encode(it.value, "UTF-8")}" }
+        client.newCall(Request.Builder().url(url("/api/social/app/scheduled-tasks/$endpoint?$query")).header("Authorization", "Bearer $token").get().build()).execute().use {
+            if (!it.isSuccessful) throw ApiException(it.code, "任务数据查询失败 (${it.code})")
+            return JSONObject(it.body?.string().orEmpty())
+        }
+    }
+
     suspend fun scheduledTasks(token: String): List<ScheduledTask> = withContext(Dispatchers.IO) {
-        val response = client.newCall(Request.Builder().url(url("/api/scheduled-tasks")).header("Authorization", "Bearer $token").get().build()).execute()
+        val response = client.newCall(Request.Builder().url(url("/api/social/app/scheduled-tasks")).header("Authorization", "Bearer $token").get().build()).execute()
         response.use {
             if (!it.isSuccessful) throw ApiException(it.code, "定时任务加载失败 (${it.code})")
             val array = org.json.JSONArray(it.body?.string().orEmpty())
-            buildList { for (i in 0 until array.length()) { val item = array.optJSONObject(i) ?: continue; val task = item.optJSONObject("task") ?: item; add(ScheduledTask(task.optString("task_id", task.optString("id")), task.optString("name", "未命名任务"), task.optString("task_type", task.optString("trigger_type", "scheduled")), task.optBoolean("enabled", true), task.optString("description"), item.optString("next_run_time").ifBlank { task.optString("next_run_at").ifBlank { null } }, task.optInt("total_runs"), task.optInt("success_runs"), task.optBoolean("broadcast_enabled"))) } }
+            buildList { for (i in 0 until array.length()) { val item = array.optJSONObject(i) ?: continue; val task = item.optJSONObject("task") ?: item; add(ScheduledTask(task.optString("task_id", task.optString("id")), task.optJSONObject("workspace_entry")?.optString("title")?.takeIf { it.isNotBlank() } ?: task.optString("name", "未命名任务"), task.optString("trigger_type", "scheduled"), task.optBoolean("enabled", true), task.optString("description"), item.optString("next_run_time").ifBlank { task.optString("next_run_at").ifBlank { null } }, task.optInt("total_runs"), task.optInt("success_runs"), task.optBoolean("broadcast_enabled"))) } }
         }
     }
 

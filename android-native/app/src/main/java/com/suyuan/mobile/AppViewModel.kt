@@ -61,6 +61,13 @@ data class AppUiState(
     val reportError: String? = null,
     val scheduledTasks: List<ScheduledTask> = emptyList(),
     val scheduledTasksLoading: Boolean = false,
+    val taskError: String? = null,
+    val taskResults: List<org.json.JSONObject> = emptyList(),
+    val taskResultsLoading: Boolean = false,
+    val taskPage: Int = 1,
+    val taskTotalPages: Int = 0,
+    val taskTotal: Int = 0,
+    val taskFacets: org.json.JSONObject = org.json.JSONObject(),
 ) {
     val loggedIn: Boolean get() = token.isNotBlank()
 }
@@ -863,12 +870,28 @@ class AppViewModel(
         }
     }
 
+    private var taskQueryJob: Job? = null
+    fun queryTaskResults(taskId: String, page: Int = 1, start: String = "", end: String = "", station: String = "", pollutant: String = "") {
+        taskQueryJob?.cancel()
+        taskQueryJob = viewModelScope.launch {
+            _state.value = _state.value.copy(taskResultsLoading = true, taskError = null, taskResults = emptyList(), taskFacets = org.json.JSONObject())
+            try {
+                val data = repository.taskResults(_state.value.token, taskId, page, start, end, station, pollutant)
+                val values = data.optJSONArray("results") ?: org.json.JSONArray()
+                _state.value = _state.value.copy(taskResults = (0 until values.length()).mapNotNull { values.optJSONObject(it) }, taskPage = page, taskTotal = data.optInt("total"), taskTotalPages = data.optInt("total_pages"), taskResultsLoading = false)
+                val facets = repository.taskFacets(_state.value.token, taskId)
+                _state.value = _state.value.copy(taskFacets = facets)
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { _state.value = _state.value.copy(taskResultsLoading = false, taskError = friendlyError(e)) }
+        }
+    }
+
     fun refreshScheduledTasks() {
         viewModelScope.launch {
-            _state.value = _state.value.copy(scheduledTasksLoading = true)
+            _state.value = _state.value.copy(scheduledTasksLoading = true, taskError = null)
             runCatching { repository.scheduledTasks(_state.value.token) }
                 .onSuccess { _state.value = _state.value.copy(scheduledTasks = it, scheduledTasksLoading = false) }
-                .onFailure { _state.value = _state.value.copy(scheduledTasksLoading = false) }
+                .onFailure { _state.value = _state.value.copy(scheduledTasksLoading = false, taskError = friendlyError(it)) }
         }
     }
 
