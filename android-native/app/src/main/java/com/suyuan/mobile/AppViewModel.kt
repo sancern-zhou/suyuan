@@ -37,6 +37,7 @@ data class AppUiState(
     val displayName: String = "",
     val sessionId: String? = null,
     val mode: String = "expert",
+    val modelTier: String = "auto",
     val sessions: List<SessionInfo> = emptyList(),
     val sessionsHasMore: Boolean = false,
     val sessionsLoadingMore: Boolean = false,
@@ -58,6 +59,7 @@ data class AppUiState(
     val reportUnreadCount: Int = 0,
     val reportLoading: Boolean = false,
     val reportError: String? = null,
+    val scheduledTasks: List<ScheduledTask> = emptyList(),
 ) {
     val loggedIn: Boolean get() = token.isNotBlank()
 }
@@ -67,6 +69,7 @@ private data class PendingTurn(
     val attachments: List<UploadedAttachment>,
     val sessionId: String?,
     val mode: String,
+    val modelTier: String,
 )
 
 class AppViewModel(
@@ -89,10 +92,15 @@ class AppViewModel(
         else if (_state.value.loggedIn) {
             refreshSessions(selectExisting = false)
             refreshBroadcasts()
+            refreshScheduledTasks()
         }
     }
 
     fun updateDraft(value: String) = _state.value.let { _state.value = it.copy(draft = value, error = null) }
+
+    fun selectModelTier(tier: String) {
+        if (tier in setOf("auto", "fast", "deep")) _state.value = _state.value.copy(modelTier = tier)
+    }
 
     fun selectMode(mode: String) {
         if (mode !in setOf("query", "knowledge", "expert")) return
@@ -317,7 +325,7 @@ class AppViewModel(
             attachments = emptyList(),
             messages = current.messages + userMessage,
         )
-        pendingTurns.addLast(PendingTurn(query, current.attachments.toList(), current.sessionId, current.mode))
+        pendingTurns.addLast(PendingTurn(query, current.attachments.toList(), current.sessionId, current.mode, current.modelTier))
         ensureStreamWorker()
     }
 
@@ -344,8 +352,10 @@ class AppViewModel(
         var thoughtId: String? = null
         var answerId: String? = null
         var outputAttachments: List<UploadedAttachment> = emptyList()
+        val turnStartedAt = android.os.SystemClock.elapsedRealtime()
+        var toolCount = 0
         runCatching {
-            repository.stream(current.token, turn.query, turnSessionId, turn.attachments, turn.mode).collect { event ->
+            repository.stream(current.token, turn.query, turnSessionId, turn.attachments, turn.mode, turn.modelTier).collect { event ->
                 if (event.type == "start") {
                     val session = runCatching { org.json.JSONObject(event.data).optString("session_id") }.getOrNull()
                     if (!session.isNullOrBlank() && turnSessionId == null) {
@@ -422,7 +432,8 @@ class AppViewModel(
                         }
                     }
                     // Tool calls/results are intentionally hidden in the mobile view.
-                    "tool_use", "tool_result" -> Unit
+                    "tool_use" -> toolCount += 1
+                    "tool_result" -> Unit
                     "streaming_text" -> {
                         val data = runCatching { org.json.JSONObject(event.data) }.getOrNull()
                         val chunk = data?.optString("chunk").orEmpty()
@@ -445,9 +456,9 @@ class AppViewModel(
                         if (answer.isNotBlank()) {
                             answerId = answerId ?: UUID.randomUUID().toString()
                             if (_state.value.messages.none { it.id == answerId }) {
-                                upsertMessage(ChatMessage(answerId!!, "assistant", answer, incomingAttachments, streaming = false))
+                                upsertMessage(ChatMessage(answerId!!, "assistant", answer, incomingAttachments, streaming = false, durationMs = android.os.SystemClock.elapsedRealtime() - turnStartedAt, toolCount = toolCount))
                             } else {
-                                updateMessage(answerId!!) { it.copy(content = answer, attachments = if (incomingAttachments.isEmpty()) it.attachments else incomingAttachments, streaming = false) }
+                                updateMessage(answerId!!) { it.copy(content = answer, attachments = if (incomingAttachments.isEmpty()) it.attachments else incomingAttachments, streaming = false, durationMs = android.os.SystemClock.elapsedRealtime() - turnStartedAt, toolCount = toolCount) }
                             }
                         } else if (answerId != null) {
                             updateMessage(answerId!!) { it.copy(streaming = false) }
@@ -588,7 +599,7 @@ class AppViewModel(
                         val values = ContentValues().apply {
                             put(MediaStore.Downloads.DISPLAY_NAME, attachment.filename)
                             put(MediaStore.Downloads.MIME_TYPE, attachment.mimeType)
-                            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/溯源Agent")
+                            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/许昌环境Agent")
                         }
                         val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                             ?: error("无法创建下载文件")
@@ -619,7 +630,7 @@ class AppViewModel(
                         val values = ContentValues().apply {
                             put(MediaStore.Downloads.DISPLAY_NAME, filename)
                             put(MediaStore.Downloads.MIME_TYPE, "application/pdf")
-                            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/溯源Agent")
+                            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/许昌环境Agent")
                         }
                         val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                             ?: error("无法创建下载文件")
@@ -851,6 +862,10 @@ class AppViewModel(
         }
     }
 
+    fun refreshScheduledTasks() {
+        viewModelScope.launch { runCatching { repository.scheduledTasks(_state.value.token) }.onSuccess { _state.value = _state.value.copy(scheduledTasks = it) } }
+    }
+
     fun markReportRead(report: ReportResult) {
         if (report.read) return
         viewModelScope.launch {
@@ -872,8 +887,19 @@ class AppViewModel(
         viewModelScope.launch {
             runCatching { repository.sessions(token, limit = SESSION_PAGE_SIZE, offset = 0) }
                 .onSuccess { sessions ->
-                    val conversationSessions = sessions.filterNot {
+                    val rawConversationSessions = sessions.filterNot {
                         it.sessionId.startsWith("broadcast_session_")
+                    }
+                    // Older sessions may have no persisted title and are returned
+                    // as “新对话”. Derive a stable display title from the first
+                    // user message, matching the Web conversation list behavior.
+                    val conversationSessions = rawConversationSessions.map { session ->
+                        if (!isPlaceholderSessionTitle(session.title, session.sessionId)) session
+                        else {
+                            val firstUser = runCatching { repository.messages(token, session.sessionId) }
+                                .getOrNull().orEmpty().firstOrNull { it.kind == "user" && it.content.isNotBlank() }
+                            firstUser?.let { session.copy(title = sessionTitleFromQuery(it.content)) } ?: session
+                        }
                     }
                     val current = _state.value
                     if (conversationSessions.isEmpty() || !selectExisting) {
@@ -937,7 +963,12 @@ class AppViewModel(
             _state.value = _state.value.copy(sessionsLoadingMore = true)
             runCatching { repository.sessions(current.token, limit = SESSION_PAGE_SIZE, offset = current.sessions.size) }
                 .onSuccess { sessions ->
-                    val additional = sessions.filterNot { it.sessionId.startsWith("broadcast_session_") }
+                    val additional = sessions.filterNot { it.sessionId.startsWith("broadcast_session_") }.map { session ->
+                        if (!isPlaceholderSessionTitle(session.title, session.sessionId)) session else {
+                            val firstUser = runCatching { repository.messages(current.token, session.sessionId) }.getOrNull().orEmpty().firstOrNull { it.kind == "user" && it.content.isNotBlank() }
+                            firstUser?.let { session.copy(title = sessionTitleFromQuery(it.content)) } ?: session
+                        }
+                    }
                     val merged = (_state.value.sessions + additional).distinctBy { it.sessionId }
                     _state.value = _state.value.copy(
                         sessions = merged,
@@ -972,3 +1003,4 @@ class AppViewModel(
         return cleanTitle.isBlank() || cleanTitle == "新对话" || cleanTitle == "新会话" || cleanTitle == sessionId || cleanTitle.startsWith("session_")
     }
 }
+

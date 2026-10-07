@@ -49,6 +49,7 @@ data class ReportResult(
     val read: Boolean, val attachments: List<UploadedAttachment> = emptyList(),
 )
 data class ReportInbox(val reports: List<ReportResult>, val unreadCount: Int, val nextCursor: String? = null, val hasMore: Boolean = false)
+data class ScheduledTask(val taskId: String, val name: String, val taskType: String, val enabled: Boolean = true)
 data class ChatMessage(
     val id: String,
     val kind: String,
@@ -56,6 +57,8 @@ data class ChatMessage(
     val attachments: List<UploadedAttachment> = emptyList(),
     val streaming: Boolean = false,
     val expanded: Boolean = false,
+    val durationMs: Long? = null,
+    val toolCount: Int = 0,
 )
 
 data class AttachmentVariant(
@@ -296,11 +299,12 @@ class SocialAppApi(
         }
     }
 
-    fun stream(token: String, query: String, sessionId: String?, attachments: List<UploadedAttachment> = emptyList(), mode: String = "expert"): Flow<AgentEvent> = channelFlow {
+    fun stream(token: String, query: String, sessionId: String?, attachments: List<UploadedAttachment> = emptyList(), mode: String = "expert", modelTier: String = "auto"): Flow<AgentEvent> = channelFlow {
         withContext(Dispatchers.IO) {
             val payload = JSONObject().apply {
                 put("query", query)
                 put("mode", mode)
+                put("model_tier", modelTier)
                 if (sessionId != null) put("session_id", sessionId)
                 put("attachments", org.json.JSONArray().apply { attachments.forEach { put(it.toJson()) } })
             }.toString().toRequestBody("application/json".toMediaType())
@@ -553,6 +557,15 @@ class SocialAppApi(
         response.use {
             if (!it.isSuccessful) throw ApiException(it.code, "广播消息删除失败 (${it.code})")
             JSONObject(it.body?.string().orEmpty()).optBoolean("deleted", true)
+        }
+    }
+
+    suspend fun scheduledTasks(token: String): List<ScheduledTask> = withContext(Dispatchers.IO) {
+        val response = client.newCall(Request.Builder().url(url("/api/scheduled-tasks")).header("Authorization", "Bearer $token").get().build()).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "定时任务加载失败 (${it.code})")
+            val array = org.json.JSONArray(it.body?.string().orEmpty())
+            buildList { for (i in 0 until array.length()) { val item = array.optJSONObject(i) ?: continue; val task = item.optJSONObject("task") ?: item; add(ScheduledTask(task.optString("task_id", task.optString("id")), task.optString("name", "未命名任务"), task.optString("task_type", task.optString("trigger_type", "scheduled")), task.optBoolean("enabled", true))) } }
         }
     }
 

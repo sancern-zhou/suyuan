@@ -6,7 +6,7 @@
 
 1. 使用 JDK 17 和 Android SDK 34 打开本目录。
 2. 后端配置 `APP_AUTH_SECRET` 与 `APP_ACCOUNTS_JSON`，启动 `D:\溯源\backend`。
-3. App 默认访问 `http://219.135.180.51:54333`。如需连接其他环境，可在构建时通过 `-PapiBaseUrl=...` 覆盖。HTTP 地址已在 Android 清单中允许明文访问。
+3. App 默认访问 `http://117.159.53.11:60787/suyuan`。如需连接其他环境，可在构建时通过 `-PapiBaseUrl=...` 覆盖。HTTP 地址已在 Android 清单中允许明文访问。
 4. 推荐执行 `.\build-debug.ps1 -Install` 构建并安装调试包。脚本会从 `../backend/.env` 读取 `PUSH_GETUI_APP_ID`，自动传给 Gradle，并固定使用 JDK 17；`local.properties` 由本机 Android SDK 自动生成，不提交到版本库。
 
 构建并安装示例：
@@ -18,7 +18,7 @@
 如需指定 API 地址或设备：
 
 ```powershell
-.\build-debug.ps1 -ApiBaseUrl http://219.135.180.51:54333 -Install -DeviceId A43TVB4A25013903
+.\build-debug.ps1 -ApiBaseUrl http://117.159.53.11:60787/suyuan -Install -DeviceId A43TVB4A25013903
 ```
 
 后端模型配置应使用部署环境中已验证的提供商配置；本次联调使用参考环境文件中的 Doubao 主链路。不要把 API key 写入 Android 工程或提交到版本库。
@@ -69,3 +69,4 @@ App 身份由服务端从 token 解析为 `app:android:<account_id>`，客户端
 `COMPANY_OIDC_CLIENT_ID` 和 `COMPANY_AUTHENTICATION_MORE_URL`；客户端只接收公共授权端点和
 redirect URI，不保存公司密码。回调地址固定为 `com.suyuan.mobile://oauth/callback`，需在 IDBase
 移动端客户端登记同一地址。refresh token 只保存在 Android 私有存储中，退出登录时清除。
+

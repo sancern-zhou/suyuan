@@ -51,6 +51,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -199,12 +200,12 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
         horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
     ) {
         androidx.compose.foundation.Image(
-            painter = painterResource(com.suyuan.mobile.R.mipmap.ic_launcher),
-            contentDescription = "溯源 Agent",
+            painter = painterResource(com.suyuan.mobile.R.drawable.ic_launcher),
+            contentDescription = "许昌环境Agent",
             modifier = Modifier.size(88.dp).clip(RoundedCornerShape(22.dp)),
             contentScale = ContentScale.Crop,
         )
-        Text("溯源 Agent", color = SuyuanColors.text, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 18.dp))
+        Text("许昌环境Agent", color = SuyuanColors.text, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 18.dp))
         Text("连接你的专属智能助手", color = SuyuanColors.secondaryText, fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp, bottom = 28.dp))
         OutlinedTextField(
             accountId, { accountId = it }, Modifier.fillMaxWidth(), label = { Text("账号") },
@@ -357,7 +358,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             onHistory = { showHistory = true; showBroadcasts = false; showReports = false },
             onBack = { showHistory = false; showBroadcasts = false; showReports = false },
             onBroadcasts = { showBroadcasts = true; showHistory = false; showReports = false; viewModel.openBroadcasts() },
-            onReports = { showReports = true; showHistory = false; showBroadcasts = false; viewModel.refreshReports() },
+                onReports = { showReports = true; showHistory = false; showBroadcasts = false; viewModel.refreshScheduledTasks(); viewModel.refreshReports() },
             unreadBroadcastCount = state.unreadBroadcastCount,
             unreadReportCount = state.reportUnreadCount,
             onNew = { showHistory = false; showBroadcasts = false; showReports = false; viewModel.newConversation() },
@@ -406,19 +407,13 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             ) {
                 if (state.messages.isEmpty()) {
                     item { EmptyChatState(loading = state.loading, mode = state.mode, onModeSelected = viewModel::selectMode) }
-                } else items(state.messages, key = { it.id }) {
+                } else items(state.messages.filterNot { it.kind == "thought" }, key = { it.id }) {
                     ChatMessageView(it, state, viewModel)
                 }
                 if (waitingForAssistant) {
                     item(key = "thinking-indicator") { ThinkingIndicator() }
                 }
             }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(SuyuanColors.border),
-        )
         val canCancel = state.loading && state.sessionId != null
         if (state.attachments.isNotEmpty()) {
             AttachmentTray(state, viewModel, context)
@@ -426,9 +421,10 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         Surface(
             color = Color.White,
             shape = RoundedCornerShape(22.dp),
-            tonalElevation = 1.dp,
+            tonalElevation = 0.dp,
             modifier = Modifier.fillMaxWidth()
-                .border(1.dp, SuyuanColors.border, RoundedCornerShape(22.dp))
+                .shadow(8.dp, RoundedCornerShape(22.dp), ambientColor = Color(0x22000000), spotColor = Color(0x18000000))
+                .border(1.dp, Color(0xFFE7E9EE), RoundedCornerShape(22.dp))
                 .padding(vertical = 8.dp)
                 .imePadding()
                 .navigationBarsPadding(),
@@ -466,7 +462,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                             true
                         }
                         else -> true
-                    }
+                }
                 }
                 if (!voiceMode) {
                     Box(
@@ -561,6 +557,15 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                 }
             }
         }
+            Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("auto" to "自动", "fast" to "快速模式", "deep" to "深度思考").forEach { (tier, label) ->
+                    val selected = state.modelTier == tier
+                    Text(label, color = if (selected) SuyuanColors.primary else SuyuanColors.secondaryText, fontSize = 12.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(if (selected) SuyuanColors.primary.copy(alpha = .12f) else Color.Transparent)
+                            .border(1.dp, if (selected) SuyuanColors.primary.copy(alpha = .4f) else SuyuanColors.border, RoundedCornerShape(16.dp))
+                            .clickable { viewModel.selectModelTier(tier) }.padding(horizontal = 12.dp, vertical = 6.dp))
+                }
+            }
         (state.error ?: localError)?.let { Text(it, color = SuyuanColors.error, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp)) }
         }
     }
@@ -632,7 +637,7 @@ private fun AppTopBar(
                 Text("广播消息", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
             } else if (showReports) {
                 Icon(painterResource(R.drawable.ic_file), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(22.dp))
-                Text("报告成果", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
+                Text("定时任务", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
             } else if (!showHistory) {
                 Box {
                     IconButton(onClick = onBroadcasts) {
@@ -644,7 +649,7 @@ private fun AppTopBar(
                 }
                 IconButton(onClick = onReports) {
                     Box {
-                        Icon(painterResource(R.drawable.ic_file), contentDescription = "报告成果", tint = SuyuanColors.text)
+                        Icon(painterResource(R.drawable.ic_file), contentDescription = "定时任务", tint = SuyuanColors.text)
                         if (unreadReportCount > 0) Box(Modifier.size(8.dp).clip(CircleShape).background(SuyuanColors.error).align(androidx.compose.ui.Alignment.TopEnd))
                     }
                 }
@@ -751,6 +756,8 @@ private fun HistoryPanel(state: AppUiState, viewModel: AppViewModel, onBack: () 
 @Composable
 private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit) {
     var expandedMessageId by rememberSaveable { mutableStateOf<String?>(null) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var unreadOnly by rememberSaveable { mutableStateOf(false) }
     var deleteMessage by remember { mutableStateOf<BroadcastMessage?>(null) }
     val listState = rememberLazyListState()
     LaunchedEffect(listState, state.broadcastMessages.size, state.broadcastHasMore) {
@@ -761,6 +768,10 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
             }
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+        Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("搜索广播") }, modifier = Modifier.weight(1f))
+            TextButton(onClick = { unreadOnly = !unreadOnly }) { Text(if (unreadOnly) "全部" else "未读", color = SuyuanColors.primary, fontSize = 12.sp) }
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             if (state.broadcastMessages.any { !it.read }) {
                 TextButton(onClick = { viewModel.markAllBroadcastsRead() }) { Text("全部已读", color = SuyuanColors.primary, fontSize = 12.sp) }
@@ -775,13 +786,14 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
         } else if (state.broadcastMessages.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text("暂无广播消息", color = SuyuanColors.secondaryText, fontSize = 15.sp) }
         } else {
+            val filteredMessages = state.broadcastMessages.filter { (!unreadOnly || !it.read) && (query.isBlank() || it.content.contains(query, ignoreCase = true)) }
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(bottom = 16.dp),
             ) {
-                items(state.broadcastMessages, key = { it.messageId }) { broadcast ->
+                items(filteredMessages, key = { it.messageId }) { broadcast ->
                     val expanded = expandedMessageId == broadcast.messageId
                     Surface(
                         color = if (expanded) SuyuanColors.panel else Color.White,
@@ -863,15 +875,22 @@ private fun ReportPanel(state: AppUiState, viewModel: AppViewModel) {
     var expandedId by rememberSaveable { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            OutlinedTextField(value = reportType, onValueChange = { reportType = it }, singleLine = true, label = { Text("报告类型") }, modifier = Modifier.weight(1f))
+            OutlinedTextField(value = reportType, onValueChange = { reportType = it }, singleLine = true, label = { Text("任务类型/名称") }, modifier = Modifier.weight(1f))
             TextButton(onClick = { viewModel.refreshReports(reportType.trim().ifBlank { null }) }) { Text("筛选") }
+        }
+        if (state.scheduledTasks.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                state.scheduledTasks.forEach { task ->
+                    Text(task.name, color = SuyuanColors.secondaryText, fontSize = 11.sp, modifier = Modifier.clip(RoundedCornerShape(14.dp)).border(1.dp, SuyuanColors.border, RoundedCornerShape(14.dp)).clickable { reportType = task.name; viewModel.refreshReports(task.name) }.padding(horizontal = 10.dp, vertical = 6.dp))
+                }
+            }
         }
         if (state.reportLoading) {
             Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { CircularProgressIndicator(color = SuyuanColors.primary, strokeWidth = 2.dp) }
         } else if (state.reportError != null && state.reportResults.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text(state.reportError, color = SuyuanColors.error, fontSize = 14.sp) }
         } else if (state.reportResults.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text("暂无报告成果", color = SuyuanColors.secondaryText, fontSize = 15.sp) }
+            Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text("暂无定时任务成果", color = SuyuanColors.secondaryText, fontSize = 15.sp) }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
                 items(state.reportResults, key = { it.reportId }) { report ->
@@ -909,7 +928,7 @@ private fun EmptyChatState(loading: Boolean = false, mode: String = "expert", on
             }
         }
         Text(
-            if (loading) "正在加载最近的会话内容…" else "向溯源 Agent 描述你想完成的任务",
+            if (loading) "正在加载最近的会话内容…" else "向许昌环境Agent 描述你想完成的任务",
             color = SuyuanColors.secondaryText,
             fontSize = 13.sp,
             modifier = Modifier.padding(top = 8.dp),
@@ -1033,6 +1052,7 @@ private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: 
                     Text(message.content, color = SuyuanColors.error, fontSize = 13.sp, lineHeight = 19.sp)
                 }
                 else -> {
+                    ProcessSummary(message)
                     if (message.content.isNotBlank()) {
                         MarkdownContent(message.content, if (isUser) SuyuanColors.primary else SuyuanColors.text)
                     }
@@ -1050,6 +1070,18 @@ private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: 
             }
         }
     }
+}
+
+@Composable
+private fun ProcessSummary(message: ChatMessage) {
+    if (message.kind != "assistant" || (message.durationMs == null && message.toolCount == 0)) return
+    val duration = message.durationMs?.let { if (it < 1000) "${it}毫秒" else "${"%.1f".format(it / 1000.0)}秒" }
+    Text(
+        "${duration?.let { "用时${it}完成" } ?: "已完成"} · ${message.toolCount}个工具调用",
+        color = SuyuanColors.secondaryText,
+        fontSize = 12.sp,
+        modifier = Modifier.padding(bottom = 6.dp),
+    )
 }
 
 private sealed class MarkdownBlock {
@@ -1337,13 +1369,13 @@ private fun AttachmentView(attachment: UploadedAttachment, state: AppUiState, vi
                             if (pdfBytes != null && !attachment.filename.endsWith(".pdf", true) && attachment.variants.none { it.format.equals("pdf", true) }) {
                                 TextButton(onClick = {
                                     viewModel.downloadPreview(context, attachment, pdfBytes) { success ->
-                                        Toast.makeText(context, if (success) "PDF 已保存到下载/溯源Agent" else "下载失败", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, if (success) "PDF 已保存到下载/许昌环境Agent" else "下载失败", Toast.LENGTH_SHORT).show()
                                     }
                                 }) { Text("下载 PDF") }
                             }
                             TextButton(onClick = {
                                 viewModel.downloadAttachment(context, attachment) { success ->
-                                    Toast.makeText(context, if (success) "文件已保存到下载/溯源Agent" else "下载失败", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, if (success) "文件已保存到下载/许昌环境Agent" else "下载失败", Toast.LENGTH_SHORT).show()
                                 }
                             }) { Text("下载 ${attachment.filename.substringAfterLast('.', "文件").uppercase()}") }
                             attachment.variants.forEach { variant ->
@@ -1435,7 +1467,7 @@ private fun DocumentPreviewContent(
         if (showDownload) {
             TextButton(onClick = {
                 viewModel.downloadAttachment(context, attachment) { success ->
-                    Toast.makeText(context, if (success) "已保存到下载/溯源Agent" else "下载失败", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, if (success) "已保存到下载/许昌环境Agent" else "下载失败", Toast.LENGTH_SHORT).show()
                 }
             }, modifier = Modifier.align(androidx.compose.ui.Alignment.End)) {
                 Text("下载")
@@ -1605,7 +1637,7 @@ private fun saveImageToGallery(context: android.content.Context, bytes: ByteArra
     val values = ContentValues().apply {
         put(MediaStore.Images.Media.DISPLAY_NAME, filename.substringBeforeLast('.') + ".jpg")
         put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/溯源Agent")
+        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/许昌环境Agent")
     }
     val resolver = context.contentResolver
     val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
@@ -1647,3 +1679,4 @@ private fun AnnotatedString.Builder.appendInlineMarkdown(line: String) {
     }
     append(line.substring(cursor))
 }
+
