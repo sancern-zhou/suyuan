@@ -552,6 +552,7 @@ class ReActAgent:
         latest_resource_version: int | None = None
         resource_failures: list[dict[str, Any]] = []
         published_resource_ids: list[str] = []
+        published_resource_group_ids: set[str] = set()
         consolidation_message_start = (
             len(memory_manager.session.get_messages_for_llm()) if memory_manager else 0
         )
@@ -790,6 +791,7 @@ class ReActAgent:
                                     published_resource_ids.extend(
                                         publication.changed_resource_ids
                                     )
+                                    published_resource_group_ids.update(publication.changed_group_ids)
                                     pending_resource_event = publication.changed_event(
                                         actual_session_id, effective_run_id
                                     )
@@ -820,6 +822,7 @@ class ReActAgent:
                     if active_run_id:
                         terminal_data.setdefault("run_id", str(active_run_id))
                     terminal_data["resource_ids"] = list(dict.fromkeys(published_resource_ids))
+                    terminal_data["resource_group_ids"] = sorted(published_resource_group_ids)
                     if latest_resource_version is not None:
                         terminal_data["resource_version"] = latest_resource_version
                     if resource_failures:

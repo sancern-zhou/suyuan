@@ -366,6 +366,7 @@ class ToolExecutor:
                 "focus_resource_id": (
                     focused_resource.resource_id if focused_resource is not None else None
                 ),
+                "resource_group_ids": sorted({stored.group_id for stored in stored_resources}),
                 "rejected": rejected,
             }
 

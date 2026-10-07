@@ -96,6 +96,8 @@ async def test_tool_result_publication_returns_durable_change():
     )
     assert result.catalog_version == 4
     assert len(result.changed_resource_ids) == 1
+    assert result.changed_group_ids == ["group-id"]
+    assert result.changed_event("session-a", "run-a")["data"]["resource_group_ids"] == ["group-id"]
 
 
 @pytest.mark.asyncio
@@ -147,6 +149,7 @@ async def test_durably_tracked_publish_session_file_keeps_focus_intent():
                         "durable": True,
                         "version": 7,
                         "resource_ids": ["primary-id", "preview-id"],
+                        "resource_group_ids": ["report-group"],
                     },
                 },
             },
@@ -156,6 +159,7 @@ async def test_durably_tracked_publish_session_file_keeps_focus_intent():
 
     assert result.catalog_version == 7
     assert result.focus_resource_id == "primary-id"
+    assert result.changed_group_ids == ["report-group"]
 
 
 @pytest.mark.asyncio
@@ -393,7 +397,7 @@ async def test_ownership_transition_waits_for_resource_commit(tmp_path):
             await allow_commit.wait()
             return SimpleNamespace(
                 catalog_version=1,
-                resources=[SimpleNamespace(resource_id="resource-a")],
+                    resources=[SimpleNamespace(resource_id="resource-a", group_id="group-a")],
             )
 
     async def tool(**_):

@@ -54,3 +54,9 @@ class InlineChartLayoutTests(unittest.TestCase):
         attach_reply_resources(history, [{"file_id": "document", "run_id": "r1"}])
         self.assertNotIn("attachments", history[0])
         self.assertEqual(history[1]["attachments"][0]["file_id"], "document")
+
+    def test_new_group_versions_replace_old_attachment_urls(self):
+        history = [{"type": "final", "attachments": [{"file_id": "old", "group_id": "report"}]}]
+        current = {"file_id": "new", "group_id": "report", "run_id": "resource-edit"}
+        attach_reply_resources(history, [current])
+        self.assertEqual(history[0]["attachments"], [current])
