@@ -9,7 +9,16 @@ def attach_reply_resources(history: list, descriptors: list[dict]) -> None:
                and str(item.get("role") or item.get("type") or "").lower() in {"assistant", "final"}]
     if not replies:
         return
-    by_id = {str(value[key]): value for value in descriptors
+    # Specs and image renditions share a visual ID. Prefer the renderable image
+    # for static charts, and the interactive spec for ECharts, independent of order.
+    def priority(value):
+        if value.get("resource_key") == "chart-spec" and value.get("interactive") is True:
+            return 2
+        if str(value.get("mime_type") or "").startswith("image/"):
+            return 1
+        return 0
+
+    by_id = {str(value[key]): value for value in sorted(descriptors, key=priority)
              for key in ("visual_id", "file_id") if value.get(key)}
     claimed = set()
 
@@ -25,5 +34,7 @@ def attach_reply_resources(history: list, descriptors: list[dict]) -> None:
                      if ref in by_id]
         attach(reply, resources)
         claimed.update(value["file_id"] for value in resources)
+        visual_ids = {value.get("visual_id") for value in resources if value.get("visual_id")}
+        claimed.update(value["file_id"] for value in descriptors if value.get("visual_id") in visual_ids)
     # Preserve legacy attachment behavior for files and replies without explicit references.
     attach(replies[-1], [value for value in descriptors if value["file_id"] not in claimed])
