@@ -131,6 +131,9 @@ async def persist_tool_result_resources(
         declarations = [
             item.model_copy(update={"tool_name": tool_name}) for item in declarations
         ]
+    from .office_preview import attach_office_preview_declarations
+
+    declarations = await attach_office_preview_declarations(declarations)
     published = []
     for group_key, members in groupby_group_key(declarations).items():
         published.append(
