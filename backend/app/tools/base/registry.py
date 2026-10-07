@@ -244,6 +244,7 @@ class ToolRegistry:
         *,
         success: bool,
         execution_time: float | None = None,
+        error_summary: str | None = None,
     ) -> Dict[str, Any]:
         """记录一次工具执行"""
         if tool_name not in self._tools:
@@ -253,6 +254,7 @@ class ToolRegistry:
             tool_name,
             success=success,
             execution_time=execution_time,
+            error_summary=error_summary,
         )
         self._stats[tool_name] = stats
         return stats

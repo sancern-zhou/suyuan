@@ -1,0 +1,43 @@
+# 数据集契约：mart_qc_backorder_analysis
+dataset: mart_qc_backorder_analysis
+description: >
+  江苏质控补测/回调安排日志数据集。一行 = 一条平台安排的补测任务（站点×小时×污染物），
+  每日 02:30 全量（窗口 ≥2026-07-01），窗口内约 1 万行、96 站。
+  回答"哪些站点/因子被安排补测、当前状态、补测是否集中爆发（风暴预警）"，
+  是质控闭环的下游环节（执行结果合格/不合格 → 平台补测处置 → 复核）。
+  源表 air_province_data.dbo.qc_backorderarrangelog（每日全量）。
+owner: 江苏运维平台组
+grain: 一行 = 一条补测安排（站点×小时×污染物）
+freshness_slo: 26小时（每日全量）
+known_caveats:
+  - state(1/2/3/6) 与 datatype(1/2/3/6) 为平台原始枚举，中文语义待平台确认，
+    不得在结论中编造状态含义，可描述分布与集中度
+  - uniquecode 为质控任务组代码，可关联 qc_historyresult（95/96 命中）判断补测背景；
+    不可关联 qc_arrangeresult 行级（该表 uniquecode 为任务组代码，105 值/3618 行）
+  - 补测集中信号（2026-10-04 实测）：3079A 9 天 2248 条、3081A 10 天 958 条，
+    站点×日聚合条数即为风暴预警口径
+  - pollutant_name 除六参数外还含 降水量/湿度 等（'-' 为空值占位）
+columns:
+  - {name: id, business: 源记录ID(主键)}
+  - {name: station_code, business: 平台站点编码}
+  - {name: station_name, business: 站点名称(经dim_station关联)}
+  - {name: city_code, business: 城市行政区码(经dim_station关联)}
+  - {name: city_name, business: 城市名(经dim_station关联)}
+  - {name: uniquecode, business: 质控任务组代码(关联执行结果用)}
+  - {name: pollutant_name, business: 污染物名称(含降水量/湿度等; '-'=空占位)}
+  - {name: datatype, business: 数据类型枚举(1/2/3/6, 语义待平台确认)}
+  - {name: state, business: 补测状态枚举(1/2/3/6, 语义待平台确认)}
+  - {name: start_time, business: 补测时段开始}
+  - {name: end_time, business: 补测时段结束}
+  - {name: created_at, business: 安排产生时间}
+  - {name: operator, business: 操作人}
+  - {name: synced_at, business: 重建时间}
+access:
+  tool: execute_jiangsu_mart_sql
+  role: agent_reader
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  station_code/station_name/city_name/uniquecode/pollutant_name/datatype/state/start_time/end_time/created_at/operator。
+  查质控补测安排、补测状态、按站点×日聚合发现补测集中(风暴预警)用本表;
+  质控闭环= mart_qc_execution_analysis(合格/不合格) → 本表(补测处置) ; uniquecode 关联 qc_historyresult 判背景。
+  state/datatype 为平台原始枚举(1/2/3/6), 中文语义未确认, 只可描述分布与集中度, 不得编造状态含义。

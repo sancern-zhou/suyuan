@@ -1,0 +1,4 @@
+{
+  "apiSecret": "<Cube REST JWT 签名密钥; 与后端 jiangsu_query_metrics 侧共享同一值>",
+  "dbPassword": "<agent_reader 数据库账号密码>"
+}

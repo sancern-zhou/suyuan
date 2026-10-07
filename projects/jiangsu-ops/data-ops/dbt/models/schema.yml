@@ -1,0 +1,736 @@
+version: 2
+models:
+- name: dim_station
+  description: '江苏站点目录一致性维度表。一行 = 一个站点（全省 1509 站全量）， 随 jiangsu_ods.bsd_station 每 5 分钟同步后重建（交换式，无空窗）。 统一站点/城市维度：所有宽表的站点与城市归属都应经本表关联；
+    bsd_city 的多层级 code 重复只在本表做一次 DISTINCT ON 去重。
+
+    已知口径注意: city_name 按 areacode 前4位映射地级市；行政区划调整时依赖源库 bsd_city 更新; uniquecode 是质控等子系统关联键（qc_historyresult
+    无 stationcode，须经本表换算）; 历史上历史站点（historycode/historyname 非空）仍按当前编码保留一行
+
+    粒度: 一行 = 一个站点（station_code）'
+  columns:
+  - name: station_code
+    description: 平台站点编码(主键口径)
+    data_tests:
+    - unique
+    - not_null
+  - name: station_name
+    description: 站点名称(positionname)
+  - name: uniquecode
+    description: 站点唯一编码(质控等子系统关联键)
+    data_tests:
+    - not_null
+  - name: city_code
+    description: 城市行政区码(areacode)
+  - name: city_name
+    description: 城市名(已去重映射)
+  - name: towncode
+    description: 乡镇码
+  - name: longitude
+    description: 经度
+  - name: latitude
+    description: 纬度
+  - name: address
+    description: 地址
+  - name: station_type_id
+    description: 站点类型ID
+  - name: status
+    description: 启用状态
+  - name: is_monitor
+    description: 是否监测站
+  - name: is_contrast
+    description: 是否对照站
+  - name: manager
+    description: 管理人
+  - name: builddate
+    description: 建站日期
+  - name: stoptime
+    description: 停用时间
+  - name: updatetime
+    description: 源更新时间
+  - name: synced_at
+    description: 重建时间
+- name: dim_device
+  description: '江苏站点设备台账维度表。一行=一台登记设备（全省 1684 台，每日 02:30 全量重建， 源自 jiangsu_ods.bsd_device ← 源库 air_province_bsd.dbo.bsd_device）。
+    用于站点设备构成核对、品牌型号与购置/启用日期查询。 替代已下线的 jiangsu_fetch_device_ledger 接口工具的公共台账查询。
+
+    已知口径注意: device_stats 为平台设备状态原始枚举码，未做中文翻译；翻译口径待业务确认; 台账是"当前挂载快照"，生命周期事件（启用/故障/备机/维修/停用/报废）请查 mart_device_lifecycle_analysis（源自
+    log_device+dev_scrap，2026-10-04 接入）； 备机更换及时性 P1 场景以该表的 DeviceSpare 流转为口径，不再是数据盲区; masterslavenum 源库
+    100% 为空，仍无台账级备机身份字段; station_code 关联 dim 层与 mart_station_device_health 可补站点/城市维度
+
+    粒度: 一行 = 一台设备（device_code）'
+  columns:
+  - name: device_code
+    description: 设备编码(业务主键)
+    data_tests:
+    - unique:
+        config:
+          severity: warn
+  - name: station_code
+    description: 所属站点编码
+  - name: assets_code
+    description: 资产编码
+  - name: device_type
+    description: 设备类型码
+  - name: device_type_name
+    description: 设备类型名(如 O3分析仪
+  - name: device_brand
+    description: 品牌
+  - name: device_model
+    description: 型号
+  - name: device_model_id
+    description: 设备型号ID(数值
+  - name: purchase_date
+    description: 购置日期
+  - name: use_date
+    description: 启用日期
+  - name: device_stats
+    description: 设备状态码(原始枚举
+  - name: calibrate
+    description: 校准标记
+  - name: original_machine
+    description: 原始机器标记(语义待确认)
+  - name: master_slave_num
+    description: 主从机编号
+  - name: quality_period
+    description: 质保期
+  - name: mainter_company
+    description: 维护单位
+  - name: custodian
+    description: 保管人
+  - name: warehouse
+    description: 库房
+  - name: price
+    description: 价格
+  - name: asset_ownership
+    description: 资产权属
+  - name: synced_at
+    description: 重建时间
+- name: mart_work_order_analysis
+  description: '江苏故障工单分析数据集。一行=一张故障工单（2026-07-01 起，已作废单未纳入；2026-10-06 起显式过滤 ordertype=''Fault''，例行单不入本表）。 含站点/城市/设备维度、工单流转时间、预计算指标（响应/处理/修复时长、30天重复故障）和创建前24h关联告警数。数据来自运维平台每日同步。
+
+    已知口径注意: 派单/到站为代理口径：CH_Check 节点开始=派单，首个 FaultProcess 开始=到站；派单缺失回退工单创建时间; 2小时响应(is_response_within_2h)：故障单均有到场节点，全量可评估(2026-10 实测)；当前流程数据中
+    CH_Check 与 FaultProcess 节点不同时出现，实际代理为创建→到站; 4小时处置(is_recover_within_4h)=数据恢复正常(业务口径 2026-09-22
+    确认)，代理为触发告警解除： 取建单前24h~后1h内同站最近一条已解除告警，恢复耗时从告警发生起算；平台规则判定对 断数/恒值/超标类统一适用；约47%可评估(2026-10 实测)；可评估单恢复均值约114小时为数据现状;
+    故障单均填写设备ID，重复故障判定为"站点+设备"维度，见 repeat_fault_basis 列; 故障单无计划完成时间，is_overdue/超期率恒为0不可评估，历史"超期率约85%"系含例行单旧口径不得引用; 窗口自 2026-07-01，更早历史不可查；同比/年度分析不支持
+
+    粒度: 一行 = 一张故障工单（源表 mtc_WorkingOrder.Id）'
+  columns:
+  - name: id
+    description: 工单源ID(主键)
+    data_tests:
+    - unique
+    - not_null
+  - name: working_order_code
+    description: 工单号
+  - name: order_title
+    description: 工单标题
+  - name: order_type
+    description: 工单类型
+  - name: order_status
+    description: 状态原始值
+  - name: order_status_cn
+    description: 状态中文名
+  - name: urgency_type
+    description: 紧急程度
+  - name: station_code
+    description: 站点编码
+    data_tests:
+    - not_null:
+        config:
+          severity: warn
+  - name: station_name
+    description: 站点名称
+  - name: city_code
+    description: 城市行政区码
+  - name: city_name
+    description: 城市名
+  - name: device_id
+    description: 设备ID
+  - name: operation_unit_id
+    description: 运维单位ID
+  - name: create_time
+    description: 创建时间
+  - name: dispatch_time
+    description: 派单时间(代理=CH_Check开始
+  - name: arrival_time
+    description: 到站时间(代理=首个FaultProcess开始)
+  - name: finish_time
+    description: 完成时间
+  - name: plan_finish_time
+    description: 计划完成时间
+  - name: current_point
+    description: 当前流程节点
+  - name: node_count
+    description: 流转节点数
+  - name: response_minutes
+    description: 响应时长(分钟)
+  - name: process_minutes
+    description: 处理时长(分钟)
+  - name: repair_minutes
+    description: 修复时长(分钟)
+  - name: is_response_within_2h
+    description: 2小时内到站(布尔)
+  - name: trigger_alarm_time
+    description: 关联触发告警发生时间
+  - name: recovery_time
+    description: 数据恢复正常时间(触发告警解除时间)
+  - name: recovery_hours
+    description: 恢复耗时(小时)
+  - name: is_recover_within_4h
+    description: 4小时内数据恢复(布尔)
+  - name: is_overdue
+    description: 是否超期
+  - name: is_repeat_fault
+    description: 是否30天内重复故障
+  - name: repeat_fault_basis
+    description: 重复故障判定维度
+  - name: repeat_count_30d
+    description: 前30天同维度工单数
+  - name: alarm_count_1d
+    description: 创建前24小时同站告警数(alm_summary)
+  - name: source_updated_at
+    description: 源系统最后更新时间
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: mart_alarm_event_analysis
+  description: '江苏站点告警事件数据集。一行=一条站点告警（2026-07-01 起，源 alm_summary）。 含告警级别/状态（已翻译）、生命周期时间、持续与处理时长、是否未处理、
+    告警后24小时内同站关联工单数。用于告警分析、告警→工单转化、未处理告警督办。
+
+    已知口径注意: 仅含 alm_summary 站点告警；mot_alarm 平台监控告警无站点编码暂未纳入（需平台组确认 refid 语义）; alarmlevel 中文映射按平台惯例（urgent=紧急/secondary=中级/commonly=一般），待业务确认;
+    ddalarmstate 1=未处理 3=已解除 已通过解除时间字段验证
+
+    粒度: 一行 = 一条站点告警（alm_summary.Id）'
+  columns:
+  - name: id
+    description: 告警源ID(主键)
+    data_tests:
+    - unique
+    - not_null
+  - name: station_code
+    description: 站点编码
+  - name: station_name
+    description: 站点名称
+  - name: city_name
+    description: 城市名
+  - name: device_id
+    description: 设备ID
+  - name: alarm_content
+    description: 告警内容
+  - name: alarm_level
+    description: 级别原始值
+  - name: alarm_level_cn
+    description: 级别中文名
+  - name: alarm_state
+    description: 状态原始值
+  - name: alarm_state_cn
+    description: 状态中文
+  - name: rule_type
+    description: 告警规则类型
+  - name: alarm_time
+    description: 告警时间
+  - name: handle_time
+    description: 处理时间
+  - name: remove_time
+    description: 解除时间
+  - name: duration_minutes
+    description: 告警持续时长(分钟)
+  - name: handle_minutes
+    description: 处理时长(分钟)
+  - name: is_unresolved
+    description: 是否未处理
+  - name: linked_work_orders_24h
+    description: 告警后24h内同站新建工单数
+  - name: source_updated_at
+    description: 源最后更新时间
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: mart_station_device_health
+  description: '江苏站点设备健康数据集。一行=一个站点（全省 1509 站全量，含无事件站点）。 汇总近30天工单/超期/重复故障/响应时长、近7天与30天告警、未处理告警数、 设备数及风险分级。用于故障诊断优先级、全网健康概览。
+
+    已知口径注意: risk_level 为代理规则（高=30天工单≥5且超期率≥50% 或 未处理告警≥10；中=工单≥3且超期率≥30% 或 未处理告警≥5；无事件=稳定），阈值待业务确认后可调整;
+    超期率普遍偏高源于平台长期未闭环工单（见工单数据集 caveats）; avg_response_minutes_30d 依赖派单/到站代理口径，覆盖率约15%
+
+    粒度: 一行 = 一个站点'
+  columns:
+  - name: station_code
+    description: 站点编码(主键)
+    data_tests:
+    - unique
+    - not_null
+  - name: station_name
+    description: 站点名称
+  - name: city_name
+    description: 城市名
+  - name: station_status
+    description: 站点启用状态
+  - name: is_monitor
+    description: 是否监测站
+  - name: device_count
+    description: 登记设备数
+  - name: work_orders_30d
+    description: 近30天工单数
+  - name: overdue_orders_30d
+    description: 近30天超期工单数
+  - name: overdue_rate_30d
+    description: 近30天超期率(0-1)
+  - name: repeat_fault_orders_30d
+    description: 近30天重复故障工单数
+  - name: avg_response_minutes_30d
+    description: 近30天平均响应时长(分钟)
+  - name: alarms_7d
+    description: 近7天告警数
+  - name: alarms_30d
+    description: 近30天告警数
+  - name: unresolved_alarms
+    description: 未处理告警累计数
+  - name: last_alarm_time
+    description: 最近告警时间
+  - name: last_work_order_time
+    description: 最近工单时间
+  - name: risk_level
+    description: 风险分级
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: mart_station_daily_profile
+  description: '江苏站点日概况数据集。一行=站点×日（2026-07-01 起，仅含有活动记录的站点日）。 含当日新建/完成/超期工单数、当日告警数、到站签到数。用于全网态势时间序列、 趋势与同期对比、异常日识别。
+
+    已知口径注意: 当日数据在次日刷新前不完整（工单按创建时间落盘）; attendance_signins 依赖源考勤表，7月以来源数据仅11条，近乎为空
+
+    粒度: 一行 = 站点 × 自然日'
+  columns:
+  - name: profile_date
+    description: 日期
+    data_tests:
+    - not_null
+  - name: station_code
+    description: 站点编码
+    data_tests:
+    - not_null
+  - name: station_name
+    description: 站点名称
+  - name: city_name
+    description: 城市名
+  - name: work_orders_created
+    description: 当日新建工单数
+  - name: work_orders_finished
+    description: 当日完成工单数
+  - name: overdue_orders_created
+    description: 当日新建且超期的工单数
+  - name: alarms
+    description: 当日告警数
+  - name: attendance_signins
+    description: 当日到站签到数(源数据稀疏)
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: mart_qc_execution_analysis
+  description: '江苏质控执行结果数据集。一行 = 一条质控任务执行结果（站点×污染物×零点/跨度检查）， 数据窗口 2026-07-01 起（用户确认口径），约 21,750 行。合格判定直接采用平台
+    qc_historyresult.result 文本（合格/不合格），不重算判定规则。 用于质控合格率统计、不合格站点排名、按城市/污染物/任务类型分组分析。 源表 air_province_data.dbo.qc_historyresult（id
+    自增增量，5 分钟同步）。
+
+    已知口径注意: 质控仅覆盖约 23 个站点（省控质控试点范围），统计结果不能外推到全网 1509 站; 任务类型仅两种：零点检查、跨度检查（各约 50%）; is_qualified 由 result_cn=''合格''
+    推导；判定阈值（inaccuracy 与 target 的限值）未本地重算; 窗口按 create_time（入库时间）引导，个别 6 月末执行、7 月初入库的结果会包含在内（约265条）; 站点经
+    uniquecode 关联 bsd_station；截至 2026-09-22 关联覆盖率 100%; 7/1 之前的历史不同步；单站下钻（rId→状态/运行日志/监测曲线）走平台 API 工具
+
+    粒度: 一行 = 一条质控任务执行结果'
+  columns:
+  - name: id
+    description: 源记录ID(主键)
+    data_tests:
+    - unique
+    - not_null
+  - name: uniquecode
+    description: 站点唯一编码
+  - name: station_code
+    description: 平台站点编码
+    data_tests:
+    - not_null:
+        config:
+          severity: warn
+  - name: station_name
+    description: 站点名称
+  - name: city_code
+    description: 城市行政区码
+  - name: city_name
+    description: 城市名
+  - name: pollutant
+    description: 污染物(SO2/NOx/O3等)
+  - name: task_type
+    description: 任务类型(零点检查/跨度检查)
+  - name: result_cn
+    description: 平台判定文本(合格/不合格)
+  - name: is_qualified
+    description: 是否合格(布尔
+  - name: qc_date
+    description: 执行日期(start_time取日)
+  - name: start_time
+    description: 执行开始时间
+  - name: end_time
+    description: 执行结束时间
+  - name: target_value
+    description: 目标值(跨度气浓度
+  - name: relevant_value
+    description: 响应值(仪器读数)
+  - name: inaccuracy
+    description: 相对误差
+  - name: relative_error
+    description: 相对误差(备用列
+  - name: rid
+    description: 质控任务号(API下钻用)
+  - name: source_create_time
+    description: 源库入库时间
+  - name: synced_at
+    description: 重建时间
+- name: mart_qc_arrangement_analysis
+  description: '江苏质控任务安排数据集。一行 = 一条平台安排的质控任务（含历史），每日 02:30 全量， 约 3,500 行。status_cn 为平台安排状态文本，回答"完成情况/哪些站点任务过期未完成"。
+    源表 air_province_data.dbo.qc_arrangeresult（每日全量）。
+
+    已知口径注意: 状态分布（2026-09-22 实测）：已过期约 76%、等待中约 24%、运行中/已删除个别； "已过期"占比较高是平台安排口径的数据现状，未核实是否代表真实漏做; 与 mart_qc_execution_analysis
+    的关联键为 rid（任务号），可做安排-执行差距分析; 该表覆盖范围同样以质控试点站点为主
+
+    粒度: 一行 = 一条安排的质控任务'
+  columns:
+  - name: id
+    description: 源记录ID(主键)
+    data_tests:
+    - unique
+    - not_null
+  - name: station_code
+    description: 平台站点编码
+  - name: station_name
+    description: 站点名称
+  - name: city_code
+    description: 城市行政区码(经dim_station关联)
+  - name: city_name
+    description: 城市名(经dim_station关联)
+  - name: uniquecode
+    description: 站点唯一编码
+  - name: pollutant
+    description: 污染物
+  - name: task_type
+    description: 任务类型
+  - name: tstatus
+    description: 状态码
+  - name: status_cn
+    description: 安排状态文本(已过期/等待中/运行中/任务已删除)
+  - name: planned_time
+    description: 计划执行时间
+  - name: result_time
+    description: 结果时间
+  - name: source_create_time
+    description: 源库创建时间
+  - name: rid
+    description: 质控任务号(API下钻/关联执行结果用)
+  - name: synced_at
+    description: 重建时间
+- name: mart_inspection_analysis
+  description: '江苏巡检完成数据集。一行 = 一条巡检任务项（pw_TaskItem，站点×设备×周期）， 数据窗口 2026-07-01 起（按 UpdateTime 引导），约 21,300
+    行，5 分钟增量。 巡检周期类型：周/月/季/半年/年。用于巡检完成率、超期未完成、按人员/单位完成量、 巡检转工单率分析。源表 opa_product_data.dbo.pw_TaskItem。
+
+    已知口径注意: status 0/1/2 按数据分布推断为 未开始/处理中/已完成（94%已完成），语义待业务确认; is_overdue = 计划周期结束日(plan_end_date)已过仍未完成；plan
+    窗口来自 pw_Task（每日全量）， 当日新任务项可能短暂关联不到周期行; has_linked_order 约97%（巡检项完成生成故障/巡检工单，WorkingOrderCode 关联）;
+    窗口按 UpdateTime>=2026-07-01 引导，含少量 6 月前创建但近期更新的任务项
+
+    粒度: 一行 = 一条巡检任务项'
+  columns:
+  - name: id
+    description: 源记录ID(主键)
+    data_tests:
+    - unique
+    - not_null
+  - name: uniquecode
+    description: 站点唯一编码
+  - name: station_code
+    description: 平台站点编码(经dim_station)
+  - name: station_name
+    description: 站点名称
+  - name: city_code
+    description: 城市行政区码
+  - name: city_name
+    description: 城市名
+  - name: rule_type
+    description: 周期类型原始值(Week/Month/Quarter/HalfYear/Year)
+  - name: rule_type_cn
+    description: 周期类型中文(周巡检/月巡检/季巡检/半年巡检/年巡检)
+  - name: pollutant_type
+    description: 污染物类型
+  - name: task_user_name
+    description: 处理人
+  - name: status
+    description: 状态原始值(0/1/2)
+  - name: status_cn
+    description: 状态中文(未开始/处理中/已完成
+  - name: is_finished
+    description: 是否已完成(布尔)
+  - name: working_order_code
+    description: 关联工单号
+  - name: has_linked_order
+    description: 是否已转工单(布尔)
+  - name: task_date
+    description: 任务日期
+  - name: create_time
+    description: 创建时间
+  - name: finish_time
+    description: 完成时间
+  - name: plan_start_date
+    description: 计划周期开始日
+  - name: plan_end_date
+    description: 计划周期结束日
+  - name: is_overdue
+    description: 是否超期(周期已结束未完成)
+  - name: synced_at
+    description: 重建时间
+- name: mart_performance_analysis
+  description: '江苏站点月度考核数据集。一行 = 站点×月（2026-07 起，约 600 行，每日 02:30 全量重建）。 两率考核（设备正常运行率/数据准确率，源 opa_performance_tworate）与三项评分
+    （运维分/质控分/档案分/总分，源 opa_performance_qaqc）按站点+月份合成一张宽表。
+
+    已知口径注意: 重要·窗口内(2026-07起)无实际填报数据：全表均为占位值(-99/满分模板)。源库最新实际填报为 2025-04(两率)与 2024-08(评分)。考核场景的统计结果当前为空，必须向用户如实说明数据现状，
+    不得用占位值构造结论；平台恢复填报后本表自动生效; 当月未结算的行评分为占位值 -99，已清洗为 NULL；is_settled 仅反映两率是否出数(validdays>0); 两表月份覆盖不同：tworate
+    缺 2026-07/08 行(源库即如此)，这两月两率列为空但 qaqc 评分可能有值; qaqc 评分月中常为满分模板占位(如 20/20/10/50)，月度结算后才反映真实考核; 运维单位(departmentname)为第三方运维公司名
+
+    粒度: 一行 = 站点×月'
+  columns:
+  - name: tworate_id
+    description: 两率表源ID
+  - name: qaqc_id
+    description: 评分表源ID
+  - name: perf_month
+    description: 考核月份(月初日期)
+    data_tests:
+    - not_null:
+        config:
+          severity: warn
+  - name: station_code
+    description: 平台站点编码
+    data_tests:
+    - not_null:
+        config:
+          severity: warn
+  - name: station_name
+    description: 站点名称
+  - name: city_code
+    description: 城市行政区码(经dim_station)
+  - name: city_name
+    description: 城市名
+  - name: operation_unit
+    description: 运维单位(第三方公司名)
+  - name: validdays
+    description: 有效天数
+  - name: is_settled
+    description: 当月是否已结算(布尔)
+  - name: device_working_rate
+    description: 设备正常运行率(-99已转NULL)
+  - name: deviceworkingdescription
+    description: 设备正常运行率说明
+  - name: data_accuracy_rate
+    description: 数据准确率(-99已转NULL)
+  - name: dataaccuracydescription
+    description: 数据准确率说明
+  - name: daily_operation_score
+    description: 运维分(-99已转NULL)
+  - name: qaqc_score
+    description: 质控分(-99已转NULL)
+  - name: archive_score
+    description: 档案分(-99已转NULL)
+  - name: total_score
+    description: 总分(-99已转NULL)
+  - name: synced_at
+    description: 重建时间
+- name: mart_blackout_analysis
+  description: '江苏停电报备单数据集。一行 = 一张停电单（mtc_BlackOut 全量 65 行，每日 02:30 刷新）。 含停电起止时间、时长、撤销标记，用于高值时段停电合规核验（停电时段
+    vs 离线/断数告警）。
+
+    已知口径注意: stop_type 0/1 语义待业务确认（按 62:3 分布猜测 0=计划停电/1=故障停电），列值已带(待确认)标记; 数据量小（65 行，2026-07 以来仅 7 张新单），覆盖有限，结论须注明
+
+    粒度: 一行 = 一张停电单'
+  columns:
+  - name: id
+    description: 源记录ID(主键)
+    data_tests:
+    - unique
+    - not_null
+  - name: station_code
+    description: 平台站点编码
+  - name: station_name
+    description: 站点名称(经dim_station)
+  - name: city_code
+    description: 城市行政区码
+  - name: city_name
+    description: 城市名
+  - name: stop_type
+    description: 停电类型原始值
+  - name: stop_type_cn
+    description: 停电类型中文(待业务确认)
+  - name: order_type_text
+    description: 工单类型文本
+  - name: start_time
+    description: 停电开始时间
+  - name: end_time
+    description: 停电结束时间
+  - name: duration_hours
+    description: 停电时长(小时)
+  - name: is_cancel
+    description: 是否撤销
+  - name: abnormal
+    description: 异常标记
+  - name: remark
+    description: 备注
+  - name: source_create_time
+    description: 源创建时间
+  - name: source_update_time
+    description: 源更新时间
+  - name: synced_at
+    description: 重建时间
+- name: mart_qc_backorder_analysis
+  description: '江苏质控补测/回调安排日志数据集。一行 = 一条平台安排的补测任务（站点×小时×污染物）， 每日 02:30 全量（窗口 ≥2026-07-01），窗口内约 1 万行、96
+    站。 回答"哪些站点/因子被安排补测、当前状态、补测是否集中爆发（风暴预警）"， 是质控闭环的下游环节（执行结果合格/不合格 → 平台补测处置 → 复核）。 源表 air_province_data.dbo.qc_backorderarrangelog（每日全量）。
+
+    已知口径注意: state(1/2/3/6) 与 datatype(1/2/3/6) 为平台原始枚举，中文语义待平台确认， 不得在结论中编造状态含义，可描述分布与集中度; uniquecode 为质控任务组代码，可关联
+    qc_historyresult（95/96 命中）判断补测背景； 不可关联 qc_arrangeresult 行级（该表 uniquecode 为任务组代码，105 值/3618 行）; 补测集中信号（2026-10-04
+    实测）：3079A 9 天 2248 条、3081A 10 天 958 条， 站点×日聚合条数即为风暴预警口径; pollutant_name 除六参数外还含 降水量/湿度 等（''-'' 为空值占位）
+
+    粒度: 一行 = 一条补测安排（站点×小时×污染物）'
+  columns:
+  - name: id
+    description: 源记录ID(主键)
+    data_tests:
+    - unique
+    - not_null
+  - name: station_code
+    description: 平台站点编码
+    data_tests:
+    - not_null:
+        config:
+          severity: warn
+  - name: station_name
+    description: 站点名称(经dim_station关联)
+  - name: city_code
+    description: 城市行政区码(经dim_station关联)
+  - name: city_name
+    description: 城市名(经dim_station关联)
+  - name: uniquecode
+    description: 质控任务组代码(关联执行结果用)
+  - name: pollutant_name
+    description: 污染物名称(含降水量/湿度等; '-'=空占位)
+  - name: datatype
+    description: 数据类型枚举(1/2/3/6
+  - name: state
+    description: 补测状态枚举(1/2/3/6
+  - name: start_time
+    description: 补测时段开始
+  - name: end_time
+    description: 补测时段结束
+  - name: created_at
+    description: 安排产生时间
+  - name: operator
+    description: 操作人
+  - name: synced_at
+    description: 重建时间
+- name: dim_device_parameter
+  description: '设备型号健康参数阈值维度表。一行 = 一个设备型号的一个受检参数及其上下限/预警限， 每日 02:30 全量，428 行（38 型号 × 参数，参数名非空的行）。 补充 alm_rule（污染指标告警阈值）之外的"设备健康参数"维度：
+    故障诊断时按站点设备的型号取参数核对清单，结合监测曲线/巡检读数判断硬件越限。 源表 air_province_bsd.dbo.bsd_moniter_parameter（每日全量，开 SCD2
+    快照）。
+
+    已知口径注意: 源库 statusname(参数名) 约 37% 为空，这些行未进本表；参数名以 statusname 为准; warntype=Range 为量程型参数（看 toplimit/lowlimit），State
+    为状态型参数（10 个， 限值可能为空，按是否在正常状态判断）; devicemodel_id 与 dim_device.device_model_id 关联；model_device_count
+    为全省该型号设备数; parameterid(178 个) 与参数名(121 个) 数量不一致，参数名字典来源待平台确认
+
+    粒度: 一行 = 设备型号 × 受检参数（(devicemodel_id, parameterid) 源粒度唯一）'
+  columns:
+  - name: devicemodel
+    description: 设备型号ID(原始文本)
+    data_tests:
+    - not_null
+  - name: devicemodel_id
+    description: 设备型号ID(数值
+    data_tests:
+    - not_null:
+        config:
+          severity: warn
+  - name: parameterid
+    description: 参数ID
+    data_tests:
+    - not_null
+  - name: parameter_name
+    description: 参数名(如 采样流量/光室温度/转换炉温度)
+    data_tests:
+    - not_null
+  - name: series
+    description: 系列号
+  - name: toplimit
+    description: 上限
+  - name: lowlimit
+    description: 下限
+  - name: warn_top_limit
+    description: 预警上限
+  - name: warn_low_limit
+    description: 预警下限
+  - name: unit
+    description: 单位
+  - name: warntype
+    description: 预警类型(Range=量程型/State=状态型)
+  - name: description
+    description: 参数说明(截断500字符)
+  - name: model_device_count
+    description: 全省该型号设备数
+  - name: synced_at
+    description: 重建时间
+- name: mart_device_lifecycle_analysis
+  description: '设备生命周期事件流数据集。一行 = 一条设备生命周期事件（2026-07-01 起）， 每日 02:30 全量，窗口内约 700 行。 事件来源 = 状态变更日志 log_device（启用/故障/维修/备机/校准/停用等状态流转，
+    可关联故障工单号）∪ 报废审批 dev_scrap（报废理由与审批结果）。 回答"最近一周/一月设备周期发生了什么：哪些设备启用、故障维修、转备机、停用、报废"， 备机更换及时性分析查 DeviceSpare
+    状态流转。 源表 opa_product_data.dbo.log_device + dbo.DEV_SCRAP（每日全量）。
+
+    已知口径注意: state_after/event_type 为平台原始枚举（如 DeviceSpare=转为备机、DeviceFault=转故障、 DeviceRepair=维修事件），中文语义按此理解但以平台为准，不得编造其他含义;
+    日志窗口自 2026-07-01，更早的启用/故障历史不可查；报废事件为全量（行数极少）; 部分事件无站点码（event_station 空）且回退设备台账归属站；个别设备已不在台账（孤儿 deviceid），
+    device_code/station_code 为空属正常; remarks 常见"故障单：现场维修站点的故障设备"等，working_order_code 可关联 mart_work_order_analysis
+    看处置详情
+
+    粒度: 一行 = 一条生命周期事件（event_id：log_* 或 scrap_*）'
+  columns:
+  - name: event_id
+    description: 事件ID(log_*/scrap_* 主键)
+    data_tests:
+    - unique
+    - not_null
+  - name: event_source
+    description: 事件来源(log_device=状态变更日志/dev_scrap=报废审批)
+  - name: event_time
+    description: 事件时间
+    data_tests:
+    - not_null
+  - name: device_id
+    description: 设备ID
+  - name: device_code
+    description: 设备编码
+  - name: station_code
+    description: 站点编码(事件站点优先
+    data_tests:
+    - not_null:
+        config:
+          severity: warn
+  - name: station_name
+    description: 站点名称(经dim_station)
+  - name: city_code
+    description: 城市行政区码(经dim_station)
+  - name: city_name
+    description: 城市名(经dim_station)
+  - name: device_type
+    description: 设备类型码
+  - name: device_type_name
+    description: 设备类型名(如 O3分析仪)
+  - name: device_model_id
+    description: 设备型号ID(可关联 dim_device_parameter 查参数阈值)
+  - name: state_after
+    description: 变更后状态枚举(DeviceNormal/DeviceFault/DeviceSpare/…)
+  - name: event_type
+    description: 事件动作枚举(DeviceStart/DeviceRepair/DeviceStop/…)
+  - name: remarks
+    description: 备注(如 故障单：现场维修站点的故障设备)
+  - name: working_order_code
+    description: 关联故障工单号
+  - name: scrap_reason
+    description: 报废理由(仅报废行)
+  - name: approve_result
+    description: 报废审批结果(仅报废行)
+  - name: synced_at
+    description: 重建时间

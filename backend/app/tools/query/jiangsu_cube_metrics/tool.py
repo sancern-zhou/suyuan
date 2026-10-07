@@ -34,17 +34,20 @@ logger = structlog.get_logger()
 # 单一事实源(本文件内): 结构化目录 → 渲染进工具描述。改口径时四处同步:
 # datasets/*.yaml ↔ dbt models ↔ cube/schema/*.js ↔ 此处。
 CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
+    # WorkOrder 仅覆盖故障工单(宽表过滤 ordertype='Fault'); 例行单不入宽表, 巡检走 Inspection。
+    # 响应/恢复类指标依赖故障单流程节点(FaultProcess)与关联告警, 定义上即故障单专属;
+    # 全部指标结论均须注明为故障单口径(2026-10-06 收敛)。
     "WorkOrder": {
         "measures": [
-            {"name": "count", "title": "工单量"},
-            {"name": "overdueCount", "title": "超期工单数"},
-            {"name": "overdueRate", "title": "超期率%(分母=全部工单,约85%偏高是平台僵尸单现状)"},
-            {"name": "responseEvaluable", "title": "可评估响应的工单数(有到场节点,约14%)"},
-            {"name": "responseWithin2hCount", "title": "2小时内到场工单数"},
-            {"name": "responseWithin2hRate", "title": "2小时响应率%(分母=可评估单,须注明占比)"},
-            {"name": "recoverEvaluable", "title": "可评估恢复的工单数(有已解除关联告警,约27%)"},
-            {"name": "recoverWithin4hCount", "title": "4小时内恢复工单数"},
-            {"name": "recoverWithin4hRate", "title": "4小时恢复率%(分母=可评估单,须注明占比)"},
+            {"name": "count", "title": "故障工单量(仅Fault类型)"},
+            {"name": "overdueCount", "title": "超期故障工单数(故障单无计划完成时间,恒0不可评估,勿用)"},
+            {"name": "overdueRate", "title": "超期率%(故障单无计划完成时间,恒0;历史~85%系含例行单旧口径,勿用)"},
+            {"name": "responseEvaluable", "title": "可评估响应的故障工单数(故障单均有到场节点,全量可评估)"},
+            {"name": "responseWithin2hCount", "title": "2小时内到场故障工单数"},
+            {"name": "responseWithin2hRate", "title": "2小时响应率%(故障单全量可评估)"},
+            {"name": "recoverEvaluable", "title": "可评估恢复的故障工单数(有已解除关联告警,约47%)"},
+            {"name": "recoverWithin4hCount", "title": "4小时内恢复故障工单数"},
+            {"name": "recoverWithin4hRate", "title": "4小时恢复率%(分母=可评估单约47%,须注明占比)"},
             {"name": "repeatFaultCount", "title": "30天重复故障工单数"},
             {"name": "repeatFaultRate", "title": "30天重复故障率%"},
             {"name": "avgResponseMinutes", "title": "平均响应时长(分钟)"},
@@ -59,10 +62,10 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "stationName", "title": "站点名"},
             {"name": "orderStatus", "title": "工单状态(处理中/已完成)"},
             {"name": "urgency", "title": "紧急程度"},
-            {"name": "orderType", "title": "工单类型"},
-            {"name": "isOverdue", "title": "是否超期"},
+            {"name": "orderType", "title": "工单类型(本cube仅故障单Fault,保留作口径核对)"},
+            {"name": "isOverdue", "title": "是否超期(故障单无计划完成时间,恒false不可评估,勿用)"},
             {"name": "isRepeatFault", "title": "是否重复故障"},
-            {"name": "repeatBasis", "title": "重复故障判定维度"},
+            {"name": "repeatBasis", "title": "重复故障判定维度(故障单均填设备,恒为站点+设备)"},
             {"name": "createTime", "title": "创建时间(时间维度)"},
             {"name": "finishTime", "title": "完成时间(时间维度)"},
         ],
@@ -127,6 +130,93 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "taskDate", "title": "任务日期(时间维度)"},
         ],
     },
+    # ---- 扩展 cube(2026-10-07): 存量宽表接入语义目录 ----
+    # StationHealth 为当前态势快照(一行=一个站点), 工单侧统计仅故障单口径(Fault)。
+    "StationHealth": {
+        "measures": [
+            {"name": "count", "title": "站点数"},
+            {"name": "highRiskCount", "title": "高风险站点数(当前快照)"},
+            {"name": "midRiskCount", "title": "中风险站点数(当前快照)"},
+            {"name": "totalOrders30d", "title": "近30天故障工单总数(站点合计)"},
+            {"name": "totalOverdue30d", "title": "近30天超期故障工单总数(故障单无计划完成时间,恒0勿用)"},
+            {"name": "totalRepeatFault30d", "title": "近30天重复故障工单总数(站点合计)"},
+            {"name": "avgOverdueRate30d", "title": "近30天超期率均值%(故障单无计划完成时间,恒0勿用)"},
+            {"name": "avgResponseMinutes30d", "title": "近30天平均响应时长分钟(仅可评估站点,覆盖率约15%)"},
+            {"name": "totalAlarms7d", "title": "近7天告警总数(站点合计)"},
+            {"name": "totalAlarms30d", "title": "近30天告警总数(站点合计)"},
+            {"name": "totalUnresolvedAlarms", "title": "未处理告警总数(站点合计)"},
+        ],
+        "dimensions": [
+            {"name": "cityName", "title": "城市名"},
+            {"name": "stationCode", "title": "站点编码"},
+            {"name": "stationName", "title": "站点名"},
+            {"name": "riskLevel", "title": "风险分级(高/中/低/稳定)"},
+            {"name": "stationStatus", "title": "站点启用状态"},
+            {"name": "isMonitor", "title": "是否监测站"},
+            {"name": "lastAlarmTime", "title": "最近告警时间(时间维度)"},
+        ],
+    },
+    # StationDaily 为站点×日趋势(2026-07-01 起, 当日数据次日刷新才完整, 签到源数据稀疏)。
+    "StationDaily": {
+        "measures": [
+            {"name": "count", "title": "站点日数(活跃站点日)"},
+            {"name": "activeStations", "title": "活跃站点数(去重)"},
+            {"name": "createdSum", "title": "新建故障工单数"},
+            {"name": "finishedSum", "title": "完成故障工单数"},
+            {"name": "overdueCreatedSum", "title": "新建且超期故障工单数(故障单无计划完成时间,恒0勿用)"},
+            {"name": "alarmsSum", "title": "告警数"},
+            {"name": "signinsSum", "title": "到站签到数(源数据稀疏)"},
+        ],
+        "dimensions": [
+            {"name": "profileDate", "title": "日期(时间维度)"},
+            {"name": "cityName", "title": "城市名"},
+            {"name": "stationCode", "title": "站点编码"},
+            {"name": "stationName", "title": "站点名"},
+        ],
+    },
+    # DeviceLifecycle 为设备生命周期事件(状态变更日志+报废审批), working_order_code 关联故障工单。
+    "DeviceLifecycle": {
+        "measures": [
+            {"name": "count", "title": "生命周期事件数"},
+            {"name": "distinctDevices", "title": "涉及设备数(去重)"},
+            {"name": "startEvents", "title": "启用事件数"},
+            {"name": "repairEvents", "title": "维修事件数"},
+            {"name": "stopEvents", "title": "停用事件数"},
+            {"name": "scrapEvents", "title": "报废审批事件数"},
+        ],
+        "dimensions": [
+            {"name": "cityName", "title": "城市名"},
+            {"name": "cityCode", "title": "城市行政区码"},
+            {"name": "stationCode", "title": "站点编码"},
+            {"name": "stationName", "title": "站点名"},
+            {"name": "deviceCode", "title": "设备编码"},
+            {"name": "deviceTypeName", "title": "设备类型名(如O3分析仪)"},
+            {"name": "eventType", "title": "事件动作(启用/维修/停用等)"},
+            {"name": "stateAfter", "title": "变更后状态(DeviceNormal/DeviceFault/DeviceSpare等)"},
+            {"name": "eventSource", "title": "事件来源(log_device状态日志/dev_scrap报废审批)"},
+            {"name": "eventTime", "title": "事件时间(时间维度)"},
+        ],
+    },
+    # QcArrangement 只回答质控任务安排与过期积压; 执行结果(合格判定)走 QcExecution。
+    "QcArrangement": {
+        "measures": [
+            {"name": "count", "title": "质控任务数"},
+            {"name": "expiredCount", "title": "已过期任务数"},
+            {"name": "waitingCount", "title": "等待中任务数"},
+            {"name": "runningCount", "title": "运行中任务数"},
+            {"name": "deletedCount", "title": "已删除任务数"},
+        ],
+        "dimensions": [
+            {"name": "cityName", "title": "城市名"},
+            {"name": "cityCode", "title": "城市行政区码"},
+            {"name": "stationCode", "title": "站点编码"},
+            {"name": "stationName", "title": "站点名"},
+            {"name": "pollutant", "title": "污染物"},
+            {"name": "taskType", "title": "任务类型"},
+            {"name": "statusCn", "title": "安排状态(已过期/等待中/运行中/任务已删除)"},
+            {"name": "plannedTime", "title": "计划执行时间(时间维度)"},
+        ],
+    },
 }
 
 # 每个 cube 对应的宽表新鲜度列(用于返回 data_as_of)
@@ -135,6 +225,10 @@ FRESHNESS_COLUMN: Dict[str, Tuple[str, str]] = {
     "AlarmEvent": ("mart_alarm_event_analysis", "refreshed_at"),
     "QcExecution": ("mart_qc_execution_analysis", "synced_at"),
     "Inspection": ("mart_inspection_analysis", "synced_at"),
+    "StationHealth": ("mart_station_device_health", "refreshed_at"),
+    "StationDaily": ("mart_station_daily_profile", "refreshed_at"),
+    "DeviceLifecycle": ("mart_device_lifecycle_analysis", "synced_at"),
+    "QcArrangement": ("mart_qc_arrangement_analysis", "synced_at"),
 }
 
 ALLOWED_FILTER_OPERATORS = {
@@ -179,8 +273,10 @@ class JiangsuQueryMetricsTool(LLMTool):
         function_schema = {
             "name": self.tool_name,
             "description": (
-                "查询江苏运维指标(语义层,口径唯一):工单量/超期率/2h响应率/4h恢复率/重复故障率、"
-                "告警量/未处理率/转工单率、质控合格率、巡检完成率等。"
+                "查询江苏运维指标(语义层,口径唯一):故障工单量/2h响应率/4h恢复率/重复故障率、"
+                "告警量/未处理率/转工单率、质控合格率、巡检完成率/超期率、站点健康与风险分级、"
+                "站点日趋势(工单/告警计数)、设备生命周期事件、质控任务安排与过期积压等。"
+                "注意: 工单超期对故障单不适用(无计划完成时间,恒0),工单超期统计勿用本工具的 WorkOrder.overdueRate。"
                 "传 measures+dimensions+时间范围即可,不需要写SQL;"
                 "同一问题的数字与 execute_jiangsu_mart_sql 口径一致。"
                 + _render_guide()
@@ -190,7 +286,7 @@ class JiangsuQueryMetricsTool(LLMTool):
                 "properties": {
                     "measures": {
                         "type": "array", "items": {"type": "string"},
-                        "description": "度量成员,如 ['WorkOrder.overdueRate','WorkOrder.count'],须同一Cube",
+                        "description": "度量成员,如 ['WorkOrder.responseWithin2hRate','WorkOrder.count'],须同一Cube",
                     },
                     "dimensions": {
                         "type": "array", "items": {"type": "string"},

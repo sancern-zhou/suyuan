@@ -25,7 +25,7 @@
 
 ## 本地历史数据集（趋势与汇总辅助）
 
-- 全网/多站的**历史趋势、月度对比、异常日识别**类问题，目录内指标优先用 `jiangsu_query_metrics`（语义层，口径唯一，按日粒度出趋势、按市/站点分组取率与量）；目录外口径或明细下钻用 `execute_jiangsu_mart_sql` 查本地数据集：`mart_station_daily_profile`（站点×日的工单/告警计数，趋势对比）、`mart_station_device_health`（每站点近30天工单/告警/风险分级，当前态势优先）、`mart_work_order_analysis` 与 `mart_alarm_event_analysis`（工单与告警明细）、`mart_qc_execution_analysis`（质控执行结果，2026-07-01 起，约23个试点站点的合格率统计）、`mart_qc_arrangement_analysis`（质控任务安排状态）。
+- 全网/多站的**历史趋势、月度对比、异常日识别**类问题，目录内指标优先用 `jiangsu_query_metrics`（语义层，口径唯一，按日粒度出趋势、按市/站点分组取率与量）；目录外口径或明细下钻用 `execute_jiangsu_mart_sql` 查本地数据集：`mart_station_daily_profile`（站点×日的故障工单/告警计数，趋势对比）、`mart_station_device_health`（每站点近30天故障工单/告警/风险分级，当前态势优先）、`mart_work_order_analysis` 与 `mart_alarm_event_analysis`（故障工单与告警明细；工单宽表仅含 Fault 故障单，例行单不入表）、`mart_qc_execution_analysis`（质控执行结果，2026-07-01 起，约23个试点站点的合格率统计）、`mart_qc_arrangement_analysis`（质控任务安排状态）。
 - **与实时巡检的分工**：当前时点状态与异常核实走平台巡检/告警接口（本流程上方步骤）；历史统计与趋势仅作态势背景，不替代实时核实结论。
 - 数据自 2026-07-01 起；SQL 仅 SELECT 且带 LIMIT；返回需带数据截至时间（data_as_of）；字段含义见工具说明内嵌契约。
 

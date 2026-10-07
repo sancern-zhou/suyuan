@@ -1,0 +1,14 @@
+# 复制为 profiles.yml 并填入真实密码（profiles.yml 已 gitignore，不进仓库）
+# dbt 通过 --profiles-dir 指向本目录（sync-mart 计划任务 / 手工 dbt build 均在工作目录解析）
+jiangsu_marts:
+  target: prod
+  outputs:
+    prod:
+      type: postgres
+      host: 127.0.0.1
+      port: 5432
+      user: suyuan
+      password: "<suyuan 用户密码>"
+      dbname: suyuan_jiangsu
+      schema: jiangsu_mart
+      threads: 4

@@ -1,0 +1,50 @@
+# 数据集契约：dim_device
+dataset: dim_device
+description: >
+  江苏站点设备台账维度表。一行=一台登记设备（全省 1684 台，每日 02:30 全量重建，
+  源自 jiangsu_ods.bsd_device ← 源库 air_province_bsd.dbo.bsd_device）。
+  用于站点设备构成核对、品牌型号与购置/启用日期查询。
+  替代已下线的 jiangsu_fetch_device_ledger 接口工具的公共台账查询。
+owner: 江苏运维平台组
+grain: 一行 = 一台设备（device_code）
+freshness_slo: 26小时（每日全量）
+known_caveats:
+  - device_stats 为平台设备状态原始枚举码，未做中文翻译；翻译口径待业务确认
+  - 台账是"当前挂载快照"，生命周期事件（启用/故障/备机/维修/停用/报废）请查
+    mart_device_lifecycle_analysis（源自 log_device+dev_scrap，2026-10-04 接入）；
+    备机更换及时性 P1 场景以该表的 DeviceSpare 流转为口径，不再是数据盲区
+  - masterslavenum 源库 100% 为空，仍无台账级备机身份字段
+  - station_code 关联 dim 层与 mart_station_device_health 可补站点/城市维度
+columns:
+  - {name: device_code, business: 设备编码(业务主键)}
+  - {name: station_code, business: 所属站点编码}
+  - {name: assets_code, business: 资产编码}
+  - {name: device_type, business: 设备类型码}
+  - {name: device_type_name, business: 设备类型名(如 O3分析仪, bsd_DeviceType 字典)}
+  - {name: device_brand, business: 品牌}
+  - {name: device_model, business: 型号}
+  - {name: device_model_id, business: 设备型号ID(数值, join dim_device_parameter.devicemodel_id 查参数阈值)}
+  - {name: purchase_date, business: 购置日期}
+  - {name: use_date, business: 启用日期}
+  - {name: device_stats, business: 设备状态码(原始枚举,未翻译)}
+  - {name: calibrate, business: 校准标记}
+  - {name: original_machine, business: 原始机器标记(语义待确认)}
+  - {name: master_slave_num, business: 主从机编号}
+  - {name: quality_period, business: 质保期}
+  - {name: mainter_company, business: 维护单位}
+  - {name: custodian, business: 保管人}
+  - {name: warehouse, business: 库房}
+  - {name: price, business: 价格}
+  - {name: asset_ownership, business: 资产权属}
+  - {name: synced_at, business: 重建时间}
+access:
+  tool: execute_jiangsu_mart_sql
+  role: agent_reader
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  device_code/station_code/device_type/device_type_name/device_brand/device_model/device_model_id/purchase_date/use_date/
+  device_stats(平台状态码原始枚举，未翻译)/original_machine/master_slave_num/mainter_company/
+  asset_ownership/price。查站点设备构成、品牌型号、购置启用日期用本表；
+  设备健康参数阈值经 device_model_id 关联 dim_device_parameter 获取；
+  启用/故障/备机/报废等生命周期事件查 mart_device_lifecycle_analysis（不要用 use_date 代替生命周期），
+  备机更换及时性分析以该表 DeviceSpare 流转为口径。

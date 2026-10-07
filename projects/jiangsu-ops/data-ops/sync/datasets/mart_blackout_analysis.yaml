@@ -1,0 +1,37 @@
+# 数据集契约：mart_blackout_analysis
+dataset: mart_blackout_analysis
+description: >
+  江苏停电报备单数据集。一行 = 一张停电单（mtc_BlackOut 全量 65 行，每日 02:30 刷新）。
+  含停电起止时间、时长、撤销标记，用于高值时段停电合规核验（停电时段 vs 离线/断数告警）。
+owner: 江苏运维平台组
+grain: 一行 = 一张停电单
+freshness_slo: 26小时
+known_caveats:
+  - stop_type 0/1 语义待业务确认（按 62:3 分布猜测 0=计划停电/1=故障停电），列值已带(待确认)标记
+  - 数据量小（65 行，2026-07 以来仅 7 张新单），覆盖有限，结论须注明
+columns:
+  - {name: id, business: 源记录ID(主键)}
+  - {name: station_code, business: 平台站点编码}
+  - {name: station_name, business: 站点名称(经dim_station)}
+  - {name: city_code, business: 城市行政区码}
+  - {name: city_name, business: 城市名}
+  - {name: stop_type, business: 停电类型原始值}
+  - {name: stop_type_cn, business: 停电类型中文(待业务确认)}
+  - {name: order_type_text, business: 工单类型文本}
+  - {name: start_time, business: 停电开始时间}
+  - {name: end_time, business: 停电结束时间}
+  - {name: duration_hours, business: 停电时长(小时)}
+  - {name: is_cancel, business: 是否撤销}
+  - {name: abnormal, business: 异常标记}
+  - {name: remark, business: 备注}
+  - {name: source_create_time, business: 源创建时间}
+  - {name: source_update_time, business: 源更新时间}
+  - {name: synced_at, business: 重建时间}
+access:
+  tool: execute_jiangsu_mart_sql
+  role: agent_reader
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  station_code/station_name/city_name/stop_type_cn(停电类型,语义待业务确认)/
+  start_time/end_time/duration_hours(小时)/is_cancel/remark。
+  查停电报备时段、停电与离线告警合规核验用本表；数据量小(65行),结论须注明覆盖有限。

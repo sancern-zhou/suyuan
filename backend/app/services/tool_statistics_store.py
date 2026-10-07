@@ -19,6 +19,8 @@ logger = structlog.get_logger()
 class ToolStatisticsStore:
     """Persist tool execution statistics across processes."""
 
+    RECENT_ERRORS_LIMIT = 5
+
     def __init__(self, base_dir: str | Path | None = None) -> None:
         root = resolve_agent_path(base_dir) if base_dir else get_data_registry()
         self.base_dir = root / "tool_statistics"
@@ -39,6 +41,8 @@ class ToolStatisticsStore:
             "avg_execution_time": 0.0,
             "last_execution_at": None,
             "updated_at": None,
+            "last_error_summary": None,
+            "recent_errors": [],
         }
 
     @contextmanager
@@ -93,6 +97,14 @@ class ToolStatisticsStore:
         normalized["success_duration_total"] = float(stored_duration_total or 0.0)
         normalized["last_execution_at"] = stats.get("last_execution_at")
         normalized["updated_at"] = stats.get("updated_at")
+        normalized["last_error_summary"] = stats.get("last_error_summary")
+        stored_recent_errors = stats.get("recent_errors")
+        if isinstance(stored_recent_errors, list):
+            normalized["recent_errors"] = [
+                item for item in stored_recent_errors if isinstance(item, dict)
+            ][-self.RECENT_ERRORS_LIMIT:]
+        else:
+            normalized["recent_errors"] = []
         if normalized["success"] > 0:
             normalized["avg_execution_time"] = normalized["success_duration_total"] / normalized["success"]
         else:
@@ -115,6 +127,7 @@ class ToolStatisticsStore:
         *,
         success: bool,
         execution_time: float | None = None,
+        error_summary: str | None = None,
     ) -> Dict[str, Any]:
         with self._lock:
             with self._locked():
@@ -130,6 +143,17 @@ class ToolStatisticsStore:
                         entry["avg_execution_time"] = entry["success_duration_total"] / entry["success"]
                 else:
                     entry["failed"] += 1
+                    if error_summary:
+                        summary = str(error_summary).strip()[:200]
+                        if summary:
+                            entry["last_error_summary"] = summary
+                            entry["recent_errors"] = (
+                                entry.get("recent_errors", [])
+                                + [{
+                                    "at": datetime.utcnow().isoformat(),
+                                    "summary": summary,
+                                }]
+                            )[-self.RECENT_ERRORS_LIMIT:]
                 entry["last_execution_at"] = datetime.utcnow().isoformat()
                 entry["updated_at"] = entry["last_execution_at"]
                 stats[tool_name] = entry

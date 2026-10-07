@@ -1,0 +1,28 @@
+# 运行时产物与本地凭据不进仓库；真实凭据只存服务器运行时目录 E:\Tools\suyuan-jiangsu
+# 各文件的 example 模板在本目录内，部署新环境时复制并填入真实值
+
+# dbt 运行产物与凭据
+dbt/target/
+dbt/logs/
+dbt/profiles.yml
+dbt/.user.yml
+
+# Cube 依赖与本地密钥
+cube/node_modules/
+cube/local.json
+
+# 同步配置（含源库/目标库真实凭据）与运行日志
+sync/sync_config.json
+sync/sync_config.json.*.bak*
+sync/*.log
+sync/__pycache__/
+
+# 主仓库根 .gitignore 为应用代码设的宽泛排除（analyze_*/check_*/verify_*/extract_*/find_*、*.txt）
+# 会误伤本目录的同步诊断脚本——在本目录范围内重新纳入（.py 诊断脚本属于数据链路代码；
+# 临时 scratch 文本 retest_dump/session_tools/baseline_counts 仍按仓库规则排除）
+!sync/analyze_*.py
+!sync/check_*.py
+!sync/verify_*.py
+!sync/extract_*.py
+!sync/find_*.py
+

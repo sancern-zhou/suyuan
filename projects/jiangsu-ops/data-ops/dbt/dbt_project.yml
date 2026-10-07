@@ -1,0 +1,50 @@
+name: jiangsu_marts
+version: '1.0.0'
+config-version: 2
+profile: jiangsu_marts
+
+model-paths: ["models"]
+snapshot-paths: ["snapshots"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+# 数据流: SQL Server 原库 --(sync_table.py, 不归 dbt 管)--> jiangsu_ods
+#          --(本项目的 models)--> jiangsu_mart (agent 只读白名单表)
+# tag:frequent = sync-all.cmd 每5分钟重建; tag:daily = sync-daily.cmd 每日重建
+# 每个 model 自带 post_hook: GRANT agent_reader + COMMENT ON TABLE
+models:
+  jiangsu_marts:
+    +materialized: table
+    dim_station:
+      +tags: ["frequent"]
+    dim_device:
+      +tags: ["daily"]
+    mart_work_order_analysis:
+      +tags: ["frequent"]
+    mart_alarm_event_analysis:
+      +tags: ["frequent"]
+    mart_station_device_health:
+      +tags: ["frequent"]
+    mart_qc_execution_analysis:
+      +tags: ["frequent"]
+    mart_inspection_analysis:
+      +tags: ["frequent"]
+    mart_station_daily_profile:
+      +tags: ["daily"]
+    mart_qc_arrangement_analysis:
+      +tags: ["daily"]
+    mart_performance_analysis:
+      +tags: ["daily"]
+    mart_blackout_analysis:
+      +tags: ["daily"]
+
+# 字典/规则表每日 check 快照(SCD2)。alm_rule 无更新时间列, check 策略按整行哈希判变,
+# 上游任何增删改都会留痕 —— 替代此前手工快照 diff 倒推变更的做法。
+snapshots:
+  jiangsu_marts:
+    +target_schema: jiangsu_snapshot
+    +unique_key: id
+    +strategy: check
+    +check_cols: all
+    +tags: ["daily"]

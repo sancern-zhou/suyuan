@@ -1,0 +1,43 @@
+# 数据集契约：mart_station_device_health
+dataset: mart_station_device_health
+description: >
+  江苏站点设备健康数据集。一行=一个站点（全省 1509 站全量，含无事件站点）。
+  汇总近30天故障工单/超期/重复故障/响应时长、近7天与30天告警、未处理告警数、
+  设备数及风险分级。工单侧统计基于 mart_work_order_analysis，仅故障工单(Fault)口径，
+  例行单不计入。用于故障诊断优先级、全网健康概览。
+owner: 江苏运维平台组
+grain: 一行 = 一个站点
+freshness_slo: 5分钟
+known_caveats:
+  - risk_level 为代理规则（高=30天工单≥5且超期率≥50% 或 未处理告警≥10；中=工单≥3且超期率≥30% 或 未处理告警≥5；无事件=稳定），阈值待业务确认后可调整
+  - 超期率普遍偏高源于平台长期未闭环工单（见工单数据集 caveats）
+  - avg_response_minutes_30d 依赖派单/到站代理口径，覆盖率约15%
+columns:
+  - {name: station_code, business: 站点编码(主键)}
+  - {name: station_name, business: 站点名称}
+  - {name: city_name, business: 城市名}
+  - {name: station_status, business: 站点启用状态}
+  - {name: is_monitor, business: 是否监测站}
+  - {name: device_count, business: 登记设备数}
+  - {name: work_orders_30d, business: 近30天工单数}
+  - {name: overdue_orders_30d, business: 近30天超期工单数}
+  - {name: overdue_rate_30d, business: 近30天超期率(0-1)}
+  - {name: repeat_fault_orders_30d, business: 近30天重复故障工单数}
+  - {name: avg_response_minutes_30d, business: 近30天平均响应时长(分钟)}
+  - {name: alarms_7d, business: 近7天告警数}
+  - {name: alarms_30d, business: 近30天告警数}
+  - {name: unresolved_alarms, business: 未处理告警累计数}
+  - {name: last_alarm_time, business: 最近告警时间}
+  - {name: last_work_order_time, business: 最近工单时间}
+  - {name: risk_level, business: 风险分级, enum: {高: 优先处置, 中: 关注, 低: 常规, 稳定: 无事件}}
+  - {name: refreshed_at, business: 本表刷新时间}
+allowed_filters: [station_code, station_name, city_name, risk_level, is_monitor, station_status]
+example_questions:
+  - 当前风险分级为"高"的站点有哪些，按未处理告警排序？
+  - 南京市平均响应时长最长的5个站点？
+  - 各市高风险站点数量分布？
+  - 哪些站点30天内重复故障超过3次？
+join_notes: 单表即得；明细下钻用 mart_work_order_analysis / mart_alarm_event_analysis
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  work_orders_30d/overdue_orders_30d/overdue_rate_30d/repeat_fault_orders_30d/avg_response_minutes_30d/alarms_7d/alarms_30d/unresolved_alarms/last_alarm_time/last_work_order_time/device_count/risk_level(高/中/低/稳定)。当前态势类问题优先查本表。

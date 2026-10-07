@@ -1,0 +1,38 @@
+# 数据集契约：mart_qc_arrangement_analysis
+dataset: mart_qc_arrangement_analysis
+description: >
+  江苏质控任务安排数据集。一行 = 一条平台安排的质控任务（含历史），每日 02:30 全量，
+  约 3,500 行。status_cn 为平台安排状态文本，回答"完成情况/哪些站点任务过期未完成"。
+  源表 air_province_data.dbo.qc_arrangeresult（每日全量）。
+owner: 江苏运维平台组
+grain: 一行 = 一条安排的质控任务
+freshness_slo: 26小时（每日全量）
+known_caveats:
+  - 状态分布（2026-09-22 实测）：已过期约 76%、等待中约 24%、运行中/已删除个别；
+    "已过期"占比较高是平台安排口径的数据现状，未核实是否代表真实漏做
+  - 与 mart_qc_execution_analysis 的关联键为 rid（任务号），可做安排-执行差距分析
+  - 该表覆盖范围同样以质控试点站点为主
+columns:
+  - {name: id, business: 源记录ID(主键)}
+  - {name: station_code, business: 平台站点编码}
+  - {name: station_name, business: 站点名称}
+  - {name: city_code, business: 城市行政区码(经dim_station关联)}
+  - {name: city_name, business: 城市名(经dim_station关联)}
+  - {name: uniquecode, business: 站点唯一编码}
+  - {name: pollutant, business: 污染物}
+  - {name: task_type, business: 任务类型}
+  - {name: tstatus, business: 状态码}
+  - {name: status_cn, business: 安排状态文本(已过期/等待中/运行中/任务已删除)}
+  - {name: planned_time, business: 计划执行时间}
+  - {name: result_time, business: 结果时间}
+  - {name: source_create_time, business: 源库创建时间}
+  - {name: rid, business: 质控任务号(API下钻/关联执行结果用)}
+  - {name: synced_at, business: 重建时间}
+access:
+  tool: execute_jiangsu_mart_sql
+  role: agent_reader
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  station_code/station_name/city_name/pollutant/task_type/tstatus/status_cn(已过期/等待中/运行中/任务已删除)/
+  planned_time/result_time/rid。查质控任务完成情况、哪些站点任务过期未完成查本表；
+  与 mart_qc_execution_analysis 按站点对比可分析安排-执行差距。
