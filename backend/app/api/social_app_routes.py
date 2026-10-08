@@ -1325,8 +1325,14 @@ async def _readable_app_session_row(session_id: str, identity: AppIdentity):
     try:
         row = await catalog.require_read(session_id, user)
     except HTTPException as exc:
-        row = await _authorize_scheduled_session_row(catalog, session_id, user, exc)
-    if row.source not in (ConversationSource.SOCIAL, ConversationSource.WEB):
+        # 定时任务会话在目录中的 owner 是 system，改按任务可见性授权。
+        return await _authorize_scheduled_session_row(catalog, session_id, user, exc)
+    if (
+        row.source != ConversationSource.SOCIAL
+        and not _scheduled_session_task_id(session_id)
+    ):
+        # App 只恢复自己的 SOCIAL 会话；WEB 会话仅在定时任务结果场景
+        # （scheduled_task_ 前缀，已按任务可见性授权）下可见。
         raise HTTPException(status_code=404, detail="session_not_found")
     return row
 
