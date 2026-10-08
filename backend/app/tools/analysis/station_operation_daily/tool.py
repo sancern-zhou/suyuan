@@ -16,7 +16,7 @@ class StationOperationDailyTool(LLMTool):
             requires_context=False,
             function_schema={
                 'name': 'station_operation_daily',
-                'description': '使用部署配置的站点名录及小时接口，保存原始快照，计算连续缺数超过4小时、恢复、回补并生成日报。不得把缺数直接解释成设备故障。',
+                'description': '使用部署配置的站点名录及小时接口，保存原始快照，计算小时数据缺失、恢复、回补并生成日报。不得把缺数直接解释成设备故障。',
                 'parameters': {'type':'object','properties': {
                     'action': {'type':'string','enum':['collect','report'],'default':'report'},
                     'date': {'type':'string','description':'可选报告日期YYYY-MM-DD；默认北京时间今天'},

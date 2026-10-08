@@ -32,14 +32,14 @@ def write_word(data, config, path):
     document.add_paragraph(local_time(data['window_end']).strftime('（%Y年%m月%d日）'))
     document.add_paragraph(config.get('organization', ''))
     document.add_paragraph(f"统计时段：{stamp(data['window_start'])}至{stamp(data['window_end'])}。")
-    document.add_paragraph('通过站点小时数据接口检查、核对，统计超过4小时的连续数据缺失，同时跟进前日及更早未结记录。')
+    document.add_paragraph('通过站点小时数据接口检查、核对，整理全部小时数据缺失（含单项缺失），同时跟进前日及更早未结记录。')
     if not data['report_ready']:
         document.add_paragraph('本次取数不完整，报告为待核实稿；不能据此认定所有站点运行正常。')
     for kind in ('国控', '省控'):
         entries = [entry for entry in data['entries'] if entry['type'] == kind]
         document.add_heading(f"{kind}站点（本次监控范围{data['station_counts'][kind]}个）：", 1)
         if not entries:
-            document.add_paragraph('本次监控范围内未发现已观察的连续缺数超过4小时记录。')
+            document.add_paragraph('本次监控范围内未发现已观察的小时数据缺失记录。')
         for entry in entries:
             restored = '截至统计截止小时数据已返回，设备恢复时间待核实' if entry['recovered'] else '截至统计截止时未恢复，正在持续跟进'
             filled = '数据已回补' if entry['backfill_status'] == '已回补' else '数据'+entry['backfill_status']
@@ -110,6 +110,12 @@ def replace_spans(paragraph, spans):
         if properties[index] is not None:
             run._r.insert(0, deepcopy(properties[index]))
 
+def missing_note(entry):
+    names = {'sO2':'SO₂', 'nO2':'NO₂', 'pM10':'PM₁₀', 'co':'CO', 'o3':'O₃', 'pM2_5':'PM₂.₅'}
+    parameters = entry.get('missing_parameters', [])
+    return '缺失项目：' + '、'.join(names.get(p, p) for p in parameters) if parameters else ''
+
+
 def incident_text(entry):
     recovery = '截止小时数据已恢复' if entry['recovered'] else '截止时未恢复，正在持续跟进'
     filled = '数据已回补' if entry['backfill_status'] == '已回补' else '数据' + entry['backfill_status']
@@ -117,7 +123,7 @@ def incident_text(entry):
         filled += '（' + entry['unrecoverable_confirmation']['reason'] + '）'
     prefix = '前日及更早情况跟进：' if entry['carry_over'] else ''
     return (f"{prefix}{entry['city']}{entry['name']}：{stamp(entry['offline_start'])}至{stamp(entry['offline_end'])}，"
-            f"累计影响数据时长{entry['affected_hours']}小时，{recovery}，{filled}。")
+            f"累计影响数据时长{entry['affected_hours']}小时，{recovery}，{filled}；{missing_note(entry)}。")
 
 
 def write_template_word(data, config, path):
@@ -140,7 +146,7 @@ def write_template_word(data, config, path):
                  '       ' + config.get('report_issue', f'{end.year}年期号待确认'))
     counts = data['station_counts']
     replace_text(paragraphs[5], f"通过站点小时数据检查、核对，统计时段为{stamp(data['window_start'])}至{stamp(data['window_end'])}，"
-                 f"本次监控国控站点{counts['国控']}个、省控站点{counts['省控']}个，连续缺数超过4小时的情况如下。")
+                 f"本次监控国控站点{counts['国控']}个、省控站点{counts['省控']}个，小时数据缺失的情况如下。")
     replace_text(paragraphs[6], f"国控站点（本次监控{counts['国控']}个）：")
     replace_text(paragraphs[10], f"省控站点（本次监控{counts['省控']}个）：")
     prototype = deepcopy(paragraphs[8]._p)
@@ -148,8 +154,8 @@ def write_template_word(data, config, path):
         paragraphs[i]._p.getparent().remove(paragraphs[i]._p)
     for kind, anchor in [('国控', paragraphs[7]), ('省控', paragraphs[11])]:
         entries = [e for e in data['entries'] if e['type'] == kind]
-        replace_text(anchor, f'过去24小时及历史未结记录中，共有{len(entries)}条连续缺数超4小时记录。'
-                     if entries else '本次监控范围内，未发现已观察的连续缺数超4小时记录。')
+        replace_text(anchor, f'过去24小时及历史未结记录中，共有{len(entries)}条数据缺失记录。'
+                     if entries else '本次监控范围内，未发现已观察的数据缺失记录。')
         for entry in entries:
             element = deepcopy(prototype)
             anchor._p.addnext(element)
@@ -174,6 +180,8 @@ def write_template_word(data, config, path):
                 values = ['/'] * 9
             else:
                 note = '数据已回补' if entry['backfill_status'] == '已回补' else entry['backfill_status']
+                if missing_note(entry):
+                    note += '；' + missing_note(entry)
                 confirmation = entry.get('unrecoverable_confirmation')
                 if confirmation:
                     note += '；' + confirmation['reason'] + '；依据：' + confirmation['evidence']

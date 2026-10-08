@@ -93,13 +93,13 @@ def test_stale_recheck_cannot_erase_later_backfill(tmp_path):
     assert entry['backfill_status']=='已回补' and entry['recovered']
 
 
-def test_four_hours_excluded_five_included(tmp_path):
+def test_short_and_long_missing_intervals_are_all_included(tmp_path):
     store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
     end=BASE+timedelta(days=1)
     missing={('A',h) for h in hours(BASE,BASE+timedelta(hours=4))}
     missing.update(('B',h) for h in hours(BASE,BASE+timedelta(hours=5)))
     ingest(store,BASE,end,rows(BASE,end,missing=missing))
-    assert [e['code'] for e in report(store,end)['entries']]==['B']
+    assert {e['code']:e['affected_hours'] for e in report(store,end)['entries']}=={'A':4,'B':5}
 
 
 class FakeSource:
@@ -228,3 +228,25 @@ def test_pending_rechecks_skip_already_filled_intervals(tmp_path):
     intervals=store.pending_hours()
     assert len(intervals)==2
     assert all(local_time(i['end'])-local_time(i['start'])==timedelta(hours=1) for i in intervals)
+
+
+def test_one_hour_partial_parameter_gap_is_tracked_and_backfilled(tmp_path):
+    store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
+    end=BASE+timedelta(days=1)
+    records=rows(BASE,end)
+    records[0]['o3']='—'
+    ingest(store,BASE,end,records)
+    entry=report(store,end)['entries'][0]
+    assert entry['affected_hours']==1 and entry['backfill_status']=='待回补'
+    assert entry['missing_parameters']==['o3']
+    ingest(store,BASE,end,rows(BASE,end),observed=end+timedelta(minutes=31))
+    entry=report(store,end)['entries'][0]
+    assert entry['affected_hours']==1 and entry['backfill_status']=='已回补'
+
+
+def test_separate_one_hour_gaps_remain_separate_events(tmp_path):
+    store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
+    end=BASE+timedelta(days=1)
+    labels=list(hours(BASE,end))
+    ingest(store,BASE,end,rows(BASE,end,missing={('A',labels[0]),('A',labels[2])}))
+    assert [e['affected_hours'] for e in report(store,end)['entries']]==[1,1]
