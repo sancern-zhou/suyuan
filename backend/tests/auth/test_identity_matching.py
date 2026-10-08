@@ -1,4 +1,9 @@
-from app.auth.identity_matching import canonical_user_ids, owner_matches
+from app.auth.identity_matching import (
+    _app_accounts,
+    canonical_user_ids,
+    owner_matches,
+    visible_owner_ids,
+)
 
 
 def test_web_user_matches_company_prefixed_owner():
@@ -25,3 +30,30 @@ def test_blank_and_edge_inputs_fail_closed():
     assert not owner_matches("", "u1")
     assert canonical_user_ids("company:") == ("company:",)
     assert not owner_matches("company:", "")
+
+
+def test_bound_app_account_sees_company_user_records(monkeypatch):
+    monkeypatch.setattr(
+        "app.auth.identity_matching.settings",
+        type("S", (), {"app_accounts_json": '{"周三成": {"bind_user_id": "2"}}'})(),
+    )
+    _app_accounts.cache_clear()
+    try:
+        assert owner_matches("2", "app:android:周三成")
+        assert "app:android:周三成" in visible_owner_ids("2")
+        assert not owner_matches("2", "app:android:android_demo")
+    finally:
+        _app_accounts.cache_clear()
+
+
+def test_unbound_company_user_stays_isolated(monkeypatch):
+    monkeypatch.setattr(
+        "app.auth.identity_matching.settings",
+        type("S", (), {"app_accounts_json": '{"android_demo": {}}'})(),
+    )
+    _app_accounts.cache_clear()
+    try:
+        assert visible_owner_ids("app:android:android_demo") == ("app:android:android_demo",)
+        assert not owner_matches("app:android:android_demo", "2")
+    finally:
+        _app_accounts.cache_clear()
