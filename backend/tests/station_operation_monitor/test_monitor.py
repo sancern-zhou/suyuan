@@ -135,7 +135,7 @@ def test_arrival_grace_and_future_window_rejected(tmp_path):
         generate_report(config(),now=BASE,root=tmp_path,refresh=False)
 
 
-def test_partial_return_recovers_transmission_but_not_all_missing_data(tmp_path):
+def test_partial_return_does_not_recover_missing_parameters(tmp_path):
     store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
     end=BASE+timedelta(days=1)
     absent={('B',h) for h in hours(BASE,BASE+timedelta(hours=5))}
@@ -145,7 +145,7 @@ def test_partial_return_recovers_transmission_but_not_all_missing_data(tmp_path)
         if record['code']=='B':record['co']='—'
     ingest(store,BASE,end,partial,observed=end+timedelta(minutes=40))
     entry=report(store,end)['entries'][0]
-    assert entry['recovered'] and entry['backfill_status']=='待回补'
+    assert not entry['recovered'] and entry['backfill_status']=='待回补'
 
 
 def test_malformed_response_not_persisted_as_station_outage(tmp_path):
@@ -250,3 +250,15 @@ def test_separate_one_hour_gaps_remain_separate_events(tmp_path):
     labels=list(hours(BASE,end))
     ingest(store,BASE,end,rows(BASE,end,missing={('A',labels[0]),('A',labels[2])}))
     assert [e['affected_hours'] for e in report(store,end)['entries']]==[1,1]
+
+
+def test_partial_missing_at_cutoff_does_not_claim_recovery(tmp_path):
+    store=MonitorStore(tmp_path/'state.sqlite');store.seed(ROSTER)
+    end=BASE+timedelta(days=1)
+    records=rows(BASE,end)
+    for record in records:
+        if record['code']=='A' and record['timePoint']==end.isoformat():
+            record['o3']='—'
+    ingest(store,BASE,end,records)
+    entry=report(store,end)['entries'][0]
+    assert not entry['recovered'] and entry['missing_parameters']==['o3']
