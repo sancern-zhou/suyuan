@@ -252,3 +252,20 @@ def validate_template_format(template_path, output_path):
     if failures:
         raise ValueError('日报格式校验失败：' + '、'.join(failures))
     return {'passed': True, 'checks': checks}
+
+
+def render_pdf_preview(word_path):
+    """Render the exact generated Word using an isolated LibreOffice profile."""
+    from tempfile import TemporaryDirectory
+    from app.tools.office.soffice import run_soffice
+
+    word_path = Path(word_path).resolve()
+    with TemporaryDirectory(prefix='station-report-office-') as profile:
+        result = run_soffice([
+            '-env:UserInstallation=' + Path(profile).as_uri(), '--headless',
+            '--convert-to', 'pdf', '--outdir', str(word_path.parent), str(word_path),
+        ], capture_output=True, timeout=120)
+    pdf_path = word_path.with_suffix('.pdf')
+    if result.returncode != 0 or not pdf_path.is_file() or not pdf_path.read_bytes().startswith(b'%PDF-'):
+        raise RuntimeError('日报 PDF 预览生成失败')
+    return pdf_path

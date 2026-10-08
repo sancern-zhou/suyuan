@@ -520,6 +520,8 @@ class ScheduledTaskExecutor:
                     if tool_calls:
                         tool_calls[-1]["success"] = not event_data.get("is_error", False)
                         tool_calls[-1]["result"] = result or event.get("summary", "")
+                        from app.scheduled_tasks.result_extraction import declared_file_paths
+                        tool_calls[-1]["media"] = declared_file_paths(result)
 
                 elif event_type == "iteration":
                     iterations = event.get("iteration", 0)

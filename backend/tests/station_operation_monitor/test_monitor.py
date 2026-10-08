@@ -262,3 +262,38 @@ def test_partial_missing_at_cutoff_does_not_claim_recovery(tmp_path):
     ingest(store,BASE,end,records)
     entry=report(store,end)['entries'][0]
     assert not entry['recovered'] and entry['missing_parameters']==['o3']
+
+
+@pytest.mark.asyncio
+async def test_report_tool_publishes_word_and_pdf_to_session_catalog(tmp_path, monkeypatch):
+    from app.services.station_operation_monitor import runtime, word
+    from app.tools.analysis.station_operation_daily.tool import StationOperationDailyTool
+    from app.agent.resources.runtime import persist_tool_result_resources
+    from app.agent.resources.resource_service import SessionResourceService
+    from app.scheduled_tasks.result_extraction import declared_file_paths
+    doc=tmp_path/'日报.docx';doc.write_bytes(b'word')
+    pdf=tmp_path/'日报.pdf';pdf.write_bytes(b'%PDF-1.4')
+    monkeypatch.setattr(runtime,'generate_report',lambda **kwargs:{'success':True,'report_ready':True,'word_path':str(doc)})
+    monkeypatch.setattr(word,'render_pdf_preview',lambda path:pdf)
+    result=await StationOperationDailyTool().execute()
+    assert len(result['resources'])==2 and 'resources' not in result['data']
+    service=SessionResourceService.in_memory()
+    await persist_tool_result_resources(service,'report-session','report-run',
+        {'type':'tool_result','data':{'tool_name':'station_operation_daily','result':result}},turn_sequence=1)
+    resources=(await service.list_resources('report-session')).resources
+    assert len(resources)==2
+    primary=next(r for r in resources if r.relation=='primary')
+    preview=next(r for r in resources if r.relation=='preview')
+    assert preview.parent_resource_id==primary.resource_id
+    assert preview.renderer=='pdf' and 'preview' in preview.capabilities
+    assert declared_file_paths(result)==[str(doc),str(pdf)]
+
+
+def test_scheduled_result_extracts_declared_document_locators():
+    from app.scheduled_tasks.models.execution import TaskExecution
+    from app.scheduled_tasks.result_extraction import extract_task_result
+    execution=TaskExecution(execution_id='e',task_id='t',task_name='日报',status='success',total_steps=1)
+    result=extract_task_result(execution,None,{'tool_calls':[{'tool':'station_operation_daily','result':{
+        'resources':[{'locator':{'path':'backend/reports/日报.docx'}},
+                     {'locator':{'path':'backend/reports/日报.pdf'}}]}}]})
+    assert result.document_paths==['backend/reports/日报.docx','backend/reports/日报.pdf']
