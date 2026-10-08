@@ -85,6 +85,9 @@ class MonitorStore:
                   end TEXT NOT NULL, success INTEGER NOT NULL, detail TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS cells_missing ON cells(first_missing_at, present);
             ''')
+            columns = {row['name'] for row in db.execute('PRAGMA table_info(cells)')}
+            if 'first_missing_raw' not in columns:
+                db.execute('ALTER TABLE cells ADD COLUMN first_missing_raw TEXT')
 
     def connect(self):
         db = sqlite3.connect(self.path, timeout=60)
@@ -146,12 +149,13 @@ class MonitorStore:
                 for hour in sorted(grid):
                     cell = normalized.get((row['code'], hour))
                     present = bool(cell and cell['present'])
-                    first_missing = None if present else observed_at
+                    first_missing = None if cell and cell['data_complete'] else observed_at
                     raw = json.dumps(cell['raw'], ensure_ascii=False) if cell else None
                     db.execute('''INSERT INTO cells(code,source,hour,present,data_complete,quality_complete,
-                        observed_at,first_missing_at,recovered_at,first_present_at,completed_at,raw) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                        observed_at,first_missing_at,recovered_at,first_present_at,completed_at,raw,first_missing_raw) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                         ON CONFLICT(code,source,hour) DO UPDATE SET
                         first_missing_at=COALESCE(cells.first_missing_at,excluded.first_missing_at),
+                        first_missing_raw=CASE WHEN cells.first_missing_at IS NULL THEN excluded.first_missing_raw ELSE cells.first_missing_raw END,
                         recovered_at=CASE WHEN excluded.present=1 AND cells.first_missing_at IS NOT NULL
                           THEN COALESCE(cells.recovered_at,excluded.observed_at) ELSE cells.recovered_at END,
                         first_present_at=COALESCE(cells.first_present_at,excluded.first_present_at),
@@ -162,7 +166,7 @@ class MonitorStore:
                         WHERE excluded.observed_at >= cells.observed_at''',
                         (row['code'], source, hour, int(present), int(bool(cell and cell['data_complete'])), int(bool(cell and cell['quality_complete'])),
                          observed_at, first_missing, None, observed_at if present else None,
-                         observed_at if cell and cell['data_complete'] else None, raw))
+                         observed_at if cell and cell['data_complete'] else None, raw, raw if first_missing else None))
 
         return True
 
@@ -183,7 +187,7 @@ class MonitorStore:
                                   'start':row['hour'], 'end':row['hour']})
         return intervals
 
-    def report(self, end, *, national_sources, provincial_source, threshold=4):
+    def report(self, end, *, national_sources, provincial_source):
         end = local_time(end)
         start = end - timedelta(days=1)
         entries, unknown, errors = [], [], []
@@ -207,8 +211,6 @@ class MonitorStore:
                     else:
                         groups.append([cell])
                 for group in groups:
-                    if len(group) <= threshold:
-                        continue
                     event_start = local_time(group[0]['hour']) - timedelta(hours=1)
                     event_end = local_time(group[-1]['hour'])
                     complete_sources, remaining, backfill_observations = [], {}, []
@@ -244,7 +246,10 @@ class MonitorStore:
                         'backfill_status': '已回补' if backfilled else '待回补',
                         'backfill_sources': complete_sources, 'remaining_hours': remaining,
                         'carry_over': event_start < start,
-                        'evidence_kind': '小时数据缺失，设备离线原因待核实',
+                        'evidence_kind': '小时数据缺失（包含单项缺失），设备离线原因待核实',
+                        'missing_parameters': sorted({field for cell in group
+                            for field in POLLUTANTS if cell['first_missing_raw'] is None
+                            or normalize(json.loads(cell['first_missing_raw']))['values'][field] is None}),
                     })
                 # A successful collect must cover the end hour; stale or failed collection
                 # makes the result incomplete, never a blanket "all normal" conclusion.
@@ -262,7 +267,7 @@ class MonitorStore:
                           for r in last.values() if not r['success'])
             counts = {kind: sum(s['active'] and s['type'] == kind for s in roster) for kind in ('国控', '省控')}
         return {
-            'schema_version': 'station_operation_daily/v1', 'window_start': start.isoformat(),
+            'schema_version': 'station_operation_daily/v2', 'window_start': start.isoformat(),
             'window_end': end.isoformat(), 'generated_at': local_time().isoformat(),
             'entries': entries, 'station_counts': counts, 'unverified_stations': unknown,
             'membership_confirmed': all(s['confirmed'] for s in roster),
