@@ -119,19 +119,23 @@ def _broadcast_attachment_payload(item: object, *, message_id: str, index: int) 
         "mime_type": mime_type,
     }
     # Only forward URLs, never server filesystem paths; local files are served
-    # through the owner-scoped broadcast attachment content endpoint.
+    # through the owner-scoped broadcast attachment content endpoint.  The
+    # unique filename tail keeps per-message URLs distinct down to their last
+    # path segment: image loaders that key their disk cache on the final
+    # segment would otherwise collapse every broadcast image into one newest
+    # cache entry.
     if raw_url.startswith("/") or raw_url.startswith("https://") or raw_url.startswith("http://"):
         payload["url"] = raw_url
     elif str(item.get("path") or "").strip():
         base_url = f"/api/social/app/broadcasts/{message_id}/attachments/{index}"
-        payload["url"] = f"{base_url}/content"
-        payload["download_url"] = f"{base_url}/content"
+        payload["url"] = f"{base_url}/content/{quote(name, safe='')}"
+        payload["download_url"] = payload["url"]
         # Office 文件 App 端只能通过 PDF rendition 预览，与聊天附件的
         # office preview 管线保持一致。
         if Path(name).suffix.lower() in {
             ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
         }:
-            payload["preview_url"] = f"{base_url}/preview"
+            payload["preview_url"] = f"{base_url}/preview/{quote(Path(name).stem, safe='')}.pdf"
             payload["preview_mime_type"] = "application/pdf"
     return payload
 
@@ -544,6 +548,7 @@ async def app_broadcast_attachment(
         media_type=media_type,
         filename=filename,
         content_disposition_type=disposition,
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
     )
 
 
@@ -727,7 +732,10 @@ async def _broadcast_attachment_name(
     return str(attachment.get("name") or attachment.get("filename") or target_name)
 
 
-@router.get("/broadcasts/{message_id}/attachments/{index}/content")
+# The {filename} tail keeps attachment URLs unique per message for clients
+# whose image cache keys on the final path segment; its value is not used for
+# resolution (message_id + index identify the stored copy).
+@router.get("/broadcasts/{message_id}/attachments/{index}/content/{filename}")
 async def app_broadcast_attachment_content(
     message_id: str,
     index: int,
@@ -737,14 +745,21 @@ async def app_broadcast_attachment_content(
 
     The persisted attachment keeps the server filesystem path; this endpoint
     resolves it server-side so the path never reaches the client.
+    Persisted copies are immutable per message, so the response is marked
+    privately cacheable without revalidation.
     """
     target = await _resolve_broadcast_attachment(message_id, index, identity)
     filename = await _broadcast_attachment_name(message_id, index, identity)
     media_type = str(mimetypes.guess_type(filename)[0] or "application/octet-stream")
-    return FileResponse(target, media_type=media_type, filename=filename)
+    return FileResponse(
+        target,
+        media_type=media_type,
+        filename=filename,
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
 
 
-@router.get("/broadcasts/{message_id}/attachments/{index}/preview")
+@router.get("/broadcasts/{message_id}/attachments/{index}/preview/{filename}")
 async def app_broadcast_attachment_preview(
     message_id: str,
     index: int,
@@ -769,7 +784,12 @@ async def app_broadcast_attachment_preview(
             raise HTTPException(status_code=503, detail="broadcast_preview_generation_failed")
         cached = preview
     filename = await _broadcast_attachment_name(message_id, index, identity)
-    return FileResponse(cached, media_type="application/pdf", filename=f"{Path(filename).stem}.pdf")
+    return FileResponse(
+        cached,
+        media_type="application/pdf",
+        filename=f"{Path(filename).stem}.pdf",
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
 
 
 def _session_mapper(request: Request) -> SessionMapper:
