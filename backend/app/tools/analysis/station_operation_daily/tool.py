@@ -27,15 +27,21 @@ class StationOperationDailyTool(LLMTool):
     async def execute(self, action='report', date=None, **kwargs):
         from app.services.station_operation_monitor.runtime import collect, generate_report
         try:
+            resources = []
             if action == 'collect':
                 result = await asyncio.to_thread(collect)
             elif action == 'report':
                 result = await asyncio.to_thread(generate_report, date=date)
-                result['resources'] = generated_file_products(
-                    [resolve_agent_path(result['word_path'])], tool_name=self.name)
+                from app.services.station_operation_monitor.word import render_pdf_preview
+                from app.utils.path_config import format_agent_path
+                word_path = resolve_agent_path(result['word_path'])
+                pdf_path = await asyncio.to_thread(render_pdf_preview, word_path)
+                result['pdf_path'] = format_agent_path(pdf_path)
+                resources = generated_file_products(
+                    [word_path], tool_name=self.name, preview_paths={str(word_path):pdf_path})
             else:
                 raise ValueError('unsupported action')
-            return {'success':result['success'], 'data':result,
+            return {'success':result['success'], 'data':result, 'resources':resources,
                     'summary': '日报已生成' if result.get('report_ready') else '采集完成或已生成待核实报告，请查看取数状态及说明'}
         except Exception as exc:
             # Config/network exceptions can contain secret material; expose only their class.

@@ -249,6 +249,23 @@ def _extract_image_paths(agent_result: dict | None, execution: TaskExecution) ->
     return result
 
 
+
+def declared_file_paths(result: Any) -> list[str]:
+    """Read explicit resource locators; support historical nested declarations."""
+    if not isinstance(result, dict):
+        return []
+    data = result.get('data') if isinstance(result.get('data'), dict) else {}
+    resources = result.get('resources') or data.get('resources') or []
+    paths = []
+    for resource in resources:
+        if not isinstance(resource, dict):
+            continue
+        locator = resource.get('locator') if isinstance(resource.get('locator'), dict) else {}
+        path = locator.get('path') or resource.get('path')
+        if isinstance(path, str) and path and path not in paths:
+            paths.append(path)
+    return paths
+
 def _extract_document_paths(
     agent_result: dict | None,
     execution: TaskExecution,
@@ -272,9 +289,8 @@ def _extract_document_paths(
             continue
         result = call.get("result")
         data = result.get("data") if isinstance(result, dict) and isinstance(result.get("data"), dict) else {}
-        for resource in data.get("resources") or []:
-            if isinstance(resource, dict):
-                _add_path(resource.get("path"))
+        for path in declared_file_paths(result):
+            _add_path(path)
         report_id = _first_str(data.get("report_id"))
         if report_id and call.get("tool") in _REPORT_TOOL_NAMES:
             report_refs.append({
