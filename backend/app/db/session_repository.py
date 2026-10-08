@@ -6,7 +6,7 @@
 
 数据库 schema 设计：
 - role: Anthropic 角色（user/assistant），用于 LLM 对话恢复
-- msg_type: 语义类型（user/thought/tool_use/tool_result/final/error/user_pause），用于前端展示
+- msg_type: 语义类型（user/thought/action/observation/tool_result/final），用于前端展示
 - content: JSONB 类型，原生支持 str 和 list（Anthropic content blocks）
 """
 
@@ -17,7 +17,8 @@ import time
 from enum import Enum
 from pathlib import Path
 from typing import List, Optional, Dict, Any
-from datetime import date, datetime, time as datetime_time, timezone
+from datetime import date, datetime, timezone
+from datetime import time as datetime_time
 from decimal import Decimal
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -29,15 +30,12 @@ from .session_database import session_engine
 
 logger = structlog.get_logger()
 
-# 展示转录的完整类型集合。error/user_pause 必须保留，否则保存后
-# 重载会被默认规范化为 final，触发转录校验误报。
-VALID_MSG_TYPES = {
-    "user", "thought", "tool_use", "tool_result", "final", "error", "user_pause",
-}
+# 有效的语义类型集合
+VALID_MSG_TYPES = {"user", "thought", "tool_use", "tool_result", "final"}
 
 # These messages are rendered as conversation turns and must never be reduced
 # to a preview during lightweight history restoration.
-FULL_DISPLAY_CONTENT_MSG_TYPES = {"user", "final", "error", "user_pause"}
+FULL_DISPLAY_CONTENT_MSG_TYPES = {"user", "final"}
 
 MESSAGE_METADATA_EXCLUDED_KEYS = {
     "type",
@@ -63,8 +61,6 @@ TYPE_TO_ROLE = {
     "thought": "assistant",
     "tool_use": "assistant",
     "final": "assistant",
-    "error": "assistant",
-    "user_pause": "user",
 }
 
 
@@ -93,13 +89,8 @@ class SessionRepository:
         if isinstance(obj, Enum):
             return SessionRepository._normalize_json_value(obj.value)
         if isinstance(obj, Decimal):
-            numeric = float(obj)
-            return numeric if math.isfinite(numeric) else None
-        # PostgreSQL json/jsonb rejects the non-standard JSON tokens NaN and
-        # Infinity.  Normalize them at the persistence boundary as a final
-        # safeguard for tool results and runtime metadata from any producer.
-        if isinstance(obj, float):
-            return obj if math.isfinite(obj) else None
+            value = float(obj)
+            return value if math.isfinite(value) else None
         if isinstance(obj, (datetime, date, datetime_time)):
             return obj.isoformat()
         if isinstance(obj, (UUID, Path)):
@@ -118,13 +109,20 @@ class SessionRepository:
                 SessionRepository._normalize_json_value(item)
                 for item in sorted(obj, key=str)
             ]
-        if obj is None or isinstance(obj, (str, bool, int, float)):
+        if isinstance(obj, float):
+            return obj if math.isfinite(obj) else None
+        if obj is None or isinstance(obj, (str, bool, int)):
             return obj
         return str(obj)
 
     @staticmethod
+    def _convert_json_value(obj: Any) -> Any:
+        """Backward-compatible alias for JSON normalization."""
+        return SessionRepository._normalize_json_value(obj)
+
+    @staticmethod
     def _convert_decimal_to_float(obj: Any) -> Any:
-        """Backward-compatible alias for the former JSON normalization helper."""
+        """Backward-compatible alias retained for older persistence callers."""
         return SessionRepository._normalize_json_value(obj)
 
     @staticmethod
@@ -134,7 +132,7 @@ class SessionRepository:
 
         支持多种输入格式：
         - Anthropic 原生格式：有 role 字段（user/assistant）
-        - 前端简化格式：有 type 字段（user/thought/tool_use/tool_result/final/error/user_pause）
+        - 前端简化格式：有 type 字段（user/thought/tool_use/tool_result/final）
         - 旧格式：type 字段为 assistant
 
         Returns:
@@ -161,7 +159,12 @@ class SessionRepository:
 
     @staticmethod
     def _serialize_content(content: Any) -> Any:
-        """Serialize content to a value accepted by JSON/JSONB columns."""
+        """
+        序列化 content 为 JSONB 兼容格式
+
+        JSONB 列原生支持 str, list, dict, None，
+        只需处理 Decimal 等不可序列化的类型
+        """
         return SessionRepository._normalize_json_value(content)
 
     @staticmethod
@@ -190,12 +193,12 @@ class SessionRepository:
             for k, v in msg.items()
             if k not in MESSAGE_METADATA_EXCLUDED_KEYS
         }
-        return SessionRepository._normalize_json_value(metadata)
+        return SessionRepository._convert_json_value(metadata)
 
     @staticmethod
     def _message_data(msg: Dict[str, Any]) -> Any:
         """Return message data with tool runtime fields preserved in one place."""
-        msg_data = SessionRepository._normalize_json_value(msg.get("data"))
+        msg_data = SessionRepository._convert_json_value(msg.get("data"))
         tool_fields = {
             key: msg[key]
             for key in ("tool_use_id", "tool_name", "is_error")
@@ -208,7 +211,7 @@ class SessionRepository:
         if isinstance(msg_data, dict):
             for key, value in tool_fields.items():
                 msg_data.setdefault(key, value)
-        return SessionRepository._normalize_json_value(msg_data)
+        return SessionRepository._convert_json_value(msg_data)
 
     @staticmethod
     def _message_attachments(metadata: Any) -> List[Dict[str, Any]]:
@@ -596,14 +599,16 @@ class SessionRepository:
         """
         增量同步会话消息。
 
-        只追加数据库中尚不存在的尾部消息，避免每轮对话都执行
+        只追加数据库中尚不存在的消息，避免每轮对话都执行
         DELETE FROM session_messages WHERE session_id = ... 导致锁等待和
         statement timeout。
 
         约定：
-        - 当前会话历史是 append-only 时走增量路径。
-        - 如果传入历史短于数据库已有消息，说明调用方可能做了压缩/截断，
-          此方法不删除旧消息，交由显式全量重写接口处理。
+        - 以消息身份键（role/msg_type/content/data/timestamp）对账，而不是
+          按长度+位置对账。持久化视图可能过滤或合并消息（例如 thought 不
+          落持久化 transcript），长度对账会把表示差异误判为"没有新消息"，
+          静默丢失整轮对话。
+        - 传入历史短于数据库已有消息时不删除旧消息，只追加新消息。
         """
         if not conversation_history:
             return True
@@ -611,33 +616,76 @@ class SessionRepository:
         started = time.monotonic()
         try:
             async with AsyncSession(self.engine) as session:
-                count_started = time.monotonic()
+                rows_started = time.monotonic()
                 stmt = (
-                    select(func.max(SessionMessageDB.sequence_number))
+                    select(
+                        SessionMessageDB.role,
+                        SessionMessageDB.msg_type,
+                        SessionMessageDB.content,
+                        SessionMessageDB.data,
+                        SessionMessageDB.timestamp,
+                        SessionMessageDB.sequence_number,
+                    )
                     .where(SessionMessageDB.session_id == session_id)
+                    .order_by(SessionMessageDB.sequence_number)
                 )
                 result = await session.execute(stmt)
-                max_seq = result.scalar()
-                existing_count = (max_seq + 1) if max_seq is not None else 0
-                count_ms = round((time.monotonic() - count_started) * 1000, 2)
+                existing_rows = result.all()
+                existing_count = len(existing_rows)
+                max_seq = max(
+                    (row.sequence_number for row in existing_rows),
+                    default=-1,
+                )
+                existing_keys = {
+                    self._db_message_identity_key(row) for row in existing_rows
+                }
+                rows_read_ms = round((time.monotonic() - rows_started) * 1000, 2)
 
-                if existing_count >= len(conversation_history):
-                    logger.debug(
+                diff_started = time.monotonic()
+                new_messages: List[Dict[str, Any]] = []
+                for msg in conversation_history:
+                    key = self._incoming_message_identity_key(msg)
+                    if key in existing_keys:
+                        continue
+                    existing_keys.add(key)
+                    new_messages.append(msg)
+                diff_ms = round((time.monotonic() - diff_started) * 1000, 2)
+
+                if not new_messages:
+                    if existing_count > len(conversation_history):
+                        logger.warning(
+                            "conversation_history_incoming_shorter_than_db",
+                            session_id=session_id,
+                            existing_count=existing_count,
+                            incoming_count=len(conversation_history),
+                            hint="持久化视图与数据库表示存在差异，已按身份键确认无新消息",
+                        )
+                    logger.info(
                         "conversation_history_incremental_noop",
                         session_id=session_id,
                         existing_count=existing_count,
                         incoming_count=len(conversation_history),
-                        count_ms=count_ms,
+                        rows_read_ms=rows_read_ms,
+                        diff_ms=diff_ms,
                         total_ms=round((time.monotonic() - started) * 1000, 2),
                         **self._pool_status(),
                     )
                     return True
 
-                new_messages = conversation_history[existing_count:]
+                if existing_count > len(conversation_history):
+                    logger.warning(
+                        "conversation_history_incoming_shorter_than_db",
+                        session_id=session_id,
+                        existing_count=existing_count,
+                        incoming_count=len(conversation_history),
+                        appending_count=len(new_messages),
+                        hint="传入历史短于数据库，但按身份键识别出新消息，仅追加不删除",
+                    )
 
                 rows_started = time.monotonic()
                 rows = []
-                for offset, msg in enumerate(new_messages, start=existing_count):
+                for offset, msg in enumerate(new_messages):
+                    sequence_number = max_seq + 1 + offset
                     role, msg_type = self._resolve_role_and_type(msg)
                     timestamp = self._normalize_db_timestamp(
                         msg.get("timestamp"),
@@ -655,7 +703,7 @@ class SessionRepository:
                             "data": msg_data,
                             "timestamp": timestamp,
                             "metadata": self._message_metadata(msg),
-                            "sequence_number": offset,
+                            "sequence_number": sequence_number,
                         }
                     )
                 rows_build_ms = round((time.monotonic() - rows_started) * 1000, 2)
@@ -674,7 +722,8 @@ class SessionRepository:
                     existing_count=existing_count,
                     appended_count=len(new_messages),
                     incoming_count=len(conversation_history),
-                    count_ms=count_ms,
+                    rows_read_ms=rows_read_ms,
+                    diff_ms=diff_ms,
                     rows_build_ms=rows_build_ms,
                     insert_ms=insert_ms,
                     commit_ms=commit_ms,
@@ -691,6 +740,52 @@ class SessionRepository:
                 error_type=type(e).__name__
             )
             return False
+
+    @staticmethod
+    def _canonical_json(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+    def _db_message_identity_key(self, row: Any) -> tuple:
+        return (
+            row.role,
+            row.msg_type,
+            self._canonical_json(self._deserialize_content(row.content)),
+            self._canonical_json(row.data),
+            row.timestamp.isoformat() if row.timestamp is not None else None,
+        )
+
+    def _incoming_message_identity_key(self, msg: Dict[str, Any]) -> tuple:
+        role, msg_type = self._resolve_role_and_type(msg)
+        return (
+            role,
+            msg_type,
+            self._canonical_json(self._serialize_content(msg.get("content"))),
+            self._canonical_json(self._message_data(msg)),
+            self._identity_timestamp(msg.get("timestamp")),
+        )
+
+    @staticmethod
+    def _identity_timestamp(value: Any) -> Optional[str]:
+        """Deterministic naive-UTC isoformat for identity comparison.
+
+        Unlike _normalize_db_timestamp, a missing/invalid timestamp maps to
+        None instead of "now", so re-saving the same message stays idempotent.
+        """
+        if not value:
+            return None
+        try:
+            if isinstance(value, datetime):
+                parsed = value
+            elif isinstance(value, str):
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            else:
+                return None
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed.isoformat()
+        except (ValueError, TypeError):
+            return None
+
 
     async def add_message(
         self,
@@ -958,7 +1053,7 @@ class SessionRepository:
 
         ⚠️ 轻量级策略：
         - 不查询 data 字段（避免传输大型 result 数据）
-        - 前端从 content_preview 中解析工具名称
+        - content 保持完整，content_preview 只用于工具名称识别
         - 性能优化：首屏恢复速度提升 3-5 倍
         """
         display_content = getattr(row, "display_content", None)
@@ -982,8 +1077,8 @@ class SessionRepository:
 
         # ✅ 从 content_preview 中提取工具名称（用于前端显示）
         # tool_use 消息的 content 通常包含："调用工具：check_order" 等信息
-        if row.msg_type == "tool_use" and row.content_preview:
-            content = row.content_preview
+        if row.msg_type == "tool_use" and content_preview:
+            content = content_preview
             # 尝试从 content 中提取工具名称（兼容多种格式）
             import re
             # 格式1：调用工具：tool_name
@@ -1061,6 +1156,7 @@ class SessionRepository:
                         SessionMessageDB.id,
                         SessionMessageDB.role,
                         SessionMessageDB.msg_type,
+                        SessionMessageDB.content,
                         SessionMessageDB.msg_metadata,
                         SessionMessageDB.timestamp,
                         SessionMessageDB.sequence_number,

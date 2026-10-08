@@ -152,7 +152,7 @@ def render_weather_timeseries(*, title: str, data: dict[str, Any], options: dict
         legend_labels.append("风向（等长箭头，指向气流去向）")
     ax.legend(handles, legend_labels, loc="lower center", bbox_to_anchor=(0.5, 1.08), fontsize=8, frameon=False, ncol=4)
     fig.suptitle(str(title), fontsize=14, fontweight="bold", y=0.995)
-    fig.subplots_adjust(left=0.12, right=0.88, top=0.78, bottom=0.16)
+    fig.subplots_adjust(left=0.12, right=0.88, top=0.93, bottom=0.16)
     apply_font_to_figure(fig)
     output = BytesIO(); fig.savefig(output, format="png", dpi=180, bbox_inches="tight"); plt.close(fig)
     return base64.b64encode(output.getvalue()).decode("ascii"), {"valid_point_count": valid_point_count, "multi_day": multi_day, "day_count": len(days), "gap_count": gap_count, "line_width": width, "date": ts[0].date().isoformat(), "start_time": ts[0].isoformat(sep=" "), "end_time": ts[-1].isoformat(sep=" "), "area_count": len(areas), "direction_arrow_count": len(arrow_indices), "calm_point_count": int(calm.sum())}, []

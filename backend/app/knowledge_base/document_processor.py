@@ -19,10 +19,8 @@ import re
 from typing import List, Dict, Any, Optional, Literal
 from pathlib import Path
 from enum import Enum
-import httpx
 import structlog
 from config.settings import settings
-from app.services.aliyun_ocr import call_aliyun_ocr, resolve_aliyun_ocr_app_code
 from app.services.llm_service import llm_service
 
 logger = structlog.get_logger()
@@ -74,9 +72,15 @@ class DocumentProcessor:
         ".rtf": "rtf"
     }
 
-    OCR_PROVIDER = "aliyun_market"
-    OCR_MODEL = "ocrservice/advanced"
-    OCR_FORCE_MIN_TEXT_LENGTH = int(getattr(settings, "knowledge_base_ocr_min_text_length", 600) or 600)
+    # Scanned-document OCR is handled by the configured multimodal model.  The
+    # production default is the same vision-capable model used by the main LLM
+    # route; it must not depend on a local Tesseract executable or on the
+    # separate Bailian OCR endpoint.
+    OCR_PROVIDER = os.getenv("KNOWLEDGE_BASE_OCR_PROVIDER", "doubao").strip().lower()
+    OCR_MODEL = os.getenv(
+        "KNOWLEDGE_BASE_OCR_MODEL",
+        getattr(settings, "doubao_model", "gpt-5.6-luna"),
+    ).strip()
     OCR_MAX_CONCURRENT = int(os.getenv("OCR_MAX_CONCURRENT", "2"))
     OCR_TIMEOUT = int(os.getenv("OCR_TIMEOUT", "120"))
     
@@ -84,8 +88,8 @@ class DocumentProcessor:
         self._unstructured = None
         self._embedding_model = None
 
-    def _html_table_to_markdown(self, html: str) -> str:
-        """将 HTML 表格转换为 Markdown 表格。"""
+    def _html_table_to_text(self, html: str) -> str:
+        """将HTML表格转换为文本格式"""
         try:
             from bs4 import BeautifulSoup
             
@@ -96,22 +100,14 @@ class DocumentProcessor:
             
             rows = []
             for tr in table.find_all('tr'):
-                cells = [td.get_text(" ", strip=True) for td in tr.find_all(['td', 'th'])]
+                cells = []
+                for td in tr.find_all(['td', 'th']):
+                    cell_text = td.get_text(strip=True)
+                    cells.append(cell_text)
                 if cells:
-                    rows.append(cells)
-
-            if not rows:
-                return html
-
-            max_cols = max(len(row) for row in rows)
-            normalized_rows = [row + [" "] * (max_cols - len(row)) for row in rows]
-
-            lines = ["| " + " | ".join(normalized_rows[0]) + " |"]
-            lines.append("| " + " | ".join(["---"] * max_cols) + " |")
-            for row in normalized_rows[1:]:
-                lines.append("| " + " | ".join(row) + " |")
-
-            return "\n".join(lines)
+                    rows.append(' | '.join(cells))
+            
+            return '\n'.join(rows)
         except Exception as e:
             logger.warning("html_table_parse_failed", error=str(e))
             return html
@@ -188,7 +184,7 @@ class DocumentProcessor:
             logger.error("pdf_to_images_failed", error=str(e), file_path=file_path)
             raise
 
-    # OCR 提示词（保留给回归测试与故障排查，不再直接发送给 OCR 接口）
+    # OCR 提示词（共享多模态模型）
     OCR_PROMPT_DEFAULT = """完整识别当前页面，并按页面视觉布局恢复可阅读的 Markdown 文本。
 
 内容保真要求：
@@ -207,36 +203,69 @@ class DocumentProcessor:
         image_bytes: bytes,
         page_num: int,
         prompt: str = None,
-        client: httpx.AsyncClient | None = None,
         max_retries: int = 3
     ) -> tuple:
         """
-        调用阿里云云市场高精版 OCR 处理单张图片。
+        调用多模态模型处理单张图片。
+
+        The image is sent through the shared LLM service so the configured
+        provider/model (by default ``doubao/gpt-5.6-luna``) is used.  This is
+        intentionally separate from the legacy Bailian OCR helper: the
+        knowledge-base scan path must use the same multimodal model as the
+        rest of the application.
 
         Args:
             image_bytes: 图片字节数据
             page_num: 页码
-            prompt: 保留兼容参数，当前不再发送给 OCR 接口
-            client: 可复用的 HTTP 客户端
+            prompt: 提示词
             max_retries: 最大重试次数
 
         Returns:
             (page_num, extracted_text)
         """
+        import base64
         import asyncio
-
-        del prompt
+        
+        # 使用默认的 OCR 提示词
+        if prompt is None:
+            prompt = self.OCR_PROMPT_DEFAULT
+        
+        base64_image = base64.b64encode(image_bytes).decode("ascii")
         
         for attempt in range(max_retries):
             try:
-                content, _ = await call_aliyun_ocr(
-                    image_bytes,
-                    app_code=resolve_aliyun_ocr_app_code(),
-                    timeout_seconds=self.OCR_TIMEOUT,
-                    client=client,
-                )
+                with llm_service.use_provider_model(self.OCR_PROVIDER, self.OCR_MODEL):
+                    response = await llm_service.chat_anthropic(
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "image",
+                                        "source": {
+                                            "type": "base64",
+                                            "media_type": "image/png",
+                                            "data": base64_image,
+                                        },
+                                    },
+                                    {"type": "text", "text": prompt},
+                                ],
+                            }
+                        ],
+                        max_tokens=7000,
+                        temperature=0.1,
+                        system=(
+                            "你是知识库扫描文档 OCR 与版式恢复助手。以页面图像为唯一依据，完整转写并修复明显的错误断行、"
+                            "表格错位和公式排版；保持所有原文信息、数值和符号不变，禁止总结、改写、删减或猜测。直接输出结果，不要解释。"
+                        ),
+                    )
+                content = "\n".join(
+                    str(getattr(block, "text", ""))
+                    for block in response.get("content", [])
+                    if getattr(block, "type", None) == "text"
+                ).strip()
                 if not content:
-                    raise RuntimeError("Aliyun OCR returned no text")
+                    raise RuntimeError("multimodal OCR returned no text")
                 content = self._clean_repeated_substrings(content)
                 logger.debug(
                     "ocr_page_success",
@@ -279,7 +308,7 @@ class DocumentProcessor:
 
     async def _process_pdf_with_ocr(self, file_path: str) -> str:
         """
-        使用阿里云云市场 OCR 处理扫描件 PDF
+        使用共享多模态模型处理扫描件 PDF
         
         Args:
             file_path: PDF 文件路径
@@ -299,15 +328,14 @@ class DocumentProcessor:
         
         # 2. 使用信号量限制并发
         semaphore = asyncio.Semaphore(self.OCR_MAX_CONCURRENT)
-
-        async with httpx.AsyncClient(timeout=httpx.Timeout(self.OCR_TIMEOUT)) as client:
-            async def process_with_semaphore(page_num: int, img_bytes: bytes):
-                async with semaphore:
-                    return await self._call_ocr_api_single(img_bytes, page_num, client=client)
-
-            # 3. 并发调用 OCR
-            tasks = [process_with_semaphore(page_num, img_bytes) for page_num, img_bytes in images]
-            results = await asyncio.gather(*tasks)
+        
+        async def process_with_semaphore(page_num: int, img_bytes: bytes):
+            async with semaphore:
+                return await self._call_ocr_api_single(img_bytes, page_num)
+        
+        # 3. 并发调用 OCR
+        tasks = [process_with_semaphore(page_num, img_bytes) for page_num, img_bytes in images]
+        results = await asyncio.gather(*tasks)
         
         # 4. 按页码排序合并
         results.sort(key=lambda x: x[0])
@@ -389,14 +417,14 @@ class DocumentProcessor:
         
         file_ext = Path(file_path).suffix.lower()
         
-        # PDF 文件特殊处理：检测扫描件并使用逐页阿里云 OCR
+        # PDF 文件特殊处理：检测扫描件并使用逐页多模态 OCR
         if file_ext == ".pdf":
             # 先尝试 fast 策略提取文本
             content, is_scanned = await asyncio.to_thread(self._try_fast_pdf_parse, file_path)
             
             if is_scanned:
                 logger.info(
-                    "pdf_is_scanned_using_aliyun_ocr",
+                    "pdf_is_scanned_using_multimodal_ocr",
                     file_path=file_path,
                     provider=self.OCR_PROVIDER,
                     model=self.OCR_MODEL,
@@ -430,28 +458,19 @@ class DocumentProcessor:
                     if page_text:
                         content_parts.append(page_text)
 
-            if tables_text:
-                content_parts.extend(tables_text)
-
-            content = "\n\n".join(content_parts)
-            normalized_content_length = len(re.sub(r"\s+", "", content))
-
-            if normalized_content_length < self.OCR_FORCE_MIN_TEXT_LENGTH:
-                logger.info(
-                    "pdf_fast_parse_below_ocr_threshold",
-                    file_path=file_path,
-                    content_length=normalized_content_length,
-                    threshold=self.OCR_FORCE_MIN_TEXT_LENGTH,
-                    page_count=page_count,
-                    table_count=len(tables_text),
-                )
-                return ("", True)
-
-            if not content.strip():
+            # 检查是否提取到内容
+            text_content = "\n\n".join(content_parts)
+            
+            if not text_content and not tables_text:
                 # 没有文本也没有表格，是扫描件
                 logger.info("pdf_detected_as_scanned", file_path=file_path)
                 return ("", True)
 
+            if tables_text:
+                content_parts.extend(tables_text)
+
+            content = "\n\n".join(content_parts)
+            
             logger.info(
                 "document_parsed",
                 file_path=file_path,
@@ -522,20 +541,10 @@ class DocumentProcessor:
             if el_type == "Table":
                 text = str(el).strip()
                 # 只保留 pdfplumber 提取的表格（以 "[表格 - 第" 开头）
+                # 过滤掉 unstructured 提取的混乱表格文本
                 if text.startswith("[表格 - 第"):
                     content_parts.append(text)
-                    continue
-
-                html = getattr(getattr(el, "metadata", None), "text_as_html", "") or ""
-                if html:
-                    table_text = self._html_table_to_markdown(html).strip()
-                    if table_text:
-                        content_parts.append(f"[表格]\n{table_text}")
-                        continue
-
-                # unstructured 识别的表格仍应保留，宁可保留扁平文本，也不要静默丢失
-                if text:
-                    content_parts.append(f"[表格]\n{text}")
+                # unstructured 识别的表格跳过
             else:
                 text = str(el).strip()
                 if text:
@@ -798,21 +807,8 @@ class DocumentProcessor:
 
         except Exception as e:
             logger.error("llm_chunk_failed", error=str(e), llm_mode=llm_mode)
-            fallback_strategy = self._choose_fallback_chunk_strategy(content)
-            logger.warning(
-                "falling_back_to_deterministic_chunking",
-                fallback_strategy=fallback_strategy,
-            )
-            fallback_chunks = self._chunk_sync(
-                content,
-                fallback_strategy,
-                chunk_size,
-                chunk_size // 4,
-            )
-            return self._split_large_chunks(
-                fallback_chunks,
-                max_size=max(1800, chunk_size),
-            )
+            logger.warning("falling_back_to_sentence_chunking")
+            return self._chunk_sync(content, "sentence", chunk_size, chunk_size // 4)
 
     async def _llm_chunk_single_pass(
         self,
@@ -1498,12 +1494,8 @@ class DocumentProcessor:
     def _split_large_chunk_content(self, content: str, max_size: int) -> List[str]:
         """确定性拆分单个大chunk，优先保留章节/条款/表格上下文。"""
         lines = [line.rstrip() for line in content.splitlines()]
-        if any(line.strip().startswith("[表格") for line in lines):
-            if self._has_table_like_lines(lines):
-                return self._split_markdown_table_chunk(content, max_size=max_size)
-            return [content]
-
-        if self._has_table_like_lines(lines):
+        table_lines = [line for line in lines if line.strip().startswith("|") and line.strip().endswith("|")]
+        if len(table_lines) >= 4:
             return self._split_markdown_table_chunk(content, max_size=max_size)
 
         normalized = re.sub(
@@ -1535,49 +1527,29 @@ class DocumentProcessor:
         return parts or [content]
 
     def _split_markdown_table_chunk(self, content: str, max_size: int) -> List[str]:
-        """拆长表格；每段重复表名前缀和表头，保证单块可读。"""
+        """拆长Markdown表格；每段重复表名前缀和表头，保证单块可读。"""
         lines = [line.rstrip() for line in content.splitlines() if line.strip()]
-        if len(lines) < 2:
+        first_table_idx = next((i for i, line in enumerate(lines) if line.strip().startswith("|")), 0)
+        prefix = "\n".join(lines[:first_table_idx]).strip()
+        table = lines[first_table_idx:]
+        if len(table) < 3:
             return [content[i:i + max_size] for i in range(0, len(content), max_size)]
 
-        prefix: List[str] = []
-        table_start = 0
-        while table_start < len(lines) and not self._looks_like_table_row(lines[table_start]):
-            prefix.append(lines[table_start])
-            table_start += 1
-
-        table = lines[table_start:]
-        if len(table) < 2:
-            return [content[i:i + max_size] for i in range(0, len(content), max_size)]
-
-        has_explicit_separator = len(table) >= 2 and self._is_table_separator_row(table[1])
-        if has_explicit_separator:
-            header = table[:2]
-            rows = table[2:]
-            build_lines = lambda rows_subset: ([*prefix] if prefix else []) + header + rows_subset
-        else:
-            header_row = table[0]
-            separator_row = self._build_table_separator_row(header_row)
-            rows = table[1:]
-            build_lines = lambda rows_subset: ([*prefix] if prefix else []) + [header_row, separator_row] + rows_subset
-
+        header = table[:2]
+        rows = table[2:]
         parts = []
         current_rows = []
         for row in rows:
-            candidate_lines = build_lines([*current_rows, row])
+            candidate_lines = ([prefix] if prefix else []) + header + current_rows + [row]
             candidate = "\n".join(candidate_lines).strip()
             if len(candidate) <= max_size:
                 current_rows.append(row)
                 continue
             if current_rows:
-                parts.append("\n".join(build_lines(current_rows)).strip())
-                current_rows = []
-            if len("\n".join(build_lines([row])).strip()) <= max_size:
-                current_rows = [row]
-            else:
-                parts.append("\n".join(build_lines([row])).strip())
+                parts.append("\n".join(([prefix] if prefix else []) + header + current_rows).strip())
+            current_rows = [row]
         if current_rows:
-            parts.append("\n".join(build_lines(current_rows)).strip())
+            parts.append("\n".join(([prefix] if prefix else []) + header + current_rows).strip())
         return parts or [content]
 
     def _merge_small_chunks(self, chunks: List[Dict[str, Any]], min_size: int = 150) -> List[Dict[str, Any]]:
@@ -1590,20 +1562,6 @@ class DocumentProcessor:
         
         for chunk in chunks:
             content_len = len(chunk.get("content", ""))
-            is_table_chunk = self._is_table_chunk(chunk)
-
-            if is_table_chunk:
-                if buffer:
-                    if len(buffer.get("content", "")) >= min_size:
-                        merged.append(buffer)
-                    elif merged and not self._is_table_chunk(merged[-1]):
-                        merged[-1]["content"] += "\n\n" + buffer["content"]
-                        merged[-1]["original_content"] = merged[-1]["content"]
-                    else:
-                        merged.append(buffer)
-                    buffer = None
-                merged.append(chunk)
-                continue
             
             if content_len < min_size:
                 if buffer:
@@ -1625,12 +1583,8 @@ class DocumentProcessor:
                         merged.append(buffer)
                     else:
                         # buffer太小，合并到当前chunk
-                        if merged and not self._is_table_chunk(merged[-1]):
-                            merged[-1]["content"] += "\n\n" + buffer["content"]
-                            merged[-1]["original_content"] = merged[-1]["content"]
-                        else:
-                            chunk["content"] = buffer["content"] + "\n\n" + chunk["content"]
-                            chunk["original_content"] = chunk["content"]
+                        chunk["content"] = buffer["content"] + "\n\n" + chunk["content"]
+                        chunk["original_content"] = chunk["content"]
                     buffer = None
                 merged.append(chunk)
         
@@ -1644,63 +1598,6 @@ class DocumentProcessor:
                 merged.append(buffer)
         
         return merged
-
-    def _choose_fallback_chunk_strategy(self, content: str) -> str:
-        """LLM 失败时选择更保守的确定性分块策略。"""
-        lines = [line.strip() for line in content.splitlines() if line.strip()]
-        if not lines:
-            return "sentence"
-
-        has_table_markers = any(
-            line.startswith("[表格") or self._looks_like_table_row(line)
-            for line in lines
-        )
-        has_markdown_headings = any(re.match(r"#{1,6}\s+\S", line) for line in lines[:200])
-        has_structured_numbering = any(
-            re.match(r"(?:第[一二三四五六七八九十百]+[章节条]|[一二三四五六七八九十]+、|\d+(?:\.\d+)*\s+)", line)
-            for line in lines[:200]
-        )
-        if has_table_markers or has_markdown_headings or has_structured_numbering:
-            return "markdown"
-        return "sentence"
-
-    @staticmethod
-    def _is_table_separator_row(line: str) -> bool:
-        cells = [cell.strip().replace(" ", "") for cell in line.strip().strip("|").split("|")]
-        cells = [cell for cell in cells if cell]
-        return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
-
-    @staticmethod
-    def _build_table_separator_row(header_row: str) -> str:
-        columns = [cell.strip() for cell in header_row.strip().strip("|").split("|")]
-        column_count = max(1, len([col for col in columns if col]) or len(columns))
-        return "| " + " | ".join(["---"] * column_count) + " |"
-
-    def _looks_like_table_row(self, line: str) -> bool:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("[表格"):
-            return False
-        if stripped.startswith("|") and stripped.endswith("|"):
-            return True
-        return "|" in stripped and not self._is_table_separator_row(stripped)
-
-    def _has_table_like_lines(self, lines: List[str]) -> bool:
-        table_like_lines = [line for line in lines if self._looks_like_table_row(line)]
-        if any(line.strip().startswith("[表格") for line in lines):
-            return len(table_like_lines) >= 1
-        return len(table_like_lines) >= 3
-
-    def _is_table_chunk(self, chunk: Dict[str, Any]) -> bool:
-        metadata = chunk.get("metadata") or {}
-        if str(metadata.get("type", "")).lower() == "table":
-            return True
-        content = str(chunk.get("content") or "").strip()
-        if not content:
-            return False
-        if content.startswith("[表格"):
-            return True
-        lines = [line for line in content.splitlines() if line.strip()]
-        return self._has_table_like_lines(lines)
 
     def _split_into_segments(self, content: str, max_chars: int) -> List[str]:
         """将长文档预分割成较小的片段"""

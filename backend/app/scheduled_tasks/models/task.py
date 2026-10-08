@@ -68,6 +68,9 @@ class HistoryLearningConfig(BaseModel):
         le=20,
         description="主动检索单次返回案例数量上限",
     )
+    case_filter_by_city: bool = Field(default=False, description="案例注入按城市筛选")
+    case_filter_by_station: bool = Field(default=False, description="案例注入按站点筛选")
+    case_filter_by_pollutant: bool = Field(default=False, description="案例注入按污染物筛选")
 
 
 class ScheduledTask(BaseModel):
@@ -189,7 +192,7 @@ class ScheduledTask(BaseModel):
             raise ValueError("tool_names is required for custom mode")
         if self.execution_mode != "custom" and self.tool_names is not None:
             raise ValueError("tool_names is only valid for custom mode")
-        if self.execution_mode == "workflow" and not self.workflow_name:
+        if self.execution_mode == "workflow" and not (self.workflow_name or "").strip():
             raise ValueError("workflow_name is required for workflow mode")
         if self.execution_mode != "workflow" and (self.workflow_name is not None or self.workflow_args):
             raise ValueError("workflow_name/workflow_args are only valid for workflow mode")

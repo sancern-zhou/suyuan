@@ -13,9 +13,7 @@ defineEmits(['close'])
 <style scoped>
 .management-panel {
   height: 100%;
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
+  overflow-y: auto;
   background: white;
 }
 </style>

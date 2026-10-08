@@ -79,6 +79,52 @@ def test_project_task_sync_never_overwrites_existing_tasks(tmp_path):
     assert updated.created_by == "system"
 
 
+def test_project_task_sync_migrates_legacy_agent_task_to_seeded_workflow(tmp_path):
+    storage = TaskStorage(tmp_path / "state")
+    existing = ScheduledTask(
+        task_id="task_report",
+        name="报告",
+        description="报告",
+        execution_mode="custom",
+        tool_names=["legacy_tool"],
+        trigger_type="event",
+        event_type="xuchang.station_deviation.alert_created",
+        target_user_ids=["app:android:android_demo"],
+        broadcast_enabled=True,
+        prompt="旧 Agent 指令",
+    )
+    existing.enabled = False
+    existing.total_runs = 7
+    storage.create(existing)
+
+    seed = ScheduledTask(
+        task_id="task_report",
+        name="报告",
+        description="报告",
+        execution_mode="workflow",
+        workflow_name="xuchang_station_deviation_alert",
+        trigger_type="event",
+        event_type="xuchang.station_deviation.alert_created",
+        prompt="确定性工作流指令",
+    )
+    _write_definition(tmp_path, seed)
+
+    result = sync_project_scheduled_tasks(
+        project_id="demo", task_ids=["task_report"], service=_Service(storage), project_root=tmp_path
+    )
+
+    migrated = storage.get("task_report")
+    assert result[0]["action"] == "migrated_workflow"
+    assert migrated.execution_mode == "workflow"
+    assert migrated.workflow_name == "xuchang_station_deviation_alert"
+    assert migrated.tool_names is None
+    assert migrated.skill_id is None
+    assert migrated.prompt == "确定性工作流指令"
+    assert migrated.enabled is False
+    assert migrated.total_runs == 7
+    assert migrated.target_user_ids == ["app:android:android_demo"]
+
+
 def test_project_task_sync_uses_declared_runtime_fields_only(tmp_path):
     """运行时存储中的额外字段不会进入任务模型。"""
     storage = TaskStorage(tmp_path / "state")

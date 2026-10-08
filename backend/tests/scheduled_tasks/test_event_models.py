@@ -63,6 +63,13 @@ def test_event_matches_scalar_and_list_filters():
     assert not event.matches({"city": "太原市"})
 
 
+def test_xuchang_daily_attainment_exceedance_event_is_registered():
+    definitions = {item.event_type: item for item in get_event_definitions()}
+
+    event = definitions["xuchang.daily_attainment.predicted_exceedance"]
+    assert "target_pollutant" in event.filter_fields
+
+
 def _event_task() -> ScheduledTask:
     return ScheduledTask(
         task_id="event",

@@ -1,0 +1,48 @@
+{
+  "task_id": "task_xuchang_mee_cnemc_weekly_news",
+  "name": "生态环境部和中国环境监测总站最近一周新闻抓取",
+  "description": "每周一抓取生态环境部与中国环境监测总站最近一周新闻，汇总为可追溯的新闻摘要并推送。",
+  "execution_mode": "custom",
+  "tool_names": [
+    "web_search",
+    "web_fetch",
+    "broadcast_social_users"
+  ],
+  "skill_id": null,
+  "knowledge_base_binding": null,
+  "trigger_type": "schedule",
+  "schedule_type": "weekly_monday_8am",
+  "target_user_ids": [
+    "app:android:android_demo"
+  ],
+  "broadcast_enabled": true,
+  "report_type": null,
+  "enabled": true,
+  "created_by": "system",
+  "owner_user_id": "system",
+  "owner_username": "scheduled-task",
+  "owner_display_name": "定时任务",
+  "tags": [
+    "xuchang",
+    "mee",
+    "cnemc",
+    "weekly_news"
+  ],
+  "workspace_entry": {
+    "enabled": true,
+    "title": "部与总站周新闻"
+  },
+  "prompt": "你是生态环境新闻周报 Agent，每周一执行，任务：抓取生态环境部（mee.gov.cn）和中国环境监测总站（cnemc.cn）最近一周发布的新闻，汇总为面向环境业务用户的中文新闻摘要并推送。\n\n抓取要求：\n1. 统计范围为执行日之前7天（上周一至上周日）正式发布的新闻，以页面标注的发布日期为准。\n2. 优先用 web_fetch 抓取官网新闻列表页：生态环境部新闻（www.mee.gov.cn 要闻/新闻发布栏目）和中国环境监测总站新闻中心（www.cnemc.cn）。从列表页提取发布日期、标题和原文链接；列表页分页或抓取失败时，用 web_search 以站点限定词（如 site:mee.gov.cn、site:cnemc.cn）补充，不得遗漏明显的重要新闻。\n3. 对拟入选的新闻，可用 web_fetch 读取正文开头，为每条写1-2句摘要；摘要必须来自原文，不得编造或夸大。\n\n输出要求：\n1. 按“生态环境部”“中国环境监测总站”两组呈现，组内按发布日期倒序，每组最多10条。\n2. 每条格式：日期｜标题｜一两句摘要｜原文链接。链接必须是工具实际返回的 URL，禁止拼接或虚构。\n3. 开头用两三句话概述本周总体动向（政策发布、监测动态、重要会议等）；某来源本周无新新闻时如实说明。\n4. 正文不得出现内部路径、字段名或工具调用细节。\n\n推送要求：\n1. 最终回复完整展示同一份新闻摘要正文。\n2. 调用 broadcast_social_users 推送，消息为上述摘要（500字以内，可省略链接），不添加附件。\n3. 抓取全部失败时，不推送编造内容，如实报告失败原因。",
+  "timeout_seconds": 1800,
+  "history_learning": {
+    "enabled": false,
+    "max_recent_cases": 3,
+    "memory_char_budget": 4000,
+    "consolidation_timeout_seconds": 120,
+    "active_retrieval_enabled": false,
+    "active_retrieval_max_results": 5,
+    "case_filter_by_city": false,
+    "case_filter_by_station": false,
+    "case_filter_by_pollutant": false
+  }
+}

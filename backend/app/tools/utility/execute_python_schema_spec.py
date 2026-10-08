@@ -17,11 +17,63 @@ def test_execute_python_schema_describes_general_capability_and_bash_boundary():
     assert "查看文件、搜索文本、检查进程或调用现成 CLI" in description
     assert "优先使用 bash" in description
     assert "不限制于数据分析、Excel或可视化" in description
-    assert "backend/app/tools/utility/execute_python_data_manual.md" in description
-    assert "backend/app/tools/utility/execute_python_chart_manual.md" in description
-    assert "backend/app/tools/utility/execute_python_report_manual.md" in description
-    assert "read_file(path=...)" in description
-    assert "混合任务" in description
+    assert "backend/app/tools/utility/ 下的 execute_python_data_manual.md" in description
+    assert "execute_python_chart_manual.md" in description
+    assert "execute_python_report_manual.md" in description
+    assert "配备 read_file 的模式" in description
+    assert "问数模式直接编写脚本即可" in description
+
+
+def test_query_mode_execute_python_schema_strips_manual_references():
+    from app.agent.tool_adapter import _query_mode_execute_python_schema
+
+    base = ExecutePythonTool().get_function_schema()
+    adapted = _query_mode_execute_python_schema(base)
+
+    assert ".md" not in adapted["description"]
+    assert "read_file" not in adapted["description"]
+    assert "手册" not in adapted["description"]
+    assert "load_data(file_path)" in adapted["description"]
+    code_description = adapted["parameters"]["properties"]["code"]["description"]
+    assert ".md" not in code_description
+    # 原始 schema 不被就地修改，其他模式不受影响
+    assert "execute_python_data_manual.md" in base["description"]
+    assert "配备 read_file 的模式" in base["description"]
+
+
+def test_station_mode_tool_schemas_apply_query_adaptation():
+    from app.agent.tool_adapter import get_tool_schemas
+
+    schemas = get_tool_schemas(
+        mode="query_monitoring_station",
+        allowed_tool_names=["execute_python"],
+    )
+    assert len(schemas) == 1 and schemas[0]["name"] == "execute_python"
+    assert ".md" not in schemas[0]["description"]
+    assert "read_file" not in schemas[0]["description"]
+
+
+def test_query_mode_sql_schemas_hide_describe_table():
+    from app.agent.tool_adapter import _query_mode_sql_query_schema, get_tool_schemas
+    from app.tools.query.execute_crawler_sql_query.tool import ExecuteCrawlerSQLQueryTool
+    from app.tools.query.execute_postgres_sql_query.tool import ExecutePostgresSQLQueryTool
+
+    for tool in (ExecuteCrawlerSQLQueryTool(), ExecutePostgresSQLQueryTool()):
+        base = tool.get_function_schema()
+        adapted = _query_mode_sql_query_schema(base)
+        assert "describe_table" not in adapted["parameters"]["properties"]
+        assert "describe_table" not in adapted["description"]
+        assert "sql" in adapted["parameters"]["properties"]
+        # 原始 schema 不被就地修改
+        assert "describe_table" in base["parameters"]["properties"]
+
+    schemas = get_tool_schemas(
+        mode="query_monitoring_station",
+        allowed_tool_names=["execute_crawler_sql_query"],
+    )
+    assert len(schemas) == 1
+    assert "describe_table" not in schemas[0]["parameters"]["properties"]
+    assert "describe_table" not in schemas[0]["description"]
 
 
 def test_python_is_primary_report_plotting_tool_with_shared_style():

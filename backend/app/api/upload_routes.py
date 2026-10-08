@@ -127,7 +127,9 @@ def _office_pdf_preview(file_path: str) -> Path | None:
             converted = output_dir / f"{source.stem}.pdf"
             if not converted.is_file() or converted.stat().st_size == 0:
                 raise RuntimeError("LibreOffice did not produce a PDF preview")
-            converted.replace(preview)
+            # shutil.move handles cross-device moves (os.rename/Path.replace
+            # raises Errno 18 when tempdir and storage are on different mounts).
+            shutil.move(str(converted), str(preview))
             return preview
     except Exception as exc:
         logger.warning(

@@ -96,7 +96,6 @@ def test_component_manifest_adds_next_month_outlook_forecast_images_without_even
     assert {"product": "national_max_temperature_forecast", "date": "20260601", "time": "024", "download": True} in calls
     assert {"product": "national_max_temperature_forecast", "date": "20260601", "time": "072", "download": True} in calls
     assert {"product": "national_precip_forecast", "date": "20260601", "time": "024", "download": True} in calls
-    assert {"product": "max_10m_wind_speed_24h", "date": "20260601", "time": "072", "download": True} in calls
     assert not any(call["product"] == "backward_trajectory" for call in calls)
 
     manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))

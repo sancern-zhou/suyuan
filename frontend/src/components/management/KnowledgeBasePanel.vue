@@ -61,7 +61,6 @@
         </div>
         <div v-if="kbStore.privateKbs.length === 0" class="kb-empty">暂无个人知识库</div>
       </div>
-
     </div>
 
     <!-- 知识库详情 -->

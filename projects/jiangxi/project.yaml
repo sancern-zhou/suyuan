@@ -11,9 +11,23 @@ frontend:
     - query
     - expert
     - report
-    - chart
+  default_agent_mode: query
+  agent_mode_overrides:
+    query:
+      name: 智能问数生图智能体
+      description: 查询噪声数据、生成图表与统计分析
+      tags:
+        - 噪声查询
+        - 图表生成
+      welcome:
+        description: 查询江西省噪声监测数据
+        features:
+          - 查询噪声数据
+          - 生成可视化图表
   agent_platform_layout: environment-grid
 backend:
+  fetchers_enabled: false
+  gis_tools_enabled: false
   tools:
     - get_jiangxi_noise_data
 knowledge:

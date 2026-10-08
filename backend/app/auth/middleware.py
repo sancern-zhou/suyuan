@@ -17,6 +17,7 @@ from .share_access import (
     RESOURCE_PREVIEW_COOKIE,
     RESOURCE_PREVIEW_TICKET,
     RESOURCE_PREVIEW_TICKET_PATH_SEGMENT,
+    SCHEDULED_RESULT_PREVIEW_KIND,
     resource_preview_identity,
 )
 
@@ -47,6 +48,9 @@ _DOCS_PATHS = {"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
 _UNTRUSTED_IDENTITY_HEADERS = {b"x-user-id", b"x-is-admin"}
 _RESOURCE_CONTENT_PATTERN = re.compile(
     r"^/api/sessions/([^/]+)/resources/([^/]+)/content(?:/.*)?$"
+)
+_SCHEDULED_RESULT_CONTENT_PATTERN = re.compile(
+    r"^/api/scheduled-tasks/results/([^/]+)/(?:files|report)(?:/.*)?$"
 )
 
 
@@ -160,22 +164,46 @@ class GatewayAuthenticationMiddleware:
             before, _, remainder = path.partition(marker)
             base_path = before + "/content"
             ticket = remainder.split("/", 1)[0]
+        else:
+            report_marker = f"/report/{RESOURCE_PREVIEW_TICKET_PATH_SEGMENT}/"
+            if report_marker in path:
+                before, _, remainder = path.partition(report_marker)
+                base_path = before + "/report"
+                ticket = remainder.split("/", 1)[0]
         match = _RESOURCE_CONTENT_PATTERN.fullmatch(base_path)
-        if match is None:
-            return False
+        if match is not None:
+            session_id, resource_id = (unquote(value) for value in match.groups())
+            return self._verify_preview_ticket(
+                scope,
+                ticket,
+                "session-resource",
+                resource_preview_identity(session_id, resource_id),
+            )
+        scheduled = _SCHEDULED_RESULT_CONTENT_PATTERN.fullmatch(base_path)
+        if scheduled is not None:
+            return self._verify_preview_ticket(
+                scope,
+                ticket,
+                SCHEDULED_RESULT_PREVIEW_KIND,
+                unquote(scheduled.group(1)),
+            )
+        return False
+
+    def _verify_preview_ticket(
+        self,
+        scope: Scope,
+        ticket: str,
+        kind: str,
+        resource_id: str,
+    ) -> bool:
         if not ticket:
             query = parse_qs(scope.get("query_string", b"").decode("utf-8"))
             ticket = (query.get(RESOURCE_PREVIEW_TICKET) or [""])[0]
         if not ticket:
             ticket = self._resource_preview_cookie(scope)
-        session_id, resource_id = (unquote(value) for value in match.groups())
         return bool(
             ticket
-            and self.share_access.verify(
-                ticket,
-                "session-resource",
-                resource_preview_identity(session_id, resource_id),
-            )
+            and self.share_access.verify(ticket, kind, resource_id)
         )
 
     @staticmethod

@@ -10,8 +10,10 @@ from .ppt_prompt import build_ppt_prompt
 from .expert_prompt import build_expert_analysis_prompt, build_expert_meteorology_prompt, build_expert_prompt
 from .query_prompt import build_query_prompt
 from .query_data_prompt import (
-    build_query_forecast_prompt, build_query_monitoring_prompt,
-    build_query_monitoring_station_prompt, build_query_monitoring_city_prompt,
+    build_query_forecast_prompt,
+    build_query_monitoring_city_prompt,
+    build_query_monitoring_prompt,
+    build_query_monitoring_station_prompt,
 )
 from app.agent.workflow.delegation import build_delegation_contract
 from .knowledge_prompt import build_knowledge_prompt
@@ -32,6 +34,7 @@ from .deliberation_prompt import (
     build_deliberation_reviewer_prompt,
 )
 from .tool_registry import get_tools_by_mode
+from .data_source_map import render_data_source_map
 import structlog
 
 logger = structlog.get_logger()
@@ -113,7 +116,30 @@ AgentMode = Literal[
 ]
 
 
+# 数据源地图对取数/研判/编排模式生效；纯产出型模式（ppt/board 等）不需要。
+DATA_SOURCE_MAP_MODES = {"query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "expert", "expert_meteorology", "expert_analysis", "report"}
+
+
+def _with_data_source_map(prompt: str, mode: str) -> str:
+    if mode not in DATA_SOURCE_MAP_MODES:
+        return prompt
+    source_map = render_data_source_map()
+    if not source_map:
+        return prompt
+    return f"{prompt.rstrip()}\n\n{source_map}".rstrip() + "\n"
+
+
 def build_react_system_prompt(
+    mode: AgentMode,
+    *args,
+    **kwargs,
+) -> str:
+    """构建模式系统提示词，并按模式追加数据源地图（若 registry 已配置）。"""
+    prompt = _build_react_system_prompt(mode, *args, **kwargs)
+    return _with_data_source_map(prompt, str(mode))
+
+
+def _build_react_system_prompt(
     mode: AgentMode,
     available_tools: Optional[List[str]] = None,
     user_preferences: Optional[dict] = None,

@@ -45,13 +45,15 @@ class ScheduledTaskService:
         claim_storage: EventClaimStorage | None = None,
         event_delivery: EventTaskDelivery | None = None,
         conversation_persistence=None,
+        recover_interrupted: bool = True,
     ):
         # 初始化存储层
         self.task_storage = task_storage or TaskStorage()
         self.execution_storage = execution_storage or self._default_execution_storage()
         self.claim_storage = claim_storage or EventClaimStorage()
         self.event_delivery = event_delivery or EventTaskDelivery()
-        self._recover_interrupted_executions()
+        if recover_interrupted:
+            self._recover_interrupted_executions()
 
         configured_event_concurrency = os.getenv(
             "SCHEDULED_EVENT_MAX_CONCURRENT_TASKS",
@@ -781,14 +783,17 @@ def get_scheduled_task_service() -> ScheduledTaskService:
     return _service_instance
 
 
-def init_service(agent_factory: Optional[callable] = None):
+def init_service(agent_factory: Optional[callable] = None, recover_interrupted: bool = True):
     """初始化服务"""
     global _service_instance
     if _service_instance is not None:
         logger.warning("ScheduledTaskService already initialized")
         return _service_instance
 
-    _service_instance = ScheduledTaskService(agent_factory=agent_factory)
+    _service_instance = ScheduledTaskService(
+        agent_factory=agent_factory,
+        recover_interrupted=recover_interrupted,
+    )
     logger.info("ScheduledTaskService initialized")
     return _service_instance
 

@@ -103,7 +103,10 @@ def test_ops_prompt_generates_and_validates_audit_reports_directly():
     assert "当前模式直接完成数据抽取、规则/语义复核、结果落盘和运维工单审核正式报告" in prompt
 
 
-def test_social_mode_exposes_only_create_report_package_for_reporting():
+def test_social_mode_exposes_only_create_report_package_for_reporting(monkeypatch):
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "project_id", "default")
     tools = get_tools_by_mode("social")
 
     assert "create_business_chart" in tools

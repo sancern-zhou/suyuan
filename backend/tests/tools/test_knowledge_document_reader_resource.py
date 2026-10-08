@@ -44,10 +44,12 @@ async def test_reader_materializes_original_and_declares_session_resource(
     async def fake_session():
         yield object()
 
-    import app.db.database as database_module
+    import app.db.knowledge_database as knowledge_database_module
     import app.knowledge_base.service as service_module
 
-    monkeypatch.setattr(database_module, "async_session", fake_session)
+    monkeypatch.setattr(
+        knowledge_database_module, "knowledge_async_session", fake_session
+    )
     monkeypatch.setattr(service_module, "KnowledgeBaseService", _FakeKnowledgeBaseService)
     resource_service = SessionResourceService(storage_root=tmp_path / "resource_content")
     reader = KnowledgeDocumentReader(resource_service=resource_service)

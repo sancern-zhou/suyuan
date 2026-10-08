@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import hashlib
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,25 @@ from app.agent.session.session_resolver import (
     load_session_for_mode,
     replace_session_transcript_for_mode,
 )
+from app.utils.path_config import get_data_registry, resolve_agent_path
+
+
+def resolve_broadcast_media_path(media_path: str | Path) -> Path:
+    """Resolve a broadcast path to the user-facing report artifact.
+
+    ReportPackage tools expose ``report.qmd`` as their source ``file_path``
+    while rendered DOCX/PDF files live beside it.  Sending that source file
+    makes App preview the Markdown source instead of the generated report.
+    Only the canonical ReportPackage layout is upgraded; ordinary Markdown
+    attachments remain untouched.
+    """
+    source = resolve_agent_path(media_path)
+    if source.name.lower() == "report.qmd":
+        for rendition_name in ("report.docx", "report.pdf"):
+            rendition = source.with_name(rendition_name)
+            if rendition.is_file():
+                return rendition
+    return source
 
 
 def broadcast_session_id(social_user_id: str) -> str:
@@ -91,14 +111,22 @@ async def persist_broadcast_context(
     task_id = str(metadata.get("task_id") or "manual")
     event_id = str(metadata.get("event_id") or hashlib.sha256(message.encode("utf-8")).hexdigest()[:16])
     message_id = f"broadcast:{task_id}:{event_id}:{social_user_id}"
-    attachments = [
-        {
-            "name": Path(media_path).name or "attachment",
-            "path": media_path,
+    attachment_root = get_data_registry() / "social" / "broadcast_attachments" / hashlib.sha256(
+        message_id.encode("utf-8")
+    ).hexdigest()[:32]
+    attachments = []
+    for media_path in media:
+        source = resolve_broadcast_media_path(media_path)
+        if not source.is_file():
+            continue
+        attachment_root.mkdir(parents=True, exist_ok=True)
+        target = attachment_root / source.name
+        shutil.copy2(source, target)
+        attachments.append({
+            "name": target.name or "attachment",
+            "path": str(target),
             "type": "file",
-        }
-        for media_path in media
-    ]
+        })
 
     if not any(
         item.get("id") == message_id

@@ -55,7 +55,7 @@ from app.utils.path_config import (
     resolve_agent_path,
     is_agent_sensitive_path,
 )
-from app.utils.font_utils import BROWSER_CHART_FONT_FAMILY, select_preferred_chinese_font_path
+from app.utils.font_utils import BROWSER_CHART_FONT_FAMILY, select_preferred_chinese_font_path, get_font_manager
 from app.tools.visualization.create_business_chart.theme import REPORT_THEME, SERIES_COLORS, matplotlib_report_style
 
 logger = structlog.get_logger()
@@ -109,11 +109,9 @@ class ExecutePythonTool(LLMTool):
                 "不得将自行写入或推断得到的中间数据路径传给后续工具。"
                 "生成 Excel、Word、PDF 等交付文件时必须先调用 artifact_path(filename) 获取输出路径，"
                 "再保存到该路径；工具会自动归档并返回真实 file_path。"
-                "Agent 须在调用前按场景使用 read_file(path=...) 阅读对应规范："
-                "数据处理/Excel 读取 backend/app/tools/utility/execute_python_data_manual.md，"
-                "静态图表读取 backend/app/tools/utility/execute_python_chart_manual.md，"
-                "报告/Office 交付读取 backend/app/tools/utility/execute_python_report_manual.md；"
-                "混合任务须阅读全部命中的场景规范。"
+                "数据/图表/报告三份规范手册位于 backend/app/tools/utility/ 下的 execute_python_data_manual.md、"
+                "execute_python_chart_manual.md、execute_python_report_manual.md，仅供配备 read_file 的模式（专家/报告）深入查阅；"
+                "上文要点（input_files/load_data/save_data/artifact_path）已覆盖数据质检与合并场景，问数模式直接编写脚本即可。"
                 "⚠️ **图表选择策略**："
                 "① 已支持的专用业务图型 → 所有模式必须使用 create_business_chart，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具；"
                 "② 其他通用/自定义图：专家/报告模式优先使用 execute_python，自动应用统一报告主题；问数模式优先使用 execute_echarts_python；"
@@ -537,6 +535,9 @@ class ExecutePythonTool(LLMTool):
                 )
                 if shapes:
                     result["data_shapes"] = shapes
+                    register_shapes = getattr(context, "register_data_shapes", None)
+                    if callable(register_shapes):
+                        register_shapes(shapes)
                 if result.get("success", False):
                     result["summary"] = (
                         f"{result.get('summary', '✅ 工具已执行完成')} | "
@@ -939,6 +940,9 @@ class ExecutePythonTool(LLMTool):
                 self._extract_python_data_shapes(stdout or ""),
                 context,
             )
+            register_shapes = getattr(context, "register_data_shapes", None)
+            if data_shapes and callable(register_shapes):
+                register_shapes(data_shapes)
             output = stdout or ""
             if stderr:
                 output += f"\n错误输出:\n{stderr}"
@@ -1239,9 +1243,20 @@ class ExecutePythonTool(LLMTool):
                 synced_rw_bind_destinations.append(session_data_dir)
                 sync_dirs.append((staged_session_dir, session_data_dir, original_relative_paths))
 
+            # The data registry is the agent's shared read-only data area. It
+            # is mounted at both the canonical host path (for absolute paths)
+            # and the project-relative path used by agent code. Other host
+            # directories remain explicit-input-only mounts below.
+            registry_dir = Path(get_data_registry()).resolve()
+            self._append_bubblewrap_parent_dirs(command, registry_dir)
+            command.extend(["--ro-bind", str(registry_dir), str(registry_dir)])
+            mounted_destinations.add(str(registry_dir))
+            command.extend(["--ro-bind", str(registry_dir), "/sandbox/backend/backend_data_registry"])
+            mounted_destinations.add("/sandbox/backend/backend_data_registry")
+
             # Matplotlib helpers write to the canonical images path inside the
-            # sandbox. Bind a staging directory there, then publish only the
-            # generated files after the subprocess exits successfully.
+            # sandbox. Seed the staging directory with existing registry
+            # images so the writable output mount does not hide prior assets.
             images_dir = Path(get_images_dir()).resolve()
             staged_images_dir = Path(working_dir) / "images_output"
             staged_images_dir.mkdir(parents=True, exist_ok=True)
@@ -1271,17 +1286,15 @@ class ExecutePythonTool(LLMTool):
                 (staged_images_dir, images_dir, staged_images_original_paths)
             )
 
-            preferred_font_path = select_preferred_chinese_font_path()
-            if preferred_font_path is not None:
-                preferred_font_path = preferred_font_path.resolve()
-            if preferred_font_path is not None and preferred_font_path.is_file():
-                staged_font_path = (
-                    Path(working_dir)
-                    / "_suyuan_assets"
-                    / "preferred_chinese_font.ttf"
-                )
-                staged_font_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(preferred_font_path, staged_font_path)
+            preferred_font_path = Path(get_font_manager().FONT_FILE_PATHS[0]).resolve()
+            if preferred_font_path.is_file():
+                self._append_bubblewrap_parent_dirs(command, preferred_font_path.parent)
+                command.extend([
+                    "--ro-bind",
+                    str(preferred_font_path),
+                    str(preferred_font_path),
+                ])
+                mounted_destinations.add(str(preferred_font_path))
 
             for index, value in enumerate(candidate_paths):
                 raw_path = Path(value).expanduser()
@@ -1674,9 +1687,8 @@ def artifact_path(filename: str) -> str:
             if first_visual_path:
                 llm_resume["tool_hint"] = (
                     f"Use read_file(path='{first_visual_path}', as_multimodal_attachment=true) "
-                    "to inspect this image internally. Do not place this server "
-                    "path in the final answer or Markdown image URL; generated "
-                    "visuals are published through session resources."
+                    "to inspect this image. Do not place this server path in your reply; "
+                    "reference the published session resource instead."
                 )
         if llm_resume:
             result["llm_resume"] = llm_resume
@@ -1948,12 +1960,14 @@ def artifact_path(filename: str) -> str:
         generator: str,
     ) -> List[Dict[str, Any]]:
         """Convert parsed ECharts options into frontend visuals."""
+        from app.utils.echarts_layout import normalize_echarts_layout
         from app.utils.echarts_legend import ensure_echarts_legend
 
         visuals: List[Dict[str, Any]] = []
         for index, echarts_data in enumerate(echarts_options):
             try:
                 echarts_data = ensure_echarts_legend(echarts_data)
+                echarts_data = normalize_echarts_layout(echarts_data)
                 echarts_data["textStyle"] = {
                     **(echarts_data.get("textStyle") or {}),
                     "fontFamily": BROWSER_CHART_FONT_FAMILY,
@@ -2341,6 +2355,7 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
             return code
 
         images_dir_literal = repr(str(get_images_dir()))
+        preferred_font_path_literal = repr(str(get_font_manager().FONT_FILE_PATHS[0]))
         save_support_code = """# ===== Matplotlib 图片保存捕获（自动注入） =====
 import os
 from matplotlib.figure import Figure
@@ -2349,6 +2364,7 @@ import matplotlib.pyplot as _suyuan_plt
 from app.utils.environment_charts import (
     AQI_COLORS, AQI_LABELS, MISSING_COLOR, aqi_color, pollutant_color,
     get_environment_limit, get_pollutant_scale, add_standard_limit, legend_below,
+    figure_content_overflow,
 )
 
 REPORT_THEME = __SUYUAN_REPORT_THEME__
@@ -2376,20 +2392,8 @@ def _suyuan_configure_matplotlib_chinese_font(force_default=False):
         from matplotlib import font_manager as _suyuan_font_manager
         from matplotlib.ft2font import FT2Font
         current_fonts = list(_suyuan_plt.rcParams.get('font.sans-serif', []))
-        default_font_paths = [
-            '/sandbox/_suyuan_assets/preferred_chinese_font.ttf',
-            '/home/xckj/.local/share/fonts/方正小标宋简.TTF',
-            '/usr/share/fonts/gb-cjk/GB_XBS_GB18030.TTF',
-            '/usr/share/fonts/gb-cjk/GB_XBS_GBT2312.TTF',
-            '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc',
-            '/usr/share/fonts/google-noto-cjk/NotoSansCJKsc-Regular.otf',
-            '/usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf',
-            '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-            '/usr/share/fonts/truetype/arphic/uming.ttc',
-            '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
-        ]
-        default_font_path = next((path for path in default_font_paths if os.path.exists(path)), None)
-        if not default_font_path:
+        default_font_path = __SUYUAN_PREFERRED_FONT_PATH__
+        if not os.path.exists(default_font_path):
             return
         _suyuan_font_manager.fontManager.addfont(default_font_path)
         default_font_prop = _suyuan_font_manager.FontProperties(fname=default_font_path)
@@ -2419,7 +2423,7 @@ def _suyuan_configure_matplotlib_chinese_font(force_default=False):
                 selected_name = font_prop.get_name()
                 selected_prop = font_prop
             elif requested_font and not _SUYUAN_FONT_WARNING_EMITTED:
-                print(f'字体提示：指定字体不支持中文，已回退为小标宋默认字体。font={requested_font}')
+                print(f'字体提示：指定字体不支持中文，已回退为方正小标宋简。font={requested_font}')
                 _SUYUAN_FONT_WARNING_EMITTED = True
 
         if not selected_name:
@@ -2452,6 +2456,18 @@ def _suyuan_normalize_matplotlib_label_text(value):
         ('CO₂', 'CO$_2$'),
         ('CH₄', 'CH$_4$'),
         ('N₂O', 'N$_2$O'),
+        ('SO₄²⁻', 'SO$_4^{2-}$'),
+        ('NO₃⁻', 'NO$_3^-$'),
+        ('NH₄⁺', 'NH$_4^+$'),
+        ('SO₄', 'SO$_4$'),
+        ('NO₃', 'NO$_3$'),
+        ('NH₄', 'NH$_4$'),
+        ('Ca²⁺', 'Ca$^{2+}$'),
+        ('Mg²⁺', 'Mg$^{2+}$'),
+        ('K⁺', 'K$^+$'),
+        ('Na⁺', 'Na$^+$'),
+        ('Cl⁻', 'Cl$^-$'),
+        ('F⁻', 'F$^-$'),
         ('μg/m³', 'μg/m$^3$'),
         ('ug/m³', 'ug/m$^3$'),
         ('/m³', '/m$^3$'),
@@ -2471,6 +2487,27 @@ def _suyuan_normalize_matplotlib_figure_text(fig):
             normalized = _suyuan_normalize_matplotlib_label_text(original)
             if normalized != original:
                 text.set_text(normalized)
+    except Exception:
+        pass
+    try:
+        import functools as _suyuan_functools
+        for ax in fig.axes:
+            for axis in (ax.xaxis, ax.yaxis):
+                for formatter in (axis.get_major_formatter(), axis.get_minor_formatter()):
+                    seq = getattr(formatter, 'seq', None)
+                    if isinstance(seq, list):
+                        formatter.seq = [
+                            _suyuan_normalize_matplotlib_label_text(item) if isinstance(item, str) else item
+                            for item in seq
+                        ]
+                    func = getattr(formatter, 'func', None)
+                    if isinstance(func, _suyuan_functools.partial):
+                        mappings = [arg for arg in func.args if isinstance(arg, dict)]
+                        mappings.extend(value for value in (func.keywords or {}).values() if isinstance(value, dict))
+                        for mapping in mappings:
+                            for key, value in mapping.items():
+                                if isinstance(value, str):
+                                    mapping[key] = _suyuan_normalize_matplotlib_label_text(value)
     except Exception:
         pass
 
@@ -2509,6 +2546,11 @@ def _suyuan_patched_figure_savefig(self, fname, *args, **kwargs):
     _suyuan_configure_matplotlib_chinese_font()
     _suyuan_normalize_matplotlib_figure_text(self)
     _suyuan_apply_chinese_font_to_figure(self)
+    try:
+        if kwargs.get('bbox_inches') is None and figure_content_overflow(self):
+            kwargs['bbox_inches'] = 'tight'
+    except Exception:
+        pass
     result = _suyuan_original_figure_savefig(self, fname, *args, **kwargs)
     _suyuan_emit_chart_saved(fname)
     return result
@@ -2544,10 +2586,11 @@ def save_chart(fig, filename, dpi=None, bbox_inches='tight', facecolor='white'):
     return filepath
 
 """.replace("__SUYUAN_IMAGES_DIR__", images_dir_literal).replace(
-            "__SUYUAN_REPORT_THEME__", repr(REPORT_THEME)
-        ).replace("__SUYUAN_SERIES_COLORS__", repr(SERIES_COLORS)).replace(
-            "__SUYUAN_REPORT_STYLE__", repr(matplotlib_report_style())
-        )
+            "__SUYUAN_PREFERRED_FONT_PATH__",
+            preferred_font_path_literal,
+        ).replace("__SUYUAN_REPORT_THEME__", repr(REPORT_THEME)).replace(
+            "__SUYUAN_SERIES_COLORS__", repr(SERIES_COLORS)
+        ).replace("__SUYUAN_REPORT_STYLE__", repr(matplotlib_report_style()))
 
         injected_code = save_support_code + "\n" + code
         logger.info(
@@ -3286,11 +3329,9 @@ def merge_excel_with_charts(file_paths, output_path):
                 "通过 load_data(file_path) 加载，较大计算结果通过 save_data(...) 保存为新的 file_path，避免直接输出大量明细。"
                 "如果任务只是查看文件、搜索文本、检查进程或调用现成 CLI，优先使用 bash；"
                 "需要循环、条件分支、解析转换、程序化处理或可靠地产出文件时，优先使用 execute_python。"
-                "Agent 必须在调用 execute_python 前按任务用途调用 read_file(path=...) 阅读对应规范："
-                "数据处理/Excel 使用 backend/app/tools/utility/execute_python_data_manual.md；"
-                "matplotlib/seaborn 静态图使用 backend/app/tools/utility/execute_python_chart_manual.md；"
-                "报告、QMD、DOCX、PPTX、PDF 使用 backend/app/tools/utility/execute_python_report_manual.md；"
-                "混合任务或代码同时覆盖多个场景时，须阅读全部命中的规范。"
+                "数据/图表/报告规范手册位于 backend/app/tools/utility/ 下的 execute_python_data_manual.md、"
+                "execute_python_chart_manual.md、execute_python_report_manual.md，供配备 read_file 的模式（专家/报告）按任务用途查阅；"
+                "数据处理要点已包含在下文，问数模式直接编写脚本即可。"
                 "每次调用是独立环境，变量和文件挂载不跨调用保留；每次读取输入文件都须通过 input_files 声明。"
                 "声明文件经会话权限校验后挂载，代码中的 input_files 列表提供规范化绝对路径，支持循环读取和路径运算。"
                 "用 load_data(file_path) 读取会话数据文件，"
@@ -3303,7 +3344,7 @@ def merge_excel_with_charts(file_paths, output_path):
                 "生成 Excel、Word、PDF 等交付文件必须先调用 artifact_path(filename) 获取输出路径并保存；"
                 "已支持的专用业务图型在所有模式必须使用 create_business_chart，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具。"
                 "其他图表：专家/报告模式的静态分析和正式报告图表优先使用 execute_python；问数模式绘图优先使用 execute_echarts_python。"
-                "绘图前阅读 backend/app/tools/utility/execute_python_chart_manual.md；matplotlib/seaborn 自动应用与报告图表一致的主题，"
+                "绘图规范详见 execute_python_chart_manual.md（配备 read_file 的模式查阅）；matplotlib/seaborn 自动应用与报告图表一致的主题，"
                 "可按分析需要自主选择图型，无需用户预先指定；默认一个独立图表一个图片文件，同主题的趋势、分布、排名分别保存。"
                 "一次调用可保存多张图；仅联合阅读确有必要或用户明确要求时使用多子图，并保证报告插入后的可读性。"
                 "专家/报告静态图按报告正文插入尺寸设计画布、比例和字号，详见手册报告插图尺寸与比例。"
@@ -3342,6 +3383,8 @@ def merge_excel_with_charts(file_paths, output_path):
                             "只能向后续工具传递该返回值，不能传递其他文件写入方式产生的中间路径。"
                             "Excel、Word、PDF 等交付文件必须先使用 output_path = artifact_path(filename)，"
                             "再保存到 output_path，禁止自行拼接绝对输出路径。"
+                            "结构化结果若需被后续调用或其他工具读取，代码必须使用 path = save_data(data, schema=...)；"
+                            "只能向后续工具传递该返回值，不能传递其他文件写入方式产生的中间路径。"
                         )
                     },
                     "timeout": {
@@ -3370,7 +3413,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "其他通用图：问数模式优先使用 execute_echarts_python；专家/报告模式优先使用 execute_python，ECharts 辅助交互探索；"
             "② 前端交互式图表/复杂数据可视化 → 使用 execute_echarts_python；"
             "③ 深度分析与报告静态图 → 使用 execute_python + matplotlib/seaborn，默认一个独立图表一个图片文件。"
-            "只发布交互图资源，在右侧面板展示；不生成静态图片，不插入对话正文，不使用 [[chart:...]] 占位符。"
+            "交互图通过统一资源发布；最终回复使用 [[chart:<visual_id>]] 在相关分析段落之间插入图表，visual_id 取返回的 visuals.id。"
             "需要正文或报告静态图时，通用图通过 execute_python 绘制，已支持的业务图型必须使用 create_business_chart。"
             "通用计算和文件生成仍使用 execute_python。"
         )
@@ -3434,7 +3477,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
         result.setdefault("resources", []).extend(
             resources_for_visuals(echarts_visuals, tool_name=self.name)
         )
-        result["summary"] = f"✅ ECharts 图表生成完成：{len(echarts_visuals)} 个"
+        result["summary"] = f"✅ ECharts 图表生成完成：{len(echarts_visuals)} 个。最终回复使用 [[chart:<visual_id>]] 按分析顺序插入图表，ID 取 visuals.id。"
         return result
 
     def get_function_schema(self) -> Dict[str, Any]:
@@ -3451,10 +3494,13 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                 "每次调用是独立环境；读取输入文件须通过 input_files 声明，代码中的同名列表提供校验后的绝对路径。"
                 "仅输出 ECharts 图表配置：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
-                "图表通过统一会话资源目录发布为 chart-spec，只在右侧面板展示交互图。"
-                "不生成静态图片，不在对话正文插图，不使用 [[chart:...]] 占位符或拼接图片 URL。"
-                "正文说明分析结论，可告知用户在右侧面板查看交互图。"
+                "图表通过统一会话资源目录发布为 chart-spec，Web 与 App 共用交互图表。"
+                "最终回复必须用 [[chart:<visual_id>]] 安排图表位置，visual_id 必须取工具返回的 visuals.id，不得编造。"
+                "每个标记独占一行并与上下段落空行分隔；按分析逻辑交替组织文字与图表，每张图后说明结论。"
+                "不在正文输出配置 JSON、HTML 或拼接图片 URL；不要要求用户到右侧面板寻找图表。"
                 "需要正文或 Word/QMD 报告静态图时，通用图通过 execute_python 绘制，已支持的业务图型必须使用 create_business_chart。"
+                "布局要求：图例（legend）水平置于横坐标刻度下方（不得与刻度重叠），"
+                "纵轴名称（yAxis.name）置于图表左侧，横轴名称（xAxis.name）置于横轴右侧。"
                 "多图时输出多行纯 JSON。禁止输出 CHART_1: 前缀、Markdown 代码块、解释文字包裹 JSON。"
                 "数据分析、清洗、中间计算和文件生成请使用 execute_python。"
             ),
