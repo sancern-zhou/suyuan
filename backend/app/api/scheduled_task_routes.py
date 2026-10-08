@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from app.auth.dependencies import optional_current_user, require_current_user
+from app.auth.identity_matching import visible_owner_ids
 from app.auth.models import CurrentUser
 from app.scheduled_tasks import (
     get_scheduled_task_service,
@@ -359,7 +360,10 @@ def _is_scheduled_task_admin(user: CurrentUser) -> bool:
 
 
 def _can_access_task(task: ScheduledTask, user: CurrentUser) -> bool:
-    return _is_scheduled_task_admin(user) or task.owner_user_id == user.id
+    if _is_scheduled_task_admin(user):
+        return True
+    user_ids = set(visible_owner_ids(user.id))
+    return bool(set(visible_owner_ids(task.owner_user_id)) & user_ids)
 
 
 def _can_view_task(task: ScheduledTask, user: CurrentUser) -> bool:
@@ -374,7 +378,10 @@ def _can_view_task(task: ScheduledTask, user: CurrentUser) -> bool:
         return True
 
     if task.broadcast_enabled:
-        return not task.target_user_ids or user.id in task.target_user_ids
+        if not task.target_user_ids:
+            return True
+        user_ids = set(visible_owner_ids(user.id))
+        return any(str(target) in user_ids for target in task.target_user_ids)
 
     return False
 
