@@ -599,14 +599,16 @@ class SessionRepository:
         """
         增量同步会话消息。
 
-        只追加数据库中尚不存在的尾部消息，避免每轮对话都执行
+        只追加数据库中尚不存在的消息，避免每轮对话都执行
         DELETE FROM session_messages WHERE session_id = ... 导致锁等待和
         statement timeout。
 
         约定：
-        - 当前会话历史是 append-only 时走增量路径。
-        - 如果传入历史短于数据库已有消息，说明调用方可能做了压缩/截断，
-          此方法不删除旧消息，交由显式全量重写接口处理。
+        - 以消息身份键（role/msg_type/content/data/timestamp）对账，而不是
+          按长度+位置对账。持久化视图可能过滤或合并消息（例如 thought 不
+          落持久化 transcript），长度对账会把表示差异误判为"没有新消息"，
+          静默丢失整轮对话。
+        - 传入历史短于数据库已有消息时不删除旧消息，只追加新消息。
         """
         if not conversation_history:
             return True
@@ -614,33 +616,76 @@ class SessionRepository:
         started = time.monotonic()
         try:
             async with AsyncSession(self.engine) as session:
-                count_started = time.monotonic()
+                rows_started = time.monotonic()
                 stmt = (
-                    select(func.max(SessionMessageDB.sequence_number))
+                    select(
+                        SessionMessageDB.role,
+                        SessionMessageDB.msg_type,
+                        SessionMessageDB.content,
+                        SessionMessageDB.data,
+                        SessionMessageDB.timestamp,
+                        SessionMessageDB.sequence_number,
+                    )
                     .where(SessionMessageDB.session_id == session_id)
+                    .order_by(SessionMessageDB.sequence_number)
                 )
                 result = await session.execute(stmt)
-                max_seq = result.scalar()
-                existing_count = (max_seq + 1) if max_seq is not None else 0
-                count_ms = round((time.monotonic() - count_started) * 1000, 2)
+                existing_rows = result.all()
+                existing_count = len(existing_rows)
+                max_seq = max(
+                    (row.sequence_number for row in existing_rows),
+                    default=-1,
+                )
+                existing_keys = {
+                    self._db_message_identity_key(row) for row in existing_rows
+                }
+                rows_read_ms = round((time.monotonic() - rows_started) * 1000, 2)
 
-                if existing_count >= len(conversation_history):
-                    logger.debug(
+                diff_started = time.monotonic()
+                new_messages: List[Dict[str, Any]] = []
+                for msg in conversation_history:
+                    key = self._incoming_message_identity_key(msg)
+                    if key in existing_keys:
+                        continue
+                    existing_keys.add(key)
+                    new_messages.append(msg)
+                diff_ms = round((time.monotonic() - diff_started) * 1000, 2)
+
+                if not new_messages:
+                    if existing_count > len(conversation_history):
+                        logger.warning(
+                            "conversation_history_incoming_shorter_than_db",
+                            session_id=session_id,
+                            existing_count=existing_count,
+                            incoming_count=len(conversation_history),
+                            hint="持久化视图与数据库表示存在差异，已按身份键确认无新消息",
+                        )
+                    logger.info(
                         "conversation_history_incremental_noop",
                         session_id=session_id,
                         existing_count=existing_count,
                         incoming_count=len(conversation_history),
-                        count_ms=count_ms,
+                        rows_read_ms=rows_read_ms,
+                        diff_ms=diff_ms,
                         total_ms=round((time.monotonic() - started) * 1000, 2),
                         **self._pool_status(),
                     )
                     return True
 
-                new_messages = conversation_history[existing_count:]
+                if existing_count > len(conversation_history):
+                    logger.warning(
+                        "conversation_history_incoming_shorter_than_db",
+                        session_id=session_id,
+                        existing_count=existing_count,
+                        incoming_count=len(conversation_history),
+                        appending_count=len(new_messages),
+                        hint="传入历史短于数据库，但按身份键识别出新消息，仅追加不删除",
+                    )
 
                 rows_started = time.monotonic()
                 rows = []
-                for offset, msg in enumerate(new_messages, start=existing_count):
+                for offset, msg in enumerate(new_messages):
+                    sequence_number = max_seq + 1 + offset
                     role, msg_type = self._resolve_role_and_type(msg)
                     timestamp = self._normalize_db_timestamp(
                         msg.get("timestamp"),
@@ -658,7 +703,7 @@ class SessionRepository:
                             "data": msg_data,
                             "timestamp": timestamp,
                             "metadata": self._message_metadata(msg),
-                            "sequence_number": offset,
+                            "sequence_number": sequence_number,
                         }
                     )
                 rows_build_ms = round((time.monotonic() - rows_started) * 1000, 2)
@@ -677,7 +722,8 @@ class SessionRepository:
                     existing_count=existing_count,
                     appended_count=len(new_messages),
                     incoming_count=len(conversation_history),
-                    count_ms=count_ms,
+                    rows_read_ms=rows_read_ms,
+                    diff_ms=diff_ms,
                     rows_build_ms=rows_build_ms,
                     insert_ms=insert_ms,
                     commit_ms=commit_ms,
@@ -694,6 +740,52 @@ class SessionRepository:
                 error_type=type(e).__name__
             )
             return False
+
+    @staticmethod
+    def _canonical_json(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+    def _db_message_identity_key(self, row: Any) -> tuple:
+        return (
+            row.role,
+            row.msg_type,
+            self._canonical_json(self._deserialize_content(row.content)),
+            self._canonical_json(row.data),
+            row.timestamp.isoformat() if row.timestamp is not None else None,
+        )
+
+    def _incoming_message_identity_key(self, msg: Dict[str, Any]) -> tuple:
+        role, msg_type = self._resolve_role_and_type(msg)
+        return (
+            role,
+            msg_type,
+            self._canonical_json(self._serialize_content(msg.get("content"))),
+            self._canonical_json(self._message_data(msg)),
+            self._identity_timestamp(msg.get("timestamp")),
+        )
+
+    @staticmethod
+    def _identity_timestamp(value: Any) -> Optional[str]:
+        """Deterministic naive-UTC isoformat for identity comparison.
+
+        Unlike _normalize_db_timestamp, a missing/invalid timestamp maps to
+        None instead of "now", so re-saving the same message stays idempotent.
+        """
+        if not value:
+            return None
+        try:
+            if isinstance(value, datetime):
+                parsed = value
+            elif isinstance(value, str):
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            else:
+                return None
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed.isoformat()
+        except (ValueError, TypeError):
+            return None
+
 
     async def add_message(
         self,
