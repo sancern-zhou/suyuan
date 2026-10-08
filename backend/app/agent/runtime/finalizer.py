@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, AsyncGenerator, Optional
 
+from app.agent.resources.chart_placeholders import normalize_chart_placeholders
+
 from .conversation_writer import ConversationWriter
 from .event_bus import RuntimeEventBus
 from .types import PlannerResult, RunState
@@ -23,6 +25,7 @@ class Finalizer:
         thought: Any = None,
         stream_answer: bool = True,
     ) -> AsyncGenerator[dict, None]:
+        answer = await normalize_chart_placeholders(answer or "", state.session_id)
         state.response_text = answer or ""
         state.task_completed = True
         self.writer.add_final_assistant_message(state, planner_result, thought=thought)
