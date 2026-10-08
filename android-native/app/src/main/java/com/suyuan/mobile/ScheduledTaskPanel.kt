@@ -2,6 +2,7 @@ package com.suyuan.mobile
 
 import android.app.DatePickerDialog
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -118,16 +119,105 @@ fun ScheduledTaskPanel(state: AppUiState, viewModel: AppViewModel, requestedTask
         }
     }
     reportUrl?.let { target ->
+        var downloads by remember(target) { mutableStateOf<List<UploadedAttachment>>(emptyList()) }
+        var formatsLoading by remember(target) { mutableStateOf(true) }
+        var downloadError by remember(target) { mutableStateOf<String?>(null) }
+        var downloading by remember(target) { mutableStateOf<String?>(null) }
+        var reloadFormats by remember(target) { mutableStateOf(0) }
+        val downloadContext = LocalContext.current
+        LaunchedEffect(target, reloadFormats) {
+            formatsLoading = true
+            downloadError = null
+            try {
+                downloads = viewModel.reportDownloadFormats(target.substringAfter("/results/").substringBefore("/report/"))
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                downloadError = failure.message ?: "下载格式加载失败"
+            } finally { formatsLoading = false }
+        }
         Dialog(onDismissRequest = { reportUrl = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             Surface(Modifier.fillMaxSize().padding(8.dp), color = Color.White) {
                 Column {
                     TextButton(onClick = { reportUrl = null }) { Text("关闭报告") }
-                    AndroidView(factory = { WebView(it).apply { settings.javaScriptEnabled = false; settings.useWideViewPort = true; settings.loadWithOverviewMode = true; settings.builtInZoomControls = true; settings.displayZoomControls = false; loadUrl(target) } }, modifier = Modifier.weight(1f).fillMaxWidth())
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("docx" to "Word", "html" to "HTML").forEach { (format, label) ->
+                            val file = downloads.firstOrNull { it.format == format }
+                            OutlinedButton(modifier = Modifier.weight(1f), enabled = file != null && !formatsLoading && downloading == null,
+                                onClick = {
+                                    file?.let {
+                                        downloading = format
+                                        viewModel.downloadAttachment(downloadContext, it) { success ->
+                                            downloading = null
+                                            android.widget.Toast.makeText(downloadContext, if (success) "已保存到下载/许昌环境Agent" else "下载失败，请重试", android.widget.Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                }) {
+                                Text(if (downloading == format) "下载中…" else "下载 $label", fontSize = 13.sp)
+                            }
+                        }
+                    }
+                    if (formatsLoading) Text("正在加载下载格式…", fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp))
+                    else if (downloadError != null) Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Text(downloadError.orEmpty(), color = Color(0xFFB42318), fontSize = 12.sp, modifier = Modifier.weight(1f).padding(start = 16.dp))
+                        TextButton(onClick = { reloadFormats++ }) { Text("重试") }
+                    }
+                    else if (downloads.none { it.format == "docx" }) Text("此报告尚未生成 Word 文件", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(horizontal = 16.dp))
+                    AndroidView(factory = { WebView(it).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.useWideViewPort = false
+                        settings.loadWithOverviewMode = false
+                        settings.builtInZoomControls = true
+                        settings.displayZoomControls = false
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageFinished(view: WebView, url: String) {
+                                super.onPageFinished(view, url)
+                                view.evaluateJavascript(MOBILE_REPORT_STYLE, null)
+                            }
+                        }
+                        loadUrl(target)
+                    } }, modifier = Modifier.weight(1f).fillMaxWidth())
                 }
             }
         }
     }
 }
+
+private val MOBILE_REPORT_STYLE = """
+(function(){
+  var viewport=document.querySelector('meta[name=viewport]');
+  if(!viewport){viewport=document.createElement('meta');viewport.name='viewport';document.head.appendChild(viewport);}
+  viewport.content='width=device-width,initial-scale=1,maximum-scale=5,viewport-fit=cover';
+  var style=document.getElementById('suyuan-mobile-report-style');
+  if(!style){style=document.createElement('style');style.id='suyuan-mobile-report-style';document.head.appendChild(style);}
+  style.textContent=`
+    html,body{width:100%!important;max-width:100%!important;margin:0!important;padding:0!important;overflow-x:hidden!important;background:#fff!important}
+    body{font-size:16px!important;line-height:1.75!important;color:#202124!important}
+    *,*::before,*::after{box-sizing:border-box}
+    #quarto-content,.page-columns,.page-rows{display:block!important;grid-template-columns:none!important;column-count:1!important;width:100%!important;max-width:100%!important;margin:0!important;padding:0!important}
+    main,main.content{display:block!important;float:none!important;column-count:1!important;width:100%!important;min-width:0!important;max-width:100%!important;margin:0!important;padding:16px!important}
+    main p,main section,main .columns,main .column{float:none!important;column-count:1!important;width:auto!important;min-width:0!important;max-width:100%!important}
+    main .columns{display:block!important}
+    #quarto-sidebar,.sidebar,.margin-sidebar,.page-navigation{display:none!important}
+    h1,h2,h3,h4{line-height:1.35!important;overflow-wrap:anywhere!important}
+    p,li,td,th{overflow-wrap:anywhere!important;word-break:break-word!important}
+    img,svg,video,canvas{max-width:100%!important;height:auto!important}
+    .suyuan-report-table-scroll{display:block;width:100%;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin:12px 0}
+    table{width:100%!important;min-width:600px!important;max-width:none!important;font-size:13px!important}
+    table thead th,table tbody td{white-space:normal!important;min-width:72px!important}
+    .table-responsive,.table-scroll,.table-container,table{overflow-x:auto!important}
+    pre,code{white-space:pre-wrap!important;overflow-wrap:anywhere!important}
+    .quarto-figure,.figure,.cell-output-display{max-width:100%!important;overflow-x:auto!important}
+  `;
+  document.querySelectorAll('table').forEach(function(table){
+    if(table.parentElement.classList.contains('suyuan-report-table-scroll'))return;
+    var wrapper=document.createElement('div');wrapper.className='suyuan-report-table-scroll';
+    table.parentNode.insertBefore(wrapper,table);wrapper.appendChild(table);
+  });
+  window.dispatchEvent(new Event('resize'));
+})()
+""".trimIndent()
 
 private fun JSONObject.text(key: String) = optString(key).takeIf { it != "null" }.orEmpty()
 private fun taskTypeLabel(value: String) = when (value) { "event" -> "事件任务"; "schedule", "scheduled" -> "定时任务"; else -> value }

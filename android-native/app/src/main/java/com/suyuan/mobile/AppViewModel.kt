@@ -672,6 +672,9 @@ class AppViewModel(
         }
     }
 
+    suspend fun reportDownloadFormats(executionId: String): List<UploadedAttachment> =
+        repository.reportDownloadFormats(_state.value.token, executionId)
+
     fun downloadPreview(context: Context, attachment: UploadedAttachment, bytes: ByteArray, onComplete: (Boolean) -> Unit = {}) {
         val filename = if (attachment.filename.substringAfterLast('.', "").equals("pdf", ignoreCase = true)) {
             attachment.filename

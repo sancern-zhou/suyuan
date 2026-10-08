@@ -1485,3 +1485,13 @@ async def app_scheduled_facets(task_id: str, identity: AppIdentity = Depends(req
         raise HTTPException(404, "Task not found")
     _require_task_view(task, identity.as_current_user())
     return service.list_task_result_facets(task_id=task_id)
+
+
+@router.get("/scheduled-tasks/results/{execution_id}/report/formats")
+async def app_scheduled_report_formats(
+    execution_id: str, identity: AppIdentity = Depends(require_app_identity),
+):
+    from app.api.scheduled_task_routes import list_task_result_report_formats
+    return await list_task_result_report_formats(
+        execution_id=execution_id, user=identity.as_current_user(),
+    )
