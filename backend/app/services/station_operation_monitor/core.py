@@ -227,10 +227,15 @@ class MonitorStore:
                         if not holes:
                             complete_sources.append(source)
                     backfilled = bool(complete_sources)
-                    latest = db.execute('''SELECT hour,present,observed_at FROM cells
+                    missing_parameters = sorted({field for cell in group
+                        for field in POLLUTANTS if cell['first_missing_raw'] is None
+                        or normalize(json.loads(cell['first_missing_raw']))['values'][field] is None})
+                    latest = db.execute('''SELECT hour,present,raw,observed_at FROM cells
                         WHERE code=? AND source=? AND hour<=? ORDER BY hour DESC LIMIT 1''',
                         (station['code'], main_source, end.isoformat())).fetchone()
-                    recovered = bool(latest and latest['present'] and local_time(latest['hour']) >= event_end)
+                    latest_values = normalize(json.loads(latest['raw']))['values'] if latest and latest['raw'] else {}
+                    recovered = bool(latest and latest['present'] and local_time(latest['hour']) >= event_end
+                                     and all(latest_values.get(field) is not None for field in missing_parameters))
                     # Carry open incidents from any preceding date. Closed old events remain
                     # visible on the day their backfill was observed, then leave the daily list.
                     changed_today = any(start < local_time(stamp) for stamp in backfill_observations)
@@ -247,9 +252,7 @@ class MonitorStore:
                         'backfill_sources': complete_sources, 'remaining_hours': remaining,
                         'carry_over': event_start < start,
                         'evidence_kind': '小时数据缺失（包含单项缺失），设备离线原因待核实',
-                        'missing_parameters': sorted({field for cell in group
-                            for field in POLLUTANTS if cell['first_missing_raw'] is None
-                            or normalize(json.loads(cell['first_missing_raw']))['values'][field] is None}),
+                        'missing_parameters': missing_parameters,
                     })
                 # A successful collect must cover the end hour; stale or failed collection
                 # makes the result incomplete, never a blanket "all normal" conclusion.
