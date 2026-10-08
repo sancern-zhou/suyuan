@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import mimetypes
 import re
@@ -113,6 +114,7 @@ def _broadcast_attachment_payload(item: object, *, message_id: str, index: int) 
         mime_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
     raw_url = str(item.get("url") or "").strip()
     payload = {
+        "file_id": f"broadcast:{message_id}:{index}",
         "filename": name,
         "name": name,
         "type": "image" if mime_type.lower().startswith("image/") else "file",
@@ -128,14 +130,15 @@ def _broadcast_attachment_payload(item: object, *, message_id: str, index: int) 
         payload["url"] = raw_url
     elif str(item.get("path") or "").strip():
         base_url = f"/api/social/app/broadcasts/{message_id}/attachments/{index}"
-        payload["url"] = f"{base_url}/content/{quote(name, safe='')}"
+        unique_name = f"{hashlib.sha256(message_id.encode()).hexdigest()[:16]}-{index}-{name}"
+        payload["url"] = f"{base_url}/content/{quote(unique_name, safe='')}"
         payload["download_url"] = payload["url"]
         # Office 文件 App 端只能通过 PDF rendition 预览，与聊天附件的
         # office preview 管线保持一致。
         if Path(name).suffix.lower() in {
             ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
         }:
-            payload["preview_url"] = f"{base_url}/preview/{quote(Path(name).stem, safe='')}.pdf"
+            payload["preview_url"] = f"{base_url}/preview/{quote(Path(unique_name).stem, safe='')}.pdf"
             payload["preview_mime_type"] = "application/pdf"
     return payload
 
