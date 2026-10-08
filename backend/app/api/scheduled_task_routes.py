@@ -702,7 +702,7 @@ def _authorize_result_content(
         task = service.get_task(result.task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="Task result not found")
-        _require_task_access(task, user)
+        _require_task_view(task, user)
         return result
 
     from app.auth.share_access import (
@@ -742,7 +742,7 @@ async def list_task_results(
             task = service.get_task(task_id)
             if not task:
                 raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-            _require_task_access(task, user)
+            _require_task_view(task, user)
             accessible_ids: Optional[set[str]] = None
         else:
             accessible_ids = _accessible_task_ids(user)
@@ -841,7 +841,7 @@ async def list_task_result_report_formats(
     task = service.get_task(result.task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task result not found")
-    _require_task_access(task, user)
+    _require_task_view(task, user)
 
     report_dir = _result_report_dir(result)
     formats: List[Dict[str, Any]] = []
@@ -1185,7 +1185,7 @@ async def get_task_executions(
         task = service.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-        _require_task_access(task, user)
+        _require_task_view(task, user)
         executions, total = service.list_executions_page(
             task_id=task_id,
             page=page,
@@ -1217,8 +1217,8 @@ async def get_execution_artifact(
     service = get_scheduled_task_service()
     task = service.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-    _require_task_access(task, user)
+        raise HTTPException(status_code=404, detail="Task not found")
+    _require_task_view(task, user)
     execution = service.get_execution(execution_id)
     if not execution or execution.task_id != task_id:
         raise HTTPException(status_code=404, detail="Execution not found")
@@ -1394,7 +1394,7 @@ async def list_task_result_facets(
             task = service.get_task(task_id)
             if not task:
                 raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-            _require_task_access(task, user)
+            _require_task_view(task, user)
             accessible_ids = None
         else:
             accessible_ids = _accessible_task_ids(user)
@@ -1421,7 +1421,7 @@ async def get_statistics(
             task = service.get_task(task_id)
             if not task:
                 raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-            _require_task_access(task, user)
+            _require_task_view(task, user)
             stats = service.get_statistics(task_id=task_id, days=days)
             return StatisticsResponse(**stats)
 
