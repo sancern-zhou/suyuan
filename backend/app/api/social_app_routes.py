@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.identity_matching import owner_matches
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.schemas import ConversationSource
 from app.db.database import get_db
@@ -859,11 +860,13 @@ async def _ensure_session(
         row = await get_conversation_catalog().find(requested_session_id)
         if (
             row is None
-            or row.owner_user_id != identity.social_user_id
+            or not owner_matches(row.owner_user_id, identity.social_user_id)
             or row.source != ConversationSource.SOCIAL
         ):
             raise HTTPException(status_code=404, detail="session_not_found")
-        session_id = requested_session_id
+        # Keep the original catalog identity when continuing through a bound
+        # account; re-registering it would attempt to transfer ownership.
+        return requested_session_id
     else:
         session_id = await mapper.get_or_create_session(identity.social_user_id, mode="social")
 

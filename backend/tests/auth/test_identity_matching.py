@@ -1,3 +1,5 @@
+import pytest
+
 from app.auth.identity_matching import (
     _app_accounts,
     canonical_user_ids,
@@ -55,5 +57,37 @@ def test_unbound_company_user_stays_isolated(monkeypatch):
     try:
         assert visible_owner_ids("app:android:android_demo") == ("app:android:android_demo",)
         assert not owner_matches("app:android:android_demo", "2")
+    finally:
+        _app_accounts.cache_clear()
+
+
+@pytest.mark.parametrize("binding", ["2", "company:2"])
+@pytest.mark.parametrize("user_id", ["2", "company:2"])
+def test_binding_matches_both_company_identity_spellings(monkeypatch, binding, user_id):
+    import json
+
+    monkeypatch.setattr(
+        "app.auth.identity_matching.settings",
+        type("S", (), {"app_accounts_json": json.dumps({"alice": {"bind_user_id": binding}})})(),
+    )
+    _app_accounts.cache_clear()
+    try:
+        assert owner_matches("app:android:alice", user_id)
+        assert owner_matches(user_id, "app:android:alice")
+        assert not owner_matches("app:android:alice", "company:3")
+    finally:
+        _app_accounts.cache_clear()
+
+
+def test_empty_identity_cannot_match_unbound_accounts(monkeypatch):
+    monkeypatch.setattr(
+        "app.auth.identity_matching.settings",
+        type("S", (), {"app_accounts_json": '{"alice": {}, "bob": {"bind_user_id": ""}}'})(),
+    )
+    _app_accounts.cache_clear()
+    try:
+        assert visible_owner_ids("") == ()
+        assert visible_owner_ids("  ") == ()
+        assert not owner_matches("app:android:alice", "")
     finally:
         _app_accounts.cache_clear()

@@ -50,6 +50,8 @@ def _bound_company_user_id(account_id: str) -> str:
 def visible_owner_ids(raw_user_id: str) -> tuple[str, ...]:
     """Owner spellings visible to a user, including explicit account bindings."""
     value = (raw_user_id or "").strip()
+    if not value:
+        return ()
     ids = list(canonical_user_ids(value))
     if value.startswith(APP_ANDROID_PREFIX):
         account_id = value[len(APP_ANDROID_PREFIX) :].strip()
@@ -57,8 +59,10 @@ def visible_owner_ids(raw_user_id: str) -> tuple[str, ...]:
         if bound:
             ids.extend(canonical_user_ids(bound))
     else:
+        company_ids = set(ids)
         for account_id, config in _app_accounts().items():
-            if str(config.get("bind_user_id") or "").strip() == value:
+            bound = str(config.get("bind_user_id") or "").strip()
+            if bound and company_ids.intersection(canonical_user_ids(bound)):
                 ids.append(f"{APP_ANDROID_PREFIX}{account_id}")
     return tuple(dict.fromkeys(ids))
 
