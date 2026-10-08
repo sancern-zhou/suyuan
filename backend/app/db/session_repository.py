@@ -11,6 +11,7 @@
 """
 
 import json
+from collections import Counter, defaultdict, deque
 import math
 import structlog
 import time
@@ -169,21 +170,8 @@ class SessionRepository:
 
     @staticmethod
     def _deserialize_content(content: Any) -> Any:
-        """Read content returned by both JSON and JSONB drivers.
-
-        Some deployments return a JSON scalar string with its JSON quoting
-        still present (for example ``\"hello\"``). Decode that wrapper while
-        leaving ordinary strings and structured content unchanged.
-        """
-        if not isinstance(content, str):
-            return content
-        if not content.startswith('"'):
-            return content
-        try:
-            decoded = json.loads(content)
-        except (TypeError, json.JSONDecodeError):
-            return content
-        return decoded if isinstance(decoded, str) else content
+        """SQLAlchemy JSON columns already decode JSON; preserve literal quotes."""
+        return content
 
     @staticmethod
     def _message_metadata(msg: Dict[str, Any]) -> Dict[str, Any]:
@@ -609,6 +597,7 @@ class SessionRepository:
           落持久化 transcript），长度对账会把表示差异误判为"没有新消息"，
           静默丢失整轮对话。
         - 传入历史短于数据库已有消息时不删除旧消息，只追加新消息。
+        - 无有效时间戳的输入按消息内容和已有条数匹配，保留合法重复消息。
         """
         if not conversation_history:
             return True
@@ -636,18 +625,28 @@ class SessionRepository:
                     (row.sequence_number for row in existing_rows),
                     default=-1,
                 )
-                existing_keys = {
-                    self._db_message_identity_key(row) for row in existing_rows
-                }
+                existing_keys = Counter(self._db_message_identity_key(row) for row in existing_rows)
+                keys_by_content = defaultdict(deque)
+                for key in existing_keys:
+                    keys_by_content[key[:-1]].append(key)
                 rows_read_ms = round((time.monotonic() - rows_started) * 1000, 2)
 
                 diff_started = time.monotonic()
                 new_messages: List[Dict[str, Any]] = []
                 for msg in conversation_history:
                     key = self._incoming_message_identity_key(msg)
-                    if key in existing_keys:
+                    matched = key
+                    if key[-1] is None:
+                        # Missing/invalid input timestamps are filled at insert.
+                        # Match one stored occurrence by body, preserving repeated
+                        # identical messages rather than collapsing them in a set.
+                        candidates = keys_by_content[key[:-1]]
+                        while candidates and not existing_keys[candidates[0]]:
+                            candidates.popleft()
+                        matched = candidates[0] if candidates else key
+                    if existing_keys[matched]:
+                        existing_keys[matched] -= 1
                         continue
-                    existing_keys.add(key)
                     new_messages.append(msg)
                 diff_ms = round((time.monotonic() - diff_started) * 1000, 2)
 
