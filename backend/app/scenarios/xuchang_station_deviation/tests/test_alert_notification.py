@@ -14,14 +14,13 @@ from app.scenarios.xuchang_station_deviation.alert_notification import (
 
 def _deviation_alert(**overrides) -> dict:
     alert = {
-        "event_id": "xuchang-station-deviation-202609131200-nox",
+        "event_id": "xuchang-station-deviation-202609131200-no2",
         "occurred_at": "2026-09-13T12:00:00+08:00",
         "station_id": "1003A",
         "station_name": "开发区",
-        "target_pollutant": "NOX",
+        "target_pollutant": "NO2",
         "measurement_granularity": "5min",
         "observed_indicator": "NO2",
-        "nox_proxy_note": "NO2站点小时浓度作为NOX空间异常筛查代理",
         "station_value": 35.0,
         "peer_mean": 19.4,
         "absolute_delta": 15.6,
@@ -95,7 +94,7 @@ def test_compose_deviation_notification_covers_all_sections():
 
     message = compose_station_alert_message(package)
 
-    assert message.startswith("【许昌站点污染抬升告警｜开发区｜NOX】")
+    assert message.startswith("【许昌站点污染抬升告警｜开发区｜NO2】")
     for section in ("一、告警概况", "二、监测趋势", "三、气象与质控", "四、污染特征", "五、调度指令"):
         assert section in message
     assert "单站相对区域偏高" in message
@@ -105,7 +104,6 @@ def test_compose_deviation_notification_covers_all_sections():
     assert "2026-09-13 10:00观测" in message
     assert "风来东东北方向（68°）" not in message  # 必须选 213° 那条而非更早记录
     assert "南西南方向（213°）" in message
-    assert "NO2站点小时浓度作为NOX空间异常筛查代理" in message
     assert "拥堵、怠速、机械和燃烧" in message
     assert "不作为来源认定或同步上升证据" in message
     assert "backend/" not in message  # 不暴露本地路径
@@ -114,7 +112,6 @@ def test_compose_deviation_notification_covers_all_sections():
 def test_compose_rise_notification_uses_rise_indicators():
     alert = _deviation_alert(
         target_pollutant="PM10",
-        nox_proxy_note=None,
         measurement_granularity="5min",
         station_value=180.0,
         rise_window_values=[120.0, 135.0, 150.0, 158.0, 166.0, 172.0, 180.0],
@@ -137,23 +134,21 @@ def test_compose_rise_notification_uses_rise_indicators():
 def test_multi_factor_episode_merges_into_one_notice(tmp_path):
     pm10 = _deviation_alert(
         target_pollutant="PM10",
-        nox_proxy_note=None,
         station_value=180.0,
         rule="relative_deviation > threshold AND absolute_delta > pollutant_absolute_threshold",
         pollutant_source_features={"status": "not_calculated"},
         upwind_road_scope_image_path=None,
     )
-    nox = _deviation_alert()
+    no2 = _deviation_alert()
     message = compose_station_alert_message(_package([
         {"alert": pm10, "evidence": _deviation_evidence()},
-        {"alert": nox, "evidence": _deviation_evidence()},
+        {"alert": no2, "evidence": _deviation_evidence()},
     ]))
 
-    assert "【许昌站点污染抬升告警｜开发区｜PM10、NOX】" in message
+    assert "【许昌站点污染抬升告警｜开发区｜PM10、NO2】" in message
     assert "合并为一条通报" in message
     assert message.count("三、气象与质控") == 1  # 气象与质控只出现一次
     assert "自行核实周边3公里范围" in message  # PM10 地图缺失时如实说明
-    assert "NO2站点小时浓度作为NOX空间异常筛查代理" in message
 
 
 def test_collect_media_deduplicates_and_keeps_existing_files(tmp_path):
