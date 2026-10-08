@@ -35,6 +35,7 @@ from app.agent.resources.resource_service import (
 )
 from app.tools.resource_declarations import derivative_file, primary_file
 from app.auth.dependencies import require_current_user
+from app.auth.identity_matching import owner_matches
 from app.auth.models import CurrentUser
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.repository import ConversationCatalogRepository
@@ -55,7 +56,7 @@ async def _require_upload_file_access(
     if not session_id:
         raise HTTPException(status_code=404, detail="文件不存在")
     record = await ConversationCatalogRepository().get(session_id)
-    if record is None or record.owner_user_id != user.id:
+    if record is None or not owner_matches(record.owner_user_id, user.id):
         raise HTTPException(status_code=404, detail="文件不存在")
 
 
@@ -803,7 +804,7 @@ async def list_uploaded_files(
         if not session_id:
             raise HTTPException(status_code=403, detail="session_id 必填")
         record = await ConversationCatalogRepository().get(session_id)
-        if record is None or record.owner_user_id != user.id:
+        if record is None or not owner_matches(record.owner_user_id, user.id):
             raise HTTPException(status_code=404, detail="会话不存在")
 
     query = select(UploadedFile)
