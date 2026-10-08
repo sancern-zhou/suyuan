@@ -4,6 +4,7 @@ from datetime import datetime
 
 from fastapi import HTTPException
 
+from app.auth.identity_matching import canonical_user_ids
 from app.auth.models import CurrentUser
 
 from .schemas import ConversationCatalogRecord, ConversationSource
@@ -111,7 +112,9 @@ class ConversationCatalogService:
         self, session_id: str, user: CurrentUser
     ) -> ConversationCatalogRecord:
         row = await self.repository.get(session_id)
-        if row is None or (not user.is_admin and row.owner_user_id != user.id):
+        if row is None or (
+            not user.is_admin and row.owner_user_id not in canonical_user_ids(user.id)
+        ):
             raise HTTPException(status_code=404, detail="session_not_found")
         return row
 
@@ -127,7 +130,7 @@ class ConversationCatalogService:
         self, user: CurrentUser, *, limit: int, offset: int = 0
     ) -> list[ConversationCatalogRecord]:
         return await self.repository.list_visible(
-            user_id=None if user.is_admin else user.id,
+            user_ids=None if user.is_admin else canonical_user_ids(user.id),
             limit=limit,
             offset=offset,
         )

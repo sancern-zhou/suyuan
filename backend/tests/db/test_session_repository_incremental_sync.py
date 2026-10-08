@@ -4,6 +4,10 @@
 数据库行数，被误判为"没有新消息"，整轮对话静默丢失。
 """
 from datetime import datetime
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from app.db.models_session import Base, SessionDB, SessionMessageDB
 
 from app.db.session_repository import SessionRepository
 
@@ -113,3 +117,40 @@ def test_db_row_identity_handles_none_content_and_data():
 
     key = SessionRepository()._db_message_identity_key(row)
     assert key[2] == "null" and key[3] == "null"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history", [
+    [{"type": "user", "content": "好的"}],
+    [{"type": "user", "content": "好的", "timestamp": "invalid"}],
+    [{"type": "user", "content": "好的"}, {"type": "user", "content": "好的"}],
+    [{"type": "user", "content": '"hello"', "timestamp": "2026-10-08T03:00:00"},
+     {"type": "user", "content": "hello", "timestamp": "2026-10-08T03:00:00"}],
+])
+async def test_incremental_sync_preserves_occurrences_and_is_idempotent(tmp_path, history):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'messages.db'}")
+    repository = SessionRepository()
+    repository.engine = engine
+    repository._pool_status = lambda: {}
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(lambda c: Base.metadata.create_all(c, tables=[SessionDB.__table__, SessionMessageDB.__table__]))
+        async with AsyncSession(engine) as session:
+            session.add(SessionDB(session_id="sync-test", query="test"))
+            await session.commit()
+        for _ in range(2):
+            assert await repository.sync_conversation_history_incremental("sync-test", history)
+        async with AsyncSession(engine) as session:
+            rows = (await session.execute(select(SessionMessageDB).order_by(SessionMessageDB.sequence_number))).scalars().all()
+        assert [row.content for row in rows] == [msg["content"] for msg in history]
+        assert [row.sequence_number for row in rows] == list(range(len(history)))
+        restored = [repository._msg_to_dict(row) for row in rows]
+        assert [msg["content"] for msg in restored] == [msg["content"] for msg in history]
+        assert await repository.sync_conversation_history_incremental("sync-test", restored)
+        extended = history + [{"type": "final", "content": "new reply"}]
+        assert await repository.sync_conversation_history_incremental("sync-test", extended)
+        async with AsyncSession(engine) as session:
+            rows = (await session.execute(select(SessionMessageDB).order_by(SessionMessageDB.sequence_number))).scalars().all()
+        assert len(rows) == len(history) + 1
+    finally:
+        await engine.dispose()
