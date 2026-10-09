@@ -36,7 +36,7 @@ data class AppUiState(
     val accountId: String = "",
     val displayName: String = "",
     val sessionId: String? = null,
-    val mode: String = "expert",
+    val mode: String = "query",
     val modelTier: String = "auto",
     val sessions: List<SessionInfo> = emptyList(),
     val sessionsHasMore: Boolean = false,
@@ -80,6 +80,7 @@ private data class PendingTurn(
     val sessionId: String?,
     val mode: String,
     val modelTier: String,
+    val requestId: String = UUID.randomUUID().toString(),
 )
 
 private fun defaultWorkStatus(mode: String) = when (mode) {
@@ -112,6 +113,36 @@ class AppViewModel(
     private val pendingTurns = ArrayDeque<PendingTurn>()
     private var registeredPushCid: String? = null
     private val modeSessionIds = mutableMapOf<String, String>()
+    private var recoveryJob: Job? = null
+
+    fun onForeground() {
+        if (!_state.value.loggedIn) return
+        if (streamJob?.isActive == true) {
+            repository.reconnectChat()
+            return
+        }
+        if (recoveryJob?.isActive == true) return
+        val saved = store.pendingTurn() ?: return
+        recoveryJob = viewModelScope.launch {
+            runCatching {
+                val payload = org.json.JSONObject(saved)
+                val session = payload.optString("resume_session_id").ifBlank { payload.optString("session_id") }.takeIf { it.isNotBlank() }
+                val query = payload.getString("query")
+                val history = if (session != null) repository.messages(_state.value.token, session) else emptyList()
+                // Replay rebuilds the pending turn, including offline completion.
+                val turnIndex = history.indexOfLast { it.id == "app-user:${payload.getString("request_id")}" }
+                val earlier = if (turnIndex >= 0) history.take(turnIndex) else history
+                val attachments = parseAttachments(payload)
+                _state.value = _state.value.copy(sessionId = session, mode = payload.optString("mode", "query"),
+                    messages = earlier + ChatMessage(UUID.randomUUID().toString(), "user", query, attachments),
+                    loading = true, error = null, workStatus = "正在恢复后台任务")
+                pendingTurns.addFirst(PendingTurn(query, attachments,
+                    payload.optString("session_id").takeIf { it.isNotBlank() }, payload.optString("mode", "query"),
+                    payload.optString("model_tier", "auto"), payload.getString("request_id")))
+                ensureStreamWorker()
+            }.onFailure { _state.value = _state.value.copy(error = "暂时无法恢复后台任务，请联网后重试") }
+        }
+    }
 
     init {
         val refreshToken = store.refreshToken()
@@ -174,7 +205,7 @@ class AppViewModel(
     fun loadSession(session: SessionInfo) {
         val current = _state.value
         if (current.loading) return
-        _state.value = current.copy(sessionId = session.sessionId, draft = "", messages = emptyList(), attachments = emptyList(), loading = true, error = null, workStatus = null, workStartedAtMs = null)
+        _state.value = current.copy(mode = session.mode.takeIf { it in setOf("query", "knowledge", "expert") } ?: current.mode, sessionId = session.sessionId, draft = "", messages = emptyList(), attachments = emptyList(), loading = true, error = null, workStatus = null, workStartedAtMs = null)
         viewModelScope.launch {
             runCatching { repository.messages(current.token, session.sessionId) }
                 .onSuccess { messages -> _state.value = _state.value.copy(messages = messages, loading = false) }
@@ -388,7 +419,7 @@ class AppViewModel(
         }
         var toolCount = 0
         runCatching {
-            repository.stream(current.token, turn.query, turnSessionId, turn.attachments, turn.mode, turn.modelTier).collect { event ->
+            repository.stream(current.token, turn.query, turnSessionId, turn.attachments, turn.mode, turn.modelTier, turn.requestId).collect { event ->
                 if (event.type == "start") {
                     val session = runCatching { org.json.JSONObject(event.data).optString("session_id") }.getOrNull()
                     if (!session.isNullOrBlank() && turnSessionId == null) {
@@ -413,6 +444,7 @@ class AppViewModel(
                 // persist them, but never let them mutate the active session UI.
                 if (_state.value.sessionId != turnSessionId) return@collect
                 when (event.type) {
+                    "reconnecting" -> updateWorkStatus("连接暂时中断，正在恢复后台任务")
                     "start" -> {
                         // Session selection is handled before this guard.
                     }
@@ -715,6 +747,7 @@ class AppViewModel(
         streamJob = null
         viewModelScope.launch {
             runCatching { repository.cancel(current.token, session) }
+                .onSuccess { store.clearPendingTurn() }
                 .onFailure { if (it is ApiException && it.statusCode == 401) logout("登录已过期，请重新登录") }
         }
     }

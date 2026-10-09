@@ -43,6 +43,7 @@ from app.social.app_identity import (
     resolve_refresh_token,
 )
 from app.social.session_mapper import SessionMapper
+from app.social.app_runs import get_app_run_store
 from config.settings import settings
 
 router = APIRouter(prefix="/api/social/app", tags=["android-app"])
@@ -73,6 +74,7 @@ class AppChatRequest(BaseModel):
     session_id: str | None = Field(default=None, max_length=128)
     attachments: list[dict] = Field(default_factory=list, max_length=8)
     mode: Literal["query", "knowledge", "expert"] = "expert"
+    request_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class AppSteerRequest(BaseModel):
@@ -1080,6 +1082,7 @@ async def _stream_events(
     query: str,
     attachments: list[dict] | None = None,
     mode: str = "expert",
+    request_id: str | None = None,
 ) -> AsyncIterator[str]:
     from app.agent.runtime.cancellation import cancellation_registry
 
@@ -1094,6 +1097,8 @@ async def _stream_events(
         "attachments": attachments or [],
         "timestamp": datetime.now().isoformat(),
     }]
+    if request_id:
+        display_history[0]['id'] = f"app-user:{request_id}"
     streamed_answer = ""
     streamed_resources: list[dict] = []
     persisted = False
@@ -1126,6 +1131,8 @@ async def _stream_events(
         ):
             event_type = event.get("type")
             event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            if event_data.get("run_id"):
+                await cancellation_registry.attach_run_id(session_id, cancel_event, str(event_data["run_id"]))
             if event_type == "streaming_text":
                 streamed_answer += str(event_data.get("chunk") or "")
             elif event_type == "resources_changed":
@@ -1196,14 +1203,62 @@ async def chat_stream(
     db: AsyncSession = Depends(get_db),
     identity: AppIdentity = Depends(require_app_identity),
 ) -> StreamingResponse:
-    session_id = await _ensure_session(request, identity, payload.session_id)
-    attachments = await _sanitize_attachments(db, session_id, payload.attachments)
+    run = await start_app_run(request, payload, db, identity)
     response = StreamingResponse(
-        _stream_events(identity, session_id, payload.query, attachments, payload.mode),
+        get_app_run_store().stream(run["run_id"]),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Session-Id": session_id},
+        headers={"Cache-Control": "no-cache", "X-Session-Id": run["session_id"], "X-Run-Id": run["run_id"], "X-Accel-Buffering": "no"},
     )
     return response
+
+
+def _public_app_run(run: dict) -> dict:
+    return {key: run[key] for key in ("run_id", "session_id", "status", "request_id")}
+
+
+@router.post("/chat/runs")
+async def start_app_run(
+    request: Request,
+    payload: AppChatRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: AppIdentity = Depends(require_app_identity),
+) -> dict:
+    store = get_app_run_store()
+    request_id = payload.request_id or uuid.uuid4().hex
+    fingerprint = hashlib.sha256(json.dumps(payload.model_dump(exclude={"request_id"}), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    existing = await store.lookup(identity.social_user_id, request_id)
+    if existing:
+        if existing['fingerprint'] != fingerprint:
+            raise HTTPException(status_code=409, detail="request_id_conflict")
+        return _public_app_run(existing)
+    session_id = await _ensure_session(request, identity, payload.session_id)
+    attachments = await _sanitize_attachments(db, session_id, payload.attachments)
+    try:
+        run, created = await store.create(identity.social_user_id, request_id, session_id, fingerprint, payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if created:
+        store.start(run['run_id'], lambda: _stream_events(identity, session_id, payload.query, attachments, payload.mode, request_id=request_id))
+    return _public_app_run(run)
+
+
+async def _read_app_run(run_id: str, identity: AppIdentity) -> dict:
+    run = await get_app_run_store().get(run_id)
+    if run is None or not owner_matches(run['owner'], identity.social_user_id):
+        raise HTTPException(status_code=404, detail="run_not_found")
+    await get_conversation_catalog().require_read(run['session_id'], identity.as_current_user())
+    return run
+
+
+@router.get("/chat/runs/{run_id}")
+async def app_run_status(run_id: str, identity: AppIdentity = Depends(require_app_identity)) -> dict:
+    return _public_app_run(await _read_app_run(run_id, identity))
+
+
+@router.get("/chat/runs/{run_id}/events")
+async def app_run_events(run_id: str, after: int = Query(default=0, ge=0), identity: AppIdentity = Depends(require_app_identity)) -> StreamingResponse:
+    await _read_app_run(run_id, identity)
+    return StreamingResponse(get_app_run_store().stream(run_id, after), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.get("/sessions")
@@ -1428,7 +1483,9 @@ async def cancel_session(
     from app.agent.runtime.cancellation import cancellation_registry
 
     await _ensure_session(request, identity, session_id)
-    cancelled = await cancellation_registry.cancel(session_id, reason="app_user_cancelled")
+    cancelled = await get_app_run_store().cancel_session(session_id)
+    if not cancelled:
+        cancelled = await cancellation_registry.cancel(session_id, reason="app_user_cancelled")
     return {"session_id": session_id, "cancelled": bool(cancelled)}
 
 

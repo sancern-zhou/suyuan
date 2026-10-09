@@ -76,3 +76,18 @@ App 身份由服务端从 token 解析为 `app:android:<account_id>`，客户端
 redirect URI，不保存公司密码。回调地址固定为 `com.suyuan.mobile://oauth/callback`，需在 IDBase
 移动端客户端登记同一地址。refresh token 只保存在 Android 私有存储中，退出登录时清除。
 
+## 对话后台执行与恢复
+
+App 使用 `POST /api/social/app/chat/runs` 提交带 `request_id` 的对话，随后通过
+`GET /api/social/app/chat/runs/{run_id}/events?after=<sequence>` 接收和恢复事件。
+断线重连和提交响应丢失后的重试沿用同一个请求标识，不重复执行工具。
+App 保存待恢复请求，回到前台或进程重新启动时自动恢复；最终回复、图表和附件
+仍写入原有会话存储。旧版 `/chat/stream` 也改为订阅独立执行的任务。
+
+任务状态、输入和事件日志存放在 `DATA_REGISTRY_DIR/social/app_runs.sqlite3`。
+同一部署的所有 Web 进程必须使用同一个持久化目录（本地磁盘），支持多进程读取、
+幂等提交和停止任务；不要将此 SQLite 文件放在网络文件系统上。
+用户主动停止会取消后台执行，关闭 App 连接不会取消。服务器进程重启或异常退出
+会将失去心跳的任务标为失败，不会自动重新执行可能产生副作用的工具。
+上线需要先更新后端，再安装新的 App；本次不包含服务器重启后的任务续跑。
+

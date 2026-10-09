@@ -111,6 +111,9 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
@@ -155,6 +158,14 @@ private class AppViewModelFactory(
 
 @Composable
 private fun SuyuanApp(viewModel: AppViewModel, oauthCallback: Uri?, consumeOAuthCallback: () -> Unit) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.onForeground()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     LaunchedEffect(oauthCallback) {
@@ -306,6 +317,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     }
     LaunchedEffect(state.loggedIn) {
         if (state.loggedIn) {
+            viewModel.onForeground()
             while (true) {
                 viewModel.refreshBroadcasts(reset = false)
                 delay(30_000L)
@@ -894,7 +906,7 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
 }
 
 @Composable
-private fun EmptyChatState(loading: Boolean = false, mode: String = "expert", onModeSelected: (String) -> Unit = {}) {
+private fun EmptyChatState(loading: Boolean = false, mode: String = "query", onModeSelected: (String) -> Unit = {}) {
     Column(Modifier.fillMaxWidth().padding(top = 110.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
         Text(if (loading) "正在恢复会话" else modeTitle(mode), color = SuyuanColors.text, fontSize = 22.sp, fontWeight = FontWeight.Medium)
         Row(Modifier.padding(top = 22.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

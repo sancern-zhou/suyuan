@@ -11,6 +11,14 @@ class AppSessionStore(context: Context) {
     fun refreshExpiresAt(): Long = preferences.getLong("refresh_expires_at", 0L)
     fun accountId(): String = preferences.getString("account_id", "").orEmpty()
     fun displayName(): String = preferences.getString("display_name", "").orEmpty()
+    fun pendingTurn(): String? = preferences.getString("pending_turn", null)
+    fun savePendingTurn(payload: String) { preferences.edit().putString("pending_turn", payload).commit() }
+    fun clearPendingTurn(requestId: String? = null) {
+        val current = pendingTurn()
+        if (requestId == null || current?.let { runCatching { org.json.JSONObject(it).optString("request_id") }.getOrNull() } == requestId) {
+            preferences.edit().remove("pending_turn").commit()
+        }
+    }
     fun save(result: LoginResult) {
         preferences.edit()
             .putString("token", result.token)
