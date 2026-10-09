@@ -25,17 +25,59 @@ INDUSTRY_COLORS = (
     "#4c78a8", "#f58518", "#e45756", "#72b7b2", "#54a24b",
     "#eecc16", "#b279a2", "#ff9da6", "#9d755d", "#bab0ac",
 )
+# 中文字体普遍缺少 Unicode 上标字形（如 ³），保存前统一改写为 mathtext，
+# 避免 Y 轴单位出现黑色方块（tofu）。
+_LABEL_NORMALIZATIONS = (
+    ("μg/m³", "μg/m$^3$"),
+    ("ug/m³", "ug/m$^3$"),
+    ("/m³", "/m$^3$"),
+)
+
+
+def _normalize_label(value: Any) -> str:
+    text = str(value)
+    for source, target in _LABEL_NORMALIZATIONS:
+        if source in text:
+            text = text.replace(source, target)
+    return text
 
 
 def _field(pollutant: str) -> str:
     return FIELD_BY_POLLUTANT.get(pollutant, "pm25")
 
 
-def _hour_label(value: str) -> str:
+def _stamp(value: Any) -> datetime | None:
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(TZ).strftime("%H时")
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except (TypeError, ValueError):
-        return ""
+        return None
+    return parsed.astimezone(TZ) if parsed.tzinfo else parsed.replace(tzinfo=TZ)
+
+
+def _hour_key(value: Any) -> str:
+    """Normalize an hour stamp to a tz-naive Beijing local ISO key.
+
+    统计层时间带 +08:00，抓取层时间可能无时区，两者同为北京墙上时间；
+    直接做字符串匹配会因时区后缀错位导致曲线丢失。
+    """
+    stamp = _stamp(value)
+    if stamp is None:
+        return str(value)
+    return stamp.replace(tzinfo=None).isoformat()
+
+
+def _hour_label(value: str) -> str:
+    stamp = _stamp(value)
+    return stamp.strftime("%H时") if stamp else ""
+
+
+def _valid_concentration(value: Any) -> float | None:
+    """Reject non-numeric and missing-data sentinel values (negative fills)."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
 
 
 def _save_figure(fig: Any, path: Path) -> None:
@@ -51,40 +93,38 @@ def _artifact(path: Path, role: str, title: str) -> dict[str, str]:
 def national_station_curves(national_hourly: list[dict[str, Any]], path: Path, pollutant: str) -> dict[str, str] | None:
     import matplotlib.pyplot as plt
 
-    by_station: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    by_station: dict[str, dict[str, float]] = defaultdict(dict)
     field = _field(pollutant)
     for row in national_hourly:
-        try:
-            value = float(row.get(field))
-        except (TypeError, ValueError):
+        value = _valid_concentration(row.get(field))
+        if value is None:
             continue
         hour = row.get("data_time") or row.get("time")
         if hour is None:
             continue
-        by_station[str(row.get("name") or row.get("station_id"))].append((str(hour), value))
+        by_station[str(row.get("name") or row.get("station_id"))][_hour_key(hour)] = value
     if not by_station:
         return None
+    all_hours = sorted({hour for samples in by_station.values() for hour in samples})
     fig, ax = plt.subplots(figsize=(8.6, 4.2))
-    all_means: dict[str, float] = defaultdict(list)
     for index, (station, samples) in enumerate(sorted(by_station.items())):
-        samples.sort()
-        hours = [item[0] for item in samples]
-        values = [item[1] for item in samples]
-        ax.plot(range(len(hours)), values, linewidth=1.1, alpha=0.75,
+        # 全站共用同一小时横轴，缺测小时留空断线，避免各站索引自对齐错位。
+        values = [samples.get(hour) for hour in all_hours]
+        ax.plot(range(len(all_hours)), values, linewidth=1.1, alpha=0.75,
                 color=INDUSTRY_COLORS[index % len(INDUSTRY_COLORS)], label=station)
-        for hour, value in samples:
-            all_means[hour].append(value)
-    mean_hours = sorted(all_means)
-    ax.plot(range(len(mean_hours)), [sum(all_means[h]) / len(all_means[h]) for h in mean_hours],
+    mean_values = []
+    for hour in all_hours:
+        valid = [samples[hour] for samples in by_station.values() if hour in samples]
+        mean_values.append(sum(valid) / len(valid) if valid else None)
+    ax.plot(range(len(all_hours)), mean_values,
             linewidth=2.6, color="#1f2937", label="全市均值")
-    ticks = range(0, len(mean_hours))
-    ax.set_xticks(list(ticks))
-    ax.set_xticklabels([_hour_label(mean_hours[i]) for i in ticks], fontsize=8, rotation=45)
+    ax.set_xticks(range(len(all_hours)))
+    ax.set_xticklabels([_hour_label(hour) for hour in all_hours], fontsize=8, rotation=45)
     ax.set_ylabel(f"{pollutant} ({UNIT})")
     ax.set_title(f"国控站 {pollutant} 小时变化")
     ax.legend(fontsize=8, ncol=3)
     ax.grid(alpha=0.25)
-    apply_font_to_figure(fig)
+    apply_font_to_figure(fig, _normalize_label)
     _save_figure(fig, path)
     return _artifact(path, "national_station_hourly_curves", "国控站小时变化")
 
@@ -112,7 +152,7 @@ def urban_district_comparison(city_hourly: list[dict[str, Any]], district_hourly
     ax.set_title("城区与各区县乡镇站小时均值对比")
     ax.legend(fontsize=8, ncol=3)
     ax.grid(alpha=0.25)
-    apply_font_to_figure(fig)
+    apply_font_to_figure(fig, _normalize_label)
     _save_figure(fig, path)
     return _artifact(path, "urban_district_hourly_comparison", "城区与区县对比")
 
@@ -159,7 +199,7 @@ def meteorology_panel(city_hourly: list[dict[str, Any]], meteo_rows: list[dict[s
     ax_bottom.set_xticklabels([_hour_label(hour) for hour in order], fontsize=8, rotation=45)
     fig.suptitle(f"{pollutant}与气象条件小时变化（许昌站）", y=1.0)
     fig.tight_layout()
-    apply_font_to_figure(fig)
+    apply_font_to_figure(fig, _normalize_label)
     _save_figure(fig, path)
     return _artifact(path, "meteorology_hourly_panel", "污染与气象小时变化")
 
@@ -173,21 +213,20 @@ def regional_city_curves(city_hourly: list[dict[str, Any]], regional_hourly: lis
     field = _field(pollutant)
     by_city: dict[str, list[tuple[str, float]]] = defaultdict(list)
     for row in regional_hourly:
-        try:
-            value = float(row.get(field))
-        except (TypeError, ValueError):
+        value = _valid_concentration(row.get(field))
+        if value is None:
             continue
         hour = row.get("data_time") or row.get("time")
         if hour is None:
             continue
-        by_city[str(row.get("name") or row.get("station_id"))].append((str(hour), value))
+        by_city[str(row.get("name") or row.get("station_id"))].append((_hour_key(hour), value))
     if not by_city:
         return None
     fig, ax = plt.subplots(figsize=(8.6, 4.2))
-    base = [item["time"] for item in city_hourly]
+    base = [_hour_key(item["time"]) for item in city_hourly]
     order = {hour: index for index, hour in enumerate(base)}
     if base:
-        ax.plot([order[item["time"]] for item in city_hourly], [item["mean"] for item in city_hourly],
+        ax.plot(list(order.values()), [item["mean"] for item in city_hourly],
                 linewidth=2.6, color="#c2410c", label="许昌市")
     for index, (city, samples) in enumerate(sorted(by_city.items())):
         samples.sort()
@@ -202,7 +241,7 @@ def regional_city_curves(city_hourly: list[dict[str, Any]], regional_hourly: lis
     ax.set_title("许昌及周边城市小时变化对比")
     ax.legend(fontsize=8, ncol=3)
     ax.grid(alpha=0.25)
-    apply_font_to_figure(fig)
+    apply_font_to_figure(fig, _normalize_label)
     _save_figure(fig, path)
     return _artifact(path, "regional_city_hourly_comparison", "周边城市小时对比")
 
@@ -234,7 +273,7 @@ def regional_daypart_bars(regional: list[dict[str, Any]], path: Path,
     ax.set_title("周边城市夜间与午后均值对比")
     ax.legend(fontsize=8)
     ax.grid(axis="y", alpha=0.25)
-    apply_font_to_figure(fig)
+    apply_font_to_figure(fig, _normalize_label)
     _save_figure(fig, path)
     return _artifact(path, "regional_city_daypart_comparison", "周边城市分时段均值")
 
@@ -272,7 +311,7 @@ def correlation_heatmap(correlation: dict[str, Any], path: Path) -> dict[str, st
     fig.colorbar(image, ax=ax, shrink=0.85)
     ax.set_title("污染物小时相关性（逐站Pearson中位数）")
     fig.tight_layout()
-    apply_font_to_figure(fig)
+    apply_font_to_figure(fig, _normalize_label)
     _save_figure(fig, path)
     return _artifact(path, "pollutant_correlation_heatmap", "污染物相关性热力图")
 
@@ -307,7 +346,7 @@ def township_spatial_map(township_top: list[dict[str, Any]], national_hourly: li
     ax.set_xlabel("经度")
     ax.set_ylabel("纬度")
     ax.grid(alpha=0.25)
-    apply_font_to_figure(fig)
+    apply_font_to_figure(fig, _normalize_label)
     _save_figure(fig, path)
     return _artifact(path, "township_daily_spatial_distribution", "乡镇站空间分布")
 
@@ -338,7 +377,7 @@ def enterprise_top10_bars(enterprises: list[dict[str, Any]], path: Path) -> dict
     ax.set_xlabel("筛查得分（清单排放量×距离衰减，非贡献率）")
     ax.set_title("嫌疑企业Top10筛查得分")
     ax.grid(axis="x", alpha=0.25)
-    apply_font_to_figure(fig)
+    apply_font_to_figure(fig, _normalize_label)
     _save_figure(fig, path)
     return _artifact(path, "enterprise_screening_top10", "嫌疑企业筛查得分")
 

@@ -488,18 +488,25 @@ async def app_broadcasts(identity: AppIdentity = Depends(require_app_identity)) 
 
 def _report_payload(row) -> dict:
     from app.social.report_service import report_payload
+
     payload = report_payload(row)
     attachments = []
+    # Unique tail per report+attachment keeps App client caches (which key on
+    # the final URL path segment) from collapsing every report preview into
+    # one entry; the value itself is never used for resolution.
+    identity = hashlib.sha256(str(row.report_id).encode("utf-8")).hexdigest()[:16]
     for index, item in enumerate(payload.get("attachments") or []):
         if not isinstance(item, dict):
             continue
         name = str(item.get("filename") or item.get("name") or "报告附件")
         mime = str(item.get("mime_type") or mimetypes.guess_type(name)[0] or "application/octet-stream")
         encoded = quote(row.report_id, safe="")
-        content_url = f"/api/social/app/report-results/{encoded}/attachments/{index}"
+        base_url = f"/api/social/app/report-results/{encoded}/attachments/{index}"
+        unique_name = f"{identity}-{index}-{name}"
+        content_url = f"{base_url}/content/{quote(unique_name, safe='')}"
         preview_url = content_url
         if Path(name).suffix.lower() in {".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}:
-            preview_url = f"{content_url}/preview"
+            preview_url = f"{base_url}/preview/{quote(Path(unique_name).stem, safe='')}.pdf"
         attachment_payload = {"file_id": f"report-{row.report_id}-{index}", "filename": name, "name": name,
                               "type": "image" if mime.startswith("image/") else "document",
                               "file_type": "image" if mime.startswith("image/") else "document",
@@ -612,9 +619,20 @@ async def app_delete_report(report_id: str, identity: AppIdentity = Depends(requ
     return {"report_id": report_id, "deleted": True}
 
 
-@router.get("/report-results/{report_id}/attachments/{attachment_index}")
-async def app_report_attachment(report_id: str, attachment_index: int, disposition: Literal["inline", "attachment"] = "inline", identity: AppIdentity = Depends(require_app_identity)) -> FileResponse:
+async def _serve_report_attachment(
+    report_id: str,
+    attachment_index: int,
+    identity: AppIdentity,
+    *,
+    disposition: Literal["inline", "attachment"] = "inline",
+) -> FileResponse:
+    """Stream one persisted report attachment to its owner.
+
+    Persisted report attachments are immutable (each execution writes its own
+    report directory), so responses are marked privately cacheable.
+    """
     from app.social.report_service import get_report
+
     row = await get_report(identity.social_user_id, report_id)
     if row is None:
         raise HTTPException(status_code=404, detail="report_not_found")
@@ -631,16 +649,50 @@ async def app_report_attachment(report_id: str, attachment_index: int, dispositi
         raise HTTPException(status_code=404, detail="report_attachment_missing")
     filename = str(attachment.get("filename") or attachment.get("name") or target.name)
     media_type = str(attachment.get("mime_type") or mimetypes.guess_type(filename)[0] or "application/octet-stream")
-    return FileResponse(target, media_type=media_type, filename=filename, content_disposition_type=disposition)
+    return FileResponse(
+        target,
+        media_type=media_type,
+        filename=filename,
+        content_disposition_type=disposition,
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
 
 
-@router.get("/report-results/{report_id}/attachments/{attachment_index}/preview")
-async def app_report_attachment_preview(
+@router.get("/report-results/{report_id}/attachments/{attachment_index}")
+async def app_report_attachment(
     report_id: str,
     attachment_index: int,
+    disposition: Literal["inline", "attachment"] = "inline",
     identity: AppIdentity = Depends(require_app_identity),
 ) -> FileResponse:
-    """Serve a PDF preview for an Office report attachment."""
+    return await _serve_report_attachment(
+        report_id, attachment_index, identity, disposition=disposition
+    )
+
+
+# The {filename} tail keeps attachment URLs unique per report for clients
+# whose caches key on the final path segment; its value is not used for
+# resolution (report_id + index identify the stored copy). Mirrors the
+# broadcast attachment routes.
+@router.get("/report-results/{report_id}/attachments/{attachment_index}/content/{filename}")
+async def app_report_attachment_content(
+    report_id: str,
+    attachment_index: int,
+    filename: str,
+    disposition: Literal["inline", "attachment"] = "inline",
+    identity: AppIdentity = Depends(require_app_identity),
+) -> FileResponse:
+    return await _serve_report_attachment(
+        report_id, attachment_index, identity, disposition=disposition
+    )
+
+
+async def _serve_report_attachment_preview(
+    report_id: str,
+    attachment_index: int,
+    identity: AppIdentity,
+) -> FileResponse:
+    """Serve a cached PDF preview for an Office report attachment."""
     import asyncio
 
     from app.api.upload_routes import _office_pdf_preview
@@ -662,14 +714,35 @@ async def app_report_attachment_preview(
         raise HTTPException(status_code=404, detail="report_attachment_missing")
     if target.suffix.lower() not in {".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}:
         raise HTTPException(status_code=404, detail="report_preview_not_supported")
-    cached = target.with_suffix(".preview.pdf")
-    if not cached.is_file():
-        preview = await asyncio.to_thread(_office_pdf_preview, str(target))
-        if preview is None:
-            raise HTTPException(status_code=503, detail="report_preview_generation_failed")
-        cached = preview
+    cached = await asyncio.to_thread(_office_pdf_preview, str(target))
+    if cached is None:
+        raise HTTPException(status_code=503, detail="report_preview_generation_failed")
     filename = str(attachment.get("filename") or attachment.get("name") or target.name)
-    return FileResponse(cached, media_type="application/pdf", filename=f"{Path(filename).stem}.pdf")
+    return FileResponse(
+        cached,
+        media_type="application/pdf",
+        filename=f"{Path(filename).stem}.pdf",
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
+
+
+@router.get("/report-results/{report_id}/attachments/{attachment_index}/preview")
+async def app_report_attachment_preview(
+    report_id: str,
+    attachment_index: int,
+    identity: AppIdentity = Depends(require_app_identity),
+) -> FileResponse:
+    return await _serve_report_attachment_preview(report_id, attachment_index, identity)
+
+
+@router.get("/report-results/{report_id}/attachments/{attachment_index}/preview/{filename}")
+async def app_report_attachment_preview_tailed(
+    report_id: str,
+    attachment_index: int,
+    filename: str,
+    identity: AppIdentity = Depends(require_app_identity),
+) -> FileResponse:
+    return await _serve_report_attachment_preview(report_id, attachment_index, identity)
 
 
 @router.post("/broadcasts/{message_id}/read")
@@ -801,12 +874,9 @@ async def app_broadcast_attachment_preview(
     target = await _resolve_broadcast_attachment(message_id, index, identity)
     if target.suffix.lower() not in {".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}:
         raise HTTPException(status_code=404, detail="broadcast_preview_not_supported")
-    cached = target.with_suffix(".preview.pdf")
-    if not cached.is_file():
-        preview = await asyncio.to_thread(_office_pdf_preview, str(target))
-        if preview is None:
-            raise HTTPException(status_code=503, detail="broadcast_preview_generation_failed")
-        cached = preview
+    cached = await asyncio.to_thread(_office_pdf_preview, str(target))
+    if cached is None:
+        raise HTTPException(status_code=503, detail="broadcast_preview_generation_failed")
     filename = await _broadcast_attachment_name(message_id, index, identity)
     return FileResponse(
         cached,
@@ -1146,6 +1216,8 @@ async def _stream_events(
             **social_context,
             attachments=attachments or None,
             cancel_event=cancel_event,
+            # App 网关入口固定标记客户端来源，随 runtime_metadata 透传到子Agent。
+            runtime_metadata={"client_channel": "app"},
         ):
             event_type = event.get("type")
             event_data = event.get("data") if isinstance(event.get("data"), dict) else {}

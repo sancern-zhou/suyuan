@@ -533,7 +533,7 @@ class AgentRuntime:
         state: RunState,
         action: Optional[Dict[str, Any]] = None,
     ) -> None:
-        if state.mode in {"ppt", "chart"} and not self._action_materializes_visual_output(action):
+        if state.mode in {"ppt"} and not self._action_materializes_visual_output(action):
             logger.info(
                 "multimodal_attachments_retained_for_visual_materialization",
                 session_id=state.session_id,

@@ -67,7 +67,6 @@ DEFAULT_ABSOLUTE_DELTA_THRESHOLDS = {
     "NO2": 10.0,
     "CO": 0.2,
     "O3": 30.0,
-    "NOX": 15.0,
 }
 DEFAULT_LEVEL_DEVIATION_THRESHOLDS = {
     "优": 0.30,
@@ -94,7 +93,7 @@ class StationDeviationConfig:
     deviation_threshold: float = 0.5
     min_station_count: int = 3
     min_data_rate: float = 0.8
-    pollutants: tuple[str, ...] = ("PM2.5", "PM10", "SO2", "NO2", "CO", "O3", "NOX")
+    pollutants: tuple[str, ...] = ("PM2.5", "PM10", "SO2", "NO2", "CO", "O3")
     absolute_delta_thresholds: tuple[tuple[str, float], ...] = (
         ("PM2.5", 10.0),
         ("PM10", 10.0),
@@ -102,7 +101,6 @@ class StationDeviationConfig:
         ("NO2", 10.0),
         ("CO", 0.2),
         ("O3", 30.0),
-        ("NOX", 15.0),
     )
 
     def absolute_delta_threshold(self, pollutant: str) -> float:
@@ -329,7 +327,6 @@ def detect_station_deviations(
                     "data_source": source,
                     "measurement_granularity": "5min" if source == "minute" else "hour",
                     "observed_indicator": OBSERVED_INDICATORS[pollutant],
-                    "nox_proxy_note": "NO2站点小时浓度作为NOX空间异常筛查代理" if pollutant == "NOX" else None,
                     **primary,
                     "secondary_stations": pollutant_alerts[1:],
                     "available_station_count": available_stations,
@@ -352,6 +349,14 @@ def detect_continuous_rises(
 ) -> list[dict[str, Any]]:
     """Detect six consecutive five-minute rises with pollutant thresholds."""
     grouped: dict[tuple[str, str], list[tuple[datetime, float, dict[str, Any]]]] = defaultdict(list)
+    # Only screen pollutants enabled in config. NOX intentionally has no lane
+    # of its own: it shares the NO2 monitoring column, and a separate lane let
+    # NOX bypass NO2's episode cooldown and duplicate notifications.
+    rise_columns = {
+        pollutant: column
+        for pollutant in config.pollutants
+        if (column := POLLUTANT_COLUMNS.get(pollutant))
+    }
     for row in rows:
         if row.get("data_source") != "minute":
             continue
@@ -359,7 +364,7 @@ def detect_continuous_rises(
         if not isinstance(timestamp, datetime):
             continue
         station_id = str(row.get("station_id") or "")
-        for pollutant, column in POLLUTANT_COLUMNS.items():
+        for pollutant, column in rise_columns.items():
             if pollutant in ("PM2.5", "O3") or not station_id or _has_mark(row.get(f"{column}_mark")):
                 continue
             value = _float(row.get(column))

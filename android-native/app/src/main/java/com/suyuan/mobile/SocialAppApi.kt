@@ -665,6 +665,26 @@ class SocialAppApi(
         taskQuery(token, "facets", mapOf("task_id" to taskId))
     }
 
+    suspend fun reportDownloadFormats(token: String, executionId: String): List<UploadedAttachment> = withContext(Dispatchers.IO) {
+        val id = java.net.URLEncoder.encode(executionId, "UTF-8")
+        client.newCall(Request.Builder().url(url("/api/social/app/scheduled-tasks/results/$id/report/formats"))
+            .header("Authorization", "Bearer $token").get().build()).execute().use { response ->
+            if (!response.isSuccessful) throw ApiException(response.code, "报告下载格式加载失败 (${response.code})")
+            val formats = JSONObject(response.body?.string().orEmpty()).optJSONArray("formats") ?: org.json.JSONArray()
+            buildList {
+                for (i in 0 until formats.length()) {
+                    val item = formats.optJSONObject(i) ?: continue
+                    val format = item.optString("format")
+                    val path = item.optString("url")
+                    if (format !in setOf("docx", "html") || path.isBlank()) continue
+                    add(UploadedAttachment(fileId = "$executionId:$format", filename = item.optString("filename", "report.$format"),
+                        fileType = "document", mimeType = if (format == "docx") "application/vnd.openxmlformats-officedocument.wordprocessingml.document" else "text/html",
+                        url = path, downloadUrl = path, resourceRef = null, format = format))
+                }
+            }
+        }
+    }
+
     private fun taskQuery(token: String, endpoint: String, params: Map<String, String>): JSONObject {
         val query = params.entries.joinToString("&") { "${it.key}=${java.net.URLEncoder.encode(it.value, "UTF-8")}" }
         client.newCall(Request.Builder().url(url("/api/social/app/scheduled-tasks/$endpoint?$query")).header("Authorization", "Bearer $token").get().build()).execute().use {

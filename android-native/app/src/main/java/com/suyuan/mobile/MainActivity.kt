@@ -93,6 +93,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
@@ -270,6 +271,11 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     val voiceLongPressed = remember { mutableStateOf(false) }
     val voiceGestureDownX = remember { mutableStateOf(0f) }
     val voiceGestureOffsetX = remember { mutableStateOf(0f) }
+    val voiceGestureDownY = remember { mutableStateOf(0f) }
+    val voiceGestureOffsetY = remember { mutableStateOf(0f) }
+    val voiceCancelArmed = remember { mutableStateOf(false) }
+    val draftBeforeVoice = remember { mutableStateOf("") }
+    val voiceCancelThresholdPx = with(LocalDensity.current) { 80.dp.toPx() }
     var requestKeyboardFocus by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf<String?>(null) }
     var showHistory by remember { mutableStateOf(false) }
@@ -283,6 +289,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     val startListening = {
         if (!recording) {
             localError = null
+            draftBeforeVoice.value = state.draft
             recording = true
             voiceClient.start(
                 token = state.token,
@@ -337,12 +344,15 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         voiceHoldHandler.removeCallbacks(voiceHoldRunnable)
         voiceHoldHandler.postDelayed(voiceHoldRunnable, 240L)
     }
-    val endVoicePress = { toggleMode: Boolean ->
+    val endVoicePress = { toggleMode: Boolean, forceCancel: Boolean ->
         voiceHoldHandler.removeCallbacks(voiceHoldRunnable)
         val wasLongPressed = voiceLongPressed.value
+        val cancelled = forceCancel || (wasLongPressed && voiceCancelArmed.value)
         voicePressActive.value = false
+        voiceCancelArmed.value = false
         localError = null
         voiceGestureOffsetX.value = 0f
+        voiceGestureOffsetY.value = 0f
         if (!wasLongPressed) {
             recording = false
             voiceClient.stop()
@@ -351,6 +361,12 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                 keyboardController?.hide()
                 focusManager.clearFocus()
             }
+        } else if (cancelled) {
+            // Swipe-up cancel (or an interrupted gesture): drop the recognition
+            // result and restore the draft captured before recording started.
+            recording = false
+            voiceClient.stop()
+            viewModel.updateDraft(draftBeforeVoice.value)
         } else {
             // A long-press release always sends the recognized text. Keeping
             // one outcome avoids a second gesture layer and matches the direct
@@ -469,6 +485,9 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                             voicePressActive.value = true
                             voiceGestureDownX.value = event.rawX
                             voiceGestureOffsetX.value = 0f
+                            voiceGestureDownY.value = event.rawY
+                            voiceGestureOffsetY.value = 0f
+                            voiceCancelArmed.value = false
                             if (voiceEnabled && !recording) {
                                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                                     permission.launch(Manifest.permission.RECORD_AUDIO)
@@ -481,12 +500,18 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                             if (voiceLongPressed.value) {
                                 val offset = (event.rawX - voiceGestureDownX.value).coerceIn(-260f, 260f)
                                 voiceGestureOffsetX.value = offset
+                                val rise = voiceGestureDownY.value - event.rawY
+                                voiceGestureOffsetY.value = rise.coerceIn(0f, 400f)
+                                voiceCancelArmed.value = rise >= voiceCancelThresholdPx
                             }
                             true
                         }
-                        android.view.MotionEvent.ACTION_UP,
+                        android.view.MotionEvent.ACTION_UP -> {
+                            endVoicePress(toggleOnTap, false)
+                            true
+                        }
                         android.view.MotionEvent.ACTION_CANCEL -> {
-                            endVoicePress(toggleOnTap)
+                            endVoicePress(toggleOnTap, true)
                             true
                         }
                         else -> true
@@ -598,12 +623,12 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         (state.error ?: localError)?.let { Text(it, color = SuyuanColors.error, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp)) }
         }
     }
-        if (recording) VoiceRecordingOverlay(voiceGestureOffsetX.value)
+        if (recording) VoiceRecordingOverlay(voiceGestureOffsetX.value, voiceGestureOffsetY.value, voiceCancelArmed.value)
     }
 }
 
 @Composable
-private fun VoiceRecordingOverlay(offsetX: Float) {
+private fun VoiceRecordingOverlay(offsetX: Float, offsetY: Float, cancelArmed: Boolean) {
     Box(
         Modifier.fillMaxSize().background(Color.Black.copy(alpha = .72f)),
         contentAlignment = androidx.compose.ui.Alignment.BottomCenter,
@@ -614,9 +639,10 @@ private fun VoiceRecordingOverlay(offsetX: Float) {
         ) {
             Spacer(Modifier.weight(1f))
             Surface(
-                color = Color(0xFF8FEF63),
+                color = if (cancelArmed) Color(0xFFE5484D) else Color(0xFF8FEF63),
                 shape = RoundedCornerShape(18.dp),
-                modifier = Modifier.width(210.dp).height(84.dp).offset { IntOffset((offsetX * 0.12f).roundToInt(), 0) },
+                modifier = Modifier.width(210.dp).height(84.dp)
+                    .offset { IntOffset((offsetX * 0.12f).roundToInt(), -(offsetY * 0.25f).roundToInt()) },
             ) {
                 Row(
                     Modifier.fillMaxSize().padding(horizontal = 34.dp),
@@ -624,13 +650,14 @@ private fun VoiceRecordingOverlay(offsetX: Float) {
                     verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                 ) {
                     val heights = listOf(6, 10, 16, 24, 13, 28, 18, 10, 21, 13, 7)
+                    val barColor = if (cancelArmed) Color.White else Color(0xFF3A6A31)
                     heights.forEach { height ->
-                        Box(Modifier.padding(horizontal = 1.5.dp).width(3.dp).height(height.dp).clip(RoundedCornerShape(3.dp)).background(Color(0xFF3A6A31)))
+                        Box(Modifier.padding(horizontal = 1.5.dp).width(3.dp).height(height.dp).clip(RoundedCornerShape(3.dp)).background(barColor))
                     }
                 }
             }
             Text(
-                "松开发送语音文字",
+                if (cancelArmed) "松开取消发送" else "松开发送 · 上滑取消",
                 color = Color.White,
                 fontSize = 17.sp,
                 modifier = Modifier.padding(top = 14.dp),
@@ -860,7 +887,7 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
                             }
                             if (expanded) {
                                 if (broadcast.content.isNotBlank()) {
-                                    MarkdownContent(broadcast.content, SuyuanColors.text)
+                                    MarkdownContent(broadcast.content, SuyuanColors.text, state, viewModel)
                                 }
                                 broadcast.attachments.forEach { attachment ->
                                     AttachmentView(attachment, state, viewModel, LocalContext.current)
@@ -1095,7 +1122,7 @@ private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: 
                         blocks.forEach { block ->
                             when (block) {
                                 is ReplyBlock.Text -> Column(Modifier.padding(horizontal = if (isUser) 0.dp else 14.dp)) {
-                                    MarkdownContent(block.content, if (isUser) SuyuanColors.primary else SuyuanColors.text)
+                                    MarkdownContent(block.content, if (isUser) SuyuanColors.primary else SuyuanColors.text, state, viewModel)
                                 }
                                 is ReplyBlock.Chart -> InlineChart(block.attachment, state, viewModel)
                                 is ReplyBlock.Image -> AttachmentView(block.attachment, state, viewModel, context, inlineImage = true)
@@ -1136,10 +1163,18 @@ private fun ProcessSummary(message: ChatMessage) {
 private sealed class MarkdownBlock {
     data class Text(val value: String) : MarkdownBlock()
     data class Table(val headers: List<String>, val rows: List<List<String>>) : MarkdownBlock()
+    data class Image(val url: String, val alt: String) : MarkdownBlock()
 }
 
+private val MARKDOWN_IMAGE_LINE_RE = Regex("^!\\[([^\\]]*)\\]\\(([^)\\s]+)\\)\\s*$")
+
 @Composable
-internal fun MarkdownContent(content: String, color: Color) {
+internal fun MarkdownContent(
+    content: String,
+    color: Color,
+    state: AppUiState? = null,
+    viewModel: AppViewModel? = null,
+) {
     SelectionContainer {
         Column {
             parseMarkdownBlocks(content).forEach { block ->
@@ -1148,8 +1183,47 @@ internal fun MarkdownContent(content: String, color: Color) {
                         Text(remember(block.value) { markdownToAnnotatedString(block.value) }, color = color, fontSize = 15.sp, lineHeight = 22.sp)
                     }
                     is MarkdownBlock.Table -> MarkdownTable(block.headers, block.rows, color)
+                    is MarkdownBlock.Image -> MarkdownImage(block.url, block.alt, state, viewModel)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MarkdownImage(url: String, alt: String, state: AppUiState?, viewModel: AppViewModel?) {
+    if (state == null || viewModel == null) return
+    // markdown 图片与 [[chart:<id>]] 图片共用附件预览通道（带 token 下载/缓存）。
+    val key = "mdimg:$url"
+    LaunchedEffect(url) {
+        viewModel.loadAttachmentPreview(
+            UploadedAttachment(
+                fileId = key,
+                filename = url.substringAfterLast('/').ifBlank { "image.png" },
+                fileType = "image",
+                mimeType = "image/png",
+                url = url,
+                resourceRef = null,
+            )
+        )
+    }
+    val preview = state.attachmentPreviews[key]
+    val loadError = preview?.error
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        val bytes = preview?.imageBytes
+        val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) } }
+        when {
+            bitmap != null -> androidx.compose.foundation.Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = alt.ifBlank { "图片" },
+                modifier = Modifier.fillMaxWidth(),
+                contentScale = ContentScale.FillWidth,
+            )
+            loadError != null -> Text("图片加载失败：$loadError", color = SuyuanColors.error, fontSize = 13.sp)
+            else -> Text("图片加载中…", color = SuyuanColors.secondaryText, fontSize = 13.sp)
+        }
+        if (alt.isNotBlank()) {
+            Text(alt, color = SuyuanColors.secondaryText, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
         }
     }
 }
@@ -1231,6 +1305,14 @@ private fun parseMarkdownBlocks(content: String): List<MarkdownBlock> {
     }
     var index = 0
     while (index < lines.size) {
+        val trimmed = lines[index].trim()
+        val imageMatch = MARKDOWN_IMAGE_LINE_RE.matchEntire(trimmed)
+        if (imageMatch != null) {
+            flushText()
+            blocks += MarkdownBlock.Image(url = imageMatch.groupValues[2], alt = imageMatch.groupValues[1])
+            index += 1
+            continue
+        }
         if (index + 1 < lines.size && isTableRow(lines[index]) && isTableDivider(lines[index + 1])) {
             flushText()
             val headers = splitTableRow(lines[index])
