@@ -54,7 +54,6 @@ MODE_PROFILES = {
     "query_forecast": "general-purpose",
     "report": "orchestrator",
     "social": "orchestrator",
-    "chart": "general-purpose",
     "expert": "general-purpose",
     "expert_meteorology": "general-purpose",
     "expert_analysis": "general-purpose",

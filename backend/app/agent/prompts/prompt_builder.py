@@ -19,7 +19,6 @@ from app.agent.workflow.delegation import build_delegation_contract
 from .knowledge_prompt import build_knowledge_prompt
 from .report_prompt import build_report_prompt
 from .social_prompt import build_social_prompt
-from .chart_prompt import build_chart_prompt
 from .board_prompt import build_board_prompt
 from .ops_prompt import build_ops_prompt
 from .graph_prompt import build_graph_prompt
@@ -103,7 +102,6 @@ AgentMode = Literal[
     "report",
     "social",
     "enforcement_exam",
-    "chart",
     "board",
     "ops",
     "graph",
@@ -158,7 +156,7 @@ def _build_react_system_prompt(
     构建ReAct系统提示词（多模式架构）
 
     Args:
-        mode: Agent模式 ("assistant" | "ppt" | "expert" | "query" | "report" | "social" | "chart" | "ops")
+        mode: Agent模式 ("assistant" | "ppt" | "expert" | "query" | "report" | "social" | "ops")
         available_tools: 可用工具列表（如果为None，自动加载该模式的所有工具）
         user_preferences: 用户偏好配置（仅social模式使用）
         memory_file_path: 用户记忆文件路径（仅social模式使用）
@@ -260,8 +258,6 @@ def _build_react_system_prompt(
             user_preferences=user_preferences,
             user_context=user_context,
         ))
-    elif mode == "chart":
-        return _with_platform_contracts(build_chart_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "board":
         return _with_platform_contracts(build_board_prompt(
             filtered_tools,

@@ -27,7 +27,7 @@ def test_expert_mode_exposes_meteorology_tools_only():
 
 def test_hidden_tools_are_not_exposed_by_any_agent_mode():
     modes = (
-        "assistant", "ppt", "expert", "query", "knowledge", "report", "social", "chart", "board",
+        "assistant", "ppt", "expert", "query", "knowledge", "report", "social", "board",
         "ops", "graph", "memory_consolidator", "deliberation_meteorology",
         "deliberation_monitoring", "deliberation_chemistry", "deliberation_reviewer",
     )

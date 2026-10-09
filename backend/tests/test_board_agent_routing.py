@@ -10,15 +10,6 @@ from app.api.agent import (
 )
 
 
-def test_chart_and_board_modes_use_distinct_agent_instances():
-    chart_agent = select_agent_instance(SimpleNamespace(mode="chart", assistant_mode=None))
-    board_agent = select_agent_instance(SimpleNamespace(mode="board", assistant_mode=None))
-
-    assert chart_agent is data_viz_agent_instance
-    assert board_agent is board_agent_instance
-    assert board_agent is not chart_agent
-
-
 def test_ppt_mode_uses_its_own_agent_instance():
     ppt_agent = select_agent_instance(SimpleNamespace(mode="ppt", assistant_mode=None))
 

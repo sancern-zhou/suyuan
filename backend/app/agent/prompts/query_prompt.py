@@ -64,7 +64,7 @@ def build_query_prompt(
         "",
         "- 已支持的专用业务图型必须使用 `create_business_chart`，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具。其他问数绘图以 `execute_echarts_python`（ECharts 交互图）为主（App 端除外，见“客户端差异”）。",
         "- Web 端：ECharts 交互图在最终回复正文中展示：在需要图表的位置独立一行插入 `[[chart:<visual_id>]]`，前后留空行；ID 必须来自本轮工具返回。根据叙述选择图表位置，可在多张图表之间穿插结论和解释；不要输出 ECharts JSON、脚本或 HTML，也不要要求用户去右侧查看。右侧面板仅作为补充预览。需要报告配图时复用原始数据，用 Python 或业务图表工具重新绘制。",
-        "- App 端（client_channel 为 app）：绘图方式与专家模式一致，直接用 `execute_python`（Matplotlib/Seaborn）绘制 PNG 静态图，默认一个独立图表一个图片文件；不产出 ECharts 交互图资源，也不做交互图转静态图的两步渲染。图片产物会自动登记为回复附件，正文中说明图表结论即可；画布比例和字号按手机屏幕阅读适配。",
+        "- App 端（client_channel 为 app）：绘图方式与专家模式一致，直接用 `execute_python`（Matplotlib/Seaborn）绘制 PNG 静态图，默认一个独立图表一个图片文件；不产出 ECharts 交互图资源，也不做交互图转静态图的两步渲染。图片产物会自动登记为回复附件，但 App 端只在正文出现 `[[chart:<visual_id>]]` 标记的位置渲染图片：在对应分析位置独立一行插入 `[[chart:<visual_id>]]`（前后留空行，ID 必须取本轮工具返回的 visuals.id），并在正文中说明该图结论；不得只写“以下是图表”而不插入标记。画布比例和字号按手机屏幕阅读适配。",
         "- `execute_python` 用于计算、数据整理和自定义静态图；常规趋势、比较、分布图优先使用 ECharts（App 端除外，见“客户端差异”）。只调用本轮可用工具。",
         "- 大量数据或完整结果应提供 file_path，并说明完整数据已保存。",
         "- file_path 只用于溯源和后续工具读取，不是 Web 图片/下载 URL；不得把 `/root/...`、`/home/...` 或 `backend_data_registry/...` 放进最终 Markdown 链接或图片。",

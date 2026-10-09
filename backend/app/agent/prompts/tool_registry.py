@@ -313,27 +313,6 @@ REPORT_TOOL_NAMES = [
     "run_agent_workflow",
 ]
 
-# ===== 图表模式工具 =====
-CHART_TOOL_NAMES = [
-    "list_session_resources",
-    "publish_session_file",
-    # 文件操作
-    "read_file",
-    "write_file",
-    "edit_file",
-    "grep",
-    "list_directory",
-    "search_files",
-    "bash",
-    # 代码执行和原生多模态视觉参考
-    "create_business_chart",
-    "execute_python",
-    "execute_echarts_python",
-    # 数据查询工具
-    "get_observed_meteorology",
-    "execute_sql_query",
-]
-
 # ===== 画板模式工具 =====
 BOARD_TOOL_NAMES = [
     "list_session_resources",
@@ -541,7 +520,6 @@ QUERY_FORECAST_TOOLS = _build_tool_dict(QUERY_FORECAST_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
 KNOWLEDGE_TOOLS = _build_tool_dict(KNOWLEDGE_TOOL_NAMES)
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
-CHART_TOOLS = _build_tool_dict(CHART_TOOL_NAMES)
 BOARD_TOOLS = _build_tool_dict(BOARD_TOOL_NAMES)
 OPS_TOOLS = _build_tool_dict(OPS_TOOL_NAMES)
 GRAPH_TOOLS = _build_tool_dict(GRAPH_TOOL_NAMES)
@@ -560,7 +538,6 @@ EXPERT_TOOL_ORDER = EXPERT_TOOL_NAMES
 QUERY_TOOL_ORDER = QUERY_TOOL_NAMES
 KNOWLEDGE_TOOL_ORDER = KNOWLEDGE_TOOL_NAMES
 REPORT_TOOL_ORDER = REPORT_TOOL_NAMES
-CHART_TOOL_ORDER = CHART_TOOL_NAMES
 BOARD_TOOL_ORDER = BOARD_TOOL_NAMES
 OPS_TOOL_ORDER = OPS_TOOL_NAMES
 GRAPH_TOOL_ORDER = GRAPH_TOOL_NAMES
@@ -572,7 +549,7 @@ MEMORY_CONSOLIDATOR_TOOL_ORDER = MEMORY_CONSOLIDATOR_TOOL_NAMES
 # 用户可直接交互的一级模式允许向用户提出结构化问题；无人值守场景
 # （定时任务、子代理）由 ask_user_question 工具自身护栏拒绝，无需在此区分。
 INTERACTIVE_QUESTION_MODES = frozenset({
-    "assistant", "ppt", "expert", "query", "knowledge", "report", "chart", "board", "ops", "graph",
+    "assistant", "ppt", "expert", "query", "knowledge", "report", "board", "ops", "graph",
 })
 
 
@@ -581,7 +558,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     根据模式获取工具有序白名单。
 
     Args:
-        mode: "assistant" | "ppt" | "expert" | "expert_meteorology" | "expert_analysis" | "query" | "query_monitoring" | "query_monitoring_station" | "query_monitoring_city" | "query_forecast" | "report" | "social" | "enforcement_exam" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
+        mode: "assistant" | "ppt" | "expert" | "expert_meteorology" | "expert_analysis" | "query" | "query_monitoring" | "query_monitoring_station" | "query_monitoring_city" | "query_forecast" | "report" | "social" | "enforcement_exam" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
 
     Returns:
         工具字典 {tool_name: ""}，key 顺序即工具顺序。
@@ -601,7 +578,6 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "report": REPORT_TOOLS,
         "social": SOCIAL_TOOLS,
         "enforcement_exam": ENFORCEMENT_EXAM_TOOLS,
-        "chart": CHART_TOOLS,
         "board": BOARD_TOOLS,
         "ops": OPS_TOOLS,
         "graph": GRAPH_TOOLS,
