@@ -56,6 +56,7 @@ from app.utils.path_config import (
     is_agent_sensitive_path,
 )
 from app.utils.font_utils import BROWSER_CHART_FONT_FAMILY, select_preferred_chinese_font_path, get_font_manager
+from app.utils.visual_ids import new_visual_id
 from app.tools.visualization.create_business_chart.theme import REPORT_THEME, SERIES_COLORS, matplotlib_report_style
 
 logger = structlog.get_logger()
@@ -594,8 +595,8 @@ class ExecutePythonTool(LLMTool):
                             with open(abs_chart_path, 'rb') as f:
                                 base64_data = base64.b64encode(f.read()).decode('utf-8')
 
-                            # 生成唯一的 chart_id（使用纳秒时间戳避免冲突）
-                            chart_id = f"matplotlib_{time.time_ns()}"
+                            # 生成唯一的 chart_id（base36 微秒时间戳，短 ID 便于模型照抄）
+                            chart_id = new_visual_id("matplotlib")
 
                             logger.info(
                                 "saving_to_image_cache",
@@ -675,7 +676,7 @@ class ExecutePythonTool(LLMTool):
                             mime_type, base64_data = base64_data_url.split(",", 1)
 
                             # 生成唯一的 chart_id
-                            chart_id = f"matplotlib_{time.time_ns()}"
+                            chart_id = new_visual_id("matplotlib")
 
                             logger.info(
                                 "saving_base64_to_image_cache",
@@ -1975,7 +1976,7 @@ def artifact_path(filename: str) -> str:
                 chart_type = self._detect_echarts_chart_type(echarts_data)
                 display_title = self._detect_echarts_title(echarts_data, chart_type)
                 visuals.append({
-                    "id": f"echarts_{time.time_ns()}_{index}",
+                    "id": new_visual_id("echarts", index),
                     "type": chart_type,
                     "title": display_title,
                     "data": echarts_data,
