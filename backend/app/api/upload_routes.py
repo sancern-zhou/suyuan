@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from fastapi.responses import FileResponse, Response
 from typing import Optional, List
 import asyncio
+import glob
 import os
 import re
 import subprocess
@@ -99,13 +100,51 @@ def _attachment_renderer(mime_type: str, filename: str) -> str:
 OFFICE_PDF_PREVIEW_EXTENSIONS = {".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
 
 
+def _office_preview_fingerprint(source: Path) -> str:
+    """Identity of one source file revision; rewrites produce a new value."""
+    stat = source.stat()
+    return f"{stat.st_mtime_ns}-{stat.st_size}"
+
+
+def _office_pdf_preview_path(source: Path) -> Path:
+    """Fingerprinted cache name for one source revision.
+
+    The source extension stays part of the key so same-directory docx/xlsx
+    pairs with identical stems never share one preview PDF.
+    """
+    extension = source.suffix.lower().lstrip(".")
+    return source.with_name(
+        f"{source.stem}.{extension}-{_office_preview_fingerprint(source)}.preview.pdf"
+    )
+
+
+def _prune_office_pdf_previews(source: Path, keep: Path) -> None:
+    """Drop cached previews of older revisions and the legacy fixed name."""
+    extension = glob.escape(source.suffix.lower().lstrip("."))
+    pattern = f"{glob.escape(source.stem)}.{extension}-*.preview.pdf"
+    try:
+        for item in source.parent.glob(pattern):
+            if item != keep:
+                item.unlink(missing_ok=True)
+        source.with_suffix(".preview.pdf").unlink(missing_ok=True)
+    except OSError as exc:
+        logger.warning(
+            "office_attachment_preview_prune_failed",
+            file=str(source),
+            error=str(exc),
+        )
+
+
 def _office_pdf_preview(file_path: str) -> Path | None:
     """Render Office uploads to an isolated PDF preview."""
     source = Path(file_path).resolve()
     if source.suffix.lower() not in OFFICE_PDF_PREVIEW_EXTENSIONS:
         return None
-    preview = source.with_suffix(".preview.pdf")
+    preview = _office_pdf_preview_path(source)
     try:
+        if preview.is_file() and preview.stat().st_size > 0:
+            _prune_office_pdf_previews(source, preview)
+            return preview
         with tempfile.TemporaryDirectory(prefix="suyuan-office-preview-") as temp_dir:
             profile_dir = Path(temp_dir) / "profile"
             output_dir = Path(temp_dir) / "output"
@@ -131,6 +170,7 @@ def _office_pdf_preview(file_path: str) -> Path | None:
             # shutil.move handles cross-device moves (os.rename/Path.replace
             # raises Errno 18 when tempdir and storage are on different mounts).
             shutil.move(str(converted), str(preview))
+            _prune_office_pdf_previews(source, preview)
             return preview
     except Exception as exc:
         logger.warning(
@@ -143,9 +183,17 @@ def _office_pdf_preview(file_path: str) -> Path | None:
 
 
 def _remove_office_pdf_preview(file_path: str) -> None:
-    preview = Path(file_path).resolve().with_suffix(".preview.pdf")
-    if preview.is_file():
-        preview.unlink()
+    source = Path(file_path).resolve()
+    extension = glob.escape(source.suffix.lower().lstrip("."))
+    pattern = f"{glob.escape(source.stem)}.{extension}-*.preview.pdf"
+    for preview in source.parent.glob(pattern):
+        try:
+            preview.unlink()
+        except OSError:
+            continue
+    legacy = source.with_suffix(".preview.pdf")
+    if legacy.is_file():
+        legacy.unlink()
 
 # 配置
 # 统一使用 backend/backend_data_registry/uploads，避免附件路径诱导 Agent 写到仓库根目录。

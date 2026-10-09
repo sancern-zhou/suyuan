@@ -154,8 +154,12 @@ async def test_broadcast_attachment_content_streaming(tmp_path, monkeypatch):
     }
     (tmp_path / "outside.txt").write_text("forbidden")
     (reports_dir / "notes.txt").write_text("notes")
-    # 预置 LibreOffice 管线约定位置的缓存 PDF，避免测试依赖 soffice
-    (reports_dir / "统计报表.preview.pdf").write_bytes(b"%PDF-1.5 cached-preview")
+    # 预置 LibreOffice 管线约定位置的缓存 PDF（按源文件指纹命名），避免测试依赖 soffice
+    from app.api.upload_routes import _office_pdf_preview_path
+
+    xlsx_source = reports_dir / "统计报表.xlsx"
+    cached_preview = _office_pdf_preview_path(xlsx_source)
+    cached_preview.write_bytes(b"%PDF-1.5 cached-preview")
 
     async def fake_inbox(social_user_id):
         return [dict(original_message)] if social_user_id == "app:android:alice" else []
