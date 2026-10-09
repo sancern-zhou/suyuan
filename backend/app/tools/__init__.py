@@ -383,6 +383,23 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
                 error=str(e),
             )
 
+    if is_project_tool_enabled(
+        context,
+        "xuchang-air-quality",
+        "query_xuchang_traffic_status",
+    ):
+        try:
+            from app.tools.xuchang.traffic_status.tool import XuchangTrafficStatusTool
+
+            registry.register(XuchangTrafficStatusTool(), priority=48)
+            logger.info("tool_loaded", tool="query_xuchang_traffic_status")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="query_xuchang_traffic_status",
+                error=str(e),
+            )
+
     # XcAiDb SQL Server 城市历史数据查询工具
     try:
         from app.tools.query.query_xcai_city_history.tool import QueryXcAiCityHistoryTool

@@ -36,6 +36,7 @@ backend:
     - query_airdata_platform
     - airdata_calc_report_summary
     - xuchang_station_catalog
+    - query_xuchang_traffic_status
   agent_mode_tools:
     query:
       - run_agent_workflow
@@ -96,6 +97,8 @@ backend:
       - query_national_province_air_quality
       - query_national_city_air_quality
       - resolve_station_geo
+      # 站点周边实时路况（百度地图 Traffic API）
+      - query_xuchang_traffic_status
       - meteorological_trajectory_analysis
       # 许昌源清单与上风向企业分析（企业排放清单 + 排污许可证合并筛查）
       - query_xuchang_emission_inventory
