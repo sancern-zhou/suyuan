@@ -551,6 +551,13 @@ async def search_knowledge_bases(
                 web_evidence = {"status": "pending", "query": query, "count": 0}
             except Exception as exc:
                 web_evidence = {"status": "failed", "query": query, "count": 0, "summary": str(exc)[:200]}
+            logger.info(
+                "knowledge_web_prefetch_result",
+                query=query[:60],
+                status=web_evidence.get("status"),
+                provider=web_evidence.get("provider"),
+                count=web_evidence.get("count"),
+            )
 
             # 网页补充只挂到首条结果的检索元数据上（消费方只读 documents[0]），避免整份文本按 top_k 重复；
             # 无本地结果时追加一条合成条目保留补充证据。

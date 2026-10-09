@@ -22,6 +22,7 @@ SOCIAL_CONTEXT_MODES = {"social", "enforcement_exam"}
 SYSTEM_CONTEXT_LAYER_ORDER = (
     "platform_policy",
     "mode_policy",
+    "knowledge_evidence",
     "fixed_policies",
     "acceptance_checklist",
     "session_resources",
@@ -107,6 +108,10 @@ class SimplifiedContextBuilder:
 
         # 问数模式地图交互上下文，仅 query 模式允许注入。
         self.map_context = None
+
+        # 知识问答模式首轮固定预取证据包（knowledge_evidence.py 生成），
+        # 仅 knowledge 模式首轮由 runtime 注入；为 None 时该层不渲染。
+        self.knowledge_evidence_context: Optional[str] = None
 
         # 客户端来源标记（"web" | "app"），由请求入口经 runtime_metadata 透传。
         # 为 None 时（定时任务、子Agent 未标记等）不渲染客户端差异层。
@@ -394,6 +399,7 @@ class SimplifiedContextBuilder:
         return {
             "platform_policy": self._build_platform_policy_prompt(),
             "mode_policy": mode_prompt,
+            "knowledge_evidence": self.knowledge_evidence_context or "",
             "fixed_policies": self._wrap_optional_context(
                 "fixed_policies", self.fixed_policy_context
             ),
