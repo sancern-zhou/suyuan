@@ -81,7 +81,7 @@ class RememberFactTool(LLMTool):
                     },
                     "category": {
                         "type": "string",
-                        "enum": ["用户偏好", "领域知识", "历史结论", "环境信息"],
+                        "enum": ["用户偏好", "领域知识", "模式方法论", "环境信息"],
                         "description": "事实类别"
                     },
                     "priority": {
@@ -247,13 +247,13 @@ class RememberFactTool(LLMTool):
         if not memory_file.exists():
             initial_content = """# 长期记忆 (MEMORY.md)
 
-此文件存储用户的偏好、领域知识和重要结论。
+此文件存储用户的偏好、领域知识和模式方法论。
 
 ## 用户偏好
 
 ## 领域知识
 
-## 历史结论
+## 模式方法论
 
 ## 环境信息
 """
