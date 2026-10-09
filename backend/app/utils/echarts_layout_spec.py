@@ -64,3 +64,34 @@ def test_option_without_grid_is_unchanged():
 
     assert "grid" not in option
     assert option["legend"]["bottom"] == 0
+
+
+def test_rotated_time_labels_reserve_more_than_the_fallback():
+    option = normalize_echarts_layout(_base_option(
+        xAxis={"type": "time", "axisLabel": {"rotate": 45, "fontSize": 12}},
+        series=[{"type": "line", "data": [["2026-10-09 10:00:00", 1], ["2026-10-10 11:00:00", 2]]}],
+    ))
+
+    # 旋转 45° 的完整时间标签垂直投影明显超过固定刻度行高 24
+    assert option["grid"]["bottom"] > 35 + 25 + 24
+
+
+def test_long_legend_names_wrap_and_reserve_extra_rows():
+    long_names = [f"许昌市{site}国控站点PM2.5浓度" for site in ["建安区", "魏都区", "襄城县", "鄢陵县"]]
+    option = normalize_echarts_layout(_base_option(legend={"data": long_names}))
+
+    # 800px 容器放不下四条长图例，折算成多行后预留超过单行常量
+    assert option["grid"]["bottom"] > 35 + 25 + 24
+
+
+def test_contain_label_grid_skips_label_row_reservation():
+    option = normalize_echarts_layout(_base_option(grid={"bottom": 40, "containLabel": True}))
+
+    # containLabel 由 ECharts 自动包含刻度，只预留图例行
+    assert option["grid"]["bottom"] == 35 + 25
+
+
+def test_horizontal_short_labels_keep_minimum_reservation():
+    option = normalize_echarts_layout(_base_option())
+
+    assert option["grid"]["bottom"] == 84

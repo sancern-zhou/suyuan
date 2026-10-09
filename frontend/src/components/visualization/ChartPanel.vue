@@ -43,6 +43,7 @@ import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import 'echarts-gl'  // 引入echarts-gl扩展库以支持3D图表
 import { cloneEChartsOption, ensureEChartsLegend, sanitizeCompleteRadarOption } from '../../utils/echartsOptionSanitizer'
+import { estimateLegendHeight, estimateXAxisLabelHeight } from '../../utils/echartsBottomSpace'
 import { applyPreferredChartFont } from '../../services/chartTypography'
 import { CHART_PRIMARY, CHART_TEXT_1, CHART_TEXT_2, CHART_COLORS, CHART_PRIMARY_FILL } from '../../services/chart/chartColors'
 
@@ -425,6 +426,7 @@ const optimizeChartLayout = (option) => {
   const containerHeight = chartContainer.value?.clientHeight
     || parseInt(dynamicHeight.value, 10)
     || 400
+  const containerWidth = chartContainer.value?.clientWidth || 600
 
   // 优化标题位置：确保标题与图表内容有间距
   if (optimized.title) {
@@ -521,13 +523,25 @@ const optimizeChartLayout = (option) => {
       const xAxes = Array.isArray(optimized.xAxis)
         ? optimized.xAxis
         : (optimized.xAxis ? [optimized.xAxis] : [])
+      // 刻度行高按内容估算（旋转/换行标签实际高度远超固定常量），但不低于常量兜底；
+      // containLabel 开启时 ECharts 自动把刻度框进 grid，无需重复预留
+      const labelsAutoContained = g.containLabel === true
+      const xAxisLabelSpace = labelsAutoContained ? 0 : Math.max(
+        X_AXIS_LABEL_HEIGHT,
+        ...xAxes.map(axis => estimateXAxisLabelHeight(axis, optimized.series, X_AXIS_LABEL_HEIGHT))
+      )
       const namedAxes = xAxes.filter(axis => axis && axis.name
         && ['middle', 'center'].includes(axis.nameLocation || 'end'))
       const axisNameSpace = namedAxes.length
         ? Math.max(...namedAxes.map(axis => axis.nameGap || 15)) + 16
         : 0
-      const requiredBottom = bottomLegendOffset + LEGEND_HEIGHT
-        + X_AXIS_LABEL_HEIGHT + axisNameSpace + LAYOUT_GAP
+      // 图例行数按图例项总宽与容器宽度折算（多行图例向上生长，常量 25px 不够）
+      const legendSpace = Math.max(
+        LEGEND_HEIGHT,
+        estimateLegendHeight(optimized.legend, optimized, containerWidth, LEGEND_HEIGHT)
+      )
+      const requiredBottom = bottomLegendOffset + legendSpace
+        + xAxisLabelSpace + axisNameSpace + LAYOUT_GAP
       const currentBottom = typeof g.bottom === 'number'
         ? g.bottom
         : (typeof g.bottom === 'string' && g.bottom.includes('%')
