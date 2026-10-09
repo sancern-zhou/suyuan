@@ -66,10 +66,10 @@ async def build_first_turn_evidence(
     parts: List[str] = [
         "<knowledge_evidence>",
         "## 首轮证据包（系统已在作答前固定预取：本地召回+重排+分块+并发网页摘要一次完成）",
-        "- 使用规则：优先直接基于以下证据回答；命中分块足以支持答案时不要再检索、不要再读全文。",
-        "- 仅在证据不足、结果冲突、需要跨章节总结或用户明确要求全文时，才按 document_read_targets "
-        "用 knowledge_document_reader 精读，或用 knowledge_qa_workflow 换关键词补查；"
-        "不要重复与本次相同的检索。",
+        "- 使用规则：先判断证据是否足以支撑回答——足以支撑时直接回答，不检索、不读全文。",
+        "- 证据不足（覆盖缺失、结果冲突、需要跨章节总结或用户明确要求全文）时才继续行动："
+        "换关键词调用 knowledge_qa_workflow 补检索，或按 document_read_targets 用 "
+        "knowledge_document_reader 精读。是否继续检索由证据充分性决定，不是固定步骤。",
         "",
     ]
 
