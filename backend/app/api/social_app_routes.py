@@ -1146,6 +1146,8 @@ async def _stream_events(
             **social_context,
             attachments=attachments or None,
             cancel_event=cancel_event,
+            # App 网关入口固定标记客户端来源，随 runtime_metadata 透传到子Agent。
+            runtime_metadata={"client_channel": "app"},
         ):
             event_type = event.get("type")
             event_data = event.get("data") if isinstance(event.get("data"), dict) else {}

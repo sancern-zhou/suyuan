@@ -824,7 +824,12 @@ async def analyze_stream(
             "session_storage_mode": "assistant",
             "attachments": None,
             "user_identifier": request.user_id,  # ✅ 直接传递 user_id，允许 None（None 时使用模式内共享记忆）
-            "skip_auto_followup": request.skip_auto_followup
+            "skip_auto_followup": request.skip_auto_followup,
+            # 客户端来源随 runtime_metadata 全链路透传（含子Agent），
+            # 供提示词按 App/Web 端差异化（图表形态、回复详略）。
+            "runtime_metadata": {
+                "client_channel": "app" if getattr(user, "auth_source", "") == "app" else "web"
+            },
         }
         if request.mode == "board" and request.board_context:
             analyze_kwargs["board_context"] = request.board_context
@@ -895,7 +900,10 @@ async def analyze_stream(
                         status_code=409,
                         detail={"code": "scheduled_context_tools_unavailable", "tools": missing_tools},
                     )
-                analyze_kwargs["runtime_metadata"] = {"scheduled_task": persisted_context}
+                analyze_kwargs["runtime_metadata"] = {
+                    **(analyze_kwargs.get("runtime_metadata") or {}),
+                    "scheduled_task": persisted_context,
+                }
                 analyze_kwargs["extra_tool_names"] = list(dict.fromkeys(persisted_tools))
 
         requested_active_contexts = (

@@ -108,6 +108,10 @@ class SimplifiedContextBuilder:
         # 问数模式地图交互上下文，仅 query 模式允许注入。
         self.map_context = None
 
+        # 客户端来源标记（"web" | "app"），由请求入口经 runtime_metadata 透传。
+        # 为 None 时（定时任务、子Agent 未标记等）不渲染客户端差异层。
+        self.client_channel: Optional[str] = None
+
         # 当前逻辑会话的共享资源投影。此字段不受模式隔离策略清理。
         self.session_resource_context = None
 
@@ -406,8 +410,27 @@ class SimplifiedContextBuilder:
             return ""
         return f"<{tag}>\n{content.strip()}\n</{tag}>"
 
+    def _build_client_channel_prompt(self) -> str:
+        """Render the request origin marker consumed by per-mode prompt branches."""
+        channel = (self.client_channel or "").strip().lower()
+        if channel == "app":
+            return (
+                "<client_channel>\n"
+                "当前消息来自 App 端（Android 手机客户端），用户在手机屏幕上阅读回复。\n"
+                "图表输出形态与回复详略，按当前模式提示词中「App 端 / Web 端」的约定执行。\n"
+                "</client_channel>"
+            )
+        if channel == "web":
+            return (
+                "<client_channel>\n"
+                "当前消息来自 Web 端（桌面浏览器）。\n"
+                "</client_channel>"
+            )
+        return ""
+
     def _build_platform_policy_prompt(self) -> str:
         """Build non-compressible runtime rules shared by every agent mode."""
+        client_channel_prompt = self._build_client_channel_prompt()
         return (
             "<context_precedence>\n"
             "上下文优先级按 context_layer 的 priority 从小到大递减。\n"
@@ -416,6 +439,7 @@ class SimplifiedContextBuilder:
             "历史裁剪只允许改变历史消息，不得删除、摘要或改写任何 system context layer。\n"
             "</context_precedence>\n\n"
             + self._build_agent_control_prompt()
+            + (f"\n\n{client_channel_prompt}" if client_channel_prompt else "")
         )
 
     def _build_session_resources_layer(self) -> str:
