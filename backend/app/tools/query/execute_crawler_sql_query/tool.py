@@ -76,6 +76,8 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
             "只允许 SELECT，禁止 INSERT/UPDATE/DELETE/DDL、注释和多语句；"
             f"使用 LIMIT 分页，最大返回 {MAX_LIMIT} 条。"
             "不确定字段时先调用 describe_table，不要查询 information_schema。"
+            "\n注意：StationHour 站名列是 StationName；StationDay/CityDay 没有 StationName 列，"
+            "站名/城市名用 PositionName/Area，不要跨表套用列名。"
             f"{contracts_block}"
             "\n注意：以上表都在同一个 MySQL 采集库，可跨表 JOIN；"
             "与 SQL Server 历史库、PostgreSQL 主库不支持跨库 JOIN。"
