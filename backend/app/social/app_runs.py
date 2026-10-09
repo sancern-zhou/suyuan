@@ -48,6 +48,8 @@ class AppRunStore:
             db.execute("CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, payload TEXT NOT NULL)")
             db.execute("CREATE INDEX IF NOT EXISTS event_run ON events(run_id, sequence)")
             db.execute("CREATE INDEX IF NOT EXISTS run_housekeeping ON runs(status, heartbeat)")
+            db.execute("CREATE TABLE IF NOT EXISTS interactions (interaction_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, session_id TEXT NOT NULL, payload TEXT NOT NULL, resolution TEXT)")
+            db.execute("CREATE INDEX IF NOT EXISTS pending_interactions ON interactions(session_id, resolution)")
             db.commit()
 
     def _call(self, operation):
@@ -97,6 +99,8 @@ class AppRunStore:
                 return dict(existing), False
             if db.execute("SELECT 1 FROM runs WHERE session_id=? AND status='running'", (session_id,)).fetchone():
                 raise ValueError("session_run_active")
+            if db.execute("SELECT 1 FROM runs WHERE session_id=? AND status='awaiting_user'", (session_id,)).fetchone():
+                raise ValueError('answer_pending_question_first')
             run_id = uuid.uuid4().hex
             db.execute("INSERT INTO runs(run_id,owner,request_id,session_id,fingerprint,status,heartbeat,payload) VALUES (?,?,?,?,?,'running',?,?)", (run_id, owner, request_id, session_id, fingerprint, time.time(), json.dumps(payload or {}, ensure_ascii=False)))
             self._event(db, run_id, {"type": "start", "data": {"session_id": session_id, "run_id": run_id}})
@@ -109,9 +113,50 @@ class AppRunStore:
             if not row or row[0] != 'running':
                 return
             self._event(db, run_id, event)
+            if event.get('type') == 'interaction_required':
+                data = event.get('data') or {}
+                if data.get('kind') == 'structured_question':
+                    db.execute("INSERT INTO interactions VALUES (?,?,?,?,NULL)", (data['interaction_id'], run_id, data['session_id'], json.dumps(data, ensure_ascii=False)))
             status = {"complete": "completed", "fatal_error": "failed", "incomplete": "failed", "interrupted": "cancelled"}.get(event.get('type'), 'running')
+            if status == 'completed' and db.execute("SELECT 1 FROM interactions WHERE run_id=? AND resolution IS NULL", (run_id,)).fetchone():
+                status = 'awaiting_user'
             db.execute("UPDATE runs SET status=?,heartbeat=? WHERE run_id=?", (status, time.time(), run_id))
         await asyncio.to_thread(self._call, operation)
+
+    async def pending_interaction(self, session_id):
+        def operation(db):
+            row = db.execute("SELECT i.payload FROM interactions i JOIN runs r ON r.run_id=i.run_id WHERE i.session_id=? AND i.resolution IS NULL AND r.status IN ('running','awaiting_user') ORDER BY i.rowid DESC LIMIT 1", (session_id,)).fetchone()
+            return json.loads(row[0]) if row else None
+        return await asyncio.to_thread(self._call, operation)
+
+    async def resolve_interaction(self, session_id, interaction_id, decision, answers):
+        from app.agent.user_questions import format_answers, validate_answers
+        def operation(db):
+            row = db.execute("SELECT * FROM interactions WHERE session_id=? AND interaction_id=?", (session_id, interaction_id)).fetchone()
+            if row is None:
+                raise LookupError('interaction_not_found')
+            interaction = json.loads(row['payload'])
+            normalized = validate_answers(interaction['questions'], answers or []) if decision == 'answer' else None
+            submitted = {'decision': decision, 'answers': normalized}
+            if row['resolution']:
+                saved = json.loads(row['resolution'])
+                if saved['submitted'] != submitted:
+                    raise RuntimeError('interaction_already_resolved')
+                return saved['response']
+            run = db.execute("SELECT status FROM runs WHERE run_id=?", (row['run_id'],)).fetchone()
+            if run and run[0] == 'running':
+                raise RuntimeError('interaction_turn_finishing')
+            if not run or run[0] != 'awaiting_user':
+                raise RuntimeError('interaction_run_unavailable')
+            response = {
+                'status': 'resolved', 'interaction_id': interaction_id, 'decision': decision,
+                'resume_query': format_answers(interaction['questions'], normalized) if normalized else None,
+                'mode': interaction['mode'], 'request_id': f'answer:{interaction_id}',
+            }
+            db.execute("UPDATE interactions SET resolution=? WHERE interaction_id=?", (json.dumps({'submitted': submitted, 'response': response}, ensure_ascii=False), interaction_id))
+            db.execute("UPDATE runs SET status=? WHERE run_id=?", ('completed' if decision == 'answer' else 'cancelled', row['run_id']))
+            return response
+        return await asyncio.to_thread(self._call, operation)
 
     async def heartbeat(self, run_id):
         def operation(db):
@@ -166,7 +211,7 @@ class AppRunStore:
             row = await self.get(run_id)
             if row is None:
                 return
-            if row['status'] in TERMINAL:
+            if row['status'] in TERMINAL or row['status'] == 'awaiting_user':
                 # A terminal event may have been committed after our first read.
                 if not await self.events(run_id, after):
                     return

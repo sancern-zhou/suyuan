@@ -403,12 +403,12 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             val visibleMessages = state.messages.filterNot { it.kind == "thought" }
             val showingWorkStatus = state.workStatus != null
             var initiallyScrolledSession by remember { mutableStateOf<String?>(null) }
-            LaunchedEffect(state.messages.size, state.messages.lastOrNull()?.content?.length, state.messages.lastOrNull()?.kind, showingWorkStatus) {
+            LaunchedEffect(state.messages.size, state.messages.lastOrNull()?.content?.length, state.messages.lastOrNull()?.kind, showingWorkStatus, state.pendingInteraction?.interactionId) {
                 if (state.messages.isNotEmpty()) {
                     val lastIndex = visibleMessages.lastIndex
                     val visibleLast = conversationListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
                     val lastMessageIsNewUserInput = state.messages.lastOrNull()?.kind == "user"
-                    val targetIndex = lastIndex + if (showingWorkStatus) 1 else 0
+                    val targetIndex = lastIndex + (if (showingWorkStatus) 1 else 0) + (if (state.pendingInteraction != null) 1 else 0)
                     val isFirstRestore = !state.sessionId.isNullOrBlank() && initiallyScrolledSession != state.sessionId
                     if (isFirstRestore || lastMessageIsNewUserInput || visibleLast == null || visibleLast >= lastIndex - 1) {
                         conversationListState.scrollToItem(targetIndex)
@@ -427,6 +427,13 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                     item { EmptyChatState(loading = state.loading, mode = state.mode, onModeSelected = viewModel::selectMode) }
                 } else items(visibleMessages, key = { it.id }) {
                     ChatMessageView(it, state, viewModel)
+                }
+                state.pendingInteraction?.let { question ->
+                    item(key = "question-${question.interactionId}") {
+                        AgentQuestionCard(question, state.loading, state.questionSubmitting, state.error,
+                            onSubmit = { viewModel.resolveQuestion("answer", it) },
+                            onCancel = { viewModel.resolveQuestion("reject") })
+                    }
                 }
                 if (showingWorkStatus) {
                     item(key = "working-status") {

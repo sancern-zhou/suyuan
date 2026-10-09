@@ -5,6 +5,9 @@ import java.io.File
 
 class SocialAppRepository(private val api: SocialAppApi) {
     fun reconnectChat() = api.reconnectChat()
+    suspend fun pendingInteraction(token: String, sessionId: String) = api.pendingInteraction(token, sessionId)
+    suspend fun resolveInteraction(token: String, question: AgentQuestionInteraction, decision: String, answers: List<AgentQuestionAnswer>) =
+        api.resolveInteraction(token, question.sessionId, question.interactionId, decision, answers)
     suspend fun login(accountId: String, secret: String) = api.login(accountId, secret)
     suspend fun oidcConfig() = api.oidcConfig()
     suspend fun exchangeOidcCode(code: String, codeVerifier: String, redirectUri: String) =

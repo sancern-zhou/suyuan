@@ -12,6 +12,12 @@ class AppSessionStore(context: Context) {
     fun accountId(): String = preferences.getString("account_id", "").orEmpty()
     fun displayName(): String = preferences.getString("display_name", "").orEmpty()
     fun pendingTurn(): String? = preferences.getString("pending_turn", null)
+    fun pendingQuestion(): String? = preferences.getString("pending_question", null)
+    fun savePendingQuestion(payload: String) { preferences.edit().putString("pending_question", payload).commit() }
+    fun clearPendingQuestion() { preferences.edit().remove("pending_question").commit() }
+    fun pendingQuestionReply(): String? = preferences.getString("pending_question_reply", null)
+    fun savePendingQuestionReply(payload: String) { preferences.edit().putString("pending_question_reply", payload).commit() }
+    fun clearPendingQuestionReply() { preferences.edit().remove("pending_question_reply").commit() }
     fun savePendingTurn(payload: String) { preferences.edit().putString("pending_turn", payload).commit() }
     fun clearPendingTurn(requestId: String? = null) {
         val current = pendingTurn()

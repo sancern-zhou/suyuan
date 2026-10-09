@@ -44,6 +44,7 @@ from app.social.app_identity import (
 )
 from app.social.session_mapper import SessionMapper
 from app.social.app_runs import get_app_run_store
+from app.agent.user_questions import QuestionSet
 from config.settings import settings
 
 router = APIRouter(prefix="/api/social/app", tags=["android-app"])
@@ -75,6 +76,11 @@ class AppChatRequest(BaseModel):
     attachments: list[dict] = Field(default_factory=list, max_length=8)
     mode: Literal["query", "knowledge", "expert"] = "expert"
     request_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class AppQuestionResolution(BaseModel):
+    decision: Literal["answer", "reject"]
+    answers: list[dict] | None = Field(default=None, max_length=4)
 
 
 class AppSteerRequest(BaseModel):
@@ -1133,7 +1139,19 @@ async def _stream_events(
             event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
             if event_data.get("run_id"):
                 await cancellation_registry.attach_run_id(session_id, cancel_event, str(event_data["run_id"]))
-            if event_type == "streaming_text":
+            if event_type == "interaction_required":
+                if event_data.get('kind') != 'structured_question':
+                    # Unsupported approval actions must remain explicit; never
+                    # silently approve operations on behalf of a mobile user.
+                    raise RuntimeError('App 暂不支持此确认类型，请在回复中说明需要用户确认的事项')
+                validated = QuestionSet.model_validate({'questions': event_data.get('questions')})
+                event['data'] = {
+                    **event_data, **validated.model_dump(),
+                    'interaction_id': f'interaction_{uuid.uuid4().hex}',
+                    'title': event_data.get('title') or '需要你的选择',
+                    'mode': mode, 'session_id': session_id,
+                }
+            elif event_type == "streaming_text":
                 streamed_answer += str(event_data.get("chunk") or "")
             elif event_type == "resources_changed":
                 descriptors = await _app_resource_descriptors(
@@ -1232,6 +1250,8 @@ async def start_app_run(
             raise HTTPException(status_code=409, detail="request_id_conflict")
         return _public_app_run(existing)
     session_id = await _ensure_session(request, identity, payload.session_id)
+    if await store.pending_interaction(session_id):
+        raise HTTPException(status_code=409, detail="answer_pending_question_first")
     attachments = await _sanitize_attachments(db, session_id, payload.attachments)
     try:
         run, created = await store.create(identity.social_user_id, request_id, session_id, fingerprint, payload.model_dump())
@@ -1259,6 +1279,31 @@ async def app_run_status(run_id: str, identity: AppIdentity = Depends(require_ap
 async def app_run_events(run_id: str, after: int = Query(default=0, ge=0), identity: AppIdentity = Depends(require_app_identity)) -> StreamingResponse:
     await _read_app_run(run_id, identity)
     return StreamingResponse(get_app_run_store().stream(run_id, after), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+async def _require_app_question_session(session_id: str, identity: AppIdentity):
+    row = await get_conversation_catalog().require_read(session_id, identity.as_current_user())
+    if row.source != ConversationSource.SOCIAL:
+        raise HTTPException(status_code=404, detail='session_not_found')
+
+
+@router.get('/sessions/{session_id}/interaction')
+async def app_pending_interaction(session_id: str, identity: AppIdentity = Depends(require_app_identity)):
+    await _require_app_question_session(session_id, identity)
+    return {'interaction': await get_app_run_store().pending_interaction(session_id)}
+
+
+@router.post('/sessions/{session_id}/interactions/{interaction_id}')
+async def app_resolve_interaction(session_id: str, interaction_id: str, payload: AppQuestionResolution, identity: AppIdentity = Depends(require_app_identity)):
+    await _require_app_question_session(session_id, identity)
+    try:
+        return await get_app_run_store().resolve_interaction(session_id, interaction_id, payload.decision, payload.answers)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/sessions")
