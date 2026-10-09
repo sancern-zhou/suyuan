@@ -24,7 +24,7 @@ frontend:
   agent_scene_overrides:
     monitoring:
       # assistant 为通用助手入口，其余为专业工作空间；顺序即平台页展示顺序。
-      mode_ids: [assistant, query, knowledge, expert, report, chart]
+      mode_ids: [assistant, query, knowledge, expert, report]
   # 侧边栏不再展示智能体模式快捷入口，统一由智能体平台页进入。
   sidebar_agent_modes: []
 backend:
