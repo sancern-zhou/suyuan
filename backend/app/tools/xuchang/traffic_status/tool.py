@@ -18,6 +18,7 @@ import structlog
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 from .client import BaiduTrafficClient, BaiduTrafficError
+from .quota import QUOTA_HARDCAP, quota_exceeded
 
 logger = structlog.get_logger()
 
@@ -40,6 +41,9 @@ class XuchangTrafficStatusTool(LLMTool):
                 "（0全部 1高速 2环路快速路 3主干路 4次干路 5支路）。"
                 "注意：平均车速、拥堵距离、10分钟趋势仅在存在拥堵路段时返回，"
                 "全畅通时只有整体评价与道路清单；结果仅代表查询时刻，不可当作历史规律。"
+                "调用会消耗与定时抓取共享的百度配额（1900次/日硬顶），超额时返回额度用尽提示；"
+                "历史路况时序请改用 execute_postgres_sql_query 查询 traffic_snapshot / "
+                "v_station_traffic_hourly（6分钟时隙定时抓取，slot_at 为 UTC），不要用本工具逐时段回溯。"
             ),
             "parameters": {
                 "type": "object",
@@ -105,6 +109,12 @@ class XuchangTrafficStatusTool(LLMTool):
     ) -> dict[str, Any]:
         client = self._client or BaiduTrafficClient()
         try:
+            # 实时额度优先放行：不做预检查，INCR 后越过硬顶才拒（实施方案 §6.2/§10.5）。
+            if await quota_exceeded():
+                return self._failed(
+                    f"当日实时路况额度已用完（百度配额硬顶 {QUOTA_HARDCAP} 次/日，定时抓取优先）。"
+                    "请次日再试，或用 execute_postgres_sql_query 查询 traffic_snapshot 历史数据。"
+                )
             if query_type == "around":
                 if latitude is None or longitude is None:
                     return self._failed("query_type=around 时必须提供 latitude 与 longitude")

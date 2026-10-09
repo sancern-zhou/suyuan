@@ -65,6 +65,8 @@ backend:
       - execute_echarts_python
       - knowledge_graph_query
       - resolve_station_geo
+      # 站点周边实时路况（百度地图 Traffic API，实时额度与定时抓取共享）
+      - query_xuchang_traffic_status
       - query_national_province_air_quality
       - query_national_city_air_quality
       - query_airdata_platform
@@ -97,8 +99,7 @@ backend:
       - query_national_province_air_quality
       - query_national_city_air_quality
       - resolve_station_geo
-      # 站点周边实时路况（百度地图 Traffic API）
-      - query_xuchang_traffic_status
+      # 实时路况已移交问数模式；专家模式历史路况走 execute_postgres_sql_query（traffic_snapshot）
       - meteorological_trajectory_analysis
       # 许昌源清单与上风向企业分析（企业排放清单 + 排污许可证合并筛查）
       - query_xuchang_emission_inventory
