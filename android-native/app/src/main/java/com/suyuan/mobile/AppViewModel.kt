@@ -49,6 +49,8 @@ data class AppUiState(
     val loading: Boolean = false,
     val workStatus: String? = null,
     val workStartedAtMs: Long? = null,
+    val pendingInteraction: AgentQuestionInteraction? = null,
+    val questionSubmitting: Boolean = false,
     val error: String? = null,
     val broadcastMessages: List<BroadcastMessage> = emptyList(),
     val unreadBroadcastCount: Int = 0,
@@ -122,10 +124,23 @@ class AppViewModel(
             return
         }
         if (recoveryJob?.isActive == true) return
-        val saved = store.pendingTurn() ?: return
+        val saved = store.pendingTurn()
+        if (saved == null) {
+            val cached = store.pendingQuestionReply()?.let { runCatching { AgentQuestionInteraction.fromJson(org.json.JSONObject(it).getJSONObject("question")) }.getOrNull() }
+                ?: store.pendingQuestion()?.let { runCatching { AgentQuestionInteraction.fromJson(org.json.JSONObject(it)) }.getOrNull() }
+            if (cached != null && (_state.value.sessionId == null || _state.value.sessionId == cached.sessionId)) {
+                if (_state.value.sessionId == null) loadSession(SessionInfo(cached.sessionId, cached.mode, "待回答的对话"))
+                else refreshPendingQuestion(cached.sessionId)
+            }
+            return
+        }
         recoveryJob = viewModelScope.launch {
             runCatching {
                 val payload = org.json.JSONObject(saved)
+                if (payload.optString("request_id").startsWith("answer:")) {
+                    store.clearPendingQuestion()
+                    store.clearPendingQuestionReply()
+                }
                 val session = payload.optString("resume_session_id").ifBlank { payload.optString("session_id") }.takeIf { it.isNotBlank() }
                 val query = payload.getString("query")
                 val history = if (session != null) repository.messages(_state.value.token, session) else emptyList()
@@ -134,7 +149,7 @@ class AppViewModel(
                 val earlier = if (turnIndex >= 0) history.take(turnIndex) else history
                 val attachments = parseAttachments(payload)
                 _state.value = _state.value.copy(sessionId = session, mode = payload.optString("mode", "query"),
-                    messages = earlier + ChatMessage(UUID.randomUUID().toString(), "user", query, attachments),
+                    messages = earlier + ChatMessage("app-user:${payload.getString("request_id")}", "user", questionReplyDisplay(query), attachments),
                     loading = true, error = null, workStatus = "正在恢复后台任务")
                 pendingTurns.addFirst(PendingTurn(query, attachments,
                     payload.optString("session_id").takeIf { it.isNotBlank() }, payload.optString("mode", "query"),
@@ -157,6 +172,85 @@ class AppViewModel(
 
     fun updateDraft(value: String) = _state.value.let { _state.value = it.copy(draft = value, error = null) }
 
+    private fun refreshPendingQuestion(sessionId: String) {
+        viewModelScope.launch {
+            // Re-submit a persisted decision if the process died between server
+            // acknowledgement and local handoff. The endpoint is idempotent.
+            val retry = store.pendingQuestionReply()?.let { runCatching { org.json.JSONObject(it) }.getOrNull() }
+            if (retry != null && !_state.value.questionSubmitting && _state.value.sessionId == sessionId) {
+                val cached = runCatching { AgentQuestionInteraction.fromJson(retry.getJSONObject("question")) }.getOrNull()
+                if (cached?.sessionId == sessionId) {
+                    val answers = retry.getJSONArray("answers").let { values -> (0 until values.length()).map { index ->
+                        val answer = values.getJSONObject(index)
+                        val custom = if (answer.isNull("custom")) "" else answer.optString("custom")
+                        val selected = answer.getJSONArray("selected")
+                        AgentQuestionAnswer((0 until selected.length()).map { selected.getInt(it) }.toSet(), custom.isNotBlank(), custom)
+                    } }
+                    _state.value = _state.value.copy(pendingInteraction = cached)
+                    resolveQuestion(retry.getString("decision"), answers)
+                    return@launch
+                }
+            }
+            runCatching {
+                val json = repository.pendingInteraction(_state.value.token, sessionId)
+                json to json?.let { AgentQuestionInteraction.fromJson(it) }
+            }.onSuccess { (json, question) ->
+                    if (_state.value.sessionId != sessionId || _state.value.questionSubmitting) return@onSuccess
+                    if (json != null) store.savePendingQuestion(json.toString())
+                    else store.clearPendingQuestion()
+                    _state.value = _state.value.copy(pendingInteraction = question)
+                }
+                .onFailure { failure ->
+                    if (_state.value.sessionId == sessionId) _state.value = _state.value.copy(error = friendlyError(failure))
+                }
+        }
+    }
+
+    fun resolveQuestion(decision: String, answers: List<AgentQuestionAnswer> = emptyList()) {
+        val current = _state.value
+        val question = current.pendingInteraction ?: return
+        if (current.loading || current.questionSubmitting || current.sessionId != question.sessionId) return
+        if (decision == "answer" && (answers.size != question.questions.size || answers.zip(question.questions).any { !it.first.valid(it.second) })) return
+        _state.value = current.copy(questionSubmitting = true, error = null)
+        store.savePendingQuestionReply(org.json.JSONObject().put("question", question.toJson()).put("decision", decision)
+            .put("answers", org.json.JSONArray().apply { answers.forEach { put(it.toJson()) } }).toString())
+        viewModelScope.launch {
+            runCatching { repository.resolveInteraction(current.token, question, decision, answers) }
+                .onSuccess { resolution ->
+                    val query = resolution.optString("resume_query").takeIf { it.isNotBlank() && it != "null" }
+                    if (decision == "answer" && query != null) {
+                        val requestId = resolution.getString("request_id")
+                        val mode = resolution.optString("mode", question.mode)
+                        // Save before clearing the question: process death after
+                        // answering must still resume the same idempotent turn.
+                        store.savePendingTurn(org.json.JSONObject().put("request_id", requestId)
+                            .put("query", query).put("session_id", question.sessionId).put("mode", mode)
+                            .put("model_tier", current.modelTier).put("attachments", org.json.JSONArray()).toString())
+                        pendingTurns.addFirst(PendingTurn(query, emptyList(), question.sessionId, mode, current.modelTier, requestId))
+                        if (_state.value.sessionId == question.sessionId) {
+                            val summary = answers.zip(question.questions).joinToString("\n") { (answer, item) ->
+                                val labels = answer.selected.sorted().map { item.options[it].label } + if (answer.customEnabled) listOf(answer.custom.trim()) else emptyList()
+                                "${item.header}：${labels.joinToString("、")}"
+                            }
+                            _state.value = _state.value.copy(pendingInteraction = null, questionSubmitting = false,
+                                messages = _state.value.messages + ChatMessage("app-user:$requestId", "user", summary),
+                                loading = true, workStatus = "已收到回答，正在继续原任务")
+                        }
+                        store.clearPendingQuestion()
+                        store.clearPendingQuestionReply()
+                        ensureStreamWorker()
+                    } else {
+                        store.clearPendingQuestion()
+                        store.clearPendingQuestionReply()
+                        if (_state.value.sessionId == question.sessionId) _state.value = _state.value.copy(pendingInteraction = null, questionSubmitting = false)
+                    }
+                }
+                .onFailure { failure ->
+                    if (_state.value.sessionId == question.sessionId) _state.value = _state.value.copy(questionSubmitting = false, error = friendlyError(failure))
+                }
+        }
+    }
+
     fun selectModelTier(tier: String) {
         if (tier in setOf("auto", "fast", "deep")) _state.value = _state.value.copy(modelTier = tier)
     }
@@ -166,7 +260,7 @@ class AppViewModel(
         val current = _state.value
         if (current.mode == mode && current.sessionId != null) return
         current.sessionId?.let { modeSessionIds[current.mode] = it }
-        _state.value = current.copy(mode = mode, sessionId = null, messages = emptyList(), draft = "", attachments = emptyList(), error = null, loading = true, workStatus = null, workStartedAtMs = null)
+        _state.value = current.copy(pendingInteraction = null, questionSubmitting = false, mode = mode, sessionId = null, messages = emptyList(), draft = "", attachments = emptyList(), error = null, loading = true, workStatus = null, workStartedAtMs = null)
         val existingId = modeSessionIds[mode]
         if (existingId != null) {
             _state.value = _state.value.copy(loading = false)
@@ -188,7 +282,7 @@ class AppViewModel(
         // stream continues to be persisted in the background and is ignored
         // by the new conversation UI until the user reopens that session.
         val current = _state.value
-        _state.value = current.copy(sessionId = null, draft = "", messages = emptyList(), attachments = emptyList(), error = null, loading = false, workStatus = null, workStartedAtMs = null)
+        _state.value = current.copy(pendingInteraction = null, questionSubmitting = false, sessionId = null, draft = "", messages = emptyList(), attachments = emptyList(), error = null, loading = false, workStatus = null, workStartedAtMs = null)
         viewModelScope.launch {
             runCatching { repository.createSession(current.token) }
                 .onSuccess { session ->
@@ -205,10 +299,13 @@ class AppViewModel(
     fun loadSession(session: SessionInfo) {
         val current = _state.value
         if (current.loading) return
-        _state.value = current.copy(mode = session.mode.takeIf { it in setOf("query", "knowledge", "expert") } ?: current.mode, sessionId = session.sessionId, draft = "", messages = emptyList(), attachments = emptyList(), loading = true, error = null, workStatus = null, workStartedAtMs = null)
+        _state.value = current.copy(pendingInteraction = null, questionSubmitting = false, mode = session.mode.takeIf { it in setOf("query", "knowledge", "expert") } ?: current.mode, sessionId = session.sessionId, draft = "", messages = emptyList(), attachments = emptyList(), loading = true, error = null, workStatus = null, workStartedAtMs = null)
         viewModelScope.launch {
             runCatching { repository.messages(current.token, session.sessionId) }
-                .onSuccess { messages -> _state.value = _state.value.copy(messages = messages, loading = false) }
+                .onSuccess { messages ->
+                    _state.value = _state.value.copy(messages = messages, loading = false, pendingInteraction = null)
+                    refreshPendingQuestion(session.sessionId)
+                }
                 .onFailure { _state.value = _state.value.copy(loading = false, error = friendlyError(it)) }
         }
     }
@@ -369,6 +466,10 @@ class AppViewModel(
 
     fun send() {
         val current = _state.value
+        if (current.pendingInteraction != null) {
+            _state.value = current.copy(error = "请先回答对话中的问题，或取消本次问题")
+            return
+        }
         val query = current.draft.trim()
         if (query.isEmpty() || !current.loggedIn) return
         val userMessage = ChatMessage(
@@ -394,11 +495,11 @@ class AppViewModel(
     private fun ensureStreamWorker() {
         if (streamJob?.isActive == true) return
         streamJob = viewModelScope.launch {
-            while (pendingTurns.isNotEmpty()) {
+            while (pendingTurns.isNotEmpty() && _state.value.pendingInteraction == null) {
                 runTurn(pendingTurns.removeFirst())
             }
             streamJob = null
-            if (pendingTurns.isNotEmpty()) {
+            if (pendingTurns.isNotEmpty() && _state.value.pendingInteraction == null) {
                 _state.value = _state.value.copy(loading = true)
                 ensureStreamWorker()
             } else {
@@ -444,6 +545,18 @@ class AppViewModel(
                 // persist them, but never let them mutate the active session UI.
                 if (_state.value.sessionId != turnSessionId) return@collect
                 when (event.type) {
+                    "interaction_required" -> {
+                        val json = org.json.JSONObject(event.data)
+                        if (json.optString("kind") == "structured_question") {
+                            val interaction = runCatching { AgentQuestionInteraction.fromJson(json) }.getOrNull()
+                            if (interaction == null) {
+                                _state.value = _state.value.copy(error = "提问功能需要更新后端服务，请联系管理员部署并重启后重试", workStatus = null)
+                            } else {
+                                store.savePendingQuestion(json.toString())
+                                _state.value = _state.value.copy(pendingInteraction = interaction, workStatus = "需要你的选择")
+                            }
+                        }
+                    }
                     "reconnecting" -> updateWorkStatus("连接暂时中断，正在恢复后台任务")
                     "start" -> {
                         // Session selection is handled before this guard.

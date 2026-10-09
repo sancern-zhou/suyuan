@@ -409,6 +409,25 @@ class SocialAppApi(
         awaitClose { activeCall?.cancel(); worker.cancel() }
     }
 
+    suspend fun pendingInteraction(token: String, sessionId: String): JSONObject? = withContext(Dispatchers.IO) {
+        client.newCall(Request.Builder().url(url("/api/social/app/sessions/$sessionId/interaction"))
+            .header("Authorization", "Bearer $token").build()).apply { timeout().timeout(30, TimeUnit.SECONDS) }.execute().use {
+            if (!it.isSuccessful) throw ApiException(it.code, "获取待回答问题失败 (${it.code})")
+            JSONObject(it.body?.string().orEmpty()).optJSONObject("interaction")
+        }
+    }
+
+    suspend fun resolveInteraction(token: String, sessionId: String, interactionId: String, decision: String, answers: List<AgentQuestionAnswer>): JSONObject = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("decision", decision)
+        if (decision == "answer") body.put("answers", org.json.JSONArray().apply { answers.forEach { put(it.toJson()) } })
+        client.newCall(Request.Builder().url(url("/api/social/app/sessions/$sessionId/interactions/$interactionId"))
+            .header("Authorization", "Bearer $token").post(body.toString().toRequestBody("application/json".toMediaType()))
+            .build()).apply { timeout().timeout(30, TimeUnit.SECONDS) }.execute().use {
+            if (!it.isSuccessful) throw ApiException(it.code, "提交回答失败 (${it.code})，请重试")
+            JSONObject(it.body?.string().orEmpty())
+        }
+    }
+
     suspend fun transcribe(token: String, audioFile: File): String = withContext(Dispatchers.IO) {
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("language", "zh")
@@ -551,7 +570,7 @@ class SocialAppApi(
                     // stay available to the web client but are omitted here.
                     if (kind == "tool") continue
                     if (kind == "thought" && !isVisibleThought(content)) continue
-                    add(ChatMessage(item.optString("id", "history-$index"), kind, content, attachments, streaming = false, expanded = false))
+                    add(ChatMessage(item.optString("id", "history-$index"), kind, if (kind == "user") questionReplyDisplay(content) else content, attachments, streaming = false, expanded = false))
                 }
             }
         }
