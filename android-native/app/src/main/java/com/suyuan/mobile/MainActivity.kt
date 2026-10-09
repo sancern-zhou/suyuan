@@ -860,7 +860,7 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
                             }
                             if (expanded) {
                                 if (broadcast.content.isNotBlank()) {
-                                    MarkdownContent(broadcast.content, SuyuanColors.text)
+                                    MarkdownContent(broadcast.content, SuyuanColors.text, state, viewModel)
                                 }
                                 broadcast.attachments.forEach { attachment ->
                                     AttachmentView(attachment, state, viewModel, LocalContext.current)
@@ -1095,7 +1095,7 @@ private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: 
                         blocks.forEach { block ->
                             when (block) {
                                 is ReplyBlock.Text -> Column(Modifier.padding(horizontal = if (isUser) 0.dp else 14.dp)) {
-                                    MarkdownContent(block.content, if (isUser) SuyuanColors.primary else SuyuanColors.text)
+                                    MarkdownContent(block.content, if (isUser) SuyuanColors.primary else SuyuanColors.text, state, viewModel)
                                 }
                                 is ReplyBlock.Chart -> InlineChart(block.attachment, state, viewModel)
                                 is ReplyBlock.Image -> AttachmentView(block.attachment, state, viewModel, context, inlineImage = true)
@@ -1136,10 +1136,18 @@ private fun ProcessSummary(message: ChatMessage) {
 private sealed class MarkdownBlock {
     data class Text(val value: String) : MarkdownBlock()
     data class Table(val headers: List<String>, val rows: List<List<String>>) : MarkdownBlock()
+    data class Image(val url: String, val alt: String) : MarkdownBlock()
 }
 
+private val MARKDOWN_IMAGE_LINE_RE = Regex("^!\\[([^\\]]*)\\]\\(([^)\\s]+)\\)\\s*$")
+
 @Composable
-internal fun MarkdownContent(content: String, color: Color) {
+internal fun MarkdownContent(
+    content: String,
+    color: Color,
+    state: AppUiState? = null,
+    viewModel: AppViewModel? = null,
+) {
     SelectionContainer {
         Column {
             parseMarkdownBlocks(content).forEach { block ->
@@ -1148,8 +1156,47 @@ internal fun MarkdownContent(content: String, color: Color) {
                         Text(remember(block.value) { markdownToAnnotatedString(block.value) }, color = color, fontSize = 15.sp, lineHeight = 22.sp)
                     }
                     is MarkdownBlock.Table -> MarkdownTable(block.headers, block.rows, color)
+                    is MarkdownBlock.Image -> MarkdownImage(block.url, block.alt, state, viewModel)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MarkdownImage(url: String, alt: String, state: AppUiState?, viewModel: AppViewModel?) {
+    if (state == null || viewModel == null) return
+    // markdown 图片与 [[chart:<id>]] 图片共用附件预览通道（带 token 下载/缓存）。
+    val key = "mdimg:$url"
+    LaunchedEffect(url) {
+        viewModel.loadAttachmentPreview(
+            UploadedAttachment(
+                fileId = key,
+                filename = url.substringAfterLast('/').ifBlank { "image.png" },
+                fileType = "image",
+                mimeType = "image/png",
+                url = url,
+                resourceRef = null,
+            )
+        )
+    }
+    val preview = state.attachmentPreviews[key]
+    val loadError = preview?.error
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        val bytes = preview?.imageBytes
+        val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) } }
+        when {
+            bitmap != null -> androidx.compose.foundation.Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = alt.ifBlank { "图片" },
+                modifier = Modifier.fillMaxWidth(),
+                contentScale = ContentScale.FillWidth,
+            )
+            loadError != null -> Text("图片加载失败：$loadError", color = SuyuanColors.error, fontSize = 13.sp)
+            else -> Text("图片加载中…", color = SuyuanColors.secondaryText, fontSize = 13.sp)
+        }
+        if (alt.isNotBlank()) {
+            Text(alt, color = SuyuanColors.secondaryText, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
         }
     }
 }
@@ -1231,6 +1278,13 @@ private fun parseMarkdownBlocks(content: String): List<MarkdownBlock> {
     }
     var index = 0
     while (index < lines.size) {
+        val trimmed = lines[index].trim()
+        MARKDOWN_IMAGE_LINE_RE.matchEntire(trimmed)?.let { match ->
+            flushText()
+            blocks += MarkdownBlock.Image(url = match.groupValues[2], alt = match.groupValues[1])
+            index += 1
+            continue
+        }
         if (index + 1 < lines.size && isTableRow(lines[index]) && isTableDivider(lines[index + 1])) {
             flushText()
             val headers = splitTableRow(lines[index])

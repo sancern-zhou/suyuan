@@ -32,7 +32,7 @@ internal fun chartReplyBlocks(content: String, attachments: List<UploadedAttachm
         .flatMap { listOf(it.fileId to it, it.visualId to it) }.toMap()
     val blocks = mutableListOf<ReplyBlock>()
     var start = 0
-    Regex("\\[\\[chart:([A-Za-z0-9_-]{1,100})\\]\\]").findAll(content).forEach { match ->
+    Regex("\\[\\[chart:([A-Za-z0-9_.-]{1,100})\\]\\]").findAll(content).forEach { match ->
         val chart = charts[match.groupValues[1]] ?: return@forEach
         if (match.range.first > start) blocks += ReplyBlock.Text(content.substring(start, match.range.first))
         blocks += if (isInteractiveChart(chart)) ReplyBlock.Chart(chart) else ReplyBlock.Image(chart)
