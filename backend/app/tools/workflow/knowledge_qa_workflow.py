@@ -106,7 +106,8 @@ class KnowledgeQAWorkflow(WorkflowTool):
 
     name = "knowledge_qa_workflow"
     description = (
-        "检索知识库，只返回来源不生成答案；严肃问答后续按 document_read_targets 调 knowledge_document_reader。"
+        "固定执行本地召回、重排、分块和文档元数据预取，并并发获取最多2条网页短摘要；"
+        "只返回证据，不生成答案，由主Agent决定是否重检索、读邻近块或完整原文。"
     )
     version = "1.0.0"
     category = "knowledge_qa"
@@ -225,6 +226,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
             # 构建来源信息（用于data字段）
             sources = []
             retrieval_metadata = documents[0].get("retrieval_metadata", {}) if documents else {}
+            web_evidence = retrieval_metadata.get("web_evidence", {}) if retrieval_metadata else {}
             document_read_targets = _build_document_read_targets(documents)
             for doc in documents[:5]:  # 最多返回5篇参考文档
                 # 获取完整内容，不再截断
@@ -262,11 +264,13 @@ class KnowledgeQAWorkflow(WorkflowTool):
                 "document_read_targets": document_read_targets,
                 "reading_requirement": {
                     "applies_to": "严肃知识问答、标准条款解释、计算方法、表格/公式解读、跨章节总结",
-                    "required_action": "按document_read_targets中的document_id和matched_chunk_indices，调用knowledge_document_reader读取相邻chunks；需要全文概括时读取all_chunks。",
-                    "do_not_answer_from_chunks_only": True
+                    "required_action": "先判断当前chunk是否足以支持答案；仅在证据不足、结果冲突、需要跨章节总结或用户明确要求全文时，按document_read_targets调用knowledge_document_reader读取相邻chunks或all_chunks。",
+                    "do_not_answer_from_chunks_only": False,
+                    "web_evidence_role": "网页摘要仅作补充线索，优先使用本地知识库证据。"
                 },
                 "total_retrieved": len(documents),
                 "retrieval_metadata": retrieval_metadata,
+                "web_evidence": web_evidence,
                 "retrieval_summary": f"从知识库中检索到 {len(documents)} 篇相关文档"
             }
 

@@ -278,6 +278,29 @@ async def search_knowledge_bases(
         get_shared_knowledge_session_factory,
     )
 
+    # 固定证据预取：网页只返回少量摘要，绝不参与本地排序，也不调用 LLM。
+    # 与本地检索并发启动；超时或无配置时静默降级为空补充。
+    async def prefetch_web() -> dict:
+        try:
+            from app.tools.social.web_search.tool import WebSearchTool
+            result = await WebSearchTool().execute(query=query, count=2)
+            if not result.get("success"):
+                return {"status": "failed", "results": [], "summary": result.get("summary", "")}
+            data = result.get("data", {}) or {}
+            return {
+                "status": "ready",
+                "provider": data.get("provider"),
+                "query": data.get("query", query),
+                "results_text": data.get("results_text", "")[:3000],
+                "count": min(int(data.get("count", 0) or 0), 2),
+                "summary": result.get("summary", ""),
+            }
+        except Exception as exc:
+            logger.info("knowledge_web_prefetch_skipped", error=str(exc))
+            return {"status": "failed", "results": [], "summary": str(exc)[:200]}
+
+    web_task = asyncio.create_task(prefetch_web())
+
     # 使用独立会话，检索完成后立即关闭
     async with async_session() as db:
         service = KnowledgeBaseService(db=db)
@@ -501,6 +524,31 @@ async def search_knowledge_bases(
                     }
                 })
 
+            try:
+                web_evidence = await asyncio.wait_for(web_task, timeout=1.5)
+            except asyncio.TimeoutError:
+                web_evidence = {"status": "pending", "query": query, "count": 0}
+            except Exception as exc:
+                web_evidence = {"status": "failed", "query": query, "count": 0, "summary": str(exc)[:200]}
+
+            # 将网页补充挂在每条结果的检索元数据上，兼容现有返回契约；无本地结果时也保留补充证据。
+            for item in formatted_results:
+                item.setdefault("retrieval_metadata", {})["web_evidence"] = web_evidence
+            if not formatted_results and web_evidence.get("status") == "ready" and web_evidence.get("count", 0):
+                formatted_results.append({
+                    "content": web_evidence.get("results_text", ""),
+                    "original_content": web_evidence.get("results_text", ""),
+                    "score": 0.0,
+                    "rerank_score": None,
+                    "document_id": None,
+                    "document_name": "网页检索补充",
+                    "knowledge_base_id": None,
+                    "knowledge_base_name": "互联网补充",
+                    "metadata": {"web_evidence": web_evidence},
+                    "retrieval_route": "web_prefetch",
+                    "retrieval_metadata": {"web_evidence": web_evidence},
+                })
+
             return formatted_results
 
         except asyncio.TimeoutError:
@@ -574,11 +622,28 @@ def build_rag_prompt(
 以下是检索到的相关参考资料（按相关度排序）：
 
 {context_str}""")
-        prompt_parts.append("""## 回答要求
+        web_evidence = []
+        for ctx in contexts:
+            candidate = (ctx.get("retrieval_metadata") or {}).get("web_evidence")
+            if candidate and candidate not in web_evidence:
+                web_evidence.append(candidate)
+        web_instruction = ""
+        if web_evidence:
+            web_text = "\n\n".join(
+                item.get("results_text", "") for item in web_evidence
+                if item.get("status") == "ready" and item.get("results_text")
+            )
+            if web_text:
+                prompt_parts.append(f"""## 网页补充（仅作线索）
+{web_text}""")
+            web_instruction = """\n5. 网页检索内容只是补充线索，优先使用本地知识库证据；除非问题要求最新信息或本地证据不足，不要让网页摘要覆盖本地资料。"""
+        prompt_parts.append(f"""## 回答要求
 1. 优先使用参考资料中的信息进行回答
-2. 如果是追问，直接回答问题，不需要重复背景信息
-3. 保持回答简洁、准确、专业
-4. 如果涉及多个来源的信息，请综合分析后给出答案
+2. 如果当前分块已经足以支持答案，直接回答，不要为了形式再读取相邻分块或完整文档
+3. 只有在证据不足、结果冲突、需要跨章节总结，或用户明确要求全文时，才继续读取相邻分块/完整原文
+4. 如果是追问，直接回答问题，不需要重复背景信息
+5. 保持回答简洁、准确、专业
+6. 如果涉及多个来源的信息，请综合分析后给出答案{web_instruction}
 
 ## 开始回答""")
     else:
@@ -777,7 +842,8 @@ async def knowledge_qa_stream(
     try:
         # Step 1: 按需HyDE关键词增强 + 检索知识库（使用独立会话，超时控制）
         search_start = time.time()
-        reranker_setting = request.use_reranker if request.use_reranker is not None else request.rerank_mode
+        # 基础证据包固定执行重排；是否继续扩展由 Agent 决定。
+        reranker_setting = "always"
 
         contexts = await search_knowledge_bases(
             query=request.query,
@@ -786,7 +852,7 @@ async def knowledge_qa_stream(
             top_k=request.top_k,
             score_threshold=request.score_threshold,
             use_reranker=reranker_setting,
-            use_hyde="auto"
+            use_hyde=False
         )
 
         search_elapsed = (time.time() - search_start) * 1000
@@ -851,7 +917,7 @@ async def knowledge_qa_non_stream(
 
     try:
         # 检索知识库（按需HyDE关键词增强，按需Reranker精排）
-        reranker_setting = request.use_reranker if request.use_reranker is not None else request.rerank_mode
+        reranker_setting = "always"
         contexts = await search_knowledge_bases(
             query=request.query,
             user_id=user_id,
@@ -859,7 +925,7 @@ async def knowledge_qa_non_stream(
             top_k=request.top_k,
             score_threshold=request.score_threshold,
             use_reranker=reranker_setting,
-            use_hyde="auto"
+            use_hyde=False
         )
 
         # 构建Prompt
