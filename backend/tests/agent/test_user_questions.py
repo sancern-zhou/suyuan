@@ -52,6 +52,26 @@ def test_question_validation_and_answers():
             validate_answers(QUESTIONS, invalid)
 
 
+def _option_with_preview(preview):
+    return {**QUESTIONS[0], "options": [{**QUESTIONS[0]["options"][0], "preview": preview}, QUESTIONS[0]["options"][1]]}
+
+
+def test_preview_must_be_safe_html_fragment():
+    # 纯文本与安全 HTML 片段放行
+    for preview in ("纯文本对比说明", "<div class=\"mock\">布局示意</div>", "<!-- 注释 -->\n<table>...</table>"):
+        assert len(QuestionSet.model_validate({"questions": [_option_with_preview(preview)]}).questions) == 1
+    # 文档级标签、脚本样式、只有标记没有标签均拒绝
+    for preview in (
+        "<html><body>整页</body></html>",
+        "<!doctype html><div>x</div>",
+        "<div onclick=\"x\"><script>1</script></div>",
+        "<style>.a{}</style>",
+        "<!-- 只有注释没有标签 -->",
+    ):
+        with pytest.raises(ValueError):
+            QuestionSet.model_validate({"questions": [_option_with_preview(preview)]})
+
+
 @pytest.mark.asyncio
 async def test_tool_result_exposes_interaction_and_parallel_runtime_recognizes_it():
     result = await AskUserQuestionTool().execute(questions=QUESTIONS)

@@ -888,6 +888,13 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_scheduled_task_results", error=str(e))
 
+    try:
+        from app.tools.social.ask_user_question_tool import AskUserQuestionTool
+        registry.register(AskUserQuestionTool(), priority=367)
+        logger.info("tool_loaded", tool="ask_user_question")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="ask_user_question", error=str(e))
+
     # ========================================
     # Social Mode Tools（社交模式工具 - 呼吸式Agent）
     # ========================================

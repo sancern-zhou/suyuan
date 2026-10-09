@@ -569,6 +569,13 @@ ENFORCEMENT_EXAM_TOOL_ORDER = ENFORCEMENT_EXAM_TOOL_NAMES
 MEMORY_CONSOLIDATOR_TOOL_ORDER = MEMORY_CONSOLIDATOR_TOOL_NAMES
 
 
+# 用户可直接交互的一级模式允许向用户提出结构化问题；无人值守场景
+# （定时任务、子代理）由 ask_user_question 工具自身护栏拒绝，无需在此区分。
+INTERACTIVE_QUESTION_MODES = frozenset({
+    "assistant", "ppt", "expert", "query", "knowledge", "report", "chart", "board", "ops", "graph",
+})
+
+
 def get_tools_by_mode(mode: str) -> Dict[str, str]:
     """
     根据模式获取工具有序白名单。
@@ -610,14 +617,17 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         raise ValueError(f"Unknown mode: {mode}")
 
     if project_tool_names is not None:
-        tools = _build_tool_dict(project_tool_names)
+        # 项目全量接管模式同样获得交互提问工具（此前接管会让它静默丢失）。
+        tool_names = list(project_tool_names)
+        if mode in INTERACTIVE_QUESTION_MODES and "ask_user_question" not in tool_names:
+            tool_names.append("ask_user_question")
     else:
+        tool_names = list(mode_mapping[mode].keys())
+        if mode in INTERACTIVE_QUESTION_MODES:
+            tool_names.append("ask_user_question")
         extra_tool_names = _get_project_extra_tool_names_by_mode(mode)
-        base_names = list(mode_mapping[mode].keys())
-        if mode in {"assistant", "ppt", "expert", "query", "knowledge", "report", "chart", "board", "ops", "graph"}:
-            base_names.append("ask_user_question")
-        merged_names = base_names + [name for name in (extra_tool_names or []) if name not in base_names]
-        tools = _build_tool_dict(merged_names)
+        tool_names += [name for name in (extra_tool_names or []) if name not in tool_names]
+    tools = _build_tool_dict(tool_names)
 
     disabled_tools = _get_project_disabled_tool_names()
     if not disabled_tools:

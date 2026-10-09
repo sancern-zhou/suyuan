@@ -3,9 +3,20 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
+
+# 参考 ZCode AskUserQuestion 的 preview 校验：预览只能是安全的 HTML 片段。
+# 含 HTML 标记时禁止 html/body/doctype 文档级标签与 script/style 标签，且必须含至少一个标签；
+# 纯文本（不含任何 HTML 标记）原样放行。
+_HTML_PREVIEW_MARKER = re.compile(
+    r"<!doctype\b|<!--|</?\s*[a-z][a-z0-9:-]*(?:\s[^<>]*)?>", re.IGNORECASE
+)
+_HTML_PREVIEW_DOCUMENT_TAG = re.compile(r"<!doctype\b|</?\s*(?:html|body)\b", re.IGNORECASE)
+_HTML_PREVIEW_SCRIPT_STYLE_TAG = re.compile(r"</?\s*(?:script|style)\b", re.IGNORECASE)
+_HTML_PREVIEW_TAG = re.compile(r"</?\s*[a-z][a-z0-9:-]*(?:\s[^<>]*)?>", re.IGNORECASE)
 
 
 class QuestionOption(BaseModel):
@@ -13,6 +24,18 @@ class QuestionOption(BaseModel):
     label: str = Field(min_length=1, max_length=80)
     description: str = Field(min_length=1, max_length=500)
     preview: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def validate_preview(self):
+        if self.preview is None or not _HTML_PREVIEW_MARKER.search(self.preview):
+            return self
+        if _HTML_PREVIEW_DOCUMENT_TAG.search(self.preview):
+            raise ValueError("preview 必须是 HTML 片段，不能包含 html/body/doctype 标签")
+        if _HTML_PREVIEW_SCRIPT_STYLE_TAG.search(self.preview):
+            raise ValueError("preview 不能包含 script 或 style 标签")
+        if not _HTML_PREVIEW_TAG.search(self.preview):
+            raise ValueError("preview 含 HTML 标记时必须包含至少一个 HTML 标签")
+        return self
 
 
 class Question(BaseModel):
