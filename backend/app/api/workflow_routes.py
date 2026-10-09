@@ -14,6 +14,7 @@ from app.agent.session import get_session_manager
 from app.agent.session.session_manager import get_session_manager as get_child_session_manager
 from app.agent.workflow.registry import active_workflow_registry
 from app.agent.workflow.jobs import get_workflow_job_store
+from app.utils.json_safety import dumps_safe
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.conversations.dependencies import get_conversation_catalog
@@ -304,7 +305,7 @@ async def workflow_events(
             if stream_events:
                 for event_key, event in stream_events:
                     stream_cursor = event_key
-                    yield f"data: {json.dumps({'event_id': event_key, **event}, ensure_ascii=False, default=str)}\n\n"
+                    yield f"data: {dumps_safe({'event_id': event_key, **event}, default=str)}\n\n"
             else:
                 events = _workflow_events(current or {}, cursor)
                 for event in events:

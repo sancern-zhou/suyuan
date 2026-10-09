@@ -36,6 +36,7 @@ from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.schemas import ConversationSource
 from app.conversations.service import ConversationCatalogService
 from app.core.sse import create_sse_response
+from app.utils.json_safety import dumps_safe
 from app.knowledge_base.retrieval_utils import deduplicate_results_by_content
 
 logger = structlog.get_logger()
@@ -774,7 +775,7 @@ async def generate_streaming_answer(
                 'timestamp': datetime.now().isoformat()
             }
         }
-        yield f"data: {json.dumps(complete_data, ensure_ascii=False, default=str)}\n\n"
+        yield f"data: {dumps_safe(complete_data, default=str)}\n\n"
 
         # 保存对话轮次（用户问题）
         await conversation_store.add_turn(

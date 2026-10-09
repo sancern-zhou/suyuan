@@ -15,6 +15,7 @@ import structlog
 import uuid
 
 from app.agent import create_react_agent
+from app.utils.json_safety import dumps_safe
 from app.agent.active_contexts import (
     ACTIVE_CONTEXTS_KEY,
     active_contexts_metadata,
@@ -1034,7 +1035,7 @@ async def analyze_stream(
                         "detail": str(pause_error),
                     },
                 }
-                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+                yield f"data: {dumps_safe(error_event)}\n\n"
                 return
             current_task = asyncio.current_task()
             if current_task is not None:
@@ -1368,7 +1369,7 @@ async def analyze_stream(
                                     session_id=actual_session_id,
                                     run_id=event_run_id,
                                 )
-                                event_data = json.dumps(event, ensure_ascii=False, default=str)
+                                event_data = dumps_safe(event, default=str)
                                 yield f"data: {event_data}\n\n"
                                 break
                             # ✅ 添加最终答案消息
@@ -1410,7 +1411,7 @@ async def analyze_stream(
                                     run_id=event_run_id,
                                     event_type=event["type"],
                                 )
-                                event_data = json.dumps(event, ensure_ascii=False, default=str)
+                                event_data = dumps_safe(event, default=str)
                                 yield f"data: {event_data}\n\n"
                                 break
                             # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
@@ -1451,7 +1452,7 @@ async def analyze_stream(
                             logger.info("collected_data_stored_on_error", session_id=actual_session_id, error_type=event["type"])
 
                         # 将事件序列化为 SSE 格式
-                        event_data = json.dumps(event, ensure_ascii=False, default=str)
+                        event_data = dumps_safe(event, default=str)
                         yield f"data: {event_data}\n\n"
 
                         # 如果是完成或致命错误，结束循环
@@ -1554,7 +1555,7 @@ async def analyze_stream(
                         "timestamp": None
                     }
                 }
-                yield f"data: {json.dumps(error_event, ensure_ascii=False, default=str)}\n\n"
+                yield f"data: {dumps_safe(error_event, default=str)}\n\n"
             finally:
                 if actual_session_id and cancel_event is not None:
                     await cancellation_registry.unregister(actual_session_id, cancel_event)

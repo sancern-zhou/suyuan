@@ -33,6 +33,7 @@ from app.conversations.schemas import ConversationSource
 from app.db.database import get_db
 from app.knowledge_base.models import UploadedFile
 from app.agent.resources.resource_service import SessionResourceService
+from app.utils.json_safety import dumps_safe
 from app.utils.path_config import get_data_registry
 from app.social.app_identity import (
     AppIdentity,
@@ -1305,12 +1306,12 @@ async def _stream_events(
                 })
                 await _persist_app_turn(session_id, query, display_history)
                 persisted = True
-            yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+            yield f"data: {dumps_safe(event, default=str)}\n\n"
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         error = {"type": "fatal_error", "data": {"error": str(exc), "code": "app_agent_failed"}}
-        yield f"data: {json.dumps(error, ensure_ascii=False)}\n\n"
+        yield f"data: {dumps_safe(error)}\n\n"
     finally:
         reset_current_context(context_tokens)
         # A disconnected client can cancel the stream before a terminal event.
