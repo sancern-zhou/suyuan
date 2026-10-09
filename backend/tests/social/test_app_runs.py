@@ -91,3 +91,25 @@ async def test_long_event_replay_is_not_truncated(tmp_path):
     await store.append(run['run_id'], {'type': 'complete', 'data': {'answer': 'x' * 210}})
     frames = [frame async for frame in store.stream(run['run_id'])]
     assert len(frames) == 212
+
+
+@pytest.mark.asyncio
+async def test_wal_enabled_and_expired_terminal_events_are_pruned(tmp_path):
+    store = AppRunStore(tmp_path / 'runs.sqlite3')
+    with sqlite3.connect(store.path) as db:
+        assert db.execute('PRAGMA journal_mode').fetchone()[0] == 'wal'
+    old_run, _ = await store.create('alice', 'request', 'session', 'fingerprint')
+    await store.append(old_run['run_id'], {'type': 'streaming_text', 'data': {'chunk': 'x'}})
+    await store.append(old_run['run_id'], {'type': 'complete', 'data': {}})
+    fresh_run, _ = await store.create('bob', 'request', 'session-b', 'fingerprint')
+    await store.append(fresh_run['run_id'], {'type': 'complete', 'data': {}})
+    with sqlite3.connect(store.path) as db:
+        db.execute('UPDATE runs SET heartbeat=? WHERE run_id=?', (time.time() - 8 * 86400, old_run['run_id']))
+    await store.cleanup()
+    assert await store.events(old_run['run_id']) == []
+    assert len(await store.events(fresh_run['run_id'])) == 2
+    # Run rows survive pruning so request_id idempotency is preserved.
+    row = await store.get(old_run['run_id'])
+    assert row['status'] == 'completed'
+    with pytest.raises(ValueError, match='request_id_conflict'):
+        await store.create('alice', 'request', 'session', 'changed-fingerprint')
