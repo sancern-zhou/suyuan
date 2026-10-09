@@ -21,3 +21,9 @@ test('never resolves inactive resources', () => {
 test('leaves static image references to the existing image renderer', () => {
   assert.equal(inlineChartBlocks('[[chart:chart1]]', [{ ...resources[0], interactive: false }])[0].kind, 'text')
 })
+
+test('matches protocol ids containing dots (e.g. sanitized mathtext names)', () => {
+  const resource = { resource_id: 'r1', visual_id: 'generic_pollutant_wind_rose_PM2.5', resource_key: 'chart-spec', interactive: true, status: 'active', content_url: '/c' }
+  const blocks = inlineChartBlocks('结论\n\n[[chart:generic_pollutant_wind_rose_PM2.5]]\n', [resource])
+  assert.equal(blocks.filter(b => b.kind === 'chart').length, 1)
+})

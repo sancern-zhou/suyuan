@@ -1,4 +1,5 @@
 import { getUnifiedProcessMessages, getMessageType } from '../components/reactAnalysis/messageProcessGrouping.js'
+import { chartReferenceRegex } from './chartReferencePattern.js'
 
 function interactiveVisualIds(resources) {
   return new Set((resources || [])
@@ -20,7 +21,7 @@ export function inlineChartImages(finalMessage, messages, resources, content = '
   const seen = new Set()
   // Restored messages omit bulky tool-result visuals. Explicit placeholders
   // still identify their image through the session resource catalog.
-  const referencedResources = [...String(content).matchAll(/\[\[chart:([A-Za-z0-9_-]{1,100})\]\]/g)]
+  const referencedResources = [...String(content).matchAll(chartReferenceRegex())]
     .map(([, visualId]) => imageByVisualId.get(visualId))
   const hasReportPackage = processMessages.some(message =>
     message.data?.tool_name === 'create_report_package'
@@ -53,7 +54,7 @@ export function renderChartPlaceholders(content, chartResources, sessionResource
   const byVisualId = new Map((chartResources || []).map(resource => [resource.visual_id, resource]))
   const usedResourceIds = new Set()
   const rendered = String(content ?? '').replace(
-    /\[\[chart:([A-Za-z0-9_-]{1,100})\]\]/g,
+    chartReferenceRegex(),
     (placeholder, visualId) => {
       if (interactiveIds.has(visualId)) return ''
       const resource = byVisualId.get(visualId)

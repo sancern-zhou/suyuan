@@ -1,5 +1,6 @@
 import { getUnifiedProcessMessages } from '../components/reactAnalysis/messageProcessGrouping.js'
 import { buildResourceGroups, preferredPreview } from './resourceGroups.js'
+import { chartReferenceRegex } from './chartReferencePattern.js'
 
 export function replyOutcomes(message, messages, resources) {
   const runs = new Set(), ids = new Set(), ownedGroups = new Set()
@@ -16,7 +17,7 @@ export function replyOutcomes(message, messages, resources) {
     }
   }
   const content = String(message?.content || '')
-  const referenced = new Set([...content.matchAll(/\[\[chart:([A-Za-z0-9_-]{1,100})\]\]/g)].map(match => match[1]))
+  const referenced = new Set([...content.matchAll(chartReferenceRegex())].map(match => match[1]))
   const groups = buildResourceGroups(resources.filter(resource => resource.status === 'active'))
   const outcomes = { files: [], others: [] }
   for (const group of groups) {
