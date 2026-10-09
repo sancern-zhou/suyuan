@@ -363,10 +363,6 @@ def merge_board_execution_context(
     return merged
 
 
-def is_incompatible_chart_board_session(stored_mode: Optional[str], requested_mode: Optional[str]) -> bool:
-    return {stored_mode, requested_mode} == {"chart", "board"}
-
-
 # ========================================
 # Request/Response Models
 # ========================================
@@ -695,8 +691,6 @@ async def analyze_stream(
         catalog_record = await catalog.find(request.session_id)
         if catalog_record is not None:
             await catalog.require_write(request.session_id, user)
-            if is_incompatible_chart_board_session(catalog_record.mode, request.mode):
-                raise HTTPException(status_code=409, detail="session_mode_mismatch")
         else:
             load_session = getattr(session_manager, "load_session_light", None)
             if load_session is None:
