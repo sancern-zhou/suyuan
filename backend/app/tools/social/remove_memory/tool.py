@@ -72,7 +72,7 @@ class RemoveMemoryTool(LLMTool):
                     },
                     "category": {
                         "type": "string",
-                        "enum": ["用户偏好", "领域知识", "历史结论", "环境信息"],
+                        "enum": ["用户偏好", "领域知识", "模式方法论", "环境信息"],
                         "description": "事实类别（可选，用于精确匹配）"
                     }
                 },

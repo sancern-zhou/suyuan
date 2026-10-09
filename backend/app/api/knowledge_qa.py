@@ -278,16 +278,30 @@ async def search_knowledge_bases(
         get_shared_knowledge_session_factory,
     )
 
+    # 网页预取结果短缓存：相同 query 5 分钟内复用，节省搜索配额（WSA 免费额度有限）
+    _web_prefetch_cache = None
+
+    def _get_web_prefetch_cache():
+        nonlocal _web_prefetch_cache
+        if _web_prefetch_cache is None:
+            from app.tools.social.web_search.fetch_core import TTLCache
+            _web_prefetch_cache = TTLCache(ttl=300, maxsize=128)
+        return _web_prefetch_cache
+
     # 固定证据预取：网页只返回少量摘要，绝不参与本地排序，也不调用 LLM。
     # 与本地检索并发启动；超时或无配置时静默降级为空补充。
     async def prefetch_web() -> dict:
+        cache = _get_web_prefetch_cache()
+        cached = cache.get(query)
+        if cached is not None:
+            return {**cached, "cached": True}
         try:
             from app.tools.social.web_search.tool import WebSearchTool
             result = await WebSearchTool().execute(query=query, count=2)
             if not result.get("success"):
                 return {"status": "failed", "results": [], "summary": result.get("summary", "")}
             data = result.get("data", {}) or {}
-            return {
+            payload = {
                 "status": "ready",
                 "provider": data.get("provider"),
                 "query": data.get("query", query),
@@ -295,11 +309,12 @@ async def search_knowledge_bases(
                 "count": min(int(data.get("count", 0) or 0), 2),
                 "summary": result.get("summary", ""),
             }
+            if payload["count"]:
+                cache.set(query, payload)
+            return payload
         except Exception as exc:
             logger.info("knowledge_web_prefetch_skipped", error=str(exc))
             return {"status": "failed", "results": [], "summary": str(exc)[:200]}
-
-    web_task = asyncio.create_task(prefetch_web())
 
     # 使用独立会话，检索完成后立即关闭
     async with async_session() as db:
@@ -382,6 +397,9 @@ async def search_knowledge_bases(
         hyde_keywords = ""
         hyde_elapsed = 0.0
         retrieval_routes = ["original"]
+
+        # 网页预取与本地检索并发；知识库清单已确定，此后的早退路径统一由 finally 兜底取消
+        web_task = asyncio.create_task(prefetch_web())
 
         try:
             retrieval_started_at = time.time()
@@ -531,9 +549,10 @@ async def search_knowledge_bases(
             except Exception as exc:
                 web_evidence = {"status": "failed", "query": query, "count": 0, "summary": str(exc)[:200]}
 
-            # 将网页补充挂在每条结果的检索元数据上，兼容现有返回契约；无本地结果时也保留补充证据。
-            for item in formatted_results:
-                item.setdefault("retrieval_metadata", {})["web_evidence"] = web_evidence
+            # 网页补充只挂到首条结果的检索元数据上（消费方只读 documents[0]），避免整份文本按 top_k 重复；
+            # 无本地结果时追加一条合成条目保留补充证据。
+            if formatted_results:
+                formatted_results[0].setdefault("retrieval_metadata", {})["web_evidence"] = web_evidence
             if not formatted_results and web_evidence.get("status") == "ready" and web_evidence.get("count", 0):
                 formatted_results.append({
                     "content": web_evidence.get("results_text", ""),
@@ -557,6 +576,10 @@ async def search_knowledge_bases(
         except Exception as e:
             logger.error("knowledge_search_failed", error=str(e))
             return []
+        finally:
+            # 超时/异常早退时取消仍在飞的网络请求，避免孤儿任务白烧搜索配额
+            if not web_task.done():
+                web_task.cancel()
 
 
 # ========================================
@@ -624,11 +647,15 @@ def build_rag_prompt(
 {context_str}""")
         web_evidence = []
         for ctx in contexts:
+            # web_prefetch 合成条目的正文已是网页文本，按参考资料渲染，不再重复进补充段
+            if ctx.get("retrieval_route") == "web_prefetch":
+                continue
             candidate = (ctx.get("retrieval_metadata") or {}).get("web_evidence")
             if candidate and candidate not in web_evidence:
                 web_evidence.append(candidate)
+        has_web_prefetch_entry = any(ctx.get("retrieval_route") == "web_prefetch" for ctx in contexts)
         web_instruction = ""
-        if web_evidence:
+        if web_evidence or has_web_prefetch_entry:
             web_text = "\n\n".join(
                 item.get("results_text", "") for item in web_evidence
                 if item.get("status") == "ready" and item.get("results_text")
