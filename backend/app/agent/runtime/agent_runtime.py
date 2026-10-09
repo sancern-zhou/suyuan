@@ -145,6 +145,9 @@ class AgentRuntime:
             self.planner.is_interruption = self.config.is_interruption
             self.writer.load_initial_history_if_needed(initial_messages)
 
+            if (state.mode or "").lower() == "knowledge":
+                await self._prefetch_knowledge_evidence(state)
+
             yield self.events.start(state)
 
             workflow_definition = get_mode_workflow(state.mode)
@@ -243,6 +246,33 @@ class AgentRuntime:
                 yield deferred_event
             async for event in self.finalizer.fatal_error(state, exc):
                 yield event
+
+    async def _prefetch_knowledge_evidence(self, state: RunState) -> None:
+        """知识问答模式首轮固定预取：检索证据包注入系统上下文。
+
+        仅首轮（会话无历史）执行；追问轮由 agent 按需自行调 workflow 补检索。
+        失败静默降级——agent 退回原有的自主调 knowledge_qa_workflow 路径。
+        """
+        try:
+            history = self.memory.session.get_messages_for_llm()
+            if history:
+                return
+            from app.agent.context.knowledge_evidence import build_first_turn_evidence
+
+            evidence = await build_first_turn_evidence(
+                state.user_query,
+                user_id=self.config.user_identifier,
+                knowledge_base_ids=self.config.knowledge_base_ids,
+            )
+            if evidence:
+                self.context_builder.knowledge_evidence_context = evidence
+        except Exception as exc:
+            logger.warning(
+                "knowledge_evidence_prefetch_failed",
+                session_id=state.session_id,
+                query=state.user_query[:60],
+                error=str(exc),
+            )
 
     async def _run_iteration(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
         context_result, conversation_history = await self._build_context(state)
