@@ -44,6 +44,10 @@ from .enforcement_exam_knowledge import (
 
 logger = structlog.get_logger()
 
+# sources 单块正文字符上限：保证 5 块 + 元数据的工具结果总量远低于 20K 压缩阈值，
+# 避免整包被截断后模型转向逐块精读。需要更多上下文按 document_read_targets 精读。
+_SOURCE_CONTENT_MAX_CHARS = 1200
+
 
 def _build_document_read_targets(documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """按文档聚合命中chunk，给Agent后续阅读相邻块或全文块的目标。"""
@@ -229,8 +233,14 @@ class KnowledgeQAWorkflow(WorkflowTool):
             web_evidence = retrieval_metadata.get("web_evidence", {}) if retrieval_metadata else {}
             document_read_targets = _build_document_read_targets(documents)
             for doc in documents[:5]:  # 最多返回5篇参考文档
-                # 获取完整内容，不再截断
-                content = doc.get("content", "")
+                # 紧凑摘要：单块截断到 _SOURCE_CONTENT_MAX_CHARS。
+                # 此前返回全文导致工具结果超 20K 被压缩截断，模型读不到完整证据，
+                # 只能逐块调 knowledge_document_reader（实测一轮连读 20+ 次）。
+                # 需要更多上下文时按 document_read_targets 定点精读即可。
+                content = doc.get("content", "") or ""
+                content_truncated = len(content) > _SOURCE_CONTENT_MAX_CHARS
+                if content_truncated:
+                    content = content[:_SOURCE_CONTENT_MAX_CHARS]
                 sources.append({
                     "title": doc.get("document_name", "未知标题"),
                     "source": doc.get("knowledge_base_name", "未知来源"),
@@ -249,7 +259,8 @@ class KnowledgeQAWorkflow(WorkflowTool):
                     "retrieval_route": doc.get("retrieval_route"),
                     "retrieval_routes": doc.get("retrieval_routes", []),
                     "retrieval_metadata": doc.get("retrieval_metadata", {}),
-                    "content": content  # 返回完整内容
+                    "content": content,
+                    "content_truncated": content_truncated,
                 })
 
             self._record_step("knowledge_retrieval_complete", "success", {
@@ -265,6 +276,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
                 "reading_requirement": {
                     "applies_to": "严肃知识问答、标准条款解释、计算方法、表格/公式解读、跨章节总结",
                     "required_action": "先判断当前chunk是否足以支持答案；仅在证据不足、结果冲突、需要跨章节总结或用户明确要求全文时，按document_read_targets调用knowledge_document_reader读取相邻chunks或all_chunks。",
+                    "content_format": "sources.content 为紧凑摘要（单块≤1200字符，content_truncated=true 表示已截断）；整包完整可读，不会整体截断。需要更多上下文时按 document_read_targets 定点精读。",
                     "do_not_answer_from_chunks_only": False,
                     "web_evidence_role": "网页摘要仅作补充线索，优先使用本地知识库证据。"
                 },
