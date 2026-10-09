@@ -36,7 +36,16 @@ WEATHER_SQL_TABLES = [
     "observed_weather_data",
 ]
 
-ALLOWED_SQL_TABLES = PERMIT_SQL_TABLES + WEATHER_SQL_TABLES
+# 许昌国控站周边路况定时抓取数据（主库）。工具代码与抓取脚本在 xuchang 分支
+# （backend/scripts/xuchang_traffic_collect.py）；其他项目库中无这些表，
+# 查询会得到"未找到白名单表"的明确提示，故直接并入共享白名单。
+XUCHANG_TRAFFIC_SQL_TABLES = [
+    "traffic_snapshot",
+    "traffic_section",
+    "v_station_traffic_hourly",
+]
+
+ALLOWED_SQL_TABLES = PERMIT_SQL_TABLES + WEATHER_SQL_TABLES + XUCHANG_TRAFFIC_SQL_TABLES
 
 MAX_LIMIT = 1000
 DEFAULT_LIMIT = 50
@@ -50,9 +59,9 @@ class ExecutePostgresSQLQueryTool(LLMTool):
 
         self._table_types_cache = TableTypesCache()
         schema_description = (
-            "PostgreSQL/KingbaseES 只读 SQL 查询工具。支持两类数据："
-            "许昌市企业排污许可证数据（主库）和气象站逐小时地面观测数据（独立气象库，"
-            "含定时抓取的中央气象台NMC观测，如许昌站）；"
+            "PostgreSQL/KingbaseES 只读 SQL 查询工具。支持三类数据："
+            "许昌市企业排污许可证数据（主库）、气象站逐小时地面观测数据（独立气象库，"
+            "含定时抓取的中央气象台NMC观测，如许昌站）和许昌国控站周边路况时序（主库，定时抓取）；"
             "支持 describe_table 查看表结构，或 sql 执行 SELECT/CTE 查询，二者必须二选一。"
             f"仅允许白名单业务表：{', '.join(ALLOWED_SQL_TABLES)}；禁止采集运行日志和失败记录。"
             "只允许 SELECT，禁止 INSERT/UPDATE/DELETE/DDL、注释和多语句；"
@@ -74,6 +83,18 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             "溯源字段 data_source='NMC'、data_quality='good'/'partial'；NULL 表示该小时缺测。"
             "\n注意：permit_* 表在主库，observed_weather_data 在独立气象库，"
             "两库不支持跨库 JOIN，混用会直接报错。"
+            "\n- traffic_snapshot：国控站周边路况快照（定时抓取，6分钟时隙，slot_at 为 UTC 时隙起点）；"
+            "station_code 站点编码（道路级行以 'road:路名' 前缀区分），"
+            "evaluation_status 0未知/1畅通/2缓行/3拥堵/4严重拥堵，road_count 道路数，"
+            "congestion_section_count 拥堵路段数，raw 百度原始响应。"
+            "\n- traffic_section：拥堵路段明细（仅拥堵时存在），以 snapshot_id 关联快照，"
+            "含 road_name、section_desc、status、speed_km_h、congestion_distance_m、"
+            "congestion_trend（较10分钟前：加重/持平/缓解）。"
+            "\n- v_station_traffic_hourly：按 station_code+小时聚合视图（samples 样本数、"
+            "avg_status/max_status、congestion_sections、avg_speed_in_sections），"
+            "可与空气质量小时表按 station_code+小时 join。"
+            "\n注意：路况为查询时刻快照，缺失时隙=未采集（历史不可回补），请结合 samples 判断可信度；"
+            "当前时刻实时路况请用 query_xuchang_traffic_status 工具，不要用本工具冒充实时。"
             "\n\n示例："
             "\n- 企业查询：SELECT enterprise_name, permit_number, current_status FROM permit_licenses "
             "WHERE enterprise_name ILIKE '%水泥%' ORDER BY updated_at DESC LIMIT 50"
@@ -83,6 +104,9 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             "\n- 许昌小时观测：SELECT time, temperature_2m, relative_humidity_2m, wind_speed_10m, "
             "wind_direction_10m, precipitation FROM observed_weather_data "
             "WHERE station_id = 'ZzMTA' AND time >= '2026-08-30' ORDER BY time LIMIT 48"
+            "\n- 路况小时统计：SELECT station_code, hour_ts, samples, avg_status, max_status, "
+            "congestion_sections FROM v_station_traffic_hourly "
+            "WHERE station_code IN ('1003A','1005A') ORDER BY hour_ts DESC LIMIT 100"
         )
         function_schema = {
             "name": "execute_postgres_sql_query",
@@ -111,10 +135,10 @@ class ExecutePostgresSQLQueryTool(LLMTool):
         }
         super().__init__(
             name="execute_postgres_sql_query",
-            description="Execute read-only PostgreSQL/KingbaseES permit-license and observed-weather SQL queries",
+            description="Execute read-only PostgreSQL/KingbaseES permit-license, observed-weather and traffic-history SQL queries",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="1.1.0",
+            version="1.2.0",
             requires_context=True,
         )
         self.sql_validator = SQLValidator(
