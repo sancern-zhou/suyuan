@@ -2,7 +2,10 @@
 
 SQLite lives under DATA_REGISTRY_DIR, so all web processes on a deployment
 share admission control, status and replay. Server restarts fail stale runs;
-they never silently repeat tools with side effects.
+they never silently repeat tools with side effects. The database runs in WAL
+mode (local disk required, no network filesystems), schema DDL happens once
+per process at startup, and event logs of terminal runs are pruned after a
+retention window. Run rows are kept: they back request_id idempotency.
 """
 from __future__ import annotations
 
@@ -17,29 +20,59 @@ from typing import AsyncIterator, Callable
 
 
 TERMINAL = {"completed", "failed", "cancelled"}
+STALE_AFTER_SECONDS = 90
+EVENT_RETENTION_SECONDS = 7 * 86400
+CLEANUP_INTERVAL_SECONDS = 3600.0
+_TERMINAL_SQL = ",".join(f"'{status}'" for status in sorted(TERMINAL))
 
 
 class AppRunStore:
     def __init__(self, path: Path):
         self.path = path
         self.tasks: set[asyncio.Task] = set()
+        self._next_cleanup = 0.0
+        self._init_db()
 
-    def _call(self, operation):
+    def _connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with closing(sqlite3.connect(self.path, timeout=30)) as db:
-            db.row_factory = sqlite3.Row
+        db = sqlite3.connect(self.path, timeout=30)
+        db.row_factory = sqlite3.Row
+        return db
+
+    def _init_db(self):
+        with closing(self._connect()) as db:
+            # WAL keeps concurrent workers and stream pollers from blocking
+            # each other; it persists in the database file.
+            db.execute("PRAGMA journal_mode=WAL").fetchone()
             db.execute("CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, owner TEXT NOT NULL, request_id TEXT NOT NULL, session_id TEXT NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL, heartbeat REAL NOT NULL, cancel_requested INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL, UNIQUE(owner, request_id))")
             db.execute("CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, payload TEXT NOT NULL)")
             db.execute("CREATE INDEX IF NOT EXISTS event_run ON events(run_id, sequence)")
+            db.execute("CREATE INDEX IF NOT EXISTS run_housekeeping ON runs(status, heartbeat)")
+            db.commit()
+
+    def _call(self, operation):
+        with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             # A dead web process cannot leave the App spinning forever.
-            stale = db.execute("SELECT run_id FROM runs WHERE status='running' AND heartbeat < ?", (time.time() - 90,)).fetchall()
+            stale = db.execute("SELECT run_id FROM runs WHERE status='running' AND heartbeat < ?", (time.time() - STALE_AFTER_SECONDS,)).fetchall()
             for row in stale:
                 db.execute("UPDATE runs SET status='failed' WHERE run_id=?", (row[0],))
                 self._event(db, row[0], {"type": "fatal_error", "data": {"error": "服务执行已中断，请重新发起对话", "code": "app_run_lost"}})
             result = operation(db)
+            now = time.time()
+            if now >= self._next_cleanup:
+                self._prune_old_events(db, now)
+                self._next_cleanup = now + CLEANUP_INTERVAL_SECONDS
             db.commit()
             return result
+
+    @staticmethod
+    def _prune_old_events(db, now: float):
+        cutoff = now - EVENT_RETENTION_SECONDS
+        db.execute(f"DELETE FROM events WHERE run_id IN (SELECT run_id FROM runs WHERE status IN ({_TERMINAL_SQL}) AND heartbeat < ?)", (cutoff,))
+
+    async def cleanup(self):
+        await asyncio.to_thread(self._call, lambda db: self._prune_old_events(db, time.time()))
 
     @staticmethod
     def _event(db, run_id, event):
