@@ -104,6 +104,7 @@ en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_
 markdown==3.7
 jinja2==3.1.4
 beautifulsoup4==4.14.3  # HTML parsing for reports, knowledge base, and query tools
+trafilatura==2.3.1  # Main-content extraction (markdown) for web_fetch tool
 
 # File Upload & Async I/O
 python-multipart==0.0.21  # FastAPI UploadFile/Form request parsing
