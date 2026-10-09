@@ -363,10 +363,6 @@ def merge_board_execution_context(
     return merged
 
 
-def is_incompatible_chart_board_session(stored_mode: Optional[str], requested_mode: Optional[str]) -> bool:
-    return {stored_mode, requested_mode} == {"chart", "board"}
-
-
 # ========================================
 # Request/Response Models
 # ========================================
@@ -424,7 +420,7 @@ class AgentAnalyzeRequest(BaseModel):
     max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数")
     mode: Optional[str] = Field(
         "expert",
-        description="✅ Agent模式：'assistant' - 助手模式，'ppt' - 幻灯片模式，'expert' - 专家模式，'query' - 问数模式，'knowledge' - 知识问答模式，'report' - 报告模式，'chart' - 图表模式，'ops' - 运维管理模式"
+        description="✅ Agent模式：'assistant' - 助手模式，'ppt' - 幻灯片模式，'expert' - 专家模式，'query' - 问数模式，'knowledge' - 知识问答模式，'report' - 报告模式，'ops' - 运维管理模式"
     )
     user_id: Optional[str] = Field(None, description="""✅ 用户标识（用于跨会话记忆）
 - 如果提供：同一用户在不同session共享记忆
@@ -623,8 +619,6 @@ def select_agent_instance(request):
     """Select the dedicated top-level agent for an analyze request."""
     if request.mode == "board":
         return board_agent_instance
-    if request.mode == "chart":
-        return data_viz_agent_instance
     if request.mode == "ppt":
         return ppt_agent_instance
     if request.assistant_mode == "meteorology-expert":
@@ -697,8 +691,6 @@ async def analyze_stream(
         catalog_record = await catalog.find(request.session_id)
         if catalog_record is not None:
             await catalog.require_write(request.session_id, user)
-            if is_incompatible_chart_board_session(catalog_record.mode, request.mode):
-                raise HTTPException(status_code=409, detail="session_mode_mismatch")
         else:
             load_session = getattr(session_manager, "load_session_light", None)
             if load_session is None:
@@ -770,7 +762,7 @@ async def analyze_stream(
     active_context_request_started_at = datetime.now(timezone.utc)
     try:
         # 根据助手模式选择 Agent
-        if request.mode in {"board", "chart", "ppt"}:
+        if request.mode in {"board", "ppt"}:
             agent = select_agent_instance(request)
             logger.info("使用独立模式智能体", mode=request.mode, session_id=request.session_id, agent_id=id(agent))
         elif request.assistant_mode == 'meteorology-expert':

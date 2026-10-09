@@ -12,7 +12,6 @@ from app.agent.runtime.mode_capabilities import supports_native_multimodal
         "query",
         "report",
         "social",
-        "chart",
         "board",
         "ops",
         "graph",

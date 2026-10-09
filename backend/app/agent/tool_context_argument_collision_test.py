@@ -194,7 +194,7 @@ def test_chart_detailed_read_file_schema_keeps_optional_native_multimodal_attach
         lambda: [{"tool": FakeReadFileTool()}],
     )
 
-    schemas = get_detailed_schemas_for_tools(["read_file"], mode="chart")
+    schemas = get_detailed_schemas_for_tools(["read_file"], mode="ppt")
 
     properties = schemas[0]["parameters"]["properties"]
     assert "analysis_type" not in properties

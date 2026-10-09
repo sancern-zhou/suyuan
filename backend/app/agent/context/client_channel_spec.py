@@ -6,7 +6,6 @@
 from unittest.mock import Mock
 
 from app.agent.context.context_builder import SimplifiedContextBuilder
-from app.agent.prompts.chart_prompt import build_chart_prompt
 from app.agent.prompts.knowledge_prompt import build_knowledge_prompt
 from app.agent.prompts.query_prompt import build_query_prompt
 from app.agent.prompts.tool_registry import get_tools_by_mode
@@ -52,16 +51,7 @@ def test_mode_prompts_state_app_has_no_side_panel():
         assert "适当精简" in prompt
 
 
-def test_chart_prompt_branches_output_form_without_tool_names():
-    prompt = build_chart_prompt([])
-    assert "App 端" in prompt and "PNG" in prompt
-    for tool_name in ("execute_echarts_python", "render_chart_to_image", "execute_python", "read_file"):
-        assert tool_name not in prompt
-
-
-def test_static_render_tool_stays_out_of_chart_mode_whitelists():
+def test_static_render_tool_stays_out_of_query_mode_whitelist():
     # App 端静态图由 execute_python 直绘（已在白名单），不引入 ECharts 转 PNG 的渲染工具
     assert "render_chart_to_image" not in get_tools_by_mode("query")
-    assert "render_chart_to_image" not in get_tools_by_mode("chart")
     assert "execute_python" in get_tools_by_mode("query")
-    assert "execute_python" in get_tools_by_mode("chart")

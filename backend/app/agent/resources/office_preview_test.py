@@ -1,7 +1,9 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.agent.resources import office_preview
+from app.tools.office import soffice as soffice_module
 from app.agent.resources.contracts import (
     ResourceCapability,
     ResourceDeclaration,
@@ -41,6 +43,14 @@ def _fake_converter(pdf_dir: Path):
     return _convert
 
 
+def _fake_soffice(args, **kwargs):
+    """Mimic soffice: write `<stem>.pdf` into the --outdir directory."""
+    out_dir = Path(args[args.index("--outdir") + 1])
+    source = Path(args[-1])
+    (out_dir / f"{source.stem}.pdf").write_bytes(b"pdf-of-" + source.read_bytes())
+    return SimpleNamespace(returncode=0, stderr="")
+
+
 def test_attaches_pdf_preview_for_docx_primary(tmp_path):
     docx = tmp_path / "报告.docx"
     docx.write_bytes(b"docx-bytes")
@@ -62,7 +72,8 @@ def test_attaches_pdf_preview_for_docx_primary(tmp_path):
     assert preview.parent_key == primary.resource_key
     assert preview.media_type == "application/pdf"
     assert preview.renderer.value == "pdf"
-    assert preview.locator.path.endswith("报告.pdf")
+    assert preview.locator.path.endswith(".pdf")
+    assert preview.label == "报告.pdf"
     assert preview.group_key == primary.group_key
 
 
@@ -153,7 +164,58 @@ def test_attaches_pdf_preview_for_xlsx_primary(tmp_path):
     assert preview.relation is ResourceRelation.PREVIEW
     assert preview.parent_key == primary.resource_key
     assert preview.format == "pdf"
-    assert preview.locator.path.endswith("统计表.pdf")
+    assert preview.locator.path.endswith(".pdf")
+    assert preview.label == "统计表.pdf"
+
+
+def test_regenerates_preview_when_source_is_rewritten(tmp_path, monkeypatch):
+    docx = tmp_path / "报告.docx"
+    docx.write_bytes(b"docx-v1")
+    monkeypatch.setattr(soffice_module, "run_soffice", _fake_soffice)
+
+    first = office_preview._convert_to_pdf(docx)
+    assert first is not None
+    assert first.read_bytes() == b"pdf-of-docx-v1"
+
+    docx.write_bytes(b"docx-v2-with-longer-content")
+    second = office_preview._convert_to_pdf(docx)
+    assert second is not None
+    assert second != first
+    assert second.read_bytes() == b"pdf-of-docx-v2-with-longer-content"
+    assert not first.exists()
+
+
+def test_reuses_preview_while_source_unchanged(tmp_path, monkeypatch):
+    docx = tmp_path / "报告.docx"
+    docx.write_bytes(b"docx-stable")
+    monkeypatch.setattr(soffice_module, "run_soffice", _fake_soffice)
+
+    first = office_preview._convert_to_pdf(docx)
+    calls = []
+
+    def _counting(*args, **kwargs):
+        calls.append(args)
+        return _fake_soffice(*args, **kwargs)
+
+    monkeypatch.setattr(soffice_module, "run_soffice", _counting)
+    second = office_preview._convert_to_pdf(docx)
+    assert second == first
+    assert calls == []
+
+
+def test_same_stem_docx_and_xlsx_get_distinct_previews(tmp_path, monkeypatch):
+    (tmp_path / "报告.docx").write_bytes(b"docx-bytes")
+    (tmp_path / "报告.xlsx").write_bytes(b"xlsx-bytes")
+    monkeypatch.setattr(soffice_module, "run_soffice", _fake_soffice)
+
+    docx_pdf = office_preview._convert_to_pdf(tmp_path / "报告.docx")
+    xlsx_pdf = office_preview._convert_to_pdf(tmp_path / "报告.xlsx")
+
+    assert docx_pdf is not None and xlsx_pdf is not None
+    assert docx_pdf != xlsx_pdf
+    assert docx_pdf.read_bytes() == b"pdf-of-docx-bytes"
+    assert xlsx_pdf.read_bytes() == b"pdf-of-xlsx-bytes"
+    assert docx_pdf.exists() and xlsx_pdf.exists()
 
 
 def test_non_office_primary_is_untouched(tmp_path):

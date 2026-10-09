@@ -1,13 +1,13 @@
 from app.agent.runtime.tool_coordinator import ToolCoordinator
 
 
-def test_chart_mode_read_file_does_not_default_to_native_multimodal_attachment():
+def test_ppt_mode_read_file_does_not_default_to_native_multimodal_attachment():
     coordinator = ToolCoordinator(tool_executor=None)
 
     normalized = coordinator.normalize_tool_input(
         "read_file",
         {"path": "/tmp/chart.png"},
-        mode="chart",
+        mode="ppt",
     )
 
     assert "as_multimodal_attachment" not in normalized
@@ -19,7 +19,7 @@ def test_native_multimodal_read_file_preserves_explicit_false_attachment_choice(
     normalized = coordinator.normalize_tool_input(
         "read_file",
         {"path": "/tmp/chart.png", "as_multimodal_attachment": False},
-        mode="chart",
+        mode="ppt",
     )
 
     assert normalized["as_multimodal_attachment"] is False
