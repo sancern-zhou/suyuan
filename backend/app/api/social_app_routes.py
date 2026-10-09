@@ -45,6 +45,7 @@ from app.social.app_identity import (
 from app.social.session_mapper import SessionMapper
 from app.social.app_runs import get_app_run_store
 from app.agent.user_questions import QuestionSet
+from app.social.inline_charts import _CHART_REFERENCE
 from config.settings import settings
 
 router = APIRouter(prefix="/api/social/app", tags=["android-app"])
@@ -295,7 +296,18 @@ async def realtime_voice(websocket: WebSocket) -> None:
 
 @router.post("/auth/login", response_model=AppLoginResponse)
 async def login(request: AppLoginRequest) -> AppLoginResponse:
-    token, identity = issue_access_token(request.account_id, request.account_secret)
+    try:
+        token, identity = issue_access_token(request.account_id, request.account_secret)
+    except HTTPException as exc:
+        logger.warning(
+            "app_login_failed",
+            account_id=request.account_id,
+            account_id_bytes=len(request.account_id.encode("utf-8")),
+            secret_length=len(request.account_secret),
+            status=exc.status_code,
+            detail=exc.detail,
+        )
+        raise
     access_token, refresh_token, expires_at, refresh_expires_at = issue_token_pair(identity)
     return AppLoginResponse(
         access_token=access_token or token,
@@ -1165,6 +1177,32 @@ async def _stream_events(
                 answer = str(event_data.get("answer") or streamed_answer).strip()
                 if answer:
                     final_attachments = list(streamed_resources)
+                    # 答案可能复用之前轮次生成的图表（跨轮引用）。本轮没有产生
+                    # resources_changed 时，按会话目录补齐被引用的图表资源，
+                    # 否则 App 端按消息附件匹配不到 [[chart:...]] 只能显示原文。
+                    referenced_ids = {
+                        ref for ref in _CHART_REFERENCE.findall(answer)
+                    } - {item.get("visual_id") for item in final_attachments}
+                    if referenced_ids:
+                        try:
+                            session_descriptors = await _app_resource_descriptors(session_id, [])
+                            known_file_ids = {item.get("file_id") for item in final_attachments}
+                            final_attachments.extend(
+                                item for item in session_descriptors
+                                if item.get("visual_id") in referenced_ids
+                                and item.get("file_id") not in known_file_ids
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "app_final_cross_run_charts_attach_failed",
+                                session_id=session_id,
+                                error=str(exc),
+                            )
+                    seen_file_ids = set()
+                    final_attachments = [
+                        item for item in final_attachments
+                        if item.get("file_id") and not (item["file_id"] in seen_file_ids or seen_file_ids.add(item["file_id"]))
+                    ]
                     if final_attachments:
                         event_data["attachments"] = final_attachments
                         event_data["resource_run_ids"] = sorted({item["run_id"] for item in final_attachments if item.get("run_id")})
