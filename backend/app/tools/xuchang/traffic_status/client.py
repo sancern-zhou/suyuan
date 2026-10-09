@@ -104,7 +104,10 @@ class BaiduTrafficClient:
         status = payload.get("status")
         if status != 0:
             message = str(payload.get("message") or "未知错误")
-            hint = _STATUS_HINTS.get(status) if isinstance(status, int) else None
+            try:
+                hint = _STATUS_HINTS.get(int(status))
+            except (TypeError, ValueError):
+                hint = None
             detail = f"{message}（status={status}{'；' + hint if hint else ''}）"
             logger.info("baidu_traffic_api_error", path=path, status=status, message=message)
             raise BaiduTrafficError(status, detail)
