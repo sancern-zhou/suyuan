@@ -259,6 +259,18 @@ async def generate_hypothetical_keywords(query: str) -> str:
 # 知识库检索函数（修复版 - 独立会话 + 超时控制）
 # ========================================
 
+# 网页预取结果短缓存（模块级，跨请求复用）：相同 query 5 分钟内不重复搜索，节省配额
+_web_prefetch_cache = None
+
+
+def _get_web_prefetch_cache():
+    global _web_prefetch_cache
+    if _web_prefetch_cache is None:
+        from app.tools.social.web_search.fetch_core import TTLCache
+        _web_prefetch_cache = TTLCache(ttl=300, maxsize=128)
+    return _web_prefetch_cache
+
+
 async def search_knowledge_bases(
     query: str,
     user_id: Optional[str] = None,
@@ -277,16 +289,6 @@ async def search_knowledge_bases(
         get_central_shared_knowledge_base_ids,
         get_shared_knowledge_session_factory,
     )
-
-    # 网页预取结果短缓存：相同 query 5 分钟内复用，节省搜索配额（WSA 免费额度有限）
-    _web_prefetch_cache = None
-
-    def _get_web_prefetch_cache():
-        nonlocal _web_prefetch_cache
-        if _web_prefetch_cache is None:
-            from app.tools.social.web_search.fetch_core import TTLCache
-            _web_prefetch_cache = TTLCache(ttl=300, maxsize=128)
-        return _web_prefetch_cache
 
     # 固定证据预取：网页只返回少量摘要，绝不参与本地排序，也不调用 LLM。
     # 与本地检索并发启动；超时或无配置时静默降级为空补充。
