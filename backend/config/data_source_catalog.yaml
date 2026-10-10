@@ -4,6 +4,16 @@
 # - route=tool 的 locator 必须是已注册工具名（守卫测试校验）
 # - 字段细节不进地图，由 describe_table / 工具 schema 按需提供
 # - 工具名或表名变更时必须同步更新本文件
+#
+# 【许昌空气质量查询优先级总纲】
+# 1. 常规指标（18城含济源排名/最新小时日值/县级站/区县聚合）→ xuchang_cube_metrics
+#    （数据窗口 2026-10-03 起）
+# 2. 长历史/同比/跨年趋势/语义层未覆盖明细 → execute_crawler_sql_query
+#    （DataCrawler MySQL：许昌本地 2016/2018 起长历史 + Ssfb* 采集表）
+# 3. SQL Server 侧（发布口径长历史/中大审核口径/预报表）→ execute_sql_query
+#    （注意：CityDay 缺济源；HenanCityAccumulateRanking 仅至 2026-08 已停更）
+# 4. 乡镇站小时（中台口径）→ xuchang_station_catalog 解析编码 + query_airdata_platform
+# 同一问题优先用高层工具；仅在需要语义层未覆盖的字段/时间时下沉到 SQL 工具。
 
 sources:
   - domain: 空气质量（语义层：河南18城市组含济源排名/小时日值 + 许昌县级站）

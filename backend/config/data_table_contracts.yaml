@@ -465,3 +465,233 @@ tables:
       Address: varchar
       Longitude: double
       Latitude: double
+  SsfbCityHour:
+    time_columns:
+    - DataTime
+    dimension_columns:
+    - City
+    - CityCode
+    - GroupID
+    - Quality
+    - Grade
+    - MainPollutant
+    value_columns:
+    - AQI
+    - PM25
+    - PM10
+    - O3
+    - O3_8H
+    - NO2
+    - SO2
+    - CO
+    mark_columns: []
+    caliber_columns:
+    - FetchedAt
+    column_types:
+      id: bigint
+      City: varchar
+      CityCode: varchar
+      GroupID: int
+      DataTime: datetime
+      AQI: int
+      Quality: varchar
+      Grade: int
+      PM25: double
+      PM10: double
+      O3: double
+      O3_8H: double
+      NO2: double
+      SO2: double
+      CO: double
+      MainPollutant: varchar
+      FetchedAt: datetime
+      CreatedAt: datetime
+  SsfbCityDay:
+    time_columns:
+    - DataTime
+    dimension_columns:
+    - City
+    - CityCode
+    - GroupID
+    - Quality
+    - Grade
+    - MainPollutant
+    value_columns:
+    - AQI
+    - PM25
+    - PM10
+    - O3
+    - O3_8H
+    - NO2
+    - SO2
+    - CO
+    mark_columns: []
+    caliber_columns:
+    - FetchedAt
+    column_types:
+      id: bigint
+      City: varchar
+      CityCode: varchar
+      GroupID: int
+      DataTime: datetime
+      AQI: int
+      Quality: varchar
+      Grade: int
+      PM25: double
+      PM10: double
+      O3: double
+      O3_8H: double
+      NO2: double
+      SO2: double
+      CO: double
+      MainPollutant: varchar
+      FetchedAt: datetime
+      CreatedAt: datetime
+  SsfbSiteHour:
+    time_columns:
+    - DataTime
+    dimension_columns:
+    - SiteID
+    - SiteName
+    - OnlineType
+    - City
+    - County
+    - Area
+    - Quality
+    - Grade
+    - MainPollutant
+    value_columns:
+    - AQI
+    - PM25
+    - PM10
+    - O3
+    - O3_8H
+    - NO2
+    - SO2
+    - CO
+    mark_columns: []
+    caliber_columns:
+    - FetchedAt
+    column_types:
+      id: bigint
+      SiteID: int
+      SiteName: varchar
+      OnlineType: varchar
+      City: varchar
+      County: varchar
+      Area: varchar
+      DataTime: datetime
+      AQI: int
+      Quality: varchar
+      Grade: int
+      PM25: double
+      PM10: double
+      O3: double
+      O3_8H: double
+      NO2: double
+      SO2: double
+      CO: double
+      MainPollutant: varchar
+      FetchedAt: datetime
+      CreatedAt: datetime
+  SsfbSiteDay:
+    time_columns:
+    - DataTime
+    dimension_columns:
+    - SiteID
+    - SiteName
+    - OnlineType
+    - City
+    - County
+    - Quality
+    value_columns:
+    - AQI
+    - PM25
+    - PM10
+    - O3
+    - O3_8H
+    - NO2
+    - SO2
+    - CO
+    mark_columns: []
+    caliber_columns:
+    - FetchedAt
+    column_types:
+      id: bigint
+      SiteID: int
+      SiteName: varchar
+      OnlineType: varchar
+      City: varchar
+      County: varchar
+      Area: varchar
+      DataTime: datetime
+      AQI: int
+      Quality: varchar
+      Grade: int
+      PM25: double
+      PM10: double
+      O3: double
+      O3_8H: double
+      NO2: double
+      SO2: double
+      CO: double
+      MainPollutant: varchar
+      FetchedAt: datetime
+      CreatedAt: datetime
+  SsfbCityRanking:
+    time_columns:
+    - ComputedAt
+    dimension_columns:
+    - PeriodType
+    - Period
+    - City
+    - GroupID
+    value_columns:
+    - Days
+    - ValidDays
+    - PmValidDays
+    - PM25
+    - PM10
+    - SO2
+    - NO2
+    - CO95
+    - O3_8H_90
+    - RankPM25
+    - RankPM10
+    - RankSO2
+    - RankNO2
+    - RankO3
+    - RankCO
+    - OfficialZong
+    - OfficialRank
+    mark_columns: []
+    caliber_columns:
+    - DataStart
+    - DataEnd
+    column_types:
+      id: bigint
+      PeriodType: varchar
+      Period: varchar
+      City: varchar
+      GroupID: int
+      DataStart: date
+      DataEnd: date
+      Days: int
+      ValidDays: int
+      PmValidDays: int
+      PM25: double
+      PM10: double
+      SO2: double
+      NO2: double
+      CO95: double
+      O3_8H_90: double
+      RankPM25: int
+      RankPM10: int
+      RankSO2: int
+      RankNO2: int
+      RankO3: int
+      RankCO: int
+      OfficialZong: double
+      OfficialRank: int
+      ComputedAt: datetime
+      CreatedAt: datetime

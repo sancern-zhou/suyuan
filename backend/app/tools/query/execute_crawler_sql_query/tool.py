@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
-# DataCrawler（MySQL 8，采集库）长历史表：站点/城市逐小时、逐日与年度均值。
+# DataCrawler（MySQL 8，采集库）：许昌本地长历史表 + 河南实时发布采集表（Ssfb*）。
 CRAWLER_SQL_TABLES = [
     "StationHour",
     "CityHour",
@@ -30,7 +30,27 @@ CRAWLER_SQL_TABLES = [
     "CityDay",
     "CityYearPm25Avg",
     "Station",
+    "SsfbCityHour",
+    "SsfbCityDay",
+    "SsfbSiteHour",
+    "SsfbSiteDay",
+    "SsfbCityRanking",
 ]
+
+# 各表白名单对应的数据时间范围（实测），供 Agent 直接判断可查窗口、避免空查。
+TABLE_TIME_RANGES: dict[str, str] = {
+    "StationHour": "2016-01 起，许昌 6 国控站逐小时，更新至实时",
+    "CityHour": "2020-07 起，许昌市逐小时",
+    "StationDay": "2018-09 起，许昌站点逐日",
+    "CityDay": "2018-09 起，许昌市逐日",
+    "CityYearPm25Avg": "2014-2025，许昌市 PM2.5 年均值（每年 1 行）",
+    "Station": "许昌站点目录（覆盖有限，站名可能为空）",
+    "SsfbCityHour": "2026-10-09 起，河南 18 城市组逐小时（含济源）",
+    "SsfbCityDay": "2026-10-03 起，河南 18 城市组逐日（含济源）",
+    "SsfbSiteHour": "2026-10-09 起，许昌县级站逐小时",
+    "SsfbSiteDay": "2026-10-08 起，许昌县级站逐日",
+    "SsfbCityRanking": "2026-10 月度 / 2026 年度起（随 SsfbCityDay 每日 06:10 重算）",
+}
 
 MAX_LIMIT = 5000
 DEFAULT_LIMIT = 50
@@ -69,15 +89,27 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
                 "\n\n表字段契约缺失：写 SQL 前必须先用 describe_table 确认字段名与大小写。"
             )
         schema_description = (
-            "大气监测采集库（MySQL）只读 SQL 查询工具，提供中台接口未覆盖的长历史数据："
-            "站点/城市逐小时与逐日历史、PM2.5 年均值、站点目录。"
+            "大气监测采集库（MySQL）只读 SQL 查询工具：许昌本地长历史数据"
+            "（站点/城市逐小时与逐日、PM2.5 年均值、站点目录）+ 河南实时发布采集表"
+            "（Ssfb*：18 城市组含济源的小时/日/单项浓度排名、许昌县级站）。"
             "支持 describe_table 查看表结构，或 sql 执行 SELECT/CTE 查询，二者必须二选一。"
             f"仅允许白名单表：{', '.join(CRAWLER_SQL_TABLES)}；禁止采集运行日志和失败记录表。"
             "只允许 SELECT，禁止 INSERT/UPDATE/DELETE/DDL、注释和多语句；"
             f"使用 LIMIT 分页，最大返回 {MAX_LIMIT} 条。"
             "不确定字段时先调用 describe_table，不要查询 information_schema。"
-            "\n注意：StationHour 站名列是 StationName；StationDay/CityDay 没有 StationName 列，"
+            "\n\n【查询优先级】常规指标（18 城含济源的排名/最新小时日值/县级站）优先走"
+            " xuchang_cube_metrics 语义层；本工具用于长历史、同比、跨年趋势和语义层未覆盖的明细。"
+            "省内排名（含济源）：SsfbCityRanking（Rank* 升序=1 最优，相同值并列，"
+            "需 periodType+period 过滤），不要用 SQL Server 的 HenanCityAccumulateRanking"
+            "（省APP已停服，仅至2026-08）。"
+            "月均/年均等自定义聚合：SsfbCityDay 可从 2026-10-03 聚合，"
+            "更早历史用 CityDay（许昌，缺济源）并在结论注明数据源与覆盖差异。"
+            "\n\n【各表数据时间范围】（查询窗口必须在范围内，否则空结果）：\n"
+            + "\n".join(f"- {name}: {desc}" for name, desc in TABLE_TIME_RANGES.items())
+            + "\n注意：StationHour 站名列是 StationName；StationDay/CityDay 没有 StationName 列，"
             "站名/城市名用 PositionName/Area，不要跨表套用列名。"
+            "\n注意：老表（StationHour/CityHour/StationDay/CityDay/CityYearPm25Avg）仅覆盖许昌单城市，"
+            "Ssfb* 表覆盖河南 18 城市组与许昌县级站，两套口径不要混算同比。"
             f"{contracts_block}"
             "\n注意：以上表都在同一个 MySQL 采集库，可跨表 JOIN；"
             "与 SQL Server 历史库、PostgreSQL 主库不支持跨库 JOIN。"
@@ -89,6 +121,8 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
             "WHERE Area LIKE '%许昌%' AND Date >= '2020-01-01' ORDER BY Date LIMIT 100"
             "\n- PM2.5 年均值：SELECT Year, ActualPm25Avg, StandardPm25Avg FROM CityYearPm25Avg "
             "WHERE CityName LIKE '%许昌%' ORDER BY Year"
+            "\n- 18城排名（含济源）：SELECT City, RankPm25, PM25 FROM SsfbCityRanking "
+            "WHERE PeriodType='monthly' AND Period='2026-10' ORDER BY RankPm25"
         )
         function_schema = {
             "name": "execute_crawler_sql_query",
