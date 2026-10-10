@@ -98,8 +98,20 @@ class KnowledgeVectorStore:
             raise
 
     def _init_embedding(self):
-        """初始化bge-m3 Embedding模型"""
+        """初始化bge-m3 Embedding模型：配置了远程服务则不再本地加载权重"""
         try:
+            from app.knowledge_base.remote_embedding import RemoteEmbeddingModel
+
+            remote = RemoteEmbeddingModel.from_env()
+            if remote is not None:
+                logger.info("embedding_using_remote_service", url=remote.api_url)
+                self.embedding_model = remote
+                # 就绪探测：服务不可用时在这里失败，尽早暴露
+                test_embedding = self.embedding_model.encode("test", normalize_embeddings=True)
+                self._embedding_dim = len(test_embedding)
+                logger.info("embedding_model_ready", dim=self._embedding_dim, mode="remote")
+                return
+
             from sentence_transformers import SentenceTransformer
 
             # 优先使用环境变量中的本地模型路径
