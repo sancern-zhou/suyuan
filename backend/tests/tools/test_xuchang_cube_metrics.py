@@ -15,9 +15,9 @@ from app.tools.query.xuchang_cube_metrics.tool import (
 )
 
 
-def test_catalog_covers_all_seven_cubes_with_chinese_titles():
+def test_catalog_covers_all_eight_cubes_with_chinese_titles():
     assert set(CATALOG) == {
-        "SsfbCityHour", "SsfbCityDay", "SsfbCityRanking",
+        "SsfbCityHour", "SsfbCityDay", "SsfbCityRanking", "SsfbCityHourRank",
         "SsfbSiteHour", "SsfbSiteDay",
         "TownHour", "TownDay",
     }

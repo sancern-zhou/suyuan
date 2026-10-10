@@ -35,6 +35,35 @@ logger = structlog.get_logger()
 # 单一事实源(本文件内): 结构化目录 → 渲染进工具描述。改口径时三处同步:
 # fetchers(采集) ↔ cube/schema/*.js ↔ 此处。
 CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
+    # 城市小时排名：MySQL 窗口函数现算（实时），18 城市组同小时分区排名。
+    # 排名规则与日/月一致：数值越低越靠前（Rank* 升序,1=最优），相同值并列。
+    "SsfbCityHourRank": {
+        "measures": [
+            {"name": "rankAqi", "title": "AQI小时排名(升序,1=最优,含济源)"},
+            {"name": "rankPm25", "title": "PM2.5小时排名(升序,1=最优)"},
+            {"name": "rankPm10", "title": "PM10小时排名(升序,1=最优)"},
+            {"name": "rankSo2", "title": "SO2小时排名(升序,1=最优)"},
+            {"name": "rankNo2", "title": "NO2小时排名(升序,1=最优)"},
+            {"name": "rankO3", "title": "O3小时排名(升序,1=最优)"},
+            {"name": "rankCo", "title": "CO小时排名(升序,1=最优)"},
+            {"name": "avgAqi", "title": "AQI"},
+            {"name": "avgPm25", "title": "PM2.5(μg/m³)"},
+            {"name": "avgPm10", "title": "PM10(μg/m³)"},
+            {"name": "avgO3", "title": "O3(μg/m³)"},
+            {"name": "avgNo2", "title": "NO2(μg/m³)"},
+            {"name": "avgSo2", "title": "SO2(μg/m³)"},
+            {"name": "avgCo", "title": "CO(mg/m³)"},
+            {"name": "cityCount", "title": "参与排名城市数(应=18)"},
+        ],
+        "dimensions": [
+            {"name": "city", "title": "城市名(含济源市)"},
+            {"name": "cityCode", "title": "城市行政区码"},
+            {"name": "groupId", "title": "城市组ID"},
+            {"name": "quality", "title": "空气质量等级"},
+            {"name": "primaryPollutant", "title": "首要污染物"},
+            {"name": "dataTime", "title": "数据时间(时间维度,精确到小时)"},
+        ],
+    },
     # 乡镇站小时（中大国发平台口径，本地库，2025-2026 已回补完整）。
     # caliber 维度必须二选一过滤（app=审核 / src=原始），否则同站同时刻
     # 两条记录重复计数；官方结论优先 caliber='app'。数值已排除 -99 无效值。
@@ -231,7 +260,7 @@ def _render_guide() -> str:
     lines.append("")
     lines.append(
         DATA_WINDOW_NOTE
-        + "排名类问题用 SsfbCityRanking(日排名 periodType=daily+period=日期;月/年排名 periodType=monthly/yearly);"
+        + "排名类问题用 SsfbCityRanking(日排名 periodType=daily+period=日期;月/年排名 periodType=monthly/yearly);小时排名用 SsfbCityHourRank(过滤 dataTime 到具体小时);"
         "排名规则为数值越低越靠前(Rank*=1 最优),相同值并列;"
         "乡镇站(76个,2024起)用 TownHour/TownDay,必须过滤 caliber(app=审核,官方结论优先),"
         "否则原始与审核重复计数;"
