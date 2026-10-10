@@ -15,7 +15,7 @@
 ## 已建模
 
 - **SsfbCityHour / SsfbCityDay**：18 城市组（含济源）小时/日六参数+AQI
-- **SsfbCityRanking**：月/年累计排名（HJ663 重算，升序并列，官方对照列）
+- **SsfbCityRanking**：月/年单项浓度累计与排名（升序并列，不做综合指数，官方对照列）
 - **SsfbSiteHour / SsfbSiteDay**：许昌县级站（县/区归属，剔除国控）
 
 口径细则见各 schema 文件头注释；与 fetcher 采集逻辑一致由测试守卫
@@ -60,7 +60,7 @@ docker run -d --name suyan-xuchang-cube --restart unless-stopped \
 # Agent 侧由 xuchang_cube_metrics 工具自动签发
 curl -X POST http://127.0.0.1:4610/cubejs-api/v1/load \
   -H "Authorization: <JWT>" -H "Content-Type: application/json" \
-  -d '{"query":{"measures":["SsfbCityRanking.rankZong","SsfbCityRanking.avgZong"],
+  -d '{"query":{"measures":["SsfbCityRanking.rankPm25","SsfbCityRanking.avgPm25"],
        "dimensions":["SsfbCityRanking.city"],
        "filters":["SsfbCityRanking.period = 2026-10","SsfbCityRanking.periodType = monthly"]}}'
 ```

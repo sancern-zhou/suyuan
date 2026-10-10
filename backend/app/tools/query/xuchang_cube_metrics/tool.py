@@ -80,20 +80,19 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "dataDate", "title": "数据日期(时间维度)"},
         ],
     },
-    # 城市排名(本地重算): HJ663 综合指数, 数值越低排名越靠前(Rank*升序,1=最优),
-    # 相同值并列(1,1,3)。排名在 18 城市组内(含济源)。
+    # 城市排名（本地重算）: 只做单项浓度累计与排名（不做综合指数），
+    # 数值越低排名越靠前（Rank* 升序,1=最优），相同值并列（1,1,3）。
+    # 排名在 18 城市组内(含济源)。
     # OfficialZong/OfficialRank 为省APP官方对照(仅≤2026-08有值, 勿与重算值混算)。
     "SsfbCityRanking": {
         "measures": [
             {"name": "count", "title": "记录数"},
-            {"name": "avgZong", "title": "综合指数(HJ663)"},
             {"name": "avgPm25", "title": "PM2.5累计均值(μg/m³)"},
             {"name": "avgPm10", "title": "PM10累计均值(缺口由小时均值补齐)"},
             {"name": "avgSo2", "title": "SO2累计均值(μg/m³)"},
             {"name": "avgNo2", "title": "NO2累计均值(μg/m³)"},
             {"name": "avgO38h90", "title": "O3-8h第90百分位(μg/m³)"},
             {"name": "avgCo95", "title": "CO第95百分位(mg/m³)"},
-            {"name": "rankZong", "title": "综合指数排名(升序,1=最优,含济源)"},
             {"name": "rankPm25", "title": "PM2.5排名(升序,1=最优)"},
             {"name": "rankPm10", "title": "PM10排名(升序,1=最优)"},
             {"name": "rankSo2", "title": "SO2排名(升序,1=最优)"},
@@ -218,7 +217,7 @@ class XuchangCubeMetricsTool(LLMTool):
             "name": self.tool_name,
             "description": (
                 "查询许昌本地空气质量指标(语义层,口径唯一):河南18城市组(含济源)小时/日"
-                "六参数与AQI、月/年累计综合指数排名(HJ663重算,数值越低排名越靠前,相同值并列,"
+                "六参数与AQI、月/年累计单项浓度排名(数值越低排名越靠前,相同值并列,"
                 "济源已纳入)、许昌县级站(鄢陵/襄城/禹州/长葛)小时/日数据与区县口径聚合。"
                 "传 measures+dimensions+时间范围即可,不需要写SQL;"
                 "排名问题用 SsfbCityRanking 并过滤 periodType/period。"
@@ -229,7 +228,7 @@ class XuchangCubeMetricsTool(LLMTool):
                 "properties": {
                     "measures": {
                         "type": "array", "items": {"type": "string"},
-                        "description": "度量成员,如 ['SsfbCityRanking.rankZong','SsfbCityRanking.avgZong'],须同一Cube",
+                        "description": "度量成员,如 ['SsfbCityRanking.rankPm25','SsfbCityRanking.avgPm25'],须同一Cube",
                     },
                     "dimensions": {
                         "type": "array", "items": {"type": "string"},
@@ -261,7 +260,7 @@ class XuchangCubeMetricsTool(LLMTool):
                     },
                     "order": {
                         "type": "object",
-                        "description": "(可选)排序,如 {'SsfbCityRanking.rankZong':'asc'}",
+                        "description": "(可选)排序,如 {'SsfbCityRanking.rankPm25':'asc'}",
                     },
                     "limit": {
                         "type": "integer",

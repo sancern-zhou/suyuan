@@ -48,14 +48,12 @@ def test_compute_rank_skips_null_values():
     assert by_city == {"乙市": 1, "甲市": None}
 
 
-def test_aggregation_hj663_composite_index():
+def test_aggregation_single_pollutant_cumulative_means():
     days = [
         _day(pm25=35, pm10=70, o3=160, no2=40, so2=60, co=4),
         _day(pm25=35, pm10=70, o3=160, no2=40, so2=60, co=4),
     ]
     result = AggregationResult.from_days("许昌市", 210, days)
-    # 每项浓度等于二级标准限值 → 单项指数均为 1 → 综合指数 = 6
-    assert result.zong == pytest.approx(6.0)
     assert result.pm25 == pytest.approx(35.0)
     assert result.o3_8h_90 == pytest.approx(160.0)
     assert result.co_95 == pytest.approx(4.0)
@@ -76,8 +74,8 @@ def test_aggregation_ignores_days_with_missing_pollutant_for_valid_days():
 
 def test_aggregation_empty_days_returns_none_metrics():
     result = AggregationResult.from_days("许昌市", 210, [])
-    assert result.zong is None
     assert result.pm25 is None
+    assert result.o3_8h_90 is None
     assert result.valid_days == 0
 
 
@@ -96,11 +94,11 @@ def test_rank_cities_assigns_all_metrics():
     }
     rows = build_ranking_rows("monthly", "2026-10", stats, official={}, computed_at=datetime(2026, 10, 11, 6))
     by_city = {row["city"]: row for row in rows}
-    # 济源各项浓度更低 → 排名 1
-    assert by_city["济源市"]["rank_zong"] == 1
-    assert by_city["许昌市"]["rank_zong"] == 2
+    # 济源各项浓度更低 → 排名 1（单项浓度排名，不做综合指数）
     assert by_city["济源市"]["rank_pm25"] == 1
-    assert by_city["济源市"]["zong"] < by_city["许昌市"]["zong"]
+    assert by_city["许昌市"]["rank_pm25"] == 2
+    assert "rank_zong" not in by_city["济源市"]
+    assert "zong" not in by_city["济源市"]
     assert by_city["济源市"]["period_type"] == "monthly"
     assert by_city["济源市"]["computed_at"] == datetime(2026, 10, 11, 6)
 

@@ -1,16 +1,16 @@
-"""Recalculate Henan city cumulative rankings from our own SsfbCityDay table.
+"""Recalculate Henan city cumulative concentration rankings from SsfbCityDay.
 
 背景：河南省空气质量 APP（月/年累计排名的唯一外部来源）已于 2026-09 停服，
 XcAiDb.dbo.HenanCityAccumulateRanking 自 2026-08 后不再更新；同时全国城市
 日发布历史（CityDayAQIPublishHistory）长期缺济源。本 fetcher 用我们自己
-采集的 18 城市组日值（SsfbCityDay，含济源）按透明口径重算排名：
+采集的 18 城市组日值（SsfbCityDay，含济源）按透明口径重算**单项浓度累计
+与排名**（不做综合指数计算与排名）：
 
 - 单项浓度：SO2/NO2/PM10/PM2.5 为算术月均/年均，O3 取日最大 8 小时值第 90
   百分位（nearest-rank），CO 取日均值第 95 百分位（nearest-rank）；
-- 综合指数：HJ663 口径，六项单项指数之和，标准限值取 GB3095-2012 二级年均
-  （SO2 60 / NO2 40 / PM10 70 / PM2.5 35 μg/m³，O3 160，CO 4 mg/m³）；
-- 排名：综合指数与单项浓度均**数值越低排名越靠前**，相同值并列
-  （standard competition：1,2,2,4）；
+- 排名：单项浓度均**数值越低排名越靠前**，相同值并列
+  （standard competition：1,1,3）；
+- PM10 缺口：源日值接口 2026-10 起不发布 PM10，由本城小时均值补齐；
 - 对照列：保留省 APP 官方最后月份（2026-08 及以前）的 zong/rank 供口径对照。
 
 结果写入 DataCrawler MySQL ``SsfbCityRanking``（period_type=monthly/yearly），
@@ -37,17 +37,7 @@ logger = structlog.get_logger()
 
 RANKING_TABLE = "SsfbCityRanking"
 
-# GB3095-2012 二级标准（年均/参考值），HJ663 综合指数分母
-HJ663_STANDARDS = {
-    "so2": 60.0,
-    "no2": 40.0,
-    "pm10": 70.0,
-    "pm25": 35.0,
-    "o3_8h_90": 160.0,
-    "co_95": 4.0,
-}
-
-RANK_METRICS = ("zong", "pm25", "pm10", "so2", "no2", "o3_8h_90", "co_95")
+RANK_METRICS = ("pm25", "pm10", "so2", "no2", "o3_8h_90", "co_95")
 
 RANKING_DDL = """
 CREATE TABLE IF NOT EXISTS SsfbCityRanking (
@@ -67,8 +57,6 @@ CREATE TABLE IF NOT EXISTS SsfbCityRanking (
     NO2 DOUBLE NULL,
     CO95 DOUBLE NULL,
     O3_8H_90 DOUBLE NULL,
-    Zong DOUBLE NULL,
-    RankZong INT NULL,
     RankPM25 INT NULL,
     RankPM10 INT NULL,
     RankSO2 INT NULL,
@@ -86,17 +74,17 @@ CREATE TABLE IF NOT EXISTS SsfbCityRanking (
 RANKING_UPSERT = """
 INSERT INTO SsfbCityRanking
     (PeriodType, Period, City, GroupID, DataStart, DataEnd, Days, ValidDays, PmValidDays,
-     PM25, PM10, SO2, NO2, CO95, O3_8H_90, Zong,
-     RankZong, RankPM25, RankPM10, RankSO2, RankNO2, RankO3, RankCO,
+     PM25, PM10, SO2, NO2, CO95, O3_8H_90,
+     RankPM25, RankPM10, RankSO2, RankNO2, RankO3, RankCO,
      OfficialZong, OfficialRank, ComputedAt)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+        %s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON DUPLICATE KEY UPDATE
     GroupID=VALUES(GroupID), DataStart=VALUES(DataStart), DataEnd=VALUES(DataEnd),
     Days=VALUES(Days), ValidDays=VALUES(ValidDays), PmValidDays=VALUES(PmValidDays),
     PM25=VALUES(PM25), PM10=VALUES(PM10), SO2=VALUES(SO2), NO2=VALUES(NO2),
-    CO95=VALUES(CO95), O3_8H_90=VALUES(O3_8H_90), Zong=VALUES(Zong),
-    RankZong=VALUES(RankZong), RankPM25=VALUES(RankPM25), RankPM10=VALUES(RankPM10),
+    CO95=VALUES(CO95), O3_8H_90=VALUES(O3_8H_90),
+    RankPM25=VALUES(RankPM25), RankPM10=VALUES(RankPM10),
     RankSO2=VALUES(RankSO2), RankNO2=VALUES(RankNO2), RankO3=VALUES(RankO3),
     RankCO=VALUES(RankCO), OfficialZong=VALUES(OfficialZong),
     OfficialRank=VALUES(OfficialRank), ComputedAt=VALUES(ComputedAt)
@@ -156,7 +144,7 @@ def compute_rank(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
 
 
 class AggregationResult:
-    """单城市一段时间的累计指标（HJ663 口径）。"""
+    """单城市一段时间的单项浓度累计指标。"""
 
     def __init__(self, city: str, group_id: int | None) -> None:
         self.city = city
@@ -212,23 +200,6 @@ class AggregationResult:
     def co_95(self) -> float | None:
         return percentile_nearest_rank(sorted(self.series["co"]), 95)
 
-    @property
-    def zong(self) -> float | None:
-        """HJ663 综合指数：六项单项指数之和；任一序列为空则不可评估。"""
-        components = {
-            "so2": self._mean("so2"),
-            "no2": self._mean("no2"),
-            "pm10": self._mean("pm10"),
-            "pm25": self._mean("pm25"),
-            "o3_8h_90": self.o3_8h_90,
-            "co_95": self.co_95,
-        }
-        if any(value is None for value in components.values()):
-            return None
-        return sum(
-            components[key] / HJ663_STANDARDS[key] for key in HJ663_STANDARDS
-        )
-
     @classmethod
     def from_days(cls, city: str, group_id: int | None, days: list[dict[str, Any]]) -> "AggregationResult":
         result = cls(city, group_id)
@@ -274,7 +245,6 @@ def build_ranking_rows(
     }
     for metric, rows in ranked_by_metric.items():
         column = {
-            "zong": "rank_zong",
             "pm25": "rank_pm25",
             "pm10": "rank_pm10",
             "so2": "rank_so2",
@@ -294,7 +264,6 @@ def build_ranking_rows(
                 "period": period,
                 "city": city,
                 "group_id": agg.group_id,
-                "zong": agg.zong,
                 "pm25": agg.pm25,
                 "pm10": agg.pm10,
                 "so2": agg.so2,
@@ -334,7 +303,7 @@ class XuchangHenanRankingRecalcFetcher(DataFetcher):
     ) -> None:
         super().__init__(
             name="xuchang_henan_ranking_recalc_fetcher",
-            description="基于SsfbCityDay重算河南18城市组月/年累计排名(HJ663)入库DataCrawler",
+            description="基于SsfbCityDay重算河南18城市组月/年单项浓度累计与排名入库DataCrawler",
             schedule="10 6 * * *",
             version="1.0.0",
         )
@@ -438,14 +407,14 @@ class XuchangHenanRankingRecalcFetcher(DataFetcher):
         fetched_at = self.now_factory().replace(microsecond=0)
         collected = self._collect(fetched_at)
         saved = await self._save(collected)
-        monthly = {row["city"]: row["rank_zong"] for row in collected["monthly"]}
+        pm25_ranks = {row["city"]: row["rank_pm25"] for row in collected["monthly"]}
         result = {
             "fetched_at": fetched_at.isoformat(),
             "day_rows": collected["day_count"],
             "saved_monthly": saved["monthly"],
             "saved_yearly": saved["yearly"],
-            "xuchang_month_rank": monthly.get("许昌市"),
-            "jiyuan_month_rank": monthly.get("济源市"),
+            "xuchang_pm25_rank": pm25_ranks.get("许昌市"),
+            "jiyuan_pm25_rank": pm25_ranks.get("济源市"),
         }
         logger.info("xuchang_henan_ranking_recalc_completed", **result)
         return result
@@ -512,8 +481,8 @@ def _ranking_params(row: dict[str, Any]) -> tuple:
         row.get("data_start"), row.get("data_end"), row["days"],
         row["valid_days"], row["pm_valid_days"],
         row["pm25"], row["pm10"], row["so2"], row["no2"],
-        row["co_95"], row["o3_8h_90"], row["zong"],
-        row["rank_zong"], row["rank_pm25"], row["rank_pm10"],
+        row["co_95"], row["o3_8h_90"],
+        row["rank_pm25"], row["rank_pm10"],
         row["rank_so2"], row["rank_no2"], row["rank_o3"], row["rank_co"],
         row["official_zong"], row["official_rank"], row["computed_at"],
     )

@@ -49,7 +49,7 @@ def test_make_token_is_signed_hs256():
 def test_validate_rejects_cross_cube_query():
     tool = XuchangCubeMetricsTool()
     cube, err = tool._validate(
-        measures=["SsfbCityRanking.rankZong"],
+        measures=["SsfbCityRanking.rankPm25"],
         dimensions=["SsfbCityDay.city"],
         time_dimension=None,
         filters=[],
@@ -63,7 +63,7 @@ def test_validate_rejects_unknown_members_and_operators():
     _, err = tool._validate(["SsfbCityRanking.nonsense"], [], None, [])
     assert "未知度量" in err
     _, err = tool._validate(
-        ["SsfbCityRanking.rankZong"], [], None,
+        ["SsfbCityRanking.rankPm25"], [], None,
         [{"member": "SsfbCityRanking.period", "operator": "regex", "values": ["x"]}],
     )
     assert "不支持的过滤操作符" in err
@@ -72,7 +72,7 @@ def test_validate_rejects_unknown_members_and_operators():
 def test_validate_accepts_single_cube_query():
     tool = XuchangCubeMetricsTool()
     cube, err = tool._validate(
-        measures=["SsfbCityRanking.rankZong", "SsfbCityRanking.avgZong"],
+        measures=["SsfbCityRanking.rankPm25", "SsfbCityRanking.avgPm25"],
         dimensions=["SsfbCityRanking.city"],
         time_dimension=None,
         filters=[
@@ -115,8 +115,8 @@ async def test_execute_returns_rows(monkeypatch):
             return _FakeResponse({
                 "data": [
                     {"SsfbCityRanking.city": "许昌市",
-                     "SsfbCityRanking.rankZong": {"value": 7},
-                     "SsfbCityRanking.avgZong": {"value": 3.42}},
+                     "SsfbCityRanking.rankPm25": {"value": 7},
+                     "SsfbCityRanking.avgPm25": {"value": 3.42}},
                 ],
             })
 
@@ -128,7 +128,7 @@ async def test_execute_returns_rows(monkeypatch):
 
     tool = XuchangCubeMetricsTool()
     result = await tool.execute(
-        measures=["SsfbCityRanking.rankZong", "SsfbCityRanking.avgZong"],
+        measures=["SsfbCityRanking.rankPm25", "SsfbCityRanking.avgPm25"],
         dimensions=["SsfbCityRanking.city"],
         filters=[
             {"member": "SsfbCityRanking.periodType", "operator": "equals",
@@ -136,13 +136,13 @@ async def test_execute_returns_rows(monkeypatch):
             {"member": "SsfbCityRanking.period", "operator": "equals",
              "values": ["2026-10"]},
         ],
-        order={"SsfbCityRanking.rankZong": "asc"},
+        order={"SsfbCityRanking.rankPm25": "asc"},
     )
 
     assert result["success"] is True
-    assert result["data"][0]["SsfbCityRanking.rankZong"] == 7
+    assert result["data"][0]["SsfbCityRanking.rankPm25"] == 7
     # dict 包装值被解包为标量
-    assert result["data"][0]["SsfbCityRanking.avgZong"] == 3.42
+    assert result["data"][0]["SsfbCityRanking.avgPm25"] == 3.42
     assert "1 行" in result["summary"]
     assert captured["query"]["limit"] == 50
     assert captured["auth"].count(".") == 2
