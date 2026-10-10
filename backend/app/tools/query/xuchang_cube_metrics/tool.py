@@ -35,6 +35,52 @@ logger = structlog.get_logger()
 # 单一事实源(本文件内): 结构化目录 → 渲染进工具描述。改口径时三处同步:
 # fetchers(采集) ↔ cube/schema/*.js ↔ 此处。
 CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
+    # 乡镇站小时（中大国发平台口径，本地库，2025-2026 已回补完整）。
+    # caliber 维度必须二选一过滤（app=审核 / src=原始），否则同站同时刻
+    # 两条记录重复计数；官方结论优先 caliber='app'。数值已排除 -99 无效值。
+    "TownHour": {
+        "measures": [
+            {"name": "count", "title": "小时记录数"},
+            {"name": "avgPm25", "title": "PM2.5均值(μg/m³)"},
+            {"name": "avgPm10", "title": "PM10均值(μg/m³)"},
+            {"name": "avgSo2", "title": "SO2均值(μg/m³)"},
+            {"name": "avgNo2", "title": "NO2均值(μg/m³)"},
+            {"name": "avgCo", "title": "CO均值(mg/m³)"},
+            {"name": "avgO3", "title": "O3均值(μg/m³)"},
+            {"name": "maxAqi", "title": "AQI最大值"},
+            {"name": "onlineSites", "title": "有数据乡镇站数(去重,76站)"},
+        ],
+        "dimensions": [
+            {"name": "caliber", "title": "口径(app审核/src原始,必选其一过滤)"},
+            {"name": "stationCode", "title": "乡镇站编码(平台内部,如1024B)"},
+            {"name": "stationName", "title": "乡镇站名(前缀含区县,如建安区小召乡)"},
+            {"name": "quality", "title": "空气质量等级"},
+            {"name": "primaryPollutant", "title": "首要污染物"},
+            {"name": "dataTime", "title": "数据时间(时间维度,2024-01-01起)"},
+        ],
+    },
+    # 乡镇站日：本地库 2024-08 起且 2025 年起完整（2026-10 回补）。
+    "TownDay": {
+        "measures": [
+            {"name": "count", "title": "站点日记录数"},
+            {"name": "avgPm25", "title": "PM2.5日均(μg/m³)"},
+            {"name": "avgPm10", "title": "PM10日均(μg/m³)"},
+            {"name": "avgSo2", "title": "SO2日均(μg/m³)"},
+            {"name": "avgNo2", "title": "NO2日均(μg/m³)"},
+            {"name": "avgCo", "title": "CO日均(mg/m³)"},
+            {"name": "avgO3", "title": "O3日均(μg/m³)"},
+            {"name": "maxAqi", "title": "AQI最大值"},
+            {"name": "onlineSites", "title": "有数据乡镇站数(去重,76站)"},
+        ],
+        "dimensions": [
+            {"name": "caliber", "title": "口径(app审核/src原始,必选其一过滤)"},
+            {"name": "stationCode", "title": "乡镇站编码"},
+            {"name": "stationName", "title": "乡镇站名(前缀含区县)"},
+            {"name": "quality", "title": "空气质量等级"},
+            {"name": "primaryPollutant", "title": "首要污染物"},
+            {"name": "dataDate", "title": "数据日期(时间维度,src 2024-08-01起/app 2024-09-01起)"},
+        ],
+    },
     # 城市小时: 18 城市组(含济源)逐小时六参数+AQI, 河南实时发布系统采集。
     "SsfbCityHour": {
         "measures": [
@@ -187,6 +233,8 @@ def _render_guide() -> str:
         DATA_WINDOW_NOTE
         + "排名类问题用 SsfbCityRanking(需 periodType+period 过滤);"
         "排名规则为数值越低越靠前(Rank*=1 最优),相同值并列;"
+        "乡镇站(76个,2024起)用 TownHour/TownDay,必须过滤 caliber(app=审核,官方结论优先),"
+        "否则原始与审核重复计数;"
         "OfficialZong/OfficialRank 是省APP对照列(仅2026-08前有值),勿与重算值混用。"
     )
     return "\n".join(lines)
@@ -218,9 +266,11 @@ class XuchangCubeMetricsTool(LLMTool):
             "description": (
                 "查询许昌本地空气质量指标(语义层,口径唯一):河南18城市组(含济源)小时/日"
                 "六参数与AQI、月/年累计单项浓度排名(数值越低排名越靠前,相同值并列,"
-                "济源已纳入)、许昌县级站(鄢陵/襄城/禹州/长葛)小时/日数据与区县口径聚合。"
+                "济源已纳入)、许昌县级站(鄢陵/襄城/禹州/长葛)小时/日数据、"
+                "乡镇站(76个)小时/日数据(2024起,2025年起完整,审核/原始口径二选一)。"
                 "传 measures+dimensions+时间范围即可,不需要写SQL;"
-                "排名问题用 SsfbCityRanking 并过滤 periodType/period。"
+                "排名问题用 SsfbCityRanking 并过滤 periodType/period;"
+                "乡镇站问题用 TownHour/TownDay 并过滤 caliber(官方结论用 app)。"
                 + _render_guide()
             ),
             "parameters": {

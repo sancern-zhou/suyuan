@@ -15,10 +15,11 @@ from app.tools.query.xuchang_cube_metrics.tool import (
 )
 
 
-def test_catalog_covers_all_five_cubes_with_chinese_titles():
+def test_catalog_covers_all_seven_cubes_with_chinese_titles():
     assert set(CATALOG) == {
         "SsfbCityHour", "SsfbCityDay", "SsfbCityRanking",
         "SsfbSiteHour", "SsfbSiteDay",
+        "TownHour", "TownDay",
     }
     for cube, parts in CATALOG.items():
         assert parts["measures"], cube

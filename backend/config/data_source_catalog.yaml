@@ -6,22 +6,25 @@
 # - 工具名或表名变更时必须同步更新本文件
 #
 # 【许昌空气质量查询优先级总纲】
-# 1. 常规指标（18城含济源排名/最新小时日值/县级站/区县聚合）→ xuchang_cube_metrics
-#    （数据窗口 2026-10-03 起）
+# 1. 常规指标（18城含济源排名/最新小时日值/县级站/区县聚合/乡镇站76个）→ xuchang_cube_metrics
+#    （数据窗口：ssfb 2026-10-03 起；乡镇站 TownHour/TownDay 2024 起、2025 年起完整，
+#     必须过滤 caliber：官方结论用 caliber='app' 审核口径）
 # 2. 长历史/同比/跨年趋势/语义层未覆盖明细 → execute_crawler_sql_query
 #    （DataCrawler MySQL：许昌本地 2016/2018 起长历史 + Ssfb* 采集表）
 # 3. SQL Server 侧（发布口径长历史/中大审核口径/预报表）→ execute_sql_query
-#    （注意：CityDay 缺济源；HenanCityAccumulateRanking 仅至 2026-08 已停更）
-# 4. 乡镇站小时（中台口径）→ xuchang_station_catalog 解析编码 + query_airdata_platform
+#    （注意：CityDay 缺济源；HenanCityAccumulateRanking 已下线）
+# 4. 中台独有口径（区域/站点基础表、城市/站点日数据、月度及以上报表）→
+#    xuchang_station_catalog 解析编码 + query_airdata_platform / airdata_calc_report_summary
+#    （乡镇小时/日已迁本地 TownHour/TownDay，中台 v_t_* 乡镇视图仅备用）
 # 同一问题优先用高层工具；仅在需要语义层未覆盖的字段/时间时下沉到 SQL 工具。
 
 sources:
-  - domain: 空气质量（语义层：河南18城市组含济源排名/小时日值 + 许昌县级站）
+  - domain: 空气质量（语义层：河南18城市组含济源排名/小时日值 + 许昌县级站 + 乡镇站）
     route: tool
     locator: xuchang_cube_metrics
-    usage: "优先用本工具点数查询（免写SQL）：SsfbCityRanking（月/年单项浓度累计与排名，Rank* 升序=1 最优，含济源，需 periodType+period 过滤；不做综合指数）/SsfbCityHour/SsfbCityDay（城市小时日值）/SsfbSiteHour/SsfbSiteDay（许昌县级站，County 字段做区县口径）；排名规则=数值越低越靠前，相同值并列"
+    usage: "优先用本工具点数查询（免写SQL）：SsfbCityRanking（月/年单项浓度排名，Rank* 升序=1 最优，含济源，需 periodType+period 过滤）/SsfbCityHour/SsfbCityDay（城市小时日值）/SsfbSiteHour/SsfbSiteDay（许昌县级站，County 字段做区县口径）/TownHour/TownDay（乡镇站76个，2024 起、2025 年起完整，必须过滤 caliber：官方结论用 caliber='app' 审核口径，区县从 stationName 前缀解析）；排名规则=数值越低越靠前，相同值并列"
     granularity: 逐小时/逐日/月年累计
-    caveats: "数据窗口 2026-10-03 起（源仅保留 8 天滚动+每日累积）；OfficialZong/OfficialRank 为省APP官方对照（≤2026-08）勿与重算值混用；编码解析（城市/县级站）用 xuchang_station_catalog"
+    caveats: "数据窗口：ssfb 2026-10-03 起、乡镇站 2024 起；OfficialZong/OfficialRank 为省APP官方对照（≤2026-08）勿与重算值混用；编码解析（城市/县级站/乡镇站）用 xuchang_station_catalog"
 
   - domain: 空气质量（河南实时发布：18城市组含济源 + 许昌县级站 + 本地重算排名）
     route: tool
