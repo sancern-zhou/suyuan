@@ -50,7 +50,6 @@ MONITORING_SQL_TABLES = [
     'dat_zhongda_station_minute',
     'dat_zhongda_station_hour',
     'dat_zhongda_city_hour',
-    'HenanCityAccumulateRanking',
     'WeatherForecast7Day',
     'city_168_statistics_new_standard',
     'city_168_statistics_old_standard',
@@ -80,7 +79,6 @@ XUCHANG_MONITORING_SQL_TABLES = [
     'dat_zhongda_station_minute',
     'dat_zhongda_station_hour',
     'dat_zhongda_city_hour',
-    'HenanCityAccumulateRanking',
     'WeatherForecast7Day',
     'city_168_statistics_new_standard',
     'city_168_statistics_old_standard',
@@ -100,7 +98,8 @@ AIR_QUALITY_SCHEMA_GUIDE = (
     "执行前必须替换为上下文中的实际值，不得把模板变量原样写入SQL。"
     "若上下文缺少名称与代码的映射，应补充地理上下文；describe_table只能查询字段，不能提供该映射。"
     "不同表的城市字段不同，禁止跨表套用字段名。"
-    "\n【数据源优先级】站点小时/城市小时数据同时存在通用发布表"
+    "\n【数据源优先级】"
+    "站点小时/城市小时数据同时存在通用发布表"
     "（dat_station_hour、CityAQIPublishHistory）和中大平台表（dat_zhongda_station_hour、"
     "dat_zhongda_city_hour）两个来源时，优先查询中大平台表（dat_zhongda_*）——中大源为审核后数据，"
     "准确性更高。仅当中大表不覆盖所需时间（如城市聚合滞后约1天）或字段缺失时，再用通用发布表补充。"
@@ -131,24 +130,27 @@ AIR_QUALITY_SCHEMA_GUIDE = (
     "没有cityname、CityID。时间字段为TimePoint；"
     "污染物字段为PM2_5, PM10, O3, NO2, SO2, CO, AQI；"
     "其他字段为PrimaryPollutant, Quality。注意PM2.5字段名是PM2_5，不是PM25。"
-    "注意：与dat_zhongda_city_hour数据重复，优先使用中大表（审核后数据），本表仅作补充。"
+    "数据范围 2017-01 起。注意：与dat_zhongda_city_hour数据重复，优先使用中大表（审核后数据），本表仅作补充。"
     "\n- CityDayAQIPublishHistory（城市日历史）："
     "城市字段为Area和CityCode，按城市全称或行政区代码筛选："
     "Area = N'{city_name}'或CityCode = {city_code}；"
     "时间字段为TimePoint；日均字段为PM2_5_24h, PM10_24h, O3_8h_24h, "
     "NO2_24h, SO2_24h, CO_24h；其他字段为AQI, PrimaryPollutant, Quality。"
     "城市日数据仅此表提供（中大平台不再采集日数据）。"
+    "数据范围 2021-06 起；**缺济源市**（全国表仅 17 城）。"
             "\n- dat_station_hour（站点小时）和dat_station_day（站点日）："
             "城市字段为city_area_code，按行政区代码筛选：city_area_code = '{city_code}'；"
             "站点字段为station_id, name, lon, lat；时间字段为data_time；"
             "污染物字段使用小写：aqi, aqi_level, pm25, pm10, o3, no2, so2, co, pollutant；"
             "dat_station_day另有O38h字段。没有cityname、CityID、Area、CityCode。"
+            "数据范围：dat_station_hour 2024-01 起，dat_station_day 2026-08-25 起（CNEMC 采集起步，日历史很浅）。"
             "注意：dat_station_hour与dat_zhongda_station_hour数据重复，优先使用中大表（审核后数据），"
             "本表仅作补充；站点日数据仅本表提供。"
             "\n- dat_zhongda_station_minute（中大平台站点5分钟）和dat_zhongda_station_hour（中大平台站点小时）："
             "城市字段为area，按城市全称筛选：area = N'{city_name}'；"
             "站点字段为station_code（平台内部编码，数字+字母如'1003A'）和station_name；时间字段为time_point；"
             "没有city_area_code、cityname、CityID、CityCode、station_id。"
+            "数据范围：两者均 2026-08-26 起（采集起步），更早时间无数据。"
             "口径字段必须显式过滤：data_table_type（'Act'实况/'Std'标况）、parameter_type（'gp'常规污染物），"
             "当前仅采集'Act'+'gp'口径。"
             "污染物数值字段小写：aqi, api, so2, no_val, no2, nox, o3, co, pm10, pm25, o3_8h, pm1；"
@@ -164,6 +166,8 @@ AIR_QUALITY_SCHEMA_GUIDE = (
             "\n- dat_zhongda_city_hour（中大平台城市小时，审核后）："
             "城市字段为area（按城市全称筛选area = N'{city_name}'），另有city_code、province字段；"
             "时间为time_point；"
+            "数据范围 2022-01-01 起（审核值滞后约1-2天发布，最新日期可能无审核值，"
+            "此时先用发布口径表 CityAQIPublishHistory 补最新小时）。"
             "含data_type_plan（评价规划期，按数据时间互斥分区："
             "2026-01-01起为'155th'十五五，2021~2025为'145th'十四五，更早为'135th'；"
             "查询2026年数据必须加data_type_plan = '155th'，用错规划期会返回空）；"
@@ -174,16 +178,6 @@ AIR_QUALITY_SCHEMA_GUIDE = (
             "无效占位值为-999（区别于站点表的-99），统计前必须排除（如AND aqi <> -999）。"
             "注意：城市表由平台聚合任务生成，可能为空，查询无结果不代表SQL错误。"
             "站点日/城市日数据中大平台不再采集，请改用dat_station_day、CityDayAQIPublishHistory。"
-            "\n- HenanCityAccumulateRanking（河南省城市月/年累计空气质量排名）："
-            "period_type区分monthly（月累计）/yearly（年累计），period为YYYY-MM或YYYY；"
-            "城市字段为city，按全称筛选如city = N'郑州'；排名为city_rank（1最优）；"
-            "is_pro_city=1为省辖市，0为市平均/县平均等汇总行；"
-            "指标字段：zong（综合指数）, pm25, pm10, so2, no2, co, o3；"
-            "同比字段：zong_change_rate（如N'5.6%'文本）, change_rate, ratio；"
-            "天数字段：valid_days（有效天数）, pm_valid_days, o3_exceed_days, heavy_pollution_days；"
-            "统计区间stat_start/stat_end；当期数据每日抓取整体更新，lastyear_json存去年同期行。"
-            "示例：SELECT TOP 30 city, city_rank, zong, pm25, valid_days FROM dbo.HenanCityAccumulateRanking "
-            "WHERE period_type = 'monthly' AND period = '2026-08' ORDER BY city_rank。"
     "\n- WeatherForecast7Day（7天空气质量预报）："
     "城市字段为cityname，按城市全称筛选：cityname = N'{city_name}'；时间字段为TimePoint；"
     "预报字段为DayTitle, MinAqi, MaxAqi, MaxPollution, WeatherCondition, "
@@ -228,7 +222,7 @@ def _build_xuchang_schema_guide() -> str:
     forecast_start = guide.index("\n【预报数据源优先级】")
     xuchang_priority = (
         "\n【数据源优先级】国控站点小时/日长历史与城市长历史使用 "
-        "execute_crawler_sql_query；不要在本工具查询 dat_station_hour/dat_station_day。"
+        "execute_crawler_sql_query。"
         "中大平台站点5分钟/小时数据仍使用本工具的 dat_zhongda_station_minute/"
         "dat_zhongda_station_hour。"
     )
@@ -1093,7 +1087,6 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
             "\n- dat_station_day：站点日数据"
             "\n- dat_zhongda_station_minute/dat_zhongda_station_hour：中大平台站点5分钟/小时数据（含质量标记列，-99为无效值）"
             "\n- dat_zhongda_city_hour：中大平台城市小时（可能为空，需空结果容错）"
-            "\n- HenanCityAccumulateRanking：河南省城市月/年累计空气质量排名（period_type区分月/年累计）"
             "\n【统计预计算表】"
             "\n- city_168_statistics_new_standard/city_168_statistics_old_standard：168城市空气质量统计；"
             "适用于168城市全国排名、排名变化、全国发布统计数据查询"
@@ -1121,7 +1114,6 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
                 "\n- dat_zhongda_station_minute/dat_zhongda_station_hour：中大平台站点5分钟/小时数据"
                 "\n- dat_zhongda_city_hour：中大平台城市小时数据"
                 "\n- 国控站点小时/日长历史：改用 execute_crawler_sql_query，本工具不开放 dat_station_hour/dat_station_day"
-                "\n- HenanCityAccumulateRanking：河南省城市月/年累计空气质量排名"
                 "\n- city_168_statistics_new_standard/city_168_statistics_old_standard：168城市统计"
                 "\n- province_statistics_new_standard/province_statistics_old_standard：省级空气质量统计"
                 + schema_guide

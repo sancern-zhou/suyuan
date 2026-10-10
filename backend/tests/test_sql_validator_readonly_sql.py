@@ -99,7 +99,8 @@ def test_execute_sql_query_allows_xuchang_nmc_hourly_weather_forecast_tables():
         assert is_valid, error
 
 
-def test_execute_sql_query_allows_henan_city_accumulate_ranking_table():
+def test_execute_sql_query_rejects_henan_city_accumulate_ranking_table():
+    """省APP已停服，排名走 xuchang_cube_metrics；该表已从白名单移除。"""
     tool = ExecuteSQLQueryTool()
 
     for sql in (
@@ -110,7 +111,7 @@ def test_execute_sql_query_allows_henan_city_accumulate_ranking_table():
     ):
         is_valid, error = tool.sql_validator.validate(sql)
 
-        assert is_valid, error
+        assert not is_valid, error
 
 
 def test_xuchang_sql_tool_routes_crawler_station_history_before_execution():
