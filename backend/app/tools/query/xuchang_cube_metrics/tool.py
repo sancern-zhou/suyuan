@@ -149,8 +149,8 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "officialRank", "title": "省APP官方排名(对照,≤2026-08,勿用)"},
         ],
         "dimensions": [
-            {"name": "periodType", "title": "期次类型(monthly/yearly)"},
-            {"name": "period", "title": "期次(2026-10 / 2026)"},
+            {"name": "periodType", "title": "期次类型(daily单日/monthly/yearly)"},
+            {"name": "period", "title": "期次(2026-10-09 / 2026-10 / 2026)"},
             {"name": "city", "title": "城市名(含济源市)"},
             {"name": "groupId", "title": "城市组ID"},
             {"name": "days", "title": "累计天数"},
@@ -231,7 +231,7 @@ def _render_guide() -> str:
     lines.append("")
     lines.append(
         DATA_WINDOW_NOTE
-        + "排名类问题用 SsfbCityRanking(需 periodType+period 过滤);"
+        + "排名类问题用 SsfbCityRanking(日排名 periodType=daily+period=日期;月/年排名 periodType=monthly/yearly);"
         "排名规则为数值越低越靠前(Rank*=1 最优),相同值并列;"
         "乡镇站(76个,2024起)用 TownHour/TownDay,必须过滤 caliber(app=审核,官方结论优先),"
         "否则原始与审核重复计数;"

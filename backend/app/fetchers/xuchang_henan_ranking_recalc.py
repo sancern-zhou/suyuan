@@ -332,6 +332,7 @@ class XuchangHenanRankingRecalcFetcher(DataFetcher):
         today = fetched_at.date()
         month_start = today.replace(day=1)
         year_start = today.replace(month=1, day=1)
+        yesterday = today - timedelta(days=1)
         query_start = f"{year_start:%Y-%m-%d} 00:00:00"
         query_end = f"{today + timedelta(days=1):%Y-%m-%d} 00:00:00"
 
@@ -342,6 +343,17 @@ class XuchangHenanRankingRecalcFetcher(DataFetcher):
 
         monthly = self._aggregate_window(day_rows, month_start, today)
         yearly = self._aggregate_window(day_rows, year_start, today)
+        # 日粒度排名：昨日为主，前天兜底（当日日值未发布时仍有昨日可用）。
+        daily_rank_rows: list[dict[str, Any]] = []
+        for window_end in (yesterday, yesterday - timedelta(days=1)):
+            city_map = self._aggregate_window(day_rows, window_end, window_end)
+            # 18 城市组齐全才产出单日排名
+            if len(city_map) == 18:
+                daily_rank_rows.extend(
+                    build_ranking_rows(
+                        "daily", window_end.isoformat(), city_map, {}, fetched_at
+                    )
+                )
 
         official = self.official_query(month_start.strftime("%Y-%m"))
         monthly_rows = build_ranking_rows(
@@ -353,6 +365,7 @@ class XuchangHenanRankingRecalcFetcher(DataFetcher):
         return {
             "monthly": monthly_rows,
             "yearly": yearly_rows,
+            "daily": daily_rank_rows,
             "day_count": len(day_rows),
         }
 
@@ -408,13 +421,20 @@ class XuchangHenanRankingRecalcFetcher(DataFetcher):
         collected = self._collect(fetched_at)
         saved = await self._save(collected)
         pm25_ranks = {row["city"]: row["rank_pm25"] for row in collected["monthly"]}
+        daily_ranks = {
+            row["period"]: row["rank_pm25"] for row in collected["daily"]
+            if row["city"] == "许昌市"
+        }
         result = {
             "fetched_at": fetched_at.isoformat(),
             "day_rows": collected["day_count"],
             "saved_monthly": saved["monthly"],
             "saved_yearly": saved["yearly"],
-            "xuchang_pm25_rank": pm25_ranks.get("许昌市"),
-            "jiyuan_pm25_rank": pm25_ranks.get("济源市"),
+            "saved_daily": saved["daily"],
+            "daily_periods": sorted(daily_ranks),
+            "xuchang_pm25_rank_monthly": pm25_ranks.get("许昌市"),
+            "xuchang_pm25_rank_daily": daily_ranks,
+            "jiyuan_pm25_rank_monthly": pm25_ranks.get("济源市"),
         }
         logger.info("xuchang_henan_ranking_recalc_completed", **result)
         return result
@@ -425,7 +445,7 @@ class XuchangHenanRankingRecalcFetcher(DataFetcher):
             async with conn.cursor() as cursor:
                 await cursor.execute(RANKING_DDL)
                 counts = {}
-                for kind in ("monthly", "yearly"):
+                for kind in ("monthly", "yearly", "daily"):
                     rows = collected[kind]
                     if rows:
                         await cursor.executemany(

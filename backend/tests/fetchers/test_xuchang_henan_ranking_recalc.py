@@ -114,3 +114,22 @@ def test_ranking_maps_official_reference():
     )
     assert rows[0]["official_zong"] == 5.169
     assert rows[0]["official_rank"] == 10
+
+
+def test_daily_ranking_period_is_iso_date():
+    from app.fetchers.xuchang_henan_ranking_recalc import build_ranking_rows
+
+    stats = {
+        "许昌市": (210, [_day(pm25=43, pm10=84, o3=120, no2=25, so2=8, co=0.5)]),
+        "济源市": (218, [_day(pm25=38, pm10=78, o3=170, no2=24, so2=7, co=0.5)]),
+    }
+    rows = build_ranking_rows(
+        "daily", "2026-10-09", stats, official={}, computed_at=datetime(2026, 10, 11, 6)
+    )
+    assert len(rows) == 2
+    assert {row["period_type"] for row in rows} == {"daily"}
+    assert {row["period"] for row in rows} == {"2026-10-09"}
+    by_city = {row["city"]: row for row in rows}
+    # 单日单项浓度排名：济源 38 < 许昌 43 → 济源第 1
+    assert by_city["济源市"]["rank_pm25"] == 1
+    assert by_city["许昌市"]["rank_pm25"] == 2

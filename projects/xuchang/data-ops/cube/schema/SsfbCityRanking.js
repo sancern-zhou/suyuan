@@ -29,7 +29,7 @@ cube(`SsfbCityRanking`, {
   },
 
   dimensions: {
-    periodType: { sql: `PeriodType`, type: `string` },
+    periodType: { sql: `PeriodType`, type: `string` }, // daily(单日,period=YYYY-MM-DD)/monthly/yearly
     period: { sql: `Period`, type: `string` },
     city: { sql: `City`, type: `string` },
     groupId: { sql: `GroupID`, type: `number` },
