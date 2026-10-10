@@ -50,7 +50,6 @@ MONITORING_SQL_TABLES = [
     'dat_zhongda_station_minute',
     'dat_zhongda_station_hour',
     'dat_zhongda_city_hour',
-    'HenanCityAccumulateRanking',
     'WeatherForecast7Day',
     'city_168_statistics_new_standard',
     'city_168_statistics_old_standard',
@@ -80,7 +79,6 @@ XUCHANG_MONITORING_SQL_TABLES = [
     'dat_zhongda_station_minute',
     'dat_zhongda_station_hour',
     'dat_zhongda_city_hour',
-    'HenanCityAccumulateRanking',
     'WeatherForecast7Day',
     'city_168_statistics_new_standard',
     'city_168_statistics_old_standard',
@@ -179,20 +177,8 @@ AIR_QUALITY_SCHEMA_GUIDE = (
             "无效占位值为-999（区别于站点表的-99），统计前必须排除（如AND aqi <> -999）。"
             "注意：城市表由平台聚合任务生成，可能为空，查询无结果不代表SQL错误。"
             "站点日/城市日数据中大平台不再采集，请改用dat_station_day、CityDayAQIPublishHistory。"
-            "\n- HenanCityAccumulateRanking（河南省城市月/年累计空气质量排名，**已停更**）："
-            "省空气质量APP 2026-09 停服，本表数据仅到 2026-08（monthly 2026-08 / yearly 2026），"
-            "查询更后期次会空结果；2026-09 起的排名改用 xuchang_cube_metrics 的"
-            " SsfbCityRanking（本地重算，Rank* 升序=1 最优，含济源）。"
-            "本表仅作官方历史对照："
-            "period_type区分monthly（月累计）/yearly（年累计），period为YYYY-MM或YYYY；"
-            "城市字段为city，按全称筛选如city = N'郑州'；排名为city_rank（1最优）；"
-            "is_pro_city=1为省辖市，0为市平均/县平均等汇总行；"
-            "指标字段：zong（综合指数）, pm25, pm10, so2, no2, co, o3；"
-            "同比字段：zong_change_rate（如N'5.6%'文本）, change_rate, ratio；"
-            "天数字段：valid_days（有效天数）, pm_valid_days, o3_exceed_days, heavy_pollution_days；"
-            "统计区间stat_start/stat_end；当期数据每日抓取整体更新，lastyear_json存去年同期行。"
-            "示例：SELECT TOP 30 city, city_rank, zong, pm25, valid_days FROM dbo.HenanCityAccumulateRanking "
-            "WHERE period_type = 'monthly' AND period = '2026-08' ORDER BY city_rank。"
+            "河南省城市月/年累计排名不在本工具（省APP已停服，官方数据仅至2026-08）；"
+            "2026-10 起的排名用 xuchang_cube_metrics 的 SsfbCityRanking（本地重算，含济源）。"
     "\n- WeatherForecast7Day（7天空气质量预报）："
     "城市字段为cityname，按城市全称筛选：cityname = N'{city_name}'；时间字段为TimePoint；"
     "预报字段为DayTitle, MinAqi, MaxAqi, MaxPollution, WeatherCondition, "
@@ -1102,7 +1088,6 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
             "\n- dat_station_day：站点日数据"
             "\n- dat_zhongda_station_minute/dat_zhongda_station_hour：中大平台站点5分钟/小时数据（含质量标记列，-99为无效值）"
             "\n- dat_zhongda_city_hour：中大平台城市小时（可能为空，需空结果容错）"
-            "\n- HenanCityAccumulateRanking：河南省城市月/年累计空气质量排名（period_type区分月/年累计）"
             "\n【统计预计算表】"
             "\n- city_168_statistics_new_standard/city_168_statistics_old_standard：168城市空气质量统计；"
             "适用于168城市全国排名、排名变化、全国发布统计数据查询"
@@ -1130,7 +1115,6 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
                 "\n- dat_zhongda_station_minute/dat_zhongda_station_hour：中大平台站点5分钟/小时数据"
                 "\n- dat_zhongda_city_hour：中大平台城市小时数据"
                 "\n- 国控站点小时/日长历史：改用 execute_crawler_sql_query，本工具不开放 dat_station_hour/dat_station_day"
-                "\n- HenanCityAccumulateRanking：河南省城市月/年累计空气质量排名"
                 "\n- city_168_statistics_new_standard/city_168_statistics_old_standard：168城市统计"
                 "\n- province_statistics_new_standard/province_statistics_old_standard：省级空气质量统计"
                 + schema_guide
