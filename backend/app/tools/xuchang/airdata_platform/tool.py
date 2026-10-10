@@ -117,11 +117,20 @@ _API_CODE_HINTS = {
     "v_c_d_src_155": "城市日数据-原始155口径（非新国标替代口径，仅近半月少量，不作默认）",
     "v_s_d_app_145": "站点日数据-审核145口径",
     "v_s_d_src_145": "站点日数据-原始145口径",
-    "v_t_d_app": "乡镇日数据-审核",
-    "v_t_d_src": "乡镇日数据-原始",
-    "v_t_h_app": "乡镇小时数据-审核",
-    "v_t_h_src": "乡镇小时数据-原始",
+    "v_t_d_app": "乡镇日数据-审核（中台侧当前不可用，勿查）",
+    "v_t_d_src": "乡镇日数据-原始（2024-08-01 起）",
+    "v_t_h_app": "乡镇小时数据-审核（2024-08-26 起）",
+    "v_t_h_src": "乡镇小时数据-原始（2024-01-01 起，更新至实时；查乡镇小时优先用此视图）",
 }
+
+# 各中台视图实测数据时间范围（查询窗口超出即空结果）；口径分段见 _API_CODE_HINTS
+VIEW_TIME_RANGES_NOTE = (
+    "\n\n【中台各视图数据时间范围】（实测，超出即空结果）："
+    "乡镇小时 v_t_h_src 2024-01-01 起 / v_t_h_app 2024-08-26 起；"
+    "乡镇日 v_t_d_src 2024-08-01 起（v_t_d_app 中台侧异常勿用）；"
+    "城市日按 v_c_d_sb_145（2021-07~2025-12）/v_c_d_sb_155（2026-01 起）口径分段；"
+    "站点日 v_s_d_* 为十四五口径。查询更早历史请改用 execute_crawler_sql_query（2016/2018 起长历史）。"
+)
 
 # 许昌空气质量查询的三条数据通道同属中大国发平台，中台工具承担中台独有口径
 DATA_SOURCE_NOTE = (
@@ -382,6 +391,7 @@ class QueryAirDataPlatformTool(LLMTool):
                 f"可选接口：{'；'.join(f'{code}={_API_CODE_HINTS[code]}' for code in REFERENCE_API_CODES)}。"
                 f"空气质量数据接口：{data_hint}。"
                 f"{DATA_SOURCE_NOTE}"
+                f"{VIEW_TIME_RANGES_NOTE}"
                 f"{OFFICIAL_CALIBER_NOTE}"
                 f"{CITY_NEW_STANDARD_NOTE}"
                 f"{AGGREGATION_RULE_NOTE}"
