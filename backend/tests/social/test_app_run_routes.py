@@ -23,7 +23,7 @@ async def test_run_routes_retry_replay_and_user_isolation(tmp_path, monkeypatch)
     monkeypatch.setattr(routes, 'get_conversation_catalog', lambda: catalog)
     release = asyncio.Event()
     calls = []
-    async def producer(identity, session_id, query, attachments, mode, request_id=None):
+    async def producer(identity, session_id, query, attachments, mode, request_id=None, resource_refs=None):
         calls.append(query)
         await release.wait()
         yield 'data: ' + json.dumps({'type': 'complete', 'data': {'answer': '完成'}}) + '\n\n'

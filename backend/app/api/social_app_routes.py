@@ -498,6 +498,22 @@ async def upload_file(
     )
 
 
+@router.delete("/upload/{file_id}")
+async def app_delete_upload(
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: AppIdentity = Depends(require_app_identity),
+) -> dict:
+    """Remove an App-uploaded attachment through the same pipeline as Web."""
+    from app.api.upload_routes import delete_uploaded_file
+
+    return await delete_uploaded_file(
+        file_id=file_id,
+        db=db,
+        user=identity.as_current_user(),
+    )
+
+
 @router.get("/broadcasts")
 async def app_broadcasts(identity: AppIdentity = Depends(require_app_identity)) -> dict:
     """Return the authenticated App account's persistent broadcast inbox."""
@@ -1061,9 +1077,49 @@ async def _sanitize_attachments(
             "type": row.file_type,
             "mime_type": row.mime_type,
             "url": f"/api/upload/{row.id}",
+            # 服务端本地路径仅供运行时兜底（原生图片块），持久化与回传 App
+            # 前由 _display_attachments 剥离，不把文件系统布局泄漏到消息里。
+            **({"local_path": row.file_path} if row.file_path and Path(row.file_path).exists() else {}),
         }
         for row in (rows[str(item["file_id"]).strip()] for item in attachments)
     ]
+
+
+def _display_attachments(attachments: list[dict]) -> list[dict]:
+    """Strip server-only fields from attachment metadata before persisting."""
+    return [
+        {key: value for key, value in attachment.items() if key not in {"local_path", "path"}}
+        for attachment in attachments
+        if isinstance(attachment, dict)
+    ]
+
+
+async def _resolve_attachment_resource_refs(session_id: str, file_ids: list[str]) -> list:
+    """Resolve uploaded file_ids to the session resources registered at upload
+    time, so App runs consume attachments through the same selected-resource
+    pipeline as Web: native image blocks for images, server-readable paths in
+    the current-turn context for documents."""
+    if not file_ids:
+        return []
+    from app.agent.resources.contracts import ResourceStatus
+    from app.agent.selection_context import select_conversation_resources
+
+    page = await SessionResourceService.database().list_resources(session_id, limit=1000)
+    by_file_id: dict[str, object] = {}
+    for item in page.resources:
+        if item.relation != "primary" or item.status != ResourceStatus.ACTIVE.value:
+            continue
+        owner_file_id = str((item.metadata or {}).get("file_id") or "")
+        if owner_file_id in file_ids:
+            by_file_id.setdefault(owner_file_id, item)
+    requested_ids = [
+        by_file_id[file_id].resource_id
+        for file_id in file_ids
+        if file_id in by_file_id
+    ]
+    if not requested_ids:
+        return []
+    return select_conversation_resources(page.resources, requested_ids)
 
 
 def _app_resource_descriptor(session_id: str, resource, *, preview_resource=None, variants=None) -> dict:
@@ -1191,6 +1247,22 @@ async def _app_resource_descriptors(session_id: str, resource_ids: list[str]) ->
     return list(deduplicated.values())
 
 
+def _fallback_runtime_attachments(attachments: list[dict] | None, resource_refs: list | None) -> list[dict]:
+    """Attachments not covered by resolved resource refs fall back to the
+    legacy attachments parameter; refs-covered files must not ride both
+    channels or images would be inlined twice as native blocks."""
+    covered_file_ids = {
+        str((getattr(ref, "metadata", None) or {}).get("file_id") or "")
+        for ref in (resource_refs or [])
+    }
+    if not resource_refs:
+        return list(attachments or [])
+    return [
+        item for item in (attachments or [])
+        if str(item.get("file_id") or "") not in covered_file_ids
+    ]
+
+
 async def _stream_events(
     identity: AppIdentity,
     session_id: str,
@@ -1198,6 +1270,7 @@ async def _stream_events(
     attachments: list[dict] | None = None,
     mode: str = "expert",
     request_id: str | None = None,
+    resource_refs: list | None = None,
 ) -> AsyncIterator[str]:
     from app.agent.runtime.cancellation import cancellation_registry
 
@@ -1205,11 +1278,12 @@ async def _stream_events(
     memory_store = await _get_memory_store(identity)
     social_context = _social_preferences(identity)
     cancel_event = await cancellation_registry.register(session_id)
+    fallback_attachments = _fallback_runtime_attachments(attachments, resource_refs)
     display_history: list[dict] = [{
         "type": "user",
         "role": "user",
         "content": query,
-        "attachments": attachments or [],
+        "attachments": _display_attachments(attachments or []),
         "timestamp": datetime.now().isoformat(),
     }]
     if request_id:
@@ -1241,7 +1315,8 @@ async def _stream_events(
             user_identifier=identity.social_user_id,
             social_memory_store=memory_store,
             **social_context,
-            attachments=attachments or None,
+            attachments=fallback_attachments or None,
+            selected_resource_refs=resource_refs or None,
             cancel_event=cancel_event,
             # App 网关入口固定标记客户端来源，随 runtime_metadata 透传到子Agent。
             runtime_metadata={"client_channel": "app"},
@@ -1406,11 +1481,26 @@ async def start_app_run(
         raise HTTPException(status_code=409, detail="answer_pending_question_first")
     attachments = await _sanitize_attachments(db, session_id, payload.attachments)
     try:
+        resource_refs = (
+            await _resolve_attachment_resource_refs(
+                session_id, [str(item["file_id"]) for item in attachments]
+            )
+            if attachments
+            else []
+        )
+    except Exception as exc:
+        logger.error(
+            "app_attachment_resource_resolution_failed",
+            session_id=session_id,
+            error=str(exc),
+        )
+        raise HTTPException(status_code=503, detail="resource_store_unavailable") from exc
+    try:
         run, created = await store.create(identity.social_user_id, request_id, session_id, fingerprint, payload.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if created:
-        store.start(run['run_id'], lambda: _stream_events(identity, session_id, payload.query, attachments, payload.mode, request_id=request_id))
+        store.start(run['run_id'], lambda: _stream_events(identity, session_id, payload.query, attachments, payload.mode, request_id=request_id, resource_refs=resource_refs))
     return _public_app_run(run)
 
 
