@@ -36,6 +36,7 @@ backend:
     - query_airdata_platform
     - airdata_calc_report_summary
     - xuchang_station_catalog
+    - xuchang_cube_metrics
     - query_xuchang_traffic_status
   agent_mode_tools:
     query:
@@ -72,6 +73,7 @@ backend:
       - query_airdata_platform
       - airdata_calc_report_summary
       - xuchang_station_catalog
+      - xuchang_cube_metrics
       - execute_python
     expert:
       - run_agent_workflow
@@ -96,6 +98,7 @@ backend:
       - query_airdata_platform
       - airdata_calc_report_summary
       - xuchang_station_catalog
+      - xuchang_cube_metrics
       - query_national_province_air_quality
       - query_national_city_air_quality
       - resolve_station_geo
@@ -145,6 +148,7 @@ backend:
       - query_airdata_platform
       - airdata_calc_report_summary
       - xuchang_station_catalog
+      - xuchang_cube_metrics
       - query_national_city_air_quality
       - execute_sql_query
       - execute_python
@@ -163,6 +167,7 @@ backend:
       - execute_postgres_sql_query
       - query_airdata_platform
       - xuchang_station_catalog
+      - xuchang_cube_metrics
       - query_national_city_air_quality
       - resolve_station_geo
       - execute_python
@@ -179,6 +184,7 @@ backend:
       - get_weather_forecast
       - query_airdata_platform
       - xuchang_station_catalog
+      - xuchang_cube_metrics
       - resolve_station_geo
       - execute_postgres_sql_query
       - execute_python
@@ -253,6 +259,11 @@ backend:
     - xuchang_cnemc_station_hour_fetcher
     - xuchang_city_exceedance_fetcher
     - xuchang_henan_month_year_accumulate_fetcher
+    # 河南实时发布系统：18城市组(含济源)小时/日值 + 全省站点小时/日值
+    - xuchang_henan_ssfb_city_publish_fetcher
+    - xuchang_henan_ssfb_site_publish_fetcher
+    # 省APP已停服：基于SsfbCityDay重算月/年排名(HJ663, 数值低=排名前, 并列)
+    - xuchang_henan_ranking_recalc_fetcher
     - xuchang_nmc_hourly_forecast_fetcher
     - xuchang_weather_com_daily_forecast_fetcher
     - xuchang_air_quality_forecast_fetcher
