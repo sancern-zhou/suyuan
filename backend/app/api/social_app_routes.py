@@ -16,7 +16,7 @@ import re
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import AsyncIterator, Literal
+from typing import AsyncIterator, Literal, Optional
 from urllib.parse import quote
 
 import structlog
@@ -51,6 +51,32 @@ from config.settings import settings
 
 router = APIRouter(prefix="/api/social/app", tags=["android-app"])
 logger = structlog.get_logger()
+
+# 模型照抄的工具产物图片链接：/api/image/{image_id}。该通道挂在公司网关
+# 鉴权之后，App 凭证过不了校验（401 附件读取失败），统一改写到
+# /api/social/app/sessions/{sid}/resources/{rid}/content（App 网关自行鉴权）。
+_APP_IMAGE_URL_PATTERN = re.compile(r"/api/image/([A-Za-z0-9_\-]+)")
+
+
+def _rewrite_app_image_urls(answer: str, descriptors: Optional[list]) -> str:
+    """把回复里的 /api/image/{id} 改写为同名会话资源的 App 内容 URL。
+
+    资源与 image_id 按文件名主干匹配（资源 label 多为 image_id + 扩展名）；
+    匹配不到的资源保持原样（Web 端仍可直接访问）。
+    """
+    by_stem: dict[str, str] = {}
+    for item in descriptors or []:
+        filename = str(item.get("filename") or item.get("name") or "")
+        url = str(item.get("url") or "")
+        stem = filename.rsplit(".", 1)[0] if filename else ""
+        if stem and url:
+            by_stem.setdefault(stem, url)
+
+    def _sub(match: re.Match) -> str:
+        return by_stem.get(match.group(1), match.group(0))
+
+    return _APP_IMAGE_URL_PATTERN.sub(_sub, answer)
+
 _agent = None
 _agent_lock = asyncio.Lock()
 _memory_managers: dict[str, object] = {}
@@ -1250,6 +1276,7 @@ async def _stream_events(
                 answer = str(event_data.get("answer") or streamed_answer).strip()
                 if answer:
                     final_attachments = list(streamed_resources)
+                    session_descriptors: Optional[list] = None
                     # 答案可能复用之前轮次生成的图表（跨轮引用）。本轮没有产生
                     # resources_changed 时，按会话目录补齐被引用的图表资源，
                     # 否则 App 端按消息附件匹配不到 [[chart:...]] 只能显示原文。
@@ -1271,6 +1298,20 @@ async def _stream_events(
                                 session_id=session_id,
                                 error=str(exc),
                             )
+                    # 模型会照抄工具结果里的 /api/image/{id} 裸链接，而该通道
+                    # 需要公司网关凭证，App 端拉取必 401（附件读取失败）。
+                    # 改写到 App 可访问的会话资源通道（按文件名主干匹配资源）。
+                    if "/api/image/" in answer:
+                        if session_descriptors is None:
+                            try:
+                                session_descriptors = await _app_resource_descriptors(session_id, [])
+                            except Exception as exc:
+                                logger.warning(
+                                    "app_image_url_rewrite_descriptors_failed",
+                                    session_id=session_id,
+                                    error=str(exc),
+                                )
+                        answer = _rewrite_app_image_urls(answer, session_descriptors)
                     seen_file_ids = set()
                     final_attachments = [
                         item for item in final_attachments
