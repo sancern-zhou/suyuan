@@ -1152,8 +1152,9 @@ private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: 
 private fun ProcessSummary(message: ChatMessage) {
     if (message.kind != "assistant" || (message.durationMs == null && message.toolCount == 0)) return
     val duration = message.durationMs?.let { if (it < 1000) "${it}毫秒" else "${"%.1f".format(it / 1000.0)}秒" }
+    val durationText = duration?.let { "${it}后开始回答" } ?: "已完成"
     Text(
-        "${duration?.let { "用时${it}完成" } ?: "已完成"} · ${message.toolCount}个工具调用",
+        "$durationText · ${message.toolCount}个工具调用",
         color = SuyuanColors.secondaryText,
         fontSize = 12.sp,
         modifier = Modifier.padding(bottom = 6.dp),

@@ -842,8 +842,9 @@ const copyAgentMessage = async (message) => {
   }
 }
 
-// 任务总用时：优先使用生命周期终态时记录的response_duration_ms，
-// 否则用 final 消息与其前最近 user 消息的时间戳差值（历史消息恢复场景）
+// 首响用时（从用户输入到开始回答）：优先使用生命周期终态时记录的first_response_ms，
+// 否则用 final 消息（流式路径下创建于首个回答块到达时刻）与其前最近 user 消息的
+// 时间戳差值兜底（历史消息恢复场景）。不要回退到response_duration_ms（总时长口径）
 const formatResponseDuration = (durationMs) => {
   if (!Number.isFinite(durationMs) || durationMs < 0) return ''
   const totalSeconds = durationMs / 1000
@@ -865,7 +866,7 @@ const finalDurationTextMap = computed(() => {
     const message = msgs[i]
     if (getMessageType(message) !== 'final') continue
 
-    const precomputed = message.data?.response_duration_ms == null ? NaN : Number(message.data.response_duration_ms)
+    const precomputed = message.data?.first_response_ms == null ? NaN : Number(message.data.first_response_ms)
     let durationMs = Number.isFinite(precomputed) ? precomputed : null
 
     if (durationMs === null) {
@@ -1103,7 +1104,7 @@ const getProcessSummaryText = (finalMessage, allMessages) => {
   const toolCount = items.filter(item => item.kind === 'tool').length
   const failedCount = items.filter(item => item.kind === 'tool' && item.status === 'error').length
   const duration = getFinalDurationText(finalMessage)
-  const summary = `${duration ? `用时${duration}完成` : '已完成'} · ${toolCount}个工具调用`
+  const summary = `${duration ? `${duration}后开始回答` : '已完成'} · ${toolCount}个工具调用`
   return failedCount > 0 ? `${summary} · ${failedCount}个步骤失败` : summary
 }
 

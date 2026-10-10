@@ -515,6 +515,8 @@ class AppViewModel(
         var answerId: String? = null
         var outputAttachments: List<UploadedAttachment> = emptyList()
         val turnStartedAt = android.os.SystemClock.elapsedRealtime()
+        // 首响时刻：第一个最终回答块到达的时间，用于"从输入到开始回答"口径
+        var firstAnswerAtMs: Long? = null
         if (current.sessionId == turnSessionId) {
             _state.value = current.copy(workStatus = defaultWorkStatus(turn.mode), workStartedAtMs = turnStartedAt)
         }
@@ -625,6 +627,7 @@ class AppViewModel(
                         val data = runCatching { org.json.JSONObject(event.data) }.getOrNull()
                         val chunk = data?.optString("chunk").orEmpty()
                         if (chunk.isNotEmpty()) {
+                            if (firstAnswerAtMs == null) firstAnswerAtMs = android.os.SystemClock.elapsedRealtime()
                             answerId = answerId ?: UUID.randomUUID().toString()
                             if (_state.value.messages.none { it.id == answerId }) {
                                 upsertMessage(ChatMessage(answerId!!, "assistant", chunk, streaming = true))
@@ -644,9 +647,9 @@ class AppViewModel(
                         if (answer.isNotBlank()) {
                             answerId = answerId ?: UUID.randomUUID().toString()
                             if (_state.value.messages.none { it.id == answerId }) {
-                                upsertMessage(ChatMessage(answerId!!, "assistant", answer, incomingAttachments, streaming = false, durationMs = android.os.SystemClock.elapsedRealtime() - turnStartedAt, toolCount = toolCount))
+                                upsertMessage(ChatMessage(answerId!!, "assistant", answer, incomingAttachments, streaming = false, durationMs = (firstAnswerAtMs ?: android.os.SystemClock.elapsedRealtime()) - turnStartedAt, toolCount = toolCount))
                             } else {
-                                updateMessage(answerId!!) { it.copy(content = answer, attachments = if (incomingAttachments.isEmpty()) it.attachments else incomingAttachments, streaming = false, durationMs = android.os.SystemClock.elapsedRealtime() - turnStartedAt, toolCount = toolCount) }
+                                updateMessage(answerId!!) { it.copy(content = answer, attachments = if (incomingAttachments.isEmpty()) it.attachments else incomingAttachments, streaming = false, durationMs = (firstAnswerAtMs ?: android.os.SystemClock.elapsedRealtime()) - turnStartedAt, toolCount = toolCount) }
                             }
                         } else if (answerId != null) {
                             updateMessage(answerId!!) { it.copy(streaming = false) }
