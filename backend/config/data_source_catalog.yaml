@@ -49,7 +49,7 @@ sources:
     locator: get_weather_data / get_weather_forecast / query_airdata_platform
     usage: "历史实况回看与多时效预报用 get_weather_data/get_weather_forecast（lat/lon + past_days/hourly/daily）；空气质量预报产品用 query_airdata_platform；交付时标注起报时间与时效"
     granularity: 逐小时/3小时间隔/逐日
-    caveats: "预报数据的静稳/扩散形势研判归 expert_meteorology；平台 SQL 库（execute_sql_query/execute_crawler_sql_query/execute_postgres_sql_query）均无气象实况表，禁止在其中寻找气象数据"
+    caveats: "库内历史网格（ERA5 再分析/边界层/云量）与站点实况由预采集窗口维护，一般覆盖近 90 天，更早需在线补采（近5天即时、更大范围后台排队）；预报数据的静稳/扩散形势研判归 expert_meteorology；平台 SQL 库（execute_sql_query/execute_crawler_sql_query/execute_postgres_sql_query）均无气象实况表（dat_weather_hour 无许昌数据），禁止在其中寻找许昌气象数据"
 
   - domain: 空气质量（全国城市对比）
     route: tool
