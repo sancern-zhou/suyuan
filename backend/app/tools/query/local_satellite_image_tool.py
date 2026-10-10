@@ -8,7 +8,7 @@ from typing import Any
 
 from app.services.data_registry import DataRegistryService, data_registry
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import file_products
+from app.tools.resource_declarations import resources_for_visuals
 from app.tools.resource_refs import build_file_ref, build_registry_data_ref, build_url_ref, build_visual_ref
 
 
@@ -148,10 +148,9 @@ class LocalSatelliteImageTool(LLMTool):
             "status": "success",
             "data": {"source": self.source_name, "images": images, "count": len(images)},
             "visuals": visuals,
-            "resources": file_products(
-                [image["local_path"] for image in images],
-                tool_name=self.name,
-            ),
+            # visual 带原生文件 local_path，统一登记产出 chart-spec + chart-image
+            # （含 visual_id），App 端 [[chart:<id>]] 标记即可引用。
+            "resources": resources_for_visuals(visuals, tool_name=self.name),
             "refs": refs,
             "llm_resume": {
                 "source_registry_data_ids": list(dict.fromkeys(image["data_id"] for image in images)),
