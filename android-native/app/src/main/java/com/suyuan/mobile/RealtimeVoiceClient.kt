@@ -8,8 +8,10 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
+import java.util.ArrayDeque
 import java.util.concurrent.TimeUnit
 
 /** Streams microphone PCM to the authenticated backend ASR proxy. */
@@ -25,8 +27,17 @@ class RealtimeVoiceClient(
     @Volatile private var sending = false
     @Volatile private var generation = 0L
     @Volatile private var finishing = false
-    private var finishGeneration = 0L
+    @Volatile private var finishGeneration = 0L
     private var finishCallback: (() -> Unit)? = null
+
+    // Audio captured before the backend ASR task is live is buffered here and
+    // flushed on "ready", so words spoken during the websocket handshake are
+    // recognized instead of lost.
+    private val bufferLock = Any()
+    private val pendingChunks = ArrayDeque<ByteString>()
+    private var pendingBytes = 0
+    private var readyToSend = false
+    private var stopSent = false
 
     fun start(
         token: String,
@@ -38,6 +49,12 @@ class RealtimeVoiceClient(
         val runId = synchronized(this) {
             generation += 1
             generation
+        }
+        synchronized(bufferLock) {
+            pendingChunks.clear()
+            pendingBytes = 0
+            readyToSend = false
+            stopSent = false
         }
         val endpoint = baseUrl.trimEnd('/')
             .replaceFirst("https://", "wss://")
@@ -53,10 +70,14 @@ class RealtimeVoiceClient(
                     val json = JSONObject(text)
                     when (json.optString("type")) {
                         "ready" -> {
-                            if (isCurrent(runId)) {
-                                onReady()
-                                if (isCurrent(runId) && !finishing) startRecorder(webSocket, onError, runId) else Unit
+                            synchronized(bufferLock) {
+                                if (isCurrent(runId)) {
+                                    readyToSend = true
+                                    drainPendingLocked(webSocket)
+                                    if (finishing && finishGeneration == runId) sendStopLocked()
+                                }
                             }
+                            if (isCurrent(runId)) onReady()
                             Unit
                         }
                         "partial" -> {
@@ -108,6 +129,7 @@ class RealtimeVoiceClient(
                 }
             }
         })
+        startRecorder(runId, onError)
     }
 
     fun stop() {
@@ -121,6 +143,12 @@ class RealtimeVoiceClient(
         stopRecorder()
         socket?.send("{\"type\":\"stop\"}")
         socket = null
+        synchronized(bufferLock) {
+            readyToSend = false
+            stopSent = false
+            pendingChunks.clear()
+            pendingBytes = 0
+        }
     }
 
     /** Finish a live recognition session and invoke the callback after the final result. */
@@ -135,52 +163,61 @@ class RealtimeVoiceClient(
         finishing = true
         sending = false
         stopRecorder()
-        socket?.send("{\"type\":\"stop\"}")
+        synchronized(bufferLock) {
+            if (readyToSend) sendStopLocked()
+        }
+        // Released before "ready": the ready handler flushes the buffered
+        // audio first and only then sends stop, so nothing is dropped.
     }
 
     private fun isCurrent(runId: Long): Boolean = generation == runId
 
-    private fun startRecorder(webSocket: WebSocket, onError: (String) -> Unit, runId: Long) {
+    private fun startRecorder(runId: Long, onError: (String) -> Unit) {
         if (!isCurrent(runId)) return
         if (sending) return
-        val minBuffer = AudioRecord.getMinBufferSize(
-            16000,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-        )
-        if (minBuffer <= 0) {
-            onError("手机不支持 16kHz 录音")
-            return
-        }
-        val bufferSize = maxOf(minBuffer, 6400)
-        val audioRecord = runCatching {
-            AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                16000,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize,
-            )
-        }.getOrElse {
-            onError("无法打开麦克风，请检查权限")
-            return
-        }
-        recorder = audioRecord
         sending = true
         Thread {
-            val buffer = ByteArray(3200)
+            var audioRecord: AudioRecord? = null
             try {
-                audioRecord.startRecording()
+                val minBuffer = AudioRecord.getMinBufferSize(
+                    16000,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                )
+                if (minBuffer <= 0) {
+                    onError("手机不支持 16kHz 录音")
+                    return@Thread
+                }
+                val bufferSize = maxOf(minBuffer, 6400)
+                val record = try {
+                    AudioRecord(
+                        MediaRecorder.AudioSource.MIC,
+                        16000,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                        bufferSize,
+                    )
+                } catch (_: Throwable) {
+                    onError("无法打开麦克风，请检查权限")
+                    return@Thread
+                }
+                audioRecord = record
+                recorder = record
+                if (!sending || !isCurrent(runId)) return@Thread
+                record.startRecording()
+                val buffer = ByteArray(3200)
                 while (sending && isCurrent(runId)) {
-                    val count = audioRecord.read(buffer, 0, buffer.size)
-                    if (count > 0 && isCurrent(runId)) webSocket.send(buffer.toByteString(0, count))
+                    val count = record.read(buffer, 0, buffer.size)
+                    if (count > 0 && isCurrent(runId)) emitChunk(runId, buffer, count)
                 }
             } catch (_: Throwable) {
                 if (sending && isCurrent(runId)) onError("麦克风采集失败")
             } finally {
-                runCatching { audioRecord.stop() }
-                audioRecord.release()
-                if (recorder === audioRecord) recorder = null
+                audioRecord?.let {
+                    runCatching { it.stop() }
+                    it.release()
+                    if (recorder === it) recorder = null
+                }
             }
         }.start()
     }
@@ -189,5 +226,40 @@ class RealtimeVoiceClient(
         sending = false
         recorder?.let { runCatching { it.stop() } }
         recorder = null
+    }
+
+    /** Send one PCM chunk, or park it in the buffer while the ASR task starts. */
+    private fun emitChunk(runId: Long, chunk: ByteArray, count: Int) {
+        val payload = chunk.toByteString(0, count)
+        synchronized(bufferLock) {
+            if (!isCurrent(runId)) return
+            if (!readyToSend) {
+                pendingChunks.addLast(payload)
+                pendingBytes += payload.size
+                while (pendingBytes > MAX_PENDING_BYTES && pendingChunks.isNotEmpty()) {
+                    pendingBytes -= pendingChunks.removeFirst().size
+                }
+                return
+            }
+            socket?.send(payload)
+        }
+    }
+
+    private fun drainPendingLocked(target: WebSocket) {
+        while (pendingChunks.isNotEmpty()) {
+            target.send(pendingChunks.removeFirst())
+        }
+        pendingBytes = 0
+    }
+
+    private fun sendStopLocked() {
+        if (stopSent) return
+        stopSent = true
+        socket?.send("{\"type\":\"stop\"}")
+    }
+
+    private companion object {
+        /** ~60s of 16kHz mono 16-bit PCM; caps memory if the handshake stalls. */
+        const val MAX_PENDING_BYTES = 1_920_000
     }
 }

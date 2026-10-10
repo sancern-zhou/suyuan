@@ -338,11 +338,15 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             requestKeyboardFocus = false
         }
     }
-    val beginVoicePress = {
+    // 按住说话 has no tap action, so capture starts at ACTION_DOWN (the client
+    // buffers audio until the ASR socket is ready). The keyboard-mode mic icon
+    // keeps the 240ms deferral: a short tap on it toggles voice mode instead.
+    val beginVoicePress = { captureNow: Boolean ->
         voicePressActive.value = true
         voiceLongPressed.value = false
         voiceHoldHandler.removeCallbacks(voiceHoldRunnable)
         voiceHoldHandler.postDelayed(voiceHoldRunnable, 240L)
+        if (captureNow) latestStartListening.value()
     }
     val endVoicePress = { toggleMode: Boolean, forceCancel: Boolean ->
         voiceHoldHandler.removeCallbacks(voiceHoldRunnable)
@@ -492,7 +496,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                                     permission.launch(Manifest.permission.RECORD_AUDIO)
                                 }
-                                beginVoicePress()
+                                beginVoicePress(!toggleOnTap)
                             }
                             true
                         }
