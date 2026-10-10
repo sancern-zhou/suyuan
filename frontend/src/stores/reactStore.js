@@ -1419,6 +1419,8 @@ export const useReactStore = defineStore('react', {
     /**
      * 【新增】为final消息记录回复用时统计（复制到data中供UI展示）
      * 使用前端时钟计算，避免后端naive时间戳与前端UTC时间戳混用导致时区误差
+     * first_response_ms：从用户输入到开始回答的耗时。流式路径下final消息创建于
+     * 首个回答块到达时刻（message.timestamp即首响时刻），非流式路径下等于总耗时
      */
     _stampResponseTiming(modeState, message) {
       if (!modeState?.messages || !message) return
@@ -1444,6 +1446,10 @@ export const useReactStore = defineStore('react', {
         const end = Date.parse(completedAt)
         if (Number.isFinite(start) && Number.isFinite(end) && end >= start) {
           nextData.response_duration_ms = end - start
+          const firstTokenAt = Date.parse(message.timestamp)
+          if (Number.isFinite(firstTokenAt) && firstTokenAt >= start) {
+            nextData.first_response_ms = firstTokenAt - start
+          }
         }
       }
 
