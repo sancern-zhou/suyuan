@@ -12,7 +12,7 @@ import structlog
 
 from app.services.data_registry import DataRegistryService, data_registry
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import single_file_product
+from app.tools.resource_declarations import resources_for_visuals, single_file_product
 from app.tools.resource_refs import (
     build_file_ref,
     build_registry_data_ref,
@@ -576,6 +576,13 @@ class GetPlatformWeatherImageTool(LLMTool):
             if visual_refs:
                 refs["visuals"] = visual_refs
 
+            # visual 带原生文件 local_path，走统一登记产出 chart-spec + chart-image
+            # （含 visual_id），App 端 [[chart:<id>]] 标记即可引用；无 visual 时退回文件登记。
+            if visual:
+                resources = resources_for_visuals([visual], tool_name=self.name)
+            else:
+                resources = [single_file_product(local_path, tool_name=self.name)]
+
             result = {
                 "success": True,
                 "status": "success",
@@ -605,7 +612,7 @@ class GetPlatformWeatherImageTool(LLMTool):
                     "product_code": product_spec.code,
                     "output_root": str(self.output_root),
                 },
-                "resources": [single_file_product(local_path, tool_name=self.name)],
+                "resources": resources,
                 "summary": f"已获取{date_key} {product_spec.name} {time_key} 图片",
             }
             if visual:
@@ -747,12 +754,18 @@ class GetPlatformWeatherImageTool(LLMTool):
                     local_path=local_path,
                 )
             ]
+        # 与下载路径一致：visual 暴露时走统一登记（chart-spec + chart-image），
+        # 未暴露 visual（download=False）时保留文件登记。
+        if download and visual:
+            resources = resources_for_visuals([visual], tool_name=self.name)
+        else:
+            resources = [single_file_product(local_path, tool_name=self.name)]
         return {
             "success": True,
             "status": "success",
             "data": data,
             "visuals": [visual] if download else [],
-            "resources": [single_file_product(local_path, tool_name=self.name)],
+            "resources": resources,
             "refs": refs,
             "llm_resume": {
                 "tool_hint": (

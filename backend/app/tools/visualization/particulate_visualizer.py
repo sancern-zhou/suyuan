@@ -124,9 +124,7 @@ class ParticulateVisualizer:
         cache = get_image_cache()
         saved_info = cache.save(img_base64, chart_id)
         saved_image_id = saved_info["image_id"]  # 提取image_id字符串
-
-        # 【修复】使用相对路径，让前端通过vite代理或同域访问
-        image_url = f"/api/image/{saved_image_id}"
+        image_url = saved_info["url"]  # 使用缓存返回的标准URL
 
         meta = {
             "schema_version": "3.1",
@@ -149,6 +147,8 @@ class ParticulateVisualizer:
                 "image_id": saved_image_id,
                 "image_url": image_url,  # 相对路径，供前端访问
                 "markdown_image": f"![{title}]({image_url})",  # 预生成的Markdown格式（相对路径）
+                # 原生PNG本地路径：resources_for_visuals 依赖该字段登记 chart-image
+                "local_path": saved_info["local_path"],
                 "title": title,
                 "meta": meta
             },

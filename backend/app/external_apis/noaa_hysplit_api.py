@@ -549,8 +549,8 @@ class NOAAHysplitAPI:
             "endpoints_data": []
         }
     
-    def _save_image_to_cache(self, base64_data: str, chart_id: str) -> str:
-        """将base64图片保存到缓存，返回image_id"""
+    def _save_image_to_cache(self, base64_data: str, chart_id: str) -> dict:
+        """将base64图片保存到缓存，返回图片信息（image_id/url/local_path）"""
         from app.services.image_cache import get_image_cache
         cache = get_image_cache()
         return cache.save(base64_data, chart_id)
@@ -613,6 +613,9 @@ class NOAAHysplitAPI:
                     "image_id": image_id,  # 图片ID，供weather_executor使用
                     "image_url": image_url,  # 图片URL，供LLM生成Markdown链接
                     "markdown_image": f"![HYSPLIT {direction}轨迹分析]({image_url})",  # 预生成的Markdown格式
+                    # 原生PNG本地路径：resources_for_visuals 依赖该字段登记 chart-image 原生图资源，
+                    # App 端 [[chart:<id>]] 引用图片时按此资源下载渲染
+                    "local_path": image_info["local_path"],
                     "meta": {
                         "schema_version": "3.1",
                         "generator": "noaa_hysplit_local_plot",
