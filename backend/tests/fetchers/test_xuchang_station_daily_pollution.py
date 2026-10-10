@@ -52,43 +52,69 @@ class _FakeConnection:
         pass
 
 
-def test_load_city_daily_rows_uses_publish_history_for_all_cities(monkeypatch):
-    result_sets = [
-        [
-            ("许昌市", "411000", datetime(2026, 9, 19), "42", "72"),
-            ("郑州市", "410100", datetime(2026, 9, 19), "51", "75"),
-            ("开封市", "410200", datetime(2026, 9, 19), "52", "100"),
-        ],
+def test_load_city_daily_rows_uses_ssfb_table_for_all_cities(monkeypatch):
+    """日均排名数据源为本地 SsfbCityDay（18 城含济源）。"""
+    ssfb_rows = [
+        {"city": "许昌市", "city_code": "411000", "data_date": datetime(2026, 9, 19), "pm25": 42, "pm10": 72},
+        {"city": "郑州市", "city_code": "410100", "data_date": datetime(2026, 9, 19), "pm25": 51, "pm10": 75},
+        {"city": "济源市", "city_code": "419001", "data_date": datetime(2026, 9, 19), "pm25": 38, "pm10": 78},
     ]
-    connection = _FakeConnection(result_sets)
+    executed = []
 
+    class _FakeMysqlCursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def execute(self, sql, params=None):
+            executed.append(" ".join(sql.split()))
+
+        async def fetchall(self):
+            return ssfb_rows
+
+    class _FakeMysqlConn:
+        def cursor(self, cursor_class=None):
+            return _FakeMysqlCursor()
+
+        async def close(self):
+            pass
+
+    class _FakeAiomysql:
+        DictCursor = object
+
+        @staticmethod
+        async def connect(**kwargs):
+            return _FakeMysqlConn()
+
+    import sys as _sys
+    monkeypatch.setitem(_sys.modules, "aiomysql", _FakeAiomysql)
     monkeypatch.setattr(
-        "app.fetchers.xuchang_station_daily_pollution.xcai_connection_string", lambda: "dsn=fake"
-    )
-    monkeypatch.setattr(
-        "app.fetchers.xuchang_station_daily_pollution.pyodbc",
-        types.SimpleNamespace(connect=lambda dsn, timeout=30: connection),
+        "app.fetchers.xuchang_station_daily_pollution.settings",
+        types.SimpleNamespace(crawler_mysql_url="mysql+aiomysql://u:p@127.0.0.1:13307/DataCrawler"),
     )
     fetcher = XuchangStationDailyPollutionFetcher()
 
     rows = fetcher.load_city_daily_rows(date(2026, 9, 19))
 
-    (publish_sql,) = connection._cursor.executed
-    assert "CityDayAQIPublishHistory" in publish_sql
-    assert "dat_zhongda_city_day" not in publish_sql
-    assert [row["city"] for row in rows] == ["许昌市", "郑州市", "开封市"]
-    assert all(row["data_source"] == "city_day_publish_history" for row in rows)
+    (ssfb_sql,) = executed
+    assert "SsfbCityDay" in ssfb_sql
+    assert "CityDayAQIPublishHistory" not in ssfb_sql
+    assert [row["city"] for row in rows] == ["许昌市", "郑州市", "济源市"]
+    assert all(row["data_source"] == "ssfb_city_day" for row in rows)
     assert rows[0]["pm25"] == 42.0
-    assert rows[1]["pm25"] == 51.0 and rows[2]["pm10"] == 100.0
+    assert rows[2]["pm10"] == 78.0
 
     ranking = build_city_daily_ranking(rows, date(2026, 9, 19))
     assert ranking["city_count"] == 3
     assert ranking["xuchang"]["pm25"] == 42.0
-    assert ranking["xuchang"]["value_source"] == "city_day_publish_history"
-    assert ranking["xuchang"]["pm25_rank"] == 3
-    assert ranking["xuchang"]["pm25_median"] == 51.0
-    assert "CityDayAQIPublishHistory" in ranking["source"]
-    assert "dat_zhongda_city_day" not in ranking["source"]
+    # 济源 PM2.5=38 低于许昌 42，许昌为浓度第 2 高（降序，1=污染最重）
+    assert ranking["xuchang"]["pm25_rank"] == 2
+    assert ranking["coverage"]["pm25_city_count"] == 3
+    assert ranking["xuchang"]["pm25_median"] == 42.0
+    assert "SsfbCityDay" in ranking["source"]
+    assert "CityDayAQIPublishHistory" not in ranking["source"]
 
 
 def test_load_hourly_rows_normalizes_legacy_station_id(monkeypatch):
