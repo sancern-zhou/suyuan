@@ -386,6 +386,23 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     if is_project_tool_enabled(
         context,
         "xuchang-air-quality",
+        "xuchang_cube_metrics",
+    ):
+        try:
+            from app.tools.query.xuchang_cube_metrics.tool import XuchangCubeMetricsTool
+
+            registry.register(XuchangCubeMetricsTool(), priority=48)
+            logger.info("tool_loaded", tool="xuchang_cube_metrics")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="xuchang_cube_metrics",
+                error=str(e),
+            )
+
+    if is_project_tool_enabled(
+        context,
+        "xuchang-air-quality",
         "query_xuchang_traffic_status",
     ):
         try:

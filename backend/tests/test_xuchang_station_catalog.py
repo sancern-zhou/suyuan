@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from app.integrations.henan_ssfb_client import HenanSsfbError
 from app.tools.xuchang.airdata_platform.client import AirDataPlatformClient
 from app.tools.xuchang.station_catalog import catalog as catalog_module
 from app.tools.xuchang.station_catalog.catalog import (
@@ -110,6 +111,51 @@ class FakeClient:
         return {"columns": [], "rows": [], "total": 0, "pages_fetched": 0, "truncated": False}
 
 
+class FakeSsfbClient:
+    """河南实时发布系统目录桩（扁平城市树 + 站点树两根结构）。"""
+
+    def city_tree(self):
+        return [
+            {"ID": 210, "Name": "许昌市", "Code": "411000"},
+            {"ID": 218, "Name": "济源示范区", "Code": "419001"},
+        ]
+
+    def station_tree(self):
+        return [
+            {"Name": "省辖市", "Children": [
+                {"ID": 210, "Name": "许昌市", "Code": "411000", "Children": [
+                    {"ID": 21002, "Name": "魏都区", "Code": "410102", "Children": [
+                        {"ID": 86, "Name": "市一中(国)", "Note": "GK"},
+                    ]},
+                ]},
+            ]},
+            {"Name": "县级", "Children": [
+                {"ID": 210, "Name": "许昌市", "Code": "411000", "Children": [
+                    {"ID": 410124, "Name": "鄢陵县", "Code": "410124", "Children": [
+                        {"ID": 232, "Name": "鄢陵县政府", "Note": "SK"},
+                        {"ID": 453, "Name": "鄢陵县胥庄监测站", "Note": "SCK"},
+                    ]},
+                    {"ID": 410125, "Name": "襄城县", "Code": "410125", "Children": [
+                        {"ID": 23, "Name": "襄城县社会福利中心", "Note": "SK"},
+                    ]},
+                ]},
+                {"ID": 211, "Name": "漯河市", "Code": "411100", "Children": [
+                    {"ID": 410021, "Name": "舞阳县", "Code": "410021", "Children": [
+                        {"ID": 24, "Name": "舞阳县环保局", "Note": "SK"},
+                    ]},
+                ]},
+            ]},
+        ]
+
+
+class BrokenSsfbClient:
+    def city_tree(self):
+        raise HenanSsfbError("platform unavailable")
+
+    def station_tree(self):
+        raise HenanSsfbError("platform unavailable")
+
+
 @pytest.fixture
 def fake_catalog(monkeypatch, tmp_path):
     monkeypatch.setattr(catalog_module, "get_data_registry", lambda: tmp_path)
@@ -122,6 +168,7 @@ def fake_catalog(monkeypatch, tmp_path):
     monkeypatch.setattr(
         catalog_module, "load_station_coordinates", lambda: STATION_COORDINATES
     )
+    monkeypatch.setattr(catalog_module, "HenanSsfbClient", FakeSsfbClient)
     return tmp_path
 
 
@@ -266,7 +313,7 @@ def test_resolve_stations_by_fuzzy_name_and_code(fake_catalog):
     assert [item["station_name"] for item in by_code] == ["芙蓉广场"]
 
     by_district = resolve_stations(catalog, districts=["襄城"])
-    assert [item["station_code"] for item in by_district] == ["1050B"]
+    assert [item["station_code"] for item in by_district] == ["1050B", "23"]
 
 
 def test_resolve_stations_type_filter(fake_catalog):
@@ -332,3 +379,99 @@ def test_query_payload_auto_fields_for_township_views():
 
     payload_region = AirDataPlatformClient._build_query_payload("region", None, None, None, 1, 100)
     assert "selectedFields" not in payload_region
+
+
+def test_build_catalog_includes_henan_directory_and_county_stations(fake_catalog):
+    catalog = build_catalog()
+
+    cities = {row["name"]: row for row in catalog["henan_cities"]}
+    assert cities["济源市"] == {"group_id": 218, "name": "济源市", "code": "419001"}
+    assert cities["许昌市"]["group_id"] == 210
+
+    districts = {(row["city"], row["name"]) for row in catalog["henan_districts"]}
+    assert ("许昌市", "鄢陵县") in districts
+    assert ("漯河市", "舞阳县") in districts
+
+    county_codes = {item["station_code"] for item in catalog["county_stations"]}
+    # 县级根许昌站点入库；省辖市根国控站与外市站点剔除
+    assert {"232", "453", "23"} <= county_codes
+    assert "86" not in county_codes
+    assert "24" not in county_codes
+    county = {item["station_code"]: item for item in catalog["county_stations"]}["232"]
+    assert county["station_type"] == "county"
+    assert county["type_name"] == "县级市控"
+    assert county["district"] == "鄢陵县"
+    assert county["site_id"] == 232
+    assert county["data_source"] == "henan_ssfb:station_tree"
+
+
+def test_resolve_stations_finds_county_station(fake_catalog):
+    catalog = load_catalog()
+
+    by_code = resolve_stations(catalog, station_codes=["232"], station_type="county")
+    assert [item["station_name"] for item in by_code] == ["鄢陵县政府"]
+
+    by_name = resolve_stations(catalog, station_names=["胥庄"], station_type="all")
+    assert [item["station_code"] for item in by_name] == ["453"]
+
+    county_only = resolve_stations(catalog, districts=["鄢陵"], station_type="county")
+    assert [item["station_code"] for item in county_only] == ["232", "453"]
+
+
+@pytest.mark.asyncio
+async def test_catalog_tool_lookup_henan_cities(fake_catalog):
+    tool = XuchangStationCatalogTool()
+
+    result = await tool.execute(action="lookup_henan_cities")
+
+    assert result["success"] is True
+    assert result["status"] == "success"
+    names = {row["name"] for row in result["data"]}
+    assert "济源市" in names and "许昌市" in names
+    jiyuan = next(row for row in result["data"] if row["name"] == "济源市")
+    assert jiyuan["group_id"] == 218
+
+    filtered = await tool.execute(action="lookup_henan_cities", cities=["济源"])
+    assert [row["name"] for row in filtered["data"]] == ["济源市"]
+
+
+@pytest.mark.asyncio
+async def test_catalog_tool_lookup_henan_districts(fake_catalog):
+    tool = XuchangStationCatalogTool()
+
+    result = await tool.execute(action="lookup_henan_districts", cities=["许昌"])
+
+    assert result["success"] is True
+    pairs = {(row["city"], row["name"]) for row in result["data"]}
+    assert ("许昌市", "鄢陵县") in pairs
+    assert all(row["city"] == "许昌市" for row in result["data"])
+
+    empty = await tool.execute(action="lookup_henan_districts", cities=["焦作"])
+    assert empty["status"] == "empty"
+
+
+def test_build_catalog_survives_ssfb_outage(fake_catalog, monkeypatch):
+    monkeypatch.setattr(catalog_module, "HenanSsfbClient", BrokenSsfbClient)
+
+    catalog = build_catalog()
+
+    assert catalog["henan_cities"] == []
+    assert catalog["henan_districts"] == []
+    assert catalog["county_stations"] == []
+    assert catalog["townships"], "中台目录不受 ssfb 故障影响"
+
+
+def test_legacy_cache_without_henan_block_triggers_rebuild(fake_catalog):
+    first = load_catalog()
+    assert first["from_cache"] is False
+
+    # 模拟目录扩展前生成的旧缓存（无 henan_cities 块）
+    path = fake_catalog / "xuchang_station_catalog" / "catalog_cache.json"
+    legacy = json.loads(path.read_text(encoding="utf-8"))
+    legacy.pop("henan_cities", None)
+    legacy["generated_at"] = legacy["generated_at"] + 10
+    path.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+
+    rebuilt = load_catalog()
+    assert rebuilt["from_cache"] is False
+    assert rebuilt["henan_cities"]

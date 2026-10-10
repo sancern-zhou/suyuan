@@ -61,6 +61,7 @@ frontend/.vite/
 *.tmp
 *.txt
 !backend/requirements.txt
+!backend/app/tools/xuchang/station_catalog/hidden_stations.txt
 *.docx
 *.xlsx
 *.pptx
