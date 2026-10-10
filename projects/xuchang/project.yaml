@@ -258,7 +258,8 @@ backend:
     - xuchang_annual_attainment_forecast_fetcher
     - xuchang_cnemc_station_hour_fetcher
     - xuchang_city_exceedance_fetcher
-    - xuchang_henan_month_year_accumulate_fetcher
+    # 省空气质量APP 2026-09 停服，接口不可达；排名改由 xuchang_henan_ranking_recalc_fetcher 重算
+    # - xuchang_henan_month_year_accumulate_fetcher
     # 河南实时发布系统：18城市组(含济源)小时/日值 + 全省站点小时/日值
     - xuchang_henan_ssfb_city_publish_fetcher
     - xuchang_henan_ssfb_site_publish_fetcher
