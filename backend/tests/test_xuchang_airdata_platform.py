@@ -306,7 +306,10 @@ def test_tool_schemas():
 
     assert query_tool.name == "query_airdata_platform"
     assert query_tool.function_schema["parameters"]["required"] == ["api_code"]
-    assert "v_t_h_src" in query_tool.function_schema["parameters"]["properties"]["api_code"]["enum"]
+    # 乡镇视图已下线（数据走本地语义层 TownHour/TownDay），不在工具 enum 中
+    town_views = {"v_t_d_app", "v_t_d_src", "v_t_h_app", "v_t_h_src"}
+    enum_codes = set(query_tool.function_schema["parameters"]["properties"]["api_code"]["enum"])
+    assert enum_codes.isdisjoint(town_views)
 
     assert report_tool.name == "airdata_calc_report_summary"
     assert set(report_tool.function_schema["parameters"]["required"]) == {
