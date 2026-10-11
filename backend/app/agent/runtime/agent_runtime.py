@@ -1055,6 +1055,12 @@ class AgentRuntime:
                 if content:
                     yield self.events.thinking_content(state, content)
 
+            elif event_type == "context_usage":
+                usage_data = event.get("data") or {}
+                state.last_context_usage = usage_data
+                yield event
+                await self._persist_context_usage(state, usage_data)
+
             elif event_type == "tool_use":
                 tool_data = event["data"]
                 tool_use_id = tool_data.get("tool_use_id", "")
@@ -1133,6 +1139,25 @@ class AgentRuntime:
             "planner_result": planner_result,
             "streaming_tool_executor": streaming_tool_executor,
         }
+
+    async def _persist_context_usage(self, state: RunState, usage_data: Dict[str, Any]) -> None:
+        """把最近一次上下文占用快照写入 session_metadata，供会话恢复后展示。"""
+        if not usage_data:
+            return
+        try:
+            from app.agent.session.session_resolver import save_context_usage_for_mode
+
+            await save_context_usage_for_mode(
+                state.session_id,
+                usage_data,
+                mode=state.mode,
+            )
+        except Exception as exc:
+            logger.warning(
+                "context_usage_persist_failed",
+                session_id=state.session_id,
+                error=str(exc),
+            )
 
     def _allowed_tool_names_for_state(self, state: RunState) -> Optional[List[str]]:
         if state.mode == "custom" and hasattr(self.executor, "tool_registry"):

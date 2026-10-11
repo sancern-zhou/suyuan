@@ -163,6 +163,14 @@
 
         <div class="input-footer">
           <div class="action-group">
+            <div
+              v-if="contextUsagePercent !== null"
+              class="context-usage-indicator"
+              :class="contextUsageLevel"
+              :title="`上下文占用：${contextUsageDetail}`"
+            >
+              上下文 {{ contextUsagePercent }}%
+            </div>
             <div v-if="showModelTierSelector" class="model-tier-wrapper">
               <select
                 v-model="modelTier"
@@ -641,6 +649,24 @@ const activeModelTierMode = computed(() => (
 ))
 const showModelTierSelector = computed(() => shouldShowModelTierSelector(activeModelTierMode.value))
 const showVoiceControls = computed(() => shouldShowVoiceControls(reactStore.currentMode))
+const contextUsage = computed(() => reactStore.currentState?.contextUsage || null)
+const contextUsagePercent = computed(() => {
+  const usage = contextUsage.value
+  if (!usage || !usage.contextWindow || !usage.contextTokens) return null
+  return Math.min(100, Math.round((usage.contextTokens / usage.contextWindow) * 100))
+})
+const contextUsageLevel = computed(() => {
+  const percent = contextUsagePercent.value
+  if (percent === null) return ''
+  if (percent >= 95) return 'danger'
+  if (percent >= 80) return 'warning'
+  return ''
+})
+const contextUsageDetail = computed(() => {
+  const usage = contextUsage.value
+  if (!usage) return ''
+  return `${Number(usage.contextTokens).toLocaleString()} / ${Number(usage.contextWindow).toLocaleString()} tokens`
+})
 const canSteerWhileRunning = computed(() => props.isAnalyzing && reactStore.currentMode === 'assistant')
 const boardSyncStatus = computed(() => (
   reactStore.currentMode === 'board'
@@ -1619,6 +1645,25 @@ defineExpose({
   padding: 6px 8px;
 }
 
+.context-usage-indicator {
+  margin-right: 6px;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1;
+  color: #8a94a6;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}
+
+.context-usage-indicator.warning {
+  color: #d97706;
+}
+
+.context-usage-indicator.danger {
+  color: #dc2626;
+}
+
 .model-tier-select {
   height: 30px;
   padding: 0 24px 0 10px;
@@ -1895,6 +1940,10 @@ defineExpose({
     width: 100%;
     justify-content: flex-end;
     padding: 4px;
+  }
+
+  .context-usage-indicator {
+    display: none;
   }
 }
 
