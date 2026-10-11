@@ -161,7 +161,9 @@
               :aria-expanded="!isModeGroupCollapsed(group.key)"
               @click="toggleModeGroup(group.key)"
             >
-              <span class="session-mode-dot" :style="{ background: group.header.accent }"></span>
+              <svg class="session-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7a1.5 1.5 0 0 1 1.5-1.5h3.6l2 2h7.4A1.5 1.5 0 0 1 20 9v8.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5V7Z" />
+              </svg>
               <span class="session-mode-name">{{ group.header.label }}</span>
               <span class="session-mode-count">{{ group.sessions.length }}</span>
               <svg class="session-mode-chevron" :class="{ collapsed: isModeGroupCollapsed(group.key) }" viewBox="0 0 24 24" aria-hidden="true">
@@ -426,13 +428,10 @@ const conversationListEmptyText = computed(() => ({
 
 const agentModeHeader = mode => {
   if (mode === 'other') {
-    return { label: '其他', accent: '#8a94a6' }
+    return { label: '其他' }
   }
   const meta = AGENT_MODES.find(item => item.id === mode)
-  return {
-    label: meta?.shortName || meta?.name || mode,
-    accent: meta?.accent || '#8a94a6'
-  }
+  return { label: meta?.shortName || meta?.name || mode }
 }
 
 const sidebarSessionGroups = computed(() => {
@@ -1260,11 +1259,15 @@ onUnmounted(() => {
   }
 }
 
-.session-mode-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.session-mode-icon {
+  width: 15px;
+  height: 15px;
   flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .session-mode-name {
