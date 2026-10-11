@@ -156,7 +156,7 @@ export function useKbFileUpload(kbStore, options = {}) {
       chunking_strategy: 'llm',
       chunk_size: 800,
       chunk_overlap: 100,
-      llm_mode: 'local'
+      llm_mode: 'online'
     }
 
     const options = { ...defaultOptions, ...uploadOptions }

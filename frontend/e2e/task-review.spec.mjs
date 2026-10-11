@@ -30,7 +30,7 @@ test('generic review renders and persists human decision without a business rend
   expect(errors).toEqual([])
 })
 
-test('scheduler classifies generic todos by task type, opens shared review and removes confirmed items', async ({ page }) => {
+test('scheduler classifies generic todos by task type and keeps archived items visible', async ({ page }) => {
   const today = new Date().toISOString()
   const records = [
     { ...structuredClone(base), updated_at: today },
@@ -42,7 +42,8 @@ test('scheduler classifies generic todos by task type, opens shared review and r
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url())
     if (url.pathname.endsWith('/scheduled-tasks')) return route.fulfill({ json: [{ task: { task_id: 'scheduled', name: '定时巡检', trigger_type: 'schedule', enabled: true } }, { task: { task_id: 'event', name: '告警研判', trigger_type: 'event', enabled: true } }] })
-    if (url.pathname.endsWith('/task-reviews')) return route.fulfill({ json: { reviews: records.filter(record => record.status === 'pending_review'), total: records.filter(record => record.status === 'pending_review').length } })
+    // 真实后端 pending_only=false：列表返回全部状态（含已归档/已退回），由前端状态筛选聚焦。
+    if (url.pathname.endsWith('/task-reviews')) return route.fulfill({ json: { reviews: records, total: records.length } })
     const record = records.find(record => url.pathname.includes(record.review_id))
     if (record) {
       if (route.request().method() === 'POST') Object.assign(record, { status: 'archived', version: 2, human_decision: { ...route.request().postDataJSON(), actor: { username: '审核员' }, occurred_at: '2026-09-10' } })
@@ -67,8 +68,24 @@ test('scheduler classifies generic todos by task type, opens shared review and r
   await page.getByLabel('审核意见', { exact: true }).fill('已核验')
   await page.getByRole('button', { name: '确认归档' }).click()
   await page.getByRole('button', { name: '关闭', exact: true }).click()
+  // 归档后记录保留在列表中并显示"已归档"徽章；状态筛选可聚焦待办/已归档。
+  // （label 文本含 option 文本，getByLabel exact 匹配不到，用 combobox 角色定位。）
+  const statusFilter = page.getByRole('combobox', { name: '状态' })
+  await expect(reviewRows).toHaveCount(2)
+  await expect(reviewRows.first()).toContainText('已归档')
+  await statusFilter.selectOption('archived')
+  await expect(reviewRows).toHaveCount(1)
+  await expect(reviewRows.first()).toContainText('故障处理需确认')
+  await statusFilter.selectOption('pending')
   await expect(reviewRows).toHaveCount(1)
   await expect(reviewRows.first()).toContainText('恒值异常需确认')
+  await statusFilter.selectOption('')
+  await expect(reviewRows).toHaveCount(2)
+  // 已归档记录的详情为只读：无人工处理表单，展示人工处理记录。
+  await page.getByRole('button', { name: '查看详情' }).first().click()
+  await expect(page.getByRole('heading', { name: '人工处理记录' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '确认归档' })).toHaveCount(0)
+  await page.getByRole('button', { name: '关闭', exact: true }).click()
   expect(errors).toEqual([])
 })
 

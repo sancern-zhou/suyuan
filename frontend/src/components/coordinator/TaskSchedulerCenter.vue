@@ -8,7 +8,7 @@
         <div>
           <p class="scheduler-kicker">苏环智管 · 任务调度</p>
           <h1>任务调度中心</h1>
-          <p class="scheduler-description">集中展示待人工确认或处置的故障工单审核与智能事件 AI 研判结果。</p>
+          <p class="scheduler-description">集中展示故障工单审核与智能事件 AI 研判结果；已归档与已退回的记录保留在列表中，可用状态筛选聚焦待办。</p>
         </div>
         <div class="header-actions">
           <span class="live-status"><i aria-hidden="true"></i>调度运行中</span>
@@ -20,13 +20,22 @@
 
       <div v-if="loadError" class="load-note">{{ loadError }}</div>
 
-      <section class="task-list-section" aria-label="待办审核结果">
+      <section class="task-list-section" aria-label="审核结果">
         <template v-if="todoTasks.length">
           <div class="filter-bar">
             <label class="filter-item">
               <span>任务类型</span>
               <select v-model="filters.taskType">
                 <option v-for="(label, value) in TASK_TYPE_LABELS" :key="value" :value="value">{{ label }}</option>
+              </select>
+            </label>
+            <label class="filter-item">
+              <span>状态</span>
+              <select v-model="filters.status">
+                <option value="">全部</option>
+                <option value="pending">待办（待确认/处置中）</option>
+                <option value="archived">已归档</option>
+                <option value="rejected">已退回</option>
               </select>
             </label>
             <label class="filter-item">
@@ -90,8 +99,8 @@
           </div>
         </template>
         <div v-else class="empty-state">
-          <strong>暂无待人工确认或处置的审核结果</strong>
-          <span>AI 完成审核或研判后，待人工确认或处置的结果将按所选任务类型显示在这里。</span>
+          <strong>暂无匹配的审核结果</strong>
+          <span>AI 完成审核或研判后，结果（含已归档/已退回）将按所选任务类型与筛选条件显示在这里。</span>
         </div>
       </section>
     </div>
@@ -123,7 +132,9 @@ const todoTasks = computed(() => reviews.value.map(review => ({
   ...review, taskName: review.task_name, occurredAt: review.updated_at
 })))
 
-const formatTodoStatus = task => jiangsuReviewStatus(task) || ({ pending_review: '待人工确认', in_disposal: '待处置' }[task.status])
+const formatTodoStatus = task => jiangsuReviewStatus(task) || ({
+  pending_review: '待人工确认', in_disposal: '待处置', archived: '已归档', rejected: '已退回',
+}[task.status])
 const formatTodoTime = value => {
   if (!value) return '完成时间未知'
   const date = new Date(value)
@@ -160,14 +171,18 @@ const daysAgoStr = n => {
   d.setDate(d.getDate() - n)
   return formatLocalDay(d)
 }
-// 完成日期默认近三日（含今天），任务类型默认故障工单审核，避免默认翻到其他类型/更久历史数据
+// 完成日期默认近三日（含今天），任务类型默认故障工单审核，避免默认翻到其他类型/更久历史数据；
+// 状态默认全部（已归档/已退回保留在列表中），"待办"聚焦仍需人工处理的记录。
+const PENDING_STATUSES = ['pending_review', 'in_disposal']
 const DEFAULT_TASK_TYPE = '工单审核'
-const defaultFilters = () => ({ startDate: daysAgoStr(2), endDate: todayStr(), taskType: DEFAULT_TASK_TYPE, decision: '' })
+const defaultFilters = () => ({ startDate: daysAgoStr(2), endDate: todayStr(), taskType: DEFAULT_TASK_TYPE, decision: '', status: '' })
 const filters = ref(defaultFilters())
 const page = ref(1)
 const filteredTasks = computed(() => todoTasks.value.filter(task => {
   if (filters.value.taskType && task.category !== filters.value.taskType) return false
   if (filters.value.decision && task.decision !== filters.value.decision) return false
+  if (filters.value.status === 'pending' && !PENDING_STATUSES.includes(task.status)) return false
+  if (filters.value.status && filters.value.status !== 'pending' && task.status !== filters.value.status) return false
   if (filters.value.startDate || filters.value.endDate) {
     const day = localDay(task.occurredAt)
     if (!day) return false
@@ -181,7 +196,7 @@ const pagedTasks = computed(() =>
 const totalPages = computed(() => Math.max(1, Math.ceil(filteredTasks.value.length / PAGE_SIZE)))
 const hasActiveFilters = computed(() => {
   const f = filters.value
-  return Boolean(f.decision || f.taskType !== DEFAULT_TASK_TYPE || f.startDate !== daysAgoStr(2) || f.endDate !== todayStr())
+  return Boolean(f.decision || f.status || f.taskType !== DEFAULT_TASK_TYPE || f.startDate !== daysAgoStr(2) || f.endDate !== todayStr())
 })
 const resetFilters = () => { filters.value = defaultFilters() }
 watch(filters, () => { page.value = 1 }, { deep: true })
@@ -269,6 +284,8 @@ onMounted(loadTasks)
 .review-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .review-status.status-pending_review { border-color: rgba(29, 78, 216, .25); background: rgba(29, 78, 216, .08); color: #1d4ed8; }
 .review-status.status-in_disposal { border-color: rgba(222, 146, 32, .3); background: rgba(242, 169, 59, .12); color: #a3660a; }
+.review-status.status-archived { border-color: rgba(35, 139, 96, .3); background: rgba(35, 139, 96, .1); color: #238b60; }
+.review-status.status-rejected { border-color: rgba(200, 60, 60, .3); background: rgba(200, 60, 60, .08); color: #b34040; }
 .mono { font-family: Consolas, 'Courier New', monospace; font-size: 11px; color: var(--lake-700); white-space: nowrap; }
 .col-title { min-width: 180px; }
 .col-title strong { display: block; color: var(--ink); font-size: 12.5px; line-height: 1.4; }

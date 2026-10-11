@@ -201,7 +201,7 @@ export const AGENT_MODES = Object.freeze([
   {
     id: 'smart_inspection',
     name: '智能巡检智能体',
-    shortName: '智能巡检',
+    shortName: '站点智能巡检',
     description: '巡查站点告警线索，辅助形成巡检与工单派发建议',
     welcome: {
       description: '面向站点巡检与工单闭环场景，先基于运维告警记录识别需关注站点、梳理巡检重点，并形成待人工确认的工单建议。',
@@ -223,7 +223,7 @@ export const AGENT_MODES = Object.freeze([
   {
     id: 'operations_analysis',
     name: '运维操作分析智能体',
-    shortName: '操作分析',
+    shortName: '运维操作分析',
     description: '分析人员到站覆盖与空间分布，发现值得管理核查的运维模式',
     welcome: {
       description: '面向运维管理人员，结合人员到站签到和站点空间台账，发现跨市频繁到站、覆盖失衡与疑似不经济的到站顺序，并给出待核查的优化建议。',
@@ -245,7 +245,7 @@ export const AGENT_MODES = Object.freeze([
   {
     id: 'device_control',
     name: '设备反控智能体',
-    shortName: '设备反控',
+    shortName: '智能设备反控',
     description: '在人工确认下查询并执行受限的站房设备反控指令',
     welcome: {
       description: '面向已授权站点，查询质控设备状态并生成受控的阀门、电源或空调指令；每次执行前都会展示目标与动作，须经人工明确确认。',
@@ -267,7 +267,7 @@ export const AGENT_MODES = Object.freeze([
   {
     id: 'station_fault_diagnosis',
     name: '站点故障诊断智能体',
-    shortName: '故障诊断',
+    shortName: '站点故障诊断',
     description: '汇集告警、监测、巡检和工单证据，研判站点故障并给出处置方案',
     welcome: {
       description: '面向单站故障与数据异常，结合实时告警、监测数据、自动巡检、历史故障工单和知识图谱，输出可追溯的根因研判与现场处置方案。',
@@ -287,13 +287,13 @@ export const AGENT_MODES = Object.freeze([
     ]
   },
   {
-    id: 'smart_event_external', name: '外界环境识别智能体', shortName: '外界环境',
+    id: 'smart_event_external', name: '外界环境识别智能体', shortName: '外界环境识别',
     description: '识别外界环境和人为行为对监测代表性的影响',
     welcome: { description: '围绕雾炮、喷淋、人员进入和其他外界环境线索开展证据核验与处置。', features: ['查询环境事件', '核验气象与门禁证据', '反馈归档', '派单处置'] },
     tags: ['外界环境', '事件处置'], accent: '#1677ff', iconPaths: ['M4 5h16v14H4z', 'M6 15c2-5 4-5 6 0s4 5 6 0']
   },
   {
-    id: 'smart_event_instrument', name: '仪器故障识别智能体', shortName: '仪器故障',
+    id: 'smart_event_instrument', name: '仪器故障识别智能体', shortName: '仪器故障识别',
     description: '识别仪器、供电、数采和站房运行故障',
     welcome: { description: '围绕仪器状态、断数、供电、数采和站房环境线索开展故障核验与处置。', features: ['查询故障事件', '核验仪器与质控证据', '反馈归档', '派单维修'] },
     tags: ['仪器故障', '事件处置'], accent: '#0f9d8a', iconPaths: ['M4 5h16v14H4z', 'M12 7v10M8 11h8M9 17h6']

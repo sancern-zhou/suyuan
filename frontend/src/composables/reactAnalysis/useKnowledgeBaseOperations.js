@@ -30,7 +30,7 @@ export function useKnowledgeBaseOperations() {
     chunking_strategy: 'llm',
     chunk_size: KB_DEFAULTS.CHUNK_SIZE,
     chunk_overlap: KB_DEFAULTS.CHUNK_OVERLAP,
-    llm_mode: 'local'
+    llm_mode: 'online'
   })
 
   // 上传状态
