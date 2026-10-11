@@ -12,7 +12,7 @@
 # 2. 长历史/同比/跨年趋势/语义层未覆盖明细 → execute_crawler_sql_query
 #    （DataCrawler MySQL：许昌本地 2016/2018 起长历史 + Ssfb* 采集表）
 # 3. SQL Server 侧（发布口径长历史/中大审核口径/预报表）→ execute_sql_query
-#    （注意：CityDay 缺济源；HenanCityAccumulateRanking 已下线）
+#    （注意：CityDay 缺济源；本地月/年排名与官方审核口径存在±0.5μg/m³级别差异，正式引用以官方发布为准）
 # 4. 中台独有口径（区域/站点基础表、城市/站点日数据、月度及以上报表）→
 #    xuchang_station_catalog 解析编码 + query_airdata_platform / airdata_calc_report_summary
 #    （乡镇小时/日已迁本地 TownHour/TownDay，中台 v_t_* 乡镇视图仅备用）

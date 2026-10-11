@@ -159,6 +159,9 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
     # 修约：银行家算法，PM2.5/CO 一位小数，其余整数；排名基于修约后的值。
     # 排名规则：数值越低越靠前（Rank* 升序,1=最优），相同值并列（1,1,3）。
     # 期次：periodType=daily（单日原值排序）/monthly（月累计）/yearly（年累计）。
+    # 差异声明：官方统计基于审核后数据与官方有效性审核规则（无法外部复现），本地计算与官方
+    # 已发布结果存在 ±0.5 μg/m³ 级别差异（2026-08 回验 PM2.5 平均绝对差 0.41）。正式场合、
+    # 对外汇报引用月/年统计时，提示用户以官方发布数据为准。
     "SsfbCityRanking": {
         "measures": [
             {"name": "count", "title": "记录数"},
@@ -255,7 +258,10 @@ def _render_guide() -> str:
     lines.append("")
     lines.append(
         DATA_WINDOW_NOTE
-        + "排名类问题用 SsfbCityRanking(periodType=daily单日/monthly月累计/yearly年累计+period;本地计算非官方口径,银行家修约:PM2.5/CO一位小数其余整数,数值越低越靠前,相同值并列);小时排名用 SsfbCityHourRank(过滤 dataTime 到具体小时);"
+        + "排名类问题用 SsfbCityRanking(periodType=daily单日/monthly月累计/yearly年累计+period;"
+        "SsfbCityRanking 为本地计算非官方口径(银行家修约:PM2.5/CO一位小数其余整数,数值越低越靠前,相同值并列;"
+        "与官方审核口径存在±0.5μg/m³级别差异,正式汇报引用月/年统计时须说明为本地计算并以官方发布为准);"
+        "小时排名用 SsfbCityHourRank(过滤 dataTime 到具体小时);"
         "无聚合统计,月度及以上统计以官方发布为准);"
         "小时排名用 SsfbCityHourRank(过滤 dataTime 到具体小时);"
         "排名规则为数值越低越靠前(Rank*=1 最优),相同值并列;"
