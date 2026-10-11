@@ -94,8 +94,8 @@ ON DUPLICATE KEY UPDATE SiteName=VALUES(SiteName), County=VALUES(County), Online
 """
 
 # "县级"根分支 + 许昌市辖区内的县级站；GK(国控)不采集。
-SITE_TREE_ROOT = "县级"
-SITE_TARGET_CITIES = {"许昌市"}
+# 全省采集：站点树两根（省辖市=城区站 92 区县分组 / 县级=县·县级市站 101 区县分组）
+# 合计覆盖全省 193 个区县（含功能区）；国控站（GK）剔除。
 SITE_EXCLUDED_TYPES = {"GK"}
 
 SITE_REQUEST_CHUNK_SIZE = 80
@@ -506,9 +506,9 @@ class XuchangHenanSsfbSitePublishFetcher(DataFetcher):
     ) -> None:
         super().__init__(
             name="xuchang_henan_ssfb_site_publish_fetcher",
-            description="抓取河南实时发布系统许昌市县级站(剔除国控)小时/日值入库DataCrawler",
+            description="抓取河南实时发布系统全省区县站点(两根树,剔除国控)小时/日值入库DataCrawler",
             schedule="45 * * * *",
-            version="1.0.0",
+            version="1.1.0",
         )
         self.client = client or HenanSsfbClient()
         self.storage = storage or HenanSsfbMySqlStorage()
@@ -516,11 +516,7 @@ class XuchangHenanSsfbSitePublishFetcher(DataFetcher):
         self.request_chunk_size = request_chunk_size
 
     def _target_sites(self, tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        sites = site_leaves_from_tree(
-            tree,
-            root_names={SITE_TREE_ROOT},
-            city_names=SITE_TARGET_CITIES,
-        )
+        sites = site_leaves_from_tree(tree)
         return [site for site in sites if site.get("online_type") not in SITE_EXCLUDED_TYPES]
 
     def _collect(self, fetched_at: datetime) -> dict[str, Any]:
@@ -532,7 +528,7 @@ class XuchangHenanSsfbSitePublishFetcher(DataFetcher):
         tree = self.client.station_tree()
         sites = self._target_sites(tree)
         if not sites:
-            raise ValueError("ssfb station tree returned no Xuchang county sites")
+            raise ValueError("ssfb station tree returned no sites")
         site_meta = {site["site_id"]: site for site in sites}
 
         hour_records: list[dict[str, Any]] = []

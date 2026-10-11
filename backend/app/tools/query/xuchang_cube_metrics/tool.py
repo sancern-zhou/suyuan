@@ -77,7 +77,7 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "avgCo", "title": "CO均值(mg/m³)"},
             {"name": "avgO3", "title": "O3均值(μg/m³)"},
             {"name": "maxAqi", "title": "AQI最大值"},
-            {"name": "onlineSites", "title": "有数据乡镇站数(去重,76站)"},
+            {"name": "onlineSites", "title": "有数据站点数(去重)"},
         ],
         "dimensions": [
             {"name": "caliber", "title": "口径(app审核/src原始,必选其一过滤)"},
@@ -99,7 +99,7 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "avgCo", "title": "CO日均(mg/m³)"},
             {"name": "avgO3", "title": "O3日均(μg/m³)"},
             {"name": "maxAqi", "title": "AQI最大值"},
-            {"name": "onlineSites", "title": "有数据乡镇站数(去重,76站)"},
+            {"name": "onlineSites", "title": "有数据站点数(去重)"},
         ],
         "dimensions": [
             {"name": "caliber", "title": "口径(app审核/src原始,必选其一过滤)"},
@@ -186,7 +186,8 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "computedAt", "title": "计算时间(时间维度)"},
         ],
     },
-    # 许昌县级站小时: 站点目录见 xuchang_station_catalog(station_type=county),
+    # 全省区县站点小时(两根树 193 区县,剔除国控;County 字段为区县归属): 站点目录见
+    # xuchang_station_catalog 与 SsfbDimSite, 编码为河南实时发布系统数字编码(SiteID)。
     # 编码为河南实时发布系统数字编码(SiteID)。
     "SsfbSiteHour": {
         "measures": [
@@ -214,7 +215,7 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "dataTime", "title": "数据时间(时间维度)"},
         ],
     },
-    # 许昌县级站日值: 仅单日接口, 历史按日累积。
+    # 全省区县站点日值: 仅单日接口, 历史按日累积。
     "SsfbSiteDay": {
         "measures": [
             {"name": "count", "title": "站点日记录数"},

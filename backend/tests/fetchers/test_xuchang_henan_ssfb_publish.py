@@ -201,7 +201,8 @@ def test_city_fetcher_collect_uses_full_city_list_and_window():
     assert collected["day"][0]["data_time"] == datetime(2026, 10, 9)
 
 
-def test_site_fetcher_collect_excludes_gk_and_other_cities():
+def test_site_fetcher_collect_covers_all_roots_excludes_gk():
+    """全省采集：两根树全部站点（剔除国控），不再限定许昌。"""
     client = _FakeClient()
     fetcher = XuchangHenanSsfbSitePublishFetcher(
         client=client,
@@ -218,7 +219,8 @@ def test_site_fetcher_collect_excludes_gk_and_other_cities():
     assert [(call[2], call[3]) for call in site_calls[1:]] == [
         ("2026-10-08", "2026-10-08"), ("2026-10-09", "2026-10-09"),
     ]
-    assert all(call[1] == (232, 453) for call in site_calls)
+    # 两根树全部非国控站点（排序后：舞阳24、鄢陵232/453；魏都区国控86剔除）
+    assert all(call[1] == (24, 232, 453) for call in site_calls)
     assert collected["hour"][0]["county"] == "鄢陵县"
     assert collected["day"][0]["data_time"] == datetime(2026, 10, 9)
 

@@ -1,7 +1,8 @@
-// 许昌县级站小时/日空气质量语义模型 — 一行 = 站点 × 小时（或自然日）
+// 全省区县站点小时/日空气质量语义模型 — 一行 = 站点 × 小时（或自然日）
 // 口径来源: DataCrawler.SsfbSiteHour / SsfbSiteDay
-//（xuchang_henan_ssfb_site_publish_fetcher 采集，源为河南实时发布系统"县级"体系，
-//  已剔除国控站；站点目录见 SsfbDimSite，区县归属 County 字段）。
+//（xuchang_henan_ssfb_site_publish_fetcher 采集，源为河南实时发布系统两棵站点树——
+//  省辖市根(城区站 161)/县级根(县·县级市站 335)，合计覆盖全省 193 个区县（含功能区），
+//  已剔除国控站；区县归属 County 字段，站点目录见 SsfbDimSite）。
 cube(`SsfbSiteHour`, {
   sql: `SELECT * FROM SsfbSiteHour`,
 
