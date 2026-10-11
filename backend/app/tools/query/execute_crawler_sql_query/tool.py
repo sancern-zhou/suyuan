@@ -49,7 +49,7 @@ TABLE_TIME_RANGES: dict[str, str] = {
     "SsfbCityDay": "2026-10-03 起，河南 18 城市组逐日（含济源）",
     "SsfbSiteHour": "2026-10-09 起，许昌县级站逐小时",
     "SsfbSiteDay": "2026-10-08 起，许昌县级站逐日",
-    "SsfbCityRanking": "2026-10 月度 / 2026 年度起（随 SsfbCityDay 每日 06:10 重算）",
+    "SsfbCityRanking": "2026-10-09 起（每日 06:10 对官方发布日值排序，仅 daily）",
 }
 
 MAX_LIMIT = 5000

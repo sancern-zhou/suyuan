@@ -155,37 +155,32 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "dataDate", "title": "数据日期(时间维度)"},
         ],
     },
-    # 城市排名（本地重算）: 只做单项浓度累计与排名（不做综合指数），
+    # 城市日排名：仅对官方发布日值排序展示（不做任何聚合统计计算，
+    # 月均/百分位/综合指数等环境统计一律以官方发布为准）。
     # 数值越低排名越靠前（Rank* 升序,1=最优），相同值并列（1,1,3）。
-    # 排名在 18 城市组内(含济源)。
-    # OfficialZong/OfficialRank 为省APP官方对照(仅≤2026-08有值, 勿与重算值混算)。
+    # 排名在 18 城市组内(含济源)；某参数缺失该城不参与该参数排名。
     "SsfbCityRanking": {
         "measures": [
             {"name": "count", "title": "记录数"},
-            {"name": "avgPm25", "title": "PM2.5累计均值(μg/m³)"},
-            {"name": "avgPm10", "title": "PM10累计均值(缺口由小时均值补齐)"},
-            {"name": "avgSo2", "title": "SO2累计均值(μg/m³)"},
-            {"name": "avgNo2", "title": "NO2累计均值(μg/m³)"},
-            {"name": "avgO38h90", "title": "O3-8h第90百分位(μg/m³)"},
-            {"name": "avgCo95", "title": "CO第95百分位(mg/m³)"},
+            {"name": "avgPm25", "title": "PM2.5日值(μg/m³,官方发布)"},
+            {"name": "avgPm10", "title": "PM10日值(μg/m³,官方发布)"},
+            {"name": "avgSo2", "title": "SO2日值(μg/m³)"},
+            {"name": "avgNo2", "title": "NO2日值(μg/m³)"},
+            {"name": "avgCo", "title": "CO日值(mg/m³)"},
+            {"name": "avgO38h", "title": "O3-8h日值(μg/m³)"},
             {"name": "rankPm25", "title": "PM2.5排名(升序,1=最优)"},
             {"name": "rankPm10", "title": "PM10排名(升序,1=最优)"},
             {"name": "rankSo2", "title": "SO2排名(升序,1=最优)"},
             {"name": "rankNo2", "title": "NO2排名(升序,1=最优)"},
             {"name": "rankO3", "title": "O3排名(升序,1=最优)"},
             {"name": "rankCo", "title": "CO排名(升序,1=最优)"},
-            {"name": "officialZong", "title": "省APP官方综合指数(对照,≤2026-08)"},
-            {"name": "officialRank", "title": "省APP官方排名(对照,≤2026-08,勿用)"},
         ],
         "dimensions": [
-            {"name": "periodType", "title": "期次类型(daily单日/monthly/yearly)"},
-            {"name": "period", "title": "期次(2026-10-09 / 2026-10 / 2026)"},
+            {"name": "periodType", "title": "期次类型(仅daily)"},
+            {"name": "period", "title": "期次(YYYY-MM-DD)"},
             {"name": "city", "title": "城市名(含济源市)"},
             {"name": "groupId", "title": "城市组ID"},
-            {"name": "days", "title": "累计天数"},
-            {"name": "validDays", "title": "六参数全有效天数"},
-            {"name": "pmValidDays", "title": "PM2.5有效天数"},
-            {"name": "computedAt", "title": "重算时间(时间维度)"},
+            {"name": "computedAt", "title": "排序时间(时间维度)"},
         ],
     },
     # 许昌县级站小时: 站点目录见 xuchang_station_catalog(station_type=county),
@@ -260,11 +255,12 @@ def _render_guide() -> str:
     lines.append("")
     lines.append(
         DATA_WINDOW_NOTE
-        + "排名类问题用 SsfbCityRanking(日排名 periodType=daily+period=日期;月/年排名 periodType=monthly/yearly);小时排名用 SsfbCityHourRank(过滤 dataTime 到具体小时);"
+        + "排名类问题用 SsfbCityRanking(periodType=daily,period=日期;仅对官方发布日值排序,"
+        "无聚合统计,月度及以上统计以官方发布为准);"
+        "小时排名用 SsfbCityHourRank(过滤 dataTime 到具体小时);"
         "排名规则为数值越低越靠前(Rank*=1 最优),相同值并列;"
         "乡镇站(76个,2024起)用 TownHour/TownDay,必须过滤 caliber(app=审核,官方结论优先),"
-        "否则原始与审核重复计数;"
-        "OfficialZong/OfficialRank 是省APP对照列(仅2026-08前有值),勿与重算值混用。"
+        "否则原始与审核重复计数。"
     )
     return "\n".join(lines)
 
