@@ -22,7 +22,7 @@ sources:
   - domain: 空气质量（语义层：河南18城市组含济源排名/小时日值 + 许昌县级站 + 乡镇站）
     route: tool
     locator: xuchang_cube_metrics
-    usage: "优先用本工具点数查询（免写SQL）：SsfbCityRanking（城市日排名，仅对官方发布日值排序，Rank* 升序=1 最优，含济源，periodType=daily+period=日期，无聚合统计）/SsfbCityHourRank（某小时 18 城排名，dataTime 过滤到小时）/SsfbCityHour/SsfbCityDay（城市小时日值）/SsfbSiteHour/SsfbSiteDay（许昌县级站，County 字段做区县口径）/TownHour/TownDay（乡镇站76个，2024 起、2025 年起完整，必须过滤 caliber：官方结论用 caliber='app' 审核口径，区县从 stationName 前缀解析）；排名规则=数值越低越靠前，相同值并列"
+    usage: "优先用本工具点数查询（免写SQL）：SsfbCityRanking（月/年/日累计统计与排名，**本地计算非官方口径**，银行家修约：PM2.5/CO 一位小数其余整数，Rank* 升序=1 最优，含济源，需 periodType+period 过滤）/SsfbCityHourRank（某小时 18 城排名，dataTime 过滤到小时）/SsfbCityHour/SsfbCityDay（城市小时日值）/SsfbSiteHour/SsfbSiteDay（许昌县级站，County 字段做区县口径）/TownHour/TownDay（乡镇站76个，2024 起、2025 年起完整，必须过滤 caliber：官方结论用 caliber='app' 审核口径，区县从 stationName 前缀解析）；排名规则=数值越低越靠前，相同值并列"
     granularity: 逐小时/逐日/月年累计
     caveats: "数据窗口：ssfb 2026-10-03 起、乡镇站 2024 起；OfficialZong/OfficialRank 为省APP官方对照（≤2026-08）勿与重算值混用；编码解析（城市/县级站/乡镇站）用 xuchang_station_catalog"
 

@@ -155,19 +155,19 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "dataDate", "title": "数据日期(时间维度)"},
         ],
     },
-    # 城市日排名：仅对官方发布日值排序展示（不做任何聚合统计计算，
-    # 月均/百分位/综合指数等环境统计一律以官方发布为准）。
-    # 数值越低排名越靠前（Rank* 升序,1=最优），相同值并列（1,1,3）。
-    # 排名在 18 城市组内(含济源)；某参数缺失该城不参与该参数排名。
+    # 城市累计统计与排名（**本地计算，非官方口径**，仅供省内横向对比）。
+    # 修约：银行家算法，PM2.5/CO 一位小数，其余整数；排名基于修约后的值。
+    # 排名规则：数值越低越靠前（Rank* 升序,1=最优），相同值并列（1,1,3）。
+    # 期次：periodType=daily（单日原值排序）/monthly（月累计）/yearly（年累计）。
     "SsfbCityRanking": {
         "measures": [
             {"name": "count", "title": "记录数"},
-            {"name": "avgPm25", "title": "PM2.5日值(μg/m³,官方发布)"},
-            {"name": "avgPm10", "title": "PM10日值(μg/m³,官方发布)"},
-            {"name": "avgSo2", "title": "SO2日值(μg/m³)"},
-            {"name": "avgNo2", "title": "NO2日值(μg/m³)"},
-            {"name": "avgCo", "title": "CO日值(mg/m³)"},
-            {"name": "avgO38h", "title": "O3-8h日值(μg/m³)"},
+            {"name": "avgPm25", "title": "PM2.5累计均值(本地计算,一位小数)"},
+            {"name": "avgPm10", "title": "PM10累计均值(本地计算,整数)"},
+            {"name": "avgSo2", "title": "SO2累计均值(本地计算,整数)"},
+            {"name": "avgNo2", "title": "NO2累计均值(本地计算,整数)"},
+            {"name": "avgCo", "title": "CO累计均值(本地计算,一位小数)"},
+            {"name": "avgO38h", "title": "O3-8h第90百分位(本地计算,整数)"},
             {"name": "rankPm25", "title": "PM2.5排名(升序,1=最优)"},
             {"name": "rankPm10", "title": "PM10排名(升序,1=最优)"},
             {"name": "rankSo2", "title": "SO2排名(升序,1=最优)"},
@@ -176,11 +176,11 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "rankCo", "title": "CO排名(升序,1=最优)"},
         ],
         "dimensions": [
-            {"name": "periodType", "title": "期次类型(仅daily)"},
-            {"name": "period", "title": "期次(YYYY-MM-DD)"},
+            {"name": "periodType", "title": "期次类型(daily单日/monthly月累计/yearly年累计)"},
+            {"name": "period", "title": "期次(YYYY-MM-DD / YYYY-MM / YYYY)"},
             {"name": "city", "title": "城市名(含济源市)"},
             {"name": "groupId", "title": "城市组ID"},
-            {"name": "computedAt", "title": "排序时间(时间维度)"},
+            {"name": "computedAt", "title": "计算时间(时间维度)"},
         ],
     },
     # 许昌县级站小时: 站点目录见 xuchang_station_catalog(station_type=county),
@@ -255,7 +255,7 @@ def _render_guide() -> str:
     lines.append("")
     lines.append(
         DATA_WINDOW_NOTE
-        + "排名类问题用 SsfbCityRanking(periodType=daily,period=日期;仅对官方发布日值排序,"
+        + "排名类问题用 SsfbCityRanking(periodType=daily单日/monthly月累计/yearly年累计+period;本地计算非官方口径,银行家修约:PM2.5/CO一位小数其余整数,数值越低越靠前,相同值并列);小时排名用 SsfbCityHourRank(过滤 dataTime 到具体小时);"
         "无聚合统计,月度及以上统计以官方发布为准);"
         "小时排名用 SsfbCityHourRank(过滤 dataTime 到具体小时);"
         "排名规则为数值越低越靠前(Rank*=1 最优),相同值并列;"
