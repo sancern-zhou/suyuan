@@ -196,7 +196,8 @@ class RunEventStream:
         if not result:
             return []
         entries: list[tuple[str, str]] = []
-        for _key, messages in result.items():
+        pairs = result.items() if isinstance(result, dict) else result
+        for _key, messages in pairs:
             for entry_id, fields in messages:
                 payload = fields.get("payload") if isinstance(fields, dict) else None
                 if payload:

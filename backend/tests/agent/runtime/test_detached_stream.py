@@ -30,7 +30,7 @@ class FakeRedis:
         return entry_id
 
     async def xread(self, streams, block=None, count=None):
-        result = {}
+        result = []
         for key, last_id in streams.items():
             entries = [
                 (eid, fields)
@@ -38,8 +38,9 @@ class FakeRedis:
                 if _entry_gt(eid, last_id)
             ]
             if entries:
-                result[key] = entries[: count or len(entries)]
-        return result
+                result.append((key, entries[: count or len(entries)]))
+        # 与 redis.asyncio 一致：返回 [key, entries] 列表
+        return [[key, entries] for key, entries in result]
 
     async def expire(self, key, ttl):
         return True
