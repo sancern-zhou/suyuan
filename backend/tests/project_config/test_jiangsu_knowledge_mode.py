@@ -35,7 +35,8 @@ def test_jiangsu_declares_dedicated_knowledge_mode_and_tools():
 def test_jiangsu_knowledge_mode_loads_project_prompt_and_tool_surface(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "jiangsu-ops")
 
-    assert get_tool_order("knowledge") == EXPECTED_TOOLS
+    # 交互模式由共享层自动追加 ask_user_question（main 2026-10 合入），yaml 白名单不显式声明
+    assert get_tool_order("knowledge") == EXPECTED_TOOLS + ["ask_user_question"]
     prompt = build_react_system_prompt("knowledge")
 
     assert "你是江苏项目的知识问答智能体" in prompt

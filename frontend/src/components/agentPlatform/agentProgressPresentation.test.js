@@ -13,7 +13,7 @@ test('progress status favors the latest real process event', () => {
   assert.equal(getAgentProgressStatus([], 'query_monitoring'), '正在准备查询和核验数据')
   assert.equal(getAgentProgressStatus([{ kind: 'thought' }], 'query'), '正在梳理分析思路')
   assert.equal(getAgentProgressStatus([{ kind: 'tool', toolName: 'execute_sql', status: 'running' }]), '正在查询并核验数据')
-  assert.equal(getAgentProgressStatus([{ kind: 'tool', toolName: 'create_report_chart', status: 'running' }]), '正在生成可视化结果')
+  assert.equal(getAgentProgressStatus([{ kind: 'tool', toolName: 'create_business_chart', status: 'running' }]), '正在生成可视化结果')
   assert.equal(getAgentProgressStatus([{ kind: 'tool', toolName: 'unknown_internal_tool', status: 'running' }]), '正在执行分析步骤')
 })
 

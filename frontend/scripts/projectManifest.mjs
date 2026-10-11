@@ -157,7 +157,10 @@ export function loadProjectBuildConfig({ projectId, repoRoot }) {
   for (const sceneId of agentScenes) {
     if (!AGENT_SCENE_IDS.has(sceneId)) throw new Error(`unknown agent scene: ${sceneId}`)
   }
-  const sidebarAgentModes = uniqueStrings(manifest.frontend?.sidebar_agent_modes ?? ['query'], 'frontend.sidebar_agent_modes')
+  // coordinator 布局没有独立侧边栏；未显式配置时默认为空，
+  // 避免默认 ['query'] 因项目未声明共享 query 模式（如江苏用 jiangsu_query）而校验失败。
+  const sidebarDefault = agentPlatformLayout === 'coordinator' ? [] : ['query']
+  const sidebarAgentModes = uniqueStrings(manifest.frontend?.sidebar_agent_modes ?? sidebarDefault, 'frontend.sidebar_agent_modes')
   for (const modeId of sidebarAgentModes) {
     if (!SIDEBAR_AGENT_MODE_IDS.has(modeId)) throw new Error(`unknown sidebar agent mode: ${modeId}`)
     if (agentModes.length > 0 && !agentModes.includes(modeId)) {

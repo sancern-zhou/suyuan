@@ -61,7 +61,7 @@ test('chat welcome copy drops the example question guidance for every agent', ()
 })
 
 test('agent mode lookup returns matching metadata and null for unsupported modes', () => {
-  assert.equal(getAgentMode('query')?.name, 'AI问数智能体')
+  assert.equal(getAgentMode('query')?.name, '问数生图智能体')
   assert.equal(getAgentMode('knowledge')?.name, '知识问答智能体')
   assert.equal(getAgentMode('ops')?.welcome.description, '面向系统运维与工单处置场景，协助定位故障原因、评估影响并形成可执行的处理方案。')
   assert.equal(getAgentMode('missing'), null)

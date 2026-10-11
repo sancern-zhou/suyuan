@@ -51,6 +51,7 @@ ASSISTANT_TOOL_NAMES = [
     "grep",
     "create_html_artifact",
     "create_report_package",
+    "publish_report",
     # 轻量数据计算与网页检索抓取。
     "execute_python",
     "web_search",
@@ -89,6 +90,8 @@ PPT_TOOL_NAMES = [
     "web_search",
     "web_fetch",
     "browser",
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",
 ]
 
 # ===== 专家模式工具 =====
@@ -124,6 +127,8 @@ EXPERT_TOOL_NAMES = [
     "grep",
     "list_directory",
     "search_files",
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",
 ]
 
 # ===== 气象专家模式工具（报告 DAG 子专家，精简配置） =====
@@ -208,6 +213,8 @@ QUERY_TOOL_NAMES = [
     # === 图表生成工具 ===
     "create_business_chart",
     "execute_echarts_python",
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",
 ]
 
 # ===== 报告 DAG 问数子模式工具（精简配置，核心取数集） =====
@@ -289,6 +296,8 @@ KNOWLEDGE_TOOL_NAMES = [
     "read_session_resource",
     "web_search",
     "web_fetch",
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",
 ]
 
 # ===== 报告模式工具 =====
@@ -322,6 +331,8 @@ BOARD_TOOL_NAMES = [
     "create_drawio_board",
     "render_drawio_board_candidate",
     "accept_drawio_board_candidate",
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",
 ]
 
 # ===== 运维管理模式工具 =====
@@ -341,6 +352,7 @@ OPS_TOOL_NAMES = [
     "execute_ops_sql_query",
     # 审核正式报告生成与验收
     "create_report_package",
+    "publish_report",
     # 子 Agent 复核
     "call_sub_agent",
     # 代码执行
@@ -364,6 +376,8 @@ GRAPH_TOOL_NAMES = [
     "grep",
     "list_directory",
     "search_files",
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",
 ]
 
 # ===== 社交模式工具（移动端助理） =====
@@ -388,6 +402,7 @@ SOCIAL_TOOL_NAMES = [
     # 正式报告生成与收口
     "create_business_chart",
     "create_report_package",
+    "publish_report",
     # 网络搜索
     "web_search",
     "web_fetch",
@@ -413,6 +428,8 @@ ENFORCEMENT_EXAM_TOOL_NAMES = [
     "web_search",
     "web_fetch",
     "schedule_task",
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",
 ]
 
 # ===== 记忆整合器工具（后台专用） =====
@@ -426,6 +443,8 @@ MEMORY_CONSOLIDATOR_TOOL_NAMES = [
     "replace_memory",
     "remove_memory",
     "agent_case_library",
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",
 ]
 
 # ===== 会商专用模式工具 =====
@@ -440,6 +459,8 @@ DELIBERATION_METEOROLOGY_TOOL_NAMES = [
     "TaskUpdate",
     "TaskList",
     "TaskGet",
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",
 ]
 
 DELIBERATION_MONITORING_TOOL_NAMES = [
@@ -450,6 +471,8 @@ DELIBERATION_MONITORING_TOOL_NAMES = [
     "TaskUpdate",
     "TaskList",
     "TaskGet",
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",
 ]
 
 DELIBERATION_CHEMISTRY_TOOL_NAMES = [
@@ -470,6 +493,8 @@ DELIBERATION_CHEMISTRY_TOOL_NAMES = [
     "TaskUpdate",
     "TaskList",
     "TaskGet",
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",
 ]
 
 DELIBERATION_REVIEWER_TOOL_NAMES = [
@@ -486,6 +511,8 @@ DELIBERATION_REVIEWER_TOOL_NAMES = [
     "TaskUpdate",
     "TaskList",
     "TaskGet",
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",
 ]
 
 # ========================================
@@ -519,6 +546,84 @@ QUERY_MONITORING_CITY_TOOLS = _build_tool_dict(QUERY_MONITORING_CITY_TOOL_NAMES)
 QUERY_FORECAST_TOOLS = _build_tool_dict(QUERY_FORECAST_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
 KNOWLEDGE_TOOLS = _build_tool_dict(KNOWLEDGE_TOOL_NAMES)
+JIANGSU_QUERY_TOOLS = _build_tool_dict([
+    "list_session_resources",
+    "publish_session_file",
+    "jiangsu_fetch_city_data",
+    "jiangsu_fetch_district_data",
+    "jiangsu_fetch_station_data",
+    "jiangsu_fetch_station_directory",
+    "jiangsu_query_statistics",
+    "jiangsu_fetch_alarm_records",
+    "get_weather_data",
+    "get_weather_forecast",
+    "get_current_weather",
+    "get_observed_meteorology",
+    "execute_sql_query",
+    "create_business_chart",
+    "execute_echarts_python",
+    "execute_python",
+
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",])
+SMART_INSPECTION_TOOLS = _build_tool_dict([
+    "jiangsu_smart_event_workspace",
+    "jiangsu_query_operations_graph",
+    "jiangsu_fetch_network_inspection_summary",
+    "jiangsu_fetch_alarm_records",
+    "jiangsu_fetch_auto_inspection",
+    "jiangsu_fetch_station_alarm_logs",
+    "jiangsu_fetch_station_environment_history",
+    "jiangsu_fetch_station_directory",
+    "jiangsu_fetch_qc_task_history",
+    "jiangsu_fetch_qc_task_status",
+    "jiangsu_fetch_qc_run_logs",
+    "jiangsu_fetch_qc_monitoring_curve",
+    "knowledge_graph_query",
+
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",])
+OPERATIONS_ANALYSIS_TOOLS = _build_tool_dict([
+    "jiangsu_query_operations_graph",
+    "jiangsu_fetch_attendance_records",
+    "jiangsu_fetch_station_directory",
+    "knowledge_graph_query",
+
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",])
+DEVICE_CONTROL_TOOLS = _build_tool_dict([
+    "jiangsu_get_device_control_state",
+    "jiangsu_prepare_device_control",
+    "jiangsu_execute_device_control",
+    "jiangsu_fetch_station_directory",
+    "jiangsu_fetch_qc_task_history",
+    "jiangsu_fetch_qc_task_status",
+    "jiangsu_fetch_qc_run_logs",
+    "jiangsu_fetch_qc_monitoring_curve",
+    "jiangsu_query_operations_graph",
+    "knowledge_graph_query",
+
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",])
+STATION_FAULT_DIAGNOSIS_TOOLS = _build_tool_dict([
+    "jiangsu_smart_event_workspace",
+    "knowledge_qa_workflow",
+    "knowledge_document_reader",
+    "jiangsu_fetch_station_data",
+    "jiangsu_fetch_station_directory",
+    "jiangsu_fetch_alarm_records",
+    "jiangsu_fetch_station_alarm_logs",
+    "jiangsu_fetch_fault_work_orders",
+    "jiangsu_fetch_auto_inspection",
+    "jiangsu_fetch_qc_task_history",
+    "jiangsu_fetch_qc_task_status",
+    "jiangsu_fetch_qc_run_logs",
+    "jiangsu_fetch_qc_monitoring_curve",
+    "jiangsu_query_operations_graph",
+    "knowledge_graph_query",
+
+    # 正式报告包（HTML/DOCX/QMD）生成
+    "create_report_package",])
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
 BOARD_TOOLS = _build_tool_dict(BOARD_TOOL_NAMES)
 OPS_TOOLS = _build_tool_dict(OPS_TOOL_NAMES)

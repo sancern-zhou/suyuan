@@ -20,7 +20,7 @@ EXPECTED_TOOLS = [
     "web_search",
     "web_fetch",
     "execute_python",
-    "create_report_chart",
+    "create_business_chart",
     "create_report_package",
     "publish_report",
     "manage_editable_ppt",
@@ -43,7 +43,8 @@ def test_jiangsu_declares_assistant_mode_and_reviewed_tools():
 def test_jiangsu_assistant_mode_loads_project_prompt_and_tool_surface(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "jiangsu-ops")
 
-    assert get_tool_order("assistant") == EXPECTED_TOOLS
+    # 交互模式由共享层自动追加 ask_user_question（main 2026-10 合入），yaml 白名单不显式声明
+    assert get_tool_order("assistant") == EXPECTED_TOOLS + ["ask_user_question"]
     prompt = build_react_system_prompt("assistant")
 
     assert "江苏省运维审核管理服务平台" in prompt

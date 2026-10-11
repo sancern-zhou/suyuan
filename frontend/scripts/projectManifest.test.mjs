@@ -34,12 +34,12 @@ test('xuchang project enables only its declared business modules', () => {
   const config = loadProjectBuildConfig({ projectId: 'xuchang', repoRoot })
 
   assert.deepEqual(config.modules, ['core', 'legacy', 'satellite', 'xuchang-air-quality', 'xuchang-satellite'])
-  assert.deepEqual(config.frontend.agentModes, ['query', 'knowledge', 'expert', 'report'])
+  assert.deepEqual(config.frontend.agentModes, ['assistant', 'query', 'knowledge', 'expert', 'report'])
   assert.equal(config.frontend.defaultAgentMode, 'query')
   assert.equal(config.frontend.agentPlatformLayout, 'scenes')
   assert.deepEqual(config.frontend.agentScenes, ['monitoring'])
   assert.deepEqual(config.frontend.agentSceneOverrides, {
-    monitoring: { modeIds: ['query', 'knowledge', 'expert', 'report', 'chart'] }
+    monitoring: { modeIds: ['assistant', 'query', 'knowledge', 'expert', 'report'] }
   })
   assert.deepEqual(config.frontend.sidebarAgentModes, [])
 })
@@ -47,13 +47,13 @@ test('xuchang project enables only its declared business modules', () => {
 test('jiangsu operations project exposes its dedicated operations modes', () => {
   const config = loadProjectBuildConfig({ projectId: 'jiangsu-ops', repoRoot })
   assert.deepEqual(config.frontend.agentModes, [
-    'assistant', 'ops', 'jiangsu_query', 'knowledge', 'expert', 'smart_inspection', 'operations_analysis',
+    'assistant', 'ops', 'jiangsu_query', 'knowledge', 'smart_inspection', 'operations_analysis',
     'device_control', 'station_fault_diagnosis', 'smart_event_external', 'smart_event_instrument'
   ])
   assert.equal(config.frontend.defaultAgentMode, 'ops')
   assert.equal(config.frontend.agentModeOverrides.ops.name, '工单审核模式')
-  assert.equal(config.frontend.agentModeOverrides.ops.shortName, '工单审核')
-  assert.equal(config.frontend.agentModeOverrides.jiangsu_query.name, '江苏问数生图智能体')
+  assert.equal(config.frontend.agentModeOverrides.ops.shortName, '智能工单审核')
+  assert.equal(config.frontend.agentModeOverrides.jiangsu_query.name, '运维问数生图智能体')
   assert.equal(config.frontend.agentModeOverrides.jiangsu_query.tags.includes('问数生图'), true)
   assert.equal(config.frontend.agentModeOverrides.knowledge.name, '江苏知识问答智能体')
 })

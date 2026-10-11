@@ -184,8 +184,8 @@ class ListSkillsTool(LLMTool):
         matches = re.findall(pattern, content)
 
         for name, file_path, description in matches:
-            # 转换为绝对路径
-            full_path = str(self.skills_dir / file_path)
+            # 转换为绝对路径；统一正斜杠，保证跨平台（Windows 本地与 CI）路径断言一致
+            full_path = str(self.skills_dir / file_path).replace("\\", "/")
             skills.append({
                 "name": name.strip(),
                 "file": full_path,
@@ -210,7 +210,7 @@ class ListSkillsTool(LLMTool):
                 name, description = self._parse_skill_file(md_file)
                 skills.append({
                     "name": name,
-                    "file": str(md_file),
+                    "file": str(md_file).replace("\\", "/"),
                     "description": description
                 })
 

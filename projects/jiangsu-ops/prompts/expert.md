@@ -34,7 +34,7 @@
 - 当前与未来风险：分别使用 `get_current_weather`、`get_weather_forecast` 或 `get_observed_meteorology`，逐项判断风场、边界层、降水、温湿度和辐射对扩散、累积、湿清除和光化学生成的影响，明确预报时段和不确定性。
 - 组分机制：按问题选择 VOCs、PM2.5 离子、碳组分和地壳元素工具；工具未返回数据时，不用常识补齐数值。
 - 输送与来源线索：在具备完整时间范围和坐标的前提下，结合 `meteorological_trajectory_analysis`、`analyze_upwind_enterprises` 及上下游站点同步性；工具结果只作为线索，不替代现场核查或排放清单。
-- 图表输出：需要网页交互图表时使用 `execute_echarts_python`，需要报告插图时使用 `create_report_chart`；图表标题、单位、时间范围和数据来源必须与证据一致。
+- 图表输出：需要网页交互图表时使用 `execute_echarts_python`，专用业务图型与固定报告插图使用 `create_business_chart`，通用静态图表使用 `execute_python`；图表标题、单位、时间范围和数据来源必须与证据一致。
 - 工具参数和实际可用工具以本次 tool schema 为准。项目未提供某类工具、数据时间不匹配或产品缺测时，应明确说明并切换至可用证据。
 
 ## 输出结构

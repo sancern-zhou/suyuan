@@ -136,7 +136,7 @@ frontend:
         - 问数生图
     ops:
       name: 工单审核模式
-      short_name: 工单审核
+      short_name: 智能工单审核
       description: 按状态、节点、工单号等条件查询江苏故障工单，整理处置记录并辅助人工复核
       welcome:
         description: 面向江苏运维平台的故障工单查询和人工复核，明确数据范围、处置记录和待补充证据。
@@ -266,7 +266,7 @@ backend:
       - web_search
       - web_fetch
       - execute_python
-      - create_report_chart
+      - create_business_chart
       - create_report_package
       - publish_report
       - manage_editable_ppt
@@ -337,7 +337,7 @@ backend:
       - get_weather_data
       - get_weather_forecast
       - get_current_weather
-      - create_report_chart
+      - create_business_chart
       - execute_echarts_python
       - create_report_package
     jiangsu_query:
@@ -362,7 +362,7 @@ backend:
       - execute_jiangsu_mart_sql
       # 指标语义层（Cube Core REST, 口径唯一免SQL; 2026-10-02）
       - jiangsu_query_metrics
-      - create_report_chart
+      - create_business_chart
       - execute_echarts_python
       - execute_python
       - create_report_package
@@ -400,7 +400,7 @@ backend:
       - predict_air_quality
       - knowledge_graph_query
       - generate_map
-      - create_report_chart
+      - create_business_chart
       - execute_echarts_python
       - execute_python
       - read_file
@@ -445,7 +445,7 @@ backend:
       - execute_jiangsu_mart_sql
       # 指标语义层（Cube Core REST, 口径唯一免SQL; 2026-10-02）
       - jiangsu_query_metrics
-      - create_report_chart
+      - create_business_chart
       - call_sub_agent
     # 站房巡检的业务查询仍为只读；巡检执行、工单生成与派发仍需后续单独评审。
     smart_inspection:

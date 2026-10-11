@@ -12,7 +12,7 @@ def test_jiangsu_ops_mode_uses_jiangsu_fault_work_order_query_only():
     override = context.manifest.frontend.agent_mode_overrides["ops"]
 
     assert override["name"] == "工单审核模式"
-    assert override["short_name"] == "工单审核"
+    assert override["short_name"] == "智能工单审核"
     assert "jiangsu_fetch_fault_work_orders" in tools
     assert "jiangsu_fetch_fault_work_order_detail" in tools
     # 站房告警/动环历史/质控清单已并入 jiangsu_fetch_review_evidence 的 modules 参数；

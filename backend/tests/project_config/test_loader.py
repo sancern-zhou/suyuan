@@ -28,7 +28,7 @@ def test_default_project_loads_legacy_module():
         "ops",
     ]
     assert context.manifest.frontend.agent_platform_layout == "scenes"
-    assert context.manifest.backend.tools  # project-scoped tools declared explicitly
+    assert context.manifest.backend.tools == []  # default 项目不声明项目级工具
     assert context.manifest.backend.fetchers_enabled is True
     assert context.manifest.backend.mode_prompt_files == {}
     assert context.manifest.knowledge.collections == []
@@ -149,6 +149,7 @@ def test_xuchang_project_composes_shared_and_customer_modules():
     )
     assert context.manifest.frontend.brand_name == "许昌市AI应用智能体"
     assert context.manifest.frontend.agent_modes == [
+        "assistant",
         "query",
         "knowledge",
         "expert",
@@ -195,6 +196,9 @@ def test_xuchang_project_composes_shared_and_customer_modules():
     # 许昌不再需要逐项禁用；仅保留非项目工具的显式禁用项。
     assert context.manifest.backend.disabled_tools == [
         "get_observed_meteorology",
+        "execute_tender_sql_query",
+        "zhiliao_tender_detail",
+        "browser",
     ]
     assert context.manifest.scheduled_tasks == [
         "task_xuchang_station_deviation_alert",

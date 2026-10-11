@@ -28,17 +28,16 @@ def test_xuchang_disables_guangdong_query_tools_only_for_xuchang(monkeypatch):
         "query_station_standard_report",
         "query_station_standard_yoy_report",
     }
+    # 广东数据源工具已收敛为项目专属（共享 PROJECT_SCOPED_TOOL_NAMES 置空），
+    # 任何项目的共享模式白名单都不再包含它们；独立 chart 模式已下线移除。
+    forbidden = standard_report_tools | {"get_5min_data", "analyze_city_pollutant_rankings"}
     monkeypatch.setattr(settings, "project_id", "xuchang")
-    for mode in ("query", "report", "chart"):
-        tools = get_tools_by_mode(mode)
-        assert "get_5min_data" not in tools
-        assert "analyze_city_pollutant_rankings" not in tools
-        assert standard_report_tools.isdisjoint(tools)
+    for mode in ("query", "report"):
+        assert forbidden.isdisjoint(get_tools_by_mode(mode))
 
     monkeypatch.setattr(settings, "project_id", "default")
-    assert "get_5min_data" in get_tools_by_mode("query")
-    assert "analyze_city_pollutant_rankings" in get_tools_by_mode("query")
-    assert standard_report_tools.issubset(get_tools_by_mode("query"))
+    for mode in ("query", "report"):
+        assert forbidden.isdisjoint(get_tools_by_mode(mode))
 
 
 def test_xuchang_report_mode_is_orchestrator_focused(monkeypatch):

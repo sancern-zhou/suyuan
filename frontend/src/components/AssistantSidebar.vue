@@ -122,7 +122,7 @@
           class="quick-entry"
           :class="{ open: quickEntryOpen }"
           @mouseenter="openQuickEntry"
-          @mouseleave="closeQuickEntry"
+          @mouseleave="scheduleQuickEntryClose"
         >
           <button
             class="module-card"
@@ -449,33 +449,62 @@ const conversationListEmptyText = computed(() => ({
 
 const platformEntryLabel = computed(() => '智能体平台')
 
-// 运维管理类智能体模式统一收纳到“快捷入口”，悬停时在右侧展开
+// 运维管理类智能体模式统一收纳到“快捷入口”，悬停时在右侧展开。
+// 收起带 300ms 宽限期：从按钮斜向滑向列表时会短暂离开悬停区域，不立即收起。
 const quickEntryRef = ref(null)
 const quickEntryOpen = ref(false)
-const openQuickEntry = () => { quickEntryOpen.value = true }
-const closeQuickEntry = () => { quickEntryOpen.value = false }
-const toggleQuickEntry = () => { quickEntryOpen.value = !quickEntryOpen.value }
-const quickEntries = Object.freeze([
-  { id: 'query-dashboard', name: '运维问数生图', icon: 'query-dashboard' },
-  { id: 'smart-inspection', name: '智能巡检', icon: 'smart-inspection' },
-  { id: 'operations-analysis', name: '运维操作分析', icon: 'operations-analysis' },
-  { id: 'device-control', name: '智能遥控', icon: 'device-control' },
-  { id: 'station-fault-diagnosis', name: '故障诊断', icon: 'station-fault-diagnosis' },
-  { id: 'work-order-review', name: '工单审核', icon: 'work-order-review' },
-  { id: 'smart-event-external', name: '外界环境识别', icon: 'smart-event-external' },
-  { id: 'smart-event-instrument', name: '仪器故障识别', icon: 'smart-event-instrument' }
-])
-const quickEntryActive = computed(() => quickEntries.some(entry => isActive(entry.id)))
-const handleQuickEntrySelect = (moduleId) => {
-  closeQuickEntry()
-  handleModuleSelect(moduleId)
+const QUICK_ENTRY_CLOSE_DELAY_MS = 300
+let quickEntryCloseTimer = null
+const cancelQuickEntryClose = () => {
+  if (quickEntryCloseTimer !== null) {
+    window.clearTimeout(quickEntryCloseTimer)
+    quickEntryCloseTimer = null
+  }
 }
-
+const openQuickEntry = () => {
+  cancelQuickEntryClose()
+  quickEntryOpen.value = true
+}
+const closeQuickEntry = () => {
+  cancelQuickEntryClose()
+  quickEntryOpen.value = false
+}
+const scheduleQuickEntryClose = () => {
+  cancelQuickEntryClose()
+  quickEntryCloseTimer = window.setTimeout(() => {
+    quickEntryCloseTimer = null
+    quickEntryOpen.value = false
+  }, QUICK_ENTRY_CLOSE_DELAY_MS)
+}
+const toggleQuickEntry = () => { quickEntryOpen.value = !quickEntryOpen.value }
 // 问数入口绑定当前项目实际启用的问数模式：江苏使用 jiangsu_query，
 // 其他项目回退到共享的 query 模式，避免江苏误入 main 的问数生图智能体。
 const queryDashboardMode = computed(() => (
   projectConfig.agentModeIds.includes('jiangsu_query') ? 'jiangsu_query' : 'query'
 ))
+
+// 排序与“智能体平台”一致：问数（监测分析）在前，其余按平台运维管理场景卡片顺序。
+// 名称取模式配置 shortName（与平台卡片、聊天模式切换共用同一来源），统一为 6 字命名。
+const QUICK_ENTRY_DEFS = Object.freeze([
+  { id: 'query-dashboard', fallbackName: '运维问数生图', icon: 'query-dashboard' },
+  { id: 'work-order-review', modeId: 'ops', fallbackName: '智能工单审核', icon: 'work-order-review' },
+  { id: 'smart-inspection', modeId: 'smart_inspection', fallbackName: '站点智能巡检', icon: 'smart-inspection' },
+  { id: 'operations-analysis', modeId: 'operations_analysis', fallbackName: '运维操作分析', icon: 'operations-analysis' },
+  { id: 'device-control', modeId: 'device_control', fallbackName: '智能设备反控', icon: 'device-control' },
+  { id: 'station-fault-diagnosis', modeId: 'station_fault_diagnosis', fallbackName: '站点故障诊断', icon: 'station-fault-diagnosis' },
+  { id: 'smart-event-external', modeId: 'smart_event_external', fallbackName: '外界环境识别', icon: 'smart-event-external' },
+  { id: 'smart-event-instrument', modeId: 'smart_event_instrument', fallbackName: '仪器故障识别', icon: 'smart-event-instrument' }
+])
+const quickEntries = computed(() => QUICK_ENTRY_DEFS.map((def) => {
+  const modeId = def.modeId || queryDashboardMode.value
+  const mode = getAgentMode(modeId, projectConfig.agentModeOverrides)
+  return { id: def.id, icon: def.icon, name: mode?.shortName || mode?.name || def.fallbackName }
+}))
+const quickEntryActive = computed(() => quickEntries.value.some(entry => isActive(entry.id)))
+const handleQuickEntrySelect = (moduleId) => {
+  closeQuickEntry()
+  handleModuleSelect(moduleId)
+}
 
 const queryDashboardModule = computed(() => {
   if (queryDashboardMode.value === 'query') {
@@ -486,6 +515,14 @@ const queryDashboardModule = computed(() => {
 })
 
 const allModules = [
+  {
+    id: 'restart-session',
+    name: '新建对话',
+    abbr: '新建对话',
+    desc: '清空对话，开始新分析',
+    badge: '操作',
+    isAction: true
+  },
   {
     id: 'agent-platform',
     name: '智能体平台',
@@ -918,6 +955,7 @@ onUnmounted(() => {
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
   document.removeEventListener('keydown', handleDocumentKeydown)
   window.removeEventListener('session-case-updated', handleSessionCaseUpdated)
+  cancelQuickEntryClose()
   if (recentSessionsTimer) {
     window.clearInterval(recentSessionsTimer)
     recentSessionsTimer = null
@@ -1139,6 +1177,11 @@ onUnmounted(() => {
 .quick-entry {
   position: relative;
 
+  // button 元素默认按内容收缩（不像其它条目作为 flex 子项被拉伸），显式撑满与其它入口对齐
+  > .module-card {
+    width: 100%;
+  }
+
   &.open > .module-card {
     background: var(--sidebar-hover);
     color: var(--color-primary);
@@ -1170,6 +1213,16 @@ onUnmounted(() => {
   border-radius: 10px;
   background: var(--bg-container);
   box-shadow: 0 12px 30px rgba(31, 42, 68, 0.14);
+
+  // 触发按钮与弹出层之间的接缝桥：斜向滑动经过缝隙时不脱离悬停区域
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -12px;
+    width: 12px;
+    height: 100%;
+  }
 }
 
 .quick-entry-item {
