@@ -38,8 +38,39 @@ class StreamingLLMWithUsage:
         yield {"type": "message_stop", "data": {}}
 
 
-async def collect_context_usage(usage):
-    planner = ReActPlanner(llm_client=StreamingLLMWithUsage(usage))
+class StreamingLLMCompatEndFrame:
+    """模拟 OpenAI 兼容适配器：message_start 占位 0，真实 usage 在结束帧 message_delta。"""
+
+    def __init__(self, usage, model="compat-model"):
+        self.usage = usage
+        self.model = model
+
+    async def chat_anthropic_streaming(self, **kwargs):
+        yield {
+            "type": "message_start",
+            "data": {"model": self.model, "usage": {"input_tokens": 0, "output_tokens": 0}},
+        }
+        yield {
+            "type": "content_block_start",
+            "data": {"index": 0, "block": SimpleNamespace(type="text")},
+        }
+        yield {
+            "type": "content_block_delta",
+            "data": {
+                "index": 0,
+                "delta": SimpleNamespace(type="text_delta", text="结论"),
+            },
+        }
+        yield {"type": "content_block_stop", "data": {"index": 0}}
+        yield {
+            "type": "message_delta",
+            "data": {"stop_reason": "end_turn", "usage": self.usage},
+        }
+        yield {"type": "message_stop", "data": {}}
+
+
+async def collect_context_usage(usage, llm_cls=StreamingLLMWithUsage):
+    planner = ReActPlanner(llm_client=llm_cls(usage))
     events = [
         event
         async for event in planner.think_and_action_streaming(
@@ -85,6 +116,31 @@ async def test_context_usage_event_without_cache_fields():
 @pytest.mark.asyncio
 async def test_context_usage_event_absent_without_usage():
     assert await collect_context_usage({}) == []
+
+
+@pytest.mark.asyncio
+async def test_context_usage_from_compat_end_frame_skips_placeholder_start():
+    """OpenAI 兼容协议：占位 message_start 不产出事件，结束帧 message_delta 产出真实快照。"""
+    events = await collect_context_usage(
+        {"input_tokens": 7800, "output_tokens": 120},
+        llm_cls=StreamingLLMCompatEndFrame,
+    )
+
+    assert len(events) == 1
+    data = events[0]["data"]
+    assert data["input_tokens"] == 7800
+    assert data["context_tokens"] == 7800
+    # 适配器结束帧 message_delta 不携带 model 字段
+    assert data["model"] is None
+
+
+@pytest.mark.asyncio
+async def test_context_usage_absent_when_compat_end_frame_has_zero_usage():
+    events = await collect_context_usage(
+        {"input_tokens": 0, "output_tokens": 0},
+        llm_cls=StreamingLLMCompatEndFrame,
+    )
+    assert events == []
 
 
 def test_merge_preserved_metadata_keeps_context_usage():
