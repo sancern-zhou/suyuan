@@ -62,6 +62,7 @@ async def test_legacy_stream_uses_detached_execution(tmp_path, monkeypatch):
     store = AppRunStore(tmp_path / 'runs.sqlite3')
     monkeypatch.setattr(routes, 'get_app_run_store', lambda: store)
     monkeypatch.setattr(routes, '_ensure_session', AsyncMock(return_value='social-session'))
+    monkeypatch.setattr(routes, 'get_conversation_catalog', lambda: SimpleNamespace(find=AsyncMock(return_value=None)))
     release = asyncio.Event()
     async def producer(*args, **kwargs):
         await release.wait()
@@ -75,3 +76,58 @@ async def test_legacy_stream_uses_detached_execution(tmp_path, monkeypatch):
     release.set()
     await asyncio.gather(*store.tasks)
     assert (await store.get(response.headers['x-run-id']))['status'] == 'completed'
+
+
+@pytest.mark.asyncio
+async def test_start_app_run_autotitles_placeholder_session(tmp_path, monkeypatch):
+    store = AppRunStore(tmp_path / 'runs.sqlite3')
+    monkeypatch.setattr(routes, 'get_app_run_store', lambda: store)
+    monkeypatch.setattr(routes, '_ensure_session', AsyncMock(return_value='social-session'))
+    catalog = SimpleNamespace(
+        find=AsyncMock(return_value=SimpleNamespace(title='新对话')),
+        rename=AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(routes, 'get_conversation_catalog', lambda: catalog)
+
+    async def producer(*args, **kwargs):
+        yield 'data: {"type":"complete","data":{"answer":"done"}}\n\n'
+
+    monkeypatch.setattr(routes, '_stream_events', producer)
+    await routes.start_app_run(
+        object(),
+        routes.AppChatRequest(query='  帮我  查一下空气质量  ', mode='query'),
+        None,
+        AppIdentity('alice', 'Alice', 'app:android:alice', 9999999999),
+    )
+    await asyncio.gather(*store.tasks)
+    catalog.rename.assert_awaited_once_with('social-session', '帮我 查一下空气质量')
+
+
+@pytest.mark.asyncio
+async def test_autotitle_skips_named_sessions_and_broadcasts():
+    catalog = SimpleNamespace(
+        find=AsyncMock(return_value=SimpleNamespace(title='已有标题')),
+        rename=AsyncMock(return_value=True),
+    )
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(routes, 'get_conversation_catalog', lambda: catalog)
+        await routes._autotitle_session_from_query('social-session', '新问题')
+        catalog.rename.assert_not_awaited()
+        await routes._autotitle_session_from_query('broadcast_session_x', '新问题')
+        assert catalog.find.await_count == 1
+        await routes._autotitle_session_from_query('social-session', '   ')
+        assert catalog.find.await_count == 1
+        catalog.rename.assert_not_awaited()
+
+
+@pytest.mark.parametrize('title,expected', [
+    (None, True),
+    ('', True),
+    ('新对话', True),
+    ('新会话', True),
+    ('session_abc', True),
+    ('session-ab real title', False),
+    ('帮我查空气质量', False),
+])
+def test_placeholder_title_detection(title, expected):
+    assert routes._is_placeholder_session_title(title, 'social-session') is expected
