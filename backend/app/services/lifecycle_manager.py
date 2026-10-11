@@ -41,6 +41,7 @@ from app.fetchers.xuchang_annual_attainment_forecast import XuchangAnnualAttainm
 from app.fetchers.xuchang_cnemc_station_hour import XuchangCnemcStationHourFetcher
 from app.fetchers.xuchang_city_exceedance import XuchangCityExceedanceFetcher
 from app.fetchers.xuchang_daily_attainment_forecast import XuchangDailyAttainmentForecastFetcher
+from app.fetchers.xuchang_henan_county_publish import XuchangHenanCountyPublishFetcher
 from app.fetchers.xuchang_henan_month_year_accumulate import XuchangHenanMonthYearAccumulateFetcher
 from app.fetchers.xuchang_henan_ranking_recalc import XuchangHenanRankingRecalcFetcher
 from app.fetchers.xuchang_henan_ssfb_publish import (
@@ -142,6 +143,7 @@ def _configured_fetchers(project_context):
         "xuchang_henan_ranking_recalc_fetcher": XuchangHenanRankingRecalcFetcher,
         "xuchang_henan_ssfb_city_publish_fetcher": XuchangHenanSsfbCityPublishFetcher,
         "xuchang_henan_ssfb_site_publish_fetcher": XuchangHenanSsfbSitePublishFetcher,
+        "xuchang_henan_county_publish_fetcher": XuchangHenanCountyPublishFetcher,
         "xuchang_nmc_hourly_forecast_fetcher": XuchangNmcHourlyForecastFetcher,
         "xuchang_weather_com_daily_forecast_fetcher": XuchangWeatherComDailyForecastFetcher,
         "xuchang_air_quality_forecast_fetcher": XuchangAirQualityForecastFetcher,

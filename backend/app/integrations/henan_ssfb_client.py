@@ -6,13 +6,15 @@ AES-128-CBC/PKCS7 加密的 Base64 文本；解密后的 JSON 中数字字段夹
 NUL 填充字符（前端同样执行 replace(/\\u0000/g, "")）。
 
 能力边界（2026-10 实测）：
-- 城市组接口（airQualityGroupHours/Days）只认城市树 ID，覆盖河南
-  17 省辖市 + 济源示范区（共 18 组），小时值约保留最近 8 天，日值
-  次日发布、保留同样时长；
+- 城市组接口（airQualityGroupHours/Days）queryType=1 时只认城市树
+  ID，覆盖河南 17 省辖市 + 济源示范区（共 18 组），小时值约保留
+  最近 8 天，日值次日发布、保留同样时长；
+- 同一接口 queryType=2 返回区县口径：cityIDs 传区县树
+  （GetGroupCountyTree，189 叶子）的叶子 ID；济源不在区县树，但
+  ID 218（济源示范区）可直接查询且返回区县级行，平台"区县排名"
+  即 189 叶子 + 济源 共 188+ 个区县按因子值升序并列排名；
 - 站点接口（airQualitySiteHours/Days）覆盖全省国控/省控/市控站点
-  （约 500 个，含济源），树为 市 → 区县分组 → 站点 三层；
-- 区县组接口没有独立数据：区县树叶子 ID 会被错误映射回城市组，
-  区县口径数据需要用站点数据自行聚合。
+  （约 500 个，含济源），树为 市 → 区县分组 → 站点 三层。
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ SSFB_AES_KEY = "3294573829475733"
 SSFB_AES_IV = "1234567890123456"
 
 CITY_TREE_PATH = "/HNTree/GetGroupCityTree"
+COUNTY_TREE_PATH = "/HNTree/GetGroupCountyTree"
 STATION_TREE_PATH = "/HNTree/GetGroupStationTree"
 GROUP_HOURS_PATH = "/ssfbfw/airQualityGroupHours"
 GROUP_DAYS_PATH = "/ssfbfw/airQualityGroupDays"
@@ -55,6 +58,11 @@ RETRY_BACKOFF_SECONDS = 5
 # 216周口 217驻马店 218济源 —— ID 与树重复但接口按此表返回，采集时
 # 以城市树实时解析为准，此表仅用于文档与测试对照。
 CITY_NAME_ALIASES = {"济源示范区": "济源市"}
+
+# 区县树（GetGroupCountyTree）不含济源，但区县接口（queryType=2）
+# 可用 ID 218 直接查询济源示范区，返回区县级行（area=济源示范区）。
+# 平台"区县排名"即区县树叶子 + 济源 的全集。
+JIYUAN_COUNTY_GROUP_ID = 218
 
 
 def normalize_city_name(name: str | None) -> str:
@@ -120,32 +128,45 @@ class HenanSsfbClient:
     def city_tree(self) -> list[dict[str, Any]]:
         return self._query(CITY_TREE_PATH) or []
 
+    def county_tree(self) -> list[dict[str, Any]]:
+        return self._query(COUNTY_TREE_PATH) or []
+
     def station_tree(self) -> list[dict[str, Any]]:
         return self._query(STATION_TREE_PATH) or []
 
     def group_hours(
-        self, city_ids: list[int], start: str, end: str
+        self,
+        city_ids: list[int],
+        start: str,
+        end: str,
+        query_type: str = "1",
     ) -> list[dict[str, Any]]:
+        """queryType: 1=城市组口径（城市树 ID），2=区县口径（区县树叶子 ID）。"""
         return self._query(
             GROUP_HOURS_PATH,
             {
                 "cityIDs": ",".join(str(value) for value in city_ids),
                 "sDate": start,
                 "eDate": end,
-                "queryType": "1",
+                "queryType": query_type,
             },
         )
 
     def group_days(
-        self, city_ids: list[int], start: str, end: str
+        self,
+        city_ids: list[int],
+        start: str,
+        end: str,
+        query_type: str = "1",
     ) -> list[dict[str, Any]]:
+        """queryType: 1=城市组口径（城市树 ID），2=区县口径（区县树叶子 ID）。"""
         return self._query(
             GROUP_DAYS_PATH,
             {
                 "cityIDs": ",".join(str(value) for value in city_ids),
                 "sDate": start,
                 "eDate": end,
-                "queryType": "1",
+                "queryType": query_type,
             },
         )
 
@@ -238,6 +259,45 @@ def build_henan_district_directory(tree: list[dict[str, Any]]) -> list[dict[str,
                     "system": system,
                 }
     return sorted(districts.values(), key=lambda item: (item["city"], item["name"]))
+
+
+def county_groups_from_tree(tree: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    """Flatten the county tree into {county_id: {"name", "city", "code"}}.
+
+    区县树结构有差异：顶层可以是省辖市根（"省辖市"/"县级"，其子节点
+    为城市），也可以直接是城市节点；叶子即区县（含功能区，如经开区、
+    南湾风景管理区）。济源不在树中，由调用方按
+    ``JIYUAN_COUNTY_GROUP_ID`` 补充。同一 ID 以先出现为准。
+    """
+
+    def _is_wrapper(name: str) -> bool:
+        return name.endswith(("省辖市", "县级"))
+
+    def _collect(node: dict[str, Any], parent_city: str | None,
+                 groups: dict[int, dict[str, Any]]) -> None:
+        name = str(node.get("Name") or "").strip()
+        children = node.get("Children") or []
+        if children:
+            # 城市节点：非包装根、且自身有下级（区县）。
+            city = None if _is_wrapper(name) else name
+            for child in children:
+                _collect(child, city if city else parent_city, groups)
+            return
+        if not name or parent_city is None:
+            return
+        node_id = node.get("ID")
+        if node_id is None or int(node_id) in groups:
+            return
+        groups[int(node_id)] = {
+            "name": name,
+            "city": parent_city,
+            "code": str(node.get("Code") or "").strip() or None,
+        }
+
+    groups: dict[int, dict[str, Any]] = {}
+    for node in tree or []:
+        _collect(node, None, groups)
+    return groups
 
 
 def site_leaves_from_tree(

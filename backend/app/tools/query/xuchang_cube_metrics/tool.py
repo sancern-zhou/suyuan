@@ -188,7 +188,7 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
     },
     # 全省区县站点小时(两根树 193 区县,剔除国控;County 字段为区县归属): 站点目录见
     # xuchang_station_catalog 与 SsfbDimSite, 编码为河南实时发布系统数字编码(SiteID)。
-    # 编码为河南实时发布系统数字编码(SiteID)。
+    # 平台仅发布省控站数据(约241个), 市控站挂树无数据。
     "SsfbSiteHour": {
         "measures": [
             {"name": "count", "title": "小时记录数"},
@@ -237,6 +237,158 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "dataDate", "title": "数据日期(时间维度)"},
         ],
     },
+    # 全省区县小时/日(190区县,含济源与功能区,与平台"区县"页签同源)。
+    "SsfbCountyHour": {
+        "measures": [
+            {"name": "count", "title": "小时记录数"},
+            {"name": "avgPm25", "title": "PM2.5均值(μg/m³)"},
+            {"name": "avgPm10", "title": "PM10均值(μg/m³)"},
+            {"name": "avgO3", "title": "O3均值(μg/m³)"},
+            {"name": "avgO38h", "title": "O3-8h均值(μg/m³)"},
+            {"name": "avgNo2", "title": "NO2均值(μg/m³)"},
+            {"name": "avgSo2", "title": "SO2均值(μg/m³)"},
+            {"name": "avgCo", "title": "CO均值(mg/m³)"},
+            {"name": "maxAqi", "title": "AQI最大值"},
+            {"name": "onlineCounties", "title": "有数据区县数(去重)"},
+        ],
+        "dimensions": [
+            {"name": "county", "title": "区县名(含济源市/功能区)"},
+            {"name": "city", "title": "所属省辖市"},
+            {"name": "cityCode", "title": "区县行政区码"},
+            {"name": "groupId", "title": "区县组ID"},
+            {"name": "quality", "title": "空气质量等级(优/良...)"},
+            {"name": "grade", "title": "AQI级别(1-6)"},
+            {"name": "primaryPollutant", "title": "首要污染物"},
+            {"name": "dataTime", "title": "数据时间(时间维度)"},
+        ],
+    },
+    "SsfbCountyDay": {
+        "measures": [
+            {"name": "count", "title": "日记录数"},
+            {"name": "avgPm25", "title": "PM2.5日均(μg/m³)"},
+            {"name": "avgPm10", "title": "PM10日均(μg/m³)"},
+            {"name": "avgO38h", "title": "O3-8h日均(μg/m³)"},
+            {"name": "avgNo2", "title": "NO2日均(μg/m³)"},
+            {"name": "avgSo2", "title": "SO2日均(μg/m³)"},
+            {"name": "avgCo", "title": "CO日均(mg/m³)"},
+            {"name": "onlineCounties", "title": "有数据区县数(去重)"},
+        ],
+        "dimensions": [
+            {"name": "county", "title": "区县名(含济源市/功能区)"},
+            {"name": "city", "title": "所属省辖市"},
+            {"name": "cityCode", "title": "区县行政区码"},
+            {"name": "groupId", "title": "区县组ID"},
+            {"name": "quality", "title": "空气质量等级"},
+            {"name": "grade", "title": "AQI级别(1-6)"},
+            {"name": "primaryPollutant", "title": "首要污染物"},
+            {"name": "dataDate", "title": "数据日期(时间维度)"},
+        ],
+    },
+    # 区县小时排名：窗口函数现算（实时），190 区县同小时分区排名。
+    # 排名规则与城市/日粒度一致：数值越低越靠前（升序），相同值并列。
+    "SsfbCountyHourRank": {
+        "measures": [
+            {"name": "rankAqi", "title": "AQI小时排名(升序,1=最优,含济源)"},
+            {"name": "rankPm25", "title": "PM2.5小时排名(升序,1=最优)"},
+            {"name": "rankPm10", "title": "PM10小时排名(升序,1=最优)"},
+            {"name": "rankO3", "title": "O3小时排名(升序,1=最优)"},
+            {"name": "rankNo2", "title": "NO2小时排名(升序,1=最优)"},
+            {"name": "rankSo2", "title": "SO2小时排名(升序,1=最优)"},
+            {"name": "rankCo", "title": "CO小时排名(升序,1=最优)"},
+            {"name": "avgAqi", "title": "AQI"},
+            {"name": "avgPm25", "title": "PM2.5(μg/m³)"},
+            {"name": "avgPm10", "title": "PM10(μg/m³)"},
+            {"name": "avgO38h", "title": "O3-8h(μg/m³)"},
+            {"name": "avgNo2", "title": "NO2(μg/m³)"},
+            {"name": "avgSo2", "title": "SO2(μg/m³)"},
+            {"name": "avgCo", "title": "CO(mg/m³)"},
+            {"name": "countyCount", "title": "参与排名区县数"},
+        ],
+        "dimensions": [
+            {"name": "county", "title": "区县名"},
+            {"name": "city", "title": "所属省辖市"},
+            {"name": "groupId", "title": "区县组ID"},
+            {"name": "quality", "title": "空气质量等级"},
+            {"name": "primaryPollutant", "title": "首要污染物"},
+            {"name": "dataTime", "title": "数据时间(时间维度,精确到小时)"},
+        ],
+    },
+    # 区县日排名：与平台"区县排名"完全同口径（升序并列,平台O3列=O3-8H）。
+    "SsfbCountyDayRank": {
+        "measures": [
+            {"name": "rankAqi", "title": "AQI日排名(升序,1=最优,含济源)"},
+            {"name": "rankPm25", "title": "PM2.5日排名(升序,1=最优)"},
+            {"name": "rankPm10", "title": "PM10日排名(升序,1=最优)"},
+            {"name": "rankO3", "title": "O3-8h日排名(升序,1=最优,平台O3列)"},
+            {"name": "rankNo2", "title": "NO2日排名(升序,1=最优)"},
+            {"name": "rankSo2", "title": "SO2日排名(升序,1=最优)"},
+            {"name": "rankCo", "title": "CO日排名(升序,1=最优)"},
+            {"name": "avgAqi", "title": "AQI"},
+            {"name": "avgPm25", "title": "PM2.5日均(μg/m³)"},
+            {"name": "avgPm10", "title": "PM10日均(μg/m³)"},
+            {"name": "avgO38h", "title": "O3-8h日均(μg/m³)"},
+            {"name": "avgNo2", "title": "NO2日均(μg/m³)"},
+            {"name": "avgSo2", "title": "SO2日均(μg/m³)"},
+            {"name": "avgCo", "title": "CO日均(mg/m³)"},
+            {"name": "countyCount", "title": "参与排名区县数(应≈188)"},
+        ],
+        "dimensions": [
+            {"name": "county", "title": "区县名"},
+            {"name": "city", "title": "所属省辖市"},
+            {"name": "groupId", "title": "区县组ID"},
+            {"name": "quality", "title": "空气质量等级"},
+            {"name": "grade", "title": "AQI级别(1-6)"},
+            {"name": "primaryPollutant", "title": "首要污染物"},
+            {"name": "dataDate", "title": "数据日期(时间维度)"},
+        ],
+    },
+    # 站点小时/日排名：窗口函数现算（实时，省控站约241个有数据）。
+    "SsfbSiteHourRank": {
+        "measures": [
+            {"name": "rankAqi", "title": "AQI小时排名(升序,1=最优)"},
+            {"name": "rankPm25", "title": "PM2.5小时排名(升序,1=最优)"},
+            {"name": "rankPm10", "title": "PM10小时排名(升序,1=最优)"},
+            {"name": "rankO3", "title": "O3小时排名(升序,1=最优)"},
+            {"name": "rankNo2", "title": "NO2小时排名(升序,1=最优)"},
+            {"name": "rankSo2", "title": "SO2小时排名(升序,1=最优)"},
+            {"name": "rankCo", "title": "CO小时排名(升序,1=最优)"},
+            {"name": "avgAqi", "title": "AQI"},
+            {"name": "avgPm25", "title": "PM2.5(μg/m³)"},
+            {"name": "siteCount", "title": "参与排名站点数"},
+        ],
+        "dimensions": [
+            {"name": "siteId", "title": "站点编码(SiteID)"},
+            {"name": "siteName", "title": "站点名"},
+            {"name": "city", "title": "所属城市"},
+            {"name": "county", "title": "归属区县"},
+            {"name": "quality", "title": "空气质量等级"},
+            {"name": "primaryPollutant", "title": "首要污染物"},
+            {"name": "dataTime", "title": "数据时间(时间维度,精确到小时)"},
+        ],
+    },
+    "SsfbSiteDayRank": {
+        "measures": [
+            {"name": "rankAqi", "title": "AQI日排名(升序,1=最优)"},
+            {"name": "rankPm25", "title": "PM2.5日排名(升序,1=最优)"},
+            {"name": "rankPm10", "title": "PM10日排名(升序,1=最优)"},
+            {"name": "rankO3", "title": "O3-8h日排名(升序,1=最优)"},
+            {"name": "rankNo2", "title": "NO2日排名(升序,1=最优)"},
+            {"name": "rankSo2", "title": "SO2日排名(升序,1=最优)"},
+            {"name": "rankCo", "title": "CO日排名(升序,1=最优)"},
+            {"name": "avgAqi", "title": "AQI"},
+            {"name": "avgPm25", "title": "PM2.5日均(μg/m³)"},
+            {"name": "siteCount", "title": "参与排名站点数"},
+        ],
+        "dimensions": [
+            {"name": "siteId", "title": "站点编码(SiteID)"},
+            {"name": "siteName", "title": "站点名"},
+            {"name": "city", "title": "所属城市"},
+            {"name": "county", "title": "归属区县"},
+            {"name": "quality", "title": "空气质量等级"},
+            {"name": "primaryPollutant", "title": "首要污染物"},
+            {"name": "dataDate", "title": "数据日期(时间维度)"},
+        ],
+    },
 }
 
 ALLOWED_FILTER_OPERATORS = {
@@ -259,13 +411,13 @@ def _render_guide() -> str:
     lines.append("")
     lines.append(
         DATA_WINDOW_NOTE
-        + "排名类问题用 SsfbCityRanking(periodType=daily单日/monthly月累计/yearly年累计+period;"
-        "SsfbCityRanking 为本地计算非官方口径(银行家修约:PM2.5/CO一位小数其余整数,数值越低越靠前,相同值并列;"
+        + "排名类问题按对象选 Cube: 城市排名用 SsfbCityRanking(periodType=daily单日/monthly月累计/yearly年累计+period;"
+        "SsfbCityRanking 为本地计算非官方口径(银行家修约:PM2.5/CO一位小数其余整数;"
         "与官方审核口径存在±0.5μg/m³级别差异,正式汇报引用月/年统计时须说明为本地计算并以官方发布为准);"
-        "小时排名用 SsfbCityHourRank(过滤 dataTime 到具体小时);"
-        "无聚合统计,月度及以上统计以官方发布为准);"
-        "小时排名用 SsfbCityHourRank(过滤 dataTime 到具体小时);"
-        "排名规则为数值越低越靠前(Rank*=1 最优),相同值并列;"
+        "区县排名用 SsfbCountyDayRank/SsfbCountyHourRank(与省平台'区县排名'同口径,190区县含济源,升序并列);"
+        "站点排名用 SsfbSiteDayRank/SsfbSiteHourRank(省控站约241个,本系统统一口径);"
+        "小时排名过滤 dataTime 到具体小时,日排名过滤 dataDate 到具体日期;"
+        "排名规则统一为数值越低越靠前(Rank*=1 最优),相同值并列(RANK:1,2,2,4);"
         "乡镇站(76个,2024起)用 TownHour/TownDay,必须过滤 caliber(app=审核,官方结论优先),"
         "否则原始与审核重复计数。"
     )
@@ -297,11 +449,12 @@ class XuchangCubeMetricsTool(LLMTool):
             "name": self.tool_name,
             "description": (
                 "查询许昌本地空气质量指标(语义层,口径唯一):河南18城市组(含济源)小时/日"
-                "六参数与AQI、月/年累计单项浓度排名(数值越低排名越靠前,相同值并列,"
-                "济源已纳入)、许昌县级站(鄢陵/襄城/禹州/长葛)小时/日数据、"
-                "乡镇站(76个)小时/日数据(2024起,2025年起完整,审核/原始口径二选一)。"
+                "六参数与AQI、城市/区县/站点的小时与日排名(数值越低排名越靠前,相同值并列,"
+                "区县排名与省平台同口径)、全省区县(190个含济源)小时/日数据、"
+                "许昌县级站小时/日数据、乡镇站(76个)小时/日数据(2024起,审核/原始口径二选一)。"
                 "传 measures+dimensions+时间范围即可,不需要写SQL;"
-                "排名问题用 SsfbCityRanking 并过滤 periodType/period;"
+                "城市月/年排名用 SsfbCityRanking 并过滤 periodType/period;"
+                "区县排名用 SsfbCountyDayRank/SsfbCountyHourRank,站点排名用 SsfbSiteDayRank/SsfbSiteHourRank;"
                 "乡镇站问题用 TownHour/TownDay 并过滤 caliber(官方结论用 app)。"
                 + _render_guide()
             ),
