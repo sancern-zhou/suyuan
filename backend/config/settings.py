@@ -597,6 +597,15 @@ class Settings(BaseSettings):
         default=2,
         description="Concurrent LLM request limit per provider/model pool"
     )
+    agent_detached_runs_enabled: bool = Field(
+        default=True,
+        description="Keep agent runs alive after the web client disconnects (requires Redis); set AGENT_DETACHED_RUNS_ENABLED=0 to fall back to legacy inline streaming",
+    )
+    agent_detached_run_max_seconds: int = Field(
+        default=3600,
+        ge=60,
+        description="Wall-clock guard for detached agent runs; the run is interrupted when exceeded",
+    )
     llm_request_timeout_seconds: float = Field(
         default=180.0,
         description="Timeout in seconds for LLM provider requests"
