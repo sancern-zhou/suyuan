@@ -210,7 +210,7 @@ class SessionManagerDB:
         if not isinstance(existing_metadata, dict):
             return merged
 
-        for key in ("llm_compact_state",):
+        for key in ("llm_compact_state", "context_usage"):
             if key in existing_metadata and key not in merged:
                 merged[key] = existing_metadata[key]
 
@@ -383,6 +383,18 @@ class SessionManagerDB:
             session_id,
             compact_state,
         )
+
+    async def save_context_usage(self, session_id: str, context_usage: Dict[str, Any]) -> bool:
+        """Persist the latest context-usage snapshot without touching transcript rows."""
+        return await self.repository.save_context_usage(session_id, context_usage)
+
+    async def get_context_usage(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Return the persisted context-usage snapshot, if any."""
+        metadata = await self.repository.get_session_metadata(session_id)
+        if not isinstance(metadata, dict):
+            return None
+        context_usage = metadata.get("context_usage")
+        return context_usage if isinstance(context_usage, dict) else None
 
     async def load_session_for_llm(self, session_id: str) -> Optional[Session]:
         """Load session metadata plus lightweight transcript for LLM continuation."""

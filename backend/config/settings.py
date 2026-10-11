@@ -345,6 +345,10 @@ class Settings(BaseSettings):
         default="doubao",
         description="LLM provider: doubao, openai, anthropic, deepseek, minimax, mimo, agnes, glm, bailian, scnet, go, go2"
     )
+    llm_context_window_tokens: int = Field(
+        default=200000,
+        description="上下文窗口大小（tokens），随 context_usage 事件下发给前端上下文占用指示器",
+    )
     doubao_api_key: Optional[str] = Field(default=None, description="Doubao-compatible gateway API key")
     doubao_base_url: str = Field(
         default="https://doubao.best/v1",

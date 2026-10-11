@@ -1024,6 +1024,27 @@ class SessionRepository:
             metadata=metadata,
         )
 
+    async def save_context_usage(
+        self,
+        session_id: str,
+        context_usage: Dict[str, Any],
+    ) -> bool:
+        """Persist the latest context-usage snapshot in session metadata."""
+        db_session = await self.get_session(session_id)
+        if not db_session:
+            return False
+
+        metadata = db_session.session_metadata or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata = dict(metadata)
+        metadata["context_usage"] = context_usage
+
+        return await self.update_session(
+            session_id,
+            metadata=metadata,
+        )
+
     async def get_display_history_messages_light(self, session_id: str) -> List[Dict[str, Any]]:
         """Load display text plus the small attachment contract, without result data."""
         async with AsyncSession(self.engine) as session:
