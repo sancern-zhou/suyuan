@@ -120,6 +120,8 @@ export function useSessionRestore(options) {
           cacheHitRate: sessionData.context_usage.cache_hit_rate == null
             ? null
             : Number(sessionData.context_usage.cache_hit_rate),
+          breakdown: sessionData.context_usage.breakdown || null,
+          estimated: sessionData.context_usage.estimated === true,
           model: sessionData.context_usage.model || null,
           updatedAt: sessionData.context_usage.timestamp || null
         }

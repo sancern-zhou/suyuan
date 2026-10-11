@@ -165,11 +165,67 @@
           <div class="action-group">
             <div
               v-if="contextUsagePercent !== null"
-              class="context-usage-indicator"
+              class="context-usage-wrap"
               :class="contextUsageLevel"
-              :title="`上下文占用：${contextUsageDetail}`"
             >
-              上下文 {{ contextUsagePercent }}%
+              <div class="context-usage-indicator" :title="`上下文占用：${contextUsageDetail}`">
+                <svg class="context-usage-ring" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="4"
+                    opacity="0.25"
+                  />
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="4"
+                    opacity="0.7"
+                    stroke-linecap="round"
+                    :stroke-dasharray="contextRingCircumference"
+                    :stroke-dashoffset="contextRingDashOffset"
+                    transform="rotate(-90 12 12)"
+                  />
+                </svg>
+              </div>
+              <div v-if="contextSegments.length" class="context-usage-panel">
+                <div class="context-panel-header">
+                  <span class="context-panel-title">上下文</span>
+                  <span class="context-panel-summary">{{ contextUsageSummary }}</span>
+                </div>
+                <div class="context-panel-bar">
+                  <span
+                    v-for="segment in contextSegments"
+                    :key="segment.source"
+                    class="context-panel-segment"
+                    :style="{ width: `${segment.percent * 100}%`, background: segment.color }"
+                  ></span>
+                </div>
+                <div class="context-panel-rows">
+                  <div
+                    v-for="segment in contextSegments"
+                    :key="segment.source"
+                    class="context-panel-row"
+                  >
+                    <span class="context-panel-dot" :style="{ background: segment.color }"></span>
+                    <span class="context-panel-label">{{ segment.label }}</span>
+                    <span class="context-panel-percent">{{ Math.round(segment.percent * 100) }}%</span>
+                  </div>
+                  <div v-if="contextCacheHitRateText" class="context-panel-row cache">
+                    <span class="context-panel-label">缓存命中率</span>
+                    <span class="context-panel-percent">{{ contextCacheHitRateText }}</span>
+                  </div>
+                  <div v-if="contextUsageEstimated" class="context-panel-row estimated">
+                    <span class="context-panel-label">估算值（网关未回传精确用量）</span>
+                  </div>
+                </div>
+              </div>
             </div>
             <div v-if="showModelTierSelector" class="model-tier-wrapper">
               <select
@@ -296,6 +352,14 @@ import AuthenticatedImage from '@/components/AuthenticatedImage.vue'
 import { uploadChatFile, validateFile, createImagePreview, getFileUrl } from '@/services/uploadApi'
 import { transcribeVoice } from '@/services/voiceApi.js'
 import { getPendingSteeringDisplay } from '@/components/inputBoxPendingSteering.js'
+import {
+  CONTEXT_RING_CIRCUMFERENCE,
+  buildContextUsageSegments,
+  contextUsagePercent as contextUsagePercentOf,
+  formatContextCacheHitRate,
+  formatContextTokens,
+  ringDashOffset
+} from './contextUsagePresentation.js'
 import { getSkillsList } from '@/api/skillsManagement.js'
 import { getInputQuickPrompts } from '@/api/coordinatorConfig.js'
 import { getSession, getSessionResources } from '@/api/session.js'
@@ -650,11 +714,17 @@ const activeModelTierMode = computed(() => (
 const showModelTierSelector = computed(() => shouldShowModelTierSelector(activeModelTierMode.value))
 const showVoiceControls = computed(() => shouldShowVoiceControls(reactStore.currentMode))
 const contextUsage = computed(() => reactStore.currentState?.contextUsage || null)
-const contextUsagePercent = computed(() => {
-  const usage = contextUsage.value
-  if (!usage || !usage.contextWindow || !usage.contextTokens) return null
-  return Math.min(100, Math.round((usage.contextTokens / usage.contextWindow) * 100))
-})
+const contextUsagePercent = computed(() => contextUsagePercentOf(
+  contextUsage.value?.contextTokens,
+  contextUsage.value?.contextWindow
+))
+const contextRingCircumference = CONTEXT_RING_CIRCUMFERENCE
+const contextRingDashOffset = computed(() => ringDashOffset(contextUsagePercent.value))
+const contextSegments = computed(() => buildContextUsageSegments(contextUsage.value?.breakdown))
+const contextCacheHitRateText = computed(() =>
+  formatContextCacheHitRate(contextUsage.value?.cacheHitRate)
+)
+const contextUsageEstimated = computed(() => contextUsage.value?.estimated === true)
 const contextUsageLevel = computed(() => {
   const usage = contextUsage.value
   const percent = contextUsagePercent.value
@@ -668,12 +738,6 @@ const contextUsageLevel = computed(() => {
   }
   return ''
 })
-const contextCacheHitRateText = computed(() => {
-  const hitRate = contextUsage.value?.cacheHitRate
-  // 与 ZCode 同策略：低命中率不展示，避免分散对上下文容量的注意力
-  if (hitRate == null || !Number.isFinite(hitRate) || hitRate < 0.78) return null
-  return `${Math.round(hitRate * 100)}%`
-})
 const contextUsageDetail = computed(() => {
   const usage = contextUsage.value
   if (!usage) return ''
@@ -681,6 +745,11 @@ const contextUsageDetail = computed(() => {
   return contextCacheHitRateText.value
     ? `${base} · 缓存命中 ${contextCacheHitRateText.value}`
     : base
+})
+const contextUsageSummary = computed(() => {
+  const usage = contextUsage.value
+  if (!usage || contextUsagePercent.value === null) return ''
+  return `${formatContextTokens(usage.contextTokens)} / ${formatContextTokens(usage.contextWindow)} (${contextUsagePercent.value}%)`
 })
 const canSteerWhileRunning = computed(() => props.isAnalyzing && reactStore.currentMode === 'assistant')
 const boardSyncStatus = computed(() => (
@@ -1660,23 +1729,133 @@ defineExpose({
   padding: 6px 8px;
 }
 
-.context-usage-indicator {
+.context-usage-wrap {
+  position: relative;
   margin-right: 6px;
-  padding: 0 2px;
-  font-size: 12px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+}
+
+.context-usage-indicator {
+  display: inline-flex;
+  align-items: center;
   color: #8a94a6;
-  white-space: nowrap;
   cursor: default;
   user-select: none;
 }
 
-.context-usage-indicator.warning {
+.context-usage-wrap.warning .context-usage-indicator {
   color: #d97706;
 }
 
-.context-usage-indicator.danger {
+.context-usage-wrap.danger .context-usage-indicator {
   color: #dc2626;
+}
+
+.context-usage-ring {
+  width: 14px;
+  height: 14px;
+}
+
+.context-usage-panel {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 60;
+  width: 264px;
+  padding: 12px;
+  border: 1px solid #e0e7f0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(31, 42, 68, 0.14);
+  cursor: default;
+}
+
+.context-usage-wrap:hover .context-usage-panel,
+.context-usage-wrap:focus-within .context-usage-panel {
+  display: block;
+}
+
+.context-panel-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.context-panel-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+}
+
+.context-panel-summary {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.context-panel-bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #edf1f7;
+  margin-bottom: 10px;
+}
+
+.context-panel-segment {
+  height: 100%;
+  min-width: 2px;
+}
+
+.context-panel-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.context-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #526173;
+}
+
+.context-panel-row.cache {
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid #eef2f8;
+}
+
+.context-panel-row.estimated .context-panel-label {
+  color: #98a2b3;
+  font-size: 11px;
+}
+
+.context-panel-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.context-panel-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-panel-percent {
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  color: #333;
 }
 
 .model-tier-select {
@@ -1957,7 +2136,7 @@ defineExpose({
     padding: 4px;
   }
 
-  .context-usage-indicator {
+  .context-usage-wrap {
     display: none;
   }
 }
