@@ -84,6 +84,8 @@ class RunState:
     last_loop_block_signature: Optional[str] = None
     last_missing_tool_signature: Optional[str] = None
     fixed_workflow_progress: Dict[str, Any] = field(default_factory=dict)
+    # 最近一次 LLM 调用的上下文占用快照（planner context_usage 事件数据）
+    last_context_usage: Optional[Dict[str, Any]] = None
 
     def timestamp(self) -> str:
         return datetime.now().isoformat()

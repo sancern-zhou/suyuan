@@ -305,6 +305,29 @@ class ReActPlanner:
             llm_response,
         )
 
+    @staticmethod
+    def _build_context_usage(usage: Dict[str, Any], model: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """把 LLM message_start 的 usage 换算为上下文占用快照。
+
+        口径与 model_trajectory 一致：Anthropic 语义下 input_tokens 不含缓存命中，
+        真实 prompt 占用 = input + cache_read + cache_creation；
+        OpenAI 兼容适配器已把 prompt_tokens（含缓存）映射为 input_tokens。
+        """
+        input_tokens = usage.get("input_tokens")
+        if input_tokens is None:
+            return None
+        cache_read = usage.get("cache_read_input_tokens") or 0
+        cache_creation = usage.get("cache_creation_input_tokens") or 0
+        return {
+            "input_tokens": int(input_tokens),
+            "cache_read_input_tokens": int(cache_read),
+            "cache_creation_input_tokens": int(cache_creation),
+            "context_tokens": int(input_tokens) + int(cache_read) + int(cache_creation),
+            "context_window": settings.llm_context_window_tokens,
+            "model": model,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
     async def think_and_action_streaming(
         self,
         query: str,
@@ -602,6 +625,14 @@ class ReActPlanner:
                             tool_use_id=tool_block["id"][:12],
                             yielded_count=yielded_tool_use_count,
                         )
+
+                elif event_type == "message_start":
+                    context_usage = self._build_context_usage(
+                        event_data.get("usage") or {},
+                        model=event_data.get("model"),
+                    )
+                    if context_usage:
+                        yield {"type": "context_usage", "data": context_usage}
 
                 elif event_type == "message_delta":
                     stop_reason = event_data.get("stop_reason")
