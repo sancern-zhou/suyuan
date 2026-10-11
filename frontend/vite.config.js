@@ -13,7 +13,9 @@ export default defineConfig(({ mode }) => {
     base: env.VITE_APP_BASE_PATH || '/',
     build: {
       // Project deployments must never overwrite another project's static assets.
-      outDir: env.VITE_BUILD_OUT_DIR || 'dist'
+      outDir: env.VITE_BUILD_OUT_DIR || 'dist',
+      manifest: true,
+      rollupOptions: { input: { main: resolve(__dirname, 'index.html'), chart: resolve(__dirname, 'chart.html') } }
     },
     define: {
       __SUYUAN_PROJECT_CONFIG__: JSON.stringify(projectConfig)

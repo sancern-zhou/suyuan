@@ -183,20 +183,18 @@
 
         <div class="message-content" v-if="!getStructuredQuestionForFinal(message, messages) && useMarkdown">
           <!-- 【Vue 3 最佳实践】使用 key 强制重新渲染 -->
-          <MarkdownRenderer
+          <template v-for="(block, blockIndex) in messageLayoutBlocks(message)" :key="`${message.id}-${blockIndex}`">
+          <InlineChartCard v-if="block.kind === 'chart'" :resource="block.resource" />
+          <MarkdownRenderer v-else
             :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}-${message.renderVersion || 0}`"
-            :content="renderedMessageContent(message)"
+            :content="renderedMessageContent({ ...message, content: block.content })"
             :streaming="message.streaming === true"
           />
+          </template>
         </div>
         <div class="message-content" v-else-if="!getStructuredQuestionForFinal(message, messages)">{{ renderedMessageContent(message) }}</div>
-        <div v-if="!message.streaming && inlineImagesForFinal(message).length" class="message-content inline-chart-images">
-          <MarkdownRenderer
-            v-for="image in inlineImagesForFinal(message)"
-            :key="image.resource_id"
-            :content="`![${image.label.replace(/[\\[\\]\\\\]/g, '')}](${image.content_url})`"
-          />
-        </div>
+        <ReplyOutcomeCards v-if="!message.streaming" :message="message" :messages="messages" :resources="currentSessionResources()"
+          @preview="resourceId => emit('preview-message-attachment', { sessionId: props.sessionId, resourceId })" />
 
         <!-- 多专家系统：直接显示报告内容，无额外装饰 -->
         <div v-if="message.data?.expert_results?.report && reportContentCacheMap.get(message.data.expert_results.report)" class="expert-report-content">
@@ -227,6 +225,26 @@
           </div>
         </div>
 
+        <!-- AI回复操作栏：复制按钮（用时统一由上方过程摘要展示） -->
+        <div v-if="showAgentMessageFooter(message)" class="agent-message-footer">
+          <div class="agent-message-tools">
+            <button
+              class="agent-message-tool-button"
+              :class="{ copied: copiedAgentMessageId === message.id }"
+              type="button"
+              :title="copiedAgentMessageId === message.id ? '已复制' : '复制'"
+              @click.stop="copyAgentMessage(message)"
+            >
+              <svg v-if="copiedAgentMessageId === message.id" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m5 12 4 4 10-10" />
+              </svg>
+              <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- 错误消息 -->
@@ -319,6 +337,9 @@ import {
   selectAgentProgressTip
 } from './agentPlatform/agentProgressPresentation.js'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import InlineChartCard from './InlineChartCard.vue'
+import ReplyOutcomeCards from './ReplyOutcomeCards.vue'
+import { inlineChartBlocks } from '@/services/inlineChartBlocks.js'
 import { inlineChartImages, renderChartPlaceholders } from '@/services/inlineChartImages.js'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import {
@@ -438,11 +459,7 @@ const renderedMessageContent = message => {
   if (!content.includes('[[chart:')) return content
   return renderChartPlaceholders(content, chartResourcesForMessage(message), currentSessionResources()).content
 }
-const inlineImagesForFinal = message => {
-  const resources = chartResourcesForMessage(message)
-  const rendered = renderChartPlaceholders(contentToString(getMessageContent(message)), resources, currentSessionResources())
-  return resources.filter(resource => !rendered.usedResourceIds.has(resource.resource_id))
-}
+const messageLayoutBlocks = message => inlineChartBlocks(contentToString(getMessageContent(message)), currentSessionResources())
 
 const messagesContainer = ref(null)
 const messagesContent = ref(null)
@@ -762,34 +779,70 @@ const markUserMessageCopied = (messageId) => {
   }, 1400)
 }
 
-const copyUserMessage = async (message) => {
-  const text = getUserMessageText(getMessageContent(message))
-  if (!text) return
-
+// 【新增】共享剪贴板写入（优先 Clipboard API，失败时降级 execCommand）
+const writeClipboardText = async (text) => {
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text)
-      markUserMessageCopied(message?.id)
-      return
+      return true
     }
   } catch (error) {
     console.warn('Clipboard copy failed, falling back:', error)
   }
 
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.setAttribute('readonly', '')
-  textarea.style.position = 'fixed'
-  textarea.style.left = '-9999px'
-  document.body.appendChild(textarea)
-  textarea.select()
-  document.execCommand('copy')
-  document.body.removeChild(textarea)
-  markUserMessageCopied(message?.id)
+  try {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.setAttribute('readonly', '')
+    textarea.style.position = 'fixed'
+    textarea.style.left = '-9999px'
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+    return true
+  } catch (error) {
+    console.warn('Clipboard fallback copy failed:', error)
+    return false
+  }
 }
 
-// 【新增】AI回复用时统计：优先使用store在完成时记录的response_duration_ms，
-// 否则用 final 消息与其前最近 user 消息的时间戳差值（历史消息恢复场景）
+const copyUserMessage = async (message) => {
+  const text = getUserMessageText(getMessageContent(message))
+  if (!text) return
+
+  if (await writeClipboardText(text)) {
+    markUserMessageCopied(message?.id)
+  }
+}
+
+// 【新增】AI回复（final消息）复制按钮状态与处理
+const copiedAgentMessageId = ref(null)
+let copiedAgentMessageTimer = null
+
+const markAgentMessageCopied = (messageId) => {
+  copiedAgentMessageId.value = messageId || null
+  if (copiedAgentMessageTimer) {
+    clearTimeout(copiedAgentMessageTimer)
+  }
+  copiedAgentMessageTimer = setTimeout(() => {
+    copiedAgentMessageId.value = null
+    copiedAgentMessageTimer = null
+  }, 1400)
+}
+
+const copyAgentMessage = async (message) => {
+  const text = contentToString(getMessageContent(message)).trim()
+  if (!text) return
+
+  if (await writeClipboardText(text)) {
+    markAgentMessageCopied(message?.id)
+  }
+}
+
+// 首响用时（从用户输入到开始回答）：优先使用生命周期终态时记录的first_response_ms，
+// 否则用 final 消息（流式路径下创建于首个回答块到达时刻）与其前最近 user 消息的
+// 时间戳差值兜底（历史消息恢复场景）。不要回退到response_duration_ms（总时长口径）
 const formatResponseDuration = (durationMs) => {
   if (!Number.isFinite(durationMs) || durationMs < 0) return ''
   const totalSeconds = durationMs / 1000
@@ -811,7 +864,7 @@ const finalDurationTextMap = computed(() => {
     const message = msgs[i]
     if (getMessageType(message) !== 'final') continue
 
-    const precomputed = message.data?.response_duration_ms == null ? NaN : Number(message.data.response_duration_ms)
+    const precomputed = message.data?.first_response_ms == null ? NaN : Number(message.data.first_response_ms)
     let durationMs = Number.isFinite(precomputed) ? precomputed : null
 
     if (durationMs === null) {
@@ -840,6 +893,11 @@ const finalDurationTextMap = computed(() => {
 })
 
 const getFinalDurationText = (message) => finalDurationTextMap.value.get(message?.id) || ''
+
+// 【新增】AI回复操作栏显示条件：流式结束且有可复制内容
+const showAgentMessageFooter = (message) => (
+  message?.streaming !== true && !!contentToString(getMessageContent(message)).trim()
+)
 
 const getProcessCorrelationId = (message) => {
   const data = message?.data || {}
@@ -1044,7 +1102,7 @@ const getProcessSummaryText = (finalMessage, allMessages) => {
   const toolCount = items.filter(item => item.kind === 'tool').length
   const failedCount = items.filter(item => item.kind === 'tool' && item.status === 'error').length
   const duration = getFinalDurationText(finalMessage)
-  const summary = `${duration ? `用时${duration}完成` : '已完成'} · ${toolCount}个工具调用`
+  const summary = `${duration ? `${duration}后开始回答` : '已完成'} · ${toolCount}个工具调用`
   return failedCount > 0 ? `${summary} · ${failedCount}个步骤失败` : summary
 }
 
@@ -1184,6 +1242,9 @@ onBeforeUnmount(() => {
   stopProgressTimer()
   if (copiedUserMessageTimer) {
     clearTimeout(copiedUserMessageTimer)
+  }
+  if (copiedAgentMessageTimer) {
+    clearTimeout(copiedAgentMessageTimer)
   }
   document.removeEventListener('keydown', handleEscKey)
 })
@@ -2156,6 +2217,15 @@ const downloadPreviewedImage = async () => {
   }
 }
 
+// 【新增】AI回复操作栏：用时统计 + 复制按钮
+.agent-message-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  min-height: 26px;
+}
+
 .agent-message.final.question-handoff-message,
 .agent-message.final.question-followup-message {
   width: fit-content;
@@ -2195,7 +2265,6 @@ const downloadPreviewedImage = async () => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin-top: 6px;
   font-size: var(--text-size-xs);
   line-height: 1;
   color: var(--text-3);
@@ -2210,6 +2279,56 @@ const downloadPreviewedImage = async () => {
     stroke-width: 1.7;
     stroke-linecap: round;
     stroke-linejoin: round;
+  }
+}
+
+.agent-message-tools {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+}
+
+.message-wrapper:hover .agent-message-tools,
+.message-wrapper:focus-within .agent-message-tools {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.agent-message-tool-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #d8deea;
+  border-radius: 6px;
+  color: #627089;
+  background: rgba(255, 255, 255, 0.92);
+  cursor: pointer;
+  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+
+  svg {
+    width: 15px;
+    height: 15px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  &:hover {
+    color: #1976D2;
+    border-color: #90CAF9;
+    background: #fff;
+  }
+
+  &.copied {
+    color: #2e7d32;
+    border-color: #a5d6a7;
+    background: #f1f8f4;
   }
 }
 
@@ -2686,6 +2805,11 @@ button.thought-summary-toggle { cursor: pointer; }
     opacity: 1;
     pointer-events: auto;
     align-self: flex-end;
+  }
+
+  .agent-message-tools {
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .attachment-image {

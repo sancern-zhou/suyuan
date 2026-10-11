@@ -34,11 +34,13 @@ logger = structlog.get_logger()
 # 在模块加载时设置PyTorch线程数（必须在任何PyTorch操作之前）
 try:
     import torch
-    _num_threads = os.cpu_count() or 4
+    _num_threads = max(1, int(os.getenv("KNOWLEDGE_TORCH_NUM_THREADS", "2")))
     torch.set_num_threads(_num_threads)
     # 只在首次设置interop threads，避免重复调用报错
     if not hasattr(torch, '_interop_threads_set'):
-        torch.set_num_interop_threads(min(4, _num_threads))
+        torch.set_num_interop_threads(
+            max(1, int(os.getenv("KNOWLEDGE_TORCH_INTEROP_THREADS", "1")))
+        )
         torch._interop_threads_set = True
     logger.info("pytorch_threads_configured", num_threads=_num_threads)
 except Exception as e:

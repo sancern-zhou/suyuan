@@ -9,6 +9,7 @@ import json
 
 from app.agent.context.data_files import get_data_root, resolve_data_path
 from app.auth.dependencies import require_current_user
+from app.auth.identity_matching import owner_matches
 from app.auth.models import CurrentUser
 from app.conversations.repository import ConversationCatalogRepository
 from app.services.map_program_receipts import map_program_receipt_store
@@ -29,7 +30,7 @@ async def _require_session_access(
     if user.is_admin:
         return
     record = await ConversationCatalogRepository().get(session_id)
-    if record is None or record.owner_user_id != user.id:
+    if record is None or not owner_matches(record.owner_user_id, user.id):
         raise HTTPException(status_code=404, detail="session not found")
 
 

@@ -132,7 +132,7 @@ def test_wind_vectors_explain_speed_scale_and_separate_calm(monkeypatch, speeds)
     )
     assert metadata['rendered_vector_count'] == moving
     assert metadata['calm_point_count'] == 3 - moving
-    keys = figures[0].axes[1].findobj(QuiverKey)
+    keys = figures[0].findobj(QuiverKey)
     assert len(keys) == int(moving > 0)
     if keys:
         assert 'm/s' in keys[0].label and '气流去向' in keys[0].label

@@ -254,7 +254,7 @@ def test_schema_points_to_tool_specific_guide_name():
     assert "TOOL_SKILL.md" not in description
     properties = schema["parameters"]["properties"]
     assert set(properties) == {"product", "date", "time", "download"}
-    assert schema["parameters"]["required"] == ["product", "time"]
+    assert schema["parameters"]["required"] == ["product"]
     assert len(__import__("json").dumps(schema, ensure_ascii=False, separators=(",", ":"))) < 650
 
 

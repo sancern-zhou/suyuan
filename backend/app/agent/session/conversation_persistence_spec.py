@@ -28,3 +28,13 @@ def test_conversation_persistence_does_not_store_thought_events():
     ]
     assert "运行时思考不应持久化" not in str(session.conversation_history)
     assert "旧思考不应保留" not in str(session.conversation_history)
+
+
+def test_conversation_persistence_does_not_store_compact_memory():
+    service = ConversationPersistenceService()
+    messages = [
+        {"type": "compact_memory", "role": "user", "content": "internal summary"},
+        {"type": "final", "role": "assistant", "content": "最终回答"},
+    ]
+
+    assert service._persistent_messages(messages) == [messages[1]]

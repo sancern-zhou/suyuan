@@ -552,6 +552,7 @@ class ReActAgent:
         latest_resource_version: int | None = None
         resource_failures: list[dict[str, Any]] = []
         published_resource_ids: list[str] = []
+        published_resource_group_ids: set[str] = set()
         consolidation_message_start = (
             len(memory_manager.session.get_messages_for_llm()) if memory_manager else 0
         )
@@ -684,6 +685,12 @@ class ReActAgent:
                     current_request_image_count=len(effective_board_context["current_request_images"]),
                 )
 
+            # 客户端来源标记（web/app）：随 runtime_metadata 透传，包括子Agent，
+            # 上下文构建器据此渲染 <client_channel>，供模式提示词做端侧差异分支。
+            react_loop.context_builder.client_channel = str(
+                (runtime_metadata or {}).get("client_channel") or ""
+            ).strip().lower() or None
+
             if manual_mode in {"query", "graph"} and map_context:
                 react_loop.context_builder.map_context = map_context
                 map_events = map_context.get("events") or []
@@ -790,6 +797,7 @@ class ReActAgent:
                                     published_resource_ids.extend(
                                         publication.changed_resource_ids
                                     )
+                                    published_resource_group_ids.update(publication.changed_group_ids)
                                     pending_resource_event = publication.changed_event(
                                         actual_session_id, effective_run_id
                                     )
@@ -817,6 +825,10 @@ class ReActAgent:
 
                 if event.get("type") in {"complete", "incomplete", "interrupted", "fatal_error"}:
                     terminal_data = event.setdefault("data", {})
+                    if active_run_id:
+                        terminal_data.setdefault("run_id", str(active_run_id))
+                    terminal_data["resource_ids"] = list(dict.fromkeys(published_resource_ids))
+                    terminal_data["resource_group_ids"] = sorted(published_resource_group_ids)
                     if latest_resource_version is not None:
                         terminal_data["resource_version"] = latest_resource_version
                     if resource_failures:

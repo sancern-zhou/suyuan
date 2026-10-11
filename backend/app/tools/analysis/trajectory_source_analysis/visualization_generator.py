@@ -13,8 +13,8 @@ import structlog
 logger = structlog.get_logger()
 
 
-def _save_image_to_cache(base64_data: str, chart_id: Optional[str] = None) -> str:
-    """将base64图片保存到缓存，返回image_id"""
+def _save_image_to_cache(base64_data: str, chart_id: Optional[str] = None) -> dict:
+    """将base64图片保存到缓存，返回图片信息（image_id/url/local_path）"""
     from app.services.image_cache import get_image_cache
     cache = get_image_cache()
     return cache.save(base64_data, chart_id)
@@ -37,8 +37,9 @@ def _create_image_visual(
     extra_meta: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """将base64图片保存并创建VisualBlock格式输出"""
-    saved_image_id = _save_image_to_cache(image_base64, chart_id)
-    full_url = _get_full_image_url(saved_image_id)
+    image_info = _save_image_to_cache(image_base64, chart_id)
+    saved_image_id = image_info["image_id"]
+    full_url = image_info["url"]
 
     meta = {
         "schema_version": "3.1",
@@ -62,6 +63,8 @@ def _create_image_visual(
             "image_id": saved_image_id,
             "image_url": full_url,  # 完整URL，供LLM生成Markdown链接
             "markdown_image": f"![{title}]({full_url})",  # 预生成的Markdown格式
+            # 原生PNG本地路径：resources_for_visuals 依赖该字段登记 chart-image 原生图资源
+            "local_path": image_info["local_path"],
             "meta": meta
         },
         "meta": {

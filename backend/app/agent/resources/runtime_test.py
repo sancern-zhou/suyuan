@@ -11,7 +11,9 @@ from app.agent.resources.resource_service import SessionResourceService, StoredR
 from app.tools.utility.list_directory_tool import ListDirectoryTool
 from app.tools.utility.read_file_tool import ReadFileTool
 from app.tools.utility.read_session_resource_tool import ReadSessionResourceTool
+from app.utils.path_config import BACKEND_ROOT
 from app.tools.office.validate_pptx_tool import validation_output_resources
+from app.tools.artifact_utils import attach_report_package_resources
 from app.tools.resource_declarations import primary_file
 from .contracts import ResourceDeclaration
 from .contracts import ResourceLocator
@@ -94,6 +96,8 @@ async def test_tool_result_publication_returns_durable_change():
     )
     assert result.catalog_version == 4
     assert len(result.changed_resource_ids) == 1
+    assert result.changed_group_ids == ["group-id"]
+    assert result.changed_event("session-a", "run-a")["data"]["resource_group_ids"] == ["group-id"]
 
 
 @pytest.mark.asyncio
@@ -145,6 +149,7 @@ async def test_durably_tracked_publish_session_file_keeps_focus_intent():
                         "durable": True,
                         "version": 7,
                         "resource_ids": ["primary-id", "preview-id"],
+                        "resource_group_ids": ["report-group"],
                     },
                 },
             },
@@ -154,6 +159,7 @@ async def test_durably_tracked_publish_session_file_keeps_focus_intent():
 
     assert result.catalog_version == 7
     assert result.focus_resource_id == "primary-id"
+    assert result.changed_group_ids == ["report-group"]
 
 
 @pytest.mark.asyncio
@@ -181,6 +187,36 @@ async def test_durably_tracked_visual_requests_frontend_focus():
     )
 
     assert result.focus_resource_id == "chart-resource"
+
+
+@pytest.mark.asyncio
+async def test_durably_tracked_report_presentation_focuses_html_preview():
+    result = await persist_tool_result_resources(
+        object(),
+        "session-a",
+        "run-a",
+        {
+            "type": "tool_result",
+            "data": {
+                "tool_name": "create_report_package",
+                "result": {
+                    "success": True,
+                    "presentation": {"action": "open", "resource_key": "html"},
+                    "resource_tracking": {
+                        "durable": True,
+                        "version": 9,
+                        "resource_ids": ["qmd-resource", "html-resource", "docx-resource"],
+                        "focus_resource_id": "html-resource",
+                    },
+                },
+            },
+        },
+        turn_sequence=1,
+    )
+
+    assert result.focus_resource_id == "html-resource"
+    event = result.changed_event("session-a", "run-a")
+    assert event["data"]["focus_resource_id"] == "html-resource"
 
 
 def test_malformed_iteration_falls_back_to_zero():
@@ -230,6 +266,52 @@ async def test_executor_persists_resources_before_returning_result(tmp_path):
     assert page.resources[0].turn_sequence == 3
     assert f"path={generated.resolve()}" in context_builder.session_resource_context
     await run_ownership_registry.complete("session-a", "run-a")
+
+
+@pytest.mark.asyncio
+async def test_executor_tracks_html_as_report_presentation_focus(tmp_path):
+    report_dir = tmp_path / "report"
+    report_dir.mkdir()
+    qmd_path = report_dir / "report.qmd"
+    html_path = report_dir / "report.html"
+    docx_path = report_dir / "report.docx"
+    qmd_path.write_text("# Report\n", encoding="utf-8")
+    html_path.write_text("<h1>Report</h1>", encoding="utf-8")
+    docx_path.write_bytes(b"docx")
+
+    async def tool(**_):
+        data = {}
+        attach_report_package_resources(
+            data,
+            qmd_path,
+            report_id="focus-report",
+            html_path=html_path,
+            docx_path=docx_path,
+            generator="create_report_package",
+        )
+        return {
+            "success": True,
+            "resources": data["resources"],
+            "presentation": {"action": "open", "resource_key": "html"},
+        }
+
+    service = SessionResourceService.in_memory()
+    executor = ToolExecutor(tool_registry={"create_report_package": tool})
+    executor.memory_manager = SimpleNamespace(session_id="session-report-focus")
+    executor.configure_resource_tracking(
+        service=service,
+        context_builder=SimpleNamespace(session_resource_context=""),
+    )
+    executor.resource_run_id = "run-report-focus"
+    from app.agent.runtime.ownership import run_ownership_registry
+
+    await run_ownership_registry.register("session-report-focus", "run-report-focus")
+    result = await executor.execute_tool("create_report_package", {}, iteration=1)
+    page = await service.list_resources("session-report-focus")
+    html_resource = next(item for item in page.resources if item.resource_key == "html")
+
+    assert result["resource_tracking"]["focus_resource_id"] == html_resource.resource_id
+    await run_ownership_registry.complete("session-report-focus", "run-report-focus")
 
 
 @pytest.mark.asyncio
@@ -315,7 +397,7 @@ async def test_ownership_transition_waits_for_resource_commit(tmp_path):
             await allow_commit.wait()
             return SimpleNamespace(
                 catalog_version=1,
-                resources=[SimpleNamespace(resource_id="resource-a")],
+                    resources=[SimpleNamespace(resource_id="resource-a", group_id="group-a")],
             )
 
     async def tool(**_):
@@ -446,6 +528,16 @@ async def test_read_file_keeps_runtime_multimodal_attachment_path(tmp_path):
     )
 
     assert result["attachments"][0]["local_path"] == str(source)
+
+
+def test_read_file_resolves_current_project_data_registry_from_backend_root():
+    tool = ReadFileTool()
+    relative_path = "backend/backend_data_registry/xuchang_attainment_predictions/annual/latest.json"
+    expected_path = (BACKEND_ROOT / "backend_data_registry/xuchang_attainment_predictions/annual/latest.json").resolve()
+
+    assert tool._resolve_path(relative_path) == expected_path
+    assert tool._resolve_path(str(expected_path)) == expected_path
+    assert tool._resolve_path(str(Path("/etc/passwd"))) is None
 
 
 def _stored(declaration: ResourceDeclaration) -> StoredResource:

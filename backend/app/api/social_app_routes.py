@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import mimetypes
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import AsyncIterator, Literal
+from typing import AsyncIterator, Literal, Optional
+from urllib.parse import quote
 
 import structlog
 from aiohttp import WSMsgType
@@ -24,11 +27,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.identity_matching import owner_matches
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.schemas import ConversationSource
 from app.db.database import get_db
 from app.knowledge_base.models import UploadedFile
 from app.agent.resources.resource_service import SessionResourceService
+from app.utils.json_safety import dumps_safe
 from app.utils.path_config import get_data_registry
 from app.social.app_identity import (
     AppIdentity,
@@ -39,10 +44,39 @@ from app.social.app_identity import (
     resolve_refresh_token,
 )
 from app.social.session_mapper import SessionMapper
+from app.social.app_runs import get_app_run_store
+from app.agent.user_questions import QuestionSet
+from app.social.inline_charts import _CHART_REFERENCE
 from config.settings import settings
 
 router = APIRouter(prefix="/api/social/app", tags=["android-app"])
 logger = structlog.get_logger()
+
+# 模型照抄的工具产物图片链接：/api/image/{image_id}。该通道挂在公司网关
+# 鉴权之后，App 凭证过不了校验（401 附件读取失败），统一改写到
+# /api/social/app/sessions/{sid}/resources/{rid}/content（App 网关自行鉴权）。
+_APP_IMAGE_URL_PATTERN = re.compile(r"/api/image/([A-Za-z0-9_\-]+)")
+
+
+def _rewrite_app_image_urls(answer: str, descriptors: Optional[list]) -> str:
+    """把回复里的 /api/image/{id} 改写为同名会话资源的 App 内容 URL。
+
+    资源与 image_id 按文件名主干匹配（资源 label 多为 image_id + 扩展名）；
+    匹配不到的资源保持原样（Web 端仍可直接访问）。
+    """
+    by_stem: dict[str, str] = {}
+    for item in descriptors or []:
+        filename = str(item.get("filename") or item.get("name") or "")
+        url = str(item.get("url") or "")
+        stem = filename.rsplit(".", 1)[0] if filename else ""
+        if stem and url:
+            by_stem.setdefault(stem, url)
+
+    def _sub(match: re.Match) -> str:
+        return by_stem.get(match.group(1), match.group(0))
+
+    return _APP_IMAGE_URL_PATTERN.sub(_sub, answer)
+
 _agent = None
 _agent_lock = asyncio.Lock()
 _memory_managers: dict[str, object] = {}
@@ -69,6 +103,12 @@ class AppChatRequest(BaseModel):
     session_id: str | None = Field(default=None, max_length=128)
     attachments: list[dict] = Field(default_factory=list, max_length=8)
     mode: Literal["query", "knowledge", "expert"] = "expert"
+    request_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class AppQuestionResolution(BaseModel):
+    decision: Literal["answer", "reject"]
+    answers: list[dict] | None = Field(default=None, max_length=4)
 
 
 class AppSteerRequest(BaseModel):
@@ -101,33 +141,54 @@ class AppPushDeviceRequest(BaseModel):
     app_id: str | None = Field(default=None, max_length=128)
 
 
-def _broadcast_attachment_payload(item: object) -> dict | None:
+def _broadcast_attachment_payload(item: object, *, message_id: str, index: int) -> dict | None:
     """Project internal broadcast attachment metadata to an App-safe shape."""
     if not isinstance(item, dict):
         return None
     name = str(item.get("filename") or item.get("name") or "附件").strip() or "附件"
     mime_type = str(item.get("mime_type") or item.get("mimeType") or "").strip()
+    if not mime_type:
+        mime_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
     raw_url = str(item.get("url") or "").strip()
     payload = {
+        "file_id": f"broadcast:{message_id}:{index}",
         "filename": name,
         "name": name,
         "type": "image" if mime_type.lower().startswith("image/") else "file",
-        "mime_type": mime_type or "application/octet-stream",
+        "mime_type": mime_type,
     }
-    # Only forward URLs, never server filesystem paths.
+    # Only forward URLs, never server filesystem paths; local files are served
+    # through the owner-scoped broadcast attachment content endpoint.  The
+    # unique filename tail keeps per-message URLs distinct down to their last
+    # path segment: image loaders that key their disk cache on the final
+    # segment would otherwise collapse every broadcast image into one newest
+    # cache entry.
     if raw_url.startswith("/") or raw_url.startswith("https://") or raw_url.startswith("http://"):
         payload["url"] = raw_url
+    elif str(item.get("path") or "").strip():
+        base_url = f"/api/social/app/broadcasts/{message_id}/attachments/{index}"
+        unique_name = f"{hashlib.sha256(message_id.encode()).hexdigest()[:16]}-{index}-{name}"
+        payload["url"] = f"{base_url}/content/{quote(unique_name, safe='')}"
+        payload["download_url"] = payload["url"]
+        # Office 文件 App 端只能通过 PDF rendition 预览，与聊天附件的
+        # office preview 管线保持一致。
+        if Path(name).suffix.lower() in {
+            ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
+        }:
+            payload["preview_url"] = f"{base_url}/preview/{quote(Path(unique_name).stem, safe='')}.pdf"
+            payload["preview_mime_type"] = "application/pdf"
     return payload
 
 
 def _broadcast_payload(item: dict) -> dict:
     data = item.get("data") if isinstance(item.get("data"), dict) else {}
     raw_attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
-    attachments = [
-        attachment
-        for raw in raw_attachments
-        if (attachment := _broadcast_attachment_payload(raw)) is not None
-    ]
+    message_id = str(item.get("id") or "")
+    attachments = []
+    for index, raw in enumerate(raw_attachments):
+        attachment = _broadcast_attachment_payload(raw, message_id=message_id, index=index)
+        if attachment is not None:
+            attachments.append(attachment)
     return {
         "message_id": str(item.get("id") or ""),
         "content": str(item.get("content") or ""),
@@ -262,7 +323,18 @@ async def realtime_voice(websocket: WebSocket) -> None:
 
 @router.post("/auth/login", response_model=AppLoginResponse)
 async def login(request: AppLoginRequest) -> AppLoginResponse:
-    token, identity = issue_access_token(request.account_id, request.account_secret)
+    try:
+        token, identity = issue_access_token(request.account_id, request.account_secret)
+    except HTTPException as exc:
+        logger.warning(
+            "app_login_failed",
+            account_id=request.account_id,
+            account_id_bytes=len(request.account_id.encode("utf-8")),
+            secret_length=len(request.account_secret),
+            status=exc.status_code,
+            detail=exc.detail,
+        )
+        raise
     access_token, refresh_token, expires_at, refresh_expires_at = issue_token_pair(identity)
     return AppLoginResponse(
         access_token=access_token or token,
@@ -426,6 +498,22 @@ async def upload_file(
     )
 
 
+@router.delete("/upload/{file_id}")
+async def app_delete_upload(
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: AppIdentity = Depends(require_app_identity),
+) -> dict:
+    """Remove an App-uploaded attachment through the same pipeline as Web."""
+    from app.api.upload_routes import delete_uploaded_file
+
+    return await delete_uploaded_file(
+        file_id=file_id,
+        db=db,
+        user=identity.as_current_user(),
+    )
+
+
 @router.get("/broadcasts")
 async def app_broadcasts(identity: AppIdentity = Depends(require_app_identity)) -> dict:
     """Return the authenticated App account's persistent broadcast inbox."""
@@ -443,20 +531,33 @@ async def app_broadcasts(identity: AppIdentity = Depends(require_app_identity)) 
 
 def _report_payload(row) -> dict:
     from app.social.report_service import report_payload
+
     payload = report_payload(row)
     attachments = []
+    # Unique tail per report+attachment keeps App client caches (which key on
+    # the final URL path segment) from collapsing every report preview into
+    # one entry; the value itself is never used for resolution.
+    identity = hashlib.sha256(str(row.report_id).encode("utf-8")).hexdigest()[:16]
     for index, item in enumerate(payload.get("attachments") or []):
         if not isinstance(item, dict):
             continue
         name = str(item.get("filename") or item.get("name") or "报告附件")
         mime = str(item.get("mime_type") or mimetypes.guess_type(name)[0] or "application/octet-stream")
         encoded = quote(row.report_id, safe="")
-        content_url = f"/api/social/app/report-results/{encoded}/attachments/{index}"
-        attachments.append({"file_id": f"report-{row.report_id}-{index}", "filename": name, "name": name,
-                            "type": "image" if mime.startswith("image/") else "document",
-                            "file_type": "image" if mime.startswith("image/") else "document",
-                            "mime_type": mime, "url": content_url, "preview_url": content_url,
-                            "download_url": f"{content_url}?disposition=attachment"})
+        base_url = f"/api/social/app/report-results/{encoded}/attachments/{index}"
+        unique_name = f"{identity}-{index}-{name}"
+        content_url = f"{base_url}/content/{quote(unique_name, safe='')}"
+        preview_url = content_url
+        if Path(name).suffix.lower() in {".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}:
+            preview_url = f"{base_url}/preview/{quote(Path(unique_name).stem, safe='')}.pdf"
+        attachment_payload = {"file_id": f"report-{row.report_id}-{index}", "filename": name, "name": name,
+                              "type": "image" if mime.startswith("image/") else "document",
+                              "file_type": "image" if mime.startswith("image/") else "document",
+                              "mime_type": mime, "url": content_url, "preview_url": preview_url,
+                              "download_url": f"{content_url}?disposition=attachment"}
+        if preview_url != content_url:
+            attachment_payload["preview_mime_type"] = "application/pdf"
+        attachments.append(attachment_payload)
     payload["attachments"] = attachments
     return payload
 
@@ -521,6 +622,7 @@ async def app_broadcast_attachment(
         media_type=media_type,
         filename=filename,
         content_disposition_type=disposition,
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
     )
 
 
@@ -560,9 +662,20 @@ async def app_delete_report(report_id: str, identity: AppIdentity = Depends(requ
     return {"report_id": report_id, "deleted": True}
 
 
-@router.get("/report-results/{report_id}/attachments/{attachment_index}")
-async def app_report_attachment(report_id: str, attachment_index: int, disposition: Literal["inline", "attachment"] = "inline", identity: AppIdentity = Depends(require_app_identity)) -> FileResponse:
+async def _serve_report_attachment(
+    report_id: str,
+    attachment_index: int,
+    identity: AppIdentity,
+    *,
+    disposition: Literal["inline", "attachment"] = "inline",
+) -> FileResponse:
+    """Stream one persisted report attachment to its owner.
+
+    Persisted report attachments are immutable (each execution writes its own
+    report directory), so responses are marked privately cacheable.
+    """
     from app.social.report_service import get_report
+
     row = await get_report(identity.social_user_id, report_id)
     if row is None:
         raise HTTPException(status_code=404, detail="report_not_found")
@@ -579,7 +692,100 @@ async def app_report_attachment(report_id: str, attachment_index: int, dispositi
         raise HTTPException(status_code=404, detail="report_attachment_missing")
     filename = str(attachment.get("filename") or attachment.get("name") or target.name)
     media_type = str(attachment.get("mime_type") or mimetypes.guess_type(filename)[0] or "application/octet-stream")
-    return FileResponse(target, media_type=media_type, filename=filename, content_disposition_type=disposition)
+    return FileResponse(
+        target,
+        media_type=media_type,
+        filename=filename,
+        content_disposition_type=disposition,
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
+
+
+@router.get("/report-results/{report_id}/attachments/{attachment_index}")
+async def app_report_attachment(
+    report_id: str,
+    attachment_index: int,
+    disposition: Literal["inline", "attachment"] = "inline",
+    identity: AppIdentity = Depends(require_app_identity),
+) -> FileResponse:
+    return await _serve_report_attachment(
+        report_id, attachment_index, identity, disposition=disposition
+    )
+
+
+# The {filename} tail keeps attachment URLs unique per report for clients
+# whose caches key on the final path segment; its value is not used for
+# resolution (report_id + index identify the stored copy). Mirrors the
+# broadcast attachment routes.
+@router.get("/report-results/{report_id}/attachments/{attachment_index}/content/{filename}")
+async def app_report_attachment_content(
+    report_id: str,
+    attachment_index: int,
+    filename: str,
+    disposition: Literal["inline", "attachment"] = "inline",
+    identity: AppIdentity = Depends(require_app_identity),
+) -> FileResponse:
+    return await _serve_report_attachment(
+        report_id, attachment_index, identity, disposition=disposition
+    )
+
+
+async def _serve_report_attachment_preview(
+    report_id: str,
+    attachment_index: int,
+    identity: AppIdentity,
+) -> FileResponse:
+    """Serve a cached PDF preview for an Office report attachment."""
+    import asyncio
+
+    from app.api.upload_routes import _office_pdf_preview
+    from app.social.report_service import get_report
+
+    row = await get_report(identity.social_user_id, report_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="report_not_found")
+    attachments = row.attachments or []
+    if attachment_index < 0 or attachment_index >= len(attachments) or not isinstance(attachments[attachment_index], dict):
+        raise HTTPException(status_code=404, detail="report_attachment_not_found")
+    attachment = attachments[attachment_index]
+    target = Path(str(attachment.get("path") or "").strip()).expanduser().resolve()
+    try:
+        target.relative_to(get_data_registry().expanduser().resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="report_attachment_forbidden") from exc
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="report_attachment_missing")
+    if target.suffix.lower() not in {".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}:
+        raise HTTPException(status_code=404, detail="report_preview_not_supported")
+    cached = await asyncio.to_thread(_office_pdf_preview, str(target))
+    if cached is None:
+        raise HTTPException(status_code=503, detail="report_preview_generation_failed")
+    filename = str(attachment.get("filename") or attachment.get("name") or target.name)
+    return FileResponse(
+        cached,
+        media_type="application/pdf",
+        filename=f"{Path(filename).stem}.pdf",
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
+
+
+@router.get("/report-results/{report_id}/attachments/{attachment_index}/preview")
+async def app_report_attachment_preview(
+    report_id: str,
+    attachment_index: int,
+    identity: AppIdentity = Depends(require_app_identity),
+) -> FileResponse:
+    return await _serve_report_attachment_preview(report_id, attachment_index, identity)
+
+
+@router.get("/report-results/{report_id}/attachments/{attachment_index}/preview/{filename}")
+async def app_report_attachment_preview_tailed(
+    report_id: str,
+    attachment_index: int,
+    filename: str,
+    identity: AppIdentity = Depends(require_app_identity),
+) -> FileResponse:
+    return await _serve_report_attachment_preview(report_id, attachment_index, identity)
 
 
 @router.post("/broadcasts/{message_id}/read")
@@ -607,6 +813,120 @@ async def app_mark_all_broadcasts_read(
 
     changed = await mark_broadcast_read(identity.social_user_id)
     return {"read_all": True, "changed": changed}
+
+
+async def _resolve_broadcast_attachment(
+    message_id: str,
+    index: int,
+    identity: AppIdentity,
+) -> Path:
+    """Resolve one broadcast attachment of the caller's inbox to a local file."""
+    from app.social.broadcast_context import load_broadcast_messages
+
+    messages = await load_broadcast_messages(identity.social_user_id)
+    message = next(
+        (item for item in messages if isinstance(item, dict) and str(item.get("id")) == message_id),
+        None,
+    )
+    if message is None:
+        raise HTTPException(status_code=404, detail="broadcast_not_found")
+    data = message.get("data") if isinstance(message.get("data"), dict) else {}
+    attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
+    if index < 0 or index >= len(attachments) or not isinstance(attachments[index], dict):
+        raise HTTPException(status_code=404, detail="broadcast_attachment_not_found")
+    raw_path = str(attachments[index].get("path") or "").strip()
+    if not raw_path:
+        raise HTTPException(status_code=404, detail="broadcast_attachment_content_unavailable")
+    registry_root = get_data_registry().expanduser().resolve()
+    target = Path(raw_path).expanduser().resolve()
+    try:
+        target.relative_to(registry_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="broadcast_attachment_path_forbidden") from exc
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="broadcast_attachment_content_missing")
+    return target
+
+
+async def _broadcast_attachment_name(
+    message_id: str,
+    index: int,
+    identity: AppIdentity,
+) -> str:
+    """Return the stored display name of one broadcast attachment."""
+    from app.social.broadcast_context import load_broadcast_messages
+
+    messages = await load_broadcast_messages(identity.social_user_id)
+    message = next(
+        (item for item in messages if isinstance(item, dict) and str(item.get("id")) == message_id),
+        None,
+    )
+    if message is None:
+        raise HTTPException(status_code=404, detail="broadcast_not_found")
+    data = message.get("data") if isinstance(message.get("data"), dict) else {}
+    attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
+    if index < 0 or index >= len(attachments) or not isinstance(attachments[index], dict):
+        raise HTTPException(status_code=404, detail="broadcast_attachment_not_found")
+    attachment = attachments[index]
+    target_name = Path(str(attachment.get("path") or "attachment")).name
+    return str(attachment.get("name") or attachment.get("filename") or target_name)
+
+
+# The {filename} tail keeps attachment URLs unique per message for clients
+# whose image cache keys on the final path segment; its value is not used for
+# resolution (message_id + index identify the stored copy).
+@router.get("/broadcasts/{message_id}/attachments/{index}/content/{filename}")
+async def app_broadcast_attachment_content(
+    message_id: str,
+    index: int,
+    identity: AppIdentity = Depends(require_app_identity),
+) -> FileResponse:
+    """Stream one broadcast attachment to its owner.
+
+    The persisted attachment keeps the server filesystem path; this endpoint
+    resolves it server-side so the path never reaches the client.
+    Persisted copies are immutable per message, so the response is marked
+    privately cacheable without revalidation.
+    """
+    target = await _resolve_broadcast_attachment(message_id, index, identity)
+    filename = await _broadcast_attachment_name(message_id, index, identity)
+    media_type = str(mimetypes.guess_type(filename)[0] or "application/octet-stream")
+    return FileResponse(
+        target,
+        media_type=media_type,
+        filename=filename,
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
+
+
+@router.get("/broadcasts/{message_id}/attachments/{index}/preview/{filename}")
+async def app_broadcast_attachment_preview(
+    message_id: str,
+    index: int,
+    identity: AppIdentity = Depends(require_app_identity),
+) -> FileResponse:
+    """Serve a cached PDF rendition of one broadcast Office attachment.
+
+    Mirrors the chat-upload preview pipeline (LibreOffice -> <file>.preview.pdf)
+    because the Android App renders Office documents via PDF previews only.
+    """
+    import asyncio
+
+    from app.api.upload_routes import _office_pdf_preview
+
+    target = await _resolve_broadcast_attachment(message_id, index, identity)
+    if target.suffix.lower() not in {".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}:
+        raise HTTPException(status_code=404, detail="broadcast_preview_not_supported")
+    cached = await asyncio.to_thread(_office_pdf_preview, str(target))
+    if cached is None:
+        raise HTTPException(status_code=503, detail="broadcast_preview_generation_failed")
+    filename = await _broadcast_attachment_name(message_id, index, identity)
+    return FileResponse(
+        cached,
+        media_type="application/pdf",
+        filename=f"{Path(filename).stem}.pdf",
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
 
 
 def _session_mapper(request: Request) -> SessionMapper:
@@ -673,11 +993,13 @@ async def _ensure_session(
         row = await get_conversation_catalog().find(requested_session_id)
         if (
             row is None
-            or row.owner_user_id != identity.social_user_id
+            or not owner_matches(row.owner_user_id, identity.social_user_id)
             or row.source != ConversationSource.SOCIAL
         ):
             raise HTTPException(status_code=404, detail="session_not_found")
-        session_id = requested_session_id
+        # Keep the original catalog identity when continuing through a bound
+        # account; re-registering it would attempt to transfer ownership.
+        return requested_session_id
     else:
         session_id = await mapper.get_or_create_session(identity.social_user_id, mode="social")
 
@@ -755,9 +1077,49 @@ async def _sanitize_attachments(
             "type": row.file_type,
             "mime_type": row.mime_type,
             "url": f"/api/upload/{row.id}",
+            # 服务端本地路径仅供运行时兜底（原生图片块），持久化与回传 App
+            # 前由 _display_attachments 剥离，不把文件系统布局泄漏到消息里。
+            **({"local_path": row.file_path} if row.file_path and Path(row.file_path).exists() else {}),
         }
         for row in (rows[str(item["file_id"]).strip()] for item in attachments)
     ]
+
+
+def _display_attachments(attachments: list[dict]) -> list[dict]:
+    """Strip server-only fields from attachment metadata before persisting."""
+    return [
+        {key: value for key, value in attachment.items() if key not in {"local_path", "path"}}
+        for attachment in attachments
+        if isinstance(attachment, dict)
+    ]
+
+
+async def _resolve_attachment_resource_refs(session_id: str, file_ids: list[str]) -> list:
+    """Resolve uploaded file_ids to the session resources registered at upload
+    time, so App runs consume attachments through the same selected-resource
+    pipeline as Web: native image blocks for images, server-readable paths in
+    the current-turn context for documents."""
+    if not file_ids:
+        return []
+    from app.agent.resources.contracts import ResourceStatus
+    from app.agent.selection_context import select_conversation_resources
+
+    page = await SessionResourceService.database().list_resources(session_id, limit=1000)
+    by_file_id: dict[str, object] = {}
+    for item in page.resources:
+        if item.relation != "primary" or item.status != ResourceStatus.ACTIVE.value:
+            continue
+        owner_file_id = str((item.metadata or {}).get("file_id") or "")
+        if owner_file_id in file_ids:
+            by_file_id.setdefault(owner_file_id, item)
+    requested_ids = [
+        by_file_id[file_id].resource_id
+        for file_id in file_ids
+        if file_id in by_file_id
+    ]
+    if not requested_ids:
+        return []
+    return select_conversation_resources(page.resources, requested_ids)
 
 
 def _app_resource_descriptor(session_id: str, resource, *, preview_resource=None, variants=None) -> dict:
@@ -777,6 +1139,15 @@ def _app_resource_descriptor(session_id: str, resource, *, preview_resource=None
         "url": f"/api/social/app/sessions/{session_id}/resources/{resource.resource_id}/content",
         "download_url": f"/api/social/app/sessions/{session_id}/resources/{resource.resource_id}/content",
         "format": resource.format,
+        "renderer": resource.renderer,
+        "resource_key": resource.resource_key,
+        "visual_id": str(resource.metadata.get("visual_id") or ""),
+        "interactive": resource.metadata.get("interactive") is True,
+        "group_id": str(getattr(resource, "group_id", "") or ""),
+        "run_id": str(getattr(resource, "run_id", "") or ""),
+        "relation": str(getattr(resource, "relation", "") or ""),
+        "role": str(getattr(resource, "role", "") or ""),
+        "kind": str(getattr(resource, "kind", "") or ""),
     }
     if preview_resource is not None:
         descriptor["preview_url"] = f"/api/social/app/sessions/{session_id}/resources/{preview_resource.resource_id}/content"
@@ -863,9 +1234,11 @@ async def _app_resource_descriptors(session_id: str, resource_ids: list[str]) ->
     deduplicated: dict[tuple[str, str], dict] = {}
     for descriptor in descriptors:
         key = (
-            str(descriptor.get("filename") or descriptor.get("name") or "").strip().lower(),
+            str(descriptor.get("group_id") or descriptor.get("run_id") or "") + ":" + str(descriptor.get("filename") or descriptor.get("name") or "").strip().lower(),
             str(descriptor.get("mime_type") or descriptor.get("format") or "").strip().lower(),
         )
+        if descriptor.get("resource_key") in {"chart-spec", "chart-image"}:
+            key = (descriptor["file_id"], descriptor["resource_key"])
         if not key[0]:
             continue
         current = deduplicated.get(key)
@@ -874,12 +1247,30 @@ async def _app_resource_descriptors(session_id: str, resource_ids: list[str]) ->
     return list(deduplicated.values())
 
 
+def _fallback_runtime_attachments(attachments: list[dict] | None, resource_refs: list | None) -> list[dict]:
+    """Attachments not covered by resolved resource refs fall back to the
+    legacy attachments parameter; refs-covered files must not ride both
+    channels or images would be inlined twice as native blocks."""
+    covered_file_ids = {
+        str((getattr(ref, "metadata", None) or {}).get("file_id") or "")
+        for ref in (resource_refs or [])
+    }
+    if not resource_refs:
+        return list(attachments or [])
+    return [
+        item for item in (attachments or [])
+        if str(item.get("file_id") or "") not in covered_file_ids
+    ]
+
+
 async def _stream_events(
     identity: AppIdentity,
     session_id: str,
     query: str,
     attachments: list[dict] | None = None,
     mode: str = "expert",
+    request_id: str | None = None,
+    resource_refs: list | None = None,
 ) -> AsyncIterator[str]:
     from app.agent.runtime.cancellation import cancellation_registry
 
@@ -887,16 +1278,33 @@ async def _stream_events(
     memory_store = await _get_memory_store(identity)
     social_context = _social_preferences(identity)
     cancel_event = await cancellation_registry.register(session_id)
+    fallback_attachments = _fallback_runtime_attachments(attachments, resource_refs)
     display_history: list[dict] = [{
         "type": "user",
         "role": "user",
         "content": query,
-        "attachments": attachments or [],
+        "attachments": _display_attachments(attachments or []),
         "timestamp": datetime.now().isoformat(),
     }]
+    if request_id:
+        display_history[0]['id'] = f"app-user:{request_id}"
     streamed_answer = ""
     streamed_resources: list[dict] = []
     persisted = False
+    # 与 agent_bridge 处理微信/QQ 入站消息保持一致：为本次 agent 运行设置
+    # social 上下文，使 send_notification 等工具能解析当前发送通道。
+    from app.social.message_bus_singleton import reset_current_context, set_current_context
+
+    social_user_parts = identity.social_user_id.rsplit(":", 2)
+    if len(social_user_parts) == 3:
+        context_channel, context_bot_account, context_chat_id = social_user_parts
+    else:
+        context_channel, context_bot_account, context_chat_id = "app", "android", identity.account_id
+    context_tokens = set_current_context(
+        channel=context_channel,
+        chat_id=context_chat_id,
+        bot_account=context_bot_account,
+    )
     try:
         await cancellation_registry.arm_run_task(session_id, cancel_event)
         async for event in agent.analyze(
@@ -907,12 +1315,29 @@ async def _stream_events(
             user_identifier=identity.social_user_id,
             social_memory_store=memory_store,
             **social_context,
-            attachments=attachments or None,
+            attachments=fallback_attachments or None,
+            selected_resource_refs=resource_refs or None,
             cancel_event=cancel_event,
+            # App 网关入口固定标记客户端来源，随 runtime_metadata 透传到子Agent。
+            runtime_metadata={"client_channel": "app"},
         ):
             event_type = event.get("type")
             event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
-            if event_type == "streaming_text":
+            if event_data.get("run_id"):
+                await cancellation_registry.attach_run_id(session_id, cancel_event, str(event_data["run_id"]))
+            if event_type == "interaction_required":
+                if event_data.get('kind') != 'structured_question':
+                    # Unsupported approval actions must remain explicit; never
+                    # silently approve operations on behalf of a mobile user.
+                    raise RuntimeError('App 暂不支持此确认类型，请在回复中说明需要用户确认的事项')
+                validated = QuestionSet.model_validate({'questions': event_data.get('questions')})
+                event['data'] = {
+                    **event_data, **validated.model_dump(),
+                    'interaction_id': f'interaction_{uuid.uuid4().hex}',
+                    'title': event_data.get('title') or '需要你的选择',
+                    'mode': mode, 'session_id': session_id,
+                }
+            elif event_type == "streaming_text":
                 streamed_answer += str(event_data.get("chunk") or "")
             elif event_type == "resources_changed":
                 descriptors = await _app_resource_descriptors(
@@ -926,8 +1351,50 @@ async def _stream_events(
                 answer = str(event_data.get("answer") or streamed_answer).strip()
                 if answer:
                     final_attachments = list(streamed_resources)
+                    session_descriptors: Optional[list] = None
+                    # 答案可能复用之前轮次生成的图表（跨轮引用）。本轮没有产生
+                    # resources_changed 时，按会话目录补齐被引用的图表资源，
+                    # 否则 App 端按消息附件匹配不到 [[chart:...]] 只能显示原文。
+                    referenced_ids = {
+                        ref for ref in _CHART_REFERENCE.findall(answer)
+                    } - {item.get("visual_id") for item in final_attachments}
+                    if referenced_ids:
+                        try:
+                            session_descriptors = await _app_resource_descriptors(session_id, [])
+                            known_file_ids = {item.get("file_id") for item in final_attachments}
+                            final_attachments.extend(
+                                item for item in session_descriptors
+                                if item.get("visual_id") in referenced_ids
+                                and item.get("file_id") not in known_file_ids
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "app_final_cross_run_charts_attach_failed",
+                                session_id=session_id,
+                                error=str(exc),
+                            )
+                    # 模型会照抄工具结果里的 /api/image/{id} 裸链接，而该通道
+                    # 需要公司网关凭证，App 端拉取必 401（附件读取失败）。
+                    # 改写到 App 可访问的会话资源通道（按文件名主干匹配资源）。
+                    if "/api/image/" in answer:
+                        if session_descriptors is None:
+                            try:
+                                session_descriptors = await _app_resource_descriptors(session_id, [])
+                            except Exception as exc:
+                                logger.warning(
+                                    "app_image_url_rewrite_descriptors_failed",
+                                    session_id=session_id,
+                                    error=str(exc),
+                                )
+                        answer = _rewrite_app_image_urls(answer, session_descriptors)
+                    seen_file_ids = set()
+                    final_attachments = [
+                        item for item in final_attachments
+                        if item.get("file_id") and not (item["file_id"] in seen_file_ids or seen_file_ids.add(item["file_id"]))
+                    ]
                     if final_attachments:
                         event_data["attachments"] = final_attachments
+                        event_data["resource_run_ids"] = sorted({item["run_id"] for item in final_attachments if item.get("run_id")})
                     display_history.append({
                         "type": "final",
                         "role": "assistant",
@@ -955,13 +1422,14 @@ async def _stream_events(
                 })
                 await _persist_app_turn(session_id, query, display_history)
                 persisted = True
-            yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+            yield f"data: {dumps_safe(event, default=str)}\n\n"
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         error = {"type": "fatal_error", "data": {"error": str(exc), "code": "app_agent_failed"}}
-        yield f"data: {json.dumps(error, ensure_ascii=False)}\n\n"
+        yield f"data: {dumps_safe(error)}\n\n"
     finally:
+        reset_current_context(context_tokens)
         # A disconnected client can cancel the stream before a terminal event.
         # Keep the user message so the session remains auditable and does not
         # appear to have been silently dropped.
@@ -980,14 +1448,104 @@ async def chat_stream(
     db: AsyncSession = Depends(get_db),
     identity: AppIdentity = Depends(require_app_identity),
 ) -> StreamingResponse:
-    session_id = await _ensure_session(request, identity, payload.session_id)
-    attachments = await _sanitize_attachments(db, session_id, payload.attachments)
+    run = await start_app_run(request, payload, db, identity)
     response = StreamingResponse(
-        _stream_events(identity, session_id, payload.query, attachments, payload.mode),
+        get_app_run_store().stream(run["run_id"]),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Session-Id": session_id},
+        headers={"Cache-Control": "no-cache", "X-Session-Id": run["session_id"], "X-Run-Id": run["run_id"], "X-Accel-Buffering": "no"},
     )
     return response
+
+
+def _public_app_run(run: dict) -> dict:
+    return {key: run[key] for key in ("run_id", "session_id", "status", "request_id")}
+
+
+@router.post("/chat/runs")
+async def start_app_run(
+    request: Request,
+    payload: AppChatRequest,
+    db: AsyncSession = Depends(get_db),
+    identity: AppIdentity = Depends(require_app_identity),
+) -> dict:
+    store = get_app_run_store()
+    request_id = payload.request_id or uuid.uuid4().hex
+    fingerprint = hashlib.sha256(json.dumps(payload.model_dump(exclude={"request_id"}), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    existing = await store.lookup(identity.social_user_id, request_id)
+    if existing:
+        if existing['fingerprint'] != fingerprint:
+            raise HTTPException(status_code=409, detail="request_id_conflict")
+        return _public_app_run(existing)
+    session_id = await _ensure_session(request, identity, payload.session_id)
+    if await store.pending_interaction(session_id):
+        raise HTTPException(status_code=409, detail="answer_pending_question_first")
+    attachments = await _sanitize_attachments(db, session_id, payload.attachments)
+    try:
+        resource_refs = (
+            await _resolve_attachment_resource_refs(
+                session_id, [str(item["file_id"]) for item in attachments]
+            )
+            if attachments
+            else []
+        )
+    except Exception as exc:
+        logger.error(
+            "app_attachment_resource_resolution_failed",
+            session_id=session_id,
+            error=str(exc),
+        )
+        raise HTTPException(status_code=503, detail="resource_store_unavailable") from exc
+    try:
+        run, created = await store.create(identity.social_user_id, request_id, session_id, fingerprint, payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if created:
+        store.start(run['run_id'], lambda: _stream_events(identity, session_id, payload.query, attachments, payload.mode, request_id=request_id, resource_refs=resource_refs))
+    return _public_app_run(run)
+
+
+async def _read_app_run(run_id: str, identity: AppIdentity) -> dict:
+    run = await get_app_run_store().get(run_id)
+    if run is None or not owner_matches(run['owner'], identity.social_user_id):
+        raise HTTPException(status_code=404, detail="run_not_found")
+    await get_conversation_catalog().require_read(run['session_id'], identity.as_current_user())
+    return run
+
+
+@router.get("/chat/runs/{run_id}")
+async def app_run_status(run_id: str, identity: AppIdentity = Depends(require_app_identity)) -> dict:
+    return _public_app_run(await _read_app_run(run_id, identity))
+
+
+@router.get("/chat/runs/{run_id}/events")
+async def app_run_events(run_id: str, after: int = Query(default=0, ge=0), identity: AppIdentity = Depends(require_app_identity)) -> StreamingResponse:
+    await _read_app_run(run_id, identity)
+    return StreamingResponse(get_app_run_store().stream(run_id, after), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+async def _require_app_question_session(session_id: str, identity: AppIdentity):
+    row = await get_conversation_catalog().require_read(session_id, identity.as_current_user())
+    if row.source != ConversationSource.SOCIAL:
+        raise HTTPException(status_code=404, detail='session_not_found')
+
+
+@router.get('/sessions/{session_id}/interaction')
+async def app_pending_interaction(session_id: str, identity: AppIdentity = Depends(require_app_identity)):
+    await _require_app_question_session(session_id, identity)
+    return {'interaction': await get_app_run_store().pending_interaction(session_id)}
+
+
+@router.post('/sessions/{session_id}/interactions/{interaction_id}')
+async def app_resolve_interaction(session_id: str, interaction_id: str, payload: AppQuestionResolution, identity: AppIdentity = Depends(require_app_identity)):
+    await _require_app_question_session(session_id, identity)
+    try:
+        return await get_app_run_store().resolve_interaction(session_id, interaction_id, payload.decision, payload.answers)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/sessions")
@@ -1071,13 +1629,66 @@ async def delete_app_session(
     return {"session_id": session_id, "deleted": bool(deleted)}
 
 
+_SCHEDULED_SESSION_RE = re.compile(r"^scheduled_task_(?P<task_id>.+)_\d{8}_\d{6}_[0-9a-fA-F]{8}$")
+
+# Android 端会话恢复只展示对话轮次：用户输入、思考与最终结论。
+# 执行过程（tool_use/tool_result/process 等）与 Web 端共享存储，但不下发。
+_MOBILE_VISIBLE_HISTORY_TYPES = {
+    "user",
+    "final",
+    "thought",
+    "thinking",
+    "error",
+    "fatal_error",
+    "incomplete",
+    "interrupted",
+}
+
+
+def _scheduled_session_task_id(session_id: str) -> str | None:
+    match = _SCHEDULED_SESSION_RE.match(session_id)
+    return match.group("task_id") if match else None
+
+
+async def _authorize_scheduled_session_row(catalog, session_id: str, user, exc: HTTPException):
+    """定时任务会话在目录中的 owner 是 system，改按任务可见性授权。"""
+    if exc.status_code != 404 or not session_id.startswith("scheduled_task_"):
+        raise exc
+    from app.api.scheduled_task_routes import get_scheduled_task_service, _require_task_view
+
+    task_id = _scheduled_session_task_id(session_id)
+    task = get_scheduled_task_service().get_task(task_id) if task_id else None
+    if task is None:
+        raise HTTPException(status_code=404, detail="session_not_found") from exc
+    _require_task_view(task, user)
+    row = await catalog.find(session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="session_not_found") from exc
+    return row
+
+
+async def _readable_app_session_row(session_id: str, identity: AppIdentity):
+    catalog = get_conversation_catalog()
+    user = identity.as_current_user()
+    try:
+        row = await catalog.require_read(session_id, user)
+    except HTTPException as exc:
+        # 定时任务会话在目录中的 owner 是 system，改按任务可见性授权。
+        return await _authorize_scheduled_session_row(catalog, session_id, user, exc)
+    if (
+        row.source != ConversationSource.SOCIAL
+        and not _scheduled_session_task_id(session_id)
+    ):
+        # App 只恢复自己的 SOCIAL 会话；WEB 会话仅在定时任务结果场景
+        # （scheduled_task_ 前缀，已按任务可见性授权）下可见。
+        raise HTTPException(status_code=404, detail="session_not_found")
+    return row
+
+
 @router.get("/sessions/{session_id}/messages")
 async def app_session_messages(session_id: str, identity: AppIdentity = Depends(require_app_identity)) -> dict:
     """Restore the latest messages for an App-owned conversation."""
-    catalog = get_conversation_catalog()
-    row = await catalog.require_read(session_id, identity.as_current_user())
-    if row.source != ConversationSource.SOCIAL:
-        raise HTTPException(status_code=404, detail="session_not_found")
+    row = await _readable_app_session_row(session_id, identity)
     from app.conversations.adapters import get_conversation_adapters
 
     restored = await get_conversation_adapters().get(row.source).restore(
@@ -1085,21 +1696,25 @@ async def app_session_messages(session_id: str, identity: AppIdentity = Depends(
     )
     if not restored:
         return {"session_id": session_id, "messages": []}
-    payload = restored.get("normalized_session") or {}
-    history = list(payload.get("conversation_history") or [])
-    # Resource outputs are stored in the session resource catalog separately
-    # from the text transcript. Project them onto the latest assistant turn so
-    # the Android history view can render generated images/files as well.
+    if row.source == ConversationSource.WEB:
+        session = restored.get("session")
+        if session is None:
+            return {"session_id": session_id, "messages": []}
+        payload = session.model_dump(mode="json")
+    else:
+        payload = restored.get("normalized_session") or {}
+    history = [
+        item
+        for item in list(payload.get("conversation_history") or [])
+        if not isinstance(item, dict)
+        or str(item.get("type") or item.get("role") or "").lower() in _MOBILE_VISIBLE_HISTORY_TYPES
+    ]
+    # Match explicit chart references and run/resource identities to their turns.
+    # Unattributed legacy files remain in the catalog, not on the latest reply.
     try:
         descriptors = await _app_resource_descriptors(session_id, [])
-        if descriptors:
-            for item in reversed(history):
-                role = str(item.get("role") or item.get("type") or "").lower() if isinstance(item, dict) else ""
-                if role in {"assistant", "final"}:
-                    existing = item.get("attachments") if isinstance(item.get("attachments"), list) else []
-                    known = {str(value.get("file_id") or value.get("resource_id") or value.get("url") or "") for value in existing if isinstance(value, dict)}
-                    item["attachments"] = existing + [value for value in descriptors if value["file_id"] not in known]
-                    break
+        from app.social.inline_charts import attach_reply_resources
+        attach_reply_resources(history, descriptors)
     except Exception as exc:
         logger.warning("app_session_resources_restore_failed", session_id=session_id, error=str(exc))
     return {"session_id": session_id, "messages": history}
@@ -1111,9 +1726,7 @@ async def app_session_resources(
     identity: AppIdentity = Depends(require_app_identity),
 ) -> dict:
     """List user-visible generated resources for the Android App."""
-    row = await get_conversation_catalog().require_read(session_id, identity.as_current_user())
-    if row.source != ConversationSource.SOCIAL:
-        raise HTTPException(status_code=404, detail="session_not_found")
+    await _readable_app_session_row(session_id, identity)
     return {
         "session_id": session_id,
         "resources": await _app_resource_descriptors(session_id, []),
@@ -1127,9 +1740,7 @@ async def app_session_resource_content(
     identity: AppIdentity = Depends(require_app_identity),
 ) -> FileResponse:
     """Serve generated resource bytes to the authenticated Android App."""
-    row = await get_conversation_catalog().require_read(session_id, identity.as_current_user())
-    if row.source != ConversationSource.SOCIAL:
-        raise HTTPException(status_code=404, detail="session_not_found")
+    await _readable_app_session_row(session_id, identity)
     resource = await SessionResourceService.database().get_resource(session_id, resource_id, status="active")
     if resource is None or resource.role not in {"output", "report", "attachment"} or resource.kind not in {"data", "file", "artifact", "visual"}:
         raise HTTPException(status_code=404, detail="resource_not_found")
@@ -1159,7 +1770,9 @@ async def cancel_session(
     from app.agent.runtime.cancellation import cancellation_registry
 
     await _ensure_session(request, identity, session_id)
-    cancelled = await cancellation_registry.cancel(session_id, reason="app_user_cancelled")
+    cancelled = await get_app_run_store().cancel_session(session_id)
+    if not cancelled:
+        cancelled = await cancellation_registry.cancel(session_id, reason="app_user_cancelled")
     return {"session_id": session_id, "cancelled": bool(cancelled)}
 
 
@@ -1175,3 +1788,66 @@ async def steer_session(
     await _ensure_session(request, identity, session_id)
     accepted = await steering_registry.add_input(session_id, payload.message)
     return {"session_id": session_id, "accepted": bool(accepted)}
+
+
+@router.get("/scheduled-tasks")
+async def app_scheduled_tasks(identity: AppIdentity = Depends(require_app_identity)):
+    from app.api.scheduled_task_routes import list_tasks
+    return await list_tasks(enabled_only=False, user=identity.as_current_user())
+
+
+@router.get("/scheduled-tasks/results")
+async def app_scheduled_results(
+    task_id: str, page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=100),
+    start: datetime | None = None, end: datetime | None = None,
+    station_id: str | None = None, pollutant: str | None = None,
+    identity: AppIdentity = Depends(require_app_identity),
+):
+    from app.api.scheduled_task_routes import (
+        get_scheduled_task_service, _require_task_view, _result_preview_ticket,
+        _result_report_dir, TaskResultItem, TaskResultListResponse,
+    )
+    import math
+    service = get_scheduled_task_service()
+    task = service.get_task(task_id)
+    if task is None:
+        raise HTTPException(404, "Task not found")
+    _require_task_view(task, identity.as_current_user())
+    records, total = service.list_task_results(
+        task_id=task_id, station_id=station_id, pollutant=pollutant,
+        started_after=start, started_before=end, page=page, page_size=page_size,
+    )
+    items = []
+    for record in records:
+        item = TaskResultItem(**record.model_dump())
+        item.preview_ticket = _result_preview_ticket(record.execution_id)
+        item.has_report = _result_report_dir(record) is not None
+        item.has_broadcast = bool(item.broadcast_message or item.broadcast_image_paths)
+        item.broadcast_image_urls = [
+            f"/api/scheduled-tasks/results/{record.execution_id}/files/broadcast_images/{i}?preview_ticket={item.preview_ticket}"
+            for i in range(len(record.broadcast_image_paths or []))
+        ]
+        items.append(item)
+    return TaskResultListResponse(results=items, total=total, page=page,
+                                  page_size=page_size, total_pages=math.ceil(total / page_size))
+
+
+@router.get("/scheduled-tasks/facets")
+async def app_scheduled_facets(task_id: str, identity: AppIdentity = Depends(require_app_identity)):
+    from app.api.scheduled_task_routes import get_scheduled_task_service, _require_task_view
+    service = get_scheduled_task_service()
+    task = service.get_task(task_id)
+    if task is None:
+        raise HTTPException(404, "Task not found")
+    _require_task_view(task, identity.as_current_user())
+    return service.list_task_result_facets(task_id=task_id)
+
+
+@router.get("/scheduled-tasks/results/{execution_id}/report/formats")
+async def app_scheduled_report_formats(
+    execution_id: str, identity: AppIdentity = Depends(require_app_identity),
+):
+    from app.api.scheduled_task_routes import list_task_result_report_formats
+    return await list_task_result_report_formats(
+        execution_id=execution_id, user=identity.as_current_user(),
+    )

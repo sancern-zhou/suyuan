@@ -140,20 +140,26 @@ def test_deepseek_api_mode_setting_exists():
     assert settings.deepseek_api_mode == "chat_completions"
 
 
-def test_bailian_settings_replace_all_qwen_settings():
-    assert not hasattr(settings, "qwen_api_key")
-    assert not hasattr(settings, "qwen_base_url")
-    assert not hasattr(settings, "qwen_model")
-    assert not hasattr(settings, "qwen_api_mode")
-    assert not hasattr(settings, "qwen_vl_api_key")
-    assert not hasattr(settings, "qwen_vl_base_url")
-    assert not hasattr(settings, "qwen_vl_model")
-    assert not hasattr(settings, "qwen_vision_model")
-    assert settings.bailian_base_url == (
+def test_bailian_settings_replace_all_qwen_settings(monkeypatch):
+    # Assert against pristine defaults: the deployment .env (also loaded into
+    # os.environ by app.db.database) overrides provider endpoints, so neither
+    # the settings singleton nor a plain Settings() is a stable oracle.
+    monkeypatch.delenv("BAILIAN_BASE_URL", raising=False)
+    monkeypatch.delenv("BAILIAN_MODEL", raising=False)
+    defaults = Settings(_env_file=None)
+    assert not hasattr(defaults, "qwen_api_key")
+    assert not hasattr(defaults, "qwen_base_url")
+    assert not hasattr(defaults, "qwen_model")
+    assert not hasattr(defaults, "qwen_api_mode")
+    assert not hasattr(defaults, "qwen_vl_api_key")
+    assert not hasattr(defaults, "qwen_vl_base_url")
+    assert not hasattr(defaults, "qwen_vl_model")
+    assert not hasattr(defaults, "qwen_vision_model")
+    assert defaults.bailian_base_url == (
         "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic"
     )
-    assert settings.bailian_model == "qwen3.8-max"
-    assert not hasattr(settings, "bailian_vision_model")
+    assert defaults.bailian_model == "qwen3.8-max"
+    assert not hasattr(defaults, "bailian_vision_model")
 
 
 @pytest.mark.parametrize("provider", ["qwen", "qwen_vl"])
@@ -521,7 +527,8 @@ def test_ocr_configuration_follows_global_bailian_model(monkeypatch):
 
 
 def test_visual_runtimes_use_expected_ocr_backend():
-    aliyun_runtime_files = [
+    # 知识库扫描件 OCR 走配置化的多模态模型；运维审核图片走 Bailian/Mimo。
+    multimodal_runtime_files = [
         "backend/app/knowledge_base/document_processor.py",
         "backend/app/tools/utility/parse_pdf_tool.py",
     ]
@@ -530,17 +537,16 @@ def test_visual_runtimes_use_expected_ocr_backend():
         "backend/app/tools/utility/analyze_image_tool.py",
     ]
 
-    for relative_path in aliyun_runtime_files:
+    for relative_path in multimodal_runtime_files:
         source = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
-        assert "ALIYUN_OCR_APP_CODE" in source or "aliyun_ocr" in source, relative_path
-        assert "KNOWLEDGE_BASE_OCR_PROVIDER" not in source, relative_path
-        assert "KNOWLEDGE_BASE_OCR_MODEL" not in source, relative_path
+        assert "bailian_multimodal" in source or "KNOWLEDGE_BASE_OCR" in source, relative_path
+        assert "call_aliyun_ocr" not in source, relative_path
         assert "bailian_vision_model" not in source, relative_path
         assert "BAILIAN_VISION_MODEL" not in source, relative_path
 
     for relative_path in bailian_runtime_files:
         source = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
-        assert "bailian_model" in source or "use_provider_model" in source, relative_path
+        assert "bailian" in source.lower() or "mimo" in source.lower(), relative_path
 
 
 def test_obsolete_batch_ozone_report_script_is_removed():
@@ -754,19 +760,29 @@ def test_all_qwen_visual_runtimes_are_migrated_to_bailian():
 
 
 def test_env_templates_document_doubao_mode_priorities():
-    for relative_path in [
-        "backend/.env.example",
-        "backend/.env.template",
-        "backend/.env.production.template",
-    ]:
+    template_priorities = {
+        "backend/.env.example": (
+            "BAILIAN_MODEL=qwen3.8-max",
+            "LLM_PRO_MODELS=bailian/deepseek-v4-pro",
+        ),
+        "backend/.env.template": (
+            "BAILIAN_MODEL=qwen3.8-max",
+            "LLM_PRO_MODELS=bailian/deepseek-v4-pro",
+        ),
+        "backend/.env.production.template": (
+            "BAILIAN_MODEL=qwen3.8-max-preview",
+            "LLM_PRO_MODELS=doubao/gpt-5.6-luna",
+        ),
+    }
+    for relative_path, expected in template_priorities.items():
         source = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
         assert "LLM_PROVIDER=doubao" in source
         assert "DOUBAO_BASE_URL=https://doubao.best/v1" in source
         assert "DOUBAO_MODEL=gpt-5.6-luna" in source
         assert "DOUBAO_API_MODE=chat_completions" in source
-        assert "BAILIAN_MODEL=qwen3.8-max" in source
         assert "LLM_FLASH_MODELS=doubao/gpt-5.6-luna" in source
-        assert "LLM_PRO_MODELS=bailian/deepseek-v4-pro" in source
+        for marker in expected:
+            assert marker in source, (relative_path, marker)
         assert "LLM_MULTIMODAL_MODELS=" not in source
         assert "QWEN_VL_API_KEY" not in source
 

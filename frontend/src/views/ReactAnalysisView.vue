@@ -771,6 +771,18 @@ const handleSidebarAction = async (actionId) => {
       hideManagementPanel()
       resetPanelState()
       break
+    case 'knowledge-qa':
+      if (!await confirmResourcePreviewLeave()) return
+      store.switchMode('knowledge')
+      hideManagementPanel()
+      resetPanelState()
+      break
+    case 'expert-analysis':
+      if (!await confirmResourcePreviewLeave()) return
+      store.switchMode('expert')
+      hideManagementPanel()
+      resetPanelState()
+      break
     case 'tools-management':
       console.log('[ReactAnalysisView] Showing tools-management panel')
       showManagementPanel('tools-management')

@@ -313,12 +313,12 @@ class PollutionEventEvidenceEnhancer:
             {"product": "hourly_wind_field", "date": date_key, "time": self._hourly_wind_time(fetch_end), "analysis_role": "historical_context"},
             {"product": "rainfall_24h", "date": date_key, "time": "00", "analysis_role": "historical_context"},
             {"product": "visibility", "date": date_key, "time": f"{fetch_end.hour:02d}", "analysis_role": "historical_context"},
-            {"product": "***REMOVED***", "date": date_key, "time": "024", "analysis_role": "forecast_outlook"},
-            {"product": "***REMOVED***", "date": date_key, "time": "048", "analysis_role": "forecast_outlook"},
-            {"product": "***REMOVED***", "date": date_key, "time": "072", "analysis_role": "forecast_outlook"},
-            {"product": "***REMOVED***", "date": date_key, "time": "024", "analysis_role": "forecast_outlook"},
-            {"product": "***REMOVED***", "date": date_key, "time": "048", "analysis_role": "forecast_outlook"},
-            {"product": "***REMOVED***", "date": date_key, "time": "072", "analysis_role": "forecast_outlook"},
+            {"product": "precip_forecast_24h", "date": date_key, "time": "024", "analysis_role": "forecast_outlook"},
+            {"product": "precip_forecast_24h", "date": date_key, "time": "048", "analysis_role": "forecast_outlook"},
+            {"product": "precip_forecast_24h", "date": date_key, "time": "072", "analysis_role": "forecast_outlook"},
+            {"product": "max_10m_wind_speed_24h", "date": date_key, "time": "024", "analysis_role": "forecast_outlook"},
+            {"product": "max_10m_wind_speed_24h", "date": date_key, "time": "048", "analysis_role": "forecast_outlook"},
+            {"product": "max_10m_wind_speed_24h", "date": date_key, "time": "072", "analysis_role": "forecast_outlook"},
             {"product": "forecast_trajectory", "date": (fetch_end + timedelta(days=1)).strftime("%Y%m%d"), "time": city, "analysis_role": "forecast_outlook"},
         ]
         if branch == "o3":

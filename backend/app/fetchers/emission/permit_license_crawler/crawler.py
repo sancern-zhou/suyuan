@@ -194,9 +194,11 @@ class XuchangPermitCrawler:
                 license_row.id, "copy_page", page_no
             )
             if existing and _stored_document_is_valid(self.storage, existing):
-                page_paths.append(self.storage.root / existing.relative_path)
+                page_paths.append(self.storage.resolve(existing.relative_path))
                 continue
-            page_response = await self.client.get(page_url, headers={"Referer": url})
+            page_response = await self.client.get(
+                page_url, burst=True, headers={"Referer": url}
+            )
             if detect_document_kind(
                 page_response.headers.get("content-type", ""), page_response.content
             ) != "image":

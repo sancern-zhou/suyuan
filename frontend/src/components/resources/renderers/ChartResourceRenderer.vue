@@ -17,7 +17,7 @@
     <TaskReviewPanel v-else-if="spec?.type === 'task_review'" :review-id="spec.data.review_id" compact />
     <QcTaskDetailPanel v-else-if="spec && isQcTaskDetail" :data="spec" />
     <WorkOrderReviewEvidencePanel v-else-if="spec && isReviewEvidence" :data="spec" />
-    <ChartPanel v-else-if="spec" :data="spec" />
+    <ChartPanel v-else-if="spec" ref="panelRef" :data="spec" />
   </div>
 </template>
 
@@ -77,6 +77,10 @@ const load = async () => {
 
 onMounted(load)
 watch(() => props.contentUrl, load)
+
+const panelRef = ref(null)
+const getChartImage = async (options) => panelRef.value?.getChartImage ? panelRef.value.getChartImage(options) : null
+defineExpose({ getChartImage })
 </script>
 
 <style scoped>

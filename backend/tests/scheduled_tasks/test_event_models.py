@@ -75,6 +75,13 @@ def test_jiangsu_work_order_review_event_is_registered():
     assert definitions[event_type].label == "江苏故障工单审核"
 
 
+def test_xuchang_daily_attainment_exceedance_event_is_registered():
+    definitions = {item.event_type: item for item in get_event_definitions()}
+
+    event = definitions["xuchang.daily_attainment.predicted_exceedance"]
+    assert "target_pollutant" in event.filter_fields
+
+
 def _event_task() -> ScheduledTask:
     return ScheduledTask(
         task_id="event",

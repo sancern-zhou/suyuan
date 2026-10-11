@@ -163,7 +163,6 @@ def test_social_profile_and_memory_are_not_hidden_in_mode_prompt():
     "query",
     "report",
     "social",
-    "chart",
     "board",
     "ops",
     "graph",
@@ -215,6 +214,8 @@ def test_compacted_history_places_summary_before_anchor_and_recent_messages():
     assert result[0]["type"] == "compact_memory"
     assert "summary-marker" in result[0]["content"]
     assert result[1]["content"] == "anchor-marker"
+    assert result[0]["metadata"]["ui_visibility"] == "hidden"
+    assert result[0]["metadata"]["provider_visibility"] == "visible"
 
 
 def test_fallback_compaction_boundary_precedes_anchor_and_recent_messages():

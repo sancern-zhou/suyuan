@@ -30,6 +30,12 @@ export function createProjectConfig(value) {
         workspaceBlocks: Object.freeze([...(value.frontend.coordinator.workspaceBlocks || [])])
       })
     : null
+  const agentSceneOverrides = Object.freeze(Object.fromEntries(
+    Object.entries(value.frontend.agentSceneOverrides || {}).map(([scene, override]) => [
+      scene,
+      Object.freeze({ modeIds: Object.freeze([...(override.modeIds || [])]) })
+    ])
+  ))
   return Object.freeze({
     schemaVersion: value.schemaVersion,
     project: value.project,
@@ -40,8 +46,11 @@ export function createProjectConfig(value) {
     agentModeIds,
     defaultAgentMode,
     agentModeOverrides,
+    agentSceneOverrides,
     agentPlatformLayout: value.frontend.agentPlatformLayout || 'scenes',
     coordinator,
+    agentScenes: Object.freeze([...(value.frontend.agentScenes || [])]),
+    sidebarAgentModes: Object.freeze([...(value.frontend.sidebarAgentModes || ['query'])]),
     hasModule: moduleId => modules.has(moduleId),
     hasFeature: featureId => features[featureId] === true,
     isFeatureEnabled: (featureId, defaultValue = false) => (
@@ -63,8 +72,11 @@ const injected = typeof __SUYUAN_PROJECT_CONFIG__ === 'undefined'
         agentModes: ['assistant', 'ppt', 'expert', 'query', 'knowledge', 'report', 'board', 'ops'],
         defaultAgentMode: 'assistant',
         agentModeOverrides: {},
+        agentSceneOverrides: {},
         agentPlatformLayout: 'scenes',
-        coordinator: null
+        coordinator: null,
+        agentScenes: [],
+        sidebarAgentModes: ['query']
       }
     }
   : __SUYUAN_PROJECT_CONFIG__

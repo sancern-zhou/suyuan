@@ -116,7 +116,11 @@ class SendNotificationTool(LLMTool):
 
         try:
             # ✅ 从 singleton 获取当前 channel 和 chat_id（由 agent_bridge 设置）
-            from app.social.message_bus_singleton import get_current_channel, get_current_chat_id
+            from app.social.message_bus_singleton import (
+                get_current_bot_account,
+                get_current_channel,
+                get_current_chat_id,
+            )
 
             current_channel = get_current_channel()
             current_chat_id = get_current_chat_id()
@@ -208,6 +212,77 @@ class SendNotificationTool(LLMTool):
                         )
 
             media = normalized_media
+
+            # ✅ App 通道投递：走广播 inbox + 统一推送（消息总线上没有 app 通道，
+            # 微信/QQ 才通过 ChannelManager 派发）
+            if current_channel == "app":
+                if not current_chat_id:
+                    return {
+                        "status": "failed",
+                        "success": False,
+                        "summary": "无法确定 App 接收账号（chat_id 为空）"
+                    }
+
+                from uuid import uuid4 as _uuid4
+
+                from app.social.broadcast_context import persist_broadcast_context
+                from app.social.push_service import get_unified_push_service
+
+                social_user_id = f"app:{get_current_bot_account() or 'android'}:{current_chat_id}"
+                notification_id = _uuid4().hex
+                context_persisted = False
+                try:
+                    context_persisted = await persist_broadcast_context(
+                        session_mapper=None,
+                        social_user_id=social_user_id,
+                        message=message,
+                        media=media,
+                        metadata={
+                            "source": "send_notification",
+                            "tool_name": "send_notification",
+                            "task_id": "notification",
+                            "event_id": notification_id,
+                        },
+                    )
+                except Exception as persist_error:
+                    logger.error(
+                        "app_notification_persist_failed",
+                        social_user_id=social_user_id,
+                        error=str(persist_error),
+                    )
+
+                push_result = None
+                if context_persisted:
+                    try:
+                        push_result = await get_unified_push_service().send_broadcast(
+                            social_user_id=social_user_id,
+                            message=message,
+                        )
+                    except Exception as push_error:
+                        logger.warning(
+                            "app_notification_push_failed",
+                            social_user_id=social_user_id,
+                            error=str(push_error),
+                        )
+
+                if not context_persisted:
+                    return {
+                        "status": "failed",
+                        "success": False,
+                        "summary": f"App 通知写入广播收件箱失败：{social_user_id}"
+                    }
+
+                media_info = f"，包含 {len(media)} 个文件" if media else ""
+                push_info = ""
+                if isinstance(push_result, dict) and push_result.get("sent"):
+                    push_info = "，已触发推送"
+                return {
+                    "status": "success",
+                    "success": True,
+                    "channels_sent": [social_user_id],
+                    "media_sent": len(media),
+                    "summary": f"已发送 App 通知到 {social_user_id}{media_info}{push_info}"
+                }
 
             # 如果有MessageBus，通过MessageBus发送
             if self.message_bus:

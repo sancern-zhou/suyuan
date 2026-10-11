@@ -202,7 +202,8 @@ class ScheduledTaskExecutor:
         # 历史执行记忆：任务专属案例库 + 长期记忆（不跨任务共享）
         case_storage = self._get_case_storage(task)
         history_section = (
-            build_history_section(task, case_storage) if case_storage is not None else None
+            build_history_section(task, case_storage, event=event)
+            if case_storage is not None else None
         )
         runtime_extra_tool_names = self._runtime_extra_tool_names(task)
         # 即使执行中途失败/超时，也已收集到部分执行材料，供收尾时入案例库
@@ -226,7 +227,8 @@ class ScheduledTaskExecutor:
                     step_id="workflow",
                     status=ExecutionStatus.SUCCESS,
                     agent_prompt=f"workflow:{task.workflow_name}",
-                    agent_response=workflow_result.get("summary", ""),
+                    agent_response=workflow_result.get("final_message")
+                    or workflow_result.get("summary", ""),
                     result_data_ids=workflow_result.get("data_ids", []),
                     tool_calls=[{
                         "tool": task.workflow_name,
@@ -242,7 +244,9 @@ class ScheduledTaskExecutor:
                     "workflow_result": workflow_result,
                 })
                 self.execution_storage.update(execution)
-                execution.status = ExecutionStatus.SUCCESS
+                # 只有工作流正常返回且未抛异常时才算执行成功。
+                if execution.status == ExecutionStatus.RUNNING:
+                    execution.status = ExecutionStatus.SUCCESS
             else:
                 shared_agent = None
                 if execution_mode == "custom":
@@ -269,6 +273,7 @@ class ScheduledTaskExecutor:
                     history_section=history_section,
                 )
                 from app.services.llm_service import llm_service
+
                 with (
                     llm_service.use_model_tier(task.model_tier),
                     llm_service.use_opencode_session(
@@ -353,6 +358,8 @@ class ScheduledTaskExecutor:
                         error=str(learn_error),
                     )
 
+            # 结构化执行结论入库：时间/城市/站点/污染物/结论/图片/文档路径。
+            # 写入失败只降级记录，不影响执行状态。
             try:
                 self._persist_task_result(
                     task=task,
@@ -361,7 +368,7 @@ class ScheduledTaskExecutor:
                     agent_result=collected,
                     case=result_case,
                 )
-            except Exception as result_error:  # noqa: BLE001 - result persistence is fail-soft
+            except Exception as result_error:  # noqa: BLE001 - 结论入库失败不改变执行结果
                 logger.warning(
                     "scheduled_task_result_persist_failed",
                     task_id=task.task_id,
@@ -686,8 +693,8 @@ class ScheduledTaskExecutor:
             )
         sections.append(
             """## 后台定时任务执行约束
-- 最终回复第一行必须是简洁的业务结论；禁止仅用“任务已完成”“报告已生成”等流程状态充当结论。若任务要求严格 JSON，则本条不适用。
 - 本次是后台无人值守的定时任务执行；任务名称、任务描述、执行指令、调度和筛选条件均视为用户已提前配置并确认。
+- 最终回复的第一行必须是一句话业务结论（不超过80字）：直接给出业务判定与关键数据（如污染物、浓度、偏差、判定原因）；禁止用“任务已完成”“报告已出具”“报告ID”等流程性表述充当结论；补充说明从第二行开始。若任务提示词明确要求最终回复为严格 JSON，则本条不适用。
 - 不要以“请确认”“等待用户确认”“确认后继续”等形式中途结束；需要计划、自检或复核时，在本次执行内自行完成后继续下一步。
 - 如果任务流程要求调用子 Agent 审核、复核或生成交接产物，必须在本次执行内直接调用并等待工具返回，不要先向用户展示方案等待确认。
 - 如果工具结果明确存在 manual_review、report_ready=false 或无法自动判断的业务项，按工具结果说明未完成自动出具正式报告的原因并正常交付当前可用产物，不要等待在线确认。"""
@@ -714,7 +721,7 @@ class ScheduledTaskExecutor:
                 """## 输出与投递约束
 - 完成任务后调用 `broadcast_social_users` 发送结果。
 - 目标微信用户名称：%s
-- `target_user_names` 使用上述名称；生成的附件必须使用上游工具返回的最终成品路径（例如 render_report_package 的 `path` 或 resources 中的 DOCX/PDF），禁止把 `report.qmd`/`file_path` 源文件当作正式报告附件，也禁止自行拼接路径。
+- `target_user_names` 使用上述名称；生成的附件必须使用上游工具返回的最终成品资源路径（例如 create_report_package 的 resources 中的 DOCX/PDF），禁止把 `report.qmd`/`file_path` 源文件当作正式报告附件，也禁止自行拼接路径。
 - 广播工具执行完成后，正常简要说明执行结果，不需要返回 JSON。""" % names
             )
         return "\n\n".join(sections)

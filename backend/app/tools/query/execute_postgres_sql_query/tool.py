@@ -1,0 +1,400 @@
+"""Read-only PostgreSQL/KingbaseES SQL queries for permit-license and observed weather data."""
+
+from __future__ import annotations
+
+from datetime import date, datetime, time
+from decimal import Decimal
+import re
+from typing import Any, Optional, TYPE_CHECKING
+
+import structlog
+from sqlalchemy import text
+
+from app.db.database import engine
+from app.db.weather_database import weather_engine
+from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.agent.context.data_shape import shape_summary_suffix
+from app.utils.sql_validator import SQLValidator
+
+if TYPE_CHECKING:
+    from app.agent.context import ExecutionContext
+
+
+logger = structlog.get_logger()
+
+
+PERMIT_SQL_TABLES = [
+    "permit_licenses",
+    "permit_license_versions",
+    "permit_pollution_details",
+    "permit_documents",
+]
+
+# 气象观测表位于独立气象库（WEATHER_DATABASE_URL/weather_engine），不在主库。
+# weather_stations 主档表当前仅剩广东遗留站点且无人维护，NMC 站点未登记，故不开放。
+WEATHER_SQL_TABLES = [
+    "observed_weather_data",
+]
+
+# 许昌国控站周边路况定时抓取数据（主库）。工具代码与抓取脚本在 xuchang 分支
+# （backend/scripts/xuchang_traffic_collect.py）；其他项目库中无这些表，
+# 查询会得到"未找到白名单表"的明确提示，故直接并入共享白名单。
+XUCHANG_TRAFFIC_SQL_TABLES = [
+    "traffic_snapshot",
+    "traffic_section",
+    "v_station_traffic_hourly",
+]
+
+ALLOWED_SQL_TABLES = PERMIT_SQL_TABLES + WEATHER_SQL_TABLES + XUCHANG_TRAFFIC_SQL_TABLES
+
+MAX_LIMIT = 1000
+DEFAULT_LIMIT = 50
+
+
+class ExecutePostgresSQLQueryTool(LLMTool):
+    """Execute read-only SQL against the configured PostgreSQL/KingbaseES databases."""
+
+    def __init__(self) -> None:
+        from app.agent.context.data_shape import TableTypesCache
+
+        self._table_types_cache = TableTypesCache()
+        schema_description = (
+            "PostgreSQL/KingbaseES 只读 SQL 查询工具。支持三类数据："
+            "许昌市企业排污许可证数据（主库）、气象站逐小时地面观测数据（独立气象库，"
+            "含定时抓取的中央气象台NMC观测，如许昌站）和许昌国控站周边路况时序（主库，定时抓取）；"
+            "支持 describe_table 查看表结构，或 sql 执行 SELECT/CTE 查询，二者必须二选一。"
+            f"仅允许白名单业务表：{', '.join(ALLOWED_SQL_TABLES)}；禁止采集运行日志和失败记录。"
+            "只允许 SELECT，禁止 INSERT/UPDATE/DELETE/DDL、注释和多语句；"
+            f"使用 PostgreSQL LIMIT 分页，最大返回 {MAX_LIMIT} 条。"
+            "不确定字段时先调用 describe_table，不要查询 information_schema。"
+            "\n\n表说明："
+            "\n- permit_licenses：许可证主表，含企业名称、许可证编号、统一社会信用代码、"
+            "地址、行业、有效期、管理类别、当前状态和详情页链接。"
+            "\n- permit_license_versions：许可证历史/业务版本，以 license_id 关联主表。"
+            "\n- permit_pollution_details：大气/水污染物、排放方式和执行标准，以 license_id 关联主表。"
+            "\n- permit_documents：已下载的许可证正副本及分页文件，以 license_id 关联主表。"
+            "\n- observed_weather_data：气象站逐小时地面观测数据（NMC定时抓取落库）；"
+            "主键(time, station_id)；站点字段 station_id/station_name（许昌站为 'ZzMTA'/'许昌'，"
+            "许昌下辖长葛='sHlBF'、禹州='HFqwM'，其余站点可用 "
+            "SELECT DISTINCT station_id, station_name FROM observed_weather_data 查询）；"
+            "气象字段：temperature_2m(°C)、relative_humidity_2m(%)、dew_point_2m(°C)、"
+            "wind_speed_10m(km/h)、wind_direction_10m(°，气象来向)、surface_pressure(hPa)、"
+            "precipitation(mm)、cloud_cover(%)、visibility(m)；"
+            "溯源字段 data_source='NMC'、data_quality='good'/'partial'；NULL 表示该小时缺测。"
+            "\n注意：permit_* 表在主库，observed_weather_data 在独立气象库，"
+            "两库不支持跨库 JOIN，混用会直接报错。"
+            "\n- traffic_snapshot：国控站周边路况快照（定时抓取，6分钟时隙，slot_at 为 UTC 时隙起点）；"
+            "station_code 站点编码（道路级行以 'road:路名' 前缀区分），"
+            "evaluation_status 0未知/1畅通/2缓行/3拥堵/4严重拥堵，road_count 道路数，"
+            "congestion_section_count 拥堵路段数，raw 百度原始响应。"
+            "\n- traffic_section：拥堵路段明细（仅拥堵时存在），以 snapshot_id 关联快照，"
+            "含 road_name、section_desc、status、speed_km_h、congestion_distance_m、"
+            "congestion_trend（较10分钟前：加重/持平/缓解）。"
+            "\n- v_station_traffic_hourly：按 station_code+小时聚合视图（samples 样本数、"
+            "avg_status/max_status、congestion_sections、avg_speed_in_sections），"
+            "可与空气质量小时表按 station_code+小时 join。"
+            "\n注意：路况为查询时刻快照，缺失时隙=未采集（历史不可回补），请结合 samples 判断可信度；"
+            "当前时刻实时路况请用 query_xuchang_traffic_status 工具，不要用本工具冒充实时。"
+            "\n\n示例："
+            "\n- 企业查询：SELECT enterprise_name, permit_number, current_status FROM permit_licenses "
+            "WHERE enterprise_name ILIKE '%水泥%' ORDER BY updated_at DESC LIMIT 50"
+            "\n- 大气污染物：SELECT l.enterprise_name, p.air_pollutant_types, p.air_emission_standard "
+            "FROM permit_licenses l JOIN permit_pollution_details p ON p.license_id = l.id "
+            "WHERE l.city_name = '许昌市' LIMIT 50"
+            "\n- 许昌小时观测：SELECT time, temperature_2m, relative_humidity_2m, wind_speed_10m, "
+            "wind_direction_10m, precipitation FROM observed_weather_data "
+            "WHERE station_id = 'ZzMTA' AND time >= '2026-08-30' ORDER BY time LIMIT 48"
+            "\n- 路况小时统计：SELECT station_code, hour_ts, samples, avg_status, max_status, "
+            "congestion_sections FROM v_station_traffic_hourly "
+            "WHERE station_code IN ('1003A','1005A') ORDER BY hour_ts DESC LIMIT 100"
+        )
+        function_schema = {
+            "name": "execute_postgres_sql_query",
+            "description": schema_description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "describe_table": {
+                        "type": "string",
+                        "enum": ALLOWED_SQL_TABLES,
+                        "description": "查看白名单业务表的字段及一条样例；与 sql 二选一。",
+                    },
+                    "sql": {
+                        "type": "string",
+                        "description": "仅允许使用白名单表的 PostgreSQL/KingbaseES SELECT 或 WITH...SELECT 查询；与 describe_table 二选一。",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": MAX_LIMIT,
+                        "default": DEFAULT_LIMIT,
+                        "description": "未在 SQL 中指定 LIMIT 时使用的返回上限；最大 1000。",
+                    },
+                },
+            },
+        }
+        super().__init__(
+            name="execute_postgres_sql_query",
+            description="Execute read-only PostgreSQL/KingbaseES permit-license, observed-weather and traffic-history SQL queries",
+            category=ToolCategory.QUERY,
+            function_schema=function_schema,
+            version="1.2.0",
+            requires_context=True,
+        )
+        self.sql_validator = SQLValidator(
+            max_limit=MAX_LIMIT,
+            allowed_tables=ALLOWED_SQL_TABLES,
+        )
+
+    async def execute(
+        self,
+        context: Optional["ExecutionContext"] = None,
+        describe_table: Optional[str] = None,
+        sql: Optional[str] = None,
+        limit: Optional[int] = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        del kwargs
+        if bool(describe_table) == bool(sql):
+            return {
+                "success": False,
+                "data": None,
+                "summary": "请且只能提供 describe_table 或 sql 其中一个参数。",
+            }
+        if describe_table is not None:
+            return await self._describe_table(describe_table)
+        return await self._execute_sql(sql or "", limit, context)
+
+    async def _describe_table(self, table_name: str) -> dict[str, Any]:
+        if table_name not in ALLOWED_SQL_TABLES:
+            return {
+                "success": False,
+                "data": None,
+                "summary": f"表 '{table_name}' 不在白名单中。可用表: {', '.join(ALLOWED_SQL_TABLES)}",
+            }
+
+        try:
+            columns = await self._run_query(
+                """
+                SELECT column_name, data_type, is_nullable, column_default
+                FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = :table_name
+                ORDER BY ordinal_position
+                """,
+                {"table_name": table_name},
+                tables=[table_name],
+            )
+            sample_rows = await self._run_query(
+                f"SELECT * FROM {table_name} LIMIT 1", tables=[table_name]
+            )
+        except Exception as exc:
+            logger.error("postgres_sql_describe_failed", table_name=table_name, error=str(exc))
+            return {"success": False, "data": None, "summary": f"查询表结构失败: {exc}"}
+
+        if not columns:
+            return {
+                "success": False,
+                "data": None,
+                "summary": f"当前数据库中未找到白名单表 '{table_name}'。",
+            }
+        return {
+            "success": True,
+            "data": {
+                "table_name": table_name,
+                "columns": columns,
+                "sample_data": sample_rows[0] if sample_rows else None,
+            },
+            "summary": f"表 {table_name} 共 {len(columns)} 个字段；已返回字段结构和一条样例。",
+        }
+
+    async def _execute_sql(
+        self,
+        sql: str,
+        limit: Optional[int],
+        context: Optional["ExecutionContext"],
+    ) -> dict[str, Any]:
+        normalized_sql = self.sql_validator.normalize_sql(sql)
+        valid, error = self.sql_validator.validate(normalized_sql)
+        if not valid:
+            return {
+                "success": False,
+                "data": [],
+                "summary": f"SQL 验证失败: {error}。字段不确定时请先调用 describe_table。",
+            }
+
+        effective_limit = self._resolve_limit(limit)
+        safe_sql, limit_error = self._sanitize_limit(normalized_sql, effective_limit)
+        if limit_error:
+            return {"success": False, "data": [], "summary": limit_error}
+
+        referenced_tables = self.sql_validator.extract_tables(normalized_sql)
+        permit_refs = [t for t in referenced_tables if t in PERMIT_SQL_TABLES]
+        weather_refs = [t for t in referenced_tables if t in WEATHER_SQL_TABLES]
+        if permit_refs and weather_refs:
+            return {
+                "success": False,
+                "data": [],
+                "summary": (
+                    "许可证表与气象表分属不同数据库，不支持跨库 JOIN："
+                    f"{', '.join(permit_refs)}（主库）、{', '.join(weather_refs)}（气象库）。"
+                    "请分开查询后在应用层合并。"
+                ),
+            }
+
+        logger.info(
+            "postgres_sql_query_start",
+            sql_preview=normalized_sql[:200],
+            limit=effective_limit,
+            database="weather" if weather_refs else "main",
+            session_id=getattr(context, "session_id", "unknown") if context else "unknown",
+        )
+        try:
+            rows = await self._run_query(safe_sql, tables=referenced_tables)
+        except Exception as exc:
+            logger.error("postgres_sql_query_failed", error=str(exc), sql_preview=normalized_sql[:200])
+            return {
+                "success": False,
+                "data": [],
+                "summary": f"查询失败: {exc}。字段不确定时请先调用 describe_table。",
+            }
+
+        data_shape = await self._build_data_shape(
+            list(rows[0].keys()) if rows else [],
+            rows,
+            len(rows),
+            referenced_tables,
+        )
+        return self._format_result(rows, normalized_sql, effective_limit, context, data_shape=data_shape)
+
+    @staticmethod
+    def _resolve_limit(limit: Optional[int]) -> int:
+        if limit is None:
+            return DEFAULT_LIMIT
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+            return DEFAULT_LIMIT
+        return min(limit, MAX_LIMIT)
+
+    @staticmethod
+    def _sanitize_limit(sql: str, default_limit: int) -> tuple[str, Optional[str]]:
+        if re.search(r"\b(fetch|offset)\b", sql, re.IGNORECASE):
+            return "", "请仅使用 LIMIT 分页，不支持 FETCH 或 OFFSET。"
+        if not re.search(r"\blimit\b", sql, re.IGNORECASE):
+            return f"{sql.rstrip(' ;')} LIMIT {default_limit}", None
+
+        limit_match = re.search(r"\blimit\s+(\d+)\b", sql, re.IGNORECASE)
+        if not limit_match:
+            return "", "LIMIT 必须是 1 到 1000 的整数。"
+        limit_value = int(limit_match.group(1))
+        if limit_value < 1:
+            return "", "LIMIT 必须大于 0。"
+        if limit_value <= MAX_LIMIT:
+            return sql, None
+        return (
+            re.sub(r"\blimit\s+\d+\b", f"LIMIT {MAX_LIMIT}", sql, count=1, flags=re.IGNORECASE),
+            None,
+        )
+
+    @staticmethod
+    def _select_engine(tables: list[str]):
+        """按引用表选择连接：气象表走独立气象库，其余走主库。"""
+        if any(table in WEATHER_SQL_TABLES for table in tables):
+            return weather_engine
+        return engine
+
+    async def _run_query(
+        self,
+        sql: str,
+        parameters: Optional[dict[str, Any]] = None,
+        tables: Optional[list[str]] = None,
+    ) -> list[dict[str, Any]]:
+        target_engine = self._select_engine(
+            tables if tables is not None else self.sql_validator.extract_tables(sql)
+        )
+        async with target_engine.connect() as connection:
+            result = await connection.execute(text(sql), parameters or {})
+            return [self._serialize_row(dict(row)) for row in result.mappings()]
+
+    async def _build_data_shape(
+        self,
+        columns: list[str],
+        rows: list[dict[str, Any]],
+        row_count: int,
+        tables: list[str],
+    ) -> dict[str, Any]:
+        """information_schema 精确类型优先，派生列回退样本推断。"""
+        from app.agent.context.data_shape import (
+            build_data_shape,
+            infer_column_types,
+        )
+
+        exact_types: dict[str, str] = {}
+        for table_name in tables:
+            exact_types.update(await self._table_types_cache.load(self._select_engine([table_name]), table_name))
+        inferred_types = infer_column_types(rows, columns)
+        columns_with_types = {
+            str(name): exact_types.get(str(name)) or inferred_types.get(str(name), "str")
+            for name in columns
+        }
+        source = "db" if exact_types else "inferred"
+        return build_data_shape(columns_with_types, row_count, source)
+
+    def _format_result(
+        self,
+        rows: list[dict[str, Any]],
+        sql: str,
+        limit: int,
+        context: Optional["ExecutionContext"],
+        data_shape: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        columns = list(rows[0]) if rows else []
+        suffix = shape_summary_suffix(data_shape)
+        if context and len(rows) > 24:
+            try:
+                data_id = context.save_data(
+                    data=rows,
+                    schema="permit_sql_query_result",
+                    metadata={
+                        "database": "postgresql_or_kingbase",
+                        "sql": sql,
+                        "row_count": len(rows),
+                        "columns": columns,
+                        "limit": limit,
+                        "data_shape": data_shape,
+                    },
+                )
+                sample = rows[:12] + rows[-12:]
+                return {
+                    "success": True,
+                    "data": sample,
+                    "data_id": data_id,
+                    "count": len(rows),
+                    "sample_count": len(sample),
+                    "summary": f"查询到 {len(rows)} 条记录，完整结果已保存，当前返回 24 条样例。{suffix}",
+                    "data_shape": data_shape,
+                    "metadata": {"columns": columns, "externalized": True},
+                }
+            except Exception as exc:
+                logger.warning("postgres_sql_externalize_failed", error=str(exc))
+
+        return {
+            "success": True,
+            "data": rows,
+            "count": len(rows),
+            "summary": f"查询到 {len(rows)} 条记录。{suffix}",
+            "data_shape": data_shape,
+            "metadata": {"columns": columns, "externalized": False},
+        }
+
+    @staticmethod
+    def _serialize_row(row: dict[str, Any]) -> dict[str, Any]:
+        return {key: ExecutePostgresSQLQueryTool._serialize_value(value) for key, value in row.items()}
+
+    @staticmethod
+    def _serialize_value(value: Any) -> Any:
+        if isinstance(value, (datetime, date, time)):
+            return value.isoformat()
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, bytes):
+            return value.hex()
+        return value

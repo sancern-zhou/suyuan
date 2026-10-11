@@ -46,7 +46,8 @@ single-chart specifications selected by the routing table below.
 
 ## Domain Chart Routing
 
-- Guangdong Province AQI calendar only: read `aqi-calendar.md`.
+- Guangdong Province AQI calendar only (Guangdong/default project only): read
+  `aqi-calendar.md`. Other projects do not expose this type.
 - Calendar for another region/station or a non-AQI pollutant: read
   `pollutant-calendar.md`.
 - Pollutant wind rose, pollution rose, or wind-direction
@@ -54,12 +55,15 @@ single-chart specifications selected by the routing table below.
   `generic-pollutant-wind-rose.md`.
 - Guangdong Province pollutant wind rose only: read `pollutant-wind-rose.md`
   and use `chart_type: "pollutant_wind_rose"`.
+  Other projects do not expose this type; use `generic_pollutant_wind_rose`.
 - Wind direction, wind speed, and one pollutant changing over time: read
   `wind-timeseries.md` and use `chart_type: "wind_timeseries"`.
 - Five-element weather forecast time series (wind arrows, speed, temperature,
   precipitation probability, humidity): read `weather-timeseries.md` and use
   `chart_type: "weather_timeseries"`. This type supports 1–7 consecutive days
   on a continuous time axis. Do not overlay pollutants or overlap daily curves.
+- Henan province city-level AQI or pollutant map: read `henan-city-map.md` and
+  use `chart_type: "henan_city_map"`.
 
 First match the six supported business types. In every mode, these types MUST
 use `create_business_chart`; do not reimplement their templates in Python or

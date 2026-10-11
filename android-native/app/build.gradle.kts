@@ -33,7 +33,7 @@ android {
     val configuredApiBaseUrl = (project.findProperty("apiBaseUrl") as String?)
         ?.trim()
         ?.takeIf { it.isNotEmpty() }
-        ?: "http://127.0.0.1:8000"
+        ?: "http://117.159.53.11:60787/suyuan"
     val escapedApiBaseUrl = configuredApiBaseUrl
         .replace("\\", "\\\\")
         .replace("\"", "\\\"")
@@ -47,6 +47,9 @@ android {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("org.json:json:20240303")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.ktx)
@@ -60,3 +63,16 @@ dependencies {
     implementation(libs.getui.gtc)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
+
+// Consume the shared frontend build, retaining only the chart entry's dependencies.
+val chartAssets = layout.buildDirectory.dir("generated/chartAssets")
+val packageChartRenderer by tasks.registering(Exec::class) {
+    val frontend = rootProject.projectDir.parentFile.resolve("frontend")
+    inputs.dir(frontend.resolve("dist"))
+    inputs.file(frontend.resolve("scripts/packageChartRenderer.mjs"))
+    outputs.dir(chartAssets)
+    commandLine("node", frontend.resolve("scripts/packageChartRenderer.mjs").absolutePath,
+        frontend.resolve("dist").absolutePath, chartAssets.get().asFile.resolve("charts").absolutePath)
+}
+android.sourceSets.getByName("main").assets.srcDir(chartAssets)
+tasks.named("preBuild").configure { dependsOn(packageChartRenderer) }

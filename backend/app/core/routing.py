@@ -49,6 +49,7 @@ ROUTER_REGISTRY = [
     ),
     RouterSpec("app.api.admin", description="Admin interface"),
     RouterSpec("app.api.agent", description="ReAct Agent API"),
+    RouterSpec("app.api.agent_memory_routes", description="Agent mode memory view/edit", owner="core"),
     RouterSpec("app.api.human_feedback_routes", description="Agent human feedback"),
     RouterSpec("app.api.routes", prefix="/api", description="Basic API routes"),
     RouterSpec("app.api.query_dashboard_routes", prefix="/api", description="Map data API"),

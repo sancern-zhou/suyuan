@@ -20,6 +20,13 @@ from app.tools.visualization.create_business_chart.renderer import (
     select_chinese_font,
 )
 from app.tools.visualization.create_business_chart.theme import SERIES_COLORS
+from config.settings import settings
+
+
+@pytest.fixture(autouse=True)
+def _use_default_project(monkeypatch):
+    """共享图型目录测试固定 default 项目，避免项目裁剪影响枚举与引用路径。"""
+    monkeypatch.setattr(settings, "project_id", "default")
 
 
 def test_schema_stays_compact_and_points_to_progressive_references():
@@ -53,6 +60,7 @@ def test_schema_stays_compact_and_points_to_progressive_references():
     assert set(properties["chart_type"]["enum"]) == {
         "aqi_calendar", "pollutant_calendar", "pollutant_wind_rose",
         "generic_pollutant_wind_rose", "wind_timeseries", "weather_timeseries",
+        "henan_city_map",
     }
     assert "不是 ECharts option" in properties["data"]["description"]
     assert "file_path" in properties["data"]["description"]
@@ -74,6 +82,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
     expected_keys = {
         "index", "pollutant_calendar", "generic_pollutant_wind_rose",
         "wind_timeseries", "weather_timeseries", "aqi_calendar", "pollutant_wind_rose",
+        "henan_city_map",
     }
 
     assert set(paths) == expected_keys
@@ -87,6 +96,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
     generic_wind_rose_text = resolve_agent_path(paths["generic_pollutant_wind_rose"]).read_text(encoding="utf-8")
     wind_timeseries_text = resolve_agent_path(paths["wind_timeseries"]).read_text(encoding="utf-8")
     weather_timeseries_text = resolve_agent_path(paths["weather_timeseries"]).read_text(encoding="utf-8")
+    henan_city_map_text = resolve_agent_path(paths["henan_city_map"]).read_text(encoding="utf-8")
     index_text = resolve_agent_path(paths["index"]).read_text(encoding="utf-8")
     assert "aqi_calendar" in aqi_calendar_text
     assert "广东省专用" in aqi_calendar_text
@@ -96,7 +106,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
     assert "generic_pollutant_wind_rose" in generic_wind_rose_text
     assert "wind_timeseries" in wind_timeseries_text
     assert "meteorological_from" in wind_timeseries_text
-    assert "weather_timeseries" in weather_timeseries_text
+    assert "henan_city_map" in henan_city_map_text
     assert "Supply at least one of `data` or `file_path`" in index_text
     assert "current session" in index_text
     assert "not infer arbitrary record fields" in index_text
@@ -123,14 +133,31 @@ def test_renderer_selects_existing_chinese_font_file_when_available():
         assert font_path == str(gb_xbs_path)
 
 
+def test_henan_city_map_uses_new_standard_breakpoints_by_metric():
+    from app.tools.visualization.create_business_chart.domain.henan_city_map import (
+        LEVELS,
+        NEW_STANDARD_CONCENTRATION_BREAKS,
+        _metric_key,
+    )
+
+    assert LEVELS == (50, 100, 150, 200, 300)
+    assert NEW_STANDARD_CONCENTRATION_BREAKS["PM2_5"] == (35, 60, 115, 150, 250)
+    assert NEW_STANDARD_CONCENTRATION_BREAKS["PM10"] == (50, 120, 250, 350, 420)
+    assert NEW_STANDARD_CONCENTRATION_BREAKS["O3_8h"] == (100, 160, 215, 265, 800)
+    assert _metric_key("PM2.5") == "PM2_5"
+    assert _metric_key("O3_8H") == "O3_8h"
+
+
 def test_label_normalization_converts_ionic_superscripts_and_subscripts_to_mathtext():
     from app.tools.visualization.create_business_chart.text import normalize_matplotlib_label_text
 
     assert (
         normalize_matplotlib_label_text("各城市PM2.5中SO₄²⁻/NO₃⁻比值对比")
-        == "各城市PM2.5中SO$_4^{2-}$/NO$_3^-$比值对比"
+        == "各城市PM$_{2.5}$中SO$_4^{2-}$/NO$_3^-$比值对比"
     )
     assert normalize_matplotlib_label_text("NH₄⁺贡献占比") == "NH$_4^+$贡献占比"
+    assert normalize_matplotlib_label_text("O₃_8H日最大") == "O$_3$-8H日最大"
+    assert normalize_matplotlib_label_text("PM2.5浓度") == "PM$_{2.5}$浓度"
 
 
 @pytest.mark.asyncio
@@ -339,6 +366,8 @@ async def test_generic_pollutant_wind_rose_renders_non_guangdong_distribution():
     assert Path(result["visuals"][0]["local_path"]).exists()
 
 
+
+
 @pytest.mark.asyncio
 async def test_wind_timeseries_renders_speed_direction_and_pm25_arrays():
     timestamps = [f"2026-05-01 {hour:02d}:00:00" for hour in range(24)]
@@ -361,7 +390,7 @@ async def test_wind_timeseries_renders_speed_direction_and_pm25_arrays():
     assert metadata["applied_chart_type"] == "wind_timeseries"
     assert metadata["input_mode"] == "speed_direction"
     assert metadata["wind_direction_convention"] == "meteorological_from"
-    assert metadata["pollutant_name"] == "PM2.5"
+    assert metadata["pollutant_name"] == "PM$_{2.5}$"
     assert metadata["unit"] == "μg/m$^3$"
     assert metadata["valid_point_count"] == 24
     assert metadata["rendered_vector_count"] == 18
@@ -402,7 +431,7 @@ async def test_wind_timeseries_renders_custom_pollutant_records_from_file_path()
     assert result["metadata"]["source_file_path"] == "chart_data:v1:abc"
     metadata = result["data"]["metadata"]
     assert metadata["input_mode"] == "records_speed_direction"
-    assert metadata["pollutant_name"] == "O3"
+    assert metadata["pollutant_name"] == "O$_3$"
     assert metadata["valid_point_count"] == len(records)
     assert Path(result["visuals"][0]["local_path"]).exists()
 

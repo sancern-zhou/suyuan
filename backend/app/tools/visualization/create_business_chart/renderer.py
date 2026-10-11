@@ -24,7 +24,7 @@ from app.tools.visualization.create_business_chart.text_layout import (
 from app.tools.visualization.create_business_chart.theme import REPORT_THEME, SERIES_COLORS, theme_color
 from app.tools.visualization.create_business_chart.validation import ChartDataError
 from app.utils.chart_legend import position_legends_below_plot, visible_legends
-from app.utils.font_utils import chinese_font_prop, select_preferred_chinese_font_path
+from app.utils.font_utils import chinese_font_prop, normalize_figure_text, select_preferred_chinese_font_path
 
 
 WORD_TARGET_WIDTH_IN = 5.8
@@ -60,6 +60,8 @@ SPECIALIZED_CHART_TYPES = {
     "generic_pollutant_wind_rose",
     "wind_timeseries",
     "weather_timeseries",
+    # 许昌项目专用：河南省城市级 AQI/污染物地图（xuchang 分支叠加）。
+    "henan_city_map",
 }
 CHART_TYPE_ALIASES = {"timeseries": "line"}
 
@@ -629,6 +631,7 @@ def _chinese_font_prop():
 
 
 def _apply_font_to_figure(fig) -> None:
+    normalize_figure_text(fig, normalize_matplotlib_label_text)
     font_prop = _chinese_font_prop()
     for text in fig.findobj(match=lambda obj: hasattr(obj, "set_fontproperties")):
         try:
@@ -1461,9 +1464,11 @@ def _validate_xy_lengths(chart_type: str, labels: Sequence[Any], values: Sequenc
 
 
 def _safe_chart_id(value: str) -> str:
-    safe = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in str(value).strip())
-    safe = safe.strip("_")
-    return safe[:80] or f"business_chart_{uuid.uuid4().hex[:10]}"
+    # 收敛到 [[chart:<id>]] 协议字符集（见 app/utils/visual_ids.py，契约测试钉住）
+    from app.utils.visual_ids import sanitize_visual_id
+
+    safe = sanitize_visual_id(value)
+    return safe or f"business_chart_{uuid.uuid4().hex[:10]}"
 
 
 def _dedupe(values: Sequence[str]) -> List[str]:

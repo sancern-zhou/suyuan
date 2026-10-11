@@ -1,0 +1,229 @@
+import json
+import hashlib
+
+import pytest
+import httpx
+from fastapi import FastAPI
+
+from app.social import app_identity
+from app.api.social_app_routes import router as app_router
+from app.api import social_app_routes
+from app.auth.middleware import GatewayAuthenticationMiddleware
+from config.settings import Settings
+from app.social.broadcast_context import resolve_broadcast_media_path
+
+
+def configure_accounts(monkeypatch):
+    monkeypatch.setattr(app_identity.settings, "app_auth_secret", "test-signing-secret")
+    monkeypatch.setattr(
+        app_identity.settings,
+        "app_accounts_json",
+        json.dumps(
+            {
+                "alice": {"secret": "alice-secret", "name": "Alice"},
+                "bob": {"secret": "bob-secret", "name": "Bob"},
+            }
+        ),
+    )
+    monkeypatch.setattr(app_identity.settings, "app_access_token_ttl_seconds", 3600)
+
+
+def build_app() -> FastAPI:
+    app = FastAPI()
+    app.add_middleware(
+        GatewayAuthenticationMiddleware,
+        settings=Settings(),
+        auth_service=None,
+    )
+    app.include_router(app_router)
+    return app
+
+
+def test_report_package_source_path_resolves_to_rendered_docx(tmp_path):
+    report_dir = tmp_path / "report-package"
+    report_dir.mkdir()
+    qmd = report_dir / "report.qmd"
+    docx = report_dir / "report.docx"
+    qmd.write_text("# source", encoding="utf-8")
+    docx.write_bytes(b"docx")
+
+    assert resolve_broadcast_media_path(qmd) == docx
+
+
+def test_report_package_source_path_falls_back_to_pdf(tmp_path):
+    report_dir = tmp_path / "report-package"
+    report_dir.mkdir()
+    qmd = report_dir / "report.qmd"
+    pdf = report_dir / "report.pdf"
+    qmd.write_text("# source", encoding="utf-8")
+    pdf.write_bytes(b"%PDF")
+
+    assert resolve_broadcast_media_path(qmd) == pdf
+
+
+BROADCAST_MESSAGE = {
+    "id": "broadcast:daily:evt-1:app:android:alice",
+    "type": "broadcast",
+    "role": "assistant",
+    "content": "报表已生成",
+    "timestamp": "2026-08-30T17:00:00+08:00",
+    "read": False,
+    "data": {
+        "attachments": [
+            {
+                "name": "统计报表.xlsx",
+                "path": "/registry/reports/统计报表.xlsx",
+                "type": "file",
+            },
+            {
+                "name": "外链.png",
+                "url": "https://example.com/chart.png",
+            },
+        ],
+        "read": False,
+    },
+}
+
+
+async def _inbox_for(social_user_id):
+    if social_user_id == "app:android:alice":
+        return [dict(BROADCAST_MESSAGE)]
+    return []
+
+
+@pytest.mark.asyncio
+async def test_broadcast_payload_hides_paths_and_links_content_endpoint():
+    payload = social_app_routes._broadcast_payload(BROADCAST_MESSAGE)
+    assert "/registry/reports" not in json.dumps(payload)
+    local_attachment = payload["attachments"][0]
+    prefix = hashlib.sha256(BROADCAST_MESSAGE["id"].encode()).hexdigest()[:16] + "-0-"
+    expected_url = (
+        "/api/social/app/broadcasts/broadcast:daily:evt-1:app:android:alice"
+        f"/attachments/0/content/{prefix}%E7%BB%9F%E8%AE%A1%E6%8A%A5%E8%A1%A8.xlsx"
+    )
+    assert local_attachment["url"] == expected_url
+    assert local_attachment["download_url"] == expected_url
+    # URL 最后一段必须是唯一文件名：App 端图片缓存若按末段做 key，
+    # 以 /content 结尾会让所有历史消息都显示最新一张图。
+    assert local_attachment["url"].rsplit("/", 1)[-1] not in {"content", "preview"}
+    assert local_attachment["mime_type"].endswith(
+        "spreadsheetml.sheet"
+    )
+    assert local_attachment["preview_url"] == (
+        "/api/social/app/broadcasts/broadcast:daily:evt-1:app:android:alice"
+        f"/attachments/0/preview/{prefix}%E7%BB%9F%E8%AE%A1%E6%8A%A5%E8%A1%A8.pdf"
+    )
+    assert local_attachment["preview_mime_type"] == "application/pdf"
+    remote_attachment = payload["attachments"][1]
+    assert remote_attachment["url"] == "https://example.com/chart.png"
+    assert "download_url" not in remote_attachment
+    assert "preview_url" not in remote_attachment
+
+
+def test_broadcast_attachment_cache_identity_distinguishes_messages_and_indexes():
+    attachment = {"name": "report.docx", "path": "/registry/report.docx"}
+    payloads = [social_app_routes._broadcast_attachment_payload(attachment, message_id=message, index=index)
+                for message, index in [("message-a", 0), ("message-b", 0), ("message-a", 1)]]
+    assert len({item["file_id"] for item in payloads}) == 3
+    assert all(item["file_id"] for item in payloads)
+    assert len({item["url"].rsplit("/", 1)[-1] for item in payloads}) == 3
+    assert len({item["preview_url"].rsplit("/", 1)[-1] for item in payloads}) == 3
+    assert payloads[0] == social_app_routes._broadcast_attachment_payload(attachment, message_id="message-a", index=0)
+
+
+@pytest.mark.asyncio
+async def test_broadcast_attachment_content_streaming(tmp_path, monkeypatch):
+    configure_accounts(monkeypatch)
+    registry_root = tmp_path / "registry"
+    reports_dir = registry_root / "reports"
+    reports_dir.mkdir(parents=True)
+    (reports_dir / "统计报表.xlsx").write_bytes(b"xlsx-bytes")
+
+    original_message = dict(BROADCAST_MESSAGE)
+    original_message["data"] = {
+        "attachments": [
+            {
+                "name": "统计报表.xlsx",
+                "path": str(reports_dir / "统计报表.xlsx"),
+                "type": "file",
+            },
+            {"name": "越权文件.txt", "path": str(tmp_path / "outside.txt"), "type": "file"},
+            {"name": "普通文本.txt", "path": str(reports_dir / "notes.txt"), "type": "file"},
+        ],
+        "read": False,
+    }
+    (tmp_path / "outside.txt").write_text("forbidden")
+    (reports_dir / "notes.txt").write_text("notes")
+    # 预置 LibreOffice 管线约定位置的缓存 PDF（按源文件指纹命名），避免测试依赖 soffice
+    from app.api.upload_routes import _office_pdf_preview_path
+
+    xlsx_source = reports_dir / "统计报表.xlsx"
+    cached_preview = _office_pdf_preview_path(xlsx_source)
+    cached_preview.write_bytes(b"%PDF-1.5 cached-preview")
+
+    async def fake_inbox(social_user_id):
+        return [dict(original_message)] if social_user_id == "app:android:alice" else []
+
+    from app.social import broadcast_context
+
+    monkeypatch.setattr(broadcast_context, "load_broadcast_messages", fake_inbox)
+    monkeypatch.setattr(social_app_routes, "get_data_registry", lambda: registry_root)
+
+    app = build_app()
+    transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 12345))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        login = await client.post(
+            "/api/social/app/auth/login",
+            json={"account_id": "alice", "account_secret": "alice-secret"},
+        )
+        alice_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        bob_login = await client.post(
+            "/api/social/app/auth/login",
+            json={"account_id": "bob", "account_secret": "bob-secret"},
+        )
+        bob_headers = {"Authorization": f"Bearer {bob_login.json()['access_token']}"}
+
+        inbox = await client.get("/api/social/app/broadcasts", headers=alice_headers)
+        assert inbox.status_code == 200
+        body = inbox.json()
+        attachment = body["messages"][0]["attachments"][0]
+        assert attachment["url"].startswith("/api/social/app/broadcasts/")
+        assert attachment["preview_url"].endswith(".pdf")
+        assert attachment["preview_mime_type"] == "application/pdf"
+
+        base = "/api/social/app/broadcasts/broadcast:daily:evt-1:app:android:alice/attachments"
+        xlsx = "%E7%BB%9F%E8%AE%A1%E6%8A%A5%E8%A1%A8.xlsx"
+
+        content = await client.get(f"{base}/0/content/{xlsx}", headers=alice_headers)
+        assert content.status_code == 200
+        assert content.content == b"xlsx-bytes"
+        assert content.headers["cache-control"] == "private, max-age=31536000, immutable"
+
+        # 文件名尾巴不参与解析：随便一个名字也按 index 取同一附件。
+        renamed = await client.get(f"{base}/0/content/other.png", headers=alice_headers)
+        assert renamed.status_code == 200
+        assert renamed.content == b"xlsx-bytes"
+
+        # 无文件名尾巴的旧路由已下线（开发阶段，无需兼容旧 App）。
+        legacy = await client.get(f"{base}/0/content", headers=alice_headers)
+        assert legacy.status_code == 404
+
+        preview = await client.get(f"{base}/0/preview/%E7%BB%9F%E8%AE%A1%E6%8A%A5%E8%A1%A8.pdf", headers=alice_headers)
+        assert preview.status_code == 200
+        assert preview.headers["content-type"].startswith("application/pdf")
+        assert preview.content == b"%PDF-1.5 cached-preview"
+
+        txt_preview = await client.get(f"{base}/2/preview/notes.pdf", headers=alice_headers)
+        assert txt_preview.status_code == 404
+
+        forbidden = await client.get(f"{base}/1/content/越权文件.txt", headers=alice_headers)
+        assert forbidden.status_code == 403
+
+        missing_index = await client.get(f"{base}/9/content/x.xlsx", headers=alice_headers)
+        assert missing_index.status_code == 404
+
+        other_user = await client.get(f"{base}/0/content/{xlsx}", headers=bob_headers)
+        assert other_user.status_code == 404
+
+        no_auth = await client.get(f"{base}/0/content/{xlsx}")
+        assert no_auth.status_code == 401

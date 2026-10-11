@@ -72,8 +72,9 @@ class EKMAVisualizer:
 
         img_base64 = self._fig_to_base64(fig)
         cache = get_image_cache()
-        saved_image_id = cache.save(img_base64, chart_id)
-        image_url = f"/api/image/{saved_image_id}"
+        image_info = cache.save(img_base64, chart_id)
+        saved_image_id = image_info["image_id"]
+        image_url = image_info["url"]
 
         meta = {
             "schema_version": "3.1",
@@ -93,6 +94,8 @@ class EKMAVisualizer:
                 "image_id": saved_image_id,
                 "image_url": image_url,
                 "markdown_image": f"![{title}]({image_url})",
+                # 原生PNG本地路径：resources_for_visuals 依赖该字段登记 chart-image
+                "local_path": image_info["local_path"],
                 "title": title,
                 "meta": meta
             },

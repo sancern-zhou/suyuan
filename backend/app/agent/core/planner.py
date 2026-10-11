@@ -25,6 +25,73 @@ from config.settings import settings
 
 logger = structlog.get_logger()
 
+_INTERNAL_COMPACTION_MARKERS = (
+    "# 工作记忆压缩",
+    "Runtime memory summary from earlier turns.",
+    "<compact_memory_context>",
+    "This session is being continued from a previous conversation that ran out of context.",
+)
+
+
+def _is_internal_compaction_text(text: str) -> bool:
+    """Recognize a leaked compaction result before it reaches the user stream."""
+    normalized = (text or "").lstrip()
+    return any(normalized.startswith(marker) for marker in _INTERNAL_COMPACTION_MARKERS)
+
+
+def _could_be_internal_compaction_prefix(text: str) -> bool:
+    normalized = (text or "").lstrip()
+    return any(marker.startswith(normalized) for marker in _INTERNAL_COMPACTION_MARKERS)
+
+
+def _repair_unescaped_json_quotes(raw: str) -> Optional[dict]:
+    """修复模型流式工具入参中字符串值内未转义的英文双引号。
+
+    实测案例：ask_user_question 的选项描述含 ``判断"高出来一层"是输送还是本地``，
+    内层引号未转义导致严格解析失败。逐字符扫描：处于字符串内遇到 `"` 时，
+    其后第一个非空白字符不是结构字符（,:}]）则视为内容引号补转义，否则视为闭合。
+    仅在严格解析失败后调用；修复后必须能通过 json.loads 才返回，否则返回 None。
+    """
+    if '"' not in raw:
+        return None
+    out: List[str] = []
+    in_string = False
+    i = 0
+    n = len(raw)
+    while i < n:
+        ch = raw[i]
+        if in_string and ch == "\\":
+            out.append(ch)
+            if i + 1 < n:
+                out.append(raw[i + 1])
+                i += 1
+            i += 1
+            continue
+        if ch == '"':
+            if not in_string:
+                in_string = True
+                out.append(ch)
+            else:
+                j = i + 1
+                while j < n and raw[j] in " \t\r\n":
+                    j += 1
+                nxt = raw[j] if j < n else ""
+                if nxt in (",", "}", "]", ":"):
+                    in_string = False
+                    out.append(ch)
+                else:
+                    out.append('\\"')
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    repaired = "".join(out)
+    try:
+        recovered = json.loads(repaired)
+    except json.JSONDecodeError:
+        return None
+    return recovered if isinstance(recovered, dict) else None
+
 class ReActPlanner:
     """
     ReAct规划器: 按模式过滤工具定义（V4 架构）
@@ -294,6 +361,9 @@ class ReActPlanner:
         current_blocks: List[Dict[str, Any]] = []
         current_thinking_block: Optional[Dict[str, Any]] = None  # ✅ 新增：thinking block
         current_text_block: Optional[Dict[str, Any]] = None  # {"index": int, "text": str}
+        text_stream_buffer = ""
+        text_stream_suppressed = False
+        text_stream_guard_decided = False
         current_tool_block: Optional[Dict[str, Any]] = None  # {"index": int, "id": str, "name": str, "input_json": str}
         # V4: 追踪已 yield 的 tool_use 数量（避免重复处理）
         yielded_tool_use_count = 0
@@ -320,6 +390,9 @@ class ReActPlanner:
                         current_thinking_block = {"index": index, "thinking": ""}
                     elif block.type == "text":
                         current_text_block = {"index": index, "text": ""}
+                        text_stream_buffer = ""
+                        text_stream_suppressed = False
+                        text_stream_guard_decided = False
                     elif block.type == "tool_use":
                         initial_input = getattr(block, "input", None)
                         if not isinstance(initial_input, dict):
@@ -340,11 +413,28 @@ class ReActPlanner:
                         text_chunk = delta.text
                         if current_text_block and current_text_block["index"] == index:
                             current_text_block["text"] += text_chunk
-                        # 流式输出文本
-                        yield {
-                            "type": "streaming_text",
-                            "data": {"chunk": text_chunk, "is_complete": False}
-                        }
+                        # Hold the short prefix until we know this is not a leaked
+                        # compact summary. Normal answers still stream after the guard.
+                        if not text_stream_suppressed:
+                            text_stream_buffer += text_chunk
+                            if _is_internal_compaction_text(text_stream_buffer):
+                                text_stream_suppressed = True
+                                text_stream_buffer = ""
+                            elif (
+                                not text_stream_guard_decided
+                                and len(text_stream_buffer) < 256
+                                and _could_be_internal_compaction_prefix(text_stream_buffer)
+                            ):
+                                pass
+                            else:
+                                text_stream_guard_decided = True
+                                visible_chunk = text_stream_buffer
+                                text_stream_buffer = ""
+                                if visible_chunk:
+                                    yield {
+                                        "type": "streaming_text",
+                                        "data": {"chunk": visible_chunk, "is_complete": False}
+                                    }
 
                     elif delta.type == "thinking_delta":
                         # ✅ 处理 thinking 增量
@@ -415,6 +505,12 @@ class ReActPlanner:
                         current_thinking_block = None
 
                     if current_text_block and current_text_block["index"] == index:
+                        if not text_stream_suppressed and text_stream_buffer:
+                            yield {
+                                "type": "streaming_text",
+                                "data": {"chunk": text_stream_buffer, "is_complete": False}
+                            }
+                        text_stream_buffer = ""
                         current_blocks.append({
                             "type": "text",
                             "text": current_text_block["text"]
@@ -448,24 +544,36 @@ class ReActPlanner:
                                         error=str(exc),
                                     )
                                 else:
-                                    logger.warning(
-                                        "tool_use_input_json_parse_failed",
-                                        tool_name=current_tool_block["name"],
-                                        raw_json_length=len(raw_input_json),
-                                        raw_json_head=raw_input_json[:500],
-                                        raw_json_tail=raw_input_json[-2000:],
-                                        error=str(exc),
-                                    )
-                                    current_blocks.append({
-                                        "type": "text",
-                                        "text": (
-                                            f"Tool call for {current_tool_block['name']} was not executed because "
-                                            "the streamed tool input JSON was malformed. Retry with a smaller tool "
-                                            "input or write large payloads to a file and pass the file path."
-                                        ),
-                                    })
-                                    current_tool_block = None
-                                    continue
+                                    # 字符串值内未转义引号（模型输出常见毛病）：
+                                    # 尝试补转义修复，成功即恢复调用，不向用户泄漏内部错误。
+                                    repaired = _repair_unescaped_json_quotes(raw_input_json)
+                                    if repaired is not None:
+                                        tool_input = repaired
+                                        logger.warning(
+                                            "tool_use_input_json_repaired_unescaped_quotes",
+                                            tool_name=current_tool_block["name"],
+                                            raw_json_length=len(raw_input_json),
+                                            error=str(exc),
+                                        )
+                                    else:
+                                        logger.warning(
+                                            "tool_use_input_json_parse_failed",
+                                            tool_name=current_tool_block["name"],
+                                            raw_json_length=len(raw_input_json),
+                                            raw_json_head=raw_input_json[:500],
+                                            raw_json_tail=raw_input_json[-2000:],
+                                            error=str(exc),
+                                        )
+                                        current_blocks.append({
+                                            "type": "text",
+                                            "text": (
+                                                f"Tool call for {current_tool_block['name']} was not executed because "
+                                                "the streamed tool input JSON was malformed. Retry with a smaller tool "
+                                                "input or write large payloads to a file and pass the file path."
+                                            ),
+                                        })
+                                        current_tool_block = None
+                                        continue
 
                         tool_block = {
                             "type": "tool_use",
@@ -554,7 +662,8 @@ class ReActPlanner:
 
                     # 发送 streaming_text 完成标记（如果有文本块）
                     has_text = any(b["type"] == "text" for b in current_blocks)
-                    if has_text:
+                    has_visible_text = has_text and result.get("action", {}).get("type") != "INTERNAL_COMPACTION"
+                    if has_visible_text:
                         yield {
                             "type": "streaming_text",
                             "data": {"chunk": "", "is_complete": True}
@@ -685,6 +794,21 @@ class ReActPlanner:
         ])
 
         if not tool_use_blocks:
+            if _is_internal_compaction_text(full_text):
+                logger.warning(
+                    "internal_compaction_text_block_suppressed",
+                    full_text_length=len(full_text),
+                    full_text_preview=full_text[:200],
+                )
+                return {
+                    "thought": "内部上下文压缩结果已拦截",
+                    "action": {
+                        "type": "INTERNAL_COMPACTION",
+                        "answer": "",
+                        "reason": "compact_summary_leaked_into_planner_output",
+                    },
+                    "raw_thinking_blocks": thinking_blocks,
+                }
             action = {
                 "type": "PLAIN_TEXT_REPLY",
                 "answer": full_text,

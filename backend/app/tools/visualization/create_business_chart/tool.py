@@ -12,6 +12,63 @@ from app.utils.path_config import format_agent_path
 
 REFERENCE_DIR = Path(__file__).resolve().parent / "references"
 
+# chart_type enum 的稳定顺序（全部共享图型）。
+ALL_CHART_TYPES: tuple[str, ...] = (
+    "pollutant_calendar",
+    "generic_pollutant_wind_rose",
+    "wind_timeseries",
+    "weather_timeseries",
+    "aqi_calendar",
+    "pollutant_wind_rose",
+    "henan_city_map",
+)
+
+# 项目专用图型：仅允许列出的 project_id 暴露。
+# 未列出的项目会从 chart_type enum、引用文档和路由中隐藏，避免跨项目误用。
+PROJECT_SCOPED_CHART_TYPES: dict[str, frozenset[str]] = {
+    # 广东省专用六档等值线风玫瑰；其他地区使用 generic_pollutant_wind_rose。
+    "pollutant_wind_rose": frozenset({"default"}),
+    # 广东省专用月级 AQI 日历；其他地区使用通用 pollutant_calendar。
+    "aqi_calendar": frozenset({"default"}),
+}
+
+# 项目裁剪后用于替代的通用图型（键为被隐藏的 chart_type）。
+_SCOPED_CHART_TYPE_FALLBACKS: dict[str, str] = {
+    "pollutant_wind_rose": "generic_pollutant_wind_rose",
+    "aqi_calendar": "pollutant_calendar",
+}
+
+# 项目裁剪后给 Agent 的替代指引（键为被隐藏的 chart_type）。
+_SCOPED_CHART_TYPE_HINTS: dict[str, str] = {
+    "pollutant_wind_rose": (
+        "本项目污染物风玫瑰图使用 `generic_pollutant_wind_rose`；"
+        "它需要风向、风速、污染物浓度在记录中平铺同行，或直接提供三个等长数组。"
+    ),
+    "aqi_calendar": (
+        "本项目日历图使用 `pollutant_calendar`，不使用广东专用 `aqi_calendar`。"
+    ),
+}
+
+
+def active_project_id() -> str:
+    """当前部署项目 ID；未配置时回退到默认项目（广东）。"""
+    from config.settings import settings
+
+    return str(getattr(settings, "project_id", "") or "").strip() or "default"
+
+
+def chart_type_enabled(chart_type: str, project_id: str | None = None) -> bool:
+    """判断 chart_type 在当前（或指定）项目下是否可用。"""
+    allowed_projects = PROJECT_SCOPED_CHART_TYPES.get(chart_type)
+    if allowed_projects is None:
+        return True
+    return (project_id or active_project_id()) in allowed_projects
+
+
+def available_chart_types(project_id: str | None = None) -> list[str]:
+    """当前项目可用的 chart_type 列表（保持 ALL_CHART_TYPES 顺序）。"""
+    return [name for name in ALL_CHART_TYPES if chart_type_enabled(name, project_id)]
+
 
 def business_chart_reference_paths() -> Dict[str, str]:
     paths = {
@@ -19,10 +76,14 @@ def business_chart_reference_paths() -> Dict[str, str]:
         "pollutant_calendar": str(REFERENCE_DIR / "pollutant-calendar.md"),
         "generic_pollutant_wind_rose": str(REFERENCE_DIR / "generic-pollutant-wind-rose.md"),
         "wind_timeseries": str(REFERENCE_DIR / "wind-timeseries.md"),
-        "weather_timeseries": str(REFERENCE_DIR / "weather-timeseries.md"),
         "aqi_calendar": str(REFERENCE_DIR / "aqi-calendar.md"),
         "pollutant_wind_rose": str(REFERENCE_DIR / "pollutant-wind-rose.md"),
+        "henan_city_map": str(REFERENCE_DIR / "henan-city-map.md"),
+        "weather_timeseries": str(REFERENCE_DIR / "weather-timeseries.md"),
     }
+    for scoped_type in PROJECT_SCOPED_CHART_TYPES:
+        if not chart_type_enabled(scoped_type):
+            paths.pop(scoped_type, None)
     return {name: format_agent_path(path) for name, path in paths.items()}
 
 
@@ -41,6 +102,7 @@ class CreateBusinessChartTool(LLMTool):
             "仅支持污染物/AQI 日历、污染物风玫瑰、风场污染物叠加时序和气象五要素时序。"
             "常规柱状、折线、散点、饼图、分布、热力图及自定义组合图不由本工具绘制；"
             "问数交互图使用 execute_echarts_python，静态分析及报告图使用 execute_python。"
+            "henan_city_map 绘制河南省城市级 AQI/污染物地图（本项目专用）。"
             "weather_timeseries 绘制连续 1–7 天风向、风速、温度、降水概率、湿度五要素，禁止叠加污染物或重叠不同日期曲线；"
             "气象背景叠加污染物使用 wind_timeseries；纯风向频率图使用 Python，不得用占位浓度制作污染物风玫瑰。"
             "现成业务图可作为组合报告素材复用；尚未覆盖的自定义分析、分面、多子图和科研图表使用 execute_python + matplotlib/seaborn。"
@@ -49,6 +111,9 @@ class CreateBusinessChartTool(LLMTool):
             "未指定位置的图由前端追加到本轮答复末尾。制作正式报告时图表仍可作为报告素材复用，"
             "报告包内部配图不会自动逐张追加到对话。不要自行拼图片 URL 或本地路径。"
         )
+        for scoped_type, hint in _SCOPED_CHART_TYPE_HINTS.items():
+            if not chart_type_enabled(scoped_type):
+                description += hint
         function_schema = {
             "name": "create_business_chart",
             "description": description,
@@ -61,8 +126,8 @@ class CreateBusinessChartTool(LLMTool):
                     },
                     "chart_type": {
                         "type": "string",
-                        "enum": sorted(SPECIALIZED_CHART_TYPES),
-                        "description": "业务场景图型，仅支持列出的专用类型。",
+                        "enum": available_chart_types(),
+                        "description": "业务场景图型，仅支持当前项目可用的专用类型。",
                     },
                     "title": {"type": "string", "description": "图表标题。"},
                     "data": {
@@ -71,6 +136,7 @@ class CreateBusinessChartTool(LLMTool):
                             "结构化图表数据，不是 ECharts option。"
                             "按对应业务图型文档提供 records、日期与污染物浓度数组、风向风速与真实浓度数组等。"
                             "输入必须符合选定图型的业务口径；不接收常规图型或 charts 嵌套多图请求。"
+                            "henan_city_map 使用 records[{city,value}]（或 cities+values），可选 metric 与 geojson。"
                             "与 file_path 同时提供时，data 用于渲染，file_path 仅用于来源追踪。"
                         ),
                     },
@@ -159,6 +225,12 @@ class CreateBusinessChartTool(LLMTool):
             "style_profile": style_profile or "report",
             "reference_paths": business_chart_reference_paths(),
         }
+        if chart_type and not chart_type_enabled(chart_type):
+            fallback = _SCOPED_CHART_TYPE_FALLBACKS.get(chart_type)
+            message = f"当前项目不支持的 chart_type：{chart_type}。"
+            if fallback:
+                message += f"请使用 {fallback}。"
+            return self._failed_result(message, metadata, chart_type, title, file_path)
         if chart_type not in SPECIALIZED_CHART_TYPES:
             return self._failed_result(
                 f"create_business_chart 不支持图型 {chart_type!r}；仅支持专用业务图型。"
@@ -225,11 +297,8 @@ class CreateBusinessChartTool(LLMTool):
                 if not isinstance(visual, dict):
                     continue
                 catalog_visual = dict(visual)
-                # Preview and download URLs are projected only after the
-                # resource group is persisted; tool results keep server paths
-                # private to the publication boundary.
-                catalog_visual.pop("url", None)
-                catalog_visual.pop("image_url", None)
+                # Keep the image-cache URL for immediate chat rendering while
+                # the path-backed visual is also published as a session resource.
                 catalog_visual.pop("markdown_image", None)
                 catalog_visuals.append(catalog_visual)
             rendered = {**rendered, "visuals": catalog_visuals}

@@ -22,7 +22,10 @@ test('project config exposes module and feature predicates', () => {
         quickPrompts: [{ label: '查数据', prompt: '查询今天数据', mode: 'query' }],
         attentionTaskIds: ['task-1'],
         routes: [{ mode: 'query', keywords: ['查询'] }]
-      }
+      },
+      agentScenes: ['monitoring'],
+      agentSceneOverrides: { monitoring: { modeIds: ['query', 'assistant'] } },
+      sidebarAgentModes: ['query', 'knowledge']
     }
   })
 
@@ -39,4 +42,7 @@ test('project config exposes module and feature predicates', () => {
   assert.equal(config.coordinator.name, '小助')
   assert.equal(config.coordinator.stationImageUrl, '/project-assets/demo/station.png')
   assert.equal(config.coordinator.quickPrompts[0].mode, 'query')
+  assert.deepEqual(config.agentScenes, ['monitoring'])
+  assert.deepEqual(config.agentSceneOverrides, { monitoring: { modeIds: ['query', 'assistant'] } })
+  assert.deepEqual(config.sidebarAgentModes, ['query', 'knowledge'])
 })

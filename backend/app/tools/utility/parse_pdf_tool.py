@@ -2,8 +2,8 @@
 PDF解析工具 - 智能PDF内容提取
 
 支持功能：
-- 文本提取：使用PyPDF2或pdfplumber提取文本内容
-- OCR识别：自动检测扫描版PDF并使用OCR识别（可选）
+- 文本提取：使用pypdf或pdfplumber提取文本内容
+- OCR识别：使用阿里云高精度 OCR 识别扫描版 PDF
 - 表格提取：提取PDF中的表格数据
 - 图片提取：提取PDF中的图片信息
 - 分页读取：支持指定页面范围
@@ -12,7 +12,7 @@ PDF解析工具 - 智能PDF内容提取
 
 适用场景：
 - 解析文本型PDF（可直接提取文本）
-- 解析扫描版PDF（需要OCR识别）
+- 解析扫描版PDF（使用阿里云 OCR）
 - 提取PDF中的表格数据
 - 提取PDF中的图片信息
 - 获取PDF元数据
@@ -25,16 +25,19 @@ PDF解析工具 - 智能PDF内容提取
 """
 
 import os
+import base64
+import io
 import json
+import asyncio
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
-import httpx
 import structlog
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import single_file_product
 from app.utils.path_config import get_data_registry, resolve_agent_path
-from app.services.aliyun_ocr import call_aliyun_ocr, resolve_aliyun_ocr_app_code
+from config.settings import settings
+from app.services.bailian_multimodal import call_bailian_vision
 
 logger = structlog.get_logger()
 
@@ -60,7 +63,7 @@ class ParsePDFTool(LLMTool):
             description="""解析PDF文件并提取内容
 
 支持多种解析模式：
-- text: 提取文本内容（使用PyPDF2或pdfplumber）
+- text: 提取文本内容（使用pypdf或pdfplumber）
 - ocr: OCR识别（针对扫描版PDF）
 - table: 提取表格数据
 - image: 提取图片信息
@@ -69,7 +72,7 @@ class ParsePDFTool(LLMTool):
 
 特性：
 - 自动检测文本型/扫描型PDF
-- 统一使用阿里云高精版OCR
+- 支持阿里云高精度 OCR
 - 支持分页读取
 - 提取表格和图片信息
 - 获取PDF元数据
@@ -93,13 +96,13 @@ class ParsePDFTool(LLMTool):
 限制：
 - 文件大小限制：100MB
 - 页面限制：最多50页
-- OCR需要配置 ALIYUN_OCR_APP_CODE
+- OCR需要配置阿里云云市场 AppCode
 
 注意：
 - 文本型PDF使用text模式最快
 - 扫描版PDF需要OCR，处理时间较长
 - 提取表格需要安装pdfplumber
-- OCR使用阿里云云市场高精版接口
+- OCR需要配置阿里云云市场 AppCode
 """,
             category=ToolCategory.QUERY,
             version="1.0.0",
@@ -426,7 +429,7 @@ class ParsePDFTool(LLMTool):
             pages: 页面范围（如 "1-5", "3", "10-20"）
             extract_tables: 是否提取表格
             extract_images: 是否提取图片
-            ocr_engine: OCR引擎（auto/aliyun）
+            ocr_engine: OCR引擎（auto/tesseract/paddleocr/bailian）
 
         Returns:
             简化格式：{"success": bool, "data": dict, "summary": str}
@@ -486,11 +489,11 @@ class ParsePDFTool(LLMTool):
     async def _detect_mode(self, file_path: Path, page_numbers: List[int]) -> str:
         """自动检测PDF类型"""
         try:
-            # 尝试使用PyPDF2提取文本
+            # 尝试使用pypdf提取文本
             try:
-                import PyPDF2
+                import pypdf
                 with open(file_path, 'rb') as f:
-                    pdf_reader = PyPDF2.PdfReader(f)
+                    pdf_reader = pypdf.PdfReader(f)
 
                     # 检查前几页是否有文本
                     pages_to_check = min(3, len(pdf_reader.pages))
@@ -511,7 +514,7 @@ class ParsePDFTool(LLMTool):
                         return self.MODE_OCR
 
             except ImportError:
-                # PyPDF2未安装，尝试pdfplumber
+                # pypdf未安装，尝试pdfplumber
                 return self.MODE_TEXT
 
         except Exception as e:
@@ -625,11 +628,11 @@ class ParsePDFTool(LLMTool):
                     return result
 
             except ImportError:
-                # pdfplumber未安装，使用PyPDF2
-                import PyPDF2
+                # pdfplumber未安装，使用pypdf
+                import pypdf
 
                 with open(file_path, 'rb') as f:
-                    pdf_reader = PyPDF2.PdfReader(f)
+                    pdf_reader = pypdf.PdfReader(f)
                     total_pages = len(pdf_reader.pages)
                     pages_to_process = [p for p in page_numbers if p <= total_pages]
 
@@ -651,7 +654,7 @@ class ParsePDFTool(LLMTool):
                         "pages_processed": len(pages_to_process),
                         "content": content,
                         "content_length": len(content),
-                        "note": "使用PyPDF2提取（安装pdfplumber可获得更好效果）"
+                        "note": "使用pypdf提取（安装pdfplumber可获得更好效果）"
                     }
 
                     # 保存结果到文件
@@ -686,86 +689,154 @@ class ParsePDFTool(LLMTool):
     ) -> Dict[str, Any]:
         """OCR识别"""
         try:
+            # 检查OCR引擎
             if ocr_engine == "auto":
-                ocr_engine = "aliyun"
+                ocr_engine = await self._detect_ocr_engine()
 
-            if ocr_engine != "aliyun":
+            if ocr_engine in {"auto", "aliyun"}:
+                return await self._ocr_with_aliyun(file_path, page_numbers)
+            else:
                 return {
                     "success": False,
                     "data": {"error": f"OCR引擎不可用: {ocr_engine}"},
-                    "summary": "仅支持阿里云高精版 OCR"
+                    "summary": "OCR引擎未安装或配置错误"
                 }
-
-            return await self._ocr_with_aliyun(file_path, page_numbers)
 
         except Exception as e:
             logger.error("ocr_extract_failed", path=str(file_path), error=str(e))
             raise
 
+    async def _detect_ocr_engine(self) -> str:
+        """检测可用的OCR引擎"""
+        if os.getenv("ALIYUN_OCR_APPCODE", "").strip():
+            return "aliyun"
+        return "aliyun" if os.getenv("ALIYUN_OCR_APPCODE", "").strip() else "none"
+
     async def _ocr_with_aliyun(self, file_path: Path, page_numbers: List[int]) -> Dict[str, Any]:
-        """使用阿里云云市场高精版 OCR 识别"""
+        """Use Alibaba Cloud Marketplace high-precision OCR via APPCODE."""
+        appcode = os.getenv("ALIYUN_OCR_APPCODE", "").strip()
+        if not appcode:
+            return {"success": False, "data": {"error": "未配置ALIYUN_OCR_APPCODE"}, "summary": "阿里云 OCR AppCode 未配置"}
         try:
             import pdf2image
-            import io
-            import fitz
+            import httpx
+            images = await asyncio.to_thread(
+                pdf2image.convert_from_path,
+                file_path,
+                first_page=min(page_numbers),
+                last_page=max(page_numbers),
+                dpi=200,
+                fmt="jpeg",
+            )
+            endpoint = os.getenv(
+                "ALIYUN_OCR_ENDPOINT",
+                "https://ocrapi-advanced.taobao.com/ocrservice/advanced",
+            ).strip()
+            texts = []
+            async with httpx.AsyncClient(timeout=float(os.getenv("ALIYUN_OCR_TIMEOUT", "60"))) as client:
+                for page_num, image in zip(range(min(page_numbers), max(page_numbers) + 1), images):
+                    if page_num not in page_numbers:
+                        continue
+                    buf = io.BytesIO()
+                    image.save(buf, format="JPEG", quality=92)
+                    payload = {
+                        "img": base64.b64encode(buf.getvalue()).decode("ascii"),
+                        "prob": True,
+                        "rotate": True,
+                        "table": True,
+                    }
+                    response = await client.post(
+                        endpoint,
+                        headers={"Authorization": f"APPCODE {appcode}", "Content-Type": "application/json"},
+                        content=json.dumps(payload),
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    text = self._extract_aliyun_ocr_text(data)
+                    if text:
+                        texts.append(f"--- 第 {page_num} 页 ---\n{text}")
+            content = "\n\n".join(texts)
+            return {"success": True, "data": {"type": "pdf_ocr", "content": content, "pages_processed": len(texts), "ocr_engine": "aliyun"}, "summary": f"阿里云 OCR 识别成功: {file_path.name} (识别 {len(texts)} 页)"}
+        except Exception as exc:
+            logger.error("ocr_aliyun_failed", path=str(file_path), error=str(exc))
+            return {"success": False, "data": {"error": str(exc)}, "summary": "阿里云 OCR 识别失败"}
 
-            with fitz.open(file_path) as pdf:
-                total_pages = pdf.page_count
-                pages_to_process = [p for p in page_numbers if p <= total_pages]
+    @staticmethod
+    def _extract_aliyun_ocr_text(payload: Any) -> str:
+        """Extract text from common Aliyun Marketplace OCR response shapes."""
+        if isinstance(payload, str):
+            return payload
+        if isinstance(payload, dict):
+            for key in ("content", "text", "words", "word", "result", "data"):
+                value = payload.get(key)
+                text = ParsePDFTool._extract_aliyun_ocr_text(value)
+                if text:
+                    return text
+            return "\n".join(ParsePDFTool._extract_aliyun_ocr_text(v) for v in payload.values() if isinstance(v, (dict, list, str))).strip()
+        if isinstance(payload, list):
+            return "\n".join(ParsePDFTool._extract_aliyun_ocr_text(v) for v in payload).strip()
+        return ""
 
-            if not pages_to_process:
-                return {
-                    "success": False,
-                    "data": {"error": f"无效的页面范围: {page_numbers} (总页数: {total_pages})"},
-                    "summary": "页面范围超出PDF总页数"
-                }
+    async def _ocr_with_bailian(self, file_path: Path, page_numbers: List[int]) -> Dict[str, Any]:
+        """使用百炼多模态模型进行OCR识别"""
+        try:
+            import pdf2image
+            import base64
 
             # 转换PDF为图片
             images = pdf2image.convert_from_path(
                 file_path,
-                first_page=min(pages_to_process),
-                last_page=max(pages_to_process)
+                first_page=min(page_numbers),
+                last_page=max(page_numbers)
             )
 
-            app_code = resolve_aliyun_ocr_app_code()
-            if not app_code:
+            api_url = settings.bailian_base_url
+            api_key = settings.bailian_api_key or ""
+
+            if not api_key:
                 return {
                     "success": False,
-                    "data": {"error": "未配置 ALIYUN_OCR_APP_CODE"},
-                    "summary": "阿里云 OCR AppCode 未配置"
+                    "data": {"error": "未配置BAILIAN_API_KEY"},
+                    "summary": "百炼 OCR API密钥未配置"
                 }
 
             text_content = []
-            async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
-                for idx, image in enumerate(images):
-                    page_num = min(pages_to_process) + idx
-                    if page_num not in pages_to_process:
-                        continue
+            # 对每一页进行OCR
+            for idx, image in enumerate(images):
+                page_num = idx + 1
+                if page_num not in page_numbers:
+                    continue
 
-                    img_buffer = io.BytesIO()
-                    image.save(img_buffer, format='PNG')
+                # 转换图片为base64
+                import io
+                img_buffer = io.BytesIO()
+                image.save(img_buffer, format='PNG')
+                img_base64 = base64.b64encode(img_buffer.getvalue()).decode('utf-8')
 
-                    text, _ = await call_aliyun_ocr(
-                        img_buffer.getvalue(),
-                        app_code=app_code,
-                        client=client,
-                    )
-                    text_content.append(f"--- 第 {page_num} 页 ---\n{text}")
+                text, _ = await call_bailian_vision(
+                    image_url=f"data:image/png;base64,{img_base64}",
+                    prompt="请识别图片中的所有文字内容，保持原有格式和排版。",
+                    api_key=api_key,
+                    base_url=api_url,
+                    model=settings.bailian_model,
+                    timeout=120.0,
+                )
+                text_content.append(f"--- 第 {page_num} 页 ---\n{text}")
 
             content = "\n\n".join(text_content)
 
             result_data = {
                 "type": "pdf_ocr",
-                "ocr_engine": "aliyun",
+                "ocr_engine": "bailian",
                 "file_path": str(file_path),
                 "file_name": file_path.name,
-                "pages_processed": len(pages_to_process),
+                "pages_processed": len(page_numbers),
                 "content": content,
                 "content_length": len(content)
             }
 
             # 保存结果到文件
-            result_file_path = self._save_result_to_file(file_path, "ocr_aliyun", result_data)
+            result_file_path = self._save_result_to_file(file_path, "ocr", result_data)
 
             result = {
                 "success": True,
@@ -773,7 +844,7 @@ class ParsePDFTool(LLMTool):
                 "metadata": {
                     "generator": "parse_pdf"
                 },
-                "summary": f"OCR识别成功: {file_path.name} (共 {len(pages_to_process)} 页)"
+                "summary": f"OCR识别成功: {file_path.name} (共 {len(page_numbers)} 页)"
             }
 
             # 添加文档路径到data中
@@ -785,7 +856,153 @@ class ParsePDFTool(LLMTool):
             return result
 
         except Exception as e:
-            logger.error("ocr_aliyun_failed", path=str(file_path), error=str(e))
+            logger.error("ocr_bailian_failed", path=str(file_path), error=str(e))
+            raise
+
+    async def _ocr_with_paddleocr(self, file_path: Path, page_numbers: List[int]) -> Dict[str, Any]:
+        """使用PaddleOCR进行识别"""
+        try:
+            from paddleocr import PaddleOCR
+            import pdf2image
+
+            # 初始化OCR
+            ocr = PaddleOCR(use_angle_cls=True, lang='ch')
+
+            # 转换PDF为图片
+            images = pdf2image.convert_from_path(
+                file_path,
+                first_page=min(page_numbers),
+                last_page=max(page_numbers)
+            )
+
+            text_content = []
+
+            for idx, image in enumerate(images):
+                page_num = idx + 1
+                if page_num not in page_numbers:
+                    continue
+
+                # OCR识别
+                result = ocr.ocr(image, cls=True)
+
+                # 提取文本
+                page_text = []
+                if result and result[0]:
+                    for line in result[0]:
+                        if line and len(line) >= 2:
+                            text_line = line[0]  # 坐标
+                            text_content_str = line[1][0]  # 文本内容
+                            page_text.append(text_content_str)
+
+                text_content.append(f"--- 第 {page_num} 页 ---\n" + "\n".join(page_text))
+
+            content = "\n\n".join(text_content)
+
+            result_data = {
+                "type": "pdf_ocr",
+                "ocr_engine": "paddleocr",
+                "file_path": str(file_path),
+                "file_name": file_path.name,
+                "pages_processed": len(page_numbers),
+                "content": content,
+                "content_length": len(content)
+            }
+
+            # 保存结果到文件
+            result_file_path = self._save_result_to_file(file_path, "ocr_paddleocr", result_data)
+
+            result = {
+                "success": True,
+                "data": result_data,
+                "metadata": {
+                    "generator": "parse_pdf"
+                },
+                "summary": f"OCR识别成功: {file_path.name} (共 {len(page_numbers)} 页)"
+            }
+
+            # 添加文档路径到data中
+            if result_file_path:
+                result["data"]["result_file_path"] = result_file_path
+                result["resources"] = [single_file_product(result_file_path, tool_name=self.name)]
+                result["summary"] += f" → 结果已保存: `{result_file_path}`"
+
+            return result
+
+        except ImportError:
+            return {
+                "success": False,
+                "data": {"error": "PaddleOCR未安装，请运行: pip install paddleocr"},
+                "summary": "PaddleOCR未安装"
+            }
+        except Exception as e:
+            logger.error("ocr_paddleocr_failed", path=str(file_path), error=str(e))
+            raise
+
+    async def _ocr_with_tesseract(self, file_path: Path, page_numbers: List[int]) -> Dict[str, Any]:
+        """使用Tesseract进行OCR识别"""
+        try:
+            import pdf2image
+            import pytesseract
+            from PIL import Image
+
+            # 转换PDF为图片
+            images = pdf2image.convert_from_path(
+                file_path,
+                first_page=min(page_numbers),
+                last_page=max(page_numbers)
+            )
+
+            text_content = []
+
+            for idx, image in enumerate(images):
+                page_num = idx + 1
+                if page_num not in page_numbers:
+                    continue
+
+                # OCR识别
+                text = pytesseract.image_to_string(image, lang='chi_sim+eng')
+                text_content.append(f"--- 第 {page_num} 页 ---\n{text}")
+
+            content = "\n\n".join(text_content)
+
+            result_data = {
+                "type": "pdf_ocr",
+                "ocr_engine": "tesseract",
+                "file_path": str(file_path),
+                "file_name": file_path.name,
+                "pages_processed": len(page_numbers),
+                "content": content,
+                "content_length": len(content)
+            }
+
+            # 保存结果到文件
+            result_file_path = self._save_result_to_file(file_path, "ocr_tesseract", result_data)
+
+            result = {
+                "success": True,
+                "data": result_data,
+                "metadata": {
+                    "generator": "parse_pdf"
+                },
+                "summary": f"OCR识别成功: {file_path.name} (共 {len(page_numbers)} 页)"
+            }
+
+            # 添加文档路径到data中
+            if result_file_path:
+                result["data"]["result_file_path"] = result_file_path
+                result["resources"] = [single_file_product(result_file_path, tool_name=self.name)]
+                result["summary"] += f" → 结果已保存: `{result_file_path}`"
+
+            return result
+
+        except ImportError:
+            return {
+                "success": False,
+                "data": {"error": "依赖库未安装，请运行: pip install pdf2image pytesseract"},
+                "summary": "OCR依赖库未安装"
+            }
+        except Exception as e:
+            logger.error("ocr_tesseract_failed", path=str(file_path), error=str(e))
             raise
 
     async def _extract_tables(self, file_path: Path, page_numbers: List[int]) -> Dict[str, Any]:
@@ -926,10 +1143,10 @@ class ParsePDFTool(LLMTool):
     async def _extract_metadata(self, file_path: Path) -> Dict[str, Any]:
         """提取元数据"""
         try:
-            import PyPDF2
+            import pypdf
 
             with open(file_path, 'rb') as f:
-                pdf_reader = PyPDF2.PdfReader(f)
+                pdf_reader = pypdf.PdfReader(f)
 
                 # 基本信息
                 metadata = {
