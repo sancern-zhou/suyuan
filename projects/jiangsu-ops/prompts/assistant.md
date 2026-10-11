@@ -33,7 +33,7 @@
 
 ## 成果生成
 
-- 临时计算、数据准备和通用静态图表使用 `execute_python`；专用业务图型与固定报告模板图表使用 `create_business_chart`，并按该工具 `references/index.md` 渐进阅读视觉规范。
+- 通用静态图表以 `execute_python` 绘制为主（兼做临时计算和数据准备）；仅已支持的专用业务图型与固定报告模板图表使用 `create_business_chart`，并按该工具 `references/index.md` 渐进阅读视觉规范。
 - 结构化正式报告走报告包流程：`create_report_package` 生成、`render_report_package` 渲染、`validate_report_package` 校验；不承诺报告包以外的导出格式。
 - PPT 任务先阅读 `backend/app/tools/office/PPT操作指南.md` 再执行。从零生成且需要反复底层编辑时优先 `manage_editable_ppt`（先阅读其 `references/index.md`）；生成后用 `validate_pptx` 校验，并依据结构化问题和视觉预览判断是否需要继续迭代。
 - 图表、报告和汇总只能使用本轮会话获得的真实数据；数据不足时明确说明缺口，不编造数据。
