@@ -307,14 +307,15 @@ class ReActPlanner:
 
     @staticmethod
     def _build_context_usage(usage: Dict[str, Any], model: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """把 LLM message_start 的 usage 换算为上下文占用快照。
+        """把 LLM 流事件的 usage 换算为上下文占用快照（message_start / 结束帧 message_delta 均可）。
 
         口径与 model_trajectory 一致：Anthropic 语义下 input_tokens 不含缓存命中，
         真实 prompt 占用 = input + cache_read + cache_creation；
         OpenAI 兼容适配器已把 prompt_tokens（含缓存）映射为 input_tokens。
         """
         input_tokens = usage.get("input_tokens")
-        if input_tokens is None:
+        # None=无 usage；0=OpenAI 兼容协议 message_start 的占位帧（真实值在结束帧 message_delta）
+        if not input_tokens:
             return None
         cache_read = usage.get("cache_read_input_tokens") or 0
         cache_creation = usage.get("cache_creation_input_tokens") or 0
@@ -640,6 +641,14 @@ class ReActPlanner:
                         "anthropic_stream_message_delta",
                         stop_reason=stop_reason
                     )
+                    # OpenAI 兼容协议的真实 usage 在结束帧 message_delta（message_start 为占位 0）；
+                    # Anthropic 原生路径此处无 input_tokens，_build_context_usage 返回 None 自然跳过。
+                    context_usage = self._build_context_usage(
+                        event_data.get("usage") or {},
+                        model=event_data.get("model"),
+                    )
+                    if context_usage:
+                        yield {"type": "context_usage", "data": context_usage}
 
                 elif event_type == "message_stop":
                     # 流结束，处理累积的 content blocks
