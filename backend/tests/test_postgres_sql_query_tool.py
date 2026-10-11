@@ -1,32 +1,28 @@
 import asyncio
 
-from app.agent.prompts.tool_registry import get_tool_order
+from app.agent.prompts.tool_registry import QUERY_FORECAST_TOOL_NAMES, QUERY_MONITORING_TOOL_NAMES
 from app.db.database import engine
 from app.db.weather_database import weather_engine
 from app.tools import create_global_tool_registry
 from app.tools.query.execute_postgres_sql_query.tool import (
+    ALERT_RESULT_SQL_TABLES,
     ALLOWED_SQL_TABLES,
     MAX_LIMIT,
     PERMIT_SQL_TABLES,
     WEATHER_SQL_TABLES,
+    XUCHANG_TRAFFIC_SQL_TABLES,
     ExecutePostgresSQLQueryTool,
 )
 
 
-def test_postgres_sql_tool_schema_covers_permit_and_weather_tables():
+def test_postgres_sql_tool_schema_covers_whitelisted_tables():
     tool = ExecutePostgresSQLQueryTool()
 
     schema = tool.get_function_schema()
 
     assert tool.name == "execute_postgres_sql_query"
     assert schema["name"] == "execute_postgres_sql_query"
-    assert schema["parameters"]["properties"]["describe_table"]["enum"] == [
-        "permit_licenses",
-        "permit_license_versions",
-        "permit_pollution_details",
-        "permit_documents",
-        "observed_weather_data",
-    ]
+    assert schema["parameters"]["properties"]["describe_table"]["enum"] == ALLOWED_SQL_TABLES
 
 
 def test_postgres_sql_tool_allows_permit_join_and_rejects_other_tables():
@@ -104,11 +100,53 @@ def test_postgres_sql_tool_is_registered_and_available_to_query_agents():
     registry = create_global_tool_registry()
 
     assert registry.get_tool("execute_postgres_sql_query") is not None
-    assert "execute_postgres_sql_query" in get_tool_order("assistant")
-    assert "execute_postgres_sql_query" in get_tool_order("expert")
-    assert "execute_postgres_sql_query" in get_tool_order("query")
-    assert "execute_postgres_sql_query" in get_tool_order("report")
+    # 共享层：报告 DAG 问数子模式直接挂载本工具；问数/专家模式由项目 manifest
+    # （projects/xuchang/project.yaml 的 agent_mode_tools）挂载。
+    assert "execute_postgres_sql_query" in QUERY_MONITORING_TOOL_NAMES
+    assert "execute_postgres_sql_query" in QUERY_FORECAST_TOOL_NAMES
 
 
 def test_postgres_sql_tool_whitelist_partitions():
-    assert ALLOWED_SQL_TABLES == PERMIT_SQL_TABLES + WEATHER_SQL_TABLES
+    assert ALLOWED_SQL_TABLES == (
+        PERMIT_SQL_TABLES + WEATHER_SQL_TABLES + XUCHANG_TRAFFIC_SQL_TABLES + ALERT_RESULT_SQL_TABLES
+    )
+
+
+def test_postgres_sql_tool_allows_alert_result_queries():
+    tool = ExecutePostgresSQLQueryTool()
+
+    valid, error = tool.sql_validator.validate(
+        "SELECT started_at, station_name, target_pollutant, status, "
+        "peak_station_value, peak_deviation_ratio "
+        "FROM xuchang_station_alert_episodes ORDER BY started_at DESC LIMIT 50"
+    )
+    assert valid is True
+    assert error == ""
+
+    valid, error = tool.sql_validator.validate(
+        "SELECT completed_at, station_name, conclusion, broadcast_message "
+        "FROM scheduled_task_results "
+        "WHERE task_id = 'task_xuchang_station_deviation_alert' "
+        "ORDER BY completed_at DESC LIMIT 20"
+    )
+    assert valid is True
+    assert error == ""
+
+
+def test_postgres_sql_tool_alert_tables_route_to_main_engine():
+    tool = ExecutePostgresSQLQueryTool()
+
+    assert tool._select_engine(["scheduled_task_results"]) is engine
+    assert tool._select_engine(["xuchang_station_alert_episodes"]) is engine
+
+
+def test_postgres_sql_tool_rejects_alert_weather_cross_database_join():
+    tool = ExecutePostgresSQLQueryTool()
+
+    sql = (
+        "SELECT e.station_name, o.temperature_2m FROM xuchang_station_alert_episodes e "
+        "JOIN observed_weather_data o ON 1 = 1 LIMIT 10"
+    )
+    result = asyncio.get_event_loop().run_until_complete(tool._execute_sql(sql, 10, None))
+    assert result["success"] is False
+    assert "跨库" in result["summary"]

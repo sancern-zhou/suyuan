@@ -45,7 +45,21 @@ XUCHANG_TRAFFIC_SQL_TABLES = [
     "v_station_traffic_hourly",
 ]
 
-ALLOWED_SQL_TABLES = PERMIT_SQL_TABLES + WEATHER_SQL_TABLES + XUCHANG_TRAFFIC_SQL_TABLES
+# 定时任务结构化结果（主库）。scheduled_task_results 为所有定时任务共用的结果表，
+# 查站点快速污染抬升告警需按 task_id 过滤；xuchang_station_alert_episodes 为
+# 许昌场景一告警事件聚合表，其他项目库中无该表，查询会得到"未找到白名单表"的
+# 明确提示，故直接并入共享白名单（同 traffic 表的处理方式）。
+ALERT_RESULT_SQL_TABLES = [
+    "scheduled_task_results",
+    "xuchang_station_alert_episodes",
+]
+
+ALLOWED_SQL_TABLES = (
+    PERMIT_SQL_TABLES
+    + WEATHER_SQL_TABLES
+    + XUCHANG_TRAFFIC_SQL_TABLES
+    + ALERT_RESULT_SQL_TABLES
+)
 
 MAX_LIMIT = 1000
 DEFAULT_LIMIT = 50
@@ -59,9 +73,10 @@ class ExecutePostgresSQLQueryTool(LLMTool):
 
         self._table_types_cache = TableTypesCache()
         schema_description = (
-            "PostgreSQL/KingbaseES 只读 SQL 查询工具。支持三类数据："
+            "PostgreSQL/KingbaseES 只读 SQL 查询工具。支持四类数据："
             "许昌市企业排污许可证数据（主库）、气象站逐小时地面观测数据（独立气象库，"
-            "含定时抓取的中央气象台NMC观测，如许昌站）和许昌国控站周边路况时序（主库，定时抓取）；"
+            "含定时抓取的中央气象台NMC观测，如许昌站）、许昌国控站周边路况时序（主库，定时抓取）"
+            "和定时任务结果/站点快速告警记录（主库）；"
             "支持 describe_table 查看表结构，或 sql 执行 SELECT/CTE 查询，二者必须二选一。"
             f"仅允许白名单业务表：{', '.join(ALLOWED_SQL_TABLES)}；禁止采集运行日志和失败记录。"
             "只允许 SELECT，禁止 INSERT/UPDATE/DELETE/DDL、注释和多语句；"
@@ -95,6 +110,20 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             "可与空气质量小时表按 station_code+小时 join。"
             "\n注意：路况为查询时刻快照，缺失时隙=未采集（历史不可回补），请结合 samples 判断可信度；"
             "当前时刻实时路况请用 query_xuchang_traffic_status 工具，不要用本工具冒充实时。"
+            "\n- scheduled_task_results：定时任务结构化结果（主库，所有任务共用，一行一次执行）；"
+            "查站点快速污染抬升告警结论需加 WHERE task_id = 'task_xuchang_station_deviation_alert'；"
+            "关键字段：task_id/task_name、status、started_at/completed_at、city、"
+            "station_id/station_name、pollutant、conclusion（结论文本）、"
+            "broadcast_message（LLM 通报正文）、trigger_type（scheduled 定时/event 事件触发）、"
+            "event_id/event_type（关联告警事件）；findings/image_paths 等列表列为 JSON。"
+            "\n- xuchang_station_alert_episodes：站点快速污染抬升告警事件聚合（主库，一行一个告警过程）；"
+            "字段：station_id/station_name、target_pollutant、alert_type、"
+            "status（active 进行中/closed 已结束）、started_at/last_seen_at/closed_at/closed_reason、"
+            "hour_count、notification_count、peak_station_value（站点峰值浓度）、"
+            "peak_deviation_ratio（峰值偏差比）；event_ids 为 JSON 数组，"
+            "可与 scheduled_task_results.event_id 关联取历次结论与通报。"
+            "\n注意：permit_*/路况/定时任务结果表在主库，observed_weather_data 在独立气象库，"
+            "两库不支持跨库 JOIN，混用会直接报错。"
             "\n\n示例："
             "\n- 企业查询：SELECT enterprise_name, permit_number, current_status FROM permit_licenses "
             "WHERE enterprise_name ILIKE '%水泥%' ORDER BY updated_at DESC LIMIT 50"
@@ -107,6 +136,12 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             "\n- 路况小时统计：SELECT station_code, hour_ts, samples, avg_status, max_status, "
             "congestion_sections FROM v_station_traffic_hourly "
             "WHERE station_code IN ('1003A','1005A') ORDER BY hour_ts DESC LIMIT 100"
+            "\n- 快速告警历史：SELECT started_at, station_name, target_pollutant, status, "
+            "peak_station_value, peak_deviation_ratio FROM xuchang_station_alert_episodes "
+            "ORDER BY started_at DESC LIMIT 50"
+            "\n- 告警结论与通报：SELECT completed_at, station_name, conclusion, broadcast_message "
+            "FROM scheduled_task_results WHERE task_id = 'task_xuchang_station_deviation_alert' "
+            "ORDER BY completed_at DESC LIMIT 20"
         )
         function_schema = {
             "name": "execute_postgres_sql_query",
@@ -138,7 +173,7 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             description="Execute read-only PostgreSQL/KingbaseES permit-license, observed-weather and traffic-history SQL queries",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="1.2.0",
+            version="1.3.0",
             requires_context=True,
         )
         self.sql_validator = SQLValidator(
@@ -228,15 +263,15 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             return {"success": False, "data": [], "summary": limit_error}
 
         referenced_tables = self.sql_validator.extract_tables(normalized_sql)
-        permit_refs = [t for t in referenced_tables if t in PERMIT_SQL_TABLES]
         weather_refs = [t for t in referenced_tables if t in WEATHER_SQL_TABLES]
-        if permit_refs and weather_refs:
+        main_refs = [t for t in referenced_tables if t not in WEATHER_SQL_TABLES]
+        if main_refs and weather_refs:
             return {
                 "success": False,
                 "data": [],
                 "summary": (
-                    "许可证表与气象表分属不同数据库，不支持跨库 JOIN："
-                    f"{', '.join(permit_refs)}（主库）、{', '.join(weather_refs)}（气象库）。"
+                    "主库表与气象表分属不同数据库，不支持跨库 JOIN："
+                    f"{', '.join(main_refs)}（主库）、{', '.join(weather_refs)}（气象库）。"
                     "请分开查询后在应用层合并。"
                 ),
             }
