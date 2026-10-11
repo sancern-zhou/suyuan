@@ -656,16 +656,31 @@ const contextUsagePercent = computed(() => {
   return Math.min(100, Math.round((usage.contextTokens / usage.contextWindow) * 100))
 })
 const contextUsageLevel = computed(() => {
+  const usage = contextUsage.value
   const percent = contextUsagePercent.value
   if (percent === null) return ''
   if (percent >= 95) return 'danger'
-  if (percent >= 80) return 'warning'
+  // 警示线与后端压缩触发线一致（compact_threshold_tokens）；旧快照无阈值时回退 80%
+  if (usage?.compactThresholdTokens
+    ? usage.contextTokens >= usage.compactThresholdTokens
+    : percent >= 80) {
+    return 'warning'
+  }
   return ''
+})
+const contextCacheHitRateText = computed(() => {
+  const hitRate = contextUsage.value?.cacheHitRate
+  // 与 ZCode 同策略：低命中率不展示，避免分散对上下文容量的注意力
+  if (hitRate == null || !Number.isFinite(hitRate) || hitRate < 0.78) return null
+  return `${Math.round(hitRate * 100)}%`
 })
 const contextUsageDetail = computed(() => {
   const usage = contextUsage.value
   if (!usage) return ''
-  return `${Number(usage.contextTokens).toLocaleString()} / ${Number(usage.contextWindow).toLocaleString()} tokens`
+  const base = `${Number(usage.contextTokens).toLocaleString()} / ${Number(usage.contextWindow).toLocaleString()} tokens`
+  return contextCacheHitRateText.value
+    ? `${base} · 缓存命中 ${contextCacheHitRateText.value}`
+    : base
 })
 const canSteerWhileRunning = computed(() => props.isAnalyzing && reactStore.currentMode === 'assistant')
 const boardSyncStatus = computed(() => (

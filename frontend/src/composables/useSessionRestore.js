@@ -116,6 +116,10 @@ export function useSessionRestore(options) {
         ? {
           contextTokens: sessionData.context_usage.context_tokens || 0,
           contextWindow: sessionData.context_usage.context_window || 0,
+          compactThresholdTokens: sessionData.context_usage.compact_threshold_tokens || 0,
+          cacheHitRate: sessionData.context_usage.cache_hit_rate == null
+            ? null
+            : Number(sessionData.context_usage.cache_hit_rate),
           model: sessionData.context_usage.model || null,
           updatedAt: sessionData.context_usage.timestamp || null
         }

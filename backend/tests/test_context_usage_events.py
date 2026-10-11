@@ -8,7 +8,7 @@ from app.agent.core.planner import ReActPlanner
 from app.agent.runtime.types import RunState
 from app.agent.session import session_resolver
 from app.agent.session.session_manager_db import SessionManagerDB
-from config.settings import settings
+from app.utils.token_budget import COMPRESSION_THRESHOLD_RATIO, token_budget_manager
 
 
 class StreamingLLMWithUsage:
@@ -85,7 +85,7 @@ async def collect_context_usage(usage, llm_cls=StreamingLLMWithUsage):
 
 @pytest.mark.asyncio
 async def test_context_usage_event_merges_cache_tokens(monkeypatch):
-    monkeypatch.setattr(settings, "llm_context_window_tokens", 123456)
+    monkeypatch.setattr(token_budget_manager, "max_context_tokens", 123456)
     events = await collect_context_usage({
         "input_tokens": 1000,
         "cache_read_input_tokens": 2500,
@@ -98,9 +98,11 @@ async def test_context_usage_event_merges_cache_tokens(monkeypatch):
     assert data["input_tokens"] == 1000
     assert data["cache_read_input_tokens"] == 2500
     assert data["cache_creation_input_tokens"] == 400
-    # Anthropic 语义：真实 prompt 占用 = input + cache_read + cache_creation
+    # Anthropic 原生语义（带 cache_creation_input_tokens 键）：input + cache_read + cache_creation
     assert data["context_tokens"] == 3900
     assert data["context_window"] == 123456
+    assert data["compact_threshold_tokens"] == int(123456 * COMPRESSION_THRESHOLD_RATIO)
+    assert data["cache_hit_rate"] == round(2500 / 3900, 4)
     assert data["model"] == "test-model"
     assert data["timestamp"]
 
@@ -132,6 +134,36 @@ async def test_context_usage_from_compat_end_frame_skips_placeholder_start():
     assert data["context_tokens"] == 7800
     # 适配器结束帧 message_delta 不携带 model 字段
     assert data["model"] is None
+
+
+@pytest.mark.asyncio
+async def test_compat_cache_hit_does_not_double_count(monkeypatch):
+    """DeepSeek 场景：input_tokens 已含缓存命中，cache_read 只作命中率明细，不再叠加。"""
+    monkeypatch.setattr(token_budget_manager, "max_context_tokens", 200000)
+    events = await collect_context_usage(
+        {"input_tokens": 7800, "output_tokens": 120, "cache_read_input_tokens": 3000},
+        llm_cls=StreamingLLMCompatEndFrame,
+    )
+
+    assert len(events) == 1
+    data = events[0]["data"]
+    # 不得把 7800 算成 7800+3000
+    assert data["context_tokens"] == 7800
+    assert data["cache_read_input_tokens"] == 3000
+    assert data["cache_hit_rate"] == round(3000 / 7800, 4)
+
+
+@pytest.mark.asyncio
+async def test_context_usage_carries_compact_threshold(monkeypatch):
+    monkeypatch.setattr(token_budget_manager, "max_context_tokens", 200000)
+    events = await collect_context_usage({"input_tokens": 900, "output_tokens": 5})
+
+    assert len(events) == 1
+    data = events[0]["data"]
+    assert data["context_window"] == 200000
+    assert data["compact_threshold_tokens"] == int(200000 * COMPRESSION_THRESHOLD_RATIO)
+    # 无缓存命中字段时命中率为 0
+    assert data["cache_hit_rate"] == 0.0
 
 
 @pytest.mark.asyncio

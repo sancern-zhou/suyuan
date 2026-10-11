@@ -2218,6 +2218,8 @@ export const useReactStore = defineStore('react', {
             targetState.contextUsage = {
               contextTokens,
               contextWindow,
+              compactThresholdTokens: Number(data?.compact_threshold_tokens) || 0,
+              cacheHitRate: data?.cache_hit_rate == null ? null : Number(data.cache_hit_rate),
               model: data?.model || null,
               updatedAt: data?.timestamp || new Date().toISOString()
             }

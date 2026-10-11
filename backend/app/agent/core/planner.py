@@ -21,7 +21,7 @@ from app.services.llm_failover import is_media_fetch_failure_message
 from app.services.llm_service import llm_service
 from app.tools.base.registry import ToolRegistry
 from app.utils.llm_context_logger import get_llm_context_logger
-from config.settings import settings
+from app.utils.token_budget import COMPRESSION_THRESHOLD_RATIO, token_budget_manager
 
 logger = structlog.get_logger()
 
@@ -309,9 +309,12 @@ class ReActPlanner:
     def _build_context_usage(usage: Dict[str, Any], model: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """把 LLM 流事件的 usage 换算为上下文占用快照（message_start / 结束帧 message_delta 均可）。
 
-        口径与 model_trajectory 一致：Anthropic 语义下 input_tokens 不含缓存命中，
-        真实 prompt 占用 = input + cache_read + cache_creation；
-        OpenAI 兼容适配器已把 prompt_tokens（含缓存）映射为 input_tokens。
+        口径按协议分支归一：
+        - Anthropic 原生 usage（model_dump）带 cache_creation_input_tokens 键，
+          input_tokens 不含缓存命中，真实 prompt 占用 = input + cache_read + cache_creation；
+        - OpenAI 兼容适配器（含 DeepSeek prompt_cache_hit_tokens）把总 prompt（缓存命中为其
+          子集）映射为 input_tokens，不得再叠加，否则把缓存命中部分算了两次。
+        窗口与压缩阈值取自 token_budget_manager（压缩预算的单一事实源），展示线与压缩线一致。
         """
         input_tokens = usage.get("input_tokens")
         # None=无 usage；0=OpenAI 兼容协议 message_start 的占位帧（真实值在结束帧 message_delta）
@@ -319,12 +322,21 @@ class ReActPlanner:
             return None
         cache_read = usage.get("cache_read_input_tokens") or 0
         cache_creation = usage.get("cache_creation_input_tokens") or 0
+        if "cache_creation_input_tokens" in usage:
+            context_tokens = int(input_tokens) + int(cache_read) + int(cache_creation)
+        else:
+            # OpenAI 兼容语义：input_tokens 已含缓存命中
+            context_tokens = int(input_tokens)
+        context_window = token_budget_manager.max_context_tokens
+        cache_hit_rate = int(cache_read) / context_tokens if context_tokens > 0 else None
         return {
             "input_tokens": int(input_tokens),
             "cache_read_input_tokens": int(cache_read),
             "cache_creation_input_tokens": int(cache_creation),
-            "context_tokens": int(input_tokens) + int(cache_read) + int(cache_creation),
-            "context_window": settings.llm_context_window_tokens,
+            "context_tokens": context_tokens,
+            "context_window": context_window,
+            "compact_threshold_tokens": int(context_window * COMPRESSION_THRESHOLD_RATIO),
+            "cache_hit_rate": round(cache_hit_rate, 4) if cache_hit_rate is not None else None,
             "model": model,
             "timestamp": datetime.utcnow().isoformat(),
         }
