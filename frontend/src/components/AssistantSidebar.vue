@@ -193,6 +193,22 @@
           <span class="recent-sessions-title">{{ conversationListTitle }}</span>
           <div class="conversation-view-actions">
             <button
+              v-if="conversationListView === CONVERSATION_LIST_VIEW.RECENT"
+              class="conversation-view-icon"
+              :class="{ active: conversationLayout === CONVERSATION_LIST_LAYOUT.GROUPED }"
+              type="button"
+              @click="toggleConversationLayout"
+              :title="conversationLayout === CONVERSATION_LIST_LAYOUT.GROUPED ? '切换为按时间排列' : '按智能体分组'"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 6h14" />
+                <path d="M5 12h9" />
+                <path d="M5 18h5" />
+                <circle cx="18.5" cy="16.5" r="2.5" />
+                <path d="m20.5 18.5 1.5 1.5" />
+              </svg>
+            </button>
+            <button
               class="conversation-view-icon"
               :class="{ active: conversationListView === CONVERSATION_LIST_VIEW.CASES }"
               type="button"
@@ -225,14 +241,39 @@
             {{ conversationListEmptyText }}
           </div>
           <div
-            v-for="session in activeSessionList"
-            :key="session.session_id"
-            class="recent-session-item"
-            :class="{ running: session.is_running }"
-            @click="loadSession(session)"
+            v-for="group in sidebarSessionGroups"
+            :key="group.key"
+            class="session-mode-group"
+            :class="{ 'has-header': !!group.header }"
           >
-            <span class="session-query">{{ truncateQuery(session.query, 30) }}</span>
-            <span class="session-time">{{ session.is_running ? '运行中' : formatTime(session.updated_at) }}</span>
+            <button
+              v-if="group.header"
+              class="session-mode-header"
+              type="button"
+              :aria-expanded="!isModeGroupCollapsed(group.key)"
+              @click="toggleModeGroup(group.key)"
+            >
+              <svg class="session-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7a1.5 1.5 0 0 1 1.5-1.5h3.6l2 2h7.4A1.5 1.5 0 0 1 20 9v8.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5V7Z" />
+              </svg>
+              <span class="session-mode-name">{{ group.header.label }}</span>
+              <span class="session-mode-count">{{ group.sessions.length }}</span>
+              <svg class="session-mode-chevron" :class="{ collapsed: isModeGroupCollapsed(group.key) }" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m7 10 5 5 5-5" />
+              </svg>
+            </button>
+            <template v-if="!group.header || !isModeGroupCollapsed(group.key)">
+              <div
+                v-for="session in group.sessions"
+                :key="session.session_id"
+                class="recent-session-item"
+                :class="{ running: session.is_running }"
+                @click="loadSession(session)"
+              >
+                <span class="session-query">{{ truncateQuery(session.query, 30) }}</span>
+                <span class="session-time">{{ session.is_running ? '运行中' : formatTime(session.updated_at) }}</span>
+              </div>
+            </template>
           </div>
         </div>
       </div>
@@ -289,10 +330,15 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/auth/authStore.js'
 import { useReactStore } from '@/stores/reactStore'
 import {
+  CONVERSATION_LIST_LAYOUT,
   CONVERSATION_LIST_VIEW,
   filterSidebarConversations,
-  toggleConversationListView
+  groupSidebarConversationsByMode,
+  readSidebarConversationLayout,
+  toggleConversationListView,
+  writeSidebarConversationLayout
 } from './conversationListPolicy.js'
+import { AGENT_MODES, AGENT_MODE_IDS } from '@/config/agentModes.js'
 import { filterSidebarModules } from './sidebarProjectModules.js'
 
 const router = useRouter()
@@ -345,9 +391,28 @@ const brandInitial = computed(() => Array.from(projectConfig.brandName || '')[0]
 const recentSessions = ref([])
 const refreshingSessions = ref(false)
 const conversationListView = ref(CONVERSATION_LIST_VIEW.RECENT)
+const conversationLayout = ref(readSidebarConversationLayout())
+const collapsedModeGroups = ref([])
 const RECENT_SESSIONS_LIMIT = 30
 const SESSION_FETCH_LIMIT = 200
 let recentSessionsTimer = null
+
+watch(conversationLayout, layout => writeSidebarConversationLayout(layout))
+
+const toggleConversationLayout = () => {
+  conversationLayout.value = conversationLayout.value === CONVERSATION_LIST_LAYOUT.GROUPED
+    ? CONVERSATION_LIST_LAYOUT.FLAT
+    : CONVERSATION_LIST_LAYOUT.GROUPED
+  collapsedModeGroups.value = []
+}
+
+const toggleModeGroup = mode => {
+  collapsedModeGroups.value = collapsedModeGroups.value.includes(mode)
+    ? collapsedModeGroups.value.filter(item => item !== mode)
+    : [...collapsedModeGroups.value, mode]
+}
+
+const isModeGroupCollapsed = mode => collapsedModeGroups.value.includes(mode)
 
 const handleSessionCaseUpdated = () => {
   refreshRecentSessions({ silent: true })
@@ -375,6 +440,7 @@ const mergedRecentSessions = computed(() => {
         updated_at: lastMessage?.timestamp || new Date().toISOString(),
         is_running: !!session.isAnalyzing,
         is_local: true,
+        ...(session.mode ? { mode: session.mode } : {}),
         ...(session.conversationAccess?.source
           ? { source: session.conversationAccess.source }
           : {})
@@ -386,9 +452,15 @@ const mergedRecentSessions = computed(() => {
     byId.set(session.session_id, session)
   }
   for (const session of localSessions) {
+    const existing = byId.get(session.session_id) || {}
+    const metadata = {
+      ...(existing.metadata || {}),
+      ...(session.mode ? { mode: session.mode } : {})
+    }
     byId.set(session.session_id, {
-      ...(byId.get(session.session_id) || {}),
-      ...session
+      ...existing,
+      ...session,
+      ...(Object.keys(metadata).length ? { metadata } : {})
     })
   }
 
@@ -512,6 +584,29 @@ const queryDashboardModule = computed(() => {
   }
   const mode = getAgentMode(queryDashboardMode.value, projectConfig.agentModeOverrides)
   return { label: mode?.shortName || '运维问数生图', title: mode?.name || '运维问数生图' }
+})
+
+const agentModeHeader = mode => {
+  if (mode === 'other') {
+    return { label: '其他' }
+  }
+  const meta = AGENT_MODES.find(item => item.id === mode)
+  return { label: meta?.shortName || meta?.name || mode }
+}
+
+const sidebarSessionGroups = computed(() => {
+  const list = activeSessionList.value
+  if (
+    conversationListView.value !== CONVERSATION_LIST_VIEW.RECENT ||
+    conversationLayout.value !== CONVERSATION_LIST_LAYOUT.GROUPED
+  ) {
+    return [{ key: 'all', header: null, sessions: list }]
+  }
+  return groupSidebarConversationsByMode(list, AGENT_MODE_IDS).map(group => ({
+    key: group.mode,
+    header: agentModeHeader(group.mode),
+    sessions: group.sessions
+  }))
 })
 
 const allModules = [
@@ -1468,6 +1563,74 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.session-mode-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  &.has-header {
+    gap: 2px;
+  }
+}
+
+.session-mode-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #526173;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  transition: background 0.2s;
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.04);
+  }
+}
+
+.session-mode-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.session-mode-name {
+  font-weight: 500;
+}
+
+.session-mode-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: #98a2b3;
+}
+
+.session-mode-chevron {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.2s;
+
+  &.collapsed {
+    transform: rotate(-90deg);
+  }
 }
 
 .recent-session-item {

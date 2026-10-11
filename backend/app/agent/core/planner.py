@@ -21,7 +21,7 @@ from app.services.llm_failover import is_media_fetch_failure_message
 from app.services.llm_service import llm_service
 from app.tools.base.registry import ToolRegistry
 from app.utils.llm_context_logger import get_llm_context_logger
-from config.settings import settings
+from app.utils.token_budget import COMPRESSION_THRESHOLD_RATIO, token_budget_manager
 
 logger = structlog.get_logger()
 
@@ -304,6 +304,42 @@ class ReActPlanner:
         return self._parse_anthropic_response(
             llm_response,
         )
+
+    @staticmethod
+    def _build_context_usage(usage: Dict[str, Any], model: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """把 LLM 流事件的 usage 换算为上下文占用快照（message_start / 结束帧 message_delta 均可）。
+
+        口径按协议分支归一：
+        - Anthropic 原生 usage（model_dump）带 cache_creation_input_tokens 键，
+          input_tokens 不含缓存命中，真实 prompt 占用 = input + cache_read + cache_creation；
+        - OpenAI 兼容适配器（含 DeepSeek prompt_cache_hit_tokens）把总 prompt（缓存命中为其
+          子集）映射为 input_tokens，不得再叠加，否则把缓存命中部分算了两次。
+        窗口与压缩阈值取自 token_budget_manager（压缩预算的单一事实源），展示线与压缩线一致。
+        """
+        input_tokens = usage.get("input_tokens")
+        # None=无 usage；0=OpenAI 兼容协议 message_start 的占位帧（真实值在结束帧 message_delta）
+        if not input_tokens:
+            return None
+        cache_read = usage.get("cache_read_input_tokens") or 0
+        cache_creation = usage.get("cache_creation_input_tokens") or 0
+        if "cache_creation_input_tokens" in usage:
+            context_tokens = int(input_tokens) + int(cache_read) + int(cache_creation)
+        else:
+            # OpenAI 兼容语义：input_tokens 已含缓存命中
+            context_tokens = int(input_tokens)
+        context_window = token_budget_manager.max_context_tokens
+        cache_hit_rate = int(cache_read) / context_tokens if context_tokens > 0 else None
+        return {
+            "input_tokens": int(input_tokens),
+            "cache_read_input_tokens": int(cache_read),
+            "cache_creation_input_tokens": int(cache_creation),
+            "context_tokens": context_tokens,
+            "context_window": context_window,
+            "compact_threshold_tokens": int(context_window * COMPRESSION_THRESHOLD_RATIO),
+            "cache_hit_rate": round(cache_hit_rate, 4) if cache_hit_rate is not None else None,
+            "model": model,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
 
     async def think_and_action_streaming(
         self,
@@ -603,12 +639,28 @@ class ReActPlanner:
                             yielded_count=yielded_tool_use_count,
                         )
 
+                elif event_type == "message_start":
+                    context_usage = self._build_context_usage(
+                        event_data.get("usage") or {},
+                        model=event_data.get("model"),
+                    )
+                    if context_usage:
+                        yield {"type": "context_usage", "data": context_usage}
+
                 elif event_type == "message_delta":
                     stop_reason = event_data.get("stop_reason")
                     logger.info(
                         "anthropic_stream_message_delta",
                         stop_reason=stop_reason
                     )
+                    # OpenAI 兼容协议的真实 usage 在结束帧 message_delta（message_start 为占位 0）；
+                    # Anthropic 原生路径此处无 input_tokens，_build_context_usage 返回 None 自然跳过。
+                    context_usage = self._build_context_usage(
+                        event_data.get("usage") or {},
+                        model=event_data.get("model"),
+                    )
+                    if context_usage:
+                        yield {"type": "context_usage", "data": context_usage}
 
                 elif event_type == "message_stop":
                     # 流结束，处理累积的 content blocks

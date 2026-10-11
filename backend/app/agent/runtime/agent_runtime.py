@@ -969,6 +969,15 @@ class AgentRuntime:
         tool_schema_chars = len(json.dumps(tool_schemas, ensure_ascii=False, default=str))
         tool_schema_tokens_est = int(tool_schema_chars / 1.5)
         context_tokens = context_result.get("tokens", {})
+        state.context_estimate_tokens = (
+            int(context_tokens.get("total") or 0) + int(tool_schema_tokens_est)
+        )
+        state.context_breakdown = {
+            "system_prompt": int(context_tokens.get("system") or 0),
+            "messages": int(context_tokens.get("user") or 0)
+            + int(context_tokens.get("history") or 0),
+            "tools": int(tool_schema_tokens_est),
+        }
         logger.info(
             "planner_context_with_tools",
             mode=state.mode,
@@ -997,6 +1006,7 @@ class AgentRuntime:
             max_concurrency=4 if get_mode_workflow(state.mode) else 10,
         )
         await cancellation_registry.attach_streaming_executor(state.session_id, streaming_tool_executor)
+        usage_at_stream_start = state.last_context_usage
         buffer = AssistantStreamBuffer()
         planner_result = PlannerResult()
         user_content = None
@@ -1054,6 +1064,14 @@ class AgentRuntime:
                 content = event["data"].get("content", "")
                 if content:
                     yield self.events.thinking_content(state, content)
+
+            elif event_type == "context_usage":
+                usage_data = event.get("data") or {}
+                if usage_data and state.context_breakdown:
+                    usage_data.setdefault("breakdown", dict(state.context_breakdown))
+                state.last_context_usage = usage_data
+                yield event
+                await self._persist_context_usage(state, usage_data)
 
             elif event_type == "tool_use":
                 tool_data = event["data"]
@@ -1128,11 +1146,55 @@ class AgentRuntime:
         if planner_result.action and planner_result.action.get("type") in ("TOOL_CALL", "TOOL_CALLS"):
             planner_result.tool_calls = self.tool_coordinator.tool_calls_from_action(planner_result.action)
 
+        # 部分网关不回传 input_tokens（如 scnet anthropic_messages：message_start 全 0、
+        # message_delta 仅 output_tokens），planner 全程产不出 context_usage。用本轮
+        # 上下文构建阶段的 token 估算合成快照兜底，保证前端指示器始终有数可显。
+        if (
+            state.last_context_usage is usage_at_stream_start
+            and state.context_estimate_tokens
+        ):
+            from config.settings import settings
+
+            estimate = {
+                "input_tokens": int(state.context_estimate_tokens),
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "context_tokens": int(state.context_estimate_tokens),
+                "context_window": settings.llm_context_window_tokens,
+                "model": self.config.llm_model,
+                "timestamp": datetime.now().isoformat(),
+                "estimated": True,
+            }
+            if state.context_breakdown:
+                estimate["breakdown"] = dict(state.context_breakdown)
+            state.last_context_usage = estimate
+            yield {"type": "context_usage", "data": estimate}
+            await self._persist_context_usage(state, estimate)
+
         yield {
             "type": "_planner_done",
             "planner_result": planner_result,
             "streaming_tool_executor": streaming_tool_executor,
         }
+
+    async def _persist_context_usage(self, state: RunState, usage_data: Dict[str, Any]) -> None:
+        """把最近一次上下文占用快照写入 session_metadata，供会话恢复后展示。"""
+        if not usage_data:
+            return
+        try:
+            from app.agent.session.session_resolver import save_context_usage_for_mode
+
+            await save_context_usage_for_mode(
+                state.session_id,
+                usage_data,
+                mode=state.mode,
+            )
+        except Exception as exc:
+            logger.warning(
+                "context_usage_persist_failed",
+                session_id=state.session_id,
+                error=str(exc),
+            )
 
     def _allowed_tool_names_for_state(self, state: RunState) -> Optional[List[str]]:
         if state.mode == "custom" and hasattr(self.executor, "tool_registry"):

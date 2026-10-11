@@ -1017,6 +1017,41 @@ async def _ensure_session(
     return session_id
 
 
+_APP_PLACEHOLDER_TITLES = {"新对话", "新会话"}
+
+
+def _is_placeholder_session_title(title: str | None, session_id: str) -> bool:
+    clean = (title or "").strip()
+    return (
+        not clean
+        or clean in _APP_PLACEHOLDER_TITLES
+        or clean == session_id
+        or clean.startswith("session_")
+    )
+
+
+async def _autotitle_session_from_query(session_id: str, query: str) -> None:
+    """Derive the session-list title from the first user message.
+
+    Web conversations are catalogued with their first query (agent.py), so the
+    history list is browsable. App sessions used to keep the “新对话” placeholder
+    until manually renamed; mirror the Web behavior here.
+    """
+    clean_query = " ".join((query or "").split())
+    if not clean_query or session_id.startswith("broadcast_session_"):
+        return
+    try:
+        catalog = get_conversation_catalog()
+        row = await catalog.find(session_id)
+        if row is None or not _is_placeholder_session_title(row.title, session_id):
+            return
+        await catalog.rename(session_id, clean_query[:256])
+    except Exception as exc:
+        logger.warning(
+            "app_session_autotitle_failed", session_id=session_id, error=str(exc)
+        )
+
+
 async def _persist_app_turn(
     session_id: str,
     query: str,
@@ -1477,6 +1512,7 @@ async def start_app_run(
             raise HTTPException(status_code=409, detail="request_id_conflict")
         return _public_app_run(existing)
     session_id = await _ensure_session(request, identity, payload.session_id)
+    await _autotitle_session_from_query(session_id, payload.query)
     if await store.pending_interaction(session_id):
         raise HTTPException(status_code=409, detail="answer_pending_question_first")
     attachments = await _sanitize_attachments(db, session_id, payload.attachments)
@@ -1585,7 +1621,8 @@ async def create_app_session(request: Request, identity: AppIdentity = Depends(r
         owner_display_name=identity.display_name,
         source=ConversationSource.SOCIAL,
         mode="social",
-        title="新对话",
+        # 不再持久化 “新对话” 占位标题：留空以便首条消息自动命名。
+        title=None,
         read_only_on_web=True,
     )
     return {"session_id": session_id, "mode": "social", "title": "新对话"}

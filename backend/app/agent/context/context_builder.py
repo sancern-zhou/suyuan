@@ -13,7 +13,7 @@ import structlog
 from datetime import datetime
 
 from ..memory.context_compressor import ContextCompressor
-from ...utils.token_budget import token_budget_manager
+from ...utils.token_budget import COMPRESSION_THRESHOLD_RATIO, token_budget_manager
 
 logger = structlog.get_logger()
 
@@ -71,7 +71,7 @@ class SimplifiedContextBuilder:
         # Token配置
         self.max_context_tokens = token_budget_manager.max_context_tokens
         self.safety_buffer = token_budget_manager.safety_buffer
-        self.compression_threshold = 0.8  # 80%阈值
+        self.compression_threshold = COMPRESSION_THRESHOLD_RATIO
 
         # ✅ 新增：当前模式（默认expert）
         self.current_mode = "expert"

@@ -345,6 +345,10 @@ class Settings(BaseSettings):
         default="doubao",
         description="LLM provider: doubao, openai, anthropic, deepseek, minimax, mimo, agnes, glm, bailian, scnet, go"
     )
+    llm_context_window_tokens: int = Field(
+        default=200000,
+        description="上下文窗口大小（tokens）：token_budget_manager 压缩预算与 context_usage 指示器的单一事实源",
+    )
     doubao_api_key: Optional[str] = Field(default=None, description="Doubao-compatible gateway API key")
     doubao_base_url: str = Field(
         default="https://doubao.best/v1",
@@ -596,6 +600,15 @@ class Settings(BaseSettings):
     llm_global_max_concurrency: int = Field(
         default=2,
         description="Concurrent LLM request limit per provider/model pool"
+    )
+    agent_detached_runs_enabled: bool = Field(
+        default=True,
+        description="Keep agent runs alive after the web client disconnects (requires Redis); set AGENT_DETACHED_RUNS_ENABLED=0 to fall back to legacy inline streaming",
+    )
+    agent_detached_run_max_seconds: int = Field(
+        default=3600,
+        ge=60,
+        description="Wall-clock guard for detached agent runs; the run is interrupted when exceeded",
     )
     llm_request_timeout_seconds: float = Field(
         default=300.0,

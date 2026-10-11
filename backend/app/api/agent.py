@@ -4,7 +4,7 @@ ReAct Agent API Routes
 ReAct Agent 的 REST API 路由
 """
 
-from fastapi import APIRouter, HTTPException, Body, Depends, Request
+from fastapi import APIRouter, HTTPException, Body, Depends, Query, Request
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime, timezone
@@ -22,6 +22,7 @@ from app.agent.active_contexts import (
     effective_active_context_items,
     resolve_active_contexts,
 )
+from app.agent.runtime.detached_stream import RunEventStream
 from app.agent.session import Session, get_session_manager
 from app.agent.session.workspace_routing import (
     bind_workspace_request_to_source_query,
@@ -51,6 +52,7 @@ from app.core.sse import create_sse_response
 from app.db.session_database import session_async_session as async_session
 from app.services.llm_service import llm_service
 from app.tools import global_tool_registry
+from config.settings import settings
 
 logger = structlog.get_logger()
 
@@ -80,6 +82,28 @@ async def _await_cancellation_resistant(awaitable):
                 while current.cancelling():
                     current.uncancel()
     return task.result()
+
+
+def _detached_run_stream(raw_request: Request) -> Optional[RunEventStream]:
+    """构建脱离型 run 的事件镜像；功能关闭或 Redis 未配置时返回 None。"""
+    if not settings.agent_detached_runs_enabled:
+        return None
+    app = getattr(raw_request, "app", None)
+    if app is None:
+        return None
+    return RunEventStream.from_app(app)
+
+
+async def _finish_detached_run(
+    gen: Any,
+    stream: RunEventStream,
+    stream_id: str,
+) -> None:
+    try:
+        await gen.aclose()
+    except Exception:
+        logger.debug("detached_run_generator_close_failed", stream_id=stream_id)
+    await stream.close(stream_id)
 
 
 def _build_user_message_for_history(
@@ -1560,7 +1584,52 @@ async def analyze_stream(
                 if actual_session_id and cancel_event is not None:
                     await cancellation_registry.unregister(actual_session_id, cancel_event)
 
-        return create_sse_response(event_generator())
+        detached_stream = _detached_run_stream(raw_request)
+        if detached_stream is None or not actual_session_id:
+            # Redis 不可用 / 功能关闭：回退旧内联模式（断开即取消）
+            return create_sse_response(event_generator())
+
+        stream_id = uuid.uuid4().hex
+        await detached_stream.open(actual_session_id, stream_id)
+
+        async def _execute_run() -> None:
+            gen = event_generator()
+            try:
+                async with asyncio.timeout(settings.agent_detached_run_max_seconds):
+                    async for chunk in gen:
+                        await detached_stream.publish(stream_id, chunk)
+            except TimeoutError:
+                logger.warning(
+                    "detached_run_timeout",
+                    session_id=actual_session_id,
+                    stream_id=stream_id,
+                    max_seconds=settings.agent_detached_run_max_seconds,
+                )
+            except asyncio.CancelledError:
+                # 显式取消（/cancel）：生成器内部已保存中断转录，原样传播
+                raise
+            except Exception:
+                logger.error(
+                    "detached_run_failed",
+                    session_id=actual_session_id,
+                    stream_id=stream_id,
+                    exc_info=True,
+                )
+            finally:
+                # 取消路径下也要补写 stream_closed，避免订阅端悬挂
+                await _await_cancellation_resistant(
+                    _finish_detached_run(gen, detached_stream, stream_id)
+                )
+
+        asyncio.create_task(_execute_run())
+        logger.info(
+            "detached_run_started",
+            session_id=actual_session_id,
+            stream_id=stream_id,
+        )
+        return create_sse_response(
+            detached_stream.follow(stream_id, session_id=actual_session_id)
+        )
 
     except HTTPException:
         raise
@@ -1574,6 +1643,35 @@ async def analyze_stream(
             status_code=500,
             detail=f"分析失败: {str(e)}"
         )
+
+
+@router.get("/stream")
+async def reconnect_detached_stream(
+    raw_request: Request,
+    session_id: str = Query(..., description="会话ID"),
+    stream_id: Optional[str] = Query(None, description="断开前持有的 run stream id；缺省时解析会话活跃 run"),
+    last_id: Optional[str] = Query(None, description="上次收到的 SSE 事件 id（等价 Last-Event-ID），缺省从起始回放"),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    """重连脱离型 run 的事件流：先回放镜像，再实时跟随直到终止。
+
+    - 页面刷新/弱网断开后调用本接口即可接回后端仍在运行（或已结束）的任务；
+    - 流已过期或不存在时返回 404，前端应回退到会话恢复接口（/messages / restore）。
+    """
+    await catalog.require_read(session_id, user)
+    stream = _detached_run_stream(raw_request)
+    if stream is None:
+        raise HTTPException(status_code=404, detail="detached_stream_unavailable")
+    resolved_stream_id = stream_id or await stream.resolve_active(session_id)
+    if not resolved_stream_id:
+        raise HTTPException(status_code=404, detail="no_active_detached_run")
+    if await stream.owner_of(resolved_stream_id) not in (None, session_id):
+        # stream 归属另一会话：拒绝跨会话读取
+        raise HTTPException(status_code=404, detail="no_active_detached_run")
+    return create_sse_response(
+        stream.follow(resolved_stream_id, session_id=session_id, last_id=last_id or "0")
+    )
 
 
 @router.post("/{session_id}/cancel")
