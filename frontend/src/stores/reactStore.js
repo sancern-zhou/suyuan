@@ -2210,6 +2210,21 @@ export const useReactStore = defineStore('react', {
           break
         }
 
+        case 'context_usage': {
+          // 最近一次 LLM 调用的上下文占用快照（覆盖式更新，供输入框指示器展示）
+          const contextTokens = Number(data?.context_tokens) || 0
+          const contextWindow = Number(data?.context_window) || 0
+          if (contextTokens > 0 && contextWindow > 0) {
+            targetState.contextUsage = {
+              contextTokens,
+              contextWindow,
+              model: data?.model || null,
+              updatedAt: data?.timestamp || new Date().toISOString()
+            }
+          }
+          break
+        }
+
         case 'message_delta': {
           // 原生 Anthropic 事件：消息增量（含 stop_reason 和 usage）
           console.log('[event:message_delta] Anthropic 消息增量', {

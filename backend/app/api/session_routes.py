@@ -510,6 +510,14 @@ async def restore_session(
     # 使用 mode='json' 确保 float 特殊值（inf, -inf, NaN）被正确处理
     session_data = session.model_dump(mode='json')
 
+    # 分页加载路径不携带 session_metadata，上下文占用快照单独取出随恢复返回
+    try:
+        context_usage = await get_session_manager().get_context_usage(session_id)
+        if context_usage:
+            session_data["context_usage"] = context_usage
+    except Exception as exc:
+        logger.warning("restore_context_usage_unavailable", session_id=session_id, error=str(exc))
+
     resource_version = 0
     resource_counts = {"total": 0, "documents": 0, "visualizations": 0, "files": 0}
     try:
