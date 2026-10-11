@@ -250,3 +250,142 @@ async def test_runtime_persists_context_usage(monkeypatch):
     assert persisted["session_id"] == "session-1"
     assert persisted["context_usage"] == usage
     assert persisted["mode"] == "expert"
+
+
+async def test_runtime_synthesizes_context_usage_estimate_for_usageless_gateway(monkeypatch):
+    """网关不回传 input_tokens（scnet anthropic_messages）时用上下文估算合成快照。"""
+    from app.agent.runtime import agent_runtime as runtime_module
+    from app.agent.runtime.agent_runtime import AgentRuntime
+
+    async def planner_stream(**kwargs):
+        yield {
+            "type": "action",
+            "data": {
+                "thought": None,
+                "action": {"type": "PLAIN_TEXT_REPLY", "answer": "好"},
+                "raw_thinking_blocks": None,
+                "yielded_tool_use_count": 0,
+            },
+        }
+
+    stub_runtime = SimpleNamespace(
+        planner=SimpleNamespace(think_and_action_streaming=planner_stream),
+        events=SimpleNamespace(
+            assistant_delta=lambda *a, **k: {"type": "assistant_delta"},
+            thought=lambda *a, **k: {"type": "thought"},
+            thinking_content=lambda *a, **k: {"type": "thinking_content"},
+        ),
+        executor=SimpleNamespace(tool_registry={}),
+        tool_coordinator=SimpleNamespace(loop_guard=None),
+        context_diagnostics=SimpleNamespace(log_report=lambda **kw: None),
+        config=SimpleNamespace(
+            llm_provider=None, llm_model="test-model", is_interruption=None, auto_profile=None
+        ),
+        _raise_if_cancelled=lambda: None,
+        _allowed_tool_names_for_state=lambda state: None,
+        _tool_names_to_suppress=lambda state: [],
+        _fixed_workflow_blocked_observation=lambda *a, **k: None,
+        _suppressed_housekeeping_observation=lambda *a, **k: None,
+        _effective_attachments=lambda state: [],
+        _record_visual_context=lambda *a, **k: None,
+        _persist_context_usage=_noop_persist,
+    )
+    monkeypatch.setattr(runtime_module, "supports_native_multimodal", lambda mode: False)
+
+    persisted = {}
+
+    async def fake_save(session_id, context_usage, *, mode=None):
+        persisted["context_usage"] = context_usage
+        return True
+
+    monkeypatch.setattr(session_resolver, "save_context_usage_for_mode", fake_save)
+
+    state = RunState(session_id="session-est", user_query="q", mode="expert")
+    state.context_estimate_tokens = 12345
+
+    events = []
+    async for event in AgentRuntime._run_planner_stream(stub_runtime, state, {"tokens": {"total": 9000}, "system_prompt": "sp", "user_conversation": []}, []):
+        events.append(event)
+
+    usage_events = [e for e in events if e.get("type") == "context_usage"]
+    assert len(usage_events) == 1
+    data = usage_events[0]["data"]
+    assert data["estimated"] is True
+    assert data["context_tokens"] == state.context_estimate_tokens
+    assert data["input_tokens"] == state.context_estimate_tokens
+    assert state.last_context_usage is data
+
+
+async def test_runtime_skips_estimate_synthesis_when_real_usage_reported(monkeypatch):
+    """planner 已产出真实 usage 时不追加估算快照。"""
+    from app.agent.runtime import agent_runtime as runtime_module
+    from app.agent.runtime.agent_runtime import AgentRuntime
+
+    real_usage = {
+        "input_tokens": 5000,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "context_tokens": 5000,
+        "context_window": 200000,
+        "model": "test-model",
+    }
+
+    async def planner_stream(**kwargs):
+        yield {"type": "context_usage", "data": dict(real_usage)}
+        yield {
+            "type": "action",
+            "data": {
+                "thought": None,
+                "action": {"type": "PLAIN_TEXT_REPLY", "answer": "好"},
+                "raw_thinking_blocks": None,
+                "yielded_tool_use_count": 0,
+            },
+        }
+
+    stub_runtime = SimpleNamespace(
+        planner=SimpleNamespace(think_and_action_streaming=planner_stream),
+        events=SimpleNamespace(
+            assistant_delta=lambda *a, **k: {"type": "assistant_delta"},
+            thought=lambda *a, **k: {"type": "thought"},
+            thinking_content=lambda *a, **k: {"type": "thinking_content"},
+        ),
+        executor=SimpleNamespace(tool_registry={}),
+        tool_coordinator=SimpleNamespace(loop_guard=None),
+        context_diagnostics=SimpleNamespace(log_report=lambda **kw: None),
+        config=SimpleNamespace(
+            llm_provider=None, llm_model="test-model", is_interruption=None, auto_profile=None
+        ),
+        _raise_if_cancelled=lambda: None,
+        _allowed_tool_names_for_state=lambda state: None,
+        _tool_names_to_suppress=lambda state: [],
+        _fixed_workflow_blocked_observation=lambda *a, **k: None,
+        _suppressed_housekeeping_observation=lambda *a, **k: None,
+        _effective_attachments=lambda state: [],
+        _record_visual_context=lambda *a, **k: None,
+        _persist_context_usage=_noop_persist,
+    )
+    monkeypatch.setattr(runtime_module, "supports_native_multimodal", lambda mode: False)
+
+    async def fake_save(session_id, context_usage, *, mode=None):
+        return True
+
+    monkeypatch.setattr(session_resolver, "save_context_usage_for_mode", fake_save)
+
+    state = RunState(session_id="session-real", user_query="q", mode="expert")
+    state.context_estimate_tokens = 12345
+
+    events = []
+    async for event in AgentRuntime._run_planner_stream(stub_runtime, state, {"tokens": {"total": 9000}, "system_prompt": "sp", "user_conversation": []}, []):
+        events.append(event)
+
+    usage_events = [e for e in events if e.get("type") == "context_usage"]
+    assert len(usage_events) == 1
+    data = usage_events[0]["data"]
+    for key, value in real_usage.items():
+        assert data[key] == value
+    assert data.get("estimated") is None
+    assert data["breakdown"] == state.context_breakdown
+
+
+async def _noop_persist(state, usage):
+    return None
