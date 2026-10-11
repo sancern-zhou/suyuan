@@ -347,7 +347,7 @@ class Settings(BaseSettings):
     )
     llm_context_window_tokens: int = Field(
         default=200000,
-        description="上下文窗口大小（tokens），随 context_usage 事件下发给前端上下文占用指示器",
+        description="上下文窗口大小（tokens）：token_budget_manager 压缩预算与 context_usage 指示器的单一事实源",
     )
     doubao_api_key: Optional[str] = Field(default=None, description="Doubao-compatible gateway API key")
     doubao_base_url: str = Field(
