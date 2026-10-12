@@ -685,6 +685,12 @@ class ReActAgent:
                     current_request_image_count=len(effective_board_context["current_request_images"]),
                 )
 
+            # 客户端来源标记（web/app）：随 runtime_metadata 透传，包括子Agent，
+            # 上下文构建器据此渲染 <client_channel>，供模式提示词做端侧差异分支。
+            react_loop.context_builder.client_channel = str(
+                (runtime_metadata or {}).get("client_channel") or ""
+            ).strip().lower() or None
+
             if manual_mode in {"query", "graph"} and map_context:
                 react_loop.context_builder.map_context = map_context
                 map_events = map_context.get("events") or []

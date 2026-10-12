@@ -13,7 +13,6 @@ ALL_MODE_LISTS = [
     tool_registry.EXPERT_TOOL_NAMES,
     tool_registry.QUERY_TOOL_NAMES,
     tool_registry.REPORT_TOOL_NAMES,
-    tool_registry.CHART_TOOL_NAMES,
     tool_registry.BOARD_TOOL_NAMES,
     tool_registry.OPS_TOOL_NAMES,
     tool_registry.GRAPH_TOOL_NAMES,
@@ -87,18 +86,9 @@ def test_retired_chart_modules_and_runtime_references_are_removed():
     assert stale_references == []
 
 
-def test_current_chart_tools_remain_exposed_after_legacy_cleanup():
-    assert "execute_echarts_python" in tool_registry.CHART_TOOL_NAMES
-    assert "create_business_chart" in tool_registry.CHART_TOOL_NAMES
-
-
-def test_query_mode_can_generate_charts_and_chart_mode_cannot_query_business_data():
+def test_query_mode_can_generate_charts():
     assert "execute_echarts_python" in tool_registry.QUERY_TOOL_NAMES
     assert "create_business_chart" in tool_registry.QUERY_TOOL_NAMES
-    # 许昌项目 chart（问数生图）模式保留业务查询能力（get_5min_data/execute_sql_query 等），
-    # 仅要求不暴露内部编排与正式交付工具。
-    assert "render_report_package" not in tool_registry.CHART_TOOL_NAMES
-    assert "validate_report_package" not in tool_registry.CHART_TOOL_NAMES
 
 
 def test_query_mode_can_query_historical_meteorology():

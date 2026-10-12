@@ -108,7 +108,11 @@ def test_one_pollutant_event_keeps_primary_and_secondary_stations():
     assert [item["station_id"] for item in result["alerts"][0]["secondary_stations"]] == ["b"]
 
 
-def test_nox_uses_no2_as_an_explicit_proxy():
+def test_nox_is_not_screened_as_a_separate_pollutant():
+    # NOX 与 NO2 共用同一监测列，不再作为独立告警通道；
+    # 同一份数据只由 NO2 通道产出告警，避免重复通报和绕过冷却。
+    assert "NOX" not in StationDeviationConfig().pollutants
+
     rows = [_row("a", 100), _row("b", 40), _row("c", 40)]
     for row in rows:
         row["data_source"] = "minute"
@@ -116,13 +120,13 @@ def test_nox_uses_no2_as_an_explicit_proxy():
         rows,
         expected_station_count=3,
         expected_station_counts={"minute": 3},
-        config=StationDeviationConfig(pollutants=("NOX",)),
+        config=StationDeviationConfig(),
     )
 
-    alert = result["alerts"][0]
-    assert alert["target_pollutant"] == "NOX"
-    assert alert["observed_indicator"] == "NO2"
-    assert "代理" in alert["nox_proxy_note"]
+    pollutants = {alert["target_pollutant"] for alert in result["alerts"]}
+    assert "NOX" not in pollutants
+    assert "NO2" in pollutants
+    assert all("nox_proxy_note" not in alert for alert in result["alerts"])
 
 
 def test_minute_rows_are_grouped_in_five_minute_slots():
@@ -252,7 +256,7 @@ def test_multifactor_snapshot_prefers_slot_pm25_over_previous_hour():
 
 
 @pytest.mark.asyncio
-async def test_run_no2_nox_episode_has_no_multifactor_table(tmp_path):
+async def test_run_nox_slot_alerts_only_through_no2_lane(tmp_path):
     rows = []
     for sid, no2_value in (("a", 100), ("b", 40), ("c", 40)):
         row = {**_row(sid, 40), "data_source": "minute", "data_time": datetime(2026, 9, 12, 21, 35)}
@@ -264,5 +268,5 @@ async def test_run_no2_nox_episode_has_no_multifactor_table(tmp_path):
     result = await service.run(datetime(2026, 9, 12, 21, 36))
 
     pollutants = {a["target_pollutant"] for a in result["alerts"] if a["station_id"] == "a"}
-    assert pollutants == {"NO2", "NOX"}
+    assert pollutants == {"NO2"}
     assert all("multifactor_table_path" not in a for a in result["alerts"])

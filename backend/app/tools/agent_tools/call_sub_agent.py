@@ -62,9 +62,9 @@ logger = structlog.get_logger()
 # 获取全局session管理器
 session_manager = get_session_manager()
 
-# ⚠️ 支持多种模式：assistant, query, report, social, chart, expert, ops
+# ⚠️ 支持多种模式：assistant, query, report, social, expert, ops
 AgentMode = Literal[
-    "assistant", "query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "report", "social", "chart", "expert",
+    "assistant", "query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "report", "social", "expert",
 
     "expert_meteorology", "expert_analysis", "ops", "board", "ppt", "knowledge",
 ]

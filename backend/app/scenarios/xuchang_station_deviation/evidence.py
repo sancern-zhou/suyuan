@@ -391,7 +391,6 @@ class XuchangStationDeviationEvidenceCollector:
                 alert, air_quality.get("local_station_5min_records", [])
             ),
             "calculation_notes": [
-                "NOX事件使用站点NO2小时浓度作为空间异常代理。",
                 "相关性和领先滞后是时序关系，不等同于来源因果关系。",
                 "所有指标仅基于证据窗口内已落库数据计算。",
             ],

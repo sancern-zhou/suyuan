@@ -1,7 +1,10 @@
 """Restore chart resources at their referenced assistant turns, without exposing paths."""
 import re
 
-_CHART_REFERENCE = re.compile(r"\[\[chart:([A-Za-z0-9_-]{1,100})\]\]")
+from app.utils.visual_ids import VISUAL_ID_PATTERN
+
+# 字符集与长度唯一定义在 app/utils/visual_ids.py（契约测试钉住）。
+_CHART_REFERENCE = re.compile(rf"\[\[chart:({VISUAL_ID_PATTERN})\]\]")
 
 
 def attach_reply_resources(history: list, descriptors: list[dict]) -> None:

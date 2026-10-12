@@ -1,4 +1,5 @@
 import json
+import hashlib
 
 import pytest
 import httpx
@@ -95,9 +96,10 @@ async def test_broadcast_payload_hides_paths_and_links_content_endpoint():
     payload = social_app_routes._broadcast_payload(BROADCAST_MESSAGE)
     assert "/registry/reports" not in json.dumps(payload)
     local_attachment = payload["attachments"][0]
+    prefix = hashlib.sha256(BROADCAST_MESSAGE["id"].encode()).hexdigest()[:16] + "-0-"
     expected_url = (
         "/api/social/app/broadcasts/broadcast:daily:evt-1:app:android:alice"
-        "/attachments/0/content/%E7%BB%9F%E8%AE%A1%E6%8A%A5%E8%A1%A8.xlsx"
+        f"/attachments/0/content/{prefix}%E7%BB%9F%E8%AE%A1%E6%8A%A5%E8%A1%A8.xlsx"
     )
     assert local_attachment["url"] == expected_url
     assert local_attachment["download_url"] == expected_url
@@ -109,13 +111,24 @@ async def test_broadcast_payload_hides_paths_and_links_content_endpoint():
     )
     assert local_attachment["preview_url"] == (
         "/api/social/app/broadcasts/broadcast:daily:evt-1:app:android:alice"
-        "/attachments/0/preview/%E7%BB%9F%E8%AE%A1%E6%8A%A5%E8%A1%A8.pdf"
+        f"/attachments/0/preview/{prefix}%E7%BB%9F%E8%AE%A1%E6%8A%A5%E8%A1%A8.pdf"
     )
     assert local_attachment["preview_mime_type"] == "application/pdf"
     remote_attachment = payload["attachments"][1]
     assert remote_attachment["url"] == "https://example.com/chart.png"
     assert "download_url" not in remote_attachment
     assert "preview_url" not in remote_attachment
+
+
+def test_broadcast_attachment_cache_identity_distinguishes_messages_and_indexes():
+    attachment = {"name": "report.docx", "path": "/registry/report.docx"}
+    payloads = [social_app_routes._broadcast_attachment_payload(attachment, message_id=message, index=index)
+                for message, index in [("message-a", 0), ("message-b", 0), ("message-a", 1)]]
+    assert len({item["file_id"] for item in payloads}) == 3
+    assert all(item["file_id"] for item in payloads)
+    assert len({item["url"].rsplit("/", 1)[-1] for item in payloads}) == 3
+    assert len({item["preview_url"].rsplit("/", 1)[-1] for item in payloads}) == 3
+    assert payloads[0] == social_app_routes._broadcast_attachment_payload(attachment, message_id="message-a", index=0)
 
 
 @pytest.mark.asyncio
@@ -141,8 +154,12 @@ async def test_broadcast_attachment_content_streaming(tmp_path, monkeypatch):
     }
     (tmp_path / "outside.txt").write_text("forbidden")
     (reports_dir / "notes.txt").write_text("notes")
-    # 预置 LibreOffice 管线约定位置的缓存 PDF，避免测试依赖 soffice
-    (reports_dir / "统计报表.preview.pdf").write_bytes(b"%PDF-1.5 cached-preview")
+    # 预置 LibreOffice 管线约定位置的缓存 PDF（按源文件指纹命名），避免测试依赖 soffice
+    from app.api.upload_routes import _office_pdf_preview_path
+
+    xlsx_source = reports_dir / "统计报表.xlsx"
+    cached_preview = _office_pdf_preview_path(xlsx_source)
+    cached_preview.write_bytes(b"%PDF-1.5 cached-preview")
 
     async def fake_inbox(social_user_id):
         return [dict(original_message)] if social_user_id == "app:android:alice" else []

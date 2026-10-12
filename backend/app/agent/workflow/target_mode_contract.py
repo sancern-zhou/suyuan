@@ -95,12 +95,6 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
         "boundary": "不做业务取数，不替代 query/expert 的数据与研判工作。",
         "outputs": "报告包（report_id 与产物）。",
     },
-    "chart": {
-        "positioning": "可视化 Agent：面向专题图表与可视化叙事。",
-        "scope": "趋势图、分布图、地图等可视化产物；独立使用时可补充必要的气象或 SQL 数据。",
-        "boundary": "在 DAG 中优先复用 dependencies 已提供的数据，不重复查询，不产出正式报告包。",
-        "outputs": "图表/可视化产物。",
-    },
     "board": {
         "positioning": "画板 Agent：面向流程图、架构图、决策树等可编辑图形。",
         "scope": "draw.io 画板与图形文件。",

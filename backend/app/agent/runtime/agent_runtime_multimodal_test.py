@@ -70,7 +70,7 @@ async def test_chart_mode_sends_image_attachment_as_native_content_blocks(tmp_pa
     runtime.context_diagnostics = FakeContextDiagnostics()
     runtime.tool_coordinator = FakeToolCoordinator()
 
-    state = RunState(session_id="chart_session", user_query="照这个图生成", mode="chart")
+    state = RunState(session_id="chart_session", user_query="照这个图生成", mode="ppt")
     context_result = {"system_prompt": "system", "user_conversation": "user text"}
     events = [
         event
@@ -381,7 +381,7 @@ async def test_explicit_tool_image_read_can_reopen_a_consumed_reference(tmp_path
     runtime.context_diagnostics = FakeContextDiagnostics()
     runtime.tool_coordinator = FakeToolCoordinator()
 
-    state = RunState(session_id="chart_session", user_query="继续", mode="chart")
+    state = RunState(session_id="chart_session", user_query="继续", mode="ppt")
     observation = {
         "type": "multimodal_attachment",
         "attachments": [attachment],
@@ -522,7 +522,7 @@ async def test_chart_mode_does_not_suppress_explicit_image_when_legacy_board_con
     state = RunState(
         session_id="chart_session",
         user_query="继续调整这个画板",
-        mode="chart",
+        mode="ppt",
         board_context={
             "artifact_kind": "drawio_board",
             "current_xml": "<mxfile><diagram><mxCell id=\"device_group3\" value=\"XX数据接口\" /></diagram></mxfile>",

@@ -6,22 +6,38 @@
     @dragleave.prevent="handleDragLeave"
     @drop.prevent="handleDrop"
   >
-    <!-- 顶部功能区：左侧为侧边栏收起/展开按钮，右侧为右侧面板开关和更多功能菜单 -->
+    <!-- 顶部功能区：左侧为侧边栏收起/展开按钮和新建对话按钮，右侧为右侧面板开关和更多功能菜单 -->
     <div class="conversation-actions">
-      <button
-        type="button"
-        class="sidebar-toggle-btn"
-        @click="handleToggleSidebar"
-        :title="leftSidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
-        :aria-label="leftSidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
-      >
-        <svg class="sidebar-toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <rect width="18" height="18" x="3" y="3" rx="2" />
-          <path d="M9 3v18" />
-          <path v-if="leftSidebarCollapsed" d="m14 9 3 3-3 3" />
-          <path v-else d="m16 15-3-3 3-3" />
-        </svg>
-      </button>
+      <div class="actions-left-group">
+        <button
+          type="button"
+          class="sidebar-toggle-btn"
+          @click="handleToggleSidebar"
+          :title="leftSidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+          :aria-label="leftSidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+        >
+          <svg class="sidebar-toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <rect width="18" height="18" x="3" y="3" rx="2" />
+            <path d="M9 3v18" />
+            <path v-if="leftSidebarCollapsed" d="m14 9 3 3-3 3" />
+            <path v-else d="m16 15-3-3 3-3" />
+          </svg>
+        </button>
+
+        <button
+          type="button"
+          class="sidebar-toggle-btn"
+          title="新建对话"
+          aria-label="新建对话"
+          @click="$emit('new-conversation')"
+        >
+          <svg class="sidebar-toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z" />
+            <path d="M12 8v6" />
+            <path d="M9 11h6" />
+          </svg>
+        </button>
+      </div>
 
       <div class="actions-right-group">
         <button
@@ -108,21 +124,19 @@
                 </svg>
                 <span>导出对话记录</span>
               </button>
-  
+
               <div class="more-menu-separator" role="separator"></div>
-  
+
               <button
                 type="button"
                 class="more-menu-item"
                 role="menuitem"
-                @click="handleMenuAction('new-conversation')"
+                @click="handleMenuAction('view-memory')"
               >
                 <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z" />
-                  <path d="M12 8v6" />
-                  <path d="M9 11h6" />
+                  <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
                 </svg>
-                <span>新建对话</span>
+                <span>查看模式记忆</span>
               </button>
             </div>
           </transition>
@@ -309,6 +323,7 @@ const emit = defineEmits([
   'resolve-interaction',
   'close-interaction',
   'open-trajectory',
+  'open-memory',
   'toggle-left-sidebar',
   'new-conversation'
 ])
@@ -419,8 +434,8 @@ const handleMenuAction = async (action) => {
     exportConversation()
     return
   }
-  if (action === 'new-conversation') {
-    emit('new-conversation')
+  if (action === 'view-memory') {
+    emit('open-memory')
   }
 }
 
@@ -490,6 +505,12 @@ defineExpose({
   justify-content: space-between;
   gap: 8px;
   padding: 6px 20px;
+}
+
+.actions-left-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .sidebar-toggle-btn {
@@ -608,12 +629,6 @@ defineExpose({
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.more-menu-separator {
-  height: 1px;
-  margin: 4px 2px;
-  background: var(--border-3, #e5e7eb);
 }
 
 .more-menu-fade-enter-active,

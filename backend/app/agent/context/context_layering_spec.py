@@ -163,7 +163,6 @@ def test_social_profile_and_memory_are_not_hidden_in_mode_prompt():
     "query",
     "report",
     "social",
-    "chart",
     "board",
     "ops",
     "graph",

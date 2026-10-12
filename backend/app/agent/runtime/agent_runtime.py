@@ -145,6 +145,9 @@ class AgentRuntime:
             self.planner.is_interruption = self.config.is_interruption
             self.writer.load_initial_history_if_needed(initial_messages)
 
+            if (state.mode or "").lower() == "knowledge":
+                await self._prefetch_knowledge_evidence(state)
+
             yield self.events.start(state)
 
             workflow_definition = get_mode_workflow(state.mode)
@@ -243,6 +246,33 @@ class AgentRuntime:
                 yield deferred_event
             async for event in self.finalizer.fatal_error(state, exc):
                 yield event
+
+    async def _prefetch_knowledge_evidence(self, state: RunState) -> None:
+        """知识问答模式首轮固定预取：检索证据包注入系统上下文。
+
+        仅首轮（会话无历史）执行；追问轮由 agent 按需自行调 workflow 补检索。
+        失败静默降级——agent 退回原有的自主调 knowledge_qa_workflow 路径。
+        """
+        try:
+            history = self.memory.session.get_messages_for_llm()
+            if history:
+                return
+            from app.agent.context.knowledge_evidence import build_first_turn_evidence
+
+            evidence = await build_first_turn_evidence(
+                state.user_query,
+                user_id=self.config.user_identifier,
+                knowledge_base_ids=self.config.knowledge_base_ids,
+            )
+            if evidence:
+                self.context_builder.knowledge_evidence_context = evidence
+        except Exception as exc:
+            logger.warning(
+                "knowledge_evidence_prefetch_failed",
+                session_id=state.session_id,
+                query=state.user_query[:60],
+                error=str(exc),
+            )
 
     async def _run_iteration(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
         context_result, conversation_history = await self._build_context(state)
@@ -533,7 +563,7 @@ class AgentRuntime:
         state: RunState,
         action: Optional[Dict[str, Any]] = None,
     ) -> None:
-        if state.mode in {"ppt", "chart"} and not self._action_materializes_visual_output(action):
+        if state.mode in {"ppt"} and not self._action_materializes_visual_output(action):
             logger.info(
                 "multimodal_attachments_retained_for_visual_materialization",
                 session_id=state.session_id,
@@ -939,6 +969,15 @@ class AgentRuntime:
         tool_schema_chars = len(json.dumps(tool_schemas, ensure_ascii=False, default=str))
         tool_schema_tokens_est = int(tool_schema_chars / 1.5)
         context_tokens = context_result.get("tokens", {})
+        state.context_estimate_tokens = (
+            int(context_tokens.get("total") or 0) + int(tool_schema_tokens_est)
+        )
+        state.context_breakdown = {
+            "system_prompt": int(context_tokens.get("system") or 0),
+            "messages": int(context_tokens.get("user") or 0)
+            + int(context_tokens.get("history") or 0),
+            "tools": int(tool_schema_tokens_est),
+        }
         logger.info(
             "planner_context_with_tools",
             mode=state.mode,
@@ -967,6 +1006,7 @@ class AgentRuntime:
             max_concurrency=4 if get_mode_workflow(state.mode) else 10,
         )
         await cancellation_registry.attach_streaming_executor(state.session_id, streaming_tool_executor)
+        usage_at_stream_start = state.last_context_usage
         buffer = AssistantStreamBuffer()
         planner_result = PlannerResult()
         user_content = None
@@ -1024,6 +1064,14 @@ class AgentRuntime:
                 content = event["data"].get("content", "")
                 if content:
                     yield self.events.thinking_content(state, content)
+
+            elif event_type == "context_usage":
+                usage_data = event.get("data") or {}
+                if usage_data and state.context_breakdown:
+                    usage_data.setdefault("breakdown", dict(state.context_breakdown))
+                state.last_context_usage = usage_data
+                yield event
+                await self._persist_context_usage(state, usage_data)
 
             elif event_type == "tool_use":
                 tool_data = event["data"]
@@ -1098,11 +1146,55 @@ class AgentRuntime:
         if planner_result.action and planner_result.action.get("type") in ("TOOL_CALL", "TOOL_CALLS"):
             planner_result.tool_calls = self.tool_coordinator.tool_calls_from_action(planner_result.action)
 
+        # 部分网关不回传 input_tokens（如 scnet anthropic_messages：message_start 全 0、
+        # message_delta 仅 output_tokens），planner 全程产不出 context_usage。用本轮
+        # 上下文构建阶段的 token 估算合成快照兜底，保证前端指示器始终有数可显。
+        if (
+            state.last_context_usage is usage_at_stream_start
+            and state.context_estimate_tokens
+        ):
+            from config.settings import settings
+
+            estimate = {
+                "input_tokens": int(state.context_estimate_tokens),
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "context_tokens": int(state.context_estimate_tokens),
+                "context_window": settings.llm_context_window_tokens,
+                "model": self.config.llm_model,
+                "timestamp": datetime.now().isoformat(),
+                "estimated": True,
+            }
+            if state.context_breakdown:
+                estimate["breakdown"] = dict(state.context_breakdown)
+            state.last_context_usage = estimate
+            yield {"type": "context_usage", "data": estimate}
+            await self._persist_context_usage(state, estimate)
+
         yield {
             "type": "_planner_done",
             "planner_result": planner_result,
             "streaming_tool_executor": streaming_tool_executor,
         }
+
+    async def _persist_context_usage(self, state: RunState, usage_data: Dict[str, Any]) -> None:
+        """把最近一次上下文占用快照写入 session_metadata，供会话恢复后展示。"""
+        if not usage_data:
+            return
+        try:
+            from app.agent.session.session_resolver import save_context_usage_for_mode
+
+            await save_context_usage_for_mode(
+                state.session_id,
+                usage_data,
+                mode=state.mode,
+            )
+        except Exception as exc:
+            logger.warning(
+                "context_usage_persist_failed",
+                session_id=state.session_id,
+                error=str(exc),
+            )
 
     def _allowed_tool_names_for_state(self, state: RunState) -> Optional[List[str]]:
         if state.mode == "custom" and hasattr(self.executor, "tool_registry"):

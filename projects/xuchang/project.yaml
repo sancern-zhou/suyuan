@@ -11,6 +11,7 @@ frontend:
   features:
     query_agent_as_default: true
   agent_modes:
+    - assistant
     - query
     - knowledge
     - expert
@@ -22,7 +23,8 @@ frontend:
   # 监测分析分组在共享卡片基础上补充知识问答入口（统一从智能体平台进入）。
   agent_scene_overrides:
     monitoring:
-      mode_ids: [query, knowledge, expert, report, chart]
+      # assistant 为通用助手入口，其余为专业工作空间；顺序即平台页展示顺序。
+      mode_ids: [assistant, query, knowledge, expert, report]
   # 侧边栏不再展示智能体模式快捷入口，统一由智能体平台页进入。
   sidebar_agent_modes: []
 backend:
@@ -80,7 +82,8 @@ backend:
       - get_weather_forecast
       - get_universal_meteorology
       - get_current_weather
-      - get_weather_situation_map
+      # 平台天气图片工具（已裁剪：仅 NMC 中国地面天气形势图一种产品）
+      - get_platform_weather_image
       - query_xcai_city_history
       - execute_sql_query
       - execute_crawler_sql_query
@@ -120,7 +123,8 @@ backend:
       - get_weather_forecast
       - get_universal_meteorology
       - get_current_weather
-      - get_weather_situation_map
+      # 平台天气图片工具（已裁剪：仅 NMC 中国地面天气形势图一种产品）
+      - get_platform_weather_image
       - meteorological_trajectory_analysis
       - resolve_station_geo
       - execute_sql_query
@@ -212,6 +216,12 @@ backend:
   # 仅保留非项目工具的显式禁用项。
   disabled_tools:
     - get_observed_meteorology
+    # 许昌无招投标业务：禁用共享助手白名单携带的招投标工具
+    - execute_tender_sql_query
+    - zhiliao_tender_detail
+    # 助手不需要交互式浏览器（网页检索由 web_search/web_fetch 覆盖）；
+    # 注意：项目级禁用对 ppt 子代理同样生效，其网页取证退化为 web_search/web_fetch
+    - browser
   # 许昌分支不使用 GIS 交互（问数地图）能力：该开关关闭后，
   # visual_interaction / resolve_map_data_asset / create_map_point_asset /
   # spatial_analysis / spatial_interpolation / map_program 回执等 Agentic GIS 工具
@@ -219,11 +229,17 @@ backend:
   # 禁止在本项目任何模式的工具列表中加入上述 GIS 工具或重新打开此开关。
   gis_tools_enabled: false
   mode_prompt_files:
+    assistant: projects/xuchang/prompts/assistant.md
     query: projects/xuchang/prompts/query.md
     knowledge: projects/xuchang/prompts/knowledge.md
     expert: projects/xuchang/prompts/expert.md
     social: projects/xuchang/prompts/social.md
     report: projects/xuchang/prompts/report.md
+  # 通用助手在共享白名单基础上追加的项目专属工具：
+  # create_skill_draft 允许助手在用户确认后沉淀技能草稿（只写 .drafts/，不直接发布）。
+  agent_mode_extra_tools:
+    assistant:
+      - create_skill_draft
   fetchers:
     - city_weather_history
     - nmc_observed_weather

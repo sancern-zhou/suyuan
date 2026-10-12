@@ -122,10 +122,23 @@ def test_xuchang_expert_mode_drops_retired_analysis_tools():
     assert "meteorological_trajectory_analysis" in expert_tools
 
 
-def test_xuchang_agent_mode_tools_exclude_platform_weather_image():
-    """许昌项目不接入平台天气图片工具：所有模式白名单均不得包含 get_platform_weather_image。"""
+def test_xuchang_expert_modes_expose_platform_weather_image_chart_only():
+    """综合专家与气象专家接入平台天气图片工具，且仅限天气形势图；其余模式不得暴露。"""
+    from app.tools.query.get_platform_weather_image.tool import (
+        GetPlatformWeatherImageTool,
+        NMC_WEATHER_CHART_KEY,
+    )
+
     context = load_project_context("xuchang")
     mode_tools = context.manifest.backend.agent_mode_tools
 
+    assert "get_platform_weather_image" in mode_tools["expert"]
+    assert "get_platform_weather_image" in mode_tools["expert_meteorology"]
     for mode, tools in mode_tools.items():
+        if mode in {"expert", "expert_meteorology"}:
+            continue
         assert "get_platform_weather_image" not in tools, f"{mode} 模式不应暴露 get_platform_weather_image"
+
+    # 裁剪守卫：工具 schema 只暴露 nmc_surface_weather_chart（中国地面天气形势图）
+    schema = GetPlatformWeatherImageTool().get_function_schema()
+    assert schema["parameters"]["properties"]["product"]["enum"] == [NMC_WEATHER_CHART_KEY]

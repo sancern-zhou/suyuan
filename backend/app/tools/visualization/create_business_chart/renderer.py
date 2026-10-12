@@ -1464,9 +1464,11 @@ def _validate_xy_lengths(chart_type: str, labels: Sequence[Any], values: Sequenc
 
 
 def _safe_chart_id(value: str) -> str:
-    safe = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in str(value).strip())
-    safe = safe.strip("_")
-    return safe[:80] or f"business_chart_{uuid.uuid4().hex[:10]}"
+    # 收敛到 [[chart:<id>]] 协议字符集（见 app/utils/visual_ids.py，契约测试钉住）
+    from app.utils.visual_ids import sanitize_visual_id
+
+    safe = sanitize_visual_id(value)
+    return safe or f"business_chart_{uuid.uuid4().hex[:10]}"
 
 
 def _dedupe(values: Sequence[str]) -> List[str]:

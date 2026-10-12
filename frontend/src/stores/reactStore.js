@@ -1419,6 +1419,8 @@ export const useReactStore = defineStore('react', {
     /**
      * 【新增】为final消息记录回复用时统计（复制到data中供UI展示）
      * 使用前端时钟计算，避免后端naive时间戳与前端UTC时间戳混用导致时区误差
+     * first_response_ms：从用户输入到开始回答的耗时。流式路径下final消息创建于
+     * 首个回答块到达时刻（message.timestamp即首响时刻），非流式路径下等于总耗时
      */
     _stampResponseTiming(modeState, message) {
       if (!modeState?.messages || !message) return
@@ -1444,6 +1446,10 @@ export const useReactStore = defineStore('react', {
         const end = Date.parse(completedAt)
         if (Number.isFinite(start) && Number.isFinite(end) && end >= start) {
           nextData.response_duration_ms = end - start
+          const firstTokenAt = Date.parse(message.timestamp)
+          if (Number.isFinite(firstTokenAt) && firstTokenAt >= start) {
+            nextData.first_response_ms = firstTokenAt - start
+          }
         }
       }
 
@@ -2201,6 +2207,25 @@ export const useReactStore = defineStore('react', {
         case 'message_start': {
           // 原生 Anthropic 事件：消息开始（可扩展为 token 监控）
           console.log('[event:message_start] Anthropic 消息开始', data?.usage)
+          break
+        }
+
+        case 'context_usage': {
+          // 最近一次 LLM 调用的上下文占用快照（覆盖式更新，供输入框指示器展示）
+          const contextTokens = Number(data?.context_tokens) || 0
+          const contextWindow = Number(data?.context_window) || 0
+          if (contextTokens > 0 && contextWindow > 0) {
+            targetState.contextUsage = {
+              contextTokens,
+              contextWindow,
+              model: data?.model || null,
+              compactThresholdTokens: Number(data?.compact_threshold_tokens) || null,
+              cacheHitRate: Number(data?.cache_hit_rate) || null,
+              breakdown: data?.breakdown || null,
+              estimated: data?.estimated === true,
+              updatedAt: data?.timestamp || new Date().toISOString()
+            }
+          }
           break
         }
 

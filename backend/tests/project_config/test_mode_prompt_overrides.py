@@ -130,3 +130,20 @@ def test_xuchang_social_prompt_overrides_shared_social_prompt(monkeypatch):
 
     monkeypatch.setattr(settings, "project_id", "default")
     assert "移动端助理" in build_react_system_prompt("social")
+
+
+def test_xuchang_mode_prompts_carry_client_channel_branches(monkeypatch):
+    """许昌 query/knowledge/expert 用项目级提示词，客户端差异分支必须写在 .md 覆盖层。"""
+    monkeypatch.setattr(settings, "project_id", "xuchang")
+
+    query_prompt = build_react_system_prompt("query")
+    assert "<client_channel>" in query_prompt
+    assert "App 端没有右侧面板" in query_prompt
+    assert "不产出 ECharts 交互图资源" in query_prompt
+    assert "client_channel 为 web" in query_prompt
+
+    for mode in ("knowledge", "expert"):
+        prompt = build_react_system_prompt(mode)
+        assert "<client_channel>" in prompt
+        assert "App 端没有右侧面板" in prompt
+        assert "适当精简" in prompt

@@ -24,23 +24,23 @@ IMAGE_CACHE_DIR = str(get_images_dir())
 _MATHTEXT_SUPER_RE = re.compile(r"\^\{([^{}]*)\}")
 _MATHTEXT_SUB_RE = re.compile(r"\$\_\{([^{}]*)\}\$")
 _MATHTEXT_INLINE_RE = re.compile(r"\$([^$]*)\$")
-_UNSAFE_ID_CHARS_RE = re.compile(r"[^0-9A-Za-z._\-\u4e00-\u9fff]+")
 
 
 def sanitize_image_id(value: str) -> str:
-    """将 image_id 归一化为文件系统与 URL 安全的纯文本。
+    """将 image_id 归一化为 ``[[chart:<id>]]`` 协议安全的纯文本。
 
     - matplotlib mathtext 还原为纯文本（如 PM$_{2.5}$ -> PM2.5、SO$_4^{2-}$ -> SO4^(2-)）
-    - 去除 $、{}、空格、斜杠等文件系统/URL 不安全字符
+    - 再经 ``app.utils.visual_ids.sanitize_visual_id`` 收敛到协议字符集
+      （A-Za-z0-9_.-）；中文名等不可保留字符折叠为下划线。
     """
     text = str(value)
     text = _MATHTEXT_SUPER_RE.sub(r"^(\1)", text)
     text = _MATHTEXT_SUB_RE.sub(r"\1", text)
     text = _MATHTEXT_INLINE_RE.sub(r"\1", text)
     text = text.replace("{", "").replace("}", "")
-    text = _UNSAFE_ID_CHARS_RE.sub("_", text)
-    text = re.sub(r"_+", "_", text).strip("_")
-    return text or "img"
+    from app.utils.visual_ids import sanitize_visual_id
+
+    return sanitize_visual_id(text) or "img"
 
 
 class ImageCache:

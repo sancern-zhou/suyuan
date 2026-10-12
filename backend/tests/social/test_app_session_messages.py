@@ -93,6 +93,26 @@ def test_app_messages_still_rejects_non_social_non_web_sources(monkeypatch):
     assert response.json()["detail"] == "session_not_found"
 
 
+def test_app_messages_rejects_plain_web_session_of_same_user(monkeypatch):
+    row = ConversationCatalogRecord(
+        session_id="assistant_session_1_abc", owner_user_id="u1",
+        owner_username="alice", owner_display_name="Alice",
+        source=ConversationSource.WEB, mode="assistant", title="网页对话",
+        read_only_on_web=False,
+        created_at=datetime(2026, 10, 7), updated_at=datetime(2026, 10, 7),
+    )
+
+    class Catalog:
+        async def require_read(self, session_id, user):
+            return row
+
+    monkeypatch.setattr(social_app_routes, "get_conversation_catalog", lambda: Catalog())
+
+    response = _client().get("/api/social/app/sessions/assistant_session_1_abc/messages")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "session_not_found"
+
+
 def test_app_messages_allows_system_owned_scheduled_task_session(monkeypatch):
     from app.api import scheduled_task_routes
 

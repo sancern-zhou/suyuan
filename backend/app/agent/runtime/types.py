@@ -84,6 +84,14 @@ class RunState:
     last_loop_block_signature: Optional[str] = None
     last_missing_tool_signature: Optional[str] = None
     fixed_workflow_progress: Dict[str, Any] = field(default_factory=dict)
+    # 最近一次 LLM 调用的上下文占用快照（planner context_usage 事件数据）
+    last_context_usage: Optional[Dict[str, Any]] = None
+    # 本轮上下文构建阶段的 token 估算（total + 工具 schema 估算），供网关不回传
+    # input_tokens 时（如 scnet anthropic_messages 协议）合成占位快照兜底
+    context_estimate_tokens: Optional[int] = None
+    # 上下文构成分段估算：{"system_prompt": n, "messages": n, "tools": n}，
+    # 随 context_usage 事件下发供前端 hover 面板展示占比
+    context_breakdown: Optional[Dict[str, int]] = None
 
     def timestamp(self) -> str:
         return datetime.now().isoformat()

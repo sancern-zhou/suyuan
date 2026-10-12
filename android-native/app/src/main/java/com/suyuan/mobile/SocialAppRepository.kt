@@ -4,6 +4,10 @@ import kotlinx.coroutines.flow.Flow
 import java.io.File
 
 class SocialAppRepository(private val api: SocialAppApi) {
+    fun reconnectChat() = api.reconnectChat()
+    suspend fun pendingInteraction(token: String, sessionId: String) = api.pendingInteraction(token, sessionId)
+    suspend fun resolveInteraction(token: String, question: AgentQuestionInteraction, decision: String, answers: List<AgentQuestionAnswer>) =
+        api.resolveInteraction(token, question.sessionId, question.interactionId, decision, answers)
     suspend fun login(accountId: String, secret: String) = api.login(accountId, secret)
     suspend fun oidcConfig() = api.oidcConfig()
     suspend fun exchangeOidcCode(code: String, codeVerifier: String, redirectUri: String) =
@@ -11,7 +15,7 @@ class SocialAppRepository(private val api: SocialAppApi) {
     suspend fun refresh(refreshToken: String) = api.refresh(refreshToken)
     suspend fun registerPushDevice(token: String, deviceId: String) = api.registerPushDevice(token, deviceId)
     suspend fun unregisterPushDevice(token: String, deviceId: String) = api.unregisterPushDevice(token, deviceId)
-    fun stream(token: String, query: String, sessionId: String?, attachments: List<UploadedAttachment> = emptyList(), mode: String = "expert", modelTier: String = "auto"): Flow<AgentEvent> = api.stream(token, query, sessionId, attachments, mode, modelTier)
+    fun stream(token: String, query: String, sessionId: String?, attachments: List<UploadedAttachment> = emptyList(), mode: String = "query", modelTier: String = "auto", requestId: String = java.util.UUID.randomUUID().toString()): Flow<AgentEvent> = api.stream(token, query, sessionId, attachments, mode, modelTier, requestId)
     suspend fun sessions(token: String, limit: Int = 30, offset: Int = 0) = api.sessions(token, limit, offset)
     suspend fun createSession(token: String) = api.createSession(token)
     suspend fun renameSession(token: String, sessionId: String, title: String) = api.renameSession(token, sessionId, title)
@@ -24,6 +28,7 @@ class SocialAppRepository(private val api: SocialAppApi) {
     suspend fun reports(token: String, reportType: String? = null, limit: Int = 30, before: String? = null) = api.reports(token, reportType, limit, before)
     suspend fun taskResults(token: String, taskId: String, page: Int, start: String, end: String, station: String, pollutant: String) = api.taskResults(token, taskId, page, start, end, station, pollutant)
     suspend fun taskFacets(token: String, taskId: String) = api.taskFacets(token, taskId)
+    suspend fun reportDownloadFormats(token: String, executionId: String) = api.reportDownloadFormats(token, executionId)
     suspend fun scheduledTasks(token: String) = api.scheduledTasks(token)
     suspend fun markReportRead(token: String, reportId: String) = api.markReportRead(token, reportId)
     suspend fun deleteReport(token: String, reportId: String) = api.deleteReport(token, reportId)

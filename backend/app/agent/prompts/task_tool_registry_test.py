@@ -1,7 +1,6 @@
-from app.agent.prompts.tool_registry import ASSISTANT_TOOL_ORDER, BOARD_TOOL_ORDER, CHART_TOOL_ORDER, get_tools_by_mode
+from app.agent.prompts.tool_registry import ASSISTANT_TOOL_ORDER, BOARD_TOOL_ORDER, get_tools_by_mode
 from app.agent.prompts.assistant_prompt import build_assistant_prompt
 from app.agent.prompts.board_prompt import build_board_prompt
-from app.agent.prompts.chart_prompt import build_chart_prompt
 from app.agent.prompts.ops_prompt import build_ops_prompt
 from app.agent.prompts.social_prompt import build_social_prompt
 
@@ -184,7 +183,6 @@ def test_board_mode_exposes_drawio_board_not_diagram_artifact():
     assert "create_drawio_board" in BOARD_TOOL_ORDER
     assert "render_drawio_board_candidate" in BOARD_TOOL_ORDER
     assert "accept_drawio_board_candidate" in BOARD_TOOL_ORDER
-    assert "create_drawio_board" not in CHART_TOOL_ORDER
     assert "analyze_image" not in tools
     assert "analyze_image" not in BOARD_TOOL_ORDER
     assert "present_artifact" not in tools
@@ -234,26 +232,3 @@ def test_drawio_tool_schema_does_not_expose_current_xml_to_llm():
     assert "current_xml" not in drawio_schema["parameters"]["properties"]
     assert "currentXml" not in drawio_schema["parameters"]["properties"]
 
-
-def test_chart_prompt_does_not_embed_board_instructions_even_if_called_with_board_tool():
-    prompt = build_chart_prompt(["create_drawio_board", "read_file"])
-
-    assert "Draw.io" not in prompt
-    assert "board_context" not in prompt
-    assert "create_diagram_artifact" not in prompt
-
-
-def test_chart_prompt_omits_drawio_guide_when_board_tool_unavailable():
-    prompt = build_chart_prompt(["execute_echarts_python", "read_file"])
-
-    assert "Draw.io 画板强约束文档" not in prompt
-    assert "board_context" not in prompt
-
-
-def test_chart_prompt_has_no_accidental_python_string_fragments_or_duplicate_headings():
-    prompt = build_chart_prompt(["execute_echarts_python", "read_file"])
-
-    assert '        "##' not in prompt
-    assert "series 在顶层" not in prompt
-    assert "execute_echarts_python" not in prompt
-    assert "read_file" not in prompt

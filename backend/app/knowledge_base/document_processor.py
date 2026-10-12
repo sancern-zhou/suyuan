@@ -367,8 +367,23 @@ class DocumentProcessor:
         return self._unstructured
 
     def _get_embedding_model(self):
-        """延迟加载Embedding模型（用于语义分块）"""
+        """延迟加载Embedding模型（用于语义分块）：配置了远程服务则不再本地加载权重"""
         if self._embedding_model is None:
+            from app.knowledge_base.remote_embedding import (
+                RemoteEmbeddingModel,
+                build_llama_index_embedding,
+            )
+
+            remote = RemoteEmbeddingModel.from_env()
+            if remote is not None:
+                self._embedding_model = build_llama_index_embedding(remote)
+                logger.info(
+                    "embedding_using_remote_service",
+                    url=remote.api_url,
+                    purpose="semantic_chunking",
+                )
+                return self._embedding_model
+
             from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
             local_path = os.getenv("BGE_M3_MODEL_PATH")

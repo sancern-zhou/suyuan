@@ -68,6 +68,7 @@
         @preview-message-attachment="handleMessageAttachmentPreview"
         @toggle-viz-panel="handleToggleVizPanel"
         @open-trajectory="handleTabChange('trajectory')"
+        @open-memory="memoryDialogOpen = true"
         @new-web-conversation="$emit('new-web-conversation')"
         @resolve-interaction="$emit('resolve-interaction', $event)"
         @close-interaction="$emit('close-interaction')"
@@ -163,6 +164,13 @@
         </template>
           </ChatArea>
         </div>
+
+        <!-- 模式记忆查看/编辑对话框 -->
+        <ModeMemoryDialog
+          :visible="memoryDialogOpen"
+          :agent-mode="agentMode"
+          @close="memoryDialogOpen = false"
+        />
         <!-- 宽度调整器 -->
         <WidthResizer
           v-if="rightPanelShown"
@@ -212,6 +220,7 @@ import { projectConfig } from '@/config/projectConfig.js'
 import ChatArea from './ChatArea.vue'
 import RightPanelContainer from './RightPanelContainer.vue'
 import WidthResizer from './WidthResizer.vue'
+import ModeMemoryDialog from './dialogs/ModeMemoryDialog.vue'
 import KnowledgeBasePanel from '@/components/management/KnowledgeBasePanel.vue'
 import FetchersPanel from '@/components/management/FetchersPanel.vue'
 import ScheduledTasksPanel from '@/components/management/ScheduledTasksPanel.vue'
@@ -494,6 +503,9 @@ const emit = defineEmits([
 ])
 
 const layoutRef = ref(null)
+
+// 模式记忆对话框（查看/编辑当前 agentMode 的长期记忆）
+const memoryDialogOpen = ref(false)
 
 // 右侧面板展开状态（用于ChatArea的展开/隐藏按钮）
 const rightPanelExpanded = computed(() => rightPanelShown.value)

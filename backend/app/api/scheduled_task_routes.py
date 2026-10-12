@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from app.auth.dependencies import optional_current_user, require_current_user
+from app.auth.identity_matching import visible_owner_ids
 from app.auth.models import CurrentUser
 from app.scheduled_tasks import (
     get_scheduled_task_service,
@@ -359,7 +360,10 @@ def _is_scheduled_task_admin(user: CurrentUser) -> bool:
 
 
 def _can_access_task(task: ScheduledTask, user: CurrentUser) -> bool:
-    return _is_scheduled_task_admin(user) or task.owner_user_id == user.id
+    if _is_scheduled_task_admin(user):
+        return True
+    user_ids = set(visible_owner_ids(user.id))
+    return bool(set(visible_owner_ids(task.owner_user_id)) & user_ids)
 
 
 def _can_view_task(task: ScheduledTask, user: CurrentUser) -> bool:
@@ -374,14 +378,21 @@ def _can_view_task(task: ScheduledTask, user: CurrentUser) -> bool:
         return True
 
     if task.broadcast_enabled:
-        return not task.target_user_ids or user.id in task.target_user_ids
+        if not task.target_user_ids:
+            return True
+        user_ids = set(visible_owner_ids(user.id))
+        return any(str(target) in user_ids for target in task.target_user_ids)
 
     return False
 
 
-def _require_task_access(task: ScheduledTask, user: CurrentUser) -> None:
+def _require_task_access(task: ScheduledTask, user: CurrentUser, action: str = "修改") -> None:
     if not _can_access_task(task, user):
-        raise HTTPException(status_code=404, detail=f"Task {task.task_id} not found")
+        if task.owner_user_id == "system" or task.created_by == "system":
+            detail = f"系统任务，无权限{action}"
+        else:
+            detail = f"该任务归属其他用户，无权限{action}"
+        raise HTTPException(status_code=404, detail=detail)
 
 
 def _require_task_view(task: ScheduledTask, user: CurrentUser) -> None:
@@ -695,7 +706,7 @@ def _authorize_result_content(
         task = service.get_task(result.task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="Task result not found")
-        _require_task_access(task, user)
+        _require_task_view(task, user)
         return result
 
     from app.auth.share_access import (
@@ -735,7 +746,7 @@ async def list_task_results(
             task = service.get_task(task_id)
             if not task:
                 raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-            _require_task_access(task, user)
+            _require_task_view(task, user)
             accessible_ids: Optional[set[str]] = None
         else:
             accessible_ids = _accessible_task_ids(user)
@@ -834,7 +845,7 @@ async def list_task_result_report_formats(
     task = service.get_task(result.task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task result not found")
-    _require_task_access(task, user)
+    _require_task_view(task, user)
 
     report_dir = _result_report_dir(result)
     formats: List[Dict[str, Any]] = []
@@ -1020,7 +1031,7 @@ async def delete_task(
         task = service.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-        _require_task_access(task, user)
+        _require_task_access(task, user, action="删除")
 
         success = service.delete_task(task_id)
 
@@ -1045,7 +1056,7 @@ async def enable_task(
         service = get_scheduled_task_service()
         task = service.get_task(task_id)
         if task:
-            _require_task_access(task, user)
+            _require_task_access(task, user, action="启用")
         task = service.enable_task(task_id)
         return TaskResponse(task=task)
 
@@ -1067,7 +1078,7 @@ async def disable_task(
         service = get_scheduled_task_service()
         task = service.get_task(task_id)
         if task:
-            _require_task_access(task, user)
+            _require_task_access(task, user, action="禁用")
         task = service.disable_task(task_id)
         return TaskResponse(task=task)
 
@@ -1090,7 +1101,7 @@ async def execute_task_now(
         task = service.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-        _require_task_access(task, user)
+        _require_task_access(task, user, action="执行")
 
         if task.trigger_type == TriggerType.EVENT:
             builder = get_manual_event_builder(task.event_type or "")
@@ -1150,7 +1161,7 @@ async def retry_failed_delivery(
         if execution is not None:
             task = service.get_task(execution.task_id)
             if task:
-                _require_task_access(task, user)
+                _require_task_access(task, user, action="操作")
         return await service.retry_failed_delivery(execution_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1178,7 +1189,7 @@ async def get_task_executions(
         task = service.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-        _require_task_access(task, user)
+        _require_task_view(task, user)
         executions, total = service.list_executions_page(
             task_id=task_id,
             page=page,
@@ -1210,8 +1221,8 @@ async def get_execution_artifact(
     service = get_scheduled_task_service()
     task = service.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-    _require_task_access(task, user)
+        raise HTTPException(status_code=404, detail="Task not found")
+    _require_task_view(task, user)
     execution = service.get_execution(execution_id)
     if not execution or execution.task_id != task_id:
         raise HTTPException(status_code=404, detail="Execution not found")
@@ -1237,7 +1248,7 @@ def _get_task_case_storage(task_id: str, user: CurrentUser) -> TaskCaseStorage:
     task = service.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-    _require_task_access(task, user)
+    _require_task_access(task, user, action="操作")
     return TaskCaseStorage(task_id)
 
 
@@ -1387,7 +1398,7 @@ async def list_task_result_facets(
             task = service.get_task(task_id)
             if not task:
                 raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-            _require_task_access(task, user)
+            _require_task_view(task, user)
             accessible_ids = None
         else:
             accessible_ids = _accessible_task_ids(user)
@@ -1414,7 +1425,7 @@ async def get_statistics(
             task = service.get_task(task_id)
             if not task:
                 raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-            _require_task_access(task, user)
+            _require_task_view(task, user)
             stats = service.get_statistics(task_id=task_id, days=days)
             return StatisticsResponse(**stats)
 
