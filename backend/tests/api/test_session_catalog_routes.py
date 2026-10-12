@@ -19,8 +19,10 @@ class DenyingCatalog:
         raise HTTPException(status_code=404, detail="session_not_found")
 
 
-def make_client(user=None, catalog=None, adapters=None):
+def make_client(user=None, catalog=None, adapters=None, redis=None):
     app = FastAPI()
+    if redis is not None:
+        app.state.auth_redis = redis
     app.include_router(router)
     app.dependency_overrides[require_current_user] = lambda: user or CurrentUser(
         id="u1", username="u1", display_name="U1"
@@ -200,3 +202,65 @@ def test_knowledge_catalog_record_dispatches_to_knowledge_adapter():
         int,
     )
     assert client.delete("/api/sessions/kqa-1").status_code == 200
+
+
+def _restorable_knowledge_case(session_id="kqa-1"):
+    row = ConversationCatalogRecord(
+        session_id=session_id,
+        owner_user_id="u1",
+        owner_username="u1",
+        owner_display_name="U1",
+        source=ConversationSource.KNOWLEDGE_QA,
+        mode="knowledge_qa",
+        title="knowledge",
+        created_at=datetime(2026, 7, 14),
+        updated_at=datetime(2026, 7, 14),
+    )
+
+    class AllowedCatalog:
+        async def require_read(self, session_id, user):
+            return row
+
+    class Adapter:
+        async def restore(self, catalog_row, **options):
+            return {
+                "normalized_session": {
+                    "session_id": catalog_row.session_id,
+                    "source": "knowledge_qa",
+                }
+            }
+
+    class Adapters:
+        def get(self, source):
+            return Adapter()
+
+    return AllowedCatalog(), Adapters()
+
+
+class FakeActiveRunRedis:
+    """模拟 RunEventStream 的活跃 run 映射（suyuan:run:active:<session_id>）。"""
+
+    def __init__(self, active=None):
+        self._active = active or {}
+
+    async def get(self, key):
+        return self._active.get(key)
+
+
+def test_restore_marks_active_detached_run():
+    catalog, adapters = _restorable_knowledge_case()
+    redis = FakeActiveRunRedis({"suyuan:run:active:kqa-1": "stream-1"})
+    client = make_client(catalog=catalog, adapters=adapters, redis=redis)
+
+    session = client.post("/api/sessions/kqa-1/restore").json()["session"]
+
+    assert session["active_run"] == {"stream_id": "stream-1"}
+
+
+def test_restore_omits_active_run_marker_without_active_run():
+    catalog, adapters = _restorable_knowledge_case()
+    client = make_client(catalog=catalog, adapters=adapters, redis=FakeActiveRunRedis())
+
+    session = client.post("/api/sessions/kqa-1/restore").json()["session"]
+
+    assert "active_run" not in session
