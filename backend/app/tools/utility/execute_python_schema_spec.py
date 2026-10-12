@@ -21,7 +21,9 @@ def test_execute_python_schema_describes_general_capability_and_bash_boundary():
     assert "execute_python_chart_manual.md" in description
     assert "execute_python_report_manual.md" in description
     assert "配备 read_file 的模式" in description
-    assert "问数模式直接编写脚本即可" in description
+    assert "未配备 read_file 的模式依据下文要点直接编写脚本" in description
+    assert "首次执行某类任务前必须先用 read_file 阅读对应手册" in description
+    assert "不得凭记忆套用规范或限值" in description
 
 
 def test_query_mode_execute_python_schema_strips_manual_references():
@@ -36,6 +38,10 @@ def test_query_mode_execute_python_schema_strips_manual_references():
     assert "load_data(file_path)" in adapted["description"]
     code_description = adapted["parameters"]["properties"]["code"]["description"]
     assert ".md" not in code_description
+    # 强制读手册的要求只针对配备 read_file 的模式；无 read_file 的问数工作流被整体剥离，
+    # 但"禁止硬编码限值"这条不依赖手册的禁令必须保留。
+    assert "首次执行某类任务前必须先用 read_file 阅读对应手册" in base["description"]
+    assert "标准限值线禁止凭记忆硬编码数值" in adapted["parameters"]["properties"]["code"]["description"]
     # 原始 schema 不被就地修改，其他模式不受影响
     assert "execute_python_data_manual.md" in base["description"]
     assert "配备 read_file 的模式" in base["description"]
@@ -99,6 +105,9 @@ def test_environment_constraints_use_existing_tool_description():
     for helper in ("aqi_color", "pollutant_color", "get_pollutant_scale",
                    "get_environment_limit", "add_standard_limit", "legend_below"):
         assert helper in description
+    assert "标准限值线禁止凭记忆硬编码数值" in description
+    assert "标注标准版本、适用阶段、区类、平均时间和单位" in description
+    assert "首次绘图前必须先用 read_file 阅读 backend/app/tools/utility/execute_python_chart_manual.md" in description
     assert "风向箭头须明确来向/去向" in description
 
 
