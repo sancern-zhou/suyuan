@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from app.utils.path_config import get_memory_dir, get_social_memory_dir, resolve_agent_path
 
-_SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_MAX_SEGMENT_LENGTH = 128
+_FORBIDDEN_SEGMENTS = {".", ".."}
+_FORBIDDEN_CHARS = ("/", "\\", "\x00")
 
 
 def safe_memory_segment(value: str, *, field: str) -> str:
+    """Validate one path segment, allowing CJK/`@`/`.` user IDs (prod data)."""
     raw = str(value or "").strip()
-    if not _SAFE_SEGMENT.fullmatch(raw):
+    if not raw or len(raw) > _MAX_SEGMENT_LENGTH:
+        raise ValueError(f"invalid memory {field}")
+    if raw in _FORBIDDEN_SEGMENTS or any(ch in raw for ch in _FORBIDDEN_CHARS):
+        raise ValueError(f"invalid memory {field}")
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in raw):
         raise ValueError(f"invalid memory {field}")
     return raw
 
