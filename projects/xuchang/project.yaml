@@ -273,8 +273,8 @@ backend:
     - xuchang_weather_situation_evidence_fetcher
     - xuchang_station_deviation_alert_fetcher
     - xuchang_station_daily_pollution_fetcher
-    # 备用功能，暂不启用：场景二站点日污染超标确认与溯源任务触发
-    # - xuchang_station_daily_exceedance_fetcher
+    # 场景二：站点日污染超标确认与溯源任务触发
+    - xuchang_station_daily_exceedance_fetcher
     - xuchang_transport_analysis_fetcher
     - xuchang_zhongda_station_minute_fetcher
     - xuchang_zhongda_station_hour_fetcher
