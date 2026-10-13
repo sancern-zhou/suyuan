@@ -422,7 +422,9 @@ def _render_guide() -> str:
         "小时排名过滤 dataTime 到具体小时,日排名过滤 dataDate 到具体日期;"
         "排名规则统一为数值越低越靠前(Rank*=1 最优),相同值并列(RANK:1,2,2,4);"
         "乡镇站(76个,2024起)用 TownHour/TownDay,必须过滤 caliber(app=审核,官方结论优先),"
-        "否则原始与审核重复计数。"
+        "否则原始与审核重复计数;"
+        "审核口径(caliber='app')常滞后甚至断档(最近1-2天可能无数据),查最新时段发现 app 无数据或覆盖不足时,"
+        "回退 caliber='src' 查原始口径,并在答复中注明为未审核原始数据。"
     )
     return "\n".join(lines)
 
@@ -458,7 +460,8 @@ class XuchangCubeMetricsTool(LLMTool):
                 "传 measures+dimensions+时间范围即可,不需要写SQL;"
                 "城市月/年排名用 SsfbCityRanking 并过滤 periodType/period;"
                 "区县排名用 SsfbCountyDayRank/SsfbCountyHourRank,站点排名用 SsfbSiteDayRank/SsfbSiteHourRank;"
-                "乡镇站问题用 TownHour/TownDay 并过滤 caliber(官方结论用 app)。"
+                "乡镇站问题用 TownHour/TownDay 并过滤 caliber(官方结论用 app;"
+                "app 无最新时段数据时回退 src 并注明为未审核原始数据)。"
                 + _render_guide()
             ),
             "parameters": {

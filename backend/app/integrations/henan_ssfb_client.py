@@ -108,6 +108,11 @@ class HenanSsfbClient:
                 response.raise_for_status()
                 payload = decrypt_payload(response.text.strip())
                 if not isinstance(payload, dict) or payload.get("code") != 1:
+                    # 平台夜间(约00:45-06:45)对日值接口返回"还没有新数据发布哦"，
+                    # 语义等同空结果集，不能当致命错误，否则整轮采集中断。
+                    msg = str(payload.get("msg") or "") if isinstance(payload, dict) else ""
+                    if "还没有新数据" in msg:
+                        return payload.get("data") or []
                     raise HenanSsfbError(
                         f"{path} returned unusable payload: {str(payload)[:200]}"
                     )

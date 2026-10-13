@@ -438,7 +438,7 @@ class XuchangHenanSsfbCityPublishFetcher(DataFetcher):
         super().__init__(
             name="xuchang_henan_ssfb_city_publish_fetcher",
             description="抓取河南实时发布系统18城市组(含济源)小时/日值入库DataCrawler",
-            schedule="25 * * * *",
+            schedule="14,20,55 * * * *",
             version="1.0.0",
         )
         self.client = client or HenanSsfbClient()
@@ -507,7 +507,7 @@ class XuchangHenanSsfbSitePublishFetcher(DataFetcher):
         super().__init__(
             name="xuchang_henan_ssfb_site_publish_fetcher",
             description="抓取河南实时发布系统全省区县站点(两根树,剔除国控)小时/日值入库DataCrawler",
-            schedule="45 * * * *",
+            schedule="16,22,57 * * * *",
             version="1.1.0",
         )
         self.client = client or HenanSsfbClient()

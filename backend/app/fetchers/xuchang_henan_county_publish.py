@@ -241,7 +241,7 @@ class XuchangHenanCountyPublishFetcher(DataFetcher):
         super().__init__(
             name="xuchang_henan_county_publish_fetcher",
             description="抓取河南实时发布系统全省区县(含济源/功能区)小时/日值入库DataCrawler",
-            schedule="55 * * * *",
+            schedule="18,24,59 * * * *",
             version="1.1.0",
         )
         self.client = client or HenanSsfbClient()
