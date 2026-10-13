@@ -1100,7 +1100,9 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
                 "SO2_24h/CO_24h/NO2_24h/O3_8h_24h/PM10_24h/PM2_5_24h）"
                 "\n- dat_zhongda_station_minute/dat_zhongda_station_hour：中大平台站点5分钟/小时数据"
                 "\n- dat_zhongda_city_hour：中大平台城市小时数据"
-                "\n- 国控站点小时/日长历史：改用 execute_crawler_sql_query，本工具不开放 dat_station_hour/dat_station_day"
+                "\n- 国控站点小时长历史：改用 execute_crawler_sql_query；"
+                "国控站点日值（日及以上）优先 query_airdata_platform 中台接口"
+                "（v_s_d_app_145/v_s_d_src_145），长历史才用其 StationDay"
                 "\n- city_168_statistics_new_standard/city_168_statistics_old_standard：168城市统计"
                 "\n- province_statistics_new_standard/province_statistics_old_standard：省级空气质量统计"
                 + schema_guide
