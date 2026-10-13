@@ -53,6 +53,12 @@ Secret 仅放在后端环境变量，不能写入 App 或提交 Git。构建时�
 
 构建前可执行 `powershell -ExecutionPolicy Bypass -File .\check-environment.ps1` 检查 JDK 17 和 Android SDK 34。当前开发机已完成 SDK 34 配置，并可构建 Debug APK。
 
+## 正式出包与签名
+
+对外分发一律用 `.\build-release.ps1 -VersionCode <递增整数> -VersionName <x.y.z>` 出 release 包，
+脚本会校验正式签名并打印证书指纹。密钥生成、保管、登记与发版 checklist 见 `RELEASE_SIGNING.md`；
+未配置 `keystore.properties` 的机器只能编译 debug，release 构建会被拒绝。
+
 ## 已接入接口
 
 - `POST /api/social/app/auth/login`：App 账号登录并签发 HMAC token。
