@@ -1,6 +1,7 @@
 package com.suyuan.mobile
 
 import android.app.DatePickerDialog
+import androidx.activity.compose.BackHandler
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.*
@@ -33,6 +34,8 @@ fun ScheduledTaskPanel(state: AppUiState, viewModel: AppViewModel, requestedTask
     var detail by remember { mutableStateOf<JSONObject?>(null) }
     var filtersExpanded by rememberSaveable { mutableStateOf(false) }
     var reportUrl by remember { mutableStateOf<String?>(null) }
+    // 面板内先收起筛选区再交回外层 ChatScreen 的 BackHandler 关闭面板。
+    BackHandler(enabled = filtersExpanded) { filtersExpanded = false }
     val selected = state.scheduledTasks.firstOrNull { it.taskId == selectedId }
     fun reload(page: Int = 1) { selectedId?.let { viewModel.queryTaskResults(it, page, start, end, station, pollutant) } }
     LaunchedEffect(state.scheduledTasks, requestedTaskId) {

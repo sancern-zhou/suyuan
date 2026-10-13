@@ -32,6 +32,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -282,6 +283,12 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     var showBroadcasts by remember { mutableStateOf(false) }
     var showReports by remember { mutableStateOf(false) }
     var selectedTaskId by remember { mutableStateOf<String?>(null) }
+    // 系统返回（侧滑/返回键）在面板打开时先回对话页，而不是走 Activity 默认行为直接退出。
+    BackHandler(enabled = showHistory || showBroadcasts || showReports) {
+        showHistory = false
+        showBroadcasts = false
+        showReports = false
+    }
     val voiceClient = remember { RealtimeVoiceClient(BuildConfig.API_BASE_URL) }
     DisposableEffect(voiceClient) {
         onDispose { voiceClient.stop() }
