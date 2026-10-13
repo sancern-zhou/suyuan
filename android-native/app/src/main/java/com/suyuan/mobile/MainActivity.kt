@@ -214,6 +214,40 @@ private fun SuyuanApp(viewModel: AppViewModel, oauthCallback: Uri?, consumeOAuth
 }
 
 @Composable
+private fun FilterDropdown(
+    label: String,
+    options: List<String>,
+    selected: String?,
+    onSelect: (String?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier) {
+        var expanded by remember { mutableStateOf(false) }
+        TextButton(onClick = { expanded = true }) {
+            Text(
+                if (selected == null) "$label: 全部" else "$label: $selected",
+                color = SuyuanColors.primary,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("$label: 全部", color = if (selected == null) SuyuanColors.primary else SuyuanColors.text) },
+                onClick = { onSelect(null); expanded = false },
+            )
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option, color = if (selected == option) SuyuanColors.primary else SuyuanColors.text) },
+                    onClick = { onSelect(option); expanded = false },
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun UpdatePanels(updateState: UpdateState, viewModel: AppViewModel) {
     val context = LocalContext.current
     when (val s = updateState) {
@@ -909,7 +943,8 @@ private fun HistoryPanel(state: AppUiState, viewModel: AppViewModel, onBack: () 
 @Composable
 private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit) {
     var expandedMessageId by rememberSaveable { mutableStateOf<String?>(null) }
-    var query by rememberSaveable { mutableStateOf("") }
+    var stationFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    var pollutantFilter by rememberSaveable { mutableStateOf<String?>(null) }
     var unreadOnly by rememberSaveable { mutableStateOf(false) }
     var deleteMessage by remember { mutableStateOf<BroadcastMessage?>(null) }
     val listState = rememberLazyListState()
@@ -922,7 +957,20 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
         Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("搜索广播") }, modifier = Modifier.weight(1f))
+            FilterDropdown(
+                label = "站点",
+                options = state.broadcastMessages.mapNotNull { it.stationName }.distinct().sorted(),
+                selected = stationFilter,
+                onSelect = { stationFilter = it },
+                modifier = Modifier.weight(1f),
+            )
+            FilterDropdown(
+                label = "污染物",
+                options = state.broadcastMessages.mapNotNull { it.pollutant }.distinct().sorted(),
+                selected = pollutantFilter,
+                onSelect = { pollutantFilter = it },
+                modifier = Modifier.weight(1f),
+            )
             TextButton(onClick = { unreadOnly = !unreadOnly }) { Text(if (unreadOnly) "全部" else "未读", color = SuyuanColors.primary, fontSize = 12.sp) }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -939,7 +987,11 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
         } else if (state.broadcastMessages.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text("暂无广播消息", color = SuyuanColors.secondaryText, fontSize = 15.sp) }
         } else {
-            val filteredMessages = state.broadcastMessages.filter { (!unreadOnly || !it.read) && (query.isBlank() || it.content.contains(query, ignoreCase = true)) }
+            val filteredMessages = state.broadcastMessages.filter {
+                (!unreadOnly || !it.read) &&
+                    (stationFilter == null || it.stationName == stationFilter) &&
+                    (pollutantFilter == null || it.pollutant == pollutantFilter)
+            }
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),

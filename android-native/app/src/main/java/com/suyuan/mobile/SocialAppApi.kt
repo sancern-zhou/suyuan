@@ -49,6 +49,8 @@ data class BroadcastMessage(
     val timestamp: String? = null,
     val read: Boolean = false,
     val attachments: List<UploadedAttachment> = emptyList(),
+    val stationName: String? = null,
+    val pollutant: String? = null,
 )
 data class BroadcastInbox(
     val messages: List<BroadcastMessage>,
@@ -611,6 +613,8 @@ class SocialAppApi(
                             timestamp = item.optString("timestamp", "").ifBlank { null },
                             read = item.optBoolean("read", false),
                             attachments = attachments,
+                            stationName = item.optJSONObject("metadata")?.optString("station_name")?.ifBlank { null },
+                            pollutant = item.optJSONObject("metadata")?.optString("pollutant")?.ifBlank { null },
                         )
                     )
                 }
