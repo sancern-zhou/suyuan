@@ -13,6 +13,7 @@ xuchang_henan_ranking_recalc.py）。
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -608,18 +609,30 @@ class XuchangCubeMetricsTool(LLMTool):
                 raise RuntimeError("CUBE_API_SECRET 未配置(语义层鉴权)")
 
             token = _make_token(secret)
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(
-                    f"{base_url}/load",
-                    json={"query": query},
-                    headers={"Authorization": token},
-                )
-                if resp.status_code != 200:
-                    detail = resp.text[:500]
-                    raise RuntimeError(f"语义层返回 {resp.status_code}: {detail}")
-                body = resp.json()
-                if "error" in body:
-                    raise RuntimeError(f"语义层错误: {body['error']}")
+            wait_seconds = float(os.getenv("CUBE_API_WAIT_SECONDS", "60"))
+            deadline = started + wait_seconds
+            body: Dict[str, Any] = {}
+            async with httpx.AsyncClient(timeout=30) as client:
+                while True:
+                    resp = await client.post(
+                        f"{base_url}/load",
+                        json={"query": query},
+                        headers={"Authorization": token},
+                    )
+                    if resp.status_code != 200:
+                        detail = resp.text[:500]
+                        raise RuntimeError(f"语义层返回 {resp.status_code}: {detail}")
+                    body = resp.json()
+                    pending = str(body.get("error") or "")
+                    if "continue wait" not in pending.lower():
+                        break
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(
+                            f"语义层查询排队超时({round(time.monotonic() - started, 1)}s): {pending}"
+                        )
+                    await asyncio.sleep(1.5)
+            if body.get("error"):
+                raise RuntimeError(f"语义层错误: {body['error']}")
 
             results = [
                 {k: (v.get("value") if isinstance(v, dict) else v)
