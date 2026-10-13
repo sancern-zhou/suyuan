@@ -34,6 +34,10 @@ from app.scenarios.xuchang_city_exceedance.station_catalog import (
     NATIONAL_STATION_META,
     REGIONAL_CITIES,
 )
+from app.tools.xuchang.airdata_platform.client import (
+    AirDataPlatformError,
+    get_airdata_platform_client,
+)
 from app.scenarios.xuchang_daily_review.township_hourly import load_township_hourly_rows
 from app.scenarios.xuchang_station_deviation.source_features import (
     calculate_pollutant_source_features,
@@ -446,6 +450,7 @@ def evaluate_station_daily_pollution(
             "station_name": row.get("name") or station_id,
             "lat": _number(row.get("lat")),
             "lon": _number(row.get("lon")),
+            "data_caliber": row.get("caliber") or "app",
             "target_date": target_date.isoformat(),
             "pm25": {
                 "status": "confirmed" if pm25_daily is not None else "missing_daily_value",
@@ -490,7 +495,11 @@ def evaluate_station_daily_pollution(
                 "daily_value": metric["daily_value"],
                 "limit": metric["limit"],
                 "source_granularity": "station_day",
-                "source_table": "dbo.dat_zhongda_station_hour(HJ633 day aggregate)",
+                "source_table": (
+                    f"airdata_platform:v_s_d_{evaluation['data_caliber']}_145"
+                    if evaluation.get("data_caliber") in ("app", "src")
+                    else "zhongda_hour(HJ633 day aggregate)"
+                ),
                 "trigger": "confirmed_station_daily_exceedance",
             })
     evaluation_by_station = {item["station_id"]: item for item in evaluations}
@@ -529,14 +538,70 @@ class XuchangStationDailyExceedanceFetcher(DataFetcher):
         self.now_factory = now_factory
 
     def load_rows(self, target_date: date) -> list[dict[str, Any]]:
-        """Aggregate zhongda hourly values into station-day rows.
+        """站点日值：中台接口优先（审核 app → 原始 src 补位），接口不可用
+        或无数据时按 HJ 633 规则由中大小时值现算（PM2.5 日均 >=20 有效
+        小时；MDA8 由 o3 小时值按 17 个滑动 8 小时窗口现算）。"""
+        rows = self._load_rows_from_airdata(target_date)
+        if rows is None:
+            rows = self._compute_rows_from_zhongda(target_date)
+        return rows
 
-        原依赖平台日值表（dat_station_day，已随 CNEMC 直发链路下线）；
-        现按 HJ 633 日统计规则由中大小时值计算：PM2.5 日均取有效小时
-        算术平均（有效小时 >= 20）；O3 日最大 8 小时对日内 00-08 至
-        16-24 共 17 个滑动窗口求均值（每窗口有效小时 >= 6），取最大值
-        （有效窗口 >= 6），不足最低有效数量时视为缺测。中大表 o3_8h
-        列在 Act+gp 口径下不回填，MDA8 必须由 o3 小时值现算。
+    @staticmethod
+    def _airdata_day_rows(api_code: str, target_date: date) -> dict[str, dict[str, Any]]:
+        # 日值视图 timepoint 为纯日期字符串，中台按字符串比较，
+        # 过滤值必须用 "YYYY-MM-DD"（带时分秒会匹配不到任何行）。
+        client = get_airdata_platform_client()
+        result = client.query_all(
+            api_code,
+            filters=[
+                {"field": "code", "operator": "in", "value": list(NATIONAL_STATION_CODES)},
+                {"field": "timepoint", "operator": "gte", "value": f"{target_date:%Y-%m-%d}"},
+                {"field": "timepoint", "operator": "lte", "value": f"{target_date:%Y-%m-%d}"},
+            ],
+            selected_fields=["code", "name", "timepoint", "aqi", "pm2_5", "o3_8h"],
+            max_rows=50,
+        )
+        return {str(row.get("code")): row for row in result["rows"]}
+
+    def _load_rows_from_airdata(self, target_date: date) -> list[dict[str, Any]] | None:
+        try:
+            app_rows = self._airdata_day_rows("v_s_d_app_145", target_date)
+        except (AirDataPlatformError, OSError) as exc:
+            logger.warning("xuchang_station_daily_airdata_app_failed", error=str(exc))
+            app_rows = {}
+        try:
+            src_rows = self._airdata_day_rows("v_s_d_src_145", target_date)
+        except (AirDataPlatformError, OSError) as exc:
+            logger.warning("xuchang_station_daily_airdata_src_failed", error=str(exc))
+            src_rows = {}
+        if not app_rows and not src_rows:
+            return None
+
+        day_rows = []
+        for code in NATIONAL_STATION_CODES:
+            row = app_rows.get(code) or src_rows.get(code)
+            if not row:
+                continue
+            meta = NATIONAL_STATION_META.get(code, {})
+            day_rows.append({
+                "station_id": code,
+                "name": str(row.get("name") or meta.get("name") or code),
+                "lon": meta.get("lon"),
+                "lat": meta.get("lat"),
+                "pm25": _number(row.get("pm2_5")),
+                "o3_8h": _number(row.get("o3_8h")),
+                "data_time": datetime.combine(target_date, time.min),
+                "caliber": "app" if code in app_rows else "src",
+            })
+        return day_rows or None
+
+    def _compute_rows_from_zhongda(self, target_date: date) -> list[dict[str, Any]]:
+        """中台接口不可用时的兜底：按 HJ 633 日统计规则由中大小时值聚合。
+
+        PM2.5 日均取有效小时算术平均（有效小时 >= 20）；O3 日最大 8 小时
+        对日内 00-08 至 16-24 共 17 个滑动窗口求均值（每窗口有效小时
+        >= 6），取最大值（有效窗口 >= 6）。中大表 o3_8h 列在 Act+gp 口径
+        下不回填，MDA8 必须由 o3 小时值现算。
         """
         start = datetime.combine(target_date, time.min)
         end = start + timedelta(days=1)
@@ -588,6 +653,7 @@ class XuchangStationDailyExceedanceFetcher(DataFetcher):
                 ),
                 "o3_8h": self._daily_max_8h_o3(o3_values),
                 "data_time": datetime.combine(target_date, time.min),
+                "caliber": "computed(zhongda_hour)",
             })
         return day_rows
 
