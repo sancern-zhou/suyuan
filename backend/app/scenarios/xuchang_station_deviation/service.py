@@ -23,6 +23,10 @@ import pyodbc
 import structlog
 
 from app.integrations.xcai_station_sql import xcai_connection_string
+from app.scenarios.xuchang_city_exceedance.station_catalog import (
+    NATIONAL_STATION_CODES,
+    NATIONAL_STATION_META,
+)
 from app.utils.path_config import format_agent_path, get_data_registry
 from app.scenarios.xuchang_station_deviation.source_features import calculate_pollutant_source_features
 from app.scenarios.xuchang_station_deviation.dispatch import resolve_station
@@ -441,27 +445,46 @@ class XuchangStationDeviationAlertService:
         start = _hour(timestamp) - timedelta(hours=1)
         end = start + timedelta(hours=1)
         source_start = _hour(timestamp) - timedelta(hours=24)
+        placeholders = ", ".join("?" for _ in NATIONAL_STATION_CODES)
         expected_hour = self._query(
-            """
+            f"""
             SELECT MAX(station_count) AS count FROM (
-                SELECT COUNT(DISTINCT station_id) AS station_count
-                FROM dbo.dat_station_hour
-                WHERE city_area_code = ? AND data_time >= DATEADD(hour, -24, ?) AND data_time < ?
-                GROUP BY data_time
+                SELECT COUNT(DISTINCT station_code) AS station_count
+                FROM dbo.dat_zhongda_station_hour
+                WHERE data_table_type = 'Act' AND parameter_type = 'gp'
+                  AND station_code IN ({placeholders})
+                  AND time_point >= DATEADD(hour, -24, ?) AND time_point < ?
+                GROUP BY time_point
             ) AS hourly_counts
             """,
-            [self.config.city_area_code, start.replace(tzinfo=None), end.replace(tzinfo=None)],
+            [*NATIONAL_STATION_CODES, start.replace(tzinfo=None), end.replace(tzinfo=None)],
         )
         expected_hour_count = int(expected_hour[0]["count"] or 0) if expected_hour else 0
         hour_rows = self._query(
-            """
-            SELECT station_id, name, lon, lat, pm25, pm10, o3, no2, so2, co, data_time
-            FROM dbo.dat_station_hour
-            WHERE city_area_code = ? AND data_time >= ? AND data_time < ?
-            ORDER BY data_time, station_id
+            f"""
+            SELECT station_code, station_name, aqi, pm25, pm10, o3, no2, so2, co, time_point
+            FROM dbo.dat_zhongda_station_hour
+            WHERE data_table_type = 'Act' AND parameter_type = 'gp'
+              AND station_code IN ({placeholders})
+              AND time_point >= ? AND time_point < ?
+            ORDER BY time_point, station_code
             """,
-            [self.config.city_area_code, source_start.replace(tzinfo=None), end.replace(tzinfo=None)],
+            [*NATIONAL_STATION_CODES, source_start.replace(tzinfo=None), end.replace(tzinfo=None)],
         )
+        hour_rows = [
+            {
+                "station_id": str(row["station_code"]),
+                "name": row["station_name"],
+                "station_name": row["station_name"],
+                "lon": NATIONAL_STATION_META.get(str(row["station_code"]), {}).get("lon"),
+                "lat": NATIONAL_STATION_META.get(str(row["station_code"]), {}).get("lat"),
+                "aqi": row["aqi"],
+                "pm25": row["pm25"], "pm10": row["pm10"], "o3": row["o3"],
+                "no2": row["no2"], "so2": row["so2"], "co": row["co"],
+                "data_time": row["time_point"],
+            }
+            for row in hour_rows
+        ]
         for row in hour_rows:
             row["data_source"] = "hour"
             normalize_station_row(row)

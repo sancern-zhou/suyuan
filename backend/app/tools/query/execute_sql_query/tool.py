@@ -99,12 +99,12 @@ AIR_QUALITY_SCHEMA_GUIDE = (
     "若上下文缺少名称与代码的映射，应补充地理上下文；describe_table只能查询字段，不能提供该映射。"
     "不同表的城市字段不同，禁止跨表套用字段名。"
     "\n【数据源优先级】"
-    "站点小时/城市小时数据同时存在通用发布表"
-    "（dat_station_hour、CityAQIPublishHistory）和中大平台表（dat_zhongda_station_hour、"
-    "dat_zhongda_city_hour）两个来源时，优先查询中大平台表（dat_zhongda_*）——中大源为审核后数据，"
+    "站点/城市小时数据存在通用发布表（CityAQIPublishHistory）和中大平台表"
+    "（dat_zhongda_station_hour、dat_zhongda_city_hour）两个来源时，"
+    "优先查询中大平台表（dat_zhongda_*）——中大源为审核后数据，"
     "准确性更高。仅当中大表不覆盖所需时间（如城市聚合滞后约1天）或字段缺失时，再用通用发布表补充。"
-    "站点日/城市日数据仅有通用发布表（dat_station_day、CityDayAQIPublishHistory），"
-    "中大平台不再采集日数据。站点5分钟数据（dat_zhongda_station_minute）为中大独有，无此冲突。"
+    "城市日数据仅通用发布表 CityDayAQIPublishHistory 提供。"
+    "站点5分钟数据（dat_zhongda_station_minute）为中大独有，无此冲突。"
     "\n【预报数据源优先级】查询未来逐小时气象预报（温度、湿度、风向风速、气压、降水概率、天气现象）时，"
     "优先查询NMC逐小时气象预报（XuchangNmcHourlyWeatherForecast，中央气象台官方预报，7天×3小时间隔）；"
     "中国天气网日预报归入NMC同源数据。"
@@ -141,14 +141,6 @@ AIR_QUALITY_SCHEMA_GUIDE = (
     "城市日数据仅此表提供（中大平台不再采集日数据）。"
     "数据范围 2021-06 起；**缺济源市**（全国表仅 17 城），济源日值及"
     "2026-10-03 后的最新日值请改用 xuchang_cube_metrics 的 SsfbCityDay。"
-            "\n- dat_station_hour（站点小时）和dat_station_day（站点日）："
-            "城市字段为city_area_code，按行政区代码筛选：city_area_code = '{city_code}'；"
-            "站点字段为station_id, name, lon, lat；时间字段为data_time；"
-            "污染物字段使用小写：aqi, aqi_level, pm25, pm10, o3, no2, so2, co, pollutant；"
-            "dat_station_day另有O38h字段。没有cityname、CityID、Area、CityCode。"
-            "数据范围：dat_station_hour 2024-01 起，dat_station_day 2026-08-25 起（CNEMC 采集起步，日历史很浅）。"
-            "注意：dat_station_hour与dat_zhongda_station_hour数据重复，优先使用中大表（审核后数据），"
-            "本表仅作补充；站点日数据仅本表提供。"
             "\n- dat_zhongda_station_minute（中大平台站点5分钟）和dat_zhongda_station_hour（中大平台站点小时）："
             "城市字段为area，按城市全称筛选：area = N'{city_name}'；"
             "站点字段为station_code（平台内部编码，数字+字母如'1003A'）和station_name；时间字段为time_point；"
@@ -180,7 +172,7 @@ AIR_QUALITY_SCHEMA_GUIDE = (
             "数值为平台返回原值（当前无数据，单位未经核实，跨表统计前先抽样核对）。"
             "无效占位值为-999（区别于站点表的-99），统计前必须排除（如AND aqi <> -999）。"
             "注意：城市表由平台聚合任务生成，可能为空，查询无结果不代表SQL错误。"
-            "站点日/城市日数据中大平台不再采集，请改用dat_station_day、CityDayAQIPublishHistory。"
+            "城市日数据请使用 CityDayAQIPublishHistory；国控站点小时/日长历史请使用 execute_crawler_sql_query。"
     "\n- WeatherForecast7Day（7天空气质量预报）："
     "城市字段为cityname，按城市全称筛选：cityname = N'{city_name}'；时间字段为TimePoint；"
     "预报字段为DayTitle, MinAqi, MaxAqi, MaxPollution, WeatherCondition, "
@@ -219,7 +211,7 @@ XUCHANG_CRAWLER_TABLE_HINTS = {
 
 
 def _build_xuchang_schema_guide() -> str:
-    """移除许昌不可用的 SQL Server 站点长历史契约，并写明替代路由。"""
+    """替换数据源优先级段，写明站点/城市长历史改走 crawler 工具。"""
     guide = AIR_QUALITY_SCHEMA_GUIDE
     priority_start = guide.index("\n【数据源优先级】")
     forecast_start = guide.index("\n【预报数据源优先级】")
@@ -229,11 +221,7 @@ def _build_xuchang_schema_guide() -> str:
         "中大平台站点5分钟/小时数据仍使用本工具的 dat_zhongda_station_minute/"
         "dat_zhongda_station_hour。"
     )
-    guide = guide[:priority_start] + xuchang_priority + guide[forecast_start:]
-
-    station_start = guide.index("\n- dat_station_hour（站点小时）和dat_station_day（站点日）：")
-    zhongda_start = guide.index("\n- dat_zhongda_station_minute", station_start)
-    return guide[:station_start] + guide[zhongda_start:]
+    return guide[:priority_start] + xuchang_priority + guide[forecast_start:]
 
 
 OPS_SQL_TABLES = [
@@ -1086,8 +1074,6 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
             "\n- CityAQIPublishHistory：城市小时空气质量历史（列：TimePoint/Area/CityCode/AQI/Quality/"
             "PrimaryPollutant/SO2/CO/NO2/O3/PM10/PM2_5）"
             "\n- CurrentAirQuality：当前空气质量"
-            "\n- dat_station_hour：站点小时数据（次选，优先中大表）"
-            "\n- dat_station_day：站点日数据"
             "\n- dat_zhongda_station_minute/dat_zhongda_station_hour：中大平台站点5分钟/小时数据（含质量标记列，-99为无效值）"
             "\n- dat_zhongda_city_hour：中大平台城市小时（可能为空，需空结果容错）"
             "\n【统计预计算表】"

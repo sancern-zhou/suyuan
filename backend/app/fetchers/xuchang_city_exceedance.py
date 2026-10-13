@@ -22,9 +22,10 @@ from app.fetchers.xuchang_station_daily_exceedance import (
 )
 from app.integrations.xcai_station_sql import xcai_connection_string
 from app.scenarios.xuchang_city_exceedance.process import POLLUTANT_FIELDS, detect_processes
+from app.scenarios.xuchang_city_exceedance.aqi import hourly_aqi_and_primary
 from app.scenarios.xuchang_city_exceedance.station_catalog import (
-    NATIONAL_SOURCE_TO_CANONICAL,
-    NATIONAL_STATION_IDS,
+    NATIONAL_STATION_CODES,
+    NATIONAL_STATION_META,
     REGIONAL_CITIES,
 )
 from app.scenarios.xuchang_daily_review.township_hourly import load_township_hourly_rows
@@ -100,30 +101,41 @@ class XuchangCityExceedanceFetcher(DataFetcher):
         self.township_loader = township_loader
 
     def load_national(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
-        placeholders = ", ".join("?" for _ in NATIONAL_STATION_IDS)
+        placeholders = ", ".join("?" for _ in NATIONAL_STATION_CODES)
         connection = pyodbc.connect(xcai_connection_string(), timeout=30)
         try:
             cursor = connection.cursor()
             cursor.execute(
-                f"""SELECT station_id, name, lon, lat, aqi, pollutant,
-                                  pm25, pm10, o3, no2, so2, co, data_time
-                    FROM dbo.dat_station_hour
-                    WHERE city_area_code = ? AND station_id IN ({placeholders})
-                      AND data_time >= ? AND data_time <= ?
-                    ORDER BY data_time, station_id""",
-                ["411000", *NATIONAL_STATION_IDS, start, end],
+                f"""SELECT station_code, station_name, aqi,
+                          pm25, pm10, o3, no2, so2, co, time_point
+                    FROM dbo.dat_zhongda_station_hour
+                    WHERE data_table_type = 'Act' AND parameter_type = 'gp'
+                      AND station_code IN ({placeholders})
+                      AND time_point >= ? AND time_point <= ?
+                    ORDER BY time_point, station_code""",
+                [*NATIONAL_STATION_CODES, start, end],
             )
             columns = [item[0] for item in cursor.description]
-            normalized = {}
+            rows = []
             for raw in cursor.fetchall():
                 row = dict(zip(columns, raw, strict=True))
-                source_id = str(row["station_id"])
-                row["station_id"] = NATIONAL_SOURCE_TO_CANONICAL.get(source_id, source_id)
-                row["source_station_id"] = source_id
-                key = (row["station_id"], row["data_time"])
-                if key not in normalized or source_id == row["station_id"]:
-                    normalized[key] = row
-            return list(normalized.values())
+                station_id = str(row.pop("station_code"))
+                meta = NATIONAL_STATION_META.get(station_id, {})
+                aqi = _value(row.get("aqi"))
+                _, primary = hourly_aqi_and_primary(row)
+                rows.append({
+                    "station_id": station_id,
+                    "name": str(row.pop("station_name") or meta.get("name") or station_id),
+                    "lon": meta.get("lon"),
+                    "lat": meta.get("lat"),
+                    "aqi": aqi,
+                    "pollutant": primary,
+                    "pm25": row.get("pm25"), "pm10": row.get("pm10"),
+                    "o3": row.get("o3"), "no2": row.get("no2"),
+                    "so2": row.get("so2"), "co": row.get("co"),
+                    "data_time": row.get("time_point"),
+                })
+            return rows
         finally:
             connection.close()
 

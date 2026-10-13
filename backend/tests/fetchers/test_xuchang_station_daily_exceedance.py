@@ -14,7 +14,6 @@ from app.fetchers.xuchang_station_daily_exceedance import (
     evaluate_station_daily_pollution,
     merge_meteo_rows,
     normalize_station_name,
-    resolve_hourly_station_codes,
 )
 
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -243,30 +242,6 @@ def test_merge_prefers_observed_surface_variables_and_keeps_era5_vertical():
 
 
 def test_station_code_mapping_by_name():
-    daily_names = {
-        "2398A": "开发区",
-        "3134A": "市一中",
-        "3337A": "许昌学院",
-        "3338A": "芙蓉广场",
-        "4180A": "新元大道996号",
-        "4259A": "望田路111号",
-    }
-    hourly_names = {
-        "1003A": "开发区",
-        "1005A": "市一中（启用170929）",
-        "1008A": "许昌学院",
-        "1009A": "芙蓉广场",
-        "1011A": "新元大道996号",
-        "1012A": "望田路111号（启用20250213）",
-        "9999A": "其它站",
-    }
-
-    mapping = resolve_hourly_station_codes(daily_names, hourly_names)
-
-    assert mapping == {
-        "2398A": "1003A", "3134A": "1005A", "3337A": "1008A",
-        "3338A": "1009A", "4180A": "1011A", "4259A": "1012A",
-    }
     assert normalize_station_name("市一中（启用170929）") == "市一中"
 
 

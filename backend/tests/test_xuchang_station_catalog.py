@@ -78,7 +78,7 @@ STATION_COORDINATES = {
         "name": "芙蓉广场",
         "longitude": 113.8428,
         "latitude": 34.0825,
-        "source": "sqlserver:dat_station_hour",
+        "source": "builtin:national_station_meta",
     },
 }
 
@@ -258,13 +258,13 @@ def test_township_coordinates_are_joined_by_station_name(fake_catalog):
     assert regular[1]["district"] == "建安区"
 
 
-def test_regular_station_coordinates_filled_from_sqlserver(fake_catalog):
+def test_regular_station_coordinates_filled_from_builtin_meta(fake_catalog):
     catalog = build_catalog()
 
     regular = catalog["regular_stations"][0]
     assert regular["longitude"] == pytest.approx(113.8428)
     assert regular["latitude"] == pytest.approx(34.0825)
-    assert regular["coordinate_source"] == "sqlserver:dat_station_hour"
+    assert regular["coordinate_source"] == "builtin:national_station_meta"
 
 
 @pytest.mark.asyncio

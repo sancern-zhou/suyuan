@@ -15,6 +15,10 @@ import pyodbc
 
 from app.db.repositories.weather_repo import WeatherRepository
 from app.integrations.xcai_station_sql import xcai_connection_string
+from app.scenarios.xuchang_city_exceedance.station_catalog import (
+    NATIONAL_STATION_CODES,
+    NATIONAL_STATION_META,
+)
 
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
 XUCHANG_CITY = "许昌市"
@@ -443,16 +447,29 @@ class XuchangStationDeviationEvidenceCollector:
         try:
             cursor = connection.cursor()
             cursor.execute(
-                """
-                SELECT data_time AS time, station_id, name AS station_name,
-                       lon, lat, pm25, pm10, o3, no2, so2, co, aqi
-                FROM dbo.dat_station_hour
-                WHERE city_area_code = ? AND data_time >= ? AND data_time <= ?
-                ORDER BY data_time, station_id
+                f"""
+                SELECT station_code, station_name, time_point AS time,
+                       aqi, pm25, pm10, o3, no2, so2, co
+                FROM dbo.dat_zhongda_station_hour
+                WHERE data_table_type = 'Act' AND parameter_type = 'gp'
+                  AND station_code IN ({placeholders})
+                  AND time_point >= ? AND time_point <= ?
+                ORDER BY time_point, station_code
                 """,
-                [XUCHANG_CITY_AREA_CODE, start_value, end_value],
+                [*NATIONAL_STATION_CODES, start_value, end_value],
             )
-            station_rows = _rows(cursor)
+            station_rows = [
+                {
+                    "time": row["time"], "station_id": str(row["station_code"]),
+                    "station_name": row["station_name"],
+                    "lon": NATIONAL_STATION_META.get(str(row["station_code"]), {}).get("lon"),
+                    "lat": NATIONAL_STATION_META.get(str(row["station_code"]), {}).get("lat"),
+                    "pm25": row["pm25"], "pm10": row["pm10"], "o3": row["o3"],
+                    "no2": row["no2"], "so2": row["so2"], "co": row["co"],
+                    "aqi": row["aqi"],
+                }
+                for row in _rows(cursor)
+            ]
             minute_start_value = (end - timedelta(hours=1)).replace(tzinfo=None)
             cursor.execute(
                 """
@@ -474,7 +491,7 @@ class XuchangStationDeviationEvidenceCollector:
         air_status = "success" if station_rows or station_minute_rows else "empty"
         return {
             "status": air_status,
-            "source": "XcAiDb.dbo.dat_station_hour + XcAiDb.dbo.dat_zhongda_station_minute",
+            "source": "XcAiDb.dbo.dat_zhongda_station_hour + XcAiDb.dbo.dat_zhongda_station_minute",
             "window": {"start": start.isoformat(), "end": end.isoformat()},
             "local_station_hour_records": station_rows,
             "local_station_5min_records": station_minute_rows,

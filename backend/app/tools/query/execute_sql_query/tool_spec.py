@@ -18,9 +18,8 @@ def test_execute_sql_query_schema_embeds_reusable_frequent_table_contracts():
     assert "Area = N'{city_name}'或CityCode = {city_code}" in description
     assert "PM2_5，不是PM25" in description
 
-    assert "dat_station_hour" in description
-    assert "city_area_code = '{city_code}'" in description
-    assert "污染物字段使用小写" in description
+    assert "dat_station_hour" not in description
+    assert "dat_station_day" not in description
 
     assert "dat_zhongda_station_minute" in description
     assert "dat_zhongda_station_hour" in description

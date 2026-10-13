@@ -42,8 +42,6 @@ class SQLValidator:
         'CityDayAQIPublishHistory',  # 城市日空气质量发布历史（24小时均值）
         'CityAQIPublishHistory',  # 城市小时空气质量发布历史
         'CurrentAirQuality',  # 当前空气质量
-        'dat_station_day',  # 站点日数据
-        'dat_station_hour',  # 站点小时数据
         'dat_weather_hour',  # 气象小时数据
         'HenanCityAccumulateRanking',  # 河南省城市月/年累计空气质量排名（月度/年度综合指数、六参数、同比、有效天数）
         'WeatherForecast7Day',  # 7天空气质量预报数据（全国319个城市，包含AQI范围、首要污染物、气象条件等）
