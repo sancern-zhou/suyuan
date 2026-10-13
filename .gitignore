@@ -36,6 +36,8 @@ data/
 *.png
 *.jpg
 *.jpeg
+# 前端源码资产不属临时文件，显式放行（打包进 bundle 的二维码等）
+!frontend/src/assets/*.png
 *.html
 *.tmp
 nul
