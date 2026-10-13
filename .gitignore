@@ -287,6 +287,7 @@ suncere*/
 *.keystore
 android-native/keystore.properties
 android-native/.gradle/
+android-native/dist-archives/
 *.htpasswd
 id_rsa*
 id_ed25519*
