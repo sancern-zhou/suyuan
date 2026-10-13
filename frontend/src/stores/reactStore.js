@@ -46,6 +46,7 @@ import {
   removePendingSteeringInput
 } from './reactStoreSteering.js'
 import { getEventRunId, shouldApplyRunEvent } from './reactStoreRunOwnership.js'
+import { createRunStreamTracker, observeRunStreamEvent, shouldReportMissingRunProgress } from './reactStoreRunReattach.js'
 import {
   acknowledgeQueuedInput,
   enqueueUserInput,
@@ -3133,6 +3134,46 @@ export const useReactStore = defineStore('react', {
           this._persistModeState(actualMode)
         }
       }
+    },
+
+    // 接回仍在运行的 detached run：回放+跟随事件流，实时恢复进度展示。
+    // 用于历史会话恢复（运行中会话的消息在终态才落库，恢复到 0 条属预期）。
+    // 注意：本方法会阻塞到 run 终止/流结束，调用方不应 await 其完成。
+    async reattachActiveRun(sessionId, options = {}) {
+      if (!sessionId) return { success: false, error: 'missing_session_id' }
+
+      const mode = options.mode || this._getModeForSessionId(sessionId)
+      const sessionState = this._ensureSessionState(sessionId, mode)
+      sessionState.isAnalyzing = true
+      sessionState.isComplete = false
+      sessionState.error = null
+
+      const tracker = createRunStreamTracker()
+
+      try {
+        await agentAPI.followRunStream(sessionId, {
+          requestKey: sessionId,
+          onEvent: (event) => {
+            if (!observeRunStreamEvent(tracker, event)) return
+            if (!event.data) event.data = {}
+            if (!event.data.session_id) event.data.session_id = sessionId
+            this.handleEvent(event)
+          }
+        })
+      } catch (error) {
+        sessionState.isAnalyzing = false
+        throw error
+      }
+
+      if (!tracker.sawTerminal) {
+        // 流结束但没有业务终止事件：镜像丢失/过期（或任务仍在跑但通道中断）
+        sessionState.isAnalyzing = false
+        if (shouldReportMissingRunProgress(tracker, sessionState.messages?.length) && !sessionState.error) {
+          sessionState.error = '未接收到运行中任务的进度，请稍后重新打开该会话'
+        }
+      }
+
+      return { success: true, terminal: tracker.sawTerminal, streamLost: tracker.sawStreamLost }
     },
 
     async steerActiveAnalysis(query, sessionState = this.currentState) {

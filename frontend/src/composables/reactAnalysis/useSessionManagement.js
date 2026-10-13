@@ -243,7 +243,10 @@ export function useSessionManagement(store) {
       const sessionData = restoreResult.session || restoreResult
       let messages = sessionData.conversation_history || []
       const restoredBoard = sessionData.metadata?.drawio_board || sessionData.drawio_board || null
-      if (messages.length === 0 && !restoredBoard?.board_id) {
+      // 运行中的 detached run：消息在终态才落库，恢复到 0 条属预期，改走接流
+      const activeRun = sessionData.active_run || null
+      const hasActiveRun = !!(activeRun && (activeRun.stream_id || activeRun === true))
+      if (messages.length === 0 && !restoredBoard?.board_id && !hasActiveRun) {
         throw new Error('该历史会话没有可恢复的消息，消息持久化可能失败')
       }
 
@@ -319,6 +322,14 @@ export function useSessionManagement(store) {
         return { success: false, cancelled: true, error: '会话已切换' }
       }
       chooseRestoredResource(resourceStore, sessionId)
+
+      // 运行中的任务：接回 detached run 事件流，实时展示进度。
+      // 不 await 完成（跟随会持续到任务终止），失败时回退为普通恢复结果。
+      if (hasActiveRun) {
+        store.reattachActiveRun(sessionId, { mode: restoredMode }).catch(error => {
+          console.warn('[会话恢复] 接回运行中任务失败:', error)
+        })
+      }
 
       // 设置分页信息
       if (sessionData.has_more_messages !== undefined || sessionData.total_message_count !== undefined) {
