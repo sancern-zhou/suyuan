@@ -44,8 +44,6 @@ MONITORING_SQL_TABLES = [
     'dbo.XuchangNmcHourlyWeatherForecast',
     'XuchangWeatherComDailyForecast',
     'dbo.XuchangWeatherComDailyForecast',
-    'dat_station_day',
-    'dat_station_hour',
     'dat_weather_hour',
     'dat_zhongda_station_minute',
     'dat_zhongda_station_hour',
