@@ -533,8 +533,10 @@ class XuchangStationDailyExceedanceFetcher(DataFetcher):
 
         原依赖平台日值表（dat_station_day，已随 CNEMC 直发链路下线）；
         现按 HJ 633 日统计规则由中大小时值计算：PM2.5 日均取有效小时
-        算术平均（有效小时 >= 20），O3 日最大 8 小时取 o3_8h 有效小时
-        最大值（有效小时 >= 6），不足最低有效小时数时视为缺测。
+        算术平均（有效小时 >= 20）；O3 日最大 8 小时对日内 00-08 至
+        16-24 共 17 个滑动窗口求均值（每窗口有效小时 >= 6），取最大值
+        （有效窗口 >= 6），不足最低有效数量时视为缺测。中大表 o3_8h
+        列在 Act+gp 口径下不回填，MDA8 必须由 o3 小时值现算。
         """
         start = datetime.combine(target_date, time.min)
         end = start + timedelta(days=1)
@@ -544,7 +546,7 @@ class XuchangStationDailyExceedanceFetcher(DataFetcher):
             cursor = connection.cursor()
             cursor.execute(
                 f"""
-                SELECT station_code, station_name, pm25, o3_8h, time_point
+                SELECT station_code, station_name, pm25, o3, time_point
                 FROM dbo.dat_zhongda_station_hour
                 WHERE data_table_type = 'Act' AND parameter_type = 'gp'
                   AND station_code IN ({placeholders})
@@ -572,8 +574,9 @@ class XuchangStationDailyExceedanceFetcher(DataFetcher):
         day_rows: list[dict[str, Any]] = []
         for station_id, hours in sorted(hourly_by_station.items()):
             meta = NATIONAL_STATION_META.get(station_id, {})
+            hours = sorted(hours, key=lambda item: item["time_point"])
             pm25_values = [value for value in (_valid(item.get("pm25")) for item in hours) if value is not None]
-            o3_values = [value for value in (_valid(item.get("o3_8h")) for item in hours) if value is not None]
+            o3_values = [_valid(item.get("o3")) for item in hours]
             day_rows.append({
                 "station_id": station_id,
                 "name": str(hours[0].get("station_name") or meta.get("name") or station_id),
@@ -583,10 +586,28 @@ class XuchangStationDailyExceedanceFetcher(DataFetcher):
                     round(sum(pm25_values) / len(pm25_values), 3)
                     if len(pm25_values) >= 20 else None
                 ),
-                "o3_8h": max(o3_values) if len(o3_values) >= 6 else None,
+                "o3_8h": self._daily_max_8h_o3(o3_values),
                 "data_time": datetime.combine(target_date, time.min),
             })
         return day_rows
+
+    @staticmethod
+    def _daily_max_8h_o3(
+        o3_values: list[float | None], *, min_window_hours: int = 6, min_windows: int = 6
+    ) -> float | None:
+        """日内 17 个滑动 8 小时窗口的均值取最大（HJ 633 MDA8）。"""
+        best: float | None = None
+        valid_windows = 0
+        for offset in range(0, 17):
+            window = o3_values[offset:offset + 8]
+            valid = [value for value in window if value is not None]
+            if len(valid) < min_window_hours:
+                continue
+            valid_windows += 1
+            mean = sum(valid) / len(valid)
+            if best is None or mean > best:
+                best = mean
+        return round(best, 3) if best is not None and valid_windows >= min_windows else None
 
     def load_station_hourly(
         self, target_date: date, station_ids: list[str]
