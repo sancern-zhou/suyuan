@@ -1888,3 +1888,47 @@ async def app_scheduled_report_formats(
     return await list_task_result_report_formats(
         execution_id=execution_id, user=identity.as_current_user(),
     )
+
+
+# --- App 远程更新：版本元数据 + APK 下载 -------------------------------------
+# 发布流程（build-release.ps1 也会打印同样指引）：
+#   1. 把签名 APK 放到 DATA_REGISTRY_DIR/social/apk/<filename>.apk
+#   2. 把发版脚本生成的 app_version.json 覆盖 DATA_REGISTRY_DIR/social/app_version.json
+# 两个端点均为公开接口（与 /auth/oidc/config 同级），只暴露版本号与包校验和。
+
+
+def _app_apk_dir() -> Path:
+    return get_data_registry() / "social" / "apk"
+
+
+def _app_version_payload() -> dict | None:
+    path = get_data_registry() / "social" / "app_version.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or "versionCode" not in payload:
+        return None
+    return payload
+
+
+@router.get("/version/latest")
+async def app_latest_version() -> dict:
+    payload = _app_version_payload()
+    if payload is None:
+        raise HTTPException(status_code=404, detail="app_version.json 未发布")
+    return payload
+
+
+@router.get("/apk/{filename}")
+async def app_apk_download(filename: str) -> FileResponse:
+    if not re.fullmatch(r"[A-Za-z0-9._\-]+\.apk", filename):
+        raise HTTPException(status_code=404, detail="invalid apk filename")
+    path = _app_apk_dir() / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="apk not found")
+    return FileResponse(
+        path,
+        media_type="application/vnd.android.package-archive",
+        filename=filename,
+    )

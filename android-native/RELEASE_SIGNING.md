@@ -56,14 +56,19 @@ Copy-Item keystore.properties.example keystore.properties
 .\build-release.ps1 -VersionCode <递增整数> -VersionName "<x.y.z>" `
   -ExpectedCertSha256 <上表登记的指纹（去冒号小写）>
 # 本机验证安装可加 -Install [-DeviceId <serial>]
+# 远程自动更新发布：加 -PublishToSshTarget <user@host> -ServerRegistryDir <服务器DATA_REGISTRY_DIR>
+#   （或按脚本打印的指引手工 scp 两个文件）；-ReleaseNotes/-MinVersionCode 填更新说明与强制更新门槛。
 ```
 
 Checklist：
 
 1. `versionCode` 必须严格递增（低于已装机版本将无法覆盖安装）；`versionName` 同步可读化。
 2. 脚本会自动跑 `apksigner verify` 并打印证书 SHA-256；传 `-ExpectedCertSha256` 时指纹不符会拒绝出包。
-3. 分发前确认指纹与登记值一致；对外发布的包和指纹记录归档。
+3. 分发前确认指纹与登记值一致；对外发布的包和指纹记录归档（`dist-archives/`，不入 git）。
 4. 前端有改动时，先在 `frontend/` 执行 `npm run build:standalone` 再出包（图表资源来自该构建）。
+5. 远程更新发布：出包成功后脚本会在 `dist-archives/` 生成 `suyuan-<版本>.apk` 与 `app_version.json`，
+   两个文件分别上传到服务器 `DATA_REGISTRY_DIR/social/apk/` 与 `social/app_version.json` 即完成发版；
+   用户端 App 启动/回前台时会自动检查并提示更新，`minVersionCode` 之下的旧版会被强制阻断。
 
 ## 五、存量设备迁移（仅一次）
 

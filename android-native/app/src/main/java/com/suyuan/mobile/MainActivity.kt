@@ -73,6 +73,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.graphics.Color
@@ -130,8 +131,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             val context = LocalContext.current
             val store = remember { AppSessionStore(context) }
+            val api = remember { SocialAppApi(sessionStore = store) }
+            val updater = remember { AppUpdater(context.applicationContext, api) }
             val appViewModel: AppViewModel = viewModel(
-                factory = AppViewModelFactory(SocialAppRepository(SocialAppApi(sessionStore = store)), store)
+                factory = AppViewModelFactory(SocialAppRepository(api), store, updater)
             )
             SuyuanApp(appViewModel, oauthCallback) { oauthCallback = null }
         }
@@ -151,10 +154,11 @@ class MainActivity : ComponentActivity() {
 private class AppViewModelFactory(
     private val repository: SocialAppRepository,
     private val store: AppSessionStore,
+    private val updater: AppUpdater,
 ) : androidx.lifecycle.ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-        return AppViewModel(repository, store) as T
+        return AppViewModel(repository, store, updater) as T
     }
 }
 
@@ -163,12 +167,16 @@ private fun SuyuanApp(viewModel: AppViewModel, oauthCallback: Uri?, consumeOAuth
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, viewModel) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) viewModel.onForeground()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.onForeground()
+                viewModel.checkAppUpdate()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val state by viewModel.state.collectAsState()
+    val updateState by viewModel.updateState.collectAsState()
     val context = LocalContext.current
     LaunchedEffect(oauthCallback) {
         oauthCallback?.let {
@@ -201,7 +209,71 @@ private fun SuyuanApp(viewModel: AppViewModel, oauthCallback: Uri?, consumeOAuth
     }
     Surface(modifier = Modifier.fillMaxSize(), color = SuyuanColors.background) {
         if (state.loggedIn) ChatScreen(state, viewModel) else LoginScreen(state, viewModel)
+        UpdatePanels(updateState, viewModel)
     }
+}
+
+@Composable
+private fun UpdatePanels(updateState: UpdateState, viewModel: AppViewModel) {
+    val context = LocalContext.current
+    when (val s = updateState) {
+        is UpdateState.Available -> UpdateAvailableDialog(s, viewModel)
+        is UpdateState.Downloading -> AlertDialog(
+            onDismissRequest = {},
+            title = { Text("正在下载更新") },
+            text = { Text("更新到 ${s.info.versionName}：${s.progress}%") },
+            confirmButton = {},
+        )
+        is UpdateState.ReadyToInstall -> AlertDialog(
+            onDismissRequest = { if (!s.forced) viewModel.dismissUpdate(s.info) },
+            title = { Text("安装包已就绪") },
+            text = { Text("版本 ${s.info.versionName} 下载完成，安装过程中应用会关闭并重启。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (viewModel.canInstallUpdate()) {
+                        context.startActivity(viewModel.installUpdateIntent(s.apk))
+                    } else {
+                        context.startActivity(viewModel.unknownSourcesIntent())
+                    }
+                }) { Text("立即安装") }
+            },
+            dismissButton = {
+                if (!s.forced) TextButton(onClick = { viewModel.dismissUpdate(s.info) }) { Text("稍后") }
+            },
+        )
+        is UpdateState.Failed -> AlertDialog(
+            onDismissRequest = { if (!s.forced) viewModel.dismissUpdate(s.info) },
+            title = { Text("更新失败") },
+            text = { Text(s.message) },
+            confirmButton = {
+                TextButton(onClick = { viewModel.downloadUpdate(s.info, s.forced) }) { Text("重试") }
+            },
+            dismissButton = {
+                if (!s.forced) TextButton(onClick = { viewModel.dismissUpdate(s.info) }) { Text("稍后") }
+            },
+        )
+        UpdateState.Idle -> {}
+    }
+}
+
+@Composable
+private fun UpdateAvailableDialog(s: UpdateState.Available, viewModel: AppViewModel) {
+    AlertDialog(
+        onDismissRequest = { if (!s.forced) viewModel.dismissUpdate(s.info) },
+        title = { Text(if (s.forced) "需要强制更新" else "发现新版本") },
+        text = {
+            Text(buildString {
+                append("新版本 ${s.info.versionName}：${s.info.releaseNotes ?: "体验优化与问题修复"}")
+                if (s.forced) append("\n\n当前版本过旧，必须更新后才能继续使用。")
+            })
+        },
+        confirmButton = {
+            TextButton(onClick = { viewModel.downloadUpdate(s.info, s.forced) }) { Text("立即更新") }
+        },
+        dismissButton = {
+            if (!s.forced) TextButton(onClick = { viewModel.dismissUpdate(s.info) }) { Text("稍后") }
+        },
+    )
 }
 
 @Composable

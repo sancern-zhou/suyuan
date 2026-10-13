@@ -9,6 +9,10 @@ param(
     [string]$ApiBaseUrl = "http://117.159.53.11:60787/suyuan",
     [string]$GetuiAppId,
     [string]$ExpectedCertSha256,
+    [string]$ReleaseNotes = "",
+    [int]$MinVersionCode = 0,
+    [string]$PublishToSshTarget,
+    [string]$ServerRegistryDir,
     [switch]$Install,
     [string]$DeviceId
 )
@@ -93,12 +97,48 @@ if ($Install) {
     if ($LASTEXITCODE -ne 0) { throw "adb install 失败（exit $LASTEXITCODE）。" }
 }
 
+# 9. 生成发版产物副本与版本元数据（配合服务端 GET /api/social/app/version/latest）。
+$apkSha256 = (Get-FileHash -Algorithm SHA256 -Path $apk).Hash.ToLowerInvariant()
+$apkName = "suyuan-$VersionName-$VersionCode.apk"
+$distDir = Join-Path $ProjectDir "dist-archives"
+New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+Copy-Item $apk (Join-Path $distDir $apkName) -Force
+$versionPayload = [ordered]@{
+    versionCode    = $VersionCode
+    versionName    = $VersionName
+    downloadUrl    = "/api/social/app/apk/$apkName"
+    sha256         = $apkSha256
+    releaseNotes   = $ReleaseNotes
+    minVersionCode = $MinVersionCode
+}
+$versionJsonPath = Join-Path $distDir "app_version.json"
+$versionPayload | ConvertTo-Json | Out-File -FilePath $versionJsonPath -Encoding utf8
+
+# 10. 可选：直接 scp 发布（ssh 免密可达时）。两个文件分别落到
+#     $ServerRegistryDir/social/apk/ 与 $ServerRegistryDir/social/app_version.json。
+if ($PublishToSshTarget) {
+    if (-not $ServerRegistryDir) {
+        throw "使用 -PublishToSshTarget 时必须同时给 -ServerRegistryDir（服务器上的 DATA_REGISTRY_DIR 绝对路径）。"
+    }
+    scp (Join-Path $distDir $apkName) "${PublishToSshTarget}:$ServerRegistryDir/social/apk/$apkName"
+    if ($LASTEXITCODE -ne 0) { throw "scp APK 失败（exit $LASTEXITCODE）。" }
+    scp $versionJsonPath "${PublishToSshTarget}:$ServerRegistryDir/social/app_version.json"
+    if ($LASTEXITCODE -ne 0) { throw "scp app_version.json 失败（exit $LASTEXITCODE）。" }
+    Write-Host "已发布到 ${PublishToSshTarget}:$ServerRegistryDir/social/" -ForegroundColor Green
+}
+
 Write-Host ""
 Write-Host "==== 出包结果 ====" -ForegroundColor Cyan
 Write-Host "APK        : $apk"
+Write-Host "产物副本   : $(Join-Path $distDir $apkName)"
+Write-Host "版本元数据 : $versionJsonPath"
 Write-Host "versionCode: $VersionCode  versionName: $VersionName"
 Write-Host "ApiBaseUrl : $ApiBaseUrl"
 if ($certSha256) { Write-Host "证书SHA-256: $certSha256" }
 if (-not $ExpectedCertSha256) {
     Write-Host "提醒：请将上面指纹与 RELEASE_SIGNING.md 登记值比对后再分发。" -ForegroundColor Yellow
+}
+if (-not $PublishToSshTarget) {
+    Write-Host "发布步骤   : 把产物副本和版本元数据上传到服务器 DATA_REGISTRY_DIR 下的" -ForegroundColor Yellow
+    Write-Host "             social/apk/ 与 social/app_version.json（或下次直接传 -PublishToSshTarget/-ServerRegistryDir）。" -ForegroundColor Yellow
 }
