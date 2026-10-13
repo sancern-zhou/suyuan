@@ -32,8 +32,8 @@ App 走内部分发（无应用商店），Android 规则是**同一把密钥签
 | --- | --- |
 | 证书 SHA-256 指纹 | `dec96b8fff115939d9a0722a941a8bf1026dee55bf2f3e81cc2caf217c7c29d3` |
 | 别名 | `suyuan` |
-| keystore 存放位置 | `C:\secrets\suyuan-release.keystore`（生成机本机；按第二节要求另做两份备份） |
-| 密码存放位置 | 临时文件 `C:\Users\47688\suyuan-release-password.txt`——**待保管人转入密码管理器后删除该文件** |
+| keystore 存放位置 | `C:\secrets\suyuan-release.keystore`（生成机本机，2026-10-13 已备份） |
+| 密码存放位置 | 保管人密码管理器（2026-10-13 已转存，临时文件已删除）；出包机的 `android-native/keystore.properties` 内含同密码 |
 | 保管人 | sancern-zhou（git 用户名，待保管人确认） |
 | 生成日期 | 2026-10-13 |
 
