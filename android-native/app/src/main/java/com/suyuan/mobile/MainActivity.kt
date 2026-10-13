@@ -223,7 +223,11 @@ private fun FilterDropdown(
 ) {
     Box(modifier) {
         var expanded by remember { mutableStateOf(false) }
-        TextButton(onClick = { expanded = true }) {
+        TextButton(
+            onClick = { expanded = true },
+            modifier = Modifier.defaultMinSize(minWidth = 1.dp),
+            contentPadding = PaddingValues(horizontal = 4.dp),
+        ) {
             Text(
                 if (selected == null) "$label: 全部" else "$label: $selected",
                 color = SuyuanColors.primary,
@@ -956,7 +960,7 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
             }
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
-        Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             FilterDropdown(
                 label = "站点",
                 options = state.broadcastMessages.mapNotNull { it.stationName }.distinct().sorted(),
@@ -971,11 +975,17 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
                 onSelect = { pollutantFilter = it },
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = { unreadOnly = !unreadOnly }) { Text(if (unreadOnly) "全部" else "未读", color = SuyuanColors.primary, fontSize = 12.sp) }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(
+                onClick = { unreadOnly = !unreadOnly },
+                modifier = Modifier.defaultMinSize(minWidth = 1.dp),
+                contentPadding = PaddingValues(horizontal = 4.dp),
+            ) { Text(if (unreadOnly) "全部" else "未读", color = SuyuanColors.primary, fontSize = 12.sp) }
             if (state.broadcastMessages.any { !it.read }) {
-                TextButton(onClick = { viewModel.markAllBroadcastsRead() }) { Text("全部已读", color = SuyuanColors.primary, fontSize = 12.sp) }
+                TextButton(
+                    onClick = { viewModel.markAllBroadcastsRead() },
+                    modifier = Modifier.defaultMinSize(minWidth = 1.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                ) { Text("全部已读", color = SuyuanColors.primary, fontSize = 12.sp) }
             }
         }
         if (state.broadcastLoading && state.broadcastMessages.isEmpty()) {
