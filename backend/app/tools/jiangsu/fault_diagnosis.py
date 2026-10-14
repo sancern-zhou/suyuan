@@ -1578,6 +1578,11 @@ class JiangsuNetworkInspectionSummaryTool(LLMTool):
 
     _PATH = "stationintegrate/StationIntegrate/GetNetworkCheckAlarms"
     _PERIODS = {"day", "week", "month"}
+    # The whole-network check endpoint also lists non-provincial stations such
+    # as the 7099A supersite, so the raw staList runs one over the provincial
+    # directory (101, verified 2026-10-14). The summary scope is provincial
+    # stations only; extend this set if the endpoint adds more of them.
+    _EXCLUDED_STATION_CODES = frozenset({"7099A"})
 
     def __init__(self) -> None:
         super().__init__(
@@ -1605,10 +1610,23 @@ class JiangsuNetworkInspectionSummaryTool(LLMTool):
             alarm_info = result.get("alarmInfo") or []
             if not isinstance(station_list, list) or not isinstance(alarm_info, list):
                 raise ValueError("全网巡检接口返回列表格式无效")
+            raw_station_count = len(station_list)
+            station_list = [
+                item for item in station_list
+                if not isinstance(item, dict)
+                or str(
+                    item.get("code") or item.get("Code")
+                    or item.get("stationCode") or item.get("StationCode") or ""
+                ).strip() not in self._EXCLUDED_STATION_CODES
+            ]
+            # Downstream aggregation (jiangsu_network_inspection_workflow) reads
+            # staList back out of ``data``, so keep the payload consistent.
+            result["staList"] = station_list
             alarm_stations = [item for item in station_list if isinstance(item, dict) and (item.get("IsAlarm") or item.get("isAlarm"))]
             return {"status": "success", "success": True, "data": result,
                     "metadata": {"source": "jiangsu_station_integrate_api", "endpoint": self._PATH,
                                  "period": period, "station_count": len(station_list),
+                                 "excluded_station_count": raw_station_count - len(station_list),
                                  "alarm_station_count": len(alarm_stations), "queried_at": datetime.now().astimezone().isoformat()},
                     "summary": f"全网巡检汇总完成：覆盖 {len(station_list)} 个站点，{len(alarm_stations)} 个站点存在异常。"}
         except (ValueError, httpx.HTTPError) as exc:

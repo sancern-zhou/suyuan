@@ -11,6 +11,7 @@ from app.tools.jiangsu.fault_diagnosis import (
     JiangsuAutoInspectionTool,
     JiangsuFaultWorkOrderDetailTool,
     JiangsuFaultWorkOrdersTool,
+    JiangsuNetworkInspectionSummaryTool,
     JiangsuQcMonitoringCurveTool,
     JiangsuQcRunLogTool,
     JiangsuQcTaskHistoryTool,
@@ -1516,3 +1517,25 @@ async def test_station_environment_history_queries_only_requested_codes(monkeypa
     assert params["Uniquecode"] == "U1"
     assert params["PollutantCode"] == "StationTemp,VA"
     assert result["metadata"]["pollutant_codes"] == ["StationTemp", "VA"]
+
+
+@pytest.mark.asyncio
+async def test_network_inspection_summary_excludes_non_provincial_stations(monkeypatch):
+    async def fake_get(self, path, params):
+        assert path.endswith("GetNetworkCheckAlarms")
+        assert params == [("DataType", "day")]
+        return {"success": True, "result": {"staList": [
+            {"code": "3001A", "name": "省控站点甲", "isAlarm": False},
+            {"code": "7099A", "name": "江苏省环境监测中心超站", "isAlarm": False},
+            {"code": "3002A", "name": "省控站点乙", "isAlarm": True},
+        ], "alarmInfo": []}}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    result = await JiangsuNetworkInspectionSummaryTool().execute(period="day")
+
+    assert result["success"] is True
+    assert result["metadata"]["station_count"] == 2
+    assert result["metadata"]["excluded_station_count"] == 1
+    assert result["metadata"]["alarm_station_count"] == 1
+    assert [row["code"] for row in result["data"]["staList"]] == ["3001A", "3002A"]
+    assert "覆盖 2 个站点" in result["summary"]
