@@ -19,6 +19,8 @@
 --   状态翻译: ddalarmstate 1=未处理 3=已解除(经数据验证: 状态3全部有解除时间)
 --   关联工单 = 告警发生后 24h 内同站创建的故障工单数(来自 mart_work_order_analysis, 仅Fault口径)
 --   alarmlevel 翻译: urgent=紧急 secondary=中级 commonly=一般(按平台惯例, 待业务确认)
+--   站点范围(2026-10-14 治理): 省控站统一口径=启用省控站101个(dim_station.is_active_provincial),
+--   停用省控站(3008A/3022A/3094A/5030A)与名录外站点不入本表
 -- 刷新: 全量重建, 依赖 mart_work_order_analysis 先刷新(dbt ref 依赖保证顺序)
 -- ============================================================
 select
@@ -61,9 +63,12 @@ left join {{ source('jiangsu_ods', 'bsd_city') }} c
                         then rpad(left(s.areacode, 4), 6, '0')
                         else s.areacode end
       and c.level = '2'
+left join {{ ref('dim_station') }} dsg
+       on dsg.station_code = a.stacode
 left join lateral (
     select count(*) as linked_orders
     from {{ ref('mart_work_order_analysis') }} w
     where w.station_code = a.stacode
       and w.create_time between a.alarmtime and a.alarmtime + interval '24 hours'
 ) wo on true
+where dsg.is_active_provincial

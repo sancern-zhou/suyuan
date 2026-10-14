@@ -6,7 +6,7 @@
     ],
     post_hook=[
         "GRANT SELECT ON {{ this }} TO agent_reader",
-        "COMMENT ON TABLE {{ this }} IS '站点月度考核宽表(2026-07起,一行=站点×月,FULL OUTER 合并两率与评分两表)。-99占位清洗为NULL;is_settled 仅反映两率是否出数(validdays>0),tworate 缺行月份(如2026-07/08,源库即如此)该列为false但 qaqc 评分列可能仍有值;qaqc 评分月中常为满分模板占位,结算后变化。'",
+        "COMMENT ON TABLE {{ this }} IS '站点月度考核宽表(2026-07起,一行=站点×月,FULL OUTER 合并两率与评分两表)。站点类型见 station_type_name(考核覆盖省控/省乡镇/省建等全部类型站,按类型过滤用本列)。-99占位清洗为NULL;is_settled 仅反映两率是否出数(validdays>0),tworate 缺行月份(如2026-07/08,源库即如此)该列为false但 qaqc 评分列可能仍有值;qaqc 评分月中常为满分模板占位,结算后变化。'",
     ],
 ) }}
 
@@ -14,12 +14,15 @@
 -- 一行 = 站点×月;opa_performance_tworate(两率)与 opa_performance_qaqc(三项评分)
 -- 按站点+月份 FULL OUTER 合成一张表(两表月份覆盖不同:tworate 缺 2026-07/08 行,源库即如此)。
 -- 口径: -99/-99.00 = 当月未出数/未结算,一律清洗为 NULL;validdays 缺失或=0 视为两率未结算。
+-- 站点类型(2026-10-14): 考核覆盖全部类型站(约47%行非省控), station_type_name 经 dim_station
+-- 带出供过滤/分组, 本表不做省控站裁剪。
 select
     t.id                                          as tworate_id,
     q.id                                          as qaqc_id,
     date_trunc('month', coalesce(t.timepoint, q.timepoint))::date as perf_month,
     coalesce(t.stationcode, q.stationcode)        as station_code,
     coalesce(t.stationname, q.stationname)        as station_name,
+    ds.station_type_name                          as station_type_name,
     ds.city_code                                  as city_code,
     ds.city_name                                  as city_name,
     coalesce(t.departmentname, q.departmentname)  as operation_unit,

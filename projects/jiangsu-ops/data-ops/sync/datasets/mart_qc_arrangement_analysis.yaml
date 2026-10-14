@@ -8,10 +8,11 @@ owner: 江苏运维平台组
 grain: 一行 = 一条安排的质控任务
 freshness_slo: 26小时（每日全量）
 known_caveats:
+  - 站点范围=省控站统一口径（启用的省控站 101 个，dim_station.is_active_provincial）；
+    停用省控站与 Voc 等非省控类型站不入本表，与 mart_qc_execution_analysis 同口径（2026-10-14 治理）
   - 状态分布（2026-09-22 实测）：已过期约 76%、等待中约 24%、运行中/已删除个别；
     "已过期"占比较高是平台安排口径的数据现状，未核实是否代表真实漏做
   - 与 mart_qc_execution_analysis 的关联键为 rid（任务号），可做安排-执行差距分析
-  - 该表覆盖范围同样以质控试点站点为主
 columns:
   - {name: id, business: 源记录ID(主键)}
   - {name: station_code, business: 平台站点编码}
@@ -36,3 +37,4 @@ guide: >-
   station_code/station_name/city_name/pollutant/task_type/tstatus/status_cn(已过期/等待中/运行中/任务已删除)/
   planned_time/result_time/rid。查质控任务完成情况、哪些站点任务过期未完成查本表；
   与 mart_qc_execution_analysis 按站点对比可分析安排-执行差距。
+  覆盖范围为启用的省控站101个(统一口径), 结论表述为省控站口径。

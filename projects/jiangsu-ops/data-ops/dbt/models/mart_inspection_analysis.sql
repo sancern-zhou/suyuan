@@ -8,13 +8,15 @@
     ],
     post_hook=[
         "GRANT SELECT ON {{ this }} TO agent_reader",
-        "COMMENT ON TABLE {{ this }} IS '巡检完成宽表(2026-07-01起,一行=一条巡检任务项)。status_cn 按数据分布推断(0=未开始/1=处理中/2=已完成,待业务确认);is_overdue=计划周期已结束仍未完成;has_linked_order 标记巡检转工单。'",
+        "COMMENT ON TABLE {{ this }} IS '巡检完成宽表(2026-07-01起,一行=一条巡检任务项)。status_cn 按数据分布推断(0=未开始/1=处理中/2=已完成,待业务确认);is_overdue=计划周期已结束仍未完成;has_linked_order 标记巡检转工单。station_type_name 区分省控站/省建站/省乡镇站(约37%任务项非省控),按类型过滤用本列。'",
     ],
 ) }}
 
 -- mart_inspection_analysis: 巡检完成宽表
 -- 一行 = 一条巡检任务项(pw_TaskItem)。数据窗口: 2026-07-01 起(UpdateTime 引导)。
 -- 维度经 dim_station(uniquecode 关联);周期窗口/超期判定经 pw_Task(每日全量)。
+-- 站点类型 station_type_name 经 dim_station: 约 37% 任务项来自省乡镇站/省建站(2026-10 实测),
+-- 按站点类型过滤/分组一律用本列, 不得默认全省巡检即省控站口径。
 -- 口径注意: status 0/1/2 按数据分布推断为 未开始/处理中/已完成(待业务确认);
 --           is_overdue = 计划周期已结束且未完成。
 select
@@ -22,6 +24,7 @@ select
     i.uniquecode             as uniquecode,
     ds.station_code          as station_code,
     ds.station_name          as station_name,
+    ds.station_type_name     as station_type_name,
     ds.city_code             as city_code,
     ds.city_name             as city_name,
     i.ruletype               as ruletype,

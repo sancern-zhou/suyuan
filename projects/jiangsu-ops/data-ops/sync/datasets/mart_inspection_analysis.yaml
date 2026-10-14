@@ -14,11 +14,14 @@ known_caveats:
     当日新任务项可能短暂关联不到周期行
   - has_linked_order 约97%（巡检项完成生成故障/巡检工单，WorkingOrderCode 关联）
   - 窗口按 UpdateTime>=2026-07-01 引导，含少量 6 月前创建但近期更新的任务项
+  - 本表含三类站点的巡检：省控站约63%、省乡镇站约25%、省建站约12%（2026-10 实测）；
+    按站点类型过滤/分组用 station_type_name，不得默认全省巡检即省控站口径
 columns:
   - {name: id, business: 源记录ID(主键)}
   - {name: uniquecode, business: 站点唯一编码}
   - {name: station_code, business: 平台站点编码(经dim_station)}
   - {name: station_name, business: 站点名称}
+  - {name: station_type_name, business: 站点类型(经dim_station,省控站/省乡镇站/省建站等), note: 省乡镇站约25%、省建站约12%, 按类型过滤用本列}
   - {name: city_code, business: 城市行政区码}
   - {name: city_name, business: 城市名}
   - {name: rule_type, business: 周期类型原始值(Week/Month/Quarter/HalfYear/Year)}
@@ -42,8 +45,10 @@ access:
   role: agent_reader
 # guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
 guide: >-
-  维度 station_code/station_name/city_name/rule_type_cn(周巡检/月巡检/季巡检/半年巡检/年巡检)/
+  维度 station_code/station_name/station_type_name(站点类型:省控站/省乡镇站/省建站等,
+  约37%任务项非省控站)/city_name/rule_type_cn(周巡检/月巡检/季巡检/半年巡检/年巡检)/
   task_user_name/pollutant_type；时间 task_date/plan_start_date/plan_end_date/finish_time；
   指标 status_cn(未开始/处理中/已完成，语义待业务确认)/is_finished/is_overdue(周期结束未完成)/
   has_linked_order(巡检转工单)/working_order_code。
-  巡检完成率、超期未完成、按人员完成量、巡检转工单率查本表。
+  巡检完成率、超期未完成、按人员完成量、巡检转工单率查本表；
+  按站点类型统计用 station_type_name 过滤或分组，结论须注明口径含哪些站点类型。

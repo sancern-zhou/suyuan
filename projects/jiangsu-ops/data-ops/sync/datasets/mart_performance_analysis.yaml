@@ -8,6 +8,8 @@ owner: 江苏运维平台组
 grain: 一行 = 站点×月
 freshness_slo: 26小时
 known_caveats:
+  - 站点范围=全部类型站（省控/省乡镇/省建等，约 47% 行非省控站）；按站点类型过滤/分组用
+    station_type_name，本表不做省控站裁剪（2026-10-14 治理）；说"省控站考核"时先按类型过滤再统计
   - 重要·窗口内(2026-07起)无实际填报数据：全表均为占位值(-99/满分模板)。源库最新实际填报为
     2025-04(两率)与 2024-08(评分)。考核场景的统计结果当前为空，必须向用户如实说明数据现状，
     不得用占位值构造结论；平台恢复填报后本表自动生效
@@ -21,6 +23,7 @@ columns:
   - {name: perf_month, business: 考核月份(月初日期)}
   - {name: station_code, business: 平台站点编码}
   - {name: station_name, business: 站点名称}
+  - {name: station_type_name, business: 站点类型(经dim_station,省控站/省乡镇站/省建站等; 约47%行非省控), note: 考核覆盖全部类型站, 按类型过滤用本列}
   - {name: city_code, business: 城市行政区码(经dim_station)}
   - {name: city_name, business: 城市名}
   - {name: operation_unit, business: 运维单位(第三方公司名)}
@@ -40,9 +43,11 @@ access:
   role: agent_reader
 # guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
 guide: >-
-  一行=站点×月。perf_month/station_code/station_name/city_name/operation_unit(运维单位)；
+  一行=站点×月。perf_month/station_code/station_name/station_type_name(站点类型,考核覆盖全部类型站,
+  约47%行非省控,按类型过滤用本列)/city_name/operation_unit(运维单位)；
   两率 device_working_rate(设备正常运行率)/data_accuracy_rate(数据准确率)/validdays；
   评分 daily_operation_score(运维分)/qaqc_score(质控分)/archive_score(档案分)/total_score(总分)。
   重要：-99 占位已清洗为 NULL，is_settled=false 表示两率未出数。
   数据现状：2026-07 以来窗口内无实际填报(最新实际为2025-04)，当前统计基本为空，如实说明；
-  平台恢复填报后，两率达标/不达标排名、考核分数趋势、按运维单位汇总查本表。
+  平台恢复填报后，两率达标/不达标排名、考核分数趋势、按运维单位汇总查本表；
+  按站点类型统计先过 station_type_name 再聚合，勿把全类型结论表述为省控站口径。

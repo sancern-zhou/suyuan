@@ -9,6 +9,8 @@ owner: 江苏运维平台组
 grain: 一行 = 一条站点告警（alm_summary.Id）
 freshness_slo: 5分钟
 known_caveats:
+  - 站点范围=省控站统一口径（启用的省控站 101 个，dim_station.is_active_provincial）；
+    停用省控站（3008A/3022A/3094A/5030A）与名录外站点不入本表（2026-10-14 治理）
   - 仅含 alm_summary 站点告警；mot_alarm 平台监控告警无站点编码暂未纳入（需平台组确认 refid 语义）
   - alarmlevel 中文映射按平台惯例（urgent=紧急/secondary=中级/commonly=一般），待业务确认
   - ddalarmstate 1=未处理 3=已解除 已通过解除时间字段验证

@@ -60,6 +60,7 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "cityCode", "title": "城市行政区码"},
             {"name": "stationCode", "title": "站点编码"},
             {"name": "stationName", "title": "站点名"},
+            {"name": "stationTypeName", "title": "站点类型(省控站/省建站/省乡镇站/国控站等; 按站点类型统计用本维度)"},
             {"name": "orderStatus", "title": "工单状态(处理中/已完成)"},
             {"name": "urgency", "title": "紧急程度"},
             {"name": "orderType", "title": "工单类型(本cube仅故障单Fault,保留作口径核对)"},
@@ -94,6 +95,7 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
     "QcExecution": {
         "measures": [
             {"name": "count", "title": "质控执行量"},
+            {"name": "assessedCount", "title": "已判定数(合格+不合格)"},
             {"name": "qualifiedCount", "title": "合格数"},
             {"name": "qualifiedRate", "title": "质控合格率%(平台判定文本,不重算)"},
             {"name": "avgInaccuracy", "title": "平均不准确度"},
@@ -103,7 +105,7 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "stationCode", "title": "站点编码"},
             {"name": "stationName", "title": "站点名"},
             {"name": "pollutant", "title": "污染物"},
-            {"name": "taskType", "title": "任务类型(零点/跨度)"},
+            {"name": "taskType", "title": "任务类型(零点/跨度/O3/校准类)"},
             {"name": "resultCn", "title": "判定文本"},
             {"name": "isQualified", "title": "是否合格"},
             {"name": "qcDate", "title": "质控日期(时间维度)"},
@@ -123,6 +125,7 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "cityName", "title": "城市名"},
             {"name": "stationCode", "title": "站点编码"},
             {"name": "stationName", "title": "站点名"},
+            {"name": "stationTypeName", "title": "站点类型(省控站/省乡镇站/省建站等; 约37%任务项非省控站, 按类型统计用本维度)"},
             {"name": "ruleType", "title": "周期类型(周/月/季/半年/年巡检)"},
             {"name": "statusCn", "title": "状态(未开始/处理中/已完成)"},
             {"name": "isFinished", "title": "是否完成"},

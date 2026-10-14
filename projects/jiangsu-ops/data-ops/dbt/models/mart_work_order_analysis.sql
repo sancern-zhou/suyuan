@@ -27,6 +27,8 @@
 --             注: 故障单无计划完成时间(2026-10 实测全空), 本口径对故障单恒不可评估(is_overdue 恒 false)
 --   重复故障 = 同站同设备, 本单创建前 30 天内存在其他故障工单(窗口仅统计故障单, 2026-10-07 收敛)
 -- 范围     = 仅故障工单(ordertype='Fault'); 例行单不入本表(2026-10-06 收敛, 见文末 where)
+-- 站点类型 = station_type_name(经dim_station): 故障单以省控站为主, 省建站/省乡镇站的故障单
+--            同样入表(2026-10 实测占比<1%), 按站点类型过滤/分组用本列
 -- 关联告警 = 工单创建前 24h 内同站 alm_summary 条数（代理口径）
 -- 刷新: 全量重建（数据量 <2 万行, 5 分钟一次成本可忽略）
 -- ============================================================
@@ -45,6 +47,7 @@ select
     w.urgencytype                                               as urgency_type,
     w.stationcode                                               as station_code,
     s.positionname                                              as station_name,
+    st.station_type_name                                        as station_type_name,
     s.areacode                                                  as city_code,
     c.name                                                      as city_name,
     nullif(w.deviceid, 0)                                       as device_id,
@@ -91,6 +94,8 @@ select
 from {{ source('jiangsu_ods', 'mtc_working_order') }} w
 left join {{ source('jiangsu_ods', 'bsd_station') }} s
        on s.stationcode = w.stationcode
+left join {{ ref('dim_station') }} st
+       on st.station_code = w.stationcode
 left join {{ source('jiangsu_ods', 'bsd_city') }} c
        on c.code = case when length(s.areacode) >= 4
                         then rpad(left(s.areacode, 4), 6, '0')

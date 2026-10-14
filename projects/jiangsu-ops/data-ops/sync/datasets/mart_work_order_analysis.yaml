@@ -35,6 +35,7 @@ columns:
   - {name: urgency_type, business: 紧急程度}
   - {name: station_code, business: 站点编码}
   - {name: station_name, business: 站点名称}
+  - {name: station_type_name, business: 站点类型(经dim_station,省控站/省建站/省乡镇站等), note: 故障单以省控站为主, 省建站/省乡镇站同样入表(2026-10实测占比<1%), 按类型过滤用本列}
   - {name: city_code, business: 城市行政区码}
   - {name: city_name, business: 城市名, note: 按 bsd_station.areacode 前4位映射地级市}
   - {name: device_id, business: 设备ID, note: 空=工单未关联设备}
@@ -61,7 +62,7 @@ columns:
   - {name: alarm_count_1d, business: 创建前24小时同站告警数(alm_summary)}
   - {name: source_updated_at, business: 源系统最后更新时间}
   - {name: refreshed_at, business: 本表刷新时间}
-allowed_filters: [station_code, station_name, city_name, order_status, order_type, urgency_type, create_time, finish_time, is_overdue, is_repeat_fault, repeat_fault_basis]
+allowed_filters: [station_code, station_name, station_type_name, city_name, order_status, order_type, urgency_type, create_time, finish_time, is_overdue, is_repeat_fault, repeat_fault_basis]
 example_questions:
   - 最近7天各市故障工单量和2小时响应率排名？
   - 苏州哪些站点30天内重复故障超过3次？
@@ -70,7 +71,8 @@ example_questions:
 join_notes: 单表即得，无需 join；明细节点请用 mart_work_order_node_detail（二期）
 # guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
 guide: >-
-  维度 working_order_code/station_code/station_name/city_name/device_id/order_type/order_status_cn(处理中/已完成/已作废)/urgency_type；
+  维度 working_order_code/station_code/station_name/station_type_name(站点类型:省控站/省建站/省乡镇站等,
+  省建站/省乡镇站故障单同样入表占比<1%)/city_name/device_id/order_type/order_status_cn(处理中/已完成/已作废)/urgency_type；
   时间 create_time/dispatch_time/arrival_time/finish_time/plan_finish_time；
   指标 response_minutes(响应=派单→到站,故障单全量可评估)/is_response_within_2h(2小时到站)/
   trigger_alarm_time/recovery_time(数据恢复正常=触发告警解除)/recovery_hours/is_recover_within_4h(4小时恢复,~47%可评估,须注明)/
@@ -79,4 +81,5 @@ guide: >-
   注意：派单/到站为工作流节点代理口径；故障单无计划完成时间，超期/超期率不适用
   (历史"超期率~85%"系含例行单旧口径，不得引用)，长期未闭环用"处理中且未完成"口径；
   本表仅故障工单(ordertype='Fault')，例行单不入表，工单量/时效结论须注明为故障单口径；
-  4小时恢复率须注明可评估工单占比，不得把不可评估单计入分母。
+  4小时恢复率须注明可评估工单占比，不得把不可评估单计入分母；
+  按站点类型统计(省控站/省建站/省乡镇站)用 station_type_name 过滤或分组。

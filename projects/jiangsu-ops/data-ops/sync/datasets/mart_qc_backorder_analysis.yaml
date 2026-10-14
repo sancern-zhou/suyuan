@@ -10,9 +10,12 @@ owner: 江苏运维平台组
 grain: 一行 = 一条补测安排（站点×小时×污染物）
 freshness_slo: 26小时（每日全量）
 known_caveats:
+  - 站点范围=省控站统一口径（启用的省控站 101 个，dim_station.is_active_provincial）；
+    停用省控站与省乡镇站等非省控类型不入本表，与 mart_qc_execution_analysis 同口径（2026-10-14 治理）
   - state(1/2/3/6) 与 datatype(1/2/3/6) 为平台原始枚举，中文语义待平台确认，
     不得在结论中编造状态含义，可描述分布与集中度
-  - uniquecode 为质控任务组代码，可关联 qc_historyresult（95/96 命中）判断补测背景；
+  - uniquecode 为质控任务组代码，可关联质控执行结果宽表 mart_qc_execution_analysis
+    （源 qc_his_result_2026，2026-10-14 起省控站口径）判断补测背景；
     不可关联 qc_arrangeresult 行级（该表 uniquecode 为任务组代码，105 值/3618 行）
   - 补测集中信号（2026-10-04 实测）：3079A 9 天 2248 条、3081A 10 天 958 条，
     站点×日聚合条数即为风暴预警口径
@@ -39,5 +42,5 @@ access:
 guide: >-
   station_code/station_name/city_name/uniquecode/pollutant_name/datatype/state/start_time/end_time/created_at/operator。
   查质控补测安排、补测状态、按站点×日聚合发现补测集中(风暴预警)用本表;
-  质控闭环= mart_qc_execution_analysis(合格/不合格) → 本表(补测处置) ; uniquecode 关联 qc_historyresult 判背景。
+  质控闭环= mart_qc_execution_analysis(合格/不合格) → 本表(补测处置) ; uniquecode 关联 qc_his_result_2026(即宽表 mart_qc_execution_analysis)判背景。
   state/datatype 为平台原始枚举(1/2/3/6), 中文语义未确认, 只可描述分布与集中度, 不得编造状态含义。

@@ -63,6 +63,8 @@ cube(`WorkOrder`, {
     cityCode: { sql: `city_code`, type: `string` },
     stationCode: { sql: `station_code`, type: `string` },
     stationName: { sql: `station_name`, type: `string` },
+    // 站点类型(2026-10-14): 省控站/省建站/省乡镇站/国控站等, 映射源=源库 StationType 字典(经 dim_station)
+    stationTypeName: { sql: `station_type_name`, type: `string` },
     orderStatus: { sql: `order_status_cn`, type: `string` },
     urgency: { sql: `urgency_type`, type: `string` },
     orderType: { sql: `order_type`, type: `string` },

@@ -38,6 +38,8 @@ cube(`Inspection`, {
     cityName: { sql: `city_name`, type: `string` },
     stationCode: { sql: `station_code`, type: `string` },
     stationName: { sql: `station_name`, type: `string` },
+    // 站点类型(2026-10-14): 约37%任务项来自省乡镇站/省建站, 按类型统计必须用本维度, 勿默认省控站口径
+    stationTypeName: { sql: `station_type_name`, type: `string` },
     ruleType: { sql: `rule_type_cn`, type: `string`, title: `周期类型` },
     statusCn: { sql: `status_cn`, type: `string` },
     isFinished: { sql: `is_finished`, type: `boolean` },

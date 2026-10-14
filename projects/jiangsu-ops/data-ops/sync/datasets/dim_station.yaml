@@ -9,6 +9,11 @@ owner: 江苏运维平台组
 grain: 一行 = 一个站点（station_code）
 freshness_slo: 30分钟
 known_caveats:
+  - 省控站统一口径（2026-10-14 治理约定）：is_active_provincial = 站点类型2 且启用 = 101 个站，
+    是全部查询入口共用的"省控站"定义；停用省控站 4 个（3008A江阴南闸/3022A金坛建筑技工/
+    3094A靖江靖城/5030A上方山）与超站 7099A、40 开头试点站均为 false
+  - station_type_name 映射自源库 air_province_bsd.sys_datadictionary(StationType 字典)；
+    运维记录不只覆盖省控站——省建站(type 6)与省乡镇站(type 7)同样有记录，按类型过滤用本列
   - city_name 按 areacode 前4位映射地级市；行政区划调整时依赖源库 bsd_city 更新
   - uniquecode 是质控等子系统关联键（qc_historyresult 无 stationcode，须经本表换算）
   - 历史上历史站点（historycode/historyname 非空）仍按当前编码保留一行
@@ -23,6 +28,8 @@ columns:
   - {name: latitude, business: 纬度}
   - {name: address, business: 地址}
   - {name: station_type_id, business: 站点类型ID}
+  - {name: station_type_name, business: 站点类型名(映射自源库StationType字典,1国控站/2省控站/3市控站/4区域站/5乡镇站/6省建站/7省乡镇站/9Voc站,其余未知)}
+  - {name: is_active_provincial, business: 省控站统一口径位(布尔,站点类型=省控站且启用,当前101个), note: 省控域分析宽表(告警/质控安排/质控补测/质控执行)一律经本位过滤}
   - {name: status, business: 启用状态}
   - {name: is_monitor, business: 是否监测站}
   - {name: is_contrast, business: 是否对照站}
@@ -37,5 +44,7 @@ access:
 # guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
 guide: >-
   station_code(主键)/station_name/uniquecode/city_code/city_name/longitude/latitude/
-  station_type_id/status/is_monitor/is_contrast/address。
-  查站点名录、站点与城市归属、经纬度用本表；各宽表可用 station_code 或 uniquecode 关联本表补维度。
+  station_type_id/station_type_name(国控站/省控站/市控站/区域站/乡镇站/省建站/省乡镇站/Voc站,未知)/
+  is_active_provincial(省控站统一口径位=启用的101个省控站)/status/is_monitor/is_contrast/address。
+  查站点名录、站点与城市归属、经纬度、站点类型用本表；"省控站"数量口径以 is_active_provincial 为准
+  (勿用 station_type_name='省控站' 直接计数, 那会含停用站)；各宽表可用 station_code 或 uniquecode 关联本表补维度。

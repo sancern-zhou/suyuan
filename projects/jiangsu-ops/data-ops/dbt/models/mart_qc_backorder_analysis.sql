@@ -7,7 +7,7 @@
     ],
     post_hook=[
         "GRANT SELECT ON {{ this }} TO agent_reader",
-        "COMMENT ON TABLE {{ this }} IS '质控补测/回调安排日志宽表(每日全量,窗口>=2026-07-01)。一行=一条补测安排(站点×小时×污染物)。state/datatype 为平台原始枚举(语义待平台确认);uniquecode 可关联质控执行结果(qc_historyresult)判断补测背景;勿关联 qc_arrangeresult(该表 uniquecode 为任务组代码)。'",
+        "COMMENT ON TABLE {{ this }} IS '质控补测/回调安排日志宽表(每日全量,窗口>=2026-07-01,省控站统一口径=启用省控站101个)。一行=一条补测安排(站点×小时×污染物)。state/datatype 为平台原始枚举(语义待平台确认);uniquecode 可关联质控执行结果(现源 qc_his_result_2026,即宽表 mart_qc_execution_analysis)判断补测背景;勿关联 qc_arrangeresult(该表 uniquecode 为任务组代码)。停用省控站与非省控类型站不入本表。'",
     ],
 ) }}
 
@@ -15,6 +15,8 @@
 -- 回答: 哪些站点/因子被安排补测、当前状态、补测是否集中爆发(站点×日聚合=风暴预警)。
 -- 质控闭环下游: mart_qc_execution_analysis(合格/不合格) → 本表(平台补测处置) → 复核结果。
 -- 口径: state 1/2/3/6 与 datatype 1/2/3/6 为平台原始枚举,中文语义待平台确认,契约中不得编造。
+-- 站点范围(2026-10-14 治理): 省控站统一口径=启用省控站101个(dim_station.is_active_provincial);
+-- 与 mart_qc_execution_analysis(质控执行)同口径, 停用省控站与省乡镇站等非省控类型不入本表。
 select
     b.id                     as id,
     b.stationcode            as station_code,
@@ -33,3 +35,4 @@ select
 from {{ source('jiangsu_ods', 'qc_backorderarrangelog') }} b
 left join {{ ref('dim_station') }} ds
        on ds.station_code = b.stationcode
+where ds.is_active_provincial
