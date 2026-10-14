@@ -722,6 +722,7 @@ class ScheduledTaskExecutor:
 - 完成任务后调用 `broadcast_social_users` 发送结果。
 - 目标微信用户名称：%s
 - `target_user_names` 使用上述名称；生成的附件必须使用上游工具返回的最终成品资源路径（例如 create_report_package 的 resources 中的 DOCX/PDF），禁止把 `report.qmd`/`file_path` 源文件当作正式报告附件，也禁止自行拼接路径。
+- 广播内容涉及具体站点或污染物时，同步填写工具的 `station_name` 和 `pollutant` 参数（站点用全名），供 App 端按站点/污染物筛选广播。
 - 广播工具执行完成后，正常简要说明执行结果，不需要返回 JSON。""" % names
             )
         return "\n\n".join(sections)

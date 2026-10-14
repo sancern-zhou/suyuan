@@ -106,16 +106,36 @@ private fun workStatusForTool(toolName: String): String = when {
 class AppViewModel(
     private val repository: SocialAppRepository,
     private val store: AppSessionStore,
+    private val updater: AppUpdater,
 ) : ViewModel() {
     private val _state = MutableStateFlow(
         AppUiState(store.token(), store.accountId(), store.displayName())
     )
     val state: StateFlow<AppUiState> = _state.asStateFlow()
+    val updateState: StateFlow<UpdateState> = updater.state
+
+    init {
+        viewModelScope.launch { updater.checkOnLaunch() }
+    }
     private var streamJob: Job? = null
     private val pendingTurns = ArrayDeque<PendingTurn>()
     private var registeredPushCid: String? = null
     private val modeSessionIds = mutableMapOf<String, String>()
     private var recoveryJob: Job? = null
+
+    fun checkAppUpdate() {
+        viewModelScope.launch { updater.checkOnLaunch() }
+    }
+
+    fun dismissUpdate(info: AppUpdateInfo) = updater.dismiss(info)
+
+    fun downloadUpdate(info: AppUpdateInfo, forced: Boolean) = updater.download(info, forced)
+
+    fun canInstallUpdate(): Boolean = updater.canInstallNow()
+
+    fun unknownSourcesIntent(): Intent = updater.unknownSourcesSettingsIntent()
+
+    fun installUpdateIntent(apk: File): Intent = updater.installIntent(apk)
 
     fun onForeground() {
         if (!_state.value.loggedIn) return

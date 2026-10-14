@@ -32,6 +32,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -71,6 +72,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -129,8 +131,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             val context = LocalContext.current
             val store = remember { AppSessionStore(context) }
+            val api = remember { SocialAppApi(sessionStore = store) }
+            val updater = remember { AppUpdater(context.applicationContext, api) }
             val appViewModel: AppViewModel = viewModel(
-                factory = AppViewModelFactory(SocialAppRepository(SocialAppApi(sessionStore = store)), store)
+                factory = AppViewModelFactory(SocialAppRepository(api), store, updater)
             )
             SuyuanApp(appViewModel, oauthCallback) { oauthCallback = null }
         }
@@ -150,10 +154,11 @@ class MainActivity : ComponentActivity() {
 private class AppViewModelFactory(
     private val repository: SocialAppRepository,
     private val store: AppSessionStore,
+    private val updater: AppUpdater,
 ) : androidx.lifecycle.ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-        return AppViewModel(repository, store) as T
+        return AppViewModel(repository, store, updater) as T
     }
 }
 
@@ -162,12 +167,16 @@ private fun SuyuanApp(viewModel: AppViewModel, oauthCallback: Uri?, consumeOAuth
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, viewModel) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) viewModel.onForeground()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.onForeground()
+                viewModel.checkAppUpdate()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val state by viewModel.state.collectAsState()
+    val updateState by viewModel.updateState.collectAsState()
     val context = LocalContext.current
     LaunchedEffect(oauthCallback) {
         oauthCallback?.let {
@@ -200,7 +209,109 @@ private fun SuyuanApp(viewModel: AppViewModel, oauthCallback: Uri?, consumeOAuth
     }
     Surface(modifier = Modifier.fillMaxSize(), color = SuyuanColors.background) {
         if (state.loggedIn) ChatScreen(state, viewModel) else LoginScreen(state, viewModel)
+        UpdatePanels(updateState, viewModel)
     }
+}
+
+@Composable
+private fun FilterDropdown(
+    label: String,
+    options: List<String>,
+    selected: String?,
+    onSelect: (String?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier) {
+        var expanded by remember { mutableStateOf(false) }
+        TextButton(
+            onClick = { expanded = true },
+            modifier = Modifier.defaultMinSize(minWidth = 1.dp),
+            contentPadding = PaddingValues(horizontal = 4.dp),
+        ) {
+            Text(
+                if (selected == null) "$label: 全部" else "$label: $selected",
+                color = SuyuanColors.primary,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("$label: 全部", color = if (selected == null) SuyuanColors.primary else SuyuanColors.text) },
+                onClick = { onSelect(null); expanded = false },
+            )
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option, color = if (selected == option) SuyuanColors.primary else SuyuanColors.text) },
+                    onClick = { onSelect(option); expanded = false },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun UpdatePanels(updateState: UpdateState, viewModel: AppViewModel) {
+    val context = LocalContext.current
+    when (val s = updateState) {
+        is UpdateState.Available -> UpdateAvailableDialog(s, viewModel)
+        is UpdateState.Downloading -> AlertDialog(
+            onDismissRequest = {},
+            title = { Text("正在下载更新") },
+            text = { Text("更新到 ${s.info.versionName}：${s.progress}%") },
+            confirmButton = {},
+        )
+        is UpdateState.ReadyToInstall -> AlertDialog(
+            onDismissRequest = { if (!s.forced) viewModel.dismissUpdate(s.info) },
+            title = { Text("安装包已就绪") },
+            text = { Text("版本 ${s.info.versionName} 下载完成，安装过程中应用会关闭并重启。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (viewModel.canInstallUpdate()) {
+                        context.startActivity(viewModel.installUpdateIntent(s.apk))
+                    } else {
+                        context.startActivity(viewModel.unknownSourcesIntent())
+                    }
+                }) { Text("立即安装") }
+            },
+            dismissButton = {
+                if (!s.forced) TextButton(onClick = { viewModel.dismissUpdate(s.info) }) { Text("稍后") }
+            },
+        )
+        is UpdateState.Failed -> AlertDialog(
+            onDismissRequest = { if (!s.forced) viewModel.dismissUpdate(s.info) },
+            title = { Text("更新失败") },
+            text = { Text(s.message) },
+            confirmButton = {
+                TextButton(onClick = { viewModel.downloadUpdate(s.info, s.forced) }) { Text("重试") }
+            },
+            dismissButton = {
+                if (!s.forced) TextButton(onClick = { viewModel.dismissUpdate(s.info) }) { Text("稍后") }
+            },
+        )
+        UpdateState.Idle -> {}
+    }
+}
+
+@Composable
+private fun UpdateAvailableDialog(s: UpdateState.Available, viewModel: AppViewModel) {
+    AlertDialog(
+        onDismissRequest = { if (!s.forced) viewModel.dismissUpdate(s.info) },
+        title = { Text(if (s.forced) "需要强制更新" else "发现新版本") },
+        text = {
+            Text(buildString {
+                append("新版本 ${s.info.versionName}：${s.info.releaseNotes ?: "体验优化与问题修复"}")
+                if (s.forced) append("\n\n当前版本过旧，必须更新后才能继续使用。")
+            })
+        },
+        confirmButton = {
+            TextButton(onClick = { viewModel.downloadUpdate(s.info, s.forced) }) { Text("立即更新") }
+        },
+        dismissButton = {
+            if (!s.forced) TextButton(onClick = { viewModel.dismissUpdate(s.info) }) { Text("稍后") }
+        },
+    )
 }
 
 @Composable
@@ -282,6 +393,12 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     var showBroadcasts by remember { mutableStateOf(false) }
     var showReports by remember { mutableStateOf(false) }
     var selectedTaskId by remember { mutableStateOf<String?>(null) }
+    // 系统返回（侧滑/返回键）在面板打开时先回对话页，而不是走 Activity 默认行为直接退出。
+    BackHandler(enabled = showHistory || showBroadcasts || showReports) {
+        showHistory = false
+        showBroadcasts = false
+        showReports = false
+    }
     val voiceClient = remember { RealtimeVoiceClient(BuildConfig.API_BASE_URL) }
     DisposableEffect(voiceClient) {
         onDispose { voiceClient.stop() }
@@ -830,7 +947,8 @@ private fun HistoryPanel(state: AppUiState, viewModel: AppViewModel, onBack: () 
 @Composable
 private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit) {
     var expandedMessageId by rememberSaveable { mutableStateOf<String?>(null) }
-    var query by rememberSaveable { mutableStateOf("") }
+    var stationFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    var pollutantFilter by rememberSaveable { mutableStateOf<String?>(null) }
     var unreadOnly by rememberSaveable { mutableStateOf(false) }
     var deleteMessage by remember { mutableStateOf<BroadcastMessage?>(null) }
     val listState = rememberLazyListState()
@@ -842,13 +960,32 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
             }
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
-        Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("搜索广播") }, modifier = Modifier.weight(1f))
-            TextButton(onClick = { unreadOnly = !unreadOnly }) { Text(if (unreadOnly) "全部" else "未读", color = SuyuanColors.primary, fontSize = 12.sp) }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            FilterDropdown(
+                label = "站点",
+                options = state.broadcastMessages.mapNotNull { it.stationName }.distinct().sorted(),
+                selected = stationFilter,
+                onSelect = { stationFilter = it },
+                modifier = Modifier.weight(1f),
+            )
+            FilterDropdown(
+                label = "污染物",
+                options = state.broadcastMessages.mapNotNull { it.pollutant }.distinct().sorted(),
+                selected = pollutantFilter,
+                onSelect = { pollutantFilter = it },
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                onClick = { unreadOnly = !unreadOnly },
+                modifier = Modifier.defaultMinSize(minWidth = 1.dp),
+                contentPadding = PaddingValues(horizontal = 4.dp),
+            ) { Text(if (unreadOnly) "全部" else "未读", color = SuyuanColors.primary, fontSize = 12.sp) }
             if (state.broadcastMessages.any { !it.read }) {
-                TextButton(onClick = { viewModel.markAllBroadcastsRead() }) { Text("全部已读", color = SuyuanColors.primary, fontSize = 12.sp) }
+                TextButton(
+                    onClick = { viewModel.markAllBroadcastsRead() },
+                    modifier = Modifier.defaultMinSize(minWidth = 1.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                ) { Text("全部已读", color = SuyuanColors.primary, fontSize = 12.sp) }
             }
         }
         if (state.broadcastLoading && state.broadcastMessages.isEmpty()) {
@@ -860,7 +997,11 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
         } else if (state.broadcastMessages.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text("暂无广播消息", color = SuyuanColors.secondaryText, fontSize = 15.sp) }
         } else {
-            val filteredMessages = state.broadcastMessages.filter { (!unreadOnly || !it.read) && (query.isBlank() || it.content.contains(query, ignoreCase = true)) }
+            val filteredMessages = state.broadcastMessages.filter {
+                (!unreadOnly || !it.read) &&
+                    (stationFilter == null || it.stationName == stationFilter) &&
+                    (pollutantFilter == null || it.pollutant == pollutantFilter)
+            }
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
