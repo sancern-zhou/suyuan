@@ -18,16 +18,6 @@
       <div class="new-session-section">
         <button
           class="module-card"
-          type="button"
-          @click="handleModuleSelect('restart-session')"
-        >
-          <span class="module-icon" v-html="getModuleIcon('restart-session')"></span>
-          <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">新建对话</p>
-          </div>
-        </button>
-        <button
-          class="module-card"
           :class="{ active: isActive('agent-platform') }"
           type="button"
           @click="handleModuleSelect('agent-platform')"
@@ -338,7 +328,7 @@ import {
   toggleConversationListView,
   writeSidebarConversationLayout
 } from './conversationListPolicy.js'
-import { AGENT_MODES, AGENT_MODE_IDS } from '@/config/agentModes.js'
+import { AGENT_MODES, AGENT_MODE_IDS, getAgentMode } from '@/config/agentModes.js'
 import { filterSidebarModules } from './sidebarProjectModules.js'
 
 const router = useRouter()
@@ -610,14 +600,6 @@ const sidebarSessionGroups = computed(() => {
 })
 
 const allModules = [
-  {
-    id: 'restart-session',
-    name: '新建对话',
-    abbr: '新建对话',
-    desc: '清空对话，开始新分析',
-    badge: '操作',
-    isAction: true
-  },
   {
     id: 'agent-platform',
     name: '智能体平台',
