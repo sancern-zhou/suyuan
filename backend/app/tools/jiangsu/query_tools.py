@@ -23,7 +23,9 @@ logger = structlog.get_logger(__name__)
 class _JiangsuApiTool(LLMTool):
     """Shared authenticated, read-only client for Jiangsu provincial APIs."""
 
-    _DATA_TYPES = {0: "原始工况", 1: "审核工况", 2: "原始标况", 3: "审核标况"}
+    _DATA_TYPES = {0: "原始实况", 1: "审核实况", 2: "原始标况", 3: "审核标况"}
+    # 平台统计页面两率默认：原始实况 + 新国标（2026-10 与平台端页面请求体核对）。
+    _RATE_NS_TYPES = (1, 2)
 
     def __init__(self, **kwargs: Any) -> None:
         from config.settings import settings
@@ -73,11 +75,13 @@ class _JiangsuApiTool(LLMTool):
             self._token = token
             return token
 
-    async def _get(self, endpoint: str, params: list[tuple[str, Any]]) -> dict[str, Any]:
+    async def _get(self, endpoint: str, params: list[tuple[str, Any]], *,
+                   timeout_seconds: float | None = None) -> dict[str, Any]:
         self._validate_config()
         token = await self._get_token()
+        timeout = httpx.Timeout(timeout_seconds or self.timeout_seconds)
         headers = {"Authorization": f"Bearer {token}", "SysCode": "SunAirProvince"}
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.get(f"{self.base_url}/{endpoint}", params=params, headers=headers)
             if response.status_code == 401:
                 self._token = None
@@ -89,12 +93,14 @@ class _JiangsuApiTool(LLMTool):
             raise ValueError(str(payload.get("msg") or "江苏接口返回失败"))
         return payload
 
-    async def _post_json(self, endpoint: str, body: dict[str, Any]) -> dict[str, Any]:
+    async def _post_json(self, endpoint: str, body: dict[str, Any], *,
+                         timeout_seconds: float | None = None) -> dict[str, Any]:
         """POST + JSON body variant of _get for endpoints that reject GET (405)."""
         self._validate_config()
         token = await self._get_token()
+        timeout = httpx.Timeout(timeout_seconds or self.timeout_seconds)
         headers = {"Authorization": f"Bearer {token}", "SysCode": "SunAirProvince"}
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(f"{self.base_url}/{endpoint}", json=body, headers=headers)
             if response.status_code == 401:
                 self._token = None
@@ -404,58 +410,86 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
         "station_overday": "GetStationOverDayStatisticsPagedAsync",
         "station_transfer_rate": "GetStationTransferRateQueryDataPage",
         "station_effective_rate": "GetStationEffectiveRateQueryDataPage",
-        "station_receive_rate": "GetStationReceiveRateQueryDataPage",
+        # 平台「日有效率统计」页面接口（2026-10-14 平台端确认口径：dataType=0 原始实况 + nsType=2 新国标）。
+        "station_daily_effective_rate": "GetStationReceiveRateQueryDataPage",
     }
     _CODE_FIELDS = {"city_rank": "CityCode", "district_rank": "DistrictCode", "station_rank": "StationCode",
                     "station_o3_rank": "StationCode", "station_overday": "StationCode",
-                    "station_transfer_rate": "codes", "station_effective_rate": "codes", "station_receive_rate": "codes"}
+                    "station_transfer_rate": "codes", "station_effective_rate": "codes",
+                    "station_daily_effective_rate": "codes"}
     _STATION_STATISTIC_KINDS = {
         "station_rank",
         "station_o3_rank",
         "station_overday",
         "station_transfer_rate",
         "station_effective_rate",
-        "station_receive_rate",
+        "station_daily_effective_rate",
+        "station_data_rate",
     }
-    # 两率端点（GetStation*RateQueryDataPage）只接受 POST + JSON body：
+    # 率值端点（GetStation*RateQueryDataPage）只接受 POST + JSON body：
     # GET 返回 405，POST 查询串返回 415；body 形如 {"codes": [...],
     # "timePoint": [start, end], "dataType": 1, "skipCount": 0, "maxResultCount": n}。
-    _RATE_STATISTIC_KINDS = {"station_transfer_rate", "station_effective_rate", "station_receive_rate"}
+    _RATE_STATISTIC_KINDS = {"station_transfer_rate", "station_effective_rate", "station_daily_effective_rate"}
+    # 平台"数据获取率"页接口（DataReceivingRateQuery/*）不在对外 API 上，按其页面计数规则
+    # 从原始实况小时数据直接计算（2026-10-14 与平台页面对账：江宁九龙湖 328/336 一致）。
+    _COMPUTED_KINDS = {"station_data_rate"}
+    # 平台「综合数据获取率」（联网情况+汇总）城市级页面：GET + stationType 数字站型
+    # （1国控/2省控/3市控/4区域站/5乡镇站/6省建站/7省乡镇站，页面默认省控，缺省/0 平台报错），
+    # 返回各城市行 + 1 条"合计"行；
+    # rate=联网率、hourAppRate=小时获取率、dayAppRate=日获取率，remark=离线站点名，可能出现 "NaN"。
+    _NETWORKING_KINDS = {"city_networking_summary"}
+    _NETWORKING_STATION_TYPES = {"国控": 1, "省控": 2, "市控": 3,
+                                 "区域站": 4, "乡镇站": 5, "省建站": 6, "省乡镇站": 7}
+    # 乡镇站（stationType=5，千站级）单次查询平台侧实测约 50s，远超默认 30s 超时。
+    _NETWORKING_TIMEOUT_SECONDS = 120
+    _POLLUTANT_FIELDS = (("pM2_5", "PM2.5"), ("o3", "O3"), ("pM10", "PM10"),
+                         ("nO2", "NO2"), ("co", "CO"), ("sO2", "SO2"))
 
     def __init__(self) -> None:
         self._directory_rows: list[dict[str, Any]] | None = None
         self._directory_lock = asyncio.Lock()
         super().__init__(
             name="jiangsu_query_statistics", description="查询江苏省城市、区县、站点的均值浓度、排名、综合指数及传输率、有效率等平台统计结果。",
-            category=ToolCategory.QUERY, version="1.3.0",
+            category=ToolCategory.QUERY, version="1.5.1",
             function_schema={
                 "name": "jiangsu_query_statistics",
                 "description": (
                     "只读查询江苏平台已计算的统计结果；凡询问均值浓度（平均浓度、均值对比）、排名、综合指数、最高/最低站点或区域、同比、达标率、超标天、"
-                    "传输率、有效率和接收率等统计问题时，必须优先用本工具直接查询，禁止拉取明细数据自行求平均或排序来替代平台口径。"
+                    "传输率、有效率、日有效率和综合数据获取率等统计问题时，必须优先用本工具直接查询，禁止拉取明细数据自行求平均或排序来替代平台口径。"
                     "排名类 statistic_kind（city_rank/district_rank/station_rank/station_o3_rank）返回的就是时段内污染物平均浓度排名。"
                     "排名类结果每条记录对应一个名次档位：metrics{指标: {district_name/station_name, value, rank, "
                     "same_compare, same_compare_rank, same_compare_*_name}}，同一档位内各指标的持有区域互相独立；"
                     "空值字段已剔除，全部指标为空的区域仅列入 metadata.no_data_names；"
                     "超过24条时完整结果外部化保存为文件，data 仅返回首尾样本，可用 file_path 读取。"
                     "district_rank 查询全省所有区县时，codes 可传 jiangsu_resolve_geography 解析出的全部区县编码。"
-                    "站点级统计（station_rank/station_o3_rank/station_overday/传输率/有效率/接收率）支持三种选站方式："
+                    "站点级统计（station_rank/station_o3_rank/station_overday/传输率/有效率/获取率）支持三种选站方式："
                     "直接传 codes；或传 city_names/district_names/station_names 名称（按平台实时站点目录自动映射辖区站点编码，城市名传“江苏省”即全网）；"
                     "或全部省略——默认全省省控站点（station_type 可改选国控/省控/市控；city_names 传“江苏省”可覆盖目录内全部类型站点）。"
-                    "传输率/有效率/接收率结果为每站点一行、按污染物列出率值（SO2/NO2/PM2.5/PM10/CO/O3，接收率另含 AQI 与 totalReceiveRate 综合率）以及 rank 全网排名；"
+                    "传输率/有效率结果为每站点一行、按污染物列出率值（SO2/NO2/PM2.5/PM10/CO/O3）以及 rank 全网排名；"
                     "窗口内无数据的站点不会出现在结果中。"
+                    "传输率/有效率默认按平台统计页面口径查询：dataType=0（原始实况）、nsType=2（新国标）；"
+                    "时间边界按整点小时对齐（与平台页面一致），月末/月中口径核对禁止改用审核口径充当平台数值。"
+                    "数据获取率必须用 statistic_kind=station_data_rate：平台获取率页面口径（原始实况小时数据有效值计数，分子=有效小时数、"
+                    "分母=起止日期闭区间整天数×24，每站点返回各污染物率值及分子/分母），已与平台页面对账一致。"
+                    "日有效率用 statistic_kind=station_daily_effective_rate：平台「日有效率统计」页面接口，缺省 dataType=0（原始实况）+ nsType=2（新国标），"
+                    "每站点一行按污染物给率值（另含 aqi 与 totalReceiveRate 综合率），数值为平台原值原样返回。"
+                    "综合数据获取率用 statistic_kind=city_networking_summary：城市级联网汇总（每城市一行+1 条合计行），"
+                    "rate=联网率%、hourAppRate=小时获取率%、dayAppRate=日获取率%、remark=离线站点名；"
+                    "station_type 可选 国控/省控/市控/区域站/乡镇站/省建站/省乡镇站（对应平台 stationType 1-7，缺省省控）。"
                 ),
                 "parameters": {"type": "object", "properties": {
-                    "statistic_kind": {"type": "string", "enum": list(self._ENDPOINTS), "description": "统计类型。city_rank/district_rank/station_rank/station_o3_rank 为时段平均浓度排名（station_rank 按站点、district_rank 按区县、city_rank 按城市）；station_overday 为超标天数；station_transfer_rate/station_effective_rate/station_receive_rate 为传输率/有效率/接收率。"},
+                "statistic_kind": {"type": "string", "enum": list(self._ENDPOINTS) + list(self._COMPUTED_KINDS) + list(self._NETWORKING_KINDS), "description": "统计类型。city_rank/district_rank/station_rank/station_o3_rank 为时段平均浓度排名（station_rank 按站点、district_rank 按区县、city_rank 按城市）；station_overday 为超标天数；station_transfer_rate/station_effective_rate/station_daily_effective_rate 为传输率/有效率/日有效率（平台页面口径）；station_data_rate 为数据获取率（平台页面计数口径，原始实况）；city_networking_summary 为综合数据获取率（城市级联网汇总+合计行）。"},
+                    "ns_type": {"type": "integer", "enum": [1, 2], "default": 2,
+                                "description": "国标类型，仅传输率/有效率/日有效率生效：2新国标（默认，与平台页面一致）、1旧国标。"},
                     "codes": {"type": "array", "items": {"type": "string"}, "description": "城市、区县或站点编码，最多300个。站点级统计可省略（默认全网站点）或改用名称参数；city_rank/district_rank 必传。"},
                     "city_names": {"type": "array", "items": {"type": "string"}, "description": "城市名称（如 南京市；江苏省=全网），站点级统计专用；按实时站点目录自动映射辖区站点编码，可与 codes 并用。"},
                     "district_names": {"type": "array", "items": {"type": "string"}, "description": "区县名称（如 海门区），站点级统计专用；自动映射辖区站点编码。"},
                     "station_names": {"type": "array", "items": {"type": "string"}, "description": "站点名称（如 海门城悦建筑），站点级统计专用；自动映射站点编码。"},
-                    "station_type": {"type": "string", "enum": ["全部", "国控", "省控", "市控"], "default": "全部", "description": "仅 station_rank/station_o3_rank/station_overday/传输率/有效率/接收率生效；按实时站点目录过滤站点编码。未传任何站点/区域参数时，缺省按省控站点子集查询。city_rank/district_rank 是平台区域汇总口径，不支持该维度。"},
+                    "station_type": {"type": "string", "enum": ["全部", "国控", "省控", "市控", "区域站", "乡镇站", "省建站", "省乡镇站"], "default": "全部", "description": "站点级统计（station_rank/station_o3_rank/station_overday/传输率/有效率/日有效率/获取率）仅支持 全部/国控/省控/市控，按实时站点目录过滤站点编码，未传任何站点/区域参数时缺省按省控站点子集查询；city_networking_summary 支持 国控(1)/省控(2)/市控(3)/区域站(4)/乡镇站(5)/省建站(6)/省乡镇站(7)，缺省省控（页面默认），不支持全部。city_rank/district_rank 是平台区域汇总口径，不支持该维度。"},
                     "start_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
                     "end_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
-                    "data_type": {"type": "integer", "enum": [0, 1, 2, 3], "default": 1,
-                                  "description": "0原始工况、1审核工况、2原始标况、3审核标况；默认1（审核工况）。"},
+                    "data_type": {"type": "integer", "enum": [0, 1, 2, 3],
+                                  "description": "0原始实况、1审核实况、2原始标况、3审核标况；不传时传输率/有效率/日有效率默认0（原始实况，与平台统计页面默认一致），其余统计默认1（审核实况）；数据获取率固定按原始实况计数。"},
                     "pollutant_code": {"type": "string", "description": "仅 station_overday 必填，如 PM2_5 或 O3_8h。"},
                     "cal_area_type": {"type": "integer", "description": "城市/区县排名的计算区域类型，可选。"},
                     "ascending": {"type": "boolean", "description": "排名升序，默认 true。"},
@@ -465,16 +499,36 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
         )
 
     async def execute(self, context=None, statistic_kind: str | None = None, codes: list[str] | None = None,
-                      start_time: str | None = None, end_time: str | None = None, data_type: int = 1,
+                      start_time: str | None = None, end_time: str | None = None, data_type: int | None = None,
+                      ns_type: int = 2,
                       pollutant_code: str | None = None, cal_area_type: int | None = None,
                       ascending: bool = True, max_results: int = 200,
                       station_type: str | None = None,
                       station_names: list[str] | None = None, city_names: list[str] | None = None,
                       district_names: list[str] | None = None, **_: Any) -> dict[str, Any]:
         try:
-            if statistic_kind not in self._ENDPOINTS:
+            if statistic_kind not in self._ENDPOINTS and statistic_kind not in self._COMPUTED_KINDS \
+                    and statistic_kind not in self._NETWORKING_KINDS:
                 raise ValueError("不支持的 statistic_kind")
             is_station_kind = statistic_kind in self._STATION_STATISTIC_KINDS
+            is_rate_kind = statistic_kind in self._RATE_STATISTIC_KINDS
+            if data_type is None:
+                # 率值与平台统计页面对齐：缺省原始实况；其余统计维持审核实况。
+                data_type = 0 if is_rate_kind else 1
+            if is_rate_kind and ns_type not in self._RATE_NS_TYPES:
+                raise ValueError("ns_type 必须为 1（旧国标）或 2（新国标）")
+            if statistic_kind in self._NETWORKING_KINDS:
+                if codes or station_names or city_names or district_names:
+                    raise ValueError("city_networking_summary 为城市级联网汇总，不接受 codes 或站点/区域名称参数")
+                station_type_name = station_type.strip() if isinstance(station_type, str) and station_type.strip() else "省控"
+                station_type_id = self._NETWORKING_STATION_TYPES.get(station_type_name)
+                if station_type_id is None:
+                    raise ValueError("city_networking_summary 的 station_type 仅支持 "
+                                     + "/".join(self._NETWORKING_STATION_TYPES)
+                                     + "（平台 stationType 1-7，缺省省控），不支持全部")
+                self._parse_range(start_time, end_time)
+                return await self._city_networking_summary(
+                    context, station_type_name, station_type_id, start_time, end_time, max_results)
             resolved_codes = [str(code).strip() for code in codes or [] if isinstance(code, str) and code.strip()]
             if len(resolved_codes) > 300:
                 raise ValueError("codes 最多 300 个编码")
@@ -494,10 +548,11 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
             if not isinstance(max_results, int) or not 1 <= max_results <= 1000:
                 raise ValueError("max_results 必须在 1 至 1000 之间")
             if station_type is not None and normalize_station_type(station_type, allow_all=True) is None:
-                raise ValueError("station_type 必须为 全部、国控、省控或市控")
+                raise ValueError("站点级统计的 station_type 仅支持 全部、国控、省控或市控；"
+                                 "区域站/乡镇站/省建站/省乡镇站 仅 city_networking_summary（综合数据获取率）支持")
             effective_station_type = normalize_station_type(station_type, allow_all=True) or "全部"
             if effective_station_type != "全部" and not is_station_kind:
-                raise ValueError("station_type 仅适用于站点排名、超标天数、传输率、有效率和接收率统计；city_rank/district_rank 不支持")
+                raise ValueError("station_type 仅适用于站点排名、超标天数、传输率、有效率和获取率统计；city_rank/district_rank 不支持")
             station_type_filter_applied = False
             codes_source = "explicit"
             # 名称解析与全网缺省都依赖实时站点目录；显式编码+全部类型时保持原有行为不查目录。
@@ -535,6 +590,9 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
                     if not resolved_codes:
                         raise ValueError(f"站点编码中没有{effective_station_type}站点")
             self._parse_range(start_time, end_time)
+            if statistic_kind == "station_data_rate":
+                return await self._station_data_rate(
+                    context, resolved_codes, start_time, end_time, max_results)
             endpoint = f"dataanalysis/StationDataStatisticQuery/{self._ENDPOINTS[statistic_kind]}"
             if statistic_kind in self._RATE_STATISTIC_KINDS:
                 # 两率 POST：编码过多平台会超时，按 200 一批串行取回合并（与明细工具分批同思路）；
@@ -546,6 +604,7 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
                         "codes": chunk,
                         "timePoint": [start_time, end_time],
                         "dataType": data_type,
+                        "nsType": ns_type,
                         "skipCount": 0,
                         "maxResultCount": min(1000, max(max_results, len(chunk))),
                     })
@@ -584,6 +643,7 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
                         "station_type_filter_applied": station_type_filter_applied,
                         "time_range": [start_time, end_time],
                         "data_type": data_type, "data_type_label": self._DATA_TYPES[data_type],
+                        "ns_type": ns_type if is_rate_kind else None,
                         "total_count": total_count, "record_count": len(compact_items),
                         "queried_at": datetime.now().astimezone().isoformat(), **filter_metadata}
             metadata["context_data"] = externalization
@@ -597,6 +657,160 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
         except (ValueError, httpx.HTTPError) as exc:
             logger.warning("jiangsu_statistics_failed", statistic_kind=statistic_kind, error=str(exc))
             return {"status": "failed", "success": False, "data": [], "summary": f"江苏统计查询失败：{exc}"}
+
+    async def _station_data_rate(
+        self, context, codes: list[str], start_time: str, end_time: str, max_results: int,
+    ) -> dict[str, Any]:
+        """平台“数据获取率”口径：原始实况小时数据有效值计数。
+
+        平台获取率页接口（DataReceivingRateQuery/*）不在对外 API；本方法按其页面计数规则
+        从 GetStationHourDataListAsync(dataType=0) 直接计算，2026-10-14 与平台页面对账一致
+        （江宁九龙湖 328/336）。分子=该污染物有效小时数（纯数值≥0；“值(标记)”、-99、缺测无效），
+        分母=起止日期闭区间整天数×24（不含未来日期）。
+        """
+        today = datetime.now().date()
+        start_day = datetime.fromisoformat(start_time).date()
+        end_day = min(datetime.fromisoformat(end_time).date(), today)
+        expected_days = (end_day - start_day).days + 1
+        if expected_days <= 0:
+            raise ValueError("start_time 晚于当前日期，无法统计数据获取率")
+        denominator = expected_days * 24
+
+        endpoint = "airdata/DATStationHour/GetStationHourDataListAsync"
+        counts: dict[str, dict[str, int]] = {}
+        station_info: dict[str, dict[str, Any]] = {}
+        for start in range(0, len(codes), 200):
+            chunk = codes[start:start + 200]
+            payload = await self._post_json(endpoint, {
+                "codes": chunk,
+                "timePoint": [start_time, end_time],
+                "dataType": 0,
+            })
+            for row in payload.get("result") or []:
+                if not isinstance(row, dict):
+                    continue
+                code = str(row.get("code") or "").strip()
+                if not code:
+                    continue
+                slot = counts.setdefault(code, {field: 0 for field, _ in self._POLLUTANT_FIELDS})
+                info = station_info.setdefault(code, {})
+                for key in ("cityName", "districtName", "name"):
+                    if row.get(key) and not info.get(key):
+                        info[key] = row.get(key)
+                for field, _ in self._POLLUTANT_FIELDS:
+                    if self._is_valid_pollutant_value(row.get(field)):
+                        slot[field] += 1
+
+        rows: list[dict[str, Any]] = []
+        for code in codes:
+            if code not in counts:
+                continue
+            info = station_info.get(code) or {}
+            row: dict[str, Any] = {
+                "stationCode": code,
+                "stationName": info.get("name"),
+                "cityName": info.get("cityName"),
+                "districtName": info.get("districtName"),
+                "expected_hours": denominator,
+            }
+            for field, _ in self._POLLUTANT_FIELDS:
+                valid = counts[code][field]
+                row[field] = round(valid / denominator * 100, 2)
+                row[f"{field}_valid_hours"] = valid
+            rows.append(row)
+
+        externalization_meta = {"source_tool": self.name, "source_record_count": len(rows)}
+        inline_items, filtered_file_path, externalization = externalize_compact_records(
+            rows, context=context, schema="jiangsu_statistics_station_data_rate",
+            metadata=externalization_meta,
+        )
+        metadata = {"source": "computed_from_platform_hour_data", "endpoint": endpoint,
+                    "statistic_kind": "station_data_rate", "codes": codes,
+                    "station_count": len(codes), "time_range": [start_time, end_time],
+                    "data_type": 0, "data_type_label": self._DATA_TYPES[0],
+                    "expected_days": expected_days, "expected_hours": denominator,
+                    "record_count": len(rows),
+                    "queried_at": datetime.now().astimezone().isoformat()}
+        metadata["context_data"] = externalization
+        return {
+            "status": "success" if rows else "empty", "success": True, "data": inline_items,
+            "metadata": metadata,
+            "summary": f"数据获取率（平台口径）查询完成：{len(rows)} 个站点，应测 {denominator} 小时/站"
+                       f"（{start_day} ~ {end_day} 闭区间整天数×24，原始实况）；每站点按污染物给出率值与有效小时数（分子）。",
+            **{key: externalization[key] for key in ("data_complete", "record_count", "returned_records", "sample_strategy")},
+            **({"file_path": filtered_file_path} if filtered_file_path else {}),
+        }
+
+    async def _city_networking_summary(
+        self, context, station_type_name: str, station_type_id: int,
+        start_time: str, end_time: str, max_results: int,
+    ) -> dict[str, Any]:
+        """平台「综合数据获取率」（联网情况+汇总）城市级页面。
+
+        GET GetCityTownStationNetworkingPagedListWithSummaryRecordAsync，stationType 数字站型
+        （1国控/2省控/3市控/4区域站/5乡镇站/6省建站/7省乡镇站），返回 13 个城市行 + 1 条"合计"行；
+        rate=联网率、hourAppRate=小时获取率、dayAppRate=日获取率、remark=离线站点名；平台可能返回
+        字符串 "NaN"，统一置空。
+        """
+        endpoint = ("dataanalysis/StationDataStatisticQuery/"
+                    "GetCityTownStationNetworkingPagedListWithSummaryRecordAsync")
+        params: list[tuple[str, Any]] = [
+            ("skipCount", 0), ("maxResultCount", max_results),
+            ("stationType", station_type_id),
+            ("timePoint[0]", start_time), ("timePoint[1]", end_time),
+        ]
+        payload = await self._get(endpoint, params, timeout_seconds=self._NETWORKING_TIMEOUT_SECONDS)
+        result = payload.get("result") or {}
+        raw_items = result.get("items", []) if isinstance(result, dict) else []
+        rows: list[dict[str, Any]] = []
+        for row in raw_items:
+            if not isinstance(row, dict):
+                continue
+            clean = {}
+            for key, value in row.items():
+                if isinstance(value, str) and value.strip().lower() in {"nan", "-"}:
+                    clean[key] = None
+                else:
+                    clean[key] = value
+            clean["station_type"] = station_type_name
+            clean["is_summary"] = str(clean.get("cityCode") or "") == "合计"
+            rows.append(clean)
+
+        externalization_meta = {"source_tool": self.name, "source_record_count": len(rows)}
+        inline_items, filtered_file_path, externalization = externalize_compact_records(
+            rows, context=context, schema="jiangsu_statistics_city_networking_summary",
+            metadata=externalization_meta,
+        )
+        summary_rows = [r for r in rows if r.get("is_summary")]
+        metadata = {"source": "jiangsu_air_province_api", "endpoint": endpoint,
+                    "statistic_kind": "city_networking_summary",
+                    "station_type": station_type_name,
+                    "time_range": [start_time, end_time],
+                    "city_count": len(rows) - len(summary_rows),
+                    "summary": (summary_rows or [None])[0] if summary_rows else None,
+                    "record_count": len(rows),
+                    "queried_at": datetime.now().astimezone().isoformat()}
+        metadata["context_data"] = externalization
+        return {
+            "status": "success" if rows else "empty", "success": True, "data": inline_items,
+            "metadata": metadata,
+            "summary": f"综合数据获取率（联网汇总，{station_type_name}站点）查询完成："
+                       f"{len(rows) - len(summary_rows)} 个城市行 + {len(summary_rows)} 条合计行；"
+                       "rate=联网率%、hourAppRate=小时获取率%、dayAppRate=日获取率%，remark 为离线站点名。",
+            **{key: externalization[key] for key in ("data_complete", "record_count", "returned_records", "sample_strategy")},
+            **({"file_path": filtered_file_path} if filtered_file_path else {}),
+        }
+
+    @staticmethod
+    def _is_valid_pollutant_value(value: Any) -> bool:
+        """平台有效值计数规则：纯数值≥0 有效；'值(标记)'（如 2(PF)）、-99、缺测符号、空 均无效。"""
+        text = str(value).strip()
+        if not text or "(" in text or "（" in text:
+            return False
+        try:
+            return float(text) >= 0
+        except ValueError:
+            return False
 
     async def _typed_station_rows(self, station_type: str) -> tuple[list[dict[str, Any]], bool]:
         """Live station directory (cached) filtered by station_type: (rows, filter_applied)."""

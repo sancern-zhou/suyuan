@@ -249,7 +249,7 @@ def _render_guide() -> str:
         lines.append("  维度(dimensions): " + "; ".join(
             f"{d['name']}={d['title']}" for d in parts["dimensions"]))
     lines.append("")
-    lines.append("数据窗口: 2026-07-01 起。获取率/有效率/接收率是平台统计口径,不在本工具,"
+    lines.append("数据窗口: 2026-07-01 起。获取率/有效率/传输率是平台统计口径,不在本工具,"
                  "用 jiangsu_query_statistics。考核两率窗口内无实际填报。")
     return "\n".join(lines)
 
