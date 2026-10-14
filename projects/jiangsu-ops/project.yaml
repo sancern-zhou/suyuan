@@ -49,23 +49,8 @@ frontend:
       - label: 查询知识库
         prompt: 从我有权访问的知识库中检索江苏运维规程，并说明命中文档和依据。
         mode: knowledge
-    routes:
-      - mode: device_control
-        keywords: [反控, 空调, 阀门, 零气机, 校准仪, 设备控制]
-      - mode: station_fault_diagnosis
-        keywords: [断数, 恒值, 故障, 离线, 根因, 质控异常]
-      - mode: operations_analysis
-        keywords: [人员, 到站, 签到, 调度, 覆盖, 跨市]
-      - mode: knowledge
-        keywords: [知识库, 规程, 标准, 制度, 文档, 条款]
-      # - mode: expert  # 2026-09-23 专家研判下线，路由关键词一并停用。
-      #   keywords: [污染过程, 成因, 来源, 传输, 专家研判]
-      - mode: jiangsu_query
-        keywords: [查询, 数据, 浓度, 趋势, 排名, 图表, 同比]
-      - mode: smart_inspection
-        keywords: [巡检, 告警, 异常站点, 全网态势]
-      - mode: ops
-        keywords: [工单, 审核, 报告, 整改]
+    # 2026-10-12 关键词路由（routes）按产品决策整体删除：不允许关键词路由。
+    # 用户在当前模式提问，快问快答由该模式直接 call_sub_agent 委派对应子模式。
     workspace_blocks:
       - id: shift-briefing
         type: briefing
@@ -205,13 +190,66 @@ backend:
   # 江苏项目按模式向工单审核、故障诊断和其他运维智能体暴露经评审的工具。
   # 该白名单同时用于提示词和函数 schema；新增工具必须经过项目评审后加入。
   # 内部子模式仅由 operations_analysis 委派，不出现在前台。
+  # 2026-10-12 参照许昌分支按数据类型拆分问数子模式（query_monitoring/query_forecast）
+  # 的做法，将原单一 jiangsu_ops_data 按数据域拆为 7 个子模式：每个子模式只在
+  # agent_mode_tools 暴露本域工具，父 Agent 无法把跨域任务塞给单个节点。
+  # 背景：上周运维报告的数据台账任务在 8 次迭代内取不齐 8 个数据域
+  # （run_20261012_001329 status=timeout max_iterations_reached）。
   agent_workflow_modes:
-    jiangsu_ops_data:
-      positioning: 运维数据准备
-      scope: 批量指标、受控明细与数据对齐；统一时间、站点、分母与截至时间
-      boundary: 只取数和确定性整理，不作风险认定、不生成正式报告
+    jiangsu_ops_data_workorder:
+      positioning: 工单数据准备
+      scope: 故障工单(仅Fault)与例行工单的批量指标、受控明细与数据对齐；响应时长、处理中未闭环、重复故障
+      boundary: 只取数和确定性整理，不作风险认定、不生成正式报告；告警、巡检、质控、设备等跨域取数不在本节点，列入 data_gaps 交父 Agent 委派
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
-      max_iterations: 8
+      max_iterations: 10
+      timeout_seconds: 180
+      max_deliverables: 3
+    jiangsu_ops_data_alarm:
+      positioning: 告警与事件数据准备
+      scope: 站点告警、智能事件与报警积压的批量指标、受控明细与数据对齐
+      boundary: 只取数和确定性整理，不作风险认定；告警与事件数据仅更新至2026-09-27，覆盖缺口须声明盲区；跨域取数列入 data_gaps
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
+      max_iterations: 10
+      timeout_seconds: 180
+      max_deliverables: 3
+    jiangsu_ops_data_inspection:
+      positioning: 巡检数据准备
+      scope: 巡检任务项数、超期(周期结束未完成)、周期类型/人员/站点分布与受控明细
+      boundary: 只取数和确定性整理，不作风险认定、不生成正式报告；跨域取数列入 data_gaps 交父 Agent 委派
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
+      max_iterations: 10
+      timeout_seconds: 180
+      max_deliverables: 3
+    jiangsu_ops_data_qc:
+      positioning: 质控数据准备
+      scope: 质控执行量与不合格数、质控安排与已过期任务、补测闭环的批量指标与受控明细
+      boundary: 只取数和确定性整理；仅约23个质控试点站，结论不得外推全省；跨域取数列入 data_gaps
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
+      max_iterations: 10
+      timeout_seconds: 180
+      max_deliverables: 3
+    jiangsu_ops_data_device:
+      positioning: 设备与停电数据准备
+      scope: 设备生命周期事件、设备参数与台账、停电报备单及时长、站房动环供电历史
+      boundary: 只取数和确定性整理，不作风险认定；动环历史仅限父任务指定窗口不扩大范围；跨域取数列入 data_gaps
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
+      max_iterations: 10
+      timeout_seconds: 180
+      max_deliverables: 3
+    jiangsu_ops_data_station:
+      positioning: 站点与人员数据准备
+      scope: 站点健康快照、站点日概况、站点与设备台账、到站签到条数与签到轨迹
+      boundary: 只取数和确定性整理；签到源数据稀疏须如实记录条数；快照须注明快照时间与底层告警截止时间；跨域取数列入 data_gaps
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
+      max_iterations: 10
+      timeout_seconds: 180
+      max_deliverables: 3
+    jiangsu_ops_data_rates:
+      positioning: 平台率值数据准备
+      scope: 数据获取率、有效率、传输率等平台统计口径指标及其分母可用性
+      boundary: 率值一律以平台统计接口为准禁止自算；不取业务明细、不生成正式报告；跨域取数列入 data_gaps
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
+      max_iterations: 10
       timeout_seconds: 180
       max_deliverables: 3
     jiangsu_ops_regular_analysis:
@@ -242,12 +280,20 @@ backend:
   agent_workflow_parents:
     operations_analysis:
       child_modes:
-        - jiangsu_ops_data
+        - jiangsu_ops_data_workorder
+        - jiangsu_ops_data_alarm
+        - jiangsu_ops_data_inspection
+        - jiangsu_ops_data_qc
+        - jiangsu_ops_data_device
+        - jiangsu_ops_data_station
+        - jiangsu_ops_data_rates
         - jiangsu_ops_regular_analysis
         - jiangsu_ops_risk_analysis
         - jiangsu_ops_evidence
       max_concurrency: 3
-      max_nodes: 12
+      # 2026-10-12 数据子模式按域拆分后，一份正式报告的数据节点按域增加，
+      # 节点预算从 12 放宽到 16（7 数据域 + 3 分析 + 定向补证仍有余量）。
+      max_nodes: 16
       max_retries: 3
       max_extensions: 2
       timeout_seconds: 1200
@@ -278,6 +324,7 @@ backend:
       - jiangsu_prepare_fault_work_order
       - submit_task_review
       - create_report_package
+      - execute_python
     smart_event_instrument:
       - read_file
       - jiangsu_smart_event_workspace
@@ -287,6 +334,7 @@ backend:
       - jiangsu_prepare_fault_work_order
       - submit_task_review
       - create_report_package
+      - execute_python
     # 知识问答以授权知识库为主，允许读取已注册的会话资源，并按需联网补充。
     knowledge:
       - knowledge_qa_workflow
@@ -299,6 +347,7 @@ backend:
       - web_search
       - web_fetch
       - create_report_package
+      - execute_python
     # 江苏社交模式独立声明工具面，不继承共享“风清气智”的社交工具集合。
     # 移动端仅开放用户隔离能力、江苏只读业务查询和成果发布能力。
     social:
@@ -338,6 +387,7 @@ backend:
       - get_weather_forecast
       - get_current_weather
       - create_business_chart
+      - execute_python
       - execute_echarts_python
       - create_report_package
     jiangsu_query:
@@ -446,6 +496,8 @@ backend:
       # 指标语义层（Cube Core REST, 口径唯一免SQL; 2026-10-02）
       - jiangsu_query_metrics
       - create_business_chart
+      # 2026-10-13 项目要求全模式统一补配 execute_python（Python 分析兜底），不受上述瘦身约束。
+      - execute_python
       - call_sub_agent
     # 站房巡检的业务查询仍为只读；巡检执行、工单生成与派发仍需后续单独评审。
     smart_inspection:
@@ -472,9 +524,16 @@ backend:
       # 指标语义层（Cube Core REST, 口径唯一免SQL; 2026-10-02）
       - jiangsu_query_metrics
       - create_report_package
-    # 分析到站记录和空间台账，不能替代工单、告警处置等确定性流程约束。
+      - execute_python
+    # 2026-10-12 父模式裁剪为编排与报告生成：不持有任何取数工具，
+    # 取数一律委派子 Agent——快问快答用 call_sub_agent 直接调用对应
+    # 子模式，多专题报告用 run_agent_workflow 编排 DAG；父模式只做编排、
+    # 口径一致性核对、结论分级与成稿发布（图表由分析节点生成，父模式复用不重绘）。
+    # 2026-10-13 项目要求全模式统一补配 execute_python，父模式仅作轻量分析兜底，
+    # 跨域取数与正式图表仍走子 Agent。
     operations_analysis:
       - run_agent_workflow
+      - call_sub_agent
       - list_session_resources
       - read_session_resource
       - publish_session_file
@@ -484,34 +543,10 @@ backend:
       # 技能发现与阅读：加载日常监管/风险监管两份场景 Skill。
       - list_skills
       - view_skill
-      - jiangsu_query_operations_graph
-      - jiangsu_fetch_attendance_records
-      - jiangsu_fetch_station_directory
-      - jiangsu_fetch_fault_work_orders
-      - jiangsu_fetch_fault_work_order_detail
-      - jiangsu_fetch_alarm_records
-      - jiangsu_fetch_station_alarm_logs
-      - jiangsu_fetch_station_data
-      - jiangsu_analyze_work_order_tracks
-      # 门禁/设备台账接口工具已下线：门禁平台无数据；设备台账走 execute_jiangsu_mart_sql（dim_device）。
-      # 智能事件中心结构化查询：优先用它做告警/风险/积压的结构化筛选与聚合。
-      - execute_smart_event_sql_query
-      # 站房动环/供电历史，用于高值窗口停电/离线核验。
-      - jiangsu_fetch_station_environment_history
-      # 真实统计与质控数据（两率、质控合格率口径）。
-      - jiangsu_query_statistics
-      - jiangsu_fetch_qc_task_history
-      - jiangsu_fetch_qc_task_status
       # 报告出具链路。
-      - create_business_chart
-      - execute_python
       - create_report_package
+      - execute_python
       - publish_report
-      - knowledge_graph_query
-      # 江苏运维主题数据集受控SQL（本地 mart 语义层）
-      - execute_jiangsu_mart_sql
-      # 指标语义层（Cube Core REST, 口径唯一免SQL; 2026-10-02）
-      - jiangsu_query_metrics
     # 设备反控仅允许固定指令集。所有执行动作必须先生成待确认指令，再由用户明确确认。
     device_control:
       - read_file
@@ -529,6 +564,7 @@ backend:
       - jiangsu_query_operations_graph
       - knowledge_graph_query
       - create_report_package
+      - execute_python
     station_fault_diagnosis:
       - read_file
       - edit_file
@@ -555,21 +591,82 @@ backend:
       - jiangsu_query_metrics
       - jiangsu_prepare_fault_work_order
       - create_report_package
-    jiangsu_ops_data:
+      - execute_python
+    # 2026-10-12 数据准备子模式按数据域拆分（参照许昌 query_monitoring/query_forecast）：
+    # 每个子模式只暴露本域取数工具，跨域任务必须由父 Agent 委派对应子模式。
+    # 共同基础面：会话资源读写、文件、execute_python。
+    jiangsu_ops_data_workorder:
+      # 工单域：mart 工单宽表聚合 + 语义层目录内指标。
       - list_session_resources
       - read_session_resource
       - read_file
       - write_file
       - publish_session_file
-      - jiangsu_query_metrics
       - execute_jiangsu_mart_sql
+      - jiangsu_query_metrics
+      - execute_python
+    jiangsu_ops_data_alarm:
+      # 告警与事件域：智能事件中心结构化查询 + mart 告警事件宽表。
+      - list_session_resources
+      - read_session_resource
+      - read_file
+      - write_file
+      - publish_session_file
       - execute_smart_event_sql_query
-      - jiangsu_fetch_attendance_records
+      - execute_jiangsu_mart_sql
+      - execute_python
+    jiangsu_ops_data_inspection:
+      # 巡检域：mart 巡检分析宽表，无平台接口依赖。
+      - list_session_resources
+      - read_session_resource
+      - read_file
+      - write_file
+      - publish_session_file
+      - execute_jiangsu_mart_sql
+      - execute_python
+    jiangsu_ops_data_qc:
+      # 质控域：mart 质控执行/安排/补测宽表 + 质控任务明细下钻（只读）。
+      - list_session_resources
+      - read_session_resource
+      - read_file
+      - write_file
+      - publish_session_file
+      - execute_jiangsu_mart_sql
+      - jiangsu_fetch_qc_task_status
+      - jiangsu_fetch_qc_task_history
+      - execute_python
+    jiangsu_ops_data_device:
+      # 设备与停电域：mart 生命周期/参数/停电宽表 + 站房动环供电历史（限指定窗口）。
+      - list_session_resources
+      - read_session_resource
+      - read_file
+      - write_file
+      - publish_session_file
+      - execute_jiangsu_mart_sql
+      - jiangsu_fetch_station_environment_history
+      - execute_python
+    jiangsu_ops_data_station:
+      # 站点与人员域：站点台账/概况 + 到站签到与签到轨迹平台接口。
+      - list_session_resources
+      - read_session_resource
+      - read_file
+      - write_file
+      - publish_session_file
+      - execute_jiangsu_mart_sql
       - jiangsu_fetch_station_directory
-      - jiangsu_query_operations_graph
-      - jiangsu_query_statistics
       - jiangsu_fetch_station_data
+      - jiangsu_fetch_attendance_records
       - jiangsu_analyze_work_order_tracks
+      - execute_python
+    jiangsu_ops_data_rates:
+      # 平台率值域：两率/合格率以平台统计接口为唯一口径，禁止自算；不取业务明细。
+      - list_session_resources
+      - read_session_resource
+      - read_file
+      - write_file
+      - publish_session_file
+      - jiangsu_query_statistics
+      - jiangsu_query_metrics
       - execute_python
     jiangsu_ops_regular_analysis:
       - list_session_resources
@@ -604,7 +701,13 @@ backend:
       - jiangsu_fetch_station_data
       - execute_python
   mode_prompt_files:
-    jiangsu_ops_data: projects/jiangsu-ops/prompts/internal/jiangsu_ops_data.md
+    jiangsu_ops_data_workorder: projects/jiangsu-ops/prompts/internal/jiangsu_ops_data_workorder.md
+    jiangsu_ops_data_alarm: projects/jiangsu-ops/prompts/internal/jiangsu_ops_data_alarm.md
+    jiangsu_ops_data_inspection: projects/jiangsu-ops/prompts/internal/jiangsu_ops_data_inspection.md
+    jiangsu_ops_data_qc: projects/jiangsu-ops/prompts/internal/jiangsu_ops_data_qc.md
+    jiangsu_ops_data_device: projects/jiangsu-ops/prompts/internal/jiangsu_ops_data_device.md
+    jiangsu_ops_data_station: projects/jiangsu-ops/prompts/internal/jiangsu_ops_data_station.md
+    jiangsu_ops_data_rates: projects/jiangsu-ops/prompts/internal/jiangsu_ops_data_rates.md
     jiangsu_ops_regular_analysis: projects/jiangsu-ops/prompts/internal/jiangsu_ops_regular_analysis.md
     jiangsu_ops_risk_analysis: projects/jiangsu-ops/prompts/internal/jiangsu_ops_risk_analysis.md
     jiangsu_ops_evidence: projects/jiangsu-ops/prompts/internal/jiangsu_ops_evidence.md

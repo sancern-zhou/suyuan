@@ -22,7 +22,7 @@ def jiangsu(monkeypatch):
 
 def test_internal_roles_have_distinct_tools_and_remain_hidden(jiangsu):
     modes = jiangsu.manifest.backend.agent_workflow_modes
-    assert len(modes) == 4
+    assert len(modes) == 10
     assert set(modes).isdisjoint(jiangsu.manifest.frontend.agent_modes)
     for mode in modes:
         tools = set(get_tools_by_mode(mode))
@@ -33,8 +33,45 @@ def test_internal_roles_have_distinct_tools_and_remain_hidden(jiangsu):
     for mode in ("jiangsu_ops_regular_analysis", "jiangsu_ops_risk_analysis"):
         assert not any(name.startswith(("jiangsu_fetch", "execute_jiangsu", "execute_smart_event", "jiangsu_query"))
                        for name in get_tools_by_mode(mode))
-    assert "jiangsu_query_metrics" in get_tools_by_mode("jiangsu_ops_data")
     assert "jiangsu_fetch_fault_work_order_detail" in get_tools_by_mode("jiangsu_ops_evidence")
+
+
+def test_data_modes_are_split_by_domain_tools(jiangsu):
+    """数据准备子模式按数据域拆分：域工具只出现在自己的模式里，跨域取数必须另建节点。"""
+    data_modes = {mode: set(get_tools_by_mode(mode))
+                  for mode in jiangsu.manifest.backend.agent_workflow_modes
+                  if mode.startswith("jiangsu_ops_data_")}
+    assert set(data_modes) == {
+        "jiangsu_ops_data_workorder", "jiangsu_ops_data_alarm", "jiangsu_ops_data_inspection",
+        "jiangsu_ops_data_qc", "jiangsu_ops_data_device", "jiangsu_ops_data_station",
+        "jiangsu_ops_data_rates"}
+    assert "execute_jiangsu_mart_sql" in data_modes["jiangsu_ops_data_workorder"]
+    assert "jiangsu_query_metrics" in data_modes["jiangsu_ops_data_workorder"]
+    domain_owners = {
+        "execute_smart_event_sql_query": "jiangsu_ops_data_alarm",
+        "jiangsu_fetch_qc_task_status": "jiangsu_ops_data_qc",
+        "jiangsu_fetch_qc_task_history": "jiangsu_ops_data_qc",
+        "jiangsu_fetch_station_environment_history": "jiangsu_ops_data_device",
+        "jiangsu_fetch_station_directory": "jiangsu_ops_data_station",
+        "jiangsu_fetch_attendance_records": "jiangsu_ops_data_station",
+        "jiangsu_analyze_work_order_tracks": "jiangsu_ops_data_station",
+        "jiangsu_query_statistics": "jiangsu_ops_data_rates",
+    }
+    for tool_name, owner in domain_owners.items():
+        holders = {mode for mode, tools in data_modes.items() if tool_name in tools}
+        assert holders == {owner}, (tool_name, holders)
+
+
+def test_parent_mode_is_orchestration_and_reporting_only(jiangsu):
+    """父模式取数一律委派子 Agent；2026-10-13 起仅放行 execute_python 作分析兜底。"""
+    tools = set(get_tools_by_mode("operations_analysis"))
+    assert {"run_agent_workflow", "call_sub_agent"} <= tools
+    assert not any(
+        name.startswith(("jiangsu_fetch", "execute_jiangsu", "execute_smart_event", "jiangsu_query",
+                         "jiangsu_analyze", "create_business_chart", "knowledge_graph"))
+        for name in tools
+    )
+    assert "execute_python" in tools
 
 
 def test_schema_refreshes_when_project_changes(jiangsu, monkeypatch):
@@ -122,7 +159,7 @@ async def test_real_dag_parallel_analysis_and_extension_reuse_sources(jiangsu, m
 
     monkeypatch.setattr(RunAgentWorkflowTool, "_load_parent_snapshot", staticmethod(load))
     context = SimpleNamespace(runtime_mode="operations_analysis", session_id="isolated-dag-test")
-    workflow = {"workflow_id": "monthly", "nodes": [task("data", "jiangsu_ops_data"),
+    workflow = {"workflow_id": "monthly", "nodes": [task("data", "jiangsu_ops_data_workorder"),
                 task("coverage", "jiangsu_ops_regular_analysis", ["data"]),
                 task("risk", "jiangsu_ops_risk_analysis", ["data"])]}
     # Worker checkpoints may wrap payloads. A caller's loose nested schema
@@ -136,7 +173,7 @@ async def test_real_dag_parallel_analysis_and_extension_reuse_sources(jiangsu, m
     assert result["success"], result
     assert reached == {"coverage", "risk"}
     assert snapshots["monthly"]["max_concurrency"] == 3
-    assert snapshots["monthly"]["definition"]["budget"]["max_nodes"] == 12
+    assert snapshots["monthly"]["definition"]["budget"]["max_nodes"] == 16
     extension = {"expected_revision": result["data"]["revision"], "reason": "核验具体工单冲突",
                  "nodes": [task("verify", "jiangsu_ops_evidence", ["risk"])]}
     extended = await RunAgentWorkflowTool().execute(context=context, workflow={"workflow_id": "monthly"}, extension=extension)

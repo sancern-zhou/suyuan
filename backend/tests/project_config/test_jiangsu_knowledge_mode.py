@@ -18,6 +18,8 @@ EXPECTED_TOOLS = [
     "web_search",
     "web_fetch",
     "create_report_package",
+    # 2026-10-13 全模式统一补配 execute_python（Python 分析兜底）。
+    "execute_python",
 ]
 
 
