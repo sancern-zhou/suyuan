@@ -516,6 +516,143 @@ async def test_merged_clues_on_judged_event_create_incremental_task(tmp_path):
     assert incremental["conversation_id"] == first["conversation_id"]
 
 
+def _deviation_row(row_id, code, alarmtime, content=None):
+    return {
+        "id": row_id,
+        "code": code,
+        "stationName": "示例站",
+        "alarmtime": alarmtime,
+        "ddRuleType": "偏差报警",
+        "content": content or "数据偏差：PM2.5浓度为42μg/m3，与50公里内站点均值60μg/m3相比较，偏差为30%，超出20%。",
+    }
+
+
+@pytest.mark.asyncio
+async def test_deviation_alarms_do_not_create_events(tmp_path):
+    tool = SameDayAlarmsTool(rows=[
+        _deviation_row(1, "A", "2026-09-09 08:00:00"),
+        _deviation_row(2, "A", "2026-09-09 09:00:00"),
+    ])
+    service = JiangsuSmartEventService(tool, data_root=tmp_path)
+    result = await service.sync_alarm_events(
+        start_time="2026-09-09T00:00:00+08:00",
+        end_time="2026-09-09T23:59:59+08:00",
+        dispatch_ai=False,
+    )
+
+    store = service._load_store()
+    assert store["events"] == []
+    assert service.list_tasks() == []
+    assert result["deviation_clues"]["fetched"] == 2
+    # 当日无事件桶，线索按丢弃计数，不落库。
+    assert result["deviation_clues"]["dropped"] == 2
+    assert result["deviation_clues"]["attached"] == 0
+    assert store["last_sync"]["deviation_clues"]["dropped"] == 2
+    assert store["last_deviation_sync"]["fetched"] == 2
+
+
+@pytest.mark.asyncio
+async def test_deviation_alarms_attach_as_compliance_clues_to_same_day_bucket(tmp_path):
+    tool = SameDayAlarmsTool(rows=[
+        {"id": 1, "code": "A", "stationName": "示例站", "alarmtime": "2026-09-09 08:00:00", "ddRuleType": "供电报警", "content": "UPS 电源报警"},
+        _deviation_row(2, "A", "2026-09-09 10:00:00"),
+    ])
+    service = JiangsuSmartEventService(tool, data_root=tmp_path)
+    result = await service.sync_alarm_events(
+        start_time="2026-09-09T00:00:00+08:00",
+        end_time="2026-09-09T23:59:59+08:00",
+        dispatch_ai=False,
+    )
+
+    store = service._load_store()
+    assert len(store["events"]) == 1
+    event = store["events"][0]
+    assert event["event_id"] == "alarm:1"
+    assert event["primary_clue_tag"] == "供电报警"
+    assert event["clue_count"] == 2
+    assert result["deviation_clues"]["attached"] == 1
+    assert result["deviation_clues"]["attached_sites"] == ["A"]
+    deviation_tag = next(tag for tag in event["clue_tags"] if tag["tag_id"].startswith("compliance:偏差告警:"))
+    assert deviation_tag["tag_source"] == "合规记录"
+    assert deviation_tag["tag_category"] == "合规"
+    assert deviation_tag["tag_name"] == "偏差报警"
+    assert deviation_tag["compliance_source"] == "偏差告警"
+    # 合规线索不参与事件起止计算，边界仍锚定真实告警。
+    assert event["event_start_time"].startswith("2026-09-09T08:00:00")
+    assert event["event_end_time"].startswith("2026-09-09T08:00:00")
+    # 未研判桶仍是原一张待执行卡，挂靠不新增卡片。
+    assert len(service.list_tasks()) == 1
+
+
+@pytest.mark.asyncio
+async def test_deviation_clue_on_judged_bucket_skips_incremental_task(tmp_path):
+    tool = SameDayAlarmsTool(rows=[
+        {"id": 1, "code": "A", "stationName": "示例站", "alarmtime": "2026-09-09 08:00:00", "ddRuleType": "供电报警", "content": "UPS 电源报警"},
+    ])
+    service = JiangsuSmartEventService(tool, data_root=tmp_path)
+    await service.sync_alarm_events(
+        start_time="2026-09-09T00:00:00+08:00", end_time="2026-09-09T23:59:59+08:00", dispatch_ai=False
+    )
+    service.apply_task_execution("alarm:1", build_jiangsu_smart_event_task(), _finished_execution("第一轮结论：疑似站房停电。"))
+
+    tool.rows = tool.rows + [_deviation_row(3, "A", "2026-09-09 15:00:00")]
+    result = await service.sync_alarm_events(
+        start_time="2026-09-09T00:00:00+08:00", end_time="2026-09-09T23:59:59+08:00", dispatch_ai=False
+    )
+
+    assert result["merged_event_count"] == 0
+    assert result["deviation_clues"]["attached"] == 1
+    store = service._load_store()
+    event = store["events"][0]
+    assert event["clue_count"] == 2
+    # 旁证线索不记 pending_delta、不建增量研判卡。
+    assert "pending_delta" not in event
+    tasks = service.list_tasks()
+    assert len(tasks) == 1
+    assert tasks[0]["status"] == "已完成"
+
+
+@pytest.mark.asyncio
+async def test_deviation_clue_dedup_on_resync(tmp_path):
+    rows = [
+        {"id": 1, "code": "A", "stationName": "示例站", "alarmtime": "2026-09-09 08:00:00", "ddRuleType": "供电报警", "content": "UPS 电源报警"},
+        _deviation_row(2, "A", "2026-09-09 10:00:00"),
+    ]
+    service = JiangsuSmartEventService(SameDayAlarmsTool(rows=rows), data_root=tmp_path)
+    window = {"start_time": "2026-09-09T00:00:00+08:00", "end_time": "2026-09-09T23:59:59+08:00"}
+    await service.sync_alarm_events(**window, dispatch_ai=False)
+    second = await service.sync_alarm_events(**window, dispatch_ai=False)
+
+    assert second["deviation_clues"]["attached"] == 0
+    assert second["deviation_clues"]["dropped"] == 0
+    store = service._load_store()
+    event = store["events"][0]
+    assert event["clue_count"] == 2
+    assert len([tag for tag in event["clue_tags"] if tag["tag_name"] == "偏差报警"]) == 1
+
+
+def test_deviation_clue_detected_by_content_prefix_without_rule_type():
+    event = normalize_alarm_event({
+        "id": 9,
+        "code": "A",
+        "stationName": "示例站",
+        "alarmtime": "2026-09-09 08:00:00",
+        "content": "数据偏差：PM2.5浓度为9μg/m3，与50公里内站点均值21μg/m3相比较，偏差为12μg，超出限低偏差值12μg。",
+    })
+
+    from app.services.jiangsu_smart_event import _is_deviation_clue
+    assert _is_deviation_clue(event)
+    powered = normalize_alarm_event({
+        "id": 10,
+        "code": "A",
+        "stationName": "示例站",
+        "alarmtime": "2026-09-09 08:00:00",
+        "ddRuleType": "供电报警",
+        "content": "UPS 电源报警",
+    })
+    assert not _is_deviation_clue(powered)
+
+
 def _prepare_card_with_dispatch(service, *, token, dispatched_at):
     store = service._load_store()
     card = next(item for item in store["tasks"] if item.get("task_type") == "ai_judgment")

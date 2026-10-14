@@ -7,6 +7,11 @@ import hashlib
 import json
 from datetime import datetime, timedelta
 from typing import Any
+from uuid import uuid4
+
+# 进程启动标识：Worker 每次重启都会变化，用于感知"任务（重新）启动"并重置
+# 自动研判水位线（见 _refresh_auto_watermark）。
+_PROCESS_BOOT_ID = uuid4().hex
 
 AUTOMATION_DEFAULTS = {
     "auto_ai_enabled": True,
@@ -38,6 +43,20 @@ def is_human_review_continuation(card: dict) -> bool:
     """
     continuity = card.get("continuity") if isinstance(card.get("continuity"), dict) else {}
     return bool(continuity.get("feedback"))
+
+
+def auto_dispatch_eligible(event: dict, watermark) -> bool:
+    """AI 任务启动水位线之后发生的事件才自动研判，历史事件只走人工。
+
+    以事件发生时间（``event_start_time``，缺失回退 ``created_at``）对比水位
+    线；两者都无法判定时按历史处理（宁缺勿滥）。这样任务（重）启动后的
+    回扫即使把更早的告警补录成新事件桶，也不会被自动研判。人工增量卡由
+    调用方用 :func:`is_human_review_continuation` 豁免。
+    """
+    if watermark is None:
+        return True
+    occurred = parse_time(event.get("event_start_time")) or parse_time(event.get("created_at"))
+    return bool(occurred and occurred >= watermark)
 
 
 def evidence_signature(package):
@@ -192,6 +211,9 @@ class JiangsuSmartEventAutomation:
 
         ``human_only=True`` 时只派发人工反馈/审核退回产生的增量卡，用于演示
         冻结等暂停自动抓取的场景：人工动作仍应执行，但不派生自动卡。
+        任务（重）启动时把自动研判水位线拨到当前时刻（见
+        :meth:`_refresh_auto_watermark`）：水位线之前发生的事件一律视为历史，
+        不自动建卡/派卡（人工增量卡除外），返回值以 ``stock_blocked`` 上报拦截量。
         """
         from app.services.jiangsu_smart_event import SMART_EVENT_TASK_ID, _is_archived
         from app.scheduled_tasks import get_scheduled_task_service
@@ -213,9 +235,12 @@ class JiangsuSmartEventAutomation:
         store = await service.aload_store()
         events = {event["event_id"]: event for event in store.get("events", [])}
         cards = store.setdefault("tasks", [])
+        auto_watermark = self._refresh_auto_watermark(store, task.enabled, auto_enabled, now)
         if auto_enabled:
             for event in events.values():
                 if _is_archived(event):
+                    continue
+                if not auto_dispatch_eligible(event, auto_watermark):
                     continue
                 package = event.get("evidence_package") or {}
                 update_initial_assessment(event, package)
@@ -228,12 +253,20 @@ class JiangsuSmartEventAutomation:
             await service.asave_store(store)
         active = sum(card.get("status") == "执行中" and not _is_archived(events.get(card.get("event_id"), {})) for card in cards)
         slots = max(0, config["ai_max_concurrency"] - active)
-        pending = [card for card in cards if card.get("task_type") == "ai_judgment"
-                   and card.get("status") in {"待执行", "待调度", "执行失败"}
-                   and not card.get("retry_exhausted")
-                   and (not parse_time(card.get("next_retry_at")) or parse_time(card["next_retry_at"]) <= now)
-                   and (auto_enabled or is_human_review_continuation(card))
-                   and card.get("event_id") in events and not _is_archived(events[card["event_id"]])]
+        def _auto_pending(card):
+            return (card.get("task_type") == "ai_judgment"
+                    and card.get("status") in {"待执行", "待调度", "执行失败"}
+                    and not card.get("retry_exhausted")
+                    and (not parse_time(card.get("next_retry_at")) or parse_time(card["next_retry_at"]) <= now)
+                    and (auto_enabled or is_human_review_continuation(card))
+                    and card.get("event_id") in events and not _is_archived(events[card["event_id"]]))
+
+        stock_blocked = sum(1 for card in cards if _auto_pending(card)
+                            and not is_human_review_continuation(card)
+                            and not auto_dispatch_eligible(events[card["event_id"]], auto_watermark))
+        pending = [card for card in cards if _auto_pending(card)
+                   and (auto_watermark is None or is_human_review_continuation(card)
+                        or auto_dispatch_eligible(events[card["event_id"]], auto_watermark))]
         if not auto_enabled and not pending:
             return {"status": "disabled", "dispatched": 0}
         pending.sort(key=lambda card: (
@@ -278,7 +311,28 @@ class JiangsuSmartEventAutomation:
             dispatched_events.add(event_id)
             slots -= 1
         return {"status": "success", "attempted": len(dispatched_events),
-                "dispatched": sum(bool(item.get("accepted_task_ids")) for item in outcomes), "outcomes": outcomes}
+                "dispatched": sum(bool(item.get("accepted_task_ids")) for item in outcomes),
+                "stock_blocked": stock_blocked, "outcomes": outcomes}
+
+    def _refresh_auto_watermark(self, store, task_enabled: bool, auto_enabled: bool, now):
+        """任务（重）启动时把自动研判水位线拨到当前时刻，返回水位线。
+
+        水位线语义：只有发生时间晚于水位线的事件才自动派 AI，启动/启用当时
+        已存在的事件一律视为历史（价值有限），不自动研判；人工增量卡不受限。
+        两种情况视为一次"启动"并重置水位线：Worker 进程重启（boot_id 变化）、
+        任务由停用转为启用。水位线持久在 ``store["automation"]``。
+        """
+        if not (task_enabled and auto_enabled):
+            return None
+        state = store.setdefault("automation", {})
+        if state.get("ai_auto_boot_id") == _PROCESS_BOOT_ID and state.get("ai_auto_task_enabled") is True:
+            watermark = parse_time(state.get("ai_auto_start_at"))
+            if watermark is not None:
+                return watermark
+        state["ai_auto_start_at"] = now.isoformat()
+        state["ai_auto_boot_id"] = _PROCESS_BOOT_ID
+        state["ai_auto_task_enabled"] = True
+        return now
 
     async def _human_card_refs(self):
         """返回 (待派发的人工增量卡引用, 执行中的 AI 卡数)，不加载事件正文。"""

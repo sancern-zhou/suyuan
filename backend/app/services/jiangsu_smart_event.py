@@ -33,7 +33,9 @@ from app.fetchers.jiangsu_smart_event_evidence import JiangsuSmartEventEvidenceF
 from app.scheduled_tasks.models import TaskEvent
 from app.services.jiangsu_smart_event_automation import (
     AUTOMATION_DEFAULTS,
+    auto_dispatch_eligible,
     evidence_signature,
+    parse_time as automation_parse_time,
     schedule_retry,
     update_impact_conflict,
     update_initial_assessment,
@@ -446,6 +448,44 @@ def normalize_alarm_event(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# 偏差类实时告警（平台 RealTimeAlarm 与 50 公里内站点均值对比）量大且业务上
+# 只作旁证，降级为合规线索挂靠：不建事件桶、不派 AI 研判（V3.0 6.3 同款）。
+DEVIATION_ALARM_LABELS = frozenset({"偏差报警"})
+DEVIATION_ALARM_CONTENT_PREFIX = "数据偏差："
+DEVIATION_COMPLIANCE_SOURCE = "偏差告警"
+
+
+def _is_deviation_clue(event: dict[str, Any]) -> bool:
+    rule_type = str(event.get("source_alarm_rule_type") or "").strip()
+    if rule_type in DEVIATION_ALARM_LABELS:
+        return True
+    if str(event.get("primary_clue_tag") or "").strip() in DEVIATION_ALARM_LABELS:
+        return True
+    # 规则类型缺失时标签回退取内容前 40 字，按内容前缀兜底识别。
+    return str(event.get("alarm_content") or "").startswith(DEVIATION_ALARM_CONTENT_PREFIX)
+
+
+def _deviation_clue_tag(clue: dict[str, Any]) -> dict[str, Any]:
+    """把偏差告警归一事件改写为合规线索标签（同工单/质控/门禁挂靠形态）。"""
+    label = str(clue.get("primary_clue_tag") or "偏差报警")
+    content = str(clue.get("alarm_content") or label)[:120]
+    clue_ref = str(clue.get("event_id") or label)
+    tag_id = f"compliance:{DEVIATION_COMPLIANCE_SOURCE}:{label}:{clue_ref}"
+    return {
+        "tag_id": tag_id,
+        "tag_source": "合规记录",
+        "tag_category": "合规",
+        "tag_name": label,
+        "tag_object": str(clue.get("site_name") or clue_ref)[:80],
+        "tag_start_time": clue.get("event_start_time"),
+        "tag_end_time": clue.get("event_end_time") or clue.get("event_start_time"),
+        "tag_confidence": None,
+        "clue_id": tag_id,
+        "tag_display_text": f"合规：{label}（{content}）",
+        "compliance_source": DEVIATION_COMPLIANCE_SOURCE,
+    }
+
+
 class JiangsuSmartEventService:
     """Application service for the staged smart-event integration."""
 
@@ -813,12 +853,14 @@ class JiangsuSmartEventService:
 
     def _attach_tags_to_bucket(
         self, store: dict[str, Any], bucket: dict[str, Any], tags: list[dict[str, Any]],
-        *, actor: dict[str, Any] | None = None,
+        *, actor: dict[str, Any] | None = None, incremental_task: bool = True,
     ) -> list[str]:
         """把线索标签挂靠到已有事件桶；返回新增 tag_id 列表。
 
         合规记录与数据检测线索不单独创建事件（V3.0 6.3），只挂靠到同站点
         同日已有桶；已研判桶挂靠新标签会记录 pending_delta 并按需创建增量卡。
+        incremental_task=False 用于高频旁证线索（偏差告警）：只挂标签，
+        不记 pending_delta、不建增量卡，避免挂靠本身触发新一轮 AI 研判。
         """
         if not tags or _is_archived(bucket):
             return []
@@ -848,6 +890,8 @@ class JiangsuSmartEventService:
                 bucket["initial_event_name"] = _initial_event_name(bucket.get("site_name"), primary.get("tag_name"))
                 bucket["event_name"] = bucket["initial_event_name"]
             return [tag["tag_id"] for tag in new_tags]
+        if not incremental_task:
+            return [tag["tag_id"] for tag in new_tags]
         delta = bucket.get("pending_delta") if isinstance(bucket.get("pending_delta"), dict) else {}
         clue_ids = list(dict.fromkeys(
             [str(item) for item in delta.get("clue_ids") or []] + [tag["tag_id"] for tag in new_tags]
@@ -862,7 +906,7 @@ class JiangsuSmartEventService:
             item for item in store.get("tasks", [])
             if item.get("event_id") == bucket_id and item.get("task_type") == "ai_judgment"
         ]
-        if not any(item.get("status") in {"待执行", "待调度", "执行中"} for item in cards):
+        if not any(item.get("status") in {"待执行", "待调度", "执行中"} for item in cards) and self._auto_card_allowed(store, bucket):
             base = next((item for item in reversed(cards) if item.get("status") == "已完成"), None)
             task = self._create_ai_task(bucket, actor=actor, base_task=base, reason="merged_new_clues")
             store.setdefault("tasks", []).append(task)
@@ -896,6 +940,17 @@ class JiangsuSmartEventService:
         if merged_any:
             store["events"] = kept
         return merged_any
+
+    def _auto_card_allowed(self, store: dict[str, Any], bucket: dict[str, Any]) -> bool:
+        """自动建 AI 卡的水位线守卫，与 automation.auto_dispatch_eligible 同一口径。
+
+        任务（重）启动水位线之前发生的事件一律视为历史，不再自动建卡
+        （否则告警回扫会为历史事件源源不断补出永远不会派发的幽灵卡）；
+        水位线缺失（任务从未记录启动时刻）时保持旧行为。人工动作入口
+        （反馈/审核退回/手动重判）不经过此守卫。
+        """
+        watermark = automation_parse_time((store.get("automation") or {}).get("ai_auto_start_at"))
+        return auto_dispatch_eligible(bucket, watermark)
 
     def _create_ai_task(
         self, event: dict[str, Any], *, actor: dict[str, Any] | None = None,
@@ -959,6 +1014,71 @@ class JiangsuSmartEventService:
                     raise
         raise EventStoreConflict("smart_event_upsert_exhausted")
 
+    def _attach_deviation_clues(
+        self, incoming: list[dict[str, Any]], *, actor: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """偏差告警只挂靠同站点同日已有事件桶，不建事件（降级为合规线索）。
+
+        当日无事件桶时线索按丢弃计数（不落库）；后续扫描窗口重扫到该站点
+        出现真实告警桶时会重新挂靠，tag_id 去重保证不重复。
+        """
+        for attempt in range(3):
+            try:
+                return self._attach_deviation_clues_once(incoming, actor=actor)
+            except EventStoreConflict:
+                if attempt == 2:
+                    raise
+        raise EventStoreConflict("smart_event_deviation_attach_exhausted")
+
+    def _attach_deviation_clues_once(
+        self, incoming: list[dict[str, Any]], *, actor: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        store = self._load_store()
+        self._migrate_same_day_store(store)
+        buckets_by_site: dict[str, dict[str, dict[str, Any]]] = {}
+        for event in store.get("events", []):
+            if not isinstance(event, dict) or _is_archived(event) or event.get("event_status") == "已归档":
+                continue
+            key = _bucket_key(event)
+            if key is None or key[1] in buckets_by_site.setdefault(key[0], {}):
+                continue
+            buckets_by_site[key[0]][key[1]] = event
+        attached = 0
+        dropped = 0
+        attached_sites: set[str] = set()
+        actor_info = actor or {"user_id": "system", "username": "deviation-sync"}
+        for clue in incoming:
+            site = str(clue.get("site_id") or "").strip()
+            occurred = _parse_time(clue.get("event_start_time"))
+            day = occurred.astimezone().date().isoformat() if occurred else None
+            bucket = buckets_by_site.get(site, {}).get(day) if site and day else None
+            if bucket is None:
+                dropped += 1
+                continue
+            added = self._attach_tags_to_bucket(
+                store, bucket, [_deviation_clue_tag(clue)],
+                actor=actor_info, incremental_task=False,
+            )
+            if added:
+                attached += len(added)
+                attached_sites.add(site)
+        now = datetime.now().astimezone().isoformat()
+        store["last_deviation_sync"] = {
+            "fetched": len(incoming),
+            "attached_count": attached,
+            "dropped_count": dropped,
+            "stations": len(attached_sites),
+            "synced_at": now,
+        }
+        store["updated_at"] = now
+        self._save_store(store)
+        return {
+            "fetched": len(incoming),
+            "attached": attached,
+            "dropped": dropped,
+            "attached_sites": sorted(attached_sites),
+        }
+
     def _upsert_events_once(
         self, incoming: list[dict[str, Any]], *, actor: dict[str, Any] | None = None
     ) -> tuple[dict[str, Any], list[dict[str, Any]], list[str], list[str]]:
@@ -1017,14 +1137,14 @@ class JiangsuSmartEventService:
                 }
                 bucket["updated_at"] = now
                 has_active_card = any(item.get("status") in {"待执行", "待调度", "执行中"} for item in cards)
-                if not has_active_card:
+                if not has_active_card and self._auto_card_allowed(store, bucket):
                     base = next((item for item in reversed(cards) if item.get("status") == "已完成"), None)
                     task = self._create_ai_task(bucket, actor=actor, base_task=base, reason="merged_new_clues")
                     tasks.append(task)
                     created_tasks.append(task)
                 continue
             has_ai_task = bool(cards)
-            if not has_ai_task:
+            if not has_ai_task and self._auto_card_allowed(store, bucket):
                 task = self._create_ai_task(bucket, actor=actor)
                 tasks.append(task)
                 created_tasks.append(task)
@@ -1315,12 +1435,23 @@ class JiangsuSmartEventService:
         fetched = await self._fetch_alarm_events(
             start_time=start_time, end_time=end_time, station_codes=station_codes, limit=limit
         )
+        # 偏差告警降级为合规线索：不建事件桶、不收证据、不派 AI。
+        deviation_clues = [item for item in fetched["events"] if _is_deviation_clue(item)]
+        event_candidates = [item for item in fetched["events"] if not _is_deviation_clue(item)]
         store, created_tasks, created_event_ids, merged_event_ids = await asyncio.to_thread(
-            self._upsert_events, fetched["events"], actor=actor
+            self._upsert_events, event_candidates, actor=actor
         )
+        deviation_result: dict[str, Any] = {"fetched": 0, "attached": 0, "dropped": 0, "attached_sites": []}
+        if deviation_clues:
+            deviation_result = await asyncio.to_thread(
+                self._attach_deviation_clues, deviation_clues, actor=actor
+            )
+            # 挂靠在线程内重载并落库过，这里必须换最新库态再写 last_sync，
+            # 否则旧快照保存会撞乐观锁、同步元数据被整轮丢弃。
+            store = await self.aload_store()
         evidence_result = {"collected": 0, "failed": 0}
         if fetch_evidence:
-            alarm_ids = {str(item["event_id"]) for item in fetched["events"]}
+            alarm_ids = {str(item["event_id"]) for item in event_candidates}
             # Collect each persisted bucket once, including when this sync
             # contains only donor alarms merged into an older event ID.
             candidates = [
@@ -1342,6 +1473,7 @@ class JiangsuSmartEventService:
             "new_event_ids": created_event_ids,
             "merged_event_count": len(merged_event_ids),
             "merged_event_ids": merged_event_ids,
+            "deviation_clues": deviation_result,
             "source_metadata": fetched["source_metadata"],
             "synced_at": datetime.now().astimezone().isoformat(),
         }
@@ -1359,6 +1491,7 @@ class JiangsuSmartEventService:
             "dispatches": dispatches,
             "ai_dispatch_skipped": not dispatch_ai,
             "evidence": evidence_result,
+            "deviation_clues": deviation_result,
             "source_metadata": fetched["source_metadata"],
         }
 

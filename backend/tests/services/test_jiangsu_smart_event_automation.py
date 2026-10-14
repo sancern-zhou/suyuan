@@ -9,7 +9,8 @@ from app.scheduled_tasks.service import EventDispatchResult
 from app.scheduled_tasks.storage.event_claim_storage import EventClaimStorage
 from app.services.jiangsu_smart_event import JiangsuSmartEventService, normalize_alarm_event, _event_fingerprint
 from app.services.jiangsu_smart_event_automation import (
-    JiangsuSmartEventAutomation, evidence_signature, update_initial_assessment,
+    JiangsuSmartEventAutomation, _PROCESS_BOOT_ID, evidence_signature,
+    parse_time, update_initial_assessment,
 )
 
 
@@ -68,6 +69,12 @@ def setup(tmp_path, monkeypatch):
 
 
 async def seed(service, rows):
+    store = service._load_store()
+    # 任务先于事件启动：水位线早于种子事件发生时间，入库/派发守卫均可走通
+    state = store.setdefault('automation', {})
+    state.update({'ai_auto_start_at': '2026-09-10T07:00:00+08:00', 'ai_auto_task_enabled': True,
+                  'ai_auto_boot_id': _PROCESS_BOOT_ID})
+    service._save_store(store)
     store, *_ = service._upsert_events([normalize_alarm_event({'id': identity, 'code': site,
          'alarmtime': '2026-09-10 08:00:00', 'ddRuleType': '仪器报警'}) for identity, site in rows])
     await service._collect_event_evidence(store, store['events'])
@@ -373,3 +380,117 @@ async def test_automation_lock_skips_overlapping_worker_tick(setup):
     with (service.store_path.parent / '.automation.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         assert (await JiangsuSmartEventAutomation(service).tick())['status'] == 'already_running'
+
+
+@pytest.mark.asyncio
+async def test_watermark_blocks_history_but_dispatches_new_events(setup):
+    """任务启动水位线之前发生的历史事件不自动研判，之后的事件照常派发。"""
+    service, _, scheduler = setup
+    store = service._load_store()
+    store.setdefault('automation', {}).update({'ai_auto_start_at': '2026-09-15T00:00:00+08:00',
+                                               'ai_auto_task_enabled': True, 'ai_auto_boot_id': _PROCESS_BOOT_ID})
+    service._save_store(store)
+    service._upsert_events([
+        normalize_alarm_event({'id': 1, 'code': 'A', 'alarmtime': '2026-09-10 08:00:00', 'ddRuleType': '仪器报警'}),
+        normalize_alarm_event({'id': 2, 'code': 'B', 'alarmtime': '2026-09-20 08:00:00', 'ddRuleType': '仪器报警'}),
+    ])
+    store = service._load_store()
+    await service._collect_event_evidence(store, store['events'])
+    # 水位线之前的事件入库时不建卡；已有的历史卡（如之前积压）保持待执行、不被派发
+    store = service._load_store()
+    store['tasks'].append(service._create_ai_task(store['events'][0]))
+    service._save_store(store)
+    now = datetime.now().astimezone()
+    result = await JiangsuSmartEventAutomation(service).dispatch_queue(now=now)
+    assert [event.event_id for event in scheduler.events] == ['alarm:2']
+    assert result['stock_blocked'] == 1
+    statuses = {card['event_id']: card['status'] for card in service.list_tasks()}
+    assert statuses['alarm:1'] == '待执行'
+    assert statuses['alarm:2'] == '执行中'
+
+
+@pytest.mark.asyncio
+async def test_watermark_skips_card_creation_for_history_events(setup):
+    """历史事件入库时不再自动建卡（告警回扫补录不产生幽灵待执行卡）。"""
+    service, _, scheduler = setup
+    store = service._load_store()
+    store.setdefault('automation', {}).update({'ai_auto_start_at': '2026-09-15T00:00:00+08:00',
+                                               'ai_auto_task_enabled': True, 'ai_auto_boot_id': _PROCESS_BOOT_ID})
+    service._save_store(store)
+    service._upsert_events([normalize_alarm_event({'id': 1, 'code': 'A', 'alarmtime': '2026-09-10 08:00:00', 'ddRuleType': '仪器报警'})])
+    store = service._load_store()
+    await service._collect_event_evidence(store, store['events'])
+    now = datetime.now().astimezone()
+    result = await JiangsuSmartEventAutomation(service).dispatch_queue(now=now)
+    assert result['dispatched'] == 0
+    assert scheduler.events == []
+    assert service.list_tasks() == []
+
+
+@pytest.mark.asyncio
+async def test_watermark_still_dispatches_human_feedback_cards(setup):
+    """历史事件的人工反馈/审核退回增量卡不受水位线限制。"""
+    service, _, scheduler = setup
+    store = service._load_store()
+    store.setdefault('automation', {}).update({'ai_auto_start_at': '2026-09-15T00:00:00+08:00',
+                                               'ai_auto_task_enabled': True, 'ai_auto_boot_id': _PROCESS_BOOT_ID})
+    service._save_store(store)
+    service._upsert_events([normalize_alarm_event({'id': 1, 'code': 'A', 'alarmtime': '2026-09-10 08:00:00', 'ddRuleType': '仪器报警'})])
+    store = service._load_store()
+    await service._collect_event_evidence(store, store['events'])
+    event = store['events'][0]
+    event['ai_event_type'] = '数据异常待研判'
+    event['event_status'] = '待复核'
+    # 审核退回发生在已研判事件上：补一张历史已完成卡作为增量基线
+    done = service._create_ai_task(event)
+    done['status'] = '已完成'
+    store['tasks'].append(done)
+    service._save_store(store)
+    service.queue_review_reject_feedback(
+        event['event_id'], feedback='真实外界环境污染',
+        actor={'user_id': '1', 'username': 'tester'},
+        human_decision={'action': 'reject', 'comment': '真实外界环境污染'},
+    )
+    now = datetime.now().astimezone()
+    result = await JiangsuSmartEventAutomation(service).dispatch_queue(now=now)
+    assert result['dispatched'] == 1
+    assert [item.event_id for item in scheduler.events] == [event['event_id']]
+
+
+@pytest.mark.asyncio
+async def test_enabling_task_rebaselines_watermark_to_now(setup):
+    """停用转启用视为一次启动：水位线重置为当前时刻，此前事件转为历史。"""
+    service, _, scheduler = setup
+    await seed(service, [(1, 'A')])
+    store = service._load_store()
+    state = store['automation']
+    state.pop('ai_auto_start_at', None)
+    state['ai_auto_task_enabled'] = False
+    service._save_store(store)
+    now = datetime.now().astimezone()
+    result = await JiangsuSmartEventAutomation(service).dispatch_queue(now=now)
+    state = service._load_store()['automation']
+    assert state['ai_auto_task_enabled'] is True
+    assert parse_time(state['ai_auto_start_at']) >= now - timedelta(seconds=5)
+    assert scheduler.events == []
+    assert result['stock_blocked'] == 1
+    cards = service.list_tasks()
+    assert len(cards) == 1 and cards[0]['status'] == '待执行'
+
+
+@pytest.mark.asyncio
+async def test_worker_restart_rebaselines_watermark(setup):
+    """Worker 重启（boot_id 变化）视为一次启动，重启前未研判的事件转为历史。"""
+    service, _, scheduler = setup
+    await seed(service, [(1, 'A')])
+    store = service._load_store()
+    store['automation']['ai_auto_boot_id'] = 'dead-boot-from-previous-process'
+    service._save_store(store)
+    now = datetime.now().astimezone()
+    await JiangsuSmartEventAutomation(service).dispatch_queue(now=now)
+    state = service._load_store()['automation']
+    assert state['ai_auto_boot_id'] == _PROCESS_BOOT_ID
+    assert parse_time(state['ai_auto_start_at']) >= now - timedelta(seconds=5)
+    assert scheduler.events == []
+    cards = service.list_tasks()
+    assert len(cards) == 1 and cards[0]['status'] == '待执行'
