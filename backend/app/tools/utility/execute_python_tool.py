@@ -903,6 +903,14 @@ class ExecutePythonTool(LLMTool):
         stdout_path = runtime_logs / "stdout.log"
         stderr_path = runtime_logs / "stderr.log"
 
+        # 子进程输出统一按 UTF-8 采集（_read_capped_text）。Windows 把 stdout
+        # 重定向到文件时子进程默认用 ANSI 代码页（GBK）写入，中文会在此乱码，
+        # 因此 subprocess 引擎必须显式固定子进程 stdio 编码；Bubblewrap 引擎
+        # 已通过 LANG/LC_ALL=C.UTF-8 达成同样效果。
+        child_env: Optional[Dict[str, str]] = None
+        if self.execution_engine == "subprocess":
+            child_env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
         process = None
         cgroup_path = None
         cgroup_diagnostics: Dict[str, Any] = {"configured": False, "applied": False}
@@ -914,6 +922,8 @@ class ExecutePythonTool(LLMTool):
                     stderr=stderr_file,
                     cwd=working_dir,
                 )
+                if child_env is not None:
+                    popen_kwargs["env"] = child_env
                 if os.name == "posix":
                     popen_kwargs["start_new_session"] = True
                 else:
