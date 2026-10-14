@@ -14,6 +14,10 @@ Incremental modes per table (sync_config.json):
       SELECT gains "__incr" column; state changes bump the coalesced timestamp
   - mode "daily_full"                               -> no watermark; --full reload
       (small dictionaries / tables without a reliable update column)
+  - where (static SQL predicate)                    -> row scope filter applied on
+      EVERY pull (full and incremental). Use for business scope cuts, e.g. only
+      rows whose uniquecode is in the provincial-station list of the source
+      catalog; watermark only advances over fetched (filtered) rows.
 
 Usage:
   python sync_table.py <table>              # incremental (auto-full if no watermark)
@@ -185,6 +189,9 @@ def build_source_sql(spec: dict, watermark, full: bool, since: str | None) -> st
         else:
             clauses.append(f"[{incr}] > '{since_str}'")
     where = (" WHERE " + " AND ".join(f"({c})" for c in clauses)) if clauses else ""
+    fixed_where = spec.get("where")
+    if fixed_where:
+        where = (where + " AND " if where else " WHERE ") + f"({fixed_where})"
     if not incr:
         order = ""
     elif expr:

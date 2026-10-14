@@ -84,9 +84,9 @@ sources:
   - name: qc_backorderarrangelog
     description: 质控补测/回调安排日志(每日全量, 窗口≥2026-07-01; state/datatype 枚举语义待平台确认; 补测风暴预警与质控闭环下游)
   - name: qc_historymonthresultoverview
-  - name: qc_historyresult
-    description: 质控执行结果(5分钟增量)
-    loaded_at_field: create_time
+  - name: qc_his_result_2026
+    description: 省控站质控任务执行结果(按年分表,id增量,仅名录启用省控站;每年1月换年份表)
+    loaded_at_field: createtime
     freshness:
       warn_after:
         count: 24

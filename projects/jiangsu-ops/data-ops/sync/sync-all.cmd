@@ -5,8 +5,9 @@ rem   mart 层已 dbt 化(2026-10-02): dim_station + 工单/告警/站点健康/
 rem   dbt 负责依赖排序/原子换名重建(无空窗)/数据测试/自动 GRANT agent_reader
 rem   原 psql 脚本已归档至 legacy-sql\; 抽数(SQL Server->ODS)仍由 sync_table.py 负责
 rem   rf_common: 非故障工单表单体(rFCommon 矩阵), 供 ops_audit DB 取数
+rem   qc_his_result_2026: 省控站质控执行(按年分表, 仅名录启用省控站; 每年1月需把表名换成年份)
 cd /d E:\Tools\suyuan-jiangsu\sync
-for %%t in (mtc_working_order mtc_working_order_detail alm_summary opa_kq_attendance bsd_station mot_alarm qc_historyresult pw_taskitem mtc_taskitem rf_common) do (
+for %%t in (mtc_working_order mtc_working_order_detail alm_summary opa_kq_attendance bsd_station mot_alarm qc_his_result_2026 pw_taskitem mtc_taskitem rf_common) do (
     E:\Tools\Python311\python.exe sync_table.py %%t >> sync_%%t.log 2>&1
 )
 echo [%date% %time%] dbt build tag:frequent >> sync_mart.log 2>&1

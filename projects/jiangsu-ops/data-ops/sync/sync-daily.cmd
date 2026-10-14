@@ -17,7 +17,7 @@ E:\Tools\suyuan-jiangsu\dbt-venv\Scripts\dbt.exe build --project-dir E:\Tools\su
 echo [%date% %time%] dbt build tag:daily exit=%errorlevel% >> sync_mart.log
 rem dbt 失败时让计划任务 LastTaskResult 非 0(dq 的 SLA 告警要隔天才发现, 退出码当场可见)
 if not "%errorlevel%"=="0" exit /b %errorlevel%
-set CHECKLIST=mtc_working_order mtc_working_order_detail alm_summary opa_kq_attendance bsd_station mot_alarm opa_user_info bsd_device bsd_devicetype qc_task bsd_city qc_historyresult qc_arrangeresult qc_historymonthresultoverview pw_taskitem mtc_taskitem pw_task opa_performance_tworate opa_performance_qaqc opa_qcqa_deduction mtc_blackout mtc_dataentry mtc_dataentry_data mtc_fault wo_commonfile log_device qc_backorderarrangelog bsd_supply bsd_moniter_parameter dev_scrap bsd_region bsd_usergroup bsd_usergroup_user bsd_usergroup_station bsd_usergroup_station_devicetype bsd_maintenanceunit mtc_faultcontent mtc_faultcontentitem alm_rule wfl_workflow qa_standardmaterialstorage
+set CHECKLIST=mtc_working_order mtc_working_order_detail alm_summary opa_kq_attendance bsd_station mot_alarm opa_user_info bsd_device bsd_devicetype qc_task bsd_city qc_his_result_2026 qc_arrangeresult qc_historymonthresultoverview pw_taskitem mtc_taskitem pw_task opa_performance_tworate opa_performance_qaqc opa_qcqa_deduction mtc_blackout mtc_dataentry mtc_dataentry_data mtc_fault wo_commonfile log_device qc_backorderarrangelog bsd_supply bsd_moniter_parameter dev_scrap bsd_region bsd_usergroup bsd_usergroup_user bsd_usergroup_station bsd_usergroup_station_devicetype bsd_maintenanceunit mtc_faultcontent mtc_faultcontentitem alm_rule wfl_workflow qa_standardmaterialstorage
 for %%t in (%CHECKLIST%) do (
     E:\Tools\Python311\python.exe sync_table.py %%t --check >> sync_check.log 2>&1
 )

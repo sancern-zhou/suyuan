@@ -1,5 +1,5 @@
 {
-  "_comment": "复制为 sync_config.json 并填入真实凭据（sync_config.json 已 gitignore，凭据仅存服务器本地）。tables 段为全量表清单（source_db/source_table/mode/pk/incremental 列/column_types/columns），此处仅示意一条，其余表同构；datasets/*.yaml 是查询契约的唯一人工维护源（经 gen_tool_contract.py 生成后端工具 contract.txt），与本文件分工不同。",
+  "_comment": "复制为 sync_config.json 并填入真实凭据（sync_config.json 已 gitignore，凭据仅存服务器本地）。tables 段为全量表清单（source_db/source_table/mode/pk/incremental 列/column_types/columns/可选 where），此处仅示意两条，其余表同构；datasets/*.yaml 是查询契约的唯一人工维护源（经 gen_tool_contract.py 生成后端工具 contract.txt），与本文件分工不同。`where` 键（2026-10-14 新增）：静态行范围过滤，全量与增量拉取都生效，用于业务范围裁剪（如 qc_his_result_2026 只同步源库名录中启用的省控站）；水位只在取回的行上推进。qc_his_result_2026 为按年分表，每年 1 月需把 source_table/initial_where_tpl 里的表名换成年份。",
   "full_load_since": "2026-07-01T00:00:00",
   "source": {
     "server": "<SQL Server 源库地址>",
@@ -19,7 +19,9 @@
       "source_db": "<源库名>",
       "source_table": "dbo.<源表名>",
       "mode": "incremental",
-      "pk": ["id"],
+      "pk": [
+        "id"
+      ],
       "incremental_column": "UpdateTime",
       "incremental_type": "datetime",
       "apply_window": true,
@@ -27,7 +29,63 @@
         "Id": "integer",
         "UpdateTime": "timestamp"
       },
-      "columns": ["Id", "UpdateTime"]
+      "columns": [
+        "Id",
+        "UpdateTime"
+      ]
+    },
+    "qc_his_result_2026": {
+      "source_db": "air_province_data",
+      "source_table": "dbo.qc_his_result_2026",
+      "mode": "incremental",
+      "pk": [
+        "id"
+      ],
+      "incremental_column": "id",
+      "incremental_type": "int",
+      "apply_window": true,
+      "initial_where_tpl": "[id] >= (SELECT MIN([id]) FROM dbo.qc_his_result_2026 WITH (NOLOCK) WHERE [createtime] >= '{since}')",
+      "where": "[uniquecode] IN (SELECT [uniquecode] FROM air_province_bsd.dbo.bsd_station WITH (NOLOCK) WHERE [stationtypeid] = 2 AND [status] = 1)",
+      "column_types": {
+        "id": "integer",
+        "tstatus": "integer",
+        "tvalue": "text",
+        "rvalue": "text",
+        "inac": "text",
+        "relativeerror": "numeric",
+        "sstart": "timestamp",
+        "rstart": "timestamp",
+        "endtime": "timestamp",
+        "createtime": "timestamp",
+        "issynccompleted": "boolean"
+      },
+      "columns": [
+        "id",
+        "rid",
+        "uniquecode",
+        "stationcode",
+        "stationname",
+        "poll",
+        "qctype",
+        "group",
+        "tstatus",
+        "tstatusstr",
+        "sstart",
+        "sstartstr",
+        "rstart",
+        "rstartstr",
+        "endtime",
+        "endtimestr",
+        "qcresult",
+        "tvalue",
+        "rvalue",
+        "inac",
+        "mrk",
+        "relativeerror",
+        "issynccompleted",
+        "syncerrmsg",
+        "createtime"
+      ]
     }
   }
 }
