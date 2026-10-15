@@ -343,6 +343,9 @@ const handleSidebarAction = async (actionId) => {
     case 'social-platform':
       showManagementPanel('social-platform')
       break
+    case 'shared-conversations':
+      showManagementPanel('shared-conversations')
+      break
     case 'file-manager':
       // 显示右侧面板并切换到文件管理标签页
       activeRightTab.value = 'files'

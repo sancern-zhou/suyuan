@@ -35,6 +35,18 @@ data class OidcConfig(
 )
 data class AgentEvent(val type: String, val data: String)
 data class SessionInfo(val sessionId: String, val mode: String, val title: String = "新对话", val updatedAt: String? = null)
+data class SharedConversationSummary(
+    val shareId: String,
+    val title: String,
+    val firstQuestion: String,
+    val messageCount: Int,
+    val ownerName: String,
+    val createdAt: String? = null,
+)
+data class SharedConversationDetail(
+    val summary: SharedConversationSummary,
+    val messages: List<org.json.JSONObject>,
+)
 data class AppUpdateInfo(
     val versionCode: Int,
     val versionName: String,
@@ -665,6 +677,104 @@ class SocialAppApi(
         response.use {
             if (!it.isSuccessful) throw ApiException(it.code, "广播消息删除失败 (${it.code})")
             JSONObject(it.body?.string().orEmpty()).optBoolean("deleted", true)
+        }
+    }
+
+    suspend fun sharedConversations(token: String, search: String = "", limit: Int = 30, offset: Int = 0): List<SharedConversationSummary> = withContext(Dispatchers.IO) {
+        val query = buildString {
+            append("?limit=").append(limit).append("&offset=").append(offset)
+            if (search.isNotBlank()) append("&search=").append(java.net.URLEncoder.encode(search, "UTF-8"))
+        }
+        val response = client.newCall(
+            Request.Builder().url(url("/api/shared-conversations$query"))
+                .header("Authorization", "Bearer $token").get().build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "共享对话查询失败 (${it.code})")
+            val json = JSONObject(it.body?.string().orEmpty())
+            val array = json.optJSONArray("shares") ?: org.json.JSONArray()
+            buildList {
+                for (index in 0 until array.length()) {
+                    val item = array.getJSONObject(index)
+                    val owner = item.optJSONObject("owner")
+                    add(
+                        SharedConversationSummary(
+                            shareId = item.getString("share_id"),
+                            title = item.optString("title", "共享对话"),
+                            firstQuestion = item.optString("first_question", ""),
+                            messageCount = item.optInt("message_count", 0),
+                            ownerName = owner?.optString("display_name", "")?.ifBlank { owner.optString("username", "") } ?: "",
+                            createdAt = item.optString("created_at", null),
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    suspend fun sharedConversation(token: String, shareId: String): SharedConversationDetail = withContext(Dispatchers.IO) {
+        val response = client.newCall(
+            Request.Builder().url(url("/api/shared-conversations/${java.net.URLEncoder.encode(shareId, "UTF-8")}"))
+                .header("Authorization", "Bearer $token").get().build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "共享对话详情获取失败 (${it.code})")
+            val json = JSONObject(it.body?.string().orEmpty())
+            val owner = json.optJSONObject("owner")
+            val summary = SharedConversationSummary(
+                shareId = json.getString("share_id"),
+                title = json.optString("title", "共享对话"),
+                firstQuestion = json.optString("first_question", ""),
+                messageCount = json.optInt("message_count", 0),
+                ownerName = owner?.optString("display_name", "")?.ifBlank { owner.optString("username", "") } ?: "",
+                createdAt = json.optString("created_at", null),
+            )
+            val array = json.optJSONArray("messages") ?: org.json.JSONArray()
+            val messages = buildList {
+                for (index in 0 until array.length()) add(array.getJSONObject(index))
+            }
+            SharedConversationDetail(summary, messages)
+        }
+    }
+
+    suspend fun createSharedConversation(token: String, sessionId: String): SharedConversationSummary = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("session_id", sessionId)
+        val response = client.newCall(
+            Request.Builder().url(url("/api/shared-conversations"))
+                .header("Authorization", "Bearer $token")
+                .post(body.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) {
+                val detail = runCatching { JSONObject(it.body?.string().orEmpty()).optString("detail") }.getOrNull()
+                throw ApiException(it.code, when (it.code) {
+                    403 -> "只能分享自己的对话"
+                    400 -> "该对话还没有可分享的内容"
+                    else -> detail?.ifBlank { null } ?: "分享失败 (${it.code})"
+                })
+            }
+            val json = JSONObject(it.body?.string().orEmpty())
+            SharedConversationSummary(
+                shareId = json.getString("share_id"),
+                title = json.optString("title", "共享对话"),
+                firstQuestion = json.optString("first_question", ""),
+                messageCount = json.optInt("message_count", 0),
+                ownerName = json.optJSONObject("owner")?.optString("display_name", "").orEmpty(),
+                createdAt = json.optString("created_at", null),
+            )
+        }
+    }
+
+    suspend fun deleteSharedConversation(token: String, shareId: String): Boolean = withContext(Dispatchers.IO) {
+        val response = client.newCall(
+            Request.Builder().url(url("/api/shared-conversations/${java.net.URLEncoder.encode(shareId, "UTF-8")}"))
+                .header("Authorization", "Bearer $token")
+                .delete().build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "撤回分享失败 (${it.code})")
+            true
         }
     }
 

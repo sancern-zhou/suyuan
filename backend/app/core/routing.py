@@ -82,6 +82,7 @@ ROUTER_REGISTRY = [
     RouterSpec("app.api.upload_routes", prefix="/api/upload", description="File upload"),
     RouterSpec("app.api.voice_routes", prefix="/api", description="Voice ASR/TTS API"),
     RouterSpec("app.api.social_app_routes", description="Android App Social Gateway", owner="core"),
+    RouterSpec("app.api.shared_conversation_routes", description="Shared conversation board", owner="core"),
     RouterSpec("app.api.file_manager_routes", prefix="/api", description="File manager"),
     RouterSpec("app.api.social_routes", description="Social platform management"),
     RouterSpec("app.api.fetchers", description="Fetcher management"),
