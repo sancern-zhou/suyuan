@@ -85,9 +85,7 @@
           </div>
         </div>
       </div>
-      <div class="detail-split">
-        <div class="detail-conversation">
-          <div class="detail-body">
+      <div class="detail-body">
         <div
           v-for="(view, index) in messageViews"
           :key="index"
@@ -127,20 +125,6 @@
             </div>
           </div>
         </div>
-          </div>
-        </div>
-        <div v-if="reportFrameUrl" class="report-pane">
-          <div class="report-pane-header">
-            <span>分析报告</span>
-            <a class="report-pane-open" :href="reportFrameUrl" target="_blank" rel="noopener">新窗口打开</a>
-          </div>
-          <iframe
-            class="report-frame"
-            :src="reportFrameUrl"
-            sandbox="allow-scripts allow-forms"
-            title="分享的报告"
-          />
-        </div>
       </div>
     </template>
 
@@ -165,6 +149,8 @@ import {
   getSharedReportView,
   listSharedConversations
 } from '@/api/sharedConversations'
+
+const emit = defineEmits(['report-open', 'report-close'])
 
 const auth = useAuthStore()
 const currentUserId = auth.user?.id || ''
@@ -354,9 +340,13 @@ async function openDetail(share) {
       try {
         const data = await getSharedReportView(share.share_id)
         reportFrameUrl.value = data.url || ''
+        emit('report-open', { url: reportFrameUrl.value, title: share.title })
       } catch {
         reportFrameUrl.value = ''
+        emit('report-close')
       }
+    } else {
+      emit('report-close')
     }
   } catch (err) {
     error.value = err.message || '加载分享内容失败'
@@ -402,6 +392,10 @@ watch(() => activeShare.value?.messages, (messages) => {
   if (messages?.length) loadAuthedImages(messages)
 })
 
+watch(activeShare, (share) => {
+  if (!share) emit('report-close')
+})
+
 function releaseAuthedImages() {
   for (const url of Object.keys(authedImageUrls)) {
     URL.revokeObjectURL(authedImageUrls[url])
@@ -410,7 +404,10 @@ function releaseAuthedImages() {
   for (const url of Object.keys(authedImageFailed)) delete authedImageFailed[url]
 }
 
-onBeforeUnmount(releaseAuthedImages)
+onBeforeUnmount(() => {
+  emit('report-close')
+  releaseAuthedImages()
+})
 
 async function downloadAttachment(attachment) {
   if (!attachment?.url) return
@@ -753,76 +750,6 @@ reload()
   gap: 16px;
   max-width: 860px;
   animation: boardFadeIn 0.22s ease;
-}
-
-.detail-split {
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-}
-
-.detail-conversation {
-  flex: 1;
-  min-width: 0;
-}
-
-.report-pane {
-  position: sticky;
-  top: 74px;
-  flex: 0 0 46%;
-  width: 46%;
-  height: calc(100vh - 150px);
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border-2, #e3e8f0);
-  border-radius: 12px;
-  overflow: hidden;
-  background: white;
-  box-shadow: 0 1px 4px rgba(31, 45, 61, 0.06);
-  animation: boardFadeIn 0.22s ease;
-}
-
-.report-pane-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-2, #e3e8f0);
-  background: #f7f9fc;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-1, #2f3a4c);
-}
-
-.report-pane-open {
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--color-primary, #1976d2);
-  text-decoration: none;
-}
-
-.report-pane-open:hover {
-  text-decoration: underline;
-}
-
-.report-frame {
-  flex: 1;
-  width: 100%;
-  border: none;
-  background: white;
-}
-
-@media (max-width: 1100px) {
-  .detail-split {
-    flex-direction: column;
-  }
-
-  .report-pane {
-    position: static;
-    width: 100%;
-    flex: none;
-    height: 72vh;
-  }
 }
 
 .message-row {

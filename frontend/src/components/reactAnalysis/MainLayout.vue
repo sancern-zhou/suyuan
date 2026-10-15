@@ -145,6 +145,8 @@
           <SharedConversationsPanel
             v-else-if="managementPanel === 'shared-conversations'"
             @close="$emit('close-management-panel')"
+            @report-open="handleSharedReportOpen"
+            @report-close="sharedReportView = null"
           />
 
           <ToolsManagementPanel
@@ -212,6 +214,33 @@
         @submit-human-feedback="$emit('submit-human-feedback', $event)"
         />
       </template>
+
+      <!-- 共享对话报告停靠面板（与聊天右侧面板同款交互：拖宽/关闭/新窗口） -->
+      <WidthResizer
+        v-if="sharedReportView"
+        :is-dragging="sharedReportDragging"
+        @start-drag="handleSharedReportDragStart"
+        @reset="sharedReportWidth = 46"
+      />
+      <div
+        v-if="sharedReportView"
+        class="shared-report-wrapper"
+        :style="{ width: sharedReportWidth + '%' }"
+      >
+        <div class="shared-report-tabs">
+          <span class="shared-report-title">分析报告</span>
+          <div class="shared-report-actions">
+            <a class="shared-report-open" :href="sharedReportView.url" target="_blank" rel="noopener">新窗口打开</a>
+            <button class="shared-report-close" @click="sharedReportView = null">关闭</button>
+          </div>
+        </div>
+        <iframe
+          class="shared-report-frame"
+          :src="sharedReportView.url"
+          sandbox="allow-scripts allow-forms"
+          title="分享的报告"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -244,6 +273,36 @@ const AirQualityForecastView = projectConfig.hasModule('xuchang-air-quality')
   : null
 
 const auth = useAuthStore()
+
+// 共享对话报告停靠面板：与聊天右侧面板同款交互（拖拽调宽/关闭/新窗口）
+const sharedReportView = ref(null)
+const sharedReportWidth = ref(46)
+const sharedReportDragging = ref(false)
+
+const handleSharedReportOpen = (payload) => {
+  sharedReportView.value = payload
+}
+
+const handleSharedReportDragStart = () => {
+  const rect = layoutRef.value?.getBoundingClientRect()
+  if (!rect) return
+  sharedReportDragging.value = true
+  const onMove = (event) => {
+    const percent = ((rect.right - event.clientX) / rect.width) * 100
+    sharedReportWidth.value = Math.min(70, Math.max(25, percent))
+  }
+  const onUp = () => {
+    sharedReportDragging.value = false
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
+
+watch(() => props.managementPanel, (panel) => {
+  if (panel !== 'shared-conversations') sharedReportView.value = null
+})
 
 const props = defineProps({
   taskWorkspaceEntries: { type: Array, default: () => [] },
@@ -725,8 +784,72 @@ defineExpose({ layoutRef })
 }
 
 /* ChatArea 占据剩余空间，min-width: 0 防止内容撑开 */
-.analysis-panel :deep(.chat-area) {
-  flex: 1 1 0%;
+/* 共享对话报告停靠面板：与 RightPanelContainer 同款视觉 */
+.shared-report-wrapper {
+  flex: 0 0 auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #f8fafc;
+  border-left: 1px solid #edf1f7;
+}
+
+.shared-report-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid #edf1f7;
+  background: white;
+}
+
+.shared-report-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1, #2f3a4c);
+}
+
+.shared-report-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.shared-report-open {
+  font-size: 12px;
+  color: #1976d2;
+  text-decoration: none;
+}
+
+.shared-report-open:hover {
+  text-decoration: underline;
+}
+
+.shared-report-close {
+  border: 1px solid var(--border-2, #e3e8f0);
+  border-radius: 6px;
+  padding: 3px 10px;
+  background: white;
+  font-size: 12px;
+  color: var(--text-2, #555);
+  cursor: pointer;
+}
+
+.shared-report-close:hover {
+  border-color: var(--color-primary, #1976d2);
+  color: var(--color-primary, #1976d2);
+}
+
+.shared-report-frame {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: white;
+}
+
+.analysis-panel :deep(.chat-area) {  flex: 1 1 0%;
   min-width: 0;
 }
 
