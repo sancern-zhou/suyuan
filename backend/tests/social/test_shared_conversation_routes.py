@@ -352,6 +352,21 @@ def test_require_shared_identity_propagates_token_error_status(monkeypatch):
     assert exc.value.detail == "app_account_disabled"
 
 
+def test_require_shared_identity_prefers_web_identity_over_bearer_header():
+    import asyncio
+
+    web_user = _user()
+    request = SimpleNamespace(state=SimpleNamespace(current_user=web_user))
+
+    def _must_not_be_called(token):
+        raise AssertionError("App token path must not run for web identity")
+
+    user = asyncio.run(
+        routes.require_shared_identity(request, authorization="Bearer web-session-token")
+    )
+    assert user is web_user
+
+
 def test_escaped_like_keyword_escapes_wildcards():
     assert routes._escaped_like_keyword("100%_good\\x") == "%100\\%\\_good\\\\x%"
     assert routes._escaped_like_keyword("普通查询") == "%普通查询%"

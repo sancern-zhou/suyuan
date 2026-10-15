@@ -59,14 +59,21 @@ async def require_shared_identity(
     request: Request,
     authorization: str | None = Header(default=None),
 ) -> CurrentUser:
-    """Accept an App bearer token or the web session identity."""
+    """Accept the web session identity or an App bearer token.
+
+    The gateway middleware already resolves the web session token into
+    ``request.state.current_user``; check that first so the web Bearer
+    token is not mistaken for an App JWT (which would 401 and log the
+    user out). App requests carry an App JWT instead and are verified
+    here as a fallback.
+    """
+    user = getattr(request.state, "current_user", None)
+    if isinstance(user, CurrentUser):
+        return user
     scheme, separator, token = (authorization or "").partition(" ")
     if separator and scheme.lower() == "bearer" and token.strip():
         identity = resolve_access_token(token.strip())
         return identity.as_current_user()
-    user = getattr(request.state, "current_user", None)
-    if isinstance(user, CurrentUser):
-        return user
     raise HTTPException(status_code=401, detail="authentication_required")
 
 
