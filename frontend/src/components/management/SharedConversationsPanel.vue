@@ -85,6 +85,13 @@
           </div>
         </div>
       </div>
+      <iframe
+        v-if="reportFrameUrl"
+        class="report-frame"
+        :src="reportFrameUrl"
+        sandbox="allow-scripts allow-forms"
+        title="分享的报告"
+      />
       <div class="detail-body">
         <div
           v-for="(view, index) in messageViews"
@@ -146,6 +153,7 @@ import { AGENT_MODES } from '@/config/agentModes.js'
 import {
   deleteSharedConversation,
   getSharedConversation,
+  getSharedReportView,
   listSharedConversations
 } from '@/api/sharedConversations'
 
@@ -300,6 +308,7 @@ const messageViews = computed(() => {
 const lightboxVisible = ref(false)
 const lightboxImages = ref([])
 const lightboxStartIndex = ref(0)
+const reportFrameUrl = ref('')
 
 function openChartLightbox(view, attachment) {
   const src = authedImageUrls[attachment.url]
@@ -328,8 +337,18 @@ async function reload() {
 
 async function openDetail(share) {
   error.value = ''
+  reportFrameUrl.value = ''
   try {
-    activeShare.value = await getSharedConversation(share.share_id)
+    const detail = await getSharedConversation(share.share_id)
+    activeShare.value = detail
+    if (detail.has_report) {
+      try {
+        const data = await getSharedReportView(share.share_id)
+        reportFrameUrl.value = data.url || ''
+      } catch {
+        reportFrameUrl.value = ''
+      }
+    }
   } catch (err) {
     error.value = err.message || '加载分享内容失败'
   }
@@ -726,6 +745,15 @@ reload()
   max-width: 860px;
   margin: 0 auto;
   animation: boardFadeIn 0.22s ease;
+}
+
+.report-frame {
+  width: 100%;
+  height: 72vh;
+  border: 1px solid var(--border-2, #e3e8f0);
+  border-radius: 12px;
+  background: white;
+  margin-bottom: 16px;
 }
 
 .message-row {

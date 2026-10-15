@@ -290,6 +290,66 @@ def test_resource_endpoint_serves_copied_file_with_content_suffix(tmp_path, monk
     assert response.content == b"png-bytes"
 
 
+class _FakeTicketService:
+    def issue(self, kind, resource_id):
+        return f"ticket-for-{resource_id}"
+
+    def verify(self, grant, kind, resource_id):
+        return grant == f"ticket-for-{resource_id}"
+
+
+def test_report_view_and_file_roundtrip(tmp_path, monkeypatch):
+    report_dir = tmp_path / "report"
+    (report_dir / "report_files").mkdir(parents=True)
+    (report_dir / "report.html").write_text("<html>report</html>")
+    (report_dir / "report_files" / "chart.png").write_bytes(b"png")
+    record = SimpleNamespace(
+        share_id="s1",
+        status=routes.SHARE_STATUS_ACTIVE,
+        attachments=[{"kind": "report_package", "base": "report/", "entry": "report.html"}],
+    )
+
+    async def _active(share_id):
+        return record
+
+    monkeypatch.setattr(routes, "_active_share", _active)
+    monkeypatch.setattr(routes, "_share_dir", lambda share_id: tmp_path)
+    import app.auth.share_access as share_access
+
+    monkeypatch.setattr(share_access, "get_share_access_service", lambda: _FakeTicketService())
+
+    client = _client()
+    view = client.get("/api/shared-conversations/s1/report-view")
+    assert view.status_code == 200
+    url = view.json()["url"]
+    assert url.startswith("/api/shared-conversations/s1/reports/_t/ticket-for-s1/report.html")
+
+    entry = client.get(url)
+    assert entry.status_code == 200
+    assert b"report" in entry.content
+
+    asset = client.get("/api/shared-conversations/s1/reports/_t/ticket-for-s1/report_files/chart.png")
+    assert asset.status_code == 200
+    assert asset.content == b"png"
+
+    forged = client.get("/api/shared-conversations/s1/reports/_t/wrong/report.html")
+    assert forged.status_code == 401
+
+    escape = client.get("/api/shared-conversations/s1/reports/_t/ticket-for-s1/../report-view")
+    assert escape.status_code in {401, 403, 404, 307}
+
+
+def test_report_view_404_without_package(tmp_path, monkeypatch):
+    record = SimpleNamespace(share_id="s2", status=routes.SHARE_STATUS_ACTIVE, attachments=[])
+
+    async def _active(share_id):
+        return record
+
+    monkeypatch.setattr(routes, "_active_share", _active)
+    response = _client().get("/api/shared-conversations/s2/report-view")
+    assert response.status_code == 404
+
+
 def test_require_shared_identity_accepts_app_bearer_and_rejects_anonymous(monkeypatch):
     import asyncio
 
