@@ -34,7 +34,7 @@ class SocialSharedConversation(Base):
     message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     snapshot: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     attachments: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default=SHARE_STATUS_ACTIVE, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default=SHARE_STATUS_ACTIVE)
     removed_by: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
