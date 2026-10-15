@@ -491,12 +491,14 @@ async def get_shared_report_view(
     package = _report_package(row)
     if package is None:
         raise HTTPException(status_code=404, detail="report_not_found")
-    from app.auth.share_access import get_share_access_service
+    from app.auth.share_access import external_api_path, get_share_access_service
 
     ticket = get_share_access_service().issue("shared-report", share_id)
     entry = str(package.get("entry") or "index.html")
     return {
-        "url": f"/api/shared-conversations/{share_id}/reports/_t/{ticket}/{entry}",
+        "url": external_api_path(
+            f"/api/shared-conversations/{share_id}/reports/_t/{ticket}/{entry}"
+        ),
         "entry": entry,
     }
 
