@@ -59,19 +59,35 @@
       </div>
       <div class="detail-body">
         <div
-          v-for="(message, index) in activeShare.messages"
+          v-for="(view, index) in messageViews"
           :key="index"
           class="message-row"
-          :class="messageRole(message)"
+          :class="view.role"
         >
-          <div class="message-author">{{ messageRole(message) === 'user' ? '提问' : '回答' }}</div>
+          <div class="message-author">{{ view.role === 'user' ? '提问' : '回答' }}</div>
           <div class="message-content">
-            <template v-if="messageRole(message) === 'user'">{{ messageText(message) }}</template>
-            <MarkdownRenderer v-else :content="messageText(message)" />
-            <div v-if="imageAttachments(message).length" class="message-images">
+            <template v-if="view.role === 'user'">{{ view.text }}</template>
+            <template v-else>
+              <template v-for="(seg, si) in view.segments" :key="si">
+                <MarkdownRenderer v-if="seg.type === 'text'" :content="seg.value" />
+                <div v-else class="message-images inline-chart">
+                  <div class="message-image-item">
+                    <img
+                      v-if="authedImageUrls[seg.attachment.url]"
+                      :src="authedImageUrls[seg.attachment.url]"
+                      :alt="seg.attachment.filename || '图表'"
+                      @click="downloadAttachment(seg.attachment)"
+                    />
+                    <span v-else-if="authedImageFailed[seg.attachment.url]" class="panel-hint">图表加载失败</span>
+                    <span v-else class="panel-hint">图表加载中…</span>
+                  </div>
+                </div>
+              </template>
+            </template>
+            <div v-if="view.trailingImages.length" class="message-images">
               <div
-                v-for="attachment in imageAttachments(message)"
-                :key="attachment.resource_id"
+                v-for="attachment in view.trailingImages"
+                :key="attachment.resource_id || attachment.url"
                 class="message-image-item"
               >
                 <img
@@ -85,10 +101,10 @@
                 <span v-else class="panel-hint">图表加载中…</span>
               </div>
             </div>
-            <div v-if="fileAttachments(message).length" class="message-files">
+            <div v-if="view.files.length" class="message-files">
               <a
-                v-for="attachment in fileAttachments(message)"
-                :key="attachment.resource_id"
+                v-for="attachment in view.files"
+                :key="attachment.resource_id || attachment.url"
                 href="#"
                 @click.prevent="downloadAttachment(attachment)"
               >📎 {{ attachment.filename || '附件' }}</a>
@@ -127,7 +143,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, watch, onBeforeUnmount } from 'vue'
+import { computed, reactive, ref, watch, onBeforeUnmount } from 'vue'
 import { useAuthStore } from '@/auth/authStore.js'
 import { authFetch } from '@/auth/http.js'
 import { listSessions } from '@/api/session'
@@ -191,6 +207,49 @@ function fileAttachments(message) {
   )
 }
 
+// 回答正文用 [[chart:<visual_id>]] 标记图表位置（与历史对话一致），按标记内联渲染。
+const CHART_REF_RE = /\[\[chart:([^\]]+)\]\]/g
+
+const messageViews = computed(() => {
+  const messages = activeShare.value?.messages || []
+  return messages.map((message) => {
+    const role = messageRole(message)
+    if (role === 'user') {
+      return { role, text: messageText(message), segments: [], trailingImages: [], files: [] }
+    }
+    const attachments = visibleAttachments(message)
+    const byRef = new Map()
+    for (const attachment of attachments) {
+      for (const key of [attachment.visual_id, attachment.file_id, attachment.ref_id, attachment.resource_id]) {
+        const ref = key == null ? '' : String(key)
+        if (ref && !byRef.has(ref)) byRef.set(ref, attachment)
+      }
+    }
+    const content = messageText(message)
+    const segments = []
+    const inlineUrls = new Set()
+    let last = 0
+    for (const match of content.matchAll(CHART_REF_RE)) {
+      if (match.index > last) segments.push({ type: 'text', value: content.slice(last, match.index) })
+      const attachment = byRef.get(match[1])
+      if (attachment && String(attachment.mime_type || '').startsWith('image/') && attachment.url) {
+        segments.push({ type: 'chart', attachment })
+        inlineUrls.add(attachment.url)
+      }
+      // 交互图表（ECharts）面板不内联渲染，保留在附件区
+      last = match.index + match[0].length
+    }
+    if (last < content.length) segments.push({ type: 'text', value: content.slice(last) })
+    return {
+      role,
+      text: '',
+      segments,
+      trailingImages: imageAttachments(message).filter(a => !inlineUrls.has(a.url)),
+      files: fileAttachments(message).filter(a => !inlineUrls.has(a.url))
+    }
+  })
+})
+
 async function reload() {
   loading.value = true
   error.value = ''
@@ -223,7 +282,9 @@ function attachmentUrls(messages) {
   const urls = new Set()
   for (const message of messages || []) {
     for (const attachment of visibleAttachments(message)) {
-      if (attachment?.url) urls.add(String(attachment.url))
+      if (attachment?.url && String(attachment.mime_type || '').startsWith('image/')) {
+        urls.add(String(attachment.url))
+      }
     }
   }
   return urls
