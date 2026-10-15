@@ -68,7 +68,22 @@
           <div class="message-content">
             <template v-if="view.role === 'user'">{{ view.text }}</template>
             <template v-else>
-              <MarkdownRenderer :content="view.content" />
+              <template v-for="(seg, si) in view.segments" :key="si">
+                <MarkdownRenderer v-if="seg.type === 'text'" :content="seg.value" />
+                <div
+                  v-else
+                  class="board-chart"
+                  @click="openChartLightbox(view, seg.attachment)"
+                >
+                  <img
+                    v-if="authedImageUrls[seg.attachment.url]"
+                    :src="authedImageUrls[seg.attachment.url]"
+                    :alt="mdImageLabel(seg.attachment)"
+                  />
+                  <span v-else-if="authedImageFailed[seg.attachment.url]" class="panel-hint">图表加载失败</span>
+                  <span v-else class="panel-hint">图表加载中…</span>
+                </div>
+              </template>
               <div v-if="view.files.length" class="message-files">
                 <a
                   v-for="attachment in view.files"
@@ -82,6 +97,12 @@
         </div>
       </div>
     </template>
+
+    <ImageLightbox
+      v-model:visible="lightboxVisible"
+      :images="lightboxImages"
+      v-model:start-index="lightboxStartIndex"
+    />
 
     <div v-if="shareDialogOpen" class="share-dialog-mask" @click.self="shareDialogOpen = false">
       <div class="share-dialog">
@@ -117,6 +138,7 @@ import { useAuthStore } from '@/auth/authStore.js'
 import { authFetch } from '@/auth/http.js'
 import { listSessions } from '@/api/session'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
+import ImageLightbox from '@/components/ImageLightbox.vue'
 import {
   deleteSharedConversation,
   getSharedConversation,
@@ -177,8 +199,9 @@ function fileAttachments(message) {
 }
 
 // 回答正文用 [[chart:<visual_id>]] 标记图表位置（与历史对话一致）。
-// 与历史对话相同的渲染方式：把标记替换为 markdown 图片（blob objectURL），
-// 由 MarkdownRenderer 负责居中样式与点击放大灯箱。
+// 图片走 authFetch blob 通道；样式对齐历史对话（居中、760px/58vh），
+// 点击复用 ImageLightbox 放大。blob: URL 会被 DOMPurify 从 markdown img
+// 里剥掉，因此不能走 MarkdownRenderer 的 markdown 图片路径。
 const CHART_REF_RE = /\[\[chart:([^\]]+)\]\]/g
 
 function mdImageLabel(attachment) {
@@ -190,7 +213,7 @@ const messageViews = computed(() => {
   return messages.map((message) => {
     const role = messageRole(message)
     if (role === 'user') {
-      return { role, text: messageText(message), content: '', files: [] }
+      return { role, text: messageText(message), segments: [], files: [] }
     }
     const attachments = visibleAttachments(message)
     const byRef = new Map()
@@ -200,27 +223,44 @@ const messageViews = computed(() => {
         if (ref && !byRef.has(ref)) byRef.set(ref, attachment)
       }
     }
-    const usedUrls = new Set()
-    const rendered = messageText(message).replace(CHART_REF_RE, (marker, ref) => {
-      const attachment = byRef.get(ref)
-      if (!attachment || !attachment.url) return ''
-      if (!String(attachment.mime_type || '').startsWith('image/')) return ''
-      const blobUrl = authedImageUrls[attachment.url]
-      if (!blobUrl) return ''
-      usedUrls.add(attachment.url)
-      return `![${mdImageLabel(attachment)}](${blobUrl})`
-    })
-    // 未被标记引用的静态图同样内联在文末（历史对话中图表均内联展示）
-    let extra = ''
-    for (const attachment of imageAttachments(message)) {
-      if (usedUrls.has(attachment.url)) continue
-      const blobUrl = authedImageUrls[attachment.url]
-      if (!blobUrl) continue
-      extra += `\n\n![${mdImageLabel(attachment)}](${blobUrl})`
+    const content = messageText(message)
+    const segments = []
+    const inlineUrls = new Set()
+    let last = 0
+    for (const match of content.matchAll(CHART_REF_RE)) {
+      if (match.index > last) segments.push({ type: 'text', value: content.slice(last, match.index) })
+      const attachment = byRef.get(match[1])
+      if (attachment && String(attachment.mime_type || '').startsWith('image/') && attachment.url) {
+        segments.push({ type: 'chart', attachment })
+        inlineUrls.add(attachment.url)
+      }
+      // 交互图表（ECharts）面板不内联渲染，保留在附件区
+      last = match.index + match[0].length
     }
-    return { role, text: '', content: rendered + extra, files: fileAttachments(message) }
+    if (last < content.length) segments.push({ type: 'text', value: content.slice(last) })
+    // 未被标记引用的静态图同样内联在文末（历史对话中图表均内联展示）
+    for (const attachment of imageAttachments(message)) {
+      if (!inlineUrls.has(attachment.url)) segments.push({ type: 'chart', attachment })
+    }
+    return { role, text: '', segments, files: fileAttachments(message) }
   })
 })
+
+const lightboxVisible = ref(false)
+const lightboxImages = ref([])
+const lightboxStartIndex = ref(0)
+
+function openChartLightbox(view, attachment) {
+  const src = authedImageUrls[attachment.url]
+  if (!src) return
+  const images = view.segments
+    .filter(seg => seg.type === 'chart' && authedImageUrls[seg.attachment.url])
+    .map(seg => ({ src: authedImageUrls[seg.attachment.url], alt: mdImageLabel(seg.attachment) }))
+  if (!images.length) return
+  lightboxImages.value = images
+  lightboxStartIndex.value = Math.max(0, images.findIndex(img => img.src === src))
+  lightboxVisible.value = true
+}
 
 async function reload() {
   loading.value = true
@@ -533,6 +573,29 @@ reload()
   max-width: 100%;
   border: 1px solid var(--border-2);
   border-radius: 6px;
+}
+
+/* 内联图表：与历史对话 MarkdownRenderer 的 img 样式保持一致 */
+.board-chart {
+  margin: 12px auto;
+  max-width: min(100%, 760px);
+}
+
+.board-chart img {
+  max-width: 100%;
+  max-height: 58vh;
+  width: auto;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+  object-fit: contain;
+  border-radius: 6px;
+  cursor: zoom-in;
+  transition: transform 0.2s;
+}
+
+.board-chart img:hover {
+  transform: scale(1.02);
 }
 
 .message-files {
