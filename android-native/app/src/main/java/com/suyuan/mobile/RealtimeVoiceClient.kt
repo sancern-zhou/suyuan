@@ -46,6 +46,17 @@ class RealtimeVoiceClient(
         onError: (String) -> Unit,
         tokenRefresher: (() -> String?)? = null,
     ) {
+        startInternal(token, onReady, onText, onError, tokenRefresher, retried = false)
+    }
+
+    private fun startInternal(
+        token: String,
+        onReady: () -> Unit,
+        onText: (String, Boolean) -> Unit,
+        onError: (String) -> Unit,
+        tokenRefresher: (() -> String?)?,
+        retried: Boolean,
+    ) {
         stop()
         val runId = synchronized(this) {
             generation += 1
@@ -121,10 +132,10 @@ class RealtimeVoiceClient(
                 // no 4401 close frame reaches the client). Refresh once and
                 // reconnect instead of reporting a network failure.
                 val status = response?.code ?: 0
-                if ((status == 401 || status == 403) && tokenRefresher != null) {
+                if ((status == 401 || status == 403) && tokenRefresher != null && !retried) {
                     val fresh = runCatching { tokenRefresher.invoke() }.getOrNull()
                     if (fresh != null && fresh != token) {
-                        start(fresh, onReady, onText, onError)
+                        startInternal(fresh, onReady, onText, onError, tokenRefresher, retried = true)
                         return
                     }
                     onError("登录已过期，请重新登录")
