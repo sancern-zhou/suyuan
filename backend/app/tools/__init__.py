@@ -907,6 +907,22 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.warning("tool_import_failed", tool="search_scheduled_task_history", error=str(e))
 
     try:
+        from app.tools.runtime_monitor.tool import query_runtime_anomalies_tool
+        registry.register(
+            query_runtime_anomalies_tool,
+            priority=366,
+            metadata={
+                "data_type": "runtime_anomalies",
+                "requires_handle": False,
+                "supports_batch": False,
+                "system_managed": True,
+            },
+        )
+        logger.info("tool_loaded", tool="query_runtime_anomalies")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_runtime_anomalies", error=str(e))
+
+    try:
         from app.tools.scheduled_tasks import query_scheduled_task_results_tool
         registry.register(
             query_scheduled_task_results_tool,
