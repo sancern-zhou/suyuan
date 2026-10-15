@@ -24,6 +24,8 @@ import android.widget.Toast
 import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import androidx.compose.animation.core.RepeatMode
@@ -400,6 +402,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         showReports = false
     }
     val voiceClient = remember { RealtimeVoiceClient(BuildConfig.API_BASE_URL) }
+    val scope = rememberCoroutineScope()
     DisposableEffect(voiceClient) {
         onDispose { voiceClient.stop() }
     }
@@ -408,15 +411,31 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             localError = null
             draftBeforeVoice.value = state.draft
             recording = true
-            voiceClient.start(
-                token = state.token,
-                onReady = { if (voicePressActive.value) recording = true },
-                onText = { text, _ -> if (text.isNotBlank()) viewModel.updateDraft(text) },
-                onError = { message ->
+            scope.launch {
+                // state.token can be hours past expiry once the process has
+                // been cached in background; refresh before the handshake.
+                val token = viewModel.ensureFreshToken()
+                // The gesture may have ended (stop/finish already ran) while
+                // the refresh was in flight — start() must not resurrect it.
+                if (!recording) return@launch
+                if (token == null) {
                     recording = false
-                    localError = message
-                },
-            )
+                    localError = "登录已过期，请重新登录"
+                } else {
+                    voiceClient.start(
+                        token = token,
+                        onReady = { if (voicePressActive.value) recording = true },
+                        onText = { text, _ -> if (text.isNotBlank()) viewModel.updateDraft(text) },
+                        onError = { message ->
+                            recording = false
+                            localError = message
+                        },
+                        // Runs on OkHttp's failure thread; one reconnect with
+                        // a fresh token after an auth handshake rejection.
+                        tokenRefresher = { runBlocking { viewModel.ensureFreshToken(force = true) } },
+                    )
+                }
+            }
         }
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
