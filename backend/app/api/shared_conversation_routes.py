@@ -13,6 +13,7 @@ identity (request.state.current_user) — both converge on CurrentUser.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import mimetypes
 import shutil
@@ -43,6 +44,9 @@ router = APIRouter(prefix="/api/shared-conversations")
 # snapshot keeps their (rewritten) URLs and the resource endpoint 404s.
 MAX_ATTACHMENT_COPY_BYTES = 10 * 1024 * 1024
 
+# Disk/db guardrail: one user cannot flood the board with snapshots.
+MAX_ACTIVE_SHARES_PER_USER = 50
+
 _RESOURCE_URL_PREFIX = "/api/social/app/sessions/{session_id}/resources/"
 _SHARE_RESOURCE_URL_PREFIX = "/api/shared-conversations/{share_id}/resources/"
 
@@ -58,10 +62,7 @@ async def require_shared_identity(
     """Accept an App bearer token or the web session identity."""
     scheme, separator, token = (authorization or "").partition(" ")
     if separator and scheme.lower() == "bearer" and token.strip():
-        try:
-            identity = resolve_access_token(token.strip())
-        except HTTPException:
-            raise HTTPException(status_code=401, detail="invalid_token")
+        identity = resolve_access_token(token.strip())
         return identity.as_current_user()
     user = getattr(request.state, "current_user", None)
     if isinstance(user, CurrentUser):
@@ -84,6 +85,12 @@ def _deep_replace(value, old: str, new: str):
     if isinstance(value, list):
         return [_deep_replace(item, old, new) for item in value]
     return value
+
+
+def _escaped_like_keyword(keyword: str) -> str:
+    """Escape LIKE wildcards so user input matches literally."""
+    escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
 
 
 def _iter_attachments(value):
@@ -180,7 +187,7 @@ async def _copy_share_attachments(
             continue
         suffix = source.suffix or ""
         stored_name = f"{resource_id}{suffix}"
-        shutil.copyfile(source, target_dir / stored_name)
+        await asyncio.to_thread(shutil.copyfile, source, target_dir / stored_name)
         manifest.append(
             {
                 "resource_id": resource_id,
@@ -250,6 +257,18 @@ async def create_shared_conversation(
     if not session_id:
         raise HTTPException(status_code=422, detail="session_id_required")
 
+    async with async_session() as db:
+        owned = await db.scalar(
+            select(func.count())
+            .select_from(SocialSharedConversation)
+            .where(
+                SocialSharedConversation.owner_user_id == user.id,
+                SocialSharedConversation.status == SHARE_STATUS_ACTIVE,
+            )
+        )
+    if int(owned or 0) >= MAX_ACTIVE_SHARES_PER_USER:
+        raise HTTPException(status_code=429, detail="share_quota_exceeded")
+
     snapshot = await _build_snapshot(user, session_id)
     share_id = uuid.uuid4().hex
     manifest = await _copy_share_attachments(session_id, snapshot["history"], share_id)
@@ -278,7 +297,11 @@ async def create_shared_conversation(
     )
     async with async_session() as db:
         db.add(record)
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception:
+            shutil.rmtree(_share_dir(share_id), ignore_errors=True)
+            raise
     logger.info(
         "shared_conversation_created",
         share_id=share_id,
@@ -302,10 +325,10 @@ async def list_shared_conversations(
     )
     keyword = search.strip()
     if keyword:
-        like = f"%{keyword}%"
+        like = _escaped_like_keyword(keyword)
         statement = statement.where(
-            SocialSharedConversation.title.ilike(like)
-            | SocialSharedConversation.first_question.ilike(like)
+            SocialSharedConversation.title.ilike(like, escape="\\")
+            | SocialSharedConversation.first_question.ilike(like, escape="\\")
         )
     async with async_session() as db:
         total = await db.scalar(
