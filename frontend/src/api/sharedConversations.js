@@ -34,6 +34,10 @@ export async function getSharedConversation(shareId) {
   return await request(`${BASE_URL}/${encodeURIComponent(shareId)}`)
 }
 
+export async function getSharedReportView(shareId) {
+  return await request(`${BASE_URL}/${encodeURIComponent(shareId)}/report-view`)
+}
+
 export async function shareConversation(sessionId) {
   return await request(`${BASE_URL}`, {
     method: 'POST',

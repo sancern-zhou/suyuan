@@ -19,6 +19,7 @@ import mimetypes
 import shutil
 import uuid
 from pathlib import Path
+from urllib.parse import unquote
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -43,6 +44,10 @@ router = APIRouter(prefix="/api/shared-conversations")
 # Charts and documents larger than this are not copied into the share; the
 # snapshot keeps their (rewritten) URLs and the resource endpoint 404s.
 MAX_ATTACHMENT_COPY_BYTES = 10 * 1024 * 1024
+
+# Report-mode conversations carry an HTML report package (directory with
+# relative asset references). Copy it wholesale so the board can embed it.
+MAX_REPORT_COPY_BYTES = 100 * 1024 * 1024
 
 # Disk/db guardrail: one user cannot flood the board with snapshots.
 MAX_ACTIVE_SHARES_PER_USER = 50
@@ -206,6 +211,57 @@ async def _copy_share_attachments(
     return manifest
 
 
+async def _copy_share_report(session_id: str, share_id: str) -> dict | None:
+    """Copy an HTML report package (artifact with entrypoint) into the share.
+
+    Report-mode conversations keep the actual report in a session artifact
+    directory; the message text only says the report was generated. The
+    package is copied wholesale (relative asset references must keep working)
+    so the board can embed it behind a short-lived view ticket.
+    """
+    from app.agent.resources.resource_service import SessionResourceService
+    from app.utils.path_config import get_data_registry
+
+    service = SessionResourceService.database()
+    try:
+        page = await service.list_resources(session_id, kind="artifact", status="active", limit=200)
+    except Exception as exc:
+        logger.warning("shared_report_lookup_failed", session_id=session_id, error=str(exc))
+        return None
+
+    registry_root = get_data_registry().expanduser().resolve()
+    for resource in page.resources:
+        entrypoint = str((resource.metadata or {}).get("entrypoint") or "").strip()
+        raw_path = str((resource.locator or {}).get("path") or "").strip()
+        if not entrypoint or not raw_path:
+            continue
+        source = Path(raw_path).expanduser().resolve()
+        try:
+            source.relative_to(registry_root)
+        except ValueError:
+            continue
+        if not source.is_dir():
+            continue
+        total = sum(f.stat().st_size for f in source.rglob("*") if f.is_file())
+        if total > MAX_REPORT_COPY_BYTES:
+            logger.warning("shared_report_too_large", session_id=session_id, bytes=total)
+            return None
+
+        target = _share_dir(share_id) / "report"
+        target.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(shutil.copytree, source, target, dirs_exist_ok=True)
+        if not (target / entrypoint).is_file():
+            logger.warning("shared_report_entry_missing", session_id=session_id, entry=entrypoint)
+            return None
+        return {
+            "kind": "report_package",
+            "base": "report/",
+            "entry": entrypoint,
+            "resource_id": resource.resource_id,
+        }
+    return None
+
+
 async def _build_snapshot(user: CurrentUser, session_id: str) -> dict:
     """Restore one owned conversation and capture the share snapshot."""
     from app.api.social_app_routes import (
@@ -279,6 +335,9 @@ async def create_shared_conversation(
     snapshot = await _build_snapshot(user, session_id)
     share_id = uuid.uuid4().hex
     manifest = await _copy_share_attachments(session_id, snapshot["history"], share_id)
+    report_package = await _copy_share_report(session_id, share_id)
+    if report_package:
+        manifest.append(report_package)
 
     new_prefix = _SHARE_RESOURCE_URL_PREFIX.format(share_id=share_id)
     history = _deep_replace(
@@ -417,12 +476,71 @@ async def get_shared_conversation_resource(
     raise HTTPException(status_code=404, detail="shared_resource_not_found")
 
 
+@router.get("/{share_id}/report-view")
+async def get_shared_report_view(
+    share_id: str,
+    user: CurrentUser = Depends(require_shared_identity),
+) -> dict:
+    """Issue a short-lived view ticket for the embedded report package.
+
+    The board embeds the report in a sandboxed iframe, which cannot send
+    Authorization headers; the ticket travels as a path segment so relative
+    asset URLs inside the report inherit it (same mechanism as chat).
+    """
+    row = await _active_share(share_id)
+    package = _report_package(row)
+    if package is None:
+        raise HTTPException(status_code=404, detail="report_not_found")
+    from app.auth.share_access import get_share_access_service
+
+    ticket = get_share_access_service().issue("shared-report", share_id)
+    entry = str(package.get("entry") or "index.html")
+    return {
+        "url": f"/api/shared-conversations/{share_id}/reports/_t/{ticket}/{entry}",
+        "entry": entry,
+    }
+
+
+@router.get("/{share_id}/reports/_t/{ticket}/{file_path:path}")
+async def get_shared_report_file(
+    share_id: str,
+    ticket: str,
+    file_path: str,
+    user: CurrentUser = Depends(require_shared_identity),
+) -> FileResponse:
+    """Serve report package bytes; the ticket authorizes the sandboxed iframe."""
+    row = await _active_share(share_id)
+    package = _report_package(row)
+    if package is None:
+        raise HTTPException(status_code=404, detail="report_not_found")
+    from app.auth.share_access import get_share_access_service
+
+    if not get_share_access_service().verify(unquote(ticket), "shared-report", share_id):
+        raise HTTPException(status_code=401, detail="invalid_report_ticket")
+
+    base = (_share_dir(share_id) / str(package.get("base") or "report/")).resolve()
+    if not file_path:
+        file_path = str(package.get("entry") or "index.html")
+    target = (base / file_path).resolve()
+    if base not in target.parents or not target.is_file():
+        raise HTTPException(status_code=404, detail="report_file_not_found")
+    media_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+    return FileResponse(target, media_type=media_type)
+
+
 async def _active_share(share_id: str) -> SocialSharedConversation:
     async with async_session() as db:
         row = await db.get(SocialSharedConversation, share_id)
     if row is None or row.status != SHARE_STATUS_ACTIVE:
         raise HTTPException(status_code=404, detail="share_not_found")
     return row
+
+
+def _report_package(row: SocialSharedConversation) -> dict | None:
+    for item in row.attachments or []:
+        if isinstance(item, dict) and item.get("kind") == "report_package":
+            return item
+    return None
 
 
 def _share_summary(row: SocialSharedConversation) -> dict:
@@ -432,6 +550,7 @@ def _share_summary(row: SocialSharedConversation) -> dict:
         "first_question": row.first_question,
         "message_count": row.message_count,
         "mode": row.mode,
+        "has_report": _report_package(row) is not None,
         "owner": {
             "user_id": row.owner_user_id,
             "username": row.owner_username,

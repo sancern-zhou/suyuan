@@ -52,6 +52,9 @@ _RESOURCE_CONTENT_PATTERN = re.compile(
 _SCHEDULED_RESULT_CONTENT_PATTERN = re.compile(
     r"^/api/scheduled-tasks/results/([^/]+)/(?:files|report)(?:/.*)?$"
 )
+_SHARED_REPORT_PREVIEW_PATTERN = re.compile(
+    r"^/api/shared-conversations/([^/]+)/reports/_t/([^/]+)(?:/(.+))?$"
+)
 
 
 class GatewayAuthenticationMiddleware:
@@ -180,12 +183,21 @@ class GatewayAuthenticationMiddleware:
                 resource_preview_identity(session_id, resource_id),
             )
         scheduled = _SCHEDULED_RESULT_CONTENT_PATTERN.fullmatch(base_path)
-        if scheduled is not None:
+        if scheduled:
             return self._verify_preview_ticket(
                 scope,
                 ticket,
                 SCHEDULED_RESULT_PREVIEW_KIND,
                 unquote(scheduled.group(1)),
+            )
+        shared_report = _SHARED_REPORT_PREVIEW_PATTERN.fullmatch(path)
+        if shared_report:
+            # The ticket is inherent in the path; scope reports to one share.
+            return self._verify_preview_ticket(
+                scope,
+                unquote(shared_report.group(2)),
+                "shared-report",
+                unquote(shared_report.group(1)),
             )
         return False
 
