@@ -68,6 +68,18 @@
             <p class="module-title">知识管理</p>
           </div>
         </button>
+        <button
+          class="module-card"
+          :class="{ active: isActive('shared-conversations') }"
+          type="button"
+          @click="handleModuleSelect('shared-conversations')"
+          :title="isCollapsed ? '共享对话' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('shared-conversations')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">共享对话</p>
+          </div>
+        </button>
       </div>
 
       <div class="module-list">
@@ -214,6 +226,23 @@
         <span v-else class="user-name">{{ userDisplayName }}</span>
       </div>
       <button
+        class="qrcode-toggle"
+        type="button"
+        aria-label="扫码下载溯源 App"
+        title="扫码下载溯源 App"
+        @click.stop="qrcodeDialogOpen = true"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="3" width="7" height="7" rx="1" />
+          <rect x="14" y="3" width="7" height="7" rx="1" />
+          <rect x="3" y="14" width="7" height="7" rx="1" />
+          <path d="M14 14h3v3h-3z" />
+          <path d="M18 18h3v3h-3z" />
+          <path d="M21 14h-3" />
+          <path d="M14 21v-3" />
+        </svg>
+      </button>
+      <button
         class="settings-toggle"
         type="button"
         aria-label="打开系统设置"
@@ -227,6 +256,7 @@
         </svg>
       </button>
     </div>
+    <AppDownloadQrcodeDialog :visible="qrcodeDialogOpen" @close="qrcodeDialogOpen = false" />
   </aside>
 </template>
 
@@ -248,6 +278,7 @@ import {
 } from './conversationListPolicy.js'
 import { AGENT_MODES, AGENT_MODE_IDS } from '@/config/agentModes.js'
 import { filterSidebarModules } from './sidebarProjectModules.js'
+import AppDownloadQrcodeDialog from '@/components/AppDownloadQrcodeDialog.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -274,6 +305,7 @@ const emit = defineEmits(['update:activeModule', 'select', 'action', 'loadSessio
 const isCollapsed = ref(props.collapsed)
 const settingsFooterRef = ref(null)
 const settingsMenuOpen = ref(false)
+const qrcodeDialogOpen = ref(false)
 const closeSettingsMenu = () => {
   settingsMenuOpen.value = false
 }
@@ -590,7 +622,6 @@ const sidebarAgentModeEntries = projectConfig.sidebarAgentModes
 
 const SETTINGS_MODULE_IDS = Object.freeze([
   'session-history',
-  'shared-conversations',
   'skills-management',
   'quick-prompts-management',
   'scheduled-tasks',
@@ -733,7 +764,10 @@ const handleDocumentPointerDown = (event) => {
 }
 
 const handleDocumentKeydown = (event) => {
-  if (event.key === 'Escape') closeSettingsMenu()
+  if (event.key === 'Escape') {
+    closeSettingsMenu()
+    qrcodeDialogOpen.value = false
+  }
 }
 
 const isActive = (moduleId) => props.activeModule === moduleId
@@ -1085,6 +1119,41 @@ onUnmounted(() => {
   background: #e8eef6;
   font-size: 11px;
   font-weight: 600;
+}
+
+.qrcode-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  color: #69758c;
+  background: transparent;
+  cursor: pointer;
+
+  svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.55;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  &:hover {
+    color: #1976d2;
+    background: #eaf2fb;
+  }
+
+  &:focus-visible {
+    outline: 2px solid #8abfff;
+    outline-offset: 2px;
+  }
 }
 
 .settings-toggle {
