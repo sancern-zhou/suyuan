@@ -1,7 +1,7 @@
 {
   "task_id": "task_runtime_monitor",
   "name": "后台运行监控",
-  "description": "空闲时段检查上一时段后台异常与告警（定时任务失败、会话错误、抓取失败、LLM 限流、路况配额），先分析再向管理员推送结论；无异常不打扰。",
+  "description": "每天 7:05、12:05、18:05 检查上一时段后台异常与告警（定时任务失败、会话错误、抓取失败、LLM 限流、路况配额），先分析再向管理员推送结论；无异常不打扰。",
   "execution_mode": "custom",
   "tool_names": [
     "query_runtime_anomalies",
@@ -12,9 +12,7 @@
   "trigger_type": "schedule",
   "schedule_type": "daily_hours_custom",
   "hours": [
-    0, 1, 2, 3, 4, 5, 6, 7,
-    12, 13,
-    18, 19, 20, 21, 22, 23
+    7, 12, 18
   ],
   "minute": 5,
   "target_user_ids": [],
