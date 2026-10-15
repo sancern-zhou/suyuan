@@ -142,6 +142,11 @@
             @close="$emit('close-management-panel')"
           />
 
+          <SharedConversationsPanel
+            v-else-if="managementPanel === 'shared-conversations'"
+            @close="$emit('close-management-panel')"
+          />
+
           <ToolsManagementPanel
             v-else-if="managementPanel === 'tools-management'"
             @close="$emit('close-management-panel')"
@@ -226,6 +231,7 @@ import FetchersPanel from '@/components/management/FetchersPanel.vue'
 import ScheduledTasksPanel from '@/components/management/ScheduledTasksPanel.vue'
 import TaskExecutionWorkspace from '@/components/management/TaskExecutionWorkspace.vue'
 import SessionHistoryPanel from '@/components/management/SessionHistoryPanel.vue'
+import SharedConversationsPanel from '@/components/management/SharedConversationsPanel.vue'
 import SocialPlatformPanel from '@/components/management/SocialPlatformPanel.vue'
 import ToolsManagementPanel from '@/components/management/ToolsManagementPanel.vue'
 import SkillsManagementPanel from '@/components/management/SkillsManagementPanel.vue'

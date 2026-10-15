@@ -394,12 +394,14 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     var showHistory by remember { mutableStateOf(false) }
     var showBroadcasts by remember { mutableStateOf(false) }
     var showReports by remember { mutableStateOf(false) }
+    var showShared by remember { mutableStateOf(false) }
     var selectedTaskId by remember { mutableStateOf<String?>(null) }
     // 系统返回（侧滑/返回键）在面板打开时先回对话页，而不是走 Activity 默认行为直接退出。
-    BackHandler(enabled = showHistory || showBroadcasts || showReports) {
+    BackHandler(enabled = showHistory || showBroadcasts || showReports || showShared) {
         showHistory = false
         showBroadcasts = false
         showReports = false
+        showShared = false
     }
     val voiceClient = remember { RealtimeVoiceClient(BuildConfig.API_BASE_URL) }
     val scope = rememberCoroutineScope()
@@ -526,17 +528,21 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             showHistory = showHistory,
             showBroadcasts = showBroadcasts,
             showReports = showReports,
+            showShared = showShared,
             taskTitles = state.scheduledTasks.map { it.taskId to it.name },
             onSelectTask = { selectedTaskId = it },
-            onHistory = { showHistory = true; showBroadcasts = false; showReports = false },
-            onBack = { showHistory = false; showBroadcasts = false; showReports = false },
-            onBroadcasts = { showBroadcasts = true; showHistory = false; showReports = false; viewModel.openBroadcasts() },
-                onReports = { selectedTaskId = null; showReports = true; showHistory = false; showBroadcasts = false; viewModel.refreshScheduledTasks() },
+            onHistory = { showHistory = true; showBroadcasts = false; showReports = false; showShared = false },
+            onBack = { showHistory = false; showBroadcasts = false; showReports = false; showShared = false },
+            onBroadcasts = { showBroadcasts = true; showHistory = false; showReports = false; showShared = false; viewModel.openBroadcasts() },
+                onReports = { selectedTaskId = null; showReports = true; showHistory = false; showBroadcasts = false; showShared = false; viewModel.refreshScheduledTasks() },
+            onShared = { showShared = true; showHistory = false; showBroadcasts = false; showReports = false; viewModel.loadSharedConversations() },
             unreadBroadcastCount = state.unreadBroadcastCount,
             unreadReportCount = state.reportUnreadCount,
-            onNew = { showHistory = false; showBroadcasts = false; showReports = false; viewModel.newConversation() },
+            onNew = { showHistory = false; showBroadcasts = false; showReports = false; showShared = false; viewModel.newConversation() },
         )
-        if (showReports) {
+        if (showShared) {
+            SharedConversationsPanel(state, viewModel, onBack = { showShared = false })
+        } else if (showReports) {
             ScheduledTaskPanel(state, viewModel, selectedTaskId, onSession = { showReports = false })
         } else if (showBroadcasts) {
             BroadcastPanel(state, viewModel, onBack = { showBroadcasts = false })
@@ -812,12 +818,14 @@ private fun AppTopBar(
     showHistory: Boolean,
     showBroadcasts: Boolean,
     showReports: Boolean,
+    showShared: Boolean,
     taskTitles: List<Pair<String, String>>,
     onSelectTask: (String) -> Unit,
     onHistory: () -> Unit,
     onBack: () -> Unit,
     onBroadcasts: () -> Unit,
     onReports: () -> Unit,
+    onShared: () -> Unit,
     unreadBroadcastCount: Int,
     unreadReportCount: Int,
     onNew: () -> Unit,
@@ -828,12 +836,14 @@ private fun AppTopBar(
         horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
     ) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            IconButton(onClick = if (showHistory || showBroadcasts || showReports) onBack else onHistory) {
-                Icon(painterResource(if (showHistory || showBroadcasts || showReports) R.drawable.ic_back else R.drawable.ic_menu), contentDescription = if (showHistory || showBroadcasts || showReports) "返回对话" else "历史会话", tint = SuyuanColors.text)
+            IconButton(onClick = if (showHistory || showBroadcasts || showReports || showShared) onBack else onHistory) {
+                Icon(painterResource(if (showHistory || showBroadcasts || showReports || showShared) R.drawable.ic_back else R.drawable.ic_menu), contentDescription = if (showHistory || showBroadcasts || showReports || showShared) "返回对话" else "历史会话", tint = SuyuanColors.text)
             }
             if (showHistory) Text("历史会话", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
             if (showBroadcasts) {
                 Text("广播消息", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
+            } else if (showShared) {
+                Text("共享对话", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
             } else if (showReports) {
                 Icon(painterResource(R.drawable.ic_history), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(22.dp))
                 Text("定时任务", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
@@ -845,6 +855,9 @@ private fun AppTopBar(
                     if (unreadBroadcastCount > 0) {
                         Box(Modifier.size(8.dp).clip(CircleShape).background(SuyuanColors.error).align(androidx.compose.ui.Alignment.TopEnd))
                     }
+                }
+                IconButton(onClick = onShared) {
+                    Icon(painterResource(R.drawable.ic_people), contentDescription = "共享对话", tint = SuyuanColors.text)
                 }
                 IconButton(onClick = onReports) {
                     Box {
@@ -867,6 +880,189 @@ private fun AppTopBar(
             }
         } else if (!showBroadcasts) IconButton(onClick = onNew) {
             Icon(painterResource(R.drawable.ic_new_chat), contentDescription = "新建对话", tint = SuyuanColors.text, modifier = Modifier.size(28.dp))
+        }
+    }
+}
+
+@Composable
+private fun SharedConversationsPanel(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit) {
+    var search by remember { mutableStateOf(state.sharedSearch) }
+    var shareDialogOpen by remember { mutableStateOf(false) }
+    var shareMessage by remember { mutableStateOf<String?>(null) }
+    var shareSession by remember { mutableStateOf<SessionInfo?>(null) }
+
+    val detail = state.sharedDetail
+    if (detail != null) {
+        SharedConversationDetailView(detail, state, viewModel, onBack = { viewModel.closeSharedConversation() })
+        return
+    }
+
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = search,
+                onValueChange = { search = it },
+                placeholder = { Text("搜索标题或首问", fontSize = 13.sp) },
+                singleLine = true,
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = SuyuanColors.text),
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                shape = RoundedCornerShape(10.dp),
+            )
+            Button(
+                onClick = { shareDialogOpen = true; shareMessage = null; viewModel.refreshSessions(selectExisting = false) },
+                enabled = !state.sharedLoading,
+                shape = RoundedCornerShape(10.dp),
+            ) {
+                Text("分享对话", fontSize = 13.sp)
+            }
+        }
+        if (state.sharedError != null) {
+            Text(state.sharedError!!, color = SuyuanColors.error, fontSize = 13.sp, modifier = Modifier.padding(vertical = 4.dp))
+        }
+        when {
+            state.sharedLoading && state.sharedConversations.isEmpty() -> Text("加载中…", color = SuyuanColors.secondaryText, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
+            state.sharedConversations.isEmpty() -> Text("还没有人分享对话，点右上角「分享对话」试试。", color = SuyuanColors.secondaryText, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
+        }
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+            items(state.sharedConversations) { share ->
+                Surface(
+                    color = Color.White,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp).clickable { viewModel.openSharedConversation(share.shareId) },
+                ) {
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 13.dp)) {
+                        Text(share.title, color = SuyuanColors.text, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                        if (share.firstQuestion.isNotBlank()) {
+                            Text(share.firstQuestion, color = SuyuanColors.secondaryText, fontSize = 12.sp, maxLines = 2, modifier = Modifier.padding(top = 3.dp))
+                        }
+                        Text(
+                            "${share.ownerName} · ${share.createdAt?.replace('T', ' ')?.take(16).orEmpty()} · ${share.messageCount} 条消息",
+                            color = SuyuanColors.secondaryText, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (shareDialogOpen) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { shareDialogOpen = false }) {
+            Surface(color = Color.White, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("分享我的对话到共享面板", color = SuyuanColors.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "将生成对话快照公开给全部用户，图表一并保存；之后修改或删除原对话不影响已分享内容。",
+                        color = SuyuanColors.secondaryText, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp, bottom = 10.dp),
+                    )
+                    if (shareMessage != null) {
+                        Text(shareMessage!!, color = SuyuanColors.error, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp))
+                    }
+                    if (state.sessions.isEmpty()) {
+                        Text("暂无可分享的会话。", color = SuyuanColors.secondaryText, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
+                    } else {
+                        LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                            items(state.sessions) { session ->
+                                Surface(
+                                    color = Color.White,
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp).clickable {
+                                        if (!state.sharedLoading) {
+                                            shareSession = session
+                                            viewModel.shareSessionToBoard(session.sessionId) { ok, message ->
+                                                shareSession = null
+                                                if (ok) shareDialogOpen = false
+                                                shareMessage = message
+                                            }
+                                        }
+                                    },
+                                ) {
+                                    Row(Modifier.padding(horizontal = 12.dp, vertical = 11.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text(session.title, color = SuyuanColors.text, fontSize = 14.sp, maxLines = 1)
+                                            session.updatedAt?.let {
+                                                Text(it.replace('T', ' ').take(16), color = SuyuanColors.secondaryText, fontSize = 11.sp)
+                                            }
+                                        }
+                                        if (shareSession?.sessionId == session.sessionId) {
+                                            Text("分享中…", color = SuyuanColors.secondaryText, fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedConversationDetailView(
+    detail: SharedConversationDetail,
+    state: AppUiState,
+    viewModel: AppViewModel,
+    onBack: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(painterResource(R.drawable.ic_back), contentDescription = "返回列表", tint = SuyuanColors.text)
+            }
+            Column(Modifier.padding(start = 4.dp)) {
+                Text(detail.summary.title, color = SuyuanColors.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(
+                    "${detail.summary.ownerName} 分享 · ${detail.summary.createdAt?.replace('T', ' ')?.take(16).orEmpty()}",
+                    color = SuyuanColors.secondaryText, fontSize = 11.sp,
+                )
+            }
+        }
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+            items(detail.messages) { message ->
+                val role = sequenceOf(message.optString("type"), message.optString("role"))
+                    .firstOrNull { it.isNotBlank() }?.lowercase().orEmpty()
+                val isUser = role == "user"
+                val content = sequenceOf(
+                    message.optString("content").takeIf { it.isNotBlank() },
+                    message.optJSONObject("data")?.optJSONObject("result")?.optString("content")?.takeIf { it.isNotBlank() },
+                ).firstOrNull { it != null }.orEmpty()
+                if (content.isBlank() && message.optJSONArray("attachments") == null) return@items
+                Surface(
+                    color = if (isUser) SuyuanColors.primary.copy(alpha = .07f) else Color.White,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                ) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
+                        Text(if (isUser) "提问" else "回答", color = SuyuanColors.secondaryText, fontSize = 11.sp)
+                        if (content.isNotBlank()) {
+                            if (isUser) {
+                                Text(content, color = SuyuanColors.text, fontSize = 14.sp, lineHeight = 21.sp, modifier = Modifier.padding(top = 4.dp))
+                            } else {
+                                MarkdownContent(content, SuyuanColors.text, state = state, viewModel = viewModel)
+                            }
+                        }
+                        val attachments = message.optJSONArray("attachments")
+                        if (attachments != null) {
+                            for (index in 0 until attachments.length()) {
+                                val attachment = attachments.optJSONObject(index) ?: continue
+                                val url = attachment.optString("url")
+                                val mime = attachment.optString("mime_type")
+                                when {
+                                    url.isBlank() -> Unit
+                                    mime.startsWith("image/") -> MarkdownImage(url, attachment.optString("filename"), state, viewModel)
+                                    mime != "application/json" -> Text(
+                                        "📎 ${attachment.optString("filename", "附件")}",
+                                        color = SuyuanColors.primary, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

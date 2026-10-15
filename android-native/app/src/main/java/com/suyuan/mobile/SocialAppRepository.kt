@@ -26,6 +26,11 @@ class SocialAppRepository(private val api: SocialAppApi) {
     suspend fun markBroadcastRead(token: String, messageId: String) = api.markBroadcastRead(token, messageId)
     suspend fun markAllBroadcastsRead(token: String) = api.markAllBroadcastsRead(token)
     suspend fun deleteBroadcast(token: String, messageId: String) = api.deleteBroadcast(token, messageId)
+    suspend fun sharedConversations(token: String, search: String = "", limit: Int = 30, offset: Int = 0) =
+        api.sharedConversations(token, search, limit, offset)
+    suspend fun sharedConversation(token: String, shareId: String) = api.sharedConversation(token, shareId)
+    suspend fun createSharedConversation(token: String, sessionId: String) = api.createSharedConversation(token, sessionId)
+    suspend fun deleteSharedConversation(token: String, shareId: String) = api.deleteSharedConversation(token, shareId)
     suspend fun reports(token: String, reportType: String? = null, limit: Int = 30, before: String? = null) = api.reports(token, reportType, limit, before)
     suspend fun taskResults(token: String, taskId: String, page: Int, start: String, end: String, station: String, pollutant: String) = api.taskResults(token, taskId, page, start, end, station, pollutant)
     suspend fun taskFacets(token: String, taskId: String) = api.taskFacets(token, taskId)
