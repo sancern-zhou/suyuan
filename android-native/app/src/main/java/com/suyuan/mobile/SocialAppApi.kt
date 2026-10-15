@@ -209,6 +209,9 @@ class SocialAppApi(
     private val baseUrl: String = BuildConfig.API_BASE_URL,
     private val sessionStore: AppSessionStore? = null,
 ) {
+    /** Invoked after the authenticator refreshed the session, so the UI token state can follow. */
+    @Volatile var onSessionRefreshed: ((LoginResult) -> Unit)? = null
+
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -220,6 +223,7 @@ class SocialAppApi(
                 if (currentRefresh.isBlank()) return null
                 val refreshed = runCatching { this@SocialAppApi.refreshBlocking(currentRefresh) }.getOrNull() ?: return null
                 store.save(refreshed)
+                onSessionRefreshed?.invoke(refreshed)
                 return response.request.newBuilder()
                     .header("Authorization", "Bearer ${refreshed.token}")
                     .build()
