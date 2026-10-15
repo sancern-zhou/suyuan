@@ -6,8 +6,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import android.content.Context
@@ -106,16 +109,47 @@ private fun workStatusForTool(toolName: String): String = when {
 class AppViewModel(
     private val repository: SocialAppRepository,
     private val store: AppSessionStore,
+    private val updater: AppUpdater,
 ) : ViewModel() {
     private val _state = MutableStateFlow(
         AppUiState(store.token(), store.accountId(), store.displayName())
     )
     val state: StateFlow<AppUiState> = _state.asStateFlow()
+    val updateState: StateFlow<UpdateState> = updater.state
+    private val tokenRefreshMutex = Mutex()
+
+    init {
+        // The OkHttp authenticator refreshes sessions behind our back and only
+        // touches the store; follow it, or the UI token (and the voice socket)
+        // would keep the stale value.
+        repository.setSessionRefreshListener(::applyExternalRefresh)
+        viewModelScope.launch { updater.checkOnLaunch() }
+    }
+
+    override fun onCleared() {
+        repository.setSessionRefreshListener(null)
+        super.onCleared()
+    }
+
     private var streamJob: Job? = null
     private val pendingTurns = ArrayDeque<PendingTurn>()
     private var registeredPushCid: String? = null
     private val modeSessionIds = mutableMapOf<String, String>()
     private var recoveryJob: Job? = null
+
+    fun checkAppUpdate() {
+        viewModelScope.launch { updater.checkOnLaunch() }
+    }
+
+    fun dismissUpdate(info: AppUpdateInfo) = updater.dismiss(info)
+
+    fun downloadUpdate(info: AppUpdateInfo, forced: Boolean) = updater.download(info, forced)
+
+    fun canInstallUpdate(): Boolean = updater.canInstallNow()
+
+    fun unknownSourcesIntent(): Intent = updater.unknownSourcesSettingsIntent()
+
+    fun installUpdateIntent(apk: File): Intent = updater.installIntent(apk)
 
     fun onForeground() {
         if (!_state.value.loggedIn) return
@@ -432,6 +466,43 @@ class AppViewModel(
                     _state.value = AppUiState(error = if (showError) "登录已过期，请重新登录" else null)
                 }
         }
+    }
+
+    private fun applyExternalRefresh(result: LoginResult) {
+        _state.update { current ->
+            // Ignore results that arrive after a logout or an account switch.
+            if (current.loggedIn && current.accountId == result.accountId) {
+                current.copy(token = result.token, accountId = result.accountId, displayName = result.displayName)
+            } else current
+        }
+    }
+
+    /**
+     * Access token that is safe to hand to a connection: refreshes when the
+     * stored token is already expired or expires within the slack window, and
+     * writes the result back to the UI state. The UI token can be hours past
+     * expiry once the process has been cached in background — HTTP requests
+     * self-heal via the authenticator, but the voice websocket does not, so
+     * callers must ask here first. With [force] (used after an auth failure),
+     * a failed refresh returns null instead of the rejected token.
+     */
+    suspend fun ensureFreshToken(force: Boolean = false): String? = tokenRefreshMutex.withLock {
+        val current = _state.value.token
+        val expiresAt = store.expiresAt() // seconds since epoch; 0 = unknown (legacy session)
+        val nowSec = System.currentTimeMillis() / 1000L
+        val stale = current.isBlank() || expiresAt in 1..(nowSec + TOKEN_EXPIRY_SLACK_SEC)
+        if (!force && !stale) return current
+        val refreshToken = store.refreshToken()
+        if (refreshToken.isBlank()) return if (force) null else current.ifBlank { null }
+        val refreshed = runCatching { repository.refresh(refreshToken) }.getOrNull()
+        if (refreshed == null) {
+            // Keep the session on a failed background refresh; only a forced
+            // (post-auth-failure) refresh reports "no usable token".
+            return if (force) null else current.ifBlank { null }
+        }
+        store.save(refreshed)
+        _state.update { it.copy(token = refreshed.token, accountId = refreshed.accountId, displayName = refreshed.displayName) }
+        refreshed.token
     }
 
     private fun applyLoginResult(result: LoginResult) {
@@ -1217,6 +1288,7 @@ class AppViewModel(
     companion object {
         private const val BROADCAST_PAGE_SIZE = 30
         private const val SESSION_PAGE_SIZE = 30
+        const val TOKEN_EXPIRY_SLACK_SEC = 60L
     }
 
     private fun friendlyError(error: Throwable): String = error.message?.ifBlank { "请求失败，请稍后重试" } ?: "请求失败，请稍后重试"

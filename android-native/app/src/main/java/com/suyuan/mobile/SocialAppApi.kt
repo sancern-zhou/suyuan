@@ -35,12 +35,22 @@ data class OidcConfig(
 )
 data class AgentEvent(val type: String, val data: String)
 data class SessionInfo(val sessionId: String, val mode: String, val title: String = "新对话", val updatedAt: String? = null)
+data class AppUpdateInfo(
+    val versionCode: Int,
+    val versionName: String,
+    val downloadUrl: String,
+    val sha256: String? = null,
+    val releaseNotes: String? = null,
+    val minVersionCode: Int = 0,
+)
 data class BroadcastMessage(
     val messageId: String,
     val content: String,
     val timestamp: String? = null,
     val read: Boolean = false,
     val attachments: List<UploadedAttachment> = emptyList(),
+    val stationName: String? = null,
+    val pollutant: String? = null,
 )
 data class BroadcastInbox(
     val messages: List<BroadcastMessage>,
@@ -199,6 +209,9 @@ class SocialAppApi(
     private val baseUrl: String = BuildConfig.API_BASE_URL,
     private val sessionStore: AppSessionStore? = null,
 ) {
+    /** Invoked after the authenticator refreshed the session, so the UI token state can follow. */
+    @Volatile var onSessionRefreshed: ((LoginResult) -> Unit)? = null
+
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -210,6 +223,7 @@ class SocialAppApi(
                 if (currentRefresh.isBlank()) return null
                 val refreshed = runCatching { this@SocialAppApi.refreshBlocking(currentRefresh) }.getOrNull() ?: return null
                 store.save(refreshed)
+                onSessionRefreshed?.invoke(refreshed)
                 return response.request.newBuilder()
                     .header("Authorization", "Bearer ${refreshed.token}")
                     .build()
@@ -603,6 +617,8 @@ class SocialAppApi(
                             timestamp = item.optString("timestamp", "").ifBlank { null },
                             read = item.optBoolean("read", false),
                             attachments = attachments,
+                            stationName = item.optJSONObject("metadata")?.optString("station_name")?.ifBlank { null },
+                            pollutant = item.optJSONObject("metadata")?.optString("pollutant")?.ifBlank { null },
                         )
                     )
                 }
@@ -762,4 +778,57 @@ class SocialAppApi(
             JSONObject(it.body?.string().orEmpty()).optBoolean("accepted")
         }
     }
+
+    // 远程更新：版本元数据是公开接口，无需登录态；失败一律返回 null，不打断正常使用。
+    suspend fun checkLatestVersion(): AppUpdateInfo? = withContext(Dispatchers.IO) {
+        try {
+            client.newCall(Request.Builder().url(url("/api/social/app/version/latest")).build())
+                .execute().use { response ->
+                    if (!response.isSuccessful) return@withContext null
+                    val body = response.body?.string() ?: return@withContext null
+                    val obj = JSONObject(body)
+                    AppUpdateInfo(
+                        versionCode = obj.getInt("versionCode"),
+                        versionName = obj.optString("versionName"),
+                        downloadUrl = obj.optString("downloadUrl"),
+                        sha256 = obj.optString("sha256").takeIf { it.isNotBlank() },
+                        releaseNotes = obj.optString("releaseNotes").takeIf { it.isNotBlank() },
+                        minVersionCode = obj.optInt("minVersionCode", 0),
+                    )
+                }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    suspend fun downloadApk(downloadUrl: String, dest: File, onProgress: (Int) -> Unit): Boolean =
+        withContext(Dispatchers.IO) {
+            val target = if (downloadUrl.startsWith("/")) url(downloadUrl) else downloadUrl
+            client.newCall(Request.Builder().url(target).build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+                val body = response.body ?: return@withContext false
+                val total = body.contentLength()
+                body.byteStream().use { input ->
+                    dest.outputStream().use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        var readBytes = 0L
+                        var lastPercent = -1
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read <= 0) break
+                            output.write(buffer, 0, read)
+                            readBytes += read
+                            if (total > 0) {
+                                val percent = (readBytes * 100 / total).toInt()
+                                if (percent != lastPercent) {
+                                    lastPercent = percent
+                                    onProgress(percent.coerceIn(0, 100))
+                                }
+                            }
+                        }
+                    }
+                }
+                true
+            }
+        }
 }

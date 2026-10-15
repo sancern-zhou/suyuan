@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.Flow
 import java.io.File
 
 class SocialAppRepository(private val api: SocialAppApi) {
+    fun setSessionRefreshListener(listener: ((LoginResult) -> Unit)?) { api.onSessionRefreshed = listener }
     fun reconnectChat() = api.reconnectChat()
     suspend fun pendingInteraction(token: String, sessionId: String) = api.pendingInteraction(token, sessionId)
     suspend fun resolveInteraction(token: String, question: AgentQuestionInteraction, decision: String, answers: List<AgentQuestionAnswer>) =
