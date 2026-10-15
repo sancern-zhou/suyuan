@@ -141,6 +141,7 @@ def mark_provider_cooldown(provider: str, failure: LLMFailure) -> None:
     if seconds <= 0:
         return
     _cooldowns[provider] = (time.time() + seconds, failure)
+    _record_failure_counter(provider, failure)
     logger.warning(
         "llm_provider_cooldown_marked",
         provider=provider,
@@ -148,6 +149,22 @@ def mark_provider_cooldown(provider: str, failure: LLMFailure) -> None:
         status=failure.status,
         cooldown_seconds=seconds,
     )
+
+
+def _record_failure_counter(provider: str, failure: LLMFailure) -> None:
+    """旁路计数：供运行监控查询上一时段 LLM 限流/失败情况。失败静默。"""
+    try:
+        import asyncio
+
+        from app.services.llm_failure_counter import record_llm_failure
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(record_llm_failure(provider, failure.reason))
+    except Exception:  # noqa: BLE001 - 计数绝不影响主链路
+        pass
 
 
 def _read_status(err: object) -> Optional[int]:

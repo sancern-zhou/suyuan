@@ -242,6 +242,65 @@ class DatabaseExecutionStorage:
     def get_running_executions(self) -> List[TaskExecution]:
         return self._run(self._get_running())
 
+    def list_in_window(
+        self,
+        since: datetime,
+        until: Optional[datetime] = None,
+        statuses: Optional[List[ExecutionStatus]] = None,
+        exclude_task_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[TaskExecution]:
+        """按时间窗（started_at ∈ [since, until)）查询执行记录，新→旧。
+
+        运行监控用：只取异常状态时传 statuses；exclude_task_id 用于排除监控任务自身。
+        """
+        return self._run(
+            self._query_window(
+                since=since,
+                until=until,
+                statuses=statuses,
+                exclude_task_id=exclude_task_id,
+                limit=limit,
+            )
+        )
+
+    async def _query_window(
+        self,
+        since: datetime,
+        until: Optional[datetime],
+        statuses: Optional[List[ExecutionStatus]],
+        exclude_task_id: Optional[str],
+        limit: int,
+    ) -> List[TaskExecution]:
+        from sqlalchemy import select
+
+        from app.db.models.scheduled_task_execution_db import (
+            ScheduledTaskExecutionDB,
+        )
+
+        conditions = [ScheduledTaskExecutionDB.started_at >= since]
+        if until is not None:
+            conditions.append(ScheduledTaskExecutionDB.started_at < until)
+        if statuses:
+            conditions.append(
+                ScheduledTaskExecutionDB.status.in_(
+                    [status.value for status in statuses]
+                )
+            )
+        if exclude_task_id:
+            conditions.append(ScheduledTaskExecutionDB.task_id != exclude_task_id)
+
+        async with self._session() as session:
+            stmt = (
+                select(ScheduledTaskExecutionDB)
+                .where(*conditions)
+                .order_by(ScheduledTaskExecutionDB.started_at.desc())
+                .limit(max(int(limit), 1))
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            return [TaskExecution(**row.data) for row in rows]
+
+
     async def _get_running(self) -> List[TaskExecution]:
         from sqlalchemy import select
 

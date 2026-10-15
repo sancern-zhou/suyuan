@@ -848,6 +848,45 @@ class SessionRepository:
             result = await session.execute(stmt)
             return result.scalar() or 0
 
+    async def list_error_messages_in_window(
+        self,
+        since: datetime,
+        until: Optional[datetime] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """按时间窗查询 error 语义消息（运行监控用），新→旧。
+
+        走 ix_session_messages_type_timestamp 索引；内容截断避免大对象。
+        """
+        conditions = [
+            SessionMessageDB.msg_type == "error",
+            SessionMessageDB.timestamp >= since,
+        ]
+        if until is not None:
+            conditions.append(SessionMessageDB.timestamp < until)
+        async with AsyncSession(self.engine) as session:
+            stmt = (
+                select(SessionMessageDB)
+                .where(*conditions)
+                .order_by(SessionMessageDB.timestamp.desc())
+                .limit(max(int(limit), 1))
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            results: List[Dict[str, Any]] = []
+            for row in rows:
+                content = self._deserialize_content(row.content)
+                text = (
+                    content
+                    if isinstance(content, str)
+                    else json.dumps(content, ensure_ascii=False) if content is not None else ""
+                )
+                results.append({
+                    "session_id": row.session_id,
+                    "timestamp": row.timestamp.isoformat() if row.timestamp else None,
+                    "content": (text or "")[:300],
+                })
+            return results
+
     def _msg_to_dict(self, msg: SessionMessageDB, include_data: bool = True) -> Dict[str, Any]:
         """
         将数据库消息转换为前端字典格式
