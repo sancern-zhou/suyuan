@@ -554,6 +554,10 @@ const handleSidebarAction = async (actionId) => {
       console.log('[ReactAnalysisView] Showing social-platform panel')
       showManagementPanel('social-platform')
       break
+    case 'shared-conversations':
+      console.log('[ReactAnalysisView] Showing shared-conversations panel')
+      showManagementPanel('shared-conversations')
+      break
     case 'file-manager':
       console.log('[ReactAnalysisView] Showing file-manager panel')
       showManagementPanel('file-manager')
