@@ -84,6 +84,21 @@
             {{ formatTime(activeShare.created_at) }}
           </div>
         </div>
+        <button
+          type="button"
+          class="panel-toggle-btn"
+          :disabled="!reportFrameUrl"
+          :title="reportCollapsed ? '显示右侧面板' : '隐藏右侧面板'"
+          :aria-label="reportCollapsed ? '显示右侧面板' : '隐藏右侧面板'"
+          @click="$emit('report-toggle')"
+        >
+          <svg class="panel-toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <rect width="18" height="18" x="3" y="3" rx="2" />
+            <path d="M15 3v18" />
+            <path v-if="!reportCollapsed" d="m8 9 3 3-3 3" />
+            <path v-else d="m10 15-3-3 3-3" />
+          </svg>
+        </button>
       </div>
       <div class="detail-body">
         <div
@@ -150,7 +165,14 @@ import {
   listSharedConversations
 } from '@/api/sharedConversations'
 
-const emit = defineEmits(['report-open', 'report-close'])
+const props = defineProps({
+  reportCollapsed: {
+    type: Boolean,
+    default: false
+  }
+})
+
+const emit = defineEmits(['report-open', 'report-close', 'report-toggle'])
 
 const auth = useAuthStore()
 const currentUserId = auth.user?.id || ''
@@ -729,6 +751,46 @@ reload()
   backdrop-filter: blur(6px);
   border-bottom: 1px solid var(--border-2, #e3e8f0);
   animation: boardFadeIn 0.22s ease;
+}
+
+.detail-header .panel-toggle-btn {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.panel-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.panel-toggle-btn:hover:not(:disabled) {
+  background: var(--bg-2, #f1f4f9);
+  color: var(--text-1, #2f3a4c);
+}
+
+.panel-toggle-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.panel-toggle-icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .detail-title-main {
