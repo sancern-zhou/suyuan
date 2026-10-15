@@ -322,20 +322,25 @@ def test_report_view_and_file_roundtrip(tmp_path, monkeypatch):
     view = client.get("/api/shared-conversations/s1/report-view")
     assert view.status_code == 200
     url = view.json()["url"]
-    assert url.startswith("/api/shared-conversations/s1/reports/_t/ticket-for-s1/report.html")
+    marker = "shared-conversations/s1/reports/_t/ticket-for-s1/report.html"
+    assert url.endswith(marker)
+    assert url.startswith("/")  # 站点绝对路径，带网关前缀
 
-    entry = client.get(url)
+    # 票证路径去掉网关前缀后应可直接取件
+    trimmed = "/api/" + marker
+
+    entry = client.get(trimmed)
     assert entry.status_code == 200
     assert b"report" in entry.content
 
-    asset = client.get("/api/shared-conversations/s1/reports/_t/ticket-for-s1/report_files/chart.png")
+    asset = client.get(trimmed.rsplit("/", 1)[0] + "/report_files/chart.png")
     assert asset.status_code == 200
     assert asset.content == b"png"
 
-    forged = client.get("/api/shared-conversations/s1/reports/_t/wrong/report.html")
+    forged = client.get(trimmed.rsplit("/", 1)[0].rsplit("_t/", 1)[0] + "_t/wrong/report.html")
     assert forged.status_code == 401
 
-    escape = client.get("/api/shared-conversations/s1/reports/_t/ticket-for-s1/../report-view")
+    escape = client.get(trimmed + "/../report-view")
     assert escape.status_code in {401, 403, 404, 307}
 
 
