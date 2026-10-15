@@ -6,10 +6,29 @@
 
     <template v-if="!activeShare">
       <div v-if="error" class="panel-error">{{ error }}</div>
-      <div v-if="loading && shares.length === 0" class="panel-hint">加载中…</div>
-      <div v-else-if="shares.length === 0" class="panel-hint">还没有人分享对话。</div>
 
-      <div class="share-list">
+      <div v-if="loading && !shares.length" class="share-grid" aria-hidden="true">
+        <div v-for="i in 4" :key="i" class="share-card skeleton-card">
+          <span class="share-badge skeleton-block"></span>
+          <span class="skeleton-body">
+            <span class="skeleton-line" style="width: 72%"></span>
+            <span class="skeleton-line" style="width: 45%"></span>
+          </span>
+        </div>
+      </div>
+
+      <div v-else-if="!shares.length" class="board-empty">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="8" cy="8.5" r="3" />
+          <circle cx="16.5" cy="10" r="2.4" />
+          <path d="M3.5 19c.4-3 2.3-4.7 4.5-4.7s4.1 1.7 4.5 4.7" />
+          <path d="M14 14.6c.8-.5 1.6-.8 2.5-.8 1.9 0 3.5 1.3 3.9 3.9" />
+        </svg>
+        <p class="board-empty-title">还没有人分享对话</p>
+        <p class="board-empty-sub">在聊天页点击 AI 回复下方的「分享」按钮，把有价值的对话分享给大家</p>
+      </div>
+
+      <div v-else class="share-list">
         <div v-for="group in shareGroups" :key="group.key" class="share-date-group">
           <button
             class="share-date-header"
@@ -25,23 +44,32 @@
               <path d="m7 10 5 5 5-5" />
             </svg>
             <span>{{ group.label }}</span>
+            <span class="share-date-rule"></span>
             <span class="share-date-count">{{ group.items.length }}</span>
           </button>
-          <template v-if="!collapsedDateGroups[group.key]">
+          <div v-if="!collapsedDateGroups[group.key]" class="share-grid">
             <button
               v-for="share in group.items"
               :key="share.share_id"
               class="share-card"
               @click="openDetail(share)"
             >
-              <div class="share-card-title">{{ share.title }}</div>
+              <span class="share-badge" :style="{ background: badgeColor(share) }">{{ badgeChar(share) }}</span>
+              <span class="share-card-body">
+                <span class="share-card-title">{{ share.title }}</span>
+                <span
+                  v-if="modeChip(share)"
+                  class="share-card-chip"
+                  :style="{ color: modeChip(share).accent, borderColor: modeChip(share).accent }"
+                >{{ modeChip(share).label }}</span>
+              </span>
               <span
                 v-if="share.owner?.user_id === currentUserId"
                 class="share-withdraw"
                 @click.stop="withdraw(share)"
               >撤回</span>
             </button>
-          </template>
+          </div>
         </div>
       </div>
     </template>
@@ -64,8 +92,9 @@
           class="message-row"
           :class="view.role"
         >
-          <div class="message-author">{{ view.role === 'user' ? '提问' : '回答' }}</div>
-          <div class="message-content">
+          <span class="message-avatar" :class="view.role">{{ view.role === 'user' ? '问' : '答' }}</span>
+          <div class="message-main">
+            <div class="message-content">
             <template v-if="view.role === 'user'">{{ view.text }}</template>
             <template v-else>
               <template v-for="(seg, si) in view.segments" :key="si">
@@ -93,6 +122,7 @@
                 >📎 {{ attachment.filename || '附件' }}</a>
               </div>
             </template>
+            </div>
           </div>
         </div>
       </div>
@@ -112,6 +142,7 @@ import { useAuthStore } from '@/auth/authStore.js'
 import { authFetch } from '@/auth/http.js'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import ImageLightbox from '@/components/ImageLightbox.vue'
+import { AGENT_MODES } from '@/config/agentModes.js'
 import {
   deleteSharedConversation,
   getSharedConversation,
@@ -168,6 +199,26 @@ function formatTime(value) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
   return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+// 卡片首字徽章：取标题首字，颜色由 share_id 稳定散列
+const BADGE_PALETTE = ['#4c8bf5', '#00b8a9', '#f6416c', '#ff9f43', '#7c6ff0', '#2dc3a5', '#f0705a']
+
+function badgeChar(share) {
+  const title = String(share?.title || '').trim()
+  return title ? title[0].toUpperCase() : '共'
+}
+
+function badgeColor(share) {
+  let hash = 0
+  for (const ch of String(share?.share_id || '')) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
+  return BADGE_PALETTE[hash % BADGE_PALETTE.length]
+}
+
+function modeChip(share) {
+  const mode = AGENT_MODES.find(item => item.id === share?.mode)
+  if (!mode) return null
+  return { label: mode.shortName || mode.name, accent: mode.accent || '#2878ff' }
 }
 
 function messageRole(message) {
@@ -429,13 +480,14 @@ reload()
 .share-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 18px;
+  animation: boardFadeIn 0.22s ease;
 }
 
 .share-date-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .share-date-header {
@@ -456,6 +508,18 @@ reload()
   color: #1976d2;
 }
 
+.share-date-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border-2, #e3e8f0);
+}
+
+.share-date-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-3, #8a94a6);
+}
+
 .share-date-chevron {
   width: 14px;
   height: 14px;
@@ -471,39 +535,81 @@ reload()
   transform: rotate(-90deg);
 }
 
-.share-date-count {
-  margin-left: auto;
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--text-3, #8a94a6);
+.share-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
 }
 
 .share-card {
   position: relative;
-  text-align: center;
-  border: 1px solid var(--border-2);
-  border-radius: 12px;
-  padding: 20px 24px;
-  background: linear-gradient(135deg, #ffffff 0%, #f5f9ff 100%);
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  text-align: left;
+  border: 1px solid var(--border-2, #e3e8f0);
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: white;
   cursor: pointer;
   transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
 .share-card:hover {
-  border-color: var(--color-primary);
+  border-color: var(--color-primary, #1976d2);
   transform: translateY(-2px);
   box-shadow: 0 6px 18px rgba(25, 118, 210, 0.12);
 }
 
-.share-card-title {
+.share-card:active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.share-badge {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
   font-size: 17px;
   font-weight: 600;
-  color: var(--text-1);
-  line-height: 1.5;
+}
+
+.share-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.share-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--text-1, #2f3a4c);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.share-card:hover .share-card-title {
+  color: var(--color-primary, #1976d2);
+}
+
+.share-card-chip {
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 8px;
+  border: 1px solid;
+  border-radius: 999px;
+  background: white;
 }
 
 .share-withdraw {
@@ -512,7 +618,6 @@ reload()
   right: 12px;
   font-size: 12px;
   color: var(--color-danger, #d03050);
-  cursor: pointer;
   opacity: 0;
   transition: opacity 0.15s ease;
 }
@@ -521,50 +626,169 @@ reload()
   opacity: 1;
 }
 
+.skeleton-card {
+  pointer-events: none;
+}
+
+.skeleton-block,
+.skeleton-line {
+  display: block;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #eef1f6 25%, #f7f9fc 40%, #eef1f6 55%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.3s infinite;
+}
+
+.skeleton-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+@keyframes skeletonShimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+.board-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 56px 16px 40px;
+  text-align: center;
+  animation: boardFadeIn 0.22s ease;
+}
+
+.board-empty svg {
+  width: 44px;
+  height: 44px;
+  fill: none;
+  stroke: #b9c4d4;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  margin-bottom: 6px;
+}
+
+.board-empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1, #2f3a4c);
+}
+
+.board-empty-sub {
+  font-size: 13px;
+  color: var(--text-3, #8a94a6);
+  max-width: 320px;
+  line-height: 1.6;
+}
+
+@keyframes boardFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
 .detail-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  margin-bottom: 14px;
+  margin: 0 -4px 16px;
+  padding: 10px 4px 12px;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--border-2, #e3e8f0);
+  animation: boardFadeIn 0.22s ease;
 }
 
 .detail-title-main {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 600;
-  color: var(--text-1);
+  color: var(--text-1, #2f3a4c);
+  line-height: 1.4;
 }
 
 .detail-title-meta {
   font-size: 12px;
-  color: var(--text-3, #888);
+  color: var(--text-3, #8a94a6);
   margin-top: 4px;
 }
 
 .detail-body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
+  max-width: 860px;
+  margin: 0 auto;
+  animation: boardFadeIn 0.22s ease;
 }
 
 .message-row {
-  border: 1px solid var(--border-2);
-  border-radius: 8px;
-  padding: 10px 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.message-avatar {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: white;
+  margin-top: 2px;
+}
+
+.message-avatar.user {
+  background: #4c8bf5;
+}
+
+.message-avatar.assistant {
+  background: linear-gradient(135deg, #00b8a9, #2dc3a5);
+}
+
+.message-main {
+  min-width: 0;
+  border-radius: 14px;
+  padding: 12px 14px;
 }
 
 .message-row.user {
-  background: var(--bg-2, #f7f8fa);
+  justify-content: flex-end;
 }
 
-.message-author {
-  font-size: 12px;
-  color: var(--text-3, #888);
-  margin-bottom: 6px;
+.message-row.user .message-main {
+  max-width: 78%;
+  background: #e8f1fc;
+  border: 1px solid #d3e5fa;
+  border-radius: 14px 14px 4px 14px;
+}
+
+.message-row.user .message-avatar {
+  order: 2;
+}
+
+.message-row.assistant .message-main {
+  flex: 1;
+  background: white;
+  border: 1px solid var(--border-2, #e9edf4);
+  box-shadow: 0 1px 4px rgba(31, 45, 61, 0.06);
+  border-radius: 4px 14px 14px 14px;
 }
 
 .message-content {
-  font-size: 13px;
-  color: var(--text-1);
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--text-1, #2f3a4c);
   word-break: break-word;
 }
 
