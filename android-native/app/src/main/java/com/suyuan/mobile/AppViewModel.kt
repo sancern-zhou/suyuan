@@ -62,6 +62,11 @@ data class AppUiState(
     val broadcastNextCursor: String? = null,
     val broadcastHasMore: Boolean = false,
     val broadcastLoadingMore: Boolean = false,
+    val sharedConversations: List<SharedConversationSummary> = emptyList(),
+    val sharedDetail: SharedConversationDetail? = null,
+    val sharedLoading: Boolean = false,
+    val sharedError: String? = null,
+    val sharedSearch: String = "",
     val reportResults: List<ReportResult> = emptyList(),
     val reportUnreadCount: Int = 0,
     val reportLoading: Boolean = false,
@@ -1059,6 +1064,62 @@ class AppViewModel(
         refreshBroadcasts(reset = true)
     }
 
+    fun loadSharedConversations(search: String = _state.value.sharedSearch) {
+        val token = _state.value.token
+        if (token.isBlank()) return
+        if (_state.value.sharedLoading) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(sharedLoading = true, sharedError = null, sharedSearch = search)
+            runCatching { repository.sharedConversations(token, search = search) }
+                .onSuccess { list ->
+                    _state.value = _state.value.copy(sharedConversations = list, sharedLoading = false)
+                }
+                .onFailure { failure ->
+                    if (failure is ApiException && failure.statusCode == 401) logout("登录已过期，请重新登录")
+                    else _state.value = _state.value.copy(sharedLoading = false, sharedError = friendlyError(failure))
+                }
+        }
+    }
+
+    fun openSharedConversation(shareId: String) {
+        val token = _state.value.token
+        if (token.isBlank()) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(sharedLoading = true, sharedError = null)
+            runCatching { repository.sharedConversation(token, shareId) }
+                .onSuccess { detail ->
+                    _state.value = _state.value.copy(sharedDetail = detail, sharedLoading = false)
+                }
+                .onFailure { failure ->
+                    _state.value = _state.value.copy(sharedLoading = false, sharedError = friendlyError(failure))
+                }
+        }
+    }
+
+    fun closeSharedConversation() {
+        _state.value = _state.value.copy(sharedDetail = null)
+    }
+
+    /** Share one of the App sessions to the board; onError carries a user-facing message. */
+    fun shareSessionToBoard(sessionId: String, onDone: (Boolean, String?) -> Unit) {
+        val token = _state.value.token
+        if (token.isBlank()) return
+        if (_state.value.sharedLoading) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(sharedLoading = true)
+            runCatching { repository.createSharedConversation(token, sessionId) }
+                .onSuccess {
+                    _state.value = _state.value.copy(sharedLoading = false)
+                    loadSharedConversations(search = "")
+                    onDone(true, null)
+                }
+                .onFailure { failure ->
+                    _state.value = _state.value.copy(sharedLoading = false)
+                    onDone(false, friendlyError(failure))
+                }
+        }
+    }
+
     fun loadMoreBroadcasts() {
         val current = _state.value
         val token = current.token
@@ -1180,7 +1241,7 @@ class AppViewModel(
         }
     }
 
-    private fun refreshSessions(selectExisting: Boolean = true) {
+    fun refreshSessions(selectExisting: Boolean = true) {
         val token = _state.value.token
         if (token.isBlank()) return
         viewModelScope.launch {

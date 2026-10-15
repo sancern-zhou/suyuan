@@ -549,6 +549,14 @@ const allModules = [
     isAction: true
   },
   {
+    id: 'shared-conversations',
+    name: '共享对话',
+    abbr: '共享',
+    desc: '浏览大家分享的有价值对话',
+    badge: '共享',
+    isAction: true
+  },
+  {
     id: 'social-platform',
     name: '社交管理',
     abbr: '社交',
@@ -582,6 +590,7 @@ const sidebarAgentModeEntries = projectConfig.sidebarAgentModes
 
 const SETTINGS_MODULE_IDS = Object.freeze([
   'session-history',
+  'shared-conversations',
   'skills-management',
   'quick-prompts-management',
   'scheduled-tasks',
@@ -597,6 +606,14 @@ const settingsModules = computed(() => {
 })
 
 const moduleIcons = {
+  'shared-conversations': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="8" cy="8.5" r="3" />
+      <circle cx="16.5" cy="10" r="2.4" />
+      <path d="M3.5 19c.4-3 2.3-4.7 4.5-4.7s4.1 1.7 4.5 4.7" />
+      <path d="M14 14.6c.8-.5 1.6-.8 2.5-.8 1.9 0 3.5 1.3 3.9 3.9" />
+    </svg>
+  `,
   'agent-platform': `
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 3.5 20 8v8l-8 4.5L4 16V8l8-4.5Z" />
