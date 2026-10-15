@@ -144,8 +144,10 @@
 
           <SharedConversationsPanel
             v-else-if="managementPanel === 'shared-conversations'"
+            :report-collapsed="sharedReportCollapsed"
             @close="$emit('close-management-panel')"
             @report-open="handleSharedReportOpen"
+            @report-toggle="handleSharedReportToggle"
             @report-close="sharedReportView = null"
           />
 
@@ -215,9 +217,9 @@
         />
       </template>
 
-      <!-- 共享对话报告停靠面板（与聊天右侧面板同款交互：拖宽/关闭/新窗口） -->
+      <!-- 共享对话报告停靠面板（与聊天右侧面板同款交互：拖宽/展开收起/新窗口） -->
       <WidthResizer
-        v-if="sharedReportView"
+        v-if="sharedReportView && !sharedReportCollapsed"
         :is-dragging="sharedReportDragging"
         @start-drag="handleSharedReportDragStart"
         @reset="sharedReportWidth = 46"
@@ -225,14 +227,12 @@
       <div
         v-if="sharedReportView"
         class="shared-report-wrapper"
-        :style="{ width: sharedReportWidth + '%' }"
+        :class="{ collapsed: sharedReportCollapsed }"
+        :style="{ width: sharedReportCollapsed ? '0%' : sharedReportWidth + '%' }"
       >
         <div class="shared-report-tabs">
           <span class="shared-report-title">分析报告</span>
-          <div class="shared-report-actions">
-            <a class="shared-report-open" :href="sharedReportView.url" target="_blank" rel="noopener">新窗口打开</a>
-            <button class="shared-report-close" @click="sharedReportView = null">关闭</button>
-          </div>
+          <a class="shared-report-open" :href="sharedReportView.url" target="_blank" rel="noopener">新窗口打开</a>
         </div>
         <iframe
           class="shared-report-frame"
@@ -274,13 +274,19 @@ const AirQualityForecastView = projectConfig.hasModule('xuchang-air-quality')
 
 const auth = useAuthStore()
 
-// 共享对话报告停靠面板：与聊天右侧面板同款交互（拖拽调宽/关闭/新窗口）
+// 共享对话报告停靠面板：与聊天右侧面板同款交互（拖拽调宽/展开收起/新窗口）
 const sharedReportView = ref(null)
 const sharedReportWidth = ref(46)
 const sharedReportDragging = ref(false)
+const sharedReportCollapsed = ref(false)
 
 const handleSharedReportOpen = (payload) => {
   sharedReportView.value = payload
+  sharedReportCollapsed.value = false
+}
+
+const handleSharedReportToggle = () => {
+  sharedReportCollapsed.value = !sharedReportCollapsed.value
 }
 
 const handleSharedReportDragStart = () => {
@@ -793,6 +799,16 @@ defineExpose({ layoutRef })
   overflow: hidden;
   background: #f8fafc;
   border-left: 1px solid #edf1f7;
+  transition: width 0.2s ease;
+}
+
+.shared-report-wrapper.collapsed {
+  border-left-color: transparent;
+}
+
+.shared-report-tabs,
+.shared-report-frame {
+  min-width: 320px;
 }
 
 .shared-report-tabs {
