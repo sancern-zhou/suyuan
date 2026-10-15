@@ -396,6 +396,7 @@ async def delete_shared_conversation(
 
 
 @router.get("/{share_id}/resources/{resource_id}")
+@router.get("/{share_id}/resources/{resource_id}/content")
 async def get_shared_conversation_resource(
     share_id: str,
     resource_id: str,

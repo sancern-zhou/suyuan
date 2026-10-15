@@ -69,23 +69,28 @@
             <template v-if="messageRole(message) === 'user'">{{ messageText(message) }}</template>
             <MarkdownRenderer v-else :content="messageText(message)" />
             <div v-if="imageAttachments(message).length" class="message-images">
-              <a
+              <div
                 v-for="attachment in imageAttachments(message)"
                 :key="attachment.resource_id"
-                :href="attachment.url"
-                target="_blank"
-                rel="noopener"
+                class="message-image-item"
               >
-                <img :src="attachment.url" :alt="attachment.filename || '图表'" loading="lazy" />
-              </a>
+                <img
+                  v-if="authedImageUrls[attachment.url]"
+                  :src="authedImageUrls[attachment.url]"
+                  :alt="attachment.filename || '图表'"
+                  loading="lazy"
+                  @click="downloadAttachment(attachment)"
+                />
+                <span v-else-if="authedImageFailed[attachment.url]" class="panel-hint">图表加载失败</span>
+                <span v-else class="panel-hint">图表加载中…</span>
+              </div>
             </div>
             <div v-if="fileAttachments(message).length" class="message-files">
               <a
                 v-for="attachment in fileAttachments(message)"
                 :key="attachment.resource_id"
-                :href="attachment.url"
-                target="_blank"
-                rel="noopener"
+                href="#"
+                @click.prevent="downloadAttachment(attachment)"
               >📎 {{ attachment.filename || '附件' }}</a>
             </div>
           </div>
@@ -122,8 +127,9 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { reactive, ref, watch, onBeforeUnmount } from 'vue'
 import { useAuthStore } from '@/auth/authStore.js'
+import { authFetch } from '@/auth/http.js'
 import { listSessions } from '@/api/session'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import {
@@ -205,6 +211,72 @@ async function openDetail(share) {
     activeShare.value = await getSharedConversation(share.share_id)
   } catch (err) {
     error.value = err.message || '加载分享内容失败'
+  }
+}
+
+// 图片/附件接口需要认证头，<img>/<a> 无法携带，改为 authFetch 取回字节。
+const authedImageUrls = reactive({})
+const authedImageFailed = reactive({})
+let authedImageToken = 0
+
+function attachmentUrls(messages) {
+  const urls = new Set()
+  for (const message of messages || []) {
+    for (const attachment of visibleAttachments(message)) {
+      if (attachment?.url) urls.add(String(attachment.url))
+    }
+  }
+  return urls
+}
+
+async function loadAuthedImages(messages) {
+  const token = ++authedImageToken
+  for (const url of attachmentUrls(messages)) {
+    if (authedImageUrls[url] || authedImageFailed[url]) continue
+    try {
+      const response = await authFetch(url)
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const blob = await response.blob()
+      if (token !== authedImageToken) return
+      authedImageUrls[url] = URL.createObjectURL(blob)
+    } catch {
+      if (token !== authedImageToken) return
+      authedImageFailed[url] = true
+    }
+  }
+}
+
+watch(() => activeShare.value?.messages, (messages) => {
+  releaseAuthedImages()
+  if (messages?.length) loadAuthedImages(messages)
+})
+
+function releaseAuthedImages() {
+  for (const url of Object.keys(authedImageUrls)) {
+    URL.revokeObjectURL(authedImageUrls[url])
+    delete authedImageUrls[url]
+  }
+  for (const url of Object.keys(authedImageFailed)) delete authedImageFailed[url]
+}
+
+onBeforeUnmount(releaseAuthedImages)
+
+async function downloadAttachment(attachment) {
+  if (!attachment?.url) return
+  try {
+    const response = await authFetch(attachment.url)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const blob = await response.blob()
+    const href = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = href
+    link.download = attachment.filename || '附件'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(href)
+  } catch (err) {
+    error.value = err?.message || '附件下载失败'
   }
 }
 
@@ -428,6 +500,11 @@ reload()
   max-width: 100%;
   border: 1px solid var(--border-2);
   border-radius: 6px;
+  cursor: zoom-in;
+}
+
+.message-image-item {
+  max-width: 420px;
 }
 
 .message-files {
