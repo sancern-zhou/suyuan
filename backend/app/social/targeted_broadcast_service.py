@@ -63,20 +63,27 @@ class TargetedSocialBroadcastService:
             if user.channel == "app" and user.sender_id:
                 app_aliases[str(user.sender_id)] = str(user.name)
         for alias, display_name in app_aliases.items():
+            # App accounts whose account id equals their display name alias
+            # themselves; extending would duplicate the entry and make every
+            # broadcast to that name fail with "duplicate user name".
+            if alias == display_name:
+                continue
             users_by_name[alias].extend(users_by_name[display_name])
 
         valid: list[tuple[str, Any]] = []
         rows_by_name: dict[str, dict[str, Any]] = {}
         for name in names:
             matches = users_by_name.get(name, [])
-            if not matches:
+            # Dedupe by id: the alias pass can add the same user twice.
+            unique_matches = list({user.id: user for user in matches}.values())
+            if not unique_matches:
                 rows_by_name[name] = self._failed_row(name, "user not found")
                 continue
-            if len(matches) != 1:
+            if len(unique_matches) != 1:
                 rows_by_name[name] = self._failed_row(name, "duplicate user name")
                 continue
 
-            user = matches[0]
+            user = unique_matches[0]
             if user.status != "active":
                 rows_by_name[name] = self._failed_row(
                     name,
