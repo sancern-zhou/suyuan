@@ -27,15 +27,19 @@ export async function listSharedConversations(options = {}) {
   if (search) params.set('search', search)
   params.set('limit', String(limit))
   params.set('offset', String(offset))
-  return await request(`${BASE_URL}/?${params.toString()}`)
+  return await request(`${BASE_URL}?${params.toString()}`)
 }
 
 export async function getSharedConversation(shareId) {
   return await request(`${BASE_URL}/${encodeURIComponent(shareId)}`)
 }
 
+export async function getSharedReportView(shareId) {
+  return await request(`${BASE_URL}/${encodeURIComponent(shareId)}/report-view`)
+}
+
 export async function shareConversation(sessionId) {
-  return await request(`${BASE_URL}/`, {
+  return await request(`${BASE_URL}`, {
     method: 'POST',
     body: JSON.stringify({ session_id: sessionId })
   })
