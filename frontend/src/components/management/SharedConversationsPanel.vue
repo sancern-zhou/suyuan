@@ -68,47 +68,16 @@
           <div class="message-content">
             <template v-if="view.role === 'user'">{{ view.text }}</template>
             <template v-else>
-              <template v-for="(seg, si) in view.segments" :key="si">
-                <MarkdownRenderer v-if="seg.type === 'text'" :content="seg.value" />
-                <div v-else class="message-images inline-chart">
-                  <div class="message-image-item">
-                    <img
-                      v-if="authedImageUrls[seg.attachment.url]"
-                      :src="authedImageUrls[seg.attachment.url]"
-                      :alt="seg.attachment.filename || '图表'"
-                      @click="downloadAttachment(seg.attachment)"
-                    />
-                    <span v-else-if="authedImageFailed[seg.attachment.url]" class="panel-hint">图表加载失败</span>
-                    <span v-else class="panel-hint">图表加载中…</span>
-                  </div>
-                </div>
-              </template>
-            </template>
-            <div v-if="view.trailingImages.length" class="message-images">
-              <div
-                v-for="attachment in view.trailingImages"
-                :key="attachment.resource_id || attachment.url"
-                class="message-image-item"
-              >
-                <img
-                  v-if="authedImageUrls[attachment.url]"
-                  :src="authedImageUrls[attachment.url]"
-                  :alt="attachment.filename || '图表'"
-                  loading="lazy"
-                  @click="downloadAttachment(attachment)"
-                />
-                <span v-else-if="authedImageFailed[attachment.url]" class="panel-hint">图表加载失败</span>
-                <span v-else class="panel-hint">图表加载中…</span>
+              <MarkdownRenderer :content="view.content" />
+              <div v-if="view.files.length" class="message-files">
+                <a
+                  v-for="attachment in view.files"
+                  :key="attachment.resource_id || attachment.url"
+                  href="#"
+                  @click.prevent="downloadAttachment(attachment)"
+                >📎 {{ attachment.filename || '附件' }}</a>
               </div>
-            </div>
-            <div v-if="view.files.length" class="message-files">
-              <a
-                v-for="attachment in view.files"
-                :key="attachment.resource_id || attachment.url"
-                href="#"
-                @click.prevent="downloadAttachment(attachment)"
-              >📎 {{ attachment.filename || '附件' }}</a>
-            </div>
+            </template>
           </div>
         </div>
       </div>
@@ -207,15 +176,21 @@ function fileAttachments(message) {
   )
 }
 
-// 回答正文用 [[chart:<visual_id>]] 标记图表位置（与历史对话一致），按标记内联渲染。
+// 回答正文用 [[chart:<visual_id>]] 标记图表位置（与历史对话一致）。
+// 与历史对话相同的渲染方式：把标记替换为 markdown 图片（blob objectURL），
+// 由 MarkdownRenderer 负责居中样式与点击放大灯箱。
 const CHART_REF_RE = /\[\[chart:([^\]]+)\]\]/g
+
+function mdImageLabel(attachment) {
+  return String(attachment?.filename || '图表').replace(/[[\]]/g, '') || '图表'
+}
 
 const messageViews = computed(() => {
   const messages = activeShare.value?.messages || []
   return messages.map((message) => {
     const role = messageRole(message)
     if (role === 'user') {
-      return { role, text: messageText(message), segments: [], trailingImages: [], files: [] }
+      return { role, text: messageText(message), content: '', files: [] }
     }
     const attachments = visibleAttachments(message)
     const byRef = new Map()
@@ -225,28 +200,25 @@ const messageViews = computed(() => {
         if (ref && !byRef.has(ref)) byRef.set(ref, attachment)
       }
     }
-    const content = messageText(message)
-    const segments = []
-    const inlineUrls = new Set()
-    let last = 0
-    for (const match of content.matchAll(CHART_REF_RE)) {
-      if (match.index > last) segments.push({ type: 'text', value: content.slice(last, match.index) })
-      const attachment = byRef.get(match[1])
-      if (attachment && String(attachment.mime_type || '').startsWith('image/') && attachment.url) {
-        segments.push({ type: 'chart', attachment })
-        inlineUrls.add(attachment.url)
-      }
-      // 交互图表（ECharts）面板不内联渲染，保留在附件区
-      last = match.index + match[0].length
+    const usedUrls = new Set()
+    const rendered = messageText(message).replace(CHART_REF_RE, (marker, ref) => {
+      const attachment = byRef.get(ref)
+      if (!attachment || !attachment.url) return ''
+      if (!String(attachment.mime_type || '').startsWith('image/')) return ''
+      const blobUrl = authedImageUrls[attachment.url]
+      if (!blobUrl) return ''
+      usedUrls.add(attachment.url)
+      return `![${mdImageLabel(attachment)}](${blobUrl})`
+    })
+    // 未被标记引用的静态图同样内联在文末（历史对话中图表均内联展示）
+    let extra = ''
+    for (const attachment of imageAttachments(message)) {
+      if (usedUrls.has(attachment.url)) continue
+      const blobUrl = authedImageUrls[attachment.url]
+      if (!blobUrl) continue
+      extra += `\n\n![${mdImageLabel(attachment)}](${blobUrl})`
     }
-    if (last < content.length) segments.push({ type: 'text', value: content.slice(last) })
-    return {
-      role,
-      text: '',
-      segments,
-      trailingImages: imageAttachments(message).filter(a => !inlineUrls.has(a.url)),
-      files: fileAttachments(message).filter(a => !inlineUrls.has(a.url))
-    }
+    return { role, text: '', content: rendered + extra, files: fileAttachments(message) }
   })
 })
 
@@ -561,11 +533,6 @@ reload()
   max-width: 100%;
   border: 1px solid var(--border-2);
   border-radius: 6px;
-  cursor: zoom-in;
-}
-
-.message-image-item {
-  max-width: 420px;
 }
 
 .message-files {
