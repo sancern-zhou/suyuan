@@ -506,9 +506,13 @@ async def get_shared_report_file(
     share_id: str,
     ticket: str,
     file_path: str,
-    user: CurrentUser = Depends(require_shared_identity),
 ) -> FileResponse:
-    """Serve report package bytes; the ticket authorizes the sandboxed iframe."""
+    """Serve report package bytes; the ticket authorizes the sandboxed iframe.
+
+    No user dependency here on purpose: the iframe cannot send Authorization
+    headers, the gateway middleware admits ticket-bearing GETs, and the
+    ticket is verified again below (defense in depth).
+    """
     row = await _active_share(share_id)
     package = _report_package(row)
     if package is None:
