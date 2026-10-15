@@ -2,47 +2,47 @@
   <div class="management-panel shared-conversations-panel">
     <div class="panel-header">
       <h3>共享对话</h3>
-      <button class="panel-btn" @click="$emit('close')">关闭</button>
     </div>
 
     <template v-if="!activeShare">
-      <div class="panel-toolbar">
-        <input
-          v-model="search"
-          class="search-input"
-          placeholder="搜索标题或首问"
-          @keyup.enter="reload"
-        />
-        <button class="panel-btn" :disabled="loading" @click="reload">搜索</button>
-        <button class="panel-btn primary" :disabled="shareBusy" @click="openShareDialog">
-          分享我的对话
-        </button>
-      </div>
-
       <div v-if="error" class="panel-error">{{ error }}</div>
       <div v-if="loading && shares.length === 0" class="panel-hint">加载中…</div>
       <div v-else-if="shares.length === 0" class="panel-hint">还没有人分享对话。</div>
 
       <div class="share-list">
-        <button
-          v-for="share in shares"
-          :key="share.share_id"
-          class="share-card"
-          @click="openDetail(share)"
-        >
-          <div class="share-card-title">{{ share.title }}</div>
-          <div class="share-card-question">{{ share.first_question }}</div>
-          <div class="share-card-meta">
-            <span>{{ share.owner?.display_name || share.owner?.username }}</span>
-            <span>{{ formatTime(share.created_at) }}</span>
-            <span>{{ share.message_count }} 条消息</span>
-            <span
-              v-if="share.owner?.user_id === currentUserId"
-              class="share-withdraw"
-              @click.stop="withdraw(share)"
-            >撤回</span>
-          </div>
-        </button>
+        <div v-for="group in shareGroups" :key="group.key" class="share-date-group">
+          <button
+            class="share-date-header"
+            type="button"
+            @click="toggleDateGroup(group.key)"
+          >
+            <svg
+              class="share-date-chevron"
+              :class="{ collapsed: collapsedDateGroups[group.key] }"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path d="m7 10 5 5 5-5" />
+            </svg>
+            <span>{{ group.label }}</span>
+            <span class="share-date-count">{{ group.items.length }}</span>
+          </button>
+          <template v-if="!collapsedDateGroups[group.key]">
+            <button
+              v-for="share in group.items"
+              :key="share.share_id"
+              class="share-card"
+              @click="openDetail(share)"
+            >
+              <div class="share-card-title">{{ share.title }}</div>
+              <span
+                v-if="share.owner?.user_id === currentUserId"
+                class="share-withdraw"
+                @click.stop="withdraw(share)"
+              >撤回</span>
+            </button>
+          </template>
+        </div>
       </div>
     </template>
 
@@ -103,32 +103,6 @@
       :images="lightboxImages"
       v-model:start-index="lightboxStartIndex"
     />
-
-    <div v-if="shareDialogOpen" class="share-dialog-mask" @click.self="shareDialogOpen = false">
-      <div class="share-dialog">
-        <div class="share-dialog-header">
-          <span>选择要分享的对话</span>
-          <button class="panel-btn" @click="shareDialogOpen = false">取消</button>
-        </div>
-        <div class="share-dialog-hint">
-          分享会生成对话快照公开给本系统全部用户，图表会一并保存，之后修改或删除原对话不影响已分享内容。
-        </div>
-        <div v-if="shareError" class="panel-error">{{ shareError }}</div>
-        <div class="share-dialog-list">
-          <div v-if="mySessions.length === 0" class="panel-hint">没有可分享的会话。</div>
-          <button
-            v-for="session in mySessions"
-            :key="session.session_id"
-            class="share-dialog-item"
-            :disabled="shareBusy"
-            @click="doShare(session)"
-          >
-            <span class="share-dialog-title">{{ session.title || '新对话' }}</span>
-            <span class="share-dialog-time">{{ formatTime(session.updated_at || session.created_at) }}</span>
-          </button>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -136,32 +110,58 @@
 import { computed, reactive, ref, watch, onBeforeUnmount } from 'vue'
 import { useAuthStore } from '@/auth/authStore.js'
 import { authFetch } from '@/auth/http.js'
-import { listSessions } from '@/api/session'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import ImageLightbox from '@/components/ImageLightbox.vue'
 import {
   deleteSharedConversation,
   getSharedConversation,
-  listSharedConversations,
-  shareConversation
+  listSharedConversations
 } from '@/api/sharedConversations'
-
-defineEmits(['close'])
 
 const auth = useAuthStore()
 const currentUserId = auth.user?.id || ''
 
 const shares = ref([])
-const total = ref(0)
-const search = ref('')
 const loading = ref(false)
 const error = ref('')
 const activeShare = ref(null)
 
-const shareDialogOpen = ref(false)
-const mySessions = ref([])
-const shareBusy = ref(false)
-const shareError = ref('')
+// 按日期分组折叠：key 为 YYYY-M-D，默认全部展开
+const collapsedDateGroups = reactive({})
+
+function toggleDateGroup(key) {
+  collapsedDateGroups[key] = !collapsedDateGroups[key]
+}
+
+function dayGroupInfo(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return { key: 'unknown', label: '未知时间', date: null }
+  const now = new Date()
+  const startOfDay = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const dayDiff = Math.round((startOfDay(now) - startOfDay(date)) / 86400000)
+  let label
+  if (dayDiff === 0) label = '今天'
+  else if (dayDiff === 1) label = '昨天'
+  else if (date.getFullYear() === now.getFullYear()) label = `${date.getMonth() + 1}月${date.getDate()}日`
+  else label = `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`
+  return { key: `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`, label, date }
+}
+
+const shareGroups = computed(() => {
+  const groups = []
+  const byKey = new Map()
+  for (const share of shares.value) {
+    const info = dayGroupInfo(share.created_at)
+    let group = byKey.get(info.key)
+    if (!group) {
+      group = { key: info.key, label: info.label, items: [] }
+      byKey.set(info.key, group)
+      groups.push(group)
+    }
+    group.items.push(share)
+  }
+  return groups
+})
 
 function formatTime(value) {
   if (!value) return ''
@@ -266,9 +266,8 @@ async function reload() {
   loading.value = true
   error.value = ''
   try {
-    const data = await listSharedConversations({ search: search.value })
+    const data = await listSharedConversations()
     shares.value = data.shares || []
-    total.value = data.total || 0
   } catch (err) {
     error.value = err.message || '加载共享对话失败'
   } finally {
@@ -364,32 +363,6 @@ async function withdraw(share) {
   }
 }
 
-async function openShareDialog() {
-  shareError.value = ''
-  shareDialogOpen.value = true
-  try {
-    const data = await listSessions({ limit: 100 })
-    const rows = Array.isArray(data) ? data : data?.sessions || []
-    mySessions.value = rows.filter(session => session.session_id)
-  } catch (err) {
-    shareError.value = err.message || '加载会话列表失败'
-  }
-}
-
-async function doShare(session) {
-  shareBusy.value = true
-  shareError.value = ''
-  try {
-    await shareConversation(session.session_id)
-    shareDialogOpen.value = false
-    await reload()
-  } catch (err) {
-    shareError.value = err.message || '分享失败'
-  } finally {
-    shareBusy.value = false
-  }
-}
-
 reload()
 </script>
 
@@ -442,20 +415,6 @@ reload()
   cursor: not-allowed;
 }
 
-.panel-toolbar {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.search-input {
-  flex: 1;
-  padding: 6px 10px;
-  border: 1px solid var(--border-2);
-  border-radius: 4px;
-  font-size: 13px;
-}
-
 .panel-hint,
 .panel-error {
   padding: 10px 4px;
@@ -473,46 +432,93 @@ reload()
   gap: 10px;
 }
 
-.share-card {
-  text-align: left;
-  border: 1px solid var(--border-2);
-  border-radius: 8px;
-  padding: 12px 14px;
-  background: white;
+.share-date-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.share-date-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-1, #2f3a4c);
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
+  text-align: left;
+}
+
+.share-date-header:hover {
+  color: #1976d2;
+}
+
+.share-date-chevron {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.15s ease;
+}
+
+.share-date-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.share-date-count {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-3, #8a94a6);
+}
+
+.share-card {
+  position: relative;
+  text-align: center;
+  border: 1px solid var(--border-2);
+  border-radius: 12px;
+  padding: 20px 24px;
+  background: linear-gradient(135deg, #ffffff 0%, #f5f9ff 100%);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
 .share-card:hover {
   border-color: var(--color-primary);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(25, 118, 210, 0.12);
 }
 
 .share-card-title {
-  font-size: 14px;
+  font-size: 17px;
   font-weight: 600;
   color: var(--text-1);
-  margin-bottom: 4px;
-}
-
-.share-card-question {
-  font-size: 13px;
-  color: var(--text-2, #555);
-  margin-bottom: 8px;
+  line-height: 1.5;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-.share-card-meta {
-  display: flex;
-  gap: 14px;
-  font-size: 12px;
-  color: var(--text-3, #888);
-}
-
 .share-withdraw {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  font-size: 12px;
   color: var(--color-danger, #d03050);
   cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.share-card:hover .share-withdraw {
+  opacity: 1;
 }
 
 .detail-header {
@@ -604,81 +610,5 @@ reload()
   gap: 4px;
   margin-top: 8px;
   font-size: 13px;
-}
-
-.share-dialog-mask {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.share-dialog {
-  width: min(520px, 90vw);
-  max-height: 70vh;
-  background: white;
-  border-radius: 10px;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-}
-
-.share-dialog-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 15px;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-
-.share-dialog-hint {
-  font-size: 12px;
-  color: var(--text-3, #888);
-  margin-bottom: 10px;
-}
-
-.share-dialog-list {
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.share-dialog-item {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  text-align: left;
-  border: 1px solid var(--border-2);
-  border-radius: 6px;
-  padding: 8px 10px;
-  background: white;
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.share-dialog-item:hover {
-  border-color: var(--color-primary);
-}
-
-.share-dialog-item:disabled {
-  opacity: 0.5;
-  cursor: wait;
-}
-
-.share-dialog-title {
-  color: var(--text-1);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.share-dialog-time {
-  color: var(--text-3, #888);
-  flex-shrink: 0;
 }
 </style>
