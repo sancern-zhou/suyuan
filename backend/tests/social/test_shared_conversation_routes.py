@@ -265,6 +265,31 @@ def test_resource_endpoint_serves_copied_file(tmp_path, monkeypatch):
     assert response.headers["content-type"].startswith("image/png")
 
 
+def test_resource_endpoint_serves_copied_file_with_content_suffix(tmp_path, monkeypatch):
+    (tmp_path / "res-chart-1.png").write_bytes(b"png-bytes")
+    record = SimpleNamespace(
+        status=routes.SHARE_STATUS_ACTIVE,
+        attachments=[
+            {
+                "resource_id": "res-chart-1",
+                "stored_name": "res-chart-1.png",
+                "filename": "chart.png",
+                "media_type": "image/png",
+            }
+        ],
+    )
+
+    async def _active(share_id):
+        return record
+
+    monkeypatch.setattr(routes, "_active_share", _active)
+    monkeypatch.setattr(routes, "_share_dir", lambda share_id: tmp_path)
+
+    response = _client().get("/api/shared-conversations/s1/resources/res-chart-1/content")
+    assert response.status_code == 200
+    assert response.content == b"png-bytes"
+
+
 def test_require_shared_identity_accepts_app_bearer_and_rejects_anonymous(monkeypatch):
     import asyncio
 
