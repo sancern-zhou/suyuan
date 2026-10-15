@@ -159,6 +159,7 @@ simulate_*.py
 verify_*.py
 check_*.py
 run_*.py
+!backend/app/fetchers/base/run_log.py
 simple_*.py
 ultimate_*.py
 deep_*.py

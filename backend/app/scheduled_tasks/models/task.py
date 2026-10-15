@@ -21,6 +21,7 @@ class ScheduleType(str, Enum):
     ONCE = "once"                # 一次性任务（需指定run_at）
     INTERVAL = "interval"        # 自定义间隔（需指定interval_minutes）
     DAILY_CUSTOM = "daily_custom"  # 每天自定义时间（需指定hour和minute）
+    DAILY_HOURS_CUSTOM = "daily_hours_custom"  # 每天多个指定小时（需指定hours和minute）
     WEEKLY_CUSTOM = "weekly_custom"  # 每周自定义时间（需指定day_of_week、hour和minute）
     MONTHLY_CUSTOM = "monthly_custom"  # 每月自定义日期（需指定day_of_month、hour和minute）
     QUARTERLY_CUSTOM = "quarterly_custom"  # 每季度首月自定义日期（需指定day_of_month、hour和minute）
@@ -127,7 +128,11 @@ class ScheduledTask(BaseModel):
     run_at: Optional[datetime] = Field(default=None, description="一次性任务的执行时间（schedule_type=once时必填）")
     interval_minutes: Optional[int] = Field(default=None, description="自定义间隔分钟数（schedule_type=interval时必填）")
     hour: Optional[int] = Field(default=None, description="每天执行的小时（schedule_type=daily_custom时必填，0-23）")
-    minute: Optional[int] = Field(default=None, description="每天执行的分钟（schedule_type=daily_custom时必填，0-59）")
+    minute: Optional[int] = Field(default=None, description="每天执行的分钟（schedule_type=daily_custom/daily_hours_custom时必填，0-59）")
+    hours: Optional[List[int]] = Field(
+        default=None,
+        description="每天执行的多个小时（schedule_type=daily_hours_custom时必填，每个0-23）",
+    )
     day_of_week: Optional[int] = Field(
         default=None,
         description="每周执行的星期（schedule_type=weekly_custom时必填，0=周一，6=周日）",
@@ -229,6 +234,13 @@ class ScheduledTask(BaseModel):
                 raise ValueError("day_of_week must be between 0 and 6")
             if not 0 <= self.hour <= 23:
                 raise ValueError("hour must be between 0 and 23")
+            if not 0 <= self.minute <= 59:
+                raise ValueError("minute must be between 0 and 59")
+        if self.trigger_type == TriggerType.SCHEDULE and self.schedule_type == ScheduleType.DAILY_HOURS_CUSTOM:
+            if not self.hours or self.minute is None:
+                raise ValueError("hours and minute are required for daily_hours_custom schedule")
+            if any(not isinstance(h, int) or not 0 <= h <= 23 for h in self.hours):
+                raise ValueError("each hour must be an integer between 0 and 23")
             if not 0 <= self.minute <= 59:
                 raise ValueError("minute must be between 0 and 59")
         if self.broadcast_enabled and not self.target_user_ids:
