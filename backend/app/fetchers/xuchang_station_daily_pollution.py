@@ -121,12 +121,18 @@ def build_city_daily_ranking(rows: list[dict[str, Any]], target_date: date) -> d
 
     pm25, pm25_rank = rank_for("pm25")
     pm10, pm10_rank = rank_for("pm10")
+    hour_derived = bool(cities) and all(
+        row.get("data_source") == "ssfb_city_hour_derived" for row in cities
+    )
+    daily_source = (
+        "各城市:DataCrawler.SsfbCityHour 按小时均值自算"
+        "（平台日值次日约 06:45 发布，02:05 报告时点未入库）；"
+        if hour_derived
+        else "各城市:DataCrawler.SsfbCityDay（河南实时发布采集，18城含济源）；"
+    )
     result: dict[str, Any] = {
         "target_date": target_date.isoformat(),
-        "source": (
-            "各城市:DataCrawler.SsfbCityDay（河南实时发布采集，18城含济源）；"
-            "中大平台日数据已停止采集"
-        ),
+        "source": daily_source + "中大平台日数据已停止采集",
         "ranking_direction": "desc",
         "city_count": len(cities),
         "coverage": {
@@ -496,6 +502,11 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
 
         原数据源 dbo.CityDayAQIPublishHistory 长期缺济源（全国表仅 17 城），
         自 2026-10 起切换为河南实时发布系统采集表（xuchang_henan_ssfb_city_publish_fetcher）。
+
+        平台日值次日约 06:45 才发布、采集 07:00 入库，而回顾报告 02:05 生成时
+        昨日 SsfbCityDay 尚未入库——此时回退为按 SsfbCityHour 小时算术平均
+        自算日均（与 xuchang_henan_ranking_recalc 的 PM10 补齐口径一致），
+        标注 ``ssfb_city_hour_derived``，保证排名块每日有数。
         """
         day_start = datetime.combine(target_date, time.min)
         day_end = day_start + timedelta(days=1)
@@ -524,19 +535,35 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
                         """,
                         (day_start, day_end),
                     )
-                    return list(await cursor.fetchall())
+                    day_rows = list(await cursor.fetchall())
+                    if day_rows:
+                        return day_rows, "ssfb_city_day"
+                    await cursor.execute(
+                        """
+                        SELECT City AS city, CityCode AS city_code,
+                               AVG(PM25) AS pm25, AVG(PM10) AS pm10
+                        FROM SsfbCityHour
+                        WHERE DataTime >= %s AND DataTime < %s
+                        GROUP BY City, CityCode
+                        ORDER BY City
+                        """,
+                        (day_start, day_end),
+                    )
+                    return list(await cursor.fetchall()), "ssfb_city_hour_derived"
             finally:
                 conn.close()
 
-        rows = _run_sync(_run())
+        rows, data_source = _run_sync(_run())
         return [
             {
                 "city": str(row["city"] or "").strip(),
                 "city_code": row["city_code"],
-                "data_date": row["data_date"],
+                "data_date": day_start
+                if data_source == "ssfb_city_hour_derived"
+                else row["data_date"],
                 "pm25": _number(row["pm25"]),
                 "pm10": _number(row["pm10"]),
-                "data_source": "ssfb_city_day",
+                "data_source": data_source,
             }
             for row in rows
         ]
