@@ -88,7 +88,7 @@ class _FakeClient:
 def _make_fetcher(client, storage):
     return XuchangHenanCountyPublishFetcher(
         client=client, storage=storage,
-        now_factory=lambda: datetime(2026, 10, 10, 9, 0, 0),
+        now_factory=lambda: datetime(2026, 10, 10, 9, 30, 0),
     )
 
 
@@ -96,14 +96,15 @@ def test_county_fetcher_collect_uses_county_querytype_and_jiyuan():
     client = _FakeClient()
     fetcher = _make_fetcher(client, HenanCountyMySqlStorage(
         url="mysql+aiomysql://u:p@127.0.0.1:13307/DataCrawler"))
-    collected = fetcher._collect(datetime(2026, 10, 10, 9, 0, 0))
+    collected = fetcher._collect(datetime(2026, 10, 10, 9, 30, 0))
     kinds = [call[0] for call in client.calls]
     assert kinds == ["hours", "days", "days"]
     # 区县树叶子 + 济源(218)，全部走 queryType=2（ID 升序）
     assert client.calls[0][1] == (213, JIYUAN_COUNTY_GROUP_ID, 21007)
     assert all(call[4] == "2" for call in client.calls)
-    # 9:00 不属于三波调度分钟 → 手动/补数运行按全量对账窗口（回看 3 天）。
-    assert client.calls[0][2] == "2026-10-07 00:00:00"
+    # 9:30 不属于三波调度分钟 → 手动/补数运行按全量对账窗口（区县回看 2 天，
+    # 3 天会超出平台单次查询上限）。
+    assert client.calls[0][2] == "2026-10-08 00:00:00"
     assert client.calls[0][3] == "2026-10-10 23:00:00"
     # 站点式单日回看两日（区县日值发布偏晚，自动补齐）
     assert [(call[2], call[3]) for call in client.calls[1:]] == [
@@ -140,6 +141,27 @@ def test_county_fetcher_day_hours_follow_first_wave():
     client.calls.clear()
     fetcher._collect(datetime(2026, 10, 16, 8, 18, 0))
     assert [call[0] for call in client.calls] == ["hours"]
+
+
+def test_county_fetcher_night_reconcile_uses_two_day_window():
+    """00:18 夜间对账走 2 天回看（190 组 ×3 天会触发平台 HTTP 500）。"""
+    client = _FakeClient()
+    fetcher = _make_fetcher(client, HenanCountyMySqlStorage(
+        url="mysql+aiomysql://u:p@127.0.0.1:13307/DataCrawler"))
+    fetcher._collect(datetime(2026, 10, 16, 0, 18, 0))
+    assert [call[0] for call in client.calls] == ["hours"]
+    assert client.calls[0][2] == "2026-10-14 00:00:00"
+    assert client.calls[0][3] == "2026-10-16 23:00:00"
+
+
+def test_county_fetcher_delayed_first_wave_still_reconciles():
+    """首波延迟数分钟（事件循环挤占）仍归首波，不误判为手动全量。"""
+    client = _FakeClient()
+    fetcher = _make_fetcher(client, HenanCountyMySqlStorage(
+        url="mysql+aiomysql://u:p@127.0.0.1:13307/DataCrawler"))
+    fetcher._collect(datetime(2026, 10, 16, 0, 20, 0))
+    assert [call[0] for call in client.calls] == ["hours"]
+    assert client.calls[0][2] == "2026-10-14 00:00:00"
 
 
 def test_county_fetcher_target_counties_appends_jiyuan():

@@ -30,6 +30,7 @@ import structlog
 from app.fetchers.base.fetcher_interface import DataFetcher
 from app.fetchers.xuchang_henan_ssfb_publish import (
     MYSQL_EXECUTEMANY_CHUNK,
+    COUNTY_RECONCILE_LOOKBACK_DAYS,
     COUNTY_WAVE_MINUTES,
     HenanSsfbMySqlStorage,
     day_fetch_dates,
@@ -268,7 +269,11 @@ class XuchangHenanCountyPublishFetcher(DataFetcher):
         return counties
 
     def _collect(self, fetched_at: datetime) -> dict[str, Any]:
-        window = resolve_collection_window(fetched_at, COUNTY_WAVE_MINUTES)
+        window = resolve_collection_window(
+            fetched_at,
+            COUNTY_WAVE_MINUTES,
+            reconcile_lookback_days=COUNTY_RECONCILE_LOOKBACK_DAYS,
+        )
 
         counties = self._target_counties(self.client.county_tree())
         if not counties:

@@ -110,10 +110,17 @@ MYSQL_EXECUTEMANY_CHUNK = 200
 # 迟到；次波/三波回看 2 小时，覆盖迟到发布与平台 :27-:28 批量修正。
 FIRST_WAVE_LOOKBACK_HOURS = 6
 RETRY_WAVE_LOOKBACK_HOURS = 2
-# 每日 00:xx 首波做一次全量对账，回看 3 天（平台保留约 8 天，取 3 天覆盖
-# 周末级断档）；手动作业（分钟不在调度波次内）也按该窗口执行。
+# 每日 00:xx 首波做一次全量对账，城市/站点回看 3 天（平台保留约 8 天，
+# 取 3 天覆盖周末级断档）；手动作业（分钟不在调度波次内）也按该窗口执行。
 RECONCILE_HOUR = 0
 RECONCILE_LOOKBACK_DAYS = 3
+# 区县 190 组 ×3 天会超出平台单次查询上限（实测 HTTP 500），对账窗口
+# 收窄到 2 天（190 组 ×2 天实测可返回）。
+COUNTY_RECONCILE_LOOKBACK_DAYS = 2
+# 调度与实际点火存在分钟级漂移（事件循环被同刻其它 job 挤占，实测首波/
+# 次波可晚 ~2 分钟）。窗口判定以"当前分钟落在某波次分钟之后 ≤ N 分钟"
+# 归属该波，避免延迟运行被误判为手动/补数而发起全量对账。
+WAVE_TOLERANCE_MINUTES = 3
 # 日值发布节奏：次日约 06:45 后开始发布（00:45-06:45 为空发布），个别
 # 区县次日下午才出。07:00 起每 3 小时随首波抓一次。
 DAY_FETCH_HOURS = frozenset({7, 10, 13, 16, 19, 22})
@@ -130,25 +137,44 @@ def wave_schedule(wave_minutes: tuple[int, ...]) -> str:
     return ",".join(str(minute) for minute in wave_minutes) + " * * * *"
 
 
+def _resolve_wave_minute(minute: int, wave_minutes: tuple[int, ...]) -> int | None:
+    """把实际点火分钟归属到波次分钟，容忍分钟级延迟。
+
+    返回命中的波次分钟；若当前分钟距任一调度波次分钟都超过
+    ``WAVE_TOLERANCE_MINUTES``（含跨小时环绕），返回 ``None``（视为
+    手动/补数运行）。
+    """
+    best: int | None = None
+    best_delta: int | None = None
+    for wave_minute in wave_minutes:
+        delta = (minute - wave_minute) % 60
+        if delta <= WAVE_TOLERANCE_MINUTES and (best_delta is None or delta < best_delta):
+            best, best_delta = wave_minute, delta
+    return best
+
+
 def resolve_collection_window(
-    fetched_at: datetime, wave_minutes: tuple[int, ...]
+    fetched_at: datetime,
+    wave_minutes: tuple[int, ...],
+    reconcile_lookback_days: int = RECONCILE_LOOKBACK_DAYS,
 ) -> dict[str, Any]:
     """按波次解析小时值查询窗口与本轮是否抓日值。
 
     窗口右端固定为当日 23:00，平台只返回已发布时段（未发布/未来时段由
     记录过滤丢弃）。返回 ``hour_start``/``hour_end`` 查询字符串与
-    ``fetch_days`` 标记。
+    ``fetch_days`` 标记。``reconcile_lookback_days`` 允许区县等大集合
+    收窄对账窗口（平台对大窗口单次查询有上限）。
     """
     hour_floor = fetched_at.replace(minute=0, second=0, microsecond=0)
-    minute = fetched_at.minute
     # 对账窗口按整日对齐（回看 N 天的 00:00 起），与旧的"昨日 00:00"口径同型。
-    reconcile_start = (hour_floor - timedelta(days=RECONCILE_LOOKBACK_DAYS)).replace(hour=0)
-    if minute not in wave_minutes:
+    reconcile_start = (hour_floor - timedelta(days=reconcile_lookback_days)).replace(hour=0)
+    wave_minute = _resolve_wave_minute(fetched_at.minute, wave_minutes)
+    if wave_minute is None:
         # 手动/补数运行：按全量对账窗口，顺带刷新日值。
         start, fetch_days = reconcile_start, True
-    elif minute == wave_minutes[0] and fetched_at.hour == RECONCILE_HOUR:
+    elif wave_minute == wave_minutes[0] and fetched_at.hour == RECONCILE_HOUR:
         start, fetch_days = reconcile_start, False
-    elif minute == wave_minutes[0]:
+    elif wave_minute == wave_minutes[0]:
         start = hour_floor - timedelta(hours=FIRST_WAVE_LOOKBACK_HOURS)
         fetch_days = fetched_at.hour in DAY_FETCH_HOURS
     else:
