@@ -15,12 +15,14 @@ cityIDs 传区县树（GetGroupCountyTree，189 叶子）+ 济源示范区（218
   台"区县排名"一致（2026-10-10 全省 188 区县锚点逐位核对）。
 
 注意：区县日值在次日白天陆续发布，个别区县（如郑州经开区/许昌开发
-区）发布偏晚，靠小时滚动 + 回看两日自动补齐。
+区）发布偏晚，靠回看两日 + 每天 07/10/13/16/19/22 时随首波抓取自动
+补齐；小时值三波窗口策略与城市/站点一致（见
+``xuchang_henan_ssfb_publish.resolve_collection_window``）。
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -28,7 +30,11 @@ import structlog
 from app.fetchers.base.fetcher_interface import DataFetcher
 from app.fetchers.xuchang_henan_ssfb_publish import (
     MYSQL_EXECUTEMANY_CHUNK,
+    COUNTY_WAVE_MINUTES,
     HenanSsfbMySqlStorage,
+    day_fetch_dates,
+    resolve_collection_window,
+    wave_schedule,
 )
 from app.integrations.henan_ssfb_client import (
     JIYUAN_COUNTY_GROUP_ID,
@@ -241,8 +247,8 @@ class XuchangHenanCountyPublishFetcher(DataFetcher):
         super().__init__(
             name="xuchang_henan_county_publish_fetcher",
             description="抓取河南实时发布系统全省区县(含济源/功能区)小时/日值入库DataCrawler",
-            schedule="18,24,59 * * * *",
-            version="1.1.0",
+            schedule=wave_schedule(COUNTY_WAVE_MINUTES),
+            version="1.2.0",
         )
         self.client = client or HenanSsfbClient()
         self.storage = storage or HenanCountyMySqlStorage()
@@ -262,15 +268,7 @@ class XuchangHenanCountyPublishFetcher(DataFetcher):
         return counties
 
     def _collect(self, fetched_at: datetime) -> dict[str, Any]:
-        today = fetched_at.date()
-        day_start = today - timedelta(days=1)
-        hour_start = f"{day_start:%Y-%m-%d} 00:00:00"
-        hour_end = f"{today:%Y-%m-%d} 23:00:00"
-        # 区县日值发布偏晚（个别功能区次日下午才出），回看两日自动补齐。
-        day_dates = [
-            (day_start - timedelta(days=1)).isoformat(),
-            day_start.isoformat(),
-        ]
+        window = resolve_collection_window(fetched_at, COUNTY_WAVE_MINUTES)
 
         counties = self._target_counties(self.client.county_tree())
         if not counties:
@@ -278,15 +276,17 @@ class XuchangHenanCountyPublishFetcher(DataFetcher):
         county_ids = sorted(counties)
 
         hours = self.client.group_hours(
-            county_ids, hour_start, hour_end, query_type="2"
+            county_ids, window["hour_start"], window["hour_end"], query_type="2"
         )
         day_rows: list[dict[str, Any]] = []
-        for day_text in day_dates:
-            day_rows.extend(
-                self.client.group_days(
-                    county_ids, day_text, day_text, query_type="2"
+        if window["fetch_days"]:
+            # 区县日值发布偏晚（个别功能区次日下午才出），回看两日自动补齐。
+            for day_text in day_fetch_dates(fetched_at):
+                day_rows.extend(
+                    self.client.group_days(
+                        county_ids, day_text, day_text, query_type="2"
+                    )
                 )
-            )
         hour_records = [
             record
             for row in hours
@@ -301,6 +301,7 @@ class XuchangHenanCountyPublishFetcher(DataFetcher):
             "hour": hour_records,
             "day": day_records,
             "counties": counties,
+            "window": window,
         }
 
     async def fetch_and_store(self) -> dict[str, Any]:
@@ -311,6 +312,8 @@ class XuchangHenanCountyPublishFetcher(DataFetcher):
         dim_counties = await self.storage.upsert_dim_county(collected["counties"])
         result = {
             "fetched_at": fetched_at.isoformat(),
+            "hour_start": collected["window"]["hour_start"],
+            "days_fetched": collected["window"]["fetch_days"],
             "hour_rows": len(collected["hour"]),
             "saved_hour_rows": saved_hour,
             "day_rows": len(collected["day"]),

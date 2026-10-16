@@ -181,6 +181,30 @@ class _FakeClient:
                  "pm25": 39, "pm10": 72}]
 
 
+def test_wave_schedule_matches_window_minutes():
+    """调度 cron 由波次元组生成，避免调度与窗口判定漂移。"""
+    from app.fetchers.xuchang_henan_ssfb_publish import (
+        CITY_WAVE_MINUTES,
+        SITE_WAVE_MINUTES,
+        day_fetch_dates,
+        wave_schedule,
+    )
+
+    assert wave_schedule(CITY_WAVE_MINUTES) == "14,20,55 * * * *"
+    assert wave_schedule(SITE_WAVE_MINUTES) == "16,22,57 * * * *"
+    assert day_fetch_dates(datetime(2026, 10, 16, 10, 14)) == ["2026-10-14", "2026-10-15"]
+    city = XuchangHenanSsfbCityPublishFetcher(
+        client=_FakeClient(),
+        storage=HenanSsfbMySqlStorage(url="mysql+aiomysql://u:p@127.0.0.1:13307/DataCrawler"),
+    )
+    site = XuchangHenanSsfbSitePublishFetcher(
+        client=_FakeClient(),
+        storage=HenanSsfbMySqlStorage(url="mysql+aiomysql://u:p@127.0.0.1:13307/DataCrawler"),
+    )
+    assert city.schedule == "14,20,55 * * * *"
+    assert site.schedule == "16,22,57 * * * *"
+
+
 def test_city_fetcher_collect_uses_full_city_list_and_window():
     client = _FakeClient()
     fetcher = XuchangHenanSsfbCityPublishFetcher(
@@ -192,13 +216,60 @@ def test_city_fetcher_collect_uses_full_city_list_and_window():
     kinds = [call[0] for call in client.calls]
     assert kinds == ["hours", "days"]
     assert client.calls[0][1] == (201, 218)
-    assert client.calls[0][2] == "2026-10-09 00:00:00"
+    # 9:00 不属于三波调度分钟 → 手动/补数运行按全量对账窗口（回看 3 天）。
+    assert client.calls[0][2] == "2026-10-07 00:00:00"
     assert client.calls[0][3] == "2026-10-10 23:00:00"
     assert client.calls[1][2] == "2026-10-08"
     assert client.calls[1][3] == "2026-10-09"
     assert [row["city"] for row in collected["hour"]] == ["济源市"]
     assert collected["hour"][0]["city_code"] == "419001"
     assert collected["day"][0]["data_time"] == datetime(2026, 10, 9)
+
+
+@pytest.mark.parametrize(
+    ("minute", "expected_start", "expected_days"),
+    [
+        # 首波（:14）：回看 6 小时；日值仅在 07/10/13/16/19/22 时抓取。
+        (14, "2026-10-16 04:00:00", True),
+        # 次波/三波（:20/:55）：回看 2 小时且不抓日值。
+        (20, "2026-10-16 08:00:00", False),
+        (55, "2026-10-16 08:00:00", False),
+    ],
+)
+def test_city_fetcher_wave_windows(minute, expected_start, expected_days):
+    client = _FakeClient()
+    fetcher = XuchangHenanSsfbCityPublishFetcher(
+        client=client,
+        storage=HenanSsfbMySqlStorage(url="mysql+aiomysql://u:p@127.0.0.1:13307/DataCrawler"),
+    )
+    fetcher._collect(datetime(2026, 10, 16, 10, minute, 0))
+    hour_call = next(call for call in client.calls if call[0] == "hours")
+    assert hour_call[2] == expected_start
+    assert hour_call[3] == "2026-10-16 23:00:00"
+    assert ("days" in [call[0] for call in client.calls]) is expected_days
+
+
+def test_city_fetcher_first_wave_without_day_hour_skips_days():
+    client = _FakeClient()
+    fetcher = XuchangHenanSsfbCityPublishFetcher(
+        client=client,
+        storage=HenanSsfbMySqlStorage(url="mysql+aiomysql://u:p@127.0.0.1:13307/DataCrawler"),
+    )
+    fetcher._collect(datetime(2026, 10, 16, 9, 14, 0))
+    assert [call[0] for call in client.calls] == ["hours"]
+    assert client.calls[0][2] == "2026-10-16 03:00:00"
+
+
+def test_city_fetcher_night_reconcile_window():
+    client = _FakeClient()
+    fetcher = XuchangHenanSsfbCityPublishFetcher(
+        client=client,
+        storage=HenanSsfbMySqlStorage(url="mysql+aiomysql://u:p@127.0.0.1:13307/DataCrawler"),
+    )
+    fetcher._collect(datetime(2026, 10, 16, 0, 14, 0))
+    assert [call[0] for call in client.calls] == ["hours"]
+    assert client.calls[0][2] == "2026-10-13 00:00:00"
+    assert client.calls[0][3] == "2026-10-16 23:00:00"
 
 
 def test_site_fetcher_collect_covers_all_roots_excludes_gk():
@@ -214,7 +285,8 @@ def test_site_fetcher_collect_covers_all_roots_excludes_gk():
     # 1 次小时(范围) + 2 次日值(单日, 站点日接口不支持跨日范围)
     assert len(site_calls) == 3
     assert site_calls[0][0] == "site_hours"
-    assert site_calls[0][2] == "2026-10-09 00:00:00"
+    # 9:00 不属于三波调度分钟 → 手动/补数运行按全量对账窗口（回看 3 天）。
+    assert site_calls[0][2] == "2026-10-07 00:00:00"
     assert site_calls[0][3] == "2026-10-10 23:00:00"
     assert [(call[2], call[3]) for call in site_calls[1:]] == [
         ("2026-10-08", "2026-10-08"), ("2026-10-09", "2026-10-09"),
@@ -223,6 +295,38 @@ def test_site_fetcher_collect_covers_all_roots_excludes_gk():
     assert all(call[1] == (24, 232, 453) for call in site_calls)
     assert collected["hour"][0]["county"] == "鄢陵县"
     assert collected["day"][0]["data_time"] == datetime(2026, 10, 9)
+
+
+def test_site_fetcher_retry_wave_skips_day_fetch():
+    """次波/三波只抓 2 小时窗口的小时值，不再重复拉取日值。"""
+    client = _FakeClient()
+    fetcher = XuchangHenanSsfbSitePublishFetcher(
+        client=client,
+        storage=HenanSsfbMySqlStorage(url="mysql+aiomysql://u:p@127.0.0.1:13307/DataCrawler"),
+    )
+    for minute in (22, 57):
+        client.calls.clear()
+        collected = fetcher._collect(datetime(2026, 10, 16, 10, minute, 0))
+        site_calls = [call for call in client.calls if call[0].startswith("site_")]
+        assert [call[0] for call in site_calls] == ["site_hours"]
+        assert site_calls[0][2] == "2026-10-16 08:00:00"
+        assert site_calls[0][3] == "2026-10-16 23:00:00"
+        assert collected["day"] == []
+
+
+def test_site_fetcher_day_hour_first_wave_fetches_days():
+    client = _FakeClient()
+    fetcher = XuchangHenanSsfbSitePublishFetcher(
+        client=client,
+        storage=HenanSsfbMySqlStorage(url="mysql+aiomysql://u:p@127.0.0.1:13307/DataCrawler"),
+    )
+    fetcher._collect(datetime(2026, 10, 16, 16, 16, 0))
+    site_calls = [call for call in client.calls if call[0].startswith("site_")]
+    assert [call[0] for call in site_calls] == ["site_hours", "site_days", "site_days"]
+    assert site_calls[0][2] == "2026-10-16 10:00:00"
+    assert [(call[2], call[3]) for call in site_calls[1:]] == [
+        ("2026-10-14", "2026-10-14"), ("2026-10-15", "2026-10-15"),
+    ]
 
 
 @pytest.mark.asyncio

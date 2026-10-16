@@ -2,8 +2,13 @@
 
 数据来源为河南省空气质量实时发布系统（详见
 ``app.integrations.henan_ssfb_client``）。该平台小时/日值仅保留约
-最近 8 天，因此采集按小时滚动并回看昨日全天，断档可在下一次运行
-自动补齐。结果写入本地 MySQL 采集库 ``DataCrawler``（与
+最近 8 天。三波采样点保持每小时 3 次（首波覆盖整点后约 15-20 分钟的
+按小时发布、次波覆盖迟到发布、第三波覆盖平台 :27-:28 批量修正），但
+每波只回看最近少数小时：首波 6 小时、次波/三波 2 小时，每日 00:xx
+首波再做一次 3 天全量对账补齐断档（此前每波都重拉"昨日 00:00 →
+今日 23:00"全窗口，重复率约 150 倍）。日值单独降频：次日 06:45 后
+才发布（夜间为空发布）、个别区县次日下午才出，07:00 起每 3 小时随
+首波抓一次即可。结果写入本地 MySQL 采集库 ``DataCrawler``（与
 ``CityDay``/``CityYearPm25Avg`` 等长历史表同库）：
 
 - ``xuchang_henan_ssfb_city_publish_fetcher``：18 个城市组（含济源，
@@ -20,7 +25,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from itertools import islice
 from typing import Any
 
 import aiomysql
@@ -100,6 +104,66 @@ SITE_EXCLUDED_TYPES = {"GK"}
 
 SITE_REQUEST_CHUNK_SIZE = 80
 MYSQL_EXECUTEMANY_CHUNK = 200
+
+# ---- 采集窗口策略（三波采样，窗口按波次收窄）----
+# 首波回看 6 小时，覆盖平台按小时发布（约整点后 15-20 分钟）与几分钟级
+# 迟到；次波/三波回看 2 小时，覆盖迟到发布与平台 :27-:28 批量修正。
+FIRST_WAVE_LOOKBACK_HOURS = 6
+RETRY_WAVE_LOOKBACK_HOURS = 2
+# 每日 00:xx 首波做一次全量对账，回看 3 天（平台保留约 8 天，取 3 天覆盖
+# 周末级断档）；手动作业（分钟不在调度波次内）也按该窗口执行。
+RECONCILE_HOUR = 0
+RECONCILE_LOOKBACK_DAYS = 3
+# 日值发布节奏：次日约 06:45 后开始发布（00:45-06:45 为空发布），个别
+# 区县次日下午才出。07:00 起每 3 小时随首波抓一次。
+DAY_FETCH_HOURS = frozenset({7, 10, 13, 16, 19, 22})
+
+# 三波分钟必须与 ``schedule`` 一致（窗口判定依赖当前分钟属于哪一波），
+# 由 wave_schedule() 从同一元组生成，避免两处漂移。
+CITY_WAVE_MINUTES = (14, 20, 55)
+SITE_WAVE_MINUTES = (16, 22, 57)
+COUNTY_WAVE_MINUTES = (18, 24, 59)
+
+
+def wave_schedule(wave_minutes: tuple[int, ...]) -> str:
+    """由波次分钟生成 cron 表达式，保证调度与窗口策略同源。"""
+    return ",".join(str(minute) for minute in wave_minutes) + " * * * *"
+
+
+def resolve_collection_window(
+    fetched_at: datetime, wave_minutes: tuple[int, ...]
+) -> dict[str, Any]:
+    """按波次解析小时值查询窗口与本轮是否抓日值。
+
+    窗口右端固定为当日 23:00，平台只返回已发布时段（未发布/未来时段由
+    记录过滤丢弃）。返回 ``hour_start``/``hour_end`` 查询字符串与
+    ``fetch_days`` 标记。
+    """
+    hour_floor = fetched_at.replace(minute=0, second=0, microsecond=0)
+    minute = fetched_at.minute
+    # 对账窗口按整日对齐（回看 N 天的 00:00 起），与旧的"昨日 00:00"口径同型。
+    reconcile_start = (hour_floor - timedelta(days=RECONCILE_LOOKBACK_DAYS)).replace(hour=0)
+    if minute not in wave_minutes:
+        # 手动/补数运行：按全量对账窗口，顺带刷新日值。
+        start, fetch_days = reconcile_start, True
+    elif minute == wave_minutes[0] and fetched_at.hour == RECONCILE_HOUR:
+        start, fetch_days = reconcile_start, False
+    elif minute == wave_minutes[0]:
+        start = hour_floor - timedelta(hours=FIRST_WAVE_LOOKBACK_HOURS)
+        fetch_days = fetched_at.hour in DAY_FETCH_HOURS
+    else:
+        start, fetch_days = hour_floor - timedelta(hours=RETRY_WAVE_LOOKBACK_HOURS), False
+    return {
+        "hour_start": f"{start:%Y-%m-%d %H:%M:%S}",
+        "hour_end": f"{hour_floor.replace(hour=23):%Y-%m-%d %H:%M:%S}",
+        "fetch_days": fetch_days,
+    }
+
+
+def day_fetch_dates(fetched_at: datetime) -> list[str]:
+    """日值回看两日 [D-2, D-1]（D 为运行日）：次日发布 + 迟到记录自动补齐。"""
+    day_start = fetched_at.date() - timedelta(days=1)
+    return [(day_start - timedelta(days=1)).isoformat(), day_start.isoformat()]
 
 CITY_UPsert_SQL_TEMPLATE = """
 INSERT INTO {table}
@@ -438,28 +502,28 @@ class XuchangHenanSsfbCityPublishFetcher(DataFetcher):
         super().__init__(
             name="xuchang_henan_ssfb_city_publish_fetcher",
             description="抓取河南实时发布系统18城市组(含济源)小时/日值入库DataCrawler",
-            schedule="14,20,55 * * * *",
-            version="1.0.0",
+            schedule=wave_schedule(CITY_WAVE_MINUTES),
+            version="1.1.0",
         )
         self.client = client or HenanSsfbClient()
         self.storage = storage or HenanSsfbMySqlStorage()
         self.now_factory = now_factory
 
     def _collect(self, fetched_at: datetime) -> dict[str, Any]:
-        today = fetched_at.date()
-        day_start = today - timedelta(days=1)
-        hour_start = f"{day_start:%Y-%m-%d} 00:00:00"
-        hour_end = f"{today:%Y-%m-%d} 23:00:00"
-        day_start_text = f"{day_start - timedelta(days=1):%Y-%m-%d}"
-        day_end_text = f"{day_start:%Y-%m-%d}"
+        window = resolve_collection_window(fetched_at, CITY_WAVE_MINUTES)
 
         group_names = city_groups_from_tree(self.client.city_tree())
         if not group_names:
             raise ValueError("ssfb city tree returned no groups")
         city_ids = sorted(group_names)
 
-        hours = self.client.group_hours(city_ids, hour_start, hour_end)
-        days = self.client.group_days(city_ids, day_start_text, day_end_text)
+        hours = self.client.group_hours(
+            city_ids, window["hour_start"], window["hour_end"]
+        )
+        days: list[dict[str, Any]] = []
+        if window["fetch_days"]:
+            day_start, day_end = day_fetch_dates(fetched_at)
+            days = self.client.group_days(city_ids, day_start, day_end)
         return {
             "hour": [
                 record
@@ -472,6 +536,7 @@ class XuchangHenanSsfbCityPublishFetcher(DataFetcher):
                 if (record := _city_record(row, group_names, fetched_at, "day")) is not None
             ],
             "group_names": group_names,
+            "window": window,
         }
 
     async def fetch_and_store(self) -> dict[str, Any]:
@@ -483,6 +548,8 @@ class XuchangHenanSsfbCityPublishFetcher(DataFetcher):
         cities = sorted({record["city"] for record in collected["hour"]})
         result = {
             "fetched_at": fetched_at.isoformat(),
+            "hour_start": collected["window"]["hour_start"],
+            "days_fetched": collected["window"]["fetch_days"],
             "hour_rows": len(collected["hour"]),
             "saved_hour_rows": saved_hour,
             "day_rows": len(collected["day"]),
@@ -507,8 +574,8 @@ class XuchangHenanSsfbSitePublishFetcher(DataFetcher):
         super().__init__(
             name="xuchang_henan_ssfb_site_publish_fetcher",
             description="抓取河南实时发布系统全省区县站点(两根树,剔除国控)小时/日值入库DataCrawler",
-            schedule="16,22,57 * * * *",
-            version="1.1.0",
+            schedule=wave_schedule(SITE_WAVE_MINUTES),
+            version="1.2.0",
         )
         self.client = client or HenanSsfbClient()
         self.storage = storage or HenanSsfbMySqlStorage()
@@ -520,10 +587,7 @@ class XuchangHenanSsfbSitePublishFetcher(DataFetcher):
         return [site for site in sites if site.get("online_type") not in SITE_EXCLUDED_TYPES]
 
     def _collect(self, fetched_at: datetime) -> dict[str, Any]:
-        today = fetched_at.date()
-        day_start = today - timedelta(days=1)
-        hour_start = f"{day_start:%Y-%m-%d} 00:00:00"
-        hour_end = f"{today:%Y-%m-%d} 23:00:00"
+        window = resolve_collection_window(fetched_at, SITE_WAVE_MINUTES)
 
         tree = self.client.station_tree()
         sites = self._target_sites(tree)
@@ -533,22 +597,26 @@ class XuchangHenanSsfbSitePublishFetcher(DataFetcher):
 
         hour_records: list[dict[str, Any]] = []
         day_records: list[dict[str, Any]] = []
-        day_dates = [
-            (day_start - timedelta(days=1)).isoformat(),
-            day_start.isoformat(),
-        ]
+        day_dates = day_fetch_dates(fetched_at) if window["fetch_days"] else []
         for chunk in _chunked(sorted(site_meta), self.request_chunk_size):
-            for row in self.client.site_hours(chunk, hour_start, hour_end):
+            for row in self.client.site_hours(chunk, window["hour_start"], window["hour_end"]):
                 record = _site_record(row, site_meta, fetched_at, "hour")
                 if record is not None:
                     hour_records.append(record)
+            if not day_dates:
+                continue
             # 站点日接口只接受单日查询（跨日范围返回 HTTP 500）。
             for day_text in day_dates:
                 for row in self.client.site_days(chunk, day_text, day_text):
                     record = _site_record(row, site_meta, fetched_at, "day")
                     if record is not None:
                         day_records.append(record)
-        return {"hour": hour_records, "day": day_records, "tree": tree}
+        return {
+            "hour": hour_records,
+            "day": day_records,
+            "tree": tree,
+            "window": window,
+        }
 
     async def fetch_and_store(self) -> dict[str, Any]:
         fetched_at = self.now_factory().replace(microsecond=0)
@@ -564,6 +632,8 @@ class XuchangHenanSsfbSitePublishFetcher(DataFetcher):
         })
         result = {
             "fetched_at": fetched_at.isoformat(),
+            "hour_start": collected["window"]["hour_start"],
+            "days_fetched": collected["window"]["fetch_days"],
             "hour_rows": len(collected["hour"]),
             "saved_hour_rows": saved_hour,
             "day_rows": len(collected["day"]),

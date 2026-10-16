@@ -102,7 +102,8 @@ def test_county_fetcher_collect_uses_county_querytype_and_jiyuan():
     # 区县树叶子 + 济源(218)，全部走 queryType=2（ID 升序）
     assert client.calls[0][1] == (213, JIYUAN_COUNTY_GROUP_ID, 21007)
     assert all(call[4] == "2" for call in client.calls)
-    assert client.calls[0][2] == "2026-10-09 00:00:00"
+    # 9:00 不属于三波调度分钟 → 手动/补数运行按全量对账窗口（回看 3 天）。
+    assert client.calls[0][2] == "2026-10-07 00:00:00"
     assert client.calls[0][3] == "2026-10-10 23:00:00"
     # 站点式单日回看两日（区县日值发布偏晚，自动补齐）
     assert [(call[2], call[3]) for call in client.calls[1:]] == [
@@ -112,6 +113,33 @@ def test_county_fetcher_collect_uses_county_querytype_and_jiyuan():
     assert {row["county"] for row in collected["day"]} == {"鄢陵县", "济源市"}
     # 排名不落表（cube 语义层实时现算）
     assert "ranking" not in collected
+
+
+def test_county_fetcher_retry_wave_skips_day_fetch():
+    """次波/三波只抓 2 小时窗口的小时值，不再重复拉取日值。"""
+    client = _FakeClient()
+    fetcher = _make_fetcher(client, HenanCountyMySqlStorage(
+        url="mysql+aiomysql://u:p@127.0.0.1:13307/DataCrawler"))
+    for minute in (24, 59):
+        client.calls.clear()
+        collected = fetcher._collect(datetime(2026, 10, 16, 10, minute, 0))
+        assert [call[0] for call in client.calls] == ["hours"]
+        assert client.calls[0][2] == "2026-10-16 08:00:00"
+        assert client.calls[0][3] == "2026-10-16 23:00:00"
+        assert collected["day"] == []
+
+
+def test_county_fetcher_day_hours_follow_first_wave():
+    """日值只在 07/10/13/16/19/22 时的首波（:18 分）抓取。"""
+    client = _FakeClient()
+    fetcher = _make_fetcher(client, HenanCountyMySqlStorage(
+        url="mysql+aiomysql://u:p@127.0.0.1:13307/DataCrawler"))
+    fetcher._collect(datetime(2026, 10, 16, 7, 18, 0))
+    assert [call[0] for call in client.calls] == ["hours", "days", "days"]
+    assert client.calls[0][2] == "2026-10-16 01:00:00"
+    client.calls.clear()
+    fetcher._collect(datetime(2026, 10, 16, 8, 18, 0))
+    assert [call[0] for call in client.calls] == ["hours"]
 
 
 def test_county_fetcher_target_counties_appends_jiyuan():
