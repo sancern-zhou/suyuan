@@ -16,6 +16,7 @@ import uuid
 
 from app.agent import create_react_agent
 from app.utils.json_safety import dumps_safe
+from app.utils.visual_ids import repair_chart_reference_ids
 from app.agent.active_contexts import (
     ACTIVE_CONTEXTS_KEY,
     active_contexts_metadata,
@@ -1176,6 +1177,9 @@ async def analyze_stream(
             conversation_history.append(user_message)
             logger.debug("user_message_added", query_preview=request.query[:100])
 
+            # 本轮已生成的图表 visual_id：用于修复模型抄错的 [[chart:...]] 占位符
+            known_visual_ids: set = set()
+
             try:
                 await cancellation_registry.arm_run_task(actual_session_id, cancel_event)
                 with (
@@ -1377,6 +1381,9 @@ async def analyze_stream(
                         # 地图程序仍由传输层负责即时展示；资源引用由 ReActAgent 统一持久化。
                         if event["type"] == "tool_result" and "data" in event:
                             data = event.get("data", {})
+                            for visual in (data.get("visuals") or []):
+                                if isinstance(visual, dict) and isinstance(visual.get("id"), str):
+                                    known_visual_ids.add(visual["id"])
                             map_program = extract_map_program_from_tool_result_event(data)
                             if map_program:
                                 session.metadata = merge_map_program_into_scene_metadata(
@@ -1398,7 +1405,20 @@ async def analyze_stream(
                                 break
                             # ✅ 添加最终答案消息
                             event_data = event.get("data") or {}
+                            for visual in (event_data.get("visuals") or []):
+                                if isinstance(visual, dict) and isinstance(visual.get("id"), str):
+                                    known_visual_ids.add(visual["id"])
                             if event_data.get("answer"):
+                                # 修复模型抄错的 [[chart:...]] 占位符（SSE 与落库共用同一 dict）
+                                answer_text = event_data["answer"]
+                                if isinstance(answer_text, str) and "[[chart:" in answer_text and known_visual_ids:
+                                    repaired_answer = repair_chart_reference_ids(answer_text, known_visual_ids)
+                                    if repaired_answer != answer_text:
+                                        logger.info(
+                                            "chart_marker_ids_repaired",
+                                            session_id=actual_session_id,
+                                        )
+                                        event_data["answer"] = repaired_answer
                                 final_message = _build_final_message(event_data)
                                 conversation_history.append(final_message)
                                 logger.debug("response_message_added", answer_preview=event["data"]["answer"][:100])

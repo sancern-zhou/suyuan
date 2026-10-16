@@ -1,5 +1,6 @@
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
@@ -168,8 +169,15 @@ def test_app_messages_rejects_unknown_scheduled_session(monkeypatch):
         async def require_read(self, session_id, user):
             raise HTTPException(status_code=404, detail="session_not_found")
 
+        async def find(self, session_id):
+            return None
+
     monkeypatch.setattr(social_app_routes, "get_conversation_catalog", lambda: Catalog())
     monkeypatch.setattr(scheduled_task_routes, "get_scheduled_task_service", lambda: service)
+    monkeypatch.setattr(
+        social_app_routes, "_loaded_session_mapper",
+        AsyncMock(return_value=SimpleNamespace(get_session=AsyncMock(return_value=None))),
+    )
 
     response = _client().get("/api/social/app/sessions/scheduled_task_missing_20261007_080000_abcd1234/messages")
     assert response.status_code == 404

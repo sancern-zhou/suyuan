@@ -145,6 +145,10 @@ def _configured_fetchers(project_context):
         "xuchang_nmc_hourly_forecast_fetcher": XuchangNmcHourlyForecastFetcher,
         "xuchang_weather_com_daily_forecast_fetcher": XuchangWeatherComDailyForecastFetcher,
         "xuchang_air_quality_forecast_fetcher": XuchangAirQualityForecastFetcher,
+        "xuchang_air_quality_forecast_fetcher_noon": lambda: XuchangAirQualityForecastFetcher(
+            name="xuchang_air_quality_forecast_fetcher_noon",
+            schedule="0 12 * * *",
+        ),
         "xuchang_weather_situation_evidence_fetcher": XuchangWeatherSituationEvidenceFetcher,
         "xuchang_station_deviation_alert_fetcher": XuchangStationDeviationAlertFetcher,
         "xuchang_station_daily_pollution_fetcher": XuchangStationDailyPollutionFetcher,

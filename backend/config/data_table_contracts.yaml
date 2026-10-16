@@ -427,6 +427,25 @@ tables:
       Type: varchar
       Type_2: varchar
       UpdateTime: datetime
+  CitySandDay:
+    time_columns:
+    - DayTime
+    dimension_columns:
+    - CityCode
+    - CityName
+    value_columns:
+    - Id
+    - SourceId
+    - CreateTime
+    mark_columns: []
+    caliber_columns: []
+    column_types:
+      Id: bigint
+      SourceId: int
+      CityCode: varchar
+      CityName: varchar
+      DayTime: datetime
+      CreateTime: datetime
   CityYearPm25Avg:
     time_columns:
     - Year
