@@ -92,6 +92,76 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "alarmTime", "title": "告警时间(时间维度)"},
         ],
     },
+    "StationAlarmLog": {
+        "measures": [
+            {"name": "count", "title": "站房/仪器告警量(2026-07起,本地区步链)"},
+            {"name": "severeCount", "title": "严重告警量"},
+            {"name": "urgentCount", "title": "紧急告警量"},
+            {"name": "unresolvedCount", "title": "未恢复告警量"},
+        ],
+        "dimensions": [
+            {"name": "cityName", "title": "城市名"},
+            {"name": "stationCode", "title": "站点编码"},
+            {"name": "stationName", "title": "站点名"},
+            {"name": "alarmGrade", "title": "告警级别(一般/严重/紧急)"},
+            {"name": "alarmType", "title": "告警类型编码(平台内部码)"},
+            {"name": "subcatalog", "title": "告警子类"},
+            {"name": "source", "title": "告警来源"},
+            {"name": "alarmStatus", "title": "告警状态(平台原值)"},
+            {"name": "description", "title": "告警描述"},
+            {"name": "alarmTime", "title": "告警时间(时间维度)"},
+        ],
+    },
+    "QcTaskStatus": {
+        "measures": [
+            {"name": "count", "title": "质控任务量(快照数,2026-07起)"},
+        ],
+        "dimensions": [
+            {"name": "cityName", "title": "城市名"},
+            {"name": "stationCode", "title": "站点编码"},
+            {"name": "stationName", "title": "站点名"},
+            {"name": "poll", "title": "监测项"},
+            {"name": "qcType", "title": "质控类型"},
+            {"name": "rStart", "title": "任务开始时间(时间维度)"},
+            {"name": "rid", "title": "任务标识 rId"},
+        ],
+    },
+    "QcAirData": {
+        "measures": [
+            {"name": "count", "title": "质控曲线点数"},
+            {"name": "avgDataValue", "title": "平均监测值(数值点)"},
+            {"name": "maxDataValue", "title": "最大监测值"},
+            {"name": "minDataValue", "title": "最小监测值"},
+        ],
+        "dimensions": [
+            {"name": "cityName", "title": "城市名"},
+            {"name": "stationCode", "title": "站点编码"},
+            {"name": "stationName", "title": "站点名"},
+            {"name": "poll", "title": "监测项"},
+            {"name": "qcType", "title": "质控类型"},
+            {"name": "timePoint", "title": "监测时间点(时间维度)"},
+            {"name": "unit", "title": "单位"},
+            {"name": "isQCing", "title": "质控进行中"},
+        ],
+    },
+    "QcRunLog": {
+        "measures": [
+            {"name": "count", "title": "运行日志条数(2026-07起)"},
+            {"name": "errorCount", "title": "错误事件数"},
+            {"name": "warnCount", "title": "警告事件数"},
+        ],
+        "dimensions": [
+            {"name": "stationCode", "title": "站点编码"},
+            {"name": "stationName", "title": "站点名"},
+            {"name": "rid", "title": "任务标识 rId"},
+            {"name": "poll", "title": "监测项"},
+            {"name": "qcType", "title": "质控类型"},
+            {"name": "strEvent", "title": "事件分类(提示/警告/错误)"},
+            {"name": "target", "title": "执行环节"},
+            {"name": "userName", "title": "操作用户"},
+            {"name": "recordTime", "title": "事件时间(时间维度)"},
+        ],
+    },
     "QcExecution": {
         "measures": [
             {"name": "count", "title": "质控执行量"},

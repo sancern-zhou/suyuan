@@ -1,0 +1,33 @@
+# 数据集契约：mart_qc_task_status_result
+dataset: mart_qc_task_status_result
+description: >
+  江苏质控任务状态表。一行 = 一次质控任务的最新状态快照(按年源表 2026,每日 02:30 增量,窗口自 2026-07-01,省控站过滤)。
+  jsonstr 为平台原始状态载荷(含执行步骤/结果值);工具 jiangsu_fetch_qc_task_status 已改读本链。
+owner: 江苏运维平台组
+grain: 一行 = 一次质控任务状态快照(同 rid 取 createtime 最新)
+freshness_slo: 26小时
+known_caveats:
+  - 按年源表,每年 1 月须换年份表名(gen_alarmlog_sync_config.py)
+  - jsonstr 为平台嵌套 JSON 字符串,人工分析时用 execute_python 解析;工具链已自动解析
+  - 省控站过滤(stationtypeid=2 且 status=1)
+columns:
+  - {name: id, business: 源记录ID(主键)}
+  - {name: rid, business: 质控任务标识 rId}
+  - {name: unique_code, business: 平台唯一编码}
+  - {name: station_code, business: 平台站点编码}
+  - {name: station_name, business: 站点名称(经dim_station)}
+  - {name: source_station_name, business: 源表站点名称}
+  - {name: poll, business: 质控监测项(如 SO2/NO/CO/O3/PM25)}
+  - {name: qc_type, business: 质控类型(零点检查/跨度检查等)}
+  - {name: sstart, business: 任务计划开始时间}
+  - {name: rstart, business: 任务实际开始时间}
+  - {name: jsonstr, business: 平台状态载荷 JSON(步骤/结果值/数据值)}
+  - {name: createtime, business: 快照时间}
+  - {name: synced_at, business: 重建时间}
+access:
+  tool: execute_jiangsu_mart_sql
+  role: agent_reader
+guide: >-
+  查质控任务执行状态用本表:按 rid 或 station_code+rstart 定位,jsonstr 内含 Steps/Actions/
+  ResultValues/DataValues;质控详情可视化优先用 jiangsu_fetch_qc_task_status(自动解析并出面板);
+  与 qc_his_result(任务结果) 通过 rid 关联。

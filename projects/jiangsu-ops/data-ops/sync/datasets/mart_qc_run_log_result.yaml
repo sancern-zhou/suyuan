@@ -1,0 +1,36 @@
+# 数据集契约：mart_qc_run_log_result
+dataset: mart_qc_run_log_result
+description: >
+  江苏质控任务运行日志。一行 = 一条质控运行事件(按年源表 2026,每日增量,窗口自 2026-07-01,省控站过滤)。
+  工具 jiangsu_fetch_qc_run_logs 与质控详情链已改读本链。
+owner: 江苏运维平台组
+grain: 一行 = 一条质控运行事件
+freshness_slo: 26小时
+known_caveats:
+  - 按年源表,每年 1 月须换年份表名(gen_alarmlog_sync_config.py)
+  - 单任务日志可达数百条,按 rid 过滤后再看;strEvent 为事件分类文本
+columns:
+  - {name: id, business: 源记录ID(主键)}
+  - {name: rid, business: 质控任务标识 rId}
+  - {name: unique_code, business: 平台唯一编码}
+  - {name: station_code, business: 平台站点编码}
+  - {name: station_name, business: 站点名称(经dim_station)}
+  - {name: source_station_name, business: 源表站点名称}
+  - {name: poll, business: 监测项}
+  - {name: qc_type, business: 质控类型}
+  - {name: sstart, business: 任务计划开始时间}
+  - {name: rstart, business: 任务实际开始时间}
+  - {name: event_type, business: 事件类型编码}
+  - {name: str_event, business: 事件分类文本}
+  - {name: message, business: 事件消息原文}
+  - {name: record_time, business: 事件记录时间}
+  - {name: target, business: 执行对象/环节}
+  - {name: user_name, business: 操作用户}
+  - {name: createtime, business: 入库时间}
+  - {name: synced_at, business: 重建时间}
+access:
+  tool: execute_jiangsu_mart_sql
+  role: agent_reader
+guide: >-
+  查质控任务运行过程用本表:按 rid 过滤(单任务数百条),按 record_time 排序看执行轨迹;
+  运行日志查询优先用 jiangsu_fetch_qc_run_logs;strEvent 常见值:提示信息/警告/错误。

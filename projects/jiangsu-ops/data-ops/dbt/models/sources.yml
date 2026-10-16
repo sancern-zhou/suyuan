@@ -6,6 +6,107 @@ sources:
   description: SQL Server 原库经 sync_table.py 同步落地的 ODS 层(sync_config.json 为表清单事实源, 本文件由 gen_dbt_artifacts.py
     生成)。fact 表窗口自 2026-07-01, 更早历史不可查。
   tables:
+  - name: alarmlog_2026_3001a
+  - name: alarmlog_2026_3002a
+  - name: alarmlog_2026_3003a
+  - name: alarmlog_2026_3004a
+  - name: alarmlog_2026_3005a
+  - name: alarmlog_2026_3006a
+  - name: alarmlog_2026_3007a
+  - name: alarmlog_2026_3009a
+  - name: alarmlog_2026_3010a
+  - name: alarmlog_2026_3011a
+  - name: alarmlog_2026_3012a
+  - name: alarmlog_2026_3013a
+  - name: alarmlog_2026_3014a
+  - name: alarmlog_2026_3015a
+  - name: alarmlog_2026_3016a
+  - name: alarmlog_2026_3017a
+  - name: alarmlog_2026_3018a
+  - name: alarmlog_2026_3019a
+  - name: alarmlog_2026_3020a
+  - name: alarmlog_2026_3021a
+  - name: alarmlog_2026_3023a
+  - name: alarmlog_2026_3024a
+  - name: alarmlog_2026_3025a
+  - name: alarmlog_2026_3026a
+  - name: alarmlog_2026_3027a
+  - name: alarmlog_2026_3028a
+  - name: alarmlog_2026_3029a
+  - name: alarmlog_2026_3030a
+  - name: alarmlog_2026_3031a
+  - name: alarmlog_2026_3032a
+  - name: alarmlog_2026_3033a
+  - name: alarmlog_2026_3034a
+  - name: alarmlog_2026_3035a
+  - name: alarmlog_2026_3036a
+  - name: alarmlog_2026_3037a
+  - name: alarmlog_2026_3038a
+  - name: alarmlog_2026_3039a
+  - name: alarmlog_2026_3040a
+  - name: alarmlog_2026_3041a
+  - name: alarmlog_2026_3042a
+  - name: alarmlog_2026_3043a
+  - name: alarmlog_2026_3044a
+  - name: alarmlog_2026_3045a
+  - name: alarmlog_2026_3046a
+  - name: alarmlog_2026_3047a
+  - name: alarmlog_2026_3048a
+  - name: alarmlog_2026_3049a
+  - name: alarmlog_2026_3050a
+  - name: alarmlog_2026_3051a
+  - name: alarmlog_2026_3052a
+  - name: alarmlog_2026_3053a
+  - name: alarmlog_2026_3054a
+  - name: alarmlog_2026_3055a
+  - name: alarmlog_2026_3056a
+  - name: alarmlog_2026_3057a
+  - name: alarmlog_2026_3058a
+  - name: alarmlog_2026_3059a
+  - name: alarmlog_2026_3060a
+  - name: alarmlog_2026_3061a
+  - name: alarmlog_2026_3062a
+  - name: alarmlog_2026_3063a
+  - name: alarmlog_2026_3064a
+  - name: alarmlog_2026_3065a
+  - name: alarmlog_2026_3066a
+  - name: alarmlog_2026_3067a
+  - name: alarmlog_2026_3068a
+  - name: alarmlog_2026_3069a
+  - name: alarmlog_2026_3070a
+  - name: alarmlog_2026_3071a
+  - name: alarmlog_2026_3072a
+  - name: alarmlog_2026_3073a
+  - name: alarmlog_2026_3074a
+  - name: alarmlog_2026_3075a
+  - name: alarmlog_2026_3076a
+  - name: alarmlog_2026_3077a
+  - name: alarmlog_2026_3078a
+  - name: alarmlog_2026_3079a
+  - name: alarmlog_2026_3080a
+  - name: alarmlog_2026_3081a
+  - name: alarmlog_2026_3082a
+  - name: alarmlog_2026_3083a
+  - name: alarmlog_2026_3084a
+  - name: alarmlog_2026_3085a
+  - name: alarmlog_2026_3086a
+  - name: alarmlog_2026_3087a
+  - name: alarmlog_2026_3088a
+  - name: alarmlog_2026_3089a
+  - name: alarmlog_2026_3090a
+  - name: alarmlog_2026_3091a
+  - name: alarmlog_2026_3092a
+  - name: alarmlog_2026_3093a
+  - name: alarmlog_2026_3095a
+  - name: alarmlog_2026_3096a
+  - name: alarmlog_2026_3097a
+  - name: alarmlog_2026_3098a
+  - name: alarmlog_2026_3099a
+  - name: alarmlog_2026_3100a
+  - name: alarmlog_2026_3101a
+  - name: alarmlog_2026_3102a
+  - name: alarmlog_2026_3103a
+  - name: alarmlog_2026_3104a
   - name: alm_rule
     description: 告警规则配置(每日全量, 无更新时间列 → 见 snapshots/alm_rule.sql)
   - name: alm_summary
@@ -35,6 +136,106 @@ sources:
   - name: bsd_usergroup_user
   - name: dev_scrap
     description: 设备报废审批(每日全量, 行数极少; 设备生命周期终点, 配合 log_device)
+  - name: integrated_h_2026_3001a
+  - name: integrated_h_2026_3002a
+  - name: integrated_h_2026_3003a
+  - name: integrated_h_2026_3004a
+  - name: integrated_h_2026_3005a
+  - name: integrated_h_2026_3006a
+  - name: integrated_h_2026_3007a
+  - name: integrated_h_2026_3009a
+  - name: integrated_h_2026_3010a
+  - name: integrated_h_2026_3011a
+  - name: integrated_h_2026_3012a
+  - name: integrated_h_2026_3013a
+  - name: integrated_h_2026_3014a
+  - name: integrated_h_2026_3015a
+  - name: integrated_h_2026_3016a
+  - name: integrated_h_2026_3017a
+  - name: integrated_h_2026_3018a
+  - name: integrated_h_2026_3019a
+  - name: integrated_h_2026_3020a
+  - name: integrated_h_2026_3021a
+  - name: integrated_h_2026_3023a
+  - name: integrated_h_2026_3024a
+  - name: integrated_h_2026_3025a
+  - name: integrated_h_2026_3026a
+  - name: integrated_h_2026_3027a
+  - name: integrated_h_2026_3028a
+  - name: integrated_h_2026_3029a
+  - name: integrated_h_2026_3030a
+  - name: integrated_h_2026_3031a
+  - name: integrated_h_2026_3032a
+  - name: integrated_h_2026_3033a
+  - name: integrated_h_2026_3034a
+  - name: integrated_h_2026_3035a
+  - name: integrated_h_2026_3036a
+  - name: integrated_h_2026_3037a
+  - name: integrated_h_2026_3038a
+  - name: integrated_h_2026_3039a
+  - name: integrated_h_2026_3040a
+  - name: integrated_h_2026_3041a
+  - name: integrated_h_2026_3042a
+  - name: integrated_h_2026_3043a
+  - name: integrated_h_2026_3044a
+  - name: integrated_h_2026_3045a
+  - name: integrated_h_2026_3046a
+  - name: integrated_h_2026_3047a
+  - name: integrated_h_2026_3048a
+  - name: integrated_h_2026_3049a
+  - name: integrated_h_2026_3050a
+  - name: integrated_h_2026_3051a
+  - name: integrated_h_2026_3052a
+  - name: integrated_h_2026_3053a
+  - name: integrated_h_2026_3054a
+  - name: integrated_h_2026_3055a
+  - name: integrated_h_2026_3056a
+  - name: integrated_h_2026_3057a
+  - name: integrated_h_2026_3058a
+  - name: integrated_h_2026_3059a
+  - name: integrated_h_2026_3060a
+  - name: integrated_h_2026_3061a
+  - name: integrated_h_2026_3062a
+  - name: integrated_h_2026_3063a
+  - name: integrated_h_2026_3064a
+  - name: integrated_h_2026_3065a
+  - name: integrated_h_2026_3066a
+  - name: integrated_h_2026_3067a
+  - name: integrated_h_2026_3068a
+  - name: integrated_h_2026_3069a
+  - name: integrated_h_2026_3070a
+  - name: integrated_h_2026_3071a
+  - name: integrated_h_2026_3073a
+  - name: integrated_h_2026_3074a
+  - name: integrated_h_2026_3075a
+  - name: integrated_h_2026_3076a
+  - name: integrated_h_2026_3077a
+  - name: integrated_h_2026_3078a
+  - name: integrated_h_2026_3079a
+  - name: integrated_h_2026_3080a
+  - name: integrated_h_2026_3081a
+  - name: integrated_h_2026_3082a
+  - name: integrated_h_2026_3083a
+  - name: integrated_h_2026_3084a
+  - name: integrated_h_2026_3085a
+  - name: integrated_h_2026_3086a
+  - name: integrated_h_2026_3087a
+  - name: integrated_h_2026_3088a
+  - name: integrated_h_2026_3089a
+  - name: integrated_h_2026_3090a
+  - name: integrated_h_2026_3091a
+  - name: integrated_h_2026_3092a
+  - name: integrated_h_2026_3093a
+  - name: integrated_h_2026_3095a
+  - name: integrated_h_2026_3096a
+  - name: integrated_h_2026_3097a
+  - name: integrated_h_2026_3098a
+  - name: integrated_h_2026_3099a
+  - name: integrated_h_2026_3100a
+  - name: integrated_h_2026_3101a
+  - name: integrated_h_2026_3102a
+  - name: integrated_h_2026_3103a
+  - name: integrated_h_2026_3104a
   - name: log_device
     description: 设备生命周期状态变更日志(每日全量, 窗口≥2026-07-01; deviceidstate×eventstate 状态流转, WorkingOrderCode 可关联故障工单;
       2026-10-04 新纳入, 解锁备机更换及时性场景)
@@ -83,14 +284,11 @@ sources:
     description: 质控任务安排(每日全量)
   - name: qc_backorderarrangelog
     description: 质控补测/回调安排日志(每日全量, 窗口≥2026-07-01; state/datatype 枚举语义待平台确认; 补测风暴预警与质控闭环下游)
-  - name: qc_historymonthresultoverview
+  - name: qc_his_air_data_result_2026
   - name: qc_his_result_2026
-    description: 省控站质控任务执行结果(按年分表,id增量,仅名录启用省控站;每年1月换年份表)
-    loaded_at_field: createtime
-    freshness:
-      warn_after:
-        count: 24
-        period: hour
+  - name: qc_his_run_log_result_2026
+  - name: qc_his_task_status_result_2026
+  - name: qc_historymonthresultoverview
   - name: qc_task
   - name: rf_common
     description: 非故障工单表单体 rFCommon 矩阵(5分钟增量, ops_audit 取数源)

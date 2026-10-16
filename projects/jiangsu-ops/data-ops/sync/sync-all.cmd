@@ -10,6 +10,10 @@ cd /d E:\Tools\suyuan-jiangsu\sync
 for %%t in (mtc_working_order mtc_working_order_detail alm_summary opa_kq_attendance bsd_station mot_alarm qc_his_result_2026 pw_taskitem mtc_taskitem rf_common) do (
     E:\Tools\Python311\python.exe sync_table.py %%t >> sync_%%t.log 2>&1
 )
+rem 站房告警分片 + 质控三件套 高频增量(工具链本地化数据源; 首拉由人工后台完成)
+echo [%date% %time%] alarmlog/qc frequent sync begin >> sync_alarmlog_frequent.log 2>&1
+E:\Tools\Python311\python.exe sync_alarmlog_frequent.py >> sync_alarmlog_frequent.log 2>&1
+echo [%date% %time%] alarmlog/qc frequent sync exit=%errorlevel% >> sync_alarmlog_frequent.log
 echo [%date% %time%] dbt build tag:frequent >> sync_mart.log 2>&1
 rem PYTHONUTF8=1: dbt 按 UTF-8 读含中文注释的模型文件(计划任务默认 GBK 会 UnicodeDecodeError)
 set "PYTHONUTF8=1"
