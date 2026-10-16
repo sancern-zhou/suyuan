@@ -34,7 +34,7 @@ from app.db.database import get_db
 from app.knowledge_base.models import UploadedFile
 from app.agent.resources.resource_service import SessionResourceService
 from app.utils.json_safety import dumps_safe
-from app.utils.path_config import get_data_registry
+from app.utils.path_config import get_data_registry, get_sessions_dir
 from app.social.app_identity import (
     AppIdentity,
     issue_access_token,
@@ -981,6 +981,32 @@ def _social_preferences(identity: AppIdentity) -> dict:
     }
 
 
+_APP_SOCIAL_SESSION_RE = re.compile(r"^social_session_\d{10,}_[0-9a-f]{12}$")
+
+
+async def _lazy_register_current_mapping(
+    request: Request,
+    identity: AppIdentity,
+    session_id: str,
+) -> bool:
+    """懒注册兜底：App 新建的会话未入目录时，恢复/续聊前补注册。
+
+    App 端“新建对话”只生成本地映射（create_app_session 不写目录），且 App
+    本地会保留历史入口——用户之后任何时候点击都可能先于首条消息触发恢复。
+    mapper 只存当前一条映射，覆盖不了多次新建后点击旧入口的场景，因此放宽为
+    格式校验通过（social_session_ 前缀 + 时间戳 + 随机段）即注册给当前用户。
+    未注册会话尚无内容，误注册只会得到空会话；定时任务/广播会话走各自的
+    授权路径，不在此列。
+    """
+    if not _APP_SOCIAL_SESSION_RE.fullmatch(session_id):
+        return False
+    catalog = get_conversation_catalog()
+    if await catalog.find(session_id) is not None:
+        return False
+    await _register_social_session(identity=identity, session_id=session_id)
+    return True
+
+
 async def _ensure_session(
     request: Request,
     identity: AppIdentity,
@@ -991,9 +1017,12 @@ async def _ensure_session(
         # The mapper intentionally stores only the user's current session.
         # Historical App sessions are authorized by the catalog instead.
         row = await get_conversation_catalog().find(requested_session_id)
+        if row is None:
+            if not await _lazy_register_current_mapping(request, identity, requested_session_id):
+                raise HTTPException(status_code=404, detail="session_not_found")
+            return requested_session_id
         if (
-            row is None
-            or not owner_matches(row.owner_user_id, identity.social_user_id)
+            not owner_matches(row.owner_user_id, identity.social_user_id)
             or row.source != ConversationSource.SOCIAL
         ):
             raise HTTPException(status_code=404, detail="session_not_found")
@@ -1003,8 +1032,23 @@ async def _ensure_session(
     else:
         session_id = await mapper.get_or_create_session(identity.social_user_id, mode="social")
 
-    catalog = get_conversation_catalog()
-    await catalog.register_identity(
+    # 已在目录中的会话不重复注册：register_identity 对同 owner 是幂等的，
+    # 但显式跳过可避免绑定账号路径上误触发所有权转移。
+    if await get_conversation_catalog().find(session_id) is not None:
+        return session_id
+    await _register_social_session(
+        identity=identity,
+        session_id=session_id,
+    )
+    return session_id
+
+
+async def _register_social_session(
+    *,
+    identity: AppIdentity,
+    session_id: str,
+) -> None:
+    await get_conversation_catalog().register_identity(
         session_id=session_id,
         owner_user_id=identity.social_user_id,
         owner_username=identity.account_id,
@@ -1014,7 +1058,6 @@ async def _ensure_session(
         title=None,
         read_only_on_web=True,
     )
-    return session_id
 
 
 _APP_PLACEHOLDER_TITLES = {"新对话", "新会话"}
@@ -1584,6 +1627,16 @@ async def app_resolve_interaction(session_id: str, interaction_id: str, payload:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+def _social_session_has_content(session_id: str) -> bool:
+    """App 历史列表只展示落过盘的会话。
+
+    social 会话内容存储在 sessions 目录的 <session_id>.json；懒注册兜底会把
+    用户点击过但从未发送消息的会话写进目录，若不过滤，这些空会话会重新出现在
+    历史列表（用户主诉的问题）。文件缺失即视为无内容。
+    """
+    return (get_sessions_dir() / f"{session_id}.json").is_file()
+
+
 @router.get("/sessions")
 async def sessions(request: Request, identity: AppIdentity = Depends(require_app_identity)) -> list[dict]:
     catalog = get_conversation_catalog()
@@ -1591,7 +1644,10 @@ async def sessions(request: Request, identity: AppIdentity = Depends(require_app
         rows = await catalog.list_visible(identity.as_current_user(), limit=100)
     except Exception:
         rows = []
-    rows = [row for row in rows if row.source == ConversationSource.SOCIAL]
+    rows = [
+        row for row in rows
+        if row.source == ConversationSource.SOCIAL and _social_session_has_content(row.session_id)
+    ]
     if rows:
         return [
             {
@@ -1614,17 +1670,9 @@ async def create_app_session(request: Request, identity: AppIdentity = Depends(r
     mapper = await _loaded_session_mapper(request)
     session_id = mapper.new_session_id(mode="social")
     await mapper.save_mapping(identity.social_user_id, session_id)
-    await get_conversation_catalog().register_identity(
-        session_id=session_id,
-        owner_user_id=identity.social_user_id,
-        owner_username=identity.account_id,
-        owner_display_name=identity.display_name,
-        source=ConversationSource.SOCIAL,
-        mode="social",
-        # 不再持久化 “新对话” 占位标题：留空以便首条消息自动命名。
-        title=None,
-        read_only_on_web=True,
-    )
+    # 懒注册：此处不写会话目录。App 端“新建对话/从广播退出”都可能触发本接口，
+    # 若立即注册，用户未实际发送任何消息就会在历史列表留下空会话。
+    # 会话在首条消息（start_app_run → _ensure_session）时才注册进目录。
     return {"session_id": session_id, "mode": "social", "title": "新对话"}
 
 
@@ -1704,12 +1752,18 @@ async def _authorize_scheduled_session_row(catalog, session_id: str, user, exc: 
     return row
 
 
-async def _readable_app_session_row(session_id: str, identity: AppIdentity):
+async def _readable_app_session_row(request: Request, session_id: str, identity: AppIdentity):
     catalog = get_conversation_catalog()
     user = identity.as_current_user()
     try:
         row = await catalog.require_read(session_id, user)
     except HTTPException as exc:
+        if exc.status_code == 404 and await _lazy_register_current_mapping(
+            request, identity, session_id
+        ):
+            # App 点击“新建对话”后尚未发过消息的会话在此补注册，
+            # 否则恢复历史会直接 404（历史会话加载失败）。
+            return await catalog.require_read(session_id, user)
         # 定时任务会话在目录中的 owner 是 system，改按任务可见性授权。
         return await _authorize_scheduled_session_row(catalog, session_id, user, exc)
     if (
@@ -1723,9 +1777,13 @@ async def _readable_app_session_row(session_id: str, identity: AppIdentity):
 
 
 @router.get("/sessions/{session_id}/messages")
-async def app_session_messages(session_id: str, identity: AppIdentity = Depends(require_app_identity)) -> dict:
+async def app_session_messages(
+    request: Request,
+    session_id: str,
+    identity: AppIdentity = Depends(require_app_identity),
+) -> dict:
     """Restore the latest messages for an App-owned conversation."""
-    row = await _readable_app_session_row(session_id, identity)
+    row = await _readable_app_session_row(request, session_id, identity)
     from app.conversations.adapters import get_conversation_adapters
 
     restored = await get_conversation_adapters().get(row.source).restore(
@@ -1759,11 +1817,12 @@ async def app_session_messages(session_id: str, identity: AppIdentity = Depends(
 
 @router.get("/sessions/{session_id}/resources")
 async def app_session_resources(
+    request: Request,
     session_id: str,
     identity: AppIdentity = Depends(require_app_identity),
 ) -> dict:
     """List user-visible generated resources for the Android App."""
-    await _readable_app_session_row(session_id, identity)
+    await _readable_app_session_row(request, session_id, identity)
     return {
         "session_id": session_id,
         "resources": await _app_resource_descriptors(session_id, []),
@@ -1772,12 +1831,13 @@ async def app_session_resources(
 
 @router.get("/sessions/{session_id}/resources/{resource_id}/content")
 async def app_session_resource_content(
+    request: Request,
     session_id: str,
     resource_id: str,
     identity: AppIdentity = Depends(require_app_identity),
 ) -> FileResponse:
     """Serve generated resource bytes to the authenticated Android App."""
-    await _readable_app_session_row(session_id, identity)
+    await _readable_app_session_row(request, session_id, identity)
     resource = await SessionResourceService.database().get_resource(session_id, resource_id, status="active")
     if resource is None or resource.role not in {"output", "report", "attachment"} or resource.kind not in {"data", "file", "artifact", "visual"}:
         raise HTTPException(status_code=404, detail="resource_not_found")
