@@ -648,10 +648,6 @@ class Settings(BaseSettings):
             "flash/pro now only toggle thinking. Kept for env-file compatibility."
         ),
     )
-    llm_multimodal_models: str = Field(
-        default="",
-        description="Deprecated; Agent modes now use the normal Auto/Flash/Pro chains"
-    )
     knowledge_base_llm_model_tier: Literal["auto", "flash", "pro"] = Field(
         default="flash",
         description="Model tier used for knowledge-base LLM document parsing",
