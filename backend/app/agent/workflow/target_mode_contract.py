@@ -41,7 +41,7 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
     },
     "query_monitoring_city": {
         "positioning": "城市层级监测问数 Agent：面向城市小时/日历史、城市发布历史与全国对比的取数与核算。",
-        "scope": "城市小时/日历史与年均值（CityHour/CityDay/CityYearPm25Avg）、城市发布历史、中台接口、全国城市对比、城市口径统计核算。",
+        "scope": "城市小时/日历史与年均值（CityHour/CityDay/CityYearPm25Avg，扣沙天清单 CitySandDay）、城市发布历史、中台接口、全国城市对比、城市口径统计核算。",
         "boundary": "聚焦城市层级取数与统计核算，站点明细任务优先归 query_monitoring_station；不做气象归因与污染成因研判，不产出报告包。",
         "outputs": "结构化数据文件（file_path）+ 城市清单、数据口径、时间范围和缺口说明。",
         "warning": (
