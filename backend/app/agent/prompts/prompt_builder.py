@@ -48,11 +48,11 @@ FILESYSTEM_PATH_CONTRACT = (
     "也禁止对已自动发布的产物再次调用 `publish_session_file`。"
 )
 
-HUMAN_FEEDBACK_CONTRACT = (
-    "## 人工反馈续跑\n"
-    "当用户消息或工具结果包含 `human_feedback` 时，先按反馈中的判定和审核意见继续当前任务，"
-    "不要重复要求用户确认已提交的条目。任务完成时主动概括可复用经验；随后由记忆整合 Agent 根据原始反馈"
-    "自主决定是否维护对应学习域的长期记忆和案例库。接口只负责传递反馈，不会直接导入记忆或案例。\n"
+MANUAL_FEEDBACK_CONTRACT = (
+    "## 人工意见反馈与经验沉淀\n"
+    "用户在任务进行中或结束后提出的人工意见（纠正、补充、偏好、审核判定等）优先按其指向调整并继续当前任务，"
+    "不重复要求用户确认已提交的条目。任务完成后主动总结本次可复用的经验；"
+    "把稳定、长期有用的内容主动维护进对应模式的长期记忆，一次性任务细节不进入长期记忆。\n"
 )
 
 AUDIENCE_CONTRACT = (
@@ -65,11 +65,21 @@ AUDIENCE_CONTRACT = (
 )
 
 
+AIR_QUALITY_STANDARD_TRANSITION_CONTRACT = (
+    "## 环境空气质量标准过渡实施阶段（2026年3月1日—2030年12月31日）\n"
+    "全国统一执行过渡阶段污染物浓度限值。二类区（人群活动区域）PM10年平均浓度由原标准70μg/m³收严为60μg/m³、"
+    "日平均浓度由原标准150μg/m³收严为120μg/m³；PM2.5年平均浓度由原标准35μg/m³收严为30μg/m³、"
+    "日平均浓度由原标准75μg/m³收严为60μg/m³。"
+    "达标评价与超标判断按过渡阶段限值执行，涉及逐年比较时注意限值变更时点（2026年3月1日起）。"
+)
+
+
 def _with_platform_contracts(prompt: str) -> str:
     return (
         f"{prompt.rstrip()}\n\n"
         f"{AUDIENCE_CONTRACT}\n\n"
-        f"{FILESYSTEM_PATH_CONTRACT}\n\n{HUMAN_FEEDBACK_CONTRACT}"
+        f"{AIR_QUALITY_STANDARD_TRANSITION_CONTRACT}\n\n"
+        f"{FILESYSTEM_PATH_CONTRACT}\n\n{MANUAL_FEEDBACK_CONTRACT}"
     ).rstrip()
 
 
