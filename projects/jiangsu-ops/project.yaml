@@ -233,8 +233,9 @@ backend:
       scope: 设备生命周期事件、设备参数与台账、停电报备单及时长、站房动环供电历史
       boundary: 只取数和确定性整理，不作风险认定；动环历史仅限父任务指定窗口不扩大范围；跨域取数列入 data_gaps
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
-      max_iterations: 10
-      timeout_seconds: 180
+      # 2026-10-15: 三类数据+上期对照 10 迭代不够用(当日连续 max_iterations_reached),对齐风险域 14;180s 墙钟同日两次击穿,放宽到 240s
+      max_iterations: 14
+      timeout_seconds: 240
       max_deliverables: 3
     jiangsu_ops_data_station:
       positioning: 站点与人员数据准备
