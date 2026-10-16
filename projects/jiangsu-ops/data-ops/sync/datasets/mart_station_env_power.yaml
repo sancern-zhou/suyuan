@@ -1,0 +1,35 @@
+# 数据集契约：mart_station_env_power
+dataset: mart_station_env_power
+description: >
+  江苏站房动环小时数据集(长表)。一行 = 一个站点 × 一个小时 × 一项动环指标。
+  源为 air 平台 air_province_data 库 integrated_h_2026_<站> 按年分片表(每日 02:30 增量同步),
+  回填自 2026-10-01;用于设备域运维分析的动环/供电历史取证,替代分析链路对实时 API 的依赖。
+owner: 江苏运维平台组
+grain: 一行 = 一站 × 一小时 × 一动环项
+freshness_slo: 26小时
+known_caveats:
+  - 有数据的站为 99/101:3072A 源库无 2026 分片表,3039A 分片表 2026-10 起零数据(平台侧未上报),涉及时须注明
+  - 小时表实测仅 11 项动环编码(供电六相/站房温湿度/管线温湿压);钢瓶压力/烟感/水浸等其余项在小时表中无数据,需实时取证时走 API 工具
+  - 按年分片,每年 1 月须用 gen_env_sync_config.py 换年份表名并重跑同步;mark 为平台原样标记(如 Lsp),含义待业务确认
+  - 当日小时数据次日 02:30 才入库;当日实时补查用 jiangsu_fetch_station_environment_history
+columns:
+  - {name: id, business: 源记录ID(站内唯一,联合 station_code 才全局唯一)}
+  - {name: station_code, business: 平台站点编码}
+  - {name: station_name, business: 站点名称(经dim_station)}
+  - {name: city_code, business: 城市行政区码}
+  - {name: city_name, business: 城市名}
+  - {name: timepoint, business: 数据时间点(小时)}
+  - {name: pollutant_code, business: 动环编码(VA/VB/VC/IA/IB/IC/StationTemp/StationHum/PipeTemp/PipeHum/SamplePipeSPress)}
+  - {name: monvalue, business: 数值(monvalue_text 的数值转换,非数值为空)}
+  - {name: monvalue_text, business: 原始值文本}
+  - {name: mark, business: 平台原样数据标记}
+  - {name: synced_at, business: 重建时间}
+access:
+  tool: execute_jiangsu_mart_sql
+  role: agent_reader
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  查站房动环/供电历史用本表:三相电压 VA/VB/VC、三相电流 IA/IB/IC、站房温度 StationTemp/
+  湿度 StationHum、管线温度 PipeTemp/湿度 PipeHum、采样管压力 SamplePipeSPress;
+  按 station_code + timepoint + pollutant_code 过滤,周/月窗口直接查;monvalue 为数值,
+  非数值原文在 monvalue_text;当日实时补查走 jiangsu_fetch_station_environment_history。
