@@ -151,6 +151,11 @@
             @report-close="sharedReportView = null"
           />
 
+          <PlatformGuidePanel
+            v-else-if="managementPanel === 'platform-guide'"
+            @close="$emit('close-management-panel')"
+          />
+
           <ToolsManagementPanel
             v-else-if="managementPanel === 'tools-management'"
             @close="$emit('close-management-panel')"
@@ -261,6 +266,7 @@ import ScheduledTasksPanel from '@/components/management/ScheduledTasksPanel.vue
 import TaskExecutionWorkspace from '@/components/management/TaskExecutionWorkspace.vue'
 import SessionHistoryPanel from '@/components/management/SessionHistoryPanel.vue'
 import SharedConversationsPanel from '@/components/management/SharedConversationsPanel.vue'
+import PlatformGuidePanel from '@/components/management/PlatformGuidePanel.vue'
 import SocialPlatformPanel from '@/components/management/SocialPlatformPanel.vue'
 import ToolsManagementPanel from '@/components/management/ToolsManagementPanel.vue'
 import SkillsManagementPanel from '@/components/management/SkillsManagementPanel.vue'

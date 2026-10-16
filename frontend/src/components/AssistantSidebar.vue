@@ -80,6 +80,18 @@
             <p class="module-title">共享对话</p>
           </div>
         </button>
+        <button
+          class="module-card"
+          :class="{ active: isActive('platform-guide') }"
+          type="button"
+          @click="handleModuleSelect('platform-guide')"
+          :title="isCollapsed ? '平台使用说明' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('platform-guide')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">平台使用说明</p>
+          </div>
+        </button>
       </div>
 
       <div class="module-list">
@@ -740,6 +752,13 @@ const moduleIcons = {
       <path d="M7 9.5a4 4 0 1 1 8 0v3a4 4 0 0 1-8 0v-3Z" />
       <path d="M15 11h1.5a3.5 3.5 0 0 1 0 7H14" />
       <path d="M7 11H5.5a3.5 3.5 0 0 0 0 7H10" />
+    </svg>
+  `,
+  'platform-guide': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 11v5" />
+      <path d="M12 7.5h.01" />
     </svg>
   `
 }
