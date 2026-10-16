@@ -269,6 +269,8 @@ backend:
     - xuchang_nmc_hourly_forecast_fetcher
     - xuchang_weather_com_daily_forecast_fetcher
     - xuchang_air_quality_forecast_fetcher
+    # 同一抓取器中午 12:00 再跑一次（08:30 定时曾因远程 XcAiDb 07:30 时段断连连日失败）
+    - xuchang_air_quality_forecast_fetcher_noon
     - xuchang_weather_situation_evidence_fetcher
     - xuchang_station_deviation_alert_fetcher
     - xuchang_station_daily_pollution_fetcher
