@@ -1,0 +1,674 @@
+# GENERATED FILE - run gen_semantic_artifacts.py; do not edit by hand
+version: 1
+project: xuchang
+generated_from:
+- semantic/registry.yaml
+- xuchang_cube_metrics/tool.py
+cubes:
+  SsfbCityDay:
+    dataset: DataCrawler.SsfbCityDay
+    grain: 一行 = 城市 × 日
+    applicability: 河南18城市组含济源的城市日数据
+    source_window: 采集源日值窗口
+    limitations:
+    - 2026年10月起源接口不发布PM10，PM10缺失不得当作零或用于趋势判断
+    measures:
+      count:
+        name: 日记录数
+        definition: 日记录数
+      avgPm25:
+        name: PM2.5日均(μg/m³)
+        definition: PM2.5日均(μg/m³)
+      avgPm10:
+        name: PM10日均(源10月起缺失,勿用于趋势)
+        definition: PM10日均(源10月起缺失,勿用于趋势)
+      avgO38h:
+        name: O3-8h日均(μg/m³)
+        definition: O3-8h日均(μg/m³)
+      avgNo2:
+        name: NO2日均(μg/m³)
+        definition: NO2日均(μg/m³)
+      avgSo2:
+        name: SO2日均(μg/m³)
+        definition: SO2日均(μg/m³)
+      avgCo:
+        name: CO日均(mg/m³)
+        definition: CO日均(mg/m³)
+    dimensions:
+      city: 城市名(含济源市)
+      cityCode: 城市行政区码
+      groupId: 城市组ID
+      quality: 空气质量等级
+      grade: AQI级别(1-6)
+      primaryPollutant: 首要污染物
+      dataDate: 数据日期(时间维度)
+  SsfbCityHour:
+    dataset: DataCrawler.SsfbCityHour
+    grain: 一行 = 城市 × 小时
+    applicability: 河南18城市组含济源的实时发布小时数据
+    source_window: 采集源滚动窗口，具体以查询返回时间为准
+    limitations: []
+    measures:
+      count:
+        name: 小时记录数
+        definition: 小时记录数
+      avgPm25:
+        name: PM2.5均值(μg/m³)
+        definition: PM2.5均值(μg/m³)
+      avgPm10:
+        name: PM10均值(μg/m³)
+        definition: PM10均值(μg/m³)
+      avgO3:
+        name: O3均值(μg/m³)
+        definition: O3均值(μg/m³)
+      avgO38h:
+        name: O3-8h均值(μg/m³)
+        definition: O3-8h均值(μg/m³)
+      avgNo2:
+        name: NO2均值(μg/m³)
+        definition: NO2均值(μg/m³)
+      avgSo2:
+        name: SO2均值(μg/m³)
+        definition: SO2均值(μg/m³)
+      avgCo:
+        name: CO均值(mg/m³)
+        definition: CO均值(mg/m³)
+      maxAqi:
+        name: AQI最大值
+        definition: AQI最大值
+    dimensions:
+      city: 城市名(含济源市)
+      cityCode: 城市行政区码
+      groupId: 城市组ID
+      quality: 空气质量等级(优/良...)
+      grade: AQI级别(1-6)
+      primaryPollutant: 首要污染物
+      dataTime: 数据时间(时间维度)
+  SsfbCityHourRank:
+    dataset: DataCrawler.SsfbCityHourRank
+    grain: 一行 = 小时 × 城市排名对象
+    applicability: 河南18城市组含济源的小时排名
+    source_window: 实时重算窗口
+    limitations:
+    - 排名数值越低越靠前，1为最优，相同值并列
+    measures:
+      rankAqi:
+        name: AQI小时排名(升序,1=最优,含济源)
+        definition: AQI小时排名(升序,1=最优,含济源)
+      rankPm25:
+        name: PM2.5小时排名(升序,1=最优)
+        definition: PM2.5小时排名(升序,1=最优)
+      rankPm10:
+        name: PM10小时排名(升序,1=最优)
+        definition: PM10小时排名(升序,1=最优)
+      rankSo2:
+        name: SO2小时排名(升序,1=最优)
+        definition: SO2小时排名(升序,1=最优)
+      rankNo2:
+        name: NO2小时排名(升序,1=最优)
+        definition: NO2小时排名(升序,1=最优)
+      rankO3:
+        name: O3小时排名(升序,1=最优)
+        definition: O3小时排名(升序,1=最优)
+      rankCo:
+        name: CO小时排名(升序,1=最优)
+        definition: CO小时排名(升序,1=最优)
+      avgAqi:
+        name: AQI
+        definition: AQI
+      avgPm25:
+        name: PM2.5(μg/m³)
+        definition: PM2.5(μg/m³)
+      avgPm10:
+        name: PM10(μg/m³)
+        definition: PM10(μg/m³)
+      avgO3:
+        name: O3(μg/m³)
+        definition: O3(μg/m³)
+      avgNo2:
+        name: NO2(μg/m³)
+        definition: NO2(μg/m³)
+      avgSo2:
+        name: SO2(μg/m³)
+        definition: SO2(μg/m³)
+      avgCo:
+        name: CO(mg/m³)
+        definition: CO(mg/m³)
+      cityCount:
+        name: 参与排名城市数(应=18)
+        definition: 参与排名城市数(应=18)
+    dimensions:
+      city: 城市名(含济源市)
+      cityCode: 城市行政区码
+      groupId: 城市组ID
+      quality: 空气质量等级
+      primaryPollutant: 首要污染物
+      dataTime: 数据时间(时间维度,精确到小时)
+  SsfbCityRanking:
+    dataset: DataCrawler.SsfbCityRanking
+    grain: 一行 = 期次类型 × 期次 × 城市组
+    applicability: 本地重算的城市月/年累计和排名，仅供省内横向比较
+    source_window: 每日重算，期次由periodType和period决定
+    limitations:
+    - 非官方统计口径，正式汇报应以官方发布结果为准
+    - 排名基于修约后的浓度，数值越低越靠前，相同值并列
+    measures:
+      count:
+        name: 记录数
+        definition: 记录数
+      avgPm25:
+        name: PM2.5累计均值(本地计算,一位小数)
+        definition: PM2.5累计均值(本地计算,一位小数)
+      avgPm10:
+        name: PM10累计均值(本地计算,整数)
+        definition: PM10累计均值(本地计算,整数)
+      avgSo2:
+        name: SO2累计均值(本地计算,整数)
+        definition: SO2累计均值(本地计算,整数)
+      avgNo2:
+        name: NO2累计均值(本地计算,整数)
+        definition: NO2累计均值(本地计算,整数)
+      avgCo:
+        name: CO累计均值(本地计算,一位小数)
+        definition: CO累计均值(本地计算,一位小数)
+      avgO38h:
+        name: O3-8h第90百分位(本地计算,整数)
+        definition: O3-8h第90百分位(本地计算,整数)
+      rankPm25:
+        name: PM2.5排名(升序,1=最优)
+        definition: PM2.5排名(升序,1=最优)
+      rankPm10:
+        name: PM10排名(升序,1=最优)
+        definition: PM10排名(升序,1=最优)
+      rankSo2:
+        name: SO2排名(升序,1=最优)
+        definition: SO2排名(升序,1=最优)
+      rankNo2:
+        name: NO2排名(升序,1=最优)
+        definition: NO2排名(升序,1=最优)
+      rankO3:
+        name: O3排名(升序,1=最优)
+        definition: O3排名(升序,1=最优)
+      rankCo:
+        name: CO排名(升序,1=最优)
+        definition: CO排名(升序,1=最优)
+    dimensions:
+      periodType: 期次类型(daily单日/monthly月累计/yearly年累计)
+      period: 期次(YYYY-MM-DD / YYYY-MM / YYYY)
+      city: 城市名(含济源市)
+      groupId: 城市组ID
+      computedAt: 计算时间(时间维度)
+  SsfbCountyDay:
+    dataset: DataCrawler.SsfbCountyDay
+    grain: 一行 = 区县 × 日
+    applicability: 河南区县日数据，含济源和功能区
+    source_window: 采集源日值窗口
+    limitations: []
+    measures:
+      count:
+        name: 日记录数
+        definition: 日记录数
+      avgPm25:
+        name: PM2.5日均(μg/m³)
+        definition: PM2.5日均(μg/m³)
+      avgPm10:
+        name: PM10日均(μg/m³)
+        definition: PM10日均(μg/m³)
+      avgO38h:
+        name: O3-8h日均(μg/m³)
+        definition: O3-8h日均(μg/m³)
+      avgNo2:
+        name: NO2日均(μg/m³)
+        definition: NO2日均(μg/m³)
+      avgSo2:
+        name: SO2日均(μg/m³)
+        definition: SO2日均(μg/m³)
+      avgCo:
+        name: CO日均(mg/m³)
+        definition: CO日均(mg/m³)
+      onlineCounties:
+        name: 有数据区县数(去重)
+        definition: 有数据区县数(去重)
+    dimensions:
+      county: 区县名(含济源市/功能区)
+      city: 所属省辖市
+      cityCode: 区县行政区码
+      groupId: 区县组ID
+      quality: 空气质量等级
+      grade: AQI级别(1-6)
+      primaryPollutant: 首要污染物
+      dataDate: 数据日期(时间维度)
+  SsfbCountyDayRank:
+    dataset: DataCrawler.SsfbCountyDayRank
+    grain: 一行 = 日 × 区县排名对象
+    applicability: 与省平台区县排名同口径的日排名
+    source_window: 实时重算窗口
+    limitations:
+    - 排名数值越低越靠前，1为最优，相同值并列
+    measures:
+      rankAqi:
+        name: AQI日排名(升序,1=最优,含济源)
+        definition: AQI日排名(升序,1=最优,含济源)
+      rankPm25:
+        name: PM2.5日排名(升序,1=最优)
+        definition: PM2.5日排名(升序,1=最优)
+      rankPm10:
+        name: PM10日排名(升序,1=最优)
+        definition: PM10日排名(升序,1=最优)
+      rankO3:
+        name: O3-8h日排名(升序,1=最优,平台O3列)
+        definition: O3-8h日排名(升序,1=最优,平台O3列)
+      rankNo2:
+        name: NO2日排名(升序,1=最优)
+        definition: NO2日排名(升序,1=最优)
+      rankSo2:
+        name: SO2日排名(升序,1=最优)
+        definition: SO2日排名(升序,1=最优)
+      rankCo:
+        name: CO日排名(升序,1=最优)
+        definition: CO日排名(升序,1=最优)
+      avgAqi:
+        name: AQI
+        definition: AQI
+      avgPm25:
+        name: PM2.5日均(μg/m³)
+        definition: PM2.5日均(μg/m³)
+      avgPm10:
+        name: PM10日均(μg/m³)
+        definition: PM10日均(μg/m³)
+      avgO38h:
+        name: O3-8h日均(μg/m³)
+        definition: O3-8h日均(μg/m³)
+      avgNo2:
+        name: NO2日均(μg/m³)
+        definition: NO2日均(μg/m³)
+      avgSo2:
+        name: SO2日均(μg/m³)
+        definition: SO2日均(μg/m³)
+      avgCo:
+        name: CO日均(mg/m³)
+        definition: CO日均(mg/m³)
+      countyCount:
+        name: 参与排名区县数(应≈188)
+        definition: 参与排名区县数(应≈188)
+    dimensions:
+      county: 区县名
+      city: 所属省辖市
+      groupId: 区县组ID
+      quality: 空气质量等级
+      grade: AQI级别(1-6)
+      primaryPollutant: 首要污染物
+      dataDate: 数据日期(时间维度)
+  SsfbCountyHour:
+    dataset: DataCrawler.SsfbCountyHour
+    grain: 一行 = 区县 × 小时
+    applicability: 河南区县小时数据，含济源和功能区
+    source_window: 采集源滚动窗口
+    limitations: []
+    measures:
+      count:
+        name: 小时记录数
+        definition: 小时记录数
+      avgPm25:
+        name: PM2.5均值(μg/m³)
+        definition: PM2.5均值(μg/m³)
+      avgPm10:
+        name: PM10均值(μg/m³)
+        definition: PM10均值(μg/m³)
+      avgO3:
+        name: O3均值(μg/m³)
+        definition: O3均值(μg/m³)
+      avgO38h:
+        name: O3-8h均值(μg/m³)
+        definition: O3-8h均值(μg/m³)
+      avgNo2:
+        name: NO2均值(μg/m³)
+        definition: NO2均值(μg/m³)
+      avgSo2:
+        name: SO2均值(μg/m³)
+        definition: SO2均值(μg/m³)
+      avgCo:
+        name: CO均值(mg/m³)
+        definition: CO均值(mg/m³)
+      maxAqi:
+        name: AQI最大值
+        definition: AQI最大值
+      onlineCounties:
+        name: 有数据区县数(去重)
+        definition: 有数据区县数(去重)
+    dimensions:
+      county: 区县名(含济源市/功能区)
+      city: 所属省辖市
+      cityCode: 区县行政区码
+      groupId: 区县组ID
+      quality: 空气质量等级(优/良...)
+      grade: AQI级别(1-6)
+      primaryPollutant: 首要污染物
+      dataTime: 数据时间(时间维度)
+  SsfbCountyHourRank:
+    dataset: DataCrawler.SsfbCountyHourRank
+    grain: 一行 = 小时 × 区县排名对象
+    applicability: 与省平台区县排名同口径的小时排名
+    source_window: 实时重算窗口
+    limitations:
+    - 排名数值越低越靠前，1为最优，相同值并列
+    measures:
+      rankAqi:
+        name: AQI小时排名(升序,1=最优,含济源)
+        definition: AQI小时排名(升序,1=最优,含济源)
+      rankPm25:
+        name: PM2.5小时排名(升序,1=最优)
+        definition: PM2.5小时排名(升序,1=最优)
+      rankPm10:
+        name: PM10小时排名(升序,1=最优)
+        definition: PM10小时排名(升序,1=最优)
+      rankO3:
+        name: O3小时排名(升序,1=最优)
+        definition: O3小时排名(升序,1=最优)
+      rankNo2:
+        name: NO2小时排名(升序,1=最优)
+        definition: NO2小时排名(升序,1=最优)
+      rankSo2:
+        name: SO2小时排名(升序,1=最优)
+        definition: SO2小时排名(升序,1=最优)
+      rankCo:
+        name: CO小时排名(升序,1=最优)
+        definition: CO小时排名(升序,1=最优)
+      avgAqi:
+        name: AQI
+        definition: AQI
+      avgPm25:
+        name: PM2.5(μg/m³)
+        definition: PM2.5(μg/m³)
+      avgPm10:
+        name: PM10(μg/m³)
+        definition: PM10(μg/m³)
+      avgO38h:
+        name: O3-8h(μg/m³)
+        definition: O3-8h(μg/m³)
+      avgNo2:
+        name: NO2(μg/m³)
+        definition: NO2(μg/m³)
+      avgSo2:
+        name: SO2(μg/m³)
+        definition: SO2(μg/m³)
+      avgCo:
+        name: CO(mg/m³)
+        definition: CO(mg/m³)
+      countyCount:
+        name: 参与排名区县数
+        definition: 参与排名区县数
+    dimensions:
+      county: 区县名
+      city: 所属省辖市
+      groupId: 区县组ID
+      quality: 空气质量等级
+      primaryPollutant: 首要污染物
+      dataTime: 数据时间(时间维度,精确到小时)
+  SsfbSiteDay:
+    dataset: DataCrawler.SsfbSiteDay
+    grain: 一行 = 站点 × 日
+    applicability: 许昌县级站日数据，剔除国控站
+    source_window: 采集源日值窗口
+    limitations: []
+    measures:
+      count:
+        name: 站点日记录数
+        definition: 站点日记录数
+      avgPm25:
+        name: PM2.5日均(μg/m³)
+        definition: PM2.5日均(μg/m³)
+      avgPm10:
+        name: PM10日均(μg/m³)
+        definition: PM10日均(μg/m³)
+      avgO38h:
+        name: O3-8h日均(μg/m³)
+        definition: O3-8h日均(μg/m³)
+      avgNo2:
+        name: NO2日均(μg/m³)
+        definition: NO2日均(μg/m³)
+      avgSo2:
+        name: SO2日均(μg/m³)
+        definition: SO2日均(μg/m³)
+      avgCo:
+        name: CO日均(mg/m³)
+        definition: CO日均(mg/m³)
+      onlineSites:
+        name: 有数据站点数(去重)
+        definition: 有数据站点数(去重)
+    dimensions:
+      siteId: 县级站编码(SiteID)
+      siteName: 站点名
+      onlineType: 站点类别
+      city: 所属城市
+      county: 归属区县
+      quality: 空气质量等级
+      dataDate: 数据日期(时间维度)
+  SsfbSiteDayRank:
+    dataset: DataCrawler.SsfbSiteDayRank
+    grain: 一行 = 日 × 站点排名对象
+    applicability: 许昌县级站日排名
+    source_window: 实时重算窗口
+    limitations:
+    - 排名数值越低越靠前，1为最优，相同值并列
+    measures:
+      rankAqi:
+        name: AQI日排名(升序,1=最优)
+        definition: AQI日排名(升序,1=最优)
+      rankPm25:
+        name: PM2.5日排名(升序,1=最优)
+        definition: PM2.5日排名(升序,1=最优)
+      rankPm10:
+        name: PM10日排名(升序,1=最优)
+        definition: PM10日排名(升序,1=最优)
+      rankO3:
+        name: O3-8h日排名(升序,1=最优)
+        definition: O3-8h日排名(升序,1=最优)
+      rankNo2:
+        name: NO2日排名(升序,1=最优)
+        definition: NO2日排名(升序,1=最优)
+      rankSo2:
+        name: SO2日排名(升序,1=最优)
+        definition: SO2日排名(升序,1=最优)
+      rankCo:
+        name: CO日排名(升序,1=最优)
+        definition: CO日排名(升序,1=最优)
+      avgAqi:
+        name: AQI
+        definition: AQI
+      avgPm25:
+        name: PM2.5日均(μg/m³)
+        definition: PM2.5日均(μg/m³)
+      siteCount:
+        name: 参与排名站点数
+        definition: 参与排名站点数
+    dimensions:
+      siteId: 站点编码(SiteID)
+      siteName: 站点名
+      city: 所属城市
+      county: 归属区县
+      quality: 空气质量等级
+      primaryPollutant: 首要污染物
+      dataDate: 数据日期(时间维度)
+  SsfbSiteHour:
+    dataset: DataCrawler.SsfbSiteHour
+    grain: 一行 = 站点 × 小时
+    applicability: 许昌县级站小时数据，剔除国控站
+    source_window: 采集源滚动窗口
+    limitations: []
+    measures:
+      count:
+        name: 小时记录数
+        definition: 小时记录数
+      avgPm25:
+        name: PM2.5均值(μg/m³)
+        definition: PM2.5均值(μg/m³)
+      avgPm10:
+        name: PM10均值(μg/m³)
+        definition: PM10均值(μg/m³)
+      avgO3:
+        name: O3均值(μg/m³)
+        definition: O3均值(μg/m³)
+      avgO38h:
+        name: O3-8h均值(μg/m³)
+        definition: O3-8h均值(μg/m³)
+      avgNo2:
+        name: NO2均值(μg/m³)
+        definition: NO2均值(μg/m³)
+      avgSo2:
+        name: SO2均值(μg/m³)
+        definition: SO2均值(μg/m³)
+      avgCo:
+        name: CO均值(mg/m³)
+        definition: CO均值(mg/m³)
+      maxAqi:
+        name: AQI最大值
+        definition: AQI最大值
+      onlineSites:
+        name: 有数据站点数(去重)
+        definition: 有数据站点数(去重)
+    dimensions:
+      siteId: 县级站编码(SiteID)
+      siteName: 站点名
+      onlineType: 站点类别(县级市控SK/县级省控SCK)
+      city: 所属城市
+      county: 归属区县(区县口径按此分组)
+      area: 源平台区域
+      quality: 空气质量等级
+      grade: AQI级别(1-6)
+      primaryPollutant: 首要污染物
+      dataTime: 数据时间(时间维度)
+  SsfbSiteHourRank:
+    dataset: DataCrawler.SsfbSiteHourRank
+    grain: 一行 = 小时 × 站点排名对象
+    applicability: 许昌县级站小时排名
+    source_window: 实时重算窗口
+    limitations:
+    - 排名数值越低越靠前，1为最优，相同值并列
+    measures:
+      rankAqi:
+        name: AQI小时排名(升序,1=最优)
+        definition: AQI小时排名(升序,1=最优)
+      rankPm25:
+        name: PM2.5小时排名(升序,1=最优)
+        definition: PM2.5小时排名(升序,1=最优)
+      rankPm10:
+        name: PM10小时排名(升序,1=最优)
+        definition: PM10小时排名(升序,1=最优)
+      rankO3:
+        name: O3小时排名(升序,1=最优)
+        definition: O3小时排名(升序,1=最优)
+      rankNo2:
+        name: NO2小时排名(升序,1=最优)
+        definition: NO2小时排名(升序,1=最优)
+      rankSo2:
+        name: SO2小时排名(升序,1=最优)
+        definition: SO2小时排名(升序,1=最优)
+      rankCo:
+        name: CO小时排名(升序,1=最优)
+        definition: CO小时排名(升序,1=最优)
+      avgAqi:
+        name: AQI
+        definition: AQI
+      avgPm25:
+        name: PM2.5(μg/m³)
+        definition: PM2.5(μg/m³)
+      siteCount:
+        name: 参与排名站点数
+        definition: 参与排名站点数
+    dimensions:
+      siteId: 站点编码(SiteID)
+      siteName: 站点名
+      city: 所属城市
+      county: 归属区县
+      quality: 空气质量等级
+      primaryPollutant: 首要污染物
+      dataTime: 数据时间(时间维度,精确到小时)
+  TownDay:
+    dataset: DataCrawler.view_dat_town_day_src/view_dat_town_day_app
+    grain: 一行 = 乡镇站 × 日 × 口径
+    applicability: 乡镇站日数据，支持原始src和审核app口径
+    source_window: 2024-08-01起，审核口径起始时间可能更晚
+    limitations:
+    - 必须过滤caliber=app或caliber=src，否则同站同日会重复计数
+    - 官方结论优先使用app；app缺失时回退src必须明确说明为未审核原始数据
+    - -99为无效值，不参与数值聚合
+    measures:
+      count:
+        name: 站点日记录数
+        definition: 站点日记录数
+      avgPm25:
+        name: PM2.5日均(μg/m³)
+        definition: PM2.5日均(μg/m³)
+      avgPm10:
+        name: PM10日均(μg/m³)
+        definition: PM10日均(μg/m³)
+      avgSo2:
+        name: SO2日均(μg/m³)
+        definition: SO2日均(μg/m³)
+      avgNo2:
+        name: NO2日均(μg/m³)
+        definition: NO2日均(μg/m³)
+      avgCo:
+        name: CO日均(mg/m³)
+        definition: CO日均(mg/m³)
+      avgO3:
+        name: O3日均(μg/m³)
+        definition: O3日均(μg/m³)
+      maxAqi:
+        name: AQI最大值
+        definition: AQI最大值
+      onlineSites:
+        name: 有数据站点数(去重)
+        definition: 有数据站点数(去重)
+    dimensions:
+      caliber: 口径(app审核/src原始,必选其一过滤)
+      stationCode: 乡镇站编码
+      stationName: 乡镇站名(前缀含区县)
+      quality: 空气质量等级
+      primaryPollutant: 首要污染物
+      dataDate: 数据日期(时间维度,src 2024-08-01起/app 2024-09-01起)
+  TownHour:
+    dataset: DataCrawler.view_dat_town_hour_src/view_dat_town_hour_app
+    grain: 一行 = 乡镇站 × 小时 × 口径
+    applicability: 乡镇站小时数据，支持原始src和审核app口径
+    source_window: 2024-01-01起，审核口径起始时间可能更晚
+    limitations:
+    - 必须过滤caliber=app或caliber=src，否则同站同时刻会重复计数
+    - 官方结论优先使用app；app缺失时回退src必须明确说明为未审核原始数据
+    - -99为无效值，不参与数值聚合
+    measures:
+      count:
+        name: 小时记录数
+        definition: 小时记录数
+      avgPm25:
+        name: PM2.5均值(μg/m³)
+        definition: PM2.5均值(μg/m³)
+      avgPm10:
+        name: PM10均值(μg/m³)
+        definition: PM10均值(μg/m³)
+      avgSo2:
+        name: SO2均值(μg/m³)
+        definition: SO2均值(μg/m³)
+      avgNo2:
+        name: NO2均值(μg/m³)
+        definition: NO2均值(μg/m³)
+      avgCo:
+        name: CO均值(mg/m³)
+        definition: CO均值(mg/m³)
+      avgO3:
+        name: O3均值(μg/m³)
+        definition: O3均值(μg/m³)
+      maxAqi:
+        name: AQI最大值
+        definition: AQI最大值
+      onlineSites:
+        name: 有数据站点数(去重)
+        definition: 有数据站点数(去重)
+    dimensions:
+      caliber: 口径(app审核/src原始,必选其一过滤)
+      stationCode: 乡镇站编码(平台内部,如1024B)
+      stationName: 乡镇站名(前缀含区县,如建安区小召乡)
+      quality: 空气质量等级
+      primaryPollutant: 首要污染物
+      dataTime: 数据时间(时间维度,2024-01-01起)

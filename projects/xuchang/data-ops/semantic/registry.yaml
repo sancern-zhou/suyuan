@@ -1,0 +1,104 @@
+version: 1
+project: xuchang
+description: >-
+  许昌空气质量语义注册中心。Cube schema 负责执行，注册中心负责口径、适用范围、
+  数据窗口、质量限制和 Agent 解释边界。
+cubes:
+  SsfbCityHour:
+    dataset: DataCrawler.SsfbCityHour
+    grain: 一行 = 城市 × 小时
+    applicability: 河南18城市组含济源的实时发布小时数据
+    source_window: 采集源滚动窗口，具体以查询返回时间为准
+    limitations: []
+  SsfbCityDay:
+    dataset: DataCrawler.SsfbCityDay
+    grain: 一行 = 城市 × 日
+    applicability: 河南18城市组含济源的城市日数据
+    source_window: 采集源日值窗口
+    limitations:
+      - 2026年10月起源接口不发布PM10，PM10缺失不得当作零或用于趋势判断
+  SsfbCityHourRank:
+    dataset: DataCrawler.SsfbCityHourRank
+    grain: 一行 = 小时 × 城市排名对象
+    applicability: 河南18城市组含济源的小时排名
+    source_window: 实时重算窗口
+    limitations:
+      - 排名数值越低越靠前，1为最优，相同值并列
+  SsfbCityRanking:
+    dataset: DataCrawler.SsfbCityRanking
+    grain: 一行 = 期次类型 × 期次 × 城市组
+    applicability: 本地重算的城市月/年累计和排名，仅供省内横向比较
+    source_window: 每日重算，期次由periodType和period决定
+    limitations:
+      - 非官方统计口径，正式汇报应以官方发布结果为准
+      - 排名基于修约后的浓度，数值越低越靠前，相同值并列
+  SsfbCountyHour:
+    dataset: DataCrawler.SsfbCountyHour
+    grain: 一行 = 区县 × 小时
+    applicability: 河南区县小时数据，含济源和功能区
+    source_window: 采集源滚动窗口
+    limitations: []
+  SsfbCountyDay:
+    dataset: DataCrawler.SsfbCountyDay
+    grain: 一行 = 区县 × 日
+    applicability: 河南区县日数据，含济源和功能区
+    source_window: 采集源日值窗口
+    limitations: []
+  SsfbCountyHourRank:
+    dataset: DataCrawler.SsfbCountyHourRank
+    grain: 一行 = 小时 × 区县排名对象
+    applicability: 与省平台区县排名同口径的小时排名
+    source_window: 实时重算窗口
+    limitations:
+      - 排名数值越低越靠前，1为最优，相同值并列
+  SsfbCountyDayRank:
+    dataset: DataCrawler.SsfbCountyDayRank
+    grain: 一行 = 日 × 区县排名对象
+    applicability: 与省平台区县排名同口径的日排名
+    source_window: 实时重算窗口
+    limitations:
+      - 排名数值越低越靠前，1为最优，相同值并列
+  SsfbSiteHour:
+    dataset: DataCrawler.SsfbSiteHour
+    grain: 一行 = 站点 × 小时
+    applicability: 许昌县级站小时数据，剔除国控站
+    source_window: 采集源滚动窗口
+    limitations: []
+  SsfbSiteDay:
+    dataset: DataCrawler.SsfbSiteDay
+    grain: 一行 = 站点 × 日
+    applicability: 许昌县级站日数据，剔除国控站
+    source_window: 采集源日值窗口
+    limitations: []
+  SsfbSiteHourRank:
+    dataset: DataCrawler.SsfbSiteHourRank
+    grain: 一行 = 小时 × 站点排名对象
+    applicability: 许昌县级站小时排名
+    source_window: 实时重算窗口
+    limitations:
+      - 排名数值越低越靠前，1为最优，相同值并列
+  SsfbSiteDayRank:
+    dataset: DataCrawler.SsfbSiteDayRank
+    grain: 一行 = 日 × 站点排名对象
+    applicability: 许昌县级站日排名
+    source_window: 实时重算窗口
+    limitations:
+      - 排名数值越低越靠前，1为最优，相同值并列
+  TownHour:
+    dataset: DataCrawler.view_dat_town_hour_src/view_dat_town_hour_app
+    grain: 一行 = 乡镇站 × 小时 × 口径
+    applicability: 乡镇站小时数据，支持原始src和审核app口径
+    source_window: 2024-01-01起，审核口径起始时间可能更晚
+    limitations:
+      - 必须过滤caliber=app或caliber=src，否则同站同时刻会重复计数
+      - 官方结论优先使用app；app缺失时回退src必须明确说明为未审核原始数据
+      - -99为无效值，不参与数值聚合
+  TownDay:
+    dataset: DataCrawler.view_dat_town_day_src/view_dat_town_day_app
+    grain: 一行 = 乡镇站 × 日 × 口径
+    applicability: 乡镇站日数据，支持原始src和审核app口径
+    source_window: 2024-08-01起，审核口径起始时间可能更晚
+    limitations:
+      - 必须过滤caliber=app或caliber=src，否则同站同日会重复计数
+      - 官方结论优先使用app；app缺失时回退src必须明确说明为未审核原始数据
+      - -99为无效值，不参与数值聚合

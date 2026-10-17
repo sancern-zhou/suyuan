@@ -1,6 +1,7 @@
 # xuchang-cube — 许昌数据语义层（Cube Core 0.35）
 
-指标口径的**唯一定义与对外供数 API**。上游是 DataCrawler MySQL 采集表
+指标口径的**执行定义与对外供数 API**。业务解释口径、适用范围和限制统一登记在
+`../semantic/registry.yaml`；上游是 DataCrawler MySQL 采集表
 （`SsfbCity*` / `SsfbSite*` / `SsfbCityRanking`，由 suyan fetcher 直接抓取维护，
 无独立 sync/ODS 层），下游是智能体（`xuchang_cube_metrics` 工具点数查询）。
 
@@ -71,3 +72,5 @@ curl -X POST http://127.0.0.1:4610/cubejs-api/v1/load \
    `xuchang_henan_ranking_recalc.py`）
 2. 同步改本目录 `schema/*.js`（口径注释与字段映射）
 3. `docker restart suyan-xuchang-cube`
+4. 运行 `python projects/xuchang/data-ops/semantic/validate_registry.py` 和
+   `python projects/xuchang/data-ops/semantic/gen_semantic_artifacts.py --check`。

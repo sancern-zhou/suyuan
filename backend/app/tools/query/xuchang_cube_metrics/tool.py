@@ -26,6 +26,9 @@ import httpx
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from .quality_policy import quality_guidance
+from .result_contract import validate_result
+from .semantic_registry import cube_metadata
 
 if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
@@ -472,6 +475,10 @@ class XuchangCubeMetricsTool(LLMTool):
                         "type": "array", "items": {"type": "string"},
                         "description": "度量成员,如 ['SsfbCityRanking.rankPm25','SsfbCityRanking.avgPm25'],须同一Cube",
                     },
+                    "describe_cube": {
+                        "type": "string",
+                        "description": "(可选)只查询某个Cube的指标定义、粒度和适用范围，不执行数据查询",
+                    },
                     "dimensions": {
                         "type": "array", "items": {"type": "string"},
                         "description": "(可选)分组维度,如 ['SsfbCityRanking.city']",
@@ -510,7 +517,7 @@ class XuchangCubeMetricsTool(LLMTool):
                         "default": 50,
                     },
                 },
-                "required": ["measures"],
+                "required": [],
             },
         }
         super().__init__(
@@ -564,7 +571,20 @@ class XuchangCubeMetricsTool(LLMTool):
             cubes.add(c)
         if len(cubes) > 1:
             return None, f"一次查询只能用一个 Cube 的成员,当前跨了: {sorted(cubes)}"
-        return cubes.pop(), None
+        cube = cubes.pop()
+        if cube in {"TownHour", "TownDay"}:
+            caliber_filters = [
+                f for f in filters or []
+                if f.get("member") == f"{cube}.caliber"
+            ]
+            if not caliber_filters:
+                return None, f"{cube} 必须明确过滤 caliber=app 或 caliber=src，避免原始与审核口径重复计数"
+            values = {
+                str(value) for item in caliber_filters for value in (item.get("values") or [])
+            }
+            if not values.intersection({"app", "src"}):
+                return None, f"{cube}.caliber 只能使用 app 或 src"
+        return cube, None
 
     # ------------------------------------------------------------ 执行
     async def execute(
@@ -578,8 +598,31 @@ class XuchangCubeMetricsTool(LLMTool):
         filters: Optional[List[Dict[str, Any]]] = None,
         order: Optional[Dict[str, str]] = None,
         limit: Optional[int] = None,
+        describe_cube: Optional[str] = None,
         **kwargs,
     ) -> Dict[str, Any]:
+        if describe_cube:
+            if describe_cube not in CATALOG:
+                return {"success": False, "summary": f"未知 Cube: {describe_cube}。允许: {', '.join(CATALOG)}"}
+            semantic = cube_metadata(describe_cube, CATALOG)
+            payload = {
+                "success": True,
+                "cube": describe_cube,
+                "semantic_context": {
+                    "registry_version": semantic.get("registry_version", 0),
+                    "dataset": semantic.get("dataset"),
+                    "grain": semantic.get("grain"),
+                    "applicability": semantic.get("applicability"),
+                    "source_window": semantic.get("source_window"),
+                    "limitations": semantic.get("limitations", []),
+                    "metric_definitions": semantic.get("measures", {}),
+                },
+                "summary": f"{describe_cube} 指标定义（registry v{semantic.get('registry_version', 0)}）",
+            }
+            contract_errors = validate_result("metric_definition", payload)
+            if contract_errors:
+                logger.warning("xuchang_metric_definition_contract_violation", errors=contract_errors)
+            return payload
         cube, err = self._validate(measures, dimensions, time_dimension, filters)
         if err:
             return {"success": False, "data": None, "summary": f"参数校验失败: {err}"}
@@ -669,8 +712,10 @@ class XuchangCubeMetricsTool(LLMTool):
                 row_count=row_count,
             )
 
-        summary = f"查询 {cube} 返回 {row_count} 行({elapsed}s)"
-        return {
+        semantic = cube_metadata(cube, CATALOG)
+        data_as_of = self._infer_data_as_of(results)
+        quality_status = "unknown"
+        payload = {
             "success": True,
             "data": sample_data,
             "metadata": {
@@ -680,5 +725,35 @@ class XuchangCubeMetricsTool(LLMTool):
                 "elapsed_seconds": elapsed,
                 "truncated_to_sample": len(sample_data) < row_count,
             },
-            "summary": summary,
+            "count": row_count,
+            "sample_count": len(sample_data),
+            "data_as_of": data_as_of,
+            "quality_status": quality_status,
+            "semantic_context": {
+                "registry_version": semantic.get("registry_version", 0),
+                "dataset": semantic.get("dataset"),
+                "grain": semantic.get("grain"),
+                "applicability": semantic.get("applicability"),
+                "source_window": semantic.get("source_window"),
+                "limitations": semantic.get("limitations", []),
+                "metric_definitions": {
+                    member.split(".", 1)[-1]: semantic.get("measures", {}).get(member.split(".", 1)[-1], {})
+                    for member in measures or []
+                },
+                "quality_guidance": quality_guidance(quality_status),
+            },
+            "summary": f"查询 {cube} 返回 {row_count} 行({elapsed}s，数据截至 {data_as_of or '未能从结果推断'})",
         }
+        contract_errors = validate_result("metric_query", payload)
+        if contract_errors:
+            logger.warning("xuchang_metric_result_contract_violation", errors=contract_errors)
+        return payload
+
+    @staticmethod
+    def _infer_data_as_of(results: List[Dict[str, Any]]) -> Optional[str]:
+        values = []
+        for row in results:
+            for key, value in row.items():
+                if any(token in key.lower() for token in ("datatime", "datadate", "computedat", "period")) and value is not None:
+                    values.append(str(value))
+        return max(values) if values else None

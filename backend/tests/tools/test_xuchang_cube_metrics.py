@@ -15,12 +15,15 @@ from app.tools.query.xuchang_cube_metrics.tool import (
 )
 
 
-def test_catalog_covers_all_eight_cubes_with_chinese_titles():
-    assert set(CATALOG) == {
-        "SsfbCityHour", "SsfbCityDay", "SsfbCityRanking", "SsfbCityHourRank",
-        "SsfbSiteHour", "SsfbSiteDay",
-        "TownHour", "TownDay",
-    }
+def test_catalog_covers_all_cube_schema_names_with_chinese_titles():
+    import re
+    from pathlib import Path
+
+    schema_root = Path(__file__).resolve().parents[3] / "projects/xuchang/data-ops/cube/schema"
+    schema_cubes = set()
+    for path in schema_root.glob("*.js"):
+        schema_cubes.update(re.findall(r"cube\(`([^`]+)`", path.read_text(encoding="utf-8")))
+    assert set(CATALOG) == schema_cubes
     for cube, parts in CATALOG.items():
         assert parts["measures"], cube
         assert parts["dimensions"], cube
@@ -82,6 +85,18 @@ def test_validate_accepts_single_cube_query():
         ],
     )
     assert cube == "SsfbCityRanking"
+    assert err is None
+
+
+def test_validate_requires_town_caliber_filter():
+    tool = XuchangCubeMetricsTool()
+    _, err = tool._validate(["TownHour.avgPm25"], [], None, [])
+    assert "caliber" in err
+    cube, err = tool._validate(
+        ["TownHour.avgPm25"], [], None,
+        [{"member": "TownHour.caliber", "operator": "equals", "values": ["app"]}],
+    )
+    assert cube == "TownHour"
     assert err is None
 
 
@@ -185,3 +200,11 @@ async def test_execute_requires_secret(monkeypatch):
     result = await tool.execute(measures=["SsfbCityDay.avgPm25"])
     assert result["success"] is False
     assert "CUBE_API_SECRET" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_describe_cube_returns_semantic_definition_without_cube_call():
+    result = await XuchangCubeMetricsTool().execute(describe_cube="SsfbCityRanking")
+    assert result["success"] is True
+    assert result["semantic_context"]["metric_definitions"]["rankPm25"]["name"]
+    assert "非官方" in result["semantic_context"]["limitations"][0]
