@@ -70,6 +70,28 @@ MODEL_TESTS = {
         "id": ["unique", "not_null"],
         "station_code": ["warn_not_null"],  # 窗口内实测 0% 空, 保守 warn
     },
+    "mart_station_env_power": {
+        # id 站内唯一, 联合 station_code 才全局唯一
+        "station_code": ["not_null"],
+        "timepoint": ["not_null"],
+        "pollutant_code": ["not_null"],
+    },
+    "mart_station_alarm_log": {
+        "station_code": ["warn_not_null"],
+        "alarm_time": ["not_null"],
+    },
+    "mart_qc_task_status_result": {
+        "rid": ["not_null"],
+        "station_code": ["warn_not_null"],
+    },
+    "mart_qc_air_data_result": {
+        "station_code": ["warn_not_null"],
+        "timepoint": ["not_null"],
+    },
+    "mart_qc_run_log_result": {
+        "rid": ["not_null"],
+        "record_time": ["warn_not_null"],
+    },
     "dim_device_parameter": {
         "devicemodel": ["not_null"],
         "parameterid": ["not_null"],
@@ -144,6 +166,11 @@ DATASET_TO_MODEL = {
     "mart_qc_backorder_analysis": "mart_qc_backorder_analysis",
     "dim_device_parameter": "dim_device_parameter",
     "mart_device_lifecycle_analysis": "mart_device_lifecycle_analysis",
+    "mart_station_env_power": "mart_station_env_power",
+    "mart_station_alarm_log": "mart_station_alarm_log",
+    "mart_qc_task_status_result": "mart_qc_task_status_result",
+    "mart_qc_air_data_result": "mart_qc_air_data_result",
+    "mart_qc_run_log_result": "mart_qc_run_log_result",
 }
 
 

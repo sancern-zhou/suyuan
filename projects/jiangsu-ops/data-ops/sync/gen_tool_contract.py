@@ -43,6 +43,11 @@ TABLE_ORDER = [
     "dim_device",
     "dim_device_parameter",
     "mart_device_lifecycle_analysis",
+    "mart_station_env_power",
+    "mart_station_alarm_log",
+    "mart_qc_task_status_result",
+    "mart_qc_air_data_result",
+    "mart_qc_run_log_result",
 ]
 
 HEADER = (

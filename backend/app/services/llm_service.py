@@ -238,38 +238,11 @@ class LLMService:
         self,
         auto_profile: Optional[str] = None,
     ) -> Tuple[str, str, Optional[str]]:
-        """Resolve the configured priority chain without opening a request context."""
-        active_state = _llm_request_state.get()
-        if (
-            active_state is not None
-            and active_state.get("selection_source") != "tier"
-            and (active_state.get("provider") or active_state.get("model"))
-        ):
-            return self.provider, self.model, self.request_fallbacks
+        """Resolve the configured priority chain without opening a request context.
 
-        profile = (auto_profile or "").strip().lower()
-        profile_config = {
-            "multimodal": getattr(settings, "llm_multimodal_models", "") or "",
-        }.get(profile)
-        if profile_config and profile_config.strip():
-            candidates = [
-                candidate
-                for candidate in parse_fallback_candidates("", "", profile_config)
-                if candidate.provider
-            ]
-            if candidates:
-                primary = candidates[0]
-                fallback_items = [
-                    f"{candidate.provider}/{candidate.model}"
-                    if candidate.model
-                    else candidate.provider
-                    for candidate in candidates[1:]
-                ]
-                return (
-                    primary.provider,
-                    primary.model or "",
-                    ",".join(fallback_items),
-                )
+        2026-10-16: 多模态独立链已移除(现有模型均为多模态), 所有档位/能力配置
+        共用主链(primary + LLM_FALLBACKS); auto_profile 参数保留以兼容调用方签名。
+        """
         return self.provider, self.model, self.request_fallbacks
 
     @contextmanager
@@ -338,80 +311,15 @@ class LLMService:
 
     @contextmanager
     def use_auto_profile(self, auto_profile: Optional[str]):
-        """Temporarily select a model chain for Auto based on capability profile.
+        """Capability-profile chain selection removed (2026-10-16).
 
-        Capability profiles override Flash/Pro tier selections. Explicit
-        provider/model calls remain authoritative for non-Agent callers.
+        多模态独立链已下线: 现有模型均为多模态, 全部走主链(primary + LLM_FALLBACKS)。
+        保留 contextmanager 形态以兼容既有调用方, auto_profile 仅记录不生效。
         """
         profile = (auto_profile or "").strip().lower()
-        if not profile or profile == "default":
-            yield
-            return
-        if profile == "flash":
-            # 挡位改制后 flash 复用主配置链，仅思考开关不同，无独立 profile。
-            yield
-            return
-
-        active_state = _llm_request_state.get()
-        if (
-            active_state is not None
-            and active_state.get("selection_source") != "tier"
-            and (active_state.get("provider") or active_state.get("model"))
-        ):
-            yield
-            return
-
-        profile_configs = {
-            "multimodal": getattr(settings, "llm_multimodal_models", "") or "",
-        }
-        profile_config = profile_configs.get(profile)
-        if profile_config is None:
-            logger.warning("llm_auto_profile_unsupported", auto_profile=profile)
-            yield
-            return
-        if not profile_config.strip():
-            logger.warning("llm_auto_profile_unconfigured", auto_profile=profile)
-            yield
-            return
-
-        candidates = [
-            candidate
-            for candidate in parse_fallback_candidates("", "", profile_config)
-            if candidate.provider
-        ]
-        if not candidates:
-            raise ValueError(f"No candidates configured for Auto profile: {profile}")
-
-        token = _llm_request_state.set({})
-        try:
-            state = _llm_request_state.get()
-            if state is not None:
-                state["selection_source"] = "auto_profile"
-                state["auto_profile"] = profile
-            primary = candidates[0]
-            self.provider = primary.provider
-            self._load_provider_config()
-            if primary.model:
-                self.model = primary.model
-            fallback_items = [
-                f"{candidate.provider}/{candidate.model}" if candidate.model else candidate.provider
-                for candidate in candidates[1:]
-            ]
-            self.request_fallbacks = ",".join(fallback_items)
-            logger.info(
-                "llm_request_auto_profile_selected",
-                auto_profile=profile,
-                provider=self.provider,
-                model=self.model,
-                base_url=self.base_url,
-                fallbacks=self.request_fallbacks,
-            )
-            yield
-        finally:
-            temporary_client = self.anthropic_client
-            _llm_request_state.reset(token)
-            if temporary_client is not None:
-                self._schedule_anthropic_client_close(temporary_client)
+        if profile and profile not in ("", "default"):
+            logger.info("llm_auto_profile_ignored", auto_profile=profile)
+        yield
 
     @staticmethod
     def _strip_thinking_blocks(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

@@ -40,6 +40,55 @@ from app.utils.path_config import (
 logger = structlog.get_logger(__name__)
 
 
+async def _ods_rows(sql: str, *args: Any) -> list[dict[str, Any]]:
+    """查询本地 jiangsu_ods 同步表(告警/质控工具链本地化的数据源)。
+
+    2026-10-16 起 站房告警与质控三件套工具改读本地同步表, 不再依赖
+    air/ops 平台实时接口(接口不稳定; 本地表每日/每5分钟增量)。
+    """
+    import os
+
+    import asyncpg
+
+    dsn = os.getenv("DATABASE_URL", "").replace("+asyncpg", "")
+    if not dsn:
+        raise ValueError("DATABASE_URL 未配置, 无法查询本地同步表")
+    conn = await asyncpg.connect(dsn)
+    try:
+        return [dict(row) for row in await conn.fetch(sql, *args)]
+    finally:
+        await conn.close()
+
+
+def _year_suffix(moment: str | None) -> str:
+    """按时间参数定位按年分表的后缀, 缺省用当前年份。"""
+    year = str(moment or "")[:4]
+    return year if year.isdigit() else f"{datetime.now():%Y}"
+
+
+def _alarm_grade_text(value: Any) -> str:
+    """告警级别文本; criticallevel 实测值域 20/40/60/80, 与平台接口文本对齐:
+    40/60=一般告警(基准样本实证), 80=严重告警(实证), 20=提示(推断), 未知原样返回。"""
+    text = str(value or "").strip()
+    mapping = {"20": "提示", "40": "一般告警", "60": "一般告警", "80": "严重告警"}
+    return mapping.get(text, text)
+
+
+def _as_dt(value: Any) -> datetime | None:
+    """时间参数统一转 datetime(asyncpg 不接受 timestamp 参数传字符串)。"""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _as_dt_or(value: Any, fallback: datetime) -> datetime:
+    return _as_dt(value) or fallback
+
+
 class _JiangsuAuthenticatedApi:
     def __init__(self, *, source: str) -> None:
         from config.settings import settings
@@ -167,7 +216,7 @@ class _JiangsuAuthenticatedApi:
 
 
 class JiangsuStationAlarmLogsTool(LLMTool):
-    _PATH = "stationintegrate/StationIntegrate/GetAlarmLogsAsync"
+    # 2026-10-16 起读本地区步链(jiangsu_ods.alarmlog_2026_<站> 分片), 不再调平台接口。
     # A city-wide fan-out (Nanjing: 121 stations) still needs ~90s even at
     # high concurrency, and the upstream starts timing out beyond ~20
     # in-flight requests.  Geographic scopes are therefore rejected; only
@@ -196,9 +245,8 @@ class JiangsuStationAlarmLogsTool(LLMTool):
                       **_: Any) -> dict[str, Any]:
         try:
             stations = await self._resolve_stations(station_names, station_codes, unique_codes)
-            api = _JiangsuAuthenticatedApi(source="air")
             data = list(await asyncio.gather(
-                *(self._fetch_station(api, station) for station in stations)
+                *(self._fetch_station(station) for station in stations)
             ))
             count = sum(len(item["result"].get("alarmLogs") or []) for item in data)
             failed_count = sum(1 for item in data if not item["success"])
@@ -207,21 +255,51 @@ class JiangsuStationAlarmLogsTool(LLMTool):
             if failed_count:
                 summary += f"，{failed_count} 个站点查询失败"
             return {"status": "success" if success else "failed", "success": success, "data": data,
-                    "metadata": {"source": "jiangsu_station_integrate_api", "endpoint": self._PATH,
+                    "metadata": {"source": "jiangsu_ods_local", "endpoint": "jiangsu_ods.alarmlog_2026_*",
                                  "station_count": len(stations), "record_count": count,
                                  "failed_station_count": failed_count,
                                  "queried_at": datetime.now().astimezone().isoformat()}, "summary": summary + "。"}
         except (ValueError, httpx.HTTPError) as exc:
             return {"status": "failed", "success": False, "data": {}, "summary": f"站房告警查询失败：{exc}"}
 
-    async def _fetch_station(self, api: _JiangsuAuthenticatedApi, station: dict[str, str]) -> dict[str, Any]:
+    async def _fetch_station(self, station: dict[str, str]) -> dict[str, Any]:
+        """读本地告警分片表(最近 24 小时), 输出字段与原平台接口一致。
+
+        alarmState(设备状态位)不在告警分片表中, 置空由 metadata 说明;
+        alarmStatistics 从本地行按告警级别派生。
+        """
         try:
-            payload = await api.get(self._PATH, [("StationCode", station["station_code"])])
-            result = payload.get("result") or {}
-            if not isinstance(result, dict):
-                raise ValueError("站房告警接口 result 无效")
-            return {"station": station, "result": result, "success": True}
-        except (ValueError, httpx.HTTPError) as exc:
+            table = f"alarmlog_2026_{station['station_code'].lower()}"
+            station_name = station.get("station_name") or ""
+            if not station_name:
+                name_rows = await _ods_rows(
+                    "SELECT station_name FROM jiangsu_mart.dim_station WHERE station_code = $1",
+                    station["station_code"],
+                )
+                station_name = str(name_rows[0]["station_name"]) if name_rows else ""
+            rows = await _ods_rows(
+                f"""SELECT id, uid, type, subcatalog, criticallevel, descriptionde,
+                           warningstatus, processstatus, lauchtime
+                    FROM jiangsu_ods.{table}
+                    WHERE lauchtime >= now() - interval '24 hours'
+                    ORDER BY lauchtime DESC""")
+            logs = [{
+                "stationCode": station["station_code"],
+                "stationName": station_name,
+                "description": str(row.get("descriptionde") or ""),
+                "alarmType": row.get("type"),
+                "alarmStatus": str(row.get("warningstatus") or ""),
+                "alarmTime": _qc_time_text(row.get("lauchtime")),
+                "alarmGrade": _alarm_grade_text(row.get("criticallevel")),
+            } for row in rows]
+            grades: dict[str, int] = {}
+            for log in logs:
+                grades[log["alarmGrade"] or "未分级"] = grades.get(log["alarmGrade"] or "未分级", 0) + 1
+            statistics = [{"name": name, "count": n} for name, n in grades.items()]
+            return {"station": station,
+                    "result": {"alarmLogs": logs, "alarmState": {}, "alarmStatistics": statistics},
+                    "success": True}
+        except Exception as exc:  # noqa: BLE001 - 单站失败不阻断其余站点(含无本地分片表的站点)
             return {"station": station, "result": {}, "success": False, "error": str(exc)}
 
     async def _resolve_stations(
@@ -1744,7 +1822,6 @@ class JiangsuStationEnvironmentHistoryTool(LLMTool):
 class JiangsuQcTaskHistoryTool(LLMTool):
     """Read task records first; their ``rId`` and ``rStart`` drive detail tools."""
 
-    _PATH = "operation/QualityControl/GetNewQCHisResultListAsync"
     _MAX_STATIONS = 10
 
     def __init__(self) -> None:
@@ -1774,9 +1851,8 @@ class JiangsuQcTaskHistoryTool(LLMTool):
             stations = await _resolve_direct_station_scope(
                 station_names, station_codes, unique_codes, max_stations=self._MAX_STATIONS,
             )
-            api = _JiangsuAuthenticatedApi(source="ops")
             results = list(await asyncio.gather(
-                *(self._fetch_history(api, station["station_code"], start_time, end_time, pollutant) for station in stations)
+                *(self._fetch_history(station["station_code"], start_time, end_time, pollutant) for station in stations)
             ))
             records = [record for item in results for record in item["records"]]
             failed_count = sum(1 for item in results if not item["success"])
@@ -1784,7 +1860,7 @@ class JiangsuQcTaskHistoryTool(LLMTool):
             summary = f"质控任务查询完成：并发查询 {len(stations)} 个站点，返回 {len(records)} 条记录"
             if failed_count:
                 summary += f"，{failed_count} 个站点查询失败"
-            metadata = {"source": "jiangsu_operations_api", "endpoint": self._PATH,
+            metadata = {"source": "jiangsu_ods_local", "endpoint": "jiangsu_ods.qc_his_result_<year>",
                         "station_count": len(stations), "failed_station_count": failed_count,
                         "record_count": len(records), "queried_at": datetime.now().astimezone().isoformat()}
             return {"status": "success" if records else ("empty" if success else "failed"), "success": success,
@@ -1792,15 +1868,36 @@ class JiangsuQcTaskHistoryTool(LLMTool):
         except (ValueError, httpx.HTTPError) as exc:
             return _failed("质控任务查询", exc)
 
-    async def _fetch_history(self, api: _JiangsuAuthenticatedApi, code: str,
-                             start_time: str | None, end_time: str | None,
+    async def _fetch_history(self, code: str, start_time: str | None, end_time: str | None,
                              pollutant: str | None) -> dict[str, Any]:
+        """读本地质控历史表(qc_his_result_<年>, 省控口径), 字段名与原接口行一致。"""
         try:
-            params = [("stationCode", code), *_time_range("sStart", start_time, end_time)]
-            if pollutant:
-                params.append(("poll", _identifier(pollutant, "pollutant")))
-            return {"records": _list_result(await api.get(self._PATH, params), "质控任务"), "success": True}
-        except (ValueError, httpx.HTTPError) as exc:
+            table = f"qc_his_result_{_year_suffix(start_time)}"
+            rows = await _ods_rows(
+                f"""SELECT id, rid AS "rId", uniquecode AS "uniqueCode",
+                           stationcode AS "stationCode", stationname AS "stationName",
+                           poll, qctype AS "qcType", "group",
+                           tstatus AS "tStatus", tstatusstr AS "tStatusStr",
+                           tvalue AS "tValue", rvalue AS "rValue", qcresult AS "qcResult",
+                           inac, mrk, relativeerror AS "relativeError",
+                           sstart AS "sStart", sstartstr AS "sStartStr",
+                           rstart AS "rStart", rstartstr AS "rStartStr",
+                           endtime AS "endTime", endtimestr AS "endTimeStr",
+                           issynccompleted AS "isSyncCompleted", syncerrmsg AS "syncErrMsg",
+                           createtime AS "createTime"
+                    FROM jiangsu_ods.{table}
+                    WHERE stationcode = $1
+                      AND coalesce(rstart, sstart) >= $2
+                      AND coalesce(rstart, sstart) < $3
+                      {"AND poll = $4" if pollutant else ""}
+                    ORDER BY rstart DESC""",
+                code,
+                _as_dt_or(start_time, datetime(2000, 1, 1)),
+                _as_dt_or(end_time, datetime(2999, 12, 31)),
+                *([_identifier(pollutant, "pollutant")] if pollutant else []),
+            )
+            return {"records": rows, "success": True}
+        except Exception as exc:  # noqa: BLE001
             return {"records": [], "success": False, "error": str(exc)}
 
 
@@ -1942,6 +2039,68 @@ def _qc_curve_window(detail: dict[str, Any], status: dict[str, Any], r_start: st
     )
 
 
+async def _load_qc_task_bundle(r_id: str, r_start: str):
+    """本地读取质控任务的状态载荷、运行日志行与曲线行(质控工具链共用取数核)。
+
+    返回 (status, detail, run_log_rows, curve_rows): status 为状态表行(补平台
+    camelCase 别名), run_log_rows/curve_rows 已带接口同名字段, 供 _compact_* 直接消费。
+    找不到任务时抛 ValueError。
+    """
+    year = _year_suffix(r_start)
+    status_rows = await _ods_rows(
+        f"""SELECT rid, uniquecode, stationcode, stationname, poll, qctype,
+                   sstart, rstart, jsonstr, createtime
+            FROM jiangsu_ods.qc_his_task_status_result_{year}
+            WHERE rid = $1
+            ORDER BY createtime DESC LIMIT 1""",
+        r_id,
+    )
+    if not status_rows:
+        raise ValueError(f"本地同步表未找到该质控任务状态(rid={r_id})")
+    status = dict(status_rows[0])
+    if not str(status.get("jsonstr") or "").strip():
+        raise ValueError("质控任务状态本地记录 jsonStr 为空")
+    detail = _decode_qc_payload(status.pop("jsonstr"))
+    # 本地行列名为全小写, 补平台 camelCase 别名供 _qc_task_detail_visual/_qc_curve_window 读取
+    for snake, camel in [("stationcode", "stationCode"), ("uniquecode", "uniqueCode"),
+                         ("stationname", "stationName"), ("sstart", "sStart"),
+                         ("rstart", "rStart"), ("qctype", "qcType")]:
+        status.setdefault(camel, status.get(snake))
+
+    run_log_rows = await _ods_rows(
+        f"""SELECT id, rid AS "rId", uniquecode AS "uniqueCode",
+                   stationcode AS "stationCode", stationname AS "stationName",
+                   poll, qctype AS "qcType", sstart AS "sStart", rstart AS "rStart",
+                   eventtype AS "eventType", strevent AS "strEvent", message,
+                   recordtime AS "recordTime", target, username AS "userName",
+                   createtime AS "createTime"
+            FROM jiangsu_ods.qc_his_run_log_result_{year}
+            WHERE rid = $1
+            ORDER BY recordtime""",
+        r_id,
+    )
+
+    station_code = str(_pick(status, "stationCode", "StationCode") or "").strip()
+    poll = str(_pick(status, "poll", "Poll")
+               or _pick(detail, "PollutantCode", "pollutantCode") or "").strip()
+    qc_type = str(_pick(status, "qcType", "QCType") or "").strip()
+    curve_start, curve_end = _qc_curve_window(detail, status, r_start)
+    curve_rows: list[dict[str, Any]] = []
+    if station_code and poll and qc_type and curve_start and curve_end:
+        curve_rows = await _ods_rows(
+            f"""SELECT datavalue AS "dataValue", timepoint AS "timePoint", time AS "time",
+                       unit, isqcing AS "isQCing", flag, datamark AS "dataMark"
+                FROM jiangsu_ods.qc_his_air_data_result_{year}
+                WHERE stationcode = $1 AND poll = $2 AND qctype = $3
+                  AND timepoint >= $4 AND timepoint <= $5
+                ORDER BY timepoint""",
+            station_code, poll, qc_type,
+            _as_dt_or(curve_start, datetime(2000, 1, 1)),
+            _as_dt_or(curve_end, datetime(2999, 12, 31)),
+        )
+    return status, detail, run_log_rows, curve_rows
+
+
 def _qc_task_detail_visual(
     *,
     r_id: str,
@@ -2005,7 +2164,6 @@ def _qc_task_detail_visual(
 
 
 class JiangsuQcTaskStatusTool(LLMTool):
-    _PATH = "operation/QualityControl/GetNewQCHisTaskStatusResultAsync"
 
     def __init__(self) -> None:
         super().__init__(
@@ -2026,41 +2184,18 @@ class JiangsuQcTaskStatusTool(LLMTool):
     async def execute(self, context=None, r_start: str | None = None, r_id: str | None = None, **_: Any) -> dict[str, Any]:
         try:
             r_start, r_id = _identifier(r_start, "r_start"), _identifier(r_id, "r_id")
-            api = _JiangsuAuthenticatedApi(source="ops")
-            payload = await api.get(self._PATH, [("rStart", r_start), ("rId", r_id)])
-            status = payload.get("result") or {}
-            if not isinstance(status, dict) or not status:
-                raise ValueError("质控任务状态接口 result 无效")
-            detail = _decode_qc_payload(_pick(status, "jsonStr", "JsonStr"))
+            status, detail, log_rows, curve_rows = await _load_qc_task_bundle(r_id, r_start)
 
             warnings: list[str] = []
-            run_logs: list[dict[str, Any]] = []
-            try:
-                log_payload = await api.get(
-                    JiangsuQcRunLogTool._PATH, [("rStart", r_start), ("rId", r_id)]
-                )
-                run_logs = _compact_qc_run_logs(_list_result(log_payload, "质控运行日志"))
-            except (ValueError, httpx.HTTPError) as exc:
-                warnings.append(f"质控日志未获取（{exc}）")
+            run_logs: list[dict[str, Any]] = _compact_qc_run_logs(log_rows)
 
             curve: list[dict[str, Any]] = []
             station_code = str(_pick(status, "stationCode", "StationCode") or "").strip()
             poll = str(_pick(status, "poll", "Poll")
                        or _pick(detail, "PollutantCode", "pollutantCode") or "").strip()
             qc_type = str(_pick(status, "qcType", "QCType") or "").strip()
-            curve_start, curve_end = _qc_curve_window(detail, status, r_start)
-            if station_code and poll and qc_type and curve_start and curve_end:
-                try:
-                    curve_payload = await api.get(
-                        JiangsuQcMonitoringCurveTool._PATH,
-                        [("stationCode", station_code), ("poll", _identifier(poll, "pollutant")),
-                         ("qcType", _identifier(qc_type, "qc_type")),
-                         ("timePoint", curve_start), ("timePoint", curve_end)],
-                    )
-                    curve = _compact_qc_curve(_list_result(curve_payload, "质控监测曲线"))
-                except (ValueError, httpx.HTTPError) as exc:
-                    warnings.append(f"监测曲线未获取（{exc}）")
-            else:
+            curve = _compact_qc_curve(curve_rows)
+            if not (station_code and poll and qc_type and curve_rows):
                 warnings.append("缺少站点、监测项或质控类型，未获取监测曲线")
 
             visual = _qc_task_detail_visual(
@@ -2078,7 +2213,7 @@ class JiangsuQcTaskStatusTool(LLMTool):
             if warnings:
                 summary += "；" + "；".join(warnings)
             metadata = {
-                "source": "jiangsu_operations_api", "endpoint": self._PATH,
+                "source": "jiangsu_ods_local", "endpoint": "jiangsu_ods.qc_his_task_status_result_<year>",
                 "r_start": r_start, "r_id": r_id,
                 "station_code": station_code, "unique_code": task["unique_code"],
                 "poll": poll, "qc_type": qc_type,
@@ -2109,7 +2244,6 @@ class JiangsuQcTaskStatusTool(LLMTool):
 
 
 class JiangsuQcRunLogTool(LLMTool):
-    _PATH = "operation/QualityControl/GetNewQCHisRunLogResultListAsync"
 
     def __init__(self) -> None:
         super().__init__(
@@ -2126,15 +2260,31 @@ class JiangsuQcRunLogTool(LLMTool):
     async def execute(self, context=None, r_start: str | None = None, r_id: str | None = None, **_: Any) -> dict[str, Any]:
         try:
             r_start, r_id = _identifier(r_start, "r_start"), _identifier(r_id, "r_id")
-            records = _list_result(await _JiangsuAuthenticatedApi(source="ops").get(
-                self._PATH, [("rStart", r_start), ("rId", r_id)]), "质控运行日志")
-            return _records_response(records, self._PATH, None, "质控运行日志查询完成", {"r_start": r_start, "r_id": r_id})
+            year = _year_suffix(r_start)
+            records = await _ods_rows(
+                f"""SELECT id, rid AS "rId", uniquecode AS "uniqueCode",
+                           stationcode AS "stationCode", stationname AS "stationName",
+                           poll, qctype AS "qcType", sstart AS "sStart", rstart AS "rStart",
+                           eventtype AS "eventType", strevent AS "strEvent", message,
+                           recordtime AS "recordTime", target, username AS "userName",
+                           createtime AS "createTime"
+                    FROM jiangsu_ods.qc_his_run_log_result_{year}
+                    WHERE rid = $1
+                    ORDER BY recordtime""",
+                r_id,
+            )
+            return {"status": "success" if records else "empty", "success": True,
+                    "data": records,
+                    "metadata": {"source": "jiangsu_ods_local",
+                                 "endpoint": "jiangsu_ods.qc_his_run_log_result_<year>",
+                                 "record_count": len(records),
+                                 "queried_at": datetime.now().astimezone().isoformat()},
+                    "summary": f"质控运行日志查询完成：返回 {len(records)} 条记录。"}
         except (ValueError, httpx.HTTPError) as exc:
             return _failed("质控运行日志查询", exc)
 
 
 class JiangsuQcMonitoringCurveTool(LLMTool):
-    _PATH = "operation/QualityControl/GetNewQCAirDataResultListAsync"
     _MAX_STATIONS = 10
 
     def __init__(self) -> None:
@@ -2165,9 +2315,8 @@ class JiangsuQcMonitoringCurveTool(LLMTool):
             stations = await _resolve_direct_station_scope(
                 station_names, station_codes, unique_codes, max_stations=self._MAX_STATIONS,
             )
-            api = _JiangsuAuthenticatedApi(source="ops")
             results = list(await asyncio.gather(
-                *(self._fetch_curve(api, station["station_code"], pollutant, qc_type, start_time, end_time) for station in stations)
+                *(self._fetch_curve(station["station_code"], pollutant, qc_type, start_time, end_time) for station in stations)
             ))
             records = [record for item in results for record in item["records"]]
             failed_count = sum(1 for item in results if not item["success"])
@@ -2175,7 +2324,7 @@ class JiangsuQcMonitoringCurveTool(LLMTool):
             summary = f"质控监测曲线查询完成：并发查询 {len(stations)} 个站点，返回 {len(records)} 条记录"
             if failed_count:
                 summary += f"，{failed_count} 个站点查询失败"
-            metadata = {"source": "jiangsu_operations_api", "endpoint": self._PATH,
+            metadata = {"source": "jiangsu_ods_local", "endpoint": "jiangsu_ods.qc_his_air_data_result_<year>",
                         "station_count": len(stations), "failed_station_count": failed_count,
                         "record_count": len(records), "queried_at": datetime.now().astimezone().isoformat()}
             return {"status": "success" if records else ("empty" if success else "failed"), "success": success,
@@ -2183,13 +2332,27 @@ class JiangsuQcMonitoringCurveTool(LLMTool):
         except (ValueError, httpx.HTTPError) as exc:
             return _failed("质控监测曲线查询", exc)
 
-    async def _fetch_curve(self, api: _JiangsuAuthenticatedApi, code: str, pollutant: str | None,
+    async def _fetch_curve(self, code: str, pollutant: str | None,
                            qc_type: str | None, start_time: str | None, end_time: str | None) -> dict[str, Any]:
         try:
-            params = [("stationCode", code), ("poll", _identifier(pollutant, "pollutant")),
-                      ("qcType", _identifier(qc_type, "qc_type")), *_time_range("timePoint", start_time, end_time)]
-            return {"records": _list_result(await api.get(self._PATH, params), "质控监测曲线"), "success": True}
-        except (ValueError, httpx.HTTPError) as exc:
+            table = f"qc_his_air_data_result_{_year_suffix(start_time)}"
+            rows = await _ods_rows(
+                f"""SELECT id, uniquecode AS "uniqueCode", stationcode AS "stationCode",
+                           stationname AS "stationName", poll, qctype AS "qcType",
+                           time, timepoint AS "timePoint", datavalue AS "dataValue",
+                           unit, datamark AS "dataMark", flag, isqcing AS "isQCing",
+                           createtime AS "createTime"
+                    FROM jiangsu_ods.{table}
+                    WHERE stationcode = $1
+                      AND poll = $2 AND qctype = $3
+                      AND timepoint >= $4 AND timepoint <= $5
+                    ORDER BY timepoint""",
+                code, _identifier(pollutant, "pollutant"), _identifier(qc_type, "qc_type"),
+                _as_dt_or(start_time, datetime(2000, 1, 1)),
+                _as_dt_or(end_time, datetime(2999, 12, 31)),
+            )
+            return {"records": rows, "success": True}
+        except Exception as exc:  # noqa: BLE001
             return {"records": [], "success": False, "error": str(exc)}
 
 
@@ -2996,11 +3159,7 @@ class JiangsuReviewEvidenceTool(LLMTool):
             return {"module": kind, "status": "failed", "record_count": 0, "message": str(exc)[:200]}
 
     async def _fetch_alarms_module(self, station: dict[str, Any]) -> dict[str, Any]:
-        payload = await _JiangsuAuthenticatedApi(source="air").get(
-            JiangsuStationAlarmLogsTool._PATH, [("StationCode", station["station_code"])])
-        result = payload.get("result") or {}
-        if not isinstance(result, dict):
-            raise ValueError("站房告警接口 result 无效")
+        result = await self._local_alarm_result(station)
         logs = result.get("alarmLogs") or []
         statistics = result.get("alarmStatistics") or []
         return {"module": "alarms", "status": "success",
@@ -3010,15 +3169,23 @@ class JiangsuReviewEvidenceTool(LLMTool):
                 "alarm_statistics": statistics,
                 "alarm_state": result.get("alarmState") or {}}
 
+    async def _local_alarm_result(self, station: dict[str, Any]) -> dict[str, Any]:
+        """站房告警走本地分片(与 jiangsu_fetch_station_alarm_logs 同一数据源)。"""
+        response = await JiangsuStationAlarmLogsTool().execute(
+            station_codes=[station.get("station_code") or ""])
+        items = response.get("data") or []
+        if items and items[0].get("success"):
+            return items[0].get("result") or {}
+        raise ValueError(str(items[0].get("error") or "站房告警本地查询失败") if items else "站房告警本地查询失败")
+
     async def _fetch_env_power_module(self, station: dict[str, Any],
                                       window_texts: tuple[str, str]) -> dict[str, Any]:
         """动环历史按告警门控抓取，并只保留命中阈值/状态告警的行。
 
         无动环类告警时不抓取（与智能事件取证一致）：动环正常逐时表对审核分析无价值。
+        告警门控读本地分片；动环历史本身仍走平台接口（未本地化）。
         """
-        alarm_payload = await _JiangsuAuthenticatedApi(source="air").get(
-            JiangsuStationAlarmLogsTool._PATH, [("StationCode", station["station_code"])])
-        alarm_result = alarm_payload.get("result") or {}
+        alarm_result = await self._local_alarm_result(station)
         logs = alarm_result.get("alarmLogs") if isinstance(alarm_result, dict) else None
         env_alarms = [row for row in (logs or [])
                       if isinstance(row, dict) and _is_power_environment_alarm(row)]
@@ -3055,16 +3222,15 @@ class JiangsuReviewEvidenceTool(LLMTool):
     async def _fetch_qc_module(self, station: dict[str, Any],
                                window_texts: tuple[str, str],
                                pollutant_code: str | None = None) -> dict[str, Any]:
-        """只抓目标污染物的质控任务，并附带每个任务的合格结果与质控曲线。"""
-        params = [
-            ("stationCode", station["station_code"]),
-            *_time_range("sStart", window_texts[0], window_texts[1]),
-        ]
-        if pollutant_code:
-            params.append(("poll", pollutant_code))
-        payload = await _JiangsuAuthenticatedApi(source="ops").get(
-            JiangsuQcTaskHistoryTool._PATH, params)
-        records = _list_result(payload, "质控任务")
+        """只抓目标污染物的质控任务，并附带每个任务的合格结果与质控曲线(本地 qc_his_result 链)。"""
+        response = await JiangsuQcTaskHistoryTool().execute(
+            station_codes=[station["station_code"]],
+            start_time=window_texts[0], end_time=window_texts[1],
+            pollutant=pollutant_code,
+        )
+        if not response.get("success"):
+            raise ValueError(str(response.get("summary") or "质控任务本地查询失败"))
+        records = list(response.get("data") or [])
         tasks = [task for task in records[:self._MODULE_QC_TASK_LIMIT] if isinstance(task, dict)]
         semaphore = asyncio.Semaphore(self._MODULE_QC_DETAIL_CONCURRENCY)
 
@@ -3108,37 +3274,9 @@ class JiangsuReviewEvidenceTool(LLMTool):
             base["detail_status"] = "missing_identifiers"
             return base
         try:
-            api = _JiangsuAuthenticatedApi(source="ops")
-            status_payload = await api.get(JiangsuQcTaskStatusTool._PATH,
-                                           [("rStart", r_start), ("rId", r_id)])
-            status = status_payload.get("result") or {}
-            if not isinstance(status, dict) or not status:
-                raise ValueError("质控任务状态接口 result 无效")
-            detail = _decode_qc_payload(_pick(status, "jsonStr", "JsonStr"))
-            run_logs: list[dict[str, Any]] = []
-            try:
-                log_payload = await api.get(JiangsuQcRunLogTool._PATH,
-                                            [("rStart", r_start), ("rId", r_id)])
-                run_logs = _compact_qc_run_logs(_list_result(log_payload, "质控运行日志"))
-            except (ValueError, httpx.HTTPError):
-                run_logs = []
-            curve: list[dict[str, Any]] = []
-            station_code = str(_pick(status, "stationCode", "StationCode") or "").strip()
-            poll = str(_pick(status, "poll", "Poll")
-                       or _pick(detail, "PollutantCode", "pollutantCode") or "").strip()
-            qc_type = str(_pick(status, "qcType", "QCType") or "").strip()
-            curve_start, curve_end = _qc_curve_window(detail, status, r_start)
-            if station_code and poll and qc_type and curve_start and curve_end:
-                try:
-                    curve_payload = await api.get(
-                        JiangsuQcMonitoringCurveTool._PATH,
-                        [("stationCode", station_code), ("poll", _identifier(poll, "pollutant")),
-                         ("qcType", _identifier(qc_type, "qc_type")),
-                         ("timePoint", curve_start), ("timePoint", curve_end)],
-                    )
-                    curve = _compact_qc_curve(_list_result(curve_payload, "质控监测曲线"))
-                except (ValueError, httpx.HTTPError):
-                    curve = []
+            status, detail, log_rows, curve_rows = await _load_qc_task_bundle(r_id, r_start)
+            run_logs = _compact_qc_run_logs(log_rows)
+            curve = _compact_qc_curve(curve_rows)
             visual = _qc_task_detail_visual(
                 r_id=r_id, r_start=r_start, status=status, detail=detail,
                 run_logs=run_logs, curve=curve,
@@ -3611,34 +3749,8 @@ def _parse_iso_time(value: str | None, name: str) -> datetime:
     return result.replace(tzinfo=None)
 
 
-def _list_result(payload: dict[str, Any], label: str) -> list[Any]:
-    result = payload.get("result") or []
-    if not isinstance(result, list):
-        raise ValueError(f"{label}接口 result 无效")
-    return result
-
-
-def _records_response(records: list[Any], endpoint: str, station_code: str | None, summary: str,
-                      extra_metadata: dict[str, str] | None = None) -> dict[str, Any]:
-    metadata: dict[str, Any] = {"source": "jiangsu_operations_api", "endpoint": endpoint,
-                                "record_count": len(records), "queried_at": datetime.now().astimezone().isoformat()}
-    if station_code:
-        metadata["station_code"] = station_code
-    if extra_metadata:
-        metadata.update(extra_metadata)
-    return {"status": "success" if records else "empty", "success": True, "data": records, "metadata": metadata,
-            "summary": f"{summary}：返回 {len(records)} 条记录。"}
-
-
 def _failed(label: str, exc: Exception) -> dict[str, Any]:
     return {"status": "failed", "success": False, "data": [], "summary": f"{label}失败：{exc}"}
-
-
-def _time_range(key: str, start_time: str | None, end_time: str | None) -> list[tuple[str, str]]:
-    start, end = _identifier(start_time, "start_time"), _identifier(end_time, "end_time")
-    if start > end:
-        raise ValueError("开始时间不能晚于结束时间")
-    return [(key, start), (key, end)]
 
 
 def _identifier(value: str | None, name: str) -> str:

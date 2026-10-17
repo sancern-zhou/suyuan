@@ -108,11 +108,23 @@ class RemoveMemoryTool(LLMTool):
             if current_mode and current_mode != "social":
                 store = CuratedFactStore(Path(self._get_memory_file_path()).parent)
                 result = store.remove(old_text, category)
-                return {
+                payload = {
                     "success": result == "removed",
                     "status": result,
                     "summary": f"共享事实删除结果：{result}",
                 }
+                if result == "not_found":
+                    suggestions = store.suggest(old_text, category)
+                    if suggestions:
+                        listing = " ；".join(
+                            f"[{s['name']}] {s['fact']}" for s in suggestions
+                        )
+                        payload["error"] = f"未找到匹配条目。最接近的现有条目：{listing}"
+                        payload["summary"] = (
+                            "共享事实删除结果：not_found（已附最接近条目，"
+                            "请改用其原文作为 old_text 重试）"
+                        )
+                return payload
             memory_file = Path(memory_file_path)
 
             if not memory_file.exists():

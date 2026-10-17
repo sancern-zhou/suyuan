@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import difflib
 from datetime import date, datetime, timezone
 import fcntl
 import os
@@ -19,6 +20,10 @@ from app.utils.path_config import format_agent_path
 class CuratedFactStore:
     INDEX_LIMIT = 200
     INDEX_CHAR_LIMIT = 25_000
+    # 模型给的 old_text 常是转述或标点不一致的片段；严格子串未命中时按相似度兜底。
+    # 高阈值 + 候选数上限，避免把"没找到"变成"改错条目"。
+    FUZZY_RATIO_THRESHOLD = 0.72
+    FUZZY_MATCH_CAP = 2
 
     def __init__(self, workspace: Path) -> None:
         self.root = Path(workspace).resolve() / "facts"
@@ -123,10 +128,50 @@ class CuratedFactStore:
         needle = self._normalize(old_text)
         if not needle:
             return []
-        return [
+
+        def _typed(record: dict[str, Any]) -> bool:
+            return not category or record.get("metadata", {}).get("type") == category
+
+        strict = [
             record for record in self._records()
             if (needle in self._normalize(record["fact"]) or needle == record["name"])
-            and (not category or record.get("metadata", {}).get("type") == category)
+            and _typed(record)
+        ]
+        if strict:
+            return strict
+        scored: list[tuple[float, dict[str, Any]]] = []
+        for record in self._records():
+            if not _typed(record):
+                continue
+            ratio = difflib.SequenceMatcher(None, needle, self._normalize(record["fact"])).ratio()
+            if ratio >= self.FUZZY_RATIO_THRESHOLD:
+                scored.append((ratio, record))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return [record for _, record in scored[: self.FUZZY_MATCH_CAP]]
+
+    def suggest(self, old_text: str, category: str | None = None, limit: int = 3) -> list[dict[str, Any]]:
+        """not_found 时返回最接近的现有条目，供模型改用原文重试，省一轮试错。"""
+        needle = self._normalize(old_text)
+        if not needle:
+            return []
+        scored: list[tuple[float, dict[str, Any]]] = []
+        for record in self._records():
+            if category and record.get("metadata", {}).get("type") != category:
+                continue
+            hay = self._normalize(record["fact"])
+            ratio = difflib.SequenceMatcher(None, needle, hay).ratio()
+            if needle in hay or hay in needle:
+                ratio = max(ratio, 0.9)
+            if ratio >= 0.4:
+                scored.append((ratio, record))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return [
+            {
+                "name": record["name"],
+                "fact": record["fact"][:160],
+                "score": round(score, 2),
+            }
+            for score, record in scored[:limit]
         ]
 
     def replace(self, old_text: str, new_text: str, category: str | None = None) -> str:

@@ -61,18 +61,45 @@ def test_station_fault_diagnosis_exposes_only_read_only_evidence_and_knowledge_t
     ]
 
 
+def _ods_stub(tables):
+    """本地 _ods_rows 测试替身: 按 SQL 中的表名关键词返回夹具行。"""
+    async def fake_ods(sql, *args):
+        for key, rows in tables.items():
+            if key in sql:
+                return [dict(row) for row in rows]
+        return []
+    return fake_ods
+
+
+def _alarmlog_row(**overrides):
+    from datetime import datetime as _dt
+    row = {"id": 1, "uid": "u1", "type": 5, "subcatalog": None, "criticallevel": 60,
+           "source": None, "descriptionde": "测试告警", "warningstatus": 1,
+           "processstatus": None, "lauchtime": _dt(2026, 10, 16, 1, 7, 44),
+           "lastdetecttime": None, "resumetime": None, "showmethodint": None,
+           "imgpath": None, "flagint": None, "healthcount": None}
+    row.update(overrides)
+    return row
+
+
 @pytest.mark.asyncio
 async def test_station_alarm_logs_exposes_structured_station_result(monkeypatch):
-    async def fake_get(self, path, params):
-        assert path.endswith("GetAlarmLogsAsync")
-        assert params == [("StationCode", "1002A")]
-        return {"success": True, "result": {"alarmLogs": [{"id": 1}], "alarmStatistics": [], "alarmState": {}}}
+    async def fake_ods(sql, *args):
+        if "dim_station" in sql:
+            return [{"station_name": "测试站"}]
+        assert "alarmlog_2026_1002a" in sql
+        return [_alarmlog_row()]
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._ods_rows", fake_ods)
 
-    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
     result = await JiangsuStationAlarmLogsTool().execute(station_codes=["1002A"])
 
     assert result["success"] is True
     assert result["metadata"]["record_count"] == 1
+    assert result["metadata"]["source"] == "jiangsu_ods_local"
+    log = result["data"][0]["result"]["alarmLogs"][0]
+    assert log["stationName"] == "测试站"
+    assert log["alarmGrade"] == "一般告警"  # criticallevel 60
+    assert result["data"][0]["result"]["alarmState"] == {}
 
 
 @pytest.mark.asyncio
@@ -101,38 +128,41 @@ async def test_station_alarm_logs_queries_direct_station_list_concurrently(monke
 
     active = 0
     max_active = 0
-    requested_codes = []
+    queried_tables = []
 
-    async def fake_get(self, path, params):
+    async def fake_ods(sql, *args):
         nonlocal active, max_active
-        assert path.endswith("GetAlarmLogsAsync")
+        if "dim_station" in sql:
+            return [{"station_name": "测试站"}]
         active += 1
         max_active = max(max_active, active)
         await asyncio.sleep(0.05)
         active -= 1
-        requested_codes.append(params[0][1])
-        return {"success": True, "result": {"alarmLogs": [{"id": 1}]}}
+        queried_tables.append(sql)
+        return [_alarmlog_row()]
 
-    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._ods_rows", fake_ods)
     result = await JiangsuStationAlarmLogsTool().execute(station_codes=["1001A", "1002A"])
 
     assert result["success"] is True
     assert result["metadata"]["station_count"] == 2
     assert result["metadata"]["record_count"] == 2
-    assert sorted(requested_codes) == ["1001A", "1002A"]
+    assert sum(1 for sql in queried_tables if "alarmlog_2026_1001a" in sql) == 1
+    assert sum(1 for sql in queried_tables if "alarmlog_2026_1002a" in sql) == 1
     assert max_active == 2
     assert "并发查询 2 个站点" in result["summary"]
 
 
 @pytest.mark.asyncio
 async def test_station_alarm_logs_keeps_partial_results_when_one_station_fails(monkeypatch):
-    async def fake_get(self, path, params):
-        assert path.endswith("GetAlarmLogsAsync")
-        if params == [("StationCode", "1002A")]:
-            raise ValueError("站房告警接口 result 无效")
-        return {"success": True, "result": {"alarmLogs": [{"id": 1}]}}
+    async def fake_ods(sql, *args):
+        if "dim_station" in sql:
+            return [{"station_name": "测试站"}]
+        if "alarmlog_2026_1002a" in sql:
+            raise ValueError("站点无本地告警分片表")
+        return [_alarmlog_row()]
 
-    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._ods_rows", fake_ods)
     result = await JiangsuStationAlarmLogsTool().execute(station_codes=["1001A", "1002A"])
 
     assert result["success"] is True
@@ -681,15 +711,37 @@ async def test_alarm_records_resolves_province_selector_without_station_codes(mo
     assert result["metadata"]["station_codes"] == ["1001A", "1002A"]
 
 
+def _qc_history_row(**overrides):
+    from datetime import datetime as _dt
+    row = {"id": 1, "rId": "task-1", "uniqueCode": "U1", "stationCode": "1002A",
+           "stationName": "测试站", "poll": "SO2", "qcType": "零点检查", "group": None,
+           "tStatus": 0, "tStatusStr": "执行完成", "tValue": None, "rValue": None,
+           "qcResult": None, "inac": None, "mrk": None, "relativeError": None,
+           "sStart": None, "sStartStr": None, "rStart": _dt(2026, 8, 12, 10, 0, 0),
+           "rStartStr": None, "endTime": None, "endTimeStr": None,
+           "isSyncCompleted": None, "syncErrMsg": None, "createTime": None}
+    row.update(overrides)
+    return row
+
+
 @pytest.mark.asyncio
-async def test_qc_history_and_curve_use_repeated_time_range_parameters(monkeypatch):
-    seen = []
+async def test_qc_history_and_curve_filter_local_tables_by_window_and_pollutant(monkeypatch):
+    captured = {}
 
-    async def fake_get(self, path, params):
-        seen.append((path, params))
-        return {"success": True, "result": [{"rId": "task-1", "rStart": "2026-08-12 10:00:00"}]}
+    async def fake_ods(sql, *args):
+        if "qc_his_result_2026" in sql:
+            captured["history_args"] = args
+            return [_qc_history_row(poll="SO2")]
+        if "qc_his_air_data_result" in sql:
+            captured["curve_args"] = args
+            return [{"id": 1, "dataValue": 1.2, "timePoint": "2026-08-12 10:01:00",
+                     "time": None, "unit": "ppb", "dataMark": None, "flag": 0,
+                     "isQCing": True, "uniqueCode": "U1", "stationCode": "1002A",
+                     "stationName": "测试站", "poll": "SO2", "qcType": "零点检查",
+                     "createTime": None}]
+        return []
 
-    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._ods_rows", fake_ods)
     history = await JiangsuQcTaskHistoryTool().execute(
         station_codes=["1002A"], start_time="2026-08-12 00:00:00", end_time="2026-08-12 23:59:59", pollutant="SO2"
     )
@@ -699,11 +751,19 @@ async def test_qc_history_and_curve_use_repeated_time_range_parameters(monkeypat
     )
 
     assert history["success"] is True
+    assert history["data"][0]["rId"] == "task-1"
+    # 站点 + 窗口(datetime) + 污染物过滤参数
+    assert captured["history_args"][0] == "1002A"
+    assert str(captured["history_args"][1]).startswith("2026-08-12 00:00:00")
+    assert str(captured["history_args"][2]).startswith("2026-08-12 23:59:59")
+    assert captured["history_args"][3] == "SO2"
+
     assert curve["success"] is True
-    assert seen[0][0].endswith("GetNewQCHisResultListAsync")
-    assert seen[0][1][1:3] == [("sStart", "2026-08-12 00:00:00"), ("sStart", "2026-08-12 23:59:59")]
-    assert seen[1][0].endswith("GetNewQCAirDataResultListAsync")
-    assert seen[1][1][-2:] == [("timePoint", "2026-08-12 10:00:00"), ("timePoint", "2026-08-12 10:10:00")]
+    assert captured["curve_args"][0] == "1002A"
+    assert captured["curve_args"][1] == "SO2"
+    assert captured["curve_args"][2] == "零点校准"
+    assert str(captured["curve_args"][3]).startswith("2026-08-12 10:00:00")
+    assert str(captured["curve_args"][4]).startswith("2026-08-12 10:10:00")
 
 
 @pytest.mark.asyncio
@@ -733,19 +793,20 @@ async def test_qc_history_queries_direct_station_list_concurrently(monkeypatch):
 
     active = 0
     max_active = 0
-    requested_codes = []
+    queried_codes = []
 
-    async def fake_get(self, path, params):
+    async def fake_ods(sql, *args):
         nonlocal active, max_active
-        assert path.endswith("GetNewQCHisResultListAsync")
-        active += 1
-        max_active = max(max_active, active)
-        await asyncio.sleep(0.05)
-        active -= 1
-        requested_codes.append(params[0][1])
-        return {"success": True, "result": [{"rId": "task-1"}]}
+        if "qc_his_result_2026" in sql:
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.05)
+            active -= 1
+            queried_codes.append(args[0])
+            return [_qc_history_row()]
+        return []
 
-    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._ods_rows", fake_ods)
     result = await JiangsuQcTaskHistoryTool().execute(
         station_codes=["1001A", "1002A"], start_time="2026-08-12 00:00:00", end_time="2026-08-12 23:59:59"
     )
@@ -753,7 +814,7 @@ async def test_qc_history_queries_direct_station_list_concurrently(monkeypatch):
     assert result["success"] is True
     assert result["metadata"]["station_count"] == 2
     assert result["metadata"]["record_count"] == 2
-    assert sorted(requested_codes) == ["1001A", "1002A"]
+    assert sorted(queried_codes) == ["1001A", "1002A"]
     assert max_active == 2
     assert "并发查询 2 个站点" in result["summary"]
 
@@ -1082,6 +1143,30 @@ async def test_review_evidence_requires_single_station():
 async def test_review_evidence_modules_gather_alarm_env_qc_in_parallel(monkeypatch):
     seen_paths = []
 
+    async def fake_ods(sql, *args):
+        if "alarmlog_2026_" in sql:
+            # 含一条动环类告警（AlarmType=1150）触发动环抓取门控
+            return [_alarmlog_row(id=index, type=1150 if index == 0 else 999,
+                                  criticallevel=60 if index else 80)
+                    for index in range(60)]
+        if "qc_his_result_2026" in sql:
+            from datetime import datetime as _dt
+            return [_qc_history_row(rId="task-1", rStart=_dt(2026, 9, 14, 10, 0, 0),
+                                    poll="PM10", qcType="零气检查", sStart=_dt(2026, 9, 14, 10, 0, 0))]
+        if "qc_his_task_status_result" in sql:
+            return [{"rid": "task-1", "uniquecode": "320100397", "stationcode": "7099A",
+                     "stationname": "阜宁滨湖", "poll": "PM10", "qctype": "零气检查",
+                     "sstart": None, "rstart": None,
+                     "jsonstr": "{}", "createtime": None}]
+        if "qc_his_run_log_result" in sql:
+            return []
+        if "qc_his_air_data_result" in sql:
+            return [{"id": 1, "dataValue": 1.2, "timePoint": "2026-09-14 10:00:00", "time": None,
+                     "unit": "μg/m³", "dataMark": None, "flag": None, "isQCing": True,
+                     "uniqueCode": "320100397", "stationCode": "7099A", "stationName": "阜宁滨湖",
+                     "poll": "PM10", "qcType": "零气检查", "createTime": None}]
+        return []
+
     async def fake_get(self, path, params):
         seen_paths.append(path)
         if path.endswith("GetAllEnabledBSDStationAsync"):
@@ -1089,31 +1174,11 @@ async def test_review_evidence_modules_gather_alarm_env_qc_in_parallel(monkeypat
                 {"positionName": "阜宁滨湖", "cityName": "盐城市", "districtName": "阜宁县",
                  "stationCode": "7099A", "uniqueCode": "320100397"},
             ]}
-        if path.endswith("GetAlarmLogsAsync"):
-            # 含一条动环类告警（AlarmType=1150）触发动环抓取门控
-            return {"success": True, "result": {"alarmLogs": [
-                {"id": index, "AlarmType": 1150 if index == 0 else 999} for index in range(60)],
-                "alarmStatistics": [{"x": 1}], "alarmState": {"a": 1}}}
         if path.endswith("GetStationEnvPowerData"):
             return {"success": True, "result": {
                 "tableData": [{"timePoint": f"h{index}", "StationTemp": 26 if index else 88}
                               for index in range(60)],
                 "chartData": [{"timePoint": "t", "StationTemp": 26, "SmokeState": 0}]}}
-        if path.endswith("GetNewQCHisResultListAsync"):
-            return {"success": True, "result": [
-                {"rId": "task-1", "rStart": "2026-09-14 10:00:00", "poll": "PM10", "qcType": "零气检查"},
-            ]}
-        if path.endswith("GetNewQCHisTaskStatusResultAsync"):
-            return {"success": True, "result": {
-                "rStart": "2026-09-14 10:00:00", "rId": "task-1",
-                "stationCode": "7099A", "poll": "PM10", "qcType": "零气检查",
-                "jsonStr": "{}"}}
-        if path.endswith("GetNewQCHisRunLogResultListAsync"):
-            return {"success": True, "result": []}
-        if path.endswith("GetNewQCAirDataResultListAsync"):
-            return {"success": True, "result": [
-                {"dataValue": 1.2, "timePoint": "2026-09-14 10:00:00", "unit": "μg/m³", "isQCing": True},
-            ]}
         raise AssertionError(f"unexpected path {path}")
 
     async def fake_raw_records(self, **kwargs):
@@ -1125,6 +1190,7 @@ async def test_review_evidence_modules_gather_alarm_env_qc_in_parallel(monkeypat
     async def fake_same_city_band(station, start_time, end_time, pollutant, *, station_data_tool=None):
         return {"status": "empty", "station_count": 0, "band": []}
 
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._ods_rows", fake_ods)
     monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
     monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis.JiangsuStationDataTool.fetch_raw_records", fake_raw_records)
     monkeypatch.setattr("app.fetchers.weather.jiangsu_review_weather.fetch_city_weather", fake_city_weather)
@@ -1136,12 +1202,10 @@ async def test_review_evidence_modules_gather_alarm_env_qc_in_parallel(monkeypat
     )
 
     assert result["success"] is True
-    assert any(path.endswith("GetAlarmLogsAsync") for path in seen_paths)
+    # 动环历史保持平台接口(未本地化); 告警/质控已走本地, 不应再出现对应接口调用
     assert any(path.endswith("GetStationEnvPowerData") for path in seen_paths)
-    assert any(path.endswith("GetNewQCHisResultListAsync") for path in seen_paths)
-    # 质控任务带动合格结果与质控曲线
-    assert any(path.endswith("GetNewQCHisTaskStatusResultAsync") for path in seen_paths)
-    assert any(path.endswith("GetNewQCAirDataResultListAsync") for path in seen_paths)
+    assert not any(path.endswith("GetAlarmLogsAsync") for path in seen_paths)
+    assert not any(path.endswith("GetNewQCHisResultListAsync") for path in seen_paths)
 
     # 模块明细只进证据包分文件；tool_result 中是投影索引
     index = result["data"]["evidence_index"]
@@ -1168,16 +1232,19 @@ async def test_review_evidence_modules_gather_alarm_env_qc_in_parallel(monkeypat
 
 @pytest.mark.asyncio
 async def test_review_evidence_module_failure_degrades_without_breaking_chart(monkeypatch):
+    async def fake_ods(sql, *args):
+        if "alarmlog_2026_" in sql:
+            raise ValueError("站点无本地告警分片表")
+        if "qc_his_result_2026" in sql:
+            return []
+        return []
+
     async def fake_get(self, path, params):
         if path.endswith("GetAllEnabledBSDStationAsync"):
             return {"success": True, "result": [
                 {"positionName": "阜宁滨湖", "cityName": "盐城市", "districtName": "阜宁县",
                  "stationCode": "7099A", "uniqueCode": "320100397"},
             ]}
-        if path.endswith("GetAlarmLogsAsync"):
-            raise ValueError("站房告警接口 result 无效")
-        if path.endswith("GetNewQCHisResultListAsync"):
-            return {"success": True, "result": []}
         raise AssertionError(f"unexpected path {path}")
 
     async def fake_raw_records(self, **kwargs):
@@ -1189,6 +1256,7 @@ async def test_review_evidence_module_failure_degrades_without_breaking_chart(mo
     async def fake_same_city_band(station, start_time, end_time, pollutant, *, station_data_tool=None):
         return {"status": "empty", "station_count": 0, "band": []}
 
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._ods_rows", fake_ods)
     monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
     monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis.JiangsuStationDataTool.fetch_raw_records", fake_raw_records)
     monkeypatch.setattr("app.fetchers.weather.jiangsu_review_weather.fetch_city_weather", fake_city_weather)
@@ -1214,14 +1282,17 @@ async def test_review_evidence_qc_detail_timeout_degrades_to_summary(monkeypatch
     """质控详情超时应降级为任务概要，不拖挂整次取证。"""
     import app.tools.jiangsu.fault_diagnosis as module
 
+    async def fake_ods(sql, *args):
+        if "qc_his_result_2026" in sql:
+            return [_qc_history_row(rId="task-1", rStart=None, poll="PM10", qcType="零气检查",
+                                    sStart=None)]
+        return []
+
     async def fake_get(self, path, params):
         if path.endswith("GetAllEnabledBSDStationAsync"):
             return {"success": True, "result": [
                 {"positionName": "阜宁滨湖", "cityName": "盐城市", "districtName": "阜宁县",
                  "stationCode": "7099A", "uniqueCode": "320100397"}]}
-        if path.endswith("GetNewQCHisResultListAsync"):
-            return {"success": True, "result": [
-                {"rId": "task-1", "rStart": "2026-09-14 10:00:00", "poll": "PM10", "qcType": "零气检查"}]}
         raise AssertionError(f"unexpected path {path}")
 
     async def fake_raw_records(self, **kwargs):
@@ -1237,6 +1308,7 @@ async def test_review_evidence_qc_detail_timeout_degrades_to_summary(monkeypatch
         await asyncio.sleep(5)
         return {}
 
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._ods_rows", fake_ods)
     monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
     monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis.JiangsuStationDataTool.fetch_raw_records", fake_raw_records)
     monkeypatch.setattr("app.fetchers.weather.jiangsu_review_weather.fetch_city_weather", fake_city_weather)
@@ -1272,19 +1344,26 @@ def test_review_evidence_rejects_unknown_module():
 
 @pytest.mark.asyncio
 async def test_qc_run_log_uses_task_identifiers(monkeypatch):
-    async def fake_get(self, path, params):
-        assert path.endswith("GetNewQCHisRunLogResultListAsync")
-        assert params == [("rStart", "2026-08-12 10:00:00"), ("rId", "task-1")]
-        return {"success": True, "result": [{"recordTime": "2026-08-12 10:01:00"}]}
+    captured = {}
 
-    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    async def fake_ods(sql, *args):
+        if "qc_his_run_log_result" in sql:
+            captured["args"] = args
+            return [{"id": 1, "rId": "task-1", "uniqueCode": "U1", "stationCode": "1002A",
+                     "stationName": "测试站", "poll": "SO2", "qcType": "零点检查",
+                     "sStart": None, "rStart": None, "eventType": 6, "strEvent": "提示信息",
+                     "message": "开始执行", "recordTime": "2026-08-12 10:01:00",
+                     "target": "质控", "userName": None, "createTime": None}]
+        return []
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._ods_rows", fake_ods)
     result = await JiangsuQcRunLogTool().execute(r_start="2026-08-12 10:00:00", r_id="task-1")
     assert result["metadata"]["record_count"] == 1
+    assert captured["args"] == ("task-1",)
 
 
 @pytest.mark.asyncio
 async def test_qc_task_status_builds_detail_visual_with_logs_and_curve(monkeypatch):
-    seen = []
     status_detail = {
         "StrStartTime": "2026-09-16 00:10:09",
         "StrEndTime": "2026-09-16 00:23:52",
@@ -1300,25 +1379,32 @@ async def test_qc_task_status_builds_detail_visual_with_logs_and_curve(monkeypat
         "DataValues": [{"DataName": "漂移", "DataValue": "0.01"}],
     }
 
-    async def fake_get(self, path, params):
-        seen.append((path, params))
-        if path.endswith("GetNewQCHisTaskStatusResultAsync"):
-            return {"success": True, "result": {
-                "rId": "task-1", "rStart": "2026-09-16 00:10:09",
-                "stationCode": "7099A", "uniqueCode": "320100397",
-                "stationName": "江苏省环境监测中心超站",
-                "poll": "O3", "qcType": "零点检查",
-                "jsonStr": json.dumps(status_detail, ensure_ascii=False),
-            }}
-        if path.endswith("GetNewQCHisRunLogResultListAsync"):
-            return {"success": True, "result": [
-                {"recordTime": "2026-09-16 00:11:00", "target": "质控", "message": "开始零点检查"},
-            ]}
-        assert path.endswith("GetNewQCAirDataResultListAsync")
-        return {"success": True, "result": [
-            {"timePoint": "2026-09-16 00:10:00", "dataValue": 1.2, "unit": "ppb", "isQCing": True, "flag": 0},
-            {"timePoint": "2026-09-16 00:20:00", "dataValue": 1.6, "unit": "ppb", "isQCing": True, "flag": 0},
-        ]}
+    async def fake_ods(sql, *args):
+        if "qc_his_task_status_result" in sql:
+            assert args == ("task-1",)
+            return [{
+                "rid": "task-1", "uniquecode": "320100397", "stationcode": "7099A",
+                "stationname": "江苏省环境监测中心超站", "poll": "O3", "qctype": "零点检查",
+                "sstart": None, "rstart": None,
+                "jsonstr": json.dumps(status_detail, ensure_ascii=False), "createtime": None,
+            }]
+        if "qc_his_run_log_result" in sql:
+            return [{"id": 1, "rId": "task-1", "uniqueCode": "320100397", "stationCode": "7099A",
+                     "stationName": "江苏省环境监测中心超站", "poll": "O3", "qcType": "零点检查",
+                     "sStart": None, "rStart": None, "eventType": None, "strEvent": None,
+                     "message": "开始零点检查", "recordTime": "2026-09-16 00:11:00",
+                     "target": "质控", "userName": None, "createTime": None}]
+        assert "qc_his_air_data_result" in sql
+        return [
+            {"id": 1, "dataValue": 1.2, "timePoint": "2026-09-16 00:10:00", "time": None,
+             "unit": "ppb", "dataMark": None, "flag": 0, "isQCing": True,
+             "uniqueCode": "320100397", "stationCode": "7099A", "stationName": "超站",
+             "poll": "O3", "qcType": "零点检查", "createTime": None},
+            {"id": 2, "dataValue": 1.6, "timePoint": "2026-09-16 00:20:00", "time": None,
+             "unit": "ppb", "dataMark": None, "flag": 0, "isQCing": True,
+             "uniqueCode": "320100397", "stationCode": "7099A", "stationName": "超站",
+             "poll": "O3", "qcType": "零点检查", "createTime": None},
+        ]
 
     captured = {}
 
@@ -1333,7 +1419,7 @@ async def test_qc_task_status_builds_detail_visual_with_logs_and_curve(monkeypat
             "capabilities": ["preview"], "tool_name": tool_name,
         }]
 
-    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._ods_rows", fake_ods)
     monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis.resources_for_visuals", fake_resources_for_visuals)
     result = await JiangsuQcTaskStatusTool().execute(r_start="2026-09-16 00:10:09", r_id="task-1")
 
@@ -1344,6 +1430,7 @@ async def test_qc_task_status_builds_detail_visual_with_logs_and_curve(monkeypat
     detail = visual["data"]["qc_task_detail"]
     assert detail["task"]["qc_result"] == "合格"
     assert detail["task"]["task_status_label"] == "结束"
+    assert detail["task"]["station_name"] == "江苏省环境监测中心超站"
     assert detail["steps"][0]["name"] == "准备"
     assert detail["result_values"][0]["name"] == "零点响应"
     assert detail["run_logs"][0]["message"] == "开始零点检查"
@@ -1351,13 +1438,6 @@ async def test_qc_task_status_builds_detail_visual_with_logs_and_curve(monkeypat
     assert result["metadata"]["curve_point_count"] == 2
     assert result["resources"][0]["renderer"] == "chart"
     assert captured["tool_name"] == "jiangsu_fetch_qc_task_status"
-    assert seen[1][1] == [("rStart", "2026-09-16 00:10:09"), ("rId", "task-1")]
-    curve_params = seen[2][1]
-    assert ("stationCode", "7099A") in curve_params
-    assert ("poll", "O3") in curve_params
-    assert ("qcType", "零点检查") in curve_params
-    assert curve_params[-2][1] == "2026-09-16 00:08:09"
-    assert curve_params[-1][1] == "2026-09-16 00:25:52"
 
 
 

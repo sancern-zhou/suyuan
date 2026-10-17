@@ -1,25 +1,29 @@
 @echo off
-rem Daily job 02:30: dict/full refresh + å­—å…¸è¡¨SCD2å¿«ç…§ + daily marts + reconciliation + DQ
-rem   dbt åŒ–(2026-10-02): dbt snapshot å¯¹ 19 å¼ å­—å…¸/è§„åˆ™è¡¨åšæ•´è¡Œå“ˆå¸Œå˜æ›´ç•™ç—•
-rem   (alm_rule æ— æ›´æ–°æ—¶é—´åˆ—çš„é—®é¢˜è‡ªæ­¤æœ‰è§£: å˜æ›´åŽ†å²æŸ¥ jiangsu_snapshot.alm_rule)
-rem   dbt build tag:daily: dim_device/æ—¥æ¦‚å†µ/è´¨æŽ§å®‰æŽ’/æœˆåº¦è€ƒæ ¸/åœç”µå®½è¡¨(å«æ•°æ®æµ‹è¯•)
+rem Daily job 02:30: dict/full refresh + ×Öµä±íSCD2¿ìÕÕ + daily marts + reconciliation + DQ
+rem   dbt »¯(2026-10-02): dbt snapshot ¶Ô 19 ÕÅ×Öµä/¹æÔò±í×öÕûÐÐ¹þÏ£±ä¸üÁôºÛ
+rem   (alm_rule ÎÞ¸üÐÂÊ±¼äÁÐµÄÎÊÌâ×Ô´ËÓÐ½â: ±ä¸üÀúÊ·²é jiangsu_snapshot.alm_rule)
+rem   dbt build tag:daily: dim_device/ÈÕ¸Å¿ö/ÖÊ¿Ø°²ÅÅ/ÔÂ¶È¿¼ºË/Í£µç¿í±í(º¬Êý¾Ý²âÊÔ)
 cd /d E:\Tools\suyuan-jiangsu\sync
 set FULLLIST=opa_user_info bsd_device bsd_devicetype qc_task bsd_city qc_arrangeresult qc_historymonthresultoverview pw_task opa_performance_tworate opa_performance_qaqc opa_qcqa_deduction mtc_blackout mtc_dataentry mtc_dataentry_data mtc_fault wo_commonfile log_device qc_backorderarrangelog bsd_supply bsd_moniter_parameter dev_scrap bsd_region bsd_usergroup bsd_usergroup_user bsd_usergroup_station bsd_usergroup_station_devicetype bsd_maintenanceunit mtc_faultcontent mtc_faultcontentitem alm_rule wfl_workflow wfl_workflowtask rf_ruleitem qa_standardmaterialstorage
 for %%t in (%FULLLIST%) do (
     E:\Tools\Python311\python.exe sync_table.py %%t --full >> sync_%%t.log 2>&1
 )
+rem Õ¾·¿¶¯»·Ð¡Ê±·ÖÆ¬±í(integrated_h_2026_*, 100Õ¾): ÅúÁ¿ÔöÁ¿(Ê×´Î×Ô¶¯È«Á¿»ØÌî2026-10Æð)
+echo [%date% %time%] env hourly shards begin >> sync_integrated_env.log 2>&1
+E:\Tools\Python311\python.exe sync_env_hourly.py >> sync_integrated_env.log 2>&1
+echo [%date% %time%] env hourly shards exit=%errorlevel% >> sync_integrated_env.log
 echo [%date% %time%] dbt snapshot + build tag:daily >> sync_mart.log 2>&1
-rem PYTHONUTF8=1: dbt æŒ‰ UTF-8 è¯»å«ä¸­æ–‡æ³¨é‡Šçš„æ¨¡åž‹æ–‡ä»¶(è®¡åˆ’ä»»åŠ¡é»˜è®¤ GBK ä¼š UnicodeDecodeError)
+rem PYTHONUTF8=1: dbt °´ UTF-8 ¶Áº¬ÖÐÎÄ×¢ÊÍµÄÄ£ÐÍÎÄ¼þ(¼Æ»®ÈÎÎñÄ¬ÈÏ GBK »á UnicodeDecodeError)
 set "PYTHONUTF8=1"
 E:\Tools\suyuan-jiangsu\dbt-venv\Scripts\dbt.exe snapshot --project-dir E:\Tools\suyuan-jiangsu\dbt --profiles-dir E:\Tools\suyuan-jiangsu\dbt --no-use-colors >> sync_mart.log 2>&1
 echo [%date% %time%] dbt snapshot exit=%errorlevel% >> sync_mart.log
 E:\Tools\suyuan-jiangsu\dbt-venv\Scripts\dbt.exe build --project-dir E:\Tools\suyuan-jiangsu\dbt --profiles-dir E:\Tools\suyuan-jiangsu\dbt --select tag:daily --no-use-colors >> sync_mart.log 2>&1
 echo [%date% %time%] dbt build tag:daily exit=%errorlevel% >> sync_mart.log
-rem dbt å¤±è´¥æ—¶è®©è®¡åˆ’ä»»åŠ¡ LastTaskResult éž 0(dq çš„ SLA å‘Šè­¦è¦éš”å¤©æ‰å‘çŽ°, é€€å‡ºç å½“åœºå¯è§)
+rem dbt Ê§°ÜÊ±ÈÃ¼Æ»®ÈÎÎñ LastTaskResult ·Ç 0(dq µÄ SLA ¸æ¾¯Òª¸ôÌì²Å·¢ÏÖ, ÍË³öÂëµ±³¡¿É¼û)
 if not "%errorlevel%"=="0" exit /b %errorlevel%
 set CHECKLIST=mtc_working_order mtc_working_order_detail alm_summary opa_kq_attendance bsd_station mot_alarm opa_user_info bsd_device bsd_devicetype qc_task bsd_city qc_his_result_2026 qc_arrangeresult qc_historymonthresultoverview pw_taskitem mtc_taskitem pw_task opa_performance_tworate opa_performance_qaqc opa_qcqa_deduction mtc_blackout mtc_dataentry mtc_dataentry_data mtc_fault wo_commonfile log_device qc_backorderarrangelog bsd_supply bsd_moniter_parameter dev_scrap bsd_region bsd_usergroup bsd_usergroup_user bsd_usergroup_station bsd_usergroup_station_devicetype bsd_maintenanceunit mtc_faultcontent mtc_faultcontentitem alm_rule wfl_workflow qa_standardmaterialstorage
 for %%t in (%CHECKLIST%) do (
     E:\Tools\Python311\python.exe sync_table.py %%t --check >> sync_check.log 2>&1
 )
-rem æ•°æ®è´¨é‡æ£€æŸ¥(æ–°é²œåº¦/ç©ºå€¼/åŒæ­¥å¿ƒè·³/å¥‘çº¦æ¼‚ç§»), ç»“æžœè½ jiangsu_sync.dq_results
+rem Êý¾ÝÖÊÁ¿¼ì²é(ÐÂÏÊ¶È/¿ÕÖµ/Í¬²½ÐÄÌø/ÆõÔ¼Æ¯ÒÆ), ½á¹ûÂä jiangsu_sync.dq_results
 E:\Tools\Python311\python.exe dq_check.py >> sync_dq.log 2>&1

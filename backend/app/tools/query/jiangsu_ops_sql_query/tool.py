@@ -10,6 +10,7 @@ The dataset field contracts embedded below mirror sync/datasets/*.yaml on the
 deployment server (single governance source; keep both in sync).
 """
 
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
@@ -213,7 +214,8 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
             status = "error"
             error = f"{type(exc).__name__}: {exc}"
             logger.warning("jiangsu_mart_sql_failed", error=error)
-            return {"success": False, "data": [], "summary": f"查询失败: {error}"}
+            hint = await self._schema_hint_for_error(exc, sql)
+            return {"success": False, "data": [], "summary": f"查询失败: {error}{hint}"}
         finally:
             if conn is not None:
                 await conn.close()
@@ -221,6 +223,43 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                 context, sql, row_count, status, error,
                 int((time.monotonic() - started) * 1000),
             )
+
+    async def _schema_hint_for_error(self, exc: Exception, sql: str) -> str:
+        """列/表不存在时附上相关白名单表的实际列结构，让模型在同一轮自纠，
+        避免再花一轮迭代调 describe_table。失败静默，不影响原始错误返回。"""
+        try:
+            import asyncpg.exceptions as _pgexc
+            if not isinstance(exc, (_pgexc.UndefinedColumnError, _pgexc.UndefinedTableError)):
+                return ""
+            candidates: List[str] = []
+            for m in re.finditer(
+                r"(?:from|join)\s+(?:jiangsu_mart\.)?\"?(\w+)\"?", sql, re.IGNORECASE
+            ):
+                name = m.group(1).lower()
+                if name in MART_TABLES and name not in candidates:
+                    candidates.append(name)
+            if not candidates:
+                if isinstance(exc, _pgexc.UndefinedTableError):
+                    return f" 提示: 表不在白名单。允许: {', '.join(MART_TABLES)}"
+                return ""
+            conn = await asyncpg.connect(self._mart_dsn())
+            try:
+                hints = []
+                for table in candidates[:3]:
+                    rows = await conn.fetch(
+                        """SELECT column_name, data_type FROM information_schema.columns
+                           WHERE table_schema='jiangsu_mart' AND table_name=$1
+                           ORDER BY ordinal_position""",
+                        table,
+                    )
+                    cols = ", ".join(f"{r['column_name']} {r['data_type']}" for r in rows)
+                    hints.append(f"{table}({cols})")
+                text = " | ".join(hints)
+                return " 可用列结构: " + (text[:1500] + "…" if len(text) > 1500 else text)
+            finally:
+                await conn.close()
+        except Exception:  # noqa: BLE001
+            return ""
 
     async def _audit(self, context, sql, row_count, status, error, duration_ms) -> None:
         """Best-effort 审计；失败只记日志不影响查询。"""
