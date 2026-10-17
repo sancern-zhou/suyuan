@@ -11,25 +11,11 @@ by :mod:`app.db.sync_bridge` or an injected factory for tests.
 """
 from __future__ import annotations
 
-import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import List, Optional
 
 from ..models.execution import ExecutionStatus, TaskExecution
-
-
-def execution_db_enabled() -> bool:
-    """Whether scheduled executions should use the database backend.
-
-    ``SCHEDULED_TASK_EXECUTION_STORAGE=file`` forces the legacy JSON store
-    (used by the test suite); otherwise the database is used whenever a
-    ``DATABASE_URL`` is configured.
-    """
-    configured = os.getenv("SCHEDULED_TASK_EXECUTION_STORAGE")
-    if configured:
-        return configured.strip().lower() != "file"
-    return bool(os.getenv("DATABASE_URL"))
 
 
 class DatabaseExecutionStorage:
