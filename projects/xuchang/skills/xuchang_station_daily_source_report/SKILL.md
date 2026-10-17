@@ -1,3 +1,15 @@
+---
+name: 许昌市昨日污染回顾分析 Skill
+description: 以站点小时浓度连续快速抬升过程为日报专项分析对象，分钟告警仅作匹配线索；使用 Fetcher 冻结的确定性证据生成 QMD 报告。
+aliases:
+  - 许昌市昨日污染回顾分析
+required_tools:
+  - read_file
+  - execute_python
+  - create_report_package
+enabled: true
+---
+
 # 许昌市昨日污染回顾分析 Skill
 
 ## 概述

@@ -28,6 +28,8 @@ frontend:
   # 侧边栏不再展示智能体模式快捷入口，统一由智能体平台页进入。
   sidebar_agent_modes: []
 backend:
+  # 项目专属技能目录（SKILL.md 声明式技能）；解析时组合共享库 backend/docs/skills，项目目录优先。
+  skills_dir: projects/xuchang/skills
   tools:
     - get_gems_image
     - get_sentinel5p_image
