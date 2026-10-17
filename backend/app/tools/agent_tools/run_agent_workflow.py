@@ -16,7 +16,6 @@ from app.agent.workflow.protocol import strip_embedded_json_blocks
 from app.agent.workflow.resource_handoff import result_resource_declarations
 from app.agent.workflow.target_mode_contract import build_target_mode_contract, target_mode_values
 from app.agent.workflow.coordinator import WorkflowCoordinator, WorkflowNodeSpec
-from app.agent.workflow.registry import active_workflow_registry
 from app.agent.workflow.delegation import delegation_error
 from app.agent.workflow.resource_contract import ResourceContractError
 from app.tools.base.tool_interface import LLMTool, ToolCategory
@@ -907,6 +906,7 @@ class RunAgentWorkflowTool(LLMTool):
 
     @staticmethod
     def _build_workflow_registry():
+        from app.agent.workflow.registry import active_workflow_registry
         return active_workflow_registry
 
     @staticmethod

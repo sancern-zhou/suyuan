@@ -1,5 +1,6 @@
 """Gold scoring and controlled comparison must not turn failures into wins."""
 import pytest
+import json
 
 from app.agent.workflow.evaluation import EvaluationRunner, ReplayChildModel, default_cases, score_result
 
@@ -93,16 +94,17 @@ async def test_live_child_receives_explicit_upstream_file_handles(tmp_path):
     path = runner.paths["air_甲市"]
     await runner.execute(target_mode="expert_analysis", goal="analyze upstream",
                          _upstream_handles=[{"source_task_id": "air", "file_path": path}])
-    assert path in seen[0]
+    assert json.dumps(path, ensure_ascii=False) in seen[0]
     assert "不把task_id当文件名" in seen[0]
 
 
 @pytest.mark.asyncio
 async def test_evaluation_dag_never_uses_deployment_workflow_registry(tmp_path, monkeypatch):
+    from app.tools.agent_tools.run_agent_workflow import RunAgentWorkflowTool
     class DeploymentRegistry:
         async def register(self, *args, **kwargs):
             pytest.fail("evaluation must not register with deployment Redis")
-    monkeypatch.setattr("app.tools.agent_tools.run_agent_workflow.active_workflow_registry", DeploymentRegistry())
+    monkeypatch.setattr(RunAgentWorkflowTool, "_build_workflow_registry", staticmethod(DeploymentRegistry))
     runner = EvaluationRunner(default_cases()[0], "dag", tmp_path / "isolated", ReplayChildModel())
     assert runner.workflow_registry._store is None
     result = await runner.run(backend="replay", timeout=2)
