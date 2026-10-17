@@ -1,3 +1,4 @@
+import { accountGeneration } from '../auth/accountSession.js'
 import { authFetch } from '@/auth/http.js'
 import { connectScheduledTaskWebSocket } from '@/auth/websocket.js'
 import { defineStore } from 'pinia';
@@ -293,6 +294,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
 
     // WebSocket连接
     async connectWebSocket() {
+      const generation = accountGeneration()
       if ((this.ws && this.wsConnected) || this.wsConnecting) return;
       this.wsConnecting = true;
       this.wsReconnectEnabled = true;
@@ -343,7 +345,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
         this.ws = null;
         if (this.wsReconnectEnabled) {
           // Every reconnect obtains a fresh single-use ticket.
-          setTimeout(() => this.connectWebSocket(), 5000);
+          setTimeout(() => { if (generation === accountGeneration()) this.connectWebSocket() }, 5000);
         }
       };
     },

@@ -613,7 +613,8 @@ const allModules = [
     id: 'file-manager',
     name: '文件管理',
     abbr: '文件',
-    desc: '浏览和下载/tmp目录文件',
+    desc: '管理员浏览和下载临时文件',
+    adminOnly: true,
     badge: '工具',
     isAction: true,
     requiredModule: 'legacy'
@@ -645,7 +646,10 @@ const SETTINGS_MODULE_IDS = Object.freeze([
 
 const settingsModules = computed(() => {
   const byId = new Map(modules.map(module => [module.id, module]))
-  return SETTINGS_MODULE_IDS.map(id => byId.get(id)).filter(Boolean)
+  return SETTINGS_MODULE_IDS.map(id => byId.get(id)).filter(Boolean).filter(module => (
+    !module.adminOnly || auth.user?.isAdmin === true || auth.user?.admin === true
+    || auth.user?.roleCodes?.includes('SUYUAN_ADMIN')
+  ))
 })
 
 const moduleIcons = {

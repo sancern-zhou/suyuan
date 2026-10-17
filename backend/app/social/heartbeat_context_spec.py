@@ -4,7 +4,8 @@ from app.agent.memory.session_memory import SessionMemory
 from app.agent.session.models import Session
 from app.agent.session.session_manager import SessionManager
 from app.social.heartbeat_context import persist_heartbeat_context_event
-from app.social.session_mapper import SessionMapper
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 
 @pytest.mark.asyncio
@@ -15,8 +16,8 @@ async def test_non_silent_heartbeat_records_lightweight_event_in_social_main_ses
     monkeypatch.setattr(file_session_module, "_global_session_manager", local_manager)
 
     user_id = "weixin:bot:user"
-    session_mapper = SessionMapper(data_dir=str(tmp_path / "social"))
-    main_session_id = await session_mapper.get_or_create_session(user_id, mode="social")
+    main_session_id = "social_session_heartbeat_context"
+    session_mapper = SimpleNamespace(get_session=AsyncMock(return_value=main_session_id))
     local_manager.save_session(
         Session(
             session_id=main_session_id,
@@ -94,8 +95,8 @@ async def test_silent_heartbeat_does_not_record_social_main_session_context(tmp_
     monkeypatch.setattr(file_session_module, "_global_session_manager", local_manager)
 
     user_id = "weixin:bot:user"
-    session_mapper = SessionMapper(data_dir=str(tmp_path / "social"))
-    main_session_id = await session_mapper.get_or_create_session(user_id, mode="social")
+    main_session_id = "social_session_heartbeat_context"
+    session_mapper = SimpleNamespace(get_session=AsyncMock(return_value=main_session_id))
     local_manager.save_session(Session(session_id=main_session_id, query="已有会话"))
 
     recorded = await persist_heartbeat_context_event(
