@@ -22,7 +22,13 @@ import base64
 import structlog
 
 from app.tools.visualization.font_sizing import FontScale, resolve_font_scale
-from app.utils.environment_charts import AQI_COLORS, MISSING_COLOR, aqi_color, pollutant_iaqi
+from app.utils.environment_charts import (
+    AQI_COLORS,
+    MISSING_COLOR,
+    aqi_color,
+    pollutant_iaqi,
+    text_color_for,
+)
 
 logger = structlog.get_logger()
 
@@ -82,11 +88,7 @@ def get_text_color(background_color: str) -> str:
     Returns:
         文字颜色（'black' 或 'white'）
     """
-    rgb = [int(background_color[index:index + 2], 16) / 255 for index in (1, 3, 5)]
-    linear = [value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
-              for value in rgb]
-    luminance = sum(value * weight for value, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
-    return 'black' if luminance > 0.179 else 'white'
+    return text_color_for(background_color)
 
 
 def setup_chinese_font():

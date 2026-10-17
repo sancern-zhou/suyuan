@@ -2367,7 +2367,8 @@ from matplotlib.text import Text
 import matplotlib.pyplot as _suyuan_plt
 from app.utils.environment_charts import (
     AQI_COLORS, AQI_LABELS, MISSING_COLOR, aqi_color, pollutant_color,
-    get_environment_limit, get_pollutant_scale, add_standard_limit, legend_below,
+    get_environment_limit, get_pollutant_scale, get_six_level_scale,
+    level_index, level_color, text_color_for, add_standard_limit, legend_below,
     figure_content_overflow,
 )
 
@@ -3378,7 +3379,7 @@ def merge_excel_with_charts(file_paths, output_path):
                             "首次绘图前必须先用 read_file 阅读 backend/app/tools/utility/execute_python_chart_manual.md；"
                             "环境图等级色按适用标准，图例默认在下方；"
                             "浓度对比有适用限值时标出标准线，明确污染物、单位、平均时间、等级和数据日期。"
-                            "可直接使用 aqi_color、pollutant_color、get_pollutant_scale、get_environment_limit、add_standard_limit、legend_below；"
+                            "可直接使用 aqi_color、pollutant_color、get_pollutant_scale、get_six_level_scale、level_color、get_environment_limit、add_standard_limit、legend_below；"
                             "标准限值线禁止凭记忆硬编码数值，必须调用 get_environment_limit/add_standard_limit 按数据日期获取限值并绘制，标注标准版本、适用阶段、区类、平均时间和单位。"
                             "小时值不得直接按日均限值判断达标，缺失不填零，预测与实测区分。"
                             "风向箭头须明确来向/去向，按真实角度绘制；等长方向箭头与按风速缩放的矢量箭头必须区分。"
