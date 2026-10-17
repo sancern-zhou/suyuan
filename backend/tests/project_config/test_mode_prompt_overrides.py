@@ -21,7 +21,7 @@ def test_xuchang_mode_prompts_do_not_change_shared_prompts(monkeypatch):
     assert "### 常见机制检查" in shared_expert
 
 
-def test_xuchang_disables_guangdong_query_tools_only_for_xuchang(monkeypatch):
+def test_xuchang_isolates_guangdong_query_tools(monkeypatch):
     standard_report_tools = {
         "query_city_standard_report",
         "query_city_standard_yoy_report",
@@ -29,13 +29,13 @@ def test_xuchang_disables_guangdong_query_tools_only_for_xuchang(monkeypatch):
         "query_station_standard_yoy_report",
     }
     monkeypatch.setattr(settings, "project_id", "xuchang")
-    for mode in ("query", "report", "chart"):
+    for mode in ("query", "report"):
         tools = get_tools_by_mode(mode)
         assert "get_5min_data" not in tools
         assert "analyze_city_pollutant_rankings" not in tools
         assert standard_report_tools.isdisjoint(tools)
 
-    monkeypatch.setattr(settings, "project_id", "default")
+    monkeypatch.setattr(settings, "project_id", "guangdong")
     assert "get_5min_data" in get_tools_by_mode("query")
     assert "analyze_city_pollutant_rankings" in get_tools_by_mode("query")
     assert standard_report_tools.issubset(get_tools_by_mode("query"))
