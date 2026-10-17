@@ -55,6 +55,8 @@ from app.services.llm_service import llm_service
 from app.tools import global_tool_registry
 from config.settings import settings
 
+from app.api.tool_routes import router as tool_router
+
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -580,28 +582,6 @@ class AgentQueryResponse(BaseModel):
     session_id: str = Field(..., description="会话ID")
     iterations: Optional[int] = Field(None, description="实际迭代次数")
     completed: bool = Field(..., description="是否成功完成")
-
-
-class ToolInfo(BaseModel):
-    """工具信息"""
-    name: str
-    description: str
-    category: str
-    status: str
-    version: str
-    requires_context: bool
-    priority: int
-    registered_at: Optional[str]
-    statistics: Dict[str, Any]
-    metadata: Dict[str, Any]
-    function_schema: Optional[Dict[str, Any]]
-    has_return_schema: bool
-
-
-class ToolListResponse(BaseModel):
-    """工具列表响应"""
-    tools: List[Dict[str, Any]]
-    count: int
 
 
 # ========================================
@@ -1908,149 +1888,8 @@ async def simple_query(request: AgentQueryRequest):
         )
 
 
-@router.get("/tools", response_model=ToolListResponse)
-async def list_tools():
-    """
-    获取可用工具列表（包含完整信息）
-    """
-    try:
-        # 从工具注册表获取详细信息
-        tools_info = global_tool_registry.get_tools_info()
-
-        logger.info("agent_tools_listed", count=len(tools_info))
-
-        return ToolListResponse(
-            tools=tools_info,
-            count=len(tools_info)
-        )
-
-    except Exception as e:
-        logger.error(
-            "list_tools_failed",
-            error=str(e),
-            exc_info=True
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"获取工具列表失败: {str(e)}"
-        )
-
-
-@router.get("/tools/{tool_name}", response_model=ToolInfo)
-async def get_tool_info(tool_name: str):
-    """
-    获取特定工具的详细信息
-    """
-    try:
-        # 从工具注册表获取详细信息
-        info = global_tool_registry.get_tool_info(tool_name)
-
-        if not info:
-            raise HTTPException(
-                status_code=404,
-                detail=f"工具不存在: {tool_name}"
-            )
-
-        logger.info("tool_info_retrieved", tool_name=tool_name)
-
-        return ToolInfo(**info)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(
-            "get_tool_info_failed",
-            tool_name=tool_name,
-            error=str(e),
-            exc_info=True
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"获取工具信息失败: {str(e)}"
-        )
-
-
-@router.patch("/tools/{tool_name}")
-async def update_tool_status(tool_name: str, enabled: bool = Body(..., embed=True)):
-    """
-    更新工具启用/禁用状态
-
-    Args:
-        tool_name: 工具名称
-        enabled: True=启用, False=禁用
-    """
-    try:
-        registry = global_tool_registry
-
-        # 检查工具是否存在
-        if not registry.get_tool(tool_name):
-            raise HTTPException(
-                status_code=404,
-                detail=f"工具不存在: {tool_name}"
-            )
-
-        # 更新工具状态
-        success = registry.set_tool_enabled(tool_name, enabled)
-
-        if not success:
-            raise HTTPException(
-                status_code=500,
-                detail=f"更新工具状态失败"
-            )
-
-        logger.info(
-            "tool_status_updated",
-            tool_name=tool_name,
-            enabled=enabled
-        )
-
-        return {
-            "success": True,
-            "tool_name": tool_name,
-            "enabled": enabled
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(
-            "update_tool_status_failed",
-            tool_name=tool_name,
-            error=str(e),
-            exc_info=True
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"更新工具状态失败: {str(e)}"
-        )
-
-
-@router.get("/tools/categories")
-async def get_tools_categories():
-    """
-    获取所有工具类别
-    """
-    try:
-        registry = global_tool_registry
-        categories = registry.get_categories()
-
-        logger.info("tool_categories_listed", count=len(categories))
-
-        return {
-            "categories": categories,
-            "count": len(categories)
-        }
-
-    except Exception as e:
-        logger.error(
-            "get_tool_categories_failed",
-            error=str(e),
-            exc_info=True
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"获取工具类别失败: {str(e)}"
-        )
+# Keep the old Agent URL as an alias of the canonical /api/tools API.
+router.include_router(tool_router, include_in_schema=False)
 
 
 @router.get("/health")
@@ -2084,18 +1923,3 @@ async def agent_health():
             }
         }
     }
-
-
-# ========================================
-# TODO: 会话管理接口（可选）
-# ========================================
-
-# @router.get("/sessions/{session_id}")
-# async def get_session_status(session_id: str):
-#     """获取会话状态"""
-#     pass
-#
-# @router.delete("/sessions/{session_id}")
-# async def delete_session(session_id: str):
-#     """删除会话"""
-#     pass

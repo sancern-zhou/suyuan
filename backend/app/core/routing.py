@@ -85,7 +85,6 @@ ROUTER_REGISTRY = [
     RouterSpec("app.api.shared_conversation_routes", description="Shared conversation board", owner="core"),
     RouterSpec("app.api.file_manager_routes", prefix="/api", description="File manager"),
     RouterSpec("app.api.social_routes", description="Social platform management"),
-    RouterSpec("app.api.fetchers", description="Fetcher management"),
     RouterSpec(
         "app.api.social_account_routes",
         optional=True,
