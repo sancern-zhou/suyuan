@@ -18,7 +18,6 @@ _case_context: ContextVar[str | None] = ContextVar(
 class AgentCaseLibraryTool(LLMTool):
     """Let an Agent decide which feedback-derived cases to record and reuse."""
 
-    _current_mode: str | None = None
 
     def __init__(self) -> None:
         super().__init__(
@@ -60,12 +59,10 @@ class AgentCaseLibraryTool(LLMTool):
 
     @classmethod
     def set_case_context(cls, mode: str) -> None:
-        cls._current_mode = mode
         _case_context.set(mode)
 
     @classmethod
     def clear_case_context(cls) -> None:
-        cls._current_mode = None
         _case_context.set(None)
 
     async def execute(
@@ -81,7 +78,7 @@ class AgentCaseLibraryTool(LLMTool):
         source_refs: list[str] | None = None,
         **_: Any,
     ) -> dict[str, Any]:
-        mode = _case_context.get() or self._current_mode
+        mode = _case_context.get()
         if not mode:
             return {"success": False, "error": "case_library_context_missing"}
         library = AgentCaseLibrary(mode)

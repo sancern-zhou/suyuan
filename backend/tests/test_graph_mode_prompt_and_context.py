@@ -37,6 +37,7 @@ def test_graph_mode_exposes_existing_safe_tools_only():
         "grep",
         "list_directory",
         "search_files",
+        "ask_user_question",
     ]
     assert "execute_python" not in tools
     assert "write_file" not in tools
@@ -55,6 +56,7 @@ def test_graph_mode_tool_order_matches_registry_order():
         "grep",
         "list_directory",
         "search_files",
+        "ask_user_question",
     ]
 
 
@@ -189,25 +191,21 @@ def test_memory_consolidator_preserves_existing_graph_memory_tool_context():
             user_identifier="global",
         )
 
-        assert RememberFactTool._current_mode == "graph"
-        assert ReplaceMemoryTool._current_mode == "graph"
-        assert RemoveMemoryTool._current_mode == "graph"
+        assert _remember_fact_context.get() == ("graph", "global")
+        assert _replace_memory_context.get() == ("graph", "global")
+        assert _remove_memory_context.get() == ("graph", "global")
     finally:
         _clear_memory_tool_context()
 
 
-def test_memory_consolidator_guard_survives_cleared_class_vars():
-    """并发会话清空进程级类变量后，守卫必须沿任务级 ContextVar 保全目标模式。"""
+def test_memory_consolidator_preserves_task_local_target():
+    """整合器必须保全任务级 ContextVar 中的业务目标模式。"""
     _clear_memory_tool_context()
     try:
         # 模拟整合批次开始时的 per-batch set（_background_memory_consolidation）
         RememberFactTool.set_memory_context("report", "global")
         ReplaceMemoryTool.set_memory_context("report", "global")
         RemoveMemoryTool.set_memory_context("report", "global")
-        # 模拟并发会话的 clear_memory_context 只清掉进程级类变量
-        RememberFactTool._current_mode = None
-        ReplaceMemoryTool._current_mode = None
-        RemoveMemoryTool._current_mode = None
 
         ReActAgent._set_mode_memory_tool_context(
             manual_mode="memory_consolidator",
@@ -215,8 +213,8 @@ def test_memory_consolidator_guard_survives_cleared_class_vars():
             user_identifier="global",
         )
 
-        # 守卫不得穿透：既不覆盖类变量，也不覆盖任务级 ContextVar
-        assert RememberFactTool._current_mode is None
+        # 整合器不能将业务目标替换成自己的运行模式
+        assert _remember_fact_context.get()[0] != "memory_consolidator"
         assert _remember_fact_context.get() == ("report", "global")
         assert _replace_memory_context.get() == ("report", "global")
         assert _remove_memory_context.get() == ("report", "global")
@@ -234,9 +232,9 @@ def test_memory_consolidator_guard_never_stamps_consolidator_mode():
             user_identifier="global",
         )
 
-        assert RememberFactTool._current_mode is None
-        assert ReplaceMemoryTool._current_mode is None
-        assert RemoveMemoryTool._current_mode is None
+        assert _remember_fact_context.get()[0] != "memory_consolidator"
+        assert _replace_memory_context.get()[0] != "memory_consolidator"
+        assert _remove_memory_context.get()[0] != "memory_consolidator"
         assert _remember_fact_context.get() == (None, None)
         assert _replace_memory_context.get() == (None, None)
         assert _remove_memory_context.get() == (None, None)
@@ -253,8 +251,8 @@ def test_graph_mode_sets_memory_tool_context():
             user_identifier="global",
         )
 
-        assert RememberFactTool._current_mode == "graph"
-        assert ReplaceMemoryTool._current_mode == "graph"
-        assert RemoveMemoryTool._current_mode == "graph"
+        assert _remember_fact_context.get() == ("graph", "global")
+        assert _replace_memory_context.get() == ("graph", "global")
+        assert _remove_memory_context.get() == ("graph", "global")
     finally:
         _clear_memory_tool_context()

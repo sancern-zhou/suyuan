@@ -35,6 +35,11 @@ from app.services.document_preview_refresh import refresh_preview_for_managed_do
 from app.tools.artifact_utils import attach_mutated_document_resources
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
+from app.agent.memory.memory_limits import (
+    MEMORY_MD_HINT_CHARS,
+    MEMORY_MD_MAX_CHARS,
+    memory_capacity_error,
+)
 from app.utils.path_config import BACKEND_ROOT, TEMP_ROOT, get_data_registry, is_agent_protected_write_path, is_path_within, resolve_agent_path
 import structlog
 
@@ -291,9 +296,11 @@ class EditFileToolV2(LLMTool):
     MARKDOWN_EXTENSIONS = {'.md', '.mdx', '.markdown'}
 
     # MEMORY.md（长期记忆，常驻注入每次会话）容量上限
-    MEMORY_MD_MAX_CHARS = 12_000
+    # 数值定义在 app/agent/memory/memory_limits.py，与 write_file、人工编辑 API 共用；
+    # 此处保留类属性别名供既有测试与调用方引用。
+    MEMORY_MD_MAX_CHARS = MEMORY_MD_MAX_CHARS
     # 超限提示中的建议目标（提示 Agent 精简到该水位以下）
-    MEMORY_MAX_HINT_CHARS = 10_000
+    MEMORY_MAX_HINT_CHARS = MEMORY_MD_HINT_CHARS
 
     def __init__(self):
         super().__init__(
@@ -512,10 +519,7 @@ class EditFileToolV2(LLMTool):
             if resolved_path.name == "MEMORY.md" and len(new_content) > self.MEMORY_MD_MAX_CHARS:
                 return {
                     "success": False,
-                    "error": (
-                        f"MEMORY.md 超出容量上限（编辑后 {len(new_content)} 字符 > 上限 {self.MEMORY_MD_MAX_CHARS}）。"
-                        f"长期记忆常驻注入每次会话，请先删除过时或低价值条目，将总量精简到 {self.MEMORY_MAX_HINT_CHARS} 字符以内后再添加新内容。"
-                    ),
+                    "error": memory_capacity_error(len(new_content)),
                     "summary": f"编辑失败：MEMORY.md 超出容量上限 {self.MEMORY_MD_MAX_CHARS} 字符"
                 }
 

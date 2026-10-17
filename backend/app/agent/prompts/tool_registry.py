@@ -58,6 +58,7 @@ ASSISTANT_TOOL_NAMES = [
     "browser",
     # 任务调度、技能目录和重型工作空间委托。
     "create_scheduled_task",
+    "manage_scheduled_tasks",
     "wait_task",
     "list_skills",
     "view_skill",
@@ -419,6 +420,9 @@ ENFORCEMENT_EXAM_TOOL_NAMES = [
     "web_search",
     "web_fetch",
     "schedule_task",
+    # 长期记忆维护（MEMORY.md）：本模式属 SOCIAL_MEMORY_MODES，整合器只写事实层，
+    # 常驻记忆契约要求会话 Agent 自己用 edit_file 维护，缺它则 MEMORY.md 无任何写入方
+    "edit_file",
 ]
 
 # ===== 记忆整合器工具（后台专用） =====

@@ -395,16 +395,19 @@ class ActiveMemoryRetriever:
         )
 
 
-def build_social_memory_context(
+def build_memory_context(
     memory_store: Any,
     query: str,
     recent_messages: Optional[List[Dict]] = None,
     retriever: Optional[ActiveMemoryRetriever] = None,
     include_daily_notes: bool = False,
 ) -> str:
-    """Build social-mode memory context.
+    """Build resident memory and curated facts for every mode.
 
-    Social mode injects the current user's full MEMORY.md by default.
+    The store determines scope: shared per mode or isolated per social user.
+    The consolidator promotes durable candidates into the user's facts layer
+    (facts/*.md), so its index is injected alongside MEMORY.md — without this
+    the promoted facts would be written but never shown to the model.
     Daily notes recall is opt-in because raw conversation snippets are easy for
     the model to copy instead of using as background.
     """
@@ -420,6 +423,18 @@ def build_social_memory_context(
 
     if memory_context and memory_context.strip():
         sections.append(memory_context.strip())
+
+    workspace = getattr(memory_store, "workspace", None)
+    if workspace is not None:
+        try:
+            from app.agent.memory.curated_facts import CuratedFactStore
+
+            curated_index = CuratedFactStore(workspace).index()
+        except Exception as e:
+            logger.warning("curated_facts_index_failed", error=str(e))
+            curated_index = ""
+        if curated_index:
+            sections.append(curated_index)
 
     if not include_daily_notes:
         return "\n\n".join(sections)

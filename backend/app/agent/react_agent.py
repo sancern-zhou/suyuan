@@ -258,23 +258,15 @@ class ReActAgent:
         )
         from app.tools.utility.agent_case_library_tool import AgentCaseLibraryTool
 
+        # Only task-local contexts may identify a consolidator's target.
         current_modes = {
-            RememberFactTool._current_mode,
-            ReplaceMemoryTool._current_mode,
-            RemoveMemoryTool._current_mode,
-            AgentCaseLibraryTool._current_mode,
+            context.get()[0]
+            for context in (
+                _remember_fact_context,
+                _replace_memory_context,
+                _remove_memory_context,
+            )
         }
-        # 类变量是进程级共享状态，会被并发会话的 set/clear 清掉；ContextVar 才是
-        # 本整合任务的真实目标模式（_background_memory_consolidation 每批写入）。
-        # 守卫必须同时看两者，否则并发清空会让守卫穿透，把整合产出误写进
-        # memory_consolidator 目录（该目录不被任何业务模式读取）。
-        for memory_context in (
-            _remember_fact_context,
-            _replace_memory_context,
-            _remove_memory_context,
-        ):
-            task_mode, _ = memory_context.get()
-            current_modes.add(task_mode)
         has_existing_target_mode = any(
             mode and mode != "memory_consolidator"
             for mode in current_modes
@@ -460,6 +452,9 @@ class ReActAgent:
         memory_snapshot_created = False
         active_run_id = None
 
+        if self.enable_memory and manual_mode in SOCIAL_MEMORY_MODES and social_memory_store is None:
+            raise ValueError("Social memory requires a user-scoped memory store")
+
         # ✅ 社交模式：使用外部传入的social_memory_store（用户隔离），不走UnifiedMemoryManager
         if self.enable_memory and manual_mode in SOCIAL_MEMORY_MODES and social_memory_store is not None:
             memory_store = social_memory_store
@@ -471,9 +466,9 @@ class ReActAgent:
 
             # 社交模式：完整注入用户隔离 MEMORY.md，并单独追加 daily notes 历史会话召回。
             try:
-                from .memory.active_memory_retriever import build_social_memory_context
+                from .memory.active_memory_retriever import build_memory_context
 
-                memory_context = build_social_memory_context(
+                memory_context = build_memory_context(
                     memory_store=social_memory_store,
                     query=user_query,
                     recent_messages=initial_messages or []
@@ -483,7 +478,7 @@ class ReActAgent:
                 memory_context = social_memory_store.get_memory_context()
             unified_user_id = None  # 社交模式不走通用记忆整合
 
-        elif self.enable_memory and manual_mode:
+        elif self.enable_memory and manual_mode and manual_mode not in SOCIAL_MEMORY_MODES:
             # 非社交模式不按用户隔离；统一使用模式级共享记忆。
             unified_user_id = "global"
             memory_mode = manual_mode or "expert"
@@ -496,11 +491,10 @@ class ReActAgent:
                     user_id=unified_user_id,
                     mode=memory_mode
                 )
-                memory_context = memory_store.get_memory_context()  # 从快照获取记忆
-                from .memory.curated_facts import CuratedFactStore
-                curated_index = CuratedFactStore(memory_store.workspace).index()
-                if curated_index:
-                    memory_context = f"{memory_context}\n\n{curated_index}" if memory_context else curated_index
+                memory_store.create_snapshot()
+                memory_snapshot_created = True
+                from .memory.active_memory_retriever import build_memory_context
+                memory_context = build_memory_context(memory_store, user_query)
 
         # ✅ 统一：记录记忆注入日志
         if memory_context:
@@ -1233,7 +1227,7 @@ class ReActAgent:
                         memory_store.read_long_term() if memory_store.memory_file.exists() else ""
                     )
                     prompt = self._build_consolidation_prompt(
-                        batch, mode, existing_memory, str(memory_store.memory_file.resolve()),
+                        batch, mode, existing_memory,
                         source_session_id=session_id, start_index=start,
                     )
                     from .memory_consolidator_factory import create_memory_consolidator_agent
@@ -1286,7 +1280,6 @@ class ReActAgent:
         messages: List[Dict[str, Any]],
         mode: str,
         existing_memory: str = "",
-        memory_file_path: str = "",
         *,
         source_session_id: str = "",
         start_index: int = 0,
@@ -1294,11 +1287,15 @@ class ReActAgent:
         """
         构建记忆整合提示词
 
+        两层记忆契约：常驻 MEMORY.md 由会话 Agent 维护，此处仅作只读判重背景；
+        整合器只写事实层 facts/*.md（带来源、适用条件与可选失效日期）。
+
         Args:
             messages: 消息列表
             mode: 模式标识
-            existing_memory: 现有记忆内容
-            memory_file_path: 记忆文件路径
+            existing_memory: 既有常驻记忆（MEMORY.md）内容，仅用于判重
+            source_session_id: 来源会话 ID
+            start_index: 本批消息在会话中的起始序号
 
         Returns:
             整合提示词
@@ -1308,52 +1305,23 @@ class ReActAgent:
             for index, msg in enumerate(messages)
         )
 
-        # 计算记忆文件字符数
-        current_size = len(existing_memory) if existing_memory else 0
-        max_size = 3000  # 与工具中的限制一致
-        size_info = f"（{current_size}/{max_size}字符，使用率{current_size/max_size*100:.1f}%）"
-
-        # 构建提示词
         prompt_parts = [
-            "请分析以下对话内容，提取重要信息并更新长期记忆。",
+            "请分析以下对话内容，把值得长期保留的稳定事实写入事实层记忆（facts/*.md）。",
             "",
             "## 模式",
             mode,
             ""
         ]
 
-        # 添加现有记忆内容（如果有）
+        # 既有常驻记忆（只读背景，用于判重；整合器没有修改它的工具）
         if existing_memory and existing_memory.strip():
             prompt_parts.extend([
-                "## 现有记忆",
-                f"**当前记忆大小**：{size_info}",
+                "## 既有常驻记忆（MEMORY.md，只读背景）",
+                "以下是会话 Agent 维护的常驻记忆，仅用于判断候选是否与其重复：已被它覆盖的内容不要重复入库。",
                 "",
                 "```",
-                existing_memory,  # 完整记忆，不限制字符
+                existing_memory,
                 "```",
-                "",
-                "**⚠️ 重要限制**：",
-                f"- 记忆文件上限：{max_size}字符",
-                f"- 当前使用：{current_size}字符（{current_size/max_size*100:.1f}%）",
-                "- 当接近上限（>80%）时，优先使用 remove_memory 删除旧内容",
-                "- 当已满（100%）时，必须先删除才能添加新内容",
-                ""
-            ])
-        else:
-            # 空记忆文件
-            prompt_parts.extend([
-                "## 现有记忆",
-                "**当前记忆大小**：0/3000字符（0.0%）",
-                "",
-                "记忆文件为空，可以开始添加记忆。",
-                ""
-            ])
-
-        # 添加记忆文件路径
-        if memory_file_path:
-            prompt_parts.extend([
-                "## 记忆文件路径",
-                memory_file_path,
                 ""
             ])
 
@@ -1364,26 +1332,20 @@ class ReActAgent:
             conversation_text,
             "",
             "**任务**：",
-            "1. 阅读现有记忆，了解已记住的内容",
-            "2. 分析对话内容，识别需要记住的新信息",
-            "3. 使用工具更新记忆：",
-            "   - remember_fact: 添加新记忆",
-            "   - replace_memory: 替换现有记忆",
-            "   - remove_memory: 删除过时记忆",
+            "1. 核对上方既有常驻记忆，了解已被覆盖的内容",
+            "2. 分析对话内容，识别稳定、可长期复用的新信息（时间敏感信息必须携带 valid_until）",
+            "3. 使用工具维护事实层：",
+            "   - remember_fact: 添加新事实（必须带 source_ref 与 applies_when）",
+            "   - replace_memory: 更新已过时或被修正的事实",
+            "   - remove_memory: 删除错误事实",
             "4. 对包含 human_feedback 的对话，先检索当前模式案例库；如果反馈形成了可复用判断，使用 agent_case_library 记录案例，案例内容由你依据反馈总结，避免重复记录",
             "5. 给出简洁总结（不超过50字）",
             "",
-            "**⚠️ 记忆管理策略**（基于字符限制）：",
-            "- 当记忆使用率 < 80%：可以正常添加新记忆",
-            "- 当记忆使用率 >= 80%：优先删除临时、过时或低优先级的记忆",
-            "- 当记忆使用率 = 100%：必须先删除才能添加（工具会返回错误）",
-            "",
             "**注意事项**：",
-            "- 避免重复记忆（先检查现有记忆）",
-            "- 更新偏好设置时使用replace_memory",
-            "- 删除临时或错误记忆时使用remove_memory",
-            "- 优先保留高价值信息（用户偏好 > 领域知识 > 历史结论 > 环境信息）",
-            "- 记忆文件路径已在上方提供，工具会自动使用"
+            "- 避免重复入库：先核对既有常驻记忆，再核对事实层是否已有相似事实（有则用 replace_memory）",
+            "- 一次性的任务细节、临时数据、纯操作过程不要入库",
+            "- 优先保留高价值信息（用户偏好 > 领域知识 > 模式方法论 > 环境信息）",
+            ""
         ])
 
         return "\n".join(prompt_parts)

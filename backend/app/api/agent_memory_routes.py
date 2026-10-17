@@ -15,7 +15,6 @@ edit_file 写入相互覆盖。
 
 import fcntl
 import json
-import re
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -27,7 +26,9 @@ from pydantic import BaseModel, Field
 
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
+from app.agent.memory.memory_limits import MEMORY_MD_MAX_CHARS, memory_capacity_error
 from app.utils.path_config import get_memory_dir
+from app.agent.memory.memory_paths import memory_workspace, safe_memory_segment
 
 logger = structlog.get_logger(__name__)
 
@@ -36,7 +37,9 @@ router = APIRouter(prefix="/api/agent/memory", tags=["agent-memory"])
 # 社交模式记忆按用户隔离（social/memory/{user_id}/），不提供模式级编辑入口
 SOCIAL_MEMORY_MODES = {"social", "enforcement_exam"}
 
-MAX_MEMORY_CHARS = 100_000
+# 与 edit_file/write_file 共用同一上限（memory_limits）：
+# 人工编辑把 MEMORY.md 顶过上限后，会话 Agent 的 edit_file 会一直被拒。
+MAX_MEMORY_CHARS = MEMORY_MD_MAX_CHARS
 
 
 class ModeMemoryResponse(BaseModel):
@@ -63,9 +66,12 @@ class MemoryVersionConflictError(RuntimeError):
 
 
 def _safe_mode(mode: str) -> str:
-    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", str(mode)).strip("_")
-    if not safe:
-        raise HTTPException(status_code=400, detail="无效的模式标识")
+    try:
+        safe = safe_memory_segment(mode, field="mode")
+        if safe == "memory_consolidator":
+            raise ValueError("not a business memory mode")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="无效的模式标识") from exc
     if safe in SOCIAL_MEMORY_MODES:
         raise HTTPException(status_code=400, detail="社交模式记忆按用户隔离，不支持模式级查看/编辑")
     return safe
@@ -77,7 +83,7 @@ class ModeMemoryStorage:
     def __init__(self, mode: str, base_dir: Path | None = None):
         self.mode = mode
         base = Path(base_dir) if base_dir else get_memory_dir()
-        self.mode_dir = base / mode
+        self.mode_dir = memory_workspace(_safe_mode(mode), workspace=base)
         self.memory_file = self.mode_dir / "MEMORY.md"
         self.meta_file = self.mode_dir / "memory_meta.json"
         self.lock_file = self.mode_dir / ".memory.lock"
@@ -116,7 +122,7 @@ class ModeMemoryStorage:
         if not content:
             raise HTTPException(status_code=422, detail="记忆内容不能为空")
         if len(content) > MAX_MEMORY_CHARS:
-            raise HTTPException(status_code=422, detail=f"记忆内容过长（上限 {MAX_MEMORY_CHARS} 字符）")
+            raise HTTPException(status_code=422, detail=memory_capacity_error(len(content)))
         try:
             normalized_mtime_ns = (
                 int(str(expected_mtime_ns)) if expected_mtime_ns is not None else None
@@ -153,8 +159,8 @@ class ModeMemoryStorage:
         self.mode_dir.mkdir(parents=True, exist_ok=True)
         if not self.memory_file.exists():
             self.memory_file.write_text(
-                "# 长期记忆 (MEMORY.md)\n\n此文件存储用户的偏好、领域知识和重要结论。\n\n"
-                "## 用户偏好\n\n## 领域知识\n\n## 历史结论\n",
+                "# 长期记忆 (MEMORY.md)\n\n此文件存储用户的偏好、领域知识和模式方法论。\n\n"
+                "## 用户偏好\n\n## 领域知识\n\n## 模式方法论\n",
                 encoding="utf-8",
             )
 

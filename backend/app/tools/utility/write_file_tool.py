@@ -34,6 +34,7 @@ from app.services.document_preview_refresh import refresh_preview_for_managed_do
 from app.tools.artifact_utils import attach_mutated_document_resources
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
+from app.agent.memory.memory_limits import MEMORY_MD_MAX_CHARS, memory_capacity_error
 from app.utils.path_config import (
     BACKEND_ROOT,
     TEMP_ROOT,
@@ -138,7 +139,7 @@ def is_unc_path(path: str) -> bool:
 
     SECURITY: UNC 路径在 Windows 上会触发 SMB 认证，可能导致 NTLM 凭据泄露
     """
-    return path.startswith(UNC_PATH_PREFIXS)
+    return path.startswith(UNC_PATH_PREFIXES)
 
 
 def is_windows() -> bool:
@@ -339,6 +340,18 @@ format:
                     "success": False,
                     "error": f"文件内容过大（{self._format_size(content_size)}），超过限制（{self._format_size(MAX_FILE_SIZE)}）",
                     "summary": f"写入失败：内容过大",
+                    "error_code": 4
+                }
+
+            # ============================================================
+            # 4.5 MEMORY.md 容量守卫（与 edit_file 共用上限，防止整写绕开
+            # edit_file 的容量护栏后把常驻记忆顶爆）
+            # ============================================================
+            if resolved_path.name == "MEMORY.md" and len(content) > MEMORY_MD_MAX_CHARS:
+                return {
+                    "success": False,
+                    "error": memory_capacity_error(len(content)),
+                    "summary": f"写入失败：MEMORY.md 超出容量上限 {MEMORY_MD_MAX_CHARS} 字符",
                     "error_code": 4
                 }
 
