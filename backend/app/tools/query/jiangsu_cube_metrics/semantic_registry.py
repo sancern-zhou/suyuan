@@ -40,3 +40,15 @@ def cube_metadata(cube: str, catalog: dict[str, Any]) -> dict[str, Any]:
     }
     entry["registry_version"] = load_registry().get("version", 0)
     return entry
+
+
+def dataset_metadata(dataset: str) -> dict[str, Any]:
+    """Return the registered semantic entry for a mart dataset."""
+    registry = load_registry()
+    for cube, entry in (registry.get("cubes") or {}).items():
+        if entry.get("dataset") == dataset:
+            result = dict(entry)
+            result["cube"] = cube
+            result["registry_version"] = registry.get("version", 0)
+            return result
+    return {"dataset": dataset, "cube": None, "registry_version": registry.get("version", 0)}

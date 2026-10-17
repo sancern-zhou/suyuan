@@ -20,6 +20,7 @@ import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.sql_validator import SQLValidator
+from app.tools.query.jiangsu_cube_metrics.semantic_registry import dataset_metadata
 
 if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
@@ -70,8 +71,9 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
         function_schema = {
             "name": self.tool_name,
             "description": (
-                "查询江苏运维主题数据集（本地PostgreSQL语义层：工单/告警/站点健康/站点日概况/质控执行/质控安排6张宽表+设备台账维度表）。"
-                "只允许SELECT；表名白名单见工具说明；返回带数据截至时间。"
+                "查询江苏运维主题数据集（本地PostgreSQL受控取证层）。"
+                "只允许SELECT；表名白名单见工具说明；返回数据截至时间、语义上下文和质量状态。"
+                "此工具用于字段级取证，官方指标计算优先使用 jiangsu_query_metrics。"
                 + MART_SCHEMA_GUIDE
             ),
             "parameters": {
@@ -147,10 +149,22 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                 table,
             )
             columns = [{"name": r["column_name"], "type": r["data_type"]} for r in rows]
+            semantic = dataset_metadata(table)
             return {
                 "success": True,
                 "table": table,
                 "columns": columns,
+                "semantic_context": {
+                    "query_role": "schema_introspection",
+                    "official_metric_calculation": False,
+                    "dataset": table,
+                    "cube": semantic.get("cube"),
+                    "grain": semantic.get("grain"),
+                    "applicability": semantic.get("applicability"),
+                    "source_window": semantic.get("source_window"),
+                    "limitations": semantic.get("limitations", []),
+                    "registry_version": semantic.get("registry_version", 0),
+                },
                 "summary": f"{table}: {len(columns)} 列。字段业务含义见工具说明中的契约。",
             }
         finally:
@@ -182,11 +196,18 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
 
             conn = await asyncpg.connect(self._mart_dsn())
             rows = await conn.fetch(safe_sql)
-            data_as_of = await conn.fetchval(
-                "SELECT max(refreshed_at)::text FROM jiangsu_mart.mart_work_order_analysis"
-            )
             results = [dict(r) for r in rows]
             row_count = len(results)
+            datasets = self._datasets_from_sql(sql)
+            semantic_entries = [dataset_metadata(table) for table in datasets]
+            primary_semantic = semantic_entries[0] if semantic_entries else {}
+            time_column = self._freshness_column(datasets[0]) if datasets else None
+            if time_column:
+                data_as_of = await conn.fetchval(
+                    f"SELECT max({time_column})::text FROM jiangsu_mart.{datasets[0]}"
+                )
+            quality_checks = await self._quality_checks(conn, datasets)
+            quality_status = self._quality_status_from_checks(quality_checks)
 
             sample_data = results
             file_path = None
@@ -196,7 +217,9 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                     data=results,
                     schema="sql_query_result",
                     metadata={"database": "jiangsu_mart", "sql": sql,
-                              "row_count": len(results), "columns": columns},
+                              "row_count": len(results), "columns": columns,
+                              "semantic_registry_version": primary_semantic.get("registry_version", 0),
+                              "quality_status": quality_status},
                 )
                 sample_data = results[:12] + results[-12:]
 
@@ -207,7 +230,22 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                 "count": len(results),
                 "sample_count": len(sample_data),
                 "data_as_of": data_as_of,
-                "summary": f"返回 {len(results)} 行（数据截至 {data_as_of}）",
+                "quality_status": quality_status,
+                "semantic_context": {
+                    "query_role": "field_evidence",
+                    "official_metric_calculation": False,
+                    "datasets": datasets,
+                    "dataset": primary_semantic.get("dataset"),
+                    "cube": primary_semantic.get("cube"),
+                    "grain": primary_semantic.get("grain"),
+                    "applicability": primary_semantic.get("applicability"),
+                    "source_window": primary_semantic.get("source_window"),
+                    "limitations": primary_semantic.get("limitations", []),
+                    "registry_version": primary_semantic.get("registry_version", 0),
+                    "quality_checks": quality_checks,
+                    "interpretation": "此结果用于字段级取证；官方汇总指标应优先使用 jiangsu_query_metrics。",
+                },
+                "summary": f"返回 {len(results)} 行（数据截至 {data_as_of}，质量状态：{quality_status}）",
             }
             return payload
         except Exception as exc:  # noqa: BLE001
@@ -223,6 +261,59 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                 context, sql, row_count, status, error,
                 int((time.monotonic() - started) * 1000),
             )
+
+    @staticmethod
+    def _datasets_from_sql(sql: str) -> List[str]:
+        found = []
+        for match in re.finditer(
+            r"(?:from|join)\s+(?:jiangsu_mart\.)?\"?([a-zA-Z_][\w]*)\"?",
+            sql,
+            re.IGNORECASE,
+        ):
+            table = match.group(1).lower()
+            if table in MART_TABLES and table not in found:
+                found.append(table)
+        return found
+
+    @staticmethod
+    def _freshness_column(table: str) -> Optional[str]:
+        if table in {"mart_work_order_analysis", "mart_alarm_event_analysis",
+                     "mart_station_device_health", "mart_station_daily_profile"}:
+            return "refreshed_at"
+        return "synced_at"
+
+    @staticmethod
+    async def _quality_checks(conn, datasets: List[str]) -> List[Dict[str, str]]:
+        if not datasets:
+            return []
+        try:
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT ON (table_name, check_name) table_name, check_name, status, detail
+                FROM jiangsu_sync.dq_results
+                WHERE table_name = ANY($1::text[])
+                ORDER BY table_name, check_name, checked_at DESC
+                """,
+                datasets,
+            )
+        except Exception:
+            return []
+        return [
+            {"table": row["table_name"], "check": row["check_name"],
+             "status": row["status"], "detail": row["detail"]}
+            for row in rows
+        ]
+
+    @staticmethod
+    def _quality_status_from_checks(checks: List[Dict[str, str]]) -> str:
+        if not checks:
+            return "unknown"
+        statuses = {item["status"] for item in checks}
+        if "FAIL" in statuses:
+            return "blocked"
+        if "WARN" in statuses:
+            return "degraded"
+        return "ok"
 
     async def _schema_hint_for_error(self, exc: Exception, sql: str) -> str:
         """列/表不存在时附上相关白名单表的实际列结构，让模型在同一轮自纠，
