@@ -25,6 +25,7 @@ import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from .semantic_registry import cube_metadata
+from .result_contract import validate_result
 
 if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
@@ -567,7 +568,7 @@ class JiangsuQueryMetricsTool(LLMTool):
                 )
                 sample_data = results[:12] + results[-12:]
 
-            return {
+            payload = {
                 "success": True,
                 "data": sample_data,
                 "file_path": file_path,
@@ -583,6 +584,7 @@ class JiangsuQueryMetricsTool(LLMTool):
                     "applicability": semantic.get("applicability"),
                     "source_window": semantic.get("source_window"),
                     "freshness_slo": semantic.get("freshness_slo"),
+                    "data_as_of": data_as_of,
                     "limitations": semantic.get("limitations", []),
                     "metric_definitions": requested_metrics,
                     "quality_checks": quality_checks,
@@ -592,6 +594,10 @@ class JiangsuQueryMetricsTool(LLMTool):
                     f"质量状态：{quality_status}）"
                 ),
             }
+            contract_errors = validate_result("metric_query", payload)
+            if contract_errors:
+                logger.warning("jiangsu_metric_result_contract_violation", errors=contract_errors)
+            return payload
         except Exception as exc:  # noqa: BLE001
             status = "error"
             error = f"{type(exc).__name__}: {exc}"

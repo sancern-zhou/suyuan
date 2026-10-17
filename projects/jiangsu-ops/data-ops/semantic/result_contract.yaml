@@ -32,6 +32,17 @@ profiles:
       - semantic_context.query_role 必须为 field_evidence 或 schema_introspection
       - official_metric_calculation 必须为 false
       - findings、uncertainties、data_gaps 按实际情况返回
+  schema_introspection:
+    purpose: 受控数据集结构查询
+    required:
+      - success
+      - columns
+      - semantic_context
+    optional:
+      - summary
+    rules:
+      - semantic_context.query_role 必须为 schema_introspection
+      - 不返回与结构查询无关的 findings 或 data
   analysis:
     purpose: 故障诊断、巡检分析和综合研判
     required:

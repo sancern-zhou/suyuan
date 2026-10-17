@@ -21,6 +21,7 @@ import structlog
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.sql_validator import SQLValidator
 from app.tools.query.jiangsu_cube_metrics.semantic_registry import dataset_metadata
+from app.tools.query.jiangsu_cube_metrics.result_contract import validate_result
 
 if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
@@ -150,7 +151,7 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
             )
             columns = [{"name": r["column_name"], "type": r["data_type"]} for r in rows]
             semantic = dataset_metadata(table)
-            return {
+            payload = {
                 "success": True,
                 "table": table,
                 "columns": columns,
@@ -167,6 +168,10 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                 },
                 "summary": f"{table}: {len(columns)} 列。字段业务含义见工具说明中的契约。",
             }
+            contract_errors = validate_result("schema_introspection", payload)
+            if contract_errors:
+                logger.warning("jiangsu_schema_result_contract_violation", errors=contract_errors)
+            return payload
         finally:
             await conn.close()
 
@@ -240,6 +245,7 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                     "grain": primary_semantic.get("grain"),
                     "applicability": primary_semantic.get("applicability"),
                     "source_window": primary_semantic.get("source_window"),
+                    "data_as_of": data_as_of,
                     "limitations": primary_semantic.get("limitations", []),
                     "registry_version": primary_semantic.get("registry_version", 0),
                     "quality_checks": quality_checks,
@@ -247,6 +253,9 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                 },
                 "summary": f"返回 {len(results)} 行（数据截至 {data_as_of}，质量状态：{quality_status}）",
             }
+            contract_errors = validate_result("evidence_sql", payload)
+            if contract_errors:
+                logger.warning("jiangsu_sql_result_contract_violation", errors=contract_errors)
             return payload
         except Exception as exc:  # noqa: BLE001
             status = "error"

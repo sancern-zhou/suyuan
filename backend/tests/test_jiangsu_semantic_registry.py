@@ -4,6 +4,7 @@ from app.tools.query.jiangsu_cube_metrics.semantic_registry import (
 )
 from app.tools.query.jiangsu_cube_metrics.tool import CATALOG
 from app.tools.query.jiangsu_ops_sql_query.tool import ExecuteJiangsuOpsSQLQueryTool
+from app.tools.query.jiangsu_cube_metrics.result_contract import validate_result
 
 
 def test_registry_contains_metric_definition_and_catalog_fallback():
@@ -29,3 +30,31 @@ def test_sql_evidence_resolves_registered_dataset_and_quality_state():
     assert tool._quality_status_from_checks([]) == "unknown"
     assert tool._quality_status_from_checks([{"status": "WARN"}]) == "degraded"
     assert tool._quality_status_from_checks([{"status": "FAIL"}]) == "blocked"
+
+
+def test_sparse_result_contract_only_requires_context_for_metric_queries():
+    payload = {
+        "success": True,
+        "data": [],
+        "semantic_context": {
+            "dataset": "mart_work_order_analysis",
+            "grain": "one row per fault work order",
+            "applicability": "fault orders",
+            "data_as_of": None,
+            "metric_definitions": {"count": {"name": "工单量"}},
+        },
+        "quality_status": "unknown",
+    }
+    assert validate_result("metric_query", payload) == []
+
+
+def test_schema_introspection_does_not_require_metric_fields():
+    payload = {
+        "success": True,
+        "columns": [],
+        "semantic_context": {
+            "query_role": "schema_introspection",
+            "official_metric_calculation": False,
+        },
+    }
+    assert validate_result("schema_introspection", payload) == []
