@@ -1963,10 +1963,12 @@ def artifact_path(filename: str) -> str:
         """Convert parsed ECharts options into frontend visuals."""
         from app.utils.echarts_layout import normalize_echarts_layout
         from app.utils.echarts_legend import ensure_echarts_legend
+        from app.utils.echarts_theme import apply_echarts_report_theme
 
         visuals: List[Dict[str, Any]] = []
         for index, echarts_data in enumerate(echarts_options):
             try:
+                echarts_data = apply_echarts_report_theme(echarts_data)
                 echarts_data = ensure_echarts_legend(echarts_data)
                 echarts_data = normalize_echarts_layout(echarts_data)
                 echarts_data["textStyle"] = {

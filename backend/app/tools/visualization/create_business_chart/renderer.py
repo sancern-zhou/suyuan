@@ -362,7 +362,12 @@ def _render_general_chart_figure(
     warnings.extend(layout_warnings)
     metadata["text_layout"] = text_layout_metadata
 
-    quality_checks = _collect_quality_checks(fig, text_layout_metadata)
+    quality_checks = _collect_quality_checks(
+        fig,
+        text_layout_metadata,
+        options=options,
+        draw_metadata=draw_metadata,
+    )
     metadata["quality_checks"] = quality_checks
     warnings.extend(quality_checks["warnings"])
 
@@ -1189,8 +1194,21 @@ def _layout_warnings(fig) -> List[str]:
     return warnings
 
 
-def _collect_quality_checks(fig, text_layout_metadata: Dict[str, Any]) -> Dict[str, Any]:
-    """Record lightweight render checks for downstream report validation."""
+def _collect_quality_checks(
+    fig,
+    text_layout_metadata: Dict[str, Any],
+    *,
+    options: Dict[str, Any] | None = None,
+    draw_metadata: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Record lightweight publication checks for downstream report validation.
+
+    These checks inspect the rendered figure contract. They do not claim
+    accessibility or publisher compliance; final-size visual inspection is
+    still required.
+    """
+    options = options or {}
+    draw_metadata = draw_metadata or {}
     artist_count = 0
     for ax in fig.axes:
         artist_count += len(ax.patches)
@@ -1207,10 +1225,43 @@ def _collect_quality_checks(fig, text_layout_metadata: Dict[str, Any]) -> Dict[s
     if layout_status not in {"resolved", "degraded"}:
         warnings.append("text_layout_not_resolved")
 
+    series_count = int(draw_metadata.get("series_count") or 0)
+    legends = visible_legends(fig)
+    legend_present = bool(legends)
+    if series_count > 1 and options.get("legend", True) and not legend_present:
+        warnings.append("multi_series_legend_missing")
+
+    unit = str(options.get("unit") or "").strip()
+    if options.get("require_unit") and not unit:
+        warnings.append("unit_missing")
+
+    font_names = sorted({
+        text.get_fontproperties().get_name()
+        for text in fig.findobj(match=matplotlib.text.Text)
+        if text.get_text()
+    })
+    export_dpi = int(REPORT_THEME["dpi"])
+    width_in, height_in = (float(value) for value in fig.get_size_inches())
+    export = {
+        "format": REPORT_THEME["export"]["format"],
+        "dpi": export_dpi,
+        "min_dpi": REPORT_THEME["export"]["min_dpi"],
+        "dpi_ok": export_dpi >= REPORT_THEME["export"]["min_dpi"],
+        "width_in": round(width_in, 3),
+        "height_in": round(height_in, 3),
+        "pixel_width": round(width_in * export_dpi),
+        "pixel_height": round(height_in * export_dpi),
+        "background": REPORT_THEME["export"]["background"],
+    }
+
     return {
         "artist_count": artist_count,
         "has_plot_artists": artist_count > 0,
         "text_layout_status": layout_status,
+        "font_names": font_names,
+        "legend_present": legend_present,
+        "unit": unit or None,
+        "export": export,
         "warnings": _dedupe(warnings),
     }
 

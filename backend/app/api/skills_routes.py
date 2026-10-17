@@ -5,6 +5,7 @@
 """
 
 from fastapi import APIRouter, HTTPException
+from app.agent.selection_context import active_skill_dirs
 from app.services.skills_index import generate_skills_index
 from app.tools.utility.skill_management.skill_paths import (
     DRAFTS_DIR,
@@ -192,11 +193,11 @@ async def get_skill_detail(skill_name: str):
         }
     """
     try:
-        skills_dir, drafts_dir = _active_skill_paths()
+        _, drafts_dir = _active_skill_paths()
         try:
             skill_file = resolve_skill_file(
                 skill_name,
-                skills_dir=skills_dir,
+                skills_dir=active_skill_dirs(),
                 drafts_dir=drafts_dir,
             )
         except FileNotFoundError:
@@ -207,22 +208,10 @@ async def get_skill_detail(skill_name: str):
         # 读取文件内容
         content = skill_file.read_text(encoding='utf-8')
 
-        # 提取基本信息（第一级标题作为名称）
-        lines = content.split('\n')
-        name = skill_file.stem
-        description = "暂无描述"
-
-        for i, line in enumerate(lines):
-            line_stripped = line.strip()
-            if line_stripped.startswith("# ") and name == skill_file.stem:
-                name = line_stripped[2:].strip()
-            elif line_stripped.startswith("## 概述") or line_stripped.startswith("概述："):
-                # 尝试读取下一行作为描述
-                if i + 1 < len(lines):
-                    desc_line = lines[i + 1].strip()
-                    if desc_line and not desc_line.startswith("#"):
-                        description = desc_line
-                break
+        # 提取基本信息（frontmatter 优先，其次一级标题与概述段落）
+        metadata = parse_skill_metadata(content, skill_file.name)
+        name = metadata["title"]
+        description = metadata["description"]
 
         return {
             "success": True,
@@ -256,11 +245,11 @@ async def update_skill(skill_name: str, content: dict):
         }
     """
     try:
-        skills_dir, drafts_dir = _active_skill_paths()
+        _, drafts_dir = _active_skill_paths()
         try:
             skill_file = resolve_skill_file(
                 skill_name,
-                skills_dir=skills_dir,
+                skills_dir=active_skill_dirs(),
                 drafts_dir=drafts_dir,
             )
         except FileNotFoundError:
