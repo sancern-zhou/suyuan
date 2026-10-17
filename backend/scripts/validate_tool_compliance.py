@@ -5,7 +5,7 @@
 验证所有注册的工具是否符合：
 1. UDF v1.0 统一数据格式规范
 2. v3.0 图表数据格式规范
-3. 输入适配器规则完整性
+3. 原生 Function Schema 参数定义
 4. 返回Schema正确性
 
 使用方法：
@@ -105,7 +105,6 @@ class ToolComplianceValidator:
             "warnings": [],
             "checks": {
                 "has_metadata": False,
-                "has_input_adapter": False,
                 "has_return_schema": False,
                 "has_test_samples": False,
                 "metadata_complete": False,
@@ -137,21 +136,6 @@ class ToolComplianceValidator:
                 result["checks"]["metadata_complete"] = True
         else:
             result["errors"].append("工具缺少元数据")
-
-        # 2. 验证输入适配器规则
-        input_adapter = tool_data.get("input_adapter_rules", {})
-        if input_adapter:
-            result["checks"]["has_input_adapter"] = True
-
-            # 检查字段规则
-            if "fields" in input_adapter:
-                for field_name, field_rule in input_adapter["fields"].items():
-                    if "aliases" not in field_rule:
-                        result["warnings"].append(f"字段 {field_name} 缺少 aliases")
-                    if "validators" not in field_rule:
-                        result["warnings"].append(f"字段 {field_name} 缺少 validators")
-        else:
-            result["warnings"].append("建议添加输入适配器规则以支持宽进严出")
 
         # 3. 验证返回Schema
         return_schema = tool_data.get("return_schema", {})

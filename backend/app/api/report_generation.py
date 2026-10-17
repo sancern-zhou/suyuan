@@ -2,153 +2,65 @@
 报告生成API路由
 场景2：模板化报告生成
 """
-from fastapi import APIRouter, Depends, BackgroundTasks, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, Response
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict
 import json
 import structlog
-import uuid
+from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.report_generation import (
-    TemplateReportRequest, CreateTemplateRequest, QuickGenerateRequest,
-    ReportOptions
-)
-from app.services.tool_executor import ToolExecutor
-from app.services.report_formatter import ReportFormatter
+from app.schemas.report_generation import TemplateReportRequest, QuickGenerateRequest
 from app.utils.docx_markdown import convert_docx_to_markdown, sanitize_template_time_references
-from app.agent.context.data_context_manager import DataContextManager
 from app.core.sse import create_sse_response
 from app.db.database import get_db
-from app.db.models.report_template import ReportTemplate, ReportGenerationHistory
+from app.db.models.report_template import ReportTemplate
 from sqlalchemy import select
 
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/report", tags=["report-generation"])
 
-# 全局服务实例
-_react_agent = None
-_tool_executor = None
-
 def get_react_agent():
-    """
-    获取用于报告生成的 ReAct Agent 实例。
+    """Reuse the current report-mode Agent without a second execution pipeline."""
+    from app.api.agent import multi_expert_agent_instance
 
-    【关键设计】
-    - 这里复用 `app.api.agent` 中的 `multi_expert_agent_instance`，
-      确保模板报告流水线与主多专家系统/后续 ReAct 对话共享同一个
-      `ReActAgent` 实例和会话记忆（HybridMemoryManager）。
-    """
-    global _react_agent
-    if _react_agent is None:
-        # 延迟导入，避免循环依赖在模块加载阶段就触发
-        from app.api.agent import multi_expert_agent_instance
-
-        _react_agent = multi_expert_agent_instance
-        logger.info("React Agent initialized for report generation (reuse multi_expert_agent_instance)")
-    return _react_agent
-
-def get_tool_executor() -> ToolExecutor:
-    """获取工具执行器实例"""
-    global _tool_executor, _react_agent
-    if _tool_executor is None:
-        react_agent = get_react_agent()
-        _tool_executor = ToolExecutor(react_agent=react_agent)
-        logger.info("ToolExecutor initialized with React Agent")
-    return _tool_executor
-
+    return multi_expert_agent_instance
 
 
 def _stream_template_report_agent(
     template_content: str,
     target_time_range: Dict[str, str],
 ) -> Response:
-    """
-    公共封装：基于模板内容 + 时间范围，走模板报告专家（Agent）生成流程。
-
-    - generate-from-template-agent（JSON 版）与
-      generate-from-template-file（文件上传版）都复用此逻辑。
-    """
-
-    async def event_generator():
-        """
-        统一的模板报告流水线入口：
-        - 使用与主多专家系统共享的 ReActAgent 实例创建/复用会话；
-        - 复用该会话下的 HybridMemoryManager + DataContextManager；
-        - 将模板报告生成结果写入同一会话记忆，便于后续 ReAct 连续对话使用。
-        """
-        react_agent = get_react_agent()
-
-        # 通过 ReActAgent 创建/复用会话，获取统一的 HybridMemoryManager
-        # 注意：这是 ReActAgent 的内部方法，这里有意复用以实现真正共享记忆。
-        session_id, memory_manager, created_new = await react_agent._get_or_create_session(  # type: ignore[attr-defined]
-            session_id=None,
-            reset_session=False
-        )
-
-        try:
-            # 起始事件：将真实的 ReAct 会话 ID 暴露给前端，便于后续连续对话复用
-            yield format_sse_event({
-                "type": "start",
-                "data": {
-                    "session_id": session_id,
-                    "created_new": created_new
-                }
-            })
-
-            # 构造用户消息，包含模板内容和时间范围要求
-            display = target_time_range.get("display", f"{target_time_range.get('start', '')}至{target_time_range.get('end', '')}")
-
-            user_message = f"""请根据以下模板内容，生成{display}的空气质量DOCX报告。
+    """Use the Agent's session lifecycle and forward its terminal event once."""
+    template_content = sanitize_template_time_references(template_content)
+    display = target_time_range.get(
+        "display", f"{target_time_range.get('start', '')}至{target_time_range.get('end', '')}"
+    )
+    user_query = f"""请根据以下模板内容，生成{display}的空气质量DOCX报告。
 
 【模板内容】
 {template_content}
 
 【要求】
-1. 分析模板结构，理解报告章节安排
-2. 并发查询所需数据（使用query_new_standard_report或query_old_standard_report）
-3. 使用execute_python + python-docx生成DOCX报告
-4. 报告保存到：backend/backend_data_registry/report.docx
+1. 分析模板结构，保留用户要求的报告章节安排。
+2. 查询目标时段的真实数据，说明数据来源和缺失情况。
+3. 按当前报告模式的工具及资源交付规范生成可下载的DOCX报告。
+4. 将报告登记为当前会话资源，并在最终答复中提供下载入口。
 
 请开始执行。"""
 
-            # 调用ReAct Agent分析（报告模式）
-            agent_mode = "report"
-            async for event in react_agent.analyze(
-                message=user_message,
-                session_id=session_id,
-                agent_mode=agent_mode
+    async def event_generator():
+        try:
+            async for event in get_react_agent().analyze(
+                user_query=user_query,
+                manual_mode="report",
             ):
-                # 转发Agent事件到前端
                 if isinstance(event, dict):
                     yield format_sse_event(event)
-
-            # 完成事件
-            yield format_sse_event({
-                "type": "complete",
-                "data": {
-                    "session_id": session_id,
-                    "status": "success"
-                }
-            })
-
-        except Exception as e:
-            logger.error("template_report_agent_failed", error=str(e), exc_info=True)
-            yield format_sse_event({
-                "type": "fatal_error",
-                "data": {"error": str(e)}
-            })
-        finally:
-            # 更新会话最近使用时间，保持与 ReActAgent 的会话生命周期一致
-            try:
-                await react_agent._mark_session_used(session_id)  # type: ignore[attr-defined]
-            except Exception as mark_err:
-                logger.warning(
-                    "template_report_mark_session_used_failed",
-                    error=str(mark_err),
-                    session_id=session_id
-                )
+        except Exception as exc:
+            logger.error("template_report_agent_failed", error=str(exc), exc_info=True)
+            yield format_sse_event({"type": "fatal_error", "data": {"error": str(exc)}})
 
     return create_sse_response(event_generator())
 
@@ -204,9 +116,6 @@ async def generate_from_template_file(
             detail="仅支持 .md/.txt/.docx 模板文件"
         )
 
-    # 时间标准化处理：将模板中的具体时间替换为占位符，避免LLM被历史时间误导
-    template_content = sanitize_template_time_references(template_content)
-
     target_time_range: Dict[str, str] = {
         "start": start,
         "end": end
@@ -218,6 +127,19 @@ async def generate_from_template_file(
         template_content=template_content,
         target_time_range=target_time_range
     )
+
+
+@router.post("/templates/{template_id}/generate")
+async def generate_from_saved_template(
+    template_id: UUID,
+    request: QuickGenerateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate from a saved template through the same current Agent path."""
+    template = await db.get(ReportTemplate, template_id)
+    if template is None or not template.is_active:
+        raise HTTPException(status_code=404, detail="模板不存在或已停用")
+    return _stream_template_report_agent(template.content, request.time_range)
 
 
 @router.post("/templates")

@@ -6,7 +6,7 @@
 核心功能：
 - 定期唤醒Agent（默认30分钟间隔）
 - 读取HEARTBEAT.md文件（包含待办任务列表）
-- LLM决策是否需要执行任务
+- 基于 cron 表达式筛选到期任务
 - 执行任务后主动推送结果
 """
 
@@ -607,20 +607,6 @@ class HeartbeatService:
                 return now_ms
 
         return min(wake_times) if wake_times else None
-
-    async def _llm_decide(self, tasks: list[Dict[str, Any]]) -> bool:
-        """
-        LLM决策：是否需要执行任务（已废弃，保留用于兼容）
-
-        Args:
-            tasks: 任务列表
-
-        Returns:
-            是否执行任务
-        """
-        # ✅ 不再使用LLM决策，改为基于cron表达式判断
-        # 这个方法保留用于向后兼容
-        return len(tasks) > 0
 
     def _update_task_next_runs(self, tasks: List[Dict[str, Any]]) -> None:
         """

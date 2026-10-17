@@ -594,7 +594,6 @@ class ToolInfo(BaseModel):
     statistics: Dict[str, Any]
     metadata: Dict[str, Any]
     function_schema: Optional[Dict[str, Any]]
-    has_input_adapter: bool
     has_return_schema: bool
 
 

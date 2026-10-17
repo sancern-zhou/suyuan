@@ -71,14 +71,12 @@ def test_report_generation_uses_system_sse_response():
 
 async def test_report_generation_preserves_first_and_terminal_frames(monkeypatch):
     class FakeAgent:
-        async def _get_or_create_session(self, **kwargs):
-            return "session-1", object(), True
-
-        async def analyze(self, **kwargs):
+        async def analyze(self, *, user_query, manual_mode):
+            assert manual_mode == "report"
+            assert "Template" in user_query
+            yield {"type": "start", "data": {"session_id": "session-1"}}
             yield {"type": "streaming_text", "data": {"chunk": "answer"}}
-
-        async def _mark_session_used(self, session_id):
-            return None
+            yield {"type": "complete", "data": {"answer": "answer", "session_id": "session-1"}}
 
     monkeypatch.setattr(report_generation, "get_react_agent", lambda: FakeAgent())
     response = report_generation._stream_template_report_agent(
