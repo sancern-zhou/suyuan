@@ -1350,6 +1350,33 @@ async def _stream_events(
     request_id: str | None = None,
     resource_refs: list | None = None,
 ) -> AsyncIterator[str]:
+    from app.agent.runtime.session_advisory_lock import SessionRunConflict, session_advisory_lock
+
+    try:
+        async with session_advisory_lock(session_id):
+            gen = _stream_events_unlocked(identity, session_id, query, attachments, mode, request_id, resource_refs)
+            try:
+                async for chunk in gen:
+                    yield chunk
+            finally:
+                await gen.aclose()
+    except SessionRunConflict:
+        error_event = {
+            "type": "fatal_error",
+            "data": {"code": "session_run_in_progress", "error": "当前会话正在执行，请等待完成或暂停后重试"},
+        }
+        yield f"data: {dumps_safe(error_event)}\n\n"
+
+
+async def _stream_events_unlocked(
+    identity: AppIdentity,
+    session_id: str,
+    query: str,
+    attachments: list[dict] | None = None,
+    mode: str = "expert",
+    request_id: str | None = None,
+    resource_refs: list | None = None,
+) -> AsyncIterator[str]:
     from app.agent.runtime.cancellation import cancellation_registry
 
     agent = await _get_agent()
@@ -1402,7 +1429,9 @@ async def _stream_events(
             event_type = event.get("type")
             event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
             if event_data.get("run_id"):
-                await cancellation_registry.attach_run_id(session_id, cancel_event, str(event_data["run_id"]))
+                registered = await cancellation_registry.attach_run_id(session_id, cancel_event, str(event_data["run_id"]))
+                if not registered:
+                    raise RuntimeError("session_run_registration_rejected")
             if event_type == "interaction_required":
                 if event_data.get('kind') != 'structured_question':
                     # Unsupported approval actions must remain explicit; never

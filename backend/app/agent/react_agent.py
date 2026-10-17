@@ -24,6 +24,7 @@ from .core.loop import ReActLoop
 from .core.planner import ReActPlanner
 from .core.executor import ToolExecutor
 from .runtime.mode_capabilities import supports_native_multimodal
+from .runtime.session_advisory_lock import serialize_agent_session
 from .resources.runtime import (
     event_turn_sequence,
     persist_tool_result_resources,
@@ -383,6 +384,7 @@ class ReActAgent:
         # 现在使用任务清单驱动的流程（Agent 读取 md 模板 + Task 工具）
         pass
 
+    @serialize_agent_session
     async def analyze(
         self,
         user_query: str,

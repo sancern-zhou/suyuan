@@ -35,6 +35,7 @@ from app.agent.user_questions import format_answers, validate_answers
 from app.agent.runtime.cancellation import PauseCheckpointError, cancellation_registry
 from app.agent.runtime.steering import steering_registry
 from app.agent.runtime.ownership import run_ownership_registry
+from app.agent.runtime.session_advisory_lock import SessionRunConflict, session_advisory_lock
 from app.agent.selection_context import (
     InvalidContextReference,
     load_skill_selection,
@@ -1006,7 +1007,7 @@ async def analyze_stream(
                 except FileNotFoundError as exc:
                     raise HTTPException(status_code=409, detail="board_version_load_failed") from exc
 
-        async def event_generator():
+        async def unlocked_event_generator():
             """SSE 事件生成器"""
             nonlocal actual_session_id, conversation_history, latest_drawio_board, drawio_board_context, preloaded_session
             cancel_event = None
@@ -1020,16 +1021,6 @@ async def analyze_stream(
             # The pause barrier must complete before loading conversation
             # history; otherwise a fast next turn can retain a stale preload.
             try:
-                if request.previous_paused_run_id:
-                    await cancellation_registry.cancel(
-                        actual_session_id,
-                        expected_run_id=request.previous_paused_run_id,
-                        reason="user_paused",
-                    )
-                    await cancellation_registry.ensure_pause_succeeded(
-                        actual_session_id,
-                        request.previous_paused_run_id,
-                    )
                 cancel_event = await cancellation_registry.register(actual_session_id)
             except PauseCheckpointError as pause_error:
                 error_event = {
@@ -1042,125 +1033,126 @@ async def analyze_stream(
                 }
                 yield f"data: {dumps_safe(error_event)}\n\n"
                 return
-            current_task = asyncio.current_task()
-            if current_task is not None:
-                await cancellation_registry.attach_run_task(actual_session_id, current_task)
-            analyze_kwargs["cancel_event"] = cancel_event
-            if actual_session_id:
-                preloaded_session = await load_session(actual_session_id)
+            session = None
+            try:
+                current_task = asyncio.current_task()
+                if current_task is not None:
+                    await cancellation_registry.attach_run_task(actual_session_id, current_task)
+                analyze_kwargs["cancel_event"] = cancel_event
+                if actual_session_id:
+                    preloaded_session = await load_session(actual_session_id)
 
-            # 创建或加载会话
-            if actual_session_id:
-                logger.info(
-                    "route_session_load_start",
-                    session_id=actual_session_id,
-                    include_messages="display_light",
-                )
-                session = preloaded_session
-                if session:
-                    session_already_exists = True
+                # 创建或加载会话
+                if actual_session_id:
                     logger.info(
-                        "session_restored",
+                        "route_session_load_start",
                         session_id=actual_session_id,
-                        has_conversation_history=bool(session.conversation_history),
-                        conversation_history_length=len(session.conversation_history) if session.conversation_history else 0,
-                        resource_store="unified",
+                        include_messages="display_light",
                     )
-                    conversation_history = session.conversation_history or []
-                    if request.mode == "board" and drawio_board_context is not None:
+                    session = preloaded_session
+                    if session:
+                        session_already_exists = True
                         logger.info(
-                            "board_context_restored_from_session_metadata",
+                            "session_restored",
                             session_id=actual_session_id,
-                            current_xml_length=len(
-                                drawio_board_context.get("current_xml")
-                                or drawio_board_context.get("currentXml")
-                                or drawio_board_context.get("xml")
-                                or ""
-                            ),
-                            selected_count=len(
-                                drawio_board_context.get("selected_cells")
-                                or drawio_board_context.get("selectedCells")
-                                or []
-                            ),
-                            version=drawio_board_context.get("version"),
-                            updated_at=drawio_board_context.get("updated_at")
-                            or drawio_board_context.get("updatedAt"),
+                            has_conversation_history=bool(session.conversation_history),
+                            conversation_history_length=len(session.conversation_history) if session.conversation_history else 0,
+                            resource_store="unified",
                         )
+                        conversation_history = session.conversation_history or []
+                        if request.mode == "board" and drawio_board_context is not None:
+                            logger.info(
+                                "board_context_restored_from_session_metadata",
+                                session_id=actual_session_id,
+                                current_xml_length=len(
+                                    drawio_board_context.get("current_xml")
+                                    or drawio_board_context.get("currentXml")
+                                    or drawio_board_context.get("xml")
+                                    or ""
+                                ),
+                                selected_count=len(
+                                    drawio_board_context.get("selected_cells")
+                                    or drawio_board_context.get("selectedCells")
+                                    or []
+                                ),
+                                version=drawio_board_context.get("version"),
+                                updated_at=drawio_board_context.get("updated_at")
+                                or drawio_board_context.get("updatedAt"),
+                            )
 
-                    # ✅ 不再传递 initial_messages，因为 react_agent._get_or_create_session 会自动从 SessionManager 恢复会话
-                    # 避免重复加载历史消息
+                        # ✅ 不再传递 initial_messages，因为 react_agent._get_or_create_session 会自动从 SessionManager 恢复会话
+                        # 避免重复加载历史消息
+                    else:
+                        session_already_exists = False
+                        logger.warning(
+                            "session_not_found_creating_new",
+                            session_id=actual_session_id,
+                            hint="SessionManager中未找到该会话，将创建新会话"
+                        )
+                        session = Session(session_id=actual_session_id, query=request.query)
+                        conversation_history = []
                 else:
                     session_already_exists = False
-                    logger.warning(
-                        "session_not_found_creating_new",
-                        session_id=actual_session_id,
-                        hint="SessionManager中未找到该会话，将创建新会话"
-                    )
                     session = Session(session_id=actual_session_id, query=request.query)
                     conversation_history = []
-            else:
-                session_already_exists = False
-                session = Session(session_id=actual_session_id, query=request.query)
-                conversation_history = []
-                logger.info("session_created", session_id=actual_session_id)
-                # 更新 analyze_kwargs 中的 session_id
-                analyze_kwargs["session_id"] = actual_session_id
+                    logger.info("session_created", session_id=actual_session_id)
+                    # 更新 analyze_kwargs 中的 session_id
+                    analyze_kwargs["session_id"] = actual_session_id
 
-            if request.mode == "query" and request.map_context:
-                session.metadata = merge_map_scene_metadata(session.metadata, request.map_context)
-            session.metadata = dict(session.metadata or {})
-            session.metadata[ACTIVE_CONTEXTS_KEY] = active_contexts_payload
+                if request.mode == "query" and request.map_context:
+                    session.metadata = merge_map_scene_metadata(session.metadata, request.map_context)
+                session.metadata = dict(session.metadata or {})
+                session.metadata[ACTIVE_CONTEXTS_KEY] = active_contexts_payload
 
-            # 只保存/刷新会话元数据，不在首个 SSE 事件前同步历史消息。
-            # 历史消息在本轮完成或异常时走增量保存，避免 DELETE + INSERT
-            # 阻塞用户看到首个响应事件。
-            if session_already_exists:
-                async def _save_initial_session_metadata() -> None:
-                    try:
-                        await session_manager.save_session_metadata(session)
-                    except Exception as save_err:
-                        logger.warning(
-                            "initial_session_metadata_save_failed",
-                            session_id=actual_session_id,
-                            error=str(save_err)
-                        )
+                # 只保存/刷新会话元数据，不在首个 SSE 事件前同步历史消息。
+                # 历史消息在本轮完成或异常时走增量保存，避免 DELETE + INSERT
+                # 阻塞用户看到首个响应事件。
+                if session_already_exists:
+                    async def _save_initial_session_metadata() -> None:
+                        try:
+                            await session_manager.save_session_metadata(session)
+                        except Exception as save_err:
+                            logger.warning(
+                                "initial_session_metadata_save_failed",
+                                session_id=actual_session_id,
+                                error=str(save_err)
+                            )
 
-                asyncio.create_task(_save_initial_session_metadata())
-            else:
-                # 客户端可能在 SSE 早期断开（用户停止/前端 abort），CancelledError
-                # 会在 save_session_metadata 与 catalog.register 之间中断生成器，
-                # 留下无 catalog 行的孤儿会话，使后续 analyze/cancel 全部 404。
-                # shield 保证注册作为整体落库，取消仍正常向外传播。
-                await asyncio.shield(
-                    asyncio.create_task(
-                        persist_new_web_session(
-                            manager=session_manager,
-                            session=session,
-                            catalog=catalog,
-                            user=user,
-                            mode=request.mode or "assistant",
+                    asyncio.create_task(_save_initial_session_metadata())
+                else:
+                    # 客户端可能在 SSE 早期断开（用户停止/前端 abort），CancelledError
+                    # 会在 save_session_metadata 与 catalog.register 之间中断生成器，
+                    # 留下无 catalog 行的孤儿会话，使后续 analyze/cancel 全部 404。
+                    # shield 保证注册作为整体落库，取消仍正常向外传播。
+                    await asyncio.shield(
+                        asyncio.create_task(
+                            persist_new_web_session(
+                                manager=session_manager,
+                                session=session,
+                                catalog=catalog,
+                                user=user,
+                                mode=request.mode or "assistant",
+                            )
                         )
                     )
+
+                # ✅ 添加用户消息到对话历史
+                user_message = _build_user_message_for_history(
+                    request.query,
+                    resource_refs_to_message_attachments(selected_resource_refs),
+                    timestamp=datetime.now().isoformat(),
                 )
+                user_message["skill_ids"] = (
+                    [selected_skill.skill_id] if selected_skill else []
+                )
+                user_message["context_refs"] = [ref.model_dump(mode="json") for ref in request.context_refs]
+                user_message["active_contexts"] = list(resolved_active_contexts.items)
+                conversation_history.append(user_message)
+                logger.debug("user_message_added", query_preview=request.query[:100])
 
-            # ✅ 添加用户消息到对话历史
-            user_message = _build_user_message_for_history(
-                request.query,
-                resource_refs_to_message_attachments(selected_resource_refs),
-                timestamp=datetime.now().isoformat(),
-            )
-            user_message["skill_ids"] = (
-                [selected_skill.skill_id] if selected_skill else []
-            )
-            user_message["context_refs"] = [ref.model_dump(mode="json") for ref in request.context_refs]
-            user_message["active_contexts"] = list(resolved_active_contexts.items)
-            conversation_history.append(user_message)
-            logger.debug("user_message_added", query_preview=request.query[:100])
+                # 本轮已生成的图表 visual_id：用于修复模型抄错的 [[chart:...]] 占位符
+                known_visual_ids: set = set()
 
-            # 本轮已生成的图表 visual_id：用于修复模型抄错的 [[chart:...]] 占位符
-            known_visual_ids: set = set()
-
-            try:
                 await cancellation_registry.arm_run_task(actual_session_id, cancel_event)
                 with (
                     llm_service.use_model_tier(request.model_tier),
@@ -1171,11 +1163,13 @@ async def analyze_stream(
                         event_type = event.get("type")
                         latest_event_run_id = _event_run_id(event) or latest_event_run_id
                         if latest_event_run_id:
-                            await cancellation_registry.attach_run_id(
+                            registered = await cancellation_registry.attach_run_id(
                                 actual_session_id,
                                 cancel_event,
                                 latest_event_run_id,
                             )
+                            if not registered:
+                                raise SessionRunConflict("session_run_registration_rejected")
 
                         # ✅ 关闭流式文本事件的所有日志
                         if event_type != "streaming_text":
@@ -1486,6 +1480,7 @@ async def analyze_stream(
             except asyncio.CancelledError:
                 if (
                     actual_session_id
+                    and session is not None
                     and cancel_event is not None
                     and await cancellation_registry.can_finalize(actual_session_id, cancel_event)
                 ):
@@ -1542,7 +1537,7 @@ async def analyze_stream(
                     error=str(e),
                     exc_info=True
                 )
-                if await run_ownership_registry.can_write(actual_session_id, latest_event_run_id):
+                if session is not None and await run_ownership_registry.can_write(actual_session_id, latest_event_run_id):
                     # 保存失败会话
                     persistence.append_terminal(
                         session,
@@ -1583,6 +1578,41 @@ async def analyze_stream(
             finally:
                 if actual_session_id and cancel_event is not None:
                     await cancellation_registry.unregister(actual_session_id, cancel_event)
+
+        async def event_generator():
+            # Serialize the complete read-run-write lifecycle, including route
+            # transcript persistence. Waiting for an explicit pause happens
+            # before acquiring the lock held by that still-finishing run.
+            try:
+                if request.previous_paused_run_id:
+                    await cancellation_registry.cancel(
+                        actual_session_id,
+                        expected_run_id=request.previous_paused_run_id,
+                        reason="user_paused",
+                    )
+                    await cancellation_registry.ensure_pause_succeeded(
+                        actual_session_id, request.previous_paused_run_id
+                    )
+                async with session_advisory_lock(
+                    actual_session_id,
+                    wait_timeout=30 if request.previous_paused_run_id else 0,
+                ):
+                    gen = unlocked_event_generator()
+                    try:
+                        async for chunk in gen:
+                            yield chunk
+                    finally:
+                        await gen.aclose()
+            except (SessionRunConflict, PauseCheckpointError) as error:
+                conflict = isinstance(error, SessionRunConflict)
+                error_event = {
+                    "type": "fatal_error",
+                    "data": {
+                        "code": "session_run_in_progress" if conflict else "pause_checkpoint_failed",
+                        "error": "当前会话正在执行，请等待完成或暂停后重试" if conflict else "暂停记录保存失败，请重试当前消息",
+                    },
+                }
+                yield f"data: {dumps_safe(error_event)}\n\n"
 
         detached_stream = _detached_run_stream(raw_request)
         if detached_stream is None or not actual_session_id:
