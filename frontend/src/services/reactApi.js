@@ -1,3 +1,4 @@
+import { accountGeneration, assertAccountGeneration } from '../auth/accountSession.js'
 import { authFetch } from '@/auth/http.js'
 import { buildAnalyzeRequestBody } from './reactRequestBody.js'
 import { acceptStreamResponse } from './streamAcceptance.js'
@@ -159,12 +160,14 @@ class ReactAgentAPI {
 
   // 内部方法：读取 SSE 响应体并按事件分发
   async _readSseStream(response, onEvent) {
+    const generation = accountGeneration()
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
 
     while (true) {
       const { done, value } = await reader.read()
+      assertAccountGeneration(generation)
 
       if (done) {
         break

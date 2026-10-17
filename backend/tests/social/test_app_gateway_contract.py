@@ -77,12 +77,16 @@ def test_disabled_account_cannot_login(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_app_session_mapping_is_not_expired_after_24_hours(tmp_path):
-    mapper = SessionMapper(data_dir=str(tmp_path))
-    await mapper.save_mapping("app:android:alice", "social_session_alice")
-    mapper._timestamp_cache["app:android:alice"] = datetime.now() - timedelta(days=30)
-    mapper._timestamp_cache["qq:bot:bob"] = datetime.now() - timedelta(days=30)
-    mapper._mappings["qq:bot:bob"] = "social_session_bob"
+async def test_app_session_mapping_is_not_expired_after_24_hours(social_mapping_db):
+    from app.social.models import SocialSessionMapping
+    from sqlalchemy import insert
+    mapper = SessionMapper(db_manager=social_mapping_db)
+    async with social_mapping_db() as db:
+        await db.execute(insert(SocialSessionMapping), [
+            {"social_user_id": "app:android:alice", "session_id": "social_session_alice", "last_used": datetime.now() - timedelta(days=30)},
+            {"social_user_id": "qq:bot:bob", "session_id": "social_session_bob", "last_used": datetime.now() - timedelta(days=30)},
+        ])
+        await db.commit()
 
     assert await mapper.get_session("app:android:alice") == "social_session_alice"
     assert await mapper.get_session("qq:bot:bob") is None

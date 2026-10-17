@@ -34,7 +34,7 @@ from app.db.database import get_db
 from app.knowledge_base.models import UploadedFile
 from app.agent.resources.resource_service import SessionResourceService
 from app.utils.json_safety import dumps_safe
-from app.utils.path_config import get_data_registry, get_sessions_dir
+from app.utils.path_config import get_data_registry, get_sessions_dir, resolve_agent_path
 from app.social.app_identity import (
     AppIdentity,
     issue_access_token,
@@ -683,7 +683,7 @@ async def _serve_report_attachment(
     if attachment_index < 0 or attachment_index >= len(attachments) or not isinstance(attachments[attachment_index], dict):
         raise HTTPException(status_code=404, detail="report_attachment_not_found")
     attachment = attachments[attachment_index]
-    target = Path(str(attachment.get("path") or "").strip()).expanduser().resolve()
+    target = resolve_agent_path(str(attachment.get("path") or "").strip())
     try:
         target.relative_to(get_data_registry().expanduser().resolve())
     except ValueError as exc:
@@ -748,7 +748,7 @@ async def _serve_report_attachment_preview(
     if attachment_index < 0 or attachment_index >= len(attachments) or not isinstance(attachments[attachment_index], dict):
         raise HTTPException(status_code=404, detail="report_attachment_not_found")
     attachment = attachments[attachment_index]
-    target = Path(str(attachment.get("path") or "").strip()).expanduser().resolve()
+    target = resolve_agent_path(str(attachment.get("path") or "").strip())
     try:
         target.relative_to(get_data_registry().expanduser().resolve())
     except ValueError as exc:

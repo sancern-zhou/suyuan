@@ -10,11 +10,13 @@ export async function readReportResponse(response) {
 
   const consumeFrame = (frame) => {
     const lines = frame.split(/\r?\n/)
-    const type = lines.find(line => line.startsWith('event:'))?.slice(6).trim()
+    const namedType = lines.find(line => line.startsWith('event:'))?.slice(6).trim()
     const payload = lines.filter(line => line.startsWith('data:'))
       .map(line => line.slice(5).trimStart()).join('\n')
     if (!payload) return null // Keepalive comments are not business events.
-    const data = JSON.parse(payload)
+    const envelope = JSON.parse(payload)
+    const type = envelope.type || namedType
+    const data = envelope.type ? (envelope.data || {}) : envelope
     sessionId = data.session_id || sessionId
     if (type === 'fatal_error' || type === 'error' || type === 'interrupted') {
       throw new Error(data.error || data.reason || '报告生成失败')

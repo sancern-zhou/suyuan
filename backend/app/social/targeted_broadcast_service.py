@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from hashlib import sha256
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from app.social.broadcast_service import SocialBroadcastService
+from app.utils.path_config import (
+    resolve_agent_path, get_data_registry, agent_content_read_roots, is_path_within,
+)
 from app.social.user_registry import get_social_user_registry
 from app.social.user_registry import SocialUserRecord
 from app.social.app_identity import _accounts
@@ -203,8 +208,25 @@ class TargetedSocialBroadcastService:
         media: list[str],
     ) -> None:
         report_type = str(context_metadata.get("report_type") or "").strip()
+        if not report_type:
+            return
         document_suffixes = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
-        documents = [path for path in media if Path(str(path).split("?", 1)[0]).suffix.lower() in document_suffixes]
+        documents = []
+        execution_id = str(context_metadata.get("execution_id") or "").strip()
+        if report_type and not execution_id:
+            raise ValueError("report_execution_id_required")
+        attachment_root = get_data_registry() / "social" / "report_attachments" / sha256(execution_id.encode()).hexdigest()
+        for index, raw in enumerate(media):
+            if Path(str(raw).split("?", 1)[0]).suffix.lower() not in document_suffixes:
+                continue
+            path = resolve_agent_path(raw)
+            if not is_path_within(path, agent_content_read_roots()) or not path.is_file():
+                raise ValueError("report_attachment_unavailable")
+            attachment_root.mkdir(parents=True, exist_ok=True)
+            target = attachment_root / f"{index}-{path.name}"
+            if not target.exists():
+                shutil.copy2(path, target)
+            documents.append(str(target))
         if not report_type or not documents:
             return
         from app.social.report_service import publish_report_results

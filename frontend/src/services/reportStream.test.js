@@ -14,6 +14,12 @@ const responseFor = (text, chunkSize = 1) => {
   }))
 }
 
+test('template reports accept the standard Agent envelope with session identity', async () => {
+  const response = responseFor('data: {"type":"start","data":{"session_id":"owned-report"}}\n\n' +
+    'data: {"type":"complete","data":{"answer":"报告资源","session_id":"owned-report"}}\n\n')
+  assert.deepEqual(await readReportResponse(response), { reportContent: '报告资源', sessionId: 'owned-report' })
+})
+
 test('report stream survives split event headers, JSON, CRLF and Chinese UTF-8 bytes', async () => {
   const response = responseFor(
     ': keepalive\r\n\r\n' +

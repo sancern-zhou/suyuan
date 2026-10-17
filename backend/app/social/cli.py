@@ -33,7 +33,6 @@ from config.settings import settings
 from app.social.config import SocialConfig
 from app.social.message_bus import MessageBus
 from app.social.session_mapper import SessionMapper
-from app.utils.path_config import get_data_registry
 from app.social.agent_bridge import AgentBridge
 from app.channels.manager import ChannelManager
 from app.agent.react_agent import create_react_agent
@@ -77,9 +76,7 @@ async def main():
     message_bus = MessageBus()
 
     logger.info("Initializing session mapper")
-    session_mapper = SessionMapper(
-        data_dir=str(get_data_registry())
-    )
+    session_mapper = SessionMapper()
     await session_mapper.load()
 
     logger.info("Initializing ReActAgent")
@@ -113,7 +110,6 @@ async def main():
         logger.info("Stopping social platform integration")
         await agent_bridge.stop()
         await channel_manager.stop_all()
-        await session_mapper.save()
 
         # Cleanup expired sessions
         cleaned = await session_mapper.cleanup_expired(ttl_hours=24)

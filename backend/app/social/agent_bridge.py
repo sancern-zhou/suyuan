@@ -498,6 +498,9 @@ class AgentBridge:
                 temporary.flush()
                 os.fsync(temporary.fileno())
             except Exception:
+                # Windows cannot unlink an open temporary file. Preserve the
+                # original validation error and remove the partial copy.
+                temporary.close()
                 temporary_path.unlink(missing_ok=True)
                 raise
 
@@ -1763,7 +1766,8 @@ class AgentBridge:
                     await self.session_mapper.update_consolidation_offset(
                         social_user_id=social_user_id,
                         new_offset=len(messages),
-                        total_count=len(messages)
+                        total_count=len(messages),
+                        expected_session_id=session_id,
                     )
 
                     logger.info(

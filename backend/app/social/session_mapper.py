@@ -1,421 +1,130 @@
-"""Session mapper for social platform user to agent session mapping."""
+"""Database-owned social mappings, shared by all web and worker processes."""
 
-import asyncio
-import json
 import secrets
 from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Dict, Optional, Any
 
-import structlog
+from sqlalchemy import case, delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert
 
-from app.utils.path_config import get_social_dir
-
-logger = structlog.get_logger(__name__)
+from app.db.session_database import session_async_session
+from app.social.models import SocialSessionMapping as Mapping
 
 
 class SessionMapper:
-    """
-    Manages one-to-one mapping between social platform users and agent sessions.
-
-    Mapping structure:
-        social_user_id (e.g., "qq:123456") -> session_id (e.g., "react_session_abc123")
-
-    Persistence:
-        - PostgreSQL table: social_session_mappings
-        - Fallback: JSON file in the active project's social data directory
-    """
-
-    def __init__(self, db_manager=None, data_dir: str | None = None):
-        """
-        Initialize the session mapper.
-
-        Args:
-            db_manager: Optional database manager for PostgreSQL persistence
-            data_dir: Fallback data directory for JSON persistence
-        """
-        self.db_manager = db_manager
-        self.data_dir = Path(data_dir) if data_dir is not None else get_social_dir()
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.mappings_file = self.data_dir / "session_mappings.json"
-
-        # In-memory cache
-        self._mappings: Dict[str, str] = {}
-        self._timestamp_cache: Dict[str, datetime] = {}
-
-        # ✅ 新增缓存：偏移量和消息计数
-        self._offset_cache: Dict[str, int] = {}
-        self._message_count_cache: Dict[str, int] = {}
-
-        # Lock for thread safety
-        self._lock = asyncio.Lock()
+    def __init__(self, db_manager=None):
+        self.db_manager = db_manager or session_async_session
 
     @staticmethod
-    def _is_persistent_identity(social_user_id: str) -> bool:
-        """Android App identities keep their mapping until explicitly deleted."""
-        return social_user_id.startswith("app:")
+    def new_session_id(mode: str = "assistant") -> str:
+        return f"{mode}_session_{int(datetime.now().timestamp() * 1000)}_{secrets.token_hex(6)}"
 
-    @classmethod
-    def _is_expired(cls, social_user_id: str, last_used: datetime, ttl_hours: int = 24) -> bool:
-        return not cls._is_persistent_identity(social_user_id) and (
-            datetime.now() - last_used >= timedelta(hours=ttl_hours)
-        )
+    @staticmethod
+    def _expired(cutoff):
+        return (~Mapping.social_user_id.startswith("app:")) & (Mapping.last_used <= cutoff)
 
     async def load(self) -> None:
-        """Load mappings from persistent storage."""
-        async with self._lock:
-            # Try database first
-            if self.db_manager:
-                try:
-                    await self._load_from_db()
-                    return
-                except Exception as e:
-                    logger.warning("Failed to load from database, falling back to JSON", error=str(e))
-
-            # Fallback to JSON file
-            await self._load_from_file()
-
-    async def _load_from_db(self) -> None:
-        """Load mappings from PostgreSQL database."""
-        from sqlalchemy import select
-        from datetime import timedelta
-        from app.social.models import SocialSessionMapping
-
-        if not self.db_manager:
-            return
-
-        # Use async session from database
-        async with self.db_manager() as session:
-            stmt = select(SocialSessionMapping).where(
-                (SocialSessionMapping.social_user_id.like("app:%"))
-                | (SocialSessionMapping.last_used > datetime.now() - timedelta(hours=24))
-            )
-
-            result = await session.execute(stmt)
-            mappings = result.scalars().all()
-
-            for mapping in mappings:
-                self._mappings[mapping.social_user_id] = mapping.session_id
-                self._timestamp_cache[mapping.social_user_id] = mapping.last_used
-
-            logger.info("Loaded session mappings from database", count=len(self._mappings))
-
-    async def _load_from_file(self) -> None:
-        """Load mappings from JSON file."""
-        if not self.mappings_file.exists():
-            logger.info("No existing session mappings file found")
-            return
-
-        try:
-            with open(self.mappings_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-
-            # Filter expired mappings (older than 24 hours)
-            now = datetime.now()
-            for social_user_id, entry in data.items():
-                last_used = datetime.fromisoformat(entry.get('last_used', now.isoformat()))
-                if not self._is_expired(social_user_id, last_used):
-                    self._mappings[social_user_id] = entry['session_id']
-                    self._timestamp_cache[social_user_id] = last_used
-                    # ✅ 新增：加载偏移量和消息计数
-                    self._offset_cache[social_user_id] = entry.get('last_consolidated_offset', 0)
-                    self._message_count_cache[social_user_id] = entry.get('total_message_count', 0)
-
-            logger.info("Loaded session mappings from file", count=len(self._mappings))
-        except Exception as e:
-            logger.error("Failed to load session mappings from file", error=str(e))
-
-    async def save(self) -> None:
-        """Save mappings to persistent storage."""
-        async with self._lock:
-            # Try database first
-            if self.db_manager:
-                try:
-                    await self._save_to_db()
-                    return
-                except Exception as e:
-                    logger.warning("Failed to save to database, falling back to JSON", error=str(e))
-
-            # Fallback to JSON file
-            await self._save_to_file()
-
-    async def _save_to_db(self) -> None:
-        """Save mappings to PostgreSQL database."""
-        from sqlalchemy.dialects.postgresql import insert
-        from app.social.models import SocialSessionMapping
-
-        if not self.db_manager:
-            return
-
-        try:
-            async with self.db_manager() as session:
-                # Prepare upsert data
-                records = [
-                    {
-                        'social_user_id': social_user_id,
-                        'session_id': session_id,
-                        'last_used': self._timestamp_cache.get(social_user_id, datetime.now())
-                    }
-                    for social_user_id, session_id in self._mappings.items()
-                ]
-
-                # Bulk upsert using PostgreSQL ON CONFLICT
-                for record in records:
-                    stmt = insert(SocialSessionMapping).values(**record)
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=['social_user_id'],
-                        set_=dict(
-                            session_id=stmt.excluded.session_id,
-                            last_used=stmt.excluded.last_used
-                        )
-                    )
-                    await session.execute(stmt)
-
-                await session.commit()
-
-            logger.debug("Saved session mappings to database", count=len(self._mappings))
-        except Exception as e:
-            logger.warning("Failed to save to database, falling back to JSON", error=str(e))
-            await self._save_to_file()
-
-    def new_session_id(self, mode: str = "assistant") -> str:
-        """Generate a session identifier without exposing it in the mapping yet."""
-        timestamp = int(datetime.now().timestamp() * 1000)
-        random_str = secrets.token_hex(6)
-        return f"{mode}_session_{timestamp}_{random_str}"
+        """Check readiness without caching a snapshot or falling back to files."""
+        async with self.db_manager() as db:
+            await db.execute(select(Mapping.social_user_id).limit(1))
 
     async def save_mapping(self, social_user_id: str, session_id: str) -> None:
-        """Persist a mapping after external ownership registration succeeds."""
-        async with self._lock:
-            self._mappings[social_user_id] = session_id
-            self._timestamp_cache[social_user_id] = datetime.now()
-        await self.save()
-
-    async def _save_to_file(self) -> None:
-        """Save mappings to JSON file."""
-        try:
-            data = {}
-            for social_user_id, session_id in self._mappings.items():
-                last_used = self._timestamp_cache.get(social_user_id, datetime.now())
-                data[social_user_id] = {
-                    'session_id': session_id,
-                    'last_used': last_used.isoformat(),
-                    # ✅ 新增：保存偏移量和消息计数
-                    'last_consolidated_offset': self._offset_cache.get(social_user_id, 0),
-                    'total_message_count': self._message_count_cache.get(social_user_id, 0)
-                }
-
-            with open(self.mappings_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-
-            logger.debug("Saved session mappings to file", count=len(self._mappings))
-        except Exception as e:
-            logger.error("Failed to save session mappings to file", error=str(e))
+        changed = Mapping.session_id != session_id
+        statement = insert(Mapping).values(
+            social_user_id=social_user_id, session_id=session_id, last_used=datetime.now(),
+            last_consolidated_offset=0, total_message_count=0,
+        ).on_conflict_do_update(
+            index_elements=[Mapping.social_user_id],
+            set_={
+                "session_id": session_id, "last_used": datetime.now(),
+                "last_consolidated_offset": case((changed, 0), else_=Mapping.last_consolidated_offset),
+                "total_message_count": case((changed, 0), else_=Mapping.total_message_count),
+            },
+        )
+        async with self.db_manager() as db:
+            await db.execute(statement)
+            await db.commit()
 
     async def get_or_create_session(self, social_user_id: str, mode: str = "assistant") -> str:
-        """
-        Get existing session ID or create a new one.
+        now = datetime.now()
+        candidate = self.new_session_id(mode)
+        expired = self._expired(now - timedelta(hours=24))
+        statement = insert(Mapping).values(
+            social_user_id=social_user_id, session_id=candidate, last_used=now,
+            last_consolidated_offset=0, total_message_count=0,
+        ).on_conflict_do_update(
+            index_elements=[Mapping.social_user_id],
+            set_={
+                "session_id": case((expired, candidate), else_=Mapping.session_id),
+                "last_used": now,
+                "last_consolidated_offset": case((expired, 0), else_=Mapping.last_consolidated_offset),
+                "total_message_count": case((expired, 0), else_=Mapping.total_message_count),
+            },
+        ).returning(Mapping.session_id)
+        async with self.db_manager() as db:
+            session_id = (await db.execute(statement)).scalar_one()
+            await db.commit()
+            return session_id
 
-        Args:
-            social_user_id: Social platform user ID (e.g., "qq:123456")
-            mode: Agent mode (assistant, expert, query, code, report)
+    async def get_session(self, social_user_id: str) -> str | None:
+        async with self.db_manager() as db:
+            result = await db.execute(update(Mapping).where(
+                Mapping.social_user_id == social_user_id,
+                ~self._expired(datetime.now() - timedelta(hours=24)),
+            ).values(last_used=datetime.now()).returning(Mapping.session_id))
+            session_id = result.scalar_one_or_none()
+            await db.commit()
+            return session_id
 
-        Returns:
-            Agent session ID
-        """
-        # 先检查是否有缓存（不需要锁）
-        if social_user_id in self._mappings:
-            last_used = self._timestamp_cache.get(social_user_id, datetime.now())
-            if not self._is_expired(social_user_id, last_used):
-                # 更新时间戳
-                self._timestamp_cache[social_user_id] = datetime.now()
-                # 异步保存（不阻塞）
-                asyncio.create_task(self.save())
-                return self._mappings[social_user_id]
-
-        # 创建新session（需要锁）
-        async with self._lock:
-            # 再次检查（防止竞态条件）
-            if social_user_id in self._mappings:
-                return self._mappings[social_user_id]
-
-            # 【修复】使用标准 sessionId 格式：${mode}_session_${timestamp}_${random}
-            # 避免使用 social_user_id（包含特殊字符），改用随机字符串
-            session_id = self.new_session_id(mode)
-
-            self._mappings[social_user_id] = session_id
-            self._timestamp_cache[social_user_id] = datetime.now()
-
-            logger.info("Created new session mapping",
-                       social_user_id=social_user_id,
-                       session_id=session_id,
-                       mode=mode)
-
-        # 异步保存（释放锁后再保存）
-        asyncio.create_task(self.save())
-
-        return session_id
-
-    async def get_session(self, social_user_id: str) -> Optional[str]:
-        """
-        Get existing session ID without creating a new one.
-
-        Args:
-            social_user_id: Social platform user ID
-
-        Returns:
-            Agent session ID or None if not found or expired
-        """
-        expired = False
-        async with self._lock:
-            if social_user_id not in self._mappings:
+    async def get_mapping_info(self, social_user_id: str) -> dict | None:
+        async with self.db_manager() as db:
+            row = (await db.execute(select(Mapping).where(
+                Mapping.social_user_id == social_user_id,
+                ~self._expired(datetime.now() - timedelta(hours=24)),
+            ))).scalar_one_or_none()
+            if row is None:
                 return None
-
-            last_used = self._timestamp_cache.get(social_user_id, datetime.now())
-            if self._is_expired(social_user_id, last_used):
-                # Expired mapping
-                del self._mappings[social_user_id]
-                del self._timestamp_cache[social_user_id]
-                expired = True
-            else:
-                return self._mappings[social_user_id]
-
-        if expired:
-            await self.save()
-        return None
+            return {column.name: getattr(row, column.name) for column in Mapping.__table__.columns}
 
     async def delete_mapping(self, social_user_id: str) -> bool:
-        """
-        Delete a session mapping.
-
-        Args:
-            social_user_id: Social platform user ID
-
-        Returns:
-            True if mapping was deleted, False if not found
-        """
-        async with self._lock:
-            if social_user_id not in self._mappings:
-                return False
-
-            del self._mappings[social_user_id]
-            if social_user_id in self._timestamp_cache:
-                del self._timestamp_cache[social_user_id]
-
-        await self.save()
-        logger.info("Deleted session mapping", social_user_id=social_user_id)
-        return True
+        async with self.db_manager() as db:
+            result = await db.execute(delete(Mapping).where(Mapping.social_user_id == social_user_id))
+            await db.commit()
+            return bool(result.rowcount)
 
     async def cleanup_expired(self, ttl_hours: int = 24) -> int:
-        """
-        Clean up expired mappings.
-
-        Args:
-            ttl_hours: Time-to-live in hours (default: 24)
-
-        Returns:
-            Number of mappings cleaned up
-        """
-        async with self._lock:
-            cutoff = datetime.now() - timedelta(hours=ttl_hours)
-            expired = [
-                social_user_id
-                for social_user_id, last_used in self._timestamp_cache.items()
-                if not self._is_persistent_identity(social_user_id) and last_used < cutoff
-            ]
-
-            for social_user_id in expired:
-                del self._mappings[social_user_id]
-                del self._timestamp_cache[social_user_id]
-
-        if expired:
-            await self.save()
-            logger.info("Cleaned up expired mappings", count=len(expired))
-
-        return len(expired)
-
-    @property
-    def mapping_count(self) -> int:
-        """Get the number of active mappings."""
-        return len(self._mappings)
-
-    async def get_mapping_info(self, social_user_id: str) -> Optional[Dict[str, Any]]:
-        """
-        获取完整的 session 映射信息
-
-        Args:
-            social_user_id: 社交平台用户ID
-
-        Returns:
-            映射信息字典或 None
-        """
-        async with self._lock:
-            if social_user_id not in self._mappings:
-                return None
-
-            return {
-                "social_user_id": social_user_id,
-                "session_id": self._mappings[social_user_id],
-                "last_used": self._timestamp_cache.get(social_user_id),
-                "last_consolidated_offset": self._offset_cache.get(social_user_id, 0),
-                "total_message_count": self._message_count_cache.get(social_user_id, 0)
-            }
+        async with self.db_manager() as db:
+            result = await db.execute(delete(Mapping).where(
+                self._expired(datetime.now() - timedelta(hours=ttl_hours))
+            ))
+            await db.commit()
+            return int(result.rowcount or 0)
 
     async def get_all_social_user_ids(self) -> list[str]:
-        """
-        获取所有已知的社交用户ID。
+        async with self.db_manager() as db:
+            return list((await db.execute(select(Mapping.social_user_id))).scalars().all())
 
-        该方法不按24小时TTL过滤，用于广播和管理场景。
-        """
-        async with self._lock:
-            if self.db_manager:
-                try:
-                    from sqlalchemy import select
-                    from app.social.models import SocialSessionMapping
+    async def count_active(self) -> int:
+        async with self.db_manager() as db:
+            return (await db.execute(select(func.count()).select_from(Mapping).where(
+                ~self._expired(datetime.now() - timedelta(hours=24))
+            ))).scalar_one()
 
-                    async with self.db_manager() as session:
-                        result = await session.execute(select(SocialSessionMapping.social_user_id))
-                        return [row[0] for row in result.all()]
-                except Exception as e:
-                    logger.warning("get_all_social_user_ids_from_db_failed", error=str(e))
-
-            if self.mappings_file.exists():
-                try:
-                    data = json.loads(self.mappings_file.read_text(encoding="utf-8"))
-                    if isinstance(data, dict):
-                        return list(data.keys())
-                except Exception as e:
-                    logger.warning("get_all_social_user_ids_from_file_failed", error=str(e))
-
-            return list(self._mappings.keys())
+    async def list_active(self, limit: int = 100) -> list[dict]:
+        async with self.db_manager() as db:
+            rows = (await db.execute(select(Mapping).where(
+                ~self._expired(datetime.now() - timedelta(hours=24))
+            ).order_by(Mapping.last_used.desc(), Mapping.social_user_id).limit(min(max(limit, 1), 1000)))).scalars().all()
+            return [{column.name: getattr(row, column.name) for column in Mapping.__table__.columns} for row in rows]
 
     async def update_consolidation_offset(
-        self,
-        social_user_id: str,
-        new_offset: int,
-        total_count: int
+        self, social_user_id: str, new_offset: int, total_count: int,
+        *, expected_session_id: str | None = None,
     ) -> None:
-        """
-        更新整合偏移量
-
-        Args:
-            social_user_id: 社交平台用户ID
-            new_offset: 新的偏移量
-            total_count: 总消息数
-        """
-        async with self._lock:
-            if social_user_id not in self._mappings:
-                return
-
-            self._offset_cache[social_user_id] = new_offset
-            self._message_count_cache[social_user_id] = total_count
-
-            # 异步保存
-            asyncio.create_task(self.save())
-
-            logger.info(
-                "consolidation_offset_updated",
-                social_user_id=social_user_id,
-                new_offset=new_offset,
-                total_count=total_count
-            )
+        statement = update(Mapping).where(Mapping.social_user_id == social_user_id)
+        if expected_session_id:
+            statement = statement.where(Mapping.session_id == expected_session_id)
+        async with self.db_manager() as db:
+            await db.execute(statement.values(
+                last_consolidated_offset=new_offset, total_message_count=total_count,
+            ))
+            await db.commit()

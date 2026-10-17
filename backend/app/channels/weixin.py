@@ -231,7 +231,7 @@ _HEADER_RE = re.compile(r"^#{1,6}\s")
 _TABLE_RULE_RE = re.compile(r"^\|?[\s\-:]+\|[\s\-:]*\|?")
 
 
-def _split_message(text: str, max_len: int, split_per_line: bool = False) -> list[str]:
+def _split_message(text: str, max_len: int) -> list[str]:
     """Split message into intelligent chunks (Hermes-compatible).
 
     This function implements smart message splitting that:
@@ -243,7 +243,6 @@ def _split_message(text: str, max_len: int, split_per_line: bool = False) -> lis
     Args:
         text: Message content to split
         max_len: Maximum length per chunk (typically 2000 for WeChat)
-        split_per_line: If True, split by lines (legacy behavior)
 
     Returns:
         List of message chunks
@@ -253,32 +252,9 @@ def _split_message(text: str, max_len: int, split_per_line: bool = False) -> lis
     if len(text) <= max_len:
         return [text]
 
-    if split_per_line:
-        # Legacy: one message per line
-        return _split_message_per_line(text, max_len)
-
     # Compact (default): keep everything together when possible,
     # only split when absolutely necessary
     return _split_message_compact(text, max_len)
-
-
-def _split_message_per_line(text: str, max_len: int) -> list[str]:
-    """Legacy line-by-line splitting (preserved for backward compatibility)."""
-    chunks = []
-    current = ""
-    for line in text.split("\n"):
-        if len(current) + len(line) + 1 > max_len:
-            if current:
-                chunks.append(current)
-            current = line
-        else:
-            if current:
-                current += "\n" + line
-            else:
-                current = line
-    if current:
-        chunks.append(current)
-    return chunks
 
 
 def _split_message_compact(text: str, max_len: int) -> list[str]:
@@ -431,7 +407,7 @@ def _split_oversized_block(block: str, max_len: int) -> list[str]:
     if current:
         chunks.append(current)
 
-    return chunks if chunks else [_truncate_text(block, max_len)]
+    return chunks if chunks else [block[offset:offset + max_len] for offset in range(0, len(block), max_len)]
 
 
 def _split_oversized_paragraph(para: str, max_len: int) -> list[str]:
@@ -494,7 +470,7 @@ def _split_oversized_paragraph(para: str, max_len: int) -> list[str]:
                 continue
 
             # Word is too long (e.g., URL), force split
-            chunks.append(_truncate_text(word, max_len))
+            chunks.extend(word[offset:offset + max_len] for offset in range(0, len(word), max_len))
 
         if current_word:
             current = current_word
@@ -502,14 +478,7 @@ def _split_oversized_paragraph(para: str, max_len: int) -> list[str]:
     if current:
         chunks.append(current.strip())
 
-    return chunks if chunks else [_truncate_text(para, max_len)]
-
-
-def _truncate_text(text: str, max_len: int) -> str:
-    """Truncate text to max_len, adding ... if truncated."""
-    if len(text) <= max_len:
-        return text
-    return text[:max_len - 3] + "..."
+    return chunks if chunks else [para[offset:offset + max_len] for offset in range(0, len(para), max_len)]
 
 
 class WeixinChannel(BaseChannel):
@@ -1478,13 +1447,13 @@ class WeixinChannel(BaseChannel):
 
         if not self._client or not self._token:
             logger.warning("WeChat client not initialized or not authenticated")
-            return
+            raise RuntimeError("WeChat channel unavailable")
 
         try:
             self._assert_session_active()
         except RuntimeError as e:
             logger.warning("WeChat send blocked", error=str(e))
-            return
+            raise
 
         content = msg.content.strip()
         ctx_token = self._context_tokens.get(msg.chat_id, "")
@@ -1492,7 +1461,7 @@ class WeixinChannel(BaseChannel):
             logger.warning("WeChat: no context_token for chat_id",
                            chat_id=msg.chat_id,
                            available_tokens=list(self._context_tokens.keys()))
-            return
+            raise RuntimeError("WeChat context token unavailable")
 
         # ✅ 检查是否为流式消息（social模式）
         stream_id = msg.metadata.get("_stream_id") if msg.metadata else None
@@ -1503,6 +1472,7 @@ class WeixinChannel(BaseChannel):
                    media_count=len(msg.media or []),
                    media_list=msg.media,
                    is_stream_end=is_stream_end)
+        media_errors = []
         if is_stream_end:
             for media_path in (msg.media or []):
                 try:
@@ -1510,6 +1480,7 @@ class WeixinChannel(BaseChannel):
                     await self._send_media_file(msg.chat_id, media_path, ctx_token)
                     logger.info("WeChat send: media sent successfully", path=media_path)
                 except Exception as e:
+                    media_errors.append(e)
                     filename = Path(media_path).name
                     logger.error("Failed to send WeChat media", path=media_path, error=str(e))
                     await self._send_text(
@@ -1518,6 +1489,8 @@ class WeixinChannel(BaseChannel):
 
         # Send text content
         if not content:
+            if media_errors:
+                raise RuntimeError("WeChat attachment delivery failed") from media_errors[0]
             return
 
         try:
@@ -1528,12 +1501,15 @@ class WeixinChannel(BaseChannel):
                 logger.debug("stream_chunk_sent", stream_id=stream_id, length=len(content))
             else:
                 # 最终消息：正常处理（智能分割长消息）
-                chunks = _split_message(content, WEIXIN_MAX_MESSAGE_LEN, split_per_line=False)
+                chunks = _split_message(content, WEIXIN_MAX_MESSAGE_LEN)
                 for chunk in chunks:
                     await self._send_text(msg.chat_id, chunk, ctx_token)
         except Exception as e:
             logger.error("Error sending WeChat message", error=str(e))
             raise
+
+        if media_errors:
+            raise RuntimeError("WeChat attachment delivery failed") from media_errors[0]
 
     async def _send_text(
         self,

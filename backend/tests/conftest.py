@@ -27,6 +27,33 @@ import pytest
 
 
 @pytest.fixture
+def social_mapping_db():
+    """Execute actual mapping/report SQL in an isolated database without services."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from app.social.models import SocialSessionMapping
+    from app.social.report_models import SocialReportResult
+    engine = create_engine("sqlite:///:memory:")
+    SocialSessionMapping.__table__.create(engine)
+    SocialReportResult.__table__.create(engine)
+
+    @asynccontextmanager
+    async def factory():
+        with Session(engine, expire_on_commit=False) as session:
+            class Adapter:
+                async def execute(self, *args, **kwargs):
+                    return session.execute(*args, **kwargs)
+                async def get(self, *args, **kwargs):
+                    return session.get(*args, **kwargs)
+                async def commit(self):
+                    session.commit()
+            yield Adapter()
+
+    yield factory
+    engine.dispose()
+
+
+@pytest.fixture
 def fake_lock_db(monkeypatch):
     """Model PostgreSQL session locks with one new connection per checkout."""
     import app.agent.runtime.session_advisory_lock as module

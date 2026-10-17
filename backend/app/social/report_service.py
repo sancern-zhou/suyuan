@@ -5,7 +5,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import and_, delete, or_, select, update
 
 from app.db.session_database import session_async_session as async_session
 from .report_models import SocialReportResult
@@ -67,9 +67,14 @@ async def list_report_results(owner_user_id: str, *, limit: int, before: str | N
             statement = statement.where(SocialReportResult.generated_at <= end_time)
         if before:
             cursor = await session.get(SocialReportResult, before)
-            if cursor:
-                statement = statement.where(SocialReportResult.generated_at < cursor.generated_at)
-        statement = statement.order_by(SocialReportResult.generated_at.desc()).limit(limit)
+            if cursor is None or cursor.owner_user_id != owner_user_id:
+                return []
+            statement = statement.where(or_(
+                SocialReportResult.generated_at < cursor.generated_at,
+                and_(SocialReportResult.generated_at == cursor.generated_at,
+                     SocialReportResult.report_id < cursor.report_id),
+            ))
+        statement = statement.order_by(SocialReportResult.generated_at.desc(), SocialReportResult.report_id.desc()).limit(limit)
         return list((await session.execute(statement)).scalars().all())
 
 

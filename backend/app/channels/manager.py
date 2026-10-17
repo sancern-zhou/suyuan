@@ -300,6 +300,8 @@ class ChannelManager:
         logger.info("Outbound dispatcher started", available_channels=list(self.channels.keys()))
 
         while True:
+            msg = None
+            delivered = False
             try:
                 msg = await asyncio.wait_for(
                     self.bus.consume_outbound(),
@@ -311,6 +313,9 @@ class ChannelManager:
                            chat_id=msg.chat_id,
                            content_preview=msg.content[:50] if msg.content else "",
                            available_channels=list(self.channels.keys()))
+
+                if not self.bus.delivery_pending(msg):
+                    continue
 
                 # Check if message should be sent (progress filtering)
                 if msg.metadata.get("_progress"):
@@ -328,7 +333,7 @@ class ChannelManager:
                 channel = self.channels.get(msg.channel)
                 if channel:
                     logger.info("Channel found, sending message", channel=msg.channel)
-                    await self._send_with_retry(channel, msg)
+                    delivered = await self._send_with_retry(channel, msg)
                 elif msg.channel == "app":
                     # App 用户的正式投递是广播 inbox + 推送，总线消息仅为
                     # 遗留发布路径，这里不作为错误处理
@@ -347,6 +352,9 @@ class ChannelManager:
                 break
             except Exception as e:
                 logger.error("Error in outbound dispatcher", error=str(e), exc_info=True)
+            finally:
+                if msg is not None:
+                    self.bus.acknowledge_delivery(msg, delivered)
 
     @staticmethod
     async def _send_once(channel: BaseChannel, msg: OutboundMessage) -> None:
@@ -356,7 +364,7 @@ class ChannelManager:
         elif not msg.metadata.get("_streamed"):
             await channel.send(msg)
 
-    async def _send_with_retry(self, channel: BaseChannel, msg: OutboundMessage) -> None:
+    async def _send_with_retry(self, channel: BaseChannel, msg: OutboundMessage) -> bool:
         """Send a message with retry on failure using exponential backoff.
 
         Note: CancelledError is re-raised to allow graceful shutdown.
@@ -366,7 +374,7 @@ class ChannelManager:
         for attempt in range(max_attempts):
             try:
                 await self._send_once(channel, msg)
-                return  # Send succeeded
+                return True  # Send succeeded
             except asyncio.CancelledError:
                 raise  # Propagate cancellation for graceful shutdown
             except Exception as e:
@@ -375,7 +383,7 @@ class ChannelManager:
                         "Failed to send after %d attempts: %s - %s",
                         max_attempts, type(e).__name__, e
                     )
-                    return
+                    return False
                 delay = _SEND_RETRY_DELAYS[min(attempt, len(_SEND_RETRY_DELAYS) - 1)]
                 logger.warning(
                     "Send failed (attempt %d/%d): %s, retrying in %ds",

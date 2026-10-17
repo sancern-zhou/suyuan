@@ -13,7 +13,7 @@ from datetime import datetime
 import logging
 from urllib.parse import quote
 
-from app.auth.dependencies import require_current_user
+from app.auth.dependencies import require_admin_user
 from app.auth.models import CurrentUser
 
 logger = logging.getLogger(__name__)
@@ -21,9 +21,6 @@ router = APIRouter()
 
 # 允许访问的根目录
 ALLOWED_ROOT = Path("/tmp")
-
-# 以 inline 方式打开会有脚本执行风险的类型，一律改为附件下载
-_INLINE_UNSAFE_SUFFIXES = {".html", ".htm", ".svg", ".xml", ".xhtml"}
 
 # 路径安全检查
 def is_safe_path(path: Path) -> bool:
@@ -70,38 +67,10 @@ def get_file_info(file_path: Path, relative_path: str) -> Dict[str, Any]:
         logger.error(f"Failed to get file info: {e}")
         return None
 
-@router.get("/file-manager/test")
-async def test_path(
-    _: CurrentUser = Depends(require_current_user),
-):
-    """测试路径解析"""
-    test_cases = [
-        ("", "空字符串"),
-        ("/", "斜杠"),
-        ("subdir", "相对路径"),
-    ]
-
-    results = []
-    for path, desc in test_cases:
-        if path and path != "/":
-            target_path = ALLOWED_ROOT / path
-        else:
-            target_path = ALLOWED_ROOT
-
-        results.append({
-            "desc": desc,
-            "path": path,
-            "target_path": str(target_path),
-            "resolved": str(target_path.resolve()),
-            "safe": is_safe_path(target_path)
-        })
-
-    return {"results": results}
-
 @router.get("/file-manager/list")
 async def list_directory(
     path: str = Query("", description="目录路径，相对于/tmp"),
-    _: CurrentUser = Depends(require_current_user),
+    _: CurrentUser = Depends(require_admin_user),
 ):
     """
     列出目录内容
@@ -198,7 +167,7 @@ async def list_directory(
 @router.get("/file-manager/download")
 async def download_file(
     path: str = Query(..., description="文件路径，相对于/tmp"),
-    _: CurrentUser = Depends(require_current_user),
+    _: CurrentUser = Depends(require_admin_user),
 ):
     """
     下载或预览文件
@@ -255,7 +224,7 @@ async def download_file(
 @router.get("/file-manager/info")
 async def get_file_info_api(
     path: str = Query(..., description="文件/目录路径，相对于/tmp"),
-    _: CurrentUser = Depends(require_current_user),
+    _: CurrentUser = Depends(require_admin_user),
 ):
     """
     获取文件/目录详细信息

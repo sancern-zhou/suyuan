@@ -2,17 +2,19 @@
 报告生成API路由
 场景2：模板化报告生成
 """
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from typing import Optional, Dict
-import json
 import structlog
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.report_generation import TemplateReportRequest, QuickGenerateRequest
 from app.utils.docx_markdown import convert_docx_to_markdown, sanitize_template_time_references
-from app.core.sse import create_sse_response
+from app.auth.dependencies import require_current_user
+from app.auth.models import CurrentUser
+from app.conversations.dependencies import get_conversation_catalog
+from app.conversations.service import ConversationCatalogService
 from app.db.database import get_db
 from app.db.models.report_template import ReportTemplate
 from sqlalchemy import select
@@ -21,16 +23,12 @@ logger = structlog.get_logger()
 
 router = APIRouter(prefix="/report", tags=["report-generation"])
 
-def get_react_agent():
-    """Reuse the current report-mode Agent without a second execution pipeline."""
-    from app.api.agent import multi_expert_agent_instance
-
-    return multi_expert_agent_instance
-
-
-def _stream_template_report_agent(
+async def _stream_template_report_agent(
     template_content: str,
     target_time_range: Dict[str, str],
+    raw_request: Request,
+    user: CurrentUser,
+    catalog: ConversationCatalogService,
 ) -> Response:
     """Use the Agent's session lifecycle and forward its terminal event once."""
     template_content = sanitize_template_time_references(template_content)
@@ -50,24 +48,20 @@ def _stream_template_report_agent(
 
 请开始执行。"""
 
-    async def event_generator():
-        try:
-            async for event in get_react_agent().analyze(
-                user_query=user_query,
-                manual_mode="report",
-            ):
-                if isinstance(event, dict):
-                    yield format_sse_event(event)
-        except Exception as exc:
-            logger.error("template_report_agent_failed", error=str(exc), exc_info=True)
-            yield format_sse_event({"type": "fatal_error", "data": {"error": str(exc)}})
+    from app.api.agent import AgentAnalyzeRequest, analyze_stream
 
-    return create_sse_response(event_generator())
+    return await analyze_stream(
+        AgentAnalyzeRequest(query=user_query, mode="report", skill_ids=[], context_refs=[]),
+        raw_request=raw_request, user=user, catalog=catalog,
+    )
 
 
 @router.post("/generate-from-template-agent")
 async def generate_from_template_agent(
-    request: TemplateReportRequest
+    request: TemplateReportRequest,
+    raw_request: Request,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
 ):
     """
     基于 Agent（模板报告专家）的临时报告生成（方案B Agent化，JSON 输入）。
@@ -78,14 +72,18 @@ async def generate_from_template_agent(
             "target_time_range": {"start": "...", "end": "...", "display": "..."}
         }
     """
-    return _stream_template_report_agent(
+    return await _stream_template_report_agent(
         template_content=request.template_content,
-        target_time_range=request.target_time_range
+        target_time_range=request.target_time_range,
+        raw_request=raw_request, user=user, catalog=catalog,
     )
 
 
 @router.post("/generate-from-template-file")
 async def generate_from_template_file(
+    raw_request: Request,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
     file: UploadFile = File(...),
     start: str = Form(...),
     end: str = Form(...),
@@ -123,9 +121,10 @@ async def generate_from_template_file(
     if display:
         target_time_range["display"] = display
 
-    return _stream_template_report_agent(
+    return await _stream_template_report_agent(
         template_content=template_content,
-        target_time_range=target_time_range
+        target_time_range=target_time_range,
+        raw_request=raw_request, user=user, catalog=catalog,
     )
 
 
@@ -133,13 +132,18 @@ async def generate_from_template_file(
 async def generate_from_saved_template(
     template_id: UUID,
     request: QuickGenerateRequest,
+    raw_request: Request,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
     db: AsyncSession = Depends(get_db),
 ):
     """Generate from a saved template through the same current Agent path."""
     template = await db.get(ReportTemplate, template_id)
     if template is None or not template.is_active:
         raise HTTPException(status_code=404, detail="模板不存在或已停用")
-    return _stream_template_report_agent(template.content, request.time_range)
+    return await _stream_template_report_agent(
+        template.content, request.time_range, raw_request, user, catalog
+    )
 
 
 @router.post("/templates")
@@ -359,26 +363,3 @@ async def health_check():
         "version": "1.0.0",
         "timestamp": 1640995200
     }
-
-def format_sse_event(event) -> str:
-    """
-    格式化事件为SSE格式
-
-    Args:
-        event: 事件对象
-
-    Returns:
-        str: SSE格式的事件
-    """
-    # 转换为字典
-    event_dict = event.dict() if hasattr(event, 'dict') else event
-
-    # 提取类型和数据
-    event_type = event_dict.get("type", "unknown")
-    event_data = event_dict.get("data", {})
-
-    # 序列化为JSON
-    data_json = json.dumps(event_data, ensure_ascii=False)
-
-    # 返回SSE格式
-    return f"event: {event_type}\ndata: {data_json}\n\n"
