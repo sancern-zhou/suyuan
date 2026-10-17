@@ -4,14 +4,18 @@ Agents choose semantic roles and annotations; they do not choose raw Matplotlib
 colors, font sizes, or canvas geometry for standard report charts.
 """
 
+from functools import lru_cache
+
 from app.utils.chart_theme import SERIES_COLORS
 
 REPORT_THEME = {
     "font_family": "sans-serif",
     "font_fallbacks": [
         "Noto Sans CJK SC",
+        "Noto Sans CJK JP",
         "Microsoft YaHei",
         "SimHei",
+        "Droid Sans Fallback",
         "DejaVu Sans",
     ],
     "colors": {
@@ -51,6 +55,30 @@ def theme_color(role: str, fallback: str | None = None) -> str:
     return str(REPORT_THEME["colors"].get(role, fallback or REPORT_THEME["colors"]["primary"]))
 
 
+@lru_cache(maxsize=1)
+def resolved_font_fallbacks() -> list[str]:
+    """Font list whose first entry actually resolves in matplotlib and covers CJK.
+
+    Host fontconfig may expose Noto CJK only under another face name (ttc
+    collections register their first face), so the bundled preferred font is
+    registered and put first; the static fallbacks stay as later entries.
+    """
+    names: list[str] = []
+    try:
+        from matplotlib import font_manager as fm
+
+        from app.utils.font_utils import select_preferred_chinese_font_path
+
+        font_path = select_preferred_chinese_font_path()
+        if font_path is not None:
+            fm.fontManager.addfont(str(font_path))
+            names.append(fm.FontProperties(fname=str(font_path)).get_name())
+    except Exception:
+        pass
+    names.extend(name for name in REPORT_THEME["font_fallbacks"] if name not in names)
+    return names
+
+
 def matplotlib_report_style() -> dict:
     """Shared defaults for Python figures; layout remains analysis-specific."""
     colors = REPORT_THEME["colors"]
@@ -63,7 +91,7 @@ def matplotlib_report_style() -> dict:
         "savefig.facecolor": "white",
         "savefig.bbox": "tight",
         "font.family": REPORT_THEME["font_family"],
-        "font.sans-serif": REPORT_THEME["font_fallbacks"],
+        "font.sans-serif": resolved_font_fallbacks(),
         "font.size": sizes["axis"],
         "text.color": colors["body"],
         "axes.facecolor": "white",
