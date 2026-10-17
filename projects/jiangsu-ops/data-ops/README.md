@@ -11,6 +11,13 @@ data-ops/
 └── cube/    语义层 — Cube Core 0.35.x，口径唯一定义在 schema/*.js，REST 127.0.0.1:4610
 ```
 
+语义注册中心位于 `semantic/registry.yaml`，登记指标定义、分子/分母、粒度、适用范围和限制；
+查询工具返回的 `semantic_context` 由此生成。提交前运行：
+
+```cmd
+python semantic\validate_registry.py
+```
+
 ## 与运行时目录的关系
 
 **本目录是代码源（进 git）；`E:\Tools\suyuan-jiangsu` 是服务器运行时**（含真实凭据、
