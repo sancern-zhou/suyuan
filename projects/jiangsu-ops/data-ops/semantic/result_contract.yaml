@@ -1,0 +1,61 @@
+version: 1
+description: >-
+  江苏 Agent 工具结果采用按场景裁剪的结构化协议。字段只有在该查询产生相应语义时才返回，
+  禁止为了统一而返回空字段或重复 summary。
+profiles:
+  metric_query:
+    purpose: Cube 官方指标查询
+    required:
+      - success
+      - data
+      - semantic_context
+      - quality_status
+    optional:
+      - file_path
+      - count
+      - sample_count
+    rules:
+      - semantic_context 必须包含 dataset、grain、applicability、data_as_of 和指标定义
+      - 只有工具完成了判断时才增加 findings
+  evidence_sql:
+    purpose: 受控 SQL 字段级取证
+    required:
+      - success
+      - data
+      - semantic_context
+      - quality_status
+    optional:
+      - file_path
+      - count
+      - sample_count
+    rules:
+      - semantic_context.query_role 必须为 field_evidence 或 schema_introspection
+      - official_metric_calculation 必须为 false
+      - findings、uncertainties、data_gaps 按实际情况返回
+  analysis:
+    purpose: 故障诊断、巡检分析和综合研判
+    required:
+      - success
+      - findings
+      - evidence
+      - semantic_context
+    optional:
+      - uncertainties
+      - data_gaps
+      - quality_status
+      - data
+    rules:
+      - findings 必须通过 supported_by 关联 evidence
+      - uncertainties 表示已有数据的解释不确定性
+      - data_gaps 表示缺失数据或覆盖不足
+  action:
+    purpose: 执行或准备执行操作
+    required:
+      - success
+    optional:
+      - result
+      - evidence
+      - uncertainties
+      - data_gaps
+    rules:
+      - 不因协议统一而强制加入 semantic_context
