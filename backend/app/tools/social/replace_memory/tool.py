@@ -1,7 +1,8 @@
 """
 记忆替换工具（replace_memory）
 
-替换MEMORY.md中的现有条目
+后台记忆整合器专用：更新事实层（facts/*.md）中的既有事实。
+常驻长期记忆（MEMORY.md）由会话 Agent 通过 edit_file 直接维护。
 """
 
 from pathlib import Path
@@ -20,14 +21,11 @@ _memory_context: ContextVar[tuple[str | None, str | None]] = ContextVar(
 
 class ReplaceMemoryTool(LLMTool):
     """
-    记忆替换工具
-
-    替换MEMORY.md中的现有条目
+    记忆替换工具（后台整合器专用，写事实层 facts/*.md）
 
     使用场景：
-    - 用户纠正之前的错误信息
-    - 更新过时的偏好设置
-    - 修正不再准确的结论
+    - 事实层中的信息已过时或被修正
+    - 事实描述需要更新但不改变其身份
     """
 
     # 类变量：用于存储当前的模式和用户信息（由记忆整合Agent设置）
@@ -37,7 +35,7 @@ class ReplaceMemoryTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="replace_memory",
-            description="替换MEMORY.md中的现有条目",
+            description="更新事实层记忆（facts/*.md）中的既有事实（后台整合专用）",
             category=ToolCategory.TASK_MANAGEMENT,
             function_schema=self._build_schema(),  # ✅ 传递 schema
             version="1.0.0",
@@ -62,7 +60,7 @@ class ReplaceMemoryTool(LLMTool):
         """构建工具schema"""
         return {
             "name": "replace_memory",
-            "description": "替换MEMORY.md中的现有条目",
+            "description": "更新事实层记忆（facts/*.md）中的既有事实（后台整合专用）",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -110,48 +108,26 @@ class ReplaceMemoryTool(LLMTool):
             current_mode, current_user_id = _memory_context.get()
             current_mode = current_mode or self._current_mode
             current_user_id = current_user_id or self._current_user_id
-            if current_mode and current_mode != "social":
-                store = CuratedFactStore(Path(self._get_memory_file_path()).parent)
-                result = store.replace(old_text, new_text, category)
-                return {
-                    "success": result == "replaced",
-                    "status": result,
-                    "summary": f"共享事实更新结果：{result}",
-                }
-            memory_file = Path(memory_file_path)
-
-            if not memory_file.exists():
-                return {
-                    "success": False,
-                    "error": "记忆文件不存在",
-                    "summary": "记忆替换失败：记忆文件不存在"
-                }
-
-            # 读取当前内容
-            content = memory_file.read_text(encoding="utf-8")
-
-            # 执行替换
-            success = self._replace_fact(memory_file, content, old_text, new_text, category)
-
-            if success:
-                logger.info(
-                    "memory_fact_replaced",
-                    category=category,
-                    old_text_length=len(old_text),
-                    new_text_length=len(new_text),
-                    memory_path=str(memory_file)
+            if not current_mode or current_mode == "memory_consolidator":
+                # memory_consolidator 目录不承载业务记忆；解析到该模式说明
+                # 整合目标模式上下文缺失，拒绝写入以免事实进入不可见目录。
+                logger.warning(
+                    "memory_write_rejected_for_consolidator_mode",
+                    tool="replace_memory",
                 )
-
-                return {
-                    "success": True,
-                    "summary": f"已替换记忆：{old_text[:30]}... → {new_text[:30]}..."
-                }
-            else:
                 return {
                     "success": False,
-                    "error": f"未找到要替换的内容：{old_text[:50]}",
-                    "summary": "记忆替换失败：未找到匹配内容"
+                    "error": "记忆写入目标模式缺失（memory_consolidator 不承载业务记忆），已拒绝替换",
+                    "summary": "记忆替换失败：整合目标模式未知",
                 }
+            # 事实层唯一写入路径：后台整合器按来源模式更新 facts/*.md
+            store = CuratedFactStore(Path(self._get_memory_file_path()).parent)
+            result = store.replace(old_text, new_text, category)
+            return {
+                "success": result == "replaced",
+                "status": result,
+                "summary": f"共享事实更新结果：{result}",
+            }
 
         except Exception as e:
             logger.error(
@@ -212,59 +188,3 @@ class ReplaceMemoryTool(LLMTool):
                 error=str(e)
             )
             return None
-
-    def _replace_fact(
-        self,
-        memory_file: Path,
-        content: str,
-        old_text: str,
-        new_text: str,
-        category: str = None
-    ) -> bool:
-        """
-        替换记忆条目
-
-        Args:
-            memory_file: 记忆文件路径
-            content: 当前文件内容
-            old_text: 要替换的旧内容
-            new_text: 新的内容
-            category: 事实类别（可选）
-
-        Returns:
-            是否成功替换
-        """
-        # 如果指定category，只在该章节内搜索
-        if category:
-            section_header = f"## {category}"
-
-            if section_header not in content:
-                return False
-
-            section_start = content.index(section_header)
-            section_end = content.find("\n##", section_start + 1)
-
-            if section_end == -1:
-                section_end = len(content)
-
-            section_content = content[section_start:section_end]
-
-            if old_text in section_content:
-                new_section_content = section_content.replace(old_text, new_text)
-                new_content = content[:section_start] + new_section_content + content[section_end:]
-
-                # 原子写入
-                memory_file.write_text(new_content, encoding="utf-8")
-                return True
-
-            return False
-        else:
-            # 全文搜索
-            if old_text in content:
-                new_content = content.replace(old_text, new_text)
-
-                # 原子写入
-                memory_file.write_text(new_content, encoding="utf-8")
-                return True
-
-            return False

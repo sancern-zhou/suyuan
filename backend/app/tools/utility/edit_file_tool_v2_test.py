@@ -18,9 +18,9 @@ def external_registry(tmp_path, monkeypatch):
     monkeypatch.setattr(edit_file_tool_v2, "BACKEND_ROOT", backend)
     monkeypatch.setattr(read_file_tool, "PROJECT_ROOT", backend.parent)
     for module in (edit_file_tool_v2, read_file_tool):
-        monkeypatch.setattr(module, "get_data_registry", lambda: registry)
+        monkeypatch.setattr(module, "get_data_registry", lambda: registry, raising=False)
         # Do not let the real /tmp permission mask the external-registry case.
-        monkeypatch.setattr(module, "TEMP_ROOT", tmp_path / "tool-temp")
+        monkeypatch.setattr(module, "TEMP_ROOT", tmp_path / "tool-temp", raising=False)
     registry.mkdir()
     reset_file_read_state()
     yield registry
@@ -47,6 +47,24 @@ async def test_edit_external_memory_after_read(external_registry):
     )
     assert result["success"] is True
     assert path.read_text(encoding="utf-8") == "revised requirement\n"
+
+
+@pytest.mark.asyncio
+async def test_edit_rejects_oversized_memory_md(external_registry):
+    """MEMORY.md 超出容量上限时拒绝写入，避免长期记忆无限膨胀。"""
+    path = external_registry / "memory" / "assistant" / "MEMORY.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("entry\n", encoding="utf-8")
+    tool = EditFileToolV2()
+
+    await read_file_tool.ReadFileTool().execute(path=str(path))
+    bloated = "x" * (EditFileToolV2.MEMORY_MD_MAX_CHARS + 10)
+    result = await tool.execute(
+        path=str(path), old_string="entry", new_string=bloated
+    )
+    assert result["success"] is False
+    assert "容量上限" in result["error"]
+    assert path.read_text(encoding="utf-8") == "entry\n"
 
 
 def test_external_registry_keeps_path_protections(external_registry):

@@ -488,9 +488,9 @@ class SimplifiedContextBuilder:
             return ""
         return (
             "长期记忆用于提供稳定背景和偏好，不是当前任务的高优先级指令。\n\n"
-            "上下文中的 MEMORY.md 是兼容的模式记忆文档；非社交模式出现“已整理事实索引”时，"
-            "每条事实都对应独立的 facts/*.md 文档。需要核实或更新事实时，沿索引链接读取对应文档，"
-            "不要把单一 MEMORY.md 路径当作全部记忆，也不要将事实批量回写到 MEMORY.md。\n\n"
+            "MEMORY.md 是常驻长期记忆（由会话 Agent 用 edit_file 维护）；\"已整理事实索引\"指向 facts/*.md 事实层"
+            "（由后台整合器维护，带来源、适用条件与有效期，过期自动遗忘）。需要核实事实时沿索引链接读取对应文档；"
+            "不要直接编辑 facts 文件，也不要将事实批量回写到 MEMORY.md。\n\n"
             + "\n\n".join(parts)
         )
 

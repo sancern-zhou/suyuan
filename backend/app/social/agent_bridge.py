@@ -1846,11 +1846,11 @@ class AgentBridge:
             "## Instructions",
             "1. The recent conversation has already been written to memory/YYYY-MM-DD.md as a daily note.",
             "2. Candidate memories have been written to memory/.dreams/YYYY-MM-DD.md as a dreaming layer.",
-            "3. Promote only durable candidates from Recent Dream Candidates to MEMORY.md.",
+            "3. Promote only durable candidates from Recent Dream Candidates into the facts layer (facts/*.md) with remember_fact.",
             "4. Do not save one-off chit-chat, temporary status, or sensitive data unless the user explicitly asks.",
-            "5. Use remember_fact, replace_memory, or remove_memory to update MEMORY.md.",
-            "6. Keep memory concise. If usage is above 80%, prefer replacing or removing stale content before adding new facts.",
-            "7. Preserve the existing markdown structure when possible."
+            "5. Use remember_fact, replace_memory, or remove_memory to maintain the facts layer. Do not modify MEMORY.md; it is maintained by the chat agent via edit_file.",
+            "6. Time-sensitive facts must carry a valid_until date (YYYY-MM-DD); expired facts are forgotten automatically.",
+            "7. Skip candidates whose content is already covered by MEMORY.md; do not duplicate the resident long-term memory."
         ]
 
         return "\n".join(prompt_parts)

@@ -290,6 +290,11 @@ class EditFileToolV2(LLMTool):
     # Markdown文件扩展名（不处理trailing空格）
     MARKDOWN_EXTENSIONS = {'.md', '.mdx', '.markdown'}
 
+    # MEMORY.md（长期记忆，常驻注入每次会话）容量上限
+    MEMORY_MD_MAX_CHARS = 12_000
+    # 超限提示中的建议目标（提示 Agent 精简到该水位以下）
+    MEMORY_MAX_HINT_CHARS = 10_000
+
     def __init__(self):
         super().__init__(
             name="edit_file",
@@ -502,6 +507,19 @@ class EditFileToolV2(LLMTool):
                 changes = 1
 
             # ============================================================
+            # 10.5 MEMORY.md 容量守卫（长期记忆常驻注入，须保持精炼）
+            # ============================================================
+            if resolved_path.name == "MEMORY.md" and len(new_content) > self.MEMORY_MD_MAX_CHARS:
+                return {
+                    "success": False,
+                    "error": (
+                        f"MEMORY.md 超出容量上限（编辑后 {len(new_content)} 字符 > 上限 {self.MEMORY_MD_MAX_CHARS}）。"
+                        f"长期记忆常驻注入每次会话，请先删除过时或低价值条目，将总量精简到 {self.MEMORY_MAX_HINT_CHARS} 字符以内后再添加新内容。"
+                    ),
+                    "summary": f"编辑失败：MEMORY.md 超出容量上限 {self.MEMORY_MD_MAX_CHARS} 字符"
+                }
+
+            # ============================================================
             # 11. 写回文件（保留原文件行尾风格）
             # ============================================================
             file_line_ending = read_result.get("line_ending") or "\n"
@@ -701,8 +719,11 @@ class EditFileToolV2(LLMTool):
             if encoding is None:
                 encoding = detect_encoding(file_path)
 
-            # newline='' 保留原始行尾符，先检测风格再统一到 LF 参与匹配
-            raw_content = file_path.read_text(encoding=encoding, newline="")
+            # newline='' 保留原始行尾符，先检测风格再统一到 LF 参与匹配。
+            # 注意：Path.read_text() 在 Python 3.13 才支持 newline 参数，3.11 会
+            # 直接 TypeError，因此这里必须用 open() 读取。
+            with file_path.open(encoding=encoding, newline="") as handle:
+                raw_content = handle.read()
             line_ending = detect_line_ending(raw_content)
             content = normalize_line_endings(raw_content)
 
@@ -716,7 +737,8 @@ class EditFileToolV2(LLMTool):
         except UnicodeDecodeError:
             # 尝试GBK编码
             try:
-                raw_content = file_path.read_text(encoding='gbk', newline="")
+                with file_path.open(encoding='gbk', newline="") as handle:
+                    raw_content = handle.read()
                 line_ending = detect_line_ending(raw_content)
                 content = normalize_line_endings(raw_content)
                 return {
