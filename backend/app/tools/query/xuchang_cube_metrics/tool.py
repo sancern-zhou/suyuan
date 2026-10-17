@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
@@ -159,35 +160,126 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "dataDate", "title": "数据日期(时间维度)"},
         ],
     },
-    # 城市累计统计与排名（**本地计算，非官方口径**，仅供省内横向对比）。
-    # 修约：银行家算法，PM2.5/CO 一位小数，其余整数；排名基于修约后的值。
-    # 排名规则：数值越低越靠前（Rank* 升序,1=最优），相同值并列（1,1,3）。
-    # 期次：periodType=daily（单日原值排序）/monthly（月累计）/yearly（年累计）。
-    # 差异声明：官方统计基于审核后数据与官方有效性审核规则（无法外部复现），本地计算与官方
-    # 已发布结果存在 ±0.5 μg/m³ 级别差异（2026-08 回验 PM2.5 平均绝对差 0.41）。正式场合、
-    # 对外汇报引用月/年统计时，提示用户以官方发布数据为准。
+    # 城市日排名：仅 periodType=daily（对官方发布日值升序排序，取原值不聚合）。
+    # 月/年累计统计已改为官方月报口径，见 ProvinceMonth/ProvinceMonthCum；
+    # 本表此前的 monthly/yearly 为本地手算，已停用并删除历史行（2026-10-16）。
     "SsfbCityRanking": {
         "measures": [
             {"name": "count", "title": "记录数"},
-            {"name": "avgPm25", "title": "PM2.5累计均值(本地计算,一位小数)"},
-            {"name": "avgPm10", "title": "PM10累计均值(本地计算,整数)"},
-            {"name": "avgSo2", "title": "SO2累计均值(本地计算,整数)"},
-            {"name": "avgNo2", "title": "NO2累计均值(本地计算,整数)"},
-            {"name": "avgCo", "title": "CO累计均值(本地计算,一位小数)"},
-            {"name": "avgO38h", "title": "O3-8h第90百分位(本地计算,整数)"},
-            {"name": "rankPm25", "title": "PM2.5排名(升序,1=最优)"},
-            {"name": "rankPm10", "title": "PM10排名(升序,1=最优)"},
-            {"name": "rankSo2", "title": "SO2排名(升序,1=最优)"},
-            {"name": "rankNo2", "title": "NO2排名(升序,1=最优)"},
-            {"name": "rankO3", "title": "O3排名(升序,1=最优)"},
-            {"name": "rankCo", "title": "CO排名(升序,1=最优)"},
+            {"name": "avgPm25", "title": "PM2.5(官方日值)"},
+            {"name": "avgPm10", "title": "PM10(官方日值)"},
+            {"name": "avgSo2", "title": "SO2(官方日值)"},
+            {"name": "avgNo2", "title": "NO2(官方日值)"},
+            {"name": "avgCo", "title": "CO(官方日值)"},
+            {"name": "avgO38h", "title": "O3-8h(官方日值)"},
+            {"name": "rankPm25", "title": "PM2.5日排名(升序,1=最优)"},
+            {"name": "rankPm10", "title": "PM10日排名(升序,1=最优)"},
+            {"name": "rankSo2", "title": "SO2日排名(升序,1=最优)"},
+            {"name": "rankNo2", "title": "NO2日排名(升序,1=最优)"},
+            {"name": "rankO3", "title": "O3日排名(升序,1=最优)"},
+            {"name": "rankCo", "title": "CO日排名(升序,1=最优)"},
         ],
         "dimensions": [
-            {"name": "periodType", "title": "期次类型(daily单日/monthly月累计/yearly年累计)"},
-            {"name": "period", "title": "期次(YYYY-MM-DD / YYYY-MM / YYYY)"},
+            {"name": "periodType", "title": "期次类型(仅 daily)"},
+            {"name": "period", "title": "期次(YYYY-MM-DD)"},
             {"name": "city", "title": "城市名(含济源市)"},
             {"name": "groupId", "title": "城市组ID"},
             {"name": "computedAt", "title": "计算时间(时间维度)"},
+        ],
+    },
+    # 河南省环境空气质量月报官方附表（2025-12,2026-01~09 十期）。
+    # Level=city 19市(区)含济源/航空港：城市月度及以上统计的唯一官方口径；
+    # Level=district 88市辖区 / Level=county 101县市：无 O3(供暖季)/SO2/NO2/CO/重污染天。
+    # 同比列 Xxx_YoY 为官方同比变化率(%)；区域数量随期次变化(85区/103县市→88区/101县市)。
+    "ProvinceMonth": {
+        "measures": [
+            {"name": "pm10", "title": "PM10月均(μg/m³,官方)"},
+            {"name": "pm10YoY", "title": "PM10同比变化率(%,官方)"},
+            {"name": "pm25", "title": "PM2.5月均(μg/m³,官方)"},
+            {"name": "pm25YoY", "title": "PM2.5同比变化率(%,官方)"},
+            {"name": "o3", "title": "O3-8h第90百分位(μg/m³,供暖季期次无)"},
+            {"name": "o3YoY", "title": "O3同比变化率(%)"},
+            {"name": "goodDays", "title": "优良天数(当月)"},
+            {"name": "goodDaysChange", "title": "优良天数同比变化(天)"},
+            {"name": "goodDaysRatio", "title": "优良比例(%)"},
+            {"name": "heavyDays", "title": "重度及以上污染天数(仅city级有)"},
+            {"name": "heavyDaysChange", "title": "重度及以上污染天数同比变化(天)"},
+            {"name": "compositeIndex", "title": "综合指数(官方)"},
+            {"name": "compositeIndexYoY", "title": "综合指数同比变化率(%)"},
+            {"name": "count", "title": "记录数"},
+        ],
+        "dimensions": [
+            {"name": "level", "title": "层级(city=19市(区)/district=88市辖区/county=101县市/province=全省)"},
+            {"name": "city", "title": "所属省辖市(市级行=市全称;全省行=全省)"},
+            {"name": "region", "title": "区域名(市全称/区/县市)"},
+            {"name": "dataMonth", "title": "月份(时间维度,2025-12/2026-01~09)"},
+        ],
+    },
+    # 同上，1-N月累计（截至该月）。
+    "ProvinceMonthCum": {
+        "measures": [
+            {"name": "pm10", "title": "PM10累计均值(μg/m³,官方)"},
+            {"name": "pm10YoY", "title": "PM10累计同比变化率(%)"},
+            {"name": "pm25", "title": "PM2.5累计均值(μg/m³,官方)"},
+            {"name": "pm25YoY", "title": "PM2.5累计同比变化率(%)"},
+            {"name": "o3", "title": "O3-8h第90百分位(累计,供暖季期次无)"},
+            {"name": "o3YoY", "title": "O3累计同比变化率(%)"},
+            {"name": "goodDays", "title": "优良天数(1-N月累计)"},
+            {"name": "goodDaysChange", "title": "优良天数累计同比变化(天)"},
+            {"name": "goodDaysRatio", "title": "优良比例(累计,%)"},
+            {"name": "heavyDays", "title": "重度及以上污染天数(累计,仅city级有)"},
+            {"name": "heavyDaysChange", "title": "重度及以上污染天数累计同比变化(天)"},
+            {"name": "compositeIndex", "title": "综合指数(累计,官方)"},
+            {"name": "compositeIndexYoY", "title": "综合指数累计同比变化率(%)"},
+            {"name": "count", "title": "记录数"},
+        ],
+        "dimensions": [
+            {"name": "level", "title": "层级(city/district/county/province)"},
+            {"name": "city", "title": "所属省辖市"},
+            {"name": "region", "title": "区域名(市全称/区/县市)"},
+            {"name": "dataMonth", "title": "累计截止月(时间维度,如2026-09=1-9月累计)"},
+        ],
+    },
+    # 许昌县市区官方月报统计（剔除沙尘,2020-01~2026-09,官方月报原值,非明细聚合）。
+    # 2020 年数值取自 2021 年月报"上年同期"列;重污染天 2023 起才有;
+    # 累计表与当月表个别区域存在 1~2 天官方修订差(原值入库,勿互相换算)。
+    "CountyMonth": {
+        "measures": [
+            {"name": "pm10", "title": "PM10月均(μg/m³)"},
+            {"name": "pm25", "title": "PM2.5月均(μg/m³)"},
+            {"name": "so2", "title": "SO2月均(μg/m³)"},
+            {"name": "no2", "title": "NO2月均(μg/m³)"},
+            {"name": "co95", "title": "CO第95百分位月值(mg/m³)"},
+            {"name": "o3_8h_90", "title": "O3-8h第90百分位月值(μg/m³)"},
+            {"name": "goodDays", "title": "优良天数(当月)"},
+            {"name": "heavyDays", "title": "重污染天数(当月,2023起才有)"},
+            {"name": "compositeIndex", "title": "综合指数(当月)"},
+            {"name": "count", "title": "记录数"},
+        ],
+        "dimensions": [
+            {"name": "region", "title": "区域(许昌市/魏都区/开发区/东城区/示范区/建安区/鄢陵县/襄城县/禹州市/长葛市)"},
+            {"name": "regionType", "title": "区域类型(city=全市/urban=市辖区国家平台/county=县市省平台)"},
+            {"name": "dataMonth", "title": "月份(时间维度,2020-01~2026-09)"},
+        ],
+    },
+    # 同上,1-N月累计(YTD): 优良天/重污染天为期间合计,浓度为期间平均。
+    "CountyMonthCum": {
+        "measures": [
+            {"name": "pm10", "title": "PM10累计均值(μg/m³)"},
+            {"name": "pm25", "title": "PM2.5累计均值(μg/m³)"},
+            {"name": "so2", "title": "SO2累计均值(μg/m³)"},
+            {"name": "no2", "title": "NO2累计均值(μg/m³)"},
+            {"name": "co95", "title": "CO第95百分位累计值(mg/m³)"},
+            {"name": "o3_8h_90", "title": "O3-8h第90百分位累计值(μg/m³)"},
+            {"name": "goodDays", "title": "优良天数(1-N月合计)"},
+            {"name": "heavyDays", "title": "重污染天数(1-N月合计,2023起才有)"},
+            {"name": "compositeIndex", "title": "综合指数(1-N月累计)"},
+            {"name": "count", "title": "记录数"},
+        ],
+        "dimensions": [
+            {"name": "region", "title": "区域(许昌市/魏都区/开发区/东城区/示范区/建安区/鄢陵县/襄城县/禹州市/长葛市)"},
+            {"name": "regionType", "title": "区域类型(city=全市/urban=市辖区国家平台/county=县市省平台)"},
+            {"name": "periodEnd", "title": "累计截止月(时间维度,取月末,如2026-09-30=1-9月累计)"},
         ],
     },
     # 全省区县站点小时(两根树 193 区县,剔除国控;County 字段为区县归属): 站点目录见
@@ -415,14 +507,22 @@ def _render_guide() -> str:
     lines.append("")
     lines.append(
         DATA_WINDOW_NOTE
-        + "排名类问题按对象选 Cube: 城市排名用 SsfbCityRanking(periodType=daily单日/monthly月累计/yearly年累计+period;"
-        "SsfbCityRanking 为本地计算非官方口径(银行家修约:PM2.5/CO一位小数其余整数;"
-        "与官方审核口径存在±0.5μg/m³级别差异,正式汇报引用月/年统计时须说明为本地计算并以官方发布为准);"
+        + "排名类问题按对象选 Cube: 城市日排名用 SsfbCityRanking(仅 periodType=daily,官方日值升序);"
+        "城市/区/县市的月/年累计官方统计用 ProvinceMonth/ProvinceMonthCum"
+        "(河南省环境空气质量月报,Level=city 为 19 市(区)含济源/航空港、district 为 88 市辖区、county 为 101 县市;"
+        "覆盖 2025-12 与 2026-01~09 共十期,供暖季期次无 O3 列,区/县表无 SO2/NO2/CO/重污染天;"
+        "同比列 Xxx_YoY 是官方同比变化率,不是上年绝对值;当月查 ProvinceMonth 过滤 dataMonth,"
+        "年/YTD 累计查 ProvinceMonthCum 过滤 dataMonth;这是城市月度及以上的唯一官方口径);"
+        "SsfbCityRanking 的 monthly/yearly 为本地手算口径,已停用、历史行已删除,不要再引用;"
         "SsfbCityDay 等城市日 Cube 只用于逐日明细与序列查询,不要用 granularity=month/year "
-        "或任何方式把日值汇成月度及以上统计——许昌月度及以上统计走 airdata_calc_report_summary 报表接口,"
-        "18城月/年累计走 SsfbCityRanking;"
+        "或任何方式把日值汇成月度及以上统计——许昌市月度及以上统计走 airdata_calc_report_summary 报表接口"
+        "或 ProvinceMonth 官方值;"
         "区县排名用 SsfbCountyDayRank/SsfbCountyHourRank(与省平台'区县排名'同口径,190区县含济源,升序并列);"
         "站点排名用 SsfbSiteDayRank/SsfbSiteHourRank(省控站约241个,本系统统一口径);"
+        "许昌县市区(10区域)官方月度统计与年/YTD累计用 CountyMonth/CountyMonthCum"
+        "(2020-01~2026-09官方月报原值,剔除沙尘;当月查 CountyMonth 过滤 dataMonth,"
+        "累计查 CountyMonthCum 过滤 periodEnd;重污染天2023起才有;"
+        "这是官方发布统计,优先于任何由明细自算的县市区月度值);"
         "小时排名过滤 dataTime 到具体小时,日排名过滤 dataDate 到具体日期;"
         "排名规则统一为数值越低越靠前(Rank*=1 最优),相同值并列(RANK:1,2,2,4);"
         "乡镇站(76个,2024起)用 TownHour/TownDay,必须过滤 caliber(app=审核,官方结论优先),"
@@ -460,9 +560,13 @@ class XuchangCubeMetricsTool(LLMTool):
                 "查询许昌本地空气质量指标(语义层,口径唯一):河南18城市组(含济源)小时/日"
                 "六参数与AQI、城市/区县/站点的小时与日排名(数值越低排名越靠前,相同值并列,"
                 "区县排名与省平台同口径)、全省区县(190个含济源)小时/日数据、"
-                "许昌县级站小时/日数据、乡镇站(76个)小时/日数据(2024起,审核/原始口径二选一)。"
+                "许昌县级站小时/日数据、乡镇站(76个)小时/日数据(2024起,审核/原始口径二选一)、"
+                "许昌县市区官方月度统计(2020-01~2026-09,剔除沙尘,CountyMonth/CountyMonthCum)、"
+                "河南省官方月报统计(19市/88市辖区/101县市,ProvinceMonth/ProvinceMonthCum)。"
                 "传 measures+dimensions+时间范围即可,不需要写SQL;"
-                "城市月/年排名用 SsfbCityRanking 并过滤 periodType/period;"
+                "城市日排名用 SsfbCityRanking(仅 periodType=daily);"
+                "城市/区/县市的月与1-N月累计官方统计用 ProvinceMonth/ProvinceMonthCum(过滤 level);"
+                "县市区月度及1-N月累计统计用 CountyMonth/CountyMonthCum(官方月报口径);"
                 "区县排名用 SsfbCountyDayRank/SsfbCountyHourRank,站点排名用 SsfbSiteDayRank/SsfbSiteHourRank;"
                 "乡镇站问题用 TownHour/TownDay 并过滤 caliber(官方结论用 app;"
                 "app 无最新时段数据时回退 src 并注明为未审核原始数据)。"
@@ -714,7 +818,12 @@ class XuchangCubeMetricsTool(LLMTool):
 
         semantic = cube_metadata(cube, CATALOG)
         data_as_of = self._infer_data_as_of(results)
-        quality_status = "unknown"
+        if not row_count:
+            quality_status = "blocked"
+        elif data_as_of:
+            quality_status = "ok"
+        else:
+            quality_status = "degraded"
         payload = {
             "success": True,
             "data": sample_data,
@@ -749,11 +858,21 @@ class XuchangCubeMetricsTool(LLMTool):
             logger.warning("xuchang_metric_result_contract_violation", errors=contract_errors)
         return payload
 
-    @staticmethod
-    def _infer_data_as_of(results: List[Dict[str, Any]]) -> Optional[str]:
+    _TIME_KEY_NAMES = frozenset({
+        "datatime", "datadate", "computedat", "period", "datamonth",
+        "periodend", "month", "day", "hour",
+    })
+    _DATE_LIKE = re.compile(r"^\d{4}-\d{2}(-\d{2})?")
+
+    @classmethod
+    def _infer_data_as_of(cls, results: List[Dict[str, Any]]) -> Optional[str]:
         values = []
         for row in results:
             for key, value in row.items():
-                if any(token in key.lower() for token in ("datatime", "datadate", "computedat", "period")) and value is not None:
-                    values.append(str(value))
+                short_key = str(key).lower().rsplit(".", 1)[-1]
+                if short_key not in cls._TIME_KEY_NAMES or value is None:
+                    continue
+                text = str(value).strip()
+                if cls._DATE_LIKE.match(text):
+                    values.append(text)
         return max(values) if values else None

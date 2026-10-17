@@ -207,4 +207,5 @@ async def test_describe_cube_returns_semantic_definition_without_cube_call():
     result = await XuchangCubeMetricsTool().execute(describe_cube="SsfbCityRanking")
     assert result["success"] is True
     assert result["semantic_context"]["metric_definitions"]["rankPm25"]["name"]
-    assert "非官方" in result["semantic_context"]["limitations"][0]
+    assert "daily" in result["semantic_context"]["applicability"]
+    assert any("ProvinceMonth" in item for item in result["semantic_context"]["limitations"])

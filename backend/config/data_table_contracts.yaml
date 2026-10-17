@@ -714,3 +714,101 @@ tables:
       OfficialRank: int
       ComputedAt: datetime
       CreatedAt: datetime
+  CountyMonthReport:
+    time_columns:
+    - DataMonth
+    - PeriodEnd
+    dimension_columns:
+    - Region
+    - RegionType
+    - Scope
+    - SourceCol
+    - SourceFile
+    value_columns:
+    - PM10
+    - PM25
+    - SO2
+    - NO2
+    - CO
+    - O3_8H
+    - GoodDays
+    - HeavyDays
+    - CompositeIndex
+    mark_columns: []
+    caliber_columns:
+    - Scope
+    - SourceCol
+    column_types:
+      ID: bigint
+      Region: varchar
+      RegionType: varchar
+      DataMonth: date
+      PeriodEnd: date
+      Scope: varchar
+      PM10: decimal
+      PM25: decimal
+      SO2: decimal
+      NO2: decimal
+      CO: decimal
+      O3_8H: decimal
+      GoodDays: int
+      HeavyDays: int
+      CompositeIndex: decimal
+      SourceCol: varchar
+      SourceFile: varchar
+      CreatedAt: datetime
+  ProvinceMonthReport:
+    time_columns:
+    - DataMonth
+    dimension_columns:
+    - Level
+    - City
+    - RegionName
+    - Scope
+    - SourceFile
+    value_columns:
+    - PM10
+    - PM10_YoY
+    - PM25
+    - PM25_YoY
+    - O3
+    - O3_YoY
+    - GoodDays
+    - GoodDays_Change
+    - GoodDays_Ratio
+    - GoodDays_RatioChg
+    - HeavyDays
+    - HeavyDays_Change
+    - HeavyDays_Ratio
+    - HeavyDays_RatioChg
+    - CompositeIndex
+    - CompositeIndex_YoY
+    mark_columns: []
+    caliber_columns:
+    - Scope
+    - Level
+    column_types:
+      ID: bigint
+      Level: varchar
+      City: varchar
+      RegionName: varchar
+      DataMonth: date
+      Scope: varchar
+      PM10: decimal
+      PM10_YoY: decimal
+      PM25: decimal
+      PM25_YoY: decimal
+      O3: decimal
+      O3_YoY: decimal
+      GoodDays: decimal
+      GoodDays_Change: decimal
+      GoodDays_Ratio: decimal
+      GoodDays_RatioChg: decimal
+      HeavyDays: decimal
+      HeavyDays_Change: decimal
+      HeavyDays_Ratio: decimal
+      HeavyDays_RatioChg: decimal
+      CompositeIndex: decimal
+      CompositeIndex_YoY: decimal
+      SourceFile: varchar
+      CreatedAt: datetime

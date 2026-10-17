@@ -266,7 +266,7 @@ backend:
     - xuchang_henan_ssfb_site_publish_fetcher
     # 河南实时发布系统：全省区县(含济源/功能区)小时/日值 + 平台口径日排名
     - xuchang_henan_county_publish_fetcher
-    # 省APP已停服：基于SsfbCityDay重算月/年排名(HJ663, 数值低=排名前, 并列)
+    # 省APP已停服：仅对SsfbCityDay官方日值排序(日排名);月/年累计改走官方月报(ProvinceMonthReport)
     - xuchang_henan_ranking_recalc_fetcher
     - xuchang_nmc_hourly_forecast_fetcher
     - xuchang_weather_com_daily_forecast_fetcher

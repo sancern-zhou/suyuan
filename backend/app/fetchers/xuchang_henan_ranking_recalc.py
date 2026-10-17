@@ -1,31 +1,20 @@
-"""Henan city cumulative rankings (local calculation, clearly non-official).
+"""Henan 18-city daily air-quality ranking（官方日值升序排序，取原值不聚合）。
 
-背景：河南省空气质量 APP（月/年累计排名来源）已于 2026-09 停服，中台仅
-覆盖许昌市；为避免 Agent 自行计算导致口径漂移，由本任务统一计算河南省
-18 城市组（含济源）的月/年累计统计与排名（另有日粒度排序）。
+背景：河南省空气质量 APP（月/年累计排名来源）已于 2026-09 停服。城市**日**排名
+由本任务对官方发布日值直接排序展示（取原值，不做修约与聚合）。
 
-**口径声明：本任务产出为本地计算结果，不代表官方口径**，仅供省内城市
-横向对比参考。修约规则与官方报表一致：
+**月/年累计统计已改为官方口径**（河南省环境空气质量月报附表，
+见 ``DataCrawler.ProvinceMonthReport`` 与本目录 ``backfill_province_month/``），
+本任务此前产出的本地手算 monthly/yearly 已停用并删除历史行（2026-10-16），
+避免本地计算口径与官方发布值不一致。
 
-- 修约：银行家算法（四舍六入五成双，ROUND_HALF_EVEN）；
-- 精度：PM2.5 与 CO 保留一位小数，PM10/SO2/NO2/O3 取整数；
-- 单项浓度：SO2/NO2/PM10/PM2.5 为算术月均/年均，O3 取日最大 8 小时值
-  第 90 百分位（nearest-rank），CO 取日均值第 95 百分位（nearest-rank），
-  聚合后按上述规则修约，排名基于修约后的值；
-- 排名规则：**数值越低排名越靠前**，相同值并列（standard competition：1,1,3）；
-- PM10 缺口：源日值接口 2026-10 起不发布 PM10，由本城小时均值补齐后再
-  参与统计；
-- 日粒度（daily）：仅对官方发布日值排序展示，取原值不做修约与聚合。
-
-结果写入 DataCrawler MySQL ``SsfbCityRanking``
-（period_type=daily/monthly/yearly），每日重算当期，幂等覆盖。
-月度及以上统计的官方口径以河南省生态环境厅/驻市监测中心发布为准。
+结果写入 DataCrawler MySQL ``SsfbCityRanking``（仅 period_type=daily），
+每日重算当期，幂等覆盖；每次运行顺带清理历史遗留的 monthly/yearly 行。
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
-from decimal import Decimal, ROUND_HALF_EVEN
 from typing import Any
 
 import aiomysql
@@ -38,20 +27,6 @@ from config.settings import settings
 logger = structlog.get_logger()
 
 RANKING_TABLE = "SsfbCityRanking"
-
-# 修约精度（位小数）：PM2.5 与 CO 一位小数，其余污染物整数
-ROUND_PLACES = {"pm25": 1, "co": 1, "pm10": 0, "so2": 0, "no2": 0, "o3_8h_90": 0, "o3_8h": 0}
-
-RANK_METRICS = ("pm25", "pm10", "so2", "no2", "o3_8h", "co")
-
-RANK_COLUMN_MAP = {
-    "pm25": "rank_pm25",
-    "pm10": "rank_pm10",
-    "so2": "rank_so2",
-    "no2": "rank_no2",
-    "o3_8h": "rank_o3",
-    "co": "rank_co",
-}
 
 RANKING_DDL = """
 CREATE TABLE IF NOT EXISTS SsfbCityRanking (
@@ -100,6 +75,9 @@ ON DUPLICATE KEY UPDATE
     RankCO=VALUES(RankCO), ComputedAt=VALUES(ComputedAt)
 """
 
+# 本地历史遗留的月/年累计行清理（官方口径改由 ProvinceMonthReport 提供）
+PURGE_LEGACY_PERIODS = "DELETE FROM SsfbCityRanking WHERE PeriodType <> 'daily'"
+
 DAY_QUERY = """
 SELECT City AS city, GroupID AS group_id, DataTime AS data_time,
        PM25 AS pm25, PM10 AS pm10, O3_8H AS o3_8h, NO2 AS no2, SO2 AS so2, CO AS co
@@ -109,29 +87,13 @@ ORDER BY city, data_time
 """
 
 # 实测源接口日值的 PM10 字段自 2026-10 起不再发布，小时值仍正常；
-# PM10 日均按"本城当日小时算术平均"补齐后参与统计。
+# PM10 日均按"本城当日小时算术平均"补齐后参与排序。
 HOUR_PM10_QUERY = """
 SELECT City AS city, DATE(DataTime) AS data_date, AVG(PM10) AS pm10_mean
 FROM SsfbCityHour
 WHERE DataTime >= %s AND DataTime < %s AND PM10 IS NOT NULL
 GROUP BY City, DATE(DataTime)
 """
-
-
-def round_half_even(value: float | None, places: int) -> float | None:
-    """银行家算法修约（四舍六入五成双）。"""
-    if value is None:
-        return None
-    quantum = Decimal("0.1") if places == 1 else Decimal("1")
-    return float(Decimal(str(value)).quantize(quantum, rounding=ROUND_HALF_EVEN))
-
-
-def percentile_nearest_rank(sorted_values: list[float], p: float) -> float | None:
-    """Nearest-rank 百分位（ceil(p/100 * n) 位）。"""
-    if not sorted_values:
-        return None
-    rank = max(1, -(-int(p * len(sorted_values)) // 100))
-    return sorted_values[min(rank, len(sorted_values)) - 1]
 
 
 def compute_rank(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
@@ -152,70 +114,6 @@ def compute_rank(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
     return result + null_rows
 
 
-class CityCumulative:
-    """单城市一段时间的累计统计（聚合后按官方修约规则修约）。"""
-
-    def __init__(self, city: str, group_id: int | None) -> None:
-        self.city = city
-        self.group_id = group_id
-        self.days = 0
-        self.valid_days = 0
-        self.pm_valid_days = 0
-        self.series: dict[str, list[float]] = {
-            key: [] for key in ("pm25", "pm10", "so2", "no2", "co", "o3_8h")
-        }
-
-    def add_day(self, row: dict[str, Any]) -> None:
-        self.days += 1
-        pm25 = _number(row.get("pm25"))
-        if pm25 is not None:
-            self.pm_valid_days += 1
-        complete = True
-        for key in self.series:
-            value = _number(row.get(key))
-            if value is None:
-                complete = False
-                continue
-            self.series[key].append(value)
-        if complete:
-            self.valid_days += 1
-
-    def _mean(self, key: str) -> float | None:
-        values = self.series[key]
-        return sum(values) / len(values) if values else None
-
-    def _o3_8h_90(self) -> float | None:
-        return percentile_nearest_rank(sorted(self.series["o3_8h"]), 90)
-
-    def _co_95(self) -> float | None:
-        return percentile_nearest_rank(sorted(self.series["co"]), 95)
-
-    def rounded_metrics(self) -> dict[str, float | None]:
-        """聚合 → 修约（银行家算法，PM2.5/CO 一位小数，其余整数）。
-
-        返回键与表列对齐：O3_8H 装 O3-8h 第 90 百分位，CO 装 CO 第 95 百分位。
-        """
-        raw = {
-            "pm25": self._mean("pm25"),
-            "pm10": self._mean("pm10"),
-            "so2": self._mean("so2"),
-            "no2": self._mean("no2"),
-            "o3_8h": self._o3_8h_90(),
-            "co": self._co_95(),
-        }
-        return {
-            key: round_half_even(value, ROUND_PLACES.get(key, 0))
-            for key, value in raw.items()
-        }
-
-    @classmethod
-    def from_days(cls, city: str, group_id: int | None, days: list[dict[str, Any]]) -> "CityCumulative":
-        result = cls(city, group_id)
-        for row in days:
-            result.add_day(row)
-        return result
-
-
 def _number(value: Any) -> float | None:
     if value in (None, ""):
         return None
@@ -224,48 +122,6 @@ def _number(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if number >= 0 else None
-
-
-def build_cumulative_ranking_rows(
-    period_type: str,
-    period: str,
-    city_cumulatives: dict[str, CityCumulative],
-    computed_at: datetime,
-) -> list[dict[str, Any]]:
-    """修约 → 排名（基于修约后的值），产出累计统计排名行。"""
-    metrics_by_city = {
-        city: agg.rounded_metrics() for city, agg in city_cumulatives.items()
-    }
-    ranked_by_metric = {
-        metric: compute_rank(
-            [
-                {"city": city, "value": metrics_by_city[city].get(metric)}
-                for city in city_cumulatives
-            ],
-            key="value",
-        )
-        for metric in RANK_METRICS
-    }
-    ranks: dict[str, dict[str, int | None]] = {city: {} for city in city_cumulatives}
-    for metric, rows in ranked_by_metric.items():
-        for row in rows:
-            ranks[row["city"]][RANK_COLUMN_MAP[metric]] = row["rank"]
-
-    return [
-        {
-            "period_type": period_type,
-            "period": period,
-            "city": city,
-            "group_id": city_cumulatives[city].group_id,
-            "days": city_cumulatives[city].days,
-            "valid_days": city_cumulatives[city].valid_days,
-            "pm_valid_days": city_cumulatives[city].pm_valid_days,
-            **metrics_by_city[city],
-            **ranks[city],
-            "computed_at": computed_at,
-        }
-        for city in city_cumulatives
-    ]
 
 
 def build_daily_ranking_rows(
@@ -305,12 +161,8 @@ def build_daily_ranking_rows(
     ]
 
 
-def _chunked(values: list[int], size: int) -> list[list[int]]:
-    return [values[index:index + size] for index in range(0, len(values), size)]
-
-
 class XuchangHenanRankingRecalcFetcher(DataFetcher):
-    """Daily local calculation of Henan 18-city cumulative rankings (non-official)."""
+    """Daily official-value ranking of Henan 18 city groups (daily only)."""
 
     def __init__(
         self,
@@ -320,9 +172,9 @@ class XuchangHenanRankingRecalcFetcher(DataFetcher):
     ) -> None:
         super().__init__(
             name="xuchang_henan_ranking_recalc_fetcher",
-            description="本地计算河南18城市组月/年累计统计与排名(银行家修约,非官方口径)入库DataCrawler",
+            description="河南18城市组官方日值排序(日排名,取原值不聚合)入库DataCrawler;月/年累计改走官方月报",
             schedule="10 6 * * *",
-            version="3.0.0",
+            version="4.0.0",
         )
         self.client = client or HenanSsfbClient()
         self.now_factory = now_factory
@@ -377,26 +229,14 @@ class XuchangHenanRankingRecalcFetcher(DataFetcher):
 
     def _collect(self, fetched_at: datetime) -> dict[str, Any]:
         today = fetched_at.date()
-        month_start = today.replace(day=1)
-        year_start = today.replace(month=1, day=1)
         yesterday = today - timedelta(days=1)
-        query_start = f"{year_start:%Y-%m-%d} 00:00:00"
+        query_start = f"{yesterday - timedelta(days=1):%Y-%m-%d} 00:00:00"
         query_end = f"{today + timedelta(days=1):%Y-%m-%d} 00:00:00"
 
         day_rows = self._load_city_days(query_start, query_end)
         if not day_rows:
             raise ValueError("SsfbCityDay returned no rows for ranking calculation")
         _fill_pm10_from_hours(day_rows, self._load_pm10_hour_means(query_start, query_end))
-
-        monthly_cities = self._cumulative_window(day_rows, month_start, today)
-        yearly_cities = self._cumulative_window(day_rows, year_start, today)
-
-        monthly_rows = build_cumulative_ranking_rows(
-            "monthly", month_start.strftime("%Y-%m"), monthly_cities, fetched_at
-        )
-        yearly_rows = build_cumulative_ranking_rows(
-            "yearly", str(year_start.year), yearly_cities, fetched_at
-        )
 
         daily_rows: list[dict[str, Any]] = []
         daily_periods: list[str] = []
@@ -426,27 +266,10 @@ class XuchangHenanRankingRecalcFetcher(DataFetcher):
                     build_daily_ranking_rows(window_end.isoformat(), city_values, fetched_at)
                 )
         return {
-            "monthly": monthly_rows,
-            "yearly": yearly_rows,
             "daily": daily_rows,
             "daily_periods": daily_periods,
             "day_count": len(day_rows),
         }
-
-    @staticmethod
-    def _cumulative_window(
-        day_rows: list[dict[str, Any]], start: date, end: date
-    ) -> dict[str, CityCumulative]:
-        window: dict[str, CityCumulative] = {}
-        for row in day_rows:
-            day = row["data_time"].date() if isinstance(row["data_time"], datetime) else row["data_time"]
-            if not (start <= day <= end):
-                continue
-            city = row["city"]
-            if city not in window:
-                window[city] = CityCumulative(city, row.get("group_id"))
-            window[city].add_day(row)
-        return window
 
     @staticmethod
     def _aggregate_window(
@@ -466,7 +289,6 @@ class XuchangHenanRankingRecalcFetcher(DataFetcher):
         fetched_at = self.now_factory().replace(microsecond=0)
         collected = self._collect(fetched_at)
         saved = await self._save(collected)
-        monthly_pm25 = {row["city"]: row["rank_pm25"] for row in collected["monthly"]}
         daily_pm25 = {
             row["period"]: row["rank_pm25"] for row in collected["daily"]
             if row["city"] == "许昌市"
@@ -474,13 +296,9 @@ class XuchangHenanRankingRecalcFetcher(DataFetcher):
         result = {
             "fetched_at": fetched_at.isoformat(),
             "day_rows": collected["day_count"],
-            "saved_monthly": saved["monthly"],
-            "saved_yearly": saved["yearly"],
             "saved_daily": saved["daily"],
             "daily_periods": collected["daily_periods"],
-            "xuchang_pm25_rank_monthly": monthly_pm25.get("许昌市"),
             "xuchang_pm25_rank_daily": daily_pm25,
-            "jiyuan_pm25_rank_monthly": monthly_pm25.get("济源市"),
         }
         logger.info("xuchang_henan_ranking_recalc_completed", **result)
         return result
@@ -490,14 +308,16 @@ class XuchangHenanRankingRecalcFetcher(DataFetcher):
         try:
             async with conn.cursor() as cursor:
                 await cursor.execute(RANKING_DDL)
-                counts = {}
-                for kind in ("monthly", "yearly", "daily"):
-                    rows = collected[kind]
-                    if rows:
-                        await cursor.executemany(
-                            RANKING_UPSERT, [_ranking_params(row) for row in rows]
-                        )
-                    counts[kind] = len(rows)
+                counts: dict[str, int] = {}
+                rows = collected["daily"]
+                if rows:
+                    await cursor.executemany(
+                        RANKING_UPSERT, [_ranking_params(row) for row in rows]
+                    )
+                counts["daily"] = len(rows)
+                # 清理本地手算的月/年累计历史行（官方口径改由 ProvinceMonthReport 提供）
+                await cursor.execute(PURGE_LEGACY_PERIODS)
+                counts["purged_legacy"] = cursor.rowcount
             await conn.commit()
             return counts
         except Exception:

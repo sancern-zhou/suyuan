@@ -1,4 +1,4 @@
-version: 1
+version: 2
 project: xuchang
 description: >-
   许昌空气质量语义注册中心。Cube schema 负责执行，注册中心负责口径、适用范围、
@@ -27,11 +27,11 @@ cubes:
   SsfbCityRanking:
     dataset: DataCrawler.SsfbCityRanking
     grain: 一行 = 期次类型 × 期次 × 城市组
-    applicability: 本地重算的城市月/年累计和排名，仅供省内横向比较
-    source_window: 每日重算，期次由periodType和period决定
+    applicability: 官方日值排序的日排名（仅periodType=daily），仅供省内横向比较
+    source_window: 每日凌晨随官方日值发布更新
     limitations:
-      - 非官方统计口径，正式汇报应以官方发布结果为准
-      - 排名基于修约后的浓度，数值越低越靠前，相同值并列
+      - 仅保留daily期次；城市月/年累计统计已改走官方月报（ProvinceMonth/ProvinceMonthCum），本表monthly/yearly已停用并删除历史行
+      - 排名数值越低越靠前，1为最优，相同值并列
   SsfbCountyHour:
     dataset: DataCrawler.SsfbCountyHour
     grain: 一行 = 区县 × 小时
@@ -102,3 +102,35 @@ cubes:
       - 必须过滤caliber=app或caliber=src，否则同站同日会重复计数
       - 官方结论优先使用app；app缺失时回退src必须明确说明为未审核原始数据
       - -99为无效值，不参与数值聚合
+  ProvinceMonth:
+    dataset: DataCrawler.ProvinceMonthReport
+    grain: 一行 = 期次(Scope=month) × 层级(Level) × 区域
+    applicability: 河南省环境空气质量月报官方附表，城市月度及以上统计的唯一官方口径
+    source_window: 2025-12与2026-01~09共十期，新月报发布后回补
+    limitations:
+      - 供暖季期次无O3列；区/县表(Level=district/county)无SO2/NO2/CO/重污染天
+      - 同比列为官方变化率(%)而非绝对值
+      - 区域数量随期次变化（2025-12~2026-03为85区/103县市，2026-04起88区/101县市）
+  ProvinceMonthCum:
+    dataset: DataCrawler.ProvinceMonthReport
+    grain: 一行 = 期次(Scope=cum) × 层级(Level) × 区域
+    applicability: 河南省月报1-N月累计官方附表
+    source_window: 同ProvinceMonth；2026年第1期无累计表
+    limitations:
+      - 累计为截至dataMonth当月的1-N月值；其余限制同ProvinceMonth
+  CountyMonth:
+    dataset: DataCrawler.CountyMonthReport
+    grain: 一行 = 区域 × 月(Scope=month)
+    applicability: 许昌县市区官方月报统计（剔除沙尘），官方原值非明细聚合
+    source_window: 2020-01~2026-09（2020年取自2021年月报上年同期列）
+    limitations:
+      - 重污染天2023年起才有
+      - 魏都/开发/东城/示范/建安=国家平台，鄢陵/襄城/禹州/长葛=省平台，两平台口径不同
+  CountyMonthCum:
+    dataset: DataCrawler.CountyMonthReport
+    grain: 一行 = 区域 × 累计截止月(Scope=cum)
+    applicability: 许昌县市区月报1-N月累计
+    source_window: 同CountyMonth
+    limitations:
+      - 个别区域累计与当月之和存在1~2天官方修订差，原值入库勿互相换算
+      - 重污染天2023年起才有

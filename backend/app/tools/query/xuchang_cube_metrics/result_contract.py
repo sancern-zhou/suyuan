@@ -1,6 +1,7 @@
 """Sparse result contract checks for Xuchang metric queries."""
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -11,6 +12,7 @@ from app.utils.path_config import resolve_agent_path
 CONTRACT_PATH = resolve_agent_path("projects/xuchang/data-ops/semantic/result_contract.yaml")
 
 
+@lru_cache(maxsize=1)
 def _contract() -> dict[str, Any]:
     try:
         return yaml.safe_load(Path(CONTRACT_PATH).read_text(encoding="utf-8")) or {}
