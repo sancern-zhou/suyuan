@@ -4,7 +4,16 @@ Agents choose semantic roles and annotations; they do not choose raw Matplotlib
 colors, font sizes, or canvas geometry for standard report charts.
 """
 
+from app.utils.chart_theme import SERIES_COLORS
+
 REPORT_THEME = {
+    "font_family": "sans-serif",
+    "font_fallbacks": [
+        "Noto Sans CJK SC",
+        "Microsoft YaHei",
+        "SimHei",
+        "DejaVu Sans",
+    ],
     "colors": {
         "primary": "#1F5C99",
         "secondary": "#9FB6CC",
@@ -27,19 +36,15 @@ REPORT_THEME = {
         "note": 8.5,
     },
     "dpi": 160,
+    "export": {
+        "format": "png",
+        "min_dpi": 150,
+        "background": "white",
+    },
     "bar_width": 0.56,
     "grid_linewidth": 0.6,
     "label_padding_fraction": 0.012,
 }
-
-SERIES_COLORS = (
-    REPORT_THEME["colors"]["primary"],
-    REPORT_THEME["colors"]["secondary"],
-    REPORT_THEME["colors"]["muted"],
-    "#6F8798",
-    "#7FA6BF",
-    "#A9B8C5",
-)
 
 
 def theme_color(role: str, fallback: str | None = None) -> str:
@@ -57,6 +62,8 @@ def matplotlib_report_style() -> dict:
         "savefig.dpi": REPORT_THEME["dpi"],
         "savefig.facecolor": "white",
         "savefig.bbox": "tight",
+        "font.family": REPORT_THEME["font_family"],
+        "font.sans-serif": REPORT_THEME["font_fallbacks"],
         "font.size": sizes["axis"],
         "text.color": colors["body"],
         "axes.facecolor": "white",
