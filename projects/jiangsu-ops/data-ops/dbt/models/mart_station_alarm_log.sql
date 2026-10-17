@@ -532,7 +532,16 @@ select
     u.type                                       as alarm_type,
     u.subcatalog,
     u.criticallevel                              as alarm_grade,
-    case u.criticallevel when 1 then '一般告警' when 2 then '严重告警' when 3 then '紧急告警' else '未知' end
+    case u.criticallevel
+        when 1 then '一般告警'
+        when 40 then '一般告警'
+        when 60 then '一般告警'
+        when 2 then '严重告警'
+        when 80 then '严重告警'
+        when 3 then '紧急告警'
+        when 20 then '提示'
+        else '未知'
+    end
                                                  as alarm_grade_cn,
     u.source,
     u.descriptionde                              as description,

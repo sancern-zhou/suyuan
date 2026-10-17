@@ -6,17 +6,17 @@ cube(`QcAirData`, {
     count: { type: `count`, title: `曲线点数` },
     avgDataValue: {
       type: `avg`,
-      sql: `nullif(datavalue, '')::double precision`,
+      sql: `datavalue_numeric`,
       title: `平均监测值(数值点)`,
     },
     maxDataValue: {
       type: `number`,
-      sql: `max(nullif(datavalue, '')::double precision)`,
+      sql: `max(datavalue_numeric)`,
       title: `最大监测值`,
     },
     minDataValue: {
       type: `number`,
-      sql: `min(nullif(datavalue, '')::double precision)`,
+      sql: `min(datavalue_numeric)`,
       title: `最小监测值`,
     },
   },

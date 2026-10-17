@@ -27,6 +27,11 @@ select
     a.time,
     a.timepoint,
     a.datavalue,
+    case
+        when trim(a.datavalue) ~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)$'
+            then trim(a.datavalue)::double precision
+        else null
+    end                                          as datavalue_numeric,
     a.unit,
     a.datamark,
     a.flag,

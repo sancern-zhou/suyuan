@@ -6,7 +6,7 @@
 data-ops/
 ├── sync/    ODS 同步层 — 源 SQL Server → 本机 PostgreSQL jiangsu_ods（sync_table.py 引擎）
 │              datasets/*.yaml 是查询契约唯一人工维护源（gen_tool_contract.py 生成后端工具 contract.txt）
-├── dbt/     mart 加工层 — jiangsu_ods → jiangsu_mart（13+ 模型 / 21 字典 SCD2 快照 / 31 tests）
+├── dbt/     mart 加工层 — jiangsu_ods → jiangsu_mart（19 个模型 / 21 字典 SCD2 快照 / schema 数据测试）
 │              sync-all = tag:frequent；sync-daily = snapshot + tag:daily
 └── cube/    语义层 — Cube Core 0.35.x，口径唯一定义在 schema/*.js，REST 127.0.0.1:4610
 ```

@@ -4,11 +4,19 @@
 从 runtime sync_config.json 读取 integrated_h_<年>_* 条目生成 union 清单;
 每年 1 月换年份重跑 gen_env_sync_config.py 后, 重跑本脚本刷新模型。
 """
+import argparse
 import json
 from pathlib import Path
 
-SYNC_CONFIG = Path(r"E:\Tools\suyuan-jiangsu\sync\sync_config.json")
-OUT = Path(r"E:\suyuan\projects\jiangsu-ops\data-ops\dbt\models\mart_station_env_power.sql")
+REPO_ROOT = Path(__file__).resolve().parents[4]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--sync-config", type=Path,
+                    default=REPO_ROOT / "projects/jiangsu-ops/data-ops/sync/sync_config.json")
+parser.add_argument("--output", type=Path,
+                    default=REPO_ROOT / "projects/jiangsu-ops/data-ops/dbt/models/mart_station_env_power.sql")
+args = parser.parse_args()
+SYNC_CONFIG = args.sync_config.resolve()
+OUT = args.output.resolve()
 
 cfg = json.loads(SYNC_CONFIG.read_text(encoding="utf-8"))
 prefix = "integrated_h_"

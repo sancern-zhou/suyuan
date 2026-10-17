@@ -1,10 +1,18 @@
 # -*- coding: utf-8 -*-
 """生成 dbt 模型 mart_station_alarm_log.sql(union 101 告警分片表)。"""
+import argparse
 import json
 from pathlib import Path
 
-SYNC_CONFIG = Path(r"E:\Tools\suyuan-jiangsu\sync\sync_config.json")
-OUT = Path(r"E:\suyuan\projects\jiangsu-ops\data-ops\dbt\models\mart_station_alarm_log.sql")
+REPO_ROOT = Path(__file__).resolve().parents[4]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--sync-config", type=Path,
+                    default=REPO_ROOT / "projects/jiangsu-ops/data-ops/sync/sync_config.json")
+parser.add_argument("--output", type=Path,
+                    default=REPO_ROOT / "projects/jiangsu-ops/data-ops/dbt/models/mart_station_alarm_log.sql")
+args = parser.parse_args()
+SYNC_CONFIG = args.sync_config.resolve()
+OUT = args.output.resolve()
 
 cfg = json.loads(SYNC_CONFIG.read_text(encoding="utf-8"))
 prefix = "alarmlog_2026_"
@@ -52,7 +60,16 @@ select
     u.type                                       as alarm_type,
     u.subcatalog,
     u.criticallevel                              as alarm_grade,
-    case u.criticallevel when 40 then '一般告警' when 60 then '一般告警' when 80 then '严重告警' when 20 then '提示' else '未知' end
+    case u.criticallevel
+        when 1 then '一般告警'
+        when 40 then '一般告警'
+        when 60 then '一般告警'
+        when 2 then '严重告警'
+        when 80 then '严重告警'
+        when 3 then '紧急告警'
+        when 20 then '提示'
+        else '未知'
+    end
                                                  as alarm_grade_cn,
     u.source,
     u.descriptionde                              as description,

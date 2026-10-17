@@ -10,7 +10,7 @@ psql 脚本序列。抽数（SQL Server → jiangsu_ods）仍由 `sync/sync_tabl
 
 - `dbt_project.yml` — 项目配置；tag:frequent = 5分钟链路，tag:daily = 每日链路
 - `profiles.yml` — 连接 suyuan_jiangsu 库（schema jiangsu_mart）
-- `models/` — 11 个模型（2 dim + 9 mart），每个自带 GRANT agent_reader 的 post_hook
+- `models/` — 19 个模型（3 dim + 16 mart），每个自带 GRANT agent_reader 的 post_hook
 - `models/sources.yml`、`models/schema.yml`、`snapshots/*.sql` — **生成物**，
   由 `../sync/gen_dbt_artifacts.py` 从契约（datasets/*.yaml + sync_config.json）派生，勿手改
 - `snapshots/` — 19 张字典/规则表的每日 check 快照（SCD2），落在 `jiangsu_snapshot` schema，

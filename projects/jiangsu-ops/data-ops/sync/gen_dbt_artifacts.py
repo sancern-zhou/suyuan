@@ -81,14 +81,17 @@ MODEL_TESTS = {
         "alarm_time": ["not_null"],
     },
     "mart_qc_task_status_result": {
-        "rid": ["not_null"],
+        "id": ["unique", "not_null"],
+        "rid": ["unique", "not_null"],
         "station_code": ["warn_not_null"],
     },
     "mart_qc_air_data_result": {
+        "id": ["unique", "not_null"],
         "station_code": ["warn_not_null"],
         "timepoint": ["not_null"],
     },
     "mart_qc_run_log_result": {
+        "id": ["unique", "not_null"],
         "rid": ["not_null"],
         "record_time": ["warn_not_null"],
     },

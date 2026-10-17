@@ -14,6 +14,14 @@
 -- mart_qc_task_status_result: 质控任务状态(工具链本地化数据源)
 -- 源: air_province_data.dbo.qc_his_task_status_result_2026(按年, 每年1月换年份)
 -- 用途: jiangsu_fetch_qc_task_status 按 rid 取 jsonstr 还原质控详情(步骤/结果/日志/曲线)
+with latest as (
+    select s.*,
+           row_number() over (
+               partition by s.rid
+               order by s.createtime desc nulls last, s.id desc
+           ) as rn
+    from {{ source('jiangsu_ods', 'qc_his_task_status_result_2026') }} s
+)
 select
     s.id,
     s.rid,
@@ -30,6 +38,7 @@ select
     s.jsonstr,
     s.createtime,
     now()::timestamp                             as synced_at
-from {{ source('jiangsu_ods', 'qc_his_task_status_result_2026') }} s
+from latest s
 left join {{ ref('dim_station') }} ds
        on ds.station_code = s.stationcode
+where s.rn = 1

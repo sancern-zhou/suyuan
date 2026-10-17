@@ -126,6 +126,22 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "rid", "title": "任务标识 rId"},
         ],
     },
+    "StationEnvPower": {
+        "measures": [
+            {"name": "count", "title": "动环数据点数"},
+            {"name": "avgValue", "title": "平均动环值(数值点)"},
+            {"name": "maxValue", "title": "最大动环值"},
+            {"name": "minValue", "title": "最小动环值"},
+        ],
+        "dimensions": [
+            {"name": "cityName", "title": "城市名"},
+            {"name": "stationCode", "title": "站点编码"},
+            {"name": "stationName", "title": "站点名"},
+            {"name": "pollutantCode", "title": "动环指标编码"},
+            {"name": "timePoint", "title": "数据时间点(时间维度)"},
+            {"name": "mark", "title": "平台原始标记"},
+        ],
+    },
     "QcAirData": {
         "measures": [
             {"name": "count", "title": "质控曲线点数"},
@@ -302,6 +318,11 @@ FRESHNESS_COLUMN: Dict[str, Tuple[str, str]] = {
     "StationDaily": ("mart_station_daily_profile", "refreshed_at"),
     "DeviceLifecycle": ("mart_device_lifecycle_analysis", "synced_at"),
     "QcArrangement": ("mart_qc_arrangement_analysis", "synced_at"),
+    "StationAlarmLog": ("mart_station_alarm_log", "synced_at"),
+    "QcTaskStatus": ("mart_qc_task_status_result", "synced_at"),
+    "QcAirData": ("mart_qc_air_data_result", "synced_at"),
+    "QcRunLog": ("mart_qc_run_log_result", "synced_at"),
+    "StationEnvPower": ("mart_station_env_power", "synced_at"),
 }
 
 ALLOWED_FILTER_OPERATORS = {

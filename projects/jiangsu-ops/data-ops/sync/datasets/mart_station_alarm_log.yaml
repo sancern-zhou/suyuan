@@ -20,7 +20,7 @@ columns:
   - {name: alarm_type, business: 告警类型编码(平台内部码)}
   - {name: subcatalog, business: 告警子类}
   - {name: alarm_grade, business: 告警级别原始值}
-  - {name: alarm_grade_cn, business: 告警级别中文(1=一般/2=严重/3=紧急)}
+  - {name: alarm_grade_cn, business: 告警级别中文(兼容源值1/2/3与20/40/60/80;20=提示,40/60=一般,80=严重)}
   - {name: source, business: 告警来源}
   - {name: description, business: 告警描述原文}
   - {name: alarm_status, business: 告警状态(平台原值)}
@@ -34,5 +34,6 @@ access:
   role: agent_reader
 guide: >-
   查站房/仪器告警历史用本表:按 station_code + alarm_time 过滤,alarm_grade_cn 区分级别,
+  alarm_grade_cn 兼容源值1/2/3与20/40/60/80(20=提示,40/60=一般,80=严重),
   resume_time 为空即未恢复;近 24h 实时窗优先用 jiangsu_fetch_station_alarm_logs(本地分片,同一数据源);
   description 为告警描述原文,alarm_type 是平台内部编码不做翻译。

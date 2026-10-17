@@ -33,6 +33,11 @@ FRESHNESS_SLA_MIN = {
     "dim_station": (30, "synced_at"),
     "dim_device": (26 * 60, "synced_at"),
     "dim_device_parameter": (26 * 60, "synced_at"),
+    "mart_station_alarm_log": (26 * 60, "synced_at"),
+    "mart_station_env_power": (26 * 60, "synced_at"),
+    "mart_qc_task_status_result": (26 * 60, "synced_at"),
+    "mart_qc_air_data_result": (26 * 60, "synced_at"),
+    "mart_qc_run_log_result": (26 * 60, "synced_at"),
 }
 
 NULL_CHECKS = {
@@ -57,6 +62,19 @@ NULL_CHECKS = {
     "dim_station": (["station_code"], {}),
     "dim_device": (["device_code"], {"station_code": 400}),
     "dim_device_parameter": (["devicemodel", "parameterid", "parameter_name"], {}),
+    "mart_station_alarm_log": (["station_code", "alarm_time"], {}),
+    "mart_station_env_power": (["station_code", "timepoint", "pollutant_code"], {}),
+    "mart_qc_task_status_result": (["rid"], {"station_code": 100}),
+    "mart_qc_air_data_result": (["station_code", "timepoint"], {}),
+    "mart_qc_run_log_result": (["rid"], {}),
+}
+
+UNIQUE_CHECKS = {
+    "mart_station_alarm_log": ["station_code", "id"],
+    "mart_station_env_power": ["station_code", "id"],
+    "mart_qc_task_status_result": ["rid"],
+    "mart_qc_air_data_result": ["id"],
+    "mart_qc_run_log_result": ["id"],
 }
 
 
@@ -151,6 +169,21 @@ async def check_heartbeat(pg, results):
                          f"updated {age_h:.1f}h ago")
 
 
+async def check_uniques(pg, results):
+    for table, columns in UNIQUE_CHECKS.items():
+        keys = ", ".join(columns)
+        duplicate_count = await pg.fetchval(
+            f"SELECT count(*) FROM (SELECT {keys} FROM jiangsu_mart.{table} "
+            f"GROUP BY {keys} HAVING count(*) > 1) duplicates"
+        )
+        if duplicate_count:
+            await record(pg, results, "uniques", table, "FAIL",
+                         f"duplicate_groups={duplicate_count} on ({keys})")
+        else:
+            await record(pg, results, "uniques", table, "OK",
+                         f"unique on ({keys})")
+
+
 async def main() -> int:
     from dotenv import load_dotenv
 
@@ -171,6 +204,7 @@ async def main() -> int:
         await check_freshness(pg, results)
         await check_nulls(pg, results)
         await check_heartbeat(pg, results)
+        await check_uniques(pg, results)
         await check_contract_drift(pg, results)
     finally:
         await pg.close()
