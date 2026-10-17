@@ -33,6 +33,21 @@ cubes:
     applicability: 平台站点告警事件，按告警记录统计
     source_window: 2026-07-01 起
     freshness_slo: 30分钟
+    measures:
+      unresolvedRate:
+        name: 未处理率
+        definition: 未处理告警数 / 告警总数 × 100
+        numerator: unresolvedCount
+        denominator: count
+        null_policy: denominator_zero
+        time_basis: alarmTime
+      toWorkOrderRate:
+        name: 告警转工单率
+        definition: 24小时内转化工单的告警数 / 告警总数 × 100
+        numerator: convertedCount
+        denominator: count
+        null_policy: denominator_zero
+        time_basis: alarmTime
   StationAlarmLog:
     dataset: mart_station_alarm_log
     grain: 一行 = 一条站房或仪器告警
@@ -77,6 +92,28 @@ cubes:
     applicability: 巡检任务项，可包含非省控站
     source_window: 2026-07-01 起
     freshness_slo: 30分钟
+    measures:
+      finishedRate:
+        name: 巡检完成率
+        definition: 已完成巡检任务项数 / 巡检任务项总数 × 100
+        numerator: finishedCount
+        denominator: count
+        null_policy: denominator_zero
+        time_basis: taskDate
+      overdueRate:
+        name: 巡检超期率
+        definition: 周期结束仍未完成的巡检任务项数 / 巡检任务项总数 × 100
+        numerator: overdueCount
+        denominator: count
+        null_policy: denominator_zero
+        time_basis: taskDate
+      toWorkOrderRate:
+        name: 巡检转工单率
+        definition: 关联故障工单的巡检任务项数 / 巡检任务项总数 × 100
+        numerator: linkedOrderCount
+        denominator: count
+        null_policy: denominator_zero
+        time_basis: taskDate
   QcExecution:
     dataset: mart_qc_execution_analysis
     grain: 一行 = 一条质控任务执行结果
@@ -91,3 +128,35 @@ cubes:
         denominator: assessedCount
         null_policy: denominator_zero
         time_basis: qcDate
+  StationHealth:
+    dataset: mart_station_device_health
+    grain: 一行 = 一个站点当前健康快照
+    applicability: 当前站点健康和风险分级，不代表历史风险轨迹
+    source_window: 当前快照；明细窗口自 2026-07-01 起
+    freshness_slo: 30分钟
+    limitations:
+      - 站点汇总指标是站点合计，不能与工单明细行数直接相加
+  StationDaily:
+    dataset: mart_station_daily_profile
+    grain: 一行 = 一个站点 × 一个自然日
+    applicability: 站点日趋势，签到数据存在源端稀疏问题
+    source_window: 2026-07-01 起
+    freshness_slo: 26小时
+    limitations:
+      - 当日数据需次日刷新后才完整
+  DeviceLifecycle:
+    dataset: mart_device_lifecycle_analysis
+    grain: 一行 = 一条设备生命周期事件
+    applicability: 设备状态变更和报废事件，不用设备启用日期代替生命周期
+    source_window: 2026-07-01 起
+    freshness_slo: 26小时
+    limitations:
+      - DeviceSpare 流转间隔是备机更换周期的近似口径
+  QcArrangement:
+    dataset: mart_qc_arrangement_analysis
+    grain: 一行 = 一条质控任务安排
+    applicability: 省控站质控安排和过期积压
+    source_window: 2026-07-01 起
+    freshness_slo: 26小时
+    limitations:
+      - 任务安排不等同于任务执行结果，合格判定使用 QcExecution

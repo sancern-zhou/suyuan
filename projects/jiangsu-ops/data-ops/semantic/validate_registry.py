@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[4]
 REGISTRY = Path(__file__).resolve().with_name("registry.yaml")
 SCHEMA_DIR = ROOT / "projects/jiangsu-ops/data-ops/cube/schema"
 DATASET_DIR = ROOT / "projects/jiangsu-ops/data-ops/sync/datasets"
+TOOL_PATH = ROOT / "backend/app/tools/query/jiangsu_cube_metrics/tool.py"
 
 
 def main() -> int:
@@ -18,7 +19,13 @@ def main() -> int:
     cubes = data.get("cubes") or {}
     schema_text = "\n".join(p.read_text(encoding="utf-8") for p in SCHEMA_DIR.glob("*.js"))
     schema_cubes = set(re.findall(r"cube\(`([^`]+)`", schema_text))
+    tool_text = TOOL_PATH.read_text(encoding="utf-8")
+    catalog_section = tool_text.split("CATALOG:", 1)[1].split("# 每个 cube", 1)[0]
+    catalog_cubes = set(re.findall(r'^    "([A-Za-z]+)": \{', catalog_section, re.MULTILINE))
     errors: list[str] = []
+    missing_registry = sorted(catalog_cubes - set(cubes))
+    if missing_registry:
+        errors.append("CATALOG cubes missing from registry: " + ", ".join(missing_registry))
     for cube, spec in cubes.items():
         if cube not in schema_cubes:
             errors.append(f"{cube}: missing Cube schema")
