@@ -95,7 +95,7 @@ class CallSubAgentTool(LLMTool):
     调用子Agent的工具（双向通用）
 
     用法：
-    - Social Agent调用Query Agent：call_sub_agent(target_mode="query", ...)
+    - Social Agent调用站点取数子 Agent：call_sub_agent(target_mode="query_monitoring_station", ...)
     - 助手Agent调用其他Agent：call_sub_agent(target_mode="...", ...)
     """
 
@@ -526,11 +526,11 @@ class CallSubAgentTool(LLMTool):
                     "metadata": {"schema_version": "v2.0", "generator": "call_sub_agent"},
                     "summary": "缺少父会话上下文",
                 }
-            if promote_to_workspace and target_mode not in {"board", "ppt", "report"}:
+            if promote_to_workspace and target_mode not in {"board", "ppt"}:
                 return {
                     "status": "failed",
                     "success": False,
-                    "result": "只有 board、ppt、report 支持持续工作空间升级",
+                    "result": "只有 board、ppt 支持持续工作空间升级；报告由当前主模式直接完成",
                     "data": {},
                     "metadata": {"schema_version": "v2.0", "generator": "call_sub_agent"},
                     "summary": "不支持的工作空间模式",

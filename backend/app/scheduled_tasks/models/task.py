@@ -126,9 +126,9 @@ class ScheduledTask(BaseModel):
 
     # 灵活调度参数（根据schedule_type使用）
     run_at: Optional[datetime] = Field(default=None, description="一次性任务的执行时间（schedule_type=once时必填）")
-    interval_minutes: Optional[int] = Field(default=None, description="自定义间隔分钟数（schedule_type=interval时必填）")
-    hour: Optional[int] = Field(default=None, description="每天执行的小时（schedule_type=daily_custom时必填，0-23）")
-    minute: Optional[int] = Field(default=None, description="每天执行的分钟（schedule_type=daily_custom/daily_hours_custom时必填，0-59）")
+    interval_minutes: Optional[int] = Field(default=None, ge=1, description="自定义间隔分钟数（schedule_type=interval时必填）")
+    hour: Optional[int] = Field(default=None, ge=0, le=23, description="每天执行的小时（schedule_type=daily_custom时必填，0-23）")
+    minute: Optional[int] = Field(default=None, ge=0, le=59, description="每天执行的分钟（schedule_type=daily_custom/daily_hours_custom时必填，0-59）")
     hours: Optional[List[int]] = Field(
         default=None,
         description="每天执行的多个小时（schedule_type=daily_hours_custom时必填，每个0-23）",
