@@ -6,6 +6,7 @@ from app.tools.query.jiangsu_cube_metrics.tool import CATALOG
 from app.tools.query.jiangsu_ops_sql_query.tool import ExecuteJiangsuOpsSQLQueryTool
 from app.tools.query.jiangsu_cube_metrics.result_contract import validate_result
 from app.tools.query.jiangsu_cube_metrics.tool import JiangsuQueryMetricsTool
+from app.tools.query.jiangsu_cube_metrics.quality_policy import quality_guidance
 import asyncio
 
 
@@ -81,3 +82,9 @@ def test_metric_definition_query_does_not_call_cube_service():
     )
     assert payload["success"] is True
     assert payload["semantic_context"]["metric_definitions"]["responseWithin2hRate"]["denominator"] == "responseEvaluable"
+
+
+def test_quality_state_exposes_agent_decision_boundary():
+    assert quality_guidance("ok")["decision"] == "可用于定量判断"
+    assert quality_guidance("blocked")["decision"] == "不可形成业务结论"
+    assert quality_guidance("unexpected")["decision"] == "质量未知"

@@ -22,6 +22,7 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.sql_validator import SQLValidator
 from app.tools.query.jiangsu_cube_metrics.semantic_registry import dataset_metadata
 from app.tools.query.jiangsu_cube_metrics.result_contract import validate_result
+from app.tools.query.jiangsu_cube_metrics.quality_policy import quality_guidance
 
 if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
@@ -249,6 +250,7 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                     "limitations": primary_semantic.get("limitations", []),
                     "registry_version": primary_semantic.get("registry_version", 0),
                     "quality_checks": quality_checks,
+                    "quality_guidance": quality_guidance(quality_status),
                     "interpretation": "此结果用于字段级取证；官方汇总指标应优先使用 jiangsu_query_metrics。",
                 },
                 "summary": f"返回 {len(results)} 行（数据截至 {data_as_of}，质量状态：{quality_status}）",

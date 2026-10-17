@@ -26,6 +26,7 @@ profiles:
       - sample_count
     rules:
       - semantic_context 必须包含 dataset、grain、applicability、data_as_of 和指标定义
+      - quality_guidance 决定 Agent 能否形成定量结论
       - 只有工具完成了判断时才增加 findings
   evidence_sql:
     purpose: 受控 SQL 字段级取证
@@ -42,6 +43,7 @@ profiles:
       - semantic_context.query_role 必须为 field_evidence 或 schema_introspection
       - official_metric_calculation 必须为 false
       - findings、uncertainties、data_gaps 按实际情况返回
+      - quality_guidance 为 blocked 时只能报告数据问题，不得形成业务结论
   schema_introspection:
     purpose: 受控数据集结构查询
     required:

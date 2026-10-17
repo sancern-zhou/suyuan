@@ -26,6 +26,7 @@ import structlog
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from .semantic_registry import cube_metadata
 from .result_contract import validate_result
+from .quality_policy import quality_guidance
 
 if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
@@ -515,6 +516,7 @@ class JiangsuQueryMetricsTool(LLMTool):
                     "freshness_slo": semantic.get("freshness_slo"),
                     "limitations": semantic.get("limitations", []),
                     "metric_definitions": semantic.get("measures", {}),
+                    "quality_guidance": quality_guidance("unknown"),
                 },
                 "summary": f"{describe_cube} 指标定义（registry v{semantic.get('registry_version', 0)}）",
             }
@@ -616,6 +618,7 @@ class JiangsuQueryMetricsTool(LLMTool):
                     "limitations": semantic.get("limitations", []),
                     "metric_definitions": requested_metrics,
                     "quality_checks": quality_checks,
+                    "quality_guidance": quality_guidance(quality_status),
                 },
                 "summary": (
                     f"返回 {row_count} 行（数据截至 {data_as_of}，"
