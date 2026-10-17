@@ -69,7 +69,9 @@ class KnowledgeRetrievalService:
         results = [item for kb_results in results_by_kb for item in kb_results]
         results = deduplicate_results_by_content(results)
         results.sort(key=lambda item: item.get("score", 0.0), reverse=True)
-        candidate_limit = min(max(top_k * 4, top_k), 60)
+        # Preserve the ordinary search rerank budget when both routes share
+        # this implementation; fusion must not halve the candidate pool.
+        candidate_limit = min(max(top_k * 8, 20), 60) if self.reranker else top_k
         results = results[:candidate_limit]
         if self.reranker is not None and len(results) > top_k:
             return await self.reranker(query, results, top_k)

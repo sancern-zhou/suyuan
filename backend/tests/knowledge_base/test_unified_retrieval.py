@@ -133,3 +133,20 @@ async def test_graph_expansion_cannot_bypass_document_filter(retrieval_db, monke
         use_graph_retrieval=True, filters={"document_id": "doc"})
     assert [item["chunk_id"] for item in results] == ["good"]
     assert set(results[0]["fusion_sources"]) == {"chunk", "graph"}
+
+
+@pytest.mark.asyncio
+async def test_global_reranker_keeps_candidate_beyond_first_twenty(monkeypatch):
+    async def rerank(query, candidates, top_k):
+        assert len(candidates) == 40
+        return [candidates[-1]]
+
+    service = KnowledgeRetrievalService(session_factory=None, vector_store=None, reranker=rerank)
+
+    async def recall(**kwargs):
+        return [{"chunk_id": str(i), "content": str(i), "score": 1 - i / 100}
+                for i in range(40)]
+
+    monkeypatch.setattr(service, "_search_one_kb", recall)
+    result = await service.search(query="test", kb_ids=["kb"], top_k=5)
+    assert result[0]["chunk_id"] == "39"
