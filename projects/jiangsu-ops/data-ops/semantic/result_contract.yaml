@@ -3,6 +3,16 @@ description: >-
   江苏 Agent 工具结果采用按场景裁剪的结构化协议。字段只有在该查询产生相应语义时才返回，
   禁止为了统一而返回空字段或重复 summary。
 profiles:
+  metric_definition:
+    purpose: Cube 指标定义查询
+    required:
+      - success
+      - cube
+      - semantic_context
+    optional:
+      - summary
+    rules:
+      - semantic_context 必须包含 metric_definitions、grain 和 applicability
   metric_query:
     purpose: Cube 官方指标查询
     required:

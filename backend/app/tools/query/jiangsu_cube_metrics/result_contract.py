@@ -34,6 +34,10 @@ def validate_result(profile: str, payload: Dict[str, Any]) -> List[str]:
                 errors.append(f"semantic_context missing: {field}")
         if not semantic.get("metric_definitions"):
             errors.append("semantic_context missing: metric_definitions")
+    elif profile == "metric_definition":
+        for field in ("metric_definitions", "grain", "applicability"):
+            if field not in semantic:
+                errors.append(f"semantic_context missing: {field}")
     elif profile == "evidence_sql":
         if semantic.get("query_role") not in {"field_evidence", "schema_introspection"}:
             errors.append("semantic_context.query_role must identify SQL evidence")

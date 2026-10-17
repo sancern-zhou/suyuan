@@ -5,6 +5,8 @@ from app.tools.query.jiangsu_cube_metrics.semantic_registry import (
 from app.tools.query.jiangsu_cube_metrics.tool import CATALOG
 from app.tools.query.jiangsu_ops_sql_query.tool import ExecuteJiangsuOpsSQLQueryTool
 from app.tools.query.jiangsu_cube_metrics.result_contract import validate_result
+from app.tools.query.jiangsu_cube_metrics.tool import JiangsuQueryMetricsTool
+import asyncio
 
 
 def test_registry_contains_metric_definition_and_catalog_fallback():
@@ -58,3 +60,24 @@ def test_schema_introspection_does_not_require_metric_fields():
         },
     }
     assert validate_result("schema_introspection", payload) == []
+
+
+def test_metric_definition_profile_is_sparse_but_explainable():
+    payload = {
+        "success": True,
+        "cube": "WorkOrder",
+        "semantic_context": {
+            "metric_definitions": {"responseWithin2hRate": {"denominator": "responseEvaluable"}},
+            "grain": "one row per fault work order",
+            "applicability": "fault orders",
+        },
+    }
+    assert validate_result("metric_definition", payload) == []
+
+
+def test_metric_definition_query_does_not_call_cube_service():
+    payload = asyncio.run(
+        JiangsuQueryMetricsTool().execute(describe_cube="WorkOrder")
+    )
+    assert payload["success"] is True
+    assert payload["semantic_context"]["metric_definitions"]["responseWithin2hRate"]["denominator"] == "responseEvaluable"
