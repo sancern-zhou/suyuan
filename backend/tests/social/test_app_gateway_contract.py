@@ -154,7 +154,7 @@ async def test_app_turn_persists_transcript_to_social_file_store(tmp_path, monke
 
 
 @pytest.mark.asyncio
-async def test_app_stream_persists_complete_event_transcript(tmp_path, monkeypatch):
+async def test_app_stream_persists_complete_event_transcript(tmp_path, monkeypatch, fake_lock_db):
     from app.agent.session import session_manager as file_session_module
 
     manager = SessionManager(storage_base_path=str(tmp_path))
