@@ -204,9 +204,22 @@ class CreateScheduledTaskTool(LLMTool):
             task_kwargs = self._build_task_kwargs(task_id, config)
             self._apply_advanced_fields(task_kwargs, config)
             owner = await self._resolve_session_owner(context)
-            if owner:
-                task_kwargs.update(owner)
+            if not owner:
+                raise ValueError("无法确认当前登录用户，未创建定时任务")
+            task_kwargs.update(owner)
             task = ScheduledTask(**task_kwargs)
+
+            # Match Web API validation; a tool call must not bypass configuration policy.
+            from app.api.scheduled_task_routes import (
+                _validate_event_task_config, _validate_custom_task_tools,
+                _validate_task_skill, _validate_workflow_task,
+            )
+            from app.auth.models import CurrentUser
+            user = CurrentUser(id=owner["owner_user_id"], username=owner["owner_username"], display_name=owner["owner_display_name"])
+            await _validate_event_task_config(task)
+            _validate_custom_task_tools(task, user)
+            _validate_task_skill(task)
+            _validate_workflow_task(task)
 
             created_task = service.create_task(task)
 
@@ -319,7 +332,7 @@ class CreateScheduledTaskTool(LLMTool):
     async def _resolve_session_owner(self, context: Any) -> Optional[Dict[str, str]]:
         """把任务归属到当前会话用户，非管理员才能在定时任务页看到自己创建的任务。
 
-        会话未编目（系统执行、历史会话）时返回 None，保持 system 默认归属。
+        会话未编目时返回 None；创建入口必须拒绝，不能退化为 system 归属。
         """
         session_id = getattr(context, "session_id", None)
         if not session_id:

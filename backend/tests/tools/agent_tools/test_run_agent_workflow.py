@@ -16,6 +16,13 @@ def _isolated_workflow_cache(tmp_path, monkeypatch):
         "app.agent.workflow.result_cache._cache_root",
         lambda: tmp_path / "workflow_cache",
     )
+    from app.agent.workflow.registry import ActiveWorkflowRegistry
+    from app.agent.workflow import journal
+    monkeypatch.setattr(RunAgentWorkflowTool, "_build_workflow_registry", staticmethod(ActiveWorkflowRegistry))
+    monkeypatch.setattr(journal, "get_data_registry", lambda: tmp_path)
+    async def no_persisted_session(*args, **kwargs):
+        return None
+    monkeypatch.setattr(session_resolver, "load_session_for_mode", no_persisted_session)
 
 
 def test_run_agent_workflow_schema_documents_free_form_dag():
@@ -42,7 +49,7 @@ def test_run_agent_workflow_schema_documents_free_form_dag():
     assert "template_options" not in properties
     assert schema["parameters"]["required"] == ["workflow"]
     node_schema = properties["workflow"]["properties"]["nodes"]["items"]["properties"]
-    assert {"query", "expert", "report"}.issubset(set(node_schema["target_mode"]["enum"]))
+    assert {"query", "expert", "report"}.isdisjoint(node_schema["target_mode"]["enum"])
     call_target_mode = CallSubAgentTool().get_function_schema()["parameters"]["properties"]["target_mode"]
     assert call_target_mode["enum"] == node_schema["target_mode"]["enum"]
 
@@ -54,7 +61,7 @@ def test_run_agent_workflow_schema_documents_target_mode_contract():
 
     assert "能力与工具边界" in description
     assert "同源数据由一个节点获取，后续节点通过 dependencies 复用" in description
-    assert {"query", "expert", "report"}.issubset(set(target_mode["enum"]))
+    assert {"query", "expert", "report"}.isdisjoint(target_mode["enum"])
     call_target_mode = CallSubAgentTool().get_function_schema()["parameters"]["properties"]["target_mode"]
     assert call_target_mode["enum"] == target_mode["enum"]
 
@@ -170,10 +177,10 @@ async def test_run_agent_workflow_passes_upstream_file_handles_to_dependent_node
         workflow={
             "workflow_id": "handles-1",
             "nodes": [
-                {"task_id": "air", "target_mode": "query", "goal": "查询空气质量"},
+                {"task_id": "air", "target_mode": "query_monitoring_city", "goal": "查询空气质量"},
                 {
                     "task_id": "merge",
-                    "target_mode": "expert",
+                    "target_mode": "expert_analysis", "task_contract": {"protocol_version": "workflow.v1", "question": "分析指定数据", "deliverables": ["分析结论"]},
                     "goal": "交叉分析",
                     "dependencies": ["air"],
                 },
@@ -181,7 +188,7 @@ async def test_run_agent_workflow_passes_upstream_file_handles_to_dependent_node
         },
     )
 
-    assert result["success"] is True
+    assert result["success"] is True, result
     merge_call = next(call for call in calls if call["goal"] == "交叉分析")
     context = merge_call["context_str"]
     assert "## 上游节点结论摘要" in context
@@ -215,11 +222,11 @@ async def test_run_agent_workflow_dispatches_parallel_nodes_and_injects_dependen
         workflow={
             "workflow_id": "report-1",
             "nodes": [
-                {"task_id": "air", "target_mode": "expert", "goal": "分析空气质量"},
-                {"task_id": "weather", "target_mode": "expert", "goal": "分析气象条件"},
+                {"task_id": "air", "target_mode": "expert_analysis", "task_contract": {"protocol_version": "workflow.v1", "question": "分析指定数据", "deliverables": ["分析结论"]}, "goal": "分析空气质量"},
+                {"task_id": "weather", "target_mode": "expert_analysis", "task_contract": {"protocol_version": "workflow.v1", "question": "分析指定数据", "deliverables": ["分析结论"]}, "goal": "分析气象条件"},
                 {
                     "task_id": "merge",
-                    "target_mode": "expert",
+                    "target_mode": "expert_analysis", "task_contract": {"protocol_version": "workflow.v1", "question": "分析指定数据", "deliverables": ["分析结论"]},
                     "goal": "交叉分析",
                     "dependencies": ["air", "weather"],
                 },
@@ -228,15 +235,15 @@ async def test_run_agent_workflow_dispatches_parallel_nodes_and_injects_dependen
         max_concurrency=2,
     )
 
-    assert result["success"] is True
+    assert result["success"] is True, result
     assert result["data"]["status"] == "succeeded"
     merge_call = next(call for call in calls if call["goal"] == "交叉分析")
     assert "分析空气质量" not in merge_call["context_str"]
     assert "分析气象条件" not in merge_call["context_str"]
     assert all(call["_force_isolated_session"] is True for call in calls)
-    assert all(call["max_iterations"] == 30 for call in calls)
+    assert all(call["max_iterations"] == 20 for call in calls)
     assert all(
-        node["timeout_seconds"] == 480
+        node["timeout_seconds"] == 360
         for node in result["data"]["node_results"].values()
     )
 
@@ -269,7 +276,7 @@ async def test_run_agent_workflow_applies_domain_expert_limits(monkeypatch):
         },
     )
 
-    assert result["success"] is True
+    assert result["success"] is True, result
     by_mode = {call["target_mode"]: call for call in calls}
     assert by_mode["expert_meteorology"]["max_iterations"] == 15
     assert by_mode["expert_analysis"]["max_iterations"] == 20
@@ -285,7 +292,7 @@ async def test_run_agent_workflow_rejects_invalid_nodes():
     result = await RunAgentWorkflowTool().execute(
         workflow={
             "workflow_id": "invalid",
-            "nodes": [{"task_id": "missing-goal", "target_mode": "expert"}],
+            "nodes": [{"task_id": "missing-goal", "target_mode": "expert_analysis"}],
         }
     )
     assert result["success"] is False
@@ -323,18 +330,18 @@ async def test_run_agent_workflow_returns_node_envelopes(monkeypatch):
         workflow={
             "workflow_id": "report-1",
             "nodes": [
-                {"task_id": "air", "target_mode": "expert", "goal": "空气分析"},
-                {"task_id": "weather", "target_mode": "expert", "goal": "气象分析"},
+                {"task_id": "air", "target_mode": "expert_analysis", "task_contract": {"protocol_version": "workflow.v1", "question": "分析指定数据", "deliverables": ["分析结论"]}, "goal": "空气分析"},
+                {"task_id": "weather", "target_mode": "expert_analysis", "task_contract": {"protocol_version": "workflow.v1", "question": "分析指定数据", "deliverables": ["分析结论"]}, "goal": "气象分析"},
                 {
                     "task_id": "synthesis",
-                    "target_mode": "expert",
+                    "target_mode": "expert_analysis", "task_contract": {"protocol_version": "workflow.v1", "question": "分析指定数据", "deliverables": ["分析结论"]},
                     "goal": "交叉分析",
                     "dependencies": ["air", "weather"],
                 },
             ],
         },
     )
-    assert result["success"] is True
+    assert result["success"] is True, result
     assert result["data"]["status"] == "succeeded"
     assert result["data"]["node_results"]["air"]["result_envelope"]["status"] == "completed"
     assert result["data"]["node_errors"] == {}
@@ -430,7 +437,7 @@ async def test_run_agent_workflow_returns_compact_view_and_persists_full_results
         },
     )
 
-    assert result["success"] is True
+    assert result["success"] is True, result
     data = result["data"]
     assert "snapshot" not in data
     view = data["node_results"]["corr"]
@@ -556,11 +563,11 @@ async def test_non_report_mode_allows_expert_nodes(monkeypatch):
         workflow={
             "workflow_id": "assistant-1",
             "nodes": [
-                {"task_id": "air", "target_mode": "expert", "goal": "综合研判"},
+                {"task_id": "air", "target_mode": "expert_analysis", "task_contract": {"protocol_version": "workflow.v1", "question": "分析指定数据", "deliverables": ["分析结论"]}, "goal": "综合研判"},
             ],
         },
     )
-    assert result["success"] is True
+    assert result["success"] is True, result
 
 
 @pytest.mark.asyncio
@@ -593,7 +600,7 @@ async def test_report_mode_allows_whitelisted_modes(monkeypatch):
             ],
         },
     )
-    assert result["success"] is True
+    assert result["success"] is True, result
     assert set(calls) == {"query_monitoring_station", "expert_meteorology", "expert_analysis"}
 
 
@@ -648,7 +655,7 @@ async def test_report_mode_rejects_generic_query_nodes(monkeypatch):
     assert result["success"] is False
     assert "query_monitoring" in result["result"]
     assert "query_forecast" in result["result"]
-    assert "air" in result["result"]
+    assert "query" in result["result"]
     assert executed == []
 
 
@@ -668,13 +675,13 @@ async def test_report_mode_rejects_non_dag_specialist_nodes(monkeypatch):
         },
     )
     assert result["success"] is False
-    assert "writer" in result["result"]
-    assert "仅允许" in result["result"]
+    assert "report" in result["result"]
+    assert "不允许作为子 Agent" in result["result"]
 
 
 @pytest.mark.asyncio
-async def test_non_report_mode_still_allows_generic_query(monkeypatch):
-    """非报告父模式（assistant/social 等）仍可使用综合 query。"""
+async def test_non_report_mode_rejects_generic_query(monkeypatch):
+    """所有父模式均禁止委托综合 query。"""
     calls = []
 
     async def fake_execute(self, **kwargs):
@@ -697,5 +704,5 @@ async def test_non_report_mode_still_allows_generic_query(monkeypatch):
             ],
         },
     )
-    assert result["success"] is True
-    assert calls == ["query"]
+    assert result["success"] is False
+    assert calls == []

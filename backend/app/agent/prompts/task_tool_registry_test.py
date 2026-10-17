@@ -153,7 +153,7 @@ def test_assistant_prompt_is_a_workspace_router():
     assert "只表示本次委托使用的专家执行器" in prompt
     assert "单轮架构图或流程图可以直接委托" in prompt
     assert "create_business_chart" not in prompt
-    assert "execute_python" not in prompt
+    assert "execute_python" in prompt
     assert "create_diagram_artifact" not in prompt
 
 
@@ -165,13 +165,16 @@ def test_tender_export_is_direct_and_query_is_guangdong_environment_only():
     assert "直接查询完整日期范围" in assistant
     assert "分页取全" in assistant
     assert "不得调用 `call_sub_agent(target_mode='query')`" in assistant
-    assert "query 的能力范围仅为广东省环境数据查询" in assistant
+    assert "query_monitoring_station" in assistant
+    assert 'target_mode="query"' not in assistant
+    assert 'target_mode="expert"' not in assistant
+    assert 'target_mode="report"' not in assistant
     assert '数据查询、统计、同比环比、站点数据 → `target_mode="query"`' not in assistant
 
     query = build_query_prompt(["execute_sql_query"])
-    assert "广东省内的招投标也不属于本模式" in query
-    assert "不承接广东省外或全国范围的数据查询" in query
-    assert "工具描述不能扩大本模式职责" in query
+    assert "不承接招投标、中标、企业采购" in query
+    assert "仅处理当前项目清单明确启用" in query
+    assert "只能在当前项目清单和本模式白名单范围内使用" in query
 
 
 def test_board_mode_exposes_drawio_board_not_diagram_artifact():

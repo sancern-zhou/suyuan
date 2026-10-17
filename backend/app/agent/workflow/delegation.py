@@ -11,6 +11,7 @@ EXPERT_CHILD_MODES = QUERY_CHILD_MODES | frozenset({
 LEAF_MODES = EXPERT_CHILD_MODES | frozenset({"query_monitoring"})
 PARENT_CHILD_MODES = {"query": QUERY_CHILD_MODES, "expert": EXPERT_CHILD_MODES}
 DELEGATION_TOOLS = frozenset({"call_sub_agent", "run_agent_workflow"})
+PRIMARY_ONLY_MODES = frozenset({"query", "expert", "report"})
 
 
 def is_leaf_mode(mode: str) -> bool:
@@ -22,6 +23,13 @@ def is_leaf_mode(mode: str) -> bool:
 def delegation_error(parent_mode: str, target_modes: list[str]) -> str | None:
     from app.agent.workflow.project_policy import child_modes, parent_policy
 
+    primary_targets = sorted(set(target_modes) & PRIMARY_ONLY_MODES)
+    if primary_targets:
+        return (
+            f"主模式 {', '.join(primary_targets)} 不允许作为子 Agent 调用；"
+            "请按职责使用 query_monitoring_station、query_monitoring_city、query_forecast、"
+            "expert_meteorology、expert_analysis，当前父 Agent 负责整合与报告交付。"
+        )
     if is_leaf_mode(parent_mode):
         return f"精简子 Agent {parent_mode} 只执行本节点任务，不支持再次委派或 DAG 编排。"
     project_policy = parent_policy(parent_mode)
