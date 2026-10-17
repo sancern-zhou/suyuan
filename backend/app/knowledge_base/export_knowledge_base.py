@@ -35,8 +35,8 @@ logger = structlog.get_logger()
 
 # 数据库配置
 DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/weather_db"
+    "KNOWLEDGE_DATABASE_URL",
+    os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/weather_db")
 )
 
 # Qdrant配置
@@ -57,8 +57,16 @@ class KnowledgeBaseExporter:
         db_url: str = DATABASE_URL,
         qdrant_host: str = QDRANT_HOST,
         qdrant_port: int = QDRANT_PORT,
-        qdrant_api_key: Optional[str] = QDRANT_API_KEY
+        qdrant_api_key: Optional[str] = QDRANT_API_KEY,
+        *, legacy_format: bool = False,
     ):
+        if not legacy_format:
+            raise ValueError(
+                "This is a legacy-only transfer tool, not a complete knowledge backup. "
+                "Use PostgreSQL pg_dump/pg_restore plus original-file storage backup "
+                "for current knowledge bases. Explicit legacy_format=True is required "
+                "for old-format transfers."
+            )
         self.export_dir = Path(export_dir)
         self.export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -71,7 +79,7 @@ class KnowledgeBaseExporter:
 
         # 初始化数据库引擎（使用 asyncpg，与项目一致）
         self.db_engine = create_async_engine(
-            DATABASE_URL,
+            db_url,
             echo=False,
             pool_size=pool_int("KNOWLEDGE_EXPORT_DATABASE_POOL_SIZE", 5),
             max_overflow=pool_int("KNOWLEDGE_EXPORT_DATABASE_MAX_OVERFLOW", 10),
@@ -124,6 +132,14 @@ class KnowledgeBaseExporter:
         }
 
         try:
+            # Canonical facts cannot be represented by the legacy format.
+            async with self.db_session() as session:
+                canonical = await session.scalar(text(
+                    "SELECT 1 FROM knowledge_chunks WHERE kb_id = :kb_id LIMIT 1"
+                ), {"kb_id": kb_id})
+                if canonical:
+                    raise ValueError("Canonical knowledge facts require a PostgreSQL backup; legacy export refused")
+
             # 1. 获取知识库信息
             kb_info = await self._get_knowledge_base_info(kb_id)
             if not kb_info:
@@ -513,7 +529,7 @@ class KnowledgeBaseExporter:
 cd backend
 
 # 运行导入脚本
-python -m app.knowledge_base.import_knowledge_base --input-dir ./knowledge_base_exports/kb_{kb_info["id"]}_{self.timestamp}
+python -m app.knowledge_base.import_knowledge_base --legacy-format --input-dir ./knowledge_base_exports/kb_{kb_info["id"]}_{self.timestamp}
 ```
 
 ### 方式二：手动导入
@@ -635,9 +651,13 @@ async def main():
         help="跳过原始文件导出（减少磁盘占用）"
     )
 
+    parser.add_argument("--legacy-format", action="store_true",
+                        help="仅旧格式迁移；不包含当前 Chunk/图谱/场景/规则事实，不能作为完整备份")
     args = parser.parse_args()
+    if not args.legacy_format:
+        parser.error("旧格式工具已退役；当前知识库请使用 PostgreSQL 备份和原文件存储备份")
 
-    exporter = KnowledgeBaseExporter(export_dir=args.output_dir)
+    exporter = KnowledgeBaseExporter(export_dir=args.output_dir, legacy_format=True)
 
     try:
         if args.kb_id:

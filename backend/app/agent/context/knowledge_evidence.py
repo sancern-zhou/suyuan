@@ -48,7 +48,6 @@ async def build_first_turn_evidence(
         knowledge_base_ids=list(knowledge_base_ids) if knowledge_base_ids else None,
         top_k=5,
         use_reranker="always",
-        use_hyde=False,
     )
     local_hits = [r for r in results if r.get("document_id")]
     web = None

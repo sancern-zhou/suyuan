@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.agent.session import get_session_manager
-from app.db.database import async_session
+from app.db.knowledge_database import knowledge_async_session as async_session
 from app.knowledge_base.models import ConversationSession
 from app.agent.session.session_resolver import (
     get_session_manager_for_mode,

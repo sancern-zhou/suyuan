@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
-from app.db.database import get_db
+from app.db.knowledge_database import get_knowledge_db as get_db
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.knowledge_base.service import KnowledgeBaseService
@@ -570,7 +570,7 @@ async def search_knowledge_base(
 
     注意：检索API使用独立数据库会话，避免长时间Reranker推理导致连接超时
     """
-    from app.db.database import async_session
+    from app.db.knowledge_database import knowledge_async_session as async_session
     from sqlalchemy import select
     from app.knowledge_base.models import Document, KnowledgeBaseStatus
     from app.knowledge_base.shared_metadata import (
