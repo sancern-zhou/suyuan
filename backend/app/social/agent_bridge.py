@@ -22,7 +22,6 @@ from app.social.events import InboundMessage, OutboundMessage
 from app.social.message_bus import MessageBus
 from app.social.session_mapper import SessionMapper
 from app.social.heartbeat_service import HeartbeatService
-from app.social.memory_store import MemoryStore
 from app.social.task_status_store import TaskStatusStore
 from app.social.user_preferences import UserPreferences
 from app.agent.runtime.steering import steering_registry
@@ -1699,7 +1698,7 @@ class AgentBridge:
         start_offset: int
     ) -> None:
         """整理当前会话并更新社交用户长期记忆。"""
-        from app.social.memory_store import ImprovedMemoryStore
+        from app.agent.memory.memory_store import ImprovedMemoryStore
         from app.tools.social.remember_fact.tool import RememberFactTool
         from app.tools.social.replace_memory.tool import ReplaceMemoryTool
         from app.tools.social.remove_memory.tool import RemoveMemoryTool
@@ -1710,7 +1709,7 @@ class AgentBridge:
             # ✅ 使用统一路径配置
             from app.utils.path_config import get_social_memory_dir
             social_workspace = get_social_memory_dir()
-            memory_store = ImprovedMemoryStore(user_id=social_user_id, workspace=social_workspace)
+            memory_store = ImprovedMemoryStore(user_id=social_user_id, mode="social", workspace=social_workspace)
 
             existing_memory = memory_store.read_long_term()
             memory_file_path = str(memory_store.memory_file.resolve()) if memory_store.memory_file.exists() else ""
@@ -1739,7 +1738,9 @@ class AgentBridge:
                 messages=messages_to_consolidate,
                 existing_memory=existing_memory,
                 memory_file_path=memory_file_path,
-                recent_dreams=recent_dreams
+                recent_dreams=recent_dreams,
+                source_session_id=session_id,
+                start_offset=start_offset,
             )
 
             
@@ -1804,28 +1805,25 @@ class AgentBridge:
         messages: List[Dict[str, Any]],
         existing_memory: str,
         memory_file_path: str,
-        recent_dreams: str = ""
+        recent_dreams: str = "",
+        source_session_id: str = "",
+        start_offset: int = 0,
     ) -> str:
         """Build the prompt used by the social memory consolidator."""
         conversation_text = "\n".join([
+            f"[{source_session_id or 'session'}:{start_offset + index}] "
             f"{msg.get('role', 'unknown')}: {msg.get('content', '')}"
-            for msg in messages[-10:]
+            for index, msg in enumerate(messages)
         ])
-
-        current_size = len(existing_memory) if existing_memory else 0
-        max_size = 3000
-        usage = current_size / max_size * 100 if max_size else 0
-        size_info = f"{current_size}/{max_size} chars ({usage:.1f}%)"
 
         prompt_parts = [
             "You are a social-mode memory consolidation agent.",
-            "Your job is to update long-term memory using only durable facts from the recent conversation.",
+            "Maintain only facts/*.md using durable conversation evidence; MEMORY.md is read-only background maintained by the conversation mode itself.",
             "",
             "## Mode",
             "social",
             "",
             "## Existing Memory",
-            f"Current size: {size_info}",
             "```",
             existing_memory.strip() if existing_memory and existing_memory.strip() else "(empty)",
             "```",
@@ -1846,7 +1844,7 @@ class AgentBridge:
             "## Instructions",
             "1. The recent conversation has already been written to memory/YYYY-MM-DD.md as a daily note.",
             "2. Candidate memories have been written to memory/.dreams/YYYY-MM-DD.md as a dreaming layer.",
-            "3. Promote only durable candidates from Recent Dream Candidates into the facts layer (facts/*.md) with remember_fact.",
+            "3. Promote only durable candidates from Recent Dream Candidates into the facts layer (facts/*.md) with remember_fact. Always supply a verifiable source_ref from the conversation labels and applies_when.",
             "4. Do not save one-off chit-chat, temporary status, or sensitive data unless the user explicitly asks.",
             "5. Use remember_fact, replace_memory, or remove_memory to maintain the facts layer. Do not modify MEMORY.md; it is maintained by the chat agent via edit_file.",
             "6. Time-sensitive facts must carry a valid_until date (YYYY-MM-DD); expired facts are forgotten automatically.",
@@ -1887,7 +1885,7 @@ class AgentBridge:
             f"## {timestamp}",
             "",
             "状态: candidate",
-            "说明: 以下内容是待观察候选，不是已确认长期事实；只有稳定、重复或用户明确要求记住的内容才可晋升 MEMORY.md。",
+            "说明: 以下内容是待观察候选，不是已确认长期事实；只有稳定、重复或用户明确要求记住的内容才可晋升 facts/*.md。",
             "",
             "### Evidence",
         ]

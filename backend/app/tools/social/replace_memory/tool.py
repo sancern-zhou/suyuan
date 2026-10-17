@@ -12,6 +12,7 @@ import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.agent.memory.curated_facts import CuratedFactStore
+from app.agent.memory.memory_paths import memory_workspace
 
 logger = structlog.get_logger(__name__)
 _memory_context: ContextVar[tuple[str | None, str | None]] = ContextVar(
@@ -28,10 +29,6 @@ class ReplaceMemoryTool(LLMTool):
     - 事实描述需要更新但不改变其身份
     """
 
-    # 类变量：用于存储当前的模式和用户信息（由记忆整合Agent设置）
-    _current_mode = None
-    _current_user_id = None
-
     def __init__(self):
         super().__init__(
             name="replace_memory",
@@ -45,15 +42,11 @@ class ReplaceMemoryTool(LLMTool):
     @classmethod
     def set_memory_context(cls, mode: str, user_id: str = None):
         """设置当前的记忆上下文（由记忆整合Agent调用）"""
-        cls._current_mode = mode
-        cls._current_user_id = user_id
         _memory_context.set((mode, user_id))
 
     @classmethod
     def clear_memory_context(cls):
         """清除记忆上下文"""
-        cls._current_mode = None
-        cls._current_user_id = None
         _memory_context.set((None, None))
 
     def _build_schema(self) -> Dict[str, Any]:
@@ -106,8 +99,6 @@ class ReplaceMemoryTool(LLMTool):
 
         try:
             current_mode, current_user_id = _memory_context.get()
-            current_mode = current_mode or self._current_mode
-            current_user_id = current_user_id or self._current_user_id
             if not current_mode or current_mode == "memory_consolidator":
                 # memory_consolidator 目录不承载业务记忆；解析到该模式说明
                 # 整合目标模式上下文缺失，拒绝写入以免事实进入不可见目录。
@@ -120,8 +111,27 @@ class ReplaceMemoryTool(LLMTool):
                     "error": "记忆写入目标模式缺失（memory_consolidator 不承载业务记忆），已拒绝替换",
                     "summary": "记忆替换失败：整合目标模式未知",
                 }
+            if current_mode == "social" and (not current_user_id or current_user_id == "global"):
+                # 社交记忆按用户隔离；缺用户身份时拒绝写入，
+                # 绝不降级到共享目录（其内容不属于任何用户，永远不会被注入）。
+                logger.warning(
+                    "memory_write_rejected_for_missing_social_user",
+                    tool="replace_memory",
+                )
+                return {
+                    "success": False,
+                    "error": "社交记忆写入缺少用户身份（用户隔离目录），已拒绝替换",
+                    "summary": "记忆替换失败：社交用户身份未知",
+                }
             # 事实层唯一写入路径：后台整合器按来源模式更新 facts/*.md
-            store = CuratedFactStore(Path(self._get_memory_file_path()).parent)
+            memory_file_path = self._get_memory_file_path()
+            if not memory_file_path:
+                return {
+                    "success": False,
+                    "error": "无法获取记忆文件路径",
+                    "summary": "记忆替换失败：无法找到记忆文件"
+                }
+            store = CuratedFactStore(Path(memory_file_path).parent)
             result = store.replace(old_text, new_text, category)
             return {
                 "success": result == "replaced",
@@ -141,50 +151,11 @@ class ReplaceMemoryTool(LLMTool):
                 "summary": "记忆替换失败"
             }
 
-    def _get_memory_file_path(self) -> str:
-        """
-        获取当前用户的记忆文件路径
-
-        路径规则（与 social/memory_store.py 对齐）：
-        - 社交模式用户隔离：backend_data_registry/social/memory/{safe_user_id}/MEMORY.md
-        - 非社交模式：backend_data_registry/memory/{mode}/MEMORY.md
-        """
+    def _get_memory_file_path(self) -> str | None:
+        """Resolve the task-local target through the shared storage policy."""
+        mode, user_id = _memory_context.get()
         try:
-            # 使用类变量中存储的上下文
-            current_mode, current_user_id = _memory_context.get()
-            mode = current_mode or self._current_mode or 'social'
-            user_id = current_user_id or self._current_user_id
-
-            # 社交模式：使用与 social/memory_store.py 一致的用户隔离路径
-            if mode == 'social':
-                from app.utils.path_config import get_social_memory_dir
-                base_path = get_social_memory_dir()
-                if user_id and user_id != 'global':
-                    safe_user_id = user_id.replace(":", "_")
-                    memory_dir = base_path / safe_user_id
-                else:
-                    memory_dir = base_path / "social"
-            else:
-                from app.utils.path_config import get_memory_dir
-                base_path = get_memory_dir()
-                memory_dir = base_path / mode
-
-            memory_dir.mkdir(parents=True, exist_ok=True)
-
-            memory_file = memory_dir / "MEMORY.md"
-
-            logger.debug(
-                "memory_file_path_resolved",
-                mode=mode,
-                user_id=user_id,
-                path=str(memory_file)
-            )
-
-            return str(memory_file)
-
-        except Exception as e:
-            logger.error(
-                "failed_to_get_memory_file_path",
-                error=str(e)
-            )
+            return str(memory_workspace(mode, user_id) / "MEMORY.md")
+        except (ValueError, OSError) as exc:
+            logger.warning("invalid_memory_target", error=str(exc))
             return None

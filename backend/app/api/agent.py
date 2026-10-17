@@ -448,9 +448,7 @@ class AgentAnalyzeRequest(BaseModel):
         "expert",
         description="✅ Agent模式：'assistant' - 助手模式，'ppt' - 幻灯片模式，'expert' - 专家模式，'query' - 问数模式，'knowledge' - 知识问答模式，'report' - 报告模式，'ops' - 运维管理模式"
     )
-    user_id: Optional[str] = Field(None, description="""✅ 用户标识（用于跨会话记忆）
-- 如果提供：同一用户在不同session共享记忆
-- 如果不提供：每个session独立记忆""")
+    user_id: Optional[str] = Field(None, description="""用户标识；非社交长期记忆始终按模式共享，不随用户或 session 隔离""")
     assistant_mode: Optional[str] = Field(
         None,
         description="""助手模式（旧版，已弃用，建议使用mode参数）：
@@ -500,6 +498,9 @@ class AgentAnalyzeRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_turn_content(self) -> "AgentAnalyzeRequest":
+        if self.mode is not None:
+            from app.agent.memory.memory_paths import safe_memory_segment
+            safe_memory_segment(self.mode, field="mode")
         if not self.query.strip() and not self.skill_ids and not self.context_refs:
             raise ValueError("query, skill_ids and context_refs cannot all be empty")
         return self

@@ -78,7 +78,7 @@ async def test_remember_fact_routes_to_mode_facts_dir(tmp_path, monkeypatch):
     """三件套为后台整合器专用：非社交上下文写入该模式 facts/*.md。"""
     import app.tools.social.remember_fact.tool as remember_mod
 
-    monkeypatch.setattr("app.utils.path_config.get_memory_dir", lambda: tmp_path)
+    monkeypatch.setattr("app.agent.memory.memory_paths.get_memory_dir", lambda: tmp_path)
     try:
         remember_mod._memory_context.set(("report", "global"))
         result = await remember_mod.RememberFactTool().execute(
@@ -99,7 +99,7 @@ async def test_remember_fact_routes_to_social_user_facts_dir(tmp_path, monkeypat
     """社交整合：事实写入社交用户隔离目录下的 facts/*.md，而非 MEMORY.md。"""
     import app.tools.social.remember_fact.tool as remember_mod
 
-    monkeypatch.setattr("app.utils.path_config.get_social_memory_dir", lambda: tmp_path)
+    monkeypatch.setattr("app.agent.memory.memory_paths.get_social_memory_dir", lambda: tmp_path)
     try:
         remember_mod._memory_context.set(("social", "wx:oUser_1"))
         result = await remember_mod.RememberFactTool().execute(
@@ -123,7 +123,7 @@ async def test_memory_tools_refuse_consolidator_target_mode(tmp_path, monkeypatc
     import app.tools.social.replace_memory.tool as replace_mod
 
     monkeypatch.setattr(
-        "app.utils.path_config.get_memory_dir", lambda: tmp_path
+        "app.agent.memory.memory_paths.get_memory_dir", lambda: tmp_path
     )
     try:
         for module in (remember_mod, replace_mod, remove_mod):

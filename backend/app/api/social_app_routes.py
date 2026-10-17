@@ -957,11 +957,11 @@ async def _get_agent():
 
 
 async def _get_memory_store(identity: AppIdentity):
-    from app.social.memory_store import ImprovedMemoryStore
+    from app.agent.memory.memory_store import ImprovedMemoryStore
 
     store = _memory_managers.get(identity.social_user_id)
     if store is None:
-        store = ImprovedMemoryStore(user_id=identity.social_user_id)
+        store = ImprovedMemoryStore(user_id=identity.social_user_id, mode="social")
         _memory_managers[identity.social_user_id] = store
     return store
 

@@ -12,7 +12,7 @@ from typing import Dict
 import asyncio
 import structlog
 
-from app.social.memory_store import ImprovedMemoryStore
+from app.agent.memory.memory_store import ImprovedMemoryStore
 from app.utils.path_config import resolve_agent_path
 
 logger = structlog.get_logger(__name__)
@@ -72,7 +72,11 @@ class UserMemoryManager:
                     del self._memory_cache[oldest_key]
                     logger.debug("memory_cache_evicted", user_id=oldest_key)
 
-                self._memory_cache[user_id] = ImprovedMemoryStore(user_id=user_id)
+                self._memory_cache[user_id] = ImprovedMemoryStore(
+                    user_id=user_id,
+                    mode="social",
+                    workspace=self.base_workspace,
+                )
                 logger.info("user_memory_created", user_id=user_id)
 
             return self._memory_cache[user_id]

@@ -5,7 +5,7 @@
 
 核心功能：
 - 模式隔离：每个模式独立的记忆空间
-- 用户隔离：每个用户独立的记忆空间
+- 非社交按模式共享；社交按用户隔离
 - LRU缓存优化：自动清理不活跃的记忆
 - 整合偏移量管理：支持增量记忆整合
 """
@@ -16,11 +16,11 @@ import asyncio
 import hashlib
 import json
 import os
-import re
 import tempfile
 import structlog
 
 from app.agent.memory.memory_store import MemoryStore, ImprovedMemoryStore
+from app.agent.memory.memory_paths import safe_memory_segment
 from app.utils.path_config import get_memory_dir, resolve_agent_path
 
 logger = structlog.get_logger(__name__)
@@ -46,6 +46,7 @@ class UnifiedMemoryManager:
             max_cache_size: 最大缓存用户数
         """
         # 解析相对路径为绝对路径（避免工作目录问题）
+        self._custom_workspace = base_workspace is not None
         self.base_workspace = (
             resolve_agent_path(base_workspace) if base_workspace else get_memory_dir()
         )
@@ -80,6 +81,7 @@ class UnifiedMemoryManager:
         Returns:
             用户专属 MemoryStore
         """
+        mode = safe_memory_segment(mode, field="mode")
         cache_key = f"{mode}:{user_id}"
 
         async with self._lock:
@@ -94,7 +96,7 @@ class UnifiedMemoryManager:
                 self._memory_cache[cache_key] = ImprovedMemoryStore(
                     user_id=user_id,
                     mode=mode,
-                    workspace=self.base_workspace  # ✅ 传递工作空间
+                    workspace=(self.base_workspace if self._custom_workspace or mode != "social" else None)
                 )
                 logger.info(
                     "user_memory_created",
@@ -106,7 +108,7 @@ class UnifiedMemoryManager:
             return self._memory_cache[cache_key]
 
     def _cursor_path(self, mode: str, session_id: str) -> Path:
-        safe_mode = re.sub(r"[^a-zA-Z0-9_-]", "_", mode).strip("_")
+        safe_mode = safe_memory_segment(mode, field="mode")
         if not safe_mode or not session_id:
             raise ValueError("mode and session_id are required")
         session_key = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
@@ -163,6 +165,7 @@ class UnifiedMemoryManager:
             user_id: 用户ID
             mode: 模式标识
         """
+        mode = safe_memory_segment(mode, field="mode")
         cache_key = f"{mode}:{user_id}"
 
         async with self._lock:

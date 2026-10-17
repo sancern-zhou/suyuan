@@ -13,6 +13,7 @@ import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.agent.memory.curated_facts import CuratedFactStore
+from app.agent.memory.memory_paths import memory_workspace
 
 logger = structlog.get_logger(__name__)
 _memory_context: ContextVar[tuple[str | None, str | None]] = ContextVar(
@@ -28,10 +29,6 @@ class RememberFactTool(LLMTool):
     - 整合器从 dreaming 候选中筛出稳定、可长期复用的信息
     - 时间敏感信息必须携带 valid_until
     """
-
-    # 类变量：用于存储当前的模式和用户信息（由记忆整合Agent设置）
-    _current_mode = None
-    _current_user_id = None
 
     def __init__(self):
         super().__init__(
@@ -52,15 +49,11 @@ class RememberFactTool(LLMTool):
             mode: 模式标识（如 'social', 'assistant', 'expert'）
             user_id: 用户标识（用于社交模式的用户隔离）
         """
-        cls._current_mode = mode
-        cls._current_user_id = user_id
         _memory_context.set((mode, user_id))
 
     @classmethod
     def clear_memory_context(cls):
         """清除记忆上下文"""
-        cls._current_mode = None
-        cls._current_user_id = None
         _memory_context.set((None, None))
 
     def _build_schema(self) -> Dict[str, Any]:
@@ -80,23 +73,16 @@ class RememberFactTool(LLMTool):
                         "enum": ["用户偏好", "领域知识", "模式方法论", "环境信息"],
                         "description": "事实类别"
                     },
-                    "priority": {
-                        "type": "integer",
-                        "description": "优先级（1-5，5最高）",
-                        "default": 3,
-                        "minimum": 1,
-                        "maximum": 5
-                    },
                     "source_ref": {"type": "string", "description": "来源消息或会话引用，必须可核验。"},
                     "applies_when": {"type": "string", "description": "该事实适用的模式、任务或条件。"},
                     "valid_until": {"type": "string", "description": "可选失效日期，格式 YYYY-MM-DD；时间敏感信息必填。"}
                 },
-                "required": ["fact", "category"]
+                "required": ["fact", "category", "source_ref", "applies_when"]
             }
         }
 
     async def execute(
-        self, fact: str, category: str, priority: int = 3,
+        self, fact: str, category: str,
         source_ref: str = "", applies_when: str = "", valid_until: str = "", **kwargs
     ) -> Dict[str, Any]:
         """
@@ -105,25 +91,15 @@ class RememberFactTool(LLMTool):
         Args:
             fact: 要记住的事实
             category: 事实类别
-            priority: 优先级（1-5）
+            source_ref: 来源消息或会话引用
+            applies_when: 适用的模式、任务或条件
+            valid_until: 可选失效日期（YYYY-MM-DD）
 
         Returns:
             执行结果
         """
-        # 获取当前用户的记忆文件路径
-        memory_file_path = self._get_memory_file_path()
-
-        if not memory_file_path:
-            return {
-                "success": False,
-                "error": "无法获取记忆文件路径",
-                "summary": "记忆添加失败：无法找到记忆文件"
-            }
-
         try:
             current_mode, current_user_id = _memory_context.get()
-            current_mode = current_mode or self._current_mode
-            current_user_id = current_user_id or self._current_user_id
             if not current_mode or current_mode == "memory_consolidator":
                 # memory_consolidator 目录不承载业务记忆；解析到该模式说明
                 # 整合目标模式上下文缺失，拒绝写入以免事实进入不可见目录。
@@ -136,8 +112,27 @@ class RememberFactTool(LLMTool):
                     "error": "记忆写入目标模式缺失（memory_consolidator 不承载业务记忆），已拒绝写入",
                     "summary": "记忆添加失败：整合目标模式未知",
                 }
+            if current_mode == "social" and (not current_user_id or current_user_id == "global"):
+                # 社交记忆按用户隔离；缺用户身份时拒绝写入，
+                # 绝不降级到共享目录（其内容不属于任何用户，永远不会被注入）。
+                logger.warning(
+                    "memory_write_rejected_for_missing_social_user",
+                    tool="remember_fact",
+                )
+                return {
+                    "success": False,
+                    "error": "社交记忆写入缺少用户身份（用户隔离目录），已拒绝写入",
+                    "summary": "记忆添加失败：社交用户身份未知",
+                }
             # 事实层唯一写入路径：后台整合器按来源模式写入 facts/*.md
-            store = CuratedFactStore(self._get_memory_file_path_object().parent)
+            memory_file_path = self._get_memory_file_path()
+            if not memory_file_path:
+                return {
+                    "success": False,
+                    "error": "无法获取记忆文件路径",
+                    "summary": "记忆添加失败：无法找到记忆文件"
+                }
+            store = CuratedFactStore(Path(memory_file_path).parent)
             result = store.add(
                 fact=fact, category=category, source_ref=source_ref,
                 applies_when=applies_when, valid_until=valid_until,
@@ -156,60 +151,11 @@ class RememberFactTool(LLMTool):
                 "summary": "记忆添加失败"
             }
 
-    def _get_memory_file_path(self) -> str:
-        """
-        获取当前用户的记忆文件路径
-
-        路径规则：
-        - 社交模式用户隔离：backend_data_registry/social/memory/{safe_user_id}/MEMORY.md
-        - 非社交模式：backend_data_registry/memory/{mode}/MEMORY.md
-
-        优先级：
-        1. 使用类变量中存储的上下文（由记忆整合Agent设置）
-        2. 降级到默认模式（social）
-        """
+    def _get_memory_file_path(self) -> str | None:
+        """Resolve the task-local target through the shared storage policy."""
+        mode, user_id = _memory_context.get()
         try:
-            # 1. 优先使用类变量中存储的上下文
-            current_mode, current_user_id = _memory_context.get()
-            mode = current_mode or self._current_mode or 'social'
-            user_id = current_user_id or self._current_user_id
-
-            # 2. 社交模式：使用与 social/memory_store.py 一致的用户隔离路径
-            if mode == 'social':
-                from app.utils.path_config import get_social_memory_dir
-                base_path = get_social_memory_dir()
-                if user_id and user_id != 'global':
-                    # 与 social/memory_store.py 的路径对齐：user_id中的:替换为_
-                    safe_user_id = user_id.replace(":", "_")
-                    memory_dir = base_path / safe_user_id
-                else:
-                    # 无user_id时降级到 social 子目录
-                    memory_dir = base_path / "social"
-            else:
-                # 非社交模式：使用通用记忆路径
-                from app.utils.path_config import get_memory_dir
-                base_path = get_memory_dir()
-                memory_dir = base_path / mode
-
-            memory_dir.mkdir(parents=True, exist_ok=True)
-
-            memory_file = memory_dir / "MEMORY.md"
-
-            logger.debug(
-                "memory_file_path_resolved",
-                mode=mode,
-                user_id=user_id,
-                path=str(memory_file)
-            )
-
-            return str(memory_file)
-
-        except Exception as e:
-            logger.error(
-                "failed_to_get_memory_file_path",
-                error=str(e)
-            )
+            return str(memory_workspace(mode, user_id) / "MEMORY.md")
+        except (ValueError, OSError) as exc:
+            logger.warning("invalid_memory_target", error=str(exc))
             return None
-
-    def _get_memory_file_path_object(self) -> Path:
-        return Path(self._get_memory_file_path())

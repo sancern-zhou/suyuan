@@ -1,6 +1,6 @@
 from app.agent.memory.active_memory_retriever import (
     ActiveMemoryRetriever,
-    build_social_memory_context,
+    build_memory_context,
 )
 
 
@@ -30,7 +30,7 @@ def test_social_memory_context_does_not_auto_recall_daily_notes():
         },
     )
 
-    context = build_social_memory_context(store, "臭氧怎么分析")
+    context = build_memory_context(store, "臭氧怎么分析")
 
     assert "## 长期记忆" in context
     assert "- 长期偏好：回复简洁" in context
