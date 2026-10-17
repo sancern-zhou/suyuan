@@ -118,6 +118,13 @@ class FetcherScheduler:
             count=len(self.fetchers)
         )
 
+        # APScheduler clears in-memory jobs on shutdown. Rebuild missing jobs
+        # from the worker's registered fetchers when restarting the same instance.
+        for fetcher in list(self.fetchers.values()):
+            if self.scheduler.get_job(fetcher.name) is None:
+                self.register(fetcher)
+                if not getattr(fetcher, "enabled", True):
+                    self.scheduler.pause_job(fetcher.name)
         self.scheduler.start()
         self._running = True
 
