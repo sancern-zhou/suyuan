@@ -134,6 +134,8 @@ EXPERT_METEOROLOGY_TOOL_NAMES = [
     # 上游产物复用与中间产物落地
     "read_file",
     "write_file",
+    # 长期记忆维护（MEMORY.md）
+    "edit_file",
     # 气象数据
     "get_observed_meteorology",
     "get_weather_forecast",
@@ -157,6 +159,8 @@ EXPERT_ANALYSIS_TOOL_NAMES = [
     # 上游产物复用与中间产物落地
     "read_file",
     "write_file",
+    # 长期记忆维护（MEMORY.md）
+    "edit_file",
     # 监测数据
     "query_xcai_city_history",
     "query_national_city_air_quality",
@@ -287,6 +291,8 @@ KNOWLEDGE_TOOL_NAMES = [
     "knowledge_document_reader",
     "knowledge_graph_query",
     "read_session_resource",
+    # 长期记忆维护（MEMORY.md）
+    "edit_file",
     "web_search",
     "web_fetch",
 ]

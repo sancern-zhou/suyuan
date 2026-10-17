@@ -911,7 +911,7 @@ class CallSubAgentTool(LLMTool):
             iteration_limit = _resolve_child_max_iterations(target_mode, max_iterations)
             sub_agent = ReActAgent(
                 max_iterations=iteration_limit,
-                enable_memory=True,  # ✅ 启用记忆（子Agent会自动创建 UnifiedMemoryManager）
+                enable_memory=False,  # 子 Agent 不注入记忆、不维护记忆文件；记忆由主 Agent 与后台整合器维护
                 tool_registry=child_registry  # 子 Agent 只获得策略允许的工具
             )
 

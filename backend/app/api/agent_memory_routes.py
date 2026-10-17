@@ -2,12 +2,14 @@
 
 每个对话模式（assistant/query/knowledge/expert/...）在
 DATA_REGISTRY/memory/{mode}/ 下持有独立记忆目录（模式内所有用户共享）：
-    MEMORY.md          主长期记忆（后台整合 Agent 每 50 轮对话后自动改写）
+    MEMORY.md          常驻长期记忆（会话 Agent 用 edit_file 维护；人工经本 API 编辑）
+    facts/*.md         事实层记忆（后台整合 Agent 每 50 轮对话后自动维护，带有效期、过期遗忘）
     USER.md            用户档案
     memory_meta.json   人工编辑版本元信息（仅由本 API 维护，用于乐观锁）
 
-注意：后台整合直接改写 MEMORY.md，不经过 meta 版本号；PUT 额外用
-expected_mtime_ns 对比文件 mtime，防止人工编辑覆盖整合结果。
+注意：后台整合只写 facts/*.md，不改写 MEMORY.md；PUT 用
+expected_mtime_ns 对比文件 mtime，防止人工编辑与会话 Agent 的
+edit_file 写入相互覆盖。
 社交模式（social/enforcement_exam）按用户隔离存储，不属于本 API 范畴。
 """
 

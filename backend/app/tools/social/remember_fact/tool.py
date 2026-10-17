@@ -1,7 +1,9 @@
 """
 记忆添加工具（remember_fact）
 
-让LLM主动添加重要信息到长期记忆（MEMORY.md）
+后台记忆整合器专用：把蒸馏出的稳定事实写入事实层（facts/*.md，带来源、
+适用条件与可选失效日期，过期自动遗忘）。常驻长期记忆（MEMORY.md）由
+会话 Agent 通过 edit_file 直接维护，不经过本工具。
 """
 
 from pathlib import Path
@@ -20,17 +22,11 @@ _memory_context: ContextVar[tuple[str | None, str | None]] = ContextVar(
 
 class RememberFactTool(LLMTool):
     """
-    记忆添加工具
-
-    让LLM主动添加重要信息到长期记忆（MEMORY.md）
+    记忆添加工具（后台整合器专用，写事实层 facts/*.md）
 
     使用场景：
-    - 用户明确说"记住这个"或"记住"
-    - 用户分享个人偏好（如"我喜欢简洁的回答"）
-    - 用户纠正错误（如"不对，我想要详细版本"）
-    - 发现环境信息（如"用户在使用手机"、"用户在广州"）
-    - 学习到API特性或约定
-    - 识别稳定的、将来会有用的事实
+    - 整合器从 dreaming 候选中筛出稳定、可长期复用的信息
+    - 时间敏感信息必须携带 valid_until
     """
 
     # 类变量：用于存储当前的模式和用户信息（由记忆整合Agent设置）
@@ -40,7 +36,7 @@ class RememberFactTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="remember_fact",
-            description="记住重要事实到长期记忆（MEMORY.md）",
+            description="写入事实层记忆（facts/*.md，后台整合专用；带来源与适用条件，可选失效日期）",
             category=ToolCategory.TASK_MANAGEMENT,
             function_schema=self._build_schema(),  # ✅ 传递 schema
             version="1.0.0",
@@ -71,7 +67,7 @@ class RememberFactTool(LLMTool):
         """构建工具schema"""
         return {
             "name": "remember_fact",
-            "description": "记住重要事实到长期记忆（MEMORY.md）",
+            "description": "写入事实层记忆（facts/*.md，后台整合专用；带来源与适用条件，可选失效日期）",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -93,7 +89,7 @@ class RememberFactTool(LLMTool):
                     },
                     "source_ref": {"type": "string", "description": "来源消息或会话引用，必须可核验。"},
                     "applies_when": {"type": "string", "description": "该事实适用的模式、任务或条件。"},
-                    "valid_until": {"type": "string", "description": "可选失效日期，格式 YYYY-MM-DD。"}
+                    "valid_until": {"type": "string", "description": "可选失效日期，格式 YYYY-MM-DD；时间敏感信息必填。"}
                 },
                 "required": ["fact", "category"]
             }
@@ -128,41 +124,25 @@ class RememberFactTool(LLMTool):
             current_mode, current_user_id = _memory_context.get()
             current_mode = current_mode or self._current_mode
             current_user_id = current_user_id or self._current_user_id
-            if current_mode and current_mode != "social":
-                store = CuratedFactStore(self._get_memory_file_path_object().parent)
-                result = store.add(
-                    fact=fact, category=category, source_ref=source_ref,
-                    applies_when=applies_when, valid_until=valid_until,
+            if not current_mode or current_mode == "memory_consolidator":
+                # memory_consolidator 目录不承载业务记忆；解析到该模式说明
+                # 整合目标模式上下文缺失，拒绝写入以免事实进入不可见目录。
+                logger.warning(
+                    "memory_write_rejected_for_consolidator_mode",
+                    tool="remember_fact",
                 )
-                return {"success": True, "summary": f"记忆事实{result['status']}: {fact[:50]}", **result}
-            # 获取当前MEMORY.md大小
-            memory_file = Path(memory_file_path)
-            if memory_file.exists():
-                current_size = len(memory_file.read_text(encoding="utf-8"))
-                max_size = 3000
-
-                if current_size >= max_size:
-                    return {
-                        "success": False,
-                        "error": f"MEMORY.md已满（{current_size}/{max_size}字符），请先使用remove_memory清理旧内容",
-                        "summary": "记忆添加失败：记忆文件已满"
-                    }
-
-            # 添加记忆
-            self._append_fact(memory_file, category, fact)
-
-            logger.info(
-                "memory_fact_added",
-                category=category,
-                priority=priority,
-                fact_length=len(fact),
-                memory_path=str(memory_file)
+                return {
+                    "success": False,
+                    "error": "记忆写入目标模式缺失（memory_consolidator 不承载业务记忆），已拒绝写入",
+                    "summary": "记忆添加失败：整合目标模式未知",
+                }
+            # 事实层唯一写入路径：后台整合器按来源模式写入 facts/*.md
+            store = CuratedFactStore(self._get_memory_file_path_object().parent)
+            result = store.add(
+                fact=fact, category=category, source_ref=source_ref,
+                applies_when=applies_when, valid_until=valid_until,
             )
-
-            return {
-                "success": True,
-                "summary": f"已记住：{fact[:50]}{'...' if len(fact) > 50 else ''}"
-            }
+            return {"success": True, "summary": f"记忆事实{result['status']}: {fact[:50]}", **result}
 
         except Exception as e:
             logger.error(
@@ -233,59 +213,3 @@ class RememberFactTool(LLMTool):
 
     def _get_memory_file_path_object(self) -> Path:
         return Path(self._get_memory_file_path())
-
-    def _append_fact(self, memory_file: Path, category: str, fact: str) -> None:
-        """
-        快速追加事实到对应章节
-
-        Args:
-            memory_file: 记忆文件路径
-            category: 事实类别
-            fact: 事实内容
-        """
-        # 确保文件存在
-        if not memory_file.exists():
-            initial_content = """# 长期记忆 (MEMORY.md)
-
-此文件存储用户的偏好、领域知识和模式方法论。
-
-## 用户偏好
-
-## 领域知识
-
-## 模式方法论
-
-## 环境信息
-"""
-            memory_file.write_text(initial_content, encoding="utf-8")
-
-        content = memory_file.read_text(encoding="utf-8")
-
-        # 查找章节位置
-        section_header = f"## {category}"
-
-        if section_header in content:
-            # 在章节末尾追加
-            section_start = content.index(section_header)
-            section_end = content.find("\n##", section_start + 1)
-
-            if section_end == -1:
-                section_end = len(content)
-
-            before = content[:section_end]
-            after = content[section_end:]
-
-            # 检查章节内是否已有内容
-            section_content = content[section_start:section_end]
-            if section_content.strip().endswith(section_header):
-                # 章节为空，直接添加
-                new_content = f"{before}\n- {fact}{after}"
-            else:
-                # 章节已有内容，追加
-                new_content = f"{before}\n- {fact}{after}"
-        else:
-            # 章节不存在，创建新章节
-            new_content = f"{content}\n## {category}\n\n- {fact}\n"
-
-        # 原子写入
-        memory_file.write_text(new_content, encoding="utf-8")

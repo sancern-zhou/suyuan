@@ -244,9 +244,18 @@ class ReActAgent:
         user_identifier: str = "global",
     ) -> None:
         """Set memory tool context without clobbering a consolidator target mode."""
-        from app.tools.social.remember_fact.tool import RememberFactTool
-        from app.tools.social.replace_memory.tool import ReplaceMemoryTool
-        from app.tools.social.remove_memory.tool import RemoveMemoryTool
+        from app.tools.social.remember_fact.tool import (
+            RememberFactTool,
+            _memory_context as _remember_fact_context,
+        )
+        from app.tools.social.replace_memory.tool import (
+            ReplaceMemoryTool,
+            _memory_context as _replace_memory_context,
+        )
+        from app.tools.social.remove_memory.tool import (
+            RemoveMemoryTool,
+            _memory_context as _remove_memory_context,
+        )
         from app.tools.utility.agent_case_library_tool import AgentCaseLibraryTool
 
         current_modes = {
@@ -255,15 +264,35 @@ class ReActAgent:
             RemoveMemoryTool._current_mode,
             AgentCaseLibraryTool._current_mode,
         }
+        # 类变量是进程级共享状态，会被并发会话的 set/clear 清掉；ContextVar 才是
+        # 本整合任务的真实目标模式（_background_memory_consolidation 每批写入）。
+        # 守卫必须同时看两者，否则并发清空会让守卫穿透，把整合产出误写进
+        # memory_consolidator 目录（该目录不被任何业务模式读取）。
+        for memory_context in (
+            _remember_fact_context,
+            _replace_memory_context,
+            _remove_memory_context,
+        ):
+            task_mode, _ = memory_context.get()
+            current_modes.add(task_mode)
         has_existing_target_mode = any(
             mode and mode != "memory_consolidator"
             for mode in current_modes
         )
-        if manual_mode == "memory_consolidator" and has_existing_target_mode:
-            logger.debug(
-                "memory_consolidator_preserved_target_memory_context",
+        if manual_mode == "memory_consolidator":
+            if has_existing_target_mode:
+                logger.debug(
+                    "memory_consolidator_preserved_target_memory_context",
+                    memory_tool_mode=memory_tool_mode,
+                    existing_modes=sorted(mode for mode in current_modes if mode),
+                )
+                return
+            # 找不到任何目标模式时不落笔 memory_consolidator：调用方
+            # （_background_memory_consolidation）本应先行设置目标模式，
+            # 缺失说明时序异常，保持上下文原样并告警，工具侧另有拒绝兜底。
+            logger.warning(
+                "memory_consolidator_missing_target_memory_context",
                 memory_tool_mode=memory_tool_mode,
-                existing_modes=list(current_modes),
             )
             return
 

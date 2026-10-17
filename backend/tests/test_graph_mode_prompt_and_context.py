@@ -3,15 +3,18 @@ from pathlib import Path
 from app.agent.context.context_builder import SimplifiedContextBuilder
 from app.agent.react_agent import ReActAgent
 from app.agent.prompts.tool_registry import (
-    CHART_TOOL_ORDER,
     EXPERT_TOOL_ORDER,
+    PPT_TOOL_ORDER,
     get_tool_order_by_mode,
     get_tools_by_mode,
 )
 from app.agent.prompts.prompt_builder import build_react_system_prompt
 from app.tools.social.remember_fact.tool import RememberFactTool
+from app.tools.social.remember_fact.tool import _memory_context as _remember_fact_context
 from app.tools.social.replace_memory.tool import ReplaceMemoryTool
+from app.tools.social.replace_memory.tool import _memory_context as _replace_memory_context
 from app.tools.social.remove_memory.tool import RemoveMemoryTool
+from app.tools.social.remove_memory.tool import _memory_context as _remove_memory_context
 
 
 def _clear_memory_tool_context():
@@ -55,10 +58,10 @@ def test_graph_mode_tool_order_matches_registry_order():
     ]
 
 
-def test_session_file_publication_is_available_in_expert_and_chart_modes():
+def test_session_file_publication_is_available_in_expert_and_ppt_modes():
     assert "publish_session_file" in get_tools_by_mode("expert")
-    assert "publish_session_file" in get_tools_by_mode("chart")
-    assert "publish_session_file" in CHART_TOOL_ORDER
+    assert "publish_session_file" in get_tools_by_mode("ppt")
+    assert "publish_session_file" in PPT_TOOL_ORDER
 
 
 def test_expert_mode_exposes_knowledge_retrieval_tools():
@@ -189,6 +192,54 @@ def test_memory_consolidator_preserves_existing_graph_memory_tool_context():
         assert RememberFactTool._current_mode == "graph"
         assert ReplaceMemoryTool._current_mode == "graph"
         assert RemoveMemoryTool._current_mode == "graph"
+    finally:
+        _clear_memory_tool_context()
+
+
+def test_memory_consolidator_guard_survives_cleared_class_vars():
+    """并发会话清空进程级类变量后，守卫必须沿任务级 ContextVar 保全目标模式。"""
+    _clear_memory_tool_context()
+    try:
+        # 模拟整合批次开始时的 per-batch set（_background_memory_consolidation）
+        RememberFactTool.set_memory_context("report", "global")
+        ReplaceMemoryTool.set_memory_context("report", "global")
+        RemoveMemoryTool.set_memory_context("report", "global")
+        # 模拟并发会话的 clear_memory_context 只清掉进程级类变量
+        RememberFactTool._current_mode = None
+        ReplaceMemoryTool._current_mode = None
+        RemoveMemoryTool._current_mode = None
+
+        ReActAgent._set_mode_memory_tool_context(
+            manual_mode="memory_consolidator",
+            memory_tool_mode="memory_consolidator",
+            user_identifier="global",
+        )
+
+        # 守卫不得穿透：既不覆盖类变量，也不覆盖任务级 ContextVar
+        assert RememberFactTool._current_mode is None
+        assert _remember_fact_context.get() == ("report", "global")
+        assert _replace_memory_context.get() == ("report", "global")
+        assert _remove_memory_context.get() == ("report", "global")
+    finally:
+        _clear_memory_tool_context()
+
+
+def test_memory_consolidator_guard_never_stamps_consolidator_mode():
+    """找不到任何目标模式时，守卫不得把 memory_consolidator 落成写入模式。"""
+    _clear_memory_tool_context()
+    try:
+        ReActAgent._set_mode_memory_tool_context(
+            manual_mode="memory_consolidator",
+            memory_tool_mode="memory_consolidator",
+            user_identifier="global",
+        )
+
+        assert RememberFactTool._current_mode is None
+        assert ReplaceMemoryTool._current_mode is None
+        assert RemoveMemoryTool._current_mode is None
+        assert _remember_fact_context.get() == (None, None)
+        assert _replace_memory_context.get() == (None, None)
+        assert _remove_memory_context.get() == (None, None)
     finally:
         _clear_memory_tool_context()
 
