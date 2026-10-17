@@ -24,6 +24,7 @@ import httpx
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from .semantic_registry import cube_metadata
 
 if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
@@ -373,6 +374,8 @@ class JiangsuQueryMetricsTool(LLMTool):
                 "注意: 工单超期对故障单不适用(无计划完成时间,恒0),工单超期统计勿用本工具的 WorkOrder.overdueRate。"
                 "传 measures+dimensions+时间范围即可,不需要写SQL;"
                 "同一问题的数字与 execute_jiangsu_mart_sql 口径一致。"
+                "返回结果包含 semantic_context：指标定义、粒度、适用范围、数据时点、质量状态和限制，"
+                "生成结论前必须结合这些解释元数据判断是否可评估。"
                 + _render_guide()
             ),
             "parameters": {
@@ -539,6 +542,13 @@ class JiangsuQueryMetricsTool(LLMTool):
             ]
             row_count = len(results)
             data_as_of = await self._data_as_of(cube)
+            quality_status, quality_checks = await self._quality_status(cube)
+            semantic = cube_metadata(cube, CATALOG)
+            requested_metrics = {}
+            for member in measures or []:
+                metric_name = member.split(".", 1)[-1]
+                if metric_name in semantic.get("measures", {}):
+                    requested_metrics[metric_name] = semantic["measures"][metric_name]
 
             sample_data = results
             file_path = None
@@ -546,7 +556,14 @@ class JiangsuQueryMetricsTool(LLMTool):
                 file_path = context.save_data(
                     data=results,
                     schema="metrics_query_result",
-                    metadata={"cube": cube, "query": query, "row_count": row_count},
+                    metadata={
+                        "cube": cube,
+                        "query": query,
+                        "row_count": row_count,
+                        "registry_version": semantic.get("registry_version", 0),
+                        "quality_status": quality_status,
+                        "data_as_of": data_as_of,
+                    },
                 )
                 sample_data = results[:12] + results[-12:]
 
@@ -558,7 +575,22 @@ class JiangsuQueryMetricsTool(LLMTool):
                 "sample_count": len(sample_data),
                 "cube": cube,
                 "data_as_of": data_as_of,
-                "summary": f"返回 {row_count} 行（数据截至 {data_as_of}）",
+                "quality_status": quality_status,
+                "semantic_context": {
+                    "registry_version": semantic.get("registry_version", 0),
+                    "dataset": semantic.get("dataset"),
+                    "grain": semantic.get("grain"),
+                    "applicability": semantic.get("applicability"),
+                    "source_window": semantic.get("source_window"),
+                    "freshness_slo": semantic.get("freshness_slo"),
+                    "limitations": semantic.get("limitations", []),
+                    "metric_definitions": requested_metrics,
+                    "quality_checks": quality_checks,
+                },
+                "summary": (
+                    f"返回 {row_count} 行（数据截至 {data_as_of}，"
+                    f"质量状态：{quality_status}）"
+                ),
             }
         except Exception as exc:  # noqa: BLE001
             status = "error"
@@ -585,6 +617,43 @@ class JiangsuQueryMetricsTool(LLMTool):
                 await conn.close()
         except Exception:  # noqa: BLE001
             return None
+
+    async def _quality_status(self, cube: str) -> Tuple[str, List[Dict[str, str]]]:
+        """Read the latest DQ gate results without blocking a metric query."""
+        table_info = FRESHNESS_COLUMN.get(cube)
+        dsn = os.getenv("OPS_MART_DATABASE_URL", "")
+        if not table_info or not dsn:
+            return "unknown", []
+        try:
+            import asyncpg
+            conn = await asyncpg.connect(dsn)
+            try:
+                rows = await conn.fetch(
+                    """
+                    SELECT DISTINCT ON (check_name) check_name, status, detail
+                    FROM jiangsu_sync.dq_results
+                    WHERE table_name = $1
+                    ORDER BY check_name, checked_at DESC
+                    """,
+                    table_info[0],
+                )
+            finally:
+                await conn.close()
+            checks = [
+                {"check": row["check_name"], "status": row["status"], "detail": row["detail"]}
+                for row in rows
+            ]
+            if not checks:
+                return "unknown", []
+            statuses = {item["status"] for item in checks}
+            if "FAIL" in statuses:
+                return "blocked", checks
+            if "WARN" in statuses:
+                return "degraded", checks
+            return "ok", checks
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("jiangsu_query_metrics_quality_unavailable", error=str(exc))
+            return "unknown", []
 
     async def _audit(self, context, cube, query, row_count, status, error,
                      duration_ms) -> None:

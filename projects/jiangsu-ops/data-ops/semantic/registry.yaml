@@ -1,0 +1,93 @@
+version: 1
+project: jiangsu-ops
+description: >-
+  江苏运维 Agent 语义注册中心。这里登记指标的业务口径、适用范围、时间基准和解释约束；
+  Cube schema 负责执行，dbt/YAML 负责数据实现，查询结果必须携带本注册中心的解释元数据。
+cubes:
+  WorkOrder:
+    dataset: mart_work_order_analysis
+    grain: 一行 = 一张故障工单
+    applicability: 仅故障工单(order_type=Fault)，不代表例行工单
+    source_window: 2026-07-01 起
+    freshness_slo: 30分钟
+    limitations:
+      - 故障工单没有计划完成时间，超期率不可评估，不得把 0 当作没有超期
+    measures:
+      responseWithin2hRate:
+        name: 2小时响应率
+        definition: 2小时内到场的可评估故障工单数 / 可评估响应的故障工单数 × 100
+        numerator: responseWithin2hCount
+        denominator: responseEvaluable
+        null_policy: denominator_zero
+        time_basis: createTime
+      recoverWithin4hRate:
+        name: 4小时恢复率
+        definition: 4小时内恢复的可评估故障工单数 / 有解除告警证据的故障工单数 × 100
+        numerator: recoverWithin4hCount
+        denominator: recoverEvaluable
+        null_policy: denominator_zero
+        time_basis: createTime
+  AlarmEvent:
+    dataset: mart_alarm_event_analysis
+    grain: 一行 = 一条站点告警
+    applicability: 平台站点告警事件，按告警记录统计
+    source_window: 2026-07-01 起
+    freshness_slo: 30分钟
+  StationAlarmLog:
+    dataset: mart_station_alarm_log
+    grain: 一行 = 一条站房或仪器告警
+    applicability: 省控站站房/仪器告警历史，告警级别按规范化中文字段解释
+    source_window: 2026-07-01 起
+    freshness_slo: 26小时
+    limitations:
+      - 设备状态位图不在历史告警分片中，实时状态需使用实时工具
+  StationEnvPower:
+    dataset: mart_station_env_power
+    grain: 一行 = 一站 × 一小时 × 一动环指标
+    applicability: 省控站站房动环小时历史
+    source_window: 2026-10-01 起
+    freshness_slo: 26小时
+    limitations:
+      - 当日数据次日 02:30 后才完整；未覆盖的动环指标需走实时 API
+  QcTaskStatus:
+    dataset: mart_qc_task_status_result
+    grain: 一行 = 一个 rid 的最新质控任务状态
+    applicability: 省控站质控任务状态快照
+    source_window: 2026-07-01 起
+    freshness_slo: 26小时
+    limitations:
+      - 同一 rid 只保留 createtime 最新记录
+  QcAirData:
+    dataset: mart_qc_air_data_result
+    grain: 一行 = 一站 × 一质控任务窗口 × 一时间点
+    applicability: 省控站质控期间监测曲线
+    source_window: 2026-07-01 起
+    freshness_slo: 26小时
+    limitations:
+      - datavalue_numeric 为空的文本点不参与数值聚合，但原始 datavalue 保留
+  QcRunLog:
+    dataset: mart_qc_run_log_result
+    grain: 一行 = 一条质控运行事件
+    applicability: 省控站质控任务运行轨迹
+    source_window: 2026-07-01 起
+    freshness_slo: 26小时
+  Inspection:
+    dataset: mart_inspection_analysis
+    grain: 一行 = 一条巡检任务项
+    applicability: 巡检任务项，可包含非省控站
+    source_window: 2026-07-01 起
+    freshness_slo: 30分钟
+  QcExecution:
+    dataset: mart_qc_execution_analysis
+    grain: 一行 = 一条质控任务执行结果
+    applicability: 约 101 个省控试点站，不得外推全网
+    source_window: 2026-07-01 起
+    freshness_slo: 30分钟
+    measures:
+      qualifiedRate:
+        name: 质控合格率
+        definition: 已判定合格数 / (合格数 + 不合格数) × 100
+        numerator: qualifiedCount
+        denominator: assessedCount
+        null_policy: denominator_zero
+        time_basis: qcDate
