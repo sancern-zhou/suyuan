@@ -7,6 +7,8 @@ from app.tools.query.jiangsu_ops_sql_query.tool import ExecuteJiangsuOpsSQLQuery
 from app.tools.query.jiangsu_cube_metrics.result_contract import validate_result
 from app.tools.query.jiangsu_cube_metrics.tool import JiangsuQueryMetricsTool
 from app.tools.query.jiangsu_cube_metrics.quality_policy import quality_guidance
+import yaml
+from app.utils.path_config import resolve_agent_path
 import asyncio
 
 
@@ -88,3 +90,10 @@ def test_quality_state_exposes_agent_decision_boundary():
     assert quality_guidance("ok")["decision"] == "可用于定量判断"
     assert quality_guidance("blocked")["decision"] == "不可形成业务结论"
     assert quality_guidance("unexpected")["decision"] == "质量未知"
+
+
+def test_generated_semantic_index_keeps_registry_and_catalog_visible():
+    path = resolve_agent_path("projects/jiangsu-ops/data-ops/semantic/catalog.generated.yaml")
+    generated = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert len(generated["cubes"]) == len(CATALOG)
+    assert generated["cubes"]["WorkOrder"]["measures"]["responseWithin2hRate"]["denominator"] == "responseEvaluable"
