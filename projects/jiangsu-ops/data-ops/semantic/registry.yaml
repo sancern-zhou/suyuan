@@ -123,7 +123,7 @@ cubes:
     measures:
       qualifiedRate:
         name: 质控合格率
-        definition: 已判定合格数 / (合格数 + 不合格数) × 100
+        definition: 平台判定的合格率，直接取平台结果不重算；qualifiedCount/assessedCount 仅作数量核对
         numerator: qualifiedCount
         denominator: assessedCount
         null_policy: denominator_zero

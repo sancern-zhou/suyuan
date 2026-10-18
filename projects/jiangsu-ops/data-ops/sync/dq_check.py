@@ -4,6 +4,9 @@ Checks:
   1. mart freshness  - max(refreshed_at) within SLA (5min tables: 30min; daily: 26h)
   2. key null rates  - required columns must be non-null
   3. sync heartbeat  - every incremental watermark updated within 24h with status ok
+  4. unique keys     - dedup-sensitive tables must have no duplicate keys
+  5. generated-artifact drift - contract.txt 与 dbt sources/schema/snapshots
+     必须与 datasets/*.yaml 一致（gen_tool_contract.py / gen_dbt_artifacts.py --check）
 
 Results appended to jiangsu_sync.dq_results; exit 1 if any check fails so the
 scheduled task log shows it clearly.
@@ -78,10 +81,14 @@ UNIQUE_CHECKS = {
 }
 
 
-async def check_contract_drift(pg, results):
-    """契约防漂移: datasets/*.yaml 必须与工具加载的 contract.txt 生成物一致。"""
-    import subprocess
-    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gen_tool_contract.py")
+async def _run_generator_check(script_name: str):
+    """Run a sync/*.py --check drift detector; return (status, detail).
+
+    脚本未部署到运行时副本时 SKIP(不阻塞, 等下一次 deploy-to-runtime)。
+    """
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), script_name)
+    if not os.path.exists(script):
+        return "SKIP", f"{script_name} not deployed to runtime sync dir; skip"
     try:
         proc = await asyncio.wait_for(
             asyncio.create_subprocess_exec(
@@ -96,7 +103,19 @@ async def check_contract_drift(pg, results):
         status = "OK" if proc.returncode == 0 else "FAIL"
     except Exception as exc:  # noqa: BLE001
         status, detail = "FAIL", f"check error: {exc}"
+    return status, detail
+
+
+async def check_contract_drift(pg, results):
+    """契约防漂移: datasets/*.yaml 必须与工具加载的 contract.txt 生成物一致。"""
+    status, detail = await _run_generator_check("gen_tool_contract.py")
     await record(pg, results, "contract", "execute_jiangsu_mart_sql", status, detail)
+
+
+async def check_dbt_artifacts(pg, results):
+    """dbt 生成物(sources/schema/snapshots)防漂移: 必须与 datasets/*.yaml 一致。"""
+    status, detail = await _run_generator_check("gen_dbt_artifacts.py")
+    await record(pg, results, "dbt_artifacts", "schema.yml", status, detail)
 
 
 async def record(pg, results, name, table, status, detail):
@@ -206,6 +225,7 @@ async def main() -> int:
         await check_heartbeat(pg, results)
         await check_uniques(pg, results)
         await check_contract_drift(pg, results)
+        await check_dbt_artifacts(pg, results)
     finally:
         await pg.close()
     failures = sum(1 for r in results if r[2] == "FAIL")

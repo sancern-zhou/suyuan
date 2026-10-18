@@ -4,9 +4,11 @@ cube(`StationAlarmLog`, {
 
   measures: {
     count: { type: `count`, title: `告警量` },
+    // alarm_grade 原值刻度: 旧 1/2/3 = 一般/严重/紧急, 新 20/40/60/80 = 提示/一般/一般/严重
+    // (与 dbt 模型 alarm_grade_cn 映射一致; 新刻度无紧急档)
     severeCount: {
       type: `count`,
-      filters: [{ sql: `${CUBE}.alarm_grade = 2` }],
+      filters: [{ sql: `${CUBE}.alarm_grade IN (2, 80)` }],
       title: `严重告警量`,
     },
     urgentCount: {

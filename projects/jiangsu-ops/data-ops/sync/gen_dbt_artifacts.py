@@ -24,6 +24,21 @@ SYNC_DIR = Path(__file__).resolve().parent
 DBT_DIR = SYNC_DIR.parent / "dbt"
 DATASETS_DIR = SYNC_DIR / "datasets"
 
+
+def _resolve_sync_config() -> Path:
+    """凭据文件不进 git: 运行时副本在脚本同目录; 仓库内跑回退运行时绝对路径。"""
+    candidates = [
+        SYNC_DIR / "sync_config.json",
+        Path(r"E:\Tools\suyuan-jiangsu\sync\sync_config.json"),
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise SystemExit(
+        "sync_config.json 未找到(找过: %s)"
+        % "; ".join(str(c) for c in candidates)
+    )
+
 # ---------------------------------------------------------------- 测试配置
 # key = 模型名; value = {列名: [测试...]}, severity=warn 的测试不阻塞构建。
 # 已知数据现实的容差(如 5 张 CAL 校准工单无站点码)用 warn, 其余硬性。
@@ -185,7 +200,7 @@ def _fmt_test(test: str) -> dict | str:
 
 
 def render_sources_yml() -> str:
-    cfg = json.loads((SYNC_DIR / "sync_config.json").read_text(encoding="utf-8"))
+    cfg = json.loads(_resolve_sync_config().read_text(encoding="utf-8"))
     tables = []
     for name in sorted(cfg["tables"]):
         entry = {"name": name}

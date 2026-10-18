@@ -8,7 +8,7 @@ grain: 一行 = 一条告警
 freshness_slo: 26小时
 known_caveats:
   - 按年分片,每年 1 月须用 gen_alarmlog_sync_config.py 换年份表名并重跑同步与 gen_alarmlog_model.py
-  - alarm_grade 为平台数值编码,alarm_grade_cn 按 1=一般/2=严重/3=紧急 映射,未知值显示"未知"
+  - alarm_grade 为平台数值编码,alarm_grade_cn 按 1/40/60=一般、2/80=严重、3=紧急、20=提示 映射,其余显示"未知"
   - 设备状态位图(alarmState)不在告警分片表中,告警工具该字段置空
 columns:
   - {name: id, business: 源记录ID(站内唯一)}
@@ -20,7 +20,7 @@ columns:
   - {name: alarm_type, business: 告警类型编码(平台内部码)}
   - {name: subcatalog, business: 告警子类}
   - {name: alarm_grade, business: 告警级别原始值}
-  - {name: alarm_grade_cn, business: 告警级别中文(兼容源值1/2/3与20/40/60/80;20=提示,40/60=一般,80=严重)}
+  - {name: alarm_grade_cn, business: "告警级别中文(兼容源值1/2/3与20/40/60/80; 20=提示, 40/60=一般, 80=严重)"}
   - {name: source, business: 告警来源}
   - {name: description, business: 告警描述原文}
   - {name: alarm_status, business: 告警状态(平台原值)}

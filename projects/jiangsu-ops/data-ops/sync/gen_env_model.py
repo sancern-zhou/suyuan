@@ -1,21 +1,40 @@
 # -*- coding: utf-8 -*-
 """生成 dbt 模型 mart_station_env_power.sql(内嵌分片站点清单)。
 
-从 runtime sync_config.json 读取 integrated_h_<年>_* 条目生成 union 清单;
+读取 integrated_h_<年>_* 条目生成 union 清单(sync_config.json 依次找 脚本同目录 →
+运行时 E:\\Tools\\suyuan-jiangsu\\sync, 也可 --sync-config 显式指定);
 每年 1 月换年份重跑 gen_env_sync_config.py 后, 重跑本脚本刷新模型。
 """
 import argparse
 import json
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--sync-config", type=Path,
-                    default=REPO_ROOT / "projects/jiangsu-ops/data-ops/sync/sync_config.json")
+parser.add_argument("--sync-config", type=Path, default=None,
+                    help="sync_config.json 路径; 缺省依次找 脚本同目录 → 运行时 E:\\Tools\\suyuan-jiangsu\\sync")
 parser.add_argument("--output", type=Path,
-                    default=REPO_ROOT / "projects/jiangsu-ops/data-ops/dbt/models/mart_station_env_power.sql")
+                    default=Path(__file__).resolve().parents[4] / "projects/jiangsu-ops/data-ops/dbt/models/mart_station_env_power.sql")
 args = parser.parse_args()
-SYNC_CONFIG = args.sync_config.resolve()
+
+
+def _resolve_sync_config(explicit):
+    """凭据文件不进 git: 仓库内没有, 运行时副本在脚本同目录。仓库里跑回退运行时绝对路径。"""
+    if explicit is not None:
+        return explicit.resolve()
+    candidates = [
+        Path(__file__).resolve().parent / "sync_config.json",
+        Path(r"E:\Tools\suyuan-jiangsu\sync\sync_config.json"),
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise SystemExit(
+        "sync_config.json 未找到(找过: %s); 请显式传 --sync-config"
+        % "; ".join(str(c) for c in candidates)
+    )
+
+
+SYNC_CONFIG = _resolve_sync_config(args.sync_config)
 OUT = args.output.resolve()
 
 cfg = json.loads(SYNC_CONFIG.read_text(encoding="utf-8"))

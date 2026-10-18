@@ -222,7 +222,7 @@ cubes:
         definition: 合格数
       qualifiedRate:
         name: 质控合格率
-        definition: 已判定合格数 / (合格数 + 不合格数) × 100
+        definition: 平台判定的合格率，直接取平台结果不重算；qualifiedCount/assessedCount 仅作数量核对
         numerator: qualifiedCount
         denominator: assessedCount
         null_policy: denominator_zero
@@ -311,7 +311,7 @@ cubes:
       cityName: 城市名
       stationCode: 站点编码
       stationName: 站点名
-      alarmGrade: 告警级别(一般/严重/紧急)
+      alarmGrade: 告警级别(提示/一般/严重/紧急)
       alarmType: 告警类型编码(平台内部码)
       subcatalog: 告警子类
       source: 告警来源

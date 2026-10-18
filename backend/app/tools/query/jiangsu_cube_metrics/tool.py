@@ -106,7 +106,7 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "cityName", "title": "城市名"},
             {"name": "stationCode", "title": "站点编码"},
             {"name": "stationName", "title": "站点名"},
-            {"name": "alarmGrade", "title": "告警级别(一般/严重/紧急)"},
+            {"name": "alarmGrade", "title": "告警级别(提示/一般/严重/紧急)"},
             {"name": "alarmType", "title": "告警类型编码(平台内部码)"},
             {"name": "subcatalog", "title": "告警子类"},
             {"name": "source", "title": "告警来源"},
@@ -501,29 +501,38 @@ class JiangsuQueryMetricsTool(LLMTool):
         **kwargs,
     ) -> Dict[str, Any]:
         if describe_cube:
-            if describe_cube not in CATALOG:
-                return {"success": False, "summary": f"未知 Cube: {describe_cube}。允许: {', '.join(CATALOG)}"}
-            semantic = cube_metadata(describe_cube, CATALOG)
-            payload = {
-                "success": True,
-                "cube": describe_cube,
-                "semantic_context": {
-                    "registry_version": semantic.get("registry_version", 0),
-                    "dataset": semantic.get("dataset"),
-                    "grain": semantic.get("grain"),
-                    "applicability": semantic.get("applicability"),
-                    "source_window": semantic.get("source_window"),
-                    "freshness_slo": semantic.get("freshness_slo"),
-                    "limitations": semantic.get("limitations", []),
-                    "metric_definitions": semantic.get("measures", {}),
-                    "quality_guidance": quality_guidance("unknown"),
-                },
-                "summary": f"{describe_cube} 指标定义（registry v{semantic.get('registry_version', 0)}）",
-            }
-            contract_errors = validate_result("metric_definition", payload)
-            if contract_errors:
-                logger.warning("jiangsu_metric_definition_contract_violation", errors=contract_errors)
-            return payload
+            started = time.monotonic()
+            status, error = "ok", None
+            try:
+                if describe_cube not in CATALOG:
+                    status = "error"
+                    error = f"unknown cube: {describe_cube}"
+                    return {"success": False, "summary": f"未知 Cube: {describe_cube}。允许: {', '.join(CATALOG)}"}
+                semantic = cube_metadata(describe_cube, CATALOG)
+                payload = {
+                    "success": True,
+                    "cube": describe_cube,
+                    "semantic_context": {
+                        "registry_version": semantic.get("registry_version", 0),
+                        "dataset": semantic.get("dataset"),
+                        "grain": semantic.get("grain"),
+                        "applicability": semantic.get("applicability"),
+                        "source_window": semantic.get("source_window"),
+                        "freshness_slo": semantic.get("freshness_slo"),
+                        "limitations": semantic.get("limitations", []),
+                        "metric_definitions": semantic.get("measures", {}),
+                        "quality_guidance": quality_guidance("unknown"),
+                    },
+                    "summary": f"{describe_cube} 指标定义（registry v{semantic.get('registry_version', 0)}）",
+                }
+                contract_errors = validate_result("metric_definition", payload)
+                if contract_errors:
+                    logger.warning("jiangsu_metric_definition_contract_violation", errors=contract_errors)
+                return payload
+            finally:
+                await self._audit(context, describe_cube,
+                                  {"describe_cube": describe_cube}, 0, status, error,
+                                  int((time.monotonic() - started) * 1000))
         cube, err = self._validate(measures, dimensions, time_dimension, filters)
         if err:
             return {"success": False, "data": None, "summary": f"参数校验失败: {err}"}

@@ -4,14 +4,32 @@ import argparse
 import json
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--sync-config", type=Path,
-                    default=REPO_ROOT / "projects/jiangsu-ops/data-ops/sync/sync_config.json")
+parser.add_argument("--sync-config", type=Path, default=None,
+                    help="sync_config.json 路径; 缺省依次找 脚本同目录 → 运行时 E:\\Tools\\suyuan-jiangsu\\sync")
 parser.add_argument("--output", type=Path,
-                    default=REPO_ROOT / "projects/jiangsu-ops/data-ops/dbt/models/mart_station_alarm_log.sql")
+                    default=Path(__file__).resolve().parents[4] / "projects/jiangsu-ops/data-ops/dbt/models/mart_station_alarm_log.sql")
 args = parser.parse_args()
-SYNC_CONFIG = args.sync_config.resolve()
+
+
+def _resolve_sync_config(explicit):
+    """凭据文件不进 git: 仓库内没有, 运行时副本在脚本同目录。仓库里跑回退运行时绝对路径。"""
+    if explicit is not None:
+        return explicit.resolve()
+    candidates = [
+        Path(__file__).resolve().parent / "sync_config.json",
+        Path(r"E:\Tools\suyuan-jiangsu\sync\sync_config.json"),
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise SystemExit(
+        "sync_config.json 未找到(找过: %s); 请显式传 --sync-config"
+        % "; ".join(str(c) for c in candidates)
+    )
+
+
+SYNC_CONFIG = _resolve_sync_config(args.sync_config)
 OUT = args.output.resolve()
 
 cfg = json.loads(SYNC_CONFIG.read_text(encoding="utf-8"))
@@ -38,7 +56,7 @@ MODEL = """{{ config(
     ],
     post_hook=[
         "GRANT SELECT ON {{ this }} TO agent_reader",
-        "COMMENT ON TABLE {{ this }} IS '站房/仪器告警长表(每日02:30增量)。一行=一条告警;窗口自2026-07-01;覆盖101省控站(按年分片union);alarm_grade_cn 为级别中文(1=一般/2=严重/3=紧急,未知原样)。'",
+        "COMMENT ON TABLE {{ this }} IS '站房/仪器告警长表(每日02:30增量)。一行=一条告警;窗口自2026-07-01;覆盖101省控站(按年分片union);alarm_grade_cn 为级别中文(1/40/60=一般,2/80=严重,3=紧急,20=提示,其余未知)。'",
     ],
 ) }}
 

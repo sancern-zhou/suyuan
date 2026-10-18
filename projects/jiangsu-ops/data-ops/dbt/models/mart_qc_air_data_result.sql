@@ -14,6 +14,10 @@
 -- mart_qc_air_data_result: 质控监测曲线点(增量)
 -- 源: air_province_data.dbo.qc_his_air_data_result_2026(按年, 每年1月换年份)
 -- 用途: jiangsu_fetch_qc_monitoring_curve 本地数据源 + 曲线语义查询
+-- 部署注意: 本模型为 incremental(on_schema_change 默认 ignore), 新增列不会自动加到已存在的表。
+-- 给本模型加列后(如 2026-10 的 datavalue_numeric, 下游 QcAirData Cube 数值聚合读该列)必须先执行
+--   dbt run --full-refresh -s mart_qc_air_data_result
+-- 再重启 Cube; 否则存量行新列为 NULL → Cube 数值聚合静默只统计增量新行。
 select
     a.id,
     a.uniquecode                                 as unique_code,

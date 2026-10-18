@@ -18,6 +18,11 @@ GRANT USAGE ON SCHEMA jiangsu_mart TO agent_reader;
 GRANT SELECT ON ALL TABLES IN SCHEMA jiangsu_mart TO agent_reader;
 ALTER DEFAULT PRIVILEGES IN SCHEMA jiangsu_mart GRANT SELECT ON TABLES TO agent_reader;
 
+-- 质量门状态: 查询工具(jiangsu_query_metrics / execute_jiangsu_mart_sql)读取每日
+-- DQ 结果用于质量四态(ok/degraded/blocked/unknown); 只授这一张表, 不放行整个 schema。
+GRANT USAGE ON SCHEMA jiangsu_sync TO agent_reader;
+GRANT SELECT ON jiangsu_sync.dq_results TO agent_reader;
+
 -- 审计表: 应用侧工具每次查询写入一条
 CREATE TABLE IF NOT EXISTS jiangsu_sync.query_audit (
     audit_id     bigserial PRIMARY KEY,

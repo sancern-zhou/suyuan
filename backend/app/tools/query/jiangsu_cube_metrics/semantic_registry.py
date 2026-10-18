@@ -4,9 +4,12 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
+import structlog
 import yaml
 
 from app.utils.path_config import resolve_agent_path
+
+logger = structlog.get_logger()
 
 REGISTRY_PATH = resolve_agent_path(
     "projects/jiangsu-ops/data-ops/semantic/registry.yaml"
@@ -18,7 +21,9 @@ def load_registry() -> dict[str, Any]:
     try:
         with REGISTRY_PATH.open(encoding="utf-8") as handle:
             value = yaml.safe_load(handle) or {}
-    except (OSError, yaml.YAMLError):
+    except (OSError, yaml.YAMLError) as exc:
+        # fail-open: 目录标题兜底, 但必须让部署侧看得见注册表不可用
+        logger.warning("jiangsu_semantic_registry_unavailable", error=str(exc))
         return {"version": 0, "project": "jiangsu-ops", "cubes": {}}
     cubes = value.get("cubes")
     if not isinstance(cubes, dict):

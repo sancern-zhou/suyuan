@@ -803,7 +803,7 @@ models:
     已改读本同步链(近 24h 实时窗),本表提供全窗口历史语义查询。
 
     已知口径注意: 按年分片,每年 1 月须用 gen_alarmlog_sync_config.py 换年份表名并重跑同步与 gen_alarmlog_model.py; alarm_grade 为平台数值编码,alarm_grade_cn
-    按 1=一般/2=严重/3=紧急 映射,未知值显示"未知"; 设备状态位图(alarmState)不在告警分片表中,告警工具该字段置空
+    按 1/40/60=一般、2/80=严重、3=紧急、20=提示 映射,其余显示"未知"; 设备状态位图(alarmState)不在告警分片表中,告警工具该字段置空
 
     粒度: 一行 = 一条告警'
   columns:
@@ -830,7 +830,7 @@ models:
   - name: alarm_grade
     description: 告警级别原始值
   - name: alarm_grade_cn
-    description: 告警级别中文(兼容源值1/2/3与20/40/60/80;20=提示,40/60=一般,80=严重)
+    description: 告警级别中文(兼容源值1/2/3与20/40/60/80; 20=提示, 40/60=一般, 80=严重)
   - name: source
     description: 告警来源
   - name: description
@@ -898,8 +898,8 @@ models:
   description: '江苏质控期间监测序列(曲线点)。一行 = 一站 × 一质控任务 × 一时间点的监测值(按年源表 2026,每日增量,窗口自 2026-07-01,省控站过滤)。 工具 jiangsu_fetch_qc_monitoring_curve
     已改读本链。
 
-    已知口径注意: 按年源表,每年 1 月须换年份表名(gen_alarmlog_sync_config.py); datavalue 为文本原值,聚合使用 datavalue_numeric;time 为平台记录文本,timepoint
-    为监测时间
+    已知口径注意: 按年源表,每年 1 月须换年份表名(gen_alarmlog_sync_config.py); datavalue 为文本原值;聚合使用 datavalue_numeric(非数值原文为空);time
+    为平台记录文本,timepoint 为监测时间
 
     粒度: 一行 = 一站 × 一任务窗口 × 一时间点'
   columns:

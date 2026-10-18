@@ -307,7 +307,8 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                 """,
                 datasets,
             )
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("jiangsu_mart_quality_checks_unavailable", error=str(exc))
             return []
         return [
             {"table": row["table_name"], "check": row["check_name"],
