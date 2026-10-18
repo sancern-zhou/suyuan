@@ -850,6 +850,11 @@ class AgentBridge:
             if not session:
                 session = Session(session_id=session_id, query=agent_content)
 
+            inbound_message_id = msg.metadata.get("message_id")
+            assistant_request_id = (
+                hashlib.sha256(f"{msg.channel}:{bot_account}:{inbound_message_id}".encode()).hexdigest()
+                if inbound_message_id else None
+            )
             response_text, reasoning_content = await self._aggregate_agent_events(
                 content=agent_content,
                 session_id=session_id,
@@ -868,6 +873,7 @@ class AgentBridge:
                 agent_mode=agent_mode,
                 agent_user_identifier=agent_user_identifier,
                 stream_reasoning=agent_mode != "enforcement_exam",
+                assistant_request_id=assistant_request_id,
             )
 
             logger.info("Agent analysis completed",
@@ -966,6 +972,7 @@ class AgentBridge:
         agent_mode: Optional[str] = None,
         agent_user_identifier: Optional[str] = None,
         stream_reasoning: bool = True,
+        assistant_request_id: Optional[str] = None,
     ) -> tuple[str, str]:
         """聚合 Agent 事件并生成最终回复。
 
@@ -1037,10 +1044,9 @@ class AgentBridge:
                 **log_fields,
             )
 
+        from app.social.assistant_request import begin_assistant_request, end_assistant_request
+        assistant_request_token = begin_assistant_request(session_id, content, assistant_request_id)
         try:
-            
-            
-
             # Call agent and collect events
             async for event in self.agent.analyze(
                 user_query=content,
@@ -1328,6 +1334,9 @@ class AgentBridge:
                                persist_error=str(persist_err))
 
             return f"处理请求时出错: {str(e)}", ""
+
+        finally:
+            end_assistant_request(assistant_request_token)
 
     def _filter_technical_details(self, thought: str) -> str:
         """过滤掉工具调用等技术细节，只保留真实思考内容。
