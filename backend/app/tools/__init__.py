@@ -1028,6 +1028,13 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.warning("tool_import_failed", tool="wait_task", error=str(e))
 
     try:
+        from app.tools.social.assistant_tasks.tool import ManageAssistantTasksTool
+        registry.register(ManageAssistantTasksTool(), priority=378)
+        logger.info("tool_loaded", tool="manage_assistant_tasks")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="manage_assistant_tasks", error=str(e))
+
+    try:
         from app.tools.social.cli_session.tool import CliSessionTool
         registry.register(CliSessionTool(), priority=379)
         logger.info("tool_loaded", tool="cli_session")

@@ -102,13 +102,40 @@ class AppChatRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=20000)
     session_id: str | None = Field(default=None, max_length=128)
     attachments: list[dict] = Field(default_factory=list, max_length=8)
-    mode: Literal["query", "knowledge", "expert"] = "expert"
+    mode: Literal["query", "knowledge", "expert", "social"] = "expert"
     request_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class AppQuestionResolution(BaseModel):
     decision: Literal["answer", "reject"]
     answers: list[dict] | None = Field(default=None, max_length=4)
+
+
+@router.get("/assistant/tasks")
+async def list_assistant_tasks(
+    limit: int = Query(default=20, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    identity: AppIdentity = Depends(require_app_identity),
+):
+    from app.social.assistant_tasks import AssistantTaskService
+    try:
+        tasks = await AssistantTaskService().list(settings.project_id, identity.social_user_id, limit=limit, offset=offset)
+        return {"tasks": tasks}
+    except Exception as exc:
+        logger.warning("app_assistant_tasks_unavailable", error=type(exc).__name__)
+        raise HTTPException(status_code=503, detail="事项服务暂不可用") from exc
+
+
+@router.get("/assistant/tasks/{task_id}")
+async def get_assistant_task(task_id: str, identity: AppIdentity = Depends(require_app_identity)):
+    from app.social.assistant_tasks import AssistantTaskService, TaskNotFound
+    try:
+        return {"task": await AssistantTaskService().get(settings.project_id, identity.social_user_id, task_id)}
+    except TaskNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.warning("app_assistant_task_unavailable", error=type(exc).__name__)
+        raise HTTPException(status_code=503, detail="事项服务暂不可用") from exc
 
 
 class AppSteerRequest(BaseModel):
@@ -1410,6 +1437,8 @@ async def _stream_events_unlocked(
         chat_id=context_chat_id,
         bot_account=context_bot_account,
     )
+    from app.social.assistant_request import begin_assistant_request, end_assistant_request
+    assistant_request_token = begin_assistant_request(session_id, query, request_id)
     try:
         await cancellation_registry.arm_run_task(session_id, cancel_event)
         async for event in agent.analyze(
@@ -1536,6 +1565,7 @@ async def _stream_events_unlocked(
         error = {"type": "fatal_error", "data": {"error": str(exc), "code": "app_agent_failed"}}
         yield f"data: {dumps_safe(error)}\n\n"
     finally:
+        end_assistant_request(assistant_request_token)
         reset_current_context(context_tokens)
         # A disconnected client can cancel the stream before a terminal event.
         # Keep the user message so the session remains auditable and does not
