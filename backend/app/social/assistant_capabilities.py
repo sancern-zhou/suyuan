@@ -68,7 +68,7 @@ def capability_catalog():
                 parameters=schema.get("parameters", {}),
             )
     for mode in manifest.frontend.agent_modes:
-        if mode == "social":
+        if mode in {"assistant", "social"}:
             continue
         spec = TARGET_MODE_CONTRACTS.get(mode, {})
         override = manifest.frontend.agent_mode_overrides.get(mode, {})

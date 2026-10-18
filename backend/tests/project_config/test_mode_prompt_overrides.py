@@ -82,7 +82,7 @@ def test_report_prompt_has_no_guangdong_business_text(monkeypatch):
     assert "珠三角" not in prompt
 
 
-def test_xuchang_social_mode_uses_lightweight_query_toolset(monkeypatch):
+def test_xuchang_social_mode_preserves_query_and_former_web_assistant_tools(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "xuchang")
     tools = get_tools_by_mode("social")
 
@@ -99,6 +99,9 @@ def test_xuchang_social_mode_uses_lightweight_query_toolset(monkeypatch):
         "web_fetch",
         "schedule_task",
         "send_notification",
+        "wait_task",
+        "call_sub_agent",
+        "create_report_package",
     ):
         assert required in tools
     for forbidden in (
@@ -106,9 +109,6 @@ def test_xuchang_social_mode_uses_lightweight_query_toolset(monkeypatch):
         "cli_session",
         "terminal_session",
         "spawn",
-        "wait_task",
-        "call_sub_agent",
-        "create_report_package",
         "broadcast_social_users",
     ):
         assert forbidden not in tools

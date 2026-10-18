@@ -64,6 +64,7 @@
       @update:left-sidebar-collapsed="leftSidebarCollapsed = $event"
       @update:layout-ref="layoutRef = $event"
       @send="handleSend"
+      @assistant-continue="handleAssistantContinue"
       @pause="handlePause"
       @update:use-reranker="handleRerankerChange"
       @select-message="selectMessage"
@@ -410,6 +411,13 @@ const handleLoadSessionAndClosePanel = async (sessionId) => {
     workspace.value = 'chat'
   }
   return restored
+}
+
+const handleAssistantContinue = async ({ query, sessionId }) => {
+  if (store.currentState.isAnalyzing) return
+  const restored = await handleLoadSessionAndClosePanel(sessionId)
+  if (!restored || currentConversationPolicy.value.readOnly || store.currentState.isAnalyzing) return
+  await handleSend({ query, agentMode: 'assistant' })
 }
 
 const handleSessionRestoreAndClosePanel = async (sessionId) => {

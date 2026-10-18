@@ -613,6 +613,10 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
             tool_names.append("ask_user_question")
         extra_tool_names = _get_project_extra_tool_names_by_mode(mode)
         tool_names += [name for name in (extra_tool_names or []) if name not in tool_names]
+    if mode == "social":
+        # Social is the shared personal assistant runtime; retain office tools
+        # from the former Web assistant, including project-specific policies.
+        tool_names += [name for name in get_tools_by_mode("assistant") if name not in tool_names]
     if mode == "social" and "manage_assistant_tasks" not in tool_names:
         tool_names.append("manage_assistant_tasks")
     if mode == "social" and "manage_assistant_coaching" not in tool_names:

@@ -3,7 +3,7 @@ export const AGENT_MODES = Object.freeze([
     id: 'assistant',
     name: '通用助手智能体',
     shortName: '助手',
-    description: '通用问答、任务处理与综合分析',
+    description: '需求代办、持续事项跟进与项目使用指导',
     welcome: {
       description: '面向日常办公、信息整理和综合任务处理，为你提供从需求理解到成果交付的一站式协助。',
       features: [
@@ -244,6 +244,7 @@ function mergeAgentMode(agent, override) {
 }
 
 export const getAgentMode = (mode, overrides = {}) => {
+  mode = mode === 'social' ? 'assistant' : mode
   const agent = AGENT_MODES.find(item => item.id === mode)
   return mergeAgentMode(agent, overrides[mode])
 }

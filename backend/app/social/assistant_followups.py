@@ -80,12 +80,15 @@ class AssistantFollowupService(AssistantTaskService):
         if not request.delivery_user_id:
             raise PermissionError("当前入口没有可验证的个人提醒地址")
         route = request.delivery_user_id.rsplit(":", 2)
+        from app.social.web_assistant import web_assistant_recipient
+
+        web_recipient = request.delivery_user_id == web_assistant_recipient(owner)
         if (
             len(route) != 3
-            or route[0] not in {"app", "weixin"}
+            or route[0] not in {"app", "weixin"} and not web_recipient
             and not route[0].startswith("weixin:")
         ):
-            raise PermissionError("当前仅支持 App 和已绑定微信的个人提醒")
+            raise PermissionError("当前仅支持 Web、App 和已绑定微信的个人提醒")
         if route[0] == "app" and request.delivery_user_id != owner:
             raise PermissionError("不能替其他 App 用户设置提醒")
         if type(expected_version) is not int or expected_version < 1:
