@@ -61,6 +61,13 @@ async def verify_analysis_owner(claim):
     if not source or source.owner_user_id != task["owner_user_id"]:
         raise PermissionError("后台分析会话归属已变化")
     recipient = trigger["recipient"]
+    if recipient.startswith("web:"):
+        from app.conversations import ConversationSource
+        from app.social.web_assistant import web_assistant_recipient
+
+        if source.source != ConversationSource.WEB or recipient != web_assistant_recipient(task["owner_user_id"]):
+            raise PermissionError("后台分析 Web 归属已变化")
+        return
     if recipient.startswith("app:") and recipient == task["owner_user_id"]:
         return
     from app.social.binding_service import get_social_binding_service

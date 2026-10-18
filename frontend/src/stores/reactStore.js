@@ -556,7 +556,7 @@ export const useReactStore = defineStore('react', {
     },
 
     _resolveEventMode(eventData = {}, sessionId = null) {
-      const explicitMode = eventData?.mode
+      const explicitMode = eventData?.mode === 'social' ? 'assistant' : eventData?.mode
       if (VALID_MODES.includes(explicitMode)) {
         return explicitMode
       }

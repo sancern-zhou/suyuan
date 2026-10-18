@@ -10,6 +10,16 @@ async def deliver_reminder(task, trigger, notification):
     if not source or source.owner_user_id != task.owner_user_id:
         return "rejected"
     recipient = notification.recipient
+    from app.social.web_assistant import web_assistant_recipient
+    from app.conversations import ConversationSource
+
+    if recipient.startswith("web:"):
+        # The already durable outbox is also the Web inbox. Completion of
+        # this delivery commits inbox_saved; no external provider is invoked.
+        return (
+            "inbox_saved" if source.source == ConversationSource.WEB
+            and recipient == web_assistant_recipient(task.owner_user_id) else "rejected"
+        )
     if recipient.startswith("app:"):
         if recipient != task.owner_user_id:
             return "rejected"

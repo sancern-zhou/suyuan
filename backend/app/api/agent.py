@@ -691,6 +691,9 @@ async def analyze_stream(
     # is therefore a creation request, while a cataloged ID is a continuation
     # and must pass the normal ownership check. Never let an uncataloged source
     # session be claimed through the creation path.
+    from app.social.web_assistant import social_runtime_mode
+
+    request.mode = social_runtime_mode(request.mode)
     session_manager = get_session_manager()
     preloaded_source_session = None
     source_session_checked = False
@@ -822,7 +825,7 @@ async def analyze_stream(
             # behavior (including social prompts/tools) is an independent axis.
             "session_storage_mode": "assistant",
             "attachments": None,
-            "user_identifier": request.user_id,  # ✅ 直接传递 user_id，允许 None（None 时使用模式内共享记忆）
+            "user_identifier": request.user_id,  # Social requests override this with the authenticated identity below.
             "skip_auto_followup": request.skip_auto_followup,
             # 客户端来源随 runtime_metadata 全链路透传（含子Agent），
             # 供提示词按 App/Web 端差异化（图表形态、回复详略）。
@@ -830,6 +833,10 @@ async def analyze_stream(
                 "client_channel": "app" if getattr(user, "auth_source", "") == "app" else "web"
             },
         }
+        if request.mode == "social":
+            from app.social.web_assistant import web_social_context
+
+            analyze_kwargs.update(web_social_context(user))
         if request.mode == "board" and request.board_context:
             analyze_kwargs["board_context"] = request.board_context
             current_xml = request.board_context.get("current_xml") or request.board_context.get("currentXml") or ""
@@ -1597,12 +1604,20 @@ async def analyze_stream(
                     actual_session_id,
                     wait_timeout=30 if request.previous_paused_run_id else 0,
                 ):
-                    gen = unlocked_event_generator()
-                    try:
-                        async for chunk in gen:
-                            yield chunk
-                    finally:
-                        await gen.aclose()
+                    from contextlib import nullcontext
+                    from app.social.web_assistant import web_assistant_request
+
+                    authority = (
+                        web_assistant_request(actual_session_id, user, original_query, uuid.uuid4().hex)
+                        if request.mode == "social" else nullcontext()
+                    )
+                    with authority:
+                        gen = unlocked_event_generator()
+                        try:
+                            async for chunk in gen:
+                                yield chunk
+                        finally:
+                            await gen.aclose()
             except (SessionRunConflict, PauseCheckpointError) as error:
                 conflict = isinstance(error, SessionRunConflict)
                 error_event = {

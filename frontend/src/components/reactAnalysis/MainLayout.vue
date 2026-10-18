@@ -69,6 +69,7 @@
         @toggle-viz-panel="handleToggleVizPanel"
         @open-trajectory="handleTabChange('trajectory')"
         @open-memory="memoryDialogOpen = true"
+        @open-assistant="assistantPanelOpen = true"
         @new-web-conversation="$emit('new-web-conversation')"
         @resolve-interaction="$emit('resolve-interaction', $event)"
         @close-interaction="$emit('close-interaction')"
@@ -179,9 +180,16 @@
           </ChatArea>
         </div>
 
+        <AssistantPanel
+          v-if="assistantPanelOpen && ['assistant', 'social'].includes(agentMode)"
+          :is-analyzing="isAnalyzing"
+          :read-only="conversationReadOnly"
+          @close="assistantPanelOpen = false"
+          @continue="$emit('assistant-continue', $event)"
+        />
         <!-- 模式记忆查看/编辑对话框 -->
         <ModeMemoryDialog
-          :visible="memoryDialogOpen"
+          :visible="memoryDialogOpen && !['assistant', 'social'].includes(agentMode)"
           :agent-mode="agentMode"
           @close="memoryDialogOpen = false"
         />
@@ -260,6 +268,7 @@ import ChatArea from './ChatArea.vue'
 import RightPanelContainer from './RightPanelContainer.vue'
 import WidthResizer from './WidthResizer.vue'
 import ModeMemoryDialog from './dialogs/ModeMemoryDialog.vue'
+import AssistantPanel from './AssistantPanel.vue'
 import KnowledgeBasePanel from '@/components/management/KnowledgeBasePanel.vue'
 import FetchersPanel from '@/components/management/FetchersPanel.vue'
 import ScheduledTasksPanel from '@/components/management/ScheduledTasksPanel.vue'
@@ -279,6 +288,7 @@ const AirQualityForecastView = projectConfig.hasModule('xuchang-air-quality')
   : null
 
 const auth = useAuthStore()
+const assistantPanelOpen = ref(false)
 
 // 共享对话报告停靠面板：与聊天右侧面板同款交互（拖拽调宽/展开收起/新窗口）
 const sharedReportView = ref(null)
@@ -311,10 +321,6 @@ const handleSharedReportDragStart = () => {
   window.addEventListener('mousemove', onMove)
   window.addEventListener('mouseup', onUp)
 }
-
-watch(() => props.managementPanel, (panel) => {
-  if (panel !== 'shared-conversations') sharedReportView.value = null
-})
 
 const props = defineProps({
   taskWorkspaceEntries: { type: Array, default: () => [] },
@@ -541,6 +547,7 @@ const emit = defineEmits([
   'stop-drag',
   'reset-width',
   'tab-change',
+  'assistant-continue',
   'board-xml-change',
   'board-selection-change',
   'board-snapshot-confirm',
@@ -583,6 +590,10 @@ const layoutRef = ref(null)
 
 // 模式记忆对话框（查看/编辑当前 agentMode 的长期记忆）
 const memoryDialogOpen = ref(false)
+watch(() => props.managementPanel, (panel) => {
+  if (panel !== 'shared-conversations') sharedReportView.value = null
+})
+watch(() => props.agentMode, () => { assistantPanelOpen.value = false; memoryDialogOpen.value = false })
 
 // 右侧面板展开状态（用于ChatArea的展开/隐藏按钮）
 const rightPanelExpanded = computed(() => rightPanelShown.value)

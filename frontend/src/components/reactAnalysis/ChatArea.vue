@@ -41,6 +41,13 @@
 
       <div class="actions-right-group">
         <button
+          v-if="['assistant', 'social'].includes(agentMode)"
+          type="button"
+          class="panel-toggle-btn assistant-panel-trigger"
+          title="事项与建议"
+          @click="$emit('open-assistant')"
+        >事项与建议</button>
+        <button
           v-if="hasVizContent"
           type="button"
           class="panel-toggle-btn"
@@ -131,6 +138,7 @@
                 type="button"
                 class="more-menu-item"
                 role="menuitem"
+                v-if="!['assistant', 'social'].includes(agentMode)"
                 @click="handleMenuAction('view-memory')"
               >
                 <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -342,6 +350,7 @@ const emit = defineEmits([
   'close-interaction',
   'open-trajectory',
   'open-memory',
+  'open-assistant',
   'toggle-left-sidebar',
   'new-conversation'
 ])
@@ -700,6 +709,13 @@ defineExpose({
 .panel-toggle-btn:hover {
   background: var(--bg-muted);
   color: var(--text-1);
+}
+
+.assistant-panel-trigger {
+  width: auto;
+  padding: 0 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .panel-toggle-icon {
