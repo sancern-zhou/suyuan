@@ -3,6 +3,7 @@
 Source: https://github.com/HKUDS/nanobot
 Commit: b702ac633f149ada9ea123a8bfda5871d7ef6033
 Reference: nanobot/agent/goal_permission.py; nanobot/session/goal_state.py
+Additional stage-two reference: nanobot/cron/binding.py (binding_revision).
 Related upstream tests: tests/agent/test_goal_permission.py; tests/session/test_goal_state.py
 
 assistant_request.py adapts the default-deny ContextVar and token-reset lifetime pattern.
@@ -13,6 +14,10 @@ idempotent creation, optimistic updates and transactional audit events; it does 
 copy nanobot's session metadata persistence or add its Agent runtime as a dependency.
 Local tests cover default denial, background-session isolation, exception cleanup,
 database restart persistence, concurrent versions and owner/project isolation.
+assistant_schedule.definition_hash adapts the editable-state hash pattern from
+binding_revision, excluding runtime state and binding to the granted matter scope.
+Reminder plan fields are immutable. Scheduling uses the project's existing
+APScheduler; the SQL occurrence/outbox implementation is local integration code.
 
 MIT License
 

@@ -242,5 +242,12 @@ class AssistantTaskService:
                     raise TaskNotFound("事项不存在或无权访问")
                 raise TaskConflict("事项已变化或已结束，请重新查询后再操作")
             session.add(self._event(task_id, row.version, action, request, changes))
+            if action in {"complete", "cancel"} or {"goal", "completion_criteria"} & changes.keys():
+                from config.settings import settings
+
+                if settings.assistant_followups_enabled:
+                    from app.social.assistant_followups import revoke_followups
+
+                    await revoke_followups(session, task_id)
             await session.commit()
             return self._record(row)

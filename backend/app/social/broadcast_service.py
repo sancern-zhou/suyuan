@@ -101,6 +101,7 @@ class SocialBroadcastService:
         target_user_ids: Optional[List[str]] = None,
         persist_context: bool = False,
         context_metadata: Optional[Dict[str, Any]] = None,
+        delivery_metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Broadcast a message to all matching social users."""
         if not message:
@@ -168,7 +169,8 @@ class SocialBroadcastService:
                         chat_id=user_info["sender_id"],
                         content=message,
                         media=normalized_media,
-                        reply_to=user_info["sender_id"]
+                        reply_to=user_info["sender_id"],
+                        metadata=dict(delivery_metadata or {}),
                     )
                     delivery_error = None
                     delivery_status = "delivered"

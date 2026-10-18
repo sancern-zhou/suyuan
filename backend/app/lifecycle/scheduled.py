@@ -84,6 +84,10 @@ async def start_scheduled_task_service() -> None:
             from app.scenarios.xuchang_weather_report.task_migration import migrate_weather_task
             migrate_weather_task(service)
         start_service()
+        if settings.assistant_followups_enabled:
+            from app.social.assistant_followup_worker import start_assistant_followups
+
+            start_assistant_followups(service.scheduler.scheduler, settings.project_id)
         logger.info("scheduled_task_service_started", project_tasks_synced=synced)
     except Exception as e:
         logger.error("scheduled_task_service_failed", error=str(e), exc_info=True)
@@ -99,7 +103,14 @@ async def stop_scheduled_task_service() -> None:
         if not load_project_context(settings.project_id).manifest.scheduled_tasks_enabled:
             return
 
-        from app.scheduled_tasks import stop_service_async
+        from app.scheduled_tasks import stop_service_async, get_scheduled_task_service
+
+        if settings.assistant_followups_enabled:
+            from app.social.assistant_followup_worker import stop_assistant_followups
+
+            service = get_scheduled_task_service()
+            if service:
+                await stop_assistant_followups(service.scheduler.scheduler)
 
         await stop_service_async()
         logger.info("scheduled_task_service_stopped")
