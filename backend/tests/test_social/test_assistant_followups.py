@@ -530,11 +530,16 @@ def test_saved_migration_matches_model_columns_without_a_real_service():
     from app.utils.path_config import PROJECT_ROOT
 
     with sqlite3.connect(":memory:") as connection:
-        for number in ("021_create_assistant_tasks.sql", "022_create_assistant_followups.sql"):
+        for number in (
+            "021_create_assistant_tasks.sql",
+            "022_create_assistant_followups.sql",
+            "023_assistant_analysis_leases.sql",
+        ):
             sql = (PROJECT_ROOT / "backend" / "app" / "db" / "migrations" / number).read_text(
                 encoding="utf-8"
             )
-            connection.executescript(sql)
+            # SQLite lacks PostgreSQL's idempotent ADD COLUMN syntax.
+            connection.executescript(sql.replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN"))
         for model in (AssistantTriggerDB, AssistantRunDB, AssistantOutboxDB):
             columns = {
                 row[1] for row in connection.execute(f"PRAGMA table_info({model.__tablename__})")

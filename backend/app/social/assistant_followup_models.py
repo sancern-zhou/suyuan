@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 
 from app.db.database import Base
@@ -36,6 +37,7 @@ class AssistantTriggerDB(Base):
     grant_request_id = Column(String(128), nullable=False)
     grant_message = Column(Text, nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    last_result_hash = Column(String(64), nullable=True)
 
     __table_args__ = (Index("ix_assistant_trigger_due", "enabled", "next_at"),)
 
@@ -49,6 +51,8 @@ class AssistantRunDB(Base):
     occurrence_key = Column(String(100), nullable=False)
     state = Column(String(24), nullable=False, default="queued")
     task_version = Column(Integer, nullable=True)
+    lease_token = Column(String(36), nullable=True)
+    lease_until = Column(DateTime, nullable=True)
     attempts = Column(Integer, nullable=False, default=0)
     result = Column(JSON, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -57,6 +61,13 @@ class AssistantRunDB(Base):
     __table_args__ = (
         UniqueConstraint("trigger_id", "occurrence_key", name="uq_assistant_run_occurrence"),
         Index("ix_assistant_run_queue", "state", "created_at"),
+        Index(
+            "uq_assistant_running_task",
+            "task_id",
+            unique=True,
+            postgresql_where=text("state = 'running'"),
+            sqlite_where=text("state = 'running'"),
+        ),
     )
 
 

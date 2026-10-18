@@ -15,10 +15,10 @@ class ManageAssistantFollowupsTool(LLMTool):
             name="manage_assistant_followups",
             category=ToolCategory.TASK_MANAGEMENT,
             requires_context=True,
-            description="为当前用户的事项设置个人提醒、查询运行及投递记录、停止提醒。",
+            description="为当前用户的事项设置个人提醒或已授权的只读分析，查询运行及投递记录、停止跟进。",
             function_schema={
                 "name": "manage_assistant_followups",
-                "description": "仅用户明确要求提醒时 create。先查询事项 task_id/version；不会自动分析或标记完成。"
+                "description": "仅用户明确交办提醒或后台只读分析时 create。先查询事项 task_id/version；不会自动标记完成。"
                 "只提醒当前入口的本人，不接受收件人参数。list 查询实际计划、执行及投递状态。"
                 "disable 停止该事项所有提醒。unknown 表示投递结果不确定，不能声称已送达或自动重发。",
                 "parameters": {
@@ -28,7 +28,16 @@ class ManageAssistantFollowupsTool(LLMTool):
                         "action": {"type": "string", "enum": ["create", "list", "disable"]},
                         "task_id": {"type": "string"},
                         "expected_version": {"type": "integer", "minimum": 1},
-                        "kind": {"type": "string", "enum": ["now", "once", "interval", "cron"]},
+                        "kind": {
+                            "type": "string",
+                            "enum": ["now", "once", "interval", "cron", "feedback"],
+                        },
+                        "execution_action": {
+                            "type": "string",
+                            "enum": ["remind", "analyze"],
+                            "default": "remind",
+                            "description": "analyze 需明确用户授权和功能启用；只读且不自动完成事项。feedback 仅在新事项反馈提交后分析，不采集微信群。",
+                        },
                         "instructions": {"type": "string", "minLength": 1, "maxLength": 4000},
                         "run_at": {
                             "type": "string",
@@ -54,6 +63,7 @@ class ManageAssistantFollowupsTool(LLMTool):
         expected_version=None,
         kind=None,
         instructions=None,
+        execution_action="remind",
         run_at=None,
         interval_minutes=None,
         cron=None,
@@ -84,6 +94,7 @@ class ManageAssistantFollowupsTool(LLMTool):
                         expected_version=expected_version,
                         kind=kind,
                         instructions=instructions,
+                        execution_action=execution_action,
                         run_at=run_at,
                         interval_minutes=interval_minutes,
                         cron=cron,

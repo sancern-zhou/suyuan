@@ -242,6 +242,13 @@ class AssistantTaskService:
                     raise TaskNotFound("事项不存在或无权访问")
                 raise TaskConflict("事项已变化或已结束，请重新查询后再操作")
             session.add(self._event(task_id, row.version, action, request, changes))
+            if action == "feedback":
+                from config.settings import settings
+
+                if settings.assistant_followups_enabled and settings.assistant_analysis_enabled:
+                    from app.social.assistant_analysis import enqueue_feedback
+
+                    await enqueue_feedback(session, row)
             if action in {"complete", "cancel"} or {"goal", "completion_criteria"} & changes.keys():
                 from config.settings import settings
 
