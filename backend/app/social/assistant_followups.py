@@ -70,6 +70,7 @@ class AssistantFollowupService(AssistantTaskService):
         expected_version,
         kind,
         instructions,
+        execution_action="remind",
         run_at=None,
         interval_minutes=None,
         cron=None,
@@ -89,7 +90,16 @@ class AssistantFollowupService(AssistantTaskService):
             raise PermissionError("不能替其他 App 用户设置提醒")
         if type(expected_version) is not int or expected_version < 1:
             raise ValueError("请使用查询得到的事项版本")
-        if kind not in {"now", "once", "interval", "cron"}:
+        if execution_action not in {"remind", "analyze"}:
+            raise ValueError("不支持的执行类型")
+        if execution_action == "analyze":
+            from config.settings import settings
+
+            if not settings.assistant_analysis_enabled:
+                raise PermissionError("后台只读分析尚未启用")
+        if kind == "feedback" and execution_action != "analyze":
+            raise ValueError("反馈触发仅用于已授权的后台分析")
+        if kind not in {"now", "once", "interval", "cron", "feedback"}:
             raise ValueError("当前仅支持立即、单次、间隔或 cron 个人提醒")
         instructions = _text(instructions, "提醒内容", 4000)
         # Request replay must not shift a one-shot timestamp or create another interval.
@@ -107,7 +117,8 @@ class AssistantFollowupService(AssistantTaskService):
                     interval_minutes,
                     cron,
                     timezone_name,
-                ],
+                ]
+                + ([execution_action] if execution_action != "remind" else []),
                 ensure_ascii=False,
                 default=str,
             ).encode()
@@ -127,6 +138,10 @@ class AssistantFollowupService(AssistantTaskService):
                 timezone_name=timezone_name,
                 now=now,
             )
+            if execution_action == "analyze":
+                from app.social.assistant_analysis_agent import available_analysis_tools
+
+                schedule["tool_names"] = available_analysis_tools()
             if task.version != expected_version or task.status in {"completed", "cancelled"}:
                 raise TaskConflict("事项已变化或已结束，请重新查询")
             # Serialize registration against cancellation on both PostgreSQL and SQLite.
@@ -146,7 +161,7 @@ class AssistantFollowupService(AssistantTaskService):
                 task_id=task_id,
                 request_key=key,
                 kind=kind,
-                action="remind",
+                action=execution_action,
                 instructions=instructions,
                 schedule=schedule,
                 next_at=due,
@@ -214,6 +229,8 @@ class AssistantFollowupService(AssistantTaskService):
             return {"task_id": task.task_id, "version": expected_version + 1, "disabled": True}
 
     async def materialize(self, project, now=None):
+        from config.settings import settings
+
         now = now or datetime.utcnow()
         async with self.session_factory() as session:
             due = (
@@ -225,6 +242,11 @@ class AssistantFollowupService(AssistantTaskService):
                             Task.project_id == project,
                             Trigger.enabled.is_(True),
                             Trigger.next_at <= now,
+                            Trigger.action.in_(
+                                ["remind", "analyze"]
+                                if settings.assistant_analysis_enabled
+                                else ["remind"]
+                            ),
                         )
                         .order_by(Trigger.next_at)
                         .limit(50)
@@ -258,6 +280,12 @@ class AssistantFollowupService(AssistantTaskService):
                     continue
                 # Coalesce periodic downtime. Expire very old one-shot work visibly.
                 expired = trigger.kind in {"once", "now"} and now - at > timedelta(hours=24)
+                if trigger.action == "analyze":
+                    await session.execute(
+                        update(Run)
+                        .where(Run.trigger_id == trigger.trigger_id, Run.state == "queued")
+                        .values(state="superseded", finished_at=now)
+                    )
                 session.add(
                     Run(
                         run_id=str(uuid4()),
@@ -280,9 +308,11 @@ class AssistantFollowupService(AssistantTaskService):
                     await session.execute(
                         select(Run)
                         .join(Task)
+                        .join(Trigger, Trigger.trigger_id == Run.trigger_id)
                         .where(
                             Task.project_id == project,
                             Run.state == "queued",
+                            Trigger.action == "remind",
                         )
                         .order_by(Run.created_at)
                         .limit(50)

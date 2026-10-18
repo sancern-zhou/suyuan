@@ -1,5 +1,8 @@
 # Personal assistant reminders: local implementation
 
+This document describes the reminder increment. For the subsequent optional
+analysis extension, see assistant-analysis-stage-three.md.
+
 This increment connects saved assistant matters to durable owner-only reminders.
 It does not run scheduled LLM analysis, scrape WeChat history, contact other users,
 or implement the coach experience. Existing scheduled tasks and social heartbeats

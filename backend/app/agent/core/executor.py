@@ -94,7 +94,7 @@ class ToolExecutor:
             llm_planner: LLM规划器（用于call_sub_agent创建子Agent）
             event_bus: 事件总线（Phase 3.1: 用于工具生命周期事件）
         """
-        self.tool_registry = tool_registry or {}
+        self.tool_registry = tool_registry if tool_registry is not None else {}
         self.memory_manager = memory_manager
         self.data_context_manager: Optional["DataContextManager"] = None
         self.task_list = task_list
@@ -121,7 +121,7 @@ class ToolExecutor:
             )
 
         # 只在未提供 tool_registry 时才注册内置工具
-        if not tool_registry:
+        if tool_registry is None:
             self._register_builtin_tools()
         else:
             self._register_special_tools()

@@ -26,6 +26,8 @@ def normalize_schedule(
     config = {"timezone": timezone_name}
     if kind == "now":
         return config, now
+    if kind == "feedback":
+        return config, None
     if kind == "once":
         value = datetime.fromisoformat(run_at) if isinstance(run_at, str) else run_at
         if not isinstance(value, datetime):
@@ -49,7 +51,7 @@ def normalize_schedule(
 
 
 def next_occurrence(kind, config, now):
-    if kind in {"now", "once"}:
+    if kind in {"now", "once", "feedback"}:
         return None
     if kind == "interval":
         return now + timedelta(minutes=config["interval_minutes"])
