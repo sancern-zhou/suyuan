@@ -615,6 +615,8 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         tool_names += [name for name in (extra_tool_names or []) if name not in tool_names]
     if mode == "social" and "manage_assistant_tasks" not in tool_names:
         tool_names.append("manage_assistant_tasks")
+    if mode == "social" and "manage_assistant_coaching" not in tool_names:
+        tool_names.append("manage_assistant_coaching")
     from config.settings import settings
 
     if mode == "social" and settings.assistant_followups_enabled:

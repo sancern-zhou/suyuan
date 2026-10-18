@@ -20,6 +20,7 @@ from .knowledge_prompt import build_knowledge_prompt
 from .report_prompt import build_report_prompt
 from .social_prompt import build_social_prompt
 from .assistant_task_contract import ASSISTANT_TASK_CONTRACT
+from .assistant_coaching_contract import ASSISTANT_COACHING_CONTRACT
 from .board_prompt import build_board_prompt
 from .ops_prompt import build_ops_prompt
 from .graph_prompt import build_graph_prompt
@@ -218,6 +219,8 @@ def _build_react_system_prompt(
     )
 
     task_contract = ASSISTANT_TASK_CONTRACT if mode == "social" and "manage_assistant_tasks" in filtered_tools else ""
+    if mode == "social" and "manage_assistant_coaching" in filtered_tools:
+        task_contract += ASSISTANT_COACHING_CONTRACT
     project_prompt = load_project_mode_prompt(mode)
     if project_prompt is not None:
         return _with_platform_contracts(
