@@ -1438,7 +1438,9 @@ async def _stream_events_unlocked(
         bot_account=context_bot_account,
     )
     from app.social.assistant_request import begin_assistant_request, end_assistant_request
-    assistant_request_token = begin_assistant_request(session_id, query, request_id)
+    assistant_request_token = begin_assistant_request(
+        session_id, query, request_id, delivery_user_id=identity.social_user_id,
+    )
     try:
         await cancellation_registry.arm_run_task(session_id, cancel_event)
         async for event in agent.analyze(

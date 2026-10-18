@@ -10,6 +10,7 @@ class AssistantRequest:
     session_id: str
     request_id: str
     user_message: str
+    delivery_user_id: str | None = None
 
 
 @dataclass
@@ -22,13 +23,14 @@ _request: ContextVar[_RequestScope | None] = ContextVar("assistant_request", def
 
 
 def begin_assistant_request(
-    session_id: str, user_message: str, request_id: str | None = None
+    session_id: str, user_message: str, request_id: str | None = None,
+    *, delivery_user_id: str | None = None,
 ) -> Token:
     """Called only by authenticated human-message ingress, never by tool arguments."""
     if not session_id or not isinstance(user_message, str) or not user_message.strip():
         return _request.set(None)
     return _request.set(
-        _RequestScope(AssistantRequest(session_id, request_id or uuid4().hex, user_message))
+        _RequestScope(AssistantRequest(session_id, request_id or uuid4().hex, user_message, delivery_user_id))
     )
 
 

@@ -1045,7 +1045,9 @@ class AgentBridge:
             )
 
         from app.social.assistant_request import begin_assistant_request, end_assistant_request
-        assistant_request_token = begin_assistant_request(session_id, content, assistant_request_id)
+        assistant_request_token = begin_assistant_request(
+            session_id, content, assistant_request_id, delivery_user_id=social_user_id,
+        )
         try:
             # Call agent and collect events
             async for event in self.agent.analyze(

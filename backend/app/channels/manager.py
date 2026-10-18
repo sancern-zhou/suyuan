@@ -369,7 +369,14 @@ class ChannelManager:
 
         Note: CancelledError is re-raised to allow graceful shutdown.
         """
-        max_attempts = max(getattr(self.config.channels, 'send_max_retries', 3), 1)
+        expected_bot = msg.metadata.get("_expected_bot_account")
+        if expected_bot and channel.bot_account != expected_bot:
+            logger.warning("outbound_bot_binding_changed", channel=msg.channel)
+            return False
+        max_attempts = (
+            1 if msg.metadata.get("_single_attempt")
+            else max(getattr(self.config.channels, 'send_max_retries', 3), 1)
+        )
 
         for attempt in range(max_attempts):
             try:

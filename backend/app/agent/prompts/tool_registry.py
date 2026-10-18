@@ -615,6 +615,13 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         tool_names += [name for name in (extra_tool_names or []) if name not in tool_names]
     if mode == "social" and "manage_assistant_tasks" not in tool_names:
         tool_names.append("manage_assistant_tasks")
+    from config.settings import settings
+
+    if mode == "social" and settings.assistant_followups_enabled:
+        if "manage_assistant_followups" not in tool_names:
+            tool_names.append("manage_assistant_followups")
+    else:
+        tool_names = [name for name in tool_names if name != "manage_assistant_followups"]
     tools = _build_tool_dict(tool_names)
 
     disabled_tools = _get_project_disabled_tool_names()
