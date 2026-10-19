@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -193,8 +194,10 @@ class XuchangCityExceedanceFetcher(DataFetcher):
         last_hour = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
         scan_start = _local(last_hour - timedelta(hours=71))
         scan_end = _local(last_hour)
-        national = self.load_national(scan_start, scan_end)
-        township_result = self.township_loader(scan_start, scan_end)
+        national = await asyncio.to_thread(self.load_national, scan_start, scan_end)
+        township_result = await asyncio.to_thread(
+            self.township_loader, scan_start, scan_end
+        )
         townships = township_result.get("rows") or []
         processes = detect_processes(national, townships)
         from app.scheduled_tasks import get_scheduled_task_service
@@ -214,7 +217,7 @@ class XuchangCityExceedanceFetcher(DataFetcher):
             nearby_townships = [row for row in townships if _in_window(row.get("data_time"), start, end)]
             peer_rows = [row for row in national if _in_window(row.get("data_time"), start, end)]
             try:
-                regional_rows = self.load_regional(start, end)
+                regional_rows = await asyncio.to_thread(self.load_regional, start, end)
                 regional_status = "available" if regional_rows else "not_available:empty_window"
             except Exception as exc:
                 regional_rows, regional_status = [], f"not_available:{type(exc).__name__}"

@@ -87,7 +87,9 @@ class XuchangStationDeviationAlertFetcher(DataFetcher):
 
     async def fetch_and_store(self) -> dict[str, Any]:
         await asyncio.sleep(30)
-        result = await self.service.run()
+        # service.run() is fully synchronous (no awaits) but slow; keep the
+        # event loop responsive while it works in a worker thread.
+        result = await asyncio.to_thread(asyncio.run, self.service.run())
         target_hour = datetime.fromisoformat(result["target_hour"])
         closed_episodes = self.episode_service.close_stale(target_hour)
         if result["alerts"] or closed_episodes:
