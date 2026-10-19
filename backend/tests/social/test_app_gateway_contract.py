@@ -14,7 +14,6 @@ from app.social.session_mapper import SessionMapper
 from app.api.social_app_routes import router as app_router
 from app.api import social_app_routes
 from app.auth.middleware import GatewayAuthenticationMiddleware
-from app.agent.session.session_manager import SessionManager
 from app.conversations.schemas import ConversationCatalogRecord, ConversationSource
 from config.settings import Settings
 
@@ -100,7 +99,7 @@ async def test_app_history_session_uses_catalog_not_current_session_mapping(monk
         owner_user_id=identity.social_user_id,
         owner_username="alice",
         owner_display_name="Alice",
-        source=ConversationSource.SOCIAL,
+        source=ConversationSource.WEB,
         mode="assistant",
     )
 
@@ -126,11 +125,8 @@ async def test_app_history_session_uses_catalog_not_current_session_mapping(monk
 
 
 @pytest.mark.asyncio
-async def test_app_turn_persists_transcript_to_social_file_store(tmp_path, monkeypatch):
-    from app.agent.session import session_manager as file_session_module
-
-    manager = SessionManager(storage_base_path=str(tmp_path))
-    monkeypatch.setattr(file_session_module, "_global_session_manager", manager)
+async def test_app_turn_persists_transcript_to_shared_database(tmp_path, app_transcript_db):
+    manager = app_transcript_db
 
     await social_app_routes._persist_app_turn(
         "social_session_history",
@@ -149,23 +145,21 @@ async def test_app_turn_persists_transcript_to_social_file_store(tmp_path, monke
         ],
     )
 
-    loaded = manager.load_session("social_session_history")
+    loaded = await manager.load_session("social_session_history")
     assert loaded is not None
     assert [message["content"] for message in loaded.conversation_history] == [
         "第一轮问题", "第一轮回复", "第二轮问题", "第二轮回复"
     ]
-    assert (tmp_path / "social_session_history.json").exists()
+    assert not (tmp_path / "social_session_history.json").exists()
 
 
 @pytest.mark.asyncio
-async def test_app_stream_persists_complete_event_transcript(tmp_path, monkeypatch, fake_lock_db):
-    from app.agent.session import session_manager as file_session_module
-
-    manager = SessionManager(storage_base_path=str(tmp_path))
-    monkeypatch.setattr(file_session_module, "_global_session_manager", manager)
+async def test_app_stream_persists_complete_event_transcript(tmp_path, monkeypatch, fake_lock_db, app_transcript_db):
+    manager = app_transcript_db
 
     class FakeAgent:
         async def analyze(self, **kwargs):
+            assert kwargs["session_storage_mode"] == "assistant"
             assert kwargs["runtime_metadata"]["authenticated_account"] == {
                 "username": "alice", "display_name": "Alice",
             }
@@ -194,7 +188,7 @@ async def test_app_stream_persists_complete_event_transcript(tmp_path, monkeypat
     ]
 
     assert len(events) == 3
-    loaded = manager.load_session("social_session_stream")
+    loaded = await manager.load_session("social_session_stream")
     assert loaded is not None
     assert [message["content"] for message in loaded.conversation_history] == [
         "流式问题", "流式回复"

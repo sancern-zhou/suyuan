@@ -60,6 +60,8 @@ async def system(tmp_path, monkeypatch):
         for model in tables:
             await conn.run_sync(model.__table__.create)
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    from app.db import session_database
+    monkeypatch.setattr(session_database, "session_async_session", factory)
     async with factory() as session:
         session.add(SessionDB(session_id="web-session", query="Track my inspection", mode="assistant"))
         await session.commit()

@@ -1794,6 +1794,25 @@ async def resolve_agent_interaction(
         raise HTTPException(status_code=404, detail="session_not_found")
 
     pending = session.metadata.get("pending_interaction") if isinstance(session.metadata, dict) else None
+    # App transport acknowledgements remain idempotent even when answered on Web.
+    if request.decision in {"answer", "reject"}:
+        from app.api.social_app_routes import get_app_run_store
+        try:
+            resolution = await get_app_run_store().resolve_interaction(
+                session_id, interaction_id, request.decision, request.answers
+            )
+        except LookupError:
+            resolution = None
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if resolution is not None:
+            if isinstance(pending, dict) and pending.get("interaction_id") == interaction_id:
+                session.metadata.pop("pending_interaction", None)
+                if not await session_manager.save_session_metadata(session):
+                    raise HTTPException(500, "interaction_resolution_save_failed")
+            return resolution
     if not isinstance(pending, dict) or pending.get("interaction_id") != interaction_id:
         raise HTTPException(status_code=404, detail="interaction_not_found")
 
@@ -1831,6 +1850,7 @@ async def resolve_agent_interaction(
         raise HTTPException(status_code=500, detail="interaction_resolution_save_failed")
     return {
         "status": "resolved",
+        "request_id": f"answer:{interaction_id}",
         "interaction_id": interaction_id,
         "decision": request.decision,
         "workspace_mode": session.metadata.get("workspace_mode"),

@@ -1,4 +1,5 @@
 import { authFetch } from '@/auth/http.js'
+import { onAccountChanged } from '@/auth/accountSession.js'
 /**
  * 会话管理 Composable
  * 处理会话的创建、恢复、清理等操作
@@ -29,6 +30,9 @@ export function useSessionManagement(store) {
   const sessionHistoryLoading = ref(false)
   const persistedSessionHistoryData = ref([])
   const sessionHistoryStats = ref(null)
+  const assistantConversations = ref([])
+  const applyAssistantConversations = rows => { assistantConversations.value = rows }
+  const unsubscribeAssistantAccount = onAccountChanged(() => { assistantConversations.value = [] })
   let autoRefreshTimer = null
   let refreshInFlight = null
   let restoreRequestToken = 0
@@ -70,6 +74,12 @@ export function useSessionManagement(store) {
       )
     }
 
+    for (const session of assistantConversations.value) {
+      byId.set(session.session_id, {
+        ...(byId.get(session.session_id) || {}), ...session,
+        query: session.title, metadata: { ...(byId.get(session.session_id)?.metadata || {}), mode: 'assistant' }
+      })
+    }
     return filterConversationHistory(Array.from(byId.values())).sort((a, b) => {
       if (!!a.is_running !== !!b.is_running) return a.is_running ? -1 : 1
       return new Date(b.updated_at || 0) - new Date(a.updated_at || 0)
@@ -286,6 +296,7 @@ export function useSessionManagement(store) {
         read_only_on_web: sessionData.read_only_on_web === true
       }
       store.setMessages(messages)
+      store.currentState.pendingInteraction = sessionData.metadata?.pending_interaction || null
       if (restoredMode === 'board' && restoredBoard?.board_id &&
           typeof store.ensureDrawioBoardState === 'function' &&
           typeof store.loadDrawioBoardVersions === 'function') {
@@ -472,6 +483,7 @@ export function useSessionManagement(store) {
   })
 
   onUnmounted(() => {
+    unsubscribeAssistantAccount()
     if (autoRefreshTimer) {
       window.clearInterval(autoRefreshTimer)
       autoRefreshTimer = null
@@ -598,6 +610,7 @@ export function useSessionManagement(store) {
 
     // 会话历史
     refreshSessionHistory,
+    applyAssistantConversations,
     handleSessionCleanup,
     deleteSession,
     deleteSessions,

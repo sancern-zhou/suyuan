@@ -1,8 +1,8 @@
-"""Android App Social Gateway.
+"""Android App gateway for shared account-owned conversations.
 
 This is deliberately separate from QQ/WeChat channel adapters and the worker
-internal API. The App account is the social identity used for memory and
-conversation ownership.
+internal API. Web and App resolve the same platform account for assistant
+memory and SQL conversation ownership.
 """
 
 from __future__ import annotations
@@ -27,14 +27,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.identity_matching import owner_matches
+from app.auth.identity_matching import owner_matches, primary_owner_id
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.schemas import ConversationSource
 from app.db.database import get_db
 from app.knowledge_base.models import UploadedFile
 from app.agent.resources.resource_service import SessionResourceService
 from app.utils.json_safety import dumps_safe
-from app.utils.path_config import get_data_registry, get_sessions_dir, resolve_agent_path
+from app.utils.path_config import get_data_registry, resolve_agent_path
 from app.social.app_identity import (
     AppIdentity,
     issue_access_token,
@@ -120,7 +120,7 @@ async def list_assistant_tasks(
 ):
     from app.social.assistant_tasks import AssistantTaskService
     try:
-        tasks = await AssistantTaskService().list(settings.project_id, identity.social_user_id, limit=limit, offset=offset)
+        tasks = await AssistantTaskService().list(settings.project_id, primary_owner_id(identity.social_user_id), limit=limit, offset=offset)
         return {"tasks": tasks}
     except Exception as exc:
         logger.warning("app_assistant_tasks_unavailable", error=type(exc).__name__)
@@ -131,7 +131,7 @@ async def list_assistant_tasks(
 async def get_assistant_task(task_id: str, identity: AppIdentity = Depends(require_app_identity)):
     from app.social.assistant_tasks import AssistantTaskService, TaskNotFound
     try:
-        return {"task": await AssistantTaskService().get(settings.project_id, identity.social_user_id, task_id)}
+        return {"task": await AssistantTaskService().get(settings.project_id, primary_owner_id(identity.social_user_id), task_id)}
     except TaskNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
@@ -510,20 +510,30 @@ async def transcribe_voice(
 async def upload_file(
     request: Request,
     file: UploadFile = File(...),
+    session_id: str | None = Form(None),
+    mode: Literal["assistant", "query", "expert", "knowledge"] = Form("assistant"),
     db: AsyncSession = Depends(get_db),
     identity: AppIdentity = Depends(require_app_identity),
 ) -> dict:
     """Upload an attachment through the same safe resource pipeline as Web."""
     from app.api.upload_routes import upload_chat_file
-    session_id = await _ensure_session(request, identity, None)
-    return await upload_chat_file(
+    session_id = await _ensure_session(request, identity, session_id, mode)
+    result = await upload_chat_file(
         file=file,
         session_id=session_id,
-        mode="assistant",
+        mode=mode,
         db=db,
         user=identity.as_current_user(),
         catalog=get_conversation_catalog(),
     )
+    ref_id = (result.get("resource_ref") or {}).get("resource_id")
+    if ref_id:
+        content_url = f"/api/social/app/sessions/{session_id}/resources/{ref_id}/content"
+        original_url = result.get("url")
+        result.update(url=content_url, download_url=content_url)
+        if result.get("preview_url") == original_url:
+            result["preview_url"] = content_url
+    return result
 
 
 @router.delete("/upload/{file_id}")
@@ -1009,82 +1019,64 @@ def _social_preferences(identity: AppIdentity) -> dict:
     }
 
 
-_APP_ASSISTANT_SESSION_RE = re.compile(r"^assistant_session_\d{10,}_[0-9a-f]{12}$")
-
-
-async def _lazy_register_current_mapping(
-    request: Request,
-    identity: AppIdentity,
-    session_id: str,
-) -> bool:
-    """懒注册兜底：App 新建的会话未入目录时，恢复/续聊前补注册。
-
-    App 端“新建对话”只生成本地映射（create_app_session 不写目录），且 App
-    本地会保留历史入口——用户之后任何时候点击都可能先于首条消息触发恢复。
-    mapper 只存当前一条映射，覆盖不了多次新建后点击旧入口的场景，因此放宽为
-    格式校验通过（assistant_session_ 前缀 + 时间戳 + 随机段）即注册给当前用户。
-    未注册会话尚无内容，误注册只会得到空会话；定时任务/广播会话走各自的
-    授权路径，不在此列。
-    """
-    if not _APP_ASSISTANT_SESSION_RE.fullmatch(session_id):
-        return False
-    catalog = get_conversation_catalog()
-    if await catalog.find(session_id) is not None:
-        return False
-    await _register_social_session(identity=identity, session_id=session_id)
-    return True
-
-
 async def _ensure_session(
     request: Request,
     identity: AppIdentity,
     requested_session_id: str | None,
+    mode: str | None = None,
 ) -> str:
-    mapper = await _loaded_session_mapper(request)
     if requested_session_id:
         # The mapper intentionally stores only the user's current session.
         # Historical App sessions are authorized by the catalog instead.
         row = await get_conversation_catalog().find(requested_session_id)
         if row is None:
-            if not await _lazy_register_current_mapping(request, identity, requested_session_id):
-                raise HTTPException(status_code=404, detail="session_not_found")
-            return requested_session_id
+            raise HTTPException(status_code=404, detail="session_not_found")
         if (
             not owner_matches(row.owner_user_id, identity.social_user_id)
-            or row.source != ConversationSource.SOCIAL
+            or row.source != ConversationSource.WEB
+            or row.read_only_on_web
         ):
             raise HTTPException(status_code=404, detail="session_not_found")
+        if mode and row.mode and row.mode != mode:
+            raise HTTPException(status_code=409, detail="session_mode_conflict")
         # Keep the original catalog identity when continuing through a bound
         # account; re-registering it would attempt to transfer ownership.
         return requested_session_id
-    else:
-        session_id = await mapper.get_or_create_session(identity.social_user_id, mode="assistant")
-
-    # 已在目录中的会话不重复注册：register_identity 对同 owner 是幂等的，
-    # 但显式跳过可避免绑定账号路径上误触发所有权转移。
-    if await get_conversation_catalog().find(session_id) is not None:
-        return session_id
-    await _register_social_session(
+    mode = mode or "assistant"
+    session_id = SessionMapper.new_session_id(mode=mode)
+    await _register_app_session(
         identity=identity,
         session_id=session_id,
+        mode=mode,
     )
     return session_id
 
 
-async def _register_social_session(
+async def _register_app_session(
     *,
     identity: AppIdentity,
     session_id: str,
+    mode: str = "assistant",
 ) -> None:
+    from app.agent.session import get_session_manager
+    from app.agent.session.models import Session
+
+    # App and Web share the DB manager; never create a channel transcript here.
+    manager = get_session_manager()
+    existing = await manager.load_session(session_id, include_messages=False)
+    if existing is None:
+        session = Session(session_id=session_id, query="", metadata={"mode": mode})
+        if not await manager.save_session_metadata(session):
+            raise HTTPException(503, "session_create_failed")
     await get_conversation_catalog().register_identity(
         session_id=session_id,
-        owner_user_id=identity.social_user_id,
+        owner_user_id=primary_owner_id(identity.social_user_id),
         owner_username=identity.account_id,
         owner_display_name=identity.display_name,
-        source=ConversationSource.SOCIAL,
-        mode="assistant",
+        source=ConversationSource.WEB,
+        mode=mode,
         title=None,
-        read_only_on_web=True,
+        read_only_on_web=False,
     )
 
 
@@ -1135,8 +1127,9 @@ async def _persist_app_turn(
         load_session_for_mode,
     )
     from app.agent.session.conversation_persistence import ConversationPersistenceService
+    from app.conversations.resource_urls import conversation_resource_urls
 
-    session = await load_session_for_mode(session_id, mode="channel")
+    session = await load_session_for_mode(session_id, mode="assistant")
     if session is None:
         session = Session(session_id=session_id, query=query)
     elif not session.query:
@@ -1144,9 +1137,9 @@ async def _persist_app_turn(
 
     ConversationPersistenceService().append_complete(
         session,
-        display_history=display_history,
+        display_history=conversation_resource_urls(display_history, session_id),
     )
-    saved = await append_session_transcript_for_mode(session, mode="channel")
+    saved = await append_session_transcript_for_mode(session, mode="assistant")
     if not saved:
         raise RuntimeError("app_transcript_save_failed")
 
@@ -1235,6 +1228,7 @@ def _app_resource_descriptor(session_id: str, resource, *, preview_resource=None
     file_type = "image" if media_type.lower().startswith("image/") else "document"
     descriptor = {
         "file_id": resource.resource_id,
+        "uploaded_file_id": str(resource.metadata.get("file_id") or ""),
         "resource_id": resource.resource_id,
         "ref_id": resource.resource_id,
         "filename": label,
@@ -1408,8 +1402,13 @@ async def _stream_events_unlocked(
     from app.agent.runtime.cancellation import cancellation_registry
 
     agent = await _get_agent()
-    memory_store = await _get_memory_store(identity)
-    social_context = _social_preferences(identity)
+    from app.social.web_assistant import web_assistant_context, web_assistant_recipient
+    user = identity.as_current_user()
+    personal_context = web_assistant_context(user) if mode == "assistant" else {
+        "user_identifier": identity.social_user_id,
+        "assistant_memory_store": await _get_memory_store(identity),
+        **_social_preferences(identity),
+    }
     cancel_event = await cancellation_registry.register(session_id)
     fallback_attachments = _fallback_runtime_attachments(attachments, resource_refs)
     display_history: list[dict] = [{
@@ -1419,6 +1418,12 @@ async def _stream_events_unlocked(
         "attachments": _display_attachments(attachments or []),
         "timestamp": datetime.now().isoformat(),
     }]
+    for attachment in display_history[0]["attachments"]:
+        ref = next((ref for ref in (resource_refs or [])
+                    if str((getattr(ref, "metadata", None) or {}).get("file_id") or "")
+                    == str(attachment.get("file_id") or "")), None)
+        if ref is not None:
+            attachment["url"] = f"/api/sessions/{session_id}/resources/{ref.resource_id}/content"
     if request_id:
         display_history[0]['id'] = f"app-user:{request_id}"
     streamed_answer = ""
@@ -1440,7 +1445,8 @@ async def _stream_events_unlocked(
     )
     from app.social.assistant_request import begin_assistant_request, end_assistant_request
     assistant_request_token = begin_assistant_request(
-        session_id, query, request_id, delivery_user_id=identity.social_user_id,
+        session_id, query, request_id,
+        delivery_user_id=web_assistant_recipient(primary_owner_id(user.id)),
     )
     try:
         await cancellation_registry.arm_run_task(session_id, cancel_event)
@@ -1448,10 +1454,8 @@ async def _stream_events_unlocked(
             user_query=query,
             session_id=session_id,
             manual_mode=mode,
-            session_storage_mode="channel",
-            user_identifier=identity.social_user_id,
-            assistant_memory_store=memory_store,
-            **social_context,
+            session_storage_mode="assistant",
+            **personal_context,
             attachments=fallback_attachments or None,
             selected_resource_refs=resource_refs or None,
             cancel_event=cancel_event,
@@ -1479,6 +1483,14 @@ async def _stream_events_unlocked(
                     'title': event_data.get('title') or '需要你的选择',
                     'mode': mode, 'session_id': session_id,
                 }
+                from app.agent.session import get_session_manager
+                manager = get_session_manager()
+                session = await manager.load_session(session_id, include_messages=False)
+                if session is None:
+                    raise RuntimeError("session_not_found")
+                session.metadata["pending_interaction"] = event['data']
+                if not await manager.save_session_metadata(session):
+                    raise RuntimeError("interaction_save_failed")
             elif event_type == "streaming_text":
                 streamed_answer += str(event_data.get("chunk") or "")
             elif event_type == "resources_changed":
@@ -1619,7 +1631,7 @@ async def start_app_run(
         if existing['fingerprint'] != fingerprint:
             raise HTTPException(status_code=409, detail="request_id_conflict")
         return _public_app_run(existing)
-    session_id = await _ensure_session(request, identity, payload.session_id)
+    session_id = await _ensure_session(request, identity, payload.session_id, payload.mode)
     await _autotitle_session_from_query(session_id, payload.query)
     if await store.pending_interaction(session_id):
         raise HTTPException(status_code=409, detail="answer_pending_question_first")
@@ -1669,76 +1681,75 @@ async def app_run_events(run_id: str, after: int = Query(default=0, ge=0), ident
 
 async def _require_app_question_session(session_id: str, identity: AppIdentity):
     row = await get_conversation_catalog().require_read(session_id, identity.as_current_user())
-    if row.source != ConversationSource.SOCIAL:
+    if row.source != ConversationSource.WEB or not owner_matches(row.owner_user_id, identity.social_user_id):
         raise HTTPException(status_code=404, detail='session_not_found')
 
 
 @router.get('/sessions/{session_id}/interaction')
 async def app_pending_interaction(session_id: str, identity: AppIdentity = Depends(require_app_identity)):
     await _require_app_question_session(session_id, identity)
-    return {'interaction': await get_app_run_store().pending_interaction(session_id)}
+    from app.agent.session import get_session_manager
+    session = await get_session_manager().load_session(session_id, include_messages=False)
+    return {'interaction': session.metadata.get('pending_interaction') if session else None}
 
 
 @router.post('/sessions/{session_id}/interactions/{interaction_id}')
 async def app_resolve_interaction(session_id: str, interaction_id: str, payload: AppQuestionResolution, identity: AppIdentity = Depends(require_app_identity)):
     await _require_app_question_session(session_id, identity)
-    try:
-        return await get_app_run_store().resolve_interaction(session_id, interaction_id, payload.decision, payload.answers)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-def _social_session_has_content(session_id: str) -> bool:
-    """App 历史列表只展示落过盘的会话。
-
-    social 会话内容存储在 sessions 目录的 <session_id>.json；懒注册兜底会把
-    用户点击过但从未发送消息的会话写进目录，若不过滤，这些空会话会重新出现在
-    历史列表（用户主诉的问题）。文件缺失即视为无内容。
-    """
-    return (get_sessions_dir() / f"{session_id}.json").is_file()
+    from app.api.agent import AgentInteractionResolution, resolve_agent_interaction
+    return await resolve_agent_interaction(
+        session_id, interaction_id,
+        AgentInteractionResolution(decision=payload.decision, answers=payload.answers),
+        identity.as_current_user(), get_conversation_catalog(),
+    )
 
 
 @router.get("/sessions")
-async def sessions(request: Request, identity: AppIdentity = Depends(require_app_identity)) -> list[dict]:
-    catalog = get_conversation_catalog()
-    try:
-        rows = await catalog.list_visible(identity.as_current_user(), limit=100)
-    except Exception:
-        rows = []
-    rows = [
-        row for row in rows
-        if row.source == ConversationSource.SOCIAL and _social_session_has_content(row.session_id)
-    ]
-    if rows:
-        return [
-            {
-                "session_id": row.session_id,
-                "mode": row.mode or "assistant",
-                "title": row.title or "新对话",
-                "created_at": row.created_at.isoformat(),
-                "updated_at": row.updated_at.isoformat(),
-            }
-            for row in rows
-        ]
-    mapper = await _loaded_session_mapper(request)
-    session_id = await mapper.get_session(identity.social_user_id)
-    return [{"session_id": session_id, "mode": "assistant", "title": "新对话"}] if session_id else []
+async def sessions(
+    request: Request, identity: AppIdentity = Depends(require_app_identity),
+    limit: int = Query(30, ge=1, le=200), offset: int = Query(0, ge=0),
+) -> list[dict]:
+    from app.conversations.assistant_sync import AssistantConversationSync
+    return await AssistantConversationSync().summaries(
+        identity.as_current_user(), limit=limit, offset=offset,
+        modes=("assistant", "query", "expert", "knowledge"),
+    )
+
+
+@router.get("/assistant/conversations/{session_id}/sync")
+async def app_assistant_sync(
+    session_id: str, identity: AppIdentity = Depends(require_app_identity),
+    revision: int | None = Query(None, ge=0),
+):
+    from app.conversations.assistant_sync import AssistantConversationSync
+    snapshot = await AssistantConversationSync().snapshot(identity.as_current_user(), session_id, revision=revision)
+    if "messages" in snapshot:
+        snapshot["messages"] = await _mobile_history(session_id, snapshot["messages"])
+    return snapshot
+
+
+class AppConversationReadRequest(BaseModel):
+    through_sequence: int = Field(ge=-1, strict=True)
+
+
+@router.post("/assistant/conversations/{session_id}/read")
+async def app_assistant_read(
+    session_id: str, payload: AppConversationReadRequest,
+    identity: AppIdentity = Depends(require_app_identity),
+):
+    from app.conversations.assistant_sync import AssistantConversationSync
+    return await AssistantConversationSync().mark_read(identity.as_current_user(), session_id, payload.through_sequence)
 
 
 @router.post("/sessions")
-async def create_app_session(request: Request, identity: AppIdentity = Depends(require_app_identity)) -> dict:
+async def create_app_session(
+    request: Request, identity: AppIdentity = Depends(require_app_identity),
+    mode: Literal["assistant", "query", "expert", "knowledge"] = "assistant",
+) -> dict:
     """Create and persist a new Android App conversation session."""
-    mapper = await _loaded_session_mapper(request)
-    session_id = mapper.new_session_id(mode="assistant")
-    await mapper.save_mapping(identity.social_user_id, session_id)
-    # 懒注册：此处不写会话目录。App 端“新建对话/从广播退出”都可能触发本接口，
-    # 若立即注册，用户未实际发送任何消息就会在历史列表留下空会话。
-    # 会话在首条消息（start_app_run → _ensure_session）时才注册进目录。
-    return {"session_id": session_id, "mode": "assistant", "title": "新对话"}
+    session_id = SessionMapper.new_session_id(mode=mode)
+    await _register_app_session(identity=identity, session_id=session_id, mode=mode)
+    return {"session_id": session_id, "mode": mode, "title": "新对话"}
 
 
 @router.patch("/sessions/{session_id}")
@@ -1749,7 +1760,7 @@ async def rename_app_session(
 ) -> dict:
     catalog = get_conversation_catalog()
     row = await catalog.require_read(session_id, identity.as_current_user())
-    if row.source != ConversationSource.SOCIAL:
+    if row.source != ConversationSource.WEB or not owner_matches(row.owner_user_id, identity.social_user_id):
         raise HTTPException(status_code=404, detail="session_not_found")
     title = payload.title.strip()
     if not title:
@@ -1767,7 +1778,7 @@ async def delete_app_session(
 ) -> dict:
     catalog = get_conversation_catalog()
     row = await catalog.require_read(session_id, identity.as_current_user())
-    if row.source != ConversationSource.SOCIAL:
+    if row.source != ConversationSource.WEB or not owner_matches(row.owner_user_id, identity.social_user_id):
         raise HTTPException(status_code=404, detail="session_not_found")
     from app.conversations.adapters import get_conversation_adapters
 
@@ -1823,20 +1834,12 @@ async def _readable_app_session_row(request: Request, session_id: str, identity:
     try:
         row = await catalog.require_read(session_id, user)
     except HTTPException as exc:
-        if exc.status_code == 404 and await _lazy_register_current_mapping(
-            request, identity, session_id
-        ):
-            # App 点击“新建对话”后尚未发过消息的会话在此补注册，
-            # 否则恢复历史会直接 404（历史会话加载失败）。
-            return await catalog.require_read(session_id, user)
         # 定时任务会话在目录中的 owner 是 system，改按任务可见性授权。
         return await _authorize_scheduled_session_row(catalog, session_id, user, exc)
     if (
-        row.source != ConversationSource.SOCIAL
+        not (row.source == ConversationSource.WEB and owner_matches(row.owner_user_id, identity.social_user_id))
         and not _scheduled_session_task_id(session_id)
     ):
-        # App 只恢复自己的 SOCIAL 会话；WEB 会话仅在定时任务结果场景
-        # （scheduled_task_ 前缀，已按任务可见性授权）下可见。
         raise HTTPException(status_code=404, detail="session_not_found")
     return row
 
@@ -1863,21 +1866,41 @@ async def app_session_messages(
         payload = session.model_dump(mode="json")
     else:
         payload = restored.get("normalized_session") or {}
+    history = await _mobile_history(session_id, list(payload.get("conversation_history") or []))
+    return {"session_id": session_id, "messages": history}
+
+
+async def _mobile_history(session_id: str, messages: list) -> list:
+    from app.conversations.resource_urls import conversation_resource_urls
+    messages = conversation_resource_urls(messages, session_id, app=True)
     history = [
         item
-        for item in list(payload.get("conversation_history") or [])
+        for item in messages
         if not isinstance(item, dict)
         or str(item.get("type") or item.get("role") or "").lower() in _MOBILE_VISIBLE_HISTORY_TYPES
     ]
     # Match explicit chart references and run/resource identities to their turns.
     # Unattributed legacy files remain in the catalog, not on the latest reply.
+    descriptors = []
     try:
         descriptors = await _app_resource_descriptors(session_id, [])
         from app.social.inline_charts import attach_reply_resources
         attach_reply_resources(history, descriptors)
     except Exception as exc:
         logger.warning("app_session_resources_restore_failed", session_id=session_id, error=str(exc))
-    return {"session_id": session_id, "messages": history}
+    for item in history:
+        if isinstance(item, dict) and isinstance(item.get("content"), str):
+            item["content"] = _rewrite_app_image_urls(item["content"], descriptors)
+        if isinstance(item, dict):
+            for attachment in item.get("attachments") or []:
+                descriptor = next((resource for resource in descriptors
+                    if resource.get("uploaded_file_id")
+                    and resource["uploaded_file_id"] == attachment.get("file_id")), None)
+                if descriptor:
+                    attachment.update({key: descriptor[key] for key in (
+                        "url", "download_url", "preview_url", "preview_mime_type", "resource_id"
+                    ) if key in descriptor})
+    return history
 
 
 @router.get("/sessions/{session_id}/resources")
