@@ -413,7 +413,14 @@ class ScheduledTaskExecutor:
         from app.social.web_assistant import assistant_personal_context, web_assistant_context
 
         if task is None or not task.owner_user_id or task.owner_user_id == "system":
-            raise PermissionError("助手计划缺少用户归属")
+            # 旧版允许无归属的 assistant 定时任务（owner 缺省 system）。
+            # 缺归属只降级为不带个人上下文执行，不能让整次执行硬失败——
+            # 否则超时/部分产物语义会被 PermissionError 掩盖。
+            logger.warning(
+                "assistant_task_context_skipped_without_owner",
+                task_id=getattr(task, "task_id", None),
+            )
+            return {}, None
         user = CurrentUser(
             id=task.owner_user_id,
             username=task.owner_username,
@@ -460,6 +467,8 @@ class ScheduledTaskExecutor:
         # custom 模式由任务执行器创建一个固定工具集的 Agent 并在所有步骤间复用。
         agent = agent or self.agent_factory()
 
+        submit_tool = self._inject_submit_result(agent, manual_mode)
+
         selected_skill_context = None
         if task is not None and task.skill_id:
             from app.agent.selection_context import load_skill_selection
@@ -503,7 +512,15 @@ class ScheduledTaskExecutor:
         metadata = dict(runtime_metadata or {})
         if manual_mode == "assistant":
             assistant_context, account = await self._assistant_task_context(task)
-            metadata["authenticated_account"] = account
+            if account:
+                metadata["authenticated_account"] = account
+
+        if submit_tool is not None:
+            prompt = (
+                prompt
+                + "\n\n## 结构化交付要求\n完成取数与计算后，必须调用 submit_result 工具提交结构化结果"
+                  "（字段结构见工具定义），随后用一句话简述结论即可结束。"
+            )
 
         # ✅ 执行Agent分析，传入 session_id 以复用上下文
         analysis_error: BaseException | None = None
@@ -634,14 +651,53 @@ class ScheduledTaskExecutor:
                     if persisted:
                         self._persisted_execution_ids.add(execution.execution_id)
 
+        submitted_payload = (
+            getattr(submit_tool, "submitted_result", None) if submit_tool is not None else None
+        )
+        summary = "\n".join(summary_parts)
+        if isinstance(submitted_payload, dict) and not summary.strip():
+            import json as _json
+
+            summary = _json.dumps(submitted_payload, ensure_ascii=False)
         return {
-            "summary": "\n".join(summary_parts),
+            "summary": summary,
+            "structured_result": submitted_payload if isinstance(submitted_payload, dict) else None,
             "data_ids": data_ids,
             "visuals": visuals,
             "thoughts": thoughts,
             "tool_calls": tool_calls,
             "iterations": iterations
         }
+
+    @staticmethod
+    def _inject_submit_result(agent, manual_mode: str | None):
+        """固定工作流叶子模式的 deliver 阶段会清空工具到只剩 submit_result。
+
+        定时任务以叶子模式执行时必须注入交付工具，否则子 Agent 无法把
+        已取到的数据结构化回传（结果丢失）；submit_result 在阶段白名单
+        中豁免，交付后模型仍可输出一句话结论。
+        """
+        if not manual_mode or manual_mode == "custom":
+            return None
+        try:
+            from app.agent.workflow.mode_workflows import get_mode_workflow
+
+            if get_mode_workflow(manual_mode) is None:
+                return None
+            from copy import deepcopy
+
+            from app.agent.workflow.protocol import EXPERT_ANALYSIS_RESULT_SCHEMA
+            from app.tools.agent_tools.submit_result_tool import SubmitResultTool
+
+            registry = getattr(getattr(agent, "executor", None), "tool_registry", None)
+            if not isinstance(registry, dict) or "submit_result" in registry:
+                return registry.get("submit_result") if isinstance(registry, dict) else None
+            submit_tool = SubmitResultTool(deepcopy(EXPERT_ANALYSIS_RESULT_SCHEMA))
+            registry["submit_result"] = submit_tool
+            return submit_tool
+        except Exception as exc:
+            logger.warning("scheduled_submit_result_inject_failed", mode=manual_mode, error=str(exc))
+            return None
 
     @staticmethod
     def _build_task_prompt(
