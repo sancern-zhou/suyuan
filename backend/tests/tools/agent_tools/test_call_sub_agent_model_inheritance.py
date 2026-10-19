@@ -67,7 +67,8 @@ async def test_stale_upstream_resource_cannot_trigger_child_model_or_refetch(mon
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("target_mode", ["ops", "office"])
-async def test_sub_agent_explicitly_inherits_parent_model_chain(monkeypatch, target_mode):
+@pytest.mark.parametrize("client_channel", ["web", "app"])
+async def test_sub_agent_explicitly_inherits_parent_model_chain(monkeypatch, target_mode, client_channel):
     parent_service = SimpleNamespace(
         provider="bailian",
         model="deepseek-v4-pro",
@@ -83,6 +84,7 @@ async def test_sub_agent_explicitly_inherits_parent_model_chain(monkeypatch, tar
 
         async def analyze(self, **kwargs):
             assert kwargs["manual_mode"] == target_mode
+            assert kwargs["runtime_metadata"]["client_channel"] == client_channel
             assert child_service.active_chain == (
                 "bailian",
                 "deepseek-v4-pro",
@@ -103,6 +105,7 @@ async def test_sub_agent_explicitly_inherits_parent_model_chain(monkeypatch, tar
                 "agnes/agnes-2.0-flash,minimax/MiniMax-M3",
             ),
         )
+    context.runtime_metadata = {"client_channel": client_channel}
     if target_mode == "office":
         context.manual_mode = "social"
         context.tool_executor.delegation_tool_registry = {

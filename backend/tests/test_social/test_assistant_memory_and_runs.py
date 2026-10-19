@@ -306,7 +306,8 @@ def test_assistant_tool_boundary_and_prompt(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "default")
     tools = get_tools_by_mode("social")
     assert {"manage_assistant_memory", "manage_assistant_runs"}.issubset(tools)
-    assert {"read_file", "edit_file", "wait_task", "bash"}.isdisjoint(tools)
+    assert {"read_file", "edit_file"}.issubset(tools)
+    assert {"wait_task", "bash"}.isdisjoint(tools)
     assert "edit_file" in get_tools_by_mode("office")
     prompt = build_react_system_prompt("social", memory_file_path="/private/MEMORY.md")
     assert "直接使用 edit_file" not in prompt
