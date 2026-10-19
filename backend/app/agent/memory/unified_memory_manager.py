@@ -76,7 +76,7 @@ class UnifiedMemoryManager:
 
         Args:
             user_id: 用户ID（格式：{mode}:{user_identifier}:{shared|unique}）
-            mode: 模式标识（social/assistant/expert/query/code/report/chart/ops）
+            mode: 模式标识（assistant/office/expert/query/code/report/chart/ops）
 
         Returns:
             用户专属 MemoryStore
@@ -96,7 +96,7 @@ class UnifiedMemoryManager:
                 self._memory_cache[cache_key] = ImprovedMemoryStore(
                     user_id=user_id,
                     mode=mode,
-                    workspace=(self.base_workspace if self._custom_workspace or mode != "social" else None)
+                    workspace=(self.base_workspace if self._custom_workspace or mode != "assistant" else None)
                 )
                 logger.info(
                     "user_memory_created",

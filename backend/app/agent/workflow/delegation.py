@@ -8,11 +8,11 @@ QUERY_CHILD_MODES = frozenset({
 EXPERT_CHILD_MODES = QUERY_CHILD_MODES | frozenset({
     "expert_meteorology", "expert_analysis",
 })
-LEAF_MODES = EXPERT_CHILD_MODES | frozenset({"query_monitoring", "office", "assistant"})
+LEAF_MODES = EXPERT_CHILD_MODES | frozenset({"query_monitoring", "office"})
 PARENT_CHILD_MODES = {
     "query": QUERY_CHILD_MODES,
     "expert": EXPERT_CHILD_MODES,
-    "social": EXPERT_CHILD_MODES | frozenset({"office", "knowledge", "ppt", "board", "ops"}),
+    "assistant": EXPERT_CHILD_MODES | frozenset({"office", "knowledge", "ppt", "board", "ops"}),
 }
 DELEGATION_TOOLS = frozenset({"call_sub_agent", "run_agent_workflow"})
 PRIMARY_ONLY_MODES = frozenset({"query", "expert", "report"})
@@ -27,11 +27,11 @@ def is_leaf_mode(mode: str) -> bool:
 def delegation_error(parent_mode: str, target_modes: list[str]) -> str | None:
     from app.agent.workflow.project_policy import child_modes, parent_policy
 
+    if parent_mode == "social" or "social" in target_modes:
+        return "social 模式已移除；助手主模式为 assistant，办公子模式为 office。"
+    if "office" in target_modes and parent_mode != "assistant":
+        return "office 是助手模式的办公子 Agent，仅允许由 assistant 助手委派。"
     if "assistant" in target_modes:
-        return "原办公执行模式已更名为 office，请使用 target_mode=office。"
-    if "office" in target_modes and parent_mode != "social":
-        return "office 是助手模式的办公子 Agent，仅允许由 social 助手委派。"
-    if "social" in target_modes:
         return "助手模式负责用户交互与协调，不作为子 Agent 调用。"
     primary_targets = sorted(set(target_modes) & PRIMARY_ONLY_MODES)
     if primary_targets:
@@ -62,7 +62,7 @@ def build_delegation_contract(mode: str, available_tools: list[str]) -> str:
     """Include guidance only for an enabled parent, including project overrides."""
     from app.agent.workflow.project_policy import parent_policy
 
-    if mode == "social":
+    if mode == "assistant":
         return ""  # Its coordinator contract is appended independently of project overrides.
     policy = parent_policy(mode)
     if policy and DELEGATION_TOOLS.intersection(available_tools):

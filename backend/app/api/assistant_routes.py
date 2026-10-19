@@ -115,7 +115,7 @@ def _available(name):
     from app.tools import global_tool_registry
 
     if (
-        name not in get_tools_by_mode("social")
+        name not in get_tools_by_mode("assistant")
         or global_tool_registry.get_tool_status(name) != "enabled"
     ):
         raise HTTPException(403, "当前项目未开放此助理操作")

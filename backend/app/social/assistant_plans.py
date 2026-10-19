@@ -282,7 +282,6 @@ class AssistantPlanService(AssistantFollowupService):
             raise PermissionError("后台定时任务尚未启用")
         modes = set(manifest.frontend.agent_modes)
         modes.discard("assistant")
-        modes.discard("social")
         modes.add("office")
         if command.execution_mode not in modes or not get_tools_by_mode(command.execution_mode):
             raise ValueError("请选择当前项目可用的办公或专业执行模式")

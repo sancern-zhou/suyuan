@@ -21,10 +21,10 @@ def context(tmp_path):
     profile.write_text("# Profile\n", encoding="utf-8")
     return SimpleNamespace(
         session_id="parent-a",
-        runtime_mode="social",
+        runtime_mode="assistant",
         scheduled_task_context=None,
         assistant_memory_store=SimpleNamespace(
-            mode="social", user_id="user-a", workspace=workspace, memory_file=memory
+            mode="assistant", user_id="user-a", workspace=workspace, memory_file=memory
         ),
         assistant_profile_path=str(profile),
     )
@@ -304,12 +304,12 @@ def test_assistant_tool_boundary_and_prompt(monkeypatch):
     from config.settings import settings
 
     monkeypatch.setattr(settings, "project_id", "default")
-    tools = get_tools_by_mode("social")
+    tools = get_tools_by_mode("assistant")
     assert {"manage_assistant_memory", "manage_assistant_runs"}.issubset(tools)
     assert {"read_file", "edit_file"}.issubset(tools)
     assert {"wait_task", "bash"}.isdisjoint(tools)
     assert "edit_file" in get_tools_by_mode("office")
-    prompt = build_react_system_prompt("social", memory_file_path="/private/MEMORY.md")
+    prompt = build_react_system_prompt("assistant", memory_file_path="/private/MEMORY.md")
     assert "直接使用 edit_file" not in prompt
     assert "manage_assistant_memory" in prompt
 
@@ -457,7 +457,8 @@ def test_run_executor_injects_bound_memory_into_tool_context(context):
     executor.data_context_manager = SimpleNamespace()
     executor.task_list = None
     executor.llm_planner = None
-    executor.runtime_mode = "social"
+    executor.runtime_mode = "assistant"
+    executor.session_storage_mode = "channel"
     executor.user_identifier = "server-bound-user"
     executor.runtime_metadata = {}
     executor.authorized_input_paths = []
@@ -466,6 +467,7 @@ def test_run_executor_injects_bound_memory_into_tool_context(context):
     bound = executor._create_execution_context(1)
     assert bound.assistant_memory_store is context.assistant_memory_store
     assert bound.assistant_profile_path == context.assistant_profile_path
+    assert bound.session_storage_mode == "channel"
 
 
 def test_tools_are_registered_as_real_implementations():

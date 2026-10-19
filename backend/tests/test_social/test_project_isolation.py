@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.agent.prompts.social_prompt import build_social_prompt
+from app.agent.prompts.assistant_prompt import build_assistant_prompt
 from app.api import social_account_routes
 from app.project_config.loader import load_project_context
 from app.social.cli_task_store import CliTaskStore
@@ -24,7 +24,7 @@ def test_social_fallback_files_use_active_project_registry(tmp_path, monkeypatch
 def test_social_account_routes_use_active_deployment_config(tmp_path, monkeypatch):
     config_path = tmp_path / "jiangsu-social.yaml"
     monkeypatch.setattr(settings, "social_config_path", str(config_path))
-    monkeypatch.setattr(social_config, "get_social_dir", lambda: tmp_path / "social")
+    monkeypatch.setattr(social_config, "get_social_dir", lambda: tmp_path / "assistant")
 
     config = social_config.SocialConfig(
         weixin=social_config.WeixinConfig(enabled=True, accounts=[])

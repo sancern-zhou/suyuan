@@ -327,14 +327,14 @@ def test_social_contract_applies_to_project_override_and_respects_disabled_tool(
     monkeypatch.setattr(
         prompt_builder, "load_project_mode_prompt", lambda mode: "Project-specific assistant"
     )
-    prompt = prompt_builder.build_react_system_prompt("social")
+    prompt = prompt_builder.build_react_system_prompt("assistant")
     assert "Project-specific assistant" in prompt
     assert "持续事项与交办边界" in prompt
-    assert "manage_assistant_tasks" in tool_registry.get_tools_by_mode("social")
+    assert "manage_assistant_tasks" in tool_registry.get_tools_by_mode("assistant")
     monkeypatch.setattr(
         tool_registry, "_get_project_disabled_tool_names", lambda: ["manage_assistant_tasks"]
     )
-    assert "持续事项与交办边界" not in prompt_builder.build_react_system_prompt("social")
+    assert "持续事项与交办边界" not in prompt_builder.build_react_system_prompt("assistant")
     assert "manage_assistant_tasks" not in tool_registry.get_tools_by_mode("expert")
 
 
@@ -415,7 +415,7 @@ async def test_app_stream_binds_original_request_and_revokes_on_exit(monkeypatch
             request = require_assistant_request(kwargs["session_id"])
             assert request.user_message == "Please track my analysis"
             assert request.request_id == "client-request-a"
-            assert kwargs["manual_mode"] == "social"
+            assert kwargs["manual_mode"] == "assistant"
             if raise_error:
                 raise RuntimeError("injected agent failure")
             yield {"type": "start", "data": {}}
@@ -441,7 +441,7 @@ async def test_app_stream_binds_original_request_and_revokes_on_exit(monkeypatch
             identity,
             "session-a",
             "Please track my analysis",
-            mode="social",
+            mode="assistant",
             request_id="client-request-a",
         )
     ]
@@ -465,7 +465,7 @@ async def test_social_bridge_binds_current_request_and_revokes_after_failure(mon
 
     bridge = object.__new__(AgentBridge)
     bridge.agent = Agent()
-    bridge.mode = "social"
+    bridge.mode = "assistant"
     answer, _ = await bridge._aggregate_agent_events(
         content="Please track my analysis", session_id="session-a", chat_id="alice"
     )

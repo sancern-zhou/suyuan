@@ -30,18 +30,18 @@ def test_assistant_and_office_roles_cannot_be_expanded_by_project_tools(monkeypa
         "bash",
         "spawn",
     }
-    for mode in ("social", "office"):
+    for mode in ("assistant", "office"):
         assert forbidden.isdisjoint(get_tools_by_mode(mode))
-    assert "execute_python" not in get_tools_by_mode("social")
-    assert {"read_file", "edit_file"}.issubset(get_tools_by_mode("social"))
-    assert "wait_task" not in get_tools_by_mode("social")
-    assert {"manage_assistant_memory", "manage_assistant_runs"}.issubset(get_tools_by_mode("social"))
+    assert "execute_python" not in get_tools_by_mode("assistant")
+    assert {"read_file", "edit_file"}.issubset(get_tools_by_mode("assistant"))
+    assert "wait_task" not in get_tools_by_mode("assistant")
+    assert {"manage_assistant_memory", "manage_assistant_runs"}.issubset(get_tools_by_mode("assistant"))
     assert "execute_python" in get_tools_by_mode("office")
     assert {"call_sub_agent", "run_agent_workflow"}.isdisjoint(get_tools_by_mode("office"))
     monkeypatch.setattr(
         tool_registry, "_get_project_tool_names_by_mode", lambda mode: list(forbidden)
     )
-    assert forbidden.isdisjoint(get_tools_by_mode("social"))
+    assert forbidden.isdisjoint(get_tools_by_mode("assistant"))
     assert forbidden.isdisjoint(get_tools_by_mode("office"))
 
 
@@ -49,21 +49,21 @@ def test_office_is_a_leaf_child_of_assistant_and_retains_explicit_session_reuse(
     from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
 
     assert "office" in target_mode_values()
-    assert "assistant" not in target_mode_values()
-    assert "social" not in target_mode_values()
-    assert delegation_error("social", ["office"]) is None
+    assert {"assistant", "social"}.isdisjoint(target_mode_values())
+    assert delegation_error("assistant", ["office"]) is None
     assert delegation_error("query", ["office"])
     assert delegation_error("office", ["knowledge"])
-    assert delegation_error("social", ["assistant"])
+    assert delegation_error("assistant", ["assistant"])
     assert not get_agent_profile("office", profile="orchestrator").allow_delegation
     tool = CallSubAgentTool()
     assert not tool._should_auto_reuse_session("office", None, False, False)
     assert not tool._should_auto_reuse_session("office", "existing-office-session", False, False)
-    assert get_tools_by_mode("assistant") == get_tools_by_mode("office")
-    assert "办公模式（office）" in build_react_system_prompt("assistant")
+    assert get_tools_by_mode("assistant") != get_tools_by_mode("office")
+    assert get_agent_profile("assistant").allow_delegation
+    assert "助手模式（assistant）" in build_react_system_prompt("assistant")
 
 
-@pytest.mark.parametrize("mode", ["social", "office"])
+@pytest.mark.parametrize("mode", ["assistant", "office"])
 def test_extra_tools_cannot_restore_professional_execution(mode):
     from app.agent.runtime.agent_runtime import AgentRuntime
     from app.agent.runtime.types import RunState
@@ -86,7 +86,7 @@ def test_assistant_media_contract_survives_project_prompt_overrides(monkeypatch,
     from app.agent.prompts.assistant_role_contract import ASSISTANT_MEDIA_CONTRACT
 
     monkeypatch.setattr(settings, "project_id", project)
-    prompt = build_react_system_prompt("social")
+    prompt = build_react_system_prompt("assistant")
     assert ASSISTANT_MEDIA_CONTRACT in prompt
     if project == "default":
         assert "所有图片、图表、文件必须主动发送给用户" not in prompt

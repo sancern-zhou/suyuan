@@ -41,7 +41,7 @@
 
       <div class="actions-right-group">
         <button
-          v-if="['assistant', 'social'].includes(agentMode)"
+          v-if="agentMode === 'assistant'"
           type="button"
           class="panel-toggle-btn assistant-panel-trigger"
           title="事项与建议"
@@ -138,7 +138,7 @@
                 type="button"
                 class="more-menu-item"
                 role="menuitem"
-                v-if="!['assistant', 'social'].includes(agentMode)"
+                v-if="agentMode !== 'assistant'"
                 @click="handleMenuAction('view-memory')"
               >
                 <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">

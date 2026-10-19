@@ -698,7 +698,7 @@ class HeartbeatService:
   description: {description}
   enabled: true
   channels: {channels}
-  manual_mode: "{manual_mode or 'social'}"
+  manual_mode: "{manual_mode or 'assistant'}"
   next_run_at: "{next_run_at_str}"
 """
 

@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-SOCIAL_MEMORY_MODES = {"social", "enforcement_exam"}
+PERSONAL_MEMORY_MODES = {"assistant", "enforcement_exam"}
 HUMAN_FEEDBACK_DETAILS_MARKER = "本次反馈明细（请据此总结经验）："
 MEMORY_CONSOLIDATION_BATCH_SIZE = 10
 MEMORY_CONSOLIDATION_TRIGGER_COUNT = 50
@@ -79,7 +79,7 @@ def _human_feedback_learning_mode(user_query: str, fallback: str) -> str:
     if not isinstance(learning_mode, str) or not learning_mode.strip():
         return fallback
     learning_mode = learning_mode.strip()
-    if learning_mode in SOCIAL_MEMORY_MODES or learning_mode == "memory_consolidator":
+    if learning_mode in PERSONAL_MEMORY_MODES or learning_mode == "memory_consolidator":
         return fallback
     try:
         from app.agent.prompts.tool_registry import get_tools_by_mode
@@ -402,13 +402,13 @@ class ReActAgent:
         fixed_policy_context: Optional[str] = None,
         selected_resource_refs: Optional[List[StoredResource]] = None,
         user_identifier: Optional[str] = None,  # ✅ 新增：用户标识（可选）
-        social_memory_store: Optional[Any] = None,  # ✅ 新增：社交模式外部传入的memory_store（用户隔离）
-        social_user_preferences: Optional[dict] = None,  # ✅ 新增：社交模式用户偏好（仅social模式使用）
-        social_soul_file_path: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 文件路径
-        social_user_file_path: Optional[str] = None,  # ✅ 新增：社交模式 USER.md 文件路径
-        social_heartbeat_file_path: Optional[str] = None,  # ✅ 新增：社交模式 HEARTBEAT.md 文件路径
-        social_soul_context: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 内容（助理灵魂档案，仅social模式使用）
-        social_user_context: Optional[str] = None,  # ✅ 新增：社交模式用户上下文（USER.md内容，仅social模式使用）
+        assistant_memory_store: Optional[Any] = None,  # ✅ 新增：社交模式外部传入的memory_store（用户隔离）
+        assistant_user_preferences: Optional[dict] = None,  # ✅ 新增：社交模式用户偏好（仅助手模式使用）
+        assistant_soul_file_path: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 文件路径
+        assistant_user_file_path: Optional[str] = None,  # ✅ 新增：社交模式 USER.md 文件路径
+        assistant_heartbeat_file_path: Optional[str] = None,  # ✅ 新增：社交模式 HEARTBEAT.md 文件路径
+        assistant_soul_context: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 内容（助理灵魂档案，仅助手模式使用）
+        assistant_user_context: Optional[str] = None,  # ✅ 新增：社交模式用户上下文（USER.md内容，仅助手模式使用）
         board_context: Optional[Dict[str, Any]] = None,  # 画板模式 draw.io 上下文
         map_context: Optional[Dict[str, Any]] = None,  # 问数模式地图交互上下文
         skip_auto_followup: bool = False,  # 自动复核轮显式跳过再次触发
@@ -433,12 +433,12 @@ class ReActAgent:
             manual_mode: 双模式架构（assistant | expert，None则使用默认expert模式）
             attachments: 附件列表 [{file_id, name, type, url}]
             user_identifier: 用户标识（用于跨会话记忆，可选）
-            social_memory_store: 社交模式外部传入的memory_store（已含用户隔离），避免社交模式走UnifiedMemoryManager的共享路径
-            social_user_preferences: 社交模式用户偏好配置（仅social模式使用，用于动态提示词）
-            social_soul_file_path: 社交模式 soul.md 文件路径（仅social模式使用）
-            social_user_file_path: 社交模式 USER.md 文件路径（仅social模式使用）
-            social_soul_context: 社交模式 soul.md 内容（助理灵魂档案，仅social模式使用）
-            social_user_context: 社交模式用户上下文内容（USER.md，仅social模式使用，包含用户档案信息）
+            assistant_memory_store: 社交模式外部传入的memory_store（已含用户隔离），避免社交模式走UnifiedMemoryManager的共享路径
+            assistant_user_preferences: 社交模式用户偏好配置（仅助手模式使用，用于动态提示词）
+            assistant_soul_file_path: 社交模式 soul.md 文件路径（仅助手模式使用）
+            assistant_user_file_path: 社交模式 USER.md 文件路径（仅助手模式使用）
+            assistant_soul_context: 社交模式 soul.md 内容（助理灵魂档案，仅助手模式使用）
+            assistant_user_context: 社交模式用户上下文内容（USER.md，仅助手模式使用，包含用户档案信息）
             extra_tool_names: 本次运行临时追加暴露的工具名，不修改模式默认工具白名单
 
         Yields:
@@ -446,8 +446,6 @@ class ReActAgent:
             - type: "start" | "thought" | "action" | "observation" | "complete" | "error"
             - data: 事件数据
         """
-        # Legacy office runs keep working while new calls use the office mode ID.
-        manual_mode = "office" if manual_mode == "assistant" else manual_mode
         # ✅ 新增：构建user_id（根据用户反馈）
         memory_store = None
         memory_context = ""
@@ -456,12 +454,12 @@ class ReActAgent:
         memory_snapshot_created = False
         active_run_id = None
 
-        if self.enable_memory and manual_mode in SOCIAL_MEMORY_MODES and social_memory_store is None:
-            raise ValueError("Social memory requires a user-scoped memory store")
+        if self.enable_memory and manual_mode in PERSONAL_MEMORY_MODES and assistant_memory_store is None:
+            raise ValueError("Assistant memory requires a user-scoped memory store")
 
-        # ✅ 社交模式：使用外部传入的social_memory_store（用户隔离），不走UnifiedMemoryManager
-        if self.enable_memory and manual_mode in SOCIAL_MEMORY_MODES and social_memory_store is not None:
-            memory_store = social_memory_store
+        # ✅ 社交模式：使用外部传入的assistant_memory_store（用户隔离），不走UnifiedMemoryManager
+        if self.enable_memory and manual_mode in PERSONAL_MEMORY_MODES and assistant_memory_store is not None:
+            memory_store = assistant_memory_store
             try:
                 memory_store.create_snapshot()
                 memory_snapshot_created = True
@@ -473,16 +471,16 @@ class ReActAgent:
                 from .memory.active_memory_retriever import build_memory_context
 
                 memory_context = build_memory_context(
-                    memory_store=social_memory_store,
+                    memory_store=assistant_memory_store,
                     query=user_query,
                     recent_messages=initial_messages or []
                 )
             except ModuleNotFoundError as e:
                 logger.warning("active_memory_retriever_missing_fallback", error=str(e))
-                memory_context = social_memory_store.get_memory_context()
+                memory_context = assistant_memory_store.get_memory_context()
             unified_user_id = None  # 社交模式不走通用记忆整合
 
-        elif self.enable_memory and manual_mode and manual_mode not in SOCIAL_MEMORY_MODES:
+        elif self.enable_memory and manual_mode and manual_mode not in PERSONAL_MEMORY_MODES:
             # 非社交模式不按用户隔离；统一使用模式级共享记忆。
             unified_user_id = "global"
             memory_mode = manual_mode or "expert"
@@ -573,11 +571,11 @@ class ReActAgent:
             task_list=run_task_list,
             llm_planner=run_planner,
         )
-        if manual_mode in {"social", "office"}:
+        if manual_mode in {"assistant", "office"}:
             from app.agent.prompts.tool_registry import get_tools_by_mode
 
             allowed = set(get_tools_by_mode(manual_mode)) | {"submit_result"}
-            if manual_mode == "social":
+            if manual_mode == "assistant":
                 # Child executors receive their own policy-filtered registry;
                 # the coordinator itself cannot execute those tools.
                 run_executor.delegation_tool_registry = dict(run_executor.tool_registry)
@@ -587,9 +585,10 @@ class ReActAgent:
             }
             extra_tool_names = [name for name in (extra_tool_names or []) if name in allowed]
         run_executor.runtime_mode = manual_mode or "expert"
+        run_executor.session_storage_mode = session_storage_mode or manual_mode
         run_executor.user_identifier = user_identifier
-        run_executor.assistant_memory_store = memory_store if manual_mode == "social" else None
-        run_executor.assistant_profile_path = social_user_file_path if manual_mode == "social" else None
+        run_executor.assistant_memory_store = memory_store if manual_mode == "assistant" else None
+        run_executor.assistant_profile_path = assistant_user_file_path if manual_mode == "assistant" else None
         run_executor.runtime_metadata = dict(runtime_metadata or {})
         latest_resource_version: int | None = None
         resource_failures: list[dict[str, Any]] = []
@@ -600,7 +599,7 @@ class ReActAgent:
         )
 
         # ✅ 创建记忆快照
-        # 社交模式：使用外部传入的 social_memory_store
+        # 社交模式：使用外部传入的 assistant_memory_store
         # 其他模式：通过 UnifiedMemoryManager 获取
         if self.enable_memory and memory_store and not memory_snapshot_created:
             try:
@@ -732,9 +731,10 @@ class ReActAgent:
             react_loop.context_builder.client_channel = str(
                 (runtime_metadata or {}).get("client_channel") or ""
             ).strip().lower() or None
+            react_loop.context_builder.session_storage_mode = session_storage_mode or manual_mode
             react_loop.context_builder.authenticated_account = (
                 (runtime_metadata or {}).get("authenticated_account")
-                if manual_mode == "social" else None
+                if manual_mode == "assistant" else None
             )
 
             if manual_mode in {"query", "graph"} and map_context:
@@ -758,15 +758,15 @@ class ReActAgent:
                     mode=manual_mode
                 )
 
-            # ✅ 设置社交上下文到上下文构建器（仅social模式使用）
+            # ✅ 设置社交上下文到上下文构建器（仅助手模式使用）
             # 同时设置记忆工具的用户上下文（确保 remember_fact 等工具写入正确的用户隔离路径）
-            if manual_mode in SOCIAL_MEMORY_MODES:
-                react_loop.context_builder.user_preferences = social_user_preferences
-                react_loop.context_builder.soul_file_path = social_soul_file_path  # ✅ 传递 soul.md 文件路径
-                react_loop.context_builder.user_file_path = social_user_file_path  # ✅ 传递 USER.md 文件路径
-                react_loop.context_builder.heartbeat_file_path = social_heartbeat_file_path  # ✅ 传递 HEARTBEAT.md 文件路径
-                react_loop.context_builder.soul_context = social_soul_context  # ✅ 传递 soul.md 内容
-                react_loop.context_builder.user_context = social_user_context  # ✅ 传递用户上下文（USER.md）
+            if manual_mode in PERSONAL_MEMORY_MODES:
+                react_loop.context_builder.user_preferences = assistant_user_preferences
+                react_loop.context_builder.soul_file_path = assistant_soul_file_path  # ✅ 传递 soul.md 文件路径
+                react_loop.context_builder.user_file_path = assistant_user_file_path  # ✅ 传递 USER.md 文件路径
+                react_loop.context_builder.heartbeat_file_path = assistant_heartbeat_file_path  # ✅ 传递 HEARTBEAT.md 文件路径
+                react_loop.context_builder.soul_context = assistant_soul_context  # ✅ 传递 soul.md 内容
+                react_loop.context_builder.user_context = assistant_user_context  # ✅ 传递用户上下文（USER.md）
 
                 # ✅ 设置记忆工具的用户上下文（确保写入正确的用户隔离路径）
                 from app.tools.social.remember_fact.tool import RememberFactTool
@@ -774,9 +774,9 @@ class ReActAgent:
                 from app.tools.social.remove_memory.tool import RemoveMemoryTool
                 social_user_id = user_identifier  # social_user_id 即 user_identifier
                 if social_user_id:
-                    RememberFactTool.set_memory_context("social", social_user_id)
-                    ReplaceMemoryTool.set_memory_context("social", social_user_id)
-                    RemoveMemoryTool.set_memory_context("social", social_user_id)
+                    RememberFactTool.set_memory_context("assistant", social_user_id)
+                    ReplaceMemoryTool.set_memory_context("assistant", social_user_id)
+                    RemoveMemoryTool.set_memory_context("assistant", social_user_id)
                 else:
                     RememberFactTool.clear_memory_context()
                     ReplaceMemoryTool.clear_memory_context()
@@ -791,9 +791,9 @@ class ReActAgent:
                     memory_file_path=react_loop.context_builder.memory_file_path,
                     soul_file_path=react_loop.context_builder.soul_file_path,  # ✅ 新增日志
                     user_file_path=react_loop.context_builder.user_file_path,  # ✅ 新增日志
-                    has_user_preferences=social_user_preferences is not None,
-                    has_soul_context=social_soul_context is not None,  # ✅ 新增日志
-                    has_user_context=social_user_context is not None,  # ✅ 新增日志
+                    has_user_preferences=assistant_user_preferences is not None,
+                    has_soul_context=assistant_soul_context is not None,  # ✅ 新增日志
+                    has_user_context=assistant_user_context is not None,  # ✅ 新增日志
                     social_user_id=social_user_id
                 )
             elif manual_mode:
@@ -989,9 +989,9 @@ class ReActAgent:
                     )
 
             # ✅ 后台记忆整合（新增，与上下文压缩完全分离）
-            # ⚠️ 社交模式的记忆整合由 agent_bridge.py 负责（使用用户隔离的 social_memory_store），
+            # ⚠️ 社交模式的记忆整合由 agent_bridge.py 负责（使用用户隔离的 assistant_memory_store），
             #    此处只为非社交模式触发整合
-            if unified_user_id and manual_mode and manual_mode not in SOCIAL_MEMORY_MODES:
+            if unified_user_id and manual_mode and manual_mode not in PERSONAL_MEMORY_MODES:
                 try:
                     learning_mode = _human_feedback_learning_mode(user_query, manual_mode)
                     current_messages = memory_manager.session.get_messages_for_llm() if memory_manager else []
@@ -1014,7 +1014,7 @@ class ReActAgent:
                     )
 
             # ✅ 清理记忆快照
-            # 社交模式：使用外部传入的 social_memory_store
+            # 社交模式：使用外部传入的 assistant_memory_store
             # 其他模式：通过 UnifiedMemoryManager 获取
             if memory_store:
                 try:

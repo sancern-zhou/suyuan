@@ -27,7 +27,7 @@ export function buildAnalyzeRequestBody(query, options = {}) {
     enhance_with_history: enhanceWithHistory,
     max_iterations: maxIterations,
     assistant_mode: assistantMode,
-    mode: agentMode === 'assistant' ? 'social' : agentMode,
+    mode: agentMode,
     knowledge_base_ids: knowledgeBaseIds,
     model_tier: modelTier,
     is_interruption: isInterruption,

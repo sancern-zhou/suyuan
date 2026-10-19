@@ -522,7 +522,7 @@ class SocialAppApi(
             buildList {
                 for (index in 0 until array.length()) {
                     val item = array.getJSONObject(index)
-                    add(SessionInfo(item.getString("session_id"), item.optString("mode", "social"), item.optString("title", "新对话"), if (item.has("updated_at")) item.optString("updated_at") else null))
+                    add(SessionInfo(item.getString("session_id"), item.optString("mode", "assistant"), item.optString("title", "新对话"), if (item.has("updated_at")) item.optString("updated_at") else null))
                 }
             }
         }
@@ -536,7 +536,7 @@ class SocialAppApi(
         response.use {
             if (!it.isSuccessful) throw ApiException(it.code, "新建对话失败 (${it.code})")
             val json = JSONObject(it.body?.string().orEmpty())
-            SessionInfo(json.getString("session_id"), json.optString("mode", "social"), json.optString("title", "新对话"))
+            SessionInfo(json.getString("session_id"), json.optString("mode", "assistant"), json.optString("title", "新对话"))
         }
     }
 
@@ -549,7 +549,7 @@ class SocialAppApi(
         response.use {
             if (!it.isSuccessful) throw ApiException(it.code, "会话重命名失败 (${it.code})")
             val json = JSONObject(it.body?.string().orEmpty())
-            SessionInfo(sessionId, "social", json.optString("title", title))
+            SessionInfo(sessionId, "assistant", json.optString("title", title))
         }
     }
 

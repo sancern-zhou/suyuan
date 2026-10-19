@@ -16,7 +16,7 @@ ALL_MODE_LISTS = [
     tool_registry.BOARD_TOOL_NAMES,
     tool_registry.OPS_TOOL_NAMES,
     tool_registry.GRAPH_TOOL_NAMES,
-    tool_registry.SOCIAL_TOOL_NAMES,
+    tool_registry.ASSISTANT_TOOL_NAMES,
     tool_registry.MEMORY_CONSOLIDATOR_TOOL_NAMES,
     tool_registry.DELIBERATION_METEOROLOGY_TOOL_NAMES,
     tool_registry.DELIBERATION_MONITORING_TOOL_NAMES,

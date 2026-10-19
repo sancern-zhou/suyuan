@@ -238,7 +238,7 @@ class AgentLogger:
         metadata = self.current_run.get("metadata") or {}
         runtime_mode = metadata.get("runtime_mode") or metadata.get("mode")
         user_identifier = metadata.get("user_identifier") or metadata.get("user_id")
-        if runtime_mode != "social" or not user_identifier:
+        if runtime_mode != "assistant" or not user_identifier:
             return
 
         try:
@@ -246,7 +246,7 @@ class AgentLogger:
 
             get_fts_index().add_record(
                 self.current_run,
-                owner_type="social",
+                owner_type="assistant",
                 owner_id=str(user_identifier),
                 source_path=str(self.log_file) if self.log_file else "",
             )

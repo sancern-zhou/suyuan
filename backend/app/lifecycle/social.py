@@ -47,7 +47,7 @@ async def start_social_platform_service(app: FastAPI) -> None:
             agent=agent,
             message_bus=message_bus,
             session_mapper=session_mapper,
-            mode="social",
+            mode="assistant",
         )
 
         message_bus.agent_bridge = agent_bridge

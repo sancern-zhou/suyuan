@@ -36,7 +36,7 @@ OPS_WEEKLY_AUDIT_TASK_PROMPT = """这是每周运维工单审核定时任务。
 6. 如果 report_ready=false，交付 report_input_path 中的 pending_review_items、pending_semantic_reviews 及原因，不生成正式报告，也不等待在线确认。"""
 
 
-EXECUTION_MODES = ("office", "assistant", "expert", "ops", "query", "social", "custom", "workflow")
+EXECUTION_MODES = ("office", "assistant", "expert", "ops", "query", "assistant", "custom", "workflow")
 MODEL_TIERS = ("auto", "flash", "pro")
 TRIGGER_TYPES = ("schedule", "event")
 
@@ -57,7 +57,7 @@ class CreateScheduledTaskTool(LLMTool):
                 "灵活：once（需 run_at）/ interval（需 interval_minutes）/ daily_custom（需 hour、minute）/ "
                 "weekly_custom（需 day_of_week、hour、minute）/ monthly_custom（需 day_of_month、hour、minute）/ "
                 "quarterly_custom（需 day_of_month、hour、minute）\n\n"
-                "执行模式（execution_mode）：office（办公）/social（助手）/expert/ops/query/custom/workflow；assistant 仅兼容历史办公任务\n"
+                "执行模式（execution_mode）：assistant（助手）/office（办公）/expert/ops/query/custom/workflow\n"
                 "- custom 必须传 tool_names；workflow 必须传 workflow_name\n"
                 "- 事件触发任务需 trigger_type=event 且传 event_type（事件任务无调度周期，由业务事件触发）\n"
                 "- broadcast_enabled=true 时必须传 target_user_ids\n"
@@ -374,8 +374,8 @@ class CreateScheduledTaskTool(LLMTool):
 1. name: 任务名称（简短，10字以内）
 2. description: 任务描述（详细说明任务目的）
    模型档位 model_tier: 仅支持 "auto"、"flash"、"pro"；用户未指定时为 "auto"。
-3. execution_mode: 执行模式，支持 "office"、"expert"、"ops"、"query"、"social"、"custom"、"workflow"；assistant 仅兼容历史办公任务
-   - 轻办公内容使用 office，通知、事项协调使用 social；专业任务使用对应专业执行模式
+3. execution_mode: 执行模式，支持 "office"、"expert"、"ops"、"query"、"assistant"、"custom"、"workflow"
+   - 轻办公内容使用 office，通知、事项协调使用 assistant；专业任务使用对应专业执行模式
    - 数据分析、专业推理任务优先使用 "expert"
    - 运维工单审核、运维表单审核、工单复核任务优先使用 "ops"，由当前运维 Agent 直接执行，不调用子 Agent
    - custom 模式必须额外提供 tool_names（工具名称列表）；workflow 模式必须额外提供 workflow_name
@@ -474,7 +474,7 @@ class CreateScheduledTaskTool(LLMTool):
   "target_user_ids": ["user_001"],
   "prompt": "根据任务描述生成适合广播给社交用户的简短内容，然后调用 broadcast_social_users 工具发送。",
   "timeout_seconds": 600,
-  "tags": ["broadcast", "social"]
+  "tags": ["broadcast", "assistant"]
 }}
 
 示例6（每周运维工单审核）：

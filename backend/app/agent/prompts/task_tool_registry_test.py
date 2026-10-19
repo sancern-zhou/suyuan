@@ -1,8 +1,8 @@
 from app.agent.prompts.tool_registry import ASSISTANT_TOOL_ORDER, BOARD_TOOL_ORDER, get_tools_by_mode
-from app.agent.prompts.assistant_prompt import build_assistant_prompt
 from app.agent.prompts.board_prompt import build_board_prompt
 from app.agent.prompts.ops_prompt import build_ops_prompt
-from app.agent.prompts.social_prompt import build_social_prompt
+from app.agent.prompts.assistant_prompt import build_assistant_prompt
+from app.agent.prompts.office_prompt import build_office_prompt
 
 
 def test_project_specific_mode_is_resolved_before_builtin_validation(monkeypatch):
@@ -59,7 +59,7 @@ def test_office_does_not_query_business_databases():
 
 
 def test_assistant_mode_keeps_lightweight_office_and_web_tools():
-    tools = get_tools_by_mode("assistant")
+    tools = get_tools_by_mode("office")
 
     assert {
         "list_directory", "search_files", "read_file", "write_file", "edit_file", "grep",
@@ -106,7 +106,7 @@ def test_social_mode_has_no_chart_or_report_executor(monkeypatch):
     from config.settings import settings
 
     monkeypatch.setattr(settings, "project_id", "default")
-    tools = get_tools_by_mode("social")
+    tools = get_tools_by_mode("assistant")
 
     assert "create_business_chart" not in tools
     assert "create_report_package" not in tools
@@ -115,7 +115,7 @@ def test_social_mode_has_no_chart_or_report_executor(monkeypatch):
 
 
 def test_social_prompt_hands_reports_to_professional_mode():
-    prompt = build_social_prompt(
+    prompt = build_assistant_prompt(
         ["create_business_chart", "create_report_package", "call_sub_agent"],
     )
 
@@ -145,7 +145,7 @@ def test_assistant_prompt_does_not_describe_task_tools():
 
 
 def test_office_prompt_is_a_bounded_daily_executor():
-    prompt = build_assistant_prompt(["call_sub_agent"])
+    prompt = build_office_prompt(["call_sub_agent"])
 
     assert "办公模式（office）" in prompt
     assert "不再次委派" in prompt
@@ -158,7 +158,7 @@ def test_office_prompt_is_a_bounded_daily_executor():
 def test_tender_export_is_direct_and_query_is_guangdong_environment_only():
     from app.agent.prompts.query_prompt import build_query_prompt
 
-    assistant = build_assistant_prompt(["execute_tender_sql_query", "execute_python", "call_sub_agent"])
+    assistant = build_office_prompt(["execute_tender_sql_query", "execute_python", "call_sub_agent"])
     assert "不查询环境业务数据库和气象数据" in assistant
     assert "不调用知识问答工具" in assistant
     assert 'target_mode="query"' not in assistant

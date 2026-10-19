@@ -92,9 +92,9 @@ class ManageAssistantMemoryTool(LLMTool):
             if kwargs or action not in {"read", "update", "delete"}:
                 raise ValueError("不支持的参数或操作")
             store = getattr(context, "assistant_memory_store", None)
-            if getattr(context, "runtime_mode", None) != "social" or store is None:
+            if getattr(context, "runtime_mode", None) != "assistant" or store is None:
                 raise PermissionError("当前会话未绑定个人记忆")
-            if store.mode != "social" or not store.user_id or store.user_id == "global":
+            if store.mode != "assistant" or not store.user_id or store.user_id == "global":
                 raise PermissionError("不能访问共享记忆")
             if document == "fact":
                 if (

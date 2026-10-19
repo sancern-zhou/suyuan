@@ -103,7 +103,7 @@ class AppChatRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=20000)
     session_id: str | None = Field(default=None, max_length=128)
     attachments: list[dict] = Field(default_factory=list, max_length=8)
-    mode: Literal["query", "knowledge", "expert", "social"] = "expert"
+    mode: Literal["query", "knowledge", "expert", "assistant"] = "expert"
     request_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
@@ -519,7 +519,7 @@ async def upload_file(
     return await upload_chat_file(
         file=file,
         session_id=session_id,
-        mode="social",
+        mode="assistant",
         db=db,
         user=identity.as_current_user(),
         catalog=get_conversation_catalog(),
@@ -989,7 +989,7 @@ async def _get_memory_store(identity: AppIdentity):
 
     store = _memory_managers.get(identity.social_user_id)
     if store is None:
-        store = ImprovedMemoryStore(user_id=identity.social_user_id, mode="social")
+        store = ImprovedMemoryStore(user_id=identity.social_user_id, mode="assistant")
         _memory_managers[identity.social_user_id] = store
     return store
 
@@ -1000,16 +1000,16 @@ def _social_preferences(identity: AppIdentity) -> dict:
     manager = UserPreferences(identity.social_user_id)
     preferences = manager.get_preferences() or {}
     return {
-        "social_user_preferences": preferences,
-        "social_soul_file_path": str(manager.soul_file.resolve()) if manager.soul_file else None,
-        "social_user_file_path": str(manager.user_file.resolve()) if manager.user_file else None,
-        "social_heartbeat_file_path": str(manager.heartbeat_file.resolve()) if manager.heartbeat_file else None,
-        "social_soul_context": manager.load_soul_md(),
-        "social_user_context": manager.load_user_md(),
+        "assistant_user_preferences": preferences,
+        "assistant_soul_file_path": str(manager.soul_file.resolve()) if manager.soul_file else None,
+        "assistant_user_file_path": str(manager.user_file.resolve()) if manager.user_file else None,
+        "assistant_heartbeat_file_path": str(manager.heartbeat_file.resolve()) if manager.heartbeat_file else None,
+        "assistant_soul_context": manager.load_soul_md(),
+        "assistant_user_context": manager.load_user_md(),
     }
 
 
-_APP_SOCIAL_SESSION_RE = re.compile(r"^social_session_\d{10,}_[0-9a-f]{12}$")
+_APP_ASSISTANT_SESSION_RE = re.compile(r"^assistant_session_\d{10,}_[0-9a-f]{12}$")
 
 
 async def _lazy_register_current_mapping(
@@ -1022,11 +1022,11 @@ async def _lazy_register_current_mapping(
     App 端“新建对话”只生成本地映射（create_app_session 不写目录），且 App
     本地会保留历史入口——用户之后任何时候点击都可能先于首条消息触发恢复。
     mapper 只存当前一条映射，覆盖不了多次新建后点击旧入口的场景，因此放宽为
-    格式校验通过（social_session_ 前缀 + 时间戳 + 随机段）即注册给当前用户。
+    格式校验通过（assistant_session_ 前缀 + 时间戳 + 随机段）即注册给当前用户。
     未注册会话尚无内容，误注册只会得到空会话；定时任务/广播会话走各自的
     授权路径，不在此列。
     """
-    if not _APP_SOCIAL_SESSION_RE.fullmatch(session_id):
+    if not _APP_ASSISTANT_SESSION_RE.fullmatch(session_id):
         return False
     catalog = get_conversation_catalog()
     if await catalog.find(session_id) is not None:
@@ -1058,7 +1058,7 @@ async def _ensure_session(
         # account; re-registering it would attempt to transfer ownership.
         return requested_session_id
     else:
-        session_id = await mapper.get_or_create_session(identity.social_user_id, mode="social")
+        session_id = await mapper.get_or_create_session(identity.social_user_id, mode="assistant")
 
     # 已在目录中的会话不重复注册：register_identity 对同 owner 是幂等的，
     # 但显式跳过可避免绑定账号路径上误触发所有权转移。
@@ -1082,7 +1082,7 @@ async def _register_social_session(
         owner_username=identity.account_id,
         owner_display_name=identity.display_name,
         source=ConversationSource.SOCIAL,
-        mode="social",
+        mode="assistant",
         title=None,
         read_only_on_web=True,
     )
@@ -1136,7 +1136,7 @@ async def _persist_app_turn(
     )
     from app.agent.session.conversation_persistence import ConversationPersistenceService
 
-    session = await load_session_for_mode(session_id, mode="social")
+    session = await load_session_for_mode(session_id, mode="channel")
     if session is None:
         session = Session(session_id=session_id, query=query)
     elif not session.query:
@@ -1146,7 +1146,7 @@ async def _persist_app_turn(
         session,
         display_history=display_history,
     )
-    saved = await append_session_transcript_for_mode(session, mode="social")
+    saved = await append_session_transcript_for_mode(session, mode="channel")
     if not saved:
         raise RuntimeError("app_transcript_save_failed")
 
@@ -1448,9 +1448,9 @@ async def _stream_events_unlocked(
             user_query=query,
             session_id=session_id,
             manual_mode=mode,
-            session_storage_mode="social",
+            session_storage_mode="channel",
             user_identifier=identity.social_user_id,
-            social_memory_store=memory_store,
+            assistant_memory_store=memory_store,
             **social_context,
             attachments=fallback_attachments or None,
             selected_resource_refs=resource_refs or None,
@@ -1717,7 +1717,7 @@ async def sessions(request: Request, identity: AppIdentity = Depends(require_app
         return [
             {
                 "session_id": row.session_id,
-                "mode": row.mode or "social",
+                "mode": row.mode or "assistant",
                 "title": row.title or "新对话",
                 "created_at": row.created_at.isoformat(),
                 "updated_at": row.updated_at.isoformat(),
@@ -1726,19 +1726,19 @@ async def sessions(request: Request, identity: AppIdentity = Depends(require_app
         ]
     mapper = await _loaded_session_mapper(request)
     session_id = await mapper.get_session(identity.social_user_id)
-    return [{"session_id": session_id, "mode": "social", "title": "新对话"}] if session_id else []
+    return [{"session_id": session_id, "mode": "assistant", "title": "新对话"}] if session_id else []
 
 
 @router.post("/sessions")
 async def create_app_session(request: Request, identity: AppIdentity = Depends(require_app_identity)) -> dict:
     """Create and persist a new Android App conversation session."""
     mapper = await _loaded_session_mapper(request)
-    session_id = mapper.new_session_id(mode="social")
+    session_id = mapper.new_session_id(mode="assistant")
     await mapper.save_mapping(identity.social_user_id, session_id)
     # 懒注册：此处不写会话目录。App 端“新建对话/从广播退出”都可能触发本接口，
     # 若立即注册，用户未实际发送任何消息就会在历史列表留下空会话。
     # 会话在首条消息（start_app_run → _ensure_session）时才注册进目录。
-    return {"session_id": session_id, "mode": "social", "title": "新对话"}
+    return {"session_id": session_id, "mode": "assistant", "title": "新对话"}
 
 
 @router.patch("/sessions/{session_id}")

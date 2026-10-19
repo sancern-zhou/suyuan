@@ -403,6 +403,35 @@ class ScheduledTaskExecutor:
             iterations=result.get("iterations", 0),
         )
 
+    @staticmethod
+    async def _assistant_task_context(task):
+        """Use persisted server ownership, never the scheduled prompt, for identity."""
+        from app.auth.models import CurrentUser
+        from app.conversations.dependencies import get_conversation_catalog
+        from app.conversations.schemas import ConversationSource
+        from app.social.assistant_identity import assistant_account_context
+        from app.social.web_assistant import assistant_personal_context, web_assistant_context
+
+        if task is None or not task.owner_user_id or task.owner_user_id == "system":
+            raise PermissionError("助手计划缺少用户归属")
+        user = CurrentUser(
+            id=task.owner_user_id,
+            username=task.owner_username,
+            display_name=task.owner_display_name,
+        )
+        source = (
+            await get_conversation_catalog().find(task.source_session_id)
+            if task.source_session_id else None
+        )
+        if source is not None and source.owner_user_id != user.id:
+            raise PermissionError("助手计划来源与归属不匹配")
+        context = (
+            assistant_personal_context(user.id)
+            if source is not None and source.source == ConversationSource.SOCIAL
+            else web_assistant_context(user)
+        )
+        return context, assistant_account_context(user)
+
     async def _run_agent(
         self,
         prompt: str,
@@ -470,6 +499,12 @@ class ScheduledTaskExecutor:
             "timestamp": datetime.now().isoformat(),
         }]
 
+        assistant_context = {}
+        metadata = dict(runtime_metadata or {})
+        if manual_mode == "assistant":
+            assistant_context, account = await self._assistant_task_context(task)
+            metadata["authenticated_account"] = account
+
         # ✅ 执行Agent分析，传入 session_id 以复用上下文
         analysis_error: BaseException | None = None
         try:
@@ -481,7 +516,8 @@ class ScheduledTaskExecutor:
                 selected_skill_context=selected_skill_context,
                 knowledge_base_ids=knowledge_base_ids,
                 extra_tool_names=extra_tool_names or [],
-                runtime_metadata=runtime_metadata or {},
+                runtime_metadata=metadata,
+                **assistant_context,
             ):
                 event_type = event.get("type")
                 event_data = event.get("data") if isinstance(event.get("data"), dict) else {}

@@ -148,7 +148,7 @@
                 <option value="expert">expert</option>
                 <option value="query">query</option>
                 <option value="ops">ops（运维）</option>
-                <option value="social">助手模式</option>
+                <option value="assistant">助手模式</option>
                 <option value="custom">custom（自选工具）</option>
                 <option value="workflow">workflow（确定性工作流）</option>
               </select>
@@ -975,7 +975,7 @@ const getExecutionModeLabel = (mode) => {
     expert: '专家模式',
     query: '问数模式',
     ops: '运维模式',
-    social: '助手模式',
+
     custom: '自定义工具模式',
     workflow: '确定性工作流'
   }

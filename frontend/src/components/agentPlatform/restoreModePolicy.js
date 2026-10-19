@@ -15,6 +15,6 @@ export const resolveRestoredAgentMode = (sessionData, sessionId, currentMode) =>
     'assistant'
   ]
 
-  return candidates.map(mode => mode === 'social' ? 'assistant' : mode)
+  return candidates
     .find(mode => AGENT_MODE_IDS.includes(mode)) || 'assistant'
 }

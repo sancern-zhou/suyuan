@@ -11,8 +11,8 @@ from app.agent.session import Session
 from app.agent.prompts.prompt_builder import build_react_system_prompt
 from app.agent.prompts.tool_registry import (
     MEMORY_CONSOLIDATOR_TOOLS,
-    SOCIAL_TOOL_NAMES,
-    SOCIAL_TOOL_ORDER,
+    ASSISTANT_TOOL_NAMES,
+    ASSISTANT_TOOL_ORDER,
 )
 from app.agent.runtime.tool_coordinator import ToolCoordinator
 from app.agent.runtime.multimodal import (
@@ -172,21 +172,21 @@ def test_persisted_social_image_content_never_contains_base64(tmp_path: Path):
 
 
 def test_social_mode_does_not_expose_analyze_image_tool():
-    assert "analyze_image" not in SOCIAL_TOOL_NAMES
+    assert "analyze_image" not in ASSISTANT_TOOL_NAMES
 
 
 def test_social_tool_order_does_not_reference_analyze_image():
-    assert "analyze_image" not in SOCIAL_TOOL_ORDER
+    assert "analyze_image" not in ASSISTANT_TOOL_ORDER
 
 
 def test_social_mode_does_not_expose_memory_mutation_tools():
-    schemas = get_tool_schemas(mode="social")
+    schemas = get_tool_schemas(mode="assistant")
     names = {schema["name"] for schema in schemas}
 
     hidden_tools = {"remember_fact", "replace_memory", "remove_memory", "TodoWrite"}
     assert names.isdisjoint(hidden_tools)
-    assert set(SOCIAL_TOOL_NAMES).isdisjoint(hidden_tools)
-    assert hidden_tools.isdisjoint(SOCIAL_TOOL_ORDER)
+    assert set(ASSISTANT_TOOL_NAMES).isdisjoint(hidden_tools)
+    assert hidden_tools.isdisjoint(ASSISTANT_TOOL_ORDER)
 
 
 def test_memory_consolidator_still_exposes_memory_mutation_tools():
@@ -224,7 +224,7 @@ def test_memory_consolidator_prompt_filters_available_tools():
 
 
 def test_social_read_file_schema_does_not_advertise_image_analysis():
-    schemas = get_tool_schemas(mode="social")
+    schemas = get_tool_schemas(mode="assistant")
     read_file_schema = next(schema for schema in schemas if schema["name"] == "read_file")
 
     serialized = str(read_file_schema)
@@ -236,7 +236,7 @@ def test_social_read_file_schema_does_not_advertise_image_analysis():
 
 
 def test_social_read_file_schema_exposes_multimodal_attachment_for_images():
-    schemas = get_tool_schemas(mode="social")
+    schemas = get_tool_schemas(mode="assistant")
     read_file_schema = next(schema for schema in schemas if schema["name"] == "read_file")
 
     properties = read_file_schema["parameters"]["properties"]
@@ -257,7 +257,7 @@ def test_non_social_read_file_schema_exposes_opt_in_multimodal_attachment():
 def test_read_file_input_never_implicitly_enables_multimodal_attachment():
     coordinator = ToolCoordinator(tool_executor=object())
 
-    social_args = coordinator.normalize_tool_input("read_file", {"path": "/tmp/a.png"}, mode="social")
+    social_args = coordinator.normalize_tool_input("read_file", {"path": "/tmp/a.png"}, mode="assistant")
     expert_args = coordinator.normalize_tool_input("read_file", {"path": "/tmp/a.png"}, mode="expert")
 
     assert "as_multimodal_attachment" not in social_args
@@ -329,7 +329,7 @@ async def test_social_media_is_registered_as_a_session_attachment_resource(tmp_p
         message_bus=MessageBus(),
         agent=object(),
         session_mapper=object(),
-        mode="social",
+        mode="assistant",
         enable_heartbeat=False,
         enable_memory=False,
         resource_service=resource_service,
@@ -375,7 +375,7 @@ async def test_social_transcript_persists_resource_attachment(monkeypatch, tmp_p
         message_bus=MessageBus(),
         agent=RecordingAgent(),
         session_mapper=object(),
-        mode="social",
+        mode="assistant",
         enable_heartbeat=False,
         enable_memory=False,
         resource_service=resource_service,
@@ -419,7 +419,7 @@ async def test_social_bridge_passes_media_as_attachments_and_hides_local_paths(t
             yield {"type": "complete", "data": {"response": "看到了"}}
 
     class SessionMapper:
-        async def get_or_create_session(self, social_user_id, mode="social"):
+        async def get_or_create_session(self, social_user_id, mode="assistant"):
             return "social-session"
 
     agent = RecordingAgent()
@@ -427,7 +427,7 @@ async def test_social_bridge_passes_media_as_attachments_and_hides_local_paths(t
         message_bus=MessageBus(),
         agent=agent,
         session_mapper=SessionMapper(),
-        mode="social",
+        mode="assistant",
         enable_heartbeat=False,
         enable_memory=False,
         resource_service=SessionResourceService.in_memory(),
@@ -473,7 +473,7 @@ async def test_social_bridge_keeps_local_images_off_the_transient_url_path(tmp_p
         message_bus=MessageBus(),
         agent=object(),
         session_mapper=object(),
-        mode="social",
+        mode="assistant",
         enable_heartbeat=False,
         enable_memory=False,
     )
@@ -507,7 +507,7 @@ async def test_planner_passes_provider_model_override_to_llm_service():
         user_conversation="user",
         tools=[],
         iteration=1,
-        mode="social",
+        mode="assistant",
         llm_provider="minimax",
         llm_model="MiniMax-M3",
     ):
@@ -582,7 +582,7 @@ async def test_planner_retries_minimax_fetch_url_failure_with_base64(tmp_path: P
         user_conversation="user",
         tools=[],
         iteration=1,
-        mode="social",
+        mode="assistant",
         user_content=user_content,
         attachments=[
             {

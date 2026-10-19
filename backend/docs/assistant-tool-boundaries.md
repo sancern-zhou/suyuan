@@ -1,5 +1,9 @@
 # 助手工具边界与委派运行
 
+运行模式统一为 `assistant`（助手）和 `office`（办公子 Agent），不接受旧 `social` 模式，也不再将 `assistant` 映射成办公模式。
+Web/App 共用助手提示词和权限；客户端来源与会话存储独立于模式。Web 使用数据库，App/消息渠道显式使用 channel 文件存储。
+不迁移或兼容旧会话；个人档案继续使用既有的用户隔离路径。`app.social`、`/api/social` 等保留为渠道集成命名，不是 Agent 模式。
+
 助手使用 `manage_assistant_memory` 维护本人档案，使用 `manage_assistant_runs` 跟踪实际委派。
 保留 `read_file`、`edit_file`，用于基础文档阅读和简单文本编辑；不开放 `wait_task`、Bash、CLI 或脚本执行。
 办公模式保留文件处理能力，专业执行器继续承担业务数据、图表、知识库与报告职责。
@@ -17,7 +21,7 @@
 
 ## 跨端资源交付
 
-- Web、App 共用资源登记和交付协议；服务端 client_channel 决定交互约定，social 不等同于微信。
+- Web、App 共用资源登记和交付协议；服务端 client_channel 决定交互约定，assistant 不等同于微信。
 - 上传图片、文件优先复用会话资源；子 Agent 保留附件引用，交付时保留真实图片标记。
 - App 通过资源事件获得原生图片、附件卡片；普通对话文件交付不需要另发通知。
 - 自动登记的产物不重复发布；普通文件编辑后需确认最新版本已登记，否则发布实际文件。
@@ -25,7 +29,7 @@
 
 ## 委派运行
 
-- social 调用 `call_sub_agent`、`run_agent_workflow` 时记录独立 delegation ID。
+- assistant 调用 `call_sub_agent`、`run_agent_workflow` 时记录独立 delegation ID。
 - 记录位于 DATA_REGISTRY_DIR 下 assistant_runs，按项目和服务端解析的用户标识隔离。
   不迁移旧任务或按旧 ID 查询。
 - `list/get/result` 从持久记录查询；result 分页返回真实工具结果，避免将大结果一次塞入模型上下文。

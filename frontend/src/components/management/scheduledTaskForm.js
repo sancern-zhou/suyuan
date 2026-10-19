@@ -16,17 +16,17 @@ export const buildExecutionModeOptions = (
   currentMode = '',
 ) => {
   const options = projectModes.map(mode => {
-    const id = mode.id === 'assistant' ? 'social' : mode.id
+    const id = mode.id
     return { value: id, label: `${id}（${mode.shortName || mode.name || id}）` }
   })
   options.push(
     { value: 'office', label: 'office（办公模式）' },
-    { value: 'social', label: 'social（助手模式）' },
+    { value: 'assistant', label: 'assistant（助手模式）' },
     { value: 'custom', label: 'custom（自选工具）' },
     { value: 'workflow', label: 'workflow（确定性工作流）' }
   )
   if (currentMode && !options.some(option => option.value === currentMode)) {
-    const label = currentMode === 'assistant' ? 'assistant（办公模式，历史配置）' : `${currentMode}（当前任务模式）`
+    const label = `${currentMode}（当前任务模式）`
     options.push({ value: currentMode, label })
   }
   return options.filter((option, index, values) => (
@@ -41,7 +41,7 @@ export const applyTriggerDefaults = (form, triggerType, eventTypes = []) => {
   if (triggerType === 'event') {
     // 工作流任务是代码注册的确定性单元，切换触发方式不得改写其执行模式。
     if (previousMode !== 'workflow') {
-      form.execution_mode = 'social'
+      form.execution_mode = 'assistant'
     }
     form.tool_names = []
     form.broadcast_enabled = true

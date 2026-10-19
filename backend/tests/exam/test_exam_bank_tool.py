@@ -44,7 +44,7 @@ async def test_react_adapter_exposes_and_routes_generate_exam_bank():
 
     result = await call_llm_tool(
         "generate_exam_bank",
-        SimpleNamespace(runtime_mode="social", user_identifier="u-1"),
+        SimpleNamespace(runtime_mode="assistant", user_identifier="u-1"),
         action="list_sources",
     )
     assert result["success"] is False
@@ -59,7 +59,7 @@ async def test_generate_exam_bank_rejects_non_exam_runtime_without_opening_db():
 
     tool = GenerateExamBankTool(session_factory=SessionFactory())
     result = await tool.execute(
-        context=SimpleNamespace(runtime_mode="social", user_identifier="u-1"),
+        context=SimpleNamespace(runtime_mode="assistant", user_identifier="u-1"),
         action="list_sources",
     )
 

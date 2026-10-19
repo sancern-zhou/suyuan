@@ -59,8 +59,6 @@ OFFICE_TOOL_NAMES = [
     "view_skill",
     "create_skill_draft",
 ]
-# Import compatibility for integrations referring to the former office mode.
-ASSISTANT_TOOL_NAMES = OFFICE_TOOL_NAMES
 
 # ===== 幻灯片模式工具 =====
 PPT_TOOL_NAMES = [
@@ -370,7 +368,7 @@ GRAPH_TOOL_NAMES = [
 ]
 
 # ===== 助手模式工具（Web / App / 社交渠道） =====
-SOCIAL_TOOL_NAMES = [
+ASSISTANT_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     "read_session_resource",
@@ -402,7 +400,7 @@ ENFORCEMENT_EXAM_TOOL_NAMES = [
     "web_search",
     "web_fetch",
     "schedule_task",
-    # 长期记忆维护（MEMORY.md）：本模式属 SOCIAL_MEMORY_MODES，整合器只写事实层，
+    # 长期记忆维护（MEMORY.md）：本模式属 PERSONAL_MEMORY_MODES，整合器只写事实层，
     # 常驻记忆契约要求会话 Agent 自己用 edit_file 维护，缺它则 MEMORY.md 无任何写入方
     "edit_file",
 ]
@@ -500,7 +498,6 @@ def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
     return {name: "" for name in names}
 
 
-ASSISTANT_TOOLS = _build_tool_dict(ASSISTANT_TOOL_NAMES)
 OFFICE_TOOLS = _build_tool_dict(OFFICE_TOOL_NAMES)
 PPT_TOOLS = _build_tool_dict(PPT_TOOL_NAMES)
 EXPERT_TOOLS = _build_tool_dict(EXPERT_TOOL_NAMES)
@@ -516,7 +513,7 @@ REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
 BOARD_TOOLS = _build_tool_dict(BOARD_TOOL_NAMES)
 OPS_TOOLS = _build_tool_dict(OPS_TOOL_NAMES)
 GRAPH_TOOLS = _build_tool_dict(GRAPH_TOOL_NAMES)
-SOCIAL_TOOLS = _build_tool_dict(SOCIAL_TOOL_NAMES)
+ASSISTANT_TOOLS = _build_tool_dict(ASSISTANT_TOOL_NAMES)
 ENFORCEMENT_EXAM_TOOLS = _build_tool_dict(ENFORCEMENT_EXAM_TOOL_NAMES)
 MEMORY_CONSOLIDATOR_TOOLS = _build_tool_dict(MEMORY_CONSOLIDATOR_TOOL_NAMES)
 DELIBERATION_METEOROLOGY_TOOLS = _build_tool_dict(DELIBERATION_METEOROLOGY_TOOL_NAMES)
@@ -525,7 +522,6 @@ DELIBERATION_CHEMISTRY_TOOLS = _build_tool_dict(DELIBERATION_CHEMISTRY_TOOL_NAME
 DELIBERATION_REVIEWER_TOOLS = _build_tool_dict(DELIBERATION_REVIEWER_TOOL_NAMES)
 
 # Backward-compatible order aliases used by tests and older callers.
-ASSISTANT_TOOL_ORDER = ASSISTANT_TOOL_NAMES
 PPT_TOOL_ORDER = PPT_TOOL_NAMES
 EXPERT_TOOL_ORDER = EXPERT_TOOL_NAMES
 QUERY_TOOL_ORDER = QUERY_TOOL_NAMES
@@ -534,7 +530,7 @@ REPORT_TOOL_ORDER = REPORT_TOOL_NAMES
 BOARD_TOOL_ORDER = BOARD_TOOL_NAMES
 OPS_TOOL_ORDER = OPS_TOOL_NAMES
 GRAPH_TOOL_ORDER = GRAPH_TOOL_NAMES
-SOCIAL_TOOL_ORDER = SOCIAL_TOOL_NAMES
+ASSISTANT_TOOL_ORDER = ASSISTANT_TOOL_NAMES
 ENFORCEMENT_EXAM_TOOL_ORDER = ENFORCEMENT_EXAM_TOOL_NAMES
 MEMORY_CONSOLIDATOR_TOOL_ORDER = MEMORY_CONSOLIDATOR_TOOL_NAMES
 
@@ -542,7 +538,7 @@ MEMORY_CONSOLIDATOR_TOOL_ORDER = MEMORY_CONSOLIDATOR_TOOL_NAMES
 # 用户可直接交互的一级模式允许向用户提出结构化问题；无人值守场景
 # （定时任务、子代理）由 ask_user_question 工具自身护栏拒绝，无需在此区分。
 INTERACTIVE_QUESTION_MODES = frozenset({
-    "assistant", "social", "office", "ppt", "expert", "query", "knowledge", "report", "board", "ops", "graph",
+    "assistant", "office", "ppt", "expert", "query", "knowledge", "report", "board", "ops", "graph",
 })
 
 
@@ -551,14 +547,12 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     根据模式获取工具有序白名单。
 
     Args:
-        mode: "assistant" | "ppt" | "expert" | "expert_meteorology" | "expert_analysis" | "query" | "query_monitoring" | "query_monitoring_station" | "query_monitoring_city" | "query_forecast" | "report" | "social" | "enforcement_exam" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
+        mode: "assistant" | "ppt" | "expert" | "expert_meteorology" | "expert_analysis" | "query" | "query_monitoring" | "query_monitoring_station" | "query_monitoring_city" | "query_forecast" | "report" | "office" | "enforcement_exam" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
 
     Returns:
         工具字典 {tool_name: ""}，key 顺序即工具顺序。
     """
-    mode = "office" if mode == "assistant" else mode
     mode_mapping = {
-        "assistant": ASSISTANT_TOOLS,
         "office": OFFICE_TOOLS,
         "ppt": PPT_TOOLS,
         "expert": EXPERT_TOOLS,
@@ -571,7 +565,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "query": QUERY_TOOLS,
         "knowledge": KNOWLEDGE_TOOLS,
         "report": REPORT_TOOLS,
-        "social": SOCIAL_TOOLS,
+        "assistant": ASSISTANT_TOOLS,
         "enforcement_exam": ENFORCEMENT_EXAM_TOOLS,
         "board": BOARD_TOOLS,
         "ops": OPS_TOOLS,
@@ -583,6 +577,8 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "deliberation_reviewer": DELIBERATION_REVIEWER_TOOLS,
     }
 
+    if mode == "social":
+        raise ValueError("Unknown mode: social; use assistant")
     project_tool_names = _get_project_tool_names_by_mode(mode)
     if mode not in mode_mapping and project_tool_names is None:
         raise ValueError(f"Unknown mode: {mode}")
@@ -598,14 +594,14 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
             tool_names.append("ask_user_question")
         extra_tool_names = _get_project_extra_tool_names_by_mode(mode)
         tool_names += [name for name in (extra_tool_names or []) if name not in tool_names]
-    if mode in {"social", "office"}:
+    if mode in {"assistant", "office"}:
         # Project overrides cannot restore professional executors to either role.
-        role_tools = SOCIAL_TOOL_NAMES if mode == "social" else OFFICE_TOOL_NAMES
+        role_tools = ASSISTANT_TOOL_NAMES if mode == "assistant" else OFFICE_TOOL_NAMES
         tool_names = list(dict.fromkeys([*tool_names, *role_tools]))
         tool_names = [name for name in tool_names if name in role_tools or name == "ask_user_question"]
-    if mode == "social" and "manage_assistant_tasks" not in tool_names:
+    if mode == "assistant" and "manage_assistant_tasks" not in tool_names:
         tool_names.append("manage_assistant_tasks")
-    if mode == "social" and "manage_assistant_coaching" not in tool_names:
+    if mode == "assistant" and "manage_assistant_coaching" not in tool_names:
         tool_names.append("manage_assistant_coaching")
     tools = _build_tool_dict(tool_names)
 

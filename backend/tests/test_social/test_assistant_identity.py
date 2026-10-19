@@ -17,7 +17,7 @@ def test_authenticated_account_visible_without_profile_for_both_clients(channel)
     if channel == "app":
         user = AppIdentity("private-id", "Alice", "company:private-id", 0, username="account-a").as_current_user()
     builder = SimplifiedContextBuilder(None, None)
-    builder.current_mode = "social"
+    builder.current_mode = "assistant"
     builder.client_channel = channel
     builder.authenticated_account = assistant_account_context(user)
     builder.user_context = "Name in old profile: Bob"
@@ -45,7 +45,7 @@ def test_account_does_not_leak_to_next_mode_or_user():
     builder.authenticated_account = {"username": "account-a", "display_name": "Alice"}
     builder.current_mode = "office"
     assert "authenticated_account" not in builder._build_platform_policy_prompt()
-    builder.current_mode = "social"
+    builder.current_mode = "assistant"
     builder.authenticated_account = {"username": "account-b", "display_name": "Bob"}
     policy = builder._build_platform_policy_prompt()
     assert "account-a" not in policy

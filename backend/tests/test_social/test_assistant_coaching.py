@@ -317,12 +317,12 @@ def test_shared_contract_survives_project_override_but_respects_disabled(monkeyp
         tool_registry, "_get_project_tool_names_by_mode", lambda mode: ["read_file"]
     )
     monkeypatch.setattr(tool_registry, "_get_project_disabled_tool_names", lambda: [])
-    assert "项目 Agent 使用教练" in prompt_builder.build_react_system_prompt("social")
+    assert "项目 Agent 使用教练" in prompt_builder.build_react_system_prompt("assistant")
     assert "manage_assistant_coaching" not in tool_registry.get_tools_by_mode("expert")
     monkeypatch.setattr(
         tool_registry, "_get_project_disabled_tool_names", lambda: ["manage_assistant_coaching"]
     )
-    assert "项目 Agent 使用教练" not in prompt_builder.build_react_system_prompt("social")
+    assert "项目 Agent 使用教练" not in prompt_builder.build_react_system_prompt("assistant")
 
 
 def test_catalog_matches_project_modes_and_enabled_tools(monkeypatch):

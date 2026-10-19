@@ -87,7 +87,7 @@ async def main():
         message_bus=message_bus,
         agent=agent,
         session_mapper=session_mapper,
-        mode="social"  # ⚠️ Social模式：移动端呼吸式Agent
+        mode="assistant"  # ⚠️ Social模式：移动端呼吸式Agent
     )
 
     logger.info("Initializing channel manager")

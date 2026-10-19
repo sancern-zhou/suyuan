@@ -115,7 +115,7 @@ class SocialConversationAdapter:
     """Read-only adapter for file-backed social transcripts."""
 
     async def _load(self, session_id: str):
-        return await load_session_for_mode(session_id, mode="social")
+        return await load_session_for_mode(session_id, mode="channel")
 
     @staticmethod
     def _payload(session, row: ConversationCatalogRecord, message_limit: int | None = None):
@@ -149,7 +149,7 @@ class SocialConversationAdapter:
 
     async def delete(self, row: ConversationCatalogRecord) -> bool:
         """Delete the file-backed social transcript owned by the App user."""
-        manager = get_session_manager_for_mode("social")
+        manager = get_session_manager_for_mode("channel")
         return bool(manager.delete_session(row.session_id))
 
 
