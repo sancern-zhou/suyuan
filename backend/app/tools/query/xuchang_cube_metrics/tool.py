@@ -481,8 +481,111 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "city", "title": "所属城市"},
             {"name": "county", "title": "归属区县"},
             {"name": "quality", "title": "空气质量等级"},
+            {"name": "grade", "title": "AQI级别(1-6)"},
             {"name": "primaryPollutant", "title": "首要污染物"},
             {"name": "dataDate", "title": "数据日期(时间维度)"},
+        ],
+    },
+    # 许昌市年度目标 vs 实际（官方定版,2015-2026,《00重要基础数据.zip》01表回补,无自动采集）。
+    # 目标值全库唯一;实际值为国家网考核口径,与 CityYearPm25Avg 的实时未审核列有 1~5 μg 差,
+    # 年度考核问题一律以本 Cube 为准。
+    "XuchangCityYearTarget": {
+        "measures": [
+            {"name": "pm10Target", "title": "PM10年度目标(μg/m³)"},
+            {"name": "pm25Target", "title": "PM2.5年度目标(μg/m³)"},
+            {"name": "goodDaysTarget", "title": "优良天年度目标(天)"},
+            {"name": "heavyDaysTarget", "title": "重污染天年度目标(天,2022起下达)"},
+            {"name": "pm10", "title": "PM10年均实际(μg/m³,国家网口径)"},
+            {"name": "pm25", "title": "PM2.5年均实际(μg/m³,国家网口径)"},
+            {"name": "so2", "title": "SO2年均(μg/m³,仅2015-2025)"},
+            {"name": "no2", "title": "NO2年均(μg/m³)"},
+            {"name": "co95", "title": "CO第95百分位年均(mg/m³)"},
+            {"name": "o3", "title": "O3年均(μg/m³,仅2015-2020)"},
+            {"name": "goodDays", "title": "优良天实际(天)"},
+            {"name": "heavyDays", "title": "重污染天实际(天,剔沙尘)"},
+            {"name": "o3ExceedDays", "title": "臭氧超标天(天)"},
+            {"name": "count", "title": "记录数(应=1/年)"},
+        ],
+        "dimensions": [
+            {"name": "year", "title": "年度(2015-2026,过滤 year equals 2023)"},
+            {"name": "remark", "title": "口径备注(如2025市定目标)"},
+        ],
+    },
+    # 许昌县市区年度目标 vs 实际（官方考核定版剔沙尘,2020-2025,05表+剔沙尘表回补）。
+    # 年度考核口径与 CountyMonth 月报的区别: 2023 年重污染天差 3~4 天(2023-03 沙尘,
+    # 月报未剔沙尘),年度考核一律用本 Cube;2020 年仅重污染天。
+    "XuchangCountyYearTarget": {
+        "measures": [
+            {"name": "pm10Target", "title": "PM10年度目标(μg/m³)"},
+            {"name": "pm10", "title": "PM10年均实际(μg/m³)"},
+            {"name": "pm25Target", "title": "PM2.5年度目标(μg/m³)"},
+            {"name": "pm25", "title": "PM2.5年均实际(μg/m³)"},
+            {"name": "goodDaysTarget", "title": "优良天年度目标(天)"},
+            {"name": "goodDays", "title": "优良天实际(天)"},
+            {"name": "heavyDaysTarget", "title": "重污染天年度目标(天,2022起)"},
+            {"name": "heavyDays", "title": "重污染天实际(天,剔沙尘)"},
+            {"name": "count", "title": "记录数(应=1/区域/年)"},
+        ],
+        "dimensions": [
+            {"name": "region", "title": "区域(许昌市/魏都区/开发区/东城区/示范区/建安区/鄢陵县/襄城县/禹州市/长葛市)"},
+            {"name": "regionType", "title": "区域类型(city=全市/urban=市辖区国家平台/county=县市省平台)"},
+            {"name": "year", "title": "年度(2020-2025)"},
+            {"name": "pm10Completed", "title": "PM10目标完成(是/否)"},
+            {"name": "pm25Completed", "title": "PM2.5目标完成(是/否)"},
+            {"name": "goodDaysCompleted", "title": "优良天目标完成(是/否)"},
+            {"name": "heavyDaysCompleted", "title": "重污染天目标完成(是/否)"},
+            {"name": "remark", "title": "口径备注"},
+        ],
+    },
+    # 河南 18 地市年度目标完成情况（省考核口径,2021-2025,03表回补）。
+    # 优良天/重污染天 2021/2022/2024 为天数、2023/2025 为比例%(Ratio列);
+    # 5-9月臭氧超标天仅 2022-2023;2025 行未定稿(Remark 注明)。
+    "HenanCityYearTarget": {
+        "measures": [
+            {"name": "pm10Target", "title": "PM10年度目标(μg/m³)"},
+            {"name": "pm10", "title": "PM10年均实际(μg/m³,省考核)"},
+            {"name": "pm25Target", "title": "PM2.5年度目标(μg/m³)"},
+            {"name": "pm25", "title": "PM2.5年均实际(μg/m³,省考核)"},
+            {"name": "goodDaysTarget", "title": "优良天目标(天,2021/2022/2024)"},
+            {"name": "goodDays", "title": "优良天实际(天,2021/2022/2024)"},
+            {"name": "goodDaysRatioTarget", "title": "优良天比例目标(%)"},
+            {"name": "goodDaysRatio", "title": "优良天比例实际(%,2023/2025)"},
+            {"name": "heavyDaysTarget", "title": "重污染天目标(天)"},
+            {"name": "heavyDays", "title": "重污染天实际(天)"},
+            {"name": "heavyDaysRatioTarget", "title": "重污染天比例目标(%)"},
+            {"name": "heavyDaysRatio", "title": "重污染天比例实际(%,2023/2025)"},
+            {"name": "o3ExceedDaysTarget", "title": "5-9月臭氧超标天目标(天,仅2022-2023)"},
+            {"name": "o3ExceedDays", "title": "5-9月臭氧超标天实际(天)"},
+            {"name": "o3ExceedOver", "title": "臭氧超标天超出目标(天)"},
+            {"name": "completedCount", "title": "完成指标数量(0-4)"},
+            {"name": "count", "title": "记录数(应=18/年)"},
+        ],
+        "dimensions": [
+            {"name": "city", "title": "地市(18个含济源市)"},
+            {"name": "year", "title": "年度(2021-2025)"},
+            {"name": "pm10Completed", "title": "PM10目标完成(是/否)"},
+            {"name": "pm25Completed", "title": "PM2.5目标完成(是/否)"},
+            {"name": "goodDaysCompleted", "title": "优良天目标完成(是/否)"},
+            {"name": "heavyDaysCompleted", "title": "重污染天目标完成(是/否)"},
+            {"name": "remark", "title": "口径备注(如省/市口径差)"},
+        ],
+    },
+    # 生态环境部 168 重点城市排名（2026-01~07 逐月+累计,部发布值,无自动采集）。
+    # 仅用于全国排名与横向对比;许昌浓度绝对值用本地口径 Cube。
+    "Rank168CityMonthly": {
+        "measures": [
+            {"name": "compositeIndex", "title": "环境空气质量综合指数(部发布)"},
+            {"name": "compositeIndexRank", "title": "综合指数排名(倒序,1=最差)"},
+            {"name": "pm25", "title": "PM2.5浓度(μg/m³,部发布)"},
+            {"name": "pm25Rank", "title": "PM2.5浓度排名(倒序,1=最差)"},
+            {"name": "count", "title": "记录数"},
+        ],
+        "dimensions": [
+            {"name": "city", "title": "城市(168重点城市)"},
+            {"name": "periodType", "title": "期次类型(month当月/cum累计,必选其一过滤)"},
+            {"name": "periodLabel", "title": "期次标签(1月/1-7月)"},
+            {"name": "dataMonth", "title": "月份(时间维度,当月行=当月/累计行=截止月)"},
+            {"name": "periodEnd", "title": "累计截止月(时间维度,仅累计行)"},
         ],
     },
 }
@@ -523,6 +626,12 @@ def _render_guide() -> str:
         "(2020-01~2026-09官方月报原值,剔除沙尘;当月查 CountyMonth 过滤 dataMonth,"
         "累计查 CountyMonthCum 过滤 periodEnd;重污染天2023起才有;"
         "这是官方发布统计,优先于任何由明细自算的县市区月度值);"
+        "年度目标与完成情况查年度定版 Cube: 许昌市用 XuchangCityYearTarget(2015-2026,"
+        "目标值唯一来源,实际值为国家网考核口径),许昌县市区用 XuchangCountyYearTarget"
+        "(2020-2025,剔沙尘考核定版;2023年重污染天与月报差3~4天系2023-03沙尘,年度口径以本表为准),"
+        "河南18地市用 HenanCityYearTarget(2021-2025,省考核;优良天/重污染天2021/2022/2024为天数、"
+        "2023/2025为比例%,2025行未定稿);168城市全国排名用 Rank168CityMonthly"
+        "(2026-01~07,过滤 periodType=month/cum,仅用于全国排名,浓度绝对值用本地口径);"
         "小时排名过滤 dataTime 到具体小时,日排名过滤 dataDate 到具体日期;"
         "排名规则统一为数值越低越靠前(Rank*=1 最优),相同值并列(RANK:1,2,2,4);"
         "乡镇站(76个,2024起)用 TownHour/TownDay,必须过滤 caliber(app=审核,官方结论优先),"
@@ -562,11 +671,16 @@ class XuchangCubeMetricsTool(LLMTool):
                 "区县排名与省平台同口径)、全省区县(190个含济源)小时/日数据、"
                 "许昌县级站小时/日数据、乡镇站(76个)小时/日数据(2024起,审核/原始口径二选一)、"
                 "许昌县市区官方月度统计(2020-01~2026-09,剔除沙尘,CountyMonth/CountyMonthCum)、"
-                "河南省官方月报统计(19市/88市辖区/101县市,ProvinceMonth/ProvinceMonthCum)。"
+                "河南省官方月报统计(19市/88市辖区/101县市,ProvinceMonth/ProvinceMonthCum)、"
+                "年度目标完成情况(许昌市 XuchangCityYearTarget 2015-2026/许昌县市区 "
+                "XuchangCountyYearTarget 2020-2025/河南18地市 HenanCityYearTarget 2021-2025)、"
+                "168重点城市全国排名(Rank168CityMonthly,2026年1-7月)。"
                 "传 measures+dimensions+时间范围即可,不需要写SQL;"
                 "城市日排名用 SsfbCityRanking(仅 periodType=daily);"
                 "城市/区/县市的月与1-N月累计官方统计用 ProvinceMonth/ProvinceMonthCum(过滤 level);"
                 "县市区月度及1-N月累计统计用 CountyMonth/CountyMonthCum(官方月报口径);"
+                "年度目标与完成情况用 XuchangCityYearTarget/XuchangCountyYearTarget/HenanCityYearTarget(过滤 year);"
+                "168城市全国排名用 Rank168CityMonthly(过滤 periodType);"
                 "区县排名用 SsfbCountyDayRank/SsfbCountyHourRank,站点排名用 SsfbSiteDayRank/SsfbSiteHourRank;"
                 "乡镇站问题用 TownHour/TownDay 并过滤 caliber(官方结论用 app;"
                 "app 无最新时段数据时回退 src 并注明为未审核原始数据)。"

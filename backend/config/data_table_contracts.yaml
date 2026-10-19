@@ -812,3 +812,178 @@ tables:
       CompositeIndex_YoY: decimal
       SourceFile: varchar
       CreatedAt: datetime
+  XuchangCityYearTarget:
+    time_columns: []
+    dimension_columns:
+    - Year
+    - Remark
+    - SourceFile
+    value_columns:
+    - Pm10Target
+    - Pm25Target
+    - GoodDaysTarget
+    - HeavyDaysTarget
+    - Pm10
+    - Pm25
+    - So2
+    - No2
+    - Co
+    - O3
+    - GoodDays
+    - HeavyDays
+    - O3ExceedDays
+    mark_columns: []
+    caliber_columns:
+    - Year
+    column_types:
+      ID: bigint
+      Year: int
+      Pm10Target: double
+      Pm25Target: double
+      GoodDaysTarget: double
+      HeavyDaysTarget: double
+      Pm10: double
+      Pm25: double
+      So2: double
+      No2: double
+      Co: double
+      O3: double
+      GoodDays: int
+      HeavyDays: int
+      O3ExceedDays: int
+      Remark: varchar
+      SourceFile: varchar
+      CreatedAt: datetime
+  XuchangCountyYearTarget:
+    time_columns: []
+    dimension_columns:
+    - Region
+    - RegionType
+    - Year
+    - Pm10Completed
+    - Pm25Completed
+    - GoodDaysCompleted
+    - HeavyDaysCompleted
+    - Remark
+    - SourceFile
+    value_columns:
+    - Pm10Target
+    - Pm10
+    - Pm25Target
+    - Pm25
+    - GoodDaysTarget
+    - GoodDays
+    - HeavyDaysTarget
+    - HeavyDays
+    mark_columns: []
+    caliber_columns:
+    - RegionType
+    - Year
+    column_types:
+      ID: bigint
+      Region: varchar
+      RegionType: varchar
+      Year: int
+      Pm10Target: double
+      Pm10: double
+      Pm10Completed: varchar
+      Pm25Target: double
+      Pm25: double
+      Pm25Completed: varchar
+      GoodDaysTarget: double
+      GoodDays: int
+      GoodDaysCompleted: varchar
+      HeavyDaysTarget: int
+      HeavyDays: int
+      HeavyDaysCompleted: varchar
+      Remark: varchar
+      SourceFile: varchar
+      CreatedAt: datetime
+  HenanCityYearTarget:
+    time_columns: []
+    dimension_columns:
+    - City
+    - Year
+    - Pm10Completed
+    - Pm25Completed
+    - GoodDaysCompleted
+    - HeavyDaysCompleted
+    - Remark
+    - SourceFile
+    value_columns:
+    - Pm10Target
+    - Pm10
+    - Pm25Target
+    - Pm25
+    - GoodDaysTarget
+    - GoodDays
+    - GoodDaysRatioTarget
+    - GoodDaysRatio
+    - HeavyDaysTarget
+    - HeavyDays
+    - HeavyDaysRatioTarget
+    - HeavyDaysRatio
+    - O3ExceedDaysTarget
+    - O3ExceedDays
+    - O3ExceedOver
+    - CompletedCount
+    mark_columns: []
+    caliber_columns:
+    - Year
+    column_types:
+      ID: bigint
+      City: varchar
+      Year: int
+      Pm10Target: double
+      Pm10: double
+      Pm10Completed: varchar
+      Pm25Target: double
+      Pm25: double
+      Pm25Completed: varchar
+      GoodDaysTarget: double
+      GoodDays: int
+      GoodDaysRatioTarget: double
+      GoodDaysRatio: double
+      GoodDaysCompleted: varchar
+      HeavyDaysTarget: double
+      HeavyDays: int
+      HeavyDaysRatioTarget: double
+      HeavyDaysRatio: double
+      HeavyDaysCompleted: varchar
+      O3ExceedDaysTarget: int
+      O3ExceedDays: int
+      O3ExceedOver: int
+      CompletedCount: int
+      Remark: varchar
+      SourceFile: varchar
+      CreatedAt: datetime
+  Rank168CityMonthly:
+    time_columns:
+    - DataMonth
+    - PeriodEnd
+    dimension_columns:
+    - City
+    - PeriodType
+    - PeriodLabel
+    - SourceFile
+    value_columns:
+    - CompositeIndex
+    - CompositeIndexRank
+    - Pm25
+    - Pm25Rank
+    mark_columns: []
+    caliber_columns:
+    - PeriodType
+    column_types:
+      ID: bigint
+      City: varchar
+      PeriodType: varchar
+      DataMonth: date
+      PeriodEnd: date
+      PeriodLabel: varchar
+      CompositeIndex: double
+      CompositeIndexRank: int
+      Pm25: double
+      Pm25Rank: int
+      SourceFile: varchar
+      CreatedAt: datetime

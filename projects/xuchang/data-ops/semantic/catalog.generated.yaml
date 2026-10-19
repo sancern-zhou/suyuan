@@ -91,6 +91,75 @@ cubes:
       region: 区域(许昌市/魏都区/开发区/东城区/示范区/建安区/鄢陵县/襄城县/禹州市/长葛市)
       regionType: 区域类型(city=全市/urban=市辖区国家平台/county=县市省平台)
       periodEnd: 累计截止月(时间维度,取月末,如2026-09-30=1-9月累计)
+  HenanCityYearTarget:
+    dataset: DataCrawler.HenanCityYearTarget
+    grain: 一行 = 地市 × 年度
+    applicability: 河南18地市年度目标完成情况（省考核口径），仅供省内横向比较
+    source_window: 2021-2025（同上回补，无自动采集）
+    limitations:
+    - 优良天/重污染天2021/2022/2024为天数、2023/2025为比例%(Ratio列)，同列跨年口径不同
+    - 5-9月臭氧超标天仅2022-2023；2023年PM10/PM2.5目标列源表为空
+    - 2025年行源表未定稿，实际值勿引用；与市口径偶有1μg差（如2022许昌PM2.5省47/市46）
+    measures:
+      pm10Target:
+        name: PM10年度目标(μg/m³)
+        definition: PM10年度目标(μg/m³)
+      pm10:
+        name: PM10年均实际(μg/m³,省考核)
+        definition: PM10年均实际(μg/m³,省考核)
+      pm25Target:
+        name: PM2.5年度目标(μg/m³)
+        definition: PM2.5年度目标(μg/m³)
+      pm25:
+        name: PM2.5年均实际(μg/m³,省考核)
+        definition: PM2.5年均实际(μg/m³,省考核)
+      goodDaysTarget:
+        name: 优良天目标(天,2021/2022/2024)
+        definition: 优良天目标(天,2021/2022/2024)
+      goodDays:
+        name: 优良天实际(天,2021/2022/2024)
+        definition: 优良天实际(天,2021/2022/2024)
+      goodDaysRatioTarget:
+        name: 优良天比例目标(%)
+        definition: 优良天比例目标(%)
+      goodDaysRatio:
+        name: 优良天比例实际(%,2023/2025)
+        definition: 优良天比例实际(%,2023/2025)
+      heavyDaysTarget:
+        name: 重污染天目标(天)
+        definition: 重污染天目标(天)
+      heavyDays:
+        name: 重污染天实际(天)
+        definition: 重污染天实际(天)
+      heavyDaysRatioTarget:
+        name: 重污染天比例目标(%)
+        definition: 重污染天比例目标(%)
+      heavyDaysRatio:
+        name: 重污染天比例实际(%,2023/2025)
+        definition: 重污染天比例实际(%,2023/2025)
+      o3ExceedDaysTarget:
+        name: 5-9月臭氧超标天目标(天,仅2022-2023)
+        definition: 5-9月臭氧超标天目标(天,仅2022-2023)
+      o3ExceedDays:
+        name: 5-9月臭氧超标天实际(天)
+        definition: 5-9月臭氧超标天实际(天)
+      o3ExceedOver:
+        name: 臭氧超标天超出目标(天)
+        definition: 臭氧超标天超出目标(天)
+      completedCount:
+        name: 完成指标数量(0-4)
+        definition: 完成指标数量(0-4)
+      count:
+        name: 记录数(应=18/年)
+        definition: 记录数(应=18/年)
+    dimensions:
+      city: 地市(18个含济源市)
+      year: 年度(2021-2025)
+      pm10Completed: PM10目标完成(是/否)
+      pm25Completed: PM2.5目标完成(是/否)
+      goodDaysCompleted: 优良天目标完成(是/否)
+      heavyDaysCompleted: 重污染天目标完成(是/否)
+      remark: 口径备注(如省/市口径差)
   ProvinceMonth:
     dataset: DataCrawler.ProvinceMonthReport
     grain: 一行 = 期次(Scope=month) × 层级(Level) × 区域
@@ -203,6 +272,36 @@ cubes:
       city: 所属省辖市
       region: 区域名(市全称/区/县市)
       dataMonth: 累计截止月(时间维度,如2026-09=1-9月累计)
+  Rank168CityMonthly:
+    dataset: DataCrawler.Rank168CityMonthly
+    grain: 一行 = 城市 × 期次类型(month/cum) × 月份
+    applicability: 生态环境部168重点城市全国排名（综合指数+PM2.5倒序）
+    source_window: 2026-01~2026-07（人工回补，无自动采集）
+    limitations:
+    - 仅用于全国排名与横向对比；浓度绝对值以本地口径为准
+    - 与省内排名SsfbCityRanking不可混算；排名并列时排名值可重复
+    measures:
+      compositeIndex:
+        name: 环境空气质量综合指数(部发布)
+        definition: 环境空气质量综合指数(部发布)
+      compositeIndexRank:
+        name: 综合指数排名(倒序,1=最差)
+        definition: 综合指数排名(倒序,1=最差)
+      pm25:
+        name: PM2.5浓度(μg/m³,部发布)
+        definition: PM2.5浓度(μg/m³,部发布)
+      pm25Rank:
+        name: PM2.5浓度排名(倒序,1=最差)
+        definition: PM2.5浓度排名(倒序,1=最差)
+      count:
+        name: 记录数
+        definition: 记录数
+    dimensions:
+      city: 城市(168重点城市)
+      periodType: 期次类型(month当月/cum累计,必选其一过滤)
+      periodLabel: 期次标签(1月/1-7月)
+      dataMonth: 月份(时间维度,当月行=当月/累计行=截止月)
+      periodEnd: 累计截止月(时间维度,仅累计行)
   SsfbCityDay:
     dataset: DataCrawler.SsfbCityDay
     grain: 一行 = 城市 × 日
@@ -686,6 +785,7 @@ cubes:
       city: 所属城市
       county: 归属区县
       quality: 空气质量等级
+      grade: AQI级别(1-6)
       primaryPollutant: 首要污染物
       dataDate: 数据日期(时间维度)
   SsfbSiteHour:
@@ -870,3 +970,104 @@ cubes:
       quality: 空气质量等级
       primaryPollutant: 首要污染物
       dataTime: 数据时间(时间维度,2024-01-01起)
+  XuchangCityYearTarget:
+    dataset: DataCrawler.XuchangCityYearTarget
+    grain: 一行 = 年度
+    applicability: 许昌市年度目标与完成情况（国家网考核定版）；年度目标值全库唯一来源
+    source_window: 2015-2026（《00重要基础数据.zip》回补，无自动采集）
+    limitations:
+    - 实际值为国家网口径，与 CityYearPm25Avg 平台实时未审核列有1~5μg/m³差，年度考核以本表为准
+    - SO2/NO2/CO 年均仅2015-2025、O3年均仅2015-2020；2025年PM10目标为市定
+    - 2026年仅有目标值（在途年度）
+    measures:
+      pm10Target:
+        name: PM10年度目标(μg/m³)
+        definition: PM10年度目标(μg/m³)
+      pm25Target:
+        name: PM2.5年度目标(μg/m³)
+        definition: PM2.5年度目标(μg/m³)
+      goodDaysTarget:
+        name: 优良天年度目标(天)
+        definition: 优良天年度目标(天)
+      heavyDaysTarget:
+        name: 重污染天年度目标(天,2022起下达)
+        definition: 重污染天年度目标(天,2022起下达)
+      pm10:
+        name: PM10年均实际(μg/m³,国家网口径)
+        definition: PM10年均实际(μg/m³,国家网口径)
+      pm25:
+        name: PM2.5年均实际(μg/m³,国家网口径)
+        definition: PM2.5年均实际(μg/m³,国家网口径)
+      so2:
+        name: SO2年均(μg/m³,仅2015-2025)
+        definition: SO2年均(μg/m³,仅2015-2025)
+      no2:
+        name: NO2年均(μg/m³)
+        definition: NO2年均(μg/m³)
+      co95:
+        name: CO第95百分位年均(mg/m³)
+        definition: CO第95百分位年均(mg/m³)
+      o3:
+        name: O3年均(μg/m³,仅2015-2020)
+        definition: O3年均(μg/m³,仅2015-2020)
+      goodDays:
+        name: 优良天实际(天)
+        definition: 优良天实际(天)
+      heavyDays:
+        name: 重污染天实际(天,剔沙尘)
+        definition: 重污染天实际(天,剔沙尘)
+      o3ExceedDays:
+        name: 臭氧超标天(天)
+        definition: 臭氧超标天(天)
+      count:
+        name: 记录数(应=1/年)
+        definition: 记录数(应=1/年)
+    dimensions:
+      year: 年度(2015-2026,过滤 year equals 2023)
+      remark: 口径备注(如2025市定目标)
+  XuchangCountyYearTarget:
+    dataset: DataCrawler.XuchangCountyYearTarget
+    grain: 一行 = 区域 × 年度
+    applicability: 许昌县市区年度目标与完成情况（官方考核剔沙尘定版）
+    source_window: 2020-2025（同上回补，无自动采集）
+    limitations:
+    - 2023年重污染天与CountyMonthReport月报差3~4天（2023-03沙尘，月报未剔沙尘），年度口径以本表为准
+    - 2020年仅有重污染天；2025年许昌市PM10目标为市定未下达
+    - 个别区域源表间1天出入以05表为准（Remark注明）
+    measures:
+      pm10Target:
+        name: PM10年度目标(μg/m³)
+        definition: PM10年度目标(μg/m³)
+      pm10:
+        name: PM10年均实际(μg/m³)
+        definition: PM10年均实际(μg/m³)
+      pm25Target:
+        name: PM2.5年度目标(μg/m³)
+        definition: PM2.5年度目标(μg/m³)
+      pm25:
+        name: PM2.5年均实际(μg/m³)
+        definition: PM2.5年均实际(μg/m³)
+      goodDaysTarget:
+        name: 优良天年度目标(天)
+        definition: 优良天年度目标(天)
+      goodDays:
+        name: 优良天实际(天)
+        definition: 优良天实际(天)
+      heavyDaysTarget:
+        name: 重污染天年度目标(天,2022起)
+        definition: 重污染天年度目标(天,2022起)
+      heavyDays:
+        name: 重污染天实际(天,剔沙尘)
+        definition: 重污染天实际(天,剔沙尘)
+      count:
+        name: 记录数(应=1/区域/年)
+        definition: 记录数(应=1/区域/年)
+    dimensions:
+      region: 区域(许昌市/魏都区/开发区/东城区/示范区/建安区/鄢陵县/襄城县/禹州市/长葛市)
+      regionType: 区域类型(city=全市/urban=市辖区国家平台/county=县市省平台)
+      year: 年度(2020-2025)
+      pm10Completed: PM10目标完成(是/否)
+      pm25Completed: PM2.5目标完成(是/否)
+      goodDaysCompleted: 优良天目标完成(是/否)
+      heavyDaysCompleted: 重污染天目标完成(是/否)
+      remark: 口径备注

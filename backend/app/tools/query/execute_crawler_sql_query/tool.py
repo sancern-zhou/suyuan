@@ -38,6 +38,10 @@ CRAWLER_SQL_TABLES = [
     "SsfbCityRanking",
     "CountyMonthReport",
     "ProvinceMonthReport",
+    "XuchangCityYearTarget",
+    "XuchangCountyYearTarget",
+    "HenanCityYearTarget",
+    "Rank168CityMonthly",
 ]
 
 # 各表白名单对应的数据时间范围（实测），供 Agent 直接判断可查窗口、避免空查。
@@ -60,6 +64,14 @@ TABLE_TIME_RANGES: dict[str, str] = {
     "ProvinceMonthReport": "2025-12、2026-01~09 共 10 期河南省环境空气质量月报附表（官方口径："
                            "Level=city 19市(区)/district 88市辖区/county 101县市/province 全省；"
                            "Scope=month 当月/cum 1-N月累计；同比列 Xxx_YoY 为变化率）",
+    "XuchangCityYearTarget": "2015-2026，许昌市年度目标 vs 实际（国家网考核定版；目标值唯一来源；"
+                             "Year 过滤；无自动采集，随官方数据人工回补）",
+    "XuchangCountyYearTarget": "2020-2025，许昌 10 县市区年度目标 vs 实际（官方考核剔沙尘定版；"
+                               "2023 年重污染天与 CountyMonthReport 月报差 3~4 天系沙尘口径）",
+    "HenanCityYearTarget": "2021-2025，河南 18 地市年度目标完成情况（省考核；优良天/重污染天"
+                           " 2021/2022/2024 为天数、2023/2025 为比例%；2025 行未定稿）",
+    "Rank168CityMonthly": "2026-01~07，生态环境部 168 重点城市排名逐月+累计（PeriodType=month/cum；"
+                          "仅用于全国排名与横向对比，浓度绝对值以本地口径为准）",
 }
 
 MAX_LIMIT = 5000
@@ -125,6 +137,12 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
             "许昌 PM2.5 年均历史查 CityYearPm25Avg（平台预计算表）；"
             "许昌县市区（10 区域）月度与 1-N 月累计统计查 CountyMonthReport"
             "（官方月报剔除沙尘原值，勿从明细自算）。"
+            "年度目标与完成情况（含历史年度值）查 XuchangCityYearTarget/XuchangCountyYearTarget/"
+            "HenanCityYearTarget（年度考核定版，勿从明细或月报累计自算年度值；"
+            "XuchangCountyYearTarget 2023 年重污染天为剔沙尘考核口径，与 CountyMonthReport 月报差"
+            " 3~4 天系 2023-03 沙尘所致，年度问题以年度表为准）；"
+            "168 城市全国排名查 Rank168CityMonthly（PeriodType='month'/'cum'，"
+            "仅用于全国排名与横向对比，浓度绝对值以本地口径为准）。"
             "逐日/逐小时明细仅用于过程分析、逐日序列与趋势展示，不是统计口径来源；"
             "报表或排名表没有的口径要如实说明无该统计，不得用明细手算代替。"
             "\n\n【扣沙天口径】CitySandDay 是官方沙尘日清单（许昌市，唯一城市 411000/许昌市，"
