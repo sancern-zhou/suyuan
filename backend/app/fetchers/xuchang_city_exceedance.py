@@ -260,7 +260,9 @@ class XuchangCityExceedanceFetcher(DataFetcher):
                     "regional_rows": len(regional_rows), "meteorology_hours": len(meteo["rows"])},
                 "valid_hours": len(valid), "data_rate": len(valid) / max(1, int((end - start).total_seconds() / 3600) + 1),
             }
-            ingestion = self.analysis_service.ingest_process_exceedance(event)
+            ingestion = await asyncio.to_thread(
+                self.analysis_service.ingest_process_exceedance, event
+            )
             if ingestion["status"] != "requested":
                 continue
             job = ingestion["job"]
