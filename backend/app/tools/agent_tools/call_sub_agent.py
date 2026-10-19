@@ -236,15 +236,15 @@ class CallSubAgentTool(LLMTool):
                     },
                     "run_in_background": {
                         "type": "boolean",
-                        "description": "后台任务协议字段；返回任务句柄并由工作流快照追踪。"
+                        "description": "后台执行并返回任务句柄；助手 social 使用 manage_assistant_runs 管理返回的 run_id。"
                     },
                     "background_task_id": {
                         "type": "string",
-                        "description": "查询已启动的后台子Agent任务。"
+                        "description": "其他模式的进程内后台句柄；social 助手不要使用，改用 manage_assistant_runs。"
                     },
                     "cancel_background_task": {
                         "type": "boolean",
-                        "description": "取消 background_task_id 指定的后台任务。"
+                        "description": "其他模式的进程内取消操作；social 助手通过 manage_assistant_runs 请求停止。"
                     }
                 },
                 "required": ["target_mode"]
