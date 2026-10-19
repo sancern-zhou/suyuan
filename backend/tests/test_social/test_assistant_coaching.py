@@ -346,7 +346,8 @@ def test_catalog_matches_project_modes_and_enabled_tools(monkeypatch):
     )
     catalog = capability_catalog()
     assert "workspace:query" in catalog
-    assert "tool:execute_sql_query" in catalog
+    assert "tool:execute_sql_query" not in catalog
+    assert "delegate:office" in catalog
     assert "delegate:query" not in catalog and "delegate:expert" not in catalog
     assert "delegate:report" not in catalog
     assert all("create_report_package" not in item["tools"] for item in catalog.values())

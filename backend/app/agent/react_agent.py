@@ -446,6 +446,8 @@ class ReActAgent:
             - type: "start" | "thought" | "action" | "observation" | "complete" | "error"
             - data: 事件数据
         """
+        # Legacy office runs keep working while new calls use the office mode ID.
+        manual_mode = "office" if manual_mode == "assistant" else manual_mode
         # ✅ 新增：构建user_id（根据用户反馈）
         memory_store = None
         memory_context = ""
@@ -571,6 +573,19 @@ class ReActAgent:
             task_list=run_task_list,
             llm_planner=run_planner,
         )
+        if manual_mode in {"social", "office"}:
+            from app.agent.prompts.tool_registry import get_tools_by_mode
+
+            allowed = set(get_tools_by_mode(manual_mode)) | {"submit_result"}
+            if manual_mode == "social":
+                # Child executors receive their own policy-filtered registry;
+                # the coordinator itself cannot execute those tools.
+                run_executor.delegation_tool_registry = dict(run_executor.tool_registry)
+            run_executor.tool_registry = {
+                name: tool for name, tool in run_executor.tool_registry.items()
+                if name in allowed
+            }
+            extra_tool_names = [name for name in (extra_tool_names or []) if name in allowed]
         run_executor.runtime_mode = manual_mode or "expert"
         run_executor.user_identifier = user_identifier
         run_executor.runtime_metadata = dict(runtime_metadata or {})

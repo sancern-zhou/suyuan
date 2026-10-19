@@ -76,7 +76,7 @@ def capability_catalog():
         add("workspace", mode, str(description), tools_for(mode), contract=spec)
     if "call_sub_agent" in social_tools:
         for mode, spec in _active_contracts().items():
-            if mode in {"social", "assistant"} or delegation_error("social", [mode]):
+            if mode == "social" or delegation_error("social", [mode]):
                 continue
             add("delegate", mode, spec["positioning"], tools_for(mode), contract=spec)
     return result

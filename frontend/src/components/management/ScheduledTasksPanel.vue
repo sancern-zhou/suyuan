@@ -143,11 +143,12 @@
                 :disabled="editingWorkflowTask"
                 @change="handleExecutionModeChange"
               >
-                <option value="assistant">assistant</option>
+                <option value="office">办公模式</option>
+                <option v-if="createForm.execution_mode === 'assistant'" value="assistant">办公模式（历史配置）</option>
                 <option value="expert">expert</option>
                 <option value="query">query</option>
                 <option value="ops">ops（运维）</option>
-                <option value="social">social</option>
+                <option value="social">助手模式</option>
                 <option value="custom">custom（自选工具）</option>
                 <option value="workflow">workflow（确定性工作流）</option>
               </select>
@@ -643,7 +644,7 @@ const defaultForm = () => ({
   name: '',
   description: '',
   agent_prompt: '',
-  execution_mode: 'assistant',
+  execution_mode: 'office',
   model_tier: 'flash',
   result_requirements: [],
   skill_id: '',
@@ -969,11 +970,12 @@ const getEventLabel = (eventType) => eventTypes.value.find(
 
 const getExecutionModeLabel = (mode) => {
   const labels = {
-    assistant: '助手模式',
+    assistant: '办公模式（历史配置）',
+    office: '办公模式',
     expert: '专家模式',
     query: '问数模式',
     ops: '运维模式',
-    social: '社交模式',
+    social: '助手模式',
     custom: '自定义工具模式',
     workflow: '确定性工作流'
   }
@@ -1044,7 +1046,7 @@ const openEditDialog = async (task) => {
     name: task.name || '',
     description: task.description || '',
       agent_prompt: task.prompt || task.description || '',
-    execution_mode: task.execution_mode || 'assistant',
+    execution_mode: task.execution_mode || 'office',
     model_tier: task.model_tier || 'flash',
     result_requirements: (task.result_requirements || []).map(rule => ({ ...rule, allowedValuesText: (rule.allowed_values || []).join('，') })),
     skill_id: task.skill_id || '',

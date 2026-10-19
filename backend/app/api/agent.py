@@ -449,7 +449,7 @@ class AgentAnalyzeRequest(BaseModel):
     max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数")
     mode: Optional[str] = Field(
         "expert",
-        description="✅ Agent模式：'assistant' - 助手模式，'ppt' - 幻灯片模式，'expert' - 专家模式，'query' - 问数模式，'knowledge' - 知识问答模式，'report' - 报告模式，'ops' - 运维管理模式"
+        description="Agent模式：social - 助手模式（Web assistant 为兼容入口），office - 办公模式，ppt - 幻灯片，expert - 专家，query - 问数，knowledge - 知识问答，report - 报告，ops - 运维"
     )
     user_id: Optional[str] = Field(None, description="""用户标识；非社交长期记忆始终按模式共享，不随用户或 session 隔离""")
     assistant_mode: Optional[str] = Field(

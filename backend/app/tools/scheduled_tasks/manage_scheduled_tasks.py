@@ -36,7 +36,7 @@ class ManageScheduledTasksTool(LLMTool):
                                 "name": {"type": "string"},
                                 "description": {"type": "string"},
                                 "prompt": {"type": "string", "minLength": 1},
-                                "execution_mode": {"type": "string", "enum": ["assistant", "expert", "ops", "query", "social", "custom", "workflow"]},
+                                "execution_mode": {"type": "string", "enum": ["office", "assistant", "expert", "ops", "query", "social", "custom", "workflow"]},
                                 "schedule_type": {"type": "string", "enum": ["daily_8am", "every_2h", "every_30min", "monthly_1st_7am", "weekly_monday_8am", "once", "interval", "daily_custom", "weekly_custom", "monthly_custom", "quarterly_custom"]},
                                 "run_at": {"type": "string", "description": "Asia/Shanghai 本地时间或带时区的 ISO 日期时间"},
                                 "interval_minutes": {"type": "integer", "minimum": 1},

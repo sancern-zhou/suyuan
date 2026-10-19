@@ -62,9 +62,9 @@ logger = structlog.get_logger()
 # 获取全局session管理器
 session_manager = get_session_manager()
 
-# ⚠️ 支持多种模式：assistant, query, report, social, expert, ops
+# Child execution uses office and the registered professional leaf modes.
 AgentMode = Literal[
-    "assistant", "query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "report", "social", "expert",
+    "office", "query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "report", "social", "expert",
 
     "expert_meteorology", "expert_analysis", "ops", "board", "ppt", "knowledge",
 ]
@@ -119,7 +119,7 @@ class CallSubAgentTool(LLMTool):
             "name": "call_sub_agent",
             "description": (
                 "调用另一个 Agent 模式执行任务；继续旧会话需传 session_id。"
-                "默认不会自动复用旧的 assistant 子会话。"
+                "office 办公任务默认不自动复用无关旧子会话。"
             ),
             "parameters": {
                 "type": "object",
@@ -174,7 +174,7 @@ class CallSubAgentTool(LLMTool):
                     },
                     "force_new_session": {
                         "type": "boolean",
-                        "description": "是否强制创建新会话；assistant 子会话未传 session_id 时默认已创建新会话。"
+                        "description": "是否强制创建新会话；office 子会话未传 session_id 时默认创建新会话。"
                     },
                     "promote_to_workspace": {
                         "type": "boolean",
@@ -378,7 +378,7 @@ class CallSubAgentTool(LLMTool):
 
         Args:
             context: ExecutionContext（包含memory_manager等依赖）
-            target_mode: 目标Agent模式（"assistant" | "query" | "report" | "social" | "chart" | "expert" | "ops"）
+            target_mode: 目标子模式（office、knowledge、ppt、board、ops 或专业窄角色）
             goal: ⚠️ 任务目标（推荐）：必须完整保留所有参数（文件路径、时间范围等）
             task_description: ⚠️ [向后兼容] 等同于goal
             context_str: 补充上下文（推荐）：技能名称、操作步骤等
@@ -681,11 +681,11 @@ class CallSubAgentTool(LLMTool):
                 else:
                     logger.info(f"强制创建新session: {session_id}")
             elif not should_auto_reuse_session:
-                # assistant 子Agent默认不复用旧session，避免跨任务串上下文。
+                # Office jobs start isolated unless a session is supplied explicitly.
                 # 如需连续对话，调用方必须显式传入 session_id。
                 session_id = self._generate_session_id(parent_mode, target_mode)
                 is_new_session = True
-                logger.info(f"assistant子Agent默认创建新session: {session_id}")
+                logger.info("office_child_session_created", session_id=session_id)
             else:
                 # 自动查找并复用最近的session（默认行为）
                 logger.info(f"尝试自动查找最近的session: parent_mode={parent_mode}, child_mode={target_mode}")
@@ -891,7 +891,8 @@ class CallSubAgentTool(LLMTool):
 
             # 所有模式统一使用 ReActAgent；专家模式通过工具注册表中的原子工具/工作流工具完成分析。
             child_registry = capability_policy.filter_registry(
-                tool_executor.tool_registry if tool_executor else None
+                getattr(tool_executor, "delegation_tool_registry", tool_executor.tool_registry)
+                if tool_executor else None
             )
             # 结构化交付：节点带 result_schema 时注入 submit_result 工具，
             # 参数结构即 schema（函数调用约束），替代"最终回复输出 JSON"的提示词约定。
@@ -1338,7 +1339,7 @@ class CallSubAgentTool(LLMTool):
         goal: str,
         context: Optional[str] = None,
         workspace_path: Optional[str] = None,
-        target_mode: str = "assistant",
+        target_mode: str = "office",
         parent_resource_lines: Optional[List[str]] = None,
         scheduled_task_context: Optional[Dict[str, Any]] = None,
         skill_id: Optional[str] = None,
@@ -1414,7 +1415,7 @@ class CallSubAgentTool(LLMTool):
 
         # 根据目标模式添加特定提示
         mode_hints = {
-            "assistant": (
+            "office": (
                 "\n⚠️ **关键要求**（办公任务）：\n"
                 "- 生成任务清单时，必须在每个任务的content中保留所有原始参数\n"
                 "- 禁止摘要化或省略文件路径、时间范围、sheet索引等关键信息\n"
@@ -1452,7 +1453,7 @@ class CallSubAgentTool(LLMTool):
         goal: str,
         context: Optional[str] = None,
         workspace_path: Optional[str] = None,
-        target_mode: str = "assistant",
+        target_mode: str = "office",
         parent_resource_lines: Optional[List[str]] = None,
         scheduled_task_context: Optional[Dict[str, Any]] = None,
     ) -> str:
@@ -1534,8 +1535,8 @@ class CallSubAgentTool(LLMTool):
     def _get_mode_name(self, mode: str) -> str:
         """获取模式的友好名称"""
         mode_names = {
-            "assistant": "助手Agent",
-            "social": "社交Agent",
+            "office": "办公Agent",
+            "social": "助手Agent",
             "query": "问数Agent",
             "report": "报告Agent",
             "ops": "运维管理Agent",
@@ -1772,12 +1773,12 @@ class CallSubAgentTool(LLMTool):
         """
         判断是否允许自动复用最近的子Agent session。
 
-        assistant 子Agent默认创建新session，避免复用旧办公任务上下文。
+        office 子Agent默认创建新session，避免复用旧办公任务上下文。
         需要连续对话时，调用方应显式传入 session_id。
         """
         if session_id or force_new_session or force_isolated_session:
             return False
-        return target_mode != "assistant"
+        return target_mode not in {"office", "assistant"}
 
     def _generate_session_id(self, parent_mode: str, child_mode: str) -> str:
         """生成子Agent session_id"""

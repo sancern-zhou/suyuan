@@ -18,19 +18,20 @@ def test_primary_modes_rejected_for_every_parent(parent, target):
 def test_specific_children_remain_available():
     children = ["query_monitoring_station", "query_monitoring_city", "query_forecast", "expert_meteorology", "expert_analysis"]
     assert set(children).issubset(target_mode_values())
-    assert delegation_error("assistant", children) is None
+    assert delegation_error("social", children) is None
     assert delegation_error("report", children) is None
 
 
-def test_assistant_supports_tasks_office_and_technical_answers():
-    tools = get_tools_by_mode("assistant")
-    assert {"manage_scheduled_tasks", "create_scheduled_task", "create_report_package", "execute_python"}.issubset(tools)
-    prompt = build_react_system_prompt("assistant")
+def test_office_supports_daily_work_without_professional_execution():
+    tools = get_tools_by_mode("office")
+    assert {"read_file", "write_file", "execute_python"}.issubset(tools)
+    assert {"create_report_package", "execute_sql_query", "knowledge_qa_workflow"}.isdisjoint(tools)
+    prompt = build_react_system_prompt("office")
     assert 'target_mode="report"' not in prompt
     assert 'target_mode="query"' not in prompt
     assert 'target_mode="expert"' not in prompt
     assert 'target_mode="chart"' not in prompt
-    assert "技术问题时，允许" in prompt
+    assert "办公模式（office）" in prompt
 
 
 def test_tool_schemas_only_expose_child_roles():

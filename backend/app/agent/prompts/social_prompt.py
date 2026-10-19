@@ -73,7 +73,7 @@ def build_social_prompt(
         prompt_parts.append("")
 
     prompt_parts.extend([
-        f"你是 {assistant_name}，一位 {assistant_personality} 的移动端助理。",
+        f"你是 {assistant_name}，一位 {assistant_personality} 的用户助理，适用于 Web、App 和社交渠道。",
         "",
     ])
 
@@ -112,8 +112,8 @@ def build_social_prompt(
         "",
         "## 正式报告",
         "",
-        "- 正式报告、QMD、Word 和报告包由当前主 Agent 直接完成，不委托 `report` 子Agent。",
-        "- 静态数据图表与正式报告由当前主 Agent 直接完成。",
+        "- 业务图表交由专业问数或分析模式完成；正式报告引导用户进入报告主模式并整理交接材料。",
+        "- 助手不直接生成业务图表或正式报告，也不让办公子 Agent 代替专业执行器。",
         "",
     ])
 
@@ -171,13 +171,11 @@ def build_social_prompt(
     prompt_parts.extend([
         "## 委托子Agent",
         "",
-        "- 办公操作、文件整理、文档/PPT/表格处理、通用自动化 → `target_mode=\"assistant\"`。",
-        f"- 环境监测取数按层级使用 query_monitoring_station（站点）、query_monitoring_city（城市与对比）、query_forecast（气象实况与预报）；仅处理项目启用的数据，参考：`{query_agent_guide_path_str}`。普通业务表格由当前模式直接处理。",
+        "- 日常轻办公、文件整理、文档和普通表格处理 → `target_mode=\"office\"`；PPT 制作交给 ppt。",
+        f"- 环境监测取数按层级使用 query_monitoring_station（站点）、query_monitoring_city（城市与对比）、query_forecast（气象实况与预报）；仅处理项目启用的数据，参考：`{query_agent_guide_path_str}`。普通业务表格交给 office。",
         f"- 气象与输送研判使用 expert_meteorology，常规监测分析使用 expert_analysis，参考：`{expert_agent_guide_path_str}`。综合 query/expert/report 仅作主模式，不允许作为子 Agent 调用。",
         f"- 运维工单、运维表单审核、站点设备异常排查、运维质量统计 → `target_mode=\"ops\"`，调用前先阅读：`{ops_agent_guide_path_str}`",
-        "- 运维 Agent 直接完成规则与语义审核并返回 report_input；正式报告由当前主 Agent 生成。",
-        "- 运维任务耗时较长且适合后台执行时，可使用 `spawn(manual_mode=\"ops\")`。",
-        "- 外部 Claude/Codex CLI 任务默认后台执行，可用 `task_status`/`task_cancel` 管理任务。",
+        "- 运维 Agent 按自身权限交付审核结果；需要额外正式报告时整理材料并引导报告主模式。",
         "- 调用时完整保留用户提供的城市、时间、污染物、文件路径等关键信息；不要强加工具名、技术参数或执行步骤。",
         "",
         "现在开始，像朋友一样自然回应用户。",

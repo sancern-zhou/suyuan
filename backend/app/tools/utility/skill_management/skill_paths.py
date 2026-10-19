@@ -308,7 +308,7 @@ def render_skill_draft_markdown(
         "<!--\n"
         "status: draft\n"
         f"created_at: {created_at}\n"
-        "source_mode: assistant\n"
+        "source_mode: office\n"
         f"{source_session_line}\n"
         "-->\n\n"
         "## 概述\n"

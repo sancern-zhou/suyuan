@@ -273,13 +273,14 @@ async def test_wrong_web_recipient_cannot_be_registered(system):
         end_assistant_request(token)
 
 
-def test_social_toolset_retains_former_assistant_tools_and_respects_project_disables(monkeypatch):
+def test_social_toolset_coordinates_office_and_respects_project_disables(monkeypatch):
     from app.agent.prompts import tool_registry
 
     monkeypatch.setattr(settings, "project_id", "xuchang")
-    assert set(tool_registry.get_tools_by_mode("assistant")) <= set(
-        tool_registry.get_tools_by_mode("social")
-    )
+    social = tool_registry.get_tools_by_mode("social")
+    assert "call_sub_agent" in social
+    assert "execute_python" not in social
+    assert "execute_python" in tool_registry.get_tools_by_mode("office")
     monkeypatch.setattr(tool_registry, "_get_project_disabled_tool_names", lambda: ["read_file"])
     assert "read_file" not in tool_registry.get_tools_by_mode("social")
     assert social_runtime_mode("assistant") == social_runtime_mode("social") == "social"

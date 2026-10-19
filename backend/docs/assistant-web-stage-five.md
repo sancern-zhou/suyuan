@@ -1,5 +1,8 @@
 # Web assistant integration
 
+The later assistant-office-role-split.md supersedes the tool-union policy below:
+the personal assistant now delegates daily office work to the `office` leaf mode.
+
 The existing Web assistant entry now uses the shared social runtime. Its public
 UI ID remains `assistant` for existing history and navigation; request bodies
 and the authenticated `/api/agent/analyze` adapter normalize it to `social`.

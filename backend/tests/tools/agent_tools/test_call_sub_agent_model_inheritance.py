@@ -66,7 +66,8 @@ async def test_stale_upstream_resource_cannot_trigger_child_model_or_refetch(mon
 
 
 @pytest.mark.asyncio
-async def test_sub_agent_explicitly_inherits_parent_model_chain(monkeypatch):
+@pytest.mark.parametrize("target_mode", ["ops", "office"])
+async def test_sub_agent_explicitly_inherits_parent_model_chain(monkeypatch, target_mode):
     parent_service = SimpleNamespace(
         provider="bailian",
         model="deepseek-v4-pro",
@@ -77,8 +78,11 @@ async def test_sub_agent_explicitly_inherits_parent_model_chain(monkeypatch):
     class FakeReActAgent:
         def __init__(self, **kwargs):
             self.planner = SimpleNamespace(llm_service=child_service)
+            if target_mode == "office":
+                assert set(kwargs["tool_registry"]) == {"execute_python"}
 
         async def analyze(self, **kwargs):
+            assert kwargs["manual_mode"] == target_mode
             assert child_service.active_chain == (
                 "bailian",
                 "deepseek-v4-pro",
@@ -89,17 +93,25 @@ async def test_sub_agent_explicitly_inherits_parent_model_chain(monkeypatch):
     monkeypatch.setattr("app.agent.react_agent.ReActAgent", FakeReActAgent)
     tool = CallSubAgentTool()
     monkeypatch.setattr(tool, "_update_session", lambda **kwargs: None)
-
-    result = await tool.execute(
-        context=_context(
+    monkeypatch.setattr(tool, "_persist_workflow_snapshot", lambda **kwargs: None)
+    monkeypatch.setattr(tool, "_persist_turn_start", lambda **kwargs: None)
+    context = _context(
             parent_service,
             model_chain=(
                 "bailian",
                 "deepseek-v4-pro",
                 "agnes/agnes-2.0-flash,minimax/MiniMax-M3",
             ),
-        ),
-        target_mode="ops",
+        )
+    if target_mode == "office":
+        context.manual_mode = "social"
+        context.tool_executor.delegation_tool_registry = {
+            "execute_python": object(), "execute_sql_query": object(),
+            "call_sub_agent": object(), "create_report_package": object(),
+        }
+    result = await tool.execute(
+        context=context,
+        target_mode=target_mode,
         goal="复核工单",
         force_new_session=True,
     )
