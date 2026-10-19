@@ -17,6 +17,7 @@ from app.social.assistant_followup_models import (
     AssistantTriggerDB,
 )
 from app.social.assistant_plans import AssistantPlanService, PlanCommand
+from app.social.assistant_notification_models import AssistantNotificationDB
 from app.social.assistant_request import (
     AssistantRequest,
     begin_assistant_request,
@@ -45,6 +46,7 @@ async def plans(tmp_path, monkeypatch):
             AssistantTriggerDB,
             AssistantRunDB,
             AssistantOutboxDB,
+            AssistantNotificationDB,
         ):
             await conn.run_sync(table.__table__.create)
     service = AssistantPlanService(async_sessionmaker(engine, expire_on_commit=False))
@@ -161,6 +163,29 @@ async def test_single_list_contains_reminder_and_real_office_job(plans):
     assert paused["state"] == "paused"
     cancelled = await control(plans, paused, "cancel")
     assert cancelled["state"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_execution_binds_matter_and_verified_owner_reply_route(plans):
+    matter = await AssistantTaskService(plans.session_factory).create(
+        "default", USER.id, REQUEST, goal="Review file", completion_criteria="I approve the results",
+    )
+    plan = await create(plans, purpose="execute", execution_mode="office",
+                        task_id=matter["task_id"], expected_version=1)
+    stored = plans._job_service().get_task(plan["plan_id"].split(":", 1)[1])
+    assert stored.assistant_recipient == REQUEST.delivery_user_id
+    assert stored.assistant_matter_id == matter["task_id"]
+    assert plan["result_delivery"] == "owner"
+    with pytest.raises(TaskConflict):
+        await create(plans, purpose="execute", execution_mode="office", title="stale",
+                     task_id=matter["task_id"], expected_version=2)
+    foreign = CurrentUser(id="bob", username="bob", display_name="Bob")
+    with pytest.raises(TaskNotFound):
+        await plans.dispatch("default", foreign, PlanCommand(
+            action="create", purpose="execute", instructions="Run later", execution_mode="office",
+            task_id=matter["task_id"], expected_version=1,
+            schedule={"kind": "interval", "interval_minutes": 30},
+        ), AssistantRequest("bob-session", "bob-request", "Run later", web_assistant_recipient("bob")))
 
 
 @pytest.mark.asyncio

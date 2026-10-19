@@ -72,8 +72,6 @@ class PlanCommand(BaseModel):
                 raise ValueError("创建计划需要 purpose、instructions 和 schedule")
             if self.purpose == "followup" and (not self.task_id or self.expected_version is None):
                 raise ValueError("事项跟进需要真实 task_id 和 expected_version")
-            if self.purpose == "execute" and self.task_id:
-                raise ValueError("后台执行不接受事项 ID")
             if self.task_id and self.expected_version is None:
                 raise ValueError("绑定已有事项需要查询得到的 expected_version")
             if (self.purpose == "execute") != bool(self.execution_mode):
@@ -128,6 +126,8 @@ class AssistantPlanService(AssistantFollowupService):
             "title": task.name,
             "instructions": task.prompt,
             "execution_mode": task.execution_mode,
+            "task_id": task.assistant_matter_id,
+            "result_delivery": "owner",
             "state": "cancelled"
             if "assistant-plan:cancelled" in task.tags
             else ("active" if task.enabled else "paused"),
@@ -301,6 +301,13 @@ class AssistantPlanService(AssistantFollowupService):
             if existing.owner_user_id != user.id:
                 raise PermissionError("计划归属不匹配")
             return self._job_view(existing)
+        validate_reminder_recipient(request, user.id)
+        if command.task_id:
+            matter = await self.get(project, user.id, command.task_id)
+            if matter["version"] != command.expected_version:
+                raise TaskConflict("事项已变化，请重新查询")
+            if matter["status"] in {"completed", "cancelled"}:
+                raise ValueError("不能为已结束的事项创建执行计划")
         task = ScheduledTask(
             task_id=task_id,
             name=command.title or command.instructions[:100],
@@ -313,6 +320,9 @@ class AssistantPlanService(AssistantFollowupService):
             source_session_id=request.session_id,
             source_request_id=request.request_id,
             authorization_message=request.user_message,
+            assistant_recipient=request.delivery_user_id,
+            assistant_matter_id=command.task_id,
+            assistant_matter_version=command.expected_version,
             tags=["assistant-plan", f"project:{project}"],
             **self._job_schedule(command.schedule),
         )
@@ -334,6 +344,15 @@ class AssistantPlanService(AssistantFollowupService):
             return {"plan": view}
         if command.action in {"history", "results"}:
             from app.api import scheduled_task_routes as routes
+            from app.social.assistant_notification_models import AssistantNotificationDB as Notice
+            from app.social.assistant_notifications import AssistantNotificationService
+
+            async with self.session_factory() as session:
+                notices = (await session.execute(select(Notice).where(
+                    Notice.project_id == project, Notice.owner_user_id == user.id,
+                    Notice.data["scheduled_task_id"].as_string() == task.task_id,
+                ).order_by(Notice.created_at.desc()).offset(command.offset).limit(command.limit))).scalars().all()
+                notifications = [AssistantNotificationService.record(row) for row in notices]
 
             page = command.offset // command.limit + 1
             if command.action == "history":
@@ -344,13 +363,14 @@ class AssistantPlanService(AssistantFollowupService):
                     limit=None,
                     user=user,
                 )
-                return {"plan": view, "history": result.model_dump(mode="json")}
+                return {"plan": view, "history": result.model_dump(mode="json"), "notifications": notifications}
             rows, total = service.list_task_results(
                 task_id=task.task_id, page=page, page_size=command.limit
             )
             return {
                 "plan": view,
                 "results": [r.model_dump(mode="json", exclude={"extra"}) for r in rows],
+                "notifications": notifications,
                 "total": total,
             }
         if command.expected_revision != view["revision"]:

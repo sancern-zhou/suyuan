@@ -84,6 +84,9 @@ async def start_scheduled_task_service() -> None:
             from app.scenarios.xuchang_weather_report.task_migration import migrate_weather_task
             migrate_weather_task(service)
         start_service()
+        from app.social.assistant_notifications import start_result_replies
+
+        start_result_replies(service.scheduler.scheduler, settings.project_id, service)
         if settings.assistant_followups_enabled:
             from app.social.assistant_followup_worker import start_assistant_followups
 

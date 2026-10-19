@@ -13,6 +13,7 @@
 
     <!-- 主分析面板 -->
     <div class="analysis-panel" ref="layoutRef">
+      <slot name="assistant-replies" />
       <AgentPlatform
         v-if="workspace === 'platform'"
         :running-modes="runningAgentModes"

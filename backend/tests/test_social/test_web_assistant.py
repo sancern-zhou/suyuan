@@ -23,6 +23,8 @@ from app.social.assistant_followup_models import (
     AssistantTriggerDB,
 )
 from app.social.assistant_followups import AssistantFollowupService
+from app.social.assistant_notification_models import AssistantNotificationDB
+from app.db.models_session import SessionDB, SessionMessageDB
 from app.social.assistant_request import require_assistant_request
 from app.social.assistant_task_models import AssistantTaskDB, AssistantTaskEventDB
 from app.social.assistant_tasks import AssistantTaskService
@@ -48,6 +50,9 @@ async def system(tmp_path, monkeypatch):
         AssistantTriggerDB,
         AssistantRunDB,
         AssistantOutboxDB,
+        AssistantNotificationDB,
+        SessionDB,
+        SessionMessageDB,
         AssistantCoachingOwnerDB,
         AssistantSuggestionDB,
     ]
@@ -55,6 +60,9 @@ async def system(tmp_path, monkeypatch):
         for model in tables:
             await conn.run_sync(model.__table__.create)
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        session.add(SessionDB(session_id="web-session", query="Track my inspection", mode="assistant"))
+        await session.commit()
     tasks, followups = AssistantTaskService(factory), AssistantFollowupService(factory)
     capabilities = {"tool:read_file": {"kind": "tool", "target": "read_file", "revision": "v1"}}
     coaching = AssistantCoachingService(factory, lambda: capabilities)

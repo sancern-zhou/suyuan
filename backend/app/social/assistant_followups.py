@@ -475,6 +475,7 @@ class AssistantFollowupService(AssistantTaskService):
                 try:
                     async with asyncio.timeout(30):
                         # Adapter revalidates the authoritative account binding before I/O.
+                        row._delivery_session = session
                         row.state = await adapter(task, trigger, row)
                     if row.state not in {"inbox_saved", "provider_accepted", "rejected", "unknown"}:
                         row.state = "unknown"

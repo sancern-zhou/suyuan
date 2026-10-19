@@ -169,6 +169,9 @@ class ScheduledTask(BaseModel):
     source_session_id: Optional[str] = None
     source_request_id: Optional[str] = None
     authorization_message: Optional[str] = None
+    assistant_recipient: Optional[str] = None
+    assistant_matter_id: Optional[str] = None
+    assistant_matter_version: Optional[int] = None
     tags: List[str] = Field(default_factory=list, description="标签")
     workspace_entry: Optional[WorkspaceEntry] = Field(
         default=None,
