@@ -21,11 +21,19 @@ test('execution mode options include every project mode plus task-only modes', (
     'ops',
     'query',
     'expert',
+    'office',
     'social',
     'custom',
     'workflow'
   ])
   assert.equal(options[1].label, 'query（问数）')
+})
+
+test('Web assistant alias schedules the coordinator while legacy office tasks remain editable', () => {
+  const options = buildExecutionModeOptions([{ id: 'assistant', shortName: '助手' }], 'assistant')
+  assert.equal(options.filter(option => option.value === 'social').length, 1)
+  assert.ok(options.some(option => option.value === 'office'))
+  assert.match(options.find(option => option.value === 'assistant').label, /办公模式，历史配置/)
 })
 
 
