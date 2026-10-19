@@ -412,6 +412,10 @@ class RunAgentWorkflowTool(LLMTool):
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "run_in_background": {
+                            "type": "boolean",
+                            "description": "助手可转入后台执行并返回 run_id，之后用 manage_assistant_runs 查询、读结果或请求停止。默认等待本次结果。",
+                        },
                         "workflow": {
                             "type": "object",
                             "description": (
@@ -515,7 +519,19 @@ class RunAgentWorkflowTool(LLMTool):
             version="1.0.0",
         )
 
-    async def execute(
+    async def execute(self, context=None, **kwargs):
+        if getattr(context, "runtime_mode", None) == "social":
+            from app.social.assistant_runs import AssistantRunService
+
+            try:
+                return await AssistantRunService().launch(
+                    context, self._execute_untracked, kwargs, kind="workflow"
+                )
+            except (ValueError, PermissionError) as exc:
+                return self._failure(str(exc))
+        return await self._execute_untracked(context=context, **kwargs)
+
+    async def _execute_untracked(
         self,
         context: Optional[Any] = None,
         workflow: Optional[Mapping[str, Any]] = None,

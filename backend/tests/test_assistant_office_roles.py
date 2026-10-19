@@ -33,6 +33,8 @@ def test_assistant_and_office_roles_cannot_be_expanded_by_project_tools(monkeypa
     for mode in ("social", "office"):
         assert forbidden.isdisjoint(get_tools_by_mode(mode))
     assert "execute_python" not in get_tools_by_mode("social")
+    assert {"read_file", "edit_file", "wait_task"}.isdisjoint(get_tools_by_mode("social"))
+    assert {"manage_assistant_memory", "manage_assistant_runs"}.issubset(get_tools_by_mode("social"))
     assert "execute_python" in get_tools_by_mode("office")
     assert {"call_sub_agent", "run_agent_workflow"}.isdisjoint(get_tools_by_mode("office"))
     monkeypatch.setattr(

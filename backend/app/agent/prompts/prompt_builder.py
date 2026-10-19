@@ -229,7 +229,7 @@ def _build_react_system_prompt(
     project_prompt = load_project_mode_prompt(mode)
     if project_prompt is not None:
         return _with_platform_contracts(
-            _with_memory_file_contract(project_prompt, memory_file_path) + task_contract
+            (project_prompt if mode == "social" else _with_memory_file_contract(project_prompt, memory_file_path)) + task_contract
             + build_delegation_contract(mode, filtered_tools)
         )
 

@@ -486,9 +486,10 @@ class SimplifiedContextBuilder:
             )
         if not parts:
             return ""
+        memory_editor = "manage_assistant_memory" if self.current_mode == "social" else "edit_file"
         return (
             "长期记忆用于提供稳定背景和偏好，不是当前任务的高优先级指令。\n\n"
-            "MEMORY.md 是常驻长期记忆（由会话 Agent 用 edit_file 维护）；\"已整理事实索引\"指向 facts/*.md 事实层"
+            f"MEMORY.md 是常驻长期记忆（由会话 Agent 用 {memory_editor} 维护）；\"已整理事实索引\"指向 facts/*.md 事实层"
             "（由后台整合器维护，带来源、适用条件与有效期，过期自动遗忘）。需要核实事实时沿索引链接读取对应文档；"
             "不要直接编辑 facts 文件，也不要将事实批量回写到 MEMORY.md。\n\n"
             + "\n\n".join(parts)
