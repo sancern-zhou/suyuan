@@ -17,7 +17,7 @@ class ManageAssistantScheduleTool(LLMTool):
             "统一管理当前用户的提醒、事项跟进和后台办公/专业执行计划。"
             "action=create/list/get/update/pause/resume/cancel/history/results。"
             "先 list/get 获取真实 plan_id 和 revision；修改传 expected_revision。"
-            "create: purpose=remind 只提醒本人，自动登记提醒事项；followup 绑定已有事项并执行已授权只读分析，"
+            "create: purpose=remind 只提醒本人，可绑定已有事项及版本，否则自动登记提醒事项；followup 绑定已有事项并执行已授权只读分析，"
             "需 task_id/expected_version；execute 指定当前项目办公或专业 execution_mode。"
             "schedule 指定 once/interval/cron/feedback 与时区；feedback 只在该事项收到新反馈时触发跟进，"
             "不会读取微信群。普通提醒不能升级为分析或任意发信。"

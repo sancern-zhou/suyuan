@@ -72,8 +72,10 @@ class PlanCommand(BaseModel):
                 raise ValueError("创建计划需要 purpose、instructions 和 schedule")
             if self.purpose == "followup" and (not self.task_id or self.expected_version is None):
                 raise ValueError("事项跟进需要真实 task_id 和 expected_version")
-            if self.purpose != "followup" and self.task_id:
-                raise ValueError("只有事项跟进接受 task_id")
+            if self.purpose == "execute" and self.task_id:
+                raise ValueError("后台执行不接受事项 ID")
+            if self.task_id and self.expected_version is None:
+                raise ValueError("绑定已有事项需要查询得到的 expected_version")
             if (self.purpose == "execute") != bool(self.execution_mode):
                 raise ValueError("后台执行必须指定执行模式，提醒和跟进不接受执行模式")
             if self.schedule.kind == "feedback" and self.purpose != "followup":
@@ -232,11 +234,12 @@ class AssistantPlanService(AssistantFollowupService):
         if not settings.assistant_followups_enabled:
             raise PermissionError("个人提醒与事项跟进尚未启用")
         reminder = command.purpose == "remind"
+        standalone = reminder and command.task_id is None
         arguments = dict(
-            expected_version=1 if reminder else command.expected_version,
+            expected_version=1 if standalone else command.expected_version,
             instructions=command.instructions,
             execution_action="remind" if reminder else "analyze",
-            standalone_goal=(command.title or command.instructions) if reminder else None,
+            standalone_goal=(command.title or command.instructions) if standalone else None,
             **command.schedule.model_dump(),
         )
         # A competing replay may have committed the standalone matter first.
