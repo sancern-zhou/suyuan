@@ -38,6 +38,14 @@ models:
       +tags: ["daily"]
     mart_blackout_analysis:
       +tags: ["daily"]
+    # 以下三个 10-04/10-14 落地时漏配 tag, 只在部署当夜手工构建过,
+    # DQ freshness(fail=3)于 2026-10-19 暴露后补挂 tag:daily
+    mart_qc_backorder_analysis:
+      +tags: ["daily"]
+    mart_device_lifecycle_analysis:
+      +tags: ["daily"]
+    dim_device_parameter:
+      +tags: ["daily"]
 
 # 字典/规则表每日 check 快照(SCD2)。alm_rule 无更新时间列, check 策略按整行哈希判变,
 # 上游任何增删改都会留痕 —— 替代此前手工快照 diff 倒推变更的做法。
