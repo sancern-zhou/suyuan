@@ -23,7 +23,7 @@ frontend:
   # 监测分析分组在共享卡片基础上补充知识问答入口（统一从智能体平台进入）。
   agent_scene_overrides:
     monitoring:
-      # assistant 为通用助手入口，其余为专业工作空间；顺序即平台页展示顺序。
+      # assistant 是 Web 助手入口兼容 ID，实际运行 social；office 仅作为子 Agent。
       mode_ids: [assistant, query, knowledge, expert, report]
   # 侧边栏不再展示智能体模式快捷入口，统一由智能体平台页进入。
   sidebar_agent_modes: []
@@ -209,20 +209,19 @@ backend:
       - list_session_resources
       - read_session_resource
       - publish_session_file
-      - execute_sql_query
-      - execute_crawler_sql_query
-      - execute_bigdata_sql_query
-      - execute_postgres_sql_query
-      - query_xcai_city_history
-      - get_weather_data
-      - get_weather_forecast
-      - execute_python
-      - create_business_chart
-      - knowledge_qa_workflow
-      - knowledge_document_reader
+      - read_file
+      - edit_file
+      - call_sub_agent
+      - run_agent_workflow
+      - wait_task
+      - list_skills
+      - view_skill
+      - session_search
       - web_search
       - web_fetch
       - schedule_task
+      - create_scheduled_task
+      - manage_scheduled_tasks
       - send_notification
   # 广东数据源工具已改为项目专属（共享白名单不含、默认不注册），无需再逐项禁用；
   # 仅保留非项目工具的显式禁用项。
@@ -241,16 +240,15 @@ backend:
   # 禁止在本项目任何模式的工具列表中加入上述 GIS 工具或重新打开此开关。
   gis_tools_enabled: false
   mode_prompt_files:
-    assistant: projects/xuchang/prompts/assistant.md
+    office: projects/xuchang/prompts/office.md
     query: projects/xuchang/prompts/query.md
     knowledge: projects/xuchang/prompts/knowledge.md
     expert: projects/xuchang/prompts/expert.md
     social: projects/xuchang/prompts/social.md
     report: projects/xuchang/prompts/report.md
-  # 通用助手在共享白名单基础上追加的项目专属工具：
-  # create_skill_draft 允许助手在用户确认后沉淀技能草稿（只写 .drafts/，不直接发布）。
+  # 办公子 Agent 的技能草稿只写 .drafts/，不直接发布。
   agent_mode_extra_tools:
-    assistant:
+    office:
       - create_skill_draft
   fetchers:
     - city_weather_history
