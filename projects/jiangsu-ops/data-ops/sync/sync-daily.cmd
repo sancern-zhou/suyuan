@@ -1,29 +1,29 @@
 @echo off
-rem Daily job 02:30: dict/full refresh + ×Öµä±íSCD2¿ìÕÕ + daily marts + reconciliation + DQ
-rem   dbt »¯(2026-10-02): dbt snapshot ¶Ô 19 ÕÅ×Öµä/¹æÔò±í×öÕûÐÐ¹þÏ£±ä¸üÁôºÛ
-rem   (alm_rule ÎÞ¸üÐÂÊ±¼äÁÐµÄÎÊÌâ×Ô´ËÓÐ½â: ±ä¸üÀúÊ·²é jiangsu_snapshot.alm_rule)
-rem   dbt build tag:daily: dim_device/ÈÕ¸Å¿ö/ÖÊ¿Ø°²ÅÅ/ÔÂ¶È¿¼ºË/Í£µç¿í±í(º¬Êý¾Ý²âÊÔ)
+rem Daily job 02:30: dict/full refresh + ï¿½Öµï¿½ï¿½SCD2ï¿½ï¿½ï¿½ï¿½ + daily marts + reconciliation + DQ
+rem   dbt ï¿½ï¿½(2026-10-02): dbt snapshot ï¿½ï¿½ 19 ï¿½ï¿½ï¿½Öµï¿½/ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð¹ï¿½Ï£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+rem   (alm_rule ï¿½Þ¸ï¿½ï¿½ï¿½Ê±ï¿½ï¿½ï¿½Ðµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ô´ï¿½ï¿½Ð½ï¿½: ï¿½ï¿½ï¿½ï¿½ï¿½Ê·ï¿½ï¿½ jiangsu_snapshot.alm_rule)
+rem   dbt build tag:daily: dim_device/ï¿½Õ¸Å¿ï¿½/ï¿½Ê¿Ø°ï¿½ï¿½ï¿½/ï¿½Â¶È¿ï¿½ï¿½ï¿½/Í£ï¿½ï¿½ï¿½ï¿½(ï¿½ï¿½ï¿½ï¿½ï¿½Ý²ï¿½ï¿½ï¿½)
 cd /d E:\Tools\suyuan-jiangsu\sync
 set FULLLIST=opa_user_info bsd_device bsd_devicetype qc_task bsd_city qc_arrangeresult qc_historymonthresultoverview pw_task opa_performance_tworate opa_performance_qaqc opa_qcqa_deduction mtc_blackout mtc_dataentry mtc_dataentry_data mtc_fault wo_commonfile log_device qc_backorderarrangelog bsd_supply bsd_moniter_parameter dev_scrap bsd_region bsd_usergroup bsd_usergroup_user bsd_usergroup_station bsd_usergroup_station_devicetype bsd_maintenanceunit mtc_faultcontent mtc_faultcontentitem alm_rule wfl_workflow wfl_workflowtask rf_ruleitem qa_standardmaterialstorage
 for %%t in (%FULLLIST%) do (
     E:\Tools\Python311\python.exe sync_table.py %%t --full >> sync_%%t.log 2>&1
 )
-rem Õ¾·¿¶¯»·Ð¡Ê±·ÖÆ¬±í(integrated_h_2026_*, 100Õ¾): ÅúÁ¿ÔöÁ¿(Ê×´Î×Ô¶¯È«Á¿»ØÌî2026-10Æð)
+rem Õ¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð¡Ê±ï¿½ï¿½Æ¬ï¿½ï¿½(integrated_h_2026_*, 100Õ¾): ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½(ï¿½×´ï¿½ï¿½Ô¶ï¿½È«ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½2026-10ï¿½ï¿½)
 echo [%date% %time%] env hourly shards begin >> sync_integrated_env.log 2>&1
 E:\Tools\Python311\python.exe sync_env_hourly.py >> sync_integrated_env.log 2>&1
 echo [%date% %time%] env hourly shards exit=%errorlevel% >> sync_integrated_env.log
 echo [%date% %time%] dbt snapshot + build tag:daily >> sync_mart.log 2>&1
-rem PYTHONUTF8=1: dbt °´ UTF-8 ¶Áº¬ÖÐÎÄ×¢ÊÍµÄÄ£ÐÍÎÄ¼þ(¼Æ»®ÈÎÎñÄ¬ÈÏ GBK »á UnicodeDecodeError)
+rem PYTHONUTF8=1: dbt ï¿½ï¿½ UTF-8 ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½×¢ï¿½Íµï¿½Ä£ï¿½ï¿½ï¿½Ä¼ï¿½(ï¿½Æ»ï¿½ï¿½ï¿½ï¿½ï¿½Ä¬ï¿½ï¿½ GBK ï¿½ï¿½ UnicodeDecodeError)
 set "PYTHONUTF8=1"
 E:\Tools\suyuan-jiangsu\dbt-venv\Scripts\dbt.exe snapshot --project-dir E:\Tools\suyuan-jiangsu\dbt --profiles-dir E:\Tools\suyuan-jiangsu\dbt --no-use-colors >> sync_mart.log 2>&1
 echo [%date% %time%] dbt snapshot exit=%errorlevel% >> sync_mart.log
 E:\Tools\suyuan-jiangsu\dbt-venv\Scripts\dbt.exe build --project-dir E:\Tools\suyuan-jiangsu\dbt --profiles-dir E:\Tools\suyuan-jiangsu\dbt --select tag:daily --no-use-colors >> sync_mart.log 2>&1
 echo [%date% %time%] dbt build tag:daily exit=%errorlevel% >> sync_mart.log
-rem dbt Ê§°ÜÊ±ÈÃ¼Æ»®ÈÎÎñ LastTaskResult ·Ç 0(dq µÄ SLA ¸æ¾¯Òª¸ôÌì²Å·¢ÏÖ, ÍË³öÂëµ±³¡¿É¼û)
+rem dbt Ê§ï¿½ï¿½Ê±ï¿½Ã¼Æ»ï¿½ï¿½ï¿½ï¿½ï¿½ LastTaskResult ï¿½ï¿½ 0(dq ï¿½ï¿½ SLA ï¿½æ¾¯Òªï¿½ï¿½ï¿½ï¿½Å·ï¿½ï¿½ï¿½, ï¿½Ë³ï¿½ï¿½ëµ±ï¿½ï¿½ï¿½É¼ï¿½)
 if not "%errorlevel%"=="0" exit /b %errorlevel%
 set CHECKLIST=mtc_working_order mtc_working_order_detail alm_summary opa_kq_attendance bsd_station mot_alarm opa_user_info bsd_device bsd_devicetype qc_task bsd_city qc_his_result_2026 qc_arrangeresult qc_historymonthresultoverview pw_taskitem mtc_taskitem pw_task opa_performance_tworate opa_performance_qaqc opa_qcqa_deduction mtc_blackout mtc_dataentry mtc_dataentry_data mtc_fault wo_commonfile log_device qc_backorderarrangelog bsd_supply bsd_moniter_parameter dev_scrap bsd_region bsd_usergroup bsd_usergroup_user bsd_usergroup_station bsd_usergroup_station_devicetype bsd_maintenanceunit mtc_faultcontent mtc_faultcontentitem alm_rule wfl_workflow qa_standardmaterialstorage
 for %%t in (%CHECKLIST%) do (
     E:\Tools\Python311\python.exe sync_table.py %%t --check >> sync_check.log 2>&1
 )
-rem Êý¾ÝÖÊÁ¿¼ì²é(ÐÂÏÊ¶È/¿ÕÖµ/Í¬²½ÐÄÌø/ÆõÔ¼Æ¯ÒÆ), ½á¹ûÂä jiangsu_sync.dq_results
+rem ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½(ï¿½ï¿½ï¿½Ê¶ï¿½/ï¿½ï¿½Öµ/Í¬ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½/ï¿½ï¿½Ô¼Æ¯ï¿½ï¿½), ï¿½ï¿½ï¿½ï¿½ï¿½ jiangsu_sync.dq_results
 E:\Tools\Python311\python.exe dq_check.py >> sync_dq.log 2>&1
