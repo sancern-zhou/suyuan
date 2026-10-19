@@ -267,6 +267,21 @@ class CallSubAgentTool(LLMTool):
 
     async def execute(self, context: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
         """Run a child Agent, optionally returning a background task handle."""
+        if getattr(context, "runtime_mode", None) == "social":
+            from app.social.assistant_runs import AssistantRunService, managed_delegation
+
+            try:
+                scope = managed_delegation.get()
+                if scope is not None:
+                    service, project, owner, record = scope
+                    return await self._execute_foreground_as_subagent(
+                        context=context, **service.child_arguments(project, owner, record, kwargs)
+                    )
+                return await AssistantRunService().launch(
+                    context, self._execute_foreground_as_subagent, kwargs, kind="child"
+                )
+            except (ValueError, PermissionError) as exc:
+                return {"success": False, "status": "failed", "error": str(exc)}
         background_task_id = kwargs.get("background_task_id")
         if background_task_id:
             record = (

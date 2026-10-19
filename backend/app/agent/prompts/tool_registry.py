@@ -374,9 +374,8 @@ SOCIAL_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     "read_session_resource",
-    # Personal memory and context only; office work runs in the office child.
-    "read_file",
-    "edit_file",
+    # Server-bound personal documents; ordinary files belong to office.
+    "manage_assistant_memory",
     "list_skills",
     "view_skill",
     # Delegation and durable task coordination.
@@ -387,7 +386,7 @@ SOCIAL_TOOL_NAMES = [
     # 呼吸式特有工具
     "manage_assistant_schedule",
     "send_notification",
-    "wait_task",
+    "manage_assistant_runs",
     "session_search",
     "ask_user_question",
 ]

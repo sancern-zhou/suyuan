@@ -1113,6 +1113,8 @@ class ToolExecutor:
             context.tool_executor = self
             context.runtime_mode = self.runtime_mode
             context.user_identifier = self.user_identifier
+            context.assistant_memory_store = getattr(self, "assistant_memory_store", None)
+            context.assistant_profile_path = getattr(self, "assistant_profile_path", None)
             context.runtime_metadata = dict(self.runtime_metadata)
             context.scheduled_task_context = self.runtime_metadata.get("scheduled_task")
             context.set_authorized_input_paths(self.authorized_input_paths)

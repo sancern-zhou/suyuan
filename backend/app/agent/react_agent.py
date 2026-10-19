@@ -588,6 +588,8 @@ class ReActAgent:
             extra_tool_names = [name for name in (extra_tool_names or []) if name in allowed]
         run_executor.runtime_mode = manual_mode or "expert"
         run_executor.user_identifier = user_identifier
+        run_executor.assistant_memory_store = memory_store if manual_mode == "social" else None
+        run_executor.assistant_profile_path = social_user_file_path if manual_mode == "social" else None
         run_executor.runtime_metadata = dict(runtime_metadata or {})
         latest_resource_version: int | None = None
         resource_failures: list[dict[str, Any]] = []
