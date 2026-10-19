@@ -732,6 +732,10 @@ class ReActAgent:
             react_loop.context_builder.client_channel = str(
                 (runtime_metadata or {}).get("client_channel") or ""
             ).strip().lower() or None
+            react_loop.context_builder.authenticated_account = (
+                (runtime_metadata or {}).get("authenticated_account")
+                if manual_mode == "social" else None
+            )
 
             if manual_mode in {"query", "graph"} and map_context:
                 react_loop.context_builder.map_context = map_context
