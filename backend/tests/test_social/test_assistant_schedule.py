@@ -380,6 +380,24 @@ async def test_concurrent_reminder_replay_creates_one_plan(plans):
 
 
 @pytest.mark.asyncio
+async def test_existing_matter_reminder_does_not_upgrade_to_analysis(plans, monkeypatch):
+    matter = await AssistantTaskService.create(
+        plans,
+        "default",
+        USER.id,
+        REQUEST,
+        goal="Follow field feedback",
+        completion_criteria="Reviewed field evidence",
+    )
+    monkeypatch.setattr(settings, "assistant_analysis_enabled", False)
+    plan = await create(plans, task_id=matter["task_id"], expected_version=matter["version"])
+    assert plan["task_id"] == matter["task_id"] and plan["purpose"] == "remind"
+    async with plans.session_factory() as session:
+        trigger = await session.get(AssistantTriggerDB, plan["plan_id"].split(":", 1)[1])
+        assert trigger.action == "remind"
+
+
+@pytest.mark.asyncio
 async def test_administrator_assistant_cannot_read_another_users_execution(plans):
     plan = await create(plans, purpose="execute", execution_mode="office")
     administrator = USER.model_copy(update={"is_admin": True})
