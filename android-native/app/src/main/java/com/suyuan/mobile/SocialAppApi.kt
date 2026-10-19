@@ -232,6 +232,8 @@ class SocialAppApi(
     @Volatile var onSessionRefreshed: ((LoginResult) -> Unit)? = null
 
     private val client: OkHttpClient = OkHttpClient.Builder()
+        .addInterceptor { chain -> chain.proceed(chain.request().newBuilder()
+            .header("X-App-Conversation-Version", "2").build()) }
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .authenticator(object : okhttp3.Authenticator {

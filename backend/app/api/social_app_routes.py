@@ -46,6 +46,7 @@ from app.social.app_identity import (
 from app.social.assistant_identity import assistant_account_context
 from app.social.session_mapper import SessionMapper
 from app.social.app_runs import get_app_run_store
+from app.social.app_client_compat import is_legacy_app
 from app.agent.user_questions import QuestionSet
 from app.social.inline_charts import _CHART_REFERENCE
 from config.settings import settings
@@ -511,17 +512,23 @@ async def upload_file(
     request: Request,
     file: UploadFile = File(...),
     session_id: str | None = Form(None),
-    mode: Literal["assistant", "query", "expert", "knowledge"] = Form("assistant"),
+    mode: Literal["assistant", "query", "expert", "knowledge"] | None = Form(None),
     db: AsyncSession = Depends(get_db),
     identity: AppIdentity = Depends(require_app_identity),
 ) -> dict:
     """Upload an attachment through the same safe resource pipeline as Web."""
     from app.api.upload_routes import upload_chat_file
+    if not session_id and is_legacy_app(request):
+        mapper = await _loaded_session_mapper(request)
+        session_id = await mapper.get_session(identity.social_user_id)
+        row = await get_conversation_catalog().find(session_id) if session_id else None
+        if row is None or row.source != ConversationSource.WEB or not owner_matches(row.owner_user_id, identity.social_user_id):
+            session_id = (await create_app_session(request, identity, None))["session_id"]
     session_id = await _ensure_session(request, identity, session_id, mode)
     result = await upload_chat_file(
         file=file,
         session_id=session_id,
-        mode=mode,
+        mode=mode or "assistant",
         db=db,
         user=identity.as_current_user(),
         catalog=get_conversation_catalog(),
@@ -1025,6 +1032,13 @@ async def _ensure_session(
     requested_session_id: str | None,
     mode: str | None = None,
 ) -> str:
+    legacy = is_legacy_app(request)
+    if not requested_session_id and legacy:
+        mapper = await _loaded_session_mapper(request)
+        mapped = await mapper.get_session(identity.social_user_id)
+        row = await get_conversation_catalog().find(mapped) if mapped else None
+        if row and row.source == ConversationSource.WEB and owner_matches(row.owner_user_id, identity.social_user_id):
+            requested_session_id = mapped
     if requested_session_id:
         # The mapper intentionally stores only the user's current session.
         # Historical App sessions are authorized by the catalog instead.
@@ -1039,6 +1053,12 @@ async def _ensure_session(
             raise HTTPException(status_code=404, detail="session_not_found")
         if mode and row.mode and row.mode != mode:
             raise HTTPException(status_code=409, detail="session_mode_conflict")
+        if mode and row.mode is None:
+            from app.social.app_client_compat import bind_draft_mode
+            await bind_draft_mode(identity, requested_session_id, mode)
+        if legacy:
+            mapper = await _loaded_session_mapper(request)
+            await mapper.save_mapping(identity.social_user_id, requested_session_id)
         # Keep the original catalog identity when continuing through a bound
         # account; re-registering it would attempt to transfer ownership.
         return requested_session_id
@@ -1049,6 +1069,9 @@ async def _ensure_session(
         session_id=session_id,
         mode=mode,
     )
+    if legacy:
+        mapper = await _loaded_session_mapper(request)
+        await mapper.save_mapping(identity.social_user_id, session_id)
     return session_id
 
 
@@ -1056,7 +1079,7 @@ async def _register_app_session(
     *,
     identity: AppIdentity,
     session_id: str,
-    mode: str = "assistant",
+    mode: str | None = "assistant",
 ) -> None:
     from app.agent.session import get_session_manager
     from app.agent.session.models import Session
@@ -1065,7 +1088,8 @@ async def _register_app_session(
     manager = get_session_manager()
     existing = await manager.load_session(session_id, include_messages=False)
     if existing is None:
-        session = Session(session_id=session_id, query="", metadata={"mode": mode})
+        session = Session(session_id=session_id, query="", metadata={"mode": mode,
+            **({"app_legacy_mode_pending": True} if mode is None else {})})
         if not await manager.save_session_metadata(session):
             raise HTTPException(503, "session_create_failed")
     await get_conversation_catalog().register_identity(
@@ -1148,6 +1172,7 @@ async def _sanitize_attachments(
     db: AsyncSession,
     session_id: str,
     attachments: list[dict],
+    *, legacy_identity: AppIdentity | None = None,
 ) -> list[dict]:
     if not attachments:
         return []
@@ -1159,15 +1184,17 @@ async def _sanitize_attachments(
     file_ids.discard("")
     if len(file_ids) != len(attachments):
         raise HTTPException(status_code=400, detail="invalid_attachment")
-    result = await db.execute(
-        select(UploadedFile).where(
-            UploadedFile.id.in_(file_ids),
-            UploadedFile.session_id == session_id,
-        )
-    )
+    statement = select(UploadedFile).where(UploadedFile.id.in_(file_ids))
+    if legacy_identity is None:
+        statement = statement.where(UploadedFile.session_id == session_id)
+    result = await db.execute(statement)
     rows = {row.id: row for row in result.scalars().all()}
     if set(rows) != file_ids:
         raise HTTPException(status_code=404, detail="attachment_not_found")
+    if legacy_identity is not None and any(row.session_id != session_id for row in rows.values()):
+        from app.social.app_client_compat import copy_upload_resources
+        await copy_upload_resources(legacy_identity, session_id, list(rows.values()),
+                                    get_conversation_catalog(), SessionResourceService.database())
     return [
         {
             "file_id": row.id,
@@ -1635,7 +1662,8 @@ async def start_app_run(
     await _autotitle_session_from_query(session_id, payload.query)
     if await store.pending_interaction(session_id):
         raise HTTPException(status_code=409, detail="answer_pending_question_first")
-    attachments = await _sanitize_attachments(db, session_id, payload.attachments)
+    attachments = await _sanitize_attachments(db, session_id, payload.attachments,
+        **({"legacy_identity": identity} if is_legacy_app(request) else {}))
     try:
         resource_refs = (
             await _resolve_attachment_resource_refs(
@@ -1712,7 +1740,8 @@ async def sessions(
     from app.conversations.assistant_sync import AssistantConversationSync
     return await AssistantConversationSync().summaries(
         identity.as_current_user(), limit=limit, offset=offset,
-        modes=("assistant", "query", "expert", "knowledge"),
+        modes=("query", "expert", "knowledge") if is_legacy_app(request)
+        else ("assistant", "query", "expert", "knowledge"),
     )
 
 
@@ -1744,12 +1773,17 @@ async def app_assistant_read(
 @router.post("/sessions")
 async def create_app_session(
     request: Request, identity: AppIdentity = Depends(require_app_identity),
-    mode: Literal["assistant", "query", "expert", "knowledge"] = "assistant",
+    mode: Literal["assistant", "query", "expert", "knowledge"] | None = None,
 ) -> dict:
     """Create and persist a new Android App conversation session."""
-    session_id = SessionMapper.new_session_id(mode=mode)
+    legacy = mode is None and is_legacy_app(request)
+    mode = mode if mode else (None if legacy else "assistant")
+    session_id = SessionMapper.new_session_id(mode=mode or "assistant")
     await _register_app_session(identity=identity, session_id=session_id, mode=mode)
-    return {"session_id": session_id, "mode": mode, "title": "新对话"}
+    if legacy:
+        mapper = await _loaded_session_mapper(request)
+        await mapper.save_mapping(identity.social_user_id, session_id)
+    return {"session_id": session_id, "mode": mode or "assistant", "title": "新对话"}
 
 
 @router.patch("/sessions/{session_id}")
