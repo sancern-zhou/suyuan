@@ -33,7 +33,8 @@ def test_assistant_and_office_roles_cannot_be_expanded_by_project_tools(monkeypa
     for mode in ("social", "office"):
         assert forbidden.isdisjoint(get_tools_by_mode(mode))
     assert "execute_python" not in get_tools_by_mode("social")
-    assert {"read_file", "edit_file", "wait_task"}.isdisjoint(get_tools_by_mode("social"))
+    assert {"read_file", "edit_file"}.issubset(get_tools_by_mode("social"))
+    assert "wait_task" not in get_tools_by_mode("social")
     assert {"manage_assistant_memory", "manage_assistant_runs"}.issubset(get_tools_by_mode("social"))
     assert "execute_python" in get_tools_by_mode("office")
     assert {"call_sub_agent", "run_agent_workflow"}.isdisjoint(get_tools_by_mode("office"))
@@ -78,3 +79,16 @@ def test_extra_tools_cannot_restore_professional_execution(mode):
     assert "execute_sql_query" not in tools
     assert "create_report_package" not in tools
     assert "submit_result" in tools
+
+
+@pytest.mark.parametrize("project", ["default", "xuchang"])
+def test_assistant_media_contract_survives_project_prompt_overrides(monkeypatch, project):
+    from app.agent.prompts.assistant_role_contract import ASSISTANT_MEDIA_CONTRACT
+
+    monkeypatch.setattr(settings, "project_id", project)
+    prompt = build_react_system_prompt("social")
+    assert ASSISTANT_MEDIA_CONTRACT in prompt
+    if project == "default":
+        assert "所有图片、图表、文件必须主动发送给用户" not in prompt
+        assert "{backend_host} + 相对路径" not in prompt
+    assert "不使用通用 read_file、edit_file" not in prompt

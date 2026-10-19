@@ -1,4 +1,4 @@
-"""社交模式系统提示词（移动端助理）。"""
+"""助手模式系统提示词（Web、App 和社交渠道共用）。"""
 
 from typing import List, Optional
 
@@ -30,7 +30,7 @@ def build_social_prompt(
         soul_context: soul.md 内容
         user_context: 用户上下文内容
         heartbeat_context: HEARTBEAT.md 当前内容快照
-        backend_host: 网关地址（用于生成公网分享链接，优先使用API_BASE_URL配置）
+        backend_host: 保留的调用参数；文件交付使用已登记资源，不据此拼接链接。
     """
     from pathlib import Path
 
@@ -50,10 +50,6 @@ def build_social_prompt(
     if user_preferences:
         assistant_name = user_preferences.get("assistant_name", assistant_name)
         assistant_personality = user_preferences.get("assistant_personality", assistant_personality)
-
-    # 默认网关地址（应该是公网可访问的地址，优先从环境变量读取）
-    if not backend_host:
-        backend_host = "http://localhost:8000"  # 降级：仅开发环境使用，生产环境应配置 API_BASE_URL
 
     prompt_parts = []
 
@@ -99,16 +95,6 @@ def build_social_prompt(
         "- 回复保持自然、专业、适合移动端阅读；简单问题直接答，复杂问题再分层说明。",
         "- 信息不够时，只问一个必要的简短问题；没有依据时坦诚说明。",
         "- 任务完成后自然回复结果，不把内部工具调用写成给用户看的表演。",
-        "",
-        "## 感知交互",
-        "",
-        f"- **网关地址**: `{backend_host}`（用于生成公网分享链接，生产环境应配置API_BASE_URL为网关地址）",
-        "- 移动端（微信）没有右侧面板预览功能；所有图片、图表、文件必须主动发送给用户。",
-        "- 工具返回的摘要可能提到'右侧面板已预览显示'，这对社交模式不适用，请忽略此类描述，直接说明内容。",
-        "- **分享链接处理**: 工具返回 `html_url`、`share_url`、`download_url` 字段时，提取并转换为公网可访问的完整URL：`{backend_host} + 相对路径`，在回复中提供给用户。",
-        "  - 用户点击链接后可在浏览器中查看（确保{backend_host}是公网可访问的网关地址）",
-        "- **文件下载**: 对于文件下载需求，使用文件发送功能，不要提供下载链接。",
-        "- **文件格式限制**: 微信端不支持 md 等格式的文件预览。生成或发送文件时，应转换为 word（.doc/.docx）、excel（.xlsx/.xls）等微信支持的格式后再发送给用户。",
         "",
         "## 正式报告",
         "",
@@ -171,7 +157,7 @@ def build_social_prompt(
     prompt_parts.extend([
         "## 委托子Agent",
         "",
-        "- 日常轻办公、文件整理、文档和普通表格处理 → `target_mode=\"office\"`；PPT 制作交给 ppt。",
+        "- 基础文档阅读和简单文本编辑可直接完成；复杂办公、文件整理、格式化文档和普通表格处理 → `target_mode=\"office\"`；PPT 制作交给 ppt。",
         f"- 环境监测取数按层级使用 query_monitoring_station（站点）、query_monitoring_city（城市与对比）、query_forecast（气象实况与预报）；仅处理项目启用的数据，参考：`{query_agent_guide_path_str}`。普通业务表格交给 office。",
         f"- 气象与输送研判使用 expert_meteorology，常规监测分析使用 expert_analysis，参考：`{expert_agent_guide_path_str}`。综合 query/expert/report 仅作主模式，不允许作为子 Agent 调用。",
         f"- 运维工单、运维表单审核、站点设备异常排查、运维质量统计 → `target_mode=\"ops\"`，调用前先阅读：`{ops_agent_guide_path_str}`",

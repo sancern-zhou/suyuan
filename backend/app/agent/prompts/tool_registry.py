@@ -369,12 +369,14 @@ GRAPH_TOOL_NAMES = [
     "search_files",
 ]
 
-# ===== 社交模式工具（移动端助理） =====
+# ===== 助手模式工具（Web / App / 社交渠道） =====
 SOCIAL_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     "read_session_resource",
-    # Server-bound personal documents; ordinary files belong to office.
+    "read_file",
+    "edit_file",
+    # Personal documents use server-bound memory operations.
     "manage_assistant_memory",
     "list_skills",
     "view_skill",

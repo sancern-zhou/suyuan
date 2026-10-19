@@ -6,7 +6,7 @@ ReAct系统提示词构建器（多模式架构）
 
 from typing import Literal, List, Optional
 from .office_prompt import build_office_prompt
-from .assistant_role_contract import ASSISTANT_ROLE_CONTRACT
+from .assistant_role_contract import ASSISTANT_MEDIA_CONTRACT, ASSISTANT_ROLE_CONTRACT
 from .ppt_prompt import build_ppt_prompt
 from .expert_prompt import build_expert_analysis_prompt, build_expert_meteorology_prompt, build_expert_prompt
 from .query_prompt import build_query_prompt
@@ -225,7 +225,7 @@ def _build_react_system_prompt(
     if mode == "social" and "manage_assistant_coaching" in filtered_tools:
         task_contract += ASSISTANT_COACHING_CONTRACT
     if mode == "social":
-        task_contract += ASSISTANT_ROLE_CONTRACT
+        task_contract += ASSISTANT_ROLE_CONTRACT + ASSISTANT_MEDIA_CONTRACT
     project_prompt = load_project_mode_prompt(mode)
     if project_prompt is not None:
         return _with_platform_contracts(
