@@ -12,10 +12,11 @@ def test_xuchang_manifest_separates_coordinator_and_office():
         (Path(PROJECT_ROOT) / "projects/xuchang/project.yaml").read_text(encoding="utf-8")
     )["backend"]
     prompts = manifest["mode_prompt_files"]
-    assert "assistant" not in prompts
+    assert "social" not in prompts
+    assert prompts["assistant"] == "projects/xuchang/prompts/assistant.md"
     assert prompts["office"] == "projects/xuchang/prompts/office.md"
     assert (Path(PROJECT_ROOT) / prompts["office"]).is_file()
-    tools = manifest["agent_mode_tools"]["social"]
+    tools = manifest["agent_mode_tools"]["assistant"]
     assert {"call_sub_agent", "run_agent_workflow"}.issubset(tools)
     assert "manage_assistant_schedule" in tools
     assert {"manage_assistant_memory", "manage_assistant_runs"}.issubset(tools)
@@ -36,11 +37,11 @@ def test_xuchang_manifest_separates_coordinator_and_office():
 
 def test_xuchang_prompts_route_office_and_keep_professional_boundaries(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "xuchang")
-    social = build_react_system_prompt("social")
+    social = build_react_system_prompt("assistant")
     office = build_react_system_prompt("office")
     assert "问数分析助理" not in social
     assert 'target_mode="office"' in social
     assert "不直接查询业务或气象数据" in social
     assert "办公模式（office）" in office
     assert "不再次委派" in office
-    assert build_react_system_prompt("assistant") == office
+    assert build_react_system_prompt("assistant") != office

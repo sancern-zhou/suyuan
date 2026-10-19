@@ -23,7 +23,7 @@ frontend:
   # 监测分析分组在共享卡片基础上补充知识问答入口（统一从智能体平台进入）。
   agent_scene_overrides:
     monitoring:
-      # assistant 是 Web 助手入口兼容 ID，实际运行 social；office 仅作为子 Agent。
+      # assistant 是 Web/App 共用助手主模式；office 仅作为办公子 Agent。
       mode_ids: [assistant, query, knowledge, expert, report]
   # 侧边栏不再展示智能体模式快捷入口，统一由智能体平台页进入。
   sidebar_agent_modes: []
@@ -205,7 +205,7 @@ backend:
       - run_agent_workflow
       - list_skills
       - view_skill
-    social:
+    assistant:
       - list_session_resources
       - read_session_resource
       - publish_session_file
@@ -243,7 +243,7 @@ backend:
     query: projects/xuchang/prompts/query.md
     knowledge: projects/xuchang/prompts/knowledge.md
     expert: projects/xuchang/prompts/expert.md
-    social: projects/xuchang/prompts/social.md
+    assistant: projects/xuchang/prompts/assistant.md
     report: projects/xuchang/prompts/report.md
   # 办公子 Agent 的技能草稿只写 .drafts/，不直接发布。
   agent_mode_extra_tools:

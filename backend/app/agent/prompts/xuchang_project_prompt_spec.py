@@ -48,7 +48,7 @@ def test_xuchang_report_prompt_uses_dynamic_workflow_contract():
 
 def test_xuchang_social_prompt_coordinates_office_and_unified_schedules():
     context = load_project_context("xuchang")
-    prompt = load_project_mode_prompt("social", context)
+    prompt = load_project_mode_prompt("assistant", context)
 
     assert prompt is not None
     assert "助手模式" in prompt
@@ -63,7 +63,7 @@ def test_xuchang_social_prompt_coordinates_office_and_unified_schedules():
 
 def test_xuchang_social_tool_whitelist_matches_prompt_intent():
     context = load_project_context("xuchang")
-    tools = context.manifest.backend.agent_mode_tools.get("social", [])
+    tools = context.manifest.backend.agent_mode_tools.get("assistant", [])
 
     assert "execute_sql_query" not in tools
     assert "get_weather_data" not in tools
