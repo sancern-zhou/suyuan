@@ -46,7 +46,8 @@ PROFILES = {
 # explicit profile for genuinely read-only tasks; these modes are not mapped to
 # it because several existing registries intentionally include file exports.
 MODE_PROFILES = {
-    "assistant": "orchestrator",
+    "assistant": "general-purpose",  # Historical office mode alias.
+    "office": "general-purpose",
     "query": "general-purpose",
     "query_monitoring": "general-purpose",
     "query_monitoring_station": "general-purpose",
@@ -66,7 +67,7 @@ MODE_PROFILES = {
 def get_agent_profile(mode: Optional[str], *, profile: Optional[str] = None) -> AgentProfile:
     from app.agent.workflow.project_policy import child_modes, parent_policy
 
-    if str(mode or "") in child_modes():
+    if str(mode or "") in {"office", "assistant"} or str(mode or "") in child_modes():
         return PROFILES["general-purpose"]
     if parent_policy(str(mode or "")) is not None:
         return PROFILES["orchestrator"]

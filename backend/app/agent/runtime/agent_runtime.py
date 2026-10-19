@@ -1205,7 +1205,8 @@ class AgentRuntime:
         from app.agent.prompts.tool_registry import get_tools_by_mode
 
         names = list(get_tools_by_mode(state.mode).keys())
-        names.extend(self.config.extra_tool_names or [])
+        if state.mode not in {"social", "office", "assistant"}:
+            names.extend(self.config.extra_tool_names or [])
         # 结构化交付：call_sub_agent 给带 result_schema 的子会话动态注入
         # submit_result（不在模式白名单里）。它已注入 child registry 时必须
         # 进入候选名单，否则阶段过滤会把交付工具整体滤掉。
@@ -1225,7 +1226,7 @@ class AgentRuntime:
                 name for name in names
                 if name in phase_tools or name == "submit_result"
             ]
-        elif not self.config.extra_tool_names:
+        elif not self.config.extra_tool_names and state.mode not in {"social", "office", "assistant"}:
             return None
         return list(dict.fromkeys(names))
 

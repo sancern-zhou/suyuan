@@ -5,7 +5,8 @@ ReAct系统提示词构建器（多模式架构）
 """
 
 from typing import Literal, List, Optional
-from .assistant_prompt import build_assistant_prompt
+from .office_prompt import build_office_prompt
+from .assistant_role_contract import ASSISTANT_ROLE_CONTRACT
 from .ppt_prompt import build_ppt_prompt
 from .expert_prompt import build_expert_analysis_prompt, build_expert_meteorology_prompt, build_expert_prompt
 from .query_prompt import build_query_prompt
@@ -105,6 +106,7 @@ def _with_memory_file_contract(prompt: str, memory_file_path: Optional[str]) -> 
 
 AgentMode = Literal[
     "assistant",
+    "office",
     "ppt",
     "expert",
     "expert_meteorology",
@@ -188,6 +190,7 @@ def _build_react_system_prompt(
     Returns:
         系统提示词字符串
     """
+    mode = "office" if mode == "assistant" else mode
     if memory_file_path:
         memory_file_path = format_agent_path(resolve_agent_path(memory_file_path))
 
@@ -221,6 +224,8 @@ def _build_react_system_prompt(
     task_contract = ASSISTANT_TASK_CONTRACT if mode == "social" and "manage_assistant_tasks" in filtered_tools else ""
     if mode == "social" and "manage_assistant_coaching" in filtered_tools:
         task_contract += ASSISTANT_COACHING_CONTRACT
+    if mode == "social":
+        task_contract += ASSISTANT_ROLE_CONTRACT
     project_prompt = load_project_mode_prompt(mode)
     if project_prompt is not None:
         return _with_platform_contracts(
@@ -231,8 +236,8 @@ def _build_react_system_prompt(
     # 根据模式构建Prompt（✅ 统一传递所有路径和上下文）
     if mode == "custom":
         return _with_platform_contracts(build_custom_prompt(filtered_tools))
-    if mode == "assistant":
-        return _with_platform_contracts(build_assistant_prompt(filtered_tools, memory_context, memory_file_path))
+    if mode == "office":
+        return _with_platform_contracts(build_office_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "ppt":
         return _with_platform_contracts(build_ppt_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "expert":

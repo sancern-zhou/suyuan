@@ -51,7 +51,7 @@ def test_function_schema():
 def test_workspace_promotion_waits_for_approval_before_starting_child():
     """持续工作空间请求只生成审批数据，不创建或运行子 Agent。"""
     tool = CallSubAgentTool()
-    context = SimpleNamespace(session_id="web-session-1", manual_mode="assistant")
+    context = SimpleNamespace(session_id="web-session-1", manual_mode="social")
 
     result = asyncio.run(
         tool.execute(
@@ -143,7 +143,7 @@ def test_build_child_system_prompt():
         goal="更新Excel文件 /tmp/test.xlsx（第一个sheet）",
         context="按照技能文档步骤执行",
         workspace_path="/tmp",
-        target_mode="assistant"
+        target_mode="office"
     )
 
     assert "任务目标" in prompt, "应该包含任务目标"
@@ -160,7 +160,7 @@ def test_build_child_system_prompt():
         goal="简单任务",
         context=None,
         workspace_path=None,
-        target_mode="assistant"
+        target_mode="office"
     )
 
     assert "任务目标" in prompt, "应该包含任务目标"
@@ -172,7 +172,7 @@ def test_build_child_system_prompt():
     # 测试3：不同模式
     prompt_assistant = tool._build_child_system_prompt(
         goal="测试",
-        target_mode="assistant"
+        target_mode="office"
     )
     assert "关键要求" in prompt_assistant, "assistant 模式应该包含关键要求"
 
@@ -199,7 +199,7 @@ def test_example():
         goal=goal,
         context=context,
         workspace_path=workspace_path,
-        target_mode="assistant"
+        target_mode="office"
     )
 
     # 验证关键信息是否保留

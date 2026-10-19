@@ -82,26 +82,20 @@ def test_report_prompt_has_no_guangdong_business_text(monkeypatch):
     assert "珠三角" not in prompt
 
 
-def test_xuchang_social_mode_preserves_query_and_former_web_assistant_tools(monkeypatch):
+def test_xuchang_assistant_coordinates_instead_of_executing_professional_work(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "xuchang")
     tools = get_tools_by_mode("social")
 
     for required in (
-        "execute_sql_query",
-        "execute_postgres_sql_query",
-        "query_xcai_city_history",
-        "get_weather_data",
-        "execute_python",
-        "create_business_chart",
-        "knowledge_qa_workflow",
-        "knowledge_document_reader",
         "web_search",
         "web_fetch",
         "schedule_task",
         "send_notification",
         "wait_task",
         "call_sub_agent",
-        "create_report_package",
+        "run_agent_workflow",
+        "manage_assistant_tasks",
+        "manage_assistant_coaching",
     ):
         assert required in tools
     for forbidden in (
@@ -110,12 +104,21 @@ def test_xuchang_social_mode_preserves_query_and_former_web_assistant_tools(monk
         "terminal_session",
         "spawn",
         "broadcast_social_users",
+        "execute_sql_query",
+        "execute_postgres_sql_query",
+        "query_xcai_city_history",
+        "get_weather_data",
+        "execute_python",
+        "create_business_chart",
+        "create_report_package",
+        "knowledge_qa_workflow",
+        "knowledge_document_reader",
     ):
         assert forbidden not in tools
 
     monkeypatch.setattr(settings, "project_id", "default")
     default_social = get_tools_by_mode("social")
-    assert "bash" in default_social
+    assert "bash" not in default_social
     assert "call_sub_agent" in default_social
 
 
@@ -124,12 +127,11 @@ def test_xuchang_social_prompt_overrides_shared_social_prompt(monkeypatch):
 
     prompt = build_react_system_prompt("social")
 
-    assert "许昌市问数分析助理" in prompt
-    assert "get_weather_data" in prompt
-    assert "移动端助理" not in prompt
+    assert "助手模式职责与委派边界" in prompt
+    assert "office 子 Agent" in prompt
 
     monkeypatch.setattr(settings, "project_id", "default")
-    assert "移动端助理" in build_react_system_prompt("social")
+    assert "用户助理，适用于 Web、App 和社交渠道" in build_react_system_prompt("social")
 
 
 def test_xuchang_mode_prompts_carry_client_channel_branches(monkeypatch):

@@ -38,10 +38,10 @@ AGENT_INTERNAL_TOOL_NAMES = frozenset({
 })
 
 # ===== 助手模式工具 =====
-ASSISTANT_TOOL_NAMES = [
+OFFICE_TOOL_NAMES = [
     "list_session_resources",
-    "execute_tender_sql_query",
-    "zhiliao_tender_detail",
+    "read_session_resource",
+    "publish_session_file",
     # 轻量办公：搜索、阅读、编辑文档和生成 HTML 结果。
     "list_directory",
     "search_files",
@@ -50,21 +50,17 @@ ASSISTANT_TOOL_NAMES = [
     "edit_file",
     "grep",
     "create_html_artifact",
-    "create_report_package",
     # 轻量数据计算与网页检索抓取。
     "execute_python",
     "web_search",
     "web_fetch",
-    "browser",
     # 任务调度、技能目录和重型工作空间委托。
-    "create_scheduled_task",
-    "manage_scheduled_tasks",
-    "wait_task",
     "list_skills",
     "view_skill",
-    "call_sub_agent",
-    "run_agent_workflow",
+    "create_skill_draft",
 ]
+# Import compatibility for integrations referring to the former office mode.
+ASSISTANT_TOOL_NAMES = OFFICE_TOOL_NAMES
 
 # ===== 幻灯片模式工具 =====
 PPT_TOOL_NAMES = [
@@ -377,38 +373,25 @@ GRAPH_TOOL_NAMES = [
 SOCIAL_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-    # 文件操作
+    "read_session_resource",
+    # Personal memory and context only; office work runs in the office child.
     "read_file",
     "edit_file",
-    "grep",
-    "write_file",
-    "list_directory",
-    "search_files",
     "list_skills",
     "view_skill",
-    # 知识库检索
-    "knowledge_qa_workflow",
-    "knowledge_document_reader",
-    # 代码执行和模式互调
-    "execute_python",
+    # Delegation and durable task coordination.
     "call_sub_agent",
-    # 正式报告生成与收口
-    "create_business_chart",
-    "create_report_package",
-    # 网络搜索
+    "run_agent_workflow",
     "web_search",
     "web_fetch",
     # 呼吸式特有工具
     "schedule_task",
+    "create_scheduled_task",
+    "manage_scheduled_tasks",
     "send_notification",
-    "spawn",
     "wait_task",
-    # CLI会话管理和历史搜索
-    "cli_session",
-    "terminal_session",
     "session_search",
-    # 系统操作
-    "bash",
+    "ask_user_question",
 ]
 
 # ===== 生态环境执法备考模式（微信专业场景） =====
@@ -519,6 +502,7 @@ def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
 
 
 ASSISTANT_TOOLS = _build_tool_dict(ASSISTANT_TOOL_NAMES)
+OFFICE_TOOLS = _build_tool_dict(OFFICE_TOOL_NAMES)
 PPT_TOOLS = _build_tool_dict(PPT_TOOL_NAMES)
 EXPERT_TOOLS = _build_tool_dict(EXPERT_TOOL_NAMES)
 EXPERT_METEOROLOGY_TOOLS = _build_tool_dict(EXPERT_METEOROLOGY_TOOL_NAMES)
@@ -559,7 +543,7 @@ MEMORY_CONSOLIDATOR_TOOL_ORDER = MEMORY_CONSOLIDATOR_TOOL_NAMES
 # 用户可直接交互的一级模式允许向用户提出结构化问题；无人值守场景
 # （定时任务、子代理）由 ask_user_question 工具自身护栏拒绝，无需在此区分。
 INTERACTIVE_QUESTION_MODES = frozenset({
-    "assistant", "ppt", "expert", "query", "knowledge", "report", "board", "ops", "graph",
+    "assistant", "social", "office", "ppt", "expert", "query", "knowledge", "report", "board", "ops", "graph",
 })
 
 
@@ -573,8 +557,10 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     Returns:
         工具字典 {tool_name: ""}，key 顺序即工具顺序。
     """
+    mode = "office" if mode == "assistant" else mode
     mode_mapping = {
         "assistant": ASSISTANT_TOOLS,
+        "office": OFFICE_TOOLS,
         "ppt": PPT_TOOLS,
         "expert": EXPERT_TOOLS,
         "expert_meteorology": EXPERT_METEOROLOGY_TOOLS,
@@ -613,10 +599,11 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
             tool_names.append("ask_user_question")
         extra_tool_names = _get_project_extra_tool_names_by_mode(mode)
         tool_names += [name for name in (extra_tool_names or []) if name not in tool_names]
-    if mode == "social":
-        # Social is the shared personal assistant runtime; retain office tools
-        # from the former Web assistant, including project-specific policies.
-        tool_names += [name for name in get_tools_by_mode("assistant") if name not in tool_names]
+    if mode in {"social", "office"}:
+        # Project overrides cannot restore professional executors to either role.
+        role_tools = SOCIAL_TOOL_NAMES if mode == "social" else OFFICE_TOOL_NAMES
+        tool_names = list(dict.fromkeys([*tool_names, *role_tools]))
+        tool_names = [name for name in tool_names if name in role_tools or name == "ask_user_question"]
     if mode == "social" and "manage_assistant_tasks" not in tool_names:
         tool_names.append("manage_assistant_tasks")
     if mode == "social" and "manage_assistant_coaching" not in tool_names:
