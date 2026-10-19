@@ -41,6 +41,36 @@ Followups = Annotated[AssistantFollowupService, Depends(followup_service)]
 Catalog = Annotated[object, Depends(get_conversation_catalog)]
 
 
+class ConversationReadRequest(BaseModel):
+    through_sequence: int = Field(ge=-1, strict=True)
+
+
+@router.get("/conversations")
+async def assistant_conversations(
+    user: AuthenticatedUser,
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    from app.conversations.assistant_sync import AssistantConversationSync
+    return {"sessions": await AssistantConversationSync().summaries(user, limit=limit, offset=offset)}
+
+
+@router.get("/conversations/{session_id}/sync")
+async def assistant_conversation_sync(
+    session_id: str, user: AuthenticatedUser, revision: int | None = Query(None, ge=0),
+):
+    from app.conversations.assistant_sync import AssistantConversationSync
+    return await AssistantConversationSync().snapshot(user, session_id, revision=revision)
+
+
+@router.post("/conversations/{session_id}/read")
+async def assistant_conversation_read(
+    session_id: str, payload: ConversationReadRequest, user: AuthenticatedUser,
+):
+    from app.conversations.assistant_sync import AssistantConversationSync
+    return await AssistantConversationSync().mark_read(user, session_id, payload.through_sequence)
+
+
 async def result(awaitable):
     try:
         return await awaitable

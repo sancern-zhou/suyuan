@@ -18,7 +18,7 @@ async function request(path, body) {
 }
 
 export const listAssistantItems = (tab, offset = 0) => {
-  const path = { tasks: 'tasks', suggestions: 'suggestions', notifications: 'notifications' }[tab]
+  const path = { tasks: 'tasks', suggestions: 'suggestions' }[tab]
   if (!path) throw new Error('未知助理视图')
   return request(`${path}?limit=20&offset=${offset}${tab === 'suggestions' ? '&state=all' : ''}`)
 }
@@ -29,5 +29,10 @@ export const changeAssistantTask = (item, action, text = '') => request(
 export const decideAssistantSuggestion = (item, action) => request(
   `suggestions/${encodeURIComponent(item.suggestion_id)}/actions`, { action, expected_version: item.version }
 )
-export const listAssistantReplies = () => request('notifications?unread_only=true&limit=50')
-export const readAssistantReply = id => request(`notifications/${encodeURIComponent(id)}/read`, {})
+export const listAssistantConversations = () => request('conversations?limit=200')
+export const syncAssistantConversation = (id, revision) => request(
+  `conversations/${encodeURIComponent(id)}/sync${revision == null ? '' : `?revision=${revision}`}`
+)
+export const readAssistantConversation = (id, throughSequence) => request(
+  `conversations/${encodeURIComponent(id)}/read`, { through_sequence: throughSequence }
+)

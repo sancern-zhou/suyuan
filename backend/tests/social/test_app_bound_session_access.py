@@ -15,12 +15,12 @@ from app.social.app_identity import AppIdentity
 @pytest.mark.parametrize(
     "caller,owner,source,allowed",
     [
-        ("app:android:alice", "company:2", ConversationSource.SOCIAL, True),
-        ("company:2", "app:android:alice", ConversationSource.SOCIAL, True),
-        ("app:android:alice", "app:android:alice", ConversationSource.SOCIAL, True),
+        ("app:android:alice", "company:2", ConversationSource.WEB, True),
+        ("company:2", "app:android:alice", ConversationSource.WEB, True),
+        ("app:android:alice", "app:android:alice", ConversationSource.WEB, True),
         ("app:android:alice", "company:3", ConversationSource.SOCIAL, False),
         ("app:android:bob", "company:2", ConversationSource.SOCIAL, False),
-        ("app:android:alice", "company:2", ConversationSource.WEB, False),
+        ("app:android:alice", "company:2", ConversationSource.SOCIAL, False),
     ],
 )
 async def test_bound_app_history_resume_preserves_owner(monkeypatch, caller, owner, source, allowed):
@@ -32,7 +32,7 @@ async def test_bound_app_history_resume_preserves_owner(monkeypatch, caller, own
     row = ConversationCatalogRecord(
         session_id="history", owner_user_id=owner, owner_username="original",
         owner_display_name="Original owner", source=source, mode="query",
-        title="历史会话", read_only_on_web=True,
+        title="历史会话", read_only_on_web=False,
     )
     repository = SimpleNamespace(get=AsyncMock(return_value=row), upsert=AsyncMock())
     catalog = ConversationCatalogService(repository)

@@ -34,7 +34,13 @@ data class OidcConfig(
     val scopes: String,
 )
 data class AgentEvent(val type: String, val data: String)
-data class SessionInfo(val sessionId: String, val mode: String, val title: String = "新对话", val updatedAt: String? = null)
+data class SessionInfo(val sessionId: String, val mode: String, val title: String = "新对话", val updatedAt: String? = null, val unreadCount: Int = 0)
+
+data class AssistantConversationSnapshot(
+    val revision: Long, val throughSequence: Int, val unchanged: Boolean,
+    val messages: List<ChatMessage>,
+    val pendingInteraction: AgentQuestionInteraction? = null,
+)
 data class SharedConversationSummary(
     val shareId: String,
     val title: String,
@@ -86,6 +92,7 @@ data class ChatMessage(
     val expanded: Boolean = false,
     val durationMs: Long? = null,
     val toolCount: Int = 0,
+    val sequenceNumber: Int = -1,
 )
 
 data class AttachmentVariant(
@@ -475,8 +482,10 @@ class SocialAppApi(
         }
     }
 
-    suspend fun upload(token: String, file: File, filename: String, mimeType: String): UploadedAttachment = withContext(Dispatchers.IO) {
+    suspend fun upload(token: String, file: File, filename: String, mimeType: String, sessionId: String, mode: String): UploadedAttachment = withContext(Dispatchers.IO) {
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("session_id", sessionId)
+            .addFormDataPart("mode", mode)
             .addFormDataPart("file", filename, file.asRequestBody(mimeType.toMediaType()))
             .build()
         val response = client.newCall(
@@ -522,15 +531,15 @@ class SocialAppApi(
             buildList {
                 for (index in 0 until array.length()) {
                     val item = array.getJSONObject(index)
-                    add(SessionInfo(item.getString("session_id"), item.optString("mode", "assistant"), item.optString("title", "新对话"), if (item.has("updated_at")) item.optString("updated_at") else null))
+                    add(SessionInfo(item.getString("session_id"), item.optString("mode", "assistant"), item.optString("title", "新对话"), if (item.has("updated_at")) item.optString("updated_at") else null, item.optInt("unread_count")))
                 }
             }
         }
     }
 
-    suspend fun createSession(token: String): SessionInfo = withContext(Dispatchers.IO) {
+    suspend fun createSession(token: String, mode: String = "assistant"): SessionInfo = withContext(Dispatchers.IO) {
         val response = client.newCall(
-            Request.Builder().url(url("/api/social/app/sessions"))
+            Request.Builder().url(url("/api/social/app/sessions?mode=${java.net.URLEncoder.encode(mode, "UTF-8")}"))
                 .header("Authorization", "Bearer $token").post("".toRequestBody("application/json".toMediaType())).build()
         ) .execute()
         response.use {
@@ -572,11 +581,16 @@ class SocialAppApi(
         response.use {
             if (!it.isSuccessful) throw ApiException(it.code, "历史会话加载失败 (${it.code})")
             val array = JSONObject(it.body?.string().orEmpty()).optJSONArray("messages") ?: org.json.JSONArray()
+            parseHistoryMessages(array)
+        }
+    }
+
+    private fun parseHistoryMessages(array: org.json.JSONArray): List<ChatMessage> =
             buildList {
                 for (index in 0 until array.length()) {
                     val item = array.optJSONObject(index) ?: continue
                     val content = item.optString("content").ifBlank { item.optString("text") }
-                    val role = item.optString("role").ifBlank { item.optString("type") }
+                    val role = item.optString("type").ifBlank { item.optString("role") }
                     val attachments = item.optJSONArray("attachments")?.let { values ->
                         buildList {
                             for (attachmentIndex in 0 until values.length()) {
@@ -596,9 +610,27 @@ class SocialAppApi(
                     // stay available to the web client but are omitted here.
                     if (kind == "tool") continue
                     if (kind == "thought" && !isVisibleThought(content)) continue
-                    add(ChatMessage(item.optString("id", "history-$index"), kind, if (kind == "user") questionReplyDisplay(content) else content, attachments, streaming = false, expanded = false))
+                    add(ChatMessage(item.optString("id", "history-$index"), kind, if (kind == "user") questionReplyDisplay(content) else content, attachments, streaming = false, expanded = false, sequenceNumber = item.optInt("sequence_number", -1)))
                 }
             }
+
+    suspend fun syncAssistantConversation(token: String, sessionId: String, revision: Long?): AssistantConversationSnapshot = withContext(Dispatchers.IO) {
+        val query = revision?.let { "?revision=$it" }.orEmpty()
+        client.newCall(Request.Builder().url(url("/api/social/app/assistant/conversations/$sessionId/sync$query"))
+            .header("Authorization", "Bearer $token").get().build()).execute().use {
+            if (!it.isSuccessful) throw ApiException(it.code, "会话同步失败 (${it.code})")
+            val data = JSONObject(it.body?.string().orEmpty())
+            AssistantConversationSnapshot(data.getLong("revision"), data.optInt("through_sequence", -1),
+                data.optBoolean("unchanged"), parseHistoryMessages(data.optJSONArray("messages") ?: org.json.JSONArray()),
+                data.optJSONObject("pending_interaction")?.takeIf { question -> question.optString("kind") == "structured_question" }?.let { question -> AgentQuestionInteraction.fromJson(question) })
+        }
+    }
+
+    suspend fun readAssistantConversation(token: String, sessionId: String, throughSequence: Int) = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("through_sequence", throughSequence).toString().toRequestBody("application/json".toMediaType())
+        client.newCall(Request.Builder().url(url("/api/social/app/assistant/conversations/$sessionId/read"))
+            .header("Authorization", "Bearer $token").post(body).build()).execute().use {
+            if (!it.isSuccessful) throw ApiException(it.code, "会话已读同步失败 (${it.code})")
         }
     }
 

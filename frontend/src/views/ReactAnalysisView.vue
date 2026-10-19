@@ -113,10 +113,8 @@
       @close-interaction="handleInteractionClose"
       @submit-human-feedback="handleHumanFeedbackSubmit"
     >
-      <template #assistant-replies>
-        <AssistantReplyInbox :state="store.currentState" @open="openAssistantReply" />
-      </template>
     </MainLayout>
+    <AssistantConversationSync :state="store.currentState" :mode="store.currentMode" :active="workspace === 'chat' && !managementPanel" @sessions="applyAssistantConversations" />
 
     <!-- 知识库创建对话框 -->
     <KnowledgeBaseCreateDialog
@@ -150,7 +148,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useReactStore } from '@/stores/reactStore'
-import AssistantReplyInbox from '@/components/reactAnalysis/AssistantReplyInbox.vue'
+import AssistantConversationSync from '@/components/reactAnalysis/AssistantConversationSync.vue'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
 import {
@@ -235,6 +233,7 @@ const {
   handleSessionRestore,
   handleLoadSession,
   refreshSessionHistory,
+  applyAssistantConversations,
   handleSessionCleanup,
   deleteSessions,
   handleToggleSessionCase,
@@ -424,13 +423,6 @@ const handleAssistantContinue = async ({ query, sessionId }) => {
   if (!query?.trim()) return
   if (!restored || currentConversationPolicy.value.readOnly || store.currentState.isAnalyzing) return
   await handleSend({ query, agentMode: 'assistant' })
-}
-
-const openAssistantReply = async ({ sessionId, resolve }) => {
-  try {
-    if (store.currentState.isAnalyzing) return resolve(false)
-    resolve(Boolean(await handleLoadSessionAndClosePanel(sessionId)))
-  } catch { resolve(false) }
 }
 
 const handleSessionRestoreAndClosePanel = async (sessionId) => {

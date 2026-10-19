@@ -14,7 +14,11 @@ def web_assistant_recipient(owner):
 
 def web_assistant_context(user):
     # Filesystem-safe and collision-resistant; never trust a client user_id.
-    memory_id = "web:" + sha256(f"{user.auth_source}\0{user.id}".encode()).hexdigest()
+    from app.auth.identity_matching import primary_owner_id
+
+    owner = primary_owner_id(user.id)
+    source = "company" if owner != user.id or user.auth_source == "company" else user.auth_source
+    memory_id = "web:" + sha256(f"{source}\0{owner}".encode()).hexdigest()
     return assistant_personal_context(memory_id)
 
 

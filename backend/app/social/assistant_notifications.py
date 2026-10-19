@@ -15,7 +15,8 @@ JOB_ID = "assistant-result-replies"
 
 
 class AssistantNotificationService:
-    def __init__(self, session_factory=None, catalog=None, adapter=None):
+    def __init__(self, session_factory=None, catalog=None, adapter=None, transcript_factory=None):
+        injected_factory = session_factory
         if session_factory is None:
             from app.db.database import async_session
 
@@ -27,6 +28,10 @@ class AssistantNotificationService:
         self.session_factory = session_factory
         self.catalog = catalog
         self.adapter = adapter
+        if transcript_factory is None:
+            from app.db.session_database import session_async_session
+            transcript_factory = injected_factory or session_async_session
+        self.transcript_factory = transcript_factory
 
     @staticmethod
     def record(row):
@@ -376,11 +381,23 @@ class AssistantNotificationService:
             await session.commit()
         return state
 
+    async def _append_web_reply(self, session, row):
+        async with self.transcript_factory() as transcript:
+            if transcript.get_bind().url == session.get_bind().url:
+                return await self._append_transcript(session, row)
+            # A crash after transcript commit can replay the outbox. The parent
+            # lock and notification identity below make that replay idempotent.
+            await self._append_transcript(transcript, row)
+            await transcript.commit()
+
     @staticmethod
-    async def _append_web_reply(session, row):
+    async def _append_transcript(session, row):
         from app.db.models_session import SessionDB, SessionMessageDB
         from urllib.parse import quote
 
+        await session.execute(update(SessionDB).where(
+            SessionDB.session_id == row.source_session_id
+        ).values(updated_at=SessionDB.updated_at))
         source = (
             await session.execute(
                 select(SessionDB)
@@ -390,6 +407,14 @@ class AssistantNotificationService:
         ).scalar_one_or_none()
         if source is None:
             raise ValueError("source_session_missing")
+        existing = (await session.execute(select(SessionMessageDB).where(
+            SessionMessageDB.session_id == row.source_session_id,
+            SessionMessageDB.data["notification_id"].as_string() == row.message_id,
+        ))).scalar_one_or_none()
+        if existing:
+            row.content = existing.content
+            row.data = {**row.data, "transcript_message_id": f"msg_{existing.id}"}
+            return
         result_session = row.data.get("execution_session_id")
         if result_session:
             row.content += f"\n\n[查看执行详情与附件](/session/{quote(result_session, safe='')})"
@@ -416,7 +441,6 @@ class AssistantNotificationService:
         source.updated_at = datetime.utcnow()
 
     async def tick(self, project, job_service):
-        from app.db.models.scheduled_task_execution_db import ScheduledTaskExecutionDB as Execution
         from app.scheduled_tasks.models import TaskExecution
 
         try:
@@ -427,29 +451,8 @@ class AssistantNotificationService:
                 and f"project:{project}" in t.tags
                 and t.assistant_recipient
             }
+            rows = await self._unreported_executions(project, jobs) if jobs else []
             async with self.session_factory() as session:
-                # Reconcile the crash window between terminal execution persistence and enqueue.
-                rows = (
-                    (
-                        await session.execute(
-                            select(Execution.data)
-                            .outerjoin(
-                                Notice, Notice.message_id == "execution:" + Execution.execution_id
-                            )
-                            .where(
-                                Execution.task_id.in_(jobs),
-                                Execution.status.in_(["success", "failed", "timeout", "cancelled"]),
-                                Notice.message_id.is_(None),
-                            )
-                            .order_by(Execution.started_at)
-                            .limit(20)
-                        )
-                    )
-                    .scalars()
-                    .all()
-                    if jobs
-                    else []
-                )
                 await session.execute(
                     update(Notice)
                     .where(
@@ -506,6 +509,33 @@ class AssistantNotificationService:
                     logger.exception("assistant_reply_pending", message_id=message_id)
         except Exception:
             logger.exception("assistant_reply_clock_failed")
+
+    async def _unreported_executions(self, project, jobs):
+        from app.db.models.scheduled_task_execution_db import ScheduledTaskExecutionDB as Execution
+
+        # Execution history may live in SESSION_DATABASE_URL, separate from the outbox.
+        missing, after = [], None
+        while len(missing) < 20:
+            async with self.transcript_factory() as db:
+                query = select(Execution).where(
+                    Execution.task_id.in_(jobs),
+                    Execution.status.in_(["success", "failed", "timeout", "cancelled"]),
+                )
+                if after is not None:
+                    query = query.where(Execution.execution_id > after)
+                batch = (await db.execute(query.order_by(Execution.execution_id).limit(100))).scalars().all()
+            if not batch:
+                break
+            async with self.session_factory() as db:
+                known = set((await db.execute(select(Notice.message_id).where(
+                    Notice.project_id == project,
+                    Notice.message_id.in_([f"execution:{row.execution_id}" for row in batch]),
+                ))).scalars().all())
+            missing.extend(row.data for row in batch if f"execution:{row.execution_id}" not in known)
+            after = batch[-1].execution_id
+            if len(batch) < 100:
+                break
+        return missing[:20]
 
 
 def start_result_replies(scheduler, project, job_service):

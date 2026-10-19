@@ -918,18 +918,19 @@ class SessionRepository:
                 msg_dict.update(metadata_without_id)
         return msg_dict
 
-    def _message_row_to_context_dict(self, row: Any, include_data: bool = True) -> Dict[str, Any]:
+    @classmethod
+    def _message_row_to_context_dict(cls, row: Any, include_data: bool = True) -> Dict[str, Any]:
         message = {
             "role": row.role,
             "type": row.msg_type,
-            "content": self._deserialize_content(row.content),
+            "content": cls._deserialize_content(row.content),
             "timestamp": row.timestamp.isoformat() if row.timestamp else None,
             "id": f"msg_{row.id}",
             "sequence_number": row.sequence_number,
         }
         if include_data and getattr(row, "data", None):
             message["data"] = row.data
-        attachments = self._message_attachments(getattr(row, "msg_metadata", None))
+        attachments = cls._message_attachments(getattr(row, "msg_metadata", None))
         if attachments:
             message["attachments"] = attachments
         return message
@@ -1209,15 +1210,7 @@ class SessionRepository:
                         case(
                             (
                                 SessionMessageDB.msg_type == "tool_result",
-                                cast(
-                                    func.json_extract_path(
-                                        SessionMessageDB.data,
-                                        "result",
-                                        "data",
-                                        "human_feedback",
-                                    ),
-                                    JSON,
-                                ),
+                                SessionMessageDB.data[("result", "data", "human_feedback")],
                             ),
                             else_=None,
                         ).label("human_feedback"),

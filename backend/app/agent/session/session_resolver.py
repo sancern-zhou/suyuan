@@ -1,7 +1,7 @@
 """Resolve session storage by runtime mode.
 
-Web conversations use the database-backed manager. Channel ingress (including
-the App gateway) explicitly selects ``channel`` storage for local transcripts.
+Web and App conversations use the database-backed manager. External channel
+ingress explicitly selects ``channel`` storage for local transcripts.
 Storage selection is independent of the assistant runtime mode.
 """
 

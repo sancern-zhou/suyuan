@@ -13,17 +13,27 @@ result. Existing feature flags still control creating reminders and analyses.
 The worker reconciles terminal executions missing a notification after a crash.
 No old conversation or task migration is provided.
 
-Web replies append to the original conversation. The message and inbox receipt
-commit in one transaction; repeat delivery cannot append a second message.
-The Web checks unread replies while the page is visible, displays an unread
-banner even when the assistant panel is closed, and inserts replies in the
-active conversation only when it is not streaming. Opening a reply records a
-read receipt. Reply persistence, provider acceptance and actual reading remain
-distinct. Web notifications support execution-detail navigation; result assets
-remain accessible through the execution's existing conversation/resources.
+Web and App use the same account-owned SQL conversations, including messages,
+resource references and pending questions. App no longer writes channel JSON
+transcripts. Company logins share the platform user ID; device accounts share
+only through an explicit bind_user_id, never through a matching display name.
+New App conversations are writable from Web. Existing transcripts are not migrated.
 
-App and bound WeChat recipients reuse the existing inbox/push and single-attempt
-delivery adapter. Bindings and source ownership are revalidated before sending.
+Replies append to the original conversation. When the business and session
+databases differ, the transcript commits before the outbox acknowledgement;
+notification_id deduplication makes replay safe after a crash. Execution
+reconciliation also reads the session database instead of joining across databases.
+Both clients poll every five seconds while visible, refresh idle assistant
+conversations, and show unread counts in conversation history. A read watermark
+advances only after rendering, never beyond persisted messages. Reading on one
+surface clears the other surface's unread count on its next refresh. There is
+no separate reply banner or notification tab. Result assets remain available
+through the execution's existing conversation/resources.
+
+Tasks created from Web or App target their shared conversation by default,
+without requiring a separate notification channel or push configuration.
+Explicit external-channel recipients retain the single-attempt delivery adapter.
+Bindings and source ownership are revalidated before sending.
 A timed-out or interrupted external send becomes unknown and is not silently
 replayed. Pending, rejected and unknown receipts remain visible in the owner-only
 notification API. There is no exactly-once claim for external providers.
@@ -40,7 +50,9 @@ updates are recorded; the result reply is retained for review.
 Apply `backend/app/db/migrations/024_create_assistant_notifications.sql` to the
 matching DATABASE_URL before deploying this change. Existing assistant features
 also require migrations 021 through 023. New database initialization includes
-the notification model. No additional environment variable is required.
+the notification model. Apply migration 025_create_conversation_reads.sql to
+SESSION_DATABASE_URL (or DATABASE_URL when unset), where sessions and the
+conversation catalog live. No additional environment variable is required.
 Rebuild frontend from `frontend/` using `npm run build:standalone` and restart
 the matching Web/worker pair when deploying. This implementation did not change
 environment files, run a production migration, or deploy services.

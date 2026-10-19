@@ -173,6 +173,7 @@ private fun SuyuanApp(viewModel: AppViewModel, oauthCallback: Uri?, consumeOAuth
                 viewModel.onForeground()
                 viewModel.checkAppUpdate()
             }
+            if (event == Lifecycle.Event.ON_PAUSE) viewModel.onBackground()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -395,6 +396,9 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     var showBroadcasts by remember { mutableStateOf(false) }
     var showReports by remember { mutableStateOf(false) }
     var showShared by remember { mutableStateOf(false) }
+    LaunchedEffect(showHistory, showBroadcasts, showReports, showShared) {
+        viewModel.setChatVisible(!showHistory && !showBroadcasts && !showReports && !showShared)
+    }
     var selectedTaskId by remember { mutableStateOf<String?>(null) }
     // 系统返回（侧滑/返回键）在面板打开时先回对话页，而不是走 Activity 默认行为直接退出。
     BackHandler(enabled = showHistory || showBroadcasts || showReports || showShared) {
@@ -1096,7 +1100,7 @@ private fun HistoryPanel(state: AppUiState, viewModel: AppViewModel, onBack: () 
                             Text(updatedAt.replace('T', ' ').take(16), color = SuyuanColors.secondaryText, fontSize = 11.sp, maxLines = 1)
                         }
                     }
-                    Text(if (session.sessionId == state.sessionId) "当前" else "", color = SuyuanColors.primary, fontSize = 12.sp)
+                    Text(if (session.unreadCount > 0) "${session.unreadCount} 未读" else if (session.sessionId == state.sessionId) "当前" else "", color = SuyuanColors.primary, fontSize = 12.sp)
                     IconButton(onClick = { actionSession = session }) {
                         Icon(painterResource(R.drawable.ic_more), contentDescription = "会话操作", tint = SuyuanColors.secondaryText)
                     }
@@ -1303,8 +1307,8 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
 private fun EmptyChatState(loading: Boolean = false, mode: String = "query", onModeSelected: (String) -> Unit = {}) {
     Column(Modifier.fillMaxWidth().padding(top = 110.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
         Text(if (loading) "正在恢复会话" else modeTitle(mode), color = SuyuanColors.text, fontSize = 22.sp, fontWeight = FontWeight.Medium)
-        Row(Modifier.padding(top = 22.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("query" to "问数生图", "knowledge" to "知识问答", "expert" to "专家模式").forEach { (key, label) ->
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 22.dp, start = 12.dp, end = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("assistant" to "助手模式", "query" to "问数生图", "knowledge" to "知识问答", "expert" to "专家模式").forEach { (key, label) ->
                 Surface(
                     color = if (mode == key) SuyuanColors.primary.copy(alpha = .22f) else SuyuanColors.panel,
                     shape = RoundedCornerShape(20.dp),
@@ -1381,6 +1385,7 @@ private fun progressTips(mode: String): List<String> {
 }
 
 private fun modeTitle(mode: String): String = when (mode) {
+    "assistant" -> "助手模式开始对话"
     "query" -> "问数生图模式开始对话"
     "knowledge" -> "知识问答模式开始对话"
     else -> "专家模式开始对话"

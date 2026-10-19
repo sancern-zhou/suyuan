@@ -203,6 +203,7 @@
                 @click="loadSession(session)"
               >
                 <span class="session-query">{{ truncateQuery(session.query, 30) }}</span>
+                <span v-if="session.unread_count > 0" class="session-unread" aria-label="未读消息">{{ session.unread_count }}</span>
                 <span class="session-time">{{ session.is_running ? '运行中' : formatTime(session.updated_at) }}</span>
               </div>
             </template>
@@ -1438,6 +1439,16 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
+.session-unread {
+  flex: 0 0 auto;
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: #b42318;
+  color: #fff;
+  font-size: 11px;
+  text-align: center;
+}
 .session-query {
   flex: 1;
   font-size: 12px;

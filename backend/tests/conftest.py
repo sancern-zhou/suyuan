@@ -24,6 +24,28 @@ except ImportError:  # pragma: no cover - 仅 Windows 本地测试路径
 from contextlib import asynccontextmanager
 from types import SimpleNamespace as NS
 import pytest
+import pytest_asyncio
+
+
+@pytest_asyncio.fixture
+async def app_transcript_db(tmp_path, monkeypatch):
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from app.agent import session as session_module
+    from app.agent.session.session_manager_db import SessionManagerDB
+    from app.db.models_session import SessionDB, SessionMessageDB
+    from app.db.session_repository import SessionRepository
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'transcripts.db'}")
+    async with engine.begin() as conn:
+        for model in (SessionDB, SessionMessageDB):
+            await conn.run_sync(model.__table__.create)
+    manager = SessionManagerDB()
+    manager.repository = SessionRepository()
+    manager.repository.engine = engine
+    monkeypatch.setattr(manager.repository, "_pool_status", lambda: {})
+    monkeypatch.setattr(session_module, "get_session_manager", lambda: manager)
+    yield manager
+    await engine.dispose()
 
 
 @pytest.fixture
