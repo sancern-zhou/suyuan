@@ -14,12 +14,23 @@ async def deliver_reminder(task, trigger, notification):
     from app.conversations import ConversationSource
 
     if recipient.startswith("web:"):
-        # The already durable outbox is also the Web inbox. Completion of
-        # this delivery commits inbox_saved; no external provider is invoked.
-        return (
-            "inbox_saved" if source.source == ConversationSource.WEB
-            and recipient == web_assistant_recipient(task.owner_user_id) else "rejected"
+        if source.source != ConversationSource.WEB or recipient != web_assistant_recipient(task.owner_user_id):
+            return "rejected"
+        from app.social.assistant_notifications import AssistantNotificationService
+        from config.settings import settings
+
+        service = AssistantNotificationService()
+        payload = dict(
+            message_id="followup:" + notification.message_id,
+            project=settings.project_id, owner=task.owner_user_id,
+            source_session_id=trigger.grant_session_id, recipient=recipient,
+            content=notification.content, data={"task_id": task.task_id, "kind": "assistant_followup"},
         )
+        transaction = getattr(notification, "_delivery_session", None)
+        if transaction is not None:
+            return await service.publish_web(transaction, **payload)
+        message_id = await service.enqueue(**payload)
+        return await service.deliver(message_id)
     if recipient.startswith("app:"):
         if recipient != task.owner_user_id:
             return "rejected"
@@ -30,11 +41,11 @@ async def deliver_reminder(task, trigger, notification):
             session_mapper=None,
             social_user_id=recipient,
             message=notification.content,
-            media=[],
+            media=getattr(notification, "media", []),
             metadata={
                 "task_id": task.task_id,
                 "event_id": notification.message_id,
-                "kind": "assistant_reminder",
+                "kind": getattr(notification, "kind", "assistant_reminder"),
             },
         )
         if not saved:
@@ -60,13 +71,14 @@ async def deliver_reminder(task, trigger, notification):
 
     result = await SocialBroadcastService().broadcast(
         message=notification.content,
+        media=getattr(notification, "media", []),
         target_user_ids=[recipient],
         persist_context=True,
         delivery_metadata={"_single_attempt": True, "_expected_bot_account": parts[1]},
         context_metadata={
             "task_id": task.task_id,
             "event_id": notification.message_id,
-            "kind": "assistant_reminder",
+            "kind": getattr(notification, "kind", "assistant_reminder"),
         },
     )
     results = result.get("delivery_results", [])

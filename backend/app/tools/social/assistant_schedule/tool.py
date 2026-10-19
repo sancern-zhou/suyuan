@@ -20,6 +20,8 @@ class ManageAssistantScheduleTool(LLMTool):
             "create: purpose=remind 只提醒本人，可绑定已有事项及版本，否则自动登记提醒事项；followup 绑定已有事项并执行已授权只读分析，"
             "需 task_id/expected_version；execute 指定当前项目办公/专业主模式，或直接指定子 Agent 模式"
             "（如 query_monitoring_city；子 Agent 只在固定工具集内执行，不具委派/编排能力）。"
+            "可传 task_id/expected_version 关联事项；执行成功、失败或超时均自动回告交办人。"
+            "关联事项有结果后等待用户验收，不自动确认完成。"
             "schedule 指定 once/interval/cron/feedback 与时区；feedback 只在该事项收到新反馈时触发跟进，"
             "不会读取微信群。普通提醒不能升级为分析或任意发信。"
             "只在用户明确交办时创建或修改，不接受收件人。"

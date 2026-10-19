@@ -55,7 +55,18 @@
         </article>
       </template>
       <template v-else>
-        <article v-for="item in items" :key="item.message_id" class="assistant-item"><time>{{ time(item.created_at) }}</time><p>{{ item.content }}</p><button type="button" :disabled="busy" @click="openNotification(item)">查看事项</button></article>
+        <article v-for="item in items" :key="item.message_id" class="assistant-item">
+          <time>{{ time(item.created_at) }}</time>
+          <p>{{ item.content }}</p>
+          <span>{{ deliveryLabels[item.delivery_state] || item.delivery_state }}</span>
+          <span v-if="!item.read_at"> · 未读</span>
+          <div class="item-actions">
+            <button v-if="item.source_session_id" type="button" :disabled="disabled" @click="openReply(item)">查看回复</button>
+            <button v-if="item.execution_session_id" type="button" :disabled="disabled" @click="openExecution(item)">执行详情</button>
+            <button v-if="item.task_id" type="button" :disabled="busy" @click="openNotification(item)">查看事项</button>
+            <button v-if="!item.read_at" type="button" :disabled="busy" @click="markRead(item)">标为已读</button>
+          </div>
+        </article>
       </template>
       <button v-if="hasMore" type="button" class="load-more" :disabled="loading || busy" @click="load(true)">加载更多</button>
     </div>
@@ -66,7 +77,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RefreshCw, X } from 'lucide-vue-next'
 import { accountGeneration, onAccountChanged } from '@/auth/accountSession.js'
-import { changeAssistantTask, decideAssistantSuggestion, getAssistantTask, listAssistantItems } from '@/services/assistantApi.js'
+import { changeAssistantTask, decideAssistantSuggestion, getAssistantTask, listAssistantItems, readAssistantReply } from '@/services/assistantApi.js'
 
 const props = defineProps({ isAnalyzing: Boolean, readOnly: Boolean })
 const emit = defineEmits(['close', 'continue'])
@@ -74,6 +85,7 @@ const tabs = [{ id: 'tasks', label: '事项' }, { id: 'suggestions', label: '建
 const emptyText = { tasks: '暂无持续事项', suggestions: '暂无使用建议', notifications: '暂无提醒记录' }
 const taskLabels = { ready: '待推进', waiting_input: '等待补充或验收', blocked: '暂时阻塞', completed: '已完成', cancelled: '已取消' }
 const suggestionLabels = { pending: '待选择', accepted: '已采纳', dismissed: '已忽略' }
+const deliveryLabels = { pending: '等待回告', sending: '正在发送', inbox_saved: '已保存到消息', provider_accepted: '渠道已受理', rejected: '未能投递', unknown: '送达状态待核实' }
 const tab = ref('tasks'), items = ref([]), loading = ref(false), busy = ref(false), hasMore = ref(false)
 const error = ref(''), notice = ref(''), detail = ref(null), editing = ref(null), text = ref('')
 let sequence = 0
@@ -145,6 +157,17 @@ async function openNotification(item) {
   await load()
   await showDetail(item)
   if (detail.value && !items.value.some(row => row.task_id === detail.value.task_id)) items.value.unshift(detail.value)
+}
+function openReply(item) {
+  emit('continue', { sessionId: item.source_session_id, query: '' })
+  emit('close')
+}
+async function markRead(item) {
+  await operate(async () => { await readAssistantReply(item.message_id); await load() })
+}
+function openExecution(item) {
+  emit('continue', { sessionId: item.execution_session_id, query: '' })
+  emit('close')
 }
 watch(() => props.isAnalyzing, (running, previous) => { if (previous && !running && !busy.value) load() })
 onMounted(() => {

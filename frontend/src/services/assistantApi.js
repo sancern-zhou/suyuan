@@ -29,3 +29,5 @@ export const changeAssistantTask = (item, action, text = '') => request(
 export const decideAssistantSuggestion = (item, action) => request(
   `suggestions/${encodeURIComponent(item.suggestion_id)}/actions`, { action, expected_version: item.version }
 )
+export const listAssistantReplies = () => request('notifications?unread_only=true&limit=50')
+export const readAssistantReply = id => request(`notifications/${encodeURIComponent(id)}/read`, {})

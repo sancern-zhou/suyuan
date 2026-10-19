@@ -421,6 +421,17 @@ class ScheduledTaskService:
             self.task_storage.update_run_stats(task.task_id, success=False)
             return execution
 
+        finally:
+            if execution is not None and "assistant-plan" in task.tags and task.assistant_recipient:
+                try:
+                    from app.social.assistant_notifications import AssistantNotificationService
+                    from config.settings import settings
+
+                    await AssistantNotificationService().enqueue_execution(settings.project_id, task, execution)
+                except Exception:
+                    # Terminal executions remain durable; the reply clock reconciles this gap.
+                    logger.exception("assistant_execution_reply_pending", execution_id=execution.execution_id)
+
     async def publish_event(
         self,
         event: TaskEvent,

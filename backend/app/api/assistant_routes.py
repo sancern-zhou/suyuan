@@ -13,12 +13,10 @@ from app.auth.models import CurrentUser
 from app.conversations import ConversationSource
 from app.conversations.dependencies import get_conversation_catalog
 from app.social.assistant_coaching import AssistantCoachingService
-from app.social.assistant_followup_models import AssistantOutboxDB
 from app.social.assistant_followups import AssistantFollowupService
 from app.social.assistant_request import require_assistant_request
-from app.social.assistant_task_models import AssistantTaskDB
 from app.social.assistant_tasks import AssistantTaskService, TaskConflict, TaskNotFound
-from app.social.web_assistant import web_assistant_recipient, web_assistant_request
+from app.social.web_assistant import web_assistant_request
 from config.settings import settings
 
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
@@ -222,37 +220,18 @@ async def notifications(
     service: Tasks,
     limit: int = Query(20, ge=1, le=50),
     offset: int = Query(0, ge=0),
+    unread_only: bool = False,
 ):
-    async def load():
-        async with service.session_factory() as session:
-            rows = (
-                (
-                    await session.execute(
-                        select(AssistantOutboxDB)
-                        .join(AssistantTaskDB, AssistantTaskDB.task_id == AssistantOutboxDB.task_id)
-                        .where(
-                            *service._scope(settings.project_id, user.id),
-                            AssistantOutboxDB.recipient == web_assistant_recipient(user.id),
-                            AssistantOutboxDB.state == "inbox_saved",
-                        )
-                        .order_by(AssistantOutboxDB.created_at.desc(), AssistantOutboxDB.message_id)
-                        .offset(offset)
-                        .limit(limit)
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            return {
-                "notifications": [
-                    {
-                        "message_id": row.message_id,
-                        "task_id": row.task_id,
-                        "content": row.content,
-                        "created_at": row.created_at,
-                    }
-                    for row in rows
-                ]
-            }
+    from app.social.assistant_notifications import AssistantNotificationService
 
-    return await result(load())
+    return await result(AssistantNotificationService(service.session_factory).list(
+        settings.project_id, user.id, limit=limit, offset=offset, unread_only=unread_only,
+    ))
+
+
+@router.post("/notifications/{message_id}/read")
+async def read_notification(message_id: str, user: AuthenticatedUser, service: Tasks):
+    from app.social.assistant_notifications import AssistantNotificationService
+
+    await result(AssistantNotificationService(service.session_factory).mark_read(settings.project_id, user.id, message_id))
+    return {"success": True}
