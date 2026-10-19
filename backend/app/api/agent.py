@@ -834,9 +834,11 @@ async def analyze_stream(
             },
         }
         if request.mode == "social":
+            from app.social.assistant_identity import assistant_account_context
             from app.social.web_assistant import web_social_context
 
             analyze_kwargs.update(web_social_context(user))
+            analyze_kwargs["runtime_metadata"]["authenticated_account"] = assistant_account_context(user)
         if request.mode == "board" and request.board_context:
             analyze_kwargs["board_context"] = request.board_context
             current_xml = request.board_context.get("current_xml") or request.board_context.get("currentXml") or ""

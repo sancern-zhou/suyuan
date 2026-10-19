@@ -166,6 +166,9 @@ async def test_app_stream_persists_complete_event_transcript(tmp_path, monkeypat
 
     class FakeAgent:
         async def analyze(self, **kwargs):
+            assert kwargs["runtime_metadata"]["authenticated_account"] == {
+                "username": "alice", "display_name": "Alice",
+            }
             yield {"type": "start", "data": {"session_id": kwargs["session_id"]}}
             yield {"type": "streaming_text", "data": {"chunk": "流式回复", "is_complete": True}}
             yield {"type": "complete", "data": {"answer": "流式回复"}}

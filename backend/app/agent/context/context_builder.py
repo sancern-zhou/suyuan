@@ -116,6 +116,7 @@ class SimplifiedContextBuilder:
         # 客户端来源标记（"web" | "app"），由请求入口经 runtime_metadata 透传。
         # 为 None 时（定时任务、子Agent 未标记等）不渲染客户端差异层。
         self.client_channel: Optional[str] = None
+        self.authenticated_account = None
 
         # 当前逻辑会话的共享资源投影。此字段不受模式隔离策略清理。
         self.session_resource_context = None
@@ -437,6 +438,12 @@ class SimplifiedContextBuilder:
     def _build_platform_policy_prompt(self) -> str:
         """Build non-compressible runtime rules shared by every agent mode."""
         client_channel_prompt = self._build_client_channel_prompt()
+        from app.social.assistant_identity import render_assistant_account_context
+
+        account_prompt = (
+            render_assistant_account_context(self.authenticated_account)
+            if self.current_mode == "social" else ""
+        )
         return (
             "<context_precedence>\n"
             "上下文优先级按 context_layer 的 priority 从小到大递减。\n"
@@ -446,6 +453,7 @@ class SimplifiedContextBuilder:
             "</context_precedence>\n\n"
             + self._build_agent_control_prompt()
             + (f"\n\n{client_channel_prompt}" if client_channel_prompt else "")
+            + (f"\n\n{account_prompt}" if account_prompt else "")
         )
 
     def _build_session_resources_layer(self) -> str:

@@ -319,6 +319,9 @@ async def test_real_web_stream_uses_social_and_scopes_original_human_request(mon
             assert kwargs["session_storage_mode"] == "assistant"
             assert kwargs["user_identifier"] == "server-memory-key"
             assert kwargs["social_memory_store"] is memory
+            assert kwargs["runtime_metadata"]["authenticated_account"] == {
+                "username": ALICE.username, "display_name": ALICE.display_name,
+            }
             authority = require_assistant_request("web-session")
             assert authority.user_message == "Track my work"
             assert authority.delivery_user_id == web_assistant_recipient("alice")
