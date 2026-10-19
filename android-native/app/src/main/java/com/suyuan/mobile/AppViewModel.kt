@@ -1156,8 +1156,7 @@ class AppViewModel(
                     _state.value = _state.value.copy(sharedConversations = list, sharedLoading = false)
                 }
                 .onFailure { failure ->
-                    if (failure is ApiException && failure.statusCode == 401) logout("登录已过期，请重新登录")
-                    else _state.value = _state.value.copy(sharedLoading = false, sharedError = friendlyError(failure))
+                    _state.value = _state.value.copy(sharedLoading = false, sharedError = friendlyError(failure))
                 }
         }
     }
