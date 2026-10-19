@@ -164,6 +164,14 @@ async def test_single_list_contains_reminder_and_real_office_job(plans):
 
 
 @pytest.mark.asyncio
+async def test_execute_accepts_leaf_sub_agent_mode(plans):
+    job = await create(plans, purpose="execute", execution_mode="query_monitoring_city")
+    assert job["execution_mode"] == "query_monitoring_city"
+    stored = plans._job_service().get_task(job["plan_id"].split(":", 1)[1])
+    assert stored.execution_mode == "query_monitoring_city"
+
+
+@pytest.mark.asyncio
 async def test_cancel_revokes_pending_reminder_delivery_and_feature_off_still_allows_stop(plans):
     plan = await create(plans)
     due = plan["next_at"] + timedelta(seconds=1)
