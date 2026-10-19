@@ -209,6 +209,8 @@ backend:
       - list_session_resources
       - read_session_resource
       - publish_session_file
+      - read_file
+      - edit_file
       - manage_assistant_memory
       - call_sub_agent
       - run_agent_workflow

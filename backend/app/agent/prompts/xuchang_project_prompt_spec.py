@@ -73,7 +73,8 @@ def test_xuchang_social_tool_whitelist_matches_prompt_intent():
     assert "create_scheduled_task" not in tools
     assert "manage_scheduled_tasks" not in tools
     assert "manage_assistant_schedule" in tools
-    assert {"read_file", "edit_file", "wait_task"}.isdisjoint(tools)
+    assert {"read_file", "edit_file"}.issubset(tools)
+    assert "wait_task" not in tools
     assert {"manage_assistant_memory", "manage_assistant_runs"}.issubset(tools)
     assert "send_notification" in tools
     assert "bash" not in tools
