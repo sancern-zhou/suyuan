@@ -18,6 +18,8 @@ def test_xuchang_manifest_separates_coordinator_and_office():
     tools = manifest["agent_mode_tools"]["social"]
     assert {"call_sub_agent", "run_agent_workflow"}.issubset(tools)
     assert "manage_assistant_schedule" in tools
+    assert {"manage_assistant_memory", "manage_assistant_runs"}.issubset(tools)
+    assert {"read_file", "edit_file", "wait_task", "bash"}.isdisjoint(tools)
     assert {"schedule_task", "create_scheduled_task", "manage_scheduled_tasks"}.isdisjoint(tools)
     assert {
         "execute_sql_query",

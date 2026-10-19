@@ -56,6 +56,8 @@ def test_xuchang_social_prompt_coordinates_office_and_unified_schedules():
     assert 'target_mode="office"' in prompt
     assert "不直接查询业务或气象数据" in prompt
     assert "manage_assistant_schedule" in prompt
+    assert "manage_assistant_memory" in prompt
+    assert "manage_assistant_runs" in prompt
     assert "plan_id/revision" in prompt
 
 
@@ -71,6 +73,8 @@ def test_xuchang_social_tool_whitelist_matches_prompt_intent():
     assert "create_scheduled_task" not in tools
     assert "manage_scheduled_tasks" not in tools
     assert "manage_assistant_schedule" in tools
+    assert {"read_file", "edit_file", "wait_task"}.isdisjoint(tools)
+    assert {"manage_assistant_memory", "manage_assistant_runs"}.issubset(tools)
     assert "send_notification" in tools
     assert "bash" not in tools
     assert "call_sub_agent" in tools
