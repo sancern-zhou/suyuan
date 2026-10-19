@@ -46,7 +46,7 @@ class RememberFactTool(LLMTool):
         设置当前的记忆上下文（由记忆整合Agent调用）
 
         Args:
-            mode: 模式标识（如 'social', 'assistant', 'expert'）
+            mode: 模式标识（如 'assistant', 'assistant', 'expert'）
             user_id: 用户标识（用于社交模式的用户隔离）
         """
         _memory_context.set((mode, user_id))
@@ -112,7 +112,7 @@ class RememberFactTool(LLMTool):
                     "error": "记忆写入目标模式缺失（memory_consolidator 不承载业务记忆），已拒绝写入",
                     "summary": "记忆添加失败：整合目标模式未知",
                 }
-            if current_mode == "social" and (not current_user_id or current_user_id == "global"):
+            if current_mode == "assistant" and (not current_user_id or current_user_id == "global"):
                 # 社交记忆按用户隔离；缺用户身份时拒绝写入，
                 # 绝不降级到共享目录（其内容不属于任何用户，永远不会被注入）。
                 logger.warning(

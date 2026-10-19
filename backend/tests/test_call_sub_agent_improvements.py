@@ -52,7 +52,7 @@ def test_function_schema():
 def test_workspace_promotion_waits_for_approval_before_starting_child():
     """持续工作空间请求只生成审批数据，不创建或运行子 Agent。"""
     tool = CallSubAgentTool()
-    context = SimpleNamespace(session_id="web-session-1", manual_mode="social")
+    context = SimpleNamespace(session_id="web-session-1", manual_mode="assistant")
 
     result = asyncio.run(
         tool.execute(

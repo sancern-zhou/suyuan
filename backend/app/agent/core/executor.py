@@ -1112,6 +1112,7 @@ class ToolExecutor:
             context.llm_planner = self.llm_planner
             context.tool_executor = self
             context.runtime_mode = self.runtime_mode
+            context.session_storage_mode = getattr(self, "session_storage_mode", None)
             context.user_identifier = self.user_identifier
             context.assistant_memory_store = getattr(self, "assistant_memory_store", None)
             context.assistant_profile_path = getattr(self, "assistant_profile_path", None)

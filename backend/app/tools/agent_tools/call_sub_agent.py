@@ -64,7 +64,7 @@ session_manager = get_session_manager()
 
 # Child execution uses office and the registered professional leaf modes.
 AgentMode = Literal[
-    "office", "query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "report", "social", "expert",
+    "office", "query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "report", "assistant", "expert",
 
     "expert_meteorology", "expert_analysis", "ops", "board", "ppt", "knowledge",
 ]
@@ -236,15 +236,15 @@ class CallSubAgentTool(LLMTool):
                     },
                     "run_in_background": {
                         "type": "boolean",
-                        "description": "后台执行并返回任务句柄；助手 social 使用 manage_assistant_runs 管理返回的 run_id。"
+                        "description": "后台执行并返回任务句柄；助手 assistant 使用 manage_assistant_runs 管理返回的 run_id。"
                     },
                     "background_task_id": {
                         "type": "string",
-                        "description": "其他模式的进程内后台句柄；social 助手不要使用，改用 manage_assistant_runs。"
+                        "description": "其他模式的进程内后台句柄；assistant 助手不要使用，改用 manage_assistant_runs。"
                     },
                     "cancel_background_task": {
                         "type": "boolean",
-                        "description": "其他模式的进程内取消操作；social 助手通过 manage_assistant_runs 请求停止。"
+                        "description": "其他模式的进程内取消操作；assistant 助手通过 manage_assistant_runs 请求停止。"
                     }
                 },
                 "required": ["target_mode"]
@@ -267,7 +267,7 @@ class CallSubAgentTool(LLMTool):
 
     async def execute(self, context: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
         """Run a child Agent, optionally returning a background task handle."""
-        if getattr(context, "runtime_mode", None) == "social":
+        if getattr(context, "runtime_mode", None) == "assistant":
             from app.social.assistant_runs import AssistantRunService, managed_delegation
 
             try:
@@ -1438,7 +1438,7 @@ class CallSubAgentTool(LLMTool):
                 "（第五个sheet，时间段：2026年1-3月和2025年1-3月）'\n"
                 "- 错误示例：❌ '更新Excel文件'\n"
             ),
-            "social": "\n专注完成上述社交平台任务。\n",
+            "assistant": "\n专注完成上述社交平台任务。\n",
             "query": "\n数据查询任务：仅处理广东省环境数据查询及相关统计导出。先核对任务范围；招投标、中标、普通业务表格或省外/全国查询超出职责时，向父助手说明，不尝试绕过工具权限。范围内任务选择合适工具和参数完成。\n",
             "report": "\n专注完成上述报告生成任务。\n",
             "ops": "\n专注完成上述运维管理任务，围绕工单查询、审核判断、异常分析和闭环建议给出结构化结果。\n",
@@ -1551,7 +1551,7 @@ class CallSubAgentTool(LLMTool):
         """获取模式的友好名称"""
         mode_names = {
             "office": "办公Agent",
-            "social": "助手Agent",
+            "assistant": "助手Agent",
             "query": "问数Agent",
             "report": "报告Agent",
             "ops": "运维管理Agent",
@@ -1776,7 +1776,7 @@ class CallSubAgentTool(LLMTool):
             mm = context.memory_manager
             if hasattr(mm, 'mode'):
                 return mm.mode
-        return "social"  # 默认社交模式
+        return "assistant"  # 默认社交模式
 
     def _should_auto_reuse_session(
         self,

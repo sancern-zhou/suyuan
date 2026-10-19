@@ -16,9 +16,9 @@ test('top-level persisted mode takes priority when available', () => {
   }, 'opaque-history-id', 'expert'), 'report')
 })
 
-test('social-backed Web history restores the existing assistant entry without losing metadata priority', () => {
-  assert.equal(resolveRestoredAgentMode({ mode: 'social' }, 'opaque-id', 'query'), 'assistant')
-  assert.equal(resolveRestoredAgentMode({ metadata: { mode: 'social' } }, 'opaque-id', 'expert'), 'assistant')
+test('assistant Web history restores the existing assistant entry without losing metadata priority', () => {
+  assert.equal(resolveRestoredAgentMode({ mode: 'assistant' }, 'opaque-id', 'query'), 'assistant')
+  assert.equal(resolveRestoredAgentMode({ metadata: { mode: 'assistant' } }, 'opaque-id', 'expert'), 'assistant')
 })
 
 test('mode-prefixed ids remain a fallback for legacy sessions', () => {

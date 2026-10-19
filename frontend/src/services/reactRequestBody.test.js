@@ -31,9 +31,9 @@ test('always includes empty selection arrays', () => {
   assert.equal(body.active_contexts, null)
 })
 
-test('Web assistant uses social runtime while professional requests retain their modes', () => {
-  assert.equal(buildAnalyzeRequestBody('继续', { agentMode: 'assistant' }).mode, 'social')
-  assert.equal(buildAnalyzeRequestBody('继续', { agentMode: 'social' }).mode, 'social')
+test('Web assistant uses assistant runtime while professional requests retain their modes', () => {
+  assert.equal(buildAnalyzeRequestBody('继续', { agentMode: 'assistant' }).mode, 'assistant')
+  assert.equal(buildAnalyzeRequestBody('继续', { agentMode: 'assistant' }).mode, 'assistant')
   for (const mode of ['query', 'expert', 'report', 'ppt', 'board', 'knowledge']) {
     assert.equal(buildAnalyzeRequestBody('继续', { agentMode: mode }).mode, mode)
   }

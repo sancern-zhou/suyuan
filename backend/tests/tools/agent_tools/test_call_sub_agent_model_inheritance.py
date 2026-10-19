@@ -107,7 +107,7 @@ async def test_sub_agent_explicitly_inherits_parent_model_chain(monkeypatch, tar
         )
     context.runtime_metadata = {"client_channel": client_channel}
     if target_mode == "office":
-        context.manual_mode = "social"
+        context.manual_mode = "assistant"
         context.tool_executor.delegation_tool_registry = {
             "execute_python": object(), "execute_sql_query": object(),
             "call_sub_agent": object(), "create_report_package": object(),

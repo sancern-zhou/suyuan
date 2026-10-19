@@ -23,7 +23,7 @@ def _identity(caller="app:android:alice"):
     return AppIdentity(caller, "Caller", caller, 9999999999)
 
 
-LEGIT_SESSION_ID = "social_session_1791910261228_a9985d22e841"
+LEGIT_SESSION_ID = "assistant_session_1791910261228_a9985d22e841"
 
 
 def _catalog_with(row):
@@ -45,7 +45,7 @@ def _mapper(current_session=None, or_create=None):
         get_session=AsyncMock(return_value=current_session),
         get_or_create_session=AsyncMock(return_value=or_create),
         save_mapping=AsyncMock(),
-        new_session_id=lambda mode: "social_session_new",
+        new_session_id=lambda mode: "assistant_session_new",
     )
 
 
@@ -59,7 +59,7 @@ async def test_create_app_session_does_not_register_catalog(monkeypatch):
 
     result = await social_app_routes.create_app_session(object(), _identity())
 
-    assert result["session_id"] == "social_session_new"
+    assert result["session_id"] == "assistant_session_new"
     mapper.save_mapping.assert_awaited_once()
     repository.upsert.assert_not_awaited()
 
@@ -100,19 +100,19 @@ async def test_ensure_session_rejects_unknown_session(monkeypatch):
 async def test_ensure_session_skips_duplicate_registration(monkeypatch):
     """目录中已存在的会话不重复注册（避免所有权转移路径）。"""
     row = ConversationCatalogRecord(
-        session_id="social_session_existing", owner_user_id="app:android:alice",
+        session_id="assistant_session_existing", owner_user_id="app:android:alice",
         owner_username="alice", owner_display_name="Alice",
-        source=ConversationSource.SOCIAL, mode="social", title="已注册",
+        source=ConversationSource.SOCIAL, mode="assistant", title="已注册",
         read_only_on_web=True,
     )
     catalog, repository = _catalog_with(row=row)
-    mapper = _mapper(or_create="social_session_existing")
+    mapper = _mapper(or_create="assistant_session_existing")
     monkeypatch.setattr(social_app_routes, "get_conversation_catalog", lambda: catalog)
     monkeypatch.setattr(social_app_routes, "_loaded_session_mapper", AsyncMock(return_value=mapper))
 
     session_id = await social_app_routes._ensure_session(object(), _identity(), None)
 
-    assert session_id == "social_session_existing"
+    assert session_id == "assistant_session_existing"
     repository.upsert.assert_not_awaited()
 
 
@@ -120,13 +120,13 @@ async def test_ensure_session_skips_duplicate_registration(monkeypatch):
 async def test_ensure_session_registers_new_or_create_result(monkeypatch):
     """get_or_create 产出新映射时注册（上传附件等隐式建会话路径）。"""
     catalog, repository = _catalog_with(row=None)
-    mapper = _mapper(or_create="social_session_new")
+    mapper = _mapper(or_create="assistant_session_new")
     monkeypatch.setattr(social_app_routes, "get_conversation_catalog", lambda: catalog)
     monkeypatch.setattr(social_app_routes, "_loaded_session_mapper", AsyncMock(return_value=mapper))
 
     session_id = await social_app_routes._ensure_session(object(), _identity(), None)
 
-    assert session_id == "social_session_new"
+    assert session_id == "assistant_session_new"
     repository.upsert.assert_awaited_once()
 
 
@@ -178,14 +178,14 @@ async def test_app_session_list_hides_sessions_without_content(monkeypatch, tmp_
     live = ConversationCatalogRecord(
         session_id=LEGIT_SESSION_ID, owner_user_id="app:android:alice",
         owner_username="alice", owner_display_name="Alice",
-        source=ConversationSource.SOCIAL, mode="social", title="你好",
+        source=ConversationSource.SOCIAL, mode="assistant", title="你好",
         read_only_on_web=True,
     )
     empty = ConversationCatalogRecord(
-        session_id="social_session_1791910276138_d4843e07b640",
+        session_id="assistant_session_1791910276138_d4843e07b640",
         owner_user_id="app:android:alice",
         owner_username="alice", owner_display_name="Alice",
-        source=ConversationSource.SOCIAL, mode="social", title="新对话",
+        source=ConversationSource.SOCIAL, mode="assistant", title="新对话",
         read_only_on_web=True,
     )
     web_row = ConversationCatalogRecord(

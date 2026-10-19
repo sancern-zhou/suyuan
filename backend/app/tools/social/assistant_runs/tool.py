@@ -55,7 +55,7 @@ class ManageAssistantRunsTool(LLMTool):
         try:
             from app.social.assistant_runs import AssistantRunService
 
-            if kwargs or getattr(context, "runtime_mode", None) != "social":
+            if kwargs or getattr(context, "runtime_mode", None) != "assistant":
                 raise PermissionError("只允许当前助手会话管理本人的委派")
             limit = limit if limit is not None else (12000 if action == "result" else 20)
             if (

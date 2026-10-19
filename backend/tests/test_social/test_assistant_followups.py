@@ -499,11 +499,11 @@ def test_unified_schedule_replaces_followup_tool_even_when_creation_is_disabled(
     from config.settings import settings
 
     monkeypatch.setattr(settings, "assistant_followups_enabled", False)
-    assert "manage_assistant_followups" not in get_tools_by_mode("social")
-    assert "manage_assistant_schedule" in get_tools_by_mode("social")
+    assert "manage_assistant_followups" not in get_tools_by_mode("assistant")
+    assert "manage_assistant_schedule" in get_tools_by_mode("assistant")
     monkeypatch.setattr(settings, "assistant_followups_enabled", True)
-    assert "manage_assistant_followups" not in get_tools_by_mode("social")
-    assert "manage_assistant_schedule" in get_tools_by_mode("social")
+    assert "manage_assistant_followups" not in get_tools_by_mode("assistant")
+    assert "manage_assistant_schedule" in get_tools_by_mode("assistant")
     assert "manage_assistant_schedule" not in get_tools_by_mode("expert")
 
 

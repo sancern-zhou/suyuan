@@ -101,7 +101,7 @@ async def test_app_history_session_uses_catalog_not_current_session_mapping(monk
         owner_username="alice",
         owner_display_name="Alice",
         source=ConversationSource.SOCIAL,
-        mode="social",
+        mode="assistant",
     )
 
     class Mapper:

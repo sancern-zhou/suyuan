@@ -201,7 +201,7 @@ class SessionManager:
         查找最近的子Agent会话
 
         Args:
-            parent_mode: 父Agent模式（如 "social"）
+            parent_mode: 父Agent模式（如 "assistant"）
             child_mode: 子Agent模式（如 "query"）
 
         Returns:

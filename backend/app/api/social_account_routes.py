@@ -48,7 +48,7 @@ class AccountCreate(BaseModel):
     base_url: str = "https://ilinkai.weixin.qq.com"
     allow_from: List[str] = ["*"]
     auto_start: bool = True
-    agent_mode: Literal["social", "enforcement_exam"] = "social"
+    agent_mode: Literal["assistant", "enforcement_exam"] = "assistant"
 
 
 class AccountResponse(BaseModel):
@@ -61,7 +61,7 @@ class AccountResponse(BaseModel):
     bot_account: Optional[str] = None
     login_status: str  # "logged_out", "waiting_scan", "logged_in"
     qr_code_available: bool = False
-    agent_mode: Literal["social", "enforcement_exam"] = "social"
+    agent_mode: Literal["assistant", "enforcement_exam"] = "assistant"
 
 
 class AccountStatus(BaseModel):
@@ -251,7 +251,7 @@ async def list_accounts(
             "bot_account": getattr(channel, "bot_account", None),
             "login_status": "logged_in" if getattr(channel, "_token", None) else "logged_out",
             "qr_code_available": getattr(channel, "_current_qr_code_path", None) is not None,
-            "agent_mode": getattr(config, "agent_mode", "social"),
+            "agent_mode": getattr(config, "agent_mode", "assistant"),
         })
 
     logger.info("accounts_listed", count=len(accounts))
@@ -617,7 +617,7 @@ async def refresh_weixin_qrcode(
 
 class AutoCreateRequest(BaseModel):
     """Request for auto-creating a WeChat account with specified agent mode."""
-    agent_mode: Literal["social", "enforcement_exam"] = "social"
+    agent_mode: Literal["assistant", "enforcement_exam"] = "assistant"
 
 
 class FinalizeRequest(BaseModel):
@@ -639,7 +639,7 @@ async def auto_create_account(
     Returns:
         创建的账号信息
     """
-    agent_mode = request.agent_mode if request else "social"
+    agent_mode = request.agent_mode if request else "assistant"
     """
     自动创建临时账号并启动（用于扫码登录流程）
 
@@ -675,7 +675,7 @@ async def auto_create_account(
                 "platform_display_name": user.display_name,
                 "status": "already_exists",
                 "qr_code_available": getattr(channel, "_current_qr_code_path", None) is not None,
-                "agent_mode": getattr(channel.config, "agent_mode", "social")
+                "agent_mode": getattr(channel.config, "agent_mode", "assistant")
             }
         else:
             # 配置中存在但渠道未启动，尝试创建并启动

@@ -19,7 +19,7 @@ def isolated_context():
         tool.clear_memory_context()
 
 
-@pytest.mark.parametrize("mode,user", [("expert", "global"), ("social", "wx:bot:one")])
+@pytest.mark.parametrize("mode,user", [("expert", "global"), ("assistant", "wx:bot:one")])
 async def test_fact_tool_lifecycle_uses_same_scope_as_resident_memory(tmp_path, monkeypatch, mode, user):
     import app.agent.memory.memory_paths as paths
     monkeypatch.setattr(paths, "get_memory_dir", lambda: tmp_path / "shared")
@@ -42,8 +42,8 @@ async def test_fact_tool_lifecycle_uses_same_scope_as_resident_memory(tmp_path, 
 
 
 @pytest.mark.parametrize("mode,user", [(None, None), ("memory_consolidator", "global"),
-                                      ("social", None), ("social", "global"),
-                                      ("../escape", "global"), ("social", "wx:../escape")])
+                                      ("assistant", None), ("assistant", "global"),
+                                      ("../escape", "global"), ("assistant", "wx:../escape")])
 async def test_all_fact_tools_reject_unknown_or_unsafe_targets(tmp_path, monkeypatch, mode, user):
     import app.agent.memory.memory_paths as paths
     monkeypatch.setattr(paths, "get_memory_dir", lambda: tmp_path)

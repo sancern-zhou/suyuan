@@ -33,7 +33,7 @@ def available_analysis_tools():
 
     return sorted(
         name
-        for name in ANALYSIS_READ_TOOLS & get_tools_by_mode("social").keys()
+        for name in ANALYSIS_READ_TOOLS & get_tools_by_mode("assistant").keys()
         if global_tool_registry.get_tool_status(name) == "enabled"
     )
 

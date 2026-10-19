@@ -127,7 +127,7 @@ async def test_read_and_mutation_are_owner_and_project_scoped(plans):
         with pytest.raises(TaskNotFound):
             await plans.dispatch(project, user, PlanCommand(action="get", plan_id=plan["plan_id"]))
     with pytest.raises(ValueError):
-        await create(plans, purpose="execute", execution_mode="social")
+        await create(plans, purpose="execute", execution_mode="assistant")
 
 
 @pytest.mark.asyncio
@@ -288,7 +288,7 @@ def test_only_one_assistant_scheduling_tool_is_exposed(monkeypatch):
 
     for project in ("default", "xuchang"):
         monkeypatch.setattr(settings, "project_id", project)
-        tools = get_tools_by_mode("social")
+        tools = get_tools_by_mode("assistant")
         assert "manage_assistant_schedule" in tools
         assert {
             "schedule_task",

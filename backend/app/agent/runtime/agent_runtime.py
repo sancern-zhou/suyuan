@@ -1190,7 +1190,7 @@ class AgentRuntime:
             await save_context_usage_for_mode(
                 state.session_id,
                 usage_data,
-                mode=state.mode,
+                mode=getattr(getattr(self, "context_builder", None), "session_storage_mode", None) or state.mode,
             )
         except Exception as exc:
             logger.warning(
@@ -1205,7 +1205,7 @@ class AgentRuntime:
         from app.agent.prompts.tool_registry import get_tools_by_mode
 
         names = list(get_tools_by_mode(state.mode).keys())
-        if state.mode not in {"social", "office", "assistant"}:
+        if state.mode not in {"assistant", "office"}:
             names.extend(self.config.extra_tool_names or [])
         # 结构化交付：call_sub_agent 给带 result_schema 的子会话动态注入
         # submit_result（不在模式白名单里）。它已注入 child registry 时必须
@@ -1226,7 +1226,7 @@ class AgentRuntime:
                 name for name in names
                 if name in phase_tools or name == "submit_result"
             ]
-        elif not self.config.extra_tool_names and state.mode not in {"social", "office", "assistant"}:
+        elif not self.config.extra_tool_names and state.mode not in {"assistant", "office"}:
             return None
         return list(dict.fromkeys(names))
 

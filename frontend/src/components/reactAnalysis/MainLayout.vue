@@ -181,7 +181,7 @@
         </div>
 
         <AssistantPanel
-          v-if="assistantPanelOpen && ['assistant', 'social'].includes(agentMode)"
+          v-if="assistantPanelOpen && agentMode === 'assistant'"
           :is-analyzing="isAnalyzing"
           :read-only="conversationReadOnly"
           @close="assistantPanelOpen = false"
@@ -189,7 +189,7 @@
         />
         <!-- 模式记忆查看/编辑对话框 -->
         <ModeMemoryDialog
-          :visible="memoryDialogOpen && !['assistant', 'social'].includes(agentMode)"
+          :visible="memoryDialogOpen && agentMode !== 'assistant'"
           :agent-mode="agentMode"
           @close="memoryDialogOpen = false"
         />

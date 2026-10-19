@@ -244,7 +244,6 @@ function mergeAgentMode(agent, override) {
 }
 
 export const getAgentMode = (mode, overrides = {}) => {
-  mode = mode === 'social' ? 'assistant' : mode
   const agent = AGENT_MODES.find(item => item.id === mode)
   return mergeAgentMode(agent, overrides[mode])
 }

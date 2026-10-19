@@ -608,7 +608,7 @@ class AppViewModel(
                         if (_state.value.sessionId == null) {
                             _state.value = _state.value.copy(
                                 sessionId = session,
-                                sessions = listOf(SessionInfo(session, "social", title)) + knownSessions,
+                                sessions = listOf(SessionInfo(session, "assistant", title)) + knownSessions,
                             )
                         } else if (title.isNotBlank()) {
                             _state.value = _state.value.copy(

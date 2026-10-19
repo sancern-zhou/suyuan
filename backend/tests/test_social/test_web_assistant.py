@@ -27,7 +27,6 @@ from app.social.assistant_request import require_assistant_request
 from app.social.assistant_task_models import AssistantTaskDB, AssistantTaskEventDB
 from app.social.assistant_tasks import AssistantTaskService
 from app.social.web_assistant import (
-    social_runtime_mode,
     web_assistant_recipient,
     web_assistant_request,
 )
@@ -277,14 +276,12 @@ def test_social_toolset_coordinates_office_and_respects_project_disables(monkeyp
     from app.agent.prompts import tool_registry
 
     monkeypatch.setattr(settings, "project_id", "xuchang")
-    social = tool_registry.get_tools_by_mode("social")
+    social = tool_registry.get_tools_by_mode("assistant")
     assert "call_sub_agent" in social
     assert "execute_python" not in social
     assert "execute_python" in tool_registry.get_tools_by_mode("office")
     monkeypatch.setattr(tool_registry, "_get_project_disabled_tool_names", lambda: ["read_file"])
-    assert "read_file" not in tool_registry.get_tools_by_mode("social")
-    assert social_runtime_mode("assistant") == social_runtime_mode("social") == "social"
-    assert social_runtime_mode("query") == "query"
+    assert "read_file" not in tool_registry.get_tools_by_mode("assistant")
 
 
 @pytest.mark.asyncio
@@ -315,10 +312,10 @@ async def test_real_web_stream_uses_social_and_scopes_original_human_request(mon
 
     class Agent:
         async def analyze(self, **kwargs):
-            assert kwargs["manual_mode"] == "social"
+            assert kwargs["manual_mode"] == "assistant"
             assert kwargs["session_storage_mode"] == "assistant"
             assert kwargs["user_identifier"] == "server-memory-key"
-            assert kwargs["social_memory_store"] is memory
+            assert kwargs["assistant_memory_store"] is memory
             assert kwargs["runtime_metadata"]["authenticated_account"] == {
                 "username": ALICE.username, "display_name": ALICE.display_name,
             }
@@ -330,8 +327,8 @@ async def test_real_web_stream_uses_social_and_scopes_original_human_request(mon
     memory = object()
     monkeypatch.setattr(
         web_assistant,
-        "web_social_context",
-        lambda user: {"user_identifier": "server-memory-key", "social_memory_store": memory},
+        "web_assistant_context",
+        lambda user: {"user_identifier": "server-memory-key", "assistant_memory_store": memory},
     )
     monkeypatch.setattr(
         routes,
@@ -398,7 +395,7 @@ def test_memory_is_bound_to_server_user_and_uses_matching_store_identity(tmp_pat
 
     monkeypatch.setattr(memory_store, "ImprovedMemoryStore", store)
     monkeypatch.setattr(user_preferences, "UserPreferences", Preferences)
-    alice = web_assistant.web_social_context(ALICE)
-    bob = web_assistant.web_social_context(BOB)
+    alice = web_assistant.web_assistant_context(ALICE)
+    bob = web_assistant.web_assistant_context(BOB)
     assert alice["user_identifier"] != bob["user_identifier"]
     assert identifiers[0] == identifiers[1] == alice["user_identifier"]

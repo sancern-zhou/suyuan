@@ -38,7 +38,7 @@ async def test_non_silent_heartbeat_records_lightweight_event_in_social_main_ses
             "executed_at": "2026-07-08T09:10:30",
         },
         heartbeat_session_id="heartbeat_weixin:bot:user_20260708091000",
-        tasks=[{"name": "许昌市告警溯源报告推送", "manual_mode": "social"}],
+        tasks=[{"name": "许昌市告警溯源报告推送", "manual_mode": "assistant"}],
     )
 
     assert recorded is True
@@ -75,7 +75,7 @@ async def test_non_silent_heartbeat_records_lightweight_event_in_social_main_ses
             "executed_at": "2026-07-08T09:10:30",
         },
         heartbeat_session_id="heartbeat_weixin:bot:user_20260708091000",
-        tasks=[{"name": "许昌市告警溯源报告推送", "manual_mode": "social"}],
+        tasks=[{"name": "许昌市告警溯源报告推送", "manual_mode": "assistant"}],
     )
 
     assert recorded_again is True
@@ -104,7 +104,7 @@ async def test_silent_heartbeat_does_not_record_social_main_session_context(tmp_
         user_id=user_id,
         response={"should_notify": False, "summary": "HEARTBEAT_OK"},
         heartbeat_session_id="heartbeat_weixin:bot:user_20260708081000",
-        tasks=[{"name": "许昌市告警溯源报告推送", "manual_mode": "social"}],
+        tasks=[{"name": "许昌市告警溯源报告推送", "manual_mode": "assistant"}],
     )
 
     assert recorded is False

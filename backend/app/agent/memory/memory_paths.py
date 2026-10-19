@@ -29,6 +29,8 @@ def memory_workspace(mode: str, user_id: str | None = None, workspace: Path | No
     if safe_mode == "memory_consolidator":
         raise ValueError("memory_consolidator is not a business memory mode")
     if safe_mode == "social":
+        raise ValueError("social mode has been removed; use assistant")
+    if safe_mode == "assistant":
         if not user_id or user_id == "global":
             raise ValueError("social memory requires a user ID")
         base = resolve_agent_path(workspace) if workspace is not None else get_social_memory_dir()

@@ -49,7 +49,7 @@ def broadcast_session_id(social_user_id: str) -> str:
 async def load_broadcast_messages(social_user_id: str) -> list[dict[str, Any]]:
     """Load the broadcast inbox for one identity, newest message first."""
     session = await load_session_for_mode(
-        broadcast_session_id(social_user_id), mode="social"
+        broadcast_session_id(social_user_id), mode="channel"
     )
     if session is None:
         return []
@@ -63,7 +63,7 @@ async def load_broadcast_messages(social_user_id: str) -> list[dict[str, Any]]:
 async def mark_broadcast_read(social_user_id: str, message_id: str | None = None) -> bool:
     """Mark one message (or all messages when id is omitted) as read."""
     session = await load_session_for_mode(
-        broadcast_session_id(social_user_id), mode="social"
+        broadcast_session_id(social_user_id), mode="channel"
     )
     if session is None:
         return False
@@ -84,7 +84,7 @@ async def mark_broadcast_read(social_user_id: str, message_id: str | None = None
             changed = True
     if not changed:
         return False
-    return bool(await replace_session_transcript_for_mode(session, mode="social"))
+    return bool(await replace_session_transcript_for_mode(session, mode="channel"))
 
 
 async def persist_broadcast_context(
@@ -100,7 +100,7 @@ async def persist_broadcast_context(
     # user's normal chat mapping for broadcasts.
     del session_mapper
     session_id = broadcast_session_id(social_user_id)
-    session = await load_session_for_mode(session_id, mode="social")
+    session = await load_session_for_mode(session_id, mode="channel")
     if session is None:
         session = Session(
             session_id=session_id,
@@ -144,5 +144,5 @@ async def persist_broadcast_context(
         })
 
     return bool(
-        await append_session_transcript_for_mode(session, mode="social")
+        await append_session_transcript_for_mode(session, mode="channel")
     )

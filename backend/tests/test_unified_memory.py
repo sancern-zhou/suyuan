@@ -22,8 +22,8 @@ def test_non_social_memory_is_shared_within_mode(tmp_path):
 
 
 def test_social_uses_same_implementation_but_isolates_users(tmp_path):
-    first = ImprovedMemoryStore(user_id="wx:bot:one", mode="social", workspace=tmp_path)
-    second = ImprovedMemoryStore(user_id="wx:bot:two", mode="social", workspace=tmp_path)
+    first = ImprovedMemoryStore(user_id="wx:bot:one", mode="assistant", workspace=tmp_path)
+    second = ImprovedMemoryStore(user_id="wx:bot:two", mode="assistant", workspace=tmp_path)
     first.memory_file.write_text("one only", encoding="utf-8")
     assert first.workspace == tmp_path / "wx_bot_one"
     assert "one only" not in second.get_memory_context()
@@ -31,8 +31,8 @@ def test_social_uses_same_implementation_but_isolates_users(tmp_path):
 
 
 @pytest.mark.parametrize("mode,user", [("../outside",None), ("/outside",None),
-    ("query/../../outside",None), ("social",None), ("social","global"),
-    ("social","wx:../outside"), ("social", "wx:foo\\bar"),
+    ("query/../../outside",None), ("assistant",None), ("assistant","global"),
+    ("assistant","wx:../outside"), ("assistant", "wx:foo\\bar"),
     ("memory_consolidator",None)])
 def test_invalid_targets_rejected(tmp_path, mode, user):
     with pytest.raises(ValueError):
@@ -40,7 +40,7 @@ def test_invalid_targets_rejected(tmp_path, mode, user):
     assert list(tmp_path.iterdir()) == []
 
 
-@pytest.mark.parametrize("mode,user", [("expert","global"), ("social","wx:bot:one")])
+@pytest.mark.parametrize("mode,user", [("expert","global"), ("assistant","wx:bot:one")])
 def test_facts_and_resident_memory_are_separate_in_same_scope(tmp_path, mode, user):
     store = ImprovedMemoryStore(user_id=user, mode=mode, workspace=tmp_path)
     before = store.read_long_term()
@@ -125,13 +125,13 @@ async def test_fact_context_does_not_leak_between_tasks(tmp_path, monkeypatch):
     assert "Wrong fact" not in CuratedFactStore(tmp_path / "expert").index()
 
 
-@pytest.mark.parametrize("mode", ["social", "enforcement_exam"])
+@pytest.mark.parametrize("mode", ["assistant", "enforcement_exam"])
 async def test_social_run_without_user_scoped_store_fails_closed(mode):
     from app.agent.react_agent import ReActAgent
     agent = ReActAgent.__new__(ReActAgent)
     agent.enable_memory = True
     with pytest.raises(ValueError, match="user-scoped"):
-        await anext(agent.analyze(user_query="hello", manual_mode=mode))
+        await anext(ReActAgent.analyze.__wrapped__(agent, user_query="hello", manual_mode=mode))
 
 
 async def test_unified_manager_selects_default_social_root(tmp_path, monkeypatch):
@@ -139,5 +139,5 @@ async def test_unified_manager_selects_default_social_root(tmp_path, monkeypatch
     import app.agent.memory.unified_memory_manager as manager_module
     monkeypatch.setattr(paths, "get_social_memory_dir", lambda: tmp_path / "social")
     monkeypatch.setattr(manager_module, "get_memory_dir", lambda: tmp_path / "shared")
-    store = await UnifiedMemoryManager().get_user_memory("wx:bot:one", "social")
+    store = await UnifiedMemoryManager().get_user_memory("wx:bot:one", "assistant")
     assert store.workspace == tmp_path / "social" / "wx_bot_one"

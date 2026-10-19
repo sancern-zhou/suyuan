@@ -1,4 +1,4 @@
-"""Shared assistant contract, appended even when project prompts override social."""
+"""Shared assistant contract, appended even when project prompts override assistant."""
 
 ASSISTANT_TASK_CONTRACT = """
 ## 持续事项与交办边界

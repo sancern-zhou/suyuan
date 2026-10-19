@@ -55,7 +55,7 @@ def capability_catalog():
         ).hexdigest()
         result[item["capability_id"]] = item
 
-    social_tools = tools_for("social")
+    social_tools = tools_for("assistant")
     for name in social_tools:
         if name == "manage_assistant_coaching":
             continue
@@ -70,7 +70,7 @@ def capability_catalog():
                 parameters=schema.get("parameters", {}),
             )
     for mode in manifest.frontend.agent_modes:
-        if mode in {"assistant", "social"}:
+        if mode == "assistant":
             continue
         spec = TARGET_MODE_CONTRACTS.get(mode, {})
         override = manifest.frontend.agent_mode_overrides.get(mode, {})
@@ -78,7 +78,7 @@ def capability_catalog():
         add("workspace", mode, str(description), tools_for(mode), contract=spec)
     if "call_sub_agent" in social_tools:
         for mode, spec in _active_contracts().items():
-            if mode == "social" or delegation_error("social", [mode]):
+            if mode == "assistant" or delegation_error("assistant", [mode]):
                 continue
             add("delegate", mode, spec["positioning"], tools_for(mode), contract=spec)
     return result

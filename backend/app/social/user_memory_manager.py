@@ -74,7 +74,7 @@ class UserMemoryManager:
 
                 self._memory_cache[user_id] = ImprovedMemoryStore(
                     user_id=user_id,
-                    mode="social",
+                    mode="assistant",
                     workspace=self.base_workspace,
                 )
                 logger.info("user_memory_created", user_id=user_id)

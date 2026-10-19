@@ -1,4 +1,4 @@
-const fixedModelTierModes = new Set(['board', 'social'])
+const fixedModelTierModes = new Set(['board', 'assistant'])
 
 export const shouldShowModelTierSelector = (mode) => !fixedModelTierModes.has(mode)
 

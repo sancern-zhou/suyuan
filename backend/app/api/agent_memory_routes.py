@@ -10,7 +10,7 @@ DATA_REGISTRY/memory/{mode}/ 下持有独立记忆目录（模式内所有用户
 注意：后台整合只写 facts/*.md，不改写 MEMORY.md；PUT 用
 expected_mtime_ns 对比文件 mtime，防止人工编辑与会话 Agent 的
 edit_file 写入相互覆盖。
-社交模式（social/enforcement_exam）按用户隔离存储，不属于本 API 范畴。
+助手及备考模式（assistant/enforcement_exam）按用户隔离存储，不属于本 API 范畴。
 """
 
 import fcntl
@@ -34,8 +34,8 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/agent/memory", tags=["agent-memory"])
 
-# 社交模式记忆按用户隔离（social/memory/{user_id}/），不提供模式级编辑入口
-SOCIAL_MEMORY_MODES = {"social", "enforcement_exam"}
+# 助手个人记忆按用户隔离（social/memory/{user_id}/），不提供模式级编辑入口
+PERSONAL_MEMORY_MODES = {"assistant", "enforcement_exam"}
 
 # 与 edit_file/write_file 共用同一上限（memory_limits）：
 # 人工编辑把 MEMORY.md 顶过上限后，会话 Agent 的 edit_file 会一直被拒。
@@ -68,12 +68,12 @@ class MemoryVersionConflictError(RuntimeError):
 def _safe_mode(mode: str) -> str:
     try:
         safe = safe_memory_segment(mode, field="mode")
-        if safe == "memory_consolidator":
+        if safe in {"memory_consolidator", "social"}:
             raise ValueError("not a business memory mode")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="无效的模式标识") from exc
-    if safe in SOCIAL_MEMORY_MODES:
-        raise HTTPException(status_code=400, detail="社交模式记忆按用户隔离，不支持模式级查看/编辑")
+    if safe in PERSONAL_MEMORY_MODES:
+        raise HTTPException(status_code=400, detail="助手个人记忆按用户隔离，不支持模式级查看/编辑")
     return safe
 
 

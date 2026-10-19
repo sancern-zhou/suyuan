@@ -449,7 +449,7 @@ class AgentAnalyzeRequest(BaseModel):
     max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数")
     mode: Optional[str] = Field(
         "expert",
-        description="Agent模式：social - 助手模式（Web assistant 为兼容入口），office - 办公模式，ppt - 幻灯片，expert - 专家，query - 问数，knowledge - 知识问答，report - 报告，ops - 运维"
+        description="Agent模式：assistant - 助手模式，office - 办公模式，ppt - 幻灯片，expert - 专家，query - 问数，knowledge - 知识问答，report - 报告，ops - 运维"
     )
     user_id: Optional[str] = Field(None, description="""用户标识；非社交长期记忆始终按模式共享，不随用户或 session 隔离""")
     assistant_mode: Optional[str] = Field(
@@ -501,6 +501,8 @@ class AgentAnalyzeRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_turn_content(self) -> "AgentAnalyzeRequest":
+        if self.mode == "social":
+            raise ValueError("助手模式请使用 assistant，social 模式已移除")
         if self.mode is not None:
             from app.agent.memory.memory_paths import safe_memory_segment
             safe_memory_segment(self.mode, field="mode")
@@ -691,9 +693,6 @@ async def analyze_stream(
     # is therefore a creation request, while a cataloged ID is a continuation
     # and must pass the normal ownership check. Never let an uncataloged source
     # session be claimed through the creation path.
-    from app.social.web_assistant import social_runtime_mode
-
-    request.mode = social_runtime_mode(request.mode)
     session_manager = get_session_manager()
     preloaded_source_session = None
     source_session_checked = False
@@ -833,11 +832,11 @@ async def analyze_stream(
                 "client_channel": "app" if getattr(user, "auth_source", "") == "app" else "web"
             },
         }
-        if request.mode == "social":
+        if request.mode == "assistant":
             from app.social.assistant_identity import assistant_account_context
-            from app.social.web_assistant import web_social_context
+            from app.social.web_assistant import web_assistant_context
 
-            analyze_kwargs.update(web_social_context(user))
+            analyze_kwargs.update(web_assistant_context(user))
             analyze_kwargs["runtime_metadata"]["authenticated_account"] = assistant_account_context(user)
         if request.mode == "board" and request.board_context:
             analyze_kwargs["board_context"] = request.board_context
@@ -1611,7 +1610,7 @@ async def analyze_stream(
 
                     authority = (
                         web_assistant_request(actual_session_id, user, original_query, uuid.uuid4().hex)
-                        if request.mode == "social" else nullcontext()
+                        if request.mode == "assistant" else nullcontext()
                     )
                     with authority:
                         gen = unlocked_event_generator()

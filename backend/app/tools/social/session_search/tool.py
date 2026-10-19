@@ -119,7 +119,7 @@ class SessionSearchTool(LLMTool):
             )
             owner_type = None
             owner_id = None
-            if runtime_mode == "social":
+            if runtime_mode == "assistant":
                 if not user_identifier:
                     return {
                         "status": "failed",
@@ -128,11 +128,11 @@ class SessionSearchTool(LLMTool):
                         "metadata": {
                             "schema_version": "v1.0",
                             "tool_name": "session_search",
-                            "owner_type": "social"
+                            "owner_type": "assistant"
                         },
-                        "summary": "社交模式检索历史会话需要用户标识"
+                        "summary": "助手模式检索历史会话需要用户标识"
                     }
-                owner_type = "social"
+                owner_type = "assistant"
                 owner_id = str(user_identifier)
 
             # Ensure index is initialized

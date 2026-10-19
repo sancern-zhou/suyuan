@@ -1,7 +1,7 @@
 """
 ReAct系统提示词构建器（多模式架构）
 
-⚠️ 注意：保留现有的query模式（WEB端问数模式），支持social、chart、ops等独立场景模式。
+支持 assistant 助手主模式、office 办公子模式和 query、expert、report、ops 等专业模式。
 """
 
 from typing import Literal, List, Optional
@@ -19,7 +19,7 @@ from .query_data_prompt import (
 from app.agent.workflow.delegation import build_delegation_contract
 from .knowledge_prompt import build_knowledge_prompt
 from .report_prompt import build_report_prompt
-from .social_prompt import build_social_prompt
+from .assistant_prompt import build_assistant_prompt
 from .assistant_task_contract import ASSISTANT_TASK_CONTRACT
 from .assistant_coaching_contract import ASSISTANT_COACHING_CONTRACT
 from .board_prompt import build_board_prompt
@@ -118,7 +118,6 @@ AgentMode = Literal[
     "query_forecast",
     "knowledge",
     "report",
-    "social",
     "enforcement_exam",
     "board",
     "ops",
@@ -167,30 +166,29 @@ def _build_react_system_prompt(
     soul_context: Optional[str] = None,  # ✅ 新增：soul.md 内容（助理灵魂档案）
     user_context: Optional[str] = None,  # ✅ 新增：用户上下文内容（USER.md）
     heartbeat_context: Optional[str] = None,  # ✅ 新增：HEARTBEAT.md 当前内容
-    backend_host: Optional[str] = None,  # ✅ 新增：网关地址（仅social模式使用）
+    backend_host: Optional[str] = None,  # ✅ 新增：网关地址（仅助手模式使用）
     board_context: Optional[dict] = None,  # 画板模式 draw.io 上下文
 ) -> str:
     """
     构建ReAct系统提示词（多模式架构）
 
     Args:
-        mode: Agent模式 ("assistant" | "ppt" | "expert" | "query" | "report" | "social" | "ops")
+        mode: Agent模式 ("assistant" | "ppt" | "expert" | "query" | "report" | "office" | "ops")
         available_tools: 可用工具列表（如果为None，自动加载该模式的所有工具）
-        user_preferences: 用户偏好配置（仅social模式使用）
-        memory_file_path: 用户记忆文件路径（仅social模式使用）
-        soul_file_path: soul.md 文件路径（仅social模式使用）
-        user_file_path: USER.md 文件路径（仅social模式使用）
-        heartbeat_file_path: HEARTBEAT.md 文件路径（仅social模式使用）
+        user_preferences: 用户偏好配置（仅助手模式使用）
+        memory_file_path: 用户记忆文件路径（仅助手模式使用）
+        soul_file_path: soul.md 文件路径（仅助手模式使用）
+        user_file_path: USER.md 文件路径（仅助手模式使用）
+        heartbeat_file_path: HEARTBEAT.md 文件路径（仅助手模式使用）
         memory_context: 记忆上下文内容（从快照获取，直接注入到系统提示词）
-        soul_context: soul.md 内容（助理灵魂档案，仅social模式使用）
-        user_context: 用户上下文内容（从USER.md获取，仅social模式使用）
-        heartbeat_context: HEARTBEAT.md 当前内容（仅social模式使用）
-        backend_host: 网关地址（仅social模式使用，优先使用API_BASE_URL配置，用于生成公网分享链接）
+        soul_context: soul.md 内容（助理灵魂档案，仅助手模式使用）
+        user_context: 用户上下文内容（从USER.md获取，仅助手模式使用）
+        heartbeat_context: HEARTBEAT.md 当前内容（仅助手模式使用）
+        backend_host: 网关地址（仅助手模式使用，优先使用API_BASE_URL配置，用于生成公网分享链接）
 
     Returns:
         系统提示词字符串
     """
-    mode = "office" if mode == "assistant" else mode
     if memory_file_path:
         memory_file_path = format_agent_path(resolve_agent_path(memory_file_path))
 
@@ -221,15 +219,15 @@ def _build_react_system_prompt(
         has_board_context=board_context is not None,
     )
 
-    task_contract = ASSISTANT_TASK_CONTRACT if mode == "social" and "manage_assistant_tasks" in filtered_tools else ""
-    if mode == "social" and "manage_assistant_coaching" in filtered_tools:
+    task_contract = ASSISTANT_TASK_CONTRACT if mode == "assistant" and "manage_assistant_tasks" in filtered_tools else ""
+    if mode == "assistant" and "manage_assistant_coaching" in filtered_tools:
         task_contract += ASSISTANT_COACHING_CONTRACT
-    if mode == "social":
+    if mode == "assistant":
         task_contract += ASSISTANT_ROLE_CONTRACT + ASSISTANT_MEDIA_CONTRACT
     project_prompt = load_project_mode_prompt(mode)
     if project_prompt is not None:
         return _with_platform_contracts(
-            (project_prompt if mode == "social" else _with_memory_file_contract(project_prompt, memory_file_path)) + task_contract
+            (project_prompt if mode == "assistant" else _with_memory_file_contract(project_prompt, memory_file_path)) + task_contract
             + build_delegation_contract(mode, filtered_tools)
         )
 
@@ -262,8 +260,8 @@ def _build_react_system_prompt(
         return _with_platform_contracts(build_knowledge_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "report":
         return _with_platform_contracts(build_report_prompt(filtered_tools, memory_context, memory_file_path))
-    elif mode == "social":
-        return _with_platform_contracts(build_social_prompt(
+    elif mode == "assistant":
+        return _with_platform_contracts(build_assistant_prompt(
             filtered_tools,
             user_preferences,
             memory_file_path,

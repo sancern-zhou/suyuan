@@ -116,13 +116,13 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
     "office": {
         "positioning": "办公模式：助手专属的日常轻办公子 Agent。",
         "scope": "文档阅读、文件整理、普通文件编辑、表格清洗核对、轻量计算与 HTML 交付。",
-        "boundary": "仅由 social 委派，不再次委派；不取业务或气象数据，不做业务图表、专业研判、知识问答和正式报告。",
+        "boundary": "仅由 assistant 委派，不再次委派；不取业务或气象数据，不做业务图表、专业研判、知识问答和正式报告。",
         "outputs": "经核对的办公文件、处理说明和资源引用。",
     },
 }
 
 _ROUTING_RULES = (
-    "选择规则：综合 query、expert、report 仅作主模式，不能作为子 Agent；正式报告由具备报告职责的主模式生成，助手 social 引导报告主入口；"
+    "选择规则：综合 query、expert、report 仅作主模式，不能作为子 Agent；正式报告由具备报告职责的主模式生成，助手 assistant 引导报告主入口；"
     "监测历史数据事实按层级拆分：站点小时/日与站点目录用 query_monitoring_station，"
     "城市口径与全国对比用 query_monitoring_city；层级混合拆成站点+城市两个节点，"
     "层级不明确先向用户确认口径，不要用 query_monitoring 兜底（报告 DAG 已禁用，仅限非报告父模式直接委托）；"

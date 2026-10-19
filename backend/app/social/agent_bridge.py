@@ -9,7 +9,7 @@ import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, TYPE_CHECKING
 
 import structlog
 
@@ -38,10 +38,13 @@ from app.social.binding_service import get_social_binding_service
 
 logger = structlog.get_logger(__name__)
 
+if TYPE_CHECKING:
+    from app.channels.base import BaseChannel
+
 SOCIAL_IMAGE_MAX_BYTES = 5 * 1024 * 1024
 SOCIAL_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
 SOCIAL_STEERING_READY_TIMEOUT_SECONDS = 5.0
-SOCIAL_AGENT_MODES = {"social", "enforcement_exam"}
+SOCIAL_AGENT_MODES = {"assistant", "enforcement_exam"}
 
 
 def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
@@ -101,8 +104,8 @@ class AgentBridge:
         message_bus: MessageBus,
         agent: ReActAgent,
         session_mapper: SessionMapper,
-        mode: str = "social",  
-        enable_heartbeat: bool = True,  
+        mode: str = "assistant",
+        enable_heartbeat: bool = True,
         enable_memory: bool = True,
         binding_service=None,
         catalog=None,
@@ -130,45 +133,45 @@ class AgentBridge:
         self._active_social_sessions: Dict[str, object] = {}
         self._social_route_lock = asyncio.Lock()
 
-        
+
         # 初始化用户心跳管理器
         from app.social.user_heartbeat_manager import UserHeartbeatManager
         from app.social.user_heartbeat_singleton import set_user_heartbeat_manager
 
         self.user_heartbeat_manager: Optional[UserHeartbeatManager] = None
-        if enable_heartbeat and mode == "social":
+        if enable_heartbeat and mode == "assistant":
             self.user_heartbeat_manager = UserHeartbeatManager(
                 on_execute_callback=self._on_heartbeat_execute,
                 on_notify_callback=self._on_heartbeat_notify,
                 user_id_resolver=self._resolve_heartbeat_user_id,
             )
-            
+
             set_user_heartbeat_manager(self.user_heartbeat_manager)
             logger.info("user_heartbeat_manager_initialized")
 
-        
+
         # 初始化用户隔离记忆管理器
         from app.social.user_memory_manager import UserMemoryManager
 
         self.user_memory_manager: Optional[UserMemoryManager] = None
-        if enable_memory and mode == "social":
+        if enable_memory and mode == "assistant":
             self.user_memory_manager = UserMemoryManager()
             logger.info("user_memory_manager_initialized")
 
-        
+
         # 初始化社交子 Agent 管理器
         from app.social.subagent_manager import SubagentManager
         from app.social.subagent_singleton import set_subagent_manager
 
         self.subagent_manager: Optional[SubagentManager] = None
-        if mode == "social":
+        if mode == "assistant":
             self.task_status_store = TaskStatusStore(db_manager=None)  # JSON storage
             self.subagent_manager = SubagentManager(
                 agent=self.agent,
                 task_store=self.task_status_store,
                 message_bus=message_bus
             )
-            
+
             set_subagent_manager(self.subagent_manager)
             logger.info("subagent_manager_initialized")
 
@@ -185,7 +188,7 @@ class AgentBridge:
         else:
             self.cli_task_manager = None
 
-        
+
         self._channel_map: Dict[str, "BaseChannel"] = {}
 
     async def start(self) -> None:
@@ -205,7 +208,7 @@ class AgentBridge:
             await self.cli_task_manager.start()
 
         # ✅ 后端重启后恢复已有用户的社交定时任务心跳循环
-        if self.user_heartbeat_manager and self.mode == "social":
+        if self.user_heartbeat_manager and self.mode == "assistant":
             try:
                 restored_count = await self.user_heartbeat_manager.restore_existing_heartbeats()
                 logger.info("user_heartbeat_restore_completed", restored_count=restored_count)
@@ -213,7 +216,7 @@ class AgentBridge:
                 logger.error("user_heartbeat_restore_failed", error=str(e), exc_info=True)
 
         # ✅ 执行迁移：为现有用户创建 USER.md（如果不存在）
-        if self.mode == "social":
+        if self.mode == "assistant":
             try:
                 from app.social.migrations.create_user_md_files import migrate_user_md_files
                 migrate_user_md_files()
@@ -239,11 +242,11 @@ class AgentBridge:
             await asyncio.gather(*self._message_tasks, return_exceptions=True)
             self._message_tasks.clear()
 
-        
+
         if self.user_heartbeat_manager:
             await self.user_heartbeat_manager.shutdown()
 
-        
+
         if self.subagent_manager:
             await self.subagent_manager.shutdown()
 
@@ -273,14 +276,14 @@ class AgentBridge:
     def _get_agent_mode(self, channel_name: str) -> str:
         """Resolve the professional Agent mode while keeping social as transport/storage."""
         channel = getattr(self, "_channel_map", {}).get(channel_name)
-        configured = str(getattr(getattr(channel, "config", None), "agent_mode", "social") or "social")
+        configured = str(getattr(getattr(channel, "config", None), "agent_mode", "assistant") or "assistant")
         if configured not in SOCIAL_AGENT_MODES:
             logger.warning(
                 "unsupported_social_agent_mode",
                 channel=channel_name,
                 configured_mode=configured,
             )
-            return "social"
+            return "assistant"
         return configured
 
     def _resolve_heartbeat_user_id(self, user_id: str) -> str:
@@ -570,7 +573,7 @@ class AgentBridge:
         is_weixin = msg.channel == "weixin" or msg.channel.startswith("weixin:")
         agent_user_identifier = social_user_id
 
-        if self.mode == "social" and is_weixin:
+        if self.mode == "assistant" and is_weixin:
             binding = await self.binding_service.resolve_sender(
                 channel=msg.channel,
                 bot_account=bot_account,
@@ -633,7 +636,7 @@ class AgentBridge:
                     ))
                     return
 
-        elif self.mode == "social":
+        elif self.mode == "assistant":
             from app.social.user_registry import BIND_CODE_PATTERN, get_social_user_registry
 
             registry = get_social_user_registry()
@@ -692,7 +695,7 @@ class AgentBridge:
                 social_user_id, mode=self.mode
             )
 
-        if self.mode == "social" and not is_weixin:
+        if self.mode == "assistant" and not is_weixin:
             session_id = await self.session_mapper.get_or_create_session(
                 social_user_id, mode=self.mode
             )
@@ -700,14 +703,14 @@ class AgentBridge:
         prepared_attachments: Optional[List[Dict[str, Any]]] = None
         claimed_active_token: object | None = None
         active_token: object | None = None
-        if self.mode == "social":
+        if self.mode == "assistant":
             async with self._social_route_lock:
                 active_token = self._active_social_sessions.get(session_id)
                 if active_token is None:
                     claimed_active_token = object()
                     self._active_social_sessions[session_id] = claimed_active_token
 
-        if self.mode == "social" and active_token is not None:
+        if self.mode == "assistant" and active_token is not None:
             agent_attachments = await self._prepare_social_attachments(
                 session_id=session_id,
                 channel=msg.channel,
@@ -777,15 +780,15 @@ class AgentBridge:
                        sender_id=msg.sender_id,
                        content_length=len(msg.content))
 
-            
+
             bot_account = bot_account or await self._get_bot_account(msg.channel)
             social_user_id = social_user_id or f"{msg.channel}:{bot_account}:{msg.sender_id}"
             agent_mode = agent_mode or self._get_agent_mode(msg.channel)
             agent_user_identifier = agent_user_identifier or social_user_id
 
-            
+
             session_id = session_id or await self.session_mapper.get_or_create_session(social_user_id, mode=self.mode)
-            if self.mode == "social" and active_token is None:
+            if self.mode == "assistant" and active_token is None:
                 async with self._social_route_lock:
                     active_token = object()
                     self._active_social_sessions[session_id] = active_token
@@ -807,33 +810,33 @@ class AgentBridge:
             )
             logger.debug("current_context_set", chat_id=msg.chat_id, channel=msg.channel, bot_account=bot_account)
 
-            
-            if self.user_heartbeat_manager and self.mode == "social":
+
+            if self.user_heartbeat_manager and self.mode == "assistant":
                 heartbeat = await self.user_heartbeat_manager.get_user_heartbeat(social_user_id)
                 logger.debug("user_heartbeat_started", user_id=social_user_id)
 
-            
-            
+
+
             # ✅ 使用复用函数加载社交上下文（避免代码重复）
-            social_memory_store = None
+            assistant_memory_store = None
             social_user_prefs = None
-            social_soul_file_path = None
-            social_user_file_path = None
-            social_heartbeat_file_path = None
-            social_soul_context = None
-            social_user_context = None
+            assistant_soul_file_path = None
+            assistant_user_file_path = None
+            assistant_heartbeat_file_path = None
+            assistant_soul_context = None
+            assistant_user_context = None
 
-            if self.mode == "social":
+            if self.mode == "assistant":
                 social_context = await self._load_social_agent_context(social_user_id)
-                social_memory_store = social_context["social_memory_store"]
-                social_user_prefs = social_context["social_user_preferences"]
-                social_soul_file_path = social_context["social_soul_file_path"]
-                social_user_file_path = social_context["social_user_file_path"]
-                social_heartbeat_file_path = social_context["social_heartbeat_file_path"]
-                social_soul_context = social_context["social_soul_context"]
-                social_user_context = social_context["social_user_context"]
+                assistant_memory_store = social_context["assistant_memory_store"]
+                social_user_prefs = social_context["assistant_user_preferences"]
+                assistant_soul_file_path = social_context["assistant_soul_file_path"]
+                assistant_user_file_path = social_context["assistant_user_file_path"]
+                assistant_heartbeat_file_path = social_context["assistant_heartbeat_file_path"]
+                assistant_soul_context = social_context["assistant_soul_context"]
+                assistant_user_context = social_context["assistant_user_context"]
 
-            if self.mode == "social":
+            if self.mode == "assistant":
                 agent_attachments = prepared_attachments
                 if agent_attachments is None:
                     agent_attachments = await self._prepare_social_attachments(
@@ -846,7 +849,7 @@ class AgentBridge:
             agent_content = msg.content
 
             # ✅ 加载 Session 对象，用于持久化对话历史
-            session = await load_session_for_mode(session_id, mode=self.mode)
+            session = await load_session_for_mode(session_id, mode="channel")
             if not session:
                 session = Session(session_id=session_id, query=agent_content)
 
@@ -861,14 +864,14 @@ class AgentBridge:
                 chat_id=msg.chat_id,
                 channel=msg.channel,
                 attachments=agent_attachments,
-                social_user_id=social_user_id if self.mode == "social" else None,
-                social_memory_store=social_memory_store,
-                social_user_preferences=social_user_prefs,
-                social_soul_file_path=social_soul_file_path,
-                social_user_file_path=social_user_file_path,
-                social_heartbeat_file_path=social_heartbeat_file_path,
-                social_soul_context=social_soul_context,
-                social_user_context=social_user_context,
+                social_user_id=social_user_id if self.mode == "assistant" else None,
+                assistant_memory_store=assistant_memory_store,
+                assistant_user_preferences=social_user_prefs,
+                assistant_soul_file_path=assistant_soul_file_path,
+                assistant_user_file_path=assistant_user_file_path,
+                assistant_heartbeat_file_path=assistant_heartbeat_file_path,
+                assistant_soul_context=assistant_soul_context,
+                assistant_user_context=assistant_user_context,
                 session=session,  # ✅ 传递 session 对象
                 agent_mode=agent_mode,
                 agent_user_identifier=agent_user_identifier,
@@ -881,9 +884,9 @@ class AgentBridge:
                        response_length=len(response_text) if response_text else 0,
                        reasoning_length=len(reasoning_content) if reasoning_content else 0)
 
-            
-            if self.user_memory_manager and self.mode == "social":
-                
+
+            if self.user_memory_manager and self.mode == "assistant":
+
                 from datetime import datetime
                 messages = [
                     {"role": "user", "content": msg.content, "timestamp": datetime.now().isoformat()},
@@ -946,7 +949,7 @@ class AgentBridge:
             await self.message_bus.publish_outbound(error_msg)
         finally:
             if (
-                self.mode == "social"
+                self.mode == "assistant"
                 and session_id
                 and self._active_social_sessions.get(session_id) is active_token
             ):
@@ -960,13 +963,13 @@ class AgentBridge:
         channel: str = None,
         memory_context: str = "",
         social_user_id: str = None,
-        social_memory_store = None,
-        social_user_preferences: dict = None,
-        social_soul_file_path: str = None,
-        social_user_file_path: str = None,
-        social_heartbeat_file_path: str = None,
-        social_soul_context: str = None,
-        social_user_context: str = None,
+        assistant_memory_store = None,
+        assistant_user_preferences: dict = None,
+        assistant_soul_file_path: str = None,
+        assistant_user_file_path: str = None,
+        assistant_heartbeat_file_path: str = None,
+        assistant_soul_context: str = None,
+        assistant_user_context: str = None,
         attachments: Optional[List[Dict[str, Any]]] = None,
         session: Optional[Session] = None,
         agent_mode: Optional[str] = None,
@@ -1031,7 +1034,7 @@ class AgentBridge:
                     display_history=conversation_history,
                     terminal_message=terminal_message,
                 )
-            await append_session_transcript_for_mode(session, mode=self.mode)
+            await append_session_transcript_for_mode(session, mode="channel")
 
             if session_id not in self.agent._session_store:
                 self.agent._session_store[session_id] = {"last_used": datetime.utcnow()}
@@ -1054,16 +1057,16 @@ class AgentBridge:
                 user_query=content,
                 session_id=session_id,
                 manual_mode=agent_mode or self.mode,
-                session_storage_mode=self.mode,
-                user_identifier=agent_user_identifier or (social_user_id if self.mode == "social" else None),
-                social_memory_store=social_memory_store if self.mode == "social" else None,
-                social_user_preferences=social_user_preferences if self.mode == "social" else None,
-                social_soul_file_path=social_soul_file_path if self.mode == "social" else None,
-                social_user_file_path=social_user_file_path if self.mode == "social" else None,
-                social_heartbeat_file_path=social_heartbeat_file_path if self.mode == "social" else None,
-                social_soul_context=social_soul_context if self.mode == "social" else None,
-                social_user_context=social_user_context if self.mode == "social" else None,
-                attachments=attachments if self.mode == "social" else None,
+                session_storage_mode="channel",
+                user_identifier=agent_user_identifier or (social_user_id if self.mode == "assistant" else None),
+                assistant_memory_store=assistant_memory_store if self.mode == "assistant" else None,
+                assistant_user_preferences=assistant_user_preferences if self.mode == "assistant" else None,
+                assistant_soul_file_path=assistant_soul_file_path if self.mode == "assistant" else None,
+                assistant_user_file_path=assistant_user_file_path if self.mode == "assistant" else None,
+                assistant_heartbeat_file_path=assistant_heartbeat_file_path if self.mode == "assistant" else None,
+                assistant_soul_context=assistant_soul_context if self.mode == "assistant" else None,
+                assistant_user_context=assistant_user_context if self.mode == "assistant" else None,
+                attachments=attachments if self.mode == "assistant" else None,
             ):
                 events_buffer.append(event)
 
@@ -1143,7 +1146,7 @@ class AgentBridge:
 
                         # 社交端最终回复由 complete/final outbound 统一发送；
                         # 这里仅缓冲文本用于异常 fallback，避免中间流和最终回复重复。
-                        if self.mode == "social" and is_complete:
+                        if self.mode == "assistant" and is_complete:
                             pass
 
                     elif isinstance(data, str):
@@ -1171,7 +1174,7 @@ class AgentBridge:
 
                         # ✅ 仅工具调用前的 text_content 作为进展发送，避免最终回答重复显示
                         # ✅ 去重：如果还没发送过，才发送
-                        if text_content not in sent_text_contents and self.mode == "social" and stream_reasoning:
+                        if text_content not in sent_text_contents and self.mode == "assistant" and stream_reasoning:
                             await self._send_thinking_chunk(
                                 channel=channel,
                                 chat_id=chat_id,
@@ -1186,7 +1189,7 @@ class AgentBridge:
 
                     if real_thinking:
                         # ✅ 实时流式发送到微信端（不过滤，这是真实思考）
-                        if self.mode == "social" and stream_reasoning:
+                        if self.mode == "assistant" and stream_reasoning:
                             await self._send_thinking_chunk(
                                 channel=channel,
                                 chat_id=chat_id,
@@ -1452,15 +1455,15 @@ class AgentBridge:
                     content_length=len(content),
                     content_preview=content[:200])
 
-        
-        
+
+
         image_pattern = r'!?\[.*?\]\(/api/image/([a-zA-Z0-9_-]+)\)'
         matches = list(re.finditer(image_pattern, content))
         logger.debug("image_pattern_matches", count=len(matches))
 
         for match in matches:
             image_id = match.group(1)
-            
+
             cache = get_image_cache()
             image_path = f"{cache.cache_dir}/{image_id}.png"
             logger.debug("checking_image_file",
@@ -1476,8 +1479,8 @@ class AgentBridge:
                              expected_path=image_path,
                              cache_dir=cache.cache_dir)
 
-        
-        
+
+
         doc_pattern = r'([a-zA-Z0-9_/\-\.]+\.(docx|xlsx|pptx|pdf|md))'
         for match in re.finditer(doc_pattern, content):
             doc_path = match.group(1)
@@ -1492,24 +1495,24 @@ class AgentBridge:
         """清理社交平台不适合直接展示的媒体引用。"""
         import re
 
-        
+
         def replace_image_markdown(match):
-            alt_text = match.group(1)  
+            alt_text = match.group(1)
             return f"\n[图片: {alt_text}]\n"
 
         content = re.sub(r'!\[([^\]]+)\]\([^\)]+\)', replace_image_markdown, content)
 
-        
+
         content = re.sub(r'\(/api/image/[a-zA-Z0-9_-]+\)', '', content)
 
-        
+
         def replace_doc_path(match):
             filename = Path(match.group(1)).name
             return f"\n[文件: {filename}]\n"
 
         content = re.sub(r'\([a-zA-Z0-9_/\-\.]+\.(docx|xlsx|pptx|pdf|md)\)', replace_doc_path, content)
 
-        
+
         content = re.sub(r'\n{3,}', '\n\n', content)
 
         return content.strip()
@@ -1566,19 +1569,19 @@ class AgentBridge:
         from app.social.user_preferences import UserPreferences
 
         context = {
-            "social_memory_store": None,
-            "social_user_preferences": None,
-            "social_soul_file_path": None,
-            "social_user_file_path": None,
-            "social_heartbeat_file_path": None,
-            "social_soul_context": None,
-            "social_user_context": None
+            "assistant_memory_store": None,
+            "assistant_user_preferences": None,
+            "assistant_soul_file_path": None,
+            "assistant_user_file_path": None,
+            "assistant_heartbeat_file_path": None,
+            "assistant_soul_context": None,
+            "assistant_user_context": None
         }
 
         try:
             # 1. 加载用户记忆存储
             if self.user_memory_manager:
-                context["social_memory_store"] = await self.user_memory_manager.get_user_memory(user_id)
+                context["assistant_memory_store"] = await self.user_memory_manager.get_user_memory(user_id)
                 logger.debug("user_memory_loaded", user_id=user_id)
 
             try:
@@ -1594,8 +1597,8 @@ class AgentBridge:
                     if social_user.email:
                         structured_user_context.append(f"- 邮箱：{social_user.email}")
 
-                    existing_user_context = context.get("social_user_context") or ""
-                    context["social_user_context"] = "\n".join(
+                    existing_user_context = context.get("assistant_user_context") or ""
+                    context["assistant_user_context"] = "\n".join(
                         [*structured_user_context, "", existing_user_context]
                     ).strip()
                     context["social_user_profile"] = social_user.model_dump()
@@ -1607,30 +1610,30 @@ class AgentBridge:
             user_preferences = preferences_manager.get_preferences()
 
             if user_preferences:
-                context["social_user_preferences"] = user_preferences
-                context["social_soul_file_path"] = str(preferences_manager.soul_file.resolve()) if preferences_manager.soul_file else None
-                context["social_user_file_path"] = str(preferences_manager.user_file.resolve()) if preferences_manager.user_file else None
-                context["social_heartbeat_file_path"] = str(preferences_manager.heartbeat_file.resolve()) if preferences_manager.heartbeat_file else None
+                context["assistant_user_preferences"] = user_preferences
+                context["assistant_soul_file_path"] = str(preferences_manager.soul_file.resolve()) if preferences_manager.soul_file else None
+                context["assistant_user_file_path"] = str(preferences_manager.user_file.resolve()) if preferences_manager.user_file else None
+                context["assistant_heartbeat_file_path"] = str(preferences_manager.heartbeat_file.resolve()) if preferences_manager.heartbeat_file else None
 
                 # 加载 soul.md 和 USER.md 内容
-                context["social_soul_context"] = preferences_manager.load_soul_md()
+                context["assistant_soul_context"] = preferences_manager.load_soul_md()
                 user_md_context = preferences_manager.load_user_md()
-                if context["social_user_context"] and user_md_context:
-                    context["social_user_context"] = (
-                        context["social_user_context"] + "\n\n" + user_md_context
+                if context["assistant_user_context"] and user_md_context:
+                    context["assistant_user_context"] = (
+                        context["assistant_user_context"] + "\n\n" + user_md_context
                     )
                 elif user_md_context:
-                    context["social_user_context"] = user_md_context
+                    context["assistant_user_context"] = user_md_context
 
-                has_soul = len(context["social_soul_context"].strip()) > 0 if context["social_soul_context"] else False
+                has_soul = len(context["assistant_soul_context"].strip()) > 0 if context["assistant_soul_context"] else False
 
                 logger.info(
                     "social_agent_context_loaded",
                     user_id=user_id,
                     has_soul=has_soul,
-                    soul_file_path=context["social_soul_file_path"],
-                    user_file_path=context["social_user_file_path"],
-                    heartbeat_file_path=context["social_heartbeat_file_path"]
+                    soul_file_path=context["assistant_soul_file_path"],
+                    user_file_path=context["assistant_user_file_path"],
+                    heartbeat_file_path=context["assistant_heartbeat_file_path"]
                 )
         except Exception as e:
             logger.warning(
@@ -1650,7 +1653,7 @@ class AgentBridge:
         """检查是否需要触发社交用户记忆整理。"""
         from app.utils.token_budget import token_budget_manager
 
-        
+
         session_data = self.agent._session_store.get(session_id)
         if not session_data:
             return False
@@ -1661,12 +1664,12 @@ class AgentBridge:
 
         messages = memory_manager.session.get_messages_for_llm()
 
-        
+
         total_tokens = 0
         for msg in messages:
             total_tokens += token_budget_manager.count_tokens(msg.get("content", ""))
 
-        
+
         mapping = await self.session_mapper.get_mapping_info(social_user_id)
         if not mapping:
             return False
@@ -1674,11 +1677,11 @@ class AgentBridge:
         last_offset = mapping.get("last_consolidated_offset", 0)
         new_message_count = len(messages) - last_offset
 
-        
+
         max_tokens = int(token_budget_manager.max_context_tokens * 0.8)
         should_consolidate = (
-            total_tokens > max_tokens or  
-            new_message_count >= 20  
+            total_tokens > max_tokens or
+            new_message_count >= 20
         )
 
         if should_consolidate and new_message_count > 0:
@@ -1692,7 +1695,7 @@ class AgentBridge:
                 last_offset=last_offset
             )
 
-            
+
             await self._consolidate_session_memory(
                 session_id=session_id,
                 social_user_id=social_user_id,
@@ -1723,19 +1726,19 @@ class AgentBridge:
             # ✅ 使用统一路径配置
             from app.utils.path_config import get_social_memory_dir
             social_workspace = get_social_memory_dir()
-            memory_store = ImprovedMemoryStore(user_id=social_user_id, mode="social", workspace=social_workspace)
+            memory_store = ImprovedMemoryStore(user_id=social_user_id, mode="assistant", workspace=social_workspace)
 
             existing_memory = memory_store.read_long_term()
             memory_file_path = str(memory_store.memory_file.resolve()) if memory_store.memory_file.exists() else ""
 
-            
+
             messages_to_consolidate = messages[start_offset:] if start_offset > 0 else messages
 
             if not messages_to_consolidate:
                 logger.debug("no_messages_to_consolidate", session_id=session_id, start_offset=start_offset)
                 return
 
-            
+
             for msg in messages_to_consolidate:
                 if "timestamp" not in msg:
                     msg["timestamp"] = datetime.now().isoformat()
@@ -1747,7 +1750,7 @@ class AgentBridge:
             memory_store.append_dream_candidate(dream_candidate_entry)
             recent_dreams = memory_store.read_recent_dreams()
 
-            
+
             consolidation_prompt = self._build_social_consolidation_prompt(
                 messages=messages_to_consolidate,
                 existing_memory=existing_memory,
@@ -1757,13 +1760,13 @@ class AgentBridge:
                 start_offset=start_offset,
             )
 
-            
-            safe_user_id = social_user_id.replace(":", "_")
-            RememberFactTool.set_memory_context("social", safe_user_id)
-            ReplaceMemoryTool.set_memory_context("social", safe_user_id)
-            RemoveMemoryTool.set_memory_context("social", safe_user_id)
 
-            
+            safe_user_id = social_user_id.replace(":", "_")
+            RememberFactTool.set_memory_context("assistant", safe_user_id)
+            ReplaceMemoryTool.set_memory_context("assistant", safe_user_id)
+            RemoveMemoryTool.set_memory_context("assistant", safe_user_id)
+
+
             from app.agent.memory_consolidator_factory import create_memory_consolidator_agent
             consolidator_agent = create_memory_consolidator_agent()
 
@@ -1773,7 +1776,7 @@ class AgentBridge:
                 manual_mode="memory_consolidator"
             ):
                 if event.get("type") == "complete":
-                    
+
                     await self.session_mapper.update_consolidation_offset(
                         social_user_id=social_user_id,
                         new_offset=len(messages),
@@ -1807,7 +1810,7 @@ class AgentBridge:
                 error=str(e)
             )
         finally:
-            
+
             try:
                 RememberFactTool.clear_memory_context()
                 ReplaceMemoryTool.clear_memory_context()
@@ -1836,7 +1839,7 @@ class AgentBridge:
             "Maintain only facts/*.md using durable conversation evidence; MEMORY.md is read-only background maintained by the conversation mode itself.",
             "",
             "## Mode",
-            "social",
+            "assistant",
             "",
             "## Existing Memory",
             "```",
@@ -1943,7 +1946,7 @@ class AgentBridge:
             return {"should_notify": False, "summary": "No tasks to execute"}
 
         manual_modes = {
-            str(task.get("manual_mode") or "social").strip() or "social"
+            str(task.get("manual_mode") or "assistant").strip() or "assistant"
             for task in tasks
         }
         if len(manual_modes) > 1:
@@ -1956,13 +1959,13 @@ class AgentBridge:
         use_social_context = manual_mode in SOCIAL_AGENT_MODES
 
         social_context = await self._load_social_agent_context(user_id) if use_social_context else {
-            "social_memory_store": None,
-            "social_user_preferences": None,
-            "social_heartbeat_file_path": None,
-            "social_soul_file_path": None,
-            "social_user_file_path": None,
-            "social_soul_context": None,
-            "social_user_context": None,
+            "assistant_memory_store": None,
+            "assistant_user_preferences": None,
+            "assistant_heartbeat_file_path": None,
+            "assistant_soul_file_path": None,
+            "assistant_user_file_path": None,
+            "assistant_soul_context": None,
+            "assistant_user_context": None,
         }
 
         # 从 user_id 恢复本次心跳执行的 social 上下文。
@@ -2026,15 +2029,15 @@ Example: If task says "Send a test message", then send the message directly, don
                 user_query=query,
                 session_id=heartbeat_session_id,
                 manual_mode=manual_mode,
-                session_storage_mode="social" if use_social_context else manual_mode,
+                session_storage_mode="channel" if use_social_context else manual_mode,
                 user_identifier=heartbeat_user_identifier,
-                social_memory_store=social_context["social_memory_store"],
-                social_user_preferences=social_context["social_user_preferences"],
-                social_heartbeat_file_path=social_context["social_heartbeat_file_path"],
-                social_soul_file_path=social_context["social_soul_file_path"],
-                social_user_file_path=social_context["social_user_file_path"],
-                social_soul_context=social_context["social_soul_context"],
-                social_user_context=social_context["social_user_context"]
+                assistant_memory_store=social_context["assistant_memory_store"],
+                assistant_user_preferences=social_context["assistant_user_preferences"],
+                assistant_heartbeat_file_path=social_context["assistant_heartbeat_file_path"],
+                assistant_soul_file_path=social_context["assistant_soul_file_path"],
+                assistant_user_file_path=social_context["assistant_user_file_path"],
+                assistant_soul_context=social_context["assistant_soul_context"],
+                assistant_user_context=social_context["assistant_user_context"]
             ):
                 if event.get("type") == "complete":
                     data = event.get("data", {})
@@ -2096,14 +2099,14 @@ Example: If task says "Send a test message", then send the message directly, don
             return
 
         channel, bot_account, sender_id = parts
-        chat_id = sender_id  
+        chat_id = sender_id
 
         summary = response.get("summary", "")
         if not summary:
             logger.debug("empty_summary_no_notification_sent", user_id=user_id)
             return
 
-        
+
         # 发送心跳任务通知
         try:
             outbound_msg = OutboundMessage(

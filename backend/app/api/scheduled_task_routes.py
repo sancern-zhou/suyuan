@@ -62,7 +62,7 @@ class CreateTaskRequest(BaseModel):
     """创建任务请求"""
     name: str = Field(..., description="任务名称")
     description: str = Field(..., description="任务描述")
-    execution_mode: str = Field(default="expert", description="执行模式（office/expert/ops/query/social/custom/workflow；assistant 仅兼容历史办公任务）")
+    execution_mode: str = Field(default="expert", description="执行模式（assistant/office/expert/ops/query/custom/workflow）")
     model_tier: Literal["auto", "flash", "pro"] = "flash"
     result_requirements: List[ResultFieldRequirement] = Field(default_factory=list)
     tool_names: Optional[List[str]] = None

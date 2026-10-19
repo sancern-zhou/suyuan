@@ -111,7 +111,7 @@ class ReplaceMemoryTool(LLMTool):
                     "error": "记忆写入目标模式缺失（memory_consolidator 不承载业务记忆），已拒绝替换",
                     "summary": "记忆替换失败：整合目标模式未知",
                 }
-            if current_mode == "social" and (not current_user_id or current_user_id == "global"):
+            if current_mode == "assistant" and (not current_user_id or current_user_id == "global"):
                 # 社交记忆按用户隔离；缺用户身份时拒绝写入，
                 # 绝不降级到共享目录（其内容不属于任何用户，永远不会被注入）。
                 logger.warning(
