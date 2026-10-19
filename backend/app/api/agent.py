@@ -1362,9 +1362,20 @@ async def analyze_stream(
                         # 地图程序仍由传输层负责即时展示；资源引用由 ReActAgent 统一持久化。
                         if event["type"] == "tool_result" and "data" in event:
                             data = event.get("data", {})
+                            # visuals 可能在 data 顶层，也可能嵌在 data.result 下（工具结果信封）
+                            result_payload = data.get("result") if isinstance(data.get("result"), dict) else {}
                             for visual in (data.get("visuals") or []):
                                 if isinstance(visual, dict) and isinstance(visual.get("id"), str):
                                     known_visual_ids.add(visual["id"])
+                            for visual in (result_payload.get("visuals") or []):
+                                if isinstance(visual, dict) and isinstance(visual.get("id"), str):
+                                    known_visual_ids.add(visual["id"])
+                            # 短别名映射的值同样是本轮真实 visual_id，纳入模糊修复候选
+                            visual_refs = result_payload.get("visual_refs")
+                            if isinstance(visual_refs, dict):
+                                for ref_id in visual_refs.values():
+                                    if isinstance(ref_id, str):
+                                        known_visual_ids.add(ref_id)
                             map_program = extract_map_program_from_tool_result_event(data)
                             if map_program:
                                 session.metadata = merge_map_program_into_scene_metadata(

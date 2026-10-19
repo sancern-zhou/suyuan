@@ -92,3 +92,33 @@ def test_repair_chart_reference_ids_handles_empty_and_no_marker():
     assert repair_chart_reference_ids("plain text", {"echarts_a"}) == "plain text"
     assert repair_chart_reference_ids("[[chart:echarts_a]]", set()) == "[[chart:echarts_a]]"
     assert repair_chart_reference_ids(None, {"echarts_a"}) is None
+
+
+def test_repair_needs_to_handle_cross_prefix_mangling():
+    """回归（2026-10-19）：模型把 echarts_hnccwfa3se_0 抄成 echccwfa3se_0
+    （丢 arts_hn，距离 7、前缀变 ech）、把 echarts_hnccwfa41h_1 抄成
+    hnccwfa41h_1（丢 echarts_，距离 8、前缀变 hnccwfa41h）——超出现有
+    同前缀+距离≤3 修复能力。此类抄错由会话级短别名协议（visual_alias）
+    在协议层消除，模糊修复不承担。"""
+    known = {"echarts_hnccwfa3se_0", "echarts_hnccwfa41h_1"}
+    for marker in ("[[chart:echccwfa3se_0]]", "[[chart:hnccwfa41h_1]]"):
+        assert repair_chart_reference_ids(f"图\n{marker}\n文", known) == f"图\n{marker}\n文"
+
+
+async def test_short_alias_ids_are_protocol_compliant_and_resolvable():
+    """别名 chart_N 是 [[chart:<id>]] 协议的合法 ID；解析发生在后端。"""
+    from app.agent.runtime.visual_alias import (
+        VisualAliasRegistry,
+        resolve_chart_alias_markers,
+        is_alias_id,
+    )
+
+    assert is_alias_id("chart_0")
+
+    registry = VisualAliasRegistry()
+    await registry.bind("session_x", ["echarts_hnccwfa3se_0", "echarts_hnccwfa41h_1"])
+    text = "图一\n\n[[chart:chart_0]]\n\n图二\n\n[[chart:chart_1]]\n"
+    resolved = await resolve_chart_alias_markers(text, "session_x", registry=registry)
+    assert "[[chart:echarts_hnccwfa3se_0]]" in resolved
+    assert "[[chart:echarts_hnccwfa41h_1]]" in resolved
+    assert "chart_0" not in resolved and "chart_1" not in resolved

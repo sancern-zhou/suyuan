@@ -708,6 +708,15 @@ class Settings(BaseSettings):
         ge=60,
         description="TTL for active-run steering metadata and pending inputs",
     )
+    agent_visual_alias_redis_prefix: str = Field(
+        default="suyuan:agent:visual_alias",
+        description="Redis key prefix for session-scoped short chart aliases ([[chart:chart_N]])",
+    )
+    agent_visual_alias_ttl_seconds: int = Field(
+        default=1209600,
+        ge=60,
+        description="TTL for session-scoped chart alias mappings (refreshed on each bind)",
+    )
 
     # Cache TTL (seconds)
     cache_ttl_config: int = Field(default=3600, description="Config cache TTL")
