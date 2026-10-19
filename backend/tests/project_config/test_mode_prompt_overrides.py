@@ -89,7 +89,7 @@ def test_xuchang_assistant_coordinates_instead_of_executing_professional_work(mo
     for required in (
         "web_search",
         "web_fetch",
-        "schedule_task",
+        "manage_assistant_schedule",
         "send_notification",
         "wait_task",
         "call_sub_agent",

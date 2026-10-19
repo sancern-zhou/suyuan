@@ -82,6 +82,9 @@ class SimpleScheduler:
             cron_config = self.CRON_TEMPLATES[task.schedule_type]
             trigger = CronTrigger(**cron_config, timezone="Asia/Shanghai")
 
+        elif task.schedule_type == ScheduleType.CRON:
+            trigger = CronTrigger.from_crontab(task.cron, timezone=task.timezone_name)
+
         elif task.schedule_type == ScheduleType.ONCE:
             # 一次性任务
             if not task.run_at:

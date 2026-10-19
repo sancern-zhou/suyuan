@@ -494,15 +494,17 @@ async def test_single_attempt_metadata_prevents_transport_retry_and_wrong_bot():
     channel.send.assert_not_awaited()
 
 
-def test_followup_tool_is_only_visible_in_enabled_social_mode(monkeypatch):
+def test_unified_schedule_replaces_followup_tool_even_when_creation_is_disabled(monkeypatch):
     from app.agent.prompts.tool_registry import get_tools_by_mode
     from config.settings import settings
 
     monkeypatch.setattr(settings, "assistant_followups_enabled", False)
     assert "manage_assistant_followups" not in get_tools_by_mode("social")
+    assert "manage_assistant_schedule" in get_tools_by_mode("social")
     monkeypatch.setattr(settings, "assistant_followups_enabled", True)
-    assert "manage_assistant_followups" in get_tools_by_mode("social")
-    assert "manage_assistant_followups" not in get_tools_by_mode("expert")
+    assert "manage_assistant_followups" not in get_tools_by_mode("social")
+    assert "manage_assistant_schedule" in get_tools_by_mode("social")
+    assert "manage_assistant_schedule" not in get_tools_by_mode("expert")
 
 
 @pytest.mark.asyncio

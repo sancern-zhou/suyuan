@@ -385,9 +385,7 @@ SOCIAL_TOOL_NAMES = [
     "web_search",
     "web_fetch",
     # 呼吸式特有工具
-    "schedule_task",
-    "create_scheduled_task",
-    "manage_scheduled_tasks",
+    "manage_assistant_schedule",
     "send_notification",
     "wait_task",
     "session_search",
@@ -608,13 +606,6 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         tool_names.append("manage_assistant_tasks")
     if mode == "social" and "manage_assistant_coaching" not in tool_names:
         tool_names.append("manage_assistant_coaching")
-    from config.settings import settings
-
-    if mode == "social" and settings.assistant_followups_enabled:
-        if "manage_assistant_followups" not in tool_names:
-            tool_names.append("manage_assistant_followups")
-    else:
-        tool_names = [name for name in tool_names if name != "manage_assistant_followups"]
     tools = _build_tool_dict(tool_names)
 
     disabled_tools = _get_project_disabled_tool_names()

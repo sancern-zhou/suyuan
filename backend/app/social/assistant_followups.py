@@ -29,6 +29,23 @@ def record(row):
     return {c.name: getattr(row, c.name) for c in row.__table__.columns if c.name != "request_key"}
 
 
+def validate_reminder_recipient(request, owner):
+    if not request.delivery_user_id:
+        raise PermissionError("当前入口没有可验证的个人提醒地址")
+    route = request.delivery_user_id.rsplit(":", 2)
+    from app.social.web_assistant import web_assistant_recipient
+
+    web_recipient = request.delivery_user_id == web_assistant_recipient(owner)
+    if (
+        len(route) != 3
+        or route[0] not in {"app", "weixin"} and not web_recipient
+        and not route[0].startswith("weixin:")
+    ):
+        raise PermissionError("当前仅支持 Web、App 和已绑定微信的个人提醒")
+    if route[0] == "app" and request.delivery_user_id != owner:
+        raise PermissionError("不能替其他 App 用户设置提醒")
+
+
 async def revoke_followups(session, task_id):
     """Called inside the human task-edit transaction, never after its commit."""
     await session.execute(update(Trigger).where(Trigger.task_id == task_id).values(enabled=False))
@@ -76,21 +93,9 @@ class AssistantFollowupService(AssistantTaskService):
         cron=None,
         timezone_name="Asia/Shanghai",
         now=None,
+        standalone_goal=None,
     ):
-        if not request.delivery_user_id:
-            raise PermissionError("当前入口没有可验证的个人提醒地址")
-        route = request.delivery_user_id.rsplit(":", 2)
-        from app.social.web_assistant import web_assistant_recipient
-
-        web_recipient = request.delivery_user_id == web_assistant_recipient(owner)
-        if (
-            len(route) != 3
-            or route[0] not in {"app", "weixin"} and not web_recipient
-            and not route[0].startswith("weixin:")
-        ):
-            raise PermissionError("当前仅支持 Web、App 和已绑定微信的个人提醒")
-        if route[0] == "app" and request.delivery_user_id != owner:
-            raise PermissionError("不能替其他 App 用户设置提醒")
+        validate_reminder_recipient(request, owner)
         if type(expected_version) is not int or expected_version < 1:
             raise ValueError("请使用查询得到的事项版本")
         if execution_action not in {"remind", "analyze"}:
@@ -121,13 +126,37 @@ class AssistantFollowupService(AssistantTaskService):
                     cron,
                     timezone_name,
                 ]
-                + ([execution_action] if execution_action != "remind" else []),
+                + ([execution_action] if execution_action != "remind" else [])
+                + ([standalone_goal] if standalone_goal is not None else []),
                 ensure_ascii=False,
                 default=str,
             ).encode()
         ).hexdigest()
         async with self.session_factory() as session:
-            task = await self._task(session, project, owner, task_id)
+            # A plain reminder gets its own matter atomically with its trigger.
+            # It never requires a separate model call to register a matter first.
+            if standalone_goal is not None:
+                if task_id is not None or execution_action != "remind":
+                    raise ValueError("独立提醒不能绑定其他事项或自动升级为分析")
+                self._scope(project, owner)
+                goal = _text(standalone_goal, "提醒目标", 2000)
+                task_key = sha256(f"reminder:{key}".encode()).hexdigest()
+                task = (await session.execute(select(Task).where(
+                    *self._scope(project, owner), Task.request_key == task_key,
+                ))).scalar_one_or_none()
+                if task is None:
+                    task = Task(
+                        task_id=str(uuid4()), project_id=project, owner_user_id=owner,
+                        source_session_id=request.session_id, request_key=task_key,
+                        goal=goal, completion_criteria="用户确认提醒事项已完成",
+                        status="ready", version=1,
+                    )
+                    session.add(task)
+                    await session.flush()
+                    session.add(self._event(task.task_id, 1, "reminder_created", request, {}))
+                task_id = task.task_id
+            else:
+                task = await self._task(session, project, owner, task_id)
             existing = (
                 await session.execute(select(Trigger).where(Trigger.request_key == key))
             ).scalar_one_or_none()
