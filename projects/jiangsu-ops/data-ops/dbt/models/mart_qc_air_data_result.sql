@@ -31,11 +31,9 @@ select
     a.time,
     a.timepoint,
     a.datavalue,
-    case
-        when trim(a.datavalue) ~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)$'
-            then trim(a.datavalue)::double precision
-        else null
-    end                                          as datavalue_numeric,
+    -- 源列 datavalue 实测即 numeric(2026-10-19 部署发现; 上游按"文本原值+正则"写的
+    -- 版本在 numeric 上报 btrim(numeric) 不存在), 直接转 double 作聚合列, 与 datavalue 同值
+    a.datavalue::double precision               as datavalue_numeric,
     a.unit,
     a.datamark,
     a.flag,

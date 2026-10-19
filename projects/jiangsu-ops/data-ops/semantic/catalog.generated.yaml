@@ -147,7 +147,7 @@ cubes:
     source_window: 2026-07-01 起
     freshness_slo: 26小时
     limitations:
-    - datavalue_numeric 为空的文本点不参与数值聚合，但原始 datavalue 保留
+    - 源列 datavalue 实测为数值类型；datavalue_numeric 为其 double 聚合列（两者同值）
     measures:
       count:
         name: 质控曲线点数

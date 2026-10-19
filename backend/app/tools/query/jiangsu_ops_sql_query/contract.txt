@@ -23,7 +23,7 @@ GUIDE_START
 - mart_station_env_power（一行 = 一站 × 一小时 × 一动环项）：查站房动环/供电历史用本表:三相电压 VA/VB/VC、三相电流 IA/IB/IC、站房温度 StationTemp/ 湿度 StationHum、管线温度 PipeTemp/湿度 PipeHum、采样管压力 SamplePipeSPress; 按 station_code + timepoint + pollutant_code 过滤,周/月窗口直接查;monvalue 为数值, 非数值原文在 monvalue_text;当日实时补查走 jiangsu_fetch_station_environment_history。
 - mart_station_alarm_log（一行 = 一条告警）：查站房/仪器告警历史用本表:按 station_code + alarm_time 过滤,alarm_grade_cn 区分级别, alarm_grade_cn 兼容源值1/2/3与20/40/60/80(20=提示,40/60=一般,80=严重), resume_time 为空即未恢复;近 24h 实时窗优先用 jiangsu_fetch_station_alarm_logs(本地分片,同一数据源); description 为告警描述原文,alarm_type 是平台内部编码不做翻译。
 - mart_qc_task_status_result（一行 = 一次质控任务状态快照(同 rid 取 createtime 最新)）：查质控任务执行状态用本表:按 rid 或 station_code+rstart 定位,jsonstr 内含 Steps/Actions/ ResultValues/DataValues;质控详情可视化优先用 jiangsu_fetch_qc_task_status(自动解析并出面板); 与 qc_his_result(任务结果) 通过 rid 关联。
-- mart_qc_air_data_result（一行 = 一站 × 一任务窗口 × 一时间点）：查质控前后/期间监测曲线用本表:按 station_code+poll+qc_type+timepoint 窗口过滤并按 timepoint 排序; 曲线可视化优先用 jiangsu_fetch_qc_monitoring_curve;isqcing=true 表示质控进行中的点位; datavalue_numeric 是可安全聚合的数值列,非数值原文为空。
+- mart_qc_air_data_result（一行 = 一站 × 一任务窗口 × 一时间点）：查质控前后/期间监测曲线用本表:按 station_code+poll+qc_type+timepoint 窗口过滤并按 timepoint 排序; 曲线可视化优先用 jiangsu_fetch_qc_monitoring_curve;isqcing=true 表示质控进行中的点位; datavalue_numeric 是可安全聚合的数值列(与 datavalue 同值,语义层聚合用它)。
 - mart_qc_run_log_result（一行 = 一条质控运行事件）：查质控任务运行过程用本表:按 rid 过滤(单任务数百条),按 record_time 排序看执行轨迹; 运行日志查询优先用 jiangsu_fetch_qc_run_logs;strEvent 常见值:提示信息/警告/错误。
 【SQL方言】PostgreSQL：用 LIMIT 不用 TOP；日期截断用 date_trunc('day', col)；布尔列直接用 IS TRUE / = TRUE；时间比较用 '2026-09-01' 字面量。查询务必带 LIMIT（上限1000）；聚合统计优先 GROUP BY 城市或站点返回小结果集。
 GUIDE_END

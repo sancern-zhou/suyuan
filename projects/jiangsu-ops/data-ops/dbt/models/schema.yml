@@ -898,8 +898,8 @@ models:
   description: '江苏质控期间监测序列(曲线点)。一行 = 一站 × 一质控任务 × 一时间点的监测值(按年源表 2026,每日增量,窗口自 2026-07-01,省控站过滤)。 工具 jiangsu_fetch_qc_monitoring_curve
     已改读本链。
 
-    已知口径注意: 按年源表,每年 1 月须换年份表名(gen_alarmlog_sync_config.py); datavalue 为文本原值;聚合使用 datavalue_numeric(非数值原文为空);time
-    为平台记录文本,timepoint 为监测时间
+    已知口径注意: 按年源表,每年 1 月须换年份表名(gen_alarmlog_sync_config.py); 源列 datavalue 实测为数值类型(非文本,2026-10-19 部署核实);datavalue_numeric
+    为其 double 聚合列,两者同值;time 为平台记录文本,timepoint 为监测时间
 
     粒度: 一行 = 一站 × 一任务窗口 × 一时间点'
   columns:
@@ -931,9 +931,9 @@ models:
     data_tests:
     - not_null
   - name: datavalue
-    description: 监测值(文本原值)
+    description: 监测值(数值)
   - name: datavalue_numeric
-    description: 可安全聚合的数值监测值(非数值原文为空)
+    description: 监测值(double 聚合列
   - name: unit
     description: 单位
   - name: datamark
