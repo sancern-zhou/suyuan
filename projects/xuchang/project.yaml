@@ -219,9 +219,7 @@ backend:
       - session_search
       - web_search
       - web_fetch
-      - schedule_task
-      - create_scheduled_task
-      - manage_scheduled_tasks
+      - manage_assistant_schedule
       - send_notification
   # 广东数据源工具已改为项目专属（共享白名单不含、默认不注册），无需再逐项禁用；
   # 仅保留非项目工具的显式禁用项。
