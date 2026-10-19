@@ -12,6 +12,7 @@ from app.auth.share_access import get_share_access_service
 from app.auth.ws_tickets import WebSocketTicketService
 from app.core.fetcher_worker_proxy import FetcherWorkerProxyMiddleware
 from app.core.scheduled_task_worker_proxy import ScheduledTaskWorkerProxyMiddleware
+from app.core.slow_request_logger import SlowRequestLoggingMiddleware
 from app.core.social_account_worker_proxy import SocialAccountWorkerProxyMiddleware
 from config.settings import settings
 
@@ -83,4 +84,8 @@ def configure_middleware(app: FastAPI) -> None:
         allow_methods=["*"],
         allow_headers=["*"],
         max_age=3600,
+    )
+    app.add_middleware(
+        SlowRequestLoggingMiddleware,
+        threshold_seconds=settings.slow_request_log_threshold_seconds,
     )

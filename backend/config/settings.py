@@ -166,6 +166,11 @@ class Settings(BaseSettings):
         default="suyuan:auth:",
         description="Redis prefix for authentication state",
     )
+    slow_request_log_threshold_seconds: float = Field(
+        default=2.0,
+        ge=0.1,
+        description="Warn when a request takes this long to first response bytes",
+    )
     auth_ws_ticket_ttl_seconds: int = Field(
         default=30,
         ge=5,
