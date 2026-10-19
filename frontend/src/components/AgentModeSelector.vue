@@ -140,6 +140,8 @@ const backgroundRunningModes = computed(() => {
 const getModeLabel = (mode) => {
   const labelMap = {
     'assistant': '助手',
+    'social': '助手',
+    'office': '办公',
     'ppt': '幻灯片',
     'expert': '专家',
     'query': '问数生图',

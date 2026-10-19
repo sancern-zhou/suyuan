@@ -18,6 +18,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
+from app.utils.path_config import format_agent_path, resolve_agent_path
 
 
 def test_function_schema():
@@ -72,7 +73,7 @@ def test_workspace_promotion_waits_for_approval_before_starting_child():
         "target_mode": "board",
         "goal": "绘制系统架构图",
         "context_str": "遵循项目架构规范",
-        "workspace_path": "/tmp/board-workspace",
+        "workspace_path": format_agent_path(resolve_agent_path("/tmp/board-workspace")),
         "session_id": "web-session-1",
         "skill_ids": ["archify"],
         "resume_after_approval": True,

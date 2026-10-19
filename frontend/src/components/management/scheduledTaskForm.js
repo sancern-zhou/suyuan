@@ -15,17 +15,19 @@ export const buildExecutionModeOptions = (
   projectModes = [],
   currentMode = '',
 ) => {
-  const options = projectModes.map(mode => ({
-    value: mode.id,
-    label: `${mode.id}（${mode.shortName || mode.name || mode.id}）`
-  }))
+  const options = projectModes.map(mode => {
+    const id = mode.id === 'assistant' ? 'social' : mode.id
+    return { value: id, label: `${id}（${mode.shortName || mode.name || id}）` }
+  })
   options.push(
-    { value: 'social', label: 'social（社交任务）' },
+    { value: 'office', label: 'office（办公模式）' },
+    { value: 'social', label: 'social（助手模式）' },
     { value: 'custom', label: 'custom（自选工具）' },
     { value: 'workflow', label: 'workflow（确定性工作流）' }
   )
   if (currentMode && !options.some(option => option.value === currentMode)) {
-    options.push({ value: currentMode, label: `${currentMode}（当前任务模式）` })
+    const label = currentMode === 'assistant' ? 'assistant（办公模式，历史配置）' : `${currentMode}（当前任务模式）`
+    options.push({ value: currentMode, label })
   }
   return options.filter((option, index, values) => (
     values.findIndex(candidate => candidate.value === option.value) === index
