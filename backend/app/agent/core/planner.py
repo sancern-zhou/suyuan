@@ -17,7 +17,10 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import structlog
 
 from app.agent.context.execution_context import ExecutionContext
-from app.agent.markup_sanitizer import strip_dsml_tool_call_markup
+from app.agent.markup_sanitizer import (
+    DSML_TOOL_CALL_BLOCKED_NOTICE,
+    strip_dsml_tool_call_markup,
+)
 from app.services.llm_failover import is_media_fetch_failure_message
 from app.services.llm_service import llm_service
 from app.tools.base.registry import ToolRegistry
@@ -870,7 +873,7 @@ class ReActPlanner:
                     remaining_length=len(sanitized),
                     full_text_preview=full_text[:200],
                 )
-            if not sanitized:
+            if had_dsml and not sanitized:
                 sanitized = DSML_TOOL_CALL_BLOCKED_NOTICE
             action = {
                 "type": "PLAIN_TEXT_REPLY",
@@ -967,7 +970,7 @@ class ReActPlanner:
                     remaining_length=len(sanitized),
                     full_text_preview=full_text[:200],
                 )
-            if not sanitized:
+            if had_dsml and not sanitized:
                 sanitized = DSML_TOOL_CALL_BLOCKED_NOTICE
             action = {
                 "type": "PLAIN_TEXT_REPLY",
