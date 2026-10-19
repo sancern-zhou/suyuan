@@ -100,7 +100,8 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "DAG 禁止 query、expert、report 主模式子节点；当前父 Agent 是唯一整合与成稿者。"
     "工具返回每个节点的紧凑 result_envelope（status/summary/findings/evidence/data_gaps）与血缘清单："
     "findings 是报告取数来源，其中的数值可直接引用；"
-    "各节点完整结果已落盘并在 full_results.path，确需更多细节时用 read_file 对该文件一次整读，"
+    "各节点完整结果已落盘并在 full_results.path；social 助手通过 read_session_resource 读取已登记资源，"
+    "或用 manage_assistant_runs 读取委派结果；其他有文件权限的模式可用 read_file 一次整读，"
     "禁止分页反复读同一文件。"
     "据此判断覆盖范围与缺口并整合结论，不要对子节点过程做重复全量复核。"
     "专家子节点（expert_meteorology/expert_analysis）必须提供 task_contract（protocol_version=workflow.v1、"
@@ -818,8 +819,8 @@ class RunAgentWorkflowTool(LLMTool):
                         "path": full_results["path"],
                         "note": (
                             "各节点完整结果（结构化输出全文、工具轨迹、文件句柄）。"
-                            "envelope.findings 已含关键数值；确需更多细节时用 read_file "
-                            "对本文件一次整读，不要分页反复读。"
+                            "envelope.findings 已含关键数值；social 助手通过 read_session_resource "
+                            "读取已登记的本文件；其他有文件权限的模式用 read_file 一次整读，不要分页反复读。"
                         ),
                     }
                     if full_results else None
