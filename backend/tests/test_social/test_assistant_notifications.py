@@ -132,6 +132,9 @@ async def test_owner_and_project_isolation_including_read_receipts(system):
     assert (await system.service.list("other", "alice"))["notifications"] == []
     with pytest.raises(TaskNotFound):
         await system.service.mark_read("p", "bob", key)
+    with pytest.raises(ValueError, match="投递"):
+        await system.service.mark_read("p", "alice", key)
+    await system.service.deliver(key)
     await system.service.mark_read("p", "alice", key)
     assert (await system.service.list("p", "alice", unread_only=True))["unread_count"] == 0
 

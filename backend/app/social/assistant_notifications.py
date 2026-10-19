@@ -294,6 +294,8 @@ class AssistantNotificationService:
                 from app.social.assistant_tasks import TaskNotFound
 
                 raise TaskNotFound("通知不存在或无权访问")
+            if row.state in {"pending", "sending"}:
+                raise ValueError("通知尚在投递，请稍后再标记已读")
             row.read_at = row.read_at or datetime.utcnow()
             await session.commit()
 
