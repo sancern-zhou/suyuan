@@ -90,6 +90,26 @@ def _resolve_child_max_iterations(target_mode: str, requested: Optional[int]) ->
     return max(1, min(int(requested), 120))
 
 
+def ensure_structured_delivery_schema(target_mode: str, result_schema):
+    """固定工作流叶子模式默认附加证据结果协议。
+
+    这些模式的 deliver 阶段会把工具清空到只剩 submit_result；不注入
+    result_schema 就等于没有交付通道，子 Agent 只能以文本收尾，数据
+    文件留在子会话里无法结构化回传父 Agent（与 DAG 节点行为对齐）。
+    """
+    if isinstance(result_schema, dict) and result_schema:
+        return result_schema
+    from app.agent.workflow.mode_workflows import get_mode_workflow
+
+    if get_mode_workflow(str(target_mode)) is None:
+        return result_schema
+    from copy import deepcopy
+
+    from app.agent.workflow.protocol import EXPERT_ANALYSIS_RESULT_SCHEMA
+
+    return deepcopy(EXPERT_ANALYSIS_RESULT_SCHEMA)
+
+
 class CallSubAgentTool(LLMTool):
     """
     调用子Agent的工具（双向通用）
@@ -482,6 +502,7 @@ class CallSubAgentTool(LLMTool):
             task_contract = project_node.get("task_contract")
             result_schema = project_node.get("result_schema")
             max_iterations = project_node.get("max_iterations")
+            result_schema = ensure_structured_delivery_schema(target_mode, result_schema)
             # 报告 Agent 不再使用综合问数子代理：监测历史走 query_monitoring，
             # 气象与预报走 query_forecast（schema 枚举为全局共享，此处按父模式守卫）。
 
@@ -1098,6 +1119,18 @@ class CallSubAgentTool(LLMTool):
                 max_iterations=iteration_limit,
                 session_id=session_id
             )
+
+            # 空答案不允许静默成功：结果里保留子会话产物线索，
+            # 父 Agent 可凭 file_paths/resource_refs 继续取数（对齐
+            # ZCode 的 "(Subagent completed but returned no output.)" 约定）。
+            if (
+                final_result["status"] == "success"
+                and not str(final_result.get("answer") or "").strip()
+            ):
+                final_result["answer"] = (
+                    "（子 Agent 已完成但未输出文本结论；"
+                    "其产物已列于 file_paths/resource_refs，可直接引用。）"
+                )
 
             # 提取结构化数据
             structured_data = {
