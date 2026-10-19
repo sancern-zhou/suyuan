@@ -1042,11 +1042,11 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.warning("tool_import_failed", tool="manage_assistant_coaching", error=str(e))
 
     try:
-        from app.tools.social.assistant_followups.tool import ManageAssistantFollowupsTool
-        registry.register(ManageAssistantFollowupsTool(), priority=378)
-        logger.info("tool_loaded", tool="manage_assistant_followups")
+        from app.tools.social.assistant_schedule.tool import ManageAssistantScheduleTool
+        registry.register(ManageAssistantScheduleTool(), priority=378)
+        logger.info("tool_loaded", tool="manage_assistant_schedule")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="manage_assistant_followups", error=str(e))
+        logger.warning("tool_import_failed", tool="manage_assistant_schedule", error=str(e))
 
     try:
         from app.tools.social.cli_session.tool import CliSessionTool

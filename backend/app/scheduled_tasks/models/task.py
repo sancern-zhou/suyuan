@@ -19,6 +19,7 @@ class ScheduleType(str, Enum):
 
     # 灵活类型
     ONCE = "once"                # 一次性任务（需指定run_at）
+    CRON = "cron"                # 显式五段表达式与时区
     INTERVAL = "interval"        # 自定义间隔（需指定interval_minutes）
     DAILY_CUSTOM = "daily_custom"  # 每天自定义时间（需指定hour和minute）
     DAILY_HOURS_CUSTOM = "daily_hours_custom"  # 每天多个指定小时（需指定hours和minute）
@@ -127,6 +128,8 @@ class ScheduledTask(BaseModel):
     # 灵活调度参数（根据schedule_type使用）
     run_at: Optional[datetime] = Field(default=None, description="一次性任务的执行时间（schedule_type=once时必填）")
     interval_minutes: Optional[int] = Field(default=None, ge=1, description="自定义间隔分钟数（schedule_type=interval时必填）")
+    cron: Optional[str] = None
+    timezone_name: str = "Asia/Shanghai"
     hour: Optional[int] = Field(default=None, ge=0, le=23, description="每天执行的小时（schedule_type=daily_custom时必填，0-23）")
     minute: Optional[int] = Field(default=None, ge=0, le=59, description="每天执行的分钟（schedule_type=daily_custom/daily_hours_custom时必填，0-59）")
     hours: Optional[List[int]] = Field(
@@ -163,6 +166,9 @@ class ScheduledTask(BaseModel):
     owner_user_id: str = Field(default="system", description="会话归属用户ID")
     owner_username: str = Field(default="scheduled-task", description="会话归属用户名")
     owner_display_name: str = Field(default="定时任务", description="会话归属显示名")
+    source_session_id: Optional[str] = None
+    source_request_id: Optional[str] = None
+    authorization_message: Optional[str] = None
     tags: List[str] = Field(default_factory=list, description="标签")
     workspace_entry: Optional[WorkspaceEntry] = Field(
         default=None,
@@ -190,6 +196,9 @@ class ScheduledTask(BaseModel):
 
     @model_validator(mode="after")
     def validate_trigger(self):
+        if self.schedule_type == ScheduleType.CRON:
+            from app.social.assistant_schedule import normalize_schedule
+            normalize_schedule("cron", cron=self.cron, timezone_name=self.timezone_name)
         self.prompt = (self.prompt or "").strip()
         if not self.prompt:
             raise ValueError("prompt is required")

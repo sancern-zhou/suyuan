@@ -44,10 +44,12 @@ def capability_catalog():
             }
         if parameters is not None:
             item["required_parameters"] = list(parameters.get("required", []))
-        if target == "manage_assistant_followups" and kind == "tool":
-            item["available_execution_actions"] = ["remind"]
-            if settings.assistant_analysis_enabled:
+        if target == "manage_assistant_schedule" and kind == "tool":
+            item["available_execution_actions"] = ["remind"] if settings.assistant_followups_enabled else []
+            if settings.assistant_followups_enabled and settings.assistant_analysis_enabled:
                 item["available_execution_actions"].append("analyze")
+            if manifest.scheduled_tasks_enabled:
+                item["available_execution_actions"].append("execute")
         item["revision"] = sha256(
             json.dumps(item, sort_keys=True, ensure_ascii=False).encode()
         ).hexdigest()
