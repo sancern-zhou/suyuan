@@ -45,6 +45,31 @@ result may advance its own previous progress, but cannot overwrite intervening
 human edits, another plan's progress, or a completed/cancelled matter. Superseded
 updates are recorded; the result reply is retained for review.
 
+## Temporary Old App Compatibility
+
+Old clients may continue creating and using new SQL conversations without an
+APK update. No pre-upgrade channel session is migrated or made writable.
+Their create request omits mode, so its SQL draft keeps mode unset until the
+first turn atomically binds query/expert/knowledge. A bound mode cannot change.
+File-only uploads use the account's DB-backed current-session mapping. If the
+user switches conversations before sending, server-authorized attachment
+resource groups (including previews) are copied to the selected conversation;
+other accounts' attachments are rejected and retry reuses existing resources.
+Old history lists only modes those clients understand, excluding assistant.
+
+New clients send X-App-Conversation-Version: 2, explicit create/upload modes,
+and upload session_id. They retain strict session-scoped attachment validation
+and do not use the compatibility mapping. The header selects request handling,
+never authorization. No feature flag or additional SQL migration is needed.
+
+After the App rollout, remove app/social/app_client_compat.py and its gateway
+hooks, restore required explicit create/upload modes, remove the temporary
+Android header and transition tests. Preserve conversations whose draft mode
+was already bound; no transcript conversion is necessary. Empty unbound drafts
+can be discarded with the normal session cleanup. Local compatibility tests use
+old HTTP payloads with actual temporary SQL/file storage and a fake Agent;
+they do not replace deployed PostgreSQL and physical old-APK acceptance.
+
 ## Deployment
 
 Apply `backend/app/db/migrations/024_create_assistant_notifications.sql` to the
