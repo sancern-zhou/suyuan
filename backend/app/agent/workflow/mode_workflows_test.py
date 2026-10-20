@@ -18,7 +18,7 @@ def test_query_modes_are_registered_as_fixed_agent_workflows():
 
     assert monitoring is workflow_catalog.get("agent_mode", "query_monitoring")
     assert forecast is workflow_catalog.get("agent_mode", "query_forecast")
-    assert monitoring.max_iterations == 4
+    assert monitoring.max_iterations == 20
     assert [phase.name for phase in monitoring.phases] == [
         "acquire",
         "normalize",
@@ -120,7 +120,7 @@ def test_acquisition_ignores_support_tool_failures_in_mixed_batch():
     assert current_phase(definition, progress).name == "normalize"
 
 
-def test_query_workflow_allows_only_one_failed_batch_repair():
+def test_query_workflow_allows_bounded_failed_batch_repairs():
     definition = get_mode_workflow("query_forecast")
     progress = {}
     failed = [{
@@ -133,6 +133,11 @@ def test_query_workflow_allows_only_one_failed_batch_repair():
     assert progress["phase_attempt"] == 1
     assert progress["last_failed_tools"] == ["get_weather_forecast"]
 
+    observe_tool_results(definition, progress, failed)
+    assert current_phase(definition, progress).name == "acquire"
+    assert progress["phase_attempt"] == 2
+
+    observe_tool_results(definition, progress, failed)
     observe_tool_results(definition, progress, failed)
     assert current_phase(definition, progress).name == "normalize"
     assert progress["phase_attempt"] == 0
@@ -149,7 +154,7 @@ def test_normalization_tool_turn_forces_delivery_without_tools():
 
     assert current_phase(definition, progress).name == "deliver"
     assert allowed_tools(definition, progress) == set()
-    assert "停止调用工具" in render_phase_prompt(definition, progress)
+    assert "停止调用分析类工具" in render_phase_prompt(definition, progress)
 
 
 def test_normalization_failure_gets_repair_turn_before_delivery():

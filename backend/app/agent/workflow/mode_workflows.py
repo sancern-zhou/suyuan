@@ -122,26 +122,27 @@ def _query_definition(
                 description=acquire_description,
                 allowed_tools=query_tools,
                 advance_tools=query_tools,
-                max_attempts=2,
+                max_attempts=4,
                 allow_completion=False,
             ),
             WorkflowPhaseDefinition(
                 name="normalize",
                 description=(
-                    "检查成功结果的时间范围、记录数、字段和缺口。只有确需合并或补充质量统计时，"
-                    "才调用一次 execute_python；否则直接交付。禁止新增数据源查询。"
+                    "检查成功结果的时间范围、记录数、字段和缺口。聚合、分箱、统计与"
+                    "多步计算可分多轮调用 execute_python 完成；禁止新增数据源查询。"
                 ),
                 allowed_tools=_NORMALIZE_TOOLS,
                 advance_tools=_NORMALIZE_ADVANCE_TOOLS,
-                max_attempts=1,
+                max_attempts=15,
                 allow_completion=True,
             ),
             WorkflowPhaseDefinition(
                 name="deliver",
                 description=(
-                    "停止调用工具，直接输出最终交付文本。本轮请求没有携带任何工具，"
-                    "任何工具调用或调用标记语法（如 DSML/XML/JSON 标签）都会失败或被当作正文，"
-                    "导致交付失败。file_path 引用上方工具结果中已保存的路径即可，无需执行代码验证；"
+                    "停止调用分析类工具，输出最终交付文本。本轮请求除交付工具 submit_result 外"
+                    "没有其他工具，任何其他工具调用或调用标记语法（如 DSML/XML/JSON 标签）都会"
+                    "失败或被当作正文，导致交付失败。带 result_schema 的调用方应改用 submit_result"
+                    " 提交结构化结果。file_path 引用上方工具结果中已保存的路径即可，无需执行代码验证；"
                     "同时给出字段说明、时间与区域口径、记录数以及数据缺口。"
                     "不做机制分析，不重新查询。"
                 ),

@@ -72,14 +72,14 @@ AgentMode = Literal[
 _DEFAULT_CHILD_MAX_ITERATIONS = {
     # 计算密集型专家任务（聚合、分箱、相关性）在 15-20 轮内常常收不完，
     # 适度放宽；工作流重试还会在此基础上自动扩容（见 coordinator）。
-    "expert_meteorology": 20,
-    "expert_analysis": 28,
+    "expert_meteorology": 40,
+    "expert_analysis": 40,
     "expert": 40,
-    # 固定问数工作流由运行时限制为最多四轮。
-    "query_monitoring": 4,
-    "query_monitoring_station": 4,
-    "query_monitoring_city": 4,
-    "query_forecast": 4,
+    # 固定问数工作流由运行时限制为阶段预算之和（acquire 4 + normalize 15 + deliver 1）。
+    "query_monitoring": 20,
+    "query_monitoring_station": 20,
+    "query_monitoring_city": 20,
+    "query_forecast": 20,
 }
 
 
