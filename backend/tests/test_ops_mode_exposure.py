@@ -11,7 +11,7 @@ from app.tools.social.spawn.tool import SpawnTool
 
 def test_ops_mode_is_exposed_to_assistant_and_social_prompts():
     assistant_prompt = build_react_system_prompt("assistant")
-    social_prompt = build_react_system_prompt("social")
+    social_prompt = build_react_system_prompt("assistant")
 
     for prompt in (assistant_prompt, social_prompt):
         assert 'target_mode="ops"' in prompt
@@ -21,12 +21,12 @@ def test_ops_mode_is_exposed_to_assistant_and_social_prompts():
 
 def test_ops_mode_is_reachable_from_assistant_and_social_tools():
     assistant_tools = get_tools_by_mode("assistant")
-    social_tools = get_tools_by_mode("social")
+    social_tools = get_tools_by_mode("assistant")
     ops_tools = get_tools_by_mode("ops")
 
     assert "call_sub_agent" in assistant_tools
     assert "call_sub_agent" in social_tools
-    assert "spawn" in social_tools
+    assert "spawn" not in social_tools
     assert "execute_ops_sql_query" in ops_tools
     assert "execute_ops_sql_query" not in assistant_tools
     assert "execute_ops_sql_query" not in social_tools

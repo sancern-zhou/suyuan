@@ -230,6 +230,20 @@
         <div v-if="showAgentMessageFooter(message)" class="agent-message-footer">
           <div class="agent-message-tools">
             <button
+              v-if="sessionId"
+              class="agent-message-tool-button"
+              type="button"
+              title="分享此对话到共享面板"
+              @click.stop="emit('share-session')"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="8" cy="8.5" r="3" />
+                <circle cx="16.5" cy="10" r="2.4" />
+                <path d="M3.5 19c.4-3 2.3-4.7 4.5-4.7s4.1 1.7 4.5 4.7" />
+                <path d="M14 14.6c.8-.5 1.6-.8 2.5-.8 1.9 0 3.5 1.3 3.9 3.9" />
+              </svg>
+            </button>
+            <button
               class="agent-message-tool-button"
               :class="{ copied: copiedAgentMessageId === message.id }"
               type="button"
@@ -444,7 +458,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['load-more', 'preview-message-attachment'])
+const emit = defineEmits(['load-more', 'preview-message-attachment', 'share-session'])
 const sessionResourceStore = useSessionResourceStore()
 const currentSessionResources = () => sessionResourceStore.activeSessionId === props.sessionId
   ? sessionResourceStore.activeSessionState?.resources || []

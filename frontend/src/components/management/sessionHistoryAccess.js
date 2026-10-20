@@ -28,7 +28,8 @@ export function historyRowLabels(session = {}, isAdmin = false) {
     : ''
 
   return {
-    source: SOURCE_LABELS[session.source] || session.source || 'Web',
+    source: (session.mode || session.metadata?.mode) === 'assistant' && session.source === 'web'
+      ? '助手' : (SOURCE_LABELS[session.source] || session.source || 'Web'),
     owner,
     readOnly: session.read_only_on_web === true
   }

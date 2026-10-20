@@ -101,6 +101,7 @@ class SocialBroadcastService:
         target_user_ids: Optional[List[str]] = None,
         persist_context: bool = False,
         context_metadata: Optional[Dict[str, Any]] = None,
+        delivery_metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Broadcast a message to all matching social users."""
         if not message:
@@ -168,10 +169,20 @@ class SocialBroadcastService:
                         chat_id=user_info["sender_id"],
                         content=message,
                         media=normalized_media,
-                        reply_to=user_info["sender_id"]
+                        reply_to=user_info["sender_id"],
+                        metadata=dict(delivery_metadata or {}),
                     )
-                    await self.message_bus.publish_outbound(outbound_msg)
-                channels_sent.append(social_user_id)
+                    delivery_error = None
+                    delivery_status = "delivered"
+                    try:
+                        await self.message_bus.deliver_outbound(outbound_msg)
+                    except Exception as exc:
+                        delivery_error = str(exc)
+                        delivery_status = "unknown" if isinstance(exc, TimeoutError) else "failed"
+                else:
+                    delivery_error = None
+                    delivery_status = "delivered"
+
                 context_persisted = False
                 context_error = None
                 if persist_context:
@@ -181,7 +192,7 @@ class SocialBroadcastService:
                             social_user_id=social_user_id,
                             message=message,
                             media=normalized_media,
-                            metadata=context_metadata or {},
+                            metadata={**(context_metadata or {}), "delivery_status": delivery_status, "delivery_error": delivery_error},
                         )
                     except Exception as exc:
                         context_error = str(exc)
@@ -198,11 +209,17 @@ class SocialBroadcastService:
                         social_user_id=social_user_id,
                         message=message,
                     )
+                sent = delivery_error is None and (context_persisted if user_info["channel"] == "app" else True)
+                if sent:
+                    channels_sent.append(social_user_id)
+                else:
+                    failed_user_ids.append(social_user_id)
                 delivery_results.append({
                     "social_user_id": social_user_id,
-                    "sent": True,
+                    "sent": sent,
+                    "delivery_status": delivery_status if sent or delivery_error else "failed",
                     "context_persisted": context_persisted if persist_context else None,
-                    "error": context_error,
+                    "error": delivery_error or context_error,
                     "push": push_result,
                 })
             except Exception as e:

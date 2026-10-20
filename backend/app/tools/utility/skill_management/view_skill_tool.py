@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
@@ -9,7 +10,6 @@ from app.tools.utility.skill_management.skill_paths import (
     parse_skill_metadata,
     resolve_skill_file,
 )
-
 
 class ViewSkillTool(LLMTool):
     def __init__(self):
@@ -46,12 +46,22 @@ class ViewSkillTool(LLMTool):
 
     async def execute(self, name: str, include_drafts: bool = False, **kwargs) -> Dict[str, Any]:
         skills_dir = drafts_dir = None
+        search_dirs: list = []
         try:
             skills_dir, drafts_dir = active_skill_paths()
+            from app.agent.selection_context import active_skill_dirs
+
+            # 主目录（测试可注入）优先，其余激活技能目录（项目目录/共享库）按序去重追加。
+            search_dirs = [skills_dir]
+            search_dirs.extend(
+                directory
+                for directory in active_skill_dirs()
+                if directory.resolve() != Path(skills_dir).resolve()
+            )
             skill_file = resolve_skill_file(
                 name,
                 include_drafts=include_drafts,
-                skills_dir=skills_dir,
+                skills_dir=search_dirs,
                 drafts_dir=drafts_dir,
             )
             content = skill_file.read_text(encoding="utf-8")
@@ -72,7 +82,7 @@ class ViewSkillTool(LLMTool):
         except FileNotFoundError:
             try:
                 titles = list_skill_titles(
-                    skills_dir=skills_dir,
+                    skills_dir=search_dirs or skills_dir,
                     drafts_dir=drafts_dir,
                     include_drafts=include_drafts,
                 )

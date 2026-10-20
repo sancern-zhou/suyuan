@@ -16,7 +16,6 @@ from .conversation_writer import ConversationWriter
 from .event_bus import RuntimeEventBus
 from .finalizer import Finalizer
 from .observation_processor import ObservationProcessor
-from .session_queue import SessionRunQueue
 from .tool_coordinator import ToolCoordinator
 from .tool_classification import HOUSEKEEPING_TOOL_NAMES, all_housekeeping_tools
 from .transcript_repairer import TranscriptRepairer
@@ -85,7 +84,6 @@ class AgentRuntime:
         )
         self.observation_processor = ObservationProcessor(self.finalizer, self.events, memory_manager=self.memory)
         self.transcript_repairer = TranscriptRepairer()
-        self.session_queue = SessionRunQueue()
         self.context_diagnostics = ContextDiagnostics()
 
     async def run(
@@ -103,12 +101,17 @@ class AgentRuntime:
         )
         self.executor.resource_run_id = state.run_id
 
+        if self.config.cancel_event is not None:
+            if not await cancellation_registry.attach_run_id(
+                state.session_id, self.config.cancel_event, state.run_id
+            ):
+                raise AgentRunCancelled("session_run_registration_rejected")
         await run_ownership_registry.register(state.session_id, state.run_id)
         await steering_registry.register(state.session_id, state.run_id, state.mode)
         try:
             from app.services.model_trajectory import trajectory_scope
             with trajectory_scope(state.session_id, run_id=state.run_id):
-                async for event in self._run_locked(state, initial_messages):
+                async for event in self._run(state, initial_messages):
                     yield self._with_run_identity(state, event)
         finally:
             await steering_registry.unregister(state.session_id, state.run_id)
@@ -122,7 +125,7 @@ class AgentRuntime:
             data.setdefault("run_id", state.run_id)
         return event
 
-    async def _run_locked(
+    async def _run(
         self,
         state: RunState,
         initial_messages: Optional[List[Dict[str, Any]]],
@@ -1187,7 +1190,7 @@ class AgentRuntime:
             await save_context_usage_for_mode(
                 state.session_id,
                 usage_data,
-                mode=state.mode,
+                mode=getattr(getattr(self, "context_builder", None), "session_storage_mode", None) or state.mode,
             )
         except Exception as exc:
             logger.warning(
@@ -1202,7 +1205,8 @@ class AgentRuntime:
         from app.agent.prompts.tool_registry import get_tools_by_mode
 
         names = list(get_tools_by_mode(state.mode).keys())
-        names.extend(self.config.extra_tool_names or [])
+        if state.mode not in {"assistant", "office"}:
+            names.extend(self.config.extra_tool_names or [])
         # 结构化交付：call_sub_agent 给带 result_schema 的子会话动态注入
         # submit_result（不在模式白名单里）。它已注入 child registry 时必须
         # 进入候选名单，否则阶段过滤会把交付工具整体滤掉。
@@ -1222,7 +1226,7 @@ class AgentRuntime:
                 name for name in names
                 if name in phase_tools or name == "submit_result"
             ]
-        elif not self.config.extra_tool_names:
+        elif not self.config.extra_tool_names and state.mode not in {"assistant", "office"}:
             return None
         return list(dict.fromkeys(names))
 

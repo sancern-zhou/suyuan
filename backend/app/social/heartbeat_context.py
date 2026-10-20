@@ -94,8 +94,8 @@ async def persist_heartbeat_context_event(
     if not user_id or not heartbeat_session_id:
         return False
 
-    main_session_id = await session_mapper.get_or_create_session(user_id, mode="social")
-    session = await load_session_for_mode(main_session_id, mode="social")
+    main_session_id = await session_mapper.get_or_create_session(user_id, mode="assistant")
+    session = await load_session_for_mode(main_session_id, mode="channel")
     if not session:
         session = Session(
             session_id=main_session_id,
@@ -132,7 +132,7 @@ async def persist_heartbeat_context_event(
         **message["data"],
     }
 
-    saved = await append_session_transcript_for_mode(session, mode="social")
+    saved = await append_session_transcript_for_mode(session, mode="channel")
     if saved:
         logger.info(
             "heartbeat_context_event_persisted",

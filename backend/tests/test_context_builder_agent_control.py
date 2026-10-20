@@ -3,7 +3,7 @@ from app.agent.context.context_builder import SimplifiedContextBuilder
 
 def test_social_mode_injects_agent_control_with_assistant_style_wording():
     builder = SimplifiedContextBuilder(llm_client=None, memory_manager=None)
-    builder.current_mode = "social"
+    builder.current_mode = "assistant"
 
     system_prompt = builder._build_system_prompt()
 

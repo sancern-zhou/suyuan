@@ -23,18 +23,18 @@ def message_bus():
 
 
 @pytest.fixture
-def weixin_config():
+def weixin_config(tmp_path):
     """Create Weixin channel configuration."""
-    return {
+    return SimpleNamespace(**{
         "enabled": True,
         "allow_from": ["*"],
         "base_url": "https://ilinkai.weixin.qq.com",
         "cdn_base_url": "https://novac2c.cdn.weixin.qq.com/c2c",
         "route_tag": None,
         "token": "",
-        "state_dir": "",
+        "state_dir": str(tmp_path / "weixin"),
         "poll_timeout": 35,
-    }
+    })
 
 
 @pytest.fixture
@@ -83,8 +83,8 @@ class TestWeixinChannel:
 
     def test_channel_properties(self, weixin_channel):
         """Test channel basic properties."""
-        assert weixin_channel.name == "weixin"
-        assert weixin_channel.display_name == "WeChat"
+        assert weixin_channel.name == "weixin:default"
+        assert weixin_channel.display_name == "WeChat (default)"
 
     def test_default_config(self):
         """Test default configuration."""
@@ -285,8 +285,8 @@ class TestWeixinChannelOutbound:
             content="Test message"
         )
 
-        # Should not raise, just log warning
-        await weixin_channel.send(msg)
+        with pytest.raises(RuntimeError):
+            await weixin_channel.send(msg)
 
     @pytest.mark.asyncio
     async def test_send_without_token(self, weixin_channel):
@@ -300,8 +300,8 @@ class TestWeixinChannelOutbound:
             content="Test message"
         )
 
-        # Should not raise, just log warning
-        await weixin_channel.send(msg)
+        with pytest.raises(RuntimeError):
+            await weixin_channel.send(msg)
 
     @pytest.mark.asyncio
     async def test_send_without_context_token(self, weixin_channel):
@@ -317,8 +317,8 @@ class TestWeixinChannelOutbound:
             content="Test message"
         )
 
-        # Should log warning about missing context token
-        await weixin_channel.send(msg)
+        with pytest.raises(RuntimeError, match="context token"):
+            await weixin_channel.send(msg)
 
 
 class TestWeixinChannelLifecycle:

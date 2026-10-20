@@ -4,10 +4,13 @@ Data Fetcher Interface
 数据获取后台的基础接口
 """
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Optional
 from enum import Enum
 import asyncio
 import structlog
+
+from app.fetchers.base.run_log import record_fetcher_run
 
 logger = structlog.get_logger()
 
@@ -104,13 +107,27 @@ class DataFetcher(ABC):
 
         self.status = FetcherStatus.RUNNING
         logger.info("fetcher_started", fetcher=self.name)
+        started_at = datetime.now()
 
         try:
             await self.fetch_and_store()
             self.status = FetcherStatus.IDLE
+            record_fetcher_run(
+                fetcher=self.name,
+                started_at=started_at,
+                finished_at=datetime.now(),
+                status="success",
+            )
             logger.info("fetcher_completed", fetcher=self.name)
         except Exception as e:
             self.status = FetcherStatus.ERROR
+            record_fetcher_run(
+                fetcher=self.name,
+                started_at=started_at,
+                finished_at=datetime.now(),
+                status="failed",
+                error=str(e),
+            )
             logger.error(
                 "fetcher_failed",
                 fetcher=self.name,

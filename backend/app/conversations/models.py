@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Index, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, Text
 
 from app.db.database import Base
 
@@ -29,3 +29,13 @@ class ConversationCatalogDB(Base):
         ),
         Index("ix_conversation_catalog_source_updated", "source", "updated_at"),
     )
+
+
+class ConversationReadDB(Base):
+    """One monotonic read watermark per account and shared conversation."""
+
+    __tablename__ = "conversation_reads"
+    session_id = Column(String(255), primary_key=True)
+    owner_user_id = Column(String(255), primary_key=True)
+    through_sequence = Column(Integer, nullable=False, default=-1)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)

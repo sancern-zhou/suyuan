@@ -16,7 +16,6 @@ from app.agent.workflow.protocol import strip_embedded_json_blocks
 from app.agent.workflow.resource_handoff import result_resource_declarations
 from app.agent.workflow.target_mode_contract import build_target_mode_contract, target_mode_values
 from app.agent.workflow.coordinator import WorkflowCoordinator, WorkflowNodeSpec
-from app.agent.workflow.registry import active_workflow_registry
 from app.agent.workflow.delegation import delegation_error
 from app.agent.workflow.resource_contract import ResourceContractError
 from app.tools.base.tool_interface import LLMTool, ToolCategory
@@ -98,19 +97,20 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "必须在对应子节点的 goal/task_contract 中明确要求，由子 Agent 在分析的同时一并生成；"
     "子节点交付的图表文件会在上游产物清单中回传，父 Agent 只做复用与排版，"
     "禁止在 DAG 完成后再由父 Agent 重新绘制分析图表——那是串行追加的整段时间。"
-    "DAG 禁止 report 子节点；报告模式父 Agent 是唯一成稿者。"
+    "DAG 禁止 query、expert、report 主模式子节点；当前父 Agent 是唯一整合与成稿者。"
     "工具返回每个节点的紧凑 result_envelope（status/summary/findings/evidence/data_gaps）与血缘清单："
     "findings 是报告取数来源，其中的数值可直接引用；"
-    "各节点完整结果已落盘并在 full_results.path，确需更多细节时用 read_file 对该文件一次整读，"
+    "各节点完整结果已落盘并在 full_results.path；assistant 助手通过 read_session_resource 读取已登记资源，"
+    "或用 manage_assistant_runs 读取委派结果；其他有文件权限的模式可用 read_file 一次整读，"
     "禁止分页反复读同一文件。"
     "据此判断覆盖范围与缺口并整合结论，不要对子节点过程做重复全量复核。"
-    "expert 族节点（expert/expert_meteorology/expert_analysis）必须提供 task_contract（protocol_version=workflow.v1、"
+    "专家子节点（expert_meteorology/expert_analysis）必须提供 task_contract（protocol_version=workflow.v1、"
     "task_type=expert_analysis、question、decision_context、scope、required_evidence、deliverables）和 "
     "result_schema（要求 status、findings、evidence、uncertainties、data_gaps，finding 通过 evidence id 回溯证据）；"
     "节点可用 max_attempts 设置重试次数（默认 2：重试自动续用子会话、预算扩容 50% 并携带失败原因），"
     "用 max_iterations 限制子 Agent 推理轮次，"
     "用 timeout_seconds 设置节点硬超时；聚合、分箱、相关性等含图表的计算密集节点请放宽预算"
-    "（建议 expert 节点 max_iterations≥25、timeout_seconds≥1200）。"
+    "（建议计算密集的专家子节点 max_iterations≥25、timeout_seconds≥1200）。"
     "重试时预算自动放宽：迭代与超时各放大 50%（迭代封顶 120、超时封顶 1 小时），"
     "专家节点 task_contract.deliverables 最多 3 项；超过 3 项必须拆成多个并行节点。"
     "因此首试可给紧凑预算，把余量留给重试。"
@@ -413,6 +413,10 @@ class RunAgentWorkflowTool(LLMTool):
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "run_in_background": {
+                            "type": "boolean",
+                            "description": "助手可转入后台执行并返回 run_id，之后用 manage_assistant_runs 查询、读结果或请求停止。默认等待本次结果。",
+                        },
                         "workflow": {
                             "type": "object",
                             "description": (
@@ -516,7 +520,19 @@ class RunAgentWorkflowTool(LLMTool):
             version="1.0.0",
         )
 
-    async def execute(
+    async def execute(self, context=None, **kwargs):
+        if getattr(context, "runtime_mode", None) == "assistant":
+            from app.social.assistant_runs import AssistantRunService
+
+            try:
+                return await AssistantRunService().launch(
+                    context, self._execute_untracked, kwargs, kind="workflow"
+                )
+            except (ValueError, PermissionError) as exc:
+                return self._failure(str(exc))
+        return await self._execute_untracked(context=context, **kwargs)
+
+    async def _execute_untracked(
         self,
         context: Optional[Any] = None,
         workflow: Optional[Mapping[str, Any]] = None,
@@ -803,8 +819,8 @@ class RunAgentWorkflowTool(LLMTool):
                         "path": full_results["path"],
                         "note": (
                             "各节点完整结果（结构化输出全文、工具轨迹、文件句柄）。"
-                            "envelope.findings 已含关键数值；确需更多细节时用 read_file "
-                            "对本文件一次整读，不要分页反复读。"
+                            "envelope.findings 已含关键数值；assistant 助手通过 read_session_resource "
+                            "读取已登记的本文件；其他有文件权限的模式用 read_file 一次整读，不要分页反复读。"
                         ),
                     }
                     if full_results else None
@@ -900,13 +916,18 @@ class RunAgentWorkflowTool(LLMTool):
         if not session_id:
             return None
         from app.agent.session.session_resolver import load_session_for_mode
-        session = await load_session_for_mode(session_id, mode=getattr(context, "runtime_mode", None), include_messages=False)
+        session = await load_session_for_mode(
+            session_id,
+            mode=getattr(context, "session_storage_mode", None) or getattr(context, "runtime_mode", None),
+            include_messages=False,
+        )
         if session is None:
             return None
         return (session.metadata.get("workflow_coordinators") or {}).get(workflow_id)
 
     @staticmethod
     def _build_workflow_registry():
+        from app.agent.workflow.registry import active_workflow_registry
         return active_workflow_registry
 
     @staticmethod

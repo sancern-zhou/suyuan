@@ -73,11 +73,22 @@ def set_current_context(
 
 
 def reset_current_context(tokens: ContextTokens) -> None:
-    """恢复 set_current_context 前的 social 上下文。"""
+    """恢复 set_current_context 前的 social 上下文。
+
+    生成器可能在异于创建时的上下文中被兜底关闭（如任务取消后由 GC aclose），
+    此时 Token.reset() 抛 ValueError；清理流程必须继续走完（会话落盘、取消
+    注册），故逐个容忍跨上下文复位失败。
+    """
     channel_token, chat_id_token, bot_account_token = tokens
-    _current_bot_account.reset(bot_account_token)
-    _current_chat_id.reset(chat_id_token)
-    _current_channel.reset(channel_token)
+    for context_var, token in (
+        (_current_bot_account, bot_account_token),
+        (_current_chat_id, chat_id_token),
+        (_current_channel, channel_token),
+    ):
+        try:
+            context_var.reset(token)
+        except ValueError:
+            continue
 
 
 def clear_message_bus():

@@ -88,29 +88,6 @@ class DocumentProcessor:
         self._unstructured = None
         self._embedding_model = None
 
-    def _html_table_to_text(self, html: str) -> str:
-        """将HTML表格转换为文本格式"""
-        try:
-            from bs4 import BeautifulSoup
-            
-            soup = BeautifulSoup(html, 'html.parser')
-            table = soup.find('table')
-            if not table:
-                return html
-            
-            rows = []
-            for tr in table.find_all('tr'):
-                cells = []
-                for td in tr.find_all(['td', 'th']):
-                    cell_text = td.get_text(strip=True)
-                    cells.append(cell_text)
-                if cells:
-                    rows.append(' | '.join(cells))
-            
-            return '\n'.join(rows)
-        except Exception as e:
-            logger.warning("html_table_parse_failed", error=str(e))
-            return html
 
     def _extract_tables_with_pdfplumber(self, file_path: str) -> List[str]:
         """使用 pdfplumber 从 PDF 中提取表格"""
@@ -1665,36 +1642,6 @@ class DocumentProcessor:
         
         return segments if segments else [content]
 
-    def _fallback_chunk(self, content: str, chunk_size: int) -> List[Dict[str, Any]]:
-        """降级分块方法"""
-        chunks = []
-        paragraphs = re.split(r'\n\s*\n', content)
-        
-        current_chunk = ""
-        for para in paragraphs:
-            if len(current_chunk) + len(para) <= chunk_size:
-                current_chunk += para + "\n\n"
-            else:
-                if current_chunk.strip():
-                    chunks.append({
-                        "id": f"chunk_{len(chunks)}",
-                        "content": current_chunk.strip(),
-                        "metadata": {"chunking_method": "fallback"},
-                        "start_char": None,
-                        "end_char": None
-                    })
-                current_chunk = para + "\n\n"
-        
-        if current_chunk.strip():
-            chunks.append({
-                "id": f"chunk_{len(chunks)}",
-                "content": current_chunk.strip(),
-                "metadata": {"chunking_method": "fallback"},
-                "start_char": None,
-                "end_char": None
-            })
-        
-        return chunks
 
     def _create_semantic_parser(self):
         """创建语义分块解析器"""
@@ -1718,45 +1665,3 @@ class DocumentProcessor:
         return HierarchicalNodeParser.from_defaults(
             chunk_sizes=[1024, 256, 64]
         )
-
-    async def parse_and_chunk(
-        self,
-        file_path: str,
-        strategy: str = "llm",
-        chunk_size: int = 800,
-        chunk_overlap: int = 100
-    ) -> Dict[str, Any]:
-        """
-        解析并分块文档（便捷方法）
-
-        Args:
-            file_path: 文件路径
-            strategy: 分块策略
-            chunk_size: 分块大小
-            chunk_overlap: 分块重叠
-
-        Returns:
-            {
-                "content": str,          # 原始内容
-                "chunks": List[Dict],    # 分块列表
-                "file_type": str,        # 文件类型
-                "chunk_count": int       # 分块数量
-            }
-        """
-        # 解析
-        content = await self.parse(file_path)
-
-        # 分块
-        chunks = await self.chunk(
-            content=content,
-            strategy=strategy,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap
-        )
-
-        return {
-            "content": content,
-            "chunks": chunks,
-            "file_type": self.get_file_type(file_path),
-            "chunk_count": len(chunks)
-        }

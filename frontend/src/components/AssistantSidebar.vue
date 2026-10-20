@@ -68,6 +68,30 @@
             <p class="module-title">知识管理</p>
           </div>
         </button>
+        <button
+          class="module-card"
+          :class="{ active: isActive('shared-conversations') }"
+          type="button"
+          @click="handleModuleSelect('shared-conversations')"
+          :title="isCollapsed ? '共享对话' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('shared-conversations')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">共享对话</p>
+          </div>
+        </button>
+        <button
+          class="module-card"
+          :class="{ active: isActive('platform-guide') }"
+          type="button"
+          @click="handleModuleSelect('platform-guide')"
+          :title="isCollapsed ? '平台使用说明' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('platform-guide')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">平台使用说明</p>
+          </div>
+        </button>
       </div>
 
       <div class="module-list">
@@ -179,6 +203,7 @@
                 @click="loadSession(session)"
               >
                 <span class="session-query">{{ truncateQuery(session.query, 30) }}</span>
+                <span v-if="session.unread_count > 0" class="session-unread" aria-label="未读消息">{{ session.unread_count }}</span>
                 <span class="session-time">{{ session.is_running ? '运行中' : formatTime(session.updated_at) }}</span>
               </div>
             </template>
@@ -214,6 +239,23 @@
         <span v-else class="user-name">{{ userDisplayName }}</span>
       </div>
       <button
+        class="qrcode-toggle"
+        type="button"
+        aria-label="扫码下载溯源 App"
+        title="扫码下载溯源 App"
+        @click.stop="qrcodeDialogOpen = true"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="3" width="7" height="7" rx="1" />
+          <rect x="14" y="3" width="7" height="7" rx="1" />
+          <rect x="3" y="14" width="7" height="7" rx="1" />
+          <path d="M14 14h3v3h-3z" />
+          <path d="M18 18h3v3h-3z" />
+          <path d="M21 14h-3" />
+          <path d="M14 21v-3" />
+        </svg>
+      </button>
+      <button
         class="settings-toggle"
         type="button"
         aria-label="打开系统设置"
@@ -227,6 +269,7 @@
         </svg>
       </button>
     </div>
+    <AppDownloadQrcodeDialog :visible="qrcodeDialogOpen" @close="qrcodeDialogOpen = false" />
   </aside>
 </template>
 
@@ -248,6 +291,7 @@ import {
 } from './conversationListPolicy.js'
 import { AGENT_MODES, AGENT_MODE_IDS } from '@/config/agentModes.js'
 import { filterSidebarModules } from './sidebarProjectModules.js'
+import AppDownloadQrcodeDialog from '@/components/AppDownloadQrcodeDialog.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -274,6 +318,7 @@ const emit = defineEmits(['update:activeModule', 'select', 'action', 'loadSessio
 const isCollapsed = ref(props.collapsed)
 const settingsFooterRef = ref(null)
 const settingsMenuOpen = ref(false)
+const qrcodeDialogOpen = ref(false)
 const closeSettingsMenu = () => {
   settingsMenuOpen.value = false
 }
@@ -549,6 +594,14 @@ const allModules = [
     isAction: true
   },
   {
+    id: 'shared-conversations',
+    name: '共享对话',
+    abbr: '共享',
+    desc: '浏览大家分享的有价值对话',
+    badge: '共享',
+    isAction: true
+  },
+  {
     id: 'social-platform',
     name: '社交管理',
     abbr: '社交',
@@ -561,7 +614,8 @@ const allModules = [
     id: 'file-manager',
     name: '文件管理',
     abbr: '文件',
-    desc: '浏览和下载/tmp目录文件',
+    desc: '管理员浏览和下载临时文件',
+    adminOnly: true,
     badge: '工具',
     isAction: true,
     requiredModule: 'legacy'
@@ -593,10 +647,21 @@ const SETTINGS_MODULE_IDS = Object.freeze([
 
 const settingsModules = computed(() => {
   const byId = new Map(modules.map(module => [module.id, module]))
-  return SETTINGS_MODULE_IDS.map(id => byId.get(id)).filter(Boolean)
+  return SETTINGS_MODULE_IDS.map(id => byId.get(id)).filter(Boolean).filter(module => (
+    !module.adminOnly || auth.user?.isAdmin === true || auth.user?.admin === true
+    || auth.user?.roleCodes?.includes('SUYUAN_ADMIN')
+  ))
 })
 
 const moduleIcons = {
+  'shared-conversations': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="8" cy="8.5" r="3" />
+      <circle cx="16.5" cy="10" r="2.4" />
+      <path d="M3.5 19c.4-3 2.3-4.7 4.5-4.7s4.1 1.7 4.5 4.7" />
+      <path d="M14 14.6c.8-.5 1.6-.8 2.5-.8 1.9 0 3.5 1.3 3.9 3.9" />
+    </svg>
+  `,
   'agent-platform': `
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 3.5 20 8v8l-8 4.5L4 16V8l8-4.5Z" />
@@ -693,6 +758,13 @@ const moduleIcons = {
       <path d="M15 11h1.5a3.5 3.5 0 0 1 0 7H14" />
       <path d="M7 11H5.5a3.5 3.5 0 0 0 0 7H10" />
     </svg>
+  `,
+  'platform-guide': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 11v5" />
+      <path d="M12 7.5h.01" />
+    </svg>
   `
 }
 
@@ -716,7 +788,10 @@ const handleDocumentPointerDown = (event) => {
 }
 
 const handleDocumentKeydown = (event) => {
-  if (event.key === 'Escape') closeSettingsMenu()
+  if (event.key === 'Escape') {
+    closeSettingsMenu()
+    qrcodeDialogOpen.value = false
+  }
 }
 
 const isActive = (moduleId) => props.activeModule === moduleId
@@ -1070,6 +1145,41 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
+.qrcode-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  color: #69758c;
+  background: transparent;
+  cursor: pointer;
+
+  svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.55;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  &:hover {
+    color: #1976d2;
+    background: #eaf2fb;
+  }
+
+  &:focus-visible {
+    outline: 2px solid #8abfff;
+    outline-offset: 2px;
+  }
+}
+
 .settings-toggle {
   display: inline-flex;
   align-items: center;
@@ -1329,6 +1439,16 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
+.session-unread {
+  flex: 0 0 auto;
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: #b42318;
+  color: #fff;
+  font-size: 11px;
+  text-align: center;
+}
 .session-query {
   flex: 1;
   font-size: 12px;

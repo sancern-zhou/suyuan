@@ -10,6 +10,22 @@ const page = (sessionId, version, resources, nextCursor = null) => ({
   next_cursor: nextCursor
 })
 
+test('an old response cannot update a deleted and recreated session with the same request token', async () => {
+  let resolveOld
+  let calls = 0
+  const store = createResourceStoreHarness({ listResources: async () => {
+    calls += 1
+    if (calls === 1) return new Promise(resolve => { resolveOld = resolve })
+    return page('session', 1, [{ resource_id: 'new-account' }])
+  } })
+  const old = store.loadCatalog('session')
+  store.clearSession('session')
+  await store.loadCatalog('session')
+  resolveOld(page('session', 99, [{ resource_id: 'old-account' }]))
+  assert.equal(await old, null)
+  assert.equal(store.sessions.session.resources[0].resource_id, 'new-account')
+})
+
 test('isolates catalog and selection state by session', async () => {
   const store = createResourceStoreHarness({
     listResources: async (sessionId) => page(sessionId, 1, [{ resource_id: `resource-${sessionId}` }])

@@ -24,6 +24,7 @@ class RouterSpec:
 
 
 ROUTER_REGISTRY = [
+    RouterSpec("app.api.assistant_routes", description="Shared assistant Web workspace", owner="core"),
     RouterSpec("app.api.task_review_routes", description="Unified human task review", owner="core"),
     RouterSpec(
         "app.api.project_config_routes",
@@ -82,9 +83,9 @@ ROUTER_REGISTRY = [
     RouterSpec("app.api.upload_routes", prefix="/api/upload", description="File upload"),
     RouterSpec("app.api.voice_routes", prefix="/api", description="Voice ASR/TTS API"),
     RouterSpec("app.api.social_app_routes", description="Android App Social Gateway", owner="core"),
+    RouterSpec("app.api.shared_conversation_routes", description="Shared conversation board", owner="core"),
     RouterSpec("app.api.file_manager_routes", prefix="/api", description="File manager"),
     RouterSpec("app.api.social_routes", description="Social platform management"),
-    RouterSpec("app.api.fetchers", description="Fetcher management"),
     RouterSpec(
         "app.api.social_account_routes",
         optional=True,

@@ -4,7 +4,7 @@
 
 import pytest
 import os
-from app.agent.memory.active_memory_retriever import ActiveMemoryRetriever, build_social_memory_context
+from app.agent.memory.active_memory_retriever import ActiveMemoryRetriever, build_memory_context
 from app.agent.memory.memory_store import ImprovedMemoryStore
 
 
@@ -282,7 +282,7 @@ def test_format_memory_context(retriever):
     assert result.startswith("##")
 
 
-def test_build_social_memory_context_uses_long_term_memory_without_daily_notes_by_default():
+def test_build_memory_context_uses_long_term_memory_without_daily_notes_by_default():
     """社交上下文默认只注入 MEMORY.md，不自动召回 daily notes。"""
     memory_store = MockMemoryStore(
         "- 长期偏好：回复简洁\n- 用户关注：臭氧分析",
@@ -297,7 +297,7 @@ def test_build_social_memory_context_uses_long_term_memory_without_daily_notes_b
         },
     )
 
-    context = build_social_memory_context(memory_store, "臭氧怎么分析")
+    context = build_memory_context(memory_store, "臭氧怎么分析")
 
     assert context.startswith("## 长期记忆")
     assert "- 长期偏好：回复简洁" in context

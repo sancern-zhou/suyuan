@@ -37,6 +37,14 @@ class Settings(BaseSettings):
         default="web",
         description="Application role: web, worker, or all. Web workers must not start background schedulers.",
     )
+    assistant_followups_enabled: bool = Field(
+        default=False,
+        description="Enable durable personal followups on the existing worker scheduler after schema preparation",
+    )
+    assistant_analysis_enabled: bool = Field(
+        default=False,
+        description="Enable bounded read-only assistant analyses; also requires assistant_followups_enabled",
+    )
     sse_heartbeat_interval_seconds: float = Field(
         default=15.0,
         gt=0,

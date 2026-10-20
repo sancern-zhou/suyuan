@@ -35,7 +35,6 @@ from app.scheduled_tasks.event_catalog import (
 )
 from app.social.user_registry import get_social_user_registry
 from app.social.app_identity import _accounts
-from app.services.lifecycle_manager import get_tool_registry
 from app.scheduled_tasks.custom_agent import (
     CustomToolValidationError,
     authorized_tool_names_for_user,
@@ -45,6 +44,12 @@ from app.agent.selection_context import describe_skill_item, load_skill_selectio
 from app.utils.path_config import is_agent_readable_path, resolve_agent_path
 
 router = APIRouter(prefix="/api/scheduled-tasks", tags=["scheduled-tasks"])
+
+
+def get_tool_registry():
+    # Basic task management must not import every fetcher/analysis dependency.
+    from app.services.lifecycle_manager import get_tool_registry as resolve_registry
+    return resolve_registry()
 
 
 # ===== 请求/响应模型 =====
@@ -57,7 +62,7 @@ class CreateTaskRequest(BaseModel):
     """创建任务请求"""
     name: str = Field(..., description="任务名称")
     description: str = Field(..., description="任务描述")
-    execution_mode: str = Field(default="expert", description="执行模式（assistant/expert/ops/query/social/custom/workflow）")
+    execution_mode: str = Field(default="expert", description="执行模式（assistant/office/expert/ops/query/custom/workflow）")
     model_tier: Literal["auto", "flash", "pro"] = "flash"
     result_requirements: List[ResultFieldRequirement] = Field(default_factory=list)
     tool_names: Optional[List[str]] = None

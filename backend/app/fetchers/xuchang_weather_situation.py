@@ -32,12 +32,20 @@ async def build_weather_evidence_event(_task=None) -> TaskEvent:
 
 
 class XuchangAirQualityForecastFetcher(CityAirQualityForecastFetcher):
-    """Keep the Xuchang report's AQ forecast fresh without fetching every city."""
+    """Keep the Xuchang report's AQ forecast fresh without fetching every city.
 
-    def __init__(self) -> None:
+    每天 08:30 / 12:00 各跑一次：远程 XcAiDb 在 07:30 时段连接会被掐断
+    （连续多日 store 失败，探针见 /root/forecast_probe/），错峰避开。
+    """
+
+    def __init__(
+        self,
+        name: str = "xuchang_air_quality_forecast_fetcher",
+        schedule: str = "30 8 * * *",
+    ) -> None:
         super().__init__(cities={"411000": "许昌市"}, delay_factory=lambda: 0)
-        self.name = "xuchang_air_quality_forecast_fetcher"
-        self.schedule = "30 7 * * *"
+        self.name = name
+        self.schedule = schedule
 
 
 class XuchangWeatherSituationEvidenceFetcher(DataFetcher):

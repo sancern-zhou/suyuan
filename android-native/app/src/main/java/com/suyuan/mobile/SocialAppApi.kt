@@ -34,13 +34,41 @@ data class OidcConfig(
     val scopes: String,
 )
 data class AgentEvent(val type: String, val data: String)
-data class SessionInfo(val sessionId: String, val mode: String, val title: String = "新对话", val updatedAt: String? = null)
+data class SessionInfo(val sessionId: String, val mode: String, val title: String = "新对话", val updatedAt: String? = null, val unreadCount: Int = 0)
+
+data class AssistantConversationSnapshot(
+    val revision: Long, val throughSequence: Int, val unchanged: Boolean,
+    val messages: List<ChatMessage>,
+    val pendingInteraction: AgentQuestionInteraction? = null,
+)
+data class SharedConversationSummary(
+    val shareId: String,
+    val title: String,
+    val firstQuestion: String,
+    val messageCount: Int,
+    val ownerName: String,
+    val createdAt: String? = null,
+)
+data class SharedConversationDetail(
+    val summary: SharedConversationSummary,
+    val messages: List<org.json.JSONObject>,
+)
+data class AppUpdateInfo(
+    val versionCode: Int,
+    val versionName: String,
+    val downloadUrl: String,
+    val sha256: String? = null,
+    val releaseNotes: String? = null,
+    val minVersionCode: Int = 0,
+)
 data class BroadcastMessage(
     val messageId: String,
     val content: String,
     val timestamp: String? = null,
     val read: Boolean = false,
     val attachments: List<UploadedAttachment> = emptyList(),
+    val stationName: String? = null,
+    val pollutant: String? = null,
 )
 data class BroadcastInbox(
     val messages: List<BroadcastMessage>,
@@ -64,6 +92,7 @@ data class ChatMessage(
     val expanded: Boolean = false,
     val durationMs: Long? = null,
     val toolCount: Int = 0,
+    val sequenceNumber: Int = -1,
 )
 
 data class AttachmentVariant(
@@ -199,7 +228,12 @@ class SocialAppApi(
     private val baseUrl: String = BuildConfig.API_BASE_URL,
     private val sessionStore: AppSessionStore? = null,
 ) {
+    /** Invoked after the authenticator refreshed the session, so the UI token state can follow. */
+    @Volatile var onSessionRefreshed: ((LoginResult) -> Unit)? = null
+
     private val client: OkHttpClient = OkHttpClient.Builder()
+        .addInterceptor { chain -> chain.proceed(chain.request().newBuilder()
+            .header("X-App-Conversation-Version", "2").build()) }
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .authenticator(object : okhttp3.Authenticator {
@@ -210,6 +244,7 @@ class SocialAppApi(
                 if (currentRefresh.isBlank()) return null
                 val refreshed = runCatching { this@SocialAppApi.refreshBlocking(currentRefresh) }.getOrNull() ?: return null
                 store.save(refreshed)
+                onSessionRefreshed?.invoke(refreshed)
                 return response.request.newBuilder()
                     .header("Authorization", "Bearer ${refreshed.token}")
                     .build()
@@ -449,8 +484,10 @@ class SocialAppApi(
         }
     }
 
-    suspend fun upload(token: String, file: File, filename: String, mimeType: String): UploadedAttachment = withContext(Dispatchers.IO) {
+    suspend fun upload(token: String, file: File, filename: String, mimeType: String, sessionId: String, mode: String): UploadedAttachment = withContext(Dispatchers.IO) {
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("session_id", sessionId)
+            .addFormDataPart("mode", mode)
             .addFormDataPart("file", filename, file.asRequestBody(mimeType.toMediaType()))
             .build()
         val response = client.newCall(
@@ -496,21 +533,21 @@ class SocialAppApi(
             buildList {
                 for (index in 0 until array.length()) {
                     val item = array.getJSONObject(index)
-                    add(SessionInfo(item.getString("session_id"), item.optString("mode", "social"), item.optString("title", "新对话"), if (item.has("updated_at")) item.optString("updated_at") else null))
+                    add(SessionInfo(item.getString("session_id"), item.optString("mode", "assistant"), item.optString("title", "新对话"), if (item.has("updated_at")) item.optString("updated_at") else null, item.optInt("unread_count")))
                 }
             }
         }
     }
 
-    suspend fun createSession(token: String): SessionInfo = withContext(Dispatchers.IO) {
+    suspend fun createSession(token: String, mode: String = "assistant"): SessionInfo = withContext(Dispatchers.IO) {
         val response = client.newCall(
-            Request.Builder().url(url("/api/social/app/sessions"))
+            Request.Builder().url(url("/api/social/app/sessions?mode=${java.net.URLEncoder.encode(mode, "UTF-8")}"))
                 .header("Authorization", "Bearer $token").post("".toRequestBody("application/json".toMediaType())).build()
         ) .execute()
         response.use {
             if (!it.isSuccessful) throw ApiException(it.code, "新建对话失败 (${it.code})")
             val json = JSONObject(it.body?.string().orEmpty())
-            SessionInfo(json.getString("session_id"), json.optString("mode", "social"), json.optString("title", "新对话"))
+            SessionInfo(json.getString("session_id"), json.optString("mode", "assistant"), json.optString("title", "新对话"))
         }
     }
 
@@ -523,7 +560,7 @@ class SocialAppApi(
         response.use {
             if (!it.isSuccessful) throw ApiException(it.code, "会话重命名失败 (${it.code})")
             val json = JSONObject(it.body?.string().orEmpty())
-            SessionInfo(sessionId, "social", json.optString("title", title))
+            SessionInfo(sessionId, "assistant", json.optString("title", title))
         }
     }
 
@@ -546,11 +583,16 @@ class SocialAppApi(
         response.use {
             if (!it.isSuccessful) throw ApiException(it.code, "历史会话加载失败 (${it.code})")
             val array = JSONObject(it.body?.string().orEmpty()).optJSONArray("messages") ?: org.json.JSONArray()
+            parseHistoryMessages(array)
+        }
+    }
+
+    private fun parseHistoryMessages(array: org.json.JSONArray): List<ChatMessage> =
             buildList {
                 for (index in 0 until array.length()) {
                     val item = array.optJSONObject(index) ?: continue
                     val content = item.optString("content").ifBlank { item.optString("text") }
-                    val role = item.optString("role").ifBlank { item.optString("type") }
+                    val role = item.optString("type").ifBlank { item.optString("role") }
                     val attachments = item.optJSONArray("attachments")?.let { values ->
                         buildList {
                             for (attachmentIndex in 0 until values.length()) {
@@ -570,9 +612,27 @@ class SocialAppApi(
                     // stay available to the web client but are omitted here.
                     if (kind == "tool") continue
                     if (kind == "thought" && !isVisibleThought(content)) continue
-                    add(ChatMessage(item.optString("id", "history-$index"), kind, if (kind == "user") questionReplyDisplay(content) else content, attachments, streaming = false, expanded = false))
+                    add(ChatMessage(item.optString("id", "history-$index"), kind, if (kind == "user") questionReplyDisplay(content) else content, attachments, streaming = false, expanded = false, sequenceNumber = item.optInt("sequence_number", -1)))
                 }
             }
+
+    suspend fun syncAssistantConversation(token: String, sessionId: String, revision: Long?): AssistantConversationSnapshot = withContext(Dispatchers.IO) {
+        val query = revision?.let { "?revision=$it" }.orEmpty()
+        client.newCall(Request.Builder().url(url("/api/social/app/assistant/conversations/$sessionId/sync$query"))
+            .header("Authorization", "Bearer $token").get().build()).execute().use {
+            if (!it.isSuccessful) throw ApiException(it.code, "会话同步失败 (${it.code})")
+            val data = JSONObject(it.body?.string().orEmpty())
+            AssistantConversationSnapshot(data.getLong("revision"), data.optInt("through_sequence", -1),
+                data.optBoolean("unchanged"), parseHistoryMessages(data.optJSONArray("messages") ?: org.json.JSONArray()),
+                data.optJSONObject("pending_interaction")?.takeIf { question -> question.optString("kind") == "structured_question" }?.let { question -> AgentQuestionInteraction.fromJson(question) })
+        }
+    }
+
+    suspend fun readAssistantConversation(token: String, sessionId: String, throughSequence: Int) = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("through_sequence", throughSequence).toString().toRequestBody("application/json".toMediaType())
+        client.newCall(Request.Builder().url(url("/api/social/app/assistant/conversations/$sessionId/read"))
+            .header("Authorization", "Bearer $token").post(body).build()).execute().use {
+            if (!it.isSuccessful) throw ApiException(it.code, "会话已读同步失败 (${it.code})")
         }
     }
 
@@ -603,6 +663,8 @@ class SocialAppApi(
                             timestamp = item.optString("timestamp", "").ifBlank { null },
                             read = item.optBoolean("read", false),
                             attachments = attachments,
+                            stationName = item.optJSONObject("metadata")?.optString("station_name")?.ifBlank { null },
+                            pollutant = item.optJSONObject("metadata")?.optString("pollutant")?.ifBlank { null },
                         )
                     )
                 }
@@ -649,6 +711,104 @@ class SocialAppApi(
         response.use {
             if (!it.isSuccessful) throw ApiException(it.code, "广播消息删除失败 (${it.code})")
             JSONObject(it.body?.string().orEmpty()).optBoolean("deleted", true)
+        }
+    }
+
+    suspend fun sharedConversations(token: String, search: String = "", limit: Int = 30, offset: Int = 0): List<SharedConversationSummary> = withContext(Dispatchers.IO) {
+        val query = buildString {
+            append("?limit=").append(limit).append("&offset=").append(offset)
+            if (search.isNotBlank()) append("&search=").append(java.net.URLEncoder.encode(search, "UTF-8"))
+        }
+        val response = client.newCall(
+            Request.Builder().url(url("/api/shared-conversations$query"))
+                .header("Authorization", "Bearer $token").get().build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "共享对话查询失败 (${it.code})")
+            val json = JSONObject(it.body?.string().orEmpty())
+            val array = json.optJSONArray("shares") ?: org.json.JSONArray()
+            buildList {
+                for (index in 0 until array.length()) {
+                    val item = array.getJSONObject(index)
+                    val owner = item.optJSONObject("owner")
+                    add(
+                        SharedConversationSummary(
+                            shareId = item.getString("share_id"),
+                            title = item.optString("title", "共享对话"),
+                            firstQuestion = item.optString("first_question", ""),
+                            messageCount = item.optInt("message_count", 0),
+                            ownerName = owner?.optString("display_name", "")?.ifBlank { owner.optString("username", "") } ?: "",
+                            createdAt = item.optString("created_at", null),
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    suspend fun sharedConversation(token: String, shareId: String): SharedConversationDetail = withContext(Dispatchers.IO) {
+        val response = client.newCall(
+            Request.Builder().url(url("/api/shared-conversations/${java.net.URLEncoder.encode(shareId, "UTF-8")}"))
+                .header("Authorization", "Bearer $token").get().build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "共享对话详情获取失败 (${it.code})")
+            val json = JSONObject(it.body?.string().orEmpty())
+            val owner = json.optJSONObject("owner")
+            val summary = SharedConversationSummary(
+                shareId = json.getString("share_id"),
+                title = json.optString("title", "共享对话"),
+                firstQuestion = json.optString("first_question", ""),
+                messageCount = json.optInt("message_count", 0),
+                ownerName = owner?.optString("display_name", "")?.ifBlank { owner.optString("username", "") } ?: "",
+                createdAt = json.optString("created_at", null),
+            )
+            val array = json.optJSONArray("messages") ?: org.json.JSONArray()
+            val messages = buildList {
+                for (index in 0 until array.length()) add(array.getJSONObject(index))
+            }
+            SharedConversationDetail(summary, messages)
+        }
+    }
+
+    suspend fun createSharedConversation(token: String, sessionId: String): SharedConversationSummary = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("session_id", sessionId)
+        val response = client.newCall(
+            Request.Builder().url(url("/api/shared-conversations"))
+                .header("Authorization", "Bearer $token")
+                .post(body.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) {
+                val detail = runCatching { JSONObject(it.body?.string().orEmpty()).optString("detail") }.getOrNull()
+                throw ApiException(it.code, when (it.code) {
+                    403 -> "只能分享自己的对话"
+                    400 -> "该对话还没有可分享的内容"
+                    else -> detail?.ifBlank { null } ?: "分享失败 (${it.code})"
+                })
+            }
+            val json = JSONObject(it.body?.string().orEmpty())
+            SharedConversationSummary(
+                shareId = json.getString("share_id"),
+                title = json.optString("title", "共享对话"),
+                firstQuestion = json.optString("first_question", ""),
+                messageCount = json.optInt("message_count", 0),
+                ownerName = json.optJSONObject("owner")?.optString("display_name", "").orEmpty(),
+                createdAt = json.optString("created_at", null),
+            )
+        }
+    }
+
+    suspend fun deleteSharedConversation(token: String, shareId: String): Boolean = withContext(Dispatchers.IO) {
+        val response = client.newCall(
+            Request.Builder().url(url("/api/shared-conversations/${java.net.URLEncoder.encode(shareId, "UTF-8")}"))
+                .header("Authorization", "Bearer $token")
+                .delete().build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "撤回分享失败 (${it.code})")
+            true
         }
     }
 
@@ -762,4 +922,57 @@ class SocialAppApi(
             JSONObject(it.body?.string().orEmpty()).optBoolean("accepted")
         }
     }
+
+    // 远程更新：版本元数据是公开接口，无需登录态；失败一律返回 null，不打断正常使用。
+    suspend fun checkLatestVersion(): AppUpdateInfo? = withContext(Dispatchers.IO) {
+        try {
+            client.newCall(Request.Builder().url(url("/api/social/app/version/latest")).build())
+                .execute().use { response ->
+                    if (!response.isSuccessful) return@withContext null
+                    val body = response.body?.string() ?: return@withContext null
+                    val obj = JSONObject(body)
+                    AppUpdateInfo(
+                        versionCode = obj.getInt("versionCode"),
+                        versionName = obj.optString("versionName"),
+                        downloadUrl = obj.optString("downloadUrl"),
+                        sha256 = obj.optString("sha256").takeIf { it.isNotBlank() },
+                        releaseNotes = obj.optString("releaseNotes").takeIf { it.isNotBlank() },
+                        minVersionCode = obj.optInt("minVersionCode", 0),
+                    )
+                }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    suspend fun downloadApk(downloadUrl: String, dest: File, onProgress: (Int) -> Unit): Boolean =
+        withContext(Dispatchers.IO) {
+            val target = if (downloadUrl.startsWith("/")) url(downloadUrl) else downloadUrl
+            client.newCall(Request.Builder().url(target).build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+                val body = response.body ?: return@withContext false
+                val total = body.contentLength()
+                body.byteStream().use { input ->
+                    dest.outputStream().use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        var readBytes = 0L
+                        var lastPercent = -1
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read <= 0) break
+                            output.write(buffer, 0, read)
+                            readBytes += read
+                            if (total > 0) {
+                                val percent = (readBytes * 100 / total).toInt()
+                                if (percent != lastPercent) {
+                                    lastPercent = percent
+                                    onProgress(percent.coerceIn(0, 100))
+                                }
+                            }
+                        }
+                    }
+                }
+                true
+            }
+        }
 }

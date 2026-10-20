@@ -17,6 +17,10 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import structlog
 
 from app.agent.context.execution_context import ExecutionContext
+from app.agent.markup_sanitizer import (
+    DSML_TOOL_CALL_BLOCKED_NOTICE,
+    strip_dsml_tool_call_markup,
+)
 from app.services.llm_failover import is_media_fetch_failure_message
 from app.services.llm_service import llm_service
 from app.tools.base.registry import ToolRegistry
@@ -861,9 +865,19 @@ class ReActPlanner:
                     },
                     "raw_thinking_blocks": thinking_blocks,
                 }
+            sanitized, had_dsml = strip_dsml_tool_call_markup(full_text)
+            if had_dsml:
+                logger.warning(
+                    "dsml_tool_call_markup_sanitized",
+                    full_text_length=len(full_text),
+                    remaining_length=len(sanitized),
+                    full_text_preview=full_text[:200],
+                )
+            if had_dsml and not sanitized:
+                sanitized = DSML_TOOL_CALL_BLOCKED_NOTICE
             action = {
                 "type": "PLAIN_TEXT_REPLY",
-                "answer": full_text,
+                "answer": sanitized,
             }
             # 无工具调用 - 纯文本回复
             return {
@@ -948,9 +962,19 @@ class ReActPlanner:
             full_text = thinking_blocks[-1].get("thinking", "")
 
         if not tool_use_blocks:
+            sanitized, had_dsml = strip_dsml_tool_call_markup(full_text)
+            if had_dsml:
+                logger.warning(
+                    "dsml_tool_call_markup_sanitized",
+                    full_text_length=len(full_text),
+                    remaining_length=len(sanitized),
+                    full_text_preview=full_text[:200],
+                )
+            if had_dsml and not sanitized:
+                sanitized = DSML_TOOL_CALL_BLOCKED_NOTICE
             action = {
                 "type": "PLAIN_TEXT_REPLY",
-                "answer": full_text,
+                "answer": sanitized,
             }
             # 纯文本回复
             logger.info(

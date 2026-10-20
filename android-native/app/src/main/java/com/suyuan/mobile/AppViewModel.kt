@@ -3,11 +3,16 @@ package com.suyuan.mobile
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import android.content.Context
@@ -59,6 +64,11 @@ data class AppUiState(
     val broadcastNextCursor: String? = null,
     val broadcastHasMore: Boolean = false,
     val broadcastLoadingMore: Boolean = false,
+    val sharedConversations: List<SharedConversationSummary> = emptyList(),
+    val sharedDetail: SharedConversationDetail? = null,
+    val sharedLoading: Boolean = false,
+    val sharedError: String? = null,
+    val sharedSearch: String = "",
     val reportResults: List<ReportResult> = emptyList(),
     val reportUnreadCount: Int = 0,
     val reportLoading: Boolean = false,
@@ -106,19 +116,115 @@ private fun workStatusForTool(toolName: String): String = when {
 class AppViewModel(
     private val repository: SocialAppRepository,
     private val store: AppSessionStore,
+    private val updater: AppUpdater,
 ) : ViewModel() {
     private val _state = MutableStateFlow(
         AppUiState(store.token(), store.accountId(), store.displayName())
     )
     val state: StateFlow<AppUiState> = _state.asStateFlow()
+    val updateState: StateFlow<UpdateState> = updater.state
+    private val tokenRefreshMutex = Mutex()
+
+    init {
+        // The OkHttp authenticator refreshes sessions behind our back and only
+        // touches the store; follow it, or the UI token (and the voice socket)
+        // would keep the stale value.
+        repository.setSessionRefreshListener(::applyExternalRefresh)
+        viewModelScope.launch { updater.checkOnLaunch() }
+    }
+
+    override fun onCleared() {
+        repository.setSessionRefreshListener(null)
+        super.onCleared()
+    }
+
     private var streamJob: Job? = null
     private val pendingTurns = ArrayDeque<PendingTurn>()
     private var registeredPushCid: String? = null
     private val modeSessionIds = mutableMapOf<String, String>()
     private var recoveryJob: Job? = null
+    private var conversationSyncJob: Job? = null
+    private var foreground = false
+    private var chatVisible = true
+    private var syncedSession: String? = null
+    private var syncedAccount: String? = null
+    private var syncedMessages: List<ChatMessage>? = null
+    private var syncedRevision: Long? = null
+
+    fun setChatVisible(visible: Boolean) { chatVisible = visible }
+
+    fun onBackground() {
+        foreground = false
+        conversationSyncJob?.cancel()
+        conversationSyncJob = null
+    }
+
+    private fun startConversationSync() {
+        foreground = true
+        if (conversationSyncJob?.isActive == true) return
+        conversationSyncJob = viewModelScope.launch {
+            while (isActive && foreground) {
+                runCatching { syncConversations() }
+                delay(5_000L)
+            }
+        }
+    }
+
+    private suspend fun syncConversations() {
+        val before = _state.value
+        if (!before.loggedIn) return
+        val sessions = repository.sessions(before.token, limit = maxOf(SESSION_PAGE_SIZE, before.sessions.size).coerceAtMost(200))
+        if (!foreground || _state.value.accountId != before.accountId || _state.value.token != before.token) return
+        _state.value = _state.value.copy(sessions = sessions, sessionsHasMore = sessions.size >= maxOf(SESSION_PAGE_SIZE, before.sessions.size).coerceAtMost(200))
+        val current = _state.value
+        val sessionId = current.sessionId ?: return
+        if (!chatVisible || current.mode != "assistant" || current.loading || streamJob?.isActive == true) return
+        if (syncedSession != sessionId || syncedAccount != current.accountId || syncedMessages !== current.messages) {
+            syncedRevision = null
+        }
+        val snapshot = repository.syncAssistantConversation(current.token, sessionId, syncedRevision)
+        if (!foreground || !chatVisible || _state.value.accountId != current.accountId || _state.value.token != current.token ||
+            _state.value.sessionId != sessionId || _state.value.loading || _state.value.messages !== current.messages) return
+        if (!current.questionSubmitting) {
+            _state.value = _state.value.copy(pendingInteraction = snapshot.pendingInteraction)
+        }
+        if (!snapshot.unchanged) {
+            val expanded = current.messages.associateBy { it.id }
+            _state.value = _state.value.copy(messages = snapshot.messages.map { message ->
+                message.copy(expanded = expanded[message.id]?.expanded ?: false)
+            })
+            // Yield until the new transcript has had an opportunity to render.
+            delay(100L)
+            if (!foreground || !chatVisible || _state.value.sessionId != sessionId || _state.value.accountId != current.accountId || _state.value.loading) return
+            if (snapshot.throughSequence >= 0) {
+                repository.readAssistantConversation(current.token, sessionId, snapshot.throughSequence)
+                if (_state.value.accountId != current.accountId || _state.value.token != current.token) return
+                _state.value = _state.value.copy(sessions = _state.value.sessions.map {
+                    if (it.sessionId == sessionId) it.copy(unreadCount = 0) else it
+                })
+            }
+        }
+        syncedSession = sessionId; syncedAccount = current.accountId
+        syncedMessages = _state.value.messages; syncedRevision = snapshot.revision
+    }
+
+    fun checkAppUpdate() {
+        viewModelScope.launch { updater.checkOnLaunch() }
+    }
+
+    fun dismissUpdate(info: AppUpdateInfo) = updater.dismiss(info)
+
+    fun downloadUpdate(info: AppUpdateInfo, forced: Boolean) = updater.download(info, forced)
+
+    fun canInstallUpdate(): Boolean = updater.canInstallNow()
+
+    fun unknownSourcesIntent(): Intent = updater.unknownSourcesSettingsIntent()
+
+    fun installUpdateIntent(apk: File): Intent = updater.installIntent(apk)
 
     fun onForeground() {
         if (!_state.value.loggedIn) return
+        startConversationSync()
         if (streamJob?.isActive == true) {
             repository.reconnectChat()
             return
@@ -256,7 +362,7 @@ class AppViewModel(
     }
 
     fun selectMode(mode: String) {
-        if (mode !in setOf("query", "knowledge", "expert")) return
+        if (mode !in setOf("query", "knowledge", "expert", "assistant")) return
         val current = _state.value
         if (current.mode == mode && current.sessionId != null) return
         current.sessionId?.let { modeSessionIds[current.mode] = it }
@@ -268,7 +374,7 @@ class AppViewModel(
             return
         }
         viewModelScope.launch {
-            runCatching { repository.createSession(current.token) }
+            runCatching { repository.createSession(current.token, mode) }
                 .onSuccess { session ->
                     modeSessionIds[mode] = session.sessionId
                     _state.value = _state.value.copy(sessionId = session.sessionId, loading = false, sessions = listOf(session) + _state.value.sessions.filterNot { it.sessionId == session.sessionId })
@@ -284,7 +390,7 @@ class AppViewModel(
         val current = _state.value
         _state.value = current.copy(pendingInteraction = null, questionSubmitting = false, sessionId = null, draft = "", messages = emptyList(), attachments = emptyList(), error = null, loading = false, workStatus = null, workStartedAtMs = null)
         viewModelScope.launch {
-            runCatching { repository.createSession(current.token) }
+            runCatching { repository.createSession(current.token, current.mode) }
                 .onSuccess { session ->
                     if (_state.value.sessionId == null && _state.value.messages.isEmpty()) {
                         _state.value = _state.value.copy(sessionId = session.sessionId)
@@ -299,14 +405,18 @@ class AppViewModel(
     fun loadSession(session: SessionInfo) {
         val current = _state.value
         if (current.loading) return
-        _state.value = current.copy(pendingInteraction = null, questionSubmitting = false, mode = session.mode.takeIf { it in setOf("query", "knowledge", "expert") } ?: current.mode, sessionId = session.sessionId, draft = "", messages = emptyList(), attachments = emptyList(), loading = true, error = null, workStatus = null, workStartedAtMs = null)
+        _state.value = current.copy(pendingInteraction = null, questionSubmitting = false, mode = session.mode.takeIf { it in setOf("query", "knowledge", "expert", "assistant") } ?: current.mode, sessionId = session.sessionId, draft = "", messages = emptyList(), attachments = emptyList(), loading = true, error = null, workStatus = null, workStartedAtMs = null)
         viewModelScope.launch {
             runCatching { repository.messages(current.token, session.sessionId) }
                 .onSuccess { messages ->
+                    if (_state.value.token != current.token || _state.value.sessionId != session.sessionId) return@onSuccess
                     _state.value = _state.value.copy(messages = messages, loading = false, pendingInteraction = null)
                     refreshPendingQuestion(session.sessionId)
                 }
-                .onFailure { _state.value = _state.value.copy(loading = false, error = friendlyError(it)) }
+                .onFailure {
+                    if (_state.value.token == current.token && _state.value.sessionId == session.sessionId)
+                        _state.value = _state.value.copy(loading = false, error = friendlyError(it))
+                }
         }
     }
 
@@ -434,6 +544,43 @@ class AppViewModel(
         }
     }
 
+    private fun applyExternalRefresh(result: LoginResult) {
+        _state.update { current ->
+            // Ignore results that arrive after a logout or an account switch.
+            if (current.loggedIn && current.accountId == result.accountId) {
+                current.copy(token = result.token, accountId = result.accountId, displayName = result.displayName)
+            } else current
+        }
+    }
+
+    /**
+     * Access token that is safe to hand to a connection: refreshes when the
+     * stored token is already expired or expires within the slack window, and
+     * writes the result back to the UI state. The UI token can be hours past
+     * expiry once the process has been cached in background — HTTP requests
+     * self-heal via the authenticator, but the voice websocket does not, so
+     * callers must ask here first. With [force] (used after an auth failure),
+     * a failed refresh returns null instead of the rejected token.
+     */
+    suspend fun ensureFreshToken(force: Boolean = false): String? = tokenRefreshMutex.withLock {
+        val current = _state.value.token
+        val expiresAt = store.expiresAt() // seconds since epoch; 0 = unknown (legacy session)
+        val nowSec = System.currentTimeMillis() / 1000L
+        val stale = current.isBlank() || expiresAt in 1..(nowSec + TOKEN_EXPIRY_SLACK_SEC)
+        if (!force && !stale) return current
+        val refreshToken = store.refreshToken()
+        if (refreshToken.isBlank()) return if (force) null else current.ifBlank { null }
+        val refreshed = runCatching { repository.refresh(refreshToken) }.getOrNull()
+        if (refreshed == null) {
+            // Keep the session on a failed background refresh; only a forced
+            // (post-auth-failure) refresh reports "no usable token".
+            return if (force) null else current.ifBlank { null }
+        }
+        store.save(refreshed)
+        _state.update { it.copy(token = refreshed.token, accountId = refreshed.accountId, displayName = refreshed.displayName) }
+        refreshed.token
+    }
+
     private fun applyLoginResult(result: LoginResult) {
         store.save(result)
         _state.value = AppUiState(result.token, result.accountId, result.displayName, loading = false)
@@ -532,7 +679,7 @@ class AppViewModel(
                         if (_state.value.sessionId == null) {
                             _state.value = _state.value.copy(
                                 sessionId = session,
-                                sessions = listOf(SessionInfo(session, "social", title)) + knownSessions,
+                                sessions = listOf(SessionInfo(session, "assistant", title)) + knownSessions,
                             )
                         } else if (title.isNotBlank()) {
                             _state.value = _state.value.copy(
@@ -901,6 +1048,10 @@ class AppViewModel(
 
     fun uploadAttachment(context: Context, uri: Uri) {
         val current = _state.value
+        val sessionId = current.sessionId ?: run {
+            _state.value = current.copy(error = "请等待会话创建完成后上传文件")
+            return
+        }
         viewModelScope.launch {
             _state.value = _state.value.copy(error = null)
             runCatching {
@@ -915,10 +1066,16 @@ class AppViewModel(
                     requireNotNull(input) { "无法读取文件" }
                     file.outputStream().use { output -> input.copyTo(output) }
                 }
-                repository.upload(current.token, file, filename, mimeType)
+                try {
+                    repository.upload(current.token, file, filename, mimeType, sessionId, current.mode)
+                } finally {
+                    file.delete()
+                }
             }.onSuccess { attachment ->
+                if (_state.value.token != current.token || _state.value.sessionId != sessionId) return@onSuccess
                 _state.value = _state.value.copy(attachments = _state.value.attachments + attachment)
             }.onFailure { failure ->
+                if (_state.value.token != current.token || _state.value.sessionId != sessionId) return@onFailure
                 if (failure is ApiException && failure.statusCode == 401) logout("登录已过期，请重新登录")
                 else _state.value = _state.value.copy(error = friendlyError(failure))
             }
@@ -986,6 +1143,61 @@ class AppViewModel(
 
     fun openBroadcasts() {
         refreshBroadcasts(reset = true)
+    }
+
+    fun loadSharedConversations(search: String = _state.value.sharedSearch) {
+        val token = _state.value.token
+        if (token.isBlank()) return
+        if (_state.value.sharedLoading) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(sharedLoading = true, sharedError = null, sharedSearch = search)
+            runCatching { repository.sharedConversations(token, search = search) }
+                .onSuccess { list ->
+                    _state.value = _state.value.copy(sharedConversations = list, sharedLoading = false)
+                }
+                .onFailure { failure ->
+                    _state.value = _state.value.copy(sharedLoading = false, sharedError = friendlyError(failure))
+                }
+        }
+    }
+
+    fun openSharedConversation(shareId: String) {
+        val token = _state.value.token
+        if (token.isBlank()) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(sharedLoading = true, sharedError = null)
+            runCatching { repository.sharedConversation(token, shareId) }
+                .onSuccess { detail ->
+                    _state.value = _state.value.copy(sharedDetail = detail, sharedLoading = false)
+                }
+                .onFailure { failure ->
+                    _state.value = _state.value.copy(sharedLoading = false, sharedError = friendlyError(failure))
+                }
+        }
+    }
+
+    fun closeSharedConversation() {
+        _state.value = _state.value.copy(sharedDetail = null)
+    }
+
+    /** Share one of the App sessions to the board; onError carries a user-facing message. */
+    fun shareSessionToBoard(sessionId: String, onDone: (Boolean, String?) -> Unit) {
+        val token = _state.value.token
+        if (token.isBlank()) return
+        if (_state.value.sharedLoading) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(sharedLoading = true)
+            runCatching { repository.createSharedConversation(token, sessionId) }
+                .onSuccess {
+                    _state.value = _state.value.copy(sharedLoading = false)
+                    loadSharedConversations(search = "")
+                    onDone(true, null)
+                }
+                .onFailure { failure ->
+                    _state.value = _state.value.copy(sharedLoading = false)
+                    onDone(false, friendlyError(failure))
+                }
+        }
     }
 
     fun loadMoreBroadcasts() {
@@ -1109,7 +1321,7 @@ class AppViewModel(
         }
     }
 
-    private fun refreshSessions(selectExisting: Boolean = true) {
+    fun refreshSessions(selectExisting: Boolean = true) {
         val token = _state.value.token
         if (token.isBlank()) return
         viewModelScope.launch {
@@ -1217,6 +1429,7 @@ class AppViewModel(
     companion object {
         private const val BROADCAST_PAGE_SIZE = 30
         private const val SESSION_PAGE_SIZE = 30
+        const val TOKEN_EXPIRY_SLACK_SEC = 60L
     }
 
     private fun friendlyError(error: Throwable): String = error.message?.ifBlank { "请求失败，请稍后重试" } ?: "请求失败，请稍后重试"

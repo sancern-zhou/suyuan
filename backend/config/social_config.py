@@ -85,8 +85,8 @@ class WeixinAccountConfig(BaseModel):
     enabled: bool = Field(default=True, description="是否启用")
     allow_from: List[str] = Field(default=["*"], description="允许的用户ID列表")
     auto_start: bool = Field(default=True, description="是否自动启动")
-    agent_mode: Literal["social", "enforcement_exam"] = Field(
-        default="social",
+    agent_mode: Literal["assistant", "enforcement_exam"] = Field(
+        default="assistant",
         description="该微信账号使用的Agent模式",
     )
 

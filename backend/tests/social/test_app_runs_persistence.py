@@ -9,7 +9,7 @@ from app.social.app_runs import AppRunStore
 
 
 @pytest.mark.asyncio
-async def test_detached_turn_persists_before_terminal_replay(tmp_path, monkeypatch):
+async def test_detached_turn_persists_before_terminal_replay(tmp_path, monkeypatch, fake_lock_db):
     saved = []
     class Agent:
         async def analyze(self, **kwargs):
@@ -33,3 +33,30 @@ async def test_detached_turn_persists_before_terminal_replay(tmp_path, monkeypat
     assert (await store.get(run['run_id']))['status'] == 'completed'
     frames = [frame async for frame in store.stream(run['run_id'])]
     assert 'complete' in frames[-1]
+
+
+@pytest.mark.asyncio
+async def test_app_rejects_competing_run_before_loading_or_persisting_it(monkeypatch, fake_lock_db):
+    import asyncio
+    entered = []
+
+    async def run(*args):
+        entered.append(True)
+        try:
+            yield 'data: {"type":"start"}\n\n'
+        finally:
+            assert fake_lock_db.locked  # final transcript saved before release
+
+    monkeypatch.setattr(routes, '_stream_events_unlocked', run)
+    identity = AppIdentity('alice', 'Alice', 'app:android:alice', 9999999999)
+    first = routes._stream_events(identity, 'session', 'question')
+    await anext(first)
+    async def other_request():
+        return [frame async for frame in routes._stream_events(identity, 'session', 'duplicate')]
+    rejected = await asyncio.create_task(other_request())
+    assert len(entered) == 1
+    payload = json.loads(rejected[0].removeprefix('data: '))
+    assert payload['type'] == 'fatal_error'
+    assert payload['data']['code'] == 'session_run_in_progress'
+    await first.aclose()
+    assert not fake_lock_db.locked

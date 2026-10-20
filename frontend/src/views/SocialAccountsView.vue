@@ -3,7 +3,7 @@
     <section>
       <!-- 添加账号按钮 -->
       <div class="add-account-bar">
-        <button @click="showCreateModalWithMode('social')" class="btn-primary btn-social">
+        <button @click="showCreateModalWithMode('assistant')" class="btn-primary btn-social">
           + 扫码添加个人助手
         </button>
         <button @click="showCreateModalWithMode('enforcement_exam')" class="btn-primary btn-exam">
@@ -20,7 +20,7 @@
         <p>暂无微信账号</p>
         <p class="empty-hint">选择一个模式，扫描二维码即可快速添加</p>
         <div class="empty-buttons">
-          <button @click="showCreateModalWithMode('social')" class="btn-primary btn-social">
+          <button @click="showCreateModalWithMode('assistant')" class="btn-primary btn-social">
             扫码添加个人助手
           </button>
           <button @click="showCreateModalWithMode('enforcement_exam')" class="btn-primary btn-exam">
@@ -126,7 +126,7 @@ const accounts = ref([])
 const loading = ref(true)
 const showQRModal = ref(false)
 const showCreateModal = ref(false)
-const currentAgentMode = ref('social')
+const currentAgentMode = ref('assistant')
 const selectedAccountId = ref(null)
 const actionLoading = ref({})
 let refreshInterval = null

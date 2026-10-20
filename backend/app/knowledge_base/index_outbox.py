@@ -363,7 +363,7 @@ _worker_task: asyncio.Task[None] | None = None
 
 
 async def _resolve_collection(kb_id: str) -> VectorIndexTarget:
-    from app.db.database import async_session
+    from app.db.knowledge_database import knowledge_async_session as async_session
     from app.knowledge_base.models import KnowledgeBase
 
     async with async_session() as session:
@@ -386,7 +386,7 @@ async def start_index_outbox_worker() -> None:
     if _worker_task is not None and not _worker_task.done():
         return
 
-    from app.db.database import async_session
+    from app.db.knowledge_database import knowledge_async_session as async_session
     from app.knowledge_base import get_vector_store
 
     _worker = KnowledgeIndexOutboxWorker(

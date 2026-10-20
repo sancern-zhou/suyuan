@@ -20,7 +20,7 @@ logger = structlog.get_logger()
 
 
 _STATION_CONTRACT_TABLES = ("StationHour", "StationDay", "Station")
-_CITY_CONTRACT_TABLES = ("CityHour", "CityDay", "CityYearPm25Avg")
+_CITY_CONTRACT_TABLES = ("CityHour", "CityDay", "CitySandDay", "CityYearPm25Avg")
 
 _MONITORING_QUERY_TOOLS = (
     "query_xcai_city_history",
@@ -179,7 +179,7 @@ for _definition in (
         "城市层级空气质量监测固定问数流程",
         scope_line=(
             "聚焦城市层级取数：城市小时/日/年均值、城市发布历史与全国对比，"
-            "主要使用 CityHour/CityDay/CityYearPm25Avg 表；"
+            "主要使用 CityHour/CityDay/CityYearPm25Avg 表，扣沙天用 CitySandDay 清单过滤；"
             "城市发布历史（CityAQIPublishHistory）用 query_xcai_city_history。"
         ),
         context_block=_table_contract_block(_CITY_CONTRACT_TABLES),

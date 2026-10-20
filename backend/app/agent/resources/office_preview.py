@@ -78,11 +78,14 @@ def _convert_to_pdf(source: Path) -> Path | None:
             return expected
         # Convert in a private temp dir so concurrent conversions cannot
         # clobber each other's `<stem>.pdf` output, then move atomically.
+        # 隔离 UserInstallation：共享配置文件时，并发的 soffice 会发生
+        # 单实例让位（返回 0 但没有产出），预览会静默丢失。
         temp_dir = Path(tempfile.mkdtemp(prefix=".convert-", dir=out_dir))
         try:
             completed = run_soffice(
                 [
                     "--headless",
+                    f"-env:UserInstallation=file://{temp_dir}",
                     "--convert-to",
                     "pdf",
                     "--outdir",

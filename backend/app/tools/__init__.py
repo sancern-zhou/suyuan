@@ -853,6 +853,9 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     # Scheduled Tasks Tools（定时任务工具）
     # ========================================
 
+    from app.tools.scheduled_tasks.manage_scheduled_tasks import manage_scheduled_tasks_tool
+    registry.register(manage_scheduled_tasks_tool, priority=361)
+
     from app.tools.task_management.submit_task_review import SubmitTaskReviewTool
     registry.register(SubmitTaskReviewTool(), priority=359)
 
@@ -878,6 +881,22 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.info("tool_loaded", tool="search_scheduled_task_history")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="search_scheduled_task_history", error=str(e))
+
+    try:
+        from app.tools.runtime_monitor.tool import query_runtime_anomalies_tool
+        registry.register(
+            query_runtime_anomalies_tool,
+            priority=366,
+            metadata={
+                "data_type": "runtime_anomalies",
+                "requires_handle": False,
+                "supports_batch": False,
+                "system_managed": True,
+            },
+        )
+        logger.info("tool_loaded", tool="query_runtime_anomalies")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_runtime_anomalies", error=str(e))
 
     try:
         from app.tools.scheduled_tasks import query_scheduled_task_results_tool
@@ -1014,6 +1033,36 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.info("tool_loaded", tool="wait_task")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="wait_task", error=str(e))
+
+    try:
+        from app.tools.social.assistant_tasks.tool import ManageAssistantTasksTool
+        registry.register(ManageAssistantTasksTool(), priority=378)
+        logger.info("tool_loaded", tool="manage_assistant_tasks")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="manage_assistant_tasks", error=str(e))
+
+    try:
+        from app.tools.social.assistant_coaching.tool import ManageAssistantCoachingTool
+        registry.register(ManageAssistantCoachingTool(), priority=378)
+        logger.info("tool_loaded", tool="manage_assistant_coaching")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="manage_assistant_coaching", error=str(e))
+
+    try:
+        from app.tools.social.assistant_schedule.tool import ManageAssistantScheduleTool
+        registry.register(ManageAssistantScheduleTool(), priority=378)
+        logger.info("tool_loaded", tool="manage_assistant_schedule")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="manage_assistant_schedule", error=str(e))
+
+    try:
+        from app.tools.social.assistant_memory.tool import ManageAssistantMemoryTool
+        from app.tools.social.assistant_runs.tool import ManageAssistantRunsTool
+
+        registry.register(ManageAssistantMemoryTool(), priority=378)
+        registry.register(ManageAssistantRunsTool(), priority=378)
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="assistant_memory_and_runs", error=str(e))
 
     try:
         from app.tools.social.cli_session.tool import CliSessionTool

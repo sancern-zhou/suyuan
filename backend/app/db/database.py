@@ -306,7 +306,13 @@ async def init_db():
     # Import optional model modules so their tables are registered on Base.metadata
     # before create_all runs.
     import app.social.models  # noqa: F401
+    import app.social.assistant_task_models  # noqa: F401
+    import app.social.assistant_coaching_models  # noqa: F401
+    import app.social.assistant_followup_models  # noqa: F401
+    import app.social.assistant_notification_models  # noqa: F401
+    import app.conversations.models  # noqa: F401
     import app.social.report_models  # noqa: F401
+    import app.social.shared_conversation_models  # noqa: F401
     import app.db.models.scheduled_task_execution_db  # noqa: F401
     import app.db.models.scheduled_task_result_db  # noqa: F401
     import app.db.models.xuchang_station_alert_episode_db  # noqa: F401

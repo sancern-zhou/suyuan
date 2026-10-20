@@ -11,7 +11,6 @@
 """
 
 import json
-from collections import Counter, defaultdict, deque
 import math
 import structlog
 import time
@@ -509,7 +508,9 @@ class SessionRepository:
         """
         保存会话的对话历史
 
-        删除旧消息，插入新消息（原子操作）
+        删除旧消息，插入新消息（原子操作）。
+        全量重写后所有旧行 id 失效，因此把新行 id 写回传入的消息字典，
+        保持"消息字典 ↔ 数据库行"的身份对应关系。
         """
         import traceback
 
@@ -549,8 +550,9 @@ class SessionRepository:
                                 timestamp=timestamp,
                                 metadata=msg_metadata_converted,
                                 sequence_number=idx
-                            )
-                            await conn.execute(stmt_insert)
+                            ).returning(SessionMessageDB.__table__.c.id)
+                            new_id = (await conn.execute(stmt_insert)).scalar_one()
+                            msg["id"] = f"msg_{new_id}"
 
                         logger.info(
                             "conversation_history_saved",
@@ -592,12 +594,15 @@ class SessionRepository:
         statement timeout。
 
         约定：
-        - 以消息身份键（role/msg_type/content/data/timestamp）对账，而不是
-          按长度+位置对账。持久化视图可能过滤或合并消息（例如 thought 不
-          落持久化 transcript），长度对账会把表示差异误判为"没有新消息"，
-          静默丢失整轮对话。
-        - 传入历史短于数据库已有消息时不删除旧消息，只追加新消息。
-        - 无有效时间戳的输入按消息内容和已有条数匹配，保留合法重复消息。
+        - 以持久化身份（数据库行 id，形如 "msg_<id>"）精确对账，不做任何
+          基于内容/时间戳的猜测匹配。所有读取视图（_msg_to_dict、
+          _message_row_to_context_dict、_message_row_to_light_dict）都会
+          携带行 id；新消息在首次落库后由本方法把 id 写回传入的字典，
+          使调用方持有的内存历史与数据库行一一对应。重复插入在结构上
+          不可能发生。
+        - id 未命中本会话已有行（例如行已被全量重写删除）的消息按新消息
+          追加，不删除旧消息。
+        - 传入历史短于数据库已有消息时只追加，不做删除。
         """
         if not conversation_history:
             return True
@@ -606,13 +611,16 @@ class SessionRepository:
         try:
             async with AsyncSession(self.engine) as session:
                 rows_started = time.monotonic()
+                # Background replies append to the same transcript. Fence both
+                # sequence allocation and message identity on the session row.
+                await session.execute(
+                    update(SessionDB)
+                    .where(SessionDB.session_id == session_id)
+                    .values(updated_at=SessionDB.updated_at)
+                )
                 stmt = (
                     select(
-                        SessionMessageDB.role,
-                        SessionMessageDB.msg_type,
-                        SessionMessageDB.content,
-                        SessionMessageDB.data,
-                        SessionMessageDB.timestamp,
+                        SessionMessageDB.id,
                         SessionMessageDB.sequence_number,
                     )
                     .where(SessionMessageDB.session_id == session_id)
@@ -625,27 +633,16 @@ class SessionRepository:
                     (row.sequence_number for row in existing_rows),
                     default=-1,
                 )
-                existing_keys = Counter(self._db_message_identity_key(row) for row in existing_rows)
-                keys_by_content = defaultdict(deque)
-                for key in existing_keys:
-                    keys_by_content[key[:-1]].append(key)
+                existing_ids = {row.id for row in existing_rows}
                 rows_read_ms = round((time.monotonic() - rows_started) * 1000, 2)
 
                 diff_started = time.monotonic()
                 new_messages: List[Dict[str, Any]] = []
                 for msg in conversation_history:
-                    key = self._incoming_message_identity_key(msg)
-                    matched = key
-                    if key[-1] is None:
-                        # Missing/invalid input timestamps are filled at insert.
-                        # Match one stored occurrence by body, preserving repeated
-                        # identical messages rather than collapsing them in a set.
-                        candidates = keys_by_content[key[:-1]]
-                        while candidates and not existing_keys[candidates[0]]:
-                            candidates.popleft()
-                        matched = candidates[0] if candidates else key
-                    if existing_keys[matched]:
-                        existing_keys[matched] -= 1
+                    row_id = self._message_row_id(msg)
+                    if row_id is not None and row_id in existing_ids:
+                        # 该行已存在（本轮已落库或从数据库加载），跳过。
+                        # 同一行不会被两条消息重复命中：id 全局唯一。
                         continue
                     new_messages.append(msg)
                 diff_ms = round((time.monotonic() - diff_started) * 1000, 2)
@@ -657,7 +654,7 @@ class SessionRepository:
                             session_id=session_id,
                             existing_count=existing_count,
                             incoming_count=len(conversation_history),
-                            hint="持久化视图与数据库表示存在差异，已按身份键确认无新消息",
+                            hint="持久化视图与数据库表示存在差异，已按行 id 确认无新消息",
                         )
                     logger.info(
                         "conversation_history_incremental_noop",
@@ -678,7 +675,7 @@ class SessionRepository:
                         existing_count=existing_count,
                         incoming_count=len(conversation_history),
                         appending_count=len(new_messages),
-                        hint="传入历史短于数据库，但按身份键识别出新消息，仅追加不删除",
+                        hint="传入历史短于数据库，仅追加新消息不删除",
                     )
 
                 rows_started = time.monotonic()
@@ -708,12 +705,28 @@ class SessionRepository:
                 rows_build_ms = round((time.monotonic() - rows_started) * 1000, 2)
 
                 insert_started = time.monotonic()
-                await session.execute(SessionMessageDB.__table__.insert(), rows)
+                inserted = await session.execute(
+                    SessionMessageDB.__table__.insert().returning(
+                        SessionMessageDB.id, sort_by_parameter_order=True
+                    ),
+                    rows,
+                )
+                inserted_ids = inserted.scalars().all()
                 insert_ms = round((time.monotonic() - insert_started) * 1000, 2)
 
                 commit_started = time.monotonic()
                 await session.commit()
                 commit_ms = round((time.monotonic() - commit_started) * 1000, 2)
+
+                # 把新生成行 id 写回传入的消息字典：调用方（SessionManager
+                # 内存缓存、agent 进程内 conversation_history）持有的对象与
+                # 传入的是同一批引用，写回后后续保存可按 id 精确对账。
+                stamp_started = time.monotonic()
+                for msg, row_id in zip(new_messages, inserted_ids):
+                    # 无条件改写为真实行 id：原 id 要么缺失，要么已失效
+                    # （行被删除/属于其他会话），保留都会导致下次重插。
+                    msg["id"] = f"msg_{row_id}"
+                stamp_ms = round((time.monotonic() - stamp_started) * 1000, 2)
 
                 logger.info(
                     "conversation_history_incremental_saved",
@@ -726,6 +739,7 @@ class SessionRepository:
                     rows_build_ms=rows_build_ms,
                     insert_ms=insert_ms,
                     commit_ms=commit_ms,
+                    stamp_ms=stamp_ms,
                     total_ms=round((time.monotonic() - started) * 1000, 2),
                     **self._pool_status(),
                 )
@@ -741,50 +755,15 @@ class SessionRepository:
             return False
 
     @staticmethod
-    def _canonical_json(value: Any) -> str:
-        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
-
-    def _db_message_identity_key(self, row: Any) -> tuple:
-        return (
-            row.role,
-            row.msg_type,
-            self._canonical_json(self._deserialize_content(row.content)),
-            self._canonical_json(row.data),
-            row.timestamp.isoformat() if row.timestamp is not None else None,
-        )
-
-    def _incoming_message_identity_key(self, msg: Dict[str, Any]) -> tuple:
-        role, msg_type = self._resolve_role_and_type(msg)
-        return (
-            role,
-            msg_type,
-            self._canonical_json(self._serialize_content(msg.get("content"))),
-            self._canonical_json(self._message_data(msg)),
-            self._identity_timestamp(msg.get("timestamp")),
-        )
-
-    @staticmethod
-    def _identity_timestamp(value: Any) -> Optional[str]:
-        """Deterministic naive-UTC isoformat for identity comparison.
-
-        Unlike _normalize_db_timestamp, a missing/invalid timestamp maps to
-        None instead of "now", so re-saving the same message stays idempotent.
-        """
-        if not value:
+    def _message_row_id(msg: Dict[str, Any]) -> Optional[int]:
+        """Parse the persisted row id ("msg_<id>") carried by a message dict."""
+        raw = msg.get("id")
+        if not isinstance(raw, str) or not raw.startswith("msg_"):
             return None
         try:
-            if isinstance(value, datetime):
-                parsed = value
-            elif isinstance(value, str):
-                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            else:
-                return None
-            if parsed.tzinfo is not None:
-                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-            return parsed.isoformat()
-        except (ValueError, TypeError):
+            return int(raw[4:])
+        except ValueError:
             return None
-
 
     async def add_message(
         self,
@@ -874,6 +853,45 @@ class SessionRepository:
             result = await session.execute(stmt)
             return result.scalar() or 0
 
+    async def list_error_messages_in_window(
+        self,
+        since: datetime,
+        until: Optional[datetime] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """按时间窗查询 error 语义消息（运行监控用），新→旧。
+
+        走 ix_session_messages_type_timestamp 索引；内容截断避免大对象。
+        """
+        conditions = [
+            SessionMessageDB.msg_type == "error",
+            SessionMessageDB.timestamp >= since,
+        ]
+        if until is not None:
+            conditions.append(SessionMessageDB.timestamp < until)
+        async with AsyncSession(self.engine) as session:
+            stmt = (
+                select(SessionMessageDB)
+                .where(*conditions)
+                .order_by(SessionMessageDB.timestamp.desc())
+                .limit(max(int(limit), 1))
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            results: List[Dict[str, Any]] = []
+            for row in rows:
+                content = self._deserialize_content(row.content)
+                text = (
+                    content
+                    if isinstance(content, str)
+                    else json.dumps(content, ensure_ascii=False) if content is not None else ""
+                )
+                results.append({
+                    "session_id": row.session_id,
+                    "timestamp": row.timestamp.isoformat() if row.timestamp else None,
+                    "content": (text or "")[:300],
+                })
+            return results
+
     def _msg_to_dict(self, msg: SessionMessageDB, include_data: bool = True) -> Dict[str, Any]:
         """
         将数据库消息转换为前端字典格式
@@ -900,18 +918,19 @@ class SessionRepository:
                 msg_dict.update(metadata_without_id)
         return msg_dict
 
-    def _message_row_to_context_dict(self, row: Any, include_data: bool = True) -> Dict[str, Any]:
+    @classmethod
+    def _message_row_to_context_dict(cls, row: Any, include_data: bool = True) -> Dict[str, Any]:
         message = {
             "role": row.role,
             "type": row.msg_type,
-            "content": self._deserialize_content(row.content),
+            "content": cls._deserialize_content(row.content),
             "timestamp": row.timestamp.isoformat() if row.timestamp else None,
             "id": f"msg_{row.id}",
             "sequence_number": row.sequence_number,
         }
         if include_data and getattr(row, "data", None):
             message["data"] = row.data
-        attachments = self._message_attachments(getattr(row, "msg_metadata", None))
+        attachments = cls._message_attachments(getattr(row, "msg_metadata", None))
         if attachments:
             message["attachments"] = attachments
         return message
@@ -1191,15 +1210,7 @@ class SessionRepository:
                         case(
                             (
                                 SessionMessageDB.msg_type == "tool_result",
-                                cast(
-                                    func.json_extract_path(
-                                        SessionMessageDB.data,
-                                        "result",
-                                        "data",
-                                        "human_feedback",
-                                    ),
-                                    JSON,
-                                ),
+                                SessionMessageDB.data[("result", "data", "human_feedback")],
                             ),
                             else_=None,
                         ).label("human_feedback"),

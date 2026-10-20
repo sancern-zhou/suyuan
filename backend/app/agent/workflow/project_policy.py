@@ -30,11 +30,13 @@ def scope_delegation_schema(schema, parent_mode):
         target = properties["target_mode"]
     else:
         target = properties["workflow"]["properties"]["nodes"]["items"]["properties"]["target_mode"]
-    target["enum"] = list(policy.child_modes)
+    from app.agent.workflow.delegation import PRIMARY_ONLY_MODES
+    enabled_modes = [mode for mode in policy.child_modes if mode not in PRIMARY_ONLY_MODES]
+    target["enum"] = enabled_modes
     contracts = child_modes()
     description = "\n".join(
         f"{mode}: {contracts[mode].positioning}；{contracts[mode].scope}；边界：{contracts[mode].boundary}"
-        for mode in policy.child_modes
+        for mode in enabled_modes
     )
     target["description"] = description
     schema["description"] = (

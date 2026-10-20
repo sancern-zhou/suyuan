@@ -11,7 +11,7 @@ from app.agent.runtime.mode_capabilities import supports_native_multimodal
         "expert",
         "query",
         "report",
-        "social",
+        "assistant",
         "board",
         "ops",
         "graph",
