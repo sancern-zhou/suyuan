@@ -467,3 +467,36 @@ def test_report_accepts_path_segment_ticket_without_user():
                 assert resp.status_code == 401
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_document_report_can_be_read_and_downloaded_without_quarto_package():
+    temp_dir = Path(tempfile.mkdtemp())
+    try:
+        word = temp_dir / '站点日报.docx'
+        pdf = temp_dir / '站点日报.pdf'
+        word.write_bytes(b'docx-bytes')
+        pdf.write_bytes(b'%PDF-1.4\nreport')
+        for app, service, task, records, _dir in _make_app(temp_dir):
+            records[0].document_paths = [str(word), str(pdf)]
+            client = _client(app)
+            row = client.get('/api/scheduled-tasks/results').json()['results'][0]
+            assert row['has_report'] is True
+            assert row['report_preview_type'] == 'pdf'
+            # Browser iframe/download requests carry a ticket rather than a login header.
+            app.dependency_overrides[optional_current_user] = lambda: None
+            preview = client.get(row['report_preview_url'])
+            assert preview.status_code == 200
+            assert preview.content == pdf.read_bytes()
+            assert preview.headers['content-disposition'].startswith('inline')
+            exports = client.get('/api/scheduled-tasks/results/exec-1/report/formats').json()['formats']
+            assert {item['format'] for item in exports} == {'pdf', 'docx'}
+            for item in exports:
+                response = client.get(item['url'])
+                assert response.status_code == 200
+                assert response.headers['content-disposition'].startswith('attachment')
+            assert client.get('/api/scheduled-tasks/results/exec-1/files/documents/1').status_code == 401
+            pdf.unlink()
+            row = client.get('/api/scheduled-tasks/results').json()['results'][0]
+            assert row['has_report'] is False
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)

@@ -12,6 +12,19 @@ TZ = ZoneInfo('Asia/Shanghai')
 POLLUTANTS = ('sO2', 'nO2', 'pM10', 'co', 'o3', 'pM2_5')
 
 
+def merge_hour_spans(items):
+    """Merge per-station spans (same city/source) into re-fetch windows."""
+    merged = []
+    for item in sorted(items, key=lambda i: local_time(i['start'])):
+        start, end = local_time(item['start']), local_time(item['end'])
+        if merged and local_time(merged[-1]['end']) >= start - timedelta(hours=1):
+            if end > local_time(merged[-1]['end']):
+                merged[-1]['end'] = item['end']
+        else:
+            merged.append({'start': item['start'], 'end': item['end']})
+    return merged
+
+
 def local_time(value=None):
     value = datetime.fromisoformat(value) if isinstance(value, str) else value
     value = value or datetime.now(TZ)
@@ -171,23 +184,44 @@ class MonitorStore:
         return True
 
     def pending_hours(self):
+        """Gaps still worth re-checking: ongoing offline runs without any later
+        complete hour. Recovered gaps only ever served backfill detection, which
+        is no longer a follow-up criterion."""
         with self.connect() as db:
-            rows = list(db.execute('''SELECT DISTINCT s.city,c.source,c.hour
+            rows = list(db.execute('''SELECT DISTINCT s.city,c.source,c.code,c.hour
                 FROM cells c JOIN stations s ON s.code=c.code
                 WHERE c.first_missing_at IS NOT NULL AND c.data_complete=0 AND s.active=1
-                ORDER BY s.city,c.source,c.hour'''))
+                  AND NOT EXISTS (SELECT 1 FROM cells c2 WHERE c2.code=c.code AND c2.source=c.source
+                                 AND c2.hour>c.hour AND c2.data_complete=1)
+                ORDER BY s.city,c.source,c.code,c.hour'''))
         intervals = []
         for row in rows:
             if (intervals and intervals[-1]['city'] == row['city']
                 and intervals[-1]['source'] == row['source']
+                and intervals[-1]['code'] == row['code']
                 and local_time(row['hour']) - local_time(intervals[-1]['end']) == timedelta(hours=1)):
                 intervals[-1]['end'] = row['hour']
             else:
-                intervals.append({'city':row['city'], 'source':row['source'],
+                intervals.append({'city':row['city'], 'source':row['source'], 'code':row['code'],
                                   'start':row['hour'], 'end':row['hour']})
         return intervals
 
-    def report(self, end, *, national_sources, provincial_source):
+    def open_gaps(self, code):
+        """Merged still-missing spans per source for one station, for feedback matching."""
+        with self.connect() as db:
+            rows = list(db.execute('''SELECT source,hour FROM cells
+                WHERE code=? AND first_missing_at IS NOT NULL AND data_complete=0
+                ORDER BY source,hour''', (code,)))
+        spans = []
+        for row in rows:
+            if (spans and spans[-1]['source'] == row['source']
+                and local_time(row['hour']) - local_time(spans[-1]['end']) == timedelta(hours=1)):
+                spans[-1]['end'] = row['hour']
+            else:
+                spans.append({'source': row['source'], 'start': row['hour'], 'end': row['hour']})
+        return spans
+
+    def report(self, end, *, national_sources, provincial_source, min_missing_hours=4):
         end = local_time(end)
         start = end - timedelta(days=1)
         entries, unknown, errors = [], [], []
@@ -211,9 +245,13 @@ class MonitorStore:
                     else:
                         groups.append([cell])
                 for group in groups:
+                    # Only continuous gaps longer than min_missing_hours become incidents;
+                    # shorter or partial-parameter blips stay in raw evidence only.
+                    if len(group) <= min_missing_hours:
+                        continue
                     event_start = local_time(group[0]['hour']) - timedelta(hours=1)
                     event_end = local_time(group[-1]['hour'])
-                    complete_sources, remaining, backfill_observations = [], {}, []
+                    complete_sources, remaining = [], {}
                     for source in sources:
                         holes = []
                         for cell in group:
@@ -221,8 +259,6 @@ class MonitorStore:
                                                 (station['code'], source, cell['hour'])).fetchone()
                             if latest is None or not latest['data_complete']:
                                 holes.append(cell['hour'])
-                            elif latest['completed_at']:
-                                backfill_observations.append(latest['completed_at'])
                         remaining[source] = holes
                         if not holes:
                             complete_sources.append(source)
@@ -236,11 +272,20 @@ class MonitorStore:
                     latest_values = normalize(json.loads(latest['raw']))['values'] if latest and latest['raw'] else {}
                     recovered = bool(latest and latest['present'] and local_time(latest['hour']) >= event_end
                                      and all(latest_values.get(field) is not None for field in missing_parameters))
-                    # Carry open incidents from any preceding date. Closed old events remain
-                    # visible on the day their backfill was observed, then leave the daily list.
-                    changed_today = any(start < local_time(stamp) for stamp in backfill_observations)
-                    if event_end <= start and recovered and backfilled and not changed_today:
-                        continue
+                    # A resumed upload closes this historical incident even if a new,
+                    # separate outage occurs later. Backfill does not extend tracking.
+                    if event_end <= start:
+                        later = db.execute('''SELECT raw FROM cells
+                            WHERE code=? AND source=? AND hour>? AND hour<=? AND present=1
+                            ORDER BY hour''',
+                            (station['code'], main_source, event_end.isoformat(), end.isoformat()))
+                        resumed = recovered or any(
+                            row['raw'] and all(
+                                normalize(json.loads(row['raw']))['values'].get(field) is not None
+                                for field in missing_parameters)
+                            for row in later)
+                        if resumed:
+                            continue
                     entries.append({
                         **dict(station), 'source': main_source,
                         'offline_start': event_start.isoformat(), 'offline_end': event_end.isoformat(),
@@ -251,7 +296,7 @@ class MonitorStore:
                         'backfill_status': '已回补' if backfilled else '待回补',
                         'backfill_sources': complete_sources, 'remaining_hours': remaining,
                         'carry_over': event_start < start,
-                        'evidence_kind': '小时数据缺失（包含单项缺失），设备离线原因待核实',
+                        'evidence_kind': f'连续小时数据缺失超过{min_missing_hours}小时（包含单项缺失），设备离线原因待核实',
                         'missing_parameters': missing_parameters,
                     })
                 # A successful collect must cover the end hour; stale or failed collection
@@ -277,6 +322,9 @@ class MonitorStore:
             'collection_errors': errors, 'report_ready': not errors,
             'national_sources': national_sources, 'provincial_source': provincial_source,
             'limitations': [
+                f'日报仅记录连续缺数超过{min_missing_hours}小时的事件；不超过该时长的短时缺失和单项波动保留在原始快照中，不单独列入日报。',
+                '数据恢复上传即视为核实完成并结束跟进，仅持续缺数站点继续跟进；回补情况仅作备注展示，不作为跟进条件。',
+                '已恢复上传的事件仅在过去24小时缺失窗口内展示；窗口外不再跟进。持续未恢复上传的事件继续跟进，不设3期上限；原始证据保留。',
                 '小时数据缺失用于运行监控，不能直接证明设备离线或无法回补。',
                 '首次采集前已回补的历史缺口无法还原；离线起止时间为已观察缺失时段。',
             ] + ([] if len(national_sources) > 1 else ['国控目前仅接入省控小时接口，独立发布源未接入。'])

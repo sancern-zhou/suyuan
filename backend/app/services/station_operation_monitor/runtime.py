@@ -11,7 +11,8 @@ from uuid import uuid4
 import requests
 
 from app.utils.path_config import format_agent_path, get_data_registry, resolve_agent_path
-from .core import MonitorStore, hour_key, local_time
+from .core import MonitorStore, hour_key, local_time, merge_hour_spans
+from .feedback import closed_unrecoverable, load_feedback, match_feedback
 
 
 def config_path():
@@ -102,6 +103,12 @@ def collect(config=None, *, now=None, end=None, source_factory=StationHourHTTPSo
     raw_root = root / 'snapshots' / run_id
     raw_root.mkdir(parents=True, exist_ok=True)
     pending = store.pending_hours()
+    # User-confirmed unrecoverable spans leave the re-check rotation entirely.
+    closed = closed_unrecoverable(root)
+    def _still_tracked(item):
+        start_span, end_span = local_time(item['start']), local_time(item['end'])
+        return not any(fs <= start_span and fe >= end_span for fs, fe in closed.get(item['code'], []))
+    pending = [item for item in pending if _still_tracked(item)]
     successes, failures = [], []
     for source_config in config['sources']:
         source = source_factory(source_config)
@@ -113,9 +120,11 @@ def collect(config=None, *, now=None, end=None, source_factory=StationHourHTTPSo
                 if not codes:
                     continue
                 windows = [(start, end)]
-                for item in pending:
-                    if item['city'] == city and item['source'] == source_config['name'] and local_time(item['start']) <= start:
-                        windows.append((local_time(item['start']) - timedelta(hours=1), min(local_time(item['end']), start)))
+                for span in merge_hour_spans(item for item in pending
+                        if item['city'] == city and item['source'] == source_config['name']
+                        and local_time(item['start']) <= start):
+                    windows.append((local_time(span['start']) - timedelta(hours=1),
+                                    min(local_time(span['end']), start)))
                 # Query recent intervals after old intervals so end-hour health reflects the
                 # final attempt. Each slice has at most 800 expected station/hour rows.
                 windows.sort()
@@ -169,7 +178,9 @@ def generate_report(config=None, *, date=None, now=None, root=None, refresh=True
     root = Path(root) if root else get_data_registry() / 'station_operation_monitor'
     collection = collect(config, now=now, end=end, root=root) if refresh else None
     store = MonitorStore(root / 'monitor.sqlite3')
-    data = store.report(end, national_sources=config['national_sources'], provincial_source=config['provincial_source'])
+    data = store.report(end, national_sources=config['national_sources'],
+                        provincial_source=config['provincial_source'],
+                        min_missing_hours=config.get('min_missing_hours', 4))
     # "Unable to backfill" is an explicit, attributable confirmation, never a
     # duration-based guess. A completed backfill overrides an obsolete confirmation.
     for entry in data['entries']:
@@ -185,6 +196,21 @@ def generate_report(config=None, *, date=None, now=None, root=None, refresh=True
                 entry['backfill_status'] = '无法回补'
                 entry['unrecoverable_confirmation'] = confirmation
                 break
+    # Conversation feedback attributes a reason and closes tracking. Feedback
+    # recorded on the report day stays visible once, earlier closures drop out.
+    feedbacks = load_feedback(root)
+    kept_entries = []
+    for entry in data['entries']:
+        feedback = match_feedback(feedbacks, entry['code'], entry['offline_start'], entry['offline_end'])
+        if feedback is not None:
+            if local_time(feedback['feedback_at']).date() < end.date():
+                continue
+            entry['issue_reason'] = feedback['reason']
+            entry['feedback'] = feedback
+            if feedback.get('unrecoverable'):
+                entry['backfill_status'] = '无法回补'
+        kept_entries.append(entry)
+    data['entries'] = kept_entries
     data['collection'] = collection
     if collection and not collection['success']:
         data['report_ready'] = False

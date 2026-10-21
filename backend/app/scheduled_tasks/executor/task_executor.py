@@ -237,6 +237,7 @@ class ScheduledTaskExecutor:
                     "summary": workflow_result.get("final_message")
                     or workflow_result.get("summary", ""),
                     "workflow_result": workflow_result,
+                    "tool_calls": execution.steps[-1].tool_calls,
                 })
                 self.execution_storage.update(execution)
                 # 只有工作流正常返回且未抛异常时才算执行成功。

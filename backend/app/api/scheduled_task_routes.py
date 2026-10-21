@@ -211,7 +211,9 @@ def _execution_summary(execution: TaskExecution) -> ExecutionSummary:
     artifacts: List[str] = []
     artifact_paths: List[str] = []
     result_message = execution.steps[-1].agent_response if execution.steps else None
-    conversation_available = not execution.steps or execution.steps[-1].step_id != "workflow"
+    conversation_available = (not execution.steps or execution.steps[-1].step_id != "workflow"
+                              or any(call.get("conversation_available") is True
+                                     for step in execution.steps for call in step.tool_calls))
     for step in execution.steps:
         for visual in step.result_visuals:
             value = visual.get("title") or visual.get("name") or visual.get("file_name")
@@ -621,6 +623,8 @@ class TaskResultItem(BaseModel):
         default=None,
         description="免登录预览票据，用于 <img>/<iframe> 等无法携带 Bearer 的请求",
     )
+    report_preview_url: Optional[str] = None
+    report_preview_type: Optional[str] = None
     has_report: bool = Field(default=False, description="是否存在可在线查看的报告")
     broadcast_message: Optional[str] = Field(default=None, description="广播推送正文")
     broadcast_image_paths: List[str] = Field(default_factory=list, description="广播推送图片路径")
@@ -690,6 +694,27 @@ def _result_report_dir(result) -> Optional[Path]:
         if candidate.is_file():
             return candidate.parent
     return None
+
+
+def _result_document_files(result):
+    """Use only persisted, readable report attachments; never infer sibling files."""
+    for index, value in enumerate(result.document_paths or []):
+        try:
+            path = resolve_agent_path(str(value))
+            if path.suffix.lower() in {".pdf", ".docx", ".doc"} and is_agent_readable_path(path) and path.is_file():
+                yield index, path
+        except (OSError, ValueError):
+            continue
+
+
+def _result_report_preview(result, ticket):
+    base = f"/api/scheduled-tasks/results/{result.execution_id}"
+    if _result_report_dir(result) is not None:
+        return f"{base}/report/_t/{ticket}/report.html", "html"
+    for index, path in _result_document_files(result):
+        if path.suffix.lower() == ".pdf":
+            return f"{base}/files/documents/{index}?preview_ticket={ticket}", "pdf"
+    return None, None
 
 
 def _authorize_result_content(
@@ -772,7 +797,8 @@ async def list_task_results(
         for record in records:
             item = TaskResultItem(**record.model_dump())
             item.preview_ticket = _result_preview_ticket(record.execution_id)
-            item.has_report = _result_report_dir(record) is not None
+            item.report_preview_url, item.report_preview_type = _result_report_preview(record, item.preview_ticket)
+            item.has_report = item.report_preview_url is not None
             item.has_broadcast = bool(item.broadcast_message or item.broadcast_image_paths)
             item.broadcast_image_urls = [
                 f"/api/scheduled-tasks/results/{record.execution_id}/files/broadcast_images/{index}"
@@ -799,6 +825,7 @@ async def get_task_result_file(
     kind: str,
     index: int,
     request: Request,
+    disposition: Literal["inline", "attachment"] = "inline",
     user: Optional[CurrentUser] = Depends(optional_current_user),
 ):
     """Serve one persisted result attachment after authorization or a valid preview ticket."""
@@ -819,7 +846,7 @@ async def get_task_result_file(
         path,
         media_type=media_type,
         filename=path.name,
-        content_disposition_type="inline",
+        content_disposition_type=disposition,
         headers={
             "Cache-Control": "private, max-age=300",
             "X-Content-Type-Options": "nosniff",
@@ -875,6 +902,21 @@ async def list_task_result_report_formats(
                     # 下载请求由浏览器直接发起（无 Bearer），票据随路径继承。
                     "url": f"{base}/{filename}?disposition=attachment",
                 })
+    listed_formats = {item["format"] for item in formats}
+    ticket = _result_preview_ticket(execution_id)
+    for index, path in _result_document_files(result):
+        fmt = path.suffix.lower().lstrip(".")
+        if fmt in listed_formats:
+            continue
+        listed_formats.add(fmt)
+        formats.append({
+            "format": fmt,
+            "label": "PDF 文档" if fmt == "pdf" else "Word 文档",
+            "filename": path.name,
+            "size_bytes": path.stat().st_size,
+            "url": f"/api/scheduled-tasks/results/{execution_id}/files/documents/{index}"
+                   f"?preview_ticket={ticket}&disposition=attachment",
+        })
     return {"formats": formats}
 
 
