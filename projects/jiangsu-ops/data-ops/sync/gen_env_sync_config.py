@@ -8,7 +8,7 @@
 规则:
 - 站名录 = PostgreSQL jiangsu_mart.dim_station 中 is_active_provincial = true 的 101 站;
 - 源表   = SQL Server air_province_data.dbo.integrated_h_2026_<站小写>(按年分片, 每年 1 月需换年份);
-- 范围   = where timepoint >= '2026-10-01'(用户决策: 回填当前 10 月, 此谓词每次拉取都生效);
+- 范围   = where timepoint >= CUTOFF(当前 2026-06-01; 2026-10-19 用户决策从 10 月窗口前推到 6 月, 此谓词每次拉取都生效);
 - 增量   = id 整型严格递增(平台不回写旧行, mark 变更极少, 如需修正走 --full 重拉)。
 
 每年 1 月: 修改本文件 YEAR/CUTOFF 常量后重跑即可切换到 integrated_h_2027_*。

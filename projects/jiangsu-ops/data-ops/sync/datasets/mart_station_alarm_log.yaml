@@ -1,7 +1,7 @@
 # 数据集契约：mart_station_alarm_log
 dataset: mart_station_alarm_log
 description: >
-  江苏站房/仪器告警长表。一行 = 一条告警记录(101 省控站按年分片 union,每日 02:30 增量,窗口自 2026-07-01)。
+  江苏站房/仪器告警长表。一行 = 一条告警记录(101 省控站按年分片 union,每日 02:30 增量,窗口自 2026-06-01)。
   工具 jiangsu_fetch_station_alarm_logs 已改读本同步链(近 24h 实时窗),本表提供全窗口历史语义查询。
 owner: 江苏运维平台组
 grain: 一行 = 一条告警

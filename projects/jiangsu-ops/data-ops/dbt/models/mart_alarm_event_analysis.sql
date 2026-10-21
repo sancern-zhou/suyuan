@@ -13,7 +13,7 @@
 
 -- ============================================================
 -- mart_alarm_event_analysis 江苏告警事件分析数据集（阶段二）
--- 粒度: 一行 = 一条站点告警 (alm_summary, 2026-07-01 起)
+-- 粒度: 一行 = 一条站点告警 (alm_summary, 2026-06-01 起)
 -- 口径:
 --   告警持续 = removetime - alarmtime; 处理时长 = handletime - alarmtime
 --   状态翻译: ddalarmstate 1=未处理 3=已解除(经数据验证: 状态3全部有解除时间)

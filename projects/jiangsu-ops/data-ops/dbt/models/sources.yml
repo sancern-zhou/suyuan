@@ -4,7 +4,7 @@ sources:
   schema: jiangsu_ods
   database: suyuan_jiangsu
   description: SQL Server 原库经 sync_table.py 同步落地的 ODS 层(sync_config.json 为表清单事实源, 本文件由 gen_dbt_artifacts.py
-    生成)。fact 表窗口自 2026-07-01, 更早历史不可查。
+    生成)。fact 表窗口自 2026-06-01, 更早历史不可查。
   tables:
   - name: alarmlog_2026_3001a
   - name: alarmlog_2026_3002a
@@ -237,7 +237,7 @@ sources:
   - name: integrated_h_2026_3103a
   - name: integrated_h_2026_3104a
   - name: log_device
-    description: 设备生命周期状态变更日志(每日全量, 窗口≥2026-07-01; deviceidstate×eventstate 状态流转, WorkingOrderCode 可关联故障工单;
+    description: 设备生命周期状态变更日志(每日全量, 窗口≥2026-06-01; deviceidstate×eventstate 状态流转, WorkingOrderCode 可关联故障工单;
       2026-10-04 新纳入, 解锁备机更换及时性场景)
   - name: mot_alarm
   - name: mtc_blackout
@@ -283,7 +283,7 @@ sources:
   - name: qc_arrangeresult
     description: 质控任务安排(每日全量)
   - name: qc_backorderarrangelog
-    description: 质控补测/回调安排日志(每日全量, 窗口≥2026-07-01; state/datatype 枚举语义待平台确认; 补测风暴预警与质控闭环下游)
+    description: 质控补测/回调安排日志(每日全量, 窗口≥2026-06-01; state/datatype 枚举语义待平台确认; 补测风暴预警与质控闭环下游)
   - name: qc_his_air_data_result_2026
   - name: qc_his_result_2026
   - name: qc_his_run_log_result_2026

@@ -7,7 +7,7 @@
     ],
     post_hook=[
         "GRANT SELECT ON {{ this }} TO agent_reader",
-        "COMMENT ON TABLE {{ this }} IS '站房/仪器告警长表(每日02:30增量)。一行=一条告警;窗口自2026-07-01;覆盖101省控站(按年分片union);alarm_grade_cn 为级别中文(1/40/60=一般,2/80=严重,3=紧急,20=提示,其余未知)。'",
+        "COMMENT ON TABLE {{ this }} IS '站房/仪器告警长表(每日02:30增量)。一行=一条告警;窗口自2026-06-01;覆盖101省控站(按年分片union);alarm_grade_cn 为级别中文(1/40/60=一般,2/80=严重,3=紧急,20=提示,其余未知)。'",
     ],
 ) }}
 

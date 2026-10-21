@@ -7,7 +7,7 @@
     ],
     post_hook=[
         "GRANT SELECT ON {{ this }} TO agent_reader",
-        "COMMENT ON TABLE {{ this }} IS '质控补测/回调安排日志宽表(每日全量,窗口>=2026-07-01,省控站统一口径=启用省控站101个)。一行=一条补测安排(站点×小时×污染物)。state/datatype 为平台原始枚举(语义待平台确认);uniquecode 可关联质控执行结果(现源 qc_his_result_2026,即宽表 mart_qc_execution_analysis)判断补测背景;勿关联 qc_arrangeresult(该表 uniquecode 为任务组代码)。停用省控站与非省控类型站不入本表。'",
+        "COMMENT ON TABLE {{ this }} IS '质控补测/回调安排日志宽表(每日全量,窗口>=2026-06-01,省控站统一口径=启用省控站101个)。一行=一条补测安排(站点×小时×污染物)。state/datatype 为平台原始枚举(语义待平台确认);uniquecode 可关联质控执行结果(现源 qc_his_result_2026,即宽表 mart_qc_execution_analysis)判断补测背景;勿关联 qc_arrangeresult(该表 uniquecode 为任务组代码)。停用省控站与非省控类型站不入本表。'",
     ],
 ) }}
 

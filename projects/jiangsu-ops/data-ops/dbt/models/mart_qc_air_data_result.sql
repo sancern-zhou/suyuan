@@ -7,7 +7,7 @@
     ],
     post_hook=[
         "GRANT SELECT ON {{ this }} TO agent_reader",
-        "COMMENT ON TABLE {{ this }} IS '质控期间监测序列/曲线点(每日增量,按年源表2026)。一行=一站×一质控任务窗口×一时间点;timepoint 为监测时间,time 为平台记录时间。窗口自2026-07-01,省控站过滤。'",
+        "COMMENT ON TABLE {{ this }} IS '质控期间监测序列/曲线点(每日增量,按年源表2026)。一行=一站×一质控任务窗口×一时间点;timepoint 为监测时间,time 为平台记录时间。窗口自2026-06-01,省控站过滤。'",
     ],
 ) }}
 

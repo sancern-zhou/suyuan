@@ -1,7 +1,7 @@
 # 数据集契约：mart_qc_task_status_result
 dataset: mart_qc_task_status_result
 description: >
-  江苏质控任务状态表。一行 = 一次质控任务的最新状态快照(按年源表 2026,每日 02:30 增量,窗口自 2026-07-01,省控站过滤)。
+  江苏质控任务状态表。一行 = 一次质控任务的最新状态快照(按年源表 2026,每日 02:30 增量,窗口自 2026-06-01,省控站过滤)。
   jsonstr 为平台原始状态载荷(含执行步骤/结果值);工具 jiangsu_fetch_qc_task_status 已改读本链。
 owner: 江苏运维平台组
 grain: 一行 = 一次质控任务状态快照(同 rid 取 createtime 最新)

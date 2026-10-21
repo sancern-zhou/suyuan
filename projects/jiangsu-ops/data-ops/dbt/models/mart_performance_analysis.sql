@@ -43,4 +43,4 @@ full outer join {{ source('jiangsu_ods', 'opa_performance_qaqc') }} q
       and date_trunc('month', q.timepoint) = date_trunc('month', t.timepoint)
 left join {{ ref('dim_station') }} ds
        on ds.station_code = coalesce(t.stationcode, q.stationcode)
-where coalesce(t.timepoint, q.timepoint) >= '2026-07-01'
+where coalesce(t.timepoint, q.timepoint) >= '2026-06-01'

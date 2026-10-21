@@ -8,7 +8,7 @@
     ],
     post_hook=[
         "GRANT SELECT ON {{ this }} TO agent_reader",
-        "COMMENT ON TABLE {{ this }} IS '质控执行结果宽表(2026-07-01起,站点名录省控站口径)。result_cn 为平台原始判定文本(合格/不合格/任务失败/终止等);is_qualified: 前缀合格→true、前缀不合格→false、其余(任务失败/终止/校准类)为NULL不计入合格率分母。范围=源库名录 stationtypeid=2 且启用的省控站(2026-10-14 起为101个);超站(7099A)与40开头试点站不在范围。单站下钻走平台API工具 jiangsu_fetch_qc_*。'",
+        "COMMENT ON TABLE {{ this }} IS '质控执行结果宽表(2026-06-01起,站点名录省控站口径)。result_cn 为平台原始判定文本(合格/不合格/任务失败/终止等);is_qualified: 前缀合格→true、前缀不合格→false、其余(任务失败/终止/校准类)为NULL不计入合格率分母。范围=源库名录 stationtypeid=2 且启用的省控站(2026-10-14 起为101个);超站(7099A)与40开头试点站不在范围。单站下钻走平台API工具 jiangsu_fetch_qc_*。'",
     ],
 ) }}
 
@@ -48,5 +48,5 @@ join {{ ref('dim_station') }} ds
   on ds.uniquecode = h.uniquecode
 where ds.station_type_id = 2
   -- 平台曾把年中前的历史执行补灌进年度表(高id携带更早createtime), id窗口种子会带入
-  -- 2026-04起的记录; 显式按执行日截窗, 与全局"数据自2026-07-01起"口径保持一致
-  and coalesce(h.rstart, h.sstart, h.createtime) >= timestamp '2026-07-01'
+  -- 2026-04起的记录; 显式按执行日截窗, 与全局"数据自2026-06-01起"口径保持一致
+  and coalesce(h.rstart, h.sstart, h.createtime) >= timestamp '2026-06-01'

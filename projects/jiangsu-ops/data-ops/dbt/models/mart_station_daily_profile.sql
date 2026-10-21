@@ -11,13 +11,13 @@
 
 -- ============================================================
 -- mart_station_daily_profile 站点日概况数据集（阶段二, 每日刷新）
--- 粒度: 一行 = 站点 × 日 (2026-07-01 起)
+-- 粒度: 一行 = 站点 × 日 (2026-06-01 起)
 -- 用途: 全网态势时间序列、趋势对比、异常日识别 (smart_inspection/operations_analysis)
 -- 口径: 当日工单=created_at 当日落盘; 当日完成=finish_time 当日; 当日告警=alarm_time 当日;
 --       到站签到=signintime 当日(注: 7月以来源数据仅11条, 近乎空, 供后续补数)
 -- ============================================================
 with days as (
-    select generate_series('2026-07-01'::date, current_date, interval '1 day')::date as d
+    select generate_series('2026-06-01'::date, current_date, interval '1 day')::date as d
 ), stations as (
     select s.stationcode, s.positionname,
            c.name as city_name

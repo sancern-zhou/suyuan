@@ -2,7 +2,7 @@
 dataset: mart_inspection_analysis
 description: >
   江苏巡检完成数据集。一行 = 一条巡检任务项（pw_TaskItem，站点×设备×周期），
-  数据窗口 2026-07-01 起（按 UpdateTime 引导），约 21,300 行，5 分钟增量。
+  数据窗口 2026-06-01 起（按 UpdateTime 引导），约 21,300 行，5 分钟增量。
   巡检周期类型：周/月/季/半年/年。用于巡检完成率、超期未完成、按人员/单位完成量、
   巡检转工单率分析。源表 opa_product_data.dbo.pw_TaskItem。
 owner: 江苏运维平台组
@@ -13,7 +13,7 @@ known_caveats:
   - is_overdue = 计划周期结束日(plan_end_date)已过仍未完成；plan 窗口来自 pw_Task（每日全量），
     当日新任务项可能短暂关联不到周期行
   - has_linked_order 约97%（巡检项完成生成故障/巡检工单，WorkingOrderCode 关联）
-  - 窗口按 UpdateTime>=2026-07-01 引导，含少量 6 月前创建但近期更新的任务项
+  - 窗口按 UpdateTime>=2026-06-01 引导，含少量 6 月前创建但近期更新的任务项
   - 本表含三类站点的巡检：省控站约63%、省乡镇站约25%、省建站约12%（2026-10 实测）；
     按站点类型过滤/分组用 station_type_name，不得默认全省巡检即省控站口径
 columns:

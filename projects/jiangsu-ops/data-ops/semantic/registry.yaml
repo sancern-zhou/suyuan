@@ -8,7 +8,7 @@ cubes:
     dataset: mart_work_order_analysis
     grain: 一行 = 一张故障工单
     applicability: 仅故障工单(order_type=Fault)，不代表例行工单
-    source_window: 2026-07-01 起
+    source_window: 2026-06-01 起
     freshness_slo: 30分钟
     limitations:
       - 故障工单没有计划完成时间，超期率不可评估，不得把 0 当作没有超期
@@ -31,7 +31,7 @@ cubes:
     dataset: mart_alarm_event_analysis
     grain: 一行 = 一条站点告警
     applicability: 平台站点告警事件，按告警记录统计
-    source_window: 2026-07-01 起
+    source_window: 2026-06-01 起
     freshness_slo: 30分钟
     measures:
       unresolvedRate:
@@ -52,7 +52,7 @@ cubes:
     dataset: mart_station_alarm_log
     grain: 一行 = 一条站房或仪器告警
     applicability: 省控站站房/仪器告警历史，告警级别按规范化中文字段解释
-    source_window: 2026-07-01 起
+    source_window: 2026-06-01 起
     freshness_slo: 26小时
     limitations:
       - 设备状态位图不在历史告警分片中，实时状态需使用实时工具
@@ -68,7 +68,7 @@ cubes:
     dataset: mart_qc_task_status_result
     grain: 一行 = 一个 rid 的最新质控任务状态
     applicability: 省控站质控任务状态快照
-    source_window: 2026-07-01 起
+    source_window: 2026-06-01 起
     freshness_slo: 26小时
     limitations:
       - 同一 rid 只保留 createtime 最新记录
@@ -76,7 +76,7 @@ cubes:
     dataset: mart_qc_air_data_result
     grain: 一行 = 一站 × 一质控任务窗口 × 一时间点
     applicability: 省控站质控期间监测曲线
-    source_window: 2026-07-01 起
+    source_window: 2026-06-01 起
     freshness_slo: 26小时
     limitations:
       - 源列 datavalue 实测为数值类型；datavalue_numeric 为其 double 聚合列（两者同值）
@@ -84,13 +84,13 @@ cubes:
     dataset: mart_qc_run_log_result
     grain: 一行 = 一条质控运行事件
     applicability: 省控站质控任务运行轨迹
-    source_window: 2026-07-01 起
+    source_window: 2026-06-01 起
     freshness_slo: 26小时
   Inspection:
     dataset: mart_inspection_analysis
     grain: 一行 = 一条巡检任务项
     applicability: 巡检任务项，可包含非省控站
-    source_window: 2026-07-01 起
+    source_window: 2026-06-01 起
     freshness_slo: 30分钟
     measures:
       finishedRate:
@@ -118,7 +118,7 @@ cubes:
     dataset: mart_qc_execution_analysis
     grain: 一行 = 一条质控任务执行结果
     applicability: 约 101 个省控试点站，不得外推全网
-    source_window: 2026-07-01 起
+    source_window: 2026-06-01 起
     freshness_slo: 30分钟
     measures:
       qualifiedRate:
@@ -132,7 +132,7 @@ cubes:
     dataset: mart_station_device_health
     grain: 一行 = 一个站点当前健康快照
     applicability: 当前站点健康和风险分级，不代表历史风险轨迹
-    source_window: 当前快照；明细窗口自 2026-07-01 起
+    source_window: 当前快照；明细窗口自 2026-06-01 起
     freshness_slo: 30分钟
     limitations:
       - 站点汇总指标是站点合计，不能与工单明细行数直接相加
@@ -140,7 +140,7 @@ cubes:
     dataset: mart_station_daily_profile
     grain: 一行 = 一个站点 × 一个自然日
     applicability: 站点日趋势，签到数据存在源端稀疏问题
-    source_window: 2026-07-01 起
+    source_window: 2026-06-01 起
     freshness_slo: 26小时
     limitations:
       - 当日数据需次日刷新后才完整
@@ -148,7 +148,7 @@ cubes:
     dataset: mart_device_lifecycle_analysis
     grain: 一行 = 一条设备生命周期事件
     applicability: 设备状态变更和报废事件，不用设备启用日期代替生命周期
-    source_window: 2026-07-01 起
+    source_window: 2026-06-01 起
     freshness_slo: 26小时
     limitations:
       - DeviceSpare 流转间隔是备机更换周期的近似口径
@@ -156,7 +156,7 @@ cubes:
     dataset: mart_qc_arrangement_analysis
     grain: 一行 = 一条质控任务安排
     applicability: 省控站质控安排和过期积压
-    source_window: 2026-07-01 起
+    source_window: 2026-06-01 起
     freshness_slo: 26小时
     limitations:
       - 任务安排不等同于任务执行结果，合格判定使用 QcExecution

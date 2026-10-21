@@ -1,5 +1,5 @@
 // 站点日概况语义模型 — 口径唯一来源: sync/datasets/mart_station_daily_profile.yaml + dbt 模型
-// 一行=站点×自然日(2026-07-01 起, 仅含有活动记录的站点日), 趋势/对比/异常日识别用。
+// 一行=站点×自然日(2026-06-01 起, 仅含有活动记录的站点日), 趋势/对比/异常日识别用。
 // 工单计数仅故障单口径(来源 mart_work_order_analysis 已过滤 ordertype='Fault');
 // 当日数据在次日刷新前不完整; attendance_signins 源数据稀疏。
 cube(`StationDaily`, {

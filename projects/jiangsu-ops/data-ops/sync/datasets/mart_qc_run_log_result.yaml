@@ -1,7 +1,7 @@
 # 数据集契约：mart_qc_run_log_result
 dataset: mart_qc_run_log_result
 description: >
-  江苏质控任务运行日志。一行 = 一条质控运行事件(按年源表 2026,每日增量,窗口自 2026-07-01,省控站过滤)。
+  江苏质控任务运行日志。一行 = 一条质控运行事件(按年源表 2026,每日增量,窗口自 2026-06-01,省控站过滤)。
   工具 jiangsu_fetch_qc_run_logs 与质控详情链已改读本链。
 owner: 江苏运维平台组
 grain: 一行 = 一条质控运行事件

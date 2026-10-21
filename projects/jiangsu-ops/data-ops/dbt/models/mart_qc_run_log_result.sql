@@ -7,7 +7,7 @@
     ],
     post_hook=[
         "GRANT SELECT ON {{ this }} TO agent_reader",
-        "COMMENT ON TABLE {{ this }} IS '质控任务运行日志(每日增量,按年源表2026)。一行=一条运行事件;strEvent 为事件分类文本。窗口自2026-07-01,省控站过滤。'",
+        "COMMENT ON TABLE {{ this }} IS '质控任务运行日志(每日增量,按年源表2026)。一行=一条运行事件;strEvent 为事件分类文本。窗口自2026-06-01,省控站过滤。'",
     ],
 ) }}
 

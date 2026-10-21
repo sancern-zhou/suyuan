@@ -1,7 +1,7 @@
 # 数据集契约：mart_qc_air_data_result
 dataset: mart_qc_air_data_result
 description: >
-  江苏质控期间监测序列(曲线点)。一行 = 一站 × 一质控任务 × 一时间点的监测值(按年源表 2026,每日增量,窗口自 2026-07-01,省控站过滤)。
+  江苏质控期间监测序列(曲线点)。一行 = 一站 × 一质控任务 × 一时间点的监测值(按年源表 2026,每日增量,窗口自 2026-06-01,省控站过滤)。
   工具 jiangsu_fetch_qc_monitoring_curve 已改读本链。
 owner: 江苏运维平台组
 grain: 一行 = 一站 × 一任务窗口 × 一时间点

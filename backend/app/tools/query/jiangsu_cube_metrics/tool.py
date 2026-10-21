@@ -248,7 +248,7 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "lastAlarmTime", "title": "最近告警时间(时间维度)"},
         ],
     },
-    # StationDaily 为站点×日趋势(2026-07-01 起, 当日数据次日刷新才完整, 签到源数据稀疏)。
+    # StationDaily 为站点×日趋势(2026-06-01 起, 当日数据次日刷新才完整, 签到源数据稀疏)。
     "StationDaily": {
         "measures": [
             {"name": "count", "title": "站点日数(活跃站点日)"},
@@ -343,7 +343,7 @@ def _render_guide() -> str:
         lines.append("  维度(dimensions): " + "; ".join(
             f"{d['name']}={d['title']}" for d in parts["dimensions"]))
     lines.append("")
-    lines.append("数据窗口: 2026-07-01 起。获取率/有效率/传输率是平台统计口径,不在本工具,"
+    lines.append("数据窗口: 2026-06-01 起。获取率/有效率/传输率是平台统计口径,不在本工具,"
                  "用 jiangsu_query_statistics。考核两率窗口内无实际填报。")
     return "\n".join(lines)
 
