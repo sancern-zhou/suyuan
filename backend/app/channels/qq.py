@@ -235,8 +235,7 @@ class QQChannel(BaseChannel):
         - 最终消息：正常处理
         """
         if not self._client:
-            logger.warning("QQ client not initialized")
-            return
+            raise RuntimeError("QQ client not initialized")
 
         msg_id = msg.metadata.get("message_id")
         chat_type = self._chat_type_cache.get(msg.chat_id, "c2c")
@@ -247,6 +246,7 @@ class QQChannel(BaseChannel):
         is_stream_end = msg.metadata.get("_stream_end", True) if msg.metadata else True
 
         # 1) Send media（仅最终消息）
+        attachment_failed = False
         if is_stream_end:
             for media_ref in msg.media or []:
                 ok = await self._send_media(
@@ -256,6 +256,7 @@ class QQChannel(BaseChannel):
                     is_group=is_group,
                 )
                 if not ok:
+                    attachment_failed = True
                     filename = (
                         os.path.basename(urlparse(media_ref).path)
                         or os.path.basename(media_ref)
@@ -287,6 +288,9 @@ class QQChannel(BaseChannel):
                     msg_id=msg_id,
                     content=msg.content.strip(),
                 )
+
+        if attachment_failed:
+            raise RuntimeError("QQ attachment delivery failed")
 
     async def _send_text_only(
         self,

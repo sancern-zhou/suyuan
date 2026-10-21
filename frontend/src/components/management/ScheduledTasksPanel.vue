@@ -143,11 +143,12 @@
                 :disabled="editingWorkflowTask"
                 @change="handleExecutionModeChange"
               >
-                <option value="assistant">assistant</option>
+                <option value="office">办公模式</option>
+                <option v-if="createForm.execution_mode === 'assistant'" value="assistant">办公模式（历史配置）</option>
                 <option value="expert">expert</option>
                 <option value="query">query</option>
                 <option value="ops">ops（运维）</option>
-                <option value="social">social</option>
+                <option value="assistant">助手模式</option>
                 <option value="custom">custom（自选工具）</option>
                 <option value="workflow">workflow（确定性工作流）</option>
               </select>
@@ -257,6 +258,7 @@
                 <option value="once">一次性</option>
                 <option value="interval">自定义间隔</option>
                 <option value="daily_custom">每天自定义时间</option>
+                <option value="daily_hours_custom">每天多个时段</option>
                 <option value="weekly_custom">每周自定义时间</option>
               </select>
             </label>
@@ -280,12 +282,18 @@
               </select>
             </label>
 
+            <label class="form-field" v-if="createForm.trigger_type === 'schedule' && createForm.schedule_type === 'daily_hours_custom'">
+              <span>执行小时列表</span>
+              <input v-model="createForm.hoursText" type="text" placeholder="例如：0,1,2,3,4,5,6,7,12,13,18,19,20,21,22,23" />
+              <small class="form-hint">逗号分隔的 0-23 小时，任务将在每天的这些小时执行</small>
+            </label>
+
             <label class="form-field" v-if="createForm.trigger_type === 'schedule' && ['daily_custom', 'weekly_custom'].includes(createForm.schedule_type)">
               <span>小时</span>
               <input v-model.number="createForm.hour" type="number" min="0" max="23" />
             </label>
 
-            <label class="form-field" v-if="createForm.trigger_type === 'schedule' && ['daily_custom', 'weekly_custom'].includes(createForm.schedule_type)">
+            <label class="form-field" v-if="createForm.trigger_type === 'schedule' && ['daily_custom', 'daily_hours_custom', 'weekly_custom'].includes(createForm.schedule_type)">
               <span>分钟</span>
               <input v-model.number="createForm.minute" type="number" min="0" max="59" />
             </label>
@@ -636,7 +644,7 @@ const defaultForm = () => ({
   name: '',
   description: '',
   agent_prompt: '',
-  execution_mode: 'assistant',
+  execution_mode: 'office',
   model_tier: 'flash',
   result_requirements: [],
   skill_id: '',
@@ -655,6 +663,7 @@ const defaultForm = () => ({
   enabled: true,
   hour: 9,
   minute: 0,
+  hoursText: '',
   day_of_week: 4,
   interval_minutes: 30,
   run_at: '',
@@ -937,6 +946,7 @@ const getScheduledTaskLabel = (type) => {
     monthly_1st_7am: '每月 1 日 7 点',
     weekly_monday_8am: '每周一 8 点',
     daily_custom: '每天自定义',
+    daily_hours_custom: '每天多时段',
     weekly_custom: '每周自定义',
     interval: '自定义间隔',
     once: '一次性',
@@ -960,11 +970,12 @@ const getEventLabel = (eventType) => eventTypes.value.find(
 
 const getExecutionModeLabel = (mode) => {
   const labels = {
-    assistant: '助手模式',
+    assistant: '办公模式（历史配置）',
+    office: '办公模式',
     expert: '专家模式',
     query: '问数模式',
     ops: '运维模式',
-    social: '社交模式',
+
     custom: '自定义工具模式',
     workflow: '确定性工作流'
   }
@@ -1035,7 +1046,7 @@ const openEditDialog = async (task) => {
     name: task.name || '',
     description: task.description || '',
       agent_prompt: task.prompt || task.description || '',
-    execution_mode: task.execution_mode || 'assistant',
+    execution_mode: task.execution_mode || 'office',
     model_tier: task.model_tier || 'flash',
     result_requirements: (task.result_requirements || []).map(rule => ({ ...rule, allowedValuesText: (rule.allowed_values || []).join('，') })),
     skill_id: task.skill_id || '',
@@ -1055,6 +1066,7 @@ const openEditDialog = async (task) => {
     enabled: Boolean(task.enabled),
     hour: task.hour ?? 9,
     minute: task.minute ?? 0,
+    hoursText: Array.isArray(task.hours) ? task.hours.join(',') : '',
     day_of_week: task.day_of_week ?? 4,
     interval_minutes: task.interval_minutes ?? 30,
     run_at: task.run_at || '',

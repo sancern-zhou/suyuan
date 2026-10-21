@@ -28,16 +28,17 @@ def test_xuchang_disables_guangdong_query_tools_only_for_xuchang(monkeypatch):
         "query_station_standard_report",
         "query_station_standard_yoy_report",
     }
-    # 广东数据源工具已收敛为项目专属（共享 PROJECT_SCOPED_TOOL_NAMES 置空），
-    # 任何项目的共享模式白名单都不再包含它们；独立 chart 模式已下线移除。
-    forbidden = standard_report_tools | {"get_5min_data", "analyze_city_pollutant_rankings"}
     monkeypatch.setattr(settings, "project_id", "xuchang")
-    for mode in ("query", "report"):
-        assert forbidden.isdisjoint(get_tools_by_mode(mode))
+    for mode in ("query", "report", "chart"):
+        tools = get_tools_by_mode(mode)
+        assert "get_5min_data" not in tools
+        assert "analyze_city_pollutant_rankings" not in tools
+        assert standard_report_tools.isdisjoint(tools)
 
     monkeypatch.setattr(settings, "project_id", "default")
-    for mode in ("query", "report"):
-        assert forbidden.isdisjoint(get_tools_by_mode(mode))
+    assert "get_5min_data" in get_tools_by_mode("query")
+    assert "analyze_city_pollutant_rankings" in get_tools_by_mode("query")
+    assert standard_report_tools.issubset(get_tools_by_mode("query"))
 
 
 def test_xuchang_report_mode_is_orchestrator_focused(monkeypatch):
@@ -81,23 +82,21 @@ def test_report_prompt_has_no_guangdong_business_text(monkeypatch):
     assert "珠三角" not in prompt
 
 
-def test_xuchang_social_mode_uses_lightweight_query_toolset(monkeypatch):
+def test_xuchang_assistant_coordinates_instead_of_executing_professional_work(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "xuchang")
     tools = get_tools_by_mode("social")
 
     for required in (
-        "execute_sql_query",
-        "execute_postgres_sql_query",
-        "query_xcai_city_history",
-        "get_weather_data",
-        "execute_python",
-        "create_business_chart",
-        "knowledge_qa_workflow",
-        "knowledge_document_reader",
         "web_search",
         "web_fetch",
-        "schedule_task",
+        "manage_assistant_schedule",
         "send_notification",
+        "manage_assistant_memory",
+        "manage_assistant_runs",
+        "call_sub_agent",
+        "run_agent_workflow",
+        "manage_assistant_tasks",
+        "manage_assistant_coaching",
     ):
         assert required in tools
     for forbidden in (
@@ -105,16 +104,22 @@ def test_xuchang_social_mode_uses_lightweight_query_toolset(monkeypatch):
         "cli_session",
         "terminal_session",
         "spawn",
-        "wait_task",
-        "call_sub_agent",
-        "create_report_package",
         "broadcast_social_users",
+        "execute_sql_query",
+        "execute_postgres_sql_query",
+        "query_xcai_city_history",
+        "get_weather_data",
+        "execute_python",
+        "create_business_chart",
+        "create_report_package",
+        "knowledge_qa_workflow",
+        "knowledge_document_reader",
     ):
         assert forbidden not in tools
 
     monkeypatch.setattr(settings, "project_id", "default")
     default_social = get_tools_by_mode("social")
-    assert "bash" in default_social
+    assert "bash" not in default_social
     assert "call_sub_agent" in default_social
 
 
@@ -123,12 +128,11 @@ def test_xuchang_social_prompt_overrides_shared_social_prompt(monkeypatch):
 
     prompt = build_react_system_prompt("social")
 
-    assert "许昌市问数分析助理" in prompt
-    assert "get_weather_data" in prompt
-    assert "移动端助理" not in prompt
+    assert "助手模式职责与委派边界" in prompt
+    assert "office 子 Agent" in prompt
 
     monkeypatch.setattr(settings, "project_id", "default")
-    assert "移动端助理" in build_react_system_prompt("social")
+    assert "用户助理，适用于 Web、App 和社交渠道" in build_react_system_prompt("social")
 
 
 def test_xuchang_mode_prompts_carry_client_channel_branches(monkeypatch):

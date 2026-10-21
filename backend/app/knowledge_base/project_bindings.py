@@ -7,7 +7,7 @@ import os
 import structlog
 from sqlalchemy import or_, select
 
-from app.db.database import async_session
+from app.db.knowledge_database import knowledge_async_session as async_session
 from app.knowledge_base.models import KnowledgeBase, KnowledgeBaseStatus
 
 logger = structlog.get_logger()

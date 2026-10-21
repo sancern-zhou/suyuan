@@ -92,3 +92,41 @@ async def test_consolidation_scheduler_coalesces_same_session(tmp_path):
     await task
 
     assert calls == [("session_a", "global", "expert", True)]
+
+
+def test_social_memory_context_includes_curated_facts_index(tmp_path):
+    """社交整合器把晋升事实写入 facts/*.md，注入端必须渲染其索引（否则写而不读）。"""
+    from app.agent.memory.active_memory_retriever import build_memory_context
+    from app.agent.memory.curated_facts import CuratedFactStore
+
+    workspace = tmp_path / "wx_user1"
+    workspace.mkdir()
+    CuratedFactStore(workspace).add(
+        fact="用户偏好简洁回复",
+        category="用户偏好",
+        source_ref="social_session_x [3]",
+        applies_when="社交对话",
+    )
+    fake_store = SimpleNamespace(workspace=workspace, read_long_term=lambda: "")
+
+    context = build_memory_context(fake_store, query="随便聊聊")
+
+    assert "已整理事实索引" in context
+    assert "用户偏好简洁回复" in context
+    assert "social_session_x [3]" in context
+
+
+def test_consolidation_prompt_follows_two_layer_contract():
+    """整合提示词：只写事实层，MEMORY.md 为只读判重背景；旧容量契约不得残留。"""
+    prompt = ReActAgent._build_consolidation_prompt(
+        None,
+        [{"role": "user", "content": "需要记住的事"}],
+        "expert",
+        existing_memory="# 长期记忆 (MEMORY.md)\n\n## 用户偏好\n",
+    )
+    assert "facts/*.md" in prompt
+    assert "只读背景" in prompt
+    assert "remember_fact" in prompt
+    assert "3000" not in prompt
+    assert "使用率" not in prompt
+    assert "记忆文件路径" not in prompt

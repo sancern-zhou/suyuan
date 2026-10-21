@@ -38,11 +38,6 @@ class ChunkDraft:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class ChunkDiff:
-    reused: list[ChunkDraft]
-    added: list[ChunkDraft]
-    removed: list[ChunkDraft]
 
 
 def build_chunk_drafts(chunks: Iterable[Mapping[str, Any]]) -> list[ChunkDraft]:
@@ -85,19 +80,3 @@ def build_chunk_drafts(chunks: Iterable[Mapping[str, Any]]) -> list[ChunkDraft]:
         )
 
     return drafts
-
-
-def diff_chunks(old: list[ChunkDraft], new: list[ChunkDraft]) -> ChunkDiff:
-    new_by_key = {chunk.chunk_key: chunk for chunk in new}
-
-    reused = [
-        chunk
-        for chunk in old
-        if chunk.chunk_key in new_by_key
-        and chunk.index_hash == new_by_key[chunk.chunk_key].index_hash
-    ]
-    reused_keys = {chunk.chunk_key for chunk in reused}
-    removed = [chunk for chunk in old if chunk.chunk_key not in reused_keys]
-    added = [chunk for chunk in new if chunk.chunk_key not in reused_keys]
-
-    return ChunkDiff(reused=reused, added=added, removed=removed)

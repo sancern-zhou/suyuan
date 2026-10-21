@@ -15,17 +15,19 @@ export const buildExecutionModeOptions = (
   projectModes = [],
   currentMode = '',
 ) => {
-  const options = projectModes.map(mode => ({
-    value: mode.id,
-    label: `${mode.id}（${mode.shortName || mode.name || mode.id}）`
-  }))
+  const options = projectModes.map(mode => {
+    const id = mode.id
+    return { value: id, label: `${id}（${mode.shortName || mode.name || id}）` }
+  })
   options.push(
-    { value: 'social', label: 'social（社交任务）' },
+    { value: 'office', label: 'office（办公模式）' },
+    { value: 'assistant', label: 'assistant（助手模式）' },
     { value: 'custom', label: 'custom（自选工具）' },
     { value: 'workflow', label: 'workflow（确定性工作流）' }
   )
   if (currentMode && !options.some(option => option.value === currentMode)) {
-    options.push({ value: currentMode, label: `${currentMode}（当前任务模式）` })
+    const label = `${currentMode}（当前任务模式）`
+    options.push({ value: currentMode, label })
   }
   return options.filter((option, index, values) => (
     values.findIndex(candidate => candidate.value === option.value) === index
@@ -39,7 +41,7 @@ export const applyTriggerDefaults = (form, triggerType, eventTypes = []) => {
   if (triggerType === 'event') {
     // 工作流任务是代码注册的确定性单元，切换触发方式不得改写其执行模式。
     if (previousMode !== 'workflow') {
-      form.execution_mode = 'social'
+      form.execution_mode = 'assistant'
     }
     form.tool_names = []
     form.broadcast_enabled = true
@@ -64,7 +66,7 @@ export const buildTaskPayload = (form) => {
   const payload = {
     name: String(form.name || '').trim(),
     description: String(form.description || '').trim(),
-    execution_mode: form.execution_mode || 'assistant',
+    execution_mode: form.execution_mode || 'office',
     model_tier: form.model_tier || 'flash',
     result_requirements: (form.result_requirements || []).map(rule => ({
       field: String(rule.field || '').trim(),
@@ -119,6 +121,13 @@ export const buildTaskPayload = (form) => {
     payload.interval_minutes = Number(form.interval_minutes) || 30
   } else if (!isEvent && form.schedule_type === 'daily_custom') {
     payload.hour = Number(form.hour)
+    payload.minute = Number(form.minute)
+  } else if (!isEvent && form.schedule_type === 'daily_hours_custom') {
+    payload.hours = String(form.hoursText || '')
+      .split(/[,，\s]+/)
+      .map(value => Number(value))
+      .filter(value => Number.isInteger(value) && value >= 0 && value <= 23)
+      .filter((value, index, values) => values.indexOf(value) === index)
     payload.minute = Number(form.minute)
   } else if (!isEvent && form.schedule_type === 'weekly_custom') {
     payload.day_of_week = Number(form.day_of_week)

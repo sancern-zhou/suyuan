@@ -77,6 +77,17 @@ class ActiveWorkflowRegistry:
         async with self._lock:
             return self._items.get(workflow_id)
 
+    async def is_active(self, workflow_id: str) -> bool:
+        if await self.get(workflow_id) is not None:
+            return True
+        if self._store is not None:
+            try:
+                state = await self._store.get(self._state_key(workflow_id))
+                return bool(state and state.run_id == workflow_id and state.status in {"running", "pause_requested"})
+            except Exception:
+                return False
+        return False
+
     async def list(self, *, session_id: Optional[str] = None) -> list[ActiveWorkflow]:
         async with self._lock:
             values = list(self._items.values())

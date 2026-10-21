@@ -1,6 +1,7 @@
 """Unit tests for QQ Channel."""
 
 import pytest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import Mock, AsyncMock, patch
 
@@ -16,18 +17,18 @@ def message_bus():
 
 
 @pytest.fixture
-def qq_config():
+def qq_config(tmp_path):
     """Create QQ channel configuration."""
-    return {
+    return SimpleNamespace(**{
         "enabled": True,
         "app_id": "test_app_id",
         "secret": "test_secret",
         "allow_from": ["*"],
         "msg_format": "plain",
-        "media_dir": "",
+        "media_dir": str(tmp_path / "qq"),
         "download_chunk_size": 262144,
         "download_max_bytes": 209715200,
-    }
+    })
 
 
 @pytest.fixture
@@ -60,8 +61,8 @@ class TestFilenameSanitization:
 
     def test_sanitize_filename_path_traversal(self):
         """Test path traversal attempts are blocked."""
-        assert _sanitize_filename("../../etc/passwd") == "etc_passwd"
-        assert _sanitize_filename("..\\..\\windows\\system32") == "windows_system32"
+        assert _sanitize_filename("../../etc/passwd") == "passwd"
+        assert _sanitize_filename("..\\..\\windows\\system32") == "system32"
 
 
 class TestFileTypeDetection:
@@ -133,8 +134,8 @@ class TestQQChannel:
             content="Test message"
         )
 
-        # Should not raise, just log warning
-        await qq_channel.send(msg)
+        with pytest.raises(RuntimeError, match="not initialized"):
+            await qq_channel.send(msg)
 
     @pytest.mark.asyncio
     async def test_send_text_only_mock(self, qq_channel):

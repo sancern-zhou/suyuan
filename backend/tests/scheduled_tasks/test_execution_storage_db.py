@@ -6,10 +6,7 @@ from sqlalchemy.pool import NullPool
 
 from app.db.models.scheduled_task_execution_db import ScheduledTaskExecutionDB
 from app.scheduled_tasks.models import ExecutionStatus, TaskExecution
-from app.scheduled_tasks.storage.execution_storage_db import (
-    DatabaseExecutionStorage,
-    execution_db_enabled,
-)
+from app.scheduled_tasks.storage.execution_storage_db import DatabaseExecutionStorage
 
 
 def _execution(index: int, task_id: str = "task-1") -> TaskExecution:
@@ -106,17 +103,3 @@ def test_database_execution_storage_update_requires_existing(tmp_path):
         loop.close()
 
 
-def test_execution_db_enabled_defaults(monkeypatch):
-    monkeypatch.delenv("SCHEDULED_TASK_EXECUTION_STORAGE", raising=False)
-    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@localhost/db")
-    assert execution_db_enabled() is True
-
-    monkeypatch.setenv("SCHEDULED_TASK_EXECUTION_STORAGE", "file")
-    assert execution_db_enabled() is False
-
-    monkeypatch.setenv("SCHEDULED_TASK_EXECUTION_STORAGE", "db")
-    assert execution_db_enabled() is True
-
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.delenv("SCHEDULED_TASK_EXECUTION_STORAGE", raising=False)
-    assert execution_db_enabled() is False

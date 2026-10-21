@@ -15,10 +15,6 @@ Office Automation Tools
 - WeComCliTool: 官方企业微信 CLI 包装工具
 - soffice: LibreOffice 沙箱适配（跨平台）
 
-旧版工具（Win32 COM，待废弃）：
-- WordWin32Tool, ExcelWin32Tool, PPTWin32Tool
-- WordWin32LLMTool, ExcelWin32LLMTool, PPTWin32LLMTool
-
 Excel操作说明：
 所有Excel操作（创建、读取、修改、公式重算等）请使用 execute_python 工具，
 配合 openpyxl、pandas、xlsxwriter 等库实现。

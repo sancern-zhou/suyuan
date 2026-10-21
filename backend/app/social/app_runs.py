@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sqlite3
 import time
 import uuid
@@ -185,8 +186,9 @@ class AppRunStore:
                     return
                 await asyncio.sleep(1)
         heartbeat = asyncio.create_task(pulse())
+        gen = producer()
         try:
-            async for frame in producer():
+            async for frame in gen:
                 if frame.startswith("data: "):
                     event = json.loads(frame[6:])
                     # Admission already emitted the start event with stable IDs.
@@ -201,6 +203,12 @@ class AppRunStore:
         finally:
             heartbeat.cancel()
             await asyncio.gather(heartbeat, return_exceptions=True)
+            try:
+                await gen.aclose()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logging.getLogger(__name__).exception("app_run_producer_close_failed")
 
     async def stream(self, run_id, after=0):
         while True:

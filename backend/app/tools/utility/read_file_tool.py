@@ -24,6 +24,7 @@ Word XML 三种模式：
 - PDF/DOCX/PPTX 内部委托给专业工具，保持代码不变
 - 自动降级策略确保鲁棒性
 """
+import difflib
 import os
 import tempfile
 from mimetypes import guess_type
@@ -182,10 +183,16 @@ class ReadFileTool(LLMTool):
 
             # 2. 检查文件是否存在
             if not resolved_path.exists():
+                suggestions = self._suggest_similar_files(resolved_path)
+                hint = (
+                    f"同目录下存在名称相近的文件: {'、'.join(suggestions)}，请确认是否想读取其中之一"
+                    if suggestions
+                    else "请确认路径拼写，必要时先用 list_directory 查看目录内容"
+                )
                 return {
                     "success": False,
-                    "data": {"error": "文件不存在"},
-                    "summary": "文件不存在"
+                    "data": {"error": "文件不存在", "suggestions": suggestions, "hint": hint},
+                    "summary": f"文件不存在: {path}。{hint}"
                 }
 
             if resolved_path.is_char_device() or resolved_path.is_block_device() or resolved_path.is_fifo():
@@ -299,6 +306,22 @@ class ReadFileTool(LLMTool):
                 "data": {"error": f"无法列出目录内容: {str(e)}"},
                 "summary": f"无法访问目录: {dir_path.name}"
             }
+
+    def _suggest_similar_files(self, resolved_path: Path) -> list[str]:
+        """Suggest nearby filenames without attempting to read them automatically."""
+        try:
+            parent = resolved_path.parent
+            if not parent.is_dir():
+                return []
+            target = resolved_path.name
+            candidates = [entry.name for entry in parent.iterdir() if entry.name != target]
+            close = difflib.get_close_matches(target, candidates, n=3, cutoff=0.5)
+            if close:
+                return close
+            stem = resolved_path.stem
+            return [name for name in candidates if Path(name).stem == stem][:3]
+        except OSError:
+            return []
 
     def _file_unchanged_result(
         self, file_path: Path, offset: int, limit: Optional[int]
@@ -485,9 +508,29 @@ class ReadFileTool(LLMTool):
                     "summary": f"文本编码错误: {file_path.name}"
                 }
 
+            if total_lines == 0:
+                stat = file_path.stat()
+                get_file_read_state().set(
+                    str(file_path), content="", offset=None, limit=None,
+                    is_partial_view=False, file_size=file_size,
+                    file_mtime_ns=stat.st_mtime_ns,
+                    file_inode=getattr(stat, "st_ino", None), encoding=encoding,
+                )
+                return {
+                    "success": True,
+                    "data": {
+                        "type": "text", "format": file_path.suffix[1:] if file_path.suffix else "txt",
+                        "path": str(file_path), "size": file_size, "content": "",
+                        "total_lines": 0, "line_range": [],
+                        "note": "文件存在但内容为空（0 行），可直接 edit_file 或 write_file。",
+                    },
+                    "summary": f"文件存在但内容为空: {file_path.name}（{file_size} bytes，0 行）",
+                }
+
             start_line = min(offset, total_lines)
             end_line = min(offset + len(selected_lines), total_lines)
             content = "\n".join(selected_lines)
+            past_eof = offset >= total_lines
 
             # 检查是否需要截断
             is_truncated = effective_limit is not None and end_line < total_lines
@@ -515,6 +558,12 @@ class ReadFileTool(LLMTool):
             }
             if preview_clipped:
                 data["visible_line_range"] = [start_line + 1, visible_end_line]
+            if past_eof:
+                data["line_range"] = []
+                data["note"] = (
+                    f"文件共 {total_lines} 行，请求的起始行 {offset + 1}（offset={offset}）已超出文件末尾；"
+                    f"如需读取末尾内容请使用 offset={max(total_lines - 1, 0)}。"
+                )
             file_ref = build_file_ref(
                 file_path,
                 type="text",
@@ -550,7 +599,12 @@ class ReadFileTool(LLMTool):
                 }
 
             # 构建摘要信息
-            if effective_limit is not None and end_line < total_lines:
+            if past_eof:
+                summary = (
+                    f"读取结果为空: {file_path.name} 共 {total_lines} 行，"
+                    f"请求的起始行 {offset + 1}（offset={offset}）已超出文件末尾"
+                )
+            elif effective_limit is not None and end_line < total_lines:
                 # 用户指定了 limit 但未读完
                 summary = (
                     f"读取成功: {file_path.name} ({file_size} bytes)\n"

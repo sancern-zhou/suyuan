@@ -127,9 +127,8 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { generateFromTemplateFile, generateFromTemplateAgent, generateFromSavedTemplate, listTemplates } from '@/services/reportApi'
+import { generateFromTemplateFile, generateFromSavedTemplate, listTemplates } from '@/services/reportApi'
 import GenerationProgress from '@/components/report/GenerationProgress.vue'
-import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import { useReactStore } from '@/stores/reactStore'
 
 const props = defineProps({
@@ -243,29 +242,21 @@ const startGeneration = async () => {
   generationEvents.value = []
 
   try {
-    let result
+    let generation
     if (selectedMode.value === 'upload') {
-      // 直接将文件传给后端，由后端负责 docx/md/txt -> Markdown 转换
-      const displayRange = `${timeRange.value.start}至${timeRange.value.end}`
-      const { reportContent, sessionId } = await generateFromTemplateFile(uploadedFile.value, {
+      generation = await generateFromTemplateFile(uploadedFile.value, {
         start: timeRange.value.start,
         end: timeRange.value.end,
-        display: displayRange
+        display: `${timeRange.value.start}至${timeRange.value.end}`
       })
-      result = reportContent
-
-      // 如果后端返回了 ReAct 会话ID，则将其接入当前reactStore，
-      // 这样后续在“报告生成场景”中的对话可以基于同一session进行ReAct连续对话。
-      if (sessionId) {
-        reactStore.sessionId = sessionId
-      }
     } else {
-      // 固定模板走原有保存模板流程
-      result = await generateFromSavedTemplate(selectedTemplate.value.id, {
+      generation = await generateFromSavedTemplate(selectedTemplate.value.id, {
         time_range: timeRange.value,
         options: options.value
       })
     }
+    const { reportContent: result, sessionId } = generation
+    if (sessionId) reactStore.sessionId = sessionId
 
     currentPhase.value = '生成完成'
     generationProgress.value = 100

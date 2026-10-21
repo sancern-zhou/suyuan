@@ -39,6 +39,7 @@ class RunHandle:
     task_armed: bool = False
     finished: asyncio.Event = field(default_factory=asyncio.Event)
     monitor_task: Optional[asyncio.Task] = None
+    shared_registration_rejected: bool = False
 
 
 class CancellationRegistry:
@@ -95,19 +96,19 @@ class CancellationRegistry:
                 return False
             if handle.run_id == run_id:
                 return True
-            handle.run_id = run_id
-        registered = await self._store.register(session_id, run_id)
-        if not registered:
-            logger.warning(
-                "agent_run_shared_registration_rejected",
-                session_id=session_id,
-                run_id=run_id,
-            )
-            return False
-        async with self._lock:
-            handle = self._handles.get(session_id)
-            if not handle or handle.cancel_event is not cancel_event:
+            # Commit local ownership only after the shared claim succeeds.
+            # Keep the local lock across the claim so unregister cannot race it.
+            registered = await self._store.register(session_id, run_id)
+            if not registered:
+                handle.shared_registration_rejected = True
+                logger.warning(
+                    "agent_run_shared_registration_rejected",
+                    session_id=session_id,
+                    run_id=run_id,
+                )
                 return False
+            handle.run_id = run_id
+            handle.shared_registration_rejected = False
             handle.monitor_task = asyncio.create_task(
                 self._monitor_shared_cancellation(session_id, cancel_event, run_id)
             )
@@ -273,7 +274,16 @@ class CancellationRegistry:
     ) -> bool:
         async with self._lock:
             handle = self._handles.get(session_id)
-            return bool(handle and handle.cancel_event is cancel_event)
+            if not handle or handle.cancel_event is not cancel_event or handle.shared_registration_rejected:
+                return False
+            run_id = handle.run_id
+        if not run_id:
+            # Cancellation can arrive during setup, before the runtime binds
+            # its run ID. Permit that checkpoint only if no shared run owns it.
+            shared = await self._store.get(session_id)
+            return shared is None or shared.status in {"paused", "finished", "failed"}
+        shared = await self._store.get(session_id)
+        return bool(shared and shared.run_id == run_id)
 
     async def record_finalization_error(
         self,
@@ -323,6 +333,7 @@ class CancellationRegistry:
                 logger.info("agent_run_unregistered", session_id=session_id)
         if monitor_task and monitor_task is not asyncio.current_task():
             monitor_task.cancel()
+            await asyncio.gather(monitor_task, return_exceptions=True)
         if run_id is not None:
             await self._store.finish(session_id, run_id)
             await run_ownership_registry.revoke(session_id, run_id)

@@ -17,6 +17,7 @@ from app.api.fetcher_worker_routes import router as fetcher_worker_router
 from app.api.jiangsu_smart_event_worker_routes import router as jiangsu_smart_event_worker_router
 from app.api.scheduled_task_routes import router as scheduled_task_router
 from app.api.social_broadcast_worker_routes import router as social_broadcast_worker_router
+from app.api.assistant_plan_routes import router as assistant_plan_router
 from app.auth.internal_identity import INTERNAL_USER_HEADER, decode_internal_user
 from config.settings import settings
 
@@ -55,10 +56,13 @@ def create_social_worker_api_app(
         if internal_token and request.headers.get("x-social-worker-token") != internal_token:
             return JSONResponse({"detail": "Forbidden"}, status_code=403)
         identity_path = (
-            request.url.path == "/api/scheduled-tasks"
+            request.url.path == "/internal/assistant-schedule"
+            or request.url.path == "/api/scheduled-tasks"
             or request.url.path.startswith("/api/scheduled-tasks/")
             or request.url.path == "/api/social/accounts"
             or request.url.path.startswith("/api/social/accounts/")
+            or request.url.path == "/api/fetchers"
+            or request.url.path.startswith("/api/fetchers/")
             or request.url.path == "/internal/jiangsu/smart-events"
             or request.url.path.startswith("/internal/jiangsu/smart-events/")
         )
@@ -88,6 +92,7 @@ def create_social_worker_api_app(
     app.include_router(jiangsu_smart_event_worker_router)
     app.include_router(scheduled_task_router)
     app.include_router(social_broadcast_worker_router)
+    app.include_router(assistant_plan_router, prefix="/internal")
     return app
 
 

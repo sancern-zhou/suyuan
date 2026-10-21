@@ -18,6 +18,7 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.jiangsu.device_control import _DeviceControlClient
 from app.tools.jiangsu.result_filter import externalize_compact_records
 from app.tools.jiangsu.review_evidence import (
+    COMPARISON_POLLUTANTS,
     POLLUTANT_UNITS,
     fetch_same_city_band,
     pollutant_points,
@@ -2934,12 +2935,16 @@ class JiangsuReviewEvidenceTool(LLMTool):
             work_order_summary = "故障工单关键字段（标题/内容/设备/时间/状态）"
         else:
             work_order_summary = "未提供工单号，仅图表证据"
-        pm25_points: list[dict[str, Any]] = []
-        if pollutant_code != "PM2.5":
+        comparison_code = COMPARISON_POLLUTANTS.get(str(pollutant_code or "").upper())
+        comparison_points: list[dict[str, Any]] = []
+        if comparison_code:
             try:
-                pm25_points = pollutant_points(records, "PM2.5")
+                comparison_points = pollutant_points(records, comparison_code)
             except (ValueError, KeyError):
-                pm25_points = []
+                comparison_points = []
+        comparison_summary = (
+            f"本站 {pollutant_code} 逐时浓度（含 {comparison_code} 对照序列）"
+            if comparison_code else f"本站 {pollutant_code} 逐时浓度")
         sources: dict[str, dict[str, Any]] = {
             "work_order": {
                 "status": "success" if (order_data or detail) else "skipped",
@@ -2950,9 +2955,11 @@ class JiangsuReviewEvidenceTool(LLMTool):
             "station_hour": {
                 "status": "success" if points else "empty",
                 "record_count": len(points),
-                "summary": f"本站 {pollutant_code} 逐时浓度（含 PM2.5 对照序列）",
-                "data": {"unit": unit, "pollutant": pollutant_code, "points": points,
-                         "pm25_points": pm25_points},
+                "summary": comparison_summary,
+                "data": {"unit": unit, "pollutant": pollutant_code,
+                         "points": points,
+                         "comparison_pollutant": comparison_code,
+                         "comparison_points": comparison_points},
             },
             "band": {
                 "status": "success" if band else "empty",
@@ -3067,9 +3074,12 @@ class JiangsuReviewEvidenceTool(LLMTool):
             }
             if name == "station_hour":
                 item["projection"] = _project_pollutant_points(data.get("points") or [])
-                pm25 = data.get("pm25_points") or []
-                if pm25:
-                    item["projection"]["pm25"] = _project_pollutant_points(pm25)
+                comparison = data.get("comparison_points") or []
+                if comparison:
+                    item["projection"]["comparison"] = {
+                        "pollutant": data.get("comparison_pollutant"),
+                        **_project_pollutant_points(comparison),
+                    }
             elif name == "band":
                 item["projection"] = _project_band(data.get("band") or [])
             elif name == "weather":

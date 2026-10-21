@@ -15,5 +15,6 @@ export const resolveRestoredAgentMode = (sessionData, sessionId, currentMode) =>
     'assistant'
   ]
 
-  return candidates.find(mode => AGENT_MODE_IDS.includes(mode)) || 'assistant'
+  return candidates
+    .find(mode => AGENT_MODE_IDS.includes(mode)) || 'assistant'
 }

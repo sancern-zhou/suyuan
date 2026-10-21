@@ -19,6 +19,7 @@ def test_enforcement_exam_has_only_the_minimal_tools():
         "web_fetch",
         "schedule_task",
         "create_report_package",
+        "edit_file",
     ]
     assert get_tool_order("enforcement_exam") == list(tools)
     assert "bash" not in tools
@@ -86,12 +87,12 @@ def test_social_bridge_resolves_professional_mode_from_channel_config():
         "weixin:exam": SimpleNamespace(
             config=SimpleNamespace(agent_mode="enforcement_exam")
         ),
-        "weixin:normal": SimpleNamespace(config=SimpleNamespace(agent_mode="social")),
+        "weixin:normal": SimpleNamespace(config=SimpleNamespace(agent_mode="assistant")),
     }
 
     assert bridge._get_agent_mode("weixin:exam") == "enforcement_exam"
-    assert bridge._get_agent_mode("weixin:normal") == "social"
-    assert bridge._get_agent_mode("weixin:missing") == "social"
+    assert bridge._get_agent_mode("weixin:normal") == "assistant"
+    assert bridge._get_agent_mode("weixin:missing") == "assistant"
 
 
 @pytest.mark.asyncio
@@ -107,7 +108,7 @@ async def test_social_bridge_uses_exam_runtime_with_social_session_storage():
 
     bridge = object.__new__(AgentBridge)
     bridge.agent = Agent()
-    bridge.mode = "social"
+    bridge.mode = "assistant"
 
     answer, reasoning = await bridge._aggregate_agent_events(
         content="开始刷题",
@@ -121,5 +122,5 @@ async def test_social_bridge_uses_exam_runtime_with_social_session_storage():
     assert answer == "题目内容"
     assert reasoning == ""
     assert bridge.agent.kwargs["manual_mode"] == "enforcement_exam"
-    assert bridge.agent.kwargs["session_storage_mode"] == "social"
+    assert bridge.agent.kwargs["session_storage_mode"] == "channel"
     assert bridge.agent.kwargs["user_identifier"] == "platform-user-1"

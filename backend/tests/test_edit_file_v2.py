@@ -11,6 +11,9 @@ EditFile V2 功能测试脚本（修复版）
 7. 错误提示增强
 """
 import asyncio
+import tempfile
+import pytest
+from app.utils.path_config import BACKEND_ROOT
 from pathlib import Path
 from app.tools.utility.read_file_tool import ReadFileTool
 from app.tools.utility.edit_file_tool_v2 import EditFileToolV2
@@ -18,7 +21,14 @@ from app.tools.utility.file_read_state import get_file_read_state
 
 
 # 临时文件目录
-TEMP_DIR = Path("/home/xckj/suyuan/backend_data_registry/temp")
+TEMP_DIR = None
+
+
+@pytest.fixture(autouse=True)
+def isolated_files(monkeypatch):
+    with tempfile.TemporaryDirectory(dir=BACKEND_ROOT / "tests") as directory:
+        monkeypatch.setattr(__import__(__name__, fromlist=["TEMP_DIR"]), "TEMP_DIR", Path(directory))
+        yield
 
 
 async def test_pre_read_validation():

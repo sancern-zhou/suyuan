@@ -20,6 +20,7 @@ import structlog
 
 from app.services.jiangsu_work_order_review import save_evidence
 from app.tools.jiangsu.review_evidence import (
+    COMPARISON_POLLUTANTS,
     POLLUTANT_ROW_KEYS,
     POLLUTANT_UNITS,
     same_city_band,
@@ -126,16 +127,23 @@ def _station_hour_source(pack: dict[str, Any], pollutant: str) -> dict[str, Any]
     hour_payload = monitoring.get("station_hour_raw")
     rows = _tool_payload_rows(hour_payload)
     points = _points_from_rows(rows, pollutant, keep_flags=True)
-    pm25_points = _points_from_rows(rows, "PM2.5") if pollutant != "PM2.5" else []
+    target_code = str(pollutant or "").upper()
+    comparison = COMPARISON_POLLUTANTS.get(target_code)
+    comparison_points = (
+        _points_from_rows(rows, comparison)
+        if comparison and comparison != target_code else []
+    )
+    data: dict[str, Any] = {"unit": POLLUTANT_UNITS.get(pollutant, "μg/m³"), "pollutant": pollutant,
+                            "comparison_pollutant": comparison,
+                            "points": [], "comparison_points": []}
     if not points:
         return {"status": "empty", "record_count": 0,
-                "summary": "小时原始数据未含有效目标污染物数值",
-                "data": {"unit": POLLUTANT_UNITS.get(pollutant, "μg/m³"), "pollutant": pollutant,
-                         "points": [], "pm25_points": []}}
-    return {"status": "success", "record_count": len(points),
-            "summary": f"本站 {pollutant} 逐时浓度（含审核标识解析与 PM2.5 对照序列）",
-            "data": {"unit": POLLUTANT_UNITS.get(pollutant, "μg/m³"), "pollutant": pollutant,
-                     "points": points, "pm25_points": pm25_points}}
+                "summary": "小时原始数据未含有效目标污染物数值", "data": data}
+    data["points"] = points
+    data["comparison_points"] = comparison_points
+    summary = (f"本站 {pollutant} 逐时浓度（含审核标识解析与 {comparison} 对照序列）"
+               if comparison else f"本站 {pollutant} 逐时浓度（含审核标识解析）")
+    return {"status": "success", "record_count": len(points), "summary": summary, "data": data}
 
 
 def _band_source(pack: dict[str, Any], pollutant: str, station_code: str,

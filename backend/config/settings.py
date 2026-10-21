@@ -37,6 +37,14 @@ class Settings(BaseSettings):
         default="web",
         description="Application role: web, worker, or all. Web workers must not start background schedulers.",
     )
+    assistant_followups_enabled: bool = Field(
+        default=False,
+        description="Enable durable personal followups on the existing worker scheduler after schema preparation",
+    )
+    assistant_analysis_enabled: bool = Field(
+        default=False,
+        description="Enable bounded read-only assistant analyses; also requires assistant_followups_enabled",
+    )
     sse_heartbeat_interval_seconds: float = Field(
         default=15.0,
         gt=0,
@@ -157,6 +165,11 @@ class Settings(BaseSettings):
     auth_identity_cache_key_prefix: str = Field(
         default="suyuan:auth:",
         description="Redis prefix for authentication state",
+    )
+    slow_request_log_threshold_seconds: float = Field(
+        default=2.0,
+        ge=0.1,
+        description="Warn when a request takes this long to first response bytes",
     )
     auth_ws_ticket_ttl_seconds: int = Field(
         default=30,
@@ -696,6 +709,15 @@ class Settings(BaseSettings):
         default=7200,
         ge=60,
         description="TTL for active-run steering metadata and pending inputs",
+    )
+    agent_visual_alias_redis_prefix: str = Field(
+        default="suyuan:agent:visual_alias",
+        description="Redis key prefix for session-scoped short chart aliases ([[chart:chart_N]])",
+    )
+    agent_visual_alias_ttl_seconds: int = Field(
+        default=1209600,
+        ge=60,
+        description="TTL for session-scoped chart alias mappings (refreshed on each bind)",
     )
 
     # Cache TTL (seconds)

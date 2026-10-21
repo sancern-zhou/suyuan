@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-import difflib
 from datetime import date, datetime, timezone
+import difflib
 import fcntl
 import os
 from pathlib import Path
@@ -12,9 +12,12 @@ import tempfile
 from typing import Any, Iterator
 from uuid import uuid4
 
+import structlog
 import yaml
 
 from app.utils.path_config import format_agent_path
+
+logger = structlog.get_logger(__name__)
 
 
 class CuratedFactStore:
@@ -24,6 +27,8 @@ class CuratedFactStore:
     # 高阈值 + 候选数上限，避免把"没找到"变成"改错条目"。
     FUZZY_RATIO_THRESHOLD = 0.72
     FUZZY_MATCH_CAP = 2
+    SUGGESTION_LIMIT = 3
+    SUGGESTION_CUTOFF = 0.72
 
     def __init__(self, workspace: Path) -> None:
         self.root = Path(workspace).resolve() / "facts"
@@ -51,6 +56,25 @@ class CuratedFactStore:
         if not value:
             return ""
         return date.fromisoformat(value).isoformat()
+
+    @staticmethod
+    def _is_expired(record: dict[str, Any], today: str) -> bool:
+        expiry = (record.get("metadata") or {}).get("valid_until")
+        return bool(expiry) and str(expiry) < today
+
+    def _purge_expired_unlocked(self, records: list[dict[str, Any]], today: str) -> int:
+        """物理删除已过期的事实文件（事实层的"遗忘"；调用方须持有文件锁）。"""
+        purged = 0
+        for record in records:
+            if self._is_expired(record, today):
+                try:
+                    record["path"].unlink()
+                    purged += 1
+                except OSError:
+                    continue
+        if purged:
+            logger.info("curated_facts_purged_expired", workspace=str(self.root), purged=purged)
+        return purged
 
     def _read(self, path: Path) -> dict[str, Any] | None:
         try:
@@ -149,29 +173,29 @@ class CuratedFactStore:
         scored.sort(key=lambda pair: pair[0], reverse=True)
         return [record for _, record in scored[: self.FUZZY_MATCH_CAP]]
 
-    def suggest(self, old_text: str, category: str | None = None, limit: int = 3) -> list[dict[str, Any]]:
-        """not_found 时返回最接近的现有条目，供模型改用原文重试，省一轮试错。"""
+    def suggest(self, old_text: str, category: str | None = None) -> list[dict[str, Any]]:
+        """Return likely records for an explicit follow-up, without selecting one."""
         needle = self._normalize(old_text)
         if not needle:
             return []
-        scored: list[tuple[float, dict[str, Any]]] = []
-        for record in self._records():
-            if category and record.get("metadata", {}).get("type") != category:
-                continue
-            hay = self._normalize(record["fact"])
-            ratio = difflib.SequenceMatcher(None, needle, hay).ratio()
-            if needle in hay or hay in needle:
-                ratio = max(ratio, 0.9)
-            if ratio >= 0.4:
-                scored.append((ratio, record))
-        scored.sort(key=lambda pair: pair[0], reverse=True)
+        records = [
+            record for record in self._records()
+            if not category or record.get("metadata", {}).get("type") == category
+        ]
+        scored = []
+        for record in records:
+            fact = self._normalize(record.get("fact", ""))
+            name = self._normalize(record.get("name", ""))
+            score = max(
+                difflib.SequenceMatcher(None, needle, fact).ratio(),
+                difflib.SequenceMatcher(None, needle, name).ratio(),
+            )
+            if score >= self.SUGGESTION_CUTOFF:
+                scored.append((score, record))
+        scored.sort(key=lambda item: (-item[0], item[1].get("name", "")))
         return [
-            {
-                "name": record["name"],
-                "fact": record["fact"][:160],
-                "score": round(score, 2),
-            }
-            for score, record in scored[:limit]
+            {"name": record["name"], "fact": record["fact"], "score": round(score, 3)}
+            for score, record in scored[:self.SUGGESTION_LIMIT]
         ]
 
     def replace(self, old_text: str, new_text: str, category: str | None = None) -> str:
@@ -206,8 +230,14 @@ class CuratedFactStore:
             return ""
         today = date.today().isoformat()
         with self._locked():
+            records = self._records()
+            self._purge_expired_unlocked(records, today)
+            records = [
+                record for record in records
+                if not self._is_expired(record, today)
+            ]
             records = sorted(
-                self._records(),
+                records,
                 key=lambda record: record.get("metadata", {}).get("updated_at")
                 or record.get("metadata", {}).get("created_at", ""),
                 reverse=True,

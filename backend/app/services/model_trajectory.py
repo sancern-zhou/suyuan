@@ -41,7 +41,13 @@ def trajectory_scope(session_id=None, *, run_id=None, source=None):
     try:
         yield
     finally:
-        _scope.reset(token)
+        try:
+            _scope.reset(token)
+        except ValueError:
+            # 持有方生成器可能在异于创建时的上下文中被兜底关闭（任务取消后由
+            # GC aclose），此时 token 无法复位；跳过即可，旧的 scope 值随
+            # 遗弃上下文一并失效，不能让清理链路在这里中断。
+            pass
 
 
 def plain(value):

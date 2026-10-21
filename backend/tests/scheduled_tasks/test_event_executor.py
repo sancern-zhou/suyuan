@@ -574,3 +574,21 @@ def test_review_subject_comes_from_trusted_event_attributes(tmp_path):
     assert context["expected_subject_id"] == "event-42"
     execution.event_attributes = {}
     assert executor._runtime_metadata(task, execution)["scheduled_task"]["expected_subject_id"] is None
+
+
+def test_review_prompt_binds_subject_and_evidence_path(tmp_path):
+    task = ScheduledTask(
+        task_id="task-review-prompt", name="审核", description="审核", prompt="审核",
+        trigger_type="event", event_type="test.review", execution_mode="custom",
+        tool_names=["submit_task_review"],
+        review_subject_attribute="business_id",
+    )
+    execution = TaskExecution(
+        execution_id="exec-review-prompt", task_id=task.task_id, task_name=task.name,
+        status="running", total_steps=1, event_attributes={"business_id": "event-42"},
+    )
+    prompt = ScheduledTaskExecutor._build_task_prompt("审核数据", task, execution=execution)
+
+    assert "event-42" in prompt
+    assert "subject_id 和 event_id 都必须原样填写该编号" in prompt
+    assert "真实文件路径" in prompt

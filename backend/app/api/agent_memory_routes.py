@@ -2,18 +2,19 @@
 
 每个对话模式（assistant/query/knowledge/expert/...）在
 DATA_REGISTRY/memory/{mode}/ 下持有独立记忆目录（模式内所有用户共享）：
-    MEMORY.md          主长期记忆（后台整合 Agent 每 50 轮对话后自动改写）
+    MEMORY.md          常驻长期记忆（会话 Agent 用 edit_file 维护；人工经本 API 编辑）
+    facts/*.md         事实层记忆（后台整合 Agent 每 50 轮对话后自动维护，带有效期、过期遗忘）
     USER.md            用户档案
     memory_meta.json   人工编辑版本元信息（仅由本 API 维护，用于乐观锁）
 
-注意：后台整合直接改写 MEMORY.md，不经过 meta 版本号；PUT 额外用
-expected_mtime_ns 对比文件 mtime，防止人工编辑覆盖整合结果。
-社交模式（social/enforcement_exam）按用户隔离存储，不属于本 API 范畴。
+注意：后台整合只写 facts/*.md，不改写 MEMORY.md；PUT 用
+expected_mtime_ns 对比文件 mtime，防止人工编辑与会话 Agent 的
+edit_file 写入相互覆盖。
+助手及备考模式（assistant/enforcement_exam）按用户隔离存储，不属于本 API 范畴。
 """
 
 import fcntl
 import json
-import re
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -25,16 +26,20 @@ from pydantic import BaseModel, Field
 
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
+from app.agent.memory.memory_limits import MEMORY_MD_MAX_CHARS, memory_capacity_error
 from app.utils.path_config import get_memory_dir
+from app.agent.memory.memory_paths import memory_workspace, safe_memory_segment
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/agent/memory", tags=["agent-memory"])
 
-# 社交模式记忆按用户隔离（social/memory/{user_id}/），不提供模式级编辑入口
-SOCIAL_MEMORY_MODES = {"social", "enforcement_exam"}
+# 助手个人记忆按用户隔离（social/memory/{user_id}/），不提供模式级编辑入口
+PERSONAL_MEMORY_MODES = {"assistant", "enforcement_exam"}
 
-MAX_MEMORY_CHARS = 100_000
+# 与 edit_file/write_file 共用同一上限（memory_limits）：
+# 人工编辑把 MEMORY.md 顶过上限后，会话 Agent 的 edit_file 会一直被拒。
+MAX_MEMORY_CHARS = MEMORY_MD_MAX_CHARS
 
 
 class ModeMemoryResponse(BaseModel):
@@ -61,11 +66,14 @@ class MemoryVersionConflictError(RuntimeError):
 
 
 def _safe_mode(mode: str) -> str:
-    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", str(mode)).strip("_")
-    if not safe:
-        raise HTTPException(status_code=400, detail="无效的模式标识")
-    if safe in SOCIAL_MEMORY_MODES:
-        raise HTTPException(status_code=400, detail="社交模式记忆按用户隔离，不支持模式级查看/编辑")
+    try:
+        safe = safe_memory_segment(mode, field="mode")
+        if safe in {"memory_consolidator", "social"}:
+            raise ValueError("not a business memory mode")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="无效的模式标识") from exc
+    if safe in PERSONAL_MEMORY_MODES:
+        raise HTTPException(status_code=400, detail="助手个人记忆按用户隔离，不支持模式级查看/编辑")
     return safe
 
 
@@ -75,7 +83,7 @@ class ModeMemoryStorage:
     def __init__(self, mode: str, base_dir: Path | None = None):
         self.mode = mode
         base = Path(base_dir) if base_dir else get_memory_dir()
-        self.mode_dir = base / mode
+        self.mode_dir = memory_workspace(_safe_mode(mode), workspace=base)
         self.memory_file = self.mode_dir / "MEMORY.md"
         self.meta_file = self.mode_dir / "memory_meta.json"
         self.lock_file = self.mode_dir / ".memory.lock"
@@ -114,7 +122,7 @@ class ModeMemoryStorage:
         if not content:
             raise HTTPException(status_code=422, detail="记忆内容不能为空")
         if len(content) > MAX_MEMORY_CHARS:
-            raise HTTPException(status_code=422, detail=f"记忆内容过长（上限 {MAX_MEMORY_CHARS} 字符）")
+            raise HTTPException(status_code=422, detail=memory_capacity_error(len(content)))
         try:
             normalized_mtime_ns = (
                 int(str(expected_mtime_ns)) if expected_mtime_ns is not None else None
@@ -151,8 +159,8 @@ class ModeMemoryStorage:
         self.mode_dir.mkdir(parents=True, exist_ok=True)
         if not self.memory_file.exists():
             self.memory_file.write_text(
-                "# 长期记忆 (MEMORY.md)\n\n此文件存储用户的偏好、领域知识和重要结论。\n\n"
-                "## 用户偏好\n\n## 领域知识\n\n## 历史结论\n",
+                "# 长期记忆 (MEMORY.md)\n\n此文件存储用户的偏好、领域知识和模式方法论。\n\n"
+                "## 用户偏好\n\n## 领域知识\n\n## 模式方法论\n",
                 encoding="utf-8",
             )
 

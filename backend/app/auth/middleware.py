@@ -52,6 +52,9 @@ _RESOURCE_CONTENT_PATTERN = re.compile(
 _SCHEDULED_RESULT_CONTENT_PATTERN = re.compile(
     r"^/api/scheduled-tasks/results/([^/]+)/(?:files|report)(?:/.*)?$"
 )
+_SHARED_REPORT_PREVIEW_PATTERN = re.compile(
+    r"^/api/shared-conversations/([^/]+)/reports/_t/([^/]+)(?:/(.+))?$"
+)
 
 
 class GatewayAuthenticationMiddleware:
@@ -89,11 +92,26 @@ class GatewayAuthenticationMiddleware:
             await self.app(scope, receive, send)
             return
 
+        headers = Headers(scope=scope)
+        if (path == "/api/shared-conversations" or path.startswith("/api/shared-conversations/")) and not headers.get("syscode"):
+            # Shared snapshots are consumed by both Web sessions and signed App identities.
+            from fastapi import HTTPException
+            from app.social.app_identity import resolve_access_token
+
+            scheme, separator, app_token = headers.get("authorization", "").partition(" ")
+            if scheme.lower() == "bearer" and separator and app_token.strip():
+                try:
+                    user = resolve_access_token(app_token.strip()).as_current_user()
+                except HTTPException as exc:
+                    await self._error(scope, receive, send, exc.status_code, str(exc.detail))
+                    return
+                await self.app(self._authenticated_scope(scope, user), receive, send)
+                return
+
         if not self._is_trusted_peer(scope):
             await self._error(scope, receive, send, 403, "untrusted_gateway_peer")
             return
 
-        headers = Headers(scope=scope)
         if self.settings.auth_mode == "mock":
             token = "local-mock"
             sys_code = self.settings.auth_sys_code
@@ -118,6 +136,10 @@ class GatewayAuthenticationMiddleware:
             await self._error(scope, receive, send, 503, "authentication_unavailable")
             return
 
+        await self.app(self._authenticated_scope(scope, user), receive, send)
+
+    @staticmethod
+    def _authenticated_scope(scope: Scope, user: Any) -> Scope:
         clean_scope = dict(scope)
         clean_scope["headers"] = [
             (name, value)
@@ -127,7 +149,7 @@ class GatewayAuthenticationMiddleware:
         state = dict(scope.get("state") or {})
         state["current_user"] = user
         clean_scope["state"] = state
-        await self.app(clean_scope, receive, send)
+        return clean_scope
 
     def _is_public(self, path: str) -> bool:
         if path in _PUBLIC_EXACT_PATHS:
@@ -180,12 +202,21 @@ class GatewayAuthenticationMiddleware:
                 resource_preview_identity(session_id, resource_id),
             )
         scheduled = _SCHEDULED_RESULT_CONTENT_PATTERN.fullmatch(base_path)
-        if scheduled is not None:
+        if scheduled:
             return self._verify_preview_ticket(
                 scope,
                 ticket,
                 SCHEDULED_RESULT_PREVIEW_KIND,
                 unquote(scheduled.group(1)),
+            )
+        shared_report = _SHARED_REPORT_PREVIEW_PATTERN.fullmatch(path)
+        if shared_report:
+            # The ticket is inherent in the path; scope reports to one share.
+            return self._verify_preview_ticket(
+                scope,
+                unquote(shared_report.group(2)),
+                "shared-report",
+                unquote(shared_report.group(1)),
             )
         return False
 

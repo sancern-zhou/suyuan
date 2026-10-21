@@ -139,7 +139,7 @@ def test_board_state_is_only_in_the_session_resources_layer():
 
 def test_social_profile_and_memory_are_not_hidden_in_mode_prompt():
     builder = SimplifiedContextBuilder(Mock(), Mock(), {})
-    builder.current_mode = "social"
+    builder.current_mode = "assistant"
     builder.user_context = "user-profile-marker"
     builder.memory_context = "memory-marker"
 
@@ -162,7 +162,7 @@ def test_social_profile_and_memory_are_not_hidden_in_mode_prompt():
     "expert",
     "query",
     "report",
-    "social",
+    "assistant",
     "board",
     "ops",
     "graph",

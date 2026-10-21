@@ -25,6 +25,9 @@ def register_project_workflow_handlers(project: str) -> None:
     """
     from app.scheduled_tasks.workflow_tasks import register_workflow_handler
 
+    from app.services.station_operation_monitor.workflow import register_daily_report_workflow
+    register_daily_report_workflow()
+
     if project == "xuchang":
         from app.fetchers.xuchang_weather_situation import build_weather_evidence_event
         from app.scenarios.xuchang_weather_report.constants import EVENT_TYPE
@@ -99,6 +102,13 @@ async def start_scheduled_task_service() -> None:
             from app.scenarios.xuchang_weather_report.task_migration import migrate_weather_task
             migrate_weather_task(service)
         start_service()
+        from app.social.assistant_notifications import start_result_replies
+
+        start_result_replies(service.scheduler.scheduler, settings.project_id, service)
+        if settings.assistant_followups_enabled:
+            from app.social.assistant_followup_worker import start_assistant_followups
+
+            start_assistant_followups(service.scheduler.scheduler, settings.project_id)
         logger.info(
             "scheduled_task_service_started",
             default_tasks_created=created,
@@ -118,7 +128,14 @@ async def stop_scheduled_task_service() -> None:
         if not load_project_context(settings.project_id).manifest.scheduled_tasks_enabled:
             return
 
-        from app.scheduled_tasks import stop_service_async
+        from app.scheduled_tasks import stop_service_async, get_scheduled_task_service
+
+        if settings.assistant_followups_enabled:
+            from app.social.assistant_followup_worker import stop_assistant_followups
+
+            service = get_scheduled_task_service()
+            if service:
+                await stop_assistant_followups(service.scheduler.scheduler)
 
         await stop_service_async()
         logger.info("scheduled_task_service_stopped")

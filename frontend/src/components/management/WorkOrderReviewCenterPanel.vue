@@ -541,8 +541,13 @@ const chartSeries = computed(() => {
   const target = (data.points || []).map(point => ({ time: point.time, value: point.value }))
   if (!target.length) return []
   const series = [{ name: `${data.pollutant || entry.value.pollutant || 'PM10'}（本站）`, unit: data.unit || 'μg/m³', color: '#2f86e0', points: target }]
-  const pm25 = data.pm25_points || []
-  if (pm25.length) series.push({ name: 'PM2.5（对照）', unit: data.unit || 'μg/m³', color: '#9b8cff', points: pm25 })
+  // 对照序列：新包按目标污染物配对（comparison_points/comparison_pollutant），
+  // 旧证据包无新字段时回落到固定 PM2.5 对照（pm25_points）。
+  const comparisonName = data.comparison_pollutant || (data.pm25_points?.length ? 'PM2.5' : '')
+  const comparison = data.comparison_points?.length
+    ? data.comparison_points
+    : (comparisonName === 'PM2.5' ? data.pm25_points : [])
+  if (comparisonName && comparison.length) series.push({ name: `${comparisonName}（对照）`, unit: data.unit || 'μg/m³', color: '#9b8cff', points: comparison })
   if (bandRows.value.length) {
     const pick = key => bandRows.value.filter(row => row[key] != null).map(row => ({ time: row.time, value: row[key] }))
     // 同域只有 1 个对比站时最低/中位/最高三值相同，合并为一条线，避免三条重合曲线。

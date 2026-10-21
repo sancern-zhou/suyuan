@@ -1,3 +1,5 @@
+import { accountStateKey, accountGeneration } from '../auth/accountSession.js'
+import { prependHistory, loadHistoryPage } from './historyPagination.js'
 import { authFetch } from '@/auth/http.js'
 // ReAct Agent状态管理
 // 多模式并行任务系统 - 按模式隔离状态
@@ -157,12 +159,6 @@ const contentToString = (content) => {
     }
   }
   return String(content)
-}
-
-// 辅助函数：安全提取 content 预览（支持字符串和 content blocks 格式）
-const getContentPreview = (content, maxLength = 100) => {
-  const text = contentToString(content)
-  return text.substring(0, maxLength)
 }
 
 const createEmptyDrawioBoardState = () => ({
@@ -407,12 +403,12 @@ const createEmptyModeState = () => ({
 export const useReactStore = defineStore('react', {
   state: () => {
     // 从localStorage恢复currentMode
-    const savedMode = localStorage.getItem('current-mode')
+    const savedMode = localStorage.getItem(accountStateKey(projectConfig.project.id, 'current-mode') || '__no_account__')
     const initialMode = isProjectAgentMode(savedMode, projectConfig, VALID_MODES)
       ? savedMode
       : DEFAULT_AGENT_MODE
     if (initialMode !== savedMode) {
-      localStorage.setItem('current-mode', initialMode)
+      if (accountStateKey(projectConfig.project.id, 'current-mode')) localStorage.setItem(accountStateKey(projectConfig.project.id, 'current-mode'), initialMode)
     }
 
     return {
@@ -540,48 +536,19 @@ export const useReactStore = defineStore('react', {
       return counts
     },
 
-    // 对话列表（排除内部事件）
-    conversation: (state) => {
-      const currentMessages = state.modeStates[state.currentMode]?.messages || []
-      // ✅ 只显示用户消息、最终答案（thought 是过程，应该被折叠）
-      return currentMessages.filter(msg =>
-        msg.type === 'user' || msg.type === 'agent' || msg.type === 'final'
-      )
-    },
+    canInput() { return !this.currentState.isAnalyzing }
 
-    // 分析日志（内部事件）
-    analysisLog: (state) => {
-      const currentMessages = state.modeStates[state.currentMode]?.messages || []
-      // ✅ thought、tool_use、tool_result 都是过程消息
-      return currentMessages.filter(msg =>
-        msg.type === 'start' || msg.type === 'thought' ||
-        msg.type === 'tool_use' || msg.type === 'tool_result' || msg.type === 'error'
-      )
-    },
-
-    // 可输入状态
-    canInput: (state) => {
-      const currentModeState = state.modeStates[state.currentMode]
-      return currentModeState ? !currentModeState.isAnalyzing : true
-    },
-
-    // 进度
-    progress: (state) => {
-      const currentModeState = state.modeStates[state.currentMode]
-      if (!currentModeState || currentModeState.maxIterations === 0) return 0
-      return Math.min(100, Math.round((currentModeState.iterations / currentModeState.maxIterations) * 100))
-    },
-
-    // 已完成的工具调用
-    completedTools: (state) => {
-      const currentMessages = state.modeStates[state.currentMode]?.messages || []
-      return currentMessages
-        .filter(m => m.type === 'tool_use' && m.data?.status === 'success' && m.data?.tool_name)
-        .map(m => m.data.tool_name)
-    }
   },
 
   actions: {
+    resetAccountState() {
+      for (const timer of drawioDraftTimers.values()) clearTimeout(timer)
+      drawioDraftTimers.clear()
+      for (const state of [...Object.values(this.modeStates), ...Object.values(this.sessionStates)]) {
+        this.stopQueryVoiceOutput(state)
+      }
+      this.$reset()
+    },
     // ========== 新增：模式切换核心逻辑 ==========
 
     _getModeForSessionId(sessionId) {
@@ -628,7 +595,7 @@ export const useReactStore = defineStore('react', {
       const sessionState = this._ensureSessionState(sessionId, sessionMode)
       this.activeSessionByMode[sessionMode] = sessionId
       this.currentMode = sessionMode
-      localStorage.setItem('current-mode', sessionMode)
+      if (accountStateKey(projectConfig.project.id, 'current-mode')) localStorage.setItem(accountStateKey(projectConfig.project.id, 'current-mode'), sessionMode)
       return sessionState
     },
 
@@ -684,7 +651,7 @@ export const useReactStore = defineStore('react', {
       // 2. 切换模式
       const oldMode = this.currentMode
       this.currentMode = newMode
-      localStorage.setItem('current-mode', newMode)
+      if (accountStateKey(projectConfig.project.id, 'current-mode')) localStorage.setItem(accountStateKey(projectConfig.project.id, 'current-mode'), newMode)
 
       // 3. 进入模式默认开启新会话；该模式有正在运行的分析时保持展示运行中的会话
       const targetSessionId = this.activeSessionByMode[newMode]
@@ -734,7 +701,7 @@ export const useReactStore = defineStore('react', {
       }
       this.activeSessionByMode[targetMode] = sessionId
       this.currentMode = targetMode
-      localStorage.setItem('current-mode', targetMode)
+      if (accountStateKey(projectConfig.project.id, 'current-mode')) localStorage.setItem(accountStateKey(projectConfig.project.id, 'current-mode'), targetMode)
       this._persistModeState(targetMode)
       return true
     },
@@ -831,6 +798,7 @@ export const useReactStore = defineStore('react', {
      * - 保存完整的模式状态
      */
     _persistModeState(mode) {
+      if (!accountStateKey(projectConfig.project.id, `mode-state-${mode}`)) return
       if (!this.modeStates[mode]) return
 
       const activeSessionId = this.activeSessionByMode[mode]
@@ -878,7 +846,7 @@ export const useReactStore = defineStore('react', {
       }
 
       try {
-        localStorage.setItem(`mode-state-${mode}`, JSON.stringify(stateToSave))
+        localStorage.setItem(accountStateKey(projectConfig.project.id, `mode-state-${mode}`), JSON.stringify(stateToSave))
         console.log(`[_persistModeState] Saved ${mode} state with ${messagesToSave.length} messages`)
       } catch (error) {
         console.error(`[_persistModeState] Failed to save ${mode} state:`, error)
@@ -889,7 +857,7 @@ export const useReactStore = defineStore('react', {
             messages: messagesToSave.slice(-10), // 只保留最后10条
             isAnalyzing: modeState.isAnalyzing
           }
-          localStorage.setItem(`mode-state-${mode}`, JSON.stringify(minimalState))
+          localStorage.setItem(accountStateKey(projectConfig.project.id, `mode-state-${mode}`), JSON.stringify(minimalState))
           console.log(`[_persistModeState] Saved minimal ${mode} state`)
         } catch (retryError) {
           console.error(`[_persistModeState] Failed to save minimal state:`, retryError)
@@ -901,8 +869,9 @@ export const useReactStore = defineStore('react', {
      * 从 localStorage 恢复模式状态
      */
     _restoreModeState(mode) {
+      if (!accountStateKey(projectConfig.project.id, `mode-state-${mode}`)) return
       try {
-        const savedStateJSON = localStorage.getItem(`mode-state-${mode}`)
+        const savedStateJSON = localStorage.getItem(accountStateKey(projectConfig.project.id, `mode-state-${mode}`))
         if (!savedStateJSON) {
           console.log(`[_restoreModeState] No saved state for ${mode}`)
           return
@@ -928,70 +897,6 @@ export const useReactStore = defineStore('react', {
       } catch (error) {
         console.error(`[_restoreModeState] Failed to restore ${mode} state:`, error)
       }
-    },
-
-    /**
-     * 重置指定模式的状态
-     */
-    resetMode(mode) {
-      if (!this.modeStates[mode]) return
-
-      // 创建新的空状态
-      const emptyState = createEmptyModeState()
-      Object.assign(this.modeStates[mode], emptyState)
-
-      // 清除localStorage
-      localStorage.removeItem(`mode-state-${mode}`)
-
-      console.log(`[resetMode] Reset mode: ${mode}`)
-    },
-
-    /**
-     * 重置所有模式的状态
-     */
-    resetAllModes() {
-      for (const mode of VALID_MODES) {
-        this.resetMode(mode)
-      }
-      console.log('[resetAllModes] All modes reset')
-    },
-
-    /**
-     * 清理旧的模式状态（超过7天）
-     */
-    cleanupOldStates() {
-      const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000)
-      let cleanedCount = 0
-
-      for (const mode of VALID_MODES) {
-        const stateKey = `mode-state-${mode}`
-        const savedStateJSON = localStorage.getItem(stateKey)
-
-        if (savedStateJSON) {
-          try {
-            const savedState = JSON.parse(savedStateJSON)
-
-            // 检查最后一条消息的时间戳
-            const lastMessage = savedState.messages && savedState.messages[savedState.messages.length - 1]
-            if (lastMessage && lastMessage.timestamp) {
-              const lastMessageTime = new Date(lastMessage.timestamp).getTime()
-              if (lastMessageTime < sevenDaysAgo) {
-                localStorage.removeItem(stateKey)
-                cleanedCount++
-                console.log(`[cleanupOldStates] Cleaned up ${mode} state (last message from ${new Date(lastMessageTime).toLocaleDateString()})`)
-              }
-            }
-          } catch (error) {
-            console.error(`[cleanupOldStates] Failed to parse ${mode} state:`, error)
-            // 如果解析失败，删除该状态
-            localStorage.removeItem(stateKey)
-            cleanedCount++
-          }
-        }
-      }
-
-      console.log(`[cleanupOldStates] Cleanup complete: ${cleanedCount} modes cleaned`)
-      return cleanedCount
     },
 
     /**
@@ -1043,18 +948,6 @@ export const useReactStore = defineStore('react', {
       const match = sessionId.match(/^([a-z]+)_session_/)
       const mode = match ? match[1] : null
       return VALID_MODES.includes(mode) ? mode : null
-    },
-
-    /**
-     * 根据 sessionId 获取对应模式的状态
-     */
-    getModeStateBySessionId(sessionId) {
-      const mode = this.extractModeFromSessionId(sessionId)
-      if (!mode || !this.modeStates[mode]) {
-        console.warn('[getModeStateBySessionId] Cannot find mode for sessionId:', sessionId)
-        return this.currentState  // 降级：返回当前模式状态
-      }
-      return this.modeStates[mode]
     },
 
     /**
@@ -1159,87 +1052,19 @@ export const useReactStore = defineStore('react', {
      * 前置插入更早的消息（滚动加载更多）
      */
     prependMessages(messages) {
-      if (!messages || messages.length === 0) return
-
-      messages = normalizeRestoredMessages(messages)
-
-      // 【修复】过滤掉与现有消息重复内容的消息
-      const existingContents = new Set()
-      this.currentState.messages.forEach(m => {
-        if (m.content) {
-          existingContents.add(getContentPreview(m.content, 100)) // 使用前100个字符作为内容指纹
-        }
-      })
-
-      const beforeCount = messages.length
-      messages = messages.filter(m => {
-        if (!m.content) return true
-        const contentFingerprint = getContentPreview(m.content, 100)
-        const isDuplicate = existingContents.has(contentFingerprint)
-        if (isDuplicate) {
-          console.warn(`[prependMessages] 过滤重复消息: ${m.id}`, { content: getContentPreview(m.content, 50) })
-        } else {
-          existingContents.add(contentFingerprint)
-        }
-        return !isDuplicate
-      })
-
-      if (messages.length !== beforeCount) {
-        console.log(`[prependMessages] 过滤了 ${beforeCount - messages.length} 条重复消息`)
-      }
-
-      this.currentState.messages = [...messages, ...this.currentState.messages]
-      if (messages.length > 0) {
-        this.currentState.pagination.oldestSequence = messages[0].sequence_number
-      }
+      prependHistory(this.currentState, messages, normalizeRestoredMessages)
     },
 
-    /**
-     * 加载更多历史消息
-     */
     async loadMoreMessages() {
-      const sessionId = this.currentState.sessionId
-      const oldestSequence = this.currentState.pagination.oldestSequence
-      const hasMore = this.currentState.pagination.hasMoreMessages
-
-      if (!sessionId || !hasMore) {
-        console.log('[loadMoreMessages] 没有更多消息可加载')
-        return
-      }
-
-      if (this.currentState.pagination.loadingMore) {
-        console.log('[loadMoreMessages] 正在加载中，跳过')
-        return
-      }
-
+      const state = this.currentState
+      const generation = accountGeneration()
       try {
-        this.currentState.pagination.loadingMore = true
-        console.log(`[loadMoreMessages] 开始加载更多消息，sessionId: ${sessionId}, oldestSequence: ${oldestSequence}`)
-
-        // 调用 API 获取更多消息
-        const { getSessionMessages } = await import('@/api/session')
-        const result = await getSessionMessages(sessionId, oldestSequence, 30)
-
-        console.log('[loadMoreMessages] API返回:', result)
-
-        // 后端直接返回数据，不是 {success, data} 格式
-        const messages = result.messages || []
-        console.log(`[loadMoreMessages] 加载了 ${messages.length} 条消息`)
-
-        if (messages.length > 0) {
-          this.prependMessages(messages)
-        }
-
-        // 更新分页状态（注意字段名映射）
-        this.currentState.pagination.hasMoreMessages = result.has_more || false
-        this.currentState.pagination.totalMessageCount = result.total_count || this.currentState.pagination.totalMessageCount
-
-        console.log(`[loadMoreMessages] 加载完成，hasMore: ${this.currentState.pagination.hasMoreMessages}, total: ${this.currentState.pagination.totalMessageCount}`)
+        await loadHistoryPage(state, async (...args) => {
+          const { getSessionMessages } = await import('@/api/session')
+          return getSessionMessages(...args)
+        }, () => generation === accountGeneration(), normalizeRestoredMessages)
       } catch (error) {
-        console.error('[loadMoreMessages] 加载消息失败:', error)
-        // 不抛出错误，避免中断用户体验
-      } finally {
-        this.currentState.pagination.loadingMore = false
+        if (error.name !== 'AbortError') console.error('[loadMoreMessages]', error)
       }
     },
 
@@ -2885,6 +2710,7 @@ export const useReactStore = defineStore('react', {
 
     // 开始分析
     async startAnalysis(query, options = {}) {
+      const accountEpoch = accountGeneration()
       const {
         assistantMode = null,
         useFullChemistry = false,  // RACM2完整化学机理分析选项
@@ -3087,6 +2913,7 @@ export const useReactStore = defineStore('react', {
         }
 
         // 调用新架构 ReAct Agent
+        if (accountEpoch !== accountGeneration()) return
         await agentAPI.analyze(query, {
           sessionId: sessionState.sessionId,
           requestKey: sessionState.sessionId,
@@ -3108,13 +2935,14 @@ export const useReactStore = defineStore('react', {
           ...(mapContext !== null ? { mapContext } : {}),
           onAccepted,
           onEvent: (event) => {
+            if (accountEpoch !== accountGeneration()) return
             if (!event.data) event.data = {}
             if (!event.data.session_id) event.data.session_id = sessionState.sessionId
             this.handleEvent(event)
           }
         })
 
-        await this._runNextQueuedInput(sessionState, actualMode)
+        if (accountEpoch === accountGeneration()) await this._runNextQueuedInput(sessionState, actualMode)
       } catch (error) {
         // 检查是否为用户主动取消
         if (error.name === 'AbortError' || error.message === 'The user aborted a request.') {
@@ -3140,6 +2968,7 @@ export const useReactStore = defineStore('react', {
     // 用于历史会话恢复（运行中会话的消息在终态才落库，恢复到 0 条属预期）。
     // 注意：本方法会阻塞到 run 终止/流结束，调用方不应 await 其完成。
     async reattachActiveRun(sessionId, options = {}) {
+      const accountEpoch = accountGeneration()
       if (!sessionId) return { success: false, error: 'missing_session_id' }
 
       const mode = options.mode || this._getModeForSessionId(sessionId)
@@ -3154,7 +2983,7 @@ export const useReactStore = defineStore('react', {
         await agentAPI.followRunStream(sessionId, {
           requestKey: sessionId,
           onEvent: (event) => {
-            if (!observeRunStreamEvent(tracker, event)) return
+            if (accountEpoch !== accountGeneration() || !observeRunStreamEvent(tracker, event)) return
             if (!event.data) event.data = {}
             if (!event.data.session_id) event.data.session_id = sessionId
             this.handleEvent(event)

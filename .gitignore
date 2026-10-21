@@ -159,6 +159,7 @@ simulate_*.py
 verify_*.py
 check_*.py
 run_*.py
+!backend/app/fetchers/base/run_log.py
 simple_*.py
 ultimate_*.py
 deep_*.py
@@ -288,6 +289,7 @@ suncere*/
 *.jks
 *.keystore
 android-native/keystore.properties
+android-native/local.properties
 android-native/.gradle/
 android-native/dist-archives/
 *.htpasswd

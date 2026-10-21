@@ -168,6 +168,10 @@ def _configured_fetchers(project_context):
         "xuchang_nmc_hourly_forecast_fetcher": XuchangNmcHourlyForecastFetcher,
         "xuchang_weather_com_daily_forecast_fetcher": XuchangWeatherComDailyForecastFetcher,
         "xuchang_air_quality_forecast_fetcher": XuchangAirQualityForecastFetcher,
+        "xuchang_air_quality_forecast_fetcher_noon": lambda: XuchangAirQualityForecastFetcher(
+            name="xuchang_air_quality_forecast_fetcher_noon",
+            schedule="0 12 * * *",
+        ),
         "xuchang_weather_situation_evidence_fetcher": XuchangWeatherSituationEvidenceFetcher,
         "xuchang_station_deviation_alert_fetcher": XuchangStationDeviationAlertFetcher,
         "xuchang_station_daily_pollution_fetcher": XuchangStationDailyPollutionFetcher,
@@ -179,6 +183,10 @@ def _configured_fetchers(project_context):
         "xuchang_zhongda_city_hour_fetcher": XuchangZhongdaCityFetcher,
         "gems_xuchang_image_fetcher": GemsImageFetcher,
     }
+    from app.services.station_operation_monitor.runtime import config_path
+    if config_path().is_file():
+        from app.fetchers.station_operation_monitor import StationOperationMonitorFetcher
+        factories["station_operation_monitor"] = StationOperationMonitorFetcher
     configured = project_context.manifest.backend.fetchers
     history_config = project_context.manifest.backend.weather_history
     if history_config is not None:

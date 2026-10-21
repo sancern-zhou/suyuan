@@ -8,9 +8,14 @@ QUERY_CHILD_MODES = frozenset({
 EXPERT_CHILD_MODES = QUERY_CHILD_MODES | frozenset({
     "expert_meteorology", "expert_analysis",
 })
-LEAF_MODES = EXPERT_CHILD_MODES | frozenset({"query_monitoring"})
-PARENT_CHILD_MODES = {"query": QUERY_CHILD_MODES, "expert": EXPERT_CHILD_MODES}
+LEAF_MODES = EXPERT_CHILD_MODES | frozenset({"query_monitoring", "office"})
+PARENT_CHILD_MODES = {
+    "query": QUERY_CHILD_MODES,
+    "expert": EXPERT_CHILD_MODES,
+    "assistant": EXPERT_CHILD_MODES | frozenset({"office", "knowledge", "ppt", "board", "ops"}),
+}
 DELEGATION_TOOLS = frozenset({"call_sub_agent", "run_agent_workflow"})
+PRIMARY_ONLY_MODES = frozenset({"query", "expert", "report"})
 
 
 def is_leaf_mode(mode: str) -> bool:
@@ -22,6 +27,19 @@ def is_leaf_mode(mode: str) -> bool:
 def delegation_error(parent_mode: str, target_modes: list[str]) -> str | None:
     from app.agent.workflow.project_policy import child_modes, parent_policy
 
+    if parent_mode == "social" or "social" in target_modes:
+        return "social 模式已移除；助手主模式为 assistant，办公子模式为 office。"
+    if "office" in target_modes and parent_mode != "assistant":
+        return "office 是助手模式的办公子 Agent，仅允许由 assistant 助手委派。"
+    if "assistant" in target_modes:
+        return "助手模式负责用户交互与协调，不作为子 Agent 调用。"
+    primary_targets = sorted(set(target_modes) & PRIMARY_ONLY_MODES)
+    if primary_targets:
+        return (
+            f"主模式 {', '.join(primary_targets)} 不允许作为子 Agent 调用；"
+            "请按职责使用 query_monitoring_station、query_monitoring_city、query_forecast、"
+            "expert_meteorology、expert_analysis，当前父 Agent 负责整合与报告交付。"
+        )
     if is_leaf_mode(parent_mode):
         return f"精简子 Agent {parent_mode} 只执行本节点任务，不支持再次委派或 DAG 编排。"
     project_policy = parent_policy(parent_mode)
@@ -44,6 +62,8 @@ def build_delegation_contract(mode: str, available_tools: list[str]) -> str:
     """Include guidance only for an enabled parent, including project overrides."""
     from app.agent.workflow.project_policy import parent_policy
 
+    if mode == "assistant":
+        return ""  # Its coordinator contract is appended independently of project overrides.
     policy = parent_policy(mode)
     if policy and DELEGATION_TOOLS.intersection(available_tools):
         from app.agent.workflow.target_mode_contract import build_target_mode_contract

@@ -17,7 +17,12 @@ from .models import (
     TaskExecution,
     TriggerType,
 )
-from .storage import EventClaimStorage, TaskStorage, ExecutionStorage, TaskCaseStorage
+from .storage import (
+    DatabaseExecutionStorage,
+    EventClaimStorage,
+    TaskStorage,
+    TaskCaseStorage,
+)
 from .scheduler import SimpleScheduler
 from .executor import ScheduledTaskExecutor
 from .event_delivery import EventTaskDelivery
@@ -42,7 +47,7 @@ class ScheduledTaskService:
         self,
         agent_factory: Optional[callable] = None,
         task_storage: TaskStorage | None = None,
-        execution_storage: ExecutionStorage | None = None,
+        execution_storage: DatabaseExecutionStorage | None = None,
         claim_storage: EventClaimStorage | None = None,
         event_delivery: EventTaskDelivery | None = None,
         conversation_persistence=None,
@@ -95,20 +100,9 @@ class ScheduledTaskService:
         self._event_tasks: set[asyncio.Task] = set()
 
     @staticmethod
-    def _default_execution_storage():
-        """Choose the execution backend, preferring the database when configured.
-
-        The import stays local so the legacy JSON store remains importable in
-        deployments without a database.
-        """
-        from .storage.execution_storage_db import (
-            DatabaseExecutionStorage,
-            execution_db_enabled,
-        )
-
-        if execution_db_enabled():
-            return DatabaseExecutionStorage()
-        return ExecutionStorage()
+    def _default_execution_storage() -> DatabaseExecutionStorage:
+        """Use the database as the sole scheduled execution store."""
+        return DatabaseExecutionStorage()
 
     def _recover_interrupted_executions(self) -> None:
         """Close execution records left running by a previous worker process."""
@@ -427,6 +421,17 @@ class ScheduledTaskService:
                 self.execution_storage.update(execution)
             self.task_storage.update_run_stats(task.task_id, success=False)
             return execution
+
+        finally:
+            if execution is not None and "assistant-plan" in task.tags and task.assistant_recipient:
+                try:
+                    from app.social.assistant_notifications import AssistantNotificationService
+                    from config.settings import settings
+
+                    await AssistantNotificationService().enqueue_execution(settings.project_id, task, execution)
+                except Exception:
+                    # Terminal executions remain durable; the reply clock reconciles this gap.
+                    logger.exception("assistant_execution_reply_pending", execution_id=execution.execution_id)
 
     async def publish_event(
         self,

@@ -42,7 +42,7 @@ def test_render_skill_draft_markdown_contains_required_sections():
 
     assert content.startswith("# 污染过程复盘")
     assert "status: draft" in content
-    assert "source_mode: assistant" in content
+    assert "source_mode: office" in content
     assert "source_session_id: session-a" in content
     assert "## 概述" in content
     assert "## 适用场景" in content

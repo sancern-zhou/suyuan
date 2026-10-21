@@ -8,7 +8,7 @@ from typing import Any
 import structlog
 from sqlalchemy import select
 
-from app.db.database import async_session
+from app.db.knowledge_database import knowledge_async_session as async_session
 from app.knowledge_base.graph_models import KnowledgeGraphEntity, KnowledgeGraphRelation
 
 logger = structlog.get_logger()

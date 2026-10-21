@@ -57,7 +57,7 @@ import { getOnboardingStep, scanOwnerLabel } from './createAccountFlow.js'
 const props = defineProps({
   agentMode: {
     type: String,
-    default: 'social'
+    default: 'assistant'
   }
 })
 

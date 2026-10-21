@@ -9,7 +9,7 @@ sources:
   - domain: 空气质量（国控站点/城市长历史，2016 起）
     route: tool
     locator: execute_crawler_sql_query
-    usage: "采集库 MySQL：StationHour/CityHour/StationDay/CityDay/CityYearPm25Avg/Station；字段契约见工具描述（由真实库生成，大小写敏感）"
+    usage: "采集库 MySQL：StationHour/CityHour/StationDay/CityDay/CitySandDay（沙尘日清单）/CityYearPm25Avg/Station；字段契约见工具描述（由真实库生成，大小写敏感）"
     granularity: 逐小时/逐日/逐年
     caveats: "审核标记列命名跨表不一致（StationDay=COMark、CityDay=CO_Mark）；查询失败的返回会附真实字段清单，直接据此修正"
 

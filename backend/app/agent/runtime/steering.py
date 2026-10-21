@@ -13,7 +13,7 @@ import structlog
 
 
 logger = structlog.get_logger()
-STEERABLE_MODES = {"assistant", "social"}
+STEERABLE_MODES = {"assistant", "office"}
 
 
 @dataclass

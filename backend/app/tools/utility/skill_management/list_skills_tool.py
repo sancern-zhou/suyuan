@@ -7,6 +7,8 @@
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.utility.skill_management.skill_paths import iter_skill_documents
+from app.utils.path_config import resolve_agent_path
 import structlog
 import re
 from datetime import datetime
@@ -76,9 +78,11 @@ class ListSkillsTool(LLMTool):
             requires_context=False
         )
 
-        # 技能目录路径
+        # 技能目录路径：主目录（索引/写入位置）+ 组合搜索目录（项目目录 + 共享库）
         from app.tools.utility.skill_management.skill_paths import active_skill_paths
+        from app.agent.selection_context import active_skill_dirs
         self.skills_dir, _ = active_skill_paths()
+        self.search_dirs = active_skill_dirs()
         self.index_file = self.skills_dir / "SKILLS_INDEX.md"
 
     async def execute(
@@ -184,8 +188,12 @@ class ListSkillsTool(LLMTool):
         matches = re.findall(pattern, content)
 
         for name, file_path, description in matches:
-            # 转换为绝对路径；统一正斜杠，保证跨平台（Windows 本地与 CI）路径断言一致
-            full_path = str(self.skills_dir / file_path).replace("\\", "/")
+            # 仓库相对链接（backend/docs/skills/... 或 projects/<id>/skills/...）按项目根解析，
+            # 历史索引里的裸文件名仍按主技能目录拼接。
+            if "/" in file_path or "\\" in file_path or Path(file_path).is_absolute():
+                full_path = str(resolve_agent_path(file_path))
+            else:
+                full_path = str(self.skills_dir / file_path)
             skills.append({
                 "name": name.strip(),
                 "file": full_path,
@@ -195,24 +203,28 @@ class ListSkillsTool(LLMTool):
         return skills
 
     def _scan_skills_directory(self) -> List[Dict[str, str]]:
-        """直接扫描技能目录（当索引不可用时）"""
+        """直接扫描组合技能目录（当索引不可用时），项目目录优先。"""
         skills = []
+        seen_ids = set()
 
         try:
-            md_files = list(self.skills_dir.glob("*.md")) + list(
-                self.skills_dir.glob("*/SKILL.md")
-            )
-            # 排除索引文件本身
-            md_files = [f for f in md_files if f.name != "SKILLS_INDEX.md"]
-
-            for md_file in md_files:
-                # 尝试解析文档获取名称和描述
-                name, description = self._parse_skill_file(md_file)
-                skills.append({
-                    "name": name,
-                    "file": str(md_file).replace("\\", "/"),
-                    "description": description
-                })
+            for directory in self.search_dirs:
+                for md_file in iter_skill_documents(directory):
+                    skill_id = (
+                        md_file.parent.name
+                        if md_file.name == "SKILL.md"
+                        else md_file.stem
+                    )
+                    if skill_id in seen_ids:
+                        continue
+                    seen_ids.add(skill_id)
+                    # 尝试解析文档获取名称和描述
+                    name, description = self._parse_skill_file(md_file)
+                    skills.append({
+                        "name": name,
+                        "file": str(md_file),
+                        "description": description
+                    })
 
         except Exception as e:
             logger.warning("scan_skills_directory_failed", error=str(e))
@@ -245,8 +257,7 @@ class ListSkillsTool(LLMTool):
             searchable_text = (
                 f"{skill.get('name', '')}\n"
                 f"{skill.get('description', '')}\n"
-                f"{relative}\n"
-                f"{skill_path.name}"
+                f"{skill.get('file', '')}"
             ).lower()
             if any(token in searchable_text for token in tokens):
                 filtered.append(skill)

@@ -1731,7 +1731,6 @@ class SessionMemory:
     def _plan_stale_result_downgrade(
         self,
         turns: List["ConversationTurn"],
-        fresh_plan: Dict[int, Dict[str, str]],
     ) -> Dict[int, Dict[str, str]]:
         """把新鲜窗口之外的超大 tool_result 块收缩为存根。
 
@@ -1740,8 +1739,9 @@ class SessionMemory:
         模型需要完整数据时按 file_path 重新读取，而不是重复查询。
         """
         plan: Dict[int, Dict[str, str]] = {}
+        fresh_start = self._fresh_window_start_index(turns)
         for index, turn in enumerate(turns):
-            if index in fresh_plan:
+            if index >= fresh_start:
                 continue
             if turn.type != "tool_result" or not isinstance(turn.content, list):
                 continue
@@ -1830,7 +1830,7 @@ class SessionMemory:
         all_turns = self.conversation_history
         messages = []
         fresh_raw_plan = self._plan_fresh_raw_injection(all_turns)
-        stale_downgrade_plan = self._plan_stale_result_downgrade(all_turns, fresh_raw_plan)
+        stale_downgrade_plan = self._plan_stale_result_downgrade(all_turns)
         projection_plan: Dict[int, Dict[str, str]] = {}
         for plan_part in (stale_downgrade_plan, fresh_raw_plan):
             for turn_index, turn_plan in plan_part.items():

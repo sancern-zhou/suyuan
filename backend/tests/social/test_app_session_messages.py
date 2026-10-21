@@ -1,5 +1,6 @@
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
@@ -93,7 +94,7 @@ def test_app_messages_still_rejects_non_social_non_web_sources(monkeypatch):
     assert response.json()["detail"] == "session_not_found"
 
 
-def test_app_messages_rejects_plain_web_session_of_same_user(monkeypatch):
+def test_app_messages_accepts_plain_web_session_of_same_user(monkeypatch):
     row = ConversationCatalogRecord(
         session_id="assistant_session_1_abc", owner_user_id="u1",
         owner_username="alice", owner_display_name="Alice",
@@ -107,10 +108,14 @@ def test_app_messages_rejects_plain_web_session_of_same_user(monkeypatch):
             return row
 
     monkeypatch.setattr(social_app_routes, "get_conversation_catalog", lambda: Catalog())
-
+    adapter = SimpleNamespace(restore=AsyncMock(return_value={"session": SimpleNamespace(model_dump=lambda **kw: {
+        "conversation_history": [{"type": "user", "role": "user", "content": "From Web"}]
+    })}))
+    monkeypatch.setattr(conversations_adapters, "get_conversation_adapters", lambda: SimpleNamespace(get=lambda source: adapter))
+    monkeypatch.setattr(social_app_routes, "_app_resource_descriptors", AsyncMock(return_value=[]))
     response = _client().get("/api/social/app/sessions/assistant_session_1_abc/messages")
-    assert response.status_code == 404
-    assert response.json()["detail"] == "session_not_found"
+    assert response.status_code == 200
+    assert response.json()["messages"][0]["content"] == "From Web"
 
 
 def test_app_messages_allows_system_owned_scheduled_task_session(monkeypatch):
@@ -168,8 +173,15 @@ def test_app_messages_rejects_unknown_scheduled_session(monkeypatch):
         async def require_read(self, session_id, user):
             raise HTTPException(status_code=404, detail="session_not_found")
 
+        async def find(self, session_id):
+            return None
+
     monkeypatch.setattr(social_app_routes, "get_conversation_catalog", lambda: Catalog())
     monkeypatch.setattr(scheduled_task_routes, "get_scheduled_task_service", lambda: service)
+    monkeypatch.setattr(
+        social_app_routes, "_loaded_session_mapper",
+        AsyncMock(return_value=SimpleNamespace(get_session=AsyncMock(return_value=None))),
+    )
 
     response = _client().get("/api/social/app/sessions/scheduled_task_missing_20261007_080000_abcd1234/messages")
     assert response.status_code == 404

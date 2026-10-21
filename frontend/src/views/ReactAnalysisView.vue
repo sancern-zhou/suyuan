@@ -67,6 +67,7 @@
       @update:left-sidebar-collapsed="leftSidebarCollapsed = $event"
       @update:layout-ref="layoutRef = $event"
       @send="handleSend"
+      @assistant-continue="handleAssistantContinue"
       @pause="handlePause"
       @update:use-reranker="handleRerankerChange"
       @select-message="selectMessage"
@@ -120,7 +121,9 @@
       @resolve-interaction="handleInteractionResolve"
       @close-interaction="handleInteractionClose"
       @submit-human-feedback="handleHumanFeedbackSubmit"
-    />
+    >
+    </MainLayout>
+    <AssistantConversationSync :state="store.currentState" :mode="store.currentMode" :active="workspace === 'chat' && !managementPanel" @sessions="applyAssistantConversations" />
 
     <!-- 知识库创建对话框 -->
     <KnowledgeBaseCreateDialog
@@ -154,6 +157,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useReactStore } from '@/stores/reactStore'
+import AssistantConversationSync from '@/components/reactAnalysis/AssistantConversationSync.vue'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
 import {
@@ -250,6 +254,7 @@ const {
   handleSessionRestore,
   handleLoadSession,
   refreshSessionHistory,
+  applyAssistantConversations,
   handleSessionCleanup,
   deleteSessions,
   handleToggleSessionCase,
@@ -566,6 +571,14 @@ const handleLoadSessionAndClosePanel = async (sessionId) => {
   return restored
 }
 
+const handleAssistantContinue = async ({ query, sessionId }) => {
+  if (store.currentState.isAnalyzing) return
+  const restored = await handleLoadSessionAndClosePanel(sessionId)
+  if (!query?.trim()) return
+  if (!restored || currentConversationPolicy.value.readOnly || store.currentState.isAnalyzing) return
+  await handleSend({ query, agentMode: 'assistant' })
+}
+
 const handleSessionRestoreAndClosePanel = async (sessionId) => {
   const restored = await handleSessionRestore(sessionId)
   if (restored) {
@@ -821,6 +834,14 @@ const handleSidebarAction = async (actionId) => {
     case 'social-platform':
       console.log('[ReactAnalysisView] Showing social-platform panel')
       showManagementPanel('social-platform')
+      break
+    case 'shared-conversations':
+      console.log('[ReactAnalysisView] Showing shared-conversations panel')
+      showManagementPanel('shared-conversations')
+      break
+    case 'platform-guide':
+      console.log('[ReactAnalysisView] Showing platform-guide panel')
+      showManagementPanel('platform-guide')
       break
     case 'file-manager':
       console.log('[ReactAnalysisView] Showing file-manager panel')

@@ -7,9 +7,13 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
+from app.auth.internal_identity import INTERNAL_USER_HEADER, encode_internal_user
+from app.auth.models import CurrentUser
+
 
 FETCHERS_PREFIX = "/api/fetchers"
-PROXIED_FETCHER_SUBPATHS = ("status", "trigger/", "pause/", "resume/")
+PROXIED_FETCHER_SUBPATHS = {"status", "list", "start", "stop"}
+FETCHER_OPERATIONS = {"trigger", "pause", "resume"}
 
 
 def should_proxy_fetchers_request(
@@ -29,7 +33,10 @@ def should_proxy_fetchers_request(
         return False
 
     subpath = path.removeprefix(f"{FETCHERS_PREFIX}/")
-    return any(subpath == allowed or subpath.startswith(allowed) for allowed in PROXIED_FETCHER_SUBPATHS)
+    if subpath in PROXIED_FETCHER_SUBPATHS:
+        return True
+    parts = subpath.split("/")
+    return len(parts) == 2 and parts[0] in FETCHER_OPERATIONS and bool(parts[1])
 
 
 def build_worker_fetchers_url(base_url: str, path: str, query_string: str = "") -> str:
@@ -83,10 +90,16 @@ class FetcherWorkerProxyMiddleware:
             key: value
             for key, value in request.headers.items()
             if key.lower()
-            not in {"host", "content-length", "x-suyuan-current-user"}
+            not in {"host", "content-length", INTERNAL_USER_HEADER.lower()}
         }
         if self.worker_token:
             headers["x-social-worker-token"] = self.worker_token
+        current_user = (scope.get("state") or {}).get("current_user")
+        if isinstance(current_user, CurrentUser):
+            headers[INTERNAL_USER_HEADER] = encode_internal_user(
+                current_user,
+                secret=self.worker_token,
+            )
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:

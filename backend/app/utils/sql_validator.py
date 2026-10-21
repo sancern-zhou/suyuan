@@ -321,9 +321,15 @@ class SQLValidator:
             表名列表
         """
         sql = self.normalize_sql(sql)
-        # EXTRACT(HOUR FROM col) 的 FROM 是函数实参而非表引用; 先摘除再扫表名,
-        # 否则列名会被误判为"不在白名单的表"(2026-10-16 告警小时分布查询误拒)。
-        sql = re.sub(r"\bEXTRACT\s*\([^()]*\)", "EXTRACT()", sql, flags=re.IGNORECASE)
+        # EXTRACT(HOUR FROM col) 的 FROM 是函数实参而非表引用; 只摘掉该 FROM 关键字再扫表名,
+        # 否则列名会被误判为"不在白名单的表"(2026-10-16 告警小时分布查询误拒);
+        # 不摘整个参数列表, 以兼容 EXTRACT(... FROM 嵌套函数 ...) 的内层括号。
+        sql = re.sub(
+            r'\b(EXTRACT\s*\(\s*\w+\s+)FROM\b',
+            r'\1    ',
+            sql,
+            flags=re.IGNORECASE,
+        )
         tables = []
         pattern = r'\b(?:from|join)\s+(?!\()(\[?\w+\]?(?:\s*\.\s*\[?\w+\]?)?)'
 

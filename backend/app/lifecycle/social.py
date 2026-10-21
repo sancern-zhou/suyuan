@@ -47,7 +47,7 @@ async def start_social_platform_service(app: FastAPI) -> None:
             agent=agent,
             message_bus=message_bus,
             session_mapper=session_mapper,
-            mode="social",
+            mode="assistant",
         )
 
         message_bus.agent_bridge = agent_bridge
@@ -148,9 +148,8 @@ async def stop_social_platform_service(app: FastAPI) -> None:
             logger.info("agent_bridge_stopped")
 
         if hasattr(app.state, "session_mapper") and app.state.session_mapper:
-            await app.state.session_mapper.save()
             cleaned = await app.state.session_mapper.cleanup_expired(ttl_hours=24)
-            logger.info("session_mapper_saved_and_cleaned", cleaned_count=cleaned)
+            logger.info("session_mapper_cleaned", cleaned_count=cleaned)
 
         logger.info("social_platform_service_stopped")
     except Exception as e:

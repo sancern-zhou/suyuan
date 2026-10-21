@@ -51,7 +51,7 @@ const loadCatalog = async (store, client, sessionId, filters = {}) => {
           limit: queryFilters.limit || 200,
           ...(cursor ? { cursor } : {})
         })
-        if (store.sessions[sessionId]?.requestToken !== token) return null
+        if ((store.sessions[sessionId] !== state || state.requestToken !== token)) return null
         resources.push(...(Array.isArray(page?.resources) ? page.resources : []))
         resourceVersion = Math.max(resourceVersion, Number(page?.resource_version || 0))
         cursor = page?.next_cursor || null
@@ -62,10 +62,10 @@ const loadCatalog = async (store, client, sessionId, filters = {}) => {
         || attempt >= CATALOG_RETRY_DELAYS_MS.length
       ) break
       await new Promise(resolve => setTimeout(resolve, CATALOG_RETRY_DELAYS_MS[attempt]))
-      if (store.sessions[sessionId]?.requestToken !== token) return null
+      if ((store.sessions[sessionId] !== state || state.requestToken !== token)) return null
     }
 
-    if (store.sessions[sessionId]?.requestToken !== token) return null
+    if ((store.sessions[sessionId] !== state || state.requestToken !== token)) return null
     if (resourceVersion >= state.resourceVersion) {
       state.resources = resources
       state.resourceVersion = resourceVersion
@@ -74,7 +74,7 @@ const loadCatalog = async (store, client, sessionId, filters = {}) => {
     state.loading = false
     return state
   } catch (error) {
-    if (store.sessions[sessionId]?.requestToken === token) {
+    if (store.sessions[sessionId] === state && state.requestToken === token) {
       state.loading = false
       state.error = error instanceof Error ? error.message : String(error)
       state.requestedVersion = state.resourceVersion

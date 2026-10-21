@@ -25,6 +25,16 @@ POLLUTANT_ROW_KEYS: dict[str, tuple[str, ...]] = {
 }
 POLLUTANT_UNITS: dict[str, str] = {"PM10": "μg/m³", "PM2.5": "μg/m³", "SO2": "μg/m³",
                                    "NO": "μg/m³", "NO2": "μg/m³", "CO": "mg/m³", "O3": "μg/m³"}
+# 时序图对照污染物配对：目标 → 同站最有诊断意义的对照项，无自然配对则不画对照线。
+# 颗粒物互为对照以暴露倒挂（PM2.5>PM10 指向走纸/采样异常）；NO/NO2 同出 NOx 分析仪；
+# O3 与 NO2 有光化学平衡关系；SO2/CO 无稳定物理配对，横向比对交给同城带。
+COMPARISON_POLLUTANTS: dict[str, str] = {
+    "PM10": "PM2.5",
+    "PM2.5": "PM10",
+    "NO": "NO2",
+    "NO2": "NO",
+    "O3": "NO2",
+}
 CALL_TIMEOUT_SECONDS = 75
 FETCH_CONCURRENCY = 6
 MAX_COMPARISON_STATIONS = 3

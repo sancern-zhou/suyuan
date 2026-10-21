@@ -11,6 +11,14 @@ from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
 from app.tools.agent_tools.run_agent_workflow import RunAgentWorkflowTool
 
 
+@pytest.fixture(autouse=True)
+def isolated_workflows(monkeypatch, tmp_path):
+    from app.agent.workflow.registry import ActiveWorkflowRegistry
+    monkeypatch.setattr(RunAgentWorkflowTool, "_build_workflow_registry", staticmethod(ActiveWorkflowRegistry))
+    monkeypatch.setattr("app.agent.workflow.result_cache._cache_root", lambda: tmp_path / "cache")
+    monkeypatch.setattr("app.agent.workflow.journal.get_data_registry", lambda: tmp_path)
+
+
 def test_parent_tools_and_project_prompt_receive_delegation_guidance(monkeypatch):
     monkeypatch.setattr("app.agent.prompts.tool_registry._get_project_tool_names_by_mode", lambda mode: None)
     monkeypatch.setattr("app.agent.prompts.tool_registry._get_project_disabled_tool_names", lambda: [])

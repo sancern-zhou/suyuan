@@ -1,6 +1,6 @@
 """对话模式长期记忆查看/编辑 API 测试（隔离存储，不触碰真实 registry）"""
 import sys
-import re
+import pytest
 import tempfile
 import shutil
 from contextlib import contextmanager
@@ -149,9 +149,10 @@ def test_mode_memory_rejects_social_and_invalid_modes():
     # 含斜杠/冒号/点号的模式名无法通过路由（404），净化函数兜底保证单层安全目录名
     from app.api.agent_memory_routes import _safe_mode
 
-    sanitized = _safe_mode("query:/../../escape")
-    assert re.fullmatch(r"[a-zA-Z0-9_-]+", sanitized)
-    assert "/" not in sanitized and "\\" not in sanitized
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc:
+        _safe_mode("query:/../../escape")
+    assert exc.value.status_code == 400
 
 
 def test_write_accepts_int_mtime_ns():
@@ -179,5 +180,27 @@ def test_write_rejects_stale_version():
         except MemoryVersionConflictError:
             pass
         assert "第一版" in storage.read().memory
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_write_rejects_over_capacity_memory():
+    """人工编辑与会话 Agent 的 edit_file 共用同一容量上限：
+    API 写超限必须拒绝，否则 Agent 的 edit_file 会从此被永久卡死。"""
+    from app.agent.memory.memory_limits import MEMORY_MD_MAX_CHARS
+
+    temp_dir = tempfile.mkdtemp()
+    try:
+        storage = ModeMemoryStorage("expert", base_dir=temp_dir)
+        bloated = "x" * (MEMORY_MD_MAX_CHARS + 1)
+        try:
+            storage.write(bloated, expected_version=0, expected_mtime_ns=None)
+            assert False, "should raise"
+        except Exception as exc:  # HTTPException 422
+            assert getattr(exc, "status_code", None) == 422
+            assert "容量上限" in str(getattr(exc, "detail", ""))
+        # 未超限的正常写入不受影响
+        storage.write("正常内容", expected_version=0, expected_mtime_ns=None)
+        assert "正常内容" in storage.read().memory
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

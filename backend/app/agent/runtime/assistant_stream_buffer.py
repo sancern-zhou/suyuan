@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.agent.markup_sanitizer import DSMLStreamFilter, strip_dsml_tool_call_markup
+
 
 class AssistantStreamBuffer:
     """Tracks raw assistant text and prevents tool-planning text leaks."""
@@ -11,6 +13,7 @@ class AssistantStreamBuffer:
         self.visible_text = ""
         self._last_visible_snapshot = ""
         self.suppress_after_tool_use = False
+        self._markup_filter = DSMLStreamFilter()
 
     def note_tool_use(self) -> None:
         self.suppress_after_tool_use = True
@@ -21,10 +24,12 @@ class AssistantStreamBuffer:
         self.raw_text += chunk
         if self.suppress_after_tool_use:
             return ""
-        return self._append_visible(chunk)
+        return self._append_visible(self._markup_filter.append(chunk))
 
     def flush(self) -> str:
-        return ""
+        if self.suppress_after_tool_use:
+            return ""
+        return self._append_visible(self._markup_filter.flush())
 
     def _append_visible(self, text: str) -> str:
         if not text:
@@ -36,4 +41,4 @@ class AssistantStreamBuffer:
         return text
 
     def final_text(self, fallback: str = "") -> str:
-        return fallback or self.visible_text or self.raw_text
+        return strip_dsml_tool_call_markup(fallback or self.raw_text)[0]

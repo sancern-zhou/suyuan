@@ -5,6 +5,14 @@ import pytest
 from app.social.targeted_broadcast_service import TargetedSocialBroadcastService
 
 
+@pytest.fixture(autouse=True)
+def _no_app_accounts(monkeypatch):
+    """测试池只含夹具用户；真实 APP_ACCOUNTS_JSON 会与夹具撞名。"""
+    monkeypatch.setattr(
+        "app.social.targeted_broadcast_service._accounts", lambda: {}
+    )
+
+
 def _user(
     user_id,
     name,
@@ -99,6 +107,32 @@ async def test_broadcast_resolves_unique_names_and_persists_context(tmp_path):
     ]
     assert result["failed_user_names"] == []
     assert result["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_broadcast_resolves_app_account_whose_alias_equals_name(monkeypatch):
+    # App accounts use the account id as sender_id; when the id equals the
+    # display name the alias pass used to duplicate the pool entry and every
+    # broadcast to that name failed with "duplicate user name".
+    monkeypatch.setattr(
+        "app.social.targeted_broadcast_service._accounts",
+        lambda: {"周三成": {"name": "周三成", "status": "active"}},
+    )
+    registry = FakeRegistry([
+        _user("admin-1", "超级管理员", social_user_id="weixin:auto:bot:wx-1"),
+    ])
+    broadcaster = FakeBroadcaster()
+    service = TargetedSocialBroadcastService(registry, broadcaster)
+
+    result = await service.broadcast(
+        message="许昌告警",
+        target_user_names=["周三成"],
+    )
+
+    assert result["failed_user_names"] == []
+    assert result["success"] is True
+    assert broadcaster.calls[0]["target_user_ids"] == ["app:android:周三成"]
+    assert broadcaster.calls[0]["channels"] == ["app"]
 
 
 @pytest.mark.asyncio

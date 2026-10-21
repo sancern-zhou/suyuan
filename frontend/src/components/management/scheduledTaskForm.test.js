@@ -21,11 +21,21 @@ test('execution mode options include every project mode plus task-only modes', (
     'ops',
     'query',
     'expert',
-    'social',
+    'office',
+    'assistant',
     'custom',
     'workflow'
   ])
   assert.equal(options[1].label, 'query（问数）')
+})
+
+test('assistant and office have distinct canonical execution modes', () => {
+  const options = buildExecutionModeOptions([{ id: 'assistant', shortName: '助手' }], 'assistant')
+  assert.equal(options.filter(option => option.value === 'assistant').length, 1)
+  assert.ok(options.some(option => option.value === 'office'))
+  assert.match(options.find(option => option.value === 'assistant').label, /助手/)
+  assert.match(options.find(option => option.value === 'office').label, /办公/)
+  assert.ok(!options.some(option => option.value === 'social'))
 })
 
 
@@ -106,7 +116,7 @@ test('builds an event task with multiple backend user ids', () => {
   const payload = buildTaskPayload({
     name: "许昌告警推送",
     description: '生成并推送报告',
-    execution_mode: 'social',
+    execution_mode: 'assistant',
     trigger_type: 'event',
     event_type: "xuchang.station_deviation.alert_created",
     event_filters: { city: "许昌市" },
@@ -292,7 +302,7 @@ test('history learning preserves unexposed subfields from the edited task', () =
 })
 
 
-test('event trigger defaults to social execution and broadcasting', () => {
+test('event trigger defaults to assistant execution and broadcasting', () => {
   const form = {
     trigger_type: 'schedule',
     execution_mode: 'assistant',
@@ -305,7 +315,7 @@ test('event trigger defaults to social execution and broadcasting', () => {
   ])
 
   assert.equal(form.trigger_type, 'event')
-  assert.equal(form.execution_mode, 'social')
+  assert.equal(form.execution_mode, 'assistant')
   assert.equal(form.broadcast_enabled, true)
   assert.equal(form.event_type, 'xuchang.station_deviation.alert_created')
 })

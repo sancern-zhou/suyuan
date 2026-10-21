@@ -2,7 +2,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api import admin, agent, fetchers, routes, skills_routes
+from app.api import admin, agent, fetcher_worker_routes, routes, skills_routes
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 
@@ -55,13 +55,9 @@ def test_admin_workflow_allows_admin():
         ("POST", "/fetchers/era5/historical", {"date": "2026-08-01"}),
         ("POST", "/fetchers/jining_era5/fetch", {"date": "2026-08-01"}),
         ("GET", "/fetchers/jining_era5/stations", None),
-        ("GET", "/tools", None),
-        ("GET", "/tools/example", None),
-        ("PATCH", "/tools/example", {"enabled": True}),
-        ("GET", "/tools/categories", None),
     ],
 )
-def test_management_routes_require_admin(method, path, json_body):
+def test_fetcher_trigger_routes_require_admin(method, path, json_body):
     response = request(make_client(routes.router), method, path, json_body)
 
     assert response.status_code == 403
@@ -81,41 +77,82 @@ def test_management_routes_require_admin(method, path, json_body):
     ],
 )
 def test_fetchers_router_requires_admin(method, path, json_body):
-    response = request(make_client(fetchers.router), method, path, json_body)
+    response = request(make_client(fetcher_worker_routes.router), method, path, json_body)
 
     assert response.status_code == 403
     assert response.json()["detail"] == "admin_required"
 
 
-@pytest.mark.parametrize(
-    ("method", "path", "json_body"),
-    [
-        ("GET", "/api/agent/tools/example", None),
-        ("GET", "/api/agent/tools/categories", None),
-        ("PATCH", "/api/agent/tools/example", {"enabled": False}),
-    ],
-)
-def test_agent_tool_management_requires_admin(method, path, json_body):
-    response = request(make_client(agent.router), method, path, json_body)
+def test_tool_status_update_requires_admin():
+    response = request(make_client(routes.router), "PATCH", "/tools/example", {"enabled": False})
 
     assert response.status_code == 403
     assert response.json()["detail"] == "admin_required"
 
 
-def test_agent_tool_list_stays_available_for_authenticated_users(monkeypatch):
+def test_agent_alias_tool_status_update_requires_admin():
+    response = request(make_client(agent.router), "PATCH", "/api/agent/tools/example", {"enabled": False})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "admin_required"
+
+
+@pytest.mark.parametrize("path", ["/tools", "/api/agent/tools"])
+def test_tool_listing_stays_available_for_authenticated_users(path, monkeypatch):
     monkeypatch.setattr(
         agent.global_tool_registry,
         "get_tools_info",
         lambda: [{"name": "mock-tool", "category": "utility"}],
     )
 
-    response = make_client(agent.router).get("/api/agent/tools")
+    client = make_client(agent.router) if path.startswith("/api/agent") else make_client(routes.router)
+    response = client.get(path)
 
     assert response.status_code == 200
-    assert response.json() == {
-        "tools": [{"name": "mock-tool", "category": "utility"}],
-        "count": 1,
-    }
+    payload = response.json()
+    assert payload["tools"] == [{"name": "mock-tool", "category": "utility"}]
+    assert payload["count"] == 1
+
+
+def test_tool_categories_stay_available_for_authenticated_users(monkeypatch):
+    monkeypatch.setattr(
+        agent.global_tool_registry,
+        "get_categories",
+        lambda: ["utility"],
+    )
+
+    response = make_client(routes.router).get("/tools/categories")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["categories"] == ["utility"]
+
+
+@pytest.mark.parametrize(
+    ("router", "path"),
+    [
+        (routes, "/tools/example"),
+        (agent, "/api/agent/tools/example"),
+    ],
+)
+def test_tool_detail_available_without_admin(router, path):
+    # 非管理员可读：未注册工具返回 404 而非 401/403，证明鉴权边界只是"登录"。
+    response = make_client(router.router).get(path)
+
+    assert response.status_code == 404
+
+
+def test_agent_tool_alias_matches_canonical_shape(monkeypatch):
+    monkeypatch.setattr(
+        agent.global_tool_registry,
+        "get_tools_info",
+        lambda: [{"name": "mock-tool", "category": "utility"}],
+    )
+
+    canonical = make_client(routes.router).get("/tools").json()
+    alias = make_client(agent.router).get("/api/agent/tools").json()
+
+    assert alias == canonical
 
 
 @pytest.mark.parametrize(

@@ -611,6 +611,13 @@ class SessionRepository:
         try:
             async with AsyncSession(self.engine) as session:
                 rows_started = time.monotonic()
+                # Background replies append to the same transcript. Fence both
+                # sequence allocation and message identity on the session row.
+                await session.execute(
+                    update(SessionDB)
+                    .where(SessionDB.session_id == session_id)
+                    .values(updated_at=SessionDB.updated_at)
+                )
                 stmt = (
                     select(
                         SessionMessageDB.id,
@@ -698,7 +705,13 @@ class SessionRepository:
                 rows_build_ms = round((time.monotonic() - rows_started) * 1000, 2)
 
                 insert_started = time.monotonic()
-                await session.execute(SessionMessageDB.__table__.insert(), rows)
+                inserted = await session.execute(
+                    SessionMessageDB.__table__.insert().returning(
+                        SessionMessageDB.id, sort_by_parameter_order=True
+                    ),
+                    rows,
+                )
+                inserted_ids = inserted.scalars().all()
                 insert_ms = round((time.monotonic() - insert_started) * 1000, 2)
 
                 commit_started = time.monotonic()
@@ -709,18 +722,10 @@ class SessionRepository:
                 # 内存缓存、agent 进程内 conversation_history）持有的对象与
                 # 传入的是同一批引用，写回后后续保存可按 id 精确对账。
                 stamp_started = time.monotonic()
-                id_result = await session.execute(
-                    select(SessionMessageDB.id)
-                    .where(
-                        SessionMessageDB.session_id == session_id,
-                        SessionMessageDB.sequence_number > max_seq,
-                    )
-                    .order_by(SessionMessageDB.sequence_number)
-                )
-                for msg, row in zip(new_messages, id_result.all()):
+                for msg, row_id in zip(new_messages, inserted_ids):
                     # 无条件改写为真实行 id：原 id 要么缺失，要么已失效
                     # （行被删除/属于其他会话），保留都会导致下次重插。
-                    msg["id"] = f"msg_{row.id}"
+                    msg["id"] = f"msg_{row_id}"
                 stamp_ms = round((time.monotonic() - stamp_started) * 1000, 2)
 
                 logger.info(
@@ -848,6 +853,45 @@ class SessionRepository:
             result = await session.execute(stmt)
             return result.scalar() or 0
 
+    async def list_error_messages_in_window(
+        self,
+        since: datetime,
+        until: Optional[datetime] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """按时间窗查询 error 语义消息（运行监控用），新→旧。
+
+        走 ix_session_messages_type_timestamp 索引；内容截断避免大对象。
+        """
+        conditions = [
+            SessionMessageDB.msg_type == "error",
+            SessionMessageDB.timestamp >= since,
+        ]
+        if until is not None:
+            conditions.append(SessionMessageDB.timestamp < until)
+        async with AsyncSession(self.engine) as session:
+            stmt = (
+                select(SessionMessageDB)
+                .where(*conditions)
+                .order_by(SessionMessageDB.timestamp.desc())
+                .limit(max(int(limit), 1))
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            results: List[Dict[str, Any]] = []
+            for row in rows:
+                content = self._deserialize_content(row.content)
+                text = (
+                    content
+                    if isinstance(content, str)
+                    else json.dumps(content, ensure_ascii=False) if content is not None else ""
+                )
+                results.append({
+                    "session_id": row.session_id,
+                    "timestamp": row.timestamp.isoformat() if row.timestamp else None,
+                    "content": (text or "")[:300],
+                })
+            return results
+
     def _msg_to_dict(self, msg: SessionMessageDB, include_data: bool = True) -> Dict[str, Any]:
         """
         将数据库消息转换为前端字典格式
@@ -874,18 +918,19 @@ class SessionRepository:
                 msg_dict.update(metadata_without_id)
         return msg_dict
 
-    def _message_row_to_context_dict(self, row: Any, include_data: bool = True) -> Dict[str, Any]:
+    @classmethod
+    def _message_row_to_context_dict(cls, row: Any, include_data: bool = True) -> Dict[str, Any]:
         message = {
             "role": row.role,
             "type": row.msg_type,
-            "content": self._deserialize_content(row.content),
+            "content": cls._deserialize_content(row.content),
             "timestamp": row.timestamp.isoformat() if row.timestamp else None,
             "id": f"msg_{row.id}",
             "sequence_number": row.sequence_number,
         }
         if include_data and getattr(row, "data", None):
             message["data"] = row.data
-        attachments = self._message_attachments(getattr(row, "msg_metadata", None))
+        attachments = cls._message_attachments(getattr(row, "msg_metadata", None))
         if attachments:
             message["attachments"] = attachments
         return message
@@ -1173,15 +1218,7 @@ class SessionRepository:
                         case(
                             (
                                 SessionMessageDB.msg_type == "tool_result",
-                                cast(
-                                    func.json_extract_path(
-                                        SessionMessageDB.data,
-                                        "result",
-                                        "data",
-                                        "human_feedback",
-                                    ),
-                                    JSON,
-                                ),
+                                SessionMessageDB.data[("result", "data", "human_feedback")],
                             ),
                             else_=None,
                         ).label("human_feedback"),
