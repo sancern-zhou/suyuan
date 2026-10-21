@@ -532,7 +532,7 @@ class JiangsuQueryMetricsTool(LLMTool):
             finally:
                 await self._audit(context, describe_cube,
                                   {"describe_cube": describe_cube}, 0, status, error,
-                                  int((time.monotonic() - started) * 1000))
+                                  False, int((time.monotonic() - started) * 1000))
         cube, err = self._validate(measures, dimensions, time_dimension, filters)
         if err:
             return {"success": False, "data": None, "summary": f"参数校验失败: {err}"}
@@ -551,10 +551,13 @@ class JiangsuQueryMetricsTool(LLMTool):
             query["filters"] = filters
         if order:
             query["order"] = order
-        query["limit"] = min(limit or self.DEFAULT_LIMIT, self.MAX_LIMIT)
+        requested_limit = min(limit or self.DEFAULT_LIMIT, self.MAX_LIMIT)
+        # 多取一行用于判定结果是否被截断
+        query["limit"] = requested_limit + 1
 
         started = time.monotonic()
         status, error, row_count = "ok", None, 0
+        truncated = False
         try:
             base_url = os.getenv("CUBE_API_URL", "http://127.0.0.1:4610/cubejs-api/v1")
             secret = os.getenv("CUBE_API_SECRET", "")
@@ -580,6 +583,8 @@ class JiangsuQueryMetricsTool(LLMTool):
                  for k, v in row.items()}
                 for row in body.get("data", [])
             ]
+            truncated = len(results) > requested_limit
+            results = results[:requested_limit]
             row_count = len(results)
             data_as_of = await self._data_as_of(cube)
             quality_status, quality_checks = await self._quality_status(cube)
@@ -613,6 +618,8 @@ class JiangsuQueryMetricsTool(LLMTool):
                 "file_path": file_path,
                 "count": row_count,
                 "sample_count": len(sample_data),
+                "limit": requested_limit,
+                "truncated": truncated,
                 "cube": cube,
                 "data_as_of": data_as_of,
                 "quality_status": quality_status,
@@ -632,6 +639,8 @@ class JiangsuQueryMetricsTool(LLMTool):
                 "summary": (
                     f"返回 {row_count} 行（数据截至 {data_as_of}，"
                     f"质量状态：{quality_status}）"
+                    + (f"；已达返回上限 {requested_limit} 行，结果被截断，匹配行数更多"
+                       if truncated else "")
                 ),
             }
             contract_errors = validate_result("metric_query", payload)
@@ -645,7 +654,7 @@ class JiangsuQueryMetricsTool(LLMTool):
             return {"success": False, "data": [], "summary": f"查询失败: {error}"}
         finally:
             await self._audit(context, cube, query, row_count, status, error,
-                              int((time.monotonic() - started) * 1000))
+                              truncated, int((time.monotonic() - started) * 1000))
 
     async def _data_as_of(self, cube: str) -> Optional[str]:
         """宽表新鲜度(与 SQL 工具同源);失败不阻塞查询。"""
@@ -702,7 +711,7 @@ class JiangsuQueryMetricsTool(LLMTool):
             return "unknown", []
 
     async def _audit(self, context, cube, query, row_count, status, error,
-                     duration_ms) -> None:
+                     truncated, duration_ms) -> None:
         """Best-effort 审计;失败只记日志。"""
         try:
             import asyncpg
@@ -723,7 +732,7 @@ class JiangsuQueryMetricsTool(LLMTool):
                     json.dumps({"query": query, "status": status},
                                ensure_ascii=False, default=str)[:4000],
                     row_count,
-                    False,
+                    truncated,
                     duration_ms,
                     error,
                 )

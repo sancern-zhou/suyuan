@@ -184,6 +184,7 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
         status = "ok"
         error = None
         row_count = 0
+        truncated = False
         data_as_of = None
         try:
             sql = self.sql_validator.normalize_sql(sql)
@@ -197,12 +198,13 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                     "summary": f"SQL验证失败: {error_msg}。允许的表: {', '.join(MART_TABLES)}",
                 }
 
-            # 行数上限用外层包裹强制，不依赖LLM写LIMIT
-            safe_sql = f"SELECT * FROM ({sql.rstrip('; ')}) AS _mart_query LIMIT {limit}"
+            # 行数上限用外层包裹强制，不依赖LLM写LIMIT；多取一行用于判定是否被截断
+            safe_sql = f"SELECT * FROM ({sql.rstrip('; ')}) AS _mart_query LIMIT {limit + 1}"
 
             conn = await asyncpg.connect(self._mart_dsn())
             rows = await conn.fetch(safe_sql)
-            results = [dict(r) for r in rows]
+            truncated = len(rows) > limit
+            results = [dict(r) for r in rows[:limit]]
             row_count = len(results)
             datasets = self._datasets_from_sql(sql)
             semantic_entries = [dataset_metadata(table) for table in datasets]
@@ -235,6 +237,8 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                 "file_path": file_path,
                 "count": len(results),
                 "sample_count": len(sample_data),
+                "limit": limit,
+                "truncated": truncated,
                 "data_as_of": data_as_of,
                 "quality_status": quality_status,
                 "semantic_context": {
@@ -253,7 +257,10 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                     "quality_guidance": quality_guidance(quality_status),
                     "interpretation": "此结果用于字段级取证；官方汇总指标应优先使用 jiangsu_query_metrics。",
                 },
-                "summary": f"返回 {len(results)} 行（数据截至 {data_as_of}，质量状态：{quality_status}）",
+                "summary": (
+                    f"返回 {len(results)} 行（数据截至 {data_as_of}，质量状态：{quality_status}）"
+                    + (f"；已达返回上限 {limit} 行，结果被截断，匹配行数更多" if truncated else "")
+                ),
             }
             contract_errors = validate_result("evidence_sql", payload)
             if contract_errors:
@@ -269,7 +276,7 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
             if conn is not None:
                 await conn.close()
             await self._audit(
-                context, sql, row_count, status, error,
+                context, sql, row_count, status, error, truncated,
                 int((time.monotonic() - started) * 1000),
             )
 
@@ -364,7 +371,7 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
         except Exception:  # noqa: BLE001
             return ""
 
-    async def _audit(self, context, sql, row_count, status, error, duration_ms) -> None:
+    async def _audit(self, context, sql, row_count, status, error, truncated, duration_ms) -> None:
         """Best-effort 审计；失败只记日志不影响查询。"""
         try:
             import json
@@ -386,7 +393,7 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                     "jiangsu_mart",
                     json.dumps({"sql": (sql or "")[:4000], "status": status}, ensure_ascii=False),
                     row_count,
-                    False,
+                    truncated,
                     duration_ms,
                     error,
                 )
