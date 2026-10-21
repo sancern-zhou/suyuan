@@ -566,6 +566,10 @@ class ToolExecutor:
                         summary=f"{original_summary}，但资源发布失败，结果未交付到文件面板",
                     )
 
+            # 为本轮产出的图表绑定会话级短别名（[[chart:chart_N]]）：
+            # 模型原样复制短标记，Finalizer 落库/下发前统一还原为 visual_id。
+            await self._attach_visual_aliases(tool_name, observation)
+
             # ========================================
             # 详细调试信息：显示工具调用后
             # ========================================
@@ -797,6 +801,62 @@ class ToolExecutor:
                 else:
                     # 无法重试或已达最大重试次数
                     raise
+
+    async def _attach_visual_aliases(self, tool_name: str, observation: Dict[str, Any]) -> None:
+        """为工具结果里的 visuals 绑定会话级短别名（零抄写熵）。
+
+        visuals[].id 保持全串不变（SSE/资源目录/前端协议不受影响）；
+        别名映射写入 ``visual_refs``，并在 summary 末尾追加可直接复制的
+        ``[[chart:chart_N]]`` 标记行。解析由 Finalizer 统一完成
+        （见 app/agent/runtime/visual_alias.py）。
+        """
+        visuals = observation.get("visuals")
+        if not isinstance(visuals, list) or not visuals or not self.memory_manager:
+            return
+        visual_ids = [
+            visual.get("id")
+            for visual in visuals
+            if isinstance(visual, dict) and isinstance(visual.get("id"), str) and visual.get("id")
+        ]
+        if not visual_ids:
+            return
+        from app.agent.runtime.visual_alias import visual_alias_registry
+
+        session_id = self.memory_manager.session_id
+        try:
+            mapping = await visual_alias_registry.bind(session_id, visual_ids)
+        except Exception as exc:
+            logger.warning(
+                "visual_alias_attach_failed",
+                tool_name=tool_name,
+                session_id=session_id,
+                error=str(exc),
+            )
+            return
+        if not mapping:
+            return
+        observation["visual_refs"] = mapping
+        titles = {
+            visual.get("id"): str(visual.get("title") or "").strip()
+            for visual in visuals
+            if isinstance(visual, dict)
+        }
+        marks = []
+        for alias, visual_id in mapping.items():
+            title = titles.get(visual_id, "")
+            marks.append(f"[[chart:{alias}]]（{title[:30]}）" if title else f"[[chart:{alias}]]")
+        refs_line = (
+            "图表标记（最终答复在对应分析位置独立一行原样复制标记，"
+            "禁止手抄 visuals.id 全串、禁止改动标记内容）：" + "、".join(marks) + "。"
+        )
+        base_summary = str(observation.get("summary") or "").rstrip()
+        observation["summary"] = (base_summary + "\n" + refs_line) if base_summary else refs_line
+        logger.info(
+            "visual_aliases_bound",
+            tool_name=tool_name,
+            session_id=session_id,
+            aliases=sorted(mapping),
+        )
 
     def _normalize_result(
         self,

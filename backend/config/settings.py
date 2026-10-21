@@ -166,6 +166,11 @@ class Settings(BaseSettings):
         default="suyuan:auth:",
         description="Redis prefix for authentication state",
     )
+    slow_request_log_threshold_seconds: float = Field(
+        default=2.0,
+        ge=0.1,
+        description="Warn when a request takes this long to first response bytes",
+    )
     auth_ws_ticket_ttl_seconds: int = Field(
         default=30,
         ge=5,
@@ -707,6 +712,15 @@ class Settings(BaseSettings):
         default=7200,
         ge=60,
         description="TTL for active-run steering metadata and pending inputs",
+    )
+    agent_visual_alias_redis_prefix: str = Field(
+        default="suyuan:agent:visual_alias",
+        description="Redis key prefix for session-scoped short chart aliases ([[chart:chart_N]])",
+    )
+    agent_visual_alias_ttl_seconds: int = Field(
+        default=1209600,
+        ge=60,
+        description="TTL for session-scoped chart alias mappings (refreshed on each bind)",
     )
 
     # Cache TTL (seconds)

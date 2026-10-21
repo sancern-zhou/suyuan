@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import time
+
 import httpx
+import structlog
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
@@ -11,7 +14,10 @@ from app.auth.internal_identity import INTERNAL_USER_HEADER, encode_internal_use
 from app.auth.models import CurrentUser
 
 
+logger = structlog.get_logger()
+
 SCHEDULED_TASKS_PREFIX = "/api/scheduled-tasks"
+SLOW_PROXY_THRESHOLD_SECONDS = 2.0
 
 
 def should_proxy_scheduled_tasks_request(
@@ -50,6 +56,7 @@ class ScheduledTaskWorkerProxyMiddleware:
         worker_base_url: str,
         worker_token: str = "",
         timeout_seconds: float = 1900.0,
+        read_timeout_seconds: float = 20.0,
         scheduled_tasks_enabled: bool = True,
     ):
         self.app = app
@@ -57,6 +64,7 @@ class ScheduledTaskWorkerProxyMiddleware:
         self.worker_base_url = worker_base_url
         self.worker_token = worker_token
         self.timeout_seconds = timeout_seconds
+        self.read_timeout_seconds = read_timeout_seconds
         self.scheduled_tasks_enabled = scheduled_tasks_enabled
 
     async def __call__(self, scope, receive, send):
@@ -90,8 +98,18 @@ class ScheduledTaskWorkerProxyMiddleware:
                 secret=self.worker_token,
             )
 
+        read_timeout = (
+            self.read_timeout_seconds
+            if request.method in {"GET", "HEAD"}
+            else self.timeout_seconds
+        )
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            proxy_started = time.perf_counter()
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    connect=5.0, read=read_timeout, write=30.0, pool=5.0
+                )
+            ) as client:
                 worker_response = await client.request(
                     method=request.method,
                     url=url,
@@ -99,12 +117,30 @@ class ScheduledTaskWorkerProxyMiddleware:
                     headers=headers,
                 )
         except httpx.RequestError as exc:
+            elapsed_ms = round((time.perf_counter() - proxy_started) * 1000)
+            logger.warning(
+                "scheduled_task_proxy_unavailable",
+                method=request.method,
+                path=path,
+                elapsed_ms=elapsed_ms,
+                error=str(exc),
+            )
             response = JSONResponse(
                 {"detail": f"Scheduled task worker unavailable: {exc}"},
                 status_code=503,
             )
             await response(scope, receive, send)
             return
+
+        elapsed_ms = round((time.perf_counter() - proxy_started) * 1000)
+        if elapsed_ms >= SLOW_PROXY_THRESHOLD_SECONDS * 1000:
+            logger.warning(
+                "scheduled_task_proxy_slow",
+                method=request.method,
+                path=path,
+                status=worker_response.status_code,
+                elapsed_ms=elapsed_ms,
+            )
 
         response_headers = {
             key: value

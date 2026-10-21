@@ -19,6 +19,7 @@ from app.lifecycle.database import init_database, init_database_and_fetchers
 from app.lifecycle.knowledge_base import (
     start_knowledge_base_services,
 )
+from app.lifecycle.loop_watchdog import start_loop_watchdog
 from app.lifecycle.nacos import start_nacos
 from app.lifecycle.roles import normalize_app_role, starts_background_services
 from app.lifecycle.scheduled import start_scheduled_task_service
@@ -34,6 +35,7 @@ async def run_startup(app: FastAPI) -> None:
     """Run application startup resource initialization."""
     backend_dir = Path(__file__).resolve().parents[2]
     os.chdir(backend_dir)
+    start_loop_watchdog()
     logger.info(
         "working_directory_set",
         cwd=os.getcwd(),

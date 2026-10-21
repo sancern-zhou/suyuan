@@ -280,11 +280,25 @@ class AssistantPlanService(AssistantFollowupService):
         manifest = load_project_context(project).manifest
         if not manifest.scheduled_tasks_enabled:
             raise PermissionError("后台定时任务尚未启用")
-        modes = set(manifest.frontend.agent_modes)
+        from app.agent.workflow.delegation import LEAF_MODES
+        from app.agent.workflow.project_policy import child_modes
+
+        # 入口可以是项目主模式，也可以直接指定精简子 Agent（叶子模式）。
+        # 叶子模式不获得委派/编排工具，只在固定工具集内执行该节点任务。
+        modes = set(manifest.frontend.agent_modes) | set(LEAF_MODES) | set(child_modes())
         modes.discard("assistant")
+        modes.discard("social")
         modes.add("office")
-        if command.execution_mode not in modes or not get_tools_by_mode(command.execution_mode):
-            raise ValueError("请选择当前项目可用的办公或专业执行模式")
+        try:
+            has_tools = (
+                bool(get_tools_by_mode(command.execution_mode))
+                if command.execution_mode
+                else False
+            )
+        except ValueError:
+            has_tools = False
+        if command.execution_mode not in modes or not has_tools:
+            raise ValueError("请选择当前项目可用的办公/专业主模式或子 Agent 模式")
         key = revision(
             [
                 project,

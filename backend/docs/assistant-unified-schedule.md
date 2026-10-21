@@ -8,8 +8,9 @@
 
 - `purpose=remind`：本人提醒；可关联已有事项及版本，否则原子登记提醒事项与触发计划，不要求先调用事项工具。不执行分析。
 - `purpose=followup`：明确授权的事项只读跟进，必须引用已有事项及版本。
-- `purpose=execute`：交给项目已开放的办公或专业主模式定时执行，不能使用 social、custom
-  或历史 assistant 模式绕过角色边界，不因此给助手增加专业工具。
+- `purpose=execute`：交给项目已开放的办公/专业主模式，或直接交给精简子 Agent（如
+  `query_monitoring_city`）定时执行；子 Agent 只在固定工具集内执行、不具委派能力。
+  不能使用 social、custom 或历史 assistant 模式绕过角色边界，不因此给助手增加专业工具。
 - `schedule.kind=once/interval/cron`：单次、间隔、五段 cron，显式 IANA 时区。
   `feedback` 仅用于事项跟进，接收到新的已保存反馈才执行；不采集微信群记录。
 - 所有类型返回统一 `plan_id/revision/state/schedule/next_at`。

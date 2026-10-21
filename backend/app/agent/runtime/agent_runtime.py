@@ -1011,6 +1011,9 @@ class AgentRuntime:
         await cancellation_registry.attach_streaming_executor(state.session_id, streaming_tool_executor)
         usage_at_stream_start = state.last_context_usage
         buffer = AssistantStreamBuffer()
+        from .visual_alias import ChartAliasStreamFilter
+
+        chart_alias_filter = ChartAliasStreamFilter(state.session_id)
         planner_result = PlannerResult()
         user_content = None
         attachments = self._effective_attachments(state)
@@ -1042,12 +1045,13 @@ class AgentRuntime:
             if event_type == "streaming_text":
                 chunk = event["data"].get("chunk", "")
                 is_complete = event["data"].get("is_complete", False)
-                visible = buffer.append(chunk)
+                visible = await chart_alias_filter.append(buffer.append(chunk))
                 if visible:
                     planner_result.streamed_assistant_text = True
                     yield self.events.assistant_delta(state, visible, is_complete=False)
                 if is_complete and not buffer.suppress_after_tool_use:
-                    flushed = buffer.flush()
+                    flushed = await chart_alias_filter.append(buffer.flush())
+                    flushed += await chart_alias_filter.flush()
                     if flushed:
                         planner_result.streamed_assistant_text = True
                         yield self.events.assistant_delta(state, flushed, is_complete=False)

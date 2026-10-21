@@ -3356,8 +3356,8 @@ def merge_excel_with_charts(file_paths, output_path):
                 "专家/报告静态图按报告正文插入尺寸设计画布、比例和字号，详见手册报告插图尺寸与比例。"
                 "流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
                 "生成的静态图只在对话正文展示，不进入右侧交互图面板；"
-                "最终答复可用 [[chart:<visual_id>]] 将图片放在相应分析旁，visual_id 取工具返回的 visuals.id，"
-                "未指定位置的图片由前端追加到本轮答复末尾。不要自行拼图片 URL 或本地路径。"
+                "最终答复可用工具返回 summary 中的图表标记（如 [[chart:chart_0]]，逐字符原样复制）将图片放在相应分析旁；"
+                "未提供标记时才用 visuals.id。未指定位置的图片由前端追加到本轮答复末尾。不要自行拼图片 URL 或本地路径。"
                 "生成文件会自动归档并发布到会话资源目录；必须复用返回的 file_path，"
                 "不得自行构造资源路径，也不要再调用 publish_session_file；默认超时30秒。"
             ),
@@ -3421,7 +3421,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "其他通用图：问数模式优先使用 execute_echarts_python；专家/报告模式优先使用 execute_python，ECharts 辅助交互探索；"
             "② 前端交互式图表/复杂数据可视化 → 使用 execute_echarts_python；"
             "③ 深度分析与报告静态图 → 使用 execute_python + matplotlib/seaborn，默认一个独立图表一个图片文件。"
-            "交互图通过统一资源发布；最终回复使用 [[chart:<visual_id>]] 在相关分析段落之间插入图表，visual_id 取返回的 visuals.id。"
+            "交互图通过统一资源发布；最终回复使用 summary 中的图表标记（原样复制 [[chart:chart_N]]）在相关分析段落之间插入图表；未提供标记时才用 visuals.id。"
             "需要正文或报告静态图时，通用图通过 execute_python 绘制，已支持的业务图型必须使用 create_business_chart。"
             "通用计算和文件生成仍使用 execute_python。"
         )
@@ -3485,7 +3485,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
         result.setdefault("resources", []).extend(
             resources_for_visuals(echarts_visuals, tool_name=self.name)
         )
-        result["summary"] = f"✅ ECharts 图表生成完成：{len(echarts_visuals)} 个。最终回复使用 [[chart:<visual_id>]] 按分析顺序插入图表，ID 取 visuals.id。"
+        result["summary"] = f"✅ ECharts 图表生成完成：{len(echarts_visuals)} 个。"
         return result
 
     def get_function_schema(self) -> Dict[str, Any]:
@@ -3503,7 +3503,8 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                 "仅输出 ECharts 图表配置：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
                 "图表通过统一会话资源目录发布为 chart-spec，Web 与 App 共用交互图表。"
-                "最终回复必须用 [[chart:<visual_id>]] 安排图表位置，visual_id 必须取工具返回的 visuals.id，不得编造。"
+                "最终回复必须用 [[chart:...]] 标记安排图表位置：优先逐字符原样复制工具返回 summary 中的图表标记（如 [[chart:chart_0]]），"
+                "不得编造标记或手抄 visuals.id 全串；仅在未提供标记时才取工具返回的 visuals.id。"
                 "每个标记独占一行并与上下段落空行分隔；按分析逻辑交替组织文字与图表，每张图后说明结论。"
                 "不在正文输出配置 JSON、HTML 或拼接图片 URL；不要要求用户到右侧面板寻找图表。"
                 "需要正文或 Word/QMD 报告静态图时，通用图通过 execute_python 绘制，已支持的业务图型必须使用 create_business_chart。"
