@@ -46,7 +46,10 @@ def test_data_modes_are_split_by_domain_tools(jiangsu):
         "jiangsu_ops_data_qc", "jiangsu_ops_data_device", "jiangsu_ops_data_station",
         "jiangsu_ops_data_rates"}
     assert "execute_jiangsu_mart_sql" in data_modes["jiangsu_ops_data_workorder"]
-    assert "jiangsu_query_metrics" in data_modes["jiangsu_ops_data_workorder"]
+    # 2026-10-19: 语义层指标工具是全部数据域的公共取数通道；
+    # 统计/率值必须走目录，明细才走受控数据集，避免各节点自造聚合 SQL。
+    for mode, tools in data_modes.items():
+        assert "jiangsu_query_metrics" in tools, mode
     domain_owners = {
         "execute_smart_event_sql_query": "jiangsu_ops_data_alarm",
         "jiangsu_fetch_qc_task_status": "jiangsu_ops_data_qc",

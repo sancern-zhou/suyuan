@@ -202,7 +202,7 @@ backend:
       boundary: 只取数和确定性整理，不作风险认定、不生成正式报告；告警、巡检、质控、设备等跨域取数不在本节点，列入 data_gaps 交父 Agent 委派
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
       max_iterations: 10
-      timeout_seconds: 180
+      timeout_seconds: 300
       max_deliverables: 3
     jiangsu_ops_data_alarm:
       positioning: 告警与事件数据准备
@@ -210,7 +210,7 @@ backend:
       boundary: 只取数和确定性整理，不作风险认定；告警与事件数据仅更新至2026-09-27，覆盖缺口须声明盲区；跨域取数列入 data_gaps
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
       max_iterations: 10
-      timeout_seconds: 180
+      timeout_seconds: 300
       max_deliverables: 3
     jiangsu_ops_data_inspection:
       positioning: 巡检数据准备
@@ -218,7 +218,7 @@ backend:
       boundary: 只取数和确定性整理，不作风险认定、不生成正式报告；跨域取数列入 data_gaps 交父 Agent 委派
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
       max_iterations: 10
-      timeout_seconds: 180
+      timeout_seconds: 300
       max_deliverables: 3
     jiangsu_ops_data_qc:
       positioning: 质控数据准备
@@ -226,7 +226,7 @@ backend:
       boundary: 只取数和确定性整理；仅约23个质控试点站，结论不得外推全省；跨域取数列入 data_gaps
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
       max_iterations: 10
-      timeout_seconds: 180
+      timeout_seconds: 300
       max_deliverables: 3
     jiangsu_ops_data_device:
       positioning: 设备与停电数据准备
@@ -234,8 +234,9 @@ backend:
       boundary: 只取数和确定性整理，不作风险认定；动环历史仅限父任务指定窗口不扩大范围；跨域取数列入 data_gaps
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
       # 2026-10-15: 三类数据+上期对照 10 迭代不够用(当日连续 max_iterations_reached),对齐风险域 14;180s 墙钟同日两次击穿,放宽到 240s
+      # 2026-10-19: 数据域墙钟统一 300s（原 180s 多次击穿；重试扩容受 timeout_cap 封顶，须同步抬高策略值）
       max_iterations: 14
-      timeout_seconds: 240
+      timeout_seconds: 300
       max_deliverables: 3
     jiangsu_ops_data_station:
       positioning: 站点与人员数据准备
@@ -243,7 +244,7 @@ backend:
       boundary: 只取数和确定性整理；签到源数据稀疏须如实记录条数；快照须注明快照时间与底层告警截止时间；跨域取数列入 data_gaps
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
       max_iterations: 10
-      timeout_seconds: 180
+      timeout_seconds: 300
       max_deliverables: 3
     jiangsu_ops_data_rates:
       positioning: 平台率值数据准备
@@ -251,7 +252,7 @@ backend:
       boundary: 率值一律以平台统计接口为准禁止自算；不取业务明细、不生成正式报告；跨域取数列入 data_gaps
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
       max_iterations: 10
-      timeout_seconds: 180
+      timeout_seconds: 300
       max_deliverables: 3
     jiangsu_ops_regular_analysis:
       positioning: 常态监管专题分析
@@ -276,7 +277,7 @@ backend:
       boundary: 只读定向补证，不做全网扫描、不扩范围、不提交审核或执行设备控制
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
       max_iterations: 8
-      timeout_seconds: 180
+      timeout_seconds: 300
       max_deliverables: 3
   agent_workflow_parents:
     operations_analysis:
@@ -607,52 +608,57 @@ backend:
       - jiangsu_query_metrics
       - execute_python
     jiangsu_ops_data_alarm:
-      # 告警与事件域：智能事件中心结构化查询 + mart 告警事件宽表。
+      # 告警与事件域：语义层目录指标 + 智能事件中心结构化查询 + mart 告警事件宽表。
       - list_session_resources
       - read_session_resource
       - read_file
       - write_file
       - publish_session_file
+      - jiangsu_query_metrics
       - execute_smart_event_sql_query
       - execute_jiangsu_mart_sql
       - execute_python
     jiangsu_ops_data_inspection:
-      # 巡检域：mart 巡检分析宽表，无平台接口依赖。
+      # 巡检域：语义层目录指标 + mart 巡检分析宽表，无平台接口依赖。
       - list_session_resources
       - read_session_resource
       - read_file
       - write_file
       - publish_session_file
+      - jiangsu_query_metrics
       - execute_jiangsu_mart_sql
       - execute_python
     jiangsu_ops_data_qc:
-      # 质控域：mart 质控执行/安排/补测宽表 + 质控任务明细下钻（只读）。
+      # 质控域：语义层目录指标 + mart 质控执行/安排/补测宽表 + 质控任务明细下钻（只读）。
       - list_session_resources
       - read_session_resource
       - read_file
       - write_file
       - publish_session_file
+      - jiangsu_query_metrics
       - execute_jiangsu_mart_sql
       - jiangsu_fetch_qc_task_status
       - jiangsu_fetch_qc_task_history
       - execute_python
     jiangsu_ops_data_device:
-      # 设备与停电域：mart 生命周期/参数/停电宽表 + 站房动环供电历史（限指定窗口）。
+      # 设备与停电域：语义层目录指标 + mart 生命周期/参数/停电宽表 + 站房动环供电历史（限指定窗口）。
       - list_session_resources
       - read_session_resource
       - read_file
       - write_file
       - publish_session_file
+      - jiangsu_query_metrics
       - execute_jiangsu_mart_sql
       - jiangsu_fetch_station_environment_history
       - execute_python
     jiangsu_ops_data_station:
-      # 站点与人员域：站点台账/概况 + 到站签到与签到轨迹平台接口。
+      # 站点与人员域：语义层目录指标 + 站点台账/概况 + 到站签到与签到轨迹平台接口。
       - list_session_resources
       - read_session_resource
       - read_file
       - write_file
       - publish_session_file
+      - jiangsu_query_metrics
       - execute_jiangsu_mart_sql
       - jiangsu_fetch_station_directory
       - jiangsu_fetch_station_data
