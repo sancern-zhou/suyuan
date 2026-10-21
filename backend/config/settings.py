@@ -37,6 +37,14 @@ class Settings(BaseSettings):
         default="web",
         description="Application role: web, worker, or all. Web workers must not start background schedulers.",
     )
+    assistant_followups_enabled: bool = Field(
+        default=False,
+        description="Enable durable personal followups on the existing worker scheduler after schema preparation",
+    )
+    assistant_analysis_enabled: bool = Field(
+        default=False,
+        description="Enable bounded read-only assistant analyses; also requires assistant_followups_enabled",
+    )
     sse_heartbeat_interval_seconds: float = Field(
         default=15.0,
         gt=0,
@@ -96,6 +104,23 @@ class Settings(BaseSettings):
     jiangsu_device_control_confirmation_ttl_seconds: int = Field(default=300, ge=30, le=1800)
     jiangsu_work_order_draft_ttl_hours: int = Field(default=48, ge=1, le=720)
 
+    # 中大空气质量联网监测管理平台（许昌市站点 5 分钟/小时数据）。
+    # 账号密码通过环境变量注入，禁止写入代码或提交到仓库。
+    zhongda_api_base_url: str = Field(default="http://125.45.235.130:81")
+    zhongda_username: str = Field(default="")
+    zhongda_password: str = Field(default="")
+    zhongda_station_codes: str = Field(
+        default="1003A,1005A,1008A,1009A,1011A,1012A",
+        description="平台内部站点编码，逗号分隔",
+    )
+    zhongda_data_table_type: str = Field(default="Act", description="Act=实况；Std=标况")
+    zhongda_parameter_type: str = Field(default="gp", description="gp=常规污染物；mp=气象；gh=温室气体")
+    zhongda_hour_data_source_type: str = Field(
+        default="Src", description="站点小时抓取口径：Src=原始；App=审核后"
+    )
+    zhongda_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    zhongda_login_retries: int = Field(default=8, ge=1, le=30, description="验证码 OCR 重试次数")
+
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse CORS origins string into list."""
@@ -140,6 +165,11 @@ class Settings(BaseSettings):
     auth_identity_cache_key_prefix: str = Field(
         default="suyuan:auth:",
         description="Redis prefix for authentication state",
+    )
+    slow_request_log_threshold_seconds: float = Field(
+        default=2.0,
+        ge=0.1,
+        description="Warn when a request takes this long to first response bytes",
     )
     auth_ws_ticket_ttl_seconds: int = Field(
         default=30,
@@ -304,10 +334,6 @@ class Settings(BaseSettings):
         default="http://180.184.30.94/api/AiDataService/ReportApplication/UserReportDataQuery/Query",
         description="Meteorological data API URL"
     )
-    upwind_analysis_api_url: str = Field(
-        default="http://180.184.91.74:9095",
-        description="Upwind analysis API base URL (port 9095 for upwind-and-map)"
-    )
 
     # API Keys
     meteorological_api_key: Optional[str] = Field(
@@ -330,7 +356,11 @@ class Settings(BaseSettings):
     # LLM Configuration
     llm_provider: str = Field(
         default="doubao",
-        description="LLM provider: doubao, openai, anthropic, deepseek, minimax, mimo, agnes, glm, bailian, scnet"
+        description="LLM provider: doubao, openai, anthropic, deepseek, minimax, mimo, agnes, glm, bailian, scnet, go, go2"
+    )
+    llm_context_window_tokens: int = Field(
+        default=200000,
+        description="上下文窗口大小（tokens）：token_budget_manager 压缩预算与 context_usage 指示器的单一事实源",
     )
     doubao_api_key: Optional[str] = Field(default=None, description="Doubao-compatible gateway API key")
     doubao_base_url: str = Field(
@@ -439,6 +469,32 @@ class Settings(BaseSettings):
         default="chat_completions",
         description="Agnes API protocol mode: chat_completions"
     )
+    go_api_key: Optional[str] = Field(default=None, description="OpenCode Go subscription API key")
+    go_base_url: str = Field(
+        default="https://opencode.ai/zen/go/v1",
+        description="OpenCode Go OpenAI-compatible API base URL"
+    )
+    go_model: str = Field(
+        default="deepseek-v4.1-flash",
+        description="Default OpenCode Go model used by Flash tier"
+    )
+    go_api_mode: str = Field(
+        default="chat_completions",
+        description="OpenCode Go API protocol mode: chat_completions"
+    )
+    go2_api_key: Optional[str] = Field(default=None, description="Secondary OpenCode Go subscription API key (go2)")
+    go2_base_url: str = Field(
+        default="https://opencode.ai/zen/go/v1",
+        description="Secondary OpenCode Go OpenAI-compatible API base URL"
+    )
+    go2_model: str = Field(
+        default="deepseek-v4.1-flash",
+        description="Default secondary OpenCode Go model used by Flash tier"
+    )
+    go2_api_mode: str = Field(
+        default="chat_completions",
+        description="Secondary OpenCode Go API protocol mode: chat_completions"
+    )
     voice_mimo_base_url: str = Field(
         default="https://api.xiaomimimo.com/v1",
         description="Xiaomi Mimo OpenAI-compatible base URL for ASR/TTS"
@@ -498,7 +554,7 @@ class Settings(BaseSettings):
         description="GLM Anthropic-compatible API base URL"
     )
     glm_model: str = Field(
-        default="glm-4.7",
+        default="glm-5.3-flash",
         description="GLM model name"
     )
     glm_api_mode: str = Field(
@@ -510,6 +566,22 @@ class Settings(BaseSettings):
     scnet_base_url: str = Field(
         default="https://api.scnet.cn/api/llm/anthropic",
         description="Sugon SCNET Anthropic-compatible API base URL"
+    )
+    scnet_disable_thinking: bool = Field(
+        default=True,
+        description=(
+            "Disable thinking mode for SCNET Qwen models (thinking: disabled via "
+            "Anthropic protocol). SCNET enables thinking by default and Qwen3 "
+            "occasionally generates 20k+ char reasoning (observed 289s turns), "
+            "which blows per-node wall-clock budgets. Verified 200 with tools "
+            "and thinking-block history on 2026-10-04."
+        )
+    )
+    go_disable_thinking: bool = Field(
+        default=True,
+        description=(
+            "Enable tiered thinking policy for Go/Go2 gateways: flash models and subagents disable thinking, PRO models keep gateway-default thinking."
+        ),
     )
     scnet_model: str = Field(
         default="Qwen3.8-Max",
@@ -542,9 +614,34 @@ class Settings(BaseSettings):
         default=2,
         description="Concurrent LLM request limit per provider/model pool"
     )
+    agent_detached_runs_enabled: bool = Field(
+        default=True,
+        description="Keep agent runs alive after the web client disconnects (requires Redis); set AGENT_DETACHED_RUNS_ENABLED=0 to fall back to legacy inline streaming",
+    )
+    agent_detached_run_max_seconds: int = Field(
+        default=3600,
+        ge=60,
+        description="Wall-clock guard for detached agent runs; the run is interrupted when exceeded",
+    )
     llm_request_timeout_seconds: float = Field(
         default=180.0,
         description="Timeout in seconds for LLM provider requests"
+    )
+    llm_connect_timeout_seconds: float = Field(
+        default=10.0,
+        description="TCP/TLS connect timeout for LLM provider requests"
+    )
+    llm_first_token_timeout_seconds: float = Field(
+        default=45.0,
+        description="Max silent wait for the first streaming chunk from an LLM provider; also the per-chunk idle gap for streams"
+    )
+    llm_fresh_tool_result_budget_chars: int = Field(
+        default=48_000,
+        description="Char budget for projecting the current run's raw tool results into LLM history; lower values cut per-round latency for multi-iteration agents"
+    )
+    llm_fresh_tool_result_single_max_chars: int = Field(
+        default=24_000,
+        description="Per-result char cap above which a tool result falls back to its compacted history form instead of verbatim projection"
     )
     llm_fallbacks: str = Field(
         default="doubao/gpt-5.6-luna,bailian/qwen3.8-max,deepseek/deepseek-v4-pro",
@@ -552,11 +649,17 @@ class Settings(BaseSettings):
     )
     llm_flash_models: str = Field(
         default="doubao/gpt-5.6-luna,bailian/deepseek-v4-flash-0731,deepseek/deepseek-v4-flash",
-        description="Comma-separated Flash model priority chain, e.g. doubao/gpt-5.6-luna,bailian/deepseek-v4-flash-0731,deepseek/deepseek-v4-flash"
+        description=(
+            "Deprecated (2026-10): tiers share the primary model chain; "
+            "flash/pro now only toggle thinking. Kept for env-file compatibility."
+        ),
     )
     llm_pro_models: str = Field(
         default="bailian/deepseek-v4-pro,deepseek/deepseek-v4-pro",
-        description="Comma-separated Pro model priority chain, e.g. bailian/deepseek-v4-pro,deepseek/deepseek-v4-pro"
+        description=(
+            "Deprecated (2026-10): tiers share the primary model chain; "
+            "flash/pro now only toggle thinking. Kept for env-file compatibility."
+        ),
     )
     llm_multimodal_models: str = Field(
         default="",
@@ -610,6 +713,15 @@ class Settings(BaseSettings):
         ge=60,
         description="TTL for active-run steering metadata and pending inputs",
     )
+    agent_visual_alias_redis_prefix: str = Field(
+        default="suyuan:agent:visual_alias",
+        description="Redis key prefix for session-scoped short chart aliases ([[chart:chart_N]])",
+    )
+    agent_visual_alias_ttl_seconds: int = Field(
+        default=1209600,
+        ge=60,
+        description="TTL for session-scoped chart alias mappings (refreshed on each bind)",
+    )
 
     # Cache TTL (seconds)
     cache_ttl_config: int = Field(default=3600, description="Config cache TTL")
@@ -623,26 +735,6 @@ class Settings(BaseSettings):
     )
 
     # Analysis Parameters
-    default_search_range_km: float = Field(
-        default=5.0,
-        description="Default search range in kilometers"
-    )
-    default_max_enterprises: int = Field(
-        default=10,
-        description="Default max enterprises to fetch"
-    )
-    default_top_n_enterprises: int = Field(
-        default=10,
-        description="Default top N enterprises to return"
-    )
-    wind_speed_low_threshold: float = Field(
-        default=1.5,
-        description="Wind speed threshold for calm conditions"
-    )
-    candidate_radius_km: float = Field(
-        default=25.0,
-        description="Candidate enterprise search radius"
-    )
     nearby_stations_radius_km: float = Field(
         default=20.0,
         description="Nearby stations search radius in kilometers"
@@ -665,14 +757,18 @@ class Settings(BaseSettings):
     # Tender Information Fetcher Configuration
     tender_fetcher_enabled: bool = Field(
         default=True,
-        description="Enable daily tender information fetcher"
+        description="Enable scheduled monthly Zhiliao tender ingestion"
+    )
+    tender_monthly_schedule: str = Field(
+        default="30 3 1 * *",
+        description="Previous-month winning notices, Asia/Shanghai, first day at 03:30",
     )
     tender_fetcher_schedule: str = Field(
         default="30 2 * * *",
         description="Cron schedule for tender information fetcher"
     )
     tender_keywords: str = Field(
-        default="生态环境局,环境监测中心,生态环境厅,环境监测站,生态环境分局,环境监控中心,污染源在线监控,空气自动站,水质自动站,VOCs走航,噪声自动监测",
+        default="生态环境局,环境监测中心,生态环境厅,环境监测站,生态环境分局,环境监控中心,污染源在线监控,空气自动站,大气监测,大气污染防控,VOCs走航,噪声自动监测",
         description="Comma-separated tender search keywords"
     )
     tender_notice_types: str = Field(
@@ -735,6 +831,26 @@ class Settings(BaseSettings):
         default=None,
         description="Optional SSH private key path used for the Qianlima search proxy"
     )
+    qianlima_detail_ssh_proxy_host: Optional[str] = Field(
+        default=None,
+        description="SSH host used to create a temporary SOCKS5 proxy for Qianlima detail fetching"
+    )
+    qianlima_detail_ssh_proxy_port: int = Field(
+        default=22,
+        description="SSH port used to create a temporary SOCKS5 proxy for Qianlima detail fetching"
+    )
+    qianlima_detail_ssh_proxy_username: str = Field(
+        default="root",
+        description="SSH username used for the Qianlima detail proxy"
+    )
+    qianlima_detail_ssh_proxy_password: Optional[str] = Field(
+        default=None,
+        description="SSH password used for the Qianlima detail proxy"
+    )
+    qianlima_detail_ssh_proxy_key_path: Optional[str] = Field(
+        default=None,
+        description="Optional SSH private key path used for the Qianlima detail proxy"
+    )
     tender_llm_api_key: Optional[str] = Field(
         default=None,
         description="OpenAI-compatible API key for tender LLM screening and extraction"
@@ -767,45 +883,45 @@ class Settings(BaseSettings):
         default=5,
         description="Max concurrent tender LLM detail requests for the secondary provider"
     )
-
-    # qianlima_realtime_tender 工具反爬配置
-    qianlima_realtime_max_retries: int = Field(
-        default=3,
-        description="qianlima_realtime_tender 工具最大重试次数"
+    tender_sources: str = Field(
+        default="qianlima",
+        description="Comma-separated tender sources, e.g. qianlima,zhiliaobiaoxun,jianyu360"
     )
-    qianlima_realtime_base_delay_seconds: float = Field(
-        default=1.0,
-        description="qianlima_realtime_tender 工具重试基础延迟(秒)"
+    ggzy_platforms: str = Field(
+        default="浙江,四川,海南",
+        description="Enabled provincial public-resource platforms (comma-separated provinces)"
     )
-    qianlima_realtime_max_delay_seconds: float = Field(
-        default=30.0,
-        description="qianlima_realtime_tender 工具重试最大延迟(秒)"
+    zhiliao_ai_api_key: Optional[str] = Field(
+        default=None,
+        description="知了标讯AI开放平台 API Key (ai.zhiliaobiaoxun.com)"
     )
-    qianlima_realtime_request_delay_ms: int = Field(
-        default=800,
-        description="qianlima_realtime_tender 工具请求间延迟(毫秒)"
+    zhiliao_ai_base_url: str = Field(
+        default="https://mcp-server.zhiliaobiaoxun.com/api_v2",
+        description="知了标讯AI开放平台 API base URL"
     )
-    qianlima_realtime_detail_min_delay_seconds: float = Field(
-        default=1.0,
-        description="qianlima_realtime_tender 工具详情页最小延迟(秒)"
+    zhiliao_base_url: str = Field(
+        default="https://api-service-zhiliao.bailian-ai.com",
+        description="知了标讯 API base URL"
     )
-    qianlima_realtime_detail_max_delay_seconds: float = Field(
-        default=3.0,
-        description="qianlima_realtime_tender 工具详情页最大延迟(秒)"
+    zhiliao_cookie: Optional[str] = Field(
+        default=None,
+        description="登录后知了标讯 Cookie，用于历史搜索和详情"
     )
-    qianlima_realtime_concurrency: int = Field(
-        default=2,
-        ge=1,
-        le=5,
-        description="qianlima_realtime_tender 工具最大并发数"
+    zhiliao_username: Optional[str] = Field(
+        default=None, description="知了标讯账号（手机号）"
     )
-    qianlima_realtime_enable_search_delay: bool = Field(
-        default=True,
-        description="qianlima_realtime_tender 工具启用搜索页延迟"
+    zhiliao_password: Optional[str] = Field(
+        default=None, description="知了标讯密码（明文，登录时做 MD5）"
     )
-    qianlima_realtime_enable_detail_delay: bool = Field(
-        default=True,
-        description="qianlima_realtime_tender 工具启用详情页延迟"
+    jianyu_cookie: Optional[str] = Field(
+        default=None,
+        description="登录后剑鱼标讯 Cookie"
+    )
+    jianyu_username: Optional[str] = Field(
+        default=None, description="剑鱼标讯账号"
+    )
+    jianyu_password: Optional[str] = Field(
+        default=None, description="剑鱼标讯密码"
     )
 
     # SQL Server Configuration (History Database)
@@ -841,6 +957,87 @@ class Settings(BaseSettings):
         default="yes",
         description="Trust server cert without validation; set no after installing a CA-signed cert",
     )
+
+    # DataCrawler MySQL Configuration (long-history monitoring database)
+    crawler_mysql_host: str = Field(
+        default="127.0.0.1",
+        description="DataCrawler MySQL host"
+    )
+    crawler_mysql_port: int = Field(
+        default=13307,
+        description="DataCrawler MySQL port"
+    )
+    crawler_mysql_user: str = Field(
+        default="root",
+        description="DataCrawler MySQL username"
+    )
+    crawler_mysql_password: str = Field(
+        default="",
+        description="DataCrawler MySQL password"
+    )
+    crawler_mysql_database: str = Field(
+        default="DataCrawler",
+        description="DataCrawler MySQL database name"
+    )
+
+    @property
+    def crawler_mysql_url(self) -> str:
+        """SQLAlchemy URL for the crawler MySQL database (aiomysql async driver)."""
+        from urllib.parse import quote
+
+        return (
+            "mysql+aiomysql://"
+            f"{quote(self.crawler_mysql_user)}:{quote(self.crawler_mysql_password)}"
+            f"@{self.crawler_mysql_host}:{self.crawler_mysql_port}"
+            f"/{self.crawler_mysql_database}?charset=utf8mb4"
+        )
+
+    # Big_Data SQL Server Configuration (企业运输管控平台，大数据局对接库)
+    bigdata_sqlserver_host: str = Field(
+        default="222.143.158.143",
+        description="Big_Data SQL Server host"
+    )
+    bigdata_sqlserver_port: int = Field(
+        default=20125,
+        description="Big_Data SQL Server port"
+    )
+    bigdata_sqlserver_user: str = Field(
+        default="dsj",
+        description="Big_Data SQL Server username"
+    )
+    bigdata_sqlserver_password: str = Field(
+        default="",
+        description="Big_Data SQL Server password"
+    )
+    bigdata_sqlserver_database: str = Field(
+        default="Big_Data",
+        description="Big_Data SQL Server database name"
+    )
+    bigdata_sqlserver_driver: str = Field(
+        default="ODBC Driver 17 for SQL Server",
+        description="Big_Data SQL Server ODBC driver name",
+    )
+    bigdata_sqlserver_encrypt: str = Field(
+        default="no",
+        description="Big_Data ODBC Encrypt flag",
+    )
+    bigdata_sqlserver_trust_server_certificate: str = Field(
+        default="yes",
+        description="Big_Data trust server cert flag",
+    )
+
+    @property
+    def bigdata_sqlserver_connection_string(self) -> str:
+        """ODBC connection string for the Big_Data SQL Server instance."""
+        return (
+            f"DRIVER={{{self.bigdata_sqlserver_driver}}};"
+            f"SERVER={self.bigdata_sqlserver_host},{self.bigdata_sqlserver_port};"
+            f"DATABASE={self.bigdata_sqlserver_database};"
+            f"UID={self.bigdata_sqlserver_user};"
+            f"PWD={{{self.bigdata_sqlserver_password}}};"
+            f"Encrypt={self.bigdata_sqlserver_encrypt};"
+            f"TrustServerCertificate={self.bigdata_sqlserver_trust_server_certificate};"
+        )
 
     @property
     def sqlserver_connection_string(self) -> str:
@@ -982,6 +1179,14 @@ class Settings(BaseSettings):
                 "base_url": self.agnes_base_url,
                 "model": self.agnes_model,
                 "api_mode": self.agnes_api_mode,
+            }
+        elif self.llm_provider == "go":
+            return {
+                "provider": "go",
+                "api_key": self.go_api_key,
+                "base_url": self.go_base_url,
+                "model": self.go_model,
+                "api_mode": self.go_api_mode,
             }
         elif self.llm_provider == "glm":
             return {

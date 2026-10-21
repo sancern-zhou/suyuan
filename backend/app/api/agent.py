@@ -4,7 +4,7 @@ ReAct Agent API Routes
 ReAct Agent 的 REST API 路由
 """
 
-from fastapi import APIRouter, HTTPException, Body, Depends, Request
+from fastapi import APIRouter, HTTPException, Body, Depends, Query, Request
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime, timezone
@@ -12,21 +12,33 @@ from pathlib import Path
 import asyncio
 import json
 import structlog
+import uuid
 
 from app.agent import create_react_agent
+from app.utils.json_safety import dumps_safe
+from app.utils.visual_ids import repair_chart_reference_ids
 from app.agent.active_contexts import (
     ACTIVE_CONTEXTS_KEY,
     active_contexts_metadata,
     effective_active_context_items,
     resolve_active_contexts,
 )
+from app.agent.runtime.detached_stream import RunEventStream
 from app.agent.session import Session, get_session_manager
+from app.agent.session.workspace_routing import (
+    bind_workspace_request_to_source_query,
+    is_workspace_approval_required,
+    is_workspace_promotion,
+)
 from app.agent.session.conversation_persistence import ConversationPersistenceService
+from app.agent.user_questions import format_answers, validate_answers
 from app.agent.runtime.cancellation import PauseCheckpointError, cancellation_registry
 from app.agent.runtime.steering import steering_registry
 from app.agent.runtime.ownership import run_ownership_registry
+from app.agent.runtime.session_advisory_lock import SessionRunConflict, session_advisory_lock
 from app.agent.selection_context import (
     InvalidContextReference,
+    load_skill_selection,
     resource_refs_to_message_attachments,
     select_conversation_resources,
 )
@@ -39,9 +51,12 @@ from app.conversations import ConversationSource
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.service import ConversationCatalogService
 from app.core.sse import create_sse_response
-from app.db.database import async_session
+from app.db.session_database import session_async_session as async_session
 from app.services.llm_service import llm_service
 from app.tools import global_tool_registry
+from config.settings import settings
+
+from app.api.tool_routes import router as tool_router
 
 logger = structlog.get_logger()
 
@@ -71,6 +86,28 @@ async def _await_cancellation_resistant(awaitable):
                 while current.cancelling():
                     current.uncancel()
     return task.result()
+
+
+def _detached_run_stream(raw_request: Request) -> Optional[RunEventStream]:
+    """构建脱离型 run 的事件镜像；功能关闭或 Redis 未配置时返回 None。"""
+    if not settings.agent_detached_runs_enabled:
+        return None
+    app = getattr(raw_request, "app", None)
+    if app is None:
+        return None
+    return RunEventStream.from_app(app)
+
+
+async def _finish_detached_run(
+    gen: Any,
+    stream: RunEventStream,
+    stream_id: str,
+) -> None:
+    try:
+        await gen.aclose()
+    except Exception:
+        logger.debug("detached_run_generator_close_failed", stream_id=stream_id)
+    await stream.close(stream_id)
 
 
 def _build_user_message_for_history(
@@ -355,10 +392,6 @@ def merge_board_execution_context(
     return merged
 
 
-def is_incompatible_chart_board_session(stored_mode: Optional[str], requested_mode: Optional[str]) -> bool:
-    return {stored_mode, requested_mode} == {"chart", "board"}
-
-
 # ========================================
 # Request/Response Models
 # ========================================
@@ -416,11 +449,9 @@ class AgentAnalyzeRequest(BaseModel):
     max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数")
     mode: Optional[str] = Field(
         "expert",
-        description="✅ Agent模式：'assistant' - 助手模式，'ppt' - 幻灯片模式，'expert' - 专家模式，'query' - 问数模式，'knowledge' - 知识问答模式，'report' - 报告模式，'chart' - 图表模式，'ops' - 运维管理模式"
+        description="Agent模式：assistant - 助手模式，office - 办公模式，ppt - 幻灯片，expert - 专家，query - 问数，knowledge - 知识问答，report - 报告，ops - 运维"
     )
-    user_id: Optional[str] = Field(None, description="""✅ 用户标识（用于跨会话记忆）
-- 如果提供：同一用户在不同session共享记忆
-- 如果不提供：每个session独立记忆""")
+    user_id: Optional[str] = Field(None, description="""用户标识；非社交长期记忆始终按模式共享，不随用户或 session 隔离""")
     assistant_mode: Optional[str] = Field(
         None,
         description="""助手模式（旧版，已弃用，建议使用mode参数）：
@@ -470,6 +501,11 @@ class AgentAnalyzeRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_turn_content(self) -> "AgentAnalyzeRequest":
+        if self.mode == "social":
+            raise ValueError("助手模式请使用 assistant，social 模式已移除")
+        if self.mode is not None:
+            from app.agent.memory.memory_paths import safe_memory_segment
+            safe_memory_segment(self.mode, field="mode")
         if not self.query.strip() and not self.skill_ids and not self.context_refs:
             raise ValueError("query, skill_ids and context_refs cannot all be empty")
         return self
@@ -510,6 +546,14 @@ class AgentCancelRequest(BaseModel):
     reason: Literal["user_paused", "client_cancelled"] = "user_paused"
 
 
+class AgentInteractionResolution(BaseModel):
+    """Resolution for a user-facing agent interaction request."""
+
+    decision: Literal["approve", "reject", "answer"]
+    response: Optional[str] = Field(default=None, max_length=4000)
+    answers: Optional[List[Dict[str, Any]]] = None
+
+
 async def persist_new_web_session(
     *,
     manager,
@@ -541,29 +585,6 @@ class AgentQueryResponse(BaseModel):
     session_id: str = Field(..., description="会话ID")
     iterations: Optional[int] = Field(None, description="实际迭代次数")
     completed: bool = Field(..., description="是否成功完成")
-
-
-class ToolInfo(BaseModel):
-    """工具信息"""
-    name: str
-    description: str
-    category: str
-    status: str
-    version: str
-    requires_context: bool
-    priority: int
-    registered_at: Optional[str]
-    statistics: Dict[str, Any]
-    metadata: Dict[str, Any]
-    function_schema: Optional[Dict[str, Any]]
-    has_input_adapter: bool
-    has_return_schema: bool
-
-
-class ToolListResponse(BaseModel):
-    """工具列表响应"""
-    tools: List[Dict[str, Any]]
-    count: int
 
 
 # ========================================
@@ -607,8 +628,6 @@ def select_agent_instance(request):
     """Select the dedicated top-level agent for an analyze request."""
     if request.mode == "board":
         return board_agent_instance
-    if request.mode == "chart":
-        return data_viz_agent_instance
     if request.mode == "ppt":
         return ppt_agent_instance
     if request.assistant_mode == "meteorology-expert":
@@ -651,12 +670,9 @@ async def analyze_stream(
       - get_dust_data - 扬尘数据查询
       - get_component_data - 组分数据查询（广东省超级站）
 
-    - Analysis Tools (1个):
-      - analyze_upwind_enterprises - 上风向企业分析（广东省）
-
     - Visualization Tools:
       - execute_echarts_python - 交互式 ECharts 图表生成
-      - create_report_chart - 正式报告静态图表生成
+      - create_business_chart - 特定业务图型和固定模板绘制
       - generate_map - 地图生成
 
     **助手模式**:
@@ -684,8 +700,6 @@ async def analyze_stream(
         catalog_record = await catalog.find(request.session_id)
         if catalog_record is not None:
             await catalog.require_write(request.session_id, user)
-            if is_incompatible_chart_board_session(catalog_record.mode, request.mode):
-                raise HTTPException(status_code=409, detail="session_mode_mismatch")
         else:
             load_session = getattr(session_manager, "load_session_light", None)
             if load_session is None:
@@ -757,7 +771,7 @@ async def analyze_stream(
     active_context_request_started_at = datetime.now(timezone.utc)
     try:
         # 根据助手模式选择 Agent
-        if request.mode in {"board", "chart", "ppt"}:
+        if request.mode in {"board", "ppt"}:
             agent = select_agent_instance(request)
             logger.info("使用独立模式智能体", mode=request.mode, session_id=request.session_id, agent_id=id(agent))
         elif request.assistant_mode == 'meteorology-expert':
@@ -810,9 +824,20 @@ async def analyze_stream(
             # behavior (including social prompts/tools) is an independent axis.
             "session_storage_mode": "assistant",
             "attachments": None,
-            "user_identifier": request.user_id,  # ✅ 直接传递 user_id，允许 None（None 时使用模式内共享记忆）
-            "skip_auto_followup": request.skip_auto_followup
+            "user_identifier": request.user_id,  # Social requests override this with the authenticated identity below.
+            "skip_auto_followup": request.skip_auto_followup,
+            # 客户端来源随 runtime_metadata 全链路透传（含子Agent），
+            # 供提示词按 App/Web 端差异化（图表形态、回复详略）。
+            "runtime_metadata": {
+                "client_channel": "app" if getattr(user, "auth_source", "") == "app" else "web"
+            },
         }
+        if request.mode == "assistant":
+            from app.social.assistant_identity import assistant_account_context
+            from app.social.web_assistant import web_assistant_context
+
+            analyze_kwargs.update(web_assistant_context(user))
+            analyze_kwargs["runtime_metadata"]["authenticated_account"] = assistant_account_context(user)
         if request.mode == "board" and request.board_context:
             analyze_kwargs["board_context"] = request.board_context
             current_xml = request.board_context.get("current_xml") or request.board_context.get("currentXml") or ""
@@ -848,7 +873,6 @@ async def analyze_stream(
         latest_drawio_board = None
 
         if not actual_session_id:
-            import uuid
             actual_session_id = f"session_{int(datetime.now().timestamp() * 1000)}_{uuid.uuid4().hex[:8]}"
             analyze_kwargs["session_id"] = actual_session_id
 
@@ -861,6 +885,34 @@ async def analyze_stream(
             else await load_session(actual_session_id) if actual_session_id else None
         )
 
+        # A scheduled task conversation may continue with the same review
+        # execution. Restore only the exact persisted runtime context; do not
+        # synthesize task identity or silently downgrade missing fields.
+        if preloaded_session and isinstance(preloaded_session.metadata, dict):
+            persisted_context = preloaded_session.metadata.get("scheduled_task_context")
+            persisted_tools = preloaded_session.metadata.get("scheduled_task_tools")
+            if persisted_context is not None or persisted_tools is not None:
+                if (
+                    not isinstance(persisted_context, dict)
+                    or not persisted_context.get("task_id")
+                    or not persisted_context.get("execution_id")
+                    or not isinstance(persisted_tools, list)
+                    or any(not isinstance(name, str) or not name for name in persisted_tools)
+                ):
+                    raise HTTPException(status_code=409, detail="scheduled_context_incomplete")
+                registered_tool_names = set(global_tool_registry.list_tools())
+                missing_tools = sorted(set(persisted_tools) - registered_tool_names)
+                if missing_tools:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"code": "scheduled_context_tools_unavailable", "tools": missing_tools},
+                    )
+                analyze_kwargs["runtime_metadata"] = {
+                    **(analyze_kwargs.get("runtime_metadata") or {}),
+                    "scheduled_task": persisted_context,
+                }
+                analyze_kwargs["extra_tool_names"] = list(dict.fromkeys(persisted_tools))
+
         requested_active_contexts = (
             [item.model_dump(exclude_none=True) for item in request.active_contexts]
             if request.active_contexts is not None
@@ -872,7 +924,22 @@ async def analyze_stream(
             request.skill_ids,
         )
 
+        # Skill dependencies are loaded only for this run. They remain absent
+        # from the assistant's default tool schema and are validated against
+        # the globally registered tools before being appended as extras.
+        requested_skill_items = [
+            item for item in effective_active_contexts if item["type"] == "skill"
+        ]
+        on_demand_tool_names: list[str] = []
+
         try:
+            if requested_skill_items:
+                skill_probe = load_skill_selection(requested_skill_items[0]["id"])
+                registered_tool_names = set(global_tool_registry.list_tools())
+                on_demand_tool_names = [
+                    name for name in skill_probe.required_tools
+                    if name in registered_tool_names
+                ]
             requested_ids = [ref.resource_id for ref in request.context_refs]
             needs_resources = bool(requested_ids) or any(
                 item["type"] == "fixed_policy" for item in effective_active_contexts
@@ -891,6 +958,7 @@ async def analyze_stream(
                 effective_active_contexts,
                 mode=request.mode or "expert",
                 resources=available_resources,
+                extra_tool_names=on_demand_tool_names,
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=422, detail="selected_skill_not_found") from exc
@@ -916,6 +984,11 @@ async def analyze_stream(
         analyze_kwargs["selected_skill_context"] = selected_skill.content if selected_skill else None
         analyze_kwargs["fixed_policy_context"] = resolved_active_contexts.fixed_policy_context
         analyze_kwargs["selected_resource_refs"] = selected_resource_refs or None
+        persisted_extra_tools = analyze_kwargs.get("extra_tool_names") or []
+        analyze_kwargs["extra_tool_names"] = list(dict.fromkeys([
+            *persisted_extra_tools,
+            *on_demand_tool_names,
+        ]))
         if (
             preloaded_session
             and request.mode == "board"
@@ -942,7 +1015,7 @@ async def analyze_stream(
                 except FileNotFoundError as exc:
                     raise HTTPException(status_code=409, detail="board_version_load_failed") from exc
 
-        async def event_generator():
+        async def unlocked_event_generator():
             """SSE 事件生成器"""
             nonlocal actual_session_id, conversation_history, latest_drawio_board, drawio_board_context, preloaded_session
             cancel_event = None
@@ -956,16 +1029,6 @@ async def analyze_stream(
             # The pause barrier must complete before loading conversation
             # history; otherwise a fast next turn can retain a stale preload.
             try:
-                if request.previous_paused_run_id:
-                    await cancellation_registry.cancel(
-                        actual_session_id,
-                        expected_run_id=request.previous_paused_run_id,
-                        reason="user_paused",
-                    )
-                    await cancellation_registry.ensure_pause_succeeded(
-                        actual_session_id,
-                        request.previous_paused_run_id,
-                    )
                 cancel_event = await cancellation_registry.register(actual_session_id)
             except PauseCheckpointError as pause_error:
                 error_event = {
@@ -976,128 +1039,145 @@ async def analyze_stream(
                         "detail": str(pause_error),
                     },
                 }
-                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+                yield f"data: {dumps_safe(error_event)}\n\n"
                 return
-            current_task = asyncio.current_task()
-            if current_task is not None:
-                await cancellation_registry.attach_run_task(actual_session_id, current_task)
-            analyze_kwargs["cancel_event"] = cancel_event
-            if actual_session_id:
-                preloaded_session = await load_session(actual_session_id)
+            session = None
+            try:
+                current_task = asyncio.current_task()
+                if current_task is not None:
+                    await cancellation_registry.attach_run_task(actual_session_id, current_task)
+                analyze_kwargs["cancel_event"] = cancel_event
+                if actual_session_id:
+                    preloaded_session = await load_session(actual_session_id)
 
-            # 创建或加载会话
-            if actual_session_id:
-                logger.info(
-                    "route_session_load_start",
-                    session_id=actual_session_id,
-                    include_messages="display_light",
-                )
-                session = preloaded_session
-                if session:
-                    session_already_exists = True
+                # 创建或加载会话
+                if actual_session_id:
                     logger.info(
-                        "session_restored",
+                        "route_session_load_start",
                         session_id=actual_session_id,
-                        has_conversation_history=bool(session.conversation_history),
-                        conversation_history_length=len(session.conversation_history) if session.conversation_history else 0,
-                        resource_store="unified",
+                        include_messages="display_light",
                     )
-                    conversation_history = session.conversation_history or []
-                    if request.mode == "board" and drawio_board_context is not None:
+                    session = preloaded_session
+                    if session:
+                        session_already_exists = True
                         logger.info(
-                            "board_context_restored_from_session_metadata",
+                            "session_restored",
                             session_id=actual_session_id,
-                            current_xml_length=len(
-                                drawio_board_context.get("current_xml")
-                                or drawio_board_context.get("currentXml")
-                                or drawio_board_context.get("xml")
-                                or ""
-                            ),
-                            selected_count=len(
-                                drawio_board_context.get("selected_cells")
-                                or drawio_board_context.get("selectedCells")
-                                or []
-                            ),
-                            version=drawio_board_context.get("version"),
-                            updated_at=drawio_board_context.get("updated_at")
-                            or drawio_board_context.get("updatedAt"),
+                            has_conversation_history=bool(session.conversation_history),
+                            conversation_history_length=len(session.conversation_history) if session.conversation_history else 0,
+                            resource_store="unified",
                         )
+                        conversation_history = session.conversation_history or []
+                        if request.mode == "board" and drawio_board_context is not None:
+                            logger.info(
+                                "board_context_restored_from_session_metadata",
+                                session_id=actual_session_id,
+                                current_xml_length=len(
+                                    drawio_board_context.get("current_xml")
+                                    or drawio_board_context.get("currentXml")
+                                    or drawio_board_context.get("xml")
+                                    or ""
+                                ),
+                                selected_count=len(
+                                    drawio_board_context.get("selected_cells")
+                                    or drawio_board_context.get("selectedCells")
+                                    or []
+                                ),
+                                version=drawio_board_context.get("version"),
+                                updated_at=drawio_board_context.get("updated_at")
+                                or drawio_board_context.get("updatedAt"),
+                            )
 
-                    # ✅ 不再传递 initial_messages，因为 react_agent._get_or_create_session 会自动从 SessionManager 恢复会话
-                    # 避免重复加载历史消息
+                        # ✅ 不再传递 initial_messages，因为 react_agent._get_or_create_session 会自动从 SessionManager 恢复会话
+                        # 避免重复加载历史消息
+                    else:
+                        session_already_exists = False
+                        logger.warning(
+                            "session_not_found_creating_new",
+                            session_id=actual_session_id,
+                            hint="SessionManager中未找到该会话，将创建新会话"
+                        )
+                        session = Session(session_id=actual_session_id, query=request.query)
+                        conversation_history = []
                 else:
                     session_already_exists = False
-                    logger.warning(
-                        "session_not_found_creating_new",
-                        session_id=actual_session_id,
-                        hint="SessionManager中未找到该会话，将创建新会话"
-                    )
                     session = Session(session_id=actual_session_id, query=request.query)
                     conversation_history = []
-            else:
-                session_already_exists = False
-                session = Session(session_id=actual_session_id, query=request.query)
-                conversation_history = []
-                logger.info("session_created", session_id=actual_session_id)
-                # 更新 analyze_kwargs 中的 session_id
-                analyze_kwargs["session_id"] = actual_session_id
+                    logger.info("session_created", session_id=actual_session_id)
+                    # 更新 analyze_kwargs 中的 session_id
+                    analyze_kwargs["session_id"] = actual_session_id
 
-            if request.mode == "query" and request.map_context:
-                session.metadata = merge_map_scene_metadata(session.metadata, request.map_context)
-            session.metadata = dict(session.metadata or {})
-            session.metadata[ACTIVE_CONTEXTS_KEY] = active_contexts_payload
+                if request.mode == "query" and request.map_context:
+                    session.metadata = merge_map_scene_metadata(session.metadata, request.map_context)
+                session.metadata = dict(session.metadata or {})
+                session.metadata[ACTIVE_CONTEXTS_KEY] = active_contexts_payload
 
-            # 只保存/刷新会话元数据，不在首个 SSE 事件前同步历史消息。
-            # 历史消息在本轮完成或异常时走增量保存，避免 DELETE + INSERT
-            # 阻塞用户看到首个响应事件。
-            if session_already_exists:
-                async def _save_initial_session_metadata() -> None:
-                    try:
-                        await session_manager.save_session_metadata(session)
-                    except Exception as save_err:
-                        logger.warning(
-                            "initial_session_metadata_save_failed",
-                            session_id=actual_session_id,
-                            error=str(save_err)
+                # 只保存/刷新会话元数据，不在首个 SSE 事件前同步历史消息。
+                # 历史消息在本轮完成或异常时走增量保存，避免 DELETE + INSERT
+                # 阻塞用户看到首个响应事件。
+                if session_already_exists:
+                    async def _save_initial_session_metadata() -> None:
+                        try:
+                            await session_manager.save_session_metadata(session)
+                        except Exception as save_err:
+                            logger.warning(
+                                "initial_session_metadata_save_failed",
+                                session_id=actual_session_id,
+                                error=str(save_err)
+                            )
+
+                    asyncio.create_task(_save_initial_session_metadata())
+                else:
+                    # 客户端可能在 SSE 早期断开（用户停止/前端 abort），CancelledError
+                    # 会在 save_session_metadata 与 catalog.register 之间中断生成器，
+                    # 留下无 catalog 行的孤儿会话，使后续 analyze/cancel 全部 404。
+                    # shield 保证注册作为整体落库，取消仍正常向外传播。
+                    await asyncio.shield(
+                        asyncio.create_task(
+                            persist_new_web_session(
+                                manager=session_manager,
+                                session=session,
+                                catalog=catalog,
+                                user=user,
+                                mode=request.mode or "assistant",
+                            )
                         )
+                    )
 
-                asyncio.create_task(_save_initial_session_metadata())
-            else:
-                await persist_new_web_session(
-                    manager=session_manager,
-                    session=session,
-                    catalog=catalog,
-                    user=user,
-                    mode=request.mode or "assistant",
+                # ✅ 添加用户消息到对话历史
+                user_message = _build_user_message_for_history(
+                    request.query,
+                    resource_refs_to_message_attachments(selected_resource_refs),
+                    timestamp=datetime.now().isoformat(),
                 )
+                user_message["skill_ids"] = (
+                    [selected_skill.skill_id] if selected_skill else []
+                )
+                user_message["context_refs"] = [ref.model_dump(mode="json") for ref in request.context_refs]
+                user_message["active_contexts"] = list(resolved_active_contexts.items)
+                conversation_history.append(user_message)
+                logger.debug("user_message_added", query_preview=request.query[:100])
 
-            # ✅ 添加用户消息到对话历史
-            user_message = _build_user_message_for_history(
-                request.query,
-                resource_refs_to_message_attachments(selected_resource_refs),
-                timestamp=datetime.now().isoformat(),
-            )
-            user_message["skill_ids"] = (
-                [selected_skill.skill_id] if selected_skill else []
-            )
-            user_message["context_refs"] = [ref.model_dump(mode="json") for ref in request.context_refs]
-            user_message["active_contexts"] = list(resolved_active_contexts.items)
-            conversation_history.append(user_message)
-            logger.debug("user_message_added", query_preview=request.query[:100])
+                # 本轮已生成的图表 visual_id：用于修复模型抄错的 [[chart:...]] 占位符
+                known_visual_ids: set = set()
 
-            try:
                 await cancellation_registry.arm_run_task(actual_session_id, cancel_event)
-                with llm_service.use_model_tier(request.model_tier):
+                with (
+                    llm_service.use_model_tier(request.model_tier),
+                    llm_service.use_opencode_session(actual_session_id),
+                ):
                     async for event in agent.analyze(**analyze_kwargs):
                         event_count += 1
                         event_type = event.get("type")
                         latest_event_run_id = _event_run_id(event) or latest_event_run_id
                         if latest_event_run_id:
-                            await cancellation_registry.attach_run_id(
+                            registered = await cancellation_registry.attach_run_id(
                                 actual_session_id,
                                 cancel_event,
                                 latest_event_run_id,
                             )
+                            if not registered:
+                                raise SessionRunConflict("session_run_registration_rejected")
 
                         # ✅ 关闭流式文本事件的所有日志
                         if event_type != "streaming_text":
@@ -1106,6 +1186,47 @@ async def analyze_stream(
                         else:
                             # ✅ 流式事件：静默处理，只统计不输出
                             streaming_chunk_count += 1
+
+                        if event_type == "interaction_required":
+                            interaction_data = event.get("data") or {}
+                            if interaction_data.get("kind") == "structured_question":
+                                interaction = {
+                                    "interaction_id": f"interaction_{uuid.uuid4().hex}",
+                                    "kind": "structured_question",
+                                    "title": interaction_data.get("title") or "需要你的选择",
+                                    "questions": interaction_data["questions"],
+                                    "mode": request.mode,
+                                }
+                                session.metadata["pending_interaction"] = interaction
+                                if not await session_manager.save_session_metadata(session):
+                                    raise RuntimeError("interaction_request_save_failed")
+                                event["data"] = {**interaction, "session_id": actual_session_id, "run_id": latest_event_run_id}
+                            elif is_workspace_approval_required(interaction_data):
+                                pending_request = bind_workspace_request_to_source_query(
+                                    interaction_data["pending_request"],
+                                    original_query,
+                                )
+                                interaction_id = f"interaction_{uuid.uuid4().hex}"
+                                interaction = {
+                                    "interaction_id": interaction_id,
+                                    "kind": interaction_data["kind"],
+                                    "title": interaction_data.get("title") or "需要你的确认",
+                                    "question": interaction_data.get("question") or "是否继续？",
+                                    "actions": interaction_data.get("actions") or ["approve", "reject"],
+                                    "promotion": interaction_data["promotion"],
+                                    "pending_request": pending_request,
+                                }
+                                session.metadata["workspace"] = interaction["promotion"]
+                                session.metadata["pending_interaction"] = interaction
+                                session.metadata["workspace_session_id"] = actual_session_id
+                                session.metadata["workspace_status"] = "pending_approval"
+                                if not await session_manager.save_session_metadata(session):
+                                    raise RuntimeError("interaction_request_save_failed")
+                                event["data"] = {
+                                    **interaction,
+                                    "session_id": actual_session_id,
+                                    "run_id": latest_event_run_id,
+                                }
 
                         # 收集对话历史（转换为前端格式，添加 content 字段）
                         if event["type"] in ["thought", "tool_use", "tool_result"]:
@@ -1146,6 +1267,40 @@ async def analyze_stream(
                                                 latest_drawio_board or drawio_board_context,
                                                 result,
                                             )
+
+                                promotion = (
+                                    result.get("metadata", {}).get("workspace_promotion")
+                                    if isinstance(result, dict)
+                                    and isinstance(result.get("metadata"), dict)
+                                    else None
+                                )
+                                if is_workspace_promotion(promotion):
+                                    interaction_id = f"interaction_{uuid.uuid4().hex}"
+                                    interaction = {
+                                        "interaction_id": interaction_id,
+                                        "kind": "approval",
+                                        "title": "申请进入持续工作空间",
+                                        "question": (
+                                            f"当前任务需要持续使用{promotion['target_mode']}模式进行多轮编辑，"
+                                            "是否进入该工作空间？"
+                                        ),
+                                        "actions": ["approve", "reject"],
+                                        "promotion": promotion,
+                                    }
+                                    session.metadata["workspace"] = promotion
+                                    session.metadata["pending_interaction"] = interaction
+                                    session.metadata["workspace_session_id"] = actual_session_id
+                                    session.metadata["workspace_status"] = "pending_approval"
+                                    interaction_payload = {
+                                        "type": "interaction_required",
+                                        "data": {
+                                            **interaction,
+                                            "session_id": actual_session_id,
+                                        },
+                                    }
+                                    yield (
+                                        f"data: {json.dumps(interaction_payload, ensure_ascii=False)}\n\n"
+                                    )
 
                             frontend_message = {
                                 "type": event["type"],
@@ -1208,6 +1363,20 @@ async def analyze_stream(
                         # 地图程序仍由传输层负责即时展示；资源引用由 ReActAgent 统一持久化。
                         if event["type"] == "tool_result" and "data" in event:
                             data = event.get("data", {})
+                            # visuals 可能在 data 顶层，也可能嵌在 data.result 下（工具结果信封）
+                            result_payload = data.get("result") if isinstance(data.get("result"), dict) else {}
+                            for visual in (data.get("visuals") or []):
+                                if isinstance(visual, dict) and isinstance(visual.get("id"), str):
+                                    known_visual_ids.add(visual["id"])
+                            for visual in (result_payload.get("visuals") or []):
+                                if isinstance(visual, dict) and isinstance(visual.get("id"), str):
+                                    known_visual_ids.add(visual["id"])
+                            # 短别名映射的值同样是本轮真实 visual_id，纳入模糊修复候选
+                            visual_refs = result_payload.get("visual_refs")
+                            if isinstance(visual_refs, dict):
+                                for ref_id in visual_refs.values():
+                                    if isinstance(ref_id, str):
+                                        known_visual_ids.add(ref_id)
                             map_program = extract_map_program_from_tool_result_event(data)
                             if map_program:
                                 session.metadata = merge_map_program_into_scene_metadata(
@@ -1224,12 +1393,25 @@ async def analyze_stream(
                                     session_id=actual_session_id,
                                     run_id=event_run_id,
                                 )
-                                event_data = json.dumps(event, ensure_ascii=False, default=str)
+                                event_data = dumps_safe(event, default=str)
                                 yield f"data: {event_data}\n\n"
                                 break
                             # ✅ 添加最终答案消息
                             event_data = event.get("data") or {}
+                            for visual in (event_data.get("visuals") or []):
+                                if isinstance(visual, dict) and isinstance(visual.get("id"), str):
+                                    known_visual_ids.add(visual["id"])
                             if event_data.get("answer"):
+                                # 修复模型抄错的 [[chart:...]] 占位符（SSE 与落库共用同一 dict）
+                                answer_text = event_data["answer"]
+                                if isinstance(answer_text, str) and "[[chart:" in answer_text and known_visual_ids:
+                                    repaired_answer = repair_chart_reference_ids(answer_text, known_visual_ids)
+                                    if repaired_answer != answer_text:
+                                        logger.info(
+                                            "chart_marker_ids_repaired",
+                                            session_id=actual_session_id,
+                                        )
+                                        event_data["answer"] = repaired_answer
                                 final_message = _build_final_message(event_data)
                                 conversation_history.append(final_message)
                                 logger.debug("response_message_added", answer_preview=event["data"]["answer"][:100])
@@ -1266,12 +1448,12 @@ async def analyze_stream(
                                     run_id=event_run_id,
                                     event_type=event["type"],
                                 )
-                                event_data = json.dumps(event, ensure_ascii=False, default=str)
+                                event_data = dumps_safe(event, default=str)
                                 yield f"data: {event_data}\n\n"
                                 break
                             # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
                             if actual_session_id not in agent._session_store:
-                                agent._session_store[actual_session_id] = {}
+                                agent._session_store[actual_session_id] = {"last_used": datetime.utcnow()}
 
                             agent._session_store[actual_session_id]["has_error"] = event["type"] != "interrupted"
                             agent._session_store[actual_session_id]["error_type"] = event["type"]
@@ -1307,7 +1489,7 @@ async def analyze_stream(
                             logger.info("collected_data_stored_on_error", session_id=actual_session_id, error_type=event["type"])
 
                         # 将事件序列化为 SSE 格式
-                        event_data = json.dumps(event, ensure_ascii=False, default=str)
+                        event_data = dumps_safe(event, default=str)
                         yield f"data: {event_data}\n\n"
 
                         # 如果是完成或致命错误，结束循环
@@ -1317,6 +1499,7 @@ async def analyze_stream(
             except asyncio.CancelledError:
                 if (
                     actual_session_id
+                    and session is not None
                     and cancel_event is not None
                     and await cancellation_registry.can_finalize(actual_session_id, cancel_event)
                 ):
@@ -1354,7 +1537,7 @@ async def analyze_stream(
                         if not saved:
                             raise RuntimeError("pause_checkpoint_failed")
                         if actual_session_id not in agent._session_store:
-                            agent._session_store[actual_session_id] = {}
+                            agent._session_store[actual_session_id] = {"last_used": datetime.utcnow()}
                         agent._session_store[actual_session_id]["display_history_persisted"] = True
 
                     try:
@@ -1373,7 +1556,7 @@ async def analyze_stream(
                     error=str(e),
                     exc_info=True
                 )
-                if await run_ownership_registry.can_write(actual_session_id, latest_event_run_id):
+                if session is not None and await run_ownership_registry.can_write(actual_session_id, latest_event_run_id):
                     # 保存失败会话
                     persistence.append_terminal(
                         session,
@@ -1393,7 +1576,7 @@ async def analyze_stream(
                     saved = await session_manager.append_session_transcript(session)
                     if saved and actual_session_id:
                         if actual_session_id not in agent._session_store:
-                            agent._session_store[actual_session_id] = {}
+                            agent._session_store[actual_session_id] = {"last_used": datetime.utcnow()}
                         agent._session_store[actual_session_id]["display_history_persisted"] = True
                     if saved:
                         logger.info("session_saved_on_exception", session_id=actual_session_id)
@@ -1410,12 +1593,100 @@ async def analyze_stream(
                         "timestamp": None
                     }
                 }
-                yield f"data: {json.dumps(error_event, ensure_ascii=False, default=str)}\n\n"
+                yield f"data: {dumps_safe(error_event, default=str)}\n\n"
             finally:
                 if actual_session_id and cancel_event is not None:
                     await cancellation_registry.unregister(actual_session_id, cancel_event)
 
-        return create_sse_response(event_generator())
+        async def event_generator():
+            # Serialize the complete read-run-write lifecycle, including route
+            # transcript persistence. Waiting for an explicit pause happens
+            # before acquiring the lock held by that still-finishing run.
+            try:
+                if request.previous_paused_run_id:
+                    await cancellation_registry.cancel(
+                        actual_session_id,
+                        expected_run_id=request.previous_paused_run_id,
+                        reason="user_paused",
+                    )
+                    await cancellation_registry.ensure_pause_succeeded(
+                        actual_session_id, request.previous_paused_run_id
+                    )
+                async with session_advisory_lock(
+                    actual_session_id,
+                    wait_timeout=30 if request.previous_paused_run_id else 0,
+                ):
+                    from contextlib import nullcontext
+                    from app.social.web_assistant import web_assistant_request
+
+                    authority = (
+                        web_assistant_request(actual_session_id, user, original_query, uuid.uuid4().hex)
+                        if request.mode == "assistant" else nullcontext()
+                    )
+                    with authority:
+                        gen = unlocked_event_generator()
+                        try:
+                            async for chunk in gen:
+                                yield chunk
+                        finally:
+                            await gen.aclose()
+            except (SessionRunConflict, PauseCheckpointError) as error:
+                conflict = isinstance(error, SessionRunConflict)
+                error_event = {
+                    "type": "fatal_error",
+                    "data": {
+                        "code": "session_run_in_progress" if conflict else "pause_checkpoint_failed",
+                        "error": "当前会话正在执行，请等待完成或暂停后重试" if conflict else "暂停记录保存失败，请重试当前消息",
+                    },
+                }
+                yield f"data: {dumps_safe(error_event)}\n\n"
+
+        detached_stream = _detached_run_stream(raw_request)
+        if detached_stream is None or not actual_session_id:
+            # Redis 不可用 / 功能关闭：回退旧内联模式（断开即取消）
+            return create_sse_response(event_generator())
+
+        stream_id = uuid.uuid4().hex
+        await detached_stream.open(actual_session_id, stream_id)
+
+        async def _execute_run() -> None:
+            gen = event_generator()
+            try:
+                async with asyncio.timeout(settings.agent_detached_run_max_seconds):
+                    async for chunk in gen:
+                        await detached_stream.publish(stream_id, chunk)
+            except TimeoutError:
+                logger.warning(
+                    "detached_run_timeout",
+                    session_id=actual_session_id,
+                    stream_id=stream_id,
+                    max_seconds=settings.agent_detached_run_max_seconds,
+                )
+            except asyncio.CancelledError:
+                # 显式取消（/cancel）：生成器内部已保存中断转录，原样传播
+                raise
+            except Exception:
+                logger.error(
+                    "detached_run_failed",
+                    session_id=actual_session_id,
+                    stream_id=stream_id,
+                    exc_info=True,
+                )
+            finally:
+                # 取消路径下也要补写 stream_closed，避免订阅端悬挂
+                await _await_cancellation_resistant(
+                    _finish_detached_run(gen, detached_stream, stream_id)
+                )
+
+        asyncio.create_task(_execute_run())
+        logger.info(
+            "detached_run_started",
+            session_id=actual_session_id,
+            stream_id=stream_id,
+        )
+        return create_sse_response(
+            detached_stream.follow(stream_id, session_id=actual_session_id)
+        )
 
     except HTTPException:
         raise
@@ -1429,6 +1700,35 @@ async def analyze_stream(
             status_code=500,
             detail=f"分析失败: {str(e)}"
         )
+
+
+@router.get("/stream")
+async def reconnect_detached_stream(
+    raw_request: Request,
+    session_id: str = Query(..., description="会话ID"),
+    stream_id: Optional[str] = Query(None, description="断开前持有的 run stream id；缺省时解析会话活跃 run"),
+    last_id: Optional[str] = Query(None, description="上次收到的 SSE 事件 id（等价 Last-Event-ID），缺省从起始回放"),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    """重连脱离型 run 的事件流：先回放镜像，再实时跟随直到终止。
+
+    - 页面刷新/弱网断开后调用本接口即可接回后端仍在运行（或已结束）的任务；
+    - 流已过期或不存在时返回 404，前端应回退到会话恢复接口（/messages / restore）。
+    """
+    await catalog.require_read(session_id, user)
+    stream = _detached_run_stream(raw_request)
+    if stream is None:
+        raise HTTPException(status_code=404, detail="detached_stream_unavailable")
+    resolved_stream_id = stream_id or await stream.resolve_active(session_id)
+    if not resolved_stream_id:
+        raise HTTPException(status_code=404, detail="no_active_detached_run")
+    if await stream.owner_of(resolved_stream_id) not in (None, session_id):
+        # stream 归属另一会话：拒绝跨会话读取
+        raise HTTPException(status_code=404, detail="no_active_detached_run")
+    return create_sse_response(
+        stream.follow(resolved_stream_id, session_id=session_id, last_id=last_id or "0")
+    )
 
 
 @router.post("/{session_id}/cancel")
@@ -1475,6 +1775,92 @@ async def steer_analysis(
         "session_id": session_id,
         "reason": None if accepted else "no_active_steerable_run_or_store_unavailable",
         "message": "已追加到当前执行任务" if accepted else "没有找到可追加的运行中任务",
+    }
+
+
+@router.post("/{session_id}/interactions/{interaction_id}")
+async def resolve_agent_interaction(
+    session_id: str,
+    interaction_id: str,
+    request: AgentInteractionResolution,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    """Resolve a pending user interaction such as workspace approval."""
+    await catalog.require_write(session_id, user)
+    session_manager = get_session_manager()
+    session = await session_manager.load_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session_not_found")
+
+    pending = session.metadata.get("pending_interaction") if isinstance(session.metadata, dict) else None
+    # App transport acknowledgements remain idempotent even when answered on Web.
+    if request.decision in {"answer", "reject"}:
+        from app.api.social_app_routes import get_app_run_store
+        try:
+            resolution = await get_app_run_store().resolve_interaction(
+                session_id, interaction_id, request.decision, request.answers
+            )
+        except LookupError:
+            resolution = None
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if resolution is not None:
+            if isinstance(pending, dict) and pending.get("interaction_id") == interaction_id:
+                session.metadata.pop("pending_interaction", None)
+                if not await session_manager.save_session_metadata(session):
+                    raise HTTPException(500, "interaction_resolution_save_failed")
+            return resolution
+    if not isinstance(pending, dict) or pending.get("interaction_id") != interaction_id:
+        raise HTTPException(status_code=404, detail="interaction_not_found")
+
+    resume_query = None
+    validated_answers = None
+    if pending.get("kind") == "structured_question":
+        if request.decision == "answer":
+            try:
+                validated_answers = validate_answers(pending["questions"], request.answers or [])
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            resume_query = format_answers(pending["questions"], validated_answers)
+        elif request.decision != "reject":
+            raise HTTPException(status_code=422, detail="invalid_question_decision")
+
+    promotion = pending.get("promotion") if isinstance(pending.get("promotion"), dict) else None
+    session.metadata.pop("pending_interaction", None)
+    session.metadata["last_interaction"] = {
+        "interaction_id": interaction_id,
+        "decision": request.decision,
+        "response": request.response,
+        "answers": validated_answers,
+        "resolved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if request.decision == "approve" and is_workspace_promotion(promotion):
+        session.metadata["workspace_mode"] = promotion["target_mode"]
+        session.metadata["workspace_status"] = "active"
+    elif request.decision == "reject":
+        session.metadata.pop("workspace", None)
+        session.metadata.pop("workspace_session_id", None)
+        session.metadata.pop("workspace_mode", None)
+        session.metadata["workspace_status"] = "rejected"
+
+    if not await session_manager.save_session_metadata(session):
+        raise HTTPException(status_code=500, detail="interaction_resolution_save_failed")
+    return {
+        "status": "resolved",
+        "request_id": f"answer:{interaction_id}",
+        "interaction_id": interaction_id,
+        "decision": request.decision,
+        "workspace_mode": session.metadata.get("workspace_mode"),
+        "resume_query": resume_query,
+        "mode": pending.get("mode"),
+        "pending_request": (
+            pending.get("pending_request")
+            if request.decision == "approve" and isinstance(pending, dict)
+            else None
+        ),
     }
 
 
@@ -1579,149 +1965,8 @@ async def simple_query(request: AgentQueryRequest):
         )
 
 
-@router.get("/tools", response_model=ToolListResponse)
-async def list_tools():
-    """
-    获取可用工具列表（包含完整信息）
-    """
-    try:
-        # 从工具注册表获取详细信息
-        tools_info = global_tool_registry.get_tools_info()
-
-        logger.info("agent_tools_listed", count=len(tools_info))
-
-        return ToolListResponse(
-            tools=tools_info,
-            count=len(tools_info)
-        )
-
-    except Exception as e:
-        logger.error(
-            "list_tools_failed",
-            error=str(e),
-            exc_info=True
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"获取工具列表失败: {str(e)}"
-        )
-
-
-@router.get("/tools/{tool_name}", response_model=ToolInfo)
-async def get_tool_info(tool_name: str):
-    """
-    获取特定工具的详细信息
-    """
-    try:
-        # 从工具注册表获取详细信息
-        info = global_tool_registry.get_tool_info(tool_name)
-
-        if not info:
-            raise HTTPException(
-                status_code=404,
-                detail=f"工具不存在: {tool_name}"
-            )
-
-        logger.info("tool_info_retrieved", tool_name=tool_name)
-
-        return ToolInfo(**info)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(
-            "get_tool_info_failed",
-            tool_name=tool_name,
-            error=str(e),
-            exc_info=True
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"获取工具信息失败: {str(e)}"
-        )
-
-
-@router.patch("/tools/{tool_name}")
-async def update_tool_status(tool_name: str, enabled: bool = Body(..., embed=True)):
-    """
-    更新工具启用/禁用状态
-
-    Args:
-        tool_name: 工具名称
-        enabled: True=启用, False=禁用
-    """
-    try:
-        registry = global_tool_registry
-
-        # 检查工具是否存在
-        if not registry.get_tool(tool_name):
-            raise HTTPException(
-                status_code=404,
-                detail=f"工具不存在: {tool_name}"
-            )
-
-        # 更新工具状态
-        success = registry.set_tool_enabled(tool_name, enabled)
-
-        if not success:
-            raise HTTPException(
-                status_code=500,
-                detail=f"更新工具状态失败"
-            )
-
-        logger.info(
-            "tool_status_updated",
-            tool_name=tool_name,
-            enabled=enabled
-        )
-
-        return {
-            "success": True,
-            "tool_name": tool_name,
-            "enabled": enabled
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(
-            "update_tool_status_failed",
-            tool_name=tool_name,
-            error=str(e),
-            exc_info=True
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"更新工具状态失败: {str(e)}"
-        )
-
-
-@router.get("/tools/categories")
-async def get_tools_categories():
-    """
-    获取所有工具类别
-    """
-    try:
-        registry = global_tool_registry
-        categories = registry.get_categories()
-
-        logger.info("tool_categories_listed", count=len(categories))
-
-        return {
-            "categories": categories,
-            "count": len(categories)
-        }
-
-    except Exception as e:
-        logger.error(
-            "get_tool_categories_failed",
-            error=str(e),
-            exc_info=True
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"获取工具类别失败: {str(e)}"
-        )
+# Keep the old Agent URL as an alias of the canonical /api/tools API.
+router.include_router(tool_router, include_in_schema=False)
 
 
 @router.get("/health")
@@ -1755,18 +2000,3 @@ async def agent_health():
             }
         }
     }
-
-
-# ========================================
-# TODO: 会话管理接口（可选）
-# ========================================
-
-# @router.get("/sessions/{session_id}")
-# async def get_session_status(session_id: str):
-#     """获取会话状态"""
-#     pass
-#
-# @router.delete("/sessions/{session_id}")
-# async def delete_session(session_id: str):
-#     """删除会话"""
-#     pass

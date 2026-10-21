@@ -49,14 +49,15 @@ async def test_document_queue_forwards_processing_options(monkeypatch):
             finally:
                 captured["model_context_active"] = False
 
-    class FakeDB:
-        async def execute(self, statement):
-            return SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id="doc1"))
-
-        async def close(self):
-            captured["closed"] = True
+        @contextmanager
+        def use_opencode_session(self, session_id):
+            captured["session_id"] = session_id
+            yield
 
     class FakeService:
+        def __init__(self, **kwargs):
+            pass
+
         async def get_knowledge_base(self, kb_id):
             return SimpleNamespace(id=kb_id)
 
@@ -71,17 +72,12 @@ async def test_document_queue_forwards_processing_options(monkeypatch):
         FakeLLMService(),
     )
     monkeypatch.setattr(settings, "knowledge_base_llm_model_tier", "flash")
-    monkeypatch.setattr(queue, "_get_db_session", lambda: _async_value(FakeDB()))
-    monkeypatch.setattr(queue, "_get_service", lambda db: _async_value(FakeService()))
-    task = await queue.enqueue(
-        "doc1",
-        "kb1",
-        "/tmp/report.pdf",
-        "user1",
-        processing_options={"chunking_strategy": "llm", "llm_mode": "online"},
-    )
-
-    await queue._process_task(task, worker_id=0)
+    monkeypatch.setattr("app.knowledge_base.service.KnowledgeBaseService", FakeService)
+    monkeypatch.setattr(queue, "_update_owned", lambda *args, **kwargs: _async_value(True))
+    from app.knowledge_base.tasks import DocumentTask
+    task = DocumentTask("doc1", "kb1", 1, "token", {
+        "chunking_strategy": "llm", "llm_mode": "online"})
+    await queue._run_ingestion(task)
 
     assert captured["doc_id"] == "doc1"
     assert captured["options"] == {
@@ -89,8 +85,8 @@ async def test_document_queue_forwards_processing_options(monkeypatch):
         "llm_mode": "online",
     }
     assert captured["tier"] == "flash"
+    assert captured["session_id"] == "kb-doc-doc1"
     assert captured["model_context_active"] is False
-    assert captured["closed"] is True
 
 
 @pytest.mark.asyncio
@@ -112,21 +108,14 @@ async def test_document_queue_recovers_interrupted_processing_once(monkeypatch, 
             )
         )
 
-    queued = []
-    queue = DocumentProcessingQueue(max_workers=1)
-
-    async def record_enqueue(**kwargs):
-        queued.append(kwargs)
-
-    monkeypatch.setattr("app.db.database.async_session", factory)
-    monkeypatch.setattr(queue, "enqueue", record_enqueue)
+    queue = DocumentProcessingQueue(max_workers=1, session_factory=factory)
 
     assert await queue.recover_interrupted() == 1
     assert await queue.recover_interrupted() == 0
-    assert queued[0]["doc_id"] == "doc1"
+    assert (await queue.claim_next()).doc_id == "doc1"
     async with factory() as session:
         document = await session.get(Document, "doc1")
-        assert document.ingestion_status == "queued"
+        assert document.ingestion_status == "processing"
     await engine.dispose()
 
 

@@ -135,8 +135,8 @@ const closeContentModal = () => {
 <style lang="scss" scoped>
 .knowledge-source-panel {
   width: 100%;
-  background: #fff;
-  border: 1px solid #f0f0f0;
+  background: var(--bg-container);
+  border: 1px solid var(--border-1);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -146,8 +146,8 @@ const closeContentModal = () => {
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-  border-bottom: 1px solid #f0f0f0;
+  background: linear-gradient(135deg, var(--bg-muted) 0%, #e9ecef 100%);
+  border-bottom: 1px solid var(--border-1);
 }
 
 .header-title {
@@ -163,20 +163,20 @@ const closeContentModal = () => {
 .panel-text {
   font-size: 14px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-1);
 }
 
 .source-count {
   font-size: 12px;
-  color: #666;
-  background: #fff;
+  color: var(--text-2);
+  background: var(--bg-container);
   padding: 2px 8px;
   border-radius: 999px;
 }
 
 .toggle-btn {
   padding: 4px 12px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
   background: white;
   border-radius: 4px;
   font-size: 12px;
@@ -184,9 +184,9 @@ const closeContentModal = () => {
   transition: all 0.2s;
 
   &:hover {
-    border-color: #1976d2;
-    color: #1976d2;
-    background: #e3f2fd;
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    background: var(--color-primary-bg);
   }
 }
 
@@ -200,10 +200,10 @@ const closeContentModal = () => {
 }
 
 .source-item {
-  border: 1px solid #f0f0f0;
+  border: 1px solid var(--border-1);
   border-radius: 6px;
   padding: 12px;
-  background: #fafafa;
+  background: var(--bg-muted);
   transition: all 0.2s;
 
   &:hover {
@@ -212,11 +212,11 @@ const closeContentModal = () => {
   }
 
   &.high {
-    border-left: 3px solid #4caf50;
+    border-left: 3px solid var(--color-success);
   }
 
   &.medium {
-    border-left: 3px solid #ff9800;
+    border-left: 3px solid var(--color-warning);
   }
 
   &.low {
@@ -244,7 +244,7 @@ const closeContentModal = () => {
   justify-content: center;
   width: 20px;
   height: 20px;
-  background: #1976d2;
+  background: var(--color-primary);
   color: white;
   border-radius: 50%;
   font-size: 11px;
@@ -255,7 +255,7 @@ const closeContentModal = () => {
 .source-name {
   font-size: 13px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-1);
   word-break: break-word;
 }
 
@@ -274,8 +274,8 @@ const closeContentModal = () => {
 }
 
 .source-item.high .relevance-badge {
-  background: #e8f5e9;
-  color: #2e7d32;
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 
 .source-item.medium .relevance-badge {
@@ -303,17 +303,17 @@ const closeContentModal = () => {
 }
 
 .info-row label {
-  color: #666;
+  color: var(--text-2);
   font-weight: 500;
 }
 
 .info-row span {
-  color: #333;
+  color: var(--text-1);
 }
 
 .source-content {
   background: white;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
   border-radius: 4px;
   padding: 8px 12px;
 }
@@ -321,7 +321,7 @@ const closeContentModal = () => {
 .content-preview {
   font-size: 12px;
   line-height: 1.6;
-  color: #555;
+  color: var(--text-2);
   white-space: pre-wrap;
   word-break: break-word;
   margin-bottom: 8px;
@@ -330,8 +330,8 @@ const closeContentModal = () => {
 .view-more-btn {
   padding: 4px 8px;
   border: none;
-  background: #e3f2fd;
-  color: #1976d2;
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
   border-radius: 4px;
   font-size: 11px;
   cursor: pointer;
@@ -345,7 +345,7 @@ const closeContentModal = () => {
 .empty-state {
   padding: 24px 16px;
   text-align: center;
-  color: #999;
+  color: var(--text-3);
 }
 
 .empty-icon {
@@ -390,22 +390,22 @@ const closeContentModal = () => {
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid #f0f0f0;
-  background: #fafafa;
+  border-bottom: 1px solid var(--border-1);
+  background: var(--bg-muted);
 }
 
 .modal-header h4 {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-1);
 }
 
 .close-btn {
   width: 28px;
   height: 28px;
   border: none;
-  background: #f0f0f0;
+  background: var(--border-1);
   border-radius: 4px;
   font-size: 18px;
   cursor: pointer;
@@ -415,7 +415,7 @@ const closeContentModal = () => {
   transition: all 0.2s;
 
   &:hover {
-    background: #e0e0e0;
+    background: var(--border-2);
   }
 }
 
@@ -435,14 +435,14 @@ const closeContentModal = () => {
 .modal-source, .modal-chunk {
   padding: 4px 8px;
   border-radius: 4px;
-  background: #f0f0f0;
-  color: #666;
+  background: var(--border-1);
+  color: var(--text-2);
 }
 
 .modal-content-text {
   font-size: 13px;
   line-height: 1.8;
-  color: #333;
+  color: var(--text-1);
   white-space: pre-wrap;
   word-break: break-word;
 }

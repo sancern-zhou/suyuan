@@ -27,6 +27,7 @@ defusedxml>=0.7.1  # Safe XML parsing (protects against XML attacks)
 
 # Visualization
 matplotlib==3.9.2
+seaborn==0.13.2
 cartopy==0.23.0  # For trajectory analysis and visualization
 
 # LLM Integration
@@ -67,6 +68,10 @@ asyncpg==0.30.0
 sqlalchemy[asyncio]==2.0.35
 alembic==1.13.3
 
+# MySQL (DataCrawler long-history monitoring database)
+aiomysql==0.2.0
+pymysql==1.1.1
+
 # Scheduling
 apscheduler==3.10.4
 
@@ -80,6 +85,8 @@ rapidfuzz>=3.14,<4  # Fast deterministic near-duplicate checks for exam generati
 
 # Report Export (PDF/Word generation)
 weasyprint==63.1
+tinycss2>=1.4.0,<2  # Report HTML color/style parsing
+cssselect2>=0.7.0,<1  # Report CSS cascade and selectors
 python-docx==1.1.2
 python-pptx==1.0.2
 openpyxl>=3.1.0  # Excel file manipulation for Office tools
@@ -90,12 +97,14 @@ pdfminer.six==20251230  # Fast PDF text-layer extraction used by Unstructured an
 pdf2image==1.17.0  # PDF page rasterization through Poppler
 pytesseract==0.3.13  # OCR integration through the Tesseract executable
 Pillow==12.0.0  # Image processing for Office, reports, OCR, and visualizations
+CairoSVG==2.8.2  # Rasterize ECharts server-side SVG for document images
 unstructured==0.22.32  # Knowledge-base parsing for non-PDF document formats
 unstructured-client==0.32.4  # Keep Unstructured compatible with the pinned HTTP/Pydantic stack
 en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl  # Offline sentence splitting for Unstructured
 markdown==3.7
 jinja2==3.1.4
 beautifulsoup4==4.14.3  # HTML parsing for reports, knowledge base, and query tools
+trafilatura==2.3.1  # Main-content extraction (markdown) for web_fetch tool
 
 # File Upload & Async I/O
 python-multipart==0.0.21  # FastAPI UploadFile/Form request parsing

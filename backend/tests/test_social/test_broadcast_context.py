@@ -1,3 +1,4 @@
+from pathlib import Path
 import pytest
 
 from app.agent.session.models import Session
@@ -29,7 +30,7 @@ class FakeMessageBus:
     def __init__(self):
         self.messages = []
 
-    async def publish_outbound(self, message):
+    async def deliver_outbound(self, message):
         self.messages.append(message)
 
 
@@ -81,12 +82,12 @@ async def test_broadcast_is_appended_as_assistant_message_with_attachment(
     ok = await persist_broadcast_context(
         session_mapper=FakeSessionMapper(),
         social_user_id="weixin:bot:user",
-        message="运城告警摘要",
+        message="许昌告警摘要",
         media=[str(report)],
         metadata={
             "task_id": "task-1",
             "event_id": "alert-1",
-            "event_type": "yuncheng.alert.created",
+            "event_type": "xuchang.station_deviation.alert_created",
             "execution_id": "exec-1",
         },
     )
@@ -94,7 +95,7 @@ async def test_broadcast_is_appended_as_assistant_message_with_attachment(
     assert ok is True
     assert saved[0].conversation_history[-1]["role"] == "assistant"
     attachment = saved[0].conversation_history[-1]["data"]["attachments"][0]
-    assert attachment["path"] == str(report)
+    assert Path(attachment["path"]).read_bytes() == report.read_bytes()
     assert "office_documents" not in saved[0].model_dump()
 
 
@@ -118,12 +119,12 @@ async def test_same_broadcast_message_is_idempotent(monkeypatch, tmp_path):
     kwargs = {
         "session_mapper": FakeSessionMapper(),
         "social_user_id": "weixin:bot:user",
-        "message": "运城告警摘要",
+        "message": "许昌告警摘要",
         "media": [str(report)],
         "metadata": {
             "task_id": "task-1",
             "event_id": "alert-1",
-            "event_type": "yuncheng.alert.created",
+            "event_type": "xuchang.station_deviation.alert_created",
             "execution_id": "exec-1",
         },
     }
@@ -221,7 +222,7 @@ async def test_targeted_broadcast_persists_context_for_each_success(
         context_metadata={
             "task_id": "task-1",
             "event_id": "alert-1",
-            "event_type": "yuncheng.alert.created",
+            "event_type": "xuchang.station_deviation.alert_created",
             "execution_id": "exec-1",
         },
     )

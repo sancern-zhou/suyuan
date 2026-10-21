@@ -42,10 +42,10 @@ defineProps({
 
 <style scoped>
 .generation-progress {
-  background: #fff;
+  background: var(--bg-container);
   border-radius: 8px;
   padding: 16px;
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--border-2);
 }
 
 .progress-header {
@@ -58,13 +58,13 @@ defineProps({
 .progress-header h4 {
   margin: 0;
   font-size: 14px;
-  color: #1f2a44;
+  color: var(--text-1);
 }
 
 .current-phase {
   font-size: 12px;
-  color: #666;
-  background: #f0f0f0;
+  color: var(--text-2);
+  background: var(--border-1);
   padding: 4px 8px;
   border-radius: 4px;
 }
@@ -72,7 +72,7 @@ defineProps({
 .progress-bar {
   width: 100%;
   height: 8px;
-  background: #f0f0f0;
+  background: var(--border-1);
   border-radius: 4px;
   overflow: hidden;
   margin-bottom: 16px;
@@ -80,7 +80,7 @@ defineProps({
 
 .progress-fill {
   height: 100%;
-  background: #1976d2;
+  background: var(--color-primary);
   transition: width 0.3s ease;
 }
 
@@ -94,21 +94,21 @@ defineProps({
   display: flex;
   justify-content: space-between;
   padding: 8px 12px;
-  background: #fafafa;
+  background: var(--bg-muted);
   border-radius: 4px;
   font-size: 12px;
 }
 
 .event-item.completed {
-  background: #e8f5e9;
+  background: var(--color-success-bg);
 }
 
 .event-phase {
-  color: #1f2a44;
+  color: var(--text-1);
   font-weight: 500;
 }
 
 .event-status {
-  color: #666;
+  color: var(--text-2);
 }
 </style>

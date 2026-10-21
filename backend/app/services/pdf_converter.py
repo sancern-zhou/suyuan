@@ -47,29 +47,28 @@ class PDFConverter:
             pdf_id = f"{uuid.uuid4()}"
             pdf_path = self.output_dir / f"{pdf_id}.pdf"
 
-            with self._office_pdf_source(Path(office_file_path)) as conversion_source:
-                # Use LibreOffice to convert
-                result = run_soffice([
-                    "--headless",
-                    "--convert-to", "pdf",
-                    "--outdir", str(self.output_dir),
-                    str(conversion_source)
-                ])
+            # 在独享临时目录内转换：输出目录共享时，并发转换（或 soffice
+            # 单实例让位导致本无产出）会因"挑目录里最新的 pdf"拿到别的
+            # 文档的转换结果，造成 A 文档预览显示 B 文档内容。
+            with tempfile.TemporaryDirectory(
+                prefix=".convert-", dir=self.output_dir
+            ) as workdir:
+                with self._office_pdf_source(Path(office_file_path)) as conversion_source:
+                    # Use LibreOffice to convert
+                    result = run_soffice([
+                        "--headless",
+                        "-env:UserInstallation=file://{}".format(workdir),
+                        "--convert-to", "pdf",
+                        "--outdir", workdir,
+                        str(conversion_source)
+                    ])
 
-            if result.returncode != 0:
-                logger.error(f"LibreOffice conversion failed: {result.stderr}")
-                raise Exception(f"PDF conversion failed: {result.stderr}")
+                if result.returncode != 0:
+                    logger.error(f"LibreOffice conversion failed: {result.stderr}")
+                    raise Exception(f"PDF conversion failed: {result.stderr}")
 
-            # Find the converted PDF and rename it
-            converted_files = list(self.output_dir.glob("*.pdf"))
-            if not converted_files:
-                raise Exception("No PDF file generated")
-
-            # Get the most recently modified PDF
-            converted_pdf = max(converted_files, key=lambda p: p.stat().st_mtime)
-
-            # Move to our target location
-            shutil.move(str(converted_pdf), str(pdf_path))
+                produced = self._produced_pdf(Path(workdir))
+                shutil.move(str(produced), str(pdf_path))
 
             return {
                 "pdf_id": pdf_id,
@@ -89,28 +88,24 @@ class PDFConverter:
         try:
             pdf_path = self.get_pdf_path(pdf_id)
 
-            with self._office_pdf_source(Path(office_file_path)) as conversion_source:
-                result = run_soffice([
-                    "--headless",
-                    "--convert-to", "pdf",
-                    "--outdir", str(self.output_dir),
-                    str(conversion_source)
-                ])
+            with tempfile.TemporaryDirectory(
+                prefix=".convert-", dir=self.output_dir
+            ) as workdir:
+                with self._office_pdf_source(Path(office_file_path)) as conversion_source:
+                    result = run_soffice([
+                        "--headless",
+                        "-env:UserInstallation=file://{}".format(workdir),
+                        "--convert-to", "pdf",
+                        "--outdir", workdir,
+                        str(conversion_source)
+                    ])
 
-            if result.returncode != 0:
-                logger.error(f"LibreOffice PDF rebuild failed: {result.stderr}")
-                raise Exception(f"PDF rebuild failed: {result.stderr}")
+                if result.returncode != 0:
+                    logger.error(f"LibreOffice PDF rebuild failed: {result.stderr}")
+                    raise Exception(f"PDF rebuild failed: {result.stderr}")
 
-            converted_files = [
-                path
-                for path in self.output_dir.glob("*.pdf")
-                if path.name != f"{pdf_id}.pdf"
-            ]
-            if not converted_files:
-                raise Exception("No PDF file generated during rebuild")
-
-            converted_pdf = max(converted_files, key=lambda p: p.stat().st_mtime)
-            shutil.move(str(converted_pdf), str(pdf_path))
+                produced = self._produced_pdf(Path(workdir))
+                shutil.move(str(produced), str(pdf_path))
 
             return {
                 "pdf_id": pdf_id,
@@ -122,6 +117,18 @@ class PDFConverter:
         except Exception as e:
             logger.error(f"PDF rebuild error: {e}", exc_info=True)
             raise
+
+    @staticmethod
+    def _produced_pdf(workdir: Path) -> Path:
+        """Return the single PDF produced inside this call's private workdir."""
+        produced = [
+            path
+            for path in workdir.glob("*.pdf")
+            if path.is_file() and path.stat().st_size > 0
+        ]
+        if not produced:
+            raise Exception("No PDF file generated")
+        return max(produced, key=lambda p: p.stat().st_mtime)
 
     def _get_pdf_page_count(self, pdf_path: Path) -> int:
         """Get the number of pages in the PDF"""

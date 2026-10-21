@@ -35,12 +35,17 @@ COMPARISONS = [
 ]
 
 UPPER_STANDARD_COMPARISONS = (
-    {"field": "DELIVER6VALUE", "label": "上级标准型号", "comparison_type": "text"},
-    {"field": "DELIVERFROM6VALUE", "label": "上级标准设备号", "comparison_type": "text"},
-    {"field": "AVALUE", "label": "上级标准序列号", "comparison_type": "text"},
     {"field": "WORKDENSITY6VALUE", "label": "上级标准传递日期", "comparison_type": "date"},
     {"field": "DELIVERTO6VALUE", "label": "上级标准传递公式", "comparison_type": "formula"},
     {"field": "BVALUE", "label": "上级标准有效期", "comparison_type": "date"},
+)
+UPPER_STANDARD_FIELDS = (
+    "DELIVER6VALUE",
+    "DELIVERFROM6VALUE",
+    "AVALUE",
+    "WORKDENSITY6VALUE",
+    "DELIVERTO6VALUE",
+    "BVALUE",
 )
 
 UPPER_STANDARD_SECTION_LABELS = ("上级臭氧传递标准", "参考光电仪")
@@ -65,6 +70,7 @@ def check_o3_value_pass_xls_values(
     issues: list[Issue],
     *,
     attachment_read_cache: dict[tuple[Any, ...], dict[str, Any]] | None = None,
+    enable_value_comparison: bool = True,
 ) -> None:
     """Compare RF_HY_O3VALUEPASS values with the uploaded XLS first sheet."""
 
@@ -80,6 +86,8 @@ def check_o3_value_pass_xls_values(
         _check_o3_value_pass_form_fields(order, form, issues)
         if not xls_items:
             _add_missing_xls_review_issue(order, form, records, issues)
+        if not enable_value_comparison:
+            continue
         selected_xls = _select_matching_xls_item(form, xls_items, read_cache=read_cache)
         selected_items = [item for item in (selected_xls, _select_item(pdf_items)) if item]
         if not selected_items:
@@ -693,7 +701,7 @@ def _xls_sheet_dynamic_cells(sheet: Any) -> dict[str, list[dict[str, Any]]]:
 
 
 def _upper_standard_cells(row_count: int, column_count: int, value_at: Any) -> dict[str, list[dict[str, Any]]]:
-    cells = {comparison["field"]: [] for comparison in UPPER_STANDARD_COMPARISONS}
+    cells = {field: [] for field in UPPER_STANDARD_FIELDS}
     anchor_row = None
     for row_index in range(1, row_count + 1):
         row_text = "".join(_normalize_label(value_at(row_index, column_index)) for column_index in range(1, column_count + 1))
@@ -836,7 +844,12 @@ def _download_to_temp(url: str) -> dict[str, Any]:
 
 def _is_unavailable_attachment_source_error(error: Any) -> bool:
     text = str(error or "")
-    return "附件路径为空" in text or "文件不存在且未配置附件根路径/基础URL" in text
+    return (
+        "附件路径为空" in text
+        or "文件不存在且未配置附件根路径/基础URL" in text
+        or "下载附件失败" in text
+        or "附件主机无法解析" in text
+    )
 
 
 def _compare_values(form: dict[str, Any], cells: dict[str, Any]) -> list[dict[str, Any]]:
@@ -847,9 +860,17 @@ def _compare_values(form: dict[str, Any], cells: dict[str, Any]) -> list[dict[st
             continue
         cell = comparison["cell"]
         form_raw = form.get(field)
+        if field == "DENSITY1VALUE" and _is_explicit_not_applicable(form_raw):
+            continue
         form_value = _number(form_raw)
         form_precision = _decimal_places(form_raw)
         cell_candidates = _cell_candidates(cells.get(field), comparison)
+        if field == "DENSITY1VALUE":
+            cell_candidates = [
+                item
+                for item in cell_candidates
+                if _parse_linear_formula(item.get("value")) is None
+            ]
         matched_cell = _matched_cell(form_value, form_precision, cell_candidates, field)
         first_numeric_cell = next((item for item in cell_candidates if item["number"] is not None), None)
         used_cell = first_numeric_cell or (
@@ -941,19 +962,22 @@ def _upper_standard_values_match(
     if comparison_type == "date":
         form_date = _normalize_date_value(form_value)
         xls_date = _normalize_date_value(xls_value)
-        return bool(form_date and xls_date and form_date == xls_date)
+        return _date_values_match(form_date, xls_date)
     if field == "DELIVER6VALUE":
         return _normalize_upper_standard_model(form_value) == _normalize_upper_standard_model(xls_value)
     return _normalize_identity_text(form_value) == _normalize_identity_text(xls_value)
 
 
 def _normalize_identity_text(value: Any) -> str:
-    return re.sub(r"[^A-Z0-9]+", "", str(value or "").upper())
+    text = str(value or "").upper().strip()
+    if re.fullmatch(r"[+-]?\d+\.0+", text):
+        text = text.split(".", 1)[0]
+    return re.sub(r"[^A-Z0-9]+", "", text)
 
 
 def _normalize_upper_standard_model(value: Any) -> str:
     normalized = _normalize_identity_text(value)
-    match = re.fullmatch(r"(?:TE|THERMO|THERMOSCIENTIFIC)(49IPS)", normalized)
+    match = re.fullmatch(r"(?:TE|THERMO|THERMOSCIENTIFIC)?(49IPS)(?:DZAA)?", normalized)
     return match.group(1) if match else normalized
 
 
@@ -983,9 +1007,18 @@ def _normalize_date_value(value: Any) -> tuple[int, ...]:
     return tuple(numbers)
 
 
+def _date_values_match(left: tuple[int, ...] | None, right: tuple[int, ...] | None) -> bool:
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    shorter, longer = (left, right) if len(left) < len(right) else (right, left)
+    return len(shorter) == 3 and len(longer) == 6 and tuple(longer[:3]) == tuple(shorter)
+
+
 def _has_abbreviated_date_range(value: str) -> bool:
     return bool(
-        re.search(r"(?:~|～|至|\bto\b)", value, flags=re.IGNORECASE)
+        re.search(r"(?:~|～|至|\bto\b|\d\?+\d)", value, flags=re.IGNORECASE)
         or re.search(r"\d\s*-\s*\d{1,2}[./]\d{1,2}\s*$", value)
     )
 
@@ -1186,6 +1219,10 @@ def _number(value: Any) -> float | None:
     if not match:
         return None
     return float(match.group(0))
+
+
+def _is_explicit_not_applicable(value: Any) -> bool:
+    return re.sub(r"[^A-Z]+", "", str(value or "").upper()) == "NA"
 
 
 def _is_blank(value: Any) -> bool:

@@ -72,8 +72,9 @@ class EKMAVisualizer:
 
         img_base64 = self._fig_to_base64(fig)
         cache = get_image_cache()
-        saved_image_id = cache.save(img_base64, chart_id)
-        image_url = f"/api/image/{saved_image_id}"
+        image_info = cache.save(img_base64, chart_id)
+        saved_image_id = image_info["image_id"]
+        image_url = image_info["url"]
 
         meta = {
             "schema_version": "3.1",
@@ -93,6 +94,8 @@ class EKMAVisualizer:
                 "image_id": saved_image_id,
                 "image_url": image_url,
                 "markdown_image": f"![{title}]({image_url})",
+                # 原生PNG本地路径：resources_for_visuals 依赖该字段登记 chart-image
+                "local_path": image_info["local_path"],
                 "title": title,
                 "meta": meta
             },
@@ -166,9 +169,10 @@ class EKMAVisualizer:
             O3_max = np.max(o3_values)
             O3_min = np.min(o3_values)
 
-            # 如果没有NOx数据，使用模拟值
+            # 缺少NOx数据时不得编造，直接放弃生成
             if len(nox_values) == 0:
-                nox_values = [v * 0.5 for v in vocs_values]  # 模拟NOx
+                logger.warning("[EKMAVisualizer] 缺少NOx数据，无法生成EKMA图")
+                return None
             NOx_max = np.percentile(nox_values, 95) if nox_values else np.max(nox_values)
             NOx_min = np.percentile(nox_values, 5) if nox_values else np.min(nox_values)
 
@@ -325,7 +329,9 @@ class EKMAVisualizer:
             O3_current = np.mean(o3_values)
 
             if len(nox_values) == 0:
-                nox_values = [v * 0.5 for v in vocs_values[:min_len]]
+                logger.warning("[EKMAVisualizer] 缺少NOx数据，无法生成减排情景分析")
+                return None
+            nox_values = nox_values[:min_len]
 
             # 计算基准排放（95百分位）
             VOCs_95 = np.percentile(vocs_values, 95)
@@ -454,7 +460,8 @@ class EKMAVisualizer:
             o3_values = o3_values[:min_len]
 
             if len(nox_values) == 0:
-                nox_values = [v * 0.5 for v in vocs_values[:min_len]]
+                logger.warning("[EKMAVisualizer] 缺少NOx数据，无法生成臭氧平衡图")
+                return None
             nox_values = nox_values[:min_len]
 
             # 计算VOCs/NOx比值

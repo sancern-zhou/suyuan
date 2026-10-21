@@ -1,9 +1,12 @@
+import asyncio
+
 import pytest
 from fastapi import FastAPI, Header
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.db.database import Base, get_db
+from app.db.database import Base
+from app.db.knowledge_database import get_knowledge_db
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.knowledge_base.graph_models import (
@@ -107,7 +110,7 @@ def graph_api(tmp_path, monkeypatch):
     )
     app = FastAPI()
     app.include_router(knowledge_graph_routes.router, prefix="/api")
-    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_knowledge_db] = override_db
 
     def authenticated_user(x_test_user: str = Header(default="owner")):
         return CurrentUser(
@@ -178,6 +181,27 @@ def test_graph_build_requires_confirmed_scene(graph_api):
     )
     assert response.status_code == 409
     assert response.json()["detail"] == "scene_confirmation_required"
+
+
+@pytest.mark.asyncio
+async def test_graph_build_recovery_uses_database_session_factory(monkeypatch):
+    from app.api import knowledge_graph_routes
+
+    factories = []
+
+    class CancelRecovery:
+        def __init__(self, session_factory):
+            factories.append(session_factory)
+
+        async def recover_expired_tasks(self):
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(knowledge_graph_routes, "GraphBuildService", CancelRecovery)
+
+    with pytest.raises(asyncio.CancelledError):
+        await knowledge_graph_routes._graph_build_recovery_loop()
+
+    assert factories == [knowledge_graph_routes.knowledge_async_session]
 
 
 def test_graph_snapshot_returns_complete_selected_statuses(graph_api):

@@ -34,6 +34,39 @@ async def test_read_text_rejects_large_file_without_limit(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_missing_file_suggests_similar_name(tmp_path):
+    (tmp_path / "report-2026.csv").write_text("x\n", encoding="utf-8")
+    tool = ReadFileTool()
+    tool.allowed_dirs.append(tmp_path)
+
+    result = await tool.execute(path=str(tmp_path / "report-2026.cvs"))
+
+    assert result["success"] is False
+    assert result["data"]["suggestions"] == ["report-2026.csv"]
+    assert "名称相近" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_empty_and_past_eof_reads_are_explicit(tmp_path):
+    empty = tmp_path / "empty.txt"
+    empty.write_text("", encoding="utf-8")
+    tool = ReadFileTool()
+    tool.allowed_dirs.append(tmp_path)
+
+    empty_result = await tool.execute(path=str(empty), encoding="utf-8")
+    assert empty_result["success"] is True
+    assert empty_result["data"]["total_lines"] == 0
+    assert "内容为空" in empty_result["summary"]
+
+    lines = tmp_path / "lines.txt"
+    lines.write_text("a\nb\n", encoding="utf-8")
+    eof_result = await tool.execute(path=str(lines), offset=5, limit=2, encoding="utf-8")
+    assert eof_result["success"] is True
+    assert eof_result["data"]["line_range"] == []
+    assert "超出文件末尾" in eof_result["summary"]
+
+
+@pytest.mark.asyncio
 async def test_read_text_allows_large_file_when_limit_is_explicit(tmp_path):
     file_path = tmp_path / "large.txt"
     file_path.write_text("line 1\nline 2\nline 3\nline 4\n", encoding="utf-8")
@@ -54,21 +87,11 @@ async def test_read_text_allows_large_file_when_limit_is_explicit(tmp_path):
     assert result["data"]["line_range"] == [2, 3]
     assert result["data"]["total_lines"] == 4
     assert result["data"]["is_truncated"] is True
-    assert result["refs"]["files"] == [
-        {
-            "path": str(file_path),
-            "type": "text",
-            "format": "txt",
-            "size": file_path.stat().st_size,
-            "line_range": [2, 3],
-            "total_lines": 4,
-            "is_truncated": True,
-            "usage": "read_file",
-        }
-    ]
+    # _strip_source_path_echo 会剥离顶层 refs 冗余定位（设计行为）
+    assert "refs" not in result
     assert result["llm_resume"]["content_preview"] == "line 2\nline 3"
     assert result["llm_resume"]["tool_hint"] == (
-        f"Use read_file(path='{file_path}', offset=3, limit=2) to continue reading."
+        "Use read_file(offset=3, limit=2) on the same resource to continue reading."
     )
 
 

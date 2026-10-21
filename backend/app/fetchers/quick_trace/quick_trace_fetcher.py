@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.weather_targets import resolve_weather_city_target
 from app.fetchers.base.fetcher_interface import DataFetcher
+from app.utils.path_config import get_data_registry
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent.parent.parent
@@ -1866,7 +1867,7 @@ class QuickTraceExecutor:
         # 1. 保存到本地文件（可选，失败不影响数据库保存）
         filepath = None
         try:
-            report_dir = project_root / "backend_data_registry" / "quick_trace_reports"
+            report_dir = get_data_registry() / "quick_trace_reports"
             report_dir.mkdir(parents=True, exist_ok=True)
 
             # 生成文件名（添加时间戳避免冲突）

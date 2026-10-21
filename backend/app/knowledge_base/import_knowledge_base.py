@@ -20,6 +20,7 @@ import hashlib
 import aiofiles
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from app.db.pool_config import pool_int
 
 # Qdrant
 from qdrant_client import QdrantClient
@@ -33,8 +34,8 @@ logger = structlog.get_logger()
 
 # 数据库配置
 DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/weather_db"
+    "KNOWLEDGE_DATABASE_URL",
+    os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/weather_db")
 )
 
 # Qdrant配置
@@ -55,8 +56,16 @@ class KnowledgeBaseImporter:
         qdrant_host: str = QDRANT_HOST,
         qdrant_port: int = QDRANT_PORT,
         qdrant_api_key: Optional[str] = QDRANT_API_KEY,
-        embedding_dim: int = EMBEDDING_DIM
+        embedding_dim: int = EMBEDDING_DIM,
+        *, legacy_format: bool = False,
     ):
+        if not legacy_format:
+            raise ValueError(
+                "This is a legacy-only transfer tool, not a complete knowledge backup. "
+                "Use PostgreSQL pg_dump/pg_restore plus original-file storage backup "
+                "for current knowledge bases. Explicit legacy_format=True is required "
+                "for old-format transfers."
+            )
         # 初始化 Qdrant 客户端
         self.qdrant_client = QdrantClient(
             host=qdrant_host,
@@ -66,10 +75,10 @@ class KnowledgeBaseImporter:
 
         # 初始化数据库引擎（使用 asyncpg，与项目一致）
         self.db_engine = create_async_engine(
-            DATABASE_URL,
+            db_url,
             echo=False,
-            pool_size=5,
-            max_overflow=10,
+            pool_size=pool_int("KNOWLEDGE_IMPORT_DATABASE_POOL_SIZE", 5),
+            max_overflow=pool_int("KNOWLEDGE_IMPORT_DATABASE_MAX_OVERFLOW", 10),
             pool_pre_ping=True,
             pool_recycle=300
         )
@@ -125,6 +134,15 @@ class KnowledgeBaseImporter:
 
             async with aiofiles.open(metadata_path, "r", encoding="utf-8") as f:
                 metadata = json.loads(await f.read())
+
+            # Inspect the entire projection before creating any database rows.
+            vectors_path = input_path / "vectors.jsonl"
+            if vectors_path.exists():
+                async with aiofiles.open(vectors_path, "r", encoding="utf-8") as stream:
+                    async for line in stream:
+                        record = json.loads(line)
+                        if (record.get("payload") or {}).get("record_type"):
+                            raise ValueError("Typed knowledge vectors require canonical facts; legacy import refused")
 
             kb_info = metadata["knowledge_base"]
             original_kb_id = kb_info["id"]
@@ -587,9 +605,13 @@ async def main():
         help="知识库已存在时跳过"
     )
 
+    parser.add_argument("--legacy-format", action="store_true",
+                        help="仅旧格式迁移；不包含当前 Chunk/图谱/场景/规则事实，不能作为完整备份")
     args = parser.parse_args()
+    if not args.legacy_format:
+        parser.error("旧格式工具已退役；当前知识库请使用 PostgreSQL 备份和原文件存储备份")
 
-    importer = KnowledgeBaseImporter()
+    importer = KnowledgeBaseImporter(legacy_format=True)
 
     try:
         result = await importer.import_knowledge_base(

@@ -14,8 +14,7 @@ test('board version history previews versions without exposing a restore call ch
     'components/board/DrawioBoardPanel.vue',
     'components/reactAnalysis/RightPanelContainer.vue',
     'components/reactAnalysis/MainLayout.vue',
-    'views/ReactAnalysisView.vue',
-    'views/ReactAnalysisViewRefactored.vue'
+    'views/ReactAnalysisView.vue'
   ].map(readSource).join('\n')
   const boardPanelSource = readSource('components/board/DrawioBoardPanel.vue')
 

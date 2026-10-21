@@ -4,21 +4,30 @@ export const selectableWeixinUsers = (users = []) => users.filter(user =>
   String(user.channel || '').startsWith('weixin')
 )
 
+export const selectableSocialUsers = (users = []) => users.filter(user =>
+  user.status === 'active' &&
+  Boolean(user.social_user_id) &&
+  (String(user.channel || '').startsWith('weixin') || String(user.channel || '').startsWith('app'))
+)
+
 
 export const buildExecutionModeOptions = (
   projectModes = [],
   currentMode = '',
 ) => {
-  const options = projectModes.map(mode => ({
-    value: mode.id,
-    label: `${mode.id}（${mode.shortName || mode.name || mode.id}）`
-  }))
+  const options = projectModes.map(mode => {
+    const id = mode.id
+    return { value: id, label: `${id}（${mode.shortName || mode.name || id}）` }
+  })
   options.push(
-    { value: 'social', label: 'social（社交任务）' },
-    { value: 'custom', label: 'custom（自选工具）' }
+    { value: 'office', label: 'office（办公模式）' },
+    { value: 'assistant', label: 'assistant（助手模式）' },
+    { value: 'custom', label: 'custom（自选工具）' },
+    { value: 'workflow', label: 'workflow（确定性工作流）' }
   )
   if (currentMode && !options.some(option => option.value === currentMode)) {
-    options.push({ value: currentMode, label: `${currentMode}（当前任务模式）` })
+    const label = `${currentMode}（当前任务模式）`
+    options.push({ value: currentMode, label })
   }
   return options.filter((option, index, values) => (
     values.findIndex(candidate => candidate.value === option.value) === index
@@ -27,9 +36,13 @@ export const buildExecutionModeOptions = (
 
 
 export const applyTriggerDefaults = (form, triggerType, eventTypes = []) => {
+  const previousMode = form.execution_mode
   form.trigger_type = triggerType
   if (triggerType === 'event') {
-    form.execution_mode = 'social'
+    // 工作流任务是代码注册的确定性单元，切换触发方式不得改写其执行模式。
+    if (previousMode !== 'workflow') {
+      form.execution_mode = 'assistant'
+    }
     form.tool_names = []
     form.broadcast_enabled = true
     if (!form.event_type && eventTypes.length > 0) {
@@ -43,6 +56,7 @@ export const applyTriggerDefaults = (form, triggerType, eventTypes = []) => {
 export const applyExecutionMode = (form, mode) => {
   form.execution_mode = mode
   if (mode !== 'custom') form.tool_names = []
+  if (mode !== 'workflow') form.workflow_name = ''
   return form
 }
 
@@ -52,7 +66,15 @@ export const buildTaskPayload = (form) => {
   const payload = {
     name: String(form.name || '').trim(),
     description: String(form.description || '').trim(),
-    execution_mode: form.execution_mode || 'assistant',
+    execution_mode: form.execution_mode || 'office',
+    model_tier: form.model_tier || 'flash',
+    result_requirements: (form.result_requirements || []).map(rule => ({
+      field: String(rule.field || '').trim(),
+      label: String(rule.label || '').trim(),
+      required: rule.required !== false,
+      ...(rule.required_when && Object.keys(rule.required_when).length ? { required_when: { ...rule.required_when } } : {}),
+      allowed_values: String(rule.allowedValuesText || '').split(/[,，\n]/).map(value => value.trim()).filter(Boolean)
+    })),
     skill_id: String(form.skill_id || '').trim() || null,
     trigger_type: isEvent ? 'event' : 'schedule',
     schedule_type: isEvent ? null : form.schedule_type,
@@ -61,13 +83,8 @@ export const buildTaskPayload = (form) => {
     broadcast_enabled: Boolean(form.broadcast_enabled),
     target_user_ids: form.broadcast_enabled ? [...(form.target_user_ids || [])] : [],
     enabled: Boolean(form.enabled),
-    steps: [{
-      step_id: 'step_1',
-      description: String(form.description || '').trim(),
-      agent_prompt: String(form.agent_prompt || form.description || '').trim(),
-      timeout_seconds: isEvent ? 1800 : 600,
-      retry_on_failure: false
-    }],
+    prompt: String(form.agent_prompt || form.description || '').trim(),
+    timeout_seconds: isEvent ? 1800 : 1800,
     tags: String(form.tagsText || '')
       .split(',')
       .map(tag => tag.trim())
@@ -79,10 +96,23 @@ export const buildTaskPayload = (form) => {
     title: String(form.workspaceEntryTitle || form.name || '').trim()
   }
 
+  payload.history_learning = {
+    ...(form.historyLearningBase || {}),
+    enabled: form.historyLearningEnabled !== false,
+    max_recent_cases: Number(form.historyMaxRecentCases) || 3,
+    memory_char_budget: Number(form.historyMemoryCharBudget) || 4000,
+    active_retrieval_enabled: Boolean(form.historyActiveRetrievalEnabled)
+  }
+
   if (payload.execution_mode === 'custom') {
     payload.tool_names = [...new Set(
       (form.tool_names || []).map(name => String(name).trim()).filter(Boolean)
     )]
+  }
+
+  if (payload.execution_mode === 'workflow') {
+    payload.workflow_name = String(form.workflow_name || '').trim() || null
+    payload.workflow_args = { ...(form.workflow_args || {}) }
   }
 
   if (!isEvent && form.schedule_type === 'once') {
@@ -90,6 +120,17 @@ export const buildTaskPayload = (form) => {
   } else if (!isEvent && form.schedule_type === 'interval') {
     payload.interval_minutes = Number(form.interval_minutes) || 30
   } else if (!isEvent && form.schedule_type === 'daily_custom') {
+    payload.hour = Number(form.hour)
+    payload.minute = Number(form.minute)
+  } else if (!isEvent && form.schedule_type === 'daily_hours_custom') {
+    payload.hours = String(form.hoursText || '')
+      .split(/[,，\s]+/)
+      .map(value => Number(value))
+      .filter(value => Number.isInteger(value) && value >= 0 && value <= 23)
+      .filter((value, index, values) => values.indexOf(value) === index)
+    payload.minute = Number(form.minute)
+  } else if (!isEvent && form.schedule_type === 'weekly_custom') {
+    payload.day_of_week = Number(form.day_of_week)
     payload.hour = Number(form.hour)
     payload.minute = Number(form.minute)
   }

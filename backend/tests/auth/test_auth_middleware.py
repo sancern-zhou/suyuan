@@ -79,6 +79,8 @@ def _app(service=None, **setting_overrides):
     async def resource_content(session_id: str, resource_id: str, asset: str = ""):
         return {"session_id": session_id, "resource_id": resource_id, "asset": asset}
 
+    @app.get("/api/shared-conversations")
+    @app.get("/api/shared-conversations/{share_id}/resources/{resource_id}")
     @app.get("/api/private")
     async def private(request: Request):
         return {
@@ -89,6 +91,45 @@ def _app(service=None, **setting_overrides):
         }
 
     return app, service
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/shared-conversations", "/api/shared-conversations/s1/resources/r1"])
+async def test_shared_routes_accept_signed_app_identity_without_company_gateway(monkeypatch, path):
+    from app.social import app_identity
+
+    monkeypatch.setattr(app_identity.settings, "app_auth_secret", "test-app-signing-secret")
+    token = app_identity.issue_access_token_for_identity(app_identity.AppIdentity(
+        "account-1", "App user", "company:user-1", 0, auth_source="company",
+    ))
+    app, service = _app()
+    response = await _get(app, path, client_host="203.0.113.1", headers={
+        "Authorization": f"Bearer {token}", "X-User-Id": "attacker", "X-Is-Admin": "true",
+    })
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "company:user-1", "is_admin": False, "user_header": None, "admin_header": None,
+    }
+    assert service.calls == []
+    assert (await _get(app, "/api/private", headers={"Authorization": f"Bearer {token}"})).status_code == 401
+    assert (await _get(app, "/api/shared-conversations-evil", headers={"Authorization": f"Bearer {token}"})).status_code == 401
+    assert (await _get(app, path)).status_code == 401
+    assert (await _get(app, path, headers={"Authorization": f"Bearer {token}tampered"})).status_code == 401
+    expired = app_identity._sign({"sub": "account-1", "exp": 1, "typ": "access"})
+    assert (await _get(app, path, headers={"Authorization": f"Bearer {expired}"})).status_code == 401
+    refresh = app_identity._sign({"sub": "account-1", "exp": 9999999999, "typ": "refresh"})
+    assert (await _get(app, path, headers={"Authorization": f"Bearer {refresh}"})).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_shared_routes_preserve_company_web_authentication():
+    app, service = _app()
+    response = await _get(app, "/api/shared-conversations", headers={
+        "Authorization": "Bearer web-session", "SysCode": "SUYUAN",
+    })
+    assert response.status_code == 200
+    assert response.json()["id"] == "u1"
+    assert service.calls == [("web-session", "SUYUAN")]
 
 
 async def _get(app, path, *, client_host="127.0.0.1", headers=None):
@@ -251,11 +292,48 @@ async def test_session_resource_preview_ticket_allows_only_bound_content_subtree
         app,
         f"/api/sessions/session-1/resources/resource-1/content/assets/style.css?preview_ticket={ticket}",
     )
+    inherited = await _get(
+        app,
+        f"/api/sessions/session-1/resources/resource-1/content/_preview/{ticket}/assets/style.css",
+    )
     wrong_resource = await _get(
         app,
-        f"/api/sessions/session-1/resources/resource-2/content?preview_ticket={ticket}",
+        f"/api/sessions/session-1/resources/resource-2/content/_preview/{ticket}/assets/style.css",
     )
 
     assert allowed.status_code == 200
+    assert inherited.status_code == 200
     assert wrong_resource.status_code == 401
+    assert service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_session_resource_path_ticket_allows_bound_content_subtree():
+    app, service = _app()
+    ticket = ShareAccessService("test-preview-secret", ttl_seconds=60).issue(
+        "session-resource",
+        resource_preview_identity("session-1", "resource-1"),
+    )
+
+    entry = await _get(
+        app,
+        f"/api/sessions/session-1/resources/resource-1/content/_t/{ticket}/",
+    )
+    asset = await _get(
+        app,
+        f"/api/sessions/session-1/resources/resource-1/content/_t/{ticket}/report_files/quarto.js",
+    )
+    wrong_resource = await _get(
+        app,
+        f"/api/sessions/session-1/resources/resource-2/content/_t/{ticket}/",
+    )
+    no_ticket = await _get(
+        app,
+        "/api/sessions/session-1/resources/resource-1/content/_t/not-valid/report_files/quarto.js",
+    )
+
+    assert entry.status_code == 200
+    assert asset.status_code == 200
+    assert wrong_resource.status_code == 401
+    assert no_ticket.status_code == 401
     assert service.calls == []

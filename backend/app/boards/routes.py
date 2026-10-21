@@ -13,7 +13,7 @@ from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.service import ConversationCatalogService
-from app.db.database import get_db
+from app.db.session_database import get_session_db
 from app.utils.path_config import get_data_registry
 
 from .models import Board, BoardVersion
@@ -131,7 +131,7 @@ def _raise_version_error(exc: Exception) -> None:
 async def save_board_draft(
     board_id: str,
     request: DraftRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_session_db),
     user: CurrentUser = Depends(require_current_user),
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
     artifact_root: Path = Depends(get_board_artifact_root),
@@ -147,7 +147,7 @@ async def save_board_draft(
 async def commit_manual_board_version(
     board_id: str,
     request: ManualVersionRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_session_db),
     user: CurrentUser = Depends(require_current_user),
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
     artifact_root: Path = Depends(get_board_artifact_root),
@@ -171,7 +171,7 @@ async def commit_manual_board_version(
 @router.get("/{board_id}/versions")
 async def list_board_versions(
     board_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_session_db),
     user: CurrentUser = Depends(require_current_user),
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
     artifact_root: Path = Depends(get_board_artifact_root),
@@ -187,7 +187,7 @@ async def list_board_versions(
 async def get_board_version(
     board_id: str,
     version_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_session_db),
     user: CurrentUser = Depends(require_current_user),
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
     artifact_root: Path = Depends(get_board_artifact_root),
@@ -206,7 +206,7 @@ async def get_board_version(
 async def get_board_version_xml(
     board_id: str,
     version_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_session_db),
     user: CurrentUser = Depends(require_current_user),
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
     artifact_root: Path = Depends(get_board_artifact_root),
@@ -226,7 +226,7 @@ async def get_board_version_xml(
 @router.get("/{board_id}/draft/xml", response_class=PlainTextResponse)
 async def get_board_draft_xml(
     board_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_session_db),
     user: CurrentUser = Depends(require_current_user),
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
     artifact_root: Path = Depends(get_board_artifact_root),

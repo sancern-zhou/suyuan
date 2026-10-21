@@ -6,6 +6,7 @@ from typing import Any
 
 from app.social.broadcast_service import SocialBroadcastService
 from app.social.user_registry import get_social_user_registry
+from app.social.app_identity import _accounts
 
 from .event_output import EventTaskOutput
 from .models import ScheduledTask, TaskEvent, TaskExecution
@@ -22,6 +23,20 @@ class EventTaskDelivery:
     ) -> list[dict[str, str]]:
         recipients: list[dict[str, str]] = []
         for user_id in target_user_ids:
+            if str(user_id).startswith("app-account-"):
+                account_id = str(user_id).removeprefix("app-account-")
+                account = _accounts().get(account_id)
+                if account and str(account.get("status", "active")).lower() == "active":
+                    user_id = f"app:android:{account_id}"
+            # App identities can be targeted directly without a legacy
+            # social-user registry row.
+            if str(user_id).startswith("app:"):
+                recipients.append({
+                    "user_id": user_id,
+                    "social_user_id": user_id,
+                    "name": user_id.rsplit(":", 1)[-1],
+                })
+                continue
             record = await self.user_registry.get_user(user_id)
             if not record or record.status != "active" or not record.social_user_id:
                 continue

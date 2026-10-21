@@ -6,6 +6,8 @@ import { parse } from 'yaml'
 
 const IDENTIFIER = /^[a-z][a-z0-9_-]*$/
 const AGENT_MODE_IDS = new Set(['assistant', 'ppt', 'expert', 'query', 'knowledge', 'report', 'chart', 'board', 'ops'])
+const AGENT_SCENE_IDS = new Set(['office', 'monitoring', 'operations'])
+const SIDEBAR_AGENT_MODE_IDS = new Set(['query', 'knowledge', 'expert'])
 const AGENT_PLATFORM_LAYOUTS = new Set(['scenes', 'environment-grid'])
 const AGENT_MODE_OVERRIDE_KEYS = new Set([
   'name',
@@ -17,6 +19,7 @@ const AGENT_MODE_OVERRIDE_KEYS = new Set([
   'icon_paths',
   'iconPaths'
 ])
+const AGENT_SCENE_OVERRIDE_KEYS = new Set(['mode_ids', 'modeIds'])
 
 
 function readYaml(path) {
@@ -79,6 +82,34 @@ function normalizeAgentModeOverrides(value = {}) {
 }
 
 
+function normalizeAgentSceneOverrides(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('frontend.agent_scene_overrides must be an object')
+  }
+  const overrides = {}
+  for (const [sceneId, rawOverride] of Object.entries(value)) {
+    if (!AGENT_SCENE_IDS.has(sceneId)) throw new Error(`unknown agent scene override: ${sceneId}`)
+    if (!rawOverride || typeof rawOverride !== 'object' || Array.isArray(rawOverride)) {
+      throw new Error(`frontend.agent_scene_overrides.${sceneId} must be an object`)
+    }
+    for (const key of Object.keys(rawOverride)) {
+      if (!AGENT_SCENE_OVERRIDE_KEYS.has(key)) {
+        throw new Error(`unknown agent scene override field: ${sceneId}.${key}`)
+      }
+    }
+    const modeIds = uniqueStrings(
+      rawOverride.mode_ids ?? rawOverride.modeIds ?? [],
+      `frontend.agent_scene_overrides.${sceneId}.mode_ids`
+    )
+    for (const modeId of modeIds) {
+      if (!AGENT_MODE_IDS.has(modeId)) throw new Error(`unknown agent mode: ${modeId}`)
+    }
+    overrides[sceneId] = { modeIds }
+  }
+  return overrides
+}
+
+
 export function loadProjectBuildConfig({ projectId, repoRoot }) {
   if (!IDENTIFIER.test(projectId)) {
     throw new Error(`invalid project identifier: ${projectId}`)
@@ -103,6 +134,17 @@ export function loadProjectBuildConfig({ projectId, repoRoot }) {
   if (!AGENT_PLATFORM_LAYOUTS.has(agentPlatformLayout)) {
     throw new Error(`unknown agent platform layout: ${agentPlatformLayout}`)
   }
+  const agentScenes = uniqueStrings(manifest.frontend?.agent_scenes ?? [], 'frontend.agent_scenes')
+  for (const sceneId of agentScenes) {
+    if (!AGENT_SCENE_IDS.has(sceneId)) throw new Error(`unknown agent scene: ${sceneId}`)
+  }
+  const sidebarAgentModes = uniqueStrings(manifest.frontend?.sidebar_agent_modes ?? ['query'], 'frontend.sidebar_agent_modes')
+  for (const modeId of sidebarAgentModes) {
+    if (!SIDEBAR_AGENT_MODE_IDS.has(modeId)) throw new Error(`unknown sidebar agent mode: ${modeId}`)
+    if (agentModes.length > 0 && !agentModes.includes(modeId)) {
+      throw new Error('frontend.sidebar_agent_modes entries must be declared in frontend.agent_modes')
+    }
+  }
   for (const moduleId of selected) {
     if (!IDENTIFIER.test(moduleId)) throw new Error(`invalid module identifier: ${moduleId}`)
     const moduleManifest = readYaml(resolve(repoRoot, 'modules', moduleId, 'module.yaml'))
@@ -125,7 +167,10 @@ export function loadProjectBuildConfig({ projectId, repoRoot }) {
       agentModes,
       defaultAgentMode,
       agentModeOverrides: normalizeAgentModeOverrides(manifest.frontend?.agent_mode_overrides),
-      agentPlatformLayout
+      agentSceneOverrides: normalizeAgentSceneOverrides(manifest.frontend?.agent_scene_overrides),
+      agentPlatformLayout,
+      agentScenes,
+      sidebarAgentModes
     }
   }
 }

@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from app.services.ops_audit.models import Issue
 from app.services.ops_audit.rules.rf_formula_rules import check_rf_formula_values
 from app.services.ops_audit.rules.rf_humidity_rules import check_rf_environment_humidity_values
@@ -10,6 +12,7 @@ from app.services.ops_audit.rules.rf_time_rules import check_rf_time_ranges
 from app.services.ops_audit.rules.rf_visibility_rules import check_rf_visibility_values
 from app.services.ops_audit.rules.lifecycle_rules import check_lifecycle_closure
 from app.services.ops_audit.rules.rf_abnormal_remark_rules import check_rf_abnormal_remarks
+from app.services.ops_work_order_audit_engine import audit_dataset
 
 
 def _order(code="CH_TEST", station_id="S1"):
@@ -51,6 +54,161 @@ def test_two_week_pm_flow_calibrate_ignores_date_when_check_time_is_inside_time_
     check_rf_time_ranges(_order("CH2605131778673426846"), [("RF_TW_PmFlowCalibrate", form)], issues)
 
     assert "RF_CHECK_TIME_OUTSIDE_RANGE" not in _issue_ids(issues)
+
+
+@pytest.mark.parametrize(
+    ("end_time", "expected_issue"),
+    [
+        ("05 13 2026  1:31PM", True),
+        ("05 13 2026  1:32PM", True),
+        ("05 13 2026  1:33PM", False),
+        ("05 13 2026  1:29PM", True),
+        (None, False),
+    ],
+)
+def test_two_week_flow_check_requires_more_than_two_minutes(end_time, expected_issue):
+    order = {**_order(), "DDWORKINGORDERTYPE": "Check", "MAINTENANCETYPE": "TwoWeek"}
+    form = {
+        "CHECKDATE": "2026-05-13 13:31:00",
+        "CheckSdt": "05 13 2026  1:30PM",
+        "CheckEdt": end_time,
+    }
+    issues: list[Issue] = []
+
+    check_rf_time_ranges(order, [("RF_TW_PmFlowCheck", form)], issues)
+
+    matched = [issue for issue in issues if issue.rule_id == "RF_TWO_WEEK_FLOW_DURATION_TOO_SHORT"]
+    assert bool(matched) is expected_issue
+    if end_time == "05 13 2026  1:32PM":
+        assert json.loads(matched[0].evidence)["duration_minutes"] == 2
+
+
+def test_two_week_flow_check_still_flags_check_time_outside_window():
+    order = {**_order(), "DDWORKINGORDERTYPE": "Check", "MAINTENANCETYPE": "TwoWeek"}
+    form = {
+        "CHECKDATE": "2026-05-13 13:35:00",
+        "CheckSdt": "05 13 2026  1:30PM",
+        "CheckEdt": "05 13 2026  1:32PM",
+    }
+    issues: list[Issue] = []
+
+    check_rf_time_ranges(order, [("RF_TW_PmFlowCheck", form)], issues)
+
+    assert {"RF_CHECK_TIME_OUTSIDE_RANGE", "RF_TWO_WEEK_FLOW_DURATION_TOO_SHORT"} <= _issue_ids(issues)
+
+
+@pytest.mark.parametrize(
+    ("order_type", "maintenance_type", "table"),
+    [
+        ("Fault", "TwoWeek", "RF_TW_PmFlowCheck"),
+        ("Check", "Month", "RF_TW_PmFlowCheck"),
+        ("Check", "TwoWeek", "RF_TW_PmFlowCalibrate"),
+    ],
+)
+def test_two_week_flow_duration_only_applies_to_matching_orders(order_type, maintenance_type, table):
+    order = {**_order(), "DDWORKINGORDERTYPE": order_type, "MAINTENANCETYPE": maintenance_type}
+    form = {"CheckSdt": "05 13 2026  1:30PM", "CheckEdt": "05 13 2026  1:31PM"}
+    issues: list[Issue] = []
+
+    check_rf_time_ranges(order, [(table, form)], issues)
+
+    assert "RF_TWO_WEEK_FLOW_DURATION_TOO_SHORT" not in _issue_ids(issues)
+
+
+def test_two_week_flow_duration_is_reported_as_deterministic_audit_issue():
+    order = {**_order(), "DDWORKINGORDERTYPE": "Check", "MAINTENANCETYPE": "TwoWeek"}
+    dataset = {
+        "orders": [order],
+        "details": [],
+        "rf_forms": {
+            "RF_TW_PmFlowCheck": [{
+                "WORKINGORDERCODE": order["WORKINGORDERCODE"],
+                "CHECKDATE": "2026-05-13 13:31:00",
+                "CheckSdt": "05 13 2026  1:30PM",
+                "CheckEdt": "05 13 2026  1:32PM",
+            }],
+        },
+        "attachments": [],
+        "wo_commonfile": [],
+        "devices": [],
+    }
+
+    audit = audit_dataset(dataset, enable_visual=False)
+
+    assert "RF_TWO_WEEK_FLOW_DURATION_TOO_SHORT" in {
+        issue["rule_id"] for issue in audit["records"][0]["deterministic_issues"]
+    }
+
+
+@pytest.mark.parametrize(
+    ("station_out", "expected_issue"),
+    [
+        ("2026-05-13 10:09:59", True),
+        ("2026-05-13 10:10:00", True),
+        ("2026-05-13 10:10:01", False),
+        ("2026-05-13 09:59:00", True),
+        (None, False),
+    ],
+)
+def test_weekly_inspection_requires_more_than_ten_minutes_in_station(station_out, expected_issue):
+    order = {**_order(), "DDWORKINGORDERTYPE": "Check", "MAINTENANCETYPE": "Week"}
+    form = {
+        "STATIONINTIME": "2026-05-13 10:00:00",
+        "STATIONOUTTIME": station_out,
+    }
+    issues: list[Issue] = []
+
+    check_rf_time_ranges(order, [("RF_W_INSPECTIONSUMMARY", form)], issues)
+
+    matched = [issue for issue in issues if issue.rule_id == "RF_WEEKLY_STATION_DURATION_TOO_SHORT"]
+    assert bool(matched) is expected_issue
+    if station_out == "2026-05-13 10:10:00":
+        assert json.loads(matched[0].evidence)["duration_minutes"] == 10
+
+
+@pytest.mark.parametrize(
+    ("order_type", "maintenance_type", "table"),
+    [
+        ("Fault", "Week", "RF_W_INSPECTIONSUMMARY"),
+        ("Check", "Month", "RF_W_INSPECTIONSUMMARY"),
+        ("Check", "Week", "RF_W_INSPECTION"),
+    ],
+)
+def test_station_duration_rule_only_applies_to_weekly_inspection_orders(order_type, maintenance_type, table):
+    order = {**_order(), "DDWORKINGORDERTYPE": order_type, "MAINTENANCETYPE": maintenance_type}
+    form = {
+        "STATIONINTIME": "2026-05-13 10:00:00",
+        "STATIONOUTTIME": "2026-05-13 10:01:00",
+    }
+    issues: list[Issue] = []
+
+    check_rf_time_ranges(order, [(table, form)], issues)
+
+    assert "RF_WEEKLY_STATION_DURATION_TOO_SHORT" not in _issue_ids(issues)
+
+
+def test_weekly_station_duration_is_reported_as_deterministic_audit_issue():
+    order = {**_order(), "DDWORKINGORDERTYPE": "Check", "MAINTENANCETYPE": "Week"}
+    dataset = {
+        "orders": [order],
+        "details": [],
+        "rf_forms": {
+            "RF_W_INSPECTIONSUMMARY": [{
+                "WORKINGORDERCODE": order["WORKINGORDERCODE"],
+                "STATIONINTIME": "2026-05-13 10:00:00",
+                "STATIONOUTTIME": "2026-05-13 10:02:00",
+            }],
+        },
+        "attachments": [],
+        "wo_commonfile": [],
+        "devices": [],
+    }
+
+    audit = audit_dataset(dataset, enable_visual=False)
+
+    assert "RF_WEEKLY_STATION_DURATION_TOO_SHORT" in {
+        issue["rule_id"] for issue in audit["records"][0]["deterministic_issues"]
+    }
 
 
 def test_pm_week_sample_tube_temperature_status_yes_is_normal_without_remark():
@@ -332,6 +490,180 @@ def test_multipoint_step_time_allows_short_midnight_crossing():
     check_rf_multipoint_values(_order("CH2605121778550428075"), [("RF_Q_GASEOUSMULTIPOINT_NO2", form)], issues)
 
     assert "RF_Q_MULTIPOINT_STEP_TIME_INVALID" not in _issue_ids(issues)
+
+
+def test_multipoint_slope_below_range_is_flagged():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_SLOPE_LOW",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "XL": "0.932",
+        "XGXS": "0.9995",
+    }
+
+    check_rf_multipoint_values(_order("CH_SLOPE_LOW"), [("RF_Q_GASEOUSMULTIPOINT_CO", form)], issues)
+
+    assert "RF_MULTIPOINT_LINEARITY_OUT_OF_RANGE" in _issue_ids(issues)
+    evidence = json.loads(issues[0].evidence)
+    assert evidence["violations"][0]["metric"] == "slope"
+    assert evidence["violations"][0]["value"] == 0.932
+
+
+def test_multipoint_slope_above_range_is_flagged():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_SLOPE_HIGH",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "XL": "1.083",
+        "XGXS": "0.9998",
+    }
+
+    check_rf_multipoint_values(_order("CH_SLOPE_HIGH"), [("RF_Q_GASEOUSMULTIPOINT_CO", form)], issues)
+
+    assert "RF_MULTIPOINT_LINEARITY_OUT_OF_RANGE" in _issue_ids(issues)
+    evidence = json.loads(issues[0].evidence)
+    assert evidence["violations"][0]["metric"] == "slope"
+
+
+def test_multipoint_correlation_at_threshold_is_flagged():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_CORR",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "XL": "1.001",
+        "XGXS": "0.999",
+    }
+
+    check_rf_multipoint_values(_order("CH_CORR"), [("RF_Q_GASEOUSMULTIPOINT_CO", form)], issues)
+
+    assert "RF_MULTIPOINT_LINEARITY_OUT_OF_RANGE" in _issue_ids(issues)
+    evidence = json.loads(issues[0].evidence)
+    assert evidence["violations"][0]["metric"] == "correlation"
+
+
+def test_multipoint_linearity_within_range_is_not_flagged():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_OK",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "XL": "1.002",
+        "XGXS": "0.9999",
+    }
+
+    check_rf_multipoint_values(_order("CH_OK"), [("RF_Q_GASEOUSMULTIPOINT_CO", form)], issues)
+
+    assert "RF_MULTIPOINT_LINEARITY_OUT_OF_RANGE" not in _issue_ids(issues)
+
+
+def test_multipoint_linearity_ignores_blank_and_range_text():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_BLANK",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "XL": "",
+        "XGXS": "/",
+    }
+    range_form = {
+        "WORKINGORDERCODE": "CH_RANGE_TEXT",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "XL": "0.95-1.05",
+        "XGXS": ">0.999",
+    }
+
+    check_rf_multipoint_values(_order("CH_BLANK"), [("RF_Q_GASEOUSMULTIPOINT_CO", form)], issues)
+    check_rf_multipoint_values(_order("CH_RANGE_TEXT"), [("RF_Q_GASEOUSMULTIPOINT_CO", range_form)], issues)
+
+    assert "RF_MULTIPOINT_LINEARITY_OUT_OF_RANGE" not in _issue_ids(issues)
+
+
+def test_multipoint_intercept_beyond_full_scale_ratio_is_flagged():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_INTERCEPT",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "PPB": 20000,
+        "XL": "1.001",
+        "JU": "-250",
+        "XGXS": "0.9999",
+    }
+
+    check_rf_multipoint_values(_order("CH_INTERCEPT"), [("RF_Q_GASEOUSMULTIPOINT_CO", form)], issues)
+
+    assert "RF_MULTIPOINT_INTERCEPT_OUT_OF_RANGE" in _issue_ids(issues)
+    evidence = json.loads(issues[0].evidence)
+    assert evidence["intercept"] == -250
+    assert evidence["full_scale"] == 20000
+    assert evidence["limit"] == 200
+
+
+def test_multipoint_intercept_within_full_scale_ratio_is_not_flagged():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_INTERCEPT_OK",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "PPB": 20000,
+        "XL": "1.001",
+        "JU": "150",
+        "XGXS": "0.9999",
+    }
+
+    check_rf_multipoint_values(_order("CH_INTERCEPT_OK"), [("RF_Q_GASEOUSMULTIPOINT_CO", form)], issues)
+
+    assert "RF_MULTIPOINT_INTERCEPT_OUT_OF_RANGE" not in _issue_ids(issues)
+
+
+def test_multipoint_intercept_uses_full_scale_range_upper_bound():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_INTERCEPT_RANGE",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "SO2",
+        "PPB": "0~500",
+        "XL": "1.001",
+        "JU": "6",
+        "XGXS": "0.9999",
+    }
+
+    check_rf_multipoint_values(_order("CH_INTERCEPT_RANGE"), [("RF_Q_GASEOUSMULTIPOINT_SO2", form)], issues)
+
+    assert "RF_MULTIPOINT_INTERCEPT_OUT_OF_RANGE" in _issue_ids(issues)
+    evidence = json.loads(issues[0].evidence)
+    assert evidence["full_scale"] == 500
+    assert evidence["limit"] == 5
+
+
+def test_multipoint_intercept_skips_without_full_scale():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "CH_INTERCEPT_NO_SCALE",
+        "STATIONID": "1001",
+        "CALIBRATIONDATE": "2026-05-20 10:00:00",
+        "POLLUTANTTYPE": "CO",
+        "XL": "1.001",
+        "JU": "999",
+        "XGXS": "0.9999",
+    }
+
+    check_rf_multipoint_values(_order("CH_INTERCEPT_NO_SCALE"), [("RF_Q_GASEOUSMULTIPOINT_CO", form)], issues)
+
+    assert "RF_MULTIPOINT_INTERCEPT_OUT_OF_RANGE" not in _issue_ids(issues)
 
 
 def test_quarter_gaseous_flow_pressure_true_value_is_recomputed():

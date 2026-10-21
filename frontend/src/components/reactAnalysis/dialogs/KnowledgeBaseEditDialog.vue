@@ -196,7 +196,7 @@ defineExpose({
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid #e8e8e8;
+  border-bottom: 1px solid var(--border-2);
 }
 
 .dialog-header h3 {
@@ -210,7 +210,7 @@ defineExpose({
   border: none;
   font-size: 24px;
   cursor: pointer;
-  color: #999;
+  color: var(--text-3);
   padding: 0;
   width: 32px;
   height: 32px;
@@ -222,8 +222,8 @@ defineExpose({
 }
 
 .btn-close:hover {
-  background: #f5f5f5;
-  color: #333;
+  background: var(--bg-hover);
+  color: var(--text-1);
 }
 
 .dialog-body {
@@ -241,14 +241,14 @@ defineExpose({
   margin-bottom: 6px;
   font-size: 14px;
   font-weight: 500;
-  color: #333;
+  color: var(--text-1);
 }
 
 .form-group input[type="text"],
 .form-group textarea {
   width: 100%;
   padding: 8px 12px;
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--border-3);
   border-radius: 4px;
   font-size: 14px;
   transition: all 0.2s;
@@ -257,12 +257,12 @@ defineExpose({
 .form-group input:focus,
 .form-group textarea:focus {
   outline: none;
-  border-color: #1890ff;
-  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-ring);
 }
 
 .form-group input.input-error {
-  border-color: #ff4d4f;
+  border-color: var(--color-danger);
 }
 
 .form-group textarea {
@@ -280,14 +280,14 @@ defineExpose({
 .form-hint {
   margin: 4px 0 0 0;
   font-size: 12px;
-  color: #999;
+  color: var(--text-3);
 }
 
 .error-text {
   display: block;
   margin-top: 4px;
   font-size: 12px;
-  color: #ff4d4f;
+  color: var(--color-danger);
 }
 
 .dialog-footer {
@@ -295,7 +295,7 @@ defineExpose({
   justify-content: flex-end;
   gap: 12px;
   padding: 16px 20px;
-  border-top: 1px solid #e8e8e8;
+  border-top: 1px solid var(--border-2);
 }
 
 .btn-secondary,
@@ -310,27 +310,27 @@ defineExpose({
 
 .btn-secondary {
   background: white;
-  border-color: #d9d9d9;
-  color: #333;
+  border-color: var(--border-3);
+  color: var(--text-1);
 }
 
 .btn-secondary:hover {
-  color: #1890ff;
-  border-color: #1890ff;
+  color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 .btn-primary {
-  background: #1890ff;
+  background: var(--color-primary);
   color: white;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: #40a9ff;
+  background: var(--color-primary-hover);
 }
 
 .btn-primary:disabled {
-  background: #d9d9d9;
-  color: #999;
+  background: var(--border-3);
+  color: var(--text-3);
   cursor: not-allowed;
 }
 </style>

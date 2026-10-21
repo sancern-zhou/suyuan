@@ -5,6 +5,7 @@ import pytest
 from app.services.html_artifact_service import HtmlArtifactService
 from app.tools.html_artifact import tool as html_tool_module
 from app.tools.html_artifact.tool import CreateHtmlArtifactTool
+from app.utils.path_config import resolve_agent_path
 
 
 def test_fixed_prompts_do_not_embed_html_artifact_deck_usage() -> None:
@@ -57,6 +58,9 @@ async def test_create_html_artifact_records_guizang_deck_metadata(tmp_path, monk
     assert meta["layout_system"] == "guizang"
     assert meta["presentation_style"] == "swiss"
     assert meta["deck_asset_paths"]["template_swiss"].endswith("template-swiss.html")
+    assert not meta["deck_asset_paths"]["template_swiss"].startswith("/")
+    assert resolve_agent_path(meta["deck_asset_paths"]["template_magazine"]).is_file()
+    assert resolve_agent_path(meta["deck_asset_paths"]["template_swiss"]).is_file()
     assert meta["deck_asset_paths"]["validate_swiss"].endswith("validate-swiss-deck.mjs")
     assert [item["resource_key"] for item in result["resources"]] == [
         "source:html",

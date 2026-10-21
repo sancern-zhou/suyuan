@@ -67,7 +67,11 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
     }:
         return "一致性问题"
     if rule in {
+        "WO_MONTHLY_DYNAMIC_CALIBRATION_DURATION_TOO_SHORT",
         "RF_CHECK_TIME_OUTSIDE_RANGE",
+        "RF_WEEKLY_STATION_DURATION_TOO_SHORT",
+        "RF_TWO_WEEK_FLOW_DURATION_TOO_SHORT",
+        "RF_MULTIPOINT_DURATION_TOO_SHORT",
         "RF_CALIBRATION_DATE_EXPIRED",
         "RF_CALIBRATION_INTERVAL_TOO_LONG",
         "RF_REFERENCE_FLOWMETER_CERT_DATE_MISMATCH",
@@ -89,6 +93,8 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
         "RF_PM_PRESSURE_UNIT_MISMATCH",
         "RF_FIELD_POSITION_SUSPECT",
         "RF_MULTIPOINT_RANGE_INVALID",
+        "RF_MULTIPOINT_LINEARITY_OUT_OF_RANGE",
+        "RF_MULTIPOINT_INTERCEPT_OUT_OF_RANGE",
         "RF_RANGE_OUT_OF_SPEC",
         "RF_Q_GASEOUS_FLOW_ENV_HUMIDITY_OUT_OF_RANGE",
         "RF_M_GASEOUS_CALIDEVICE_ENV_HUMIDITY_OUT_OF_RANGE",

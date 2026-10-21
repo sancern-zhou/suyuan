@@ -9,21 +9,29 @@ test('sidebar exposes the agent platform as a primary action', async () => {
 
   assert.match(source, /agent-platform/)
   assert.match(source, /智能体平台/)
-  assert.match(source, /<p class="module-title">新建对话<\/p>/)
-  assert.match(source, /id: 'restart-session',[\s\S]*name: '新建对话'/)
+  assert.doesNotMatch(source, /新建对话/)
+  assert.doesNotMatch(source, /restart-session/)
   assert.doesNotMatch(source, /<span>智能体平台<\/span>/)
   assert.doesNotMatch(source, /agent-platform-btn|new-session-btn/)
   assert.doesNotMatch(source, /linear-gradient\(135deg/)
 })
 
-test('sidebar exposes smart query and opens the AI query agent workspace', async () => {
+test('sidebar exposes project-configured agent mode entries that switch the chat mode', async () => {
   const sidebar = await readSource('../AssistantSidebar.vue')
   const analysisView = await readSource('../../views/ReactAnalysisView.vue')
 
-  assert.match(sidebar, /<p class="module-title">智能问数<\/p>/)
-  assert.match(sidebar, /handleModuleSelect\('query-dashboard'\)/)
+  assert.match(sidebar, /const SIDEBAR_AGENT_MODE_ENTRIES = \{[\s\S]*query: \{ action: 'query-dashboard', title: '智能问数'/)
+  assert.match(sidebar, /knowledge: \{ action: 'knowledge-qa', title: '知识问答'/)
+  assert.match(sidebar, /expert: \{ action: 'expert-analysis', title: '专家分析'/)
+  assert.match(sidebar, /projectConfig\.sidebarAgentModes/)
+  assert.match(sidebar, /v-for="mode in sidebarAgentModeEntries"/)
+  assert.match(sidebar, /@click="handleModuleSelect\(mode\.action\)"/)
   assert.match(sidebar, /id: 'query-dashboard',[\s\S]*name: '智能问数'/)
-  assert.match(analysisView, /case 'query-dashboard':[\s\S]*store\.switchMode\('query'\)/)
+  assert.doesNotMatch(sidebar, /air-quality-forecast/)
+  assert.match(analysisView, /case 'query-dashboard':[\s\S]*store\.switchMode\(queryAgentMode\)/)
+  assert.match(analysisView, /queryAgentMode = .*'jiangsu_query'.*'query'/)
+  assert.match(analysisView, /case 'knowledge-qa':[\s\S]*store\.switchMode\('knowledge'\)/)
+  assert.match(analysisView, /case 'expert-analysis':[\s\S]*store\.switchMode\('expert'\)/)
 })
 
 test('sidebar moves system management entries into the bottom user settings menu', async () => {
@@ -211,4 +219,21 @@ test('conversation workspace no longer exposes inline agent mode switching', asy
   for (const source of [inputBox, chatArea, mainLayout, analysisView]) {
     assert.doesNotMatch(source, /update:agentMode|update:agent-mode/)
   }
+})
+
+test('workspace approval stays inline above the composer and scoped to the active session', async () => {
+  const prompt = await readSource('../reactAnalysis/dialogs/AgentInteractionDialog.vue')
+  const chatArea = await readSource('../reactAnalysis/ChatArea.vue')
+  const store = await readSource('../../stores/reactStore.js')
+
+  const promptIndex = chatArea.indexOf('<AgentInteractionDialog')
+  const inputIndex = chatArea.indexOf('<InputBox')
+  assert.ok(promptIndex >= 0)
+  assert.ok(inputIndex > promptIndex)
+  assert.doesNotMatch(prompt, /interaction-overlay|position:\s*fixed|aria-modal/)
+  assert.match(prompt, /class="interaction-strip"/)
+  assert.match(store, /pendingInteraction:\s*null/)
+  assert.match(store, /targetState\.pendingInteraction = data \|\| null/)
+  assert.match(store, /pendingRequest\.resume_after_approval !== false/)
+  assert.match(store, /queuedAlreadyShown:\s*true/)
 })

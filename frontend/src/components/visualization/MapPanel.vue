@@ -226,7 +226,7 @@ async function renderStation(AMap) {
   const stationDiv = document.createElement('div')
   stationDiv.innerHTML = `
     <div style="position:relative;width:36px;height:36px;cursor:pointer;">
-      <div style="position:absolute;bottom:0;left:50%;width:24px;height:24px;background:#1976d2;border-radius:50% 50% 50% 0;transform:rotate(-45deg) translateX(-50%);border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);"></div>
+      <div style="position:absolute;bottom:0;left:50%;width:24px;height:24px;background:var(--color-primary);border-radius:50% 50% 50% 0;transform:rotate(-45deg) translateX(-50%);border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);"></div>
       <div style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:8px;height:8px;background:white;border-radius:50%;"></div>
     </div>
   `
@@ -245,7 +245,7 @@ async function renderStation(AMap) {
     position: new AMap.LngLat(lng, lat),
     offset: new AMap.Pixel(0, 8),
     style: {
-      'background-color': 'rgba(25, 118, 210, 0.95)',
+      'background-color': 'var(--color-primary)',
       'border': '2px solid white',
       'padding': '4px 10px',
       'border-radius': '4px',
@@ -821,7 +821,7 @@ defineExpose({
   position: relative;
   width: 100%;
   height: 500px;
-  background: #f5f5f5;
+  background: var(--bg-hover);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
@@ -848,13 +848,13 @@ defineExpose({
 
   p {
     margin: 0;
-    color: #666;
+    color: var(--text-2);
     font-size: 14px;
   }
 
   button {
     padding: 8px 20px;
-    background: #1976d2;
+    background: var(--color-primary);
     color: white;
     border: none;
     border-radius: 4px;
@@ -863,7 +863,7 @@ defineExpose({
     transition: background 0.2s;
 
     &:hover {
-      background: #1565c0;
+      background: var(--color-primary-active);
     }
   }
 }
@@ -871,8 +871,8 @@ defineExpose({
 .spinner {
   width: 40px;
   height: 40px;
-  border: 4px solid #f0f0f0;
-  border-top-color: #1976d2;
+  border: 4px solid var(--border-1);
+  border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }

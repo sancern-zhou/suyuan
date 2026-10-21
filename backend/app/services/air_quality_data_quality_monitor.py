@@ -25,6 +25,7 @@ import structlog
 from app.agent.context.data_context_manager import DataContextManager
 from app.agent.context.execution_context import ExecutionContext
 from app.agent.memory.hybrid_manager import HybridMemoryManager
+from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
 
@@ -693,7 +694,7 @@ class AirQualityDataQualityMonitorService:
             if not root.is_absolute():
                 root = self.backend_dir / root
         else:
-            root = self.backend_dir / "backend_data_registry" / "data_quality_issues"
+            root = get_data_registry() / "data_quality_issues"
         root.mkdir(parents=True, exist_ok=True)
         return root
 

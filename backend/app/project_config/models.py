@@ -35,6 +35,16 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class CoordinatorQuickPrompt(StrictModel):
+    label: str
+    prompt: str
+    mode: str | None = None
+
+
+class CoordinatorManifest(StrictModel):
+    quick_prompts: list[CoordinatorQuickPrompt] = Field(default_factory=list)
+
+
 class FrontendManifest(StrictModel):
     theme: str = "default"
     brand_name: str = "风清气智"
@@ -43,9 +53,16 @@ class FrontendManifest(StrictModel):
     default_agent_mode: str | None = None
     agent_mode_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
     agent_platform_layout: Literal["scenes", "environment-grid"] = "scenes"
+    coordinator: CoordinatorManifest | None = None
+    agent_scenes: list[str] = Field(default_factory=list)
+    agent_scene_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    sidebar_agent_modes: list[str] = Field(default_factory=list)
 
     _unique_agent_modes = field_validator("agent_modes")(unique)
+    _unique_agent_scenes = field_validator("agent_scenes")(unique)
+    _unique_sidebar_agent_modes = field_validator("sidebar_agent_modes")(unique)
     _valid_agent_mode_overrides = field_validator("agent_mode_overrides")(valid_identifier_map)
+    _valid_agent_scene_overrides = field_validator("agent_scene_overrides")(valid_identifier_map)
 
     @model_validator(mode="after")
     def validate_default_agent_mode(self):
@@ -57,21 +74,99 @@ class FrontendManifest(StrictModel):
         return self
 
 
+class WeatherHistoryPoint(StrictModel):
+    city: str = Field(min_length=1)
+    province: str = Field(min_length=1)
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+
+
+class WeatherHistoryConfig(StrictModel):
+    points: list[WeatherHistoryPoint] = Field(min_length=1, max_length=100)
+    bootstrap_days: int = Field(default=90, ge=1, le=366)
+    lookback_days: int = Field(default=7, ge=1, le=31)
+    online_enabled: bool = True
+
+    @model_validator(mode="after")
+    def validate_points(self):
+        unique([point.city.removesuffix("市") for point in self.points])
+        return self
+
+
+class WorkflowModeManifest(StrictModel):
+    positioning: str = Field(min_length=1)
+    scope: str = Field(min_length=1)
+    boundary: str = Field(min_length=1)
+    outputs: str = Field(min_length=1)
+    max_iterations: int = Field(default=12, ge=1, le=120)
+    timeout_seconds: int = Field(default=240, ge=1, le=3600)
+    max_deliverables: int = Field(default=3, ge=1, le=5)
+    require_counter_evidence: bool = False
+
+
+class WorkflowParentManifest(StrictModel):
+    child_modes: list[str] = Field(min_length=1)
+    max_concurrency: int = Field(default=3, ge=1, le=8)
+    max_nodes: int = Field(default=12, ge=1, le=32)
+    max_retries: int = Field(default=3, ge=0, le=16)
+    max_extensions: int = Field(default=2, ge=0, le=3)
+    timeout_seconds: int = Field(default=900, ge=1, le=3600)
+
+    _valid_child_modes = field_validator("child_modes")(unique)
+
+
 class BackendManifest(StrictModel):
     tools: list[str] = Field(default_factory=list)
+    disabled_tools: list[str] = Field(default_factory=list)
     # ``None`` preserves the shared legacy directories/registrations.  An
     # explicitly empty list is meaningful: the project owns an empty surface.
     skills_dir: str | None = None
     fetchers: list[str] | None = None
     fetchers_enabled: bool = True
+    weather_history: WeatherHistoryConfig | None = None
     gis_tools_enabled: bool = True
     mode_prompt_files: dict[str, str] = Field(default_factory=dict)
     agent_mode_tools: dict[str, list[str]] = Field(default_factory=dict)
+    # Project-scoped tools appended to a shared mode whitelist.  Unlike
+    # ``agent_mode_tools`` (full replacement), these are unioned on top of the
+    # shared list so projects can enable their own tools per mode without
+    # re-declaring the shared baseline.
+    agent_mode_extra_tools: dict[str, list[str]] = Field(default_factory=dict)
+    agent_workflow_modes: dict[str, WorkflowModeManifest] = Field(default_factory=dict)
+    agent_workflow_parents: dict[str, WorkflowParentManifest] = Field(default_factory=dict)
+
+    _valid_workflow_modes = field_validator("agent_workflow_modes")(valid_identifier_map)
+    _valid_workflow_parents = field_validator("agent_workflow_parents")(valid_identifier_map)
+
+    @model_validator(mode="after")
+    def validate_workflow_modes(self):
+        children = set(self.agent_workflow_modes)
+        if children & set(self.agent_workflow_parents):
+            raise ValueError("workflow child modes cannot be parents")
+        for mode in children:
+            if not self.agent_mode_tools.get(mode) or mode not in self.mode_prompt_files:
+                raise ValueError(f"workflow child {mode} requires explicit tools and prompt")
+            if {"call_sub_agent", "run_agent_workflow"} & set(self.agent_mode_tools[mode]):
+                raise ValueError(f"workflow child {mode} cannot delegate")
+        for mode, policy in self.agent_workflow_parents.items():
+            if set(policy.child_modes) - children:
+                raise ValueError(f"workflow parent {mode} references undeclared child modes")
+            if "run_agent_workflow" not in self.agent_mode_tools.get(mode, []):
+                raise ValueError(f"workflow parent {mode} requires run_agent_workflow")
+        return self
 
     _unique_tools = field_validator("tools")(unique)
+    _unique_disabled_tools = field_validator("disabled_tools")(unique)
     _unique_fetchers = field_validator("fetchers")(unique)
     _valid_mode_prompt_files = field_validator("mode_prompt_files")(valid_identifier_map)
     _unique_agent_mode_tools = field_validator("agent_mode_tools")(unique_string_lists)
+    _unique_agent_mode_extra_tools = field_validator("agent_mode_extra_tools")(unique_string_lists)
+
+    @model_validator(mode="after")
+    def validate_weather_history_worker(self):
+        if self.weather_history is not None and self.fetchers is not None and "city_weather_history" not in self.fetchers:
+            raise ValueError("weather_history requires the city_weather_history fetcher")
+        return self
 
 
 class KnowledgeManifest(StrictModel):
@@ -109,6 +204,12 @@ class ProjectManifest(StrictModel):
     _valid_project = field_validator("project")(validate_identifier)
     _unique_modules = field_validator("modules")(unique)
     _unique_tasks = field_validator("scheduled_tasks")(unique)
+
+    @model_validator(mode="after")
+    def validate_internal_workflow_modes(self):
+        if set(self.frontend.agent_modes) & set(self.backend.agent_workflow_modes):
+            raise ValueError("internal workflow children cannot be frontend modes")
+        return self
 
 
 class ModuleManifest(StrictModel):

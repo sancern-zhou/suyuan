@@ -101,9 +101,9 @@ def test_apply_daily_calibration_moves_daily_aqi_toward_target_range():
         for hour in range(24)
     ]
     targets = {
-        "运城市": [
+        "许昌市": [
             DailyForecastTarget(
-                city="运城市",
+                city="许昌市",
                 forecast_date="2026-07-10",
                 min_aqi=80,
                 max_aqi=100,
@@ -112,7 +112,7 @@ def test_apply_daily_calibration_moves_daily_aqi_toward_target_range():
         ]
     }
 
-    calibrated = apply_daily_calibration(rows, "运城市", targets)
+    calibrated = apply_daily_calibration(rows, "许昌市", targets)
 
     assert calibrated[0]["process_type"] == "calibrated"
     assert calibrated[0]["daily_shift_value"] > 0
@@ -137,7 +137,7 @@ def test_apply_weighted_fusion_blends_first_12_hours_and_recalculates_aqi():
         for hour in (10, 16, 23)
     ]
     observation = HourlyObservation(
-        city="运城市",
+        city="许昌市",
         time=datetime(2026, 7, 9, 9, 0),
         aqi=100,
         pollutants={"pm25": 75.0, "pm10": 150.0, "o3": 300.0, "so2": 50.0, "no2": 80.0, "co": 2000.0},
@@ -171,14 +171,14 @@ def test_parse_open_meteo_hourly_forecast_limits_to_72_hours_and_maps_fields():
 
     rows = parse_open_meteo_hourly_forecast(
         payload,
-        city_key="yuncheng",
-        city_name="运城市",
+        city_key="xuchang",
+        city_name="许昌市",
         generated_at=datetime(2026, 7, 8, 10, 0),
         max_hours=3,
     )
 
     assert len(rows) == 3
-    assert rows[0]["city"] == "运城市"
+    assert rows[0]["city"] == "许昌市"
     assert rows[0]["forecast_time"] == "2026-07-09T00:00:00"
     assert rows[0]["pollutants"]["pm25"] == 20.0
     assert rows[2]["aqi"] == 110
@@ -299,16 +299,16 @@ async def test_fetcher_stores_forecast_rows_in_database_storage():
     result = await fetcher.fetch_and_store()
 
     assert result["run_id"] == "20260709103000"
-    assert result["cities"] == 2
-    assert result["forecast_hours"] == 4
-    assert result["saved_rows"] == 4
+    assert result["cities"] == 1
+    assert result["forecast_hours"] == 2
+    assert result["saved_rows"] == 2
     assert result["table"] == "OpenMeteoAirQualityForecast72h"
     assert "latest_path" not in result
     assert len(storage.calls) == 1
     stored = storage.calls[0]
     assert stored["process_type"] == "update"
     assert stored["calibration_applied"] is False
-    assert set(stored["city_results"]) == {"yuncheng", "xuchang"}
+    assert set(stored["city_results"]) == {"xuchang"}
 
 
 def test_sql_storage_builds_forecast_rows_for_insert(monkeypatch):
@@ -362,9 +362,9 @@ def test_sql_storage_builds_forecast_rows_for_insert(monkeypatch):
         source="open-meteo",
         process_type="calibrated",
         calibration_applied=True,
-        cities={"yuncheng": AIR_QUALITY_FORECAST_CITIES["yuncheng"]},
+        cities={"xuchang": AIR_QUALITY_FORECAST_CITIES["xuchang"]},
         city_results={
-            "yuncheng": [
+            "xuchang": [
                 {
                     "forecast_time": "2026-07-09T09:00:00",
                     "aqi": 50,
@@ -391,5 +391,5 @@ def test_sql_storage_builds_forecast_rows_for_insert(monkeypatch):
     assert "target.forecast_time = src.forecast_time" in inserted[0][0]
     row = inserted[0][1][0]
     assert row[0] == "20260709083000"
-    assert row[6] == "运城市"
+    assert row[6] == "许昌市"
     assert row[12] == 50

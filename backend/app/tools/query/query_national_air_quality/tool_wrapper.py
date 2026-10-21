@@ -3,6 +3,7 @@
 
 从参考项目 GDQFWS_SYS 获取全国各省份的六参数均值、AQI达标率和综合指数
 """
+import asyncio
 from typing import Dict, Any, List, Optional
 import structlog
 from datetime import datetime
@@ -94,10 +95,11 @@ class QueryNationalProvinceAirQualityTool(LLMTool):
             tool = get_national_air_quality_tool()
 
             # 调用查询方法
-            data = tool.query_province_data(
+            data = await asyncio.to_thread(
+                tool.query_province_data,
                 start_date=start_date,
                 end_date=end_date,
-                ns_type=ns_type
+                ns_type=ns_type,
             )
 
             logger.info(
@@ -240,11 +242,12 @@ class QueryNationalCityAirQualityTool(LLMTool):
             tool = get_national_air_quality_tool()
 
             # 调用查询方法
-            data = tool.query_city_data(
+            data = await asyncio.to_thread(
+                tool.query_city_data,
                 start_date=start_date,
                 end_date=end_date,
                 province_code=province_code,
-                ns_type=ns_type
+                ns_type=ns_type,
             )
 
             logger.info(

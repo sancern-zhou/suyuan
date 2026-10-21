@@ -6,6 +6,7 @@ from pathlib import Path
 from app.services.ops_audit import rule_engine
 from app.services.ops_audit.final_issue_list import build_final_issue_list
 from app.services.ops_audit.report_writer import write_report
+from app.services.ops_audit.review_artifacts import _display_evidence
 from app.services.ops_audit.rule_engine import run_rule_engine
 from app.services.ops_audit.visual_evidence import archive_visual_evidence
 
@@ -300,7 +301,7 @@ def _report_audit(scoring_issues: list[dict] | None = None) -> dict:
     }
 
 
-def test_report_embeds_at_most_three_confirmed_visual_images(tmp_path: Path) -> None:
+def test_report_embeds_all_confirmed_visual_images(tmp_path: Path) -> None:
     evidence_dir = tmp_path / "visual_evidence" / "WO-REPORT" / "RULE"
     evidence_dir.mkdir(parents=True)
     images = []
@@ -339,10 +340,28 @@ def test_report_embeds_at_most_three_confirmed_visual_images(tmp_path: Path) -> 
     )
 
     text = report_path.read_text(encoding="utf-8")
-    assert text.count("![视觉证据：") == 3
-    assert "报告展示 3 张，证据包共保存 4 张" in text
+    assert text.count("![视觉证据：") == 4
     assert "visual_evidence/WO-REPORT/RULE/photo-0.jpg" in text
-    assert "photo-3.jpg" not in text
+    assert "visual_evidence/WO-REPORT/RULE/photo-3.jpg" in text
+
+
+def test_report_display_evidence_exposes_relative_image_markdown() -> None:
+    display = _display_evidence({
+        "message": "曲线待人工复核",
+        "evidence_images": [
+            {
+                "status": "success",
+                "filename": "curve.jpg",
+                "relative_path": "visual_evidence/WO-1/RULE/curve.jpg",
+                "local_path": "/srv/private/curve.jpg",
+            }
+        ],
+    })
+
+    image = next(item for item in display if item.get("type") == "image")
+    assert image["path"] == "visual_evidence/WO-1/RULE/curve.jpg"
+    assert image["markdown"] == "![视觉证据：curve.jpg](visual_evidence/WO-1/RULE/curve.jpg)"
+    assert "/srv/private" not in image["markdown"]
 
 
 def test_report_separates_pending_visual_reviews_and_reports_image_failure(
@@ -397,7 +416,7 @@ def test_report_separates_pending_visual_reviews_and_reports_image_failure(
     assert "证据图片获取失败：附件服务不可用" in text
 
 
-def test_visual_evidence_pipeline_archives_all_and_reports_three(
+def test_visual_evidence_pipeline_archives_all_and_reports_all(
     tmp_path: Path, monkeypatch
 ) -> None:
     sources = []
@@ -464,5 +483,4 @@ def test_visual_evidence_pipeline_archives_all_and_reports_three(
     assert manifest["unique_file_count"] == 4
     assert all(Path(item["local_path"]).is_file() for item in manifest["items"])
     assert len(final_issue_list["items"][0]["evidence_images"]) == 4
-    assert text.count("![视觉证据：") == 3
-    assert "报告展示 3 张，证据包共保存 4 张" in text
+    assert text.count("![视觉证据：") == 4

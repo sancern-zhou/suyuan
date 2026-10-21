@@ -156,7 +156,7 @@ class DataMetadata(BaseModel):
     source_schema: Optional[str] = Field(default=None, description="源数据schema类型")
     source_file_paths: Optional[List[str]] = Field(default=None, description="源数据文件路径列表（支持多源）")
     scenario: Optional[str] = Field(default=None, description="场景标识：vocs_analysis | pmf_analysis等")
-    generator: Optional[str] = Field(default=None, description="生成工具：execute_echarts_python | create_report_chart | calculate_pmf 等")
+    generator: Optional[str] = Field(default=None, description="生成工具：execute_echarts_python | create_business_chart | calculate_pmf 等")
     dimensions: Optional[List[str]] = Field(default=None, description="数据维度列表：['station', 'time', 'pollutant']")
     metrics: Optional[List[str]] = Field(default=None, description="数据指标列表：['PM2.5', 'O3', 'NO2']")
     quality_report: Optional[Dict[str, Any]] = Field(default=None, description="数据质量详细报告")

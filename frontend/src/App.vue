@@ -1,10 +1,16 @@
 <template>
   <div id="app">
-    <router-view />
+    <router-view :key="accountRevision" />
   </div>
 </template>
 
 <script setup>
+import { ref, onBeforeUnmount } from 'vue'
+import { accountGeneration, onAccountChanged } from './auth/accountSession.js'
+
+const accountRevision = ref(accountGeneration())
+const stop = onAccountChanged(() => { accountRevision.value = accountGeneration() })
+onBeforeUnmount(stop)
 </script>
 
 <style lang="scss">
@@ -58,6 +64,6 @@
 
 #app {
   min-height: 100vh;
-  background: #f5f5f5;
+  background: var(--bg-hover);
 }
 </style>

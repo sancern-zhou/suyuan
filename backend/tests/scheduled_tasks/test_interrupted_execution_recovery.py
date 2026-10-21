@@ -7,7 +7,6 @@ from app.scheduled_tasks.models import (
     ScheduledTask,
     TaskEvent,
     TaskExecution,
-    TaskStep,
 )
 from app.scheduled_tasks.service import ScheduledTaskService
 from app.scheduled_tasks.storage import (
@@ -28,7 +27,7 @@ def test_service_startup_fails_execution_interrupted_by_worker_restart(tmp_path)
         execution_mode="assistant",
         trigger_type="event",
         event_type="jiangsu.station_fault.detected",
-        steps=[TaskStep(step_id="step", description="执行", agent_prompt="执行")],
+        prompt="执行",
     )
     tasks.create(task)
     event = TaskEvent(
@@ -85,7 +84,7 @@ async def test_service_resumes_claimed_event_that_was_queued_before_restart(
         execution_mode="assistant",
         trigger_type="event",
         event_type="jiangsu.station_fault.detected",
-        steps=[TaskStep(step_id="step", description="执行", agent_prompt="执行")],
+        prompt="执行",
     )
     tasks.create(task)
     event = TaskEvent(

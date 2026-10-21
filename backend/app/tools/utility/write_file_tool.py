@@ -34,6 +34,7 @@ from app.services.document_preview_refresh import refresh_preview_for_managed_do
 from app.tools.artifact_utils import attach_mutated_document_resources
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
+from app.agent.memory.memory_limits import MEMORY_MD_MAX_CHARS, memory_capacity_error
 from app.utils.path_config import (
     BACKEND_ROOT,
     TEMP_ROOT,
@@ -138,7 +139,7 @@ def is_unc_path(path: str) -> bool:
 
     SECURITY: UNC 路径在 Windows 上会触发 SMB 认证，可能导致 NTLM 凭据泄露
     """
-    return path.startswith(UNC_PATH_PREFIXS)
+    return path.startswith(UNC_PATH_PREFIXES)
 
 
 def is_windows() -> bool:
@@ -197,7 +198,7 @@ class WriteFileTool(LLMTool):
 - 正式报告不要用 write_file 直接写入 `backend/backend_data_registry/reports/` 根目录或手工拼装交付路径。
 - 正式报告应调用 `create_report_package`，由工具保存为 `reports/{report_id}/report.qmd` 并触发右侧面板预览。
 - write_file 只适合创建草稿片段、临时说明文件，或在明确需要时维护非正式文本文件。
-- 需要修改已存在的 `report.qmd` 时，先用 read_file 读取，再按需使用 edit_file/write_file，随后应通过报告包/报告接口刷新预览并用 validate_report_package 校验。
+- 需要修改已存在的 `report.qmd` 时，先用 read_file 读取，再按需使用 edit_file/write_file，随后调用 create_report_package 一次完成重新渲染、验收和预览。
 
 如果创建 Quarto 草稿或报告包内 qmd 内容，必须遵守以下格式规范：
 
@@ -343,6 +344,18 @@ format:
                 }
 
             # ============================================================
+            # 4.5 MEMORY.md 容量守卫（与 edit_file 共用上限，防止整写绕开
+            # edit_file 的容量护栏后把常驻记忆顶爆）
+            # ============================================================
+            if resolved_path.name == "MEMORY.md" and len(content) > MEMORY_MD_MAX_CHARS:
+                return {
+                    "success": False,
+                    "error": memory_capacity_error(len(content)),
+                    "summary": f"写入失败：MEMORY.md 超出容量上限 {MEMORY_MD_MAX_CHARS} 字符",
+                    "error_code": 4
+                }
+
+            # ============================================================
             # 5. 判断是创建还是更新
             # ============================================================
             is_new_file = not resolved_path.exists()
@@ -421,6 +434,8 @@ format:
                 str(resolved_path),
                 content=normalized_content,
                 file_size=resolved_path.stat().st_size,
+                file_mtime_ns=resolved_path.stat().st_mtime_ns,
+                file_inode=getattr(resolved_path.stat(), "st_ino", None),
                 encoding=encoding
             )
 
@@ -538,9 +553,16 @@ format:
         if read_record is None:
             return {"valid": True}  # 已经在 _check_pre_read 中处理
 
+        stat = file_path.stat()
+        fingerprint_changed = (
+            read_record.file_mtime_ns is not None
+            and (stat.st_mtime_ns != read_record.file_mtime_ns
+                 or stat.st_size != read_record.file_size
+                 or (read_record.file_inode is not None and stat.st_ino != read_record.file_inode))
+        )
         current_mtime = get_file_modification_time(file_path)
 
-        if current_mtime > read_record.timestamp:
+        if fingerprint_changed or current_mtime > read_record.timestamp:
             # 时间戳表明文件被修改，进行内容验证
             if read_record.is_full_read and read_record.content:
                 try:

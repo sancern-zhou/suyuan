@@ -100,7 +100,7 @@ class SearchHistoryTool(LLMTool):
             if not channel or not chat_id:
                 # 如果无法获取用户信息，使用传入的 memory_store（向后兼容）
                 if self.memory_store:
-                    results = self.memory_store.search_history(
+                    results = self.memory_store.search_daily_notes(
                         query=query,
                         limit=limit
                     )
@@ -138,7 +138,7 @@ class SearchHistoryTool(LLMTool):
 
                 # 获取用户专属 MemoryStore
                 memory_store = await agent_bridge.user_memory_manager.get_user_memory(user_id)
-                results = memory_store.search_history(query=query, limit=limit)
+                results = memory_store.search_daily_notes(query=query, limit=limit)
 
             logger.info(
                 "history_searched",

@@ -1,7 +1,7 @@
 """
 广播社交用户工具
 
-用于助手模式中，将 LLM 生成的广播内容投递给明确指定的微信用户。
+用于助手模式中，将 LLM 生成的广播内容投递给明确指定的 App 或微信用户。
 """
 
 from __future__ import annotations
@@ -17,13 +17,13 @@ logger = structlog.get_logger(__name__)
 
 
 class BroadcastSocialUsersTool(LLMTool):
-    """Broadcast a generated message to explicitly named WeChat users."""
+    """Broadcast a generated message to explicitly named App or WeChat users."""
 
     def __init__(self, worker_client=None):
         self.worker_client = worker_client
         function_schema = {
             "name": "broadcast_social_users",
-            "description": "将广播内容发送给明确指定的后台微信用户名称",
+            "description": "将广播内容发送给明确指定的后台 App 或微信用户名称；优先使用 App 用户",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -35,13 +35,25 @@ class BroadcastSocialUsersTool(LLMTool):
                         "type": "array",
                         "items": {"type": "string"},
                         "minItems": 1,
-                        "description": "后台微信用户名称列表，精确匹配且重名时拒绝"
+                        "description": "后台 App 或微信用户名称列表，精确匹配且重名时拒绝；App 用户优先"
                     },
                     "media": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "可选媒体路径或URL",
                         "default": []
+                    },
+                    "station_name": {
+                        "type": "string",
+                        "description": "可选。广播内容涉及的站点名称（如“许昌市实验小学站”），便于 App 端按站点筛选广播；内容不涉及具体站点时不要填写"
+                    },
+                    "pollutant": {
+                        "type": "string",
+                        "description": "可选。广播内容涉及的污染物（如 PM2.5、O3），便于 App 端按污染物筛选广播；内容不涉及具体污染物时不要填写"
+                    },
+                    "report_type": {
+                        "type": "string",
+                        "description": "可选。仅当广播包含最终报告文档（如 PDF/DOCX/PPTX/XLSX）时填写，用于登记到报告成果；普通广播不要填写"
                     }
                 },
                 "required": ["message", "target_user_names"]
@@ -50,7 +62,7 @@ class BroadcastSocialUsersTool(LLMTool):
 
         super().__init__(
             name="broadcast_social_users",
-            description="将助手生成的广播内容发送给明确指定的微信用户",
+            description="将助手生成的广播内容发送给明确指定的 App 或微信用户",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="1.0.0"
@@ -61,6 +73,9 @@ class BroadcastSocialUsersTool(LLMTool):
         message: str = None,
         target_user_names: Optional[List[str]] = None,
         media: Optional[List[str]] = None,
+        station_name: Optional[str] = None,
+        pollutant: Optional[str] = None,
+        report_type: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
         if not message:
@@ -95,6 +110,9 @@ class BroadcastSocialUsersTool(LLMTool):
                     "event_id": broadcast_id,
                     "event_type": "assistant.broadcast",
                     "execution_id": broadcast_id,
+                    "station_name": station_name.strip() if station_name and station_name.strip() else None,
+                    "pollutant": pollutant.strip() if pollutant and pollutant.strip() else None,
+                    "report_type": report_type.strip() if report_type and report_type.strip() else None,
                 },
             )
 

@@ -132,7 +132,6 @@ def _service(factory, extractor):
         processor=_Processor(),
         extractor=extractor,
         file_storage=None,
-        max_graph_concurrency=2,
     )
 
 

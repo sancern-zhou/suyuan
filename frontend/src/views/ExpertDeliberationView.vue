@@ -686,8 +686,8 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 0 28px;
-  background: #ffffff;
-  border-bottom: 1px solid #dfe3e8;
+  background: var(--bg-container);
+  border-bottom: 1px solid var(--border-2);
 
   h1 {
     font-size: 20px;
@@ -696,7 +696,7 @@ onMounted(() => {
   }
 
   p {
-    color: #667085;
+    color: var(--text-2);
     font-size: 13px;
   }
 }
@@ -719,15 +719,15 @@ onMounted(() => {
 }
 
 .nav-button {
-  color: #475467;
+  color: var(--text-2);
   border: 1px solid #d0d5dd;
-  background: #fff;
+  background: var(--bg-container);
   display: inline-flex;
   align-items: center;
 }
 
 .primary-button {
-  color: #fff;
+  color: var(--bg-container);
   border: 1px solid #166534;
   background: #16703f;
 
@@ -763,8 +763,8 @@ onMounted(() => {
 
 .input-pane {
   padding: 22px;
-  background: #ffffff;
-  border-right: 1px solid #dfe3e8;
+  background: var(--bg-container);
+  border-right: 1px solid var(--border-2);
 }
 
 .result-pane {
@@ -798,11 +798,11 @@ onMounted(() => {
 }
 
 .upload-box {
-  border: 1px solid #dfe3e8;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   padding: 12px;
   margin-bottom: 14px;
-  background: #f8fafc;
+  background: var(--bg-muted);
 }
 
 .upload-title {
@@ -818,7 +818,7 @@ onMounted(() => {
   }
 
   p {
-    color: #667085;
+    color: var(--text-2);
     font-size: 12px;
     line-height: 1.5;
   }
@@ -837,11 +837,11 @@ onMounted(() => {
 }
 
 .history-box {
-  border: 1px solid #dfe3e8;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   padding: 12px;
   margin-bottom: 14px;
-  background: #fff;
+  background: var(--bg-container);
 }
 
 .history-title {
@@ -857,7 +857,7 @@ onMounted(() => {
   }
 
   p {
-    color: #667085;
+    color: var(--text-2);
     font-size: 12px;
     line-height: 1.5;
   }
@@ -869,9 +869,9 @@ onMounted(() => {
 }
 
 .history-item {
-  border: 1px solid #eef1f4;
+  border: 1px solid var(--bg-muted);
   border-radius: 6px;
-  background: #f8fafc;
+  background: var(--bg-muted);
 
   &.active {
     border-color: #16703f;
@@ -896,14 +896,14 @@ onMounted(() => {
 
   span,
   em {
-    color: #667085;
+    color: var(--text-2);
     font-size: 12px;
     font-style: normal;
   }
 }
 
 .empty-history {
-  color: #667085;
+  color: var(--text-2);
   font-size: 12px;
   padding: 8px 0 2px;
 }
@@ -913,14 +913,14 @@ onMounted(() => {
   gap: 6px;
 
   span {
-    color: #475467;
+    color: var(--text-2);
     font-size: 13px;
   }
 
   input {
     width: 100%;
     font-size: 12px;
-    color: #475467;
+    color: var(--text-2);
   }
 }
 
@@ -945,7 +945,7 @@ onMounted(() => {
   span {
     display: block;
     font-size: 13px;
-    color: #475467;
+    color: var(--text-2);
     margin-bottom: 6px;
   }
 
@@ -954,7 +954,7 @@ onMounted(() => {
     width: 100%;
     border: 1px solid #cfd6df;
     border-radius: 6px;
-    background: #fff;
+    background: var(--bg-container);
     color: #1f2933;
     font-size: 13px;
     line-height: 1.5;
@@ -975,8 +975,8 @@ onMounted(() => {
 }
 
 .error-message {
-  color: #b42318;
-  background: #fff1f0;
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
   border: 1px solid #ffccc7;
   padding: 10px;
   border-radius: 6px;
@@ -989,7 +989,7 @@ onMounted(() => {
   align-content: center;
   justify-items: center;
   text-align: center;
-  color: #667085;
+  color: var(--text-2);
   padding: 24px;
 
   h2 {
@@ -1001,9 +1001,9 @@ onMounted(() => {
 .progress-list {
   width: min(760px, 100%);
   margin-top: 18px;
-  border: 1px solid #dfe3e8;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
-  background: #fff;
+  background: var(--bg-container);
   text-align: left;
   max-height: 420px;
   overflow: auto;
@@ -1011,7 +1011,7 @@ onMounted(() => {
 
 .progress-item {
   padding: 12px 14px;
-  border-bottom: 1px solid #eef1f4;
+  border-bottom: 1px solid var(--bg-muted);
 
   &:last-child {
     border-bottom: 0;
@@ -1031,7 +1031,7 @@ onMounted(() => {
 
   em {
     display: block;
-    color: #667085;
+    color: var(--text-2);
     font-size: 12px;
     font-style: normal;
     margin-top: 2px;
@@ -1039,7 +1039,7 @@ onMounted(() => {
 
   span,
   p {
-    color: #667085;
+    color: var(--text-2);
     font-size: 12px;
     line-height: 1.6;
   }
@@ -1047,7 +1047,7 @@ onMounted(() => {
 
 .progress-position {
   color: #344054 !important;
-  background: #f8fafc;
+  background: var(--bg-muted);
   border-left: 3px solid #16703f;
   padding: 8px 10px;
   margin-top: 8px;
@@ -1055,12 +1055,12 @@ onMounted(() => {
 
 .progress-block {
   margin-top: 10px;
-  border-top: 1px solid #eef1f4;
+  border-top: 1px solid var(--bg-muted);
   padding-top: 8px;
 
   h4 {
     font-size: 12px;
-    color: #475467;
+    color: var(--text-2);
     margin-bottom: 6px;
   }
 
@@ -1128,7 +1128,7 @@ onMounted(() => {
   font-size: 13px;
 
   span {
-    color: #475467;
+    color: var(--text-2);
     text-align: right;
   }
 }
@@ -1137,14 +1137,14 @@ onMounted(() => {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 1px;
-  background: #dfe3e8;
-  border: 1px solid #dfe3e8;
+  background: var(--border-2);
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   overflow: hidden;
   margin-bottom: 14px;
 
   div {
-    background: #fff;
+    background: var(--bg-container);
     padding: 14px;
   }
 
@@ -1155,7 +1155,7 @@ onMounted(() => {
   }
 
   span {
-    color: #667085;
+    color: var(--text-2);
     font-size: 13px;
   }
 }
@@ -1163,14 +1163,14 @@ onMounted(() => {
 .tabs {
   display: flex;
   gap: 6px;
-  border-bottom: 1px solid #dfe3e8;
+  border-bottom: 1px solid var(--border-2);
   margin-bottom: 14px;
 
   button {
     border: 0;
     background: transparent;
     padding: 10px 12px;
-    color: #667085;
+    color: var(--text-2);
     cursor: pointer;
     border-bottom: 2px solid transparent;
 
@@ -1182,8 +1182,8 @@ onMounted(() => {
 }
 
 .result-section {
-  background: #fff;
-  border: 1px solid #dfe3e8;
+  background: var(--bg-container);
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   overflow: auto;
 }
@@ -1194,7 +1194,7 @@ onMounted(() => {
 
 .matrix-table {
   min-width: 980px;
-  border-top: 1px solid #eef1f4;
+  border-top: 1px solid var(--bg-muted);
 }
 
 .matrix-row {
@@ -1202,7 +1202,7 @@ onMounted(() => {
   grid-template-columns: minmax(300px, 1.4fr) 90px 150px 190px 180px;
   gap: 12px;
   padding: 10px 12px;
-  border-bottom: 1px solid #eef1f4;
+  border-bottom: 1px solid var(--bg-muted);
   font-size: 13px;
   line-height: 1.6;
 
@@ -1212,9 +1212,9 @@ onMounted(() => {
 }
 
 .matrix-head {
-  background: #f8fafc;
+  background: var(--bg-muted);
   font-weight: 650;
-  color: #475467;
+  color: var(--text-2);
 }
 
 .facts-row {
@@ -1222,7 +1222,7 @@ onMounted(() => {
   grid-template-columns: 160px 100px minmax(360px, 1fr) 160px;
   gap: 12px;
   padding: 10px 12px;
-  border-bottom: 1px solid #eef1f4;
+  border-bottom: 1px solid var(--bg-muted);
   font-size: 13px;
 
   &:last-child {
@@ -1233,9 +1233,9 @@ onMounted(() => {
 .facts-head {
   position: sticky;
   top: 0;
-  background: #f8fafc;
+  background: var(--bg-muted);
   font-weight: 650;
-  color: #475467;
+  color: var(--text-2);
 }
 
 .expert-list,
@@ -1249,7 +1249,7 @@ onMounted(() => {
 .discussion-item,
 .timeline-item,
 .consensus-list article {
-  border-bottom: 1px solid #eef1f4;
+  border-bottom: 1px solid var(--bg-muted);
   padding: 14px 0;
 
   &:first-child {
@@ -1269,13 +1269,13 @@ onMounted(() => {
 }
 
 .timeline-list {
-  border-bottom: 1px solid #dfe3e8;
+  border-bottom: 1px solid var(--border-2);
   margin-bottom: 16px;
   padding-bottom: 4px;
 }
 
 .empty-inline {
-  color: #667085;
+  color: var(--text-2);
   font-size: 13px;
   padding: 18px;
 }
@@ -1290,7 +1290,7 @@ onMounted(() => {
   }
 
   span {
-    color: #667085;
+    color: var(--text-2);
     font-size: 12px;
   }
 }
@@ -1321,7 +1321,7 @@ onMounted(() => {
 }
 
 .forbidden-list {
-  border-top: 1px solid #eef1f4;
+  border-top: 1px solid var(--bg-muted);
   padding-top: 10px;
 
   p {
@@ -1345,7 +1345,7 @@ onMounted(() => {
 
   .input-pane {
     border-right: 0;
-    border-bottom: 1px solid #dfe3e8;
+    border-bottom: 1px solid var(--border-2);
   }
 
   .summary-strip {

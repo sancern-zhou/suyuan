@@ -1,3 +1,4 @@
+import { accountGeneration } from '../auth/accountSession.js'
 import { authFetch } from '@/auth/http.js'
 import { connectScheduledTaskWebSocket } from '@/auth/websocket.js'
 import { defineStore } from 'pinia';
@@ -26,6 +27,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     socialUsers: [],
     availableTools: [],
     availableSkills: [],
+    availableWorkflows: [],
     skillsLoading: false,
     ws: null,
     wsConnected: false,
@@ -77,6 +79,16 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       return this.availableTools;
     },
 
+    async fetchAvailableWorkflows() {
+      const response = await authFetch(`${API_BASE}/workflows`, {
+        clearOnUnauthorized: false
+      });
+      if (!response.ok) throw new Error('Failed to fetch available workflows');
+      const data = await response.json();
+      this.availableWorkflows = Array.isArray(data?.workflows) ? data.workflows : [];
+      return this.availableWorkflows;
+    },
+
     async fetchAvailableSkills() {
       this.skillsLoading = true;
       try {
@@ -109,18 +121,154 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       }
     },
 
-    async fetchTaskExecutions(taskId, limit = 50) {
-      const response = await authFetch(`${API_BASE}/${taskId}/executions?limit=${limit}`);
+    async fetchTaskExecutions(taskId, { page = 1, pageSize = 10 } = {}) {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize)
+      });
+      const response = await authFetch(`${API_BASE}/${taskId}/executions?${params}`);
       if (!response.ok) throw new Error('Failed to fetch task executions');
       const data = await response.json();
-      return Array.isArray(data?.executions) ? data.executions : [];
+      return {
+        executions: Array.isArray(data?.executions) ? data.executions : [],
+        total: Number(data?.total) || 0,
+        page: Number(data?.page) || page,
+        pageSize: Number(data?.page_size) || pageSize,
+        totalPages: Number(data?.total_pages) || 0
+      };
     },
 
-    async fetchRecentExecutions(limit = 50) {
-      const response = await authFetch(`${API_BASE}/executions/recent?limit=${limit}`);
+    async fetchTaskResults({
+      taskId,
+      page = 1,
+      pageSize = 10,
+      startDate = '',
+      endDate = '',
+      stationId = '',
+      pollutant = ''
+    } = {}) {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize)
+      });
+      if (taskId) params.set('task_id', taskId);
+      if (startDate) params.set('start', `${startDate}T00:00:00`);
+      if (endDate) params.set('end', `${endDate}T23:59:59`);
+      if (stationId) params.set('station_id', stationId);
+      if (pollutant) params.set('pollutant', pollutant);
+      const response = await authFetch(`${API_BASE}/results?${params}`, {
+        clearOnUnauthorized: false
+      });
+      if (!response.ok) throw new Error('Failed to fetch task results');
+      const data = await response.json();
+      return {
+        results: Array.isArray(data?.results) ? data.results : [],
+        total: Number(data?.total) || 0,
+        page: Number(data?.page) || page,
+        pageSize: Number(data?.page_size) || pageSize,
+        totalPages: Number(data?.total_pages) || 0
+      };
+    },
+
+    async fetchTaskResultFacets(taskId = '') {
+      const params = new URLSearchParams();
+      if (taskId) params.set('task_id', taskId);
+      const suffix = params.toString() ? `?${params}` : '';
+      const response = await authFetch(`${API_BASE}/results/facets${suffix}`, {
+        clearOnUnauthorized: false
+      });
+      if (!response.ok) throw new Error('Failed to fetch task result facets');
+      const data = await response.json();
+      return {
+        stations: Array.isArray(data?.stations) ? data.stations : [],
+        pollutants: Array.isArray(data?.pollutants) ? data.pollutants : []
+      };
+    },
+
+    async fetchTaskReportFormats(executionId) {
+      const response = await authFetch(
+        `${API_BASE}/results/${encodeURIComponent(executionId)}/report/formats`,
+        { clearOnUnauthorized: false }
+      );
+      if (!response.ok) throw new Error('Failed to fetch report formats');
+      const data = await response.json();
+      return Array.isArray(data?.formats) ? data.formats : [];
+    },
+
+    async fetchTaskHistoryCases(taskId, { limit = 50 } = {}) {
+      const params = new URLSearchParams({ limit: String(limit) });
+      const response = await authFetch(`${API_BASE}/${taskId}/history/cases?${params}`);
+      if (!response.ok) throw new Error('Failed to fetch task history cases');
+      const data = await response.json();
+      return {
+        cases: Array.isArray(data?.cases) ? data.cases : [],
+        total: Number(data?.total) || 0
+      };
+    },
+
+    async fetchTaskMemory(taskId) {
+      const response = await authFetch(`${API_BASE}/${taskId}/history/memory`);
+      if (!response.ok) throw new Error('Failed to fetch task memory');
+      const data = await response.json();
+      return {
+        memory: String(data?.memory || ''),
+        meta: (data?.meta && typeof data.meta === 'object') ? data.meta : {},
+        caseCount: Number(data?.case_count) || 0
+      };
+    },
+
+    async updateTaskMemory(taskId, content, expectedVersion) {
+      const response = await authFetch(`${API_BASE}/${taskId}/history/memory`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ content, expected_version: expectedVersion })
+      });
+      if (!response.ok) {
+        const error = new Error(await responseErrorMessage(response, '长期记忆保存失败'));
+        error.status = response.status;
+        throw error;
+      }
+      const data = await response.json();
+      return {
+        memory: String(data?.memory || ''),
+        meta: (data?.meta && typeof data.meta === 'object') ? data.meta : {},
+        caseCount: Number(data?.case_count) || 0
+      };
+    },
+
+    async updateTaskHistoryCase(taskId, executionId, caseData) {
+      const response = await authFetch(`${API_BASE}/${taskId}/history/cases/${encodeURIComponent(executionId)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ case: caseData })
+      });
+      if (!response.ok) {
+        const error = new Error(await responseErrorMessage(response, '案例保存失败'));
+        error.status = response.status;
+        throw error;
+      }
+      return response.json();
+    },
+
+    async fetchRecentExecutions({ page = 1, pageSize = 10 } = {}) {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize)
+      });
+      const response = await authFetch(`${API_BASE}/executions/recent?${params}`);
       if (!response.ok) throw new Error('Failed to fetch recent task executions');
       const data = await response.json();
-      return Array.isArray(data?.executions) ? data.executions : [];
+      return {
+        executions: Array.isArray(data?.executions) ? data.executions : [],
+        total: Number(data?.total) || 0,
+        page: Number(data?.page) || page,
+        pageSize: Number(data?.page_size) || pageSize,
+        totalPages: Number(data?.total_pages) || 0
+      };
     },
 
     async createTask(data) {
@@ -146,6 +294,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
 
     // WebSocket连接
     async connectWebSocket() {
+      const generation = accountGeneration()
       if ((this.ws && this.wsConnected) || this.wsConnecting) return;
       this.wsConnecting = true;
       this.wsReconnectEnabled = true;
@@ -196,7 +345,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
         this.ws = null;
         if (this.wsReconnectEnabled) {
           // Every reconnect obtains a fresh single-use ticket.
-          setTimeout(() => this.connectWebSocket(), 5000);
+          setTimeout(() => { if (generation === accountGeneration()) this.connectWebSocket() }, 5000);
         }
       };
     },

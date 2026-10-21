@@ -1,19 +1,25 @@
-from app.knowledge_base.graph_retrieval import reciprocal_rank_fusion
+from app.knowledge_base.retrieval_service import KnowledgeRetrievalService
 
 
 def test_rrf_fuses_chunk_and_graph_rankings():
-    result = reciprocal_rank_fusion(
-        {"chunk": ["c1", "c2"], "graph": ["c2", "c3"]},
-        weights={"chunk": 1.0, "graph": 1.0},
-        k=60,
+    result = KnowledgeRetrievalService.reciprocal_rank_fusion(
+        [{"chunk_id": "c1"}, {"chunk_id": "c2"}],
+        [{"chunk_id": "c2"}, {"chunk_id": "c3"}], 1.0,
     )
-    assert result[0].chunk_id == "c2"
-    assert set(result[0].sources) == {"chunk", "graph"}
+    assert result[0]["chunk_id"] == "c2"
+    assert set(result[0]["fusion_sources"]) == {"chunk", "graph"}
 
 
 def test_rrf_respects_source_weights():
-    result = reciprocal_rank_fusion(
-        {"chunk": ["c1"], "graph": ["c2"]},
-        weights={"chunk": 1.0, "graph": 2.0},
+    result = KnowledgeRetrievalService.reciprocal_rank_fusion(
+        [{"chunk_id": "c1"}], [{"chunk_id": "c2"}], 2.0,
     )
-    assert result[0].chunk_id == "c2"
+    assert result[0]["chunk_id"] == "c2"
+
+
+def test_rrf_ignores_duplicate_ids_and_disabled_graph_source():
+    result = KnowledgeRetrievalService.reciprocal_rank_fusion(
+        [{"chunk_id": "c1"}, {"chunk_id": "c1"}], [{"chunk_id": "c2"}], 0.0,
+    )
+    assert len(result) == 1
+    assert result[0]["score"] == 1 / 61

@@ -28,6 +28,6 @@ defineEmits(['retry', 'reindex'])
 <style scoped>
 .graph-status { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 10px; background: #f6f8fb; border-radius: 8px; }
 .graph-status div { display: grid; text-align: center; min-width: 58px; }
-.graph-status span { color: #667085; font-size: 12px; }
-.graph-status button { border: 1px solid #1976d2; color: #1976d2; background: white; border-radius: 4px; padding: 5px 9px; cursor: pointer; }
+.graph-status span { color: var(--text-2); font-size: 12px; }
+.graph-status button { border: 1px solid var(--color-primary); color: var(--color-primary); background: white; border-radius: 4px; padding: 5px 9px; cursor: pointer; }
 </style>

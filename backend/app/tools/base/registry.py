@@ -13,6 +13,7 @@ import structlog
 
 # 导入工具类别枚举
 from app.tools.base.tool_interface import ToolCategory
+from app.services.tool_statistics_store import ToolStatisticsStore, get_tool_statistics_store
 
 logger = structlog.get_logger()
 
@@ -27,18 +28,22 @@ class ToolRegistry:
     4. 自动化：减少重复劳动，提升开发效率
     """
 
-    def __init__(self, registry_name: str = "default"):
+    def __init__(
+        self,
+        registry_name: str = "default",
+        statistics_store: Optional[ToolStatisticsStore] = None,
+    ):
         self.registry_name = registry_name
         self._tools: Dict[str, Any] = {}
         self._priority_order: List[tuple] = []  # [(priority, tool_name), ...]
         self._stats: Dict[str, Dict[str, int]] = {}
         self._metadata_generators = {}  # 存储元数据生成器
+        self._stats_store = statistics_store or get_tool_statistics_store()
 
     def register(
         self,
         tool,
         priority: int = 100,
-        input_adapter_rules: Optional[Dict[str, Any]] = None,
         return_schema: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         auto_generate: bool = True
@@ -55,7 +60,6 @@ class ToolRegistry:
         Args:
             tool: 工具实例（必须继承LLMTool）
             priority: 优先级（数字越小优先级越高，范围1-1000）
-            input_adapter_rules: 已废弃；保留参数仅兼容旧调用，不再存储或使用
             return_schema: 返回数据Schema（Pydantic模型或JSON Schema）
                 - 确保输出符合UDF v1.0统一数据格式
                 - 确保图表输出符合v3.0规范
@@ -83,9 +87,6 @@ class ToolRegistry:
                 return_schema = self._generate_return_schema(tool)
             if not metadata:
                 metadata = self._generate_tool_metadata(tool)
-
-        # 参数契约由原生 tool schema 提供，不再生成或存储输入适配规则。
-        input_adapter_rules = {}
 
         if not return_schema:
             logger.warning(
@@ -137,7 +138,8 @@ class ToolRegistry:
             "registered_at": datetime.now().isoformat(),
             "version": getattr(tool, 'version', '1.0.0'),
             "category": getattr(tool, 'category', None),
-            "requires_context": getattr(tool, 'requires_context', False)
+            "requires_context": getattr(tool, 'requires_context', False),
+            "concurrency_policy": getattr(tool, 'concurrency_policy', "serial"),
         }
 
         self._tools[tool_name] = tool_data
@@ -145,13 +147,7 @@ class ToolRegistry:
         self._priority_order.sort(key=lambda x: x[0])  # 按优先级排序
 
         # 初始化统计
-        self._stats[tool_name] = {
-            "total": 0,
-            "success": 0,
-            "failed": 0,
-            "reflexion_attempts": 0,
-            "avg_execution_time": 0.0
-        }
+        self._stats[tool_name] = self._stats_store.get_tool_stats(tool_name)
 
         # 生成测试样例
         test_samples = self._generate_test_samples(tool, tool_data)
@@ -162,7 +158,6 @@ class ToolRegistry:
             registry=self.registry_name,
             tool=tool_name,
             priority=priority,
-            has_adapter=False,
             has_schema=bool(return_schema),
             category=tool_data.get("category"),
             requires_context=tool_data.get("requires_context")
@@ -191,14 +186,6 @@ class ToolRegistry:
     def get_tool_data(self, tool_name: str) -> Optional[Dict[str, Any]]:
         """获取工具完整数据（工具+Schema+元数据）"""
         return self._tools.get(tool_name)
-
-    def get_input_adapter(self, tool_name: str) -> Dict[str, Any]:
-        """输入适配已废弃；保留空返回兼容旧调用。"""
-        return {}
-
-    def get_input_adapter_rules(self, tool_name: str) -> Dict[str, Any]:
-        """输入适配已废弃；保留空返回兼容旧调用。"""
-        return {}
 
     def get_return_schema(self, tool_name: str) -> Dict[str, Any]:
         """获取工具返回Schema"""
@@ -229,19 +216,55 @@ class ToolRegistry:
 
     def get_stats(self) -> Dict[str, Dict[str, int]]:
         """获取统计信息"""
-        return self._stats
+        stats = {
+            tool_name: dict(tool_stats)
+            for tool_name, tool_stats in self._stats.items()
+        }
+        stats.update(self._stats_store.get_all_stats())
+        self._stats.update(stats)
+        return stats
 
-    def record_success(self, tool_name: str):
+    def record_execution(
+        self,
+        tool_name: str,
+        *,
+        success: bool,
+        execution_time: float | None = None,
+        error_summary: str | None = None,
+    ) -> Dict[str, Any]:
+        """记录一次工具执行"""
+        if tool_name not in self._tools:
+            return self._stats_store.get_tool_stats(tool_name)
+
+        stats = self._stats_store.record_execution(
+            tool_name,
+            success=success,
+            execution_time=execution_time,
+            error_summary=error_summary,
+        )
+        self._stats[tool_name] = stats
+        return stats
+
+    def record_success(self, tool_name: str, execution_time: float | None = None):
         """记录成功"""
-        if tool_name in self._stats:
-            self._stats[tool_name]["total"] += 1
-            self._stats[tool_name]["success"] += 1
+        return self.record_execution(
+            tool_name,
+            success=True,
+            execution_time=execution_time,
+        )
 
-    def record_failure(self, tool_name: str):
-        """记录失败"""
-        if tool_name in self._stats:
-            self._stats[tool_name]["total"] += 1
-            self._stats[tool_name]["failed"] += 1
+    def record_failure(
+        self,
+        tool_name: str,
+        execution_time: float | None = None,
+        error_summary: str | None = None,
+    ):
+        """记录失败（error_summary 会进入该工具的最近错误环形缓冲）"""
+        return self.record_execution(
+            tool_name,
+            success=False,
+            execution_time=execution_time,
+        )
 
     async def execute_tool(self, tool_name: str, **kwargs) -> Any:
         """
@@ -266,8 +289,7 @@ class ToolRegistry:
             execution_time = (datetime.now() - start_time).total_seconds()
 
             # 更新统计信息
-            self.record_success(tool_name)
-            self._update_execution_time(tool_name, execution_time)
+            self.record_execution(tool_name, success=True, execution_time=execution_time)
 
             logger.info(
                 "tool_executed_successfully",
@@ -277,7 +299,7 @@ class ToolRegistry:
             return result
         except Exception as e:
             execution_time = (datetime.now() - start_time).total_seconds()
-            self.record_failure(tool_name)
+            self.record_execution(tool_name, success=False, execution_time=execution_time)
             logger.error(
                 "tool_execution_failed",
                 tool=tool_name,
@@ -549,12 +571,9 @@ class ToolRegistry:
         return None
 
     def _update_execution_time(self, tool_name: str, execution_time: float):
-        """更新平均执行时间（EWMA）"""
-        if tool_name in self._stats:
-            current_avg = self._stats[tool_name].get("avg_execution_time", 0.0)
-            alpha = 0.1  # 平滑因子
-            new_avg = alpha * execution_time + (1 - alpha) * current_avg
-            self._stats[tool_name]["avg_execution_time"] = new_avg
+        """兼容旧调用点的执行时间更新入口。"""
+        if tool_name in self._tools:
+            self._stats[tool_name] = self._stats_store.get_tool_stats(tool_name)
 
     # ========================================
     # 验证和合规检查
@@ -609,7 +628,7 @@ class ToolRegistry:
         tools_info = []
         for tool_name, tool_data in self._tools.items():
             tool = tool_data["tool"]
-            stats = self._stats.get(tool_name, {})
+            stats = self._stats_store.get_tool_stats(tool_name)
             metadata = tool_data.get("metadata", {})
 
             # 获取工具状态（安全访问，非 LLMTool 可能没有 enabled 属性）
@@ -656,7 +675,7 @@ class ToolRegistry:
             return None
 
         tool = tool_data["tool"]
-        stats = self._stats.get(tool_name, {})
+        stats = self._stats_store.get_tool_stats(tool_name)
         metadata = tool_data.get("metadata", {})
 
         # 安全获取工具属性
@@ -689,7 +708,6 @@ class ToolRegistry:
                 "requires_handle": metadata.get("requires_handle", False)
             },
             "function_schema": function_schema,
-            "has_input_adapter": False,
             "has_return_schema": bool(tool_data.get("return_schema"))
         }
 

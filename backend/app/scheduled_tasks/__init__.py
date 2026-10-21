@@ -15,7 +15,6 @@ from .service import (
 )
 from .models import (
     ScheduledTask,
-    TaskStep,
     ScheduleType,
     TriggerType,
     TaskEvent,
@@ -31,7 +30,6 @@ __all__ = [
     "stop_service",
     "stop_service_async",
     "ScheduledTask",
-    "TaskStep",
     "ScheduleType",
     "TriggerType",
     "TaskEvent",

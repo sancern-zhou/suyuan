@@ -321,6 +321,47 @@ def test_o3_value_pass_xls_missing_form_field_adds_issue(tmp_path):
     assert evidence["comparisons"][0]["status"] == "missing_form_value"
 
 
+def test_o3_value_pass_xls_skips_explicit_not_applicable_change_values(tmp_path):
+    xls_path = tmp_path / "o3-transfer.xlsx"
+    _xlsx(xls_path, change="0.07462153783055481")
+
+    for value in ("N.A.", "N/A"):
+        issues = []
+        o3_value_pass_xls_rules.check_o3_value_pass_xls_values(
+            {"WORKINGORDERCODE": "WO-001"},
+            [("RF_HY_O3VALUEPASS", _form(DENSITY1VALUE=value))],
+            [],
+            [_attachment(xls_path)],
+            issues,
+        )
+        assert issues == []
+
+
+def test_o3_value_pass_xls_does_not_treat_formula_as_change_value(tmp_path):
+    xls_path = tmp_path / "o3-transfer-formula.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws["D24"], ws["F24"] = "斜率", "0.999"
+    ws["D25"], ws["F25"] = "截距(ppb)", "-0.079"
+    ws["D28"], ws["F28"] = "最佳拟合线性的传递公式", "Y=0.999X-0.079"
+    wb.save(xls_path)
+
+    issues = []
+    o3_value_pass_xls_rules.check_o3_value_pass_xls_values(
+        {"WORKINGORDERCODE": "WO-001"},
+        [("RF_HY_O3VALUEPASS", _form(DENSITY1VALUE="-0.07"))],
+        [],
+        [_attachment(xls_path)],
+        issues,
+    )
+
+    assert len(issues) == 1
+    comparison = json.loads(issues[0].evidence)["comparison"]
+    assert comparison["field"] == "DENSITY1VALUE"
+    assert comparison["status"] == "missing_xls_value"
+    assert comparison["xls_value"] is None
+
+
 def test_o3_value_pass_xls_uses_file_url_when_filepath_is_unavailable(monkeypatch):
     class Response:
         content = _xlsx_bytes()
@@ -334,7 +375,7 @@ def test_o3_value_pass_xls_uses_file_url_when_filepath_is_unavailable(monkeypatc
         requested_urls.append((url, timeout))
         return Response()
 
-    monkeypatch.setattr(o3_value_pass_xls_rules.requests, "get", fake_get)
+    monkeypatch.setattr(o3_value_pass_xls_rules, "guarded_get", fake_get)
     issues = []
 
     o3_value_pass_xls_rules.check_o3_value_pass_xls_values(

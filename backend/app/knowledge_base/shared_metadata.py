@@ -16,7 +16,12 @@ from sqlalchemy import select
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.db.database import DATABASE_URL, async_session, _normalize_async_database_url
+from app.db.database import _normalize_async_database_url
+from app.db.knowledge_database import (
+    KNOWLEDGE_DATABASE_URL as DATABASE_URL,
+    knowledge_async_session as async_session,
+)
+from app.db.pool_config import pool_int
 
 from .models import KnowledgeBase, KnowledgeBaseStatus, KnowledgeBaseStorageScope
 
@@ -48,8 +53,8 @@ def get_shared_knowledge_session_factory():
     engine = create_async_engine(
         shared_url,
         echo=False,
-        pool_size=5,
-        max_overflow=10,
+        pool_size=pool_int("SHARED_KNOWLEDGE_DATABASE_POOL_SIZE", 5),
+        max_overflow=pool_int("SHARED_KNOWLEDGE_DATABASE_MAX_OVERFLOW", 10),
         pool_pre_ping=True,
         pool_recycle=300,
         pool_timeout=120,

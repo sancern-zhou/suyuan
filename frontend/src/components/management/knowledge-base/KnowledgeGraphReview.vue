@@ -35,8 +35,8 @@ const selectMerge = entity => {
 <style scoped>
 .filters, .review-row { display: flex; gap: 8px; align-items: center; }
 .filters { margin: 12px 0; }
-.filters .active { background: #1976d2; color: white; }
-.review-row { padding: 8px 0; border-bottom: 1px solid #eee; }
+.filters .active { background: var(--color-primary); color: white; }
+.review-row { padding: 8px 0; border-bottom: 1px solid var(--border-1); }
 .review-row span { flex: 1; }
 button { cursor: pointer; }
 </style>

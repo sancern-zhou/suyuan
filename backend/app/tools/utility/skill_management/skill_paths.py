@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
@@ -22,6 +23,41 @@ def active_skill_paths() -> tuple[Path, Path]:
 
 
 _UNSAFE_CHARS = re.compile(r'[<>:"|?*\x00-\x1f]')
+
+_LOOKUP_STRIP_CHARS = "「」『』《》【】<>\"'`"
+
+
+def normalize_skill_lookup(value: Any) -> str:
+    """Normalise a skill name/title for tolerant matching."""
+    text = str(value or "").strip()
+    for char in _LOOKUP_STRIP_CHARS:
+        text = text.replace(char, "")
+    return "".join(text.split()).casefold()
+
+
+def iter_skill_documents(directory: Path) -> Iterable[Path]:
+    """Yield flat ``<skill>.md`` files and packaged ``<skill>/SKILL.md`` files."""
+    directory = Path(directory)
+    if not directory.is_dir():
+        return
+    for path in sorted(directory.glob("*.md")):
+        if path.is_file() and path.name != "SKILLS_INDEX.md":
+            yield path
+    for child in sorted(directory.iterdir()):
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        skill_md = child / "SKILL.md"
+        if skill_md.is_file():
+            yield skill_md
+
+
+def normalize_skill_dirs(value: Path | Sequence[Path] | None) -> list[Path]:
+    """Coerce a skills-directory argument into an ordered search list."""
+    if value is None:
+        return []
+    if isinstance(value, (str, Path)):
+        return [Path(value)]
+    return [Path(item) for item in value]
 
 
 def sanitize_skill_filename(name: str) -> str:
@@ -48,55 +84,173 @@ def resolve_skill_file(
     name: str,
     *,
     include_drafts: bool = False,
-    skills_dir: Path = SKILLS_DIR,
+    skills_dir: Path | Sequence[Path] = SKILLS_DIR,
     drafts_dir: Path = DRAFTS_DIR,
 ) -> Path:
     if any(part in (name or "") for part in ("../", "..\\", "/", "\\")):
         raise ValueError("技能名称不能包含路径分隔符")
 
     filename = sanitize_skill_filename(name)
-    official_path = ensure_within_directory(skills_dir / filename, skills_dir)
-    if official_path.exists() and official_path.is_file():
-        return official_path
-
     skill_id = Path(filename).stem
-    package_path = ensure_within_directory(skills_dir / skill_id / "SKILL.md", skills_dir)
-    if package_path.exists() and package_path.is_file():
-        return package_path
+    for directory in normalize_skill_dirs(skills_dir):
+        official_path = ensure_within_directory(directory / filename, directory)
+        if official_path.exists() and official_path.is_file():
+            return official_path
+        package_path = ensure_within_directory(directory / skill_id / "SKILL.md", directory)
+        if package_path.exists() and package_path.is_file():
+            return package_path
 
     if include_drafts:
         draft_path = ensure_within_directory(drafts_dir / filename, drafts_dir)
         if draft_path.exists() and draft_path.is_file():
             return draft_path
 
+    matched = find_skill_by_title(
+        name,
+        skills_dir=skills_dir,
+        drafts_dir=drafts_dir,
+        include_drafts=include_drafts,
+    )
+    if matched is not None:
+        return matched
+
     raise FileNotFoundError(filename)
 
 
-def parse_skill_metadata(content: str, fallback_name: str) -> dict[str, str]:
+def _skill_title(path: Path) -> str:
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    return parse_skill_metadata(content, path.name)["title"]
+
+
+def _skill_lookup_names(path: Path) -> list[str]:
+    """Normalized display title plus declared aliases for tolerant lookup."""
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    metadata = parse_skill_metadata(content, path.name)
+    names = [metadata["title"], *(metadata.get("aliases") or [])]
+    return [
+        normalize_skill_lookup(name)
+        for name in names
+        if name
+    ]
+
+
+def find_skill_by_title(
+    name: str,
+    *,
+    skills_dir: Path | Sequence[Path] = SKILLS_DIR,
+    drafts_dir: Path = DRAFTS_DIR,
+    include_drafts: bool = False,
+) -> Path | None:
+    """Resolve a skill document by its display title or a declared alias."""
+    target = normalize_skill_lookup(name)
+    if not target:
+        return None
+    directories = normalize_skill_dirs(skills_dir)
+    if include_drafts:
+        directories = [*directories, drafts_dir]
+    for directory in directories:
+        for path in iter_skill_documents(directory):
+            if target in _skill_lookup_names(path):
+                return ensure_within_directory(path, directory)
+    return None
+
+
+def list_skill_titles(
+    *,
+    skills_dir: Path | Sequence[Path] = SKILLS_DIR,
+    drafts_dir: Path = DRAFTS_DIR,
+    include_drafts: bool = False,
+) -> list[str]:
+    """Return the display titles of the available skill documents."""
+    directories = normalize_skill_dirs(skills_dir)
+    if include_drafts:
+        directories = [*directories, drafts_dir]
+    titles: list[str] = []
+    for directory in directories:
+        for path in iter_skill_documents(directory):
+            title = _skill_title(path)
+            if title and title not in titles:
+                titles.append(title)
+    return titles
+
+
+def _frontmatter_string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = re.split(r"[,，;；、\s]+", value)
+        return [part.strip() for part in parts if part.strip()]
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
+def parse_skill_metadata(content: str, fallback_name: str) -> dict[str, Any]:
+    """Parse display metadata and self-declarations from one skill document.
+
+    Frontmatter follows the open SKILL.md convention (``name``/``description``)
+    plus project extensions (``aliases``/``required_tools``/``enabled``); the
+    ``# `` heading and ``## 概述`` paragraph stay as fallbacks for legacy files.
+    """
     title = Path(fallback_name).stem
     description = "暂无描述"
+    aliases: list[str] = []
+    required_tools: list[str] = []
+    enabled = True
     lines = content.splitlines()
 
     if lines and lines[0].strip() == "---":
         try:
             end = lines[1:].index("---") + 1
             frontmatter = yaml.safe_load("\n".join(lines[1:end])) or {}
+            if not isinstance(frontmatter, dict):
+                raise TypeError("skill frontmatter must be a mapping")
             title = str(frontmatter.get("name") or title).strip()
             description = str(frontmatter.get("description") or description).strip()
+            aliases = _frontmatter_string_list(frontmatter.get("aliases"))
+            required_tools = _frontmatter_string_list(frontmatter.get("required_tools"))
+            if frontmatter.get("enabled") is not None:
+                enabled = bool(frontmatter.get("enabled"))
         except (ValueError, TypeError, yaml.YAMLError):
             pass
 
+    has_frontmatter_title = bool(
+        lines
+        and lines[0].strip() == "---"
+        and title != Path(fallback_name).stem
+    )
+    has_frontmatter_description = bool(
+        lines
+        and lines[0].strip() == "---"
+        and description != "暂无描述"
+    )
     for index, line in enumerate(lines):
         stripped = line.strip()
-        if stripped.startswith("# "):
+        if stripped.startswith("# ") and not has_frontmatter_title:
             title = stripped[2:].strip() or title
-        if stripped.startswith("## 概述") and index + 1 < len(lines):
+        if (
+            stripped.startswith("## 概述")
+            and not has_frontmatter_description
+            and index + 1 < len(lines)
+        ):
             candidate = lines[index + 1].strip()
             if candidate and not candidate.startswith("#"):
                 description = candidate
                 break
 
-    return {"title": title, "description": description}
+    return {
+        "title": title,
+        "description": description,
+        "aliases": aliases,
+        "required_tools": required_tools,
+        "enabled": enabled,
+    }
 
 
 def _render_bullets(values: Iterable[str]) -> str:
@@ -154,7 +308,7 @@ def render_skill_draft_markdown(
         "<!--\n"
         "status: draft\n"
         f"created_at: {created_at}\n"
-        "source_mode: assistant\n"
+        "source_mode: office\n"
         f"{source_session_line}\n"
         "-->\n\n"
         "## 概述\n"

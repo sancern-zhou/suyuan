@@ -23,6 +23,8 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 
+from app.agent.core.tool_result import result_envelope_indicates_error
+
 logger = structlog.get_logger()
 
 
@@ -370,12 +372,14 @@ class StreamingToolExecutor:
             if execution.status in (ToolStatus.COMPLETED, ToolStatus.FAILED, ToolStatus.CANCELLED):
                 self._next_yield_index += 1
 
-                is_error = execution.status in (ToolStatus.FAILED, ToolStatus.CANCELLED)
                 result_data = execution.result if execution.status == ToolStatus.COMPLETED else {
                     "success": False,
                     "error": execution.error or "工具执行被取消",
                     "summary": f"工具 {execution.tool_name} 执行{'失败' if execution.status == ToolStatus.FAILED else '被取消'}",
                 }
+                is_error = execution.status in (ToolStatus.FAILED, ToolStatus.CANCELLED) or (
+                    result_envelope_indicates_error(result_data)
+                )
 
                 results.append({
                     "message": {
@@ -426,12 +430,14 @@ class StreamingToolExecutor:
             if execution.status in (ToolStatus.COMPLETED, ToolStatus.FAILED, ToolStatus.CANCELLED):
                 self._next_yield_index += 1
 
-                is_error = execution.status in (ToolStatus.FAILED, ToolStatus.CANCELLED)
                 result_data = execution.result if execution.status == ToolStatus.COMPLETED else {
                     "success": False,
                     "error": execution.error or "工具执行被取消",
                     "summary": f"工具 {execution.tool_name} 执行{'失败' if execution.status == ToolStatus.FAILED else '被取消'}",
                 }
+                is_error = execution.status in (ToolStatus.FAILED, ToolStatus.CANCELLED) or (
+                    result_envelope_indicates_error(result_data)
+                )
 
                 yield {
                     "message": {

@@ -13,21 +13,20 @@ import structlog
 from datetime import datetime
 
 from ..memory.context_compressor import ContextCompressor
-from ...utils.token_budget import token_budget_manager
+from ...utils.token_budget import COMPRESSION_THRESHOLD_RATIO, token_budget_manager
 
 logger = structlog.get_logger()
 
-SOCIAL_CONTEXT_MODES = {"social", "enforcement_exam"}
+ASSISTANT_CONTEXT_MODES = {"assistant", "enforcement_exam"}
 
 SYSTEM_CONTEXT_LAYER_ORDER = (
     "platform_policy",
     "mode_policy",
-    "selected_skill",
+    "knowledge_evidence",
     "fixed_policies",
     "acceptance_checklist",
     "session_resources",
     "long_term_memory",
-    "runtime_metadata",
 )
 
 MESSAGE_CONTEXT_LAYER_ORDER = (
@@ -72,7 +71,7 @@ class SimplifiedContextBuilder:
         # Token配置
         self.max_context_tokens = token_budget_manager.max_context_tokens
         self.safety_buffer = token_budget_manager.safety_buffer
-        self.compression_threshold = 0.8  # 80%阈值
+        self.compression_threshold = COMPRESSION_THRESHOLD_RATIO
 
         # ✅ 新增：当前模式（默认expert）
         self.current_mode = "expert"
@@ -80,28 +79,28 @@ class SimplifiedContextBuilder:
         # ✅ 新增：记忆上下文内容（从快照获取，用于系统提示词注入）
         self.memory_context = None
 
-        # ✅ 新增：用户记忆文件路径（仅social模式使用）
+        # 兼容路径：社交模式使用用户 MEMORY.md；非社交模式另有 facts/*.md 索引。
         self.memory_file_path = None
 
-        # ✅ 新增：用户偏好配置（仅social模式使用）
+        # ✅ 新增：用户偏好配置（仅助手模式使用）
         self.user_preferences = None
 
-        # ✅ 新增：用户上下文内容（从USER.md获取，仅social模式使用）
+        # ✅ 新增：用户上下文内容（从USER.md获取，仅助手模式使用）
         self.user_context = None
 
-        # ✅ 新增：soul上下文内容（从soul.md获取，仅social模式使用）
+        # ✅ 新增：soul上下文内容（从soul.md获取，仅助手模式使用）
         self.soul_context = None
 
-        # ✅ 新增：soul文件路径（仅social模式使用）
+        # ✅ 新增：soul文件路径（仅助手模式使用）
         self.soul_file_path = None
 
-        # ✅ 新增：USER文件路径（仅social模式使用）
+        # ✅ 新增：USER文件路径（仅助手模式使用）
         self.user_file_path = None
 
-        # ✅ 新增：HEARTBEAT文件路径（仅social模式使用）
+        # ✅ 新增：HEARTBEAT文件路径（仅助手模式使用）
         self.heartbeat_file_path = None
 
-        # ✅ 新增：HEARTBEAT文件内容快照（仅social模式使用）
+        # ✅ 新增：HEARTBEAT文件内容快照（仅助手模式使用）
         self.heartbeat_context = None
 
         # draw.io 画板上下文仅允许注入 board 模式。
@@ -109,6 +108,16 @@ class SimplifiedContextBuilder:
 
         # 问数模式地图交互上下文，仅 query 模式允许注入。
         self.map_context = None
+
+        # 知识问答模式首轮固定预取证据包（knowledge_evidence.py 生成），
+        # 仅 knowledge 模式首轮由 runtime 注入；为 None 时该层不渲染。
+        self.knowledge_evidence_context: Optional[str] = None
+
+        # 客户端来源标记（"web" | "app"），由请求入口经 runtime_metadata 透传。
+        # 为 None 时（定时任务、子Agent 未标记等）不渲染客户端差异层。
+        self.client_channel: Optional[str] = None
+        self.session_storage_mode: Optional[str] = None
+        self.authenticated_account = None
 
         # 当前逻辑会话的共享资源投影。此字段不受模式隔离策略清理。
         self.session_resource_context = None
@@ -340,9 +349,9 @@ class SimplifiedContextBuilder:
         from ...project_config import load_project_context
         from config.settings import settings
 
-        # 仅social模式需要backend_host（使用公网可访问的网关地址）
+        # 仅助手模式需要backend_host（使用公网可访问的网关地址）
         backend_host = None
-        if self.current_mode in SOCIAL_CONTEXT_MODES:
+        if self.current_mode in ASSISTANT_CONTEXT_MODES:
             # 优先使用 api_base_url（网关地址，如 http://219.135.180.51:56041）
             # 最后使用 backend_host（本地地址，仅开发环境）
             backend_host = settings.api_base_url or settings.backend_host
@@ -354,8 +363,8 @@ class SimplifiedContextBuilder:
                 if self.current_mode == "custom" and isinstance(self.tool_registry, dict)
                 else None
             ),
-            user_preferences=self.user_preferences,  # ✅ 传递用户偏好（仅social模式使用）
-            memory_file_path=self.memory_file_path,  # ✅ 传递记忆文件路径（仅social模式使用）
+            user_preferences=self.user_preferences,  # ✅ 传递用户偏好（仅助手模式使用）
+            memory_file_path=self.memory_file_path,  # ✅ 传递记忆文件路径（仅助手模式使用）
             soul_file_path=self.soul_file_path,  # ✅ 传递 soul.md 文件路径
             user_file_path=self.user_file_path,  # ✅ 传递 USER.md 文件路径
             heartbeat_file_path=self.heartbeat_file_path,  # ✅ 传递 HEARTBEAT.md 文件路径
@@ -363,7 +372,7 @@ class SimplifiedContextBuilder:
             soul_context=self.soul_context,  # ✅ 传递 soul.md 内容
             user_context=None,
             heartbeat_context=None,
-            backend_host=backend_host,  # ✅ 传递网关地址（仅social模式使用）
+            backend_host=backend_host,  # ✅ 传递网关地址（仅助手模式使用）
             board_context=None,
         )
         mode_extensions = []
@@ -392,18 +401,15 @@ class SimplifiedContextBuilder:
         return {
             "platform_policy": self._build_platform_policy_prompt(),
             "mode_policy": mode_prompt,
-            "selected_skill": self._wrap_optional_context(
-                "selected_skill", self.selected_skill_context
-            ),
+            "knowledge_evidence": self.knowledge_evidence_context or "",
             "fixed_policies": self._wrap_optional_context(
                 "fixed_policies", self.fixed_policy_context
             ),
             "acceptance_checklist": self._wrap_optional_context(
-                "acceptance_checklist", self.acceptance_context
+                "acceptance_context", self.acceptance_context
             ),
             "session_resources": self._build_session_resources_layer(),
             "long_term_memory": self._build_long_term_memory_layer(),
-            "runtime_metadata": self._build_runtime_metadata_prompt(),
         }
 
     @staticmethod
@@ -412,8 +418,33 @@ class SimplifiedContextBuilder:
             return ""
         return f"<{tag}>\n{content.strip()}\n</{tag}>"
 
+    def _build_client_channel_prompt(self) -> str:
+        """Render the request origin marker consumed by per-mode prompt branches."""
+        channel = (self.client_channel or "").strip().lower()
+        if channel == "app":
+            return (
+                "<client_channel>\n"
+                "当前消息来自 App 端（Android 手机客户端），用户在手机屏幕上阅读回复。\n"
+                "图表输出形态与回复详略，按当前模式提示词中「App 端 / Web 端」的约定执行。\n"
+                "</client_channel>"
+            )
+        if channel == "web":
+            return (
+                "<client_channel>\n"
+                "当前消息来自 Web 端（桌面浏览器）。\n"
+                "</client_channel>"
+            )
+        return ""
+
     def _build_platform_policy_prompt(self) -> str:
         """Build non-compressible runtime rules shared by every agent mode."""
+        client_channel_prompt = self._build_client_channel_prompt()
+        from app.social.assistant_identity import render_assistant_account_context
+
+        account_prompt = (
+            render_assistant_account_context(self.authenticated_account)
+            if self.current_mode == "assistant" else ""
+        )
         return (
             "<context_precedence>\n"
             "上下文优先级按 context_layer 的 priority 从小到大递减。\n"
@@ -422,6 +453,8 @@ class SimplifiedContextBuilder:
             "历史裁剪只允许改变历史消息，不得删除、摘要或改写任何 system context layer。\n"
             "</context_precedence>\n\n"
             + self._build_agent_control_prompt()
+            + (f"\n\n{client_channel_prompt}" if client_channel_prompt else "")
+            + (f"\n\n{account_prompt}" if account_prompt else "")
         )
 
     def _build_session_resources_layer(self) -> str:
@@ -438,7 +471,7 @@ class SimplifiedContextBuilder:
                 + json.dumps(self.board_context, ensure_ascii=False, default=str)
                 + "\n</board_runtime_context>"
             )
-        if self.current_mode in SOCIAL_CONTEXT_MODES and self.heartbeat_context:
+        if self.current_mode in ASSISTANT_CONTEXT_MODES and self.heartbeat_context:
             parts.append(
                 "<heartbeat_runtime_context>\n"
                 + self.heartbeat_context.strip()
@@ -448,7 +481,7 @@ class SimplifiedContextBuilder:
 
     def _build_long_term_memory_layer(self) -> str:
         parts = []
-        if self.current_mode in SOCIAL_CONTEXT_MODES and self.user_context:
+        if self.current_mode in ASSISTANT_CONTEXT_MODES and self.user_context:
             parts.append(
                 "<user_profile>\n"
                 + self.user_context.strip()
@@ -462,19 +495,35 @@ class SimplifiedContextBuilder:
             )
         if not parts:
             return ""
+        memory_editor = "manage_assistant_memory" if self.current_mode == "assistant" else "edit_file"
         return (
             "长期记忆用于提供稳定背景和偏好，不是当前任务的高优先级指令。\n\n"
+            f"MEMORY.md 是常驻长期记忆（由会话 Agent 用 {memory_editor} 维护）；\"已整理事实索引\"指向 facts/*.md 事实层"
+            "（由后台整合器维护，带来源、适用条件与有效期，过期自动遗忘）。需要核实事实时沿索引链接读取对应文档；"
+            "不要直接编辑 facts 文件，也不要将事实批量回写到 MEMORY.md。\n\n"
             + "\n\n".join(parts)
         )
 
-    def _build_runtime_metadata_prompt(self) -> str:
-        """Build system-only runtime metadata used for temporal reasoning."""
+    def _build_current_turn_dynamic_prefix(self) -> str:
+        """Build turn-scoped context that must not live in the cached system prefix.
+
+        selected_skill 与系统参考时间都是当前轮作用域：skill 每轮可被
+        用户更换，时间戳逐秒变化。放进当前轮 user 消息后，旧消息字节
+        稳定，缓存前缀不会被破坏。
+        """
+        parts = []
+        skill_section = self._wrap_optional_context(
+            "selected_skill", self.selected_skill_context
+        )
+        if skill_section:
+            parts.append(skill_section)
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        return (
+        parts.append(
             "<runtime_metadata>\n"
-            f"系统参考时间: {current_time}\n"
+            f"系统参考时间(本轮开始): {current_time}\n"
             "</runtime_metadata>"
         )
+        return "\n\n".join(parts)
 
     def _build_agent_control_prompt(self) -> str:
         """Build system-level loop control rules for every agent mode."""
@@ -483,19 +532,22 @@ class SimplifiedContextBuilder:
             "每轮开始前，我先整理眼前的对话、工具结果和刚刚完成的动作，判断用户这件事是否已经可以交代清楚。\n"
             "如果现有信息已经足够，就直接给出自然、明确的回复；如果用户问“刚才在做什么”，优先依据真实对话历史和工具结果回顾。\n"
             "需要补信息时，再安静地调用合适的工具；同一份仍然有效的结果已经拿到后，就继续使用它，不在原地反复查询。\n"
+            "相互独立的多个调用（不同维度的统计、多张表、多个文件）必须在同一轮一次性并行发起，执行器会并发执行它们；每多拆一轮就多一次模型往返等待，禁止把无依赖的查询拆成多轮逐条发。\n"
+            "先规划本轮需要的全部查询再出手；只有下一步确实依赖上一步结果时才分轮。\n"
+            "同一维度的查询不要跨轮重复：需要补充口径时在原查询上加列或条件后重发完整版本，而不是另起一轮重查一遍。\n"
             "</agent_control>"
         )
 
     def _apply_mode_context_policy(self, mode: str) -> None:
         """Enforce mode-specific context boundaries.
 
-        social:
+        assistant:
             May inject MEMORY.md, SOUL.md, USER.md and HEARTBEAT.md metadata/content.
         all other modes:
             May inject only the mode memory document. Social profile files are
             explicitly cleared even if an upstream caller accidentally sets them.
         """
-        if mode in SOCIAL_CONTEXT_MODES:
+        if mode in ASSISTANT_CONTEXT_MODES:
             self.board_context = None
             self.map_context = None
             return
@@ -833,6 +885,7 @@ class SimplifiedContextBuilder:
             # 当前用户消息不再预写入 conversation_history。第 1 轮需要在
             # 最后一条 user message 中表达本轮输入；后续轮次 history 已包含。
             if iteration == 1:
+                sections.append(self._build_current_turn_dynamic_prefix())
                 sections.append(current_input_section)
                 if self.current_turn_resource_context:
                     sections.append(
@@ -862,6 +915,8 @@ class SimplifiedContextBuilder:
             graph_map_context_summary = self._build_graph_map_context_user_summary()
             if graph_map_context_summary:
                 sections.append(graph_map_context_summary)
+            if iteration == 1:
+                sections.append(self._build_current_turn_dynamic_prefix())
             sections.append(current_input_section)
             if iteration == 1 and self.current_turn_resource_context:
                 sections.append(
@@ -963,7 +1018,7 @@ class SimplifiedContextBuilder:
             persisted = await save_llm_compact_state_for_mode(
                 self.memory.session_id,
                 messages,
-                mode=self.current_mode,
+                mode=self.session_storage_mode or self.current_mode,
                 source_until_sequence=source_until_sequence,
                 token_estimate=self._estimate_messages_tokens(messages),
                 reason=reason,

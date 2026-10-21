@@ -16,6 +16,8 @@ from .errors import AuthenticationRejected, AuthenticationUnavailable
 from .share_access import (
     RESOURCE_PREVIEW_COOKIE,
     RESOURCE_PREVIEW_TICKET,
+    RESOURCE_PREVIEW_TICKET_PATH_SEGMENT,
+    SCHEDULED_RESULT_PREVIEW_KIND,
     resource_preview_identity,
 )
 
@@ -47,6 +49,12 @@ _UNTRUSTED_IDENTITY_HEADERS = {b"x-user-id", b"x-is-admin"}
 _RESOURCE_CONTENT_PATTERN = re.compile(
     r"^/api/sessions/([^/]+)/resources/([^/]+)/content(?:/.*)?$"
 )
+_SCHEDULED_RESULT_CONTENT_PATTERN = re.compile(
+    r"^/api/scheduled-tasks/results/([^/]+)/(?:files|report)(?:/.*)?$"
+)
+_SHARED_REPORT_PREVIEW_PATTERN = re.compile(
+    r"^/api/shared-conversations/([^/]+)/reports/_t/([^/]+)(?:/(.+))?$"
+)
 
 
 class GatewayAuthenticationMiddleware:
@@ -76,9 +84,7 @@ class GatewayAuthenticationMiddleware:
 
         path = scope.get("path", "")
         method = scope.get("method", "")
-        if method == "OPTIONS" or (
-            method in {"GET", "HEAD"} and self._is_public(path)
-        ):
+        if method == "OPTIONS" or self._is_public(path):
             await self.app(scope, receive, send)
             return
 
@@ -86,11 +92,26 @@ class GatewayAuthenticationMiddleware:
             await self.app(scope, receive, send)
             return
 
+        headers = Headers(scope=scope)
+        if (path == "/api/shared-conversations" or path.startswith("/api/shared-conversations/")) and not headers.get("syscode"):
+            # Shared snapshots are consumed by both Web sessions and signed App identities.
+            from fastapi import HTTPException
+            from app.social.app_identity import resolve_access_token
+
+            scheme, separator, app_token = headers.get("authorization", "").partition(" ")
+            if scheme.lower() == "bearer" and separator and app_token.strip():
+                try:
+                    user = resolve_access_token(app_token.strip()).as_current_user()
+                except HTTPException as exc:
+                    await self._error(scope, receive, send, exc.status_code, str(exc.detail))
+                    return
+                await self.app(self._authenticated_scope(scope, user), receive, send)
+                return
+
         if not self._is_trusted_peer(scope):
             await self._error(scope, receive, send, 403, "untrusted_gateway_peer")
             return
 
-        headers = Headers(scope=scope)
         if self.settings.auth_mode == "mock":
             token = "local-mock"
             sys_code = self.settings.auth_sys_code
@@ -115,6 +136,10 @@ class GatewayAuthenticationMiddleware:
             await self._error(scope, receive, send, 503, "authentication_unavailable")
             return
 
+        await self.app(self._authenticated_scope(scope, user), receive, send)
+
+    @staticmethod
+    def _authenticated_scope(scope: Scope, user: Any) -> Scope:
         clean_scope = dict(scope)
         clean_scope["headers"] = [
             (name, value)
@@ -124,7 +149,7 @@ class GatewayAuthenticationMiddleware:
         state = dict(scope.get("state") or {})
         state["current_user"] = user
         clean_scope["state"] = state
-        await self.app(clean_scope, receive, send)
+        return clean_scope
 
     def _is_public(self, path: str) -> bool:
         if path in _PUBLIC_EXACT_PATHS:
@@ -150,21 +175,66 @@ class GatewayAuthenticationMiddleware:
         return any(address in network for network in self._trusted_networks)
 
     def _valid_resource_preview(self, scope: Scope, path: str) -> bool:
-        match = _RESOURCE_CONTENT_PATTERN.fullmatch(path)
-        if match is None or self.share_access is None:
+        if self.share_access is None:
             return False
-        query = parse_qs(scope.get("query_string", b"").decode("utf-8"))
-        ticket = (query.get(RESOURCE_PREVIEW_TICKET) or [""])[0]
-        if not ticket:
-            ticket = self._resource_preview_cookie(scope)
-        session_id, resource_id = (unquote(value) for value in match.groups())
-        return bool(
-            ticket
-            and self.share_access.verify(
+        # Directory previews carry the ticket as a path segment so relative
+        # assets inherit it inside an opaque-origin sandboxed iframe.
+        ticket = ""
+        base_path = path
+        marker = f"/content/{RESOURCE_PREVIEW_TICKET_PATH_SEGMENT}/"
+        if marker in path:
+            before, _, remainder = path.partition(marker)
+            base_path = before + "/content"
+            ticket = remainder.split("/", 1)[0]
+        else:
+            report_marker = f"/report/{RESOURCE_PREVIEW_TICKET_PATH_SEGMENT}/"
+            if report_marker in path:
+                before, _, remainder = path.partition(report_marker)
+                base_path = before + "/report"
+                ticket = remainder.split("/", 1)[0]
+        match = _RESOURCE_CONTENT_PATTERN.fullmatch(base_path)
+        if match is not None:
+            session_id, resource_id = (unquote(value) for value in match.groups())
+            return self._verify_preview_ticket(
+                scope,
                 ticket,
                 "session-resource",
                 resource_preview_identity(session_id, resource_id),
             )
+        scheduled = _SCHEDULED_RESULT_CONTENT_PATTERN.fullmatch(base_path)
+        if scheduled:
+            return self._verify_preview_ticket(
+                scope,
+                ticket,
+                SCHEDULED_RESULT_PREVIEW_KIND,
+                unquote(scheduled.group(1)),
+            )
+        shared_report = _SHARED_REPORT_PREVIEW_PATTERN.fullmatch(path)
+        if shared_report:
+            # The ticket is inherent in the path; scope reports to one share.
+            return self._verify_preview_ticket(
+                scope,
+                unquote(shared_report.group(2)),
+                "shared-report",
+                unquote(shared_report.group(1)),
+            )
+        return False
+
+    def _verify_preview_ticket(
+        self,
+        scope: Scope,
+        ticket: str,
+        kind: str,
+        resource_id: str,
+    ) -> bool:
+        if not ticket:
+            query = parse_qs(scope.get("query_string", b"").decode("utf-8"))
+            ticket = (query.get(RESOURCE_PREVIEW_TICKET) or [""])[0]
+        if not ticket:
+            ticket = self._resource_preview_cookie(scope)
+        return bool(
+            ticket
+            and self.share_access.verify(ticket, kind, resource_id)
         )
 
     @staticmethod

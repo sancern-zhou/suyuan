@@ -9,8 +9,8 @@ from pathlib import Path
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.scheduled_tasks.models import ScheduledTask, TaskStep, ScheduleType
-from app.scheduled_tasks.storage import TaskStorage, ExecutionStorage
+from app.scheduled_tasks.models import ScheduledTask, ScheduleType
+from app.scheduled_tasks.storage import TaskStorage, ExecutionStorage, EventClaimStorage
 from app.scheduled_tasks.scheduler import SimpleScheduler
 from app.scheduled_tasks.executor import ScheduledTaskExecutor
 from app.scheduled_tasks.service import ScheduledTaskService
@@ -20,36 +20,22 @@ def test_models():
     """测试数据模型"""
     print("\n=== 测试数据模型 ===")
 
-    # 创建任务步骤
-    step1 = TaskStep(
-        step_id="step_1",
-        description="获取昨日O3数据",
-        agent_prompt="查询广州昨天的O3浓度数据",
-        timeout_seconds=300
-    )
-
-    step2 = TaskStep(
-        step_id="step_2",
-        description="生成分析报告",
-        agent_prompt="基于上一步的数据，生成O3污染分析报告",
-        timeout_seconds=600
-    )
-
-    # 创建任务
+    # 创建任务：一次完整的 Agent 执行
     task = ScheduledTask(
         task_id="task_test_001",
         name="每日O3污染分析",
         description="每天早上8点分析广州昨天的O3污染情况",
         schedule_type=ScheduleType.DAILY_8AM,
         enabled=True,
-        steps=[step1, step2],
+        prompt="查询广州昨天的O3浓度数据并生成O3污染分析报告",
+        timeout_seconds=1800,
         tags=["O3", "广州", "日报"]
     )
 
     print(f"任务ID: {task.task_id}")
     print(f"任务名称: {task.name}")
     print(f"调度类型: {task.schedule_type}")
-    print(f"步骤数量: {len(task.steps)}")
+    print(f"任务超时: {task.timeout_seconds}s")
     print("[OK] 数据模型测试通过")
 
 
@@ -68,14 +54,8 @@ def test_storage():
         description="测试任务存储功能",
         schedule_type=ScheduleType.EVERY_30MIN,
         enabled=True,
-        steps=[
-            TaskStep(
-                step_id="step_1",
-                description="测试步骤",
-                agent_prompt="测试提示词",
-                timeout_seconds=300
-            )
-        ]
+        prompt="测试提示词",
+        timeout_seconds=300,
     )
 
     # 测试创建
@@ -121,14 +101,8 @@ def test_scheduler():
         description="测试调度器功能",
         schedule_type=ScheduleType.EVERY_2H,
         enabled=True,
-        steps=[
-            TaskStep(
-                step_id="step_1",
-                description="测试步骤",
-                agent_prompt="测试提示词",
-                timeout_seconds=300
-            )
-        ]
+        prompt="测试提示词",
+        timeout_seconds=300,
     )
 
     task_storage.create(task)
@@ -153,7 +127,7 @@ async def test_executor():
     # 模拟Agent工厂
     def mock_agent_factory():
         class MockAgent:
-            async def analyze(self, prompt):
+            async def analyze(self, prompt, **kwargs):
                 print(f"  模拟Agent执行: {prompt[:50]}...")
                 await asyncio.sleep(0.5)
                 yield {"type": "data_saved", "data_id": "test_data_001"}
@@ -175,20 +149,8 @@ async def test_executor():
         description="测试执行器功能",
         schedule_type=ScheduleType.DAILY_8AM,
         enabled=True,
-        steps=[
-            TaskStep(
-                step_id="step_1",
-                description="测试步骤1",
-                agent_prompt="执行测试步骤1",
-                timeout_seconds=10
-            ),
-            TaskStep(
-                step_id="step_2",
-                description="测试步骤2",
-                agent_prompt="执行测试步骤2",
-                timeout_seconds=10
-            )
-        ]
+        prompt="执行测试任务",
+        timeout_seconds=10,
     )
 
     task_storage.create(task)
@@ -215,13 +177,19 @@ def test_service():
     # 模拟Agent工厂
     def mock_agent_factory():
         class MockAgent:
-            async def analyze(self, prompt):
+            async def analyze(self, prompt, **kwargs):
                 await asyncio.sleep(0.1)
                 yield {"type": "final_response", "content": "完成"}
         return MockAgent()
 
-    # 创建服务
-    service = ScheduledTaskService(agent_factory=mock_agent_factory)
+    # 创建服务（使用独立的测试存储目录，避免触碰真实任务数据）
+    test_storage_dir = "backend_data_registry/scheduled_tasks_test"
+    service = ScheduledTaskService(
+        agent_factory=mock_agent_factory,
+        task_storage=TaskStorage(storage_dir=test_storage_dir),
+        execution_storage=ExecutionStorage(storage_dir=test_storage_dir),
+        claim_storage=EventClaimStorage(storage_dir=test_storage_dir),
+    )
 
     # 创建任务
     task = ScheduledTask(
@@ -230,14 +198,8 @@ def test_service():
         description="测试服务功能",
         schedule_type=ScheduleType.EVERY_30MIN,
         enabled=True,
-        steps=[
-            TaskStep(
-                step_id="step_1",
-                description="测试步骤",
-                agent_prompt="测试提示词",
-                timeout_seconds=300
-            )
-        ]
+        prompt="测试提示词",
+        timeout_seconds=300,
     )
 
     created_task = service.create_task(task)

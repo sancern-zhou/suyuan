@@ -6,7 +6,7 @@
         <span>{{ formatName(resource) }} · v{{ group.primary?.version || resource.version }}</span>
       </div>
       <button
-        v-if="downloadTarget?.download_url"
+        v-if="downloadTarget?.download_url || isChart"
         type="button"
         :disabled="downloading"
         @click="download"
@@ -20,6 +20,7 @@
       :is="rendererComponent"
       v-else
       :key="renderKey"
+      ref="rendererRef"
       class="card-content"
       :resource="resource"
       :group="group"
@@ -46,25 +47,50 @@ const renderError = ref('')
 const downloadError = ref('')
 const downloading = ref(false)
 const retryVersion = ref(0)
+const rendererRef = ref(null)
 const rendererComponent = computed(() => RENDERERS[rendererKey(props.resource)])
 const renderKey = computed(() => (
   `${props.resource.resource_id}:${props.resource.version}:${retryVersion.value}`
 ))
+const chartImage = computed(() => props.group.resources?.find(resource =>
+  resource.resource_key === 'chart-image' && resource.status === 'active' && resource.download_url
+))
 const downloadTarget = computed(() => props.group.primary?.download_url
   ? props.group.primary
-  : props.resource)
+  : chartImage.value || props.resource)
+const isChart = computed(() => rendererKey(props.resource) === 'chart')
+const chartFileName = computed(() => {
+  const label = props.group.primary?.label || props.resource.label || '图表'
+  return String(label).replace(/[\\/:*?"<>|]/g, '_')
+})
 
 const retry = () => {
   renderError.value = ''
   retryVersion.value += 1
 }
 
+const downloadChartImage = async () => {
+  const dataUrl = await rendererRef.value?.getChartImage?.()
+  if (!dataUrl) throw new Error('图表图片生成失败')
+  const link = document.createElement('a')
+  link.href = dataUrl
+  link.download = `${chartFileName.value}.png`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+}
+
 const download = async () => {
-  if (!downloadTarget.value || downloading.value) return
+  if (downloading.value) return
+  if (!isChart.value && !downloadTarget.value?.download_url) return
   downloading.value = true
   downloadError.value = ''
   try {
-    await downloadResource(downloadTarget.value)
+    if (isChart.value && !chartImage.value) {
+      await downloadChartImage()
+    } else {
+      await downloadResource(downloadTarget.value)
+    }
   } catch (error) {
     downloadError.value = error?.message || '下载失败'
   } finally {
@@ -80,9 +106,9 @@ onErrorCaptured(error => {
 </script>
 
 <style scoped>
-.visualization-card { display: flex; min-width: 0; min-height: 360px; flex-direction: column; overflow: hidden; border: 1px solid #e1e8f0; border-radius: 10px; background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, .06); }
+.visualization-card { display: flex; min-width: 0; min-height: 360px; flex-direction: column; overflow: hidden; border: 1px solid #e1e8f0; border-radius: 10px; background: var(--bg-container); box-shadow: 0 1px 3px rgba(15, 23, 42, .06); }
 header { display: flex; min-height: 52px; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; border-bottom: 1px solid #edf1f5; box-sizing: border-box; }
 .identity { display: grid; min-width: 0; gap: 3px; }.identity strong { overflow: hidden; color: #17223b; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }.identity span { color: #7a8798; font-size: 11px; }
-button { border: 0; background: transparent; color: #1976d2; cursor: pointer; font: inherit; white-space: nowrap; }.card-content { min-height: 300px; flex: 1; }.card-state { display: grid; min-height: 300px; flex: 1; gap: 8px; place-content: center; text-align: center; }.error { color: #b42318; }
-.download-error { margin: 0; padding: 5px 12px; background: #fff2f0; color: #b42318; font-size: 11px; }
+button { border: 0; background: transparent; color: var(--color-primary); cursor: pointer; font: inherit; white-space: nowrap; }.card-content { min-height: 300px; flex: 1; }.card-state { display: grid; min-height: 300px; flex: 1; gap: 8px; place-content: center; text-align: center; }.error { color: var(--color-danger); }
+.download-error { margin: 0; padding: 5px 12px; background: #fff2f0; color: var(--color-danger); font-size: 11px; }
 </style>

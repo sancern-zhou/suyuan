@@ -64,13 +64,7 @@ backend:
     assistant: projects/jiangxi/prompts/knowledge_qa.md
     query: projects/jiangxi/prompts/query.md
   tools:
-    - query_jiangxi_noise_city
-    - query_jiangxi_noise_station_minute
-    - query_jiangxi_noise_station_hour
-    - query_jiangxi_noise_station_day
-    - query_jiangxi_noise_station_statistics
-    - query_jiangxi_noise_city_compliance
-    - query_jiangxi_noise_station_compliance
+    - get_jiangxi_noise_data
   fetchers_enabled: false
   agent_mode_tools:
     assistant:
@@ -91,13 +85,7 @@ backend:
       - grep
       - list_directory
       - search_files
-      - query_jiangxi_noise_city
-      - query_jiangxi_noise_station_minute
-      - query_jiangxi_noise_station_hour
-      - query_jiangxi_noise_station_day
-      - query_jiangxi_noise_station_statistics
-      - query_jiangxi_noise_city_compliance
-      - query_jiangxi_noise_station_compliance
+      - get_jiangxi_noise_data
     query:
       - list_session_resources
       - publish_session_file
@@ -110,13 +98,7 @@ backend:
       - create_report_chart
       - execute_echarts_python
       - execute_python
-      - query_jiangxi_noise_city
-      - query_jiangxi_noise_station_minute
-      - query_jiangxi_noise_station_hour
-      - query_jiangxi_noise_station_day
-      - query_jiangxi_noise_station_statistics
-      - query_jiangxi_noise_city_compliance
-      - query_jiangxi_noise_station_compliance
+      - get_jiangxi_noise_data
     report:
       - list_session_resources
       - publish_session_file
@@ -133,13 +115,7 @@ backend:
       - create_report_package
       - render_report_package
       - validate_report_package
-      - query_jiangxi_noise_city
-      - query_jiangxi_noise_station_minute
-      - query_jiangxi_noise_station_hour
-      - query_jiangxi_noise_station_day
-      - query_jiangxi_noise_station_statistics
-      - query_jiangxi_noise_city_compliance
-      - query_jiangxi_noise_station_compliance
+      - get_jiangxi_noise_data
     chart:
       - list_session_resources
       - publish_session_file
@@ -153,13 +129,7 @@ backend:
       - create_report_chart
       - execute_python
       - execute_echarts_python
-      - query_jiangxi_noise_city
-      - query_jiangxi_noise_station_minute
-      - query_jiangxi_noise_station_hour
-      - query_jiangxi_noise_station_day
-      - query_jiangxi_noise_station_statistics
-      - query_jiangxi_noise_city_compliance
-      - query_jiangxi_noise_station_compliance
+      - get_jiangxi_noise_data
 knowledge:
   collections: []
 scheduled_tasks: []

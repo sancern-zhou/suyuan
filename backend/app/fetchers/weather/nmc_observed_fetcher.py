@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -20,6 +22,9 @@ logger = structlog.get_logger()
 
 NMC_WEATHER_URL = "https://www.nmc.cn/rest/weather"
 NMC_SENTINEL = 9999.0
+NMC_REQUEST_INTERVAL_SECONDS = 3.0
+NMC_RETRY_BACKOFF_SECONDS = 15.0
+NMC_MAX_ATTEMPTS = 2
 
 
 # Compatibility aliases. The shared target catalog is the single definition site.
@@ -97,7 +102,9 @@ class NMCObservedWeatherClient:
         response.raise_for_status()
         payload = response.json()
         if payload.get("code") != 0:
-            raise RuntimeError(f"NMC weather API returned non-success response: {payload.get('msg')}")
+            raise RuntimeError(
+                f"NMC weather API returned non-success response: {payload.get('msg')}"
+            )
         return payload
 
 
@@ -109,16 +116,53 @@ class NMCObservedWeatherFetcher(DataFetcher):
         client: NMCObservedWeatherClient | None = None,
         repo: WeatherRepository | None = None,
         stations: dict[str, NMCCityStation] | None = None,
+        request_interval_seconds: float = NMC_REQUEST_INTERVAL_SECONDS,
+        retry_backoff_seconds: float = NMC_RETRY_BACKOFF_SECONDS,
+        max_attempts: int = NMC_MAX_ATTEMPTS,
+        sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ):
         super().__init__(
             name="nmc_observed_weather_fetcher",
-            description="NMC hourly observed weather fetcher for Xuchang and Yuncheng",
+            description="Conservative NMC hourly observed weather fetcher for target cities",
             schedule="8 * * * *",
-            version="1.0.0",
+            version="1.1.0",
         )
         self.client = client or NMCObservedWeatherClient()
         self.repo = repo or WeatherRepository()
         self.stations = stations or NMC_CITY_STATIONS
+        self.request_interval_seconds = max(0.0, request_interval_seconds)
+        self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
+        self.max_attempts = max(1, max_attempts)
+        self.sleeper = sleeper
+
+    @staticmethod
+    def _is_platform_limit_error(exc: Exception) -> bool:
+        return (
+            isinstance(exc, requests.HTTPError)
+            and exc.response is not None
+            and exc.response.status_code in {403, 429}
+        )
+
+    async def _fetch_station_weather(self, station: NMCCityStation) -> dict[str, Any]:
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                return self.client.fetch_weather(station.station_id)
+            except Exception as exc:
+                if self._is_platform_limit_error(exc) or attempt == self.max_attempts:
+                    raise
+
+                delay = self.retry_backoff_seconds * (2 ** (attempt - 1))
+                logger.warning(
+                    "nmc_observed_city_fetch_retry",
+                    station_id=station.station_id,
+                    city=station.station_name,
+                    attempt=attempt,
+                    retry_in_seconds=delay,
+                    error=str(exc),
+                )
+                await self.sleeper(delay)
+
+        raise RuntimeError("NMC observed weather retry loop ended unexpectedly")
 
     async def fetch_and_store(self) -> dict[str, int]:
         result = {
@@ -128,11 +172,17 @@ class NMCObservedWeatherFetcher(DataFetcher):
             "skipped": 0,
             "failed_rows": 0,
             "failed_cities": 0,
+            "deferred_cities": 0,
+            "rate_limited": 0,
         }
 
-        for station in self.stations.values():
+        stations = list(self.stations.values())
+        for index, station in enumerate(stations):
+            if index:
+                await self.sleeper(self.request_interval_seconds)
+
             try:
-                payload = self.client.fetch_weather(station.station_id)
+                payload = await self._fetch_station_weather(station)
                 rows = payload.get("data", {}).get("passedchart") or []
                 result["fetched_rows"] += len(rows)
             except Exception as exc:
@@ -143,6 +193,15 @@ class NMCObservedWeatherFetcher(DataFetcher):
                     city=station.station_name,
                     error=str(exc),
                 )
+                if self._is_platform_limit_error(exc):
+                    result["rate_limited"] = 1
+                    result["deferred_cities"] = len(stations) - index - 1
+                    logger.warning(
+                        "nmc_observed_fetch_deferred_after_platform_limit",
+                        station_id=station.station_id,
+                        deferred_cities=result["deferred_cities"],
+                    )
+                    break
                 continue
 
             for row in rows:
@@ -177,7 +236,7 @@ class NMCObservedWeatherFetcher(DataFetcher):
                 else:
                     result["failed_rows"] += 1
 
-        if result["failed_cities"] == len(self.stations):
+        if result["failed_cities"] == len(self.stations) and not result["rate_limited"]:
             raise RuntimeError("All NMC observed weather city fetches failed")
 
         logger.info("nmc_observed_weather_fetch_complete", **result)

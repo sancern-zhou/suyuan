@@ -11,17 +11,20 @@ ReAct Agent - 主类
 5. 上下文管理：自动压缩、外部化、RAG增强
 """
 
-from typing import Dict, Any, AsyncGenerator, Optional, Tuple, List
+from typing import TYPE_CHECKING, Dict, Any, AsyncGenerator, Optional, Tuple, List
 from datetime import datetime, timedelta
 import uuid
 import structlog
 import asyncio
+import hashlib
+import json
 
 from .memory.hybrid_manager import HybridMemoryManager
 from .core.loop import ReActLoop
 from .core.planner import ReActPlanner
 from .core.executor import ToolExecutor
 from .runtime.mode_capabilities import supports_native_multimodal
+from .runtime.session_advisory_lock import serialize_agent_session
 from .resources.runtime import (
     event_turn_sequence,
     persist_tool_result_resources,
@@ -35,9 +38,81 @@ from .selection_context import (
     resource_refs_to_runtime_attachments,
 )
 
+if TYPE_CHECKING:
+    from .memory.unified_memory_manager import UnifiedMemoryManager
+
 logger = structlog.get_logger()
 
-SOCIAL_MEMORY_MODES = {"social", "enforcement_exam"}
+PERSONAL_MEMORY_MODES = {"assistant", "enforcement_exam"}
+HUMAN_FEEDBACK_DETAILS_MARKER = "本次反馈明细（请据此总结经验）："
+MEMORY_CONSOLIDATION_BATCH_SIZE = 10
+MEMORY_CONSOLIDATION_TRIGGER_COUNT = 50
+MEMORY_TOOL_NAMES = {"remember_fact", "replace_memory", "remove_memory"}
+
+
+def _memory_message_hash(message: Dict[str, Any]) -> str:
+    payload = json.dumps(message, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _is_human_feedback_resume(user_query: str) -> bool:
+    """Identify the generic UI handoff that should trigger immediate Agent consolidation."""
+
+    return str(user_query or "").lstrip().startswith("【人工反馈续跑】")
+
+
+def _human_feedback_learning_mode(user_query: str, fallback: str) -> str:
+    """Return the producer mode selected for Agent-driven feedback learning."""
+
+    text = str(user_query or "")
+    if not _is_human_feedback_resume(text):
+        return fallback
+    marker_index = text.find(HUMAN_FEEDBACK_DETAILS_MARKER)
+    if marker_index < 0:
+        return fallback
+    payload_text = text[marker_index + len(HUMAN_FEEDBACK_DETAILS_MARKER):].lstrip()
+    try:
+        payload, _end = json.JSONDecoder().raw_decode(payload_text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return fallback
+    learning_mode = payload.get("learning_mode") if isinstance(payload, dict) else None
+    if not isinstance(learning_mode, str) or not learning_mode.strip():
+        return fallback
+    learning_mode = learning_mode.strip()
+    if learning_mode in PERSONAL_MEMORY_MODES or learning_mode == "memory_consolidator":
+        return fallback
+    try:
+        from app.agent.prompts.tool_registry import get_tools_by_mode
+
+        get_tools_by_mode(learning_mode)
+    except (ImportError, ValueError):
+        return fallback
+    return learning_mode
+
+
+def _contains_explicit_memory_signal(messages: List[Dict[str, Any]]) -> bool:
+    """Detect successful or attempted direct memory operations in recent turns."""
+    for message in reversed(messages[-20:]):
+        if not isinstance(message, dict):
+            continue
+        names = set()
+        for key in ("name", "tool_name"):
+            value = message.get(key)
+            if isinstance(value, str):
+                names.add(value)
+        tool_calls = message.get("tool_calls") or message.get("content")
+        if isinstance(tool_calls, list):
+            for item in tool_calls:
+                if not isinstance(item, dict):
+                    continue
+                function = item.get("function")
+                if isinstance(function, dict):
+                    names.add(function.get("name"))
+                names.add(item.get("name"))
+                names.add(item.get("tool_name"))
+        if names & MEMORY_TOOL_NAMES:
+            return True
+    return False
 
 
 class ReActAgent:
@@ -170,30 +245,54 @@ class ReActAgent:
         user_identifier: str = "global",
     ) -> None:
         """Set memory tool context without clobbering a consolidator target mode."""
-        from app.tools.social.remember_fact.tool import RememberFactTool
-        from app.tools.social.replace_memory.tool import ReplaceMemoryTool
-        from app.tools.social.remove_memory.tool import RemoveMemoryTool
+        from app.tools.social.remember_fact.tool import (
+            RememberFactTool,
+            _memory_context as _remember_fact_context,
+        )
+        from app.tools.social.replace_memory.tool import (
+            ReplaceMemoryTool,
+            _memory_context as _replace_memory_context,
+        )
+        from app.tools.social.remove_memory.tool import (
+            RemoveMemoryTool,
+            _memory_context as _remove_memory_context,
+        )
+        from app.tools.utility.agent_case_library_tool import AgentCaseLibraryTool
 
+        # Only task-local contexts may identify a consolidator's target.
         current_modes = {
-            RememberFactTool._current_mode,
-            ReplaceMemoryTool._current_mode,
-            RemoveMemoryTool._current_mode,
+            context.get()[0]
+            for context in (
+                _remember_fact_context,
+                _replace_memory_context,
+                _remove_memory_context,
+            )
         }
         has_existing_target_mode = any(
             mode and mode != "memory_consolidator"
             for mode in current_modes
         )
-        if manual_mode == "memory_consolidator" and has_existing_target_mode:
-            logger.debug(
-                "memory_consolidator_preserved_target_memory_context",
+        if manual_mode == "memory_consolidator":
+            if has_existing_target_mode:
+                logger.debug(
+                    "memory_consolidator_preserved_target_memory_context",
+                    memory_tool_mode=memory_tool_mode,
+                    existing_modes=sorted(mode for mode in current_modes if mode),
+                )
+                return
+            # 找不到任何目标模式时不落笔 memory_consolidator：调用方
+            # （_background_memory_consolidation）本应先行设置目标模式，
+            # 缺失说明时序异常，保持上下文原样并告警，工具侧另有拒绝兜底。
+            logger.warning(
+                "memory_consolidator_missing_target_memory_context",
                 memory_tool_mode=memory_tool_mode,
-                existing_modes=list(current_modes),
             )
             return
 
         RememberFactTool.set_memory_context(memory_tool_mode, user_identifier)
         ReplaceMemoryTool.set_memory_context(memory_tool_mode, user_identifier)
         RemoveMemoryTool.set_memory_context(memory_tool_mode, user_identifier)
+        AgentCaseLibraryTool.set_case_context(memory_tool_mode)
         logger.debug(
             "mode_memory_tool_context_set",
             mode=manual_mode,
@@ -234,6 +333,10 @@ class ReActAgent:
         # ✅ 改用细粒度锁（按 session_id 分组），不同 session 可以并发
         self._session_locks: Dict[str, asyncio.Lock] = {}
         self._global_lock = asyncio.Lock()  # 用于保护 _session_locks 字典本身
+        self._memory_consolidation_locks: Dict[str, asyncio.Lock] = {}
+        self._memory_consolidation_tasks: Dict[str, asyncio.Task] = {}
+        self._memory_consolidation_pending: Dict[str, Dict[tuple[str, str], bool]] = {}
+        self._memory_consolidation_state_lock = asyncio.Lock()
 
         # ✅ 新增：记忆管理器
         self.enable_memory = enable_memory
@@ -281,6 +384,7 @@ class ReActAgent:
         # 现在使用任务清单驱动的流程（Agent 读取 md 模板 + Task 工具）
         pass
 
+    @serialize_agent_session
     async def analyze(
         self,
         user_query: str,
@@ -298,18 +402,20 @@ class ReActAgent:
         fixed_policy_context: Optional[str] = None,
         selected_resource_refs: Optional[List[StoredResource]] = None,
         user_identifier: Optional[str] = None,  # ✅ 新增：用户标识（可选）
-        social_memory_store: Optional[Any] = None,  # ✅ 新增：社交模式外部传入的memory_store（用户隔离）
-        social_user_preferences: Optional[dict] = None,  # ✅ 新增：社交模式用户偏好（仅social模式使用）
-        social_soul_file_path: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 文件路径
-        social_user_file_path: Optional[str] = None,  # ✅ 新增：社交模式 USER.md 文件路径
-        social_heartbeat_file_path: Optional[str] = None,  # ✅ 新增：社交模式 HEARTBEAT.md 文件路径
-        social_soul_context: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 内容（助理灵魂档案，仅social模式使用）
-        social_user_context: Optional[str] = None,  # ✅ 新增：社交模式用户上下文（USER.md内容，仅social模式使用）
+        assistant_memory_store: Optional[Any] = None,  # ✅ 新增：社交模式外部传入的memory_store（用户隔离）
+        assistant_user_preferences: Optional[dict] = None,  # ✅ 新增：社交模式用户偏好（仅助手模式使用）
+        assistant_soul_file_path: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 文件路径
+        assistant_user_file_path: Optional[str] = None,  # ✅ 新增：社交模式 USER.md 文件路径
+        assistant_heartbeat_file_path: Optional[str] = None,  # ✅ 新增：社交模式 HEARTBEAT.md 文件路径
+        assistant_soul_context: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 内容（助理灵魂档案，仅助手模式使用）
+        assistant_user_context: Optional[str] = None,  # ✅ 新增：社交模式用户上下文（USER.md内容，仅助手模式使用）
         board_context: Optional[Dict[str, Any]] = None,  # 画板模式 draw.io 上下文
         map_context: Optional[Dict[str, Any]] = None,  # 问数模式地图交互上下文
         skip_auto_followup: bool = False,  # 自动复核轮显式跳过再次触发
         cancel_event: Optional[Any] = None,
         session_storage_mode: Optional[str] = None,
+        extra_tool_names: Optional[List[str]] = None,
+        runtime_metadata: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         分析用户查询（主入口）
@@ -327,12 +433,13 @@ class ReActAgent:
             manual_mode: 双模式架构（assistant | expert，None则使用默认expert模式）
             attachments: 附件列表 [{file_id, name, type, url}]
             user_identifier: 用户标识（用于跨会话记忆，可选）
-            social_memory_store: 社交模式外部传入的memory_store（已含用户隔离），避免社交模式走UnifiedMemoryManager的共享路径
-            social_user_preferences: 社交模式用户偏好配置（仅social模式使用，用于动态提示词）
-            social_soul_file_path: 社交模式 soul.md 文件路径（仅social模式使用）
-            social_user_file_path: 社交模式 USER.md 文件路径（仅social模式使用）
-            social_soul_context: 社交模式 soul.md 内容（助理灵魂档案，仅social模式使用）
-            social_user_context: 社交模式用户上下文内容（USER.md，仅social模式使用，包含用户档案信息）
+            assistant_memory_store: 社交模式外部传入的memory_store（已含用户隔离），避免社交模式走UnifiedMemoryManager的共享路径
+            assistant_user_preferences: 社交模式用户偏好配置（仅助手模式使用，用于动态提示词）
+            assistant_soul_file_path: 社交模式 soul.md 文件路径（仅助手模式使用）
+            assistant_user_file_path: 社交模式 USER.md 文件路径（仅助手模式使用）
+            assistant_soul_context: 社交模式 soul.md 内容（助理灵魂档案，仅助手模式使用）
+            assistant_user_context: 社交模式用户上下文内容（USER.md，仅助手模式使用，包含用户档案信息）
+            extra_tool_names: 本次运行临时追加暴露的工具名，不修改模式默认工具白名单
 
         Yields:
             流式事件：
@@ -347,9 +454,12 @@ class ReActAgent:
         memory_snapshot_created = False
         active_run_id = None
 
-        # ✅ 社交模式：使用外部传入的social_memory_store（用户隔离），不走UnifiedMemoryManager
-        if self.enable_memory and manual_mode in SOCIAL_MEMORY_MODES and social_memory_store is not None:
-            memory_store = social_memory_store
+        if self.enable_memory and manual_mode in PERSONAL_MEMORY_MODES and assistant_memory_store is None:
+            raise ValueError("Assistant memory requires a user-scoped memory store")
+
+        # ✅ 社交模式：使用外部传入的assistant_memory_store（用户隔离），不走UnifiedMemoryManager
+        if self.enable_memory and manual_mode in PERSONAL_MEMORY_MODES and assistant_memory_store is not None:
+            memory_store = assistant_memory_store
             try:
                 memory_store.create_snapshot()
                 memory_snapshot_created = True
@@ -358,19 +468,19 @@ class ReActAgent:
 
             # 社交模式：完整注入用户隔离 MEMORY.md，并单独追加 daily notes 历史会话召回。
             try:
-                from .memory.active_memory_retriever import build_social_memory_context
+                from .memory.active_memory_retriever import build_memory_context
 
-                memory_context = build_social_memory_context(
-                    memory_store=social_memory_store,
+                memory_context = build_memory_context(
+                    memory_store=assistant_memory_store,
                     query=user_query,
                     recent_messages=initial_messages or []
                 )
             except ModuleNotFoundError as e:
                 logger.warning("active_memory_retriever_missing_fallback", error=str(e))
-                memory_context = social_memory_store.get_memory_context()
+                memory_context = assistant_memory_store.get_memory_context()
             unified_user_id = None  # 社交模式不走通用记忆整合
 
-        elif self.enable_memory and manual_mode:
+        elif self.enable_memory and manual_mode and manual_mode not in PERSONAL_MEMORY_MODES:
             # 非社交模式不按用户隔离；统一使用模式级共享记忆。
             unified_user_id = "global"
             memory_mode = manual_mode or "expert"
@@ -383,7 +493,10 @@ class ReActAgent:
                     user_id=unified_user_id,
                     mode=memory_mode
                 )
-                memory_context = memory_store.get_memory_context()  # 从快照获取记忆
+                memory_store.create_snapshot()
+                memory_snapshot_created = True
+                from .memory.active_memory_retriever import build_memory_context
+                memory_context = build_memory_context(memory_store, user_query)
 
         # ✅ 统一：记录记忆注入日志
         if memory_context:
@@ -458,14 +571,35 @@ class ReActAgent:
             task_list=run_task_list,
             llm_planner=run_planner,
         )
+        if manual_mode in {"assistant", "office"}:
+            from app.agent.prompts.tool_registry import get_tools_by_mode
+
+            allowed = set(get_tools_by_mode(manual_mode)) | {"submit_result"}
+            if manual_mode == "assistant":
+                # Child executors receive their own policy-filtered registry;
+                # the coordinator itself cannot execute those tools.
+                run_executor.delegation_tool_registry = dict(run_executor.tool_registry)
+            run_executor.tool_registry = {
+                name: tool for name, tool in run_executor.tool_registry.items()
+                if name in allowed
+            }
+            extra_tool_names = [name for name in (extra_tool_names or []) if name in allowed]
         run_executor.runtime_mode = manual_mode or "expert"
+        run_executor.session_storage_mode = session_storage_mode or manual_mode
         run_executor.user_identifier = user_identifier
+        run_executor.assistant_memory_store = memory_store if manual_mode == "assistant" else None
+        run_executor.assistant_profile_path = assistant_user_file_path if manual_mode == "assistant" else None
+        run_executor.runtime_metadata = dict(runtime_metadata or {})
         latest_resource_version: int | None = None
         resource_failures: list[dict[str, Any]] = []
         published_resource_ids: list[str] = []
+        published_resource_group_ids: set[str] = set()
+        consolidation_message_start = (
+            len(memory_manager.session.get_messages_for_llm()) if memory_manager else 0
+        )
 
         # ✅ 创建记忆快照
-        # 社交模式：使用外部传入的 social_memory_store
+        # 社交模式：使用外部传入的 assistant_memory_store
         # 其他模式：通过 UnifiedMemoryManager 获取
         if self.enable_memory and memory_store and not memory_snapshot_created:
             try:
@@ -509,6 +643,7 @@ class ReActAgent:
                 cancel_event=cancel_event,
                 attachments=runtime_attachments if supports_native_multimodal(manual_mode) else None,
                 auto_profile=auto_profile,
+                extra_tool_names=list(dict.fromkeys(extra_tool_names or [])),
             )
 
             run_executor.configure_resource_tracking(
@@ -591,6 +726,17 @@ class ReActAgent:
                     current_request_image_count=len(effective_board_context["current_request_images"]),
                 )
 
+            # 客户端来源标记（web/app）：随 runtime_metadata 透传，包括子Agent，
+            # 上下文构建器据此渲染 <client_channel>，供模式提示词做端侧差异分支。
+            react_loop.context_builder.client_channel = str(
+                (runtime_metadata or {}).get("client_channel") or ""
+            ).strip().lower() or None
+            react_loop.context_builder.session_storage_mode = session_storage_mode or manual_mode
+            react_loop.context_builder.authenticated_account = (
+                (runtime_metadata or {}).get("authenticated_account")
+                if manual_mode == "assistant" else None
+            )
+
             if manual_mode in {"query", "graph"} and map_context:
                 react_loop.context_builder.map_context = map_context
                 map_events = map_context.get("events") or []
@@ -612,15 +758,15 @@ class ReActAgent:
                     mode=manual_mode
                 )
 
-            # ✅ 设置社交上下文到上下文构建器（仅social模式使用）
+            # ✅ 设置社交上下文到上下文构建器（仅助手模式使用）
             # 同时设置记忆工具的用户上下文（确保 remember_fact 等工具写入正确的用户隔离路径）
-            if manual_mode in SOCIAL_MEMORY_MODES:
-                react_loop.context_builder.user_preferences = social_user_preferences
-                react_loop.context_builder.soul_file_path = social_soul_file_path  # ✅ 传递 soul.md 文件路径
-                react_loop.context_builder.user_file_path = social_user_file_path  # ✅ 传递 USER.md 文件路径
-                react_loop.context_builder.heartbeat_file_path = social_heartbeat_file_path  # ✅ 传递 HEARTBEAT.md 文件路径
-                react_loop.context_builder.soul_context = social_soul_context  # ✅ 传递 soul.md 内容
-                react_loop.context_builder.user_context = social_user_context  # ✅ 传递用户上下文（USER.md）
+            if manual_mode in PERSONAL_MEMORY_MODES:
+                react_loop.context_builder.user_preferences = assistant_user_preferences
+                react_loop.context_builder.soul_file_path = assistant_soul_file_path  # ✅ 传递 soul.md 文件路径
+                react_loop.context_builder.user_file_path = assistant_user_file_path  # ✅ 传递 USER.md 文件路径
+                react_loop.context_builder.heartbeat_file_path = assistant_heartbeat_file_path  # ✅ 传递 HEARTBEAT.md 文件路径
+                react_loop.context_builder.soul_context = assistant_soul_context  # ✅ 传递 soul.md 内容
+                react_loop.context_builder.user_context = assistant_user_context  # ✅ 传递用户上下文（USER.md）
 
                 # ✅ 设置记忆工具的用户上下文（确保写入正确的用户隔离路径）
                 from app.tools.social.remember_fact.tool import RememberFactTool
@@ -628,9 +774,9 @@ class ReActAgent:
                 from app.tools.social.remove_memory.tool import RemoveMemoryTool
                 social_user_id = user_identifier  # social_user_id 即 user_identifier
                 if social_user_id:
-                    RememberFactTool.set_memory_context("social", social_user_id)
-                    ReplaceMemoryTool.set_memory_context("social", social_user_id)
-                    RemoveMemoryTool.set_memory_context("social", social_user_id)
+                    RememberFactTool.set_memory_context("assistant", social_user_id)
+                    ReplaceMemoryTool.set_memory_context("assistant", social_user_id)
+                    RemoveMemoryTool.set_memory_context("assistant", social_user_id)
                 else:
                     RememberFactTool.clear_memory_context()
                     ReplaceMemoryTool.clear_memory_context()
@@ -645,9 +791,9 @@ class ReActAgent:
                     memory_file_path=react_loop.context_builder.memory_file_path,
                     soul_file_path=react_loop.context_builder.soul_file_path,  # ✅ 新增日志
                     user_file_path=react_loop.context_builder.user_file_path,  # ✅ 新增日志
-                    has_user_preferences=social_user_preferences is not None,
-                    has_soul_context=social_soul_context is not None,  # ✅ 新增日志
-                    has_user_context=social_user_context is not None,  # ✅ 新增日志
+                    has_user_preferences=assistant_user_preferences is not None,
+                    has_soul_context=assistant_soul_context is not None,  # ✅ 新增日志
+                    has_user_context=assistant_user_context is not None,  # ✅ 新增日志
                     social_user_id=social_user_id
                 )
             elif manual_mode:
@@ -697,6 +843,7 @@ class ReActAgent:
                                     published_resource_ids.extend(
                                         publication.changed_resource_ids
                                     )
+                                    published_resource_group_ids.update(publication.changed_group_ids)
                                     pending_resource_event = publication.changed_event(
                                         actual_session_id, effective_run_id
                                     )
@@ -724,6 +871,10 @@ class ReActAgent:
 
                 if event.get("type") in {"complete", "incomplete", "interrupted", "fatal_error"}:
                     terminal_data = event.setdefault("data", {})
+                    if active_run_id:
+                        terminal_data.setdefault("run_id", str(active_run_id))
+                    terminal_data["resource_ids"] = list(dict.fromkeys(published_resource_ids))
+                    terminal_data["resource_group_ids"] = sorted(published_resource_group_ids)
                     if latest_resource_version is not None:
                         terminal_data["resource_version"] = latest_resource_version
                     if resource_failures:
@@ -838,16 +989,23 @@ class ReActAgent:
                     )
 
             # ✅ 后台记忆整合（新增，与上下文压缩完全分离）
-            # ⚠️ 社交模式的记忆整合由 agent_bridge.py 负责（使用用户隔离的 social_memory_store），
+            # ⚠️ 社交模式的记忆整合由 agent_bridge.py 负责（使用用户隔离的 assistant_memory_store），
             #    此处只为非社交模式触发整合
-            if unified_user_id and manual_mode and manual_mode not in SOCIAL_MEMORY_MODES:
+            if unified_user_id and manual_mode and manual_mode not in PERSONAL_MEMORY_MODES:
                 try:
-                    asyncio.create_task(
-                        self._background_memory_consolidation(
-                            actual_session_id,
-                            unified_user_id,
-                            manual_mode
-                        )
+                    learning_mode = _human_feedback_learning_mode(user_query, manual_mode)
+                    current_messages = memory_manager.session.get_messages_for_llm() if memory_manager else []
+                    explicit_memory_signal = _contains_explicit_memory_signal(
+                        current_messages[consolidation_message_start:]
+                    )
+                    self._schedule_memory_consolidation(
+                        actual_session_id,
+                        unified_user_id,
+                        learning_mode,
+                        force=(
+                            _is_human_feedback_resume(user_query)
+                            or explicit_memory_signal
+                        ),
                     )
                 except Exception as e:
                     logger.warning(
@@ -856,7 +1014,7 @@ class ReActAgent:
                     )
 
             # ✅ 清理记忆快照
-            # 社交模式：使用外部传入的 social_memory_store
+            # 社交模式：使用外部传入的 assistant_memory_store
             # 其他模式：通过 UnifiedMemoryManager 获取
             if memory_store:
                 try:
@@ -870,9 +1028,11 @@ class ReActAgent:
                     from app.tools.social.remember_fact.tool import RememberFactTool
                     from app.tools.social.replace_memory.tool import ReplaceMemoryTool
                     from app.tools.social.remove_memory.tool import RemoveMemoryTool
+                    from app.tools.utility.agent_case_library_tool import AgentCaseLibraryTool
                     RememberFactTool.clear_memory_context()
                     ReplaceMemoryTool.clear_memory_context()
                     RemoveMemoryTool.clear_memory_context()
+                    AgentCaseLibraryTool.clear_case_context()
                 except Exception as e:
                     logger.warning("failed_to_clear_memory_tool_context", mode=manual_mode, error=str(e))
 
@@ -965,18 +1125,66 @@ class ReActAgent:
     # 记忆整合方法（统一记忆系统 - Agent模式）
     # ========================================================================
 
+    def _ensure_memory_consolidation_state(self) -> None:
+        if not hasattr(self, "_memory_consolidation_locks"):
+            self._memory_consolidation_locks = {}
+        if not hasattr(self, "_memory_consolidation_tasks"):
+            self._memory_consolidation_tasks = {}
+        if not hasattr(self, "_memory_consolidation_pending"):
+            self._memory_consolidation_pending = {}
+        if not hasattr(self, "_memory_consolidation_state_lock"):
+            self._memory_consolidation_state_lock = asyncio.Lock()
+
+    def _schedule_memory_consolidation(
+        self,
+        session_id: str,
+        unified_user_id: str,
+        mode: str,
+        *,
+        force: bool = False,
+    ) -> None:
+        """Coalesce background requests while preserving per-mode ordering."""
+        self._ensure_memory_consolidation_state()
+        pending = self._memory_consolidation_pending.setdefault(mode, {})
+        key = (session_id, unified_user_id)
+        pending[key] = pending.get(key, False) or force
+        task = self._memory_consolidation_tasks.get(mode)
+        if task is None or task.done():
+            self._memory_consolidation_tasks[mode] = asyncio.create_task(
+                self._drain_memory_consolidation_queue(mode)
+            )
+
+    async def _drain_memory_consolidation_queue(self, mode: str) -> None:
+        self._ensure_memory_consolidation_state()
+        while True:
+            async with self._memory_consolidation_state_lock:
+                pending = self._memory_consolidation_pending.get(mode, {})
+                if not pending:
+                    self._memory_consolidation_tasks.pop(mode, None)
+                    return
+                (session_id, unified_user_id), force = pending.popitem()
+            await self._background_memory_consolidation(
+                session_id, unified_user_id, mode, force=force
+            )
+
+    def _memory_consolidation_lock_for(self, mode: str) -> asyncio.Lock:
+        self._ensure_memory_consolidation_state()
+        return self._memory_consolidation_locks.setdefault(mode, asyncio.Lock())
+
     async def _background_memory_consolidation(
         self,
         session_id: str,
         unified_user_id: str,
-        mode: str
+        mode: str,
+        *,
+        force: bool = False,
     ) -> None:
         """
         后台记忆整合任务（不阻塞主对话）
 
         核心特性：
         - 异步执行，不阻塞主对话
-        - 只基于消息数量触发（与上下文压缩完全分离）
+        - 常规按消息数量触发，人工反馈续跑可请求即时整合
         - 使用Agent模式调用工具更新记忆
         - 快照隔离：后台更新不影响当前对话
 
@@ -989,6 +1197,7 @@ class ReActAgent:
         from app.tools.social.remember_fact.tool import RememberFactTool
         from app.tools.social.replace_memory.tool import ReplaceMemoryTool
         from app.tools.social.remove_memory.tool import RemoveMemoryTool
+        from app.tools.utility.agent_case_library_tool import AgentCaseLibraryTool
 
         try:
             # 1. 获取会话历史
@@ -1004,82 +1213,73 @@ class ReActAgent:
             if not messages:
                 return
 
-            # 2. 检查是否需要整合（只基于消息数量，不检查token）
-            offset = await self.memory_manager.get_consolidation_offset(unified_user_id)
-            new_message_count = len(messages) - offset
+            # 2. 常规按消息数量整合；人工反馈续跑需要立即交给整合 Agent，
+            #    由 LLM 决定哪些反馈值得沉淀，不在这里硬编码记忆或案例内容。
+            async with self._memory_consolidation_lock_for(mode):
+                cursor = await self.memory_manager.get_consolidation_cursor(mode, session_id)
+                offset = cursor["offset"]
+                if offset > len(messages) or (
+                    offset > 0 and _memory_message_hash(messages[offset - 1]) != cursor["boundary_hash"]
+                ):
+                    logger.info("memory_consolidation_history_changed", session_id=session_id, mode=mode)
+                    offset = 0
+                pending_count = len(messages) - offset
+                if not force and pending_count < MEMORY_CONSOLIDATION_TRIGGER_COUNT:
+                    return
+                if force and pending_count == 0:
+                    offset = max(0, len(messages) - MEMORY_CONSOLIDATION_BATCH_SIZE)
 
-            # ⚠️ 关键：只检查消息数量，与上下文压缩完全分离
-            should_consolidate = new_message_count >= 50
+                logger.info(
+                    "memory_consolidation_triggered",
+                    session_id=session_id,
+                    messages_to_consolidate=len(messages) - offset,
+                )
+                user_id = unified_user_id.split(':')[1] if ':' in unified_user_id else None
 
-            if not should_consolidate:
-                return
-
-            logger.info(
-                "memory_consolidation_triggered",
-                session_id=session_id,
-                messages_to_consolidate=new_message_count
-            )
-
-            # 3. 获取现有记忆内容和文件路径
-            memory_store = await self.memory_manager.get_user_memory(
-                user_id=unified_user_id,
-                mode=mode
-            )
-            existing_memory = memory_store.read_long_term() if memory_store.memory_file.exists() else ""
-            memory_file_path = str(memory_store.memory_file.resolve()) if memory_store.memory_file.exists() else ""
-
-            # 计算记忆文件字符数
-            current_size = len(existing_memory)
-            max_size = 3000  # 与工具中的限制一致
-            size_info = f"（{current_size}/{max_size}字符，使用率{current_size/max_size*100:.1f}%）"
-
-            # 4. 构建整合提示词（包含现有记忆、文件路径和字符限制）
-            consolidation_prompt = self._build_consolidation_prompt(
-                messages[offset:] if offset > 0 else messages,
-                mode,
-                existing_memory,
-                memory_file_path
-            )
-
-            # 5. 设置记忆上下文（供记忆工具使用）
-            # 解析unified_user_id获取模式信息
-            # unified_user_id格式：{mode}:{user_identifier}:{shared|unique}
-            user_id = unified_user_id.split(':')[1] if ':' in unified_user_id else None
-
-            # 设置记忆上下文（类变量）
-            RememberFactTool.set_memory_context(mode, user_id)
-            ReplaceMemoryTool.set_memory_context(mode, user_id)
-            RemoveMemoryTool.set_memory_context(mode, user_id)
-
-            # 6. 创建记忆整合Agent
-            from .memory_consolidator_factory import create_memory_consolidator_agent
-            consolidator_agent = create_memory_consolidator_agent()
-
-            # 7. 异步执行整合
-            async for event in consolidator_agent.analyze(
-                user_query=consolidation_prompt,
-                session_id=f"{session_id}_consolidation",
-                manual_mode="memory_consolidator"
-            ):
-                if event.get("type") == "complete":
-                    await self.memory_manager.set_consolidation_offset(
-                        unified_user_id,
-                        len(messages)
+                for start in range(offset, len(messages), MEMORY_CONSOLIDATION_BATCH_SIZE):
+                    RememberFactTool.set_memory_context(mode, user_id)
+                    ReplaceMemoryTool.set_memory_context(mode, user_id)
+                    RemoveMemoryTool.set_memory_context(mode, user_id)
+                    AgentCaseLibraryTool.set_case_context(mode)
+                    end = min(start + MEMORY_CONSOLIDATION_BATCH_SIZE, len(messages))
+                    batch = messages[start:end]
+                    memory_store = await self.memory_manager.get_user_memory(
+                        user_id=unified_user_id, mode=mode
+                    )
+                    existing_memory = (
+                        memory_store.read_long_term() if memory_store.memory_file.exists() else ""
+                    )
+                    prompt = self._build_consolidation_prompt(
+                        batch, mode, existing_memory,
+                        source_session_id=session_id, start_index=start,
+                    )
+                    from .memory_consolidator_factory import create_memory_consolidator_agent
+                    consolidator_agent = create_memory_consolidator_agent()
+                    completed = False
+                    async for event in consolidator_agent.analyze(
+                        user_query=prompt,
+                        session_id=f"{session_id}_consolidation_{start}_{end}",
+                        manual_mode="memory_consolidator",
+                    ):
+                        if event.get("type") == "complete":
+                            completed = True
+                            break
+                        if event.get("type") in {"error", "fatal_error"}:
+                            logger.warning(
+                                "background_memory_consolidation_failed",
+                                session_id=session_id, mode=mode, batch_start=start,
+                                error=event.get("data", {}).get("error"),
+                            )
+                            break
+                    if not completed:
+                        break
+                    await self.memory_manager.set_consolidation_cursor(
+                        mode, session_id, end, _memory_message_hash(messages[end - 1])
                     )
                     logger.info(
-                        "background_memory_consolidation_completed",
-                        session_id=session_id,
-                        mode=mode,
-                        messages_processed=new_message_count
+                        "background_memory_consolidation_batch_completed",
+                        session_id=session_id, mode=mode, batch_start=start, batch_end=end,
                     )
-                    break
-                elif event.get("type") == "error":
-                    logger.warning(
-                        "background_memory_consolidation_failed",
-                        session_id=session_id,
-                        error=event.get("data", {}).get("error")
-                    )
-                    break
 
         except Exception as e:
             logger.exception(
@@ -1089,11 +1289,11 @@ class ReActAgent:
                 error=str(e)
             )
         finally:
-            # 8. 清除记忆上下文（无论成功或失败）
             try:
                 RememberFactTool.clear_memory_context()
                 ReplaceMemoryTool.clear_memory_context()
                 RemoveMemoryTool.clear_memory_context()
+                AgentCaseLibraryTool.clear_case_context()
                 logger.debug("memory_context_cleared")
             except Exception as e:
                 logger.warning("failed_to_clear_memory_context", error=str(e))
@@ -1103,99 +1303,72 @@ class ReActAgent:
         messages: List[Dict[str, Any]],
         mode: str,
         existing_memory: str = "",
-        memory_file_path: str = ""
+        *,
+        source_session_id: str = "",
+        start_index: int = 0,
     ) -> str:
         """
         构建记忆整合提示词
 
+        两层记忆契约：常驻 MEMORY.md 由会话 Agent 维护，此处仅作只读判重背景；
+        整合器只写事实层 facts/*.md（带来源、适用条件与可选失效日期）。
+
         Args:
             messages: 消息列表
             mode: 模式标识
-            existing_memory: 现有记忆内容
-            memory_file_path: 记忆文件路径
+            existing_memory: 既有常驻记忆（MEMORY.md）内容，仅用于判重
+            source_session_id: 来源会话 ID
+            start_index: 本批消息在会话中的起始序号
 
         Returns:
             整合提示词
         """
-        conversation_text = "\n".join([
-            f"{msg.get('role', 'unknown')}: {msg.get('content', '')}"
-            for msg in messages[-10:]  # 只使用最近10条
-        ])
+        conversation_text = "\n".join(
+            f"[{start_index + index + 1}] {msg.get('role', 'unknown')}: {msg.get('content', '')}"
+            for index, msg in enumerate(messages)
+        )
 
-        # 计算记忆文件字符数
-        current_size = len(existing_memory) if existing_memory else 0
-        max_size = 3000  # 与工具中的限制一致
-        size_info = f"（{current_size}/{max_size}字符，使用率{current_size/max_size*100:.1f}%）"
-
-        # 构建提示词
         prompt_parts = [
-            "请分析以下对话内容，提取重要信息并更新长期记忆。",
+            "请分析以下对话内容，把值得长期保留的稳定事实写入事实层记忆（facts/*.md）。",
             "",
             "## 模式",
             mode,
             ""
         ]
 
-        # 添加现有记忆内容（如果有）
+        # 既有常驻记忆（只读背景，用于判重；整合器没有修改它的工具）
         if existing_memory and existing_memory.strip():
             prompt_parts.extend([
-                "## 现有记忆",
-                f"**当前记忆大小**：{size_info}",
+                "## 既有常驻记忆（MEMORY.md，只读背景）",
+                "以下是会话 Agent 维护的常驻记忆，仅用于判断候选是否与其重复：已被它覆盖的内容不要重复入库。",
                 "",
                 "```",
-                existing_memory,  # 完整记忆，不限制字符
+                existing_memory,
                 "```",
-                "",
-                "**⚠️ 重要限制**：",
-                f"- 记忆文件上限：{max_size}字符",
-                f"- 当前使用：{current_size}字符（{current_size/max_size*100:.1f}%）",
-                "- 当接近上限（>80%）时，优先使用 remove_memory 删除旧内容",
-                "- 当已满（100%）时，必须先删除才能添加新内容",
-                ""
-            ])
-        else:
-            # 空记忆文件
-            prompt_parts.extend([
-                "## 现有记忆",
-                "**当前记忆大小**：0/3000字符（0.0%）",
-                "",
-                "记忆文件为空，可以开始添加记忆。",
-                ""
-            ])
-
-        # 添加记忆文件路径
-        if memory_file_path:
-            prompt_parts.extend([
-                "## 记忆文件路径",
-                memory_file_path,
                 ""
             ])
 
         # 添加对话内容和任务
         prompt_parts.extend([
             "## 对话内容",
+            f"来源会话：{source_session_id}" if source_session_id else "",
             conversation_text,
             "",
             "**任务**：",
-            "1. 阅读现有记忆，了解已记住的内容",
-            "2. 分析对话内容，识别需要记住的新信息",
-            "3. 使用工具更新记忆：",
-            "   - remember_fact: 添加新记忆",
-            "   - replace_memory: 替换现有记忆",
-            "   - remove_memory: 删除过时记忆",
-            "4. 给出简洁总结（不超过50字）",
-            "",
-            "**⚠️ 记忆管理策略**（基于字符限制）：",
-            f"- 当记忆使用率 < 80%：可以正常添加新记忆",
-            f"- 当记忆使用率 >= 80%：优先删除临时、过时或低优先级的记忆",
-            f"- 当记忆使用率 = 100%：必须先删除才能添加（工具会返回错误）",
+            "1. 核对上方既有常驻记忆，了解已被覆盖的内容",
+            "2. 分析对话内容，识别稳定、可长期复用的新信息（时间敏感信息必须携带 valid_until）",
+            "3. 使用工具维护事实层：",
+            "   - remember_fact: 添加新事实（必须带 source_ref 与 applies_when）",
+            "   - replace_memory: 更新已过时或被修正的事实",
+            "   - remove_memory: 删除错误事实",
+            "4. 对包含 human_feedback 的对话，先检索当前模式案例库；如果反馈形成了可复用判断，使用 agent_case_library 记录案例，案例内容由你依据反馈总结，避免重复记录",
+            "5. 给出简洁总结（不超过50字）",
             "",
             "**注意事项**：",
-            "- 避免重复记忆（先检查现有记忆）",
-            "- 更新偏好设置时使用replace_memory",
-            "- 删除临时或错误记忆时使用remove_memory",
-            "- 优先保留高价值信息（用户偏好 > 领域知识 > 历史结论 > 环境信息）",
-            "- 记忆文件路径已在上方提供，工具会自动使用"
+            "- 避免重复入库：先核对既有常驻记忆，再核对事实层是否已有相似事实（有则用 replace_memory）",
+            "- 一次性的任务细节、临时数据、纯操作过程不要入库",
+            "- 优先保留高价值信息（用户偏好 > 领域知识 > 模式方法论 > 环境信息）",
+            ""
         ])
 
         return "\n".join(prompt_parts)
@@ -1323,6 +1496,11 @@ class ReActAgent:
                         # ✅ 立即加载历史消息到 memory_manager.session
                         if saved_session.conversation_history:
                             memory_manager.session.load_history_messages(saved_session.conversation_history)
+                            from app.tools.utility.file_read_state import restore_read_state_from_history
+
+                            restored_read_states = restore_read_state_from_history(
+                                saved_session.conversation_history
+                            )
                             if isinstance(saved_session.metadata, dict):
                                 source_until_sequence = saved_session.metadata.get("llm_source_until_sequence")
                                 if isinstance(source_until_sequence, int):
@@ -1331,6 +1509,7 @@ class ReActAgent:
                                 "react_session_history_loaded",
                                 session_id=session_id,
                                 message_count=len(saved_session.conversation_history),
+                                restored_read_states=restored_read_states,
                                 llm_source_until_sequence=getattr(
                                     memory_manager.session,
                                     "llm_source_until_sequence",
@@ -1393,9 +1572,14 @@ class ReActAgent:
             return
 
         expire_before = datetime.utcnow() - self._session_ttl
+        # Some terminal/error paths may leave a metadata-only entry behind.
+        # Treat entries without a timestamp as stale instead of allowing a
+        # cache cleanup to abort the next request with KeyError.
         expired_ids = [
             sid for sid, meta in self._session_store.items()
-            if meta["last_used"] < expire_before
+            if not isinstance(meta, dict)
+            or not isinstance(meta.get("last_used"), datetime)
+            or meta["last_used"] < expire_before
         ]
 
         for sid in expired_ids:

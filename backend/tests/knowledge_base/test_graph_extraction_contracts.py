@@ -10,7 +10,6 @@ from app.knowledge_base.graph_extraction.providers.base import (
 )
 from app.knowledge_base.graph_extraction.provider_factory import (
     create_extractor_provider,
-    create_parser_provider,
 )
 
 
@@ -46,8 +45,3 @@ def test_legacy_query_and_view_are_not_part_of_new_contract():
 def test_graph_extraction_factory_builds_local_provider():
     provider = create_extractor_provider("local")
     assert provider.provider_name == "local_rule_based"
-
-
-def test_graph_extraction_factory_builds_text_parser():
-    parser = create_parser_provider("text")
-    assert parser.__class__.__name__ == "TextParserProvider"

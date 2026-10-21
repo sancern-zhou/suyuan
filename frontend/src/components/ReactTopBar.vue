@@ -20,7 +20,7 @@ defineProps({
 .react-topbar {
   height: 60px;
   background: white;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-1);
   display: flex;
   justify-content: space-between;
   align-items: center;

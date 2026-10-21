@@ -1,5 +1,6 @@
 """Social platform management API routes."""
 
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
@@ -100,7 +101,26 @@ async def list_social_users() -> List[SocialUserRecord]:
     """List social users."""
     try:
         registry = get_social_user_registry()
-        return await registry.list_users()
+        users = await registry.list_users()
+        from app.social.app_identity import _accounts
+        now = datetime.now().isoformat()
+        existing_ids = {user.social_user_id for user in users}
+        for account_id, account in _accounts().items():
+            social_user_id = f"app:android:{account_id}"
+            if social_user_id in existing_ids or str(account.get("status", "active")).lower() != "active":
+                continue
+            users.append(SocialUserRecord(
+                id=f"app-account-{account_id}",
+                name=str(account.get("name") or account_id),
+                status="active",
+                social_user_id=social_user_id,
+                channel="app",
+                bot_account="android",
+                sender_id=account_id,
+                created_at=now,
+                updated_at=now,
+            ))
+        return users
     except Exception as e:
         logger.error("failed_to_list_social_users", error=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -165,7 +185,7 @@ async def get_social_status(
         # Count active sessions
         active_sessions = 0
         if session_mapper:
-            active_sessions = len(session_mapper._mappings)
+            active_sessions = await session_mapper.count_active()
 
         # Check if any platform is enabled
         enabled = any(
@@ -226,21 +246,12 @@ async def list_sessions(
         if not session_mapper:
             return []
 
-        # Get active sessions from mapper
-        sessions = []
-        for social_user_id, session_id in session_mapper._mappings.items():
-            if len(sessions) >= limit:
-                break
+        rows = await session_mapper.list_active(limit)
+        return [SessionInfo(
+            social_user_id=row["social_user_id"], session_id=row["session_id"],
+            last_used=row["last_used"].isoformat(),
+        ) for row in rows]
 
-            last_used = session_mapper._timestamp_cache.get(social_user_id)
-            if last_used:
-                sessions.append(SessionInfo(
-                    social_user_id=social_user_id,
-                    session_id=session_id,
-                    last_used=last_used.isoformat()
-                ))
-
-        return sessions
     except Exception as e:
         logger.error("Failed to list sessions", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
@@ -424,25 +435,10 @@ async def get_weixin_qrcode(
         if not weixin_channel:
             raise HTTPException(status_code=404, detail="WeChat channel not enabled")
 
-        # Get QR code path from channel
+        # Get QR code path from channel; 未就绪时如实返回 404，不生成占位二维码。
         qr_path = getattr(weixin_channel, "_current_qr_code_path", None)
         if not qr_path or not qr_path.exists():
-            # Try to trigger QR code generation
-            from fastapi.responses import Response
-            import qrcode
-            from io import BytesIO
-
-            # Generate a placeholder QR code
-            qr = qrcode.QRCode(version=1, box_size=10, border=4)
-            qr.add_data("https://github.com")
-            qr.make(fit=True)
-
-            img = qr.make_image(fill_color="black", back_color="white")
-            buffer = BytesIO()
-            img.save(buffer, format="PNG")
-            buffer.seek(0)
-
-            return Response(content=buffer.getvalue(), media_type="image/png")
+            raise HTTPException(status_code=404, detail="WeChat login QR code is not available yet")
 
         # Return QR code image
         from fastapi.responses import FileResponse

@@ -1,21 +1,9 @@
-"""Jiangxi noise query tools."""
+"""
+江西省噪声数据查询工具
 
-from .tool import (
-    QueryJiangxiNoiseCityComplianceTool,
-    QueryJiangxiNoiseCityTool,
-    QueryJiangxiNoiseStationComplianceTool,
-    QueryJiangxiNoiseStationDayTool,
-    QueryJiangxiNoiseStationHourTool,
-    QueryJiangxiNoiseStationMinuteTool,
-    QueryJiangxiNoiseStationStatisticsTool,
-)
+提供对江西省噪声监测平台数据的访问，支持按城市或站点查询噪声数据
+"""
 
-__all__ = [
-    "QueryJiangxiNoiseCityTool",
-    "QueryJiangxiNoiseCityComplianceTool",
-    "QueryJiangxiNoiseStationMinuteTool",
-    "QueryJiangxiNoiseStationHourTool",
-    "QueryJiangxiNoiseStationDayTool",
-    "QueryJiangxiNoiseStationStatisticsTool",
-    "QueryJiangxiNoiseStationComplianceTool",
-]
+from .tool import GetJiangxiNoiseDataTool
+
+__all__ = ["GetJiangxiNoiseDataTool"]

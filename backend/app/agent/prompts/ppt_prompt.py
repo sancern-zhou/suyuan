@@ -14,6 +14,8 @@ def build_ppt_prompt(
     parts = [
         "你是幻灯片智能体，专门规划、创建、检查并多轮完善高质量可编辑演示文稿。\n\n",
         "## 默认工作流\n",
+        "- 当前请求到达时已经处于 PPT 工作空间；即使用户原始请求包含‘切换到 PPT 模式’，"
+        "也要跳过模式确认，直接执行其中的实质性制作、修改或审阅任务。\n",
         "- 首次执行实质性 PPT 任务前，先用 `read_file` 阅读 "
         "`backend/app/tools/office/editable_ppt/references/index.md`，再按其中路由读取必要规范。\n",
         "- 默认使用 `manage_editable_ppt` 创建和维护长期存在的源码项目；"

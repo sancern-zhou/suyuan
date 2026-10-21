@@ -110,6 +110,27 @@ class ExecutionStorage:
 
         return result[:limit]
 
+    def list_by_task_page(
+        self,
+        task_id: str,
+        page: int = 1,
+        page_size: int = 10,
+        status: Optional[ExecutionStatus] = None,
+    ) -> tuple[List[TaskExecution], int]:
+        """List one page of task executions and return the filtered total."""
+        executions = [
+            item
+            for item in self._read_executions()
+            if item["task_id"] == task_id
+            and (not status or item.get("status") == status.value)
+        ]
+        executions.sort(key=lambda item: item.get("started_at", ""), reverse=True)
+
+        total = len(executions)
+        start = (page - 1) * page_size
+        page_items = executions[start:start + page_size]
+        return [TaskExecution(**item) for item in page_items], total
+
     def list_recent(
         self,
         limit: int = 20,
@@ -129,6 +150,25 @@ class ExecutionStorage:
         result.sort(key=lambda x: x.started_at, reverse=True)
 
         return result[:limit]
+
+    def list_recent_page(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        status: Optional[ExecutionStatus] = None,
+    ) -> tuple[List[TaskExecution], int]:
+        """List one page of recent executions and return the filtered total."""
+        executions = [
+            item
+            for item in self._read_executions()
+            if not status or item.get("status") == status.value
+        ]
+        executions.sort(key=lambda item: item.get("started_at", ""), reverse=True)
+
+        total = len(executions)
+        start = (page - 1) * page_size
+        page_items = executions[start:start + page_size]
+        return [TaskExecution(**item) for item in page_items], total
 
     def get_running_executions(self) -> List[TaskExecution]:
         """获取所有运行中的执行"""

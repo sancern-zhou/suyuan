@@ -36,6 +36,8 @@ data/
 *.png
 *.jpg
 *.jpeg
+# 前端源码资产不属临时文件，显式放行（打包进 bundle 的二维码等）
+!frontend/src/assets/*.png
 *.html
 *.tmp
 nul
@@ -61,6 +63,7 @@ frontend/.vite/
 *.tmp
 *.txt
 !backend/requirements.txt
+!backend/app/tools/xuchang/station_catalog/hidden_stations.txt
 *.docx
 *.xlsx
 *.pptx
@@ -156,6 +159,7 @@ simulate_*.py
 verify_*.py
 check_*.py
 run_*.py
+!backend/app/fetchers/base/run_log.py
 simple_*.py
 ultimate_*.py
 deep_*.py
@@ -226,6 +230,11 @@ backend/docs/skills/*
 !backend/docs/skills/ops_work_order_audit.md
 !backend/docs/skills/ops_work_order_audit/
 !backend/docs/skills/ops_work_order_audit/**
+!backend/docs/skills/archify.md
+!backend/docs/skills/xuchang_city_exceedance_source_report.md
+!backend/docs/skills/SKILLS_INDEX.md
+!backend/docs/skills/analysis_report_workflow.md
+!backend/docs/skills/生态环境招投标市场分析.md
 scripts/
 !/.github/scripts/
 !/.github/scripts/build_filter_repo_replacements.py
@@ -266,6 +275,8 @@ backend/.env.*
 !backend/.env.production.template
 frontend/dist-*/
 backend/backend_data_registry*/
+deploy/postgres/backups/
+deploy/postgres/.env
 
 # Vendor SDK clones
 suncere*/
@@ -277,9 +288,16 @@ suncere*/
 *.pfx
 *.jks
 *.keystore
+android-native/keystore.properties
+android-native/local.properties
+android-native/.gradle/
+android-native/dist-archives/
 *.htpasswd
 id_rsa*
 id_ed25519*
 *credentials*.json
 *secrets*.yaml
 
+# 本机部署专属（不入 git）
+迁移包/
+deploy/nginx/templates-local/

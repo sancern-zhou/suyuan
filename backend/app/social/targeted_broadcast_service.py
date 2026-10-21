@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from hashlib import sha256
+import shutil
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from app.social.broadcast_service import SocialBroadcastService
+from app.utils.path_config import (
+    resolve_agent_path, get_data_registry, agent_content_read_roots, is_path_within,
+)
 from app.social.user_registry import get_social_user_registry
+from app.social.user_registry import SocialUserRecord
+from app.social.app_identity import _accounts
 
 
 class TargetedSocialBroadcastService:
@@ -33,21 +42,53 @@ class TargetedSocialBroadcastService:
             return self._result([], names, "缺少广播内容")
 
         users_by_name: dict[str, list[Any]] = defaultdict(list)
-        for user in await self.user_registry.list_users():
+        users = await self.user_registry.list_users()
+        existing_social_ids = {user.social_user_id for user in users}
+        now = datetime.now().isoformat()
+        app_aliases: dict[str, str] = {}
+        for account_id, account in _accounts().items():
+            social_user_id = f"app:android:{account_id}"
+            if social_user_id in existing_social_ids:
+                continue
+            if str(account.get("status", "active")).lower() != "active":
+                continue
+            users.append(SocialUserRecord(
+                id=social_user_id,
+                name=str(account.get("name") or account_id),
+                status="active",
+                social_user_id=social_user_id,
+                channel="app",
+                bot_account="android",
+                sender_id=account_id,
+                created_at=now,
+                updated_at=now,
+            ))
+        for user in users:
             users_by_name[str(user.name)].append(user)
+            if user.channel == "app" and user.sender_id:
+                app_aliases[str(user.sender_id)] = str(user.name)
+        for alias, display_name in app_aliases.items():
+            # App accounts whose account id equals their display name alias
+            # themselves; extending would duplicate the entry and make every
+            # broadcast to that name fail with "duplicate user name".
+            if alias == display_name:
+                continue
+            users_by_name[alias].extend(users_by_name[display_name])
 
         valid: list[tuple[str, Any]] = []
         rows_by_name: dict[str, dict[str, Any]] = {}
         for name in names:
             matches = users_by_name.get(name, [])
-            if not matches:
+            # Dedupe by id: the alias pass can add the same user twice.
+            unique_matches = list({user.id: user for user in matches}.values())
+            if not unique_matches:
                 rows_by_name[name] = self._failed_row(name, "user not found")
                 continue
-            if len(matches) != 1:
+            if len(unique_matches) != 1:
                 rows_by_name[name] = self._failed_row(name, "duplicate user name")
                 continue
 
-            user = matches[0]
+            user = unique_matches[0]
             if user.status != "active":
                 rows_by_name[name] = self._failed_row(
                     name,
@@ -102,6 +143,12 @@ class TargetedSocialBroadcastService:
                 persist_context=True,
                 context_metadata=context_metadata or {},
             )
+            await self._publish_report_if_requested(
+                context_metadata=context_metadata or {},
+                recipients=[user.social_user_id for _, user in valid],
+                message=message,
+                media=media or [],
+            )
             identity_by_social_id = {
                 user.social_user_id: (name, user.id)
                 for name, user in valid
@@ -154,6 +201,46 @@ class TargetedSocialBroadcastService:
             "media_sent": broadcast_result.get("media_sent", 0),
             "summary": summary,
         }
+
+    @staticmethod
+    async def _publish_report_if_requested(
+        *, context_metadata: dict[str, Any], recipients: list[str], message: str,
+        media: list[str],
+    ) -> None:
+        report_type = str(context_metadata.get("report_type") or "").strip()
+        if not report_type:
+            return
+        document_suffixes = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
+        documents = []
+        execution_id = str(context_metadata.get("execution_id") or "").strip()
+        if report_type and not execution_id:
+            raise ValueError("report_execution_id_required")
+        attachment_root = get_data_registry() / "social" / "report_attachments" / sha256(execution_id.encode()).hexdigest()
+        for index, raw in enumerate(media):
+            if Path(str(raw).split("?", 1)[0]).suffix.lower() not in document_suffixes:
+                continue
+            path = resolve_agent_path(raw)
+            if not is_path_within(path, agent_content_read_roots()) or not path.is_file():
+                raise ValueError("report_attachment_unavailable")
+            attachment_root.mkdir(parents=True, exist_ok=True)
+            target = attachment_root / f"{index}-{path.name}"
+            if not target.exists():
+                shutil.copy2(path, target)
+            documents.append(str(target))
+        if not report_type or not documents:
+            return
+        from app.social.report_service import publish_report_results
+        await publish_report_results(
+            recipients=recipients,
+            task_id=str(context_metadata.get("task_id") or "assistant_broadcast"),
+            execution_id=str(context_metadata.get("execution_id") or ""),
+            task_name=str(context_metadata.get("task_name") or "报告成果"),
+            report_type=report_type,
+            title=str(context_metadata.get("title") or context_metadata.get("task_name") or "报告成果"),
+            summary=message,
+            attachments=[{"name": Path(path).name, "path": path} for path in documents],
+            metadata={"event_id": context_metadata.get("event_id"), "event_type": context_metadata.get("event_type"), "source": "broadcast_social_users"},
+        )
 
     @staticmethod
     def _failed_row(

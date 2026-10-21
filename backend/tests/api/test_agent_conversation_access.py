@@ -54,6 +54,17 @@ class LookupCatalog:
         raise AssertionError("new sessions must not require an existing catalog row")
 
 
+class WritableCatalog:
+    def __init__(self):
+        self.write_checks = []
+
+    async def find(self, session_id):
+        return type("CatalogRecord", (), {"mode": "custom"})()
+
+    async def require_write(self, session_id, user):
+        self.write_checks.append((session_id, user.id))
+
+
 class LookupSessionManager:
     def __init__(self, session=None):
         self.session = session
@@ -138,6 +149,65 @@ async def test_new_client_session_id_is_allowed_when_catalog_and_source_are_abse
     assert response.ping_interval == settings.sse_heartbeat_interval_seconds
     assert manager.lookups == ["new-session"]
     assert catalog.write_checks == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tools", [[], ["submit_task_review"]])
+async def test_scheduled_conversation_accepts_optional_review_tool(monkeypatch, tools):
+    session = Session(
+        session_id="scheduled-session",
+        query="original task",
+        metadata={
+            "scheduled_task_context": {"task_id": "task-1", "execution_id": "exec-1"},
+            "scheduled_task_tools": tools,
+        },
+    )
+    manager = LookupSessionManager(session)
+    catalog = WritableCatalog()
+    monkeypatch.setattr("app.api.agent.get_session_manager", lambda: manager)
+    monkeypatch.setattr(
+        "app.api.agent.global_tool_registry.list_tools",
+        lambda: ["submit_task_review"],
+    )
+
+    response = await analyze_stream(
+        AgentAnalyzeRequest(
+            query="follow up", session_id="scheduled-session", skill_ids=[], context_refs=[]
+        ),
+        EmptyRequest(),
+        user=ordinary_user,
+        catalog=catalog,
+    )
+
+    assert isinstance(response, EventSourceResponse)
+    assert catalog.write_checks == [("scheduled-session", "u1")]
+
+
+@pytest.mark.asyncio
+async def test_scheduled_conversation_rejects_missing_tools_metadata(monkeypatch):
+    session = Session(
+        session_id="scheduled-session",
+        query="original task",
+        metadata={
+            "scheduled_task_context": {"task_id": "task-1", "execution_id": "exec-1"},
+        },
+    )
+    monkeypatch.setattr(
+        "app.api.agent.get_session_manager", lambda: LookupSessionManager(session)
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await analyze_stream(
+            AgentAnalyzeRequest(
+                query="follow up", session_id="scheduled-session", skill_ids=[], context_refs=[]
+            ),
+            EmptyRequest(),
+            user=ordinary_user,
+            catalog=WritableCatalog(),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "scheduled_context_incomplete"
 
 
 @pytest.mark.asyncio

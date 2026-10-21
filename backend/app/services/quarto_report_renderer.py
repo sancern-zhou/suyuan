@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -164,6 +165,50 @@ def normalize_chinese_ascii_quotes(text: str) -> str:
         else:
             prose, active_code_ticks = _normalize_chinese_ascii_quotes_in_prose_line(line)
             normalized.append(prose)
+
+    return "".join(normalized)
+
+
+_NUMERIC_ASCII_RANGE_RE = re.compile(
+    r"(?<=[0-9%\u3400-\u9fff])\s*~\s*(?=[0-9\u3400-\u9fff]|<\d|&lt;\d)"
+)
+
+
+def normalize_markdown_numeric_ranges(text: str) -> str:
+    """Keep report ranges as prose instead of Pandoc subscript syntax."""
+    if "~" not in text:
+        return text
+
+    lines = text.splitlines(keepends=True)
+    normalized: list[str] = []
+    fence_char = ""
+    fence_length = 0
+    fence_pattern = re.compile(r"^ {0,3}(?P<fence>\x60{3,}|~{3,})")
+    inline_code_pattern = re.compile(r"(\x60+[^\x60]*\x60+)")
+
+    for line in lines:
+        fence_match = fence_pattern.match(line)
+        if fence_char:
+            normalized.append(line)
+            closing_fence = re.fullmatch(
+                rf" {{0,3}}{re.escape(fence_char)}{{{fence_length},}}[ \t]*(?:\r?\n)?",
+                line,
+            )
+            if closing_fence:
+                fence_char = ""
+                fence_length = 0
+            continue
+        if fence_match:
+            fence = fence_match.group("fence")
+            fence_char = fence[0]
+            fence_length = len(fence)
+            normalized.append(line)
+            continue
+
+        parts = inline_code_pattern.split(line)
+        for index in range(0, len(parts), 2):
+            parts[index] = _NUMERIC_ASCII_RANGE_RE.sub("～", parts[index])
+        normalized.append("".join(parts))
 
     return "".join(normalized)
 
@@ -434,18 +479,31 @@ class QuartoReportRenderer:
         output_path = report_dir / "report.export.html"
         qmd_path = self.get_qmd_path(report_id)
         self._validate_render_qmd(report_dir, qmd_path)
-        self._run_quarto(
-            report_dir,
-            [
-                "render",
-                "report.qmd",
-                "--to",
-                "html",
-                "--output",
-                output_path.name,
-                "--embed-resources",
-            ],
-        )
+        # Quarto removes report_files when rendering an embedded HTML output.
+        # Keep the preview's external assets intact for later validation/viewing.
+        preview_assets = report_dir / "report_files"
+        with tempfile.TemporaryDirectory(prefix="quarto-share-assets-") as scratch:
+            saved_assets = Path(scratch) / "report_files"
+            if preview_assets.is_dir():
+                shutil.copytree(preview_assets, saved_assets)
+            try:
+                self._run_quarto(
+                    report_dir,
+                    [
+                        "render",
+                        "report.qmd",
+                        "--to",
+                        "html",
+                        "--output",
+                        output_path.name,
+                        "--embed-resources",
+                    ],
+                )
+            finally:
+                if saved_assets.is_dir():
+                    if preview_assets.exists():
+                        shutil.rmtree(preview_assets)
+                    shutil.copytree(saved_assets, preview_assets)
         if not output_path.is_file():
             raise ReportRenderError("Quarto did not produce the standalone HTML report")
         return output_path
@@ -468,6 +526,20 @@ class QuartoReportRenderer:
         qmd_for_render = qmd_path
         try:
             qmd_for_render = self._prepare_docx_qmd(report_dir, qmd_path)
+            # Inspect Quarto's resolved document, not tag-like strings in QMD.
+            # This also includes tables emitted by includes and executable cells.
+            from app.services.report.html_docx_bridge import RenderedHtmlReport
+
+            html_source = report_dir / f"report_docx_source_{uuid.uuid4().hex}.html"
+            try:
+                self._run_quarto(report_dir, [
+                    "render", qmd_for_render.name, "--to", "html", "--output", html_source.name,
+                ])
+                html_report = RenderedHtmlReport(html_source)
+                if html_report.tables:
+                    return self._render_docx_from_resolved_html(report_dir, qmd_path, html_report)
+            finally:
+                html_source.unlink(missing_ok=True)
             args = ["render", qmd_for_render.name, "--to", "docx", "--output", "report.docx"]
             if not self._qmd_has_usable_reference_doc(qmd_path):
                 reference_docx = ensure_government_reference_docx()
@@ -478,7 +550,11 @@ class QuartoReportRenderer:
                 docx_path = report_dir / "report.docx"
                 image_cleanup = normalize_docx_image_paragraphs(docx_path)
                 logger.info("quarto_docx_image_paragraphs_normalized", **image_cleanup)
-                style_cleanup = finalize_government_docx(docx_path)
+                preserve_template = self._qmd_preserve_template_structure(qmd_path)
+                style_cleanup = finalize_government_docx(
+                    docx_path, add_toc=not preserve_template,
+                    number_headings=not preserve_template,
+                )
                 logger.info("quarto_docx_government_style_finalized", **style_cleanup)
                 return docx_path
             except ReportRenderError:
@@ -489,6 +565,39 @@ class QuartoReportRenderer:
         finally:
             if qmd_for_render != qmd_path:
                 qmd_for_render.unlink(missing_ok=True)
+                generated_assets = report_dir / f"{qmd_for_render.stem}_files"
+                if generated_assets.is_dir():
+                    shutil.rmtree(generated_assets)
+
+    def _render_docx_from_resolved_html(self, report_dir, qmd_path, html_report):
+        source = report_dir / f"report_docx_html_{uuid.uuid4().hex}.html"
+        candidate = report_dir / f"report_docx_candidate_{uuid.uuid4().hex}.docx"
+        try:
+            html_report.prepare(source)
+            args = [
+                "pandoc", source.name, "--from", "html", "--to", "docx",
+                "--output", candidate.name, "--resource-path", str(report_dir),
+            ]
+            # Pandoc's native reference contains its table/character styles.
+            # The government profile is applied below to the complete document.
+            if self._qmd_has_usable_reference_doc(qmd_path):
+                args.extend(["--reference-doc", self._qmd_reference_doc_values(qmd_path)[0]])
+            self._run_quarto(report_dir, args)
+            preserve_template = self._qmd_preserve_template_structure(qmd_path)
+            finalize_government_docx(
+                candidate, add_toc=not preserve_template,
+                number_headings=not preserve_template,
+            )
+            html_report.apply_styles(candidate)
+            output = report_dir / "report.docx"
+            candidate.replace(output)
+            logger.info("quarto_docx_html_tables_preserved", path=str(output), tables=len(html_report.tables))
+            return output
+        except ValueError as exc:
+            raise ReportRenderError(str(exc)) from exc
+        finally:
+            source.unlink(missing_ok=True)
+            candidate.unlink(missing_ok=True)
 
     def _render_docx_from_html_fallback(self, report_dir: Path) -> Path:
         """Fallback method: convert HTML to DOCX when Quarto fails to embed images."""
@@ -517,6 +626,14 @@ class QuartoReportRenderer:
         if end_index < 0:
             return ""
         return text[3:end_index]
+
+    def _qmd_preserve_template_structure(self, qmd_path: Path) -> bool:
+        """Honor an explicit fixed-template opt-out of DOCX TOC and renumbering."""
+        header = self._read_qmd_front_matter(qmd_path)
+        return bool(re.search(
+            r"^preserve-template-structure\s*:\s*true\s*$",
+            header, flags=re.IGNORECASE | re.MULTILINE,
+        ))
 
     def _qmd_reference_doc_values(self, qmd_path: Path) -> list[str]:
         """Return reference-doc values from qmd YAML front matter."""
@@ -556,8 +673,9 @@ class QuartoReportRenderer:
         sanitized = pattern.sub("", text) if has_placeholder_reference_doc else text
         sanitized, structure_changed = _disable_docx_quarto_auto_structure(sanitized)
         quote_normalized = normalize_chinese_ascii_quotes(sanitized)
-        quotes_changed = quote_normalized != sanitized
-        sanitized = quote_normalized
+        range_normalized = normalize_markdown_numeric_ranges(quote_normalized)
+        quotes_changed = range_normalized != sanitized
+        sanitized = range_normalized
         if has_placeholder_reference_doc:
             sanitized = re.sub(
                 r"(?m)^(\s*)docx:\s*\n(?=(?:\1\S|\S|---))",

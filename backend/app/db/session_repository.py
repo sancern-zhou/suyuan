@@ -6,7 +6,7 @@
 
 数据库 schema 设计：
 - role: Anthropic 角色（user/assistant），用于 LLM 对话恢复
-- msg_type: 语义类型（user/thought/tool_use/tool_result/final/error/user_pause），用于前端展示
+- msg_type: 语义类型（user/thought/action/observation/tool_result/final），用于前端展示
 - content: JSONB 类型，原生支持 str 和 list（Anthropic content blocks）
 """
 
@@ -17,27 +17,25 @@ import time
 from enum import Enum
 from pathlib import Path
 from typing import List, Optional, Dict, Any
-from datetime import date, datetime, time as datetime_time, timezone
+from datetime import date, datetime, timezone
+from datetime import time as datetime_time
 from decimal import Decimal
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, load_only
-from sqlalchemy import select, update, delete, func, cast, Text, case
+from sqlalchemy import select, update, delete, func, cast, Text, case, JSON
 
 from .models_session import SessionDB, SessionMessageDB
-from .database import session_engine
+from .session_database import session_engine
 
 logger = structlog.get_logger()
 
-# 展示转录的完整类型集合。error/user_pause 必须保留，否则保存后
-# 重载会被默认规范化为 final，触发转录校验误报。
-VALID_MSG_TYPES = {
-    "user", "thought", "tool_use", "tool_result", "final", "error", "user_pause",
-}
+# 有效的语义类型集合
+VALID_MSG_TYPES = {"user", "thought", "tool_use", "tool_result", "final"}
 
 # These messages are rendered as conversation turns and must never be reduced
 # to a preview during lightweight history restoration.
-FULL_DISPLAY_CONTENT_MSG_TYPES = {"user", "final", "error", "user_pause"}
+FULL_DISPLAY_CONTENT_MSG_TYPES = {"user", "final"}
 
 MESSAGE_METADATA_EXCLUDED_KEYS = {
     "type",
@@ -63,8 +61,6 @@ TYPE_TO_ROLE = {
     "thought": "assistant",
     "tool_use": "assistant",
     "final": "assistant",
-    "error": "assistant",
-    "user_pause": "user",
 }
 
 
@@ -93,13 +89,8 @@ class SessionRepository:
         if isinstance(obj, Enum):
             return SessionRepository._normalize_json_value(obj.value)
         if isinstance(obj, Decimal):
-            numeric = float(obj)
-            return numeric if math.isfinite(numeric) else None
-        # PostgreSQL json/jsonb rejects the non-standard JSON tokens NaN and
-        # Infinity.  Normalize them at the persistence boundary as a final
-        # safeguard for tool results and runtime metadata from any producer.
-        if isinstance(obj, float):
-            return obj if math.isfinite(obj) else None
+            value = float(obj)
+            return value if math.isfinite(value) else None
         if isinstance(obj, (datetime, date, datetime_time)):
             return obj.isoformat()
         if isinstance(obj, (UUID, Path)):
@@ -118,13 +109,20 @@ class SessionRepository:
                 SessionRepository._normalize_json_value(item)
                 for item in sorted(obj, key=str)
             ]
-        if obj is None or isinstance(obj, (str, bool, int, float)):
+        if isinstance(obj, float):
+            return obj if math.isfinite(obj) else None
+        if obj is None or isinstance(obj, (str, bool, int)):
             return obj
         return str(obj)
 
     @staticmethod
+    def _convert_json_value(obj: Any) -> Any:
+        """Backward-compatible alias for JSON normalization."""
+        return SessionRepository._normalize_json_value(obj)
+
+    @staticmethod
     def _convert_decimal_to_float(obj: Any) -> Any:
-        """Backward-compatible alias for the former JSON normalization helper."""
+        """Backward-compatible alias retained for older persistence callers."""
         return SessionRepository._normalize_json_value(obj)
 
     @staticmethod
@@ -134,7 +132,7 @@ class SessionRepository:
 
         支持多种输入格式：
         - Anthropic 原生格式：有 role 字段（user/assistant）
-        - 前端简化格式：有 type 字段（user/thought/tool_use/tool_result/final/error/user_pause）
+        - 前端简化格式：有 type 字段（user/thought/tool_use/tool_result/final）
         - 旧格式：type 字段为 assistant
 
         Returns:
@@ -161,26 +159,18 @@ class SessionRepository:
 
     @staticmethod
     def _serialize_content(content: Any) -> Any:
-        """Serialize content to a value accepted by JSON/JSONB columns."""
+        """
+        序列化 content 为 JSONB 兼容格式
+
+        JSONB 列原生支持 str, list, dict, None，
+        只需处理 Decimal 等不可序列化的类型
+        """
         return SessionRepository._normalize_json_value(content)
 
     @staticmethod
     def _deserialize_content(content: Any) -> Any:
-        """Read content returned by both JSON and JSONB drivers.
-
-        Some deployments return a JSON scalar string with its JSON quoting
-        still present (for example ``\"hello\"``). Decode that wrapper while
-        leaving ordinary strings and structured content unchanged.
-        """
-        if not isinstance(content, str):
-            return content
-        if not content.startswith('"'):
-            return content
-        try:
-            decoded = json.loads(content)
-        except (TypeError, json.JSONDecodeError):
-            return content
-        return decoded if isinstance(decoded, str) else content
+        """SQLAlchemy JSON columns already decode JSON; preserve literal quotes."""
+        return content
 
     @staticmethod
     def _message_metadata(msg: Dict[str, Any]) -> Dict[str, Any]:
@@ -190,12 +180,12 @@ class SessionRepository:
             for k, v in msg.items()
             if k not in MESSAGE_METADATA_EXCLUDED_KEYS
         }
-        return SessionRepository._normalize_json_value(metadata)
+        return SessionRepository._convert_json_value(metadata)
 
     @staticmethod
     def _message_data(msg: Dict[str, Any]) -> Any:
         """Return message data with tool runtime fields preserved in one place."""
-        msg_data = SessionRepository._normalize_json_value(msg.get("data"))
+        msg_data = SessionRepository._convert_json_value(msg.get("data"))
         tool_fields = {
             key: msg[key]
             for key in ("tool_use_id", "tool_name", "is_error")
@@ -208,7 +198,7 @@ class SessionRepository:
         if isinstance(msg_data, dict):
             for key, value in tool_fields.items():
                 msg_data.setdefault(key, value)
-        return SessionRepository._normalize_json_value(msg_data)
+        return SessionRepository._convert_json_value(msg_data)
 
     @staticmethod
     def _message_attachments(metadata: Any) -> List[Dict[str, Any]]:
@@ -518,7 +508,9 @@ class SessionRepository:
         """
         保存会话的对话历史
 
-        删除旧消息，插入新消息（原子操作）
+        删除旧消息，插入新消息（原子操作）。
+        全量重写后所有旧行 id 失效，因此把新行 id 写回传入的消息字典，
+        保持"消息字典 ↔ 数据库行"的身份对应关系。
         """
         import traceback
 
@@ -558,8 +550,9 @@ class SessionRepository:
                                 timestamp=timestamp,
                                 metadata=msg_metadata_converted,
                                 sequence_number=idx
-                            )
-                            await conn.execute(stmt_insert)
+                            ).returning(SessionMessageDB.__table__.c.id)
+                            new_id = (await conn.execute(stmt_insert)).scalar_one()
+                            msg["id"] = f"msg_{new_id}"
 
                         logger.info(
                             "conversation_history_saved",
@@ -596,14 +589,20 @@ class SessionRepository:
         """
         增量同步会话消息。
 
-        只追加数据库中尚不存在的尾部消息，避免每轮对话都执行
+        只追加数据库中尚不存在的消息，避免每轮对话都执行
         DELETE FROM session_messages WHERE session_id = ... 导致锁等待和
         statement timeout。
 
         约定：
-        - 当前会话历史是 append-only 时走增量路径。
-        - 如果传入历史短于数据库已有消息，说明调用方可能做了压缩/截断，
-          此方法不删除旧消息，交由显式全量重写接口处理。
+        - 以持久化身份（数据库行 id，形如 "msg_<id>"）精确对账，不做任何
+          基于内容/时间戳的猜测匹配。所有读取视图（_msg_to_dict、
+          _message_row_to_context_dict、_message_row_to_light_dict）都会
+          携带行 id；新消息在首次落库后由本方法把 id 写回传入的字典，
+          使调用方持有的内存历史与数据库行一一对应。重复插入在结构上
+          不可能发生。
+        - id 未命中本会话已有行（例如行已被全量重写删除）的消息按新消息
+          追加，不删除旧消息。
+        - 传入历史短于数据库已有消息时只追加，不做删除。
         """
         if not conversation_history:
             return True
@@ -611,33 +610,78 @@ class SessionRepository:
         started = time.monotonic()
         try:
             async with AsyncSession(self.engine) as session:
-                count_started = time.monotonic()
+                rows_started = time.monotonic()
+                # Background replies append to the same transcript. Fence both
+                # sequence allocation and message identity on the session row.
+                await session.execute(
+                    update(SessionDB)
+                    .where(SessionDB.session_id == session_id)
+                    .values(updated_at=SessionDB.updated_at)
+                )
                 stmt = (
-                    select(func.max(SessionMessageDB.sequence_number))
+                    select(
+                        SessionMessageDB.id,
+                        SessionMessageDB.sequence_number,
+                    )
                     .where(SessionMessageDB.session_id == session_id)
+                    .order_by(SessionMessageDB.sequence_number)
                 )
                 result = await session.execute(stmt)
-                max_seq = result.scalar()
-                existing_count = (max_seq + 1) if max_seq is not None else 0
-                count_ms = round((time.monotonic() - count_started) * 1000, 2)
+                existing_rows = result.all()
+                existing_count = len(existing_rows)
+                max_seq = max(
+                    (row.sequence_number for row in existing_rows),
+                    default=-1,
+                )
+                existing_ids = {row.id for row in existing_rows}
+                rows_read_ms = round((time.monotonic() - rows_started) * 1000, 2)
 
-                if existing_count >= len(conversation_history):
-                    logger.debug(
+                diff_started = time.monotonic()
+                new_messages: List[Dict[str, Any]] = []
+                for msg in conversation_history:
+                    row_id = self._message_row_id(msg)
+                    if row_id is not None and row_id in existing_ids:
+                        # 该行已存在（本轮已落库或从数据库加载），跳过。
+                        # 同一行不会被两条消息重复命中：id 全局唯一。
+                        continue
+                    new_messages.append(msg)
+                diff_ms = round((time.monotonic() - diff_started) * 1000, 2)
+
+                if not new_messages:
+                    if existing_count > len(conversation_history):
+                        logger.warning(
+                            "conversation_history_incoming_shorter_than_db",
+                            session_id=session_id,
+                            existing_count=existing_count,
+                            incoming_count=len(conversation_history),
+                            hint="持久化视图与数据库表示存在差异，已按行 id 确认无新消息",
+                        )
+                    logger.info(
                         "conversation_history_incremental_noop",
                         session_id=session_id,
                         existing_count=existing_count,
                         incoming_count=len(conversation_history),
-                        count_ms=count_ms,
+                        rows_read_ms=rows_read_ms,
+                        diff_ms=diff_ms,
                         total_ms=round((time.monotonic() - started) * 1000, 2),
                         **self._pool_status(),
                     )
                     return True
 
-                new_messages = conversation_history[existing_count:]
+                if existing_count > len(conversation_history):
+                    logger.warning(
+                        "conversation_history_incoming_shorter_than_db",
+                        session_id=session_id,
+                        existing_count=existing_count,
+                        incoming_count=len(conversation_history),
+                        appending_count=len(new_messages),
+                        hint="传入历史短于数据库，仅追加新消息不删除",
+                    )
 
                 rows_started = time.monotonic()
                 rows = []
-                for offset, msg in enumerate(new_messages, start=existing_count):
+                for offset, msg in enumerate(new_messages):
+                    sequence_number = max_seq + 1 + offset
                     role, msg_type = self._resolve_role_and_type(msg)
                     timestamp = self._normalize_db_timestamp(
                         msg.get("timestamp"),
@@ -655,18 +699,34 @@ class SessionRepository:
                             "data": msg_data,
                             "timestamp": timestamp,
                             "metadata": self._message_metadata(msg),
-                            "sequence_number": offset,
+                            "sequence_number": sequence_number,
                         }
                     )
                 rows_build_ms = round((time.monotonic() - rows_started) * 1000, 2)
 
                 insert_started = time.monotonic()
-                await session.execute(SessionMessageDB.__table__.insert(), rows)
+                inserted = await session.execute(
+                    SessionMessageDB.__table__.insert().returning(
+                        SessionMessageDB.id, sort_by_parameter_order=True
+                    ),
+                    rows,
+                )
+                inserted_ids = inserted.scalars().all()
                 insert_ms = round((time.monotonic() - insert_started) * 1000, 2)
 
                 commit_started = time.monotonic()
                 await session.commit()
                 commit_ms = round((time.monotonic() - commit_started) * 1000, 2)
+
+                # 把新生成行 id 写回传入的消息字典：调用方（SessionManager
+                # 内存缓存、agent 进程内 conversation_history）持有的对象与
+                # 传入的是同一批引用，写回后后续保存可按 id 精确对账。
+                stamp_started = time.monotonic()
+                for msg, row_id in zip(new_messages, inserted_ids):
+                    # 无条件改写为真实行 id：原 id 要么缺失，要么已失效
+                    # （行被删除/属于其他会话），保留都会导致下次重插。
+                    msg["id"] = f"msg_{row_id}"
+                stamp_ms = round((time.monotonic() - stamp_started) * 1000, 2)
 
                 logger.info(
                     "conversation_history_incremental_saved",
@@ -674,10 +734,12 @@ class SessionRepository:
                     existing_count=existing_count,
                     appended_count=len(new_messages),
                     incoming_count=len(conversation_history),
-                    count_ms=count_ms,
+                    rows_read_ms=rows_read_ms,
+                    diff_ms=diff_ms,
                     rows_build_ms=rows_build_ms,
                     insert_ms=insert_ms,
                     commit_ms=commit_ms,
+                    stamp_ms=stamp_ms,
                     total_ms=round((time.monotonic() - started) * 1000, 2),
                     **self._pool_status(),
                 )
@@ -691,6 +753,17 @@ class SessionRepository:
                 error_type=type(e).__name__
             )
             return False
+
+    @staticmethod
+    def _message_row_id(msg: Dict[str, Any]) -> Optional[int]:
+        """Parse the persisted row id ("msg_<id>") carried by a message dict."""
+        raw = msg.get("id")
+        if not isinstance(raw, str) or not raw.startswith("msg_"):
+            return None
+        try:
+            return int(raw[4:])
+        except ValueError:
+            return None
 
     async def add_message(
         self,
@@ -780,6 +853,45 @@ class SessionRepository:
             result = await session.execute(stmt)
             return result.scalar() or 0
 
+    async def list_error_messages_in_window(
+        self,
+        since: datetime,
+        until: Optional[datetime] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """按时间窗查询 error 语义消息（运行监控用），新→旧。
+
+        走 ix_session_messages_type_timestamp 索引；内容截断避免大对象。
+        """
+        conditions = [
+            SessionMessageDB.msg_type == "error",
+            SessionMessageDB.timestamp >= since,
+        ]
+        if until is not None:
+            conditions.append(SessionMessageDB.timestamp < until)
+        async with AsyncSession(self.engine) as session:
+            stmt = (
+                select(SessionMessageDB)
+                .where(*conditions)
+                .order_by(SessionMessageDB.timestamp.desc())
+                .limit(max(int(limit), 1))
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            results: List[Dict[str, Any]] = []
+            for row in rows:
+                content = self._deserialize_content(row.content)
+                text = (
+                    content
+                    if isinstance(content, str)
+                    else json.dumps(content, ensure_ascii=False) if content is not None else ""
+                )
+                results.append({
+                    "session_id": row.session_id,
+                    "timestamp": row.timestamp.isoformat() if row.timestamp else None,
+                    "content": (text or "")[:300],
+                })
+            return results
+
     def _msg_to_dict(self, msg: SessionMessageDB, include_data: bool = True) -> Dict[str, Any]:
         """
         将数据库消息转换为前端字典格式
@@ -806,18 +918,19 @@ class SessionRepository:
                 msg_dict.update(metadata_without_id)
         return msg_dict
 
-    def _message_row_to_context_dict(self, row: Any, include_data: bool = True) -> Dict[str, Any]:
+    @classmethod
+    def _message_row_to_context_dict(cls, row: Any, include_data: bool = True) -> Dict[str, Any]:
         message = {
             "role": row.role,
             "type": row.msg_type,
-            "content": self._deserialize_content(row.content),
+            "content": cls._deserialize_content(row.content),
             "timestamp": row.timestamp.isoformat() if row.timestamp else None,
             "id": f"msg_{row.id}",
             "sequence_number": row.sequence_number,
         }
         if include_data and getattr(row, "data", None):
             message["data"] = row.data
-        attachments = self._message_attachments(getattr(row, "msg_metadata", None))
+        attachments = cls._message_attachments(getattr(row, "msg_metadata", None))
         if attachments:
             message["attachments"] = attachments
         return message
@@ -930,6 +1043,27 @@ class SessionRepository:
             metadata=metadata,
         )
 
+    async def save_context_usage(
+        self,
+        session_id: str,
+        context_usage: Dict[str, Any],
+    ) -> bool:
+        """Persist the latest context-usage snapshot in session metadata."""
+        db_session = await self.get_session(session_id)
+        if not db_session:
+            return False
+
+        metadata = db_session.session_metadata or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata = dict(metadata)
+        metadata["context_usage"] = context_usage
+
+        return await self.update_session(
+            session_id,
+            metadata=metadata,
+        )
+
     async def get_display_history_messages_light(self, session_id: str) -> List[Dict[str, Any]]:
         """Load display text plus the small attachment contract, without result data."""
         async with AsyncSession(self.engine) as session:
@@ -958,7 +1092,7 @@ class SessionRepository:
 
         ⚠️ 轻量级策略：
         - 不查询 data 字段（避免传输大型 result 数据）
-        - 前端从 content_preview 中解析工具名称
+        - content 保持完整，content_preview 只用于工具名称识别
         - 性能优化：首屏恢复速度提升 3-5 倍
         """
         display_content = getattr(row, "display_content", None)
@@ -982,8 +1116,8 @@ class SessionRepository:
 
         # ✅ 从 content_preview 中提取工具名称（用于前端显示）
         # tool_use 消息的 content 通常包含："调用工具：check_order" 等信息
-        if row.msg_type == "tool_use" and row.content_preview:
-            content = row.content_preview
+        if row.msg_type == "tool_use" and content_preview:
+            content = content_preview
             # 尝试从 content 中提取工具名称（兼容多种格式）
             import re
             # 格式1：调用工具：tool_name
@@ -993,6 +1127,26 @@ class SessionRepository:
             if tool_match:
                 tool_name = tool_match.group(1).strip()
                 msg_dict["data"] = {"tool_name": tool_name}
+
+        # ✅ 恢复待确认面板：轻量 tool_result 行只提取 human_feedback 子树，
+        # 组装成与完整 data 相同的嵌套结构供前端会话恢复重放识别。
+        if row.msg_type == "tool_result":
+            human_feedback = getattr(row, "human_feedback", None)
+            if isinstance(human_feedback, str):
+                try:
+                    human_feedback = json.loads(human_feedback)
+                except (TypeError, ValueError):
+                    human_feedback = None
+            if isinstance(human_feedback, dict) and human_feedback:
+                data = msg_dict.get("data") if isinstance(msg_dict.get("data"), dict) else {}
+                result_data = data.get("result") if isinstance(data.get("result"), dict) else {}
+                inner = (
+                    result_data.get("data") if isinstance(result_data.get("data"), dict) else {}
+                )
+                inner["human_feedback"] = human_feedback
+                result_data["data"] = inner
+                data["result"] = result_data
+                msg_dict["data"] = data
 
         return msg_dict
 
@@ -1034,11 +1188,14 @@ class SessionRepository:
                 # Keep user/final text complete. Only process messages use a
                 # preview; truncating JSON text can split a \uXXXX escape and
                 # also cuts long final answers shown in restored sessions.
+                # 轻量行不加载完整 data，但待确认面板依赖 tool_result 中的
+                # human_feedback 子树，必须在数据库层单独提取（避免整包 5MB data）。
                 stmt = (
                     select(
                         SessionMessageDB.id,
                         SessionMessageDB.role,
                         SessionMessageDB.msg_type,
+                        SessionMessageDB.content,
                         SessionMessageDB.msg_metadata,
                         SessionMessageDB.timestamp,
                         SessionMessageDB.sequence_number,
@@ -1050,6 +1207,13 @@ class SessionRepository:
                             else_=None,
                         ).label("display_content"),
                         func.substring(content_text, 1, 2000).label("content_preview"),
+                        case(
+                            (
+                                SessionMessageDB.msg_type == "tool_result",
+                                SessionMessageDB.data[("result", "data", "human_feedback")],
+                            ),
+                            else_=None,
+                        ).label("human_feedback"),
                     )
                     .where(SessionMessageDB.session_id == session_id)
                 )

@@ -1,0 +1,30 @@
+services:
+  local-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "${LOCAL_PG_PORT:-5433}:5432"
+    environment:
+      POSTGRES_DB: ${LOCAL_PG_DB:-suyuan_app}
+      POSTGRES_USER: ${LOCAL_PG_USER:-suyuan}
+      POSTGRES_PASSWORD: ${LOCAL_PG_PASSWORD:?LOCAL_PG_PASSWORD is required}
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - effective_cache_size=3GB
+      - -c
+      - work_mem=32MB
+    volumes:
+      - local_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LOCAL_PG_USER:-suyuan} -d ${LOCAL_PG_DB:-suyuan_app}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  local_postgres_data:

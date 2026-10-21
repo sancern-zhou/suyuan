@@ -82,4 +82,4 @@ onMounted(() => {
 })
 watch(() => props.contentUrl, load)
 </script>
-<style scoped>.board { height: 100%; }.error { color: #b42318; }</style>
+<style scoped>.board { height: 100%; }.error { color: var(--color-danger); }</style>

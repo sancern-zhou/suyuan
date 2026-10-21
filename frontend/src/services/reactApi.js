@@ -1,3 +1,4 @@
+import { accountGeneration, assertAccountGeneration } from '../auth/accountSession.js'
 import { authFetch } from '@/auth/http.js'
 import { buildAnalyzeRequestBody } from './reactRequestBody.js'
 import { acceptStreamResponse } from './streamAcceptance.js'
@@ -31,7 +32,7 @@ class ReactAgentAPI {
       assistantMode = null,  // 助手模式
       agentMode = 'expert',  // ✅ 双模式架构：assistant | expert
       knowledgeBaseIds = null,  // ✅ 知识库ID列表
-      modelTier = 'auto',
+      modelTier = 'flash',
       skillIds = [],
       contextRefs = [],
       activeContexts = null,
@@ -40,7 +41,6 @@ class ReactAgentAPI {
       userIdentifier = null,  // ✅ 用户标识（跨会话持久化）
       isInterruption = false,
       previousPausedRunId = null,
-      skipAutoFollowup = false,
       requestKey = sessionId,
       onAccepted,
       onEvent
@@ -62,8 +62,7 @@ class ReactAgentAPI {
       mapContext,
       userIdentifier,
       isInterruption,
-      previousPausedRunId,
-      skipAutoFollowup
+      previousPausedRunId
     })
 
     return this._streamRequest(
@@ -98,44 +97,7 @@ class ReactAgentAPI {
 
       acceptStreamResponse(response, onAccepted)
 
-      // 处理SSE流
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      const processStream = async () => {
-        while (true) {
-          const { done, value } = await reader.read()
-
-          if (done) {
-            break
-          }
-
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() // 保存不完整的行
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6).trim()
-              if (data) {
-                try {
-                  // 清理JSON字符串中的无效值
-                  const sanitizedData = this.sanitizeJSONString(data)
-                  const event = JSON.parse(sanitizedData)
-                  if (onEvent && typeof onEvent === 'function') {
-                    onEvent(event)
-                  }
-                } catch (e) {
-                  console.error('Failed to parse SSE data:', data, e)
-                }
-              }
-            }
-          }
-        }
-      }
-
-      await processStream()
+      await this._readSseStream(response, onEvent)
     } catch (error) {
       if (error.name === 'AbortError') {
         console.log('Request was aborted')
@@ -149,6 +111,88 @@ class ReactAgentAPI {
       }
       if (this.controller === controller) {
         this.controller = null
+      }
+    }
+  }
+
+  // 接回仍在运行的 detached run 事件流（GET /agent/stream）
+  // 用于页面刷新/历史会话恢复时，重新跟随运行中任务的实时进度
+  async followRunStream(sessionId, options = {}) {
+    const { requestKey = sessionId, onEvent, onAccepted } = options
+    if (this.controllers.has(requestKey)) {
+      this.controllers.get(requestKey).abort()
+      this.controllers.delete(requestKey)
+    }
+
+    const controller = new AbortController()
+    this.controllers.set(requestKey, controller)
+    this.controller = controller
+
+    try {
+      const response = await authFetch(
+        `${API_BASE_URL}/agent/stream?session_id=${encodeURIComponent(sessionId)}`,
+        {
+          method: 'GET',
+          headers: { Accept: 'text/event-stream' },
+          signal: controller.signal
+        }
+      )
+
+      acceptStreamResponse(response, onAccepted)
+
+      await this._readSseStream(response, onEvent)
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        console.log('[followRunStream] 已停止跟随运行中任务:', sessionId)
+        return
+      }
+      console.error('[followRunStream] 跟随运行中任务失败:', error)
+      throw error
+    } finally {
+      if (this.controllers.get(requestKey) === controller) {
+        this.controllers.delete(requestKey)
+      }
+      if (this.controller === controller) {
+        this.controller = null
+      }
+    }
+  }
+
+  // 内部方法：读取 SSE 响应体并按事件分发
+  async _readSseStream(response, onEvent) {
+    const generation = accountGeneration()
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      assertAccountGeneration(generation)
+
+      if (done) {
+        break
+      }
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() // 保存不完整的行
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6).trim()
+          if (data) {
+            try {
+              // 清理JSON字符串中的无效值
+              const sanitizedData = this.sanitizeJSONString(data)
+              const event = JSON.parse(sanitizedData)
+              if (onEvent && typeof onEvent === 'function') {
+                onEvent(event)
+              }
+            } catch (e) {
+              console.error('Failed to parse SSE data:', data, e)
+            }
+          }
+        }
       }
     }
   }

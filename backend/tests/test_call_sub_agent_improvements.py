@@ -10,6 +10,7 @@
 
 import asyncio
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 # 添加项目路径
@@ -17,6 +18,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
+from app.utils.path_config import format_agent_path, resolve_agent_path
 
 
 def test_function_schema():
@@ -38,12 +40,44 @@ def test_function_schema():
     assert "goal" in properties, "应该包含 goal 参数"
     assert "context" in properties, "应该包含 context 参数"
     assert "workspace_path" in properties, "应该包含 workspace_path 参数"
+    assert properties["skill_ids"]["maxItems"] == 1, "skill_ids 应限制为单个技能"
 
     # 检查旧参数是否仍然存在
     assert "task_description" in properties, "应该包含 task_description 参数（向后兼容）"
     assert "context_supplement" in properties, "应该包含 context_supplement 参数（向后兼容）"
 
     print("✅ function_schema 检查通过")
+
+
+def test_workspace_promotion_waits_for_approval_before_starting_child():
+    """持续工作空间请求只生成审批数据，不创建或运行子 Agent。"""
+    tool = CallSubAgentTool()
+    context = SimpleNamespace(session_id="web-session-1", manual_mode="assistant")
+
+    result = asyncio.run(
+        tool.execute(
+            context=context,
+            target_mode="board",
+            goal="绘制系统架构图",
+            context_str="遵循项目架构规范",
+            workspace_path="/tmp/board-workspace",
+            skill_ids=["archify"],
+            promote_to_workspace=True,
+        )
+    )
+
+    assert result["status"] == "pending"
+    assert result["metadata"]["interaction_required"]["kind"] == "approval"
+    pending = result["metadata"]["interaction_required"]["pending_request"]
+    assert pending == {
+        "target_mode": "board",
+        "goal": "绘制系统架构图",
+        "context_str": "遵循项目架构规范",
+        "workspace_path": format_agent_path(resolve_agent_path("/tmp/board-workspace")),
+        "session_id": "web-session-1",
+        "skill_ids": ["archify"],
+        "resume_after_approval": True,
+    }
 
 
 def test_parameter_normalization():
@@ -80,6 +114,25 @@ def test_parameter_normalization():
     print("✅ 新参数覆盖旧参数")
 
 
+def test_child_human_feedback_is_forwarded_to_parent_result():
+    tool = CallSubAgentTool()
+    feedback = {
+        "feedback_id": "ops-audit:hash",
+        "scenario": "ops_work_order_audit",
+        "required": True,
+        "items": [{"item_id": "issue-1", "kind": "issue"}],
+    }
+
+    extracted = tool._extract_human_feedback([
+        {
+            "type": "tool_result",
+            "data": {"result": {"data": {"human_feedback": feedback}}},
+        }
+    ])
+
+    assert extracted == feedback
+
+
 def test_build_child_system_prompt():
     """测试子Agent系统提示生成"""
     print("\n=== 测试 3: 子Agent系统提示生成 ===")
@@ -91,7 +144,7 @@ def test_build_child_system_prompt():
         goal="更新Excel文件 /tmp/test.xlsx（第一个sheet）",
         context="按照技能文档步骤执行",
         workspace_path="/tmp",
-        target_mode="assistant"
+        target_mode="office"
     )
 
     assert "任务目标" in prompt, "应该包含任务目标"
@@ -108,7 +161,7 @@ def test_build_child_system_prompt():
         goal="简单任务",
         context=None,
         workspace_path=None,
-        target_mode="assistant"
+        target_mode="office"
     )
 
     assert "任务目标" in prompt, "应该包含任务目标"
@@ -120,7 +173,7 @@ def test_build_child_system_prompt():
     # 测试3：不同模式
     prompt_assistant = tool._build_child_system_prompt(
         goal="测试",
-        target_mode="assistant"
+        target_mode="office"
     )
     assert "关键要求" in prompt_assistant, "assistant 模式应该包含关键要求"
 
@@ -147,7 +200,7 @@ def test_example():
         goal=goal,
         context=context,
         workspace_path=workspace_path,
-        target_mode="assistant"
+        target_mode="office"
     )
 
     # 验证关键信息是否保留

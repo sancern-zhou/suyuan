@@ -10,7 +10,7 @@ import base64
 import math
 from pathlib import Path
 
-from app.tools.visualization.create_report_chart.domain.pollutant_wind_rose import generate_pollution_rose_contour
+from app.tools.visualization.create_business_chart.domain.pollutant_wind_rose import generate_pollution_rose_contour
 
 
 def main() -> None:

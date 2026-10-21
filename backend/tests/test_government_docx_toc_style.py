@@ -61,3 +61,19 @@ def test_finalize_government_docx_applies_heading_numbering(tmp_path):
     ]
     assert result["heading_numbers"] == 3
     assert headings == ["一、总体情况", "（一）处理效率", "1. 重点问题"]
+
+
+def test_fixed_template_can_preserve_exact_heading_text_without_toc(tmp_path):
+    docx_path = tmp_path / "report.docx"
+    doc = Document()
+    doc.add_heading("一、未来7天空气质量预报总览", level=1)
+    doc.add_heading("2.1逐日各时段扩散条件汇总", level=2)
+    doc.save(docx_path)
+
+    result = finalize_government_docx(docx_path, add_toc=False, number_headings=False)
+    updated = Document(docx_path)
+    assert result["toc_inserted"] is False
+    assert result["heading_numbers"] == 0
+    assert [p.text for p in updated.paragraphs if p.style.name.startswith("Heading")] == [
+        "一、未来7天空气质量预报总览", "2.1逐日各时段扩散条件汇总",
+    ]

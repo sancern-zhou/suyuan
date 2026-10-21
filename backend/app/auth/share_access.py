@@ -13,6 +13,12 @@ from config.settings import settings
 
 RESOURCE_PREVIEW_TICKET = "preview_ticket"
 RESOURCE_PREVIEW_COOKIE = "suyuan-resource-preview"
+# Directory previews are rendered inside an opaque-origin sandboxed iframe,
+# which cannot carry cookies. The ticket therefore also travels as a leading
+# content-URL path segment so relative asset URLs inherit it automatically.
+RESOURCE_PREVIEW_TICKET_PATH_SEGMENT = "_t"
+# Preview grants for scheduled task result files/report packages.
+SCHEDULED_RESULT_PREVIEW_KIND = "scheduled-task-result"
 
 
 def resource_preview_identity(session_id: str, resource_id: str) -> str:

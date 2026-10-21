@@ -17,6 +17,19 @@ def test_execute_echarts_python_schema_owns_data_access_contract():
     assert "data_id" not in contract
     assert "stdout" in contract
     assert "series" in contract
+    assert "legend" in contract
+    assert "横坐标刻度下方" in contract
+    assert "yAxis.name" in contract
+    assert "图表左侧" in contract
+    assert "xAxis.name" in contract
+    assert "横轴右侧" in contract
+    assert "chart-spec" in contract
+    assert "只在右侧面板展示交互图" in contract
+    assert "不生成静态图片" in contract
+    assert "不在对话正文插图" in contract
+    assert "chart-image" not in contract
+    assert "PNG" not in contract
+    assert "file_path" in contract
 
 
 def test_echarts_visuals_receive_the_preferred_browser_font_stack():

@@ -1,0 +1,83 @@
+schema_version: 1
+project: guangdong
+modules:
+  - legacy
+frontend:
+  theme: default
+  brand_name: 风清气智
+  features: {}
+  agent_modes:
+    - assistant
+    - ppt
+    - expert
+    - query
+    - report
+    - board
+    - ops
+  agent_platform_layout: scenes
+backend:
+  tools:
+    - query_gd_suncere
+    - query_gd_suncere_city_hour
+    - query_gd_suncere_station_hour_new
+    - query_gd_suncere_station_day_new
+    - query_gd_suncere_regional_comparison
+    - query_gd_suncere_city_day
+    - query_gd_suncere_district_day
+    - query_gd_suncere_district_report
+    - query_gd_suncere_report_compare
+    - query_city_standard_report
+    - query_city_standard_yoy_report
+    - query_station_standard_report
+    - query_station_standard_yoy_report
+    - analyze_city_pollutant_rankings
+    - get_5min_data
+  agent_mode_extra_tools:
+    expert:
+      - query_gd_suncere_city_hour
+      - query_gd_suncere_city_day
+      - query_gd_suncere_district_day
+      - query_gd_suncere_district_report
+      - query_gd_suncere_station_hour_new
+      - query_city_standard_report
+      - query_city_standard_yoy_report
+    query:
+      - get_5min_data
+      - query_gd_suncere_city_hour
+      - query_gd_suncere_station_day_new
+      - query_gd_suncere_city_day
+      - query_city_standard_report
+      - query_city_standard_yoy_report
+      - query_station_standard_report
+      - query_station_standard_yoy_report
+      - query_gd_suncere_district_report
+      - analyze_city_pollutant_rankings
+    report:
+      - get_5min_data
+      - query_gd_suncere_city_hour
+      - query_gd_suncere_city_day
+      - query_gd_suncere_district_day
+      - query_city_standard_report
+      - query_city_standard_yoy_report
+      - query_gd_suncere_district_report
+      - query_station_standard_report
+      - query_station_standard_yoy_report
+      - analyze_city_pollutant_rankings
+    ops:
+      - query_gd_suncere_station_hour_new
+      - query_gd_suncere_station_day_new
+    deliberation_meteorology:
+      - query_gd_suncere_city_hour
+      - query_gd_suncere_station_hour_new
+    deliberation_monitoring:
+      - query_gd_suncere_city_hour
+      - query_gd_suncere_city_day
+      - query_gd_suncere_district_day
+      - query_gd_suncere_district_report
+      - query_gd_suncere_station_hour_new
+      - query_gd_suncere_station_day_new
+      - query_city_standard_report
+      - query_city_standard_yoy_report
+knowledge:
+  collections: []
+scheduled_tasks: []

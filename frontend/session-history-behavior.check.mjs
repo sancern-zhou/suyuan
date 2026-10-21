@@ -26,8 +26,5 @@ assert.match(mainLayout, /'delete-sessions'/, 'main layout should declare delete
 const view = read('./src/views/ReactAnalysisView.vue')
 assert.match(view, /@delete-sessions="deleteSessions"/, 'main view should wire delete-sessions')
 
-const refactoredView = read('./src/views/ReactAnalysisViewRefactored.vue')
-assert.match(refactoredView, /@delete-sessions="deleteSessions"/, 'refactored view should wire delete-sessions')
-
 const sidebar = read('./src/components/AssistantSidebar.vue')
 assert.match(sidebar, /SESSION_FETCH_LIMIT\s*=\s*200/, 'assistant sidebar should fetch 200 sessions')

@@ -7,6 +7,7 @@ import re
 import tempfile
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote
 from uuid import uuid4
 
 import structlog
@@ -25,6 +26,7 @@ from app.auth.models import CurrentUser
 from app.auth.share_access import (
     RESOURCE_PREVIEW_COOKIE,
     RESOURCE_PREVIEW_TICKET,
+    RESOURCE_PREVIEW_TICKET_PATH_SEGMENT,
     external_api_path,
     get_share_access_service,
     resource_preview_identity,
@@ -40,6 +42,8 @@ from app.utils.path_config import get_data_registry
 logger = structlog.get_logger()
 router = APIRouter(prefix="/api/sessions", tags=["session-resources"])
 USER_VISIBLE_RESOURCE_ROLES = {"output", "report", "attachment"}
+# 与移动端资源列表保持一致（social_app_routes._app_resource_descriptors）：
+# 外置数据文件（save_data 落盘的查询/中间结果）同样对用户可见、可下载。
 USER_VISIBLE_RESOURCE_KINDS = {"data", "file", "artifact", "visual"}
 
 
@@ -77,9 +81,17 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         resource_preview_identity(session_id, item.resource_id),
     )
     internal_content_url = f"{base}/" if directory else base
-    content_url = external_api_path(internal_content_url)
-    separator = "&" if "?" in content_url else "?"
-    content_url = f"{content_url}{separator}{RESOURCE_PREVIEW_TICKET}={preview_ticket}"
+    if directory:
+        # Relative asset URLs (report_files/, assets/, ...) resolve against the
+        # document URL, so a path segment makes every subresource carry the
+        # ticket even when the sandboxed iframe cannot send cookies.
+        content_url = external_api_path(
+            f"{base}/{RESOURCE_PREVIEW_TICKET_PATH_SEGMENT}/{quote(preview_ticket, safe='')}/"
+        )
+    else:
+        content_url = external_api_path(internal_content_url)
+        separator = "&" if "?" in content_url else "?"
+        content_url = f"{content_url}{separator}{RESOURCE_PREVIEW_TICKET}={preview_ticket}"
     if "preview" in actions:
         actions["preview"] = content_url
     if "render" in actions:
@@ -100,6 +112,7 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         "resource_id": item.resource_id,
         "ref_id": item.resource_id,
         "group_id": item.group_id,
+        "run_id": item.run_id,
         "parent_resource_id": item.parent_resource_id,
         "resource_key": item.resource_key,
         "relation": item.relation,
@@ -119,6 +132,13 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
     }
+    if item.resource_key in {"chart-spec", "chart-image"}:
+        dto["visual_id"] = item.metadata.get("visual_id")
+    if item.resource_key == "chart-spec":
+        dto["interactive"] = item.metadata.get("interactive", (
+            item.metadata.get("type") != "image"
+            and item.tool_name not in {"execute_python", "create_business_chart"}
+        ))
     board_id = _board_id_from_resource(item)
     if board_id:
         dto["board_id"] = board_id
@@ -375,11 +395,19 @@ async def get_session_resource_content(
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
 ):
     """Serve authorized bytes while keeping the storage locator opaque."""
+    path_ticket = ""
+    if asset_path:
+        segments = asset_path.split("/", 2)
+        if segments[0] == RESOURCE_PREVIEW_TICKET_PATH_SEGMENT:
+            path_ticket = segments[1] if len(segments) > 1 else ""
+            asset_path = segments[2] if len(segments) > 2 and segments[2] else None
     preview_service = get_share_access_service()
-    ticket = ""
+    ticket = path_ticket
     if request is not None:
-        ticket = request.query_params.get(RESOURCE_PREVIEW_TICKET) or request.cookies.get(
-            RESOURCE_PREVIEW_COOKIE, ""
+        ticket = (
+            ticket
+            or request.query_params.get(RESOURCE_PREVIEW_TICKET)
+            or request.cookies.get(RESOURCE_PREVIEW_COOKIE, "")
         )
     ticket_valid = preview_service.verify(
         ticket,
@@ -412,11 +440,24 @@ async def get_session_resource_content(
         "Access-Control-Allow-Origin": "*",
     }
     if media_type == "text/html":
-        headers["Content-Security-Policy"] = (
-            "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-            "script-src 'self' 'unsafe-inline'; font-src 'self' data:; "
-            "object-src 'none'; base-uri 'none'"
-        )
+        if target.name.startswith("xuchang_air_quality_daily_review_"):
+            # This standalone report embeds AMap JSAPI and an inline timeline.
+            # Keep the relaxation scoped to its generated report filename.
+            headers["Cache-Control"] = "private, no-store"
+            headers["Content-Security-Policy"] = (
+                "default-src 'self'; img-src 'self' data: blob: https:; "
+                "style-src 'self' 'unsafe-inline' https:; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+                "https://webapi.amap.com https://restapi.amap.com https://a.amap.com; "
+                "connect-src 'self' https:; font-src 'self' data: https:; "
+                "worker-src 'self' blob:; object-src 'none'; base-uri 'none'"
+            )
+        else:
+            headers["Content-Security-Policy"] = (
+                "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+                "script-src 'self' 'unsafe-inline'; font-src 'self' data:; "
+                "object-src 'none'; base-uri 'none'"
+            )
     filename = target.name if asset_path is not None else (resource.label or target.name)
     response = FileResponse(
         path=target,
@@ -425,7 +466,7 @@ async def get_session_resource_content(
         content_disposition_type=disposition,
         headers=headers,
     )
-    if ticket_valid:
+    if ticket_valid and request is not None:
         response.set_cookie(
             RESOURCE_PREVIEW_COOKIE,
             ticket,

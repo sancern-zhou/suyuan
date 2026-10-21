@@ -75,7 +75,7 @@ class FetcherScheduler:
         # 添加到调度器
         job = self.scheduler.add_job(
             fetcher.run,
-            CronTrigger.from_crontab(fetcher.schedule),
+            CronTrigger.from_crontab(fetcher.schedule, timezone=self.scheduler.timezone),
             id=fetcher.name,
             name=fetcher.description,
             replace_existing=True
@@ -118,6 +118,13 @@ class FetcherScheduler:
             count=len(self.fetchers)
         )
 
+        # APScheduler clears in-memory jobs on shutdown. Rebuild missing jobs
+        # from the worker's registered fetchers when restarting the same instance.
+        for fetcher in list(self.fetchers.values()):
+            if self.scheduler.get_job(fetcher.name) is None:
+                self.register(fetcher)
+                if not getattr(fetcher, "enabled", True):
+                    self.scheduler.pause_job(fetcher.name)
         self.scheduler.start()
         self._running = True
 

@@ -12,13 +12,15 @@ import threading
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Dict, Any, Optional, Tuple, AsyncGenerator, List
+from typing import Callable, Dict, Any, Optional, Tuple, AsyncGenerator, List
 import structlog
 from config.settings import settings
 import httpx
 from app.utils.llm_context_logger import get_llm_context_logger
+from app.services.model_trajectory import trace_model_call, update_trajectory_provider, plain
 from app.services.llm_failover import (
     LLMFailoverError,
+    LLMResponseRejectedError,
     classify_llm_failure,
     get_cooldown_failure,
     get_llm_pool_semaphore,
@@ -27,6 +29,7 @@ from app.services.llm_failover import (
     should_fallback,
     summarize_attempts,
 )
+from app.services.llm_thinking_policy import reset_request_tier, set_request_tier
 from app.services.chat_completions_adapter import (
     ChatCompletionsStreamAdapter,
     ToolCallArgumentsError,
@@ -43,24 +46,17 @@ _llm_request_state: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
     "llm_request_state",
     default=None,
 )
-_model_tier_rotation_lock = threading.Lock()
-_model_tier_rotation_offsets: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], int] = {}
 
+_llm_opencode_session_id: ContextVar[Optional[str]] = ContextVar(
+    "llm_opencode_session_id",
+    default=None,
+)
 
-def _rotate_model_tier_candidates(tier: str, candidates: list):
-    """Rotate a tier chain so concurrent KB calls do not share one primary."""
-    if len(candidates) < 2:
-        return candidates, 0
+# OpenCode Go 客户端标识：专属 User-Agent，替代通用 httpx SDK 标识
+OPENCODE_GO_USER_AGENT = "suyuan-agent/1.0"
 
-    signature = tuple(
-        (candidate.provider, candidate.model or "")
-        for candidate in candidates
-    )
-    key = (tier, signature)
-    with _model_tier_rotation_lock:
-        offset = _model_tier_rotation_offsets.get(key, 0) % len(candidates)
-        _model_tier_rotation_offsets[key] = offset + 1
-    return candidates[offset:] + candidates[:offset], offset
+# OpenCode Go 订阅 provider：go 为原有套餐，go2 为第二个套餐（可配置更高优先级）
+OPENCODE_GO_PROVIDERS = frozenset({"go", "go2"})
 
 
 class LLMService:
@@ -253,7 +249,6 @@ class LLMService:
 
         profile = (auto_profile or "").strip().lower()
         profile_config = {
-            "flash": getattr(settings, "llm_flash_models", "") or "",
             "multimodal": getattr(settings, "llm_multimodal_models", "") or "",
         }.get(profile)
         if profile_config and profile_config.strip():
@@ -284,74 +279,25 @@ class LLMService:
         *,
         load_balance: bool = False,
     ):
-        """Temporarily select the primary model for the current async request."""
-        tier = (model_tier or "").strip().lower()
-        if not tier or tier == "auto":
-            yield
-            return
+        """Temporarily select the thinking tier for the current async request.
 
-        tier_config = {
-            "flash": getattr(settings, "llm_flash_models", "") or "",
-            "pro": getattr(settings, "llm_pro_models", "") or "",
-        }.get(tier)
-        if tier_config is None:
+        挡位只决定思考开关（flash 关 / pro 开，auto 按调用方角色），
+        模型链共用主配置（primary + LLM_FALLBACKS），不再按挡位切换供应商。
+        """
+        tier = (model_tier or "").strip().lower()
+        if tier and tier not in ("auto", "flash", "pro"):
             raise ValueError(f"Unsupported model tier: {model_tier}")
 
-        from app.services.llm_failover import parse_fallback_candidates
-
         token = _llm_request_state.set({})
+        tier_token = set_request_tier(tier)
         try:
             state = _llm_request_state.get()
-            if state is not None:
+            if state is not None and tier:
                 state["selection_source"] = "tier"
                 state["model_tier"] = tier
-            if tier_config.strip():
-                candidates = parse_fallback_candidates("", "", tier_config)
-                candidates = [
-                    candidate
-                    for candidate in candidates
-                    if candidate.provider and candidate.provider.lower() != "glm"
-                ]
-                if not candidates:
-                    raise ValueError(
-                        f"No non-GLM candidates configured for model tier: {tier}. "
-                        "Flash/Pro tiers must use providers such as mimo or deepseek."
-                    )
-                rotation_offset = 0
-                if load_balance:
-                    candidates, rotation_offset = _rotate_model_tier_candidates(
-                        tier,
-                        candidates,
-                    )
-                    if state is not None:
-                        state["load_balanced"] = True
-                        state["rotation_offset"] = rotation_offset
-                primary = candidates[0]
-                self.provider = primary.provider
-                self._load_provider_config()
-                if primary.model:
-                    self.model = primary.model
-                fallback_items = [
-                    f"{candidate.provider}/{candidate.model}" if candidate.model else candidate.provider
-                    for candidate in candidates[1:]
-                ]
-                self.request_fallbacks = ",".join(fallback_items)
-            else:
-                self.provider = settings.llm_provider.lower()
-                self._load_provider_config()
-                self.request_fallbacks = None
-            logger.info(
-                "llm_request_model_tier_selected",
-                tier=tier,
-                load_balanced=load_balance,
-                rotation_offset=(state or {}).get("rotation_offset", 0),
-                provider=self.provider,
-                model=self.model,
-                base_url=self.base_url,
-                fallbacks=self.request_fallbacks,
-            )
             yield
         finally:
+            reset_request_tier(tier_token)
             temporary_client = self.anthropic_client
             _llm_request_state.reset(token)
             if temporary_client is not None:
@@ -376,6 +322,21 @@ class LLMService:
             yield
 
     @contextmanager
+    def use_opencode_session(self, session_id: Optional[str]):
+        """Set the OpenCode Go routing session id for LLM calls in this context.
+
+        OpenCode Go 网关要求每段对话发送稳定的 x-opencode-session 会话 ID，
+        用于请求路由与提示词缓存。
+        """
+        token = _llm_opencode_session_id.set(
+            str(session_id) if session_id else None
+        )
+        try:
+            yield
+        finally:
+            _llm_opencode_session_id.reset(token)
+
+    @contextmanager
     def use_auto_profile(self, auto_profile: Optional[str]):
         """Temporarily select a model chain for Auto based on capability profile.
 
@@ -384,6 +345,10 @@ class LLMService:
         """
         profile = (auto_profile or "").strip().lower()
         if not profile or profile == "default":
+            yield
+            return
+        if profile == "flash":
+            # 挡位改制后 flash 复用主配置链，仅思考开关不同，无独立 profile。
             yield
             return
 
@@ -397,7 +362,6 @@ class LLMService:
             return
 
         profile_configs = {
-            "flash": getattr(settings, "llm_flash_models", "") or "",
             "multimodal": getattr(settings, "llm_multimodal_models", "") or "",
         }
         profile_config = profile_configs.get(profile)
@@ -746,22 +710,81 @@ class LLMService:
                     reason="Same tool call continuation, preserving thinking blocks (filtered redacted_thinking)",
                 )
             else:
-                api_params["thinking"] = {"type": "disabled"}
+                # 2026-10-04 实测：scnet DeepSeek-V4.1-Flash 接受 thinking=disabled
+                # （含 thinking 历史+tools 连续 4 次返回 200 且无 thinking 块），
+                # 旧的 HTTP 400 结论针对已下线的旧模型。scnet 按模型档位走分级策略，
+                # 其余 provider 新用户轮次一律关闭。
+                if self.provider == "scnet":
+                    from app.services.llm_thinking_policy import (
+                        get_agent_caller_tier,
+                        get_request_tier,
+                        should_disable_thinking,
+                    )
+
+                    (
+                        disable,
+                        reason,
+                    ) = should_disable_thinking(
+                        settings.scnet_disable_thinking,
+                        request_tier=get_request_tier(),
+                        caller_tier=get_agent_caller_tier(),
+                    )
+                    caller_tier = get_agent_caller_tier()
+                else:
+                    disable, reason = True, "new_turn"
+                    caller_tier = None
+                if disable:
+                    api_params["thinking"] = {"type": "disabled"}
                 api_params["messages"] = self._strip_thinking_blocks(sanitized_messages)
                 logger.info(
-                    "deepseek_thinking_mode_disabled",
+                    "deepseek_new_turn_thinking_normalized",
                     provider=self.provider,
                     model=self.model,
-                    reason="New user turn, disabling thinking mode and stripping thinking blocks",
+                    reason=reason,
+                    disabled=disable,
+                    caller_tier=caller_tier,
                 )
         else:
             api_params["messages"] = self._strip_thinking_blocks(sanitized_messages)
-            logger.info(
-                "extended_thinking_skipped",
-                provider=self.provider,
-                model=self.model,
-                reason="Not a real Anthropic API",
-            )
+            if self.provider == "scnet" and not is_deepseek:
+                from app.services.llm_thinking_policy import (
+                    get_agent_caller_tier,
+                    get_request_tier,
+                    should_disable_thinking,
+                )
+
+                disable, reason = should_disable_thinking(
+                    settings.scnet_disable_thinking,
+                    request_tier=get_request_tier(),
+                    caller_tier=get_agent_caller_tier(),
+                )
+                if disable:
+                    # SCNET Qwen 默认开启思考且无法限制长度（实测出现过 26853 字符
+                    # thinking / 289s 生成轮）。thinking=disabled 已实测带 tools、
+                    # 历史含 thinking 块时均返回 200 且真实关闭（2026-10-04）。
+                    api_params["thinking"] = {"type": "disabled"}
+                    logger.info(
+                        "scnet_thinking_mode_disabled",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=reason,
+                        caller_tier=get_agent_caller_tier(),
+                    )
+                else:
+                    logger.info(
+                        "scnet_thinking_kept",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=reason,
+                        caller_tier=get_agent_caller_tier(),
+                    )
+            else:
+                logger.info(
+                    "extended_thinking_skipped",
+                    provider=self.provider,
+                    model=self.model,
+                    reason="Not a real Anthropic API",
+                )
 
         if system:
             api_params["system"] = system
@@ -1174,13 +1197,29 @@ class LLMService:
             "model_env": "AGNES_MODEL",
             "model_default": "agnes-2.0-flash",
         },
+        # OpenCode Go 订阅（https://opencode.ai/zen/go，OpenAI Chat Completions 兼容协议）
+        "go": {
+            "url_env": "GO_BASE_URL",
+            "url_default": "https://opencode.ai/zen/go/v1",
+            "key_env": "GO_API_KEY",
+            "model_env": "GO_MODEL",
+            "model_default": "deepseek-v4.1-flash",
+        },
+        # 第二个 OpenCode Go 订阅套餐；在模型链中排在 go 之前即可获得更高优先级
+        "go2": {
+            "url_env": "GO2_BASE_URL",
+            "url_default": "https://opencode.ai/zen/go/v1",
+            "key_env": "GO2_API_KEY",
+            "model_env": "GO2_MODEL",
+            "model_default": "deepseek-v4.1-flash",
+        },
         # 智谱 GLM Coding Plan（OpenAI + Anthropic 兼容协议）
         "glm": {
             "url_env": "GLM_BASE_URL",
             "url_default": "https://open.bigmodel.cn/api/coding/paas/v4",
             "key_env": "GLM_API_KEY",
             "model_env": "GLM_MODEL",
-            "model_default": "glm-4.7",
+            "model_default": "glm-5.3-flash",
         },
         # 中科曙光 SCNET Token Plan（Anthropic 兼容协议）
         "scnet": {
@@ -1192,7 +1231,39 @@ class LLMService:
         },
     }
 
-    def __init__(self):
+    @property
+    def request_timeout_seconds(self) -> float:
+        override = getattr(self, "_request_timeout_seconds", None)
+        return override if override is not None else float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+
+    @property
+    def connect_timeout_seconds(self) -> float:
+        return float(getattr(settings, "llm_connect_timeout_seconds", 10.0) or 10.0)
+
+    @property
+    def first_token_timeout_seconds(self) -> float:
+        return float(getattr(settings, "llm_first_token_timeout_seconds", 45.0) or 45.0)
+
+    def provider_http_timeout(self, *, streaming: bool = False, total: Optional[float] = None) -> httpx.Timeout:
+        """Build an httpx.Timeout for provider requests.
+
+        ``connect`` is short so a hanging endpoint fails over in seconds instead
+        of burning the full request timeout. ``read`` doubles as the
+        first-token/idle-chunk guard for streaming calls; non-streaming calls
+        keep the full request timeout because the response body arrives in one
+        silent chunk after generation completes.
+        """
+        request_timeout = float(total) if total is not None else self.request_timeout_seconds
+        connect_timeout = min(self.connect_timeout_seconds, request_timeout)
+        read_timeout = (
+            min(self.first_token_timeout_seconds, request_timeout)
+            if streaming
+            else request_timeout
+        )
+        return httpx.Timeout(request_timeout, connect=connect_timeout, read=read_timeout)
+
+    def __init__(self, *, request_timeout_seconds: Optional[float] = None):
+        self._request_timeout_seconds = request_timeout_seconds
         # 优先使用 settings 中的配置，确保与 .env 文件一致
         self.provider = settings.llm_provider.lower()
         self.temperature = settings.llm_temperature
@@ -1394,7 +1465,10 @@ class LLMService:
                     })
                     if failure.reason == "context_overflow":
                         raise
-                    if should_fallback(failure):
+                    # Response rejections are request-scoped (e.g. empty
+                    # output): move to the next candidate without poisoning
+                    # the provider for later requests.
+                    if should_fallback(failure) and failure.reason != "invalid_response":
                         mark_provider_cooldown(self.provider, failure)
                     has_next = index < len(candidates)
                     logger.warning(
@@ -1408,6 +1482,8 @@ class LLMService:
                         error=failure.message[:300],
                     )
                     if not has_next or not should_fallback(failure):
+                        if isinstance(exc, LLMResponseRejectedError) and not exc.attempts:
+                            exc.attempts = list(attempts)
                         raise
             raise LLMFailoverError(summarize_attempts(attempts))
         except Exception:
@@ -1530,6 +1606,23 @@ class LLMService:
             if not self.model:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_agnes_model_fallback_to_env", model=self.model)
+
+        elif self.provider in OPENCODE_GO_PROVIDERS:
+            self.api_mode = getattr(settings, f"{self.provider}_api_mode", "chat_completions")
+            self.base_url = (
+                getattr(settings, f"{self.provider}_base_url", None)
+                or os.getenv(config["url_env"])
+                or config["url_default"]
+            )
+            self.api_key = (
+                getattr(settings, f"{self.provider}_api_key", None)
+                or os.getenv(config["key_env"])
+                or ""
+            )
+            self.model = getattr(settings, f"{self.provider}_model", None)
+            if not self.model:
+                self.model = os.getenv(config["model_env"], config["model_default"])
+                logger.debug("llm_go_model_fallback_to_env", model=self.model)
 
         elif self.provider == "glm":
             self.api_mode = getattr(settings, "glm_api_mode", "anthropic_messages")
@@ -1681,7 +1774,7 @@ class LLMService:
                     )
                     return
 
-                request_timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+                request_timeout = self.provider_http_timeout()
                 if self.provider == "mimo":
                     # MiMo's Anthropic-compatible endpoint accepts the SDK's
                     # standard API-key authentication. Passing api_key=None and
@@ -1729,6 +1822,7 @@ class LLMService:
 
     def _get_request_config(self) -> Tuple[str, Dict[str, str]]:
         """获取请求配置（URL, headers）"""
+        update_trajectory_provider(self)
         # 🔍 调试日志：验证 base_url
         if not self.base_url:
             logger.error(
@@ -1754,8 +1848,16 @@ class LLMService:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
+        # OpenCode Go 网关要求：专属 User-Agent + 稳定会话头（缺失会被拒绝）
+        if self.provider in OPENCODE_GO_PROVIDERS:
+            headers["User-Agent"] = OPENCODE_GO_USER_AGENT
+            headers["x-opencode-session"] = (
+                _llm_opencode_session_id.get() or f"suyuan-{os.getpid()}"
+            )
+
         return url, headers
 
+    @trace_model_call
     async def chat(
         self,
         messages: list,
@@ -1766,6 +1868,10 @@ class LLMService:
         """
         简单的聊天接口（内部使用流式API避免超时）
 
+        与 call_llm_with_json_response 相同的供应商回退语义：
+        按 LLM_FALLBACKS 候选链依次尝试，主供应商认证失败、5xx 等故障时自动
+        切换下一候选，冷却中的供应商跳过；429 仍在单供应商内退避重试。
+
         Args:
             messages: 消息列表，[{"role": "user", "content": "..."}]
             temperature: 温度参数
@@ -1774,6 +1880,102 @@ class LLMService:
 
         Returns:
             LLM响应的文本内容
+        """
+        original_state = self._snapshot_provider_state()
+        candidates = parse_fallback_candidates(
+            original_state["provider"],
+            original_state["model"],
+            self.request_fallbacks,
+        )
+        attempts = []
+        try:
+            for index, candidate in enumerate(candidates, start=1):
+                if not (
+                    candidate.provider == original_state["provider"].lower()
+                    and (candidate.model or original_state["model"]) == original_state["model"]
+                ):
+                    self._switch_provider_for_attempt(candidate.provider, candidate.model)
+
+                cooldown_failure = get_cooldown_failure(self.provider)
+                if cooldown_failure and index < len(candidates):
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": cooldown_failure.reason,
+                        "status": cooldown_failure.status,
+                        "code": cooldown_failure.code,
+                        "error": "provider is in cooldown",
+                    })
+                    logger.warning(
+                        "llm_chat_fallback_candidate_skipped_cooldown",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=cooldown_failure.reason,
+                    )
+                    continue
+
+                try:
+                    result = await self._run_llm_request_with_global_limit(
+                        "chat",
+                        lambda: self._chat_attempt(
+                            messages,
+                            temperature=temperature,
+                            timeout=timeout,
+                            max_tokens=max_tokens,
+                        ),
+                    )
+                    if attempts:
+                        logger.warning(
+                            "llm_chat_fallback_candidate_succeeded",
+                            provider=self.provider,
+                            model=self.model,
+                            attempts=summarize_attempts(attempts),
+                        )
+                    return result
+                except Exception as exc:
+                    failure = classify_llm_failure(exc)
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": failure.reason,
+                        "status": failure.status,
+                        "code": failure.code,
+                        "error": failure.message,
+                    })
+                    if failure.reason == "context_overflow":
+                        raise
+                    if should_fallback(failure):
+                        mark_provider_cooldown(self.provider, failure)
+                    has_next = index < len(candidates)
+                    logger.warning(
+                        "llm_chat_fallback_candidate_failed",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=failure.reason,
+                        status=failure.status,
+                        code=failure.code,
+                        has_next=has_next,
+                        error=failure.message[:300],
+                    )
+                    if not has_next or not should_fallback(failure):
+                        raise
+            raise LLMFailoverError(summarize_attempts(attempts))
+        except Exception:
+            if attempts:
+                logger.error("llm_chat_fallback_failed", attempts=summarize_attempts(attempts))
+            raise
+        finally:
+            self._restore_provider_state(original_state)
+
+    async def _chat_attempt(
+        self,
+        messages: list,
+        temperature: float = None,
+        timeout: float = 120.0,
+        max_tokens: int = None
+    ) -> str:
+        """
+        chat() 的单供应商尝试：只请求当前选定的 provider，不做候选链回退。
         """
         # 如果未指定temperature，使用settings中的默认值
         if temperature is None:
@@ -1870,7 +2072,7 @@ class LLMService:
                 full_content = ""
 
                 # 🔥 使用流式API（600秒超时）
-                async with httpx.AsyncClient(timeout=stream_timeout) as client:
+                async with httpx.AsyncClient(timeout=self.provider_http_timeout(streaming=True, total=stream_timeout)) as client:
                     async with client.stream("POST", url, headers=headers, json=payload) as response:
                         response.raise_for_status()
 
@@ -1937,242 +2139,6 @@ class LLMService:
                     raise
 
         # 理论上不会到达这里，但为了类型检查完整性
-        raise last_error
-
-    async def chat_streaming(
-        self,
-        messages: list,
-        temperature: float = None,
-        timeout: float = 600.0,
-        max_tokens: int = None,
-    ):
-        """
-        真正的流式 LLM 调用，逐块 yield 文本内容
-
-        Args:
-            messages: 消息列表
-            temperature: 温度参数
-            timeout: 超时时间
-            max_tokens: 最大token数
-
-        Yields:
-            str: 每次返回一个文本块（chunk）
-        """
-        # 如果未指定temperature，使用settings中的默认值
-        if temperature is None:
-            temperature = self.temperature
-
-        url, headers = self._get_request_config()
-
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "stream": True,
-        }
-
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
-
-        logger.info(
-            "llm_chat_streaming_start",
-            provider=self.provider,
-            model=self.model,
-            messages_count=len(messages)
-        )
-
-        # 429速率限制重试机制
-        max_retries = 3
-        last_error = None
-
-        for attempt in range(max_retries):
-            try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
-                    async with client.stream("POST", url, headers=headers, json=payload) as response:
-                        response.raise_for_status()
-
-                        # 使用辅助方法解析 SSE 流
-                        async for chunk in self._parse_sse_stream(response):
-                            yield chunk
-
-                logger.info("llm_chat_streaming_complete")
-                return  # 成功完成
-
-            except httpx.HTTPStatusError as e:
-                last_error = e
-                status_code = e.response.status_code
-
-                # 安全地提取响应文本
-                response_text = await self._extract_response_text(e.response)
-
-                # 检查是否是429速率限制错误
-                is_rate_limit = status_code == 429 or (
-                    status_code == 400 and
-                    "rate limit" in response_text.lower()
-                )
-
-                if is_rate_limit and attempt < max_retries - 1:
-                    # 指数退避
-                    wait_time = min(2 ** attempt, 60)
-                    logger.warning(
-                        "llm_streaming_rate_limit_detected",
-                        status_code=status_code,
-                        attempt=attempt + 1,
-                        max_retries=max_retries,
-                        wait_seconds=wait_time,
-                        response_text=response_text[:200]
-                    )
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    logger.error(
-                        "llm_streaming_http_error",
-                        status_code=status_code,
-                        response_text=response_text[:500],
-                        attempt=attempt + 1,
-                        max_retries=max_retries
-                    )
-                    raise
-
-        # 理论上不会到达这里
-        raise last_error
-
-    async def chat_streaming_with_status(
-        self,
-        messages: list,
-        temperature: float = None,
-        timeout: float = 600.0,
-        max_tokens: int = None,
-    ):
-        """
-        流式 LLM 调用，返回文本块和状态信息
-
-        与 chat_streaming 的区别：
-        - 返回字典格式：{"chunk": str, "is_complete": bool}
-        - is_complete 为 True 时表示流已结束（SSE [DONE] 信号）
-
-        Args:
-            messages: 消息列表
-            temperature: 温度参数
-            timeout: 超时时间
-            max_tokens: 最大token数
-
-        Yields:
-            dict: {"chunk": str, "is_complete": bool}
-        """
-        # 如果未指定temperature，使用settings中的默认值
-        if temperature is None:
-            temperature = self.temperature
-
-        url, headers = self._get_request_config()
-
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "stream": True,
-        }
-
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
-
-        # ✅ 使用LLMContextLogger记录完整的请求上下文到文件
-        try:
-            import uuid
-            session_id = f"llm_service_{uuid.uuid4().hex[:8]}"
-
-            llm_context_logger = get_llm_context_logger()
-            log_file_path = llm_context_logger.log_request_context(
-                session_id=session_id,
-                iteration=0,  # llm_service没有iteration概念，使用0
-                mode="llm_service",
-                messages=messages,
-                metadata={
-                    "provider": self.provider,
-                    "model": self.model,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                }
-            )
-
-            # 在控制台只显示预览和文件路径
-            messages_preview = []
-            for msg in messages:
-                msg_copy = msg.copy()
-                content = msg_copy.get("content", "")
-                if len(content) > 300:
-                    msg_copy["content"] = content[:300] + "...(truncated)"
-                messages_preview.append(msg_copy)
-
-            logger.info(
-                "llm_streaming_request",
-                provider=self.provider,
-                model=self.model,
-                url=url,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                messages_count=len(messages),
-                messages_preview=messages_preview,
-                log_file=log_file_path,
-            )
-        except Exception as e:
-            logger.error("llm_context_logging_failed", error=str(e))
-
-        # 429速率限制重试机制
-        max_retries = 3
-        last_error = None
-
-        for attempt in range(max_retries):
-            try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
-                    async with client.stream("POST", url, headers=headers, json=payload) as response:
-                        response.raise_for_status()
-
-                        # 使用辅助方法解析 SSE 流，并传递流结束信号
-                        async for result in self._parse_sse_stream_with_status(response):
-                            yield result
-
-                logger.info("llm_chat_streaming_with_status_complete")
-
-                return  # 成功完成
-
-            except httpx.HTTPStatusError as e:
-                last_error = e
-                status_code = e.response.status_code
-
-                # 安全地提取响应文本
-                response_text = await self._extract_response_text(e.response)
-
-                # 检查是否是429速率限制错误
-                is_rate_limit = status_code == 429 or (
-                    status_code == 400 and
-                    "rate limit" in response_text.lower()
-                )
-
-                if is_rate_limit and attempt < max_retries - 1:
-                    # 指数退避
-                    wait_time = min(2 ** attempt, 60)
-                    logger.warning(
-                        "llm_streaming_with_status_rate_limit_detected",
-                        status_code=status_code,
-                        attempt=attempt + 1,
-                        max_retries=max_retries,
-                        wait_seconds=wait_time,
-                        response_text=response_text[:200]
-                    )
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    logger.error(
-                        "llm_streaming_with_status_http_error",
-                        status_code=status_code,
-                        response_text=response_text[:500],
-                        attempt=attempt + 1,
-                        max_retries=max_retries
-                    )
-                    raise
-
-        # 理论上不会到达这里
         raise last_error
 
     async def call_llm_with_json_response(
@@ -2315,7 +2281,7 @@ class LLMService:
 
         for attempt in range(max_retries):
             try:
-                timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+                timeout = self.provider_http_timeout()
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     response = await client.post(url, headers=headers, json=payload)
                     response.raise_for_status()
@@ -2908,6 +2874,8 @@ class LLMService:
             "temperature": temperature,
         }
         payload["stream"] = stream
+        if stream:
+            payload["stream_options"] = {"include_usage": True}
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         if converted_tools:
@@ -2915,6 +2883,32 @@ class LLMService:
             payload["tool_choice"] = tool_choice or "auto"
         if self.provider == "deepseek":
             payload["enable_thinking"] = False
+            if stream:
+                payload["stream_options"] = {"include_usage": True}
+        elif self.provider in ("go", "go2"):
+            # Go 网关（DeepSeek 上游）默认开启思考：实测无参数时推理可吃满
+            # max_tokens 导致正文为空；enable_thinking=false 实测生效（2026-10-04）。
+            from app.services.llm_thinking_policy import (
+                get_agent_caller_tier,
+                get_request_tier,
+                should_disable_thinking,
+            )
+
+            disable, reason = should_disable_thinking(
+                settings.go_disable_thinking,
+                request_tier=get_request_tier(),
+                caller_tier=get_agent_caller_tier(),
+            )
+            if disable:
+                payload["enable_thinking"] = False
+            logger.info(
+                "go_thinking_mode",
+                provider=self.provider,
+                model=self.model,
+                disabled=disable,
+                reason=reason,
+                caller_tier=get_agent_caller_tier(),
+            )
             if stream:
                 payload["stream_options"] = {"include_usage": True}
         return payload
@@ -2949,7 +2943,7 @@ class LLMService:
             messages_count=len(payload["messages"]),
             has_tools=bool(payload.get("tools")),
         )
-        timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+        timeout = self.provider_http_timeout()
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
@@ -3006,7 +3000,7 @@ class LLMService:
             has_tools=bool(payload.get("tools")),
         )
         adapter = ChatCompletionsStreamAdapter(model=self.model)
-        timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+        timeout = self.provider_http_timeout(streaming=True)
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream("POST", url, headers=headers, json=payload) as response:
                 response.raise_for_status()
@@ -3022,6 +3016,7 @@ class LLMService:
         for event in adapter.finish():
             yield event
 
+    @trace_model_call
     async def chat_anthropic(
         self,
         messages: List[Dict[str, str]],
@@ -3032,6 +3027,7 @@ class LLMService:
         provider: Optional[str] = None,
         model: Optional[str] = None,
         auto_profile: Optional[str] = None,
+        validate: Optional[Callable[[Any], Optional[str]]] = None,
     ) -> Dict[str, Any]:
         """Anthropic 格式聊天，支持原生工具调用
 
@@ -3043,6 +3039,9 @@ class LLMService:
             max_tokens: 最大输出 token 数
             temperature: 温度参数
             system: 系统提示词（Anthropic API 使用单独的 system 参数）
+            validate: 可选响应校验回调，返回 None 表示通过；返回错误文案时
+                当前候选被判为 invalid_response 并切换下一个 fallback 候选，
+                全部候选被拒绝时抛出 LLMResponseRejectedError。
 
         Returns:
             {
@@ -3060,6 +3059,7 @@ class LLMService:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     system=system,
+                    validate=validate,
                 )
             finally:
                 self._schedule_provider_override_service_close(override_service)
@@ -3072,6 +3072,7 @@ class LLMService:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     system=system,
+                    validate=validate,
                 )
 
         try:
@@ -3111,7 +3112,18 @@ class LLMService:
                     messages_count=len(api_params.get("messages", [])),
                     has_tools=bool(api_params.get("tools")),
                 )
+                update_trajectory_provider(self)
                 return await self.anthropic_client.messages.create(**api_params)
+
+            if validate is not None:
+                base_create_message = create_message
+
+                async def create_message():
+                    response = await base_create_message()
+                    rejection = validate(response)
+                    if rejection:
+                        raise LLMResponseRejectedError(str(rejection))
+                    return response
 
             response = await self._run_anthropic_with_fallback(
                 "llm_chat",
@@ -3128,7 +3140,7 @@ class LLMService:
             result = {
                 "content": response.content,
                 "model": response.model,
-                "usage": {
+                "usage": plain(response.usage) if hasattr(response.usage, "model_dump") else {
                     "input_tokens": response.usage.input_tokens,
                     "output_tokens": response.usage.output_tokens
                 },
@@ -3225,6 +3237,7 @@ class LLMService:
             )
             raise
 
+    @trace_model_call
     async def chat_anthropic_streaming(
         self,
         messages: List[Dict[str, str]],
@@ -3382,15 +3395,26 @@ class LLMService:
                             operation="anthropic_stream",
                             wait_ms=round((time.monotonic() - pool_wait_started) * 1000, 2),
                         )
-                        async with self.anthropic_client.messages.stream(**api_params) as stream:
+                        async with self.anthropic_client.messages.stream(
+                            **api_params,
+                            timeout=self.provider_http_timeout(streaming=True),
+                        ) as stream:
                             async for event in stream:
                                 event_type = event.type
+                                # Headers and complete no-argument tool blocks
+                                # are observable output even without a delta.
+                                if event_type in {
+                                    "message_start", "content_block_start", "content_block_delta",
+                                    "content_block_stop", "message_delta", "message_stop",
+                                }:
+                                    candidate_emitted = True
 
                                 if event_type == "message_start":
                                     yield {
                                         "type": "message_start",
                                         "data": {
-                                            "usage": {
+                                            "model": getattr(event.message, "model", self.model),
+                                            "usage": plain(event.message.usage) if hasattr(event.message.usage, "model_dump") else {
                                                 "input_tokens": event.message.usage.input_tokens,
                                                 "output_tokens": event.message.usage.output_tokens,
                                             }
@@ -3501,6 +3525,10 @@ class LLMService:
                         "error": failure.message,
                     })
                     if failure.reason == "context_overflow" or first_token_received or candidate_emitted:
+                        # 流式中断后生成器内无法安全换候选重放（事件已部分 yield 给上层），
+                        # 这里给当前供应商打 cooldown，让调用方的后续请求直接切换下一候选。
+                        if failure.reason != "context_overflow" and should_fallback(failure):
+                            mark_provider_cooldown(self.provider, failure)
                         logger.error(
                             "llm_anthropic_streaming_failed",
                             provider=self.provider,

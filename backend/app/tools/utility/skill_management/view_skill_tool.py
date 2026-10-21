@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.skill_management.skill_paths import (
     active_skill_paths,
+    list_skill_titles,
     parse_skill_metadata,
     resolve_skill_file,
 )
-
 
 class ViewSkillTool(LLMTool):
     def __init__(self):
@@ -16,6 +17,7 @@ class ViewSkillTool(LLMTool):
             name="view_skill",
             description=(
                 "读取技能文档完整内容。用于在 list_skills 找到相关技能后查看详细流程；"
+                "支持按技能标题（如「分析报告通用工作流」）或文件名读取；"
                 "默认只读正式技能，include_drafts=true 时也可读取候选草稿。"
             ),
             category=ToolCategory.QUERY,
@@ -23,13 +25,13 @@ class ViewSkillTool(LLMTool):
             requires_context=False,
             function_schema={
                 "name": "view_skill",
-                "description": "读取指定技能文档的完整内容，支持按文件名或技能名查找。",
+                "description": "读取指定技能文档的完整内容，支持按技能标题或文件名查找。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "name": {
                             "type": "string",
-                            "description": "技能文件名或名称，例如 excel 或 excel.md。",
+                            "description": "技能标题或文件名，例如「分析报告通用工作流」、excel 或 excel.md。",
                         },
                         "include_drafts": {
                             "type": "boolean",
@@ -43,12 +45,23 @@ class ViewSkillTool(LLMTool):
         )
 
     async def execute(self, name: str, include_drafts: bool = False, **kwargs) -> Dict[str, Any]:
+        skills_dir = drafts_dir = None
+        search_dirs: list = []
         try:
             skills_dir, drafts_dir = active_skill_paths()
+            from app.agent.selection_context import active_skill_dirs
+
+            # 主目录（测试可注入）优先，其余激活技能目录（项目目录/共享库）按序去重追加。
+            search_dirs = [skills_dir]
+            search_dirs.extend(
+                directory
+                for directory in active_skill_dirs()
+                if directory.resolve() != Path(skills_dir).resolve()
+            )
             skill_file = resolve_skill_file(
                 name,
                 include_drafts=include_drafts,
-                skills_dir=skills_dir,
+                skills_dir=search_dirs,
                 drafts_dir=drafts_dir,
             )
             content = skill_file.read_text(encoding="utf-8")
@@ -67,10 +80,19 @@ class ViewSkillTool(LLMTool):
                 "summary": f"已读取技能文档：{metadata['title']}",
             }
         except FileNotFoundError:
+            try:
+                titles = list_skill_titles(
+                    skills_dir=search_dirs or skills_dir,
+                    drafts_dir=drafts_dir,
+                    include_drafts=include_drafts,
+                )
+            except Exception:
+                titles = []
+            hint = f"。可用技能：{'、'.join(titles)}" if titles else ""
             return {
                 "success": False,
                 "error": f"Skill not found: {name}",
-                "summary": f"未找到技能文档：{name}",
+                "summary": f"未找到技能文档：{name}{hint}",
             }
         except ValueError as exc:
             return {

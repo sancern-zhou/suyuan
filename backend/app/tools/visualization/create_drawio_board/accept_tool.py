@@ -4,7 +4,7 @@ from dataclasses import asdict
 from typing import Any, Dict
 
 from app.boards.application import BoardApplicationService
-from app.db.database import async_session
+from app.db.session_database import session_async_session as async_session
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import board_product
 

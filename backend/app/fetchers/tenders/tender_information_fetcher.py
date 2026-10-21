@@ -15,7 +15,6 @@ from app.services.tenders.config import (
 )
 from app.services.tenders.llm import OpenAICompatibleTenderLLMClient, TenderLLMClientPool
 from app.services.tenders.pipeline import TenderPipeline, maybe_close_client
-from app.services.tenders.qianlima_client import QianlimaClient
 from app.services.tenders.repository import SQLServerTenderRepository
 from config.settings import settings
 
@@ -73,6 +72,7 @@ class TenderInformationFetcher(DataFetcher):
             client=client,
             repository=repository,
             llm_client=llm_client,
+            classification_only=self.config.classification_only,
         )
 
         try:
@@ -99,22 +99,69 @@ class TenderInformationFetcher(DataFetcher):
                 "detail_fetch_failures": result.detail_fetch_failures,
                 "saved_notices": result.saved_notices,
                 "errors": len(result.errors),
+                "api_requests": result.api_requests,
+                "api_cost_units": sum(float(item.get("cost_units") or 0) for item in result.api_requests),
             }
         finally:
             await maybe_close_client(client)
 
-    def _default_client(self) -> QianlimaClient:
-        return QianlimaClient(
-            base_url=settings.qianlima_base_url,
-            username=settings.qianlima_username,
-            password=settings.qianlima_password,
-            accounts=settings.qianlima_accounts,
-            storage_state_path=settings.qianlima_storage_state,
-            headless=self.config.qianlima_headless,
+    def _default_client(self):
+        from app.services.tenders.sources import (
+            MultiSourceTenderClient,
+            build_tender_sources,
         )
+
+        sources = build_tender_sources(self.config)
+        if not sources:
+            raise RuntimeError(
+                "no tender sources configured; check TENDER_SOURCES"
+            )
+        if len(sources) == 1:
+            return sources[0]
+        enrichers = [
+            source
+            for source in sources
+            if callable(getattr(source, "enrich_detail", None))
+        ]
+        return MultiSourceTenderClient(sources, detail_enrichers=enrichers)
 
     def _default_llm(self):
         clients: list[tuple[Any, int]] = []
+        screening_client_index = 1
+        # 第二个 OpenCode Go 套餐优先于原有 go 套餐；两者都排在其他 provider 之前。
+        go_plans = (
+            (
+                "go2",
+                settings.go2_api_key,
+                settings.go2_base_url,
+                settings.go2_model,
+                settings.go2_api_mode,
+            ),
+            (
+                "go",
+                settings.go_api_key,
+                settings.go_base_url,
+                settings.go_model,
+                settings.go_api_mode,
+            ),
+        )
+        go_clients = [
+            (
+                OpenAICompatibleTenderLLMClient(
+                    api_key=api_key,
+                    base_url=base_url,
+                    model=model,
+                    provider=provider,
+                    api_mode=api_mode,
+                ),
+                settings.tender_llm_concurrency,
+            )
+            for provider, api_key, base_url, model, api_mode in go_plans
+            if api_key
+        ]
+        if go_clients:
+            clients.extend(go_clients)
+            screening_client_index = 0
         agnes_api_key = settings.agnes_api_key
         if agnes_api_key:
             clients.append(
@@ -155,7 +202,7 @@ class TenderInformationFetcher(DataFetcher):
             return clients[0][0]
         return TenderLLMClientPool(
             clients,
-            screening_client_index=1,
+            screening_client_index=min(screening_client_index, len(clients) - 1),
         )
 
     def _config_from_settings(self) -> TenderFetcherConfig:

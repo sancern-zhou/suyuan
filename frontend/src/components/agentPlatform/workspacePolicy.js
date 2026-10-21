@@ -19,6 +19,13 @@ export const isAgentModeRunning = (mode, state) => {
   return Boolean(getRunningAgentSessionId(mode, state))
 }
 
+export const resolveTaskWorkspaceMode = (task, currentMode) => {
+  const taskMode = typeof task?.execution_mode === 'string'
+    ? task.execution_mode.trim()
+    : ''
+  return AGENT_MODE_IDS.includes(taskMode) ? taskMode : currentMode
+}
+
 export const resolveAgentSelection = (mode, state) => {
   if (!AGENT_MODE_IDS.includes(mode)) {
     return { mode, action: 'invalid' }

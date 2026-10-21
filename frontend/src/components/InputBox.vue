@@ -1,6 +1,15 @@
 <template>
   <div class="input-area">
-    <div class="input-container">
+    <div class="input-container" :class="{ 'has-quick-prompts': quickPrompts.length }">
+      <div v-if="quickPrompts.length" class="quick-prompts" aria-label="常用问题">
+        <button
+          v-for="prompt in quickPrompts"
+          :key="prompt.id || prompt.label"
+          type="button"
+          :disabled="disabled || isAnalyzing"
+          @click="fillQuickPrompt(prompt.prompt)"
+        >{{ prompt.label }}</button>
+      </div>
       <div v-if="selectedSkill || selectedFileRefs.length" class="composer-selection-bar">
         <button
           v-if="selectedSkill"
@@ -154,6 +163,70 @@
 
         <div class="input-footer">
           <div class="action-group">
+            <div
+              v-if="contextUsagePercent !== null"
+              class="context-usage-wrap"
+              :class="contextUsageLevel"
+            >
+              <div class="context-usage-indicator" :title="`上下文占用：${contextUsageDetail}`">
+                <svg class="context-usage-ring" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="4"
+                    opacity="0.25"
+                  />
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="4"
+                    opacity="0.7"
+                    stroke-linecap="round"
+                    :stroke-dasharray="contextRingCircumference"
+                    :stroke-dashoffset="contextRingDashOffset"
+                    transform="rotate(-90 12 12)"
+                  />
+                </svg>
+              </div>
+              <div v-if="contextSegments.length" class="context-usage-panel">
+                <div class="context-panel-header">
+                  <span class="context-panel-title">上下文</span>
+                  <span class="context-panel-summary">{{ contextUsageSummary }}</span>
+                </div>
+                <div class="context-panel-bar">
+                  <span
+                    v-for="segment in contextSegments"
+                    :key="segment.source"
+                    class="context-panel-segment"
+                    :style="{ width: `${segment.percent * 100}%`, background: segment.color }"
+                  ></span>
+                </div>
+                <div class="context-panel-rows">
+                  <div
+                    v-for="segment in contextSegments"
+                    :key="segment.source"
+                    class="context-panel-row"
+                  >
+                    <span class="context-panel-dot" :style="{ background: segment.color }"></span>
+                    <span class="context-panel-label">{{ segment.label }}</span>
+                    <span class="context-panel-percent">{{ Math.round(segment.percent * 100) }}%</span>
+                  </div>
+                  <div v-if="contextCacheHitRateText" class="context-panel-row cache">
+                    <span class="context-panel-label">缓存命中率</span>
+                    <span class="context-panel-percent">{{ contextCacheHitRateText }}</span>
+                  </div>
+                  <div v-if="contextUsageEstimated" class="context-panel-row estimated">
+                    <span class="context-panel-label">估算值（网关未回传精确用量）</span>
+                  </div>
+                </div>
+              </div>
+            </div>
             <div v-if="showModelTierSelector" class="model-tier-wrapper">
               <select
                 v-model="modelTier"
@@ -162,13 +235,13 @@
                 title="选择本次对话使用的模型"
               >
                 <option value="auto">自动</option>
-                <option value="flash">Flash</option>
-                <option value="pro">Pro</option>
+                <option value="flash">快速模式</option>
+                <option value="pro">深度思考</option>
               </select>
               <div class="model-tier-tooltip">
-                <span v-if="modelTier === 'flash'" class="tooltip-text">快速模式，适合日常问数、对话</span>
-                <span v-if="modelTier === 'pro'" class="tooltip-text">专家模式，适合报告生成、深度分析等复杂任务</span>
-                <span v-if="modelTier === 'auto'" class="tooltip-text">自动根据任务复杂度选择模型</span>
+                <span v-if="modelTier === 'flash'" class="tooltip-text">快速模式：关闭深度思考，响应快，适合日常问数、数据查询和简单对话</span>
+                <span v-if="modelTier === 'pro'" class="tooltip-text">深度思考：开启逐步推理，更严谨，适合报告生成、深度分析和复杂研判</span>
+                <span v-if="modelTier === 'auto'" class="tooltip-text">自动：主对话默认深度思考，子任务自动使用快速模式，无需手动选择</span>
               </div>
             </div>
 
@@ -269,7 +342,7 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, computed } from 'vue'
+import { ref, watch, nextTick, computed, onMounted } from 'vue'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useReactStore } from '@/stores/reactStore'
 import { AGENT_MODE_IDS } from '@/config/agentModes.js'
@@ -279,7 +352,16 @@ import AuthenticatedImage from '@/components/AuthenticatedImage.vue'
 import { uploadChatFile, validateFile, createImagePreview, getFileUrl } from '@/services/uploadApi'
 import { transcribeVoice } from '@/services/voiceApi.js'
 import { getPendingSteeringDisplay } from '@/components/inputBoxPendingSteering.js'
+import {
+  CONTEXT_RING_CIRCUMFERENCE,
+  buildContextUsageSegments,
+  contextUsagePercent as contextUsagePercentOf,
+  formatContextCacheHitRate,
+  formatContextTokens,
+  ringDashOffset
+} from './contextUsagePresentation.js'
 import { getSkillsList } from '@/api/skillsManagement.js'
+import { getInputQuickPrompts } from '@/api/coordinatorConfig.js'
 import { getSession, getSessionResources } from '@/api/session.js'
 import { withComposerShortcutGuide } from '@/components/inputBoxPlaceholder.js'
 import {
@@ -339,6 +421,10 @@ const props = defineProps({
     type: String,
     default: 'general-agent'
   },
+  agentMode: {
+    type: String,
+    default: ''
+  },
   useReranker: {
     type: Boolean,
     default: false
@@ -354,6 +440,25 @@ const emit = defineEmits(['update:modelValue', 'send', 'pause', 'update:useReran
 const textareaRef = ref(null)
 const fileInputRef = ref(null)
 const localValue = ref(props.modelValue)
+const runtimeQuickPrompts = ref([])
+const quickPrompts = computed(() => {
+  const activeMode = props.agentMode || props.assistantMode
+  return runtimeQuickPrompts.value.filter(item => item.mode === activeMode)
+})
+const fillQuickPrompt = value => {
+  if (!value || props.disabled || props.isAnalyzing) return
+  localValue.value = value
+  emit('update:modelValue', value)
+  nextTick(() => textareaRef.value?.focus())
+}
+onMounted(async () => {
+  try {
+    const data = await getInputQuickPrompts()
+    runtimeQuickPrompts.value = Array.isArray(data?.items) ? data.items : []
+  } catch (error) {
+    console.warn('[InputBox] quick prompts fetch failed:', error)
+  }
+})
 const showKnowledgeBaseSelector = ref(false)
 const activeTrigger = ref(null)
 const highlightedPaletteIndex = ref(0)
@@ -608,6 +713,44 @@ const activeModelTierMode = computed(() => (
 ))
 const showModelTierSelector = computed(() => shouldShowModelTierSelector(activeModelTierMode.value))
 const showVoiceControls = computed(() => shouldShowVoiceControls(reactStore.currentMode))
+const contextUsage = computed(() => reactStore.currentState?.contextUsage || null)
+const contextUsagePercent = computed(() => contextUsagePercentOf(
+  contextUsage.value?.contextTokens,
+  contextUsage.value?.contextWindow
+))
+const contextRingCircumference = CONTEXT_RING_CIRCUMFERENCE
+const contextRingDashOffset = computed(() => ringDashOffset(contextUsagePercent.value))
+const contextSegments = computed(() => buildContextUsageSegments(contextUsage.value?.breakdown))
+const contextCacheHitRateText = computed(() =>
+  formatContextCacheHitRate(contextUsage.value?.cacheHitRate)
+)
+const contextUsageEstimated = computed(() => contextUsage.value?.estimated === true)
+const contextUsageLevel = computed(() => {
+  const usage = contextUsage.value
+  const percent = contextUsagePercent.value
+  if (percent === null) return ''
+  if (percent >= 95) return 'danger'
+  // 警示线与后端压缩触发线一致（compact_threshold_tokens）；旧快照无阈值时回退 80%
+  if (usage?.compactThresholdTokens
+    ? usage.contextTokens >= usage.compactThresholdTokens
+    : percent >= 80) {
+    return 'warning'
+  }
+  return ''
+})
+const contextUsageDetail = computed(() => {
+  const usage = contextUsage.value
+  if (!usage) return ''
+  const base = `${Number(usage.contextTokens).toLocaleString()} / ${Number(usage.contextWindow).toLocaleString()} tokens`
+  return contextCacheHitRateText.value
+    ? `${base} · 缓存命中 ${contextCacheHitRateText.value}`
+    : base
+})
+const contextUsageSummary = computed(() => {
+  const usage = contextUsage.value
+  if (!usage || contextUsagePercent.value === null) return ''
+  return `${formatContextTokens(usage.contextTokens)} / ${formatContextTokens(usage.contextWindow)} (${contextUsagePercent.value}%)`
+})
 const canSteerWhileRunning = computed(() => props.isAnalyzing && reactStore.currentMode === 'assistant')
 const boardSyncStatus = computed(() => (
   reactStore.currentMode === 'board'
@@ -1279,6 +1422,38 @@ defineExpose({
   gap: 10px;
 }
 
+.input-container.has-quick-prompts {
+  gap: 3px;
+}
+
+.quick-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+.quick-prompts button {
+  padding: 5px 10px;
+  border: 1px solid #d8deea;
+  border-radius: 6px;
+  background: #fff;
+  color: #526173;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.quick-prompts button:hover:not(:disabled) {
+  border-color: #1976d2;
+  color: #1976d2;
+}
+
+.quick-prompts button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
 .composer-selection-bar {
   display: flex;
   flex-wrap: wrap;
@@ -1552,6 +1727,135 @@ defineExpose({
   align-items: center;
   gap: 4px;
   padding: 6px 8px;
+}
+
+.context-usage-wrap {
+  position: relative;
+  margin-right: 6px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.context-usage-indicator {
+  display: inline-flex;
+  align-items: center;
+  color: #8a94a6;
+  cursor: default;
+  user-select: none;
+}
+
+.context-usage-wrap.warning .context-usage-indicator {
+  color: #d97706;
+}
+
+.context-usage-wrap.danger .context-usage-indicator {
+  color: #dc2626;
+}
+
+.context-usage-ring {
+  width: 14px;
+  height: 14px;
+}
+
+.context-usage-panel {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 60;
+  width: 264px;
+  padding: 12px;
+  border: 1px solid #e0e7f0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(31, 42, 68, 0.14);
+  cursor: default;
+}
+
+.context-usage-wrap:hover .context-usage-panel,
+.context-usage-wrap:focus-within .context-usage-panel {
+  display: block;
+}
+
+.context-panel-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.context-panel-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+}
+
+.context-panel-summary {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.context-panel-bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #edf1f7;
+  margin-bottom: 10px;
+}
+
+.context-panel-segment {
+  height: 100%;
+  min-width: 2px;
+}
+
+.context-panel-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.context-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #526173;
+}
+
+.context-panel-row.cache {
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid #eef2f8;
+}
+
+.context-panel-row.estimated .context-panel-label {
+  color: #98a2b3;
+  font-size: 11px;
+}
+
+.context-panel-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.context-panel-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-panel-percent {
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  color: #333;
 }
 
 .model-tier-select {
@@ -1830,6 +2134,10 @@ defineExpose({
     width: 100%;
     justify-content: flex-end;
     padding: 4px;
+  }
+
+  .context-usage-wrap {
+    display: none;
   }
 }
 

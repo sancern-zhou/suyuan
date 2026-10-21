@@ -52,7 +52,7 @@ def test_scheduled_task_proxy_matches_full_namespace_for_web_only():
 def test_worker_internal_api_exposes_scheduled_tasks(monkeypatch):
     from app.api import scheduled_task_routes
     from app.lifecycle.social_worker_api import create_social_worker_api_app
-    from app.scheduled_tasks.models import ScheduledTask, TaskStep
+    from app.scheduled_tasks.models import ScheduledTask
 
     task = ScheduledTask(
         task_id="task-event",
@@ -60,13 +60,9 @@ def test_worker_internal_api_exposes_scheduled_tasks(monkeypatch):
         description="event task",
         execution_mode="social",
         trigger_type="event",
-        event_type="yuncheng.alert.created",
+        event_type="xuchang.station_deviation.alert_created",
         broadcast_enabled=False,
-        steps=[TaskStep(
-            step_id="step-1",
-            description="run",
-            agent_prompt="run",
-        )],
+        prompt="run",
     )
 
     class FakeService:
@@ -245,11 +241,8 @@ def test_worker_restores_trusted_identity_for_task_creation(monkeypatch):
             },
             "schedule_type": "once",
             "run_at": "2026-07-18T12:00:00",
-            "steps": [{
-                "step_id": "step-1",
-                "description": "执行",
-                "agent_prompt": "执行",
-            }],
+            "prompt": "执行",
+            "prompt": "执行",
         },
     )
 
@@ -392,11 +385,8 @@ async def test_authenticated_web_request_creates_worker_task_for_resolved_user(
                 "description": "验证完整身份链路",
                 "schedule_type": "once",
                 "run_at": "2026-07-18T12:00:00",
-                "steps": [{
-                    "step_id": "step-1",
-                    "description": "执行",
-                    "agent_prompt": "执行",
-                }],
+                "prompt": "执行",
+                "prompt": "执行",
             },
         )
 

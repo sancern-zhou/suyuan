@@ -346,30 +346,6 @@ async def test_create_report_package_returns_failure_for_quarto_resource_error(
     assert result["data"]["render_error"] == result["data"]["error"]
 
 
-def test_yuncheng_skill_defines_source_and_package_image_path_contract():
-    skill_path = (
-        Path(__file__).resolve().parents[2]
-        / "docs"
-        / "skills"
-        / "yuncheng_alert_tracing_skill.md"
-    )
-    skill = skill_path.read_text(encoding="utf-8")
-
-    assert "![后向轨迹](trajectory.png)" in skill
-    assert "assets/charts/trajectory.png" in skill
-    assert "report_qmd_path.parent" in skill
-    assert "Path(image_path).resolve().relative_to" in skill
-    assert "copied_assets[].relative_path" in skill
-    assert "禁止在源 `report.qmd`" not in skill
-    assert "create_report_package.assets" in skill
-
-    source_qmd_description = report_package_tool.CreateReportPackageTool().function_schema[
-        "parameters"
-    ]["properties"]["source_qmd_path"]["description"]
-    assert "不会直接覆盖" in source_qmd_description
-    assert "报告包内 report.qmd" in source_qmd_description
-
-
 def test_record_report_update_preserves_external_source_metadata(tmp_path, monkeypatch):
     report_root = tmp_path / "reports"
     report_dir = _write_report(report_root, "air_report", "# Package\n")
@@ -440,6 +416,20 @@ def test_standalone_source_preview_initializes_a_transient_package(tmp_path, mon
         "# Draft report\n\n![](chart.png)\n"
     )
     assert (report_dir / "chart.png").read_bytes() == b"png"
+
+
+def test_standalone_source_preview_normalizes_weather_ranges(tmp_path):
+    source_qmd = tmp_path / "draft" / "report.qmd"
+    source_qmd.parent.mkdir()
+    source_qmd.write_text("湿度48%~58%，等级良~轻度污染。\n", encoding="utf-8")
+    report_dir = tmp_path / "reports" / "source_preview"
+
+    preview_refresh._initialize_transient_source_preview(source_qmd, report_dir)
+
+    assert source_qmd.read_text(encoding="utf-8") == "湿度48%~58%，等级良~轻度污染。\n"
+    assert (report_dir / "report.qmd").read_text(encoding="utf-8") == (
+        "湿度48%～58%，等级良～轻度污染。\n"
+    )
 
 
 @pytest.mark.asyncio

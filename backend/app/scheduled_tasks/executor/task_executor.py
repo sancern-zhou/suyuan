@@ -3,6 +3,7 @@
 负责执行任务步骤，与ReAct Agent集成
 """
 import asyncio
+import json
 import structlog
 from datetime import datetime
 from typing import Optional
@@ -16,9 +17,63 @@ from ..models.execution import (
     ExecutionStatus
 )
 from ..storage import TaskStorage, ExecutionStorage
+from ..storage import DatabaseTaskResultStorage, task_result_db_enabled
+from ..storage.task_case_storage import TaskCaseStorage
+from ..history_learning import build_history_section, finalize_execution
+from ..result_extraction import extract_task_result
 from ..conversation_persistence import ScheduledTaskConversationPersistence
 
 logger = structlog.get_logger()
+
+# 与 event_bus._sanitize_result 的日志截断上限保持一致量级：事件上下文超限时
+# 仅保留摘要与文件路径字段，完整证据必须通过持久化文件传递。
+EVENT_CONTEXT_MAX_CHARS = 8000
+_COMPACT_VALUE_MAX_CHARS = 200
+_COMPACT_CONTAINER_MAX_CHARS = 400
+SCHEDULED_HISTORY_SEARCH_TOOL = "search_scheduled_task_history"
+SCHEDULED_BROADCAST_TOOL = "broadcast_social_users"
+
+
+def _is_path_like(value: str) -> bool:
+    return "/" in value or "\\" in value
+
+
+def _compact_value(value):
+    """Shrink one payload entry: keep scalars, paths and short containers."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        if len(value) <= _COMPACT_VALUE_MAX_CHARS or _is_path_like(value):
+            return value
+        return value[:_COMPACT_VALUE_MAX_CHARS] + "…<已截断>"
+    if isinstance(value, list):
+        if len(json.dumps(value, ensure_ascii=False, default=str)) <= _COMPACT_CONTAINER_MAX_CHARS:
+            return value
+        return f"<列表共 {len(value)} 项，已省略>"
+    if isinstance(value, dict):
+        if len(json.dumps(value, ensure_ascii=False, default=str)) <= _COMPACT_CONTAINER_MAX_CHARS:
+            return value
+        return {key: _compact_value(item) for key, item in value.items()}
+    return str(value)
+
+
+def _render_event_context(event) -> str:
+    """Render trusted event context, compacting oversized payloads."""
+    data = event.model_dump(mode="json")
+    rendered = json.dumps(data, ensure_ascii=False, indent=2, default=str)
+    if len(rendered) <= EVENT_CONTEXT_MAX_CHARS:
+        return f"## 可信事件上下文\n{rendered}"
+    note = (
+        "注意：该事件 payload 过大，以上仅保留摘要、计数与文件路径等关键字段，"
+        "超长字符串与大型列表已省略；完整证据必须通过 payload 中给出的文件路径"
+        "（如 evidence_package_path）读取，不得凭空补写被省略的内容。"
+    )
+    data["payload"] = {key: _compact_value(value) for key, value in data.get("payload", {}).items()}
+    rendered = json.dumps(data, ensure_ascii=False, indent=2, default=str)
+    if len(rendered) > EVENT_CONTEXT_MAX_CHARS:
+        data["payload"] = "<payload 过大，已整体省略，请使用事件关联的持久化文件>"
+        rendered = json.dumps(data, ensure_ascii=False, indent=2, default=str)
+    return f"## 可信事件上下文\n{rendered}\n\n{note}"
 
 
 def build_runtime_custom_tool_registry(tool_names):
@@ -43,6 +98,7 @@ class ScheduledTaskExecutor:
         execution_storage: ExecutionStorage,
         agent_factory: Optional[callable] = None,
         conversation_persistence=None,
+        task_result_storage=None,
     ):
         self.task_storage = task_storage
         self.execution_storage = execution_storage
@@ -50,7 +106,59 @@ class ScheduledTaskExecutor:
         self.conversation_persistence = (
             conversation_persistence or ScheduledTaskConversationPersistence()
         )
+        self.task_result_storage = task_result_storage or DatabaseTaskResultStorage()
         self._persisted_execution_ids: set[str] = set()
+        self._case_storages: dict[str, TaskCaseStorage] = {}
+
+    def _get_case_storage(self, task: ScheduledTask) -> TaskCaseStorage | None:
+        """任务专属历史记忆存储；任务关闭 history_learning 时返回 None。"""
+        if not task.history_learning.enabled:
+            return None
+        storage = self._case_storages.get(task.task_id)
+        if storage is None:
+            storage = TaskCaseStorage(task.task_id)
+            self._case_storages[task.task_id] = storage
+        return storage
+
+    def _runtime_extra_tool_names(self, task: ScheduledTask) -> list[str]:
+        """Tools automatically available only inside this scheduled task run.
+
+        ``read_file`` is mandatory for every agent scheduled task: task evidence
+        packages are persisted as project-relative files and both prompts and
+        skills instruct the agent to read them directly. Without it the agent
+        only sees the inline event clues and silently reports captured evidence
+        as missing.
+        """
+        names: list[str] = ["read_file"]
+        if task.broadcast_enabled:
+            names.append(SCHEDULED_BROADCAST_TOOL)
+        if (
+            task.history_learning.enabled
+            and task.execution_mode != "workflow"
+            and task.history_learning.active_retrieval_enabled
+        ):
+            names.append(SCHEDULED_HISTORY_SEARCH_TOOL)
+        return list(dict.fromkeys(names))
+
+    def _runtime_metadata(
+        self,
+        task: ScheduledTask,
+        execution: TaskExecution,
+    ) -> dict:
+        """System-only metadata injected into ExecutionContext for tools."""
+        return {
+            "scheduled_task": {
+                "task_id": task.task_id,
+                "task_name": task.name,
+                "execution_id": execution.execution_id,
+                "history_learning": task.history_learning.model_dump(mode="json"),
+                "result_requirements": [rule.model_dump(mode="json") for rule in task.result_requirements],
+                "model_tier": task.model_tier,
+                "allow_archived_review_reopen": task.allow_archived_review_reopen,
+                "review_subject_bound": bool(task.review_subject_attribute),
+                "expected_subject_id": (execution.event_attributes or {}).get(task.review_subject_attribute) if task.review_subject_attribute else None,
+            }
+        }
 
     async def execute_task(
         self,
@@ -71,7 +179,7 @@ class ScheduledTaskExecutor:
             session_id=task_session_id,  # ✅ 保存 session_id
             status=ExecutionStatus.RUNNING,
             started_at=datetime.now(),
-            total_steps=len(task.steps),
+            total_steps=1,
             scheduled_time=task.next_run_at if event is None else None,
             trigger_type="event" if event else "scheduled",
             event_id=event.event_id if event else None,
@@ -86,65 +194,116 @@ class ScheduledTaskExecutor:
             f"session_id: {task_session_id}"
         )
 
+        # 历史执行记忆：任务专属案例库 + 长期记忆（不跨任务共享）
+        case_storage = self._get_case_storage(task)
+        history_section = (
+            build_history_section(task, case_storage, event=event)
+            if case_storage is not None else None
+        )
+        runtime_extra_tool_names = self._runtime_extra_tool_names(task)
+        # 即使执行中途失败/超时，也已收集到部分执行材料，供收尾时入案例库
+        collected: dict = {}
+
+        # Event-driven tasks may target a dedicated mode while retaining a
+        # shared scheduled-task definition for compatibility.
+        execution_mode = str((event.attributes if event else {}).get("agent_mode") or task.execution_mode)
+        is_workflow = execution_mode == "workflow"
         try:
-            shared_agent = None
-            if task.execution_mode == "custom":
-                if not self.agent_factory:
-                    raise RuntimeError("Agent factory not configured")
-                runtime_tool_names = list(task.tool_names or [])
-                if task.broadcast_enabled and "broadcast_social_users" not in runtime_tool_names:
-                    runtime_tool_names.append("broadcast_social_users")
-                fixed_tools = build_runtime_custom_tool_registry(runtime_tool_names)
-                shared_agent = self.agent_factory(
-                    tool_registry=fixed_tools,
-                    enable_memory=False,
-                )
+            if is_workflow:
+                from ..workflow_tasks import execute_workflow_task
 
-            # 顺序执行步骤（所有步骤共享同一个 session_id）
-            for i, step in enumerate(task.steps):
-                execution.current_step_index = i
-                self.execution_storage.update(execution)
-
-                # 执行步骤（传入 session_id 以保持上下文连续）
-                step_result = await self._execute_step(
-                    step,
-                    execution,
-                    task_session_id,
-                    task.execution_mode,
-                    task=task,
-                    agent=shared_agent,
-                    prompt=self._build_task_prompt(
-                        step.agent_prompt,
-                        task=task,
-                        event=event,
-                        broadcast_user_names=broadcast_user_names,
+                workflow_result = await asyncio.wait_for(
+                    execute_workflow_task(
+                        task, execution, event=event, history_section=history_section
                     ),
+                    timeout=task.timeout_seconds,
                 )
-                execution.steps.append(step_result)
+                execution.steps.append(StepExecution(
+                    step_id="workflow",
+                    status=ExecutionStatus.SUCCESS,
+                    agent_prompt=f"workflow:{task.workflow_name}",
+                    agent_response=workflow_result.get("final_message")
+                    or workflow_result.get("summary", ""),
+                    result_data_ids=workflow_result.get("data_ids", []),
+                    tool_calls=[{
+                        "tool": task.workflow_name,
+                        "success": True,
+                        **(workflow_result.get("tool_call_details") or {}),
+                    }],
+                ))
+                execution.completed_steps += 1
+                # 工作流结论进入历史学习案例库，与 Agent 执行同口径收尾。
+                collected.update({
+                    "summary": workflow_result.get("final_message")
+                    or workflow_result.get("summary", ""),
+                    "workflow_result": workflow_result,
+                    "tool_calls": execution.steps[-1].tool_calls,
+                })
+                self.execution_storage.update(execution)
+                # 只有工作流正常返回且未抛异常时才算执行成功。
+                if execution.status == ExecutionStatus.RUNNING:
+                    execution.status = ExecutionStatus.SUCCESS
+            else:
+                shared_agent = None
+                if execution_mode == "custom":
+                    if not self.agent_factory:
+                        raise RuntimeError("Agent factory not configured")
+                    runtime_tool_names = list(task.tool_names or [])
+                    for tool_name in runtime_extra_tool_names:
+                        if tool_name not in runtime_tool_names:
+                            runtime_tool_names.append(tool_name)
+                    fixed_tools = build_runtime_custom_tool_registry(runtime_tool_names)
+                    shared_agent = self.agent_factory(
+                        tool_registry=fixed_tools,
+                        enable_memory=False,
+                    )
 
-                # 更新统计
-                if step_result.status == ExecutionStatus.SUCCESS:
-                    execution.completed_steps += 1
-                elif step_result.status in {ExecutionStatus.FAILED, ExecutionStatus.TIMEOUT}:
-                    execution.failed_steps += 1
+                # 一个任务就是一次完整的 Agent 执行：Agent 自行规划工具调用，
+                # 只受任务级 timeout_seconds 约束。
+                prompt = self._build_task_prompt(
+                    task.prompt,
+                    task=task,
+                    event=event,
+                    execution=execution,
+                    execution_id=execution.execution_id,
+                    broadcast_user_names=broadcast_user_names,
+                    history_section=history_section,
+                )
+                from app.services.llm_service import llm_service
 
-                    # 如果步骤失败且不重试，终止任务
-                    if task.execution_mode == "custom" or not step.retry_on_failure:
-                        logger.warning(
-                            f"Step {step.step_id} failed and retry_on_failure=False, "
-                            f"stopping task execution"
-                        )
-                        execution.status = ExecutionStatus.FAILED
-                        execution.error_message = f"Step {step.step_id} failed: {step_result.error_message}"
-                        break
-
-                # 保存中间状态
+                with (
+                    llm_service.use_model_tier(task.model_tier),
+                    llm_service.use_opencode_session(
+                        f"scheduled-{execution.execution_id}"
+                    ),
+                ):
+                    result = await asyncio.wait_for(
+                        self._run_agent(
+                            prompt, task_session_id,
+                            manual_mode=execution_mode,
+                            task=task, execution=execution, agent=shared_agent,
+                            collected=collected,
+                            extra_tool_names=runtime_extra_tool_names,
+                            runtime_metadata=self._runtime_metadata(task, execution),
+                        ),
+                        timeout=task.timeout_seconds,
+                    )
+                execution.steps.append(self._result_to_execution(result, prompt, "task"))
+                execution.completed_steps += 1
                 self.execution_storage.update(execution)
 
-            # 任务完成
-            if execution.status == ExecutionStatus.RUNNING:
-                execution.status = ExecutionStatus.SUCCESS
+                # 只有工作流或 Agent 正常返回且未抛异常时才算执行成功。
+                if execution.status == ExecutionStatus.RUNNING:
+                    execution.status = ExecutionStatus.SUCCESS
 
+        except asyncio.TimeoutError:
+            execution.status = ExecutionStatus.TIMEOUT
+            execution.error_message = f"Task timeout after {task.timeout_seconds}s"
+            logger.error(
+                "scheduled_task_timeout",
+                task_id=task.task_id,
+                timeout_seconds=task.timeout_seconds,
+            )
         except Exception as e:
             logger.error(f"Task execution failed: {e}", exc_info=True)
             execution.status = ExecutionStatus.FAILED
@@ -158,12 +317,12 @@ class ScheduledTaskExecutor:
             ).total_seconds()
 
             try:
-                if execution.execution_id not in self._persisted_execution_ids:
+                if not is_workflow and execution.execution_id not in self._persisted_execution_ids:
                     await self.conversation_persistence.ensure_terminal_session(
                         task=task,
                         execution=execution,
                     )
-                if execution.execution_id in self._persisted_execution_ids or execution.session_id:
+                if not is_workflow and (execution.execution_id in self._persisted_execution_ids or execution.session_id):
                     await self.conversation_persistence.publish_conversation(
                         task=task,
                         execution=execution,
@@ -175,6 +334,44 @@ class ScheduledTaskExecutor:
                 )
             finally:
                 self._persisted_execution_ids.discard(execution.execution_id)
+
+            # 历史记忆收尾：案例入库与长期记忆维护完成前，本次执行不算结束；
+            # 收尾自身失败只记录告警，不改变执行结果。
+            result_case = None
+            if case_storage is not None:
+                try:
+                    result_case = await finalize_execution(
+                        task=task,
+                        execution=execution,
+                        event=event,
+                        agent_result=collected,
+                        storage=case_storage,
+                    )
+                except Exception as learn_error:  # noqa: BLE001 - 收尾失败只降级不中断执行
+                    logger.warning(
+                        "scheduled_task_history_finalize_failed",
+                        task_id=task.task_id,
+                        execution_id=execution.execution_id,
+                        error=str(learn_error),
+                    )
+
+            # 结构化执行结论入库：时间/城市/站点/污染物/结论/图片/文档路径。
+            # 写入失败只降级记录，不影响执行状态。
+            try:
+                self._persist_task_result(
+                    task=task,
+                    execution=execution,
+                    event=event,
+                    agent_result=collected,
+                    case=result_case,
+                )
+            except Exception as result_error:  # noqa: BLE001 - 结论入库失败不改变执行结果
+                logger.warning(
+                    "scheduled_task_result_persist_failed",
+                    task_id=task.task_id,
+                    execution_id=execution.execution_id,
+                    error=str(result_error),
+                )
 
             # 保存最终状态
             self.execution_storage.update(execution)
@@ -195,75 +392,56 @@ class ScheduledTaskExecutor:
 
         return execution
 
-    async def _execute_step(
-        self,
-        step,
-        execution: TaskExecution,
-        session_id: str,  # ✅ 接收 session_id 参数
-        manual_mode: str,
-        task: ScheduledTask,
-        prompt: str,
-        agent=None,
-    ) -> StepExecution:
-        """执行单个步骤"""
-        step_exec = StepExecution(
-            step_id=step.step_id,
-            status=ExecutionStatus.RUNNING,
-            started_at=datetime.now(),
-            agent_prompt=prompt
+    def _result_to_execution(self, result: dict, prompt: str, step_id: str = "task") -> StepExecution:
+        return StepExecution(
+            step_id=step_id,
+            status=ExecutionStatus.SUCCESS,
+            agent_prompt=prompt,
+            agent_response=result.get("summary", ""),
+            result_data_ids=result.get("data_ids", []),
+            result_visuals=result.get("visuals", []),
+            agent_thoughts=result.get("thoughts", []),
+            tool_calls=result.get("tool_calls", []),
+            iterations=result.get("iterations", 0),
         )
 
-        logger.info(
-            f"Executing step: {step.step_id} - {step.description}, "
-            f"session_id: {session_id}"
-        )
+    @staticmethod
+    async def _assistant_task_context(task):
+        """Use persisted server ownership, never the scheduled prompt, for identity."""
+        from app.auth.models import CurrentUser
+        from app.conversations.dependencies import get_conversation_catalog
+        from app.conversations.schemas import ConversationSource
+        from app.social.assistant_identity import assistant_account_context
+        from app.social.web_assistant import assistant_personal_context, web_assistant_context
 
-        try:
-            # 执行步骤（带超时，并传入 session_id）
-            result = await asyncio.wait_for(
-                self._run_agent_step(
-                    prompt,
-                    session_id,
-                    manual_mode=manual_mode,
-                    task=task,
-                    execution=execution,
-                    agent=agent,
-                ),
-                timeout=step.timeout_seconds
+        if task is None or not task.owner_user_id or task.owner_user_id == "system":
+            # 旧版允许无归属的 assistant 定时任务（owner 缺省 system）。
+            # 缺归属只降级为不带个人上下文执行，不能让整次执行硬失败——
+            # 否则超时/部分产物语义会被 PermissionError 掩盖。
+            logger.warning(
+                "assistant_task_context_skipped_without_owner",
+                task_id=getattr(task, "task_id", None),
             )
+            return {}, None
+        user = CurrentUser(
+            id=task.owner_user_id,
+            username=task.owner_username,
+            display_name=task.owner_display_name,
+        )
+        source = (
+            await get_conversation_catalog().find(task.source_session_id)
+            if task.source_session_id else None
+        )
+        if source is not None and source.owner_user_id != user.id:
+            raise PermissionError("助手计划来源与归属不匹配")
+        context = (
+            assistant_personal_context(user.id)
+            if source is not None and source.source == ConversationSource.SOCIAL
+            else web_assistant_context(user)
+        )
+        return context, assistant_account_context(user)
 
-            # 处理结果
-            step_exec.status = ExecutionStatus.SUCCESS
-            step_exec.agent_response = result.get("summary", "")
-            step_exec.result_data_ids = result.get("data_ids", [])
-            step_exec.result_visuals = result.get("visuals", [])
-            step_exec.agent_thoughts = result.get("thoughts", [])
-            step_exec.tool_calls = result.get("tool_calls", [])
-            step_exec.iterations = result.get("iterations", 0)
-
-            logger.info(f"Step {step.step_id} completed successfully")
-
-        except asyncio.TimeoutError:
-            step_exec.status = ExecutionStatus.TIMEOUT
-            step_exec.error_message = f"Step timeout after {step.timeout_seconds}s"
-            step_exec.error_type = "TimeoutError"
-            logger.error(f"Step {step.step_id} timeout")
-
-        except Exception as e:
-            step_exec.status = ExecutionStatus.FAILED
-            step_exec.error_message = str(e)
-            step_exec.error_type = type(e).__name__
-            logger.error(f"Step {step.step_id} failed: {e}", exc_info=True)
-
-        finally:
-            step_exec.completed_at = datetime.now()
-            step_exec.duration_seconds = (
-                step_exec.completed_at - step_exec.started_at
-            ).total_seconds()
-
-        return step_exec
-
-    async def _run_agent_step(
+    async def _run_agent(
         self,
         prompt: str,
         session_id: str,
@@ -271,6 +449,9 @@ class ScheduledTaskExecutor:
         task: ScheduledTask | None = None,
         execution: TaskExecution | None = None,
         agent=None,
+        collected: dict | None = None,
+        extra_tool_names: list[str] | None = None,
+        runtime_metadata: dict | None = None,
     ) -> dict:
         """
         运行Agent步骤
@@ -287,6 +468,8 @@ class ScheduledTaskExecutor:
 
         # custom 模式由任务执行器创建一个固定工具集的 Agent 并在所有步骤间复用。
         agent = agent or self.agent_factory()
+
+        submit_tool = self._inject_submit_result(agent, manual_mode)
 
         selected_skill_context = None
         if task is not None and task.skill_id:
@@ -327,7 +510,22 @@ class ScheduledTaskExecutor:
             "timestamp": datetime.now().isoformat(),
         }]
 
+        assistant_context = {}
+        metadata = dict(runtime_metadata or {})
+        if manual_mode == "assistant":
+            assistant_context, account = await self._assistant_task_context(task)
+            if account:
+                metadata["authenticated_account"] = account
+
+        if submit_tool is not None:
+            prompt = (
+                prompt
+                + "\n\n## 结构化交付要求\n完成取数与计算后，必须调用 submit_result 工具提交结构化结果"
+                  "（字段结构见工具定义），随后用一句话简述结论即可结束。"
+            )
+
         # ✅ 执行Agent分析，传入 session_id 以复用上下文
+        analysis_error: BaseException | None = None
         try:
             async for event in agent.analyze(
                 prompt,
@@ -336,6 +534,9 @@ class ScheduledTaskExecutor:
                 session_storage_mode=("custom" if manual_mode == "custom" else "assistant"),
                 selected_skill_context=selected_skill_context,
                 knowledge_base_ids=knowledge_base_ids,
+                extra_tool_names=extra_tool_names or [],
+                runtime_metadata=metadata,
+                **assistant_context,
             ):
                 event_type = event.get("type")
                 event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -381,6 +582,8 @@ class ScheduledTaskExecutor:
                     if tool_calls:
                         tool_calls[-1]["success"] = not event_data.get("is_error", False)
                         tool_calls[-1]["result"] = result or event.get("summary", "")
+                        from app.scheduled_tasks.result_extraction import declared_file_paths
+                        tool_calls[-1]["media"] = declared_file_paths(result)
 
                 elif event_type == "iteration":
                     iterations = event.get("iteration", 0)
@@ -402,10 +605,11 @@ class ScheduledTaskExecutor:
                 elif event_type == "fatal_error":
                     error = event_data.get("error") or event.get("error") or "Agent execution failed"
                     raise RuntimeError(error)
-        except BaseException as analysis_error:
+        except BaseException as error:
+            analysis_error = error
             display_history.append({
                 "type": "error",
-                "content": str(analysis_error) or type(analysis_error).__name__,
+                "content": str(error) or type(error).__name__,
                 "timestamp": datetime.now().isoformat(),
             })
             raise
@@ -419,18 +623,49 @@ class ScheduledTaskExecutor:
                     "data": {"answer": final_answer},
                     "timestamp": datetime.now().isoformat(),
                 })
+            # 中途失败/超时也能保留已收集的执行材料，供历史记忆收尾使用
+            if collected is not None:
+                collected.update({
+                    "summary": final_answer,
+                    "data_ids": list(data_ids),
+                    "visuals": list(visuals),
+                    "thoughts": list(thoughts),
+                    "tool_calls": list(tool_calls),
+                    "iterations": iterations,
+                })
             if task is not None and execution is not None:
-                persisted = await self.conversation_persistence.persist_agent_session(
-                    agent=agent,
-                    task=task,
-                    execution=execution,
-                    display_history=display_history,
-                )
-                if persisted:
-                    self._persisted_execution_ids.add(execution.execution_id)
+                try:
+                    persisted = await self.conversation_persistence.persist_agent_session(
+                        agent=agent,
+                        task=task,
+                        execution=execution,
+                        display_history=display_history,
+                    )
+                except Exception as persist_error:
+                    if analysis_error is None:
+                        raise
+                    # 取消/超时已在向外传播，此时 transcript 校验失败不应掩盖原始错误，
+                    # 否则 wait_for 的 TimeoutError 会被替换成 FAILED 且报错信息失真。
+                    logger.error(
+                        "scheduled_agent_session_persist_failed_after_abort",
+                        execution_id=execution.execution_id,
+                        error=str(persist_error),
+                    )
+                else:
+                    if persisted:
+                        self._persisted_execution_ids.add(execution.execution_id)
 
+        submitted_payload = (
+            getattr(submit_tool, "submitted_result", None) if submit_tool is not None else None
+        )
+        summary = "\n".join(summary_parts)
+        if isinstance(submitted_payload, dict) and not summary.strip():
+            import json as _json
+
+            summary = _json.dumps(submitted_payload, ensure_ascii=False)
         return {
-            "summary": "\n".join(summary_parts),
+            "summary": summary,
+            "structured_result": submitted_payload if isinstance(submitted_payload, dict) else None,
             "data_ids": data_ids,
             "visuals": visuals,
             "thoughts": thoughts,
@@ -439,17 +674,85 @@ class ScheduledTaskExecutor:
         }
 
     @staticmethod
+    def _inject_submit_result(agent, manual_mode: str | None):
+        """固定工作流叶子模式的 deliver 阶段会清空工具到只剩 submit_result。
+
+        定时任务以叶子模式执行时必须注入交付工具，否则子 Agent 无法把
+        已取到的数据结构化回传（结果丢失）；submit_result 在阶段白名单
+        中豁免，交付后模型仍可输出一句话结论。
+        """
+        if not manual_mode or manual_mode == "custom":
+            return None
+        try:
+            from app.agent.workflow.mode_workflows import get_mode_workflow
+
+            if get_mode_workflow(manual_mode) is None:
+                return None
+            from copy import deepcopy
+
+            from app.agent.workflow.protocol import EXPERT_ANALYSIS_RESULT_SCHEMA
+            from app.tools.agent_tools.submit_result_tool import SubmitResultTool
+
+            registry = getattr(getattr(agent, "executor", None), "tool_registry", None)
+            if not isinstance(registry, dict) or "submit_result" in registry:
+                return registry.get("submit_result") if isinstance(registry, dict) else None
+            submit_tool = SubmitResultTool(deepcopy(EXPERT_ANALYSIS_RESULT_SCHEMA))
+            registry["submit_result"] = submit_tool
+            return submit_tool
+        except Exception as exc:
+            logger.warning("scheduled_submit_result_inject_failed", mode=manual_mode, error=str(exc))
+            return None
+
+    @staticmethod
     def _build_task_prompt(
         prompt: str,
         task: ScheduledTask,
         event: TaskEvent | None = None,
+        execution: "TaskExecution | None" = None,
+        execution_id: str | None = None,
         broadcast_user_names: list[str] | None = None,
+        history_section: str | None = None,
     ) -> str:
         sections = [prompt]
-        if event is not None:
+        if "submit_task_review" in (task.tool_names or []):
+            subject_hint = ""
+            if task.review_subject_attribute and execution is not None:
+                expected_subject = (execution.event_attributes or {}).get(task.review_subject_attribute)
+                if expected_subject:
+                    subject_hint = (
+                        f"本任务绑定业务编号为 {expected_subject}："
+                        "subject_id 和 event_id 都必须原样填写该编号，不得使用其他 ID。"
+                    )
             sections.append(
-                f"""## 可信事件上下文
-{event.model_dump_json(indent=2)}"""
+                "需要人工确认或处置的分析结论，统一调用 submit_task_review 提交待办；"
+                "使用稳定业务编号 subject_id 和明确 category，按工具结构填写结论、检查项、数据影响与证据。"
+                + subject_hint
+                + "证据 evidence 的 path 必须是本次执行保存在项目数据目录内的真实文件路径。"
+                "工具成功保存才表示已创建待办；普通回复、任务执行成功不会生成待办。无需人工处理的任务不提交。"
+            )
+        sections.append(
+            """## 后台定时任务执行约束
+- 本次是后台无人值守的定时任务执行；任务名称、任务描述、执行指令、调度和筛选条件均视为用户已提前配置并确认。
+- 最终回复的第一行必须是一句话业务结论（不超过80字）：直接给出业务判定与关键数据（如污染物、浓度、偏差、判定原因）；禁止用“任务已完成”“报告已出具”“报告ID”等流程性表述充当结论；补充说明从第二行开始。若任务提示词明确要求最终回复为严格 JSON，则本条不适用。
+- 不要以“请确认”“等待用户确认”“确认后继续”等形式中途结束；需要计划、自检或复核时，在本次执行内自行完成后继续下一步。
+- 如果任务流程要求调用子 Agent 审核、复核或生成交接产物，必须在本次执行内直接调用并等待工具返回，不要先向用户展示方案等待确认。
+- 如果工具结果明确存在 manual_review、report_ready=false 或无法自动判断的业务项，按工具结果说明未完成自动出具正式报告的原因并正常交付当前可用产物，不要等待在线确认。"""
+        )
+        if task.result_requirements:
+            import json
+            sections.append("## 结果字段要求\n提交工具前必须满足以下配置。sections.xxx 表示详情区块中 key=xxx 的字段；"
+                            "allowed_values 为空表示自由文本。校验失败请按错误修正并重新提交。\n"
+                            + json.dumps([rule.model_dump(mode="json") for rule in task.result_requirements], ensure_ascii=False))
+        if history_section:
+            sections.append(history_section)
+        if event is not None:
+            sections.append(_render_event_context(event))
+        if execution_id:
+            sections.append(
+                "## 本次执行标识\n"
+                f"execution_id: {execution_id}\n"
+                "本次执行生成的报告包 ID 必须包含此 execution_id；同一事件的重试必须生成独立报告，"
+                "不得覆盖其他执行已经生成的报告文件。"
             )
         if task.broadcast_enabled:
             names = ", ".join(broadcast_user_names or [])
@@ -457,10 +760,30 @@ class ScheduledTaskExecutor:
                 """## 输出与投递约束
 - 完成任务后调用 `broadcast_social_users` 发送结果。
 - 目标微信用户名称：%s
-- `target_user_names` 使用上述名称；生成的附件使用上游工具实际返回的文件路径，禁止自行拼接路径。
+- `target_user_names` 使用上述名称；生成的附件必须使用上游工具返回的最终成品资源路径（例如 create_report_package 的 resources 中的 DOCX/PDF），禁止把 `report.qmd`/`file_path` 源文件当作正式报告附件，也禁止自行拼接路径。
+- 广播内容涉及具体站点或污染物时，同步填写工具的 `station_name` 和 `pollutant` 参数（站点用全名），供 App 端按站点/污染物筛选广播。
 - 广播工具执行完成后，正常简要说明执行结果，不需要返回 JSON。""" % names
             )
         return "\n\n".join(sections)
+
+    def _persist_task_result(
+        self,
+        *,
+        task: ScheduledTask,
+        execution: TaskExecution,
+        event: TaskEvent | None,
+        agent_result: dict | None,
+        case: dict | None,
+    ) -> None:
+        if not task_result_db_enabled():
+            return
+        result = extract_task_result(
+            execution=execution,
+            event=event,
+            agent_result=agent_result,
+            case=case,
+        )
+        self.task_result_storage.upsert(result)
 
     def _generate_execution_id(self, task_id: str) -> str:
         """生成执行ID"""

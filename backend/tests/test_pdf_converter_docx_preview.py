@@ -35,7 +35,8 @@ def test_convert_to_pdf_normalizes_docx_table_spacing_without_changing_source(mo
         assert 'w:lineRule="exact"' not in converted_xml
         assert "单元格" in converted_xml
 
-        (converter.output_dir / "uploaded.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+        out_dir = Path(args[args.index("--outdir") + 1])
+        (out_dir / "uploaded.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
         return SimpleNamespace(returncode=0, stderr="", stdout="")
 
     monkeypatch.setattr(pdf_converter_module, "run_soffice", fake_run_soffice)

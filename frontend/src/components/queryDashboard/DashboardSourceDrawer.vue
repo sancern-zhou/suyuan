@@ -92,7 +92,7 @@ const sourceDetails = (source) => {
   width: min(380px, 100%);
   height: 100%;
   border-left: 1px solid rgba(32, 49, 58, 0.14);
-  background: #ffffff;
+  background: var(--bg-container);
   box-shadow: -14px 0 34px rgba(22, 39, 46, 0.14);
 }
 
@@ -122,7 +122,7 @@ h3 {
   height: 30px;
   border: 1px solid rgba(32, 49, 58, 0.16);
   border-radius: 6px;
-  background: #fff;
+  background: var(--bg-container);
   color: #52646c;
   cursor: pointer;
   font-size: 20px;

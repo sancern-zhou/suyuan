@@ -817,7 +817,7 @@ def _visual_issue_key(item: dict[str, Any]) -> tuple[str, str, str, str]:
 
 
 def _format_evidence_images(
-    item: dict[str, Any], report_path: Path, limit: int = 3
+    item: dict[str, Any], report_path: Path, limit: int | None = None
 ) -> list[str]:
     images = _evidence_images(item)
     successful: list[tuple[dict[str, Any], Path]] = []
@@ -838,11 +838,12 @@ def _format_evidence_images(
         successful.append((image, local_path))
 
     lines = []
-    for image, local_path in successful[:limit]:
+    displayed = successful if limit is None else successful[:limit]
+    for image, local_path in displayed:
         relative = local_path.relative_to(report_root).as_posix()
         filename = str(image.get("filename") or local_path.name)
         lines.extend(["", f"![视觉证据：{filename}]({relative})"])
-    if len(successful) > limit:
+    if limit is not None and len(successful) > limit:
         lines.extend(
             ["", f"> 报告展示 {limit} 张，证据包共保存 {len(successful)} 张。"]
         )

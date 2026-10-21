@@ -33,16 +33,23 @@ const responseError = async response => {
   return detail || `下载失败（HTTP ${response.status}）`
 }
 
+const readAsDataUrl = (blob, runtime) => new Promise((resolve, reject) => {
+  const FileReaderImpl = runtime.fileReader || globalThis.FileReader
+  const reader = new FileReaderImpl()
+  reader.onload = () => resolve(String(reader.result))
+  reader.onerror = () => reject(reader.error || new Error('读取下载数据失败'))
+  reader.readAsDataURL(blob)
+})
+
 export const downloadResource = async (resource, runtime = {}) => {
   if (!resource?.download_url) throw new Error('该资源不支持下载')
   const fetchImpl = runtime.fetchImpl || authFetch
   const documentRef = runtime.documentRef || globalThis.document
-  const urlApi = runtime.urlApi || globalThis.URL
   const schedule = runtime.schedule || globalThis.setTimeout.bind(globalThis)
   const response = await fetchImpl(resource.download_url)
   if (!response.ok) throw new Error(await responseError(response))
 
-  const objectUrl = urlApi.createObjectURL(await response.blob())
+  const dataUrl = await readAsDataUrl(await response.blob(), runtime)
   let link = null
   let cleaned = false
   const cleanup = () => {
@@ -51,17 +58,12 @@ export const downloadResource = async (resource, runtime = {}) => {
     try {
       link?.remove()
     } catch {
-      // Revocation must still run when DOM cleanup fails.
-    }
-    try {
-      urlApi.revokeObjectURL(objectUrl)
-    } catch {
       // Cleanup failures must not turn a completed download into an error.
     }
   }
   try {
     link = documentRef.createElement('a')
-    link.href = objectUrl
+    link.href = dataUrl
     link.download = downloadFileName(resource)
     documentRef.body.appendChild(link)
     link.click()

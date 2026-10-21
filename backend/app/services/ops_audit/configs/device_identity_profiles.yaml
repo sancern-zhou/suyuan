@@ -7,6 +7,7 @@ brand_aliases:
     - 热电
 
 device_identity:
+  enabled: false
   history_limit: 500
   recent_per_device_limit: 5
   history_rf_tables:

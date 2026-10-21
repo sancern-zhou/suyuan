@@ -6,10 +6,10 @@
 ## 后端会话数据库
 
 江西部署的会话历史必须保存在本地 PostgreSQL。后端按以下优先级选择
-会话数据库：`SESSION_DATABASE_URL`、`LOCAL_DATABASE_URL`、`DATABASE_URL`。
-生产环境应同时设置本地 `LOCAL_DATABASE_URL` 和 `SESSION_DATABASE_URL`，避免
-共享层的 `DATABASE_URL` 更新影响会话历史；启动时会同时检查共享数据库和
-会话数据库连接，不会在本地库不可用时静默回退到远程库。
+会话数据库：`SESSION_DATABASE_URL`、`DATABASE_URL`。
+生产环境必须显式设置本地 `SESSION_DATABASE_URL`，避免共享层的
+`DATABASE_URL` 更新影响会话历史。`LOCAL_DATABASE_URL` 不再参与会话数据库选择。
+知识库数据库由 `KNOWLEDGE_DATABASE_URL` 配置，未设置时使用 `DATABASE_URL`。
 
 ## 构建
 

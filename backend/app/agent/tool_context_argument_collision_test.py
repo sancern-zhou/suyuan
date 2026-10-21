@@ -163,8 +163,8 @@ def test_assistant_read_file_schema_keeps_optional_native_multimodal_attachment(
     properties = read_file_schema["parameters"]["properties"]
     assert "analysis_type" not in properties
     assert "auto_analyze" not in properties
-    assert properties["as_multimodal_attachment"]["default"] is False
-    assert "需要查看历史或工具生成的本地图片" in properties["as_multimodal_attachment"]["description"]
+    assert properties["as_multimodal_attachment"]["default"] is True
+    assert "默认返回图片附件" in properties["as_multimodal_attachment"]["description"]
     assert "所有Agent模式" in properties["as_multimodal_attachment"]["description"]
 
 
@@ -194,12 +194,12 @@ def test_chart_detailed_read_file_schema_keeps_optional_native_multimodal_attach
         lambda: [{"tool": FakeReadFileTool()}],
     )
 
-    schemas = get_detailed_schemas_for_tools(["read_file"], mode="chart")
+    schemas = get_detailed_schemas_for_tools(["read_file"], mode="ppt")
 
     properties = schemas[0]["parameters"]["properties"]
     assert "analysis_type" not in properties
     assert "auto_analyze" not in properties
-    assert properties["as_multimodal_attachment"]["default"] is False
+    assert properties["as_multimodal_attachment"]["default"] is True
 
 
 def test_default_detailed_read_file_schema_uses_native_multimodal_attachment(monkeypatch):
@@ -233,7 +233,7 @@ def test_default_detailed_read_file_schema_uses_native_multimodal_attachment(mon
     properties = schemas[0]["parameters"]["properties"]
     assert "analysis_type" not in properties
     assert "auto_analyze" not in properties
-    assert properties["as_multimodal_attachment"]["default"] is False
+    assert properties["as_multimodal_attachment"]["default"] is True
 
 
 @pytest.mark.asyncio

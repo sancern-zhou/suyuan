@@ -1,5 +1,7 @@
 <template>
-  <div class="react-message-list" ref="messagesContainer">
+  <div class="message-viewport">
+    <div class="react-message-list" ref="messagesContainer" @scroll.passive="handleUserScroll">
+      <div class="message-list-content" ref="messagesContent" @click.capture="handleContentClick">
     <!-- 欢迎消息 -->
     <div v-if="messages.length === 0 && !hideWelcome" class="welcome-message">
       <h2>{{ welcomeContent.title }}</h2>
@@ -20,7 +22,7 @@
     <div v-if="hasMoreMessages" class="load-more-container">
       <button
         v-if="!loadingMore"
-        @click="emit('load-more')"
+        @click="loadMoreMessages"
         class="load-more-btn"
       >
         加载更早的消息 ({{ totalMessageCount - messages.length }} 条)
@@ -30,7 +32,7 @@
       </div>
     </div>
 
-    <!-- 对话消息：过程消息由实时过程区和final内折叠区统一渲染 -->
+    <!-- 对话消息：过程事件留在运行状态中，不作为独立轨迹插入对话。 -->
     <div v-for="(message, index) in displayedMessages" :key="message.id" class="message-wrapper"
       :class="{
         'has-sources': getMessageType(message) === 'final' && (message.data?.sources?.length > 0 || message.sources?.length > 0),
@@ -137,56 +139,63 @@
 
       <!-- Agent消息（最终答案） -->
       <!-- 移除 v-once 以支持流式更新 -->
-      <div v-else-if="getMessageType(message) === 'final'" class="message agent-message final">
-        <!-- 统一折叠区域：显示该final之前的所有过程消息 -->
-        <details
-          v-if="getProcessItemsForFinal(message, messages).length > 0"
-          class="process-collapse"
-          :open="isProcessExpanded(message.id)"
-          @toggle="handleProcessToggle(message.id, $event)"
-        >
-          <summary>查看分析过程 ({{ getProcessItemsForFinal(message, messages).length }} 个步骤)</summary>
-          <div class="process-content">
-            <div
-              v-for="item in getProcessItemsForFinal(message, messages)"
-              :key="item.id"
-              class="process-item"
-              :class="`process-item-${item.kind}`"
-            >
-              <div v-if="item.kind === 'thought'" class="process-thought">
-                <span class="process-label">思考</span>
-                <div class="process-text">{{ item.content }}</div>
-              </div>
-
-              <div v-else-if="item.kind === 'tool'" class="process-tool">
-                <div class="process-tool-header">
-                  <span class="process-label">工具</span>
-                  <span class="process-tool-name">{{ item.toolName }}</span>
-                  <span class="process-status" :class="`status-${item.status}`">{{ getProcessStatusText(item.status) }}</span>
-                </div>
-                <div v-if="item.summary" class="process-text">{{ item.summary }}</div>
-                <details v-if="hasProcessValue(item.input)" class="process-details">
-                  <summary>参数</summary>
-                  <pre>{{ formatProcessValue(item.input) }}</pre>
-                </details>
-                <details v-if="hasProcessValue(item.result) && !item.resultHidden" class="process-details">
-                  <summary>结果详情</summary>
-                  <pre>{{ formatProcessValue(item.result) }}</pre>
-                </details>
-              </div>
-            </div>
+      <div
+        v-else-if="getMessageType(message) === 'final'"
+        class="message agent-message final"
+        :class="{
+          'question-handoff-message': getStructuredQuestionForFinal(message, messages),
+          'question-followup-message': followsStructuredQuestion(message, messages)
+        }"
+      >
+        <div v-if="getStructuredQuestionForFinal(message, messages)" class="question-handoff">
+          <div class="question-handoff-title">需要你的选择</div>
+          <div
+            v-for="(question, questionIndex) in getStructuredQuestionForFinal(message, messages).questions"
+            :key="questionIndex"
+            class="question-handoff-item"
+          >
+            <span class="question-handoff-index">{{ questionIndex + 1 }}.</span>
+            <span>{{ question.question }}</span>
           </div>
-        </details>
+        </div>
+        <div
+          v-if="!message.streaming && (getProcessItemsForFinal(message, messages).length > 0 || getFinalDurationText(message))"
+          class="assistant-process-summary"
+        >
+          <button
+            v-if="getThoughtItemsForFinal(message).length"
+            type="button"
+            class="thought-summary-toggle"
+            :aria-expanded="!!isProcessExpanded(message.id)"
+            @click.stop="toggleThoughtExpanded(message.id)"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7.5V12l3 2" /></svg>
+            <span>{{ getProcessSummaryText(message, messages) }}</span>
+            <span aria-hidden="true">{{ isProcessExpanded(message.id) ? '⌃' : '⌄' }}</span>
+          </button>
+          <span v-else class="thought-summary-toggle">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7.5V12l3 2" /></svg>
+            <span>{{ getProcessSummaryText(message, messages) }}</span>
+          </span>
+        </div>
+        <div v-if="isProcessExpanded(message.id)" class="assistant-thought-content">
+          <div v-for="thought in getThoughtItemsForFinal(message)" :key="thought.id">{{ thought.content }}</div>
+        </div>
 
-        <div class="message-content" v-if="useMarkdown">
+        <div class="message-content" v-if="!getStructuredQuestionForFinal(message, messages) && useMarkdown">
           <!-- 【Vue 3 最佳实践】使用 key 强制重新渲染 -->
-          <MarkdownRenderer
+          <template v-for="(block, blockIndex) in messageLayoutBlocks(message)" :key="`${message.id}-${blockIndex}`">
+          <InlineChartCard v-if="block.kind === 'chart'" :resource="block.resource" />
+          <MarkdownRenderer v-else
             :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}-${message.renderVersion || 0}`"
-            :content="contentToString(getMessageContent(message))"
+            :content="renderedMessageContent({ ...message, content: block.content })"
             :streaming="message.streaming === true"
           />
+          </template>
         </div>
-        <div class="message-content" v-else>{{ contentToString(getMessageContent(message)) }}</div>
+        <div class="message-content" v-else-if="!getStructuredQuestionForFinal(message, messages)">{{ renderedMessageContent(message) }}</div>
+        <ReplyOutcomeCards v-if="!message.streaming" :message="message" :messages="messages" :resources="currentSessionResources()"
+          @preview="resourceId => emit('preview-message-attachment', { sessionId: props.sessionId, resourceId })" />
 
         <!-- 多专家系统：直接显示报告内容，无额外装饰 -->
         <div v-if="message.data?.expert_results?.report && reportContentCacheMap.get(message.data.expert_results.report)" class="expert-report-content">
@@ -216,6 +225,41 @@
             </div>
           </div>
         </div>
+
+        <!-- AI回复操作栏：复制按钮（用时统一由上方过程摘要展示） -->
+        <div v-if="showAgentMessageFooter(message)" class="agent-message-footer">
+          <div class="agent-message-tools">
+            <button
+              v-if="sessionId"
+              class="agent-message-tool-button"
+              type="button"
+              title="分享此对话到共享面板"
+              @click.stop="emit('share-session')"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="8" cy="8.5" r="3" />
+                <circle cx="16.5" cy="10" r="2.4" />
+                <path d="M3.5 19c.4-3 2.3-4.7 4.5-4.7s4.1 1.7 4.5 4.7" />
+                <path d="M14 14.6c.8-.5 1.6-.8 2.5-.8 1.9 0 3.5 1.3 3.9 3.9" />
+              </svg>
+            </button>
+            <button
+              class="agent-message-tool-button"
+              :class="{ copied: copiedAgentMessageId === message.id }"
+              type="button"
+              :title="copiedAgentMessageId === message.id ? '已复制' : '复制'"
+              @click.stop="copyAgentMessage(message)"
+            >
+              <svg v-if="copiedAgentMessageId === message.id" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m5 12 4 4 10-10" />
+              </svg>
+              <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- 错误消息 -->
@@ -225,58 +269,26 @@
       </div>
     </div>
 
-    <div
-      v-if="showThinkingPlaceholder"
-      class="thinking-placeholder"
-      role="status"
-      aria-live="polite"
-      aria-label="AI 正在思考"
-    >
+    <details v-if="isAnalyzing && liveThoughtItems.length" class="assistant-live-thoughts">
+      <summary>查看思考内容</summary>
+      <div class="assistant-thought-content"><div v-for="thought in liveThoughtItems" :key="thought.id">{{ thought.content }}</div></div>
+    </details>
+    <div v-if="isAnalyzing" class="task-progress-status" aria-label="Agent 任务进度">
       <span class="thinking-indicator" aria-hidden="true"></span>
-      <span>正在思考</span>
-    </div>
-
-    <!-- 当前轮实时分析过程：默认折叠，用户可点击展开查看 -->
-    <details
-      v-if="liveProcessItems.length > 0"
-      class="live-process-details"
-      :open="isLiveProcessExpanded"
-      @toggle="handleLiveProcessToggle"
-    >
-      <summary>分析过程中 ({{ liveProcessItems.length }} 个步骤)</summary>
-      <div class="live-process-content">
-
-      <div
-        v-for="item in liveProcessItems"
-        :key="item.id"
-        class="live-process-item"
-        :class="`live-process-${item.kind} status-${item.status || 'default'}`"
-      >
-        <div v-if="item.kind === 'thought'" class="event-content">
-          <div class="event-icon">思考</div>
-          <div class="event-text">
-            <div class="thought-main">{{ item.content }}</div>
-          </div>
+      <div class="task-progress-copy">
+        <div class="task-progress-main">
+          <span class="task-progress-stage" role="status" aria-live="polite">{{ currentProgressStatus }}</span>
+          <span class="task-progress-elapsed" aria-live="off">{{ runningElapsedText }}</span>
         </div>
-
-        <div v-else-if="item.kind === 'tool'" class="event-content">
-          <div class="event-icon">工具</div>
-          <div class="event-text">
-            <div class="tool-use-main">
-              <span>{{ item.toolName }}</span>
-              <span class="process-status" :class="`status-${item.status}`">{{ getProcessStatusText(item.status) }}</span>
-            </div>
-            <div v-if="item.summary" class="tool-result-summary">{{ item.summary }}</div>
-            <div v-if="hasProcessValue(item.input)" class="tool-use-details">
-              <details>
-                <summary>查看参数</summary>
-                <pre>{{ formatProcessValue(item.input) }}</pre>
-              </details>
-            </div>
-          </div>
+        <div v-if="currentProgressTip" class="task-progress-tip">
+          <span>小技巧</span>
+          <span>{{ currentProgressTip }}</span>
         </div>
       </div>
-    </div></details>
+    </div>
+
+      </div>
+    </div>
 
     <button
       v-if="showScrollToBottom"
@@ -334,14 +346,24 @@ import {
 } from '@/services/messageAttachmentPreview.js'
 import { getAgentMode } from '@/config/agentModes.js'
 import { projectConfig } from '@/config/projectConfig.js'
+import {
+  formatRunningElapsed,
+  getAgentProgressStatus,
+  selectAgentProgressTip
+} from './agentPlatform/agentProgressPresentation.js'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import InlineChartCard from './InlineChartCard.vue'
+import ReplyOutcomeCards from './ReplyOutcomeCards.vue'
+import { inlineChartBlocks } from '@/services/inlineChartBlocks.js'
+import { inlineChartImages, renderChartPlaceholders } from '@/services/inlineChartImages.js'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import {
+  followsStructuredQuestion,
   getExecutingProcessMessages,
   getMessageType,
+  getStructuredQuestionForFinal,
   getUnifiedProcessMessages as collectUnifiedProcessMessages,
-  isProcessMessage,
-  isWaitingForAgentResponse
+  isProcessMessage
 } from './reactAnalysis/messageProcessGrouping.js'
 
 const reactStore = useReactStore()
@@ -436,10 +458,26 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['load-more', 'preview-message-attachment'])
+const emit = defineEmits(['load-more', 'preview-message-attachment', 'share-session'])
 const sessionResourceStore = useSessionResourceStore()
+const currentSessionResources = () => sessionResourceStore.activeSessionId === props.sessionId
+  ? sessionResourceStore.activeSessionState?.resources || []
+  : []
+const chartResourcesForMessage = message => inlineChartImages(
+  message,
+  props.messages,
+  currentSessionResources(),
+  contentToString(getMessageContent(message))
+)
+const renderedMessageContent = message => {
+  const content = contentToString(getMessageContent(message))
+  if (!content.includes('[[chart:')) return content
+  return renderChartPlaceholders(content, chartResourcesForMessage(message), currentSessionResources()).content
+}
+const messageLayoutBlocks = message => inlineChartBlocks(contentToString(getMessageContent(message)), currentSessionResources())
 
 const messagesContainer = ref(null)
+const messagesContent = ref(null)
 
 // 【新增】处理消息点击（支持所有模式的final消息）
 const handleMessageClick = (message, index) => {
@@ -683,15 +721,14 @@ const displayedMessages = computed(() => {
   })
 })
 
-const showThinkingPlaceholder = computed(() => (
-  isWaitingForAgentResponse(props.messages, props.isAnalyzing)
-))
-
 // 【新增】details展开状态管理（用于控制<details>的open属性）
 const expandedProcessIds = ref(new Set())
-
-// 【新增】实时分析过程展开状态（默认折叠）
-const isLiveProcessExpanded = ref(false)
+const toggleThoughtExpanded = messageId => {
+  const next = new Set(expandedProcessIds.value)
+  if (next.has(messageId)) next.delete(messageId)
+  else next.add(messageId)
+  expandedProcessIds.value = next
+}
 
 const expandedUserMessageIds = ref(new Set())
 const copiedUserMessageId = ref(null)
@@ -699,35 +736,9 @@ const USER_MESSAGE_PREVIEW_LENGTH = 320
 const USER_MESSAGE_PREVIEW_LINES = 6
 let copiedUserMessageTimer = null
 
-// 【新增】全局初始加载标志，用于强制所有 details 在初次加载时折叠
-const isInitialLoad = ref(true)
-
 // 【新增】判断final消息的过程区域是否应该展开
 const isProcessExpanded = (messageId) => {
-  // 【关键修复】初次加载时，强制所有 details 折叠
-  if (isInitialLoad.value) {
-    // console.log('[ReActMessageList] isProcessExpanded: initial load, forcing collapse')
-    return undefined
-  }
-
-  // 处理 messageId 为 undefined 或 null 的情况
-  if (!messageId) {
-    // console.log('[ReActMessageList] isProcessExpanded: messageId is empty, returning undefined (collapsed)')
-    return undefined
-  }
-
-  const isExpanded = expandedProcessIds.value.has(messageId)
-  // console.log('[ReActMessageList] isProcessExpanded:', {
-  //   messageId,
-  //   isExpanded,
-  //   expandedIds: Array.from(expandedProcessIds.value)
-  // })
-
-  if (isExpanded) {
-    return true
-  } else {
-    return undefined  // 返回 undefined 确保 details 折叠
-  }
+  return Boolean(messageId && expandedProcessIds.value.has(messageId))
 }
 
 const getMessageContent = (message) => message?.content ?? message?.content_preview ?? ''
@@ -784,49 +795,125 @@ const markUserMessageCopied = (messageId) => {
   }, 1400)
 }
 
-const copyUserMessage = async (message) => {
-  const text = getUserMessageText(getMessageContent(message))
-  if (!text) return
-
+// 【新增】共享剪贴板写入（优先 Clipboard API，失败时降级 execCommand）
+const writeClipboardText = async (text) => {
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text)
-      markUserMessageCopied(message?.id)
-      return
+      return true
     }
   } catch (error) {
     console.warn('Clipboard copy failed, falling back:', error)
   }
 
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.setAttribute('readonly', '')
-  textarea.style.position = 'fixed'
-  textarea.style.left = '-9999px'
-  document.body.appendChild(textarea)
-  textarea.select()
-  document.execCommand('copy')
-  document.body.removeChild(textarea)
-  markUserMessageCopied(message?.id)
-}
-
-// 【新增】处理details的toggle事件
-const handleProcessToggle = (messageId, event) => {
-  // event.target 是 <details> 元素
-  // event.target.open 表示当前状态（toggle之后的状态）
-  if (event.target.open) {
-    expandedProcessIds.value.add(messageId)
-  } else {
-    expandedProcessIds.value.delete(messageId)
+  try {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.setAttribute('readonly', '')
+    textarea.style.position = 'fixed'
+    textarea.style.left = '-9999px'
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+    return true
+  } catch (error) {
+    console.warn('Clipboard fallback copy failed:', error)
+    return false
   }
 }
 
-// 【新增】处理实时分析过程的toggle事件
-const handleLiveProcessToggle = (event) => {
-  // event.target 是 <details> 元素
-  // event.target.open 表示当前状态（toggle之后的状态）
-  isLiveProcessExpanded.value = event.target.open
+const copyUserMessage = async (message) => {
+  const text = getUserMessageText(getMessageContent(message))
+  if (!text) return
+
+  if (await writeClipboardText(text)) {
+    markUserMessageCopied(message?.id)
+  }
 }
+
+// 【新增】AI回复（final消息）复制按钮状态与处理
+const copiedAgentMessageId = ref(null)
+let copiedAgentMessageTimer = null
+
+const markAgentMessageCopied = (messageId) => {
+  copiedAgentMessageId.value = messageId || null
+  if (copiedAgentMessageTimer) {
+    clearTimeout(copiedAgentMessageTimer)
+  }
+  copiedAgentMessageTimer = setTimeout(() => {
+    copiedAgentMessageId.value = null
+    copiedAgentMessageTimer = null
+  }, 1400)
+}
+
+const copyAgentMessage = async (message) => {
+  const text = contentToString(getMessageContent(message)).trim()
+  if (!text) return
+
+  if (await writeClipboardText(text)) {
+    markAgentMessageCopied(message?.id)
+  }
+}
+
+// 首响用时（从用户输入到开始回答）：优先使用生命周期终态时记录的first_response_ms，
+// 否则用 final 消息（流式路径下创建于首个回答块到达时刻）与其前最近 user 消息的
+// 时间戳差值兜底（历史消息恢复场景）。不要回退到response_duration_ms（总时长口径）
+const formatResponseDuration = (durationMs) => {
+  if (!Number.isFinite(durationMs) || durationMs < 0) return ''
+  const totalSeconds = durationMs / 1000
+  if (totalSeconds < 60) return `${totalSeconds.toFixed(1)} 秒`
+  const totalWholeSeconds = Math.round(totalSeconds)
+  const minutes = Math.floor(totalWholeSeconds / 60)
+  const seconds = totalWholeSeconds % 60
+  if (minutes < 60) return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分`
+  const hours = Math.floor(minutes / 60)
+  const restMinutes = minutes % 60
+  return restMinutes ? `${hours} 小时 ${restMinutes} 分` : `${hours} 小时`
+}
+
+const finalDurationTextMap = computed(() => {
+  const map = new Map()
+  const msgs = props.messages
+
+  for (let i = 0; i < msgs.length; i++) {
+    const message = msgs[i]
+    if (getMessageType(message) !== 'final') continue
+
+    const precomputed = message.data?.first_response_ms == null ? NaN : Number(message.data.first_response_ms)
+    let durationMs = Number.isFinite(precomputed) ? precomputed : null
+
+    if (durationMs === null) {
+      let startTimestamp = null
+      for (let j = i - 1; j >= 0; j--) {
+        if (getMessageType(msgs[j]) === 'user') {
+          startTimestamp = msgs[j].timestamp
+          break
+        }
+      }
+      const endTimestamp = message.timestamp
+      if (startTimestamp && endTimestamp) {
+        const start = Date.parse(startTimestamp)
+        const end = Date.parse(endTimestamp)
+        if (Number.isFinite(start) && Number.isFinite(end)) {
+          durationMs = end - start
+        }
+      }
+    }
+
+    const text = formatResponseDuration(durationMs)
+    if (text) map.set(message.id, text)
+  }
+
+  return map
+})
+
+const getFinalDurationText = (message) => finalDurationTextMap.value.get(message?.id) || ''
+
+// 【新增】AI回复操作栏显示条件：流式结束且有可复制内容
+const showAgentMessageFooter = (message) => (
+  message?.streaming !== true && !!contentToString(getMessageContent(message)).trim()
+)
 
 const getProcessCorrelationId = (message) => {
   const data = message?.data || {}
@@ -982,9 +1069,57 @@ const buildProcessItems = (messages, options = {}) => {
 }
 
 const liveProcessItems = computed(() => buildProcessItems(executingProcessMessages.value))
+const liveThoughtItems = computed(() => liveProcessItems.value.filter(item => item.kind === 'thought'))
+const runningElapsedSeconds = ref(0)
+const progressTipSeed = ref(0)
+let progressStartedAt = 0
+let progressTimer = null
+
+const currentProgressStatus = computed(() => getAgentProgressStatus(liveProcessItems.value, props.agentMode))
+const runningElapsedText = computed(() => formatRunningElapsed(runningElapsedSeconds.value))
+const currentProgressTip = computed(() => {
+  if (runningElapsedSeconds.value < 6) return ''
+  const rotationIndex = Math.floor((runningElapsedSeconds.value - 6) / 10)
+  return selectAgentProgressTip(props.agentMode, rotationIndex, progressTipSeed.value)
+})
+
+const stopProgressTimer = () => {
+  if (progressTimer !== null) window.clearInterval(progressTimer)
+  progressTimer = null
+}
+
+const startProgressTimer = () => {
+  stopProgressTimer()
+  progressStartedAt = Date.now()
+  runningElapsedSeconds.value = 0
+  const latestUser = [...props.messages].reverse().find(message => getMessageType(message) === 'user')
+  progressTipSeed.value = String(latestUser?.id || props.sessionId || props.agentMode)
+    .split('')
+    .reduce((total, char) => total + char.charCodeAt(0), 0)
+  progressTimer = window.setInterval(() => {
+    runningElapsedSeconds.value = Math.floor((Date.now() - progressStartedAt) / 1000)
+  }, 1000)
+}
+
+watch(() => [props.isAnalyzing, props.sessionId], ([analyzing, sessionId], previous = []) => {
+  const [wasAnalyzing, previousSessionId] = previous
+  if (analyzing && (!wasAnalyzing || sessionId !== previousSessionId)) startProgressTimer()
+  else if (!analyzing) stopProgressTimer()
+}, { immediate: true })
 
 const getProcessItemsForFinal = (finalMessage, allMessages) => {
   return buildProcessItems(getUnifiedProcessMessages(finalMessage, allMessages), { finalized: true })
+}
+
+const getThoughtItemsForFinal = message => getProcessItemsForFinal(message, props.messages).filter(item => item.kind === 'thought')
+
+const getProcessSummaryText = (finalMessage, allMessages) => {
+  const items = getProcessItemsForFinal(finalMessage, allMessages)
+  const toolCount = items.filter(item => item.kind === 'tool').length
+  const failedCount = items.filter(item => item.kind === 'tool' && item.status === 'error').length
+  const duration = getFinalDurationText(finalMessage)
+  const summary = `${duration ? `${duration}后开始回答` : '已完成'} · ${toolCount}个工具调用`
+  return failedCount > 0 ? `${summary} · ${failedCount}个步骤失败` : summary
 }
 
 const getProcessStatusText = (status) => {
@@ -1017,136 +1152,87 @@ const getUnifiedProcessMessages = (finalMessage, allMessages) => {
   return collectUnifiedProcessMessages(finalMessage, allMessages)
 }
 
-// 【修复】智能滚动控制
-const scrollToBottom = () => {
-  nextTick(() => {
-    if (messagesContainer.value) {
-      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-      lastScrollTop.value = messagesContainer.value.scrollTop
-    }
-  })
-}
-
-// 判断用户是否在底部（接近底部30px内）
-const isAtBottom = () => {
-  if (!messagesContainer.value) return true
-  const { scrollTop, scrollHeight, clientHeight } = messagesContainer.value
-  return scrollHeight - scrollTop - clientHeight < 30
-}
-
-// 【新增】用户滚动状态追踪
-const userHasScrolled = ref(false)
 const showScrollToBottom = ref(false)
-const scrollTimeout = ref(null)
-const lastScrollTop = ref(0)
-const pendingLoadMoreScrollHeight = ref(null)
-const pendingLoadMoreScrollTop = ref(null)
+let followingBottom = true
+let lastScrollTop = 0
+let pendingHistory = null
+let resizeObserver
 
-// 检测用户是否手动滚动
-const handleUserScroll = (event) => {
-  // 只有当用户向上滚动（查看历史消息）时才标记
-  if (messagesContainer.value) {
-    const { scrollTop, scrollHeight, clientHeight } = messagesContainer.value
-    const distanceToBottom = scrollHeight - scrollTop - clientHeight
-    const isUserEvent = event?.isTrusted === true
-    const isScrollingUp = scrollTop < lastScrollTop.value
+const updateScrollState = () => {
+  const container = messagesContainer.value
+  if (!container || !container.clientHeight) return
+  showScrollToBottom.value = container.scrollHeight - container.scrollTop - container.clientHeight > 30
+  lastScrollTop = container.scrollTop
+}
 
-    showScrollToBottom.value = distanceToBottom > 120
-
-    // 只有距离底部超过50px时才认为用户在查看历史消息
-    if (isUserEvent && distanceToBottom > 50) {
-      userHasScrolled.value = true
-    }
-
-    // 只有用户真实向上滚动到顶部附近时才分页加载，避免首屏恢复/程序滚动触发。
-    if (
-      isUserEvent &&
-      isScrollingUp &&
-      scrollTop <= 30 &&
-      props.hasMoreMessages &&
-      !props.loadingMore
-    ) {
-      pendingLoadMoreScrollHeight.value = scrollHeight
-      pendingLoadMoreScrollTop.value = scrollTop
-      emit('load-more')
-    }
-
-    lastScrollTop.value = scrollTop
-  }
-
-  // 清除之前的超时
-  if (scrollTimeout.value) {
-    clearTimeout(scrollTimeout.value)
-    scrollTimeout.value = null
-  }
-  // 2秒后重置，让用户在停止滚动后可以恢复自动滚动
-  scrollTimeout.value = setTimeout(() => {
-    userHasScrolled.value = false
-  }, 2000)
-
+// Observe rendered sizes so streaming text, images and composer resizing share one path.
+const syncScroll = () => {
+  const container = messagesContainer.value
+  if (!container || !container.clientHeight) return
+  if (followingBottom && !pendingHistory) container.scrollTop = container.scrollHeight
+  updateScrollState()
 }
 
 const scrollToBottomFromButton = () => {
-  userHasScrolled.value = false
-  showScrollToBottom.value = false
-  scrollToBottom()
+  followingBottom = true
+  pendingHistory = null
+  syncScroll()
 }
 
-// 只在"首次加载"或"用户发送消息"时强制滚动到底部
-// 展开details查看详情时不强制滚动，避免界面跳动
+const loadMoreMessages = () => {
+  const container = messagesContainer.value
+  if (!container || !props.hasMoreMessages || props.loadingMore || pendingHistory) return
+  followingBottom = false
+  pendingHistory = { height: container.scrollHeight, top: container.scrollTop }
+  emit('load-more')
+}
+
+const handleUserScroll = () => {
+  const container = messagesContainer.value
+  if (!container || !container.clientHeight) return
+  const isScrollingUp = container.scrollTop < lastScrollTop
+  const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= 30
+  if (atBottom) followingBottom = true
+  else if (isScrollingUp) followingBottom = false
+  if (isScrollingUp && container.scrollTop <= 30) loadMoreMessages()
+  updateScrollState()
+}
+
+const handleContentClick = (event) => {
+  // Expanding a message should keep the clicked section in view.
+  if (event.target.closest('summary, .user-message-expand')) followingBottom = false
+}
+
 watch(
-  () => props.messages.length,
-  (newLength, oldLength) => {
-    // 前置插入更早消息时保持用户当前视口位置，避免内容跳动。
-    if (
-      pendingLoadMoreScrollHeight.value !== null &&
-      oldLength > 0 &&
-      newLength > oldLength &&
-      messagesContainer.value
-    ) {
-      nextTick(() => {
-        const heightDelta = messagesContainer.value.scrollHeight - pendingLoadMoreScrollHeight.value
-        messagesContainer.value.scrollTop = (pendingLoadMoreScrollTop.value || 0) + heightDelta
-        lastScrollTop.value = messagesContainer.value.scrollTop
-        pendingLoadMoreScrollHeight.value = null
-        pendingLoadMoreScrollTop.value = null
-      })
-      return
+  () => [props.messages.length, props.messages[0]?.id],
+  ([length, firstId], [oldLength, oldFirstId]) => {
+    const container = messagesContainer.value
+    if (pendingHistory && firstId !== oldFirstId && length > oldLength && container) {
+      container.scrollTop = pendingHistory.top + container.scrollHeight - pendingHistory.height
+      pendingHistory = null
+      updateScrollState()
+    } else if (oldLength === 0 || (length > oldLength && getMessageType(props.messages[length - 1]) === 'user')) {
+      scrollToBottomFromButton()
     }
-
-    // 如果是首次加载（oldLength为0），滚动到底部
-    if (oldLength === 0 && newLength > 0) {
-      scrollToBottom()
-      return
-    }
-
-    // 如果有新的消息，滚动到底部
-    if (newLength > oldLength) {
-      const lastMessage = props.messages[newLength - 1]
-
-      // 用户发送消息时，总是滚动到底部
-      if (lastMessage.type === 'user') {
-        userHasScrolled.value = false // 重置滚动状态
-        scrollToBottom()
-        return
-      }
-
-      // AI回复时，只有在用户未手动滚动查看历史消息时才自动滚动
-      if (!userHasScrolled.value && isAtBottom()) {
-        scrollToBottom()
-      }
-    }
-  }
+  },
+  { flush: 'post' }
 )
 
-// 监听滚动事件，判断用户是否在查看历史消息
-// mounted时绑定滚动事件
+watch(() => props.loadingMore, (loading) => {
+  if (!loading) pendingHistory = null
+}, { flush: 'post' })
+
+watch(() => props.sessionId, () => {
+  pendingHistory = null
+  followingBottom = true
+  nextTick(syncScroll)
+})
+
 onMounted(() => {
-  if (messagesContainer.value) {
-    lastScrollTop.value = messagesContainer.value.scrollTop
-    messagesContainer.value.addEventListener('scroll', handleUserScroll)
-  }
-  // 监听ESC键关闭图片预览
+  resizeObserver = new ResizeObserver(syncScroll)
+  resizeObserver.observe(messagesContainer.value)
+  resizeObserver.observe(messagesContent.value)
+  syncScroll()
   document.addEventListener('keydown', handleEscKey)
 })
 
@@ -1161,11 +1247,6 @@ watch(
 
     if (isFirstLoad || isBulkLoad) {
       expandedProcessIds.value.clear()
-      isInitialLoad.value = true
-
-      setTimeout(() => {
-        isInitialLoad.value = false
-      }, 3000)
     }
   },
   { deep: true }
@@ -1173,14 +1254,13 @@ watch(
 
 // 清理滚动事件监听
 onBeforeUnmount(() => {
-  if (messagesContainer.value) {
-    messagesContainer.value.removeEventListener('scroll', handleUserScroll)
-  }
-  if (scrollTimeout.value) {
-    clearTimeout(scrollTimeout.value)
-  }
+  resizeObserver?.disconnect()
+  stopProgressTimer()
   if (copiedUserMessageTimer) {
     clearTimeout(copiedUserMessageTimer)
+  }
+  if (copiedAgentMessageTimer) {
+    clearTimeout(copiedAgentMessageTimer)
   }
   document.removeEventListener('keydown', handleEscKey)
 })
@@ -1318,7 +1398,6 @@ const formatSectionTitle = (key) => {
     '1_overall_assessment': '总体评估',
     '2_meteorological_analysis': '气象分析',
     '3_chemical_diagnostics': '化学诊断',
-    '4_upwind_enterprises': '上风向企业',
     '5_control_recommendations': '控制建议',
     '6_risk_assessment': '风险评估',
     'executive_summary': '执行摘要',
@@ -1398,22 +1477,33 @@ const downloadPreviewedImage = async () => {
 </script>
 
 <style lang="scss" scoped>
-.react-message-list {
+.message-viewport {
   flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+
+.react-message-list {
+  height: 100%;
   overflow-y: auto;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
+  overflow-anchor: none;
 
   &::-webkit-scrollbar {
     width: 6px;
   }
 
   &::-webkit-scrollbar-thumb {
-    background: #d0d0d0;
-    border-radius: 3px;
+    background: var(--scrollbar-thumb);
+    border-radius: 4px;
   }
+}
+
+.message-list-content {
+  min-height: 100%;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
 }
 
 // 加载更多按钮
@@ -1425,18 +1515,18 @@ const downloadPreviewedImage = async () => {
 
 .load-more-btn {
   padding: 8px 20px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
   border-radius: 20px;
-  background: #f8f9fa;
-  color: #666;
+  background: var(--bg-muted);
+  color: var(--text-2);
   font-size: 13px;
   cursor: pointer;
   transition: all 0.2s ease;
 
   &:hover {
-    background: #e9ecef;
-    border-color: #d0d0d0;
-    color: #333;
+    background: var(--bg-hover);
+    border-color: var(--border-3);
+    color: var(--text-1);
   }
 }
 
@@ -1444,15 +1534,15 @@ const downloadPreviewedImage = async () => {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #999;
+  color: var(--text-3);
   font-size: 13px;
 
   .spinner {
     display: inline-block;
     width: 14px;
     height: 14px;
-    border: 2px solid #e0e0e0;
-    border-top-color: #999;
+    border: 2px solid var(--border-2);
+    border-top-color: var(--text-3);
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
   }
@@ -1478,7 +1568,7 @@ const downloadPreviewedImage = async () => {
   width: min(760px, 100%);
   margin: auto;
   padding: 36px 20px;
-  color: #526173;
+  color: var(--text-2);
 
   h2 {
     color: #24324a;
@@ -1505,7 +1595,7 @@ const downloadPreviewedImage = async () => {
   }
 
   .welcome-capability {
-    color: #35425f;
+    color: var(--text-1);
     font-size: 13px;
     line-height: 1.6;
     text-align: center;
@@ -1520,21 +1610,21 @@ const downloadPreviewedImage = async () => {
 }
 
 .scroll-bottom-button {
-  position: sticky;
+  position: absolute;
   bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 20;
-  align-self: center;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 34px;
   height: 34px;
-  margin-top: -34px;
-  border: 1px solid #d8deea;
+  border: 1px solid var(--border-2);
   border-radius: 999px;
-  color: #526173;
+  color: var(--text-2);
   background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 6px 18px rgba(31, 45, 68, 0.14);
+  box-shadow: var(--shadow-1);
   cursor: pointer;
   transition: color 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
 
@@ -1549,9 +1639,9 @@ const downloadPreviewedImage = async () => {
   }
 
   &:hover {
-    color: #1976D2;
+    color: var(--color-primary);
     border-color: #90CAF9;
-    transform: translateY(-1px);
+    transform: translate(-50%, -1px);
   }
 }
 
@@ -1572,16 +1662,16 @@ const downloadPreviewedImage = async () => {
     position: relative;
 
     &:hover {
-      background: #f8fbff;
+      background: var(--color-primary-bg);
     }
 
     // 选中状态
     &.selected {
-      background: #e3f2fd;
-      border-left: 3px solid #1976d2;
+      background: var(--color-primary-bg);
+      border-left: 3px solid var(--color-primary);
 
       &:hover {
-        background: #e3f2fd;
+        background: var(--color-primary-bg);
       }
     }
 
@@ -1610,9 +1700,10 @@ const downloadPreviewedImage = async () => {
 .user-message {
   position: relative;
   padding: 10px 16px;
-  background: #f5f5f5;
-  border-radius: 18px;
-  border: 1px solid #e0e0e0;
+  background: var(--bg-bubble-user);
+  border-radius: var(--radius-lg);
+  border-top-right-radius: 2px;
+  border: 1px solid var(--border-2);
   margin-left: auto;
   margin-right: 0;
   align-self: flex-end;
@@ -1651,7 +1742,7 @@ const downloadPreviewedImage = async () => {
         width: 5px;
         height: 5px;
         border-radius: 50%;
-        background: #64748b;
+        background: var(--text-2);
         opacity: 0.42;
         animation: message-pending-steering-pulse 1.2s ease-in-out infinite;
 
@@ -1687,7 +1778,7 @@ const downloadPreviewedImage = async () => {
     padding: 0;
     border: none;
     background: transparent;
-    color: #1976D2;
+    color: var(--color-primary);
     font-size: 12px;
     line-height: 1.4;
     cursor: pointer;
@@ -1721,7 +1812,7 @@ const downloadPreviewedImage = async () => {
     justify-content: center;
     width: 26px;
     height: 26px;
-    border: 1px solid #d8deea;
+    border: 1px solid var(--border-2);
     border-radius: 6px;
     color: #627089;
     background: rgba(255, 255, 255, 0.92);
@@ -1739,13 +1830,13 @@ const downloadPreviewedImage = async () => {
     }
 
     &:hover {
-      color: #1976D2;
+      color: var(--color-primary);
       border-color: #90CAF9;
-      background: #fff;
+      background: var(--bg-container);
     }
 
     &.copied {
-      color: #2e7d32;
+      color: var(--color-success);
       border-color: #a5d6a7;
       background: #f1f8f4;
     }
@@ -1755,7 +1846,7 @@ const downloadPreviewedImage = async () => {
     margin-top: 8px;
     padding: 4px 8px;
     background: rgba(255, 152, 0, 0.1);
-    border: 1px solid #FF9800;
+    border: 1px solid var(--color-warning);
     border-radius: 4px;
     display: inline-flex;
     align-items: center;
@@ -1789,11 +1880,12 @@ const downloadPreviewedImage = async () => {
 
 .agent-message.final {
   padding: 10px 16px;
-  background: transparent;
-  border-radius: 8px;
+  background: var(--bg-hover);
+  border-radius: var(--radius-lg);
+  border-top-left-radius: 2px;
   margin-left: 0;
   margin-right: 0;
-  border-left: none;
+  border: none;
   max-width: 100%;
   font-size: 14px;
   line-height: 1.6;
@@ -1801,8 +1893,8 @@ const downloadPreviewedImage = async () => {
   .expert-system-info {
     margin-top: 12px;
     padding: 12px;
-    background: rgba(66, 165, 245, 0.08);
-    border: 1px solid rgba(66, 165, 245, 0.3);
+    background: var(--color-primary-bg);
+    border: 1px solid var(--color-primary-bg-hover);
     border-radius: 8px;
 
     .expert-badge {
@@ -1810,7 +1902,7 @@ const downloadPreviewedImage = async () => {
       align-items: center;
       gap: 6px;
       padding: 4px 8px;
-      background: rgba(66, 165, 245, 0.15);
+      background: var(--color-primary-bg);
       border-radius: 4px;
       margin-bottom: 8px;
 
@@ -1821,7 +1913,7 @@ const downloadPreviewedImage = async () => {
       .badge-text {
         font-size: 12px;
         font-weight: 500;
-        color: #1976D2;
+        color: var(--color-primary);
       }
     }
 
@@ -1834,7 +1926,7 @@ const downloadPreviewedImage = async () => {
 
       .expert-label {
         font-size: 12px;
-        color: #666;
+        color: var(--text-2);
         font-weight: 500;
       }
 
@@ -1844,7 +1936,7 @@ const downloadPreviewedImage = async () => {
         border: 1px solid rgba(76, 175, 80, 0.3);
         border-radius: 12px;
         font-size: 12px;
-        color: #2E7D32;
+        color: var(--color-success);
         white-space: nowrap;
       }
     }
@@ -1855,7 +1947,7 @@ const downloadPreviewedImage = async () => {
       h4 {
         font-size: 13px;
         margin: 0 0 6px 0;
-        color: #333;
+        color: var(--text-1);
         font-weight: 600;
       }
 
@@ -1866,7 +1958,7 @@ const downloadPreviewedImage = async () => {
         li {
           font-size: 12px;
           line-height: 1.6;
-          color: #555;
+          color: var(--text-2);
           margin-bottom: 4px;
         }
       }
@@ -1878,7 +1970,7 @@ const downloadPreviewedImage = async () => {
       h4 {
         font-size: 13px;
         margin: 0 0 8px 0;
-        color: #333;
+        color: var(--text-1);
         font-weight: 600;
       }
 
@@ -1886,7 +1978,7 @@ const downloadPreviewedImage = async () => {
         margin-bottom: 10px;
         padding: 8px;
         background: rgba(255, 255, 255, 0.5);
-        border: 1px solid rgba(66, 165, 245, 0.2);
+        border: 1px solid var(--color-primary-bg-hover);
         border-radius: 6px;
 
         &:last-child {
@@ -1899,7 +1991,7 @@ const downloadPreviewedImage = async () => {
           gap: 8px;
           margin-bottom: 6px;
           padding-bottom: 6px;
-          border-bottom: 1px solid rgba(66, 165, 245, 0.2);
+          border-bottom: 1px solid var(--color-primary-bg-hover);
 
           .expert-summary-icon {
             font-size: 16px;
@@ -1908,13 +2000,13 @@ const downloadPreviewedImage = async () => {
           .expert-summary-name {
             font-size: 12px;
             font-weight: 600;
-            color: #1976D2;
+            color: var(--color-primary);
             flex: 1;
           }
 
           .expert-confidence {
             font-size: 11px;
-            color: #2E7D32;
+            color: var(--color-success);
             font-weight: 500;
           }
         }
@@ -1925,27 +2017,27 @@ const downloadPreviewedImage = async () => {
             padding: 8px;
             background: rgba(255, 255, 255, 0.6);
             border-radius: 4px;
-            border-left: 2px solid #1976D2;
+            border-left: 2px solid var(--color-primary);
 
             // 继承MarkdownRenderer的样式，但调整字体大小
             :deep(h1) {
               font-size: 14px;
               font-weight: 600;
-              color: #1976D2;
+              color: var(--color-primary);
               margin: 0 0 8px 0;
             }
 
             :deep(h2) {
               font-size: 13px;
               font-weight: 600;
-              color: #1976D2;
+              color: var(--color-primary);
               margin: 10px 0 6px 0;
             }
 
             :deep(h3) {
               font-size: 12px;
               font-weight: 600;
-              color: #333;
+              color: var(--text-1);
               margin: 8px 0 4px 0;
             }
 
@@ -1978,28 +2070,28 @@ const downloadPreviewedImage = async () => {
 
             :deep(strong) {
               font-weight: 600;
-              color: #333;
+              color: var(--text-1);
             }
           }
 
           .expert-summary-text {
             font-size: 12px;
             line-height: 1.6;
-            color: #555;
+            color: var(--text-2);
             margin: 0 0 6px 0;
           }
 
           .expert-key-findings {
-            background: rgba(66, 165, 245, 0.05);
+            background: var(--color-primary-bg);
             border-radius: 4px;
             padding: 6px 8px;
-            border-left: 2px solid #1976D2;
+            border-left: 2px solid var(--color-primary);
 
             .findings-label {
               display: inline-block;
               font-size: 11px;
               font-weight: 600;
-              color: #1976D2;
+              color: var(--color-primary);
               margin-bottom: 4px;
             }
 
@@ -2010,7 +2102,7 @@ const downloadPreviewedImage = async () => {
               li {
                 font-size: 11px;
                 line-height: 1.5;
-                color: #666;
+                color: var(--text-2);
                 margin-bottom: 2px;
 
                 &:last-child {
@@ -2026,29 +2118,29 @@ const downloadPreviewedImage = async () => {
               padding: 10px;
               background: rgba(255, 255, 255, 0.8);
               border-radius: 6px;
-              border-left: 3px solid #1976D2;
+              border-left: 3px solid var(--color-primary);
 
               // Markdown内容样式
               :deep(h1) {
                 font-size: 16px;
                 font-weight: 600;
-                color: #1976D2;
+                color: var(--color-primary);
                 margin: 0 0 12px 0;
                 padding-bottom: 6px;
-                border-bottom: 2px solid #1976D2;
+                border-bottom: 2px solid var(--color-primary);
               }
 
               :deep(h2) {
                 font-size: 14px;
                 font-weight: 600;
-                color: #1976D2;
+                color: var(--color-primary);
                 margin: 16px 0 8px 0;
               }
 
               :deep(h3) {
                 font-size: 13px;
                 font-weight: 600;
-                color: #333;
+                color: var(--text-1);
                 margin: 12px 0 6px 0;
               }
 
@@ -2079,25 +2171,25 @@ const downloadPreviewedImage = async () => {
                 th, td {
                   font-size: 11px;
                   padding: 6px 8px;
-                  border: 1px solid #ddd;
+                  border: 1px solid var(--border-3);
                   text-align: left;
                 }
 
                 th {
-                  background-color: #f5f5f5;
+                  background-color: var(--bg-hover);
                   font-weight: 600;
-                  color: #1976D2;
+                  color: var(--color-primary);
                 }
               }
 
               :deep(strong) {
                 font-weight: 600;
-                color: #333;
+                color: var(--text-1);
               }
 
               :deep(em) {
                 font-style: italic;
-                color: #666;
+                color: var(--text-2);
               }
             }
 
@@ -2106,12 +2198,12 @@ const downloadPreviewedImage = async () => {
               padding: 10px;
               background: rgba(255, 255, 255, 0.8);
               border-radius: 6px;
-              border-left: 3px solid #1976D2;
+              border-left: 3px solid var(--color-primary);
 
               .section-title {
                 font-size: 13px;
                 font-weight: 600;
-                color: #1976D2;
+                color: var(--color-primary);
                 margin: 0 0 8px 0;
               }
 
@@ -2132,11 +2224,11 @@ const downloadPreviewedImage = async () => {
                   margin-bottom: 6px;
                   .subsection-key {
                     font-weight: 500;
-                    color: #666;
+                    color: var(--text-2);
                     margin-right: 6px;
                   }
                   .subsection-value {
-                    color: #333;
+                    color: var(--text-1);
                   }
                 }
               }
@@ -2148,17 +2240,132 @@ const downloadPreviewedImage = async () => {
   }
 }
 
+// 【新增】AI回复操作栏：用时统计 + 复制按钮
+.agent-message-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  min-height: 26px;
+}
+
+.agent-message.final.question-handoff-message,
+.agent-message.final.question-followup-message {
+  width: fit-content;
+  max-width: min(100%, 860px);
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.question-handoff {
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+
+.question-handoff-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.question-handoff-item {
+  display: flex;
+  gap: 6px;
+  color: var(--text-2);
+}
+
+.question-handoff-index {
+  flex: none;
+}
+
+.question-handoff-message .process-collapse {
+  margin: 4px 0 0;
+}
+
+// 【新增】AI回复用时统计
+.agent-message-duration {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-size-xs);
+  line-height: 1;
+  color: var(--text-3);
+  user-select: none;
+  white-space: nowrap;
+
+  svg {
+    width: 13px;
+    height: 13px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}
+
+.agent-message-tools {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+}
+
+.message-wrapper:hover .agent-message-tools,
+.message-wrapper:focus-within .agent-message-tools {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.agent-message-tool-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #d8deea;
+  border-radius: 6px;
+  color: #627089;
+  background: rgba(255, 255, 255, 0.92);
+  cursor: pointer;
+  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+
+  svg {
+    width: 15px;
+    height: 15px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  &:hover {
+    color: #1976D2;
+    border-color: #90CAF9;
+    background: #fff;
+  }
+
+  &.copied {
+    color: #2e7d32;
+    border-color: #a5d6a7;
+    background: #f1f8f4;
+  }
+}
+
 .live-process-details {
   margin: 6px 0 10px 0;
   border: none;
   border-radius: 0;
   background: transparent;
   font-size: 14px;
-  color: #35425f;
+  color: var(--text-1);
 
   summary {
     cursor: pointer;
-    color: #35425f;
+    color: var(--text-1);
     font-weight: 500;
     font-size: 13px;
     user-select: none;
@@ -2193,17 +2400,71 @@ const downloadPreviewedImage = async () => {
   }
 }
 
-.thinking-placeholder {
+.task-progress-status {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 10px;
   margin: 6px 0 10px;
-  padding: 9px 12px;
-  color: #35425f;
+  padding: 10px 12px;
+  color: var(--text-1);
   font-size: 13px;
-  font-weight: 500;
   line-height: 1.6;
   animation: fadeIn 0.2s;
+}
+
+.assistant-process-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 2px 0 10px;
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.thought-summary-toggle { display: inline-flex; align-items: center; gap: 7px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; }
+button.thought-summary-toggle { cursor: pointer; }
+.thought-summary-toggle svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.assistant-thought-content { color: var(--text-2); font-size: 12px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 12px; padding: 8px 12px; border-left: 2px solid var(--border-2, #e2e8f0); }
+.assistant-thought-content > div + div { margin-top: 8px; }
+.assistant-live-thoughts summary { cursor: pointer; color: var(--text-3); font-size: 12px; margin-bottom: 8px; }
+
+.task-progress-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.task-progress-main {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+}
+
+.task-progress-stage {
+  font-weight: 600;
+}
+
+.task-progress-elapsed {
+  color: var(--text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-progress-tip {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.task-progress-tip > span:first-child {
+  color: var(--primary-color, #2878ff);
+  font-weight: 600;
 }
 
 .thinking-indicator {
@@ -2212,6 +2473,7 @@ const downloadPreviewedImage = async () => {
   flex: 0 0 10px;
   border-radius: 50%;
   background: #6f7f97;
+  margin-top: 6px;
   animation: thinking-indicator-pulse 1.2s ease-in-out infinite;
 }
 
@@ -2267,7 +2529,7 @@ const downloadPreviewedImage = async () => {
   .event-text {
     flex: 1;
     line-height: 1.6;
-    color: #35425f;
+    color: var(--text-1);
 
     .tool-use-main {
       display: flex;
@@ -2275,7 +2537,7 @@ const downloadPreviewedImage = async () => {
       gap: 8px;
       flex-wrap: wrap;
       font-weight: 500;
-      color: #35425f;
+      color: var(--text-1);
     }
 
     .tool-use-details {
@@ -2284,7 +2546,7 @@ const downloadPreviewedImage = async () => {
       details {
         summary {
           cursor: pointer;
-          color: #526173;
+          color: var(--text-2);
           font-size: 12px;
           user-select: none;
           padding: 4px 8px;
@@ -2296,8 +2558,8 @@ const downloadPreviewedImage = async () => {
         pre {
           margin-top: 8px;
           padding: 8px;
-          background: #f8fafc;
-          border: 1px solid #edf1f7;
+          background: var(--bg-muted);
+          border: 1px solid var(--bg-muted);
           border-radius: 4px;
           font-size: 12px;
           overflow-x: auto;
@@ -2308,10 +2570,10 @@ const downloadPreviewedImage = async () => {
     .tool-result-summary {
       margin-top: 8px;
       padding: 8px;
-      background: #f8fafc;
+      background: var(--bg-muted);
       border-radius: 4px;
       font-size: 13px;
-      color: #526173;
+      color: var(--text-2);
     }
 
   }
@@ -2336,7 +2598,7 @@ const downloadPreviewedImage = async () => {
     height: auto;
     border-radius: 6px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-    border: 1px solid #e0e0e0;
+    border: 1px solid var(--border-2);
     display: block;
   }
 }
@@ -2358,7 +2620,7 @@ const downloadPreviewedImage = async () => {
   border: none;
   border-radius: 0;
   overflow: hidden;
-  color: #35425f;
+  color: var(--text-1);
   background: transparent;
 
   > summary {
@@ -2369,12 +2631,12 @@ const downloadPreviewedImage = async () => {
     text-align: left;
     display: block;
     user-select: none;
-    color: #526173;
+    color: var(--text-2);
     background: transparent;
 
     &:hover {
       background: transparent;
-      color: #1976D2;
+      color: var(--color-primary);
     }
   }
 
@@ -2410,7 +2672,7 @@ const downloadPreviewedImage = async () => {
 
       .process-text {
         font-size: 12px;
-        color: #526173;
+        color: var(--text-2);
         line-height: 1.5;
         word-break: break-word;
       }
@@ -2429,7 +2691,7 @@ const downloadPreviewedImage = async () => {
     }
 
     .process-tool-name {
-      color: #35425f;
+      color: var(--text-1);
       font-size: 12px;
       font-weight: 500;
     }
@@ -2443,7 +2705,7 @@ const downloadPreviewedImage = async () => {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 500;
-  color: #526173;
+  color: var(--text-2);
   background: #f2f6fb;
 }
 
@@ -2453,7 +2715,7 @@ const downloadPreviewedImage = async () => {
 
   > summary {
     cursor: pointer;
-    color: #526173;
+    color: var(--text-2);
     font-size: 12px;
     user-select: none;
   }
@@ -2463,8 +2725,8 @@ const downloadPreviewedImage = async () => {
     overflow: auto;
     margin: 6px 0 0;
     padding: 8px;
-    background: #f8fafc;
-    border: 1px solid #edf1f7;
+    background: var(--bg-muted);
+    border: 1px solid var(--bg-muted);
     border-radius: 4px;
     font-size: 12px;
     line-height: 1.5;
@@ -2493,8 +2755,8 @@ const downloadPreviewedImage = async () => {
   width: 72px;
   height: 54px;
   border-radius: 7px;
-  border: 1px solid #d8deea;
-  background: #fff;
+  border: 1px solid var(--border-2);
+  background: var(--bg-container);
   cursor: pointer;
   object-fit: cover;
   transition: opacity 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
@@ -2513,9 +2775,9 @@ const downloadPreviewedImage = async () => {
   height: 30px;
   min-width: 0;
   padding: 0 9px;
-  background: #ffffff;
+  background: var(--bg-container);
   border-radius: 999px;
-  border: 1px solid #d8deea;
+  border: 1px solid var(--border-2);
   max-width: 100%;
   color: #5f6f89;
 }
@@ -2525,7 +2787,7 @@ const downloadPreviewedImage = async () => {
 }
 
 .clickable-attachment:focus-visible {
-  outline: 2px solid #1976d2;
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 
@@ -2548,11 +2810,11 @@ const downloadPreviewedImage = async () => {
   white-space: nowrap;
   font-size: 12px;
   line-height: 1;
-  color: #526173;
+  color: var(--text-2);
 }
 
 @media (max-width: 768px) {
-  .react-message-list {
+  .message-list-content {
     padding: 14px 12px;
   }
 
@@ -2566,6 +2828,11 @@ const downloadPreviewedImage = async () => {
     opacity: 1;
     pointer-events: auto;
     align-self: flex-end;
+  }
+
+  .agent-message-tools {
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .attachment-image {

@@ -18,6 +18,49 @@ class FakeLLMClient:
         return self.response
 
 
+@pytest.mark.asyncio
+async def test_summary_failure_preserves_previous_memory_and_recent_history():
+    class Unavailable:
+        async def chat(self, **kwargs):
+            raise RuntimeError("summary unavailable")
+
+    compressor = ContextCompressor(Unavailable())
+    prior = {
+        "role": "user", "type": "compact_memory",
+        "content": compressor.COMPACT_MEMORY_PREFIX + "Verified fact: station A is upstream.",
+    }
+    original = [prior] + _long_history()
+    compacted = await compressor.compress(original, force=True)
+    assert prior in compacted
+    assert sum(m.get("type") == "compact_memory" for m in compacted) == 1
+    assert any("继续第 7 批" in str(m["content"]) for m in compacted)
+    assert any(m.get("metadata", {}).get("compression_type") == "fallback" for m in compacted)
+
+
+@pytest.mark.parametrize("result", [
+    {"success": True, "refs": {"files": [{"path": "/tmp/report.qmd", "usage": "artifact"}],
+        "artifacts": [{"file_path": "/tmp/report.qmd"}], "visuals": [{"id": "image1"}]}},
+    {"success": True, "llm_resume": {"content_preview": "测量值为42", "tool_hint": "read_file"},
+        "data": {"content": "A" * 5000, "path": "/tmp/source.md"}},
+    {"success": True, "data_id": "aggregate:result", "report_data_id": "report:summary",
+        "source_data_ids": ["raw:source"]},
+])
+def test_restore_preserves_current_result_reference_contract(tmp_path, result):
+    session = SessionMemory("restore-current-contract", base_dir=tmp_path)
+    history = [
+        {"type": "tool_use", "data": {"tool_use_id": "t1", "tool_name": "custom_reader", "input": {}}},
+        {"type": "tool_result", "data": {"tool_use_id": "t1", "tool_name": "custom_reader", "result": result}},
+    ]
+    session.load_history_messages(history)
+    messages = session.get_messages_for_llm()
+    assert messages[0]["content"][0]["id"] == "t1"
+    restored = json.loads(messages[1]["content"][0]["content"])
+    # Recovery preserves tool-owned fields; it does not fabricate duplicated
+    # context_refs, top-level content_preview, or a summary from data_id.
+    assert restored == result
+    assert "context_refs" not in restored
+
+
 def _tool_pair(index: int):
     tool_id = f"toolu_{index}"
     return [
@@ -214,7 +257,7 @@ def test_session_memory_preserves_compact_memory_and_content_blocks_after_update
     messages = session.get_messages_for_llm()
 
     assert messages[1]["role"] == "user"
-    assert messages[1]["content"].startswith("Runtime memory summary from earlier turns.")
+    assert messages[1]["content"].startswith(ContextCompressor.COMPACT_MEMORY_PREFIX)
     assert isinstance(messages[2]["content"], list)
     assert messages[2]["content"][0]["type"] == "tool_use"
     assert isinstance(messages[3]["content"], list)
@@ -237,7 +280,7 @@ def test_session_memory_load_history_messages_restores_compact_memory(tmp_path):
 
     assert len(messages) == 1
     assert messages[0]["role"] == "user"
-    assert messages[0]["content"].startswith("Runtime memory summary from earlier turns.")
+    assert messages[0]["content"].startswith(ContextCompressor.COMPACT_MEMORY_PREFIX)
 
 
 def test_session_memory_load_history_messages_prefers_db_role_content(tmp_path):
@@ -418,412 +461,9 @@ def test_session_memory_load_history_messages_restores_field_compacted_tool_resu
     assert restored["data"] == [{"large": "row"}]
 
 
-def test_session_memory_restore_keeps_high_value_resource_references(tmp_path):
-    session = SessionMemory(session_id="restore-resource-refs-test", base_dir=tmp_path)
-    saved_messages = [
-        {
-            "type": "tool_use",
-            "role": "assistant",
-            "content": "调用工具: get_platform_weather_image",
-            "data": {
-                "tool_use_id": "toolu_image_1",
-                "tool_name": "get_platform_weather_image",
-                "input": {"product": "backward_trajectory", "time": "南昌,20260609"},
-            },
-            "timestamp": "2026-06-04T00:00:01",
-        },
-        {
-            "type": "tool_result",
-            "role": "user",
-            "content": "已获取图片",
-            "data": {
-                "tool_use_id": "toolu_image_1",
-                "tool_name": "get_platform_weather_image",
-                "result": {
-                    "status": "success",
-                    "summary": "已获取后向轨迹图",
-                    "refs": {
-                        "files": [
-                            {
-                                "path": "/home/xckj/suyuan/backend/backend_data_registry/external_images/weather_platform/backward_trajectory/20260610/101240101_20260609.gif",
-                                "type": "image",
-                                "format": "gif",
-                                "usage": "tool_input",
-                                "preferred_for": ["analyze_image", "read_file"],
-                            }
-                        ],
-                        "visuals": [
-                            {
-                                "id": "weather_platform_backward_trajectory_20260610_101240101_20260609",
-                                "type": "image",
-                                "title": "20260610 城市后向轨迹图 101240101_20260609",
-                                "image_url": "/api/image/weather_platform_backward_trajectory_20260610_101240101_20260609",
-                                "local_path": "/home/xckj/suyuan/backend/backend_data_registry/external_images/weather_platform/backward_trajectory/20260610/101240101_20260609.gif",
-                                "tool_path": "/home/xckj/suyuan/backend/backend_data_registry/external_images/weather_platform/backward_trajectory/20260610/101240101_20260609.gif",
-                            }
-                        ],
-                        "urls": [
-                            {
-                                "url": "/api/image/weather_platform_backward_trajectory_20260610_101240101_20260609",
-                                "source": "image_url",
-                                "usage": "display",
-                            },
-                            {
-                                "url": "http://data.suncereltd.cn:8313/1014/20260610/10124010120260609.gif",
-                                "source": "source_url",
-                                "usage": "source",
-                            },
-                        ],
-                    },
-                    "llm_resume": {
-                        "tool_hint": (
-                            "Use analyze_image(path='/home/xckj/suyuan/backend/backend_data_registry/"
-                            "external_images/weather_platform/backward_trajectory/20260610/"
-                            "101240101_20260609.gif') for image analysis."
-                        ),
-                    },
-                    "data": {
-                        "image_url": "/api/image/weather_platform_backward_trajectory_20260610_101240101_20260609",
-                        "image_id": "weather_platform_backward_trajectory_20260610_101240101_20260609",
-                        "local_path": "/home/xckj/suyuan/backend/backend_data_registry/external_images/weather_platform/backward_trajectory/20260610/101240101_20260609.gif",
-                        "source_url": "http://data.suncereltd.cn:8313/1014/20260610/10124010120260609.gif",
-                        "visuals": [
-                            {
-                                "id": "weather_platform_backward_trajectory_20260610_101240101_20260609",
-                                "type": "image",
-                                "title": "20260610 城市后向轨迹图 101240101_20260609",
-                                "image_url": "/api/image/weather_platform_backward_trajectory_20260610_101240101_20260609",
-                                "local_path": "/home/xckj/suyuan/backend/backend_data_registry/external_images/weather_platform/backward_trajectory/20260610/101240101_20260609.gif",
-                                "spec": {"large": "payload should not be restored"},
-                            }
-                        ],
-                    },
-                    "visuals": [
-                        {
-                            "id": "weather_platform_backward_trajectory_20260610_101240101_20260609",
-                            "type": "image",
-                            "title": "20260610 城市后向轨迹图 101240101_20260609",
-                            "image_url": "/api/image/weather_platform_backward_trajectory_20260610_101240101_20260609",
-                            "local_path": "/home/xckj/suyuan/backend/backend_data_registry/external_images/weather_platform/backward_trajectory/20260610/101240101_20260609.gif",
-                        }
-                    ],
-                },
-                "is_error": False,
-            },
-            "timestamp": "2026-06-04T00:00:02",
-        },
-    ]
-
-    session.load_history_messages(saved_messages)
-    messages = session.get_messages_for_llm()
-    restored = json.loads(messages[1]["content"][0]["content"])
-
-    refs = restored["context_refs"]
-    assert refs["files"] == [
-        {
-            "path": "/home/xckj/suyuan/backend/backend_data_registry/external_images/weather_platform/backward_trajectory/20260610/101240101_20260609.gif",
-            "type": "image",
-            "format": "gif",
-            "usage": "tool_input",
-            "preferred_for": ["analyze_image", "read_file"],
-        }
-    ]
-    assert refs["visuals"] == [
-        {
-            "id": "weather_platform_backward_trajectory_20260610_101240101_20260609",
-            "type": "image",
-            "title": "20260610 城市后向轨迹图 101240101_20260609",
-            "image_url": "/api/image/weather_platform_backward_trajectory_20260610_101240101_20260609",
-            "local_path": "/home/xckj/suyuan/backend/backend_data_registry/external_images/weather_platform/backward_trajectory/20260610/101240101_20260609.gif",
-            "tool_path": "/home/xckj/suyuan/backend/backend_data_registry/external_images/weather_platform/backward_trajectory/20260610/101240101_20260609.gif",
-        }
-    ]
-    assert refs["urls"] == [
-        {
-            "url": "/api/image/weather_platform_backward_trajectory_20260610_101240101_20260609",
-            "source": "image_url",
-            "usage": "display",
-        },
-        {
-            "url": "http://data.suncereltd.cn:8313/1014/20260610/10124010120260609.gif",
-            "source": "source_url",
-            "usage": "source",
-        },
-    ]
-    assert restored["llm_resume"]["tool_hint"].startswith("Use analyze_image(path='/home/xckj")
-    assert "spec" not in json.dumps(restored, ensure_ascii=False)
 
 
-def test_session_memory_restore_keeps_read_file_path_and_bounded_content_preview(tmp_path):
-    session = SessionMemory(session_id="restore-read-file-preview-test", base_dir=tmp_path)
-    long_content = "A" * 5000
-    saved_messages = [
-        {
-            "type": "tool_use",
-            "role": "assistant",
-            "content": "调用工具: read_file",
-            "data": {
-                "tool_use_id": "toolu_read_1",
-                "tool_name": "read_file",
-                "input": {"path": "/tmp/report.md"},
-            },
-            "timestamp": "2026-06-04T00:00:01",
-        },
-        {
-            "type": "tool_result",
-            "role": "user",
-            "content": "读取成功",
-            "data": {
-                "tool_use_id": "toolu_read_1",
-                "tool_name": "read_file",
-                "result": {
-                    "success": True,
-                    "summary": "读取成功: report.md (5000 bytes, 1 行)",
-                    "refs": {
-                        "files": [
-                            {
-                                "path": "/tmp/report.md",
-                                "type": "text",
-                                "format": "md",
-                                "size": 5000,
-                                "usage": "read_file",
-                                "line_range": [1, 1],
-                                "total_lines": 1,
-                                "is_truncated": False,
-                            }
-                        ]
-                    },
-                    "llm_resume": {
-                        "content_preview": long_content[:2000],
-                        "tool_hint": "Use read_file(path='/tmp/report.md') to reread this file.",
-                    },
-                    "data": {
-                        "type": "text",
-                        "format": "md",
-                        "path": "/tmp/report.md",
-                        "size": 5000,
-                        "line_range": [1, 1],
-                        "total_lines": 1,
-                        "is_truncated": False,
-                        "content": long_content,
-                    },
-                },
-                "is_error": False,
-            },
-            "timestamp": "2026-06-04T00:00:02",
-        },
-    ]
 
-    session.load_history_messages(saved_messages)
-    messages = session.get_messages_for_llm()
-    restored = json.loads(messages[1]["content"][0]["content"])
-
-    assert restored["context_refs"]["files"] == [
-        {
-            "path": "/tmp/report.md",
-            "type": "text",
-            "format": "md",
-            "size": 5000,
-            "usage": "read_file",
-            "line_range": [1, 1],
-            "total_lines": 1,
-            "is_truncated": False,
-        }
-    ]
-    assert restored["content_preview"].startswith("A" * 100)
-    assert restored["llm_resume"]["tool_hint"] == "Use read_file(path='/tmp/report.md') to reread this file."
-    assert len(restored["content_preview"]) < len(long_content)
-
-
-def test_session_memory_restore_prefers_explicit_tool_refs(tmp_path):
-    session = SessionMemory(session_id="restore-explicit-refs-test", base_dir=tmp_path)
-    saved_messages = [
-        {
-            "type": "tool_use",
-            "role": "assistant",
-            "content": "调用工具: create_report",
-            "data": {
-                "tool_use_id": "toolu_report_1",
-                "tool_name": "create_report",
-                "input": {"title": "report"},
-            },
-            "timestamp": "2026-06-04T00:00:01",
-        },
-        {
-            "type": "tool_result",
-            "role": "user",
-            "content": "报告已生成",
-            "data": {
-                "tool_use_id": "toolu_report_1",
-                "tool_name": "create_report",
-                "result": {
-                    "success": True,
-                    "summary": "报告已生成",
-                    "refs": {
-                        "files": [
-                            {
-                                "path": "/tmp/report.qmd",
-                                "type": "document",
-                                "format": "qmd",
-                                "usage": "artifact",
-                            }
-                        ],
-                        "artifacts": [
-                            {
-                                "type": "document",
-                                "kind": "report",
-                                "format": "qmd",
-                                "file_path": "/tmp/report.qmd",
-                                "file_name": "report.qmd",
-                            }
-                        ],
-                    },
-                    "data": {"large": "payload"},
-                },
-                "is_error": False,
-            },
-            "timestamp": "2026-06-04T00:00:02",
-        },
-    ]
-
-    session.load_history_messages(saved_messages)
-    messages = session.get_messages_for_llm()
-    restored = json.loads(messages[1]["content"][0]["content"])
-
-    assert restored["context_refs"] == {
-        "files": [
-            {
-                "path": "/tmp/report.qmd",
-                "type": "document",
-                "format": "qmd",
-                "usage": "artifact",
-            }
-        ],
-        "artifacts": [
-            {
-                "type": "document",
-                "kind": "report",
-                "format": "qmd",
-                "file_path": "/tmp/report.qmd",
-                "file_name": "report.qmd",
-            }
-        ],
-    }
-
-
-def test_session_memory_restore_preserves_explicit_llm_resume(tmp_path):
-    session = SessionMemory(session_id="restore-explicit-llm-resume-test", base_dir=tmp_path)
-    saved_messages = [
-        {
-            "type": "tool_use",
-            "role": "assistant",
-            "content": "调用工具: custom_reader",
-            "data": {
-                "tool_use_id": "toolu_custom_1",
-                "tool_name": "custom_reader",
-                "input": {"path": "/tmp/custom.txt"},
-            },
-            "timestamp": "2026-06-04T00:00:01",
-        },
-        {
-            "type": "tool_result",
-            "role": "user",
-            "content": "读取完成",
-            "data": {
-                "tool_use_id": "toolu_custom_1",
-                "tool_name": "custom_reader",
-                "result": {
-                    "success": True,
-                    "summary": "自定义读取完成",
-                    "llm_resume": {
-                        "content_preview": "关键摘录：污染过程来自东北方向传输。",
-                        "tool_hint": "Use custom_reader(path='/tmp/custom.txt') to reread.",
-                        "important_fields": ["wind_direction", "transport_path"],
-                    },
-                    "data": {
-                        "content": "这段完整内容不应因为工具名未知而进入恢复上下文。",
-                    },
-                },
-                "is_error": False,
-            },
-            "timestamp": "2026-06-04T00:00:02",
-        },
-    ]
-
-    session.load_history_messages(saved_messages)
-    messages = session.get_messages_for_llm()
-    restored = json.loads(messages[1]["content"][0]["content"])
-
-    assert restored["llm_resume"] == {
-        "content_preview": "关键摘录：污染过程来自东北方向传输。",
-        "tool_hint": "Use custom_reader(path='/tmp/custom.txt') to reread.",
-        "important_fields": ["wind_direction", "transport_path"],
-    }
-    assert restored["content_preview"] == "关键摘录：污染过程来自东北方向传输。"
-    assert "这段完整内容" not in json.dumps(restored, ensure_ascii=False)
-
-
-def test_session_memory_restore_adds_data_references_to_context_refs(tmp_path):
-    session = SessionMemory(session_id="restore-data-context-refs-test", base_dir=tmp_path)
-    saved_messages = [
-        {
-            "type": "tool_use",
-            "role": "assistant",
-            "content": "调用工具: aggregate_data",
-            "data": {
-                "tool_use_id": "toolu_data_refs_1",
-                "tool_name": "aggregate_data",
-                "input": {"data_id": "raw:v1:source"},
-            },
-            "timestamp": "2026-06-04T00:00:01",
-        },
-        {
-            "type": "tool_result",
-            "role": "user",
-            "content": "聚合完成",
-            "data": {
-                "tool_use_id": "toolu_data_refs_1",
-                "tool_name": "aggregate_data",
-                "result": {
-                    "success": True,
-                    "summary": "聚合完成",
-                    "data_id": "aggregate:v1:result",
-                    "report_data_id": "report:v1:summary",
-                    "source_data_ids": ["raw:v1:source"],
-                    "data": {
-                        "rows": [{"large": "payload"}],
-                        "record_count": 120,
-                    },
-                },
-                "is_error": False,
-            },
-            "timestamp": "2026-06-04T00:00:02",
-        },
-    ]
-
-    session.load_history_messages(saved_messages)
-    messages = session.get_messages_for_llm()
-    restored = json.loads(messages[1]["content"][0]["content"])
-
-    assert restored["data_id"] == "aggregate:v1:result"
-    assert restored["report_data_id"] == "report:v1:summary"
-    assert restored["context_refs"]["data"] == [
-        {
-            "data_id": "aggregate:v1:result",
-            "usage": "primary",
-            "tool": "read_data_registry",
-        },
-        {
-            "data_id": "report:v1:summary",
-            "usage": "report",
-            "tool": "read_data_registry",
-        },
-        {
-            "data_id": "raw:v1:source",
-            "usage": "source",
-            "tool": "read_data_registry",
-        },
-    ]
 
 
 def test_tool_result_history_minimalization_preserves_refs_and_resume(monkeypatch):
@@ -1022,51 +662,12 @@ def test_document_artifact_tool_result_survives_history_restore_projection(tmp_p
     )
     restored = json.loads(projected[1]["content"][0]["content"])
 
-    assert restored["context_refs"]["files"][0]["path"] == str(artifact_path)
-    assert restored["context_refs"]["artifacts"][0]["file_path"] == str(artifact_path)
+    assert restored["refs"]["files"][0]["path"] == str(artifact_path)
+    assert restored["refs"]["artifacts"][0]["file_path"] == str(artifact_path)
     assert restored["llm_resume"]["artifact_path"] == str(artifact_path)
     assert restored["llm_resume"]["project_dir"] == str(tmp_path / "project")
     assert "present_artifact" in restored["llm_resume"]["tool_hint"]
 
-
-def test_session_memory_load_history_messages_uses_data_id_reference_when_summary_missing(tmp_path):
-    session = SessionMemory(session_id="restore-data-id-reference-test", base_dir=tmp_path)
-    saved_messages = [
-        {
-            "type": "tool_use",
-            "role": "assistant",
-            "content": "调用工具: query_data",
-            "data": {
-                "tool_use_id": "toolu_data_1",
-                "tool_name": "query_data",
-                "input": {"table": "events"},
-            },
-            "timestamp": "2026-06-04T00:00:01",
-        },
-        {
-            "type": "tool_result",
-            "role": "user",
-            "content": "查询完成",
-            "data": {
-                "tool_use_id": "toolu_data_1",
-                "tool_name": "query_data",
-                "result": {
-                    "data_id": "sql_query_result:v1:abc",
-                    "data": [{"large": "payload"}],
-                },
-                "is_error": False,
-            },
-            "timestamp": "2026-06-04T00:00:02",
-        },
-    ]
-
-    session.load_history_messages(saved_messages)
-    messages = session.get_messages_for_llm()
-    restored = json.loads(messages[1]["content"][0]["content"])
-
-    assert restored["summary"] == "结果已保存为 data_id=sql_query_result:v1:abc，可用 read_data_registry 读取。"
-    assert restored["data_id"] == "sql_query_result:v1:abc"
-    assert restored["result_truncated"] is True
 
 
 def test_session_memory_load_history_messages_drops_orphan_tool_protocol_blocks(tmp_path):
@@ -1186,3 +787,48 @@ def test_session_memory_load_history_messages_preserves_native_tool_blocks(tmp_p
             ],
         },
     ]
+
+
+def test_content_to_text_preserves_workflow_findings_and_full_results_pointer():
+    workflow_result = json.dumps({
+        "tool_use_id": "call_1",
+        "tool_name": "run_agent_workflow",
+        "result": {
+            "status": "success",
+            "result": "工作流已完成",
+            "data": {
+                "workflow_id": "xc-week-1",
+                "status": "succeeded",
+                "node_results": {
+                    "corr": {
+                        "task_id": "corr",
+                        "target_mode": "expert_analysis",
+                        "status": "success",
+                        "result_envelope": {
+                            "status": "completed",
+                            "summary": "相关性分析完成",
+                            "findings": [
+                                {"statement": "PM2.5 与 CO 相关系数 r=0.62"}
+                            ],
+                            "data_gaps": ["组分缺测"],
+                        },
+                        "file_paths": ["backend/backend_data_registry/sessions/child/data/memo.md"],
+                    }
+                },
+                "full_results": {"path": "backend/backend_data_registry/sessions/p/data/workflow_xc-week-1_node_results.json"},
+            },
+        },
+    }, ensure_ascii=False)
+    compressor = ContextCompressor(FakeLLMClient())
+
+    rendered = compressor._content_to_text(workflow_result, max_chars=3000)
+
+    assert "full_results_path=backend/backend_data_registry/sessions/p/data/workflow_xc-week-1_node_results.json" in rendered
+    assert "r=0.62" in rendered
+    assert "memo.md" in rendered
+    assert "组分缺测" in rendered
+    assert "...[truncated]" not in rendered
+
+    plain_large = json.dumps({"rows": [{"value": "x" * 4000}]}, ensure_ascii=False)
+    rendered_plain = compressor._content_to_text(plain_large, max_chars=3000)
+    assert rendered_plain.endswith("...[truncated]")

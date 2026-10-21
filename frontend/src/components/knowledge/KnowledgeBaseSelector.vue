@@ -104,9 +104,9 @@ onMounted(async () => {
 
 <style scoped>
 .kb-selector {
-  background: #fff;
+  background: var(--bg-container);
   border-radius: 8px;
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--border-2);
   overflow: hidden;
 }
 
@@ -116,12 +116,12 @@ onMounted(async () => {
   gap: 8px;
   padding: 10px 12px;
   cursor: pointer;
-  background: #fafafa;
+  background: var(--bg-muted);
   transition: background 0.2s;
 }
 
 .kb-header:hover {
-  background: #f0f0f0;
+  background: var(--border-1);
 }
 
 .kb-icon {
@@ -132,12 +132,12 @@ onMounted(async () => {
   flex: 1;
   font-size: 14px;
   font-weight: 500;
-  color: #333;
+  color: var(--text-1);
 }
 
 .kb-count {
-  background: #1890ff;
-  color: #fff;
+  background: var(--color-primary);
+  color: var(--bg-container);
   font-size: 12px;
   padding: 2px 8px;
   border-radius: 10px;
@@ -145,7 +145,7 @@ onMounted(async () => {
 
 .expand-icon {
   font-size: 10px;
-  color: #999;
+  color: var(--text-3);
   transition: transform 0.2s;
 }
 
@@ -156,13 +156,13 @@ onMounted(async () => {
 .kb-list {
   max-height: 300px;
   overflow-y: auto;
-  border-top: 1px solid #e8e8e8;
+  border-top: 1px solid var(--border-2);
 }
 
 .kb-loading {
   padding: 20px;
   text-align: center;
-  color: #999;
+  color: var(--text-3);
   font-size: 13px;
 }
 
@@ -172,7 +172,7 @@ onMounted(async () => {
 
 .kb-group-header {
   font-size: 12px;
-  color: #666;
+  color: var(--text-2);
   padding: 8px 12px 4px;
   font-weight: 500;
 }
@@ -187,11 +187,11 @@ onMounted(async () => {
 }
 
 .kb-item:hover {
-  background: #f5f5f5;
+  background: var(--bg-hover);
 }
 
 .kb-item.selected {
-  background: #e6f7ff;
+  background: var(--color-primary-bg);
 }
 
 .kb-item input[type="checkbox"] {
@@ -210,7 +210,7 @@ onMounted(async () => {
 
 .kb-name {
   font-size: 13px;
-  color: #333;
+  color: var(--text-1);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -218,7 +218,7 @@ onMounted(async () => {
 
 .kb-meta {
   font-size: 11px;
-  color: #999;
+  color: var(--text-3);
 }
 
 .kb-type-badge {
@@ -229,19 +229,19 @@ onMounted(async () => {
 }
 
 .kb-type-badge.public {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
 }
 
 .kb-type-badge.private {
-  background: #f6ffed;
-  color: #52c41a;
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 
 .kb-empty {
   padding: 20px;
   text-align: center;
-  color: #999;
+  color: var(--text-3);
   font-size: 13px;
 }
 </style>

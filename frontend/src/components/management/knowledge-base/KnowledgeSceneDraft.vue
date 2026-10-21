@@ -48,12 +48,12 @@ async function confirm() {
 </script>
 
 <style scoped>
-.scene-draft { padding: 18px; border: 1px solid #dce3ea; border-radius: 8px; background: #fff; display: grid; gap: 12px; }
+.scene-draft { padding: 18px; border: 1px solid #dce3ea; border-radius: 8px; background: var(--bg-container); display: grid; gap: 12px; }
 header { display: flex; justify-content: space-between; gap: 16px; align-items: start; }
 .object-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
 article, .logic-row { border: 1px solid #e4e9ef; border-radius: 6px; padding: 10px; display: grid; gap: 8px; }
 .logic-row { grid-template-columns: 1fr 130px auto; }
 input, textarea, select { padding: 8px; border: 1px solid #cfd8e3; border-radius: 5px; font: inherit; }
-header button { padding: 9px 14px; border: 0; border-radius: 6px; background: #2563eb; color: white; }
-.text-button { border: 0; background: none; color: #b42318; width: fit-content; }
+header button { padding: 9px 14px; border: 0; border-radius: 6px; background: var(--color-primary); color: white; }
+.text-button { border: 0; background: none; color: var(--color-danger); width: fit-content; }
 </style>

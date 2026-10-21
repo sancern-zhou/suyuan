@@ -14,6 +14,7 @@ def test_gas_flow_single_character_measured_filename_is_selected():
             "RF_M_GASEOUSFLOWCHECK",
             {
                 "WORKINGORDERCODE": "CH2605081778206675949",
+                "DEVICEBRAND": "API",
                 "MEASUREDVALUECO": "630",
             },
         )
@@ -37,6 +38,7 @@ def test_gas_flow_tasks_skip_meter_id_photo_and_deduplicate_sources():
             "RF_M_GASEOUSFLOWCHECK",
             {
                 "WORKINGORDERCODE": "CH2605081778206675949",
+                "DEVICEBRAND": "API",
                 "DISPLAYVALUECO": "683",
                 "MEASUREDVALUECO": "630",
             },
@@ -59,7 +61,7 @@ def test_gas_flow_tasks_skip_meter_id_photo_and_deduplicate_sources():
     assert {"CO.jpg", "CO测.jpg"} <= set(filenames)
 
 
-def test_gas_flow_measured_photo_compares_measured_value_with_unit_conversion(monkeypatch):
+def test_gas_flow_measured_photo_compares_raw_value_for_api_brand(monkeypatch):
     def fake_extract_attachment_json(source, provider, task, prompt):
         assert "measured_values" in prompt
         return {
@@ -82,7 +84,8 @@ def test_gas_flow_measured_photo_compares_measured_value_with_unit_conversion(mo
             "RF_M_GASEOUSFLOWCHECK",
             {
                 "WORKINGORDERCODE": "CH2605081778206675949",
-                "MEASUREDVALUECO": "630",
+                "DEVICEBRAND": "API",
+                "MEASUREDVALUECO": "0.63",
             },
         )
     ]
@@ -118,6 +121,7 @@ def test_gas_flow_measured_photo_flags_measured_value_mismatch(monkeypatch):
             "RF_M_GASEOUSFLOWCHECK",
             {
                 "WORKINGORDERCODE": "CH2605081778206675949",
+                "DEVICEBRAND": "API",
                 "MEASUREDVALUECO": "683",
             },
         )
@@ -133,7 +137,7 @@ def test_gas_flow_measured_photo_flags_measured_value_mismatch(monkeypatch):
     assert [issue.rule_id for issue in issues] == ["ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH"]
     evidence = json.loads(issues[0].evidence)
     assert evidence["comparisons"][0]["field"] == "MEASUREDVALUECO"
-    assert evidence["comparisons"][0]["visual_value"] == 630
+    assert evidence["comparisons"][0]["visual_value"] == 0.63
 
 
 def test_pm_temp_pressure_photo_task_is_selected():

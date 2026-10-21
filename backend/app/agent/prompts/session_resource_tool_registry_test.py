@@ -13,11 +13,10 @@ ALL_MODE_LISTS = [
     tool_registry.EXPERT_TOOL_NAMES,
     tool_registry.QUERY_TOOL_NAMES,
     tool_registry.REPORT_TOOL_NAMES,
-    tool_registry.CHART_TOOL_NAMES,
     tool_registry.BOARD_TOOL_NAMES,
     tool_registry.OPS_TOOL_NAMES,
     tool_registry.GRAPH_TOOL_NAMES,
-    tool_registry.SOCIAL_TOOL_NAMES,
+    tool_registry.ASSISTANT_TOOL_NAMES,
     tool_registry.MEMORY_CONSOLIDATOR_TOOL_NAMES,
     tool_registry.DELIBERATION_METEOROLOGY_TOOL_NAMES,
     tool_registry.DELIBERATION_MONITORING_TOOL_NAMES,
@@ -87,9 +86,13 @@ def test_retired_chart_modules_and_runtime_references_are_removed():
     assert stale_references == []
 
 
-def test_current_chart_tools_remain_exposed_after_legacy_cleanup():
-    assert "execute_echarts_python" in tool_registry.CHART_TOOL_NAMES
-    assert "create_report_chart" in tool_registry.CHART_TOOL_NAMES
+def test_query_mode_can_generate_charts():
+    assert "execute_echarts_python" in tool_registry.QUERY_TOOL_NAMES
+    assert "create_business_chart" in tool_registry.QUERY_TOOL_NAMES
+
+
+def test_query_mode_can_query_historical_meteorology():
+    assert "get_weather_data" in tool_registry.QUERY_TOOL_NAMES
 
 
 def test_retired_complex_query_planner_is_fully_removed():

@@ -17,7 +17,12 @@ from .models import (
     TaskExecution,
     TriggerType,
 )
-from .storage import EventClaimStorage, TaskStorage, ExecutionStorage
+from .storage import (
+    DatabaseExecutionStorage,
+    EventClaimStorage,
+    TaskStorage,
+    TaskCaseStorage,
+)
 from .scheduler import SimpleScheduler
 from .executor import ScheduledTaskExecutor
 from .event_delivery import EventTaskDelivery
@@ -41,17 +46,19 @@ class ScheduledTaskService:
         self,
         agent_factory: Optional[callable] = None,
         task_storage: TaskStorage | None = None,
-        execution_storage: ExecutionStorage | None = None,
+        execution_storage: DatabaseExecutionStorage | None = None,
         claim_storage: EventClaimStorage | None = None,
         event_delivery: EventTaskDelivery | None = None,
         conversation_persistence=None,
+        recover_interrupted: bool = True,
     ):
         # 初始化存储层
         self.task_storage = task_storage or TaskStorage()
-        self.execution_storage = execution_storage or ExecutionStorage()
+        self.execution_storage = execution_storage or self._default_execution_storage()
         self.claim_storage = claim_storage or EventClaimStorage()
         self.event_delivery = event_delivery or EventTaskDelivery()
-        self._recover_interrupted_executions()
+        if recover_interrupted:
+            self._recover_interrupted_executions()
 
         configured_event_concurrency = os.getenv(
             "SCHEDULED_EVENT_MAX_CONCURRENT_TASKS",
@@ -90,6 +97,11 @@ class ScheduledTaskService:
 
         self._started = False
         self._event_tasks: set[asyncio.Task] = set()
+
+    @staticmethod
+    def _default_execution_storage() -> DatabaseExecutionStorage:
+        """Use the database as the sole scheduled execution store."""
+        return DatabaseExecutionStorage()
 
     def _recover_interrupted_executions(self) -> None:
         """Close execution records left running by a previous worker process."""
@@ -177,6 +189,14 @@ class ScheduledTaskService:
         task.add_done_callback(self._event_tasks.discard)
         return task
 
+    def start_task_now(self, task_id: str) -> None:
+        """Start a manual execution in the background and return immediately."""
+        task = self.task_storage.get(task_id)
+        if not task:
+            raise ValueError(f"Task {task_id} not found")
+        self._track_event_task(self._execute_scheduled_task(task))
+        logger.info("manual_task_execution_started", task_id=task_id)
+
     def _resume_claimed_event_tasks(self) -> None:
         """Resume events that were queued but not started before a restart."""
         resumed = 0
@@ -251,6 +271,28 @@ class ScheduledTaskService:
 
         # 删除执行记录
         self.execution_storage.delete_by_task(task_id)
+
+        try:
+            from .storage.task_result_storage_db import task_result_db_enabled
+
+            if task_result_db_enabled():
+                self.executor.task_result_storage.delete_by_task(task_id)
+        except Exception as cleanup_error:  # noqa: BLE001 - cleanup must not block task deletion
+            logger.warning(
+                "scheduled_task_result_cleanup_failed",
+                task_id=task_id,
+                error=str(cleanup_error),
+            )
+
+        # 删除任务专属历史执行记忆（案例库 + 长期记忆）
+        try:
+            TaskCaseStorage(task_id).delete()
+        except Exception as cleanup_error:  # noqa: BLE001 - 清理失败不阻断任务删除
+            logger.warning(
+                "scheduled_task_history_cleanup_failed",
+                task_id=task_id,
+                error=str(cleanup_error),
+            )
 
         # 删除任务
         success = self.task_storage.delete(task_id)
@@ -334,7 +376,7 @@ class ScheduledTaskService:
             if task.broadcast_enabled:
                 recipients = await self.event_delivery.resolve_recipients(task.target_user_ids)
                 if not recipients:
-                    raise ValueError("no active bound WeChat recipients")
+                    raise ValueError("no active bound social recipients")
 
             execution = await self.executor.execute_task(
                 task,
@@ -367,7 +409,7 @@ class ScheduledTaskService:
                     started_at=now,
                     completed_at=now,
                     duration_seconds=0,
-                    total_steps=len(task.steps),
+                    total_steps=1,
                     trigger_type="scheduled",
                     error_message=str(exc),
                 )
@@ -378,6 +420,17 @@ class ScheduledTaskService:
                 self.execution_storage.update(execution)
             self.task_storage.update_run_stats(task.task_id, success=False)
             return execution
+
+        finally:
+            if execution is not None and "assistant-plan" in task.tags and task.assistant_recipient:
+                try:
+                    from app.social.assistant_notifications import AssistantNotificationService
+                    from config.settings import settings
+
+                    await AssistantNotificationService().enqueue_execution(settings.project_id, task, execution)
+                except Exception:
+                    # Terminal executions remain durable; the reply clock reconciles this gap.
+                    logger.exception("assistant_execution_reply_pending", execution_id=execution.execution_id)
 
     async def publish_event(
         self,
@@ -420,7 +473,7 @@ class ScheduledTaskService:
         for task in matching_tasks:
             existing = self.claim_storage.get(task.task_id, event.event_id)
             if existing and force_retry and existing.status == "running":
-                timeout_seconds = sum(step.timeout_seconds for step in task.steps)
+                timeout_seconds = task.timeout_seconds
                 recovered = self.claim_storage.fail_stale_running(
                     task.task_id,
                     event.event_id,
@@ -467,7 +520,7 @@ class ScheduledTaskService:
             started_at=now,
             completed_at=now,
             duration_seconds=0,
-            total_steps=len(task.steps),
+            total_steps=1,
             trigger_type="event",
             event_id=event.event_id,
             event_type=event.event_type,
@@ -504,7 +557,7 @@ class ScheduledTaskService:
                     execution = self._create_failed_event_execution(
                         task,
                         event,
-                        "no active bound WeChat recipients",
+                        "no active bound social recipients",
                     )
                     self.task_storage.update_run_stats(task.task_id, success=False)
                     self.claim_storage.mark_status(
@@ -617,9 +670,101 @@ class ScheduledTaskService:
         else:
             return self.execution_storage.list_recent(limit=limit)
 
+    def list_executions_page(
+        self,
+        task_id: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 10,
+    ):
+        """List a page of executions and the total matching record count."""
+        if task_id:
+            return self.execution_storage.list_by_task_page(
+                task_id,
+                page=page,
+                page_size=page_size,
+            )
+        return self.execution_storage.list_recent_page(
+            page=page,
+            page_size=page_size,
+        )
+
     def get_statistics(self, task_id: Optional[str] = None, days: int = 7):
         """获取统计信息"""
         return self.execution_storage.get_statistics(task_id=task_id, days=days)
+
+    def list_task_results(
+        self,
+        *,
+        task_id: Optional[str] = None,
+        task_ids: Optional[list[str]] = None,
+        city: Optional[str] = None,
+        station_id: Optional[str] = None,
+        pollutant: Optional[str] = None,
+        status: Optional[str] = None,
+        started_after=None,
+        started_before=None,
+        page: int = 1,
+        page_size: int = 20,
+    ):
+        """查询结构化执行结论（数据库后端）"""
+        from .storage.task_result_storage_db import (
+            DatabaseTaskResultStorage,
+            task_result_db_enabled,
+        )
+
+        if task_result_db_enabled() and isinstance(
+            self.executor.task_result_storage,
+            DatabaseTaskResultStorage,
+        ):
+            return self.executor.task_result_storage.query_page(
+                task_id=task_id,
+                task_ids=task_ids,
+                city=city,
+                station_id=station_id,
+                pollutant=pollutant,
+                status=status,
+                started_after=started_after,
+                started_before=started_before,
+                page=page,
+                page_size=page_size,
+            )
+        return [], 0
+
+    def get_task_result(self, execution_id: str):
+        """查询单条结构化执行结论（数据库后端，无记录返回 None）"""
+        from .storage.task_result_storage_db import (
+            DatabaseTaskResultStorage,
+            task_result_db_enabled,
+        )
+
+        if task_result_db_enabled() and isinstance(
+            self.executor.task_result_storage,
+            DatabaseTaskResultStorage,
+        ):
+            return self.executor.task_result_storage.get(execution_id)
+        return None
+
+    def list_task_result_facets(
+        self,
+        *,
+        task_id: Optional[str] = None,
+        task_ids: Optional[list[str]] = None,
+    ) -> dict:
+        """查询站点/污染物筛选候选项（数据库后端）"""
+        from .storage.task_result_storage_db import (
+            DatabaseTaskResultStorage,
+            task_result_db_enabled,
+        )
+
+        if task_result_db_enabled() and isinstance(
+            self.executor.task_result_storage,
+            DatabaseTaskResultStorage,
+        ):
+            return self.executor.task_result_storage.facets(
+                task_id=task_id,
+                task_ids=task_ids,
+            )
+        return {"stations": [], "pollutants": []}
 
     def get_scheduler_status(self) -> dict:
         """获取调度器状态"""
@@ -643,14 +788,17 @@ def get_scheduled_task_service() -> ScheduledTaskService:
     return _service_instance
 
 
-def init_service(agent_factory: Optional[callable] = None):
+def init_service(agent_factory: Optional[callable] = None, recover_interrupted: bool = True):
     """初始化服务"""
     global _service_instance
     if _service_instance is not None:
         logger.warning("ScheduledTaskService already initialized")
         return _service_instance
 
-    _service_instance = ScheduledTaskService(agent_factory=agent_factory)
+    _service_instance = ScheduledTaskService(
+        agent_factory=agent_factory,
+        recover_interrupted=recover_interrupted,
+    )
     logger.info("ScheduledTaskService initialized")
     return _service_instance
 

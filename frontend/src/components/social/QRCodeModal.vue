@@ -192,7 +192,7 @@ onUnmounted(() => {
 .modal-header h3 {
   margin: 0;
   font-size: 20px;
-  color: #333;
+  color: var(--text-1);
 }
 
 .close-btn {
@@ -200,7 +200,7 @@ onUnmounted(() => {
   border: none;
   font-size: 28px;
   cursor: pointer;
-  color: #999;
+  color: var(--text-3);
   width: 32px;
   height: 32px;
   display: flex;
@@ -211,8 +211,8 @@ onUnmounted(() => {
 }
 
 .close-btn:hover {
-  background: #f5f5f5;
-  color: #333;
+  background: var(--bg-hover);
+  color: var(--text-1);
 }
 
 .modal-body {
@@ -228,7 +228,7 @@ onUnmounted(() => {
   height: 300px;
   margin: 20px auto;
   display: block;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
   border-radius: 8px;
   padding: 10px;
   background: white;
@@ -236,7 +236,7 @@ onUnmounted(() => {
 
 .instruction {
   font-size: 16px;
-  color: #666;
+  color: var(--text-2);
   margin-bottom: 10px;
 }
 
@@ -248,15 +248,15 @@ onUnmounted(() => {
 }
 
 .status-waiting {
-  color: #ff9800;
+  color: var(--color-warning);
 }
 
 .status-scanned {
-  color: #2196f3;
+  color: var(--color-primary);
 }
 
 .status-confirmed {
-  color: #4caf50;
+  color: var(--color-success);
 }
 
 .status-expired {
@@ -269,7 +269,7 @@ onUnmounted(() => {
 
 .btn-refresh, .btn-retry {
   padding: 10px 20px;
-  background: #2196f3;
+  background: var(--color-primary);
   color: white;
   border: none;
   border-radius: 4px;
@@ -283,19 +283,19 @@ onUnmounted(() => {
 }
 
 .btn-refresh:disabled {
-  background: #ccc;
+  background: var(--border-3);
   cursor: not-allowed;
 }
 
 .loading {
   text-align: center;
   padding: 80px 20px;
-  color: #666;
+  color: var(--text-2);
 }
 
 .spinner {
   border: 4px solid #f3f3f3;
-  border-top: 4px solid #2196f3;
+  border-top: 4px solid var(--color-primary);
   border-radius: 50%;
   width: 40px;
   height: 40px;
@@ -311,7 +311,7 @@ onUnmounted(() => {
 .error {
   text-align: center;
   padding: 60px 20px;
-  color: #666;
+  color: var(--text-2);
 }
 
 .error-detail {

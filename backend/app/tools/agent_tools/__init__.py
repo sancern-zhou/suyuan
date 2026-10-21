@@ -5,5 +5,6 @@ Agent工具包
 """
 
 from .call_sub_agent import CallSubAgentTool
+from .run_agent_workflow import RunAgentWorkflowTool
 
-__all__ = ["CallSubAgentTool"]
+__all__ = ["CallSubAgentTool", "RunAgentWorkflowTool"]

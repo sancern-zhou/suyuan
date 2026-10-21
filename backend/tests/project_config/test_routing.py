@@ -44,3 +44,15 @@ def test_xuchang_project_includes_xuchang_router():
     assert "app.api.xuchang_air_quality_routes" in {
         spec.module for spec in selected
     }
+
+
+def test_map_data_router_remains_shared_after_project_dashboard_split():
+    from app.core.routing import ROUTER_REGISTRY
+
+    context = load_project_context("default")
+    selected = select_router_specs(ROUTER_REGISTRY, context.enabled_modules)
+    assert "app.api.query_dashboard_routes" in {spec.module for spec in selected}
+
+    context = load_project_context("guangdong")
+    selected = select_router_specs(ROUTER_REGISTRY, context.enabled_modules)
+    assert "app.api.query_dashboard_routes" in {spec.module for spec in selected}

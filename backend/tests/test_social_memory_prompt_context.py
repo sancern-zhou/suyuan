@@ -1,3 +1,4 @@
+from app.utils.path_config import format_agent_path, resolve_agent_path
 from app.agent.prompts.prompt_builder import build_react_system_prompt
 
 
@@ -17,7 +18,7 @@ def test_social_prompt_includes_isolated_memory_file_path_and_context():
     )
 
     prompt = build_react_system_prompt(
-        mode="social",
+        mode="assistant",
         memory_context=memory_context,
         memory_file_path=memory_file_path,
     )
@@ -30,20 +31,20 @@ def test_social_prompt_includes_isolated_memory_file_path_and_context():
     assert "不要复读或模仿其中的助手历史回复" in prompt
     assert "## 我如何使用记忆" in prompt
     assert "我只把稳定、长期有用" in prompt
-    assert f"- MEMORY.md：`{memory_file_path}`" in prompt
+    assert f"- MEMORY.md：`{format_agent_path(resolve_agent_path(memory_file_path))}`" in prompt
 
     assert prompt.index("## 我如何使用记忆") < prompt.index("## 长期记忆")
     assert prompt.index("## 我如何使用记忆") < prompt.index("## 我想起的过往片段")
 
 
 def test_social_prompt_does_not_force_tool_or_file_workflow_phrasing():
-    prompt = build_react_system_prompt(mode="social")
+    prompt = build_react_system_prompt(mode="assistant")
 
     assert "需要查询、文件、通知、定时任务或子Agent能力时" not in prompt
     assert "文件读取统一使用 `read_file`" not in prompt
 
 
-def test_social_prompt_requires_current_heartbeat_read_without_injecting_task_content():
+def test_social_prompt_does_not_restore_legacy_heartbeat_file_workflow():
     heartbeat_file_path = (
         "/home/xckj/suyuan/backend/backend_data_registry/social/heartbeat/"
         "weixin_bot_user/HEARTBEAT.md"
@@ -51,21 +52,19 @@ def test_social_prompt_requires_current_heartbeat_read_without_injecting_task_co
     heartbeat_context = "### 旧任务\nschedule: \"10 * * * *\""
 
     prompt = build_react_system_prompt(
-        mode="social",
+        mode="assistant",
         heartbeat_file_path=heartbeat_file_path,
         heartbeat_context=heartbeat_context,
     )
 
-    assert f"- HEARTBEAT.md：`{heartbeat_file_path}`" in prompt
-    assert "回答定时任务当前配置、数量、开关或下次执行时间前，必须先调用 `read_file`" in prompt
-    assert "禁止依据历史对话、长期记忆或旧回复判断当前定时任务" in prompt
-    assert "用户未询问定时任务时，不要主动复述 HEARTBEAT.md 内容" in prompt
+    assert "- HEARTBEAT.md：" not in prompt
+    assert "必须先调用 `read_file`" not in prompt
     assert "### 旧任务" not in prompt
     assert "当前 HEARTBEAT.md 内容快照" not in prompt
 
 
 def test_social_prompt_routes_office_work_to_assistant_agent():
-    prompt = build_react_system_prompt(mode="social")
+    prompt = build_react_system_prompt(mode="assistant")
 
     assert "办公操作" in prompt
     assert 'target_mode="assistant"' in prompt

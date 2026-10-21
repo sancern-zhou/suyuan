@@ -40,5 +40,5 @@ test('applies a restore only to the same session and mode', () => {
 
   assert.equal(guard.isCurrent(restore, 'board_session_1', 'board'), true)
   assert.equal(guard.isCurrent(restore, 'board_session_2', 'board'), false)
-  assert.equal(guard.isCurrent(restore, 'board_session_1', 'chart'), false)
+  assert.equal(guard.isCurrent(restore, 'board_session_1', 'report'), false)
 })

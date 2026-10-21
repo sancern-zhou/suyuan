@@ -189,6 +189,15 @@
                 <span class="info-value">{{ currentTool.statistics.avg_execution_time.toFixed(2) }}s</span>
               </div>
             </div>
+            <div v-if="recentErrors(currentTool).length" class="recent-errors">
+              <h5>最近错误（最多 10 条）</h5>
+              <ul class="error-list">
+                <li v-for="(item, idx) in recentErrors(currentTool)" :key="idx" class="error-item">
+                  <span class="error-time">{{ formatErrorTime(item.at) }}</span>
+                  <span class="error-text">{{ item.error }}</span>
+                </li>
+              </ul>
+            </div>
           </div>
 
           <div class="tool-detail-section" v-if="currentTool.function_schema">
@@ -336,6 +345,17 @@ const getSuccessRate = (statistics) => {
   const { total, success } = statistics
   if (total === 0) return 0
   return ((success / total) * 100).toFixed(1)
+}
+
+const recentErrors = (tool) => {
+  const errors = tool?.statistics?.recent_errors
+  return Array.isArray(errors) ? errors : []
+}
+
+const formatErrorTime = (value) => {
+  if (!value) return '--'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
 const toggleToolStatus = async (tool) => {
@@ -745,6 +765,44 @@ const viewToolDetail = async (tool) => {
 
 .tool-detail-section {
   margin-bottom: 24px;
+}
+
+.recent-errors {
+  margin-top: 16px;
+}
+
+.recent-errors h5 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  color: #d93026;
+}
+
+.error-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.error-item {
+  display: flex;
+  gap: 12px;
+  padding: 6px 8px;
+  border-bottom: 1px dashed #f0f0f0;
+  font-size: 12px;
+  align-items: baseline;
+}
+
+.error-time {
+  flex-shrink: 0;
+  color: #999;
+  font-family: monospace;
+}
+
+.error-text {
+  color: #c0392b;
+  word-break: break-all;
 }
 
 .tool-detail-section h4 {

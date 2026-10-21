@@ -1,20 +1,18 @@
 """PostgreSQL persistence for conversation ownership records."""
 
 from datetime import datetime
+from typing import Sequence
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
-from app.db.database import session_async_session
+from app.db.session_database import session_async_session as async_session
 
 from .models import ConversationCatalogDB
 from .schemas import ConversationCatalogRecord, ConversationSource
 
 
 class ConversationCatalogRepository:
-    def __init__(self, session_factory=None):
-        self.session_factory = session_factory or session_async_session
-
     @staticmethod
     def _record(row: ConversationCatalogDB) -> ConversationCatalogRecord:
         return ConversationCatalogRecord.model_validate(
@@ -25,7 +23,7 @@ class ConversationCatalogRepository:
         )
 
     async def get(self, session_id: str) -> ConversationCatalogRecord | None:
-        async with self.session_factory() as session:
+        async with async_session() as session:
             row = await session.get(ConversationCatalogDB, session_id)
             return self._record(row) if row else None
 
@@ -45,7 +43,7 @@ class ConversationCatalogRepository:
                 },
             )
         )
-        async with self.session_factory() as session:
+        async with async_session() as session:
             await session.execute(statement)
             await session.commit()
         stored = await self.get(record.session_id)
@@ -54,7 +52,7 @@ class ConversationCatalogRepository:
         return stored
 
     async def delete(self, session_id: str) -> bool:
-        async with self.session_factory() as session:
+        async with async_session() as session:
             result = await session.execute(
                 delete(ConversationCatalogDB).where(
                     ConversationCatalogDB.session_id == session_id
@@ -66,15 +64,15 @@ class ConversationCatalogRepository:
     async def list_visible(
         self,
         *,
-        user_id: str | None,
+        user_ids: Sequence[str] | None,
         limit: int,
         offset: int,
         source: ConversationSource | None = None,
     ) -> list[ConversationCatalogRecord]:
         statement = select(ConversationCatalogDB)
-        if user_id is not None:
+        if user_ids is not None:
             statement = statement.where(
-                ConversationCatalogDB.owner_user_id == user_id
+                ConversationCatalogDB.owner_user_id.in_(user_ids)
             )
         if source is not None:
             statement = statement.where(ConversationCatalogDB.source == source.value)
@@ -83,24 +81,24 @@ class ConversationCatalogRepository:
             .offset(offset)
             .limit(limit)
         )
-        async with self.session_factory() as session:
+        async with async_session() as session:
             rows = (await session.execute(statement)).scalars().all()
             return [self._record(row) for row in rows]
 
-    async def count_visible(self, *, user_id: str | None) -> int:
+    async def count_visible(self, *, user_ids: Sequence[str] | None) -> int:
         statement = select(func.count()).select_from(ConversationCatalogDB)
-        if user_id is not None:
+        if user_ids is not None:
             statement = statement.where(
-                ConversationCatalogDB.owner_user_id == user_id
+                ConversationCatalogDB.owner_user_id.in_(user_ids)
             )
-        async with self.session_factory() as session:
+        async with async_session() as session:
             return int((await session.scalar(statement)) or 0)
 
     async def touch(self, session_id: str, *, title: str | None = None) -> bool:
         values: dict[str, object] = {"updated_at": datetime.utcnow()}
         if title is not None:
             values["title"] = title
-        async with self.session_factory() as session:
+        async with async_session() as session:
             result = await session.execute(
                 update(ConversationCatalogDB)
                 .where(ConversationCatalogDB.session_id == session_id)

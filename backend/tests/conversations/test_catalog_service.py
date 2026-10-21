@@ -17,10 +17,10 @@ class FakeRepository:
         self.records[record.session_id] = record
         return record
 
-    async def list_visible(self, *, user_id, limit, offset, source=None):
+    async def list_visible(self, *, user_ids, limit, offset, source=None):
         records = list(self.records.values())
-        if user_id is not None:
-            records = [row for row in records if row.owner_user_id == user_id]
+        if user_ids is not None:
+            records = [row for row in records if row.owner_user_id in user_ids]
         if source is not None:
             records = [row for row in records if row.source == source]
         return records[offset : offset + limit]
@@ -64,6 +64,51 @@ async def test_other_user_and_missing_session_both_return_404():
             await service.require_read(session_id, other)
         assert exc.value.status_code == 404
         assert exc.value.detail == "session_not_found"
+
+
+@pytest.mark.asyncio
+async def test_company_prefixed_owner_is_visible_to_web_user():
+    service = ConversationCatalogService(
+        FakeRepository([row(owner="company:u1")])
+    )
+    owner = CurrentUser(id="u1", username="u1", display_name="U1")
+
+    assert (await service.require_read("s1", owner)).session_id == "s1"
+
+
+@pytest.mark.asyncio
+async def test_company_login_reads_web_owned_record():
+    service = ConversationCatalogService(FakeRepository([row()]))
+    app_company_user = CurrentUser(
+        id="company:u1", username="u1", display_name="U1"
+    )
+
+    assert (await service.require_read("s1", app_company_user)).session_id == "s1"
+
+
+@pytest.mark.asyncio
+async def test_app_device_account_stays_isolated_from_company_user():
+    service = ConversationCatalogService(
+        FakeRepository([row(owner="app:android:demo")])
+    )
+    web_user = CurrentUser(id="u1", username="u1", display_name="U1")
+
+    with pytest.raises(HTTPException) as exc:
+        await service.require_read("s1", web_user)
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_visible_returns_both_owner_spellings():
+    app_side = row(owner="company:u1")
+    app_side = app_side.model_copy(update={"session_id": "s2"})
+    service = ConversationCatalogService(FakeRepository([row(), app_side]))
+    owner = CurrentUser(id="u1", username="u1", display_name="U1")
+
+    assert {item.session_id for item in await service.list_visible(owner, limit=10)} == {
+        "s1",
+        "s2",
+    }
 
 
 @pytest.mark.asyncio

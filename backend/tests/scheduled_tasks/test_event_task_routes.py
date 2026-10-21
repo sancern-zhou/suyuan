@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from app.api import scheduled_task_routes as routes
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
+from app.scheduled_tasks.models import TaskEvent
 
 
 class FakeUser:
@@ -47,6 +48,7 @@ class FakeService:
     def __init__(self):
         self.tasks = {}
         self.retry_execution_id = None
+        self.started_task_ids = []
 
     def create_task(self, task):
         self.tasks[task.task_id] = task
@@ -55,9 +57,18 @@ class FakeService:
     def get_task(self, task_id):
         return self.tasks.get(task_id)
 
+    def list_tasks(self, enabled_only=False):
+        tasks = list(self.tasks.values())
+        if enabled_only:
+            tasks = [task for task in tasks if task.enabled]
+        return tasks
+
     def update_task(self, task):
         self.tasks[task.task_id] = task
         return task
+
+    def start_task_now(self, task_id):
+        self.started_task_ids.append(task_id)
 
     def get_scheduler_status(self):
         return {"scheduled_tasks": []}
@@ -74,13 +85,33 @@ class FakeService:
         }
 
 
-def _client(monkeypatch):
+def _fake_event_definitions():
+    return [
+        SimpleNamespace(
+            event_type="xuchang.station_deviation.alert_created",
+            label="许昌站点空间偏差告警",
+            description="测试用事件定义",
+            filter_fields=["city"],
+        )
+    ]
+
+
+def _client(monkeypatch, user=None):
     service = FakeService()
     monkeypatch.setattr(routes, "get_scheduled_task_service", lambda: service)
     monkeypatch.setattr(routes, "get_social_user_registry", lambda: FakeRegistry())
     monkeypatch.setattr(routes, "get_tool_registry", lambda: FakeToolRegistry())
+    monkeypatch.setattr(routes, "get_event_definitions", _fake_event_definitions)
+    monkeypatch.setattr(
+        routes,
+        "get_event_definition",
+        lambda event_type: next(
+            (item for item in _fake_event_definitions() if item.event_type == event_type),
+            None,
+        ),
+    )
     app = FastAPI()
-    app.dependency_overrides[require_current_user] = lambda: CurrentUser(
+    app.dependency_overrides[require_current_user] = lambda: user or CurrentUser(
         id="creator-1",
         username="creator",
         display_name="任务创建人",
@@ -93,24 +124,20 @@ def _client(monkeypatch):
 
 def _event_payload():
     return {
-        "name": "运城告警推送",
+        "name": "许昌告警推送",
         "description": "有告警时生成报告并推送",
         "execution_mode": "social",
         "trigger_type": "event",
         "schedule_type": None,
-        "event_type": "yuncheng.alert.created",
-        "event_filters": {"city": "运城市"},
+        "event_type": "xuchang.station_deviation.alert_created",
+        "event_filters": {"city": "许昌市"},
         "broadcast_enabled": True,
         "target_user_ids": ["admin-1", "admin-2"],
         "enabled": True,
-        "steps": [{
-            "step_id": "report",
-            "description": "生成运城告警报告",
-            "agent_prompt": "执行运城告警溯源报告任务",
-            "timeout_seconds": 1800,
-            "retry_on_failure": False,
-        }],
-        "tags": ["yuncheng", "event"],
+        "prompt": "执行许昌告警溯源报告任务",
+        "timeout_seconds": 1800,
+        "prompt": "执行许昌告警溯源报告任务",
+        "tags": ["xuchang", "event"],
     }
 
 
@@ -120,7 +147,82 @@ def test_list_event_types(monkeypatch):
     response = client.get("/api/scheduled-tasks/event-types")
 
     assert response.status_code == 200
-    assert response.json()[0]["event_type"] == "yuncheng.alert.created"
+    assert response.json()[0]["event_type"] == "xuchang.station_deviation.alert_created"
+
+
+def test_super_admin_account_can_see_disabled_tasks(monkeypatch):
+    client, service = _client(
+        monkeypatch,
+        user=CurrentUser(
+            id="1",
+            username="ScGuanLy",
+            display_name="超级管理员",
+            is_admin=False,
+            auth_source="company",
+        ),
+    )
+    task = routes.ScheduledTask(
+        task_id="task-1",
+        name="隐藏任务",
+        description="disabled task",
+        prompt="执行隐藏任务",
+        trigger_type="schedule",
+        schedule_type="daily_8am",
+        enabled=False,
+        owner_user_id="someone-else",
+        owner_username="someone-else",
+        owner_display_name="Someone Else",
+    )
+    service.tasks[task.task_id] = task
+
+    response = client.get("/api/scheduled-tasks")
+
+    assert response.status_code == 200
+    assert [item["task"]["task_id"] for item in response.json()] == ["task-1"]
+
+
+def test_non_admin_can_see_system_workspace_task(monkeypatch):
+    client, service = _client(
+        monkeypatch,
+        user=CurrentUser(
+            id="viewer-1",
+            username="viewer",
+            display_name="普通用户",
+            is_admin=False,
+            auth_source="company",
+        ),
+    )
+    hidden_task = routes.ScheduledTask(
+        task_id="task-hidden",
+        name="其他用户任务",
+        description="foreign task",
+        prompt="执行其他用户任务",
+        trigger_type="schedule",
+        schedule_type="daily_8am",
+        owner_user_id="someone-else",
+        owner_username="someone-else",
+        owner_display_name="Someone Else",
+    )
+    workspace_task = routes.ScheduledTask(
+        task_id="task-system",
+        name="系统工作区任务",
+        description="system workspace task",
+        prompt="执行系统工作区任务",
+        trigger_type="schedule",
+        schedule_type="daily_8am",
+        created_by="system",
+        owner_user_id="system",
+        owner_username="scheduled-task",
+        owner_display_name="定时任务",
+        workspace_entry=routes.WorkspaceEntry(enabled=True, title="系统工作区任务"),
+    )
+    service.tasks[hidden_task.task_id] = hidden_task
+    service.tasks[workspace_task.task_id] = workspace_task
+
+    response = client.get("/api/scheduled-tasks")
+
+    assert response.status_code == 200
+    assert [item["task"]["task_id"] for item in response.json()] == ["task-system"]
 
 
 def test_create_event_task_with_multiple_users(monkeypatch):
@@ -316,3 +418,124 @@ def test_updating_custom_task_to_existing_mode_clears_tool_names(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["task"]["tool_names"] is None
+
+
+def test_update_ignores_unknown_client_fields(monkeypatch):
+    """客户端额外字段不得进入任务模型。"""
+    client, service = _client(monkeypatch)
+    created = client.post("/api/scheduled-tasks", json=_event_payload())
+    task_id = created.json()["task"]["task_id"]
+
+    response = client.put(
+        f"/api/scheduled-tasks/{task_id}",
+        json={
+            "unused_field": {"prompt": "旧提示词", "timeout_seconds": 600},
+        },
+    )
+
+    assert response.status_code == 200
+    updated = service.get_task(task_id)
+    assert "unused_field" not in updated.model_dump()
+    assert updated.timeout_seconds == 1800
+
+
+def test_execute_now_returns_immediately_without_waiting(monkeypatch):
+    """手动立即执行必须后台运行并立即返回，避免网关 504。"""
+    client, service = _client(monkeypatch)
+    payload = _event_payload()
+    payload.update({
+        "trigger_type": "schedule",
+        "schedule_type": "daily_8am",
+        "event_type": None,
+        "event_filters": {},
+        "broadcast_enabled": False,
+        "target_user_ids": [],
+    })
+    created = client.post("/api/scheduled-tasks", json=payload)
+    task_id = created.json()["task"]["task_id"]
+
+    response = client.post(f"/api/scheduled-tasks/{task_id}/execute")
+
+    assert response.status_code == 202
+    assert response.json()["success"] is True
+    assert service.started_task_ids == [task_id]
+
+
+def test_manual_event_builder_creates_fresh_event_without_recorded_history(monkeypatch):
+    client, service = _client(monkeypatch)
+    task = routes.ScheduledTask(
+        task_id="weather-manual",
+        name="Weather report",
+        description="Weather report",
+        prompt="Generate report",
+        trigger_type="event",
+        event_type="weather.evidence_ready",
+        event_filters={"city": "Xuchang"},
+    )
+    service.tasks[task.task_id] = task
+    generated = TaskEvent(
+        event_id="weather-fresh-1",
+        event_type=task.event_type,
+        attributes={"city": "Xuchang"},
+        payload={"evidence_package_path": "backend/data/weather/manifest.json"},
+    )
+    calls = []
+
+    async def build_event(received_task):
+        assert received_task is task
+        return generated
+
+    async def publish_event(event, **kwargs):
+        calls.append((event, kwargs))
+        return SimpleNamespace(accepted_task_ids=[task.task_id], matched_task_ids=[task.task_id])
+
+    monkeypatch.setattr(routes, "get_manual_event_builder", lambda event_type: build_event)
+    service.claim_storage = SimpleNamespace(latest_event=lambda _: (_ for _ in ()).throw(AssertionError("replayed old event")))
+    service.publish_event = publish_event
+
+    response = client.post(f"/api/scheduled-tasks/{task.task_id}/execute")
+
+    assert response.status_code == 202
+    assert calls == [(generated, {"wait": False, "force_retry": False, "target_task_id": task.task_id})]
+
+
+def test_manual_event_without_builder_or_history_keeps_conflict(monkeypatch):
+    client, service = _client(monkeypatch)
+    task = routes.ScheduledTask(
+        task_id="ordinary-event",
+        name="Ordinary event",
+        description="Ordinary event",
+        prompt="Generate report",
+        trigger_type="event",
+        event_type="ordinary.event",
+    )
+    service.tasks[task.task_id] = task
+    monkeypatch.setattr(routes, "get_manual_event_builder", lambda event_type: None)
+    service.claim_storage = SimpleNamespace(latest_event=lambda _: None)
+
+    response = client.post(f"/api/scheduled-tasks/{task.task_id}/execute")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "No recorded event available for manual execution"
+
+
+def test_task_result_and_model_configuration_create_update(monkeypatch):
+    client, service = _client(monkeypatch)
+    payload = {**_event_payload(), 'model_tier': 'flash', 'result_requirements': [
+        {'field': 'sections.level', 'label': '等级', 'required': True, 'required_when': {}, 'allowed_values': ['P1', 'P2']}
+    ]}
+    created = client.post('/api/scheduled-tasks', json=payload)
+    assert created.status_code == 200, created.text
+    record = created.json()['task']
+    assert record['model_tier'] == 'flash'
+    assert record['result_requirements'] == payload['result_requirements']
+    task_id = record['task_id']
+    service.tasks[task_id].created_by = 'project-default'
+    updated = client.put(f'/api/scheduled-tasks/{task_id}', json={'model_tier': 'pro', 'result_requirements': []})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()['task']['model_tier'] == 'pro'
+    assert updated.json()['task']['result_requirements'] == []
+    assert updated.json()['task']['created_by'] == 'user'
+    rejected = client.put(f'/api/scheduled-tasks/{task_id}', json={'model_tier': 'invalid'})
+    assert rejected.status_code == 422
+    assert service.tasks[task_id].model_tier == 'pro'

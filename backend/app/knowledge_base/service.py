@@ -26,7 +26,6 @@ from .permissions import KnowledgeBasePermissions
 from .storage_scope import get_local_knowledge_scope
 from . import get_vector_store, get_document_processor
 from .file_storage import SmartFileStorage
-from .retrieval_utils import deduplicate_results_by_content
 from app.utils.path_config import get_uploads_dir
 
 logger = structlog.get_logger()
@@ -34,11 +33,13 @@ logger = structlog.get_logger()
 # 在模块加载时设置PyTorch线程数（必须在任何PyTorch操作之前）
 try:
     import torch
-    _num_threads = os.cpu_count() or 4
+    _num_threads = max(1, int(os.getenv("KNOWLEDGE_TORCH_NUM_THREADS", "2")))
     torch.set_num_threads(_num_threads)
     # 只在首次设置interop threads，避免重复调用报错
     if not hasattr(torch, '_interop_threads_set'):
-        torch.set_num_interop_threads(min(4, _num_threads))
+        torch.set_num_interop_threads(
+            max(1, int(os.getenv("KNOWLEDGE_TORCH_INTEROP_THREADS", "1")))
+        )
         torch._interop_threads_set = True
     logger.info("pytorch_threads_configured", num_threads=_num_threads)
 except Exception as e:
@@ -122,6 +123,9 @@ class KnowledgeBaseService:
         self.processor = get_document_processor()
         self.vector_store = vector_store or get_vector_store()
         self.ingestion_service_factory = ingestion_service_factory
+        if session_factory is None:
+            from app.db.knowledge_database import knowledge_async_session
+            session_factory = knowledge_async_session
         self.session_factory = session_factory
         self._reranker = None
 
@@ -385,25 +389,19 @@ class KnowledgeBaseService:
             extra_metadata=metadata or {}
         )
 
+        if defer_processing:
+            from app.knowledge_base.tasks import queue_document
+            queue_document(doc, user_id=user_id, processing_options={
+                "chunking_strategy": chunking_strategy,
+                "chunk_size": chunk_size,
+                "chunk_overlap": chunk_overlap,
+                "llm_mode": llm_mode,
+            })
         self.db.add(doc)
         await self.db.commit()
         await self.db.refresh(doc)
 
         if defer_processing:
-            from app.knowledge_base.tasks import get_processing_queue
-
-            await get_processing_queue().enqueue(
-                doc_id=doc.id,
-                kb_id=kb_id,
-                file_path=file_path,
-                user_id=user_id or "anonymous",
-                processing_options={
-                    "chunking_strategy": chunking_strategy,
-                    "chunk_size": chunk_size,
-                    "chunk_overlap": chunk_overlap,
-                    "llm_mode": llm_mode,
-                },
-            )
             return doc
 
         # 同步处理供内部调用和兼容场景使用。
@@ -418,8 +416,7 @@ class KnowledgeBaseService:
         except Exception as e:
             # 使用新session更新失败状态（原有连接可能已超时）
             try:
-                from app.db.database import async_session
-                async with async_session() as fresh_db:
+                async with self.session_factory() as fresh_db:
                     doc_result = await fresh_db.execute(
                         select(Document).where(Document.id == doc_id)
                     )
@@ -434,8 +431,7 @@ class KnowledgeBaseService:
             raise
 
         # 返回最新状态的文档
-        from app.db.database import async_session
-        async with async_session() as fresh_db:
+        async with self.session_factory() as fresh_db:
             doc_result = await fresh_db.execute(
                 select(Document).where(Document.id == doc_id)
             )
@@ -454,7 +450,6 @@ class KnowledgeBaseService:
         if self.ingestion_service_factory is not None:
             return self.ingestion_service_factory(processing_options or {})
 
-        from app.db.database import async_session
         from app.knowledge_base.chunk_repository import KnowledgeChunkRepository
         from app.knowledge_base.graph_extractor import KnowledgeGraphExtractor
         from app.knowledge_base.graph_repository import KnowledgeGraphRepository
@@ -462,7 +457,7 @@ class KnowledgeBaseService:
         from app.knowledge_base.ingestion_service import KnowledgeIngestionService
 
         return KnowledgeIngestionService(
-            session_factory=async_session,
+            session_factory=self.session_factory,
             processor=self.processor,
             chunk_repository_factory=KnowledgeChunkRepository,
             graph_repository_factory=KnowledgeGraphRepository,
@@ -570,9 +565,8 @@ class KnowledgeBaseService:
                 temp_path.unlink()
             raise
 
-        from app.db.database import async_session
 
-        async with async_session() as session:
+        async with self.session_factory() as session:
             document = await session.get(Document, doc_id)
             if document is None:
                 raise ValueError(f"Document not found after replacement: {doc_id}")
@@ -615,14 +609,10 @@ class KnowledgeBaseService:
         if doc.status != DocumentStatus.FAILED:
             raise ValueError("Only failed documents can be retried")
 
-        doc.status = DocumentStatus.PROCESSING
-        doc.error_message = None
+        from app.knowledge_base.tasks import queue_document, TASK_METADATA_KEY
+        options = (doc.extra_metadata or {}).get(TASK_METADATA_KEY, {}).get("options", {})
+        queue_document(doc, processing_options=options, user_id=user_id)
         await self.db.commit()
-
-        try:
-            await self._process_document(doc, kb)
-        except Exception as e:
-            logger.error("document_retry_failed", doc_id=doc_id, error=str(e))
 
         await self.db.refresh(doc)
         return doc
@@ -689,136 +679,31 @@ class KnowledgeBaseService:
         if not kbs:
             return []
 
-        if use_graph_retrieval:
-            from app.db.database import async_session
-            from app.knowledge_base.retrieval_service import KnowledgeRetrievalService
-
-            rerank_mode = self._normalize_rerank_mode(use_reranker)
-            retrieval = KnowledgeRetrievalService(
-                session_factory=self.session_factory or async_session,
-                vector_store=self.vector_store,
-                reranker=self._rerank if rerank_mode != "never" else None,
-            )
-            results = await retrieval.search(
-                query=query,
-                kb_ids=[kb.id for kb in kbs],
-                top_k=top_k,
-                use_graph_retrieval=use_graph_retrieval,
-                graph_depth=graph_depth,
-                graph_seed_top_k=graph_seed_top_k,
-                graph_chunk_top_k=graph_chunk_top_k,
-                graph_weight=graph_weight,
-            )
-            await self._enrich_results_with_document_info(results)
-            self._attach_chunk_source_fields(results)
-            return results
-
-        search_started_at = time.time()
+        from app.knowledge_base.retrieval_service import KnowledgeRetrievalService
 
         rerank_mode = self._normalize_rerank_mode(use_reranker)
-        recall_for_rerank = rerank_mode in {"auto", "always"}
 
-        # 根据是否可能使用重排序决定召回策略。每库召回不能过小，否则多知识库场景下
-        # 相关片段很容易在粗召回阶段被截断；也不能无限放大，否则精排成本会线性增加。
-        if recall_for_rerank:
-            recall_per_kb = min(max(top_k * 4, 8), 20)
-            rerank_candidate_limit = min(max(top_k * 8, 20), 60)
-        else:
-            recall_per_kb = min(max(top_k * 3, 8), 15)
-            rerank_candidate_limit = top_k
+        async def rerank(query, results, top_k):
+            if self._should_rerank(query, results, top_k, rerank_mode):
+                return await self._rerank(query, results, top_k)
+            return results[:top_k]
 
-        logger.info(
-            "knowledge_search_recall_plan",
-            query_preview=query[:100],
-            kb_count=len(kbs),
-            top_k=top_k,
-            recall_per_kb=recall_per_kb,
-            rerank_candidate_limit=rerank_candidate_limit,
-            use_hybrid=use_hybrid,
-            use_reranker=rerank_mode,
-            score_threshold=score_threshold
+        retrieval = KnowledgeRetrievalService(
+            session_factory=self.session_factory,
+            vector_store=self.vector_store,
+            reranker=rerank if rerank_mode != "never" else None,
         )
-
-        async def search_single_kb(kb: KnowledgeBase):
-            if use_hybrid:
-                # 使用混合检索（Dense + Sparse BM25）
-                kb_results = await self._vector_store_for(kb).hybrid_search(
-                    collection_name=kb.qdrant_collection,
-                    query=query,
-                    top_k=recall_per_kb,
-                    score_threshold=score_threshold,
-                    alpha=alpha,
-                    filters=filters
-                )
-            else:
-                # 纯向量检索
-                kb_results = await self._vector_store_for(kb).search(
-                    collection_name=kb.qdrant_collection,
-                    query=query,
-                    top_k=recall_per_kb,
-                    score_threshold=score_threshold,
-                    filters=filters
-                )
-            for result in kb_results:
-                result["knowledge_base"] = {
-                    "id": kb.id,
-                    "name": kb.name,
-                    "type": kb.kb_type.value,
-                    "storage_scope": kb.vector_store_scope.value,
-                }
-            return kb_results
-
-        recall_started_at = time.time()
-        all_results = await asyncio.gather(*[search_single_kb(kb) for kb in kbs])
-        recall_elapsed_ms = (time.time() - recall_started_at) * 1000
-        results = []
-        for kb_results in all_results:
-            results.extend(kb_results)
-        results = deduplicate_results_by_content(results)
-
-        logger.info(
-            "knowledge_search_candidates_collected",
-            query_preview=query[:100],
-            candidate_count=len(results),
-            kb_count=len(kbs),
-            use_reranker=rerank_mode,
-            recall_elapsed_ms=round(recall_elapsed_ms, 2)
+        results = await retrieval.search(
+            query=query, kb_ids=[kb.id for kb in kbs], top_k=top_k,
+            score_threshold=score_threshold, filters=filters,
+            use_hybrid=use_hybrid, alpha=alpha,
+            use_graph_retrieval=use_graph_retrieval,
+            graph_depth=graph_depth, graph_seed_top_k=graph_seed_top_k,
+            graph_chunk_top_k=graph_chunk_top_k, graph_weight=graph_weight,
         )
-
-        # 根据是否使用重排序决定后续逻辑
-        should_rerank = self._should_rerank(query, results, top_k, rerank_mode)
-        if should_rerank and len(results) > top_k:
-            if os.getenv("KNOWLEDGE_RERANK_BACKEND", "remote").strip().lower() == "local":
-                before_limit_count = len(results)
-                results.sort(key=lambda x: x["score"], reverse=True)
-                results = results[:rerank_candidate_limit]
-                if before_limit_count > len(results):
-                    logger.info(
-                        "knowledge_search_candidates_limited_before_rerank",
-                        query_preview=query[:100],
-                        before_count=before_limit_count,
-                        after_count=len(results),
-                        limit=rerank_candidate_limit
-                    )
-            # 开启重排序：从多个候选中精选top_k
-            results = await self._rerank(query, results, top_k)
-        else:
-            # 关闭重排序或候选数量不足，直接排序返回
-            results.sort(key=lambda x: x["score"], reverse=True)
-            results = results[:top_k]
-
-        # 为每个结果添加原文档信息（用于溯源比对）
         await self._enrich_results_with_document_info(results)
         self._attach_chunk_source_fields(results)
         self._log_search_top_results(query, results)
-
-        logger.info(
-            "knowledge_search_finished",
-            query_preview=query[:100],
-            result_count=len(results),
-            elapsed_ms=round((time.time() - search_started_at) * 1000, 2)
-        )
-
         return results
 
     def _normalize_rerank_mode(self, use_reranker: bool | str) -> str:

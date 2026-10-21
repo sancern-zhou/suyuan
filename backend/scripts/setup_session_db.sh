@@ -2,7 +2,7 @@
 # 会话数据库初始化脚本
 #
 # 使用方法：
-# 1. 确保已激活 conda 环境：conda activate /root/miniconda3/envs/backend_py311
+# 1. 确保已激活 conda 环境：conda activate /root/.codex/miniconda3/envs/backend_py311
 # 2. 运行此脚本：bash setup_session_db.sh
 
 set -e

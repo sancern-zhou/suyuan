@@ -1,352 +1,218 @@
-"""
-异步文档处理任务
-
-提供后台文档处理队列，支持：
-- 异步文档解析和向量化
-- 任务状态追踪
-- 失败重试
-"""
+"""Database-backed document jobs shared by web and background workers."""
 
 import asyncio
-from typing import Dict, Any, Optional
-from datetime import datetime
-from dataclasses import dataclass, field
-from enum import Enum
+from contextlib import suppress
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from uuid import uuid4
+
 import structlog
+from sqlalchemy import select, update
+
+from .models import Document, DocumentStatus
 
 logger = structlog.get_logger()
+TASK_METADATA_KEY = "_processing_task"
 
 
-class TaskStatus(Enum):
-    """任务状态"""
-    PENDING = "pending"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+def queue_document(document, *, processing_options=None, user_id=None):
+    """Publish the job in the same transaction as the document record."""
+    metadata = dict(document.extra_metadata or {})
+    metadata[TASK_METADATA_KEY] = {
+        "options": dict(processing_options or {}),
+        "user_id": user_id,
+        "attempts": 0,
+        "generation": document.content_generation or 1,
+    }
+    metadata["processing_phase"] = "queued"
+    document.extra_metadata = metadata
+    document.status = DocumentStatus.PROCESSING
+    document.ingestion_status = "queued"
+    document.error_message = None
+    document.processing_error = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class DocumentTask:
-    """文档处理任务"""
     doc_id: str
     kb_id: str
-    file_path: Optional[str]
-    user_id: str
-    processing_options: Dict[str, Any] = field(default_factory=dict)
-    status: TaskStatus = TaskStatus.PENDING
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    error_message: Optional[str] = None
-    retry_count: int = 0
-    max_retries: int = 3
+    generation: int
+    token: str
+    processing_options: dict
 
 
 class DocumentProcessingQueue:
-    """
-    异步文档处理队列
+    """Claim durable jobs using row locks and renewable ownership leases."""
 
-    使用asyncio.Queue实现简单的任务队列
-    """
-
-    def __init__(self, max_workers: int = 3, max_queue_size: int = 100):
-        """
-        初始化处理队列
-
-        Args:
-            max_workers: 最大并发工作线程数
-            max_queue_size: 队列最大长度
-        """
-        self._queue: asyncio.Queue = asyncio.Queue(maxsize=max_queue_size)
-        self._tasks: Dict[str, DocumentTask] = {}
-        self._is_running = False
-        self._workers: list = []
+    def __init__(self, max_workers=3, *, session_factory=None,
+                 poll_interval=1.0, lease_seconds=300, max_retries=3):
+        if session_factory is None:
+            from app.db.knowledge_database import knowledge_async_session
+            session_factory = knowledge_async_session
+        self.session_factory = session_factory
         self._max_workers = max_workers
-        self._service = None
-
-    async def _get_db_session(self):
-        """获取数据库会话（每次任务创建新会话）"""
-        from app.db.database import async_session
-        return async_session()
-
-    async def _get_service(self, db):
-        """获取知识库服务"""
-        from app.knowledge_base.service import KnowledgeBaseService
-        return KnowledgeBaseService(db=db)
-
-    async def enqueue(
-        self,
-        doc_id: str,
-        kb_id: str,
-        file_path: Optional[str],
-        user_id: str,
-        processing_options: Optional[Dict[str, Any]] = None,
-    ) -> DocumentTask:
-        """
-        添加文档到处理队列
-
-        Args:
-            doc_id: 文档ID
-            kb_id: 知识库ID
-            file_path: 文件路径
-            user_id: 用户ID
-
-        Returns:
-            DocumentTask对象
-        """
-        task = DocumentTask(
-            doc_id=doc_id,
-            kb_id=kb_id,
-            file_path=file_path,
-            user_id=user_id,
-            processing_options=dict(processing_options or {}),
-        )
-
-        self._tasks[doc_id] = task
-
-        await self._queue.put(task)
-
-        logger.info(
-            "document_task_enqueued",
-            doc_id=doc_id,
-            kb_id=kb_id,
-            queue_size=self._queue.qsize()
-        )
-
-        return task
+        self.poll_interval = poll_interval
+        self.lease_seconds = lease_seconds
+        self.max_retries = max_retries
+        self._workers = []
+        self._is_running = False
 
     async def start(self):
-        """启动处理队列"""
         if self._is_running:
             return
-
+        await self.recover_interrupted()
         self._is_running = True
-
-        # 启动worker
-        for i in range(self._max_workers):
-            worker = asyncio.create_task(self._worker(i))
-            self._workers.append(worker)
-
-        logger.info(
-            "document_processing_queue_started",
-            workers=self._max_workers
-        )
-
-    async def recover_interrupted(self) -> int:
-        """Claim processing documents left behind by a stopped worker."""
-        from sqlalchemy import select
-
-        from app.db.database import async_session
-        from app.knowledge_base.models import Document, DocumentStatus
-
-        async with async_session() as db, db.begin():
-            documents = list(
-                (
-                    await db.execute(
-                        select(Document)
-                        .where(
-                            Document.status == DocumentStatus.PROCESSING,
-                            Document.ingestion_status == "processing",
-                        )
-                        .with_for_update(skip_locked=True)
-                    )
-                ).scalars()
-            )
-            recoveries = [
-                (document.id, document.knowledge_base_id, document.file_path)
-                for document in documents
-                if document.file_path
-                or document.original_file_oid
-                or document.file_storage_type == "local"
-            ]
-            for document in documents:
-                document.ingestion_status = "queued"
-
-        for doc_id, kb_id, file_path in recoveries:
-            await self.enqueue(
-                doc_id=doc_id,
-                kb_id=kb_id,
-                file_path=file_path,
-                user_id="system-recovery",
-            )
-
-        if recoveries:
-            logger.warning(
-                "document_tasks_recovered",
-                count=len(recoveries),
-                document_ids=[item[0] for item in recoveries],
-            )
-        return len(recoveries)
+        self._workers = [asyncio.create_task(self._worker(i))
+                         for i in range(self._max_workers)]
 
     async def stop(self):
-        """停止处理队列"""
-        # 先设置停止标志，让worker自然退出
         self._is_running = False
-
-        # 等待所有worker完成当前任务（最多等待10秒）
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(*self._workers, return_exceptions=True),
-                timeout=10.0
-            )
-        except asyncio.TimeoutError:
-            # 超时后强制取消剩余worker
-            logger.warning("worker_stop_timeout", message="Workers did not stop gracefully, force cancelling")
-            for worker in self._workers:
-                if not worker.done():
-                    worker.cancel()
-            # 等待取消完成
-            await asyncio.gather(*self._workers, return_exceptions=True)
-
+        for worker in self._workers:
+            worker.cancel()
+        await asyncio.gather(*self._workers, return_exceptions=True)
         self._workers.clear()
 
-        logger.info("document_processing_queue_stopped")
+    async def recover_interrupted(self):
+        """Adopt pre-durable-queue jobs; modern jobs recover through leases."""
+        recovered = 0
+        async with self.session_factory() as db, db.begin():
+            documents = await db.scalars(select(Document).where(
+                Document.status == DocumentStatus.PROCESSING,
+                Document.ingestion_status == "processing",
+            ).with_for_update(skip_locked=True))
+            for document in documents:
+                if TASK_METADATA_KEY not in (document.extra_metadata or {}):
+                    queue_document(document)
+                    recovered += 1
+        return recovered
 
-    async def _worker(self, worker_id: int):
-        """
-        工作线程
+    async def claim_next(self):
+        now = datetime.utcnow()
+        async with self.session_factory() as db, db.begin():
+            # Exclude active leases in SQL so long jobs cannot starve new ones.
+            lease = Document.extra_metadata[TASK_METADATA_KEY]["lease_until"].as_string()
+            document = await db.scalar(select(Document).where(
+                Document.status == DocumentStatus.PROCESSING,
+                Document.ingestion_status.in_(["queued", "processing"]),
+                (Document.ingestion_status == "queued") | (lease <= now.isoformat()),
+            ).order_by(Document.created_at).limit(1).with_for_update(skip_locked=True))
+            if document is None:
+                return None
+            metadata = dict(document.extra_metadata or {})
+            job = dict(metadata.get(TASK_METADATA_KEY) or {})
+            if int(job.get("attempts", 0)) >= self.max_retries:
+                document.status = DocumentStatus.FAILED
+                document.ingestion_status = "failed"
+                document.error_message = "Document processing lease expired after maximum attempts"
+                job.pop("token", None)
+                job.pop("lease_until", None)
+                metadata[TASK_METADATA_KEY] = job
+                document.extra_metadata = metadata
+                return None
+            token = uuid4().hex
+            job.update(token=token, generation=document.content_generation,
+                       attempts=int(job.get("attempts", 0)) + 1,
+                       lease_until=(now + timedelta(seconds=self.lease_seconds)).isoformat())
+            metadata[TASK_METADATA_KEY] = job
+            document.extra_metadata = metadata
+            document.ingestion_status = "processing"
+            return DocumentTask(document.id, document.knowledge_base_id,
+                                document.content_generation, token,
+                                dict(job.get("options") or {}))
 
-        Args:
-            worker_id: 工作线程ID
-        """
-        logger.info("document_worker_started", worker_id=worker_id)
+    async def _update_owned(self, task, *, error=None, renew=False, cancelled=False):
+        async with self.session_factory() as db, db.begin():
+            document = await db.scalar(select(Document).where(
+                Document.id == task.doc_id).with_for_update())
+            if document is None or document.content_generation != task.generation:
+                return False
+            metadata = dict(document.extra_metadata or {})
+            job = dict(metadata.get(TASK_METADATA_KEY) or {})
+            if job.get("token") != task.token:
+                return False
+            if renew:
+                job["lease_until"] = (datetime.utcnow() + timedelta(
+                    seconds=self.lease_seconds)).isoformat()
+            else:
+                job.pop("token", None)
+                job.pop("lease_until", None)
+                if (error or cancelled) and document.ingestion_status != "completed":
+                    retry = cancelled or job["attempts"] < self.max_retries
+                    document.status = DocumentStatus.PROCESSING if retry else DocumentStatus.FAILED
+                    document.ingestion_status = "queued" if retry else "failed"
+                    if cancelled:
+                        job["attempts"] = max(0, job["attempts"] - 1)
+                    if error:
+                        document.processing_error = str(error)[:2000]
+                        document.error_message = str(error)[:500]
+                # On success ingestion owns the final document statuses.
+            metadata[TASK_METADATA_KEY] = job
+            document.extra_metadata = metadata
+            return True
 
+    async def _heartbeat(self, task, processing):
+        try:
+            while True:
+                await asyncio.sleep(max(0.05, self.lease_seconds / 3))
+                if not await self._update_owned(task, renew=True):
+                    processing.cancel()
+                    return
+        except Exception:
+            # A disconnected worker cannot keep writing after its lease expires.
+            logger.exception("document_task_heartbeat_failed", doc_id=task.doc_id)
+            processing.cancel()
+
+    async def _run_ingestion(self, task):
+        from app.knowledge_base.service import KnowledgeBaseService
+        from app.services.llm_service import llm_service
+        from config.settings import settings
+
+        if not await self._update_owned(task, renew=True):
+            return
+        service = KnowledgeBaseService(session_factory=self.session_factory)
+        with llm_service.use_balanced_model_tier(settings.knowledge_base_llm_model_tier), \
+                llm_service.use_opencode_session(f"kb-doc-{task.doc_id}"):
+            await service.ingest_document(task.doc_id, **task.processing_options)
+
+    async def _process_task(self, task, worker_id=0):
+        processing = asyncio.create_task(self._run_ingestion(task))
+        heartbeat = asyncio.create_task(self._heartbeat(task, processing))
+        try:
+            await processing
+        except asyncio.CancelledError:
+            await self._update_owned(task, cancelled=True)
+            # Losing one document lease must not terminate the worker itself.
+            if asyncio.current_task().cancelling():
+                raise
+        except Exception as error:
+            logger.exception("document_task_failed", doc_id=task.doc_id, worker_id=worker_id)
+            await self._update_owned(task, error=error)
+        else:
+            await self._update_owned(task)
+        finally:
+            heartbeat.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat
+
+    async def _worker(self, worker_id):
         while self._is_running:
             try:
-                # 等待任务，超时1秒
-                try:
-                    task = await asyncio.wait_for(
-                        self._queue.get(),
-                        timeout=1.0
-                    )
-                except asyncio.TimeoutError:
-                    continue
-
-                # 处理任务
-                await self._process_task(task, worker_id)
-
+                task = await self.claim_next()
+                if task is None:
+                    await asyncio.sleep(self.poll_interval)
+                else:
+                    await self._process_task(task, worker_id)
             except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(
-                    "document_worker_error",
-                    worker_id=worker_id,
-                    error=str(e)
-                )
-
-        logger.info("document_worker_stopped", worker_id=worker_id)
-
-    async def _process_task(self, task: DocumentTask, worker_id: int):
-        """
-        处理单个任务
-
-        Args:
-            task: 文档任务
-            worker_id: 工作线程ID
-        """
-        task.status = TaskStatus.PROCESSING
-        task.started_at = datetime.utcnow()
-
-        logger.info(
-            "document_task_processing",
-            doc_id=task.doc_id,
-            worker_id=worker_id
-        )
-
-        # 每个任务使用独立的数据库会话
-        db = await self._get_db_session()
-
-        try:
-            service = await self._get_service(db)
-
-            # 获取知识库
-            kb = await service.get_knowledge_base(task.kb_id)
-            if not kb:
-                raise ValueError(f"Knowledge base not found: {task.kb_id}")
-
-            # 获取文档
-            from sqlalchemy import select
-            from app.knowledge_base.models import Document
-
-            result = await db.execute(
-                select(Document).where(Document.id == task.doc_id)
-            )
-            doc = result.scalar_one_or_none()
-            if not doc:
-                raise ValueError(f"Document not found: {task.doc_id}")
-
-            # 统一状态机负责 Chunk、图谱事实和 Outbox，不再直接写向量。
-            from app.services.llm_service import llm_service
-            from config.settings import settings
-
-            with llm_service.use_balanced_model_tier(
-                settings.knowledge_base_llm_model_tier
-            ):
-                await service.ingest_document(task.doc_id, **task.processing_options)
-
-            task.status = TaskStatus.COMPLETED
-            task.completed_at = datetime.utcnow()
-
-            logger.info(
-                "document_task_completed",
-                doc_id=task.doc_id,
-                duration_s=(task.completed_at - task.started_at).total_seconds()
-            )
-
-        except Exception as e:
-            task.error_message = str(e)
-            task.retry_count += 1
-
-            if task.retry_count < task.max_retries:
-                # 重新入队
-                task.status = TaskStatus.PENDING
-                await self._queue.put(task)
-                logger.warning(
-                    "document_task_retry",
-                    doc_id=task.doc_id,
-                    retry_count=task.retry_count,
-                    error=str(e)
-                )
-            else:
-                task.status = TaskStatus.FAILED
-                task.completed_at = datetime.utcnow()
-                logger.error(
-                    "document_task_failed",
-                    doc_id=task.doc_id,
-                    error=str(e)
-                )
-
-        finally:
-            # 确保关闭数据库会话
-            await db.close()
-
-    def get_task_status(self, doc_id: str) -> Optional[DocumentTask]:
-        """获取任务状态"""
-        return self._tasks.get(doc_id)
-
-    def get_queue_stats(self) -> Dict[str, Any]:
-        """获取队列统计"""
-        status_counts = {}
-        for task in self._tasks.values():
-            status = task.status.value
-            status_counts[status] = status_counts.get(status, 0) + 1
-
-        return {
-            "queue_size": self._queue.qsize(),
-            "total_tasks": len(self._tasks),
-            "workers": len(self._workers),
-            "is_running": self._is_running,
-            "status_counts": status_counts
-        }
+                return
+            except Exception:
+                logger.exception("document_worker_error", worker_id=worker_id)
+                await asyncio.sleep(self.poll_interval)
 
 
-# 全局队列实例
-_processing_queue: Optional[DocumentProcessingQueue] = None
+_processing_queue = None
 
 
-def get_processing_queue() -> DocumentProcessingQueue:
-    """获取全局处理队列"""
+def get_processing_queue():
     global _processing_queue
     if _processing_queue is None:
         _processing_queue = DocumentProcessingQueue()
@@ -354,38 +220,24 @@ def get_processing_queue() -> DocumentProcessingQueue:
 
 
 async def start_processing_queue():
-    """启动全局处理队列（应用启动时调用）"""
     await normalize_database_original_paths()
-    queue = get_processing_queue()
-    await queue.start()
-    await queue.recover_interrupted()
+    await get_processing_queue().start()
 
 
-async def normalize_database_original_paths() -> int:
-    """Clear legacy staging paths once PostgreSQL is the durable source."""
-    from sqlalchemy import update
+async def normalize_database_original_paths():
+    """Clear obsolete staging paths once PostgreSQL owns the original file."""
+    from app.db.knowledge_database import knowledge_async_session
 
-    from app.db.database import async_session
-    from app.knowledge_base.models import Document
-
-    async with async_session() as db, db.begin():
-        result = await db.execute(
-            update(Document)
-            .where(
-                Document.file_storage_type == "database",
-                Document.original_file_oid.is_not(None),
-                Document.file_path.is_not(None),
-            )
-            .values(file_path=None)
-        )
-    count = int(result.rowcount or 0)
-    if count:
-        logger.info("knowledge_database_original_paths_normalized", count=count)
-    return count
+    async with knowledge_async_session() as db, db.begin():
+        result = await db.execute(update(Document).where(
+            Document.file_storage_type == "database",
+            Document.original_file_oid.is_not(None),
+            Document.file_path.is_not(None),
+        ).values(file_path=None))
+    return int(result.rowcount or 0)
 
 
 async def stop_processing_queue():
-    """停止全局处理队列（应用关闭时调用）"""
     global _processing_queue
     if _processing_queue:
         await _processing_queue.stop()

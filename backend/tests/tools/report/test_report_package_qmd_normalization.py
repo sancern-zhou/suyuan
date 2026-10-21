@@ -38,3 +38,30 @@ def test_normalize_static_qmd_converts_quotes_around_mixed_chinese_numeric_text(
     assert '"厂家备案参数0-4.096V"' not in normalized
     assert "FPI品牌“厂家备案参数0-4.096V”" in normalized
     assert "SHARP5030“最高加热温度60℃”" in normalized
+
+
+def test_normalize_static_qmd_handles_weather_ranges_without_touching_code():
+    qmd = (
+        "湿度48%~58%，降水概率87%~90%，等级良~轻度污染。\n"
+        "风速一般2~<5m/s，表格实体2~&lt;5m/s。\n"
+        "| 湿度 | 等级 |\n|---|---|\n| 78%~93% | 较好~优 |\n"
+        "\x6048%~58%\x60 和 \\~ 保持原样。\n"
+        "\x60\x60\x60text\n78%~93%\n\x60\x60\x60\n"
+    )
+
+    normalized = _normalize_static_qmd(qmd)
+
+    assert "湿度48%～58%，降水概率87%～90%，等级良～轻度污染" in normalized
+    assert "风速一般2～<5m/s，表格实体2～&lt;5m/s" in normalized
+    assert "| 78%～93% | 较好～优 |" in normalized
+    assert "\x6048%~58%\x60 和 \\~ 保持原样" in normalized
+    assert "\x60\x60\x60text\n78%~93%\n\x60\x60\x60" in normalized
+
+
+def test_normalize_static_qmd_keeps_original_numeric_range_coverage():
+    qmd = "| 时段 |\n|---|\n| 02~08时 |\n\x6002~08\x60\n"
+
+    normalized = _normalize_static_qmd(qmd)
+
+    assert "02～08时" in normalized
+    assert "\x6002~08\x60" in normalized

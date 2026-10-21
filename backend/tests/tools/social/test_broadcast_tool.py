@@ -54,7 +54,7 @@ async def test_worker_client_posts_payload_with_internal_token(monkeypatch):
     )
 
     result = await client.broadcast(
-        message="运城告警",
+        message="许昌告警",
         target_user_names=["周三成"],
         media=["/tmp/report.docx"],
         context_metadata={"source": "assistant_tool"},
@@ -80,7 +80,7 @@ async def test_worker_client_converts_non_2xx_to_unavailable(monkeypatch):
 
     with pytest.raises(SocialBroadcastWorkerUnavailable, match="503"):
         await client.broadcast(
-            message="运城告警",
+            message="许昌告警",
             target_user_names=["周三成"],
         )
 
@@ -105,7 +105,7 @@ async def test_broadcast_tool_rejects_empty_names_without_worker_call():
     tool = BroadcastSocialUsersTool(worker_client=client)
 
     result = await tool.execute(
-        message="运城告警",
+        message="许昌告警",
         target_user_names=["", "  "],
     )
 
@@ -120,7 +120,7 @@ async def test_broadcast_tool_forwards_names_media_and_source_metadata():
     tool = BroadcastSocialUsersTool(worker_client=client)
 
     result = await tool.execute(
-        message="运城告警",
+        message="许昌告警",
         target_user_names=["周三成"],
         media=["/tmp/report.docx"],
     )
@@ -128,7 +128,7 @@ async def test_broadcast_tool_forwards_names_media_and_source_metadata():
     assert result["success"] is True
     assert len(client.calls) == 1
     call = client.calls[0]
-    assert call["message"] == "运城告警"
+    assert call["message"] == "许昌告警"
     assert call["target_user_names"] == ["周三成"]
     assert call["media"] == ["/tmp/report.docx"]
     metadata = call["context_metadata"]
@@ -148,7 +148,7 @@ async def test_broadcast_tool_returns_structured_worker_unavailable_error():
     tool = BroadcastSocialUsersTool(worker_client=client)
 
     result = await tool.execute(
-        message="运城告警",
+        message="许昌告警",
         target_user_names=["周三成"],
     )
 
@@ -163,7 +163,7 @@ async def test_broadcast_tool_hides_unexpected_internal_errors():
     tool = BroadcastSocialUsersTool(worker_client=client)
 
     result = await tool.execute(
-        message="运城告警",
+        message="许昌告警",
         target_user_names=["周三成"],
     )
 

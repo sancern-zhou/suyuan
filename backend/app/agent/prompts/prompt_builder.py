@@ -1,22 +1,31 @@
 """
 ReAct系统提示词构建器（多模式架构）
 
-⚠️ 注意：保留现有的query模式（WEB端问数模式），支持social、chart、ops等独立场景模式。
+支持 assistant 助手主模式、office 办公子模式和 query、expert、report、ops 等专业模式。
 """
 
 from typing import Literal, List, Optional
-from .assistant_prompt import build_assistant_prompt
+from .office_prompt import build_office_prompt
+from .assistant_role_contract import ASSISTANT_MEDIA_CONTRACT, ASSISTANT_ROLE_CONTRACT
 from .ppt_prompt import build_ppt_prompt
-from .expert_prompt import build_expert_prompt
+from .expert_prompt import build_expert_analysis_prompt, build_expert_meteorology_prompt, build_expert_prompt
 from .query_prompt import build_query_prompt
+from .query_data_prompt import (
+    build_query_forecast_prompt,
+    build_query_monitoring_city_prompt,
+    build_query_monitoring_prompt,
+    build_query_monitoring_station_prompt,
+)
+from app.agent.workflow.delegation import build_delegation_contract
 from .knowledge_prompt import build_knowledge_prompt
 from .report_prompt import build_report_prompt
-from .social_prompt import build_social_prompt
-from .enforcement_exam_prompt import build_enforcement_exam_prompt
-from .chart_prompt import build_chart_prompt
+from .assistant_prompt import build_assistant_prompt
+from .assistant_task_contract import ASSISTANT_TASK_CONTRACT
+from .assistant_coaching_contract import ASSISTANT_COACHING_CONTRACT
 from .board_prompt import build_board_prompt
 from .ops_prompt import build_ops_prompt
 from .graph_prompt import build_graph_prompt
+from .enforcement_exam_prompt import build_enforcement_exam_prompt
 from .custom_prompt import build_custom_prompt
 from .project_prompt import load_project_mode_prompt
 from app.utils.path_config import format_agent_path, resolve_agent_path
@@ -27,6 +36,7 @@ from .deliberation_prompt import (
     build_deliberation_reviewer_prompt,
 )
 from .tool_registry import get_tools_by_mode
+from .data_source_map import render_data_source_map
 import structlog
 
 logger = structlog.get_logger()
@@ -41,9 +51,40 @@ FILESYSTEM_PATH_CONTRACT = (
     "也禁止对已自动发布的产物再次调用 `publish_session_file`。"
 )
 
+MANUAL_FEEDBACK_CONTRACT = (
+    "## 人工意见反馈与经验沉淀\n"
+    "用户在任务进行中或结束后提出的人工意见（纠正、补充、偏好、审核判定等）优先按其指向调整并继续当前任务，"
+    "不重复要求用户确认已提交的条目。任务完成后主动总结本次可复用的经验；"
+    "把稳定、长期有用的内容主动维护进对应模式的长期记忆，一次性任务细节不进入长期记忆。\n"
+)
+
+AUDIENCE_CONTRACT = (
+    "## 用户面向与表达约定\n"
+    "本系统面向的用户是许昌市的生态环境管理用户（如局领导、科室与二级机构管理人员、执法人员、监测和业务人员）。"
+    "回复前先根据对话上下文判断用户角色，按角色组织输出的详略与侧重点：面向领导侧重结论、态势判断与决策建议；"
+    "面向业务人员侧重数据明细、过程分析与办理建议。\n"
+    "日常业务与办公输出使用用户能理解的业务语言，不直接输出内部接口名称、工具名、字段名、表结构或技术参数；"
+    "用户明确询问代码、接口、部署、系统机制等技术问题时，允许使用函数名、接口、字段、代码片段及项目相对路径和行号作为依据，仍不得披露密钥或凭据；"
+    "确需引用相关数据时，必须转换为业务术语和指标中文名称并说明其业务含义。"
+)
+
+
+AIR_QUALITY_STANDARD_TRANSITION_CONTRACT = (
+    "## 环境空气质量标准过渡实施阶段（2026年3月1日—2030年12月31日）\n"
+    "全国统一执行过渡阶段污染物浓度限值。二类区（人群活动区域）PM10年平均浓度由原标准70μg/m³收严为60μg/m³、"
+    "日平均浓度由原标准150μg/m³收严为120μg/m³；PM2.5年平均浓度由原标准35μg/m³收严为30μg/m³、"
+    "日平均浓度由原标准75μg/m³收严为60μg/m³。"
+    "达标评价与超标判断按过渡阶段限值执行，涉及逐年比较时注意限值变更时点（2026年3月1日起）。"
+)
+
 
 def _with_platform_contracts(prompt: str) -> str:
-    return f"{prompt.rstrip()}\n\n{FILESYSTEM_PATH_CONTRACT}"
+    return (
+        f"{prompt.rstrip()}\n\n"
+        f"{AUDIENCE_CONTRACT}\n\n"
+        f"{AIR_QUALITY_STANDARD_TRANSITION_CONTRACT}\n\n"
+        f"{FILESYSTEM_PATH_CONTRACT}\n\n{MANUAL_FEEDBACK_CONTRACT}"
+    ).rstrip()
 
 
 def _with_memory_file_contract(prompt: str, memory_file_path: Optional[str]) -> str:
@@ -51,21 +92,33 @@ def _with_memory_file_contract(prompt: str, memory_file_path: Optional[str]) -> 
         return prompt
     return (
         f"{prompt.rstrip()}\n\n"
-        "## 长期记忆文件\n"
-        f"- 当前模式长期记忆文件路径：`{memory_file_path}`。\n"
-        "- 仅可操作此路径，不得读取或修改其他模式的 MEMORY.md。"
+        "## 长期记忆（两层定位，不得混淆）\n"
+        f"- 常驻长期记忆 `MEMORY.md`：路径 `{memory_file_path}`，每次会话全量注入。"
+        "由你主动维护：用户明确要求记住、纠正长期偏好，或形成可跨会话复用的稳定口径/规则/方法时，"
+        "直接使用 edit_file 增、改、删其中条目；保持精炼，只留长期有效的信息，过时内容及时删除。\n"
+        "- 事实层记忆 `facts/*.md`：由后台整合器自动维护，带来源、适用条件和有效期，过期自动遗忘。"
+        "上下文中的\"已整理事实索引\"是其只读清单：需要核实时沿索引链接读取原文；"
+        "不要直接编辑 facts 文件，也不要把事实批量回写到 MEMORY.md。\n"
+        "- 两层分工：MEMORY.md 放你确认长期有效的规则与偏好；一次性的、时间敏感的、待观察的信息交给事实层，"
+        "不要写入 MEMORY.md。\n"
+        "- 仅可操作本模式的 MEMORY.md 路径，不得读取或修改其他模式的记忆文件。"
     )
 
 AgentMode = Literal[
     "assistant",
+    "office",
     "ppt",
     "expert",
+    "expert_meteorology",
+    "expert_analysis",
     "query",
+    "query_monitoring",
+    "query_monitoring_station",
+    "query_monitoring_city",
+    "query_forecast",
     "knowledge",
     "report",
-    "social",
     "enforcement_exam",
-    "chart",
     "board",
     "ops",
     "graph",
@@ -78,7 +131,30 @@ AgentMode = Literal[
 ]
 
 
+# 数据源地图对取数/研判/编排模式生效；纯产出型模式（ppt/board 等）不需要。
+DATA_SOURCE_MAP_MODES = {"query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "expert", "expert_meteorology", "expert_analysis", "report"}
+
+
+def _with_data_source_map(prompt: str, mode: str) -> str:
+    if mode not in DATA_SOURCE_MAP_MODES:
+        return prompt
+    source_map = render_data_source_map()
+    if not source_map:
+        return prompt
+    return f"{prompt.rstrip()}\n\n{source_map}".rstrip() + "\n"
+
+
 def build_react_system_prompt(
+    mode: AgentMode,
+    *args,
+    **kwargs,
+) -> str:
+    """构建模式系统提示词，并按模式追加数据源地图（若 registry 已配置）。"""
+    prompt = _build_react_system_prompt(mode, *args, **kwargs)
+    return _with_data_source_map(prompt, str(mode))
+
+
+def _build_react_system_prompt(
     mode: AgentMode,
     available_tools: Optional[List[str]] = None,
     user_preferences: Optional[dict] = None,
@@ -90,25 +166,25 @@ def build_react_system_prompt(
     soul_context: Optional[str] = None,  # ✅ 新增：soul.md 内容（助理灵魂档案）
     user_context: Optional[str] = None,  # ✅ 新增：用户上下文内容（USER.md）
     heartbeat_context: Optional[str] = None,  # ✅ 新增：HEARTBEAT.md 当前内容
-    backend_host: Optional[str] = None,  # ✅ 新增：网关地址（仅social模式使用）
+    backend_host: Optional[str] = None,  # ✅ 新增：网关地址（仅助手模式使用）
     board_context: Optional[dict] = None,  # 画板模式 draw.io 上下文
 ) -> str:
     """
     构建ReAct系统提示词（多模式架构）
 
     Args:
-        mode: Agent模式 ("assistant" | "ppt" | "expert" | "query" | "report" | "social" | "chart" | "ops")
+        mode: Agent模式 ("assistant" | "ppt" | "expert" | "query" | "report" | "office" | "ops")
         available_tools: 可用工具列表（如果为None，自动加载该模式的所有工具）
-        user_preferences: 用户偏好配置（仅social模式使用）
-        memory_file_path: 用户记忆文件路径（仅social模式使用）
-        soul_file_path: soul.md 文件路径（仅social模式使用）
-        user_file_path: USER.md 文件路径（仅social模式使用）
-        heartbeat_file_path: HEARTBEAT.md 文件路径（仅social模式使用）
+        user_preferences: 用户偏好配置（仅助手模式使用）
+        memory_file_path: 用户记忆文件路径（仅助手模式使用）
+        soul_file_path: soul.md 文件路径（仅助手模式使用）
+        user_file_path: USER.md 文件路径（仅助手模式使用）
+        heartbeat_file_path: HEARTBEAT.md 文件路径（仅助手模式使用）
         memory_context: 记忆上下文内容（从快照获取，直接注入到系统提示词）
-        soul_context: soul.md 内容（助理灵魂档案，仅social模式使用）
-        user_context: 用户上下文内容（从USER.md获取，仅social模式使用）
-        heartbeat_context: HEARTBEAT.md 当前内容（仅social模式使用）
-        backend_host: 网关地址（仅social模式使用，优先使用API_BASE_URL配置，用于生成公网分享链接）
+        soul_context: soul.md 内容（助理灵魂档案，仅助手模式使用）
+        user_context: 用户上下文内容（从USER.md获取，仅助手模式使用）
+        heartbeat_context: HEARTBEAT.md 当前内容（仅助手模式使用）
+        backend_host: 网关地址（仅助手模式使用，优先使用API_BASE_URL配置，用于生成公网分享链接）
 
     Returns:
         系统提示词字符串
@@ -143,29 +219,49 @@ def build_react_system_prompt(
         has_board_context=board_context is not None,
     )
 
+    task_contract = ASSISTANT_TASK_CONTRACT if mode == "assistant" and "manage_assistant_tasks" in filtered_tools else ""
+    if mode == "assistant" and "manage_assistant_coaching" in filtered_tools:
+        task_contract += ASSISTANT_COACHING_CONTRACT
+    if mode == "assistant":
+        task_contract += ASSISTANT_ROLE_CONTRACT + ASSISTANT_MEDIA_CONTRACT
     project_prompt = load_project_mode_prompt(mode)
     if project_prompt is not None:
         return _with_platform_contracts(
-            _with_memory_file_contract(project_prompt, memory_file_path)
+            (project_prompt if mode == "assistant" else _with_memory_file_contract(project_prompt, memory_file_path)) + task_contract
+            + build_delegation_contract(mode, filtered_tools)
         )
 
     # 根据模式构建Prompt（✅ 统一传递所有路径和上下文）
     if mode == "custom":
         return _with_platform_contracts(build_custom_prompt(filtered_tools))
-    if mode == "assistant":
-        return _with_platform_contracts(build_assistant_prompt(filtered_tools, memory_context, memory_file_path))
+    if mode == "office":
+        return _with_platform_contracts(build_office_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "ppt":
         return _with_platform_contracts(build_ppt_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "expert":
-        return _with_platform_contracts(build_expert_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_expert_prompt(filtered_tools, memory_context, memory_file_path)
+                                        + build_delegation_contract(mode, filtered_tools))
+    elif mode == "expert_meteorology":
+        return _with_platform_contracts(build_expert_meteorology_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "expert_analysis":
+        return _with_platform_contracts(build_expert_analysis_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "query":
-        return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path))
+        return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path)
+                                        + build_delegation_contract(mode, filtered_tools))
+    elif mode == "query_monitoring":
+        return _with_platform_contracts(build_query_monitoring_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "query_monitoring_station":
+        return _with_platform_contracts(build_query_monitoring_station_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "query_monitoring_city":
+        return _with_platform_contracts(build_query_monitoring_city_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "query_forecast":
+        return _with_platform_contracts(build_query_forecast_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "knowledge":
         return _with_platform_contracts(build_knowledge_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "report":
         return _with_platform_contracts(build_report_prompt(filtered_tools, memory_context, memory_file_path))
-    elif mode == "social":
-        return _with_platform_contracts(build_social_prompt(
+    elif mode == "assistant":
+        return _with_platform_contracts(build_assistant_prompt(
             filtered_tools,
             user_preferences,
             memory_file_path,
@@ -177,15 +273,13 @@ def build_react_system_prompt(
             user_context,
             heartbeat_context,
             backend_host,
-        ))
+        ) + task_contract)
     elif mode == "enforcement_exam":
         return _with_platform_contracts(build_enforcement_exam_prompt(
             filtered_tools,
             user_preferences=user_preferences,
             user_context=user_context,
         ))
-    elif mode == "chart":
-        return _with_platform_contracts(build_chart_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "board":
         return _with_platform_contracts(build_board_prompt(
             filtered_tools,

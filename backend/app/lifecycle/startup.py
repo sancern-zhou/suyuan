@@ -17,10 +17,9 @@ import structlog
 
 from app.lifecycle.database import init_database, init_database_and_fetchers
 from app.lifecycle.knowledge_base import (
-    start_document_processing_queue,
     start_knowledge_base_services,
-    warmup_knowledge_base_models_if_enabled,
 )
+from app.lifecycle.loop_watchdog import start_loop_watchdog
 from app.lifecycle.nacos import start_nacos
 from app.lifecycle.roles import normalize_app_role, starts_background_services
 from app.lifecycle.scheduled import start_scheduled_task_service
@@ -36,6 +35,7 @@ async def run_startup(app: FastAPI) -> None:
     """Run application startup resource initialization."""
     backend_dir = Path(__file__).resolve().parents[2]
     os.chdir(backend_dir)
+    start_loop_watchdog()
     logger.info(
         "working_directory_set",
         cwd=os.getcwd(),
@@ -77,8 +77,6 @@ async def run_startup(app: FastAPI) -> None:
     else:
         database_ready = await init_database()
         if database_ready:
-            await start_document_processing_queue()
-            await warmup_knowledge_base_models_if_enabled()
             from app.api.knowledge_graph_routes import start_graph_build_recovery
 
             start_graph_build_recovery()
@@ -87,8 +85,22 @@ async def run_startup(app: FastAPI) -> None:
                 "database_dependent_services_skipped",
                 services=["knowledge_base_processing_queue"],
             )
+        try:
+            from app.project_config.loader import load_project_context
+            from config.settings import settings as app_settings
+
+            if load_project_context(app_settings.project_id).manifest.scheduled_tasks_enabled:
+                from app.scheduled_tasks import init_service
+
+                init_service(recover_interrupted=False)
+        except Exception as e:
+            logger.warning(
+                "scheduled_task_service_init_skipped_for_web_role",
+                error=str(e),
+            )
         logger.info(
             "background_services_skipped_for_web_role",
             app_role=app_role,
             database_ready=database_ready,
+            knowledge_base_models="lazy_on_request",
         )

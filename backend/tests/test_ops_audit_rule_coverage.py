@@ -623,7 +623,7 @@ def test_lifecycle_attachment_and_device_rules_are_detected():
     ids = _issue_ids(audit)
     assert "LIFECYCLE_FINISH_WITHOUT_EFFECTIVE_CLOSURE" in ids
     assert "ATTACHMENT_REQUIRED_MISSING" in ids
-    assert "RF_DEVICE_IDENTITY_INCONSISTENT" in ids
+    assert "RF_DEVICE_IDENTITY_INCONSISTENT" not in ids
 
 
 def test_attachment_report_only_photo_is_detected():

@@ -253,6 +253,9 @@ class _FakeStorage:
         self.stored.append((city_id, city_name))
         return dict(self.counts)
 
+    def reset_connection(self):
+        pass
+
     def close(self):
         pass
 
@@ -324,3 +327,98 @@ def test_fetcher_reports_daily_schedule():
     assert fetcher.name == "city_air_quality_forecast_fetcher"
     assert fetcher.schedule == "30 7 * * *"
     assert fetcher.enabled
+
+
+class _DeadCursor:
+    def execute(self, *_args, **_kwargs):
+        raise RuntimeError("The cursor's connection has been closed.")
+
+    def close(self):
+        pass
+
+
+class _DeadConnection:
+    def cursor(self):
+        return _DeadCursor()
+
+    def close(self):
+        pass
+
+
+class _LiveCursor:
+    def execute(self, *_args, **_kwargs):
+        return self
+
+    def fetchone(self):
+        return (1,)
+
+    def close(self):
+        pass
+
+
+class _LiveConnection:
+    def __init__(self):
+        self.commits = 0
+
+    def cursor(self):
+        return _LiveCursor()
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        pass
+
+
+def test_get_connection_replaces_dead_cached_connection(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.fetchers.weather.city_air_quality_forecast_fetcher import CityAirQualitySQLStorage
+
+    connects = []
+
+    def _fake_connect(_connection_string, timeout=None):
+        connects.append(timeout)
+        return _LiveConnection()
+
+    monkeypatch.setattr(
+        "app.fetchers.weather.city_air_quality_forecast_fetcher.pyodbc.connect",
+        _fake_connect,
+    )
+    storage = CityAirQualitySQLStorage(sql_client=SimpleNamespace(connection_string="dsn=xcai"))
+    storage._connection = _DeadConnection()
+
+    connection = storage._get_connection()
+
+    assert isinstance(connection, _LiveConnection)
+    assert connects == [30]
+
+
+async def test_fetcher_retries_store_after_connection_reset():
+    class _FlakyStorage(_FakeStorage):
+        def __init__(self):
+            super().__init__()
+            self.resets = 0
+
+        def reset_connection(self):
+            self.resets += 1
+
+        def store_city(self, city_id, city_name, payload, fetched_at):
+            if self.resets == 0:
+                raise RuntimeError("The cursor's connection has been closed.")
+            return super().store_city(city_id, city_name, payload, fetched_at)
+
+    storage = _FlakyStorage()
+    fetcher = CityAirQualityForecastFetcher(
+        client=_FakeClient(payloads={"110000": SAMPLE_PAYLOAD}),
+        storage=storage,
+        cities={"110000": "北京市"},
+        delay_factory=lambda: 0,
+    )
+
+    summary = await fetcher.fetch_and_store()
+
+    assert summary["failed_cities"] == 0
+    assert summary["cities"] == 1
+    assert storage.resets == 1
+    assert storage.stored == [("110000", "北京市")]

@@ -19,6 +19,18 @@ def clear_qianlima_account_pool(monkeypatch):
     monkeypatch.delenv("QIANLIMA_PROXY_SERVER", raising=False)
     monkeypatch.delenv("QIANLIMA_PROXY_USERNAME", raising=False)
     monkeypatch.delenv("QIANLIMA_PROXY_PASSWORD", raising=False)
+    monkeypatch.delenv("QIANLIMA_DETAIL_SSH_PROXY_HOST", raising=False)
+    monkeypatch.delenv("QIANLIMA_SSH_PROXY_HOST", raising=False)
+    monkeypatch.setattr(
+        "app.services.tenders.qianlima_client.settings.qianlima_ssh_proxy_host",
+        None,
+    )
+    monkeypatch.delenv("QIANLIMA_REQUIRE_MEMBER_DETAIL", raising=False)
+    monkeypatch.delenv("QIANLIMA_REJECT_MEMBER_LIMITED_DETAIL", raising=False)
+    monkeypatch.setattr(
+        "app.services.tenders.qianlima_client.settings.qianlima_detail_ssh_proxy_host",
+        None,
+    )
     monkeypatch.setattr(
         "app.services.tenders.qianlima_client.settings.qianlima_proxy_server", None
     )
@@ -52,7 +64,7 @@ class FakeDetailPage:
         self._content = content
         self.visited_url = None
 
-    async def goto(self, url, wait_until=None):
+    async def goto(self, url, wait_until=None, timeout=None):
         self.visited_url = url
 
     async def wait_for_load_state(self, state, timeout=None):
@@ -112,7 +124,7 @@ async def test_fetch_detail_prefers_http_legacy_detail_when_it_has_procurement_c
     )
     monkeypatch.setattr(client, "_fetch_detail_http", lambda _url: http_detail)
 
-    async def fail_start():
+    async def fail_start(*args, **kwargs):
         raise AssertionError("HTTP 旧版详情可用时不应打开浏览器壳页")
 
     monkeypatch.setattr(client, "start", fail_start)
@@ -297,7 +309,7 @@ async def test_fetch_detail_switches_account_after_daily_limit_shell_page(
     ]
     start_storage_paths = []
 
-    async def fake_start():
+    async def fake_start(*args, **kwargs):
         start_storage_paths.append(client.storage_state_path)
         client._context = contexts[len(start_storage_paths) - 1]
 
@@ -349,7 +361,7 @@ async def test_fetch_detail_stops_after_all_accounts_reach_daily_limit(
     ]
     start_calls = 0
 
-    async def fake_start():
+    async def fake_start(*args, **kwargs):
         nonlocal start_calls
         client._context = contexts[start_calls]
         start_calls += 1
@@ -431,7 +443,7 @@ async def test_fetch_detail_uses_dedicated_browser_detail_concurrency(
     max_active = 0
 
     class SlowPage(FakeDetailPage):
-        async def goto(self, url, wait_until=None):
+        async def goto(self, url, wait_until=None, timeout=None):
             nonlocal active, max_active
             active += 1
             max_active = max(max_active, active)

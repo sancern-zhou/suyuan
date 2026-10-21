@@ -69,7 +69,8 @@ class LLMTool(ABC):
         category: ToolCategory,
         function_schema: Optional[Dict[str, Any]] = None,
         version: str = "1.0.0",
-        requires_context: bool = False
+        requires_context: bool = False,
+        concurrency_policy: Optional[str] = None,
     ):
         self.name = name
         self.description = description
@@ -79,6 +80,18 @@ class LLMTool(ABC):
         self.enabled = True
         self.status = ToolStatus.IDLE
         self.requires_context = requires_context  # New: indicate if tool needs context
+        self.concurrency_policy = concurrency_policy or (
+            "parallel_read" if category == ToolCategory.QUERY else "serial"
+        )
+
+    def is_read_only(self, tool_input: Optional[Dict[str, Any]] = None) -> bool:
+        """Whether independent calls may run concurrently.
+
+        Query tools default to read-only. Tools with mixed read/write operations
+        can override this method or set ``concurrency_policy="serial"``.
+        """
+        del tool_input
+        return self.concurrency_policy == "parallel_read"
 
     @abstractmethod
     async def execute(self, **kwargs) -> Any:

@@ -15,6 +15,8 @@
       :agent-platform-error="agentPlatformError"
       :messages="currentModeMessages"
       :pending-steering-inputs="currentModePendingSteeringInputs"
+      :pending-interaction="store.pendingInteraction"
+      :interaction-resolving="interactionResolving"
       :is-analyzing="currentModeIsAnalyzing"
       :input-disabled="inputDisabled"
       :current-message="currentModeCurrentMessage"
@@ -26,6 +28,9 @@
       :loading-more="store.currentState.pagination.loadingMore"
       :session-id="currentModeSessionId"
       :expert-results="currentModeExpertResults"
+      :human-feedback="store.pendingHumanFeedback"
+      :human-feedback-submitting="store.isHumanFeedbackSubmitting"
+      :human-feedback-error="store.humanFeedbackSubmitError"
       :active-module="workspace === 'platform' ? 'agent-platform' : (workspace === 'forecast' ? 'air-quality-forecast' : (managementPanel === 'task-workspace' && taskWorkspaceTask ? `task-workspace:${taskWorkspaceTask.task_id}` : activeAssistant))"
       :task-workspace-entries="taskWorkspaceEntries"
       :task-workspace-task="taskWorkspaceTask"
@@ -59,6 +64,7 @@
       @update:left-sidebar-collapsed="leftSidebarCollapsed = $event"
       @update:layout-ref="layoutRef = $event"
       @send="handleSend"
+      @assistant-continue="handleAssistantContinue"
       @pause="handlePause"
       @update:use-reranker="handleRerankerChange"
       @select-message="selectMessage"
@@ -103,7 +109,12 @@
       @new-web-conversation="startNewWebConversation"
       @toggle-viz-panel="toggleVizPanel"
       @preview-message-attachment="openMessageAttachmentPreview"
-    />
+      @resolve-interaction="handleInteractionResolve"
+      @close-interaction="handleInteractionClose"
+      @submit-human-feedback="handleHumanFeedbackSubmit"
+    >
+    </MainLayout>
+    <AssistantConversationSync :state="store.currentState" :mode="store.currentMode" :active="workspace === 'chat' && !managementPanel" @sessions="applyAssistantConversations" />
 
     <!-- 知识库创建对话框 -->
     <KnowledgeBaseCreateDialog
@@ -137,6 +148,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useReactStore } from '@/stores/reactStore'
+import AssistantConversationSync from '@/components/reactAnalysis/AssistantConversationSync.vue'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
 import {
@@ -152,7 +164,8 @@ import { projectConfig, resolveProjectDefaultAgentMode } from '@/config/projectC
 import {
   getRunningAgentSessionId,
   isAgentModeRunning,
-  resolveAgentSelection
+  resolveAgentSelection,
+  resolveTaskWorkspaceMode
 } from '@/components/agentPlatform/workspacePolicy.js'
 
 // 引入composables
@@ -174,6 +187,8 @@ import KnowledgeBaseChunksDialog from '@/components/reactAnalysis/dialogs/Knowle
 const route = useRoute()
 const store = useReactStore()
 const defaultAgentMode = resolveProjectDefaultAgentMode(projectConfig, AGENT_MODE_IDS)
+// 问数入口按项目启用情况选择模式：江苏使用 jiangsu_query，其他项目使用共享 query 模式。
+const queryAgentMode = projectConfig.agentModeIds.includes('jiangsu_query') ? 'jiangsu_query' : 'query'
 const kbStore = useKnowledgeBaseStore()
 const scheduledTasksStore = useScheduledTasksStore()
 const taskWorkspaceTask = ref(null)
@@ -218,6 +233,7 @@ const {
   handleSessionRestore,
   handleLoadSession,
   refreshSessionHistory,
+  applyAssistantConversations,
   handleSessionCleanup,
   deleteSessions,
   handleToggleSessionCase,
@@ -294,11 +310,43 @@ const mainLayoutRef = ref(null)
 const workspace = ref('platform')
 const selectingAgentMode = ref('')
 const agentPlatformError = ref('')
+const resolvingInteractionId = ref(null)
+const interactionResolving = computed(() => (
+  Boolean(store.pendingInteraction?.interaction_id)
+  && resolvingInteractionId.value === store.pendingInteraction.interaction_id
+))
 
 // 对话框状态（从dialogManager获取）
 const showKbCreateDialog = computed(() => dialogs.value.kbCreate)
 const showKbEditDialog = computed(() => dialogs.value.kbEdit)
 const showKbChunksDialog = computed(() => dialogs.value.kbChunks)
+
+const handleInteractionResolve = async (resolution) => {
+  const interactionId = store.pendingInteraction?.interaction_id
+  if (!interactionId || resolvingInteractionId.value === interactionId) return
+  resolvingInteractionId.value = interactionId
+  try {
+    await store.resolvePendingInteraction(resolution)
+  } catch (error) {
+    console.error('[agent-interaction] resolution failed:', error)
+  } finally {
+    if (resolvingInteractionId.value === interactionId) {
+      resolvingInteractionId.value = null
+    }
+  }
+}
+
+const handleInteractionClose = () => {
+  void handleInteractionResolve({ decision: 'reject', response: null })
+}
+
+const handleHumanFeedbackSubmit = async (payload) => {
+  try {
+    await store.submitHumanFeedback(payload)
+  } catch (error) {
+    console.error('[human-feedback] submission failed:', error)
+  }
+}
 
 // ========== 计算属性 ==========
 
@@ -369,6 +417,14 @@ const handleLoadSessionAndClosePanel = async (sessionId) => {
   return restored
 }
 
+const handleAssistantContinue = async ({ query, sessionId }) => {
+  if (store.currentState.isAnalyzing) return
+  const restored = await handleLoadSessionAndClosePanel(sessionId)
+  if (!query?.trim()) return
+  if (!restored || currentConversationPolicy.value.readOnly || store.currentState.isAnalyzing) return
+  await handleSend({ query, agentMode: 'assistant' })
+}
+
 const handleSessionRestoreAndClosePanel = async (sessionId) => {
   const restored = await handleSessionRestore(sessionId)
   if (restored) {
@@ -420,8 +476,16 @@ const handleSidebarAction = async (actionId) => {
     await scheduledTasksStore.fetchTasks()
     const task = scheduledTasksStore.tasks.find(item => item.task_id === actionId.taskId)
     if (!task) return
+    const taskMode = resolveTaskWorkspaceMode(task, store.currentMode)
+    if (taskMode !== store.currentMode) {
+      store.switchMode(taskMode)
+    }
+    const switchingTask = taskWorkspaceTask.value?.task_id !== task.task_id
     taskWorkspaceTask.value = task
     workspace.value = 'chat'
+    if (switchingTask) {
+      hideManagementPanel()
+    }
     showManagementPanel('task-workspace')
     rightPanelVisible.value = false
     return
@@ -452,7 +516,19 @@ const handleSidebarAction = async (actionId) => {
   switch (actionId) {
     case 'query-dashboard':
       if (!await confirmResourcePreviewLeave()) return
-      store.switchMode('query')
+      store.switchMode(queryAgentMode)
+      hideManagementPanel()
+      resetPanelState()
+      break
+    case 'knowledge-qa':
+      if (!await confirmResourcePreviewLeave()) return
+      store.switchMode('knowledge')
+      hideManagementPanel()
+      resetPanelState()
+      break
+    case 'expert-analysis':
+      if (!await confirmResourcePreviewLeave()) return
+      store.switchMode('expert')
       hideManagementPanel()
       resetPanelState()
       break
@@ -463,6 +539,9 @@ const handleSidebarAction = async (actionId) => {
     case 'skills-management':
       console.log('[ReactAnalysisView] Showing skills-management panel')
       showManagementPanel('skills-management')
+      break
+    case 'quick-prompts-management':
+      showManagementPanel('quick-prompts-management')
       break
     case 'knowledge-base':
       console.log('[ReactAnalysisView] Showing knowledge-base panel')
@@ -487,6 +566,14 @@ const handleSidebarAction = async (actionId) => {
     case 'social-platform':
       console.log('[ReactAnalysisView] Showing social-platform panel')
       showManagementPanel('social-platform')
+      break
+    case 'shared-conversations':
+      console.log('[ReactAnalysisView] Showing shared-conversations panel')
+      showManagementPanel('shared-conversations')
+      break
+    case 'platform-guide':
+      console.log('[ReactAnalysisView] Showing platform-guide panel')
+      showManagementPanel('platform-guide')
       break
     case 'file-manager':
       console.log('[ReactAnalysisView] Showing file-manager panel')

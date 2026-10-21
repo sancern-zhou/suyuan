@@ -5,7 +5,7 @@
 
 核心功能：
 - 模式隔离：每个模式独立的记忆空间
-- 用户隔离：每个用户独立的记忆空间
+- 非社交按模式共享；社交按用户隔离
 - LRU缓存优化：自动清理不活跃的记忆
 - 整合偏移量管理：支持增量记忆整合
 """
@@ -13,9 +13,14 @@
 from pathlib import Path
 from typing import Dict, Optional, Any
 import asyncio
+import hashlib
+import json
+import os
+import tempfile
 import structlog
 
 from app.agent.memory.memory_store import MemoryStore, ImprovedMemoryStore
+from app.agent.memory.memory_paths import safe_memory_segment
 from app.utils.path_config import get_memory_dir, resolve_agent_path
 
 logger = structlog.get_logger(__name__)
@@ -41,6 +46,7 @@ class UnifiedMemoryManager:
             max_cache_size: 最大缓存用户数
         """
         # 解析相对路径为绝对路径（避免工作目录问题）
+        self._custom_workspace = base_workspace is not None
         self.base_workspace = (
             resolve_agent_path(base_workspace) if base_workspace else get_memory_dir()
         )
@@ -50,10 +56,8 @@ class UnifiedMemoryManager:
         # MemoryStore 缓存（key: f"{mode}:{user_id}"）
         self._memory_cache: Dict[str, MemoryStore] = {}
 
-        # 整合偏移量缓存（key: user_id, value: offset）
-        self._offset_cache: Dict[str, int] = {}
-
         self._lock = asyncio.Lock()
+        self._cursor_lock = asyncio.Lock()
         self._max_cache_size = max_cache_size
 
         logger.info(
@@ -72,11 +76,12 @@ class UnifiedMemoryManager:
 
         Args:
             user_id: 用户ID（格式：{mode}:{user_identifier}:{shared|unique}）
-            mode: 模式标识（social/assistant/expert/query/code/report/chart/ops）
+            mode: 模式标识（assistant/office/expert/query/code/report/chart/ops）
 
         Returns:
             用户专属 MemoryStore
         """
+        mode = safe_memory_segment(mode, field="mode")
         cache_key = f"{mode}:{user_id}"
 
         async with self._lock:
@@ -91,7 +96,7 @@ class UnifiedMemoryManager:
                 self._memory_cache[cache_key] = ImprovedMemoryStore(
                     user_id=user_id,
                     mode=mode,
-                    workspace=self.base_workspace  # ✅ 传递工作空间
+                    workspace=(self.base_workspace if self._custom_workspace or mode != "assistant" else None)
                 )
                 logger.info(
                     "user_memory_created",
@@ -102,39 +107,51 @@ class UnifiedMemoryManager:
 
             return self._memory_cache[cache_key]
 
-    async def get_consolidation_offset(
-        self,
-        user_id: str
-    ) -> int:
-        """
-        获取整合偏移量
+    def _cursor_path(self, mode: str, session_id: str) -> Path:
+        safe_mode = safe_memory_segment(mode, field="mode")
+        if not safe_mode or not session_id:
+            raise ValueError("mode and session_id are required")
+        session_key = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+        return self.base_workspace / safe_mode / ".consolidation" / f"{session_key}.json"
 
-        Args:
-            user_id: 用户ID
+    async def get_consolidation_cursor(self, mode: str, session_id: str) -> Dict[str, Any]:
+        """Read the durable position for one mode and one conversation."""
+        path = self._cursor_path(mode, session_id)
+        async with self._cursor_lock:
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return {"offset": 0, "boundary_hash": ""}
+        if not isinstance(value, dict):
+            return {"offset": 0, "boundary_hash": ""}
+        offset = value.get("offset")
+        boundary_hash = value.get("boundary_hash")
+        if not isinstance(offset, int) or offset < 0 or not isinstance(boundary_hash, str):
+            return {"offset": 0, "boundary_hash": ""}
+        return {"offset": offset, "boundary_hash": boundary_hash}
 
-        Returns:
-            整合偏移量（已整合的消息数）
-        """
-        return self._offset_cache.get(user_id, 0)
-
-    async def set_consolidation_offset(
-        self,
-        user_id: str,
-        offset: int
+    async def set_consolidation_cursor(
+        self, mode: str, session_id: str, offset: int, boundary_hash: str
     ) -> None:
-        """
-        设置整合偏移量
-
-        Args:
-            user_id: 用户ID
-            offset: 整合偏移量（已整合的消息数）
-        """
-        self._offset_cache[user_id] = offset
-        logger.debug(
-            "consolidation_offset_updated",
-            user_id=user_id,
-            offset=offset
-        )
+        """Atomically commit a batch only after its extraction run completes."""
+        if offset < 0 or not isinstance(boundary_hash, str):
+            raise ValueError("invalid consolidation cursor")
+        path = self._cursor_path(mode, session_id)
+        async with self._cursor_lock:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_path = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w", encoding="utf-8", dir=path.parent, prefix=".cursor-", delete=False
+                ) as handle:
+                    temporary_path = Path(handle.name)
+                    json.dump({"offset": offset, "boundary_hash": boundary_hash}, handle)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary_path, path)
+            finally:
+                if temporary_path is not None:
+                    temporary_path.unlink(missing_ok=True)
 
     async def cleanup_user_memory(
         self,
@@ -148,6 +165,7 @@ class UnifiedMemoryManager:
             user_id: 用户ID
             mode: 模式标识
         """
+        mode = safe_memory_segment(mode, field="mode")
         cache_key = f"{mode}:{user_id}"
 
         async with self._lock:
@@ -257,5 +275,5 @@ class UnifiedMemoryManager:
                 "total_cache_size": len(self._memory_cache),
                 "max_cache_size": self._max_cache_size,
                 "mode_counts": mode_counts,
-                "offset_cache_size": len(self._offset_cache)
+                "cursor_storage": str(self.base_workspace)
             }

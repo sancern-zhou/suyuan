@@ -70,9 +70,12 @@ export function usePanelManagement(store = null) {
       (Array.isArray(msg?.data?.sources) && msg.data.sources.length > 0) ||
       (Array.isArray(msg?.sources) && msg.sources.length > 0)
     )
+    const hasPendingFeedback = Boolean(store.currentState?.pendingHumanFeedback?.items?.length)
 
-    return resourceSummary.value.hasArtifacts || !!explicitAttachment.value || hasSources
+    return resourceSummary.value.hasArtifacts || !!explicitAttachment.value || hasSources || hasPendingFeedback
   })
+
+  const hasPendingFeedback = computed(() => Boolean(store?.currentState?.pendingHumanFeedback?.items?.length))
 
   /**
    * 检测是否有知识溯源信息
@@ -112,10 +115,16 @@ export function usePanelManagement(store = null) {
   }
 
   const changeRightTab = async tab => {
-    if (!tab || tab === activeRightTab.value) return true
+    if (!tab) return true
+    if (tab === activeRightTab.value && tab !== 'trajectory') return true
     if (!await confirmResourcePreviewLeave()) return false
     activeRightTab.value = tab
     activeTabUserSelected.value = true
+    if (tab === 'trajectory') {
+      rightPanelVisible.value = true
+      rightPanelDismissed.value = false
+      leftSidebarCollapsed.value = true
+    }
     return true
   }
 
@@ -280,6 +289,8 @@ export function usePanelManagement(store = null) {
         const summary = resourceSummary.value
         if (sessionId !== previousSessionId) {
           previousSessionId = sessionId
+          rightPanelVisible.value = false
+          activeRightTab.value = 'files'
           activeTabUserSelected.value = false
           rightPanelDismissed.value = false
         }
@@ -327,6 +338,14 @@ export function usePanelManagement(store = null) {
       if (newValue && !activeTabUserSelected.value) {
         activeRightTab.value = 'knowledge'
         if (!rightPanelDismissed.value) rightPanelVisible.value = true
+      }
+    }, { immediate: true })
+
+    watch(hasPendingFeedback, (newValue, oldValue) => {
+      if (newValue && !oldValue) {
+        activeRightTab.value = 'feedback'
+        if (!rightPanelDismissed.value) rightPanelVisible.value = true
+        leftSidebarCollapsed.value = true
       }
     }, { immediate: true })
 
@@ -383,6 +402,7 @@ export function usePanelManagement(store = null) {
     vizPanelStyle,
     hasVizContent,
     hasKnowledgeSources,
+    hasPendingFeedback,
     resourceSummary,
 
     // 方法

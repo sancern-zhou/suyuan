@@ -1,16 +1,16 @@
 export const AGENT_MODES = Object.freeze([
   {
     id: 'assistant',
-    name: '通用助手智能体',
+    name: '助手模式',
     shortName: '助手',
-    description: '通用问答、任务处理与综合分析',
+    description: '需求代办、持续事项跟进与项目使用指导',
     welcome: {
-      description: '面向日常办公、信息整理和综合任务处理，为你提供从需求理解到成果交付的一站式协助。',
+      description: '理解工作目标，协调办公与专业智能体，持续跟进事项并指导项目使用。',
       features: [
         '解答通用问题，梳理需求与工作思路',
-        '处理文件、表格、文档和演示材料',
-        '拆解复杂任务，汇总并提炼关键信息',
-        '形成清晰、可直接使用的内容成果'
+        '委派办公模式处理文档、表格与文件整理',
+        '协调专业智能体完成查询、分析和知识问答',
+        '跟进持续事项、提醒关注信息并提供使用建议'
       ],
       example: '例如："整理我上传的项目材料，提炼关键结论并生成一份汇报提纲"'
     },
@@ -71,20 +71,20 @@ export const AGENT_MODES = Object.freeze([
   },
   {
     id: 'query',
-    name: '问数生图智能体',
-    shortName: '问数生图',
-    description: '自然语言查询数据、统计分析并生成专业图表',
+    name: 'AI问数智能体',
+    shortName: '问数',
+    description: '自然语言查询数据并完成统计分析',
     welcome: {
-      description: '通过自然语言查询结构化数据，或使用你手动提供的数据，完成统计分析并生成专业图表。',
+      description: '通过自然语言查询结构化数据，快速完成统计、对比和结论整理。',
       features: [
         '查询空气质量、气象和监测站点等业务数据',
         '完成统计汇总、同比环比和排名分析',
-        '将查询结果或手动输入数据生成交互式与静态图表',
-        '保留可追溯的数据来源、查询口径和图表产物'
+        '将查询结果整理为清晰的表格和结论',
+        '保留可追溯的数据来源与查询口径'
       ],
-      example: '例如："查询广州本月 PM2.5 日均浓度，与去年同期对比并生成趋势图"'
+      example: '例如："查询广州本月 PM2.5 日均浓度，并与去年同期对比"'
     },
-    tags: ['数据查询', '图表生成'],
+    tags: ['数据查询', '统计分析'],
     accent: '#0b9b8a',
     iconPaths: [
       'M5 6c0 1.7 3.1 3 7 3s7-1.3 7-3-3.1-3-7-3-7 1.3-7 3Z',
@@ -137,29 +137,6 @@ export const AGENT_MODES = Object.freeze([
       'M5 3.5h9l4 4V20H5V3.5Z',
       'M14 3.5v4h4M8 10h5M8 13h4',
       'm10 18 6.4-6.4a1.4 1.4 0 0 1 2 2L12 20l-2.8.7.8-2.7Z'
-    ]
-  },
-  {
-    id: 'chart',
-    name: '图表创作智能体',
-    shortName: '图表',
-    description: '生成数据图表及专题可视化内容',
-    welcome: {
-      description: '根据数据结构和表达目标创作清晰、准确的专业图表，让趋势、对比和业务关系更直观。',
-      features: [
-        '识别数据特征并推荐合适的图表类型',
-        '生成趋势、对比、分布、地图和专题图表',
-        '输出 ECharts 与适合报告使用的静态图表',
-        '调整配色、标题、标注和整体版式'
-      ],
-      example: '例如："绘制广州各站点 PM2.5 月均浓度对比图，并突出异常站点"'
-    },
-    tags: ['数据图表', '流程图'],
-    accent: '#d24d77',
-    iconPaths: [
-      'M4 4.5v15h16',
-      'm5 16 4-5 4 3 6-8',
-      'M9 11a1 1 0 1 0 0 .01M13 14a1 1 0 1 0 0 .01M19 6a1 1 0 1 0 0 .01'
     ]
   },
   {
@@ -228,7 +205,7 @@ export const AGENT_SCENES = Object.freeze([
     id: 'monitoring',
     name: '监测分析',
     description: '环境数据研判与成果输出',
-    modeIds: ['query', 'expert', 'report', 'chart'],
+    modeIds: ['query', 'expert', 'report'],
     iconPaths: [
       { tone: 'primary', d: 'M4 5v14h16' },
       { tone: 'primary', d: 'm6.5 14 3-3 3 2 3.5-6 3 2' },

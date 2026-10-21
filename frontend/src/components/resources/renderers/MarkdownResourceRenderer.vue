@@ -8,4 +8,4 @@ const content = ref(''); const loading = ref(false); const error = ref('')
 const load = async () => { loading.value = true; error.value = ''; try { const response = await authFetch(props.contentUrl); if (!response.ok) throw new Error(`HTTP ${response.status}`); content.value = await response.text() } catch (failure) { error.value = failure?.message || '加载失败' } finally { loading.value = false } }
 onMounted(load); watch(() => props.contentUrl, load)
 </script>
-<style scoped>.scroll { height: 100%; padding: 18px; overflow: auto; box-sizing: border-box; }.error { color: #b42318; }</style>
+<style scoped>.scroll { height: 100%; padding: 18px; overflow: auto; box-sizing: border-box; }.error { color: var(--color-danger); }</style>

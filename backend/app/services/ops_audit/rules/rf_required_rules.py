@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from app.services.ops_audit.config import (
@@ -223,6 +224,9 @@ def _check_teom_paper_tape_not_applicable(
     value = _text(form.get("TAPEUSAGEDISPOSAL"))
     if value.lower() in {"", "/", "-", "无", "不适用", "无需", "无纸带"}:
         return
+    if re.search(r"(?:无|不使用|未使用|无需使用)纸带[。；;，,\s]*$", value):
+        if not re.search(r"(?:已更换|剩余|余量|用量|使用量|\d+\s*%)", value):
+            return
 
     evidence = {
         "working_order_code": order.get("WORKINGORDERCODE"),

@@ -102,7 +102,7 @@ class KnowledgeGraphQueryTool(LLMTool):
 
     @staticmethod
     def _default_service():
-        from app.db.database import async_session
+        from app.db.knowledge_database import knowledge_async_session as async_session
         from app.knowledge_base import get_vector_store
         from app.knowledge_base.retrieval_service import KnowledgeRetrievalService
 

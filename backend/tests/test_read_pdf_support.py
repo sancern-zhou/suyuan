@@ -34,9 +34,9 @@ class TestReadFilePDFSupport:
         # 创建一个简单的 PDF 文件用于测试
         pdf_path = test_dir / "test_document.pdf"
 
-        # 使用 PyPDF2 创建测试 PDF
+        # 使用 pypdf 创建测试 PDF
         try:
-            from PyPDF2 import PdfWriter, PdfReader
+            from pypdf import PdfWriter, PdfReader
             from reportlab.pdfgen import canvas
             from reportlab.lib.pagesizes import letter
             import io

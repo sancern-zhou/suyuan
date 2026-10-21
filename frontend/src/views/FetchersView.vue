@@ -507,12 +507,12 @@ export default {
 
 .header-main h1 {
   font-size: 32px;
-  color: #2c3e50;
+  color: var(--text-1);
   margin-bottom: 8px;
 }
 
 .subtitle {
-  color: #7f8c8d;
+  color: var(--text-2);
   font-size: 16px;
 }
 
@@ -523,7 +523,7 @@ export default {
 
 .view-switch {
   display: inline-flex;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -533,18 +533,18 @@ export default {
   background: white;
   padding: 6px 12px;
   font-size: 13px;
-  color: #666;
+  color: var(--text-2);
   cursor: pointer;
-  border-left: 1px solid #e0e0e0;
+  border-left: 1px solid var(--border-2);
 
   &:first-child {
     border-left: none;
   }
 
   &.active {
-    background: #1976d2;
-    color: #fff;
-    border-color: #1976d2;
+    background: var(--color-primary);
+    color: var(--bg-container);
+    border-color: var(--color-primary);
   }
 }
 
@@ -559,7 +559,7 @@ export default {
 .status-card h2 {
   font-size: 20px;
   margin-bottom: 16px;
-  color: #34495e;
+  color: var(--text-1);
 }
 
 .status-grid {
@@ -573,13 +573,13 @@ export default {
   justify-content: space-between;
   align-items: center;
   padding: 12px;
-  background: #f8f9fa;
+  background: var(--bg-muted);
   border-radius: 4px;
 }
 
 .status-item .label {
   font-weight: 500;
-  color: #495057;
+  color: var(--text-2);
 }
 
 .status-value {
@@ -589,34 +589,34 @@ export default {
 }
 
 .status-running {
-  color: #27ae60;
-  background: #d4edda;
+  color: var(--color-success);
+  background: var(--color-success-bg);
 }
 
 .status-stopped {
-  color: #e74c3c;
-  background: #f8d7da;
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
 }
 
 .status-idle {
-  color: #3498db;
-  background: #d1ecf1;
+  color: var(--color-primary);
+  background: var(--color-primary-bg);
 }
 
 .status-disabled {
-  color: #95a5a6;
-  background: #e9ecef;
+  color: var(--text-2);
+  background: var(--bg-hover);
 }
 
 .status-error {
-  color: #e74c3c;
-  background: #f8d7da;
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
 }
 
 .fetchers-list h2 {
   font-size: 20px;
   margin-bottom: 16px;
-  color: #34495e;
+  color: var(--text-1);
 }
 
 .actions-bar {
@@ -640,59 +640,59 @@ export default {
 }
 
 .btn-primary {
-  background: #3498db;
+  background: var(--color-primary);
   color: white;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: #2980b9;
+  background: var(--color-primary-active);
 }
 
 .btn-secondary {
-  background: #95a5a6;
+  background: var(--text-2);
   color: white;
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #7f8c8d;
+  background: var(--text-2);
 }
 
 .btn-warning {
-  background: #f39c12;
+  background: var(--color-warning);
   color: white;
 }
 
 .btn-warning:hover:not(:disabled) {
-  background: #e67e22;
+  background: var(--color-warning);
 }
 
 .btn-success {
-  background: #27ae60;
+  background: var(--color-success);
   color: white;
 }
 
 .btn-success:hover:not(:disabled) {
-  background: #229954;
+  background: var(--color-success);
 }
 
 .btn-refresh {
-  background: #9b59b6;
+  background: var(--chart-5);
   color: white;
 }
 
 .btn-refresh:hover:not(:disabled) {
-  background: #8e44ad;
+  background: var(--chart-5);
 }
 
 .loading, .error {
   text-align: center;
   padding: 40px;
-  color: #7f8c8d;
+  color: var(--text-2);
 }
 
 .spinner {
-  border: 4px solid #f3f3f3;
-  border-top: 4px solid #3498db;
+  border: 4px solid var(--bg-hover);
+  border-top: 4px solid var(--color-primary);
   border-radius: 50%;
   width: 40px;
   height: 40px;
@@ -730,13 +730,13 @@ export default {
   align-items: center;
   margin-bottom: 16px;
   padding-bottom: 12px;
-  border-bottom: 2px solid #ecf0f1;
+  border-bottom: 2px solid var(--bg-muted);
 }
 
 .fetcher-header h3 {
   margin: 0;
   font-size: 18px;
-  color: #2c3e50;
+  color: var(--text-1);
 }
 
 .status-badge {
@@ -758,18 +758,18 @@ export default {
 
 .info-row .label {
   font-weight: 600;
-  color: #7f8c8d;
+  color: var(--text-2);
   width: 100px;
   flex-shrink: 0;
 }
 
 .info-row .value {
-  color: #2c3e50;
+  color: var(--text-1);
   flex: 1;
 }
 
 .schedule {
-  background: #f8f9fa;
+  background: var(--bg-muted);
   padding: 4px 8px;
   border-radius: 4px;
   font-family: 'Courier New', monospace;
@@ -808,11 +808,11 @@ export default {
 .modal h3 {
   margin-top: 0;
   margin-bottom: 8px;
-  color: #2c3e50;
+  color: var(--text-1);
 }
 
 .modal p {
-  color: #7f8c8d;
+  color: var(--text-2);
   margin-bottom: 20px;
 }
 
@@ -828,13 +828,13 @@ export default {
   align-items: center;
   gap: 8px;
   padding: 8px;
-  background: #f8f9fa;
+  background: var(--bg-muted);
   border-radius: 4px;
   cursor: pointer;
 }
 
 .checkbox-label:hover {
-  background: #e9ecef;
+  background: var(--bg-hover);
 }
 
 .checkbox-label input[type="checkbox"] {
@@ -864,15 +864,15 @@ export default {
 }
 
 .notification.success {
-  background: #27ae60;
+  background: var(--color-success);
 }
 
 .notification.error {
-  background: #e74c3c;
+  background: var(--color-danger);
 }
 
 .notification.info {
-  background: #3498db;
+  background: var(--color-primary);
 }
 
 .close-btn {
@@ -901,11 +901,11 @@ export default {
 .era5-historical-card h2 {
   font-size: 20px;
   margin-bottom: 8px;
-  color: #34495e;
+  color: var(--text-1);
 }
 
 .era5-historical-card .description {
-  color: #7f8c8d;
+  color: var(--text-2);
   font-size: 14px;
   margin-bottom: 20px;
 }
@@ -925,22 +925,22 @@ export default {
 
 .date-input-group label {
   font-size: 14px;
-  color: #495057;
+  color: var(--text-2);
   white-space: nowrap;
 }
 
 .date-input {
   padding: 8px 12px;
-  border: 1px solid #dcdcdc;
+  border: 1px solid var(--border-3);
   border-radius: 4px;
   font-size: 14px;
-  color: #2c3e50;
+  color: var(--text-1);
   background: white;
 }
 
 .date-input:focus {
   outline: none;
-  border-color: #3498db;
+  border-color: var(--color-primary);
   box-shadow: 0 0 0 2px rgba(52,152,219,0.2);
 }
 
@@ -952,13 +952,13 @@ export default {
 }
 
 .fetch-result.success {
-  border: 1px solid #27ae60;
-  background: #d4edda;
+  border: 1px solid var(--color-success);
+  background: var(--color-success-bg);
 }
 
 .fetch-result.warning {
-  border: 1px solid #f39c12;
-  background: #fff3cd;
+  border: 1px solid var(--color-warning);
+  background: var(--color-warning-bg);
 }
 
 .result-header {
@@ -975,17 +975,17 @@ export default {
 }
 
 .fetch-result.success .result-icon {
-  color: #27ae60;
+  color: var(--color-success);
 }
 
 .fetch-result.warning .result-icon {
-  color: #f39c12;
+  color: var(--color-warning);
 }
 
 .result-title {
   font-size: 16px;
   font-weight: 600;
-  color: #2c3e50;
+  color: var(--text-1);
 }
 
 .result-details {
@@ -1002,20 +1002,20 @@ export default {
 }
 
 .result-row .label {
-  color: #7f8c8d;
+  color: var(--text-2);
   margin-right: 8px;
 }
 
 .result-row .value {
-  color: #2c3e50;
+  color: var(--text-1);
   font-weight: 600;
 }
 
 .result-row .success-text {
-  color: #27ae60;
+  color: var(--color-success);
 }
 
 .result-row .error-text {
-  color: #e74c3c;
+  color: var(--color-danger);
 }
 </style>

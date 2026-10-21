@@ -6,10 +6,16 @@
 """
 
 from typing import Dict, Any, Optional, TYPE_CHECKING, List
+import asyncio
 import pyodbc
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.agent.context.data_shape import (
+    build_data_shape,
+    infer_column_types,
+    shape_summary_suffix,
+)
 from app.utils.sql_validator import SQLValidator
 
 if TYPE_CHECKING:
@@ -34,9 +40,16 @@ MONITORING_SQL_TABLES = [
     'CurrentAirQuality',
     'OpenMeteoAirQualityForecast72h',
     'dbo.OpenMeteoAirQualityForecast72h',
+    'XuchangNmcHourlyWeatherForecast',
+    'dbo.XuchangNmcHourlyWeatherForecast',
+    'XuchangWeatherComDailyForecast',
+    'dbo.XuchangWeatherComDailyForecast',
     'dat_station_day',
     'dat_station_hour',
     'dat_weather_hour',
+    'dat_zhongda_station_minute',
+    'dat_zhongda_station_hour',
+    'dat_zhongda_city_hour',
     'WeatherForecast7Day',
     'city_168_statistics_new_standard',
     'city_168_statistics_old_standard',
@@ -52,6 +65,29 @@ MONITORING_SQL_TABLES = [
     'information_schema.tables',
 ]
 
+# 许昌问数只开放当前监测与预报业务需要的表。其他项目继续使用
+# MONITORING_SQL_TABLES，避免项目专用表目录污染共享工具的 schema。
+XUCHANG_MONITORING_SQL_TABLES = [
+    'city_aqi_publish_history',
+    'CityDayAQIPublishHistory',
+    'CityAQIPublishHistory',
+    'CurrentAirQuality',
+    'XuchangNmcHourlyWeatherForecast',
+    'dbo.XuchangNmcHourlyWeatherForecast',
+    'XuchangWeatherComDailyForecast',
+    'dbo.XuchangWeatherComDailyForecast',
+    'dat_zhongda_station_minute',
+    'dat_zhongda_station_hour',
+    'dat_zhongda_city_hour',
+    'WeatherForecast7Day',
+    'city_168_statistics_new_standard',
+    'city_168_statistics_old_standard',
+    'province_statistics_new_standard',
+    'province_statistics_old_standard',
+    'information_schema.columns',
+    'information_schema.tables',
+]
+
 
 AIR_QUALITY_SCHEMA_GUIDE = (
     "\n\n【高频空气质量表字段契约】"
@@ -62,6 +98,21 @@ AIR_QUALITY_SCHEMA_GUIDE = (
     "执行前必须替换为上下文中的实际值，不得把模板变量原样写入SQL。"
     "若上下文缺少名称与代码的映射，应补充地理上下文；describe_table只能查询字段，不能提供该映射。"
     "不同表的城市字段不同，禁止跨表套用字段名。"
+    "\n【数据源优先级】"
+    "站点小时/城市小时数据同时存在通用发布表"
+    "（dat_station_hour、CityAQIPublishHistory）和中大平台表（dat_zhongda_station_hour、"
+    "dat_zhongda_city_hour）两个来源时，优先查询中大平台表（dat_zhongda_*）——中大源为审核后数据，"
+    "准确性更高。仅当中大表不覆盖所需时间（如城市聚合滞后约1天）或字段缺失时，再用通用发布表补充。"
+    "站点日/城市日数据仅有通用发布表（dat_station_day、CityDayAQIPublishHistory），"
+    "中大平台不再采集日数据。站点5分钟数据（dat_zhongda_station_minute）为中大独有，无此冲突。"
+    "\n【预报数据源优先级】查询未来逐小时气象预报（温度、湿度、风向风速、气压、降水概率、天气现象）时，"
+    "优先查询NMC逐小时气象预报（XuchangNmcHourlyWeatherForecast，中央气象台官方预报，7天×3小时间隔）；"
+    "中国天气网日预报归入NMC同源数据。"
+    "例外：NMC和中国天气网表不提供边界层高度boundary_layer_height或小时短波辐射shortwave_radiation；"
+    "查询当天、未来或近5天缺口的这两项时直接调用get_weather_forecast，不要向这些表试查不存在的字段，"
+    "也不要用get_weather_data试查未来。历史网格用get_weather_data；模式数据保留来源，不称为实测或纯ERA5。"
+    "查询许昌城区1-15日日预报时必须只查询XuchangWeatherComDailyForecast，使用city_code='101180401'，"
+    "该表已经包含温度、天气、风向和风力，不要追加逐小时NMC表、空气质量预报表、execute_python或图表；"
     "\n- CurrentAirQuality（城市当前实况及今明两天预报摘要）："
     "城市字段为CityID，按行政区代码筛选：CityID = '{city_code}'；"
     "没有cityname、Area、CityCode，不得把城市名称写入CityID。"
@@ -79,22 +130,107 @@ AIR_QUALITY_SCHEMA_GUIDE = (
     "没有cityname、CityID。时间字段为TimePoint；"
     "污染物字段为PM2_5, PM10, O3, NO2, SO2, CO, AQI；"
     "其他字段为PrimaryPollutant, Quality。注意PM2.5字段名是PM2_5，不是PM25。"
+    "数据范围 2017-01 起。注意：与dat_zhongda_city_hour数据重复，优先使用中大表（审核后数据），本表仅作补充。"
     "\n- CityDayAQIPublishHistory（城市日历史）："
     "城市字段为Area和CityCode，按城市全称或行政区代码筛选："
     "Area = N'{city_name}'或CityCode = {city_code}；"
     "时间字段为TimePoint；日均字段为PM2_5_24h, PM10_24h, O3_8h_24h, "
     "NO2_24h, SO2_24h, CO_24h；其他字段为AQI, PrimaryPollutant, Quality。"
-    "\n- dat_station_hour（站点小时）和dat_station_day（站点日）："
-    "城市字段为city_area_code，按行政区代码筛选：city_area_code = '{city_code}'；"
-    "站点字段为station_id, name, lon, lat；时间字段为data_time；"
-    "污染物字段使用小写：aqi, aqi_level, pm25, pm10, o3, no2, so2, co, pollutant；"
-    "dat_station_day另有O38h字段。没有cityname、CityID、Area、CityCode。"
+    "城市日数据仅此表提供（中大平台不再采集日数据）。"
+    "数据范围 2021-06 起；**缺济源市**（全国表仅 17 城）。"
+            "\n- dat_station_hour（站点小时）和dat_station_day（站点日）："
+            "城市字段为city_area_code，按行政区代码筛选：city_area_code = '{city_code}'；"
+            "站点字段为station_id, name, lon, lat；时间字段为data_time；"
+            "污染物字段使用小写：aqi, aqi_level, pm25, pm10, o3, no2, so2, co, pollutant；"
+            "dat_station_day另有O38h字段。没有cityname、CityID、Area、CityCode。"
+            "数据范围：dat_station_hour 2024-01 起，dat_station_day 2026-08-25 起（CNEMC 采集起步，日历史很浅）。"
+            "注意：dat_station_hour与dat_zhongda_station_hour数据重复，优先使用中大表（审核后数据），"
+            "本表仅作补充；站点日数据仅本表提供。"
+            "\n- dat_zhongda_station_minute（中大平台站点5分钟）和dat_zhongda_station_hour（中大平台站点小时）："
+            "城市字段为area，按城市全称筛选：area = N'{city_name}'；"
+            "站点字段为station_code（平台内部编码，数字+字母如'1003A'）和station_name；时间字段为time_point；"
+            "没有city_area_code、cityname、CityID、CityCode、station_id。"
+            "数据范围：两者均 2026-08-26 起（采集起步），更早时间无数据。"
+            "口径字段必须显式过滤：data_table_type（'Act'实况/'Std'标况）、parameter_type（'gp'常规污染物），"
+            "当前仅采集'Act'+'gp'口径。"
+            "污染物数值字段小写：aqi, api, so2, no_val, no2, nox, o3, co, pm10, pm25, o3_8h, pm1；"
+            "NO浓度列名是no_val，不是no；单位co为mg/m3，其余为μg/m3。"
+            "每个数值字段另有对应质量标记列（如pm25_mark、o3_mark），"
+            "非空值（H/B/BB/W/HSp/LSp/PS/PZ/AS/CZ/CS/RM）表示该值带质量标记，慎用于统计。"
+            "-99为平台无效值，统计前必须排除（如AND pm25 <> -99）；NULL表示缺失。"
+            "分钟表每5分钟一条，小时表整点一条，小时口径为审核后(App)。"
+            "示例：SELECT TOP 60 station_code, station_name, time_point, aqi, pm25, pm10, o3, so2, no2, co "
+            "FROM dbo.dat_zhongda_station_minute WHERE area = N'{city_name}' "
+            "AND data_table_type = 'Act' AND parameter_type = 'gp' AND time_point >= '2026-08-26 18:00' "
+            "ORDER BY time_point DESC。"
+            "\n- dat_zhongda_city_hour（中大平台城市小时，审核后）："
+            "城市字段为area（按城市全称筛选area = N'{city_name}'），另有city_code、province字段；"
+            "时间为time_point；"
+            "数据范围 2022-01-01 起（审核值滞后约1-2天发布，最新日期可能无审核值，"
+            "此时先用发布口径表 CityAQIPublishHistory 补最新小时）。"
+            "含data_type_plan（评价规划期，按数据时间互斥分区："
+            "2026-01-01起为'155th'十五五，2021~2025为'145th'十四五，更早为'135th'；"
+            "查询2026年数据必须加data_type_plan = '155th'，用错规划期会返回空）；"
+            "字段为小写污染物列：so2, no_val, no2, nox, o3, co, pm10, pm25, pm1；"
+            "评价字段为aqi/quality/pollutant，"
+            "另有第二组评价字段（aqi_2/quality_2/pollutant_2或pm10_2/pm25_2）；"
+            "数值为平台返回原值（当前无数据，单位未经核实，跨表统计前先抽样核对）。"
+            "无效占位值为-999（区别于站点表的-99），统计前必须排除（如AND aqi <> -999）。"
+            "注意：城市表由平台聚合任务生成，可能为空，查询无结果不代表SQL错误。"
+            "站点日/城市日数据中大平台不再采集，请改用dat_station_day、CityDayAQIPublishHistory。"
     "\n- WeatherForecast7Day（7天空气质量预报）："
     "城市字段为cityname，按城市全称筛选：cityname = N'{city_name}'；时间字段为TimePoint；"
     "预报字段为DayTitle, MinAqi, MaxAqi, MaxPollution, WeatherCondition, "
     "Temperature, WindLevel, WindDirection, UpdateDate, UpdateTime。"
     "cityname仅用于此预报表，不得用于CurrentAirQuality或城市、站点历史表。"
+    "\n- XuchangNmcHourlyWeatherForecast（中央气象台NMC逐3小时气象预报，未来7天）："
+    "城市字段为city_name和city_code，按城市全称或行政区代码筛选："
+    "city_name = N'{city_name}'或city_code = '{city_code}'；站点字段为station_id（NMC站点号）。"
+    "时间字段为forecast_time（3小时间隔，每日8个时次如02/05/08/11/14/17/20/23时，覆盖未来7天约56条）；"
+    "气象字段：temperature（℃）、humidity（%）、pressure（hPa）、wind_speed（m/s）、"
+    "wind_direction（中文风向如北风）、wind_direction_degrees（风向角度0~360）、"
+    "precipitation_probability（降水概率%）、weather_code/weather_text（天气现象，如晴/多云/小雨）；"
+    "溯源字段：publish_time（预报发布时间）、fetched_at（抓取时间）、source（'NMC'）。"
+    "同一(station_id, forecast_time)只保留最新一次预报（重复抓取覆盖更新），统计前无需去重；"
+    "字段为NULL表示源缺测（源端9999哨兵已归一为NULL）。"
+    "查询未来气象要素预报时本表为优先源（见上方预报数据源优先级）。"
+    "示例：SELECT TOP 56 forecast_time, temperature, humidity, pressure, wind_direction, "
+    "wind_speed, precipitation_probability, weather_text FROM dbo.XuchangNmcHourlyWeatherForecast "
+    "WHERE city_code = '{city_code}' AND forecast_time >= '2026-08-30 11:00' ORDER BY forecast_time。"
+    "\n- XuchangWeatherComDailyForecast（中国天气网许昌1-15日日气象预报）："
+    "按city_code='101180401'（许昌城区）筛选，forecast_date为预报日期；字段包括weather_text、temp_max、temp_min、"
+    "wind_direction_day、wind_direction_night、wind_force和fetched_at。"
 )
+
+
+XUCHANG_CRAWLER_TABLE_HINTS = {
+    "dat_station_hour": (
+        "许昌国控站点小时/日长历史不通过 execute_sql_query 查询；"
+        "请改用 execute_crawler_sql_query，并按其工具描述中的真实表字段契约生成查询。"
+    ),
+    "dat_station_day": (
+        "许昌国控站点小时/日长历史不通过 execute_sql_query 查询；"
+        "请改用 execute_crawler_sql_query，并按其工具描述中的真实表字段契约生成查询。"
+    ),
+}
+
+
+def _build_xuchang_schema_guide() -> str:
+    """移除许昌不可用的 SQL Server 站点长历史契约，并写明替代路由。"""
+    guide = AIR_QUALITY_SCHEMA_GUIDE
+    priority_start = guide.index("\n【数据源优先级】")
+    forecast_start = guide.index("\n【预报数据源优先级】")
+    xuchang_priority = (
+        "\n【数据源优先级】国控站点小时/日长历史与城市长历史使用 "
+        "execute_crawler_sql_query。"
+        "中大平台站点5分钟/小时数据仍使用本工具的 dat_zhongda_station_minute/"
+        "dat_zhongda_station_hour。"
+    )
+    guide = guide[:priority_start] + xuchang_priority + guide[forecast_start:]
+
+    station_start = guide.index("\n- dat_station_hour（站点小时）和dat_station_day（站点日）：")
+    zhongda_start = guide.index("\n- dat_zhongda_station_minute", station_start)
+    return guide[:station_start] + guide[zhongda_start:]
 
 
 OPS_SQL_TABLES = [
@@ -199,7 +335,6 @@ OPS_SQL_TABLES = [
 
 TENDER_SQL_TABLES = [
     'tender_notices',
-    'tender_notice_contents',
     'tender_candidates',
     'tender_fetch_runs',
 ]
@@ -233,13 +368,22 @@ class BaseSQLQueryTool(LLMTool):
         allowed_tables: List[str],
         default_database: str = "XcAiDb",
         allow_information_schema_sql: bool = True,
+        allowed_databases: Optional[List[str]] = None,
+        alternate_table_hints: Optional[Dict[str, str]] = None,
     ):
         """初始化工具"""
 
         self.tool_name = tool_name
         self.default_database = default_database
         self.allow_information_schema_sql = allow_information_schema_sql
+        # 未显式声明时保持历史行为（XcAi 服务器上的两个库）。
+        self.allowed_databases = allowed_databases or ["XcAiDb", "AirPollutionAnalysis"]
         self.sql_validator = SQLValidator(max_limit=1000, allowed_tables=allowed_tables)
+        self._table_types_cache: Dict[str, Dict[str, str]] = {}
+        self.alternate_table_hints = {
+            table.lower(): hint
+            for table, hint in (alternate_table_hints or {}).items()
+        }
 
         function_schema = {
             "name": tool_name,
@@ -258,7 +402,7 @@ class BaseSQLQueryTool(LLMTool):
                     "database": {
                         "type": "string",
                         "description": f"数据库名称，默认{default_database}",
-                        "enum": ["XcAiDb", "AirPollutionAnalysis"]
+                        "enum": self.allowed_databases
                     },
                     "limit": {
                         "type": "integer",
@@ -321,16 +465,23 @@ class BaseSQLQueryTool(LLMTool):
             database = self.default_database
 
         # 验证数据库名称
-        if database not in ["XcAiDb", "AirPollutionAnalysis"]:
+        if database not in self.allowed_databases:
             return {
                 "success": False,
                 "data": None,
-                "summary": f"不支持的数据库名称 '{database}'。支持的数据库：XcAiDb、AirPollutionAnalysis"
+                "summary": f"不支持的数据库名称 '{database}'。支持的数据库：{'、'.join(self.allowed_databases)}"
             }
 
         # 判断是查看表结构还是执行SQL
         if describe_table:
-            return self._describe_table(describe_table, database)
+            alternate_hint = self._alternate_table_hint([describe_table])
+            if alternate_hint:
+                return {
+                    "success": False,
+                    "data": None,
+                    "summary": alternate_hint,
+                }
+            return await asyncio.to_thread(self._describe_table, describe_table, database)
         else:
             return await self._execute_sql_query(sql, database, limit, context)
 
@@ -552,17 +703,26 @@ class BaseSQLQueryTool(LLMTool):
                     error=error_msg,
                     sql_preview=sql[:100]
                 )
+                alternate_hint = self._alternate_table_hint(
+                    self.sql_validator.extract_tables(sql)
+                )
                 return {
                     "success": False,
                     "data": [],
-                    "summary": f"SQL验证失败: {error_msg}。请使用 {self.tool_name}(describe_table='表名', database='{database}') 查看正确的表结构信息。"
+                    "summary": alternate_hint or (
+                        f"SQL验证失败: {error_msg}。请使用 "
+                        f"{self.tool_name}(describe_table='表名', database='{database}') "
+                        "查看正确的表结构信息。"
+                    ),
                 }
 
             # 2. 添加TOP子句（SQL Server使用TOP而非LIMIT）
             safe_sql = self._sanitize_limit_for_sqlserver(sql, limit)
 
             # 3. 执行查询
-            results = self._execute_query(safe_sql, database)
+            # pyodbc is synchronous. Run it outside the Agent event loop so
+            # independent read-only query tools can actually execute in parallel.
+            results = await asyncio.to_thread(self._execute_query, safe_sql, database)
 
             logger.info(
                 "sql_query_success",
@@ -574,6 +734,8 @@ class BaseSQLQueryTool(LLMTool):
             # 4. 数据外部化：超过24条记录时采样
             sample_data = results
             file_path = None
+            data_shape = await self._build_data_shape(results, sql, database)
+            shape_suffix = shape_summary_suffix(data_shape)
 
             if context and len(results) > 24:
                 try:
@@ -592,7 +754,8 @@ class BaseSQLQueryTool(LLMTool):
                             "sql": sql,
                             "row_count": len(results),
                             "columns": columns,
-                            "limit": limit
+                            "limit": limit,
+                            "data_shape": data_shape,
                         }
                     )
 
@@ -617,7 +780,8 @@ class BaseSQLQueryTool(LLMTool):
                         "file_path": file_path,    # 完整数据文件路径
                         "count": len(results),
                         "sample_count": len(sample_data),
-                        "summary": f"查询到{len(results)}条记录（已外部化，返回样本{len(sample_data)}条）",
+                        "summary": f"查询到{len(results)}条记录（已外部化，返回样本{len(sample_data)}条）{shape_suffix}",
+                        "data_shape": data_shape,
                         "metadata": {
                             "database": database,
                             "columns": columns,
@@ -636,7 +800,8 @@ class BaseSQLQueryTool(LLMTool):
                 "data": results,
                 "file_path": file_path,
                 "count": len(results),
-                "summary": f"查询到{len(results)}条记录",
+                "summary": f"查询到{len(results)}条记录{shape_suffix}",
+                "data_shape": data_shape,
                 "metadata": {
                     "hint": "如果结果中包含英文代码值（如Fault、Check等），请转换为中文向用户展示"
                 }
@@ -650,6 +815,17 @@ class BaseSQLQueryTool(LLMTool):
                 error=error_msg,
                 sql_preview=sql[:100]
             )
+
+            sqlstate = str(e.args[0]) if e.args else ""
+            alternate_hint = self._alternate_table_hint(
+                self.sql_validator.extract_tables(sql)
+            )
+            if alternate_hint and ("42S02" in sqlstate or "Invalid object name" in error_msg):
+                return {
+                    "success": False,
+                    "data": [],
+                    "summary": f"SQL执行失败: {error_msg}。{alternate_hint}",
+                }
 
             # 提取表名
             table_name = self._extract_table_name(sql)
@@ -759,17 +935,24 @@ class BaseSQLQueryTool(LLMTool):
 
     def _extract_table_name(self, sql: str) -> Optional[str]:
         """从SQL中提取表名"""
-        import re
-        sql_lower = sql.lower()
+        referenced_tables = self.sql_validator.extract_tables(sql)
+        for referenced_table in referenced_tables:
+            for allowed_table in self.sql_validator.ALLOWED_TABLES:
+                normalized_allowed = allowed_table.split(".")[-1].lower()
+                if (
+                    referenced_table.lower() == normalized_allowed
+                    and not allowed_table.lower().startswith("information_schema")
+                ):
+                    return allowed_table
 
-        # 尝试提取FROM后的表名
-        from_match = re.search(r'\bfrom\s+(\w+)', sql_lower)
-        if from_match:
-            table = from_match.group(1)
-            # 检查是否在白名单中（排除系统视图）
-            if table in self.sql_validator.ALLOWED_TABLES and not table.startswith('information_schema'):
-                return table
+        return None
 
+    def _alternate_table_hint(self, table_names: List[str]) -> Optional[str]:
+        for table_name in table_names:
+            normalized = table_name.strip().strip("[]").split(".")[-1].strip("[]").lower()
+            hint = self.alternate_table_hints.get(normalized)
+            if hint:
+                return hint
         return None
 
     def _get_connection_string(self, database: str) -> str:
@@ -788,6 +971,53 @@ class BaseSQLQueryTool(LLMTool):
         except Exception as e:
             logger.error("获取数据库配置失败", error=str(e))
             raise
+
+    async def _build_data_shape(self, results: list, sql: str, database: str) -> Dict[str, Any]:
+        """information_schema 精确类型优先（按 库+schema+表 缓存），派生列回退样本推断。
+
+        与主查询一致走 asyncio.to_thread：首查未缓存表的元数据查询同样可能
+        因网络抖动阻塞，不能卡住事件循环上的其他并行问数节点。
+        """
+        import re as _re
+
+        try:
+            tables = self.sql_validator.extract_tables(sql)
+            exact_types: Dict[str, str] = {}
+            for table in tables:
+                table = str(table)
+                if not _re.fullmatch(r"[A-Za-z0-9_\.]+", table):
+                    continue
+                parts = table.split(".")
+                table_name = parts[-1]
+                # 显式 schema 前缀优先；未限定时按 SQL Server 默认 schema 解析，
+                # 防止同库跨 schema（乃至跨库同表名经缓存串味）互相污染列类型。
+                schema_name = parts[-2] if len(parts) >= 2 else "dbo"
+                cache_key = f"{database}|{table}"
+                if cache_key not in self._table_types_cache:
+                    try:
+                        rows = await asyncio.to_thread(
+                            self._execute_query,
+                            "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+                            f"WHERE TABLE_NAME = '{table_name}' AND TABLE_SCHEMA = '{schema_name}'",
+                            database,
+                        )
+                        self._table_types_cache[cache_key] = {
+                            str(row["COLUMN_NAME"]): str(row["DATA_TYPE"]) for row in rows
+                        }
+                    except Exception:
+                        self._table_types_cache[cache_key] = {}
+                exact_types.update(self._table_types_cache.get(cache_key) or {})
+            columns = list(results[0].keys()) if results else []
+            inferred = infer_column_types(results, columns)
+            columns_with_types = {
+                str(name): exact_types.get(str(name)) or inferred.get(str(name), "str")
+                for name in columns
+            }
+            return build_data_shape(
+                columns_with_types, len(results), "db" if exact_types else "inferred"
+            )
+        except Exception:
+            return build_data_shape(infer_column_types(results), len(results), "inferred")
 
     def _execute_query(self, sql: str, database: str) -> list:
         """执行SQL查询"""
@@ -822,7 +1052,21 @@ class BaseSQLQueryTool(LLMTool):
 class ExecuteSQLQueryTool(BaseSQLQueryTool):
     """问数/监测数据专用SQL查询工具。"""
 
-    def __init__(self):
+    def __init__(self, project_id: str | None = None):
+        project_id = project_id or ""
+        is_xuchang = project_id == "xuchang"
+        allowed_tables = list(XUCHANG_MONITORING_SQL_TABLES if is_xuchang else MONITORING_SQL_TABLES)
+        if project_id == "xuchang":
+            allowed_tables = [
+                table for table in allowed_tables
+                if table.lower() not in {"openmeteോairqualityforecast72h", "dbo.openmeteoairqualityforecast72h"}
+            ]
+        if project_id == "xuchang":
+            allowed_tables = [
+                table for table in allowed_tables
+                if table.lower() not in {"openmeteoairqualityforecast72h", "dbo.openmeteoairqualityforecast72h"}
+            ]
+        schema_guide = _build_xuchang_schema_guide() if is_xuchang else AIR_QUALITY_SCHEMA_GUIDE
         schema_description = (
             "监测数据SQL Server查询工具。支持二选一：describe_table查看表结构，或sql执行SELECT查询。"
             "高频表优先使用下方已确认的字段契约直接生成SQL；其他表字段不确定时再用describe_table动态查询。"
@@ -832,11 +1076,17 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
             "\n\n常用表说明（按数据库分类）："
             "\n【XcAiDb数据库-空气质量】"
             "\n- WeatherForecast7Day：7天空气质量预报（全国319城，含MinAqi/MaxAqi/MaxPollution/WeatherCondition/Temperature/WindLevel/WindDirection/TimePoint）"
-            "\n- OpenMeteoAirQualityForecast72h：Open-Meteo未来72小时空气质量预报明细"
-            "\n- CityDayAQIPublishHistory：城市日空气质量历史数据（24小时均值）"
-            "\n- CityAQIPublishHistory：城市小时空气质量历史数据"
+            "\n- XuchangNmcHourlyWeatherForecast：NMC中央气象台未来7天×3小时间隔气象预报（温/湿/风/气压/降水概率/天气现象，气象预报优先源）"
+            "\n- CityDayAQIPublishHistory：城市日空气质量历史（列：TimePoint/Area/CityCode/AQI/Quality/"
+            "PrimaryPollutant/SO2_24h/CO_24h/NO2_24h/O3_8h_24h/PM10_24h/PM2_5_24h；"
+            "日值列统一带 _24h 后缀，臭氧列是 O3_8h_24h，没有 o3_8h/pm25/pm10 这类列名）"
+            "\n- CityAQIPublishHistory：城市小时空气质量历史（列：TimePoint/Area/CityCode/AQI/Quality/"
+            "PrimaryPollutant/SO2/CO/NO2/O3/PM10/PM2_5）"
             "\n- CurrentAirQuality：当前空气质量"
-            "\n- dat_station_hour/dat_station_day：站点小时/日数据"
+            "\n- dat_station_hour：站点小时数据（次选，优先中大表）"
+            "\n- dat_station_day：站点日数据"
+            "\n- dat_zhongda_station_minute/dat_zhongda_station_hour：中大平台站点5分钟/小时数据（含质量标记列，-99为无效值）"
+            "\n- dat_zhongda_city_hour：中大平台城市小时（可能为空，需空结果容错）"
             "\n【统计预计算表】"
             "\n- city_168_statistics_new_standard/city_168_statistics_old_standard：168城市空气质量统计；"
             "适用于168城市全国排名、排名变化、全国发布统计数据查询"
@@ -847,15 +1097,35 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
             "\n- quality_control_records：质控例行检查记录"
             "\n- BSD_STATION：站点信息表（含站点ID/名称/代码/区域/经纬度/地址）"
             "\n- analysis_history：分析历史记录"
-            + AIR_QUALITY_SCHEMA_GUIDE
+            + schema_guide
             + "\n\n提示：使用describe_table可查看白名单表的完整字段结构。运维表单请使用execute_ops_sql_query。"
         )
+        if is_xuchang:
+            schema_description = (
+                schema_description.split("\n\n常用表说明", 1)[0]
+                + "\n\n常用表说明（许昌监测与预报数据）："
+                "\n- WeatherForecast7Day：7天空气质量预报"
+                "\n- XuchangNmcHourlyWeatherForecast：NMC中央气象台未来7天逐3小时气象预报"
+                "\n- XuchangWeatherComDailyForecast：中国天气网许昌城区1-15日日气象预报"
+                "\n- CurrentAirQuality：许昌当前空气质量及今明两天预报摘要"
+                "\n- CityAQIPublishHistory/CityDayAQIPublishHistory：城市小时/日空气质量历史"
+                "（小时列：SO2/CO/NO2/O3/PM10/PM2_5/AQI/Quality；日列统一带 _24h 后缀："
+                "SO2_24h/CO_24h/NO2_24h/O3_8h_24h/PM10_24h/PM2_5_24h）"
+                "\n- dat_zhongda_station_minute/dat_zhongda_station_hour：中大平台站点5分钟/小时数据"
+                "\n- dat_zhongda_city_hour：中大平台城市小时数据"
+                "\n- 国控站点小时/日长历史：改用 execute_crawler_sql_query，本工具不开放 dat_station_hour/dat_station_day"
+                "\n- city_168_statistics_new_standard/city_168_statistics_old_standard：168城市统计"
+                "\n- province_statistics_new_standard/province_statistics_old_standard：省级空气质量统计"
+                + schema_guide
+                + "\n\n提示：使用describe_table可查看白名单表的完整字段结构。"
+            )
         super().__init__(
             tool_name="execute_sql_query",
             tool_description="Execute monitoring SQL queries on SQL Server database or get table structure",
             schema_description=schema_description,
-            allowed_tables=MONITORING_SQL_TABLES,
+            allowed_tables=allowed_tables,
             default_database="XcAiDb",
+            alternate_table_hints=XUCHANG_CRAWLER_TABLE_HINTS if is_xuchang else None,
         )
 
 
@@ -973,19 +1243,25 @@ class ExecuteTenderSQLQueryTool(BaseSQLQueryTool):
     def __init__(self):
         schema_description = (
             "招投标数据SQL Server查询工具。支持二选一：describe_table查看表结构，或sql执行SELECT查询。"
-            "用于助手模式查询已抓取、初筛、详情清洗并入库的招标公告和中标公告。"
+            "用于通用助手查询已入库招标、中标、候选和更正公告，包含仅有列表信息及已补充完整详情的记录。"
             "只能查询下方列出的招投标白名单表；禁止查询其他业务库表。"
             "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回1000条。"
             "SQL Server语法：中文字符串必须加N前缀，如 N'生态环境局'；分页/限制用TOP，不支持LIMIT。"
             "database默认为XcAiDb。"
             "\n\n常用表说明："
             "\n- tender_notices：清洗后的目标公告主表，也是回答“某天有多少条招投标公告/有哪些公告”的最终事实表。包含title、notice_type、project_name、purchaser、winning_bidder、budget_amount、winning_amount、province、city、publish_date、project_category、summary、key_requirements_json、extraction_meta_json等字段。"
-            "\n- tender_notice_contents：公告原文内容表，按url关联tender_notices，包含raw_content等大文本字段。"
-            "\n- tender_candidates：列表页候选公告表，用于判断初筛和补录闭环状态。accepted候选表示已通过初筛；accepted候选LEFT JOIN tender_notices后n.url IS NULL的数量，才表示仍缺详情/仍未入库。"
+            "\n- 公告内容已合并到tender_notices，不再查询tender_notice_contents。raw_content为正文/列表文本；detail_fetched_at非空表示已获取知了详情，空值不能视为完整正文。detail_json保存详情API的data和meta，attachment_urls_json为附件JSON数组，detail_cost_units为最近一次详情请求积分，detail_fetched_at为UTC时间。"
+            "\n- 查询具体项目先SELECT TOP 20 id,bid_id,title,purchaser,publish_date,url,detail_fetched_at FROM tender_notices WHERE title LIKE N'%具体项目名%' ORDER BY publish_date DESC；需要服务要求、技术指标、标段明细等正文信息时，将确认的bid_id传给zhiliao_tender_detail工具，工具自动获取并入库，多个同名公告应先确认，不猜测。"
+            "\n- 列表统计不要SELECT *或读取大型raw_content/detail_json；仅选择所需独立列。money为API原始元金额，money_wan为原始万元金额；最终中标金额仍用winning_amount_wan_yuan，元金额可由它乘10000。"
+            "\n- tender_candidates：列表页候选公告表，用于判断初筛和补录闭环状态。accepted候选表示已通过初筛或保留策略，不能据此认定与核心业务相关；accepted候选LEFT JOIN tender_notices后n.url IS NULL的数量，才表示仍缺详情/仍未入库。"
+            "\n- API信息已有独立列：county区县、bid_id、caller_id、agency_name、winner_names中标/候选供应商原始列表、winner_ids、winner_moneys原始元金额列表、sm_names标的物列表、brand_names品牌列表、tender_names等；采购单位仍用purchaser，公告链接用url，省市用province/city。"
+            "\n- 分类优先读取独立列business_type、content_tags、classification_status、notice_stage；原始副本仍保留在extraction_meta_json.classification。content_tags、winner_names、sm_names、brand_names等独立列为JSON数组，可用OPENJSON展开后精确匹配和GROUP BY统计；一次只展开所需数组，避免多个数组笛卡尔积。"
+            "\n- winner_names包括API候选供应商，统计最终中标须筛选notice_stage='final_result'并按公告ID去重；统计金额用winning_amount_wan_yuan，不使用含义未确认的money/money_wan。不要把公告数当项目数，也不要把候选或更正金额重复计入中标合计。"
+            "\n- 知了API回补与旧千里马记录可能包含同一公告。统计知了回补范围时增加bid_id IS NOT NULL，并按bid_id去重；跨来源统计须先明确去重口径，不直接累加两个来源的公告数。"
             "\n- tender_fetch_runs：抓取执行日志表，可能保留初次失败、补录中断、重试成功等多轮历史记录。它只用于排障，不是最终业务状态；不要累加saved_notices，不要仅因旧run存在detail_fetch_failures就判断补录未完成。"
             "\n\n判断口径："
             "\n- 最终入库数量：只统计tender_notices，按publish_date去重后的事实表结果为准。"
-            "\n- 补录是否完成：统计accepted候选中尚未在tender_notices出现的数量；为0表示已通过详情页抓取/复核闭环，即使历史run仍有失败日志。"
+            "\n- 补录是否完成：统计accepted候选中尚未在tender_notices出现的数量；为0表示已入库闭环，即使历史run仍有失败日志；不表示已获取详情或所有业务分类均确认，仍需查看classification_status。"
             "\n- run状态解读：tender_fetch_runs.status=partial_failed/failed/interrupted只说明该执行批次有错误或被中断，不代表该日期最终未完成；需要结合最终入库和accepted_missing_notice判断。"
             "\n\n常见查询："
             "\n- 某日最终入库公告：SELECT TOP 50 title, notice_type, purchaser, publish_date FROM tender_notices WHERE publish_date = '2026-07-01' ORDER BY id DESC"
@@ -993,6 +1269,16 @@ class ExecuteTenderSQLQueryTool(BaseSQLQueryTool):
             "\n- 某日候选初筛统计：SELECT filter_status, decision_source, COUNT(*) AS cnt FROM tender_candidates WHERE publish_date = '2026-07-01' GROUP BY filter_status, decision_source"
             "\n- 最近执行日志排障：SELECT TOP 10 id, target_date, status, total_candidates, detail_fetch_failures, saved_notices, started_at, finished_at FROM tender_fetch_runs ORDER BY started_at DESC"
             "\n\n提示：使用describe_table可查看白名单表的完整字段结构。"
+        )
+        from app.services.tenders.taxonomy import BUSINESS_TYPES, CONTENT_TAGS
+        schema_description += (
+            "\n- business_type类型合法值：" + "、".join(BUSINESS_TYPES) + "。"
+            "\n- content_tags内容标签合法值：" + "、".join(CONTENT_TAGS) + "。"
+            "\n- classification_status为classified或needs_review；待复核记录也保留，除非用户指定不要默认过滤。"
+            "notice_stage为final_result最终结果、candidate候选、correction更正、contract合同、tender招标、other或unknown。"
+            "\n- 分类查询示例：SELECT TOP 50 bid_id,title,business_type,content_tags,publish_date FROM tender_notices WHERE business_type=N'运维服务' ORDER BY publish_date DESC。"
+            "\n- 标签查询示例：SELECT TOP 50 n.bid_id,n.title,n.publish_date FROM tender_notices n WHERE EXISTS (SELECT 1 FROM OPENJSON(n.content_tags) t WHERE t.value=N'AI') ORDER BY n.publish_date DESC。"
+            "\n- 省份城市区县用province/city/county；供应商名称匹配用winner_names的OPENJSON，不把包含候选的原始名单都当最终中标。日期区间建议publish_date>=开始日期 AND publish_date<下月首日。"
         )
         super().__init__(
             tool_name="execute_tender_sql_query",

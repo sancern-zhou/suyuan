@@ -1,4 +1,5 @@
 from app.agent.prompts.prompt_builder import build_react_system_prompt
+from app.agent.prompts.tool_registry import AGENT_HIDDEN_TOOL_NAMES
 from app.agent import tool_adapter
 from app.agent.react_agent import create_react_agent
 from app.agent.runtime.agent_runtime import AgentRuntime, CustomAgentTerminalError
@@ -27,13 +28,19 @@ class FakeRegistry:
 
 
 def test_custom_prompt_is_minimal_and_uses_no_business_role_prompt():
+    from app.agent.prompts.custom_prompt import build_custom_prompt
+
+    base = build_custom_prompt(["alpha"])
     prompt = build_react_system_prompt("custom", available_tools=["alpha"])
 
-    assert "按用户任务执行" in prompt
-    assert "只能调用运行时提供的工具" in prompt
-    assert "空气质量" not in prompt
-    assert "社交" not in prompt
-    assert len(prompt) < 500
+    assert "按用户任务执行" in base
+    assert "只能调用运行时提供的工具" in base
+    assert "空气质量" not in base
+    assert "社交" not in base
+    assert len(base) < 900
+    # The minimal role still receives the common platform contracts.
+    assert prompt.startswith(base.rstrip())
+    assert "环境空气质量标准过渡实施阶段" in prompt
 
 
 def test_custom_tool_schemas_are_exact_and_keep_user_order(monkeypatch):
@@ -45,6 +52,20 @@ def test_custom_tool_schemas_are_exact_and_keep_user_order(monkeypatch):
     )
 
     assert [schema["name"] for schema in schemas] == ["gamma", "alpha"]
+
+
+def test_custom_tool_schemas_exclude_agent_hidden_tools(monkeypatch):
+    hidden_tool = next(iter(AGENT_HIDDEN_TOOL_NAMES))
+    registry = FakeRegistry()
+    registry.tools.append(FakeTool(hidden_tool))
+    monkeypatch.setattr(tool_adapter, "global_tool_registry", registry)
+
+    schemas = tool_adapter.get_tool_schemas(
+        mode="custom",
+        allowed_tool_names=[hidden_tool, "alpha"],
+    )
+
+    assert [schema["name"] for schema in schemas] == ["alpha"]
 
 
 def test_react_agent_factory_accepts_an_explicit_registry(monkeypatch):
@@ -86,6 +107,36 @@ def test_custom_runtime_stops_if_a_selected_tool_becomes_unavailable():
     }]
 
     with pytest.raises(CustomAgentTerminalError, match="工具状态已变化"):
+        AgentRuntime._enforce_custom_tool_terminal_rules(state, {}, records)
+
+
+def test_custom_runtime_allows_first_missing_tool_call_for_self_correction():
+    state = RunState(session_id="s", user_query="run", mode="custom")
+    records = [{
+        "tool_name": "read",
+        "tool_input": {"path": "backend/backend_data_registry/x/manifest.json"},
+        "result": {
+            "success": False,
+            "error": "工具不存在: read",
+            "available_tools": ["read_file", "execute_python"],
+        },
+    }]
+
+    AgentRuntime._enforce_custom_tool_terminal_rules(state, {}, records)
+
+    assert state.last_missing_tool_signature is not None
+
+
+def test_custom_runtime_terminates_on_repeated_identical_missing_tool_call():
+    state = RunState(session_id="s", user_query="run", mode="custom")
+    records = [{
+        "tool_name": "read",
+        "tool_input": {"path": "backend/x/manifest.json"},
+        "result": {"success": False, "error": "工具不存在: read"},
+    }]
+
+    AgentRuntime._enforce_custom_tool_terminal_rules(state, {}, records)
+    with pytest.raises(CustomAgentTerminalError, match="工具不存在且重复调用"):
         AgentRuntime._enforce_custom_tool_terminal_rules(state, {}, records)
 
 
@@ -146,7 +197,7 @@ async def test_ppt_runtime_stops_immediately_when_token_plan_is_exhausted():
     runtime._run_iteration = failing_iteration
     state = RunState(session_id="s", user_query="run", mode="ppt")
 
-    events = [event async for event in runtime._run_locked(state, None)]
+    events = [event async for event in runtime._run(state, None)]
 
     assert calls == 1
     assert events[-1]["type"] == "fatal_error"
@@ -190,7 +241,7 @@ async def test_ppt_runtime_breaks_after_two_deterministic_model_failures():
     runtime._run_iteration = failing_iteration
     state = RunState(session_id="s", user_query="run", mode="ppt")
 
-    events = [event async for event in runtime._run_locked(state, None)]
+    events = [event async for event in runtime._run(state, None)]
 
     assert calls == 2
     assert events[-1]["type"] == "fatal_error"
@@ -222,7 +273,7 @@ async def test_custom_iteration_limit_emits_fatal_failure_not_continue_prompt():
     runtime._run_iteration = no_events
     state = RunState(session_id="s", user_query="run", mode="custom")
 
-    events = [event async for event in runtime._run_locked(state, None)]
+    events = [event async for event in runtime._run(state, None)]
 
     assert events[-1]["type"] == "fatal_error"
     assert "未形成成功或失败终态" in events[-1]["data"]["error"]
@@ -261,7 +312,7 @@ async def test_custom_runtime_breaks_after_two_deterministic_model_failures():
     runtime._run_iteration = failing_iteration
     state = RunState(session_id="s", user_query="run", mode="custom")
 
-    events = [event async for event in runtime._run_locked(state, None)]
+    events = [event async for event in runtime._run(state, None)]
 
     assert calls == 2
     assert events[-1]["type"] == "fatal_error"

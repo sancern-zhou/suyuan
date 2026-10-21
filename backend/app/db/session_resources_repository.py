@@ -18,7 +18,7 @@ from app.agent.resources.resource_service import (
     stable_resource_id,
     validate_publication,
 )
-from app.db.database import session_engine
+from app.db.session_database import session_engine
 from app.db.models_session import SessionResourceDB, SessionResourceVersionDB
 
 

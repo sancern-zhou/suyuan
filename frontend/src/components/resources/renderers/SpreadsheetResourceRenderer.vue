@@ -219,14 +219,14 @@ watch(() => props.contentUrl, loadWorkbook)
 </script>
 
 <style scoped>
-.excel-editor { display: flex; height: 100%; min-height: 0; flex-direction: column; background: #fff; }
-.excel-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid #d8deea; background: #f7f9fc; }
+.excel-editor { display: flex; height: 100%; min-height: 0; flex-direction: column; background: var(--bg-container); }
+.excel-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border-2); background: var(--bg-muted); }
 .dirty-state { align-self: center; padding: 3px 7px; border-radius: 999px; background: #fff4e5; color: #a15c00; font-size: 11px; white-space: nowrap; }
 .sheet-tabs, .toolbar-actions { display: flex; gap: 6px; }.sheet-tabs { min-width: 0; overflow-x: auto; }
-button { min-height: 30px; padding: 5px 10px; border: 1px solid #cfd7e6; border-radius: 5px; background: #fff; color: #334155; cursor: pointer; white-space: nowrap; }
-button:disabled { cursor: wait; opacity: .55; }.sheet-tab.active { border-color: #2374d5; background: #eef6ff; color: #145ca8; }.primary { border-color: #2374d5; background: #2374d5; color: #fff; }
+button { min-height: 30px; padding: 5px 10px; border: 1px solid #cfd7e6; border-radius: 5px; background: var(--bg-container); color: var(--text-1); cursor: pointer; white-space: nowrap; }
+button:disabled { cursor: wait; opacity: .55; }.sheet-tab.active { border-color: #2374d5; background: #eef6ff; color: #145ca8; }.primary { border-color: #2374d5; background: #2374d5; color: var(--bg-container); }
 .sheet-container { min-height: 0; flex: 1; overflow: auto; }.sheet-table { min-width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
-.corner-cell, .column-header, .row-header { position: sticky; z-index: 1; border: 1px solid #d8deea; background: #eef2f7; color: #475569; font-weight: 600; }.column-header { top: 0; width: 140px; min-width: 140px; height: 28px; }.row-header { left: 0; width: 46px; min-width: 46px; height: 30px; text-align: center; }.corner-cell { top: 0; left: 0; z-index: 2; width: 46px; }
-td { width: 140px; min-width: 140px; height: 30px; padding: 0; border: 1px solid #e2e8f0; }.cell-input { width: 100%; height: 30px; padding: 4px 8px; box-sizing: border-box; border: 0; outline: 0; background: #fff; font: inherit; }.cell-input:focus { box-shadow: inset 0 0 0 2px #2374d5; }
-.excel-state { display: grid; min-height: 0; flex: 1; place-content: center; color: #64748b; }.error, .excel-status.error { color: #b42318; }.excel-status { padding: 7px 12px; border-top: 1px solid #d8deea; color: #15803d; font-size: 12px; }
+.corner-cell, .column-header, .row-header { position: sticky; z-index: 1; border: 1px solid var(--border-2); background: #eef2f7; color: var(--text-2); font-weight: 600; }.column-header { top: 0; width: 140px; min-width: 140px; height: 28px; }.row-header { left: 0; width: 46px; min-width: 46px; height: 30px; text-align: center; }.corner-cell { top: 0; left: 0; z-index: 2; width: 46px; }
+td { width: 140px; min-width: 140px; height: 30px; padding: 0; border: 1px solid var(--border-2); }.cell-input { width: 100%; height: 30px; padding: 4px 8px; box-sizing: border-box; border: 0; outline: 0; background: var(--bg-container); font: inherit; }.cell-input:focus { box-shadow: inset 0 0 0 2px #2374d5; }
+.excel-state { display: grid; min-height: 0; flex: 1; place-content: center; color: var(--text-2); }.error, .excel-status.error { color: var(--color-danger); }.excel-status { padding: 7px 12px; border-top: 1px solid var(--border-2); color: #15803d; font-size: 12px; }
 </style>

@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 import asyncio
 from pathlib import Path
+from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import structlog
@@ -15,7 +16,6 @@ from .conversation_writer import ConversationWriter
 from .event_bus import RuntimeEventBus
 from .finalizer import Finalizer
 from .observation_processor import ObservationProcessor
-from .session_queue import SessionRunQueue
 from .tool_coordinator import ToolCoordinator
 from .tool_classification import HOUSEKEEPING_TOOL_NAMES, all_housekeeping_tools
 from .transcript_repairer import TranscriptRepairer
@@ -25,6 +25,14 @@ from .mode_capabilities import supports_native_multimodal
 from .ownership import run_ownership_registry
 from .steering import steering_registry
 from ..context.context_diagnostics import ContextDiagnostics
+from ..workflow.mode_workflows import (
+    allowed_tools as fixed_workflow_allowed_tools,
+    can_complete as fixed_workflow_can_complete,
+    current_phase as fixed_workflow_current_phase,
+    get_mode_workflow,
+    observe_tool_results as observe_fixed_workflow_tool_results,
+    render_phase_prompt,
+)
 
 logger = structlog.get_logger()
 
@@ -54,6 +62,7 @@ class AgentRuntimeConfig:
     runtime_mode: Optional[str] = None
     user_identifier: Optional[str] = None
     board_context: Optional[Dict[str, Any]] = None
+    extra_tool_names: Optional[List[str]] = None
 
 
 class AgentRuntime:
@@ -75,7 +84,6 @@ class AgentRuntime:
         )
         self.observation_processor = ObservationProcessor(self.finalizer, self.events, memory_manager=self.memory)
         self.transcript_repairer = TranscriptRepairer()
-        self.session_queue = SessionRunQueue()
         self.context_diagnostics = ContextDiagnostics()
 
     async def run(
@@ -93,11 +101,18 @@ class AgentRuntime:
         )
         self.executor.resource_run_id = state.run_id
 
+        if self.config.cancel_event is not None:
+            if not await cancellation_registry.attach_run_id(
+                state.session_id, self.config.cancel_event, state.run_id
+            ):
+                raise AgentRunCancelled("session_run_registration_rejected")
         await run_ownership_registry.register(state.session_id, state.run_id)
         await steering_registry.register(state.session_id, state.run_id, state.mode)
         try:
-            async for event in self._run_locked(state, initial_messages):
-                yield self._with_run_identity(state, event)
+            from app.services.model_trajectory import trajectory_scope
+            with trajectory_scope(state.session_id, run_id=state.run_id):
+                async for event in self._run(state, initial_messages):
+                    yield self._with_run_identity(state, event)
         finally:
             await steering_registry.unregister(state.session_id, state.run_id)
 
@@ -110,7 +125,7 @@ class AgentRuntime:
             data.setdefault("run_id", state.run_id)
         return event
 
-    async def _run_locked(
+    async def _run(
         self,
         state: RunState,
         initial_messages: Optional[List[Dict[str, Any]]],
@@ -133,9 +148,17 @@ class AgentRuntime:
             self.planner.is_interruption = self.config.is_interruption
             self.writer.load_initial_history_if_needed(initial_messages)
 
+            if (state.mode or "").lower() == "knowledge":
+                await self._prefetch_knowledge_evidence(state)
+
             yield self.events.start(state)
 
-            while state.iteration < self.config.max_iterations and not state.task_completed:
+            workflow_definition = get_mode_workflow(state.mode)
+            iteration_limit = min(
+                self.config.max_iterations,
+                workflow_definition.max_iterations if workflow_definition else self.config.max_iterations,
+            )
+            while state.iteration < iteration_limit and not state.task_completed:
                 self._raise_if_cancelled()
                 state.iteration += 1
                 try:
@@ -227,9 +250,37 @@ class AgentRuntime:
             async for event in self.finalizer.fatal_error(state, exc):
                 yield event
 
+    async def _prefetch_knowledge_evidence(self, state: RunState) -> None:
+        """知识问答模式首轮固定预取：检索证据包注入系统上下文。
+
+        仅首轮（会话无历史）执行；追问轮由 agent 按需自行调 workflow 补检索。
+        失败静默降级——agent 退回原有的自主调 knowledge_qa_workflow 路径。
+        """
+        try:
+            history = self.memory.session.get_messages_for_llm()
+            if history:
+                return
+            from app.agent.context.knowledge_evidence import build_first_turn_evidence
+
+            evidence = await build_first_turn_evidence(
+                state.user_query,
+                user_id=self.config.user_identifier,
+                knowledge_base_ids=self.config.knowledge_base_ids,
+            )
+            if evidence:
+                self.context_builder.knowledge_evidence_context = evidence
+        except Exception as exc:
+            logger.warning(
+                "knowledge_evidence_prefetch_failed",
+                session_id=state.session_id,
+                query=state.user_query[:60],
+                error=str(exc),
+            )
+
     async def _run_iteration(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
         context_result, conversation_history = await self._build_context(state)
         attachments = self._effective_attachments(state)
+        self._record_visual_context(state, attachments)
         if supports_native_multimodal(state.mode) and attachments:
             from .multimodal import build_anthropic_user_content, build_persisted_user_content
 
@@ -273,13 +324,40 @@ class AgentRuntime:
             yield event
 
         if action_type == "PLAIN_TEXT_REPLY":
+            workflow_definition = get_mode_workflow(state.mode)
+            if workflow_definition and not fixed_workflow_can_complete(
+                workflow_definition, state.fixed_workflow_progress
+            ):
+                observation = {
+                    "success": False,
+                    "error": "fixed_workflow_phase_incomplete",
+                    "summary": "当前固定工作流仍处于批量取数阶段，请调用本阶段查询工具后再交付。",
+                }
+                self._ensure_user_message_written(state)
+                self.writer.add_iteration(planner_result.thought, action, observation)
+                state.last_observation = observation
+                return
             async for event in self._complete_response(state, planner_result, action.get("answer", "")):
                 yield event
             return
 
+        if action_type == "INTERNAL_COMPACTION":
+            logger.warning(
+                "internal_compaction_response_suppressed",
+                iteration=state.iteration,
+                reason=action.get("reason"),
+            )
+            # The compact result is runtime state, not a user response. Returning
+            # lets the outer loop issue the next planning request without emitting
+            # a completion or persisting the leaked summary.
+            return
+
         if action_type in ("TOOL_CALL", "TOOL_CALLS"):
             self._raise_if_cancelled()
-            suppressed_observation = self._suppressed_housekeeping_observation(state, action)
+            suppressed_observation = (
+                self._fixed_workflow_blocked_observation(state, action)
+                or self._suppressed_housekeeping_observation(state, action)
+            )
             if suppressed_observation is not None:
                 tool_call_id = action.get("tool_call_id", f"fallback_{action.get('tool', '')}")
                 tool_name = action.get("tool", "")
@@ -300,9 +378,17 @@ class AgentRuntime:
             self._ensure_user_message_written(state)
             self.writer.add_tool_exchange(records, planner_result)
             self.writer.add_iteration(planner_result.thought, action, observation)
+            self._observe_fixed_workflow(state, records)
             self._enforce_custom_tool_terminal_rules(state, action, records)
             for event in tool_events:
                 yield event
+            interaction = self._interaction_from_observation(observation)
+            if interaction is not None:
+                async for event in self._finish_for_interaction(
+                    state, planner_result, interaction
+                ):
+                    yield event
+                return
             async for event in self.observation_processor.process(state, planner_result, action, observation):
                 yield event
             return
@@ -327,6 +413,75 @@ class AgentRuntime:
         if state.pending_attachments:
             attachments.extend(state.pending_attachments)
         return attachments
+
+    def _record_visual_context(
+        self,
+        state: RunState,
+        attachments: List[Dict[str, Any]],
+    ) -> None:
+        """Persist lightweight visual references without persisting image bytes.
+
+        Native image blocks are current planner inputs. The session metadata is
+        only an index for later turns and recovery; it is never appended to
+        every prompt automatically.
+        """
+        memory = getattr(self, "memory", None)
+        if not attachments or not hasattr(memory, "session"):
+            return
+        metadata = getattr(memory.session, "metadata", None)
+        if not isinstance(metadata, dict):
+            return
+        existing = metadata.setdefault("visual_context", [])
+        if not isinstance(existing, list):
+            existing = []
+            metadata["visual_context"] = existing
+
+        now = datetime.now().isoformat()
+        for attachment in attachments:
+            if not isinstance(attachment, dict) or attachment.get("type") != "image":
+                continue
+            path_value = attachment.get("local_path") or attachment.get("path")
+            resource_id = attachment.get("resource_id") or attachment.get("ref_id")
+            key = (
+                f"resource:{resource_id}" if resource_id else
+                f"path:{path_value}" if path_value else
+                f"name:{attachment.get('name') or 'image'}"
+            )
+            fingerprint: Dict[str, Any] = {}
+            if path_value:
+                try:
+                    stat = Path(str(path_value)).stat()
+                    fingerprint = {
+                        "size": stat.st_size,
+                        "mtime_ns": stat.st_mtime_ns,
+                        "inode": getattr(stat, "st_ino", None),
+                    }
+                except OSError:
+                    pass
+            entry = next((item for item in existing if isinstance(item, dict) and item.get("key") == key), None)
+            if entry is None:
+                entry = {
+                    "key": key,
+                    "type": "image",
+                    "name": attachment.get("name") or "image",
+                    "mime_type": attachment.get("mime_type") or attachment.get("content_type"),
+                    **({"resource_id": resource_id} if resource_id else {}),
+                    **({"path": path_value} if path_value else {}),
+                    "seen_count": 0,
+                }
+                existing.append(entry)
+            entry.update({
+                "last_attached_at": now,
+                "last_attached_run_id": state.run_id,
+                "last_attached_iteration": state.iteration,
+                "seen_count": int(entry.get("seen_count") or 0) + 1,
+                **({"fingerprint": fingerprint} if fingerprint else {}),
+            })
+
+        # Keep session metadata bounded while retaining the most recently used
+        # visual references for recovery and explicit re-attachment.
+        existing.sort(key=lambda item: str(item.get("last_attached_at") or ""))
+        del existing[:-32]
 
     def _consume_effective_attachments(self, state: RunState) -> None:
         for attachment in self._effective_attachments(state):
@@ -379,7 +534,7 @@ class AgentRuntime:
         """
         visual_tools = {
             "create_pptx_with_ppt_master",
-            "create_report_chart",
+            "create_business_chart",
             "create_drawio_board",
             "render_drawio_board_candidate",
             "edit_file",
@@ -411,7 +566,7 @@ class AgentRuntime:
         state: RunState,
         action: Optional[Dict[str, Any]] = None,
     ) -> None:
-        if state.mode in {"ppt", "chart"} and not self._action_materializes_visual_output(action):
+        if state.mode in {"ppt"} and not self._action_materializes_visual_output(action):
             logger.info(
                 "multimodal_attachments_retained_for_visual_materialization",
                 session_id=state.session_id,
@@ -472,6 +627,7 @@ class AgentRuntime:
             return
 
         state.pending_attachments.extend(filtered_attachments)
+        self._record_visual_context(state, filtered_attachments)
         logger.info(
             "multimodal_attachments_captured_from_tool",
             session_id=state.session_id,
@@ -642,6 +798,7 @@ class AgentRuntime:
             safe_attachments: List[Dict[str, str]] = []
             if item.attachments:
                 state.pending_attachments.extend(item.attachments)
+                self._record_visual_context(state, item.attachments)
                 attachment_count += len(item.attachments)
                 safe_attachments = self._resource_attachment_refs(item.attachments)
                 content = self._append_attachment_summary(content, item.attachments)
@@ -750,6 +907,17 @@ class AgentRuntime:
             mode=state.mode,
             is_interruption=self.config.is_interruption if state.iteration == 1 else False,
         )
+        workflow_definition = get_mode_workflow(state.mode)
+        if workflow_definition:
+            phase_prompt = render_phase_prompt(
+                workflow_definition, state.fixed_workflow_progress
+            )
+            context_result["system_prompt"] = (
+                f"{context_result.get('system_prompt', '').rstrip()}\n\n{phase_prompt}"
+            ).strip()
+            blocks = list(context_result.get("system_prompt_blocks") or [])
+            blocks.append({"type": "text", "text": phase_prompt})
+            context_result["system_prompt_blocks"] = blocks
         conversation_history = self.memory.session.get_messages_for_llm()
         conversation_history = self.transcript_repairer.repair(conversation_history)
         return context_result, conversation_history
@@ -764,14 +932,28 @@ class AgentRuntime:
         from ..core.streaming_tool_executor import StreamingToolExecutor
 
         # 按模式过滤工具 schema（节省 token）
+        allowed_tool_names = self._allowed_tool_names_for_state(state)
         tool_schemas = get_tool_schemas(
             mode=state.mode,
-            allowed_tool_names=(
-                list(self.executor.tool_registry.keys())
-                if state.mode == "custom" and hasattr(self.executor, "tool_registry")
-                else None
-            ),
+            allowed_tool_names=allowed_tool_names,
         )
+        # 动态注入的工具（如 call_sub_agent 按 result_schema 注入的 submit_result）
+        # 只存在于本 executor 的注册表，不在 global_tool_registry，
+        # get_tool_schemas 拿不到其 schema；这里从注册表补齐，否则模型
+        # 函数调用列表里看不到交付工具，永远无法结构化交付。
+        present = {
+            (schema.get("name") or schema.get("function", {}).get("name"))
+            for schema in tool_schemas
+        }
+        executor_registry = getattr(self.executor, "tool_registry", None) or {}
+        for name in allowed_tool_names or []:
+            if not name or name in present or name not in executor_registry:
+                continue
+            dynamic_tool = executor_registry[name]
+            getter = getattr(dynamic_tool, "get_function_schema", None)
+            schema = getter() if callable(getter) else getattr(dynamic_tool, "function_schema", None)
+            if isinstance(schema, dict) and schema.get("name"):
+                tool_schemas.append(schema)
         suppressed_tool_names = self._tool_names_to_suppress(state)
         state.suppress_tool_names_current_turn = suppressed_tool_names
         if suppressed_tool_names:
@@ -790,6 +972,15 @@ class AgentRuntime:
         tool_schema_chars = len(json.dumps(tool_schemas, ensure_ascii=False, default=str))
         tool_schema_tokens_est = int(tool_schema_chars / 1.5)
         context_tokens = context_result.get("tokens", {})
+        state.context_estimate_tokens = (
+            int(context_tokens.get("total") or 0) + int(tool_schema_tokens_est)
+        )
+        state.context_breakdown = {
+            "system_prompt": int(context_tokens.get("system") or 0),
+            "messages": int(context_tokens.get("user") or 0)
+            + int(context_tokens.get("history") or 0),
+            "tools": int(tool_schema_tokens_est),
+        }
         logger.info(
             "planner_context_with_tools",
             mode=state.mode,
@@ -815,9 +1006,14 @@ class AgentRuntime:
             tool_executor=self.executor,
             tool_registry=self.executor.tool_registry if hasattr(self.executor, "tool_registry") else {},
             loop_guard=self.tool_coordinator.loop_guard,
+            max_concurrency=4 if get_mode_workflow(state.mode) else 10,
         )
         await cancellation_registry.attach_streaming_executor(state.session_id, streaming_tool_executor)
+        usage_at_stream_start = state.last_context_usage
         buffer = AssistantStreamBuffer()
+        from .visual_alias import ChartAliasStreamFilter
+
+        chart_alias_filter = ChartAliasStreamFilter(state.session_id)
         planner_result = PlannerResult()
         user_content = None
         attachments = self._effective_attachments(state)
@@ -849,12 +1045,13 @@ class AgentRuntime:
             if event_type == "streaming_text":
                 chunk = event["data"].get("chunk", "")
                 is_complete = event["data"].get("is_complete", False)
-                visible = buffer.append(chunk)
+                visible = await chart_alias_filter.append(buffer.append(chunk))
                 if visible:
                     planner_result.streamed_assistant_text = True
                     yield self.events.assistant_delta(state, visible, is_complete=False)
                 if is_complete and not buffer.suppress_after_tool_use:
-                    flushed = buffer.flush()
+                    flushed = await chart_alias_filter.append(buffer.flush())
+                    flushed += await chart_alias_filter.flush()
                     if flushed:
                         planner_result.streamed_assistant_text = True
                         yield self.events.assistant_delta(state, flushed, is_complete=False)
@@ -875,6 +1072,14 @@ class AgentRuntime:
                 if content:
                     yield self.events.thinking_content(state, content)
 
+            elif event_type == "context_usage":
+                usage_data = event.get("data") or {}
+                if usage_data and state.context_breakdown:
+                    usage_data.setdefault("breakdown", dict(state.context_breakdown))
+                state.last_context_usage = usage_data
+                yield event
+                await self._persist_context_usage(state, usage_data)
+
             elif event_type == "tool_use":
                 tool_data = event["data"]
                 tool_use_id = tool_data.get("tool_use_id", "")
@@ -893,7 +1098,10 @@ class AgentRuntime:
                     "tool_call_id": tool_use_id,
                     "args": tool_input,
                 }
-                suppressed_observation = self._suppressed_housekeeping_observation(state, tool_action)
+                suppressed_observation = (
+                    self._fixed_workflow_blocked_observation(state, tool_action)
+                    or self._suppressed_housekeeping_observation(state, tool_action)
+                )
                 if preparation_error is not None:
                     streaming_tool_executor.addCompletedTool(
                         tool_use_id=tool_use_id,
@@ -945,16 +1153,133 @@ class AgentRuntime:
         if planner_result.action and planner_result.action.get("type") in ("TOOL_CALL", "TOOL_CALLS"):
             planner_result.tool_calls = self.tool_coordinator.tool_calls_from_action(planner_result.action)
 
+        # 部分网关不回传 input_tokens（如 scnet anthropic_messages：message_start 全 0、
+        # message_delta 仅 output_tokens），planner 全程产不出 context_usage。用本轮
+        # 上下文构建阶段的 token 估算合成快照兜底，保证前端指示器始终有数可显。
+        if (
+            state.last_context_usage is usage_at_stream_start
+            and state.context_estimate_tokens
+        ):
+            from config.settings import settings
+
+            estimate = {
+                "input_tokens": int(state.context_estimate_tokens),
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "context_tokens": int(state.context_estimate_tokens),
+                "context_window": settings.llm_context_window_tokens,
+                "model": self.config.llm_model,
+                "timestamp": datetime.now().isoformat(),
+                "estimated": True,
+            }
+            if state.context_breakdown:
+                estimate["breakdown"] = dict(state.context_breakdown)
+            state.last_context_usage = estimate
+            yield {"type": "context_usage", "data": estimate}
+            await self._persist_context_usage(state, estimate)
+
         yield {
             "type": "_planner_done",
             "planner_result": planner_result,
             "streaming_tool_executor": streaming_tool_executor,
         }
 
+    async def _persist_context_usage(self, state: RunState, usage_data: Dict[str, Any]) -> None:
+        """把最近一次上下文占用快照写入 session_metadata，供会话恢复后展示。"""
+        if not usage_data:
+            return
+        try:
+            from app.agent.session.session_resolver import save_context_usage_for_mode
+
+            await save_context_usage_for_mode(
+                state.session_id,
+                usage_data,
+                mode=getattr(getattr(self, "context_builder", None), "session_storage_mode", None) or state.mode,
+            )
+        except Exception as exc:
+            logger.warning(
+                "context_usage_persist_failed",
+                session_id=state.session_id,
+                error=str(exc),
+            )
+
+    def _allowed_tool_names_for_state(self, state: RunState) -> Optional[List[str]]:
+        if state.mode == "custom" and hasattr(self.executor, "tool_registry"):
+            return list(self.executor.tool_registry.keys())
+        from app.agent.prompts.tool_registry import get_tools_by_mode
+
+        names = list(get_tools_by_mode(state.mode).keys())
+        if state.mode not in {"assistant", "office"}:
+            names.extend(self.config.extra_tool_names or [])
+        # 结构化交付：call_sub_agent 给带 result_schema 的子会话动态注入
+        # submit_result（不在模式白名单里）。它已注入 child registry 时必须
+        # 进入候选名单，否则阶段过滤会把交付工具整体滤掉。
+        executor = getattr(self, "executor", None)
+        executor_registry = getattr(executor, "tool_registry", None) or {}
+        if "submit_result" in executor_registry:
+            names.append("submit_result")
+        workflow_definition = get_mode_workflow(state.mode)
+        if workflow_definition:
+            phase_tools = fixed_workflow_allowed_tools(
+                workflow_definition, state.fixed_workflow_progress
+            )
+            # submit_result 由 call_sub_agent 按结果协议动态注入 child registry，
+            # 不在模式白名单里；它是交付边界工具，任何阶段都必须保持可见，
+            # 否则带 result_schema 的问数节点无法结构化交付。
+            names = [
+                name for name in names
+                if name in phase_tools or name == "submit_result"
+            ]
+        elif not self.config.extra_tool_names and state.mode not in {"assistant", "office"}:
+            return None
+        return list(dict.fromkeys(names))
+
+    def _fixed_workflow_blocked_observation(
+        self,
+        state: RunState,
+        action: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        definition = get_mode_workflow(state.mode)
+        if definition is None:
+            return None
+        allowed = fixed_workflow_allowed_tools(definition, state.fixed_workflow_progress)
+        requested = [name for name, _ in self._planner_action_tool_calls(action)]
+        # submit_result 是交付边界工具（见 _allowed_tool_names_for_state），全阶段放行。
+        blocked = [
+            name for name in requested
+            if name not in allowed and name != "submit_result"
+        ]
+        if not blocked:
+            return None
+        phase = fixed_workflow_current_phase(definition, state.fixed_workflow_progress)
+        return {
+            "success": False,
+            "error": "fixed_workflow_tool_not_allowed",
+            "data": {"phase": phase.name, "blocked_tools": blocked},
+            "summary": (
+                f"固定工作流阶段 {phase.name} 不允许调用 {', '.join(blocked)}；"
+                "请使用本阶段可见工具继续。"
+            ),
+        }
+
+    @staticmethod
+    def _observe_fixed_workflow(
+        state: RunState,
+        records: List[Dict[str, Any]],
+    ) -> None:
+        definition = get_mode_workflow(state.mode)
+        if definition:
+            observe_fixed_workflow_tool_results(
+                definition, state.fixed_workflow_progress, records
+            )
+
     def _tool_names_to_suppress(self, state: RunState) -> set[str]:
         """Hide housekeeping tools after terminal/no-progress state updates."""
         suppressed = set(state.suppress_tool_names_next_turn)
         state.suppress_tool_names_next_turn.clear()
+        runtime_metadata = getattr(self.executor, "runtime_metadata", {}) or {}
+        if runtime_metadata.get("scheduled_task") or runtime_metadata.get("agent_depth", 0) > 0:
+            suppressed.add("ask_user_question")
         return suppressed
 
     def _suppressed_housekeeping_observation(
@@ -1084,7 +1409,16 @@ class AgentRuntime:
         self._ensure_user_message_written(state)
         self.writer.add_tool_exchange(records, planner_result)
         self.writer.add_iteration(planner_result.thought, action, observation)
+        self._observe_fixed_workflow(state, records)
         self._enforce_custom_tool_terminal_rules(state, action, records)
+
+        interaction = self._interaction_from_observation(observation)
+        if interaction is not None:
+            async for event in self._finish_for_interaction(
+                state, planner_result, interaction
+            ):
+                yield event
+            return
 
         async for event in self.observation_processor.process(state, planner_result, action, observation):
             yield event
@@ -1123,10 +1457,29 @@ class AgentRuntime:
     ) -> None:
         if state.mode != "custom":
             return
+        missing = next((
+            record for record in records
+            if isinstance(record.get("result"), dict)
+            and str(record["result"].get("error", "")).startswith("工具不存在:")
+        ), None)
+        if missing is not None:
+            # 模型写错工具名（该工具从未注册）不属于工具状态变化：把错误和
+            # available_tools 回传给模型自我纠正；仅当相同调用重复出现时才终止。
+            signature = json.dumps(
+                {"tool": missing.get("tool_name"), "args": missing.get("tool_input", {})},
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            )
+            if state.last_missing_tool_signature == signature:
+                raise CustomAgentTerminalError(
+                    f"custom Agent 工具不存在且重复调用: {missing['result'].get('error')}"
+                )
+            state.last_missing_tool_signature = signature
         unavailable = next((
             record for record in records
             if isinstance(record.get("result"), dict)
-            and str(record["result"].get("error", "")).startswith(("工具不可用:", "工具不存在:"))
+            and str(record["result"].get("error", "")).startswith("工具不可用:")
         ), None)
         if unavailable is not None:
             raise CustomAgentTerminalError(
@@ -1203,6 +1556,47 @@ class AgentRuntime:
     def _raise_if_cancelled(self) -> None:
         if self.config.cancel_event and self.config.cancel_event.is_set():
             raise AgentRunCancelled("用户已暂停本轮分析")
+
+    @staticmethod
+    def _interaction_from_observation(
+        observation: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        if not isinstance(observation, dict):
+            return None
+        results = [observation]
+        results.extend(
+            item.get("result") for item in (observation.get("tool_results") or [])
+            if isinstance(item, dict)
+        )
+        for result in results:
+            metadata = result.get("metadata") if isinstance(result, dict) else None
+            interaction = metadata.get("interaction_required") if isinstance(metadata, dict) else None
+            if isinstance(interaction, dict) and interaction.get("kind") in {"approval", "structured_question"}:
+                return interaction
+        return None
+
+    async def _finish_for_interaction(
+        self,
+        state: RunState,
+        planner_result: PlannerResult,
+        interaction: Dict[str, Any],
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """End this run with a paired tool result while awaiting the user."""
+        self._ensure_user_message_written(state)
+        state.response_text = (
+            "已暂停，等待用户回答后继续。"
+            if interaction.get("kind") == "structured_question"
+            else "已暂停，等待用户审批后继续。"
+        )
+        state.task_completed = True
+        yield self.events.interaction_required(state, interaction)
+        async for event in self.finalizer.complete(
+            state,
+            state.response_text,
+            planner_result=planner_result,
+            thought=planner_result.thought,
+        ):
+            yield event
 
     def _format_observation(self, observation: Dict[str, Any]) -> str:
         import json

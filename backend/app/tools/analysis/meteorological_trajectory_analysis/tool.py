@@ -463,7 +463,8 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
                     "generator_version": "2.0.0",
                     "source": "NOAA ARL READY HYSPLIT",
                     "job_id": result.get("job_id"),
-                    "trajectory_image_url": result.get("trajectory_image_url"),
+                    "trajectory_image_url": trajectory_image_url if trajectory_image_url != "N/A" else None,
+                    "noaa_result_page_url": result.get("noaa_result_page_url"),
                     "record_count": len(endpoints),
                     "field_mapping_applied": True,
                     "field_mapping_info": {
@@ -553,7 +554,11 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
         # 生成Markdown图片格式的URL
         trajectory_image_markdown = ""
         if trajectory_image_url and trajectory_image_url != "N/A":
-            trajectory_image_markdown = f"\n![轨迹分析图]({trajectory_image_url})\n"
+            trajectory_image_markdown = (
+                f"\n![轨迹分析图]({trajectory_image_url})\n"
+                "\n> 展示要求：回复中嵌入轨迹图时必须使用上方以 /api/image/ 开头的本地图片链接；"
+                "NOAA 任务页链接（trajresults.pl?jobidno=...）是 HTML 页面，不能作为图片地址嵌入。\n"
+            )
 
         lines = [
             f"## NOAA HYSPLIT{direction}轨迹分析 ({hours}小时)",

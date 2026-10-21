@@ -32,6 +32,7 @@ import re
 import ast
 import json
 import signal
+import weakref
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 import structlog
@@ -39,19 +40,42 @@ import structlog
 from app.tools.artifact_utils import attach_rendered_qmd_report_resources
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_refs import build_data_file_ref, build_file_ref, build_visual_ref, merge_refs
+from app.agent.context.data_shape import MAX_SHAPE_COLUMNS
 from app.utils.path_config import (
     PROJECT_ROOT,
+    agent_declared_input_roots,
+    describe_agent_read_policy,
     format_agent_path,
     get_charts_dir,
     get_data_registry,
     get_images_dir,
     get_python_output_dir,
     get_reports_dir,
+    is_path_within,
     resolve_agent_path,
+    is_agent_sensitive_path,
 )
-from app.utils.font_utils import BROWSER_CHART_FONT_FAMILY, select_preferred_chinese_font_path
+from app.utils.font_utils import BROWSER_CHART_FONT_FAMILY, select_preferred_chinese_font_path, get_font_manager
+from app.utils.visual_ids import new_visual_id
+from app.tools.visualization.create_business_chart.theme import REPORT_THEME, SERIES_COLORS, matplotlib_report_style
 
 logger = structlog.get_logger()
+
+_EXECUTION_LOCKS: weakref.WeakValueDictionary[tuple[int, str], asyncio.Lock] = weakref.WeakValueDictionary()
+_MAX_CAPTURE_BYTES = 256 * 1024
+
+
+def _execution_lock_for(context) -> Optional[asyncio.Lock]:
+    """Serialize executions sharing a session's writable artifact namespace."""
+    if context is None:
+        return None
+    session = getattr(getattr(getattr(context, "data_manager", None), "memory", None), "session", None)
+    session_dir = getattr(session, "data_dir", None)
+    session_key = str(session_dir or getattr(context, "session_id", "")).strip()
+    if not session_key:
+        return None
+    key = (id(asyncio.get_running_loop()), session_key)
+    return _EXECUTION_LOCKS.setdefault(key, asyncio.Lock())
 
 
 class ExecutePythonTool(LLMTool):
@@ -80,20 +104,24 @@ class ExecutePythonTool(LLMTool):
             name="execute_python",
             description=(
                 "执行 Python 代码，用于数据处理、数值计算、Excel/文件处理、"
-                "⭐ **自定义图表生成**：matplotlib/seaborn/plotly/bokeh 绘制复杂/3D/科研图表。"
-                "每次调用是独立环境；用 load_data(file_path) 读取会话数据文件，"
+                "⭐ **主要绘图工具**：matplotlib/seaborn 绘制日常分析、深度分析及正式报告图表。"
+                "每次调用是独立环境；读取输入文件须通过 input_files 声明，声明的路径可在代码中通过 input_files 列表访问；用 load_data(file_path) 读取会话数据文件，"
                 "跨调用或跨工具复用结构化结果必须用 save_data(...) 保存，并原样复用其返回的 file_path；"
                 "不得将自行写入或推断得到的中间数据路径传给后续工具。"
                 "生成 Excel、Word、PDF 等交付文件时必须先调用 artifact_path(filename) 获取输出路径，"
                 "再保存到该路径；工具会自动归档并返回真实 file_path。"
+                "数据/图表/报告三份规范手册位于 backend/app/tools/utility/ 下的 execute_python_data_manual.md、"
+                "execute_python_chart_manual.md、execute_python_report_manual.md；"
+                "配备 read_file 的模式在首次执行某类任务前必须先用 read_file 阅读对应手册（数据处理→data、绘图→chart、正式报告→report），不得凭记忆套用规范或限值；"
+                "未配备 read_file 的模式依据描述要点直接编写脚本即可。"
                 "⚠️ **图表选择策略**："
-                "① 标准报告图表（bar/line/scatter/pile/histogram等）→ 优先使用 create_report_chart；"
-                "② 复杂/自定义图表（3D图/多子图/任意极坐标/科研图表）→ 使用 execute_python + matplotlib/seaborn/plotly；"
+                "① 已支持的专用业务图型 → 所有模式必须使用 create_business_chart，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具；"
+                "② 其他通用/自定义图：专家/报告模式优先使用 execute_python，自动应用统一报告主题；问数模式优先使用 execute_echarts_python；"
                 "③ 流程图/架构图/步骤图 → 使用 call_sub_agent(target_mode='board') 调用画板Agent生成draw.io图片文件。"
                 "生成文件由工具自动归档并返回可复用路径。"
             ),
             category=ToolCategory.QUERY,
-            version="1.0.3",
+            version="1.1.0",
             requires_context=True  # ✅ 需要上下文以支持数据访问功能
         )
 
@@ -137,6 +165,7 @@ class ExecutePythonTool(LLMTool):
                 is_file_reader = (
                     func_name in {"open", "io.open", "get_raw_data", "load_data"}
                     or leaf_name.startswith("read_")
+                    or func_name in {"Path.read_text", "Path.read_bytes"}
                     or func_name in {"pd.load", "np.load"}
                 )
                 if is_file_reader and node.args:
@@ -161,17 +190,73 @@ class ExecutePythonTool(LLMTool):
             return assigned_strings.get(node.id)
         return None
 
-    def _build_allowed_data_files_payload(self, code: str, context) -> str:
+    def _validate_input_files(self, input_files, context) -> Optional[List[str]]:
+        """Resolve declared files without treating a declaration as authorization.
+
+        Authorization follows the one shared read policy in
+        ``path_config``: session files, run-authorized catalog paths and the
+        read-only data registry. Content-read surfaces (``read_file`` etc.)
+        share the same sensitive-path veto so the documented policy can never
+        drift from the enforced one.
+        """
+        if input_files is None:
+            return None  # Compatibility with existing literal-path callers.
+        if not isinstance(input_files, list) or len(input_files) > 256:
+            raise ValueError("input_files 必须是最多256项的文件路径数组")
+        if not input_files:
+            return []
+        if context is None:
+            raise ValueError("声明输入文件需要当前会话上下文")
+        try:
+            session_dir = resolve_agent_path(context.data_manager.memory.session.data_dir)
+        except (AttributeError, TypeError, ValueError):
+            session_dir = None
+        authorized = {
+            resolve_agent_path(path)
+            for path in [*(getattr(context, "available_file_paths", []) or []),
+                         *(getattr(context, "authorized_input_paths", []) or [])]
+            if path
+        }
+        declared_input_roots = agent_declared_input_roots()
+        resolved_files = []
+        for index, raw in enumerate(input_files):
+            if not isinstance(raw, str) or not raw.strip():
+                raise ValueError(f"input_files[{index}] 必须是非空文件路径")
+            path = resolve_agent_path(raw)
+            in_session = session_dir is not None and path.is_relative_to(session_dir)
+            if is_agent_sensitive_path(path):
+                raise ValueError(f"input_files[{index}] 指向敏感文件（密钥/凭据/.env 等），拒绝读取")
+            if path not in authorized and not in_session and not is_path_within(path, declared_input_roots):
+                logger.warning(
+                    "execute_python_input_file_rejected",
+                    declared_path=raw,
+                    resolved_path=str(path),
+                    session_dir=str(session_dir) if session_dir else None,
+                    authorized_count=len(authorized),
+                )
+                raise ValueError(
+                    f"input_files[{index}] 不可授权读取: {format_agent_path(path)}；"
+                    f"{describe_agent_read_policy()}"
+                )
+            if not path.is_file():
+                raise ValueError(f"input_files[{index}] 文件不存在或不是普通文件: {format_agent_path(path)}")
+            if str(path) not in resolved_files:
+                resolved_files.append(str(path))
+        return resolved_files
+
+    def _build_allowed_data_files_payload(self, code: str, context, input_files=None) -> str:
         """Build a small allowlist; the child loads data instead of embedding it in code."""
-        session_data_dir = Path(context.data_manager.memory.session.data_dir).resolve()
+        if input_files is not None:
+            return json.dumps(input_files, ensure_ascii=False)
+        session_data_dir = resolve_agent_path(context.data_manager.memory.session.data_dir)
         available_paths = {
-            str(Path(path).resolve())
+            str(resolve_agent_path(path))
             for path in getattr(context, "available_file_paths", []) or []
             if path
         }
         # Durable catalog inputs (uploads etc.) count as authorized reads too.
         available_paths.update(
-            str(Path(path).resolve())
+            str(resolve_agent_path(path))
             for path in getattr(context, "authorized_input_paths", []) or []
             if path
         )
@@ -189,11 +274,21 @@ class ExecutePythonTool(LLMTool):
             requested_paths.append(resolved_path)
         return json.dumps(list(dict.fromkeys(requested_paths)), ensure_ascii=False)
 
-    async def execute(
+    async def execute(self, context=None, code: str = None, timeout: Optional[int] = None,
+                      input_files: Optional[List[str]] = None, **kwargs) -> Dict[str, Any]:
+        """Run one Python call while protecting the session output namespace."""
+        lock = _execution_lock_for(context)
+        if lock is None:
+            return await self._execute_unlocked(context, code, timeout, input_files, **kwargs)
+        async with lock:
+            return await self._execute_unlocked(context, code, timeout, input_files, **kwargs)
+
+    async def _execute_unlocked(
         self,
         context=None,
         code: str = None,
         timeout: Optional[int] = None,
+        input_files: Optional[List[str]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -202,6 +297,7 @@ class ExecutePythonTool(LLMTool):
         Args:
             code: Python 代码
             timeout: 超时时间（秒），默认 30 秒
+            input_files: 本次需要读取的已授权文件，代码内可通过同名列表访问。
 
         Returns:
             {
@@ -227,6 +323,16 @@ class ExecutePythonTool(LLMTool):
                 "summary": "缺少代码参数"
             }
 
+        try:
+            declared_inputs = self._validate_input_files(input_files, context)
+        except (ValueError, OSError) as exc:
+            return {
+                "status": "failed", "success": False,
+                "error_code": "INVALID_INPUT_FILES", "error": str(exc),
+                "summary": f"输入文件声明无效：{exc}", "data": None,
+                "metadata": {"tool_name": self.name},
+            }
+
         # ✅ 确保图表目录存在（每次执行时都检查）
         os.makedirs(self.CHARTS_DIR, exist_ok=True)
 
@@ -243,8 +349,9 @@ class ExecutePythonTool(LLMTool):
         try:
             # 只在独立子进程中执行，且不修改 Web worker 的全局 cwd。
             original_code = code
+            code = "input_files = " + json.dumps(declared_inputs or [], ensure_ascii=False) + "\n" + code
             code = self._inject_artifact_path_helper(code)
-            code = self._inject_data_context(code, context)
+            code = self._inject_data_context(code, context, input_files=declared_inputs)
             code = self._inject_matplotlib_save_support(code)
             code = self._inject_excel_helpers(code)
 
@@ -263,6 +370,8 @@ class ExecutePythonTool(LLMTool):
                 timeout or self.default_timeout,
                 working_dir=temp_dir,
                 context=context,
+                input_files=declared_inputs,
+                original_code=original_code,
             )
 
             # ✅ 从 output 中提取用户保存的文件路径（绝对路径保存的文件）
@@ -398,9 +507,23 @@ class ExecutePythonTool(LLMTool):
             chart_data = self._extract_chart_paths(result["data"].get("output", ""))
 
             # 检测 Python 中通过 save_data() 保存的会话数据文件。
-            python_data_paths = self._extract_python_data_file_paths(
-                result["data"].get("output", "")
-            )
+            declared_data_paths = result["data"].pop("declared_data_file_paths", None)
+            if declared_data_paths is None:
+                declared_data_paths = self._extract_python_data_file_paths(result["data"].get("output", ""))
+            python_data_paths = []
+            for file_path in declared_data_paths:
+                try:
+                    path = resolve_agent_path(file_path)
+                    session_dir = resolve_agent_path(context.data_manager.memory.session.data_dir)
+                    if session_dir not in path.parents or path.is_symlink():
+                        raise ValueError("Saved data must belong to the current session")
+                    with path.open(encoding="utf-8") as stream:
+                        json.load(stream)
+                    python_data_paths.append(str(path))
+                except (AttributeError, OSError, ValueError, TypeError) as error:
+                    result.update(status="failed", success=False, error_code="DATA_FILE_NOT_AVAILABLE",
+                                  error=f"保存结果未通过文件校验: {error}",
+                                  summary="中间结果文件不可用，不能声称保存成功或继续传递该路径。")
             if python_data_paths:
                 for file_path in python_data_paths:
                     if file_path not in context.available_file_paths:
@@ -408,6 +531,15 @@ class ExecutePythonTool(LLMTool):
                 result["data"]["data_file_paths"] = python_data_paths
                 result.setdefault("metadata", {})
                 result["metadata"]["data_file_paths"] = python_data_paths
+                shapes = self._prefer_sidecar_data_shapes(
+                    self._extract_python_data_shapes(result["data"].get("output", "")),
+                    context,
+                )
+                if shapes:
+                    result["data_shapes"] = shapes
+                    register_shapes = getattr(context, "register_data_shapes", None)
+                    if callable(register_shapes):
+                        register_shapes(shapes)
                 if result.get("success", False):
                     result["summary"] = (
                         f"{result.get('summary', '✅ 工具已执行完成')} | "
@@ -464,8 +596,8 @@ class ExecutePythonTool(LLMTool):
                             with open(abs_chart_path, 'rb') as f:
                                 base64_data = base64.b64encode(f.read()).decode('utf-8')
 
-                            # 生成唯一的 chart_id（使用纳秒时间戳避免冲突）
-                            chart_id = f"matplotlib_{time.time_ns()}"
+                            # 生成唯一的 chart_id（base36 微秒时间戳，短 ID 便于模型照抄）
+                            chart_id = new_visual_id("matplotlib")
 
                             logger.info(
                                 "saving_to_image_cache",
@@ -545,7 +677,7 @@ class ExecutePythonTool(LLMTool):
                             mime_type, base64_data = base64_data_url.split(",", 1)
 
                             # 生成唯一的 chart_id
-                            chart_id = f"matplotlib_{time.time_ns()}"
+                            chart_id = new_visual_id("matplotlib")
 
                             logger.info(
                                 "saving_base64_to_image_cache",
@@ -693,6 +825,10 @@ class ExecutePythonTool(LLMTool):
             # Only after they are complete do we expose the canonical Agent-facing
             # project-relative paths and the automatic-publication contract.
             self._attach_resume_context(result)
+            if not result.get("success"):
+                result.setdefault("error_code", "PYTHON_EXECUTION_FAILED")
+                result.setdefault("error", result.get("data", {}).get("error") or result.get("summary"))
+                result["next_action"] = "检查error_code和error_details；只可复用已验证的data_file_paths/resources，修复后重试，不能把失败解释为无数据或交付成功。"
             return result
 
         except Exception as e:
@@ -701,6 +837,7 @@ class ExecutePythonTool(LLMTool):
                 "status": "failed",  # ✅ 添加 status 字段
                 "success": False,
                 "error": str(e),
+                "error_code": "PYTHON_EXECUTION_FAILED",
                 "data": {"error": str(e)},
                 "metadata": {
                     "tool_name": "execute_python",
@@ -719,6 +856,8 @@ class ExecutePythonTool(LLMTool):
         *,
         working_dir: str,
         context=None,
+        input_files=None,
+        original_code: Optional[str] = None,
     ) -> Dict[str, Any]:
         """在独立沙箱进程组中执行代码，同时保持 Web worker 事件循环可运行。"""
         # 写入脚本文件
@@ -740,6 +879,7 @@ class ExecutePythonTool(LLMTool):
             working_dir=working_dir,
             timeout=timeout,
             context=context,
+            input_files=input_files,
         )
         if sandbox_spec is None:
             return {
@@ -750,34 +890,61 @@ class ExecutePythonTool(LLMTool):
             }
         command, sandbox_sync_dirs, relative_input_mounts = sandbox_spec
 
-        # 执行代码
+        user_code_start_line = self._user_code_start_line(code, original_code)
+        runtime_logs = Path(working_dir) / "runtime_logs"
+        runtime_logs.mkdir(parents=True, exist_ok=True)
+        stdout_path = runtime_logs / "stdout.log"
+        stderr_path = runtime_logs / "stderr.log"
+
+        # 文件承接 stdout/stderr，避免 communicate() 无界缓冲撑高 Web worker 内存。
         process = None
+        cgroup_path = None
+        cgroup_diagnostics: Dict[str, Any] = {"configured": False, "applied": False}
         try:
-            process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=working_dir,
-                start_new_session=True,
+            with stdout_path.open("wb") as stdout_file, stderr_path.open("wb") as stderr_file:
+                process = subprocess.Popen(
+                    command,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    cwd=working_dir,
+                    start_new_session=True,
+                )
+                cgroup_path, cgroup_diagnostics = self._attach_cgroup(process.pid)
+                logger.info(
+                    "execute_python_subprocess_started",
+                    pid=process.pid,
+                    script_size=len(code),
+                    timeout_seconds=timeout,
+                    sandbox=self.execution_engine,
+                    cgroup=cgroup_diagnostics,
+                )
+                await asyncio.to_thread(process.wait, timeout=timeout)
+
+            stdout, stdout_truncated, stdout_bytes = self._read_capped_text(
+                stdout_path, _MAX_CAPTURE_BYTES
             )
-            logger.info(
-                "execute_python_subprocess_started",
-                pid=process.pid,
-                script_size=len(code),
-                timeout_seconds=timeout,
-                sandbox=self.execution_engine,
+            stderr, stderr_truncated, stderr_bytes = self._read_capped_text(
+                stderr_path, _MAX_CAPTURE_BYTES, keep_tail=True
             )
-            stdout, stderr = await asyncio.to_thread(process.communicate, timeout=timeout)
             self._sync_sandbox_session_outputs(sandbox_sync_dirs)
             logger.info(
                 "execute_python_subprocess_completed",
                 pid=process.pid,
                 returncode=process.returncode,
-                stdout_size=len(stdout or ""),
-                stderr_size=len(stderr or ""),
+                stdout_size=stdout_bytes,
+                stderr_size=stderr_bytes,
+                stdout_truncated=stdout_truncated,
+                stderr_truncated=stderr_truncated,
             )
 
+            declared_data_paths = self._extract_python_data_file_paths(stdout or "")
+            data_shapes = self._prefer_sidecar_data_shapes(
+                self._extract_python_data_shapes(stdout or ""),
+                context,
+            )
+            register_shapes = getattr(context, "register_data_shapes", None)
+            if data_shapes and callable(register_shapes):
+                register_shapes(data_shapes)
             output = stdout or ""
             if stderr:
                 output += f"\n错误输出:\n{stderr}"
@@ -785,41 +952,89 @@ class ExecutePythonTool(LLMTool):
             # 截断输出
             if len(output) > self.max_output_size:
                 output = output[:self.max_output_size] + "\n... (输出被截断)"
+            elif stdout_truncated or stderr_truncated:
+                output += "\n... (stdout/stderr 已按沙箱输出上限截断)"
+
+            diagnostics = {
+                "exit_code": process.returncode,
+                "stdout_bytes": stdout_bytes,
+                "stderr_bytes": stderr_bytes,
+                "stdout_truncated": stdout_truncated,
+                "stderr_truncated": stderr_truncated,
+                "timed_out": False,
+                "cgroup": cgroup_diagnostics,
+            }
 
             # 如果执行失败，尝试解析错误信息
             if process.returncode != 0:
-                error_info = self._parse_subprocess_error(stderr, code)
+                error_info = self._parse_subprocess_error(
+                    stderr,
+                    code,
+                    original_code=original_code,
+                    user_code_start_line=user_code_start_line,
+                )
+                error_code = (
+                    "SANDBOX_BOOTSTRAP_FAILED"
+                    if error_info["error_type"] == "SandboxBootstrapError"
+                    else "PYTHON_EXECUTION_FAILED"
+                )
                 return {
                     "status": "failed",
                     "success": False,
-                    "data": {"error": error_info["error_message"], "error_details": error_info, "output": output},
+                    "error_code": error_code,
+                    "error": error_info["error_message"],
+                    "data": {"error": error_info["error_message"], "error_details": error_info, "output": output,
+                             "declared_data_file_paths": declared_data_paths, "execution": diagnostics},
                     "summary": error_info["summary"]
                 }
 
             return {
                 "status": "success",
                 "success": True,
-                "data": {"output": output},
-                "summary": "✅ 工具已执行完成，计算任务已完成"
+                "data": {"output": output, "declared_data_file_paths": declared_data_paths,
+                         "execution": diagnostics},
+                "summary": "✅ 工具已执行完成，计算任务已完成",
+                **({"data_shapes": data_shapes} if data_shapes else {}),
             }
 
         except subprocess.TimeoutExpired:
             if process is not None:
                 logger.warning("execute_python_subprocess_timeout", pid=process.pid)
                 self._terminate_process_group(process)
-                await asyncio.to_thread(process.communicate)
+                await asyncio.to_thread(process.wait)
+            stdout, stdout_truncated, stdout_bytes = self._read_capped_text(
+                stdout_path, _MAX_CAPTURE_BYTES
+            )
+            stderr, stderr_truncated, stderr_bytes = self._read_capped_text(
+                stderr_path, _MAX_CAPTURE_BYTES, keep_tail=True
+            )
             return {
                 "status": "failed",
                 "success": False,
-                "data": {"error": "执行超时"},
+                "error_code": "PYTHON_TIMEOUT",
+                "error": "执行超时",
+                "data": {
+                    "error": "执行超时",
+                    "output": stdout + (("\n错误输出:\n" + stderr) if stderr else ""),
+                    "execution": {
+                        "exit_code": process.returncode if process is not None else None,
+                        "stdout_bytes": stdout_bytes,
+                        "stderr_bytes": stderr_bytes,
+                        "stdout_truncated": stdout_truncated,
+                        "stderr_truncated": stderr_truncated,
+                        "timed_out": True,
+                        "cgroup": cgroup_diagnostics,
+                    },
+                },
                 "summary": "执行超时"
             }
         except asyncio.CancelledError:
             if process is not None and process.poll() is None:
                 self._terminate_process_group(process)
-                await asyncio.to_thread(process.communicate)
+                await asyncio.to_thread(process.wait)
             raise
         finally:
+            self._cleanup_cgroup(cgroup_path)
             for mountpoint in sorted(relative_input_mounts, key=lambda item: len(item.parts), reverse=True):
                 try:
                     if mountpoint.is_dir():
@@ -837,6 +1052,7 @@ class ExecutePythonTool(LLMTool):
         working_dir: str,
         timeout: int,
         context=None,
+        input_files=None,
     ) -> Optional[Tuple[List[str], List[Tuple[Path, Path, set[str]]], List[Path]]]:
         """构建 fail-closed Bubblewrap 沙箱命令。
 
@@ -865,7 +1081,10 @@ class ExecutePythonTool(LLMTool):
         command = [
             prlimit,
             f"--cpu={max(1, timeout + 2)}",
-            "--as=2147483648",
+            # 地址空间上限需要容纳 numpy/pandas 之外的大型 mmap 库（如 torch 的
+            # libcublasLt），RLIMIT_AS 过小会让动态加载器报 "failed to map
+            # segment"。可用 PYTHON_SANDBOX_RLIMIT_AS 覆盖（字节）。
+            f"--as={self._sandbox_address_space_limit()}",
             "--fsize=104857600",
             "--nofile=256",
             "--nproc=128",
@@ -913,6 +1132,9 @@ class ExecutePythonTool(LLMTool):
             command.extend(["--unsetenv", name])
         safe_env = {
             "PATH": f"{python_env}/bin:/usr/bin:/bin",
+            # Expose only the application package mounted below.  Secrets,
+            # sessions and the data registry are intentionally not mounted.
+            "PYTHONPATH": str(Path(PROJECT_ROOT) / "backend"),
             "HOME": "/tmp",
             "TMPDIR": "/tmp",
             "MPLCONFIGDIR": "/tmp/matplotlib",
@@ -927,13 +1149,64 @@ class ExecutePythonTool(LLMTool):
         session_data_dir = None
         if context is not None:
             try:
-                session_data_dir = Path(context.data_manager.memory.session.data_dir).resolve()
+                session_data_dir = resolve_agent_path(context.data_manager.memory.session.data_dir)
             except (AttributeError, TypeError):
                 session_data_dir = None
 
         mounted_destinations = set()
         sync_dirs: List[Tuple[Path, Path, set[str]]] = []
         relative_input_mounts: List[Path] = []
+        # Read-write bind destinations whose host staging directories are
+        # synced back to persistent storage after the run. A read-only bind
+        # targeting one of these subtrees would be materialized by bwrap as a
+        # mountpoint placeholder inside the host staging directory, and the
+        # post-run sync would then publish that placeholder over the real
+        # file (this silently truncated persisted chart images).
+        synced_rw_bind_destinations: list[Path] = []
+        read_only_bind_destinations: list[Path] = []
+
+        # Business calculation code may import the backend application
+        # package, but the sandbox must not receive the project root, .env
+        # files, session history, or the persistent data registry.  Authorized
+        # data files continue to be staged separately below.
+        backend_root = Path(PROJECT_ROOT) / "backend"
+        staged_backend_root = Path(working_dir) / "backend_runtime"
+        for source in (backend_root / "app", backend_root / "config"):
+            if not source.is_dir():
+                continue
+            relative = source.relative_to(backend_root)
+            staged_source = staged_backend_root / relative
+            shutil.copytree(source, staged_source, dirs_exist_ok=True)
+            self._append_bubblewrap_parent_dirs(command, source)
+            command.extend(["--ro-bind", str(staged_source), str(source)])
+            mounted_destinations.add(str(source))
+            read_only_bind_destinations.append(source)
+
+        # Repo-style `backend.app.*` imports must keep working inside the
+        # sandbox even though only `app`/`config` are exposed there. Stage a
+        # tiny alias package at `<backend>/backend` so both import styles
+        # resolve to the same code; scenario docs stay authoritative for the
+        # preferred `app.*` style.
+        shim_init = staged_backend_root / "backend_pkg" / "__init__.py"
+        shim_init.parent.mkdir(parents=True, exist_ok=True)
+        shim_init.write_text(
+            "import sys\n"
+            "\n"
+            "try:\n"
+            "    import app as _app\n"
+            "except Exception:  # pragma: no cover - app always mounted in practice\n"
+            "    _app = None\n"
+            "if _app is not None:\n"
+            "    sys.modules.setdefault('backend.app', _app)\n"
+            "    sys.modules[__name__].app = _app\n",
+            encoding="utf-8",
+        )
+        backend_pkg_mount = backend_root / "backend"
+        self._append_bubblewrap_parent_dirs(command, backend_pkg_mount)
+        command.extend(["--ro-bind", str(shim_init.parent), str(backend_pkg_mount)])
+        mounted_destinations.add(str(backend_pkg_mount))
+        read_only_bind_destinations.append(backend_pkg_mount)
+
         context_paths = list(
             dict.fromkeys(
                 [
@@ -947,7 +1220,10 @@ class ExecutePythonTool(LLMTool):
             )
         )
         requested_paths = self._find_data_file_accesses(code)
-        candidate_paths = list(dict.fromkeys([*context_paths, *requested_paths]))
+        candidate_paths = (
+            list(input_files) if input_files is not None
+            else list(dict.fromkeys([*context_paths, *requested_paths]))
+        )
         try:
             if session_data_dir and session_data_dir.is_dir():
                 staged_session_dir = Path(working_dir) / "session_data"
@@ -965,44 +1241,76 @@ class ExecutePythonTool(LLMTool):
                     shutil.copy2(source_path, staged_path)
                     original_relative_paths.add(str(relative_path))
 
-                self._append_bubblewrap_parent_dirs(command, session_data_dir)
-                command.extend(["--bind", str(staged_session_dir), str(session_data_dir)])
                 mounted_destinations.add(str(session_data_dir))
+                synced_rw_bind_destinations.append(session_data_dir)
                 sync_dirs.append((staged_session_dir, session_data_dir, original_relative_paths))
 
+            # The data registry is the agent's shared read-only data area. It
+            # is mounted at both the canonical host path (for absolute paths)
+            # and the project-relative path used by agent code. Other host
+            # directories remain explicit-input-only mounts below.
+            registry_dir = Path(get_data_registry()).resolve()
+            self._append_bubblewrap_parent_dirs(command, registry_dir)
+            command.extend(["--ro-bind", str(registry_dir), str(registry_dir)])
+            mounted_destinations.add(str(registry_dir))
+            command.extend(["--ro-bind", str(registry_dir), "/sandbox/backend/backend_data_registry"])
+            mounted_destinations.add("/sandbox/backend/backend_data_registry")
+
             # Matplotlib helpers write to the canonical images path inside the
-            # sandbox. Bind a staging directory there, then publish only the
-            # generated files after the subprocess exits successfully.
+            # sandbox. Seed the staging directory with existing registry
+            # images so the writable output mount does not hide prior assets.
             images_dir = Path(get_images_dir()).resolve()
             staged_images_dir = Path(working_dir) / "images_output"
             staged_images_dir.mkdir(parents=True, exist_ok=True)
+            # Authorized candidate inputs under the images directory are
+            # pre-staged here instead of being ro-bound at their host paths:
+            # the images bind above already backs that subtree, so an extra
+            # bind would be materialized as a host-side mountpoint placeholder
+            # in this staging directory and then synced over the real file.
+            staged_images_original_paths: set[str] = set()
+            for value in candidate_paths:
+                source_path = resolve_agent_path(value)
+                if not source_path.is_file():
+                    continue
+                try:
+                    relative_input = source_path.relative_to(images_dir)
+                except ValueError:
+                    continue
+                staged_input = staged_images_dir / relative_input
+                staged_input.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_path, staged_input)
+                staged_images_original_paths.add(str(relative_input))
             self._append_bubblewrap_parent_dirs(command, images_dir)
             command.extend(["--bind", str(staged_images_dir), str(images_dir)])
             mounted_destinations.add(str(images_dir))
-            sync_dirs.append((staged_images_dir, images_dir, set()))
+            synced_rw_bind_destinations.append(images_dir)
+            sync_dirs.append(
+                (staged_images_dir, images_dir, staged_images_original_paths)
+            )
 
-            preferred_font_path = select_preferred_chinese_font_path()
-            if preferred_font_path is not None:
-                preferred_font_path = preferred_font_path.resolve()
-            if preferred_font_path is not None and preferred_font_path.is_file():
-                staged_font_path = (
-                    Path(working_dir)
-                    / "_suyuan_assets"
-                    / "preferred_chinese_font.ttf"
-                )
-                staged_font_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(preferred_font_path, staged_font_path)
+            preferred_font_path = Path(get_font_manager().FONT_FILE_PATHS[0]).resolve()
+            if preferred_font_path.is_file():
+                self._append_bubblewrap_parent_dirs(command, preferred_font_path.parent)
+                command.extend([
+                    "--ro-bind",
+                    str(preferred_font_path),
+                    str(preferred_font_path),
+                ])
+                mounted_destinations.add(str(preferred_font_path))
 
             for index, value in enumerate(candidate_paths):
                 raw_path = Path(value).expanduser()
                 path = resolve_agent_path(value)
                 if not path.exists():
                     continue
-                if (
-                    raw_path.is_absolute()
-                    and session_data_dir
-                    and (path == session_data_dir or session_data_dir in path.parents)
+                if any(
+                    path == synced_destination or synced_destination in path.parents
+                    for synced_destination in synced_rw_bind_destinations
                 ):
+                    # Already visible through the synced rw staging bind (and
+                    # pre-staged above); a read-only bind here would be
+                    # materialized as a host-side mountpoint inside the
+                    # staging directory.
                     continue
                 if raw_path.is_absolute():
                     destination_path = path
@@ -1031,8 +1339,15 @@ class ExecutePythonTool(LLMTool):
                     shutil.copy2(path, staged_input)
                 if raw_path.is_absolute():
                     self._append_bubblewrap_parent_dirs(command, path.parent)
+                    read_only_bind_destinations.append(path)
                 command.extend(["--ro-bind", str(staged_input), destination])
                 mounted_destinations.add(destination)
+
+            # Mount writable session outputs last: a later read-only parent
+            # mount would hide this mount and make save_data() fail with EROFS.
+            if session_data_dir and session_data_dir.is_dir():
+                self._append_bubblewrap_parent_dirs(command, session_data_dir)
+                command.extend(["--bind", str(staged_session_dir), str(session_data_dir)])
         except OSError as error:
             logger.error(
                 "execute_python_sandbox_mount_open_failed",
@@ -1042,7 +1357,44 @@ class ExecutePythonTool(LLMTool):
             return None
 
         command.extend([str(python_env / "bin/python"), "/sandbox/script.py"])
+
+        # Fail closed on mount overlap: a read-only bind whose destination
+        # falls inside a synced read-write staging bind would be materialized
+        # as a host-side mountpoint placeholder and published by the post-run
+        # sync, silently overwriting persistent files.
+        for read_only_destination in read_only_bind_destinations:
+            for synced_destination in synced_rw_bind_destinations:
+                if read_only_destination == synced_destination or (
+                    synced_destination in read_only_destination.parents
+                ):
+                    logger.error(
+                        "execute_python_sandbox_mount_overlap_rejected",
+                        read_only_bind=str(read_only_destination),
+                        synced_rw_bind=str(synced_destination),
+                    )
+                    return None
+
         return command, sync_dirs, relative_input_mounts
+
+    @staticmethod
+    def _sandbox_address_space_limit() -> int:
+        """Sandbox RLIMIT_AS in bytes; env-overridable, 4 GiB default.
+
+        RLIMIT_AS caps *address space*, not resident memory. Large mmap-backed
+        shared libraries (torch's libcublasLt 等) reserve hundreds of MB of
+        address space at load time, so a tight cap makes the dynamic loader
+        fail with "failed to map segment from shared object" long before real
+        memory pressure. 4 GiB keeps heavy imports workable while still
+        bounding runaway allocations; deployments may tighten via
+        ``PYTHON_SANDBOX_RLIMIT_AS``.
+        """
+        raw = os.getenv("PYTHON_SANDBOX_RLIMIT_AS", "").strip()
+        if raw:
+            try:
+                return max(256 * 1024 * 1024, int(raw))
+            except ValueError:
+                logger.warning("execute_python_sandbox_rlimit_as_invalid", value=raw)
+        return 4 * 1024 * 1024 * 1024
 
     @staticmethod
     def _sync_sandbox_session_outputs(
@@ -1079,6 +1431,79 @@ class ExecutePythonTool(LLMTool):
         except ProcessLookupError:
             pass
 
+    @staticmethod
+    def _read_capped_text(path: Path, limit: int, *, keep_tail: bool = False) -> Tuple[str, bool, int]:
+        """Read bounded UTF-8 output without buffering an untrusted stream in RAM."""
+        try:
+            total = path.stat().st_size
+            with path.open("rb") as handle:
+                if keep_tail and total > limit:
+                    handle.seek(-limit, os.SEEK_END)
+                payload = handle.read(limit)
+        except OSError:
+            return "", False, 0
+        return payload.decode("utf-8", errors="replace"), total > limit, total
+
+    @staticmethod
+    def _user_code_start_line(code: str, original_code: Optional[str]) -> Optional[int]:
+        if not original_code:
+            return None
+        offset = code.rfind(original_code)
+        if offset < 0:
+            return None
+        return code[:offset].count("\n") + 1
+
+    @staticmethod
+    def _attach_cgroup(pid: int) -> Tuple[Optional[Path], Dict[str, Any]]:
+        """Optionally place the sandbox in a delegated cgroup v2 subtree."""
+        parent_raw = os.getenv("PYTHON_SANDBOX_CGROUP_PARENT", "").strip()
+        if not parent_raw:
+            return None, {"configured": False, "applied": False}
+        parent = Path(parent_raw)
+        leaf = parent / f"exec-{pid}"
+        diagnostics: Dict[str, Any] = {
+            "configured": True,
+            "applied": False,
+            "parent": str(parent),
+        }
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+            leaf.mkdir()
+            limits = {
+                "memory.max": os.getenv("PYTHON_SANDBOX_CGROUP_MEMORY_MAX", str(2 * 1024**3)),
+                "memory.swap.max": os.getenv("PYTHON_SANDBOX_CGROUP_SWAP_MAX", "0"),
+                "pids.max": os.getenv("PYTHON_SANDBOX_CGROUP_PIDS_MAX", "128"),
+            }
+            for filename, value in limits.items():
+                target = leaf / filename
+                if target.exists():
+                    target.write_text(str(value), encoding="ascii")
+            (leaf / "cgroup.procs").write_text(str(pid), encoding="ascii")
+            diagnostics.update({"applied": True, "path": str(leaf), "limits": limits})
+            return leaf, diagnostics
+        except OSError as exc:
+            logger.warning(
+                "execute_python_cgroup_attach_failed",
+                pid=pid,
+                error=str(exc),
+                parent=str(parent),
+            )
+            try:
+                leaf.rmdir()
+            except OSError:
+                pass
+            diagnostics["error"] = str(exc)
+            return None, diagnostics
+
+    @staticmethod
+    def _cleanup_cgroup(path: Optional[Path]) -> None:
+        if path is None:
+            return
+        try:
+            path.rmdir()
+        except OSError as exc:
+            logger.warning("execute_python_cgroup_cleanup_failed", path=str(path), error=str(exc))
+
     def _find_generated_files(self, temp_dir: str) -> list:
         """查找生成的文件（排除临时文件）"""
         generated_files = []
@@ -1094,6 +1519,8 @@ class ExecutePythonTool(LLMTool):
                         "session_data",
                         "images_output",
                         "_suyuan_assets",
+                        "backend_runtime",
+                        "runtime_logs",
                     }
                 ]
             # 跳过 __pycache__ 目录
@@ -1262,9 +1689,8 @@ def artifact_path(filename: str) -> str:
             if first_visual_path:
                 llm_resume["tool_hint"] = (
                     f"Use read_file(path='{first_visual_path}', as_multimodal_attachment=true) "
-                    "to inspect this image internally. Do not place this server "
-                    "path in the final answer or Markdown image URL; generated "
-                    "visuals are published through session resources."
+                    "to inspect this image. Do not place this server path in your reply; "
+                    "reference the published session resource instead."
                 )
         if llm_resume:
             result["llm_resume"] = llm_resume
@@ -1398,6 +1824,46 @@ def artifact_path(filename: str) -> str:
                 refs.append(match)
         return refs
 
+    def _extract_python_data_shapes(self, output: str) -> Dict[str, Dict[str, Any]]:
+        """Extract per-file data_shape printed by the injected save_data() helper."""
+        if not output:
+            return {}
+        shapes: Dict[str, Dict[str, Any]] = {}
+        for match in re.findall(r"PYTHON_DATA_FILE_SHAPE:([^\s]+\.json):(\{.*\})", output):
+            path, payload = match
+            try:
+                shapes[path] = json.loads(payload)
+            except Exception:
+                continue
+        return shapes
+
+    def _prefer_sidecar_data_shapes(
+        self,
+        shapes: Dict[str, Dict[str, Any]],
+        context: Any,
+    ) -> Dict[str, Dict[str, Any]]:
+        """stdout 里的形状可能是截断版；sidecar（<file>.data_shape.json）有全量时优先。
+
+        截断形状仅在沙箱 sidecar 写入失败时兜底，保证资源元数据拿到完整列清单。
+        """
+        if not shapes or not context:
+            return shapes
+        get_data_shape = getattr(context, "get_data_shape", None)
+        if not callable(get_data_shape):
+            return shapes
+        resolved: Dict[str, Dict[str, Any]] = {}
+        for file_path, shape in shapes.items():
+            try:
+                full_shape = get_data_shape(file_path)
+            except Exception:
+                full_shape = None
+            resolved[file_path] = (
+                full_shape
+                if isinstance(full_shape, dict) and full_shape.get("columns")
+                else shape
+            )
+        return resolved
+
     def _extract_echarts_format(self, output: str) -> dict:
         """Backward-compatible single-option extractor."""
         options = self._extract_echarts_formats(output)
@@ -1496,9 +1962,16 @@ def artifact_path(filename: str) -> str:
         generator: str,
     ) -> List[Dict[str, Any]]:
         """Convert parsed ECharts options into frontend visuals."""
+        from app.utils.echarts_layout import normalize_echarts_layout
+        from app.utils.echarts_legend import ensure_echarts_legend
+        from app.utils.echarts_theme import apply_echarts_report_theme
+
         visuals: List[Dict[str, Any]] = []
         for index, echarts_data in enumerate(echarts_options):
             try:
+                echarts_data = apply_echarts_report_theme(echarts_data)
+                echarts_data = ensure_echarts_legend(echarts_data)
+                echarts_data = normalize_echarts_layout(echarts_data)
                 echarts_data["textStyle"] = {
                     **(echarts_data.get("textStyle") or {}),
                     "fontFamily": BROWSER_CHART_FONT_FAMILY,
@@ -1506,7 +1979,7 @@ def artifact_path(filename: str) -> str:
                 chart_type = self._detect_echarts_chart_type(echarts_data)
                 display_title = self._detect_echarts_title(echarts_data, chart_type)
                 visuals.append({
-                    "id": f"echarts_{time.time_ns()}_{index}",
+                    "id": new_visual_id("echarts", index),
                     "type": chart_type,
                     "title": display_title,
                     "data": echarts_data,
@@ -1547,7 +2020,7 @@ def artifact_path(filename: str) -> str:
             return echarts_title.get("text", f"{chart_type.upper()}图表")
         return echarts_title or f"{chart_type.upper()}图表"
 
-    def _inject_data_context(self, code: str, context) -> str:
+    def _inject_data_context(self, code: str, context, input_files=None) -> str:
         """
         注入基于会话文件路径的数据访问上下文。
 
@@ -1569,10 +2042,12 @@ def artifact_path(filename: str) -> str:
             has_data_manager=context.data_manager is not None
         )
 
-        allowed_data_files_payload = self._build_allowed_data_files_payload(code, context)
-        session_data_dir = json.dumps(str(context.data_manager.memory.session.data_dir), ensure_ascii=False)
+        allowed_data_files_payload = self._build_allowed_data_files_payload(code, context, input_files)
+        resolved_session_dir = resolve_agent_path(context.data_manager.memory.session.data_dir)
+        resolved_session_dir.mkdir(parents=True, exist_ok=True)
+        session_data_dir = json.dumps(str(resolved_session_dir), ensure_ascii=False)
         session_prefix = json.dumps(
-            str(context.data_manager.memory.session.data_dir), ensure_ascii=False
+            str(resolved_session_dir), ensure_ascii=False
         )
 
         # 构建注入的代码
@@ -1588,9 +2063,12 @@ __ALLOWED_DATA_FILES__ = set(__ALLOWED_DATA_FILES_PAYLOAD__)
 # 获取原始数据（字典列表格式）
 def load_data(file_path: str):
     """读取当前会话中的数据文件。"""
-    resolved_path = str(__DataContextPath(file_path).resolve())
+    input_path = __DataContextPath(file_path)
+    if not input_path.is_absolute():
+        input_path = __DataContextPath(__AGENT_PROJECT_ROOT__) / input_path
+    resolved_path = str(input_path.resolve())
     if resolved_path not in __ALLOWED_DATA_FILES__:
-        raise RuntimeError(f"未找到会话数据文件: {file_path}")
+        raise RuntimeError(f"未找到会话数据文件: {file_path}；请将该文件路径加入本次 execute_python 调用的 input_files 参数后重试（挂载不跨调用保留）")
     with open(resolved_path, 'r', encoding='utf-8') as data_file:
         return __data_context_json.load(data_file)
 
@@ -1636,7 +2114,61 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
     absolute_path = Path(__SESSION_DATA_DIR__) / filename
     absolute_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
     file_path = __SESSION_PREFIX__ + "/" + filename
+    __ALLOWED_DATA_FILES__.add(str(absolute_path.resolve()))
     print(f"PYTHON_DATA_FILE_SAVED:{file_path}")
+
+    # data_shape：真实列名/读回类型/行数，随工具结果返回 LLM 上下文
+    try:
+        row_count = len(payload) if isinstance(payload, list) else 1
+        columns_with_types = {}
+        is_frame = False
+        try:
+            import pandas as _pd
+            if isinstance(data, _pd.DataFrame):
+                is_frame = True
+                for _name in data.columns:
+                    _dtype = str(data[_name].dtype)
+                    if _dtype.startswith('datetime'):
+                        columns_with_types[str(_name)] = 'datetime-str'
+                    elif _dtype in ('int64', 'int32'):
+                        columns_with_types[str(_name)] = 'int'
+                    elif _dtype in ('float64', 'float32'):
+                        columns_with_types[str(_name)] = 'float'
+                    elif _dtype == 'bool':
+                        columns_with_types[str(_name)] = 'bool'
+                    else:
+                        columns_with_types[str(_name)] = 'str'
+        except Exception:
+            is_frame = False
+        if not is_frame and isinstance(payload, list) and payload and isinstance(payload[0], dict):
+            for _name, _value in payload[0].items():
+                columns_with_types[str(_name)] = (
+                    'bool' if isinstance(_value, bool)
+                    else 'int' if isinstance(_value, int)
+                    else 'float' if isinstance(_value, float)
+                    else 'str'
+                )
+        shape = {
+            'columns': [{'name': n, 'type': t} for n, t in columns_with_types.items()],
+            'row_count': row_count,
+            'source': 'dataframe' if is_frame else 'inferred',
+        }
+        # 全量形状写 sidecar（<file>.data_shape.json）供资源元数据/下游 DAG 复用；
+        # stdout 只打截断版（前 __MAX_SHAPE_COLUMNS__ 列 + 总列数），避免宽表把几 KB
+        # JSON 灌进 LLM 上下文。
+        try:
+            absolute_path.with_suffix('.data_shape.json').write_text(
+                json.dumps(shape, ensure_ascii=False), encoding='utf-8')
+        except Exception:
+            pass
+        shape_view = dict(shape)
+        _shape_columns = shape_view.get('columns') or []
+        if len(_shape_columns) > __MAX_SHAPE_COLUMNS__:
+            shape_view['columns_total'] = len(_shape_columns)
+            shape_view['columns'] = _shape_columns[:__MAX_SHAPE_COLUMNS__]
+        print("PYTHON_DATA_FILE_SHAPE:" + file_path + ":" + json.dumps(shape_view, ensure_ascii=False))
+    except Exception:
+        pass
     return file_path
 
 # ===== 数据访问上下文注入完成 =====
@@ -1648,6 +2180,10 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
         )
         context_injection_code = context_injection_code.replace("__SESSION_DATA_DIR__", session_data_dir)
         context_injection_code = context_injection_code.replace("__SESSION_PREFIX__", session_prefix)
+        context_injection_code = context_injection_code.replace("__AGENT_PROJECT_ROOT__", repr(str(PROJECT_ROOT)))
+        context_injection_code = context_injection_code.replace(
+            "__MAX_SHAPE_COLUMNS__", str(int(MAX_SHAPE_COLUMNS))
+        )
 
         # 在代码开头插入上下文代码
         injected_code = context_injection_code + code
@@ -1814,17 +2350,40 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
         return converted_code
 
     def _inject_matplotlib_save_support(self, code: str) -> str:
-        """Inject only matplotlib image save detection and save_chart()."""
-        has_matplotlib_import = "import matplotlib" in code or "from matplotlib" in code
+        """Inject shared report styling and image publication helpers."""
+        has_matplotlib_import = any(
+            token in code for token in ("import matplotlib", "from matplotlib", "import seaborn", "from seaborn")
+        )
         if not has_matplotlib_import:
             logger.debug("matplotlib_save_injection_skipped", reason="no matplotlib import")
             return code
 
         images_dir_literal = repr(str(get_images_dir()))
+        preferred_font_path_literal = repr(str(get_font_manager().FONT_FILE_PATHS[0]))
         save_support_code = """# ===== Matplotlib 图片保存捕获（自动注入） =====
 import os
 from matplotlib.figure import Figure
 from matplotlib.text import Text
+import matplotlib.pyplot as _suyuan_plt
+from app.utils.environment_charts import (
+    AQI_COLORS, AQI_LABELS, MISSING_COLOR, aqi_color, pollutant_color,
+    get_environment_limit, get_pollutant_scale, get_six_level_scale,
+    level_index, level_color, text_color_for, add_standard_limit, legend_below,
+    figure_content_overflow,
+)
+
+REPORT_THEME = __SUYUAN_REPORT_THEME__
+SERIES_COLORS = __SUYUAN_SERIES_COLORS__
+
+def theme_color(role, fallback=None):
+    return REPORT_THEME['colors'].get(role, fallback or REPORT_THEME['colors']['primary'])
+
+def apply_report_style():
+    '''在创建 Figure 前应用共享主题；seaborn.set_theme 后可再次调用。'''
+    _suyuan_plt.rcParams.update(__SUYUAN_REPORT_STYLE__)
+    _suyuan_plt.rcParams['axes.prop_cycle'] = _suyuan_plt.cycler(color=SERIES_COLORS)
+
+apply_report_style()
 
 _SUYUAN_CHINESE_FONT_PROP = None
 _SUYUAN_FONT_WARNING_EMITTED = False
@@ -1838,20 +2397,8 @@ def _suyuan_configure_matplotlib_chinese_font(force_default=False):
         from matplotlib import font_manager as _suyuan_font_manager
         from matplotlib.ft2font import FT2Font
         current_fonts = list(_suyuan_plt.rcParams.get('font.sans-serif', []))
-        default_font_paths = [
-            '/sandbox/_suyuan_assets/preferred_chinese_font.ttf',
-            '/home/xckj/.local/share/fonts/方正小标宋简.TTF',
-            '/usr/share/fonts/gb-cjk/GB_XBS_GB18030.TTF',
-            '/usr/share/fonts/gb-cjk/GB_XBS_GBT2312.TTF',
-            '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc',
-            '/usr/share/fonts/google-noto-cjk/NotoSansCJKsc-Regular.otf',
-            '/usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf',
-            '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-            '/usr/share/fonts/truetype/arphic/uming.ttc',
-            '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
-        ]
-        default_font_path = next((path for path in default_font_paths if os.path.exists(path)), None)
-        if not default_font_path:
+        default_font_path = __SUYUAN_PREFERRED_FONT_PATH__
+        if not os.path.exists(default_font_path):
             return
         _suyuan_font_manager.fontManager.addfont(default_font_path)
         default_font_prop = _suyuan_font_manager.FontProperties(fname=default_font_path)
@@ -1881,7 +2428,7 @@ def _suyuan_configure_matplotlib_chinese_font(force_default=False):
                 selected_name = font_prop.get_name()
                 selected_prop = font_prop
             elif requested_font and not _SUYUAN_FONT_WARNING_EMITTED:
-                print(f'字体提示：指定字体不支持中文，已回退为小标宋默认字体。font={requested_font}')
+                print(f'字体提示：指定字体不支持中文，已回退为方正小标宋简。font={requested_font}')
                 _SUYUAN_FONT_WARNING_EMITTED = True
 
         if not selected_name:
@@ -1914,6 +2461,18 @@ def _suyuan_normalize_matplotlib_label_text(value):
         ('CO₂', 'CO$_2$'),
         ('CH₄', 'CH$_4$'),
         ('N₂O', 'N$_2$O'),
+        ('SO₄²⁻', 'SO$_4^{2-}$'),
+        ('NO₃⁻', 'NO$_3^-$'),
+        ('NH₄⁺', 'NH$_4^+$'),
+        ('SO₄', 'SO$_4$'),
+        ('NO₃', 'NO$_3$'),
+        ('NH₄', 'NH$_4$'),
+        ('Ca²⁺', 'Ca$^{2+}$'),
+        ('Mg²⁺', 'Mg$^{2+}$'),
+        ('K⁺', 'K$^+$'),
+        ('Na⁺', 'Na$^+$'),
+        ('Cl⁻', 'Cl$^-$'),
+        ('F⁻', 'F$^-$'),
         ('μg/m³', 'μg/m$^3$'),
         ('ug/m³', 'ug/m$^3$'),
         ('/m³', '/m$^3$'),
@@ -1933,6 +2492,27 @@ def _suyuan_normalize_matplotlib_figure_text(fig):
             normalized = _suyuan_normalize_matplotlib_label_text(original)
             if normalized != original:
                 text.set_text(normalized)
+    except Exception:
+        pass
+    try:
+        import functools as _suyuan_functools
+        for ax in fig.axes:
+            for axis in (ax.xaxis, ax.yaxis):
+                for formatter in (axis.get_major_formatter(), axis.get_minor_formatter()):
+                    seq = getattr(formatter, 'seq', None)
+                    if isinstance(seq, list):
+                        formatter.seq = [
+                            _suyuan_normalize_matplotlib_label_text(item) if isinstance(item, str) else item
+                            for item in seq
+                        ]
+                    func = getattr(formatter, 'func', None)
+                    if isinstance(func, _suyuan_functools.partial):
+                        mappings = [arg for arg in func.args if isinstance(arg, dict)]
+                        mappings.extend(value for value in (func.keywords or {}).values() if isinstance(value, dict))
+                        for mapping in mappings:
+                            for key, value in mapping.items():
+                                if isinstance(value, str):
+                                    mapping[key] = _suyuan_normalize_matplotlib_label_text(value)
     except Exception:
         pass
 
@@ -1971,6 +2551,11 @@ def _suyuan_patched_figure_savefig(self, fname, *args, **kwargs):
     _suyuan_configure_matplotlib_chinese_font()
     _suyuan_normalize_matplotlib_figure_text(self)
     _suyuan_apply_chinese_font_to_figure(self)
+    try:
+        if kwargs.get('bbox_inches') is None and figure_content_overflow(self):
+            kwargs['bbox_inches'] = 'tight'
+    except Exception:
+        pass
     result = _suyuan_original_figure_savefig(self, fname, *args, **kwargs)
     _suyuan_emit_chart_saved(fname)
     return result
@@ -1978,10 +2563,10 @@ def _suyuan_patched_figure_savefig(self, fname, *args, **kwargs):
 _suyuan_patched_figure_savefig._suyuan_original_savefig = _suyuan_original_figure_savefig
 Figure.savefig = _suyuan_patched_figure_savefig
 
-def save_chart(fig, filename, dpi=150, bbox_inches='tight', facecolor='white'):
+def save_chart(fig, filename, dpi=None, bbox_inches='tight', facecolor='white'):
     '''
     保存 matplotlib 图表并输出 CHART_SAVED 标记，便于工具登记统一资源。
-    本函数不修改字体、字号、画布、布局或其他视觉设计。
+    默认使用共享报告 DPI，保留分析代码选择的图型、字号和布局。
     '''
     charts_dir = __SUYUAN_IMAGES_DIR__
     try:
@@ -1998,14 +2583,19 @@ def save_chart(fig, filename, dpi=150, bbox_inches='tight', facecolor='white'):
     _suyuan_original_figure_savefig(
         fig,
         filepath,
-        dpi=dpi,
+        dpi=REPORT_THEME['dpi'] if dpi is None else dpi,
         bbox_inches=bbox_inches,
         facecolor=facecolor,
     )
     _suyuan_emit_chart_saved(filepath)
     return filepath
 
-""".replace("__SUYUAN_IMAGES_DIR__", images_dir_literal)
+""".replace("__SUYUAN_IMAGES_DIR__", images_dir_literal).replace(
+            "__SUYUAN_PREFERRED_FONT_PATH__",
+            preferred_font_path_literal,
+        ).replace("__SUYUAN_REPORT_THEME__", repr(REPORT_THEME)).replace(
+            "__SUYUAN_SERIES_COLORS__", repr(SERIES_COLORS)
+        ).replace("__SUYUAN_REPORT_STYLE__", repr(matplotlib_report_style()))
 
         injected_code = save_support_code + "\n" + code
         logger.info(
@@ -2545,6 +3135,11 @@ def merge_excel_with_charts(file_paths, output_path):
                 suggestions.append("• **运算符不支持**: 操作数类型不匹配")
                 suggestions.append("• **解决方案**: 检查变量类型，使用 `type()` 查看类型，使用 `int()`/`float()`/`str()` 转换")
 
+            elif "bad operand type for unary" in error_msg:
+                suggestions.append("• **一元运算符类型错误**: 常见于对 pandas 布尔列使用 `~` 取反，但该列因含 NaN 已被上转型为 float/object（如整行赋值 `df.loc[i] = dict` 混入 None/NaN）")
+                suggestions.append("• **解决方案**: 取反前确保布尔 dtype，或改用等价比较")
+                suggestions.append("• **示例修复**: `(~df['flag'].fillna(False)).sum()` 或 `df['flag'].eq(False).sum()`；布尔标志列也可改用 0/1 整数列避免上转型")
+
             elif "not subscriptable" in error_msg:
                 suggestions.append("• **不可下标访问**: 尝试对非列表/字典类型使用索引")
                 suggestions.append("• **解决方案**: 检查变量是否为列表或字典，使用 `list()` 或 `dict()` 转换")
@@ -2568,6 +3163,11 @@ def merge_excel_with_charts(file_paths, output_path):
             elif "I/O operation on closed file" in error_msg:
                 suggestions.append("• **文件已关闭**: 尝试操作已关闭的文件对象")
                 suggestions.append("• **解决方案**: 确保文件在 `with` 块内操作，或重新打开文件")
+
+            elif "nan to integer" in error_msg.lower():
+                suggestions.append("• **NaN 转整数失败**: 对含缺失值（NaN）的数值列调用了 `int()`/`astype(int)`")
+                suggestions.append("• **解决方案**: 使用可空整型 `Int64`，或先处理缺失值再转换")
+                suggestions.append("• **示例修复**: `df['col'].astype('Int64')`；单个值先判空 `int(v) if pd.notna(v) else None`")
 
         elif error_type == "AttributeError":
             if "'NoneType' object has no attribute" in error_msg:
@@ -2598,6 +3198,14 @@ def merge_excel_with_charts(file_paths, output_path):
             suggestions.append("• **常见原因**: 括号不匹配、冒号缺失、缩进错误")
             suggestions.append("• **解决方案**: 检查括号、引号是否配对，检查缩进是否正确")
 
+        # 基于错误内容的补充建议（不依赖错误类型分类）
+        if "未找到会话数据文件" in error_msg:
+            suggestions.append("• **输入文件未挂载**: 沙箱只挂载本次调用 input_files 参数中声明的文件，挂载不跨调用保留")
+            suggestions.append("• **解决方案**: 把报错中提到的文件路径加入本次 execute_python 调用的 input_files 数组后重试")
+
+        if "No module named 'backend'" in error_msg or "No module named 'backend." in error_msg:
+            suggestions.append("• **导入路径**: 沙箱内应用包名为 `app`，推荐 `from app.xxx import ...`；`backend.app.*` 已自动兼容映射，但新代码请统一使用 `app.*`")
+
         # 如果没有特定建议，提供通用建议
         if not suggestions:
             suggestions.append("• **检查代码**: 仔细阅读错误信息，定位问题代码")
@@ -2606,7 +3214,14 @@ def merge_excel_with_charts(file_paths, output_path):
 
         return "\n".join(suggestions)
 
-    def _parse_subprocess_error(self, stderr: str, code: str) -> Dict[str, str]:
+    def _parse_subprocess_error(
+        self,
+        stderr: str,
+        code: str,
+        *,
+        original_code: Optional[str] = None,
+        user_code_start_line: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """
         解析 subprocess 模式的错误信息
 
@@ -2619,14 +3234,42 @@ def merge_excel_with_charts(file_paths, output_path):
         """
         import re
 
+        # 沙箱引导/环境级失败优先于 Python 异常模式：动态加载器、bubblewrap
+        # 自身或资源限制失败不会产生 Python traceback，归为独立类型以便监控
+        # 区分"代码 bug"与"沙箱环境问题"。
+        bootstrap_markers = (
+            "error while loading shared libraries",
+            "failed to map segment from shared object",
+            "cannot allocate memory",
+            "prlimit: failed",
+        )
+        stderr_lower = stderr.lower()
+        if any(marker in stderr_lower for marker in bootstrap_markers) or re.search(r"\bbwrap:", stderr):
+            return {
+                "error_type": "SandboxBootstrapError",
+                "error_message": (
+                    "❌ 沙箱环境错误\n\n"
+                    f"**错误类型**: SandboxBootstrapError\n"
+                    f"**错误信息**: {stderr.strip()[:800]}\n\n"
+                    "**💡 修复建议**:\n"
+                    "• 这是沙箱运行环境问题而非代码逻辑问题\n"
+                    "• 动态库映射失败通常与地址空间限制相关，可在部署环境调大 PYTHON_SANDBOX_RLIMIT_AS 后重试\n"
+                    "• 若持续出现，请通过运维渠道反馈，不要反复原样重试\n"
+                ),
+                "summary": f"❌ 沙箱环境错误: {stderr.strip()[:200]}",
+                "line_number": None,
+                "code_context": "",
+                "suggestions": "调整 PYTHON_SANDBOX_RLIMIT_AS 或反馈运维；避免原样重试",
+            }
+
         # 尝试提取错误类型和错误消息
         error_type = "UnknownError"
         error_msg = stderr.strip() if stderr else "未知错误"
 
         # 常见 Python 错误模式
         patterns = [
-            r"(NameError|TypeError|ValueError|KeyError|AttributeError|IndexError|FileNotFoundError|ZeroDivisionError|SyntaxError): (.+)",
-            r"Traceback \(most recent call last\):\s+.*\s+(NameError|TypeError|ValueError|KeyError|AttributeError|IndexError|FileNotFoundError|ZeroDivisionError|SyntaxError): (.+)",
+            r"(NameError|TypeError|ValueError|KeyError|AttributeError|IndexError|FileNotFoundError|ZeroDivisionError|SyntaxError|RuntimeError|ImportError|ModuleNotFoundError|PermissionError|OSError|MemoryError): (.+)",
+            r"Traceback \(most recent call last\):\s+.*\s+(NameError|TypeError|ValueError|KeyError|AttributeError|IndexError|FileNotFoundError|ZeroDivisionError|SyntaxError|RuntimeError|ImportError|ModuleNotFoundError|PermissionError|OSError|MemoryError): (.+)",
         ]
 
         for pattern in patterns:
@@ -2637,18 +3280,23 @@ def merge_excel_with_charts(file_paths, output_path):
                 break
 
         # 提取行号
-        line_number = None
-        line_match = re.search(r'File "<string>", line (\d+)', stderr)
-        if line_match:
-            line_number = int(line_match.group(1))
+        raw_line_number = None
+        line_matches = re.findall(r'File "(?:<string>|[^"]*script\.py)", line (\d+)', stderr)
+        if line_matches:
+            raw_line_number = int(line_matches[-1])
+        line_number = raw_line_number
+        if raw_line_number and user_code_start_line and original_code:
+            mapped = raw_line_number - user_code_start_line + 1
+            if 1 <= mapped <= len(original_code.splitlines()):
+                line_number = mapped
 
         # 获取错误行的代码上下文
         code_context = ""
         if line_number:
-            code_lines = code.split('\n')
+            code_lines = (original_code or code).split('\n')
             if 0 < line_number <= len(code_lines):
                 error_line = code_lines[line_number - 1].strip()
-                code_context = f"错误行代码（第{line_number}行）: {error_line}"
+                code_context = f"用户代码错误行（第{line_number}行）: {error_line}"
 
         # 获取修复建议
         suggestions = self._get_error_suggestions(error_type, error_msg, code_context)
@@ -2669,6 +3317,7 @@ def merge_excel_with_charts(file_paths, output_path):
             "error_message": detailed_error,
             "summary": f"❌ 执行失败: {error_type} - {error_msg}",
             "line_number": line_number,
+            "raw_line_number": raw_line_number,
             "code_context": code_context,
             "suggestions": suggestions
         }
@@ -2685,29 +3334,65 @@ def merge_excel_with_charts(file_paths, output_path):
                 "通过 load_data(file_path) 加载，较大计算结果通过 save_data(...) 保存为新的 file_path，避免直接输出大量明细。"
                 "如果任务只是查看文件、搜索文本、检查进程或调用现成 CLI，优先使用 bash；"
                 "需要循环、条件分支、解析转换、程序化处理或可靠地产出文件时，优先使用 execute_python。"
-                "复杂用法先阅读 backend/app/tools/utility/execute_python_manual.md。"
-                "每次调用是独立环境；用 load_data(file_path) 读取会话数据文件，"
+                "数据/图表/报告规范手册位于 backend/app/tools/utility/ 下的 execute_python_data_manual.md、"
+                "execute_python_chart_manual.md、execute_python_report_manual.md；"
+                "配备 read_file 的模式在首次执行某类任务前必须先用 read_file 阅读对应手册（数据处理→data、绘图→chart、正式报告→report），不得凭记忆套用规范或限值；"
+                "未配备 read_file 的模式依据下文要点直接编写脚本。"
+                "每次调用是独立环境，变量和文件挂载不跨调用保留；每次读取输入文件都须通过 input_files 声明。"
+                "声明文件经会话权限校验后挂载，代码中的 input_files 列表提供规范化绝对路径，支持循环读取和路径运算。"
+                "用 load_data(file_path) 读取会话数据文件，"
                 "跨调用或交给其他工具使用的结构化结果必须调用 save_data(...)，"
                 "并原样复用 save_data 返回的 file_path。"
+                "执行后必须检查success、error_code和data.data_file_paths：只有经过文件校验的路径才可继续传递。"
+                "success=false时不能声称执行或保存成功，也不能把异常解释为查询结果缺失。"
+                "气象数据合并须用带时区的datetime对象作为键；先读取完整file_path，再做去重、截止时间过滤和缺失检查，禁止从首尾样本推断缺失。"
                 "执行环境相互隔离，不得将自行写入、拼接或猜测得到的中间数据路径交给后续工具。"
                 "生成 Excel、Word、PDF 等交付文件必须先调用 artifact_path(filename) 获取输出路径并保存；"
-                "正式报告静态图表优先使用 create_report_chart；流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
+                "已支持的专用业务图型在所有模式必须使用 create_business_chart，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具。"
+                "其他图表：专家/报告模式的静态分析和正式报告图表优先使用 execute_python；问数模式绘图优先使用 execute_echarts_python。"
+                "首次绘图前必须先用 read_file 阅读 execute_python_chart_manual.md；matplotlib/seaborn 自动应用与报告图表一致的主题，"
+                "可按分析需要自主选择图型，无需用户预先指定；默认一个独立图表一个图片文件，同主题的趋势、分布、排名分别保存。"
+                "一次调用可保存多张图；仅联合阅读确有必要或用户明确要求时使用多子图，并保证报告插入后的可读性。"
+                "专家/报告静态图按报告正文插入尺寸设计画布、比例和字号，详见手册报告插图尺寸与比例。"
+                "流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
+                "生成的静态图只在对话正文展示，不进入右侧交互图面板；"
+                "最终答复可用工具返回 summary 中的图表标记（如 [[chart:chart_0]]，逐字符原样复制）将图片放在相应分析旁；"
+                "未提供标记时才用 visuals.id。未指定位置的图片由前端追加到本轮答复末尾。不要自行拼图片 URL 或本地路径。"
                 "生成文件会自动归档并发布到会话资源目录；必须复用返回的 file_path，"
                 "不得自行构造资源路径，也不要再调用 publish_session_file；默认超时30秒。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "input_files": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "maxItems": 256,
+                        "description": "本次需要读取的输入文件路径，读取文件时必须声明；" + describe_agent_read_policy() + "不接受目录。相对路径以项目根目录为准。代码中的 input_files 为校验后的绝对路径列表。无需读取文件时可省略。"
+                    },
                     "code": {
                         "type": "string",
                         "description": (
                             "要执行的 Python 代码。matplotlib 图片可用 save_chart(fig, filename) 或 fig.savefig(path) 保存；"
                             "matplotlib 中文字体由系统自动设置，不要显式设置 SimHei、DejaVu Sans 等不支持中文的字体；"
-                            "工具只捕获保存路径，不接管图表字号、画布或布局。"
+                            "工具默认应用共享报告配色、字号和轴线风格；可使用 REPORT_THEME、SERIES_COLORS、theme_color(role)。"
+                            "首次绘图前必须先用 read_file 阅读 backend/app/tools/utility/execute_python_chart_manual.md；"
+                            "环境图等级色按适用标准，图例默认在下方；"
+                            "浓度对比有适用限值时标出标准线，明确污染物、单位、平均时间、等级和数据日期。"
+                            "可直接使用 aqi_color、pollutant_color、get_pollutant_scale、get_six_level_scale、level_color、get_environment_limit、add_standard_limit、legend_below；"
+                            "标准限值线禁止凭记忆硬编码数值，必须调用 get_environment_limit/add_standard_limit 按数据日期获取限值并绘制，标注标准版本、适用阶段、区类、平均时间和单位。"
+                            "小时值不得直接按日均限值判断达标，缺失不填零，预测与实测区分。"
+                            "风向箭头须明确来向/去向，按真实角度绘制；等长方向箭头与按风速缩放的矢量箭头必须区分。"
+                            "seaborn.set_theme 后须在创建图表前调用 apply_report_style() 恢复主题。"
+                            "默认一个独立图表一个图片文件，可在一次调用中分别保存多个 Figure；仅联合阅读确有必要或用户明确要求时合图。"
+                            "报告图显式设置 figsize，未知模板时按约 5.8 英寸插入宽度设计，常规单图可用 (6.0, 3.8)。"
+                            "最终刻度/图例一般不小于 9 pt，PNG 显式用 save_chart(..., dpi=240)，按 backend/app/tools/utility/execute_python_chart_manual.md 检查缩放后可读性。"
                             "结构化结果若需被后续调用或其他工具读取，代码必须使用 path = save_data(data, schema=...)；"
                             "只能向后续工具传递该返回值，不能传递其他文件写入方式产生的中间路径。"
                             "Excel、Word、PDF 等交付文件必须先使用 output_path = artifact_path(filename)，"
                             "再保存到 output_path，禁止自行拼接绝对输出路径。"
+                            "结构化结果若需被后续调用或其他工具读取，代码必须使用 path = save_data(data, schema=...)；"
+                            "只能向后续工具传递该返回值，不能传递其他文件写入方式产生的中间路径。"
                         )
                     },
                     "timeout": {
@@ -2732,9 +3417,12 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "执行 Python 代码并将 stdout 中的一行一个纯 JSON ECharts option 转换为前端交互式图表。"
             "用于生成前端交互式 ECharts 图表（柱状图/折线图/散点图/饼图/3D图/地图等）。"
             "⚠️ **图表选择策略**："
-            "① 正式报告Word/QMD静态图表 → 优先使用 create_report_chart；"
+            "① 已支持的专用业务图型 → 所有模式必须使用 create_business_chart，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具；"
+            "其他通用图：问数模式优先使用 execute_echarts_python；专家/报告模式优先使用 execute_python，ECharts 辅助交互探索；"
             "② 前端交互式图表/复杂数据可视化 → 使用 execute_echarts_python；"
-            "③ 复杂Python绘图（3D/科研图/多子图） → 使用 execute_python + matplotlib/seaborn/plotly。"
+            "③ 深度分析与报告静态图 → 使用 execute_python + matplotlib/seaborn，默认一个独立图表一个图片文件。"
+            "交互图通过统一资源发布；最终回复使用 summary 中的图表标记（原样复制 [[chart:chart_N]]）在相关分析段落之间插入图表；未提供标记时才用 visuals.id。"
+            "需要正文或报告静态图时，通用图通过 execute_python 绘制，已支持的业务图型必须使用 create_business_chart。"
             "通用计算和文件生成仍使用 execute_python。"
         )
 
@@ -2797,7 +3485,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
         result.setdefault("resources", []).extend(
             resources_for_visuals(echarts_visuals, tool_name=self.name)
         )
-        result["summary"] = f"✅ ECharts 图表生成完成：{len(echarts_visuals)} 个"
+        result["summary"] = f"✅ ECharts 图表生成完成：{len(echarts_visuals)} 个。"
         return result
 
     def get_function_schema(self) -> Dict[str, Any]:
@@ -2806,18 +3494,34 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "name": "execute_echarts_python",
             "description": (
                 "执行 Python 代码生成 ECharts 图表配置，并返回标准 visuals 给前端渲染。"
+                "问数模式的主要绘图工具；专家/报告模式中作为交互探索的辅助工具，主要绘图使用 execute_python。"
+                "已支持的专用业务图型在所有模式必须使用 create_business_chart，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具。"
                 "首次使用前必须先调用 read_file 阅读 "
                 "backend/app/tools/utility/execute_echarts_python_manual.md。"
                 "使用工具返回的 file_path，代码中通过系统注入的 load_data(file_path) 获取数据。"
-                "仅用于图表模式的 ECharts 输出：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
+                "每次调用是独立环境；读取输入文件须通过 input_files 声明，代码中的同名列表提供校验后的绝对路径。"
+                "仅输出 ECharts 图表配置：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
-                "图表通过统一会话资源目录发布和预览，不返回独立图片 URL。"
+                "图表通过统一会话资源目录发布为 chart-spec，Web 与 App 共用交互图表。"
+                "最终回复必须用 [[chart:...]] 标记安排图表位置：优先逐字符原样复制工具返回 summary 中的图表标记（如 [[chart:chart_0]]），"
+                "不得编造标记或手抄 visuals.id 全串；仅在未提供标记时才取工具返回的 visuals.id。"
+                "每个标记独占一行并与上下段落空行分隔；按分析逻辑交替组织文字与图表，每张图后说明结论。"
+                "不在正文输出配置 JSON、HTML 或拼接图片 URL；不要要求用户到右侧面板寻找图表。"
+                "需要正文或 Word/QMD 报告静态图时，通用图通过 execute_python 绘制，已支持的业务图型必须使用 create_business_chart。"
+                "布局要求：图例（legend）水平置于横坐标刻度下方（不得与刻度重叠），"
+                "纵轴名称（yAxis.name）置于图表左侧，横轴名称（xAxis.name）置于横轴右侧。"
                 "多图时输出多行纯 JSON。禁止输出 CHART_1: 前缀、Markdown 代码块、解释文字包裹 JSON。"
                 "数据分析、清洗、中间计算和文件生成请使用 execute_python。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "input_files": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "maxItems": 256,
+                        "description": "本次需要读取的输入文件路径，每次调用重新声明，不接受目录，代码中通过 input_files 列表访问。" + describe_agent_read_policy()
+                    },
                     "code": {
                         "type": "string",
                         "description": (

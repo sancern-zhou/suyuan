@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 import structlog
 import asyncio
 from app.kingbase_dialect import register_kingbase_dialect
+from app.db.pool_config import pool_int
 
 load_dotenv()
 register_kingbase_dialect()
@@ -27,36 +28,12 @@ DATABASE_URL = _normalize_async_database_url(
     or "postgresql+asyncpg://user:password@localhost:5432/weather_db"
 )
 
-# Shared knowledge-base metadata lives in the central database.  Project-local
-# and private metadata may remain in a separate PostgreSQL database so shared
-# projects can use both stores without mixing ownership or local_scope rows.
-LOCAL_DATABASE_URL = _normalize_async_database_url(os.getenv("LOCAL_DATABASE_URL", "")) or None
-
-
-def _resolve_session_database_url(
-    database_url: str,
-    local_database_url: str | None,
-    explicit_session_database_url: str | None,
-) -> str:
-    """Keep private session data local unless a deployment opts out explicitly."""
-    return explicit_session_database_url or local_database_url or database_url
-
-
-# Conversation history, ownership metadata, and published session resources
-# must use one database. Prefer the project-local store so changing the shared
-# DATABASE_URL cannot silently move a deployment's session history.
-SESSION_DATABASE_URL = _resolve_session_database_url(
-    DATABASE_URL,
-    LOCAL_DATABASE_URL,
-    _normalize_async_database_url(os.getenv("SESSION_DATABASE_URL", "")) or None,
-)
-
 # Create async engine
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,  # Set to True for SQL query logging
-    pool_size=20,        # 增加到20个连接（支持更多并发查询）
-    max_overflow=30,     # 增加到30个溢出连接（峰值时最多50个连接）
+    pool_size=pool_int("DATABASE_POOL_SIZE", 20),
+    max_overflow=pool_int("DATABASE_MAX_OVERFLOW", 30),
     pool_pre_ping=True,  # Verify connections before using
     pool_recycle=300,    # Recycle connections after 5 minutes
     pool_timeout=120,    # 增加到120秒（给更多时间等待连接）
@@ -71,57 +48,6 @@ engine = create_async_engine(
 # Create async session factory
 async_session = async_sessionmaker(
     engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autocommit=False,
-    autoflush=False,
-)
-
-local_engine = None
-local_async_session = None
-if LOCAL_DATABASE_URL and LOCAL_DATABASE_URL != DATABASE_URL:
-    local_engine = create_async_engine(
-        LOCAL_DATABASE_URL,
-        echo=False,
-        pool_size=10,
-        max_overflow=10,
-        pool_pre_ping=True,
-        pool_recycle=300,
-        pool_timeout=30,
-        connect_args={
-            "command_timeout": 60,
-            "server_settings": {"statement_timeout": "60000"},
-        },
-    )
-    local_async_session = async_sessionmaker(
-        local_engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-        autocommit=False,
-        autoflush=False,
-    )
-
-if SESSION_DATABASE_URL == DATABASE_URL:
-    session_engine = engine
-elif local_engine is not None and SESSION_DATABASE_URL == LOCAL_DATABASE_URL:
-    session_engine = local_engine
-else:
-    session_engine = create_async_engine(
-        SESSION_DATABASE_URL,
-        echo=False,
-        pool_size=10,
-        max_overflow=10,
-        pool_pre_ping=True,
-        pool_recycle=300,
-        pool_timeout=30,
-        connect_args={
-            "command_timeout": 60,
-            "server_settings": {"statement_timeout": "60000"},
-        },
-    )
-
-session_async_session = async_sessionmaker(
-    session_engine,
     class_=AsyncSession,
     expire_on_commit=False,
     autocommit=False,
@@ -270,6 +196,44 @@ async def _ensure_session_resources_schema(conn) -> None:
     logger.info("session_resources_schema_ensured")
 
 
+async def _ensure_coordinator_quick_prompts_schema(conn) -> None:
+    """Create the runtime quick-prompt table and scope uniqueness index."""
+    if conn.dialect.name != "postgresql":
+        return
+    statements = (
+        """
+        CREATE TABLE IF NOT EXISTS coordinator_quick_prompts (
+            id SERIAL PRIMARY KEY,
+            project_id VARCHAR(100) NOT NULL,
+            surface VARCHAR(16) NOT NULL DEFAULT 'home',
+            label VARCHAR(30) NOT NULL,
+            prompt TEXT NOT NULL,
+            mode VARCHAR(100),
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_by VARCHAR(255),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        ALTER TABLE coordinator_quick_prompts
+            ADD COLUMN IF NOT EXISTS surface VARCHAR(16) NOT NULL DEFAULT 'home'
+        """,
+        """
+        ALTER TABLE coordinator_quick_prompts
+            DROP CONSTRAINT IF EXISTS uq_coordinator_quick_prompts_project_label
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_coordinator_quick_prompts_scope_label
+            ON coordinator_quick_prompts (project_id, surface, COALESCE(mode, ''), label)
+        """,
+    )
+    for statement in statements:
+        await conn.execute(text(statement))
+    logger.info("coordinator_quick_prompts_schema_ensured")
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency for FastAPI endpoints to get database session.
@@ -342,11 +306,28 @@ async def init_db():
     # Import optional model modules so their tables are registered on Base.metadata
     # before create_all runs.
     import app.social.models  # noqa: F401
+    import app.social.assistant_task_models  # noqa: F401
+    import app.social.assistant_coaching_models  # noqa: F401
+    import app.social.assistant_followup_models  # noqa: F401
+    import app.social.assistant_notification_models  # noqa: F401
+    import app.conversations.models  # noqa: F401
+    import app.social.report_models  # noqa: F401
+    import app.social.shared_conversation_models  # noqa: F401
+    import app.db.models.scheduled_task_execution_db  # noqa: F401
+    import app.db.models.scheduled_task_result_db  # noqa: F401
+    import app.db.models.xuchang_station_alert_episode_db  # noqa: F401
+    # Web Agent conversation persistence uses SessionDB / SessionMessageDB.
+    # Import it before create_all so isolated project databases receive the
+    # required `sessions` tables on their first startup as well.
+    # Session persistence historically owns a separate SQLAlchemy Base, so it
+    # must be initialized explicitly in addition to the application Base.
+    import app.db.models_session as session_models
     import app.knowledge_base.models  # noqa: F401
     import app.knowledge_base.graph_models  # noqa: F401
     import app.knowledge_base.graph_build_models  # noqa: F401
     import app.boards.models  # noqa: F401
     import app.exam.models  # noqa: F401
+    import app.db.coordinator_quick_prompt_model  # noqa: F401
 
     async with engine.begin() as conn:
         dialect_name = getattr(getattr(conn, "dialect", None), "name", "")
@@ -354,36 +335,18 @@ async def init_db():
         if lock_sql:
             await conn.execute(text(lock_sql))
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(session_models.Base.metadata.create_all)
         await _ensure_uploaded_files_schema(conn)
         await _ensure_social_binding_schema(conn)
-
-    # Session models intentionally use their own Base and may live in a
-    # different project-local database from shared application data.
-    import app.db.models_session as session_models
-    from app.conversations.models import ConversationCatalogDB
-
-    async with session_engine.begin() as conn:
-        dialect_name = getattr(getattr(conn, "dialect", None), "name", "")
-        lock_sql = _schema_init_lock_sql(dialect_name)
-        if lock_sql:
-            await conn.execute(text(lock_sql))
-        await conn.run_sync(session_models.Base.metadata.create_all)
-        await conn.run_sync(
-            lambda sync_conn: ConversationCatalogDB.__table__.create(
-                sync_conn, checkfirst=True
-            )
-        )
         await _ensure_session_resources_schema(conn)
+        await _ensure_coordinator_quick_prompts_schema(conn)
     logger.info("database_initialized")
 
 
 async def check_db_connection() -> None:
-    """Verify shared and session database availability without schema changes."""
+    """Verify database availability without mutating the schema."""
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
-    if session_engine is not engine:
-        async with session_engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
 
 
 async def close_db():
@@ -393,11 +356,7 @@ async def close_db():
     """
     try:
         # 尝试优雅关闭连接池（最多等待10秒）
-        engines = {id(item): item for item in (engine, local_engine, session_engine) if item}
-        await asyncio.wait_for(
-            asyncio.gather(*(item.dispose() for item in engines.values())),
-            timeout=10.0,
-        )
+        await asyncio.wait_for(engine.dispose(), timeout=10.0)
         logger.info("database_closed")
     except asyncio.TimeoutError:
         logger.warning("database_close_timeout", message="Database close timed out, forcing disposal")

@@ -6,7 +6,7 @@ from app.conversations.schemas import ConversationSource
 from app.scheduled_tasks.conversation_persistence import (
     ScheduledTaskConversationPersistence,
 )
-from app.scheduled_tasks.models import ScheduledTask, TaskExecution, TaskStep
+from app.scheduled_tasks.models import ScheduledTask, TaskExecution
 
 
 class FakeSessionManager:
@@ -67,7 +67,7 @@ def task():
         owner_user_id="owner-1",
         owner_username="alice",
         owner_display_name="Alice",
-        steps=[TaskStep(step_id="step-1", description="分析", agent_prompt="执行")],
+        prompt="执行",
     )
 
 
@@ -125,6 +125,48 @@ async def test_persists_runtime_transcript_as_owned_web_conversation():
         "title": "告警分析",
         "read_only_on_web": False,
     }]
+
+
+@pytest.mark.asyncio
+async def test_event_agent_mode_survives_conversation_persistence():
+    manager = FakeSessionManager()
+    catalog = FakeCatalog()
+    persistence = ScheduledTaskConversationPersistence(
+        session_manager=manager,
+        catalog=catalog,
+    )
+    execution = TaskExecution(
+        execution_id="exec-event-1",
+        task_id="task-1",
+        task_name="告警分析",
+        session_id="scheduled-event-session",
+        status="running",
+        total_steps=1,
+        event_attributes={"agent_mode": "station_fault_diagnosis"},
+    )
+
+    await persistence.persist_agent_session(
+        agent=FakeAgent(),
+        task=task(),
+        execution=execution,
+        display_history=[{"type": "user", "content": "事件研判"}],
+    )
+    await persistence.publish_conversation(task=task(), execution=execution)
+
+    assert manager.existing.metadata["mode"] == "station_fault_diagnosis"
+    assert manager.existing.metadata["scheduled_task_context"] == {
+        "task_id": "task-1",
+        "task_name": "告警分析",
+        "execution_id": "exec-event-1",
+        "history_learning": task().history_learning.model_dump(mode="json"),
+        "result_requirements": [],
+        "model_tier": task().model_tier,
+        "allow_archived_review_reopen": task().allow_archived_review_reopen,
+        "review_subject_bound": False,
+        "expected_subject_id": None,
+    }
+    assert manager.existing.metadata["scheduled_task_tools"] == []
+    assert catalog.registrations[0]["mode"] == "station_fault_diagnosis"
 
 
 @pytest.mark.asyncio
@@ -207,7 +249,7 @@ def test_legacy_tasks_default_to_system_ownership_for_future_executions():
         description="旧任务",
         schedule_type="once",
         run_at="2026-07-17T12:00:00",
-        steps=[TaskStep(step_id="step-1", description="执行", agent_prompt="执行")],
+        prompt="执行",
     )
 
     assert legacy.owner_user_id == "system"
@@ -301,3 +343,45 @@ async def test_creates_terminal_fallback_when_runtime_export_never_started():
         "user", "error"
     ]
     assert await persistence.publish_conversation(task=task(), execution=execution)
+
+
+@pytest.mark.asyncio
+async def test_terminal_save_does_not_repeat_database_enriched_live_snapshot():
+    class DatabaseLikeManager(FakeSessionManager):
+        async def save_session(self, session, **kwargs):
+            await super().save_session(session, **kwargs)
+            for index, message in enumerate(self.existing.conversation_history):
+                message['id'] = f'msg_{len(self.saved)}_{index}'
+                message['role'] = 'user' if message['type'] == 'user' else 'assistant'
+            return True
+
+    manager = DatabaseLikeManager()
+    persistence = ScheduledTaskConversationPersistence(manager, FakeCatalog())
+    execution = TaskExecution(
+        execution_id='exec-1', task_id='task-1', task_name='告警分析',
+        session_id='scheduled-session-1', status='running', total_steps=1,
+    )
+    history = [
+        {'type': 'user', 'content': '执行任务', 'timestamp': '2026-09-11T00:41:44.362298'},
+        {'type': 'thought', 'content': '核验证据', 'timestamp': '2026-09-11T00:42:00.000001'},
+        {'type': 'tool_result', 'content': '核验完成', 'data': {'result': 'ok'},
+         'timestamp': '2026-09-11T00:42:44.362298'},
+    ]
+    async def persist(messages):
+        await persistence.persist_agent_session(
+            agent=FakeAgent(), task=task(), execution=execution,
+            display_history=messages,
+        )
+
+    await persist(history)
+    complete = history + [
+        {'type': 'final', 'content': '研判完成', 'timestamp': '2026-09-11T00:43:44.362298'}
+    ]
+    await persist(complete)
+    await persist(complete)
+    assert [m['type'] for m in manager.existing.conversation_history] == [
+        'user', 'tool_result', 'final'
+    ]
+    # Identical wording in a later turn is still a real new input.
+    await persist([dict(history[0], timestamp='2026-09-11T01:41:44.362298')])
+    assert len(manager.existing.conversation_history) == 4

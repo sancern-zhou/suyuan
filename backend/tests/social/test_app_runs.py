@@ -1,0 +1,159 @@
+import asyncio
+import json
+import sqlite3
+import time
+from contextvars import ContextVar
+
+import pytest
+
+from app.social.app_runs import AppRunStore
+
+
+@pytest.mark.asyncio
+async def test_concurrent_admission_is_idempotent_across_stores(tmp_path):
+    stores = [AppRunStore(tmp_path / 'runs.sqlite3') for _ in range(6)]
+    results = await asyncio.gather(*(s.create('alice', 'request', 'session', 'fingerprint') for s in stores))
+    assert sum(created for _, created in results) == 1
+    assert len({run['run_id'] for run, _ in results}) == 1
+    with pytest.raises(ValueError, match='request_id_conflict'):
+        await stores[0].create('alice', 'request', 'session', 'changed')
+    with pytest.raises(ValueError, match='session_run_active'):
+        await stores[0].create('alice', 'other-request', 'session', 'fingerprint')
+
+
+@pytest.mark.asyncio
+async def test_disconnect_does_not_cancel_execution_and_other_process_replays(tmp_path):
+    store = AppRunStore(tmp_path / 'runs.sqlite3')
+    reader = AppRunStore(store.path)
+    run, _ = await store.create('alice', 'request', 'session', 'fingerprint')
+    release = asyncio.Event()
+    calls = []
+    async def producer():
+        calls.append('executed')
+        await release.wait()
+        yield 'data: ' + json.dumps({'type': 'complete', 'data': {'answer': '最终结果'}}) + '\n\n'
+    store.start(run['run_id'], producer)
+    subscription = store.stream(run['run_id'])
+    first = await anext(subscription)
+    assert 'start' in first
+    cursor = int(first.splitlines()[0].split(': ')[1])
+    await subscription.aclose()
+    release.set()
+    await asyncio.gather(*store.tasks)
+    assert calls == ['executed']
+    assert (await reader.get(run['run_id']))['status'] == 'completed'
+    frames = [frame async for frame in reader.stream(run['run_id'], cursor)]
+    assert len(frames) == 1
+    assert '最终结果' in frames[0]
+
+
+@pytest.mark.asyncio
+async def test_explicit_cancel_from_another_process_stops_run(tmp_path):
+    owner = AppRunStore(tmp_path / 'runs.sqlite3')
+    caller = AppRunStore(owner.path)
+    run, _ = await owner.create('alice', 'request', 'session', 'fingerprint')
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+    async def producer():
+        try:
+            started.set()
+            await asyncio.Event().wait()
+            yield ''
+        finally:
+            stopped.set()
+    owner.start(run['run_id'], producer)
+    await started.wait()
+    assert await caller.cancel_session('session')
+    await asyncio.wait_for(stopped.wait(), 3)
+    await asyncio.gather(*owner.tasks, return_exceptions=True)
+    assert (await caller.get(run['run_id']))['status'] == 'cancelled'
+    assert (await caller.events(run['run_id']))[-1][1]['type'] == 'interrupted'
+
+
+@pytest.mark.asyncio
+async def test_cancel_closes_yield_parked_producer_inside_executor_context(tmp_path):
+    """取消落在消费端 await 上、生成器停在 yield 点时，清理必须在执行器
+    任务的上下文内完成：contextvar token 复位不得抛 ValueError，producer
+    的 finally（对应路由侧的会话落盘与取消注册）必须执行，否则跨进程取消
+    注册表会残留 running 状态，把会话锁到 TTL 过期。"""
+    store = AppRunStore(tmp_path / 'runs.sqlite3')
+    run, _ = await store.create('alice', 'request', 'session', 'fingerprint')
+    probe = ContextVar('app_runs_cancel_probe', default=None)
+    started = asyncio.Event()
+    append_started = asyncio.Event()
+    release_append = asyncio.Event()
+    finally_done = asyncio.Event()
+    real_append = store.append
+
+    async def slow_append(run_id, event):
+        append_started.set()
+        await release_append.wait()
+        return await real_append(run_id, event)
+
+    store.append = slow_append
+
+    async def producer():
+        token = probe.set('in-flight')
+        try:
+            started.set()
+            yield 'data: ' + json.dumps({'type': 'streaming_text', 'data': {'chunk': 'x'}}) + '\n\n'
+        finally:
+            probe.reset(token)
+            finally_done.set()
+
+    store.start(run['run_id'], producer)
+    await started.wait()
+    await append_started.wait()
+    assert await store.cancel_session('session')
+    await asyncio.sleep(1.5)
+    release_append.set()
+    await asyncio.wait_for(finally_done.wait(), 3)
+    await asyncio.gather(*store.tasks, return_exceptions=True)
+    assert (await store.get(run['run_id']))['status'] == 'cancelled'
+    assert (await store.events(run['run_id']))[-1][1]['type'] == 'interrupted'
+
+
+@pytest.mark.asyncio
+async def test_dead_process_is_reported_without_reexecution(tmp_path):
+    store = AppRunStore(tmp_path / 'runs.sqlite3')
+    run, _ = await store.create('alice', 'request', 'session', 'fingerprint')
+    with sqlite3.connect(store.path) as db:
+        db.execute('UPDATE runs SET heartbeat=?', (time.time() - 100,))
+    assert (await store.get(run['run_id']))['status'] == 'failed'
+    same, created = await store.create('alice', 'request', 'session', 'fingerprint')
+    assert not created
+    assert same['status'] == 'failed'
+    assert (await store.events(run['run_id']))[-1][1]['data']['code'] == 'app_run_lost'
+
+
+@pytest.mark.asyncio
+async def test_long_event_replay_is_not_truncated(tmp_path):
+    store = AppRunStore(tmp_path / 'runs.sqlite3')
+    run, _ = await store.create('alice', 'request', 'session', 'fingerprint')
+    for _ in range(210):
+        await store.append(run['run_id'], {'type': 'streaming_text', 'data': {'chunk': 'x'}})
+    await store.append(run['run_id'], {'type': 'complete', 'data': {'answer': 'x' * 210}})
+    frames = [frame async for frame in store.stream(run['run_id'])]
+    assert len(frames) == 212
+
+
+@pytest.mark.asyncio
+async def test_wal_enabled_and_expired_terminal_events_are_pruned(tmp_path):
+    store = AppRunStore(tmp_path / 'runs.sqlite3')
+    with sqlite3.connect(store.path) as db:
+        assert db.execute('PRAGMA journal_mode').fetchone()[0] == 'wal'
+    old_run, _ = await store.create('alice', 'request', 'session', 'fingerprint')
+    await store.append(old_run['run_id'], {'type': 'streaming_text', 'data': {'chunk': 'x'}})
+    await store.append(old_run['run_id'], {'type': 'complete', 'data': {}})
+    fresh_run, _ = await store.create('bob', 'request', 'session-b', 'fingerprint')
+    await store.append(fresh_run['run_id'], {'type': 'complete', 'data': {}})
+    with sqlite3.connect(store.path) as db:
+        db.execute('UPDATE runs SET heartbeat=? WHERE run_id=?', (time.time() - 8 * 86400, old_run['run_id']))
+    await store.cleanup()
+    assert await store.events(old_run['run_id']) == []
+    assert len(await store.events(fresh_run['run_id'])) == 2
+    # Run rows survive pruning so request_id idempotency is preserved.
+    row = await store.get(old_run['run_id'])
+    assert row['status'] == 'completed'
+    with pytest.raises(ValueError, match='request_id_conflict'):
+        await store.create('alice', 'request', 'session', 'changed-fingerprint')

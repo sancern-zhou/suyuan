@@ -1,11 +1,14 @@
 # execute_echarts_python 工具指导手册
 
-首次使用 `execute_echarts_python` 前应阅读本手册。后续调用可根据任务只重读相关章节。
+工具 Schema 要求 Agent 在使用 `execute_echarts_python` 前通过 `read_file` 阅读本手册。该要求由 Agent 按任务场景执行，工具运行时代码不检测阅读状态，也不会因此阻断执行；后续调用可根据任务只重读相关章节。
 
 ## 使用边界
 
-- 前端交互式 ECharts 图表使用 `execute_echarts_python`。
-- 正式报告 Word/QMD 中的静态图表优先使用 `create_report_chart`。
+- 所有模式先匹配专用业务图型：属于 `create_business_chart` 已支持的六种图型时，必须使用 `create_business_chart`，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具。数据准备可使用 Python。
+- 其他通用或自定义图表，问数模式以 `execute_echarts_python` 为主要绘图工具；Python 负责计算、整理和自定义静态图。
+- 专家和报告模式以 `execute_python` 为主要绘图工具，ECharts 辅助交互探索；前端交互式 ECharts 图表使用 `execute_echarts_python`。
+- 交互图登记 `chart-spec` 资源，Web 与 App 在最终回复中使用同一组件渲染。最终回复使用 `[[chart:...]]` 标记控制位置：工具返回 summary 中给出的图表标记（如 `[[chart:chart_0]]`）必须逐字符原样复制，禁止手抄 `visuals.id` 全串、禁止改动标记；仅在未提供标记时才取本次工具返回的 `visuals.id`。每个标记独占一行，与上下文空行分隔；按分析逻辑组织“说明—图表—结论”，支持多图穿插。禁止编造 ID、输出配置 JSON/HTML 或要求用户去右侧面板寻找图表。
+- 正文或正式报告 Word/QMD 所需通用静态图使用 `execute_python`，已支持的专用业务图型必须使用 `create_business_chart`；需要把问数结果写入报告时复用原始数据绘制静态图或复用业务工具图片。
 - 数据清洗、中间计算、文件生成和 matplotlib/seaborn/plotly 绘图使用 `execute_python`。
 
 ## 标准数据访问流程
@@ -53,6 +56,14 @@ Do not guess or rewrite a path. Reuse the exact path returned by the producing t
 - 不要添加 `CHART_1:` 前缀、Markdown 代码块或自然语言说明。
 - option 必须可由 JSON 序列化；JavaScript 回调、Python 函数和 lambda 不能放入 option。
 - 序列数据中的 Python `None` 会输出为 JSON `null`，可用于折线缺口。
+
+## 布局约束
+
+- 图例（`legend`）统一水平排列，由渲染器固定在横坐标刻度文字下方的底边区域；不要放在顶部或右侧。
+- 纵轴名称（`yAxis.name`）放在图表左侧，垂直显示在轴的中部，例如
+  `"yAxis": {"name": "PM2.5 (μg/m³)", "nameLocation": "middle", "nameGap": 50, "nameRotate": 90}`。
+- 横轴名称（`xAxis.name`）放在横轴右侧，例如 `"xAxis": {"name": "时间", "nameLocation": "end", "nameGap": 30}`。
+- 图例必须紧贴横坐标刻度文字下方，不得与刻度重叠；渲染器会自动设置 `legend.bottom` 与 `grid.bottom`，无需自行估算图例与刻度的间距。
 
 ## 最小正确示例
 

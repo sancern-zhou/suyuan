@@ -13,7 +13,7 @@ def is_enforcement_exam_context(context) -> bool:
 
 
 async def resolve_enforcement_exam_knowledge_base_ids(user_id: str | None) -> list[str]:
-    from app.db.database import async_session
+    from app.db.knowledge_database import knowledge_async_session as async_session
     from app.knowledge_base.service import KnowledgeBaseService
 
     async with async_session() as db:

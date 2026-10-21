@@ -183,21 +183,21 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--border-2);
 }
 
 .panel-header h3 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-1);
 }
 
 .panel-btn {
   padding: 6px 12px;
-  border: 1px solid #1976d2;
+  border: 1px solid var(--color-primary);
   background: white;
-  color: #1976d2;
+  color: var(--color-primary);
   border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
@@ -205,7 +205,7 @@ onMounted(() => {
 }
 
 .panel-btn:hover {
-  background: #1976d2;
+  background: var(--color-primary);
   color: white;
 }
 
@@ -222,21 +222,21 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  border-bottom: 1px solid #e8e8e8;
-  background: #fafafa;
+  border-bottom: 1px solid var(--border-2);
+  background: var(--bg-muted);
 }
 
 .breadcrumb-path {
   flex: 1;
   font-size: 14px;
-  color: #333;
+  color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .root-label {
-  color: #1890ff;
+  color: var(--color-primary);
   font-weight: 500;
 }
 
@@ -245,22 +245,22 @@ onMounted(() => {
 }
 
 .separator {
-  color: #999;
+  color: var(--text-3);
   margin: 0 4px;
 }
 
 .segment {
-  color: #666;
+  color: var(--text-2);
 }
 
 .segment.clickable {
-  color: #1890ff;
+  color: var(--color-primary);
   cursor: pointer;
   text-decoration: underline;
 }
 
 .segment.clickable:hover {
-  color: #40a9ff;
+  color: var(--color-primary-hover);
 }
 
 /* 文件列表容器 */
@@ -279,14 +279,14 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   padding: 40px 20px;
-  color: #999;
+  color: var(--text-3);
 }
 
 .spinner {
   width: 32px;
   height: 32px;
-  border: 3px solid #f0f0f0;
-  border-top-color: #1890ff;
+  border: 3px solid var(--border-1);
+  border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 16px;
@@ -299,15 +299,15 @@ onMounted(() => {
 .retry-btn {
   margin-top: 16px;
   padding: 8px 16px;
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--border-3);
   background: white;
   border-radius: 4px;
   cursor: pointer;
-  color: #1890ff;
+  color: var(--color-primary);
 }
 
 .retry-btn:hover {
-  border-color: #1890ff;
+  border-color: var(--color-primary);
 }
 
 /* 文件列表 */
@@ -328,8 +328,8 @@ onMounted(() => {
 }
 
 .file-item:hover {
-  background: #f0f0f0;
-  border-color: #e8e8e8;
+  background: var(--border-1);
+  border-color: var(--border-2);
 }
 
 .file-item.directory {
@@ -348,7 +348,7 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   margin-right: 12px;
-  color: #666;
+  color: var(--text-2);
 }
 
 .file-icon svg {
@@ -363,7 +363,7 @@ onMounted(() => {
 
 .file-name {
   font-size: 14px;
-  color: #333;
+  color: var(--text-1);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -375,7 +375,7 @@ onMounted(() => {
   gap: 12px;
   margin-top: 4px;
   font-size: 12px;
-  color: #999;
+  color: var(--text-3);
 }
 
 .dir-indicator {
@@ -384,7 +384,7 @@ onMounted(() => {
 }
 
 .file-size {
-  color: #52c41a;
+  color: var(--color-success);
 }
 
 /* 滚动条样式 */
@@ -393,15 +393,15 @@ onMounted(() => {
 }
 
 .file-list-container::-webkit-scrollbar-track {
-  background: #f0f0f0;
+  background: var(--border-1);
 }
 
 .file-list-container::-webkit-scrollbar-thumb {
-  background: #bfbfbf;
+  background: var(--text-disabled);
   border-radius: 4px;
 }
 
 .file-list-container::-webkit-scrollbar-thumb:hover {
-  background: #999;
+  background: var(--text-3);
 }
 </style>

@@ -24,12 +24,43 @@ import traceback
 import asyncio
 import time
 
+from app.utils.path_config import resolve_agent_path
+
 if TYPE_CHECKING:
     from app.agent.memory.hybrid_manager import HybridMemoryManager
     from app.agent.context.data_context_manager import DataContextManager
     from app.agent.context.execution_context import ExecutionContext
 
 logger = structlog.get_logger()
+
+
+def _canonical_agent_path(path: str) -> str:
+    """归一化 Agent 路径为绝对路径字符串；非法路径原样返回。"""
+    try:
+        return str(resolve_agent_path(path))
+    except (OSError, ValueError):
+        return str(path or "")
+
+
+def _match_result_shape(
+    result_shapes: Dict[str, Any],
+    file_path: str,
+) -> Optional[Dict[str, Any]]:
+    """按归一化后的绝对路径精确匹配工具结果里解析出的 data_shape。
+
+    禁止前后缀模糊匹配（如 "xx11.csv" 会误配 "1.csv" 的形状）——
+    给 LLM 看的元数据错比缺更糟。
+    """
+    if not isinstance(result_shapes, dict):
+        return None
+    exact = result_shapes.get(file_path)
+    if isinstance(exact, dict):
+        return exact
+    target = _canonical_agent_path(file_path)
+    for key, value in result_shapes.items():
+        if isinstance(value, dict) and _canonical_agent_path(key) == target:
+            return value
+    return None
 
 
 class ToolExecutor:
@@ -63,7 +94,7 @@ class ToolExecutor:
             llm_planner: LLM规划器（用于call_sub_agent创建子Agent）
             event_bus: 事件总线（Phase 3.1: 用于工具生命周期事件）
         """
-        self.tool_registry = tool_registry or {}
+        self.tool_registry = tool_registry if tool_registry is not None else {}
         self.memory_manager = memory_manager
         self.data_context_manager: Optional["DataContextManager"] = None
         self.task_list = task_list
@@ -75,6 +106,7 @@ class ToolExecutor:
         self.resource_context_builder: Optional[Any] = None
         self.resource_run_id: str = ""
         self.resource_query: str = ""
+        self.runtime_metadata: Dict[str, Any] = {}
         # File inputs from the durable session resource catalog (uploads etc.).
         # Consumed by sandboxed tools as a staging allowlist.
         self.authorized_input_paths: List[str] = []
@@ -89,7 +121,7 @@ class ToolExecutor:
             )
 
         # 只在未提供 tool_registry 时才注册内置工具
-        if not tool_registry:
+        if tool_registry is None:
             self._register_builtin_tools()
         else:
             self._register_special_tools()
@@ -244,6 +276,7 @@ class ToolExecutor:
         )
         cloned.runtime_mode = self.runtime_mode
         cloned.user_identifier = self.user_identifier
+        cloned.runtime_metadata = dict(self.runtime_metadata)
         return cloned
 
     def configure_resource_tracking(
@@ -305,6 +338,20 @@ class ToolExecutor:
                 for publication in publications
                 for stored in publication.resources
             ]
+            presentation = value.get("presentation") if isinstance(value, dict) else None
+            preferred_resource_key = (
+                str(presentation.get("resource_key") or "").strip()
+                if isinstance(presentation, dict)
+                else ""
+            )
+            focused_resource = next(
+                (
+                    stored
+                    for stored in stored_resources
+                    if preferred_resource_key and stored.resource_key == preferred_resource_key
+                ),
+                None,
+            )
             if self.resource_context_builder is not None:
                 self.resource_context_builder.session_resource_context = project_agent_resource_map(
                     stored_resources,
@@ -316,6 +363,10 @@ class ToolExecutor:
                     publication.catalog_version for publication in publications
                 ),
                 "resource_ids": [stored.resource_id for stored in stored_resources],
+                "focus_resource_id": (
+                    focused_resource.resource_id if focused_resource is not None else None
+                ),
+                "resource_group_ids": sorted({stored.group_id for stored in stored_resources}),
                 "rejected": rejected,
             }
 
@@ -341,6 +392,21 @@ class ToolExecutor:
                 error=str(exc),
             )
             return {"durable": False, "error": "resource_persistence_failed", "rejected": rejected}
+
+    # 模型偶发把工具名写成常见简称（如 read/write/edit/list），
+    # 在判"工具不存在"前先尝试映射到注册表中的正式工具名。
+    TOOL_NAME_ALIASES: Dict[str, str] = {
+        "read": "read_file",
+        "write": "write_file",
+        "edit": "edit_file",
+        "list": "list_directory",
+    }
+
+    def _resolve_tool_alias(self, tool_name: str) -> Optional[str]:
+        candidate = self.TOOL_NAME_ALIASES.get(str(tool_name).strip().lower())
+        if candidate and candidate in self.tool_registry:
+            return candidate
+        return None
 
     async def execute_tool(
         self,
@@ -393,6 +459,16 @@ class ToolExecutor:
         )
 
         # Step 1: 验证工具存在
+        if tool_name not in self.tool_registry:
+            resolved_name = self._resolve_tool_alias(tool_name)
+            if resolved_name is not None:
+                logger.warning(
+                    "tool_name_alias_resolved",
+                    requested_tool=tool_name,
+                    resolved_tool=resolved_name
+                )
+                tool_name = resolved_name
+
         if tool_name not in self.tool_registry:
             # 🔍 调试日志：工具不存在时详细输出注册表状态
             available_tools = list(self.tool_registry.keys())
@@ -451,11 +527,26 @@ class ToolExecutor:
                     for item in declared
                     if isinstance(item, dict) and isinstance(item.get("locator"), dict)
                 }
-                declared.extend(
-                    data_file_resource(file_path, tool_name=tool_name)
-                    for file_path in execution_context.available_file_paths
-                    if file_path not in declared_paths
+                result_shapes = (
+                    observation.get("data_shapes")
+                    if isinstance(observation.get("data_shapes"), dict)
+                    else {}
                 )
+                get_context_shape = getattr(execution_context, "get_data_shape", None)
+                for file_path in execution_context.available_file_paths:
+                    if file_path in declared_paths:
+                        continue
+                    shape = _match_result_shape(result_shapes, file_path)
+                    if shape is None and callable(get_context_shape):
+                        shape = get_context_shape(file_path)
+                    declaration_metadata = {"data_shape": shape} if isinstance(shape, dict) else None
+                    declared.append(
+                        data_file_resource(
+                            file_path,
+                            tool_name=tool_name,
+                            metadata=declaration_metadata,
+                        )
+                    )
 
             tracking = await self._persist_boundary_resources(
                 tool_name=tool_name,
@@ -474,6 +565,10 @@ class ToolExecutor:
                         error="resource_persistence_failed",
                         summary=f"{original_summary}，但资源发布失败，结果未交付到文件面板",
                     )
+
+            # 为本轮产出的图表绑定会话级短别名（[[chart:chart_N]]）：
+            # 模型原样复制短标记，Finalizer 落库/下发前统一还原为 visual_id。
+            await self._attach_visual_aliases(tool_name, observation)
 
             # ========================================
             # 详细调试信息：显示工具调用后
@@ -706,6 +801,62 @@ class ToolExecutor:
                 else:
                     # 无法重试或已达最大重试次数
                     raise
+
+    async def _attach_visual_aliases(self, tool_name: str, observation: Dict[str, Any]) -> None:
+        """为工具结果里的 visuals 绑定会话级短别名（零抄写熵）。
+
+        visuals[].id 保持全串不变（SSE/资源目录/前端协议不受影响）；
+        别名映射写入 ``visual_refs``，并在 summary 末尾追加可直接复制的
+        ``[[chart:chart_N]]`` 标记行。解析由 Finalizer 统一完成
+        （见 app/agent/runtime/visual_alias.py）。
+        """
+        visuals = observation.get("visuals")
+        if not isinstance(visuals, list) or not visuals or not self.memory_manager:
+            return
+        visual_ids = [
+            visual.get("id")
+            for visual in visuals
+            if isinstance(visual, dict) and isinstance(visual.get("id"), str) and visual.get("id")
+        ]
+        if not visual_ids:
+            return
+        from app.agent.runtime.visual_alias import visual_alias_registry
+
+        session_id = self.memory_manager.session_id
+        try:
+            mapping = await visual_alias_registry.bind(session_id, visual_ids)
+        except Exception as exc:
+            logger.warning(
+                "visual_alias_attach_failed",
+                tool_name=tool_name,
+                session_id=session_id,
+                error=str(exc),
+            )
+            return
+        if not mapping:
+            return
+        observation["visual_refs"] = mapping
+        titles = {
+            visual.get("id"): str(visual.get("title") or "").strip()
+            for visual in visuals
+            if isinstance(visual, dict)
+        }
+        marks = []
+        for alias, visual_id in mapping.items():
+            title = titles.get(visual_id, "")
+            marks.append(f"[[chart:{alias}]]（{title[:30]}）" if title else f"[[chart:{alias}]]")
+        refs_line = (
+            "图表标记（最终答复在对应分析位置独立一行原样复制标记，"
+            "禁止手抄 visuals.id 全串、禁止改动标记内容）：" + "、".join(marks) + "。"
+        )
+        base_summary = str(observation.get("summary") or "").rstrip()
+        observation["summary"] = (base_summary + "\n" + refs_line) if base_summary else refs_line
+        logger.info(
+            "visual_aliases_bound",
+            tool_name=tool_name,
+            session_id=session_id,
+            aliases=sorted(mapping),
+        )
 
     def _normalize_result(
         self,
@@ -1021,14 +1172,20 @@ class ToolExecutor:
             context.llm_planner = self.llm_planner
             context.tool_executor = self
             context.runtime_mode = self.runtime_mode
+            context.session_storage_mode = getattr(self, "session_storage_mode", None)
             context.user_identifier = self.user_identifier
-            context.authorized_input_paths = list(self.authorized_input_paths)
+            context.assistant_memory_store = getattr(self, "assistant_memory_store", None)
+            context.assistant_profile_path = getattr(self, "assistant_profile_path", None)
+            context.runtime_metadata = dict(self.runtime_metadata)
+            context.scheduled_task_context = self.runtime_metadata.get("scheduled_task")
+            context.set_authorized_input_paths(self.authorized_input_paths)
 
             logger.debug(
                 "execution_context_created",
                 session_id=context.session_id,
                 iteration=iteration,
-                has_task_list=self.task_list is not None
+                has_task_list=self.task_list is not None,
+                has_scheduled_task_context=bool(context.scheduled_task_context),
             )
             return context
         except Exception as exc:

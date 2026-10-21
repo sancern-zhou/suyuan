@@ -21,7 +21,7 @@ from app.boards.design import (
     normalize_board_theme_tokens,
 )
 from app.boards.quality import evaluate_drawio_quality
-from app.db.database import async_session
+from app.db.session_database import session_async_session as async_session
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import board_product
 from app.utils.path_config import get_data_registry

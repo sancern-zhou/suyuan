@@ -46,6 +46,19 @@ class LLMFailoverError(Exception):
         super().__init__(f"All LLM fallback candidates failed: {summary}")
 
 
+class LLMResponseRejectedError(Exception):
+    """Raised when a response completes but fails caller-side validation.
+
+    Unlike transport failures this does not mark the provider as cooldown;
+    only the current request moves on to the next fallback candidate.
+    """
+
+    def __init__(self, reason: str, attempts: Optional[list[dict]] = None):
+        self.reason = reason
+        self.attempts = attempts or []
+        super().__init__(reason)
+
+
 _pool_semaphores: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _pool_semaphore_limits: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _cooldowns: dict[str, tuple[float, LLMFailure]] = {}
@@ -115,10 +128,20 @@ def get_cooldown_failure(provider: str) -> Optional[LLMFailure]:
 
 
 def mark_provider_cooldown(provider: str, failure: LLMFailure) -> None:
+    # format(400) 错误通常是瞬态的（网关格式兼容、模型临时不可用等），不打 cooldown，
+    # 避免主 provider 被跳过导致所有请求落到 fallback 而 fallback 又因余额不足失败。
+    if failure.reason == "format":
+        logger.info(
+            "llm_cooldown_skipped_for_format",
+            provider=provider,
+            status=failure.status,
+        )
+        return
     seconds = max(0, int(getattr(settings, "llm_failover_cooldown_seconds", 60) or 0))
     if seconds <= 0:
         return
     _cooldowns[provider] = (time.time() + seconds, failure)
+    _record_failure_counter(provider, failure)
     logger.warning(
         "llm_provider_cooldown_marked",
         provider=provider,
@@ -126,6 +149,22 @@ def mark_provider_cooldown(provider: str, failure: LLMFailure) -> None:
         status=failure.status,
         cooldown_seconds=seconds,
     )
+
+
+def _record_failure_counter(provider: str, failure: LLMFailure) -> None:
+    """旁路计数：供运行监控查询上一时段 LLM 限流/失败情况。失败静默。"""
+    try:
+        import asyncio
+
+        from app.services.llm_failure_counter import record_llm_failure
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(record_llm_failure(provider, failure.reason))
+    except Exception:  # noqa: BLE001 - 计数绝不影响主链路
+        pass
 
 
 def _read_status(err: object) -> Optional[int]:
@@ -189,6 +228,8 @@ def classify_llm_failure(err: object) -> LLMFailure:
     lower = message.lower()
     name = type(err).__name__
 
+    if isinstance(err, LLMResponseRejectedError):
+        return LLMFailure("invalid_response", None, None, err.reason)
     if is_context_overflow_message(message):
         return LLMFailure("context_overflow", status, code, message)
     if is_media_fetch_failure_message(message):
@@ -213,13 +254,15 @@ def classify_llm_failure(err: object) -> LLMFailure:
 def should_fallback(failure: LLMFailure) -> bool:
     # auth(401/403) 也纳入切换：中转网关（如 doubao.best）的 403 常为临时封禁/IP 风控，
     # 切到备用 provider 可用性更高；密钥真正配错时备用链会全部失败并抛 LLMFailoverError。
+    # billing(402) 不切换：账户余额不足是账号级别问题，换 provider 无法解决，
+    # 直接抛出错误让调用方感知，避免无意义重试消耗时间。
     return failure.reason in {
         "rate_limit",
         "overloaded",
         "timeout",
-        "billing",
         "format",
         "auth",
+        "invalid_response",
         "unknown",
     }
 

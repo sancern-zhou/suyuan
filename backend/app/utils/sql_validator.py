@@ -45,6 +45,7 @@ class SQLValidator:
         'dat_station_day',  # 站点日数据
         'dat_station_hour',  # 站点小时数据
         'dat_weather_hour',  # 气象小时数据
+        'HenanCityAccumulateRanking',  # 河南省城市月/年累计空气质量排名（月度/年度综合指数、六参数、同比、有效天数）
         'WeatherForecast7Day',  # 7天空气质量预报数据（全国319个城市，包含AQI范围、首要污染物、气象条件等）
         'city_168_statistics_new_standard',  # 168城市空气质量统计表（新标准 HJ 633-2026）
         'city_168_statistics_old_standard',  # 168城市空气质量统计表（旧标准 HJ 633-2013）
@@ -320,11 +321,22 @@ class SQLValidator:
             表名列表
         """
         sql = self.normalize_sql(sql)
+        sql = re.sub(
+            r'\b(EXTRACT\s*\(\s*\w+\s+)FROM\b',
+            r'\1    ',
+            sql,
+            flags=re.IGNORECASE,
+        )
         tables = []
         pattern = r'\b(?:from|join)\s+(?!\()(\[?\w+\]?(?:\s*\.\s*\[?\w+\]?)?)'
 
         for match in re.finditer(pattern, sql, re.IGNORECASE):
             raw_table = match.group(1)
+            # SQL Server's built-in JSON rowset is a function, not a table.
+            # Only the unqualified call is exempt; subqueries in its argument
+            # are still found and checked by the same scan.
+            if raw_table.lower() == "openjson" and sql[match.end():].lstrip().startswith("("):
+                continue
             parts = [
                 part.strip().strip("[]").lower()
                 for part in raw_table.split(".")

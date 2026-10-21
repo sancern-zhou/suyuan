@@ -2,12 +2,18 @@
 定时任务API路由
 提供RESTful API接口
 """
+import math
+import mimetypes
+import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Literal
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 
-from app.auth.dependencies import require_current_user
+from app.auth.dependencies import optional_current_user, require_current_user
+from app.auth.identity_matching import visible_owner_ids
 from app.auth.models import CurrentUser
 from app.scheduled_tasks import (
     get_scheduled_task_service,
@@ -16,32 +22,52 @@ from app.scheduled_tasks import (
     ScheduleType,
     TriggerType,
 )
-from app.scheduled_tasks.models import TaskStep, WorkspaceEntry
+from app.scheduled_tasks.models import WorkspaceEntry, HistoryLearningConfig
+from app.scheduled_tasks.event_builders import get_manual_event_builder
+from app.scheduled_tasks.storage.task_case_storage import (
+    MemoryVersionConflictError,
+    TaskCaseStorage,
+)
 from app.scheduled_tasks.event_catalog import (
     EventDefinition,
     get_event_definition,
     get_event_definitions,
 )
 from app.social.user_registry import get_social_user_registry
-from app.services.lifecycle_manager import get_tool_registry
+from app.social.app_identity import _accounts
 from app.scheduled_tasks.custom_agent import (
     CustomToolValidationError,
     authorized_tool_names_for_user,
     validate_custom_tool_names,
 )
 from app.agent.selection_context import describe_skill_item, load_skill_selection
+from app.utils.path_config import is_agent_readable_path, resolve_agent_path
 
 router = APIRouter(prefix="/api/scheduled-tasks", tags=["scheduled-tasks"])
 
 
+def get_tool_registry():
+    # Basic task management must not import every fetcher/analysis dependency.
+    from app.services.lifecycle_manager import get_tool_registry as resolve_registry
+    return resolve_registry()
+
+
 # ===== 请求/响应模型 =====
+
+from typing import Literal
+from app.scheduled_tasks.models.review_requirements import ResultFieldRequirement
+
 
 class CreateTaskRequest(BaseModel):
     """创建任务请求"""
     name: str = Field(..., description="任务名称")
     description: str = Field(..., description="任务描述")
-    execution_mode: str = Field(default="expert", description="执行模式（assistant/expert/query/social/custom）")
+    execution_mode: str = Field(default="expert", description="执行模式（assistant/office/expert/ops/query/custom/workflow）")
+    model_tier: Literal["auto", "flash", "pro"] = "flash"
+    result_requirements: List[ResultFieldRequirement] = Field(default_factory=list)
     tool_names: Optional[List[str]] = None
+    workflow_name: Optional[str] = None
+    workflow_args: Dict[str, Any] = Field(default_factory=dict)
     skill_id: Optional[str] = None
     trigger_type: TriggerType = Field(default=TriggerType.SCHEDULE, description="触发方式")
     schedule_type: Optional[ScheduleType] = Field(default=None, description="调度类型")
@@ -49,14 +75,22 @@ class CreateTaskRequest(BaseModel):
     interval_minutes: Optional[int] = None
     hour: Optional[int] = None
     minute: Optional[int] = None
+    day_of_week: Optional[int] = None
+    day_of_month: Optional[int] = None
     event_type: Optional[str] = None
     event_filters: Dict[str, Any] = Field(default_factory=dict)
     broadcast_enabled: bool = False
+    report_type: Optional[str] = None
     target_user_ids: List[str] = Field(default_factory=list)
     enabled: bool = Field(default=True, description="是否启用")
-    steps: List[TaskStep] = Field(..., description="任务步骤")
+    prompt: str = Field(..., min_length=1)
+    timeout_seconds: int = Field(default=1800, ge=1)
     tags: List[str] = Field(default_factory=list, description="标签")
     workspace_entry: Optional[WorkspaceEntry] = None
+    history_learning: Optional[HistoryLearningConfig] = Field(
+        default=None,
+        description="历史执行记忆配置（为空时使用默认配置）",
+    )
 
 
 class UpdateTaskRequest(BaseModel):
@@ -64,6 +98,10 @@ class UpdateTaskRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     execution_mode: Optional[str] = None
+    workflow_name: Optional[str] = None
+    workflow_args: Optional[Dict[str, Any]] = None
+    model_tier: Optional[Literal["auto", "flash", "pro"]] = None
+    result_requirements: Optional[List[ResultFieldRequirement]] = None
     tool_names: Optional[List[str]] = None
     skill_id: Optional[str] = None
     trigger_type: Optional[TriggerType] = None
@@ -72,14 +110,19 @@ class UpdateTaskRequest(BaseModel):
     interval_minutes: Optional[int] = None
     hour: Optional[int] = None
     minute: Optional[int] = None
+    day_of_week: Optional[int] = None
+    day_of_month: Optional[int] = None
     event_type: Optional[str] = None
     event_filters: Optional[Dict[str, Any]] = None
     broadcast_enabled: Optional[bool] = None
+    report_type: Optional[str] = None
     target_user_ids: Optional[List[str]] = None
     enabled: Optional[bool] = None
-    steps: Optional[List[TaskStep]] = None
+    prompt: Optional[str] = Field(default=None, min_length=1)
+    timeout_seconds: Optional[int] = Field(default=None, ge=1)
     tags: Optional[List[str]] = None
     workspace_entry: Optional[WorkspaceEntry] = None
+    history_learning: Optional[HistoryLearningConfig] = None
 
 
 class TaskResponse(BaseModel):
@@ -89,10 +132,35 @@ class TaskResponse(BaseModel):
     is_running: bool = False
 
 
+class ExecutionSummary(BaseModel):
+    """列表页所需的轻量执行摘要，不返回 Agent 详细执行日志。"""
+    execution_id: str
+    task_id: str
+    task_name: str
+    session_id: Optional[str] = None
+    status: str
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[float] = None
+    trigger_type: str
+    total_steps: int
+    completed_steps: int
+    failed_steps: int
+    error_message: Optional[str] = None
+    artifacts: List[str] = Field(default_factory=list)
+    event_id: Optional[str] = None
+    result_message: Optional[str] = None
+    conversation_available: bool = True
+    artifact_urls: List[str] = Field(default_factory=list)
+
+
 class ExecutionListResponse(BaseModel):
     """执行记录列表响应"""
-    executions: List[TaskExecution]
+    executions: List[ExecutionSummary]
     total: int
+    page: int
+    page_size: int
+    total_pages: int
 
 
 class StatisticsResponse(BaseModel):
@@ -106,7 +174,75 @@ class StatisticsResponse(BaseModel):
     period_days: int
 
 
+class TaskHistoryCasesResponse(BaseModel):
+    """任务历史案例库响应（最新在前）"""
+    cases: List[Dict[str, Any]]
+    total: int
+
+
+class TaskMemoryResponse(BaseModel):
+    """任务专属长期记忆响应"""
+    memory: str
+    meta: Dict[str, Any]
+    case_count: int
+
+
+class UpdateTaskMemoryRequest(BaseModel):
+    """人工编辑长期记忆请求"""
+    content: str = Field(..., min_length=1, description="记忆 Markdown 全文")
+    expected_version: int = Field(..., ge=0, description="编辑时读取到的记忆版本")
+
+
+class UpdateTaskCaseRequest(BaseModel):
+    """人工编辑案例库中的一条案例。"""
+    case: Dict[str, Any] = Field(..., description="案例 JSON 内容")
+
+
 # ===== API端点 =====
+
+
+_ARTIFACT_PATTERN = re.compile(
+    r"(?:[A-Za-z]:)?[^\s\"'`<>]+\.(?:docx|pdf|xlsx?|csv|qmd|md|png|jpg|jpeg)",
+    re.IGNORECASE,
+)
+
+
+def _execution_summary(execution: TaskExecution) -> ExecutionSummary:
+    artifacts: List[str] = []
+    artifact_paths: List[str] = []
+    result_message = execution.steps[-1].agent_response if execution.steps else None
+    conversation_available = (not execution.steps or execution.steps[-1].step_id != "workflow"
+                              or any(call.get("conversation_available") is True
+                                     for step in execution.steps for call in step.tool_calls))
+    for step in execution.steps:
+        for visual in step.result_visuals:
+            value = visual.get("title") or visual.get("name") or visual.get("file_name")
+            if value:
+                artifacts.append(str(value).replace("\\", "/").rsplit("/", 1)[-1])
+        for value in _ARTIFACT_PATTERN.findall(step.agent_response or ""):
+            artifacts.append(value.replace("\\", "/").rsplit("/", 1)[-1])
+        for call in step.tool_calls:
+            for value in (call.get("media") or call.get("attachments") or []):
+                if not value:
+                    continue
+                path_value = str(value)
+                artifacts.append(path_value.replace("\\", "/").rsplit("/", 1)[-1])
+                try:
+                    if resolve_agent_path(path_value).is_file() and path_value not in artifact_paths:
+                        artifact_paths.append(path_value)
+                except (OSError, ValueError):
+                    continue
+
+    return ExecutionSummary(
+        **execution.model_dump(exclude={"steps", "event_attributes", "delivery_results"}),
+        artifacts=list(dict.fromkeys(filter(None, artifacts))),
+        result_message=result_message,
+        conversation_available=conversation_available,
+        artifact_urls=[
+            f"/api/scheduled-tasks/{execution.task_id}/executions/{execution.execution_id}/artifacts/{index}"
+            for index, _ in enumerate(artifact_paths)
+        ],
+    )
 
 
 async def _validate_event_task_config(task: ScheduledTask) -> None:
@@ -123,6 +259,19 @@ async def _validate_event_task_config(task: ScheduledTask) -> None:
 
     registry = get_social_user_registry()
     for user_id in task.target_user_ids:
+        # App recipients may be represented by their direct social identity,
+        # or by the synthetic id used by the management user list.
+        normalized_user_id = str(user_id)
+        if normalized_user_id.startswith("app-account-"):
+            account_id = normalized_user_id.removeprefix("app-account-")
+            account = _accounts().get(account_id)
+            if account and str(account.get("status", "active")).lower() == "active":
+                normalized_user_id = f"app:android:{account_id}"
+        if normalized_user_id.startswith("app:"):
+            account_id = normalized_user_id.rsplit(":", 1)[-1]
+            account = _accounts().get(account_id)
+            if account and str(account.get("status", "active")).lower() == "active":
+                continue
         user = await registry.get_user(user_id)
         if (
             not user
@@ -153,6 +302,36 @@ def _validate_custom_task_tools(task: ScheduledTask, user: CurrentUser) -> None:
         ) from exc
 
 
+def _validate_workflow_task(task: ScheduledTask) -> None:
+    if task.execution_mode != "workflow":
+        return
+    from app.scheduled_tasks.workflow_tasks import registered_workflows
+
+    if (task.workflow_name or "") not in registered_workflows():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_task_workflow",
+                "workflow_name": task.workflow_name,
+                "registered": registered_workflows(),
+            },
+        )
+
+
+def _forbid_workflow_mode_change(task: ScheduledTask, updates: dict) -> None:
+    """Workflow tasks are code-registered units; their mode is immutable via API."""
+    if task.execution_mode != "workflow":
+        return
+    if "execution_mode" in updates and updates["execution_mode"] != "workflow":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "workflow_mode_immutable",
+                "message": "工作流任务不允许修改执行模式；如需更换模式请删除后以其他模式重建",
+            },
+        )
+
+
 def _validate_task_skill(task: ScheduledTask) -> None:
     if not task.skill_id:
         return
@@ -178,18 +357,59 @@ def _validate_task_skill(task: ScheduledTask) -> None:
         ) from exc
 
 
+# Company auth system super-admin account resolved from external user records.
+_SYSTEM_SUPER_ADMIN_USER_IDS = {"1"}
+_SYSTEM_MANAGED_CUSTOM_TASK_TOOLS = {"search_scheduled_task_history"}
+
+
+def _is_scheduled_task_admin(user: CurrentUser) -> bool:
+    return bool(user.is_admin or user.id in _SYSTEM_SUPER_ADMIN_USER_IDS)
+
+
 def _can_access_task(task: ScheduledTask, user: CurrentUser) -> bool:
-    return bool(user.is_admin) or task.owner_user_id == user.id
+    if _is_scheduled_task_admin(user):
+        return True
+    user_ids = set(visible_owner_ids(user.id))
+    return bool(set(visible_owner_ids(task.owner_user_id)) & user_ids)
 
 
-def _require_task_access(task: ScheduledTask, user: CurrentUser) -> None:
+def _can_view_task(task: ScheduledTask, user: CurrentUser) -> bool:
+    if _can_access_task(task, user):
+        return True
+
+    workspace_entry = task.workspace_entry
+    if not workspace_entry or not workspace_entry.enabled:
+        return False
+
+    if task.owner_user_id == "system" or task.created_by == "system":
+        return True
+
+    if task.broadcast_enabled:
+        if not task.target_user_ids:
+            return True
+        user_ids = set(visible_owner_ids(user.id))
+        return any(str(target) in user_ids for target in task.target_user_ids)
+
+    return False
+
+
+def _require_task_access(task: ScheduledTask, user: CurrentUser, action: str = "修改") -> None:
     if not _can_access_task(task, user):
+        if task.owner_user_id == "system" or task.created_by == "system":
+            detail = f"系统任务，无权限{action}"
+        else:
+            detail = f"该任务归属其他用户，无权限{action}"
+        raise HTTPException(status_code=404, detail=detail)
+
+
+def _require_task_view(task: ScheduledTask, user: CurrentUser) -> None:
+    if not _can_view_task(task, user):
         raise HTTPException(status_code=404, detail=f"Task {task.task_id} not found")
 
 
 def _accessible_task_ids(user: CurrentUser) -> set[str] | None:
     """Return owned task ids for non-admin users; None means unrestricted."""
-    if user.is_admin:
+    if _is_scheduled_task_admin(user):
         return None
     service = get_scheduled_task_service()
     return {
@@ -217,7 +437,11 @@ async def list_custom_task_tools(
     return {
         "tools": [
             tool for tool in tools
-            if tool.get("status") == "enabled" and tool.get("name") in authorized
+            if (
+                tool.get("status") == "enabled"
+                and tool.get("name") in authorized
+                and tool.get("name") not in _SYSTEM_MANAGED_CUSTOM_TASK_TOOLS
+            )
         ]
     }
 
@@ -269,8 +493,14 @@ async def create_task(
             task_id=task_id,
             name=request.name,
             description=request.description,
+            prompt=request.prompt,
+            timeout_seconds=request.timeout_seconds,
             execution_mode=request.execution_mode,
+            model_tier=request.model_tier,
+            result_requirements=request.result_requirements,
             tool_names=request.tool_names,
+            workflow_name=request.workflow_name,
+            workflow_args=request.workflow_args,
             skill_id=request.skill_id,
             trigger_type=request.trigger_type,
             schedule_type=request.schedule_type,
@@ -278,14 +508,17 @@ async def create_task(
             interval_minutes=request.interval_minutes,
             hour=request.hour,
             minute=request.minute,
+            day_of_week=request.day_of_week,
+            day_of_month=request.day_of_month,
             event_type=request.event_type,
             event_filters=request.event_filters,
             broadcast_enabled=request.broadcast_enabled,
+            report_type=request.report_type,
             target_user_ids=request.target_user_ids,
             enabled=request.enabled,
-            steps=request.steps,
             tags=request.tags,
             workspace_entry=request.workspace_entry,
+            history_learning=request.history_learning or HistoryLearningConfig(),
             owner_user_id=user.id,
             owner_username=user.username,
             owner_display_name=user.display_name,
@@ -293,6 +526,7 @@ async def create_task(
         await _validate_event_task_config(task)
         _validate_custom_task_tools(task, user)
         _validate_task_skill(task)
+        _validate_workflow_task(task)
 
         created_task = service.create_task(task)
 
@@ -318,6 +552,14 @@ async def create_task(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/workflows")
+async def list_workflows(user: CurrentUser = Depends(require_current_user)):
+    """List registered deterministic workflow names available for workflow tasks."""
+    from app.scheduled_tasks.workflow_tasks import registered_workflows
+
+    return {"workflows": registered_workflows()}
+
+
 @router.get("", response_model=List[TaskResponse])
 async def list_tasks(
     enabled_only: bool = Query(default=False, description="仅显示启用的任务"),
@@ -327,7 +569,7 @@ async def list_tasks(
     try:
         service = get_scheduled_task_service()
         tasks = service.list_tasks(enabled_only=enabled_only)
-        tasks = [task for task in tasks if _can_access_task(task, user)]
+        tasks = [task for task in tasks if _can_view_task(task, user)]
 
         # 获取调度器状态
         scheduler_status = service.get_scheduler_status()
@@ -351,6 +593,402 @@ async def list_tasks(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ===== 结构化执行结果 =====
+
+class TaskResultItem(BaseModel):
+    """结构化执行结论"""
+
+    execution_id: str = Field(..., description="执行ID")
+    task_id: str = Field(..., description="任务ID")
+    task_name: str = Field(default="", description="任务名称")
+    session_id: Optional[str] = None
+    status: str = Field(default="", description="执行状态")
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    city: Optional[str] = Field(default=None, description="城市")
+    station_id: Optional[str] = Field(default=None, description="站点ID")
+    station_name: Optional[str] = Field(default=None, description="站点名称")
+    pollutant: Optional[str] = Field(default=None, description="污染物")
+    conclusion: Optional[str] = Field(default=None, description="LLM 最终结论")
+    conclusion_source: Optional[str] = None
+    findings: List[str] = Field(default_factory=list)
+    image_paths: List[str] = Field(default_factory=list, description="图片产物路径")
+    document_paths: List[str] = Field(default_factory=list, description="报告文档路径")
+    evidence_package_paths: List[str] = Field(default_factory=list, description="证据包路径")
+    report_refs: List[Dict[str, Any]] = Field(default_factory=list)
+    trigger_type: str = Field(default="scheduled")
+    event_id: Optional[str] = None
+    event_type: Optional[str] = None
+    preview_ticket: Optional[str] = Field(
+        default=None,
+        description="免登录预览票据，用于 <img>/<iframe> 等无法携带 Bearer 的请求",
+    )
+    report_preview_url: Optional[str] = None
+    report_preview_type: Optional[str] = None
+    has_report: bool = Field(default=False, description="是否存在可在线查看的报告")
+    broadcast_message: Optional[str] = Field(default=None, description="广播推送正文")
+    broadcast_image_paths: List[str] = Field(default_factory=list, description="广播推送图片路径")
+    broadcast_image_urls: List[str] = Field(default_factory=list, description="广播推送图片访问地址")
+    has_broadcast: bool = Field(default=False, description="是否存在广播推送内容")
+
+
+class TaskResultListResponse(BaseModel):
+    results: List[TaskResultItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+_RESULT_FILE_KINDS = {
+    "images": "image_paths",
+    "documents": "document_paths",
+    "evidence": "evidence_package_paths",
+    "broadcast_images": "broadcast_image_paths",
+}
+
+
+def _result_preview_ticket(execution_id: str) -> str:
+    from app.auth.share_access import (
+        SCHEDULED_RESULT_PREVIEW_KIND,
+        get_share_access_service,
+    )
+
+    return get_share_access_service().issue(SCHEDULED_RESULT_PREVIEW_KIND, execution_id)
+
+
+def _result_report_dir(result) -> Optional[Path]:
+    """解析执行结论对应的报告目录；仅允许 reports 根目录内的路径。"""
+    from app.services.quarto_report_renderer import quarto_report_renderer
+
+    for ref in result.report_refs or []:
+        kind = str((ref or {}).get("kind") or "")
+        ref_value = str((ref or {}).get("ref") or "")
+        if not ref_value:
+            continue
+        if kind == "report":
+            try:
+                report_dir = quarto_report_renderer.get_report_dir(ref_value)
+            except (FileNotFoundError, ValueError, OSError):
+                continue
+            if report_dir.is_dir():
+                return report_dir
+        elif kind == "report_dir":
+            try:
+                candidate = Path(ref_value).expanduser().resolve()
+                candidate.relative_to(quarto_report_renderer.report_root)
+            except (ValueError, OSError):
+                continue
+            if candidate.is_dir():
+                return candidate
+
+    for path in result.document_paths or []:
+        text = str(path)
+        if not text.lower().endswith(".html"):
+            continue
+        try:
+            candidate = Path(text).expanduser().resolve()
+            candidate.relative_to(quarto_report_renderer.report_root)
+        except (ValueError, OSError):
+            continue
+        if candidate.is_file():
+            return candidate.parent
+    return None
+
+
+def _result_document_files(result):
+    """Use only persisted, readable report attachments; never infer sibling files."""
+    for index, value in enumerate(result.document_paths or []):
+        try:
+            path = resolve_agent_path(str(value))
+            if path.suffix.lower() in {".pdf", ".docx", ".doc"} and is_agent_readable_path(path) and path.is_file():
+                yield index, path
+        except (OSError, ValueError):
+            continue
+
+
+def _result_report_preview(result, ticket):
+    base = f"/api/scheduled-tasks/results/{result.execution_id}"
+    if _result_report_dir(result) is not None:
+        return f"{base}/report/_t/{ticket}/report.html", "html"
+    for index, path in _result_document_files(result):
+        if path.suffix.lower() == ".pdf":
+            return f"{base}/files/documents/{index}?preview_ticket={ticket}", "pdf"
+    return None, None
+
+
+def _authorize_result_content(
+    execution_id: str,
+    request: Request,
+    user: Optional[CurrentUser],
+    path_ticket: str = "",
+):
+    """校验结果内容访问：登录用户走任务权限，匿名请求走预览票据。
+
+    票据来源优先级：查询参数 > cookie > URL 路径段（iframe 内相对资源
+    无法携带查询参数，票据必须随路径继承）。
+    """
+    service = get_scheduled_task_service()
+    result = service.get_task_result(execution_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Task result not found")
+    if user is not None:
+        task = service.get_task(result.task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task result not found")
+        _require_task_view(task, user)
+        return result
+
+    from app.auth.share_access import (
+        RESOURCE_PREVIEW_COOKIE,
+        RESOURCE_PREVIEW_TICKET,
+        SCHEDULED_RESULT_PREVIEW_KIND,
+        get_share_access_service,
+    )
+
+    ticket = (
+        request.query_params.get(RESOURCE_PREVIEW_TICKET)
+        or request.cookies.get(RESOURCE_PREVIEW_COOKIE, "")
+        or path_ticket
+    )
+    if not get_share_access_service().verify(ticket, SCHEDULED_RESULT_PREVIEW_KIND, execution_id):
+        raise HTTPException(status_code=401, detail="authentication_required")
+    return result
+
+
+@router.get("/results", response_model=TaskResultListResponse)
+async def list_task_results(
+    task_id: Optional[str] = Query(default=None, description="任务ID（可选）"),
+    city: Optional[str] = Query(default=None, description="按城市筛选"),
+    station_id: Optional[str] = Query(default=None, description="按站点ID筛选"),
+    pollutant: Optional[str] = Query(default=None, description="按污染物筛选"),
+    status: Optional[str] = Query(default=None, description="按执行状态筛选"),
+    start: Optional[datetime] = Query(default=None, description="结论时间起始（含）"),
+    end: Optional[datetime] = Query(default=None, description="结论时间截止（含）"),
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=20, ge=1, le=100, description="每页记录数"),
+    user: CurrentUser = Depends(require_current_user),
+):
+    """查询定时任务的结构化执行结论（时间/城市/站点/污染物/结论/图片/文档路径）"""
+    try:
+        service = get_scheduled_task_service()
+        if task_id:
+            task = service.get_task(task_id)
+            if not task:
+                raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+            _require_task_view(task, user)
+            accessible_ids: Optional[set[str]] = None
+        else:
+            accessible_ids = _accessible_task_ids(user)
+
+        records, total = service.list_task_results(
+            task_id=task_id,
+            task_ids=list(accessible_ids) if accessible_ids is not None else None,
+            city=city,
+            station_id=station_id,
+            pollutant=pollutant,
+            status=status,
+            started_after=start,
+            started_before=end,
+            page=page,
+            page_size=page_size,
+        )
+        items: List[TaskResultItem] = []
+        for record in records:
+            item = TaskResultItem(**record.model_dump())
+            item.preview_ticket = _result_preview_ticket(record.execution_id)
+            item.report_preview_url, item.report_preview_type = _result_report_preview(record, item.preview_ticket)
+            item.has_report = item.report_preview_url is not None
+            item.has_broadcast = bool(item.broadcast_message or item.broadcast_image_paths)
+            item.broadcast_image_urls = [
+                f"/api/scheduled-tasks/results/{record.execution_id}/files/broadcast_images/{index}"
+                f"?preview_ticket={item.preview_ticket}"
+                for index in range(len(record.broadcast_image_paths or []))
+            ]
+            items.append(item)
+        return TaskResultListResponse(
+            results=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=math.ceil(total / page_size),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/results/{execution_id}/files/{kind}/{index}")
+async def get_task_result_file(
+    execution_id: str,
+    kind: str,
+    index: int,
+    request: Request,
+    disposition: Literal["inline", "attachment"] = "inline",
+    user: Optional[CurrentUser] = Depends(optional_current_user),
+):
+    """Serve one persisted result attachment after authorization or a valid preview ticket."""
+    if kind not in _RESULT_FILE_KINDS:
+        raise HTTPException(status_code=404, detail="Artifact kind not found")
+    result = _authorize_result_content(execution_id, request, user)
+    paths = list(getattr(result, _RESULT_FILE_KINDS[kind]) or [])
+    if index < 0 or index >= len(paths):
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    try:
+        path = resolve_agent_path(str(paths[index]))
+    except (OSError, ValueError):
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    if not is_agent_readable_path(path) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=path.name,
+        content_disposition_type=disposition,
+        headers={
+            "Cache-Control": "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
+_REPORT_EXPORT_FORMATS = (
+    ("report.docx", "Word 文档", "docx"),
+    ("report.pdf", "PDF 文档", "pdf"),
+    ("report.export.html", "HTML 文件", "html"),
+    ("report.html", "HTML 文件", "html"),
+    ("report.qmd", "源文件（QMD）", "qmd"),
+)
+
+
+@router.get("/results/{execution_id}/report/formats")
+async def list_task_result_report_formats(
+    execution_id: str,
+    user: CurrentUser = Depends(require_current_user),
+):
+    """列出报告包内可下载的导出格式（仅登录用户，走任务权限）。"""
+    service = get_scheduled_task_service()
+    result = service.get_task_result(execution_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Task result not found")
+    task = service.get_task(result.task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task result not found")
+    _require_task_view(task, user)
+
+    report_dir = _result_report_dir(result)
+    formats: List[Dict[str, Any]] = []
+    if report_dir is not None and report_dir.is_dir():
+        listed_formats: set[str] = set()
+        ticket = _result_preview_ticket(execution_id)
+        base = (
+            f"/api/scheduled-tasks/results/{execution_id}"
+            f"/report/_t/{ticket}"
+        )
+        for filename, label, fmt in _REPORT_EXPORT_FORMATS:
+            if fmt in listed_formats:
+                continue
+            candidate = report_dir / filename
+            if candidate.is_file():
+                listed_formats.add(fmt)
+                formats.append({
+                    "format": fmt,
+                    "label": label,
+                    "filename": candidate.name,
+                    "size_bytes": candidate.stat().st_size,
+                    # 下载请求由浏览器直接发起（无 Bearer），票据随路径继承。
+                    "url": f"{base}/{filename}?disposition=attachment",
+                })
+    listed_formats = {item["format"] for item in formats}
+    ticket = _result_preview_ticket(execution_id)
+    for index, path in _result_document_files(result):
+        fmt = path.suffix.lower().lstrip(".")
+        if fmt in listed_formats:
+            continue
+        listed_formats.add(fmt)
+        formats.append({
+            "format": fmt,
+            "label": "PDF 文档" if fmt == "pdf" else "Word 文档",
+            "filename": path.name,
+            "size_bytes": path.stat().st_size,
+            "url": f"/api/scheduled-tasks/results/{execution_id}/files/documents/{index}"
+                   f"?preview_ticket={ticket}&disposition=attachment",
+        })
+    return {"formats": formats}
+
+
+@router.get("/results/{execution_id}/report")
+@router.get("/results/{execution_id}/report/{asset_path:path}")
+async def get_task_result_report(
+    execution_id: str,
+    request: Request,
+    asset_path: Optional[str] = None,
+    disposition: Literal["inline", "attachment"] = "inline",
+    user: Optional[CurrentUser] = Depends(optional_current_user),
+):
+    """Serve the rendered report package (HTML entry plus its sibling assets)."""
+    from app.auth.share_access import RESOURCE_PREVIEW_TICKET_PATH_SEGMENT
+
+    # iframe 里的相对资源无法携带查询参数，票据随路径段继承：/_t/{ticket}/...
+    path_ticket = ""
+    relative = asset_path or ""
+    segments = relative.split("/", 2)
+    if segments and segments[0] == RESOURCE_PREVIEW_TICKET_PATH_SEGMENT:
+        path_ticket = segments[1] if len(segments) > 1 else ""
+        relative = segments[2] if len(segments) > 2 and segments[2] else "report.html"
+
+    result = _authorize_result_content(execution_id, request, user, path_ticket)
+    report_dir = _result_report_dir(result)
+    if report_dir is None or not report_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Report not available")
+
+    if not relative:
+        relative = "report.html"
+    try:
+        target = (report_dir / relative).resolve()
+        target.relative_to(report_dir)
+    except (ValueError, OSError):
+        raise HTTPException(status_code=403, detail="report_path_forbidden")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Report content missing")
+
+    media_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    headers = {
+        "Cache-Control": "private, max-age=300",
+        "X-Content-Type-Options": "nosniff",
+        # Quarto previews reference sibling styles/scripts; keep an explicit CORS grant.
+        "Access-Control-Allow-Origin": "*",
+    }
+    if media_type == "text/html" and disposition == "inline":
+        if report_dir.name.startswith("xuchang_daily_review_"):
+            # Interactive AMap access is limited to the Xuchang daily report family.
+            headers["Content-Security-Policy"] = (
+                "default-src 'self'; img-src 'self' data: blob: https:; "
+                "style-src 'self' 'unsafe-inline' https:; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+                "https://*.amap.com https://*.autonavi.com; "
+                "connect-src 'self' https:; font-src 'self' data: https:; "
+                "worker-src 'self' blob:; object-src 'none'; base-uri 'none'"
+            )
+        else:
+            headers["Content-Security-Policy"] = (
+                "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+                "script-src 'self' 'unsafe-inline'; font-src 'self' data:; "
+                "object-src 'none'; base-uri 'none'"
+            )
+    return FileResponse(
+        path=target,
+        media_type=media_type,
+        filename=target.name,
+        # 必须显式 inline：FileResponse 默认 attachment 会让 iframe 触发下载而非渲染。
+        content_disposition_type=disposition,
+        headers=headers,
+    )
+
+
 @router.get("/{task_id}", response_model=TaskResponse)
 async def get_task(
     task_id: str,
@@ -363,7 +1001,7 @@ async def get_task(
 
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-        _require_task_access(task, user)
+        _require_task_view(task, user)
 
         # 获取下次运行时间
         scheduler_status = service.get_scheduler_status()
@@ -401,14 +1039,21 @@ async def update_task(
         _require_task_access(task, user)
 
         updates = request.model_dump(exclude_unset=True)
+        _forbid_workflow_mode_change(task, updates)
         if updates.get("execution_mode") != "custom" and "execution_mode" in updates:
             updates.setdefault("tool_names", None)
+        if updates.get("execution_mode") != "workflow" and "execution_mode" in updates:
+            updates.setdefault("workflow_name", None)
+            updates.setdefault("workflow_args", {})
         task_data = task.model_dump()
         task_data.update(updates)
+        if {"model_tier", "result_requirements"} & updates.keys():
+            task_data["created_by"] = "user"
         task = ScheduledTask.model_validate(task_data)
         await _validate_event_task_config(task)
         _validate_custom_task_tools(task, user)
         _validate_task_skill(task)
+        _validate_workflow_task(task)
 
         updated_task = service.update_task(task)
 
@@ -433,7 +1078,7 @@ async def delete_task(
         task = service.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-        _require_task_access(task, user)
+        _require_task_access(task, user, action="删除")
 
         success = service.delete_task(task_id)
 
@@ -458,7 +1103,7 @@ async def enable_task(
         service = get_scheduled_task_service()
         task = service.get_task(task_id)
         if task:
-            _require_task_access(task, user)
+            _require_task_access(task, user, action="启用")
         task = service.enable_task(task_id)
         return TaskResponse(task=task)
 
@@ -480,7 +1125,7 @@ async def disable_task(
         service = get_scheduled_task_service()
         task = service.get_task(task_id)
         if task:
-            _require_task_access(task, user)
+            _require_task_access(task, user, action="禁用")
         task = service.disable_task(task_id)
         return TaskResponse(task=task)
 
@@ -492,21 +1137,22 @@ async def disable_task(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{task_id}/execute")
+@router.post("/{task_id}/execute", status_code=202)
 async def execute_task_now(
     task_id: str,
     user: CurrentUser = Depends(require_current_user),
 ):
-    """立即执行任务（手动触发）"""
+    """立即执行任务（手动触发，后台执行并立即返回）"""
     try:
         service = get_scheduled_task_service()
         task = service.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-        _require_task_access(task, user)
+        _require_task_access(task, user, action="执行")
 
         if task.trigger_type == TriggerType.EVENT:
-            event = service.claim_storage.latest_event(task.event_type or "")
+            builder = get_manual_event_builder(task.event_type or "")
+            event = (await builder(task)) if builder else service.claim_storage.latest_event(task.event_type or "")
             if not event:
                 raise HTTPException(
                     status_code=409,
@@ -514,11 +1160,11 @@ async def execute_task_now(
                 )
             dispatch = await service.publish_event(
                 event,
-                wait=True,
-                force_retry=True,
+                wait=False,
+                force_retry=builder is None,
                 target_task_id=task_id,
             )
-            if not dispatch.execution_ids:
+            if not dispatch.accepted_task_ids:
                 if task_id not in dispatch.matched_task_ids:
                     raise HTTPException(
                         status_code=409,
@@ -531,15 +1177,16 @@ async def execute_task_now(
                     status_code=409,
                     detail="Event is already being processed, please try again later",
                 )
-            execution = service.get_execution(dispatch.execution_ids[0])
         else:
-            execution = await service.execute_task_now(task_id)
+            # 同步等待整个 Agent 执行会被网关超时切断（HTTP 504），
+            # 因此在后台启动执行并立即返回，前端通过执行记录查看进度。
+            service.start_task_now(task_id)
 
         return {
             "success": True,
-            "message": f"任务已开始执行",
-            "execution_id": execution.execution_id,
-            "execution": execution
+            "message": "任务已开始执行，请在执行记录中查看进度和结果",
+            "execution_id": None,
+            "execution": None
         }
 
     except ValueError as e:
@@ -561,7 +1208,7 @@ async def retry_failed_delivery(
         if execution is not None:
             task = service.get_task(execution.task_id)
             if task:
-                _require_task_access(task, user)
+                _require_task_access(task, user, action="操作")
         return await service.retry_failed_delivery(execution_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -572,22 +1219,36 @@ async def retry_failed_delivery(
 @router.get("/{task_id}/executions", response_model=ExecutionListResponse)
 async def get_task_executions(
     task_id: str,
-    limit: int = Query(default=10, ge=1, le=50, description="返回记录数"),
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=10, ge=1, le=50, description="每页记录数"),
+    limit: Optional[int] = Query(
+        default=None,
+        ge=1,
+        le=50,
+        description="兼容旧客户端的每页记录数",
+    ),
     user: CurrentUser = Depends(require_current_user),
 ):
     """获取任务的执行记录"""
     try:
         service = get_scheduled_task_service()
+        effective_page_size = limit or page_size
         task = service.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-        _require_task_access(task, user)
-
-        executions = service.list_executions(task_id=task_id, limit=limit)
+        _require_task_view(task, user)
+        executions, total = service.list_executions_page(
+            task_id=task_id,
+            page=page,
+            page_size=effective_page_size,
+        )
 
         return ExecutionListResponse(
-            executions=executions,
-            total=len(executions)
+            executions=[_execution_summary(item) for item in executions],
+            total=total,
+            page=page,
+            page_size=effective_page_size,
+            total_pages=math.ceil(total / effective_page_size),
         )
 
     except HTTPException:
@@ -596,24 +1257,202 @@ async def get_task_executions(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/{task_id}/executions/{execution_id}/artifacts/{artifact_index}")
+async def get_execution_artifact(
+    task_id: str,
+    execution_id: str,
+    artifact_index: int,
+    user: CurrentUser = Depends(require_current_user),
+):
+    """Serve a persisted execution attachment after task-level authorization."""
+    service = get_scheduled_task_service()
+    task = service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    _require_task_view(task, user)
+    execution = service.get_execution(execution_id)
+    if not execution or execution.task_id != task_id:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    paths: list[str] = []
+    for step in execution.steps:
+        for call in step.tool_calls:
+            for value in (call.get("media") or call.get("attachments") or []):
+                path_value = str(value)
+                try:
+                    if resolve_agent_path(path_value).is_file() and path_value not in paths:
+                        paths.append(path_value)
+                except (OSError, ValueError):
+                    continue
+    if artifact_index < 0 or artifact_index >= len(paths):
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    path = resolve_agent_path(paths[artifact_index])
+    return FileResponse(path, filename=Path(path).name)
+
+
+def _get_task_case_storage(task_id: str, user: CurrentUser) -> TaskCaseStorage:
+    service = get_scheduled_task_service()
+    task = service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    _require_task_access(task, user, action="操作")
+    return TaskCaseStorage(task_id)
+
+
+@router.get("/{task_id}/history/cases", response_model=TaskHistoryCasesResponse)
+async def get_task_history_cases(
+    task_id: str,
+    limit: int = Query(default=50, ge=1, le=200, description="返回最近案例数量"),
+    user: CurrentUser = Depends(require_current_user),
+):
+    """获取任务专属历史案例库（最新在前）"""
+    try:
+        storage = _get_task_case_storage(task_id, user)
+        cases = storage.recent_cases(limit)
+        cases.reverse()  # recent_cases 返回旧→新，接口统一最新在前
+        return TaskHistoryCasesResponse(cases=cases, total=storage.case_count())
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{task_id}/history/cases/{execution_id}")
+async def update_task_history_case(
+    task_id: str,
+    execution_id: str,
+    request: UpdateTaskCaseRequest,
+    user: CurrentUser = Depends(require_current_user),
+):
+    """人工修订任务案例，供用户纠正自动沉淀的执行结论。"""
+    try:
+        storage = _get_task_case_storage(task_id, user)
+        if not storage.update_case(execution_id, request.case):
+            raise HTTPException(status_code=404, detail="案例不存在")
+        cases = storage.recent_cases(200)
+        cases.reverse()
+        return {"case": next((item for item in cases if str(item.get("execution_id")) == execution_id), request.case)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{task_id}/history/memory", response_model=TaskMemoryResponse)
+async def get_task_history_memory(
+    task_id: str,
+    user: CurrentUser = Depends(require_current_user),
+):
+    """获取任务专属长期记忆与巩固元信息"""
+    try:
+        storage = _get_task_case_storage(task_id, user)
+        return TaskMemoryResponse(
+            memory=storage.read_memory(),
+            meta=storage.read_meta(),
+            case_count=storage.case_count(),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{task_id}/history/memory", response_model=TaskMemoryResponse)
+async def update_task_history_memory(
+    task_id: str,
+    request: UpdateTaskMemoryRequest,
+    user: CurrentUser = Depends(require_current_user),
+):
+    """人工编辑任务专属长期记忆（用于纠正记忆偏差），版本号递增并标记 manual"""
+    try:
+        storage = _get_task_case_storage(task_id, user)
+        meta = storage.read_meta()
+        storage.write_memory(
+            request.content,
+            {
+                **meta,
+                "version": int(meta.get("version", 0)) + 1,
+                "last_consolidation_status": "manual",
+                "updated_at": datetime.now().isoformat(),
+            },
+            expected_version=request.expected_version,
+        )
+        return TaskMemoryResponse(
+            memory=storage.read_memory(),
+            meta=storage.read_meta(),
+            case_count=storage.case_count(),
+        )
+    except MemoryVersionConflictError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "memory_version_conflict", "message": str(e)},
+        ) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/executions/recent", response_model=ExecutionListResponse)
 async def get_recent_executions(
-    limit: int = Query(default=20, ge=1, le=50, description="返回记录数"),
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=10, ge=1, le=50, description="每页记录数"),
+    limit: Optional[int] = Query(
+        default=None,
+        ge=1,
+        le=50,
+        description="兼容旧客户端的每页记录数",
+    ),
     user: CurrentUser = Depends(require_current_user),
 ):
     """获取最近的执行记录（非管理员仅能看到自己任务的记录）"""
     try:
         service = get_scheduled_task_service()
-        executions = service.list_executions(limit=limit)
+        effective_page_size = limit or page_size
+        executions, total = service.list_executions_page(
+            page=page,
+            page_size=effective_page_size,
+        )
         accessible = _accessible_task_ids(user)
         if accessible is not None:
             executions = [e for e in executions if e.task_id in accessible]
+            total = len(executions)
 
         return ExecutionListResponse(
-            executions=executions,
-            total=len(executions)
+            executions=[_execution_summary(item) for item in executions],
+            total=total,
+            page=page,
+            page_size=effective_page_size,
+            total_pages=math.ceil(total / effective_page_size),
         )
 
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/results/facets")
+async def list_task_result_facets(
+    task_id: Optional[str] = Query(default=None, description="任务ID（可选）"),
+    user: CurrentUser = Depends(require_current_user),
+):
+    """站点/污染物筛选候选项（下拉框数据源）"""
+    try:
+        service = get_scheduled_task_service()
+        accessible_ids: Optional[set[str]]
+        if task_id:
+            task = service.get_task(task_id)
+            if not task:
+                raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+            _require_task_view(task, user)
+            accessible_ids = None
+        else:
+            accessible_ids = _accessible_task_ids(user)
+        return service.list_task_result_facets(
+            task_id=task_id,
+            task_ids=list(accessible_ids) if accessible_ids is not None else None,
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -633,7 +1472,7 @@ async def get_statistics(
             task = service.get_task(task_id)
             if not task:
                 raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-            _require_task_access(task, user)
+            _require_task_view(task, user)
             stats = service.get_statistics(task_id=task_id, days=days)
             return StatisticsResponse(**stats)
 

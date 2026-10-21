@@ -6,7 +6,7 @@ import pytest
 
 from app.scheduled_tasks.event_output import parse_event_task_output
 from app.scheduled_tasks.executor import ScheduledTaskExecutor
-from app.scheduled_tasks.models import ScheduledTask, TaskEvent, TaskExecution, TaskStep
+from app.scheduled_tasks.models import ScheduledTask, TaskEvent, TaskExecution
 from app.scheduled_tasks.storage import ExecutionStorage, TaskStorage
 
 
@@ -138,7 +138,7 @@ async def test_executor_uses_web_storage_and_persists_completed_runtime(tmp_path
         execution_mode="social",
         schedule_type="once",
         run_at="2026-07-17T12:00:00",
-        steps=[TaskStep(step_id="step-1", description="执行", agent_prompt="执行")],
+        prompt="执行",
     )
     execution = TaskExecution(
         execution_id="exec-1",
@@ -155,7 +155,7 @@ async def test_executor_uses_web_storage_and_persists_completed_runtime(tmp_path
         conversation_persistence=persistence,
     )
 
-    await executor._run_agent_step(
+    await executor._run_agent(
         "执行",
         execution.session_id,
         manual_mode="social",
@@ -185,7 +185,7 @@ async def test_executor_injects_task_skill_context(monkeypatch, tmp_path):
         skill_id="sample-skill",
         schedule_type="once",
         run_at="2026-07-17T12:00:00",
-        steps=[TaskStep(step_id="step", description="执行", agent_prompt="执行")],
+        prompt="执行",
     )
     execution = TaskExecution(
         execution_id="exec-with-skill",
@@ -205,7 +205,7 @@ async def test_executor_injects_task_skill_context(monkeypatch, tmp_path):
         agent_factory=lambda: agent,
     )
 
-    await executor._run_agent_step(
+    await executor._run_agent(
         "执行",
         execution.session_id,
         manual_mode=task.execution_mode,
@@ -228,7 +228,7 @@ async def test_custom_task_injects_skill_without_tool_compatibility_check(monkey
         skill_id="sample-skill",
         schedule_type="once",
         run_at="2026-07-17T12:00:00",
-        steps=[TaskStep(step_id="step", description="执行", agent_prompt="执行")],
+        prompt="执行",
     )
     execution = TaskExecution(
         execution_id="custom-exec-with-skill",
@@ -248,7 +248,7 @@ async def test_custom_task_injects_skill_without_tool_compatibility_check(monkey
         agent_factory=lambda: agent,
     )
 
-    await executor._run_agent_step(
+    await executor._run_agent(
         "执行",
         execution.session_id,
         manual_mode=task.execution_mode,
@@ -272,41 +272,64 @@ async def test_timeout_still_persists_partial_runtime_before_returning(tmp_path)
         execution_mode="assistant",
         schedule_type="once",
         run_at="2026-07-17T12:00:00",
-        steps=[TaskStep(
-            step_id="slow",
-            description="慢步骤",
-            agent_prompt="执行",
-            timeout_seconds=1,
-        )],
+        prompt="执行",
+        timeout_seconds=1,
     )
-    execution = TaskExecution(
-        execution_id="exec-timeout",
-        task_id=task.task_id,
-        task_name=task.name,
-        session_id="scheduled-timeout",
-        status="running",
-        total_steps=1,
-    )
+    task_storage = TaskStorage(storage_dir=tmp_path)
+    task_storage.create(task)
     executor = ScheduledTaskExecutor(
-        task_storage=TaskStorage(storage_dir=tmp_path),
+        task_storage=task_storage,
         execution_storage=ExecutionStorage(storage_dir=tmp_path),
         agent_factory=SlowAgent,
         conversation_persistence=persistence,
     )
 
-    result = await executor._execute_step(
-        task.steps[0],
-        execution,
-        execution.session_id,
-        task.execution_mode,
-        task=task,
-        prompt="执行",
-    )
+    execution = await executor.execute_task(task, update_stats=False)
 
-    assert result.status.value == "timeout"
-    assert len(persistence.calls) == 1
+    assert execution.status.value == "timeout"
+    assert len(persistence.calls) == 2
     assert persistence.calls[0]["execution"] is execution
     assert persistence.calls[0]["display_history"][-1]["type"] == "error"
+
+
+class VerificationFailingPersistence:
+    """Reproduces transcript verification failing under cancellation."""
+
+    async def persist_agent_session(self, **kwargs):
+        raise RuntimeError("scheduled_session_transcript_verification_failed")
+
+    async def publish_conversation(self, **kwargs):
+        return True
+
+    async def ensure_terminal_session(self, **kwargs):
+        return True
+
+
+@pytest.mark.asyncio
+async def test_timeout_not_masked_by_failing_transcript_verification(tmp_path):
+    task = ScheduledTask(
+        task_id="task-timeout-masked",
+        name="超时任务",
+        description="超时任务",
+        execution_mode="assistant",
+        schedule_type="once",
+        run_at="2026-07-17T12:00:00",
+        prompt="执行",
+        timeout_seconds=1,
+    )
+    task_storage = TaskStorage(storage_dir=tmp_path)
+    task_storage.create(task)
+    executor = ScheduledTaskExecutor(
+        task_storage=task_storage,
+        execution_storage=ExecutionStorage(storage_dir=tmp_path),
+        agent_factory=SlowAgent,
+        conversation_persistence=VerificationFailingPersistence(),
+    )
+
+    execution = await executor.execute_task(task, update_stats=False)
+
+    assert execution.status.value == "timeout"
+    assert "Task timeout after" in execution.error_message
 
 
 @pytest.mark.asyncio
@@ -320,7 +343,7 @@ async def test_execution_is_published_only_after_all_steps_finish(tmp_path):
         execution_mode="social",
         schedule_type="once",
         run_at="2026-07-17T12:00:00",
-        steps=[TaskStep(step_id="step", description="执行", agent_prompt="执行")],
+        prompt="执行",
     )
     task_storage.create(task)
     executor = ScheduledTaskExecutor(
@@ -346,7 +369,7 @@ async def test_executor_collects_current_runtime_complete_response(tmp_path):
         agent_factory=CurrentRuntimeAgent,
     )
 
-    result = await executor._run_agent_step(
+    result = await executor._run_agent(
         "处理告警",
         "scheduled-task-session",
         manual_mode="assistant",
@@ -370,10 +393,10 @@ async def test_executor_appends_event_context_to_agent_prompt(tmp_path):
         description="event task",
         execution_mode="social",
         trigger_type="event",
-        event_type="yuncheng.alert.created",
+        event_type="xuchang.station_deviation.alert_created",
         broadcast_enabled=True,
         target_user_ids=["admin-1"],
-        steps=[TaskStep(step_id="report", description="report", agent_prompt="处理告警")],
+        prompt="处理告警",
     )
     task_storage.create(task)
     executor = ScheduledTaskExecutor(
@@ -384,30 +407,84 @@ async def test_executor_appends_event_context_to_agent_prompt(tmp_path):
     )
     event = TaskEvent(
         event_id="alert-1",
-        event_type="yuncheng.alert.created",
-        attributes={"city": "运城市"},
+        event_type="xuchang.station_deviation.alert_created",
+        attributes={"city": "许昌市"},
         payload={"evidence_dir": "/tmp/evidence"},
     )
 
     execution = await executor.execute_task(
         task,
         event=event,
-        broadcast_user_names=["运城值班员"],
+        broadcast_user_names=["许昌值班员"],
     )
 
     assert execution.trigger_type == "event"
     assert execution.event_id == "alert-1"
     assert "alert-1" in agent.prompts[0]
-    assert "yuncheng.alert.created" in agent.prompts[0]
+    assert "xuchang.station_deviation.alert_created" in agent.prompts[0]
     assert "/tmp/evidence" in agent.prompts[0]
     assert "broadcast_social_users" in agent.prompts[0]
-    assert "运城值班员" in agent.prompts[0]
+    assert "许昌值班员" in agent.prompts[0]
     assert "不需要返回 JSON" in agent.prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_executor_compacts_oversized_event_payload_in_agent_prompt(tmp_path):
+    report = tmp_path / "report.docx"
+    report.write_bytes(b"docx")
+    agent = FakeAgent(report)
+    task_storage = TaskStorage(storage_dir=tmp_path)
+    execution_storage = ExecutionStorage(storage_dir=tmp_path)
+    task = ScheduledTask(
+        task_id="event-task-oversized",
+        name="event task",
+        description="event task",
+        execution_mode="report",
+        trigger_type="event",
+        event_type="xuchang.station_deviation.alert_created",
+        broadcast_enabled=False,
+        prompt="生成回顾报告",
+    )
+    task_storage.create(task)
+    executor = ScheduledTaskExecutor(
+        task_storage=task_storage,
+        execution_storage=execution_storage,
+        agent_factory=lambda: agent,
+        conversation_persistence=RecordingConversationPersistence(),
+    )
+    event = TaskEvent(
+        event_id="xuchang-station-daily-review-20260829",
+        event_type="xuchang.station_deviation.alert_created",
+        attributes={"city": "许昌市", "target_date": "2026-08-29"},
+        payload={
+            "city": "许昌市",
+            "target_date": "2026-08-29",
+            "event_count": 7,
+            "events": [
+                {"station_hourly": [f"row-{index}" for index in range(500)]}
+                for _ in range(7)
+            ],
+            "evidence_package_path": (
+                "backend/backend_data_registry/xuchang_station_daily_reviews/20260829.json"
+            ),
+        },
+    )
+
+    await executor.execute_task(task, event=event)
+
+    prompt = agent.prompts[0]
+    assert "## 可信事件上下文" in prompt
+    assert "event_count" in prompt
+    assert "evidence_package_path" in prompt
+    assert "row-499" not in prompt
+    assert "payload 过大" in prompt
+    assert len(prompt) < 20000
 
 
 @pytest.mark.asyncio
 async def test_custom_broadcast_task_adds_broadcast_tool_at_runtime(tmp_path, monkeypatch):
     requested_tools = []
+
     monkeypatch.setattr(
         "app.scheduled_tasks.executor.task_executor.build_runtime_custom_tool_registry",
         lambda names: requested_tools.extend(names) or {name: name for name in names},
@@ -422,7 +499,7 @@ async def test_custom_broadcast_task_adds_broadcast_tool_at_runtime(tmp_path, mo
         run_at="2026-07-20T12:00:00",
         broadcast_enabled=True,
         target_user_ids=["admin-1"],
-        steps=[TaskStep(step_id="report", description="report", agent_prompt="生成日报")],
+        prompt="生成日报",
     )
     executor = ScheduledTaskExecutor(
         task_storage=TaskStorage(storage_dir=tmp_path),
@@ -438,61 +515,11 @@ async def test_custom_broadcast_task_adds_broadcast_tool_at_runtime(tmp_path, mo
     )
 
     assert execution.status.value == "success"
-    assert requested_tools == ["execute_python", "broadcast_social_users"]
-
-
-@pytest.mark.asyncio
-async def test_custom_task_reuses_one_agent_with_one_fixed_tool_registry(tmp_path, monkeypatch):
-    created_agents = []
-    factory_kwargs = []
-
-    class MultiStepAgent:
-        def __init__(self):
-            self.prompts = []
-
-        async def analyze(self, prompt, **kwargs):
-            self.prompts.append((prompt, kwargs))
-            yield {"type": "complete", "data": {"answer": f"完成: {prompt}"}}
-
-    def factory(**kwargs):
-        factory_kwargs.append(kwargs)
-        agent = MultiStepAgent()
-        created_agents.append(agent)
-        return agent
-
-    monkeypatch.setattr(
-        "app.scheduled_tasks.executor.task_executor.build_runtime_custom_tool_registry",
-        lambda names: {"beta": "B", "alpha": "A"},
-    )
-    task = ScheduledTask(
-        task_id="custom-multi-step",
-        name="自定义多步骤任务",
-        description="共享 Agent",
-        execution_mode="custom",
-        tool_names=["beta", "alpha"],
-        schedule_type="once",
-        run_at="2026-07-20T12:00:00",
-        steps=[
-            TaskStep(step_id="one", description="一", agent_prompt="第一步"),
-            TaskStep(step_id="two", description="二", agent_prompt="第二步"),
-        ],
-    )
-    executor = ScheduledTaskExecutor(
-        task_storage=TaskStorage(storage_dir=tmp_path),
-        execution_storage=ExecutionStorage(storage_dir=tmp_path),
-        agent_factory=factory,
-        conversation_persistence=RecordingConversationPersistence(),
-    )
-
-    result = await executor.execute_task(task, update_stats=False)
-
-    assert result.status.value == "success"
-    assert len(created_agents) == 1
-    assert list(factory_kwargs[0]["tool_registry"]) == ["beta", "alpha"]
-    assert factory_kwargs[0]["enable_memory"] is False
-    assert [prompt for prompt, _ in created_agents[0].prompts] == ["第一步", "第二步"]
-    assert all(kwargs["manual_mode"] == "custom" for _, kwargs in created_agents[0].prompts)
-    assert all(kwargs["session_storage_mode"] == "custom" for _, kwargs in created_agents[0].prompts)
+    assert requested_tools == [
+        "execute_python",
+        "read_file",
+        "broadcast_social_users",
+    ]
 
 
 @pytest.mark.asyncio
@@ -510,7 +537,7 @@ async def test_custom_task_invalid_runtime_tools_fail_before_agent_request(tmp_p
         tool_names=["alpha"],
         schedule_type="once",
         run_at="2026-07-20T12:00:00",
-        steps=[TaskStep(step_id="one", description="一", agent_prompt="执行")],
+        prompt="执行",
     )
     executor = ScheduledTaskExecutor(
         task_storage=TaskStorage(storage_dir=tmp_path),
@@ -526,46 +553,30 @@ async def test_custom_task_invalid_runtime_tools_fail_before_agent_request(tmp_p
     assert factory_calls == []
 
 
-@pytest.mark.asyncio
-async def test_custom_fatal_error_stops_following_steps_even_when_retry_enabled(tmp_path, monkeypatch):
-    prompts = []
+def test_review_subject_comes_from_trusted_event_attributes(tmp_path):
+    task = ScheduledTask(task_id="task-42", name="审核", description="审核", prompt="审核", trigger_type="event", event_type="test.review", review_subject_attribute="business_id")
+    execution = TaskExecution(execution_id="exec-42", task_id=task.task_id, task_name=task.name, status="running", total_steps=1, event_attributes={"business_id": "event-42"})
+    executor = ScheduledTaskExecutor(task_storage=TaskStorage(storage_dir=tmp_path), execution_storage=ExecutionStorage(storage_dir=tmp_path))
+    context = executor._runtime_metadata(task, execution)["scheduled_task"]
+    assert context["review_subject_bound"] is True
+    assert context["expected_subject_id"] == "event-42"
+    execution.event_attributes = {}
+    assert executor._runtime_metadata(task, execution)["scheduled_task"]["expected_subject_id"] is None
 
-    class FatalAgent:
-        async def analyze(self, prompt, **kwargs):
-            prompts.append(prompt)
-            yield {"type": "fatal_error", "data": {"error": "iteration limit reached"}}
 
-    monkeypatch.setattr(
-        "app.scheduled_tasks.executor.task_executor.build_runtime_custom_tool_registry",
-        lambda names: {"alpha": "A"},
-    )
+def test_review_prompt_binds_subject_and_evidence_path(tmp_path):
     task = ScheduledTask(
-        task_id="custom-fatal",
-        name="终态失败",
-        description="不能继续后续步骤",
-        execution_mode="custom",
-        tool_names=["alpha"],
-        schedule_type="once",
-        run_at="2026-07-20T12:00:00",
-        steps=[
-            TaskStep(
-                step_id="one",
-                description="失败",
-                agent_prompt="第一步",
-                retry_on_failure=True,
-            ),
-            TaskStep(step_id="two", description="不应执行", agent_prompt="第二步"),
-        ],
+        task_id="task-review-prompt", name="审核", description="审核", prompt="审核",
+        trigger_type="event", event_type="test.review", execution_mode="custom",
+        tool_names=["submit_task_review"],
+        review_subject_attribute="business_id",
     )
-    executor = ScheduledTaskExecutor(
-        task_storage=TaskStorage(storage_dir=tmp_path),
-        execution_storage=ExecutionStorage(storage_dir=tmp_path),
-        agent_factory=lambda **kwargs: FatalAgent(),
-        conversation_persistence=RecordingConversationPersistence(),
+    execution = TaskExecution(
+        execution_id="exec-review-prompt", task_id=task.task_id, task_name=task.name,
+        status="running", total_steps=1, event_attributes={"business_id": "event-42"},
     )
+    prompt = ScheduledTaskExecutor._build_task_prompt("审核数据", task, execution=execution)
 
-    result = await executor.execute_task(task, update_stats=False)
-
-    assert result.status.value == "failed"
-    assert prompts == ["第一步"]
-    assert "iteration limit reached" in result.error_message
+    assert "event-42" in prompt
+    assert "subject_id 和 event_id 都必须原样填写该编号" in prompt
+    assert "真实文件路径" in prompt

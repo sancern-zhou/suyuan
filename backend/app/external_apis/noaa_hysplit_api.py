@@ -29,6 +29,8 @@ import re
 import os
 import base64
 
+from app.utils.path_config import get_data_registry
+
 logger = structlog.get_logger()
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
@@ -65,7 +67,7 @@ class NOAAHysplitAPI:
         self.api_key = api_key or os.getenv("NOAA_HYSPLIT_API_KEY")
         self.timeout = httpx.Timeout(180.0, connect=60.0)
         
-        self.output_dir = Path("data/noaa_hysplit")
+        self.output_dir = get_data_registry() / "noaa_hysplit"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info(
@@ -100,7 +102,8 @@ class NOAAHysplitAPI:
         heights: List[int] = None,
         hours: int = 72,
         direction: str = "Backward",
-        meteo_source: str = "gdas1"
+        meteo_source: str = "gdas1",
+        generate_plot: bool = True,
     ) -> Dict[str, Any]:
         """
         运行HYSPLIT轨迹计算
@@ -251,15 +254,12 @@ class NOAAHysplitAPI:
                     text = resp.text
 
                     # 调试日志：每5次轮询输出一次响应预览
-                    if poll_count == 0 and os.getenv("SUYUAN_DEBUG_NOAA_DUMP", "").lower() in ("1", "true", "yes"):
-                        # 第一次轮询时保存完整响应用于调试（需设置 SUYUAN_DEBUG_NOAA_DUMP=1 开启）
+                    if poll_count == 0:
+                        # 第一次轮询时保存完整响应用于调试
                         try:
-                            debug_dir = Path(__file__).resolve().parents[2] / "data" / "noaa_hysplit" / "debug"
-                            debug_dir.mkdir(parents=True, exist_ok=True)
-                            debug_path = debug_dir / f"noaa_response_{job_id}.html"
-                            with open(debug_path, "w", encoding="utf-8") as f:
+                            with open(f"noaa_response_{job_id}.html", "w", encoding="utf-8") as f:
                                 f.write(text)
-                            logger.info("noaa_response_saved", job_id=job_id, path=str(debug_path))
+                            logger.info("noaa_response_saved", job_id=job_id, path=f"noaa_response_{job_id}.html")
                         except Exception as e:
                             logger.warning("noaa_response_save_failed", error=str(e))
 
@@ -320,7 +320,7 @@ class NOAAHysplitAPI:
 
                 # ✅ 修复4: 优先本地绘制 - 只要有端点数据就尝试绘制
                 # 不依赖 model_complete 判断（可能不准确）
-                if endpoints_downsampled:
+                if endpoints_downsampled and generate_plot:
                     logger.info("generating_local_plot", job_id=job_id, endpoints_count=len(endpoints_downsampled))
                     metadata_for_plot = {
                         "lat": lat,
@@ -338,13 +338,13 @@ class NOAAHysplitAPI:
                         logger.info("local_plot_success", job_id=job_id)
                     else:
                         logger.warning("local_plot_failed", job_id=job_id)
-                else:
+                elif not endpoints_downsampled:
                     logger.warning("cannot_generate_local_plot", job_id=job_id,
                                    model_complete=model_complete, endpoints_count=len(endpoints_downsampled))
 
                 # ✅ 修复5: 调整成功条件 - 有端点数据且本地绘制成功就算成功
                 # model_complete 只是一个参考指标
-                success = len(endpoints_downsampled) > 0 and local_plot
+                success = len(endpoints_downsampled) > 0
 
                 logger.info(
                     "noaa_trajectory_result",
@@ -354,7 +354,7 @@ class NOAAHysplitAPI:
                     has_image=bool(image_data),
                     endpoints_count=len(endpoints_downsampled),
                     original_endpoints_count=len(endpoints),
-                    success_criteria="endpoints_data + local_plot"
+                    success_criteria="endpoints_data"
                 )
 
                 # 如果没有端点数据，返回错误
@@ -365,17 +365,17 @@ class NOAAHysplitAPI:
                         "success": False,
                         "error": error_msg,
                         "job_id": job_id,
-                        "trajectory_image_url": result_url,
+                        "noaa_result_page_url": result_url,
                         "trajectory_image_base64": None,
                         "endpoints_data": [],
                         "model_complete": model_complete,
                         "plot_success": False
                     }
-                
+
                 return {
                     "success": success,
                     "job_id": job_id,
-                    "trajectory_image_url": result_url,  # 保留NOAA结果页面URL
+                    "noaa_result_page_url": result_url,  # NOAA结果页面URL（HTML任务页，不能作为图片嵌入）
                     "trajectory_image_base64": image_data,  # 本地生成的PNG图片
                     "endpoints_data": endpoints_downsampled,  # 抽稀后的轨迹点
                     "model_complete": model_complete,
@@ -544,13 +544,13 @@ class NOAAHysplitAPI:
             "success": False,
             "error": error,
             "job_id": None,
-            "trajectory_image_url": None,
+            "noaa_result_page_url": None,
             "trajectory_image_base64": None,
             "endpoints_data": []
         }
     
-    def _save_image_to_cache(self, base64_data: str, chart_id: str) -> str:
-        """将base64图片保存到缓存，返回image_id"""
+    def _save_image_to_cache(self, base64_data: str, chart_id: str) -> dict:
+        """将base64图片保存到缓存，返回图片信息（image_id/url/local_path）"""
         from app.services.image_cache import get_image_cache
         cache = get_image_cache()
         return cache.save(base64_data, chart_id)
@@ -573,6 +573,7 @@ class NOAAHysplitAPI:
         image_base64 = result.get("trajectory_image_base64")
 
         visuals = []
+        local_image_url = None
 
         # 公共meta信息
         job_id = result.get("job_id")
@@ -593,6 +594,7 @@ class NOAAHysplitAPI:
             image_info = self._save_image_to_cache(image_base64, chart_id)
             image_id = image_info["image_id"]  # 提取image_id字符串
             image_url = image_info["url"]  # 提取URL字符串
+            local_image_url = image_url
 
             logger.info("trajectory_image_saved_to_cache", image_id=image_id, chart_id=chart_id, image_url=image_url)
 
@@ -611,6 +613,9 @@ class NOAAHysplitAPI:
                     "image_id": image_id,  # 图片ID，供weather_executor使用
                     "image_url": image_url,  # 图片URL，供LLM生成Markdown链接
                     "markdown_image": f"![HYSPLIT {direction}轨迹分析]({image_url})",  # 预生成的Markdown格式
+                    # 原生PNG本地路径：resources_for_visuals 依赖该字段登记 chart-image 原生图资源，
+                    # App 端 [[chart:<id>]] 引用图片时按此资源下载渲染
+                    "local_path": image_info["local_path"],
                     "meta": {
                         "schema_version": "3.1",
                         "generator": "noaa_hysplit_local_plot",
@@ -650,7 +655,8 @@ class NOAAHysplitAPI:
                 "generator": "noaa_hysplit_local_plot",
                 "source": "NOAA HYSPLIT计算 + matplotlib本地绘制",
                 "job_id": result.get("job_id"),
-                "trajectory_image_url": result.get("trajectory_image_url"),
+                "trajectory_image_url": local_image_url,  # 本地缓存图URL，前端可直接展示
+                "noaa_result_page_url": result.get("noaa_result_page_url"),  # NOAA任务页（HTML），不可作图片嵌入
                 **metadata
             }
         }

@@ -65,6 +65,11 @@ from app.lifecycle.startup import run_startup
 configure_logging()
 logger = structlog.get_logger()
 
+# LD_PRELOAD 只服务于主进程提前映射 torch 原生库（aarch64 TLS 规避）；
+# 清除它以免泄露到子进程（bubblewrap 沙箱等被迫加载 CUDA 库而启动失败）。
+if os.environ.pop("LD_PRELOAD", None):
+    logger.info("ld_preload_cleared_for_child_processes")
+
 
 async def main() -> None:
     stop_event = asyncio.Event()
@@ -79,10 +84,15 @@ async def main() -> None:
     app = SimpleNamespace(state=SimpleNamespace())
     await run_startup(app)
     logger.info("background_worker_started")
+    from app.agent.workflow.worker import workflow_worker_loop
+
+    workflow_task = asyncio.create_task(workflow_worker_loop(stop_event))
 
     try:
         await stop_event.wait()
     finally:
+        workflow_task.cancel()
+        await asyncio.gather(workflow_task, return_exceptions=True)
         logger.info("background_worker_stopping")
         await run_shutdown(app)
 

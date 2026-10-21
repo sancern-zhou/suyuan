@@ -1,8 +1,8 @@
 """Resolve session storage by runtime mode.
 
-Most agent surfaces use the database-backed manager. Social mode is different:
-its user/session mapping and transcript are local operational state, so it must
-use the file-backed manager as the source of truth.
+Web and App conversations use the database-backed manager. External channel
+ingress explicitly selects ``channel`` storage for local transcripts.
+Storage selection is independent of the assistant runtime mode.
 """
 
 from __future__ import annotations
@@ -15,13 +15,13 @@ from .session_manager import SessionManager
 from .session_manager import get_session_manager as get_file_session_manager
 
 
-def _is_social_mode(mode: Optional[str]) -> bool:
-    return mode == "social"
+def _is_channel_storage(mode: Optional[str]) -> bool:
+    return mode == "channel"
 
 
 def get_session_manager_for_mode(mode: Optional[str] = None) -> Any:
     """Return the canonical session manager for a runtime mode."""
-    if _is_social_mode(mode):
+    if _is_channel_storage(mode):
         return get_file_session_manager()
 
     from . import get_session_manager
@@ -106,6 +106,23 @@ async def save_llm_compact_state_for_mode(
                 token_estimate=token_estimate,
                 reason=reason,
             )
+        )
+    )
+
+
+async def save_context_usage_for_mode(
+    session_id: str,
+    context_usage: dict[str, Any],
+    *,
+    mode: Optional[str] = None,
+) -> bool:
+    """Persist the latest context-usage snapshot into session metadata."""
+    manager = get_session_manager_for_mode(mode)
+    if not hasattr(manager, "save_context_usage"):
+        return False
+    return bool(
+        await _maybe_await(
+            manager.save_context_usage(session_id, context_usage)
         )
     )
 

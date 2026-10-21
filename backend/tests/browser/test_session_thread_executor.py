@@ -119,6 +119,15 @@ class TestSessionThreadExecutor:
 
         executor.shutdown()
 
+    def test_submit_preserves_session_id_keyword_for_task(self):
+        executor = SessionThreadExecutor()
+
+        def task(session_id):
+            return session_id
+
+        assert executor.submit("session-1", task, session_id="session-1") == "session-1"
+        executor.shutdown()
+
     def test_get_status(self):
         """测试状态获取"""
         executor = SessionThreadExecutor()

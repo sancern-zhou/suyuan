@@ -5,6 +5,7 @@ from app.services.ops_audit.semantic import reviewer
 
 
 def test_build_semantic_review_results_is_generated(monkeypatch) -> None:
+    monkeypatch.setattr(reviewer, "_call_semantic_llm_json", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         reviewer,
         "review_remark_semantic",
@@ -52,7 +53,10 @@ def test_build_semantic_review_results_is_generated(monkeypatch) -> None:
             {"WORKINGORDERCODE": "WO-SEM", "PROCESSSTEP": "CreateOrder", "SUBMITREMARK": ""},
             {"WORKINGORDERCODE": "WO-SEM", "PROCESSSTEP": "CheckOrder", "SUBMITREMARK": ""},
         ],
-        "rf_forms": {},
+        "rf_forms": {"RF_W_PMCHECK": [{
+            "WORKINGORDERCODE": "WO-SEM", "DEVICEMODEL": "BAM1020",
+            "POLLUTANTTYPE": "PM10", "TAPEUSAGEDISPOSAL": "足够一周使用",
+        }]},
         "attachments": [],
         "wo_commonfile": [],
         "device_history": {"orders": [], "rf_forms": {}},

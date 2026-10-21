@@ -17,7 +17,7 @@ import fnmatch
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.utils.path_config import PROJECT_ROOT, TEMP_ROOT, format_agent_path, is_path_within, resolve_agent_path
+from app.utils.path_config import PROJECT_ROOT, agent_content_read_roots, format_agent_path, is_path_within, resolve_agent_path
 import structlog
 
 logger = structlog.get_logger()
@@ -57,8 +57,8 @@ class GlobTool(LLMTool):
         # 工作目录：使用项目根目录（稳定路径，不依赖 cwd）
         # 所有相对路径都从项目根目录解析
         self.working_dir = PROJECT_ROOT
-        # 允许访问的额外目录（临时目录）
-        self.allowed_dirs = [self.working_dir, TEMP_ROOT]
+        # 读取边界统一由 path_config.agent_content_read_roots() 维护
+        self.allowed_dirs = agent_content_read_roots()
 
     async def execute(
         self,

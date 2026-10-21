@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import hashlib
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,25 @@ from app.agent.session.session_resolver import (
     load_session_for_mode,
     replace_session_transcript_for_mode,
 )
+from app.utils.path_config import get_data_registry, resolve_agent_path
+
+
+def resolve_broadcast_media_path(media_path: str | Path) -> Path:
+    """Resolve a broadcast path to the user-facing report artifact.
+
+    ReportPackage tools expose ``report.qmd`` as their source ``file_path``
+    while rendered DOCX/PDF files live beside it.  Sending that source file
+    makes App preview the Markdown source instead of the generated report.
+    Only the canonical ReportPackage layout is upgraded; ordinary Markdown
+    attachments remain untouched.
+    """
+    source = resolve_agent_path(media_path)
+    if source.name.lower() == "report.qmd":
+        for rendition_name in ("report.docx", "report.pdf"):
+            rendition = source.with_name(rendition_name)
+            if rendition.is_file():
+                return rendition
+    return source
 
 
 def broadcast_session_id(social_user_id: str) -> str:
@@ -29,7 +49,7 @@ def broadcast_session_id(social_user_id: str) -> str:
 async def load_broadcast_messages(social_user_id: str) -> list[dict[str, Any]]:
     """Load the broadcast inbox for one identity, newest message first."""
     session = await load_session_for_mode(
-        broadcast_session_id(social_user_id), mode="social"
+        broadcast_session_id(social_user_id), mode="channel"
     )
     if session is None:
         return []
@@ -43,7 +63,7 @@ async def load_broadcast_messages(social_user_id: str) -> list[dict[str, Any]]:
 async def mark_broadcast_read(social_user_id: str, message_id: str | None = None) -> bool:
     """Mark one message (or all messages when id is omitted) as read."""
     session = await load_session_for_mode(
-        broadcast_session_id(social_user_id), mode="social"
+        broadcast_session_id(social_user_id), mode="channel"
     )
     if session is None:
         return False
@@ -64,7 +84,7 @@ async def mark_broadcast_read(social_user_id: str, message_id: str | None = None
             changed = True
     if not changed:
         return False
-    return bool(await replace_session_transcript_for_mode(session, mode="social"))
+    return bool(await replace_session_transcript_for_mode(session, mode="channel"))
 
 
 async def persist_broadcast_context(
@@ -80,7 +100,7 @@ async def persist_broadcast_context(
     # user's normal chat mapping for broadcasts.
     del session_mapper
     session_id = broadcast_session_id(social_user_id)
-    session = await load_session_for_mode(session_id, mode="social")
+    session = await load_session_for_mode(session_id, mode="channel")
     if session is None:
         session = Session(
             session_id=session_id,
@@ -91,14 +111,22 @@ async def persist_broadcast_context(
     task_id = str(metadata.get("task_id") or "manual")
     event_id = str(metadata.get("event_id") or hashlib.sha256(message.encode("utf-8")).hexdigest()[:16])
     message_id = f"broadcast:{task_id}:{event_id}:{social_user_id}"
-    attachments = [
-        {
-            "name": Path(media_path).name or "attachment",
-            "path": media_path,
+    attachment_root = get_data_registry() / "social" / "broadcast_attachments" / hashlib.sha256(
+        message_id.encode("utf-8")
+    ).hexdigest()[:32]
+    attachments = []
+    for media_path in media:
+        source = resolve_broadcast_media_path(media_path)
+        if not source.is_file():
+            continue
+        attachment_root.mkdir(parents=True, exist_ok=True)
+        target = attachment_root / source.name
+        shutil.copy2(source, target)
+        attachments.append({
+            "name": target.name or "attachment",
+            "path": str(target),
             "type": "file",
-        }
-        for media_path in media
-    ]
+        })
 
     if not any(
         item.get("id") == message_id
@@ -116,5 +144,5 @@ async def persist_broadcast_context(
         })
 
     return bool(
-        await append_session_transcript_for_mode(session, mode="social")
+        await append_session_transcript_for_mode(session, mode="channel")
     )

@@ -11,8 +11,12 @@
 """
 
 import asyncio
+import os
 import sys
+import tempfile
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -83,39 +87,52 @@ async def test_file_operations():
 
 
 async def test_security_checks():
-    """测试安全检查"""
+    """测试 Shell 语法校验和真实 Shell 返回状态。"""
     print("\n=== 测试 3: 安全检查 ===")
 
     tool = BashTool()
 
-    # 测试 3.1: 危险命令拒绝（rm -rf /）
-    print("\n[测试 3.1] 尝试执行危险命令：rm -rf /")
-    result = await tool.execute(command="rm -rf /")
+    print("\n[测试 3.1] 语法错误返回结构化失败")
+    result = await tool.execute(command="printf 'unterminated")
     print(f"状态: {result['status']}")
     print(f"成功: {result['success']}")
     print(f"错误: {result.get('error', 'N/A')}")
-    assert not result['success'], "危险命令应该被拒绝"
-    assert "危险命令" in result.get('error', '') or "Dangerous command" in result.get('error', '')
+    assert not result['success']
+    assert result['metadata']['error_type'] == 'COMMAND_NOT_PARSABLE'
 
-    # 测试 3.2: sudo 命令拒绝
-    print("\n[测试 3.2] 尝试执行 sudo 命令")
-    result = await tool.execute(command="sudo ls")
+    # 包含旧黑名单词的普通参数不应再被误拦截。
+    print("\n[测试 3.2] 普通参数中包含 sudo")
+    result = await tool.execute(command="printf '%s' sudo")
     print(f"状态: {result['status']}")
     print(f"错误: {result.get('error', 'N/A')}")
-    assert not result['success'], "sudo 命令应该被拒绝"
+    assert result['success']
+    assert result['data']['stdout'] == "sudo"
 
-    # 测试 3.3: 路径遍历攻击检测
-    print("\n[测试 3.3] 尝试路径遍历攻击")
-    result = await tool.execute(command="rm ../../../etc/passwd")
+    # 系统路径在 Bash 沙箱内只读，越界写入应由沙箱拒绝。
+    print("\n[测试 3.3] 尝试写入只读系统路径")
+    result = await tool.execute(command="printf blocked > /etc/zcode-bash-test")
     print(f"状态: {result['status']}")
     print(f"错误: {result.get('error', 'N/A')}")
-    assert not result['success'], "路径遍历攻击应该被拒绝"
+    assert not result['success'], "沙箱应该拒绝写入系统路径"
+
+    result = await tool.execute(command="test ! -e /root/.ssh && test ! -s backend/.env")
+    assert result['success'], "宿主机密钥目录和后端环境文件不应暴露给 Shell"
+
+    result = await tool.execute(command="printf blocked > backend/app/zcode-bash-test")
+    assert not result['success'], "受保护源码目录应保持只读"
+
+    os.environ["SUYUAN_BASH_TEST_SECRET"] = "should-not-leak"
+    try:
+        result = await tool.execute(command="test -z \"${SUYUAN_BASH_TEST_SECRET:-}\"")
+        assert result['success'], "Web 进程环境变量不应传入 Shell"
+    finally:
+        os.environ.pop("SUYUAN_BASH_TEST_SECRET", None)
 
     print("\n[OK] 安全检查测试通过")
 
 
 async def test_pipeline_support():
-    """测试受限管道支持"""
+    """测试真实 Shell 管道和条件执行。"""
     print("\n=== 测试 4: 受限管道支持 ===")
 
     tool = BashTool()
@@ -132,12 +149,17 @@ async def test_pipeline_support():
     print(f"校验结果: {validation}")
     assert validation["valid"], "引号内的 | 应作为普通参数"
 
-    print("\n[测试 4.3] 管道中禁止执行器命令")
+    print("\n[测试 4.3] 管道中允许执行器命令")
     result = await tool.execute(command="echo hello | python -c \"print(1)\"")
     print(f"状态: {result['status']}")
     print(f"错误: {result.get('error', 'N/A')}")
-    assert not result['success'], "管道中 python 应被拒绝"
-    assert "管道中不允许使用命令" in result.get('error', '')
+    assert result['success'], "真实 Shell 应该允许管道中的 python"
+    assert result['data']['stdout'].strip() == "1"
+
+    print("\n[测试 4.4] 条件执行和脚本片段")
+    result = await tool.execute(command="false || printf 'fallback'; printf ' done'")
+    assert result['success']
+    assert result['data']['stdout'] == "fallback done"
 
     print("\n[OK] 受限管道测试通过")
 
@@ -155,13 +177,18 @@ async def test_timeout_protection():
     print(f"成功: {result['success']}")
     print(f"错误: {result.get('error', 'N/A')}")
     assert not result['success'], "超时命令应该失败"
-    assert "timeout" in result.get('error', '').lower(), "应该提示超时"
+    assert "timed out" in result.get('error', '').lower(), "应该提示超时"
+
+    started = time.monotonic()
+    result = await tool.execute(command="sleep 10 &", timeout=1)
+    assert result['success']
+    assert time.monotonic() - started < 3
 
     print("\n[OK] 超时保护测试通过")
 
 
 async def test_large_output_preserved():
-    """测试大输出保留"""
+    """测试大输出按模型内联预算截断并标记。"""
     print("\n=== 测试 6: 大输出保留 ===")
 
     tool = BashTool()
@@ -175,10 +202,62 @@ async def test_large_output_preserved():
     print(f"输出长度: {len(result['data']['stdout'])} 字符")
     print(f"metadata 输出长度: {result['metadata']['stdout_length']}")
     assert result['success'], "长输出命令应该成功"
-    assert len(result['data']['stdout']) == 100001, "长输出应该完整保留"
+    assert len(result['data']['stdout']) <= BashTool.MAX_OUTPUT_BYTES + 40
+    assert result['metadata']['stdout_truncated'] is True
     assert result['metadata']['stdout_length'] == len(result['data']['stdout'])
+    output_path = Path(result['metadata']['stdout_path'])
+    assert output_path.is_file()
+    assert output_path.stat().st_size > BashTool.MAX_OUTPUT_BYTES
 
     print("\n[OK] 大输出保留测试通过")
+
+
+async def test_session_data_isolation(tmp_path, monkeypatch):
+    registry = tmp_path / "registry"
+    own = registry / "sessions" / "own"
+    other = registry / "sessions" / "other"
+    own.mkdir(parents=True)
+    other.mkdir(parents=True)
+    (own / "input.txt").write_text("own-data", encoding="utf-8")
+    (other / "private.txt").write_text("other-data", encoding="utf-8")
+    monkeypatch.setattr("app.tools.utility.bash_tool.path_config.get_data_registry", lambda: registry)
+    context = SimpleNamespace(
+        data_manager=SimpleNamespace(memory=SimpleNamespace(session=SimpleNamespace(data_dir=str(own)))),
+        available_file_paths=[], authorized_input_paths=[],
+    )
+    tool = BashTool()
+    result = await tool.execute(context=context, command=f"cat {own / 'input.txt'}")
+    assert result['success'] and result['data']['stdout'] == "own-data"
+    result = await tool.execute(context=context, command=f"cat {other / 'private.txt'}")
+    assert not result['success']
+    assert "other-data" not in result['data']['stdout']
+
+    context.authorized_input_paths = [str(other / "private.txt")]
+    result = await tool.execute(context=context, command=f"cat {other / 'private.txt'}")
+    assert result['success'] and result['data']['stdout'] == "other-data"
+
+
+async def test_project_registry_session_mount():
+    from app.utils.path_config import get_data_registry
+
+    with tempfile.TemporaryDirectory(prefix="bash-test-", dir=get_data_registry()) as directory:
+        session_dir = Path(directory)
+        (session_dir / "input.txt").write_text("session-visible", encoding="utf-8")
+        context = SimpleNamespace(
+            data_manager=SimpleNamespace(memory=SimpleNamespace(session=SimpleNamespace(data_dir=directory))),
+            available_file_paths=[], authorized_input_paths=[],
+        )
+        result = await BashTool().execute(context=context, command=f"cat {session_dir / 'input.txt'}")
+        assert result['success'] and result['data']['stdout'] == "session-visible"
+
+
+async def test_output_capture_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(BashTool, "MAX_CAPTURE_BYTES", 2048)
+    monkeypatch.setattr(BashTool, "MAX_OUTPUT_BYTES", 256)
+    monkeypatch.setattr(BashTool, "_output_directory", lambda self, context: tmp_path)
+    result = await BashTool().execute(command="yes output")
+    assert result['metadata']['error_type'] == 'OUTPUT_LIMIT'
+    assert Path(result['data']['stdout_path']).stat().st_size <= 2048
 
 
 async def test_tool_registry():

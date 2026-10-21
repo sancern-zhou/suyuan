@@ -49,19 +49,19 @@ def test_build_image_payload_renders_url_pdf_first_page(tmp_path, monkeypatch):
     assert image_bytes.startswith(b"\x89PNG")
 
 
-def test_flow_visual_defaults_to_bailian_only(monkeypatch):
-    monkeypatch.delenv("OPS_AUDIT_FLOW_VISUAL_PROVIDERS", raising=False)
-    monkeypatch.setattr(ocr_adapter.settings, "bailian_model", "qwen3.8-max-preview")
+def test_visual_target_follows_active_llm_context(monkeypatch):
+    class _Service:
+        provider = "go"
+        model = "deepseek-v4.1-flash"
+        base_url = "https://example.test/v1"
+        api_key = "task-key"
 
-    providers = ocr_adapter._flow_visual_providers()
+    monkeypatch.setattr("app.services.llm_service.llm_service", _Service())
 
-    assert [provider["provider"] for provider in providers] == ["bailian"]
-    assert providers[0]["model"] == "qwen3.8-max-preview"
-
-
-def test_bailian_ocr_and_flow_visual_use_same_model(monkeypatch):
-    monkeypatch.setattr(ocr_adapter.settings, "bailian_model", "qwen3.8-max-preview")
-
-    assert ocr_adapter._bailian_target("document")["model"] == "qwen3.8-max-preview"
-    assert ocr_adapter._bailian_target("general")["model"] == "qwen3.8-max-preview"
-    assert ocr_adapter._bailian_target("flow_visual")["model"] == "qwen3.8-max-preview"
+    target = ocr_adapter._resolve_target("flow_visual")
+    assert target == {
+        "provider": "go",
+        "model": "deepseek-v4.1-flash",
+        "base_url": "https://example.test/v1",
+        "api_key": "task-key",
+    }

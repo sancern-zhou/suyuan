@@ -40,54 +40,6 @@ DEFAULT_CONFIG = {
                 "url": "http://180.184.30.94/api/AiDataService/ReportApplication/UserReportDataQuery/Query",
                 "description": "查询风速、风向、温度、湿度等气象数据",
                 "api_key_env": "METEOROLOGICAL_API_KEY"
-            },
-            "upwind_analysis_api": {
-                "name": "上风向分析API",
-                "url": "http://180.184.91.74:9095",
-                "description": "基于风向数据识别上风向企业"
-            }
-        }
-    },
-
-    "analysis_parameters": {
-        "name": "分析参数配置",
-        "description": "溯源分析流程的核心参数",
-        "config": {
-            "search_range_km": {
-                "name": "搜索半径",
-                "value": 5.0,
-                "unit": "km",
-                "description": "上风向企业搜索半径"
-            },
-            "max_enterprises": {
-                "name": "最大企业数",
-                "value": 30,
-                "unit": "个",
-                "description": "单次查询返回的最大企业数量"
-            },
-            "top_n_enterprises": {
-                "name": "Top N企业数",
-                "value": 8,
-                "unit": "个",
-                "description": "重点关注的Top N企业数量"
-            },
-            "wind_speed_low_threshold": {
-                "name": "低风速阈值",
-                "value": 1.5,
-                "unit": "m/s",
-                "description": "低于此风速视为静风或弱风"
-            },
-            "candidate_radius_km": {
-                "name": "候选企业半径",
-                "value": 25.0,
-                "unit": "km",
-                "description": "候选企业筛选半径"
-            },
-            "sector_half_angle": {
-                "name": "扇区半角",
-                "value": 11.25,
-                "unit": "度",
-                "description": "风向扇区的半角大小（22.5度扇区）"
             }
         }
     },

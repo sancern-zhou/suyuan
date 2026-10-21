@@ -1,5 +1,27 @@
 # RF multipoint calibration hard checks.
 
+linearity:
+  slope_fields:
+    - XL
+    - SLOPE
+    - SLOPEVALUE
+  correlation_fields:
+    - XGXS
+    - CORRELATION
+    - CORRELATIONCOEFFICIENT
+  slope:
+    min: 0.95
+    max: 1.05
+  correlation:
+    min: 0.999
+    operator: ">"
+  intercept_fields:
+    - JU
+  intercept:
+    ratio: 0.01
+    tolerance: 0.0
+  tolerance: 0.0005
+
 tables:
   RF_HY_O3VALUEPASS:
     pollutant: O3

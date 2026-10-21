@@ -21,10 +21,21 @@ test('execution mode options include every project mode plus task-only modes', (
     'ops',
     'query',
     'expert',
-    'social',
-    'custom'
+    'office',
+    'assistant',
+    'custom',
+    'workflow'
   ])
   assert.equal(options[1].label, 'query（问数）')
+})
+
+test('assistant and office have distinct canonical execution modes', () => {
+  const options = buildExecutionModeOptions([{ id: 'assistant', shortName: '助手' }], 'assistant')
+  assert.equal(options.filter(option => option.value === 'assistant').length, 1)
+  assert.ok(options.some(option => option.value === 'office'))
+  assert.match(options.find(option => option.value === 'assistant').label, /助手/)
+  assert.match(options.find(option => option.value === 'office').label, /办公/)
+  assert.ok(!options.some(option => option.value === 'social'))
 })
 
 
@@ -103,22 +114,23 @@ test('filters active bound WeChat users', () => {
 
 test('builds an event task with multiple backend user ids', () => {
   const payload = buildTaskPayload({
-    name: '运城告警推送',
+    name: "许昌告警推送",
     description: '生成并推送报告',
-    execution_mode: 'social',
+    execution_mode: 'assistant',
     trigger_type: 'event',
-    event_type: 'yuncheng.alert.created',
-    event_filters: { city: '运城市' },
+    event_type: "xuchang.station_deviation.alert_created",
+    event_filters: { city: "许昌市" },
     broadcast_enabled: true,
     target_user_ids: ['a', 'd'],
     enabled: true,
-    tagsText: 'yuncheng,event'
+    tagsText: 'xuchang,event'
   })
 
   assert.equal(payload.schedule_type, null)
   assert.deepEqual(payload.target_user_ids, ['a', 'd'])
-  assert.deepEqual(payload.event_filters, { city: '运城市' })
-  assert.equal(payload.steps[0].retry_on_failure, false)
+  assert.deepEqual(payload.event_filters, { city: "许昌市" })
+  assert.equal(payload.prompt, '生成并推送报告')
+  assert.equal(payload.timeout_seconds, 1800)
 })
 
 
@@ -141,6 +153,27 @@ test('keeps schedule fields for schedule tasks', () => {
   assert.equal(payload.hour, 9)
   assert.equal(payload.minute, 10)
   assert.equal(payload.event_type, null)
+})
+
+
+test('weekly custom schedule preserves weekday and time fields', () => {
+  const payload = buildTaskPayload({
+    name: '工单周审',
+    description: '审核运维工单',
+    execution_mode: 'ops',
+    trigger_type: 'schedule',
+    schedule_type: 'weekly_custom',
+    day_of_week: 4,
+    hour: 9,
+    minute: 30,
+    enabled: true
+  })
+
+  assert.equal(payload.execution_mode, 'ops')
+  assert.equal(payload.schedule_type, 'weekly_custom')
+  assert.equal(payload.day_of_week, 4)
+  assert.equal(payload.hour, 9)
+  assert.equal(payload.minute, 30)
 })
 
 
@@ -206,7 +239,70 @@ test('always sends workspace entry state so an existing sidebar entry can be dis
 })
 
 
-test('event trigger defaults to social execution and broadcasting', () => {
+test('history learning defaults to enabled with fallback params', () => {
+  const payload = buildTaskPayload({
+    name: '历史任务',
+    description: '执行',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true
+  })
+
+  assert.deepEqual(payload.history_learning, {
+    enabled: true,
+    max_recent_cases: 3,
+    memory_char_budget: 4000,
+    active_retrieval_enabled: false
+  })
+})
+
+
+test('history learning can be disabled and params overridden', () => {
+  const payload = buildTaskPayload({
+    name: '历史任务',
+    description: '执行',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true,
+    historyLearningEnabled: false,
+    historyMaxRecentCases: 5,
+    historyMemoryCharBudget: 2000,
+    historyActiveRetrievalEnabled: true
+  })
+
+  assert.equal(payload.history_learning.enabled, false)
+  assert.equal(payload.history_learning.max_recent_cases, 5)
+  assert.equal(payload.history_learning.memory_char_budget, 2000)
+  assert.equal(payload.history_learning.active_retrieval_enabled, true)
+})
+
+
+test('history learning preserves unexposed subfields from the edited task', () => {
+  const payload = buildTaskPayload({
+    name: '历史任务',
+    description: '执行',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true,
+    historyLearningEnabled: true,
+    historyMaxRecentCases: 7,
+    historyMemoryCharBudget: 3000,
+    historyLearningBase: {
+      enabled: true,
+      max_recent_cases: 3,
+      memory_char_budget: 4000,
+      consolidation_timeout_seconds: 300,
+      active_retrieval_max_results: 8
+    }
+  })
+
+  assert.equal(payload.history_learning.consolidation_timeout_seconds, 300)
+  assert.equal(payload.history_learning.active_retrieval_max_results, 8)
+  assert.equal(payload.history_learning.max_recent_cases, 7)
+})
+
+
+test('event trigger defaults to assistant execution and broadcasting', () => {
   const form = {
     trigger_type: 'schedule',
     execution_mode: 'assistant',
@@ -215,11 +311,88 @@ test('event trigger defaults to social execution and broadcasting', () => {
   }
 
   applyTriggerDefaults(form, 'event', [
-    { event_type: 'yuncheng.alert.created' }
+    { event_type: "xuchang.station_deviation.alert_created" }
   ])
 
   assert.equal(form.trigger_type, 'event')
-  assert.equal(form.execution_mode, 'social')
+  assert.equal(form.execution_mode, 'assistant')
   assert.equal(form.broadcast_enabled, true)
-  assert.equal(form.event_type, 'yuncheng.alert.created')
+  assert.equal(form.event_type, 'xuchang.station_deviation.alert_created')
+})
+
+test('task payload preserves each model tier and defaults legacy forms to flash', () => {
+  for (const tier of ['auto', 'flash', 'pro']) {
+    assert.equal(buildTaskPayload({ model_tier: tier }).model_tier, tier)
+  }
+  assert.equal(buildTaskPayload({}).model_tier, 'flash')
+})
+
+
+test('event trigger keeps workflow mode untouched', () => {
+  const form = {
+    trigger_type: 'schedule',
+    execution_mode: 'workflow',
+    workflow_name: 'demo_workflow',
+    broadcast_enabled: false,
+    event_type: ''
+  }
+
+  applyTriggerDefaults(form, 'event', [])
+
+  assert.equal(form.trigger_type, 'event')
+  assert.equal(form.execution_mode, 'workflow')
+  assert.equal(form.workflow_name, 'demo_workflow')
+})
+
+
+test('workflow payload carries the selected workflow and switching modes clears it', () => {
+  const payload = buildTaskPayload({
+    name: '确定性工作流值守',
+    description: '确定性值守结论',
+    execution_mode: 'workflow',
+    workflow_name: 'demo_workflow',
+    workflow_args: { period: 'day' },
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true
+  })
+
+  assert.equal(payload.workflow_name, 'demo_workflow')
+  assert.deepEqual(payload.workflow_args, { period: 'day' })
+
+  const form = { execution_mode: 'workflow', workflow_name: 'demo_workflow' }
+  applyExecutionMode(form, 'assistant')
+  assert.equal(form.workflow_name, '')
+
+  const cleared = buildTaskPayload({
+    ...form,
+    name: '普通任务',
+    description: '执行',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true
+  })
+  assert.equal(Object.hasOwn(cleared, 'workflow_name'), false)
+  assert.equal(Object.hasOwn(cleared, 'workflow_args'), false)
+})
+
+
+test('task payload preserves tier and serializes editable result requirements', () => {
+  const result = buildTaskPayload({ model_tier: 'pro', result_requirements: [
+    { field: 'sections.suggested_level', label: '等级', required: true, allowedValuesText: 'P0，P1,P2' },
+    { field: 'sections.note', label: '说明', required: false, allowedValuesText: '' }
+  ] })
+  assert.equal(result.model_tier, 'pro')
+  assert.deepEqual(result.result_requirements, [
+    { field: 'sections.suggested_level', label: '等级', required: true, allowed_values: ['P0', 'P1', 'P2'] },
+    { field: 'sections.note', label: '说明', required: false, allowed_values: [] }
+  ])
+  assert.equal(buildTaskPayload({}).model_tier, 'flash')
+})
+
+
+test('editing a task retains conditional result validation', () => {
+  const result = buildTaskPayload({ result_requirements: [{ field: 'sections.analysis', label: '分析', required: true,
+    required_when: { 'sections.impact': 'yes' }, allowedValuesText: '' }] })
+  assert.deepEqual(result.result_requirements[0].required_when, { 'sections.impact': 'yes' })
 })

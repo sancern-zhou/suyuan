@@ -6,6 +6,8 @@ Token budget management for LLM context windows.
 import structlog
 from typing import Any
 
+from config.settings import settings
+
 logger = structlog.get_logger()
 
 # Try to import tiktoken for accurate token counting
@@ -216,11 +218,15 @@ class TokenBudgetManager:
         return truncated_text
 
 
+# 压缩触发阈值比例：context_builder 的预测式压缩线与 context_usage 事件下发的
+# compact_threshold_tokens 都以此为准，避免展示色阶与真实压缩线漂移。
+COMPRESSION_THRESHOLD_RATIO = 0.8
+
 # Global token budget manager instance
-# Default: 200K context window (支持更长上下文)
-# 实际分配：system(~2K) + tools(~2K) + conversation(~10K) + context(~181K) + safety(5K) = 200K
+# 窗口来自 settings.llm_context_window_tokens（LLM_CONTEXT_WINDOW_TOKENS，默认 200K），
+# 是压缩预算与上下文占用指示器的单一事实源。
 token_budget_manager = TokenBudgetManager(
     model="gpt-4",
-    max_context_tokens=200000,
+    max_context_tokens=settings.llm_context_window_tokens,
     safety_buffer=5000
 )

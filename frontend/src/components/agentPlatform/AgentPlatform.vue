@@ -25,57 +25,6 @@
 
       <div v-if="error" class="platform-error" role="alert">{{ error }}</div>
 
-      <section class="portal-section task-portal" aria-labelledby="tasks-title">
-        <header class="section-heading">
-          <span class="heading-bar task-bar" aria-hidden="true"></span>
-          <div>
-            <h2 id="tasks-title">定时任务</h2>
-            <p>与左侧工作区保持同步，快速进入任务执行空间</p>
-          </div>
-          <span class="section-count">{{ scheduledTasks.length }} TASKS</span>
-        </header>
-
-        <div v-if="scheduledTasks.length" class="scheduled-task-grid">
-          <button
-            v-for="task in scheduledTasks"
-            :key="task.task_id"
-            class="scheduled-task-card"
-            type="button"
-            @click="emit('select-task', task)"
-          >
-            <span class="task-ambient" aria-hidden="true"></span>
-            <span class="task-badge">定时工作区</span>
-            <span class="task-card-top">
-              <span class="task-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /><path d="M8 2.8h8" /></svg>
-              </span>
-              <span class="task-title-wrap">
-                <strong>{{ task.workspace_entry?.title || task.name }}</strong>
-                <small>{{ task.name }}</small>
-              </span>
-              <span :class="['task-status', { paused: !task.enabled }]">
-                <i aria-hidden="true"></i>{{ task.enabled ? '已启用' : '已暂停' }}
-              </span>
-            </span>
-            <span class="card-description">{{ task.description || '进入任务工作区查看执行情况与产出文件。' }}</span>
-            <span class="task-meta">
-              <span>{{ formatTaskSchedule(task) }}</span>
-              <span>{{ task.steps?.length || 0 }} 个步骤</span>
-            </span>
-            <span class="card-action task-action">
-              进入工作区
-              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12" /><path d="m12 6 4 4-4 4" /></svg>
-            </span>
-          </button>
-        </div>
-        <div v-else class="task-empty-state">
-          <span class="task-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
-          </span>
-          <div><strong>暂无显示在工作区的定时任务</strong><p>启用任务的工作区入口后，它会自动出现在这里。</p></div>
-        </div>
-      </section>
-
       <section class="agent-groups" aria-label="智能体场景">
         <div v-if="isSceneLayout" class="scene-stack">
           <section
@@ -168,6 +117,57 @@
         </div>
       </section>
 
+      <section class="portal-section task-portal" aria-labelledby="tasks-title">
+        <header class="section-heading">
+          <span class="heading-bar task-bar" aria-hidden="true"></span>
+          <div>
+            <h2 id="tasks-title">定时任务</h2>
+            <p>与左侧工作区保持同步，快速进入任务执行空间</p>
+          </div>
+          <span class="section-count">{{ scheduledTasks.length }} TASKS</span>
+        </header>
+
+        <div v-if="scheduledTasks.length" class="scheduled-task-grid">
+          <button
+            v-for="task in scheduledTasks"
+            :key="task.task_id"
+            class="scheduled-task-card"
+            type="button"
+            @click="emit('select-task', task)"
+          >
+            <span class="task-ambient" aria-hidden="true"></span>
+            <span class="task-badge">定时工作区</span>
+            <span class="task-card-top">
+              <span class="task-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /><path d="M8 2.8h8" /></svg>
+              </span>
+              <span class="task-title-wrap">
+                <strong>{{ task.workspace_entry?.title || task.name }}</strong>
+                <small>{{ task.name }}</small>
+              </span>
+              <span :class="['task-status', { paused: !task.enabled }]">
+                <i aria-hidden="true"></i>{{ task.enabled ? '已启用' : '已暂停' }}
+              </span>
+            </span>
+            <span class="card-description">{{ task.description || '进入任务工作区查看执行情况与产出文件。' }}</span>
+            <span class="task-meta">
+              <span>{{ formatTaskSchedule(task) }}</span>
+              <span>{{ task.timeout_seconds || 1800 }} 秒超时</span>
+            </span>
+            <span class="card-action task-action">
+              进入工作区
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12" /><path d="m12 6 4 4-4 4" /></svg>
+            </span>
+          </button>
+        </div>
+        <div v-else class="task-empty-state">
+          <span class="task-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
+          </span>
+          <div><strong>暂无显示在工作区的定时任务</strong><p>启用任务的工作区入口后，它会自动出现在这里。</p></div>
+        </div>
+      </section>
+
     </div>
   </main>
 </template>
@@ -179,7 +179,17 @@ import { projectConfig } from '@/config/projectConfig.js'
 
 const props = defineProps({
   agents: { type: Array, default: () => selectAgentModes(projectConfig.agentModeIds, projectConfig.agentModeOverrides) },
-  scenes: { type: Array, default: () => AGENT_SCENES },
+  scenes: {
+    type: Array,
+    default: () => {
+      const sceneIds = projectConfig.agentScenes
+      const scenes = sceneIds.length ? AGENT_SCENES.filter(scene => sceneIds.includes(scene.id)) : AGENT_SCENES
+      return scenes.map(scene => {
+        const override = projectConfig.agentSceneOverrides?.[scene.id]
+        return override?.modeIds?.length ? { ...scene, modeIds: override.modeIds } : scene
+      })
+    }
+  },
   layout: { type: String, default: () => projectConfig.agentPlatformLayout },
   runningModes: { type: Array, default: () => [] },
   selectingMode: { type: String, default: '' },
@@ -219,7 +229,7 @@ const formatTaskSchedule = (task) => {
   --ink: #0a2531;
   --muted: #5b7684;
   --faint: #8aa3ae;
-  --surface: #ffffff;
+  --surface: var(--bg-container);
   --line: #d9e6ea;
   --lake-900: #07293b;
   --lake-700: #0d4c6b;
@@ -268,7 +278,7 @@ const formatTaskSchedule = (task) => {
 
 .platform-error { margin-bottom: 18px; padding: 10px 14px; border: 1px solid #efb7af; border-radius: 10px; background: #fff6f4; color: #b44738; font-size: 13px; }
 .portal-section + .portal-section { margin-top: 30px; }
-.task-portal + .agent-groups { margin-top: 30px; }
+.agent-groups + .task-portal { margin-top: 30px; }
 .section-heading { display: flex; align-items: center; gap: 11px; margin-bottom: 14px; }
 .heading-bar { width: 4px; height: 32px; border-radius: 3px; background: linear-gradient(180deg, var(--cyan-400), var(--teal-600)); }
 .task-bar { background: linear-gradient(180deg, #f2a93b, #de9220); }
@@ -310,14 +320,14 @@ const formatTaskSchedule = (task) => {
   &:disabled { cursor: wait; opacity: 0.78; }
 }
 .agent-card-top, .task-card-top { display: flex; align-items: flex-start; gap: 11px; }
-.agent-icon, .task-icon { display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border-radius: 11px; background: var(--agent-accent, var(--lake-600)); color: #fff; box-shadow: 0 4px 12px rgba(10, 42, 58, 0.2); }
+.agent-icon, .task-icon { display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border-radius: 11px; background: var(--agent-accent, var(--lake-600)); color: var(--bg-container); box-shadow: 0 4px 12px rgba(10, 42, 58, 0.2); }
 .agent-icon svg, .task-icon svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .agent-title-wrap, .task-title-wrap { display: flex; min-width: 0; flex: 1; flex-direction: column; align-items: flex-start; gap: 5px; }
 .agent-title-wrap strong, .task-title-wrap strong { color: var(--ink); font-size: 15px; line-height: 1.3; }
 .running-badge, .task-status { display: inline-flex; align-items: center; gap: 6px; color: #238b60; font-size: 10px; font-weight: 700; }
 .card-description { display: block; margin-top: 11px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .agent-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.agent-tags > span { padding: 2px 7px; border: 1px solid color-mix(in srgb, var(--agent-accent) 22%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--agent-accent) 8%, #fff); color: color-mix(in srgb, var(--agent-accent) 72%, var(--ink)); font-size: 10px; }
+.agent-tags > span { padding: 2px 7px; border: 1px solid color-mix(in srgb, var(--agent-accent) 22%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--agent-accent) 8%, var(--bg-container)); color: color-mix(in srgb, var(--agent-accent) 72%, var(--ink)); font-size: 10px; }
 .card-action { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 12px; color: var(--agent-accent, var(--teal-600)); font-size: 11px; font-weight: 700; }
 .card-action svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.2s ease; }
 .agent-card:hover .card-action svg, .scheduled-task-card:hover .card-action svg { transform: translateX(3px); }
@@ -329,16 +339,16 @@ const formatTaskSchedule = (task) => {
   border-color: rgba(63, 200, 212, 0.28);
   background: linear-gradient(120deg, var(--lake-900) 0%, #0a3a52 52%, var(--lake-700) 100%);
   box-shadow: 0 14px 32px rgba(7, 41, 59, 0.2);
-  color: #fff;
+  color: var(--bg-container);
 
   &:hover { border-color: rgba(63, 200, 212, 0.62); box-shadow: 0 18px 38px rgba(7, 41, 59, 0.28); }
   .card-description { position: relative; z-index: 1; max-width: 90%; color: rgba(220, 239, 244, 0.78); font-size: 12px; }
 }
 .task-ambient { position: absolute; width: 260px; height: 260px; top: -145px; right: -100px; border-radius: 50%; background: radial-gradient(circle, rgba(63, 200, 212, 0.3), transparent 70%); pointer-events: none; }
-.task-badge { position: absolute; z-index: 2; top: 0; right: 0; padding: 5px 13px 6px 15px; border-radius: 0 14px 0 13px; background: linear-gradient(120deg, #f2a93b, #de9220); color: #fff; font-size: 9px; font-weight: 800; letter-spacing: 0.12em; }
+.task-badge { position: absolute; z-index: 2; top: 0; right: 0; padding: 5px 13px 6px 15px; border-radius: 0 14px 0 13px; background: linear-gradient(120deg, #f2a93b, #de9220); color: var(--bg-container); font-size: 9px; font-weight: 800; letter-spacing: 0.12em; }
 .task-card-top { position: relative; z-index: 1; padding-right: 64px; }
 .task-icon { border: 1px solid rgba(255, 255, 255, 0.24); background: rgba(255, 255, 255, 0.12); box-shadow: none; color: var(--cyan-400); }
-.task-title-wrap strong { color: #fff; font-size: 16px; }
+.task-title-wrap strong { color: var(--bg-container); font-size: 16px; }
 .task-title-wrap small { overflow: hidden; max-width: 100%; color: rgba(203, 226, 233, 0.56); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .task-status { margin-left: auto; color: #65ddb4; white-space: nowrap; }
 .task-status.paused { color: #f3bf69; }

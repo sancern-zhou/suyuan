@@ -1,6 +1,6 @@
 """
 简单调度器 - 基于APScheduler
-支持预设cron模板和灵活调度（一次性、自定义间隔、自定义时间），最多3个并发任务
+支持预设cron模板和灵活调度（一次性、自定义间隔、每天/每周自定义时间），最多3个并发任务
 """
 import asyncio
 import structlog
@@ -26,6 +26,8 @@ class SimpleScheduler:
         ScheduleType.DAILY_8AM: {"hour": 8, "minute": 0},      # 每天早上8点
         ScheduleType.EVERY_2H: {"hour": "*/2", "minute": 0},   # 每2小时
         ScheduleType.EVERY_30MIN: {"minute": "*/30"},          # 每30分钟
+        ScheduleType.MONTHLY_1ST_7AM: {"day": 1, "hour": 7, "minute": 0},  # 每月1日早上7点
+        ScheduleType.WEEKLY_MONDAY_8AM: {"day_of_week": "mon", "hour": 8, "minute": 0},
     }
 
     MAX_CONCURRENT_TASKS = 3  # 最多3个并发任务
@@ -80,6 +82,9 @@ class SimpleScheduler:
             cron_config = self.CRON_TEMPLATES[task.schedule_type]
             trigger = CronTrigger(**cron_config, timezone="Asia/Shanghai")
 
+        elif task.schedule_type == ScheduleType.CRON:
+            trigger = CronTrigger.from_crontab(task.cron, timezone=task.timezone_name)
+
         elif task.schedule_type == ScheduleType.ONCE:
             # 一次性任务
             if not task.run_at:
@@ -103,6 +108,72 @@ class SimpleScheduler:
                 return
             trigger = CronTrigger(hour=task.hour, minute=task.minute, timezone="Asia/Shanghai")
             logger.info(f"Scheduled daily task: {task.name} at {task.hour:02d}:{task.minute:02d}")
+
+        elif task.schedule_type == ScheduleType.DAILY_HOURS_CUSTOM:
+            # 每天多个指定小时（如空闲时段：0-7点、12-13点、18-23点）
+            hours = sorted({int(h) for h in (task.hours or []) if 0 <= int(h) <= 23})
+            if not hours or task.minute is None:
+                logger.error(
+                    f"Task {task.task_id}: schedule_type=daily_hours_custom but hours/minute is not set"
+                )
+                return
+            trigger = CronTrigger(
+                hour=",".join(str(h) for h in hours),
+                minute=task.minute,
+                timezone="Asia/Shanghai",
+            )
+            logger.info(
+                f"Scheduled daily hours task: {task.name} at hours {hours} minute {task.minute:02d}"
+            )
+
+        elif task.schedule_type == ScheduleType.WEEKLY_CUSTOM:
+            # 每周自定义时间；APScheduler 使用 0=周一，6=周日
+            if task.day_of_week is None or task.hour is None or task.minute is None:
+                logger.error(f"Task {task.task_id}: schedule_type=weekly_custom but day_of_week/hour/minute is not set")
+                return
+            trigger = CronTrigger(
+                day_of_week=task.day_of_week,
+                hour=task.hour,
+                minute=task.minute,
+                timezone="Asia/Shanghai",
+            )
+            logger.info(
+                f"Scheduled weekly task: {task.name} on day {task.day_of_week} "
+                f"at {task.hour:02d}:{task.minute:02d}"
+            )
+
+        elif task.schedule_type == ScheduleType.MONTHLY_CUSTOM:
+            # 每月自定义日期与时间
+            if task.day_of_month is None or task.hour is None or task.minute is None:
+                logger.error(f"Task {task.task_id}: schedule_type=monthly_custom but day_of_month/hour/minute is not set")
+                return
+            trigger = CronTrigger(
+                day=task.day_of_month,
+                hour=task.hour,
+                minute=task.minute,
+                timezone="Asia/Shanghai",
+            )
+            logger.info(
+                f"Scheduled monthly task: {task.name} on day {task.day_of_month} "
+                f"at {task.hour:02d}:{task.minute:02d}"
+            )
+
+        elif task.schedule_type == ScheduleType.QUARTERLY_CUSTOM:
+            # 每季度首月（1/4/7/10）的自定义日期与时间
+            if task.day_of_month is None or task.hour is None or task.minute is None:
+                logger.error(f"Task {task.task_id}: schedule_type=quarterly_custom but day_of_month/hour/minute is not set")
+                return
+            trigger = CronTrigger(
+                month="1,4,7,10",
+                day=task.day_of_month,
+                hour=task.hour,
+                minute=task.minute,
+                timezone="Asia/Shanghai",
+            )
+            logger.info(
+                f"Scheduled quarterly task: {task.name} on day {task.day_of_month} "
+                f"at {task.hour:02d}:{task.minute:02d}"
+            )
 
         else:
             logger.error(f"Unknown schedule type: {task.schedule_type}")

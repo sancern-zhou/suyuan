@@ -26,7 +26,7 @@ def test_default_project_loads_legacy_module():
         "ops",
     ]
     assert context.manifest.frontend.agent_platform_layout == "scenes"
-    assert context.manifest.backend.tools == []
+    assert context.manifest.backend.tools  # project-scoped tools declared explicitly
     assert context.manifest.backend.fetchers_enabled is True
     assert context.manifest.backend.mode_prompt_files == {}
     assert context.manifest.knowledge.collections == []
@@ -55,22 +55,15 @@ def test_jiangxi_project_disables_data_fetchers():
         "query": "projects/jiangxi/prompts/query.md"
     }
     assert context.manifest.backend.tools == [
-        "query_jiangxi_noise_city",
-        "query_jiangxi_noise_station_minute",
-        "query_jiangxi_noise_station_hour",
-        "query_jiangxi_noise_station_day",
-        "query_jiangxi_noise_station_statistics",
-        "query_jiangxi_noise_city_compliance",
-        "query_jiangxi_noise_station_compliance",
+        "get_jiangxi_noise_data",
     ]
-    query_tools = context.manifest.backend.agent_mode_tools["query"]
-    assert "create_report_chart" in query_tools
-    assert "execute_echarts_python" in query_tools
-    assert "get_jiangxi_noise_data" not in query_tools
-    expert_tools = context.manifest.backend.agent_mode_tools["expert"]
-    assert "knowledge_qa_workflow" in expert_tools
-    assert "knowledge_document_reader" in expert_tools
-    assert "generate_map" not in expert_tools
+    assert context.manifest.backend.agent_mode_tools["assistant"] == [
+        "knowledge_qa_workflow",
+        "web_search",
+        "publish_session_file",
+    ]
+    for mode in ("query", "expert", "report", "chart"):
+        assert "get_jiangxi_noise_data" in context.manifest.backend.agent_mode_tools[mode]
 
 
 def test_xuchang_project_composes_shared_and_customer_modules():
@@ -88,14 +81,58 @@ def test_xuchang_project_composes_shared_and_customer_modules():
     assert context.manifest.frontend.brand_name == "许昌市AI应用智能体"
     assert context.manifest.frontend.agent_modes == [
         "query",
+        "knowledge",
         "expert",
         "report",
-        "chart",
     ]
-    assert context.manifest.frontend.agent_platform_layout == "environment-grid"
+    assert context.manifest.frontend.agent_platform_layout == "scenes"
     assert context.manifest.backend.tools == [
         "get_gems_image",
         "get_sentinel5p_image",
+        "analyze_xuchang_upwind_permit_sources",
+        "query_xuchang_emission_inventory",
+        "query_airdata_platform",
+        "airdata_calc_report_summary",
+        "xuchang_station_catalog",
+    ]
+    assert context.manifest.backend.agent_mode_tools["expert"][-1] == (
+        "view_skill"
+    )
+    assert context.manifest.backend.agent_mode_tools["report"][-1] == (
+        "view_skill"
+    )
+    assert context.manifest.backend.fetchers == [
+        "city_weather_history",
+        "nmc_observed_weather",
+        "nmc_weather_chart",
+        "xuchang_daily_attainment_forecast_fetcher",
+        "xuchang_annual_attainment_forecast_fetcher",
+        "xuchang_cnemc_station_hour_fetcher",
+        "xuchang_city_exceedance_fetcher",
+        "xuchang_henan_month_year_accumulate_fetcher",
+        "xuchang_nmc_hourly_forecast_fetcher",
+        "xuchang_weather_com_daily_forecast_fetcher",
+        "xuchang_air_quality_forecast_fetcher",
+        "xuchang_weather_situation_evidence_fetcher",
+        "xuchang_station_deviation_alert_fetcher",
+        "xuchang_station_daily_pollution_fetcher",
+        "xuchang_transport_analysis_fetcher",
+        "xuchang_zhongda_station_minute_fetcher",
+        "xuchang_zhongda_station_hour_fetcher",
+        "xuchang_zhongda_city_hour_fetcher",
+        "gems_xuchang_image_fetcher",
+    ]
+    # 广东数据源工具已收敛为项目专属（共享白名单不含、默认不注册），
+    # 许昌不再需要逐项禁用；仅保留非项目工具的显式禁用项。
+    assert context.manifest.backend.disabled_tools == [
+        "get_observed_meteorology",
+    ]
+    assert context.manifest.scheduled_tasks == [
+        "task_xuchang_station_deviation_alert",
+        "task_xuchang_station_daily_source_report",
+        "task_xuchang_station_daily_source_analysis_report",
+        "task_xuchang_weekly_weather_situation_report",
+        "task_xuchang_mee_cnemc_weekly_news",
     ]
     assert context.manifest.knowledge.collections == ["xuchang"]
 
@@ -123,6 +160,12 @@ def test_xuchang_project_enables_only_declared_satellite_tools():
     assert not tools_module.is_project_tool_enabled(
         context, "satellite", "undeclared_satellite_tool"
     )
+    # 项目专属工具不再依赖 disabled_tools 屏蔽：未声明即不注册。
+    assert not tools_module.is_project_tool_disabled(
+        context, "analyze_city_pollutant_rankings"
+    )
+    assert not tools_module.is_project_tool_disabled(context, "get_5min_data")
+    assert not tools_module.is_project_tool_enabled(context, "legacy", "get_5min_data")
 
 
 def test_unknown_module_fails_closed(tmp_path: Path):
