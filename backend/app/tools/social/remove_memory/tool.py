@@ -118,11 +118,18 @@ class RemoveMemoryTool(LLMTool):
                 }
             store = CuratedFactStore(Path(memory_file_path).parent)
             result = store.remove(old_text, category)
-            return {
+            payload = {
                 "success": result == "removed",
                 "status": result,
                 "summary": f"共享事实删除结果：{result}",
             }
+            if result == "not_found":
+                suggestions = store.suggest(old_text, category)
+                if suggestions:
+                    payload["error"] = "未找到匹配条目，请确认后使用以下候选的完整原文重试：" + "；".join(
+                        item["fact"] for item in suggestions
+                    )
+            return payload
 
         except Exception as e:
             logger.error(

@@ -55,6 +55,24 @@ def test_facts_and_resident_memory_are_separate_in_same_scope(tmp_path, mode, us
     assert facts.index() == ""
 
 
+def test_fact_suggestions_are_explicit_and_non_mutating(tmp_path):
+    from app.agent.memory.curated_facts import CuratedFactStore
+
+    store = CuratedFactStore(tmp_path)
+    store.add(
+        fact="用户偏好简洁回复",
+        category="用户偏好",
+        source_ref="session:1",
+        applies_when="assistant",
+    )
+
+    suggestions = store.suggest("用户偏好简洁回覆", "用户偏好")
+
+    assert suggestions and suggestions[0]["fact"] == "用户偏好简洁回复"
+    assert store.replace("用户偏好简洁回覆", "错误替换", "用户偏好") == "not_found"
+    assert "用户偏好简洁回复" in store.index()
+
+
 async def test_social_manager_honors_configured_root(tmp_path):
     manager = UserMemoryManager(base_workspace=tmp_path)
     store = await manager.get_user_memory("wx:bot:one")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
+import difflib
 import fcntl
 import os
 from pathlib import Path
@@ -22,6 +23,8 @@ logger = structlog.get_logger(__name__)
 class CuratedFactStore:
     INDEX_LIMIT = 200
     INDEX_CHAR_LIMIT = 25_000
+    SUGGESTION_LIMIT = 3
+    SUGGESTION_CUTOFF = 0.72
 
     def __init__(self, workspace: Path) -> None:
         self.root = Path(workspace).resolve() / "facts"
@@ -149,6 +152,31 @@ class CuratedFactStore:
             record for record in self._records()
             if (needle in self._normalize(record["fact"]) or needle == record["name"])
             and (not category or record.get("metadata", {}).get("type") == category)
+        ]
+
+    def suggest(self, old_text: str, category: str | None = None) -> list[dict[str, Any]]:
+        """Return likely records for an explicit follow-up, without selecting one."""
+        needle = self._normalize(old_text)
+        if not needle:
+            return []
+        records = [
+            record for record in self._records()
+            if not category or record.get("metadata", {}).get("type") == category
+        ]
+        scored = []
+        for record in records:
+            fact = self._normalize(record.get("fact", ""))
+            name = self._normalize(record.get("name", ""))
+            score = max(
+                difflib.SequenceMatcher(None, needle, fact).ratio(),
+                difflib.SequenceMatcher(None, needle, name).ratio(),
+            )
+            if score >= self.SUGGESTION_CUTOFF:
+                scored.append((score, record))
+        scored.sort(key=lambda item: (-item[0], item[1].get("name", "")))
+        return [
+            {"name": record["name"], "fact": record["fact"], "score": round(score, 3)}
+            for score, record in scored[:self.SUGGESTION_LIMIT]
         ]
 
     def replace(self, old_text: str, new_text: str, category: str | None = None) -> str:
