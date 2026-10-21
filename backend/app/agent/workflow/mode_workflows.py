@@ -31,17 +31,22 @@ _MONITORING_QUERY_TOOLS = (
     "xuchang_station_catalog",
     "airdata_calc_report_summary",
     "query_national_city_air_quality",
+    "get_5min_data",
+    "xuchang_cube_metrics",
 )
 
 # 站点层级问数：国控站走采集库 SQL；乡镇站/中台口径走"目录解析编码 → 中台查询"
 # （编码不可猜，该串行为必要轮次）。目录工具与中台工具必须成对配置。
+# 5 分钟粒度走 get_5min_data（中大分钟数据，含站点浓度与气象）。
 _MONITORING_STATION_QUERY_TOOLS = (
     "execute_crawler_sql_query",
     "xuchang_station_catalog",
     "query_airdata_platform",
+    "get_5min_data",
 )
 
-# 城市层级问数：城市小时/日/年均值 + SQL Server 城市发布历史 + 中台接口。
+# 城市层级问数：城市小时/日/年均值 + SQL Server 城市发布历史 + 中台接口；
+# cube 语义层提供官方月报/年度目标/168 城排名等统计口径。
 _MONITORING_CITY_QUERY_TOOLS = (
     "query_xcai_city_history",
     "execute_sql_query",
@@ -50,6 +55,7 @@ _MONITORING_CITY_QUERY_TOOLS = (
     "query_airdata_platform",
     "airdata_calc_report_summary",
     "query_national_city_air_quality",
+    "xuchang_cube_metrics",
 )
 
 _FORECAST_QUERY_TOOLS = (
@@ -169,6 +175,7 @@ for _definition in (
         scope_line=(
             "聚焦站点层级取数：国控站小时/日历史用采集库 SQL 直接查询"
             "（StationHour/StationDay，按名称或区域 LIKE 过滤，无需解析目录）；"
+            "5 分钟粒度数据（国控站分钟浓度与气象）用 get_5min_data 查询；"
             "乡镇站与中台口径数据先用 xuchang_station_catalog 解析编码"
             "（支持按名称模糊、按区县展开下辖站点），再调 query_airdata_platform 查询。"
         ),

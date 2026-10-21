@@ -32,11 +32,12 @@ def test_station_and_city_query_modes_split_by_table_level():
     progress = {}
 
     assert station is not None and city is not None
-    # 站点模式：采集库 SQL + 乡镇站目录解析/中台链路（成对配置）
+    # 站点模式：采集库 SQL + 乡镇站目录解析/中台链路（成对配置）+ 5 分钟工具
     assert allowed_tools(station, progress) == {
         "execute_crawler_sql_query",
         "xuchang_station_catalog",
         "query_airdata_platform",
+        "get_5min_data",
     }
     assert "query_xcai_city_history" in allowed_tools(city, progress)
     assert "xuchang_station_catalog" not in allowed_tools(city, progress)
