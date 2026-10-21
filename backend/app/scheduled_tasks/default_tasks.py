@@ -163,7 +163,8 @@ def build_jiangsu_smart_event_task(event_type_dictionary: list[str] | None = Non
         event_type="jiangsu.smart_event.alarm",
         enabled=True,
         prompt=_smart_event_task_prompt(event_type_dictionary),
-        timeout_seconds=1200,
+        # 画面图片多模态核验 + 全量数据取证后单轮耗时约 30-40 分钟，1800s 会误杀（2026-10-20）。
+        timeout_seconds=3000,
         created_by="project-default",
         owner_user_id="system",
         owner_username="smart-event-agent",

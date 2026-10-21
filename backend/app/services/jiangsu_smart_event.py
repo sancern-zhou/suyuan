@@ -1377,7 +1377,9 @@ class JiangsuSmartEventService:
                         "仅使用本任务 evidence_package_path 指定的独立证据包（index.json）。先校验包内 event_id 与 "
                         "smart_event.event_id 一致；不一致立即停止。index.json 的 sources.<name> 是来源索引"
                         "（status/summary/record_count/metadata）；需要来源明细时读取同目录 sources/<name>.json 的 "
-                        "data 字段，按需逐个读取，不将截断内容当完整证据。不得读取全局 store.json 或其他事件目录。"
+                        "data 字段，按需逐个读取，不将截断内容当完整证据。sources.video 的 data[].image_path "
+                        "指向画面图片文件，用 read_file 读取该路径即可直接查看画面（多模态），"
+                        "并结合画面内容核验视频线索。不得读取全局 store.json 或其他事件目录。"
                     ),
                     "continuity_context": continuity,
                 },
