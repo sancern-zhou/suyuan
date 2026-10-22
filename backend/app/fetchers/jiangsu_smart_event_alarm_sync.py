@@ -50,4 +50,19 @@ class JiangsuSmartEventAlarmSyncFetcher(DataFetcher):
                 now=datetime.now().astimezone(), human_only=True,
             )
             return {**result, "demo_freeze": True, "fetcher": self.name}
-        return await JiangsuSmartEventAutomation(self._service).tick()
+        result = await JiangsuSmartEventAutomation(self._service).tick()
+        # tick 把各阶段异常吞进返回值；不落日志的话，证据/派发停摆完全隐形
+        # （2026-10-21 事故：qc_history Decimal 序列化炸保存，44 小时无人知晓）。
+        import structlog
+
+        logger = structlog.get_logger()
+        for phase_name in ("alarm_sync", "compliance_sync", "evidence", "ai_queue"):
+            phase_result = result.get(phase_name) if isinstance(result, dict) else None
+            if isinstance(phase_result, dict) and phase_result.get("status") == "failed":
+                logger.warning(
+                    "smart_event_tick_phase_failed",
+                    fetcher=self.name,
+                    phase=phase_name,
+                    error=str(phase_result.get("error"))[:500],
+                )
+        return result

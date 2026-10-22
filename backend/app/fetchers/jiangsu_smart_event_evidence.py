@@ -20,7 +20,8 @@ import json
 import re
 import unicodedata
 from collections.abc import Awaitable, Callable
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 
 from app.fetchers.weather.jiangsu_review_weather import fetch_city_weather
@@ -421,6 +422,27 @@ def _qc_severe_only(result: dict[str, Any]) -> dict[str, Any]:
     base_summary = str(result.get("summary") or "质控任务查询完成。").rstrip("。")
     result["summary"] = f"{base_summary}；仅保留严重告警类型记录 {len(kept)}/{total_text} 条。"
     return result
+
+
+def _json_safe(value: Any) -> Any:
+    """把 asyncpg/工具层泄漏的非 JSON 标量转成可序列化值。
+
+    证据包整体以 JSONB 落库（smart_events.data / evidence 列），任何一个源带出
+    Decimal（NUMERIC 列）或 datetime（时间戳列）都会让整批保存失败——保存异常
+    被 tick 吞掉后表现为证据管线静默停摆、AI 卡全部滞留待执行
+    （2026-10-21/22 事故根因：qc_history 严重质控行的 relativeError）。
+    """
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 def _compact(value: Any, *, depth: int = 0, max_items: int = MAX_INLINE_RECORDS) -> Any:
@@ -1290,4 +1312,4 @@ class JiangsuSmartEventEvidenceFetcher:
             "区域对比按同区县省控站点取原始记录；全市其余省控站点仅计算事件窗口均值与差值，不落原始记录。",
             "视频线索接口尚未接入，已显式记录为 evidence gap，不推断视频结论。",
         ]
-        return package
+        return _json_safe(package)
