@@ -501,10 +501,11 @@ const isComposing = ref(false)
 const useReranker = ref(props.useReranker)  // 精准检索开关状态
 const validAgentModes = [...new Set([...AGENT_MODE_IDS, ...projectConfig.agentModeIds, 'graph'])]
 const validModelTiers = ['auto', 'flash', 'pro']
-const legacyModelTier = localStorage.getItem('llm-model-tier') || 'flash'
-const draftModelTierKey = 'llm-model-tier:draft'
+const defaultModelTier = 'auto'
+// v1 键位里的值是旧默认档位 flash 被自动回填的结果，不能当作用户选择，升版键位让默认值切换真正生效
+const draftModelTierKey = 'llm-model-tier:v2:draft'
 
-const getSessionModelTierKey = (sessionId) => `llm-model-tier:${sessionId}`
+const getSessionModelTierKey = (sessionId) => `llm-model-tier:v2:${sessionId}`
 
 const readStoredModelTier = (sessionId) => {
   const sessionKey = sessionId ? getSessionModelTierKey(sessionId) : null
@@ -518,11 +519,7 @@ const readStoredModelTier = (sessionId) => {
     return draftValue
   }
 
-  if (legacyModelTier && validModelTiers.includes(legacyModelTier)) {
-    return legacyModelTier
-  }
-
-  return 'flash'
+  return defaultModelTier
 }
 
 const modelTier = ref(readStoredModelTier(props.sessionId))

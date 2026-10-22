@@ -320,11 +320,11 @@ test('event trigger defaults to assistant execution and broadcasting', () => {
   assert.equal(form.event_type, 'xuchang.station_deviation.alert_created')
 })
 
-test('task payload preserves each model tier and defaults legacy forms to flash', () => {
+test('task payload preserves each model tier and defaults legacy forms to auto', () => {
   for (const tier of ['auto', 'flash', 'pro']) {
     assert.equal(buildTaskPayload({ model_tier: tier }).model_tier, tier)
   }
-  assert.equal(buildTaskPayload({}).model_tier, 'flash')
+  assert.equal(buildTaskPayload({}).model_tier, 'auto')
 })
 
 
@@ -436,7 +436,7 @@ test('task payload preserves tier and serializes editable result requirements', 
     { field: 'sections.suggested_level', label: '等级', required: true, allowed_values: ['P0', 'P1', 'P2'] },
     { field: 'sections.note', label: '说明', required: false, allowed_values: [] }
   ])
-  assert.equal(buildTaskPayload({}).model_tier, 'flash')
+  assert.equal(buildTaskPayload({}).model_tier, 'auto')
 })
 
 

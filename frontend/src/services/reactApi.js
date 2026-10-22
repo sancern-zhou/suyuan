@@ -32,7 +32,7 @@ class ReactAgentAPI {
       assistantMode = null,  // 助手模式
       agentMode = 'expert',  // ✅ 双模式架构：assistant | expert
       knowledgeBaseIds = null,  // ✅ 知识库ID列表
-      modelTier = 'flash',
+      modelTier = 'auto',
       skillIds = [],
       contextRefs = [],
       activeContexts = null,
