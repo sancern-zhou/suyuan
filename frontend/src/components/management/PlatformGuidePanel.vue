@@ -20,7 +20,10 @@
 
       <section v-if="dataSourceGroups.length" class="guide-section">
         <h4 class="guide-title">数据接入情况</h4>
-        <p class="guide-subtitle">以下为平台当前已接入的数据类别与实际可用时间范围，可直接在对话中查询使用。</p>
+        <p class="guide-subtitle">
+          以下为平台当前已接入的数据类别、实际可用时间范围与同步频次。平台接口类数据在提问时实时读取；
+          本地同步库每 5 分钟一次高频增量、每日凌晨 2:30 全量对齐，查询结果以最近一次同步为准。
+        </p>
 
         <div
           v-for="group in dataSourceGroups"
@@ -32,9 +35,10 @@
             <table class="data-table">
               <thead>
                 <tr>
-                  <th style="width: 24%">数据类别</th>
-                  <th style="width: 10%">粒度</th>
-                  <th style="width: 18%">实际可用时间范围</th>
+                  <th style="width: 20%">数据类别</th>
+                  <th style="width: 8%">粒度</th>
+                  <th style="width: 17%">实际可用时间范围</th>
+                  <th style="width: 17%">更新频次与延迟</th>
                   <th>说明</th>
                 </tr>
               </thead>
@@ -43,6 +47,7 @@
                   <td class="cell-name">{{ row.name }}</td>
                   <td>{{ row.granularity }}</td>
                   <td class="cell-range">{{ row.range }}</td>
+                  <td class="cell-sync">{{ row.sync }}</td>
                   <td class="cell-desc">{{ row.desc }}</td>
                 </tr>
               </tbody>
@@ -126,77 +131,89 @@ const dataSourceGroups = [
         name: '江苏城市数据（13 个设区市）',
         granularity: '1 小时、1 日',
         range: '平台在线数据，历史深度以平台为准',
+        sync: '接口实时读取',
         desc: '城市 AQI、首要污染物、6 项污染物浓度与城市排名'
       },
       {
         name: '江苏区县数据',
         granularity: '1 小时、1 日',
         range: '平台在线数据，历史深度以平台为准',
+        sync: '接口实时读取',
         desc: '全省区县污染物浓度与排名查询'
       },
       {
         name: '站点监测数据（全省 101 个省控站）',
         granularity: '5 分钟、1 小时、1 日',
         range: '平台在线数据，历史深度以平台为准',
+        sync: '接口实时读取；审核口径待平台审核完成，滞后于原始数据',
         desc: '6 项污染物浓度；区分原始/审核、工况/标况四种口径；站点异常告警判定的主要输入'
       },
       {
         name: '平台统计指标',
         granularity: '—',
         range: '平台在线数据',
+        sync: '接口实时读取',
         desc: '城市/区县/站点排名、同比、达标率、超标天数、臭氧排名等统计口径'
       },
       {
         name: '率值指标（获取率/有效率/传输率等）',
         granularity: '日',
         range: '平台在线数据',
+        sync: '平台按日统计产出，接口实时可查',
         desc: '一律以平台统计接口为唯一口径，平台不做自算；含 13 市综合获取率与联网率'
       }
     ]
   },
   {
-    title: '运维专题数据（本地同步库，2026-07-01 起每日同步）',
+    title: '运维专题数据（本地同步库，2026-07-01 起）',
     rows: [
       {
         name: '故障工单与例行工单',
         granularity: '单',
         range: '2026-07-01 至今',
+        sync: '工单宽表每 5 分钟同步；工单详情接口实时读取',
         desc: '工单台账、处置流转、故障项与检查项详单；故障工单仅 Fault 类，例行工单走平台审核接口'
       },
       {
         name: '站点告警日志',
         granularity: '条',
         range: '平台历史全量，持续同步',
+        sync: '每 5 分钟同步',
         desc: '101 个省控站按站点分片全覆盖，含电话记录'
       },
       {
         name: '智能事件中心',
         granularity: '事件',
-        range: '2026-06-01 起自动汇聚（存在生成滞后）',
+        range: '2026-06-01 起自动汇聚',
+        sync: '告警每 5 分钟轮询发现，异常扫描约每小时一轮；证据包生成有分钟级滞后',
         desc: '告警/异常事件线索与证据包，支撑外界环境识别与仪器故障识别；只读结构化查询'
       },
       {
         name: '巡检记录',
         granularity: '任务项',
         range: '2026-07-01 至今',
+        sync: '每 5 分钟同步',
         desc: '自动巡检任务项数、超期（周期结束未完成）、周期类型/人员/站点分布'
       },
       {
         name: '质控数据（约 23 个质控试点站）',
         granularity: '任务/条',
         range: '2026 年至今（按年分表）',
+        sync: '执行明细每 5 分钟同步；安排与补测每日 02:30 重建；质控曲线接口实时读取',
         desc: '质控执行、质控安排与过期任务、补测闭环、运行日志与质控监测曲线；口径为省控 101 站名录，结论不得外推全省'
       },
       {
         name: '设备与停电',
         granularity: '事件/台账',
         range: '2026-07-01 至今；站房动环供电小时自 2026-10 起',
+        sync: '台账/参数/生命周期、停电报备每日 02:30 重建；动环供电小时每日 02:30 增量',
         desc: '设备生命周期事件、参数阈值与台账、停电报备单及时长；动环小时表含温湿度等 11 项编码，每年 1 月切换年份表'
       },
       {
         name: '站点与人员',
         granularity: '台账/条',
         range: '2026-07-01 至今（签到按平台数据）',
+        sync: '台账与健康快照每 5 分钟同步；站点日概况每日 02:30 重建；签到与轨迹接口实时读取',
         desc: '站点台账与健康快照、站点日概况、运维单位与责任站点关系、到站签到记录与签到轨迹；签到源数据较稀疏，以实际记录数为准'
       }
     ]
@@ -207,19 +224,22 @@ const dataSourceGroups = [
       {
         name: '江苏逐小时气象实况（13 市+区县）',
         granularity: '1 小时',
-        range: '持续积累，后台每小时更新',
+        range: '持续积累',
+        sync: '每小时第 12 分钟自动抓取上一小时实况',
         desc: '中央气象台按城市/区县自动抓取：气温、湿度、风向/风速、气压、降水；直接用名称查询，无需气象站编号'
       },
       {
         name: '历史气象库',
         granularity: '1 小时',
         range: '按库内覆盖为准',
+        sync: '实况抓取每小时入库；再分析数据为既有数据集',
         desc: '江苏地面观测与区域再分析数据，用于历史气象查询与污染过程对照'
       },
       {
         name: '天气预报',
         granularity: '1 日',
         range: '未来数日（外部服务）',
+        sync: '提问时实时请求外部服务',
         desc: '当前天气与未来预报，依赖外部天气服务，条件可用'
       }
     ]
@@ -231,12 +251,14 @@ const dataSourceGroups = [
         name: '授权知识库',
         granularity: '—',
         range: '持续更新',
+        sync: '人工维护更新',
         desc: '江苏运维规程、标准制度、设备资料与业务规则；知识问答、故障诊断与报告口径的依据来源'
       },
       {
         name: '公开网页搜索与抓取',
         granularity: '—',
         range: '按需',
+        sync: '提问时实时检索',
         desc: '仅在知识库证据不足或问题需要最新公开信息时联网补充，回答中标明网络来源'
       }
     ]
@@ -413,6 +435,11 @@ const dataSourceGroups = [
 .cell-range {
   white-space: nowrap;
   color: var(--text-1);
+}
+
+.cell-sync {
+  color: var(--text-1);
+  line-height: 1.5;
 }
 
 .cell-desc {
