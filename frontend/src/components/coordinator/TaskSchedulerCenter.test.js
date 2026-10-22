@@ -48,4 +48,9 @@ test('review list keeps conversation entry, detail dialog and shared emits', asy
   // 管理面板插槽内宿主整页工单审核工作台。
   assert.match(layout, /managementPanel === 'work-order-review'/)
   assert.match(layout, /WorkOrderReviewCenterPanel[\s\S]*?:workspace-command="workOrderReviewCommand"/)
+  // 对话右侧 tab 仅展示当前工单分析，不提供刷新/返回列表（整页模式保持默认 true）。
+  const panel = await readFile(new URL('../management/WorkOrderReviewCenterPanel.vue', import.meta.url), 'utf8')
+  assert.match(panel, /showListActions: \{ type: Boolean, default: true \}/)
+  const rightPanel = await readFile(new URL('../reactAnalysis/RightPanelContainer.vue', import.meta.url), 'utf8')
+  assert.match(rightPanel, /:show-list-actions="false"/)
 })

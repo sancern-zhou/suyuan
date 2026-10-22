@@ -6,11 +6,11 @@
         <p>按故障日期查看工单、AI 研判与证据</p>
       </div>
       <div class="wor-header-actions">
-        <button type="button" class="btn btn--secondary" :disabled="listLoading" @click="loadOrders">
+        <button v-if="showListActions" type="button" class="btn btn--secondary" :disabled="listLoading" @click="loadOrders">
           <span v-if="listLoading" class="spinner spinner--sm" aria-hidden="true"></span>
           {{ listLoading ? '刷新中…' : '刷新' }}
         </button>
-        <button v-if="selectedCode" type="button" class="btn btn--secondary" @click="backToList">返回列表</button>
+        <button v-if="showListActions && selectedCode" type="button" class="btn btn--secondary" @click="backToList">返回列表</button>
         <button type="button" class="btn btn--text close-btn" aria-label="关闭" @click="$emit('close')">
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M6 6l12 12" />
@@ -451,6 +451,8 @@ import {
 
 const props = defineProps({
   workspaceCommand: { type: Object, default: null },
+  // 对话右侧 tab 模式置 false：定位是当前工单的分析与展示，不提供列表操作（刷新/返回列表）
+  showListActions: { type: Boolean, default: true },
 })
 defineEmits(['close'])
 

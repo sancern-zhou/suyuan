@@ -270,11 +270,13 @@
         @open-task="$emit('open-smart-event-task', $event)"
       />
 
-      <!-- 故障工单审核工作区：证据包拆分数据 + AI 研判 + 人工反馈/归档/退回 -->
+      <!-- 故障工单审核工作区：证据包拆分数据 + AI 研判 + 人工反馈/归档/退回；
+           对话 tab 定位是当前工单的分析展示，不提供刷新/返回列表等列表操作 -->
       <WorkOrderReviewCenterPanel
         v-else-if="activeTab === 'work-order-review'"
         class="panel-content"
         :workspace-command="workOrderReviewCommand"
+        :show-list-actions="false"
         @close="$emit('close-work-order-review-panel')"
       />
 
