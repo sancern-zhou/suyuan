@@ -38,3 +38,20 @@ export function normalizeReviewPoints(points, granularity = '') {
   }
   return result
 }
+
+// 剔除区间标注 → 所属污染物：优先取后端给的 pollutant 字段（新包），
+// 旧包只有 "{污染物}剔除区间" 形态的名称，按前缀解析，无污染物则返回空串。
+export function areaPollutant(area) {
+  const explicit = String(area?.pollutant || '').trim().toUpperCase()
+  if (explicit) return explicit
+  const match = /^(.+?)剔除/.exec(String(area?.name || '').trim())
+  return match ? match[1].trim().toUpperCase() : ''
+}
+
+// 曲线色（#rrggbb）→ 同色半透明填充，用于 markArea 与曲线同色关联；非法输入返回 null。
+export function hexWithAlpha(hex, alpha = 0.14) {
+  const match = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim())
+  if (!match) return null
+  const value = parseInt(match[1], 16)
+  return `rgba(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`
+}

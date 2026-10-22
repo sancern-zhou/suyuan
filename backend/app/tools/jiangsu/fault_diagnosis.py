@@ -19,6 +19,7 @@ from app.tools.jiangsu.device_control import _DeviceControlClient
 from app.tools.jiangsu.result_filter import externalize_compact_records
 from app.tools.jiangsu.review_evidence import (
     COMPARISON_POLLUTANTS,
+    POLLUTANT_ROW_KEYS,
     POLLUTANT_UNITS,
     fetch_same_city_band,
     pollutant_points,
@@ -2602,6 +2603,9 @@ class JiangsuReviewEvidenceTool(LLMTool):
                     "end_time": {"type": "string", "description": "结束时间，YYYY-MM-DD HH:mm:ss；不传时由工单创建时间推算（后 2 天）。"},
                     "mark_areas": {"type": "array", "items": {"type": "object", "properties": {
                         "name": {"type": "string", "description": "区间标注名，如“剔除候选区间”。"},
+                        "pollutant": {"type": "string",
+                                      "description": "区间所属监测项（PM10、PM2.5、SO2、NO、NO2、CO、O3）；"
+                                                     "提供后工作台按污染物曲线颜色着色标注并补画该污染物曲线。"},
                         "start": {"type": "string", "description": "区间开始，YYYY-MM-DD HH:mm:ss。"},
                         "end": {"type": "string", "description": "区间结束，YYYY-MM-DD HH:mm:ss。"},
                     }, "required": ["start", "end"]},
@@ -2770,11 +2774,15 @@ class JiangsuReviewEvidenceTool(LLMTool):
             for area in mark_areas or []:
                 if not isinstance(area, dict) or not area.get("start") or not area.get("end"):
                     raise ValueError("mark_areas 每项必须包含 start 与 end")
-                normalized_mark_areas.append({
+                normalized = {
                     "name": str(area.get("name") or "标注区间"),
                     "start": _qc_time_text(area["start"]),
                     "end": _qc_time_text(area["end"]),
-                })
+                }
+                pollutant = str(area.get("pollutant") or "").strip().upper()
+                if pollutant:
+                    normalized["pollutant"] = pollutant
+                normalized_mark_areas.append(normalized)
             station = stations[0]
 
             records, _total = await JiangsuStationDataTool().fetch_raw_records(
@@ -2942,6 +2950,16 @@ class JiangsuReviewEvidenceTool(LLMTool):
                 comparison_points = pollutant_points(records, comparison_code)
             except (ValueError, KeyError):
                 comparison_points = []
+        # 其余污染物的逐时点序列（宽表记录本就含全要素，本地提取零成本）：
+        # 工作台在剔除建议涉及多污染物时按此补画曲线。
+        excluded = {str(pollutant_code or "").upper(), str(comparison_code or "").upper()}
+        extra_points: dict[str, list[dict[str, Any]]] = {}
+        for name in POLLUTANT_ROW_KEYS:
+            if name.upper() in excluded:
+                continue
+            name_points = pollutant_points(records, name)
+            if name_points:
+                extra_points[name] = name_points
         comparison_summary = (
             f"本站 {pollutant_code} 逐时浓度（含 {comparison_code} 对照序列）"
             if comparison_code else f"本站 {pollutant_code} 逐时浓度")
@@ -2959,7 +2977,8 @@ class JiangsuReviewEvidenceTool(LLMTool):
                 "data": {"unit": unit, "pollutant": pollutant_code,
                          "points": points,
                          "comparison_pollutant": comparison_code,
-                         "comparison_points": comparison_points},
+                         "comparison_points": comparison_points,
+                         "extra_points": extra_points},
             },
             "band": {
                 "status": "success" if band else "empty",
@@ -3080,6 +3099,12 @@ class JiangsuReviewEvidenceTool(LLMTool):
                         "pollutant": data.get("comparison_pollutant"),
                         **_project_pollutant_points(comparison),
                     }
+                extras = data.get("extra_points") or {}
+                if extras:
+                    item["projection"]["extra_pollutants"] = [
+                        {"pollutant": extra_name, "record_count": len(extra_points_list)}
+                        for extra_name, extra_points_list in extras.items()
+                    ]
             elif name == "band":
                 item["projection"] = _project_band(data.get("band") or [])
             elif name == "weather":

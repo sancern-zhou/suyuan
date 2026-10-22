@@ -81,6 +81,35 @@ def test_attach_judgment_updates_status(isolated_registry):
     assert doc["index"]["judgment"]["comment"] == "通过，数据保留"
 
 
+def test_attach_judgment_mark_areas_carry_pollutant(isolated_registry):
+    """多污染物剔除建议 → 每个区间带 pollutant 字段，工作台据此按污染物补曲线与着色。"""
+    save_evidence(_sample_package())
+    attach_judgment("FA260914178938611578927", {
+        "review_id": "review_mk", "version": 1,
+        "submission": {"decision": "needs_evidence", "comment": "多污染物异常",
+                       "data_impact": [
+                           {"pollutant": "pm10", "decision": "partial_exclude",
+                            "start": "2026-09-13T20:00:00", "end": "2026-09-13 23:00:00"},
+                           {"pollutant": " NO2 ", "decision": "exclude",
+                            "start": "2026-09-14 01:00:00", "end": "2026-09-14 04:00:00"},
+                           {"pollutant": "O3", "decision": "keep",
+                            "start": "2026-09-14 06:00:00", "end": "2026-09-14 07:00:00"},
+                           {"decision": "partial_exclude",
+                            "start": "2026-09-14 08:00:00", "end": "2026-09-14 09:00:00"},
+                       ]},
+    })
+
+    doc = get_order("FA260914178938611578927")
+    assert doc["index"]["mark_areas"] == [
+        {"name": "PM10剔除区间", "pollutant": "PM10",
+         "start": "2026-09-13 20:00:00", "end": "2026-09-13 23:00:00"},
+        {"name": "NO2剔除区间", "pollutant": "NO2",
+         "start": "2026-09-14 01:00:00", "end": "2026-09-14 04:00:00"},
+        {"name": "剔除区间",
+         "start": "2026-09-14 08:00:00", "end": "2026-09-14 09:00:00"},
+    ]
+
+
 def test_record_operation_feedback_keeps_status(isolated_registry):
     save_evidence(_sample_package())
     record_operation("FA260914178938611578927", "feedback", "建议复核采样流量", {"username": "ops"})

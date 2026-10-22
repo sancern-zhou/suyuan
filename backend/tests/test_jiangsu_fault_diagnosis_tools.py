@@ -1128,6 +1128,37 @@ def test_review_evidence_same_city_band_statistics():
     ], "PM10") == [{"time": "2026-09-14 10:00:00", "value": 82.0}]
 
 
+def test_review_evidence_package_persists_extra_pollutant_points():
+    """证据包 station_hour 源持久化目标/对照之外各污染物的逐时点序列，
+    工作台据此在剔除建议涉及多污染物时补画曲线；标注区间透传 pollutant。"""
+    from app.tools.jiangsu.fault_diagnosis import JiangsuReviewEvidenceTool
+    from app.tools.jiangsu.review_evidence import pollutant_points
+
+    records = [
+        {"timePoint": "2026-09-14 22:00:00", "pM10": 96.0, "pM2_5": 61.5, "o3": 80.0, "sO2": -99.0},
+        {"timePoint": "2026-09-14 23:00:00", "pM10": 88.0, "pM2_5": 55.0, "o3": 76.0, "sO2": -999.0},
+    ]
+    evidence = JiangsuReviewEvidenceTool._build_evidence_package(
+        order_code="FA1", order_info=None, order_detail=None,
+        station={"station_name": "试点站", "station_code": "5006A"},
+        pollutant_code="PM10",
+        start_text="2026-09-14 20:00:00", end_text="2026-09-15 20:00:00",
+        records=records, points=pollutant_points(records, "PM10"), unit="μg/m³",
+        band=[], band_result={}, weather_rows=[], weather_result={},
+        module_payloads=[],
+        mark_areas=[{"name": "O3剔除区间", "pollutant": "O3",
+                     "start": "2026-09-14 22:00:00", "end": "2026-09-14 23:00:00"}],
+    )
+
+    data = evidence["sources"]["station_hour"]["data"]
+    assert data["comparison_pollutant"] == "PM2.5"
+    # PM10=目标、PM2.5=对照单列；O3 有有效点进 extra_points，SO2 全无效不出现
+    assert set(data["extra_points"]) == {"O3"}
+    assert data["extra_points"]["O3"] == [{"time": "2026-09-14 22:00:00", "value": 80.0},
+                                          {"time": "2026-09-14 23:00:00", "value": 76.0}]
+    assert evidence["mark_areas"][0]["pollutant"] == "O3"
+
+
 @pytest.mark.asyncio
 async def test_review_evidence_requires_single_station():
     result = await JiangsuReviewEvidenceTool().execute(

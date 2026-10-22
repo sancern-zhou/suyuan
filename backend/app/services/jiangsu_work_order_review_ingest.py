@@ -133,9 +133,18 @@ def _station_hour_source(pack: dict[str, Any], pollutant: str) -> dict[str, Any]
         _points_from_rows(rows, comparison)
         if comparison and comparison != target_code else []
     )
+    # 其余污染物的逐时点序列：工作台在剔除建议涉及多污染物时按此补画曲线。
+    excluded = {target_code, str(comparison or "").upper()}
+    extra_points: dict[str, list[dict[str, Any]]] = {}
+    for name in POLLUTANT_ROW_KEYS:
+        if name.upper() in excluded:
+            continue
+        extra = _points_from_rows(rows, name)
+        if extra:
+            extra_points[name] = extra
     data: dict[str, Any] = {"unit": POLLUTANT_UNITS.get(pollutant, "μg/m³"), "pollutant": pollutant,
                             "comparison_pollutant": comparison,
-                            "points": [], "comparison_points": []}
+                            "points": [], "comparison_points": [], "extra_points": extra_points}
     if not points:
         return {"status": "empty", "record_count": 0,
                 "summary": "小时原始数据未含有效目标污染物数值", "data": data}

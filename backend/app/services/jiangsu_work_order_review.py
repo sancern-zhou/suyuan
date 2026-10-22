@@ -255,12 +255,16 @@ def _mark_areas_from_data_impact(data_impact: Any) -> list[dict[str, Any]]:
         start, end = item.get("start"), item.get("end")
         if not start or not end:
             continue
-        pollutant = str(item.get("pollutant") or "").strip()
-        areas.append({
+        pollutant = str(item.get("pollutant") or "").strip().upper()
+        area = {
             "name": f"{pollutant}剔除区间" if pollutant else "剔除区间",
             "start": _compact_time_text(start),
             "end": _compact_time_text(end),
-        })
+        }
+        # pollutant 供工作台按污染物曲线颜色着色标注、并按 extra_points 补画曲线
+        if pollutant:
+            area["pollutant"] = pollutant
+        areas.append(area)
     return areas
 
 

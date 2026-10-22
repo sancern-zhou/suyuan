@@ -422,6 +422,7 @@ import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import JiangsuWeatherReviewChart from '@/components/visualization/JiangsuWeatherReviewChart.vue'
 import QcTaskDetailPanel from '@/components/visualization/QcTaskDetailPanel.vue'
 import ReviewTimeSeriesChart from '@/components/visualization/ReviewTimeSeriesChart.vue'
+import { areaPollutant } from '@/components/visualization/reviewTimeSeriesData.js'
 import {
   getWorkOrderReview,
   getWorkOrderReviewSource,
@@ -536,10 +537,44 @@ const evidenceSections = computed(() => {
     })
 })
 
+// 剔除建议涉及的目标/对照之外的污染物：补画曲线用色（避开同城带的灰/绿/黄三色）。
+const EXTRA_POLLUTANT_COLORS = ['#ff8a75', '#56d6c9', '#d7a84e', '#8fb4ff']
+// 补画曲线的单位：CO 与常规 μg/m³ 不同，其余与目标污染物一致。
+const POLLUTANT_UNIT_OVERRIDES = { CO: 'mg/m³' }
+
+const stationHourData = computed(() => sourceCache.value.station_hour?.data || {})
+
+// 剔除区间标注涉及的污染物（去重、保序）：多污染物异常时逐个补画曲线。
+const markAreaPollutants = computed(() => {
+  const pollutants = []
+  for (const area of (index.value.mark_areas || [])) {
+    const pollutant = areaPollutant(area)
+    if (pollutant && !pollutants.includes(pollutant)) pollutants.push(pollutant)
+  }
+  return pollutants
+})
+
+// 污染物 → 曲线颜色：目标/对照用固定色，剔除建议补画的污染物从补画色板取。
+// 无曲线的污染物（旧包无 extra_points）不入表，其区间回退默认琥珀色。
+const pollutantColorMap = computed(() => {
+  const data = stationHourData.value
+  const colors = {}
+  colors[String(data.pollutant || entry.value.pollutant || 'PM10').toUpperCase()] = '#2f86e0'
+  if (data.comparison_pollutant) colors[String(data.comparison_pollutant).toUpperCase()] = '#9b8cff'
+  let extraIndex = 0
+  for (const pollutant of markAreaPollutants.value) {
+    if (colors[pollutant]) continue
+    if (!(data.extra_points?.[pollutant] || []).length) continue
+    colors[pollutant] = EXTRA_POLLUTANT_COLORS[extraIndex++ % EXTRA_POLLUTANT_COLORS.length]
+  }
+  return colors
+})
+
 const chartSeries = computed(() => {
-  const data = sourceCache.value.station_hour?.data || {}
+  const data = stationHourData.value
   const target = (data.points || []).map(point => ({ time: point.time, value: point.value }))
   if (!target.length) return []
+  const targetCode = String(data.pollutant || entry.value.pollutant || 'PM10').toUpperCase()
   const series = [{ name: `${data.pollutant || entry.value.pollutant || 'PM10'}（本站）`, unit: data.unit || 'μg/m³', color: '#2f86e0', points: target }]
   // 对照序列：新包按目标污染物配对（comparison_points/comparison_pollutant），
   // 旧证据包无新字段时回落到固定 PM2.5 对照（pm25_points）。
@@ -548,6 +583,18 @@ const chartSeries = computed(() => {
     ? data.comparison_points
     : (comparisonName === 'PM2.5' ? data.pm25_points : [])
   if (comparisonName && comparison.length) series.push({ name: `${comparisonName}（对照）`, unit: data.unit || 'μg/m³', color: '#9b8cff', points: comparison })
+  // 剔除建议涉及的其他污染物：从证据包 extra_points 补画曲线，颜色与区间标注一致。
+  for (const pollutant of markAreaPollutants.value) {
+    if (pollutant === targetCode || pollutant === String(comparisonName || '').toUpperCase()) continue
+    const points = data.extra_points?.[pollutant] || []
+    if (!points.length) continue
+    series.push({
+      name: `${pollutant}（本站）`,
+      unit: POLLUTANT_UNIT_OVERRIDES[pollutant] || data.unit || 'μg/m³',
+      color: pollutantColorMap.value[pollutant],
+      points,
+    })
+  }
   if (bandRows.value.length) {
     const pick = key => bandRows.value.filter(row => row[key] != null).map(row => ({ time: row.time, value: row[key] }))
     // 同域只有 1 个对比站时最低/中位/最高三值相同，合并为一条线，避免三条重合曲线。
@@ -561,7 +608,11 @@ const chartSeries = computed(() => {
   }
   return series
 })
-const markAreas = computed(() => index.value.mark_areas || [])
+// 剔除区间按污染物着色：颜色取该污染物曲线色（图上无对应曲线时保持默认琥珀色）。
+const markAreas = computed(() => (index.value.mark_areas || []).map(area => {
+  const color = pollutantColorMap.value[areaPollutant(area)]
+  return color ? { ...area, color } : { ...area }
+}))
 
 // 同城对比带：取证侧只存聚合行（本站 target + 同城最低/中位/最高）。本站值取本站小时时序
 // （同窗口、同单位，且比 band.target 更完整——对比数据集缺小时的 target 为空），

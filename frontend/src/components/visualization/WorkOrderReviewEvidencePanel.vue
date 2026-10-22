@@ -52,13 +52,31 @@
 import { computed } from 'vue'
 import JiangsuWeatherReviewChart from './JiangsuWeatherReviewChart.vue'
 import ReviewTimeSeriesChart from './ReviewTimeSeriesChart.vue'
+import { areaPollutant } from './reviewTimeSeriesData.js'
 
 const props = defineProps({ data: { type: Object, required: true } })
 
 const payload = computed(() => props.data?.data?.work_order_review_evidence || {})
 const panel = computed(() => payload.value.panel || {})
 const series = computed(() => (Array.isArray(payload.value.series) ? payload.value.series : []))
-const markAreas = computed(() => (Array.isArray(payload.value.mark_areas) ? payload.value.mark_areas : []))
+// 序列名前缀（"PM10（本站）" → "PM10"）→ 颜色：剔除区间按所属污染物曲线色着色。
+const seriesPollutant = name => {
+  const match = /^(.+?)（/.exec(String(name || '').trim())
+  return match ? match[1].trim().toUpperCase() : ''
+}
+const seriesColorMap = computed(() => {
+  const colors = {}
+  for (const item of series.value) {
+    const pollutant = seriesPollutant(item?.name)
+    if (pollutant && item?.color && !colors[pollutant]) colors[pollutant] = item.color
+  }
+  return colors
+})
+const markAreas = computed(() => (Array.isArray(payload.value.mark_areas) ? payload.value.mark_areas : [])
+  .map(area => {
+    const color = seriesColorMap.value[areaPollutant(area)]
+    return color ? { ...area, color } : { ...area }
+  }))
 const weather = computed(() => payload.value.weather || {})
 const weatherRows = computed(() => (Array.isArray(weather.value.data) ? weather.value.data : []))
 const entry = computed(() => payload.value.entry || {})

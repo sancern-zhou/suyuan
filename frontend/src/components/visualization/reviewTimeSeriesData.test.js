@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { finiteObservation, observationValue, normalizeReviewPoints } from './reviewTimeSeriesData.js'
+import { areaPollutant, finiteObservation, hexWithAlpha, observationValue, normalizeReviewPoints } from './reviewTimeSeriesData.js'
 
 test('empty observations stay null while real zero is preserved', () => {
   for (const raw of [null, undefined, '', '  ', '--', NaN, Infinity, false, [], {}]) {
@@ -47,4 +47,19 @@ test('irregular QC series is not assigned an invented cadence', () => {
     { time: '2026-09-01 00:00:00', value: 1 },
     { time: '2026-09-01 00:23:00', value: 2 }
   ]).length, 2)
+})
+
+test('mark area pollutant comes from explicit field or legacy name prefix', () => {
+  assert.equal(areaPollutant({ pollutant: 'pm10', name: '任意名' }), 'PM10')
+  assert.equal(areaPollutant({ name: 'NO2剔除区间' }), 'NO2')
+  assert.equal(areaPollutant({ name: '剔除候选' }), '')
+  assert.equal(areaPollutant(null), '')
+})
+
+test('hex colors convert to translucent rgba and junk falls back to null', () => {
+  assert.equal(hexWithAlpha('#2f86e0', 0.14), 'rgba(47, 134, 224, 0.14)')
+  assert.equal(hexWithAlpha('#2F86E0'), 'rgba(47, 134, 224, 0.14)')
+  for (const bad of [null, '', 'rgba(1,2,3,.5)', '#2f86e', 'yellow']) {
+    assert.equal(hexWithAlpha(bad), null)
+  }
 })

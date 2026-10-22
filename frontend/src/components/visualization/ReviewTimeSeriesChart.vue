@@ -10,6 +10,7 @@
 
     <div v-if="normalizedMarkAreas.length" class="mark-area-list" aria-label="剔除候选区间">
       <span v-for="area in normalizedMarkAreas" :key="`${area.name}-${area.start}-${area.end}`" class="mark-area-pill">
+        <i class="mark-area-swatch" :style="{ background: area.shadeColor }"></i>
         <b>{{ area.name }}</b>
         <em>{{ area.rangeText }}</em>
       </span>
@@ -37,9 +38,8 @@ import {
 } from 'echarts/components'
 import { LineChart } from 'echarts/charts'
 import { CanvasRenderer } from 'echarts/renderers'
-import { finiteObservation, normalizeReviewPoints } from './reviewTimeSeriesData.js'
+import { areaPollutant, finiteObservation, hexWithAlpha, normalizeReviewPoints } from './reviewTimeSeriesData.js'
 import { CHART_TEXT_1 } from '../../services/chart/chartColors'
-
 echarts.use([
   DataZoomComponent,
   GridComponent,
@@ -141,6 +141,9 @@ const chartYAxis = computed(() => {
   ]
 })
 
+// 无污染物归属（或归属污染物未在图中）的区间回退统一的琥珀色。
+const DEFAULT_AREA_SHADE = 'rgba(246, 189, 74, .13)'
+
 const normalizedMarkAreas = computed(() => (Array.isArray(props.markAreas) ? props.markAreas : [])
   .map(area => {
     const start = parseTimeValue(area?.start)
@@ -149,10 +152,14 @@ const normalizedMarkAreas = computed(() => (Array.isArray(props.markAreas) ? pro
     const orderedStart = Math.min(start, end)
     const orderedEnd = Math.max(start, end)
     const name = area?.name || '剔除候选'
+    // 按污染物曲线颜色着色：color 由调用方按 series 颜色映射传入（十六进制）。
+    const shadeColor = hexWithAlpha(area?.color, 0.14) || DEFAULT_AREA_SHADE
     return {
       name,
+      pollutant: areaPollutant(area),
       start: orderedStart,
       end: orderedEnd,
+      shadeColor,
       rangeText: `${formatFullTime(orderedStart)} 至 ${formatFullTime(orderedEnd)}`,
       chartLabel: area?.label || `${name}\n${formatTime(orderedStart)} 至 ${formatTime(orderedEnd)}`
     }
@@ -235,11 +242,12 @@ const chartOption = computed(() => ({
     markArea: index === 0 && normalizedMarkAreas.value.length
       ? {
           silent: true,
-          itemStyle: { color: 'rgba(246, 189, 74, .13)' },
+          itemStyle: { color: DEFAULT_AREA_SHADE },
           // 区间名称已由图上方的胶囊标签完整列出，图内不再重复标注（会与图例文字重叠）。
           label: { show: false },
+          // 每个区间按所属污染物着色（shadeColor 已是带透明度的 rgba），与对应曲线同色关联。
           data: normalizedMarkAreas.value.map(area => [
-            { name: area.chartLabel, xAxis: area.start },
+            { name: area.chartLabel, xAxis: area.start, itemStyle: { color: area.shadeColor } },
             { xAxis: area.end }
           ])
         }
@@ -281,6 +289,7 @@ onBeforeUnmount(() => {
 .chart-head em { flex: none; color: var(--text-1); font-size: 11px; font-style: normal; }
 .mark-area-list { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .mark-area-pill { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 7px; border: 1px solid rgba(180, 83, 9, .28); border-radius: 4px; background: rgba(246, 189, 74, .15); color: var(--text-1); font-size: 11px; line-height: 1.35; }
+.mark-area-swatch { flex: none; width: 10px; height: 10px; border: 1px solid rgba(17, 24, 39, .24); border-radius: 2px; }
 .mark-area-pill b { flex: none; font-weight: 700; }
 .mark-area-pill em { min-width: 0; color: var(--text-1); font-style: normal; overflow-wrap: anywhere; }
 .chart-surface { width: 100%; min-height: 220px; border: 1px solid rgba(17, 24, 39, .12); border-radius: 4px; background: transparent; }
