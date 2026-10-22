@@ -141,11 +141,13 @@
             @open-task="$emit('open-smart-event-task', $event)"
           />
 
-          <!-- 任务调度中心「查看详情」直达：整页工单审核工作台，同智能事件中心详情模式 -->
+          <!-- 任务调度中心「查看详情」直达：整页工单审核工作台，同智能事件中心详情模式；
+               返回列表直接关闭面板回到任务调度中心，不展示内部工单列表页 -->
           <WorkOrderReviewCenterPanel
             v-else-if="managementPanel === 'work-order-review'"
             class="wor-management-host"
             :workspace-command="workOrderReviewCommand"
+            :list-return-closes="true"
             @close="$emit('close-work-order-review-panel')"
           />
 

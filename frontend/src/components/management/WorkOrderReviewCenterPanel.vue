@@ -6,8 +6,8 @@
         <p>按故障日期查看工单、AI 研判与证据</p>
       </div>
       <div class="wor-header-actions">
-        <button v-if="showListActions" type="button" class="btn btn--secondary" :disabled="listLoading" @click="loadOrders">
-          <span v-if="listLoading" class="spinner spinner--sm" aria-hidden="true"></span>
+        <button v-if="showListActions" type="button" class="btn btn--secondary" :disabled="listLoading || detailLoading" @click="refreshView">
+          <span v-if="listLoading || detailLoading" class="spinner spinner--sm" aria-hidden="true"></span>
           {{ listLoading ? '刷新中…' : '刷新' }}
         </button>
         <button v-if="showListActions && selectedCode" type="button" class="btn btn--secondary" @click="backToList">返回列表</button>
@@ -449,8 +449,11 @@ const props = defineProps({
   workspaceCommand: { type: Object, default: null },
   // 对话右侧 tab 模式置 false：定位是当前工单的分析与展示，不提供列表操作（刷新/返回列表）
   showListActions: { type: Boolean, default: true },
+  // 整页模式（任务调度中心「查看详情」直达）置 true：「返回列表」直接关闭面板回到任务调度中心，
+  // 不再展示组件内部的故障工单审核列表页
+  listReturnCloses: { type: Boolean, default: false },
 })
-defineEmits(['close'])
+const emit = defineEmits(['close'])
 
 const SECTION_LABELS = {
   work_order: '工单信息',
@@ -1131,7 +1134,17 @@ async function openDetail(code) {
   }
 }
 
+// 刷新当前视图：详情态重取当前工单证据包，列表态刷新工单清单
+function refreshView() {
+  if (selectedCode.value) openDetail(selectedCode.value)
+  else loadOrders()
+}
+
 function backToList() {
+  if (props.listReturnCloses) {
+    emit('close')
+    return
+  }
   selectedCode.value = null
   detail.value = null
   releaseAttachmentUrls()

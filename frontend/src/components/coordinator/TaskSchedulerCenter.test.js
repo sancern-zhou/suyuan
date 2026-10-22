@@ -45,12 +45,14 @@ test('review list keeps conversation entry, detail dialog and shared emits', asy
   const layout = await readFile(new URL('../reactAnalysis/MainLayout.vue', import.meta.url), 'utf8')
   assert.match(layout, /@select-review="\$emit\('select-review', \$event\)"/)
   assert.match(layout, /@open-review-detail="\$emit\('open-review-detail', \$event\)"/)
-  // 管理面板插槽内宿主整页工单审核工作台。
+  // 管理面板插槽内宿主整页工单审核工作台；返回列表直接关闭回任务调度中心，不展示内部工单列表。
   assert.match(layout, /managementPanel === 'work-order-review'/)
-  assert.match(layout, /WorkOrderReviewCenterPanel[\s\S]*?:workspace-command="workOrderReviewCommand"/)
+  assert.match(layout, /WorkOrderReviewCenterPanel[\s\S]*?:list-return-closes="true"/)
   // 对话右侧 tab 仅展示当前工单分析，不提供刷新/返回列表（整页模式保持默认 true）。
   const panel = await readFile(new URL('../management/WorkOrderReviewCenterPanel.vue', import.meta.url), 'utf8')
   assert.match(panel, /showListActions: \{ type: Boolean, default: true \}/)
+  assert.match(panel, /listReturnCloses: \{ type: Boolean, default: false \}/)
+  assert.match(panel, /if \(props\.listReturnCloses\) \{\s*\n\s*emit\('close'\)/)
   const rightPanel = await readFile(new URL('../reactAnalysis/RightPanelContainer.vue', import.meta.url), 'utf8')
   assert.match(rightPanel, /:show-list-actions="false"/)
 })
