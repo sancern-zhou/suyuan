@@ -110,6 +110,23 @@ async def save_llm_compact_state_for_mode(
     )
 
 
+async def save_context_usage_for_mode(
+    session_id: str,
+    context_usage: dict[str, Any],
+    *,
+    mode: Optional[str] = None,
+) -> bool:
+    """Persist the latest context-usage snapshot into session metadata."""
+    manager = get_session_manager_for_mode(mode)
+    if not hasattr(manager, "save_context_usage"):
+        return False
+    return bool(
+        await _maybe_await(
+            manager.save_context_usage(session_id, context_usage)
+        )
+    )
+
+
 async def append_session_transcript_for_mode(
     session: Session,
     *,

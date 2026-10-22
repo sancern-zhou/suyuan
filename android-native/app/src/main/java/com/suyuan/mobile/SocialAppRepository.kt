@@ -1,0 +1,41 @@
+package com.suyuan.mobile
+
+import kotlinx.coroutines.flow.Flow
+import java.io.File
+
+class SocialAppRepository(private val api: SocialAppApi) {
+    fun reconnectChat() = api.reconnectChat()
+    suspend fun pendingInteraction(token: String, sessionId: String) = api.pendingInteraction(token, sessionId)
+    suspend fun resolveInteraction(token: String, question: AgentQuestionInteraction, decision: String, answers: List<AgentQuestionAnswer>) =
+        api.resolveInteraction(token, question.sessionId, question.interactionId, decision, answers)
+    suspend fun login(accountId: String, secret: String) = api.login(accountId, secret)
+    suspend fun oidcConfig() = api.oidcConfig()
+    suspend fun exchangeOidcCode(code: String, codeVerifier: String, redirectUri: String) =
+        api.exchangeOidcCode(code, codeVerifier, redirectUri)
+    suspend fun refresh(refreshToken: String) = api.refresh(refreshToken)
+    suspend fun registerPushDevice(token: String, deviceId: String) = api.registerPushDevice(token, deviceId)
+    suspend fun unregisterPushDevice(token: String, deviceId: String) = api.unregisterPushDevice(token, deviceId)
+    fun stream(token: String, query: String, sessionId: String?, attachments: List<UploadedAttachment> = emptyList(), mode: String = "query", modelTier: String = "auto", requestId: String = java.util.UUID.randomUUID().toString()): Flow<AgentEvent> = api.stream(token, query, sessionId, attachments, mode, modelTier, requestId)
+    suspend fun sessions(token: String, limit: Int = 30, offset: Int = 0) = api.sessions(token, limit, offset)
+    suspend fun createSession(token: String) = api.createSession(token)
+    suspend fun renameSession(token: String, sessionId: String, title: String) = api.renameSession(token, sessionId, title)
+    suspend fun deleteSession(token: String, sessionId: String) = api.deleteSession(token, sessionId)
+    suspend fun messages(token: String, sessionId: String) = api.messages(token, sessionId)
+    suspend fun broadcasts(token: String, limit: Int = 30, before: String? = null) = api.broadcasts(token, limit, before)
+    suspend fun markBroadcastRead(token: String, messageId: String) = api.markBroadcastRead(token, messageId)
+    suspend fun markAllBroadcastsRead(token: String) = api.markAllBroadcastsRead(token)
+    suspend fun deleteBroadcast(token: String, messageId: String) = api.deleteBroadcast(token, messageId)
+    suspend fun reports(token: String, reportType: String? = null, limit: Int = 30, before: String? = null) = api.reports(token, reportType, limit, before)
+    suspend fun taskResults(token: String, taskId: String, page: Int, start: String, end: String, station: String, pollutant: String) = api.taskResults(token, taskId, page, start, end, station, pollutant)
+    suspend fun taskFacets(token: String, taskId: String) = api.taskFacets(token, taskId)
+    suspend fun reportDownloadFormats(token: String, executionId: String) = api.reportDownloadFormats(token, executionId)
+    suspend fun scheduledTasks(token: String) = api.scheduledTasks(token)
+    suspend fun markReportRead(token: String, reportId: String) = api.markReportRead(token, reportId)
+    suspend fun deleteReport(token: String, reportId: String) = api.deleteReport(token, reportId)
+    suspend fun cancel(token: String, sessionId: String) = api.cancel(token, sessionId)
+    suspend fun steer(token: String, sessionId: String, message: String) = api.steer(token, sessionId, message)
+    suspend fun transcribe(token: String, audioFile: File) = api.transcribe(token, audioFile)
+    suspend fun upload(token: String, file: File, filename: String, mimeType: String) = api.upload(token, file, filename, mimeType)
+    suspend fun deleteUpload(token: String, fileId: String) = api.deleteUpload(token, fileId)
+    suspend fun download(token: String, attachment: UploadedAttachment) = api.download(token, attachment)
+}

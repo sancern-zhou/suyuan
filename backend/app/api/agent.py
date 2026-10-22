@@ -4,7 +4,7 @@ ReAct Agent API Routes
 ReAct Agent 的 REST API 路由
 """
 
-from fastapi import APIRouter, HTTPException, Body, Depends, Request
+from fastapi import APIRouter, HTTPException, Body, Depends, Query, Request
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime, timezone
@@ -15,12 +15,14 @@ import structlog
 import uuid
 
 from app.agent import create_react_agent
+from app.utils.json_safety import dumps_safe
 from app.agent.active_contexts import (
     ACTIVE_CONTEXTS_KEY,
     active_contexts_metadata,
     effective_active_context_items,
     resolve_active_contexts,
 )
+from app.agent.runtime.detached_stream import RunEventStream
 from app.agent.session import Session, get_session_manager
 from app.agent.session.workspace_routing import (
     bind_workspace_request_to_source_query,
@@ -50,6 +52,7 @@ from app.core.sse import create_sse_response
 from app.db.session_database import session_async_session as async_session
 from app.services.llm_service import llm_service
 from app.tools import global_tool_registry
+from config.settings import settings
 
 logger = structlog.get_logger()
 
@@ -79,6 +82,28 @@ async def _await_cancellation_resistant(awaitable):
                 while current.cancelling():
                     current.uncancel()
     return task.result()
+
+
+def _detached_run_stream(raw_request: Request) -> Optional[RunEventStream]:
+    """构建脱离型 run 的事件镜像；功能关闭或 Redis 未配置时返回 None。"""
+    if not settings.agent_detached_runs_enabled:
+        return None
+    app = getattr(raw_request, "app", None)
+    if app is None:
+        return None
+    return RunEventStream.from_app(app)
+
+
+async def _finish_detached_run(
+    gen: Any,
+    stream: RunEventStream,
+    stream_id: str,
+) -> None:
+    try:
+        await gen.aclose()
+    except Exception:
+        logger.debug("detached_run_generator_close_failed", stream_id=stream_id)
+    await stream.close(stream_id)
 
 
 def _build_user_message_for_history(
@@ -363,10 +388,6 @@ def merge_board_execution_context(
     return merged
 
 
-def is_incompatible_chart_board_session(stored_mode: Optional[str], requested_mode: Optional[str]) -> bool:
-    return {stored_mode, requested_mode} == {"chart", "board"}
-
-
 # ========================================
 # Request/Response Models
 # ========================================
@@ -424,7 +445,7 @@ class AgentAnalyzeRequest(BaseModel):
     max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数")
     mode: Optional[str] = Field(
         "expert",
-        description="✅ Agent模式：'assistant' - 助手模式，'ppt' - 幻灯片模式，'expert' - 专家模式，'query' - 问数模式，'knowledge' - 知识问答模式，'report' - 报告模式，'chart' - 图表模式，'ops' - 运维管理模式"
+        description="✅ Agent模式：'assistant' - 助手模式，'ppt' - 幻灯片模式，'expert' - 专家模式，'query' - 问数模式，'knowledge' - 知识问答模式，'report' - 报告模式，'ops' - 运维管理模式"
     )
     user_id: Optional[str] = Field(None, description="""✅ 用户标识（用于跨会话记忆）
 - 如果提供：同一用户在不同session共享记忆
@@ -623,8 +644,6 @@ def select_agent_instance(request):
     """Select the dedicated top-level agent for an analyze request."""
     if request.mode == "board":
         return board_agent_instance
-    if request.mode == "chart":
-        return data_viz_agent_instance
     if request.mode == "ppt":
         return ppt_agent_instance
     if request.assistant_mode == "meteorology-expert":
@@ -697,8 +716,6 @@ async def analyze_stream(
         catalog_record = await catalog.find(request.session_id)
         if catalog_record is not None:
             await catalog.require_write(request.session_id, user)
-            if is_incompatible_chart_board_session(catalog_record.mode, request.mode):
-                raise HTTPException(status_code=409, detail="session_mode_mismatch")
         else:
             load_session = getattr(session_manager, "load_session_light", None)
             if load_session is None:
@@ -770,7 +787,7 @@ async def analyze_stream(
     active_context_request_started_at = datetime.now(timezone.utc)
     try:
         # 根据助手模式选择 Agent
-        if request.mode in {"board", "chart", "ppt"}:
+        if request.mode in {"board", "ppt"}:
             agent = select_agent_instance(request)
             logger.info("使用独立模式智能体", mode=request.mode, session_id=request.session_id, agent_id=id(agent))
         elif request.assistant_mode == 'meteorology-expert':
@@ -824,7 +841,12 @@ async def analyze_stream(
             "session_storage_mode": "assistant",
             "attachments": None,
             "user_identifier": request.user_id,  # ✅ 直接传递 user_id，允许 None（None 时使用模式内共享记忆）
-            "skip_auto_followup": request.skip_auto_followup
+            "skip_auto_followup": request.skip_auto_followup,
+            # 客户端来源随 runtime_metadata 全链路透传（含子Agent），
+            # 供提示词按 App/Web 端差异化（图表形态、回复详略）。
+            "runtime_metadata": {
+                "client_channel": "app" if getattr(user, "auth_source", "") == "app" else "web"
+            },
         }
         if request.mode == "board" and request.board_context:
             analyze_kwargs["board_context"] = request.board_context
@@ -895,7 +917,10 @@ async def analyze_stream(
                         status_code=409,
                         detail={"code": "scheduled_context_tools_unavailable", "tools": missing_tools},
                     )
-                analyze_kwargs["runtime_metadata"] = {"scheduled_task": persisted_context}
+                analyze_kwargs["runtime_metadata"] = {
+                    **(analyze_kwargs.get("runtime_metadata") or {}),
+                    "scheduled_task": persisted_context,
+                }
                 analyze_kwargs["extra_tool_names"] = list(dict.fromkeys(persisted_tools))
 
         requested_active_contexts = (
@@ -1034,7 +1059,7 @@ async def analyze_stream(
                         "detail": str(pause_error),
                     },
                 }
-                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+                yield f"data: {dumps_safe(error_event)}\n\n"
                 return
             current_task = asyncio.current_task()
             if current_task is not None:
@@ -1368,7 +1393,7 @@ async def analyze_stream(
                                     session_id=actual_session_id,
                                     run_id=event_run_id,
                                 )
-                                event_data = json.dumps(event, ensure_ascii=False, default=str)
+                                event_data = dumps_safe(event, default=str)
                                 yield f"data: {event_data}\n\n"
                                 break
                             # ✅ 添加最终答案消息
@@ -1410,7 +1435,7 @@ async def analyze_stream(
                                     run_id=event_run_id,
                                     event_type=event["type"],
                                 )
-                                event_data = json.dumps(event, ensure_ascii=False, default=str)
+                                event_data = dumps_safe(event, default=str)
                                 yield f"data: {event_data}\n\n"
                                 break
                             # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
@@ -1451,7 +1476,7 @@ async def analyze_stream(
                             logger.info("collected_data_stored_on_error", session_id=actual_session_id, error_type=event["type"])
 
                         # 将事件序列化为 SSE 格式
-                        event_data = json.dumps(event, ensure_ascii=False, default=str)
+                        event_data = dumps_safe(event, default=str)
                         yield f"data: {event_data}\n\n"
 
                         # 如果是完成或致命错误，结束循环
@@ -1554,12 +1579,57 @@ async def analyze_stream(
                         "timestamp": None
                     }
                 }
-                yield f"data: {json.dumps(error_event, ensure_ascii=False, default=str)}\n\n"
+                yield f"data: {dumps_safe(error_event, default=str)}\n\n"
             finally:
                 if actual_session_id and cancel_event is not None:
                     await cancellation_registry.unregister(actual_session_id, cancel_event)
 
-        return create_sse_response(event_generator())
+        detached_stream = _detached_run_stream(raw_request)
+        if detached_stream is None or not actual_session_id:
+            # Redis 不可用 / 功能关闭：回退旧内联模式（断开即取消）
+            return create_sse_response(event_generator())
+
+        stream_id = uuid.uuid4().hex
+        await detached_stream.open(actual_session_id, stream_id)
+
+        async def _execute_run() -> None:
+            gen = event_generator()
+            try:
+                async with asyncio.timeout(settings.agent_detached_run_max_seconds):
+                    async for chunk in gen:
+                        await detached_stream.publish(stream_id, chunk)
+            except TimeoutError:
+                logger.warning(
+                    "detached_run_timeout",
+                    session_id=actual_session_id,
+                    stream_id=stream_id,
+                    max_seconds=settings.agent_detached_run_max_seconds,
+                )
+            except asyncio.CancelledError:
+                # 显式取消（/cancel）：生成器内部已保存中断转录，原样传播
+                raise
+            except Exception:
+                logger.error(
+                    "detached_run_failed",
+                    session_id=actual_session_id,
+                    stream_id=stream_id,
+                    exc_info=True,
+                )
+            finally:
+                # 取消路径下也要补写 stream_closed，避免订阅端悬挂
+                await _await_cancellation_resistant(
+                    _finish_detached_run(gen, detached_stream, stream_id)
+                )
+
+        asyncio.create_task(_execute_run())
+        logger.info(
+            "detached_run_started",
+            session_id=actual_session_id,
+            stream_id=stream_id,
+        )
+        return create_sse_response(
+            detached_stream.follow(stream_id, session_id=actual_session_id)
+        )
 
     except HTTPException:
         raise
@@ -1573,6 +1643,35 @@ async def analyze_stream(
             status_code=500,
             detail=f"分析失败: {str(e)}"
         )
+
+
+@router.get("/stream")
+async def reconnect_detached_stream(
+    raw_request: Request,
+    session_id: str = Query(..., description="会话ID"),
+    stream_id: Optional[str] = Query(None, description="断开前持有的 run stream id；缺省时解析会话活跃 run"),
+    last_id: Optional[str] = Query(None, description="上次收到的 SSE 事件 id（等价 Last-Event-ID），缺省从起始回放"),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    """重连脱离型 run 的事件流：先回放镜像，再实时跟随直到终止。
+
+    - 页面刷新/弱网断开后调用本接口即可接回后端仍在运行（或已结束）的任务；
+    - 流已过期或不存在时返回 404，前端应回退到会话恢复接口（/messages / restore）。
+    """
+    await catalog.require_read(session_id, user)
+    stream = _detached_run_stream(raw_request)
+    if stream is None:
+        raise HTTPException(status_code=404, detail="detached_stream_unavailable")
+    resolved_stream_id = stream_id or await stream.resolve_active(session_id)
+    if not resolved_stream_id:
+        raise HTTPException(status_code=404, detail="no_active_detached_run")
+    if await stream.owner_of(resolved_stream_id) not in (None, session_id):
+        # stream 归属另一会话：拒绝跨会话读取
+        raise HTTPException(status_code=404, detail="no_active_detached_run")
+    return create_sse_response(
+        stream.follow(resolved_stream_id, session_id=session_id, last_id=last_id or "0")
+    )
 
 
 @router.post("/{session_id}/cancel")

@@ -56,14 +56,14 @@ test('scheduled tasks use a distinct two-column featured-card treatment', async 
   assert.match(source, /class="task-badge"/)
 })
 
-test('scheduled tasks appear before the agent catalog', async () => {
+test('scheduled tasks appear below the agent catalog', async () => {
   const source = await readComponent('AgentPlatform.vue')
   const taskPortalIndex = source.indexOf('class="portal-section task-portal"')
   const agentPortalIndex = source.indexOf('class="agent-groups"')
 
   assert.ok(taskPortalIndex >= 0)
   assert.ok(agentPortalIndex >= 0)
-  assert.ok(taskPortalIndex < agentPortalIndex)
+  assert.ok(agentPortalIndex < taskPortalIndex)
 })
 
 test('scene headings are primary sections without a nested container surface', async () => {
@@ -75,6 +75,20 @@ test('scene headings are primary sections without a nested container surface', a
   assert.doesNotMatch(source, /\.scene-section \{[^}]*border/)
   assert.doesNotMatch(source, /\.scene-section \{[^}]*background/)
   assert.doesNotMatch(source, /\.scene-section \{[^}]*padding/)
+})
+
+test('scene catalog honors the project scene whitelist', async () => {
+  const source = await readComponent('AgentPlatform.vue')
+
+  assert.match(source, /projectConfig\.agentScenes/)
+  assert.match(source, /AGENT_SCENES\.filter\(scene => sceneIds\.includes\(scene\.id\)\)/)
+})
+
+test('scene catalog applies project scene card overrides on top of the shared scenes', async () => {
+  const source = await readComponent('AgentPlatform.vue')
+
+  assert.match(source, /projectConfig\.agentSceneOverrides\?\.\[scene\.id\]/)
+  assert.match(source, /override\?\.modeIds\?\.length \? \{ \.\.\.scene, modeIds: override\.modeIds \} : scene/)
 })
 
 test('empty chat resolves complete welcome copy from the selected agent catalog entry', async () => {
@@ -94,4 +108,17 @@ test('welcome capabilities render as centered plain text instead of styled butto
   assert.doesNotMatch(source, /<button[\s\S]*class="welcome-capability"/)
   assert.match(source, /\.welcome-capabilities[\s\S]*align-items: center/)
   assert.match(source, /\.welcome-capability[\s\S]*text-align: center/)
+})
+
+test('chat shows live task status and keeps final duration for the terminal state', async () => {
+  const source = await readComponent('../ReActMessageList.vue')
+
+  assert.match(source, /v-if="[^"]*getFinalDurationText\(message\)/)
+  assert.match(source, /first_response_ms/)
+  assert.match(source, /后开始回答/)
+  assert.match(source, /class="task-progress-status"/)
+  assert.match(source, /currentProgressStatus/)
+  assert.match(source, /runningElapsedText/)
+  assert.match(source, /currentProgressTip/)
+  assert.doesNotMatch(source, /任务执行中，完成后显示总用时/)
 })

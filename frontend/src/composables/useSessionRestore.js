@@ -111,6 +111,22 @@ export function useSessionRestore(options) {
         store.currentState.lastExpertResults = sessionData.last_result
       }
 
+      // 恢复上下文占用快照（无数据时置空，避免残留上一会话的指示）
+      store.currentState.contextUsage = sessionData.context_usage
+        ? {
+          contextTokens: sessionData.context_usage.context_tokens || 0,
+          contextWindow: sessionData.context_usage.context_window || 0,
+          compactThresholdTokens: sessionData.context_usage.compact_threshold_tokens || 0,
+          cacheHitRate: sessionData.context_usage.cache_hit_rate == null
+            ? null
+            : Number(sessionData.context_usage.cache_hit_rate),
+          breakdown: sessionData.context_usage.breakdown || null,
+          estimated: sessionData.context_usage.estimated === true,
+          model: sessionData.context_usage.model || null,
+          updatedAt: sessionData.context_usage.timestamp || null
+        }
+        : null
+
       // 7. 恢复分页状态
       if (sessionData.has_more_messages !== undefined) {
         store.setPagination({

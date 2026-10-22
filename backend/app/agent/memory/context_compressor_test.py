@@ -1186,3 +1186,48 @@ def test_session_memory_load_history_messages_preserves_native_tool_blocks(tmp_p
             ],
         },
     ]
+
+
+def test_content_to_text_preserves_workflow_findings_and_full_results_pointer():
+    workflow_result = json.dumps({
+        "tool_use_id": "call_1",
+        "tool_name": "run_agent_workflow",
+        "result": {
+            "status": "success",
+            "result": "工作流已完成",
+            "data": {
+                "workflow_id": "xc-week-1",
+                "status": "succeeded",
+                "node_results": {
+                    "corr": {
+                        "task_id": "corr",
+                        "target_mode": "expert_analysis",
+                        "status": "success",
+                        "result_envelope": {
+                            "status": "completed",
+                            "summary": "相关性分析完成",
+                            "findings": [
+                                {"statement": "PM2.5 与 CO 相关系数 r=0.62"}
+                            ],
+                            "data_gaps": ["组分缺测"],
+                        },
+                        "file_paths": ["backend/backend_data_registry/sessions/child/data/memo.md"],
+                    }
+                },
+                "full_results": {"path": "backend/backend_data_registry/sessions/p/data/workflow_xc-week-1_node_results.json"},
+            },
+        },
+    }, ensure_ascii=False)
+    compressor = ContextCompressor(FakeLLMClient())
+
+    rendered = compressor._content_to_text(workflow_result, max_chars=3000)
+
+    assert "full_results_path=backend/backend_data_registry/sessions/p/data/workflow_xc-week-1_node_results.json" in rendered
+    assert "r=0.62" in rendered
+    assert "memo.md" in rendered
+    assert "组分缺测" in rendered
+    assert "...[truncated]" not in rendered
+
+    plain_large = json.dumps({"rows": [{"value": "x" * 4000}]}, ensure_ascii=False)
+    rendered_plain = compressor._content_to_text(plain_large, max_chars=3000)
+    assert rendered_plain.endswith("...[truncated]")

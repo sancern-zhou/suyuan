@@ -21,6 +21,7 @@ test('builds the breaking structured analyze protocol', () => {
   assert.equal('attachments' in body, false)
   assert.equal('modelTier' in body, false)
   assert.equal('debug_mode' in body, false)
+  assert.equal('skip_auto_followup' in body, false)
 })
 
 test('always includes empty selection arrays', () => {

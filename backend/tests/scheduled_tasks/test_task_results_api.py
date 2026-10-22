@@ -445,6 +445,21 @@ def test_report_accepts_path_segment_ticket_without_user():
                 assert resp.status_code == 200
                 assert resp.content == b"png-bytes"
 
+                map_dir = reports_root / "xuchang_daily_review_demo"
+                map_dir.mkdir()
+                (map_dir / "report.html").write_text(
+                    "<html>map</html>", encoding="utf-8"
+                )
+                records[0].report_refs = [{"kind": "report", "ref": map_dir.name}]
+                map_resp = client.get(
+                    f"/api/scheduled-tasks/results/exec-1/report/_t/{ticket}/report.html"
+                )
+                assert map_resp.status_code == 200
+                map_csp = map_resp.headers["content-security-policy"]
+                assert "https://*.amap.com" in map_csp
+                assert "https://*.autonavi.com" in map_csp
+                records[0].report_refs = [{"kind": "report", "ref": "report-abc"}]
+
                 # 错误票据仍拒绝
                 resp = client.get(
                     "/api/scheduled-tasks/results/exec-1/report/_t/bogus/report.html"

@@ -8,6 +8,16 @@ def normalize_matplotlib_label_text(value: Any) -> Any:
     if not isinstance(value, str) or not value:
         return value
     replacements = [
+        ("O₃_8H", "O$_3$-8H"),
+        ("O₃_8h", "O$_3$-8h"),
+        ("O3_8H", "O$_3$-8H"),
+        ("O3_8h", "O$_3$-8h"),
+        ("PM2.5", "PM$_{2.5}$"),
+        ("PM2_5", "PM$_{2.5}$"),
+        ("PM10", "PM$_{10}$"),
+        ("SO2", "SO$_2$"),
+        ("NO2", "NO$_2$"),
+        ("O3", "O$_3$"),
         ("SO₄²⁻", "SO$_4^{2-}$"),
         ("SO4²⁻", "SO$_4^{2-}$"),
         ("NO₃⁻", "NO$_3^-$"),

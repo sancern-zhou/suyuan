@@ -195,3 +195,31 @@ def legend_below(ax, *other_axes, handles=None, labels=None, ncols=3):
                        ncols=min(ncols, len(entries)), frameon=False, borderaxespad=0)
     legend.set_in_layout(True)
     return legend
+
+
+def figure_content_overflow(fig, tolerance: float = 1.0) -> bool:
+    """检测图例、文本等内容是否超出画布边界（原生 savefig 会裁剪超界内容）。
+
+    图例用 bbox_to_anchor 挂到坐标系外且未预留画布空间时，只有
+    bbox_inches='tight' 能扩展画布包住内容；调用方未指定该参数时，
+    保存前用本函数检测并按需兜底。
+    """
+    try:
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        tight = fig.get_tightbbox(renderer)
+        if tight is None:
+            return False
+        # Figure.get_tightbbox 返回英寸，fig.bbox 为像素，统一换算后比较
+        dpi = fig.dpi
+        x0, y0 = tight.x0 * dpi, tight.y0 * dpi
+        x1, y1 = tight.x1 * dpi, tight.y1 * dpi
+        canvas_bbox = fig.bbox
+        return (
+            x0 < canvas_bbox.x0 - tolerance
+            or y0 < canvas_bbox.y0 - tolerance
+            or x1 > canvas_bbox.x1 + tolerance
+            or y1 > canvas_bbox.y1 + tolerance
+        )
+    except Exception:
+        return False

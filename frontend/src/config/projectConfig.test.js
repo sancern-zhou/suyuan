@@ -15,7 +15,10 @@ test('project config exposes module and feature predicates', () => {
       features: { noiseMap: true, era5HistoricalBackfill: false },
       agentModes: ['assistant', 'query'],
       defaultAgentMode: 'query',
-      agentPlatformLayout: 'scenes'
+      agentPlatformLayout: 'scenes',
+      agentScenes: ['monitoring'],
+      agentSceneOverrides: { monitoring: { modeIds: ['query', 'assistant'] } },
+      sidebarAgentModes: ['query', 'knowledge']
     }
   })
 
@@ -29,4 +32,7 @@ test('project config exposes module and feature predicates', () => {
   assert.deepEqual(config.agentModeIds, ['assistant', 'query'])
   assert.equal(config.defaultAgentMode, 'query')
   assert.equal(config.agentPlatformLayout, 'scenes')
+  assert.deepEqual(config.agentScenes, ['monitoring'])
+  assert.deepEqual(config.agentSceneOverrides, { monitoring: { modeIds: ['query', 'assistant'] } })
+  assert.deepEqual(config.sidebarAgentModes, ['query', 'knowledge'])
 })

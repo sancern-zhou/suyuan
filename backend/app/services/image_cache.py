@@ -8,6 +8,7 @@
 """
 
 import os
+import re
 import uuid
 import base64
 from datetime import datetime
@@ -19,6 +20,27 @@ logger = structlog.get_logger()
 
 # 图片存储目录（相对于backend）
 IMAGE_CACHE_DIR = str(get_images_dir())
+
+_MATHTEXT_SUPER_RE = re.compile(r"\^\{([^{}]*)\}")
+_MATHTEXT_SUB_RE = re.compile(r"\$\_\{([^{}]*)\}\$")
+_MATHTEXT_INLINE_RE = re.compile(r"\$([^$]*)\$")
+
+
+def sanitize_image_id(value: str) -> str:
+    """将 image_id 归一化为 ``[[chart:<id>]]`` 协议安全的纯文本。
+
+    - matplotlib mathtext 还原为纯文本（如 PM$_{2.5}$ -> PM2.5、SO$_4^{2-}$ -> SO4^(2-)）
+    - 再经 ``app.utils.visual_ids.sanitize_visual_id`` 收敛到协议字符集
+      （A-Za-z0-9_.-）；中文名等不可保留字符折叠为下划线。
+    """
+    text = str(value)
+    text = _MATHTEXT_SUPER_RE.sub(r"^(\1)", text)
+    text = _MATHTEXT_SUB_RE.sub(r"\1", text)
+    text = _MATHTEXT_INLINE_RE.sub(r"\1", text)
+    text = text.replace("{", "").replace("}", "")
+    from app.utils.visual_ids import sanitize_visual_id
+
+    return sanitize_visual_id(text) or "img"
 
 
 class ImageCache:
@@ -76,6 +98,7 @@ class ImageCache:
         if not chart_id:
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             chart_id = f"img_{timestamp}_{uuid.uuid4().hex[:8]}"
+        chart_id = sanitize_image_id(chart_id)
 
         # 保存为文件（总是使用.png扩展名，内部会处理GIF格式）
         filepath = os.path.join(self.cache_dir, f"{chart_id}.png")
@@ -111,6 +134,7 @@ class ImageCache:
         Returns:
             base64编码的图片数据，如果不存在返回None
         """
+        image_id = sanitize_image_id(image_id)
         filepath = os.path.join(self.cache_dir, f"{image_id}.png")
         if os.path.exists(filepath):
             with open(filepath, 'rb') as f:
@@ -126,6 +150,7 @@ class ImageCache:
         Returns:
             图片二进制数据，如果不存在返回None
         """
+        image_id = sanitize_image_id(image_id)
         filepath = os.path.join(self.cache_dir, f"{image_id}.png")
         if os.path.exists(filepath):
             with open(filepath, 'rb') as f:
@@ -155,7 +180,7 @@ class ImageCache:
         Returns:
             图片访问URL
         """
-        return f"/api/image/{image_id}"
+        return f"/api/image/{sanitize_image_id(image_id)}"
 
     def get_report_package_path(self, image_id: str) -> str:
         """获取旧版报告包路径提示。
@@ -171,10 +196,11 @@ class ImageCache:
         Returns:
             旧版路径提示: assets/charts/{image_id}.png
         """
-        return f"assets/charts/{image_id}.png"
+        return f"assets/charts/{sanitize_image_id(image_id)}.png"
 
     def exists(self, image_id: str) -> bool:
         """检查图片是否存在"""
+        image_id = sanitize_image_id(image_id)
         filepath = os.path.join(self.cache_dir, f"{image_id}.png")
         return os.path.exists(filepath)
 
@@ -187,6 +213,7 @@ class ImageCache:
         Returns:
             是否删除成功
         """
+        image_id = sanitize_image_id(image_id)
         filepath = os.path.join(self.cache_dir, f"{image_id}.png")
         if os.path.exists(filepath):
             os.remove(filepath)

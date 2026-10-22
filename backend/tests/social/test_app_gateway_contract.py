@@ -1,4 +1,6 @@
 import json
+import sys
+from types import ModuleType
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -30,6 +32,28 @@ def configure_accounts(monkeypatch):
         ),
     )
     monkeypatch.setattr(app_identity.settings, "app_access_token_ttl_seconds", 3600)
+
+
+@pytest.mark.asyncio
+async def test_app_report_formats_preserves_app_identity_and_download_tickets(monkeypatch):
+    configure_accounts(monkeypatch)
+    token, identity = app_identity.issue_access_token("alice", "alice-secret")
+    module = ModuleType("app.api.scheduled_task_routes")
+    async def formats(*, execution_id, user):
+        assert execution_id == "execution-a"
+        assert user == identity.as_current_user()
+        return {"formats": [{"format": "docx", "filename": "report.docx",
+                             "url": "/api/scheduled-tasks/results/execution-a/report/_t/ticket/report.docx?disposition=attachment"}]}
+    module.list_task_result_report_formats = formats
+    monkeypatch.setitem(sys.modules, "app.api.scheduled_task_routes", module)
+    app = FastAPI()
+    app.include_router(app_router)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        path = "/api/social/app/scheduled-tasks/results/execution-a/report/formats"
+        assert (await client.get(path)).status_code == 401
+        response = await client.get(path, headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 200
+        assert response.json()["formats"][0]["url"].endswith("/_t/ticket/report.docx?disposition=attachment")
 
 
 def test_app_token_derives_server_owned_social_identity(monkeypatch):

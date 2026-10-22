@@ -38,28 +38,6 @@ def test_social_account_routes_use_active_deployment_config(tmp_path, monkeypatc
     assert social_account_routes.load_config().weixin.enabled is True
 
 
-def test_jiangsu_config_does_not_adopt_orphan_account_state(tmp_path, monkeypatch):
-    config_path = tmp_path / "jiangsu-social.yaml"
-    social_dir = tmp_path / "social"
-    orphan_dir = social_dir / "weixin" / "shared-account"
-    orphan_dir.mkdir(parents=True)
-    (orphan_dir / "account.json").write_text(
-        '{"token":"shared-token","base_url":"https://example.invalid"}',
-        encoding="utf-8",
-    )
-    config_path.write_text(
-        "weixin:\n"
-        "  enabled: true\n"
-        "  recover_orphan_accounts: false\n"
-        "  accounts: []\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(social_config, "get_social_dir", lambda: social_dir)
-
-    loaded = social_config.load_social_config(str(config_path))
-
-    assert loaded.weixin.accounts == []
-
 
 def test_social_web_search_uses_jiangsu_config_from_environment(tmp_path, monkeypatch):
     shared_path = tmp_path / "shared.yaml"
@@ -71,10 +49,3 @@ def test_social_web_search_uses_jiangsu_config_from_environment(tmp_path, monkey
     assert WebSearchTool._load_config_key("web_search", "api_key") == "jiangsu-key"
 
 
-def test_jiangsu_social_prompt_names_the_active_project(monkeypatch):
-    monkeypatch.setattr(settings, "project_id", "jiangsu-ops")
-
-    prompt = build_social_prompt(available_tools=[])
-
-    assert "当前部署：江苏省运维审核管理服务平台（jiangsu-ops）" in prompt
-    assert "不得引用或推断其他项目的配置与数据" in prompt

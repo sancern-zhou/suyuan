@@ -103,5 +103,5 @@ field=DEVICEDELIVERMODEL；label=斜率；comparison_type=number；configured_ce
 1. 必要时读取同轮 `dataset_path` 或 `audit_result_path` 补充审核范围，但不改变问题明细。
 2. 组织完整 `report.qmd`，调用 `create_report_package` 生成报告包。
 3. 检查正文只有“审核范围”和“问题工单明细”两个章节；明细行数等于 `summary.report_issue_count`，每个 `source_issue_ids` 只属于一行；问题明细中的证据图片使用报告包内相对路径，不额外生成统计图表。
-4. 调用 `validate_report_package` 验收 QMD、图片引用和 HTML 预览；失败时修复后重新验收。
+4. `create_report_package` 会同时验收 QMD、图片引用、HTML 预览和 Word；失败时按返回错误修复后重新调用。
 5. 交付时说明右侧面板可预览并下载 QMD 或 Word，不把本地绝对路径作为主要交付内容，不手工拼接下载链接。

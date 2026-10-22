@@ -6,7 +6,7 @@ from app.agent.context.context_builder import SimplifiedContextBuilder
 
 
 MODES = [
-    "assistant", "expert", "query", "report", "social", "chart", "ops", "graph",
+    "assistant", "expert", "query", "report", "social", "ops", "graph",
     "memory_consolidator", "deliberation_meteorology", "deliberation_monitoring",
     "deliberation_chemistry", "deliberation_reviewer",
 ]

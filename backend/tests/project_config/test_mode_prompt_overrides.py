@@ -1,0 +1,149 @@
+from app.agent.prompts.prompt_builder import build_react_system_prompt
+from app.agent.prompts.tool_registry import get_tools_by_mode
+from config.settings import settings
+
+
+def test_xuchang_mode_prompts_do_not_change_shared_prompts(monkeypatch):
+    monkeypatch.setattr(settings, "project_id", "xuchang")
+    xuchang_query = build_react_system_prompt("query")
+    xuchang_expert = build_react_system_prompt("expert")
+
+    assert "## Agentic GIS 视觉交互" not in xuchang_query
+    assert "每个结论必须区分" not in xuchang_expert
+    assert "### 常见机制检查" not in xuchang_expert
+
+    monkeypatch.setattr(settings, "project_id", "default")
+    shared_query = build_react_system_prompt("query")
+    shared_expert = build_react_system_prompt("expert")
+
+    assert "## Agentic GIS 视觉交互" in shared_query
+    assert "每个结论必须区分" in shared_expert
+    assert "### 常见机制检查" in shared_expert
+
+
+def test_xuchang_disables_guangdong_query_tools_only_for_xuchang(monkeypatch):
+    standard_report_tools = {
+        "query_city_standard_report",
+        "query_city_standard_yoy_report",
+        "query_station_standard_report",
+        "query_station_standard_yoy_report",
+    }
+    monkeypatch.setattr(settings, "project_id", "xuchang")
+    for mode in ("query", "report", "chart"):
+        tools = get_tools_by_mode(mode)
+        assert "get_5min_data" not in tools
+        assert "analyze_city_pollutant_rankings" not in tools
+        assert standard_report_tools.isdisjoint(tools)
+
+    monkeypatch.setattr(settings, "project_id", "default")
+    assert "get_5min_data" in get_tools_by_mode("query")
+    assert "analyze_city_pollutant_rankings" in get_tools_by_mode("query")
+    assert standard_report_tools.issubset(get_tools_by_mode("query"))
+
+
+def test_xuchang_report_mode_is_orchestrator_focused(monkeypatch):
+    monkeypatch.setattr(settings, "project_id", "xuchang")
+
+    expert_tools = get_tools_by_mode("expert")
+    report_tools = get_tools_by_mode("report")
+
+    assert "broadcast_social_users" not in expert_tools
+    assert "broadcast_social_users" not in report_tools
+    assert "run_agent_workflow" in report_tools
+    assert "call_sub_agent" not in report_tools
+    assert {
+        "execute_sql_query",
+        "execute_postgres_sql_query",
+        "bash",
+        "grep",
+        "list_directory",
+        "search_files",
+    }.isdisjoint(report_tools)
+    assert {"read_file", "write_file", "edit_file"}.issubset(report_tools)
+    assert "execute_python" in expert_tools
+    assert "create_report_package" in report_tools
+    assert "render_report_package" not in report_tools
+    assert "validate_report_package" not in report_tools
+
+    monkeypatch.setattr(settings, "project_id", "default")
+    assert "broadcast_social_users" not in get_tools_by_mode("expert")
+    assert "broadcast_social_users" not in get_tools_by_mode("report")
+
+
+def test_report_prompt_has_no_guangdong_business_text(monkeypatch):
+    monkeypatch.setattr(settings, "project_id", "xuchang")
+
+    prompt = build_react_system_prompt("report")
+
+    assert "广东" not in prompt
+    assert "粤东" not in prompt
+    assert "粤西" not in prompt
+    assert "粤北" not in prompt
+    assert "珠三角" not in prompt
+
+
+def test_xuchang_social_mode_uses_lightweight_query_toolset(monkeypatch):
+    monkeypatch.setattr(settings, "project_id", "xuchang")
+    tools = get_tools_by_mode("social")
+
+    for required in (
+        "execute_sql_query",
+        "execute_postgres_sql_query",
+        "query_xcai_city_history",
+        "get_weather_data",
+        "execute_python",
+        "create_business_chart",
+        "knowledge_qa_workflow",
+        "knowledge_document_reader",
+        "web_search",
+        "web_fetch",
+        "schedule_task",
+        "send_notification",
+    ):
+        assert required in tools
+    for forbidden in (
+        "bash",
+        "cli_session",
+        "terminal_session",
+        "spawn",
+        "wait_task",
+        "call_sub_agent",
+        "create_report_package",
+        "broadcast_social_users",
+    ):
+        assert forbidden not in tools
+
+    monkeypatch.setattr(settings, "project_id", "default")
+    default_social = get_tools_by_mode("social")
+    assert "bash" in default_social
+    assert "call_sub_agent" in default_social
+
+
+def test_xuchang_social_prompt_overrides_shared_social_prompt(monkeypatch):
+    monkeypatch.setattr(settings, "project_id", "xuchang")
+
+    prompt = build_react_system_prompt("social")
+
+    assert "许昌市问数分析助理" in prompt
+    assert "get_weather_data" in prompt
+    assert "移动端助理" not in prompt
+
+    monkeypatch.setattr(settings, "project_id", "default")
+    assert "移动端助理" in build_react_system_prompt("social")
+
+
+def test_xuchang_mode_prompts_carry_client_channel_branches(monkeypatch):
+    """许昌 query/knowledge/expert 用项目级提示词，客户端差异分支必须写在 .md 覆盖层。"""
+    monkeypatch.setattr(settings, "project_id", "xuchang")
+
+    query_prompt = build_react_system_prompt("query")
+    assert "<client_channel>" in query_prompt
+    assert "App 端没有右侧面板" in query_prompt
+    assert "不产出 ECharts 交互图资源" in query_prompt
+    assert "client_channel 为 web" in query_prompt
+
+    for mode in ("knowledge", "expert"):
+        prompt = build_react_system_prompt(mode)
+        assert "<client_channel>" in prompt
+        assert "App 端没有右侧面板" in prompt
+        assert "适当精简" in prompt

@@ -23,18 +23,44 @@ def safe_component(value: str, *, fallback: str) -> str:
 
 
 class FileStorage:
-    def __init__(self, root: Path | str) -> None:
-        self.root = Path(root).resolve()
+    def __init__(
+        self,
+        root: Path | str,
+        project_root: Path | str | None = None,
+    ) -> None:
+        self.project_root = Path(project_root).resolve() if project_root is not None else None
+        root_path = Path(root)
+        if not root_path.is_absolute() and self.project_root is not None:
+            root_path = self.project_root / root_path
+        self.root = root_path.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _resolve(self, relative_path: Path | str) -> tuple[Path, Path]:
         relative = Path(relative_path)
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError(f"unsafe path: {relative}")
-        target = (self.root / relative).resolve()
+        root_relative = relative
+        if self.project_root is not None:
+            try:
+                prefix = self.root.relative_to(self.project_root)
+            except ValueError:
+                prefix = None
+            if prefix is not None and (
+                relative == prefix or prefix in relative.parents
+            ):
+                root_relative = relative.relative_to(prefix)
+        target = (self.root / root_relative).resolve()
         if target != self.root and self.root not in target.parents:
             raise ValueError(f"unsafe path: {relative}")
-        return target, relative
+        if self.project_root is not None:
+            stored_relative = target.relative_to(self.project_root)
+        else:
+            stored_relative = root_relative
+        return target, stored_relative
+
+    def resolve(self, relative_path: Path | str) -> Path:
+        target, _ = self._resolve(relative_path)
+        return target
 
     def write_bytes(self, relative_path: Path | str, content: bytes) -> StoredFile:
         target, relative = self._resolve(relative_path)

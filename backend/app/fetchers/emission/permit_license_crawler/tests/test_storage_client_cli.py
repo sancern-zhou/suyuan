@@ -33,6 +33,22 @@ def test_storage_rejects_path_escape_and_writes_with_checksum(tmp_path: Path):
     assert not list(tmp_path.rglob("*.part"))
 
 
+def test_storage_with_project_root_returns_project_relative_path(tmp_path: Path):
+    project = tmp_path / "suyuan"
+    root = Path("backend") / "backend_data_registry" / "permit_licenses" / "河南省" / "许昌市"
+    storage = FileStorage(root, project_root=project)
+
+    result = storage.write_bytes(Path("123") / "copy" / "permit_copy.pdf", b"pdf")
+    assert result.path == project / root / "123" / "copy" / "permit_copy.pdf"
+    assert result.relative_path == root / "123" / "copy" / "permit_copy.pdf"
+
+    described = storage.describe(result.relative_path)
+    assert described.path == result.path
+
+    resolved = storage.resolve(result.relative_path)
+    assert resolved == result.path
+
+
 def test_pdf_builder_preserves_page_order(tmp_path: Path):
     first = tmp_path / "001.png"
     second = tmp_path / "002.png"

@@ -43,6 +43,9 @@ async def test_init_db_ensures_social_binding_schema(monkeypatch):
     async def fake_social_binding_schema(connection):
         calls.append(("social_binding", connection))
 
+    async def fake_session_resources_schema(connection):
+        calls.append(("session_resources", connection))
+
     monkeypatch.setattr(database, "engine", FakeEngine())
     monkeypatch.setattr(database, "_ensure_uploaded_files_schema", fake_uploaded_files_schema)
     monkeypatch.setattr(
@@ -51,13 +54,21 @@ async def test_init_db_ensures_social_binding_schema(monkeypatch):
         fake_social_binding_schema,
         raising=False,
     )
+    monkeypatch.setattr(
+        database,
+        "_ensure_session_resources_schema",
+        fake_session_resources_schema,
+        raising=False,
+    )
 
     await database.init_db()
 
     assert [name for name, _ in calls] == [
         "create_all",
+        "create_all",
         "uploaded_files",
         "social_binding",
+        "session_resources",
     ]
 
 
@@ -186,7 +197,7 @@ async def test_database_failure_skips_worker_social_services(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_web_role_starts_only_document_processing_queue(monkeypatch):
+async def test_web_role_skips_knowledge_base_background_services(monkeypatch):
     calls = []
 
     async def record(name):
@@ -201,16 +212,6 @@ async def test_web_role_starts_only_document_processing_queue(monkeypatch):
         lambda: record("initialize_tools_and_agents"),
     )
     monkeypatch.setattr(startup, "init_database", lambda: record("init_database"))
-    monkeypatch.setattr(
-        startup,
-        "start_document_processing_queue",
-        lambda: record("start_document_processing_queue"),
-    )
-    monkeypatch.setattr(
-        startup,
-        "warmup_knowledge_base_models_if_enabled",
-        lambda: record("warmup_knowledge_base_models_if_enabled"),
-    )
 
     await startup.run_startup(SimpleNamespace(state=SimpleNamespace()))
 
@@ -218,8 +219,6 @@ async def test_web_role_starts_only_document_processing_queue(monkeypatch):
         "start_nacos",
         "initialize_tools_and_agents",
         "init_database",
-        "start_document_processing_queue",
-        "warmup_knowledge_base_models_if_enabled",
     ]
 
 

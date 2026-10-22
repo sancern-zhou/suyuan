@@ -29,38 +29,17 @@
           </div>
         </button>
         <button
+          v-for="mode in sidebarAgentModeEntries"
+          :key="mode.id"
           class="module-card"
+          :class="{ active: isActive(mode.action) }"
           type="button"
-          @click="handleModuleSelect('restart-session')"
+          @click="handleModuleSelect(mode.action)"
+          :title="isCollapsed ? mode.title : ''"
         >
-          <span class="module-icon" v-html="getModuleIcon('restart-session')"></span>
+          <span class="module-icon" v-html="getModuleIcon(mode.icon)"></span>
           <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">新建对话</p>
-          </div>
-        </button>
-        <button
-          v-if="projectConfig.hasModule('xuchang-air-quality')"
-          class="module-card"
-          :class="{ active: isActive('air-quality-forecast') }"
-          type="button"
-          @click="handleModuleSelect('air-quality-forecast')"
-          :title="isCollapsed ? '预报预测' : ''"
-        >
-          <span class="module-icon" v-html="getModuleIcon('air-quality-forecast')"></span>
-          <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">预报预测</p>
-          </div>
-        </button>
-        <button
-          class="module-card"
-          :class="{ active: isActive('query-dashboard') }"
-          type="button"
-          @click="handleModuleSelect('query-dashboard')"
-          :title="isCollapsed ? queryDashboardModule.title : ''"
-        >
-          <span class="module-icon" v-html="getModuleIcon('query-dashboard')"></span>
-          <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">{{ queryDashboardModule.label }}</p>
+            <p class="module-title">{{ mode.title }}</p>
           </div>
         </button>
         <button
@@ -122,6 +101,22 @@
           <span class="recent-sessions-title">{{ conversationListTitle }}</span>
           <div class="conversation-view-actions">
             <button
+              v-if="conversationListView === CONVERSATION_LIST_VIEW.RECENT"
+              class="conversation-view-icon"
+              :class="{ active: conversationLayout === CONVERSATION_LIST_LAYOUT.GROUPED }"
+              type="button"
+              @click="toggleConversationLayout"
+              :title="conversationLayout === CONVERSATION_LIST_LAYOUT.GROUPED ? '切换为按时间排列' : '按智能体分组'"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 6h14" />
+                <path d="M5 12h9" />
+                <path d="M5 18h5" />
+                <circle cx="18.5" cy="16.5" r="2.5" />
+                <path d="m20.5 18.5 1.5 1.5" />
+              </svg>
+            </button>
+            <button
               class="conversation-view-icon"
               :class="{ active: conversationListView === CONVERSATION_LIST_VIEW.CASES }"
               type="button"
@@ -154,14 +149,39 @@
             {{ conversationListEmptyText }}
           </div>
           <div
-            v-for="session in activeSessionList"
-            :key="session.session_id"
-            class="recent-session-item"
-            :class="{ running: session.is_running }"
-            @click="loadSession(session)"
+            v-for="group in sidebarSessionGroups"
+            :key="group.key"
+            class="session-mode-group"
+            :class="{ 'has-header': !!group.header }"
           >
-            <span class="session-query">{{ truncateQuery(session.query, 30) }}</span>
-            <span class="session-time">{{ session.is_running ? '运行中' : formatTime(session.updated_at) }}</span>
+            <button
+              v-if="group.header"
+              class="session-mode-header"
+              type="button"
+              :aria-expanded="!isModeGroupCollapsed(group.key)"
+              @click="toggleModeGroup(group.key)"
+            >
+              <svg class="session-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7a1.5 1.5 0 0 1 1.5-1.5h3.6l2 2h7.4A1.5 1.5 0 0 1 20 9v8.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5V7Z" />
+              </svg>
+              <span class="session-mode-name">{{ group.header.label }}</span>
+              <span class="session-mode-count">{{ group.sessions.length }}</span>
+              <svg class="session-mode-chevron" :class="{ collapsed: isModeGroupCollapsed(group.key) }" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m7 10 5 5 5-5" />
+              </svg>
+            </button>
+            <template v-if="!group.header || !isModeGroupCollapsed(group.key)">
+              <div
+                v-for="session in group.sessions"
+                :key="session.session_id"
+                class="recent-session-item"
+                :class="{ running: session.is_running }"
+                @click="loadSession(session)"
+              >
+                <span class="session-query">{{ truncateQuery(session.query, 30) }}</span>
+                <span class="session-time">{{ session.is_running ? '运行中' : formatTime(session.updated_at) }}</span>
+              </div>
+            </template>
           </div>
         </div>
       </div>
@@ -213,16 +233,20 @@
 <script setup>
 import { authFetch } from '@/auth/http.js'
 import { projectConfig } from '@/config/projectConfig.js'
-import { getAgentMode } from '@/config/agentModes.js'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/auth/authStore.js'
 import { useReactStore } from '@/stores/reactStore'
 import {
+  CONVERSATION_LIST_LAYOUT,
   CONVERSATION_LIST_VIEW,
   filterSidebarConversations,
-  toggleConversationListView
+  groupSidebarConversationsByMode,
+  readSidebarConversationLayout,
+  toggleConversationListView,
+  writeSidebarConversationLayout
 } from './conversationListPolicy.js'
+import { AGENT_MODES, AGENT_MODE_IDS } from '@/config/agentModes.js'
 import { filterSidebarModules } from './sidebarProjectModules.js'
 
 const router = useRouter()
@@ -274,9 +298,28 @@ const brandInitial = computed(() => Array.from(projectConfig.brandName || '')[0]
 const recentSessions = ref([])
 const refreshingSessions = ref(false)
 const conversationListView = ref(CONVERSATION_LIST_VIEW.RECENT)
+const conversationLayout = ref(readSidebarConversationLayout())
+const collapsedModeGroups = ref([])
 const RECENT_SESSIONS_LIMIT = 30
 const SESSION_FETCH_LIMIT = 200
 let recentSessionsTimer = null
+
+watch(conversationLayout, layout => writeSidebarConversationLayout(layout))
+
+const toggleConversationLayout = () => {
+  conversationLayout.value = conversationLayout.value === CONVERSATION_LIST_LAYOUT.GROUPED
+    ? CONVERSATION_LIST_LAYOUT.FLAT
+    : CONVERSATION_LIST_LAYOUT.GROUPED
+  collapsedModeGroups.value = []
+}
+
+const toggleModeGroup = mode => {
+  collapsedModeGroups.value = collapsedModeGroups.value.includes(mode)
+    ? collapsedModeGroups.value.filter(item => item !== mode)
+    : [...collapsedModeGroups.value, mode]
+}
+
+const isModeGroupCollapsed = mode => collapsedModeGroups.value.includes(mode)
 
 const handleSessionCaseUpdated = () => {
   refreshRecentSessions({ silent: true })
@@ -304,6 +347,7 @@ const mergedRecentSessions = computed(() => {
         updated_at: lastMessage?.timestamp || new Date().toISOString(),
         is_running: !!session.isAnalyzing,
         is_local: true,
+        ...(session.mode ? { mode: session.mode } : {}),
         ...(session.conversationAccess?.source
           ? { source: session.conversationAccess.source }
           : {})
@@ -315,9 +359,15 @@ const mergedRecentSessions = computed(() => {
     byId.set(session.session_id, session)
   }
   for (const session of localSessions) {
+    const existing = byId.get(session.session_id) || {}
+    const metadata = {
+      ...(existing.metadata || {}),
+      ...(session.mode ? { mode: session.mode } : {})
+    }
     byId.set(session.session_id, {
-      ...(byId.get(session.session_id) || {}),
-      ...session
+      ...existing,
+      ...session,
+      ...(Object.keys(metadata).length ? { metadata } : {})
     })
   }
 
@@ -376,18 +426,27 @@ const conversationListEmptyText = computed(() => ({
   [CONVERSATION_LIST_VIEW.IM]: '暂无IM对话'
 })[conversationListView.value])
 
-// 问数入口绑定当前项目实际启用的问数模式：江苏使用 jiangsu_query，
-// 其他项目回退到共享的 query 模式，避免江苏误入 main 的问数生图智能体。
-const queryDashboardMode = computed(() => (
-  projectConfig.agentModeIds.includes('jiangsu_query') ? 'jiangsu_query' : 'query'
-))
-
-const queryDashboardModule = computed(() => {
-  if (queryDashboardMode.value === 'query') {
-    return { label: '智能问数', title: '智能问数' }
+const agentModeHeader = mode => {
+  if (mode === 'other') {
+    return { label: '其他' }
   }
-  const mode = getAgentMode(queryDashboardMode.value, projectConfig.agentModeOverrides)
-  return { label: mode?.shortName || '江苏问数生图', title: mode?.name || '江苏问数生图' }
+  const meta = AGENT_MODES.find(item => item.id === mode)
+  return { label: meta?.shortName || meta?.name || mode }
+}
+
+const sidebarSessionGroups = computed(() => {
+  const list = activeSessionList.value
+  if (
+    conversationListView.value !== CONVERSATION_LIST_VIEW.RECENT ||
+    conversationLayout.value !== CONVERSATION_LIST_LAYOUT.GROUPED
+  ) {
+    return [{ key: 'all', header: null, sessions: list }]
+  }
+  return groupSidebarConversationsByMode(list, AGENT_MODE_IDS).map(group => ({
+    key: group.mode,
+    header: agentModeHeader(group.mode),
+    sessions: group.sessions
+  }))
 })
 
 const allModules = [
@@ -400,14 +459,6 @@ const allModules = [
     isAction: true
   },
   {
-    id: 'restart-session',
-    name: '新建对话',
-    abbr: '新建对话',
-    desc: '清空对话，开始新分析',
-    badge: '操作',
-    isAction: true
-  },
-  {
     id: 'query-dashboard',
     name: '智能问数',
     abbr: '问数',
@@ -417,13 +468,22 @@ const allModules = [
     requiredModule: 'legacy'
   },
   {
-    id: 'air-quality-forecast',
-    name: '预报预测',
-    abbr: '预报',
-    desc: '查看许昌市逐小时空气质量预报与观测',
-    badge: '预报',
+    id: 'knowledge-qa',
+    name: '知识问答',
+    abbr: '知识',
+    desc: '基于知识库检索的问答对话',
+    badge: '知识',
     isAction: true,
-    requiredModule: 'xuchang-air-quality'
+    requiredModule: 'legacy'
+  },
+  {
+    id: 'expert-analysis',
+    name: '专家分析',
+    abbr: '专家',
+    desc: '进入专家会商分析对话',
+    badge: '专家',
+    isAction: true,
+    requiredModule: 'legacy'
   },
   {
     id: 'knowledge-base',
@@ -510,6 +570,16 @@ const allModules = [
 
 const modules = filterSidebarModules(allModules, projectConfig.hasModule)
 
+const SIDEBAR_AGENT_MODE_ENTRIES = {
+  query: { action: 'query-dashboard', title: '智能问数', icon: 'query-dashboard' },
+  knowledge: { action: 'knowledge-qa', title: '知识问答', icon: 'knowledge-qa' },
+  expert: { action: 'expert-analysis', title: '专家分析', icon: 'expert-analysis' }
+}
+
+const sidebarAgentModeEntries = projectConfig.sidebarAgentModes
+  .map(modeId => ({ id: modeId, ...SIDEBAR_AGENT_MODE_ENTRIES[modeId] }))
+  .filter(mode => mode.action)
+
 const SETTINGS_MODULE_IDS = Object.freeze([
   'session-history',
   'skills-management',
@@ -535,12 +605,6 @@ const moduleIcons = {
       <path d="m8.5 6 7 4" />
     </svg>
   `,
-  'restart-session': `
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 5v14" />
-      <path d="M5 12h14" />
-    </svg>
-  `,
   'query-dashboard': `
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M4 19V5" />
@@ -551,14 +615,21 @@ const moduleIcons = {
       <path d="M20 8.5 16 6l-4 2-4-3" />
     </svg>
   `,
-  'air-quality-forecast': `
+  'knowledge-qa': `
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4 19V5" />
-      <path d="M4 19h16" />
-      <path d="M7.5 16v-4" />
-      <path d="M11.5 16V8" />
-      <path d="M15.5 16v-6" />
-      <path d="m7 8 4-3 3 2 5-3" />
+      <path d="M5 5.5C5 4.67 5.67 4 6.5 4h11c.83 0 1.5.67 1.5 1.5v13c0 .83-.67 1.5-1.5 1.5h-11A1.5 1.5 0 0 1 5 18.5v-13Z" />
+      <path d="M8.5 9.5h7" />
+      <path d="M8.5 13h4" />
+      <path d="M12 21v-2" />
+      <path d="m14.5 16.5 1.8-1.8 1.7 1.7" />
+    </svg>
+  `,
+  'expert-analysis': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 3.5a3 3 0 0 1 3 3v.5a3 3 0 0 1 0 6v.5a3 3 0 0 1-6 0v-.5a3 3 0 0 1 0-6V6.5a3 3 0 0 1 3-3Z" />
+      <path d="M12 16.5V20" />
+      <path d="M8 20h8" />
+      <path d="m10 7.5.8.8L12.5 6.6" />
     </svg>
   `,
   'session-history': `
@@ -1155,6 +1226,74 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.session-mode-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  &.has-header {
+    gap: 2px;
+  }
+}
+
+.session-mode-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #526173;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  transition: background 0.2s;
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.04);
+  }
+}
+
+.session-mode-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.session-mode-name {
+  font-weight: 500;
+}
+
+.session-mode-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: #98a2b3;
+}
+
+.session-mode-chevron {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.2s;
+
+  &.collapsed {
+    transform: rotate(-90deg);
+  }
 }
 
 .recent-session-item {

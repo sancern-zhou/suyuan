@@ -191,7 +191,7 @@ async def test_chart_mode_uses_normal_auto_chain(monkeypatch):
         async for event in agent.analyze(
             user_query="按参考图生成图表",
             session_id="chart_session_profile",
-            manual_mode="chart",
+            manual_mode="ppt",
             attachments=[image_attachment],
         )
     ]

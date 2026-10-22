@@ -22,6 +22,7 @@ from app.fetchers.consultation.annual_ytd import (
     AnnualYtdConsultationFileFetcher,  # 年度累计会商文件
 )
 from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
+from app.fetchers.fault_diagnosis import FaultDiagnosisFetcher
 from app.fetchers.quick_trace import JiningQuickTraceFetcher  # 济宁市快速溯源报告每日生成
 from app.fetchers.satellite.gems_hcho_data_fetcher import GemsHchoDataFetcher
 from app.fetchers.satellite.gems_image_fetcher import GemsImageFetcher
@@ -35,6 +36,24 @@ from app.fetchers.weather.nmc_weather_chart_fetcher import NMCWeatherChartFetche
 from app.fetchers.weather.observed_fetcher import ObservedWeatherFetcher
 from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
     OpenMeteoAirQualityForecastFetcher,
+)
+from app.fetchers.xuchang_annual_attainment_forecast import XuchangAnnualAttainmentForecastFetcher
+from app.fetchers.xuchang_cnemc_station_hour import XuchangCnemcStationHourFetcher
+from app.fetchers.xuchang_city_exceedance import XuchangCityExceedanceFetcher
+from app.fetchers.xuchang_daily_attainment_forecast import XuchangDailyAttainmentForecastFetcher
+from app.fetchers.xuchang_henan_month_year_accumulate import XuchangHenanMonthYearAccumulateFetcher
+from app.fetchers.xuchang_nmc_hourly_forecast import XuchangNmcHourlyForecastFetcher
+from app.fetchers.xuchang_station_daily_exceedance import XuchangStationDailyExceedanceFetcher
+from app.fetchers.xuchang_station_daily_pollution import XuchangStationDailyPollutionFetcher
+from app.fetchers.xuchang_station_deviation_alert import XuchangStationDeviationAlertFetcher
+from app.fetchers.xuchang_transport_analysis import XuchangTransportAnalysisFetcher
+from app.fetchers.xuchang_weather_com_daily_forecast import XuchangWeatherComDailyForecastFetcher
+from app.fetchers.xuchang_weather_situation import (
+    XuchangAirQualityForecastFetcher, XuchangWeatherSituationEvidenceFetcher,
+)
+from app.fetchers.xuchang_zhongda_station import (
+    XuchangZhongdaCityFetcher,
+    XuchangZhongdaStationFetcher,
 )
 from app.project_config.loader import load_project_context
 from app.fetchers.task_review_feedback import TaskReviewFeedbackFetcher
@@ -109,6 +128,25 @@ def _configured_fetchers(project_context):
         "consultation": ConsultationFileFetcher,
         "monthly_consultation": MonthlyConsultationFileFetcher,
         "annual_ytd_consultation": AnnualYtdConsultationFileFetcher,
+        "fault_diagnosis": FaultDiagnosisFetcher,
+        "xuchang_daily_attainment_forecast_fetcher": XuchangDailyAttainmentForecastFetcher,
+        "xuchang_annual_attainment_forecast_fetcher": XuchangAnnualAttainmentForecastFetcher,
+        "xuchang_cnemc_station_hour_fetcher": XuchangCnemcStationHourFetcher,
+        "xuchang_city_exceedance_fetcher": XuchangCityExceedanceFetcher,
+        "xuchang_henan_month_year_accumulate_fetcher": XuchangHenanMonthYearAccumulateFetcher,
+        "xuchang_nmc_hourly_forecast_fetcher": XuchangNmcHourlyForecastFetcher,
+        "xuchang_weather_com_daily_forecast_fetcher": XuchangWeatherComDailyForecastFetcher,
+        "xuchang_air_quality_forecast_fetcher": XuchangAirQualityForecastFetcher,
+        "xuchang_weather_situation_evidence_fetcher": XuchangWeatherSituationEvidenceFetcher,
+        "xuchang_station_deviation_alert_fetcher": XuchangStationDeviationAlertFetcher,
+        "xuchang_station_daily_pollution_fetcher": XuchangStationDailyPollutionFetcher,
+        "xuchang_station_daily_exceedance_fetcher": XuchangStationDailyExceedanceFetcher,
+        "xuchang_transport_analysis_fetcher": XuchangTransportAnalysisFetcher,
+        "xuchang_zhongda_station_minute_fetcher": XuchangZhongdaStationFetcher,
+        "xuchang_zhongda_station_hour_fetcher":
+            lambda: XuchangZhongdaStationFetcher(data_kind="hour"),
+        "xuchang_zhongda_city_hour_fetcher": XuchangZhongdaCityFetcher,
+        "gems_xuchang_image_fetcher": GemsImageFetcher,
     }
     from app.services.station_operation_monitor.runtime import config_path
     if config_path().is_file():

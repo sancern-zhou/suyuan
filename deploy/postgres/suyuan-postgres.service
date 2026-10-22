@@ -1,0 +1,14 @@
+[Unit]
+Description=Suyuan PostgreSQL 16 database container
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/podman start --attach suyuan-postgres
+ExecStop=/usr/bin/podman stop -t 30 suyuan-postgres
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

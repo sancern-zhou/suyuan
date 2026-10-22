@@ -1,0 +1,214 @@
+"""Persistent episode aggregation for Scenario 1 station deviations."""
+
+from __future__ import annotations
+
+import json
+import tempfile
+from datetime import datetime, timedelta
+from pathlib import Path
+from threading import RLock
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from app.utils.path_config import get_data_registry
+
+TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+def _hour(value: Any) -> datetime:
+    """Normalize timestamps without truncating minutes.
+
+    Minute alerts use this same episode store, so truncating to the hour would
+    make a 30-minute inactivity window impossible to enforce.
+    """
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=TZ_SHANGHAI)
+    return parsed.astimezone(TZ_SHANGHAI)
+
+
+class XuchangStationDeviationEpisodeService:
+    """Aggregate station deviations and limit repeat notifications."""
+
+    def __init__(
+        self,
+        *,
+        output_root: Path | None = None,
+        close_after_hours: float = 0.5,
+        material_ratio_increase: float = 0.25,
+    ) -> None:
+        self.output_root = output_root or get_data_registry() / "xuchang_station_deviation_alerts"
+        self.close_after_hours = close_after_hours
+        self.material_ratio_increase = material_ratio_increase
+        self._lock = RLock()
+
+    @property
+    def state_path(self) -> Path:
+        return self.output_root / "episode_state.json"
+
+    @staticmethod
+    def _alert_type(alert: dict[str, Any]) -> str:
+        """Return a stable rule identity used to isolate alert episodes."""
+        explicit = alert.get("alert_type")
+        if explicit:
+            return str(explicit)
+        rule = str(alert.get("rule") or "unknown")
+        if rule.startswith("six_consecutive"):
+            return "continuous_rise"
+        if "synchronous" in rule or "multi_station" in rule:
+            return "multi_station_sync"
+        if alert.get("measurement_granularity") == "hour":
+            return "hourly_deviation"
+        return "station_deviation"
+
+    def _close_after(self, granularity: str) -> timedelta:
+        # Minute alerts need the existing short inactivity boundary; hourly
+        # alerts arriving once per hour must remain in the same episode.
+        if granularity in {"minute", "5min"}:
+            return timedelta(hours=self.close_after_hours)
+        return timedelta(hours=max(self.close_after_hours, 1.5))
+
+    def _can_close(self, episode: dict[str, Any], now: datetime) -> bool:
+        granularity = str(episode.get("measurement_granularity") or "unknown")
+        return (
+            now - _hour(episode["last_seen_at"]) >= self._close_after(granularity)
+            and now - _hour(episode["last_notified_at"]) >= timedelta(minutes=60)
+        )
+
+    def record(self, alert: dict[str, Any]) -> dict[str, Any]:
+        occurred_at = _hour(alert["occurred_at"])
+        station_id = str(alert["station_id"])
+        pollutant = str(alert["target_pollutant"]).upper()
+        granularity = str(alert.get("measurement_granularity") or alert.get("granularity") or "unknown")
+        alert_type = self._alert_type(alert)
+        key = f"{granularity}::{alert_type}::{station_id}::{pollutant}"
+        with self._lock:
+            state = self._load()
+            episode = state["active"].get(key)
+            if episode and alert.get("event_id") in episode.get("event_ids", []):
+                return {"status": "duplicate", "should_analyze": False, "episode": episode}
+
+            if episode and self._can_close(episode, occurred_at):
+                self._close(state, key, episode, occurred_at, "inactivity")
+                episode = None
+
+            if episode is None:
+                episode_id = (
+                    f"xuchang-station-deviation-episode-{occurred_at:%Y%m%d%H}-"
+                    f"{station_id}-{pollutant.lower().replace('.', '')}"
+                )
+                episode = {
+                    "episode_id": episode_id,
+                    "status": "active",
+                    "city": alert.get("city", "许昌市"),
+                    "station_id": station_id,
+                    "station_name": alert.get("station_name") or station_id,
+                    "target_pollutant": pollutant,
+                    "measurement_granularity": granularity,
+                    "alert_type": alert_type,
+                    "started_at": occurred_at.isoformat(),
+                    "last_seen_at": occurred_at.isoformat(),
+                    "last_notified_at": occurred_at.isoformat(),
+                    "event_ids": [alert.get("event_id")],
+                    "hour_count": 1,
+                    "notification_count": 1,
+                    "peak_station_value": float(alert.get("station_value") or 0),
+                    "peak_deviation_ratio": float(alert.get("deviation_ratio") or 0),
+                }
+                state["active"][key] = episode
+                result_status = "started"
+                should_analyze = True
+                reason = "episode_started"
+            else:
+                previous_value = float(episode.get("peak_station_value") or 0)
+                previous_ratio = float(episode.get("peak_deviation_ratio") or 0)
+                current_value = float(alert.get("station_value") or 0)
+                current_ratio = float(alert.get("deviation_ratio") or 0)
+                since_notification = occurred_at - _hour(episode["last_notified_at"])
+                material = current_ratio - previous_ratio >= self.material_ratio_increase
+                # The first 30 minutes are a hard cooldown. During minutes
+                # 30-60 only a 25 percentage-point increase over the episode
+                # peak can notify again; after 60 minutes the cooldown expires.
+                if since_notification < timedelta(minutes=30):
+                    should_analyze = False
+                    reason = "notification_cooldown"
+                elif since_notification < timedelta(minutes=60):
+                    should_analyze = material
+                    reason = "material_worsening" if material else "same_episode"
+                else:
+                    should_analyze = True
+                    reason = "notification_window_elapsed"
+                episode["last_seen_at"] = occurred_at.isoformat()
+                episode["event_ids"].append(alert.get("event_id"))
+                episode["hour_count"] = int(episode.get("hour_count", 0)) + 1
+                episode["peak_station_value"] = max(previous_value, current_value)
+                episode["peak_deviation_ratio"] = max(previous_ratio, current_ratio)
+                if should_analyze:
+                    episode["last_notified_at"] = occurred_at.isoformat()
+                    episode["notification_count"] = int(episode.get("notification_count", 0)) + 1
+                result_status = (
+                    "material_update" if should_analyze and material else
+                    "reminder" if should_analyze else "suppressed_update"
+                )
+
+            state["updated_at"] = datetime.now(TZ_SHANGHAI).isoformat()
+            self._save(state)
+            from .episode_storage_db import upsert_episode
+            upsert_episode(episode)
+            return {
+                "status": result_status,
+                "reason": reason,
+                "should_analyze": should_analyze,
+                "episode": dict(episode),
+            }
+
+    def close_stale(self, now: datetime) -> list[dict[str, Any]]:
+        now = _hour(now)
+        with self._lock:
+            state = self._load()
+            closed = []
+            for key, episode in list(state["active"].items()):
+                if not self._can_close(episode, now):
+                    continue
+                closed.append(self._close(state, key, episode, now, "inactivity"))
+            if closed:
+                state["updated_at"] = datetime.now(TZ_SHANGHAI).isoformat()
+                self._save(state)
+                from .episode_storage_db import upsert_episode
+                for episode in closed:
+                    upsert_episode(episode)
+            return closed
+
+    @staticmethod
+    def _close(
+        state: dict[str, Any], key: str, episode: dict[str, Any], closed_at: datetime, reason: str
+    ) -> dict[str, Any]:
+        closed = {
+            **episode,
+            "status": "closed",
+            "closed_at": closed_at.isoformat(),
+            "closed_reason": reason,
+        }
+        state["history"].append(closed)
+        state["active"].pop(key, None)
+        return closed
+
+    def _load(self) -> dict[str, Any]:
+        try:
+            state = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            state = {}
+        state.setdefault("schema_version", "xuchang_station_deviation_episodes/v1")
+        state.setdefault("active", {})
+        state.setdefault("history", [])
+        state.setdefault("updated_at", None)
+        return state
+
+    def _save(self, state: dict[str, Any]) -> None:
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=self.state_path.parent, delete=False
+        ) as handle:
+            json.dump(state, handle, ensure_ascii=False, indent=2)
+            temp_path = Path(handle.name)
+        temp_path.replace(self.state_path)

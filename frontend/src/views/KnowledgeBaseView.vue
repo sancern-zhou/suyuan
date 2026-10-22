@@ -47,7 +47,7 @@
                 <span class="kb-badge shared">共享</span>
               </div>
               <div class="kb-card-meta">
-                {{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块 / {{ kb.vector_store_scope === 'shared' ? '共享索引' : '本地索引' }}
+                {{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块
               </div>
             </div>
             <div v-if="sharedKbs.length === 0" class="section-empty">暂无共享知识库</div>
@@ -92,7 +92,6 @@
             </div>
             <div v-if="privateKbs.length === 0" class="section-empty">暂无个人知识库</div>
           </div>
-
         </div>
       </div>
 
@@ -1136,15 +1135,15 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
   color: #389e0d;
 }
 
+.kb-badge.private {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
 .section-empty {
   padding: 8px 10px;
   color: #8c8c8c;
   font-size: 12px;
-}
-
-.kb-badge.private {
-  background: var(--color-success-bg);
-  color: var(--color-success);
 }
 
 .kb-card-meta {

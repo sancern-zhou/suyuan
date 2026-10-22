@@ -5,6 +5,7 @@ Analysis Tools
 """
 
 __all__ = [
+    "AnalyzeXuchangUpwindPermitSourcesTool",
     "TrajectorySourceAnalysisTool",
 ]
 
@@ -14,4 +15,10 @@ def __getattr__(name: str):
         from app.tools.analysis.trajectory_source_analysis.tool import TrajectorySourceAnalysisTool
 
         return TrajectorySourceAnalysisTool
+    if name == "AnalyzeXuchangUpwindPermitSourcesTool":
+        from app.tools.analysis.xuchang_upwind_permit_sources.tool import (
+            AnalyzeXuchangUpwindPermitSourcesTool,
+        )
+
+        return AnalyzeXuchangUpwindPermitSourcesTool
     raise AttributeError(name)

@@ -177,6 +177,18 @@ class TaskCaseStorage:
         with self._lock():
             self._write_meta_unlocked(meta)
 
+    def claim_memory_consolidation(self, day: str) -> bool:
+        """Atomically claim one daily memory-maintenance run."""
+        with self._lock():
+            meta = self._read_meta_unlocked()
+            if meta.get("last_memory_consolidation_date") == day:
+                return False
+            if meta.get("memory_consolidation_in_progress_date") == day:
+                return False
+            meta["memory_consolidation_in_progress_date"] = day
+            self._write_meta_unlocked(meta)
+            return True
+
     def _write_meta_unlocked(self, meta: dict[str, Any]) -> None:
         tmp = self.meta_file.with_suffix(".json.tmp")
         tmp.write_text(

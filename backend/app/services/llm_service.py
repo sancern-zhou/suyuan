@@ -1868,6 +1868,10 @@ class LLMService:
         """
         简单的聊天接口（内部使用流式API避免超时）
 
+        与 call_llm_with_json_response 相同的供应商回退语义：
+        按 LLM_FALLBACKS 候选链依次尝试，主供应商认证失败、5xx 等故障时自动
+        切换下一候选，冷却中的供应商跳过；429 仍在单供应商内退避重试。
+
         Args:
             messages: 消息列表，[{"role": "user", "content": "..."}]
             temperature: 温度参数
@@ -1876,6 +1880,102 @@ class LLMService:
 
         Returns:
             LLM响应的文本内容
+        """
+        original_state = self._snapshot_provider_state()
+        candidates = parse_fallback_candidates(
+            original_state["provider"],
+            original_state["model"],
+            self.request_fallbacks,
+        )
+        attempts = []
+        try:
+            for index, candidate in enumerate(candidates, start=1):
+                if not (
+                    candidate.provider == original_state["provider"].lower()
+                    and (candidate.model or original_state["model"]) == original_state["model"]
+                ):
+                    self._switch_provider_for_attempt(candidate.provider, candidate.model)
+
+                cooldown_failure = get_cooldown_failure(self.provider)
+                if cooldown_failure and index < len(candidates):
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": cooldown_failure.reason,
+                        "status": cooldown_failure.status,
+                        "code": cooldown_failure.code,
+                        "error": "provider is in cooldown",
+                    })
+                    logger.warning(
+                        "llm_chat_fallback_candidate_skipped_cooldown",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=cooldown_failure.reason,
+                    )
+                    continue
+
+                try:
+                    result = await self._run_llm_request_with_global_limit(
+                        "chat",
+                        lambda: self._chat_attempt(
+                            messages,
+                            temperature=temperature,
+                            timeout=timeout,
+                            max_tokens=max_tokens,
+                        ),
+                    )
+                    if attempts:
+                        logger.warning(
+                            "llm_chat_fallback_candidate_succeeded",
+                            provider=self.provider,
+                            model=self.model,
+                            attempts=summarize_attempts(attempts),
+                        )
+                    return result
+                except Exception as exc:
+                    failure = classify_llm_failure(exc)
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": failure.reason,
+                        "status": failure.status,
+                        "code": failure.code,
+                        "error": failure.message,
+                    })
+                    if failure.reason == "context_overflow":
+                        raise
+                    if should_fallback(failure):
+                        mark_provider_cooldown(self.provider, failure)
+                    has_next = index < len(candidates)
+                    logger.warning(
+                        "llm_chat_fallback_candidate_failed",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=failure.reason,
+                        status=failure.status,
+                        code=failure.code,
+                        has_next=has_next,
+                        error=failure.message[:300],
+                    )
+                    if not has_next or not should_fallback(failure):
+                        raise
+            raise LLMFailoverError(summarize_attempts(attempts))
+        except Exception:
+            if attempts:
+                logger.error("llm_chat_fallback_failed", attempts=summarize_attempts(attempts))
+            raise
+        finally:
+            self._restore_provider_state(original_state)
+
+    async def _chat_attempt(
+        self,
+        messages: list,
+        temperature: float = None,
+        timeout: float = 120.0,
+        max_tokens: int = None
+    ) -> str:
+        """
+        chat() 的单供应商尝试：只请求当前选定的 provider，不做候选链回退。
         """
         # 如果未指定temperature，使用settings中的默认值
         if temperature is None:

@@ -15,7 +15,7 @@ class PdfParserProvider:
     async def parse(self, source_file: GraphSourceFile) -> list[GraphDocumentChunk]:
         text = self._extract_with_pdfplumber(source_file)
         if not text.strip():
-            text = self._extract_with_pypdf2(source_file)
+            text = self._extract_with_pypdf(source_file)
         if not text.strip():
             raise RuntimeError(f"PDF文件未提取到可用于构建认知地图的文本：{source_file.filename}")
         return await TextParserProvider(max_chars=self.max_chars).parse_text(
@@ -37,17 +37,17 @@ class PdfParserProvider:
                     pages.append(f"[page {index}]\n{page_text.strip()}")
         return "\n\n".join(pages)
 
-    def _extract_with_pypdf2(self, source_file: GraphSourceFile) -> str:
+    def _extract_with_pypdf(self, source_file: GraphSourceFile) -> str:
         try:
-            import PyPDF2
+            import pypdf
         except ImportError as exc:
             raise RuntimeError(
-                "PDF解析需要安装 pdfplumber 或 PyPDF2"
+                "PDF解析需要安装 pdfplumber 或 pypdf"
             ) from exc
 
         pages = []
         with source_file.path.open("rb") as pdf_file:
-            reader = PyPDF2.PdfReader(pdf_file)
+            reader = pypdf.PdfReader(pdf_file)
             if getattr(reader, "is_encrypted", False):
                 try:
                     reader.decrypt("")

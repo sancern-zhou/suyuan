@@ -73,11 +73,10 @@
           <!-- 操作按钮 -->
           <div class="scheduled-task-actions">
             <button
-              v-if="task.trigger_type !== 'event'"
               class="scheduled-btn scheduled-btn-execute"
               @click="$emit('execute-task', task)"
               :disabled="task.executing"
-              title="立即执行此任务"
+              :title="task.trigger_type === 'event' ? '重放最近一次匹配事件并立即执行' : '立即执行此任务'"
             >
               {{ task.executing ? '执行中...' : '▶️ 立即执行' }}
             </button>
@@ -524,7 +523,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import MarkdownIt from 'markdown-it'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
 import ScheduledTaskResultsView from './ScheduledTaskResultsView.vue'
@@ -536,7 +535,7 @@ import {
 } from './scheduledTaskForm.js'
 
 // Props
-defineProps({
+const props = defineProps({
   tasks: {
     type: Array,
     default: () => []
@@ -573,6 +572,16 @@ const formError = ref('')
 const selectedHistoryTask = ref(null)
 const resultsViewRef = ref(null)
 const resultsRefreshing = ref(false)
+
+watch(() => props.tasks, (tasks) => {
+  const current = selectedHistoryTask.value
+  if (!current) return
+  const exists = (Array.isArray(tasks) ? tasks : []).some(task => task?.task_id === current.task_id)
+  if (!exists) {
+    selectedHistoryTask.value = null
+    resultsViewRef.value = null
+  }
+})
 
 const eventTypes = computed(() => scheduledTasksStore.eventTypes)
 const socialUsers = computed(() => selectableSocialUsers(scheduledTasksStore.socialUsers))
