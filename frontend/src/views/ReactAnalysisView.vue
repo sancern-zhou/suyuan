@@ -110,6 +110,7 @@
       @close-work-order-review-panel="handleWorkOrderReviewPanelClose"
       @close-device-control-panel="handleDeviceControlPanelClose"
       @select-review="handleTodoReviewOpen"
+      @open-review-detail="handleTodoReviewDetailOpen"
       @refresh-session-history="refreshSessionHistory"
       @cleanup-sessions="handleSessionCleanup"
       @restore-session="handleSessionRestoreAndClosePanel"
@@ -178,7 +179,7 @@ import {
 } from '@/components/agentPlatform/workspacePolicy.js'
 import { resolveCoordinatorMode } from '@/components/coordinator/coordinatorWorkspace.js'
 import { extractSmartEventWorkspaceCommand } from '@/services/jiangsuSmartEventWorkspace.js'
-import { extractWorkOrderReviewCommand } from '@/services/jiangsuWorkOrderReviewWorkspace.js'
+import { extractWorkOrderReviewCommand, WORK_ORDER_REVIEW_COMMANDS } from '@/services/jiangsuWorkOrderReviewWorkspace.js'
 import { extractDeviceControlWorkspaceCommand } from '@/services/jiangsuDeviceControlWorkspace.js'
 
 // 引入composables
@@ -409,6 +410,14 @@ const openWorkOrderReviewSidePanel = () => {
 }
 
 const handleWorkOrderReviewPanelClose = () => {
+  // 整页模式（任务调度中心「查看详情」进入）：关闭面板并回到任务调度中心列表；
+  // 右侧面板模式（对话内 ui_command 打开）：仅收起面板
+  if (managementPanel.value === 'work-order-review') {
+    managementPanel.value = null
+    rightPanelVisible.value = false
+    workspace.value = 'task-center'
+    return
+  }
   rightPanelVisible.value = false
   leftSidebarCollapsed.value = false
 }
@@ -587,6 +596,21 @@ const handleSessionRestoreAndClosePanel = async (sessionId) => {
     await reconcileWorkspaceCommands()
   }
   return restored
+}
+
+// 任务调度中心「查看详情」直达工单审核详情：类似智能事件中心，整页管理面板直显证据包
+// 工作台——不恢复/切换任何会话，也不展开对话区与右侧面板 tab。写入
+// lastWorkOrderReviewCommandKey 防止消息回放重复应用同一条命令
+const handleTodoReviewDetailOpen = (review) => {
+  const code = String(review?.subject_id || '').trim()
+  if (!code) return
+  const command = { type: WORK_ORDER_REVIEW_COMMANDS.OPEN, working_order_code: code }
+  workOrderReviewCommand.value = command
+  lastWorkOrderReviewCommandKey.value = JSON.stringify(command)
+  workspace.value = 'chat'
+  rightPanelVisible.value = false
+  // 直接赋值而非 showManagementPanel，避免面板已开时二次点击被 toggle 收起而不是切换工单
+  managementPanel.value = 'work-order-review'
 }
 
 const handleTodoReviewOpen = async (review) => {

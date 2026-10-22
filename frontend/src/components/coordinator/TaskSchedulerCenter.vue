@@ -78,8 +78,16 @@
                   <td class="col-summary"><span class="review-summary">{{ task.summary }}</span></td>
                   <td class="col-time">{{ formatTodoTime(task.occurredAt) }}</td>
                   <td class="review-row-actions">
-                    <button type="button" class="row-action" @click="selectedReviewId = task.review_id">查看详情</button>
-                    <button type="button" class="row-action primary" @click="emit('select-review', task)">
+                    <!-- 工单审核行：查看详情直接在右侧面板打开证据包工作台，无需进入对话 -->
+                    <button
+                      v-if="isWorkOrderTask(task)"
+                      type="button" class="row-action primary"
+                      @click="emit('open-review-detail', task)"
+                    >查看详情</button>
+                    <button v-else type="button" class="row-action" @click="selectedReviewId = task.review_id">查看详情</button>
+                    <!-- 工单审核行的人工确认/归档表单仍保留在研判卡片弹窗里 -->
+                    <button v-if="isWorkOrderTask(task)" type="button" class="row-action" @click="selectedReviewId = task.review_id">研判卡片</button>
+                    <button type="button" :class="['row-action', { primary: !isWorkOrderTask(task) }]" @click="emit('select-review', task)">
                       进入对话工作区
                       <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12" /><path d="m12 6 4 4-4 4" /></svg>
                     </button>
@@ -122,11 +130,14 @@ import TaskReviewPanel from '@/components/reviews/TaskReviewPanel.vue'
 defineProps({
   runningModes: { type: Array, default: () => [] }
 })
-const emit = defineEmits(['select-task', 'select-review'])
+const emit = defineEmits(['select-task', 'select-review', 'open-review-detail'])
 const loading = ref(false)
 const loadError = ref('')
 const reviews = ref([])
 const selectedReviewId = ref(null)
+
+// 工单审核行的 subject_id 即工单编号，可直接驱动证据包工作台；智能事件行仍走研判卡片弹窗
+const isWorkOrderTask = task => task.category === '工单审核'
 
 const todoTasks = computed(() => reviews.value.map(review => ({
   ...review, taskName: review.task_name, occurredAt: review.updated_at

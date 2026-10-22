@@ -29,11 +29,23 @@ test('scheduler center renders only the structured review list', async () => {
 test('review list keeps conversation entry, detail dialog and shared emits', async () => {
   const source = await readFile(new URL('./TaskSchedulerCenter.vue', import.meta.url), 'utf8')
   assert.match(source, /emit\('select-review', task\)/)
-  assert.match(source, /'select-task', 'select-review'/)
+  assert.match(source, /'select-task', 'select-review', 'open-review-detail'/)
   assert.match(source, /selectedReviewId = task\.review_id/)
+  // 工单审核行的查看详情直达右侧证据包工作台（不进对话）；人工确认表单保留在研判卡片弹窗。
+  assert.match(source, /emit\('open-review-detail', task\)/)
+  assert.match(source, /isWorkOrderTask/)
+  assert.match(source, /研判卡片/)
   const view = await readFile(new URL('../../views/ReactAnalysisView.vue', import.meta.url), 'utf8')
   assert.match(view, /@select-review="handleTodoReviewOpen"/)
   assert.match(view, /suppressSmartEventCommandOpen/)
+  assert.match(view, /@open-review-detail="handleTodoReviewDetailOpen"/)
+  // 直达详情复用工单审核工作台命令契约，整页管理面板直显（同智能事件中心），不进对话不出右侧 tab。
+  assert.match(view, /WORK_ORDER_REVIEW_COMMANDS\.OPEN, working_order_code: code/)
+  assert.match(view, /managementPanel\.value = 'work-order-review'/)
   const layout = await readFile(new URL('../reactAnalysis/MainLayout.vue', import.meta.url), 'utf8')
   assert.match(layout, /@select-review="\$emit\('select-review', \$event\)"/)
+  assert.match(layout, /@open-review-detail="\$emit\('open-review-detail', \$event\)"/)
+  // 管理面板插槽内宿主整页工单审核工作台。
+  assert.match(layout, /managementPanel === 'work-order-review'/)
+  assert.match(layout, /WorkOrderReviewCenterPanel[\s\S]*?:workspace-command="workOrderReviewCommand"/)
 })

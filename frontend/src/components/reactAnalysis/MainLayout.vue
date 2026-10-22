@@ -36,6 +36,7 @@
         :running-modes="runningAgentModes"
         @select-task="handleTaskWorkspaceSelect"
         @select-review="$emit('select-review', $event)"
+        @open-review-detail="$emit('open-review-detail', $event)"
       />
       <template v-else>
         <div class="conversation-workspace">
@@ -138,6 +139,14 @@
             :workspace-command="smartEventCommand"
             @close="$emit('close-management-panel')"
             @open-task="$emit('open-smart-event-task', $event)"
+          />
+
+          <!-- 任务调度中心「查看详情」直达：整页工单审核工作台，同智能事件中心详情模式 -->
+          <WorkOrderReviewCenterPanel
+            v-else-if="managementPanel === 'work-order-review'"
+            class="wor-management-host"
+            :workspace-command="workOrderReviewCommand"
+            @close="$emit('close-work-order-review-panel')"
           />
 
           <SessionHistoryPanel
@@ -297,6 +306,7 @@ import FetchersPanel from '@/components/management/FetchersPanel.vue'
 import ScheduledTasksPanel from '@/components/management/ScheduledTasksPanel.vue'
 import TaskExecutionWorkspace from '@/components/management/TaskExecutionWorkspace.vue'
 import SmartEventCenterPanel from '@/components/management/SmartEventCenterPanel.vue'
+import WorkOrderReviewCenterPanel from '@/components/management/WorkOrderReviewCenterPanel.vue'
 import SessionHistoryPanel from '@/components/management/SessionHistoryPanel.vue'
 import SharedConversationsPanel from '@/components/management/SharedConversationsPanel.vue'
 import PlatformGuidePanel from '@/components/management/PlatformGuidePanel.vue'
@@ -574,6 +584,7 @@ const emit = defineEmits([
   'assistant-select',
   'sidebar-action',
   'select-review',
+  'open-review-detail',
   'load-session',
   'start-drag',
   'stop-drag',
@@ -926,5 +937,12 @@ defineExpose({ layoutRef })
 /* WidthResizer 固定宽度 */
 .analysis-panel :deep(.resize-handle) {
   flex: 0 0 4px;
+}
+
+/* 整页工单审核工作台：抵消管理面板容器内边距，对齐智能事件中心详情模式的铺满效果 */
+.wor-management-host {
+  width: calc(100% + 32px);
+  height: calc(100% + 32px);
+  margin: -16px;
 }
 </style>
