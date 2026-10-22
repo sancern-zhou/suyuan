@@ -12,6 +12,7 @@ import { GridComponent, TooltipComponent, LegendComponent, DataZoomComponent, Ma
 import { LineChart, ScatterChart } from 'echarts/charts'
 import { CanvasRenderer } from 'echarts/renderers'
 import { hourlyWeatherPoints, weatherTime } from './jiangsuWeatherSeries.js'
+import { hexWithAlpha } from './reviewTimeSeriesData.js'
 echarts.use([GridComponent, TooltipComponent, LegendComponent, DataZoomComponent, MarkAreaComponent, LineChart, ScatterChart, CanvasRenderer])
 // 风向箭头：竖直细长，尾部贴轴，箭头指向风吹去的方向（气象风向为来向）。
 const WIND_ARROW_SYMBOL = 'path://M-1,12 L-1,-5 L-4,-5 L0,-12 L4,-5 L1,-5 L1,12 Z'
@@ -25,9 +26,24 @@ const valuesFor = key => hourlyWeatherPoints(props.weather, key)
 const alignedPollutant = item => { const values = new Map((item.points || []).map(point => [weatherTime(point.time), point.value])); return times.value.map(time => [time, values.get(time) ?? null]) }
 const option = computed(() => {
   const windSpeed = valuesFor('windSpeed'); const windDirection = valuesFor('windDirection'); const temperature = valuesFor('temperature'); const humidity = valuesFor('humidity'); const pressure = valuesFor('pressure')
-  const series = props.entry.series.map(item => ({ name: item.name, type: 'line', xAxisIndex: 0, yAxisIndex: 0, showSymbol: false, connectNulls: false, data: alignedPollutant(item) }))
+  // 污染物曲线颜色由调用方传入（与小时时序图一致：目标蓝、对照紫、剔除建议污染物补画色），
+  // 未带颜色的序列（如 AI 旧 spec）回退 ECharts 默认色板；气象序列固定用默认色板。
+  const series = props.entry.series.map(item => ({
+    name: item.name, type: 'line', xAxisIndex: 0, yAxisIndex: 0, showSymbol: false, connectNulls: false,
+    data: alignedPollutant(item),
+    ...(item.color ? { lineStyle: { color: item.color }, itemStyle: { color: item.color } } : {}),
+  }))
   series.push({ name: '风速 (m/s)', type: 'line', xAxisIndex: 1, yAxisIndex: 1, showSymbol: false, data: windSpeed }, { name: '风向', type: 'scatter', xAxisIndex: 1, yAxisIndex: 2, symbol: WIND_ARROW_SYMBOL, symbolSize: [8, 26], data: windDirection.flatMap(([time, value]) => (value == null || value < 0 || value > 360) ? [] : [{ value: [time, 0.5, value], symbolRotate: 180 - value }]), encode: { x: 0, y: 1, tooltip: [2] }, tooltip: { valueFormatter: direction => `${direction}°（来向）` } }, { name: '温度 (°C)', type: 'line', xAxisIndex: 2, yAxisIndex: 3, showSymbol: false, data: temperature }, { name: '湿度 (%)', type: 'line', xAxisIndex: 2, yAxisIndex: 3, showSymbol: false, data: humidity }, { name: '大气压 (hPa)', type: 'line', xAxisIndex: 2, yAxisIndex: 4, showSymbol: false, data: pressure })
-  if (series[0]) series[0].markArea = { silent: true, itemStyle: { color: 'rgba(220, 110, 40, 0.16)' }, label: { show: false }, data: props.markAreas.map(area => [{ name: area.name, xAxis: weatherTime(area.start) }, { xAxis: weatherTime(area.end) }]) }
+  if (series[0] && props.markAreas.length) series[0].markArea = {
+    silent: true,
+    itemStyle: { color: 'rgba(220, 110, 40, 0.16)' },
+    label: { show: false },
+    // 区间按所属污染物曲线色着色（与小时时序图一致），无颜色归属回退默认橙。
+    data: props.markAreas.map(area => [
+      { name: area.name, xAxis: weatherTime(area.start), itemStyle: { color: hexWithAlpha(area.color, 0.16) || 'rgba(220, 110, 40, 0.16)' } },
+      { xAxis: weatherTime(area.end) },
+    ]),
+  }
   const x = { type: 'time', min: weatherTime(props.weather.start), max: weatherTime(props.weather.end), axisLabel: { hideOverlap: true } }
   return { animation: false, tooltip: { trigger: 'axis', confine: true }, legend: { type: 'scroll', top: 4, left: 0, right: 0 }, grid: [{ left: 72, right: 72, top: 50, height: '23%' }, { left: 72, right: 72, top: '37%', height: '23%' }, { left: 72, right: 72, top: '70%', height: '20%' }], xAxis: [{ ...x, gridIndex: 0 }, { ...x, gridIndex: 1 }, { ...x, gridIndex: 2 }], yAxis: [{ type: 'value', name: props.entry.unit, gridIndex: 0, position: 'left', scale: true, ...AXIS_NAME_STYLE }, { type: 'value', name: '风速 (m/s)', gridIndex: 1, position: 'left', scale: true, ...AXIS_NAME_STYLE }, { type: 'value', gridIndex: 1, show: false, min: 0, max: 1 }, { type: 'value', name: '温度/湿度', gridIndex: 2, position: 'left', scale: true, ...AXIS_NAME_STYLE }, { type: 'value', name: '气压 (hPa)', gridIndex: 2, position: 'right', scale: true, splitLine: { show: false }, ...AXIS_NAME_STYLE }], dataZoom: [{ type: 'inside', xAxisIndex: [0, 1, 2], filterMode: 'none' }, { type: 'slider', xAxisIndex: [0, 1, 2], bottom: 4, height: 22, filterMode: 'none' }], series }
 })

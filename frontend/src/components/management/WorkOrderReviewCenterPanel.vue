@@ -571,12 +571,15 @@ const pollutantColorMap = computed(() => {
   return colors
 })
 
-const chartSeries = computed(() => {
+// 站内污染物序列（目标 + 对照 + 剔除建议补画的多污染物）：小时时序图与气象图的污染物
+// 面板共用同一份，保证两处曲线名称与颜色完全一致（同城带只属于小时时序图，不在此列）。
+const stationPollutantSeries = computed(() => {
   const data = stationHourData.value
   const target = (data.points || []).map(point => ({ time: point.time, value: point.value }))
   if (!target.length) return []
-  const targetCode = String(data.pollutant || entry.value.pollutant || 'PM10').toUpperCase()
-  const series = [{ name: `${data.pollutant || entry.value.pollutant || 'PM10'}（本站）`, unit: data.unit || 'μg/m³', color: '#2f86e0', points: target }]
+  const targetName = data.pollutant || entry.value.pollutant || 'PM10'
+  const targetCode = String(targetName).toUpperCase()
+  const series = [{ name: `${targetName}（本站）`, unit: data.unit || 'μg/m³', color: '#2f86e0', points: target }]
   // 对照序列：新包按目标污染物配对（comparison_points/comparison_pollutant），
   // 旧证据包无新字段时回落到固定 PM2.5 对照（pm25_points）。
   const comparisonName = data.comparison_pollutant || (data.pm25_points?.length ? 'PM2.5' : '')
@@ -585,8 +588,9 @@ const chartSeries = computed(() => {
     : (comparisonName === 'PM2.5' ? data.pm25_points : [])
   if (comparisonName && comparison.length) series.push({ name: `${comparisonName}（对照）`, unit: data.unit || 'μg/m³', color: '#9b8cff', points: comparison })
   // 剔除建议涉及的其他污染物：从证据包 extra_points 补画曲线，颜色与区间标注一致。
+  const comparisonCode = String(comparisonName || '').toUpperCase()
   for (const pollutant of markAreaPollutants.value) {
-    if (pollutant === targetCode || pollutant === String(comparisonName || '').toUpperCase()) continue
+    if (pollutant === targetCode || pollutant === comparisonCode) continue
     const points = data.extra_points?.[pollutant] || []
     if (!points.length) continue
     series.push({
@@ -596,6 +600,13 @@ const chartSeries = computed(() => {
       points,
     })
   }
+  return series
+})
+
+const chartSeries = computed(() => {
+  const data = stationHourData.value
+  const series = [...stationPollutantSeries.value]
+  if (!series.length) return []
   if (bandRows.value.length) {
     const pick = key => bandRows.value.filter(row => row[key] != null).map(row => ({ time: row.time, value: row[key] }))
     // 同域只有 1 个对比站时最低/中位/最高三值相同，合并为一条线，避免三条重合曲线。
@@ -637,15 +648,12 @@ const weatherPayload = computed(() => ({
   end: entry.value.window_end,
   data: weatherRows.value,
 }))
-const weatherEntry = computed(() => {
-  const data = sourceCache.value.station_hour?.data || {}
-  const points = (data.points || []).map(point => ({ time: point.time, value: point.value }))
-  return {
-    title: `${entry.value.pollutant || ''} 与气象时序`,
-    unit: data.unit || 'μg/m³',
-    series: points.length ? [{ name: `${data.pollutant || entry.value.pollutant}（本站）`, points }] : [],
-  }
-})
+const weatherEntry = computed(() => ({
+  title: `${entry.value.pollutant || ''} 与气象时序`,
+  unit: stationHourData.value.unit || 'μg/m3',
+  // 污染物面板与小时时序图共用同一份站内序列（目标/对照/剔除建议补画的多污染物），颜色一致
+  series: stationPollutantSeries.value.map(item => ({ name: item.name, color: item.color, points: item.points })),
+}))
 
 const workOrderData = computed(() => sourceCache.value.work_order?.data || {})
 const sectionContent = ref(null)
