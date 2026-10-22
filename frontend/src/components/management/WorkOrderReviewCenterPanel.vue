@@ -287,15 +287,11 @@
               </template>
 
               <template v-else-if="source.key === 'band'">
-                <ReviewTimeSeriesChart
-                  v-if="bandChartSeries.length"
-                  title="同城对比带小时趋势"
-                  :subtitle="bandSubtitle"
-                  :unit="unit"
-                  :series="bandChartSeries"
-                  :mark-areas="markAreas"
-                  :height="300"
-                />
+                <!-- 同城对比曲线（最低/中位/最高）已叠加在上方小时时序图上与站内序列同图对照，
+                     本区块不再重复画图，只保留范围说明与数据表入口。 -->
+                <p v-if="bandRows.length" class="band-scope-note">
+                  {{ bandSubtitle }}；对比曲线已叠加在上方「污染物小时时序」图中
+                </p>
                 <p v-else class="source-empty">该来源暂无同城对比数据。</p>
                 <template v-if="source.rows.length">
                   <button type="button" class="link-btn" @click="toggleSourceRows(source.key)">
@@ -616,9 +612,9 @@ const markAreas = computed(() => (index.value.mark_areas || []).map(area => {
   return color ? { ...area, color } : { ...area }
 }))
 
-// 同城对比带：取证侧只存聚合行（本站 target + 同城最低/中位/最高）。本站值取本站小时时序
-// （同窗口、同单位，且比 band.target 更完整——对比数据集缺小时的 target 为空），
-// 同区只有 1 个省控对比站时最低/中位/最高三值相同，合并为一条"同城对比站"线，避免三条重合线。
+// 同城对比带：取证侧只存聚合行（本站 target + 同城最低/中位/最高）。聚合行叠加在小时时序图上
+// 与站内序列同图对照；同区只有 1 个省控对比站时最低/中位/最高三值相同，合并为一条"同城对比站"线。
+// 对比带区块本身不再重复画图（与主图完全重叠），只展示范围说明与数据表。
 const bandRows = computed(() => (sourceCache.value.band?.data?.band || [])
   .filter(row => row && row.time)
   .slice()
@@ -626,27 +622,6 @@ const bandRows = computed(() => (sourceCache.value.band?.data?.band || [])
 const bandComparisonCollapsed = computed(() => bandRows.value.length > 0 && bandRows.value.every(row => (
   row.min == null || row.max == null || Number(row.min) === Number(row.max)
 )))
-const bandChartSeries = computed(() => {
-  const rows = bandRows.value
-  if (!rows.length) return []
-  const data = sourceCache.value.station_hour?.data || {}
-  const unit = data.unit || 'μg/m³'
-  const pick = key => rows.filter(row => row[key] != null).map(row => ({ time: row.time, value: row[key] }))
-  const series = []
-  const target = (data.points || []).map(point => ({ time: point.time, value: point.value }))
-  if (target.length) {
-    series.push({ name: `${data.pollutant || entry.value.pollutant || '本站'}（本站）`, unit, color: '#2f86e0', points: target })
-  }
-  if (bandComparisonCollapsed.value) {
-    series.push({ name: `同城对比站（${sourceCache.value.band?.data?.district_name || '同域'}）`, unit, color: '#f6bd4a', points: pick('median') })
-  } else {
-    ;[['min', '同城最低', '#94a3b8'], ['median', '同城中位', '#61d394'], ['max', '同城最高', '#f6bd4a']].forEach(([key, name, color]) => {
-      const points = pick(key)
-      if (points.length) series.push({ name, unit, color, points })
-    })
-  }
-  return series
-})
 const bandSubtitle = computed(() => {
   const data = sourceCache.value.band?.data || {}
   const scopeText = data.scope === 'same_city' ? '同城' : '同区县'
@@ -1857,6 +1832,13 @@ loadOrders()
   margin: 0;
   font-size: var(--text-size-sm);
   color: var(--text-3);
+}
+
+/* 同城对比带区块的范围说明（图已并入上方小时时序图，本区块只剩说明与数据表） */
+.band-scope-note {
+  margin: 0;
+  font-size: var(--text-size-sm);
+  color: var(--text-2);
 }
 
 .muted {
