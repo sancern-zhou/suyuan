@@ -485,12 +485,30 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="knowledge_graph_build", error=str(e))
 
+    # 城市标准报表工具（直接调用统计查询 API，不本地重算）
     try:
-        from app.tools.query.resolve_station_geo.tool import ResolveStationGeoTool
-        registry.register(ResolveStationGeoTool(), priority=54)
-        logger.info("tool_loaded", tool="resolve_station_geo")
+        from app.tools.query.query_city_standard_report.tool import (
+            QueryCityStandardReportTool,
+            QueryCityStandardYoyReportTool,
+        )
+        registry.register(QueryCityStandardReportTool(), priority=47)
+        registry.register(QueryCityStandardYoyReportTool(), priority=47)
+        logger.info("tool_loaded", tool="query_city_standard_report")
+        logger.info("tool_loaded", tool="query_city_standard_yoy_report")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="resolve_station_geo", error=str(e))
+        logger.warning("tool_import_failed", tool="query_city_standard_report", error=str(e))
+
+    try:
+        from app.tools.query.query_station_standard_report.tool import (
+            QueryStationStandardReportTool,
+            QueryStationStandardYoyReportTool,
+        )
+        registry.register(QueryStationStandardReportTool(), priority=47)
+        registry.register(QueryStationStandardYoyReportTool(), priority=47)
+        logger.info("tool_loaded", tool="query_station_standard_report")
+        logger.info("tool_loaded", tool="query_station_standard_yoy_report")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_station_standard_report", error=str(e))
 
     # 5分钟数据查询工具（项目专属，默认不注册）
     if is_project_tool_enabled(context, "legacy", "get_5min_data"):

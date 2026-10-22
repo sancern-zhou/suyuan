@@ -4,7 +4,7 @@ modules:
 - legacy
 frontend:
   theme: default
-  brand_name: 风清气智
+  brand_name: 广东省大气环境智能体
   features: {}
   agent_modes:
   - assistant

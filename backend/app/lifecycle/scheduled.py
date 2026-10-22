@@ -25,6 +25,9 @@ def register_project_workflow_handlers(project: str) -> None:
     """
     from app.scheduled_tasks.workflow_tasks import register_workflow_handler
 
+    from app.services.station_operation_monitor.workflow import register_daily_report_workflow
+    register_daily_report_workflow()
+
     if project == "xuchang":
         from app.fetchers.xuchang_weather_situation import build_weather_evidence_event
         from app.scenarios.xuchang_weather_report.constants import EVENT_TYPE

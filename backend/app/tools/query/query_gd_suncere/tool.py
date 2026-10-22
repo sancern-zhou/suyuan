@@ -403,6 +403,19 @@ class GeoMappingResolver:
             if not raw:
                 continue
 
+            # 支持省级输入（如"广东"/"广东省"）：展开为全省所有区县
+            if raw.rstrip("省") == "广东":
+                for district_code in cls._district_name_by_code_from_geo:
+                    if district_code not in seen:
+                        district_codes.append(district_code)
+                        seen.add(district_code)
+                logger.info(
+                    "province_expanded_to_all_districts",
+                    province=raw,
+                    district_count=len(district_codes),
+                )
+                continue
+
             city_codes = cls.resolve_city_codes([raw])
             if not city_codes:
                 logger.warning(

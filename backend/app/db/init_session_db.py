@@ -25,6 +25,7 @@ async def init_session_tables():
     from app.db.models.scheduled_task_execution_db import (
         ScheduledTaskExecutionDB,
     )
+    from app.db.models.scheduled_task_result_db import ScheduledTaskResultDB
     from app.social.models import (
         SocialSessionMapping,
         SocialUser,
@@ -34,6 +35,7 @@ async def init_session_tables():
 
     session_scoped_tables = [
         ScheduledTaskExecutionDB.__table__,
+        ScheduledTaskResultDB.__table__,
         ConversationCatalogDB.__table__,
         Board.__table__,
         BoardVersion.__table__,  # 依赖 drawio_boards

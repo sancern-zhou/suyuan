@@ -858,7 +858,7 @@ class QueryGDSuncereDistrictDayTool(LLMTool):
                     "cities": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市名称或6位城市编码列表；提供后自动展开为该城市下辖所有区县，如 ['清远']"
+                        "description": "城市名称或6位城市编码列表；提供后自动展开为该城市下辖所有区县，如 ['清远']；查询全省传 ['广东']"
                     },
                     "district_codes": {
                         "type": "array",
@@ -1178,7 +1178,7 @@ class QueryGDSuncereDistrictReportTool(LLMTool):
                     "cities": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市名称或6位城市编码列表；提供后自动展开为该城市下辖所有区县，如 ['清远']"
+                        "description": "城市名称或6位城市编码列表；提供后自动展开为该城市下辖所有区县，如 ['清远']；查询全省传 ['广东']"
                     },
                     "district_codes": {
                         "type": "array",

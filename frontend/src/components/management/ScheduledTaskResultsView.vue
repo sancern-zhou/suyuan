@@ -92,6 +92,13 @@
                     @click="viewReport(record)"
                   >查看报告</button>
                   <button
+                    v-if="(record.document_paths || []).length"
+                    type="button"
+                    class="row-action"
+                    title="打开报告文档"
+                    @click="openDocument(record)"
+                  >打开文档</button>
+                  <button
                     v-if="record.has_broadcast"
                     type="button"
                     class="row-action"
@@ -105,7 +112,7 @@
                     title="进入 Agent 会话"
                     @click="enterSession(record)"
                   >进入会话</button>
-                  <span v-if="!record.has_report && !record.has_broadcast && !canOpenSession(record)">—</span>
+                  <span v-if="!record.has_report && !record.has_broadcast && !canOpenSession(record) && !(record.document_paths || []).length">—</span>
                 </td>
               </tr>
             </tbody>
@@ -280,6 +287,18 @@ function viewReport(record) {
   reportVisible.value = true
   downloadMenuVisible.value = false
   loadFormats(record)
+}
+
+function openDocument(record) {
+  const documents = record?.document_paths || []
+  if (!documents.length || !record?.preview_ticket) return
+  const pdfIndex = documents.findIndex(path => String(path).toLowerCase().endsWith('.pdf'))
+  const index = pdfIndex >= 0 ? pdfIndex : 0
+  const url = gatewayUrl(
+    `/api/scheduled-tasks/results/${encodeURIComponent(record.execution_id)}`
+    + `/files/documents/${index}?preview_ticket=${encodeURIComponent(record.preview_ticket)}`
+  )
+  window.open(url, '_blank', 'noopener')
 }
 
 function sizeLabel(bytes) {

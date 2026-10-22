@@ -1,17 +1,15 @@
 {
   "task_id": "gd_station_operation_daily",
   "name": "广东站点运行日报",
-  "description": "每天10:30生成昨日10时到今日10时日报，跟进前日及更早未结站点",
-  "execution_mode": "custom",
+  "description": "每天10:30生成昨日10时到今日10时日报，仅记录连续缺数超过4小时的站点事件（1-4小时短时缺失不列入），数据恢复上传即停止跟进（回补仅作备注），持续缺数事件最多连续跟进3天",
+  "execution_mode": "workflow",
   "model_tier": "auto",
-  "tool_names": [
-    "station_operation_daily"
-  ],
+  "tool_names": null,
   "schedule_type": "daily_custom",
   "hour": 10,
   "minute": 30,
   "enabled": true,
-  "prompt": "执行已绑定的 station-operation-daily Skill，调用 station_operation_daily(action=\"report\") 完成本日数据生成和原模板 Word 交付。必须检查 report_ready 及 format_validation_path；保留来源限制与历史未结跟进。工具失败不得编造日报。",
+  "prompt": "执行固定站点日报工作流：取数计算、指定字段填充、模板验收、PDF预览和资源发布。无需LLM；禁止增添模板以外章节。已恢复事件仅保留过去24小时缺失，持续未恢复事件继续跟踪。",
   "timeout_seconds": 1800,
   "created_by": "system",
   "owner_user_id": "system",
@@ -27,5 +25,7 @@
   "history_learning": {
     "enabled": false
   },
-  "skill_id": "station-operation-daily"
+  "skill_id": null,
+  "workflow_name": "station_operation_daily_report",
+  "workflow_args": {}
 }
