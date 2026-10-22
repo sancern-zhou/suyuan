@@ -70,9 +70,8 @@ def test_jiangsu_project_owns_station_fault_automation_surfaces():
         "jiangsu_station_fault_diagnosis",
         "jiangsu_fault_work_order_review",
     ]
-    assert {
-        route.mode for route in context.manifest.frontend.coordinator.routes
-    } >= {"ops", "jiangsu_query", "station_fault_diagnosis"}
+    # 2026-10-12 产品决策：关键词路由（routes）整体删除。
+    assert context.manifest.frontend.coordinator.routes == []
     assert context.manifest.frontend.coordinator.demo_attention_items == []
     assert context.manifest.backend.fetchers == [
         "jiangsu_station_fault_event",
@@ -84,14 +83,20 @@ def test_jiangsu_project_owns_station_fault_automation_surfaces():
         "jiangsu_data_audit_review_event",
     ]
     assert "execute_sql_query" in context.manifest.backend.agent_mode_tools["jiangsu_query"]
-    assert "jiangsu_query_operations_graph" in context.manifest.backend.agent_mode_tools["operations_analysis"]
+    # 2026-10-12 数据子模式按域拆分后，operations_analysis 父模式只保留委托与
+    # 轻量分析兜底（run_agent_workflow + 报告出具链路），图谱工具归数据子模式。
+    assert {"run_agent_workflow", "call_sub_agent"} <= set(
+        context.manifest.backend.agent_mode_tools["operations_analysis"]
+    )
     assert {"read_file", "edit_file", "write_file"} <= set(
+        context.manifest.backend.agent_mode_tools["operations_analysis"]
+    )
+    assert {"create_report_package", "execute_python", "publish_report"} <= set(
         context.manifest.backend.agent_mode_tools["operations_analysis"]
     )
     # ops（工单审核模式）2026-09 瘦身后不再暴露图谱工具；其余运维模式保持不变。
     for mode in (
         "smart_inspection",
-        "operations_analysis",
         "device_control",
         "station_fault_diagnosis",
     ):

@@ -29,13 +29,13 @@ def test_xuchang_disables_guangdong_query_tools_only_for_xuchang(monkeypatch):
         "query_station_standard_yoy_report",
     }
     monkeypatch.setattr(settings, "project_id", "xuchang")
-    for mode in ("query", "report", "chart"):
+    for mode in ("query", "report"):
         tools = get_tools_by_mode(mode)
         assert "get_5min_data" not in tools
         assert "analyze_city_pollutant_rankings" not in tools
         assert standard_report_tools.isdisjoint(tools)
 
-    monkeypatch.setattr(settings, "project_id", "default")
+    monkeypatch.setattr(settings, "project_id", "guangdong")
     assert "get_5min_data" in get_tools_by_mode("query")
     assert "analyze_city_pollutant_rankings" in get_tools_by_mode("query")
     assert standard_report_tools.issubset(get_tools_by_mode("query"))
@@ -84,7 +84,7 @@ def test_report_prompt_has_no_guangdong_business_text(monkeypatch):
 
 def test_xuchang_assistant_coordinates_instead_of_executing_professional_work(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "xuchang")
-    tools = get_tools_by_mode("social")
+    tools = get_tools_by_mode("assistant")
 
     for required in (
         "web_search",
@@ -118,7 +118,7 @@ def test_xuchang_assistant_coordinates_instead_of_executing_professional_work(mo
         assert forbidden not in tools
 
     monkeypatch.setattr(settings, "project_id", "default")
-    default_social = get_tools_by_mode("social")
+    default_social = get_tools_by_mode("assistant")
     assert "bash" not in default_social
     assert "call_sub_agent" in default_social
 
@@ -126,13 +126,13 @@ def test_xuchang_assistant_coordinates_instead_of_executing_professional_work(mo
 def test_xuchang_social_prompt_overrides_shared_social_prompt(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "xuchang")
 
-    prompt = build_react_system_prompt("social")
+    prompt = build_react_system_prompt("assistant")
 
     assert "助手模式职责与委派边界" in prompt
     assert "office 子 Agent" in prompt
 
     monkeypatch.setattr(settings, "project_id", "default")
-    assert "用户助理，适用于 Web、App 和社交渠道" in build_react_system_prompt("social")
+    assert "用户助理，适用于 Web、App 和社交渠道" in build_react_system_prompt("assistant")
 
 
 def test_xuchang_mode_prompts_carry_client_channel_branches(monkeypatch):

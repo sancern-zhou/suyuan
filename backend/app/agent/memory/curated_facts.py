@@ -23,10 +23,6 @@ logger = structlog.get_logger(__name__)
 class CuratedFactStore:
     INDEX_LIMIT = 200
     INDEX_CHAR_LIMIT = 25_000
-    # 模型给的 old_text 常是转述或标点不一致的片段；严格子串未命中时按相似度兜底。
-    # 高阈值 + 候选数上限，避免把"没找到"变成"改错条目"。
-    FUZZY_RATIO_THRESHOLD = 0.72
-    FUZZY_MATCH_CAP = 2
     SUGGESTION_LIMIT = 3
     SUGGESTION_CUTOFF = 0.72
 
@@ -152,26 +148,13 @@ class CuratedFactStore:
         needle = self._normalize(old_text)
         if not needle:
             return []
-
-        def _typed(record: dict[str, Any]) -> bool:
-            return not category or record.get("metadata", {}).get("type") == category
-
-        strict = [
+        # 严格子串/ID 匹配；模糊相近的条目由 suggest() 显式列出，由模型改用原文重试，
+        # 不做模糊替换（避免把"没找到"变成"改错条目"）。
+        return [
             record for record in self._records()
             if (needle in self._normalize(record["fact"]) or needle == record["name"])
-            and _typed(record)
+            and (not category or record.get("metadata", {}).get("type") == category)
         ]
-        if strict:
-            return strict
-        scored: list[tuple[float, dict[str, Any]]] = []
-        for record in self._records():
-            if not _typed(record):
-                continue
-            ratio = difflib.SequenceMatcher(None, needle, self._normalize(record["fact"])).ratio()
-            if ratio >= self.FUZZY_RATIO_THRESHOLD:
-                scored.append((ratio, record))
-        scored.sort(key=lambda pair: pair[0], reverse=True)
-        return [record for _, record in scored[: self.FUZZY_MATCH_CAP]]
 
     def suggest(self, old_text: str, category: str | None = None) -> list[dict[str, Any]]:
         """Return likely records for an explicit follow-up, without selecting one."""

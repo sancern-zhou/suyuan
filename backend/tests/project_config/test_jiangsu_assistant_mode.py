@@ -8,24 +8,16 @@ from config.settings import settings
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+# 2026-10-21 随 main 合入 assistant 角色契约：项目只声明角色白名单内的能力，
+# 专业执行（写文件/图表/报告包/PPT/知识库问答）收敛到委托路径。
 EXPECTED_TOOLS = [
     "list_session_resources",
     "read_session_resource",
     "publish_session_file",
     "read_file",
     "edit_file",
-    "write_file",
-    "knowledge_qa_workflow",
-    "knowledge_document_reader",
     "web_search",
     "web_fetch",
-    "execute_python",
-    "create_business_chart",
-    "create_report_package",
-    "publish_report",
-    "manage_editable_ppt",
-    "create_pptx_with_ppt_master",
-    "validate_pptx",
 ]
 
 
@@ -43,16 +35,29 @@ def test_jiangsu_declares_assistant_mode_and_reviewed_tools():
 def test_jiangsu_assistant_mode_loads_project_prompt_and_tool_surface(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "jiangsu-ops")
 
-    # 交互模式由共享层自动追加 ask_user_question（main 2026-10 合入），yaml 白名单不显式声明
-    assert get_tool_order("assistant") == EXPECTED_TOOLS + ["ask_user_question"]
+    # 交互提问由共享层自动追加（INTERACTIVE_QUESTION_MODES）；角色白名单补充
+    # 记忆/技能/委托/日程能力，任务与教练管理固定殿后（main 2026-10 角色契约）。
+    role_extras = [
+        "manage_assistant_memory",
+        "list_skills",
+        "view_skill",
+        "call_sub_agent",
+        "run_agent_workflow",
+        "manage_assistant_schedule",
+        "send_notification",
+        "manage_assistant_runs",
+        "session_search",
+        "manage_assistant_tasks",
+        "manage_assistant_coaching",
+    ]
+    assert get_tool_order("assistant") == EXPECTED_TOOLS + ["ask_user_question"] + role_extras
     prompt = build_react_system_prompt("assistant")
 
     assert "江苏省运维审核管理服务平台" in prompt
     assert "read_session_resource" in prompt
-    assert "knowledge_qa_workflow" in prompt
+    assert "call_sub_agent" in prompt
     assert "bash" not in prompt
     assert "browser" not in prompt
-    assert "call_sub_agent" not in prompt
     assert "broadcast_social_users" not in prompt
 
 

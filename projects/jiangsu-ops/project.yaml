@@ -300,26 +300,18 @@ backend:
       max_extensions: 2
       timeout_seconds: 1200
   agent_mode_tools:
-    # 通用助手不继承共享默认工具面；仅开放经项目评审的会话资源、文件、
-    # 知识检索、网络补充和成果生成能力，不含 shell、浏览器和子Agent调用。
+    # 2026-10-21 随 main 合入 assistant/office 角色契约：assistant 只承担协调、
+    # 材料阅读与任务委托，专业执行（写文件/图表/报告包/PPT/知识库问答）由角色
+    # 白名单强制收敛，项目配置无法越界（越界项会被运行时静默过滤）。
+    # 交互提问 ask_user_question 与任务/教练管理由共享层自动追加，无需在此声明。
     assistant:
       - list_session_resources
       - read_session_resource
       - publish_session_file
       - read_file
       - edit_file
-      - write_file
-      - knowledge_qa_workflow
-      - knowledge_document_reader
       - web_search
       - web_fetch
-      - execute_python
-      - create_business_chart
-      - create_report_package
-      - publish_report
-      - manage_editable_ppt
-      - create_pptx_with_ppt_master
-      - validate_pptx
     smart_event_external:
       - read_file
       - jiangsu_smart_event_workspace

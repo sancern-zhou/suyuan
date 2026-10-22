@@ -159,9 +159,19 @@ async def test_registry_dispatches_and_injects_history(monkeypatch):
         seen["history"] = history_section
         return {"summary": "ok", "final_message": "ok", "data_ids": [], "tool_call_details": {}}
 
+    from app.agent.workflow.catalog import FixedWorkflowDefinition, workflow_catalog
     from app.scheduled_tasks import workflow_tasks
 
-    monkeypatch.setitem(workflow_tasks._WORKFLOW_HANDLERS, "demo_workflow", handler)
+    monkeypatch.setitem(
+        workflow_catalog._definitions,
+        ("scheduled_task", "demo_workflow"),
+        FixedWorkflowDefinition(
+            name="demo_workflow",
+            entrypoint="scheduled_task",
+            phases=(),
+            handler=handler,
+        ),
+    )
     task = _task()
     task.workflow_name = "demo_workflow"
     result = await execute_workflow_task(task, _execution(), event=None, history_section="记忆")

@@ -194,6 +194,8 @@ class ListSkillsTool(LLMTool):
                 full_path = str(resolve_agent_path(file_path))
             else:
                 full_path = str(self.skills_dir / file_path)
+            # 统一正斜杠，保证跨平台（Windows 本地与 CI）路径断言一致。
+            full_path = full_path.replace("\\", "/")
             skills.append({
                 "name": name.strip(),
                 "file": full_path,
@@ -222,7 +224,8 @@ class ListSkillsTool(LLMTool):
                     name, description = self._parse_skill_file(md_file)
                     skills.append({
                         "name": name,
-                        "file": str(md_file),
+                        # 统一正斜杠，保证跨平台（Windows 本地与 CI）路径断言一致。
+                        "file": str(md_file).replace("\\", "/"),
                         "description": description
                     })
 
