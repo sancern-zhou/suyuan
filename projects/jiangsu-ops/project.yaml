@@ -2,6 +2,9 @@ schema_version: 1
 project: jiangsu-ops
 modules:
   - legacy
+  # 江苏保留左侧面板共享对话入口（后端 shared_conversation_routes 已挂载）；
+  # 共享段 main 自 486c74f1 起默认关闭，仅声明本模块的项目展示。
+  - shared-conversations
 frontend:
   theme: default
   brand_name: 江苏省运维审核管理服务平台
