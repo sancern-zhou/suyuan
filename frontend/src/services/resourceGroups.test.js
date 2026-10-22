@@ -70,3 +70,18 @@ test('only document, visualization, and board targets request an automatic previ
   assert.equal(isPreviewTarget({ primary: primary({ renderer: 'pdf', format: 'pdf' }) }), true)
   assert.equal(isPreviewTarget({ primary: primary({ renderer: 'board', format: 'drawio' }) }), true)
 })
+
+test('excludes task review cards from panel products but keeps them groupable for inline rendering', () => {
+  const groups = buildResourceGroups([
+    primary({
+      resource_id: 'review-spec', group_id: 'review', label: '昆山第二中学 SO2 故障工单审核',
+      kind: 'visual', role: 'output', renderer: 'chart', format: 'json', visual_id: 'task_review_r-1'
+    }),
+    primary({ resource_id: 'chart', group_id: 'chart-group', label: '趋势图.png', kind: 'visual', role: 'output', renderer: 'chart' })
+  ])
+
+  // 右侧面板产物不再包含审核卡片（对话内联已展示同一张 TaskReviewPanel），普通图表不受影响。
+  assert.deepEqual(topLevelProducts(groups).map(group => group.primary.label), ['趋势图.png'])
+  // 分组本身保留（内联图表块按 raw 资源匹配 visual_id，不走 topLevelProducts）。
+  assert.equal(groups.length, 2)
+})

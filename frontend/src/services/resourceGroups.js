@@ -1,3 +1,5 @@
+import { isTaskReviewCatalogResource } from './visualizationTypes.js'
+
 const PRODUCT_ROLES = new Set(['output', 'report'])
 const PRODUCT_KINDS = new Set(['data', 'file', 'artifact', 'visual'])
 const SUPPORTED_RENDERERS = new Set([
@@ -44,6 +46,8 @@ export function topLevelProducts(groups = []) {
     && primary.relation === 'primary'
     && PRODUCT_ROLES.has(primary.role)
     && PRODUCT_KINDS.has(primary.kind)
+    // 审核卡片在对话消息内已内联渲染（InlineChartCard → TaskReviewPanel），右侧面板不再重复展示
+    && !isTaskReviewCatalogResource(primary)
   ))
 }
 
