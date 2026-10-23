@@ -33,6 +33,7 @@ LLM Tools
 - 已支持的专用业务图型 → 所有模式必须使用 create_business_chart，优先于模式默认工具
 """
 
+import importlib
 import structlog
 
 from app.project_config.loader import load_project_context
@@ -320,6 +321,54 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
                 tool="get_jiangxi_noise_data",
                 error=str(e),
             )
+
+    # 江西项目专属：噪声统计评价考核 / 趋势对比 / 噪声源与事件 / 运行状态 / 站点目录
+    jiangxi_extra_tools = (
+        (
+            "get_jiangxi_noise_statistics",
+            "GetJiangxiNoiseStatisticsTool",
+            "stats_tool",
+            49,
+        ),
+        (
+            "get_jiangxi_noise_trends",
+            "GetJiangxiNoiseTrendsTool",
+            "trends_tool",
+            50,
+        ),
+        (
+            "get_jiangxi_noise_events",
+            "GetJiangxiNoiseEventsTool",
+            "events_tool",
+            51,
+        ),
+        (
+            "get_jiangxi_noise_runtime_status",
+            "GetJiangxiNoiseRuntimeStatusTool",
+            "runtime_tool",
+            52,
+        ),
+        (
+            "get_jiangxi_noise_directory",
+            "GetJiangxiNoiseDirectoryTool",
+            "directory_tool",
+            53,
+        ),
+    )
+    for tool_name, class_name, module_name, priority in jiangxi_extra_tools:
+        if is_project_tool_enabled(context, "jiangxi-noise", tool_name):
+            try:
+                module = importlib.import_module(
+                    f"app.tools.query.query_jiangxi_noise.{module_name}"
+                )
+                registry.register(getattr(module, class_name)(), priority=priority)
+                logger.info("tool_loaded", tool=tool_name)
+            except ImportError as e:
+                logger.warning(
+                    "tool_import_failed",
+                    tool=tool_name,
+                    error=str(e),
+                )
 
     # 许昌项目专属：大气环境监测数据接口中台查询工具
     if is_project_tool_enabled(

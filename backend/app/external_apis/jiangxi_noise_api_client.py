@@ -85,6 +85,128 @@ class JiangxiNoiseDataClient:
         "city_hour": ("/api/noiseproduct/airdata/DATCityHour/GetFunCityHourDisplayListAsync"),
     }
 
+    # 扩展路由表：值为 (HTTP 方法, 路径)。方法名与参数结构以平台代码为准。
+    API_ROUTES: dict[str, tuple[str, str]] = {
+        # 监测数据（站点/区县）
+        "station_second": (
+            "GET",
+            "/api/noiseproduct/airdata/NoiseBaseData/GetNoise1STransitionDisplayPagedListAsync",
+        ),
+        "station_minute": (
+            "GET",
+            "/api/noiseproduct/airdata/DATStationMinute/GetDATStationMinuteDisplayPagedListAsync",
+        ),
+        "station_period_report": (
+            "GET",
+            "/api/noiseproduct/airdata/DATStationDay/GetNoiseDATStationMonthOrYearDisplayPagedListAsync",
+        ),
+        "district_day": (
+            "GET",
+            "/api/noiseproduct/airdata/DATDistrictDay/GetDATDistrictDayDisplayPagedListAsync",
+        ),
+        # 统计评价考核
+        "station_period_stats": (
+            "POST",
+            "/api/noiseproduct/dataanalysis/NoiseEvaluateData/GetStationReportForRangeListAsync",
+        ),
+        "region_period_stats": (
+            "POST",
+            "/api/noiseproduct/dataanalysis/NoiseEvaluateData/GetReportForRangeListAsync",
+        ),
+        "quality_summary": (
+            "POST",
+            "/api/noiseproduct/airdata/NoiseQualityAssessmentData/GetSummaryAsync",
+        ),
+        "quality_detail": (
+            "POST",
+            "/api/noiseproduct/airdata/NoiseQualityAssessmentData/GetDetailPageAsync",
+        ),
+        "fun_evaluation": (
+            "POST",
+            "/api/noiseproduct/airdata/FunEvaluationData/GetFunEvaluationDataListAsync",
+        ),
+        "fun_attainment_rate": (
+            "POST",
+            "/api/noiseproduct/airdata/FunEvaluationData/GetFunAttainmentRate",
+        ),
+        "area_evaluation": (
+            "POST",
+            "/api/noiseproduct/airdata/AreaEvaluationData/GetAllEvaluationDataListAsync",
+        ),
+        "district_month_rate": (
+            "GET",
+            "/api/noiseproduct/airdata/DATDistricMonth/GetDistricMonthRateListAsync",
+        ),
+        "region_noise_ranking": (
+            "GET",
+            "/api/noiseproduct/index/HomeIndex/GetHomeIndexNoiseDataAsync",
+        ),
+        # 趋势对比
+        "year_on_year": (
+            "POST",
+            "/api/noiseproduct/airdata/NoiseYearOnYearAnalysisDataService/GetNoiseYearOnYearAnalysisDataAsync",
+        ),
+        "period_on_period": (
+            "POST",
+            "/api/noiseproduct/airdata/NoiseYearOnYearAnalysisDataService/GetNoisePeriodOnPeriodAnalysisDataAsync",
+        ),
+        "trend_24h": (
+            "POST",
+            "/api/noiseproduct/airdata/Noise24HourTrendDataService/GetNoise24HourTrendAsync",
+        ),
+        "long_term_trend": (
+            "POST",
+            "/api/noiseproduct/airdata/NoiseLongTermTrendDataService/GetNoiseLongTermTrendDataAsync",
+        ),
+        "noise_compare": (
+            "POST",
+            "/api/noiseproduct/airdata/NoiseCompareDataService/GetNoiseCompareDataAsync",
+        ),
+        # 噪声源与事件
+        "source_analysis": (
+            "GET",
+            "/api/noiseproduct/dataanalysis/NoiseSourceAnalysis/GetNoiseSourceAnalysisDataPageAsync",
+        ),
+        "event_list": (
+            "GET",
+            "/api/noiseproduct/airdata/NoiseEvent/GetNoiseEventPagedListAsync",
+        ),
+        "event_type_percentage": (
+            "GET",
+            "/api/noiseproduct/airdata/NoiseEvent/GetNoiseEventTypePercentagePageListAsync",
+        ),
+        "event_daily_summary": (
+            "POST",
+            "/api/noiseproduct/airdata/NoiseEventAnalysis/GetNoiseLdLnAndEventNumListAsync",
+        ),
+        # 运行状态
+        "network_overview": (
+            "GET",
+            "/api/noiseproduct/netoverview/NetworkDataQuery/GetHomePageNetworkDataAsync",
+        ),
+        "station_network_status": (
+            "GET",
+            "/api/noiseproduct/netoverview/NetworkDataQuery/GetNetworkDataAsync",
+        ),
+        "data_receiving_rate": (
+            "GET",
+            "/api/noiseproduct/netoverview/DataReceivingRateQuery/GetDataReceivingRateAsync",
+        ),
+        "alarm_records": (
+            "GET",
+            "/api/noiseproduct/AlarmRecord/GetAlarmRecordsPagedAsync",
+        ),
+        # 基础字典
+        "station_directory": (
+            "GET",
+            "/api/noiseproduct/AirCityProductBase/GetAllEnabledBSDStationAsync",
+        ),
+        "region_directory": (
+            "GET",
+            "/api/noiseproduct/AirCityProductBase/GetBSDRegionAsync",
+        ),
+    }
+
     def __init__(
         self,
         *,
@@ -214,21 +336,32 @@ class JiangxiNoiseDataClient:
         self,
         endpoint: str,
         params: dict[str, Any],
+        *,
+        method: str = "GET",
+        json_body: dict[str, Any] | None = None,
     ) -> Any:
         async with self._create_http_client() as client:
             for attempt in range(2):
                 if not self._token:
                     await self._authenticate(client)
 
+                request_kwargs: dict[str, Any] = {
+                    "headers": {
+                        "Authorization": f"Bearer {self._token}",
+                        "Content-Type": "application/json",
+                        "syscode": "NOISE",
+                    }
+                }
+                if method == "GET":
+                    request_kwargs["params"] = params
+                else:
+                    request_kwargs["json"] = json_body if json_body is not None else {}
+
                 try:
-                    response = await client.get(
+                    response = await client.request(
+                        method,
                         endpoint,
-                        headers={
-                            "Authorization": f"Bearer {self._token}",
-                            "Content-Type": "application/json",
-                            "syscode": "NOISE",
-                        },
-                        params=params,
+                        **request_kwargs,
                     )
                 except httpx.TimeoutException as exc:
                     raise JiangxiNoiseClientError(
@@ -368,9 +501,55 @@ class JiangxiNoiseDataClient:
         result = await self._request_result(self.API_ENDPOINTS["city_hour"], params)
         return self._paged_result(result)
 
+    @staticmethod
+    def build_array_params(
+        params: dict[str, Any],
+        name: str,
+        values: list[str],
+        *,
+        start_index: int = 0,
+    ) -> None:
+        """将列表参数按平台的 codes[0]/timePoint[0] 形式写入查询参数。"""
+        for offset, value in enumerate(values):
+            params[f"{name}[{start_index + offset}]"] = value
+
+    async def query_platform_api(
+        self,
+        route: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """按路由表调用平台接口并归一化返回。
+
+        分页结果返回 data/total_count，列表结果返回 data，对象结果直接放入 data。
+        """
+        try:
+            method, endpoint = self.API_ROUTES[route]
+        except KeyError as exc:
+            raise JiangxiNoiseClientError(
+                "unknown_route",
+                f"未知的江西噪声平台路由：{route}",
+            ) from exc
+        result = await self._request_result(
+            endpoint,
+            params if params is not None else {},
+            method=method,
+            json_body=json_body,
+        )
+        if isinstance(result, dict) and "items" in result:
+            return self._paged_result(result)
+        if isinstance(result, list):
+            return {"success": True, "data": result, "total_count": len(result)}
+        return {"success": True, "data": result}
+
     @classmethod
     def get_api_endpoints(cls) -> dict[str, str]:
         return cls.API_ENDPOINTS.copy()
+
+    @classmethod
+    def get_api_routes(cls) -> dict[str, tuple[str, str]]:
+        return {key: value for key, value in cls.API_ROUTES.items()}
 
 
 NoiseClient = JiangxiNoiseDataClient

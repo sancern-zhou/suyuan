@@ -65,6 +65,11 @@ backend:
     query: projects/jiangxi/prompts/query.md
   tools:
     - get_jiangxi_noise_data
+    - get_jiangxi_noise_statistics
+    - get_jiangxi_noise_trends
+    - get_jiangxi_noise_events
+    - get_jiangxi_noise_runtime_status
+    - get_jiangxi_noise_directory
   fetchers_enabled: false
   agent_mode_tools:
     assistant:
@@ -86,6 +91,11 @@ backend:
       - list_directory
       - search_files
       - get_jiangxi_noise_data
+      - get_jiangxi_noise_statistics
+      - get_jiangxi_noise_trends
+      - get_jiangxi_noise_events
+      - get_jiangxi_noise_runtime_status
+      - get_jiangxi_noise_directory
     query:
       - list_session_resources
       - publish_session_file
@@ -99,6 +109,11 @@ backend:
       - execute_echarts_python
       - execute_python
       - get_jiangxi_noise_data
+      - get_jiangxi_noise_statistics
+      - get_jiangxi_noise_trends
+      - get_jiangxi_noise_events
+      - get_jiangxi_noise_runtime_status
+      - get_jiangxi_noise_directory
     report:
       - list_session_resources
       - publish_session_file

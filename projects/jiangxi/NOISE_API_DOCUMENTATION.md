@@ -2,10 +2,11 @@
 
 ## 合并 main 后的工具入口
 
-当前仅注册统一工具 `get_jiangxi_noise_data`，参数与查询能力以
-`backend/app/tools/query/query_jiangxi_noise/tool.py` 的工具 schema 为准。
-原有 `query_jiangxi_noise_*` 工具不再注册；下文保留为旧版平台对接记录，
-其中的工具名、参数、时间范围和能力说明不代表当前统一工具支持范围。
+当前注册六个按业务语义划分的数据获取工具（见第 2 节工具矩阵），
+参数与查询能力以 `backend/app/tools/query/query_jiangxi_noise/` 下各工具 schema 为准，
+均接入 query 与 expert 模式（`projects/jiangxi/project.yaml` 的
+`backend.tools` 与 `backend.agent_mode_tools`）。
+文中“旧版五个工具”的对接记录仅作历史参考，工具名与能力已不代表当前实现。
 江西声环境知识问答模式及其专属提示词继续保留。
 
 ## 1. 平台概述
@@ -23,19 +24,25 @@
 
 代码和日志不得保存、输出或提交认证密钥、Token 或 Token 前缀。
 
-## 2. 当前工具开放范围
+## 2. 当前工具矩阵
 
-当前开放五个独立分页查询工具：
+六个工具按业务语义划分，统一参数约定：ISO 8601 时间（无时区按北京时间）、
+`review_status` 取 `raw`/`audited`、`max_results` 1~100（默认 50）、
+结果超限返回 `truncated` 与缩小范围提示、无效/缺测数值以 `-99` 表示。
+站点/区县编码先经 `get_jiangxi_noise_directory` 解析。
 
-| 工具 | 能力 | 端点 |
+| 工具 | 能力 | 主要平台端点 |
 |---|---|---|
-| `query_jiangxi_noise_city` | 城市功能区聚合值（时间范围汇总） | `/api/noiseproduct/airdata/DATCityHour/GetFunCityHourDisplayListAsync` |
-| `query_jiangxi_noise_station_minute` | 站点分钟值 | `/api/noiseproduct/airdata/DATStationMinute/GetDATStationMinuteDisplayPagedListAsync` |
-| `query_jiangxi_noise_station_hour` | 站点小时值 | `/api/noiseproduct/airdata/DATStationHour/GetDATStationHourDisplayPagedListAsync` |
-| `query_jiangxi_noise_station_day` | 站点日均值 | `/api/noiseproduct/airdata/DATStationDay/GetDATStationDayDisplayPagedListAsync` |
-| `query_jiangxi_noise_station_statistics` | 站点任意时段统计值 | `/api/noiseproduct/airdata/DATStationDay/GetNoiseStationAnyDateDisplayPagedListAsync` |
+| `get_jiangxi_noise_data` | 站点秒/分/时/日/月/季/年监测数据、城市小时聚合、区县日值 | `NoiseBaseData/GetNoise1STransitionDisplayPagedListAsync`、`DATStationMinute`、`DATStationHour`、`DATStationDay`、`DATStationDay/GetNoiseDATStationMonthOrYearDisplayPagedListAsync`、`DATCityHour/GetFunCityHourDisplayListAsync`、`DATDistrictDay` |
+| `get_jiangxi_noise_statistics` | 站点/区域周期统计、质量评价概览与明细、功能区评价与达标率、区域年度评价、区县月达标率排名、区域声级排名 | `NoiseEvaluateData/GetStationReportForRangeListAsync`、`GetReportForRangeListAsync`、`NoiseQualityAssessmentData`、`FunEvaluationData`、`AreaEvaluationData`、`DATDistricMonth`、`Index/HomeIndex` |
+| `get_jiangxi_noise_trends` | 年度同比、月/季环比、24小时趋势、长期均值趋势、多对象对比 | `NoiseYearOnYearAnalysisDataService`、`Noise24HourTrendDataService`、`NoiseLongTermTrendDataService`、`NoiseCompareDataService` |
+| `get_jiangxi_noise_events` | 声源结构分析、事件明细、事件类型占比、每日昼夜事件趋势 | `NoiseSourceAnalysis`、`NoiseEvent`、`NoiseEventAnalysis` |
+| `get_jiangxi_noise_runtime_status` | 联网总览、站点在线状态、数据获取率/有效率、报警记录 | `NetworkDataQuery`、`DataReceivingRateQuery`、`AlarmRecord` |
+| `get_jiangxi_noise_directory` | 启用站点清单与行政区划编码（名称→编码解析） | `AirCityProductBase/GetAllEnabledBSDStationAsync`、`GetBSDRegionAsync` |
 
 工具支持自动翻页、江西省/地市/站点名称解析、站点编码查询和大结果外部化。
+各工具的详细参数、枚举与错误码见对应 schema 与
+`backend/tests/test_jiangxi_noise_tools.py`。
 
 ## 3. 运行配置
 
