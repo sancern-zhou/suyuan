@@ -5,6 +5,17 @@
 from typing import List, Optional
 
 
+def _ops_database_name() -> str:
+    """运维库 database 参数名（部署可通过 OPS_SQLSERVER_DATABASE 覆盖）。"""
+    try:
+        from config.settings import Settings
+
+        return Settings().ops_sqlserver_database
+    except Exception:
+        return "AirPollutionAnalysis"
+
+
+
 def build_ops_prompt(
     available_tools: List[str],
     memory_context: Optional[str] = None,
@@ -46,9 +57,9 @@ def build_ops_prompt(
             "- `report_ready=false` 表示仍有 pending_review_items 或 pending_semantic_reviews；交付待核验清单，不得生成正式报告。\n",
             "- 普通运维工单查询、工单详情、基础表单、跨表关联或自定义补查使用 `execute_ops_sql_query`。\n",
             "- 运维模式只能查询 `execute_ops_sql_query` 工具说明中列出的白名单表单；禁止通过 `information_schema.tables`、`information_schema.columns` 或其他元数据表做表名发现式查询。\n",
-            "- 不确定表结构或字段名时，先调用 `execute_ops_sql_query(describe_table='表名', database='AirPollutionAnalysis')` 查看结构和样例。\n",
+            f"- 不确定表结构或字段名时，先调用 `execute_ops_sql_query(describe_table='表名', database='{_ops_database_name()}')` 查看结构和样例。\n",
             "- 如果不知道中文业务表单对应哪个白名单表名，不要猜表名或模糊搜索系统表；请基于已列出的白名单表说明选择最可能的表，或向用户说明当前表单映射不明确。\n",
-            "- 质控、工单、基础表单、站点基础信息通常使用 `database='AirPollutionAnalysis'`。\n",
+            f"- 质控、工单、基础表单、站点基础信息通常使用 `database='{_ops_database_name()}'`。\n",
         ]
     )
 

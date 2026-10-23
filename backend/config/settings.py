@@ -1057,6 +1057,61 @@ class Settings(BaseSettings):
             f"TrustServerCertificate={self.sqlserver_trust_server_certificate};"
         )
 
+    # Operations (work order) SQL Server Configuration.
+    # 每个字段未配置时逐项回退到通用 sqlserver_* 配置；仅
+    # ops_sqlserver_database 固定默认 AirPollutionAnalysis（与历史行为一致），
+    # 这样在未配置 OPS_SQLSERVER_* 的部署上连接串与旧行为完全相同。
+    ops_sqlserver_host: Optional[str] = Field(
+        default=None,
+        description="Operations SQL Server host; falls back to sqlserver_host when unset",
+    )
+    ops_sqlserver_port: Optional[int] = Field(
+        default=None,
+        description="Operations SQL Server port; falls back to sqlserver_port when unset",
+    )
+    ops_sqlserver_database: str = Field(
+        default="AirPollutionAnalysis",
+        description="Operations SQL Server database name"
+    )
+    ops_sqlserver_user: Optional[str] = Field(
+        default=None,
+        description="Operations SQL Server username; falls back to sqlserver_user when unset",
+    )
+    ops_sqlserver_password: Optional[str] = Field(
+        default=None,
+        description="Operations SQL Server password; falls back to sqlserver_password when unset",
+    )
+    ops_sqlserver_driver: Optional[str] = Field(
+        default=None,
+        description="Operations SQL Server ODBC driver; falls back to sqlserver_driver when unset",
+    )
+    ops_sqlserver_encrypt: Optional[str] = Field(
+        default=None,
+        description="Operations ODBC Encrypt flag; falls back to sqlserver_encrypt when unset",
+    )
+    ops_sqlserver_trust_server_certificate: Optional[str] = Field(
+        default=None,
+        description="Operations trust server cert flag; falls back when unset",
+    )
+
+    @property
+    def ops_sqlserver_connection_string(self) -> str:
+        """ODBC connection string for the operations (work order) SQL Server."""
+        return (
+            f"DRIVER={{{self.ops_sqlserver_driver or self.sqlserver_driver}}};"
+            f"SERVER={self.ops_sqlserver_host or self.sqlserver_host},{self.ops_sqlserver_port or self.sqlserver_port};"
+            f"DATABASE={self.ops_sqlserver_database};"
+            f"UID={self.ops_sqlserver_user or self.sqlserver_user};"
+            f"PWD={{{self.ops_sqlserver_password or self.sqlserver_password}}};"
+            f"Encrypt={self.ops_sqlserver_encrypt or self.sqlserver_encrypt};"
+            f"TrustServerCertificate={self.ops_sqlserver_trust_server_certificate or self.sqlserver_trust_server_certificate};"
+        )
+
+    @property
+    def ops_sqlserver_configured(self) -> bool:
+        """True when the deployment points operations tools at a dedicated SQL Server."""
+        return bool(self.ops_sqlserver_host)
+
     # Query Template Configuration
     query_template_city_pollutant: str = Field(
         default="{city}市{pollutant}小时平均浓度，时间为{start_time}至{end_time}",
