@@ -301,3 +301,7 @@ id_ed25519*
 # 本机部署专属（不入 git）
 迁移包/
 deploy/nginx/templates-local/
+
+# 广东运维工单语义契约与项目文档不受全局忽略规则约束
+!backend/app/tools/query/guangdong_ops_sql_query/contract.txt
+!projects/guangdong/docs/
