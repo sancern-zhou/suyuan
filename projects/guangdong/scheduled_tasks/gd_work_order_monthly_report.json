@@ -1,0 +1,42 @@
+{
+  "task_id": "gd_work_order_monthly_report",
+  "name": "广东运维工单月度报告",
+  "description": "每月3日生成上一自然月广东运维工单月度分析报告：总量与环比、类型/状态/区域分布、时效与附件完整率、长期未闭环存量与高频故障原因，产出 Word 报告并登记发布",
+  "execution_mode": "custom",
+  "model_tier": "auto",
+  "tool_names": [
+    "execute_guangdong_mart_sql",
+    "execute_python",
+    "read_file",
+    "create_report_package",
+    "render_report_package",
+    "validate_report_package",
+    "publish_session_file"
+  ],
+  "trigger_type": "schedule",
+  "schedule_type": "monthly_custom",
+  "day_of_month": 3,
+  "hour": 7,
+  "minute": 30,
+  "enabled": true,
+  "prompt": "生成上一自然月广东运维工单月度分析报告，数据只取本地工单同步数据集（只读查询），报告必须可复算。执行步骤：1) 确定上一自然月起止日期（如运行日为2026-11-03则统计2026-10-01至2026-10-31，按工单创建时间口径）。2) 用本地数据集分批查询并保存原始结果：a.上月新建工单数、完成工单数、月末在办存量，及上月和上上月环比；b.按工单类型的数量分布（类型用中文名：运维单/故障单/组分网巡检单等，对照工具说明内嵌字典）；c.按状态的数量分布；d.按站点聚合的工单量Top15（关联站点维度表取中文名，按区域分组汇总）；e.完成工单的处置时长分布（完成时间-创建时间，输出中位数/P90/最长）；f.附件完整率（有附件索引的完成工单占比，按工单类型分开）；g.月末在办中创建时间超过30天的存量清单Top20（工单号/站点/类型/创建天数）；h.上月故障单高频原因Top10。3) 用 execute_python 对以上查询结果做确定性聚合与核对，脚本只做数据标准化和计算，禁止在脚本中臆造任何数值；计算脚本失败时记录错误并停止，不得重复换脚本重试超过一次。4) 报告结构：一、总体概况（新建/完成/环比/在办存量）；二、工单类型结构（表+简评）；三、区域与站点分布（Top15表+集中度点评）；四、处置时效（分位数表+与上月对比）；五、附件完整情况；六、长期未闭环专项（列表+建议核查方向）；七、故障原因Top10。每节注明统计口径与数据截至时间。5) 严格执行 create_report_package（report.qmd）→ render_report_package(format 含 docx) → validate_report_package；校验失败不得发布，修复后再校验；渲染产物如未自动发布，用 publish_session_file 登记最终 docx。6) 数据真实性红线：查询失败或结果为空时如实写数据缺口，不得生成'无异常'结论；在办存量只作存量表述，不与计划完成时间比较（源系统该字段存在历史挂起口径问题，禁止输出'超期率'）；所有数字必须来自本轮查询或聚合结果；不输出表名、字段名、SQL或文件路径。",
+  "timeout_seconds": 1800,
+  "created_by": "project-default",
+  "owner_user_id": "system",
+  "owner_username": "gd-monthly-report-agent",
+  "owner_display_name": "广东工单月报智能体",
+  "tags": [
+    "广东",
+    "运维工单",
+    "月报",
+    "只读"
+  ],
+  "workspace_entry": {
+    "enabled": true,
+    "title": "工单月报"
+  },
+  "history_learning": {
+    "enabled": false
+  },
+  "skill_id": null
+}
