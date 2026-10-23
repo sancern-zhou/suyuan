@@ -37,6 +37,7 @@
         @select-task="handleTaskWorkspaceSelect"
         @select-review="$emit('select-review', $event)"
         @open-review-detail="$emit('open-review-detail', $event)"
+        @open-event-detail="$emit('open-event-detail', $event)"
       />
       <template v-else>
         <div class="conversation-workspace">
@@ -137,7 +138,7 @@
           <SmartEventCenterPanel
             v-else-if="managementPanel === 'smart-events'"
             :workspace-command="smartEventCommand"
-            @close="$emit('close-management-panel')"
+            @close="$emit('close-smart-event-management-panel')"
             @open-task="$emit('open-smart-event-task', $event)"
           />
 
@@ -587,6 +588,7 @@ const emit = defineEmits([
   'sidebar-action',
   'select-review',
   'open-review-detail',
+  'open-event-detail',
   'load-session',
   'start-drag',
   'stop-drag',
@@ -621,6 +623,7 @@ const emit = defineEmits([
   'restore-execution-session',
   'open-smart-event-task',
   'close-smart-event-panel',
+  'close-smart-event-management-panel',
   'close-work-order-review-panel',
   'close-device-control-panel',
   'refresh-session-history',

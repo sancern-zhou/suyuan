@@ -62,9 +62,15 @@ test('scheduler classifies generic todos by task type and keeps archived items v
   await page.getByLabel('任务类型').selectOption('智能事件')
   await expect(reviewRows).toHaveCount(1)
   await expect(reviewRows.first()).toContainText('站点告警需确认')
+  // 智能事件行与工单行操作区一致：查看详情 / 快速审核 / 进入对话区 三个操作。
+  const rowOps = reviewRows.first().locator('.review-row-actions')
+  await expect(rowOps.getByRole('button', { name: '查看详情' })).toHaveCount(1)
+  await expect(rowOps.getByRole('button', { name: '快速审核' })).toHaveCount(1)
+  await expect(rowOps.getByRole('button', { name: '进入对话区' })).toHaveCount(1)
   await page.getByLabel('任务类型').selectOption('工单审核')
   await expect(reviewRows).toHaveCount(2)
-  await page.getByRole('button', { name: '查看详情' }).first().click()
+  // 查看详情在宿主里直达整页工作台（本 harness 不挂宿主）；人工处理表单走快速审核弹窗。
+  await page.getByRole('button', { name: '快速审核' }).first().click()
   await page.getByLabel('审核意见', { exact: true }).fill('已核验')
   await page.getByRole('button', { name: '确认归档' }).click()
   await page.getByRole('button', { name: '关闭', exact: true }).click()
@@ -81,8 +87,8 @@ test('scheduler classifies generic todos by task type and keeps archived items v
   await expect(reviewRows.first()).toContainText('恒值异常需确认')
   await statusFilter.selectOption('')
   await expect(reviewRows).toHaveCount(2)
-  // 已归档记录的详情为只读：无人工处理表单，展示人工处理记录。
-  await page.getByRole('button', { name: '查看详情' }).first().click()
+  // 已归档记录的快速审核为只读：无人工处理表单，展示人工处理记录。
+  await page.getByRole('button', { name: '快速审核' }).first().click()
   await expect(page.getByRole('heading', { name: '人工处理记录' })).toBeVisible()
   await expect(page.getByRole('button', { name: '确认归档' })).toHaveCount(0)
   await page.getByRole('button', { name: '关闭', exact: true }).click()

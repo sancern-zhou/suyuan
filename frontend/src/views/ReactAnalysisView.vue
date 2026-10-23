@@ -107,10 +107,12 @@
       @restore-execution-session="handleSessionRestoreAndClosePanel"
       @open-smart-event-task="handleSmartEventTaskOpen"
       @close-smart-event-panel="handleSmartEventPanelClose"
+      @close-smart-event-management-panel="handleSmartEventManagementPanelClose"
       @close-work-order-review-panel="handleWorkOrderReviewPanelClose"
       @close-device-control-panel="handleDeviceControlPanelClose"
       @select-review="handleTodoReviewOpen"
       @open-review-detail="handleTodoReviewDetailOpen"
+      @open-event-detail="handleTodoEventDetailOpen"
       @refresh-session-history="refreshSessionHistory"
       @cleanup-sessions="handleSessionCleanup"
       @restore-session="handleSessionRestoreAndClosePanel"
@@ -210,6 +212,8 @@ const taskWorkspaceTask = ref(null)
 const smartEventCommand = ref(null)
 const suppressSmartEventCommandOpen = ref(false)
 const lastSmartEventCommandKey = ref('')
+// 整页智能事件中心是否从任务调度中心进入：决定面板关闭后回到任务调度中心还是当前对话
+const smartEventPanelReturnToTaskCenter = ref(false)
 const workOrderReviewCommand = ref(null)
 const lastWorkOrderReviewCommandKey = ref('')
 const deviceControlCommand = ref(null)
@@ -399,6 +403,16 @@ const handleSmartEventPanelClose = () => {
   leftSidebarCollapsed.value = false
 }
 
+// 整页智能事件中心关闭：任务调度中心「查看详情」进入时回到任务调度中心列表；
+// 侧边栏「智能事件中心」进入时仅收起面板回到当前对话
+const handleSmartEventManagementPanelClose = () => {
+  managementPanel.value = null
+  if (smartEventPanelReturnToTaskCenter.value) {
+    smartEventPanelReturnToTaskCenter.value = false
+    workspace.value = 'task-center'
+  }
+}
+
 // AI 取证命令驱动的故障工单审核页面在右侧面板打开，保留对话供用户继续交互
 const openWorkOrderReviewSidePanel = () => {
   workspace.value = 'chat'
@@ -448,6 +462,7 @@ watch(currentModeSessionId, () => {
   smartEventCommand.value = null
   workOrderReviewCommand.value = null
   deviceControlCommand.value = null
+  smartEventPanelReturnToTaskCenter.value = false
   lastSmartEventCommandKey.value = ''
   lastWorkOrderReviewCommandKey.value = ''
   lastDeviceControlCommandKey.value = ''
@@ -613,6 +628,22 @@ const handleTodoReviewDetailOpen = (review) => {
   managementPanel.value = 'work-order-review'
 }
 
+// 任务调度中心「查看详情」直达智能事件详情：复用智能事件工作台 open_event_detail 命令契约，
+// 整页管理面板直显事件详情与 AI 研判内容——不恢复会话、不展开对话区与右侧面板 tab。
+// 写入 lastSmartEventCommandKey 防止消息回放重复应用同一条命令
+const handleTodoEventDetailOpen = (review) => {
+  const eventId = String(review?.subject_id || '').trim()
+  if (!eventId) return
+  const command = { type: 'open_event_detail', event_id: eventId }
+  smartEventCommand.value = command
+  lastSmartEventCommandKey.value = JSON.stringify(command)
+  smartEventPanelReturnToTaskCenter.value = true
+  workspace.value = 'chat'
+  rightPanelVisible.value = false
+  // 直接赋值而非 showManagementPanel，避免面板已开时二次点击被 toggle 收起而不是切换事件
+  managementPanel.value = 'smart-events'
+}
+
 const handleTodoReviewOpen = async (review) => {
   let sessionId = null
   if (review?.execution_id && review?.task_id) {
@@ -635,13 +666,14 @@ const handleTodoReviewOpen = async (review) => {
     }
     suppressSmartEventCommandOpen.value = false
   }
-  // 找不到执行会话时回退：打开智能事件工作区并聚焦该事件
+  // 找不到执行会话时回退：打开智能事件工作区并聚焦该事件（仍从任务调度中心进入，关闭时回列表）
   if (review?.subject_id) {
     const command = { type: 'open_event_detail', event_id: String(review.subject_id) }
     smartEventCommand.value = command
     lastSmartEventCommandKey.value = JSON.stringify(command)
+    smartEventPanelReturnToTaskCenter.value = true
     workspace.value = 'chat'
-    showManagementPanel('smart-events')
+    managementPanel.value = 'smart-events'
     rightPanelVisible.value = false
   }
 }
@@ -848,6 +880,8 @@ const handleSidebarAction = async (actionId) => {
       await refreshScheduledTasks()
       break
     case 'smart-events':
+      // 侧边栏进入不回任务调度中心：面板关闭后留在当前对话
+      smartEventPanelReturnToTaskCenter.value = false
       showManagementPanel('smart-events')
       break
     case 'session-history':

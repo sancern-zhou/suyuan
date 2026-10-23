@@ -29,12 +29,15 @@ test('scheduler center renders only the structured review list', async () => {
 test('review list keeps conversation entry, detail dialog and shared emits', async () => {
   const source = await readFile(new URL('./TaskSchedulerCenter.vue', import.meta.url), 'utf8')
   assert.match(source, /emit\('select-review', task\)/)
-  assert.match(source, /'select-task', 'select-review', 'open-review-detail'/)
+  assert.match(source, /'select-task', 'select-review', 'open-review-detail', 'open-event-detail'/)
   assert.match(source, /selectedReviewId = task\.review_id/)
-  // 工单审核行的查看详情直达右侧证据包工作台（不进对话）；人工确认表单保留在研判卡片弹窗。
+  // 两类行操作区一致：查看详情直达整页工作台（不进对话）；人工确认表单保留在快速审核弹窗。
   assert.match(source, /emit\('open-review-detail', task\)/)
   assert.match(source, /isWorkOrderTask/)
-  assert.match(source, /研判卡片/)
+  assert.match(source, /快速审核/)
+  assert.match(source, /进入对话区/)
+  // 智能事件行的查看详情按 subject_id（事件 ID）分流到 open-event-detail。
+  assert.match(source, /emit\('open-event-detail', task\)/)
   const view = await readFile(new URL('../../views/ReactAnalysisView.vue', import.meta.url), 'utf8')
   assert.match(view, /@select-review="handleTodoReviewOpen"/)
   assert.match(view, /suppressSmartEventCommandOpen/)
@@ -42,12 +45,21 @@ test('review list keeps conversation entry, detail dialog and shared emits', asy
   // 直达详情复用工单审核工作台命令契约，整页管理面板直显（同智能事件中心），不进对话不出右侧 tab。
   assert.match(view, /WORK_ORDER_REVIEW_COMMANDS\.OPEN, working_order_code: code/)
   assert.match(view, /managementPanel\.value = 'work-order-review'/)
+  // 智能事件行查看详情复用 open_event_detail 命令契约整页直显；面板关闭按进入来源回任务调度中心。
+  assert.match(view, /@open-event-detail="handleTodoEventDetailOpen"/)
+  assert.match(view, /open_event_detail', event_id: eventId/)
+  assert.match(view, /managementPanel\.value = 'smart-events'/)
+  assert.match(view, /@close-smart-event-management-panel="handleSmartEventManagementPanelClose"/)
   const layout = await readFile(new URL('../reactAnalysis/MainLayout.vue', import.meta.url), 'utf8')
   assert.match(layout, /@select-review="\$emit\('select-review', \$event\)"/)
   assert.match(layout, /@open-review-detail="\$emit\('open-review-detail', \$event\)"/)
+  assert.match(layout, /@open-event-detail="\$emit\('open-event-detail', \$event\)"/)
   // 管理面板插槽内宿主整页工单审核工作台；返回列表直接关闭回任务调度中心，不展示内部工单列表。
   assert.match(layout, /managementPanel === 'work-order-review'/)
   assert.match(layout, /WorkOrderReviewCenterPanel[\s\S]*?:list-return-closes="true"/)
+  // 智能事件中心整页宿主的关闭走专属事件，由宿主决定回落点（任务调度中心或当前对话）。
+  assert.match(layout, /managementPanel === 'smart-events'/)
+  assert.match(layout, /@close="\$emit\('close-smart-event-management-panel'\)"/)
   // 对话右侧 tab 仅展示当前工单分析，不提供刷新/返回列表（整页模式保持默认 true）。
   const panel = await readFile(new URL('../management/WorkOrderReviewCenterPanel.vue', import.meta.url), 'utf8')
   assert.match(panel, /showListActions: \{ type: Boolean, default: true \}/)
