@@ -140,6 +140,7 @@
             :workspace-command="smartEventCommand"
             @close="$emit('close-smart-event-management-panel')"
             @open-task="$emit('open-smart-event-task', $event)"
+            @open-judgment-conversation="$emit('open-judgment-conversation', $event)"
           />
 
           <!-- 任务调度中心「查看详情」直达：整页工单审核工作台，同智能事件中心详情模式；
@@ -259,6 +260,7 @@
         @board-snapshot-confirm="handleBoardSnapshotConfirm"
         @submit-human-feedback="$emit('submit-human-feedback', $event)"
         @open-smart-event-task="$emit('open-smart-event-task', $event)"
+        @open-judgment-conversation="$emit('open-judgment-conversation', $event)"
         @close-smart-event-panel="$emit('close-smart-event-panel')"
         @close-work-order-review-panel="$emit('close-work-order-review-panel')"
         @close-device-control-panel="$emit('close-device-control-panel')"
@@ -622,6 +624,7 @@ const emit = defineEmits([
   'delete-scheduled-task',
   'restore-execution-session',
   'open-smart-event-task',
+  'open-judgment-conversation',
   'close-smart-event-panel',
   'close-smart-event-management-panel',
   'close-work-order-review-panel',

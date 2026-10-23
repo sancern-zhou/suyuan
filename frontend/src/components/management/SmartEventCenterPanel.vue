@@ -79,6 +79,10 @@
                 <button v-if="!hasCompletedJudgment(event) || event.pending_delta" type="button" class="ai-button" :disabled="event.archived || isAiBusy(event.event_id)" @click.stop="dispatchAiJudgment(event)">
                   {{ isAiBusy(event.event_id) ? '研判中…' : 'AI研判' }}
                 </button>
+                <!-- 与任务调度中心「进入对话区」同链路：按 review_id 取研判记录后恢复研判执行会话 -->
+                <button v-if="event.review_id" type="button" class="detail-button" :disabled="isConversationBusy(event.event_id)" @click.stop="openJudgmentConversation(event)">
+                  {{ isConversationBusy(event.event_id) ? '打开中…' : '查看对话' }}
+                </button>
                 <button type="button" class="detail-button" @click.stop="openDetail(event.event_id)">详情</button>
               </td>
             </tr>
@@ -485,7 +489,7 @@ const props = defineProps({
   workspaceCommand: { type: Object, default: null },
   category: { type: String, default: 'all' }
 })
-const emit = defineEmits(['close', 'open-task'])
+const emit = defineEmits(['close', 'open-task', 'open-judgment-conversation'])
 
 const DEFAULT_LIST_TIME_FORMATTER = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Shanghai',
@@ -574,6 +578,7 @@ const viewMode = ref(props.initialEventId ? 'detail' : 'list')
 const workbenchActive = computed(() => viewMode.value === 'detail' && !detailLoading.value && workspaceMode.value === 'detail' && Boolean(selectedEvent.value))
 const evidenceBusy = ref(false)
 const aiBusyIds = ref(new Set())
+const conversationBusyIds = ref(new Set())
 const activeEvidenceKey = ref('event')
 const evidenceContent = ref(null)
 const videoImageUrls = ref({})
@@ -1361,6 +1366,28 @@ const dispatchAiJudgment = async event => {
     const next = new Set(aiBusyIds.value)
     next.delete(eventId)
     aiBusyIds.value = next
+  }
+}
+
+// 列表「查看对话」：事件自带 review_id，取研判记录后交宿主恢复研判执行会话
+// （execution_id→session_id 链路在宿主 ReactAnalysisView，与任务调度中心「进入对话区」同源）
+const isConversationBusy = eventId => conversationBusyIds.value.has(String(eventId))
+const openJudgmentConversation = async event => {
+  const eventId = String(event?.event_id || '')
+  const reviewId = event?.review_id
+  if (!eventId || !reviewId || isConversationBusy(eventId)) return
+  conversationBusyIds.value = new Set(conversationBusyIds.value).add(eventId)
+  error.value = ''
+  actionMessage.value = ''
+  try {
+    const { review } = await getTaskReview(reviewId)
+    emit('open-judgment-conversation', review)
+  } catch (err) {
+    actionMessage.value = err?.message || '研判对话打开失败，记录可能已清理'
+  } finally {
+    const next = new Set(conversationBusyIds.value)
+    next.delete(eventId)
+    conversationBusyIds.value = next
   }
 }
 

@@ -27,6 +27,35 @@ test('event list exposes a manual AI judgment dispatch action', () => {
   assert.match(source, /@click\.stop="dispatchAiJudgment\(event\)"/)
 })
 
+test('event list links judged events to their judgment conversation', () => {
+  // 「查看对话」与任务调度中心「进入对话区」同链路：按事件自带 review_id 取研判记录，
+  // 交宿主按 execution_id→session_id 恢复研判执行会话；无 review_id 的行不显示入口。
+  assert.match(source, /defineEmits\(\['close', 'open-task', 'open-judgment-conversation'\]\)/)
+  assert.match(source, /v-if="event\.review_id"/)
+  assert.match(source, /@click\.stop="openJudgmentConversation\(event\)"/)
+  assert.match(source, /const \{ review \} = await getTaskReview\(reviewId\)/)
+  assert.match(source, /emit\('open-judgment-conversation', review\)/)
+  assert.match(source, /isConversationBusy/)
+})
+
+test('hosts forward judgment conversation requests and restore the review session', () => {
+  const view = fs.readFileSync(path.join(import.meta.dirname, '../../views/ReactAnalysisView.vue'), 'utf8')
+  // 宿主复用任务调度中心的会话恢复链路：execution→session 反查 + suppress 防消息回放拉起面板
+  assert.match(view, /@open-judgment-conversation="handleEventConversationOpen"/)
+  assert.match(view, /const handleEventConversationOpen = async \(review\) =>/)
+  assert.match(view, /const resolveReviewSession = async \(review\) =>/)
+  assert.match(view, /fetchTaskExecutions\(review\.task_id/)
+  assert.match(view, /const restoreReviewConversation = async \(sessionId\) =>/)
+  // 事件中心入口的回退打开事件详情但不置任务调度中心返回标记（关闭详情仍回事件中心列表）
+  assert.match(view, /openSmartEventDetail\(review\?\.subject_id\)\r?\n\}/)
+  const layout = fs.readFileSync(path.join(import.meta.dirname, '../reactAnalysis/MainLayout.vue'), 'utf8')
+  assert.match(layout, /@open-judgment-conversation="\$emit\('open-judgment-conversation', \$event\)"/)
+  assert.match(layout, /'open-judgment-conversation'/)
+  const rightPanel = fs.readFileSync(path.join(import.meta.dirname, '../reactAnalysis/RightPanelContainer.vue'), 'utf8')
+  assert.match(rightPanel, /@open-judgment-conversation="\$emit\('open-judgment-conversation', \$event\)"/)
+  assert.match(rightPanel, /'open-judgment-conversation'/)
+})
+
 test('event list filters by a start and end event time', () => {
   assert.match(source, /v-model="listStartTime" type="datetime-local" aria-label="事件开始时间筛选"/)
   assert.match(source, /v-model="listEndTime" type="datetime-local" aria-label="事件结束时间筛选"/)

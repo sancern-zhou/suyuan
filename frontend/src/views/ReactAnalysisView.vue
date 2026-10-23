@@ -113,6 +113,7 @@
       @select-review="handleTodoReviewOpen"
       @open-review-detail="handleTodoReviewDetailOpen"
       @open-event-detail="handleTodoEventDetailOpen"
+      @open-judgment-conversation="handleEventConversationOpen"
       @refresh-session-history="refreshSessionHistory"
       @cleanup-sessions="handleSessionCleanup"
       @restore-session="handleSessionRestoreAndClosePanel"
@@ -628,54 +629,66 @@ const handleTodoReviewDetailOpen = (review) => {
   managementPanel.value = 'work-order-review'
 }
 
-// 任务调度中心「查看详情」直达智能事件详情：复用智能事件工作台 open_event_detail 命令契约，
-// 整页管理面板直显事件详情与 AI 研判内容——不恢复会话、不展开对话区与右侧面板 tab。
-// 写入 lastSmartEventCommandKey 防止消息回放重复应用同一条命令
-const handleTodoEventDetailOpen = (review) => {
-  const eventId = String(review?.subject_id || '').trim()
+// 整页打开智能事件详情工作台：复用 open_event_detail 命令契约，整页管理面板直显事件详情与
+// AI 研判内容——不恢复会话、不展开对话区与右侧面板 tab。写入 lastSmartEventCommandKey 防止
+// 消息回放重复应用同一条命令。returnToTaskCenter 控制关闭详情是否回任务调度中心列表
+const openSmartEventDetail = (subjectId, { returnToTaskCenter = false } = {}) => {
+  const eventId = String(subjectId || '').trim()
   if (!eventId) return
   const command = { type: 'open_event_detail', event_id: eventId }
   smartEventCommand.value = command
   lastSmartEventCommandKey.value = JSON.stringify(command)
-  smartEventPanelReturnToTaskCenter.value = true
+  if (returnToTaskCenter) smartEventPanelReturnToTaskCenter.value = true
   workspace.value = 'chat'
   rightPanelVisible.value = false
   // 直接赋值而非 showManagementPanel，避免面板已开时二次点击被 toggle 收起而不是切换事件
   managementPanel.value = 'smart-events'
 }
 
+const handleTodoEventDetailOpen = (review) => {
+  openSmartEventDetail(review?.subject_id, { returnToTaskCenter: true })
+}
+
+// 研判记录→执行会话：review 带 execution_id/task_id，反查任务执行记录取 session_id
+const resolveReviewSession = async (review) => {
+  if (!review?.execution_id || !review?.task_id) return null
+  try {
+    const { executions } = await scheduledTasksStore.fetchTaskExecutions(review.task_id, { page: 1, pageSize: 50 })
+    return executions.find(item => item.execution_id === review.execution_id)?.session_id || null
+  } catch (error) {
+    console.warn('[ReactAnalysisView] 研判执行记录获取失败:', error)
+    return null
+  }
+}
+
+// 恢复研判执行会话并展开对话区；suppressSmartEventCommandOpen 防止会话消息回放重新拉起智能事件面板
+const restoreReviewConversation = async (sessionId) => {
+  suppressSmartEventCommandOpen.value = true
+  const restored = await handleSessionRestoreAndClosePanel(sessionId)
+  await nextTick()
+  if (restored) {
+    rightPanelVisible.value = true
+    if (!activeRightTab.value) activeRightTab.value = 'files'
+    if (suppressSmartEventCommandOpen.value) suppressSmartEventCommandOpen.value = false
+    return true
+  }
+  suppressSmartEventCommandOpen.value = false
+  return false
+}
+
 const handleTodoReviewOpen = async (review) => {
-  let sessionId = null
-  if (review?.execution_id && review?.task_id) {
-    try {
-      const { executions } = await scheduledTasksStore.fetchTaskExecutions(review.task_id, { page: 1, pageSize: 50 })
-      sessionId = executions.find(item => item.execution_id === review.execution_id)?.session_id || null
-    } catch (error) {
-      console.warn('[ReactAnalysisView] 研判执行记录获取失败:', error)
-    }
-  }
-  if (sessionId) {
-    suppressSmartEventCommandOpen.value = true
-    const restored = await handleSessionRestoreAndClosePanel(sessionId)
-    await nextTick()
-    if (restored) {
-      rightPanelVisible.value = true
-      if (!activeRightTab.value) activeRightTab.value = 'files'
-      if (suppressSmartEventCommandOpen.value) suppressSmartEventCommandOpen.value = false
-      return
-    }
-    suppressSmartEventCommandOpen.value = false
-  }
+  const sessionId = await resolveReviewSession(review)
+  if (sessionId && await restoreReviewConversation(sessionId)) return
   // 找不到执行会话时回退：打开智能事件工作区并聚焦该事件（仍从任务调度中心进入，关闭时回列表）
-  if (review?.subject_id) {
-    const command = { type: 'open_event_detail', event_id: String(review.subject_id) }
-    smartEventCommand.value = command
-    lastSmartEventCommandKey.value = JSON.stringify(command)
-    smartEventPanelReturnToTaskCenter.value = true
-    workspace.value = 'chat'
-    managementPanel.value = 'smart-events'
-    rightPanelVisible.value = false
-  }
+  openSmartEventDetail(review?.subject_id, { returnToTaskCenter: true })
+}
+
+// 智能事件中心列表「查看对话」：与任务调度中心「进入对话区」共用同一恢复链路；回退差异在于
+// 不置任务调度中心返回标记——从事件中心进入，关闭详情仍回事件中心列表
+const handleEventConversationOpen = async (review) => {
+  const sessionId = await resolveReviewSession(review)
+  if (sessionId && await restoreReviewConversation(sessionId)) return
+  openSmartEventDetail(review?.subject_id)
 }
 
 let routeSessionRestoreQueue = Promise.resolve()

@@ -268,6 +268,7 @@
         :workspace-command="smartEventCommand"
         @close="$emit('close-smart-event-panel')"
         @open-task="$emit('open-smart-event-task', $event)"
+        @open-judgment-conversation="$emit('open-judgment-conversation', $event)"
       />
 
       <!-- 故障工单审核工作区：证据包拆分数据 + AI 研判 + 人工反馈/归档/退回；
@@ -393,6 +394,7 @@ const emit = defineEmits([
   'board-snapshot-confirm',
   'submit-human-feedback',
   'open-smart-event-task',
+  'open-judgment-conversation',
   'close-smart-event-panel',
   'close-work-order-review-panel',
   'close-device-control-panel'
