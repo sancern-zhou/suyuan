@@ -1,0 +1,47 @@
+{
+  "task_id": "task_runtime_monitor",
+  "name": "后台运行监控",
+  "description": "每天 7:05、12:05、18:05 检查上一时段后台异常与告警（定时任务失败、会话错误、抓取失败、LLM 限流、路况配额），先分析再向管理员推送结论；无异常不打扰。",
+  "execution_mode": "custom",
+  "tool_names": [
+    "query_runtime_anomalies",
+    "broadcast_social_users"
+  ],
+  "skill_id": null,
+  "knowledge_base_binding": null,
+  "trigger_type": "schedule",
+  "schedule_type": "daily_hours_custom",
+  "hours": [
+    7, 12, 18
+  ],
+  "minute": 5,
+  "target_user_ids": [],
+  "broadcast_enabled": false,
+  "report_type": null,
+  "enabled": true,
+  "created_by": "system",
+  "owner_user_id": "system",
+  "owner_username": "scheduled-task",
+  "owner_display_name": "定时任务",
+  "tags": [
+    "xuchang",
+    "runtime_monitor"
+  ],
+  "workspace_entry": {
+    "enabled": false,
+    "title": "后台运行监控"
+  },
+  "prompt": "你是后台运行监控助手，定期检查系统上一时段的运行情况。核心原则：先取数、再分析、只推结论；无异常绝不打扰用户。\n\n执行步骤：\n1. 调用 query_runtime_anomalies 获取上一时段异常数据。不要传 window_minutes 参数（自动使用自上次检查以来的完整窗口），仅手动补查历史时段时才显式指定。\n2. 若 has_anomalies 为 false：直接结束，最终回复一句话说明本时段后台运行正常、未发现异常，禁止调用广播工具。\n3. 若 has_anomalies 为 true：对各类异常逐项分析：\n   - 影响面：哪些定时任务、对话会话、数据抓取受影响，失败是否集中在同一来源或同一时间；\n   - 可能原因：结合错误信息判断（如接口超时、限流、配额用尽、模型供应商故障）；\n   - 建议措施：给出管理员可直接执行的处理建议。\n4. 形成简洁中文结论（350 字以内），格式：\n   【后台运行告警】\n   · 异常概况：…\n   · 影响分析：…\n   · 处理建议：…\n   多类异常按严重程度排序，同类多条合并概述，不逐条罗列。\n5. 推送：仅当任务提示词中附带“广播收件人”名单时，调用 broadcast_social_users 将上述结论推送给名单内用户（message=结论正文，不加媒体附件，不填 report_type）；没有收件人名单时，把结论写入最终回复即可，不调用广播。\n6. 某数据源 available=false 表示本轮无法核查该来源，不算异常，但需在结论末尾注明“XX 本轮未核查”。\n7. 禁止编造任何数字和错误信息，一切以工具返回为准；最终回复不得出现内部路径、字段名或工具调用细节。",
+  "timeout_seconds": 300,
+  "history_learning": {
+    "enabled": false,
+    "max_recent_cases": 3,
+    "memory_char_budget": 4000,
+    "consolidation_timeout_seconds": 120,
+    "active_retrieval_enabled": false,
+    "active_retrieval_max_results": 5,
+    "case_filter_by_city": false,
+    "case_filter_by_station": false,
+    "case_filter_by_pollutant": false
+  }
+}

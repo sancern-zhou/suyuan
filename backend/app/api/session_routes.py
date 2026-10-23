@@ -4,7 +4,7 @@
 提供会话保存、恢复、列表、删除等API端点。
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from typing import Optional, Any, Dict, List
 from datetime import datetime
 import structlog
@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.session import get_session_manager
+from app.agent.runtime.detached_stream import RunEventStream
 from app.boards.models import Board
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
@@ -25,6 +26,7 @@ from app.conversations.service import ConversationCatalogService
 from app.agent.resources.resource_service import SessionResourceService
 from app.db.session_database import get_session_db
 from app.utils.path_config import get_data_registry
+from config.settings import settings
 
 logger = structlog.get_logger()
 
@@ -348,6 +350,22 @@ async def unmark_session_case(
     }
 
 
+@router.get("/{session_id}/model-trajectory")
+async def get_model_trajectory(
+    session_id: str,
+    before: Optional[str] = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    await catalog.require_read(session_id, user)
+    import asyncio
+    from app.services.model_trajectory import ModelTrajectoryStore
+    return await asyncio.to_thread(
+        ModelTrajectoryStore().read, session_id, before=before, limit=limit
+    )
+
+
 @router.get("/{session_id}/messages")
 async def get_session_messages(
     session_id: str,
@@ -420,9 +438,35 @@ def _sanitize_floats(obj):
     return obj
 
 
+async def _resolve_active_run(request: Request, session_id: str) -> Optional[Dict[str, Any]]:
+    """检测会话是否仍有运行中的 detached run；有则返回供前端接流的标记。
+
+    运行中的会话消息尚未持久化（终态才落库），前端恢复到 0 条消息时
+    依据该标记改走 GET /api/agent/stream 接回实时进度，而不是报"无法恢复"。
+    """
+    if not settings.agent_detached_runs_enabled:
+        return None
+    stream = RunEventStream.from_app(request.app)
+    if stream is None:
+        return None
+    try:
+        stream_id = await stream.resolve_active(session_id)
+    except Exception as exc:
+        logger.warning(
+            "restore_active_run_lookup_failed",
+            session_id=session_id,
+            error=str(exc),
+        )
+        return None
+    if not stream_id:
+        return None
+    return {"stream_id": stream_id}
+
+
 @router.post("/{session_id}/restore")
 async def restore_session(
     session_id: str,
+    request: Request,
     message_limit: int = 100,
     user: CurrentUser = Depends(require_current_user),
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
@@ -477,6 +521,9 @@ async def restore_session(
         )
         normalized_session["resource_counts"] = resource_counts
         normalized_session["resource_version"] = resource_version
+        active_run = await _resolve_active_run(request, session_id)
+        if active_run:
+            normalized_session["active_run"] = active_run
         return {
             "message": f"Session {session_id} restored successfully",
             "session": normalized_session,
@@ -494,6 +541,14 @@ async def restore_session(
     # 使用 mode='json' 确保 float 特殊值（inf, -inf, NaN）被正确处理
     session_data = session.model_dump(mode='json')
 
+    # 分页加载路径不携带 session_metadata，上下文占用快照单独取出随恢复返回
+    try:
+        context_usage = await get_session_manager().get_context_usage(session_id)
+        if context_usage:
+            session_data["context_usage"] = context_usage
+    except Exception as exc:
+        logger.warning("restore_context_usage_unavailable", session_id=session_id, error=str(exc))
+
     resource_version = 0
     resource_counts = {"total": 0, "documents": 0, "visualizations": 0, "files": 0}
     try:
@@ -507,6 +562,9 @@ async def restore_session(
     session_data["oldest_sequence"] = pagination["oldest_sequence"]
     session_data["resource_counts"] = resource_counts
     session_data["resource_version"] = resource_version
+    active_run = await _resolve_active_run(request, session_id)
+    if active_run:
+        session_data["active_run"] = active_run
 
     session_data = _strip_lazy_artifacts(session_data)
 

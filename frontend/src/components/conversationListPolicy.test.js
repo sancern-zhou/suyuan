@@ -2,10 +2,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  CONVERSATION_LIST_LAYOUT,
   CONVERSATION_LIST_VIEW,
   filterConversationHistory,
   filterSidebarConversations,
+  groupSidebarConversationsByMode,
   reconcileConversationHistoryStats,
+  resolveConversationAgentMode,
   toggleConversationListView
 } from './conversationListPolicy.js'
 
@@ -80,4 +83,32 @@ test('conversation list icons switch mutually exclusively and toggle back to rec
     toggleConversationListView(CONVERSATION_LIST_VIEW.CASES, CONVERSATION_LIST_VIEW.CASES),
     CONVERSATION_LIST_VIEW.RECENT
   )
+})
+
+const knownModeIds = ['assistant', 'expert', 'query', 'knowledge', 'report', 'ops', 'ppt', 'board']
+
+test('agent mode resolution prefers metadata then session id prefix then assistant', () => {
+  assert.equal(resolveConversationAgentMode({ metadata: { mode: 'expert' } }), 'expert')
+  assert.equal(resolveConversationAgentMode({ session_id: 'query_session_123' }), 'query')
+  assert.equal(resolveConversationAgentMode({ session_id: 'no-prefix' }), 'assistant')
+  assert.equal(resolveConversationAgentMode({}), 'assistant')
+})
+
+test('grouping keeps recency order and buckets unknown modes under other', () => {
+  const sessions = [
+    { session_id: 's1', metadata: { mode: 'expert' } },
+    { session_id: 's2', metadata: { mode: 'assistant' } },
+    { session_id: 's3', metadata: { mode: 'expert' } },
+    { session_id: 's4', metadata: { mode: 'legacy_mode' } },
+    { session_id: 's5' }
+  ]
+  const groups = groupSidebarConversationsByMode(sessions, knownModeIds)
+  assert.deepEqual(groups.map(group => group.mode), ['expert', 'assistant', 'other'])
+  assert.deepEqual(groups[0].sessions.map(row => row.session_id), ['s1', 's3'])
+  assert.deepEqual(groups[1].sessions.map(row => row.session_id), ['s2', 's5'])
+  assert.deepEqual(groups[2].sessions.map(row => row.session_id), ['s4'])
+})
+
+test('grouping handles empty lists', () => {
+  assert.deepEqual(groupSidebarConversationsByMode([], knownModeIds), [])
 })

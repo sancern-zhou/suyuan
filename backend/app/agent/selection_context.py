@@ -13,13 +13,26 @@ from app.agent.resources.resource_service import StoredResource
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "docs" / "skills"
 
 
-def active_skills_dir() -> Path:
-    """Resolve skills for the selected deployment, not the shared backend."""
+def active_skill_dirs() -> list[Path]:
+    """Ordered skill search path: the project dir first, then the shared legacy dir.
+
+    Projects which do not configure ``backend.skills_dir`` keep serving the
+    shared ``backend/docs/skills`` directory only.
+    """
     from app.project_config.loader import load_project_context
     from app.project_config.paths import project_skills_dir
     from config.settings import settings
 
-    return project_skills_dir(load_project_context(settings.project_id))
+    project_dir = project_skills_dir(load_project_context(settings.project_id)).resolve()
+    shared = SKILLS_DIR.resolve()
+    if project_dir == shared:
+        return [shared]
+    return [project_dir, shared]
+
+
+def active_skills_dir() -> Path:
+    """Primary skills directory (project-owned when configured) for writes/index."""
+    return active_skill_dirs()[0]
 
 
 class InvalidContextReference(ValueError):
@@ -35,13 +48,14 @@ class SkillSelection:
     required_tools: list[str]
 
 
-def _declared_skill_metadata(skills_dir: Path, skill_id: str) -> dict:
-    metadata_path = skills_dir / "skills_metadata.json"
-    if not metadata_path.is_file() and skills_dir.resolve() == SKILLS_DIR.resolve():
-        from app.agent.skill_metadata import SKILL_METADATA
-
-        return dict(SKILL_METADATA.get(skill_id) or {})
+def _registry_declaration(metadata_root: Path, skill_id: str) -> dict:
+    """Deployment-level registry entry for one skill, keyed by its owning dir."""
+    metadata_path = metadata_root / "skills_metadata.json"
     if not metadata_path.is_file():
+        if metadata_root.resolve() == SKILLS_DIR.resolve():
+            from app.agent.skill_metadata import SKILL_METADATA
+
+            return dict(SKILL_METADATA.get(skill_id) or {})
         return {}
     payload = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata = (payload.get("skills") or {}).get(skill_id) or {}
@@ -50,35 +64,48 @@ def _declared_skill_metadata(skills_dir: Path, skill_id: str) -> dict:
     return metadata
 
 
-def _resolve_published_skill(skill_id: str, skills_dir: Path) -> Path:
+def _skill_declaration(skill_file: Path, skill_id: str, content: str | None = None) -> dict:
+    """Merge a skill's frontmatter self-declaration with its registry entry.
+
+    The frontmatter carries the asset's own SKILL.md declarations; the owning
+    directory's registry (``skills_metadata.json``, or the legacy hardcoded map
+    for the shared directory) stays authoritative where it defines a key.
+    """
+    from app.tools.utility.skill_management.skill_paths import parse_skill_metadata
+
+    is_package = skill_file.name == "SKILL.md"
+    metadata_root = skill_file.parent.parent if is_package else skill_file.parent
+    if content is None:
+        content = skill_file.read_text(encoding="utf-8")
+    parsed = parse_skill_metadata(content, skill_file.name)
+    declaration: dict = {
+        "aliases": list(parsed.get("aliases") or []),
+        "required_tools": list(parsed.get("required_tools") or []),
+        "enabled": bool(parsed.get("enabled", True)),
+    }
+    registry = _registry_declaration(metadata_root, skill_id)
+    for key in ("aliases", "required_tools", "enabled"):
+        if key in registry:
+            declaration[key] = registry[key]
+    for key, value in registry.items():
+        declaration.setdefault(key, value)
+    return declaration
+
+
+def _resolve_published_skill(skill_id: str, skills_dirs: Sequence[Path]) -> Path:
     if not skill_id or any(part in skill_id for part in ("/", "\\", "..")):
         raise ValueError("invalid skill id")
-    root = skills_dir.resolve()
     normalized_id = skill_id[:-3] if skill_id.endswith(".md") else skill_id
-    candidates = [
-        (skills_dir / f"{normalized_id}.md").resolve(),
-        (skills_dir / normalized_id / "SKILL.md").resolve(),
-    ]
-    for path in candidates:
-        if root in path.parents and path.is_file():
-            return path
+    for skills_dir in skills_dirs:
+        root = skills_dir.resolve()
+        candidates = [
+            (skills_dir / f"{normalized_id}.md").resolve(),
+            (skills_dir / normalized_id / "SKILL.md").resolve(),
+        ]
+        for path in candidates:
+            if root in path.parents and path.is_file():
+                return path
     raise FileNotFoundError(f"{normalized_id}.md or {normalized_id}/SKILL.md")
-
-
-def _skill_metadata(content: str, fallback_name: str) -> tuple[str, str]:
-    name = Path(fallback_name).stem
-    description = "暂无描述"
-    lines = content.splitlines()
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("# "):
-            name = stripped[2:].strip() or name
-        if stripped == "## 概述" and index + 1 < len(lines):
-            candidate = lines[index + 1].strip()
-            if candidate and not candidate.startswith("#"):
-                description = candidate
-                break
-    return name, description
 
 
 def describe_skill_item(
@@ -92,8 +119,12 @@ def describe_skill_item(
     skill_id = (
         path.parent.name if is_package else path.stem
     ) or str(item.get("id") or item.get("name") or "")
-    metadata_root = path.parent.parent if is_package else path.parent
-    declared = _declared_skill_metadata(metadata_root, skill_id) if metadata_root else {}
+    declared: dict = {}
+    if path.is_file():
+        try:
+            declared = _skill_declaration(path, skill_id)
+        except (OSError, ValueError, json.JSONDecodeError):
+            declared = {}
     required_tools = list(declared.get("required_tools") or [])
     missing_tools = (
         [name for name in required_tools if name not in available_tools]
@@ -114,16 +145,20 @@ def describe_skill_item(
 def load_skill_selection(
     skill_id: str,
     *,
-    skills_dir: Path | None = None,
+    skills_dir: Path | Sequence[Path] | None = None,
     available_tools: set[str] | None = None,
 ) -> SkillSelection:
     """Load one published skill and optionally enforce current-mode dependencies."""
-    skills_dir = skills_dir or active_skills_dir()
-    path = _resolve_published_skill(skill_id, skills_dir)
+    skills_dirs = (
+        [skills_dir] if isinstance(skills_dir, Path) else list(skills_dir or [])
+    ) or active_skill_dirs()
+    path = _resolve_published_skill(skill_id, skills_dirs)
     normalized_id = skill_id[:-3] if skill_id.endswith(".md") else skill_id
     content = path.read_text(encoding="utf-8")
-    name, description = _skill_metadata(content, path.name)
-    declared = _declared_skill_metadata(skills_dir, normalized_id)
+    from app.tools.utility.skill_management.skill_paths import parse_skill_metadata
+
+    metadata = parse_skill_metadata(content, path.name)
+    declared = _skill_declaration(path, normalized_id, content=content)
     if declared.get("enabled", True) is False:
         raise ValueError(f"skill is disabled: {normalized_id}")
     required_tools = list(declared.get("required_tools") or [])
@@ -133,8 +168,8 @@ def load_skill_selection(
             raise ValueError("missing required tools: " + ", ".join(missing))
     return SkillSelection(
         skill_id=normalized_id,
-        name=name,
-        description=description,
+        name=metadata["title"],
+        description=metadata["description"],
         content=content,
         required_tools=required_tools,
     )

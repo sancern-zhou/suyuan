@@ -21,12 +21,6 @@ from app.fetchers.consultation import (  # 会商文件批量更新、月度完�
 from app.fetchers.consultation.annual_ytd import (
     AnnualYtdConsultationFileFetcher,  # 年度累计会商文件
 )
-from app.fetchers.consultation.monthly_supplement_fetchers import (
-    MonthlyDistrictPollutantRankingFetcher,
-    MonthlyMeteorologySupportFetcher,
-    MonthlyPollutionEventsComponentsFetcher,
-    MonthlyStationHighValuesFetcher,
-)
 from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
 from app.fetchers.fault_diagnosis import FaultDiagnosisFetcher
 from app.fetchers.quick_trace import JiningQuickTraceFetcher  # 济宁市快速溯源报告每日生成
@@ -44,10 +38,15 @@ from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
     OpenMeteoAirQualityForecastFetcher,
 )
 from app.fetchers.xuchang_annual_attainment_forecast import XuchangAnnualAttainmentForecastFetcher
-from app.fetchers.xuchang_cnemc_station_hour import XuchangCnemcStationHourFetcher
 from app.fetchers.xuchang_city_exceedance import XuchangCityExceedanceFetcher
 from app.fetchers.xuchang_daily_attainment_forecast import XuchangDailyAttainmentForecastFetcher
+from app.fetchers.xuchang_henan_county_publish import XuchangHenanCountyPublishFetcher
 from app.fetchers.xuchang_henan_month_year_accumulate import XuchangHenanMonthYearAccumulateFetcher
+from app.fetchers.xuchang_henan_ranking_recalc import XuchangHenanRankingRecalcFetcher
+from app.fetchers.xuchang_henan_ssfb_publish import (
+    XuchangHenanSsfbCityPublishFetcher,
+    XuchangHenanSsfbSitePublishFetcher,
+)
 from app.fetchers.xuchang_nmc_hourly_forecast import XuchangNmcHourlyForecastFetcher
 from app.fetchers.xuchang_station_daily_exceedance import XuchangStationDailyExceedanceFetcher
 from app.fetchers.xuchang_station_daily_pollution import XuchangStationDailyPollutionFetcher
@@ -134,19 +133,22 @@ def _configured_fetchers(project_context):
         "consultation": ConsultationFileFetcher,
         "monthly_consultation": MonthlyConsultationFileFetcher,
         "annual_ytd_consultation": AnnualYtdConsultationFileFetcher,
-        "monthly_district_pollutant_ranking": MonthlyDistrictPollutantRankingFetcher,
-        "monthly_station_high_values": MonthlyStationHighValuesFetcher,
-        "monthly_pollution_events_components": MonthlyPollutionEventsComponentsFetcher,
-        "monthly_meteorology_support": MonthlyMeteorologySupportFetcher,
         "fault_diagnosis": FaultDiagnosisFetcher,
         "xuchang_daily_attainment_forecast_fetcher": XuchangDailyAttainmentForecastFetcher,
         "xuchang_annual_attainment_forecast_fetcher": XuchangAnnualAttainmentForecastFetcher,
-        "xuchang_cnemc_station_hour_fetcher": XuchangCnemcStationHourFetcher,
         "xuchang_city_exceedance_fetcher": XuchangCityExceedanceFetcher,
         "xuchang_henan_month_year_accumulate_fetcher": XuchangHenanMonthYearAccumulateFetcher,
+        "xuchang_henan_ranking_recalc_fetcher": XuchangHenanRankingRecalcFetcher,
+        "xuchang_henan_ssfb_city_publish_fetcher": XuchangHenanSsfbCityPublishFetcher,
+        "xuchang_henan_ssfb_site_publish_fetcher": XuchangHenanSsfbSitePublishFetcher,
+        "xuchang_henan_county_publish_fetcher": XuchangHenanCountyPublishFetcher,
         "xuchang_nmc_hourly_forecast_fetcher": XuchangNmcHourlyForecastFetcher,
         "xuchang_weather_com_daily_forecast_fetcher": XuchangWeatherComDailyForecastFetcher,
         "xuchang_air_quality_forecast_fetcher": XuchangAirQualityForecastFetcher,
+        "xuchang_air_quality_forecast_fetcher_noon": lambda: XuchangAirQualityForecastFetcher(
+            name="xuchang_air_quality_forecast_fetcher_noon",
+            schedule="0 12 * * *",
+        ),
         "xuchang_weather_situation_evidence_fetcher": XuchangWeatherSituationEvidenceFetcher,
         "xuchang_station_deviation_alert_fetcher": XuchangStationDeviationAlertFetcher,
         "xuchang_station_daily_pollution_fetcher": XuchangStationDailyPollutionFetcher,

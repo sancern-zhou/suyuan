@@ -178,6 +178,11 @@ def _extract_conclusion(execution: TaskExecution, case: dict | None) -> tuple[st
     case_conclusion = _first_str((case or {}).get("conclusion"))
     if case_conclusion:
         return case_conclusion, "distilled"
+    distilled = (case or {}).get("distilled")
+    if isinstance(distilled, dict):
+        distilled_conclusion = _first_str(distilled.get("case_brief"))
+        if distilled_conclusion:
+            return distilled_conclusion, "distilled"
     case_summary = _first_str((case or {}).get("summary"))
     if case_summary:
         return case_summary, "summary"

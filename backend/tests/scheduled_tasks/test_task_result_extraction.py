@@ -23,7 +23,7 @@ def _execution(**overrides) -> TaskExecution:
                     "市一中站CO空间偏高，实测0.421毫克/立方米，周边均值0.195，判定本地累积。\n"
                     "\n"
                     "**执行结果**\n"
-                    "- 报告ID: xuchang_daily_review_20261005\n"
+                    "- 报告ID: scheduled_daily_review_20261005\n"
                     "- 报告: /tmp/report.docx"
                 ),
             )
@@ -36,20 +36,20 @@ def _execution(**overrides) -> TaskExecution:
 class _Event:
     def __init__(self, attributes):
         self.event_id = "evt-1"
-        self.event_type = "xuchang.station_deviation.alert_created"
+        self.event_type = "air_quality.station_deviation.alert_created"
         self.attributes = attributes
         self.payload = {}
 
 
 def test_extraction_prefers_distilled_case():
     case = {
-        "city": "许昌市",
-        "station": "许昌ymc",
+        "city": "示例市",
+        "station": "监测站A",
         "pollutant": "PM2.5",
         "conclusion": "站点连续3小时抬升，已通知",
         "distilled": {
-            "cities": ["许昌市"],
-            "stations": ["许昌ymc"],
+            "cities": ["示例市"],
+            "stations": ["监测站A"],
             "pollutants": ["PM2.5"],
             "findings": ["峰值偏差 0.4", "持续 3 小时"],
         },
@@ -60,12 +60,30 @@ def test_extraction_prefers_distilled_case():
         agent_result={"summary": "fallback"},
         case=case,
     )
-    assert result.city == "许昌市"
-    assert result.station_name == "许昌ymc"
+    assert result.city == "示例市"
+    assert result.station_name == "监测站A"
     assert result.pollutant == "PM2.5"
     assert result.conclusion == "站点连续3小时抬升，已通知"
     assert result.conclusion_source == "distilled"
     assert result.findings == ["峰值偏差 0.4", "持续 3 小时"]
+
+
+def test_extraction_reads_case_brief_from_shared_history_case():
+    case = {
+        "distilled": {
+            "case_brief": "区域污染水平回落，未触发进一步处置",
+            "findings": ["小时浓度连续下降"],
+        }
+    }
+    result = extract_task_result(
+        execution=_execution(),
+        event=None,
+        agent_result=None,
+        case=case,
+    )
+
+    assert result.conclusion == "区域污染水平回落，未触发进一步处置"
+    assert result.conclusion_source == "distilled"
 
 
 def test_extraction_falls_back_to_event_attributes():
@@ -152,7 +170,7 @@ def test_extraction_collects_images_and_documents():
 def test_extraction_collects_evidence_package_paths():
     event = _Event({"station_id": "station-42"})
     event.payload = {
-        "evidence_package_path": "/data/evidence/20260918/xuchang-station-episode-1.evidence.json"
+        "evidence_package_path": "/data/evidence/20260918/station-episode-1.evidence.json"
     }
     agent_result = {
         "tool_calls": [
@@ -177,7 +195,7 @@ def test_extraction_collects_evidence_package_paths():
         case=case,
     )
     assert result.evidence_package_paths == [
-        "/data/evidence/20260918/xuchang-station-episode-1.evidence.json",
+        "/data/evidence/20260918/station-episode-1.evidence.json",
         "/data/evidence/legacy.json",
         "/data/evidence/episode/source.json",
     ]

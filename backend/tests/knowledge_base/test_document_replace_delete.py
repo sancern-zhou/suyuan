@@ -198,11 +198,6 @@ async def test_stale_generation_failure_cannot_mark_or_purge_newer_document(
         "stale failure",
         expected_generation=1,
     )
-    await service._mark_chunk_graph_failed(
-        chunks[0].id,
-        "stale failure",
-        expected_generation=1,
-    )
     await service._purge_document_derivatives(
         kb_id="kb1",
         document_id="doc1",

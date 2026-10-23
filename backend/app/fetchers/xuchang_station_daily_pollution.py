@@ -76,6 +76,20 @@ def _number(value: Any) -> float | None:
     return parsed if parsed >= 0 else None
 
 
+def _run_sync(coro: Any) -> Any:
+    """在异步 fetcher 中执行一次同步风格的 async 调用（采集在执行线程内完成）。"""
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(lambda: asyncio.run(coro)).result()
+
+
 def build_city_daily_ranking(rows: list[dict[str, Any]], target_date: date) -> dict[str, Any]:
     """Calculate Henan city daily PM ranks while retaining no raw peer rows."""
     normalized = []
@@ -107,12 +121,18 @@ def build_city_daily_ranking(rows: list[dict[str, Any]], target_date: date) -> d
 
     pm25, pm25_rank = rank_for("pm25")
     pm10, pm10_rank = rank_for("pm10")
+    hour_derived = bool(cities) and all(
+        row.get("data_source") == "ssfb_city_hour_derived" for row in cities
+    )
+    daily_source = (
+        "各城市:DataCrawler.SsfbCityHour 按小时均值自算"
+        "（平台日值次日约 06:45 发布，02:05 报告时点未入库）；"
+        if hour_derived
+        else "各城市:DataCrawler.SsfbCityDay（河南实时发布采集，18城含济源）；"
+    )
     result: dict[str, Any] = {
         "target_date": target_date.isoformat(),
-        "source": (
-            "各城市:dbo.CityDayAQIPublishHistory（城市日发布历史）；"
-            "中大平台日数据已停止采集"
-        ),
+        "source": daily_source + "中大平台日数据已停止采集",
         "ranking_direction": "desc",
         "city_count": len(cities),
         "coverage": {
@@ -478,37 +498,75 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
             connection.close()
 
     def load_city_daily_rows(self, target_date: date) -> list[dict[str, Any]]:
-        """河南各城市日均统一取城市日发布历史（中大平台日数据已停止采集）。"""
-        city_names = sorted(HENAN_CITY_NAMES)
+        """河南各城市日均统一取本地采集的 SsfbCityDay（18 城含济源）。
+
+        原数据源 dbo.CityDayAQIPublishHistory 长期缺济源（全国表仅 17 城），
+        自 2026-10 起切换为河南实时发布系统采集表（xuchang_henan_ssfb_city_publish_fetcher）。
+
+        平台日值次日约 06:45 才发布、采集 07:00 入库，而回顾报告 02:05 生成时
+        昨日 SsfbCityDay 尚未入库——此时回退为按 SsfbCityHour 小时算术平均
+        自算日均（与 xuchang_henan_ranking_recalc 的 PM10 补齐口径一致），
+        标注 ``ssfb_city_hour_derived``，保证排名块每日有数。
+        """
         day_start = datetime.combine(target_date, time.min)
         day_end = day_start + timedelta(days=1)
-        connection = pyodbc.connect(xcai_connection_string(), timeout=30)
-        try:
-            cursor = connection.cursor()
-            placeholders = ", ".join("?" for _ in city_names)
-            cursor.execute(
-                f"""
-                SELECT Area, CityCode, TimePoint, PM2_5_24h, PM10_24h
-                FROM dbo.CityDayAQIPublishHistory
-                WHERE TimePoint >= ? AND TimePoint < ?
-                  AND Area IN ({placeholders})
-                ORDER BY Area, TimePoint
-                """,
-                [day_start, day_end, *city_names],
+
+        async def _run():
+            import aiomysql
+
+            url = settings.crawler_mysql_url.split("://", 1)[1]
+            auth_host, database = url.split("/", 1)
+            credentials, host_port = auth_host.rsplit("@", 1)
+            user, password = credentials.split(":", 1)
+            host, port = host_port.split(":")
+            conn = await aiomysql.connect(
+                host=host, port=int(port), user=user, password=password,
+                db=database.split("?", 1)[0],
             )
-            return [
-                {
-                    "city": str(row[0] or "").strip(),
-                    "city_code": row[1],
-                    "data_date": row[2],
-                    "pm25": _number(row[3]),
-                    "pm10": _number(row[4]),
-                    "data_source": "city_day_publish_history",
-                }
-                for row in cursor.fetchall()
-            ]
-        finally:
-            connection.close()
+            try:
+                async with conn.cursor(aiomysql.DictCursor) as cursor:
+                    await cursor.execute(
+                        """
+                        SELECT City AS city, CityCode AS city_code,
+                               DataTime AS data_date, PM25 AS pm25, PM10 AS pm10
+                        FROM SsfbCityDay
+                        WHERE DataTime >= %s AND DataTime < %s
+                        ORDER BY City
+                        """,
+                        (day_start, day_end),
+                    )
+                    day_rows = list(await cursor.fetchall())
+                    if day_rows:
+                        return day_rows, "ssfb_city_day"
+                    await cursor.execute(
+                        """
+                        SELECT City AS city, CityCode AS city_code,
+                               AVG(PM25) AS pm25, AVG(PM10) AS pm10
+                        FROM SsfbCityHour
+                        WHERE DataTime >= %s AND DataTime < %s
+                        GROUP BY City, CityCode
+                        ORDER BY City
+                        """,
+                        (day_start, day_end),
+                    )
+                    return list(await cursor.fetchall()), "ssfb_city_hour_derived"
+            finally:
+                conn.close()
+
+        rows, data_source = _run_sync(_run())
+        return [
+            {
+                "city": str(row["city"] or "").strip(),
+                "city_code": row["city_code"],
+                "data_date": day_start
+                if data_source == "ssfb_city_hour_derived"
+                else row["data_date"],
+                "pm25": _number(row["pm25"]),
+                "pm10": _number(row["pm10"]),
+                "data_source": data_source,
+            }
+            for row in rows
+        ]
 
     def _episode_anchors(self, target_date: date) -> dict[str, Any]:
         registry = get_data_registry()

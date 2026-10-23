@@ -1,0 +1,103 @@
+# 溯源 Agent Android 客户端
+
+这是新的 Android-only 客户端工程，使用 Kotlin、Jetpack Compose、OkHttp 和 Gradle Version Catalog。旧的 React Native 工程不作为本仓库的依赖或构建入口。
+
+## 本地运行
+
+1. 使用 JDK 17 和 Android SDK 34 打开本目录。
+2. 后端配置 `APP_AUTH_SECRET` 与 `APP_ACCOUNTS_JSON`，启动 `D:\溯源\backend`。
+3. App 默认访问 `http://117.159.53.11:60787/suyuan`。如需连接其他环境，可在构建时通过 `-PapiBaseUrl=...` 覆盖。HTTP 地址已在 Android 清单中允许明文访问。
+4. 推荐执行 `.\build-debug.ps1 -Install` 构建并安装调试包。脚本会从 `../backend/.env` 读取 `PUSH_GETUI_APP_ID`，自动传给 Gradle，并固定使用 JDK 17；`local.properties` 由本机 Android SDK 自动生成，不提交到版本库。
+
+构建并安装示例：
+
+App 的回复内图表复用 Web 的 `ChartPanel`，打包前先在仓库 `frontend/` 执行
+`npm install`（首次）和 `npm run build:standalone`。Gradle 自动从该次构建的
+`dist/.vite/manifest.json` 提取 `chart.html` 及其依赖，打包进 App；不需要 CDN。
+Agent 使用独立一行的 `[[chart:<visual_id>]]` 决定图表位置，Web/App 均支持。
+后端须同步部署图表资源元数据和历史引用恢复更新，旧后端仍将 JSON 作为普通附件返回。
+
+```powershell
+.\build-debug.ps1 -Install
+```
+
+如需指定 API 地址或设备：
+
+```powershell
+.\build-debug.ps1 -ApiBaseUrl http://117.159.53.11:60787/suyuan -Install -DeviceId A43TVB4A25013903
+```
+
+后端模型配置应使用部署环境中已验证的提供商配置；本次联调使用参考环境文件中的 Doubao 主链路。不要把 API key 写入 Android 工程或提交到版本库。
+
+## 个推统一推送联调
+
+后台广播推送使用个推 UniPush，Android 工程不区分华为、荣耀、小米等厂商。
+后端只配置 `PUSH_PROVIDER=getui`、`PUSH_GETUI_APP_ID`、
+`PUSH_GETUI_APP_KEY` 和 `PUSH_GETUI_MASTER_SECRET`；其中 App Key 和 Master
+Secret 仅放在后端环境变量，不能写入 App 或提交 Git。构建时把同一个 App ID
+传给 Gradle。推荐使用上面的 `build-debug.ps1`，避免遗漏；不要把真实 App ID
+或其他推送密钥写入 Android 工程或提交 Git。
+
+```powershell
+.\build-debug.ps1 -Install
+```
+
+首次登录并允许 Android 13+ 通知权限后，App 会自动获取 CID 并注册到
+`POST /api/social/app/push/devices`。然后触发一个配置了社交广播收件人的定时任务，
+检查广播先写入 App 收件箱、个推返回 `sent`、手机收到系统通知，点击通知后 App
+刷新收件箱。详细的后端环境变量和排查顺序见
+`D:\溯源\backend\docs\android-unified-push.md`。
+
+广播和历史会话列表采用分段加载：首次请求最新 30 条，滚动到列表底部后继续加载更早内容；
+广播详情页的操作菜单支持删除，删除只移除收件箱记录，不会自动删除服务器上的原始附件文件。
+
+构建前可执行 `powershell -ExecutionPolicy Bypass -File .\check-environment.ps1` 检查 JDK 17 和 Android SDK 34。当前开发机已完成 SDK 34 配置，并可构建 Debug APK。
+
+## 正式出包与签名
+
+对外分发一律用 `.\build-release.ps1 -VersionCode <递增整数> -VersionName <x.y.z>` 出 release 包，
+脚本会校验正式签名并打印证书指纹。密钥生成、保管、登记与发版 checklist 见 `RELEASE_SIGNING.md`；
+未配置 `keystore.properties` 的机器只能编译 debug，release 构建会被拒绝。
+
+## 已接入接口
+
+- `POST /api/social/app/auth/login`：App 账号登录并签发 HMAC token。
+- `GET /api/social/app/auth/oidc/config`：读取公司 IDBase OIDC/PKCE 公共配置。
+- `POST /api/social/app/auth/oidc/exchange`：后端用授权码和 PKCE verifier 交换 ID token，并调用 `authenticationMore` 映射公司业务账号。
+- `POST /api/social/app/auth/refresh`：轮换 App access/refresh token；App 启动和接口收到 401 时自动使用 refresh token 恢复会话。
+- `GET /api/social/app/me`：当前账号信息。
+- `POST /api/social/app/chat/stream`：Social 模式 Agent SSE 流。
+- `GET /api/social/app/sessions`：当前账号的持久会话。
+- `POST /api/social/app/sessions`：创建新的 App 会话。
+- `GET /api/social/app/sessions/{session_id}/messages`：恢复历史会话消息。
+- `POST /api/social/app/upload`：上传并绑定当前会话的附件。
+- `POST /api/social/app/voice/transcribe`：m4a 录音上传转写。
+- `GET /api/social/app/version/latest`：远程更新检查（公开接口），返回最新版本号、下载地址、包 sha256、更新说明与强制更新门槛；App 启动/回前台时自动检查。
+- `GET /api/social/app/apk/{filename}`：下载发布到 `DATA_REGISTRY_DIR/social/apk/` 的签名 APK（公开接口）。
+
+App 身份由服务端从 token 解析为 `app:android:<account_id>`，客户端不能通过请求体伪造其他用户。`app:` 会话映射不受现有社交平台 24 小时清理策略影响。
+
+## 公司统一登录配置
+
+公司登录使用 IDBase OIDC Authorization Code + PKCE（S256）。后端环境文件需要配置
+`COMPANY_OIDC_CLIENT_ID` 和 `COMPANY_AUTHENTICATION_MORE_URL`；客户端只接收公共授权端点和
+redirect URI，不保存公司密码。回调地址固定为 `com.suyuan.mobile://oauth/callback`，需在 IDBase
+移动端客户端登记同一地址。refresh token 只保存在 Android 私有存储中，退出登录时清除。
+
+## 对话后台执行与恢复
+
+App 使用 `POST /api/social/app/chat/runs` 提交带 `request_id` 的对话，随后通过
+`GET /api/social/app/chat/runs/{run_id}/events?after=<sequence>` 接收和恢复事件。
+断线重连和提交响应丢失后的重试沿用同一个请求标识，不重复执行工具。
+App 保存待恢复请求，回到前台或进程重新启动时自动恢复；最终回复、图表和附件
+仍写入原有会话存储。旧版 `/chat/stream` 也改为订阅独立执行的任务。
+
+任务状态、输入和事件日志存放在 `DATA_REGISTRY_DIR/social/app_runs.sqlite3`。
+数据库启用 WAL 模式（仅适用于本地磁盘），同一部署的所有 Web 进程必须使用
+同一个持久化目录，支持多进程读取、幂等提交和停止任务；不要将此 SQLite 文件
+放在网络文件系统上。终态任务的事件日志保留 7 天后自动清理，任务行本身长期
+保留以维持 `request_id` 幂等。
+用户主动停止会取消后台执行，关闭 App 连接不会取消。服务器进程重启或异常退出
+会将失去心跳的任务标为失败，不会自动重新执行可能产生副作用的工具。
+上线需要先更新后端，再安装新的 App；本次不包含服务器重启后的任务续跑。
+

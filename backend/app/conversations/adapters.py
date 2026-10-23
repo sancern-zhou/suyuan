@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.agent.session import get_session_manager
-from app.db.database import async_session
+from app.db.knowledge_database import knowledge_async_session as async_session
 from app.knowledge_base.models import ConversationSession
 from app.agent.session.session_resolver import (
     get_session_manager_for_mode,
@@ -115,7 +115,7 @@ class SocialConversationAdapter:
     """Read-only adapter for file-backed social transcripts."""
 
     async def _load(self, session_id: str):
-        return await load_session_for_mode(session_id, mode="social")
+        return await load_session_for_mode(session_id, mode="channel")
 
     @staticmethod
     def _payload(session, row: ConversationCatalogRecord, message_limit: int | None = None):
@@ -149,7 +149,7 @@ class SocialConversationAdapter:
 
     async def delete(self, row: ConversationCatalogRecord) -> bool:
         """Delete the file-backed social transcript owned by the App user."""
-        manager = get_session_manager_for_mode("social")
+        manager = get_session_manager_for_mode("channel")
         return bool(manager.delete_session(row.session_id))
 
 

@@ -7,6 +7,7 @@ import hashlib
 import re
 import time
 import json
+import uuid
 from typing import Any, Dict, Mapping, Optional
 
 import structlog
@@ -15,11 +16,21 @@ from app.agent.workflow.protocol import strip_embedded_json_blocks
 from app.agent.workflow.resource_handoff import result_resource_declarations
 from app.agent.workflow.target_mode_contract import build_target_mode_contract, target_mode_values
 from app.agent.workflow.coordinator import WorkflowCoordinator, WorkflowNodeSpec
-from app.agent.workflow.registry import active_workflow_registry
+from app.agent.workflow.delegation import delegation_error
+from app.agent.workflow.resource_contract import ResourceContractError
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 
 logger = structlog.get_logger(__name__)
+
+RESOURCE_CONTRACT_PROPERTIES = {
+    "kind": {"type": "string"}, "format": {"type": "string"},
+    "fields": {"type": "array", "items": {"type": "string"}},
+    "units": {"type": "object", "additionalProperties": {"type": "string"}},
+    "granularity": {"type": "string"}, "scope": {"type": "object"},
+    "time_range": {"type": "object", "properties": {"start": {"type": "string"}, "end": {"type": "string"}}, "required": ["start", "end"]},
+    "required": {"type": "boolean", "description": "默认 true；false 表示不兼容时允许缺少此资源，但仍明确交付缺口。"},
+}
 
 # 报告 DAG 专家节点集合：这些模式必须提供 task_contract 并受交付物粒度校验
 EXPERT_NODE_MODES = frozenset({"expert_meteorology", "expert_analysis"})
@@ -51,12 +62,13 @@ WORKFLOW_DAG_EXAMPLE = (
     '{"task_id": "weather-data", "target_mode": "query_forecast", "goal": "获取同期地面气象观测与预报数据"}, '
     '{"task_id": "cause-analysis", "target_mode": "expert_analysis", '
     '"goal": "基于上游数据完成污染成因研判，输出结论、证据和缺口", '
-    '"dependencies": ["air-data", "weather-data"]}]}, "max_concurrency": 4}'
+    '"dependencies": ["station-data", "weather-data"]}]}, "max_concurrency": 4}'
 )
 
 WORKFLOW_SCHEMA_DESCRIPTION = (
     "提交一个有向无环 Agent 工作流（DAG）：节点可并行执行，只有依赖节点成功后才会执行下游节点；"
-    "适合多源数据分析、交叉验证和分阶段报告任务。编排完全由你自主决定：按分析问题规划节点数量、"
+    "适合问数、专家研判、多源数据分析和分阶段报告任务。query 父模式可用站点/城市/预报取数节点；"
+    "expert 父模式还可用气象/常规分析专家节点；精简子节点不再次编排。编排完全由你自主决定：按分析问题规划节点数量、"
     "每个节点的 target_mode 与 goal；无依赖的数据/分析节点并行执行，需要上游产物或结论的节点用 "
     "dependencies 表达，不靠文字约定顺序。每个节点必须有唯一 task_id、target_mode、goal，"
     "goal 写清时间范围、区域、指标口径和预期输出；把无依赖的取数拆成独立节点以并行执行。"
@@ -85,22 +97,31 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "必须在对应子节点的 goal/task_contract 中明确要求，由子 Agent 在分析的同时一并生成；"
     "子节点交付的图表文件会在上游产物清单中回传，父 Agent 只做复用与排版，"
     "禁止在 DAG 完成后再由父 Agent 重新绘制分析图表——那是串行追加的整段时间。"
-    "DAG 禁止 report 子节点；报告模式父 Agent 是唯一成稿者。"
+    "DAG 禁止 query、expert、report 主模式子节点；当前父 Agent 是唯一整合与成稿者。"
     "工具返回每个节点的紧凑 result_envelope（status/summary/findings/evidence/data_gaps）与血缘清单："
     "findings 是报告取数来源，其中的数值可直接引用；"
-    "各节点完整结果已落盘并在 full_results.path，确需更多细节时用 read_file 对该文件一次整读，"
+    "各节点完整结果已落盘并在 full_results.path；assistant 助手通过 read_session_resource 读取已登记资源，"
+    "或用 manage_assistant_runs 读取委派结果；其他有文件权限的模式可用 read_file 一次整读，"
     "禁止分页反复读同一文件。"
     "据此判断覆盖范围与缺口并整合结论，不要对子节点过程做重复全量复核。"
-    "expert 族节点（expert/expert_meteorology/expert_analysis）必须提供 task_contract（protocol_version=workflow.v1、"
+    "专家子节点（expert_meteorology/expert_analysis）必须提供 task_contract（protocol_version=workflow.v1、"
     "task_type=expert_analysis、question、decision_context、scope、required_evidence、deliverables）和 "
     "result_schema（要求 status、findings、evidence、uncertainties、data_gaps，finding 通过 evidence id 回溯证据）；"
     "节点可用 max_attempts 设置重试次数（默认 2：重试自动续用子会话、预算扩容 50% 并携带失败原因），"
     "用 max_iterations 限制子 Agent 推理轮次，"
     "用 timeout_seconds 设置节点硬超时；聚合、分箱、相关性等含图表的计算密集节点请放宽预算"
-    "（建议 expert 节点 max_iterations≥25、timeout_seconds≥1200）。"
+    "（建议计算密集的专家子节点 max_iterations≥25、timeout_seconds≥1200）。"
     "重试时预算自动放宽：迭代与超时各放大 50%（迭代封顶 120、超时封顶 1 小时），"
     "专家节点 task_contract.deliverables 最多 3 项；超过 3 项必须拆成多个并行节点。"
     "因此首试可给紧凑预算，把余量留给重试。"
+    "条件节点用 when 声明 source_task_id（必须是直接依赖）、path（上游结果的点分路径）、op、value；"
+    "支持 all/any/not 组合；条件为假会跳过该分支，缺少比较证据会报告失败，不猜测真假。"
+    "辅助节点显式 required=false；下游只有 dependency_policy=allow_partial 才能消费部分上游，"
+    "且至少需要一个成功上游。工具返回 partial 时参考 delivery.gaps，交付已有成果并说明缺口；"
+    "不能把缺失数据当作零、编造结论或默认重新取数。关键节点失败仍阻断完整交付。"
+    "input_contracts 按 source_task_id 校验上游资源，output_contract 校验本节点产物；"
+    "可约束 kind/format/fields/units/granularity/time_range/scope。字段尽可能从文件核对，"
+    "单位、粒度、时间覆盖和范围依赖资源 metadata.data_contract；缺失元数据不会自动假定满足要求。"
     f"示例：{WORKFLOW_DAG_EXAMPLE}\n\n"
     f"{build_target_mode_contract()}"
 )
@@ -254,6 +275,7 @@ _PARENT_NODE_FINDINGS_CHARS = 4000
 _PARENT_NODE_EVIDENCE_ITEMS = 20
 
 _FENCED_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*[\s\S]*?```", re.IGNORECASE)
+_SAFE_WORKFLOW_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 
 
 def _cap_plain_text(value: Any, limit: int) -> str:
@@ -370,6 +392,15 @@ def compact_parent_node_result(
 class RunAgentWorkflowTool(LLMTool):
     """Coordinator entry point for report/assistant orchestration."""
 
+    def get_function_schema(self):
+        from copy import deepcopy
+
+        schema = deepcopy(super().get_function_schema())
+        properties = schema["parameters"]["properties"]
+        properties["workflow"]["properties"]["nodes"]["items"]["properties"]["target_mode"]["enum"] = target_mode_values()
+        schema["description"] = WORKFLOW_SCHEMA_DESCRIPTION + "\n当前项目能力契约优先于通用领域拆分建议：\n" + build_target_mode_contract()
+        return schema
+
     def __init__(self) -> None:
         super().__init__(
             name="run_agent_workflow",
@@ -382,6 +413,10 @@ class RunAgentWorkflowTool(LLMTool):
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "run_in_background": {
+                            "type": "boolean",
+                            "description": "助手可转入后台执行并返回 run_id，之后用 manage_assistant_runs 查询、读结果或请求停止。默认等待本次结果。",
+                        },
                         "workflow": {
                             "type": "object",
                             "description": (
@@ -389,15 +424,41 @@ class RunAgentWorkflowTool(LLMTool):
                                 "dependencies, task_contract, result_schema, max_attempts, max_iterations, "
                                 "timeout_seconds}]}. workflow_id 缺省时自动生成。"
                                 "编排由你自主规划；无依赖节点并行，依赖用 dependencies 表达。"
+                                "新建时提供 nodes；补图时只提供 workflow_id，并传 extension。"
+                                "budget 可限制累计 timeout_seconds/max_nodes/max_retries/max_extensions，"
+                                "默认 3600秒/32/16/3。"
                             ),
                             "properties": {
                                 "workflow_id": {"type": "string"},
                                 "version": {"type": "string"},
+                                "budget": {
+                                    "type": "object",
+                                    "properties": {
+                                        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
+                                        "max_nodes": {"type": "integer", "minimum": 1},
+                                        "max_retries": {"type": "integer", "minimum": 0},
+                                        "max_extensions": {"type": "integer", "minimum": 0},
+                                    },
+                                    "additionalProperties": False,
+                                },
                                 "nodes": {
                                     "type": "array",
                                     "items": {
                                         "type": "object",
                                         "properties": {
+                                            "required": {"type": "boolean", "description": "默认 true，关键节点；辅助节点失败仍允许部分交付时设 false。"},
+                                            "dependency_policy": {"type": "string", "enum": ["all_success", "allow_partial"], "description": "默认所有上游成功；allow_partial 等待上游全部结束后消费成功结果，并显式携带缺口。"},
+                                            "when": {
+                                                "type": "object", "description": "上游完成后判断分支；也可用 all/any/not 组合叶条件。路径相对于节点完整结果，如 data.result_envelope.outputs.exceedance_count；上游 result_schema 必须要求该字段。",
+                                                "properties": {
+                                                    "source_task_id": {"type": "string"}, "path": {"type": "string"},
+                                                    "op": {"type": "string", "enum": ["eq", "ne", "gt", "ge", "lt", "le", "contains", "nonempty", "exists"]},
+                                                    "value": {}, "all": {"type": "array", "items": {"type": "object"}},
+                                                    "any": {"type": "array", "items": {"type": "object"}}, "not": {"type": "object"},
+                                                },
+                                            },
+                                            "input_contracts": {"type": "array", "items": {"type": "object", "properties": {**RESOURCE_CONTRACT_PROPERTIES, "source_task_id": {"type": "string"}}, "required": ["source_task_id"]}},
+                                            "output_contract": {"type": "object", "properties": RESOURCE_CONTRACT_PROPERTIES},
                                             "task_id": {"type": "string"},
                                             "target_mode": {
                                                 "type": "string",
@@ -431,7 +492,6 @@ class RunAgentWorkflowTool(LLMTool):
                                     },
                                 },
                             },
-                            "required": ["nodes"],
                         },
                         "max_concurrency": {
                             "type": "integer",
@@ -443,6 +503,16 @@ class RunAgentWorkflowTool(LLMTool):
                             "type": "object",
                             "description": "可选的上次运行快照；传入后从中断位置恢复。",
                         },
+                        "extension": {
+                            "type": "object",
+                            "description": "父 Agent 检查缺口后在两轮之间补图；从当前父会话加载快照，保留已完成节点。禁止改旧节点或给运行中的图补图。",
+                            "properties": {
+                                "expected_revision": {"type": "integer", "minimum": 0},
+                                "reason": {"type": "string"},
+                                "nodes": {"type": "array", "items": {"type": "object"}},
+                            },
+                            "required": ["expected_revision", "reason", "nodes"],
+                        },
                     },
                     "required": ["workflow"],
                 },
@@ -450,12 +520,25 @@ class RunAgentWorkflowTool(LLMTool):
             version="1.0.0",
         )
 
-    async def execute(
+    async def execute(self, context=None, **kwargs):
+        if getattr(context, "runtime_mode", None) == "assistant":
+            from app.social.assistant_runs import AssistantRunService
+
+            try:
+                return await AssistantRunService().launch(
+                    context, self._execute_untracked, kwargs, kind="workflow"
+                )
+            except (ValueError, PermissionError) as exc:
+                return self._failure(str(exc))
+        return await self._execute_untracked(context=context, **kwargs)
+
+    async def _execute_untracked(
         self,
         context: Optional[Any] = None,
         workflow: Optional[Mapping[str, Any]] = None,
         max_concurrency: int = 4,
         snapshot: Optional[Mapping[str, Any]] = None,
+        extension: Optional[Mapping[str, Any]] = None,
         **_: Any,
     ) -> Dict[str, Any]:
         if not isinstance(workflow, Mapping):
@@ -464,8 +547,28 @@ class RunAgentWorkflowTool(LLMTool):
             definition = dict(workflow)
             if not str(definition.get("workflow_id") or "").strip():
                 definition["workflow_id"] = f"workflow-{int(time.time() * 1000)}"
-            nodes = [dict(node) for node in definition.get("nodes") or []]
-            for node in nodes:
+            added_nodes = []
+            if extension is not None:
+                if not isinstance(extension, Mapping) or snapshot is not None or definition.get("nodes") or definition.get("budget"):
+                    return self._failure("补图只接受 workflow_id + extension，并使用当前父会话中的可信快照")
+                snapshot = await self._load_parent_snapshot(context, str(definition["workflow_id"]))
+                if not snapshot:
+                    return self._failure("当前父会话中未找到工作流快照，不能补图")
+                if snapshot.get("status") not in {"succeeded", "partial", "failed"}:
+                    return self._failure("只能给已经结束一轮执行的工作流补图")
+                definition = dict(snapshot["definition"])
+                added_nodes = [dict(node) for node in extension.get("nodes") or []]
+            # Worker checkpoints use canonical nested payloads; accept both formats.
+            def normalize(node: Mapping[str, Any]) -> Dict[str, Any]:
+                spec = WorkflowNodeSpec.from_mapping(node)
+                normalized = {**dict(node), **spec.payload, "task_id": spec.task_id}
+                # Flatten worker payloads before enforcing policy; a stale nested
+                # schema must not take precedence over the validated definition.
+                normalized.pop("payload", None)
+                return normalized
+            nodes = [normalize(node) for node in definition.get("nodes") or []]
+            added_nodes = [normalize(node) for node in added_nodes]
+            for node in [*nodes, *added_nodes]:
                 if not node.get("target_mode") or not node.get("goal"):
                     return self._failure(f"节点 {node.get('task_id') or '<unknown>'} 缺少 target_mode 或 goal")
                 limits = _DEFAULT_EXPERT_NODE_LIMITS.get(str(node.get("target_mode")))
@@ -476,11 +579,21 @@ class RunAgentWorkflowTool(LLMTool):
                 if granularity_error:
                     return self._failure(granularity_error)
             # 报告编排只暴露领域取数与专家节点，禁止综合模式或产出型模式越权。
-            runtime_mode = str(getattr(context, "runtime_mode", "") or "")
+            runtime_mode = str(
+                getattr(context, "runtime_mode", None)
+                or getattr(context, "manual_mode", None)
+                or getattr(getattr(context, "memory_manager", None), "mode", "")
+                or ""
+            )
+            if extension is not None and snapshot.get("parent_mode") != runtime_mode:
+                return self._failure("补图的父模式必须与原工作流一致")
+            boundary_error = delegation_error(runtime_mode, [str(node.get("target_mode") or "") for node in [*nodes, *added_nodes]])
+            if boundary_error:
+                return self._failure(boundary_error)
             if runtime_mode == "report":
                 disallowed_nodes = [
                     str(node.get("task_id") or "<unknown>")
-                    for node in nodes
+                    for node in [*nodes, *added_nodes]
                     if str(node.get("target_mode") or "") not in REPORT_NODE_ALLOWED_MODES
                 ]
                 if disallowed_nodes:
@@ -493,10 +606,17 @@ class RunAgentWorkflowTool(LLMTool):
                         "气象与预报用 query_forecast，其他模式不得作为报告子节点。"
                         f"越界节点：{', '.join(disallowed_nodes)}"
                     )
+            from app.agent.workflow.project_policy import prepare_node, apply_workflow_limits
+
+            for node in [*nodes, *added_nodes]:
+                prepare_node(node)
+            max_concurrency = apply_workflow_limits(runtime_mode, definition, max_concurrency)
             definition["nodes"] = nodes
             # 节点成果缓存：同 workflow 重提时复用命中节点（依赖闭包完整才复用）
             from app.agent.workflow.result_cache import (
                 result_fingerprint,
+                cache_namespace,
+                node_signature,
                 select_reusable_nodes,
                 store_node_result,
             )
@@ -504,7 +624,19 @@ class RunAgentWorkflowTool(LLMTool):
 
             workflow_journal = WorkflowJournal()
             workflow_id_str = str(definition["workflow_id"])
-            completed_results = select_reusable_nodes(workflow_id_str, nodes)
+            parent_session_id = getattr(context, "session_id", None)
+            cache_id = cache_namespace(str(parent_session_id or uuid.uuid4().hex), workflow_id_str)
+            completed_results = {} if snapshot else select_reusable_nodes(cache_id, nodes, validate_signatures=True)
+            for cached_node in nodes:
+                task_id = str(cached_node.get("task_id") or "")
+                sources = list(cached_node.get("dependencies") or []) if cached_node.get("input_contracts") else []
+                if cached_node.get("output_contract") is not None:
+                    sources.append(task_id)
+                # A cached descriptor cannot prove that a catalog entry is
+                # still active. These nodes must perform a fresh import/check.
+                if any(handle.get("handle_type") == "session_resource" for source in sources
+                       for handle in collect_result_handles(str(source), completed_results.get(str(source)))):
+                    completed_results.pop(task_id, None)
             if completed_results:
                 logger.info(
                     "workflow_cache_nodes_reused",
@@ -531,6 +663,11 @@ class RunAgentWorkflowTool(LLMTool):
                 else:
                     upstream_handles = []
                 context_text = str(payload.get("context") or "") + upstream
+                input_gaps = coordinator.node_input_gaps.get(node.task_id)
+                if input_gaps:
+                    context_text += "\n## 上游证据缺口\n" + json.dumps(input_gaps, ensure_ascii=False) + "\n仅基于成功上游交付带限制的结论；缺失数据不是零，不重新查询缺失来源。\n"
+                if node.input_contracts or node.output_contract is not None:
+                    context_text += "\n## 资源契约\n" + json.dumps({"inputs": list(node.input_contracts), "output": node.output_contract}, ensure_ascii=False) + "\n单位、粒度、范围等必须来自真实数据元信息；不要按预期契约伪造元数据。\n"
                 # 重试续用上次的子会话：失败原因与已交付进度写入上下文
                 retry_session_id = None
                 if retry_context:
@@ -550,7 +687,7 @@ class RunAgentWorkflowTool(LLMTool):
                             + "\n".join(f"- {path}" for path in delivered)
                             + "\n请核对剩余交付物并继续完成。\n"
                         )
-                return await sub_agent_tool.execute(
+                result = await sub_agent_tool.execute(
                     context=context,
                     target_mode=payload["target_mode"],
                     goal=payload["goal"],
@@ -566,47 +703,75 @@ class RunAgentWorkflowTool(LLMTool):
                     repair_attempts=2 if payload.get("result_schema") else max(0, min(node.max_attempts - 1, 2)),
                     _force_isolated_session=True,
                     _upstream_handles=upstream_handles,
+                    **({"_input_contracts": list(node.input_contracts)} if node.input_contracts else {}),
                     _on_session_started=lambda child_session_id: coordinator.bind_node_session(
                         node.task_id, child_session_id
                     ),
                 )
+                violations = (result.get("data") or {}).get("resource_contract_violations") if isinstance(result, Mapping) else None
+                if violations:
+                    raise ResourceContractError(violations)
+                warnings = (result.get("data") or {}).get("resource_contract_warnings") if isinstance(result, Mapping) else None
+                if warnings:
+                    current_warnings = coordinator.node_contract_errors.setdefault(node.task_id, [])
+                    current_warnings.extend(item for item in warnings if item not in current_warnings)
+                return result
 
             coordinator = WorkflowCoordinator(
                 definition,
                 executor=execute_node,
                 max_concurrency=max(1, min(int(max_concurrency or 4), 8)),
                 snapshot=snapshot,
-                persist=lambda current: self._persist_parent_snapshot(context, current),
+                persist=lambda current: self._persist_parent_snapshot(context, {
+                    **current, "parent_mode": runtime_mode,
+                    "max_concurrency": max(1, min(int(max_concurrency or 4), 8)),
+                }),
                 completed_results=completed_results,
                 journal=workflow_journal,
             )
-            await active_workflow_registry.register(
+            workflow_registry = self._build_workflow_registry()
+            await workflow_registry.register(
                 str(definition["workflow_id"]),
                 coordinator,
                 session_id=getattr(context, "session_id", None) if context is not None else None,
             )
             try:
+                if extension is not None:
+                    # Check again under the live registry claim: a preceding
+                    # parent round may have finished while this call was loading.
+                    latest = await self._load_parent_snapshot(context, str(definition["workflow_id"]))
+                    if (
+                        not latest
+                        or latest.get("revision", 0) != extension["expected_revision"]
+                        or latest != snapshot
+                    ):
+                        raise ValueError("workflow revision conflict")
+                    if latest.get("status") not in {"succeeded", "partial", "failed"}:
+                        raise ValueError("cannot extend a running workflow")
+                    coordinator.extend(added_nodes, expected_revision=extension["expected_revision"], reason=extension["reason"])
+                    nodes += added_nodes
                 snapshot = await coordinator.run()
             finally:
-                await active_workflow_registry.unregister(
+                pending_persistence = list(getattr(context, "workflow_persistence_tasks", set())) if context is not None else []
+                if pending_persistence:
+                    await asyncio.gather(*pending_persistence, return_exceptions=True)
+                await workflow_registry.unregister(
                     str(definition["workflow_id"]), coordinator
                 )
-            pending_persistence = list(getattr(context, "workflow_persistence_tasks", set())) if context is not None else []
-            if pending_persistence:
-                await asyncio.gather(*pending_persistence, return_exceptions=True)
             succeeded = snapshot["status"] == "succeeded"
-            if succeeded:
-                # 全部成功后才写缓存：部分失败的结果不污染缓存
+            if parent_session_id:
+                # Reuse individually validated successes even if another branch failed.
                 for cached_node in nodes:
                     cached_task_id = str(cached_node.get("task_id") or "")
                     cached_result = snapshot["node_results"].get(cached_task_id)
                     if isinstance(cached_result, Mapping):
                         store_node_result(
-                            workflow_id_str,
+                            cache_id,
                             cached_task_id,
                             str(cached_node.get("goal") or ""),
                             str(cached_node.get("target_mode") or ""),
                             cached_result,
+                            signature=node_signature(cached_node),
                             dependency_hashes={
                                 str(dependency): result_fingerprint(
                                     snapshot["node_results"][str(dependency)]
@@ -639,6 +804,13 @@ class RunAgentWorkflowTool(LLMTool):
             result_data = {
                 "workflow_id": snapshot["workflow_id"],
                 "status": snapshot["status"],
+                "revision": snapshot.get("revision", 0),
+                "budget_state": snapshot.get("budget_state", {}),
+                "delivery": snapshot.get("delivery", {}),
+                "node_statuses": {task_id: node["status"] for task_id, node in snapshot["graph"].items()},
+                "node_decisions": snapshot.get("node_decisions", {}),
+                "node_input_gaps": snapshot.get("node_input_gaps", {}),
+                "node_contract_errors": snapshot.get("node_contract_errors", {}),
                 "node_results": node_views,
                 "node_errors": snapshot["node_errors"],
                 "node_lineage": snapshot["node_lineage"],
@@ -647,8 +819,8 @@ class RunAgentWorkflowTool(LLMTool):
                         "path": full_results["path"],
                         "note": (
                             "各节点完整结果（结构化输出全文、工具轨迹、文件句柄）。"
-                            "envelope.findings 已含关键数值；确需更多细节时用 read_file "
-                            "对本文件一次整读，不要分页反复读。"
+                            "envelope.findings 已含关键数值；assistant 助手通过 read_session_resource "
+                            "读取已登记的本文件；其他有文件权限的模式用 read_file 一次整读，不要分页反复读。"
                         ),
                     }
                     if full_results else None
@@ -656,15 +828,17 @@ class RunAgentWorkflowTool(LLMTool):
             }
             return {
                 "status": "success" if succeeded else snapshot["status"],
-                "success": succeeded,
-                "result": "工作流已完成" if succeeded else "工作流未完成",
+                # A usable partial delivery is a valid tool observation; do not
+                # trigger generic tool-error handling or hide its resources.
+                "success": snapshot["status"] in {"succeeded", "partial"},
+                "result": "工作流已完成" if succeeded else "部分任务完成，可交付已有成果并说明缺口" if snapshot["status"] == "partial" else "工作流未完成",
                 "data": result_data,
                 "metadata": {
                     "schema_version": "workflow.v1",
                     "generator": "run_agent_workflow",
                     "workflow_id": snapshot["workflow_id"],
                 },
-                "summary": "工作流执行完成" if succeeded else "工作流执行失败或被取消",
+                "summary": "工作流执行完成" if succeeded else "工作流部分完成，存在证据缺口" if snapshot["status"] == "partial" else "工作流执行失败或被取消",
                 "resources": resources,
             }
         except (TypeError, ValueError, KeyError) as exc:
@@ -691,7 +865,15 @@ class RunAgentWorkflowTool(LLMTool):
 
             target_dir = get_sessions_dir() / f"agent_session_{session_id}" / "data"
             target_dir.mkdir(parents=True, exist_ok=True)
-            path = target_dir / f"workflow_{workflow_id}_node_results.json"
+            # workflow_id is model/user supplied. Keep normal IDs readable, but
+            # never allow separators or traversal components into session data.
+            if _SAFE_WORKFLOW_ID_RE.fullmatch(workflow_id):
+                file_stem = workflow_id
+            else:
+                file_stem = "id-" + hashlib.sha256(workflow_id.encode()).hexdigest()[:24]
+            path = (target_dir / f"workflow_{file_stem}_node_results.json").resolve()
+            if target_dir.resolve() not in path.parents:
+                raise ValueError("workflow result path escaped session data directory")
             payload = {
                 "workflow_id": workflow_id,
                 "status": snapshot.get("status"),
@@ -727,6 +909,26 @@ class RunAgentWorkflowTool(LLMTool):
                 error=str(exc),
             )
             return None
+
+    @staticmethod
+    async def _load_parent_snapshot(context: Any, workflow_id: str) -> Optional[Mapping[str, Any]]:
+        session_id = getattr(context, "session_id", None)
+        if not session_id:
+            return None
+        from app.agent.session.session_resolver import load_session_for_mode
+        session = await load_session_for_mode(
+            session_id,
+            mode=getattr(context, "session_storage_mode", None) or getattr(context, "runtime_mode", None),
+            include_messages=False,
+        )
+        if session is None:
+            return None
+        return (session.metadata.get("workflow_coordinators") or {}).get(workflow_id)
+
+    @staticmethod
+    def _build_workflow_registry():
+        from app.agent.workflow.registry import active_workflow_registry
+        return active_workflow_registry
 
     @staticmethod
     def _build_sub_agent_tool():
@@ -820,9 +1022,6 @@ class RunAgentWorkflowTool(LLMTool):
                         mode=mode,
                         update_timestamp=True,
                     )
-                    event_sink = getattr(context, "workflow_event_sink", None)
-                    if callable(event_sink):
-                        event_sink(dict(snapshot))
                 except Exception as exc:
                     # Checkpointing must never turn a successfully running node into
                     # a failed node; the coordinator still returns the in-memory
@@ -834,6 +1033,13 @@ class RunAgentWorkflowTool(LLMTool):
                         error=str(exc),
                     )
                     return
+                finally:
+                    # Durable workers need the terminal snapshot even if session
+                    # metadata persistence is unavailable. Resource persistence
+                    # remains best-effort, but event delivery must not depend on it.
+                    event_sink = getattr(context, "workflow_event_sink", None)
+                    if callable(event_sink):
+                        event_sink(dict(snapshot))
 
         try:
             loop = asyncio.get_running_loop()

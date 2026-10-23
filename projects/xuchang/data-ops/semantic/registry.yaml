@@ -1,0 +1,171 @@
+version: 2
+project: xuchang
+description: >-
+  许昌空气质量语义注册中心。Cube schema 负责执行，注册中心负责口径、适用范围、
+  数据窗口、质量限制和 Agent 解释边界。
+cubes:
+  SsfbCityHour:
+    dataset: DataCrawler.SsfbCityHour
+    grain: 一行 = 城市 × 小时
+    applicability: 河南18城市组含济源的实时发布小时数据
+    source_window: 采集源滚动窗口，具体以查询返回时间为准
+    limitations: []
+  SsfbCityDay:
+    dataset: DataCrawler.SsfbCityDay
+    grain: 一行 = 城市 × 日
+    applicability: 河南18城市组含济源的城市日数据
+    source_window: 采集源日值窗口
+    limitations:
+      - 2026年10月起源接口不发布PM10，PM10缺失不得当作零或用于趋势判断
+  SsfbCityHourRank:
+    dataset: DataCrawler.SsfbCityHourRank
+    grain: 一行 = 小时 × 城市排名对象
+    applicability: 河南18城市组含济源的小时排名
+    source_window: 实时重算窗口
+    limitations:
+      - 排名数值越低越靠前，1为最优，相同值并列
+  SsfbCityRanking:
+    dataset: DataCrawler.SsfbCityRanking
+    grain: 一行 = 期次类型 × 期次 × 城市组
+    applicability: 官方日值排序的日排名（仅periodType=daily），仅供省内横向比较
+    source_window: 每日凌晨随官方日值发布更新
+    limitations:
+      - 仅保留daily期次；城市月/年累计统计已改走官方月报（ProvinceMonth/ProvinceMonthCum），本表monthly/yearly已停用并删除历史行
+      - 排名数值越低越靠前，1为最优，相同值并列
+  SsfbCountyHour:
+    dataset: DataCrawler.SsfbCountyHour
+    grain: 一行 = 区县 × 小时
+    applicability: 河南区县小时数据，含济源和功能区
+    source_window: 采集源滚动窗口
+    limitations: []
+  SsfbCountyDay:
+    dataset: DataCrawler.SsfbCountyDay
+    grain: 一行 = 区县 × 日
+    applicability: 河南区县日数据，含济源和功能区
+    source_window: 采集源日值窗口
+    limitations: []
+  SsfbCountyHourRank:
+    dataset: DataCrawler.SsfbCountyHourRank
+    grain: 一行 = 小时 × 区县排名对象
+    applicability: 与省平台区县排名同口径的小时排名
+    source_window: 实时重算窗口
+    limitations:
+      - 排名数值越低越靠前，1为最优，相同值并列
+  SsfbCountyDayRank:
+    dataset: DataCrawler.SsfbCountyDayRank
+    grain: 一行 = 日 × 区县排名对象
+    applicability: 与省平台区县排名同口径的日排名
+    source_window: 实时重算窗口
+    limitations:
+      - 排名数值越低越靠前，1为最优，相同值并列
+  SsfbSiteHour:
+    dataset: DataCrawler.SsfbSiteHour
+    grain: 一行 = 站点 × 小时
+    applicability: 许昌县级站小时数据，剔除国控站
+    source_window: 采集源滚动窗口
+    limitations: []
+  SsfbSiteDay:
+    dataset: DataCrawler.SsfbSiteDay
+    grain: 一行 = 站点 × 日
+    applicability: 许昌县级站日数据，剔除国控站
+    source_window: 采集源日值窗口
+    limitations: []
+  SsfbSiteHourRank:
+    dataset: DataCrawler.SsfbSiteHourRank
+    grain: 一行 = 小时 × 站点排名对象
+    applicability: 许昌县级站小时排名
+    source_window: 实时重算窗口
+    limitations:
+      - 排名数值越低越靠前，1为最优，相同值并列
+  SsfbSiteDayRank:
+    dataset: DataCrawler.SsfbSiteDayRank
+    grain: 一行 = 日 × 站点排名对象
+    applicability: 许昌县级站日排名
+    source_window: 实时重算窗口
+    limitations:
+      - 排名数值越低越靠前，1为最优，相同值并列
+  TownHour:
+    dataset: DataCrawler.view_dat_town_hour_src/view_dat_town_hour_app
+    grain: 一行 = 乡镇站 × 小时 × 口径
+    applicability: 乡镇站小时数据，支持原始src和审核app口径
+    source_window: 2024-01-01起，审核口径起始时间可能更晚
+    limitations:
+      - 必须过滤caliber=app或caliber=src，否则同站同时刻会重复计数
+      - 官方结论优先使用app；app缺失时回退src必须明确说明为未审核原始数据
+      - -99为无效值，不参与数值聚合
+  TownDay:
+    dataset: DataCrawler.view_dat_town_day_src/view_dat_town_day_app
+    grain: 一行 = 乡镇站 × 日 × 口径
+    applicability: 乡镇站日数据，支持原始src和审核app口径
+    source_window: 2024-08-01起，审核口径起始时间可能更晚
+    limitations:
+      - 必须过滤caliber=app或caliber=src，否则同站同日会重复计数
+      - 官方结论优先使用app；app缺失时回退src必须明确说明为未审核原始数据
+      - -99为无效值，不参与数值聚合
+  ProvinceMonth:
+    dataset: DataCrawler.ProvinceMonthReport
+    grain: 一行 = 期次(Scope=month) × 层级(Level) × 区域
+    applicability: 河南省环境空气质量月报官方附表，城市月度及以上统计的唯一官方口径
+    source_window: 2025-12与2026-01~09共十期，新月报发布后回补
+    limitations:
+      - 供暖季期次无O3列；区/县表(Level=district/county)无SO2/NO2/CO/重污染天
+      - 同比列为官方变化率(%)而非绝对值
+      - 区域数量随期次变化（2025-12~2026-03为85区/103县市，2026-04起88区/101县市）
+  ProvinceMonthCum:
+    dataset: DataCrawler.ProvinceMonthReport
+    grain: 一行 = 期次(Scope=cum) × 层级(Level) × 区域
+    applicability: 河南省月报1-N月累计官方附表
+    source_window: 同ProvinceMonth；2026年第1期无累计表
+    limitations:
+      - 累计为截至dataMonth当月的1-N月值；其余限制同ProvinceMonth
+  CountyMonth:
+    dataset: DataCrawler.CountyMonthReport
+    grain: 一行 = 区域 × 月(Scope=month)
+    applicability: 许昌县市区官方月报统计（剔除沙尘），官方原值非明细聚合
+    source_window: 2020-01~2026-09（2020年取自2021年月报上年同期列）
+    limitations:
+      - 重污染天2023年起才有
+      - 魏都/开发/东城/示范/建安=国家平台，鄢陵/襄城/禹州/长葛=省平台，两平台口径不同
+  CountyMonthCum:
+    dataset: DataCrawler.CountyMonthReport
+    grain: 一行 = 区域 × 累计截止月(Scope=cum)
+    applicability: 许昌县市区月报1-N月累计
+    source_window: 同CountyMonth
+    limitations:
+      - 个别区域累计与当月之和存在1~2天官方修订差，原值入库勿互相换算
+      - 重污染天2023年起才有
+  XuchangCityYearTarget:
+    dataset: DataCrawler.XuchangCityYearTarget
+    grain: 一行 = 年度
+    applicability: 许昌市年度目标与完成情况（国家网考核定版）；年度目标值全库唯一来源
+    source_window: 2015-2026（《00重要基础数据.zip》回补，无自动采集）
+    limitations:
+      - 实际值为国家网口径，与 CityYearPm25Avg 平台实时未审核列有1~5μg/m³差，年度考核以本表为准
+      - SO2/NO2/CO 年均仅2015-2025、O3年均仅2015-2020；2025年PM10目标为市定
+      - 2026年仅有目标值（在途年度）
+  XuchangCountyYearTarget:
+    dataset: DataCrawler.XuchangCountyYearTarget
+    grain: 一行 = 区域 × 年度
+    applicability: 许昌县市区年度目标与完成情况（官方考核剔沙尘定版）
+    source_window: 2020-2025（同上回补，无自动采集）
+    limitations:
+      - 2023年重污染天与CountyMonthReport月报差3~4天（2023-03沙尘，月报未剔沙尘），年度口径以本表为准
+      - 2020年仅有重污染天；2025年许昌市PM10目标为市定未下达
+      - 个别区域源表间1天出入以05表为准（Remark注明）
+  HenanCityYearTarget:
+    dataset: DataCrawler.HenanCityYearTarget
+    grain: 一行 = 地市 × 年度
+    applicability: 河南18地市年度目标完成情况（省考核口径），仅供省内横向比较
+    source_window: 2021-2025（同上回补，无自动采集）
+    limitations:
+      - 优良天/重污染天2021/2022/2024为天数、2023/2025为比例%(Ratio列)，同列跨年口径不同
+      - 5-9月臭氧超标天仅2022-2023；2023年PM10/PM2.5目标列源表为空
+      - 2025年行源表未定稿，实际值勿引用；与市口径偶有1μg差（如2022许昌PM2.5省47/市46）
+  Rank168CityMonthly:
+    dataset: DataCrawler.Rank168CityMonthly
+    grain: 一行 = 城市 × 期次类型(month/cum) × 月份
+    applicability: 生态环境部168重点城市全国排名（综合指数+PM2.5倒序）
+    source_window: 2026-01~2026-07（人工回补，无自动采集）
+    limitations:
+      - 仅用于全国排名与横向对比；浓度绝对值以本地口径为准
+      - 与省内排名SsfbCityRanking不可混算；排名并列时排名值可重复

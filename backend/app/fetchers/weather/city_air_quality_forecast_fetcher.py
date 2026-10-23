@@ -781,6 +781,17 @@ class CityAirQualitySQLStorage:
         self._connection: pyodbc.Connection | None = None
 
     def _get_connection(self) -> pyodbc.Connection:
+        if self._connection is not None:
+            # 任务每天仅跑一次，缓存连接可能已被服务端/网络断开；复用前检活。
+            try:
+                probe = self._connection.cursor()
+                try:
+                    probe.execute("SELECT 1")
+                    probe.fetchone()
+                finally:
+                    probe.close()
+            except Exception:
+                self.reset_connection()
         if self._connection is None:
             self._connection = pyodbc.connect(self.sql_client.connection_string, timeout=30)
             cursor = self._connection.cursor()
@@ -905,16 +916,23 @@ class CityAirQualityForecastFetcher(DataFetcher):
                 counts = await asyncio.to_thread(
                     self.storage.store_city, city_id, city_name, payload, run_started
                 )
-            except Exception as exc:
-                failed_cities[city_id] = str(exc)
-                logger.warning(
-                    "city_air_quality_forecast_store_failed",
-                    city_id=city_id,
-                    city=city_name,
-                    progress=progress,
-                    error=str(exc),
-                )
-                continue
+            except Exception:
+                # 典型场景：缓存的 SQL Server 连接已被对端断开；重建后重试一次。
+                self.storage.reset_connection()
+                try:
+                    counts = await asyncio.to_thread(
+                        self.storage.store_city, city_id, city_name, payload, run_started
+                    )
+                except Exception as exc:
+                    failed_cities[city_id] = str(exc)
+                    logger.warning(
+                        "city_air_quality_forecast_store_failed",
+                        city_id=city_id,
+                        city=city_name,
+                        progress=progress,
+                        error=str(exc),
+                    )
+                    continue
 
             for table, count in counts.items():
                 saved_rows[table] = saved_rows.get(table, 0) + count

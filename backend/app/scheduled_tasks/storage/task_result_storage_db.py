@@ -230,7 +230,7 @@ class DatabaseTaskResultStorage:
         conditions = []
         if task_id:
             conditions.append(ScheduledTaskResultDB.task_id == task_id)
-        if task_ids:
+        if task_ids is not None:
             conditions.append(ScheduledTaskResultDB.task_id.in_(list(task_ids)))
 
         stations: dict[str, dict] = {}
@@ -282,7 +282,7 @@ class DatabaseTaskResultStorage:
         conditions = []
         if task_id:
             conditions.append(model.task_id == task_id)
-        if task_ids:
+        if task_ids is not None:
             conditions.append(model.task_id.in_(list(task_ids)))
         if city:
             conditions.append(model.city == city)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -22,9 +23,10 @@ from app.fetchers.xuchang_station_daily_exceedance import (
 )
 from app.integrations.xcai_station_sql import xcai_connection_string
 from app.scenarios.xuchang_city_exceedance.process import POLLUTANT_FIELDS, detect_processes
+from app.scenarios.xuchang_city_exceedance.aqi import hourly_aqi_and_primary
 from app.scenarios.xuchang_city_exceedance.station_catalog import (
-    NATIONAL_SOURCE_TO_CANONICAL,
-    NATIONAL_STATION_IDS,
+    NATIONAL_STATION_CODES,
+    NATIONAL_STATION_META,
     REGIONAL_CITIES,
 )
 from app.scenarios.xuchang_daily_review.township_hourly import load_township_hourly_rows
@@ -100,30 +102,41 @@ class XuchangCityExceedanceFetcher(DataFetcher):
         self.township_loader = township_loader
 
     def load_national(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
-        placeholders = ", ".join("?" for _ in NATIONAL_STATION_IDS)
+        placeholders = ", ".join("?" for _ in NATIONAL_STATION_CODES)
         connection = pyodbc.connect(xcai_connection_string(), timeout=30)
         try:
             cursor = connection.cursor()
             cursor.execute(
-                f"""SELECT station_id, name, lon, lat, aqi, pollutant,
-                                  pm25, pm10, o3, no2, so2, co, data_time
-                    FROM dbo.dat_station_hour
-                    WHERE city_area_code = ? AND station_id IN ({placeholders})
-                      AND data_time >= ? AND data_time <= ?
-                    ORDER BY data_time, station_id""",
-                ["411000", *NATIONAL_STATION_IDS, start, end],
+                f"""SELECT station_code, station_name, aqi,
+                          pm25, pm10, o3, no2, so2, co, time_point
+                    FROM dbo.dat_zhongda_station_hour
+                    WHERE data_table_type = 'Act' AND parameter_type = 'gp'
+                      AND station_code IN ({placeholders})
+                      AND time_point >= ? AND time_point <= ?
+                    ORDER BY time_point, station_code""",
+                [*NATIONAL_STATION_CODES, start, end],
             )
             columns = [item[0] for item in cursor.description]
-            normalized = {}
+            rows = []
             for raw in cursor.fetchall():
                 row = dict(zip(columns, raw, strict=True))
-                source_id = str(row["station_id"])
-                row["station_id"] = NATIONAL_SOURCE_TO_CANONICAL.get(source_id, source_id)
-                row["source_station_id"] = source_id
-                key = (row["station_id"], row["data_time"])
-                if key not in normalized or source_id == row["station_id"]:
-                    normalized[key] = row
-            return list(normalized.values())
+                station_id = str(row.pop("station_code"))
+                meta = NATIONAL_STATION_META.get(station_id, {})
+                aqi = _value(row.get("aqi"))
+                _, primary = hourly_aqi_and_primary(row)
+                rows.append({
+                    "station_id": station_id,
+                    "name": str(row.pop("station_name") or meta.get("name") or station_id),
+                    "lon": meta.get("lon"),
+                    "lat": meta.get("lat"),
+                    "aqi": aqi,
+                    "pollutant": primary,
+                    "pm25": row.get("pm25"), "pm10": row.get("pm10"),
+                    "o3": row.get("o3"), "no2": row.get("no2"),
+                    "so2": row.get("so2"), "co": row.get("co"),
+                    "data_time": row.get("time_point"),
+                })
+            return rows
         finally:
             connection.close()
 
@@ -181,8 +194,10 @@ class XuchangCityExceedanceFetcher(DataFetcher):
         last_hour = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
         scan_start = _local(last_hour - timedelta(hours=71))
         scan_end = _local(last_hour)
-        national = self.load_national(scan_start, scan_end)
-        township_result = self.township_loader(scan_start, scan_end)
+        national = await asyncio.to_thread(self.load_national, scan_start, scan_end)
+        township_result = await asyncio.to_thread(
+            self.township_loader, scan_start, scan_end
+        )
         townships = township_result.get("rows") or []
         processes = detect_processes(national, townships)
         from app.scheduled_tasks import get_scheduled_task_service
@@ -202,7 +217,7 @@ class XuchangCityExceedanceFetcher(DataFetcher):
             nearby_townships = [row for row in townships if _in_window(row.get("data_time"), start, end)]
             peer_rows = [row for row in national if _in_window(row.get("data_time"), start, end)]
             try:
-                regional_rows = self.load_regional(start, end)
+                regional_rows = await asyncio.to_thread(self.load_regional, start, end)
                 regional_status = "available" if regional_rows else "not_available:empty_window"
             except Exception as exc:
                 regional_rows, regional_status = [], f"not_available:{type(exc).__name__}"
@@ -245,7 +260,9 @@ class XuchangCityExceedanceFetcher(DataFetcher):
                     "regional_rows": len(regional_rows), "meteorology_hours": len(meteo["rows"])},
                 "valid_hours": len(valid), "data_rate": len(valid) / max(1, int((end - start).total_seconds() / 3600) + 1),
             }
-            ingestion = self.analysis_service.ingest_process_exceedance(event)
+            ingestion = await asyncio.to_thread(
+                self.analysis_service.ingest_process_exceedance, event
+            )
             if ingestion["status"] != "requested":
                 continue
             job = ingestion["job"]

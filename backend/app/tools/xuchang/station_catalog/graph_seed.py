@@ -114,7 +114,7 @@ async def _resolve_target_kb() -> dict[str, Any]:
     """解析站点目录目标知识库：优先 station_directory 绑定，其次项目 collections"""
     from sqlalchemy.ext.asyncio import AsyncSession  # noqa: F401
 
-    from app.db.database import async_session
+    from app.db.knowledge_database import knowledge_async_session as async_session
     from app.knowledge_base.models import KnowledgeBase, KnowledgeBaseStatus
     from app.project_config.loader import load_project_context
     from config.settings import settings
@@ -167,7 +167,7 @@ async def _seed_graph_deterministic(
     """
     from sqlalchemy import select
 
-    from app.db.database import async_session
+    from app.db.knowledge_database import knowledge_async_session as async_session
     from app.knowledge_base.extraction_run_repository import (
         ExtractionRunContext,
         ExtractionRunRepository,
@@ -419,7 +419,7 @@ async def sync_station_knowledge_graph(
     doc_path = doc_dir / DOCUMENT_FILENAME
     doc_path.write_text(markdown, encoding="utf-8")
 
-    from app.db.database import async_session
+    from app.db.knowledge_database import knowledge_async_session as async_session
     from app.knowledge_base.service import KnowledgeBaseService
 
     deleted_previous = False

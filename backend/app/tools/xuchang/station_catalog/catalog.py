@@ -1,10 +1,14 @@
 """
 许昌空气监测站点目录
 
-数据源为大气环境监测数据接口中台：
-- 乡镇站：v_t_d_src 视图 distinct（站点编码为自定义编码，归属区县从站点名称前缀解析）
-- 国控站：station 表 areacode=411000
-- 区县：region 表 4110 前缀 level>=3
+数据源：
+- 大气环境监测数据接口中台：
+  - 乡镇站：v_t_d_src 视图 distinct（站点编码为自定义编码，归属区县从站点名称前缀解析）
+  - 国控站：station 表 areacode=411000
+  - 区县：region 表 4110 前缀 level>=3
+- 河南省实时发布系统（ssfb）：许昌县级站（市控/省控，剔除国控）与
+  全省城市/区县目录（含济源），用于 SsfbCityHour/SsfbSiteHour 等采集
+  表的编码解析。
 
 目录构建结果缓存到 data registry，TTL 默认 7 天。
 """
@@ -18,6 +22,12 @@ from typing import Any
 
 import structlog
 
+from app.integrations.henan_ssfb_client import (
+    HenanSsfbClient,
+    HenanSsfbError,
+    city_groups_from_tree,
+    site_leaves_from_tree,
+)
 from app.tools.xuchang.airdata_platform.client import (
     DATA_VIEW_QUERY_FIELDS,
     get_airdata_platform_client,
@@ -37,6 +47,12 @@ TOWNSHIP_SOURCE_VIEW = "v_t_d_src"
 TOWNSHIP_CODE_SUFFIX = "B"
 
 STATION_TYPE_NAME_MAP = {1: "国控", 2: "省控", 3: "市控", 4: "区县控", 5: "乡镇控"}
+
+# ssfb 站点树：仅采集"县级"根下许昌市的县级站（SK 市控/SCK 省控，GK 国控剔除）。
+SSFB_SITE_TREE_ROOT = "县级"
+SSFB_TARGET_CITIES = {"许昌市"}
+SSFB_EXCLUDED_SITE_TYPES = {"GK"}
+SSFB_SITE_TYPE_NAME_MAP = {"SK": "县级市控", "SCK": "县级省控"}
 
 ZONE_NAME_ALIASES = ("示范区",)
 
@@ -237,6 +253,105 @@ def normalize_regular_stations(
     )
 
 
+def normalize_county_stations(
+    sites: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """把 ssfb 站点树叶子归一化为目录条目（station_type=county）。
+
+    ``station_code`` 使用 ssfb 数字站点编码（字符串形式），并额外保留
+    ``site_id`` 整数字段，供 SsfbSiteHour/SsfbSiteDay 查询直接使用。
+    """
+    stations: dict[str, dict[str, Any]] = {}
+    for site in sites:
+        site_id = int(site.get("site_id") or 0)
+        name = str(site.get("site_name") or "").strip()
+        if not site_id or not name or str(site_id) in stations:
+            continue
+        online_type = str(site.get("online_type") or "").strip()
+        stations[str(site_id)] = {
+            "station_code": str(site_id),
+            "site_id": site_id,
+            "station_name": name,
+            "district": str(site.get("county") or "").strip(),
+            "city": CITY_NAME,
+            "station_type": "county",
+            "type_name": SSFB_SITE_TYPE_NAME_MAP.get(online_type, "县级站"),
+            "online_type": online_type or None,
+            "longitude": None,
+            "latitude": None,
+            "address": "",
+            "coordinate_source": None,
+            "data_source": "henan_ssfb:station_tree",
+        }
+    return sorted(
+        stations.values(), key=lambda item: (item["district"], item["station_name"])
+    )
+
+
+def build_henan_city_directory(tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """全省城市组目录：[{group_id, name, code}]，含济源市。"""
+    groups = city_groups_from_tree(tree)
+    return [
+        {
+            "group_id": group_id,
+            "name": meta.get("name"),
+            "code": meta.get("code"),
+        }
+        for group_id, meta in sorted(groups.items())
+    ]
+
+
+def build_henan_district_directory(tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """全省区县目录：[{city, name, code, system}]，system 为省辖市/县级体系。"""
+    districts: dict[tuple[str, str], dict[str, Any]] = {}
+    for root in tree:
+        system = str(root.get("Name") or "").strip()
+        for city in root.get("Children") or []:
+            city_name = str(city.get("Name") or "").strip()
+            if not city_name:
+                continue
+            for county in city.get("Children") or []:
+                county_name = str(county.get("Name") or "").strip()
+                if not county_name:
+                    continue
+                key = (city_name, county_name)
+                if key in districts:
+                    continue
+                districts[key] = {
+                    "city": city_name,
+                    "name": county_name,
+                    "code": str(county.get("Code") or "").strip() or None,
+                    "system": system,
+                }
+    return sorted(districts.values(), key=lambda item: (item["city"], item["name"]))
+
+
+def load_ssfb_directory(
+    client: HenanSsfbClient | None = None,
+) -> dict[str, Any]:
+    """拉取 ssfb 目录（城市/区县/许昌县级站）；失败时降级为空块不阻断建目录。"""
+    try:
+        ssfb = client or HenanSsfbClient()
+        city_tree = ssfb.city_tree()
+        station_tree = ssfb.station_tree()
+        sites = site_leaves_from_tree(
+            station_tree,
+            root_names={SSFB_SITE_TREE_ROOT},
+            city_names=SSFB_TARGET_CITIES,
+        )
+        sites = [
+            site for site in sites if site.get("online_type") not in SSFB_EXCLUDED_SITE_TYPES
+        ]
+        return {
+            "henan_cities": build_henan_city_directory(city_tree),
+            "henan_districts": build_henan_district_directory(station_tree),
+            "county_stations": normalize_county_stations(sites),
+        }
+    except (HenanSsfbError, OSError, ValueError) as exc:
+        logger.warning("xuchang_station_catalog_ssfb_unavailable", error=str(exc))
+        return {"henan_cities": [], "henan_districts": [], "county_stations": []}
+
+
 def build_catalog() -> dict[str, Any]:
     """从中台拉取并构建站点目录（不读缓存）"""
     client = get_airdata_platform_client()
@@ -273,6 +388,7 @@ def build_catalog() -> dict[str, Any]:
             station_rows, districts, station_coordinates
         ),
         "hidden_station_count": len(load_hidden_stations()),
+        **load_ssfb_directory(),
     }
 
 
@@ -284,7 +400,13 @@ def load_catalog(force_refresh: bool = False) -> dict[str, Any]:
             payload = json.loads(path.read_text(encoding="utf-8"))
             generated_at = float(payload.get("generated_at") or 0)
             has_stations = payload.get("townships") or payload.get("regular_stations")
-            if has_stations and time.time() - generated_at < CACHE_TTL_HOURS * 3600:
+            # 部署目录扩展前生成的旧缓存缺少 ssfb 城市块，视为过期触发重建。
+            has_henan_directory = payload.get("henan_cities") is not None
+            if (
+                has_stations
+                and has_henan_directory
+                and time.time() - generated_at < CACHE_TTL_HOURS * 3600
+            ):
                 payload["from_cache"] = True
                 return payload
         except (OSError, ValueError, TypeError) as exc:
@@ -308,6 +430,8 @@ def iter_stations(catalog: dict[str, Any], station_type: str = "all") -> list[di
         stations.extend(catalog.get("townships") or [])
     if station_type in ("all", "regular"):
         stations.extend(catalog.get("regular_stations") or [])
+    if station_type in ("all", "county"):
+        stations.extend(catalog.get("county_stations") or [])
     return stations
 
 
@@ -362,3 +486,37 @@ def resolve_stations(
         seen.add(key)
         matched.append(payload)
     return matched
+
+
+def henan_cities(catalog: dict[str, Any], names: list[str] | None = None) -> list[dict[str, Any]]:
+    """全省城市组目录，可按名称（模糊）过滤。"""
+    wanted = [str(item or "").strip() for item in (names or []) if str(item or "").strip()]
+    rows = catalog.get("henan_cities") or []
+    if not wanted:
+        return list(rows)
+    return [
+        row
+        for row in rows
+        if any(
+            want in str(row.get("name") or "")
+            or str(row.get("name") or "").endswith(want)
+            for want in wanted
+        )
+    ]
+
+
+def henan_districts(catalog: dict[str, Any], cities: list[str] | None = None) -> list[dict[str, Any]]:
+    """全省区县目录，可按所属城市（模糊）过滤。"""
+    wanted = [str(item or "").strip() for item in (cities or []) if str(item or "").strip()]
+    rows = catalog.get("henan_districts") or []
+    if not wanted:
+        return list(rows)
+    return [
+        row
+        for row in rows
+        if any(
+            want in str(row.get("city") or "")
+            or str(row.get("city") or "").endswith(want)
+            for want in wanted
+        )
+    ]

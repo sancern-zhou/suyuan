@@ -1,9 +1,8 @@
-from app.agent.prompts.tool_registry import ASSISTANT_TOOL_ORDER, BOARD_TOOL_ORDER, CHART_TOOL_ORDER, get_tools_by_mode
-from app.agent.prompts.assistant_prompt import build_assistant_prompt
+from app.agent.prompts.tool_registry import ASSISTANT_TOOL_ORDER, BOARD_TOOL_ORDER, get_tools_by_mode
 from app.agent.prompts.board_prompt import build_board_prompt
-from app.agent.prompts.chart_prompt import build_chart_prompt
 from app.agent.prompts.ops_prompt import build_ops_prompt
-from app.agent.prompts.social_prompt import build_social_prompt
+from app.agent.prompts.assistant_prompt import build_assistant_prompt
+from app.agent.prompts.office_prompt import build_office_prompt
 
 
 def test_project_specific_mode_is_resolved_before_builtin_validation(monkeypatch):
@@ -53,21 +52,21 @@ def test_weather_image_tool_is_reserved_for_expert_mode(monkeypatch):
     assert "get_platform_weather_image" in get_tools_by_mode("expert")
 
 
-def test_assistant_exposes_zhiliao_details_and_tender_queries():
+def test_office_does_not_query_business_databases():
     assert "qianlima_realtime_tender" not in get_tools_by_mode("assistant")
-    assert "execute_tender_sql_query" in ASSISTANT_TOOL_ORDER
-    assert "zhiliao_tender_detail" in get_tools_by_mode("assistant")
+    assert "execute_tender_sql_query" not in ASSISTANT_TOOL_ORDER
+    assert "zhiliao_tender_detail" not in get_tools_by_mode("office")
 
 
 def test_assistant_mode_keeps_lightweight_office_and_web_tools():
-    tools = get_tools_by_mode("assistant")
+    tools = get_tools_by_mode("office")
 
     assert {
         "list_directory", "search_files", "read_file", "write_file", "edit_file", "grep",
-        "create_html_artifact", "execute_python", "web_search", "web_fetch", "browser",
+        "create_html_artifact", "execute_python", "web_search", "web_fetch",
     }.issubset(tools)
     assert "manage_editable_ppt" not in tools
-    assert "create_report_package" in tools
+    assert "create_report_package" not in tools
     assert "render_report_package" not in tools
     assert "validate_report_package" not in tools
     assert "bash" not in tools
@@ -103,26 +102,26 @@ def test_ops_prompt_generates_and_validates_audit_reports_directly():
     assert "当前模式直接完成数据抽取、规则/语义复核、结果落盘和运维工单审核正式报告" in prompt
 
 
-def test_social_mode_exposes_only_create_report_package_for_reporting(monkeypatch):
+def test_social_mode_has_no_chart_or_report_executor(monkeypatch):
     from config.settings import settings
 
     monkeypatch.setattr(settings, "project_id", "default")
-    tools = get_tools_by_mode("social")
+    tools = get_tools_by_mode("assistant")
 
-    assert "create_business_chart" in tools
-    assert "create_report_package" in tools
+    assert "create_business_chart" not in tools
+    assert "create_report_package" not in tools
     assert "render_report_package" not in tools
     assert "validate_report_package" not in tools
 
 
-def test_social_prompt_prefers_main_agent_report_generation():
-    prompt = build_social_prompt(
+def test_social_prompt_hands_reports_to_professional_mode():
+    prompt = build_assistant_prompt(
         ["create_business_chart", "create_report_package", "call_sub_agent"],
     )
 
-    assert "正式报告、QMD、Word 和报告包由当前主 Agent 直接完成" in prompt
-    assert "不委托 `report` 子Agent" in prompt
-    assert "运维 Agent 直接完成规则与语义审核" in prompt
+    assert "正式报告引导用户进入报告主模式" in prompt
+    assert "助手不直接生成业务图表或正式报告" in prompt
+    assert 'target_mode="office"' in prompt
     assert "target_mode=\"report\"" not in prompt
 
 
@@ -145,34 +144,32 @@ def test_assistant_prompt_does_not_describe_task_tools():
     assert "任务清单工具" not in prompt
 
 
-def test_assistant_prompt_is_a_workspace_router():
-    prompt = build_assistant_prompt(["call_sub_agent"])
+def test_office_prompt_is_a_bounded_daily_executor():
+    prompt = build_office_prompt(["call_sub_agent"])
 
-    assert "call_sub_agent" in prompt
-    assert "target_mode=\"board\"" in prompt
-    assert "promote_to_workspace=true" in prompt
-    assert "只表示本次委托使用的专家执行器" in prompt
-    assert "单轮架构图或流程图可以直接委托" in prompt
+    assert "办公模式（office）" in prompt
+    assert "不再次委派" in prompt
+    assert "call_sub_agent" not in prompt
     assert "create_business_chart" not in prompt
-    assert "execute_python" not in prompt
+    assert "轻量计算" in prompt
     assert "create_diagram_artifact" not in prompt
 
 
 def test_tender_export_is_direct_and_query_is_guangdong_environment_only():
     from app.agent.prompts.query_prompt import build_query_prompt
 
-    assistant = build_assistant_prompt(["execute_tender_sql_query", "execute_python", "call_sub_agent"])
-    assert "招投标直接处理" in assistant
-    assert "直接查询完整日期范围" in assistant
-    assert "分页取全" in assistant
-    assert "不得调用 `call_sub_agent(target_mode='query')`" in assistant
-    assert "query 的能力范围仅为广东省环境数据查询" in assistant
+    assistant = build_office_prompt(["execute_tender_sql_query", "execute_python", "call_sub_agent"])
+    assert "不查询环境业务数据库和气象数据" in assistant
+    assert "不调用知识问答工具" in assistant
+    assert 'target_mode="query"' not in assistant
+    assert 'target_mode="expert"' not in assistant
+    assert 'target_mode="report"' not in assistant
     assert '数据查询、统计、同比环比、站点数据 → `target_mode="query"`' not in assistant
 
     query = build_query_prompt(["execute_sql_query"])
-    assert "广东省内的招投标也不属于本模式" in query
-    assert "不承接广东省外或全国范围的数据查询" in query
-    assert "工具描述不能扩大本模式职责" in query
+    assert "不承接招投标、中标、企业采购" in query
+    assert "仅处理当前项目清单明确启用" in query
+    assert "只能在当前项目清单和本模式白名单范围内使用" in query
 
 
 def test_board_mode_exposes_drawio_board_not_diagram_artifact():
@@ -184,7 +181,6 @@ def test_board_mode_exposes_drawio_board_not_diagram_artifact():
     assert "create_drawio_board" in BOARD_TOOL_ORDER
     assert "render_drawio_board_candidate" in BOARD_TOOL_ORDER
     assert "accept_drawio_board_candidate" in BOARD_TOOL_ORDER
-    assert "create_drawio_board" not in CHART_TOOL_ORDER
     assert "analyze_image" not in tools
     assert "analyze_image" not in BOARD_TOOL_ORDER
     assert "present_artifact" not in tools
@@ -234,26 +230,3 @@ def test_drawio_tool_schema_does_not_expose_current_xml_to_llm():
     assert "current_xml" not in drawio_schema["parameters"]["properties"]
     assert "currentXml" not in drawio_schema["parameters"]["properties"]
 
-
-def test_chart_prompt_does_not_embed_board_instructions_even_if_called_with_board_tool():
-    prompt = build_chart_prompt(["create_drawio_board", "read_file"])
-
-    assert "Draw.io" not in prompt
-    assert "board_context" not in prompt
-    assert "create_diagram_artifact" not in prompt
-
-
-def test_chart_prompt_omits_drawio_guide_when_board_tool_unavailable():
-    prompt = build_chart_prompt(["execute_echarts_python", "read_file"])
-
-    assert "Draw.io 画板强约束文档" not in prompt
-    assert "board_context" not in prompt
-
-
-def test_chart_prompt_has_no_accidental_python_string_fragments_or_duplicate_headings():
-    prompt = build_chart_prompt(["execute_echarts_python", "read_file"])
-
-    assert '        "##' not in prompt
-    assert "series 在顶层" not in prompt
-    assert "execute_echarts_python" not in prompt
-    assert "read_file" not in prompt

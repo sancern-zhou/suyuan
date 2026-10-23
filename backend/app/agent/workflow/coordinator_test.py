@@ -253,6 +253,58 @@ def test_coordinator_rejects_snapshot_for_changed_definition():
         raise AssertionError("changed workflow definition must not reuse a snapshot")
 
 
+def test_resume_reactivates_legacy_dependency_blocked_nodes():
+    async def scenario():
+        definition = {"workflow_id": "blocked", "nodes": [
+            {"task_id": "source", "max_attempts": 2},
+            {"task_id": "derived", "dependencies": ["source"]},
+        ]}
+        original = WorkflowCoordinator(definition, executor=lambda *args: {"success": True})
+        snapshot = original.snapshot()
+        snapshot["status"] = "failed"
+        snapshot["graph"]["source"]["status"] = "failed"
+        snapshot["graph"]["derived"]["status"] = "cancelled"
+        snapshot["node_errors"] = {"source": "interrupted", "derived": "dependency failed"}
+        snapshot["runtime"]["runs"]["blocked:source"].update(status="failed", attempt=1)
+        snapshot["runtime"]["runs"][snapshot["workflow_run_id"]].update(status="failed", attempt=1)
+        calls = []
+        async def execute(node, dependencies, attempt, retry_context=None):
+            calls.append(node.task_id)
+            return {"success": True}
+        restored = await WorkflowCoordinator(definition, executor=execute, snapshot=snapshot).run()
+        assert restored["status"] == "succeeded"
+        assert calls == ["source", "derived"]
+        assert restored["node_errors"] == {}
+    asyncio.run(scenario())
+
+
+def test_parent_cancellation_stops_children_and_preserves_resumable_session():
+    async def scenario():
+        started, stopped = asyncio.Event(), asyncio.Event()
+        coordinator = None
+        async def execute(node, dependencies, attempt, retry_context=None):
+            coordinator.bind_node_session(node.task_id, "child-existing")
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+        definition = {"workflow_id": "shutdown", "nodes": [{"task_id": "node"}]}
+        coordinator = WorkflowCoordinator(definition, executor=execute)
+        task = asyncio.create_task(coordinator.run())
+        await started.wait()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert stopped.is_set()
+        snapshot = coordinator.snapshot()
+        assert snapshot["graph"]["node"]["status"] == "pending"
+        async def resume(node, dependencies, attempt, retry_context=None):
+            assert retry_context["session_id"] == "child-existing"
+            return {"success": True}
+        assert (await WorkflowCoordinator(definition, executor=resume, snapshot=snapshot).run())["status"] == "succeeded"
+    asyncio.run(scenario())
+
+
 def test_coordinator_expands_node_budget_on_retry():
     async def run():
         seen = []
@@ -306,6 +358,21 @@ def test_coordinator_expands_node_budget_on_retry():
         assert result["definition"]["nodes"][0]["timeout_seconds"] == 600
 
     asyncio.run(run())
+
+
+def test_invalid_parameters_do_not_consume_another_child_attempt():
+    async def scenario():
+        attempts = []
+        async def execute(node, dependencies, attempt, retry_context=None):
+            attempts.append(attempt)
+            raise ValueError("invalid parameter")
+        result = await WorkflowCoordinator(
+            {"workflow_id": "invalid", "nodes": [{"task_id": "n", "max_attempts": 3}]},
+            executor=execute,
+        ).run()
+        assert result["status"] == "failed"
+        assert attempts == [1]
+    asyncio.run(scenario())
 
 
 def test_coordinator_injects_completed_results_and_journal():

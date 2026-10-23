@@ -403,6 +403,42 @@ class ScheduledTaskExecutor:
             iterations=result.get("iterations", 0),
         )
 
+    @staticmethod
+    async def _assistant_task_context(task):
+        """Use persisted server ownership, never the scheduled prompt, for identity."""
+        from app.auth.models import CurrentUser
+        from app.conversations.dependencies import get_conversation_catalog
+        from app.conversations.schemas import ConversationSource
+        from app.social.assistant_identity import assistant_account_context
+        from app.social.web_assistant import assistant_personal_context, web_assistant_context
+
+        if task is None or not task.owner_user_id or task.owner_user_id == "system":
+            # 旧版允许无归属的 assistant 定时任务（owner 缺省 system）。
+            # 缺归属只降级为不带个人上下文执行，不能让整次执行硬失败——
+            # 否则超时/部分产物语义会被 PermissionError 掩盖。
+            logger.warning(
+                "assistant_task_context_skipped_without_owner",
+                task_id=getattr(task, "task_id", None),
+            )
+            return {}, None
+        user = CurrentUser(
+            id=task.owner_user_id,
+            username=task.owner_username,
+            display_name=task.owner_display_name,
+        )
+        source = (
+            await get_conversation_catalog().find(task.source_session_id)
+            if task.source_session_id else None
+        )
+        if source is not None and source.owner_user_id != user.id:
+            raise PermissionError("助手计划来源与归属不匹配")
+        context = (
+            assistant_personal_context(user.id)
+            if source is not None and source.source == ConversationSource.SOCIAL
+            else web_assistant_context(user)
+        )
+        return context, assistant_account_context(user)
+
     async def _run_agent(
         self,
         prompt: str,
@@ -430,6 +466,8 @@ class ScheduledTaskExecutor:
 
         # custom 模式由任务执行器创建一个固定工具集的 Agent 并在所有步骤间复用。
         agent = agent or self.agent_factory()
+
+        submit_tool = self._inject_submit_result(agent, manual_mode)
 
         selected_skill_context = None
         if task is not None and task.skill_id:
@@ -470,6 +508,20 @@ class ScheduledTaskExecutor:
             "timestamp": datetime.now().isoformat(),
         }]
 
+        assistant_context = {}
+        metadata = dict(runtime_metadata or {})
+        if manual_mode == "assistant":
+            assistant_context, account = await self._assistant_task_context(task)
+            if account:
+                metadata["authenticated_account"] = account
+
+        if submit_tool is not None:
+            prompt = (
+                prompt
+                + "\n\n## 结构化交付要求\n完成取数与计算后，必须调用 submit_result 工具提交结构化结果"
+                  "（字段结构见工具定义），随后用一句话简述结论即可结束。"
+            )
+
         # ✅ 执行Agent分析，传入 session_id 以复用上下文
         analysis_error: BaseException | None = None
         try:
@@ -481,7 +533,8 @@ class ScheduledTaskExecutor:
                 selected_skill_context=selected_skill_context,
                 knowledge_base_ids=knowledge_base_ids,
                 extra_tool_names=extra_tool_names or [],
-                runtime_metadata=runtime_metadata or {},
+                runtime_metadata=metadata,
+                **assistant_context,
             ):
                 event_type = event.get("type")
                 event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -598,14 +651,53 @@ class ScheduledTaskExecutor:
                     if persisted:
                         self._persisted_execution_ids.add(execution.execution_id)
 
+        submitted_payload = (
+            getattr(submit_tool, "submitted_result", None) if submit_tool is not None else None
+        )
+        summary = "\n".join(summary_parts)
+        if isinstance(submitted_payload, dict) and not summary.strip():
+            import json as _json
+
+            summary = _json.dumps(submitted_payload, ensure_ascii=False)
         return {
-            "summary": "\n".join(summary_parts),
+            "summary": summary,
+            "structured_result": submitted_payload if isinstance(submitted_payload, dict) else None,
             "data_ids": data_ids,
             "visuals": visuals,
             "thoughts": thoughts,
             "tool_calls": tool_calls,
             "iterations": iterations
         }
+
+    @staticmethod
+    def _inject_submit_result(agent, manual_mode: str | None):
+        """固定工作流叶子模式的 deliver 阶段会清空工具到只剩 submit_result。
+
+        定时任务以叶子模式执行时必须注入交付工具，否则子 Agent 无法把
+        已取到的数据结构化回传（结果丢失）；submit_result 在阶段白名单
+        中豁免，交付后模型仍可输出一句话结论。
+        """
+        if not manual_mode or manual_mode == "custom":
+            return None
+        try:
+            from app.agent.workflow.mode_workflows import get_mode_workflow
+
+            if get_mode_workflow(manual_mode) is None:
+                return None
+            from copy import deepcopy
+
+            from app.agent.workflow.protocol import EXPERT_ANALYSIS_RESULT_SCHEMA
+            from app.tools.agent_tools.submit_result_tool import SubmitResultTool
+
+            registry = getattr(getattr(agent, "executor", None), "tool_registry", None)
+            if not isinstance(registry, dict) or "submit_result" in registry:
+                return registry.get("submit_result") if isinstance(registry, dict) else None
+            submit_tool = SubmitResultTool(deepcopy(EXPERT_ANALYSIS_RESULT_SCHEMA))
+            registry["submit_result"] = submit_tool
+            return submit_tool
+        except Exception as exc:
+            logger.warning("scheduled_submit_result_inject_failed", mode=manual_mode, error=str(exc))
+            return None
 
     @staticmethod
     def _build_task_prompt(
@@ -654,6 +746,7 @@ class ScheduledTaskExecutor:
 - 完成任务后调用 `broadcast_social_users` 发送结果。
 - 目标微信用户名称：%s
 - `target_user_names` 使用上述名称；生成的附件必须使用上游工具返回的最终成品资源路径（例如 create_report_package 的 resources 中的 DOCX/PDF），禁止把 `report.qmd`/`file_path` 源文件当作正式报告附件，也禁止自行拼接路径。
+- 广播内容涉及具体站点或污染物时，同步填写工具的 `station_name` 和 `pollutant` 参数（站点用全名），供 App 端按站点/污染物筛选广播。
 - 广播工具执行完成后，正常简要说明执行结果，不需要返回 JSON。""" % names
             )
         return "\n\n".join(sections)

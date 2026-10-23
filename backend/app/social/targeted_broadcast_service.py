@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from hashlib import sha256
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from app.social.broadcast_service import SocialBroadcastService
+from app.utils.path_config import (
+    resolve_agent_path, get_data_registry, agent_content_read_roots, is_path_within,
+)
 from app.social.user_registry import get_social_user_registry
 from app.social.user_registry import SocialUserRecord
 from app.social.app_identity import _accounts
@@ -63,20 +68,27 @@ class TargetedSocialBroadcastService:
             if user.channel == "app" and user.sender_id:
                 app_aliases[str(user.sender_id)] = str(user.name)
         for alias, display_name in app_aliases.items():
+            # App accounts whose account id equals their display name alias
+            # themselves; extending would duplicate the entry and make every
+            # broadcast to that name fail with "duplicate user name".
+            if alias == display_name:
+                continue
             users_by_name[alias].extend(users_by_name[display_name])
 
         valid: list[tuple[str, Any]] = []
         rows_by_name: dict[str, dict[str, Any]] = {}
         for name in names:
             matches = users_by_name.get(name, [])
-            if not matches:
+            # Dedupe by id: the alias pass can add the same user twice.
+            unique_matches = list({user.id: user for user in matches}.values())
+            if not unique_matches:
                 rows_by_name[name] = self._failed_row(name, "user not found")
                 continue
-            if len(matches) != 1:
+            if len(unique_matches) != 1:
                 rows_by_name[name] = self._failed_row(name, "duplicate user name")
                 continue
 
-            user = matches[0]
+            user = unique_matches[0]
             if user.status != "active":
                 rows_by_name[name] = self._failed_row(
                     name,
@@ -196,8 +208,25 @@ class TargetedSocialBroadcastService:
         media: list[str],
     ) -> None:
         report_type = str(context_metadata.get("report_type") or "").strip()
+        if not report_type:
+            return
         document_suffixes = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
-        documents = [path for path in media if Path(str(path).split("?", 1)[0]).suffix.lower() in document_suffixes]
+        documents = []
+        execution_id = str(context_metadata.get("execution_id") or "").strip()
+        if report_type and not execution_id:
+            raise ValueError("report_execution_id_required")
+        attachment_root = get_data_registry() / "social" / "report_attachments" / sha256(execution_id.encode()).hexdigest()
+        for index, raw in enumerate(media):
+            if Path(str(raw).split("?", 1)[0]).suffix.lower() not in document_suffixes:
+                continue
+            path = resolve_agent_path(raw)
+            if not is_path_within(path, agent_content_read_roots()) or not path.is_file():
+                raise ValueError("report_attachment_unavailable")
+            attachment_root.mkdir(parents=True, exist_ok=True)
+            target = attachment_root / f"{index}-{path.name}"
+            if not target.exists():
+                shutil.copy2(path, target)
+            documents.append(str(target))
         if not report_type or not documents:
             return
         from app.social.report_service import publish_report_results

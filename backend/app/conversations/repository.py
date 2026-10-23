@@ -1,6 +1,7 @@
 """PostgreSQL persistence for conversation ownership records."""
 
 from datetime import datetime
+from typing import Sequence
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -63,15 +64,15 @@ class ConversationCatalogRepository:
     async def list_visible(
         self,
         *,
-        user_id: str | None,
+        user_ids: Sequence[str] | None,
         limit: int,
         offset: int,
         source: ConversationSource | None = None,
     ) -> list[ConversationCatalogRecord]:
         statement = select(ConversationCatalogDB)
-        if user_id is not None:
+        if user_ids is not None:
             statement = statement.where(
-                ConversationCatalogDB.owner_user_id == user_id
+                ConversationCatalogDB.owner_user_id.in_(user_ids)
             )
         if source is not None:
             statement = statement.where(ConversationCatalogDB.source == source.value)
@@ -84,11 +85,11 @@ class ConversationCatalogRepository:
             rows = (await session.execute(statement)).scalars().all()
             return [self._record(row) for row in rows]
 
-    async def count_visible(self, *, user_id: str | None) -> int:
+    async def count_visible(self, *, user_ids: Sequence[str] | None) -> int:
         statement = select(func.count()).select_from(ConversationCatalogDB)
-        if user_id is not None:
+        if user_ids is not None:
             statement = statement.where(
-                ConversationCatalogDB.owner_user_id == user_id
+                ConversationCatalogDB.owner_user_id.in_(user_ids)
             )
         async with async_session() as session:
             return int((await session.scalar(statement)) or 0)

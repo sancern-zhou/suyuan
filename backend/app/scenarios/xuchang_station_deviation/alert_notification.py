@@ -39,7 +39,6 @@ DISPATCH_ACTIONS = {
     "NO2": "核查站点周边机动车拥堵、怠速、机械和燃烧源。",
     "CO": "核查站点周边机动车拥堵、怠速、机械和燃烧源。",
     "O3": "核查站点周边挥发性有机物逸散情况及区域浓度变化，不将道路洒水作为通用管控措施。",
-    "NOX": "核查站点周边机动车拥堵、怠速、机械和燃烧源。",
 }
 
 WIND_BEARINGS = (
@@ -266,14 +265,6 @@ def _factor_trend(alert: dict[str, Any], evidence: dict[str, Any]) -> str:
     return "；".join(sentences) + "。" if sentences else "暂无可用趋势指标。"
 
 
-def _nox_proxy_note(alerts: list[dict[str, Any]]) -> str | None:
-    for alert in alerts:
-        note = alert.get("nox_proxy_note")
-        if note:
-            return str(note)
-    return None
-
-
 def compose_station_alert_message(package: dict[str, Any]) -> str:
     """Render the business notification from one episode evidence package."""
     alerts = package.get("alerts") or []
@@ -322,10 +313,6 @@ def compose_station_alert_message(package: dict[str, Any]) -> str:
                 seen_actions.add(sentence)
                 lines.append(f"- {sentence}")
     lines.append("- 请回传具体位置、现场照片、处置情况和复测结果；不得擅自要求停产或封路，本通报不认定特定道路或企业为污染来源。")
-
-    proxy_note = _nox_proxy_note([item.get("alert") or {} for item in alerts])
-    if proxy_note:
-        lines.append(f"说明：{proxy_note}。")
 
     return "\n".join(lines)
 

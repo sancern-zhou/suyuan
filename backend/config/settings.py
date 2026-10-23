@@ -37,6 +37,14 @@ class Settings(BaseSettings):
         default="web",
         description="Application role: web, worker, or all. Web workers must not start background schedulers.",
     )
+    assistant_followups_enabled: bool = Field(
+        default=False,
+        description="Enable durable personal followups on the existing worker scheduler after schema preparation",
+    )
+    assistant_analysis_enabled: bool = Field(
+        default=False,
+        description="Enable bounded read-only assistant analyses; also requires assistant_followups_enabled",
+    )
     sse_heartbeat_interval_seconds: float = Field(
         default=15.0,
         gt=0,
@@ -157,6 +165,11 @@ class Settings(BaseSettings):
     auth_identity_cache_key_prefix: str = Field(
         default="suyuan:auth:",
         description="Redis prefix for authentication state",
+    )
+    slow_request_log_threshold_seconds: float = Field(
+        default=2.0,
+        ge=0.1,
+        description="Warn when a request takes this long to first response bytes",
     )
     auth_ws_ticket_ttl_seconds: int = Field(
         default=30,
@@ -344,6 +357,10 @@ class Settings(BaseSettings):
     llm_provider: str = Field(
         default="doubao",
         description="LLM provider: doubao, openai, anthropic, deepseek, minimax, mimo, agnes, glm, bailian, scnet, go, go2"
+    )
+    llm_context_window_tokens: int = Field(
+        default=200000,
+        description="上下文窗口大小（tokens）：token_budget_manager 压缩预算与 context_usage 指示器的单一事实源",
     )
     doubao_api_key: Optional[str] = Field(default=None, description="Doubao-compatible gateway API key")
     doubao_base_url: str = Field(
@@ -597,6 +614,15 @@ class Settings(BaseSettings):
         default=2,
         description="Concurrent LLM request limit per provider/model pool"
     )
+    agent_detached_runs_enabled: bool = Field(
+        default=True,
+        description="Keep agent runs alive after the web client disconnects (requires Redis); set AGENT_DETACHED_RUNS_ENABLED=0 to fall back to legacy inline streaming",
+    )
+    agent_detached_run_max_seconds: int = Field(
+        default=3600,
+        ge=60,
+        description="Wall-clock guard for detached agent runs; the run is interrupted when exceeded",
+    )
     llm_request_timeout_seconds: float = Field(
         default=180.0,
         description="Timeout in seconds for LLM provider requests"
@@ -686,6 +712,15 @@ class Settings(BaseSettings):
         default=7200,
         ge=60,
         description="TTL for active-run steering metadata and pending inputs",
+    )
+    agent_visual_alias_redis_prefix: str = Field(
+        default="suyuan:agent:visual_alias",
+        description="Redis key prefix for session-scoped short chart aliases ([[chart:chart_N]])",
+    )
+    agent_visual_alias_ttl_seconds: int = Field(
+        default=1209600,
+        ge=60,
+        description="TTL for session-scoped chart alias mappings (refreshed on each bind)",
     )
 
     # Cache TTL (seconds)

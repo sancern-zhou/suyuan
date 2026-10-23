@@ -5,7 +5,6 @@
       :activeModule="activeModule"
       :collapsed="leftSidebarCollapsed"
       :task-workspace-entries="taskWorkspaceEntries"
-      @update:collapsed="handleCollapseChange"
       @update:activeModule="handleActiveModuleChange"
       @select="handleAssistantSelect"
       @action="handleSidebarAction"
@@ -55,9 +54,12 @@
         :show-management-panel="!!managementPanel"
         :right-panel-expanded="rightPanelExpanded"
         :has-viz-content="hasVizContent"
+        :left-sidebar-collapsed="leftSidebarCollapsed"
         @send="handleSend"
         @pause="handlePause"
         @update:useReranker="handleRerankerChange"
+        @toggle-left-sidebar="handleToggleLeftSidebar"
+        @new-conversation="handleNewConversation"
         @drag-over="handleChatAreaDragOver"
         @drag-leave="handleChatAreaDragLeave"
         @drop="handleChatAreaDrop"
@@ -65,6 +67,9 @@
         @load-more="handleLoadMore"
         @preview-message-attachment="handleMessageAttachmentPreview"
         @toggle-viz-panel="handleToggleVizPanel"
+        @open-trajectory="handleTabChange('trajectory')"
+        @open-memory="memoryDialogOpen = true"
+        @open-assistant="assistantPanelOpen = true"
         @new-web-conversation="$emit('new-web-conversation')"
         @resolve-interaction="$emit('resolve-interaction', $event)"
         @close-interaction="$emit('close-interaction')"
@@ -138,6 +143,20 @@
             @close="$emit('close-management-panel')"
           />
 
+          <SharedConversationsPanel
+            v-else-if="managementPanel === 'shared-conversations'"
+            :report-collapsed="sharedReportCollapsed"
+            @close="$emit('close-management-panel')"
+            @report-open="handleSharedReportOpen"
+            @report-toggle="handleSharedReportToggle"
+            @report-close="sharedReportView = null"
+          />
+
+          <PlatformGuidePanel
+            v-else-if="managementPanel === 'platform-guide'"
+            @close="$emit('close-management-panel')"
+          />
+
           <ToolsManagementPanel
             v-else-if="managementPanel === 'tools-management'"
             @close="$emit('close-management-panel')"
@@ -160,10 +179,24 @@
         </template>
           </ChatArea>
         </div>
+
+        <AssistantPanel
+          v-if="assistantPanelOpen && agentMode === 'assistant'"
+          :is-analyzing="isAnalyzing"
+          :read-only="conversationReadOnly"
+          @close="assistantPanelOpen = false"
+          @continue="$emit('assistant-continue', $event)"
+        />
+        <!-- 模式记忆查看/编辑对话框 -->
+        <ModeMemoryDialog
+          :visible="memoryDialogOpen && agentMode !== 'assistant'"
+          :agent-mode="agentMode"
+          @close="memoryDialogOpen = false"
+        />
         <!-- 宽度调整器 -->
         <WidthResizer
-          v-if="rightPanelVisible"
-        :visible="rightPanelVisible"
+          v-if="rightPanelShown"
+        :visible="rightPanelShown"
         :is-dragging="isDragging"
         @start-drag="handleStartDrag"
         @stop-drag="handleStopDrag"
@@ -172,8 +205,10 @@
 
         <!-- 右侧面板 -->
         <RightPanelContainer
-          v-if="rightPanelVisible"
-        :visible="rightPanelVisible"
+          v-if="rightPanelShown"
+        :visible="rightPanelShown"
+        :workflow-available="hasWorkflowContent"
+        :trajectory-available="hasTrajectoryContent"
         :knowledge-panel-visible="knowledgePanelVisible"
         :active-tab="activeRightTab"
         :panel-style="vizPanelStyle"
@@ -194,23 +229,53 @@
         @submit-human-feedback="$emit('submit-human-feedback', $event)"
         />
       </template>
+
+      <!-- 共享对话报告停靠面板（与聊天右侧面板同款交互：拖宽/展开收起/新窗口） -->
+      <WidthResizer
+        v-if="sharedReportView && !sharedReportCollapsed"
+        :is-dragging="sharedReportDragging"
+        @start-drag="handleSharedReportDragStart"
+        @reset="sharedReportWidth = 46"
+      />
+      <div
+        v-if="sharedReportView"
+        class="shared-report-wrapper"
+        :class="{ collapsed: sharedReportCollapsed }"
+        :style="{ width: sharedReportCollapsed ? '0%' : sharedReportWidth + '%' }"
+      >
+        <div class="shared-report-tabs">
+          <span class="shared-report-title">分析报告</span>
+          <a class="shared-report-open" :href="sharedReportView.url" target="_blank" rel="noopener">新窗口打开</a>
+        </div>
+        <iframe
+          class="shared-report-frame"
+          :src="sharedReportView.url"
+          sandbox="allow-scripts allow-forms"
+          title="分享的报告"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { defineAsyncComponent, ref, computed, watch } from 'vue'
+import { defineAsyncComponent, ref, computed, watch, onBeforeUnmount } from 'vue'
+import { listSessionWorkflows } from '@/services/workflowApi.js'
 import AssistantSidebar from '@/components/AssistantSidebar.vue'
 import AgentPlatform from '@/components/agentPlatform/AgentPlatform.vue'
 import { projectConfig } from '@/config/projectConfig.js'
 import ChatArea from './ChatArea.vue'
 import RightPanelContainer from './RightPanelContainer.vue'
 import WidthResizer from './WidthResizer.vue'
+import ModeMemoryDialog from './dialogs/ModeMemoryDialog.vue'
+import AssistantPanel from './AssistantPanel.vue'
 import KnowledgeBasePanel from '@/components/management/KnowledgeBasePanel.vue'
 import FetchersPanel from '@/components/management/FetchersPanel.vue'
 import ScheduledTasksPanel from '@/components/management/ScheduledTasksPanel.vue'
 import TaskExecutionWorkspace from '@/components/management/TaskExecutionWorkspace.vue'
 import SessionHistoryPanel from '@/components/management/SessionHistoryPanel.vue'
+import SharedConversationsPanel from '@/components/management/SharedConversationsPanel.vue'
+import PlatformGuidePanel from '@/components/management/PlatformGuidePanel.vue'
 import SocialPlatformPanel from '@/components/management/SocialPlatformPanel.vue'
 import ToolsManagementPanel from '@/components/management/ToolsManagementPanel.vue'
 import SkillsManagementPanel from '@/components/management/SkillsManagementPanel.vue'
@@ -223,6 +288,39 @@ const AirQualityForecastView = projectConfig.hasModule('xuchang-air-quality')
   : null
 
 const auth = useAuthStore()
+const assistantPanelOpen = ref(false)
+
+// 共享对话报告停靠面板：与聊天右侧面板同款交互（拖拽调宽/展开收起/新窗口）
+const sharedReportView = ref(null)
+const sharedReportWidth = ref(46)
+const sharedReportDragging = ref(false)
+const sharedReportCollapsed = ref(false)
+
+const handleSharedReportOpen = (payload) => {
+  sharedReportView.value = payload
+  sharedReportCollapsed.value = false
+}
+
+const handleSharedReportToggle = () => {
+  sharedReportCollapsed.value = !sharedReportCollapsed.value
+}
+
+const handleSharedReportDragStart = () => {
+  const rect = layoutRef.value?.getBoundingClientRect()
+  if (!rect) return
+  sharedReportDragging.value = true
+  const onMove = (event) => {
+    const percent = ((rect.right - event.clientX) / rect.width) * 100
+    sharedReportWidth.value = Math.min(70, Math.max(25, percent))
+  }
+  const onUp = () => {
+    sharedReportDragging.value = false
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
 
 const props = defineProps({
   taskWorkspaceEntries: { type: Array, default: () => [] },
@@ -449,6 +547,7 @@ const emit = defineEmits([
   'stop-drag',
   'reset-width',
   'tab-change',
+  'assistant-continue',
   'board-xml-change',
   'board-selection-change',
   'board-snapshot-confirm',
@@ -489,13 +588,40 @@ const emit = defineEmits([
 
 const layoutRef = ref(null)
 
+// 模式记忆对话框（查看/编辑当前 agentMode 的长期记忆）
+const memoryDialogOpen = ref(false)
+watch(() => props.managementPanel, (panel) => {
+  if (panel !== 'shared-conversations') sharedReportView.value = null
+})
+watch(() => props.agentMode, () => { assistantPanelOpen.value = false; memoryDialogOpen.value = false })
+
 // 右侧面板展开状态（用于ChatArea的展开/隐藏按钮）
-const rightPanelExpanded = ref(true)
+const rightPanelExpanded = computed(() => rightPanelShown.value)
+const hasWorkflowContent = ref(false)
+const hasTrajectoryContent = computed(() => Boolean(props.sessionId) && props.messages.some(message =>
+  ['thought', 'tool_use', 'tool_result', 'final', 'assistant'].includes(message.type)
+  || message.role === 'assistant'
+))
+let workflowCheckTimer, workflowGeneration = 0
+watch(() => [props.sessionId, props.messages.length, props.isAnalyzing], ([sessionId], previous) => {
+  const generation = ++workflowGeneration
+  clearTimeout(workflowCheckTimer)
+  if (sessionId !== previous?.[0]) hasWorkflowContent.value = false
+  if (!sessionId) return
+  workflowCheckTimer = setTimeout(async () => {
+    try {
+      const result = await listSessionWorkflows(sessionId)
+      if (generation === workflowGeneration) hasWorkflowContent.value = Boolean(result?.workflows?.length)
+    } catch { /* A failed availability check must not open an empty panel. */ }
+  }, 250)
+}, { immediate: true })
+onBeforeUnmount(() => { workflowGeneration++; clearTimeout(workflowCheckTimer) })
 
 // 计算是否有可视化内容（用于显示/隐藏ChatArea中的按钮）
 const hasVizContent = computed(() => {
-  return Boolean(props.sessionId) || props.rightPanelVisible || props.hasResourceContent
+  return props.hasResourceContent || hasWorkflowContent.value || hasTrajectoryContent.value || knowledgeSources.value.length > 0 || Boolean(props.humanFeedback?.items?.length)
 })
+const rightPanelShown = computed(() => props.rightPanelVisible && hasVizContent.value)
 
 // 计算知识溯源数据
 const knowledgeSources = computed(() => {
@@ -535,14 +661,14 @@ watch(layoutRef, (newEl) => {
   emit('update:layout-ref', newEl)
 })
 
-// 同步右侧面板展开状态
-watch(() => props.rightPanelVisible, (newValue) => {
-  rightPanelExpanded.value = newValue
-}, { immediate: true })
-
 // 事件处理
-const handleCollapseChange = (value) => {
-  emit('update:leftSidebarCollapsed', value)
+const handleToggleLeftSidebar = () => {
+  emit('update:leftSidebarCollapsed', !props.leftSidebarCollapsed)
+}
+
+// 对话区「更多功能」菜单：新建对话复用侧边栏的 restart-session 动作
+const handleNewConversation = () => {
+  emit('sidebar-action', 'restart-session')
 }
 
 const handleActiveModuleChange = (value) => {
@@ -619,7 +745,7 @@ const handleBoardSnapshotConfirm = (snapshot) => {
 
 // 处理右侧面板展开/隐藏
 const handleToggleVizPanel = () => {
-  rightPanelExpanded.value = !rightPanelExpanded.value
+  if (!hasVizContent.value) return
   // 通知父组件切换右侧面板状态
   emit('toggle-viz-panel')
 }
@@ -681,8 +807,82 @@ defineExpose({ layoutRef })
 }
 
 /* ChatArea 占据剩余空间，min-width: 0 防止内容撑开 */
-.analysis-panel :deep(.chat-area) {
-  flex: 1 1 0%;
+/* 共享对话报告停靠面板：与 RightPanelContainer 同款视觉 */
+.shared-report-wrapper {
+  flex: 0 0 auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #f8fafc;
+  border-left: 1px solid #edf1f7;
+  transition: width 0.2s ease;
+}
+
+.shared-report-wrapper.collapsed {
+  border-left-color: transparent;
+}
+
+.shared-report-tabs,
+.shared-report-frame {
+  min-width: 320px;
+}
+
+.shared-report-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid #edf1f7;
+  background: white;
+}
+
+.shared-report-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1, #2f3a4c);
+}
+
+.shared-report-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.shared-report-open {
+  font-size: 12px;
+  color: #1976d2;
+  text-decoration: none;
+}
+
+.shared-report-open:hover {
+  text-decoration: underline;
+}
+
+.shared-report-close {
+  border: 1px solid var(--border-2, #e3e8f0);
+  border-radius: 6px;
+  padding: 3px 10px;
+  background: white;
+  font-size: 12px;
+  color: var(--text-2, #555);
+  cursor: pointer;
+}
+
+.shared-report-close:hover {
+  border-color: var(--color-primary, #1976d2);
+  color: var(--color-primary, #1976d2);
+}
+
+.shared-report-frame {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: white;
+}
+
+.analysis-panel :deep(.chat-area) {  flex: 1 1 0%;
   min-width: 0;
 }
 

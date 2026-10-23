@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable, Mapping
-from pathlib import Path
 from typing import Any
 
 import structlog
@@ -41,6 +40,7 @@ def stored_resource_ref(resource: StoredResource) -> dict[str, Any]:
         "capabilities": list(resource.capabilities),
         "version": resource.version,
         "locator": dict(resource.locator or {}),
+        "metadata": dict(resource.metadata or {}),
     }
     path = str((resource.locator or {}).get("path") or "").strip()
     if path:
@@ -111,6 +111,7 @@ def _declaration_from_file_handle(
         role="source",
         label=str(handle.get("label") or handle.get("name") or path.name),
         metadata={
+            **dict(handle.get("metadata") or {}),
             "workflow_origin": {
                 "source_task_id": str(handle.get("source_task_id") or ""),
                 "handle_type": "file_path",
@@ -131,10 +132,16 @@ async def import_workflow_handles(
 ) -> list[dict[str, Any]]:
     """Register dependency resources in the downstream session catalog."""
     imported: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
     source_groups: dict[tuple[str, str], list[StoredResource]] = {}
-    source_group_tasks: dict[tuple[str, str], str] = {}
+    source_group_tasks: dict[tuple[str, str], set[str]] = {}
     file_handles: list[Mapping[str, Any]] = []
+    handles = list(handles)
+    catalog_paths = {
+        str(resolve_agent_path(raw_path))
+        for handle in handles if isinstance(handle, Mapping) and handle.get("source_session_id") and handle.get("resource_id")
+        if (raw_path := handle.get("file_path") or (handle.get("locator") or {}).get("path"))
+    }
 
     for handle in handles:
         if not isinstance(handle, Mapping):
@@ -142,7 +149,7 @@ async def import_workflow_handles(
         source_session_id = str(handle.get("source_session_id") or "").strip()
         resource_id = str(handle.get("resource_id") or "").strip()
         file_path = str(handle.get("file_path") or handle.get("path") or "").strip()
-        identity = (source_session_id, resource_id or file_path)
+        identity = (source_session_id, resource_id or file_path, str(handle.get("source_task_id") or ""))
         if not identity[1] or identity in seen:
             continue
         seen.add(identity)
@@ -158,11 +165,13 @@ async def import_workflow_handles(
                         limit=500,
                     )
                     source_groups[group_identity] = list(page.resources)
-                source_group_tasks.setdefault(
-                    group_identity,
-                    str(handle.get("source_task_id") or ""),
-                )
+                source_group_tasks.setdefault(group_identity, set()).add(str(handle.get("source_task_id") or ""))
                 continue
+            # A typed resource must remain active in its owning catalog. Do
+            # not resurrect an inactive entry through its old filesystem path.
+            continue
+        if file_path and str(resolve_agent_path(file_path)) in catalog_paths:
+            continue
         file_handles.append(handle)
 
     for (source_session_id, source_group_id), resources in source_groups.items():
@@ -172,7 +181,7 @@ async def import_workflow_handles(
             resource
             for resource in resources
             if (resource.locator or {}).get("path")
-            and not Path(str(resource.locator["path"])).exists()
+            and not resolve_agent_path(str(resource.locator["path"])).exists()
         ]
         if missing_paths:
             logger.warning(
@@ -199,9 +208,8 @@ async def import_workflow_handles(
                     "source_session_id": source_session_id,
                     "resource_id": resource.resource_id,
                     "source_group_id": source_group_id,
-                    "source_task_id": source_group_tasks.get(
-                        (source_session_id, source_group_id), ""
-                    ),
+                    "source_task_id": next(iter(sorted(source_group_tasks.get((source_session_id, source_group_id), {""})))),
+                    "source_task_ids": sorted(source_group_tasks.get((source_session_id, source_group_id), set())),
                 },
             )
             for resource in resources

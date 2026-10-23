@@ -61,14 +61,9 @@ def test_resolve_model_chain_returns_complete_multimodal_priority(monkeypatch):
 
 
 @pytest.mark.parametrize("tier", ["flash", "pro"])
-def test_multimodal_profile_overrides_explicit_model_tier(monkeypatch, tier):
+def test_multimodal_profile_overrides_tier_without_changing_primary_chain(monkeypatch, tier):
     service = LLMService()
-
-    monkeypatch.setattr(
-        f"app.services.llm_service.settings.llm_{tier}_models",
-        "deepseek/deepseek-v4-flash",
-        raising=False,
-    )
+    original_provider, original_model = service.provider, service.model
     monkeypatch.setattr(
         "app.services.llm_service.settings.llm_multimodal_models",
         "mimo/mimo-v2.5,minimax/MiniMax-M3",
@@ -76,12 +71,12 @@ def test_multimodal_profile_overrides_explicit_model_tier(monkeypatch, tier):
     )
 
     with service.use_model_tier(tier):
-        assert service.provider == "deepseek"
-        assert service.model == "deepseek-v4-flash"
+        assert service.provider == original_provider
+        assert service.model == original_model
         with service.use_auto_profile("multimodal"):
             assert service.provider == "mimo"
             assert service.model == "mimo-v2.5"
             assert service.request_fallbacks == "minimax/MiniMax-M3"
 
-        assert service.provider == "deepseek"
-        assert service.model == "deepseek-v4-flash"
+        assert service.provider == original_provider
+        assert service.model == original_model

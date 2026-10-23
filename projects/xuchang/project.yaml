@@ -11,6 +11,7 @@ frontend:
   features:
     query_agent_as_default: true
   agent_modes:
+    - assistant
     - query
     - knowledge
     - expert
@@ -22,10 +23,13 @@ frontend:
   # 监测分析分组在共享卡片基础上补充知识问答入口（统一从智能体平台进入）。
   agent_scene_overrides:
     monitoring:
-      mode_ids: [query, knowledge, expert, report, chart]
+      # assistant 是 Web/App 共用助手主模式；office 仅作为办公子 Agent。
+      mode_ids: [assistant, query, knowledge, expert, report]
   # 侧边栏不再展示智能体模式快捷入口，统一由智能体平台页进入。
   sidebar_agent_modes: []
 backend:
+  # 项目专属技能目录（SKILL.md 声明式技能）；解析时组合共享库 backend/docs/skills，项目目录优先。
+  skills_dir: projects/xuchang/skills
   tools:
     - get_gems_image
     - get_sentinel5p_image
@@ -34,8 +38,12 @@ backend:
     - query_airdata_platform
     - airdata_calc_report_summary
     - xuchang_station_catalog
+    - xuchang_cube_metrics
+    - query_xuchang_traffic_status
   agent_mode_tools:
     query:
+      - run_agent_workflow
+      - call_sub_agent
       - list_session_resources
       - read_session_resource
       - publish_session_file
@@ -60,13 +68,18 @@ backend:
       - execute_echarts_python
       - knowledge_graph_query
       - resolve_station_geo
+      # 站点周边实时路况（百度地图 Traffic API，实时额度与定时抓取共享）
+      - query_xuchang_traffic_status
       - query_national_province_air_quality
       - query_national_city_air_quality
       - query_airdata_platform
       - airdata_calc_report_summary
       - xuchang_station_catalog
+      - xuchang_cube_metrics
       - execute_python
     expert:
+      - run_agent_workflow
+      - call_sub_agent
       - list_session_resources
       - read_session_resource
       - publish_session_file
@@ -76,7 +89,8 @@ backend:
       - get_weather_forecast
       - get_universal_meteorology
       - get_current_weather
-      - get_weather_situation_map
+      # 平台天气图片工具（已裁剪：仅 NMC 中国地面天气形势图一种产品）
+      - get_platform_weather_image
       - query_xcai_city_history
       - execute_sql_query
       - execute_crawler_sql_query
@@ -86,9 +100,11 @@ backend:
       - query_airdata_platform
       - airdata_calc_report_summary
       - xuchang_station_catalog
+      - xuchang_cube_metrics
       - query_national_province_air_quality
       - query_national_city_air_quality
       - resolve_station_geo
+      # 实时路况已移交问数模式；专家模式历史路况走 execute_postgres_sql_query（traffic_snapshot）
       - meteorological_trajectory_analysis
       # 许昌源清单与上风向企业分析（企业排放清单 + 排污许可证合并筛查）
       - query_xuchang_emission_inventory
@@ -116,7 +132,8 @@ backend:
       - get_weather_forecast
       - get_universal_meteorology
       - get_current_weather
-      - get_weather_situation_map
+      # 平台天气图片工具（已裁剪：仅 NMC 中国地面天气形势图一种产品）
+      - get_platform_weather_image
       - meteorological_trajectory_analysis
       - resolve_station_geo
       - execute_sql_query
@@ -133,6 +150,7 @@ backend:
       - query_airdata_platform
       - airdata_calc_report_summary
       - xuchang_station_catalog
+      - xuchang_cube_metrics
       - query_national_city_air_quality
       - execute_sql_query
       - execute_python
@@ -151,6 +169,7 @@ backend:
       - execute_postgres_sql_query
       - query_airdata_platform
       - xuchang_station_catalog
+      - xuchang_cube_metrics
       - query_national_city_air_quality
       - resolve_station_geo
       - execute_python
@@ -167,6 +186,7 @@ backend:
       - get_weather_forecast
       - query_airdata_platform
       - xuchang_station_catalog
+      - xuchang_cube_metrics
       - resolve_station_geo
       - execute_postgres_sql_query
       - execute_python
@@ -185,29 +205,33 @@ backend:
       - run_agent_workflow
       - list_skills
       - view_skill
-    social:
+    assistant:
       - list_session_resources
       - read_session_resource
       - publish_session_file
-      - execute_sql_query
-      - execute_crawler_sql_query
-      - execute_bigdata_sql_query
-      - execute_postgres_sql_query
-      - query_xcai_city_history
-      - get_weather_data
-      - get_weather_forecast
-      - execute_python
-      - create_business_chart
-      - knowledge_qa_workflow
-      - knowledge_document_reader
+      - read_file
+      - edit_file
+      - manage_assistant_memory
+      - call_sub_agent
+      - run_agent_workflow
+      - manage_assistant_runs
+      - list_skills
+      - view_skill
+      - session_search
       - web_search
       - web_fetch
-      - schedule_task
+      - manage_assistant_schedule
       - send_notification
   # 广东数据源工具已改为项目专属（共享白名单不含、默认不注册），无需再逐项禁用；
   # 仅保留非项目工具的显式禁用项。
   disabled_tools:
     - get_observed_meteorology
+    # 许昌无招投标业务：禁用共享助手白名单携带的招投标工具
+    - execute_tender_sql_query
+    - zhiliao_tender_detail
+    # 助手不需要交互式浏览器（网页检索由 web_search/web_fetch 覆盖）；
+    # 注意：项目级禁用对 ppt 子代理同样生效，其网页取证退化为 web_search/web_fetch
+    - browser
   # 许昌分支不使用 GIS 交互（问数地图）能力：该开关关闭后，
   # visual_interaction / resolve_map_data_asset / create_map_point_asset /
   # spatial_analysis / spatial_interpolation / map_program 回执等 Agentic GIS 工具
@@ -215,28 +239,42 @@ backend:
   # 禁止在本项目任何模式的工具列表中加入上述 GIS 工具或重新打开此开关。
   gis_tools_enabled: false
   mode_prompt_files:
+    office: projects/xuchang/prompts/office.md
     query: projects/xuchang/prompts/query.md
     knowledge: projects/xuchang/prompts/knowledge.md
     expert: projects/xuchang/prompts/expert.md
-    social: projects/xuchang/prompts/social.md
+    assistant: projects/xuchang/prompts/assistant.md
     report: projects/xuchang/prompts/report.md
+  # 办公子 Agent 的技能草稿只写 .drafts/，不直接发布。
+  agent_mode_extra_tools:
+    office:
+      - create_skill_draft
   fetchers:
     - city_weather_history
     - nmc_observed_weather
     - nmc_weather_chart
     - xuchang_daily_attainment_forecast_fetcher
     - xuchang_annual_attainment_forecast_fetcher
-    - xuchang_cnemc_station_hour_fetcher
     - xuchang_city_exceedance_fetcher
-    - xuchang_henan_month_year_accumulate_fetcher
+    # 省空气质量APP 2026-09 停服，接口不可达；排名改由 xuchang_henan_ranking_recalc_fetcher 重算
+    # - xuchang_henan_month_year_accumulate_fetcher
+    # 河南实时发布系统：18城市组(含济源)小时/日值 + 全省站点小时/日值
+    - xuchang_henan_ssfb_city_publish_fetcher
+    - xuchang_henan_ssfb_site_publish_fetcher
+    # 河南实时发布系统：全省区县(含济源/功能区)小时/日值 + 平台口径日排名
+    - xuchang_henan_county_publish_fetcher
+    # 省APP已停服：仅对SsfbCityDay官方日值排序(日排名);月/年累计改走官方月报(ProvinceMonthReport)
+    - xuchang_henan_ranking_recalc_fetcher
     - xuchang_nmc_hourly_forecast_fetcher
     - xuchang_weather_com_daily_forecast_fetcher
     - xuchang_air_quality_forecast_fetcher
+    # 同一抓取器中午 12:00 再跑一次（08:30 定时曾因远程 XcAiDb 07:30 时段断连连日失败）
+    - xuchang_air_quality_forecast_fetcher_noon
     - xuchang_weather_situation_evidence_fetcher
     - xuchang_station_deviation_alert_fetcher
     - xuchang_station_daily_pollution_fetcher
-    # 备用功能，暂不启用：场景二站点日污染超标确认与溯源任务触发
-    # - xuchang_station_daily_exceedance_fetcher
+    # 场景二：站点日污染超标确认与溯源任务触发
+    - xuchang_station_daily_exceedance_fetcher
     - xuchang_transport_analysis_fetcher
     - xuchang_zhongda_station_minute_fetcher
     - xuchang_zhongda_station_hour_fetcher
@@ -275,3 +313,4 @@ scheduled_tasks:
   - task_xuchang_station_daily_source_analysis_report
   - task_xuchang_weekly_weather_situation_report
   - task_xuchang_mee_cnemc_weekly_news
+  - task_runtime_monitor

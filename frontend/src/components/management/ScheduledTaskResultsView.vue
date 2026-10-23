@@ -74,7 +74,7 @@
                 </td>
                 <td class="col-pollutant">{{ record.pollutant || '—' }}</td>
                 <td class="col-brief" :title="record.conclusion || ''">
-                  {{ record.conclusion ? briefText(record.conclusion, 60) : '—' }}
+                  {{ record.conclusion ? briefText(record.conclusion, 300) : '—' }}
                 </td>
                 <td class="col-assets">
                   <template v-if="(record.image_paths || []).length || (record.document_paths || []).length">
@@ -246,8 +246,8 @@ const reportTitle = computed(() => {
   return time === '—' ? taskName : `${time} ${taskName}`
 })
 
-function briefText(text, max = 80) {
-  const value = String(text).replace(/\s+/g, ' ').trim()
+function briefText(text, max = 300) {
+  const value = String(text).trim()
   return value.length > max ? `${value.slice(0, max)}…` : value
 }
 
@@ -418,7 +418,7 @@ defineExpose({ reload })
 .col-time { white-space: nowrap; color: var(--text-1); }
 .col-status, .col-city, .col-pollutant { white-space: nowrap; }
 .col-station { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.col-brief { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+.col-brief { max-width: 420px; min-width: 240px; white-space: pre-wrap; word-break: break-word; color: var(--text-2); }
 .col-assets, .col-actions { white-space: nowrap; }
 .col-assets { min-width: 72px; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eef5ff; color: #275a9a; font-size: 11px; }

@@ -36,6 +36,26 @@ def test_goal_hash_is_whitespace_stable():
     assert goal_hash("a", "expert") != goal_hash("a", "query")
 
 
+def test_cache_scope_contract_and_age_invalidate_reuse(tmp_path, monkeypatch):
+    from app.agent.workflow.result_cache import cache_namespace, node_signature
+    monkeypatch.setattr("app.agent.workflow.result_cache._cache_root", lambda: tmp_path)
+    node = {"task_id": "n", "goal": "统计", "target_mode": "query", "context": "站点口径"}
+    key = cache_namespace("session-1", "wf")
+    assert store_node_result(key, "n", node["goal"], "query", {"rows": 1}, signature=node_signature(node))
+    assert select_reusable_nodes(key, [node], validate_signatures=True)
+    assert not select_reusable_nodes(cache_namespace("session-2", "wf"), [node], validate_signatures=True)
+    for change in (
+        {"context": "城市口径"}, {"task_contract": {"question": "其他"}},
+        {"result_schema": {"type": "object"}},
+    ):
+        assert not select_reusable_nodes(key, [{**node, **change}], validate_signatures=True)
+    path = _node_path(key, "n")
+    entry = json.loads(path.read_text())
+    entry["stored_at"] = 0
+    path.write_text(json.dumps(entry))
+    assert not select_reusable_nodes(key, [node], validate_signatures=True)
+
+
 def test_select_reusable_respects_dependency_closure(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "app.agent.workflow.result_cache._cache_root", lambda: tmp_path / "workflow_cache"

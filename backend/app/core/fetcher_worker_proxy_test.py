@@ -9,7 +9,9 @@ def test_fetcher_proxy_matches_only_fetcher_management_routes():
         should_proxy_fetchers_request,
     )
 
-    assert should_proxy_fetchers_request("/api/fetchers/status", "web")
+    for path in ("status", "list", "start", "stop"):
+        assert should_proxy_fetchers_request(f"/api/fetchers/{path}", "web")
+        assert not should_proxy_fetchers_request(f"/api/fetchers/{path}-extra", "web")
     assert should_proxy_fetchers_request("/api/fetchers/trigger/example", "web")
     assert should_proxy_fetchers_request("/api/fetchers/pause/example", "web")
     assert should_proxy_fetchers_request("/api/fetchers/resume/example", "web")
@@ -33,7 +35,7 @@ def test_fetcher_proxy_matches_only_fetcher_management_routes():
 
 def test_worker_internal_api_exposes_lifecycle_fetcher_status(monkeypatch):
     from app.lifecycle.social_worker_api import create_social_worker_api_app
-    from app.services import lifecycle_manager
+    from app.api.fetcher_worker_routes import get_fetcher_scheduler
 
     class FakeScheduler:
         def get_status(self):
@@ -51,12 +53,12 @@ def test_worker_internal_api_exposes_lifecycle_fetcher_status(monkeypatch):
                 },
             }
 
-    monkeypatch.setattr(lifecycle_manager, "get_fetcher_scheduler", lambda: FakeScheduler())
 
     app = create_social_worker_api_app(
         SimpleNamespace(channel_manager=None),
         internal_token="secret",
     )
+    app.dependency_overrides[get_fetcher_scheduler] = lambda: FakeScheduler()
     client = TestClient(app)
 
     forbidden = client.get("/api/fetchers/status")

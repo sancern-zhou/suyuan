@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from typing import Any, AsyncGenerator, Optional
 
+from app.agent.markup_sanitizer import (
+    DSML_TOOL_CALL_BLOCKED_NOTICE,
+    strip_dsml_tool_call_markup,
+)
+from app.agent.resources.chart_placeholders import normalize_chart_placeholders
+from app.agent.runtime.visual_alias import resolve_chart_alias_markers
+
 from .conversation_writer import ConversationWriter
 from .event_bus import RuntimeEventBus
 from .types import PlannerResult, RunState
@@ -23,6 +30,14 @@ class Finalizer:
         thought: Any = None,
         stream_answer: bool = True,
     ) -> AsyncGenerator[dict, None]:
+        answer = await normalize_chart_placeholders(answer or "", state.session_id)
+        # 会话级短别名 [[chart:chart_N]] 还原为全局唯一 visual_id，
+        # 必须在流式下发与落库之前完成（SSE 与持久化共用 state.response_text）。
+        answer = await resolve_chart_alias_markers(answer or "", state.session_id)
+        sanitized, had_dsml = strip_dsml_tool_call_markup(answer or "")
+        if had_dsml:
+            sanitized = sanitized or DSML_TOOL_CALL_BLOCKED_NOTICE
+        answer = sanitized
         state.response_text = answer or ""
         state.task_completed = True
         self.writer.add_final_assistant_message(state, planner_result, thought=thought)

@@ -36,7 +36,7 @@ class ChildCapabilityPolicy:
             return {}
         denied = set(self.denied_tools)
         if not self.allow_delegation:
-            denied.add("call_sub_agent")
+            denied.update({"call_sub_agent", "run_agent_workflow"})
         allowed = set(self.allowed_tools) if self.allowed_tools is not None else None
         return RestrictedToolRegistry({
             name: tool

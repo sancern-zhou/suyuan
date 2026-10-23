@@ -28,13 +28,19 @@ class FakeRegistry:
 
 
 def test_custom_prompt_is_minimal_and_uses_no_business_role_prompt():
+    from app.agent.prompts.custom_prompt import build_custom_prompt
+
+    base = build_custom_prompt(["alpha"])
     prompt = build_react_system_prompt("custom", available_tools=["alpha"])
 
-    assert "按用户任务执行" in prompt
-    assert "只能调用运行时提供的工具" in prompt
-    assert "空气质量" not in prompt
-    assert "社交" not in prompt
-    assert len(prompt) < 900
+    assert "按用户任务执行" in base
+    assert "只能调用运行时提供的工具" in base
+    assert "空气质量" not in base
+    assert "社交" not in base
+    assert len(base) < 900
+    # The minimal role still receives the common platform contracts.
+    assert prompt.startswith(base.rstrip())
+    assert "环境空气质量标准过渡实施阶段" in prompt
 
 
 def test_custom_tool_schemas_are_exact_and_keep_user_order(monkeypatch):
@@ -191,7 +197,7 @@ async def test_ppt_runtime_stops_immediately_when_token_plan_is_exhausted():
     runtime._run_iteration = failing_iteration
     state = RunState(session_id="s", user_query="run", mode="ppt")
 
-    events = [event async for event in runtime._run_locked(state, None)]
+    events = [event async for event in runtime._run(state, None)]
 
     assert calls == 1
     assert events[-1]["type"] == "fatal_error"
@@ -235,7 +241,7 @@ async def test_ppt_runtime_breaks_after_two_deterministic_model_failures():
     runtime._run_iteration = failing_iteration
     state = RunState(session_id="s", user_query="run", mode="ppt")
 
-    events = [event async for event in runtime._run_locked(state, None)]
+    events = [event async for event in runtime._run(state, None)]
 
     assert calls == 2
     assert events[-1]["type"] == "fatal_error"
@@ -267,7 +273,7 @@ async def test_custom_iteration_limit_emits_fatal_failure_not_continue_prompt():
     runtime._run_iteration = no_events
     state = RunState(session_id="s", user_query="run", mode="custom")
 
-    events = [event async for event in runtime._run_locked(state, None)]
+    events = [event async for event in runtime._run(state, None)]
 
     assert events[-1]["type"] == "fatal_error"
     assert "未形成成功或失败终态" in events[-1]["data"]["error"]
@@ -306,7 +312,7 @@ async def test_custom_runtime_breaks_after_two_deterministic_model_failures():
     runtime._run_iteration = failing_iteration
     state = RunState(session_id="s", user_query="run", mode="custom")
 
-    events = [event async for event in runtime._run_locked(state, None)]
+    events = [event async for event in runtime._run(state, None)]
 
     assert calls == 2
     assert events[-1]["type"] == "fatal_error"

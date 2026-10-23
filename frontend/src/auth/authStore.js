@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { setAccountIdentity } from './accountSession.js'
 
 import { createAuthApi } from './authApi.js'
 import { browserAuthStorage } from './storage.js'
@@ -62,6 +63,9 @@ export function createAuthSession({
         this.initialized = true
         storage.writeSession({ token: this.token, sysCode, user: this.user })
         return this.user
+      } catch (error) {
+        this.clear()
+        throw error
       } finally {
         this.loading = false
       }
@@ -138,6 +142,7 @@ export const useAuthStore = defineStore('suyuan-auth', {
   },
   actions: {
     _sync(session) {
+      setAccountIdentity(session.user, session.sysCode)
       this.authMode = session.authMode
       this.token = session.token
       this.user = session.user

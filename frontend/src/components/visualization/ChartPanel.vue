@@ -43,6 +43,7 @@ import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import 'echarts-gl'  // 引入echarts-gl扩展库以支持3D图表
 import { cloneEChartsOption, ensureEChartsLegend, sanitizeCompleteRadarOption } from '../../utils/echartsOptionSanitizer'
+import { estimateLegendHeight, estimateXAxisLabelHeight } from '../../utils/echartsBottomSpace'
 import { applyPreferredChartFont } from '../../services/chartTypography'
 import { CHART_PRIMARY, CHART_TEXT_1, CHART_TEXT_2, CHART_COLORS, CHART_PRIMARY_FILL } from '../../services/chart/chartColors'
 
@@ -425,6 +426,7 @@ const optimizeChartLayout = (option) => {
   const containerHeight = chartContainer.value?.clientHeight
     || parseInt(dynamicHeight.value, 10)
     || 400
+  const containerWidth = chartContainer.value?.clientWidth || 600
 
   // 优化标题位置：确保标题与图表内容有间距
   if (optimized.title) {
@@ -521,13 +523,25 @@ const optimizeChartLayout = (option) => {
       const xAxes = Array.isArray(optimized.xAxis)
         ? optimized.xAxis
         : (optimized.xAxis ? [optimized.xAxis] : [])
+      // 刻度行高按内容估算（旋转/换行标签实际高度远超固定常量），但不低于常量兜底；
+      // containLabel 开启时 ECharts 自动把刻度框进 grid，无需重复预留
+      const labelsAutoContained = g.containLabel === true
+      const xAxisLabelSpace = labelsAutoContained ? 0 : Math.max(
+        X_AXIS_LABEL_HEIGHT,
+        ...xAxes.map(axis => estimateXAxisLabelHeight(axis, optimized.series, X_AXIS_LABEL_HEIGHT))
+      )
       const namedAxes = xAxes.filter(axis => axis && axis.name
         && ['middle', 'center'].includes(axis.nameLocation || 'end'))
       const axisNameSpace = namedAxes.length
         ? Math.max(...namedAxes.map(axis => axis.nameGap || 15)) + 16
         : 0
-      const requiredBottom = bottomLegendOffset + LEGEND_HEIGHT
-        + X_AXIS_LABEL_HEIGHT + axisNameSpace + LAYOUT_GAP
+      // 图例行数按图例项总宽与容器宽度折算（多行图例向上生长，常量 25px 不够）
+      const legendSpace = Math.max(
+        LEGEND_HEIGHT,
+        estimateLegendHeight(optimized.legend, optimized, containerWidth, LEGEND_HEIGHT)
+      )
+      const requiredBottom = bottomLegendOffset + legendSpace
+        + xAxisLabelSpace + axisNameSpace + LAYOUT_GAP
       const currentBottom = typeof g.bottom === 'number'
         ? g.bottom
         : (typeof g.bottom === 'string' && g.bottom.includes('%')
@@ -610,6 +624,38 @@ const optimizeChartLayout = (option) => {
 }
 
 // 构建ECharts配置（v3.0格式）
+
+// 估算条图末端数值标签需要的右侧余量（像素）。
+// containLabel 只包含坐标轴刻度标签，series 末端标签（position 'right'）超出
+// 绘图区时会溢出容器，需按最长数值文本显式预留 grid.right。
+const estimateRightLabelPx = (option) => {
+  const seriesList = Array.isArray(option.series) ? option.series : option.series ? [option.series] : []
+  if (!seriesList.length) return 0
+  const yAxes = Array.isArray(option.yAxis) ? option.yAxis : option.yAxis ? [option.yAxis] : []
+  const xAxes = Array.isArray(option.xAxis) ? option.xAxis : option.xAxis ? [option.xAxis] : []
+  const horizontalBars = yAxes.some(axis => (axis?.type || 'category') === 'category') &&
+    xAxes.some(axis => ['value', 'log'].includes(axis?.type || 'category'))
+  const labelNeedsRightRoom = (series) => {
+    const label = series?.label
+    if (!label || label.show === false) return false
+    const position = label.position || (horizontalBars ? 'right' : 'top')
+    if (horizontalBars) return !['inside', 'insideLeft', 'insideRight', 'left'].includes(position)
+    return position === 'right'
+  }
+  if (!seriesList.some(labelNeedsRightRoom)) return 0
+  let longest = ''
+  seriesList.forEach(series => {
+    (Array.isArray(series?.data) ? series.data : []).forEach(item => {
+      const value = (item && typeof item === 'object') ? item.value : item
+      if (value === null || value === undefined) return
+      const text = String(value)
+      if (text.length > longest.length) longest = text
+    })
+  })
+  if (!longest) return 0
+  return Math.min(72, longest.length * 7 + 8)
+}
+
 const buildOption = () => {
   try {
     if (!hasValidData.value) {
@@ -728,6 +774,47 @@ const buildOption = () => {
     }
     if (optimized.radiusAxis?.name) {
       console.log('[ChartPanel] radiusAxis名称:', optimized.radiusAxis.name)
+    }
+    if ((chartContainer.value?.clientWidth || 1000) < 600) {
+      const xAxes = Array.isArray(optimized.xAxis) ? optimized.xAxis : optimized.xAxis ? [optimized.xAxis] : []
+      xAxes.forEach(axis => { axis.axisLabel = { ...axis.axisLabel, hideOverlap: true, fontSize: 10 } })
+      // 横向条图的类目轴（城市名等）在 yAxis 上，窄屏同样压缩字号
+      const yAxes = Array.isArray(optimized.yAxis) ? optimized.yAxis : optimized.yAxis ? [optimized.yAxis] : []
+      yAxes.forEach(axis => { axis.axisLabel = { ...axis.axisLabel, hideOverlap: true, fontSize: 10 } })
+      // 轴名称在末端时（默认）会伸出绘图区右边界，窄屏改到刻度下方居中
+      xAxes.forEach(axis => {
+        if (axis?.name && !['middle', 'center'].includes(axis.nameLocation || 'end')) {
+          axis.nameLocation = 'middle'
+          axis.nameGap = Math.max(Number(axis.nameGap) || 15, 18)
+          axis.nameTextStyle = { ...(axis.nameTextStyle || {}), fontSize: 10 }
+        }
+      })
+      const legends = Array.isArray(optimized.legend) ? optimized.legend : optimized.legend ? [optimized.legend] : []
+      legends.forEach(legend => {
+        legend.type = 'scroll'; legend.textStyle = { ...legend.textStyle, fontSize: 10 }
+        if (!Array.isArray(optimized.grid)) { delete legend.top; legend.bottom = 8; legend.left = 'center' }
+      })
+      // 窄屏下无论 spec 是否自带 grid（LLM 生成的完整配置常缺省）、也无论
+      // grid 是对象还是数组，都必须 containLabel，否则类目标签会溢出被裁切。
+      // 条图末端数值标签不计入 containLabel，按最长标签估算右侧余量。
+      const containerWidth = chartContainer.value?.clientWidth || 390
+      const rightLabelPx = estimateRightLabelPx(optimized)
+      const narrowGrid = (g) => {
+        const merged = { ...g, bottom: Math.max(72, Number(g.bottom) || 0), containLabel: true }
+        if (rightLabelPx > 0) {
+          const currentRight = typeof merged.right === 'number'
+            ? merged.right
+            : (typeof merged.right === 'string' && merged.right.includes('%')
+                ? containerWidth * parseInt(merged.right) / 100
+                : containerWidth * 0.1)
+          merged.right = Math.max(currentRight, rightLabelPx)
+        }
+        return merged
+      }
+      if (!optimized.grid) optimized.grid = narrowGrid({})
+      else if (Array.isArray(optimized.grid)) optimized.grid = optimized.grid.map(narrowGrid)
+      else optimized.grid = narrowGrid(optimized.grid)
+      if (optimized.tooltip) optimized.tooltip = { ...optimized.tooltip, confine: true }
     }
     return applyPreferredChartFont(optimized)
   } catch (error) {

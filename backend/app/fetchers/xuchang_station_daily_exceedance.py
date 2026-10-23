@@ -28,10 +28,15 @@ import structlog
 from app.fetchers.base.fetcher_interface import DataFetcher
 from app.integrations.xcai_station_sql import xcai_connection_string
 from app.scenarios.xuchang_city_exceedance.process_stats import compute_city_day_statistics
+from app.scenarios.xuchang_city_exceedance.aqi import hourly_aqi_and_primary
 from app.scenarios.xuchang_city_exceedance.station_catalog import (
-    NATIONAL_SOURCE_TO_CANONICAL,
-    NATIONAL_STATION_IDS,
+    NATIONAL_STATION_CODES,
+    NATIONAL_STATION_META,
     REGIONAL_CITIES,
+)
+from app.tools.xuchang.airdata_platform.client import (
+    AirDataPlatformError,
+    get_airdata_platform_client,
 )
 from app.scenarios.xuchang_daily_review.township_hourly import load_township_hourly_rows
 from app.scenarios.xuchang_station_deviation.source_features import (
@@ -374,25 +379,6 @@ def normalize_station_name(value: Any) -> str:
     return "".join(text.split())
 
 
-def resolve_hourly_station_codes(
-    daily_names: dict[str, str], hourly_names: dict[str, str]
-) -> dict[str, str]:
-    """Map platform station-day ids to zhongda hourly codes by station name.
-
-    平台日值表与中大源小时表使用两套站点编码（如 3337A 与 1008A），
-    同一物理站点名称一致，按去后缀名称建立映射；无法匹配的站点不映射。
-    """
-    by_name = {
-        normalize_station_name(name): code for code, name in hourly_names.items()
-    }
-    resolved = {}
-    for daily_code, daily_name in daily_names.items():
-        hourly_code = by_name.get(normalize_station_name(daily_name))
-        if hourly_code:
-            resolved[str(daily_code)] = hourly_code
-    return resolved
-
-
 def merge_meteo_rows(
     observed_rows: list[dict[str, Any]], era5_rows: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -464,6 +450,7 @@ def evaluate_station_daily_pollution(
             "station_name": row.get("name") or station_id,
             "lat": _number(row.get("lat")),
             "lon": _number(row.get("lon")),
+            "data_caliber": row.get("caliber") or "app",
             "target_date": target_date.isoformat(),
             "pm25": {
                 "status": "confirmed" if pm25_daily is not None else "missing_daily_value",
@@ -508,7 +495,11 @@ def evaluate_station_daily_pollution(
                 "daily_value": metric["daily_value"],
                 "limit": metric["limit"],
                 "source_granularity": "station_day",
-                "source_table": "dbo.dat_station_day",
+                "source_table": (
+                    f"airdata_platform:v_s_d_{evaluation['data_caliber']}_145"
+                    if evaluation.get("data_caliber") in ("app", "src")
+                    else "zhongda_hour(HJ633 day aggregate)"
+                ),
                 "trigger": "confirmed_station_daily_exceedance",
             })
     evaluation_by_station = {item["station_id"]: item for item in evaluations}
@@ -547,97 +538,177 @@ class XuchangStationDailyExceedanceFetcher(DataFetcher):
         self.now_factory = now_factory
 
     def load_rows(self, target_date: date) -> list[dict[str, Any]]:
+        """站点日值：中台接口优先（审核 app → 原始 src 补位），接口不可用
+        或无数据时按 HJ 633 规则由中大小时值现算（PM2.5 日均 >=20 有效
+        小时；MDA8 由 o3 小时值按 17 个滑动 8 小时窗口现算）。"""
+        rows = self._load_rows_from_airdata(target_date)
+        if rows is None:
+            rows = self._compute_rows_from_zhongda(target_date)
+        return rows
+
+    @staticmethod
+    def _airdata_day_rows(api_code: str, target_date: date) -> dict[str, dict[str, Any]]:
+        # 日值视图 timepoint 为纯日期字符串，中台按字符串比较，
+        # 过滤值必须用 "YYYY-MM-DD"（带时分秒会匹配不到任何行）。
+        client = get_airdata_platform_client()
+        result = client.query_all(
+            api_code,
+            filters=[
+                {"field": "code", "operator": "in", "value": list(NATIONAL_STATION_CODES)},
+                {"field": "timepoint", "operator": "gte", "value": f"{target_date:%Y-%m-%d}"},
+                {"field": "timepoint", "operator": "lte", "value": f"{target_date:%Y-%m-%d}"},
+            ],
+            selected_fields=["code", "name", "timepoint", "aqi", "pm2_5", "o3_8h"],
+            max_rows=50,
+        )
+        return {str(row.get("code")): row for row in result["rows"]}
+
+    def _load_rows_from_airdata(self, target_date: date) -> list[dict[str, Any]] | None:
+        try:
+            app_rows = self._airdata_day_rows("v_s_d_app_145", target_date)
+        except (AirDataPlatformError, OSError) as exc:
+            logger.warning("xuchang_station_daily_airdata_app_failed", error=str(exc))
+            app_rows = {}
+        try:
+            src_rows = self._airdata_day_rows("v_s_d_src_145", target_date)
+        except (AirDataPlatformError, OSError) as exc:
+            logger.warning("xuchang_station_daily_airdata_src_failed", error=str(exc))
+            src_rows = {}
+        if not app_rows and not src_rows:
+            return None
+
+        day_rows = []
+        for code in NATIONAL_STATION_CODES:
+            row = app_rows.get(code) or src_rows.get(code)
+            if not row:
+                continue
+            meta = NATIONAL_STATION_META.get(code, {})
+            day_rows.append({
+                "station_id": code,
+                "name": str(row.get("name") or meta.get("name") or code),
+                "lon": meta.get("lon"),
+                "lat": meta.get("lat"),
+                "pm25": _number(row.get("pm2_5")),
+                "o3_8h": _number(row.get("o3_8h")),
+                "data_time": datetime.combine(target_date, time.min),
+                "caliber": "app" if code in app_rows else "src",
+            })
+        return day_rows or None
+
+    def _compute_rows_from_zhongda(self, target_date: date) -> list[dict[str, Any]]:
+        """中台接口不可用时的兜底：按 HJ 633 日统计规则由中大小时值聚合。
+
+        PM2.5 日均取有效小时算术平均（有效小时 >= 20）；O3 日最大 8 小时
+        对日内 00-08 至 16-24 共 17 个滑动窗口求均值（每窗口有效小时
+        >= 6），取最大值（有效窗口 >= 6）。中大表 o3_8h 列在 Act+gp 口径
+        下不回填，MDA8 必须由 o3 小时值现算。
+        """
         start = datetime.combine(target_date, time.min)
         end = start + timedelta(days=1)
+        placeholders = ", ".join("?" for _ in NATIONAL_STATION_CODES)
         connection = pyodbc.connect(xcai_connection_string(), timeout=30)
         try:
             cursor = connection.cursor()
             cursor.execute(
-                """
-                SELECT station_id, name, lon, lat, pm25, O38h AS o3_8h, data_time
-                FROM dbo.dat_station_day
-                WHERE city_area_code = ? AND data_time >= ? AND data_time < ?
-                ORDER BY station_id, data_time
+                f"""
+                SELECT station_code, station_name, pm25, o3, time_point
+                FROM dbo.dat_zhongda_station_hour
+                WHERE data_table_type = 'Act' AND parameter_type = 'gp'
+                  AND station_code IN ({placeholders})
+                  AND time_point >= ? AND time_point < ?
+                ORDER BY station_code, time_point
                 """,
-                ["411000", start, end],
+                [*NATIONAL_STATION_CODES, start, end],
             )
             columns = [column[0] for column in cursor.description]
-            return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+            raw_rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
         finally:
             connection.close()
+
+        def _valid(value: Any) -> float | None:
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                return None
+            return parsed if parsed >= 0 else None
+
+        hourly_by_station: dict[str, list[dict[str, Any]]] = {}
+        for row in raw_rows:
+            hourly_by_station.setdefault(str(row["station_code"]), []).append(row)
+
+        day_rows: list[dict[str, Any]] = []
+        for station_id, hours in sorted(hourly_by_station.items()):
+            meta = NATIONAL_STATION_META.get(station_id, {})
+            hours = sorted(hours, key=lambda item: item["time_point"])
+            pm25_values = [value for value in (_valid(item.get("pm25")) for item in hours) if value is not None]
+            o3_values = [_valid(item.get("o3")) for item in hours]
+            day_rows.append({
+                "station_id": station_id,
+                "name": str(hours[0].get("station_name") or meta.get("name") or station_id),
+                "lon": meta.get("lon"),
+                "lat": meta.get("lat"),
+                "pm25": (
+                    round(sum(pm25_values) / len(pm25_values), 3)
+                    if len(pm25_values) >= 20 else None
+                ),
+                "o3_8h": self._daily_max_8h_o3(o3_values),
+                "data_time": datetime.combine(target_date, time.min),
+                "caliber": "computed(zhongda_hour)",
+            })
+        return day_rows
+
+    @staticmethod
+    def _daily_max_8h_o3(
+        o3_values: list[float | None], *, min_window_hours: int = 6, min_windows: int = 6
+    ) -> float | None:
+        """日内 17 个滑动 8 小时窗口的均值取最大（HJ 633 MDA8）。"""
+        best: float | None = None
+        valid_windows = 0
+        for offset in range(0, 17):
+            window = o3_values[offset:offset + 8]
+            valid = [value for value in window if value is not None]
+            if len(valid) < min_window_hours:
+                continue
+            valid_windows += 1
+            mean = sum(valid) / len(valid)
+            if best is None or mean > best:
+                best = mean
+        return round(best, 3) if best is not None and valid_windows >= min_windows else None
 
     def load_station_hourly(
         self, target_date: date, station_ids: list[str]
     ) -> list[dict[str, Any]]:
-        """Load same-day hourly pollutants for alerting stations.
-
-        中大源小时表与平台日值表站点编码不同（如 1008A ↔ 3337A），按站点
-        名称建立映射后返回，行内 station_id 统一改写为平台日值表编码。
-        """
+        """Load same-day hourly pollutants for alerting stations (zhongda source)."""
         if not station_ids:
             return []
         start = datetime.combine(target_date, time.min)
         end = start + timedelta(days=1)
+        placeholders = ", ".join("?" for _ in station_ids)
         connection = pyodbc.connect(xcai_connection_string(), timeout=30)
         try:
             cursor = connection.cursor()
             cursor.execute(
-                """
-                SELECT station_id, name
-                FROM dbo.dat_station_day
-                WHERE city_area_code = ? AND data_time >= ? AND data_time < ?
-                """,
-                ["411000", start, end],
-            )
-            daily_names = {
-                str(row[0]): str(row[1] or "") for row in cursor.fetchall()
-            }
-            cursor.execute(
-                """
+                f"""
                 SELECT station_code, station_name, pm25, pm10, o3, no2, so2, co, time_point
                 FROM dbo.dat_zhongda_station_hour
-                WHERE time_point >= ? AND time_point < ?
-                  AND area LIKE N'%许昌%'
+                WHERE data_table_type = 'Act' AND parameter_type = 'gp'
+                  AND station_code IN ({placeholders})
+                  AND time_point >= ? AND time_point < ?
                 ORDER BY station_code, time_point
                 """,
-                [start, end],
+                [*station_ids, start, end],
             )
-            hourly_rows = [
+            return [
                 {
-                    "hourly_station_code": str(row[0]), "name": row[1],
+                    "station_id": str(row[0]), "name": row[1],
                     "pm25": row[2], "pm10": row[3], "o3": row[4], "no2": row[5],
                     "so2": row[6], "co": row[7], "data_time": row[8],
+                    "data_source": "hour",
                 }
                 for row in cursor.fetchall()
             ]
         finally:
             connection.close()
-
-        hourly_names = {
-            row["hourly_station_code"]: str(row["name"] or "")
-            for row in hourly_rows
-        }
-        code_map = resolve_hourly_station_codes(daily_names, hourly_names)
-        hourly_to_daily = {hourly: daily for daily, hourly in code_map.items()}
-        alert_codes = {str(code) for code in station_ids}
-        rows = []
-        for row in hourly_rows:
-            daily_code = hourly_to_daily.get(row["hourly_station_code"])
-            if daily_code is None or daily_code not in alert_codes:
-                continue
-            rows.append({
-                "station_id": daily_code,
-                "name": row["name"],
-                "pm25": row["pm25"],
-                "pm10": row["pm10"],
-                "o3": row["o3"],
-                "no2": row["no2"],
-                "so2": row["so2"],
-                "co": row["co"],
-                "data_time": row["data_time"],
-                "data_source": "hour",
-            })
-        return rows
 
     async def load_era5_hourly(self, target_date: date) -> list[dict[str, Any]]:
         """Load hourly ERA5 rows (cloud cover, boundary layer height) for Xuchang."""
@@ -701,40 +772,42 @@ class XuchangStationDailyExceedanceFetcher(DataFetcher):
         return evidence_rows
 
     def load_city_national_hourly(self, target_date: date) -> list[dict[str, Any]]:
-        """Load full-day hourly rows for all six national stations.
-
-        dat_station_hour keeps the historical codes; rows are normalized to
-        the canonical catalog IDs so reports can group by station directly.
-        """
+        """Load full-day hourly rows for all six national stations (zhongda source)."""
         start = datetime.combine(target_date, time.min)
         end = start + timedelta(days=1)
-        placeholders = ", ".join("?" for _ in NATIONAL_STATION_IDS)
+        placeholders = ", ".join("?" for _ in NATIONAL_STATION_CODES)
         connection = pyodbc.connect(xcai_connection_string(), timeout=30)
         try:
             cursor = connection.cursor()
             cursor.execute(
-                f"""SELECT station_id, name, lon, lat, aqi, pollutant,
-                           pm25, pm10, o3, no2, so2, co, data_time
-                    FROM dbo.dat_station_hour
-                    WHERE city_area_code = ? AND station_id IN ({placeholders})
-                      AND data_time >= ? AND data_time < ?
-                    ORDER BY data_time, station_id""",
-                ["411000", *NATIONAL_STATION_IDS, start, end],
+                f"""SELECT station_code, station_name, aqi,
+                           pm25, pm10, o3, no2, so2, co, time_point
+                    FROM dbo.dat_zhongda_station_hour
+                    WHERE data_table_type = 'Act' AND parameter_type = 'gp'
+                      AND station_code IN ({placeholders})
+                      AND time_point >= ? AND time_point < ?
+                    ORDER BY time_point, station_code""",
+                [*NATIONAL_STATION_CODES, start, end],
             )
             columns = [item[0] for item in cursor.description]
-            normalized: dict[tuple[str, datetime], dict[str, Any]] = {}
+            rows = []
             for raw in cursor.fetchall():
                 row = dict(zip(columns, raw, strict=True))
-                source_id = str(row["station_id"])
-                row["station_id"] = NATIONAL_SOURCE_TO_CANONICAL.get(source_id, source_id)
-                row["source_station_id"] = source_id
-                key = (row["station_id"], row["data_time"])
-                if key not in normalized or source_id == row["station_id"]:
-                    normalized[key] = row
-            return [
-                {**row, "data_time": row["data_time"].isoformat()}
-                for row in normalized.values()
-            ]
+                station_id = str(row.pop("station_code"))
+                meta = NATIONAL_STATION_META.get(station_id, {})
+                _, primary = hourly_aqi_and_primary(row)
+                rows.append({
+                    "station_id": station_id,
+                    "name": str(row.pop("station_name") or meta.get("name") or station_id),
+                    "lon": meta.get("lon"), "lat": meta.get("lat"),
+                    "aqi": row.get("aqi"), "pollutant": primary,
+                    "pm25": row.get("pm25"), "pm10": row.get("pm10"),
+                    "o3": row.get("o3"), "no2": row.get("no2"),
+                    "so2": row.get("so2"), "co": row.get("co"),
+                    "data_time": row.get("time_point").isoformat()
+                    if row.get("time_point") is not None else None,
+                })
+            return rows
         finally:
             connection.close()
 

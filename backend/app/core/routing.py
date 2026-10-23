@@ -20,9 +20,11 @@ class RouterSpec:
     description: str = ""
     owner: str = "legacy"
     requires_scheduled_tasks: bool = False
+    required_feature: str | None = None
 
 
 ROUTER_REGISTRY = [
+    RouterSpec("app.api.assistant_routes", description="Shared assistant Web workspace", owner="core"),
     RouterSpec("app.api.task_review_routes", description="Unified human task review", owner="core"),
     RouterSpec(
         "app.api.project_config_routes",
@@ -48,9 +50,10 @@ ROUTER_REGISTRY = [
     ),
     RouterSpec("app.api.admin", description="Admin interface"),
     RouterSpec("app.api.agent", description="ReAct Agent API"),
+    RouterSpec("app.api.agent_memory_routes", description="Agent mode memory view/edit", owner="core"),
     RouterSpec("app.api.human_feedback_routes", description="Agent human feedback"),
     RouterSpec("app.api.routes", prefix="/api", description="Basic API routes"),
-    RouterSpec("app.api.query_dashboard_routes", prefix="/api", description="Query dashboard API"),
+    RouterSpec("app.api.query_dashboard_routes", prefix="/api", description="Map data API"),
     RouterSpec("app.api.knowledge_base_routes", prefix="/api", description="Knowledge Base API"),
     RouterSpec("app.api.knowledge_graph_routes", prefix="/api", description="Knowledge Graph API"),
     RouterSpec("app.api.knowledge_scene_routes", prefix="/api", description="Knowledge Scene API"),
@@ -80,9 +83,9 @@ ROUTER_REGISTRY = [
     RouterSpec("app.api.upload_routes", prefix="/api/upload", description="File upload"),
     RouterSpec("app.api.voice_routes", prefix="/api", description="Voice ASR/TTS API"),
     RouterSpec("app.api.social_app_routes", description="Android App Social Gateway", owner="core"),
+    RouterSpec("app.api.shared_conversation_routes", description="Shared conversation board", owner="core"),
     RouterSpec("app.api.file_manager_routes", prefix="/api", description="File manager"),
     RouterSpec("app.api.social_routes", description="Social platform management"),
-    RouterSpec("app.api.fetchers", description="Fetcher management"),
     RouterSpec(
         "app.api.social_account_routes",
         optional=True,
@@ -105,12 +108,15 @@ def select_router_specs(
     enabled_modules: frozenset[str],
     *,
     scheduled_tasks_enabled: bool = True,
+    enabled_features: dict[str, bool] | None = None,
 ) -> list[RouterSpec]:
+    enabled_features = enabled_features or {}
     return [
         spec
         for spec in specs
         if spec.owner in enabled_modules
         and (scheduled_tasks_enabled or not spec.requires_scheduled_tasks)
+        and (spec.required_feature is None or enabled_features.get(spec.required_feature, False))
     ]
 
 
@@ -123,6 +129,7 @@ def include_routers(app: FastAPI) -> None:
         ROUTER_REGISTRY,
         context.enabled_modules,
         scheduled_tasks_enabled=context.manifest.scheduled_tasks_enabled,
+        enabled_features=context.manifest.frontend.features,
     ):
         try:
             module = import_module(spec.module)

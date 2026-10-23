@@ -56,6 +56,7 @@ from app.utils.path_config import (
     is_agent_sensitive_path,
 )
 from app.utils.font_utils import BROWSER_CHART_FONT_FAMILY, select_preferred_chinese_font_path, get_font_manager
+from app.utils.visual_ids import new_visual_id
 from app.tools.visualization.create_business_chart.theme import REPORT_THEME, SERIES_COLORS, matplotlib_report_style
 
 logger = structlog.get_logger()
@@ -110,8 +111,9 @@ class ExecutePythonTool(LLMTool):
                 "生成 Excel、Word、PDF 等交付文件时必须先调用 artifact_path(filename) 获取输出路径，"
                 "再保存到该路径；工具会自动归档并返回真实 file_path。"
                 "数据/图表/报告三份规范手册位于 backend/app/tools/utility/ 下的 execute_python_data_manual.md、"
-                "execute_python_chart_manual.md、execute_python_report_manual.md，仅供配备 read_file 的模式（专家/报告）深入查阅；"
-                "上文要点（input_files/load_data/save_data/artifact_path）已覆盖数据质检与合并场景，问数模式直接编写脚本即可。"
+                "execute_python_chart_manual.md、execute_python_report_manual.md；"
+                "配备 read_file 的模式在首次执行某类任务前必须先用 read_file 阅读对应手册（数据处理→data、绘图→chart、正式报告→report），不得凭记忆套用规范或限值；"
+                "未配备 read_file 的模式依据描述要点直接编写脚本即可。"
                 "⚠️ **图表选择策略**："
                 "① 已支持的专用业务图型 → 所有模式必须使用 create_business_chart，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具；"
                 "② 其他通用/自定义图：专家/报告模式优先使用 execute_python，自动应用统一报告主题；问数模式优先使用 execute_echarts_python；"
@@ -594,8 +596,8 @@ class ExecutePythonTool(LLMTool):
                             with open(abs_chart_path, 'rb') as f:
                                 base64_data = base64.b64encode(f.read()).decode('utf-8')
 
-                            # 生成唯一的 chart_id（使用纳秒时间戳避免冲突）
-                            chart_id = f"matplotlib_{time.time_ns()}"
+                            # 生成唯一的 chart_id（base36 微秒时间戳，短 ID 便于模型照抄）
+                            chart_id = new_visual_id("matplotlib")
 
                             logger.info(
                                 "saving_to_image_cache",
@@ -675,7 +677,7 @@ class ExecutePythonTool(LLMTool):
                             mime_type, base64_data = base64_data_url.split(",", 1)
 
                             # 生成唯一的 chart_id
-                            chart_id = f"matplotlib_{time.time_ns()}"
+                            chart_id = new_visual_id("matplotlib")
 
                             logger.info(
                                 "saving_base64_to_image_cache",
@@ -1962,10 +1964,12 @@ def artifact_path(filename: str) -> str:
         """Convert parsed ECharts options into frontend visuals."""
         from app.utils.echarts_layout import normalize_echarts_layout
         from app.utils.echarts_legend import ensure_echarts_legend
+        from app.utils.echarts_theme import apply_echarts_report_theme
 
         visuals: List[Dict[str, Any]] = []
         for index, echarts_data in enumerate(echarts_options):
             try:
+                echarts_data = apply_echarts_report_theme(echarts_data)
                 echarts_data = ensure_echarts_legend(echarts_data)
                 echarts_data = normalize_echarts_layout(echarts_data)
                 echarts_data["textStyle"] = {
@@ -1975,7 +1979,7 @@ def artifact_path(filename: str) -> str:
                 chart_type = self._detect_echarts_chart_type(echarts_data)
                 display_title = self._detect_echarts_title(echarts_data, chart_type)
                 visuals.append({
-                    "id": f"echarts_{time.time_ns()}_{index}",
+                    "id": new_visual_id("echarts", index),
                     "type": chart_type,
                     "title": display_title,
                     "data": echarts_data,
@@ -2363,7 +2367,9 @@ from matplotlib.text import Text
 import matplotlib.pyplot as _suyuan_plt
 from app.utils.environment_charts import (
     AQI_COLORS, AQI_LABELS, MISSING_COLOR, aqi_color, pollutant_color,
-    get_environment_limit, get_pollutant_scale, add_standard_limit, legend_below,
+    get_environment_limit, get_pollutant_scale, get_six_level_scale,
+    level_index, level_color, text_color_for, add_standard_limit, legend_below,
+    figure_content_overflow,
 )
 
 REPORT_THEME = __SUYUAN_REPORT_THEME__
@@ -2455,6 +2461,18 @@ def _suyuan_normalize_matplotlib_label_text(value):
         ('CO₂', 'CO$_2$'),
         ('CH₄', 'CH$_4$'),
         ('N₂O', 'N$_2$O'),
+        ('SO₄²⁻', 'SO$_4^{2-}$'),
+        ('NO₃⁻', 'NO$_3^-$'),
+        ('NH₄⁺', 'NH$_4^+$'),
+        ('SO₄', 'SO$_4$'),
+        ('NO₃', 'NO$_3$'),
+        ('NH₄', 'NH$_4$'),
+        ('Ca²⁺', 'Ca$^{2+}$'),
+        ('Mg²⁺', 'Mg$^{2+}$'),
+        ('K⁺', 'K$^+$'),
+        ('Na⁺', 'Na$^+$'),
+        ('Cl⁻', 'Cl$^-$'),
+        ('F⁻', 'F$^-$'),
         ('μg/m³', 'μg/m$^3$'),
         ('ug/m³', 'ug/m$^3$'),
         ('/m³', '/m$^3$'),
@@ -2474,6 +2492,27 @@ def _suyuan_normalize_matplotlib_figure_text(fig):
             normalized = _suyuan_normalize_matplotlib_label_text(original)
             if normalized != original:
                 text.set_text(normalized)
+    except Exception:
+        pass
+    try:
+        import functools as _suyuan_functools
+        for ax in fig.axes:
+            for axis in (ax.xaxis, ax.yaxis):
+                for formatter in (axis.get_major_formatter(), axis.get_minor_formatter()):
+                    seq = getattr(formatter, 'seq', None)
+                    if isinstance(seq, list):
+                        formatter.seq = [
+                            _suyuan_normalize_matplotlib_label_text(item) if isinstance(item, str) else item
+                            for item in seq
+                        ]
+                    func = getattr(formatter, 'func', None)
+                    if isinstance(func, _suyuan_functools.partial):
+                        mappings = [arg for arg in func.args if isinstance(arg, dict)]
+                        mappings.extend(value for value in (func.keywords or {}).values() if isinstance(value, dict))
+                        for mapping in mappings:
+                            for key, value in mapping.items():
+                                if isinstance(value, str):
+                                    mapping[key] = _suyuan_normalize_matplotlib_label_text(value)
     except Exception:
         pass
 
@@ -2512,6 +2551,11 @@ def _suyuan_patched_figure_savefig(self, fname, *args, **kwargs):
     _suyuan_configure_matplotlib_chinese_font()
     _suyuan_normalize_matplotlib_figure_text(self)
     _suyuan_apply_chinese_font_to_figure(self)
+    try:
+        if kwargs.get('bbox_inches') is None and figure_content_overflow(self):
+            kwargs['bbox_inches'] = 'tight'
+    except Exception:
+        pass
     result = _suyuan_original_figure_savefig(self, fname, *args, **kwargs)
     _suyuan_emit_chart_saved(fname)
     return result
@@ -3291,8 +3335,9 @@ def merge_excel_with_charts(file_paths, output_path):
                 "如果任务只是查看文件、搜索文本、检查进程或调用现成 CLI，优先使用 bash；"
                 "需要循环、条件分支、解析转换、程序化处理或可靠地产出文件时，优先使用 execute_python。"
                 "数据/图表/报告规范手册位于 backend/app/tools/utility/ 下的 execute_python_data_manual.md、"
-                "execute_python_chart_manual.md、execute_python_report_manual.md，供配备 read_file 的模式（专家/报告）按任务用途查阅；"
-                "数据处理要点已包含在下文，问数模式直接编写脚本即可。"
+                "execute_python_chart_manual.md、execute_python_report_manual.md；"
+                "配备 read_file 的模式在首次执行某类任务前必须先用 read_file 阅读对应手册（数据处理→data、绘图→chart、正式报告→report），不得凭记忆套用规范或限值；"
+                "未配备 read_file 的模式依据下文要点直接编写脚本。"
                 "每次调用是独立环境，变量和文件挂载不跨调用保留；每次读取输入文件都须通过 input_files 声明。"
                 "声明文件经会话权限校验后挂载，代码中的 input_files 列表提供规范化绝对路径，支持循环读取和路径运算。"
                 "用 load_data(file_path) 读取会话数据文件，"
@@ -3305,14 +3350,14 @@ def merge_excel_with_charts(file_paths, output_path):
                 "生成 Excel、Word、PDF 等交付文件必须先调用 artifact_path(filename) 获取输出路径并保存；"
                 "已支持的专用业务图型在所有模式必须使用 create_business_chart，禁止用 Python/ECharts 重绘替代；此规则优先于模式默认工具。"
                 "其他图表：专家/报告模式的静态分析和正式报告图表优先使用 execute_python；问数模式绘图优先使用 execute_echarts_python。"
-                "绘图规范详见 execute_python_chart_manual.md（配备 read_file 的模式查阅）；matplotlib/seaborn 自动应用与报告图表一致的主题，"
+                "首次绘图前必须先用 read_file 阅读 execute_python_chart_manual.md；matplotlib/seaborn 自动应用与报告图表一致的主题，"
                 "可按分析需要自主选择图型，无需用户预先指定；默认一个独立图表一个图片文件，同主题的趋势、分布、排名分别保存。"
                 "一次调用可保存多张图；仅联合阅读确有必要或用户明确要求时使用多子图，并保证报告插入后的可读性。"
                 "专家/报告静态图按报告正文插入尺寸设计画布、比例和字号，详见手册报告插图尺寸与比例。"
                 "流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
                 "生成的静态图只在对话正文展示，不进入右侧交互图面板；"
-                "最终答复可用 [[chart:<visual_id>]] 将图片放在相应分析旁，visual_id 取工具返回的 visuals.id，"
-                "未指定位置的图片由前端追加到本轮答复末尾。不要自行拼图片 URL 或本地路径。"
+                "最终答复可用工具返回 summary 中的图表标记（如 [[chart:chart_0]]，逐字符原样复制）将图片放在相应分析旁；"
+                "未提供标记时才用 visuals.id。未指定位置的图片由前端追加到本轮答复末尾。不要自行拼图片 URL 或本地路径。"
                 "生成文件会自动归档并发布到会话资源目录；必须复用返回的 file_path，"
                 "不得自行构造资源路径，也不要再调用 publish_session_file；默认超时30秒。"
             ),
@@ -3331,9 +3376,11 @@ def merge_excel_with_charts(file_paths, output_path):
                             "要执行的 Python 代码。matplotlib 图片可用 save_chart(fig, filename) 或 fig.savefig(path) 保存；"
                             "matplotlib 中文字体由系统自动设置，不要显式设置 SimHei、DejaVu Sans 等不支持中文的字体；"
                             "工具默认应用共享报告配色、字号和轴线风格；可使用 REPORT_THEME、SERIES_COLORS、theme_color(role)。"
-                            "环境图遵守 backend/app/tools/utility/execute_python_chart_manual.md：等级色按适用标准，图例默认在下方；"
+                            "首次绘图前必须先用 read_file 阅读 backend/app/tools/utility/execute_python_chart_manual.md；"
+                            "环境图等级色按适用标准，图例默认在下方；"
                             "浓度对比有适用限值时标出标准线，明确污染物、单位、平均时间、等级和数据日期。"
-                            "可直接使用 aqi_color、pollutant_color、get_pollutant_scale、get_environment_limit、add_standard_limit、legend_below；"
+                            "可直接使用 aqi_color、pollutant_color、get_pollutant_scale、get_six_level_scale、level_color、get_environment_limit、add_standard_limit、legend_below；"
+                            "标准限值线禁止凭记忆硬编码数值，必须调用 get_environment_limit/add_standard_limit 按数据日期获取限值并绘制，标注标准版本、适用阶段、区类、平均时间和单位。"
                             "小时值不得直接按日均限值判断达标，缺失不填零，预测与实测区分。"
                             "风向箭头须明确来向/去向，按真实角度绘制；等长方向箭头与按风速缩放的矢量箭头必须区分。"
                             "seaborn.set_theme 后须在创建图表前调用 apply_report_style() 恢复主题。"
@@ -3374,7 +3421,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "其他通用图：问数模式优先使用 execute_echarts_python；专家/报告模式优先使用 execute_python，ECharts 辅助交互探索；"
             "② 前端交互式图表/复杂数据可视化 → 使用 execute_echarts_python；"
             "③ 深度分析与报告静态图 → 使用 execute_python + matplotlib/seaborn，默认一个独立图表一个图片文件。"
-            "只发布交互图资源，在右侧面板展示；不生成静态图片，不插入对话正文，不使用 [[chart:...]] 占位符。"
+            "交互图通过统一资源发布；最终回复使用 summary 中的图表标记（原样复制 [[chart:chart_N]]）在相关分析段落之间插入图表；未提供标记时才用 visuals.id。"
             "需要正文或报告静态图时，通用图通过 execute_python 绘制，已支持的业务图型必须使用 create_business_chart。"
             "通用计算和文件生成仍使用 execute_python。"
         )
@@ -3438,7 +3485,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
         result.setdefault("resources", []).extend(
             resources_for_visuals(echarts_visuals, tool_name=self.name)
         )
-        result["summary"] = f"✅ ECharts 图表生成完成：{len(echarts_visuals)} 个"
+        result["summary"] = f"✅ ECharts 图表生成完成：{len(echarts_visuals)} 个。"
         return result
 
     def get_function_schema(self) -> Dict[str, Any]:
@@ -3455,9 +3502,11 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                 "每次调用是独立环境；读取输入文件须通过 input_files 声明，代码中的同名列表提供校验后的绝对路径。"
                 "仅输出 ECharts 图表配置：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
-                "图表通过统一会话资源目录发布为 chart-spec，只在右侧面板展示交互图。"
-                "不生成静态图片，不在对话正文插图，不使用 [[chart:...]] 占位符或拼接图片 URL。"
-                "正文说明分析结论，可告知用户在右侧面板查看交互图。"
+                "图表通过统一会话资源目录发布为 chart-spec，Web 与 App 共用交互图表。"
+                "最终回复必须用 [[chart:...]] 标记安排图表位置：优先逐字符原样复制工具返回 summary 中的图表标记（如 [[chart:chart_0]]），"
+                "不得编造标记或手抄 visuals.id 全串；仅在未提供标记时才取工具返回的 visuals.id。"
+                "每个标记独占一行并与上下段落空行分隔；按分析逻辑交替组织文字与图表，每张图后说明结论。"
+                "不在正文输出配置 JSON、HTML 或拼接图片 URL；不要要求用户到右侧面板寻找图表。"
                 "需要正文或 Word/QMD 报告静态图时，通用图通过 execute_python 绘制，已支持的业务图型必须使用 create_business_chart。"
                 "布局要求：图例（legend）水平置于横坐标刻度下方（不得与刻度重叠），"
                 "纵轴名称（yAxis.name）置于图表左侧，横轴名称（xAxis.name）置于横轴右侧。"

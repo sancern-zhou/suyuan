@@ -427,6 +427,25 @@ tables:
       Type: varchar
       Type_2: varchar
       UpdateTime: datetime
+  CitySandDay:
+    time_columns:
+    - DayTime
+    dimension_columns:
+    - CityCode
+    - CityName
+    value_columns:
+    - Id
+    - SourceId
+    - CreateTime
+    mark_columns: []
+    caliber_columns: []
+    column_types:
+      Id: bigint
+      SourceId: int
+      CityCode: varchar
+      CityName: varchar
+      DayTime: datetime
+      CreateTime: datetime
   CityYearPm25Avg:
     time_columns:
     - Year
@@ -465,3 +484,506 @@ tables:
       Address: varchar
       Longitude: double
       Latitude: double
+  SsfbCityHour:
+    time_columns:
+    - DataTime
+    dimension_columns:
+    - City
+    - CityCode
+    - GroupID
+    - Quality
+    - Grade
+    - MainPollutant
+    value_columns:
+    - AQI
+    - PM25
+    - PM10
+    - O3
+    - O3_8H
+    - NO2
+    - SO2
+    - CO
+    mark_columns: []
+    caliber_columns:
+    - FetchedAt
+    column_types:
+      id: bigint
+      City: varchar
+      CityCode: varchar
+      GroupID: int
+      DataTime: datetime
+      AQI: int
+      Quality: varchar
+      Grade: int
+      PM25: double
+      PM10: double
+      O3: double
+      O3_8H: double
+      NO2: double
+      SO2: double
+      CO: double
+      MainPollutant: varchar
+      FetchedAt: datetime
+      CreatedAt: datetime
+  SsfbCityDay:
+    time_columns:
+    - DataTime
+    dimension_columns:
+    - City
+    - CityCode
+    - GroupID
+    - Quality
+    - Grade
+    - MainPollutant
+    value_columns:
+    - AQI
+    - PM25
+    - PM10
+    - O3
+    - O3_8H
+    - NO2
+    - SO2
+    - CO
+    mark_columns: []
+    caliber_columns:
+    - FetchedAt
+    column_types:
+      id: bigint
+      City: varchar
+      CityCode: varchar
+      GroupID: int
+      DataTime: datetime
+      AQI: int
+      Quality: varchar
+      Grade: int
+      PM25: double
+      PM10: double
+      O3: double
+      O3_8H: double
+      NO2: double
+      SO2: double
+      CO: double
+      MainPollutant: varchar
+      FetchedAt: datetime
+      CreatedAt: datetime
+  SsfbSiteHour:
+    time_columns:
+    - DataTime
+    dimension_columns:
+    - SiteID
+    - SiteName
+    - OnlineType
+    - City
+    - County
+    - Area
+    - Quality
+    - Grade
+    - MainPollutant
+    value_columns:
+    - AQI
+    - PM25
+    - PM10
+    - O3
+    - O3_8H
+    - NO2
+    - SO2
+    - CO
+    mark_columns: []
+    caliber_columns:
+    - FetchedAt
+    column_types:
+      id: bigint
+      SiteID: int
+      SiteName: varchar
+      OnlineType: varchar
+      City: varchar
+      County: varchar
+      Area: varchar
+      DataTime: datetime
+      AQI: int
+      Quality: varchar
+      Grade: int
+      PM25: double
+      PM10: double
+      O3: double
+      O3_8H: double
+      NO2: double
+      SO2: double
+      CO: double
+      MainPollutant: varchar
+      FetchedAt: datetime
+      CreatedAt: datetime
+  SsfbSiteDay:
+    time_columns:
+    - DataTime
+    dimension_columns:
+    - SiteID
+    - SiteName
+    - OnlineType
+    - City
+    - County
+    - Quality
+    value_columns:
+    - AQI
+    - PM25
+    - PM10
+    - O3
+    - O3_8H
+    - NO2
+    - SO2
+    - CO
+    mark_columns: []
+    caliber_columns:
+    - FetchedAt
+    column_types:
+      id: bigint
+      SiteID: int
+      SiteName: varchar
+      OnlineType: varchar
+      City: varchar
+      County: varchar
+      Area: varchar
+      DataTime: datetime
+      AQI: int
+      Quality: varchar
+      Grade: int
+      PM25: double
+      PM10: double
+      O3: double
+      O3_8H: double
+      NO2: double
+      SO2: double
+      CO: double
+      MainPollutant: varchar
+      FetchedAt: datetime
+      CreatedAt: datetime
+  SsfbCityRanking:
+    time_columns:
+    - ComputedAt
+    dimension_columns:
+    - PeriodType
+    - Period
+    - City
+    - GroupID
+    value_columns:
+    - Days
+    - ValidDays
+    - PmValidDays
+    - PM25
+    - PM10
+    - SO2
+    - NO2
+    - CO95
+    - O3_8H_90
+    - RankPM25
+    - RankPM10
+    - RankSO2
+    - RankNO2
+    - RankO3
+    - RankCO
+    - OfficialZong
+    - OfficialRank
+    mark_columns: []
+    caliber_columns:
+    - DataStart
+    - DataEnd
+    column_types:
+      id: bigint
+      PeriodType: varchar
+      Period: varchar
+      City: varchar
+      GroupID: int
+      DataStart: date
+      DataEnd: date
+      Days: int
+      ValidDays: int
+      PmValidDays: int
+      PM25: double
+      PM10: double
+      SO2: double
+      NO2: double
+      CO95: double
+      O3_8H_90: double
+      RankPM25: int
+      RankPM10: int
+      RankSO2: int
+      RankNO2: int
+      RankO3: int
+      RankCO: int
+      OfficialZong: double
+      OfficialRank: int
+      ComputedAt: datetime
+      CreatedAt: datetime
+  CountyMonthReport:
+    time_columns:
+    - DataMonth
+    - PeriodEnd
+    dimension_columns:
+    - Region
+    - RegionType
+    - Scope
+    - SourceCol
+    - SourceFile
+    value_columns:
+    - PM10
+    - PM25
+    - SO2
+    - NO2
+    - CO
+    - O3_8H
+    - GoodDays
+    - HeavyDays
+    - CompositeIndex
+    mark_columns: []
+    caliber_columns:
+    - Scope
+    - SourceCol
+    column_types:
+      ID: bigint
+      Region: varchar
+      RegionType: varchar
+      DataMonth: date
+      PeriodEnd: date
+      Scope: varchar
+      PM10: decimal
+      PM25: decimal
+      SO2: decimal
+      NO2: decimal
+      CO: decimal
+      O3_8H: decimal
+      GoodDays: int
+      HeavyDays: int
+      CompositeIndex: decimal
+      SourceCol: varchar
+      SourceFile: varchar
+      CreatedAt: datetime
+  ProvinceMonthReport:
+    time_columns:
+    - DataMonth
+    dimension_columns:
+    - Level
+    - City
+    - RegionName
+    - Scope
+    - SourceFile
+    value_columns:
+    - PM10
+    - PM10_YoY
+    - PM25
+    - PM25_YoY
+    - O3
+    - O3_YoY
+    - GoodDays
+    - GoodDays_Change
+    - GoodDays_Ratio
+    - GoodDays_RatioChg
+    - HeavyDays
+    - HeavyDays_Change
+    - HeavyDays_Ratio
+    - HeavyDays_RatioChg
+    - CompositeIndex
+    - CompositeIndex_YoY
+    mark_columns: []
+    caliber_columns:
+    - Scope
+    - Level
+    column_types:
+      ID: bigint
+      Level: varchar
+      City: varchar
+      RegionName: varchar
+      DataMonth: date
+      Scope: varchar
+      PM10: decimal
+      PM10_YoY: decimal
+      PM25: decimal
+      PM25_YoY: decimal
+      O3: decimal
+      O3_YoY: decimal
+      GoodDays: decimal
+      GoodDays_Change: decimal
+      GoodDays_Ratio: decimal
+      GoodDays_RatioChg: decimal
+      HeavyDays: decimal
+      HeavyDays_Change: decimal
+      HeavyDays_Ratio: decimal
+      HeavyDays_RatioChg: decimal
+      CompositeIndex: decimal
+      CompositeIndex_YoY: decimal
+      SourceFile: varchar
+      CreatedAt: datetime
+  XuchangCityYearTarget:
+    time_columns: []
+    dimension_columns:
+    - Year
+    - Remark
+    - SourceFile
+    value_columns:
+    - Pm10Target
+    - Pm25Target
+    - GoodDaysTarget
+    - HeavyDaysTarget
+    - Pm10
+    - Pm25
+    - So2
+    - No2
+    - Co
+    - O3
+    - GoodDays
+    - HeavyDays
+    - O3ExceedDays
+    mark_columns: []
+    caliber_columns:
+    - Year
+    column_types:
+      ID: bigint
+      Year: int
+      Pm10Target: double
+      Pm25Target: double
+      GoodDaysTarget: double
+      HeavyDaysTarget: double
+      Pm10: double
+      Pm25: double
+      So2: double
+      No2: double
+      Co: double
+      O3: double
+      GoodDays: int
+      HeavyDays: int
+      O3ExceedDays: int
+      Remark: varchar
+      SourceFile: varchar
+      CreatedAt: datetime
+  XuchangCountyYearTarget:
+    time_columns: []
+    dimension_columns:
+    - Region
+    - RegionType
+    - Year
+    - Pm10Completed
+    - Pm25Completed
+    - GoodDaysCompleted
+    - HeavyDaysCompleted
+    - Remark
+    - SourceFile
+    value_columns:
+    - Pm10Target
+    - Pm10
+    - Pm25Target
+    - Pm25
+    - GoodDaysTarget
+    - GoodDays
+    - HeavyDaysTarget
+    - HeavyDays
+    mark_columns: []
+    caliber_columns:
+    - RegionType
+    - Year
+    column_types:
+      ID: bigint
+      Region: varchar
+      RegionType: varchar
+      Year: int
+      Pm10Target: double
+      Pm10: double
+      Pm10Completed: varchar
+      Pm25Target: double
+      Pm25: double
+      Pm25Completed: varchar
+      GoodDaysTarget: double
+      GoodDays: int
+      GoodDaysCompleted: varchar
+      HeavyDaysTarget: int
+      HeavyDays: int
+      HeavyDaysCompleted: varchar
+      Remark: varchar
+      SourceFile: varchar
+      CreatedAt: datetime
+  HenanCityYearTarget:
+    time_columns: []
+    dimension_columns:
+    - City
+    - Year
+    - Pm10Completed
+    - Pm25Completed
+    - GoodDaysCompleted
+    - HeavyDaysCompleted
+    - Remark
+    - SourceFile
+    value_columns:
+    - Pm10Target
+    - Pm10
+    - Pm25Target
+    - Pm25
+    - GoodDaysTarget
+    - GoodDays
+    - GoodDaysRatioTarget
+    - GoodDaysRatio
+    - HeavyDaysTarget
+    - HeavyDays
+    - HeavyDaysRatioTarget
+    - HeavyDaysRatio
+    - O3ExceedDaysTarget
+    - O3ExceedDays
+    - O3ExceedOver
+    - CompletedCount
+    mark_columns: []
+    caliber_columns:
+    - Year
+    column_types:
+      ID: bigint
+      City: varchar
+      Year: int
+      Pm10Target: double
+      Pm10: double
+      Pm10Completed: varchar
+      Pm25Target: double
+      Pm25: double
+      Pm25Completed: varchar
+      GoodDaysTarget: double
+      GoodDays: int
+      GoodDaysRatioTarget: double
+      GoodDaysRatio: double
+      GoodDaysCompleted: varchar
+      HeavyDaysTarget: double
+      HeavyDays: int
+      HeavyDaysRatioTarget: double
+      HeavyDaysRatio: double
+      HeavyDaysCompleted: varchar
+      O3ExceedDaysTarget: int
+      O3ExceedDays: int
+      O3ExceedOver: int
+      CompletedCount: int
+      Remark: varchar
+      SourceFile: varchar
+      CreatedAt: datetime
+  Rank168CityMonthly:
+    time_columns:
+    - DataMonth
+    - PeriodEnd
+    dimension_columns:
+    - City
+    - PeriodType
+    - PeriodLabel
+    - SourceFile
+    value_columns:
+    - CompositeIndex
+    - CompositeIndexRank
+    - Pm25
+    - Pm25Rank
+    mark_columns: []
+    caliber_columns:
+    - PeriodType
+    column_types:
+      ID: bigint
+      City: varchar
+      PeriodType: varchar
+      DataMonth: date
+      PeriodEnd: date
+      PeriodLabel: varchar
+      CompositeIndex: double
+      CompositeIndexRank: int
+      Pm25: double
+      Pm25Rank: int
+      SourceFile: varchar
+      CreatedAt: datetime

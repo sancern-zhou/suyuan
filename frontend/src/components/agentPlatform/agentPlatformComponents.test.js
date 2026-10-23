@@ -113,7 +113,9 @@ test('welcome capabilities render as centered plain text instead of styled butto
 test('chat shows live task status and keeps final duration for the terminal state', async () => {
   const source = await readComponent('../ReActMessageList.vue')
 
-  assert.match(source, /v-if="!isAnalyzing && getFinalDurationText\(message\)"/)
+  assert.match(source, /v-if="[^"]*getFinalDurationText\(message\)/)
+  assert.match(source, /first_response_ms/)
+  assert.match(source, /后开始回答/)
   assert.match(source, /class="task-progress-status"/)
   assert.match(source, /currentProgressStatus/)
   assert.match(source, /runningElapsedText/)

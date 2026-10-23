@@ -17,6 +17,7 @@ import structlog
 from config.settings import settings
 import httpx
 from app.utils.llm_context_logger import get_llm_context_logger
+from app.services.model_trajectory import trace_model_call, update_trajectory_provider, plain
 from app.services.llm_failover import (
     LLMFailoverError,
     LLMResponseRejectedError,
@@ -1821,6 +1822,7 @@ class LLMService:
 
     def _get_request_config(self) -> Tuple[str, Dict[str, str]]:
         """获取请求配置（URL, headers）"""
+        update_trajectory_provider(self)
         # 🔍 调试日志：验证 base_url
         if not self.base_url:
             logger.error(
@@ -1855,6 +1857,7 @@ class LLMService:
 
         return url, headers
 
+    @trace_model_call
     async def chat(
         self,
         messages: list,
@@ -1865,6 +1868,10 @@ class LLMService:
         """
         简单的聊天接口（内部使用流式API避免超时）
 
+        与 call_llm_with_json_response 相同的供应商回退语义：
+        按 LLM_FALLBACKS 候选链依次尝试，主供应商认证失败、5xx 等故障时自动
+        切换下一候选，冷却中的供应商跳过；429 仍在单供应商内退避重试。
+
         Args:
             messages: 消息列表，[{"role": "user", "content": "..."}]
             temperature: 温度参数
@@ -1873,6 +1880,102 @@ class LLMService:
 
         Returns:
             LLM响应的文本内容
+        """
+        original_state = self._snapshot_provider_state()
+        candidates = parse_fallback_candidates(
+            original_state["provider"],
+            original_state["model"],
+            self.request_fallbacks,
+        )
+        attempts = []
+        try:
+            for index, candidate in enumerate(candidates, start=1):
+                if not (
+                    candidate.provider == original_state["provider"].lower()
+                    and (candidate.model or original_state["model"]) == original_state["model"]
+                ):
+                    self._switch_provider_for_attempt(candidate.provider, candidate.model)
+
+                cooldown_failure = get_cooldown_failure(self.provider)
+                if cooldown_failure and index < len(candidates):
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": cooldown_failure.reason,
+                        "status": cooldown_failure.status,
+                        "code": cooldown_failure.code,
+                        "error": "provider is in cooldown",
+                    })
+                    logger.warning(
+                        "llm_chat_fallback_candidate_skipped_cooldown",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=cooldown_failure.reason,
+                    )
+                    continue
+
+                try:
+                    result = await self._run_llm_request_with_global_limit(
+                        "chat",
+                        lambda: self._chat_attempt(
+                            messages,
+                            temperature=temperature,
+                            timeout=timeout,
+                            max_tokens=max_tokens,
+                        ),
+                    )
+                    if attempts:
+                        logger.warning(
+                            "llm_chat_fallback_candidate_succeeded",
+                            provider=self.provider,
+                            model=self.model,
+                            attempts=summarize_attempts(attempts),
+                        )
+                    return result
+                except Exception as exc:
+                    failure = classify_llm_failure(exc)
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": failure.reason,
+                        "status": failure.status,
+                        "code": failure.code,
+                        "error": failure.message,
+                    })
+                    if failure.reason == "context_overflow":
+                        raise
+                    if should_fallback(failure):
+                        mark_provider_cooldown(self.provider, failure)
+                    has_next = index < len(candidates)
+                    logger.warning(
+                        "llm_chat_fallback_candidate_failed",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=failure.reason,
+                        status=failure.status,
+                        code=failure.code,
+                        has_next=has_next,
+                        error=failure.message[:300],
+                    )
+                    if not has_next or not should_fallback(failure):
+                        raise
+            raise LLMFailoverError(summarize_attempts(attempts))
+        except Exception:
+            if attempts:
+                logger.error("llm_chat_fallback_failed", attempts=summarize_attempts(attempts))
+            raise
+        finally:
+            self._restore_provider_state(original_state)
+
+    async def _chat_attempt(
+        self,
+        messages: list,
+        temperature: float = None,
+        timeout: float = 120.0,
+        max_tokens: int = None
+    ) -> str:
+        """
+        chat() 的单供应商尝试：只请求当前选定的 provider，不做候选链回退。
         """
         # 如果未指定temperature，使用settings中的默认值
         if temperature is None:
@@ -2036,242 +2139,6 @@ class LLMService:
                     raise
 
         # 理论上不会到达这里，但为了类型检查完整性
-        raise last_error
-
-    async def chat_streaming(
-        self,
-        messages: list,
-        temperature: float = None,
-        timeout: float = 600.0,
-        max_tokens: int = None,
-    ):
-        """
-        真正的流式 LLM 调用，逐块 yield 文本内容
-
-        Args:
-            messages: 消息列表
-            temperature: 温度参数
-            timeout: 超时时间
-            max_tokens: 最大token数
-
-        Yields:
-            str: 每次返回一个文本块（chunk）
-        """
-        # 如果未指定temperature，使用settings中的默认值
-        if temperature is None:
-            temperature = self.temperature
-
-        url, headers = self._get_request_config()
-
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "stream": True,
-        }
-
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
-
-        logger.info(
-            "llm_chat_streaming_start",
-            provider=self.provider,
-            model=self.model,
-            messages_count=len(messages)
-        )
-
-        # 429速率限制重试机制
-        max_retries = 3
-        last_error = None
-
-        for attempt in range(max_retries):
-            try:
-                async with httpx.AsyncClient(timeout=self.provider_http_timeout(streaming=True, total=timeout)) as client:
-                    async with client.stream("POST", url, headers=headers, json=payload) as response:
-                        response.raise_for_status()
-
-                        # 使用辅助方法解析 SSE 流
-                        async for chunk in self._parse_sse_stream(response):
-                            yield chunk
-
-                logger.info("llm_chat_streaming_complete")
-                return  # 成功完成
-
-            except httpx.HTTPStatusError as e:
-                last_error = e
-                status_code = e.response.status_code
-
-                # 安全地提取响应文本
-                response_text = await self._extract_response_text(e.response)
-
-                # 检查是否是429速率限制错误
-                is_rate_limit = status_code == 429 or (
-                    status_code == 400 and
-                    "rate limit" in response_text.lower()
-                )
-
-                if is_rate_limit and attempt < max_retries - 1:
-                    # 指数退避
-                    wait_time = min(2 ** attempt, 60)
-                    logger.warning(
-                        "llm_streaming_rate_limit_detected",
-                        status_code=status_code,
-                        attempt=attempt + 1,
-                        max_retries=max_retries,
-                        wait_seconds=wait_time,
-                        response_text=response_text[:200]
-                    )
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    logger.error(
-                        "llm_streaming_http_error",
-                        status_code=status_code,
-                        response_text=response_text[:500],
-                        attempt=attempt + 1,
-                        max_retries=max_retries
-                    )
-                    raise
-
-        # 理论上不会到达这里
-        raise last_error
-
-    async def chat_streaming_with_status(
-        self,
-        messages: list,
-        temperature: float = None,
-        timeout: float = 600.0,
-        max_tokens: int = None,
-    ):
-        """
-        流式 LLM 调用，返回文本块和状态信息
-
-        与 chat_streaming 的区别：
-        - 返回字典格式：{"chunk": str, "is_complete": bool}
-        - is_complete 为 True 时表示流已结束（SSE [DONE] 信号）
-
-        Args:
-            messages: 消息列表
-            temperature: 温度参数
-            timeout: 超时时间
-            max_tokens: 最大token数
-
-        Yields:
-            dict: {"chunk": str, "is_complete": bool}
-        """
-        # 如果未指定temperature，使用settings中的默认值
-        if temperature is None:
-            temperature = self.temperature
-
-        url, headers = self._get_request_config()
-
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "stream": True,
-        }
-
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
-
-        # ✅ 使用LLMContextLogger记录完整的请求上下文到文件
-        try:
-            import uuid
-            session_id = f"llm_service_{uuid.uuid4().hex[:8]}"
-
-            llm_context_logger = get_llm_context_logger()
-            log_file_path = llm_context_logger.log_request_context(
-                session_id=session_id,
-                iteration=0,  # llm_service没有iteration概念，使用0
-                mode="llm_service",
-                messages=messages,
-                metadata={
-                    "provider": self.provider,
-                    "model": self.model,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                }
-            )
-
-            # 在控制台只显示预览和文件路径
-            messages_preview = []
-            for msg in messages:
-                msg_copy = msg.copy()
-                content = msg_copy.get("content", "")
-                if len(content) > 300:
-                    msg_copy["content"] = content[:300] + "...(truncated)"
-                messages_preview.append(msg_copy)
-
-            logger.info(
-                "llm_streaming_request",
-                provider=self.provider,
-                model=self.model,
-                url=url,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                messages_count=len(messages),
-                messages_preview=messages_preview,
-                log_file=log_file_path,
-            )
-        except Exception as e:
-            logger.error("llm_context_logging_failed", error=str(e))
-
-        # 429速率限制重试机制
-        max_retries = 3
-        last_error = None
-
-        for attempt in range(max_retries):
-            try:
-                async with httpx.AsyncClient(timeout=self.provider_http_timeout(streaming=True, total=timeout)) as client:
-                    async with client.stream("POST", url, headers=headers, json=payload) as response:
-                        response.raise_for_status()
-
-                        # 使用辅助方法解析 SSE 流，并传递流结束信号
-                        async for result in self._parse_sse_stream_with_status(response):
-                            yield result
-
-                logger.info("llm_chat_streaming_with_status_complete")
-
-                return  # 成功完成
-
-            except httpx.HTTPStatusError as e:
-                last_error = e
-                status_code = e.response.status_code
-
-                # 安全地提取响应文本
-                response_text = await self._extract_response_text(e.response)
-
-                # 检查是否是429速率限制错误
-                is_rate_limit = status_code == 429 or (
-                    status_code == 400 and
-                    "rate limit" in response_text.lower()
-                )
-
-                if is_rate_limit and attempt < max_retries - 1:
-                    # 指数退避
-                    wait_time = min(2 ** attempt, 60)
-                    logger.warning(
-                        "llm_streaming_with_status_rate_limit_detected",
-                        status_code=status_code,
-                        attempt=attempt + 1,
-                        max_retries=max_retries,
-                        wait_seconds=wait_time,
-                        response_text=response_text[:200]
-                    )
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    logger.error(
-                        "llm_streaming_with_status_http_error",
-                        status_code=status_code,
-                        response_text=response_text[:500],
-                        attempt=attempt + 1,
-                        max_retries=max_retries
-                    )
-                    raise
-
-        # 理论上不会到达这里
         raise last_error
 
     async def call_llm_with_json_response(
@@ -3007,6 +2874,8 @@ class LLMService:
             "temperature": temperature,
         }
         payload["stream"] = stream
+        if stream:
+            payload["stream_options"] = {"include_usage": True}
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         if converted_tools:
@@ -3147,6 +3016,7 @@ class LLMService:
         for event in adapter.finish():
             yield event
 
+    @trace_model_call
     async def chat_anthropic(
         self,
         messages: List[Dict[str, str]],
@@ -3242,6 +3112,7 @@ class LLMService:
                     messages_count=len(api_params.get("messages", [])),
                     has_tools=bool(api_params.get("tools")),
                 )
+                update_trajectory_provider(self)
                 return await self.anthropic_client.messages.create(**api_params)
 
             if validate is not None:
@@ -3269,7 +3140,7 @@ class LLMService:
             result = {
                 "content": response.content,
                 "model": response.model,
-                "usage": {
+                "usage": plain(response.usage) if hasattr(response.usage, "model_dump") else {
                     "input_tokens": response.usage.input_tokens,
                     "output_tokens": response.usage.output_tokens
                 },
@@ -3366,6 +3237,7 @@ class LLMService:
             )
             raise
 
+    @trace_model_call
     async def chat_anthropic_streaming(
         self,
         messages: List[Dict[str, str]],
@@ -3529,12 +3401,20 @@ class LLMService:
                         ) as stream:
                             async for event in stream:
                                 event_type = event.type
+                                # Headers and complete no-argument tool blocks
+                                # are observable output even without a delta.
+                                if event_type in {
+                                    "message_start", "content_block_start", "content_block_delta",
+                                    "content_block_stop", "message_delta", "message_stop",
+                                }:
+                                    candidate_emitted = True
 
                                 if event_type == "message_start":
                                     yield {
                                         "type": "message_start",
                                         "data": {
-                                            "usage": {
+                                            "model": getattr(event.message, "model", self.model),
+                                            "usage": plain(event.message.usage) if hasattr(event.message.usage, "model_dump") else {
                                                 "input_tokens": event.message.usage.input_tokens,
                                                 "output_tokens": event.message.usage.output_tokens,
                                             }

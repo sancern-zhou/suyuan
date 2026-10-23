@@ -109,6 +109,10 @@ REPORT_MATCH_ID_COLUMNS = ("UniqueCode", "StationCode", "DistrictCode", "CityCod
 # 报表预览的字符量上限，超出后减少预览行数并把完整数据落盘
 REPORT_PREVIEW_MAX_CHARS = 6000
 
+# 乡镇站视图已下线：数据走本地语义层 xuchang_cube_metrics（TownHour/TownDay）。
+# client 的 DATA_API_CODES 保留（station_catalog 目录构建与日报乡镇小时场景直连使用）。
+TOWN_DATA_VIEWS = frozenset({"v_t_d_app", "v_t_d_src", "v_t_h_app", "v_t_h_src"})
+
 _API_CODE_HINTS = {
     "region": "区域表（行政区划，含经纬度与气象编码）",
     "station": "站点表（站点名称/编码/坐标/地址）",
@@ -117,20 +121,23 @@ _API_CODE_HINTS = {
     "v_c_d_src_155": "城市日数据-原始155口径（非新国标替代口径，仅近半月少量，不作默认）",
     "v_s_d_app_145": "站点日数据-审核145口径",
     "v_s_d_src_145": "站点日数据-原始145口径",
-    "v_t_d_app": "乡镇日数据-审核",
-    "v_t_d_src": "乡镇日数据-原始",
-    "v_t_h_app": "乡镇小时数据-审核",
-    "v_t_h_src": "乡镇小时数据-原始",
 }
+
+# 各中台视图实测数据时间范围（查询窗口超出即空结果）；口径分段见 _API_CODE_HINTS
+VIEW_TIME_RANGES_NOTE = (
+    "\n\n【中台各视图数据时间范围】（实测，超出即空结果）："
+    "城市日按 v_c_d_sb_145（2021-07~2025-12）/v_c_d_sb_155（2026-01 起）口径分段；"
+    "站点日 v_s_d_* 为十四五口径。查询更早历史请改用 execute_crawler_sql_query（2016/2018 起长历史）。"
+)
 
 # 许昌空气质量查询的三条数据通道同属中大国发平台，中台工具承担中台独有口径
 DATA_SOURCE_NOTE = (
     "【数据源归属与优先级】许昌空气质量数据实际有三个查询通道，且同属中大国发平台数据源，仅时间粒度与覆盖时段不同："
     "①中大平台审核后数据（站点5分钟/站点小时/城市小时，近期高时效，审核后口径）；"
     "②长历史采集库（城市小时/城市日/站点日等历史归档，时间跨度最长）；"
-    "③大气监测接口中台（本工具，区域/站点基础表、城市/站点/乡镇日时数据、同比报表）。"
+    "③大气监测接口中台（本工具，区域/站点基础表、城市/站点日数据、同比报表）。"
     "①②为第一优先级：用户问许昌空气质量数据时，优先走中大平台审核后数据与长历史采集库；"
-    "本工具用于中台独有口径（区域/站点基础表、乡镇日/小时数据、月度与年度报表统计），"
+    "本工具用于中台独有口径（区域/站点基础表、城市/站点日数据、月度与年度报表统计），"
     "以及①②未落库的时间段；不要用本工具重复查询①②已覆盖且口径一致的数据。"
 )
 
@@ -373,8 +380,11 @@ class QueryAirDataPlatformTool(LLMTool):
     """大气环境监测数据接口中台通用数据查询工具"""
 
     def __init__(self):
-        api_code_enum = list(ALL_API_CODES)
-        data_hint = "；".join(f"{code}={_API_CODE_HINTS[code]}" for code in DATA_API_CODES)
+        api_code_enum = [code for code in ALL_API_CODES if code not in TOWN_DATA_VIEWS]
+        data_hint = "；".join(
+            f"{code}={_API_CODE_HINTS[code]}" for code in DATA_API_CODES
+            if code not in TOWN_DATA_VIEWS
+        )
         function_schema = {
             "name": "query_airdata_platform",
             "description": (
@@ -382,17 +392,17 @@ class QueryAirDataPlatformTool(LLMTool):
                 f"可选接口：{'；'.join(f'{code}={_API_CODE_HINTS[code]}' for code in REFERENCE_API_CODES)}。"
                 f"空气质量数据接口：{data_hint}。"
                 f"{DATA_SOURCE_NOTE}"
+                f"{VIEW_TIME_RANGES_NOTE}"
                 f"{OFFICIAL_CALIBER_NOTE}"
                 f"{CITY_NEW_STANDARD_NOTE}"
                 f"{AGGREGATION_RULE_NOTE}"
                 f"{DATA_SOURCE_DISCLOSURE_NOTE}"
                 "数据接口输出 32 个字段：8 项污染物浓度（so2/no2/pm10/co/o3_8h/o3/pm2_5/no/nox）、"
                 "对应 *_mark 数据标记、*_iaqi 分指数、aqi、qualitytype 空气质量等级、primarypollutant 首要污染物；"
-                "name/code 为城市或站点或乡镇名称与编码，timepoint 为时间点（日粒度 yyyy-MM-dd，时粒度 yyyy-MM-dd HH）。"
+                "name/code 为城市或站点名称与编码，timepoint 为时间点（日粒度 yyyy-MM-dd，时粒度 yyyy-MM-dd HH）。"
                 "filters 多条件为 AND；field 必须是该接口可过滤字段，否则条件被静默忽略；"
                 "时间字段格式 yyyy-MM-dd 或 yyyy-MM-dd HH:mm:ss；同一字段可传多条（如 gte+lte）。"
-                "注意 v_t_d_app（乡镇日-审核）当前中台侧配置故障暂不可用，乡镇日数据请改用 v_t_d_src。"
-                "乡镇站/站点编码应先用 xuchang_station_catalog 解析，不要凭名称猜测编码。"
+                "站点编码应先用 xuchang_station_catalog 解析，不要凭名称猜测编码。"
                 "自动翻页聚合，超过 24 行时完整数据落盘并返回 file_path。"
             ),
             "parameters": {

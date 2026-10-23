@@ -20,7 +20,7 @@ logger = structlog.get_logger()
 
 
 _STATION_CONTRACT_TABLES = ("StationHour", "StationDay", "Station")
-_CITY_CONTRACT_TABLES = ("CityHour", "CityDay", "CityYearPm25Avg")
+_CITY_CONTRACT_TABLES = ("CityHour", "CityDay", "CitySandDay", "CityYearPm25Avg")
 
 _MONITORING_QUERY_TOOLS = (
     "query_xcai_city_history",
@@ -31,17 +31,22 @@ _MONITORING_QUERY_TOOLS = (
     "xuchang_station_catalog",
     "airdata_calc_report_summary",
     "query_national_city_air_quality",
+    "get_5min_data",
+    "xuchang_cube_metrics",
 )
 
 # 站点层级问数：国控站走采集库 SQL；乡镇站/中台口径走"目录解析编码 → 中台查询"
 # （编码不可猜，该串行为必要轮次）。目录工具与中台工具必须成对配置。
+# 5 分钟粒度走 get_5min_data（中大分钟数据，含站点浓度与气象）。
 _MONITORING_STATION_QUERY_TOOLS = (
     "execute_crawler_sql_query",
     "xuchang_station_catalog",
     "query_airdata_platform",
+    "get_5min_data",
 )
 
-# 城市层级问数：城市小时/日/年均值 + SQL Server 城市发布历史 + 中台接口。
+# 城市层级问数：城市小时/日/年均值 + SQL Server 城市发布历史 + 中台接口；
+# cube 语义层提供官方月报/年度目标/168 城排名等统计口径。
 _MONITORING_CITY_QUERY_TOOLS = (
     "query_xcai_city_history",
     "execute_sql_query",
@@ -50,6 +55,7 @@ _MONITORING_CITY_QUERY_TOOLS = (
     "query_airdata_platform",
     "airdata_calc_report_summary",
     "query_national_city_air_quality",
+    "xuchang_cube_metrics",
 )
 
 _FORECAST_QUERY_TOOLS = (
@@ -58,7 +64,6 @@ _FORECAST_QUERY_TOOLS = (
     "get_weather_forecast",
     "query_airdata_platform",
     "xuchang_station_catalog",
-    "resolve_station_geo",
     "execute_postgres_sql_query",
 )
 
@@ -123,26 +128,27 @@ def _query_definition(
                 description=acquire_description,
                 allowed_tools=query_tools,
                 advance_tools=query_tools,
-                max_attempts=2,
+                max_attempts=4,
                 allow_completion=False,
             ),
             WorkflowPhaseDefinition(
                 name="normalize",
                 description=(
-                    "检查成功结果的时间范围、记录数、字段和缺口。只有确需合并或补充质量统计时，"
-                    "才调用一次 execute_python；否则直接交付。禁止新增数据源查询。"
+                    "检查成功结果的时间范围、记录数、字段和缺口。聚合、分箱、统计与"
+                    "多步计算可分多轮调用 execute_python 完成；禁止新增数据源查询。"
                 ),
                 allowed_tools=_NORMALIZE_TOOLS,
                 advance_tools=_NORMALIZE_ADVANCE_TOOLS,
-                max_attempts=1,
+                max_attempts=15,
                 allow_completion=True,
             ),
             WorkflowPhaseDefinition(
                 name="deliver",
                 description=(
-                    "停止调用工具，直接输出最终交付文本。本轮请求没有携带任何工具，"
-                    "任何工具调用或调用标记语法（如 DSML/XML/JSON 标签）都会失败或被当作正文，"
-                    "导致交付失败。file_path 引用上方工具结果中已保存的路径即可，无需执行代码验证；"
+                    "停止调用分析类工具，输出最终交付文本。本轮请求除交付工具 submit_result 外"
+                    "没有其他工具，任何其他工具调用或调用标记语法（如 DSML/XML/JSON 标签）都会"
+                    "失败或被当作正文，导致交付失败。带 result_schema 的调用方应改用 submit_result"
+                    " 提交结构化结果。file_path 引用上方工具结果中已保存的路径即可，无需执行代码验证；"
                     "同时给出字段说明、时间与区域口径、记录数以及数据缺口。"
                     "不做机制分析，不重新查询。"
                 ),
@@ -169,6 +175,7 @@ for _definition in (
         scope_line=(
             "聚焦站点层级取数：国控站小时/日历史用采集库 SQL 直接查询"
             "（StationHour/StationDay，按名称或区域 LIKE 过滤，无需解析目录）；"
+            "5 分钟粒度数据（国控站分钟浓度与气象）用 get_5min_data 查询；"
             "乡镇站与中台口径数据先用 xuchang_station_catalog 解析编码"
             "（支持按名称模糊、按区县展开下辖站点），再调 query_airdata_platform 查询。"
         ),
@@ -180,7 +187,7 @@ for _definition in (
         "城市层级空气质量监测固定问数流程",
         scope_line=(
             "聚焦城市层级取数：城市小时/日/年均值、城市发布历史与全国对比，"
-            "主要使用 CityHour/CityDay/CityYearPm25Avg 表；"
+            "主要使用 CityHour/CityDay/CityYearPm25Avg 表，扣沙天用 CitySandDay 清单过滤；"
             "城市发布历史（CityAQIPublishHistory）用 query_xcai_city_history。"
         ),
         context_block=_table_contract_block(_CITY_CONTRACT_TABLES),

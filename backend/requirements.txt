@@ -21,6 +21,8 @@ numpy==1.26.3  # Keep aligned with environment.yml; NumPy 2.x removes np.mat use
 xarray>=2024.1.0
 netCDF4>=1.6.5
 scipy>=1.10.0  # Sparse matrix optimization for OBM calculations
+statsmodels>=0.14.4,<0.16  # Optional regression, time-series and statistical diagnostics
+geopandas>=1.0,<2  # Optional tabular spatial joins and GeoJSON operations
 PyKrige>=1.7.2  # Kriging interpolation backend for GIS concentration surfaces
 nimfa>=1.0.0   # Non-negative matrix factorization for PMF dual-mode
 defusedxml>=0.7.1  # Safe XML parsing (protects against XML attacks)
@@ -104,6 +106,7 @@ en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_
 markdown==3.7
 jinja2==3.1.4
 beautifulsoup4==4.14.3  # HTML parsing for reports, knowledge base, and query tools
+trafilatura==2.3.1  # Main-content extraction (markdown) for web_fetch tool
 
 # File Upload & Async I/O
 python-multipart==0.0.21  # FastAPI UploadFile/Form request parsing

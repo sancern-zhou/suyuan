@@ -22,15 +22,57 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
-# DataCrawler（MySQL 8，采集库）长历史表：站点/城市逐小时、逐日与年度均值。
+# DataCrawler（MySQL 8，采集库）：许昌本地长历史表 + 河南实时发布采集表（Ssfb*）。
 CRAWLER_SQL_TABLES = [
     "StationHour",
     "CityHour",
     "StationDay",
     "CityDay",
+    "CitySandDay",
     "CityYearPm25Avg",
     "Station",
+    "SsfbCityHour",
+    "SsfbCityDay",
+    "SsfbSiteHour",
+    "SsfbSiteDay",
+    "SsfbCityRanking",
+    "CountyMonthReport",
+    "ProvinceMonthReport",
+    "XuchangCityYearTarget",
+    "XuchangCountyYearTarget",
+    "HenanCityYearTarget",
+    "Rank168CityMonthly",
 ]
+
+# 各表白名单对应的数据时间范围（实测），供 Agent 直接判断可查窗口、避免空查。
+TABLE_TIME_RANGES: dict[str, str] = {
+    "StationHour": "2016-01 起，许昌 6 国控站逐小时，更新至实时",
+    "CityHour": "2020-07 起，许昌市逐小时",
+    "StationDay": "2018-09 起，许昌站点逐日",
+    "CityDay": "2018-09 起，许昌市逐日",
+    "CitySandDay": "2019-04 起，许昌市沙尘日清单（仅城市+日期，无数值列，累计约 200 天）",
+    "CityYearPm25Avg": "2014-2025，许昌市 PM2.5 年均值（每年 1 行）",
+    "Station": "许昌站点目录（覆盖有限，站名可能为空）",
+    "SsfbCityHour": "2026-10-09 起，河南 18 城市组逐小时（含济源）",
+    "SsfbCityDay": "2026-10-03 起，河南 18 城市组逐日（含济源）",
+    "SsfbSiteHour": "2026-10-09 起，许昌县级站逐小时",
+    "SsfbSiteDay": "2026-10-08 起，许昌县级站逐日",
+    "SsfbCityRanking": "2026-10-09 起（每日 06:10 对官方发布日值排序，仅 daily）",
+    "CountyMonthReport": "2020-01 ~ 2026-09，许昌 10 县市区官方月报统计（剔除沙尘；"
+                         "Scope=month 当月/cum 1-N月累计；重污染天 2023 起才有；"
+                         "2020 年取自 2021 年月报同期列，SourceCol=prior）",
+    "ProvinceMonthReport": "2025-12、2026-01~09 共 10 期河南省环境空气质量月报附表（官方口径："
+                           "Level=city 19市(区)/district 88市辖区/county 101县市/province 全省；"
+                           "Scope=month 当月/cum 1-N月累计；同比列 Xxx_YoY 为变化率）",
+    "XuchangCityYearTarget": "2015-2026，许昌市年度目标 vs 实际（国家网考核定版；目标值唯一来源；"
+                             "Year 过滤；无自动采集，随官方数据人工回补）",
+    "XuchangCountyYearTarget": "2020-2025，许昌 10 县市区年度目标 vs 实际（官方考核剔沙尘定版；"
+                               "2023 年重污染天与 CountyMonthReport 月报差 3~4 天系沙尘口径）",
+    "HenanCityYearTarget": "2021-2025，河南 18 地市年度目标完成情况（省考核；优良天/重污染天"
+                           " 2021/2022/2024 为天数、2023/2025 为比例%；2025 行未定稿）",
+    "Rank168CityMonthly": "2026-01~07，生态环境部 168 重点城市排名逐月+累计（PeriodType=month/cum；"
+                          "仅用于全国排名与横向对比，浓度绝对值以本地口径为准）",
+}
 
 MAX_LIMIT = 5000
 DEFAULT_LIMIT = 50
@@ -69,13 +111,52 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
                 "\n\n表字段契约缺失：写 SQL 前必须先用 describe_table 确认字段名与大小写。"
             )
         schema_description = (
-            "大气监测采集库（MySQL）只读 SQL 查询工具，提供中台接口未覆盖的长历史数据："
-            "站点/城市逐小时与逐日历史、PM2.5 年均值、站点目录。"
+            "大气监测采集库（MySQL）只读 SQL 查询工具：许昌本地长历史数据"
+            "（站点/城市逐小时与逐日、PM2.5 年均值、沙尘日清单、站点目录）+ 河南实时发布采集表"
+            "（Ssfb*：18 城市组含济源的小时/日/单项浓度排名、许昌县级站）。"
             "支持 describe_table 查看表结构，或 sql 执行 SELECT/CTE 查询，二者必须二选一。"
             f"仅允许白名单表：{', '.join(CRAWLER_SQL_TABLES)}；禁止采集运行日志和失败记录表。"
             "只允许 SELECT，禁止 INSERT/UPDATE/DELETE/DDL、注释和多语句；"
             f"使用 LIMIT 分页，最大返回 {MAX_LIMIT} 条。"
             "不确定字段时先调用 describe_table，不要查询 information_schema。"
+            "\n\n【查询优先级】常规指标（18 城含济源的排名/最新小时日值/县级站/乡镇站）优先走"
+            " xuchang_cube_metrics 语义层；本工具用于长历史、同比、跨年趋势和语义层未覆盖的明细。"
+            "国控站点日值（含昨日）优先走 query_airdata_platform 中台接口"
+            "（v_s_d_app_145 审核 / v_s_d_src_145 原始，μg/m³，timepoint 过滤值用纯日期 YYYY-MM-DD）；"
+            "StationDay 保留用于 2018-09 起的长历史与中台接口缺数时的补充，两者口径为中大同源。"
+            "省内城市日排名（含济源）：SsfbCityRanking（仅 periodType='daily'，Rank* 升序=1 最优，"
+            "相同值并列），不要从 SsfbCityDay 逐日聚合。"
+            "城市/区/县市月与 1-N月累计官方统计：ProvinceMonthReport"
+            "（Level=city/district/county/province，Scope=month/cum，同比列 Xxx_YoY 为变化率；"
+            "本地手算的 SsfbCityRanking monthly/yearly 已停用并删除）。"
+            "\n\n【统计口径硬规则】禁止用 CityDay/StationDay/CityHour/StationHour/SsfbCityDay 等"
+            "逐日、逐小时明细自行汇总或计算月度、季度、半年、年度统计值"
+            "（包括均值、极值、有效天数、达标率、重污染天数、排名、同比等任何月度及以上指标）："
+            "许昌月度及以上统计的唯一来源是 airdata_calc_report_summary 报表接口，"
+            "河南 19 市（区）月/年累计官方统计查 ProvinceMonthReport（官方月报），"
+            "许昌 PM2.5 年均历史查 CityYearPm25Avg（平台预计算表）；"
+            "许昌县市区（10 区域）月度与 1-N 月累计统计查 CountyMonthReport"
+            "（官方月报剔除沙尘原值，勿从明细自算）。"
+            "年度目标与完成情况（含历史年度值）查 XuchangCityYearTarget/XuchangCountyYearTarget/"
+            "HenanCityYearTarget（年度考核定版，勿从明细或月报累计自算年度值；"
+            "XuchangCountyYearTarget 2023 年重污染天为剔沙尘考核口径，与 CountyMonthReport 月报差"
+            " 3~4 天系 2023-03 沙尘所致，年度问题以年度表为准）；"
+            "168 城市全国排名查 Rank168CityMonthly（PeriodType='month'/'cum'，"
+            "仅用于全国排名与横向对比，浓度绝对值以本地口径为准）。"
+            "逐日/逐小时明细仅用于过程分析、逐日序列与趋势展示，不是统计口径来源；"
+            "报表或排名表没有的口径要如实说明无该统计，不得用明细手算代替。"
+            "\n\n【扣沙天口径】CitySandDay 是官方沙尘日清单（许昌市，唯一城市 411000/许昌市，"
+            "时间列 DayTime 为当日 00:00:00，表里只有城市+日期、没有任何浓度数值），"
+            "\u201c扣除沙尘天\u201d一律用它过滤逐日明细："
+            "SELECT ... FROM CityDay WHERE Date NOT IN (SELECT DayTime FROM CitySandDay)；"
+            "不要把 CitySandDay 当数值表查询或聚合，也不要自行判断某天是不是沙尘天。"
+            "官方报表/排名接口没有现成的扣沙天统计时，才按上述过滤从明细表算，并在结果中注明口径。"
+            "\n\n【各表数据时间范围】（查询窗口必须在范围内，否则空结果）：\n"
+            + "\n".join(f"- {name}: {desc}" for name, desc in TABLE_TIME_RANGES.items())
+            + "\n注意：StationHour 站名列是 StationName；StationDay/CityDay 没有 StationName 列，"
+            "站名/城市名用 PositionName/Area，不要跨表套用列名。"
+            "\n注意：老表（StationHour/CityHour/StationDay/CityDay/CitySandDay/CityYearPm25Avg）仅覆盖许昌单城市，"
+            "Ssfb* 表覆盖河南 18 城市组与许昌县级站，两套口径不要混算同比。"
             f"{contracts_block}"
             "\n注意：以上表都在同一个 MySQL 采集库，可跨表 JOIN；"
             "与 SQL Server 历史库、PostgreSQL 主库不支持跨库 JOIN。"
@@ -87,6 +168,12 @@ class ExecuteCrawlerSQLQueryTool(LLMTool):
             "WHERE Area LIKE '%许昌%' AND Date >= '2020-01-01' ORDER BY Date LIMIT 100"
             "\n- PM2.5 年均值：SELECT Year, ActualPm25Avg, StandardPm25Avg FROM CityYearPm25Avg "
             "WHERE CityName LIKE '%许昌%' ORDER BY Year"
+            "\n- 扣沙天城市日值：SELECT Date, Area, AQI, PM2_5 FROM CityDay "
+            "WHERE Area LIKE '%许昌%' AND Date NOT IN (SELECT DayTime FROM CitySandDay) "
+            "ORDER BY Date LIMIT 100"
+            "\n- 19市官方月报累计（含济源/航空港）：SELECT City, PM25, PM25_YoY, CompositeIndex "
+            "FROM ProvinceMonthReport WHERE Level='city' AND Scope='cum' AND DataMonth='2026-09-01' "
+            "ORDER BY PM25"
         )
         function_schema = {
             "name": "execute_crawler_sql_query",

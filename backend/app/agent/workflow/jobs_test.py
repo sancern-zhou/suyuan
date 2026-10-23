@@ -1,6 +1,10 @@
+import json
 import pytest
 
-from app.agent.workflow.jobs import WorkflowJobStore
+from app.agent.workflow.jobs import (
+    WorkflowJobStore, WorkflowLeaseLost, _ENQUEUE_SCRIPT, _CLAIM_SCRIPT,
+    _RECOVER_SCRIPT, _LEASE_WRITE_SCRIPT,
+)
 
 
 class _FakeRedis:
@@ -13,6 +17,54 @@ class _FakeRedis:
 
     async def hgetall(self, key):
         return dict(self.hashes.get(key, {}))
+
+    async def eval(self, script, number_of_keys, *args):
+        keys, argv = args[:number_of_keys], args[number_of_keys:]
+        target = self.hashes.setdefault(keys[0], {})
+        if script == _ENQUEUE_SCRIPT:
+            if target.get("session_id") and target["session_id"] != argv[1]:
+                return -1
+            if target.get("status") in {"queued", "running"}:
+                return 0
+            target.update(dict(zip(
+                ("job_id", "workflow_id", "session_id", "status", "payload", "snapshot", "updated_at", "last_sequence"),
+                (argv[0], argv[0], argv[1], "queued", argv[2], argv[3], argv[4], "0"),
+            )))
+            for name in ("lease_token", "owner", "result"):
+                target.pop(name, None)
+            self.lists.setdefault(keys[1], []).append(argv[0])
+            return 1
+        if script == _CLAIM_SCRIPT:
+            if target.get("status") != "queued":
+                return 0
+            target.update(status="running", owner=argv[0], updated_at=argv[1], lease_token=argv[2])
+            return 1
+        if script == _RECOVER_SCRIPT:
+            if target.get("status") != argv[0] or target.get("updated_at") != argv[1]:
+                return 0
+            target.update(status="queued", updated_at=argv[2])
+            target.pop("lease_token", None)
+            target.pop("owner", None)
+            self.lists.setdefault(keys[1], []).append(argv[3])
+            return 1
+        if script == _LEASE_WRITE_SCRIPT:
+            if target.get("status") != "running" or target.get("lease_token") != argv[0]:
+                return 0
+            if argv[1] == "snapshot":
+                sequence = int(target.get("last_sequence", 0))
+                for event in json.loads(argv[4]):
+                    if event["sequence"] > sequence:
+                        await self.xadd(keys[1], {"event": event["payload"], "created_at": argv[2]})
+                        sequence = event["sequence"]
+                target.update(snapshot=argv[3], last_sequence=str(sequence))
+            elif argv[1] == "finish":
+                target.update(status=argv[4], result=argv[3])
+                await self.xadd(keys[1], {"event": argv[5], "created_at": argv[2]})
+                target.pop("lease_token", None)
+                target.pop("owner", None)
+            target["updated_at"] = argv[2]
+            return 1
+        raise AssertionError("unknown Lua script")
 
     async def hget(self, key, field):
         return self.hashes.get(key, {}).get(field)
@@ -69,7 +121,7 @@ async def test_workflow_job_store_claims_idempotently_and_streams_events():
 
     claimed = await store.claim(timeout=0)
     assert claimed.workflow_id == "wf-1"
-    await store.publish_snapshot("wf-1", {"status": "running", "runtime": {"events": [{"sequence": 1, "event_type": "task.running"}]}})
+    await store.publish_snapshot("wf-1", {"status": "running", "runtime": {"events": [{"sequence": 1, "event_type": "task.running"}]}}, lease_token=claimed.lease_token)
     events = await store.read_events("wf-1")
     assert any(event.get("type") == "runtime" for _, event in events)
     assert store.redis.last_xread_block is None
@@ -82,3 +134,53 @@ async def test_workflow_job_store_does_not_wait_for_missing_event_stream():
 
     assert await store.read_events("missing") == []
     assert redis.last_xread_block is None
+
+
+@pytest.mark.asyncio
+async def test_recovered_job_reads_latest_snapshot_and_keeps_session_owner():
+    store = WorkflowJobStore(_FakeRedis(), prefix="test:recovery")
+    await store.enqueue(session_id="s1", workflow_id="wf", definition={}, snapshot={})
+    claimed = await store.claim()
+    latest = {"status": "running", "node_results": {"air": {"success": True}}}
+    await store.publish_snapshot("wf", latest, lease_token=claimed.lease_token)
+    assert (await store.get("wf")).snapshot == latest
+    with pytest.raises(ValueError, match="another session"):
+        await store.enqueue(session_id="s2", workflow_id="wf", definition={}, snapshot={})
+    await store.redis.hset(store.state_key("wf"), "updated_at", "0")
+    assert await store.recover_expired() == 1
+    assert (await store.claim()).snapshot == latest
+
+
+@pytest.mark.asyncio
+async def test_recovery_requeues_job_lost_between_pop_and_claim():
+    store = WorkflowJobStore(_FakeRedis(), prefix="test:lost")
+    await store.enqueue(session_id="s", workflow_id="wf", definition={}, snapshot={})
+    await store.redis.blpop(store.queue_key)
+    await store.redis.hset(store.state_key("wf"), "updated_at", "0")
+    assert await store.recover_expired() == 1
+    assert (await store.claim()).workflow_id == "wf"
+
+
+@pytest.mark.asyncio
+async def test_previous_execution_cannot_write_after_same_worker_reclaims_job():
+    store = WorkflowJobStore(_FakeRedis(), prefix="test:fencing")
+    await store.enqueue(session_id="s", workflow_id="wf", definition={}, snapshot={})
+    previous = await store.claim()
+    await store.redis.hset(store.state_key("wf"), "updated_at", "0")
+    await store.recover_expired()
+    current = await store.claim()
+    assert previous.lease_token != current.lease_token
+    state = await store.redis.hgetall(store.state_key("wf"))
+    events = await store.read_events("wf")
+    for write in (
+        store.heartbeat("wf", lease_token=previous.lease_token),
+        store.publish_snapshot("wf", {"status": "failed"}, lease_token=previous.lease_token),
+        store.finish("wf", status="failed", lease_token=previous.lease_token),
+    ):
+        with pytest.raises(WorkflowLeaseLost):
+            await write
+    assert await store.redis.hgetall(store.state_key("wf")) == state
+    assert await store.read_events("wf") == events
+    await store.finish("wf", status="succeeded", lease_token=current.lease_token)
+    with pytest.raises(WorkflowLeaseLost):
+        await store.heartbeat("wf", lease_token=current.lease_token)

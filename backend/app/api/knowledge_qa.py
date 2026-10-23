@@ -12,12 +12,10 @@
 """
 
 import json
-import re
 import structlog
 import asyncio
 import time
 from typing import Optional, List
-from collections import OrderedDict
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -36,6 +34,7 @@ from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.schemas import ConversationSource
 from app.conversations.service import ConversationCatalogService
 from app.core.sse import create_sse_response
+from app.utils.json_safety import dumps_safe
 from app.knowledge_base.retrieval_utils import deduplicate_results_by_content
 
 logger = structlog.get_logger()
@@ -90,174 +89,27 @@ class KnowledgeQAResponse(BaseModel):
     elapsed_ms: int = Field(..., description="处理耗时(毫秒)")
 
 
-# ========================================
-# HyDE 假设答案生成函数
-# ========================================
-
-_HYDE_CACHE_TTL_SECONDS = 3600
-_HYDE_CACHE_MAX_SIZE = 256
-_hyde_cache: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
-
-
 def _dedupe_search_results(results: List[dict]) -> List[dict]:
-    """合并召回结果，同一分块只保留得分更高的一条，并记录命中路由。"""
-    results = deduplicate_results_by_content(results)
-    deduped: "OrderedDict[tuple, dict]" = OrderedDict()
     for item in results:
-        kb_info = item.get("knowledge_base", {}) or {}
-        metadata = item.get("metadata", {}) or {}
-        key = (
-            kb_info.get("id"),
-            item.get("document_id"),
-            item.get("chunk_index"),
-            metadata.get("chunk_id"),
-            (item.get("content") or "")[:120]
-        )
-        route = item.get("retrieval_route", "unknown")
-        existing = deduped.get(key)
-        if not existing:
-            item["retrieval_routes"] = [route]
-            deduped[key] = item
-            continue
-
-        existing_routes = existing.setdefault("retrieval_routes", [])
-        if route not in existing_routes:
-            existing_routes.append(route)
-        if float(item.get("score") or 0) > float(existing.get("score") or 0):
-            item["retrieval_routes"] = existing_routes
-            deduped[key] = item
-
-    return list(deduped.values())
-
-
-def _get_cached_hyde_keywords(query: str) -> Optional[str]:
-    cached = _hyde_cache.get(query)
-    if not cached:
-        return None
-
-    cached_at, keywords = cached
-    if time.time() - cached_at > _HYDE_CACHE_TTL_SECONDS:
-        _hyde_cache.pop(query, None)
-        return None
-
-    _hyde_cache.move_to_end(query)
-    return keywords
-
-
-def _set_cached_hyde_keywords(query: str, keywords: str) -> None:
-    _hyde_cache[query] = (time.time(), keywords)
-    _hyde_cache.move_to_end(query)
-    while len(_hyde_cache) > _HYDE_CACHE_MAX_SIZE:
-        _hyde_cache.popitem(last=False)
-
-
-def _normalize_mode(value, default: str, allowed: set[str]) -> str:
-    if isinstance(value, bool):
-        return "always" if value else "never"
-    mode = str(value or default).strip().lower()
-    aliases = {
-        "true": "always",
-        "false": "never",
-        "yes": "always",
-        "no": "never",
-        "on": "always",
-        "off": "never",
-    }
-    mode = aliases.get(mode, mode)
-    return mode if mode in allowed else default
-
-
-def _is_precise_knowledge_query(query: str) -> bool:
-    """标准号、文件号、英文缩写等精确查询优先走原始 hybrid recall。"""
-    patterns = [
-        r"\b(HJ|GB|GB/T|HJ/T|DB\d*|ISO|IEC)\s*[\dA-Z]+(?:[-—]\d{2,4})?\b",
-        r"(环办|环发|环监|国办发|国务院|生态环境部).{0,12}\d{2,4}",
-        r"\b[A-Z]{2,}\d{0,4}\b",
-    ]
-    return any(re.search(pattern, query, flags=re.IGNORECASE) for pattern in patterns)
-
-
-def _should_generate_hyde_keywords(query: str, mode: str) -> tuple[bool, Optional[str]]:
-    if mode == "never":
-        return False, "disabled"
-    if mode == "always":
-        return True, None
-    if _is_precise_knowledge_query(query):
-        return False, "precise_query"
-
-    compact_query = re.sub(r"\s+", "", query)
-    has_question_word = any(word in query for word in ("怎么", "如何", "怎么算", "是什么", "哪个", "哪里", "为何", "为什么"))
-    if len(compact_query) <= 18 or has_question_word:
-        return True, None
-    return False, "auto_not_needed"
-
-
-async def generate_hypothetical_keywords(query: str) -> str:
-    """
-    使用LLM生成检索关键词（HyDE优化版）
-
-    原理：提取原始query中的专业术语，并生成同义词、相关概念
-    避免生成描述性summary，减少与原始query的重复
-
-    Args:
-        query: 用户问题
-
-    Returns:
-        关键词字符串（逗号分隔）
-    """
-    from app.services.llm_service import llm_service
-
-    cached_keywords = _get_cached_hyde_keywords(query)
-    if cached_keywords is not None:
-        logger.info("hyde_cache_hit", query=query[:100], keywords=cached_keywords[:200])
-        return cached_keywords
-
-    hyde_prompt = f"""你是一位环境监测领域的专家。请从问题中提取核心检索关键词。
-
-问题：{query}
-
-要求：
-1. 提取5-10个核心关键词/短语
-2. 优先包含标准号、条款名、表名、公式名、指标名、英文缩写
-3. 添加同义词或相关概念（如"点位"→"监测点"、"采样点"；"空气质量指数"→"AQI"、"分指数"、"首要污染物"）
-4. 对环境标准/技术规范问题，补充可能出现的标准写法（如"HJ 633"、"HJ633-2026"、"GB 3095"）
-5. 不要生成完整句子，只要关键词
-
-只返回JSON数组：
-["关键词1", "关键词2", "关键词3", "同义词1", "相关概念"]"""
-
-    try:
-        keywords = await llm_service.call_llm_with_json_response(
-            prompt=hyde_prompt,
-            max_retries=1
-        )
-
-        if not isinstance(keywords, list):
-            logger.warning("hyde_invalid_format", query=query[:50], result=keywords)
-            return ""
-
-        keywords = [str(item).strip() for item in keywords if str(item).strip()]
-
-        if not keywords:
-            logger.warning("hyde_empty_keywords", query=query[:50])
-            return ""
-
-        keywords_text = ", ".join(keywords)
-        logger.info(
-            "hyde_keywords_generated",
-            query=query[:100],
-            keywords=keywords_text[:200]
-        )
-        _set_cached_hyde_keywords(query, keywords_text)
-        return keywords_text
-    except Exception as e:
-        logger.warning("hyde_generation_failed", error=str(e), query=query[:50])
-        return ""
+        item.setdefault("retrieval_routes", [item.get("retrieval_route", "unknown")])
+    return deduplicate_results_by_content(results)
 
 
 # ========================================
 # 知识库检索函数（修复版 - 独立会话 + 超时控制）
 # ========================================
+
+# 网页预取结果短缓存（模块级，跨请求复用）：相同 query 5 分钟内不重复搜索，节省配额
+_web_prefetch_cache = None
+
+
+def _get_web_prefetch_cache():
+    global _web_prefetch_cache
+    if _web_prefetch_cache is None:
+        from app.tools.social.web_search.fetch_core import TTLCache
+        _web_prefetch_cache = TTLCache(ttl=300, maxsize=128)
+    return _web_prefetch_cache
+
 
 async def search_knowledge_bases(
     query: str,
@@ -266,7 +118,6 @@ async def search_knowledge_bases(
     top_k: int = 5,
     score_threshold: Optional[float] = None,
     use_reranker: bool | str = "never",
-    use_hyde: bool | str = False  # 是否使用HyDE关键词增强；不再双路检索
 ) -> List[dict]:
     """检索知识库并返回相关文档片段（使用独立数据库会话，避免超时）"""
     from app.db.knowledge_database import knowledge_async_session as async_session
@@ -277,6 +128,34 @@ async def search_knowledge_bases(
         get_central_shared_knowledge_base_ids,
         get_shared_knowledge_session_factory,
     )
+
+    # 固定证据预取：网页只返回少量摘要，绝不参与本地排序，也不调用 LLM。
+    # 与本地检索并发启动；超时或无配置时静默降级为空补充。
+    async def prefetch_web() -> dict:
+        cache = _get_web_prefetch_cache()
+        cached = cache.get(query)
+        if cached is not None:
+            return {**cached, "cached": True}
+        try:
+            from app.tools.social.web_search.tool import WebSearchTool
+            result = await WebSearchTool().execute(query=query, count=2)
+            if not result.get("success"):
+                return {"status": "failed", "results": [], "summary": result.get("summary", "")}
+            data = result.get("data", {}) or {}
+            payload = {
+                "status": "ready",
+                "provider": data.get("provider"),
+                "query": data.get("query", query),
+                "results_text": data.get("results_text", "")[:3000],
+                "count": min(int(data.get("count", 0) or 0), 2),
+                "summary": result.get("summary", ""),
+            }
+            if payload["count"]:
+                cache.set(query, payload)
+            return payload
+        except Exception as exc:
+            logger.info("knowledge_web_prefetch_skipped", error=str(exc))
+            return {"status": "failed", "results": [], "summary": str(exc)[:200]}
 
     # 使用独立会话，检索完成后立即关闭
     async with async_session() as db:
@@ -352,53 +231,15 @@ async def search_knowledge_bases(
                 item["retrieval_route_elapsed_ms"] = round(route_elapsed, 2)
             return route_results, route_elapsed
 
-        # HyDE按需生成补充关键词后拼入同一次检索，不再 original/hyde 双路各检索、各 rerank。
-        hyde_mode = _normalize_mode(use_hyde, "never", {"auto", "always", "never"})
-        should_use_hyde, hyde_skipped_reason = _should_generate_hyde_keywords(query, hyde_mode)
-        hyde_used = False
-        hyde_keywords = ""
-        hyde_elapsed = 0.0
-        retrieval_routes = ["original"]
+        # 网页预取与本地检索并发；知识库清单已确定，此后的早退路径统一由 finally 兜底取消
+        web_task = asyncio.create_task(prefetch_web())
 
         try:
             retrieval_started_at = time.time()
-            route_elapsed_ms = {}
-            effective_query = query
-            route_name = "original"
-
-            if should_use_hyde:
-                hyde_start = time.time()
-                hyde_keywords = await generate_hypothetical_keywords(query)
-                hyde_elapsed = (time.time() - hyde_start) * 1000
-                hyde_used = bool(hyde_keywords)
-                if hyde_keywords:
-                    effective_query = f"{query}\n补充关键词：{hyde_keywords}"
-                    route_name = "hyde_augmented"
-                    retrieval_routes = [route_name]
-                else:
-                    hyde_skipped_reason = "keyword_generation_empty"
-
-                logger.info(
-                    "hyde_single_route_applied",
-                    original_query=query[:100],
-                    hyde_keywords=hyde_keywords.strip()[:200],
-                    routes=retrieval_routes,
-                    hyde_elapsed_ms=round(hyde_elapsed, 2)
-                )
-
-            route_results = [
-                await asyncio.wait_for(
-                    run_search_route(route_name, effective_query),
-                    timeout=30.0
-                )
-            ]
-
-            raw_results = []
-            for route_items, route_elapsed in route_results:
-                raw_results.extend(route_items)
-                if route_items:
-                    route_name = route_items[0].get("retrieval_route", "unknown")
-                    route_elapsed_ms[route_name] = round(route_elapsed, 2)
+            raw_results, route_elapsed = await asyncio.wait_for(
+                run_search_route("original", query), timeout=30.0
+            )
+            route_elapsed_ms = {"original": round(route_elapsed, 2)}
 
             results = _dedupe_search_results(raw_results)
             results.sort(key=lambda x: x.get("score", 0), reverse=True)
@@ -406,17 +247,17 @@ async def search_knowledge_bases(
             retrieval_elapsed = (time.time() - retrieval_started_at) * 1000
 
             # 格式化结果，添加文档信息
-            doc_ids = [r.get("document_id") for r in results if r.get("document_id")]
+            doc_ids = [r.get("document_id") for r in results if r.get("document_id") and not r.get("document")]
             docs_map = {}
             if doc_ids:
                 local_doc_ids = [
                     r.get("document_id") for r in results
-                    if r.get("document_id")
+                    if r.get("document_id") and not r.get("document")
                     and (r.get("knowledge_base", {}) or {}).get("id") not in central_kb_ids
                 ]
                 central_doc_ids = [
                     r.get("document_id") for r in results
-                    if r.get("document_id")
+                    if r.get("document_id") and not r.get("document")
                     and (r.get("knowledge_base", {}) or {}).get("id") in central_kb_ids
                 ]
                 if local_doc_ids:
@@ -478,27 +319,51 @@ async def search_knowledge_bases(
                     "section": chunk_metadata.get("section") or metadata.get("section"),
                     "topic": chunk_metadata.get("topic") or metadata.get("topic"),
                     "metadata": metadata,
-                    "hyde_used": hyde_used,  # 标记是否使用HyDE
                     "retrieval_route": r.get("retrieval_route"),
                     "retrieval_routes": r.get("retrieval_routes", []),
                     "retrieval_metadata": {
-                        "route_queries": {
-                            "original": query,
-                            "effective": effective_query,
-                            "hyde_keywords": hyde_keywords or None
-                        },
-                        "hyde_keywords": hyde_keywords,
-                        "hyde_used": hyde_used,
-                        "hyde_skipped_reason": hyde_skipped_reason,
-                        "hyde_elapsed_ms": round(hyde_elapsed, 2),
+                        "route_queries": {"original": query, "effective": query},
                         "retrieval_elapsed_ms": round(retrieval_elapsed, 2),
-                        "retrieval_routes": retrieval_routes,
+                        "retrieval_routes": ["original"],
                         "route_elapsed_ms": route_elapsed_ms,
                         "raw_result_count": len(raw_results),
                         "result_count": len(results),
                         "top_k": top_k,
                         "use_reranker": use_reranker
                     }
+                })
+
+            try:
+                web_evidence = await asyncio.wait_for(web_task, timeout=1.5)
+            except asyncio.TimeoutError:
+                web_evidence = {"status": "pending", "query": query, "count": 0}
+            except Exception as exc:
+                web_evidence = {"status": "failed", "query": query, "count": 0, "summary": str(exc)[:200]}
+            logger.info(
+                "knowledge_web_prefetch_result",
+                query=query[:60],
+                status=web_evidence.get("status"),
+                provider=web_evidence.get("provider"),
+                count=web_evidence.get("count"),
+            )
+
+            # 网页补充只挂到首条结果的检索元数据上（消费方只读 documents[0]），避免整份文本按 top_k 重复；
+            # 无本地结果时追加一条合成条目保留补充证据。
+            if formatted_results:
+                formatted_results[0].setdefault("retrieval_metadata", {})["web_evidence"] = web_evidence
+            if not formatted_results and web_evidence.get("status") == "ready" and web_evidence.get("count", 0):
+                formatted_results.append({
+                    "content": web_evidence.get("results_text", ""),
+                    "original_content": web_evidence.get("results_text", ""),
+                    "score": 0.0,
+                    "rerank_score": None,
+                    "document_id": None,
+                    "document_name": "网页检索补充",
+                    "knowledge_base_id": None,
+                    "knowledge_base_name": "互联网补充",
+                    "metadata": {"web_evidence": web_evidence},
+                    "retrieval_route": "web_prefetch",
+                    "retrieval_metadata": {"web_evidence": web_evidence},
                 })
 
             return formatted_results
@@ -509,6 +374,10 @@ async def search_knowledge_bases(
         except Exception as e:
             logger.error("knowledge_search_failed", error=str(e))
             return []
+        finally:
+            # 超时/异常早退时取消仍在飞的网络请求，避免孤儿任务白烧搜索配额
+            if not web_task.done():
+                web_task.cancel()
 
 
 # ========================================
@@ -574,11 +443,32 @@ def build_rag_prompt(
 以下是检索到的相关参考资料（按相关度排序）：
 
 {context_str}""")
-        prompt_parts.append("""## 回答要求
+        web_evidence = []
+        for ctx in contexts:
+            # web_prefetch 合成条目的正文已是网页文本，按参考资料渲染，不再重复进补充段
+            if ctx.get("retrieval_route") == "web_prefetch":
+                continue
+            candidate = (ctx.get("retrieval_metadata") or {}).get("web_evidence")
+            if candidate and candidate not in web_evidence:
+                web_evidence.append(candidate)
+        has_web_prefetch_entry = any(ctx.get("retrieval_route") == "web_prefetch" for ctx in contexts)
+        web_instruction = ""
+        if web_evidence or has_web_prefetch_entry:
+            web_text = "\n\n".join(
+                item.get("results_text", "") for item in web_evidence
+                if item.get("status") == "ready" and item.get("results_text")
+            )
+            if web_text:
+                prompt_parts.append(f"""## 网页补充（仅作线索）
+{web_text}""")
+            web_instruction = """\n5. 网页检索内容只是补充线索，优先使用本地知识库证据；除非问题要求最新信息或本地证据不足，不要让网页摘要覆盖本地资料。"""
+        prompt_parts.append(f"""## 回答要求
 1. 优先使用参考资料中的信息进行回答
-2. 如果是追问，直接回答问题，不需要重复背景信息
-3. 保持回答简洁、准确、专业
-4. 如果涉及多个来源的信息，请综合分析后给出答案
+2. 如果当前分块已经足以支持答案，直接回答，不要为了形式再读取相邻分块或完整文档
+3. 只有在证据不足、结果冲突、需要跨章节总结，或用户明确要求全文时，才继续读取相邻分块/完整原文
+4. 如果是追问，直接回答问题，不需要重复背景信息
+5. 保持回答简洁、准确、专业
+6. 如果涉及多个来源的信息，请综合分析后给出答案{web_instruction}
 
 ## 开始回答""")
     else:
@@ -680,7 +570,7 @@ async def generate_streaming_answer(
                 'timestamp': datetime.now().isoformat()
             }
         }
-        yield f"data: {json.dumps(complete_data, ensure_ascii=False, default=str)}\n\n"
+        yield f"data: {dumps_safe(complete_data, default=str)}\n\n"
 
         # 保存对话轮次（用户问题）
         await conversation_store.add_turn(
@@ -777,7 +667,8 @@ async def knowledge_qa_stream(
     try:
         # Step 1: 按需HyDE关键词增强 + 检索知识库（使用独立会话，超时控制）
         search_start = time.time()
-        reranker_setting = request.use_reranker if request.use_reranker is not None else request.rerank_mode
+        # 基础证据包固定执行重排；是否继续扩展由 Agent 决定。
+        reranker_setting = "always"
 
         contexts = await search_knowledge_bases(
             query=request.query,
@@ -786,7 +677,6 @@ async def knowledge_qa_stream(
             top_k=request.top_k,
             score_threshold=request.score_threshold,
             use_reranker=reranker_setting,
-            use_hyde="auto"
         )
 
         search_elapsed = (time.time() - search_start) * 1000
@@ -851,7 +741,7 @@ async def knowledge_qa_non_stream(
 
     try:
         # 检索知识库（按需HyDE关键词增强，按需Reranker精排）
-        reranker_setting = request.use_reranker if request.use_reranker is not None else request.rerank_mode
+        reranker_setting = "always"
         contexts = await search_knowledge_bases(
             query=request.query,
             user_id=user_id,
@@ -859,7 +749,6 @@ async def knowledge_qa_non_stream(
             top_k=request.top_k,
             score_threshold=request.score_threshold,
             use_reranker=reranker_setting,
-            use_hyde="auto"
         )
 
         # 构建Prompt

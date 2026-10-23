@@ -41,7 +41,7 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
     },
     "query_monitoring_city": {
         "positioning": "城市层级监测问数 Agent：面向城市小时/日历史、城市发布历史与全国对比的取数与核算。",
-        "scope": "城市小时/日历史与年均值（CityHour/CityDay/CityYearPm25Avg）、城市发布历史、中台接口、全国城市对比、城市口径统计核算。",
+        "scope": "城市小时/日历史与年均值（CityHour/CityDay/CityYearPm25Avg，扣沙天清单 CitySandDay）、城市发布历史、中台接口、全国城市对比、城市口径统计核算。",
         "boundary": "聚焦城市层级取数与统计核算，站点明细任务优先归 query_monitoring_station；不做气象归因与污染成因研判，不产出报告包。",
         "outputs": "结构化数据文件（file_path）+ 城市清单、数据口径、时间范围和缺口说明。",
         "warning": (
@@ -89,18 +89,6 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
             "同一数据源已有 query 节点产出时，通过 dependencies 复用其 file_path。"
         ),
     },
-    "report": {
-        "positioning": "报告 Agent：面向成稿与交付收口。",
-        "scope": "组织章节、生成图表、产出正式报告包（report.qmd/HTML/Word）。",
-        "boundary": "不做业务取数，不替代 query/expert 的数据与研判工作。",
-        "outputs": "报告包（report_id 与产物）。",
-    },
-    "chart": {
-        "positioning": "可视化 Agent：面向专题图表与可视化叙事。",
-        "scope": "趋势图、分布图、地图等可视化产物；独立使用时可补充必要的气象或 SQL 数据。",
-        "boundary": "在 DAG 中优先复用 dependencies 已提供的数据，不重复查询，不产出正式报告包。",
-        "outputs": "图表/可视化产物。",
-    },
     "board": {
         "positioning": "画板 Agent：面向流程图、架构图、决策树等可编辑图形。",
         "scope": "draw.io 画板与图形文件。",
@@ -125,27 +113,20 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
         "boundary": "不做正式报告包与专题可视化。",
         "outputs": "结构化处置结论与建议。",
     },
-    "assistant": {
-        "positioning": "助手 Agent：面向轻量办公任务。",
-        "scope": "文档搜索阅读、普通文件编辑、轻量计算、网页检索抓取、HTML/报告包生成。",
-        "boundary": "超出轻量范围的专业任务应委托对应模式。",
-        "outputs": "轻量产物或路由结果。",
-    },
-    "social": {
-        "positioning": "社交 Agent：面向社交平台交互任务。",
-        "scope": "社交平台消息处理与广播。",
-        "boundary": "不做专业数据分析与报告成稿。",
-        "outputs": "社交任务结果。",
+    "office": {
+        "positioning": "办公模式：助手专属的日常轻办公子 Agent。",
+        "scope": "文档阅读、文件整理、普通文件编辑、表格清洗核对、轻量计算与 HTML 交付。",
+        "boundary": "仅由 assistant 委派，不再次委派；不取业务或气象数据，不做业务图表、专业研判、知识问答和正式报告。",
+        "outputs": "经核对的办公文件、处理说明和资源引用。",
     },
 }
 
 _ROUTING_RULES = (
-    "选择规则：机制/成因用 expert；成稿交付用 report；"
+    "选择规则：综合 query、expert、report 仅作主模式，不能作为子 Agent；正式报告由具备报告职责的主模式生成，助手 assistant 引导报告主入口；"
     "监测历史数据事实按层级拆分：站点小时/日与站点目录用 query_monitoring_station，"
     "城市口径与全国对比用 query_monitoring_city；层级混合拆成站点+城市两个节点，"
     "层级不明确先向用户确认口径，不要用 query_monitoring 兜底（报告 DAG 已禁用，仅限非报告父模式直接委托）；"
     "气象实况/预报与空气质量预报数据用 query_forecast；"
-    "综合 query 仅限非报告父模式（assistant/social 等）使用，报告 DAG 禁止；"
     "气象条件、输送通道与静稳形势用 expert_meteorology，六参数浓度/AQI/超标与时空变化用 expert_analysis；组分分析预留给独立专家模式，"
     "二者可并行拆分，交叉归因（如气象导致累积）在 synthesis 或报告整合阶段完成；"
     "expert 需要 query 系数据时，把对应问数节点写入 dependencies 并复用其 file_path；"
@@ -155,13 +136,28 @@ _ROUTING_RULES = (
 
 def target_mode_values() -> list[str]:
     """已登记契约的 target_mode 取值（顺序稳定）。"""
-    return list(TARGET_MODE_CONTRACTS.keys())
+    return list(_active_contracts())
+
+
+def _active_contracts():
+    from app.agent.workflow.project_policy import child_modes
+
+    project = child_modes()
+    overlap = set(project) & set(TARGET_MODE_CONTRACTS)
+    if overlap:
+        raise ValueError(f"project workflow modes shadow shared modes: {sorted(overlap)}")
+    from app.agent.workflow.delegation import PRIMARY_ONLY_MODES
+
+    return {**{name: spec for name, spec in TARGET_MODE_CONTRACTS.items() if name not in PRIMARY_ONLY_MODES}, **{
+        name: policy.model_dump(include={"positioning", "scope", "boundary", "outputs"})
+        for name, policy in project.items() if name not in PRIMARY_ONLY_MODES
+    }}
 
 
 def build_target_mode_contract() -> str:
     """构建 target_mode 能力/工具边界契约文本（供工具 schema 使用）。"""
     lines = ["子 Agent（target_mode）能力与工具边界："]
-    for mode, spec in TARGET_MODE_CONTRACTS.items():
+    for mode, spec in _active_contracts().items():
         parts = [f"- {mode}：{spec['positioning']}"]
         if spec.get("scope"):
             parts.append(f"能做：{spec['scope']}")

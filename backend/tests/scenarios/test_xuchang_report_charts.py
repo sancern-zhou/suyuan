@@ -88,3 +88,41 @@ def test_generate_city_report_charts_survives_empty_evidence(tmp_path: Path):
         national_hourly=[], city_day_statistics={}, meteorology_rows=[],
         regional_hourly=[], enterprise_screening={"enterprises": []})
     assert artifacts == []
+
+
+def test_hour_key_matches_timezone_aware_and_naive_stamps():
+    from app.scenarios.xuchang_city_exceedance.report_charts import _hour_key
+
+    assert _hour_key("2026-09-23T00:00:00+08:00") == "2026-09-23T00:00:00"
+    assert _hour_key("2026-09-23T00:00:00") == "2026-09-23T00:00:00"
+
+
+def test_valid_concentration_rejects_missing_data_sentinels():
+    from app.scenarios.xuchang_city_exceedance.report_charts import _valid_concentration
+
+    assert _valid_concentration(-99) is None
+    assert _valid_concentration("-99") is None
+    assert _valid_concentration(None) is None
+    assert _valid_concentration("55") == 55.0
+    assert _valid_concentration(55.5) == 55.5
+
+
+def test_national_curves_render_with_sentinels_and_naive_times(tmp_path: Path):
+    national = _national_hourly()
+    national.append({"station_id": "1003A", "name": "市一中",
+                     "data_time": "2026-09-23T07:00:00", "pm25": -99})
+    regional = [
+        {**row, "data_time": row["data_time"].replace("+08:00", "")}
+        for row in _regional_hourly()
+    ]
+    artifacts = generate_city_report_charts(
+        output_dir=tmp_path, job_id="job-3", pollutant="PM2.5",
+        national_hourly=national,
+        city_day_statistics={"city_hourly": [
+            {"time": f"2026-09-23T{hour:02d}:00:00+08:00", "mean": 80.0}
+            for hour in range(24)
+        ]},
+        meteorology_rows=_meteo_rows(), regional_hourly=regional,
+        enterprise_screening={"enterprises": []})
+    roles = {item["role"] for item in artifacts}
+    assert {"national_station_hourly_curves", "regional_city_hourly_comparison"} <= roles

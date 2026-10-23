@@ -17,7 +17,12 @@ from .models import (
     TaskExecution,
     TriggerType,
 )
-from .storage import EventClaimStorage, TaskStorage, ExecutionStorage, TaskCaseStorage
+from .storage import (
+    DatabaseExecutionStorage,
+    EventClaimStorage,
+    TaskStorage,
+    TaskCaseStorage,
+)
 from .scheduler import SimpleScheduler
 from .executor import ScheduledTaskExecutor
 from .event_delivery import EventTaskDelivery
@@ -41,17 +46,19 @@ class ScheduledTaskService:
         self,
         agent_factory: Optional[callable] = None,
         task_storage: TaskStorage | None = None,
-        execution_storage: ExecutionStorage | None = None,
+        execution_storage: DatabaseExecutionStorage | None = None,
         claim_storage: EventClaimStorage | None = None,
         event_delivery: EventTaskDelivery | None = None,
         conversation_persistence=None,
+        recover_interrupted: bool = True,
     ):
         # 初始化存储层
         self.task_storage = task_storage or TaskStorage()
         self.execution_storage = execution_storage or self._default_execution_storage()
         self.claim_storage = claim_storage or EventClaimStorage()
         self.event_delivery = event_delivery or EventTaskDelivery()
-        self._recover_interrupted_executions()
+        if recover_interrupted:
+            self._recover_interrupted_executions()
 
         configured_event_concurrency = os.getenv(
             "SCHEDULED_EVENT_MAX_CONCURRENT_TASKS",
@@ -92,20 +99,9 @@ class ScheduledTaskService:
         self._event_tasks: set[asyncio.Task] = set()
 
     @staticmethod
-    def _default_execution_storage():
-        """Choose the execution backend, preferring the database when configured.
-
-        The import stays local so the legacy JSON store remains importable in
-        deployments without a database.
-        """
-        from .storage.execution_storage_db import (
-            DatabaseExecutionStorage,
-            execution_db_enabled,
-        )
-
-        if execution_db_enabled():
-            return DatabaseExecutionStorage()
-        return ExecutionStorage()
+    def _default_execution_storage() -> DatabaseExecutionStorage:
+        """Use the database as the sole scheduled execution store."""
+        return DatabaseExecutionStorage()
 
     def _recover_interrupted_executions(self) -> None:
         """Close execution records left running by a previous worker process."""
@@ -276,6 +272,18 @@ class ScheduledTaskService:
         # 删除执行记录
         self.execution_storage.delete_by_task(task_id)
 
+        try:
+            from .storage.task_result_storage_db import task_result_db_enabled
+
+            if task_result_db_enabled():
+                self.executor.task_result_storage.delete_by_task(task_id)
+        except Exception as cleanup_error:  # noqa: BLE001 - cleanup must not block task deletion
+            logger.warning(
+                "scheduled_task_result_cleanup_failed",
+                task_id=task_id,
+                error=str(cleanup_error),
+            )
+
         # 删除任务专属历史执行记忆（案例库 + 长期记忆）
         try:
             TaskCaseStorage(task_id).delete()
@@ -412,6 +420,17 @@ class ScheduledTaskService:
                 self.execution_storage.update(execution)
             self.task_storage.update_run_stats(task.task_id, success=False)
             return execution
+
+        finally:
+            if execution is not None and "assistant-plan" in task.tags and task.assistant_recipient:
+                try:
+                    from app.social.assistant_notifications import AssistantNotificationService
+                    from config.settings import settings
+
+                    await AssistantNotificationService().enqueue_execution(settings.project_id, task, execution)
+                except Exception:
+                    # Terminal executions remain durable; the reply clock reconciles this gap.
+                    logger.exception("assistant_execution_reply_pending", execution_id=execution.execution_id)
 
     async def publish_event(
         self,
@@ -688,9 +707,15 @@ class ScheduledTaskService:
         page_size: int = 20,
     ):
         """查询结构化执行结论（数据库后端）"""
-        from .storage.task_result_storage_db import DatabaseTaskResultStorage
+        from .storage.task_result_storage_db import (
+            DatabaseTaskResultStorage,
+            task_result_db_enabled,
+        )
 
-        if isinstance(self.executor.task_result_storage, DatabaseTaskResultStorage):
+        if task_result_db_enabled() and isinstance(
+            self.executor.task_result_storage,
+            DatabaseTaskResultStorage,
+        ):
             return self.executor.task_result_storage.query_page(
                 task_id=task_id,
                 task_ids=task_ids,
@@ -707,9 +732,15 @@ class ScheduledTaskService:
 
     def get_task_result(self, execution_id: str):
         """查询单条结构化执行结论（数据库后端，无记录返回 None）"""
-        from .storage.task_result_storage_db import DatabaseTaskResultStorage
+        from .storage.task_result_storage_db import (
+            DatabaseTaskResultStorage,
+            task_result_db_enabled,
+        )
 
-        if isinstance(self.executor.task_result_storage, DatabaseTaskResultStorage):
+        if task_result_db_enabled() and isinstance(
+            self.executor.task_result_storage,
+            DatabaseTaskResultStorage,
+        ):
             return self.executor.task_result_storage.get(execution_id)
         return None
 
@@ -720,9 +751,15 @@ class ScheduledTaskService:
         task_ids: Optional[list[str]] = None,
     ) -> dict:
         """查询站点/污染物筛选候选项（数据库后端）"""
-        from .storage.task_result_storage_db import DatabaseTaskResultStorage
+        from .storage.task_result_storage_db import (
+            DatabaseTaskResultStorage,
+            task_result_db_enabled,
+        )
 
-        if isinstance(self.executor.task_result_storage, DatabaseTaskResultStorage):
+        if task_result_db_enabled() and isinstance(
+            self.executor.task_result_storage,
+            DatabaseTaskResultStorage,
+        ):
             return self.executor.task_result_storage.facets(
                 task_id=task_id,
                 task_ids=task_ids,
@@ -751,14 +788,17 @@ def get_scheduled_task_service() -> ScheduledTaskService:
     return _service_instance
 
 
-def init_service(agent_factory: Optional[callable] = None):
+def init_service(agent_factory: Optional[callable] = None, recover_interrupted: bool = True):
     """初始化服务"""
     global _service_instance
     if _service_instance is not None:
         logger.warning("ScheduledTaskService already initialized")
         return _service_instance
 
-    _service_instance = ScheduledTaskService(agent_factory=agent_factory)
+    _service_instance = ScheduledTaskService(
+        agent_factory=agent_factory,
+        recover_interrupted=recover_interrupted,
+    )
     logger.info("ScheduledTaskService initialized")
     return _service_instance
 

@@ -34,6 +34,7 @@ async def test_cancel_cancels_attached_run_task_and_discards_executor():
     assert cancel_event.is_set()
     assert executor.discarded is True
     assert run_task.cancelled()
+    await registry.unregister("session_a", cancel_event)
 
 
 @pytest.mark.asyncio
@@ -50,6 +51,7 @@ async def test_cancel_ignores_a_stale_expected_run_id():
 
     assert cancelled is False
     assert cancel_event.is_set() is False
+    await registry.unregister("session_a", cancel_event)
 
 
 @pytest.mark.asyncio
@@ -93,6 +95,7 @@ async def test_next_run_waits_until_previous_run_unregisters():
 
     assert old_task.cancelled()
     assert next_event is not first_event
+    await registry.unregister("session_a", next_event)
 
 
 @pytest.mark.asyncio

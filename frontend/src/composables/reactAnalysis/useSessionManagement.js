@@ -1,4 +1,5 @@
 import { authFetch } from '@/auth/http.js'
+import { onAccountChanged } from '@/auth/accountSession.js'
 /**
  * 会话管理 Composable
  * 处理会话的创建、恢复、清理等操作
@@ -29,6 +30,9 @@ export function useSessionManagement(store) {
   const sessionHistoryLoading = ref(false)
   const persistedSessionHistoryData = ref([])
   const sessionHistoryStats = ref(null)
+  const assistantConversations = ref([])
+  const applyAssistantConversations = rows => { assistantConversations.value = rows }
+  const unsubscribeAssistantAccount = onAccountChanged(() => { assistantConversations.value = [] })
   let autoRefreshTimer = null
   let refreshInFlight = null
   let restoreRequestToken = 0
@@ -70,6 +74,12 @@ export function useSessionManagement(store) {
       )
     }
 
+    for (const session of assistantConversations.value) {
+      byId.set(session.session_id, {
+        ...(byId.get(session.session_id) || {}), ...session,
+        query: session.title, metadata: { ...(byId.get(session.session_id)?.metadata || {}), mode: 'assistant' }
+      })
+    }
     return filterConversationHistory(Array.from(byId.values())).sort((a, b) => {
       if (!!a.is_running !== !!b.is_running) return a.is_running ? -1 : 1
       return new Date(b.updated_at || 0) - new Date(a.updated_at || 0)
@@ -229,7 +239,10 @@ export function useSessionManagement(store) {
       const sessionData = restoreResult.session || restoreResult
       let messages = sessionData.conversation_history || []
       const restoredBoard = sessionData.metadata?.drawio_board || sessionData.drawio_board || null
-      if (messages.length === 0 && !restoredBoard?.board_id) {
+      // 运行中的 detached run：消息在终态才落库，恢复到 0 条属预期，改走接流
+      const activeRun = sessionData.active_run || null
+      const hasActiveRun = !!(activeRun && (activeRun.stream_id || activeRun === true))
+      if (messages.length === 0 && !restoredBoard?.board_id && !hasActiveRun) {
         throw new Error('该历史会话没有可恢复的消息，消息持久化可能失败')
       }
 
@@ -283,6 +296,7 @@ export function useSessionManagement(store) {
         read_only_on_web: sessionData.read_only_on_web === true
       }
       store.setMessages(messages)
+      store.currentState.pendingInteraction = sessionData.metadata?.pending_interaction || null
       if (restoredMode === 'board' && restoredBoard?.board_id &&
           typeof store.ensureDrawioBoardState === 'function' &&
           typeof store.loadDrawioBoardVersions === 'function') {
@@ -305,6 +319,14 @@ export function useSessionManagement(store) {
         return { success: false, cancelled: true, error: '会话已切换' }
       }
       chooseRestoredResource(resourceStore, sessionId)
+
+      // 运行中的任务：接回 detached run 事件流，实时展示进度。
+      // 不 await 完成（跟随会持续到任务终止），失败时回退为普通恢复结果。
+      if (hasActiveRun) {
+        store.reattachActiveRun(sessionId, { mode: restoredMode }).catch(error => {
+          console.warn('[会话恢复] 接回运行中任务失败:', error)
+        })
+      }
 
       // 设置分页信息
       if (sessionData.has_more_messages !== undefined || sessionData.total_message_count !== undefined) {
@@ -461,6 +483,7 @@ export function useSessionManagement(store) {
   })
 
   onUnmounted(() => {
+    unsubscribeAssistantAccount()
     if (autoRefreshTimer) {
       window.clearInterval(autoRefreshTimer)
       autoRefreshTimer = null
@@ -587,6 +610,7 @@ export function useSessionManagement(store) {
 
     // 会话历史
     refreshSessionHistory,
+    applyAssistantConversations,
     handleSessionCleanup,
     deleteSession,
     deleteSessions,

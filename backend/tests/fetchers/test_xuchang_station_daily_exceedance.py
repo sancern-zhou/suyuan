@@ -14,7 +14,6 @@ from app.fetchers.xuchang_station_daily_exceedance import (
     evaluate_station_daily_pollution,
     merge_meteo_rows,
     normalize_station_name,
-    resolve_hourly_station_codes,
 )
 
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -243,30 +242,6 @@ def test_merge_prefers_observed_surface_variables_and_keeps_era5_vertical():
 
 
 def test_station_code_mapping_by_name():
-    daily_names = {
-        "2398A": "开发区",
-        "3134A": "市一中",
-        "3337A": "许昌学院",
-        "3338A": "芙蓉广场",
-        "4180A": "新元大道996号",
-        "4259A": "望田路111号",
-    }
-    hourly_names = {
-        "1003A": "开发区",
-        "1005A": "市一中（启用170929）",
-        "1008A": "许昌学院",
-        "1009A": "芙蓉广场",
-        "1011A": "新元大道996号",
-        "1012A": "望田路111号（启用20250213）",
-        "9999A": "其它站",
-    }
-
-    mapping = resolve_hourly_station_codes(daily_names, hourly_names)
-
-    assert mapping == {
-        "2398A": "1003A", "3134A": "1005A", "3337A": "1008A",
-        "3338A": "1009A", "4180A": "1011A", "4259A": "1012A",
-    }
     assert normalize_station_name("市一中（启用170929）") == "市一中"
 
 
@@ -437,3 +412,70 @@ async def test_load_era5_hourly_refreshes_grid_before_read(monkeypatch):
         datetime(2026, 8, 5, 0, 0, tzinfo=TZ_SHANGHAI),
         datetime(2026, 8, 5, 23, 59, 59, 999999, tzinfo=TZ_SHANGHAI),
     )
+
+
+class _FakeAirdataClient:
+    def __init__(self, responses):
+        self.responses = responses
+
+    def query_all(self, api_code, filters=None, selected_fields=None, max_rows=50):
+        return {
+            "rows": self.responses.get(api_code, []),
+            "total": len(self.responses.get(api_code, [])),
+            "pages_fetched": 1,
+            "truncated": False,
+        }
+
+
+def test_load_rows_prefers_app_and_falls_back_to_src(monkeypatch):
+    import app.fetchers.xuchang_station_daily_exceedance as module
+
+    client = _FakeAirdataClient({
+        "v_s_d_app_145": [
+            {"code": "1003A", "name": "开发区", "aqi": 118, "pm2_5": 79, "o3_8h": 130},
+        ],
+        "v_s_d_src_145": [
+            {"code": "1003A", "name": "开发区", "aqi": 105, "pm2_5": 79, "o3_8h": 130},
+            {"code": "1005A", "name": "市一中（启用170929）", "aqi": 104, "pm2_5": -99, "o3_8h": -99000},
+        ],
+    })
+    monkeypatch.setattr(module, "get_airdata_platform_client", lambda: client)
+
+    rows = XuchangStationDailyExceedanceFetcher().load_rows(date(2026, 10, 11))
+    by_station = {row["station_id"]: row for row in rows}
+    assert by_station["1003A"]["caliber"] == "app"
+    assert by_station["1005A"]["caliber"] == "src"
+    assert by_station["1003A"]["pm25"] == 79
+    assert by_station["1005A"]["pm25"] is None
+    assert by_station["1005A"]["o3_8h"] is None
+    assert by_station["1003A"]["lon"] == pytest.approx(113.7906)
+
+
+def test_load_rows_falls_back_to_zhongda_compute_when_airdata_empty(monkeypatch):
+    import app.fetchers.xuchang_station_daily_exceedance as module
+
+    monkeypatch.setattr(module, "get_airdata_platform_client", lambda: _FakeAirdataClient({}))
+
+    class Cursor:
+        description = [("station_code",), ("station_name",), ("pm25",), ("o3",), ("time_point",)]
+
+        def execute(self, query, params):
+            assert "dat_zhongda_station_hour" in query
+
+        def fetchall(self):
+            hour = datetime(2026, 10, 11, 12)
+            return [("1003A", "开发区", 80, 100, hour)] * 24
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(module.pyodbc, "connect", lambda *args, **kwargs: Connection())
+    rows = XuchangStationDailyExceedanceFetcher().load_rows(date(2026, 10, 11))
+    assert rows[0]["station_id"] == "1003A"
+    assert rows[0]["caliber"] == "computed(zhongda_hour)"
+    assert rows[0]["pm25"] == 80
+    assert rows[0]["o3_8h"] == 100

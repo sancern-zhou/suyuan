@@ -35,6 +35,11 @@ from app.services.document_preview_refresh import refresh_preview_for_managed_do
 from app.tools.artifact_utils import attach_mutated_document_resources
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
+from app.agent.memory.memory_limits import (
+    MEMORY_MD_HINT_CHARS,
+    MEMORY_MD_MAX_CHARS,
+    memory_capacity_error,
+)
 from app.utils.path_config import BACKEND_ROOT, TEMP_ROOT, get_data_registry, is_agent_protected_write_path, is_path_within, resolve_agent_path
 import structlog
 
@@ -203,11 +208,32 @@ def _apply_curly_single_quotes(s: str) -> str:
 
 def normalize_line_endings(content: str) -> str:
     """
-    规范化行尾符（\r\n → \n）
+    规范化行尾符（\r\n → \n，孤立 \r 一并归一为 \n）
 
     参考：FileEditTool.ts:214
     """
-    return content.replace('\r\n', '\n')
+    return content.replace('\r\n', '\n').replace('\r', '\n')
+
+
+def detect_line_ending(content: str) -> str:
+    """
+    检测文件主导行尾符（返回 '\r\n' 或 '\n'）
+
+    CRLF 行数多于 LF 行数时视为 CRLF 文件；纯 LF、混合或无换行一律按 LF 处理。
+    须在 normalize_line_endings 之前调用（用 newline='' 读取保留原始行尾）。
+    """
+    crlf = content.count('\r\n')
+    lf = content.count('\n') - crlf
+    return '\r\n' if crlf > lf else '\n'
+
+
+def restore_line_endings(content: str, line_ending: str) -> str:
+    """
+    把 LF 内容按检测到的行尾风格还原（配合 newline='' 写入，避免被二次翻译成 os.linesep）
+    """
+    if line_ending == '\r\n':
+        return content.replace('\n', '\r\n')
+    return content
 
 
 def detect_encoding(file_path: Path) -> str:
@@ -269,6 +295,13 @@ class EditFileToolV2(LLMTool):
     # Markdown文件扩展名（不处理trailing空格）
     MARKDOWN_EXTENSIONS = {'.md', '.mdx', '.markdown'}
 
+    # MEMORY.md（长期记忆，常驻注入每次会话）容量上限
+    # 数值定义在 app/agent/memory/memory_limits.py，与 write_file、人工编辑 API 共用；
+    # 此处保留类属性别名供既有测试与调用方引用。
+    MEMORY_MD_MAX_CHARS = MEMORY_MD_MAX_CHARS
+    # 超限提示中的建议目标（提示 Agent 精简到该水位以下）
+    MEMORY_MAX_HINT_CHARS = MEMORY_MD_HINT_CHARS
+
     def __init__(self):
         super().__init__(
             name="edit_file",
@@ -315,6 +348,8 @@ class EditFileToolV2(LLMTool):
 
 注意：
 - 必须先使用 read_file 读取文件，否则会报错；分页读取只允许编辑已读取片段中的唯一匹配内容
+- 编辑后文件读取状态自动同步，无需为确认结果而重新 read_file
+- 保留原文件的行尾风格（CRLF/LF），编辑不会改变行尾格式
 - old_string 在文件中不存在时会提供详细诊断信息
 - old_string 在文件中出现多次且 replace_all=False 时报错
 - 自动处理引号规范化和trailing空格
@@ -358,6 +393,10 @@ class EditFileToolV2(LLMTool):
             }
         """
         try:
+            # 模型可能传入 \r\n：统一归一到 LF 再做匹配与替换，写回时按原文件风格还原
+            old_string = normalize_line_endings(old_string)
+            new_string = normalize_line_endings(new_string)
+
             # ============================================================
             # 1. 路径安全检查
             # ============================================================
@@ -475,19 +514,33 @@ class EditFileToolV2(LLMTool):
                 changes = 1
 
             # ============================================================
-            # 11. 写回文件
+            # 10.5 MEMORY.md 容量守卫（长期记忆常驻注入，须保持精炼）
             # ============================================================
-            resolved_path.write_text(new_content, encoding=actual_encoding)
+            if resolved_path.name == "MEMORY.md" and len(new_content) > self.MEMORY_MD_MAX_CHARS:
+                return {
+                    "success": False,
+                    "error": memory_capacity_error(len(new_content)),
+                    "summary": f"编辑失败：MEMORY.md 超出容量上限 {self.MEMORY_MD_MAX_CHARS} 字符"
+                }
 
             # ============================================================
-            # 12. 更新读取状态
+            # 11. 写回文件（保留原文件行尾风格）
             # ============================================================
+            file_line_ending = read_result.get("line_ending") or "\n"
+            disk_content = restore_line_endings(new_content, file_line_ending)
+            # newline='' 禁用写端换行翻译，避免还原后的 \r\n 被展开成 \r\r\n
+            resolved_path.write_text(disk_content, encoding=actual_encoding, newline="")
+
+            # ============================================================
+            # 12. 更新读取状态（指纹取磁盘实际 stat：CRLF 文件的磁盘字节数与 LF 内容长度不同）
+            # ============================================================
+            stat_after = resolved_path.stat()
             self.read_state.set(
                 str(resolved_path),
                 content=new_content,
-                file_size=len(new_content),
-                file_mtime_ns=resolved_path.stat().st_mtime_ns,
-                file_inode=getattr(resolved_path.stat(), "st_ino", None),
+                file_size=stat_after.st_size,
+                file_mtime_ns=stat_after.st_mtime_ns,
+                file_inode=getattr(stat_after, "st_ino", None),
                 encoding=actual_encoding
             )
 
@@ -508,7 +561,7 @@ class EditFileToolV2(LLMTool):
                 "replace_all": replace_all,
                 "encoding": actual_encoding
             }
-            summary = f"编辑成功：{resolved_path.name}，替换了 {changes} 处"
+            summary = f"编辑成功：{resolved_path.name}，替换了 {changes} 处；文件读取状态已同步，无需 read_file 重读确认"
 
             preview_refresh = refresh_preview_for_managed_document_path(resolved_path)
             if preview_refresh:
@@ -670,27 +723,33 @@ class EditFileToolV2(LLMTool):
             if encoding is None:
                 encoding = detect_encoding(file_path)
 
-            # 读取文件
-            content = file_path.read_text(encoding=encoding)
-
-            # 规范化行尾符（\r\n → \n）
-            content = normalize_line_endings(content)
+            # newline='' 保留原始行尾符，先检测风格再统一到 LF 参与匹配。
+            # 注意：Path.read_text() 在 Python 3.13 才支持 newline 参数，3.11 会
+            # 直接 TypeError，因此这里必须用 open() 读取。
+            with file_path.open(encoding=encoding, newline="") as handle:
+                raw_content = handle.read()
+            line_ending = detect_line_ending(raw_content)
+            content = normalize_line_endings(raw_content)
 
             return {
                 "success": True,
                 "content": content,
-                "encoding": encoding
+                "encoding": encoding,
+                "line_ending": line_ending
             }
 
         except UnicodeDecodeError:
             # 尝试GBK编码
             try:
-                content = file_path.read_text(encoding='gbk')
-                content = normalize_line_endings(content)
+                with file_path.open(encoding='gbk', newline="") as handle:
+                    raw_content = handle.read()
+                line_ending = detect_line_ending(raw_content)
+                content = normalize_line_endings(raw_content)
                 return {
                     "success": True,
                     "content": content,
-                    "encoding": 'gbk'
+                    "encoding": 'gbk',
+                    "line_ending": line_ending
                 }
             except Exception:
                 return {

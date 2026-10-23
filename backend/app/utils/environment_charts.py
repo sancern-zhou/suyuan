@@ -63,15 +63,91 @@ def _concentration(value):
     return value
 
 
+AQI_LEVEL_BREAKS = (50, 100, 150, 200, 300)
+
+
 def aqi_color(value):
     """Return the appendix-A RGB color; missing values remain distinct."""
     value = _concentration(value)
     if value is None:
         return MISSING_COLOR
-    for index, upper in enumerate((50, 100, 150, 200, 300)):
+    for index, upper in enumerate(AQI_LEVEL_BREAKS):
         if value <= upper:
             return AQI_COLORS[index]
     return AQI_COLORS[-1]
+
+
+# 环境空气基本污染物 + AQI 的规范键（去下标/单位/分隔符后归一）。
+_POLLUTANT_ALIASES = {
+    "AQI": "AQI",
+    "PM25": "PM2.5", "PM2.5": "PM2.5", "PM10": "PM10",
+    "SO2": "SO2", "NO2": "NO2", "CO": "CO",
+    "O3": "O3", "O38H": "O3", "O38": "O3", "O3DAILYMAX8H": "O3",
+}
+
+
+def _standard_pollutant_key(pollutant):
+    """归一污染物/AQI 标识；未内置标准的返回 None。"""
+    name = str(pollutant or "").strip()
+    for subscript, ascii_digit in (("₂", "2"), ("₃", "3"), ("₁", "1"), ("₅", "5"), ("₀", "0")):
+        name = name.replace(subscript, ascii_digit)
+    name = name.replace("$", "").replace("{", "").replace("}", "").replace("\\", "")
+    name = name.replace(" ", "").replace("_", "").replace(".", "").replace("-", "").upper()
+    return _POLLUTANT_ALIASES.get(name)
+
+
+def get_six_level_scale(*, pollutant, average_time=None):
+    """Return the HJ 633-2026 six-level fixed scale for level charts.
+
+    breaks are the 5 finite upper bounds (IAQI 50/100/150/200/300); colors and
+    labels are the appendix-A palette shared with the AQI renderers. Unknown
+    pollutants raise so callers never stretch a continuous color map instead.
+    """
+    key = _standard_pollutant_key(pollutant)
+    if key is None:
+        raise ValueError("仅内置 AQI 与环境空气基本污染物的 HJ 633-2026 六级分级，请核实该指标标准。")
+    if key == "AQI":
+        return {"pollutant": "AQI", "average_time": "aqi", "breaks": list(AQI_LEVEL_BREAKS),
+                "colors": list(AQI_COLORS), "labels": list(AQI_LABELS), "standard": "HJ 633-2026"}
+    periods = _STANDARDS["iaqi_2026"][key]
+    period = average_time or ("daily_max_8h" if key == "O3" else "24h")
+    if period not in periods:
+        raise ValueError(f"{key} 没有 {period} 的 IAQI 分级口径。")
+    values = [float(item) for item in periods[period]]
+    if len(values) < len(AQI_COLORS):
+        raise ValueError(f"{key}/{period} 分级不足，无法绘制固定六级。")
+    return {"pollutant": key, "average_time": period,
+            "breaks": values[1:len(AQI_COLORS)],
+            "colors": list(AQI_COLORS), "labels": list(AQI_LABELS), "standard": "HJ 633-2026"}
+
+
+def level_index(value, breaks):
+    """Map a value to a 0-based level index; out-of-range clamps, bad input is None."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    for index, upper in enumerate(breaks):
+        if number <= upper:
+            return index
+    return len(breaks)
+
+
+def level_color(value, scale):
+    """Return the fixed level color for a value; missing/invalid becomes MISSING_COLOR."""
+    index = level_index(value, scale["breaks"])
+    return MISSING_COLOR if index is None else scale["colors"][index]
+
+
+def text_color_for(background_color):
+    """Pick black or white text for legibility on an appendix-A level color."""
+    rgb = [int(background_color[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+    linear = [value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+              for value in rgb]
+    luminance = sum(value * weight for value, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+    return "black" if luminance > 0.179 else "white"
 
 
 def get_pollutant_scale(*, pollutant, average_time, observed_on, unit):
@@ -195,3 +271,31 @@ def legend_below(ax, *other_axes, handles=None, labels=None, ncols=3):
                        ncols=min(ncols, len(entries)), frameon=False, borderaxespad=0)
     legend.set_in_layout(True)
     return legend
+
+
+def figure_content_overflow(fig, tolerance: float = 1.0) -> bool:
+    """检测图例、文本等内容是否超出画布边界（原生 savefig 会裁剪超界内容）。
+
+    图例用 bbox_to_anchor 挂到坐标系外且未预留画布空间时，只有
+    bbox_inches='tight' 能扩展画布包住内容；调用方未指定该参数时，
+    保存前用本函数检测并按需兜底。
+    """
+    try:
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        tight = fig.get_tightbbox(renderer)
+        if tight is None:
+            return False
+        # Figure.get_tightbbox 返回英寸，fig.bbox 为像素，统一换算后比较
+        dpi = fig.dpi
+        x0, y0 = tight.x0 * dpi, tight.y0 * dpi
+        x1, y1 = tight.x1 * dpi, tight.y1 * dpi
+        canvas_bbox = fig.bbox
+        return (
+            x0 < canvas_bbox.x0 - tolerance
+            or y0 < canvas_bbox.y0 - tolerance
+            or x1 > canvas_bbox.x1 + tolerance
+            or y1 > canvas_bbox.y1 + tolerance
+        )
+    except Exception:
+        return False

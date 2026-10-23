@@ -54,3 +54,79 @@ definition made of named phases; they differ only in their adapter:
 Latency-sensitive query modes are defined in `mode_workflows.py`. They use a
 bounded acquire/normalize/deliver flow, so report DAG nodes and future scheduled
 jobs can share the same execution policy instead of copying prompt conventions.
+
+## 通用 Agent DAG
+
+run_agent_workflow 用于具有独立子任务或明确依赖的任务；单一简单查询优先直接调用业务工具，
+一次性委派可用 call_sub_agent。本轮优化参考 LangGraph 的状态恢复、任务隔离和重试策略，
+沿用当前依赖就绪后立即调度的执行器，没有新增 LangGraph 运行依赖。
+
+### 父模式与子节点
+
+| 父模式 | 子节点类型 | 父 Agent 职责 |
+| --- | --- | --- |
+| query | query_monitoring_station、query_monitoring_city、query_forecast | 查询规划、跨源合并、核算、导出与展示 |
+| expert | 上述取数节点，以及 expert_meteorology、expert_analysis | 证据判断、跨领域归因与结论整合 |
+| report | 上述取数节点，以及 expert_meteorology、expert_analysis | 正式报告整合与交付 |
+
+专家节点需给出任务契约和结果 schema，一个节点回答一个分析问题。
+精简子节点保持原有工具白名单，并禁用 call_sub_agent 和 run_agent_workflow。
+同一父会话的上游资源通过 dependencies 交接；已经获取的数据优先复用。
+子节点的地域、时段、口径与职责须继承父任务边界。
+
+项目专属白名单需要显式配置委派工具；公共默认白名单不覆盖项目配置。
+项目提示词启用委派工具时会自动补充通用协作约定。
+
+### 恢复与缓存
+
+- 显式取消是终止操作；依赖失败使用 blocked 状态，避免与用户取消混淆。
+- 恢复兼容旧快照中的 cancelled + dependency failed，成功后清除旧错误。
+- 父执行协程中断时清理子任务，保留可恢复状态与已绑定的子会话。
+- Redis 队列读取最新 snapshot；入队、领取和过期回收使用 Lua 原子状态检查。
+- worker 独立发送心跳，保留父模式与并发配置；事件写入异常不会使队列等待永久挂起。
+- 每次领取生成独立 lease_token；心跳、快照与终态写入原子校验领取令牌。
+  过期回收立即撤销旧令牌，同一 worker 再次领取也不能复用旧令牌。
+  失去所有权的执行停止运行；显式取消保留 cancelled 终态。
+- 快照及其新增事件在同一个 Redis 脚本中保存，事件序号去重；
+  队列状态在执行期间保持 running，直到 finish 原子写入终态与终态事件。
+- 成果缓存按父会话和工作流隔离；任务上下文、契约和 schema 变化会使缓存失效。
+- 缓存一小时内有效，文件原子替换；部分失败时已验证成功的节点也可复用。
+- 参数、类型、权限和未实现错误不自动重试；连接与超时错误采用短暂退避和抖动。
+
+### 当前边界
+
+快照与资源保存仍属于尽力持久化，不能保证外部工具副作用恰好执行一次。
+Redis 队列操作的原子性不替代数据库事务，也不提供跨系统副作用事务。
+并发上限仍以工作流为单位；跨会话的服务配额需由部署层或服务层控制。
+图在执行前确定，执行中补任务、持久人工暂停和循环重规划尚未加入。
+
+通用实现先提交 main，再合并到项目分支；项目专属模式配置在项目分支维护。
+
+### 真实 Redis 验证
+
+设置 `PYTEST_REDIS_SERVER=/绝对路径/redis-server` 后执行
+`backend/app/agent/workflow/jobs_redis_test.py`。每个测试启动独立 Unix socket Redis，
+关闭 TCP 监听与持久化，结束后停止测试进程，不使用部署环境 Redis 配置。
+覆盖并发入队/领取、最新快照恢复、旧领取令牌隔离、事件去重、
+pop/claim 中断、心跳与回收竞争及失去租约后的执行取消。
+未配置测试二进制时明确跳过这些集成测试。
+
+### 问数/专家受控评测
+
+从项目根运行 `PYTHONPATH=backend python -m scripts.evaluate_agent_dag --backend replay`。
+真实模型试运行使用 `--backend live`，可通过 `--env-file /绝对路径/backend/.env`
+显式选择本实例的模型配置。`--case` 可指定 single_city、multi_city、air_weather；
+`--repeats 3` 交替 direct/DAG 顺序，`--timeout 180` 设置每次执行硬超时。
+
+评测使用固定合成数据，不查询业务库；业务工具 schema 为评测用最小替身，
+以真实模式白名单限制工具。父/子模型采用有界工具调用循环，DAG 仍走
+run_agent_workflow、依赖调度、资源交接和结果压缩。未覆盖完整生产 ReAct、
+固定问数阶段、记忆、SSE、子会话持久化，不能直接外推生产吞吐或质量。
+仅 replay 使用显式金标准回放，它只用于链路测试，不衡量模型质量。
+
+每次运行隔离 journal/cache/log，活动工作流登记使用本地 registry，
+不访问部署 Redis；输出 results.json 与 comparison.md，记录代码提交和初始模型配置。
+模型看不到金标准数值；校验数值、实际已访问来源、证据覆盖和因果边界。
+统计供应商实报 Token、模型调用、耗时、重复取数、节点数与并行峰值；
+缺失 usage 保留 null，失败/超时保留在比较中。结果解释与结论证据绑定需人工复核。
+已有输出目录拒绝覆盖。单次样本不用于自动确定预算或委派阈值。

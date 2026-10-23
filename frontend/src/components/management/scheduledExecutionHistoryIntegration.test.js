@@ -79,6 +79,18 @@ test('results view renders each record as one row of database fields', () => {
 })
 
 
+test('results view shows the conclusion in full with paragraph wrapping and truncates only beyond 300 chars', () => {
+  const source = readSource('./ScheduledTaskResultsView.vue')
+
+  assert.match(source, /briefText\(record\.conclusion, 300\)/)
+  assert.match(source, /function briefText\(text, max = 300\)/)
+  assert.match(source, /\.col-brief \{[^}]*white-space: pre-wrap/)
+  assert.match(source, /\.col-brief \{[^}]*word-break: break-word/)
+  assert.doesNotMatch(source, /briefText\(record\.conclusion, 60\)/)
+  assert.doesNotMatch(source, /\.col-brief \{[^}]*white-space: nowrap/)
+})
+
+
 test('report and session actions live directly in the list rows', () => {
   const source = readSource('./ScheduledTaskResultsView.vue')
 

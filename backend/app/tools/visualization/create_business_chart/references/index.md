@@ -43,6 +43,20 @@ single-chart specifications selected by the routing table below.
   Where a limit is applicable, label its standard, phase, grade, averaging
   period, value and unit. Do not judge hourly compliance against daily limits.
   Missing values are not zero; distinguish forecasts from observations.
+- Measured quantities must carry a unit. Pass `options.unit` and set
+  `options.require_unit: true` for concentrations, rates, temperatures, wind
+  speeds, pressures, areas, and other physical measures; the renderer records
+  the unit and warns when a required unit is absent.
+- Use the governed series palette, direct labels, markers, or line styles so
+  meaning is not carried by color alone. AQI/IAQI and risk colors remain
+  semantic and must not be replaced by the general series palette.
+- Keep missing, excluded, and zero values distinct. Record transformations,
+  smoothing, binning, normalization, and reference lines when they can change
+  the apparent comparison.
+- Export metadata records format, DPI, physical size, pixel size, font names,
+  legend presence, and quality warnings. These checks support review; they do
+  not claim accessibility or publisher compliance. Inspect the final file at
+  its intended report size.
 
 ## Domain Chart Routing
 

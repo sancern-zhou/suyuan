@@ -11,9 +11,12 @@ import tempfile
 from typing import Any, Iterator
 from uuid import uuid4
 
+import structlog
 import yaml
 
 from app.utils.path_config import format_agent_path
+
+logger = structlog.get_logger(__name__)
 
 
 class CuratedFactStore:
@@ -46,6 +49,25 @@ class CuratedFactStore:
         if not value:
             return ""
         return date.fromisoformat(value).isoformat()
+
+    @staticmethod
+    def _is_expired(record: dict[str, Any], today: str) -> bool:
+        expiry = (record.get("metadata") or {}).get("valid_until")
+        return bool(expiry) and str(expiry) < today
+
+    def _purge_expired_unlocked(self, records: list[dict[str, Any]], today: str) -> int:
+        """物理删除已过期的事实文件（事实层的"遗忘"；调用方须持有文件锁）。"""
+        purged = 0
+        for record in records:
+            if self._is_expired(record, today):
+                try:
+                    record["path"].unlink()
+                    purged += 1
+                except OSError:
+                    continue
+        if purged:
+            logger.info("curated_facts_purged_expired", workspace=str(self.root), purged=purged)
+        return purged
 
     def _read(self, path: Path) -> dict[str, Any] | None:
         try:
@@ -161,8 +183,14 @@ class CuratedFactStore:
             return ""
         today = date.today().isoformat()
         with self._locked():
+            records = self._records()
+            self._purge_expired_unlocked(records, today)
+            records = [
+                record for record in records
+                if not self._is_expired(record, today)
+            ]
             records = sorted(
-                self._records(),
+                records,
                 key=lambda record: record.get("metadata", {}).get("updated_at")
                 or record.get("metadata", {}).get("created_at", ""),
                 reverse=True,

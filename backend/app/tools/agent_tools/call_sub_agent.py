@@ -29,6 +29,8 @@ from app.agent.session.workspace_routing import (
 from app.agent.selection_context import load_skill_selection
 from app.agent.prompts.tool_registry import get_tools_by_mode
 from app.agent.workflow.capabilities import MEMORY_EDIT_TOOL_NAMES, build_child_capability_policy
+from app.agent.workflow.delegation import is_leaf_mode, delegation_error
+
 from app.agent.workflow.resource_handoff import (
     import_workflow_handles,
     result_resource_declarations,
@@ -60,23 +62,24 @@ logger = structlog.get_logger()
 # 获取全局session管理器
 session_manager = get_session_manager()
 
-# ⚠️ 支持多种模式：assistant, query, report, social, chart, expert, ops
+# Child execution uses office and the registered professional leaf modes.
 AgentMode = Literal[
-    "assistant", "query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "report", "social", "chart", "expert",
+    "office", "query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "report", "assistant", "expert",
+
     "expert_meteorology", "expert_analysis", "ops", "board", "ppt", "knowledge",
 ]
 
 _DEFAULT_CHILD_MAX_ITERATIONS = {
     # 计算密集型专家任务（聚合、分箱、相关性）在 15-20 轮内常常收不完，
     # 适度放宽；工作流重试还会在此基础上自动扩容（见 coordinator）。
-    "expert_meteorology": 20,
-    "expert_analysis": 28,
+    "expert_meteorology": 40,
+    "expert_analysis": 40,
     "expert": 40,
-    # 固定问数工作流由运行时限制为最多四轮。
-    "query_monitoring": 4,
-    "query_monitoring_station": 4,
-    "query_monitoring_city": 4,
-    "query_forecast": 4,
+    # 固定问数工作流由运行时限制为阶段预算之和（acquire 4 + normalize 15 + deliver 1）。
+    "query_monitoring": 20,
+    "query_monitoring_station": 20,
+    "query_monitoring_city": 20,
+    "query_forecast": 20,
 }
 
 
@@ -87,14 +90,43 @@ def _resolve_child_max_iterations(target_mode: str, requested: Optional[int]) ->
     return max(1, min(int(requested), 120))
 
 
+def ensure_structured_delivery_schema(target_mode: str, result_schema):
+    """固定工作流叶子模式默认附加证据结果协议。
+
+    这些模式的 deliver 阶段会把工具清空到只剩 submit_result；不注入
+    result_schema 就等于没有交付通道，子 Agent 只能以文本收尾，数据
+    文件留在子会话里无法结构化回传父 Agent（与 DAG 节点行为对齐）。
+    """
+    if isinstance(result_schema, dict) and result_schema:
+        return result_schema
+    from app.agent.workflow.mode_workflows import get_mode_workflow
+
+    if get_mode_workflow(str(target_mode)) is None:
+        return result_schema
+    from copy import deepcopy
+
+    from app.agent.workflow.protocol import EXPERT_ANALYSIS_RESULT_SCHEMA
+
+    return deepcopy(EXPERT_ANALYSIS_RESULT_SCHEMA)
+
+
 class CallSubAgentTool(LLMTool):
     """
     调用子Agent的工具（双向通用）
 
     用法：
-    - Social Agent调用Query Agent：call_sub_agent(target_mode="query", ...)
+    - Social Agent调用站点取数子 Agent：call_sub_agent(target_mode="query_monitoring_station", ...)
     - 助手Agent调用其他Agent：call_sub_agent(target_mode="...", ...)
     """
+
+    def get_function_schema(self):
+        from copy import deepcopy
+
+        schema = deepcopy(super().get_function_schema())
+        target = schema["parameters"]["properties"]["target_mode"]
+        target["enum"] = target_mode_values()
+        target["description"] = build_target_mode_contract()
+        return schema
 
     def __init__(
         self,
@@ -107,7 +139,7 @@ class CallSubAgentTool(LLMTool):
             "name": "call_sub_agent",
             "description": (
                 "调用另一个 Agent 模式执行任务；继续旧会话需传 session_id。"
-                "默认不会自动复用旧的 assistant 子会话。"
+                "office 办公任务默认不自动复用无关旧子会话。"
             ),
             "parameters": {
                 "type": "object",
@@ -162,7 +194,7 @@ class CallSubAgentTool(LLMTool):
                     },
                     "force_new_session": {
                         "type": "boolean",
-                        "description": "是否强制创建新会话；assistant 子会话未传 session_id 时默认已创建新会话。"
+                        "description": "是否强制创建新会话；office 子会话未传 session_id 时默认创建新会话。"
                     },
                     "promote_to_workspace": {
                         "type": "boolean",
@@ -224,15 +256,15 @@ class CallSubAgentTool(LLMTool):
                     },
                     "run_in_background": {
                         "type": "boolean",
-                        "description": "后台任务协议字段；返回任务句柄并由工作流快照追踪。"
+                        "description": "后台执行并返回任务句柄；助手 assistant 使用 manage_assistant_runs 管理返回的 run_id。"
                     },
                     "background_task_id": {
                         "type": "string",
-                        "description": "查询已启动的后台子Agent任务。"
+                        "description": "其他模式的进程内后台句柄；assistant 助手不要使用，改用 manage_assistant_runs。"
                     },
                     "cancel_background_task": {
                         "type": "boolean",
-                        "description": "取消 background_task_id 指定的后台任务。"
+                        "description": "其他模式的进程内取消操作；assistant 助手通过 manage_assistant_runs 请求停止。"
                     }
                 },
                 "required": ["target_mode"]
@@ -255,6 +287,21 @@ class CallSubAgentTool(LLMTool):
 
     async def execute(self, context: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
         """Run a child Agent, optionally returning a background task handle."""
+        if getattr(context, "runtime_mode", None) == "assistant":
+            from app.social.assistant_runs import AssistantRunService, managed_delegation
+
+            try:
+                scope = managed_delegation.get()
+                if scope is not None:
+                    service, project, owner, record = scope
+                    return await self._execute_foreground_as_subagent(
+                        context=context, **service.child_arguments(project, owner, record, kwargs)
+                    )
+                return await AssistantRunService().launch(
+                    context, self._execute_foreground_as_subagent, kwargs, kind="child"
+                )
+            except (ValueError, PermissionError) as exc:
+                return {"success": False, "status": "failed", "error": str(exc)}
         background_task_id = kwargs.get("background_task_id")
         if background_task_id:
             record = (
@@ -357,6 +404,7 @@ class CallSubAgentTool(LLMTool):
         profile: Optional[str] = None,
         run_in_background: bool = False,
         _upstream_handles: Optional[List[Dict[str, Any]]] = None,
+        _input_contracts: Optional[List[Dict[str, Any]]] = None,
         _on_session_started: Optional[Callable[[str], None]] = None,
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
@@ -365,7 +413,7 @@ class CallSubAgentTool(LLMTool):
 
         Args:
             context: ExecutionContext（包含memory_manager等依赖）
-            target_mode: 目标Agent模式（"assistant" | "query" | "report" | "social" | "chart" | "expert" | "ops"）
+            target_mode: 目标子模式（office、knowledge、ppt、board、ops 或专业窄角色）
             goal: ⚠️ 任务目标（推荐）：必须完整保留所有参数（文件路径、时间范围等）
             task_description: ⚠️ [向后兼容] 等同于goal
             context_str: 补充上下文（推荐）：技能名称、操作步骤等
@@ -439,8 +487,25 @@ class CallSubAgentTool(LLMTool):
         try:
             # 获取父Agent模式
             parent_mode = self._get_parent_mode(context)
+            boundary_error = delegation_error(parent_mode, [str(target_mode)])
+            if boundary_error:
+                return {
+                    "status": "failed", "success": False, "result": boundary_error,
+                    "data": {}, "metadata": {"generator": "call_sub_agent"},
+                    "summary": boundary_error,
+                }
+            from app.agent.workflow.project_policy import prepare_node
+
+            project_node = {"target_mode": target_mode, "task_contract": task_contract,
+                            "result_schema": result_schema, "max_iterations": max_iterations}
+            prepare_node(project_node)
+            task_contract = project_node.get("task_contract")
+            result_schema = project_node.get("result_schema")
+            max_iterations = project_node.get("max_iterations")
+            result_schema = ensure_structured_delivery_schema(target_mode, result_schema)
             # 报告 Agent 不再使用综合问数子代理：监测历史走 query_monitoring，
             # 气象与预报走 query_forecast（schema 枚举为全局共享，此处按父模式守卫）。
+
             if parent_mode == "report" and target_mode == "query":
                 return {
                     "status": "failed",
@@ -497,11 +562,11 @@ class CallSubAgentTool(LLMTool):
                     "metadata": {"schema_version": "v2.0", "generator": "call_sub_agent"},
                     "summary": "缺少父会话上下文",
                 }
-            if promote_to_workspace and target_mode not in {"board", "ppt", "report"}:
+            if promote_to_workspace and target_mode not in {"board", "ppt"}:
                 return {
                     "status": "failed",
                     "success": False,
-                    "result": "只有 board、ppt、report 支持持续工作空间升级",
+                    "result": "只有 board、ppt 支持持续工作空间升级；报告由当前主模式直接完成",
                     "data": {},
                     "metadata": {"schema_version": "v2.0", "generator": "call_sub_agent"},
                     "summary": "不支持的工作空间模式",
@@ -652,11 +717,11 @@ class CallSubAgentTool(LLMTool):
                 else:
                     logger.info(f"强制创建新session: {session_id}")
             elif not should_auto_reuse_session:
-                # assistant 子Agent默认不复用旧session，避免跨任务串上下文。
+                # Office jobs start isolated unless a session is supplied explicitly.
                 # 如需连续对话，调用方必须显式传入 session_id。
                 session_id = self._generate_session_id(parent_mode, target_mode)
                 is_new_session = True
-                logger.info(f"assistant子Agent默认创建新session: {session_id}")
+                logger.info("office_child_session_created", session_id=session_id)
             else:
                 # 自动查找并复用最近的session（默认行为）
                 logger.info(f"尝试自动查找最近的session: parent_mode={parent_mode}, child_mode={target_mode}")
@@ -750,21 +815,27 @@ class CallSubAgentTool(LLMTool):
 
             agent_profile = get_agent_profile(target_mode, profile=profile)
             mode_tool_names = set(get_tools_by_mode(target_mode).keys())
-            if selected_child_skill:
+            if selected_child_skill and not is_leaf_mode(target_mode):
                 mode_tool_names.update(selected_child_skill.required_tools or [])
             capability_policy = build_child_capability_policy(
                 target_mode=target_mode,
-                allowed_tools=(allowed_tool_names if allowed_tool_names is not None else mode_tool_names),
+                allowed_tools=(
+                    mode_tool_names & set(allowed_tool_names)
+                    if is_leaf_mode(target_mode) and allowed_tool_names is not None
+                    else allowed_tool_names if allowed_tool_names is not None else mode_tool_names
+                ),
+
                 denied_tools=merge_denied_tools(agent_profile, denied_tool_names),
                 allow_delegation=(
-                    agent_profile.allow_delegation
+                    not is_leaf_mode(target_mode) and agent_profile.allow_delegation
                     if allow_child_delegation is None
-                    else bool(allow_child_delegation and agent_profile.allow_delegation)
+                    else bool(not is_leaf_mode(target_mode) and allow_child_delegation and agent_profile.allow_delegation)
                 ),
             )
 
             handoff_resource_service = getattr(tool_executor, "resource_service", None)
             imported_resource_refs: List[Dict[str, Any]] = []
+            resource_contract_warnings: List[Dict[str, Any]] = []
             parent_resource_handles = await self._collect_parent_resource_handles(context)
             upstream_group_ids = {
                 (str(item.get("source_session_id") or ""), str(item.get("group_id") or ""))
@@ -812,6 +883,15 @@ class CallSubAgentTool(LLMTool):
                     },
                 )
 
+            # Validate the imported catalog, not just requested handles. A stale
+            # or missing group must fail before the child starts model calls.
+            if _input_contracts:
+                from app.agent.workflow.resource_contract import assert_resource_contracts, check_resource_contracts
+                assert_resource_contracts(_input_contracts, imported_resource_refs)
+                resource_contract_warnings = [item for item in check_resource_contracts(_input_contracts, imported_resource_refs) if not item["required"]]
+                if resource_contract_warnings:
+                    effective_context = (effective_context or "") + "\n资源导入后发现可选证据缺口：" + json.dumps(resource_contract_warnings, ensure_ascii=False) + "\n仅基于可用证据交付并明确限制，不重新取数。"
+
             # 3. 构建子 Agent 请求：ReActAgent 会自行构建系统提示，因此把任务、
             # 补充上下文和规范化后的工作目录作为本轮用户请求一起传入。
             scheduled_task_context = (
@@ -847,7 +927,8 @@ class CallSubAgentTool(LLMTool):
 
             # 所有模式统一使用 ReActAgent；专家模式通过工具注册表中的原子工具/工作流工具完成分析。
             child_registry = capability_policy.filter_registry(
-                tool_executor.tool_registry if tool_executor else None
+                getattr(tool_executor, "delegation_tool_registry", tool_executor.tool_registry)
+                if tool_executor else None
             )
             # 结构化交付：节点带 result_schema 时注入 submit_result 工具，
             # 参数结构即 schema（函数调用约束），替代"最终回复输出 JSON"的提示词约定。
@@ -867,16 +948,20 @@ class CallSubAgentTool(LLMTool):
             iteration_limit = _resolve_child_max_iterations(target_mode, max_iterations)
             sub_agent = ReActAgent(
                 max_iterations=iteration_limit,
-                enable_memory=True,  # ✅ 启用记忆（子Agent会自动创建 UnifiedMemoryManager）
+                enable_memory=False,  # 子 Agent 不注入记忆、不维护记忆文件；记忆由主 Agent 与后台整合器维护
                 tool_registry=child_registry  # 子 Agent 只获得策略允许的工具
             )
 
             # 子Agent必须继承父Agent本次请求已经选定的完整模型优先级链。
             # 先快照再进入新上下文，避免子Agent的 Auto 多模态 profile 重选模型链。
+            # 注意：use_provider_chain 是 @contextmanager，单次使用；修复轮会
+            # 多次进入 with，必须保存参数、每轮新建（复用同一对象会在
+            # _GeneratorContextManager.__enter__ 的 del self.args 处抛
+            # AttributeError: '_GeneratorContextManager' object has no attribute 'args'）。
             parent_llm_service = getattr(llm_planner, "llm_service", None)
             child_planner = getattr(sub_agent, "planner", None)
             child_llm_service = getattr(child_planner, "llm_service", None)
-            model_chain_context = nullcontext()
+            model_chain_context_factory = nullcontext
             if parent_llm_service is not None and child_llm_service is not None:
                 inherited_chain = getattr(tool_executor, "llm_model_chain", None)
                 if inherited_chain:
@@ -885,7 +970,7 @@ class CallSubAgentTool(LLMTool):
                     parent_provider = parent_llm_service.provider
                     parent_model = parent_llm_service.model
                     parent_fallbacks = parent_llm_service.request_fallbacks
-                model_chain_context = child_llm_service.use_provider_chain(
+                model_chain_context_factory = lambda: child_llm_service.use_provider_chain(
                     parent_provider,
                     parent_model,
                     parent_fallbacks,
@@ -910,7 +995,7 @@ class CallSubAgentTool(LLMTool):
             ) -> List[Dict[str, Any]]:
                 turn_events: List[Dict[str, Any]] = []
                 async with child_actor_registry.lease(actor_key):
-                    with model_chain_context:
+                    with model_chain_context_factory():
                         async for event in sub_agent.analyze(
                             user_query=prompt,
                             session_id=session_id if session_id else None,
@@ -1035,6 +1120,18 @@ class CallSubAgentTool(LLMTool):
                 session_id=session_id
             )
 
+            # 空答案不允许静默成功：结果里保留子会话产物线索，
+            # 父 Agent 可凭 file_paths/resource_refs 继续取数（对齐
+            # ZCode 的 "(Subagent completed but returned no output.)" 约定）。
+            if (
+                final_result["status"] == "success"
+                and not str(final_result.get("answer") or "").strip()
+            ):
+                final_result["answer"] = (
+                    "（子 Agent 已完成但未输出文本结论；"
+                    "其产物已列于 file_paths/resource_refs，可直接引用。）"
+                )
+
             # 提取结构化数据
             structured_data = {
                 "file_paths": self._extract_file_paths(result_events),
@@ -1042,6 +1139,8 @@ class CallSubAgentTool(LLMTool):
                 "image_paths": self._extract_image_paths(result_events),  # 本地路径（文件操作）
                 "tool_calls": self._extract_tool_calls(result_events)
             }
+            if resource_contract_warnings:
+                structured_data["resource_contract_warnings"] = resource_contract_warnings
             if handoff_resource_service is None:
                 from app.agent.resources.resource_service import SessionResourceService
 
@@ -1218,6 +1317,7 @@ class CallSubAgentTool(LLMTool):
             }
 
         except Exception as e:
+            from app.agent.workflow.resource_contract import ResourceContractError
             if workflow_runtime is not None:
                 try:
                     run = workflow_run
@@ -1239,7 +1339,7 @@ class CallSubAgentTool(LLMTool):
                 "status": "failed",
                 "success": False,
                 "result": f"子Agent执行失败：{str(e)}",
-                "data": {},
+                "data": ({"resource_contract_violations": e.violations} if isinstance(e, ResourceContractError) else {}),
                 "metadata": {
                     "schema_version": "v2.0",
                     "generator": "call_sub_agent"
@@ -1287,7 +1387,7 @@ class CallSubAgentTool(LLMTool):
         goal: str,
         context: Optional[str] = None,
         workspace_path: Optional[str] = None,
-        target_mode: str = "assistant",
+        target_mode: str = "office",
         parent_resource_lines: Optional[List[str]] = None,
         scheduled_task_context: Optional[Dict[str, Any]] = None,
         skill_id: Optional[str] = None,
@@ -1363,7 +1463,7 @@ class CallSubAgentTool(LLMTool):
 
         # 根据目标模式添加特定提示
         mode_hints = {
-            "assistant": (
+            "office": (
                 "\n⚠️ **关键要求**（办公任务）：\n"
                 "- 生成任务清单时，必须在每个任务的content中保留所有原始参数\n"
                 "- 禁止摘要化或省略文件路径、时间范围、sheet索引等关键信息\n"
@@ -1371,7 +1471,7 @@ class CallSubAgentTool(LLMTool):
                 "（第五个sheet，时间段：2026年1-3月和2025年1-3月）'\n"
                 "- 错误示例：❌ '更新Excel文件'\n"
             ),
-            "social": "\n专注完成上述社交平台任务。\n",
+            "assistant": "\n专注完成上述社交平台任务。\n",
             "query": "\n数据查询任务：仅处理广东省环境数据查询及相关统计导出。先核对任务范围；招投标、中标、普通业务表格或省外/全国查询超出职责时，向父助手说明，不尝试绕过工具权限。范围内任务选择合适工具和参数完成。\n",
             "report": "\n专注完成上述报告生成任务。\n",
             "ops": "\n专注完成上述运维管理任务，围绕工单查询、审核判断、异常分析和闭环建议给出结构化结果。\n",
@@ -1401,7 +1501,7 @@ class CallSubAgentTool(LLMTool):
         goal: str,
         context: Optional[str] = None,
         workspace_path: Optional[str] = None,
-        target_mode: str = "assistant",
+        target_mode: str = "office",
         parent_resource_lines: Optional[List[str]] = None,
         scheduled_task_context: Optional[Dict[str, Any]] = None,
     ) -> str:
@@ -1483,8 +1583,8 @@ class CallSubAgentTool(LLMTool):
     def _get_mode_name(self, mode: str) -> str:
         """获取模式的友好名称"""
         mode_names = {
+            "office": "办公Agent",
             "assistant": "助手Agent",
-            "social": "社交Agent",
             "query": "问数Agent",
             "report": "报告Agent",
             "ops": "运维管理Agent",
@@ -1700,6 +1800,8 @@ class CallSubAgentTool(LLMTool):
 
     def _get_parent_mode(self, context: Optional[Any]) -> str:
         """从context获取父Agent模式"""
+        if getattr(context, "runtime_mode", None):
+            return context.runtime_mode
         if context and hasattr(context, 'manual_mode'):
             return context.manual_mode
         # 尝试从memory_manager获取
@@ -1707,7 +1809,7 @@ class CallSubAgentTool(LLMTool):
             mm = context.memory_manager
             if hasattr(mm, 'mode'):
                 return mm.mode
-        return "social"  # 默认社交模式
+        return "assistant"  # 默认社交模式
 
     def _should_auto_reuse_session(
         self,
@@ -1719,12 +1821,12 @@ class CallSubAgentTool(LLMTool):
         """
         判断是否允许自动复用最近的子Agent session。
 
-        assistant 子Agent默认创建新session，避免复用旧办公任务上下文。
+        office 子Agent默认创建新session，避免复用旧办公任务上下文。
         需要连续对话时，调用方应显式传入 session_id。
         """
         if session_id or force_new_session or force_isolated_session:
             return False
-        return target_mode != "assistant"
+        return target_mode not in {"office", "assistant"}
 
     def _generate_session_id(self, parent_mode: str, child_mode: str) -> str:
         """生成子Agent session_id"""

@@ -1,3 +1,4 @@
+import { accountGeneration, assertAccountGeneration } from './accountSession.js'
 import axios from 'axios'
 
 import { browserAuthStorage } from './storage.js'
@@ -51,6 +52,7 @@ export function createAuthFetch({
     }
     const url = external ? rawUrl : gatewayUrl(rawUrl, apiBaseUrl)
     const headers = new Headers(fetchOptions.headers || (typeof input === 'string' ? undefined : input.headers))
+    const generation = accountGeneration()
     let requestToken = ''
     if (!external && !publicRequest) {
       const session = storage.readSession()
@@ -65,6 +67,18 @@ export function createAuthFetch({
     if (!external && !publicRequest && clearOnUnauthorized && response.status === 401) {
       // A delayed response from an earlier session must not log out a newer login.
       if (storage.readSession().token === requestToken) storage.clear()
+    }
+    if (!external && !publicRequest && response.status !== 401) {
+      assertAccountGeneration(generation)
+      // Parsing may finish after the account has changed as well.
+      for (const method of ['json', 'text', 'blob', 'arrayBuffer']) {
+        const read = response[method].bind(response)
+        response[method] = async (...args) => {
+          const value = await read(...args)
+          assertAccountGeneration(generation)
+          return value
+        }
+      }
     }
     return response
   }
@@ -91,21 +105,29 @@ authAxios.interceptors.request.use(config => {
   if (!external && !publicRequest) {
     const session = browserStorage().readSession()
     config.headers.Authorization = session.token ? `Bearer ${session.token}` : undefined
+    config.accountToken = session.token || ''
+    config.accountGeneration = accountGeneration()
     config.headers.SysCode = session.sysCode || 'SUYUAN'
   } else {
     delete config.headers.Authorization
     delete config.headers.SysCode
   }
+  config.accountProtected = !external && !publicRequest
   delete config.external
   delete config.public
   return config
 })
 
 authAxios.interceptors.response.use(
-  response => response,
+  response => {
+    if (response.config.accountProtected) {
+      assertAccountGeneration(response.config.accountGeneration)
+    }
+    return response
+  },
   error => {
-    if (error?.response?.status === 401 && !error.config?.external && !error.config?.public) {
-      browserStorage().clear()
+    if (error?.response?.status === 401 && error.config?.accountProtected) {
+      if ((browserStorage().readSession().token || '') === error.config.accountToken) browserStorage().clear()
     }
     return Promise.reject(error)
   }

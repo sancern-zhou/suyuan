@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 
 import { AGENT_MODES, AGENT_MODE_IDS, AGENT_SCENES, getAgentMode, selectAgentModes } from './agentModes.js'
 
-test('agent mode catalog exposes dedicated knowledge, ppt, chart and board modes in product order', () => {
+test('agent mode catalog exposes dedicated knowledge, ppt and board modes in product order', () => {
   assert.deepEqual(AGENT_MODE_IDS, [
     'assistant',
     'ppt',
@@ -11,7 +11,6 @@ test('agent mode catalog exposes dedicated knowledge, ppt, chart and board modes
     'query',
     'knowledge',
     'report',
-    'chart',
     'board',
     'ops'
   ])
@@ -34,13 +33,11 @@ test('agent platform icons use distinct semantic silhouettes', () => {
   assert.equal(new Set(iconSignatures).size, AGENT_MODES.length)
 
   const query = AGENT_MODES.find(agent => agent.id === 'query')
-  const chart = AGENT_MODES.find(agent => agent.id === 'chart')
   assert.match(query.iconPaths.join(' '), /c0 1\.7 3\.1 3 7 3s7-1\.3 7-3/)
-  assert.match(chart.iconPaths.join(' '), /m5 16 4-5 4 3 6-8/)
 })
 
 test('every agent provides complete chat welcome content', () => {
-  assert.equal(AGENT_MODES.length, 9)
+  assert.equal(AGENT_MODES.length, 8)
   for (const agent of AGENT_MODES) {
     assert.ok(agent.welcome?.description)
     assert.ok(agent.welcome?.features.length >= 3)
@@ -59,8 +56,8 @@ test('agent mode lookup returns matching metadata and null for unsupported modes
 test('agent platform selects the project-declared modes without leaking another project selection', () => {
   assert.deepEqual(selectAgentModes(AGENT_MODE_IDS).map(agent => agent.id), AGENT_MODE_IDS)
   assert.deepEqual(
-    selectAgentModes(['query', 'expert', 'report', 'chart']).map(agent => agent.id),
-    ['query', 'expert', 'report', 'chart']
+    selectAgentModes(['query', 'expert', 'report']).map(agent => agent.id),
+    ['query', 'expert', 'report']
   )
 })
 

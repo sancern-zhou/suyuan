@@ -70,7 +70,7 @@ async def test_chart_mode_sends_image_attachment_as_native_content_blocks(tmp_pa
     runtime.context_diagnostics = FakeContextDiagnostics()
     runtime.tool_coordinator = FakeToolCoordinator()
 
-    state = RunState(session_id="chart_session", user_query="照这个图生成", mode="chart")
+    state = RunState(session_id="chart_session", user_query="照这个图生成", mode="ppt")
     context_result = {"system_prompt": "system", "user_conversation": "user text"}
     events = [
         event
@@ -108,7 +108,7 @@ async def test_social_initial_attachments_are_consumed_after_first_planner_call(
     runtime.context_diagnostics = FakeContextDiagnostics()
     runtime.tool_coordinator = FakeToolCoordinator()
 
-    state = RunState(session_id="social_session", user_query="参考这张图", mode="social")
+    state = RunState(session_id="social_session", user_query="参考这张图", mode="assistant")
     context_result = {"system_prompt": "system", "user_conversation": "user text"}
 
     first_events = [
@@ -322,7 +322,7 @@ async def test_pending_tool_attachments_are_consumed_after_one_planner_call(tmp_
     runtime.context_diagnostics = FakeContextDiagnostics()
     runtime.tool_coordinator = FakeToolCoordinator()
 
-    state = RunState(session_id="social_session", user_query="继续", mode="social")
+    state = RunState(session_id="social_session", user_query="继续", mode="assistant")
     state.pending_attachments.append(
         {"type": "image", "name": "tool-output.png", "local_path": str(image_path), "mime_type": "image/png"}
     )
@@ -381,7 +381,7 @@ async def test_explicit_tool_image_read_can_reopen_a_consumed_reference(tmp_path
     runtime.context_diagnostics = FakeContextDiagnostics()
     runtime.tool_coordinator = FakeToolCoordinator()
 
-    state = RunState(session_id="chart_session", user_query="继续", mode="chart")
+    state = RunState(session_id="chart_session", user_query="继续", mode="ppt")
     observation = {
         "type": "multimodal_attachment",
         "attachments": [attachment],
@@ -522,7 +522,7 @@ async def test_chart_mode_does_not_suppress_explicit_image_when_legacy_board_con
     state = RunState(
         session_id="chart_session",
         user_query="继续调整这个画板",
-        mode="chart",
+        mode="ppt",
         board_context={
             "artifact_kind": "drawio_board",
             "current_xml": "<mxfile><diagram><mxCell id=\"device_group3\" value=\"XX数据接口\" /></diagram></mxfile>",

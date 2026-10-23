@@ -11,7 +11,7 @@ test('board state and snapshots are isolated to board mode', () => {
   assert.match(storeSource, /actualMode === 'board'/)
   assert.match(storeSource, /mode !== 'board'/)
   assert.match(storeSource, /actualMode === 'board' \? this\.buildBoardContext/)
-  assert.doesNotMatch(storeSource, /actualMode === 'chart' \? this\.buildBoardContext/)
+  assert.doesNotMatch(storeSource, /actualMode === 'query' \? this\.buildBoardContext/)
   assert.match(inputSource, /currentMode !== 'board'/)
   assert.doesNotMatch(sessionManagementSource, /restoreDrawioBoardFromSession/)
   assert.match(sessionManagementSource, /resourceStore\.loadCatalog\(sessionId\)/)

@@ -7,6 +7,7 @@
 from typing import List, Dict, Any
 import json
 import structlog
+from app.services.model_trajectory import trajectory_source
 
 logger = structlog.get_logger()
 
@@ -49,80 +50,6 @@ Rules:
 {prior_memory_block}
 Older history to compress:
 {history_text}
-"""
-
-    # ⭐ 新版压缩提示词：保留消息类型结构
-    COMPRESSION_PROMPT = """你是一个对话上下文压缩专家。你的任务是压缩以下对话历史，保留关键信息，移除冗余内容。
-
-**⚠️ 核心原则（CRITICAL）**：
-- **保留消息类型结构**：保持每条消息的 "type" 和 "role" 字段不变
-- **只压缩消息内容**：不要合并或删除消息，只精简每条消息的 content 字段
-- **支持前端折叠渲染**：保留 thought/action/observation/final 消息类型，让前端可以折叠显示
-
-**必须保留的消息类型**：
-1. **user** - 用户问题（完整保留）
-2. **thought** - 思考过程（提炼关键决策点）
-3. **action** - 工具调用（保留工具名和关键参数）
-4. **observation** - 工具结果（保留 file_path 和摘要）
-5. **final/assistant** - 最终答案（完整保留）
-
-**压缩策略（按消息类型）**：
-
-**user 消息**：
-- 完整保留，不压缩
-
-**thought 消息**：
-- 提炼关键决策点，去除冗余推理
-- 原始："我需要分析广州的臭氧污染情况。首先，我应该查询气象数据，了解温度、湿度、风速等条件。然后，我需要查看臭氧浓度数据，分析其变化趋势。最后，我将综合这些信息，给出分析结论。"
-- 压缩后："决定先查询气象数据，再分析臭氧浓度趋势，最后给出综合结论"
-
-**action 消息**：
-- 保留工具名和关键参数，省略详细参数
-- 原始：完整的工具调用 JSON，包含所有参数
-- 压缩后："调用 get_weather_data，参数：城市=广州，日期=2024-03-01"
-
-**observation 消息**：
-- 保留 file_path 和摘要，省略详细数据
-- 原始：包含完整的工具返回数据（可能有数千条记录）
-- 压缩后："成功获取 30 条气象记录，file_path: weather_001，平均温度 25°C"
-
-**final/assistant 消息**：
-- 完整保留，不压缩（这是用户看到的最终答案）
-
-**重要提示**：
-- 保留所有 file_path 引用（后续分析可能需要）
-- 保持对话的逻辑连贯性
-- 不要合并或删除任何消息
-
-**原始对话**：
-{conversation_json}
-
-**输出要求（CRITICAL - 必须严格遵守）**：
-
-⚠️ **你的输出将直接传递给 json.loads() 解析，任何非 JSON 字符都会导致系统崩溃！
-
-**强制规则**：
-1. 第一个字符必须是 `[`（左方括号）
-2. 最后一个字符必须是 `]`（右方括号）
-3. 禁止使用 ```json 或 ``` 包裹 JSON
-4. 禁止在 JSON 前后添加任何解释文字、空行或其他字符
-5. 每条消息必须保留原始的 "type" 和 "role" 字段
-6. 返回标准 JSON 数组格式
-
-**正确示例（保留消息类型结构）**：
-[
-  {{"type": "user", "role": "user", "content": "分析广州O3污染"}},
-  {{"type": "thought", "role": "assistant", "content": "决定先查询气象数据"}},
-  {{"type": "tool_use", "role": "assistant", "content": "调用 get_weather_data，参数：城市=广州"}},
-  {{"type": "tool_result", "role": "user", "content": "成功获取 30 条记录，file_path: weather_001"}},
-  {{"type": "final", "role": "assistant", "content": "根据分析，发现..."}}
-]
-
-⚠️ 再次强调：
-1. 保持每条消息的 type 字段不变
-2. 只压缩 content 字段的内容
-3. 不要合并或删除消息
-4. 输出必须以 [ 开头，以 ] 结尾
 """
 
     # 工具输出截断配置
@@ -473,27 +400,29 @@ Older history to compress:
         original_count: int,
         error: Exception,
     ) -> List[Dict[str, Any]]:
-        compacted_groups, recent_groups = self._split_recent_groups(messages)
+        prior_memory = [dict(msg) for msg in messages if self._is_compact_memory_message(msg)]
+        new_messages = [msg for msg in messages if not self._is_compact_memory_message(msg)]
+        compacted_groups, recent_groups = self._split_recent_groups(new_messages)
         recent_messages = self._drop_existing_anchor_messages(
             self._flatten_groups(recent_groups)
         )
         boundary_msg = self._create_compaction_boundary(
             original_count=original_count,
-            compressed_count=len(anchor_messages) + 1 + len(recent_messages),
+            compressed_count=len(prior_memory) + len(anchor_messages) + 1 + len(recent_messages),
             compression_type="fallback",
         )
         boundary_msg["content"] = (
             f"[系统提示] 上下文压缩失败，已保留原始任务锚点和最近消息。错误: {str(error)[:200]}"
         )
-        return [boundary_msg] + anchor_messages + recent_messages
+        return [boundary_msg] + prior_memory + anchor_messages + recent_messages
 
+    @trajectory_source('compact')
     async def _harness_compact(
         self,
         messages_to_compress: List[Dict[str, Any]],
         protected_messages: List[Dict[str, Any]],
         anchor_messages: List[Dict[str, Any]],
         original_count: int,
-        model: str = None,
     ) -> List[Dict[str, Any]]:
         existing_memory_text, eligible_messages = self._split_existing_compact_memory(messages_to_compress)
         eligible_messages = self._drop_existing_anchor_messages(eligible_messages)
@@ -526,9 +455,6 @@ Older history to compress:
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": self.COMPACT_SUMMARY_MAX_TOKENS,
         }
-        if model:
-            chat_params["model"] = model
-
         api_mode = getattr(self.llm_client, "api_mode", "chat_completions")
         if api_mode != "chat_completions" and getattr(self.llm_client, "anthropic_client", None):
             chat_params["temperature"] = 0.3
@@ -574,7 +500,6 @@ Older history to compress:
     async def compress(
         self,
         messages: List[Dict[str, Any]],
-        model: str = None,
         force: bool = False,
         force_reason: str = ""
     ) -> List[Dict[str, Any]]:
@@ -592,7 +517,6 @@ Older history to compress:
 
         Args:
             messages: 需要压缩的消息列表
-            model: 使用的模型（如果为 None，使用系统配置的模型）
             force: 外层已判定上下文超阈值时强制压缩，避免被消息数阈值短路
             force_reason: 强制压缩原因，用于日志排查
 
@@ -670,7 +594,6 @@ Older history to compress:
                 protected_messages=protected_messages,
                 anchor_messages=anchor_messages,
                 original_count=original_count,
-                model=model,
             )
 
         except Exception as e:
@@ -690,12 +613,10 @@ Older history to compress:
     async def compress_messages(
         self,
         messages: List[Dict[str, Any]],
-        model: str = None,
     ) -> List[Dict[str, Any]]:
         """Compatibility wrapper used by reactive context-overflow recovery."""
         return await self.compress(
             messages,
-            model=model,
             force=True,
             force_reason="provider_context_overflow",
         )
@@ -874,77 +795,6 @@ Older history to compress:
         compressible = messages[:len(messages) - len(protected)]
 
         return protected, compressible
-
-    def _parse_compression_result(self, response: str) -> List[Dict[str, Any]]:
-        """
-        解析 LLM 返回的压缩结果
-
-        Args:
-            response: LLM 返回的响应文本
-
-        Returns:
-            解析后的消息列表
-        """
-        try:
-            # 尝试直接解析 JSON
-            compressed = json.loads(response)
-
-            # 验证格式
-            if not isinstance(compressed, list):
-                raise ValueError("压缩结果不是列表格式")
-
-            for msg in compressed:
-                if not isinstance(msg, dict) or "role" not in msg or "content" not in msg:
-                    raise ValueError("消息格式不正确")
-
-            return compressed
-
-        except json.JSONDecodeError as e:
-            # 尝试从 markdown 代码块中提取 JSON
-            import re
-
-            # 策略1: 匹配代码块内的内容（使用贪婪匹配以支持嵌套结构）
-            # 模式: ```json ... ``` 或 ``` ... ```
-            code_block_patterns = [
-                r'```json\s*(.*?)\s*```',  # 带 json 标签
-                r'```\s*(.*?)\s*```'       # 不带标签
-            ]
-
-            for pattern in code_block_patterns:
-                match = re.search(pattern, response, re.DOTALL)
-                if match:
-                    try:
-                        compressed = json.loads(match.group(1).strip())
-                        # 验证格式
-                        if isinstance(compressed, list) and all(
-                            isinstance(msg, dict) and "role" in msg and "content" in msg
-                            for msg in compressed
-                        ):
-                            return compressed
-                    except (json.JSONDecodeError, ValueError):
-                        continue
-
-            # 策略2: 查找第一个 [ 到最后一个 ] 之间的内容
-            start_idx = response.find('[')
-            end_idx = response.rfind(']')
-            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                try:
-                    compressed = json.loads(response[start_idx:end_idx+1])
-                    # 验证格式
-                    if isinstance(compressed, list) and all(
-                        isinstance(msg, dict) and "role" in msg and "content" in msg
-                        for msg in compressed
-                    ):
-                        return compressed
-                except json.JSONDecodeError:
-                    pass
-
-            # 所有策略失败，抛出详细错误
-            raise ValueError(
-                f"无法解析压缩结果: {str(e)}\n"
-                f"响应预览: {response[:500]}...\n"
-                f"响应长度: {len(response)} 字符"
-            )
 
     def _pre_truncate_for_compression(
         self,

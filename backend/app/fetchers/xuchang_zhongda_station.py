@@ -514,8 +514,8 @@ class XuchangZhongdaStationFetcher(_ZhongdaBaseFetcher):
             return "FiveMinQuery/GetFiveMinDataForGrid", "GetFiveMinDataForGrid", "FiveMinQuery"
         return "HourQuery/GetHourDataForGrid", "GetHourDataForGrid", "HourQuery"
 
-    def _window(self) -> tuple[datetime, datetime]:
-        now = datetime.now().replace(second=0, microsecond=0)
+    def _window(self, now: datetime | None = None) -> tuple[datetime, datetime]:
+        now = (now or datetime.now()).replace(second=0, microsecond=0)
         if self.data_kind == "minute":
             return now - timedelta(minutes=25), now
         end = now.replace(minute=0)
@@ -591,13 +591,15 @@ class XuchangZhongdaCityFetcher(_ZhongdaBaseFetcher):
     def _endpoint(self) -> tuple[str, str | None, str | None]:
         return "CityHour/GetCityHourData", None, None
 
-    def _window(self) -> tuple[datetime, datetime]:
-        now = datetime.now().replace(second=0, microsecond=0)
-        # 城市聚合通常晚于站点小时数据生成。每小时重查“昨天 00:00
-        # 至当前小时（含当前小时）”，迟到数据可在后续轮次补齐；
-        # _store 使用唯一键 upsert，重复小时不会产生重复记录。
+    def _window(self, now: datetime | None = None) -> tuple[datetime, datetime]:
+        now = (now or datetime.now()).replace(second=0, microsecond=0)
+        # 城市聚合审核后数据的可查前沿滞后实测约 2 天（2026-09 起由 <1 天变
+        # 为 ~2 天：窗口若只回看 1 天，每天仅 D-1 00:00 边界点已过审核，导致
+        # 每天只落库 1 条）。每小时重查“3 天前 00:00 至当前小时（含当前
+        # 小时）”，迟到数据可在后续轮次补齐；_store 使用唯一键 upsert，
+        # 重复小时不会产生重复记录。
         current_hour = now.replace(minute=0)
-        start = (current_hour - timedelta(days=1)).replace(
+        start = (current_hour - timedelta(days=3)).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
         end = current_hour + timedelta(hours=1)

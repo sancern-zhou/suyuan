@@ -43,11 +43,6 @@ class SessionSearchTool(LLMTool):
                         "default": 5,
                         "minimum": 1,
                         "maximum": 20
-                    },
-                    "rebuild": {
-                        "type": "boolean",
-                        "description": "是否重建索引（首次使用或索引过期时设为true）",
-                        "default": False
                     }
                 },
                 "required": ["query"]
@@ -77,7 +72,6 @@ class SessionSearchTool(LLMTool):
         context=None,
         query: str = None,
         limit: int = 5,
-        rebuild: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -86,7 +80,6 @@ class SessionSearchTool(LLMTool):
         Args:
             query: Search keyword
             limit: Maximum results to return
-            rebuild: Whether to rebuild the index
 
         Returns:
             {
@@ -97,6 +90,9 @@ class SessionSearchTool(LLMTool):
                 "summary": "简要总结"
             }
         """
+        # Index rebuilds belong to the maintenance service, never model calls.
+        if "rebuild" in kwargs:
+            return {"status": "failed", "success": False, "summary": "索引维护不属于会话检索操作"}
         # Parameter validation
         if not query:
             return {
@@ -123,7 +119,7 @@ class SessionSearchTool(LLMTool):
             )
             owner_type = None
             owner_id = None
-            if runtime_mode == "social":
+            if runtime_mode == "assistant":
                 if not user_identifier:
                     return {
                         "status": "failed",
@@ -132,18 +128,12 @@ class SessionSearchTool(LLMTool):
                         "metadata": {
                             "schema_version": "v1.0",
                             "tool_name": "session_search",
-                            "owner_type": "social"
+                            "owner_type": "assistant"
                         },
-                        "summary": "社交模式检索历史会话需要用户标识"
+                        "summary": "助手模式检索历史会话需要用户标识"
                     }
-                owner_type = "social"
+                owner_type = "assistant"
                 owner_id = str(user_identifier)
-
-            # Rebuild index if requested
-            if rebuild:
-                logger.info("rebuilding_fts_index")
-                indexed_count = fts_index.build_index()
-                logger.info("fts_index_rebuilt", count=indexed_count)
 
             # Ensure index is initialized
             if not fts_index._initialized:

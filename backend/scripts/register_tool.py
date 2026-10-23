@@ -3,7 +3,6 @@
 工具注册CLI - 辅助新工具注册
 
 使用此CLI可以快速注册新工具到 global_tool_registry，自动生成：
-- 输入适配器规则
 - 返回Schema
 - 测试样例
 - 验证合规性
@@ -137,7 +136,6 @@ class ToolRegistrationCLI:
         return {
             "tool": self.tool_instance,
             "priority": self.priority or 100,
-            "input_adapter_rules": None,  # 让注册表自动生成
             "return_schema": None,  # 让注册表自动生成
             "metadata": None,  # 让注册表自动生成
             "auto_generate": True
@@ -254,13 +252,6 @@ class ToolRegistrationCLI:
             else:
                 print(f"  {key}: {value}")
 
-        print(f"\n📝 输入适配器规则:")
-        adapter_rules = tool_data.get('input_adapter_rules', {})
-        if adapter_rules:
-            print(f"  字段数: {len(adapter_rules.get('fields', {}))}")
-        else:
-            print("  未配置")
-
         print(f"\n✅ 测试样例:")
         test_samples = tool_data.get('test_samples', [])
         for sample in test_samples:
@@ -297,7 +288,6 @@ class ToolRegistrationCLI:
             "priority": tool_data.get("priority"),
             "requires_context": tool_data.get("requires_context"),
             "metadata": tool_data.get("metadata"),
-            "input_adapter_rules": tool_data.get("input_adapter_rules"),
             "return_schema": tool_data.get("return_schema"),
             "test_samples": tool_data.get("test_samples"),
             "registered_at": tool_data.get("registered_at")

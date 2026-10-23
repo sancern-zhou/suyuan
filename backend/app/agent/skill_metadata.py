@@ -71,12 +71,6 @@ SKILL_METADATA = {
     "routine_monitoring_analysis_expert": {"enabled": True, "aliases": [], "required_tools": []},
     "skill_template": {"enabled": False, "aliases": [], "required_tools": []},
     "top3_city_identification_rules": {"enabled": True, "aliases": [], "required_tools": []},
-    "weather_analysis_expert": {"enabled": True, "aliases": [], "required_tools": []},
-    "xuchang_station_daily_source_report": {
-        "enabled": True,
-        "aliases": ["许昌市昨日污染回顾分析"],
-        "required_tools": ["read_file", "execute_python", "create_report_package"],
-    },
     "上个月污染特征与溯源分析": {
         "enabled": True, "aliases": [], "required_tools": ["call_sub_agent"],
     },

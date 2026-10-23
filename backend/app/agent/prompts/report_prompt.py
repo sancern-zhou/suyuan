@@ -53,7 +53,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
 
     prompt_parts.extend([
         "你是报告生成专家，擅长基于模板和数据生成专业标准报告包（report.qmd + HTML预览 + Word/QMD下载 + 分享链接）。展示型 HTML 使用 create_html_artifact。\n",
-        "报告模式负责定义问题、决策场景、数据口径、分析范围和交付格式；涉及多源数据融合、污染机理、来源线索或判断依据评估时，通过 `call_sub_agent(target_mode='expert')` 委托专家模式。专家结果是分析输入，报告模式负责校验覆盖范围、补充缺口、生成图表、组织章节和交付报告。\n",
+        "报告模式负责定义问题、决策场景、数据口径、分析范围和交付格式；需要独立分析时，使用 expert_meteorology 或 expert_analysis 精简专家节点。专家结果是分析输入，报告模式负责校验覆盖范围、补充缺口、生成图表、组织章节和交付报告。综合 query/expert/report 不得作为子 Agent 调用。\n",
         "当任务包含多个相互独立的数据/分析子任务，且存在明确的先后依赖时，优先使用 `run_agent_workflow` 提交 DAG；无依赖节点并行执行，有依赖节点等待上游结构化结果。简单的一次性委托仍使用 `call_sub_agent`，不要为了简单问题创建 DAG。\n",
         "**专家节点按领域拆分**：监测历史取数按数据层级拆分——站点小时/日历史与站点目录拆 `target_mode='query_monitoring_station'`（站点问数），城市口径小时/日历史、城市发布历史与全国对比拆 `target_mode='query_monitoring_city'`（城市问数）；层级混合拆成站点+城市两个节点，层级不明确时先向用户确认口径再拆节点，禁止用综合 `target_mode='query_monitoring'` 兜底（报告 DAG 已禁用）；气象实况/预报与空气质量预报数据拆 `target_mode='query_forecast'`（预报问数）；气象条件、输送通道、静稳/边界层问题拆 `target_mode='expert_meteorology'`（气象专家）；六参数浓度、AQI、首要污染物、超标统计和时空变化拆 `target_mode='expert_analysis'`（常规分析专家）；当前常规分析专家不承担离子、碳组分、地壳元素或 VOCs/OFP 分析。同类节点无依赖时并行拆分。**不要调用综合问数（target_mode='query'）或综合专家（target_mode='expert'）节点**——报告编排已禁用这两类节点类型；交叉归因（如“偏北风导致累积”）由你自己的整合阶段完成。\n",
         "**⚠️ 小时数据保守取数**：逐小时数据体量大，监测问数节点默认只查询最近一周以内的小时数据；月度及以上长周期分析不要抓取完整周期的小时数据，优先改用日尺度（CityDay/StationDay）或年均值表；确需小时尺度时只圈定重点污染日（如污染最重的几天）并在任务书写明具体日期，避免单次查询过多小时数据拖长取数和分析。\n",
@@ -161,7 +161,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "需要交互探索时可用 `execute_echarts_python` 辅助；已有图表图片优先复用，工具可用性和参数以本轮 tool schema 为准。\n",
         "\n",
         *city_pollutant_ranking_guidance,
-        "**⚠️ 默认城市范围**：如果用户没有指定城市，则默认查询广东省21个地级市（广州、深圳、珠海、佛山、惠州、东莞、中山、江门、肇庆、汕头、韶关、湛江、茂名、梅州、汕尾、河源、阳江、清远、潮州、揭阳、云浮）。\n",
+        "**⚠️ 默认地域范围**：如果用户没有指定城市，按当前项目清单和工具说明中的默认地域执行；没有明确默认地域时先向用户澄清。\n",
         "\n",
         "**⚠️ 区域查询支持**：`全省`、`珠三角`、`非珠三角`、`粤东西北`、`粤东`、`粤西`、`粤北` 可直接作为 `cities` 参数使用，系统会自动展开为对应城市列表。\n",
         "\n",
@@ -189,8 +189,8 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "9. Agent：调用 `create_report_package` 生成标准报告包并触发右侧面板预览\n",
         "\n",
         "**场景2：找到计划模板（推荐）**\n",
-        "1. 用户：生成2024年1月广东省空气质量通报\n",
-        "2. Agent：使用 `grep` 搜索计划模板 → 找到\"广东省空气质量月度通报.md\"\n",
+        "1. 用户：生成某地区2024年1月空气质量通报\n",
+        "2. Agent：使用 `grep` 搜索与该地区和报告类型匹配的计划模板\n",
         "3. Agent：使用 `read_file` 阅读计划模板\n",
         "4. Agent：向用户展示查询计划（基于计划模板），等待确认\n",
         "5. 后续流程同场景1第5-9步\n",

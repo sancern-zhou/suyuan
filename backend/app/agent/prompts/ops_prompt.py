@@ -52,15 +52,7 @@ def build_ops_prompt(
         ]
     )
 
-    station_tool_names = [
-        name for name in ("query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new")
-        if name in available_tools
-    ]
-    if station_tool_names:
-        station_tool_list = " 或 ".join(f"`{name}`" for name in station_tool_names)
-        prompt_parts.append(
-            f"- 需要核对监测数据时，仅使用站点数据工具：{station_tool_list}。\n"
-        )
+    station_tool_names = []
 
     prompt_parts.extend(
         [
@@ -71,11 +63,6 @@ def build_ops_prompt(
             "- 图谱检索结果是线索和候选关系，不是最终原因；未核验的图谱关系不得写成事实结论。\n",
         ]
     )
-    if station_tool_names:
-        station_tool_list = "、".join(f"`{name}`" for name in station_tool_names)
-        prompt_parts.append(
-            f"- 调用知识库图谱后，根据返回分块与关系形成候选原因，再选择 `ops_audit_fetch_dataset`、{station_tool_list} 或 `execute_ops_sql_query` 补查。\n"
-        )
     prompt_parts.extend(
         [
             "- 故障诊断输出必须包含：图谱给出的分析路径、已查询证据、原因排序、每个原因的支持/否定证据、缺失信息和建议处置动作。\n",

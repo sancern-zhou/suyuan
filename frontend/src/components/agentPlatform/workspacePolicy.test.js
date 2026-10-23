@@ -67,14 +67,11 @@ test('unsupported mode selection is rejected', () => {
   })
 })
 
-test('report task workspace selects the task agent instead of the current query mode', () => {
-  assert.equal(
-    resolveTaskWorkspaceMode({ execution_mode: 'report' }, 'query'),
-    'report'
-  )
+test('task workspace selects a supported task agent mode', () => {
+  assert.equal(resolveTaskWorkspaceMode({ execution_mode: 'report' }, 'query'), 'report')
 })
 
-test('non-chat task modes preserve the current agent', () => {
+test('task workspace preserves the current agent for non-chat modes', () => {
   assert.equal(resolveTaskWorkspaceMode({ execution_mode: 'custom' }, 'query'), 'query')
   assert.equal(resolveTaskWorkspaceMode({ execution_mode: 'social' }, 'report'), 'report')
   assert.equal(resolveTaskWorkspaceMode({}, 'query'), 'query')

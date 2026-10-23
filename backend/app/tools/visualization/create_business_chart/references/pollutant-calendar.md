@@ -5,6 +5,10 @@ province, city, station, or pollutant. This is a business calendar template. Do 
 use the Guangdong-specific `aqi_calendar` outside Guangdong AQI calendar
 reports.
 
+Daily cells are colored with the fixed HJ 633-2026 six-level scale (AQI plus the
+ambient-air basic pollutants); missing days use the shared grey missing color.
+The color map is never stretched to the data range.
+
 ## Data Contract
 
 Preferred data:
@@ -23,7 +27,9 @@ Preferred data:
 ```
 
 `records` may be used with the same `date` and `value` fields. Use one region
-or one station per image.
+or one station per image. `pollutant` accepts `AQI` or an ambient-air basic
+pollutant (PM2.5, PM10, O3, SO2, NO2, CO) and defaults to `AQI` when omitted;
+other indicators are rejected instead of being colored with a stretched scale.
 
 ## Design Rules
 
@@ -38,3 +44,4 @@ or one station per image.
 - `month`
 - `pollutant`
 - `unit`
+- `average_time` (optional; O3 defaults to `daily_max_8h`, others to `24h`)

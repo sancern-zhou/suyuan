@@ -20,37 +20,15 @@ AGENT_HIDDEN_TOOL_NAMES = frozenset({
     "calculate_crustal", "calculate_trace", "predict_air_quality",
     "generate_map",
     "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "query_gd_suncere_city_hour", "query_gd_suncere_city_day",
-    "query_gd_suncere_district_day", "query_gd_suncere_district_report",
-    "query_gd_suncere_station_hour_new",
 })
 
 # ========================================
 # 工具有序白名单（仅包含工具名称）
 # ========================================
 
-# 广东省数据源工具（项目专属）。这些工具依赖广东联网接口/数据库，
-# 不允许进入任何共享模式白名单：
-# - 工具实例仅在项目 manifest 声明启用时注册（app/tools/__init__.py）；
-# - 项目通过 manifest 的 backend.agent_mode_extra_tools 按模式追加。
-# 守卫测试：backend/tests/test_project_scoped_tools.py
-PROJECT_SCOPED_TOOL_NAMES = frozenset({
-    "query_gd_suncere",
-    "query_gd_suncere_city_hour",
-    "query_gd_suncere_station_hour_new",
-    "query_gd_suncere_station_day_new",
-    "query_gd_suncere_regional_comparison",
-    "query_gd_suncere_city_day",
-    "query_gd_suncere_district_day",
-    "query_gd_suncere_district_report",
-    "query_gd_suncere_report_compare",
-    "query_city_standard_report",
-    "query_city_standard_yoy_report",
-    "query_station_standard_report",
-    "query_station_standard_yoy_report",
-    "analyze_city_pollutant_rankings",
-    "get_5min_data",
-})
+# Project manifests may append tools to a mode without changing the shared
+# baseline.  The shared registry itself contains no project data-source names.
+PROJECT_SCOPED_TOOL_NAMES = frozenset()
 
 # Registered for internal orchestration and maintenance only. These tools must
 # never be published in an Agent mode, including project-defined modes.
@@ -60,10 +38,10 @@ AGENT_INTERNAL_TOOL_NAMES = frozenset({
 })
 
 # ===== 助手模式工具 =====
-ASSISTANT_TOOL_NAMES = [
+OFFICE_TOOL_NAMES = [
     "list_session_resources",
-    "execute_tender_sql_query",
-    "zhiliao_tender_detail",
+    "read_session_resource",
+    "publish_session_file",
     # 轻量办公：搜索、阅读、编辑文档和生成 HTML 结果。
     "list_directory",
     "search_files",
@@ -72,19 +50,14 @@ ASSISTANT_TOOL_NAMES = [
     "edit_file",
     "grep",
     "create_html_artifact",
-    "create_report_package",
     # 轻量数据计算与网页检索抓取。
     "execute_python",
     "web_search",
     "web_fetch",
-    "browser",
     # 任务调度、技能目录和重型工作空间委托。
-    "create_scheduled_task",
-    "wait_task",
     "list_skills",
     "view_skill",
-    "call_sub_agent",
-    "run_agent_workflow",
+    "create_skill_draft",
 ]
 
 # ===== 幻灯片模式工具 =====
@@ -115,6 +88,8 @@ PPT_TOOL_NAMES = [
 
 # ===== 专家模式工具 =====
 EXPERT_TOOL_NAMES = [
+    "run_agent_workflow",
+    "call_sub_agent",
     "list_session_resources",
     "publish_session_file",
     # 知识库检索与命中文档上下文阅读
@@ -154,6 +129,8 @@ EXPERT_METEOROLOGY_TOOL_NAMES = [
     # 上游产物复用与中间产物落地
     "read_file",
     "write_file",
+    # 长期记忆维护（MEMORY.md）
+    "edit_file",
     # 气象数据
     "get_observed_meteorology",
     "get_weather_forecast",
@@ -177,6 +154,8 @@ EXPERT_ANALYSIS_TOOL_NAMES = [
     # 上游产物复用与中间产物落地
     "read_file",
     "write_file",
+    # 长期记忆维护（MEMORY.md）
+    "edit_file",
     # 监测数据
     "query_xcai_city_history",
     "query_national_city_air_quality",
@@ -188,6 +167,8 @@ EXPERT_ANALYSIS_TOOL_NAMES = [
 
 # ===== 问数模式工具 =====
 QUERY_TOOL_NAMES = [
+    "run_agent_workflow",
+    "call_sub_agent",
     "list_session_resources",
     "publish_session_file",
     # === 源码查看工具 ===
@@ -305,6 +286,8 @@ KNOWLEDGE_TOOL_NAMES = [
     "knowledge_document_reader",
     "knowledge_graph_query",
     "read_session_resource",
+    # 长期记忆维护（MEMORY.md）
+    "edit_file",
     "web_search",
     "web_fetch",
 ]
@@ -329,27 +312,6 @@ REPORT_TOOL_NAMES = [
     "create_report_package",
     # 报告主 Agent 统一通过 DAG 委托子 Agent
     "run_agent_workflow",
-]
-
-# ===== 图表模式工具 =====
-CHART_TOOL_NAMES = [
-    "list_session_resources",
-    "publish_session_file",
-    # 文件操作
-    "read_file",
-    "write_file",
-    "edit_file",
-    "grep",
-    "list_directory",
-    "search_files",
-    "bash",
-    # 代码执行和原生多模态视觉参考
-    "create_business_chart",
-    "execute_python",
-    "execute_echarts_python",
-    # 数据查询工具
-    "get_observed_meteorology",
-    "execute_sql_query",
 ]
 
 # ===== 画板模式工具 =====
@@ -405,42 +367,28 @@ GRAPH_TOOL_NAMES = [
     "search_files",
 ]
 
-# ===== 社交模式工具（移动端助理） =====
-SOCIAL_TOOL_NAMES = [
+# ===== 助手模式工具（Web / App / 社交渠道） =====
+ASSISTANT_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-    # 文件操作
+    "read_session_resource",
     "read_file",
     "edit_file",
-    "grep",
-    "write_file",
-    "list_directory",
-    "search_files",
+    # Personal documents use server-bound memory operations.
+    "manage_assistant_memory",
     "list_skills",
     "view_skill",
-    # 知识库检索
-    "knowledge_qa_workflow",
-    "knowledge_document_reader",
-    # 代码执行和模式互调
-    "execute_python",
+    # Delegation and durable task coordination.
     "call_sub_agent",
-    # 正式报告生成与收口
-    "create_business_chart",
-    "create_report_package",
-    # 网络搜索
+    "run_agent_workflow",
     "web_search",
     "web_fetch",
     # 呼吸式特有工具
-    "schedule_task",
+    "manage_assistant_schedule",
     "send_notification",
-    "spawn",
-    "wait_task",
-    # CLI会话管理和历史搜索
-    "cli_session",
-    "terminal_session",
+    "manage_assistant_runs",
     "session_search",
-    # 系统操作
-    "bash",
+    "ask_user_question",
 ]
 
 # ===== 生态环境执法备考模式（微信专业场景） =====
@@ -452,6 +400,9 @@ ENFORCEMENT_EXAM_TOOL_NAMES = [
     "web_search",
     "web_fetch",
     "schedule_task",
+    # 长期记忆维护（MEMORY.md）：本模式属 PERSONAL_MEMORY_MODES，整合器只写事实层，
+    # 常驻记忆契约要求会话 Agent 自己用 edit_file 维护，缺它则 MEMORY.md 无任何写入方
+    "edit_file",
 ]
 
 # ===== 记忆整合器工具（后台专用） =====
@@ -547,7 +498,7 @@ def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
     return {name: "" for name in names}
 
 
-ASSISTANT_TOOLS = _build_tool_dict(ASSISTANT_TOOL_NAMES)
+OFFICE_TOOLS = _build_tool_dict(OFFICE_TOOL_NAMES)
 PPT_TOOLS = _build_tool_dict(PPT_TOOL_NAMES)
 EXPERT_TOOLS = _build_tool_dict(EXPERT_TOOL_NAMES)
 EXPERT_METEOROLOGY_TOOLS = _build_tool_dict(EXPERT_METEOROLOGY_TOOL_NAMES)
@@ -559,11 +510,10 @@ QUERY_FORECAST_TOOLS = _build_tool_dict(QUERY_FORECAST_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
 KNOWLEDGE_TOOLS = _build_tool_dict(KNOWLEDGE_TOOL_NAMES)
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
-CHART_TOOLS = _build_tool_dict(CHART_TOOL_NAMES)
 BOARD_TOOLS = _build_tool_dict(BOARD_TOOL_NAMES)
 OPS_TOOLS = _build_tool_dict(OPS_TOOL_NAMES)
 GRAPH_TOOLS = _build_tool_dict(GRAPH_TOOL_NAMES)
-SOCIAL_TOOLS = _build_tool_dict(SOCIAL_TOOL_NAMES)
+ASSISTANT_TOOLS = _build_tool_dict(ASSISTANT_TOOL_NAMES)
 ENFORCEMENT_EXAM_TOOLS = _build_tool_dict(ENFORCEMENT_EXAM_TOOL_NAMES)
 MEMORY_CONSOLIDATOR_TOOLS = _build_tool_dict(MEMORY_CONSOLIDATOR_TOOL_NAMES)
 DELIBERATION_METEOROLOGY_TOOLS = _build_tool_dict(DELIBERATION_METEOROLOGY_TOOL_NAMES)
@@ -572,19 +522,24 @@ DELIBERATION_CHEMISTRY_TOOLS = _build_tool_dict(DELIBERATION_CHEMISTRY_TOOL_NAME
 DELIBERATION_REVIEWER_TOOLS = _build_tool_dict(DELIBERATION_REVIEWER_TOOL_NAMES)
 
 # Backward-compatible order aliases used by tests and older callers.
-ASSISTANT_TOOL_ORDER = ASSISTANT_TOOL_NAMES
 PPT_TOOL_ORDER = PPT_TOOL_NAMES
 EXPERT_TOOL_ORDER = EXPERT_TOOL_NAMES
 QUERY_TOOL_ORDER = QUERY_TOOL_NAMES
 KNOWLEDGE_TOOL_ORDER = KNOWLEDGE_TOOL_NAMES
 REPORT_TOOL_ORDER = REPORT_TOOL_NAMES
-CHART_TOOL_ORDER = CHART_TOOL_NAMES
 BOARD_TOOL_ORDER = BOARD_TOOL_NAMES
 OPS_TOOL_ORDER = OPS_TOOL_NAMES
 GRAPH_TOOL_ORDER = GRAPH_TOOL_NAMES
-SOCIAL_TOOL_ORDER = SOCIAL_TOOL_NAMES
+ASSISTANT_TOOL_ORDER = ASSISTANT_TOOL_NAMES
 ENFORCEMENT_EXAM_TOOL_ORDER = ENFORCEMENT_EXAM_TOOL_NAMES
 MEMORY_CONSOLIDATOR_TOOL_ORDER = MEMORY_CONSOLIDATOR_TOOL_NAMES
+
+
+# 用户可直接交互的一级模式允许向用户提出结构化问题；无人值守场景
+# （定时任务、子代理）由 ask_user_question 工具自身护栏拒绝，无需在此区分。
+INTERACTIVE_QUESTION_MODES = frozenset({
+    "assistant", "office", "ppt", "expert", "query", "knowledge", "report", "board", "ops", "graph",
+})
 
 
 def get_tools_by_mode(mode: str) -> Dict[str, str]:
@@ -592,13 +547,13 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     根据模式获取工具有序白名单。
 
     Args:
-        mode: "assistant" | "ppt" | "expert" | "expert_meteorology" | "expert_analysis" | "query" | "query_monitoring" | "query_monitoring_station" | "query_monitoring_city" | "query_forecast" | "report" | "social" | "enforcement_exam" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
+        mode: "assistant" | "ppt" | "expert" | "expert_meteorology" | "expert_analysis" | "query" | "query_monitoring" | "query_monitoring_station" | "query_monitoring_city" | "query_forecast" | "report" | "office" | "enforcement_exam" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
 
     Returns:
         工具字典 {tool_name: ""}，key 顺序即工具顺序。
     """
     mode_mapping = {
-        "assistant": ASSISTANT_TOOLS,
+        "office": OFFICE_TOOLS,
         "ppt": PPT_TOOLS,
         "expert": EXPERT_TOOLS,
         "expert_meteorology": EXPERT_METEOROLOGY_TOOLS,
@@ -610,9 +565,8 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "query": QUERY_TOOLS,
         "knowledge": KNOWLEDGE_TOOLS,
         "report": REPORT_TOOLS,
-        "social": SOCIAL_TOOLS,
+        "assistant": ASSISTANT_TOOLS,
         "enforcement_exam": ENFORCEMENT_EXAM_TOOLS,
-        "chart": CHART_TOOLS,
         "board": BOARD_TOOLS,
         "ops": OPS_TOOLS,
         "graph": GRAPH_TOOLS,
@@ -623,19 +577,33 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "deliberation_reviewer": DELIBERATION_REVIEWER_TOOLS,
     }
 
+    if mode == "social":
+        raise ValueError("Unknown mode: social; use assistant")
     project_tool_names = _get_project_tool_names_by_mode(mode)
     if mode not in mode_mapping and project_tool_names is None:
         raise ValueError(f"Unknown mode: {mode}")
 
     if project_tool_names is not None:
-        tools = _build_tool_dict(project_tool_names)
+        # 项目全量接管模式同样获得交互提问工具（此前接管会让它静默丢失）。
+        tool_names = list(project_tool_names)
+        if mode in INTERACTIVE_QUESTION_MODES and "ask_user_question" not in tool_names:
+            tool_names.append("ask_user_question")
     else:
+        tool_names = list(mode_mapping[mode].keys())
+        if mode in INTERACTIVE_QUESTION_MODES:
+            tool_names.append("ask_user_question")
         extra_tool_names = _get_project_extra_tool_names_by_mode(mode)
-        base_names = list(mode_mapping[mode].keys())
-        if mode in {"assistant", "ppt", "expert", "query", "knowledge", "report", "chart", "board", "ops", "graph"}:
-            base_names.append("ask_user_question")
-        merged_names = base_names + [name for name in (extra_tool_names or []) if name not in base_names]
-        tools = _build_tool_dict(merged_names)
+        tool_names += [name for name in (extra_tool_names or []) if name not in tool_names]
+    if mode in {"assistant", "office"}:
+        # Project overrides cannot restore professional executors to either role.
+        role_tools = ASSISTANT_TOOL_NAMES if mode == "assistant" else OFFICE_TOOL_NAMES
+        tool_names = list(dict.fromkeys([*tool_names, *role_tools]))
+        tool_names = [name for name in tool_names if name in role_tools or name == "ask_user_question"]
+    if mode == "assistant" and "manage_assistant_tasks" not in tool_names:
+        tool_names.append("manage_assistant_tasks")
+    if mode == "assistant" and "manage_assistant_coaching" not in tool_names:
+        tool_names.append("manage_assistant_coaching")
+    tools = _build_tool_dict(tool_names)
 
     disabled_tools = _get_project_disabled_tool_names()
     if not disabled_tools:

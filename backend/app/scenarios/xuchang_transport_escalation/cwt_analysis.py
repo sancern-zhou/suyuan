@@ -37,19 +37,20 @@ class XuchangStationConcentrationLoader:
             cursor = connection.cursor()
             cursor.execute(
                 f"""
-                SELECT data_time, {column} AS concentration
-                FROM dbo.dat_station_hour
-                WHERE station_id = ? AND data_time >= ? AND data_time <= ?
-                ORDER BY data_time
+                SELECT time_point, {column} AS concentration
+                FROM dbo.dat_zhongda_station_hour
+                WHERE data_table_type = 'Act' AND parameter_type = 'gp'
+                  AND station_code = ? AND time_point >= ? AND time_point <= ?
+                ORDER BY time_point
                 """,  # noqa: S608 - column is selected from the fixed mapping above.
                 [station_id, start, end],
             )
             result = {}
             requested = set(event_hours)
-            for data_time, concentration in cursor.fetchall():
+            for time_point, concentration in cursor.fetchall():
                 if concentration is None or float(concentration) < 0:
                     continue
-                key = data_time.replace(tzinfo=TZ_SHANGHAI).isoformat()
+                key = time_point.replace(tzinfo=TZ_SHANGHAI).isoformat()
                 if key in requested:
                     result[key] = float(concentration)
             return result

@@ -1,0 +1,14 @@
+version: 1
+description: 许昌语义查询按场景返回最小充分结构，避免空字段和重复摘要。
+profiles:
+  metric_query:
+    required: [success, data, semantic_context, quality_status]
+    optional: [metadata, count, sample_count, file_path]
+    rules:
+      - semantic_context 包含 dataset、grain、applicability、data_as_of 和 metric_definitions
+      - 质量状态为 degraded 或 unknown 时不得默认数据完整
+  metric_definition:
+    required: [success, cube, semantic_context]
+    optional: [summary]
+    rules:
+      - 只返回口径、粒度、适用范围、限制和指标定义，不执行数据查询

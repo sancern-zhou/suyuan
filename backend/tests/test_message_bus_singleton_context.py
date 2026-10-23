@@ -112,7 +112,7 @@ async def test_session_advisory_lock_uses_autocommit_connection(monkeypatch):
         pass
 
     assert connection.execution_options_calls == [{"isolation_level": "AUTOCOMMIT"}]
-    assert connection.statements[0][0] == str(text("SELECT pg_advisory_lock(:key)"))
+    assert connection.statements[0][0] == str(text("SELECT pg_try_advisory_lock(:key)"))
     assert connection.statements[1][0] == str(text("SELECT pg_advisory_unlock(:key) AS unlocked"))
     assert connection.invalidated is False
 
@@ -181,7 +181,7 @@ async def test_session_advisory_lock_invalidates_connection_when_unlock_fails(mo
 
 
 @pytest.mark.asyncio
-async def test_react_agent_creates_run_scoped_executor(monkeypatch):
+async def test_react_agent_creates_run_scoped_executor(monkeypatch, fake_lock_db):
     captured_executors = []
 
     class FakeLoop:

@@ -257,44 +257,6 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_jining_regular_stations", error=str(e))
 
-    # 广东省 Suncere API 查询工具（项目专属，默认不注册；
-    # 需要的项目在 manifest 的 modules 中启用 legacy 并在 backend.tools 中声明）
-    gd_suncere_tool_registrations = (
-        ("query_gd_suncere_city_hour", "QueryGDSuncereCityHourTool", 32),
-        ("query_gd_suncere_station_hour_new", "QueryGDSuncereStationHourTool", 33),
-        ("query_gd_suncere_station_day_new", "QueryGDSuncereStationDayTool", 34),
-        ("query_gd_suncere_regional_comparison", "QueryGDSuncereRegionalComparisonTool", 35),
-        ("query_gd_suncere_city_day", "QueryGDSuncereCityDayTool", 36),
-        ("query_gd_suncere_district_day", "QueryGDSuncereDistrictDayTool", 36),
-        ("query_gd_suncere_district_report", "QueryGDSuncereDistrictReportTool", 37),
-        ("query_gd_suncere_report_compare", "QueryGDSuncereReportCompareTool", 38),
-    )
-    gd_legacy_module = "app.tools.query.query_gd_suncere.tool_wrapper"
-    if is_project_tool_enabled(context, "legacy", "query_gd_suncere"):
-        for tool_name, class_name, priority in gd_suncere_tool_registrations:
-            try:
-                module = __import__(gd_legacy_module, fromlist=[class_name])
-                registry.register(getattr(module, class_name)(), priority=priority)
-                logger.info("tool_loaded", tool=tool_name)
-            except ImportError as e:
-                logger.warning("tool_import_failed", tool=tool_name, error=str(e))
-
-    gd_standard_report_registrations = (
-        ("query_city_standard_report", "app.tools.query.query_city_standard_report.tool", "QueryCityStandardReportTool", 39),
-        ("query_city_standard_yoy_report", "app.tools.query.query_city_standard_report.tool", "QueryCityStandardYoyReportTool", 39),
-        ("query_station_standard_report", "app.tools.query.query_station_standard_report.tool", "QueryStationStandardReportTool", 43),
-        ("query_station_standard_yoy_report", "app.tools.query.query_station_standard_report.tool", "QueryStationStandardYoyReportTool", 44),
-    )
-    for tool_name, module_name, class_name, priority in gd_standard_report_registrations:
-        if not is_project_tool_enabled(context, "legacy", tool_name):
-            continue
-        try:
-            module = __import__(module_name, fromlist=[class_name])
-            registry.register(getattr(module, class_name)(), priority=priority)
-            logger.info("tool_loaded", tool=tool_name)
-        except ImportError as e:
-            logger.warning("tool_import_failed", tool=tool_name, error=str(e))
-
     if is_project_tool_enabled(context, "legacy", "analyze_city_pollutant_rankings"):
         try:
             from app.tools.query.city_pollutant_rankings.tool import CityPollutantRankingsTool
@@ -418,6 +380,40 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
             logger.warning(
                 "tool_import_failed",
                 tool="xuchang_station_catalog",
+                error=str(e),
+            )
+
+    if is_project_tool_enabled(
+        context,
+        "xuchang-air-quality",
+        "xuchang_cube_metrics",
+    ):
+        try:
+            from app.tools.query.xuchang_cube_metrics.tool import XuchangCubeMetricsTool
+
+            registry.register(XuchangCubeMetricsTool(), priority=48)
+            logger.info("tool_loaded", tool="xuchang_cube_metrics")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="xuchang_cube_metrics",
+                error=str(e),
+            )
+
+    if is_project_tool_enabled(
+        context,
+        "xuchang-air-quality",
+        "query_xuchang_traffic_status",
+    ):
+        try:
+            from app.tools.xuchang.traffic_status.tool import XuchangTrafficStatusTool
+
+            registry.register(XuchangTrafficStatusTool(), priority=48)
+            logger.info("tool_loaded", tool="query_xuchang_traffic_status")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="query_xuchang_traffic_status",
                 error=str(e),
             )
 
@@ -884,6 +880,9 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     # Scheduled Tasks Tools（定时任务工具）
     # ========================================
 
+    from app.tools.scheduled_tasks.manage_scheduled_tasks import manage_scheduled_tasks_tool
+    registry.register(manage_scheduled_tasks_tool, priority=361)
+
     from app.tools.task_management.submit_task_review import SubmitTaskReviewTool
     registry.register(SubmitTaskReviewTool(), priority=359)
 
@@ -911,6 +910,22 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.warning("tool_import_failed", tool="search_scheduled_task_history", error=str(e))
 
     try:
+        from app.tools.runtime_monitor.tool import query_runtime_anomalies_tool
+        registry.register(
+            query_runtime_anomalies_tool,
+            priority=366,
+            metadata={
+                "data_type": "runtime_anomalies",
+                "requires_handle": False,
+                "supports_batch": False,
+                "system_managed": True,
+            },
+        )
+        logger.info("tool_loaded", tool="query_runtime_anomalies")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_runtime_anomalies", error=str(e))
+
+    try:
         from app.tools.scheduled_tasks import query_scheduled_task_results_tool
         registry.register(
             query_scheduled_task_results_tool,
@@ -925,6 +940,13 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.info("tool_loaded", tool="query_scheduled_task_results")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_scheduled_task_results", error=str(e))
+
+    try:
+        from app.tools.social.ask_user_question_tool import AskUserQuestionTool
+        registry.register(AskUserQuestionTool(), priority=367)
+        logger.info("tool_loaded", tool="ask_user_question")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="ask_user_question", error=str(e))
 
     # ========================================
     # Social Mode Tools（社交模式工具 - 呼吸式Agent）
@@ -1038,6 +1060,36 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.info("tool_loaded", tool="wait_task")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="wait_task", error=str(e))
+
+    try:
+        from app.tools.social.assistant_tasks.tool import ManageAssistantTasksTool
+        registry.register(ManageAssistantTasksTool(), priority=378)
+        logger.info("tool_loaded", tool="manage_assistant_tasks")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="manage_assistant_tasks", error=str(e))
+
+    try:
+        from app.tools.social.assistant_coaching.tool import ManageAssistantCoachingTool
+        registry.register(ManageAssistantCoachingTool(), priority=378)
+        logger.info("tool_loaded", tool="manage_assistant_coaching")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="manage_assistant_coaching", error=str(e))
+
+    try:
+        from app.tools.social.assistant_schedule.tool import ManageAssistantScheduleTool
+        registry.register(ManageAssistantScheduleTool(), priority=378)
+        logger.info("tool_loaded", tool="manage_assistant_schedule")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="manage_assistant_schedule", error=str(e))
+
+    try:
+        from app.tools.social.assistant_memory.tool import ManageAssistantMemoryTool
+        from app.tools.social.assistant_runs.tool import ManageAssistantRunsTool
+
+        registry.register(ManageAssistantMemoryTool(), priority=378)
+        registry.register(ManageAssistantRunsTool(), priority=378)
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="assistant_memory_and_runs", error=str(e))
 
     try:
         from app.tools.social.cli_session.tool import CliSessionTool

@@ -59,3 +59,46 @@ async def test_concurrent_model_tiers_are_scoped_to_execution(tmp_path, monkeypa
     await asyncio.gather(*(executor.execute_task(item, update_stats=False) for item in tasks))
     assert seen == {tier: tier for tier in ['auto', 'flash', 'pro']}
     assert current.get() == 'auto'
+
+
+@pytest.mark.asyncio
+async def test_completed_execution_persists_structured_result(tmp_path, monkeypatch):
+    class RecordingResultStorage:
+        def __init__(self):
+            self.results = []
+
+        def upsert(self, result):
+            self.results.append(result)
+            return result
+
+    result_storage = RecordingResultStorage()
+    persistence = SimpleNamespace(
+        ensure_terminal_session=AsyncMock(),
+        publish_conversation=AsyncMock(),
+    )
+    executor = ScheduledTaskExecutor(
+        TaskStorage(str(tmp_path)),
+        ExecutionStorage(str(tmp_path)),
+        conversation_persistence=persistence,
+        task_result_storage=result_storage,
+    )
+
+    async def run(prompt, session_id, **kwargs):
+        return dict(
+            summary='空气质量保持稳定',
+            data_ids=[],
+            visuals=[],
+            thoughts=[],
+            tool_calls=[],
+            iterations=1,
+        )
+
+    monkeypatch.setenv('SCHEDULED_TASK_RESULT_STORAGE', 'on')
+    monkeypatch.setattr(executor, '_run_agent', run)
+
+    execution = await executor.execute_task(task(), update_stats=False)
+
+    assert execution.status.value == 'success'
+    assert len(result_storage.results) == 1
+    assert result_storage.results[0].execution_id == execution.execution_id
+    assert result_storage.results[0].conclusion == '空气质量保持稳定'

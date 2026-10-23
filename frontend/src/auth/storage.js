@@ -1,3 +1,5 @@
+import { setAccountIdentity } from './accountSession.js'
+
 export const AUTH_STORAGE_KEYS = Object.freeze({
   token: 'Access-Token',
   sysCode: 'Access-Sys-Code',
@@ -29,10 +31,12 @@ export function createAuthStorage(storage) {
       else storage.removeItem(AUTH_STORAGE_KEYS.sysCode)
       if (user) storage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(user))
       else storage.removeItem(AUTH_STORAGE_KEYS.user)
+      setAccountIdentity(user, sysCode)
     },
 
     clear() {
       Object.values(AUTH_STORAGE_KEYS).forEach(key => storage.removeItem(key))
+      setAccountIdentity(null)
     }
   }
 }

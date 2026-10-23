@@ -57,6 +57,7 @@ defineEmits(['close'])
 
 .panel-embedded-content {
   height: calc(100% - 60px);
+  min-height: 0;
   overflow-y: auto;
 }
 

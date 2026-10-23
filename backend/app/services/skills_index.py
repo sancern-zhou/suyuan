@@ -4,7 +4,11 @@ import os
 import tempfile
 from pathlib import Path
 
-from app.tools.utility.skill_management.skill_paths import parse_skill_metadata
+from app.tools.utility.skill_management.skill_paths import (
+    iter_skill_documents,
+    normalize_skill_dirs,
+    parse_skill_metadata,
+)
 from app.utils.path_config import format_agent_path, resolve_agent_path
 
 
@@ -17,25 +21,41 @@ def _single_line(value: str) -> str:
 
 
 def generate_skills_index(skills_dir: Path | None = None) -> dict[str, object]:
+    """Rebuild SKILLS_INDEX.md in the primary skills directory.
+
+    When ``skills_dir`` is omitted the composed view of every active skills
+    directory is indexed (project dir first, then the shared library); entry
+    links are repo-relative agent paths so one index can span both.
+    """
     if skills_dir is None:
-        from app.agent.selection_context import active_skills_dir
-        skills_dir = active_skills_dir()
-    skills_dir = skills_dir.resolve()
-    if not skills_dir.is_dir():
-        raise FileNotFoundError(format_agent_path(skills_dir))
+        from app.agent.selection_context import active_skill_dirs
+
+        dirs = active_skill_dirs()
+    else:
+        dirs = normalize_skill_dirs(skills_dir)
+    primary = dirs[0].resolve()
+    if not primary.is_dir():
+        raise FileNotFoundError(format_agent_path(primary))
 
     entries: list[tuple[str, str, str]] = []
-    skill_paths = list(skills_dir.glob("*.md")) + list(skills_dir.glob("*/SKILL.md"))
-    for skill_path in sorted(skill_paths, key=lambda path: str(path.relative_to(skills_dir)).lower()):
-        if skill_path.name == INDEX_FILENAME:
-            continue
-        metadata = parse_skill_metadata(
-            skill_path.read_text(encoding="utf-8"),
-            skill_path.name,
-        )
-        title = _single_line(metadata["title"]).replace("[", "").replace("]", "")
-        description = _single_line(metadata["description"])
-        entries.append((title, skill_path.relative_to(skills_dir).as_posix(), description))
+    seen_ids: set[str] = set()
+    for directory in dirs:
+        for skill_path in iter_skill_documents(directory):
+            skill_id = (
+                skill_path.parent.name
+                if skill_path.name == "SKILL.md"
+                else skill_path.stem
+            )
+            if skill_id in seen_ids:
+                continue
+            seen_ids.add(skill_id)
+            metadata = parse_skill_metadata(
+                skill_path.read_text(encoding="utf-8"),
+                skill_path.name,
+            )
+            title = _single_line(metadata["title"]).replace("[", "").replace("]", "")
+            description = _single_line(metadata["description"])
+            entries.append((title, format_agent_path(skill_path), description))
 
     lines = [
         "# 技能索引",
@@ -49,13 +69,13 @@ def generate_skills_index(skills_dir: Path | None = None) -> dict[str, object]:
     )
     content = "\n".join(lines).rstrip() + "\n"
 
-    index_path = skills_dir / INDEX_FILENAME
+    index_path = primary / INDEX_FILENAME
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",
-            dir=skills_dir,
+            dir=primary,
             prefix=f".{INDEX_FILENAME}.",
             delete=False,
         ) as handle:

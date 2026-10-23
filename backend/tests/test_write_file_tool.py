@@ -44,11 +44,11 @@ class TestWriteFileTool:
     async def test_create_new_file(self, write_tool, test_dir):
         file_path = test_dir / "new_file.txt"
         result = await write_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             content="Hello World"
         )
         assert result["success"] is True
-        assert result["data"]["created"] is True
+        assert result["data"]["type"] == "create"
         assert file_path.exists()
         assert file_path.read_text() == "Hello World"
 
@@ -60,13 +60,15 @@ class TestWriteFileTool:
     async def test_overwrite_existing_file(self, write_tool, test_dir):
         file_path = test_dir / "existing.txt"
         file_path.write_text("old content")
+        from app.tools.utility.read_file_tool import ReadFileTool
+        assert (await ReadFileTool().execute(path=str(file_path)))["success"]
 
         result = await write_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             content="new content"
         )
         assert result["success"] is True
-        assert result["data"]["created"] is False  # 覆写，非新建
+        assert result["data"]["type"] == "update"  # 覆写，非新建
         assert file_path.read_text() == "new content"
 
     # ------------------------------------------------------------------
@@ -77,7 +79,7 @@ class TestWriteFileTool:
     async def test_create_parent_dirs(self, write_tool, test_dir):
         file_path = test_dir / "subdir1" / "subdir2" / "file.txt"
         result = await write_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             content="nested file",
             create_dirs=True
         )
@@ -89,12 +91,12 @@ class TestWriteFileTool:
     async def test_no_create_dirs(self, write_tool, test_dir):
         file_path = test_dir / "nonexistent_dir" / "file.txt"
         result = await write_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             content="test",
             create_dirs=False
         )
         assert result["success"] is False
-        assert "创建父目录失败" in result["summary"] or "No such file" in result["error"]
+        assert not file_path.exists()
 
     # ------------------------------------------------------------------
     # 4. 多行内容
@@ -105,7 +107,7 @@ class TestWriteFileTool:
         file_path = test_dir / "multiline.txt"
         content = "Line 1\nLine 2\nLine 3\n"
         result = await write_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             content=content
         )
         assert result["success"] is True
@@ -126,7 +128,7 @@ if __name__ == "__main__":
     hello()
 """
         result = await write_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             content=code
         )
         assert result["success"] is True
@@ -142,7 +144,7 @@ if __name__ == "__main__":
         file_path = test_dir / "config.json"
         json_content = '{\n  "port": 8000,\n  "host": "localhost"\n}'
         result = await write_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             content=json_content
         )
         assert result["success"] is True
@@ -157,7 +159,7 @@ if __name__ == "__main__":
         file_path = test_dir / "chinese.txt"
         content = "你好世界\n测试中文"
         result = await write_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             content=content,
             encoding="utf-8"
         )
@@ -173,7 +175,7 @@ if __name__ == "__main__":
         file_path = test_dir / "stats.txt"
         content = "A" * 1000  # 1000 字节
         result = await write_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             content=content
         )
         assert result["success"] is True
@@ -188,12 +190,12 @@ if __name__ == "__main__":
     async def test_empty_file(self, write_tool, test_dir):
         file_path = test_dir / "empty.txt"
         result = await write_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             content=""
         )
         assert result["success"] is True
         assert result["data"]["size"] == 0
-        assert result["data"]["lines"] == 0
+        assert result["data"]["lines"] == 1
         assert file_path.read_text() == ""
 
     # ------------------------------------------------------------------
@@ -203,7 +205,7 @@ if __name__ == "__main__":
     @pytest.mark.asyncio
     async def test_path_is_directory(self, write_tool, test_dir):
         result = await write_tool.execute(
-            file_path=str(test_dir),
+            path=str(test_dir),
             content="test"
         )
         assert result["success"] is False
@@ -216,7 +218,7 @@ if __name__ == "__main__":
     @pytest.mark.asyncio
     async def test_path_outside_workdir(self, write_tool):
         result = await write_tool.execute(
-            file_path="C:/Windows/test.txt",
+            path="C:/Windows/test.txt",
             content="test"
         )
         assert result["success"] is False
@@ -227,12 +229,13 @@ if __name__ == "__main__":
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_file_size_limit(self, write_tool, test_dir):
+    async def test_file_size_limit(self, write_tool, test_dir, monkeypatch):
+        monkeypatch.setattr("app.tools.utility.write_file_tool.MAX_FILE_SIZE", 10 * 1024 * 1024)
         file_path = test_dir / "large.txt"
         # 创建超过 10MB 的内容
         large_content = "A" * (11 * 1024 * 1024)  # 11MB
         result = await write_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             content=large_content
         )
         assert result["success"] is False
@@ -241,3 +244,42 @@ if __name__ == "__main__":
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestWriteFileMemoryCapacity:
+    """MEMORY.md 容量守卫：write_file 与 edit_file 共用上限，防止整写绕开护栏。"""
+
+    @pytest.fixture
+    def write_tool(self):
+        return WriteFileTool()
+
+    @pytest.fixture
+    def test_dir(self):
+        test_dir = project_root / "tests" / "write_test_data"
+        test_dir.mkdir(exist_ok=True)
+        yield test_dir
+        import shutil
+        shutil.rmtree(test_dir, ignore_errors=True)
+
+    @pytest.mark.asyncio
+    async def test_reject_oversized_memory_md(self, write_tool, test_dir):
+        from app.agent.memory.memory_limits import MEMORY_MD_MAX_CHARS
+
+        memory_path = test_dir / "MEMORY.md"
+        result = await write_tool.execute(
+            path=str(memory_path),
+            content="x" * (MEMORY_MD_MAX_CHARS + 10),
+        )
+        assert result["success"] is False
+        assert "容量上限" in result["error"]
+        assert not memory_path.exists()
+
+    @pytest.mark.asyncio
+    async def test_allow_memory_md_within_capacity(self, write_tool, test_dir):
+        memory_path = test_dir / "MEMORY.md"
+        result = await write_tool.execute(
+            path=str(memory_path),
+            content="# 长期记忆 (MEMORY.md)\n\n## 用户偏好\n",
+        )
+        assert result["success"] is True
+        assert memory_path.exists()
