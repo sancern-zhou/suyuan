@@ -162,7 +162,8 @@ class GuangdongWorkOrderFetcher(DataFetcher):
                 cursor.execute(
                     f"""
                     SELECT
-                        id, working_order_code, process_step, process_task_id,
+                        id, working_order_code, process_step,
+                        PROCESSTASKID AS process_task_id,
                         process_user_id, process_start_time, process_end_time,
                         process_status, process_time, expense, submit_remark,
                         description_ta, participate_user_ids, dispatch_status,
@@ -413,10 +414,14 @@ class GuangdongWorkOrderFetcher(DataFetcher):
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT station_id, station_code, station_name, region_id,
-                       longitude, latitude, address, station_type, status,
-                       unique_code, monitor_ip, mapping_station_id,
-                       operation_type, description, create_time
+                SELECT STATIONID AS station_id, CODE AS station_code,
+                       NAME AS station_name, REGIONID AS region_id,
+                       longitude, latitude, address,
+                       DDSTATIONTYPE AS station_type, STATUS AS status,
+                       UNIQUECODE AS unique_code, MonitorIp AS monitor_ip,
+                       MappingStationId AS mapping_station_id,
+                       OperationType AS operation_type,
+                       DESCRIPTION AS description, CREATETIME AS create_time
                 FROM dbo.base_station
                 """
             )

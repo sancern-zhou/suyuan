@@ -187,6 +187,8 @@ class ExecuteGuangdongMartSQLTool(LLMTool):
 
             conn = await asyncpg.connect(self._mart_dsn())
             try:
+                # 契约中的表名为裸名（如 working_orders），指向 guangdong_mart schema。
+                await conn.execute(f"SET search_path TO {MART_SCHEMA}, public")
                 rows = await conn.fetch(statement)
                 truncated = len(rows) > limit
                 results = [dict(r) for r in rows[:limit]]
