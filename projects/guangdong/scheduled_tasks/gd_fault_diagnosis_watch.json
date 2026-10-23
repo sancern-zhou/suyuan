@@ -1,0 +1,39 @@
+{
+  "task_id": "gd_fault_diagnosis_watch",
+  "name": "广东故障工单根因诊断",
+  "description": "每个工作日早上聚类近7天/30天故障工单原因，识别同站点重复故障，结合运维知识图谱候选原因与诊断路径输出根因建议",
+  "execution_mode": "custom",
+  "model_tier": "auto",
+  "tool_names": [
+    "execute_guangdong_mart_sql",
+    "knowledge_graph_query",
+    "execute_python"
+  ],
+  "knowledge_base_binding": "station_fault_diagnosis",
+  "trigger_type": "schedule",
+  "schedule_type": "daily_custom",
+  "hour": 7,
+  "minute": 30,
+  "enabled": true,
+  "prompt": "执行广东故障工单根因诊断扫描，只读本地工单同步数据集与已绑定知识库的图谱检索，不修改任何数据。执行步骤：1) 用本地数据集查询近7天新建的故障类工单（工单类型 Fault 与 SupFault）总量、其中已完成量、按天分布，并与前一个7天对比给出增减。2) 故障原因聚类：统计近7天与近30天故障单的高频故障原因Top10（原因名称、单量、占比、涉及站点数），故障原因取工单明细中填报的报警原因，一张工单取其明细中首个非空原因，避免按流程步骤重复计数。3) 重复故障专项：统计近30天同一站点故障单不少于2张的站点Top10（站点中文名、故障单数、主要原因、涉及设备类型），对其中最严重的3个站点，用知识图谱检索（knowledge_graph_query）查询各自主因的候选原因与诊断路径（如查询'数采卡死 常见原因''站点网络信号异常 诊断'），每次检索必须传入已绑定知识库的ID列表。4) 根因建议：结合图谱返回的候选原因与诊断路径，对高频原因Top3与重复故障Top3站点各给出1-2条可执行的核查建议；明确标注哪些来自知识图谱候选、哪些来自工单统计事实，图谱候选必须注明'候选、需现场核验'。5) 输出：200-400字结论在前（近7天故障总量与增减、最集中的原因、最需关注的重复故障站点、优先核查方向），随后附原因聚类表与重复故障站点表。数据红线：站点无法匹配站点名录时用站点编码原值列出并注明未匹配，不得臆造站名；查询失败或结果为空时如实说明数据缺口，不得输出'无故障'结论；所有数字只来自本轮查询与聚合结果；不输出表名、字段名、SQL、文件路径等内部技术语言。",
+  "timeout_seconds": 900,
+  "created_by": "project-default",
+  "owner_user_id": "system",
+  "owner_username": "gd-fault-diagnosis-agent",
+  "owner_display_name": "广东故障诊断智能体",
+  "tags": [
+    "广东",
+    "故障工单",
+    "根因诊断",
+    "知识图谱",
+    "只读"
+  ],
+  "workspace_entry": {
+    "enabled": true,
+    "title": "故障根因诊断"
+  },
+  "history_learning": {
+    "enabled": false
+  },
+  "skill_id": null
+}
