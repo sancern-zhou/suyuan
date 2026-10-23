@@ -103,7 +103,13 @@ def _smart_event_task_prompt(event_type_dictionary: list[str] | None = None) -> 
         "所有结论（含 P3 和待确认）均须提交；最终回复不参与系统回填。"
         "system_data_impact 是系统初判，ai_task_priority 仅用于调度；冲突时说明证据。"
         "不得把超限或取数失败直接当成数据异常。"
-        "有数据影响必须提交四段分析，增量轮次提交覆盖全部事实的完整结论及连续性依据。"
+        "输出保持简洁，方便人工快速阅读，口径与故障工单审核一致：summary 用一句话给出"
+        "事件类型结论、数据影响和核心原因；comment 固定两段，第一段写明研判结果与处置"
+        "意见，第二段一句话核心原因；四段分析、核验细节、证据缺口与历史案例对照一律写入 "
+        "checks、sections 与 actions，不得塞进 summary 或 comment。"
+        "智能事件只研判事件类型、原因与数据影响，不输出剔除时间段建议，不提交顶层 "
+        "data_impact 数组，数据影响结论以 sections.data_impact 与数据分析区块表达。"
+        "有数据影响必须提交四段分析（写入 sections 数据分析区块），增量轮次提交覆盖全部事实的完整结论及连续性依据。"
         "任务记忆只能形成待核验假设，不得自动关闭告警、派单、归档、修改数据或控制设备。"
     )
     if event_type_dictionary:

@@ -1,20 +1,22 @@
 # 研判结果提交协议
 
-分析完成后调用通用工具 `submit_task_review`。工具校验保存成功后才生成待人工确认或处置事项；最终回复仅用三至四句报告结论与提交结果，不输出用于系统解析的 JSON 代码块。
+分析完成后调用通用工具 `submit_task_review`。工具校验保存成功后才生成待人工确认或处置事项；最终回复仅用两至三句报告结论与提交结果，不输出用于系统解析的 JSON 代码块。
+
+输出口径与故障工单审核一致：用户首屏只读 `summary`，归档弹窗只读 `comment`，两者必须简洁；详细分析全部沉淀在 `checks`、`sections` 与 `actions`。但智能事件只研判事件类型、原因与数据影响，不输出剔除时间段建议。
 
 ## 通用字段
 
 - `subject_id` 与 `event_id`：均为当前智能事件的 `event_id`。重新研判和增量研判沿用同一业务编号。
 - `category`：`智能事件`。
 - `title`：站点名称 + 研判事件类型 + 数据影响。
-- `summary`：三至四句纯文本结论，涵盖现象、核心事实、数据影响和人工核查事项。
+- `summary`：一句话纯文本结论，按"研判结论 + 数据影响 + 核心原因"组织，面向列表和详情首屏快速阅读；不复述证据过程，不罗列核验项。
 - `decision`：需处置时 `needs_action`，证据不足需人工补证时 `needs_evidence`，需人工确认正常结论时 `approve`。
-- `comment`：人工复核建议及需要核验的证据。
+- `comment`：人工复核建议，面向人工快速研判，固定两段：第一段写明研判结果与处置意见（如"建议确认为疑似仪器故障，按 P1 处置并现场核查仪器""建议确认为外界环境影响，无数据影响，归档即可"）；第二段用一句话说明核心原因。现象复述、四段分析、核验过程、证据缺口与历史案例对照一律写入 `checks`、`sections` 与 `actions`，不得塞进 `summary` 或 `comment`。
 - `checks`：至少一个核验项。包含 `name`、`status`（`pass/fail/uncertain/not_applicable`）、非空 `basis`；可选 `scope`（`core/supporting/rebuttal`）和 `missing_evidence`。
 - `review_basis`：本次判断依据。
 - `actions`：处置建议数组。
 - `evidence`：证据包或图表等文件，格式 `{"label":"证据说明","path":"已存在的数据目录文件路径"}`。
-- 顶层 `data_impact`（数组，不是下文同名的影响结论字符串）：有明确污染物数据处置建议时填写。每项包含 `pollutant`、`decision`、`basis`；需要时间区间时提供含时区且开始不晚于结束的 `start/end`。剔除建议额外提供 `boundary_sources`、`reasonableness_status` 和 `reasonableness_basis`。尚不能确定区间时用 `needs_evidence`，不要捏造时间。
+- 不提交顶层 `data_impact` 数组，也不输出剔除时间段建议：剔除时段属工单审核职责，智能事件的数据影响结论只用 `sections.data_impact`（有数据影响、无数据影响、待确认）和"数据分析"区块表达。
 
 ## 详情区块
 
