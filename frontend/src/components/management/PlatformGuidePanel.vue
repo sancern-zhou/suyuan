@@ -6,7 +6,7 @@
     </div>
 
     <div class="guide-body">
-      <section class="guide-section">
+      <section v-if="usageModes.length" class="guide-section">
         <h4 class="guide-title">如何选择使用模式</h4>
         <div class="mode-grid">
           <div v-for="mode in usageModes" :key="mode.name" class="mode-card">
@@ -15,12 +15,9 @@
             <p class="mode-example">"{{ mode.example }}"</p>
           </div>
         </div>
-        <p class="mode-motto">
-          选择口诀：要数字 → 问数生图　｜　问依据 → 知识问答　｜　查原因 → 专家分析　｜　要交付 → 报告生成
-        </p>
-      </section>
+        <p v-if="modeMotto" class="mode-motto">{{ modeMotto }}</p>      </section>
 
-      <section class="guide-section">
+      <section v-if="dataSourceGroups.length" class="guide-section">
         <h4 class="guide-title">数据接入情况</h4>
         <p class="guide-subtitle">以下为平台当前已接入的数据类别与实际可用时间范围，可直接在对话中查询使用。</p>
 
@@ -52,6 +49,10 @@
           </div>
         </div>
       </section>
+
+      <p v-if="!usageModes.length && !dataSourceGroups.length" class="guide-empty">
+        共享版本不内置使用说明，内容由各项目分支按实际模式与数据接入情况维护。
+      </p>
     </div>
   </div>
 </template>
@@ -59,172 +60,10 @@
 <script setup>
 defineEmits(['close'])
 
-const usageModes = [
-  {
-    name: '问数生图',
-    desc: '自然语言查数据，可自动绘制趋势、对比等图表。',
-    example: '查 9 月 1—7 日 PM2.5 日均值并画趋势图'
-  },
-  {
-    name: '知识问答',
-    desc: '检索政策文件与技术规范，业务解读可追溯。',
-    example: '环境空气质量新旧标准的差别？'
-  },
-  {
-    name: '专家分析',
-    desc: '综合气象、站点、排放清单等多领域研判成因。',
-    example: '昨晚 PM2.5 抬升是局地还是区域输送？'
-  },
-  {
-    name: '报告生成',
-    desc: '自主规划任务、调度其他模式，产出正式文档，耗时一般 10 分钟以上。',
-    example: '分析 11—12 月气象条件与污染物相关性'
-  }
-]
-
-const dataSourceGroups = [
-  {
-    title: '空气质量监测数据',
-    rows: [
-      {
-        name: '许昌市空气质量小时（中大平台）',
-        granularity: '1 小时',
-        range: '2022-01-01 至今',
-        desc: '城市 AQI、首要污染物、6 项污染物浓度；时间跨度最长，适合长期趋势'
-      },
-      {
-        name: '许昌市空气质量日（中大平台）',
-        granularity: '1 日',
-        range: '2022-01-01 至今',
-        desc: '城市日均浓度、AQI、达标情况；适合年度/季度对比'
-      },
-      {
-        name: '许昌市国控站 5 分钟（中大平台）',
-        granularity: '5 分钟',
-        range: '2026-08-26 至今',
-        desc: 'PM₁₀、SO₂、NO₂、CO、O₃、NOₓ；站点快速告警的主要输入'
-      },
-      {
-        name: '许昌市国控站小时（中大平台）',
-        granularity: '1 小时',
-        range: '2026-01-01 至今',
-        desc: '6 个国控站逐小时浓度；PM₂.₅ 告警判定使用该源'
-      },
-      {
-        name: '许昌市国控站日（中大平台）',
-        granularity: '1 日',
-        range: '2026-01-01 至今',
-        desc: '国控站日数据，发布比小时数据晚约 1 天'
-      },
-      {
-        name: '乡镇站小时',
-        granularity: '1 小时',
-        range: '2026-01-01 至今',
-        desc: '76 个乡镇/街道站；用于国控点的污染趋势分析（受接口限制部分时间数据还有缺失，目前在逐步回补）'
-      },
-      {
-        name: '乡镇站日',
-        granularity: '1 日',
-        range: '2026-01-01 至今',
-        desc: '76 个乡镇/街道站；用于国控点的污染趋势分析'
-      },
-      {
-        name: '全省城市数据（发布数据）',
-        granularity: '小时、日',
-        range: '2026-10-10 至今',
-        desc: '全省 18 个城市的小时和日数据及排名查询'
-      },
-      {
-        name: '全省区县数据（发布数据）',
-        granularity: '小时、日',
-        range: '2026-10-10 至今',
-        desc: '全省 190 个区县的小时和日数据及排名查询'
-      },
-      {
-        name: '许昌市月度报表（中大平台）',
-        granularity: '月',
-        range: '2021年7月至今',
-        desc: '城市污染物浓度均值、评价用百分位浓度、分指数与综合指数、空气质量等级分布、总体天数与达标情况、浓度极值、单项达标统计、各污染物超标与污染级别天数、分污染物有效天数与超标率、超标城市统计（区域对比用）、超标强度、单项/唯一超标天数、首要污染物统计等指标查询，支持新旧标准对比'
-      },
-      {
-        name: '许昌市年度报表（中大平台）',
-        granularity: '年',
-        range: '2021年至今',
-        desc: '年度空气质量综合报表查询'
-      },
-      {
-        name: '许昌市 PM2.5 年均值（中大平台）',
-        granularity: '年',
-        range: '2021年至今',
-        desc: '该年 PM2.5 实际统计年均浓度（μg/m³）'
-      }
-    ]
-  },
-  {
-    title: '气象与空气质量预报数据',
-    rows: [
-      {
-        name: '许昌气象实况',
-        granularity: '1 小时',
-        range: '2024-12-31 至今',
-        desc: '温度、湿度、风向/风速、气压、降水'
-      },
-      {
-        name: '气象再分析（边界层高度、云量等）',
-        granularity: '1 小时',
-        range: '2025-07-31 至今',
-        desc: '模式/再分析数据，不是地面站实测'
-      },
-      {
-        name: 'NMC 许昌小时预报',
-        granularity: '3 小时',
-        range: '未来 7 天滚动',
-        desc: '逐 3 小时的气温、湿度、风向/风速、降水概率'
-      },
-      {
-        name: '中国天气网日预报',
-        granularity: '1 日',
-        range: '未来 15 天',
-        desc: '第 8—15 天为趋势展望，精度低于前 7 天'
-      },
-      {
-        name: '空气质量预报（空气质量发布 APP）',
-        granularity: '1 日',
-        range: '未来 7 天',
-        desc: 'AQI 范围、等级、首要污染物（来源为环境监测总站）'
-      }
-    ]
-  },
-  {
-    title: '企业门禁、排放和知识资料',
-    rows: [
-      {
-        name: '企业门禁数据',
-        granularity: '日',
-        range: '2026年4月14日 至今',
-        desc: '各企业违规次数、违规车辆特征'
-      },
-      {
-        name: '企业排放源清单',
-        granularity: '年度静态',
-        range: '清单版本 2026-09',
-        desc: '约 2300 家有坐标企业'
-      },
-      {
-        name: '排污许可证资料',
-        granularity: '静态',
-        range: '1328 家',
-        desc: '许昌市许可证企业身份、许可污染物、许可附件'
-      },
-      {
-        name: '项目知识库',
-        granularity: '—',
-        range: '持续更新',
-        desc: '知识问答、报告口径和业务解释；公开的技术规范、标准、政策文件和已授权资料'
-      }
-    ]
-  }
-]
+// 共享段不内置任何项目定制内容：模式介绍、口诀与数据接入表由各项目分支维护。
+const usageModes = []
+const dataSourceGroups = []
+const modeMotto = ''
 </script>
 
 <style scoped>
@@ -286,6 +125,13 @@ const dataSourceGroups = [
 
 .guide-subtitle {
   margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.guide-empty {
+  margin: 40px 0;
+  text-align: center;
   font-size: 13px;
   color: var(--text-2);
 }

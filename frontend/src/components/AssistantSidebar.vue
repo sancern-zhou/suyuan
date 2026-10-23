@@ -69,6 +69,7 @@
           </div>
         </button>
         <button
+          v-if="showSharedConversations"
           class="module-card"
           :class="{ active: isActive('shared-conversations') }"
           type="button"
@@ -599,7 +600,8 @@ const allModules = [
     abbr: '共享',
     desc: '浏览大家分享的有价值对话',
     badge: '共享',
-    isAction: true
+    isAction: true,
+    requiredModule: 'shared-conversations'
   },
   {
     id: 'social-platform',
@@ -623,6 +625,9 @@ const allModules = [
 ]
 
 const modules = filterSidebarModules(allModules, projectConfig.hasModule)
+
+// 共享对话按项目模块声明显隐：project.yaml modules 含 shared-conversations 才展示。
+const showSharedConversations = projectConfig.hasModule('shared-conversations')
 
 const SIDEBAR_AGENT_MODE_ENTRIES = {
   query: { action: 'query-dashboard', title: '智能问数', icon: 'query-dashboard' },
