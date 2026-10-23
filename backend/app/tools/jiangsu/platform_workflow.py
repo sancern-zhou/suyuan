@@ -19,12 +19,10 @@ previous node with ``submitRemark`` carrying the reviewer's opinion.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import datetime
 from typing import Any
 
-import httpx
 import structlog
 
 from app.tools.jiangsu.fault_diagnosis import (
@@ -209,7 +207,7 @@ async def submit_review_decision(
                     action=action_name, node=step.get("taskName"))
         return _result("synced", code, action_name,
                        f"{step.get('taskName') or '审核节点'}{outcome}")
-    except (ValueError, httpx.HTTPError, asyncio.TimeoutError) as exc:
+    except Exception as exc:  # noqa: BLE001 - 契约承诺永不抛出，意外异常也落成 failed 描述符
         logger.warning("jiangsu_platform_writeback_failed", work_order_code=code,
                        action=action_name, error=str(exc))
         return _result("failed", code, action_name, f"平台写回失败：{exc}")
@@ -311,7 +309,10 @@ async def create_smart_event_dispatch_order(
             "issuedType": issued,
         }
         await api.post(_CREATE_ORDER_PATH, payload)
-        created_at = datetime.now().astimezone()
+        # resolve_created_order_code 内部与平台返回的 naive createTime 比较，
+        # created_after 必须同为 naive 本地时间（与既有派单路由/rehearsal 一致），
+        # 否则 aware/naive 比较抛 TypeError 且发生在建单之后。
+        created_at = datetime.now()
         order_code = await resolve_created_order_code(
             unique_code=station.get("unique_code") or "",
             order_title=payload["orderTitle"],
@@ -323,7 +324,7 @@ async def create_smart_event_dispatch_order(
                        f"平台工单已创建（{order_code or '工单号回查中'}）",
                        station=station, device_id=device["device_id"],
                        urgency_type=urgency, issued_types=issued)
-    except (ValueError, httpx.HTTPError, asyncio.TimeoutError) as exc:
+    except Exception as exc:  # noqa: BLE001 - 契约承诺永不抛出，意外异常也落成 failed 描述符
         logger.warning("jiangsu_smart_event_dispatch_create_failed", event_id=event_id,
                        error=str(exc))
         return _result("failed", "", action_name, f"平台工单创建失败：{exc}")

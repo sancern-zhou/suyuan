@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -169,6 +170,46 @@ def test_create_smart_event_dispatch_order_failure_is_reported(service, tmp_path
         event_id="evt-1", site_id="未知站", title="派单"))
     assert result["status"] == "failed"
     assert "平台工单创建失败" in result["detail"]
+
+
+def test_create_smart_event_dispatch_order_resolves_code_with_platform_naive_time(
+        service, tmp_path, monkeypatch):
+    """回归：建单后按平台返回的 naive createTime 回查工单号，不得因 aware/naive 比较抛错。"""
+    from app.tools.jiangsu import platform_workflow as module
+    import app.tools.jiangsu.work_order_dispatch as dispatch_module
+
+    real_resolve = dispatch_module.resolve_created_order_code
+    monkeypatch.setattr(module, "get_data_registry", lambda: tmp_path)
+    _patch_platform_helpers(
+        monkeypatch,
+        station={"station_code": "3203A", "station_name": "示范站", "unique_code": "320382004"},
+        devices=[{"device_id": 11, "label": "颗粒物分析仪"}],
+        order_code=None,
+    )
+    # 覆盖默认打桩：回查工单号这一步走真实 resolve_created_order_code
+    monkeypatch.setattr("app.tools.jiangsu.work_order_dispatch.resolve_created_order_code",
+                        real_resolve)
+
+    class RecentOrdersApi:
+        async def get(self, path, params):
+            created = (datetime.now() - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+            return {"result": [{"wo": {
+                "orderTitle": "示范站仪器故障处置",
+                "createTime": created,
+                "workingOrderCode": "FA2601",
+            }}]}
+
+        async def post(self, path, payload):
+            return {"result": True}
+
+    monkeypatch.setattr("app.tools.jiangsu.work_order_dispatch._JiangsuAuthenticatedApi",
+                        lambda source: RecentOrdersApi())
+
+    result = asyncio.run(module.create_smart_event_dispatch_order(
+        event_id="evt-1", site_id="320382004", site_name="示范站",
+        title="示范站仪器故障处置"))
+    assert result["status"] == "synced"
+    assert result["work_order_code"] == "FA2601"
 
 
 def test_platform_sync_fetcher_dedupes_by_signature(tmp_path, monkeypatch):

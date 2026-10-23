@@ -128,6 +128,77 @@ def test_record_operation_archive_without_review(isolated_registry):
     assert doc["entry"]["status"] == "已归档"
 
 
+def test_apply_human_decision_records_platform_sync_operation(isolated_registry, monkeypatch):
+    from config.settings import settings
+    from app.services.jiangsu_work_order_review import apply_human_decision
+    from app.tools.jiangsu import platform_workflow as platform_module
+
+    code = "FA260914178938611578927"
+    save_evidence(_sample_package(code))
+    monkeypatch.setattr(settings, "jiangsu_platform_writeback_enabled", True)
+
+    calls = []
+
+    async def fake_submit(work_order_code, *, action, approved, comment=""):
+        calls.append((work_order_code, action, approved, comment))
+        return {"status": "synced", "action": action, "work_order_code": code,
+                "detail": "省中心审核节点通过，工单闭环", "at": "2026-10-23T12:00:00+08:00"}
+
+    monkeypatch.setattr(platform_module, "submit_review_decision", fake_submit)
+
+    apply_human_decision(
+        {"subject_id": code},
+        {"action": "confirm", "comment": "审核通过", "actor": {"username": "ops"}})
+
+    assert calls == [(code, "confirm", True, "审核通过")]
+    operations = get_order(code)["index"]["operations"]
+    assert operations[-1]["action"] == "platform_sync"
+    assert operations[-1]["label"] == "平台同步成功"
+    assert operations[-1]["platform"]["sync_status"] == "synced"
+
+
+def test_apply_human_decision_skips_platform_writeback_when_disabled(isolated_registry, monkeypatch):
+    """开关关闭时 submit_review_decision 返回 disabled 描述符，证据包不落 platform_sync 操作。"""
+    from app.services.jiangsu_work_order_review import apply_human_decision
+
+    code = "FA260914178938611578927"
+    save_evidence(_sample_package(code))
+
+    apply_human_decision(
+        {"subject_id": code},
+        {"action": "confirm", "comment": "审核通过", "actor": {"username": "ops"}})
+
+    operations = get_order(code)["index"]["operations"]
+    assert [op["action"] for op in operations] == ["confirm"]
+
+
+def test_apply_human_decision_skips_writeback_inside_running_loop(isolated_registry, monkeypatch):
+    import asyncio
+
+    from config.settings import settings
+    from app.services.jiangsu_work_order_review import apply_human_decision
+    from app.tools.jiangsu import platform_workflow as platform_module
+
+    code = "FA260914178938611578927"
+    save_evidence(_sample_package(code))
+    monkeypatch.setattr(settings, "jiangsu_platform_writeback_enabled", True)
+
+    async def unexpected_submit(*_args, **_kwargs):
+        raise AssertionError("事件循环内不应触达平台写回")
+
+    monkeypatch.setattr(platform_module, "submit_review_decision", unexpected_submit)
+
+    async def drive():
+        apply_human_decision(
+            {"subject_id": code},
+            {"action": "reject", "comment": "退回", "actor": {"username": "ops"}})
+
+    asyncio.run(drive())
+
+    operations = get_order(code)["index"]["operations"]
+    assert [op["action"] for op in operations] == ["reject"]
+
+
 def test_save_evidence_preserves_human_state(isolated_registry):
     save_evidence(_sample_package())
     record_operation("FA260914178938611578927", "archive", "人工确认", {"username": "ops"})
