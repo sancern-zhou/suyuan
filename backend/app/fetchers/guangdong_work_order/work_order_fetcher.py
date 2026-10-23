@@ -89,7 +89,11 @@ class GuangdongWorkOrderFetcher(DataFetcher):
         watermark = await mart.fetchval(
             "SELECT watermark FROM guangdong_sync.sync_watermark WHERE dataset = 'working_orders'"
         )
-        start: datetime = watermark or (now - timedelta(days=BACKFILL_MONTHS * 30))
+        if watermark is not None:
+            # 水位列是 timestamptz（读回带 tzinfo）；窗口边界统一用 naive 本地时间。
+            start: datetime = watermark.astimezone().replace(tzinfo=None)
+        else:
+            start = now - timedelta(days=BACKFILL_MONTHS * 30)
         end = now
         logger.info(
             "gd_work_order_sync_window",
