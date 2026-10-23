@@ -9,6 +9,8 @@ from app.tools.task_management.submit_task_review import SubmitTaskReviewTool
 def registry(tmp_path, monkeypatch):
     monkeypatch.setattr(service, 'get_data_registry', lambda: tmp_path)
     monkeypatch.setattr('app.tools.resource_declarations.get_data_registry', lambda: tmp_path)
+    # 决策对话反馈钩子（写执行会话/反馈队列）在独立模块测试，这里保持决策单测纯净。
+    monkeypatch.setattr(service, '_notify_work_order_review_decision', lambda *args, **kwargs: None)
 
 
 def payload(**changes):
@@ -107,15 +109,33 @@ def test_concurrent_submit_produces_one_record():
     assert len(service.list_reviews()) == 1
 
 
-def test_disposal_lifecycle_and_category():
+def test_decision_actions_collapsed_to_confirm_reject():
     record = service.submit_review(payload(), source())
-    decision = {**human(record), 'action': 'start_disposal', 'decision': 'needs_action'}
-    record = service.decide_review(record['review_id'], decision, {})
-    assert service.list_reviews(category='工单审核')[0]['status'] == 'in_disposal'
+    # 转入处置已下线
+    with pytest.raises(ValueError, match='转入处置'):
+        service.decide_review(record['review_id'],
+                              {**human(record), 'action': 'start_disposal', 'decision': 'needs_action'}, {})
+    # 退回必须说明原因
+    with pytest.raises(ValueError, match='退回工单必须'):
+        service.decide_review(record['review_id'],
+                              {**human(record), 'action': 'reject', 'comment': '   '}, {})
+    rejected = service.decide_review(record['review_id'],
+                                     {**human(record), 'action': 'reject', 'comment': '证据不足退回'}, {})
+    assert rejected['status'] == 'rejected'
+    # 结论轴由动作推导，与前端传入值无关
+    assert rejected['human_decision']['decision'] == 'reject'
     assert not service.list_reviews(category='智能事件')
-    with pytest.raises(ValueError):
-        service.decide_review(record['review_id'], human(record), {})
-    record = service.decide_review(record['review_id'], {**human(record), 'action': 'complete'}, {})
+
+
+def test_legacy_complete_alias_confirms_and_feedback_written_for_confirm():
+    record = service.submit_review(payload(), source())
+    # complete 是旧别名，归一化为 confirm（确认归档）
+    record = service.decide_review(record['review_id'],
+                                   {**human(record), 'action': 'complete', 'decision': 'needs_action'}, {})
+    assert record['status'] == 'archived'
+    assert record['human_decision']['action'] == 'confirm'
+    assert record['human_decision']['decision'] == 'approve'
+    # 确认归档同样写入人工反馈（供案例库/记忆学习）
     assert record['human_feedback']['status'] == 'pending'
     assert not service.list_reviews()
 

@@ -104,15 +104,16 @@ def _decision_via_task_review(code: str, payload: WorkOrderReviewOperationReques
     if record is None:
         return False
     action = "confirm" if payload.action == "archive" else "reject"
-    allowed = {"pending_review": {"confirm", "reject", "start_disposal"},
-               "in_disposal": {"complete", "reject"}}
+    if action == "reject" and not str(payload.comment or "").strip():
+        raise HTTPException(422, "退回工单必须填写审核意见说明原因")
+    allowed = {"pending_review": {"confirm", "reject"}, "in_disposal": {"confirm", "reject"}}
     if action not in allowed.get(record.get("status"), set()):
         raise HTTPException(409, f"当前审核状态 {record.get('status')} 不允许 {payload.action}")
     decision = {
         "version": record["version"],
         "action": action,
         "decision": "approve" if action == "confirm" else "reject",
-        "comment": payload.comment or ("人工归档确认" if action == "confirm" else "人工退回"),
+        "comment": payload.comment or ("人工归档确认" if action == "confirm" else ""),
         "data_impact": record.get("data_impact") or [],
         "intervals_confirmed": payload.intervals_confirmed,
     }

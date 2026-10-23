@@ -95,11 +95,21 @@ class ReviewSubmission(ReviewModel):
 
 class HumanDecision(ReviewModel):
     version: int = Field(ge=1)
-    action: Literal["confirm", "reject", "start_disposal", "complete"]
-    decision: Literal["approve", "reject", "needs_evidence", "needs_action"]
-    comment: str = Field(min_length=1, max_length=4000)
+    # 人工决策已收敛为两个流转动作：confirm（确认归档，闭环）/ reject（退回工单，平台打回重新填报）。
+    # complete/archive 是旧前端的别名，服务端归一化为 confirm；start_disposal（转入处置）已下线。
+    # decision（结论轴）由 action 推导，不再由前端单独选择。
+    action: Literal["confirm", "reject", "start_disposal", "complete", "archive"]
+    decision: Literal["approve", "reject", "needs_evidence", "needs_action"] | None = None
+    # 确认归档允许无意见；退回工单必须在 decide_review 里校验非空。
+    comment: str = Field(default="", max_length=4000)
     data_impact: list[DataImpact]
     intervals_confirmed: bool = False
+
+
+# 动作归一化：旧动作别名 → 现行两动作；结论轴由 action 推导。
+_ACTION_ALIASES = {"complete": "confirm", "archive": "confirm"}
+_ACTION_DECISIONS = {"confirm": "approve", "reject": "reject"}
+_REVIEW_ACTION_STATUSES = {"confirm": "archived", "reject": "rejected"}
 
 
 def _storage_mode() -> str:
@@ -506,36 +516,48 @@ def submit_review(payload, source):
 
 def decide_review(review_id, payload, actor):
     decision = HumanDecision.model_validate(payload).model_dump(mode="json")
+    raw_action = str(decision.get("action") or "")
+    action = _ACTION_ALIASES.get(raw_action, raw_action)
+    decision["action"] = action
+    if raw_action == "start_disposal":
+        raise ValueError("转入处置已下线：请选择确认归档，或退回工单由运维重新填报")
+    # 结论轴由流转动作推导，前端不再单独选择（人工结论与流转动作一一对应）。
+    decision["decision"] = _ACTION_DECISIONS[action]
     with review_lock(review_id):
         record = load_review(review_id)
         if record is None:
             raise KeyError(review_id)
         if record["version"] != decision["version"]:
             raise ValueError("结果已更新，请刷新后审核")
-        allowed = {"pending_review": {"confirm", "reject", "start_disposal"}, "in_disposal": {"complete", "reject"}}
-        if decision["action"] not in allowed.get(record["status"], set()):
+        allowed = {"pending_review": {"confirm", "reject"}, "in_disposal": {"confirm", "reject"}}
+        if action not in allowed.get(record["status"], set()):
             raise ValueError("当前状态不允许此操作")
-        if decision["action"] in {"confirm", "complete"}:
+        if action == "reject" and not str(decision.get("comment") or "").strip():
+            raise ValueError("退回工单必须填写审核意见说明原因")
+        if action == "confirm":
             exclusions = any(item["decision"] in {"exclude", "partial_exclude"}
                              for item in [*record["data_impact"], *decision["data_impact"]])
             if exclusions and not decision["intervals_confirmed"]:
                 raise ValueError("涉及数据剔除，必须人工核验时间区间与合理性")
         now = datetime.now().astimezone().isoformat()
-        record["status"] = {"confirm": "archived", "reject": "rejected", "start_disposal": "in_disposal", "complete": "archived"}[decision["action"]]
+        record["status"] = _REVIEW_ACTION_STATUSES[action]
         record["human_decision"] = {**decision, "actor": actor, "occurred_at": now}
         record.setdefault("operations", []).append(record["human_decision"])
         record["updated_at"] = now
         record["version"] += 1
-        if decision["action"] != "start_disposal":
-            record["human_feedback"] = {
-                "feedback_id": f"human_{review_id}_{record['version']}", "task_id": record["task_id"],
-                "review_id": review_id, "event_id": record.get("event_id"),
-                "subject_id": record["subject_id"], "occurred_at": now, "actor": actor,
-                "comment": decision["comment"], "ai": record["submission"], "human": decision,
-                "status": "pending", "attempts": 0,
-            }
+        record["human_feedback"] = {
+            "feedback_id": f"human_{review_id}_{record['version']}", "task_id": record["task_id"],
+            "review_id": review_id, "event_id": record.get("event_id"),
+            "subject_id": record["subject_id"], "occurred_at": now, "actor": actor,
+            "comment": decision["comment"], "ai": record["submission"], "human": decision,
+            "status": "pending", "attempts": 0,
+        }
         save_review(record)
         _sync_work_order_review(record, decision)
+        if is_work_order_review(record):
+            # 审核决策（确认归档/退回）同时写入原审核会话的反馈记录，
+            # 并在结论不一致时排队一次对话反馈确认轮（worker 每分钟派发）。
+            _notify_work_order_review_decision(record, decision, actor)
         if decision["action"] == "reject":
             # 智能事件人工退回后自动触发以审核意见为基准的增量 AI 研判；
             # 钩子内部自行隔离异常，退回动作本身永不因此失败。
@@ -545,19 +567,93 @@ def decide_review(review_id, payload, actor):
                 queue_review_reject_rerun(record, decision, actor)
             except Exception as exc:
                 logger.warning("smart_event_review_reject_rerun_hook_failed", error=str(exc))
-            # 故障工单审核退回后同样排队一次以人工意见为基准的增量复审，
-            # 由 worker 侧 jiangsu_fault_work_order_review_rerun 抓取器派发。
-            try:
-                from app.services.jiangsu_fault_work_order_review_rerun import (
-                    queue_fault_work_order_review_rerun,
-                )
-
-                queue_fault_work_order_review_rerun(record, decision, actor)
-            except Exception as exc:
-                logger.warning(
-                    "fault_work_order_review_reject_rerun_hook_failed", error=str(exc),
-                )
         return record
+
+
+def _notify_work_order_review_decision(record, decision, actor) -> None:
+    """故障工单审核决策的对话反馈：先写会话记录，再按需排队一致性确认。
+
+    两个钩子都尽力而为：失败只告警，绝不影响决策主流程。
+    """
+    session_id = None
+    try:
+        session_id = _append_review_session_record(record, decision, actor)
+    except Exception as exc:
+        logger.warning("work_order_review_session_record_failed", error=str(exc),
+                       review_id=record.get("review_id"))
+    try:
+        from app.services.jiangsu_fault_work_order_review_feedback import (
+            queue_work_order_review_feedback,
+        )
+
+        queue_work_order_review_feedback(record, decision, actor, session_id=session_id)
+    except Exception as exc:
+        logger.warning("work_order_review_feedback_hook_failed", error=str(exc),
+                       review_id=record.get("review_id"))
+
+
+async def _db_review_execution_session_id(execution_id: str) -> str | None:
+    from sqlalchemy import select
+
+    from app.db.models.scheduled_task_execution_db import ScheduledTaskExecutionDB
+    from app.db.sync_bridge import bridge_session
+
+    async with bridge_session() as session:
+        row = await session.execute(
+            select(ScheduledTaskExecutionDB.session_id)
+            .where(ScheduledTaskExecutionDB.execution_id == execution_id)
+        )
+        value = str(row.scalar() or "").strip()
+        if not value or len(value) > 255 or any(ch in value for ch in "/\\"):
+            return None
+        return value
+
+
+async def _db_append_review_session_message(session_id: str, message: dict) -> None:
+    from app.db.session_repository import SessionRepository
+
+    await SessionRepository().add_message(session_id, message)
+
+
+def _append_review_session_record(record, decision, actor) -> str | None:
+    """把人工审核决策作为一条消息写进原执行会话，「进入对话区」即可看到反馈记录。
+
+    返回解析到的会话 ID（供反馈确认队列复用）；会话不存在时返回 None。
+    """
+    if not _use_db():
+        return None
+    from app.db.sync_bridge import run_db
+
+    execution_id = str(record.get("execution_id") or "").strip()
+    session_id = run_db(_db_review_execution_session_id(execution_id)) if execution_id else None
+    if not session_id:
+        return None
+    run_db(_db_append_review_session_message(session_id, _review_session_message(record, decision, actor)))
+    return session_id
+
+
+def _review_session_message(record, decision, actor) -> dict:
+    action = str(decision.get("action") or "")
+    label = "确认归档" if action == "confirm" else "退回工单"
+    username = (actor or {}).get("username") or "审核员"
+    comment = str(decision.get("comment") or "").strip()
+    ai_decision = (record.get("submission") or {}).get("decision")
+    ai_label = {"approve": "建议通过", "reject": "建议退回",
+                "needs_evidence": "需要补证", "needs_action": "需要处置"}.get(str(ai_decision), "—")
+    lines = [
+        f"【人工审核反馈】{username} 对工单 {record.get('subject_id')} 做出审核决策：{label}。",
+        f"AI 原结论：{ai_label}；审核意见：{comment or '（无补充说明）'}。",
+        "确认归档=平台工单审核节点通过并闭环；退回工单=平台打回上一节点，由运维人员重新填报。",
+    ]
+    if action == "reject" or str(ai_decision) != "approve":
+        lines.append("结论与 AI 原结论存在分歧，系统将自动生成一致性确认并写入本会话；分歧经验沉淀到案例库与长期记忆。")
+    return {
+        "type": "user",
+        "content": "\n".join(lines),
+        "data": {"source": "work_order_review_decision", "review_id": record.get("review_id"),
+                 "action": action},
+        "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
 
 
 def review_visual(record):

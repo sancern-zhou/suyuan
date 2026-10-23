@@ -25,26 +25,34 @@ export const CHECK_SCOPE_LABELS = {
 }
 
 export const DECISION_LABELS = {
+  approve: '建议通过',
   pass: '通过',
   confirm: '通过',
   reject: '退回',
   needs_evidence: '退回补证',
+  needs_action: '需要处置',
 }
 
+// 与后端 DataImpact.decision 六值一一对应（勿再引入 include/none/pending 等旧值）。
 export const DATA_IMPACT_LABELS = {
-  exclude: '剔除',
+  keep: '保留',
   partial_exclude: '部分剔除',
-  include: '保留',
-  none: '无影响',
-  pending: '待确认',
+  exclude: '剔除',
+  missing_no_delete: '缺失无需剔除',
+  not_applicable: '不适用',
+  needs_evidence: '需要补证',
 }
 
+// 人工决策现行为 confirm（确认归档）/ reject（退回工单）；feedback/archive/reopen/start_disposal
+// 仅用于渲染历史操作记录，不再产生新记录。
 export const OPERATION_ACTION_LABELS = {
+  confirm: '归档',
+  complete: '处置完成',
+  start_disposal: '转入处置',
   feedback: '反馈',
   archive: '归档',
   reject: '退回',
   reopen: '重新打开',
-  start_disposal: '转入处置',
 }
 
 export const WORK_ORDER_FACT_LABELS = {

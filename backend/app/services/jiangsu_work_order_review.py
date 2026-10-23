@@ -43,11 +43,12 @@ _DECISION_LABELS = {
     "needs_evidence": "需要补证",
     "needs_action": "需要处置",
 }
+# 人工决策已收敛为 confirm（确认归档）/ reject（退回工单）两个动作；
+# complete/archive 是旧别名（服务端归一化为 confirm），仅保留兼容历史操作记录。
 _HUMAN_ACTION_STATUS = {
     "confirm": "已归档",
     "complete": "已归档",
     "reject": "已退回",
-    "start_disposal": "处置中",
     "archive": "已归档",
 }
 
@@ -296,8 +297,7 @@ def apply_human_decision(review: dict[str, Any], decision: dict[str, Any]) -> di
         package["status"] = _HUMAN_ACTION_STATUS.get(action, package.get("status") or "待审核")
         package.setdefault("operations", []).append({
             "action": action,
-            "label": {"confirm": "归档", "complete": "处置完成", "reject": "退回",
-                      "start_disposal": "转入处置"}.get(action, action),
+            "label": {"confirm": "归档", "reject": "退回"}.get(action, action),
             "comment": decision.get("comment") or "",
             "actor": decision.get("actor"),
             "at": _now(),

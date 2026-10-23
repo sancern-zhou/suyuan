@@ -42,10 +42,10 @@
       <section v-if="leanMode" class="review-section conclusion"><h3>AI 结论 <span>{{ decisions[review.decision] }}</span></h3><p class="text">{{ review.comment }}</p></section>
       <p v-if="leanMode" class="lean-hint">事件脉络与完整审核依据、原始监测数据，请到工单审核工作台或对话工作区查看。</p>
       <form v-if="editable" @submit.prevent>
-        <h3>人工处理</h3><label>最终结论<select v-model="form.decision" :disabled="submitting"><option v-for="(label, value) in decisions" :key="value" :value="value">{{ label }}</option></select></label>
-        <label>审核意见<textarea v-model="form.comment" :disabled="submitting" required maxlength="4000" /></label>
+        <h3>人工处理</h3>
+        <label>审核意见（退回工单必填，说明原因）<textarea v-model="form.comment" :disabled="submitting" :required="false" maxlength="4000" placeholder="确认归档可不填；退回工单必须说明原因，意见将随工单打回给运维人员" /></label>
         <label v-if="requiresConfirmation"><input v-model="form.intervals_confirmed" type="checkbox" :disabled="submitting" />已核验结论中涉及的数据剔除区间及合理性</label>
-        <footer><template v-if="review.status === 'pending_review'"><button :disabled="submitting" @click="submit('confirm')">确认归档</button><button :disabled="submitting" @click="submit('start_disposal')">转入处置</button></template><button v-else :disabled="submitting" @click="submit('complete')">处置完成</button><button :disabled="submitting" @click="submit('reject')">退回修改</button></footer>
+        <footer><button :disabled="submitting" @click="submit('confirm')">确认归档</button><button :disabled="submitting" @click="submit('reject')">退回工单</button></footer>
       </form>
       <section v-if="review.human_decision" class="review-section human-record"><h3>人工处理记录</h3><p>{{ review.human_decision.actor.username }} · {{ review.human_decision.occurred_at }}</p><p>{{ review.human_decision.comment }}</p></section>
     </template>
@@ -63,8 +63,8 @@ import { fetchReviewEvidenceUrl, getTaskReview, decideTaskReview, downloadReview
 const props = defineProps({ reviewId: { type: String, required: true }, compact: { type: Boolean, default: false } })
 const emit = defineEmits(['updated'])
 const review = ref(null), loading = ref(false), submitting = ref(false), error = ref('')
-const form = ref({ decision: 'approve', comment: '', data_impact: [], intervals_confirmed: false })
-const statuses = { pending_review: '待人工确认', in_disposal: '待处置', archived: '已归档', rejected: '已退回' }
+const form = ref({ comment: '', data_impact: [], intervals_confirmed: false })
+const statuses = { pending_review: '待人工确认', in_disposal: '待处置(已下线)', archived: '已归档', rejected: '已退回' }
 const decisions = { approve: '建议通过', reject: '建议退回', needs_evidence: '需要补证', needs_action: '需要处置' }
 const checkStatuses = { pass: '通过', fail: '未通过', uncertain: '不确定', not_applicable: '不适用' }
 const impactDecisions = { keep: '保留', partial_exclude: '部分剔除', exclude: '剔除', missing_no_delete: '缺失无需剔除', not_applicable: '不适用', needs_evidence: '需要补证' }
@@ -125,17 +125,19 @@ onBeforeUnmount(releaseAttachmentImages)
 function populate(value) {
   review.value = value
   const human = value.human_decision
-  form.value = { decision: human?.decision || value.decision, comment: human?.comment || '', data_impact: structuredClone(human?.data_impact || value.data_impact), intervals_confirmed: false }
+  form.value = { comment: human?.comment || '', data_impact: structuredClone(human?.data_impact || value.data_impact), intervals_confirmed: false }
 }
 async function load() {
   loading.value = true; error.value = ''; review.value = null
   try { populate((await getTaskReview(props.reviewId)).review) } catch (e) { error.value = e.message } finally { loading.value = false }
   void loadAttachmentImages()
 }
+// 人工决策只有确认归档/退回工单两个流转动作，结论轴由动作推导（后端同样收敛）。
 async function submit(action) {
-  if (!form.value.comment.trim()) { error.value = '请填写审核意见'; return }
+  if (action === 'reject' && !form.value.comment.trim()) { error.value = '退回工单必须填写审核意见说明原因'; return }
   submitting.value = true; error.value = ''
-  try { populate((await decideTaskReview(props.reviewId, { ...form.value, version: review.value.version, action })).review); emit('updated', review.value) }
+  const payload = { ...form.value, version: review.value.version, action, decision: action === 'reject' ? 'reject' : 'approve' }
+  try { populate((await decideTaskReview(props.reviewId, payload)).review); emit('updated', review.value) }
   catch (e) { error.value = e.message } finally { submitting.value = false }
 }
 async function download(index) { try { await downloadReviewEvidence(props.reviewId, index) } catch (e) { error.value = e.message } }

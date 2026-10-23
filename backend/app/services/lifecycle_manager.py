@@ -29,8 +29,8 @@ from app.fetchers.jiangsu_data_audit_review_event import (
 from app.fetchers.jiangsu_fault_work_order_review_event import (
     JiangsuFaultWorkOrderReviewEventFetcher,
 )
-from app.fetchers.jiangsu_fault_work_order_review_rerun import (
-    JiangsuFaultWorkOrderReviewRerunFetcher,
+from app.fetchers.jiangsu_fault_work_order_review_feedback import (
+    JiangsuFaultWorkOrderReviewFeedbackFetcher,
 )
 from app.fetchers.jiangsu_smart_event_alarm_sync import JiangsuSmartEventAlarmSyncFetcher
 from app.fetchers.jiangsu_smart_event_platform_sync import JiangsuSmartEventPlatformSyncFetcher
@@ -130,7 +130,7 @@ def _configured_fetchers(project_context):
     # through the historical "all fetchers" fallback.
     explicit_project_fetchers = {
         "jiangsu_fault_work_order_review_event",
-        "jiangsu_fault_work_order_review_rerun",
+        "jiangsu_fault_work_order_review_feedback",
         "jiangsu_station_fault_event",
         "jiangsu_nmc_observed_weather",
         "jiangsu_smart_event_alarm_sync",
@@ -153,7 +153,7 @@ def _configured_fetchers(project_context):
         "tender_information": MonthlyTenderInformationFetcher,
         "jining_quick_trace": JiningQuickTraceFetcher,
         "jiangsu_fault_work_order_review_event": JiangsuFaultWorkOrderReviewEventFetcher,
-        "jiangsu_fault_work_order_review_rerun": JiangsuFaultWorkOrderReviewRerunFetcher,
+        "jiangsu_fault_work_order_review_feedback": JiangsuFaultWorkOrderReviewFeedbackFetcher,
         "jiangsu_station_fault_event": JiangsuStationFaultEventFetcher,
         "jiangsu_smart_event_alarm_sync": JiangsuSmartEventAlarmSyncFetcher,
         "jiangsu_smart_event_platform_sync": JiangsuSmartEventPlatformSyncFetcher,

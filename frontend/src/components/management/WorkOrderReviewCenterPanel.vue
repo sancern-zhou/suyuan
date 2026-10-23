@@ -124,7 +124,7 @@
           <span class="status-badge" :class="statusClass(entry.status)">{{ entry.status || '待审核' }}</span>
         </header>
 
-        <p class="action-hint">人工操作（确认归档 / 退回 / 转入处置）统一在任务调度中心的审核卡片中进行，本页仅作证据查看。</p>
+        <p class="action-hint">人工操作（确认归档 / 退回工单，退回需说明原因）统一在任务调度中心的审核卡片中进行，本页仅作证据查看。</p>
 
         <div class="workbench-layout">
           <aside class="workbench-index" aria-label="审核目录">
