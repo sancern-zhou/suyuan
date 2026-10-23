@@ -2028,6 +2028,78 @@ class JiangsuSmartEventService:
         self._save_store(store)
         return event
 
+    def record_platform_dispatch(
+        self, event_id: str, result: dict[str, Any],
+        actor: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """记录派单的平台创建结果（成功回存工单号；失败保留重试线索）。"""
+        store = self._load_store(event_ids={event_id})
+        event = self._stored_event(store, event_id)
+        if event is None:
+            raise KeyError(event_id)
+        status = str((result or {}).get("status") or "")
+        order_code = str((result or {}).get("work_order_code") or "").strip()
+        if status == "synced" and order_code:
+            event["platform_order_code"] = order_code
+        self._append_operation(
+            event,
+            action="platform_dispatch",
+            actor=actor or {"user_id": "system", "username": "system"},
+            summary={
+                "synced": f"平台工单已创建：{order_code or '回查中'}",
+                "disabled": "平台写回开关未开启，仅本地派单",
+                "failed": f"平台工单创建失败：{(result or {}).get('detail', '')}",
+            }.get(status, f"平台派单结果：{status}"),
+            details={"result": result or {}},
+        )
+        now = datetime.now().astimezone().isoformat()
+        event["updated_at"] = now
+        store["updated_at"] = now
+        self._save_store(store)
+        return event
+
+    def record_platform_order_sync(
+        self, event_id: str, *, work_order_code: str, order_status: str,
+        node_name: str = "", actor: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """平台工单状态回流：处置节点推进记审计；工单完成转“已反馈”并排队增量研判。
+
+        调用方（回流抓取器）负责按状态去重；本方法只做幂等写入。
+        """
+        status_text = str(order_status or "").strip()
+        if status_text == "Finish":
+            return self._record_feedback(
+                event_id,
+                feedback=f"平台工单 {work_order_code} 已完成（运维处置闭环），请复盘处置结论。",
+                source="platform_sync",
+                actor=actor or {"user_id": "system", "username": "system"},
+            )[0]
+        store = self._load_store(event_ids={event_id})
+        event = self._stored_event(store, event_id)
+        if event is None:
+            raise KeyError(event_id)
+        self._ensure_not_archived(event)
+        if event.get("event_status") not in {"待反馈", "已反馈"}:
+            return event
+        label = "平台工单已作废" if status_text == "Invalid" else \
+            f"平台工单流转：{node_name or status_text or '处理中'}"
+        self._append_operation(
+            event,
+            action="platform_order_sync",
+            actor=actor or {"user_id": "system", "username": "system"},
+            summary=label,
+            details={
+                "work_order_code": work_order_code,
+                "order_status": status_text,
+                "node": node_name,
+            },
+        )
+        now = datetime.now().astimezone().isoformat()
+        event["updated_at"] = now
+        store["updated_at"] = now
+        self._save_store(store)
+        return event
+
     def _record_feedback(
         self, event_id: str, *, feedback: str, attachments: list[str] | None = None,
         actor: dict[str, Any] | None = None, source: str = "manual",
@@ -2085,6 +2157,11 @@ class JiangsuSmartEventService:
             incremental_task = self._create_ai_task(event, actor=actor, base_task=base, reason="feedback")
             if isinstance(incremental_task.get("continuity"), dict):
                 incremental_task["continuity"]["feedback"] = feedback_payload
+            else:
+                # 无历史研判卡（如平台工单直接完成回流）时也要保住反馈上下文，
+                # 否则增量研判会丢失人工/平台意见。
+                incremental_task["continuity"] = {"mode": "incremental", "reason": "feedback",
+                                                  "feedback": feedback_payload}
             store.setdefault("tasks", []).append(incremental_task)
         store["updated_at"] = now
         self._save_store(store)

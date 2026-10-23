@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import fcntl
+import asyncio
 import hashlib
 import json
 import re
@@ -15,7 +16,11 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 
+import structlog
+
 from app.utils.path_config import format_agent_path, resolve_agent_path
+
+logger = structlog.get_logger(__name__)
 
 SCHEMA = "jiangsu_work_order_reviews/v1"
 EVIDENCE_INDEX_NAME = "index.json"
@@ -299,7 +304,55 @@ def apply_human_decision(review: dict[str, Any], decision: dict[str, Any]) -> di
             "source": "task_review_decision",
         })
 
-    return _persist_package_update(code, mutate) if code else {}
+    entry = _persist_package_update(code, mutate) if code else {}
+    _sync_platform_decision(code, action, decision)
+    return entry
+
+
+def _sync_platform_decision(code: str, action: str, decision: dict[str, Any]) -> None:
+    """把人工决策同步到运维平台工单流转；结果回写证据包操作记录，失败不阻断。
+
+    confirm/complete → 平台审核节点通过（工单闭环）；reject → 平台打回上一节点。
+    start_disposal 无对应平台动作，仅本地状态。
+    """
+    if not code or action not in {"confirm", "complete", "reject"}:
+        return
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        logger.warning("platform_writeback_skipped_in_running_loop",
+                       work_order_code=code, action=action)
+        return
+    from app.tools.jiangsu.platform_workflow import (
+        platform_sync_result_operation,
+        submit_review_decision,
+    )
+
+    async def _run() -> dict[str, Any]:
+        return await submit_review_decision(
+            code, action=action, approved=action != "reject",
+            comment=str(decision.get("comment") or ""),
+        )
+
+    try:
+        result = asyncio.run(_run())
+    except Exception as exc:
+        logger.warning("platform_writeback_hook_failed", work_order_code=code,
+                       action=action, error=str(exc))
+        return
+    operation = platform_sync_result_operation(result)
+    if operation is None:
+        return
+
+    def record_sync(package: dict[str, Any]) -> None:
+        package.setdefault("operations", []).append(operation)
+
+    try:
+        _persist_package_update(code, record_sync)
+    except KeyError:
+        logger.debug("work_order_review_package_missing_for_platform_sync", work_order_code=code)
 
 
 def record_operation(code: str, action: str, comment: str = "", actor: dict[str, Any] | None = None,

@@ -103,6 +103,8 @@ class Settings(BaseSettings):
     jiangsu_qc_api_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     jiangsu_device_control_confirmation_ttl_seconds: int = Field(default=300, ge=30, le=1800)
     jiangsu_work_order_draft_ttl_hours: int = Field(default=48, ge=1, le=720)
+    # 平台处置写回总开关：开启后人工审核决策（通过/打回）同步到江苏运维平台工单流转。
+    jiangsu_platform_writeback_enabled: bool = Field(default=False)
 
     # 中大空气质量联网监测管理平台（许昌市站点 5 分钟/小时数据）。
     # 账号密码通过环境变量注入，禁止写入代码或提交到仓库。

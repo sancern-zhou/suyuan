@@ -893,6 +893,8 @@ const statusClass = event => {
 
 const OPERATION_ACTION_LABELS = {
   dispatch_order: '派单处置',
+  platform_dispatch: '平台工单创建',
+  platform_order_sync: '平台工单流转',
   event_feedback: '事件反馈',
   archive_event: '事件归档',
   confirm_ai_judgment: '人工确认研判',

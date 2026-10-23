@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from structlog import get_logger
 
 from app.auth.dependencies import require_admin_user, require_current_user
 from app.auth.models import CurrentUser
@@ -20,6 +21,7 @@ from app.tools.jiangsu.demo_freeze import (
 from app.utils.path_config import get_data_registry, is_path_within, resolve_agent_path
 
 router = APIRouter(prefix="/api/jiangsu/smart-events", tags=["jiangsu-smart-events"])
+logger = get_logger(__name__)
 
 
 @router.get("/{event_id}/video-image")
@@ -283,7 +285,11 @@ async def dispatch_smart_event_order(
     request: SmartEventDispatchOrderRequest,
     user: CurrentUser = Depends(require_current_user),
 ) -> dict:
-    """提交派单处置：事件状态更新为“待反馈”。"""
+    """提交派单处置：事件状态更新为“待反馈”，并同步在运维平台创建真实工单。
+
+    本地派单先行落盘；平台创建失败不回滚本地派单，结果（含重试线索）写入
+    operation_records。``platform_order_code`` 供状态回流抓取器轮询闭环。
+    """
     service = JiangsuSmartEventService()
     try:
         event = service.dispatch_order(
@@ -300,6 +306,22 @@ async def dispatch_smart_event_order(
         raise HTTPException(status_code=404, detail="smart_event_not_found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    actor = {"user_id": user.id, "username": user.username}
+    try:
+        from app.tools.jiangsu.platform_workflow import create_smart_event_dispatch_order
+
+        platform_result = await create_smart_event_dispatch_order(
+            event_id=event_id,
+            site_id=str(event.get("site_id") or ""),
+            site_name=str(event.get("site_name") or ""),
+            title=request.title,
+            description=request.description or "",
+            urgency_type=request.urgency_type or "Middle",
+            issued_types=request.issued_types,
+        )
+        event = service.record_platform_dispatch(event_id, platform_result, actor=actor)
+    except Exception as exc:  # 平台编排异常不阻断本地派单
+        logger.warning("smart_event_platform_dispatch_failed", event_id=event_id, error=str(exc))
     return {"event": event}
 
 

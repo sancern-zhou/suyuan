@@ -148,6 +148,7 @@ backend:
     - task_review_feedback
     - jiangsu_nmc_observed_weather
     - jiangsu_smart_event_alarm_sync
+    - jiangsu_smart_event_platform_sync
     - jiangsu_data_audit_review_event
   tools:
     - jiangsu_fetch_city_data

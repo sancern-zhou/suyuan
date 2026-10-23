@@ -33,6 +33,7 @@ from app.fetchers.jiangsu_fault_work_order_review_rerun import (
     JiangsuFaultWorkOrderReviewRerunFetcher,
 )
 from app.fetchers.jiangsu_smart_event_alarm_sync import JiangsuSmartEventAlarmSyncFetcher
+from app.fetchers.jiangsu_smart_event_platform_sync import JiangsuSmartEventPlatformSyncFetcher
 from app.fetchers.jiangsu_station_fault_event import JiangsuStationFaultEventFetcher
 from app.fetchers.quick_trace import JiningQuickTraceFetcher  # 济宁市快速溯源报告每日生成
 from app.fetchers.satellite.gems_hcho_data_fetcher import GemsHchoDataFetcher
@@ -133,6 +134,7 @@ def _configured_fetchers(project_context):
         "jiangsu_station_fault_event",
         "jiangsu_nmc_observed_weather",
         "jiangsu_smart_event_alarm_sync",
+        "jiangsu_smart_event_platform_sync",
         "jiangsu_data_audit_review_event",
     }
     factories = {
@@ -154,6 +156,7 @@ def _configured_fetchers(project_context):
         "jiangsu_fault_work_order_review_rerun": JiangsuFaultWorkOrderReviewRerunFetcher,
         "jiangsu_station_fault_event": JiangsuStationFaultEventFetcher,
         "jiangsu_smart_event_alarm_sync": JiangsuSmartEventAlarmSyncFetcher,
+        "jiangsu_smart_event_platform_sync": JiangsuSmartEventPlatformSyncFetcher,
         "jiangsu_nmc_observed_weather": JiangsuNMCObservedWeatherFetcher,
         "jiangsu_data_audit_review_event": JiangsuDataAuditReviewEventFetcher,
         "consultation": ConsultationFileFetcher,
