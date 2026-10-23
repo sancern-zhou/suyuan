@@ -676,18 +676,38 @@ const restoreReviewConversation = async (sessionId) => {
   return false
 }
 
+// 进入智能事件研判对话后，右侧面板直显该事件的证据包工作台：会话回放会把历史
+// show_event_list 命令写回 smartEventCommand（suppress 只拦面板拉起不拦命令写入），
+// 这里按行内事件覆写为 open_event_detail 并切到智能事件 tab，用户不再先看到事件列表
+const focusEventEvidenceInRightPanel = (review) => {
+  const eventId = String(review?.subject_id || '').trim()
+  if (!eventId) return
+  const command = { type: 'open_event_detail', event_id: eventId }
+  smartEventCommand.value = command
+  lastSmartEventCommandKey.value = JSON.stringify(command)
+  activeRightTab.value = 'smart-event'
+}
+
 const handleTodoReviewOpen = async (review) => {
   const sessionId = await resolveReviewSession(review)
-  if (sessionId && await restoreReviewConversation(sessionId)) return
+  if (sessionId && await restoreReviewConversation(sessionId)) {
+    // 智能事件研判对话进入后直显证据包工作台；工单审核对话保持默认文件 tab
+    if (review?.category === '智能事件') focusEventEvidenceInRightPanel(review)
+    return
+  }
   // 找不到执行会话时回退：打开智能事件工作区并聚焦该事件（仍从任务调度中心进入，关闭时回列表）
   openSmartEventDetail(review?.subject_id, { returnToTaskCenter: true })
 }
 
-// 智能事件中心列表「查看对话」：与任务调度中心「进入对话区」共用同一恢复链路；回退差异在于
-// 不置任务调度中心返回标记——从事件中心进入，关闭详情仍回事件中心列表
+// 智能事件中心列表「进入对话区」：与任务调度中心「进入对话区」共用同一恢复链路，进入后
+// 右侧面板直显该事件证据包；回退差异在于不置任务调度中心返回标记——从事件中心进入，
+// 关闭详情仍回事件中心列表
 const handleEventConversationOpen = async (review) => {
   const sessionId = await resolveReviewSession(review)
-  if (sessionId && await restoreReviewConversation(sessionId)) return
+  if (sessionId && await restoreReviewConversation(sessionId)) {
+    focusEventEvidenceInRightPanel(review)
+    return
+  }
   openSmartEventDetail(review?.subject_id)
 }
 

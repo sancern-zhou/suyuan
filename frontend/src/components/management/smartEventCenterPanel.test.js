@@ -28,11 +28,14 @@ test('event list exposes a manual AI judgment dispatch action', () => {
 })
 
 test('event list links judged events to their judgment conversation', () => {
-  // 「查看对话」与任务调度中心「进入对话区」同链路：按事件自带 review_id 取研判记录，
+  // 「进入对话区」与任务调度中心同链路：按事件自带 review_id 取研判记录，
   // 交宿主按 execution_id→session_id 恢复研判执行会话；无 review_id 的行不显示入口。
+  // 按钮名对齐任务调度中心：查看详情 / 进入对话区。
   assert.match(source, /defineEmits\(\['close', 'open-task', 'open-judgment-conversation'\]\)/)
   assert.match(source, /v-if="event\.review_id"/)
   assert.match(source, /@click\.stop="openJudgmentConversation\(event\)"/)
+  assert.match(source, /'打开中…' : '进入对话区'/)
+  assert.match(source, /@click\.stop="openDetail\(event\.event_id\)">查看详情</)
   assert.match(source, /const \{ review \} = await getTaskReview\(reviewId\)/)
   assert.match(source, /emit\('open-judgment-conversation', review\)/)
   assert.match(source, /isConversationBusy/)
@@ -46,6 +49,10 @@ test('hosts forward judgment conversation requests and restore the review sessio
   assert.match(view, /const resolveReviewSession = async \(review\) =>/)
   assert.match(view, /fetchTaskExecutions\(review\.task_id/)
   assert.match(view, /const restoreReviewConversation = async \(sessionId\) =>/)
+  // 进入对话区后右侧面板直显该事件证据包工作台：覆写回放命令为 open_event_detail 并切智能事件 tab
+  assert.match(view, /const focusEventEvidenceInRightPanel = \(review\) =>/)
+  assert.match(view, /open_event_detail', event_id: eventId \}\r?\n  smartEventCommand\.value = command/)
+  assert.match(view, /review\?\.category === '智能事件'\) focusEventEvidenceInRightPanel\(review\)/)
   // 事件中心入口的回退打开事件详情但不置任务调度中心返回标记（关闭详情仍回事件中心列表）
   assert.match(view, /openSmartEventDetail\(review\?\.subject_id\)\r?\n\}/)
   const layout = fs.readFileSync(path.join(import.meta.dirname, '../reactAnalysis/MainLayout.vue'), 'utf8')
@@ -296,7 +303,9 @@ test('type options union keeps category and agent-filtered values selectable', (
   assert.match(source, /\.\.\.selectedEventTypes\.value,/)
 })
 
-test('event list defaults to the current day time range', () => {
+test('event list defaults to the last three days time range', () => {
+  // 与任务调度中心一致：默认近三日（含今天），开始时间为前推第二天 00:00
+  assert.match(source, /const start = new Date\(end\.getTime\(\) - 2 \* 24 \* 60 \* 60 \* 1000\)/)
   assert.match(source, /start: `\$\{parts\.year\}-\$\{parts\.month\}-\$\{parts\.day\}T00:00`/)
 })
 

@@ -79,11 +79,11 @@
                 <button v-if="!hasCompletedJudgment(event) || event.pending_delta" type="button" class="ai-button" :disabled="event.archived || isAiBusy(event.event_id)" @click.stop="dispatchAiJudgment(event)">
                   {{ isAiBusy(event.event_id) ? '研判中…' : 'AI研判' }}
                 </button>
-                <!-- 与任务调度中心「进入对话区」同链路：按 review_id 取研判记录后恢复研判执行会话 -->
+                <!-- 按钮名对齐任务调度中心：查看详情直达整页工作台，进入对话区恢复研判执行会话 -->
                 <button v-if="event.review_id" type="button" class="detail-button" :disabled="isConversationBusy(event.event_id)" @click.stop="openJudgmentConversation(event)">
-                  {{ isConversationBusy(event.event_id) ? '打开中…' : '查看对话' }}
+                  {{ isConversationBusy(event.event_id) ? '打开中…' : '进入对话区' }}
                 </button>
-                <button type="button" class="detail-button" @click.stop="openDetail(event.event_id)">详情</button>
+                <button type="button" class="detail-button" @click.stop="openDetail(event.event_id)">查看详情</button>
               </td>
             </tr>
           </tbody>
@@ -504,12 +504,13 @@ const toDatetimeLocal = value => {
   const parts = Object.fromEntries(DEFAULT_LIST_TIME_FORMATTER.formatToParts(value).map(part => [part.type, part.value]))
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`
 }
-// 演示冻结窗口（由后端 /demo-window 下发）；null = 未开启冻结，使用当天滚动窗口。
+// 演示冻结窗口（由后端 /demo-window 下发）；null = 未开启冻结，使用最近三天滚动窗口（含今天，同任务调度中心）。
 const freezeRange = ref(null)
 const defaultListTimeRange = () => {
   if (freezeRange.value) return { ...freezeRange.value }
   const end = new Date()
-  const parts = Object.fromEntries(DEFAULT_LIST_TIME_FORMATTER.formatToParts(end).map(part => [part.type, part.value]))
+  const start = new Date(end.getTime() - 2 * 24 * 60 * 60 * 1000)
+  const parts = Object.fromEntries(DEFAULT_LIST_TIME_FORMATTER.formatToParts(start).map(part => [part.type, part.value]))
   return {
     start: `${parts.year}-${parts.month}-${parts.day}T00:00`,
     end: toDatetimeLocal(end),
