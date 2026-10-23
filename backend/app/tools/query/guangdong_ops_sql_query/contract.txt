@@ -1,0 +1,13 @@
+# generated from the guangdong mart table set — keep in sync with
+# app/fetchers/guangdong_work_order/work_order_fetcher.py (single source)
+TABLES: working_orders,working_order_details,wo_commonfile_links,dim_station,dim_device
+GUIDE_START
+【广东运维工单主数据集约束（PostgreSQL，仅下列 5 张表）】数据由 guangdong_work_order_fetcher 从运维源库（Operation_SC_GD）按水位同步，非实时；实时状态类问题建议同时用 execute_ops_sql_query 直查源库核对。生成 SQL 前先读约束，直接生成 SQL，不要先 describe_table；仅当约束缺字段时才 describe_table。
+- working_orders（一行 = 一张运维工单）：维度 working_order_code（唯一业务号，如 CH/FA/DRT 前缀）/station_id/device_id/order_type/order_status(Finish=已完成/Doing=处理中/Wait=待处理/Invalid=作废)/urgency_type(Urgent=紧急/Middle=一般/Normal=普通/NULL=未填写)/maintenance_type(Week=周维护/Month=月维护/TwoWeek=双周/Quarter=季维护/HalfYear=半年/Day=日维护/Year=年维护/AsNeed=按需)；时间 create_time/update_time/finish_time/plan_finish_time；金额 total_expense；指标辅助 order_overtime/total_overtime(超时标记，源系统原文)。按站点名称关联 dim_station（station_id = dim_station.station_id 的文本形式）。
+- order_type 字典（源 WFL_WORKFLOW 实测，筛选/分组时直接用代码值）：Check=运维单(例行维护)、Fault=故障单、SupCheck=组分网巡检单、SupSECCheck=组分网现场检查单、SECCheckCnemc=计划内现场检查、QCBlackOut=自动质控报告工单、WorkRectify=运维工作整改单、SupWorkRectify=组分网运维工作整改单、StationBlackOut=临时停运申请、SupPowerFailure=组分网停运工单、Results=成效审核工单、SupAchievement=组分网绩效审核工单、Performance=绩效审核工单(旧版)、Performance2026=绩效审核工单(2026版)、SECFlightCheck=飞行检查工单、SECCheck=现场检查单、SECOutsidePlan=计划外现场检查、SupDeviceCalibrate=组分网设备校准单、DeviceCalibration=设备校准单、Inspection=巡检单、GreenHouseCheck=温室巡检单(日)、PlanChangeMT=运维计划变更申请单、PlanChangeSC=现场计划变更申请单、DataMakeup=数据回补单、AbnormalDataReview=数据审核异常工单。近3个月活跃类型：Check/Fault/SupCheck/SupSECCheck/SECCheckCnemc/QCBlackOut/WorkRectify/StationBlackOut/Results/SupFault/SupWorkRectify/SupPowerFailure/Performance2026。
+- working_order_details（一行 = 工单一个流程步骤）：working_order_code 关联主表；process_step(步骤：CreateOrder/Approve/Review/CheckOrder/SupCheck_Check/FaultProcess 等)；process_user_id 处理人；process_start_time/process_end_time；process_status(数值状态)；alarm_reason 故障原因（故障单根因归纳的主要来源）；submit_remark/description_ta 处理描述；expense 步骤费用。工单时效与流程链分析用本表。
+- wo_commonfile_links（一行 = 一条附件索引）：working_order_code(=源 REFID，工单/表单关联键)；function_code(流程类型)；type_code(RF 表单名，如 RF_W_INSPECTION/Sup_RF_GACWeekMaintainByMARGA_WaterSolubleIons)；file_name/file_path。判断工单"有无附件/附件完整性"用本表（按 working_order_code 计数）；附件文件本体不在本库。
+- dim_station（一行 = 一个站点，332 站）：station_id(主键)/station_code/station_name(中文名，如 从化天湖/南沙大稳)/region_id/longitude/latitude/address/station_type/status。站点名单、站点归属、经纬度用本表。
+- dim_device（一行 = 一台设备）：device_id(主键)/device_code/device_type/device_brand/device_model/station_id(关联站点)/device_id_state/pollutant_id。站点设备构成、品牌型号统计用本表。
+【SQL 方言】PostgreSQL：用 LIMIT 不用 TOP；日期截断用 date_trunc('day', col)；时间比较用 '2026-10-01' 字面量；布尔用 IS TRUE。查询务必带 LIMIT（上限 1000）；聚合统计优先 GROUP BY 城市/站点/类型返回小结果集。
+GUIDE_END
