@@ -63,7 +63,6 @@ class KnowledgeIngestionService:
         outbox_factory=KnowledgeIndexOutboxRepository.for_session,
         file_storage=None,
         processing_options: dict | None = None,
-        max_graph_concurrency: int = 4,
     ):
         self.session_factory = session_factory
         self.processor = processor
@@ -73,7 +72,6 @@ class KnowledgeIngestionService:
         self.outbox_factory = outbox_factory
         self.file_storage = file_storage
         self.processing_options = dict(processing_options or {})
-        self.max_graph_concurrency = max(1, max_graph_concurrency)
 
     async def ingest_document(self, document_id: str) -> IngestionResult:
         snapshot = await self._load_and_mark_processing(document_id)
@@ -483,24 +481,6 @@ class KnowledgeIngestionService:
                 )
                 raise
 
-    async def _mark_chunk_graph_failed(
-        self,
-        chunk_id: str,
-        error: str,
-        *,
-        expected_generation: int,
-    ) -> None:
-        async with self.session_factory() as session, session.begin():
-            chunk = await session.scalar(
-                select(KnowledgeChunk).where(KnowledgeChunk.id == chunk_id).with_for_update()
-            )
-            if chunk is None or chunk.content_generation != expected_generation:
-                return
-            await self.chunk_repository_factory(session).mark_graph_status(
-                [chunk_id],
-                "failed",
-                error[:1000],
-            )
 
     async def _mark_document_failed(
         self,

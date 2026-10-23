@@ -92,7 +92,9 @@ const editError = ref('')
 const conflictDetected = ref(false)
 
 const MODE_LABELS = {
-  assistant: '通用助手',
+  assistant: '助手模式',
+
+  office: '办公模式',
   query: '智能问数',
   knowledge: '知识问答',
   expert: '专家分析',

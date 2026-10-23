@@ -7,13 +7,22 @@ from datetime import date, datetime
 from io import BytesIO
 from typing import Any, Dict, List, Sequence
 
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.patches import Patch
 
 from app.utils.font_utils import apply_font_to_figure, configure_chinese_font
 from app.services.image_cache import get_image_cache
 from app.tools.visualization.create_business_chart.renderer import ChartDataError, WORD_TARGET_WIDTH_IN
 from app.tools.visualization.create_business_chart.text import normalize_matplotlib_label_text
+from app.utils.environment_charts import (
+    MISSING_COLOR,
+    get_six_level_scale,
+    legend_below,
+    level_index,
+    text_color_for,
+)
 
 
 def render_specialized_chart(
@@ -274,12 +283,21 @@ def _render_pollutant_calendar(
 ) -> Dict[str, Any]:
     year = _int_option(data, options, "year")
     month = _int_option(data, options, "month")
-    pollutant = str(normalize_matplotlib_label_text(data.get("pollutant") or options.get("pollutant") or "污染物"))
+    raw_pollutant = str(data.get("pollutant") or options.get("pollutant") or "AQI")
+    pollutant = str(normalize_matplotlib_label_text(raw_pollutant))
     unit = str(normalize_matplotlib_label_text(data.get("unit") or options.get("unit") or ""))
     if year is None or month is None:
         raise ChartDataError("pollutant_calendar 需要 year 和 month。")
     if month < 1 or month > 12:
         raise ChartDataError("pollutant_calendar 的 month 必须为 1-12。")
+
+    average_time = str(data.get("average_time") or options.get("average_time") or "").strip() or None
+    try:
+        scale = get_six_level_scale(pollutant=raw_pollutant, average_time=average_time)
+    except ValueError as exc:
+        raise ChartDataError(
+            f"pollutant_calendar 无法按 HJ 633-2026 六级着色：{exc}"
+        ) from exc
 
     day_values = _extract_calendar_day_values(data, year, month)
     if not day_values:
@@ -292,6 +310,7 @@ def _render_pollutant_calendar(
         pollutant=pollutant,
         unit=unit,
         day_values=day_values,
+        scale=scale,
     )
     visual = _cache_base64_image(image_base64, chart_id or f"pollutant_calendar_{year}_{month}_{pollutant}", title)
     values = list(day_values.values())
@@ -314,6 +333,8 @@ def _render_pollutant_calendar(
             "avg_value": f"{sum(values) / len(values):.1f}",
             "max_value": max(values),
             "min_value": min(values),
+            "level_standard": scale["standard"],
+            "level_breaks": list(scale["breaks"]),
         },
         "summary": f"报告图表已生成：{title}。",
     }
@@ -523,18 +544,37 @@ def _render_generic_calendar_image(
     pollutant: str,
     unit: str,
     day_values: Dict[int, float],
+    scale: Dict[str, Any],
 ) -> str:
+    breaks = [float(item) for item in scale["breaks"]]
+    colors = [str(item) for item in scale["colors"]]
+    labels = [str(item) for item in scale["labels"]]
+    n_levels = len(colors)
+
     first_weekday, days_in_month = calendar.monthrange(year, month)
     weeks = math.ceil((first_weekday + days_in_month) / 7)
-    grid = np.full((weeks, 7), np.nan)
-    for day, value in day_values.items():
-        if 1 <= day <= days_in_month:
-            index = first_weekday + day - 1
-            grid[index // 7, index % 7] = value
+
+    # 分类网格：-1=月外（不绘制），n_levels=缺测，0..n_levels-1=固定等级。
+    missing_category = float(n_levels)
+    grid = np.full((weeks, 7), -1.0)
+    levels: Dict[int, int | None] = {}
+    has_missing_day = False
+    for day in range(1, days_in_month + 1):
+        index = first_weekday + day - 1
+        value = day_values.get(day)
+        level = None if value is None else level_index(value, breaks)
+        levels[day] = level
+        if level is None:
+            has_missing_day = True
+            grid[index // 7, index % 7] = missing_category
+        else:
+            grid[index // 7, index % 7] = float(level)
 
     fig, ax = plt.subplots(figsize=(8.2, max(4.2, weeks * 0.72)), dpi=180)
-    masked = np.ma.masked_invalid(grid)
-    im = ax.imshow(masked, cmap="YlOrRd", aspect="auto")
+    cmap = mcolors.ListedColormap([*colors, MISSING_COLOR])
+    cmap.set_bad("white")
+    norm = mcolors.BoundaryNorm(np.arange(-0.5, n_levels + 1.5, 1.0), cmap.N)
+    ax.imshow(np.ma.masked_less(grid, 0.0), cmap=cmap, norm=norm, aspect="auto")
     ax.set_xticks(range(7))
     ax.set_xticklabels(["一", "二", "三", "四", "五", "六", "日"], fontsize=10)
     ax.set_yticks(range(weeks))
@@ -544,20 +584,43 @@ def _render_generic_calendar_image(
     for day in range(1, days_in_month + 1):
         index = first_weekday + day - 1
         row, col = index // 7, index % 7
-        value = day_values.get(day)
-        text = f"{day}\n{value:g}" if value is not None else f"{day}"
-        ax.text(col, row, text, ha="center", va="center", fontsize=9, color="#222")
+        level = levels.get(day)
+        if level is None:
+            text, text_color = f"{day}", "#222"
+        else:
+            text, text_color = f"{day}\n{day_values[day]:g}", text_color_for(colors[level])
+        ax.text(col, row, text, ha="center", va="center", fontsize=9, color=text_color)
     for spine in ax.spines.values():
         spine.set_visible(False)
     ax.set_xticks(np.arange(-0.5, 7, 1), minor=True)
     ax.set_yticks(np.arange(-0.5, weeks, 1), minor=True)
     ax.grid(which="minor", color="white", linewidth=1.4)
     ax.tick_params(which="minor", bottom=False, left=False)
-    cbar = fig.colorbar(im, ax=ax, shrink=0.75, pad=0.02)
-    label = f"{pollutant} ({unit})" if unit else pollutant
-    cbar.set_label(str(normalize_matplotlib_label_text(label)), fontsize=10)
+
+    handles, legend_labels = _calendar_level_legend(breaks, labels, colors, unit)
+    if has_missing_day:
+        handles.append(Patch(facecolor=MISSING_COLOR, edgecolor="white", label="无数据"))
+        legend_labels.append("无数据")
+    legend_below(ax, handles=handles, labels=legend_labels, ncols=min(4, len(handles)))
     fig.tight_layout(pad=1.0)
     return _figure_to_base64(fig)
+
+
+def _calendar_level_legend(
+    breaks: Sequence[float], labels: Sequence[str], colors: Sequence[str], unit: str
+) -> tuple[List[Patch], List[str]]:
+    handles: List[Patch] = []
+    texts: List[str] = []
+    suffix = f" ({unit})" if unit else ""
+    for index, color in enumerate(colors):
+        lower = 0.0 if index == 0 else breaks[index - 1]
+        if index < len(breaks):
+            text = f"{labels[index]} {lower:g}~{breaks[index]:g}{suffix}"
+        else:
+            text = f"{labels[index]} >{breaks[-1]:g}{suffix}"
+        handles.append(Patch(facecolor=color, edgecolor="white"))
+        texts.append(text)
+    return handles, texts
 
 
 def _polar_rlabel_angle(theta_radians: "np.ndarray", heights: "np.ndarray", fallback_deg: float = 135.0) -> float:

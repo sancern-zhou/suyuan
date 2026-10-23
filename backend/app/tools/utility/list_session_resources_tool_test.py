@@ -31,7 +31,7 @@ async def test_tool_reads_only_authorized_context_session_and_filters(tmp_path):
 
     tool = ListSessionResourcesTool(service=service)
     result = await tool.execute(
-        context=SimpleNamespace(session_id="authorized-session", runtime_mode="social"),
+        context=SimpleNamespace(session_id="authorized-session", runtime_mode="assistant"),
         kind=ResourceKind.FILE.value,
         logical_key="primary:json",
         include_locator=False,

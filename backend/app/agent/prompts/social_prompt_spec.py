@@ -1,8 +1,8 @@
-from app.agent.prompts.social_prompt import build_social_prompt
+from app.agent.prompts.assistant_prompt import build_assistant_prompt
 
 
 def test_social_prompt_does_not_embed_full_heartbeat_context_snapshot():
-    prompt = build_social_prompt(
+    prompt = build_assistant_prompt(
         available_tools=["schedule_task"],
         heartbeat_file_path="/tmp/HEARTBEAT.md",
         heartbeat_context="- name: 旧任务\n  schedule: \"0 9 * * *\"\n  enabled: true",

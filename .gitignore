@@ -36,6 +36,8 @@ data/
 *.png
 *.jpg
 *.jpeg
+# 前端源码资产不属临时文件，显式放行（打包进 bundle 的二维码等）
+!frontend/src/assets/*.png
 *.html
 *.tmp
 nul
@@ -61,6 +63,7 @@ frontend/.vite/
 *.tmp
 *.txt
 !backend/requirements.txt
+!backend/app/tools/xuchang/station_catalog/hidden_stations.txt
 *.docx
 *.xlsx
 *.pptx
@@ -156,6 +159,7 @@ simulate_*.py
 verify_*.py
 check_*.py
 run_*.py
+!backend/app/fetchers/base/run_log.py
 simple_*.py
 ultimate_*.py
 deep_*.py
@@ -284,6 +288,10 @@ suncere*/
 *.pfx
 *.jks
 *.keystore
+android-native/keystore.properties
+android-native/local.properties
+android-native/.gradle/
+android-native/dist-archives/
 *.htpasswd
 id_rsa*
 id_ed25519*

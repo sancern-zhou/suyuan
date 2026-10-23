@@ -150,8 +150,10 @@ class ChartImageRenderer(LLMTool):
             # Step 2: 确保输出目录存在
             OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+            from app.utils.echarts_theme import apply_echarts_report_theme
             from app.utils.echarts_legend import ensure_echarts_legend
 
+            echarts_option = apply_echarts_report_theme(echarts_option)
             echarts_option = ensure_echarts_legend(echarts_option)
             
             # 统一图例/坐标轴布局，避免图例与横坐标刻度重叠
@@ -238,7 +240,13 @@ class ChartImageRenderer(LLMTool):
                 },
                 "metadata": {
                     "tool_name": "render_chart_to_image",
-                    "image_path": str(image_path)
+                    "image_path": str(image_path),
+                    "export": {
+                        "format": "png",
+                        "width": width,
+                        "height": height,
+                        "background": echarts_option.get("backgroundColor", "white"),
+                    },
                 },
                 "resources": [single_file_product(image_path, tool_name=self.name)],
                 "summary": f"[OK] 图表渲染完成，图片路径: {image_path}"

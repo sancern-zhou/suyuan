@@ -17,6 +17,7 @@ from app.lifecycle.knowledge_base import (
     stop_document_processing_queue,
     stop_knowledge_base_services,
 )
+from app.lifecycle.loop_watchdog import stop_loop_watchdog
 from app.lifecycle.nacos import stop_nacos
 from app.lifecycle.roles import normalize_app_role, starts_background_services
 from app.lifecycle.scheduled import stop_scheduled_task_service
@@ -33,6 +34,8 @@ async def run_shutdown(app: FastAPI) -> None:
     """Run application shutdown resource cleanup."""
     app_role = normalize_app_role(settings.app_role)
     logger.info("application_shutting_down", app_role=app_role)
+
+    await stop_loop_watchdog()
 
     from app.api.knowledge_graph_routes import stop_graph_build_recovery
 

@@ -53,6 +53,12 @@ Secret 仅放在后端环境变量，不能写入 App 或提交 Git。构建时�
 
 构建前可执行 `powershell -ExecutionPolicy Bypass -File .\check-environment.ps1` 检查 JDK 17 和 Android SDK 34。当前开发机已完成 SDK 34 配置，并可构建 Debug APK。
 
+## 正式出包与签名
+
+对外分发一律用 `.\build-release.ps1 -VersionCode <递增整数> -VersionName <x.y.z>` 出 release 包，
+脚本会校验正式签名并打印证书指纹。密钥生成、保管、登记与发版 checklist 见 `RELEASE_SIGNING.md`；
+未配置 `keystore.properties` 的机器只能编译 debug，release 构建会被拒绝。
+
 ## 已接入接口
 
 - `POST /api/social/app/auth/login`：App 账号登录并签发 HMAC token。
@@ -66,6 +72,8 @@ Secret 仅放在后端环境变量，不能写入 App 或提交 Git。构建时�
 - `GET /api/social/app/sessions/{session_id}/messages`：恢复历史会话消息。
 - `POST /api/social/app/upload`：上传并绑定当前会话的附件。
 - `POST /api/social/app/voice/transcribe`：m4a 录音上传转写。
+- `GET /api/social/app/version/latest`：远程更新检查（公开接口），返回最新版本号、下载地址、包 sha256、更新说明与强制更新门槛；App 启动/回前台时自动检查。
+- `GET /api/social/app/apk/{filename}`：下载发布到 `DATA_REGISTRY_DIR/social/apk/` 的签名 APK（公开接口）。
 
 App 身份由服务端从 token 解析为 `app:android:<account_id>`，客户端不能通过请求体伪造其他用户。`app:` 会话映射不受现有社交平台 24 小时清理策略影响。
 

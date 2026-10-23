@@ -31,7 +31,7 @@ def test_native_multimodal_read_file_preserves_explicit_true_attachment_choice()
     normalized = coordinator.normalize_tool_input(
         "read_file",
         {"path": "/tmp/chart.png", "as_multimodal_attachment": True},
-        mode="social",
+        mode="assistant",
     )
 
     assert normalized["as_multimodal_attachment"] is True
@@ -43,7 +43,7 @@ def test_social_mode_read_file_does_not_default_to_native_multimodal_attachment(
     normalized = coordinator.normalize_tool_input(
         "read_file",
         {"path": "/tmp/social.png"},
-        mode="social",
+        mode="assistant",
     )
 
     assert "as_multimodal_attachment" not in normalized

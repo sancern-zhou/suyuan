@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.Flow
 import java.io.File
 
 class SocialAppRepository(private val api: SocialAppApi) {
+    fun setSessionRefreshListener(listener: ((LoginResult) -> Unit)?) { api.onSessionRefreshed = listener }
     fun reconnectChat() = api.reconnectChat()
     suspend fun pendingInteraction(token: String, sessionId: String) = api.pendingInteraction(token, sessionId)
     suspend fun resolveInteraction(token: String, question: AgentQuestionInteraction, decision: String, answers: List<AgentQuestionAnswer>) =
@@ -17,7 +18,9 @@ class SocialAppRepository(private val api: SocialAppApi) {
     suspend fun unregisterPushDevice(token: String, deviceId: String) = api.unregisterPushDevice(token, deviceId)
     fun stream(token: String, query: String, sessionId: String?, attachments: List<UploadedAttachment> = emptyList(), mode: String = "query", modelTier: String = "auto", requestId: String = java.util.UUID.randomUUID().toString()): Flow<AgentEvent> = api.stream(token, query, sessionId, attachments, mode, modelTier, requestId)
     suspend fun sessions(token: String, limit: Int = 30, offset: Int = 0) = api.sessions(token, limit, offset)
-    suspend fun createSession(token: String) = api.createSession(token)
+    suspend fun createSession(token: String, mode: String = "assistant") = api.createSession(token, mode)
+    suspend fun syncAssistantConversation(token: String, sessionId: String, revision: Long?) = api.syncAssistantConversation(token, sessionId, revision)
+    suspend fun readAssistantConversation(token: String, sessionId: String, throughSequence: Int) = api.readAssistantConversation(token, sessionId, throughSequence)
     suspend fun renameSession(token: String, sessionId: String, title: String) = api.renameSession(token, sessionId, title)
     suspend fun deleteSession(token: String, sessionId: String) = api.deleteSession(token, sessionId)
     suspend fun messages(token: String, sessionId: String) = api.messages(token, sessionId)
@@ -25,6 +28,11 @@ class SocialAppRepository(private val api: SocialAppApi) {
     suspend fun markBroadcastRead(token: String, messageId: String) = api.markBroadcastRead(token, messageId)
     suspend fun markAllBroadcastsRead(token: String) = api.markAllBroadcastsRead(token)
     suspend fun deleteBroadcast(token: String, messageId: String) = api.deleteBroadcast(token, messageId)
+    suspend fun sharedConversations(token: String, search: String = "", limit: Int = 30, offset: Int = 0) =
+        api.sharedConversations(token, search, limit, offset)
+    suspend fun sharedConversation(token: String, shareId: String) = api.sharedConversation(token, shareId)
+    suspend fun createSharedConversation(token: String, sessionId: String) = api.createSharedConversation(token, sessionId)
+    suspend fun deleteSharedConversation(token: String, shareId: String) = api.deleteSharedConversation(token, shareId)
     suspend fun reports(token: String, reportType: String? = null, limit: Int = 30, before: String? = null) = api.reports(token, reportType, limit, before)
     suspend fun taskResults(token: String, taskId: String, page: Int, start: String, end: String, station: String, pollutant: String) = api.taskResults(token, taskId, page, start, end, station, pollutant)
     suspend fun taskFacets(token: String, taskId: String) = api.taskFacets(token, taskId)
@@ -35,7 +43,7 @@ class SocialAppRepository(private val api: SocialAppApi) {
     suspend fun cancel(token: String, sessionId: String) = api.cancel(token, sessionId)
     suspend fun steer(token: String, sessionId: String, message: String) = api.steer(token, sessionId, message)
     suspend fun transcribe(token: String, audioFile: File) = api.transcribe(token, audioFile)
-    suspend fun upload(token: String, file: File, filename: String, mimeType: String) = api.upload(token, file, filename, mimeType)
+    suspend fun upload(token: String, file: File, filename: String, mimeType: String, sessionId: String, mode: String) = api.upload(token, file, filename, mimeType, sessionId, mode)
     suspend fun deleteUpload(token: String, fileId: String) = api.deleteUpload(token, fileId)
     suspend fun download(token: String, attachment: UploadedAttachment) = api.download(token, attachment)
 }

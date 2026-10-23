@@ -24,6 +24,7 @@ Word XML 三种模式：
 - PDF/DOCX/PPTX 内部委托给专业工具，保持代码不变
 - 自动降级策略确保鲁棒性
 """
+import difflib
 import os
 import tempfile
 from mimetypes import guess_type
@@ -93,6 +94,9 @@ class ReadFileTool(LLMTool):
 
     # 建议分页行数（用于大文件提示；未显式传 limit 时不自动分页）
     DEFAULT_LIMIT = 1000
+
+    # 模型可见正文预览的字符预算（与 llm_resume.content_preview 一致）
+    CONTENT_PREVIEW_CHARS = 2000
 
     def __init__(self):
         super().__init__(
@@ -179,10 +183,16 @@ class ReadFileTool(LLMTool):
 
             # 2. 检查文件是否存在
             if not resolved_path.exists():
+                suggestions = self._suggest_similar_files(resolved_path)
+                hint = (
+                    f"同目录下存在名称相近的文件: {'、'.join(suggestions)}，请确认是否想读取其中之一"
+                    if suggestions
+                    else "请确认路径拼写，必要时先用 list_directory 查看目录内容"
+                )
                 return {
                     "success": False,
-                    "data": {"error": "文件不存在"},
-                    "summary": "文件不存在"
+                    "data": {"error": "文件不存在", "suggestions": suggestions, "hint": hint},
+                    "summary": f"文件不存在: {path}。{hint}"
                 }
 
             if resolved_path.is_char_device() or resolved_path.is_block_device() or resolved_path.is_fifo():
@@ -297,6 +307,76 @@ class ReadFileTool(LLMTool):
                 "summary": f"无法访问目录: {dir_path.name}"
             }
 
+    def _suggest_similar_files(self, resolved_path: Path) -> list[str]:
+        """Suggest nearby filenames without attempting to read them automatically."""
+        try:
+            parent = resolved_path.parent
+            if not parent.is_dir():
+                return []
+            target = resolved_path.name
+            candidates = [entry.name for entry in parent.iterdir() if entry.name != target]
+            close = difflib.get_close_matches(target, candidates, n=3, cutoff=0.5)
+            if close:
+                return close
+            stem = resolved_path.stem
+            return [name for name in candidates if Path(name).stem == stem][:3]
+        except OSError:
+            return []
+
+    def _file_unchanged_result(
+        self, file_path: Path, offset: int, limit: Optional[int]
+    ) -> Optional[Dict[str, Any]]:
+        """相同 (offset, limit) 且文件未变化的重复读取返回零正文存根。
+
+        对齐 ZCode Read 的 file_unchanged 机制：会话层会把超过预算的
+        read_file 结果降级为 2000 字符预览，模型因此倾向反复重读同一文件
+        确认内容（实测单会话对同一文件重读 121 次）。文件 mtime/inode/size
+        均未变化时，同参数读取结果必然相同，直接引用上一次 tool_result 即可。
+        逃生通道：带不同 offset/limit 读取可强制返回正文。
+        """
+        try:
+            entry = get_file_read_state().get(str(file_path))
+            stat = file_path.stat()
+        except OSError:
+            return None
+        if entry is None or not entry.content:
+            return None
+        if (entry.offset or 0) != (offset or 0) or entry.limit != limit:
+            return None
+        if entry.file_size != stat.st_size:
+            return None
+        if entry.file_mtime_ns is not None and entry.file_mtime_ns != stat.st_mtime_ns:
+            return None
+        if entry.file_inode is not None and entry.file_inode != getattr(stat, "st_ino", None):
+            return None
+
+        entry_line_count = len(entry.content.splitlines())
+        start_line = (offset or 0) + 1
+        end_line = (offset or 0) + entry_line_count
+        logger.info(
+            "read_file_unchanged_dedup",
+            path=str(file_path),
+            offset=offset,
+            limit=limit,
+        )
+        return {
+            "success": True,
+            "data": {
+                "type": "text",
+                "format": file_path.suffix[1:] if file_path.suffix else "txt",
+                "path": str(file_path),
+                "size": stat.st_size,
+                "file_unchanged": True,
+                "line_range": [start_line, end_line],
+            },
+            "summary": (
+                f"重复调用已省略: {file_path.name} 自上次 read_file"
+                f"（offset={offset or 0}, limit={limit if limit is not None else '不限'}）后未发生任何变化，"
+                f"第{start_line}-{end_line}行内容与上一次读取完全相同，请直接引用上一次读取结果，不要重读。"
+                f"如确需重新获取正文，请修改 offset 或 limit 参数。"
+            ),
+        }
+
     def _strip_source_path_echo(self, result: Dict[str, Any], source_path: Path) -> Dict[str, Any]:
         """Remove redundant source locators while preserving runtime-only directives."""
         source = str(source_path)
@@ -399,6 +479,11 @@ class ReadFileTool(LLMTool):
 
             effective_limit = limit
 
+            # 0. 重复读取去重：相同 (offset, limit) 且文件未变化时返回零正文存根
+            unchanged = self._file_unchanged_result(file_path, offset, effective_limit)
+            if unchanged is not None:
+                return unchanged
+
             # Read only the requested range for paged reads. This avoids loading
             # a large file into memory just to return a small slice.
             full_content: Optional[str] = None
@@ -423,12 +508,42 @@ class ReadFileTool(LLMTool):
                     "summary": f"文本编码错误: {file_path.name}"
                 }
 
+            if total_lines == 0:
+                stat = file_path.stat()
+                get_file_read_state().set(
+                    str(file_path), content="", offset=None, limit=None,
+                    is_partial_view=False, file_size=file_size,
+                    file_mtime_ns=stat.st_mtime_ns,
+                    file_inode=getattr(stat, "st_ino", None), encoding=encoding,
+                )
+                return {
+                    "success": True,
+                    "data": {
+                        "type": "text", "format": file_path.suffix[1:] if file_path.suffix else "txt",
+                        "path": str(file_path), "size": file_size, "content": "",
+                        "total_lines": 0, "line_range": [],
+                        "note": "文件存在但内容为空（0 行），可直接 edit_file 或 write_file。",
+                    },
+                    "summary": f"文件存在但内容为空: {file_path.name}（{file_size} bytes，0 行）",
+                }
+
             start_line = min(offset, total_lines)
             end_line = min(offset + len(selected_lines), total_lines)
             content = "\n".join(selected_lines)
+            past_eof = offset >= total_lines
 
             # 检查是否需要截断
             is_truncated = effective_limit is not None and end_line < total_lines
+
+            # 模型可见预览的实际行范围：content_preview 只有 2000 字符，
+            # 当请求读取的行数超出预览能容纳的行数时，必须如实告知模型
+            # "真正可见到哪里"，否则模型以为已读到 end_line，会跳行或反复重读
+            # （对齐 ZCode Read 的 partialViewNotice 语义）。
+            # visible_end_line 采用 1-based 行号语义，与 end_line 同基准；
+            # 同时它恰好等于续读所需的 0-based offset（与下方 tool_hint 一致）。
+            content_preview = content[:self.CONTENT_PREVIEW_CHARS]
+            visible_end_line = start_line + len(content_preview.splitlines())
+            preview_clipped = visible_end_line < end_line
 
             # 构建返回数据
             data = {
@@ -441,6 +556,14 @@ class ReadFileTool(LLMTool):
                 "total_lines": total_lines,
                 "is_truncated": is_truncated
             }
+            if preview_clipped:
+                data["visible_line_range"] = [start_line + 1, visible_end_line]
+            if past_eof:
+                data["line_range"] = []
+                data["note"] = (
+                    f"文件共 {total_lines} 行，请求的起始行 {offset + 1}（offset={offset}）已超出文件末尾；"
+                    f"如需读取末尾内容请使用 offset={max(total_lines - 1, 0)}。"
+                )
             file_ref = build_file_ref(
                 file_path,
                 type="text",
@@ -452,9 +575,17 @@ class ReadFileTool(LLMTool):
                 is_truncated=is_truncated,
             )
             llm_resume = {
-                "content_preview": content[:2000],
+                "content_preview": content_preview,
             }
-            if is_truncated:
+            if preview_clipped:
+                # 从"模型实际可见的下一行"继续，而不是请求范围的末尾：
+                # 提示 offset=end_line 会让模型跳过 end_line 之前未展示的正文。
+                llm_resume["tool_hint"] = (
+                    f"注：因上下文预算，本次结果仅展示第{start_line + 1}-{visible_end_line}行正文（请求范围为第{start_line + 1}-{end_line}行）。"
+                    f"Use read_file(offset={visible_end_line}, limit={effective_limit or self.DEFAULT_LIMIT}) on the same resource "
+                    "to continue reading."
+                )
+            elif is_truncated:
                 llm_resume["tool_hint"] = (
                     f"Use read_file(offset={end_line}, limit={effective_limit}) on the same resource "
                     "to continue reading."
@@ -468,7 +599,12 @@ class ReadFileTool(LLMTool):
                 }
 
             # 构建摘要信息
-            if effective_limit is not None and end_line < total_lines:
+            if past_eof:
+                summary = (
+                    f"读取结果为空: {file_path.name} 共 {total_lines} 行，"
+                    f"请求的起始行 {offset + 1}（offset={offset}）已超出文件末尾"
+                )
+            elif effective_limit is not None and end_line < total_lines:
                 # 用户指定了 limit 但未读完
                 summary = (
                     f"读取成功: {file_path.name} ({file_size} bytes)\n"
@@ -478,6 +614,11 @@ class ReadFileTool(LLMTool):
             else:
                 # 完整读取
                 summary = f"读取成功: {file_path.name} ({file_size} bytes, {total_lines} 行)"
+            if preview_clipped:
+                summary += (
+                    f"\n注意: 因上下文预算，本次仅向模型展示第 {start_line + 1}-{visible_end_line} 行正文，"
+                    f"使用 offset={visible_end_line},limit={effective_limit or self.DEFAULT_LIMIT} 继续读取"
+                )
 
             # 记录读取状态（用于edit_file预读验证）
             is_full_read = not is_truncated and offset == 0
@@ -502,7 +643,11 @@ class ReadFileTool(LLMTool):
                     "read_state": {
                         "tool": self.name,
                         "path": str(file_path),
-                        "content": full_content if is_full_read else content,
+                        # 分页读取的回显不携带正文：会话恢复（restore_read_state_from_history）
+                        # 只接受完整读取的回显，分页正文回显纯属死重 —— 它与 data.content
+                        # 完全重复，会把结果体积翻倍推过会话层 24KB 降级悬崖（实测大 limit
+                        # 读取全部被降级为 2000 字符预览，诱发模型反复重读）。
+                        "content": full_content if is_full_read else "",
                         "offset": offset,
                         "limit": limit,
                         "is_partial_view": not is_full_read,

@@ -6,12 +6,12 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, exists
 
 from app.knowledge_base.graph_models import KnowledgeChunk
 from app.knowledge_base.graph_repository import KnowledgeGraphRepository
 from app.knowledge_base.graph_schemas import TRUSTED_REVIEW_STATUSES
-from app.knowledge_base.models import KnowledgeBase
+from app.knowledge_base.models import KnowledgeBase, Document, DocumentStatus
 from app.knowledge_base.retrieval_utils import deduplicate_results_by_content
 from app.knowledge_base.scene_models import KnowledgeBusinessRule
 
@@ -44,6 +44,10 @@ class KnowledgeRetrievalService:
         graph_seed_top_k: int = 10,
         graph_chunk_top_k: int = 20,
         graph_weight: float = 1.0,
+        score_threshold: float = 0.25,
+        filters: dict | None = None,
+        use_hybrid: bool = True,
+        alpha: float = 0.7,
     ) -> list[dict[str, Any]]:
         results_by_kb = await asyncio.gather(
             *(
@@ -56,14 +60,18 @@ class KnowledgeRetrievalService:
                     graph_seed_top_k=graph_seed_top_k,
                     graph_chunk_top_k=graph_chunk_top_k,
                     graph_weight=graph_weight,
+                    score_threshold=score_threshold, filters=filters,
+                    use_hybrid=use_hybrid, alpha=alpha,
                 )
                 for kb_id in kb_ids
             )
         )
         results = [item for kb_results in results_by_kb for item in kb_results]
         results = deduplicate_results_by_content(results)
-        results.sort(key=lambda item: item.get("rrf_score", 0.0), reverse=True)
-        candidate_limit = min(max(top_k * 4, top_k), 60)
+        results.sort(key=lambda item: item.get("score", 0.0), reverse=True)
+        # Preserve the ordinary search rerank budget when both routes share
+        # this implementation; fusion must not halve the candidate pool.
+        candidate_limit = min(max(top_k * 8, 20), 60) if self.reranker else top_k
         results = results[:candidate_limit]
         if self.reranker is not None and len(results) > top_k:
             return await self.reranker(query, results, top_k)
@@ -80,6 +88,10 @@ class KnowledgeRetrievalService:
         graph_seed_top_k: int,
         graph_chunk_top_k: int,
         graph_weight: float,
+        score_threshold: float,
+        filters: dict | None,
+        use_hybrid: bool,
+        alpha: float,
     ) -> list[dict[str, Any]]:
         if self.session_factory is None:
             return []
@@ -88,14 +100,13 @@ class KnowledgeRetrievalService:
             if kb is None:
                 return []
             vector_store = self._vector_store_for(kb)
-            recall = min(max(top_k * 3, 8), 30)
-            chunk_results = await vector_store.hybrid_search(
-                collection_name=kb.qdrant_collection,
-                query=query,
-                top_k=recall,
-                score_threshold=0.0,
-                alpha=0.7,
-                filters=None,
+            recall = min(max(top_k * (4 if self.reranker else 3), 8), 20 if self.reranker else 15)
+            search = vector_store.hybrid_search if use_hybrid else vector_store.search
+            options = {"alpha": alpha} if use_hybrid else {}
+            chunk_results = await search(
+                collection_name=kb.qdrant_collection, query=query,
+                top_k=recall, score_threshold=score_threshold,
+                filters=filters, **options,
             )
             for item in chunk_results:
                 item["chunk_id"] = item.get("chunk_id") or (item.get("metadata") or {}).get(
@@ -125,11 +136,25 @@ class KnowledgeRetrievalService:
                 .scalars()
                 .all()
             )
-            chunk_results = [
-                item for item in chunk_results if item["chunk_id"] in current_chunk_ids
-            ]
+            # Retain only genuinely unmigrated legacy documents. Once a
+            # document has canonical chunks, obsolete projection points must go.
+            legacy_doc_ids = [item.get("document_id") for item in chunk_results
+                              if not (item.get("metadata") or {}).get("record_type")]
+            legacy_documents = set((await session.scalars(select(Document.id).where(
+                Document.knowledge_base_id == kb_id,
+                Document.id.in_(legacy_doc_ids),
+                Document.status == DocumentStatus.COMPLETED,
+                ~exists(select(KnowledgeChunk.id).where(
+                    KnowledgeChunk.document_id == Document.id)),
+            ))).all()) if legacy_doc_ids else set()
+            chunk_results = [item for item in chunk_results
+                             if item["chunk_id"] in current_chunk_ids
+                             or (not (item.get("metadata") or {}).get("record_type")
+                                 and item.get("document_id") in legacy_documents)]
 
-            if not use_graph_retrieval or not kb.graph_enabled:
+            if not use_graph_retrieval:
+                return chunk_results
+            if not kb.graph_enabled:
                 return self.reciprocal_rank_fusion(chunk_results, [], graph_weight)
 
             seed_hits = await vector_store.search_records(
@@ -194,6 +219,15 @@ class KnowledgeRetrievalService:
                     )
                 ).scalars()
             )
+            if filters:
+                from app.knowledge_base.ingestion_service import KnowledgeIngestionService
+
+                def matches(chunk):
+                    record = KnowledgeIngestionService._chunk_payload(chunk)
+                    payload = {**record.pop("payload"), **record}
+                    return all(payload.get(key) == value for key, value in filters.items())
+
+                graph_chunks = [chunk for chunk in graph_chunks if matches(chunk)]
             paths = [
                 {
                     "kb_id": kb_id,
@@ -252,10 +286,16 @@ class KnowledgeRetrievalService:
         scores: dict[str, float] = {}
 
         def add(results, source: str, weight: float) -> None:
-            for rank, item in enumerate(results, start=1):
+            if weight <= 0:
+                return
+            seen = set()
+            rank = 0
+            for item in results:
                 chunk_id = item.get("chunk_id") or (item.get("metadata") or {}).get("chunk_id")
-                if not chunk_id:
+                if not chunk_id or chunk_id in seen:
                     continue
+                seen.add(chunk_id)
+                rank += 1
                 current = fused.setdefault(chunk_id, {"chunk_id": chunk_id})
                 current.update({key: value for key, value in item.items() if value is not None})
                 sources = current.setdefault("fusion_sources", [])

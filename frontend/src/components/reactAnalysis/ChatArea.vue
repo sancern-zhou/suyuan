@@ -41,6 +41,13 @@
 
       <div class="actions-right-group">
         <button
+          v-if="agentMode === 'assistant'"
+          type="button"
+          class="panel-toggle-btn assistant-panel-trigger"
+          title="事项与建议"
+          @click="$emit('open-assistant')"
+        >事项与建议</button>
+        <button
           v-if="hasVizContent"
           type="button"
           class="panel-toggle-btn"
@@ -131,6 +138,7 @@
                 type="button"
                 class="more-menu-item"
                 role="menuitem"
+                v-if="agentMode !== 'assistant'"
                 @click="handleMenuAction('view-memory')"
               >
                 <svg class="menu-item-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -167,6 +175,7 @@
       :session-id="sessionId"
       @load-more="$emit('load-more')"
       @preview-message-attachment="$emit('preview-message-attachment', $event)"
+      @share-session="handleShareSession"
     />
 
     <div v-if="readOnly && !showManagementPanel" class="read-only-notice">
@@ -207,7 +216,24 @@ import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
 import ReActMessageList from '@/components/ReActMessageList.vue'
 import InputBox from '@/components/InputBox.vue'
 import AgentInteractionDialog from './dialogs/AgentInteractionDialog.vue'
+import { shareConversation } from '@/api/sharedConversations.js'
 import { withComposerShortcutGuide } from '@/components/inputBoxPlaceholder.js'
+
+const shareSessionBusy = ref(false)
+
+const handleShareSession = async () => {
+  if (!props.sessionId || shareSessionBusy.value) return
+  if (!window.confirm('将把当前对话生成快照公开给系统全部用户（图表会一并保存，之后修改或删除原对话不影响已分享内容）。确定分享吗？')) return
+  shareSessionBusy.value = true
+  try {
+    await shareConversation(props.sessionId)
+    window.alert('已分享到共享对话面板（左侧栏「共享对话」可查看）')
+  } catch (err) {
+    window.alert(err?.message || '分享失败')
+  } finally {
+    shareSessionBusy.value = false
+  }
+}
 
 const props = defineProps({
   messages: {
@@ -324,6 +350,7 @@ const emit = defineEmits([
   'close-interaction',
   'open-trajectory',
   'open-memory',
+  'open-assistant',
   'toggle-left-sidebar',
   'new-conversation'
 ])
@@ -682,6 +709,13 @@ defineExpose({
 .panel-toggle-btn:hover {
   background: var(--bg-muted);
   color: var(--text-1);
+}
+
+.assistant-panel-trigger {
+  width: auto;
+  padding: 0 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .panel-toggle-icon {

@@ -201,7 +201,7 @@ class SessionManager:
         查找最近的子Agent会话
 
         Args:
-            parent_mode: 父Agent模式（如 "social"）
+            parent_mode: 父Agent模式（如 "assistant"）
             child_mode: 子Agent模式（如 "query"）
 
         Returns:
@@ -289,7 +289,7 @@ class SessionManager:
 
         # 匹配所有类型的会话文件：session_*, assistant_session_*, query_session_*, report_session_*, tracing_session_*, chart_session_*, code_session_*, 以及子Agent session (*__to__*)
         patterns = [
-            "session_*.json", "assistant_session_*.json", "query_session_*.json",
+            "session_*.json", "assistant_session_*.json", "office_session_*.json", "query_session_*.json",
             "report_session_*.json", "tracing_session_*.json", "chart_session_*.json",
             "code_session_*.json",
             "social_session_*.json",
@@ -349,7 +349,7 @@ class SessionManager:
 
         # 匹配所有类型的会话文件：session_*, assistant_session_*, query_session_*, report_session_*, tracing_session_*, chart_session_*, code_session_*, 以及子Agent session (*__to__*)
         patterns = [
-            "session_*.json", "assistant_session_*.json", "query_session_*.json",
+            "session_*.json", "assistant_session_*.json", "office_session_*.json", "query_session_*.json",
             "report_session_*.json", "tracing_session_*.json", "chart_session_*.json",
             "code_session_*.json",
             "social_session_*.json",

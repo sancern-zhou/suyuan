@@ -71,3 +71,14 @@ def owner_matches(record_owner_user_id: str | None, user_id: str) -> bool:
     """Whether a stored owner_user_id belongs to the given user."""
     owner = (record_owner_user_id or "").strip()
     return owner in visible_owner_ids(user_id)
+
+
+def primary_owner_id(user_id: str) -> str:
+    """Stable account key across company Web/App and explicitly bound devices."""
+    value = (user_id or "").strip()
+    if value.startswith(APP_ANDROID_PREFIX):
+        bound = _bound_company_user_id(value[len(APP_ANDROID_PREFIX):])
+        if not bound:
+            return value
+        value = bound
+    return value.removeprefix(COMPANY_PREFIX) if not value.startswith(APP_PREFIX) else value

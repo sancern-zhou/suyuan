@@ -22,8 +22,12 @@ class XuchangTransportAnalysisFetcher(DataFetcher):
         super().__init__(
             name="xuchang_transport_analysis_fetcher",
             description="许昌场景三NOAA后向轨迹与本地输送诊断",
-            schedule="*/15 * * * *",
-            version="3.1.0",
+            # 单轮约 3~4 分钟，须避开河南 ssfb 三抓取器窗口（城市 14,20,55 / 站点 16,22,57 /
+            # 区县 18,24,59）：此前 */15 的 :15 轮拖到 :18:26，与县级抓取并发连
+            # Crawler MySQL 触发 "Packet sequence number wrong"（Crawler MySQL 并发
+            # 握手易乱包，严禁与 ssfb 三兄弟同窗口运行）。
+            schedule="26,31,40,50 * * * *",
+            version="3.1.1",
         )
         self.service = service or XuchangTransportEscalationService()
 

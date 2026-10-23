@@ -201,7 +201,7 @@ async def test_graph_build_recovery_uses_database_session_factory(monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await knowledge_graph_routes._graph_build_recovery_loop()
 
-    assert factories == [knowledge_graph_routes.async_session]
+    assert factories == [knowledge_graph_routes.knowledge_async_session]
 
 
 def test_graph_snapshot_returns_complete_selected_statuses(graph_api):

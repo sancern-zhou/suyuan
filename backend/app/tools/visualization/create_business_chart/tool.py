@@ -107,7 +107,7 @@ class CreateBusinessChartTool(LLMTool):
             "气象背景叠加污染物使用 wind_timeseries；纯风向频率图使用 Python，不得用占位浓度制作污染物风玫瑰。"
             "现成业务图可作为组合报告素材复用；尚未覆盖的自定义分析、分面、多子图和科研图表使用 execute_python + matplotlib/seaborn。"
             "生成的静态图在对话正文展示，不进入右侧交互图面板；"
-            "单独交付图表时可在最终答复中用 [[chart:<visual_id>]] 控制位置，visual_id 取返回的 visuals.id，"
+            "单独交付图表时可在最终答复中用图表标记控制位置（优先逐字符原样复制工具返回 summary 中的 [[chart:chart_N]] 标记；未提供标记时才用返回的 visuals.id），"
             "未指定位置的图由前端追加到本轮答复末尾。制作正式报告时图表仍可作为报告素材复用，"
             "报告包内部配图不会自动逐张追加到对话。不要自行拼图片 URL 或本地路径。"
         )

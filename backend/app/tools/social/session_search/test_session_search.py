@@ -174,7 +174,7 @@ class TestAgentRunsFTSIndex:
                 "status": "completed",
                 "stats": {"duration_ms": 100},
             },
-            owner_type="social",
+            owner_type="assistant",
             owner_id="user_a",
         )
         index.add_record(
@@ -187,11 +187,11 @@ class TestAgentRunsFTSIndex:
                 "status": "completed",
                 "stats": {"duration_ms": 100},
             },
-            owner_type="social",
+            owner_type="assistant",
             owner_id="user_b",
         )
 
-        results = index.search("问号", limit=10, owner_type="social", owner_id="user_a")
+        results = index.search("问号", limit=10, owner_type="assistant", owner_id="user_a")
 
         assert [result["run_id"] for result in results] == ["social_a_001"]
 
@@ -212,11 +212,11 @@ class TestAgentRunsFTSIndex:
             "stats": {"duration_ms": 100},
         }
 
-        index.add_record(record, owner_type="social", owner_id="user_a")
+        index.add_record(record, owner_type="assistant", owner_id="user_a")
         record["final_answer_preview"] = "第二次回复。"
-        index.add_record(record, owner_type="social", owner_id="user_a")
+        index.add_record(record, owner_type="assistant", owner_id="user_a")
 
-        results = index.search("增量入库测试", limit=10, owner_type="social", owner_id="user_a")
+        results = index.search("增量入库测试", limit=10, owner_type="assistant", owner_id="user_a")
 
         assert len(results) == 1
         assert results[0]["run_id"] == "social_a_002"
@@ -297,7 +297,7 @@ class TestSessionSearchTool:
                 "status": "completed",
                 "stats": {"duration_ms": 100},
             },
-            owner_type="social",
+            owner_type="assistant",
             owner_id="user_a",
         )
         index.add_record(
@@ -310,13 +310,13 @@ class TestSessionSearchTool:
                 "status": "completed",
                 "stats": {"duration_ms": 100},
             },
-            owner_type="social",
+            owner_type="assistant",
             owner_id="user_b",
         )
 
         tool = SessionSearchTool()
         tool._fts_index = index
-        context = SimpleNamespace(runtime_mode="social", user_identifier="user_a")
+        context = SimpleNamespace(runtime_mode="assistant", user_identifier="user_a")
 
         result = await tool.execute(context, query="问号", limit=5)
 
@@ -343,13 +343,13 @@ class TestSessionSearchTool:
                 "status": "completed",
                 "stats": {"duration_ms": 100},
             },
-            owner_type="social",
+            owner_type="assistant",
             owner_id="user_log",
         )
 
         tool = SessionSearchTool()
         tool._fts_index = index
-        context = SimpleNamespace(runtime_mode="social", user_identifier="user_log")
+        context = SimpleNamespace(runtime_mode="assistant", user_identifier="user_log")
         logged_events = []
 
         class FakeLogger:
@@ -367,9 +367,9 @@ class TestSessionSearchTool:
             fields for event, fields in logged_events if event == "session_searched"
         ]
         assert matching_events
-        assert matching_events[-1]["owner_type"] == "social"
+        assert matching_events[-1]["owner_type"] == "assistant"
         assert matching_events[-1]["owner_id"] == "user_log"
-        assert matching_events[-1]["runtime_mode"] == "social"
+        assert matching_events[-1]["runtime_mode"] == "assistant"
 
     @pytest.mark.asyncio
     async def test_social_tool_search_requires_user_identifier(self, temp_db_path):
@@ -382,7 +382,7 @@ class TestSessionSearchTool:
 
         tool = SessionSearchTool()
         tool._fts_index = index
-        context = SimpleNamespace(runtime_mode="social", user_identifier=None)
+        context = SimpleNamespace(runtime_mode="assistant", user_identifier=None)
 
         result = await tool.execute(context, query="问号", limit=5)
 
@@ -410,13 +410,13 @@ class TestSocialSessionIndexing:
             session_id="session_a",
             query="新的问号会话",
             metadata={
-                "runtime_mode": "social",
+                "runtime_mode": "assistant",
                 "user_identifier": "user_a",
             },
         )
         logger.end_run(status="completed", response="这是新的社交用户回复。")
 
-        results = index.search("问号", limit=5, owner_type="social", owner_id="user_a")
+        results = index.search("问号", limit=5, owner_type="assistant", owner_id="user_a")
 
         assert len(results) == 1
         assert results[0]["session_id"] == "session_a"

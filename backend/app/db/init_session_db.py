@@ -21,7 +21,7 @@ async def init_session_tables():
 
     # 以下模型定义在应用主 Base 上，但数据与会话历史同库存储
     from app.boards.models import Board, BoardVersion
-    from app.conversations.models import ConversationCatalogDB
+    from app.conversations.models import ConversationCatalogDB, ConversationReadDB
     from app.db.models.scheduled_task_execution_db import (
         ScheduledTaskExecutionDB,
     )
@@ -37,6 +37,7 @@ async def init_session_tables():
         ScheduledTaskExecutionDB.__table__,
         ScheduledTaskResultDB.__table__,
         ConversationCatalogDB.__table__,
+        ConversationReadDB.__table__,
         Board.__table__,
         BoardVersion.__table__,  # 依赖 drawio_boards
         SocialUser.__table__,
@@ -65,7 +66,7 @@ async def init_session_tables():
                 AND table_name IN (
                     'sessions', 'session_messages', 'session_resources',
                     'session_resource_versions', 'scheduled_task_executions',
-                    'conversation_catalog', 'drawio_boards',
+                    'conversation_catalog', 'conversation_reads', 'drawio_boards',
                     'drawio_board_versions', 'social_users',
                     'social_session_mappings', 'weixin_scan_tasks',
                     'social_report_results'
@@ -82,6 +83,7 @@ async def init_session_tables():
                 "session_resource_versions",
                 "scheduled_task_executions",
                 "conversation_catalog",
+                "conversation_reads",
                 "drawio_boards",
                 "drawio_board_versions",
                 "social_users",

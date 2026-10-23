@@ -44,7 +44,6 @@ class ToolRegistry:
         self,
         tool,
         priority: int = 100,
-        input_adapter_rules: Optional[Dict[str, Any]] = None,
         return_schema: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         auto_generate: bool = True
@@ -61,7 +60,6 @@ class ToolRegistry:
         Args:
             tool: 工具实例（必须继承LLMTool）
             priority: 优先级（数字越小优先级越高，范围1-1000）
-            input_adapter_rules: 已废弃；保留参数仅兼容旧调用，不再存储或使用
             return_schema: 返回数据Schema（Pydantic模型或JSON Schema）
                 - 确保输出符合UDF v1.0统一数据格式
                 - 确保图表输出符合v3.0规范
@@ -89,9 +87,6 @@ class ToolRegistry:
                 return_schema = self._generate_return_schema(tool)
             if not metadata:
                 metadata = self._generate_tool_metadata(tool)
-
-        # 参数契约由原生 tool schema 提供，不再生成或存储输入适配规则。
-        input_adapter_rules = {}
 
         if not return_schema:
             logger.warning(
@@ -163,7 +158,6 @@ class ToolRegistry:
             registry=self.registry_name,
             tool=tool_name,
             priority=priority,
-            has_adapter=False,
             has_schema=bool(return_schema),
             category=tool_data.get("category"),
             requires_context=tool_data.get("requires_context")
@@ -192,14 +186,6 @@ class ToolRegistry:
     def get_tool_data(self, tool_name: str) -> Optional[Dict[str, Any]]:
         """获取工具完整数据（工具+Schema+元数据）"""
         return self._tools.get(tool_name)
-
-    def get_input_adapter(self, tool_name: str) -> Dict[str, Any]:
-        """输入适配已废弃；保留空返回兼容旧调用。"""
-        return {}
-
-    def get_input_adapter_rules(self, tool_name: str) -> Dict[str, Any]:
-        """输入适配已废弃；保留空返回兼容旧调用。"""
-        return {}
 
     def get_return_schema(self, tool_name: str) -> Dict[str, Any]:
         """获取工具返回Schema"""
@@ -722,7 +708,6 @@ class ToolRegistry:
                 "requires_handle": metadata.get("requires_handle", False)
             },
             "function_schema": function_schema,
-            "has_input_adapter": False,
             "has_return_schema": bool(tool_data.get("return_schema"))
         }
 

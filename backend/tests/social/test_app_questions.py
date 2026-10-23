@@ -25,11 +25,13 @@ QUESTIONS = [
 
 
 @pytest.mark.asyncio
-async def test_app_question_answer_resume_and_restore(tmp_path, monkeypatch):
+async def test_app_question_answer_resume_and_restore(tmp_path, monkeypatch, fake_lock_db, app_transcript_db):
+    from app.agent.session.models import Session
+    await app_transcript_db.save_session_metadata(Session(session_id='social-session', query='', metadata={'mode': 'query'}))
     store = AppRunStore(tmp_path / 'runs.sqlite3')
     monkeypatch.setattr(routes, 'get_app_run_store', lambda: store)
     monkeypatch.setattr(routes, '_ensure_session', AsyncMock(return_value='social-session'))
-    catalog = SimpleNamespace(require_read=AsyncMock(return_value=SimpleNamespace(source=ConversationSource.SOCIAL)))
+    catalog = SimpleNamespace(require_read=AsyncMock(return_value=SimpleNamespace(source=ConversationSource.WEB, owner_user_id='app:android:alice')), require_write=AsyncMock())
     monkeypatch.setattr(routes, 'get_conversation_catalog', lambda: catalog)
     calls = []
     class Agent:
@@ -44,6 +46,8 @@ async def test_app_question_answer_resume_and_restore(tmp_path, monkeypatch):
     monkeypatch.setattr(routes, '_get_memory_store', AsyncMock(return_value=object()))
     monkeypatch.setattr(routes, '_social_preferences', lambda _identity: {})
     monkeypatch.setattr(routes, '_persist_app_turn', AsyncMock())
+    from app.api import agent as web_routes
+    monkeypatch.setattr(web_routes, 'get_session_manager', lambda: app_transcript_db)
     app = FastAPI()
     app.include_router(routes.router)
     app.dependency_overrides[require_app_identity] = lambda: AppIdentity('alice', 'Alice', 'app:android:alice', 9999999999)
@@ -69,6 +73,11 @@ async def test_app_question_answer_resume_and_restore(tmp_path, monkeypatch):
         assert resolution.status_code == 200
         assert 'HTML' in resolution.json()['resume_query']
         assert '加入图表' in resolution.json()['resume_query']
+        assert await web_routes.resolve_agent_interaction(
+            'social-session', pending['interaction_id'],
+            web_routes.AgentInteractionResolution(**answers),
+            AppIdentity('alice', 'Alice', 'app:android:alice', 9999999999).as_current_user(), catalog,
+        ) == resolution.json()
         assert (await client.post(question_url, json=answers)).json() == resolution.json()
         assert (await client.post(question_url, json={'decision': 'reject'})).status_code == 409
         assert (await reader.pending_interaction('social-session')) is None
@@ -133,7 +142,28 @@ async def test_question_endpoints_require_app_conversation_permission(monkeypatc
     with pytest.raises(HTTPException) as exc:
         await routes.app_pending_interaction('other-session', identity)
     assert exc.value.status_code == 404
-    catalog.require_read = AsyncMock(return_value=SimpleNamespace(source=ConversationSource.WEB))
+    catalog.require_read = AsyncMock(return_value=SimpleNamespace(source=ConversationSource.WEB, owner_user_id='app:android:alice'))
     with pytest.raises(HTTPException) as exc:
         await routes.app_resolve_interaction('web-session', 'question', routes.AppQuestionResolution(decision='reject'), identity)
     assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_app_answers_web_question_from_shared_database(app_transcript_db, monkeypatch, tmp_path):
+    from app.agent.session.models import Session
+    from app.api import agent as web_routes
+    question = {'interaction_id': 'web-question', 'kind': 'structured_question', 'questions': QUESTIONS,
+                'mode': 'assistant', 'session_id': 'shared'}
+    await app_transcript_db.save_session_metadata(Session(session_id='shared', query='Plan', metadata={'pending_interaction': question}))
+    monkeypatch.setattr(web_routes, 'get_session_manager', lambda: app_transcript_db)
+    monkeypatch.setattr(routes, 'get_app_run_store', lambda: AppRunStore(tmp_path / 'runtime.sqlite'))
+    catalog = SimpleNamespace(require_read=AsyncMock(return_value=SimpleNamespace(source=ConversationSource.WEB, owner_user_id='42')),
+                              require_write=AsyncMock())
+    monkeypatch.setattr(routes, 'get_conversation_catalog', lambda: catalog)
+    identity = AppIdentity('42', 'Alice', 'company:42', 9999999999)
+    assert (await routes.app_pending_interaction('shared', identity))['interaction'] == question
+    result = await routes.app_resolve_interaction('shared', 'web-question', routes.AppQuestionResolution(
+        decision='answer', answers=[{'selected': [0]}, {'selected': [1]}]), identity)
+    assert result['mode'] == 'assistant'
+    assert 'PDF' in result['resume_query']
+    assert (await routes.app_pending_interaction('shared', identity))['interaction'] is None

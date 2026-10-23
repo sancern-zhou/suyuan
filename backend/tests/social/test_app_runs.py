@@ -2,6 +2,7 @@ import asyncio
 import json
 import sqlite3
 import time
+from contextvars import ContextVar
 
 import pytest
 
@@ -67,6 +68,49 @@ async def test_explicit_cancel_from_another_process_stops_run(tmp_path):
     await asyncio.gather(*owner.tasks, return_exceptions=True)
     assert (await caller.get(run['run_id']))['status'] == 'cancelled'
     assert (await caller.events(run['run_id']))[-1][1]['type'] == 'interrupted'
+
+
+@pytest.mark.asyncio
+async def test_cancel_closes_yield_parked_producer_inside_executor_context(tmp_path):
+    """取消落在消费端 await 上、生成器停在 yield 点时，清理必须在执行器
+    任务的上下文内完成：contextvar token 复位不得抛 ValueError，producer
+    的 finally（对应路由侧的会话落盘与取消注册）必须执行，否则跨进程取消
+    注册表会残留 running 状态，把会话锁到 TTL 过期。"""
+    store = AppRunStore(tmp_path / 'runs.sqlite3')
+    run, _ = await store.create('alice', 'request', 'session', 'fingerprint')
+    probe = ContextVar('app_runs_cancel_probe', default=None)
+    started = asyncio.Event()
+    append_started = asyncio.Event()
+    release_append = asyncio.Event()
+    finally_done = asyncio.Event()
+    real_append = store.append
+
+    async def slow_append(run_id, event):
+        append_started.set()
+        await release_append.wait()
+        return await real_append(run_id, event)
+
+    store.append = slow_append
+
+    async def producer():
+        token = probe.set('in-flight')
+        try:
+            started.set()
+            yield 'data: ' + json.dumps({'type': 'streaming_text', 'data': {'chunk': 'x'}}) + '\n\n'
+        finally:
+            probe.reset(token)
+            finally_done.set()
+
+    store.start(run['run_id'], producer)
+    await started.wait()
+    await append_started.wait()
+    assert await store.cancel_session('session')
+    await asyncio.sleep(1.5)
+    release_append.set()
+    await asyncio.wait_for(finally_done.wait(), 3)
+    await asyncio.gather(*store.tasks, return_exceptions=True)
+    assert (await store.get(run['run_id']))['status'] == 'cancelled'
+    assert (await store.events(run['run_id']))[-1][1]['type'] == 'interrupted'
 
 
 @pytest.mark.asyncio

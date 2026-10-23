@@ -31,6 +31,14 @@ test('always includes empty selection arrays', () => {
   assert.equal(body.active_contexts, null)
 })
 
+test('Web assistant uses assistant runtime while professional requests retain their modes', () => {
+  assert.equal(buildAnalyzeRequestBody('继续', { agentMode: 'assistant' }).mode, 'assistant')
+  assert.equal(buildAnalyzeRequestBody('继续', { agentMode: 'assistant' }).mode, 'assistant')
+  for (const mode of ['query', 'expert', 'report', 'ppt', 'board', 'knowledge']) {
+    assert.equal(buildAnalyzeRequestBody('继续', { agentMode: mode }).mode, mode)
+  }
+})
+
 test('carries the previous paused run barrier into the next normal turn', () => {
   const body = buildAnalyzeRequestBody('继续刚才的数据分析', {
     sessionId: 'assistant_session_1',

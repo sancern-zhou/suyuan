@@ -336,7 +336,7 @@ class ScheduleTaskTool(LLMTool):
             enabled_count = sum(1 for task in tasks if task.get("enabled"))
             disabled_count = len(tasks) - enabled_count
             task_lines = [
-                f"{idx}. {task['name']} ({'enabled' if task.get('enabled') else 'disabled'}, {task.get('manual_mode') or 'social'}, {task.get('schedule')})"
+                f"{idx}. {task['name']} ({'enabled' if task.get('enabled') else 'disabled'}, {task.get('manual_mode') or 'assistant'}, {task.get('schedule')})"
                 for idx, task in enumerate(tasks, start=1)
             ]
             summary = (

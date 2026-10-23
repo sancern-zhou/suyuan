@@ -185,7 +185,7 @@ async def get_social_status(
         # Count active sessions
         active_sessions = 0
         if session_mapper:
-            active_sessions = len(session_mapper._mappings)
+            active_sessions = await session_mapper.count_active()
 
         # Check if any platform is enabled
         enabled = any(
@@ -246,21 +246,12 @@ async def list_sessions(
         if not session_mapper:
             return []
 
-        # Get active sessions from mapper
-        sessions = []
-        for social_user_id, session_id in session_mapper._mappings.items():
-            if len(sessions) >= limit:
-                break
+        rows = await session_mapper.list_active(limit)
+        return [SessionInfo(
+            social_user_id=row["social_user_id"], session_id=row["session_id"],
+            last_used=row["last_used"].isoformat(),
+        ) for row in rows]
 
-            last_used = session_mapper._timestamp_cache.get(social_user_id)
-            if last_used:
-                sessions.append(SessionInfo(
-                    social_user_id=social_user_id,
-                    session_id=session_id,
-                    last_used=last_used.isoformat()
-                ))
-
-        return sessions
     except Exception as e:
         logger.error("Failed to list sessions", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))

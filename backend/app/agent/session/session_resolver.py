@@ -1,8 +1,8 @@
 """Resolve session storage by runtime mode.
 
-Most agent surfaces use the database-backed manager. Social mode is different:
-its user/session mapping and transcript are local operational state, so it must
-use the file-backed manager as the source of truth.
+Web and App conversations use the database-backed manager. External channel
+ingress explicitly selects ``channel`` storage for local transcripts.
+Storage selection is independent of the assistant runtime mode.
 """
 
 from __future__ import annotations
@@ -15,13 +15,13 @@ from .session_manager import SessionManager
 from .session_manager import get_session_manager as get_file_session_manager
 
 
-def _is_social_mode(mode: Optional[str]) -> bool:
-    return mode == "social"
+def _is_channel_storage(mode: Optional[str]) -> bool:
+    return mode == "channel"
 
 
 def get_session_manager_for_mode(mode: Optional[str] = None) -> Any:
     """Return the canonical session manager for a runtime mode."""
-    if _is_social_mode(mode):
+    if _is_channel_storage(mode):
         return get_file_session_manager()
 
     from . import get_session_manager

@@ -94,7 +94,7 @@ async def test_planner_retries_bailian_media_fetch_failure_with_base64(tmp_path)
             user_conversation="user",
             tools=[],
             iteration=1,
-            mode="social",
+            mode="assistant",
             user_content=user_content,
             attachments=[attachment],
             llm_provider="bailian",

@@ -51,6 +51,27 @@ def _serialize_tool_result_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ": "), default=str)
 
 
+def _strip_read_state_content_for_llm(value: Any) -> Any:
+    """LLM 原文注入前剥离 read_file 结果里 metadata.read_state 的正文回显。
+
+    read_state.content 与 data.content 完全重复，序列化体积翻倍，是 read_file
+    结果撞上单结果降级悬崖（MAX_FRESH_SINGLE_TOOL_RESULT_CHARS）、退化为
+    2000 字符预览的主因。edit_file 预读校验走全局 file_read_state 单例，
+    会话恢复走持久化压缩历史（restore_read_state_from_history），都不依赖
+    这条仅存在于内存的 LLM 注入路径。
+    """
+    if not isinstance(value, dict):
+        return value
+    metadata = value.get("metadata")
+    if not isinstance(metadata, dict) or not isinstance(metadata.get("read_state"), dict):
+        return value
+    read_state = dict(metadata["read_state"])
+    if read_state.get("content"):
+        read_state["content"] = ""
+        read_state["content_stripped_for_llm"] = True
+    return {**value, "metadata": {**metadata, "read_state": read_state}}
+
+
 def _todo_status_counts(items: Any) -> Dict[str, int]:
     if not isinstance(items, list):
         return {
@@ -1676,7 +1697,9 @@ class SessionMemory:
                 if len(turn_plan) >= len(raw_map):
                     continue
                 try:
-                    serialized = _serialize_tool_result_json(raw)
+                    serialized = _serialize_tool_result_json(
+                        _strip_read_state_content_for_llm(raw)
+                    )
                 except Exception:
                     continue
                 if len(serialized) > single_max:
@@ -1708,7 +1731,6 @@ class SessionMemory:
     def _plan_stale_result_downgrade(
         self,
         turns: List["ConversationTurn"],
-        fresh_plan: Dict[int, Dict[str, str]],
     ) -> Dict[int, Dict[str, str]]:
         """把新鲜窗口之外的超大 tool_result 块收缩为存根。
 
@@ -1717,8 +1739,9 @@ class SessionMemory:
         模型需要完整数据时按 file_path 重新读取，而不是重复查询。
         """
         plan: Dict[int, Dict[str, str]] = {}
+        fresh_start = self._fresh_window_start_index(turns)
         for index, turn in enumerate(turns):
-            if index in fresh_plan:
+            if index >= fresh_start:
                 continue
             if turn.type != "tool_result" or not isinstance(turn.content, list):
                 continue
@@ -1807,7 +1830,7 @@ class SessionMemory:
         all_turns = self.conversation_history
         messages = []
         fresh_raw_plan = self._plan_fresh_raw_injection(all_turns)
-        stale_downgrade_plan = self._plan_stale_result_downgrade(all_turns, fresh_raw_plan)
+        stale_downgrade_plan = self._plan_stale_result_downgrade(all_turns)
         projection_plan: Dict[int, Dict[str, str]] = {}
         for plan_part in (stale_downgrade_plan, fresh_raw_plan):
             for turn_index, turn_plan in plan_part.items():

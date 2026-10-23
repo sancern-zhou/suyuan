@@ -25,7 +25,7 @@ from app.utils.path_config import resolve_agent_path
 from app.tools.resource_declarations import artifact_resource
 from app.knowledge_base.models import KnowledgeBase, KnowledgeBaseStatus, KnowledgeBaseType
 from app.knowledge_base.service import KnowledgeBaseService
-from app.db.database import async_session
+from app.db.knowledge_database import knowledge_async_session as async_session
 
 logger = structlog.get_logger()
 

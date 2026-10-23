@@ -191,13 +191,12 @@ class KnowledgeQAWorkflow(WorkflowTool):
             # 导入检索函数
             from app.api.knowledge_qa import search_knowledge_bases
 
-            # 1. 检索相关文档。HyDE不再由workflow双路触发；需要扩展词时由主Agent拼入query。
+            # 1. 检索相关文档；需要扩展词时由主 Agent 拼入 query。
             self._record_step("knowledge_retrieval", "running")
             search_results = await search_knowledge_bases(
                 query=actual_query,
                 user_id=user_id,
                 knowledge_base_ids=knowledge_base_ids,  # 传递知识库ID列表
-                use_hyde=False,
                 use_reranker="always",
                 top_k=min(top_k, 10)  # 限制最大10篇
             )

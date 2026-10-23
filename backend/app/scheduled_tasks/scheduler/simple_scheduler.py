@@ -82,6 +82,9 @@ class SimpleScheduler:
             cron_config = self.CRON_TEMPLATES[task.schedule_type]
             trigger = CronTrigger(**cron_config, timezone="Asia/Shanghai")
 
+        elif task.schedule_type == ScheduleType.CRON:
+            trigger = CronTrigger.from_crontab(task.cron, timezone=task.timezone_name)
+
         elif task.schedule_type == ScheduleType.ONCE:
             # 一次性任务
             if not task.run_at:
@@ -105,6 +108,23 @@ class SimpleScheduler:
                 return
             trigger = CronTrigger(hour=task.hour, minute=task.minute, timezone="Asia/Shanghai")
             logger.info(f"Scheduled daily task: {task.name} at {task.hour:02d}:{task.minute:02d}")
+
+        elif task.schedule_type == ScheduleType.DAILY_HOURS_CUSTOM:
+            # 每天多个指定小时（如空闲时段：0-7点、12-13点、18-23点）
+            hours = sorted({int(h) for h in (task.hours or []) if 0 <= int(h) <= 23})
+            if not hours or task.minute is None:
+                logger.error(
+                    f"Task {task.task_id}: schedule_type=daily_hours_custom but hours/minute is not set"
+                )
+                return
+            trigger = CronTrigger(
+                hour=",".join(str(h) for h in hours),
+                minute=task.minute,
+                timezone="Asia/Shanghai",
+            )
+            logger.info(
+                f"Scheduled daily hours task: {task.name} at hours {hours} minute {task.minute:02d}"
+            )
 
         elif task.schedule_type == ScheduleType.WEEKLY_CUSTOM:
             # 每周自定义时间；APScheduler 使用 0=周一，6=周日

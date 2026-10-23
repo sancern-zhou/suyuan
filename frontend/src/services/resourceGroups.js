@@ -53,6 +53,10 @@ export function preferredPreview(group) {
     return active.find(resource => resource.renderer === 'image') || group.primary
   }
   if (group?.primary?.renderer === 'chart' && group.primary.status === 'active') return group.primary
+  // Web 端有交互表格渲染器：xlsx 组优先主文档，PDF 预览留给无表格能力的场景
+  if (group?.primary?.renderer === 'spreadsheet' && group.primary.status === 'active') {
+    return group.primary
+  }
   return active.find(resource => resource.relation === 'preview' && SUPPORTED_RENDERERS.has(resource.renderer))
     || active.find(resource => resource.relation === 'rendition' && SUPPORTED_RENDERERS.has(resource.renderer))
     || group?.primary
