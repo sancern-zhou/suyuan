@@ -473,15 +473,17 @@ FORM_RANGE_PROFILES = {
     }
 }
 
+def _ops_database_label() -> str:
+    """审计数据集标注的源库标识（跟随 OPS_SQLSERVER_DATABASE 配置）。"""
+    try:
+        return Settings().ops_sqlserver_database
+    except Exception:
+        return "AirPollutionAnalysis"
+
+
 def connect() -> pyodbc.Connection:
     settings = Settings()
-    conn_str = re.sub(
-        r"DATABASE=\w+",
-        "DATABASE=AirPollutionAnalysis",
-        settings.sqlserver_connection_string,
-        flags=re.IGNORECASE,
-    )
-    return pyodbc.connect(conn_str, timeout=30)
+    return pyodbc.connect(settings.ops_sqlserver_connection_string, timeout=30)
 
 
 def rows(cursor: pyodbc.Cursor, sql: str, params: list[Any] | None = None) -> list[dict[str, Any]]:
@@ -734,7 +736,7 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
             return {
                 "query_info": {
                     "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "database": "AirPollutionAnalysis",
+                    "database": _ops_database_label(),
                     "order_filter": {
                         "status": order_statuses or "all",
                         "create_time_start": filters.create_time_start,
@@ -889,7 +891,7 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
     return {
         "query_info": {
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "database": "AirPollutionAnalysis",
+            "database": _ops_database_label(),
             "order_filter": {
                 "status": order_statuses or "all",
                 "create_time_start": filters.create_time_start,
