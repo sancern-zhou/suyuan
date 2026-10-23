@@ -18,6 +18,12 @@
   # 4. 任意时刻核对平台侧工单状态：
   python scripts/jiangsu_platform_writeback_rehearsal.py status --code FA...
 
+  # 5. 运维告警工单联调（走真实派单链路：平台类型映射 + 先关联后建单）：
+  python scripts/jiangsu_platform_writeback_rehearsal.py alarm-create \
+    --station-code 3018A --order-type InstrumentFault
+  python scripts/jiangsu_platform_writeback_rehearsal.py status --code YJ... \
+    --order-type InstrumentFault
+
 前置：环境需开启 JIANGSU_PLATFORM_WRITEBACK_ENABLED=true。
 """
 
@@ -48,9 +54,12 @@ def _api():
     return _JiangsuAuthenticatedApi(source="ops")
 
 
-async def _order_row(api, code: str) -> dict:
+async def _order_row(api, code: str, order_type: str = "Fault") -> dict:
+    from app.tools.jiangsu.alarm_order_types import platform_order_type_params
+
     payload = await api.get(LIST_PATH, [
-        ("OrderType", "Fault"), ("MaxResultCount", "10"), ("SkipCount", "0"),
+        *platform_order_type_params(order_type),
+        ("MaxResultCount", "10"), ("SkipCount", "0"),
         ("WorkingOrderCode", code),
     ])
     items = (payload.get("result") or {}).get("items") or []
@@ -173,9 +182,28 @@ async def write(args) -> None:
     _print_row("平台状态:", row)
 
 
+async def alarm_create(args) -> None:
+    """走真实派单链路建一张运维告警工单，验证类型映射与关联去重。"""
+    from app.tools.jiangsu.platform_workflow import create_smart_event_dispatch_order
+
+    title = f"{MARK}{args.station_code} {args.order_type} 告警工单联调"
+    result = await create_smart_event_dispatch_order(
+        event_id="rehearsal",
+        site_id=args.station_code,
+        title=title,
+        description="运维告警工单联调：验证平台类型枚举、先关联后建单与工单号回查。",
+        order_type=args.order_type,
+        event_start_time=datetime.now().astimezone().isoformat(),
+    )
+    print("派单结果:", json.dumps(result, ensure_ascii=False, default=str))
+    if result.get("work_order_code"):
+        api = _api()
+        _print_row("平台状态:", await _order_row(api, result["work_order_code"], args.order_type))
+
+
 async def status(args) -> None:
     api = _api()
-    row = await _order_row(api, args.code)
+    row = await _order_row(api, args.code, args.order_type)
     _print_row("平台状态:", row)
 
 
@@ -192,8 +220,17 @@ def main() -> None:
     p.add_argument("--action", choices=["approve", "reject"], required=True)
     p = sub.add_parser("status", help="查询平台工单状态")
     p.add_argument("--code", required=True)
+    p.add_argument("--order-type", default="Fault",
+                   choices=["Fault", "PersonIntrusion", "FogCannon", "InstrumentFault"])
+    p = sub.add_parser("alarm-create", help="创建运维告警工单（真实派单链路）")
+    p.add_argument("--station-code", required=True, help="平台站点编码，如 3018A")
+    p.add_argument("--order-type", required=True,
+                   choices=["PersonIntrusion", "FogCannon", "InstrumentFault"])
     args = parser.parse_args()
-    asyncio.run({"create": create, "drive": drive, "write": write, "status": status}[args.command](args))
+    asyncio.run({
+        "create": create, "drive": drive, "write": write, "status": status,
+        "alarm-create": alarm_create,
+    }[args.command](args))
 
 
 if __name__ == "__main__":

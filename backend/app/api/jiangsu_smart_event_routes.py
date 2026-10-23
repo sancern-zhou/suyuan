@@ -13,6 +13,12 @@ from structlog import get_logger
 from app.auth.dependencies import require_admin_user, require_current_user
 from app.auth.models import CurrentUser
 from app.services.jiangsu_smart_event import JiangsuSmartEventService, SmartEventUpstreamError
+from app.tools.jiangsu.alarm_order_types import (
+    build_clue_json,
+    platform_order_type_catalog,
+    platform_order_type_label,
+    resolve_platform_order_type,
+)
 from app.tools.jiangsu.demo_freeze import (
     demo_freeze_active,
     demo_freeze_date,
@@ -227,7 +233,11 @@ async def get_smart_event(
         raise HTTPException(status_code=502, detail={"code": "smart_event_upstream_unavailable", "message": str(exc)}) from exc
     if event is None:
         raise HTTPException(status_code=404, detail="smart_event_not_found")
-    return {"event": event}
+    # 派单弹窗按平台定义的类型枚举展示；已派单事件保留当时写入的类型。
+    order_type = str(event.get("platform_order_type") or "").strip() or resolve_platform_order_type(event)
+    event["platform_order_type"] = order_type
+    event["platform_order_type_label"] = platform_order_type_label(order_type)
+    return {"event": event, "platform_order_types": platform_order_type_catalog()}
 
 
 @router.post("/{event_id}/evidence")
@@ -318,6 +328,11 @@ async def dispatch_smart_event_order(
             description=request.description or "",
             urgency_type=request.urgency_type or "Middle",
             issued_types=request.issued_types,
+            order_type=str(event.get("platform_order_type") or ""),
+            event_start_time=str(
+                event.get("event_start_time") or event.get("latest_occurrence_time") or ""
+            ),
+            clue_json=build_clue_json(event),
         )
         event = service.record_platform_dispatch(event_id, platform_result, actor=actor)
     except Exception as exc:  # 平台编排异常不阻断本地派单

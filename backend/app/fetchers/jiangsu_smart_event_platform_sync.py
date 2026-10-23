@@ -15,6 +15,7 @@ from typing import Any
 import structlog
 
 from app.fetchers.base.fetcher_interface import DataFetcher
+from app.tools.jiangsu.alarm_order_types import platform_order_type_params
 from app.tools.jiangsu.fault_diagnosis import (
     _JiangsuAuthenticatedApi,
     JiangsuFaultWorkOrdersTool,
@@ -65,7 +66,11 @@ class JiangsuSmartEventPlatformSyncFetcher(DataFetcher):
         service = JiangsuSmartEventService()
         store = await service.aload_store()
         tracked = [
-            (str(event.get("event_id") or ""), str(event.get("platform_order_code") or "").strip())
+            (
+                str(event.get("event_id") or ""),
+                str(event.get("platform_order_code") or "").strip(),
+                str(event.get("platform_order_type") or "").strip() or "Fault",
+            )
             for event in store.get("events", [])
             if isinstance(event, dict)
             and event.get("event_status") == "待反馈"
@@ -75,24 +80,28 @@ class JiangsuSmartEventPlatformSyncFetcher(DataFetcher):
             return {"success": True, "status": "empty", "summary": "无待回流的平台派单事件"}
 
         api = _JiangsuAuthenticatedApi(source="ops")
-        node_names = await self._load_node_names(api)
+        node_names_by_type: dict[str, dict[str, str]] = {}
         state = self._read_state()
         synced = 0
         finished = 0
         failed = 0
-        for event_id, code in tracked:
+        for event_id, code, order_type in tracked:
+            if order_type not in node_names_by_type:
+                node_names_by_type[order_type] = await self._load_node_names(api, order_type)
             try:
-                row = await self._fetch_order_row(api, code)
+                row = await self._fetch_order_row(api, code, order_type)
             except Exception as exc:
                 failed += 1
                 logger.warning("jiangsu_smart_event_platform_sync_query_failed",
-                               event_id=event_id, work_order_code=code, error=str(exc))
+                               event_id=event_id, work_order_code=code,
+                               order_type=order_type, error=str(exc))
                 continue
             if row is None:
                 failed += 1
                 continue
             order_status = str(row.get("orderStatus") or "").strip()
-            node_name = node_names.get(str(row.get("currentPoint") or "").strip(), "")
+            node_name = node_names_by_type[order_type].get(
+                str(row.get("currentPoint") or "").strip(), "")
             signature = f"{order_status}|{node_name}"
             previous = (state.get(code) or {}).get("signature")
             if order_status != "Finish" and signature == previous:
@@ -127,10 +136,12 @@ class JiangsuSmartEventPlatformSyncFetcher(DataFetcher):
                 **result}
 
     @staticmethod
-    async def _load_node_names(api: _JiangsuAuthenticatedApi) -> dict[str, str]:
+    async def _load_node_names(
+        api: _JiangsuAuthenticatedApi, order_type: str = "Fault",
+    ) -> dict[str, str]:
         try:
             payload = await asyncio.wait_for(
-                api.get(JiangsuFaultWorkOrdersTool._WORKFLOW_PATH, [("Type", "Fault")]),
+                api.get(JiangsuFaultWorkOrdersTool._WORKFLOW_PATH, [("Type", order_type)]),
                 timeout=_API_TIMEOUT_SECONDS,
             )
         except Exception as exc:
@@ -143,10 +154,12 @@ class JiangsuSmartEventPlatformSyncFetcher(DataFetcher):
         return names
 
     @staticmethod
-    async def _fetch_order_row(api: _JiangsuAuthenticatedApi, code: str) -> dict[str, Any] | None:
+    async def _fetch_order_row(
+        api: _JiangsuAuthenticatedApi, code: str, order_type: str = "Fault",
+    ) -> dict[str, Any] | None:
         payload = await asyncio.wait_for(
             api.get(JiangsuFaultWorkOrdersTool._LIST_PATH, [
-                ("OrderType", "Fault"),
+                *platform_order_type_params(order_type),
                 ("MaxResultCount", "10"),
                 ("SkipCount", "0"),
                 ("WorkingOrderCode", code),

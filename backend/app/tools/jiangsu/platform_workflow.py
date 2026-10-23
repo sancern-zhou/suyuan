@@ -10,6 +10,12 @@ platform outage can never block the local review lifecycle.
 Platform flow being mirrored (Fault workflow):
     创建工单 -> 故障处理 -> 运维单位审核 -> 省中心审核(FaultApprove)
 
+Smart-event dispatch no longer assumes the fault flow: it creates platform
+运维告警工单 with the platform's own type vocabulary (PersonIntrusion /
+FogCannon / InstrumentFault, see ``alarm_order_types``), associates an existing
+in-flight order first, and stores the type alongside the order code so the
+status read-back can query the same type.
+
 An order arriving at 省中心审核 is ToAssign with no assignee, so a write-back
 must first claim the node (``WorkingOrder/ReceiveOrderAsync``) with an account
 holding the node role, then submit the node (``FaultOrder/SaveOrderAsync``):
@@ -20,16 +26,22 @@ previous node with ``submitRemark`` carrying the reviewer's opinion.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import structlog
 
+from app.tools.jiangsu.alarm_order_types import (
+    normalise_platform_order_type,
+    platform_order_type_label,
+    platform_order_type_params,
+)
 from app.tools.jiangsu.fault_diagnosis import (
     _detail_working_order_code,
     _JiangsuAuthenticatedApi,
 )
 from app.tools.jiangsu.fault_diagnosis import JiangsuFaultWorkOrdersTool
+from app.tools.jiangsu.work_order_dispatch import _parse_platform_time
 from app.utils.path_config import format_agent_path, get_data_registry
 
 logger = structlog.get_logger(__name__)
@@ -39,7 +51,10 @@ _DETAIL_PATH = JiangsuFaultWorkOrdersTool._PATH
 _WORKFLOW_PATH = JiangsuFaultWorkOrdersTool._WORKFLOW_PATH
 _RECEIVE_PATH = "operation/WorkingOrder/ReceiveOrderAsync"
 _SAVE_ORDER_PATH = "operation/FaultOrder/SaveOrderAsync"
-_CREATE_ORDER_PATH = "operation/FaultOrder/CreateAsync"
+_FAULT_ORDER_CREATE_PATH = "operation/FaultOrder/CreateAsync"
+# 江苏运维新国标分支的告警工单建单入口（AlarmOrderAppService.CreateAsync）。
+# 告警工单必须走该入口：它会创建 mtc_alarmorder 辅助记录并按类型选用独立流程。
+_ALARM_ORDER_CREATE_PATH = "operation/AlarmOrder/CreateAsync"
 
 _CLOSED_ORDER_STATUSES = {"Finish", "Invalid"}
 _CLAIMABLE_WORKFLOW_STATUSES = {"ToAssign", "ToAccept"}
@@ -233,6 +248,162 @@ def platform_sync_result_operation(result: dict[str, Any]) -> dict[str, Any] | N
     }
 
 
+def _alarm_order_list_params(
+    order_type: str,
+    *,
+    station_code: str = "",
+    working_order_code: str = "",
+    in_flight_only: bool = False,
+) -> list[tuple[str, str]]:
+    """List filters shared by link-lookup and created-code re-query."""
+    params = platform_order_type_params(order_type)
+    if working_order_code:
+        params.append(("WorkingOrderCode", working_order_code))
+    if station_code:
+        params.append(("StationCode", station_code))
+    if in_flight_only:
+        params.extend([("OrderStatus", "Wait"), ("OrderStatus", "Doing")])
+        params.extend([
+            ("WorkFlowStatus", "ToAssign"),
+            ("WorkFlowStatus", "ToAccept"),
+            ("WorkFlowStatus", "Doing"),
+        ])
+    params.extend([("MaxResultCount", "50"), ("SkipCount", "0")])
+    return params
+
+
+def _list_items(payload: Any) -> list[dict[str, Any]]:
+    """Accept both paged envelopes and the legacy bare list response."""
+    result = (payload or {}).get("result") if isinstance(payload, dict) else None
+    if isinstance(result, dict):
+        items = result.get("items") or result.get("data") or []
+    elif isinstance(result, list):
+        items = result
+    else:
+        items = []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _row_id(item: dict[str, Any]) -> int:
+    try:
+        return int(item.get("id") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _link_window_hours() -> int:
+    from config.settings import settings
+
+    try:
+        return int(getattr(settings, "jiangsu_platform_alarm_order_link_window_hours", 24))
+    except (TypeError, ValueError):
+        return 24
+
+
+def _parse_link_time(value: Any) -> datetime | None:
+    """Parse event or platform timestamps into naive local time for comparison."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return _parse_platform_time(text)
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone().replace(tzinfo=None)
+    return parsed
+
+
+async def _find_inflight_alarm_order(
+    api: _JiangsuAuthenticatedApi,
+    *,
+    station_code: str,
+    order_type: str,
+    event_start_time: str = "",
+) -> dict[str, Any] | None:
+    """Find an in-flight platform alarm order for the same site and window.
+
+    The platform creates alarm orders from alarms/video in most deployments, so
+    dispatching must associate the existing order instead of creating a second
+    one.  Only same-site, same-type orders created inside the configured window
+    are eligible; the newest one wins.
+    """
+    window_hours = _link_window_hours()
+    if window_hours <= 0:
+        return None
+    now = datetime.now()
+    window_start = (_parse_link_time(event_start_time) or now) - timedelta(hours=window_hours)
+    payload = await api.get(
+        _LIST_PATH,
+        _alarm_order_list_params(
+            order_type, station_code=station_code, in_flight_only=True,
+        ) + [
+            ("CreateTime", window_start.strftime("%Y-%m-%d %H:%M:%S")),
+            ("CreateTime", (now + timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")),
+        ],
+    )
+    best: tuple[tuple[datetime, int], dict[str, Any]] | None = None
+    for item in _list_items(payload):
+        row_type = str(item.get("orderType") or "").strip()
+        if row_type and row_type != order_type:
+            continue
+        code = str(item.get("workingOrderCode") or "").strip()
+        if not code:
+            continue
+        created = _parse_platform_time(item.get("createTime"))
+        if created is None or created < window_start or created > now + timedelta(minutes=10):
+            continue
+        key = (created, _row_id(item))
+        if best is None or key > best[0]:
+            best = (key, item)
+    return best[1] if best else None
+
+
+async def resolve_created_alarm_order_code(
+    *,
+    station_code: str,
+    order_type: str,
+    order_title: str,
+    created_after: datetime,
+) -> str | None:
+    """Re-query the newest created order of one type by title.
+
+    ``FaultOrder/GetWorkingOrderInfoByUniqueCode`` is fault-only, so alarm
+    orders are located through the shared list endpoint instead.
+    """
+    api = _JiangsuAuthenticatedApi(source="ops")
+    payload = await api.get(
+        _LIST_PATH,
+        _alarm_order_list_params(order_type, station_code=station_code) + [
+            ("CreateTime", (created_after - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")),
+            ("CreateTime", (datetime.now() + timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")),
+        ],
+    )
+    best: tuple[tuple[datetime, int], str] | None = None
+    for item in _list_items(payload):
+        if str(item.get("orderTitle") or "").strip().casefold() != order_title.strip().casefold():
+            continue
+        created = _parse_platform_time(item.get("createTime"))
+        if created is None or created < created_after - timedelta(minutes=10):
+            continue
+        code = str(item.get("workingOrderCode") or "").strip()
+        if not code:
+            continue
+        key = (created, _row_id(item))
+        if best is None or key > best[0]:
+            best = (key, code)
+    return best[1] if best else None
+
+
+def _alarm_order_create_path() -> str:
+    from config.settings import settings
+
+    return str(
+        getattr(settings, "jiangsu_platform_alarm_order_create_path", "")
+        or _ALARM_ORDER_CREATE_PATH
+    ).strip() or _ALARM_ORDER_CREATE_PATH
+
+
 async def create_smart_event_dispatch_order(
     *,
     event_id: str,
@@ -243,11 +414,19 @@ async def create_smart_event_dispatch_order(
     urgency_type: str = "Middle",
     issued_types: list[str] | None = None,
     plan_finish_hours: int = 48,
+    order_type: str | None = None,
+    event_start_time: str = "",
+    clue_json: str = "",
 ) -> dict[str, Any]:
-    """Create the real platform work order behind one smart-event dispatch.
+    """Create or associate the platform alarm work order behind one dispatch.
+
+    The order type must be a platform-defined alarm type
+    (PersonIntrusion / FogCannon / InstrumentFault).  Before creating, the
+    platform is queried for an in-flight alarm order of the same site and type
+    inside the configured window; a hit is only associated, never duplicated.
 
     Never raises: returns a result descriptor with the resolved station,
-    device and the platform ``work_order_code`` (re-queried after creation).
+    device and the platform ``work_order_code``.
     """
     action_name = "dispatch_order"
     if not platform_writeback_enabled():
@@ -275,19 +454,38 @@ async def create_smart_event_dispatch_order(
                 break
         if station is None:
             raise ValueError(f"未在平台站点目录解析到站点（site_id={site_id}）：{lookup_error}")
+        resolved_type = normalise_platform_order_type(order_type)
+        type_label = platform_order_type_label(resolved_type) or resolved_type
         api = _JiangsuAuthenticatedApi(source="ops")
-        devices = await _fetch_station_devices(api, station["station_code"])
-        if not devices:
-            raise ValueError(f"站点 {station.get('station_name') or station['station_code']} 在平台无设备台账")
-        device = devices[0]
+
+        # 平台通常已按告警/视频自动建单：先关联在办工单，避免同一事件两张单。
+        # 关联查询失败不阻断建单，按“未命中”继续。
+        try:
+            existing = await _find_inflight_alarm_order(
+                api,
+                station_code=station["station_code"],
+                order_type=resolved_type,
+                event_start_time=event_start_time,
+            )
+        except Exception as exc:  # noqa: BLE001 - 关联是优化，不能阻断派单主流程
+            logger.warning("jiangsu_smart_event_dispatch_link_lookup_failed",
+                           event_id=event_id, order_type=resolved_type, error=str(exc))
+            existing = None
+        if existing is not None:
+            existing_code = str(existing.get("workingOrderCode") or "").strip()
+            logger.info("jiangsu_smart_event_dispatch_linked", event_id=event_id,
+                        work_order_code=existing_code, order_type=resolved_type,
+                        station_code=station["station_code"])
+            return _result("linked", existing_code, action_name,
+                           f"平台已有在办{type_label}告警工单（{existing_code}），仅关联未重复创建",
+                           station=station, order_type=resolved_type, linked=True)
+
         urgency = str(urgency_type or "Middle").strip()
         if urgency not in {"Normal", "Middle", "Urgent"}:
             urgency = "Middle"
         issued = [str(item).strip() for item in (issued_types or []) if str(item).strip()]
-        from datetime import timedelta
-
-        plan_finish = (datetime.now().astimezone() + timedelta(hours=plan_finish_hours))
-        body_lines = [f"【事件描述】{str(description or '').strip() or order_title}"]
+        description_text = str(description or "").strip()
+        body_lines = [f"【事件描述】{description_text or order_title}"]
         trace = "；".join(
             part for part in (
                 f"智能事件 {str(event_id or '').strip()}" if str(event_id or '').strip() else "",
@@ -296,34 +494,87 @@ async def create_smart_event_dispatch_order(
         )
         if trace:
             body_lines.append(f"【来源】智能事件中心人工派单（{trace}）")
-        payload = {
-            "orderType": "Fault",
-            "orderTitle": order_title[:100],
-            "orderContent": "\n".join(body_lines)[:4000],
-            "otherContent": str(description or "").strip()[:2000],
-            "urgencyType": urgency,
-            "deviceId": device["device_id"],
-            "stationCodes": [station["station_code"]],
-            "checkTask": ["other"],
-            "planFinishTime": plan_finish.strftime("%Y-%m-%d %H:%M:%S"),
-            "issuedType": issued,
-        }
-        await api.post(_CREATE_ORDER_PATH, payload)
-        # resolve_created_order_code 内部与平台返回的 naive createTime 比较，
-        # created_after 必须同为 naive 本地时间（与既有派单路由/rehearsal 一致），
+        order_content = "\n".join(body_lines)[:4000]
+
+        device: dict[str, Any] | None = None
+        if resolved_type == "Fault":
+            devices = await _fetch_station_devices(api, station["station_code"])
+            if not devices:
+                raise ValueError(f"站点 {station.get('station_name') or station['station_code']} 在平台无设备台账")
+            device = devices[0]
+            payload = {
+                "orderType": "Fault",
+                "orderTitle": order_title[:100],
+                "orderContent": order_content,
+                "otherContent": description_text[:2000],
+                "urgencyType": urgency,
+                "deviceId": device["device_id"],
+                "stationCodes": [station["station_code"]],
+                "checkTask": ["other"],
+                "planFinishTime": (
+                    datetime.now().astimezone() + timedelta(hours=plan_finish_hours)
+                ).strftime("%Y-%m-%d %H:%M:%S"),
+                "issuedType": issued,
+            }
+            create_path = _FAULT_ORDER_CREATE_PATH
+        else:
+            # AlarmOrderAppService.CreateAsync：设备仅在仪器故障报警时使用，
+            # 站点通过 StationCode（单值）解析；标题列上限 50，线索 JSON 上限 1000。
+            if resolved_type == "InstrumentFault":
+                devices = await _fetch_station_devices(api, station["station_code"])
+                device = devices[0] if devices else None
+            payload = {
+                "orderType": resolved_type,
+                "stationCode": station["station_code"],
+                "orderTitle": order_title[:50],
+                "orderContent": order_content,
+                "urgencyType": urgency,
+                "issuedType": issued,
+            }
+            if clue_json:
+                payload["clueJson"] = clue_json
+            if resolved_type == "InstrumentFault":
+                # 故障现象/其他现象与设备是否存在无关，先写入；设备与故障现象编码尽力补齐。
+                payload["otherContent"] = description_text[:500]
+                payload["faultPhenomenon"] = (description_text or order_title)[:1000]
+                if device is not None:
+                    payload["deviceId"] = device["device_id"]
+                    payload["checkTask"] = ["other"]
+            create_path = _alarm_order_create_path()
+        response = await api.post(create_path, payload)
+        # AlarmOrderAppService/CreateAsync 以裸 true/false 表示成败；false 必须显式失败，
+        # 否则会把“未创建”记成 synced 并进入无工单号的状态。
+        if isinstance(response, dict):
+            result_value = response.get("result")
+            if result_value is False or str(result_value).strip().lower() == "false":
+                raise ValueError(
+                    "平台未创建工单（CreateAsync 返回 false）：请检查告警类型工作流配置与登录账号权限"
+                )
+        # 回查时的 created_after 必须与平台返回的 naive createTime 同一口径，
         # 否则 aware/naive 比较抛 TypeError 且发生在建单之后。
         created_at = datetime.now()
-        order_code = await resolve_created_order_code(
-            unique_code=station.get("unique_code") or "",
-            order_title=payload["orderTitle"],
-            created_after=created_at,
-        ) if station.get("unique_code") else None
+        if resolved_type == "Fault":
+            order_code = await resolve_created_order_code(
+                unique_code=station.get("unique_code") or "",
+                order_title=payload["orderTitle"],
+                created_after=created_at,
+            ) if station.get("unique_code") else None
+        else:
+            # 告警工单不在 FaultOrder 详单接口里，按列表接口同站点同类型回查。
+            order_code = await resolve_created_alarm_order_code(
+                station_code=station["station_code"],
+                order_type=resolved_type,
+                order_title=payload["orderTitle"],
+                created_after=created_at,
+            )
         logger.info("jiangsu_smart_event_dispatch_created", event_id=event_id,
-                    work_order_code=order_code, station_code=station["station_code"])
+                    work_order_code=order_code, order_type=resolved_type,
+                    station_code=station["station_code"])
         return _result("synced", order_code or "", action_name,
-                       f"平台工单已创建（{order_code or '工单号回查中'}）",
-                       station=station, device_id=device["device_id"],
-                       urgency_type=urgency, issued_types=issued)
+                       f"平台{type_label}告警工单已创建（{order_code or '工单号回查中'}）",
+                       station=station, device_id=(device or {}).get("device_id"),
+                       urgency_type=urgency, issued_types=issued,
+                       order_type=resolved_type)
     except Exception as exc:  # noqa: BLE001 - 契约承诺永不抛出，意外异常也落成 failed 描述符
         logger.warning("jiangsu_smart_event_dispatch_create_failed", event_id=event_id,
                        error=str(exc))

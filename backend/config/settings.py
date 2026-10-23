@@ -105,6 +105,16 @@ class Settings(BaseSettings):
     jiangsu_work_order_draft_ttl_hours: int = Field(default=48, ge=1, le=720)
     # 平台处置写回总开关：开启后人工审核决策（通过/打回）同步到江苏运维平台工单流转。
     jiangsu_platform_writeback_enabled: bool = Field(default=False)
+    # 智能事件派单创建平台告警工单。类型必须是平台定义值
+    # （PersonIntrusion / FogCannon / InstrumentFault）；无直接映射的事件用默认值。
+    jiangsu_platform_alarm_order_default_type: str = Field(default="InstrumentFault")
+    # 派单前先在平台查找同站点、同类型、同时间窗内的在办告警工单，命中只关联不重复建单；
+    # 设为 0 关闭关联（始终新建）。
+    jiangsu_platform_alarm_order_link_window_hours: int = Field(default=24, ge=0, le=168)
+    # 平台告警工单创建接口（AlarmOrderAppService.CreateAsync）；平台调整接口时可配置。
+    jiangsu_platform_alarm_order_create_path: str = Field(
+        default="operation/AlarmOrder/CreateAsync"
+    )
 
     # 中大空气质量联网监测管理平台（许昌市站点 5 分钟/小时数据）。
     # 账号密码通过环境变量注入，禁止写入代码或提交到仓库。

@@ -43,6 +43,7 @@ from app.services.jiangsu_smart_event_automation import (
 from app.services.jiangsu_smart_event_store import SCHEMA as EVENT_STORE_SCHEMA
 from app.services.jiangsu_smart_event_store import EventStoreConflict
 from app.services.jiangsu_smart_event_store import JiangsuEventPackages
+from app.tools.jiangsu.alarm_order_types import normalise_platform_order_type
 from app.tools.jiangsu.alarm_records import JiangsuAlarmRecordsTool
 from app.utils.path_config import format_agent_path, get_data_registry, resolve_agent_path
 
@@ -2005,6 +2006,10 @@ class JiangsuSmartEventService:
         order_title = str(title or "").strip()
         if not order_title:
             raise ValueError("dispatch_order_title_required")
+        # 平台工单类型必须是平台定义值；客户端仍可能传事件中文类型，这里统一归一。
+        resolved_order_type = normalise_platform_order_type(order_type, event=event)
+        requested_alarm_type = str(order_type or "").strip() or None
+        event["platform_order_type"] = resolved_order_type
         now = datetime.now().astimezone().isoformat()
         self._append_operation(
             event,
@@ -2012,7 +2017,8 @@ class JiangsuSmartEventService:
             actor=actor or {"user_id": "system", "username": "system"},
             summary=f"派单处置：{order_title}",
             details={
-                "order_type": str(order_type or "").strip() or None,
+                "order_type": resolved_order_type,
+                "requested_alarm_type": requested_alarm_type,
                 "urgency_type": str(urgency_type or "").strip() or None,
                 "issued_types": [
                     str(item).strip() for item in (issued_types or []) if str(item).strip()
@@ -2039,14 +2045,18 @@ class JiangsuSmartEventService:
             raise KeyError(event_id)
         status = str((result or {}).get("status") or "")
         order_code = str((result or {}).get("work_order_code") or "").strip()
-        if status == "synced" and order_code:
+        result_order_type = str((result or {}).get("order_type") or "").strip()
+        if status in {"synced", "linked"} and order_code:
             event["platform_order_code"] = order_code
+        if result_order_type:
+            event["platform_order_type"] = result_order_type
         self._append_operation(
             event,
             action="platform_dispatch",
             actor=actor or {"user_id": "system", "username": "system"},
             summary={
-                "synced": f"平台工单已创建：{order_code or '回查中'}",
+                "synced": f"平台告警工单已创建：{order_code or '回查中'}",
+                "linked": f"已关联平台在办告警工单：{order_code or '—'}",
                 "disabled": "平台写回开关未开启，仅本地派单",
                 "failed": f"平台工单创建失败：{(result or {}).get('detail', '')}",
             }.get(status, f"平台派单结果：{status}"),
@@ -2092,6 +2102,7 @@ class JiangsuSmartEventService:
                 "work_order_code": work_order_code,
                 "order_status": status_text,
                 "node": node_name,
+                "order_type": event.get("platform_order_type"),
             },
         )
         now = datetime.now().astimezone().isoformat()

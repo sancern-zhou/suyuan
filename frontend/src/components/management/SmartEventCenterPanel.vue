@@ -381,10 +381,18 @@
             <dl class="dispatch-facts">
               <div><dt>事件名称</dt><dd>{{ selectedEvent?.event_name || selectedEvent?.initial_event_name || '-' }}</dd></div>
               <div><dt>站点</dt><dd>{{ selectedEvent?.site_name || selectedEvent?.site_id || '-' }}</dd></div>
-              <div><dt>报警类型</dt><dd>{{ dispatchAlarmType }}</dd></div>
+              <div><dt>事件识别类型</dt><dd>{{ dispatchAlarmType }}</dd></div>
               <div><dt>事件等级</dt><dd>{{ selectedEvent?.ai_suggested_level || '待定' }}</dd></div>
             </dl>
             <div class="dispatch-form">
+              <label class="dispatch-field">
+                <span>报警类型（平台定义） <i class="required">*</i></span>
+                <select v-model="dispatchOrder.orderType">
+                  <option v-for="option in platformOrderTypeOptions" :key="option.value" :value="option.value">
+                    {{ option.label }}（{{ option.value }}）
+                  </option>
+                </select>
+              </label>
               <div class="dispatch-field">
                 <span>紧急程度 <i class="required">*</i></span>
                 <div class="radio-group">
@@ -544,7 +552,13 @@ const dispatchDialogVisible = ref(false)
 const feedbackDialogVisible = ref(false)
 const feedbackText = ref('')
 const feedbackAttachmentNames = ref([])
-const dispatchOrder = ref({ urgencyType: 'Middle', issuedTypes: ['App'], assignee: '运维处置人员', title: '', description: '' })
+const dispatchOrder = ref({ orderType: 'InstrumentFault', urgencyType: 'Middle', issuedTypes: ['App'], assignee: '运维处置人员', title: '', description: '' })
+// 平台「运维告警工单」类型枚举，请求必须使用平台定义值；详情接口返回后覆盖。
+const platformOrderTypeOptions = ref([
+  { value: 'PersonIntrusion', label: '人员入侵报警' },
+  { value: 'FogCannon', label: '雾炮喷淋报警' },
+  { value: 'InstrumentFault', label: '仪器故障报警' },
+])
 const urgencyOptions = [
   { value: 'Normal', label: '一般' },
   { value: 'Middle', label: '中等' },
@@ -677,9 +691,9 @@ const saveConfig = async () => {
   }
 }
 const aiDispatchDescription = computed(() => judgmentSummary.value || selectedEvent.value?.ai_data_impact || selectedEvent.value?.primary_clue_tag || '请根据事件证据完成现场核查与处置。')
-// 报警类型直接取事件已识别结果（人工不再改判），仅用于派单信息展示与落库。
+// 事件识别类型取 AI/规则识别结果，仅作参考展示；平台告警工单类型在派单弹窗单独选择。
 const dispatchAlarmType = computed(() => selectedEvent.value?.source_alarm_rule_type || selectedEvent.value?.primary_clue_tag || selectedEvent.value?.ai_event_type || selectedEvent.value?.event_type || '待识别')
-const dispatchSubmitReady = computed(() => Boolean(dispatchOrder.value.title.trim() && dispatchOrder.value.description.trim()))
+const dispatchSubmitReady = computed(() => Boolean(dispatchOrder.value.orderType && dispatchOrder.value.title.trim() && dispatchOrder.value.description.trim()))
 const operationRecords = computed(() => Array.isArray(selectedEvent.value?.operation_records) ? selectedEvent.value.operation_records : [])
 const statusOptions = computed(() => listFilters.value.statuses)
 const CATEGORY_TYPES = {
@@ -1287,6 +1301,9 @@ const selectEvent = async eventId => {
     const detail = await getJiangsuSmartEvent(eventId, { refresh: false })
     if (requestId !== detailRequestId) return
     selectedEvent.value = detail.event || null
+    if (Array.isArray(detail.platform_order_types) && detail.platform_order_types.length) {
+      platformOrderTypeOptions.value = detail.platform_order_types
+    }
     loadVideoImages(eventId).catch(() => {})
     reviewEvidence.value = []
     if (selectedEvent.value?.review_id) {
@@ -1391,6 +1408,7 @@ const collectEvidence = async () => {
 const openDispatchPage = () => {
   actionMessage.value = ''
   dispatchOrder.value = {
+    orderType: selectedEvent.value?.platform_order_type || 'InstrumentFault',
     urgencyType: selectedEvent.value?.ai_task_priority === 'urgent' ? 'Urgent' : 'Middle',
     issuedTypes: ['App'],
     assignee: '运维处置人员',
@@ -1407,7 +1425,7 @@ const submitDispatchOrder = async () => {
   actionMessage.value = ''
   try {
     const payload = await dispatchJiangsuSmartEventOrder(selectedEvent.value.event_id, {
-      order_type: dispatchAlarmType.value,
+      order_type: dispatchOrder.value.orderType,
       urgency_type: dispatchOrder.value.urgencyType,
       issued_types: [...dispatchOrder.value.issuedTypes],
       assignee: dispatchOrder.value.assignee.trim() || null,
@@ -2306,7 +2324,7 @@ applyDemoFreezeWindow().then(() => loadEvents())
 .dispatch-dialog { width: min(680px, calc(100vw - 32px)); }
 .dispatch-body { max-height: calc(100vh - 220px); overflow-y: auto; }
 .dispatch-field { display: grid; gap: 5px; color: var(--text-2); font-size: 12px; }
-.dispatch-field input, .dispatch-field textarea { font-size: 13px; }
+.dispatch-field input, .dispatch-field select, .dispatch-field textarea { font-size: 13px; }
 .required { color: var(--color-danger); font-style: normal; }
 .radio-group, .checkbox-group { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .radio-option, .checkbox-option { display: flex; align-items: center; gap: 6px; color: var(--text-1); font-size: 13px; cursor: pointer; }

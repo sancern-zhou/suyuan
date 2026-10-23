@@ -277,3 +277,11 @@ test('video evidence template state is declared as refs', () => {
   assert.match(source, /const videoImageUrls = ref\(\{\}\)/)
   assert.match(source, /const previewImageUrl = ref\(''\)/)
 })
+
+test('dispatch dialog submits a platform-defined alarm order type', () => {
+  assert.match(source, /报警类型（平台定义）/)
+  assert.match(source, /v-model="dispatchOrder\.orderType"/)
+  assert.match(source, /order_type: dispatchOrder\.value\.orderType/)
+  assert.match(source, /platformOrderTypeOptions\.value = detail\.platform_order_types/)
+  assert.match(source, /orderType: selectedEvent\.value\?\.platform_order_type \|\| 'InstrumentFault'/)
+})
