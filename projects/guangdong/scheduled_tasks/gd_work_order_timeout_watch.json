@@ -1,0 +1,35 @@
+{
+  "task_id": "gd_work_order_timeout_watch",
+  "name": "广东工单超时预警",
+  "description": "每个工作日早上扫描处理中且已超计划完成时间的运维工单，以及长期（超7天）未闭环的在办工单，输出超时清单、站点分布与催办建议",
+  "execution_mode": "custom",
+  "model_tier": "auto",
+  "tool_names": [
+    "execute_guangdong_mart_sql"
+  ],
+  "trigger_type": "schedule",
+  "schedule_type": "daily_custom",
+  "hour": 8,
+  "minute": 30,
+  "enabled": true,
+  "prompt": "执行广东运维工单超时预警扫描，只读本地工单同步数据集，不修改任何数据。步骤：1) 用当前日期查询处理中(Doing)且计划完成时间(plan_finish_time)非空并早于当前的工单数与明细，输出超时总量；2) 关联站点维度表按区域汇总超时工单数，列出超时最多的前10个站点（站点中文名、超时单数、最长超时天数）；3) 对每张超时工单计算超时天数（当前日期-计划完成时间），按超时天数降序列出前20张（工单号、站点名称、工单类型中文名、计划完成时间、超时天数、紧急程度中文名）；4) 另用独立口径统计处理中且创建时间早于7天前、计划完成时间为空的工单数，作为'长期未闭环'单独列出（只报总数与站点分布Top5，不展开明细）；5) 结合工单类型给出一句催办优先级建议（如故障单优先于例行维护单）。输出要求：200-400字结论在前（超时总量、涉及站点数、最集中的区域、建议优先核查方向），随后附超时工单明细表；只使用查询返回的真实数字和名称，不得补造；查询失败或数据为空时如实说明数据缺口，不得输出'无超时'类结论；不输出字段名、表名、SQL或文件路径等内部技术语言。",
+  "timeout_seconds": 600,
+  "created_by": "project-default",
+  "owner_user_id": "system",
+  "owner_username": "gd-timeout-watch-agent",
+  "owner_display_name": "广东超时预警智能体",
+  "tags": [
+    "广东",
+    "运维工单",
+    "超时预警",
+    "只读"
+  ],
+  "workspace_entry": {
+    "enabled": true,
+    "title": "工单超时预警"
+  },
+  "history_learning": {
+    "enabled": false
+  },
+  "skill_id": null
+}

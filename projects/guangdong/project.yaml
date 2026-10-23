@@ -16,6 +16,8 @@ frontend:
   - ops
   agent_platform_layout: scenes
 backend:
+  mode_prompt_files:
+    ops: projects/guangdong/prompts/ops.md
   tools:
   - execute_guangdong_mart_sql
   - query_gd_suncere
@@ -88,3 +90,4 @@ knowledge:
   collections: []
 scheduled_tasks:
 - gd_station_operation_daily
+- gd_work_order_timeout_watch
