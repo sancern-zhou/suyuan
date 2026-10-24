@@ -48,11 +48,15 @@ test('hosts forward judgment conversation requests and restore the review sessio
   assert.match(view, /const handleEventConversationOpen = async \(review\) =>/)
   assert.match(view, /const resolveReviewSession = async \(review\) =>/)
   assert.match(view, /fetchTaskExecutions\(review\.task_id/)
-  assert.match(view, /const restoreReviewConversation = async \(sessionId\) =>/)
+  // rightTab 挂载前就位：恢复会话时直接带目标 tab，避免可用性回退竞态抢切 trajectory
+  assert.match(view, /const restoreReviewConversation = async \(sessionId, \{ rightTab = 'files' \} = \{\}\) =>/)
+  assert.match(view, /restoreReviewConversation\(sessionId, \{ rightTab: 'smart-event' \}\)/)
+  assert.match(view, /rightTab: isEventReview \? 'smart-event' : 'files'/)
   // 进入对话区后右侧面板直显该事件证据包工作台：覆写回放命令为 open_event_detail 并切智能事件 tab
   assert.match(view, /const focusEventEvidenceInRightPanel = \(review\) =>/)
   assert.match(view, /open_event_detail', event_id: eventId \}\r?\n  smartEventCommand\.value = command/)
-  assert.match(view, /review\?\.category === '智能事件'\) focusEventEvidenceInRightPanel\(review\)/)
+  assert.match(view, /const isEventReview = review\?\.category === '智能事件'/)
+  assert.match(view, /if \(isEventReview\) focusEventEvidenceInRightPanel\(review\)/)
   // 事件中心入口的回退打开事件详情但不置任务调度中心返回标记（关闭详情仍回事件中心列表）
   assert.match(view, /openSmartEventDetail\(review\?\.subject_id\)\r?\n\}/)
   const layout = fs.readFileSync(path.join(import.meta.dirname, '../reactAnalysis/MainLayout.vue'), 'utf8')

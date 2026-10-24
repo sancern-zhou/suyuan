@@ -661,14 +661,16 @@ const resolveReviewSession = async (review) => {
   }
 }
 
-// 恢复研判执行会话并展开对话区；suppressSmartEventCommandOpen 防止会话消息回放重新拉起智能事件面板
-const restoreReviewConversation = async (sessionId) => {
+// 恢复研判执行会话并展开对话区；suppressSmartEventCommandOpen 防止会话消息回放重新拉起智能事件面板。
+// rightTab 必须在右侧容器挂载前就位：若挂载时停在 files 等不可用 tab，可用性回退会经异步
+// changeRightTab 与调用方的 tab 覆写形成微任务竞态，最终把面板抢切到 trajectory
+const restoreReviewConversation = async (sessionId, { rightTab = 'files' } = {}) => {
   suppressSmartEventCommandOpen.value = true
   const restored = await handleSessionRestoreAndClosePanel(sessionId)
   await nextTick()
   if (restored) {
+    activeRightTab.value = rightTab
     rightPanelVisible.value = true
-    if (!activeRightTab.value) activeRightTab.value = 'files'
     if (suppressSmartEventCommandOpen.value) suppressSmartEventCommandOpen.value = false
     return true
   }
@@ -689,10 +691,11 @@ const focusEventEvidenceInRightPanel = (review) => {
 }
 
 const handleTodoReviewOpen = async (review) => {
+  const isEventReview = review?.category === '智能事件'
   const sessionId = await resolveReviewSession(review)
-  if (sessionId && await restoreReviewConversation(sessionId)) {
+  if (sessionId && await restoreReviewConversation(sessionId, { rightTab: isEventReview ? 'smart-event' : 'files' })) {
     // 智能事件研判对话进入后直显证据包工作台；工单审核对话保持默认文件 tab
-    if (review?.category === '智能事件') focusEventEvidenceInRightPanel(review)
+    if (isEventReview) focusEventEvidenceInRightPanel(review)
     return
   }
   // 找不到执行会话时回退：打开智能事件工作区并聚焦该事件（仍从任务调度中心进入，关闭时回列表）
@@ -704,7 +707,7 @@ const handleTodoReviewOpen = async (review) => {
 // 关闭详情仍回事件中心列表
 const handleEventConversationOpen = async (review) => {
   const sessionId = await resolveReviewSession(review)
-  if (sessionId && await restoreReviewConversation(sessionId)) {
+  if (sessionId && await restoreReviewConversation(sessionId, { rightTab: 'smart-event' })) {
     focusEventEvidenceInRightPanel(review)
     return
   }

@@ -447,9 +447,12 @@ const explicitTarget = computed(() => {
   return group ? targetTab(group) : ''
 })
 
+// 智能事件 tab：assistantMode 命中智能事件模式，或已被显式切到该 tab。事件中心「进入对话区」
+// 恢复研判会话时容器先于会话模式切换挂载，若只看 assistantMode 会被可用性回退抢切 trajectory，
+// 与下方 workOrderReviewAvailable 的显式进入豁免同一处理。
 const smartEventAvailable = computed(() => (
   projectConfig.project === 'jiangsu-ops' &&
-  ['smart_event_external', 'smart_event_instrument'].includes(props.assistantMode)
+  (['smart_event_external', 'smart_event_instrument'].includes(props.assistantMode) || props.activeTab === 'smart-event')
 ))
 // 工单审核工作台：按需显示 —— Agent 工作区命令打开（ui_command），或用户从侧边栏
 // 入口显式进入（此时 activeTab 即为 work-order-review）；不再按 ops 模式常驻占用标签栏。
