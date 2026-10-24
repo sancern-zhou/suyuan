@@ -55,6 +55,12 @@ const TYPE_LABELS = { national: '国控站', township: '乡镇站', county: '区
 const alertKeys = () =>
   new Set(props.alerts.map(item => String(item.station_name || '').trim()))
 
+// marker/infoWindow 走 innerHTML 注入，字符串字段一律转义，站点名等来自数据库
+const esc = value =>
+  String(value ?? '').replace(/[&<>"']/g, ch => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
+  ))
+
 const buildMarker = (station, isAlerting) => {
   const color = aqiColor(station.aqi)
   const label = `${station.station_name} AQI ${station.aqi ?? '—'}`
@@ -62,7 +68,7 @@ const buildMarker = (station, isAlerting) => {
     position: new AMap.LngLat(station.lon, station.lat),
     // 深色大屏样式：等级色圆点，告警站点加大加脉冲描边
     content: `
-      <div class="screen-station-dot${isAlerting ? ' alerting' : ''}" style="--dot-color:${color}">
+      <div class="screen-station-dot${isAlerting ? ' alerting' : ''}" style="--dot-color:${esc(color)}">
         <span>${station.aqi ?? '—'}</span>
       </div>`,
     offset: new AMap.Pixel(-17, -17),
@@ -73,9 +79,9 @@ const buildMarker = (station, isAlerting) => {
     const info = new AMap.InfoWindow({
       content: `
         <div class="screen-station-info">
-          <strong>${station.station_name}</strong>
+          <strong>${esc(station.station_name)}</strong>
           <p>AQI ${station.aqi ?? '—'} · PM2.5 ${station.pm25 ?? '—'}</p>
-          <small>${TYPE_LABELS[station.type] || '站点'}${station.quality ? ' · ' + station.quality : ''}${station.primary ? ' · 首要 ' + station.primary : ''} · ${String(station.data_time || '').replace('T', ' ').slice(0, 16)}</small>
+          <small>${esc(TYPE_LABELS[station.type] || '站点')}${station.quality ? ' · ' + esc(station.quality) : ''}${station.primary ? ' · 首要 ' + esc(station.primary) : ''} · ${esc(String(station.data_time || '').replace('T', ' ').slice(0, 16))}</small>
         </div>`,
       offset: new AMap.Pixel(0, -18)
     })
