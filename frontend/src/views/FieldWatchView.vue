@@ -145,7 +145,8 @@ onBeforeUnmount(() => store.stopPolling())
 .fw-now {
   display: flex;
   align-items: center;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 10px 14px;
   padding: 12px 14px;
   border: 1px solid rgba(63, 200, 212, 0.18);
   border-radius: 10px;
@@ -154,6 +155,7 @@ onBeforeUnmount(() => store.stopPolling())
 }
 
 .fw-aqi {
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -168,6 +170,8 @@ onBeforeUnmount(() => store.stopPolling())
 }
 
 .fw-city {
+  flex: 1;
+  min-width: 150px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -176,6 +180,7 @@ onBeforeUnmount(() => store.stopPolling())
 }
 
 .fw-met {
+  /* 窄屏换行后气象要素与城市信息左对齐，不再推到行尾 */
   margin-left: auto;
   display: flex;
   flex-direction: column;

@@ -9,6 +9,7 @@ import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.Text
@@ -52,10 +53,13 @@ private fun buildDashboardWebViewClient(allowedBaseUrl: String): WebViewClient {
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 internal fun DashboardWebViewScreen(entryUrl: String?, allowedBaseUrl: String) {
+    // 顶栏（AppTopBar）已处理状态栏 inset；这里只补底部导航栏，
+    // 避免 WebView 内容被手势条遮挡。
     Column(
         Modifier
             .fillMaxSize()
             .background(SuyuanColors.background)
+            .navigationBarsPadding()
     ) {
         if (entryUrl == null) {
             Column(Modifier.fillMaxSize().systemBarsPadding()) {
