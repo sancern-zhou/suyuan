@@ -2,7 +2,6 @@ package com.suyuan.mobile
 
 import android.annotation.SuppressLint
 import android.graphics.Color
-import android.net.Uri
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -18,26 +17,33 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import java.net.URI
+import java.net.URLEncoder
 
 /**
  * 受限远程页面白名单：大屏直连是有意放宽的既定「禁止远程导航」策略——
  * 仅允许编译期配置的 Web 前端域名（同 host 全部放行，页面需要加载
- * JS/CSS 并向同域网关发 API 请求）；任何跨域跳转/子资源一律拒绝。
+ * JS/CSS 并向同域网关发 API 请求）；跨域导航一律拒绝。
  * 令牌只拼进首屏 URL，页面内部导航不注入。
+ *
+ * 两个入口纯函数用 java.net.URI（JVM 标准库）而不是 android.net.Uri：
+ * 本地单元测试的 mockable android.jar 不提供 Uri 实现，用框架类会让
+ * DashboardAccessTest 整体失效。
  */
 internal fun isAllowedDashboardHost(allowedBaseUrl: String, target: String): Boolean {
-    val allowedHost = runCatching { Uri.parse(allowedBaseUrl).host?.lowercase() }.getOrNull()
+    val allowedHost = runCatching { URI(allowedBaseUrl).host?.lowercase() }.getOrNull()
     if (allowedHost.isNullOrEmpty()) return false
-    val targetHost = runCatching { Uri.parse(target).host?.lowercase() }.getOrNull()
+    val targetHost = runCatching { URI(target).host?.lowercase() }.getOrNull()
     return targetHost == allowedHost
 }
 
 internal fun dashboardEntryUrl(webBaseUrl: String, path: String, accessToken: String): String? {
     if (!isAllowedDashboardHost(webBaseUrl, webBaseUrl)) return null
     val base = webBaseUrl.trimEnd('/')
-    if (!path.startsWith("/") || path.contains("..")) return null
+    // 以 "/" 开头但以 "//" 开头是协议相对地址，无法保证落在本域，一并拒绝
+    if (!path.startsWith("/") || path.startsWith("//") || path.contains("..")) return null
     if (accessToken.isBlank()) return "$base$path"
-    return "$base$path?access_token=${android.net.Uri.encode(accessToken)}"
+    return "$base$path?access_token=${URLEncoder.encode(accessToken, "UTF-8")}"
 }
 
 private fun buildDashboardWebViewClient(allowedBaseUrl: String): WebViewClient {
