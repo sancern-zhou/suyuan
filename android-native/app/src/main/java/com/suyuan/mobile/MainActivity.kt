@@ -567,7 +567,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                     if (sub == "broadcasts") viewModel.openBroadcasts()
                 }
                 if (tasksSubTab == "broadcasts") {
-                    BroadcastPanel(state, viewModel, onBack = {})
+                    BroadcastPanel(state, viewModel)
                 } else {
                     ScheduledTaskPanel(state, viewModel, selectedTaskId, onSession = { currentTab = "chat" })
                 }
@@ -1181,7 +1181,7 @@ private fun HistoryPanel(state: AppUiState, viewModel: AppViewModel, onBack: () 
 }
 
 @Composable
-private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit) {
+private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel) {
     var expandedMessageId by rememberSaveable { mutableStateOf<String?>(null) }
     var stationFilter by rememberSaveable { mutableStateOf<String?>(null) }
     var pollutantFilter by rememberSaveable { mutableStateOf<String?>(null) }
