@@ -785,15 +785,6 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                     }
                 }
             }
-            Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("auto" to "自动", "fast" to "快速模式", "deep" to "深度思考").forEach { (tier, label) ->
-                    val selected = state.modelTier == tier
-                    Text(label, color = if (selected) SuyuanColors.primary else SuyuanColors.secondaryText, fontSize = 12.sp,
-                        modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(if (selected) SuyuanColors.primary.copy(alpha = .12f) else Color.Transparent)
-                            .border(1.dp, if (selected) SuyuanColors.primary.copy(alpha = .4f) else SuyuanColors.border, RoundedCornerShape(16.dp))
-                            .clickable { viewModel.selectModelTier(tier) }.padding(horizontal = 12.dp, vertical = 6.dp))
-                }
-            }
             }
         }
         (state.error ?: localError)?.let { Text(it, color = SuyuanColors.error, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp)) }
@@ -1405,7 +1396,6 @@ private fun progressTips(mode: String): List<String> {
         "说明目标、可用资料和输出格式，Agent 会更快对齐需求",
         "复杂任务可以分步提出，先确认方向再继续完善",
         "提供一个满意的参考样例，通常比抽象描述更有效",
-        "日常查询可用快速模式，复杂研判建议使用深度思考",
     )
 }
 
