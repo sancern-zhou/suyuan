@@ -471,7 +471,7 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="ops_audit_tools", error=str(e))
 
-    # 广东运维工单主数据集 SQL 查询（guangdong 分支专属模块，仅 guangdong 项目加载）
+    # 广东运维工单数据集 SQL 查询 + 指标语义层（guangdong 分支专属模块，仅 guangdong 项目加载）
     if getattr(context.manifest, "project", "") == "guangdong":
         try:
             from app.tools.query.guangdong_ops_sql_query.tool import ExecuteGuangdongMartSQLTool
@@ -479,6 +479,12 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
             logger.info("tool_loaded", tool="execute_guangdong_mart_sql")
         except ImportError as e:
             logger.warning("tool_import_failed", tool="execute_guangdong_mart_sql", error=str(e))
+        try:
+            from app.tools.query.guangdong_cube_metrics.tool import GuangdongQueryMetricsTool
+            registry.register(GuangdongQueryMetricsTool(), priority=47)
+            logger.info("tool_loaded", tool="guangdong_query_metrics")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="guangdong_query_metrics", error=str(e))
 
     try:
         from app.tools.knowledge.knowledge_graph_query.tool import KnowledgeGraphQueryTool

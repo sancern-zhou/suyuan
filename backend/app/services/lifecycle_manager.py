@@ -156,12 +156,8 @@ def _configured_fetchers(project_context):
     if config_path().is_file():
         from app.fetchers.station_operation_monitor import StationOperationMonitorFetcher
         factories["station_operation_monitor"] = StationOperationMonitorFetcher
-    try:
-        # 广东运维工单同步（guangdong 分支专属模块；其他分支无此包时跳过）
-        from app.fetchers.guangdong_work_order import GuangdongWorkOrderFetcher
-        factories["guangdong_work_order"] = GuangdongWorkOrderFetcher
-    except ImportError:
-        pass
+    # 广东工单同步已 data-ops 化（2026-10-24）：sync_table.py + dbt 计划任务负责
+    # ODS/mart 刷新，不再经 worker fetcher；语义层见 projects/guangdong/data-ops。
     configured = project_context.manifest.backend.fetchers
     history_config = project_context.manifest.backend.weather_history
     if history_config is not None:

@@ -1,11 +1,15 @@
-"""广东运维工单主数据集受控 SQL 查询工具（本地 PostgreSQL 同步层）。
+"""广东运维工单数据集受控 SQL 查询工具（本地 PostgreSQL 同步层）。
 
 对称 jiangsu 分支的 jiangsu_ops_sql_query：查询本地 guangdong_mart schema 的
-工单同步数据集，SELECT-only、表白名单、行数上限、强制超时由外层包裹实现，
-每次查询审计写入 guangdong_sync.query_audit。数据新鲜度见
-guangdong_sync.sync_watermark（guangdong_work_order_fetcher 维护）。
+工单数据集，SELECT-only、表白名单、行数上限、强制超时由外层包裹实现，
+每次查询审计写入 guangdong_sync.query_audit。
 
-数据集字段契约见同目录 contract.txt（与 fetcher 的 mart 表结构保持一致）。
+2026-10-24 data-ops 化：数据链路改为 data-ops 三层
+（sync_table.py → guangdong_ods → dbt → guangdong_mart），不再由
+guangdong_work_order fetcher 直写；contract.txt 由
+projects/guangdong/data-ops/sync/gen_tool_contract.py 从 datasets/*.yaml 生成。
+数据新鲜度见各表 refreshed_at（dbt 重建时间）与
+guangdong_sync.ods_sync_watermark（ODS 水位）。
 """
 from __future__ import annotations
 
@@ -28,17 +32,19 @@ logger = structlog.get_logger()
 
 MART_SCHEMA = "guangdong_mart"
 AUDIT_SCHEMA = "guangdong_sync"
+# dbt 各表统一附加 refreshed_at（重建时间）；data_as_of 优先取查询涉及表的新鲜度。
 FRESHNESS_COLUMN = {
-    "working_orders": "update_time",
-    "working_order_details": "process_start_time",
-    "wo_commonfile_links": "create_time",
-    "dim_station": "station_id",
-    "dim_device": "device_id",
+    "working_orders": "refreshed_at",
+    "working_order_details": "refreshed_at",
+    "wo_commonfile_links": "refreshed_at",
+    "dim_station": "refreshed_at",
+    "dim_device": "refreshed_at",
+    "mart_work_order_analysis": "refreshed_at",
 }
 
 
 def _load_contract() -> tuple:
-    """Load the dataset contract (single source kept in sync with the fetcher)."""
+    """Load the dataset contract (generated from data-ops sync/datasets/*.yaml)."""
     text = (Path(__file__).with_name("contract.txt")).read_text(encoding="utf-8")
     tables: List[str] = []
     guide_lines: List[str] = []
@@ -102,7 +108,7 @@ class ExecuteGuangdongMartSQLTool(LLMTool):
         }
         super().__init__(
             name=self.tool_name,
-            description="查询广东运维工单主数据集（工单/明细/附件/站点/设备，受控只读SQL）",
+            description="查询广东运维工单数据集（分析宽表/工单/明细/附件/站点/设备，受控只读SQL）",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="1.0.0",
@@ -252,9 +258,17 @@ class ExecuteGuangdongMartSQLTool(LLMTool):
                 )
                 if value:
                     return value
-            watermark = await conn.fetchval(
-                f"SELECT MAX(updated_at)::text FROM {AUDIT_SCHEMA}.sync_watermark"
-            )
+            # data-ops 水位（sync_table.py 维护）；旧 fetcher 水位表作为迁移期兜底。
+            try:
+                watermark = await conn.fetchval(
+                    f"SELECT MAX(updated_at)::text FROM {AUDIT_SCHEMA}.ods_sync_watermark"
+                )
+            except asyncpg.UndefinedTableError:
+                watermark = None
+            if not watermark:
+                watermark = await conn.fetchval(
+                    f"SELECT MAX(updated_at)::text FROM {AUDIT_SCHEMA}.sync_watermark"
+                )
             return watermark
         except Exception:  # noqa: BLE001
             return None
