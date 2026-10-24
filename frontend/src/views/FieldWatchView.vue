@@ -89,6 +89,7 @@
 <script setup>
 import { onBeforeUnmount, onMounted } from 'vue'
 import { useBigScreenStore } from '@/stores/bigScreen.js'
+import { initDashboardAccessToken } from '@/api/bigScreen.js'
 import { aqiColor, aqiLevelName, formatDateTime, formatHour, windDirectionLabel } from '@/components/bigscreen/aqiLevels.js'
 
 const store = useBigScreenStore()
@@ -98,7 +99,10 @@ const fmt = (value, digits = 0) => {
   return Number.isFinite(num) ? num.toFixed(digits) : '—'
 }
 
-onMounted(() => store.startPolling())
+onMounted(() => {
+  initDashboardAccessToken()
+  store.startPolling()
+})
 onBeforeUnmount(() => store.stopPolling())
 </script>
 
