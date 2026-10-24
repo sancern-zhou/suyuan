@@ -1,6 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { areaPollutant, finiteObservation, hexWithAlpha, observationValue, normalizeReviewPoints } from './reviewTimeSeriesData.js'
+import {
+  areaPollutant,
+  buildPollutantCharts,
+  finiteObservation,
+  hexWithAlpha,
+  observationValue,
+  normalizeReviewPoints
+} from './reviewTimeSeriesData.js'
 
 test('empty observations stay null while real zero is preserved', () => {
   for (const raw of [null, undefined, '', '  ', '--', NaN, Infinity, false, [], {}]) {
@@ -62,4 +69,148 @@ test('hex colors convert to translucent rgba and junk falls back to null', () =>
   for (const bad of [null, '', 'rgba(1,2,3,.5)', '#2f86e', 'yellow']) {
     assert.equal(hexWithAlpha(bad), null)
   }
+})
+
+const _hour = (time, value) => ({ time: `2026-09-14 ${time}:00`, value })
+
+test('single-pollutant package keeps one chart with target, comparison and band overlays', () => {
+  const { charts, colorMap, stationPollutantSeries } = buildPollutantCharts({
+    data: {
+      pollutant: 'PM10', comparison_pollutant: 'PM2.5', unit: 'μg/m³',
+      points: [_hour('10:00', 82), _hour('11:00', 91)],
+      comparison_points: [_hour('10:00', 61), _hour('11:00', 58)],
+      extra_points: { O3: [_hour('10:00', 80)] },
+    },
+    markAreas: [{ name: 'PM10剔除区间', pollutant: 'PM10', start: '2026-09-14 10:00:00', end: '2026-09-14 11:00:00' }],
+    bandRows: [{ time: '2026-09-14 10:00:00', min: 60, median: 70, max: 90 }],
+    bandComparisonCollapsed: false,
+    bandDistrictName: '阜宁县',
+  })
+
+  assert.equal(charts.length, 1)
+  assert.equal(charts[0].pollutant, 'PM10')
+  assert.equal(charts[0].unit, 'μg/m³')
+  assert.deepEqual(charts[0].series.map(item => item.name),
+    ['PM10（本站）', 'PM2.5（对照）', '同城最低', '同城中位', '同城最高'])
+  assert.equal(charts[0].markAreas.length, 1)
+  assert.equal(charts[0].markAreas[0].color, colorMap.PM10)
+  assert.deepEqual(stationPollutantSeries.map(item => item.name), ['PM10（本站）', 'PM2.5（对照）'])
+  assert.equal(colorMap.PM10, '#2f86e0')
+  assert.equal(colorMap['PM2.5'], '#9b8cff')
+})
+
+test('multi-target pollutants split into one chart each with paired comparison and no band', () => {
+  const { charts } = buildPollutantCharts({
+    data: {
+      pollutant: 'PM10', comparison_pollutant: 'PM2.5', pollutants: ['PM10', 'NO2'], unit: 'μg/m³',
+      points: [_hour('10:00', 82)],
+      comparison_points: [_hour('10:00', 61)],
+      extra_points: { NO2: [_hour('10:00', 44)], NO: [_hour('10:00', 12)] },
+    },
+    bandRows: [{ time: '2026-09-14 10:00:00', min: 60, median: 70, max: 90 }],
+  })
+
+  assert.deepEqual(charts.map(chart => chart.pollutant), ['PM10', 'NO2'])
+  assert.deepEqual(charts[0].series.map(item => item.name),
+    ['PM10（本站）', 'PM2.5（对照）', '同城最低', '同城中位', '同城最高'])
+  assert.deepEqual(charts[1].series.map(item => item.name), ['NO2（本站）', 'NO（对照）'])
+  assert.notEqual(charts[1].series[0].color, charts[1].series[1].color)
+})
+
+test('mark areas route to their own pollutant chart and unattributed ones stay on the main chart', () => {
+  const { charts } = buildPollutantCharts({
+    data: {
+      pollutant: 'PM10', comparison_pollutant: 'PM2.5', unit: 'μg/m³',
+      points: [_hour('10:00', 82)],
+      comparison_points: [_hour('10:00', 61)],
+      extra_points: { O3: [_hour('10:00', 80)] },
+    },
+    markAreas: [
+      { name: 'PM10剔除区间', pollutant: 'PM10', start: '2026-09-14 10:00:00', end: '2026-09-14 11:00:00' },
+      { name: 'O3剔除区间', pollutant: 'O3', start: '2026-09-14 10:00:00', end: '2026-09-14 11:00:00' },
+      { name: '剔除候选', start: '2026-09-14 12:00:00', end: '2026-09-14 13:00:00' },
+    ],
+  })
+
+  assert.deepEqual(charts.map(chart => chart.pollutant), ['PM10', 'O3'])
+  assert.deepEqual(charts[0].markAreas.map(area => area.name), ['PM10剔除区间', '剔除候选'])
+  assert.deepEqual(charts[1].markAreas.map(area => area.name), ['O3剔除区间'])
+  assert.equal(charts[1].markAreas[0].color, charts[1].series[0].color)
+})
+
+test('areas for pollutants without curves fall back to the main chart uncolored', () => {
+  const { charts } = buildPollutantCharts({
+    data: {
+      pollutant: 'PM10', comparison_pollutant: 'PM2.5', unit: 'μg/m³',
+      points: [_hour('10:00', 82)],
+      comparison_points: [_hour('10:00', 61)],
+    },
+    markAreas: [{ name: 'CO剔除区间', pollutant: 'CO', start: '2026-09-14 10:00:00', end: '2026-09-14 11:00:00' }],
+  })
+
+  assert.equal(charts.length, 1)
+  assert.equal(charts[0].markAreas.length, 1)
+  assert.equal(charts[0].markAreas[0].color, undefined)
+})
+
+test('comparison pollutant excluded by the review gets its own chart with swapped pairing', () => {
+  const { charts } = buildPollutantCharts({
+    data: {
+      pollutant: 'PM10', comparison_pollutant: 'PM2.5', unit: 'μg/m³',
+      points: [_hour('10:00', 82), _hour('11:00', 91)],
+      comparison_points: [_hour('10:00', 61), _hour('11:00', 58)],
+    },
+    markAreas: [
+      { name: 'PM10剔除区间', pollutant: 'PM10', start: '2026-09-14 10:00:00', end: '2026-09-14 11:00:00' },
+      { name: 'PM2.5剔除区间', pollutant: 'PM2.5', start: '2026-09-14 10:00:00', end: '2026-09-14 11:00:00' },
+    ],
+  })
+
+  assert.deepEqual(charts.map(chart => chart.pollutant), ['PM10', 'PM2.5'])
+  assert.deepEqual(charts[1].series.map(item => item.name), ['PM2.5（本站）', 'PM10（对照）'])
+  assert.deepEqual(charts[1].markAreas.map(area => area.name), ['PM2.5剔除区间'])
+  assert.deepEqual(charts[0].markAreas.map(area => area.name), ['PM10剔除区间'])
+})
+
+test('CO chart switches unit to mg/m3 and packages without target points render nothing', () => {
+  const coBundle = buildPollutantCharts({
+    data: {
+      pollutant: 'CO', pollutants: ['CO'], unit: 'μg/m³',
+      points: [_hour('10:00', 1.2)],
+      extra_points: {},
+    },
+  })
+  assert.equal(coBundle.charts[0].unit, 'mg/m³')
+  assert.equal(coBundle.charts[0].series[0].name, 'CO（本站）')
+
+  const empty = buildPollutantCharts({
+    data: { pollutant: 'PM10', points: [], extra_points: { O3: [_hour('10:00', 80)] } },
+    markAreas: [{ name: 'O3剔除区间', pollutant: 'O3', start: '2026-09-14 10:00:00', end: '2026-09-14 11:00:00' }],
+  })
+  assert.deepEqual(empty.charts, [])
+})
+
+test('legacy package without comparison fields falls back to pm25_points pairing', () => {
+  const { charts } = buildPollutantCharts({
+    data: {
+      pollutant: 'PM10', unit: 'μg/m³',
+      points: [_hour('10:00', 82)],
+      pm25_points: [_hour('10:00', 61)],
+    },
+  })
+
+  assert.equal(charts.length, 1)
+  assert.equal(charts[0].series[1].name, 'PM2.5（对照）')
+})
+
+test('pollutants without valid curves never claim a chart slot', () => {
+  const { charts } = buildPollutantCharts({
+    data: {
+      pollutant: 'PM10', pollutants: ['PM10', 'NOX', 'SO2'], unit: 'μg/m³',
+      points: [_hour('10:00', 82)],
+      extra_points: {},
+    },
+  })
+
+  assert.deepEqual(charts.map(chart => chart.pollutant), ['PM10'])
 })

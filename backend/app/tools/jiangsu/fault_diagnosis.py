@@ -2975,6 +2975,8 @@ class JiangsuReviewEvidenceTool(LLMTool):
                 "record_count": len(points),
                 "summary": comparison_summary,
                 "data": {"unit": unit, "pollutant": pollutant_code,
+                         # 与事件包字段对齐：该工具路径目标污染物由入参/工单推断，只有单元素
+                         "pollutants": [pollutant_code] if pollutant_code else [],
                          "points": points,
                          "comparison_pollutant": comparison_code,
                          "comparison_points": comparison_points,

@@ -110,6 +110,28 @@ def test_attach_judgment_mark_areas_carry_pollutant(isolated_registry):
     ]
 
 
+def test_build_workbench_package_keeps_all_detected_pollutants():
+    """工单文本识别到的多目标污染物整单进入 station_hour 源，工作台据此逐污染物拆图；
+    单字符串形态回退为单元素清单，与旧行为一致。"""
+    from app.services.jiangsu_work_order_review_ingest import build_workbench_package
+
+    pack = {
+        "work_order_code": "FA1",
+        "summary": "PM10、NO2 数据异常",
+        "station": {"station_name": "试点站", "station_code": "5006A"},
+        "pollutants_detected_from_text": ["PM10", "NO2"],
+        "evidence_time_window": {"start": "2026-09-14 20:00:00", "end": "2026-09-15 20:00:00"},
+        "monitoring": {"station_hour_raw": []},
+    }
+    package = build_workbench_package(pack)
+    hour_data = package["sources"]["station_hour"]["data"]
+    assert hour_data["pollutant"] == "PM10"
+    assert hour_data["pollutants"] == ["PM10", "NO2"]
+
+    single = build_workbench_package({**pack, "pollutants_detected_from_text": "PM10"})
+    assert single["sources"]["station_hour"]["data"]["pollutants"] == ["PM10"]
+
+
 def test_record_operation_feedback_keeps_status(isolated_registry):
     save_evidence(_sample_package())
     record_operation("FA260914178938611578927", "feedback", "建议复核采样流量", {"username": "ops"})

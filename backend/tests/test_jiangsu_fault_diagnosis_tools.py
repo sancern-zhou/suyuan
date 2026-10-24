@@ -1152,6 +1152,8 @@ def test_review_evidence_package_persists_extra_pollutant_points():
 
     data = evidence["sources"]["station_hour"]["data"]
     assert data["comparison_pollutant"] == "PM2.5"
+    # 该工具路径目标污染物由入参/工单推断，清单只有单元素（与事件包字段对齐）
+    assert data["pollutants"] == ["PM10"]
     # PM10=目标、PM2.5=对照单列；O3 有有效点进 extra_points，SO2 全无效不出现
     assert set(data["extra_points"]) == {"O3"}
     assert data["extra_points"]["O3"] == [{"time": "2026-09-14 22:00:00", "value": 80.0},

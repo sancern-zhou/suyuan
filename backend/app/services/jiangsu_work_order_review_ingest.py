@@ -122,7 +122,8 @@ def _work_order_source(pack: dict[str, Any]) -> dict[str, Any]:
     return {"status": "success", "record_count": 1 + process_count, "summary": summary, "data": data}
 
 
-def _station_hour_source(pack: dict[str, Any], pollutant: str) -> dict[str, Any]:
+def _station_hour_source(pack: dict[str, Any], pollutant: str,
+                         pollutants: list[str] | None = None) -> dict[str, Any]:
     monitoring = pack.get("monitoring") if isinstance(pack.get("monitoring"), dict) else {}
     hour_payload = monitoring.get("station_hour_raw")
     rows = _tool_payload_rows(hour_payload)
@@ -144,6 +145,8 @@ def _station_hour_source(pack: dict[str, Any], pollutant: str) -> dict[str, Any]
             extra_points[name] = extra
     data: dict[str, Any] = {"unit": POLLUTANT_UNITS.get(pollutant, "μg/m³"), "pollutant": pollutant,
                             "comparison_pollutant": comparison,
+                            # 工单文本识别到的全部目标污染物：工作台小时时序按污染物拆图时逐项出图。
+                            "pollutants": [item for item in (pollutants or []) if item],
                             "points": [], "comparison_points": [], "extra_points": extra_points}
     if not points:
         return {"status": "empty", "record_count": 0,
@@ -313,14 +316,17 @@ def build_workbench_package(pack: dict[str, Any], *,
         return None
     station = pack.get("station") if isinstance(pack.get("station"), dict) else {}
     pollutant_raw = pack.get("pollutants_detected_from_text")
+    pollutants: list[str] = []
     if isinstance(pollutant_raw, (list, tuple)):
-        pollutant = str(next((item for item in pollutant_raw if item), "") or "").strip()
+        pollutants = [str(item or "").strip() for item in pollutant_raw if str(item or "").strip()]
+        pollutant = pollutants[0] if pollutants else ""
     else:
         pollutant = str(pollutant_raw or "").strip()
+        pollutants = [pollutant] if pollutant else []
     window = pack.get("evidence_time_window") if isinstance(pack.get("evidence_time_window"), dict) else {}
     sources = {
         "work_order": _work_order_source(pack),
-        "station_hour": _station_hour_source(pack, pollutant),
+        "station_hour": _station_hour_source(pack, pollutant, pollutants),
         "band": _band_source(pack, pollutant, str(station.get("station_code") or ""), event_dir),
         "weather": _weather_source(pack),
         "alarms": _alarms_source(pack),
