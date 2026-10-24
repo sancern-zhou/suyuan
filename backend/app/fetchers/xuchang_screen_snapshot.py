@@ -29,6 +29,14 @@ import pyodbc
 import structlog
 
 from app.fetchers.base.fetcher_interface import DataFetcher
+# 中大平台表名常量统一从 xuchang_zhongda_station 导入，避免两处字符串漂移。
+# 国控站小时用 STATION_HOUR_TABLE（2026-10 起 CNEMC 直发下线后
+# dat_station_hour 已无数据，国控站小时值以此表为准）。
+from app.fetchers.xuchang_zhongda_station import (
+    CITY_HOUR_TABLE,
+    STATION_HOUR_TABLE,
+    STATION_TABLE,
+)
 from app.tools.query.xuchang_cube_metrics.tool import cube_load
 from app.utils.path_config import get_data_registry
 
@@ -40,9 +48,6 @@ XUCHANG_CITY = "许昌市"
 XUCHANG_CITY_CODE = "411000"
 # NMC 许昌观测站（backend/app/config/weather_targets.py）
 MET_STATION_ID = "ZzMTA"
-# 中大平台许昌站点小时表（国控站地图层，2026-10 起 CNEMC 直发下线后
-# dat_station_hour 已无数据，国控站小时值以此表为准）
-ZHONGDA_STATION_HOUR_TABLE = "dbo.dat_zhongda_station_hour"
 
 SNAPSHOT_DIR = "xuchang_screen_snapshot"
 SNAPSHOT_FILE = "snapshot.json"
@@ -809,7 +814,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             cursor.execute(
                 f"""
                 SELECT TOP 80 station_name, time_point, aqi, pm25, pm10, o3
-                FROM {ZHONGDA_STATION_HOUR_TABLE}
+                FROM {STATION_HOUR_TABLE}
                 WHERE time_point >= ? AND aqi IS NOT NULL
                 ORDER BY time_point DESC, id DESC
                 """,
@@ -1023,7 +1028,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             cursor.execute(
                 f"""
                 SELECT TOP 1 station_name, time_point, aqi, pm25
-                FROM {ZHONGDA_STATION_HOUR_TABLE.replace('_hour', '_minute')}
+                FROM {STATION_TABLE}
                 WHERE time_point >= ? AND aqi IS NOT NULL
                 ORDER BY time_point DESC
                 """,
@@ -1034,7 +1039,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             cursor.execute(
                 f"""
                 SELECT TOP 1 area, time_point, aqi, quality, pollutant
-                FROM {ZHONGDA_STATION_HOUR_TABLE.replace('station_hour', 'city_hour')}
+                FROM {CITY_HOUR_TABLE}
                 WHERE time_point >= ? AND aqi IS NOT NULL
                 ORDER BY time_point DESC
                 """,

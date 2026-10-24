@@ -172,7 +172,8 @@ async def get_screen_snapshot(
             media_type=_MEDIA_TYPE,
         )
     if hot_alerts:
-        # 热合并在 ETag 之后：ETag 只反映快照文件本身，告警热段变化不换 ETag
+        # 热合并在 ETag 计算之前：ETag 覆盖合并后的最终响应体，告警热段
+        # 变化会换 ETag，客户端重校验即可拿到新告警（304 语义保持准确）。
         try:
             snapshot = json.loads(payload)
             if isinstance(snapshot, dict):
