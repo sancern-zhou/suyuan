@@ -44,17 +44,17 @@ internal fun BottomNavBar(
         enter = slideInVertically { it } + fadeIn(),
         exit = slideOutVertically { it } + fadeOut()
     ) {
-        // 紧凑形态（64dp，小字）：对齐原档位行的高度手感，输入框贴回拇指热区。
+        // 紧凑纯图标形态（56dp）：底部 tab 即标题，无文字；输入框贴近拇指热区。
         NavigationBar(
             containerColor = Color.White,
             tonalElevation = 0.dp,
-            modifier = Modifier.fillMaxWidth().height(64.dp)
+            modifier = Modifier.fillMaxWidth().height(56.dp)
         ) {
         NavigationBarItem(
             selected = currentTab == "chat",
             onClick = { onTab("chat") },
             icon = { TabIcon(R.drawable.ic_tab_chat, "对话", badge = 0) },
-            label = { Text("对话", fontSize = 10.sp, lineHeight = 12.sp) },
+
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = SuyuanColors.primary,
                 selectedTextColor = SuyuanColors.primary,
@@ -68,7 +68,7 @@ internal fun BottomNavBar(
                 selected = currentTab == "watch",
                 onClick = { onTab("watch") },
                 icon = { TabIcon(R.drawable.ic_tab_monitor, "现状", badge = 0) },
-                label = { Text("现状", fontSize = 10.sp, lineHeight = 12.sp) },
+
                 colors = NavigationBarItemDefaults.colors(
                     selectedIconColor = SuyuanColors.primary,
                     selectedTextColor = SuyuanColors.primary,
@@ -82,7 +82,7 @@ internal fun BottomNavBar(
             selected = currentTab == "tasks",
             onClick = { onTab("tasks") },
             icon = { TabIcon(R.drawable.ic_history, "任务", badge = taskBadge) },
-            label = { Text("任务", fontSize = 10.sp, lineHeight = 12.sp) },
+
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = SuyuanColors.primary,
                 selectedTextColor = SuyuanColors.primary,
