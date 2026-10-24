@@ -150,7 +150,7 @@
           v-if="reportUrl"
           :src="reportUrl"
           class="report-frame"
-          sandbox="allow-scripts"
+          :sandbox="reportRecord?.report_preview_type === 'pdf' ? undefined : 'allow-scripts'"
           referrerpolicy="origin"
           title="报告预览"
         ></iframe>
@@ -231,7 +231,9 @@ const canOpenSession = record => (
 
 const reportUrl = computed(() => {
   const record = reportRecord.value
-  if (!record?.has_report || !record?.preview_ticket) return ''
+  if (!record?.has_report) return ''
+  if (record.report_preview_url) return gatewayUrl(record.report_preview_url)
+  if (!record.preview_ticket) return ''
   return gatewayUrl(
     `/api/scheduled-tasks/results/${encodeURIComponent(record.execution_id)}`
     + `/report/_t/${encodeURIComponent(record.preview_ticket)}/report.html`

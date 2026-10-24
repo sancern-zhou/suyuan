@@ -47,8 +47,6 @@ _APP_GATEWAY_PREFIXES = ("/api/social/app/",)
 _PUBLIC_SHARE_PATTERNS = (re.compile(r"^/session/[^/]+$"),)
 _DOCS_PATHS = {"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
 _UNTRUSTED_IDENTITY_HEADERS = {b"x-user-id", b"x-is-admin"}
-# 大屏直连令牌（静态部署级凭证）仅放行该前缀的 GET；路由层仍做二次校验。
-_DASHBOARD_PREFIX = "/api/xuchang-dashboard"
 _RESOURCE_CONTENT_PATTERN = re.compile(
     r"^/api/sessions/([^/]+)/resources/([^/]+)/content(?:/.*)?$"
 )
@@ -228,13 +226,14 @@ class GatewayAuthenticationMiddleware:
         return False
 
     def _valid_dashboard_access(self, scope: Scope, path: str) -> bool:
-        """大屏直连令牌：静态部署级凭证，仅放行 dashboard 前缀的 GET。
+        """部署级直连令牌：静态凭证，仅放行配置前缀（dashboard_api_prefix）的 GET。
 
-        令牌为空（默认）时整体禁用；路由层 require_dashboard_reader 仍会
-        复核同一令牌，中间件放行不会绕过鉴权语义。
+        令牌或前缀为空（默认）时整体禁用；启用前缀的路由层仍需复核
+        同一令牌，中间件放行不会绕过鉴权语义。
         """
-        configured = getattr(self.settings, "xuchang_dashboard_access_token", "")
-        if not configured or not path.startswith(_DASHBOARD_PREFIX):
+        configured = getattr(self.settings, "dashboard_access_token", "")
+        prefix = getattr(self.settings, "dashboard_api_prefix", "")
+        if not configured or not prefix or not path.startswith(prefix):
             return False
         query = parse_qs(scope.get("query_string", b"").decode("utf-8"))
         supplied = (query.get("access_token") or [""])[0]

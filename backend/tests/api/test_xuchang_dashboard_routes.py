@@ -33,7 +33,7 @@ def token_client(tmp_path, monkeypatch):
         lambda: tmp_path,
     )
     monkeypatch.setattr(
-        "config.settings.settings.xuchang_dashboard_access_token",
+        "config.settings.settings.dashboard_access_token",
         "screen-token-123",
     )
     app = FastAPI()

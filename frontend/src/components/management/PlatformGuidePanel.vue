@@ -6,7 +6,7 @@
     </div>
 
     <div class="guide-body">
-      <section class="guide-section">
+      <section v-if="usageModes.length" class="guide-section">
         <h4 class="guide-title">如何选择使用模式</h4>
         <div class="mode-grid">
           <div v-for="mode in usageModes" :key="mode.name" class="mode-card">
@@ -15,12 +15,9 @@
             <p class="mode-example">"{{ mode.example }}"</p>
           </div>
         </div>
-        <p class="mode-motto">
-          选择口诀：要数字 → 问数生图　｜　问依据 → 知识问答　｜　查原因 → 专家分析　｜　要交付 → 报告生成
-        </p>
-      </section>
+        <p v-if="modeMotto" class="mode-motto">{{ modeMotto }}</p>      </section>
 
-      <section class="guide-section">
+      <section v-if="dataSourceGroups.length" class="guide-section">
         <h4 class="guide-title">数据接入情况</h4>
         <p class="guide-subtitle">以下为平台当前已接入的数据类别与实际可用时间范围，可直接在对话中查询使用。</p>
 
@@ -52,6 +49,10 @@
           </div>
         </div>
       </section>
+
+      <p v-if="!usageModes.length && !dataSourceGroups.length" class="guide-empty">
+        共享版本不内置使用说明，内容由各项目分支按实际模式与数据接入情况维护。
+      </p>
     </div>
   </div>
 </template>
@@ -59,6 +60,7 @@
 <script setup>
 defineEmits(['close'])
 
+// 共享段不内置任何项目定制内容：模式介绍、口诀与数据接入表由各项目分支维护。
 const usageModes = [
   {
     name: '问数生图',
@@ -261,6 +263,7 @@ const dataSourceGroups = [
     ]
   }
 ]
+const modeMotto = ''
 </script>
 
 <style scoped>
@@ -322,6 +325,13 @@ const dataSourceGroups = [
 
 .guide-subtitle {
   margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.guide-empty {
+  margin: 40px 0;
+  text-align: center;
   font-size: 13px;
   color: var(--text-2);
 }

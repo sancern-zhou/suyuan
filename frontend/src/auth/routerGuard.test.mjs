@@ -92,8 +92,8 @@ test('dashboard routes pass unauthenticated when the URL carries an access token
 
   assert.equal(
     await guard({
-      path: '/bigscreen',
-      fullPath: '/bigscreen?access_token=screen-token',
+      path: '/dashboard-example',
+      fullPath: '/dashboard-example?access_token=screen-token',
       meta: { allowDashboardToken: true },
       query: { access_token: 'screen-token' }
     }),
@@ -109,11 +109,11 @@ test('dashboard routes without a token still redirect to login', async () => {
 
   assert.deepEqual(
     await guard({
-      path: '/bigscreen',
-      fullPath: '/bigscreen',
+      path: '/dashboard-example',
+      fullPath: '/dashboard-example',
       meta: { allowDashboardToken: true },
       query: {}
     }),
-    { path: '/login', query: { redirect: '/bigscreen' } }
+    { path: '/login', query: { redirect: '/dashboard-example' } }
   )
 })

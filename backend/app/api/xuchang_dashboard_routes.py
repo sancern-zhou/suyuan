@@ -48,14 +48,14 @@ async def require_dashboard_reader(
 ) -> CurrentUser | None:
     """大屏读取鉴权：正常网关身份，或部署级大屏直连令牌（?access_token=）。
 
-    令牌校验与中间件 _valid_dashboard_access 同源（XUCHANG_DASHBOARD_ACCESS_TOKEN）；
+    令牌校验与中间件 _valid_dashboard_access 同源（dashboard_access_token）；
     此处复核是防止中间件配置遗漏时令牌直接命中路由，也覆盖 POST/非 GET 语义。
     """
     if user is not None:
         return user
     from config.settings import settings
 
-    configured = settings.xuchang_dashboard_access_token
+    configured = settings.dashboard_access_token
     if configured:
         supplied = request.query_params.get("access_token") or ""
         if supplied and hmac.compare_digest(supplied, configured):

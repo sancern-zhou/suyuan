@@ -183,11 +183,19 @@ class Settings(BaseSettings):
         le=86400,
         description="Signed anonymous share grant lifetime",
     )
-    xuchang_dashboard_access_token: str = Field(
+    dashboard_api_prefix: str = Field(
         default="",
         description=(
-            "静态大屏直连令牌：非空时允许携带 ?access_token= 的 GET 请求免网关登录"
-            "访问 /api/xuchang-dashboard/*（大屏设备开机即显）；空=禁用（默认）"
+            "部署级直连令牌放行的只读 API 前缀（如 /api/xuchang-dashboard）；"
+            "与 dashboard_access_token 成对配置，空=禁用（默认）"
+        ),
+    )
+    dashboard_access_token: str = Field(
+        default="",
+        description=(
+            "静态直连令牌：非空时允许携带 ?access_token= 的 GET 请求免网关登录"
+            "访问 dashboard_api_prefix 下的只读接口（大屏设备开机即显）；"
+            "空=禁用（默认）。路由层仍需复核同一令牌"
         ),
     )
     auth_docs_public: bool = Field(

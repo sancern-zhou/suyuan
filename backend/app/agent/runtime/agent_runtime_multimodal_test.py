@@ -52,6 +52,42 @@ class FakeToolCoordinator:
 
 
 @pytest.mark.asyncio
+async def test_chart_aliases_are_resolved_before_planner_stream_delivery(monkeypatch):
+    from app.agent.runtime import visual_alias
+
+    registry = visual_alias.VisualAliasRegistry()
+    await registry.bind("chart-stream-test", ["echarts_original"])
+    monkeypatch.setattr(visual_alias, "visual_alias_registry", registry)
+    text = "结论\n\n[[chart:chart_0]]\n\n说明"
+
+    class ChartPlanner(FakePlanner):
+        async def think_and_action_streaming(self, **kwargs):
+            for character in text:
+                yield {"type": "streaming_text", "data": {"chunk": character}}
+            yield {"type": "streaming_text", "data": {"chunk": "", "is_complete": True}}
+            yield {"type": "action", "data": {"action": {"type": "PLAIN_TEXT_REPLY", "answer": text}}}
+
+    planner = ChartPlanner()
+    runtime = AgentRuntime.__new__(AgentRuntime)
+    runtime.config = AgentRuntimeConfig(None, planner, FakeExecutor(), None)
+    runtime.planner = planner
+    runtime.executor = FakeExecutor()
+    runtime.context_diagnostics = FakeContextDiagnostics()
+    runtime.tool_coordinator = FakeToolCoordinator()
+    runtime.events = RuntimeEventBus()
+    state = RunState(session_id="chart-stream-test", user_query="画图", mode="expert")
+    events = [event async for event in runtime._run_planner_stream(
+        state,
+        {"system_prompt": "system", "user_conversation": "user"},
+        conversation_history=[],
+    )]
+    visible = "".join(event["data"].get("chunk", "") for event in events if event["type"] == "streaming_text")
+
+    assert visible == text.replace("chart_0", "echarts_original")
+    assert events[-1]["planner_result"].text == text
+
+
+@pytest.mark.asyncio
 async def test_chart_mode_sends_image_attachment_as_native_content_blocks(tmp_path):
     image_path = tmp_path / "ref.png"
     image_path.write_bytes(b"\x89PNG\r\n\x1a\nfake")

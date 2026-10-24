@@ -192,7 +192,7 @@ class ReadFileTool(LLMTool):
                 return {
                     "success": False,
                     "data": {"error": "文件不存在", "suggestions": suggestions, "hint": hint},
-                    "summary": f"文件不存在: {path}。{hint}",
+                    "summary": f"文件不存在: {path}。{hint}"
                 }
 
             if resolved_path.is_char_device() or resolved_path.is_block_device() or resolved_path.is_fifo():
@@ -307,27 +307,19 @@ class ReadFileTool(LLMTool):
                 "summary": f"无法访问目录: {dir_path.name}"
             }
 
-    def _suggest_similar_files(self, resolved_path: Path) -> list:
-        """同目录下按名称相似度推荐候选文件（对齐 ZCode Read 的 did-you-mean）。
-
-        优先 difflib 近似匹配，无命中时回退到同名不同后缀（如把 .csv 误写成 .xlsx）；
-        避免模型拿到裸"文件不存在"后盲试路径触发重读循环。
-        """
+    def _suggest_similar_files(self, resolved_path: Path) -> list[str]:
+        """Suggest nearby filenames without attempting to read them automatically."""
         try:
             parent = resolved_path.parent
             if not parent.is_dir():
                 return []
             target = resolved_path.name
             candidates = [entry.name for entry in parent.iterdir() if entry.name != target]
-            if not candidates:
-                return []
             close = difflib.get_close_matches(target, candidates, n=3, cutoff=0.5)
             if close:
                 return close
-            stem = Path(target).stem
-            if stem:
-                return [name for name in candidates if Path(name).stem == stem][:3]
-            return []
+            stem = resolved_path.stem
+            return [name for name in candidates if Path(name).stem == stem][:3]
         except OSError:
             return []
 
@@ -517,35 +509,28 @@ class ReadFileTool(LLMTool):
                 }
 
             if total_lines == 0:
-                # 空文件显式告知，避免模型把空结果误判为失败或反复重读（对齐 ZCode 的空文件提醒）
                 stat = file_path.stat()
                 get_file_read_state().set(
-                    str(file_path),
-                    content="",
-                    file_size=file_size,
+                    str(file_path), content="", offset=None, limit=None,
+                    is_partial_view=False, file_size=file_size,
                     file_mtime_ns=stat.st_mtime_ns,
-                    file_inode=getattr(stat, "st_ino", None),
-                    encoding=encoding,
+                    file_inode=getattr(stat, "st_ino", None), encoding=encoding,
                 )
                 return {
                     "success": True,
                     "data": {
-                        "type": "text",
-                        "format": file_path.suffix[1:] if file_path.suffix else "txt",
-                        "path": str(file_path),
-                        "size": file_size,
-                        "content": "",
-                        "total_lines": 0,
-                        "note": "文件存在但内容为空（0 行），读取状态已记录，可直接 edit_file 或 write_file。",
+                        "type": "text", "format": file_path.suffix[1:] if file_path.suffix else "txt",
+                        "path": str(file_path), "size": file_size, "content": "",
+                        "total_lines": 0, "line_range": [],
+                        "note": "文件存在但内容为空（0 行），可直接 edit_file 或 write_file。",
                     },
-                    "summary": f"文件存在但内容为空: {file_path.name}（{file_size} bytes，0 行），无需再次读取",
+                    "summary": f"文件存在但内容为空: {file_path.name}（{file_size} bytes，0 行）",
                 }
 
             start_line = min(offset, total_lines)
             end_line = min(offset + len(selected_lines), total_lines)
             content = "\n".join(selected_lines)
-            # offset 超出文件末尾：显式说明而不是静默返回空正文
-            past_eof = total_lines > 0 and offset >= total_lines
+            past_eof = offset >= total_lines
 
             # 检查是否需要截断
             is_truncated = effective_limit is not None and end_line < total_lines
@@ -576,8 +561,8 @@ class ReadFileTool(LLMTool):
             if past_eof:
                 data["line_range"] = []
                 data["note"] = (
-                    f"文件共 {total_lines} 行，请求的起始行 {offset + 1}（offset={offset}）已超出文件末尾，"
-                    f"本次未返回任何正文；如需读取末尾内容请使用 offset={max(total_lines - 1, 0)}。"
+                    f"文件共 {total_lines} 行，请求的起始行 {offset + 1}（offset={offset}）已超出文件末尾；"
+                    f"如需读取末尾内容请使用 offset={max(total_lines - 1, 0)}。"
                 )
             file_ref = build_file_ref(
                 file_path,
@@ -617,8 +602,7 @@ class ReadFileTool(LLMTool):
             if past_eof:
                 summary = (
                     f"读取结果为空: {file_path.name} 共 {total_lines} 行，"
-                    f"请求的起始行 {offset + 1}（offset={offset}）已超出文件末尾；"
-                    f"如需读取末尾请使用 offset={max(total_lines - 1, 0)}"
+                    f"请求的起始行 {offset + 1}（offset={offset}）已超出文件末尾"
                 )
             elif effective_limit is not None and end_line < total_lines:
                 # 用户指定了 limit 但未读完

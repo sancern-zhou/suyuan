@@ -37,7 +37,7 @@ class Finalizer:
         sanitized, had_dsml = strip_dsml_tool_call_markup(answer or "")
         if had_dsml:
             sanitized = sanitized or DSML_TOOL_CALL_BLOCKED_NOTICE
-        answer = sanitized
+        answer = await resolve_chart_alias_markers(sanitized, state.session_id)
         state.response_text = answer or ""
         state.task_completed = True
         self.writer.add_final_assistant_message(state, planner_result, thought=thought)

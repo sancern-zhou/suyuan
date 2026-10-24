@@ -3,7 +3,7 @@ import { authFetch } from '@/auth/http.js'
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
 // 大屏直连令牌：/bigscreen?access_token=... 场景下，页面 URL 携带的令牌
-// 透传给所有 dashboard API 请求（后端 XUCHANG_DASHBOARD_ACCESS_TOKEN 校验）。
+// 透传给所有 dashboard API 请求（后端 DASHBOARD_ACCESS_TOKEN 校验）。
 // 只在进入页面时读取一次，避免快照/素材 URL 回显之外的位置泄漏。
 let dashboardAccessToken = ''
 

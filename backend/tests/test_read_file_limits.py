@@ -34,6 +34,39 @@ async def test_read_text_rejects_large_file_without_limit(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_missing_file_suggests_similar_name(tmp_path):
+    (tmp_path / "report-2026.csv").write_text("x\n", encoding="utf-8")
+    tool = ReadFileTool()
+    tool.allowed_dirs.append(tmp_path)
+
+    result = await tool.execute(path=str(tmp_path / "report-2026.cvs"))
+
+    assert result["success"] is False
+    assert result["data"]["suggestions"] == ["report-2026.csv"]
+    assert "名称相近" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_empty_and_past_eof_reads_are_explicit(tmp_path):
+    empty = tmp_path / "empty.txt"
+    empty.write_text("", encoding="utf-8")
+    tool = ReadFileTool()
+    tool.allowed_dirs.append(tmp_path)
+
+    empty_result = await tool.execute(path=str(empty), encoding="utf-8")
+    assert empty_result["success"] is True
+    assert empty_result["data"]["total_lines"] == 0
+    assert "内容为空" in empty_result["summary"]
+
+    lines = tmp_path / "lines.txt"
+    lines.write_text("a\nb\n", encoding="utf-8")
+    eof_result = await tool.execute(path=str(lines), offset=5, limit=2, encoding="utf-8")
+    assert eof_result["success"] is True
+    assert eof_result["data"]["line_range"] == []
+    assert "超出文件末尾" in eof_result["summary"]
+
+
+@pytest.mark.asyncio
 async def test_read_text_allows_large_file_when_limit_is_explicit(tmp_path):
     file_path = tmp_path / "large.txt"
     file_path.write_text("line 1\nline 2\nline 3\nline 4\n", encoding="utf-8")

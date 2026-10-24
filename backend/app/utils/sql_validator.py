@@ -319,6 +319,12 @@ class SQLValidator:
             表名列表
         """
         sql = self.normalize_sql(sql)
+        sql = re.sub(
+            r'\b(EXTRACT\s*\(\s*\w+\s+)FROM\b',
+            r'\1    ',
+            sql,
+            flags=re.IGNORECASE,
+        )
         tables = []
         pattern = r'\b(?:from|join)\s+(?!\()(\[?\w+\]?(?:\s*\.\s*\[?\w+\]?)?)'
 

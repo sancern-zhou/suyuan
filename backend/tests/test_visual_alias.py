@@ -9,16 +9,17 @@
 
 import re
 
+import pytest
+
 from app.agent.runtime.visual_alias import (
     InMemoryVisualAliasStore,
+    ChartAliasStreamFilter,
     RedisVisualAliasStore,
     VisualAliasRegistry,
     is_alias_id,
     resolve_chart_alias_markers,
 )
 from app.utils.visual_ids import VISUAL_ID_PATTERN
-import re
-
 
 class _FakeRedis:
     """仅实现 RedisVisualAliasStore 用到的最小接口。"""
@@ -87,6 +88,7 @@ async def test_bind_rejects_invalid_input():
     assert await registry.bind("s1", []) == {}
     assert await registry.bind("", ["echarts_aaa_0"]) == {}
     assert await registry.bind("s1", [None, "", 123]) == {}
+    assert await registry.bind("s1", [{}, [], "echarts_aaa_0"]) == {"chart_0": "echarts_aaa_0"}
 
 
 async def test_redis_store_roundtrip_and_isolation():
@@ -108,11 +110,11 @@ async def test_redis_store_roundtrip_and_isolation():
     # 跨轮不重号：计数器继续递增
     seqs = await store_a.allocate("s1", 1)
     assert seqs == [2]
-    # TTL 已刷新
-    assert client_a.ttls["pfx:seq:s1"] == 60
+    assert "pfx:seq:s1" not in client_a.ttls
+    assert client_a.ttls["pfx:map:s1"] == 60
 
 
-async def test_registry_falls_back_to_memory_when_redis_fails():
+async def test_registry_does_not_reallocate_aliases_locally_when_redis_fails():
     class _BrokenStore:
         async def allocate(self, session_id, count):
             raise RuntimeError("redis down")
@@ -125,8 +127,8 @@ async def test_registry_falls_back_to_memory_when_redis_fails():
 
     registry = VisualAliasRegistry(redis_store=_BrokenStore())
     mapping = await registry.bind("s1", ["echarts_aaa_0"])
-    assert mapping == {"chart_0": "echarts_aaa_0"}
-    assert await registry.resolve_ids("s1", ["chart_0"]) == {"chart_0": "echarts_aaa_0"}
+    assert mapping == {}
+    assert await registry.resolve_ids("s1", ["chart_0"]) == {}
 
 
 async def test_resolver_rewrites_known_aliases_and_keeps_unknown():
@@ -176,3 +178,112 @@ async def test_inmemory_store_isolation():
     assert await store.lookup("s1", ["chart_0"]) == {"chart_0": "a"}
     assert await store.lookup("s2", ["chart_0"]) == {"chart_0": "b"}
     assert await store.lookup("s3", ["chart_0"]) == {}
+
+
+async def test_redis_workers_share_counter_and_mapping():
+    client = _FakeRedis()
+    first = VisualAliasRegistry(RedisVisualAliasStore(client, key_prefix="shared", ttl_seconds=60))
+    second = VisualAliasRegistry(RedisVisualAliasStore(client, key_prefix="shared", ttl_seconds=60))
+
+    assert await first.bind("s1", ["echarts_first"]) == {"chart_0": "echarts_first"}
+    assert await second.bind("s1", ["echarts_second"]) == {"chart_1": "echarts_second"}
+    assert await second.resolve_ids("s1", ["chart_0"]) == {"chart_0": "echarts_first"}
+    client.hashes.clear()
+    assert await first.bind("s1", ["echarts_third"]) == {"chart_2": "echarts_third"}
+    assert await second.resolve_ids("s1", ["chart_0"]) == {}
+
+
+async def test_disabled_memory_does_not_issue_unshared_aliases():
+    registry = VisualAliasRegistry(allow_memory=False)
+    assert await registry.bind("s1", ["echarts_first"]) == {}
+    assert await registry.resolve_ids("s1", ["chart_0"]) == {}
+
+
+async def test_tool_result_aliases_preserve_visual_resource_ids(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.agent.core.executor import ToolExecutor
+    from app.agent.runtime import visual_alias
+
+    registry = VisualAliasRegistry()
+    monkeypatch.setattr(visual_alias, "visual_alias_registry", registry)
+    executor = ToolExecutor.__new__(ToolExecutor)
+    executor.memory_manager = SimpleNamespace(session_id="s1")
+    visuals = [{"id": "echarts_original", "title": "趋势图", "type": "echarts"}]
+    observation = {"visuals": visuals, "summary": "图表已生成"}
+
+    await executor._attach_visual_aliases("execute_echarts_python", observation)
+
+    assert observation["visuals"] is visuals
+    assert visuals[0]["id"] == "echarts_original"
+    assert observation["visual_refs"] == {"chart_0": "echarts_original"}
+    assert observation["summary"].startswith("图表已生成\n")
+    assert "[[chart:chart_0]]" in observation["summary"]
+
+
+async def test_tool_result_keeps_original_summary_when_aliases_unavailable(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.agent.core.executor import ToolExecutor
+    from app.agent.runtime import visual_alias
+
+    monkeypatch.setattr(visual_alias, "visual_alias_registry", VisualAliasRegistry(allow_memory=False))
+    executor = ToolExecutor.__new__(ToolExecutor)
+    executor.memory_manager = SimpleNamespace(session_id="s1")
+    observation = {"visuals": [{"id": "matplotlib_original"}], "summary": "图表已生成"}
+
+    await executor._attach_visual_aliases("execute_python", observation)
+
+    assert observation == {"visuals": [{"id": "matplotlib_original"}], "summary": "图表已生成"}
+
+
+@pytest.mark.parametrize("chunk_size", [1, 2, 3, 7, 19, 200])
+async def test_stream_resolves_split_markers_before_emitting(chunk_size):
+    registry = VisualAliasRegistry()
+    await registry.bind("s1", ["echarts_first", "matplotlib_second"])
+    stream = ChartAliasStreamFilter("s1", registry)
+    text = "前文\n[[chart:chart_0]]\n中间\n[[chart:chart_1]]\n[[chart:unknown]]\n结论["
+    chunks = [await stream.append(text[index:index + chunk_size]) for index in range(0, len(text), chunk_size)]
+    chunks.append(await stream.flush())
+    rendered = "".join(chunks)
+
+    assert rendered == text.replace("chart_0", "echarts_first").replace("chart_1", "matplotlib_second")
+    assert not any("[[chart:chart_" in chunk for chunk in chunks)
+
+
+async def test_stream_flushes_incomplete_and_oversized_markers():
+    stream = ChartAliasStreamFilter("s1", VisualAliasRegistry())
+    assert await stream.append("前文[[chart:") == "前文"
+    assert await stream.flush() == "[[chart:"
+    oversized = "[[chart:" + "x" * 300
+    assert await stream.append(oversized) == oversized
+    assert await stream.flush() == ""
+
+
+async def test_finalizer_emits_and_persists_resolved_ids_without_dsml(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.agent.runtime import finalizer as module
+    from app.agent.runtime import visual_alias
+    from app.agent.runtime.event_bus import RuntimeEventBus
+    from app.agent.runtime.types import RunState
+
+    registry = VisualAliasRegistry()
+    await registry.bind("s1", ["echarts_first"])
+    monkeypatch.setattr(visual_alias, "visual_alias_registry", registry)
+
+    async def identity(text, session_id):
+        return text
+
+    monkeypatch.setattr(module, "normalize_chart_placeholders", identity)
+    written = []
+    writer = SimpleNamespace(add_final_assistant_message=lambda state, *args, **kwargs: written.append(state.response_text))
+    finalizer = module.Finalizer(writer, RuntimeEventBus())
+    state = RunState(session_id="s1", user_query="test", mode="expert")
+    text = '结论\n[[chart:chart_0]]\n<｜｜DSML｜｜ invoke name="execute_python">PRIVATE_CODE'
+    events = [event async for event in finalizer.complete(state, text)]
+    expected = "结论\n[[chart:echarts_first]]"
+
+    assert state.response_text == expected
+    assert written == [expected]
+    assert "".join(event["data"].get("chunk", "") for event in events if event["type"] == "streaming_text") == expected

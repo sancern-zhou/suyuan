@@ -237,6 +237,7 @@ class ScheduledTaskExecutor:
                     "summary": workflow_result.get("final_message")
                     or workflow_result.get("summary", ""),
                     "workflow_result": workflow_result,
+                    "tool_calls": execution.steps[-1].tool_calls,
                 })
                 self.execution_storage.update(execution)
                 # 只有工作流正常返回且未抛异常时才算执行成功。
@@ -263,6 +264,7 @@ class ScheduledTaskExecutor:
                     task.prompt,
                     task=task,
                     event=event,
+                    execution=execution,
                     execution_id=execution.execution_id,
                     broadcast_user_names=broadcast_user_names,
                     history_section=history_section,
@@ -580,6 +582,8 @@ class ScheduledTaskExecutor:
                     if tool_calls:
                         tool_calls[-1]["success"] = not event_data.get("is_error", False)
                         tool_calls[-1]["result"] = result or event.get("summary", "")
+                        from app.scheduled_tasks.result_extraction import declared_file_paths
+                        tool_calls[-1]["media"] = declared_file_paths(result)
 
                 elif event_type == "iteration":
                     iterations = event.get("iteration", 0)
@@ -704,15 +708,26 @@ class ScheduledTaskExecutor:
         prompt: str,
         task: ScheduledTask,
         event: TaskEvent | None = None,
+        execution: "TaskExecution | None" = None,
         execution_id: str | None = None,
         broadcast_user_names: list[str] | None = None,
         history_section: str | None = None,
     ) -> str:
         sections = [prompt]
         if "submit_task_review" in (task.tool_names or []):
+            subject_hint = ""
+            if task.review_subject_attribute and execution is not None:
+                expected_subject = (execution.event_attributes or {}).get(task.review_subject_attribute)
+                if expected_subject:
+                    subject_hint = (
+                        f"本任务绑定业务编号为 {expected_subject}："
+                        "subject_id 和 event_id 都必须原样填写该编号，不得使用其他 ID。"
+                    )
             sections.append(
                 "需要人工确认或处置的分析结论，统一调用 submit_task_review 提交待办；"
                 "使用稳定业务编号 subject_id 和明确 category，按工具结构填写结论、检查项、数据影响与证据。"
+                + subject_hint
+                + "证据 evidence 的 path 必须是本次执行保存在项目数据目录内的真实文件路径。"
                 "工具成功保存才表示已创建待办；普通回复、任务执行成功不会生成待办。无需人工处理的任务不提交。"
             )
         sections.append(
