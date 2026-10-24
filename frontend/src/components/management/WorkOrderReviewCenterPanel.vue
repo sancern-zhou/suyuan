@@ -282,8 +282,18 @@
               </template>
 
               <template v-else-if="source.key === 'station_hour'">
-                <ReviewTimeSeriesChart v-if="chartSeries.length" :series="chartSeries" :mark-areas="markAreas" :unit="unit" :height="300" />
-                <p v-else class="source-empty">该来源暂无小时数据。</p>
+                <!-- 多目标污染物拆成多张时序图：每张图只画该污染物的本站曲线、配对对照曲线
+                     与它自己的剔除区间，避免同图叠加时目标/对照曲线与剔除区间互相遮挡。 -->
+                <ReviewTimeSeriesChart
+                  v-for="chart in pollutantCharts"
+                  :key="chart.pollutant"
+                  :title="pollutantCharts.length > 1 ? `${chart.pollutant} 小时时序` : ''"
+                  :series="chart.series"
+                  :mark-areas="chart.markAreas"
+                  :unit="chart.unit"
+                  :height="300"
+                />
+                <p v-if="!pollutantCharts.length" class="source-empty">该来源暂无小时数据。</p>
               </template>
 
               <template v-else-if="source.key === 'band'">
@@ -571,8 +581,9 @@ const pollutantColorMap = computed(() => {
   return colors
 })
 
-// 站内污染物序列（目标 + 对照 + 剔除建议补画的多污染物）：小时时序图与气象图的污染物
-// 面板共用同一份，保证两处曲线名称与颜色完全一致（同城带只属于小时时序图，不在此列）。
+// 站内污染物序列（目标 + 对照 + 剔除建议补画的多污染物）：小时时序图用；
+// 气象图在其基础上由 weatherPollutantSeries 用 extra_points 补齐站点全污染物，
+// 重叠曲线的名称与颜色保持两图一致（同城带只属于小时时序图，不在此列）。
 const stationPollutantSeries = computed(() => {
   const data = stationHourData.value
   const target = (data.points || []).map(point => ({ time: point.time, value: point.value }))
@@ -648,11 +659,56 @@ const weatherPayload = computed(() => ({
   end: entry.value.window_end,
   data: weatherRows.value,
 }))
+// 气象图的污染物面板画站点全污染物（目标/对照 + extra_points 全部其余项），
+// 对齐智能事件证据包的「站点污染物与气象时序」复合图；小时时序图仍只画
+// 目标/对照/剔除建议补画项，保持主图聚焦。
+const WEATHER_POLLUTANT_ORDER = ['PM10', 'PM2.5', 'SO2', 'NO', 'NO2', 'CO', 'O3']
+const weatherPollutantSeries = computed(() => {
+  const data = stationHourData.value
+  const byName = new Map()
+  for (const item of stationPollutantSeries.value) {
+    const code = /^(.+?)（/.exec(item.name)?.[1]?.trim().toUpperCase()
+    if (code) byName.set(code === 'PM2_5' || code === 'PM25' ? 'PM2.5' : code, item)
+  }
+  const extras = Object.keys(data.extra_points || {})
+    .filter(pollutant => (data.extra_points[pollutant] || []).length)
+    .map(pollutant => String(pollutant).toUpperCase())
+  const ordered = [...byName.keys(), ...WEATHER_POLLUTANT_ORDER, ...extras]
+    .map(code => (code === 'PM2_5' || code === 'PM25' ? 'PM2.5' : code))
+    .filter((code, idx, list) => list.indexOf(code) === idx)
+  if (!ordered.length) return []
+  // 目标/对照/剔除建议污染物沿用小时时序图的配色；其余站点污染物从补画色板续取，
+  // 跳过已占用颜色，保证整张图内不重色。
+  const colors = { ...pollutantColorMap.value }
+  const used = new Set(Object.values(colors))
+  let extraIndex = 0
+  for (const pollutant of ordered) {
+    if (colors[pollutant]) continue
+    let color = EXTRA_POLLUTANT_COLORS[extraIndex++ % EXTRA_POLLUTANT_COLORS.length]
+    for (let step = 0; step < EXTRA_POLLUTANT_COLORS.length && used.has(color); step += 1) {
+      color = EXTRA_POLLUTANT_COLORS[extraIndex++ % EXTRA_POLLUTANT_COLORS.length]
+    }
+    colors[pollutant] = color
+    used.add(color)
+  }
+  return ordered.map(pollutant => {
+    const item = byName.get(pollutant)
+    const points = item?.points?.length
+      ? item.points
+      : (data.extra_points?.[pollutant] || []).map(point => ({ time: point.time, value: point.value }))
+    return {
+      name: item?.name || `${pollutant}（本站）`,
+      unit: POLLUTANT_UNIT_OVERRIDES[pollutant] || data.unit || 'μg/m³',
+      color: colors[pollutant],
+      points,
+    }
+  })
+})
 const weatherEntry = computed(() => ({
-  title: `${entry.value.pollutant || ''} 与气象时序`,
+  title: '站点污染物与气象时序',
   unit: stationHourData.value.unit || 'μg/m3',
-  // 污染物面板与小时时序图共用同一份站内序列（目标/对照/剔除建议补画的多污染物），颜色一致
-  series: stationPollutantSeries.value.map(item => ({ name: item.name, color: item.color, points: item.points })),
+  // 目标/对照/剔除建议污染物与小时时序图同名同色；其余站点污染物在此补齐全画
+  series: weatherPollutantSeries.value.map(item => ({ name: item.name, unit: item.unit, color: item.color, points: item.points })),
 }))
 
 const workOrderData = computed(() => sourceCache.value.work_order?.data || {})
