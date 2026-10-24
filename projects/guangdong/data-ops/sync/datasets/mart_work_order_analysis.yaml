@@ -15,8 +15,7 @@ known_caveats:
 - 重复故障 = 同站同设备、本单创建前 30 天内存在其他故障单(Fault)；仅在故障单口径下有意义， 非故障单 is_repeat_fault 恒 false
 - 附件计数只覆盖索引（附件本体在源系统）；附件完整率口径 = 有附件工单数 / 工单数
 - 站点关联：station_id 文本关联 dim_station；工单未关联站点(CAL* 类系统生成单)时站点维度为空
-- 城市维度（city_code/city_name）经 dim_station←alm_home 每日补充，覆盖面以 alm_home 推送为准（当前 63 站）；无城市信息的站点城市列为
-  NULL，按城市统计时注明覆盖率
+- 处理人/创建人中文名经 dim_user 解析；离职停用账号同样可解析（status 过滤由结论侧按需声明）
 columns:
 - name: id
   business: 工单源ID(主键)
@@ -147,7 +146,7 @@ example_questions:
 - 各工单类型近3个月附件完整率
 join_notes: 单表即得（站点/设备维度已宽表化）；字段级取证可回 working_orders/working_order_details。
 guide: mart_work_order_analysis（一行 = 一张运维工单，全类型含作废单）：维度 working_order_code/ order_type(代码值字典同
-  working_orders)/order_status_cn(已完成/处理中/待处理/已作废)/ urgency_type/maintenance_type/station_code/station_name/station_type_name(中文名)/city_code/city_name(经alm_home)/region_id/
+  working_orders)/order_status_cn(已完成/处理中/待处理/已作废)/ urgency_type/maintenance_type/station_code/station_name/station_type_name(中文名)/city_code/city_name(全站覆盖)/create_user_name(创建人名)/current_user_name(当前处理人名,经dim_user)/region_id/
   device_code/device_type；时间 create_time/finish_time/plan_finish_time/update_time；
   指标 node_count/response_minutes(到站-创建,仅故障单可评估)/is_response_within_2h/ process_minutes/repair_minutes/is_overdue(按计划完成时间重算,仅plan非空可评估)/
   overdue_evaluable(超期率分母)/is_repeat_fault(同站同设备30天,仅故障单口径)/repeat_count_30d/ first_alarm_reason(故障根因)/attachment_count/has_attachment(附件完整率=有附件/工单数)/

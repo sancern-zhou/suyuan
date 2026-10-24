@@ -1,0 +1,33 @@
+# 数据集契约：dim_user
+dataset: dim_user
+description: >
+  运维用户维度。一行 = 一个平台账号（约 1,036 个，每日全量刷新）。
+  解析工单/任务项的创建人、当前处理人、完成人 ID 为中文名。
+  敏感列（密码/身份证/手机/邮箱/工作证号）在同步层即被排除，不入本地库。
+owner: 广东运维平台组
+grain: 一行 = 一个平台账号（user_id）
+freshness_slo: 26小时
+known_caveats:
+  - status 为源系统原文（如 Enabled）；离职/停用账号也保留在表中，按 status 过滤在岗人员
+  - 部门中文名经 sys_department 关联；账号未挂部门时为 NULL
+columns:
+  - {name: user_id, business: 用户ID(主键,工单/任务项的用户ID关联键)}
+  - {name: user_name, business: 用户中文名}
+  - {name: user_code, business: 用户编码}
+  - {name: login_id, business: 登录名}
+  - {name: department_id, business: 部门ID}
+  - {name: department_name, business: 部门中文名(经sys_department)}
+  - {name: status, business: 账号状态(源系统原文)}
+  - {name: user_rank, business: 职级}
+  - {name: maintenance_unit_id, business: 维保单位ID}
+  - {name: user_type, business: 用户类型}
+  - {name: region_id, business: 区域ID}
+  - {name: refreshed_at, business: 本表刷新时间}
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: >-
+  dim_user（一行 = 一个平台账号）：user_id(主键)/user_name(中文名)/login_id/department_id/
+  department_name(部门中文名)/status/user_rank/user_type/maintenance_unit_id/refreshed_at。
+  工单 create_user_id/current_user_id、任务项 finish_user_id/process_user_id 经本表解析中文名；
+  在岗过滤用 status（源系统原文如 Enabled）。

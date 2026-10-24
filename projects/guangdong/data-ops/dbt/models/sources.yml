@@ -59,3 +59,11 @@ sources:
     description: 源 dbo.OPA_DataReceiveRate（每日同步）。
   - name: alm_home
     description: 源 dbo.Alm_Home（每日同步）。
+  - name: v_cityandregionanddepartment
+    description: 站点-城市-运维单位-部门视图（332 站全量覆盖，每日全量）。
+  - name: sys_user
+    description: 平台用户字典（每日全量；敏感列在同步层排除）。
+  - name: sys_department
+    description: 部门字典（每日全量）。
+  - name: v_supcityandregionanddepartment
+    description: 组分网站点-城市视图（100 站，ID 空间 1~102，每日全量）。

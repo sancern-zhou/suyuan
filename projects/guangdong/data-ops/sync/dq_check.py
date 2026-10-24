@@ -36,6 +36,7 @@ FRESHNESS_SLA_MIN = {
     "wo_commonfile_links": (120, "refreshed_at"),
     "dim_station": (26 * 60, "refreshed_at"),
     "dim_device": (26 * 60, "refreshed_at"),
+    "dim_user": (26 * 60, "refreshed_at"),
     "alm_alarm": (120, "refreshed_at"),
     "log_device": (120, "refreshed_at"),
     "sup_rf_common": (120, "refreshed_at"),
@@ -52,7 +53,8 @@ NULL_CHECKS = {
     "mart_inspection_task_analysis": (["task_item_id"], {"station_code": 500}),
     "mart_station_alarm_status": (["station_id"], {}),
     "working_orders": (["id", "working_order_code", "create_time"], {}),
-    "dim_station": (["station_id", "station_code"], {}),
+    "dim_station": (["station_id", "station_code"], {"city_name": 5}),
+    "dim_user": (["user_id", "user_name"], {"department_name": 100}),
     "dim_device": (["device_id"], {"station_id": 10}),
 }
 
@@ -66,6 +68,7 @@ UNIQUE_CHECKS = {
     "working_order_details": ["id"],
     "wo_commonfile_links": ["id"],
     "dim_station": ["station_id"],
+    "dim_user": ["user_id"],
     "dim_device": ["device_id"],
     "alm_alarm": ["alarmid"],
     "log_device": ["devicelogid"],

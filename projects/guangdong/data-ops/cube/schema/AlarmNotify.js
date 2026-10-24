@@ -21,7 +21,7 @@ cube(`AlarmNotify`, {
 
   dimensions: {
     alarmType: { sql: `alarm_type`, type: `string`, title: `告警类型(站点断数等,自CONTENT解析)` },
-    cityName: { sql: `city_name`, type: `string`, title: `城市名(经alm_home补充,覆盖率以推送为准)` },
+    cityName: { sql: `city_name`, type: `string`, title: `城市名` },
     stationTypeName: { sql: `station_type_name`, type: `string`, title: `站点类型中文名` },
     stationCode: { sql: `station_code`, type: `string`, title: `站点编码` },
     stationName: { sql: `station_name`, type: `string`, title: `站点名` },

@@ -39,6 +39,7 @@ TABLE_ORDER = [
     "wo_commonfile_links",
     "dim_station",
     "dim_device",
+    "dim_user",
     "log_device",
     "sup_rf_common",
     "pw_task",

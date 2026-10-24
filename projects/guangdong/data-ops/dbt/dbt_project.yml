@@ -27,6 +27,8 @@ models:
       +tags: ["frequent"]
     dim_device:
       +tags: ["daily"]
+    dim_user:
+      +tags: ["daily"]
     mart_work_order_analysis:
       +tags: ["frequent"]
     alm_alarm:

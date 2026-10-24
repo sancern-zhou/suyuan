@@ -133,6 +133,10 @@ select
     w.total_expense                                             as total_expense,
     w.order_overtime                                            as order_overtime,
     w.total_overtime                                            as total_overtime,
+    w.create_user_id                                            as create_user_id,
+    cu.user_name                                                as create_user_name,
+    w.current_user_id                                           as current_user_id,
+    cuu.user_name                                               as current_user_name,
     w.update_time                                               as source_updated_at,
     now()::timestamp                                            as refreshed_at
 from {{ source('guangdong_ods', 'working_orders') }} w
@@ -140,6 +144,10 @@ left join {{ ref('dim_station') }} d
        on d.station_id = w.station_id
 left join {{ ref('dim_device') }} dv
        on dv.device_id = w.device_id
+left join {{ ref('dim_user') }} cu
+       on cu.user_id = w.create_user_id
+left join {{ ref('dim_user') }} cuu
+       on cuu.user_id = w.current_user_id
 left join details dd
        on dd.working_order_code = w.working_order_code
 left join first_fault_reason fr

@@ -33,7 +33,7 @@ models:
     data_tests: [unique, not_null]
 
 - name: dim_station
-  description: 站点目录维度表。一行 = 一个站点（约 332 站全量）；城市维度暂缺(仅 region_id)。
+  description: 站点目录维度表。一行 = 一个站点（约 332 站全量）；城市/运维单位/部门经 v_cityandregionanddepartment 全量覆盖。
   columns:
   - name: station_id
     description: 站点ID(主键,文本形式)
@@ -252,6 +252,16 @@ models:
     data_tests: [unique, not_null]
   - name: refreshed_at
     description: 本表刷新时间
+- name: dim_user
+  description: 运维用户维度。一行 = 一个平台账号（敏感列已在同步层排除）；解析工单/任务项处理人中文名。
+  columns:
+  - name: user_id
+    description: 用户ID(主键)
+    data_tests: [unique, not_null]
+  - name: user_name
+    description: 用户中文名
+    data_tests: [not_null]
+
 - name: mart_alarm_notify_analysis
   description: 站点告警通知流水宽表。一行 = 一条告警通知（含发送渠道），无处理闭环状态；当前态势见 mart_station_alarm_status。
   columns:

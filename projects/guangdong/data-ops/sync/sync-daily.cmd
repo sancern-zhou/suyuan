@@ -11,7 +11,7 @@ set DBT_EXE=E:\Tools\suyuan-guangdong\dbt-venv\Scripts\dbt.exe
 cd /d %RUNTIME_DIR%\sync
 
 rem ---- daily_full tables: master data / no reliable incremental column ----
-for %%t in (base_station base_device PW_TASKITEM Sup_Mtc_TaskItem MTC_ORDERTASKITEM SEC_QcBlackOut OPA_DataReceiveRate Alm_Home) do (
+for %%t in (base_station base_device v_cityandregionanddepartment v_supcityandregionanddepartment SYS_USER SYS_DEPARTMENT PW_TASKITEM Sup_Mtc_TaskItem MTC_ORDERTASKITEM SEC_QcBlackOut OPA_DataReceiveRate Alm_Home) do (
     "%GD_PYTHON%" sync_table.py %%t --full >> sync_%%t.log 2>&1
 )
 rem working_order_details has no update column: full reload catches step status changes

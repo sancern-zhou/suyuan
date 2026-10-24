@@ -1,16 +1,14 @@
 dataset: dim_station
-description: '广东站点目录一致性维度表。一行 = 一个站点（约 332 站全量），源自 dbo.base_station， 每日全量同步后由 dbt
-  重建（交换式，无空窗）。统一站点维度：工单/附件/设备 的站点归属都应经本表关联。
-
-  '
+description: 站点目录一致性维度。一行 = 一个站点（432 站 = 主网 332 + 组分网 100，每日全量刷新）。城市/运维单位/部门维度经 v_cityandregionanddepartment（主网）与
+  v_supcityandregionanddepartment（组分网）全站覆盖。统一站点维度：工单/任务项/告警的站点归属都应经本表关联。
 owner: 广东运维平台组
 grain: 一行 = 一个站点（station_id）
 freshness_slo: 26小时
 known_caveats:
-- 城市维度（city_code/city_name）与站点类型中文名（station_type_name）、管理人（manager_name）经 alm_home
-  站点态势快照每日补充（源库无区域字典）；alm_home 未覆盖的站点城市列为 NULL（当前 63 站有城市信息）
-- 站点网络构成见 docs/work-order-semantics/03：国控站、省控站与组分站（超级站成分监测网），组分站工单使用 Sup 前缀专属类型
-- station_type 为源库字典代码原文（smallint）；中文名用 station_type_name
+- 主网 332 站（ID 1000+）来自 base_station；组分网 100 站（ID 1~102）来自 v_supcityandregionanddepartment，两组
+  ID 空间不重叠；组分站经纬度/地址未同步（视图无此信息）
+- station_type_name：主网按 DDStationType 字典映射（1国控/2省控/3市控/4区域/5乡镇/6省建/7省乡镇/9VOC）；组分网统一为"组分站"
+- 组分站运维单位/部门/管理人未同步（视图无该信息）；manager_name 仅主网告警推送站点（约 63 站）
 columns:
 - name: station_id
   business: 站点ID(主键)
@@ -48,5 +46,5 @@ columns:
 access:
   tool: execute_guangdong_mart_sql
   role: suyuan(应用) / agent_reader(语义层)
-guide: dim_station（一行 = 一个站点，332 站）：station_id(主键)/station_code/station_name/region_id/city_code(城市行政区码)/city_name(城市名,经alm_home补充)/station_type_name(站点类型中文名:省控等)/manager_name(运维管理人)/longitude/latitude/address/station_type(源库代码原文)/status/unique_code/operation_type/create_time/refreshed_at。站点名单、站点归属、城市/经纬度用本表；工单表
-  station_id 以文本形式关联本表 station_id。城市信息覆盖面以 alm_home 推送为准（当前 63 站）。
+guide: dim_station（一行 = 一个站点，432 站 = 主网 332 + 组分网 100）：station_id(主键)/station_code/station_name/city_code(城市行政区码)/city_name(城市名,全站覆盖)/station_type_name(中文名:国控站/省控站/组分站等)/operation_unit_name(运维单位中文名,主网)/department_name(部门中文名,主网)/longitude/latitude/address/status/unique_code/refreshed_at。站点名单、城市/区域归属、运维单位归属用本表；工单/任务项/告警的
+  station_id 文本关联本表 station_id。组分站(station_type_name=组分站)对应 Sup 前缀工单体系。

@@ -18,7 +18,7 @@ cubes:
       - 响应类指标（responseWithin2hRate/avgResponseMinutes）仅故障单可评估（到站=首个 FaultProcess 步骤开始）；非故障单不可评估
       - 重复故障（is_repeat_fault/repeatFaultRate）仅在故障单口径（Fault/SupFault）下有意义：同站同设备前 30 天存在其他故障单
       - 附件完整率只覆盖附件索引（附件本体在源系统）；跨工单类型的附件要求不同，横向比较需按类型分层
-      - 城市维度（cityName/cityCode/stationTypeName）经 alm_home 站点态势快照每日补充，覆盖率以源系统推送为准（2026-10-25 当日 63/332 站）；无推送的站点城市列为 NULL，按城市统计须注明覆盖率
+      - 城市维度（cityName/cityCode）经 v_cityandregionanddepartment 全站覆盖（332/332，每日刷新；2026-10-25 二期接入）；按城市统计无需再声明覆盖率
       - 完成率(finishRate)分母含作废单；剔除作废的单口径完成率需配合 orderStatus 维度自行过滤
       - 实时在办状态以运维源库（execute_ops_sql_query 直查）为准，本数据集非实时
     measures:

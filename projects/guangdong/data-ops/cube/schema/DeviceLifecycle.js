@@ -32,7 +32,7 @@ cube(`DeviceLifecycle`, {
     eventType: { sql: `event_type`, type: `string`, title: `事件动作(原文)` },
     eventTypeCn: { sql: `event_type_cn`, type: `string`, title: `事件动作(中文)` },
     stateAfter: { sql: `state_after`, type: `string`, title: `变更后状态(DeviceNormal/DeviceSpare等)` },
-    cityName: { sql: `city_name`, type: `string`, title: `城市名(经alm_home补充)` },
+    cityName: { sql: `city_name`, type: `string`, title: `城市名` },
     stationCode: { sql: `station_code`, type: `string`, title: `站点编码` },
     stationName: { sql: `station_name`, type: `string`, title: `站点名` },
     deviceCode: { sql: `device_code`, type: `string`, title: `设备编码` },

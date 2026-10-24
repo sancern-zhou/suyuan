@@ -42,7 +42,7 @@ cube(`InspectionTask`, {
   },
 
   dimensions: {
-    cityName: { sql: `city_name`, type: `string`, title: `城市名(经alm_home补充,覆盖率以推送为准)` },
+    cityName: { sql: `city_name`, type: `string`, title: `城市名` },
     stationCode: { sql: `station_code`, type: `string`, title: `站点编码` },
     stationName: { sql: `station_name`, type: `string`, title: `站点名` },
     ruleName: { sql: `rule_name`, type: `string`, title: `规则名` },

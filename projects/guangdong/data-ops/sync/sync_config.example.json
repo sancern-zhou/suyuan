@@ -2429,6 +2429,153 @@
         "MainRegionId",
         "StationUnit"
       ]
+    },
+    "v_cityandregionanddepartment": {
+      "source_table": "dbo.v_cityandregionanddepartment",
+      "mode": "daily_full",
+      "pk": [
+        "stationid2"
+      ],
+      "column_types": {
+        "privatname": "text",
+        "privatid": "text",
+        "regionname": "text",
+        "regionid": "text",
+        "operationdepatment": "text",
+        "departmentid": "text",
+        "stationname": "text",
+        "departmentid2": "text",
+        "departmentname": "text",
+        "stationid2": "integer",
+        "stationcode": "text",
+        "usertype": "numeric",
+        "status": "numeric",
+        "ddstationtype": "numeric",
+        "uniquecode": "text"
+      },
+      "columns": [
+        "privatName",
+        "privatId",
+        "regionname",
+        "regionId",
+        "operationdepatment",
+        "departmentid",
+        "stationname",
+        "departmentid2",
+        "departmentname",
+        "stationid2",
+        "stationCode",
+        "usertype",
+        "status",
+        "DDStationType",
+        "UNIQUECODE"
+      ]
+    },
+    "SYS_USER": {
+      "_note": "敏感列（PASSWORD/IDCARDNO/CELLPHONE/EMAIL/WORKCARDNO）不同步",
+      "source_table": "dbo.SYS_USER",
+      "mode": "daily_full",
+      "pk": [
+        "USERID"
+      ],
+      "column_types": {
+        "USERID": "text",
+        "USERNAME": "text",
+        "USERCODE": "text",
+        "LOGINID": "text",
+        "DEPARTMENTID": "text",
+        "STATUS": "text",
+        "RANK": "numeric",
+        "MAINTENANCEUNITID": "text",
+        "USERTYPE": "text",
+        "REGIONID": "text"
+      },
+      "columns": [
+        "USERID",
+        "USERNAME",
+        "USERCODE",
+        "LOGINID",
+        "DEPARTMENTID",
+        "STATUS",
+        "RANK",
+        "MAINTENANCEUNITID",
+        "USERTYPE",
+        "REGIONID"
+      ]
+    },
+    "SYS_DEPARTMENT": {
+      "source_table": "dbo.SYS_DEPARTMENT",
+      "mode": "daily_full",
+      "pk": [
+        "DEPARTMENTID"
+      ],
+      "column_types": {
+        "DEPARTMENTID": "text",
+        "DEPARTMENTNAME": "text",
+        "DEPARTMENTCODE": "text",
+        "PARENTID": "text",
+        "RANK": "numeric",
+        "STATUS": "text",
+        "USERTYPE": "text",
+        "CONTACTUSERID": "text",
+        "CONTACT": "text",
+        "CONTACTADDRESS": "text",
+        "isold": "integer",
+        "OperationType": "text",
+        "ShortName": "text"
+      },
+      "columns": [
+        "DEPARTMENTID",
+        "DEPARTMENTNAME",
+        "DEPARTMENTCODE",
+        "PARENTID",
+        "RANK",
+        "STATUS",
+        "USERTYPE",
+        "CONTACTUSERID",
+        "CONTACT",
+        "CONTACTADDRESS",
+        "isold",
+        "OperationType",
+        "ShortName"
+      ]
+    },
+    "v_supcityandregionanddepartment": {
+      "source_table": "dbo.v_supcityandregionanddepartment",
+      "mode": "daily_full",
+      "pk": [
+        "stationid2"
+      ],
+      "column_types": {
+        "privatname": "text",
+        "privatid": "text",
+        "regionname": "text",
+        "regionid": "text",
+        "operationdepatment": "text",
+        "departmentid": "text",
+        "stationname": "text",
+        "stationid2": "numeric",
+        "stationcode": "text",
+        "usertype": "text",
+        "status": "numeric",
+        "ddstationtype": "text",
+        "uniquecode": "text"
+      },
+      "columns": [
+        "privatName",
+        "privatId",
+        "regionname",
+        "regionId",
+        "operationdepatment",
+        "departmentid",
+        "stationname",
+        "stationid2",
+        "stationCode",
+        "usertype",
+        "status",
+        "DDStationType",
+        "UNIQUECODE"
+      ]
     }
   },
   "backend_root": "<仓库 backend 绝对路径; 运行时目录在仓库外时必填, 供契约漂移检测使用>"

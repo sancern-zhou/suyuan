@@ -8,21 +8,32 @@
     ],
 ) }}
 
--- dim_station 站点目录一致性维度（一行 = 一个站点，约 332 站全量）。
--- 源: guangdong_ods.base_station（dbo.base_station，每日全量）。
--- 契约: sync/datasets/dim_station.yaml（station_id 输出为文本形式，工单表直接等值关联）。
--- 城市维度增强（2026-10-25）: 源库无区域字典，城市码/城市名/站点类型中文名经
--- guangdong_ods.alm_home（站点告警态势快照，每日刷新）补充——alm_home 一行一站，
--- RegionId=城市行政区码(440100)、RegionName=城市名、TypeName=站点类型中文名(省控等)、
--- UserName=运维管理人。alm_home 无行的站点城市为 NULL。
+-- dim_station 站点目录一致性维度（一行 = 一个站点，432 站 = 主网 332 + 组分网 100）。
+-- 主网源: guangdong_ods.base_station（每日全量）；组分网源: v_supcityandregionanddepartment
+-- （每日全量，ID 空间 1~102 与主网 1000+ 不重叠）。
+-- 城市维度（2026-10-25 二期）: 两个 city 视图全站覆盖；DDStationType 按字典映射中文名。
+-- manager_name 来自 alm_home（仅告警推送站点，约 63 站，供参考）。
+-- 契约: sync/datasets/dim_station.yaml（station_id 输出为文本形式）。
 select
     b.stationid::text          as station_id,
     trim(b.code)               as station_code,
     trim(b.name)               as station_name,
     b.regionid::text           as region_id,
-    h.regionid                 as city_code,
-    h.regionname               as city_name,
-    h.typename                 as station_type_name,
+    v.regionid                 as city_code,
+    v.regionname               as city_name,
+    case v.ddstationtype::numeric
+        when 1 then '国控站'
+        when 2 then '省控站'
+        when 3 then '市控站'
+        when 4 then '区域站'
+        when 5 then '乡镇站'
+        when 6 then '省建站'
+        when 7 then '省乡镇站'
+        when 9 then 'VOC站'
+        else '未知(' || coalesce(v.ddstationtype::text, 'null') || ')'
+    end                        as station_type_name,
+    v.operationdepatment       as operation_unit_name,
+    v.departmentname           as department_name,
     h.username                 as manager_name,
     b.longitude,
     b.latitude,
@@ -37,5 +48,34 @@ select
     b.createtime               as create_time,
     now()::timestamp           as refreshed_at
 from {{ source('guangdong_ods', 'base_station') }} b
+left join {{ source('guangdong_ods', 'v_cityandregionanddepartment') }} v
+       on v.stationid2 = b.stationid
 left join {{ source('guangdong_ods', 'alm_home') }} h
        on h.stationid = b.stationid::text
+
+union all
+
+select
+    sup.stationid2::text       as station_id,
+    trim(sup.stationcode)      as station_code,
+    trim(sup.stationname)      as station_name,
+    null::text                 as region_id,
+    sup.regionid               as city_code,
+    sup.regionname             as city_name,
+    '组分站'                   as station_type_name,
+    sup.operationdepatment     as operation_unit_name,
+    null::text                 as department_name,
+    null::text                 as manager_name,
+    null::text                 as longitude,
+    null::text                 as latitude,
+    null::text                 as address,
+    null::smallint             as station_type,
+    sup.status::smallint       as status,
+    nullif(trim(sup.uniquecode), '') as unique_code,
+    null::text                 as monitor_ip,
+    null::text                 as mapping_station_id,
+    '组分网'                   as operation_type,
+    null::text                 as description,
+    null::timestamp            as create_time,
+    now()::timestamp           as refreshed_at
+from {{ source('guangdong_ods', 'v_supcityandregionanddepartment') }} sup
