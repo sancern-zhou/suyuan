@@ -121,6 +121,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlin.math.roundToInt
 
+// 体验调优期暂时下线的入口；面板代码保留，恢复开放时改回 true 即可。
+private const val SHOW_ASSISTANT_MODE_ENTRY = false
+private const val SHOW_SHARED_CONVERSATIONS_ENTRY = false
+
 class MainActivity : ComponentActivity() {
     private var oauthCallback by mutableStateOf<Uri?>(null)
 
@@ -888,8 +892,10 @@ private fun AppTopBar(
                         Box(Modifier.size(8.dp).clip(CircleShape).background(SuyuanColors.error).align(androidx.compose.ui.Alignment.TopEnd))
                     }
                 }
-                IconButton(onClick = onShared) {
-                    Icon(painterResource(R.drawable.ic_people), contentDescription = "共享对话", tint = SuyuanColors.text)
+                if (SHOW_SHARED_CONVERSATIONS_ENTRY) {
+                    IconButton(onClick = onShared) {
+                        Icon(painterResource(R.drawable.ic_people), contentDescription = "共享对话", tint = SuyuanColors.text)
+                    }
                 }
                 IconButton(onClick = onReports) {
                     Box {
@@ -1341,7 +1347,9 @@ private fun EmptyChatState(loading: Boolean = false, mode: String = "query", onM
     Column(Modifier.fillMaxWidth().padding(top = 110.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
         Text(if (loading) "正在恢复会话" else modeTitle(mode), color = SuyuanColors.text, fontSize = 22.sp, fontWeight = FontWeight.Medium)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 22.dp, start = 12.dp, end = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("assistant" to "助手模式", "query" to "问数生图", "knowledge" to "知识问答", "expert" to "专家模式").forEach { (key, label) ->
+            listOf("assistant" to "助手模式", "query" to "问数生图", "knowledge" to "知识问答", "expert" to "专家模式")
+                .filter { (key, _) -> key != "assistant" || SHOW_ASSISTANT_MODE_ENTRY }
+                .forEach { (key, label) ->
                 Surface(
                     color = if (mode == key) SuyuanColors.primary.copy(alpha = .22f) else SuyuanColors.panel,
                     shape = RoundedCornerShape(20.dp),
