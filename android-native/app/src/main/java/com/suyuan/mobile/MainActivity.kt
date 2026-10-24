@@ -1336,7 +1336,7 @@ private fun EmptyChatState(loading: Boolean = false, mode: String = "query", onM
             }
         }
         Text(
-            if (loading) "正在加载最近的会话内容…" else "向许昌环境Agent 描述你想完成的任务",
+            if (loading) "正在加载最近的会话内容…" else modeSubtitle(mode),
             color = SuyuanColors.secondaryText,
             fontSize = 13.sp,
             modifier = Modifier.padding(top = 8.dp),
@@ -1407,6 +1407,14 @@ private fun modeTitle(mode: String): String = when (mode) {
     "query" -> "问数生图模式开始对话"
     "knowledge" -> "知识问答模式开始对话"
     else -> "专家模式开始对话"
+}
+
+// 空态欢迎词按模式定制（对齐各模式提示词的能力定位），不再共用一句。
+private fun modeSubtitle(mode: String): String = when (mode) {
+    "assistant" -> "描述你想完成的任务"
+    "query" -> "描述要查的数据和时段，直接生成结果与图表"
+    "knowledge" -> "提问业务规则与口径，回答附知识库原文依据"
+    else -> "描述污染过程或天气形势，获得可追溯的成因研判"
 }
 
 @Composable
