@@ -74,6 +74,19 @@ def _default_handlers() -> dict[str, Any]:
             "county": "建安区", "maxAqi": 79, "avgPm25": 55,
             "quality": "良", "primaryPollutant": "PM2.5",
         }),
+        # 168 城全国排名（累计期次）
+        "Rank168CityMonthly.compositeIndexRank": _cube_rows("Rank168CityMonthly", {
+            "periodLabel": "1-9月", "periodType": "cum",
+            "compositeIndexRank": 88, "pm25Rank": 102,
+            "compositeIndex": 4.31, "pm25": 43.2,
+        }),
+        # 数据质量在线率
+        "SsfbSiteHour.onlineSites": _cube_rows("SsfbSiteHour", {
+            "dataTime": CUTOFF, "city": "许昌市", "onlineSites": 23,
+        }),
+        "TownHour.onlineSites": _cube_rows("TownHour", {
+            "dataTime": CUTOFF, "onlineSites": 71,
+        }),
         "XuchangCityYearTarget.pm25Target": _cube_rows("XuchangCityYearTarget", {
             "year": "2026", "pm25Target": 44, "pm10Target": 76,
             "goodDaysTarget": 285, "heavyDaysTarget": 3,
@@ -143,6 +156,15 @@ def _make_fetcher(monkeypatch, handlers) -> XuchangScreenSnapshotFetcher:
             "asset_path": "xuchang_transport_analysis/20261024/j1.regional-paths.png",
             "taken_at": "2026-10-24T09:30:00",
         }],
+    )
+    monkeypatch.setattr(
+        XuchangScreenSnapshotFetcher, "_minute_latest",
+        lambda self: {
+            "station": {"station_name": "许昌学院", "data_time": "2026-10-24T14:35:00",
+                        "aqi": 88, "pm25": 62},
+            "city": {"area": "许昌市", "data_time": "2026-10-24T14:00:00",
+                     "aqi": 85, "quality": "良", "primary": "PM2.5"},
+        },
     )
     return XuchangScreenSnapshotFetcher(now_factory=lambda: NOW)
 
@@ -218,6 +240,14 @@ async def test_fetch_and_store_writes_full_snapshot(
     # 轮播素材段
     assert snapshot["assets"][0]["kind"] == "transport"
     assert "xuchang_transport_analysis" in snapshot["assets"][0]["asset_path"]
+    # P2 段：168 城排名 / 分钟级 / 在线率
+    assert snapshot["rank168"]["composite_rank"] == 88
+    assert snapshot["rank168"]["period_label"] == "1-9月"
+    assert snapshot["minute"]["station"]["aqi"] == 88
+    assert snapshot["minute"]["city"]["quality"] == "良"
+    assert snapshot["quality"]["site_hour"]["online"] == 23
+    assert snapshot["quality"]["town_hour"]["online"] == 71
+    assert snapshot["quality"]["town_hour"]["caliber"] == "app"
     # 播报
     assert snapshot["broadcast"][0]["task_name"] == "站点日污染溯源报告"
 

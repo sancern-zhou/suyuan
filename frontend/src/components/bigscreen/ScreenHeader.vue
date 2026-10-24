@@ -25,6 +25,11 @@
         <div class="met"><span>风向</span><strong>{{ windDirectionLabel(header.met.wind_direction) }}</strong></div>
         <div class="met"><span>风速</span><strong>{{ fmt(header.met.wind_speed) }}km/h</strong></div>
       </div>
+      <div class="minute-chip" v-if="minute" :style="{ '--level-color': aqiColor(minute.station?.aqi) }">
+        <small>众大 5 分钟</small>
+        <strong>{{ minute.station?.station_name || '—' }} {{ minute.station?.aqi ?? '—' }}</strong>
+        <small>{{ String(minute.station?.data_time || '').slice(11, 16) }}</small>
+      </div>
     </div>
 
     <div class="meta-block">
@@ -42,6 +47,7 @@ import { aqiColor, aqiLevelName, formatDateTime, windDirectionLabel } from './aq
 
 defineProps({
   header: { type: Object, default: null },
+  minute: { type: Object, default: null },
   dataCutoffHour: { type: String, default: '' },
   generatedAt: { type: String, default: '' },
   loading: { type: Boolean, default: false },
@@ -134,6 +140,21 @@ const fmt = (value, digits = 0) => {
     span { font-size: 12px; color: #8ab6c2; }
     strong { font-size: 20px; color: #eaf6f8; }
   }
+}
+
+.minute-chip {
+  --level-color: #5b7684;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 12px;
+  border: 1px solid var(--level-color);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+
+  strong { font-size: 17px; color: var(--level-color); }
+  small { font-size: 11px; color: #8ab6c2; }
 }
 
 .met-grid {

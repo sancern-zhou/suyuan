@@ -75,6 +75,8 @@ COUNTY_SEAT_COORDINATES: Dict[str, Dict[str, float]] = {
     "开发区": {"lon": 113.7906, "lat": 33.9953},
     "示范区": {"lon": 113.8600, "lat": 34.0870},
 }
+# 乡镇站总数（Cube 目录口径：乡镇站 76 个，2024 起）
+TOWNSHIP_TOTAL = 76
 
 
 # ---------------------------------------------------------------- 工具
@@ -202,6 +204,11 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         assets = await self._guarded(
             "assets", errors, lambda: asyncio.to_thread(self._assets)
         )
+        rank168 = await self._guarded("rank168", errors, self._rank168)
+        minute = await self._guarded(
+            "minute", errors, lambda: asyncio.to_thread(self._minute_latest)
+        )
+        quality = await self._guarded("quality", errors, self._quality)
 
         snapshot = {
             "schema_version": SNAPSHOT_SCHEMA_VERSION,
@@ -217,6 +224,9 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             "broadcast": broadcast,
             "stations": stations,
             "assets": assets,
+            "rank168": rank168,
+            "minute": minute,
+            "quality": quality,
             "errors": errors or None,
         }
         path = self._write_snapshot(snapshot)
@@ -962,3 +972,156 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
                 "taken_at": datetime.fromtimestamp(mtime).replace(microsecond=0).isoformat(),
             })
         return assets
+
+    # ------------------------------------------------------------ P2 扩展段
+    async def _rank168(self) -> Optional[dict[str, Any]]:
+        """168 重点城市全国排名（部发布月报口径，倒序排名 1=最差）。
+
+        仅做全国排名展示，浓度绝对值看本地口径面板；期次取最新已发布月。
+        """
+        rows = await cube_load({
+            "measures": [
+                "Rank168CityMonthly.compositeIndexRank",
+                "Rank168CityMonthly.pm25Rank",
+                "Rank168CityMonthly.compositeIndex",
+                "Rank168CityMonthly.pm25",
+            ],
+            "dimensions": [
+                "Rank168CityMonthly.periodLabel",
+                "Rank168CityMonthly.periodType",
+            ],
+            "filters": [
+                {"member": "Rank168CityMonthly.periodType", "operator": "equals", "values": ["cum"]},
+                {"member": "Rank168CityMonthly.city", "operator": "equals", "values": [XUCHANG_CITY]},
+            ],
+            "order": {"Rank168CityMonthly.dataMonth": "desc"},
+            "limit": 1,
+        })
+        if not rows:
+            return None
+        row = _flat(rows, "Rank168CityMonthly")[0]
+        return {
+            "period_label": _text(row.get("periodLabel")),
+            "period_type": _text(row.get("periodType")),
+            "composite_rank": _int_or_none(row.get("compositeIndexRank")),
+            "pm25_rank": _int_or_none(row.get("pm25Rank")),
+            "composite_index": _number(row.get("compositeIndex")),
+            "pm25": _number(row.get("pm25")),
+        }
+
+    def _minute_latest(self) -> Optional[dict[str, Any]]:
+        """众大平台最新 5 分钟站点值 + 城市小时值（实时头的分钟级感知）。"""
+        from app.tools.query.query_xcai_city_history.sql_client import (
+            get_sql_server_client,
+        )
+
+        now = self.now_factory()
+        client = get_sql_server_client()
+        connection = pyodbc.connect(client.connection_string, timeout=30)
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                f"""
+                SELECT TOP 1 station_name, time_point, aqi, pm25
+                FROM {ZHONGDA_STATION_HOUR_TABLE.replace('_hour', '_minute')}
+                WHERE time_point >= ? AND aqi IS NOT NULL
+                ORDER BY time_point DESC
+                """,
+                (now - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S"),
+            )
+            columns = [column[0] for column in cursor.description]
+            minute_row = cursor.fetchone()
+            cursor.execute(
+                f"""
+                SELECT TOP 1 area, time_point, aqi, quality, pollutant
+                FROM {ZHONGDA_STATION_HOUR_TABLE.replace('station_hour', 'city_hour')}
+                WHERE time_point >= ? AND aqi IS NOT NULL
+                ORDER BY time_point DESC
+                """,
+                (now - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S"),
+            )
+            city_columns = [column[0] for column in cursor.description]
+            city_row = cursor.fetchone()
+        finally:
+            connection.close()
+
+        result: Dict[str, Any] = {}
+        if minute_row is not None:
+            values = dict(zip(columns, minute_row))
+            result["station"] = {
+                "station_name": _text(values.get("station_name")),
+                "data_time": _iso(values.get("time_point")),
+                "aqi": _int_or_none(values.get("aqi")),
+                "pm25": _number(values.get("pm25")),
+            }
+        if city_row is not None:
+            values = dict(zip(city_columns, city_row))
+            result["city"] = {
+                "area": _text(values.get("area")),
+                "data_time": _iso(values.get("time_point")),
+                "aqi": _int_or_none(values.get("aqi")),
+                "quality": _text(values.get("quality")),
+                "primary": _text(values.get("pollutant")),
+            }
+        return result or None
+
+    async def _quality(self) -> Optional[dict[str, Any]]:
+        """监测科数据质量：县级站/乡镇站最近整点在线站点数。
+
+        SsfbSiteHour 覆盖全省县级省控站（过滤许昌后看市级归属）；
+        TownHour 须按 caliber 过滤（审核口径优先，回退原始）。
+        """
+        latest = self._latest_hour_iso()
+
+        site_rows = await cube_load({
+            "measures": ["SsfbSiteHour.onlineSites"],
+            "dimensions": [
+                "SsfbSiteHour.dataTime", "SsfbSiteHour.city",
+            ],
+            "timeDimensions": [{
+                "dimension": "SsfbSiteHour.dataTime",
+                "dateRange": _hour_range(latest),
+            }],
+            "filters": [{
+                "member": "SsfbSiteHour.city",
+                "operator": "equals",
+                "values": [XUCHANG_CITY],
+            }],
+            "limit": 5,
+        })
+        site = {"data_time": None, "online": None}
+        for item in _flat(site_rows, "SsfbSiteHour"):
+            online = _int_or_none(item.get("onlineSites"))
+            if online is not None:
+                site = {
+                    "data_time": _iso(item.get("dataTime")),
+                    "online": online,
+                }
+                break
+
+        town = None
+        for caliber in ("app", "src"):
+            rows = await cube_load({
+                "measures": ["TownHour.onlineSites"],
+                "dimensions": ["TownHour.dataTime"],
+                "timeDimensions": [{
+                    "dimension": "TownHour.dataTime",
+                    "dateRange": _hour_range(latest),
+                }],
+                "filters": [{
+                    "member": "TownHour.caliber",
+                    "operator": "equals",
+                    "values": [caliber],
+                }],
+                "limit": 1,
+            })
+            if rows:
+                row = _flat(rows, "TownHour")[0]
+                town = {
+                    "data_time": _iso(row.get("dataTime")),
+                    "online": _int_or_none(row.get("onlineSites")),
+                    "caliber": caliber,
+                    "total": TOWNSHIP_TOTAL,
+                }
+                break
+        return {"site_hour": site, "town_hour": town}

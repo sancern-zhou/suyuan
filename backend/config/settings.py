@@ -183,6 +183,13 @@ class Settings(BaseSettings):
         le=86400,
         description="Signed anonymous share grant lifetime",
     )
+    xuchang_dashboard_access_token: str = Field(
+        default="",
+        description=(
+            "静态大屏直连令牌：非空时允许携带 ?access_token= 的 GET 请求免网关登录"
+            "访问 /api/xuchang-dashboard/*（大屏设备开机即显）；空=禁用（默认）"
+        ),
+    )
     auth_docs_public: bool = Field(
         default=False,
         description="Allow anonymous Swagger/OpenAPI access",

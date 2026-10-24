@@ -25,6 +25,23 @@ def client(tmp_path, monkeypatch):
     return TestClient(app)
 
 
+@pytest.fixture
+def token_client(tmp_path, monkeypatch):
+    """带部署级大屏令牌的客户端（模拟大屏设备免登录直连）。"""
+    monkeypatch.setattr(
+        "app.api.xuchang_dashboard_routes.get_data_registry",
+        lambda: tmp_path,
+    )
+    monkeypatch.setattr(
+        "config.settings.settings.xuchang_dashboard_access_token",
+        "screen-token-123",
+    )
+    app = FastAPI()
+    app.include_router(router)
+    # 不注入 current_user，模拟无网关会话的大屏设备
+    return TestClient(app)
+
+
 def _write_snapshot(registry, payload):
     directory = registry / SNAPSHOT_DIR
     directory.mkdir(parents=True, exist_ok=True)
@@ -144,3 +161,51 @@ def test_asset_route_404_for_missing_file(client, tmp_path):
         params={"path": "xuchang_transport_analysis/20261024/none.png"},
     )
     assert response.status_code == 404
+
+
+def test_token_client_without_token_is_401(token_client, tmp_path):
+    _write_snapshot(tmp_path, {"schema_version": 1, "header": {"aqi": 82}})
+
+    response = token_client.get("/api/xuchang-dashboard/screen-snapshot")
+    assert response.status_code == 401
+
+
+def test_token_client_with_valid_token_reads_snapshot(token_client, tmp_path):
+    _write_snapshot(tmp_path, {"schema_version": 1, "header": {"aqi": 82}})
+
+    response = token_client.get(
+        "/api/xuchang-dashboard/screen-snapshot?access_token=screen-token-123"
+    )
+    assert response.status_code == 200
+    assert response.json()["header"]["aqi"] == 82
+
+
+def test_token_client_with_wrong_token_is_401(token_client, tmp_path):
+    _write_snapshot(tmp_path, {"schema_version": 1})
+
+    response = token_client.get(
+        "/api/xuchang-dashboard/screen-snapshot?access_token=wrong"
+    )
+    assert response.status_code == 401
+
+
+def test_token_grants_asset_route_too(token_client, tmp_path):
+    import os
+
+    asset = tmp_path / "xuchang_transport_analysis" / "20261024"
+    asset.mkdir(parents=True, exist_ok=True)
+    (asset / "job-a.regional-paths.png").write_bytes(b"\x89PNG-fake-bytes")
+
+    ok = token_client.get(
+        "/api/xuchang-dashboard/asset",
+        params={
+            "path": "xuchang_transport_analysis/20261024/job-a.regional-paths.png",
+            "access_token": "screen-token-123",
+        },
+    )
+    assert ok.status_code == 200
+    denied = token_client.get(
+        "/api/xuchang-dashboard/asset",
+        params={"path": "xuchang_transport_analysis/20261024/job-a.regional-paths.png"},
+    )
+    assert denied.status_code == 401

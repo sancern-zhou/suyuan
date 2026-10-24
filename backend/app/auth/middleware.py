@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import re
 from http.cookies import SimpleCookie
@@ -46,6 +47,8 @@ _APP_GATEWAY_PREFIXES = ("/api/social/app/",)
 _PUBLIC_SHARE_PATTERNS = (re.compile(r"^/session/[^/]+$"),)
 _DOCS_PATHS = {"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
 _UNTRUSTED_IDENTITY_HEADERS = {b"x-user-id", b"x-is-admin"}
+# 大屏直连令牌（静态部署级凭证）仅放行该前缀的 GET；路由层仍做二次校验。
+_DASHBOARD_PREFIX = "/api/xuchang-dashboard"
 _RESOURCE_CONTENT_PATTERN = re.compile(
     r"^/api/sessions/([^/]+)/resources/([^/]+)/content(?:/.*)?$"
 )
@@ -89,6 +92,10 @@ class GatewayAuthenticationMiddleware:
             return
 
         if method in {"GET", "HEAD"} and self._valid_resource_preview(scope, path):
+            await self.app(scope, receive, send)
+            return
+
+        if method in {"GET", "HEAD"} and self._valid_dashboard_access(scope, path):
             await self.app(scope, receive, send)
             return
 
@@ -219,6 +226,19 @@ class GatewayAuthenticationMiddleware:
                 unquote(shared_report.group(1)),
             )
         return False
+
+    def _valid_dashboard_access(self, scope: Scope, path: str) -> bool:
+        """大屏直连令牌：静态部署级凭证，仅放行 dashboard 前缀的 GET。
+
+        令牌为空（默认）时整体禁用；路由层 require_dashboard_reader 仍会
+        复核同一令牌，中间件放行不会绕过鉴权语义。
+        """
+        configured = getattr(self.settings, "xuchang_dashboard_access_token", "")
+        if not configured or not path.startswith(_DASHBOARD_PREFIX):
+            return False
+        query = parse_qs(scope.get("query_string", b"").decode("utf-8"))
+        supplied = (query.get("access_token") or [""])[0]
+        return bool(supplied) and hmac.compare_digest(supplied, configured)
 
     def _verify_preview_ticket(
         self,

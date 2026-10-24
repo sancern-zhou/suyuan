@@ -22,7 +22,10 @@ export const useBigScreenStore = defineStore('bigScreen', {
     alerts: state => state.snapshot?.alerts || [],
     broadcast: state => state.snapshot?.broadcast || [],
     stations: state => state.snapshot?.stations || { national: [], townships: [], counties: [] },
-    assets: state => state.snapshot?.assets || []
+    assets: state => state.snapshot?.assets || [],
+    rank168: state => state.snapshot?.rank168 || null,
+    minute: state => state.snapshot?.minute || null,
+    quality: state => state.snapshot?.quality || null
   },
   actions: {
     assetUrl(assetPath) {

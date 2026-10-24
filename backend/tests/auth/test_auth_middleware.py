@@ -337,3 +337,70 @@ async def test_session_resource_path_ticket_allows_bound_content_subtree():
     assert wrong_resource.status_code == 401
     assert no_ticket.status_code == 401
     assert service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_dashboard_access_token_allows_only_configured_prefix_gets():
+    from fastapi import Request as FastAPIRequest
+
+    app = FastAPI()
+    app.add_middleware(
+        GatewayAuthenticationMiddleware,
+        settings=_settings(xuchang_dashboard_access_token="screen-token-abc"),
+        auth_service=FakeAuthService(),
+        share_access=ShareAccessService("test-preview-secret", ttl_seconds=60),
+    )
+
+    @app.get("/api/xuchang-dashboard/screen-snapshot")
+    async def snapshot():
+        return {"ok": True}
+
+    @app.post("/api/xuchang-dashboard/screen-snapshot")
+    async def post_snapshot():
+        return {"ok": True}
+
+    @app.get("/api/private")
+    async def private():
+        return {"ok": True}
+
+    async def get(path, method="GET"):
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 12345))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.request(method, path)
+
+    ok = await get("/api/xuchang-dashboard/screen-snapshot?access_token=screen-token-abc")
+    assert ok.status_code == 200
+    # 错误令牌 401
+    wrong = await get("/api/xuchang-dashboard/screen-snapshot?access_token=wrong")
+    assert wrong.status_code == 401
+    # 令牌只放行 dashboard 前缀
+    outside = await get("/api/private?access_token=screen-token-abc")
+    assert outside.status_code == 401
+    # 非 GET 不放行
+    post = await get(
+        "/api/xuchang-dashboard/screen-snapshot?access_token=screen-token-abc",
+        method="POST",
+    )
+    assert post.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_dashboard_access_token_disabled_by_default():
+    app = FastAPI()
+    app.add_middleware(
+        GatewayAuthenticationMiddleware,
+        settings=_settings(),
+        auth_service=FakeAuthService(),
+        share_access=ShareAccessService("test-preview-secret", ttl_seconds=60),
+    )
+
+    @app.get("/api/xuchang-dashboard/screen-snapshot")
+    async def snapshot():
+        return {"ok": True}
+
+    transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 12345))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/api/xuchang-dashboard/screen-snapshot?access_token=screen-token-abc"
+        )
+    assert response.status_code == 401

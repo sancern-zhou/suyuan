@@ -3,6 +3,7 @@
     <div class="bigscreen-stage" ref="stageEl" :style="{ transform: `scale(${scale})` }">
       <ScreenHeader
         :header="store.header"
+        :minute="store.minute"
         :data-cutoff-hour="store.snapshot?.data_cutoff_hour || ''"
         :generated-at="store.snapshot?.generated_at || ''"
         :loading="store.loading"
@@ -37,8 +38,13 @@
         </div>
 
         <div class="column column-right">
+          <DataQualityBar :quality="store.quality" />
           <AlertListPanel :alerts="store.alerts" />
-          <TargetProgressPanel :target="store.yearTarget || {}" :forecast="store.forecast" />
+          <TargetProgressPanel
+            :target="store.yearTarget || {}"
+            :forecast="store.forecast"
+            :rank168="store.rank168"
+          />
         </div>
       </div>
 
@@ -56,8 +62,10 @@ import TargetProgressPanel from '@/components/bigscreen/TargetProgressPanel.vue'
 import AlertListPanel from '@/components/bigscreen/AlertListPanel.vue'
 import StationMapPanel from '@/components/bigscreen/StationMapPanel.vue'
 import FocusCarouselPanel from '@/components/bigscreen/FocusCarouselPanel.vue'
+import DataQualityBar from '@/components/bigscreen/DataQualityBar.vue'
 import BroadcastTicker from '@/components/bigscreen/BroadcastTicker.vue'
 import { useBigScreenStore } from '@/stores/bigScreen.js'
+import { initDashboardAccessToken } from '@/api/bigScreen.js'
 
 const DESIGN_WIDTH = 1920
 const DESIGN_HEIGHT = 1080
@@ -74,6 +82,7 @@ const applyScale = () => {
 }
 
 onMounted(() => {
+  initDashboardAccessToken()
   applyScale()
   window.addEventListener('resize', applyScale)
   store.startPolling()

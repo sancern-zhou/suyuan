@@ -23,6 +23,12 @@ export function createAuthGuard(authStore) {
         : true
     }
 
+    // 大屏直连：未登录但 URL 携带 access_token 时放行 dashboard 类页面，
+    // 真实校验在后端（XUCHANG_DASHBOARD_ACCESS_TOKEN），无令牌的 API 请求会 401。
+    if (!authStore.isAuthenticated && to.meta?.allowDashboardToken && to.query?.access_token) {
+      return true
+    }
+
     if (authStore.isAuthenticated) return true
     return {
       path: '/login',

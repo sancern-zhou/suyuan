@@ -14,6 +14,7 @@ P1: 资产出网 —— /asset 按 registry 相对路径白名单校验后回图
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import re
 from datetime import datetime, timedelta
@@ -22,8 +23,9 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
+from fastapi import status
 
-from app.auth.dependencies import require_current_user
+from app.auth.dependencies import optional_current_user
 from app.auth.models import CurrentUser
 from app.fetchers.xuchang_screen_snapshot import (
     ALERT_WINDOW,
@@ -38,6 +40,30 @@ router = APIRouter(prefix="/api/xuchang-dashboard", tags=["xuchang-dashboard"])
 _MEDIA_TYPE = "application/json"
 # 快照资产路径只允许 registry 内的相对路径；.. 与绝对路径一律拒绝
 _UNSAFE_ASSET_PATH = re.compile(r"(^[/\\])|\.\.|[\x00-\x1f]")
+
+
+async def require_dashboard_reader(
+    request: Request,
+    user: CurrentUser | None = Depends(optional_current_user),
+) -> CurrentUser | None:
+    """大屏读取鉴权：正常网关身份，或部署级大屏直连令牌（?access_token=）。
+
+    令牌校验与中间件 _valid_dashboard_access 同源（XUCHANG_DASHBOARD_ACCESS_TOKEN）；
+    此处复核是防止中间件配置遗漏时令牌直接命中路由，也覆盖 POST/非 GET 语义。
+    """
+    if user is not None:
+        return user
+    from config.settings import settings
+
+    configured = settings.xuchang_dashboard_access_token
+    if configured:
+        supplied = request.query_params.get("access_token") or ""
+        if supplied and hmac.compare_digest(supplied, configured):
+            return None
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="authentication_required",
+    )
 
 
 def _snapshot_path() -> Path:
@@ -134,7 +160,7 @@ def _merge_hot_alerts(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 async def get_screen_snapshot(
     request: Request,
     hot_alerts: bool = Query(default=True, description="返回前实时合并告警状态"),
-    user: CurrentUser = Depends(require_current_user),
+    user: CurrentUser | None = Depends(require_dashboard_reader),
 ) -> Response:
     path = _snapshot_path()
     try:
@@ -167,7 +193,7 @@ async def get_screen_snapshot(
 @router.get("/asset")
 async def get_dashboard_asset(
     path: str = Query(..., description="registry 内素材相对路径"),
-    user: CurrentUser = Depends(require_current_user),
+    user: CurrentUser | None = Depends(require_dashboard_reader),
 ) -> Response:
     """按快照 assets 段提供的相对路径回传素材图片。
 

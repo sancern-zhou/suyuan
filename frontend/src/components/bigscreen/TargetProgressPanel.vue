@@ -43,6 +43,19 @@
         </div>
       </div>
 
+      <div class="rank168-strip" v-if="rank168">
+        <span class="strip-label">全国 168 城</span>
+        <span class="strip-item">
+          综合指数排名 <strong>{{ rank168.composite_rank ?? '—' }}</strong>
+          <small>（{{ rank168.composite_index ?? '—' }}）</small>
+        </span>
+        <span class="strip-item">
+          PM2.5 排名 <strong>{{ rank168.pm25_rank ?? '—' }}</strong>
+          <small>（{{ rank168.pm25 ?? '—' }} μg/m³）</small>
+        </span>
+        <span class="strip-period">{{ rank168.period_label || '' }} · 部发布累计</span>
+      </div>
+
       <div class="daily-strip" v-if="dailyForecasts.length">
         <span class="strip-label">未来预报</span>
         <span
@@ -68,7 +81,8 @@ import { aqiColor, aqiLevelName } from './aqiLevels.js'
 
 const props = defineProps({
   target: { type: Object, default: () => ({}) },
-  forecast: { type: Object, default: null }
+  forecast: { type: Object, default: null },
+  rank168: { type: Object, default: null }
 })
 
 const localSegment = computed(() => props.target?.local_since_official || null)
@@ -164,6 +178,31 @@ const progressPct = (value, target) => {
     font-size: 12px;
     color: #eaf6f8;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  }
+}
+
+.rank168-strip {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid rgba(229, 174, 34, 0.25);
+  border-radius: 6px;
+  background: rgba(229, 174, 34, 0.06);
+  font-size: 12px;
+  color: #c9dfe6;
+
+  .strip-label {
+    color: #e5ae22;
+    letter-spacing: 1px;
+    flex-shrink: 0;
+  }
+  .strip-item strong { font-size: 16px; color: #eaf6f8; }
+  .strip-item small { color: #8ab6c2; }
+  .strip-period {
+    margin-left: auto;
+    color: #6f95a3;
+    font-size: 11px;
   }
 }
 

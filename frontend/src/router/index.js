@@ -21,13 +21,21 @@ const routes = [
       path: '/bigscreen',
       name: 'bigscreen',
       component: () => import('@/views/BigScreenView.vue'),
-      meta: { requiredModule: 'xuchang-air-quality', title: '数据大屏' }
+      meta: {
+        requiredModule: 'xuchang-air-quality',
+        title: '数据大屏',
+        allowDashboardToken: true
+      }
     },
     {
       path: '/fieldwatch',
       name: 'fieldwatch',
       component: () => import('@/views/FieldWatchView.vue'),
-      meta: { requiredModule: 'xuchang-air-quality', title: '现场巡查快报' }
+      meta: {
+        requiredModule: 'xuchang-air-quality',
+        title: '现场巡查快报',
+        allowDashboardToken: true
+      }
     },
     {
       path: '/',
