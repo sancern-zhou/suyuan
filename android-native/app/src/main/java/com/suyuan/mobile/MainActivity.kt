@@ -860,11 +860,12 @@ private fun AppTopBar(
     onNew: () -> Unit,
 ) {
     var taskMenuExpanded by remember { mutableStateOf(false) }
+    // 对话/现状两个 tab 的名称由底部 tab 栏表达，顶栏不重复显示；
+    // 历史会话（对话内覆盖层）与任务中心仍带标题。空标题时顶栏仅作状态栏留白。
     val title = when {
-        currentTab == "watch" -> "现场巡查快报"
-        currentTab == "tasks" -> "任务中心"
         showHistory -> "历史会话"
-        else -> "对话"
+        currentTab == "tasks" -> "任务中心"
+        else -> null
     }
     Row(
         Modifier.fillMaxWidth().background(Color.White).statusBarsPadding().padding(horizontal = 18.dp, vertical = 10.dp),
@@ -880,7 +881,9 @@ private fun AppTopBar(
                     Icon(painterResource(R.drawable.ic_menu), contentDescription = "历史会话", tint = SuyuanColors.text)
                 }
             }
-            Text(title, color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
+            if (title != null) {
+                Text(title, color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
+            }
         }
         when {
             currentTab == "tasks" && tasksSubTab == "reports" -> {
