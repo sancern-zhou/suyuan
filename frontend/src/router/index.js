@@ -24,6 +24,12 @@ const routes = [
       meta: { requiredModule: 'xuchang-air-quality', title: '数据大屏' }
     },
     {
+      path: '/fieldwatch',
+      name: 'fieldwatch',
+      component: () => import('@/views/FieldWatchView.vue'),
+      meta: { requiredModule: 'xuchang-air-quality', title: '现场巡查快报' }
+    },
+    {
       path: '/',
       name: 'analysis',
       component: ReactAnalysisView

@@ -197,6 +197,25 @@
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12" /><path d="m12 6 4 4-4 4" /></svg>
             </span>
           </a>
+          <a class="scheduled-task-card bigscreen-card" href="/fieldwatch" target="_blank" rel="noopener">
+            <span class="task-ambient" aria-hidden="true"></span>
+            <span class="task-badge">移动巡查</span>
+            <span class="task-card-top">
+              <span class="task-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2" /><path d="M11 18.5h2" /></svg>
+              </span>
+              <span class="task-title-wrap">
+                <strong>现场巡查快报</strong>
+                <small>手机查看 · 适合现场管控人员</small>
+              </span>
+            </span>
+            <span class="card-description">实时告警、区县实况与任务播报，与大屏共用同一份同源数据。</span>
+            <span class="task-meta"><span>告警实时推送</span><span>免安装 · 手机浏览器直达</span></span>
+            <span class="card-action task-action">
+              打开快报
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12" /><path d="m12 6 4 4-4 4" /></svg>
+            </span>
+          </a>
         </div>
       </section>
 

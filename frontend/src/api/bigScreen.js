@@ -3,6 +3,14 @@ import { authFetch } from '@/auth/http.js'
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
 /**
+ * 大屏素材出网地址（传输轨迹 / GEMS 卫星图），走鉴权资产路由。
+ */
+export function dashboardAssetUrl(assetPath) {
+  if (!assetPath) return ''
+  return `${API_BASE_URL}/xuchang-dashboard/asset?path=${encodeURIComponent(assetPath)}`
+}
+
+/**
  * 拉取大屏整屏快照；携带 If-None-Match 时未变化返回 304。
  * @returns {{notModified: true} | {notModified: false, data: object, etag: string|null}}
  */

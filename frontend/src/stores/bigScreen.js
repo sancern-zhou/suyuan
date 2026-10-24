@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { fetchScreenSnapshot } from '@/api/bigScreen.js'
+import { dashboardAssetUrl, fetchScreenSnapshot } from '@/api/bigScreen.js'
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000
 
@@ -21,9 +21,13 @@ export const useBigScreenStore = defineStore('bigScreen', {
     yearTarget: state => state.snapshot?.year_target || null,
     alerts: state => state.snapshot?.alerts || [],
     broadcast: state => state.snapshot?.broadcast || [],
-    stations: state => state.snapshot?.stations || { national: [], townships: [] }
+    stations: state => state.snapshot?.stations || { national: [], townships: [], counties: [] },
+    assets: state => state.snapshot?.assets || []
   },
   actions: {
+    assetUrl(assetPath) {
+      return dashboardAssetUrl(assetPath)
+    },
     async refresh() {
       if (this.loading) return
       this.loading = true

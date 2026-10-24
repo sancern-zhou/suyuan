@@ -29,16 +29,17 @@ import { loadAMap } from '@/utils/mapLoader.js'
 import { LEVEL_NAMES, LEVEL_PALETTE, aqiColor } from './aqiLevels.js'
 
 const props = defineProps({
-  stations: { type: Object, default: () => ({ national: [], townships: [] }) },
+  stations: { type: Object, default: () => ({ national: [], townships: [], counties: [] }) },
   alerts: { type: Array, default: () => [] }
 })
 
 const mapContainer = ref(null)
 const error = ref('')
-const visibleLayers = ref(['national', 'townships'])
+const visibleLayers = ref(['national', 'townships', 'counties'])
 const layerOptions = [
   { key: 'national', label: '国控站' },
-  { key: 'townships', label: '乡镇站' }
+  { key: 'townships', label: '乡镇站' },
+  { key: 'counties', label: '区县' }
 ]
 const legendLevels = LEVEL_NAMES.slice(0, 4).map((label, index) => ({
   label: label.replace('污染', ''),
@@ -47,7 +48,9 @@ const legendLevels = LEVEL_NAMES.slice(0, 4).map((label, index) => ({
 
 let AMap = null
 let map = null
-const markerGroups = { national: [], townships: [] }
+const markerGroups = { national: [], townships: [], counties: [] }
+
+const TYPE_LABELS = { national: '国控站', township: '乡镇站', county: '区县代表点' }
 
 const alertKeys = () =>
   new Set(props.alerts.map(item => String(item.station_name || '').trim()))
@@ -72,7 +75,7 @@ const buildMarker = (station, isAlerting) => {
         <div class="screen-station-info">
           <strong>${station.station_name}</strong>
           <p>AQI ${station.aqi ?? '—'} · PM2.5 ${station.pm25 ?? '—'}</p>
-          <small>${station.type === 'national' ? '国控站' : '乡镇站'} · ${String(station.data_time || '').replace('T', ' ').slice(0, 16)}</small>
+          <small>${TYPE_LABELS[station.type] || '站点'}${station.quality ? ' · ' + station.quality : ''}${station.primary ? ' · 首要 ' + station.primary : ''} · ${String(station.data_time || '').replace('T', ' ').slice(0, 16)}</small>
         </div>`,
       offset: new AMap.Pixel(0, -18)
     })
@@ -85,12 +88,14 @@ const clearMarkers = () => {
   Object.values(markerGroups).forEach(markers => markers.forEach(marker => marker.setMap(null)))
   markerGroups.national = []
   markerGroups.townships = []
+  markerGroups.counties = []
 }
 
 const applyLayerVisibility = () => {
   const show = key => visibleLayers.value.includes(key)
   markerGroups.national.forEach(marker => marker.setMap(show('national') ? map : null))
   markerGroups.townships.forEach(marker => marker.setMap(show('townships') ? map : null))
+  markerGroups.counties.forEach(marker => marker.setMap(show('counties') ? map : null))
 }
 
 const renderMarkers = () => {
@@ -103,6 +108,9 @@ const renderMarkers = () => {
   })
   ;(props.stations?.townships || []).forEach(station => {
     markerGroups.townships.push(buildMarker(station, false))
+  })
+  ;(props.stations?.counties || []).forEach(station => {
+    markerGroups.counties.push(buildMarker(station, false))
   })
   applyLayerVisibility()
 }

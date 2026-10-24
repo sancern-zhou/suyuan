@@ -53,6 +53,29 @@ ALERT_WINDOW = timedelta(hours=24)
 MAX_ALERTS = 12
 MAX_TOWNSHIPS = 80
 
+# ---------------------------------------------------------------- 轮播素材
+# 各类素材最多入快照的张数；扫描结果按文件修改时间倒序取最新。
+ASSET_WINDOW_DAYS = 3
+ASSETS_PER_KIND = 4
+# 大屏资产路由允许的扩展名白名单（详见 xuchang_dashboard_routes.asset）
+ASSET_EXTENSIONS = {".png", ".jpg", ".jpeg"}
+# 素材在 registry 下的根目录（相对路径进快照，绝对路径不出后端）
+TRANSPORT_OUTPUT_DIR = "xuchang_transport_analysis"
+GEMS_OUTPUT_DIR = "satellite/gems/xuchang"
+# 许昌 10 区县代表点（政府驻地，公开稳定坐标；仅作地图辅助层，
+# 区县精确排名看左栏排名面板，不用本层做考核口径）
+COUNTY_SEAT_COORDINATES: Dict[str, Dict[str, float]] = {
+    "魏都区": {"lon": 113.8297, "lat": 34.0243},
+    "建安区": {"lon": 113.8350, "lat": 34.1094},
+    "鄢陵县": {"lon": 114.1830, "lat": 34.1030},
+    "襄城县": {"lon": 113.5010, "lat": 33.8490},
+    "禹州市": {"lon": 113.4880, "lat": 34.1400},
+    "长葛市": {"lon": 113.7730, "lat": 34.2190},
+    "东城区": {"lon": 113.8790, "lat": 34.0350},
+    "开发区": {"lon": 113.7906, "lat": 33.9953},
+    "示范区": {"lon": 113.8600, "lat": 34.0870},
+}
+
 
 # ---------------------------------------------------------------- 工具
 def _number(value: Any) -> Optional[float]:
@@ -176,6 +199,9 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
         stations = await self._guarded(
             "stations", errors, lambda: self._stations(alert_names)
         )
+        assets = await self._guarded(
+            "assets", errors, lambda: asyncio.to_thread(self._assets)
+        )
 
         snapshot = {
             "schema_version": SNAPSHOT_SCHEMA_VERSION,
@@ -190,6 +216,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             "alerts": alerts,
             "broadcast": broadcast,
             "stations": stations,
+            "assets": assets,
             "errors": errors or None,
         }
         path = self._write_snapshot(snapshot)
@@ -202,6 +229,7 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             "alerts": len(alerts or []),
             "stations": len((stations or {}).get("national", []))
             + len((stations or {}).get("townships", [])),
+            "assets": len(assets or []),
             "segments_failed": sorted(errors),
         }
         logger.info("xuchang_screen_snapshot_completed", **result)
@@ -698,7 +726,60 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
     async def _stations(self, alert_names: set[str]) -> dict[str, Any]:
         national = await asyncio.to_thread(self._national_stations, alert_names)
         townships = await self._township_stations()
-        return {"national": national, "townships": townships}
+        counties = await self._county_stations()
+        return {
+            "national": national,
+            "townships": townships,
+            "counties": counties,
+        }
+
+    async def _county_stations(self) -> List[dict[str, Any]]:
+        """区县代表点：内置驻地坐标 + SsfbCountyHour 最新小时值。
+
+        坐标是区县政府驻地代表点而非站点位置；考核排名看排名面板。
+        """
+        rows = await cube_load({
+            "measures": ["SsfbCountyHour.maxAqi", "SsfbCountyHour.avgPm25"],
+            "dimensions": [
+                "SsfbCountyHour.county", "SsfbCountyHour.quality",
+                "SsfbCountyHour.primaryPollutant",
+            ],
+            "timeDimensions": [{
+                "dimension": "SsfbCountyHour.dataTime",
+                "dateRange": _hour_range(self._latest_hour_iso()),
+            }],
+            "filters": [{
+                "member": "SsfbCountyHour.city",
+                "operator": "equals",
+                "values": [XUCHANG_CITY],
+            }],
+            "limit": 15,
+        })
+        values = {
+            _text(item.get("county")): item
+            for item in _flat(rows, "SsfbCountyHour")
+        }
+        stations = []
+        for county, coord in COUNTY_SEAT_COORDINATES.items():
+            item = values.get(county)
+            if item is None:
+                continue
+            stations.append({
+                "station_name": county,
+                "type": "county",
+                "lon": coord["lon"],
+                "lat": coord["lat"],
+                "aqi": _int_or_none(item.get("maxAqi")),
+                "pm25": _number(item.get("avgPm25")),
+                "quality": _text(item.get("quality")),
+                "primary": _text(item.get("primaryPollutant")),
+            })
+        return stations
+
+    def _latest_hour_iso(self) -> str:
+        """最近整点（本地时间），供区县段锁定时段；cutoff 探测失败时兜底。"""
+        now = self.now_factory().replace(minute=0, second=0, microsecond=0)
+        return now.strftime("%Y-%m-%dT%H:%M:%S")
 
     def _national_stations(self, alert_names: set[str]) -> List[dict[str, Any]]:
         """国控站点位（内置坐标）+ 中大平台小时值。"""
@@ -825,3 +906,59 @@ class XuchangScreenSnapshotFetcher(DataFetcher):
             if stations:
                 return stations
         return []
+
+    # ------------------------------------------------------------ 轮播素材段
+    def _assets(self) -> List[dict[str, Any]]:
+        """扫描三类轮播素材，按修改时间取各类最新 N 张。
+
+        传输轨迹：xuchang_transport_analysis/YYYYMMDD/{job}.regional-paths.png
+        GEMS 卫星：satellite/gems/xuchang/gems_*_xuchang_*.png（许昌区域裁剪）
+        快照只存 registry 相对路径，前端经 /api/xuchang-dashboard/asset 出网。
+        """
+        registry = get_data_registry()
+        now = self.now_factory()
+        oldest = now.timestamp() - ASSET_WINDOW_DAYS * 86400
+
+        candidates: List[tuple[float, str, str, str]] = []  # (mtime, kind, title, rel)
+
+        transport_root = registry / TRANSPORT_OUTPUT_DIR
+        if transport_root.is_dir():
+            for path in transport_root.glob("*/[A-Za-z0-9]*.png"):
+                stat = path.stat()
+                if stat.st_mtime < oldest:
+                    continue
+                name = path.stem
+                role = "近地层企业覆盖图" if ".local" in name else "区域后向轨迹走廊图"
+                candidates.append((
+                    stat.st_mtime, "transport", role,
+                    path.relative_to(registry).as_posix(),
+                ))
+
+        gems_root = registry / GEMS_OUTPUT_DIR
+        if gems_root.is_dir():
+            for path in gems_root.glob("gems_*_xuchang_*.png"):
+                stat = path.stat()
+                if stat.st_mtime < oldest:
+                    continue
+                product = path.name.split("_")[1] if "_" in path.name else "GEMS"
+                titles = {"AOD": "GEMS 气溶胶光学厚度", "UVAI": "GEMS 紫外气溶胶指数"}
+                candidates.append((
+                    stat.st_mtime, "gems",
+                    titles.get(product, f"GEMS {product} 产品图"),
+                    path.relative_to(registry).as_posix(),
+                ))
+
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        by_kind: Dict[str, int] = {}
+        assets: List[dict[str, Any]] = []
+        for mtime, kind, title, rel in candidates:
+            if by_kind.get(kind, 0) >= ASSETS_PER_KIND:
+                continue
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+            assets.append({
+                "kind": kind,
+                "title": title,
+                "asset_path": rel,
+                "taken_at": datetime.fromtimestamp(mtime).replace(microsecond=0).isoformat(),
+            })
+        return assets

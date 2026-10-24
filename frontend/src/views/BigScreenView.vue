@@ -26,7 +26,13 @@
         </div>
 
         <div class="column column-center">
-          <StationMapPanel :stations="store.stations" :alerts="store.alerts" />
+          <FocusCarouselPanel
+            :assets="store.assets"
+            :asset-url="store.assetUrl"
+            class="center-carousel"
+          >
+            <StationMapPanel :stations="store.stations" :alerts="store.alerts" />
+          </FocusCarouselPanel>
           <TrendPanel :trend="store.cityTrend" :forecast="store.forecast" />
         </div>
 
@@ -49,6 +55,7 @@ import TrendPanel from '@/components/bigscreen/TrendPanel.vue'
 import TargetProgressPanel from '@/components/bigscreen/TargetProgressPanel.vue'
 import AlertListPanel from '@/components/bigscreen/AlertListPanel.vue'
 import StationMapPanel from '@/components/bigscreen/StationMapPanel.vue'
+import FocusCarouselPanel from '@/components/bigscreen/FocusCarouselPanel.vue'
 import BroadcastTicker from '@/components/bigscreen/BroadcastTicker.vue'
 import { useBigScreenStore } from '@/stores/bigScreen.js'
 
@@ -127,7 +134,7 @@ onBeforeUnmount(() => {
 }
 
 .column-center {
-  :first-child { flex: 3; }
+  .center-carousel { flex: 3; }
   :last-child { flex: 2; }
 }
 

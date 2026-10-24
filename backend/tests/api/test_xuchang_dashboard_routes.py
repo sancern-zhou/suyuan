@@ -59,3 +59,88 @@ def test_serves_snapshot_and_304_on_unchanged(client, tmp_path):
     )
     assert changed.status_code == 200
     assert changed.json()["header"]["aqi"] == 71
+
+
+def test_hot_alerts_merge_overrides_snapshot_alerts(client, tmp_path):
+    _write_snapshot(tmp_path, {
+        "schema_version": 1,
+        "alerts": [{
+            "episode_id": "ep-1", "station_name": "许昌学院", "status": "active",
+            "lon": 113.8611, "lat": 34.0443,
+        }],
+    })
+    directory = tmp_path / "xuchang_station_deviation_alerts"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "episode_state.json").write_text(json.dumps({
+        "active": [{
+            "episode_id": "ep-1", "station_id": "1008A", "station_name": "许昌学院",
+            "status": "closed", "started_at": "2026-10-24T10:00:00",
+            "last_seen_at": "2026-10-24T15:30:00",
+        }, {
+            "episode_id": "ep-new", "station_id": "1005A", "station_name": "市一中",
+            "status": "active", "started_at": "2026-10-24T15:40:00",
+            "last_seen_at": "2026-10-24T15:45:00",
+        }],
+        "history": [],
+    }), encoding="utf-8")
+
+    response = client.get("/api/xuchang-dashboard/screen-snapshot")
+    assert response.status_code == 200
+    alerts = response.json()["alerts"]
+    # 状态机以 episode_state 为准，ep-1 变 closed，且新增 ep-new
+    statuses = {item["episode_id"]: item["status"] for item in alerts}
+    assert statuses == {"ep-1": "closed", "ep-new": "active"}
+    # 快照里已有的坐标在热合并时保留
+    coords = {item["episode_id"]: item["lon"] for item in alerts}
+    assert coords["ep-1"] == 113.8611
+    assert coords["ep-new"] is None
+    # 热合并行带 hot 标记
+    assert all(item["hot"] for item in alerts)
+
+
+def test_hot_alerts_can_be_disabled(client, tmp_path):
+    _write_snapshot(tmp_path, {"schema_version": 1, "alerts": [{"episode_id": "ep-x"}]})
+
+    response = client.get(
+        "/api/xuchang-dashboard/screen-snapshot?hot_alerts=false"
+    )
+    assert response.json()["alerts"] == [{"episode_id": "ep-x"}]
+
+
+def test_asset_route_rejects_traversal_and_non_images(client, tmp_path):
+    # 目录穿越
+    response = client.get("/api/xuchang-dashboard/asset", params={"path": "../secret.png"})
+    assert response.status_code == 400
+    # 绝对路径
+    response = client.get("/api/xuchang-dashboard/asset", params={"path": "/etc/passwd"})
+    assert response.status_code == 400
+    # 非白名单扩展名
+    response = client.get(
+        "/api/xuchang-dashboard/asset", params={"path": "xuchang_transport_analysis/20261024/job.json"}
+    )
+    assert response.status_code == 400
+
+
+def test_asset_route_serves_registry_image(client, tmp_path):
+    import os
+
+    asset = tmp_path / "xuchang_transport_analysis" / "20261024"
+    asset.mkdir(parents=True, exist_ok=True)
+    png = asset / "job-a.regional-paths.png"
+    png.write_bytes(b"\x89PNG-fake-bytes")
+    os.utime(png, None)
+
+    response = client.get(
+        "/api/xuchang-dashboard/asset",
+        params={"path": "xuchang_transport_analysis/20261024/job-a.regional-paths.png"},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+
+
+def test_asset_route_404_for_missing_file(client, tmp_path):
+    response = client.get(
+        "/api/xuchang-dashboard/asset",
+        params={"path": "xuchang_transport_analysis/20261024/none.png"},
+    )
+    assert response.status_code == 404

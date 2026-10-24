@@ -69,6 +69,11 @@ def _default_handlers() -> dict[str, Any]:
             "county": "建安区", "rankAqi": 1, "avgAqi": 79, "avgPm25": 55,
             "quality": "良", "primaryPollutant": "PM2.5",
         }),
+        # 区县代表点（地图 counties 层）
+        "SsfbCountyHour.maxAqi": _cube_rows("SsfbCountyHour", {
+            "county": "建安区", "maxAqi": 79, "avgPm25": 55,
+            "quality": "良", "primaryPollutant": "PM2.5",
+        }),
         "XuchangCityYearTarget.pm25Target": _cube_rows("XuchangCityYearTarget", {
             "year": "2026", "pm25Target": 44, "pm10Target": 76,
             "goodDaysTarget": 285, "heavyDaysTarget": 3,
@@ -130,6 +135,14 @@ def _make_fetcher(monkeypatch, handlers) -> XuchangScreenSnapshotFetcher:
         XuchangScreenSnapshotFetcher, "_broadcast",
         lambda self: [{"time": "2026-10-24T08:05:00", "task_name": "站点日污染溯源报告",
                        "station_name": "许昌学院", "text": "结论摘要"}],
+    )
+    monkeypatch.setattr(
+        XuchangScreenSnapshotFetcher, "_assets",
+        lambda self: [{
+            "kind": "transport", "title": "区域后向轨迹走廊图",
+            "asset_path": "xuchang_transport_analysis/20261024/j1.regional-paths.png",
+            "taken_at": "2026-10-24T09:30:00",
+        }],
     )
     return XuchangScreenSnapshotFetcher(now_factory=lambda: NOW)
 
@@ -197,6 +210,14 @@ async def test_fetch_and_store_writes_full_snapshot(
     townships = snapshot["stations"]["townships"]
     assert townships and townships[0]["caliber"] == "src"
     assert townships[0]["lon"] == 113.531
+    # 区县代表点：仅内置坐标表中的区县 + 最新小时值
+    counties = snapshot["stations"]["counties"]
+    assert counties and counties[0]["station_name"] == "建安区"
+    assert counties[0]["type"] == "county"
+    assert counties[0]["aqi"] == 79
+    # 轮播素材段
+    assert snapshot["assets"][0]["kind"] == "transport"
+    assert "xuchang_transport_analysis" in snapshot["assets"][0]["asset_path"]
     # 播报
     assert snapshot["broadcast"][0]["task_name"] == "站点日污染溯源报告"
 
@@ -282,3 +303,45 @@ def test_screen_snapshot_fetcher_is_registered_for_xuchang():
 
     assert [fetcher.name for fetcher in fetchers] == ["xuchang_screen_snapshot_fetcher"]
     assert fetchers[0].schedule == "11,41 * * * *"
+
+
+def test_assets_scanner_picks_latest_per_kind_with_window(registry, monkeypatch):
+    from app.fetchers.xuchang_screen_snapshot import (
+        ASSETS_PER_KIND,
+        XuchangScreenSnapshotFetcher as F,
+    )
+    import os
+
+    now_ts = NOW.timestamp()
+    transport_dir = registry / "xuchang_transport_analysis" / "20261024"
+    transport_dir.mkdir(parents=True, exist_ok=True)
+    gems_dir = registry / "satellite" / "gems" / "xuchang"
+    gems_dir.mkdir(parents=True, exist_ok=True)
+    stale_dir = registry / "xuchang_transport_analysis" / "20260101"
+    stale_dir.mkdir(parents=True, exist_ok=True)
+
+    paths = {
+        transport_dir / "job-a.regional-paths.png": now_ts - 100,
+        transport_dir / "job-a.local-enterprise.png": now_ts - 200,
+        gems_dir / "gems_AOD_xuchang_20261024100000.png": now_ts - 300,
+        stale_dir / "job-old.regional-paths.png": now_ts - 200 * 86400,
+    }
+    for path, mtime in paths.items():
+        path.write_bytes(b"png")
+        os.utime(path, (mtime, mtime))
+
+    # 超出每类上限的多余文件
+    extra = transport_dir / "job-b.regional-paths.png"
+    extra.write_bytes(b"png")
+    os.utime(extra, (now_ts - 50, now_ts - 50))
+
+    fetcher = F(now_factory=lambda: NOW)
+    assets = fetcher._assets()
+
+    kinds = [item["kind"] for item in assets]
+    assert kinds.count("transport") <= ASSETS_PER_KIND
+    assert "gems" in kinds
+    # 窗口外的旧文件不入快照
+    assert all("job-old" not in item["asset_path"] for item in assets)
+    # 按 mtime 倒序，最新的 job-b 优先于 job-a
+    assert assets[0]["asset_path"].endswith("job-b.regional-paths.png")
