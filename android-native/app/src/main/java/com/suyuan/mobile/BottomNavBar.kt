@@ -1,13 +1,16 @@
 package com.suyuan.mobile
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -26,16 +29,25 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** 对话 tab 的常驻底栏；键盘弹出时整体隐藏（微信式），避免顶跳输入区。 */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+/** 对话 tab 的常驻底栏；键盘弹出（或输入框聚焦兜底）时滑出隐藏（微信式），避免顶跳输入区。 */
 @Composable
-internal fun BottomNavBar(currentTab: String, showWatch: Boolean, taskBadge: Int, onTab: (String) -> Unit) {
-    if (WindowInsets.isImeVisible) return
-    NavigationBar(
-        containerColor = Color.White,
-        tonalElevation = 0.dp,
-        modifier = Modifier.fillMaxWidth()
+internal fun BottomNavBar(
+    currentTab: String,
+    showWatch: Boolean,
+    taskBadge: Int,
+    hidden: Boolean,
+    onTab: (String) -> Unit
+) {
+    AnimatedVisibility(
+        visible = !hidden,
+        enter = slideInVertically { it } + fadeIn(),
+        exit = slideOutVertically { it } + fadeOut()
     ) {
+        NavigationBar(
+            containerColor = Color.White,
+            tonalElevation = 0.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
         NavigationBarItem(
             selected = currentTab == "chat",
             onClick = { onTab("chat") },
@@ -77,6 +89,7 @@ internal fun BottomNavBar(currentTab: String, showWatch: Boolean, taskBadge: Int
                 indicatorColor = SuyuanColors.primary.copy(alpha = 0.12f)
             )
         )
+        }
     }
 }
 

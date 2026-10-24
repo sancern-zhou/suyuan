@@ -57,6 +57,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -379,7 +380,7 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
 }
 
 @Composable
-@OptIn(ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalComposeUiApi::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -408,6 +409,9 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             BuildConfig.DASHBOARD_ACCESS_TOKEN.isNotBlank() &&
             dashboardEntryUrl(BuildConfig.WEB_FRONTEND_URL, "/fieldwatch", BuildConfig.DASHBOARD_ACCESS_TOKEN) != null
     }
+    // 底部 tab 栏隐藏信号：IME insets（API 30+ 可靠）或输入框聚焦（全版本兜底）。
+    val imeVisible = WindowInsets.isImeVisible
+    var inputFocused by remember { mutableStateOf(false) }
     LaunchedEffect(currentTab, showHistory) {
         viewModel.setChatVisible(currentTab == "chat" && !showHistory)
     }
@@ -705,7 +709,8 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                     BasicTextField(
                         value = state.draft,
                         onValueChange = viewModel::updateDraft,
-                        modifier = Modifier.weight(1f).heightIn(min = 40.dp, max = 72.dp).focusRequester(focusRequester),
+                        modifier = Modifier.weight(1f).heightIn(min = 40.dp, max = 72.dp).focusRequester(focusRequester)
+                            .onFocusChanged { inputFocused = it.isFocused },
                         enabled = true,
                         minLines = 1,
                         maxLines = 4,
@@ -794,7 +799,14 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         (state.error ?: localError)?.let { Text(it, color = SuyuanColors.error, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp)) }
         }
         }
-        BottomNavBar(currentTab, dashboardConfigured, state.reportUnreadCount) { tab ->
+        BottomNavBar(
+            currentTab = currentTab,
+            showWatch = dashboardConfigured,
+            taskBadge = state.reportUnreadCount,
+            // 双条件隐藏：IME insets 在 Android 8/9（API<30）不上报，isImeVisible 恒 false，
+            // 输入框聚焦状态作为全版本可靠的兜底信号（聚焦必有键盘，收键盘必失焦）。
+            hidden = imeVisible || (currentTab == "chat" && inputFocused)
+        ) { tab ->
             showHistory = false
             if (tab == "tasks" && currentTab != "tasks") viewModel.refreshScheduledTasks()
             currentTab = tab
