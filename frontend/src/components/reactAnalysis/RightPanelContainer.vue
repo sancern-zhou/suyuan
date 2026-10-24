@@ -260,12 +260,14 @@
       />
 
       <!-- 智能事件中心：右侧 tab 只保留事件列表与事件详情两个页面；
-           任务执行记录工作区统一走整页管理面板（open-smart-event-task） -->
+           任务执行记录工作区统一走整页管理面板（open-smart-event-task）；
+           show-list-actions=false：详情态定位是当前事件证据包展示，不显示返回列表 -->
       <SmartEventCenterPanel
         v-if="activeTab === 'smart-event'"
         :category="smartEventCategory"
         class="panel-content"
         :workspace-command="smartEventCommand"
+        :show-list-actions="false"
         @close="$emit('close-smart-event-panel')"
         @open-task="$emit('open-smart-event-task', $event)"
         @open-judgment-conversation="$emit('open-judgment-conversation', $event)"

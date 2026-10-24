@@ -10,7 +10,8 @@
           <button type="button" :disabled="loading" @click="loadEvents"><span class="button-icon">↻</span>刷新</button>
           <button type="button" class="close" @click="$emit('close')">关闭</button>
         </template>
-        <button v-else type="button" class="header-back-button" @click="backToList">返回列表</button>
+        <!-- 对话右侧 tab 模式（showListActions=false）定位是当前事件的证据包展示，不提供返回列表 -->
+        <button v-else-if="showListActions" type="button" class="header-back-button" @click="backToList">返回列表</button>
       </div>
     </header>
 
@@ -487,7 +488,10 @@ import {
 const props = defineProps({
   initialEventId: { type: String, default: '' },
   workspaceCommand: { type: Object, default: null },
-  category: { type: String, default: 'all' }
+  category: { type: String, default: 'all' },
+  // 对话右侧 tab 置 false：定位是当前事件的证据包展示，隐藏顶栏「返回列表」；
+  // 整页管理面板保持默认 true，返回列表仍是常规导航
+  showListActions: { type: Boolean, default: true }
 })
 const emit = defineEmits(['close', 'open-task', 'open-judgment-conversation'])
 

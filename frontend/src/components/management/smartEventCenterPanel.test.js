@@ -67,6 +67,15 @@ test('hosts forward judgment conversation requests and restore the review sessio
   assert.match(rightPanel, /'open-judgment-conversation'/)
 })
 
+test('right-panel evidence mode hides the header back-to-list control', () => {
+  // 对话右侧 tab（show-list-actions=false）详情态只展示当前事件证据包，不显示返回列表；
+  // 整页管理面板保持默认 true，「返回列表」仍是常规导航。
+  assert.match(source, /showListActions: \{ type: Boolean, default: true \}/)
+  assert.match(source, /<button v-else-if="showListActions" type="button" class="header-back-button" @click="backToList">返回列表<\/button>/)
+  const rightPanel = fs.readFileSync(path.join(import.meta.dirname, '../reactAnalysis/RightPanelContainer.vue'), 'utf8')
+  assert.match(rightPanel, /SmartEventCenterPanel[\s\S]*?:show-list-actions="false"/)
+})
+
 test('event list filters by a start and end event time', () => {
   assert.match(source, /v-model="listStartTime" type="datetime-local" aria-label="事件开始时间筛选"/)
   assert.match(source, /v-model="listEndTime" type="datetime-local" aria-label="事件结束时间筛选"/)
