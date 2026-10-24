@@ -67,8 +67,8 @@ internal fun BottomNavBar(
             NavigationBarItem(
                 selected = currentTab == "watch",
                 onClick = { onTab("watch") },
-                icon = { TabIcon(R.drawable.ic_campaign, "巡查快报", badge = 0) },
-                label = { Text("巡查快报", fontSize = 10.sp, lineHeight = 12.sp) },
+                icon = { TabIcon(R.drawable.ic_campaign, "现状", badge = 0) },
+                label = { Text("现状", fontSize = 10.sp, lineHeight = 12.sp) },
                 colors = NavigationBarItemDefaults.colors(
                     selectedIconColor = SuyuanColors.primary,
                     selectedTextColor = SuyuanColors.primary,
