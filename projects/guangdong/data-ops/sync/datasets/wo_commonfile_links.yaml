@@ -1,0 +1,29 @@
+# 数据集契约：wo_commonfile_links
+dataset: wo_commonfile_links
+description: >
+  广东运维工单附件索引。一行 = 一条附件记录，按 id 高水位追加（近 append-only），
+  源自 dbo.wo_commonfile_links。附件文件本体存于源系统，不在本库。
+owner: 广东运维平台组
+grain: 一行 = 一条附件索引（id）
+freshness_slo: 60分钟
+known_caveats:
+  - 判断工单"有无附件/附件完整率"按 working_order_code 计数；附件内容需回源系统核对
+  - type_code 为 RF 表单名（如 RF_W_INSPECTION/Sup_RF_GACWeekMaintainByMARGA_WaterSolubleIons）
+columns:
+  - {name: id, business: 附件索引ID(主键,高水位列)}
+  - {name: working_order_code, business: 工单号(=源 REFID,工单/表单关联键)}
+  - {name: function_code, business: 流程类型}
+  - {name: type_code, business: RF 表单名}
+  - {name: file_name, business: 文件名}
+  - {name: file_path, business: 文件路径(源系统内)}
+  - {name: create_user_id, business: 上传人ID}
+  - {name: create_time, business: 上传时间}
+  - {name: refreshed_at, business: 本表刷新时间(dbt 重建时间)}
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: >-
+  wo_commonfile_links（一行 = 一条附件索引）：working_order_code(=源 REFID，工单/表单关联键)；
+  function_code(流程类型)；type_code(RF 表单名，如 RF_W_INSPECTION/
+  Sup_RF_GACWeekMaintainByMARGA_WaterSolubleIons)；file_name/file_path；create_time。
+  判断工单"有无附件/附件完整性"用本表（按 working_order_code 计数）；附件文件本体不在本库。

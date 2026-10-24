@@ -1,0 +1,18 @@
+# 运行时产物与本地凭据不进仓库；真实凭据只存运行时目录
+# 各文件的 example 模板在本目录内，部署新环境时复制并填入真实值
+
+# dbt 运行产物与凭据
+dbt/target/
+dbt/logs/
+dbt/profiles.yml
+dbt/.user.yml
+
+# Cube 依赖与本地密钥
+cube/node_modules/
+cube/local.json
+
+# 同步配置（含源库/目标库真实凭据）与运行日志
+sync/sync_config.json
+sync/sync_config.json.*.bak*
+sync/*.log
+sync/__pycache__/

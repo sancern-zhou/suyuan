@@ -1,0 +1,16 @@
+dataset: rf_w_inspection
+description: 周期巡检表单实体。源自 RF_W_INSPECTION，一行 = 一张巡检表单（今年约 5,341 张，附件 type_code RF_W_INSPECTION
+  指向本表）。
+owner: 广东运维平台组
+grain: 一张巡检表单提交
+freshness_slo: 26小时
+known_caveats:
+- 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）
+columns:
+- name: （见源表/宽表定义）
+  business: 完整列清单经工具 describe_table 获取；关键业务列见 guide
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: rf_w_inspection（一行 = 一张巡检表单）：rfwinspectionid(主键)/workingordercode(工单号)/stationid/createdate
+  + 表单题目项列（设备状态/站房环境等）。按工单号取表单内容；完整列名用 describe_table。

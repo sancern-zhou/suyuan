@@ -1,0 +1,61 @@
+version: 2
+sources:
+- name: guangdong_ods
+  schema: guangdong_ods
+  description: Operation_SC_GD 源库经 sync_table.py 同步落地的 ODS 层（sync_config.json 为表清单事实源）。
+    工单主链路窗口自 full_load_since（{year_start}-01-01 年度窗口，每年滚动）；维表全量。列名为源库原始列名小写。
+  tables:
+  - name: working_orders
+    description: 工单主表（dbo.working_orders 兼容视图），update_time 水位增量。
+  - name: working_order_details
+    description: 工单流程明细（dbo.working_order_details），id 增量 + 每日全量 upsert。
+  - name: wo_commonfile_links
+    description: 工单附件索引（dbo.wo_commonfile_links），id 高水位追加。
+  - name: base_station
+    description: 站点目录（dbo.base_station），每日全量。
+  - name: base_device
+    description: 设备台账（dbo.base_device），每日全量。
+  - name: alm_alarm
+    description: 源 dbo.ALM_ALARM（小时级增量）。
+  - name: log_device
+    description: 源 dbo.LOG_DEVICE（小时级增量）。
+  - name: sup_rf_common
+    description: 源 dbo.Sup_RF_Common（小时级增量）。
+  - name: pw_task
+    description: 源 dbo.PW_TASK（每日同步）。
+  - name: pw_taskitem
+    description: 源 dbo.PW_TASKITEM（小时级增量）。
+  - name: mtc_ordertaskitem
+    description: 源 dbo.MTC_ORDERTASKITEM（每日同步）。
+  - name: sup_mtc_taskitem
+    description: 源 dbo.Sup_Mtc_TaskItem（小时级增量）。
+  - name: rf_w_inspection
+    description: 源 dbo.RF_W_INSPECTION（每日同步）。
+  - name: rf_w_inspectionsummary
+    description: 源 dbo.RF_W_INSPECTIONSUMMARY（每日同步）。
+  - name: rf_w_gaseouscheck_so2
+    description: 源 dbo.RF_W_GASEOUSCHECK_SO2（每日同步）。
+  - name: rf_w_gaseouscheck_nox
+    description: 源 dbo.RF_W_GASEOUSCHECK_NOX（每日同步）。
+  - name: rf_w_gaseouscheck_co
+    description: 源 dbo.RF_W_GASEOUSCHECK_CO（每日同步）。
+  - name: rf_w_gaseouscheck_o3
+    description: 源 dbo.RF_W_GASEOUSCHECK_O3（每日同步）。
+  - name: rf_w_otherdevicecheck
+    description: 源 dbo.RF_W_OTHERDEVICECHECK（每日同步）。
+  - name: rf_w_pmcheck
+    description: 源 dbo.RF_W_PMCHECK（每日同步）。
+  - name: sec_blackoutreportdetail
+    description: 源 dbo.SEC_BlackOutReportDetail（每日同步）。
+  - name: sec_blackoutreporttimespan
+    description: 源 dbo.SEC_BlackOutReportTimespan（每日同步）。
+  - name: sec_qcblackout
+    description: 源 dbo.SEC_QcBlackOut（每日同步）。
+  - name: qul_qualitydate
+    description: 源 dbo.QUL_QUALITYDATE（每日同步）。
+  - name: sup_devicedaycheck
+    description: 源 dbo.Sup_DeviceDayCheck（每日同步）。
+  - name: opa_datareceiverate
+    description: 源 dbo.OPA_DataReceiveRate（每日同步）。
+  - name: alm_home
+    description: 源 dbo.Alm_Home（每日同步）。

@@ -1,0 +1,15 @@
+dataset: mart_device_lifecycle_analysis
+description: 设备生命周期事件宽表。一行 = 一条设备事件（今年窗口），语义层 DeviceLifecycle cube 的数据源。
+owner: 广东运维平台组
+grain: 一条设备状态/事件日志（维度已宽表化）
+freshness_slo: 60分钟（高频链路）
+known_caveats:
+- 数据范围与上游 ODS 一致（今年窗口+持续增量）
+columns:
+- name: （见源表/宽表定义）
+  business: 完整列清单经工具 describe_table 获取；关键业务列见 guide
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: mart_device_lifecycle_analysis（一行 = 一条设备事件）：维度 event_id/device_id/device_code/device_type/station_code/station_name/city_name/event_type(WeekCheck等)/event_type_cn(周检/月检/季检/半年检/年检/启用/新增/停用/信息更新)/state_after(DeviceNormal/DeviceSpare等)/order_id；时间
+  event_time/expect_time。设备检定/检定周期执行、启用停用统计用本表。

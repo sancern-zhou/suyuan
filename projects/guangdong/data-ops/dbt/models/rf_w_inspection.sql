@@ -1,0 +1,56 @@
+{{ config(
+    indexes=[
+        {'columns': ['rfwinspectionid'], 'unique': True},
+    ],
+    post_hook=[
+        "GRANT SELECT ON {{ this }} TO agent_reader",
+    ],
+) }}
+
+-- rf_w_inspection：契约透传层（源 dbo.RF_W_INSPECTION，一行 = 一条原始记录）。
+-- 契约: sync/datasets/rf_w_inspection.yaml；列名与 ODS 一致（源列名小写）。
+select
+    rfwinspectionid,
+    workingordercode,
+    stationid,
+    operationsunitid,
+    areaid,
+    checkdate,
+    outside1,
+    outside2,
+    outside3,
+    outside4,
+    outside5,
+    outside6,
+    outside7,
+    outside8,
+    inside1,
+    inside2,
+    inside3,
+    inside4,
+    inside5,
+    inside6,
+    inside7,
+    inside8,
+    inside9,
+    inside10,
+    inside11,
+    inside12,
+    inside13,
+    inside14,
+    inside15,
+    inside16,
+    remark,
+    prepareruserid,
+    reviewuserid,
+    auditoruserid,
+    preparerdate,
+    reviewdate,
+    auditordate,
+    createdate,
+    defaultvalue,
+    processtype,
+    starttime,
+    endtime,
+    now()::timestamp         as refreshed_at
+from {{ source('guangdong_ods', 'rf_w_inspection') }}

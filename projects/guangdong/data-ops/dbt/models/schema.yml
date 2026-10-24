@@ -1,0 +1,287 @@
+version: 2
+models:
+- name: working_orders
+  description: 广东运维工单主表。一行 = 一张运维工单（全类型含作废），update_time 水位小时级增量。
+  columns:
+  - name: id
+    description: 工单源ID(主键)
+    data_tests: [unique, not_null]
+  - name: working_order_code
+    description: 工单号(唯一业务号)
+    data_tests: [not_null]
+  - name: create_time
+    description: 创建时间
+    data_tests: [not_null]
+  - name: refreshed_at
+    description: 本表刷新时间(dbt 重建时间)
+
+- name: working_order_details
+  description: 工单流程明细。一行 = 工单一个流程步骤；alarm_reason 是故障根因归纳的主要来源。
+  columns:
+  - name: id
+    description: 明细行ID(主键)
+    data_tests: [unique, not_null]
+  - name: working_order_code
+    description: 工单号
+    data_tests: [not_null]
+
+- name: wo_commonfile_links
+  description: 工单附件索引。一行 = 一条附件记录；附件本体在源系统。
+  columns:
+  - name: id
+    description: 附件索引ID(主键)
+    data_tests: [unique, not_null]
+
+- name: dim_station
+  description: 站点目录维度表。一行 = 一个站点（约 332 站全量）；城市维度暂缺(仅 region_id)。
+  columns:
+  - name: station_id
+    description: 站点ID(主键,文本形式)
+    data_tests: [unique, not_null]
+  - name: station_code
+    description: 站点编码
+  - name: station_name
+    description: 站点中文名
+
+- name: dim_device
+  description: 设备台账维度表。一行 = 一台登记设备（每日全量）。
+  columns:
+  - name: device_id
+    description: 设备ID(主键,文本形式)
+    data_tests: [unique, not_null]
+  - name: station_id
+    description: 站点ID(关联 dim_station)
+
+- name: mart_work_order_analysis
+  description: >
+    广东运维工单分析宽表。一行 = 一张运维工单（全类型含作废），预计算时效/超期/重复故障/
+    附件计数。语义层 WorkOrder cube 的数据源。口径限制见 sync/datasets/mart_work_order_analysis.yaml。
+  columns:
+  - name: id
+    description: 工单源ID(主键)
+    data_tests: [unique, not_null]
+  - name: working_order_code
+    description: 工单号
+    data_tests: [not_null]
+  - name: create_time
+    description: 创建时间
+    data_tests: [not_null]
+  - name: order_status_cn
+    description: 状态中文名(已完成/处理中/待处理/已作废)
+  - name: is_overdue
+    description: 是否超期(仅 plan_finish_time 非空可评估,作废单不计)
+  - name: overdue_evaluable
+    description: 超期可评估位(超期率分母)
+  - name: is_repeat_fault
+    description: 是否30天内重复故障(同站同设备,仅故障单口径)
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: alm_alarm
+  description: 契约透传层：dbo.ALM_ALARM，一行 = 一条原始记录；字段业务含义见 sync/datasets/alm_alarm.yaml。
+  columns:
+  - name: alarmid
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: log_device
+  description: 契约透传层：dbo.LOG_DEVICE，一行 = 一条原始记录；字段业务含义见 sync/datasets/log_device.yaml。
+  columns:
+  - name: devicelogid
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: sup_rf_common
+  description: 契约透传层：dbo.Sup_RF_Common，一行 = 一条原始记录；字段业务含义见 sync/datasets/sup_rf_common.yaml。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: pw_task
+  description: 契约透传层：dbo.PW_TASK，一行 = 一条原始记录；字段业务含义见 sync/datasets/pw_task.yaml。
+  columns:
+  - name: pwtaskid
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: pw_taskitem
+  description: 契约透传层：dbo.PW_TASKITEM，一行 = 一条原始记录；字段业务含义见 sync/datasets/pw_taskitem.yaml。
+  columns:
+  - name: pwtaskitemid
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: mtc_ordertaskitem
+  description: 契约透传层：dbo.MTC_ORDERTASKITEM，一行 = 一条原始记录；字段业务含义见 sync/datasets/mtc_ordertaskitem.yaml。
+  columns:
+  - name: ordertaskitemid
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: sup_mtc_taskitem
+  description: 契约透传层：dbo.Sup_Mtc_TaskItem，一行 = 一条原始记录；字段业务含义见 sync/datasets/sup_mtc_taskitem.yaml。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: rf_w_inspection
+  description: 契约透传层：dbo.RF_W_INSPECTION，一行 = 一条原始记录；字段业务含义见 sync/datasets/rf_w_inspection.yaml。
+  columns:
+  - name: rfwinspectionid
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: rf_w_inspectionsummary
+  description: 契约透传层：dbo.RF_W_INSPECTIONSUMMARY，一行 = 一条原始记录；字段业务含义见 sync/datasets/rf_w_inspectionsummary.yaml。
+  columns:
+  - name: rfwinspectionsummaryid
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: rf_w_gaseouscheck_so2
+  description: 契约透传层：dbo.RF_W_GASEOUSCHECK_SO2，一行 = 一条原始记录；字段业务含义见 sync/datasets/rf_w_gaseouscheck_so2.yaml。
+  columns:
+  - name: rfwgaseouscheckid
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: rf_w_gaseouscheck_nox
+  description: 契约透传层：dbo.RF_W_GASEOUSCHECK_NOX，一行 = 一条原始记录；字段业务含义见 sync/datasets/rf_w_gaseouscheck_nox.yaml。
+  columns:
+  - name: rfwgaseouscheckid
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: rf_w_gaseouscheck_co
+  description: 契约透传层：dbo.RF_W_GASEOUSCHECK_CO，一行 = 一条原始记录；字段业务含义见 sync/datasets/rf_w_gaseouscheck_co.yaml。
+  columns:
+  - name: rfwgaseouscheckid
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: rf_w_gaseouscheck_o3
+  description: 契约透传层：dbo.RF_W_GASEOUSCHECK_O3，一行 = 一条原始记录；字段业务含义见 sync/datasets/rf_w_gaseouscheck_o3.yaml。
+  columns:
+  - name: rfwgaseouscheckid
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: rf_w_otherdevicecheck
+  description: 契约透传层：dbo.RF_W_OTHERDEVICECHECK，一行 = 一条原始记录；字段业务含义见 sync/datasets/rf_w_otherdevicecheck.yaml。
+  columns:
+  - name: rfwotherdevicecheckid
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: rf_w_pmcheck
+  description: 契约透传层：dbo.RF_W_PMCHECK，一行 = 一条原始记录；字段业务含义见 sync/datasets/rf_w_pmcheck.yaml。
+  columns:
+  - name: rfwpmcheckid
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: sec_blackoutreportdetail
+  description: 契约透传层：dbo.SEC_BlackOutReportDetail，一行 = 一条原始记录；字段业务含义见 sync/datasets/sec_blackoutreportdetail.yaml。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: sec_blackoutreporttimespan
+  description: 契约透传层：dbo.SEC_BlackOutReportTimespan，一行 = 一条原始记录；字段业务含义见 sync/datasets/sec_blackoutreporttimespan.yaml。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: sec_qcblackout
+  description: 契约透传层：dbo.SEC_QcBlackOut，一行 = 一条原始记录；字段业务含义见 sync/datasets/sec_qcblackout.yaml。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: qul_qualitydate
+  description: 契约透传层：dbo.QUL_QUALITYDATE，一行 = 一条原始记录；字段业务含义见 sync/datasets/qul_qualitydate.yaml。
+  columns:
+  - name: qualitydateid
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: sup_devicedaycheck
+  description: 契约透传层：dbo.Sup_DeviceDayCheck，一行 = 一条原始记录；字段业务含义见 sync/datasets/sup_devicedaycheck.yaml。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: opa_datareceiverate
+  description: 契约透传层：dbo.OPA_DataReceiveRate，一行 = 一条原始记录；字段业务含义见 sync/datasets/opa_datareceiverate.yaml。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: alm_home
+  description: 契约透传层：dbo.Alm_Home，一行 = 一条原始记录；字段业务含义见 sync/datasets/alm_home.yaml。
+  columns:
+  - name: stationid
+    description: 主键
+    data_tests: [unique, not_null]
+  - name: refreshed_at
+    description: 本表刷新时间
+- name: mart_alarm_notify_analysis
+  description: 站点告警通知流水宽表。一行 = 一条告警通知（含发送渠道），无处理闭环状态；当前态势见 mart_station_alarm_status。
+  columns:
+  - name: alarm_id
+    description: 通知ID
+    data_tests: [unique, not_null]
+  - name: notify_time
+    description: 告警时间
+    data_tests: [not_null]
+
+- name: mart_device_lifecycle_analysis
+  description: 设备生命周期事件宽表。一行 = 一条设备状态/事件日志（周检/月检/启用/停用等）。
+  columns:
+  - name: event_id
+    description: 事件ID
+    data_tests: [unique, not_null]
+  - name: event_time
+    description: 事件时间
+    data_tests: [not_null]
+
+- name: mart_inspection_task_analysis
+  description: 运维计划任务项宽表。一行 = 一个计划任务项（完成/超期/转工单已预计算）。
+  columns:
+  - name: task_item_id
+    description: 任务项ID
+    data_tests: [unique, not_null]
+
+- name: mart_station_alarm_status
+  description: 站点当前告警态势快照。一行 = 一个站点（覆盖面以源系统推送为准，当日 63 站）。
+  columns:
+  - name: station_id
+    description: 站点ID
+    data_tests: [unique, not_null]

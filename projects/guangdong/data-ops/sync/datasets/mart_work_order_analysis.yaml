@@ -1,0 +1,155 @@
+dataset: mart_work_order_analysis
+description: '广东运维工单分析宽表。一行 = 一张运维工单（全类型，含作废单），由 dbt 从 guangdong_ods 的工单/明细/附件/站点/设备五表重建，预计算时效指标、超期、
+  重复故障与附件计数。语义层 WorkOrder cube 的数据源。
+
+  '
+owner: 广东运维平台组
+grain: 一行 = 一张运维工单（源表 dbo.working_orders.id）
+freshness_slo: 60分钟
+data_as_of: 由工具运行时返回 refreshed_at 最大值
+known_caveats:
+- 全类型工单入表（含作废 Invalid）：工单量/时效结论必须按 order_status/order_type 显式过滤口径， 不得把全表计数表述为"已完成工单量"；作废单不参与超期与时效类指标
+- 超期口径（与江苏故障单不同）：广东工单有计划完成时间(plan_finish_time)，超期可评估， 但故障单(Fault/SupFault)计划完成时间实测全空不可评估；例行维护单(Check/SupCheck等)
+  计划时间非空但平台不作为考核截止——源系统 order_overtime 标记全年实测全 0， 本表重算超期率对例行单失真(接近100%)，例行单超期结论以源系统标记为准
+- 到站/响应为代理口径：到站 = 首个 FaultProcess 步骤开始时间（仅故障单有）， 响应时长 = 到站 - 创建时间；非故障单 response 类指标不可评估
+- 重复故障 = 同站同设备、本单创建前 30 天内存在其他故障单(Fault)；仅在故障单口径下有意义， 非故障单 is_repeat_fault 恒 false
+- 附件计数只覆盖索引（附件本体在源系统）；附件完整率口径 = 有附件工单数 / 工单数
+- 站点关联：station_id 文本关联 dim_station；工单未关联站点(CAL* 类系统生成单)时站点维度为空
+- 城市维度（city_code/city_name）经 dim_station←alm_home 每日补充，覆盖面以 alm_home 推送为准（当前 63 站）；无城市信息的站点城市列为
+  NULL，按城市统计时注明覆盖率
+columns:
+- name: id
+  business: 工单源ID(主键)
+- name: working_order_code
+  business: 工单号
+- name: order_title
+  business: 工单标题
+- name: order_type
+  business: 工单类型代码(28种
+  见语义字典01): null
+- name: order_status
+  business: 状态原始值
+  enum:
+    Finish: 已完成
+    Doing: 处理中
+    Wait: 待处理
+    Invalid: 已作废
+- name: order_status_cn
+  business: 状态中文名
+- name: urgency_type
+  business: 紧急程度
+- name: maintenance_type
+  business: 维护周期
+- name: station_id
+  business: 站点ID(文本原文)
+- name: station_code
+  business: 站点编码(经dim_station)
+- name: station_name
+  business: 站点名称(经dim_station)
+- name: station_type
+  business: 站点类型(源库代码原文
+  经dim_station): null
+- name: region_id
+  business: 区域ID(经dim_station
+  无字典): null
+- name: device_id
+  business: 设备ID(文本原文
+  可空): null
+- name: device_code
+  business: 设备编码(经dim_device)
+- name: device_type
+  business: 设备类型(源库代码原文
+  经dim_device): null
+- name: create_time
+  business: 创建时间
+- name: update_time
+  business: 源更新时间
+- name: finish_time
+  business: 完成时间
+- name: plan_finish_time
+  business: 计划完成时间(可空)
+- name: current_workflow_point
+  business: 当前流程节点
+- name: node_count
+  business: 流转节点数
+- name: first_step_time
+  business: 首个流程步骤开始时间
+- name: arrival_time
+  business: 到站时间(代理=首个FaultProcess开始
+  仅故障单): null
+- name: response_minutes
+  business: 响应时长(分钟)
+  calc: 到站-创建
+  note: 仅故障单可评估
+- name: process_minutes
+  business: 到站后处理时长(分钟)
+  calc: 完成-到站
+- name: repair_minutes
+  business: 全程修复时长(分钟)
+  calc: 完成-创建
+- name: is_response_within_2h
+  business: 2小时内到站(布尔)
+  calc: 响应时长<=120分钟
+  note: 仅故障单可评估
+- name: is_finish
+  business: 是否已完成(布尔)
+- name: is_overdue
+  business: 是否超期(布尔)
+  calc: 完成晚于计划 或 未完成且已过计划(作废单不计)
+  note: 仅plan_finish_time非空可评估
+- name: overdue_evaluable
+  business: 超期可评估(布尔
+  plan_finish_time非空): null
+  note: 超期率分母
+- name: is_repeat_fault
+  business: 是否30天内重复故障(布尔)
+  calc: 同站同设备前30天存在其他故障单
+  note: 仅故障单口径
+- name: repeat_count_30d
+  business: 前30天同站同设备故障单数
+- name: first_alarm_reason
+  business: 首个故障原因(首个FaultProcess的alarm_reason)
+- name: attachment_count
+  business: 附件索引数(经wo_commonfile_links)
+- name: has_attachment
+  business: 是否有附件(布尔)
+- name: total_expense
+  business: 工单总费用
+- name: order_overtime
+  business: 超时标记(源系统原文)
+- name: total_overtime
+  business: 累计超时标记(源系统原文)
+- name: source_updated_at
+  business: 源系统最后更新时间
+- name: refreshed_at
+  business: 本表刷新时间
+allowed_filters:
+- order_type
+- order_status
+- order_status_cn
+- urgency_type
+- maintenance_type
+- station_code
+- station_name
+- station_type
+- region_id
+- device_code
+- create_time
+- finish_time
+- is_finish
+- is_overdue
+- is_repeat_fault
+example_questions:
+- 最近7天各区域运维工单量和完成率？
+- 本月故障单2小时响应率与平均响应时长？
+- 哪些站点30天内重复故障超过3次？
+- 当前超期未完成的运维工单清单（按维护周期分组）
+- 各工单类型近3个月附件完整率
+join_notes: 单表即得（站点/设备维度已宽表化）；字段级取证可回 working_orders/working_order_details。
+guide: mart_work_order_analysis（一行 = 一张运维工单，全类型含作废单）：维度 working_order_code/ order_type(代码值字典同
+  working_orders)/order_status_cn(已完成/处理中/待处理/已作废)/ urgency_type/maintenance_type/station_code/station_name/station_type_name(中文名)/city_code/city_name(经alm_home)/region_id/
+  device_code/device_type；时间 create_time/finish_time/plan_finish_time/update_time；
+  指标 node_count/response_minutes(到站-创建,仅故障单可评估)/is_response_within_2h/ process_minutes/repair_minutes/is_overdue(按计划完成时间重算,仅plan非空可评估)/
+  overdue_evaluable(超期率分母)/is_repeat_fault(同站同设备30天,仅故障单口径)/repeat_count_30d/ first_alarm_reason(故障根因)/attachment_count/has_attachment(附件完整率=有附件/工单数)/
+  total_expense/is_finish。工单量与时效结论必须按 order_status/order_type 显式过滤； 到站取首个 FaultProcess
+  步骤开始；城市 city_name 经 alm_home 补充(覆盖率以推送为准)。

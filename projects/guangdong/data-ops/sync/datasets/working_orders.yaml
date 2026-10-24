@@ -1,0 +1,83 @@
+dataset: working_orders
+description: '广东运维工单主表。一行 = 一张运维工单，源自 Operation_SC_GD 兼容视图 dbo.working_orders，按 update_time
+  水位高频增量同步（状态流转也会刷新 UPDATETIME）， 首拉只回填今年窗口（full_load_since={year_start}-01-01，每年自动滚动；2026-10-24
+  同步量控制约定，此前年度历史不再拉取）。经 dbt 重建入 guangdong_mart。
+
+  '
+owner: 广东运维平台组
+grain: 一行 = 一张运维工单（working_order_code 唯一业务号）
+freshness_slo: 60分钟
+known_caveats:
+- order_type 字典源自 WFL_WORKFLOW 实测（见 docs/work-order-semantics/01），筛选/分组直接用代码值
+- order_overtime/total_overtime 为源系统超时标记原文，不做二次加工；跨类型超期统计建议以 mart_work_order_analysis.is_overdue（按计划完成时间重算）为准
+- 全类型工单入表（含已作废 Invalid），统计工单量时必须按 order_status 显式过滤
+columns:
+- name: id
+  business: 工单源ID(主键)
+- name: working_order_code
+  business: 工单号(CH/FA/DRT 等前缀)
+- name: station_id
+  business: 站点ID(文本形式
+  关联 dim_station.station_id): null
+- name: device_id
+  business: 设备ID(文本形式
+  可空=未关联设备): null
+- name: order_title
+  business: 工单标题
+- name: order_content
+  business: 工单内容
+- name: order_type
+  business: 工单类型代码(28种
+  见语义字典): null
+- name: order_status
+  business: 状态(Finish=已完成/Doing=处理中/Wait=待处理/Invalid=已作废)
+- name: urgency_type
+  business: 紧急程度(Urgent=紧急/Middle=一般/Normal=普通/NULL=未填写)
+- name: maintenance_type
+  business: 维护周期(Week/Month/TwoWeek/Quarter/HalfYear/Day/Year/AsNeed)
+- name: create_time
+  business: 创建时间
+- name: update_time
+  business: 源更新时间(水位列)
+- name: finish_time
+  business: 完成时间
+- name: plan_finish_time
+  business: 计划完成时间(可空
+  部分类型无): null
+- name: order_overtime
+  business: 超时标记(源系统原文)
+- name: total_overtime
+  business: 累计超时标记(源系统原文)
+- name: total_expense
+  business: 工单总费用
+- name: workflow_id
+  business: 工作流ID
+- name: current_workflow_point
+  business: 当前流程节点
+- name: current_process_status
+  business: 当前流程状态
+- name: create_user_id
+  business: 创建人ID
+- name: current_user_id
+  business: 当前处理人ID
+- name: department_id
+  business: 部门ID
+- name: contract_id
+  business: 合同ID
+- name: refreshed_at
+  business: 本表刷新时间(dbt 重建时间)
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: working_orders（一行 = 一张运维工单，全类型含作废单）：维度 working_order_code（唯一业务号， 如 CH/FA/DRT
+  前缀）/station_id/device_id/order_type/order_status(Finish=已完成/Doing=处理中/ Wait=待处理/Invalid=作废)/urgency_type(Urgent=紧急/Middle=一般/Normal=普通/NULL=未填写)/
+  maintenance_type(Week=周维护/Month=月维护/TwoWeek=双周/Quarter=季维护/HalfYear=半年/Day=日维护/
+  Year=年维护/AsNeed=按需)；时间 create_time/update_time/finish_time/plan_finish_time/refreshed_at；
+  金额 total_expense；指标辅助 order_overtime/total_overtime(超时标记，源系统原文，跨类型超期统计 建议用 mart_work_order_analysis.is_overdue)。按站点名称关联
+  dim_station（station_id = dim_station.station_id 的文本形式）。工单量统计必须按 order_status 过滤（含
+  Invalid）。 order_type 字典（源 WFL_WORKFLOW 实测，筛选/分组时直接用代码值）：Check=运维单(例行维护)、 Fault=故障单、SupCheck=组分网巡检单、SupSECCheck=组分网现场检查单、SECCheckCnemc=计划内现场检查、
+  QCBlackOut=自动质控报告工单、WorkRectify=运维工作整改单、SupWorkRectify=组分网运维工作整改单、 StationBlackOut=临时停运申请、SupPowerFailure=组分网停运工单、Results=成效审核工单、
+  SupAchievement=组分网绩效审核工单、Performance=绩效审核工单(旧版)、Performance2026=绩效审核工单 (2026版)、SECFlightCheck=飞行检查工单、SECCheck=现场检查单、SECOutsidePlan=计划外现场检查、
+  SupDeviceCalibrate=组分网设备校准单、DeviceCalibration=设备校准单、Inspection=巡检单、 GreenHouseCheck=温室巡检单(日)、PlanChangeMT=运维计划变更申请单、PlanChangeSC=现场计划变更申请单、
+  DataMakeup=数据回补单、AbnormalDataReview=数据审核异常工单。近3个月活跃类型： Check/Fault/SupCheck/SupSECCheck/SECCheckCnemc/QCBlackOut/WorkRectify/StationBlackOut/Results/
+  SupFault/SupWorkRectify/SupPowerFailure/Performance2026。

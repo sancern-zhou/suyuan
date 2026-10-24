@@ -1,0 +1,31 @@
+# 数据集契约：dim_device
+dataset: dim_device
+description: >
+  广东站点设备台账维度表。一行 = 一台登记设备，源自 dbo.base_device，
+  每日全量同步后由 dbt 重建。用于站点设备构成、品牌型号统计。
+owner: 广东运维平台组
+grain: 一行 = 一台设备（device_id）
+freshness_slo: 26小时
+known_caveats:
+  - device_id_state 为平台设备状态原始枚举码，未做中文翻译
+  - pollutant_id 为监测项目代码原文，无字典表
+  - 设备经 station_id 关联 dim_station 补站点/区域维度
+columns:
+  - {name: device_id, business: 设备ID(主键)}
+  - {name: device_code, business: 设备编码}
+  - {name: device_type, business: 设备类型(源库代码原文)}
+  - {name: device_brand, business: 品牌}
+  - {name: device_model, business: 型号}
+  - {name: station_id, business: 站点ID(关联 dim_station)}
+  - {name: device_id_state, business: 设备状态(枚举码原文)}
+  - {name: pollutant_id, business: 监测项目代码}
+  - {name: enable_time, business: 启用时间}
+  - {name: activation_time, business: 激活时间}
+  - {name: refreshed_at, business: 本表刷新时间(dbt 重建时间)}
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: >-
+  dim_device（一行 = 一台设备）：device_id(主键)/device_code/device_type(源库代码原文)/
+  device_brand/device_model/station_id(关联站点)/device_id_state(状态枚举码原文)/pollutant_id/
+  enable_time/activation_time/refreshed_at。站点设备构成、品牌型号统计用本表。

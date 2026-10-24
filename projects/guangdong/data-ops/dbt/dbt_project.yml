@@ -1,0 +1,83 @@
+name: guangdong_marts
+version: '1.0.0'
+config-version: 2
+profile: guangdong_marts
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+# 数据流: Operation_SC_GD --(sync_table.py, 不归 dbt 管)--> guangdong_ods
+#          --(本项目的 models)--> guangdong_mart (应用/agent 只读白名单表)
+# tag:frequent = sync-all.cmd 每小时重建; tag:daily = sync-daily.cmd 每日 02:30 重建
+# 每个 model 自带 post_hook: GRANT agent_reader
+# 注: mart_work_order_analysis(frequent) 引用 dim_device(daily) 时使用上一日的
+#     设备台账——设备台账日内变化可忽略; 如需严格一致可把 dim_device 挂 frequent。
+models:
+  guangdong_marts:
+    +materialized: table
+    working_orders:
+      +tags: ["frequent"]
+    working_order_details:
+      +tags: ["frequent"]
+    wo_commonfile_links:
+      +tags: ["frequent"]
+    dim_station:
+      +tags: ["frequent"]
+    dim_device:
+      +tags: ["daily"]
+    mart_work_order_analysis:
+      +tags: ["frequent"]
+    alm_alarm:
+      +tags: ["frequent"]
+    log_device:
+      +tags: ["frequent"]
+    sup_rf_common:
+      +tags: ["frequent"]
+    pw_task:
+      +tags: ["daily"]
+    pw_taskitem:
+      +tags: ["frequent"]
+    mtc_ordertaskitem:
+      +tags: ["daily"]
+    sup_mtc_taskitem:
+      +tags: ["frequent"]
+    rf_w_inspection:
+      +tags: ["daily"]
+    rf_w_inspectionsummary:
+      +tags: ["daily"]
+    rf_w_gaseouscheck_so2:
+      +tags: ["daily"]
+    rf_w_gaseouscheck_nox:
+      +tags: ["daily"]
+    rf_w_gaseouscheck_co:
+      +tags: ["daily"]
+    rf_w_gaseouscheck_o3:
+      +tags: ["daily"]
+    rf_w_otherdevicecheck:
+      +tags: ["daily"]
+    rf_w_pmcheck:
+      +tags: ["daily"]
+    sec_blackoutreportdetail:
+      +tags: ["daily"]
+    sec_blackoutreporttimespan:
+      +tags: ["daily"]
+    sec_qcblackout:
+      +tags: ["daily"]
+    qul_qualitydate:
+      +tags: ["daily"]
+    sup_devicedaycheck:
+      +tags: ["daily"]
+    opa_datareceiverate:
+      +tags: ["daily"]
+    alm_home:
+      +tags: ["daily"]
+    mart_alarm_notify_analysis:
+      +tags: ["frequent"]
+    mart_device_lifecycle_analysis:
+      +tags: ["frequent"]
+    mart_inspection_task_analysis:
+      +tags: ["daily"]
+    mart_station_alarm_status:
+      +tags: ["daily"]

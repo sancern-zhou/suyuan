@@ -1,0 +1,211 @@
+      rows  table                                          time_col         max_time
+13,533,234  dbo.SYS_ACCESSLOG                              accesstime       ERR ('HYT00', '[HYT00] [Microsoft][ODBC Driv
+ 9,790,045  dbo.STN_REALTIMEVALUE                          UpdateTime       2020-08-12 20:20:04.430000
+ 9,787,914  dbo.STN_AIRREALTIMEVALUE                       CREATETIME       2026-10-24 23:33:39
+ 1,906,420  dbo.SYS_MessageItem                            (无时间列)         -
+ 1,611,529  dbo.WO_COMMONFILE                              CREATEDATE       2026-10-24 22:34:52.350000
+ 1,497,662  dbo.WO_COMMONFILE0709                          CREATEDATE       2026-07-09 15:49:26.787000
+ 1,066,861  dbo.Sup_VOCs_CurveVerificationPoint1120        CreateTime       2025-11-19 08:24:53.623000
+   998,220  dbo.MTC_WORKINGORDERDETAIL                     CREATEDATETIME   2026-10-24 22:30:32
+   800,679  dbo.vinson_msg                                 (无时间列)         -
+   781,620  dbo.Sup_VOCs_CurveVerificationPoint            CreateTime       2026-10-22 19:43:59.547000
+   718,847  dbo.ALM_ALARM                                  ALARMTIME        ERR ('HYT00', '[HYT00] [Microsoft][ODBC Driv
+   709,487  dbo.MTC_ORDERTASKITEM                          PLANFINISHTIME   2026-10-26 00:00:00
+   682,056  dbo.Sup_VOCs_InternalStandard                  CreateTime       2026-10-22 19:43:59.543000
+   673,145  dbo.RF_RuleItemTask                            PrevDate         2026-10-20 21:07:02.073000
+   655,939  dbo.Sup_PowerFailureReportDetail               TimePoint        2026-10-14 08:00:00
+   643,193  dbo.PW_TASKITEM                                CREATETIME       2026-10-25 00:07:42.520000
+   556,045  dbo.SEC_BlackOutReportDetail                   timepoint        2026-10-22 17:00:00
+   539,898  dbo.BSD_StationMonitorValueHour                TimePoint        2026-10-24 22:00:00
+   504,581  dbo.LOG_DEVICE                                 TIME             2026-10-24 22:45:18
+   426,260  dbo.SYS_Message                                CreateTime       ERR ('HYT00', '[HYT00] [Microsoft][ODBC Driv
+   362,880  dbo.Sec_ConfigData                             PlanFinishTime   2026-11-30 00:00:00
+   344,888  dbo.Dog_CPU                                    timePoint        2025-01-02 11:35:10.903000
+   344,888  dbo.Dog_Memory                                 timePoint        2025-01-02 11:35:10.917000
+   282,888  dbo.Sup_DeviceDayCheck                         UpdateTime       2026-10-24 15:33:20.117000
+   262,315  dbo.MTC_WORKINGORDER                           UPDATETIME       2026-10-24 23:57:11.333000
+   213,106  dbo.Sup_Sec_ConfigData                         PlanFinishTime   2026-10-21 00:00:00
+   158,032  dbo.RF_ITEM                                    CreateTime       None
+   144,756  dbo.Sup_DeviceLog                              CreateTime       2026-10-24 22:43:37.893000
+   144,218  dbo.Sup_Mtc_TaskItem                           CreateTime       2026-10-24 21:36:41.757000
+   133,523  dbo.sup_Pw_TaskItem                            UpdateTime       2026-10-24 09:42:45.157000
+   133,161  dbo.Sup_RF_VOCQualityControlDataDetail         CreateTime       2026-10-22 19:43:59.550000
+   132,565  dbo.TASK_JOBLOG                                JOBSTARTTIME     2026-07-30 14:20:00
+   129,307  dbo.Sup_VOCs_SystemBlank                       CreateTime       2026-10-22 19:43:59.547000
+   128,299  dbo.Sup_RF_RuleItemTask                        PrevDate         2026-10-24 21:58:40.933000
+   123,180  dbo.Sup_Mtc_Device                             CreateTime       2026-10-24 21:36:41.757000
+   110,167  dbo.RF_W_PMCHECK                               CREATEDATE       2026-10-24 21:11:26
+   108,570  dbo.PW_TASK                                    PWTASKTIME       None
+    97,809  dbo.Sup_Pw_Task                                UpdateTime       2026-10-24 21:36:39.853000
+    86,544  dbo.Dog_Disk                                   timePoint        2025-01-02 10:39:51
+    84,498  dbo.Sup_AlarmLog                               LauchTime        2022-06-13 16:00:03.750000
+    78,261  dbo.ALM_SUMMARY                                UPDATETIME       2020-10-23 19:18:53.460000
+    78,155  dbo.QUL_QUALITYDATE                            UPDATETIME       2026-10-24 20:24:32
+    72,261  dbo.OPA_ManualQCDetail                         CREATEDATE       2026-10-23 10:15:06.047000
+    57,527  dbo.RF_W_INSPECTIONSUMMARY                     CREATEDATE       2026-10-24 21:13:09
+    55,980  dbo.RF_W_GASEOUSCHECK_NOX                      CREATEDATE       2026-10-24 21:09:06
+    55,912  dbo.RF_W_GASEOUSCHECK_CO                       CREATEDATE       2026-10-24 21:10:20
+    55,596  dbo.RF_W_GASEOUSCHECK_O3                       CREATEDATE       2026-10-24 21:09:58
+    55,394  dbo.RF_W_GASEOUSCHECK_SO2                      CREATEDATE       2026-10-24 21:08:43
+    55,134  dbo.RF_W_INSPECTION                            CREATEDATE       2026-10-24 21:07:17
+    54,892  dbo.RF_W_OTHERDEVICECHECK                      CREATEDATE       2026-10-24 21:07:49
+    54,834  dbo.OPA_Log                                    LogTime          2026-10-23 10:15:04.687000
+    46,616  dbo.RF_TW_CleanCuttingHead                     CREATEDATE       2026-10-24 18:27:40.423000
+    45,243  dbo.RF_TW_PmFlowCalibrate                      CREATEDATE       2026-10-24 18:25:52.130000
+    44,855  dbo.Sup_RF_HP_Calibration_Detail2              Sdt              2026-10-24 08:46:01
+    40,872  dbo.Sup_RF_Common                              UpdateTime       2026-10-24 10:02:05.157000
+    36,115  dbo.OPA_Performance                            (无时间列)         -
+    34,848  dbo.SEC_QcBlackOut                             Month            2026-09-01
+    33,257  dbo.zc_asset_base                              (无时间列)         -
+    32,505  dbo.STN_RealtimeValueSeven                     UpdateTime       None
+    30,066  dbo.Sup_EffectRate                             UpdateTime       None
+    26,749  dbo.OPA_MONTHLYREPORT                          CREATEDATE       2026-10-23 11:14:29.053000
+    26,665  dbo.wo_commonfile_vinson                       CREATEDATE       2020-01-08 11:15:30.383000
+    20,691  dbo.HeavyMetalQualityDiaphragmCheck            CreateTime       2026-10-21
+    17,963  dbo.APP_COMPONENT                              LASTUPDATETIME   2026-09-22 15:14:30
+    17,080  dbo.ZeroSpanCalibration                        Time1            2024-05-11 00:00:00
+    15,896  dbo.OPA_Lock_PerformanceScore                  createdate       2026-10-14 10:34:36.300000
+    14,956  dbo.HeavyMetalQualityPaperTapeBlank            CreateTime       2026-10-21
+    14,111  dbo.RF_M_STATIONDEVICEMAINTAIN                 CREATEDATE       2026-10-24 18:49:23
+    13,835  dbo.RF_M_GASEOUSFLOWCHECK                      CREATEDATE       2026-10-24 18:42:59
+    13,289  dbo.OPA_STATIONPERFORMANCESCORE                createdate       2026-10-23 10:15:04.517000
+    13,230  dbo.OPA_Lock_Performance                       (无时间列)         -
+    13,125  dbo.LOG_RFID                                   MODIFYTIME       2025-01-13 22:03:37
+    12,978  dbo.LOG_ALLSYS                                 TIME             2026-10-23 18:12:19
+    11,209  dbo.OPA_Lock_OrderDetail                       CREATEDATETIME   2026-09-11 14:55:15
+    11,200  dbo.OPA_DataReceiveRate                        CreateTime       2026-10-23 10:15:06.047000
+    10,855  dbo.Sup_RF_PM1MonitorInspection                UpdateTime       2026-10-23 23:22:14.490000
+    10,767  dbo.SYS_LOGINLOG                               LoginTime        2023-06-01 15:22:29.463000
+    10,570  dbo.Sup_RF_HP_Calibration_Detail1              TermOfValidity   2027-12-30 00:00:00
+    10,311  dbo.Sup_RF_DailyInspection                     UpdateTime       2026-10-23 23:22:21.077000
+    10,180  WebUser.OPA_Performance_bk                     (无时间列)         -
+     8,536  dbo.BSD_SIGNIN                                 SIGNTIME         2021-08-19 09:21:59
+     8,534  dbo.OPA_OrderReportDetail                      CREATETIME       2019-06-30 23:50:12
+     7,872  dbo.Sup_RF_MonitorInspection                   UpdateTime       2026-10-23 23:22:01.193000
+     7,762  dbo.OPA_Performance_BF                         (无时间列)         -
+     7,734  dbo.SEC_ScoreSheet                             CreateDate       2026-10-23 16:50:28
+     7,500  dbo.SEC_QcBlackOut_bf                          Month            2020-02-01
+     6,680  dbo.RF_TW_PmFlowCheck                          CREATEDATE       2026-10-22 09:44:11.247000
+     6,256  dbo.BSD_RFID                                   MODIFYTIME       2026-10-16 15:26:25
+     6,074  dbo.SEC_BlackOutReportTimespan                 sdt              2026-10-22 15:00:00
+     5,914  dbo.Sup_RF_DeviceFlowCheck                     UpdateTime       2026-10-23 23:11:02.460000
+     5,602  dbo.Sup_ScoreSheet                             CreateTime       2026-10-22 13:20:28.793000
+     5,221  dbo.RF_Q_GaseousFlowCheck                      CREATEDATE       2026-10-23 00:00:00
+     5,059  dbo.Dog_Web                                    timePoint        2022-10-08 21:19:30.220000
+     5,054  dbo.Sup_RF_SpanCalibration                     UpdateTime       2025-12-31 10:07:00.957000
+     5,026  dbo.zc_assettype                               (无时间列)         -
+     4,830  dbo.Sup_RF_SpeedMeterMaintain                  UpdateTime       2026-10-23 01:29:28.360000
+     4,741  dbo.RF_HY_O3VALUEPASS                          CREATEDATE       2026-10-23 23:33:02
+     4,565  dbo.RF_Q_PMPRESSURE                            CREATEDATE       2026-10-23 23:21:34
+     4,470  dbo.RF_Q_STATIONDEVICECLEAN                    CREATEDATE       2026-10-23 23:22:02
+     4,438  dbo.OPA_Lock_Order                             UPDATETIME       2026-09-11 14:55:24.653000
+     4,301  dbo.RF_HY_EnvironmentHumidity                  CREATEDATE       2026-10-23 00:00:00
+     4,199  dbo.PTR_MSQualityCalibration                   CreateTime       2026-07-06 22:36:50.150000
+     4,198  dbo.DRT_GasAnalyzer                            Timedate         2026-10-23
+     3,979  dbo.Sup_PowerFailureReportTimespan             Sdt              2026-10-13 12:00:00
+     3,908  dbo.Sup_RF_NH3Calibration                      UpdateTime       2026-10-24 22:28:30.257000
+     3,846  dbo.Sup_RF_thybWeekCheck                       UpdateTime       2026-10-22 14:39:13.147000
+     3,731  dbo.PW_UNITPLAN                                STARTDATE        2026-10-26
+     3,659  dbo.SYS_USERSTATION                            (无时间列)         -
+     3,569  dbo.Sup_RF_WaterSolubleIonsCalibration         CreateTime       2026-10-24 22:20:48.720000
+     3,567  dbo.Sup_RF_WaterSolubleIonsBlankCheck          CreateTime       2026-10-24 22:20:48.720000
+     3,567  dbo.Sup_RF_WaterSolubleIonsSingleCheck         CreateTime       2026-10-24 22:20:48.720000
+     3,519  dbo.Sup_RF_Week_RadiationRecord                UpdateTime       2026-10-22 19:52:31.623000
+     3,498  dbo.Sup_NMHC_SystemBlank                       CreateTime       2026-10-23 23:23:51.607000
+     3,441  dbo.Sup_RF_ZeroSpanCalibration                 UpdateTime       2026-10-22 16:50:38.167000
+     3,407  dbo.Sup_RF_EquipmentStatus                     UpdateTime       2026-10-21 12:02:01.947000
+     3,334  WebUser.OPA_STATIONPERFORMANCESCORE_BK         createdate       2021-07-27 15:49:43.500000
+     3,108  dbo.SEC_BLACKOUTREPORT                         upDATETIMEtime   None
+     2,998  dbo.Sup_NMHC_CurveVerificationPoint            CreateTime       2026-10-23 23:23:51.607000
+     2,914  dbo.Sup_RF_NMHC_QualityControlDataDetail       CreateTime       2026-10-23 23:23:51.613000
+     2,893  dbo.Sup_UserDevice                             (无时间列)         -
+     2,825  dbo.Sup_RF_HeavyMetalInspection                UpdateTime       2026-10-24 21:48:37.250000
+     2,815  dbo.Sup_RF_AmbientTemperature                  UpdateTime       2026-10-23 23:09:08.547000
+     2,745  dbo.RF_Q_PM10RUNSTATUSCHECK                    CREATEDATE       2026-10-22 19:08:48
+     2,730  dbo.RF_Q_PM25RUNSTATUSCHECK                    CREATEDATE       2026-10-22 19:09:29
+     2,703  dbo.DRT_Beta                                   CreateDate       2026-10-23 17:03:00
+     2,676  dbo.RF_Q_GASEOUSMULTIPOINT_CO                  CREATEDATE       2026-10-24 18:46:55
+     2,635  dbo.RF_Q_GASEOUSMULTIPOINT_O3                  CREATEDATE       2026-10-24 18:26:50
+     2,630  dbo.BSD_DEVICE                                 UpdateTime       2026-09-30 12:04:29.287000
+     2,625  dbo.RF_Q_GASEOUSMULTIPOINT_SO2                 CREATEDATE       2026-10-24 19:10:11
+     2,623  dbo.RF_Q_GASEOUSMULTIPOINT_NO2                 CREATEDATE       2026-10-24 19:08:53
+     2,590  dbo.OPA_STATIONPERFORMANCESCORE_BF             createdate       2021-01-08 20:53:29.533000
+     2,547  dbo.Sup_RF_O3LaserRadarCheck                   UpdateTime       2026-10-21 12:32:08.703000
+     2,437  dbo.MTC_WORKINGORDERLOG                        CREATETIME       2026-10-14 22:30:39
+     2,287  dbo.RF_HY_STATIONDEVICEMAINTAIN                CREATEDATE       2026-10-21 22:20:50
+     2,243  dbo.SEC_PERFORMANCEDETAILMANAGE                CREATEDATE       2020-05-01 02:05:41
+     2,207  dbo.Sup_PowerFailureReport                     CreateTime       2026-10-20 11:06:53.027000
+     2,109  dbo.Sup_Sec_Config                             (无时间列)         -
+     2,049  dbo.RF_HY_GASEOUSCALIDEVICECHECK               CREATEDATE       2026-10-23 09:04:49
+     2,024  dbo.SYS_USERROLE                               (无时间列)         -
+     2,003  dbo.Sup_RF_GACWeekMaintain                     CreateTime       2026-10-24 21:32:37.710000
+     1,979  dbo.RF_M_GASEOUSCALICHECK                      CREATEDATE       2020-09-03 11:15:54
+     1,971  dbo.RF_HY_VISIBILITYCALI                       CREATEDATE       2026-10-22 22:48:50
+     1,947  dbo.SYS_ROLETYPEPERMISSION                     (无时间列)         -
+     1,760  dbo.Sup_RF_CO2Inspection                       UpdateTime       2026-10-22 12:46:55.963000
+     1,587  dbo.Sup_RF_Turbidimeter                        UpdateTime       2026-09-18 13:03:24.457000
+     1,450  dbo.HeavyMetalQualityStandardCurve             CreateTime       2026-10-21 15:40:24.953000
+     1,399  dbo.DRT_GasAnalyzer_NOX                        Timedate         2026-10-23
+     1,319  dbo.SYS_UserLock                               updateTime       2026-10-24 12:32:32.307000
+     1,304  dbo.BSD_DEVICE_2                               PURCHASETIME     2019-02-01 00:00:00
+     1,253  dbo.MTC_ORDERFAULTCONTENTITEM                  (无时间列)         -
+     1,249  dbo.OPA_CheckScore                             CREATETIME       2026-10-23 10:15:06.047000
+     1,184  dbo.OPA_CONTRACTSTATION                        (无时间列)         -
+     1,155  dbo.Sup_RF_StandardGas                         UpdateTime       2024-12-09 11:08:45.897000
+     1,142  dbo.Sup_RF_RepaireRecord                       UpdateTime       2026-10-21 16:41:49.697000
+     1,138  dbo.Sup_RF_OCECSingleCheck                     UpdateTime       2026-10-22 19:35:53.140000
+     1,088  dbo.Sup_RF_ChromatotecWeekCheck                UpdateTime       2026-10-12 09:14:27.800000
+     1,036  dbo.SYS_USER                                   PasswordUpdateTime 2030-12-31 00:00:00
+     1,029  dbo.Sup_RF_OCECWeekCheck                       UpdateTime       2026-10-21 16:13:35.213000
+       991  dbo.STATION_HANDOVERLOG                        updatetime       2023-10-08 17:19:41.437000
+       987  dbo.Sup_RF_NH3ConversionRate                   UpdateTime       2026-10-22 19:52:59.050000
+       928  dbo.Sup_RF_EquipmentMaintenance                UpdateTime       2026-10-23 11:52:55.490000
+       925  dbo.Sup_RF_NH3MonthDeviceMaintain              UpdateTime       2026-10-22 15:59:55.807000
+       915  dbo.Sup_DepartmentDevice                       (无时间列)         -
+       907  dbo.RF_Y_PreventiveMaintenance                 CREATEDATE       2026-09-30 14:50:45.950000
+       841  dbo.BSD_DetectionItem                          (无时间列)         -
+       811  dbo.Sup_MonthReport                            UpdateTime       2026-10-14 13:51:32.543000
+       782  dbo.DRT_GasAnalyzer_FiveParameters             CreateDate       2026-10-23 16:15:21.793000
+       769  dbo.Sup_ContractDevice                         (无时间列)         -
+       767  dbo.Sup_RF_N2OAnalyzerinspection               UpdateTime       2026-10-22 13:09:43.010000
+       761  dbo.Sup_RF_VisibilityMeter                     UpdateTime       2026-09-25 17:26:48.907000
+       745  dbo.Sup_Factor                                 SynTime          2021-04-26 10:07:32.867000
+       731  dbo.APP_PAGE                                   LASTUPDATETIME   2026-09-23 11:56:21
+       730  dbo.RF_Y_DEVICEREPAIR                          CREATEDATE       2026-10-09 10:34:39
+       724  dbo.Sup_RF_RULEITEM                            (无时间列)         -
+       724  dbo.SYS_DATADICTIONARYITEMS                    (无时间列)         -
+       705  dbo.Sup_RF_RULEITEM_RELEVANCE                  (无时间列)         -
+       672  dbo.Sup_ContractDevices                        (无时间列)         -
+       666  dbo.OPA_WorkRectify                            CREATETIME       2026-10-23 10:15:06.047000
+       623  dbo.ALM_NOTIFYLOG                              MODIFYTIME       2019-04-24 16:10:10
+       579  dbo.Sup_ContractMonths                         (无时间列)         -
+       565  dbo.Sup_Device                                 UpdateTime       2026-10-23 15:36:06
+       562  dbo.Sup_RF_URGWeekMaintain                     CreateTime       2026-10-21 21:03:29.370000
+       549  dbo.Sup_Instrument                             (无时间列)         -
+       543  dbo.BSD_INSBRANDINFO                           (无时间列)         -
+       533  dbo.OPA_ContractMonths                         (无时间列)         -
+       528  dbo.Sup_RF_WaterSoluble                        CreateTime       2023-03-19 21:23:48.733000
+       524  dbo.Sup_RF_MultiCalibration                    UpdateTime       2026-10-11 10:42:32.820000
+       520  dbo.DEV_DATA                                   DATATIME         2018-10-17 10:00:00
+       518  dbo.SYS_DEPARTMENTSTATION                      (无时间列)         -
+       504  dbo.PTR_MSQualityCalibration2                  CreateTime       2026-10-15 20:28:17.160000
+       504  dbo.PTR_MSQualityDetectionLimit                CreateTime       2026-10-15 20:28:17.160000
+       504  dbo.PTR_MSQualitySinglePointCalibration        CreateTime       2026-10-15 20:28:17.160000
+       480  dbo.Sup_RF_O3LaserRadarMaintenance             UpdateTime       2026-10-22 18:49:26.877000
+       477  dbo.Sup_RF_OCECMonthCheck                      UpdateTime       2026-10-21 22:10:33.733000
+       466  dbo.SYS_ROLE                                   (无时间列)         -
+       456  dbo.Dog_BackDb                                 FileTime         2024-12-29 04:00:09
+       445  dbo.Sup_RF_GACMonthMaintain                    CreateTime       2026-10-24 21:43:20.660000
+       429  dbo.Sup_SEC_Vocs_Config                        (无时间列)         -
+       418  dbo.Sup_RF_EnvironmentalCheck                  UpdateTime       2022-03-28 11:18:51.947000
+       414  dbo.Sup_RF_CO2DeviceMaintain                   UpdateTime       2026-10-13 21:17:10.597000
+       403  dbo.OPA_Blackout                               CREATETIME       2026-10-14 10:50:29.280000
+       401  dbo.APP_PAGEFILE                               (无时间列)         -
+       371  dbo.Sup_RF_NH3AnalyzerInspection               UpdateTime       2026-09-20 23:37:50.167000
+       359  dbo.SEC_AirDayAqiSrc                           CREATEDATE       2019-07-04 17:03:57
+       354  dbo.SEC_BLACKOUTREPORTCALCULATION              datetime         2019-09-04 11:30:00
+       332  dbo.BSD_STATION                                CREATETIME       2026-09-20 17:21:23
+       316  dbo.Sup_RF_NH3DeviceMultipoint                 UpdateTime       2026-09-15 11:45:32.343000
+       314  dbo.Alm_Home                                   AlarmTimeMMSS    2026-10-24 22:30:32.447000
+       312  dbo.STATION_HANDOVER                           createtime       2026-01-04 00:39:20.343000
+       303  dbo.Sup_RF_NH3ResponseTimeInspection           UpdateTime       2026-10-08 23:35:15.527000

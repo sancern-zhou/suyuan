@@ -1,0 +1,16 @@
+dataset: alm_alarm
+description: 广东站点告警通知流水。源自 ALM_ALARM，一行 = 一条通知（今年约 20 万条）。
+owner: 广东运维平台组
+grain: 一条告警通知记录（含短信/邮件发送渠道）
+freshness_slo: 60分钟（高频链路）
+known_caveats:
+- 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）
+columns:
+- name: （见源表/宽表定义）
+  business: 完整列清单经工具 describe_table 获取；关键业务列见 guide
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: alm_alarm（一行 = 一条告警通知）：维度 alarm_id/station_id/station_code/station_name/city_name/alarm_type(告警类型,如
+  站点断数)/notify_channels(发送渠道 SMS,Mail)；时间 notify_time/notify_date。注意：本表为通知流水，无处理闭环状态（未处理率不可评估）；当前告警态势用
+  mart_station_alarm_status；告警类型从 CONTENT 前缀解析；站点经 dim_station 关联（匹配率 99.5%）。统计告警量/站点覆盖/类型分布用本表。

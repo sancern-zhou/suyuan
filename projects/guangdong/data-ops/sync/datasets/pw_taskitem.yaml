@@ -1,0 +1,16 @@
+dataset: pw_taskitem
+description: 运维计划任务项。源自 PW_TASKITEM，一行 = 一个任务项（今年约 8.3 万项，每日全量+今年创建窗口刷新）。
+owner: 广东运维平台组
+grain: 一个计划任务项
+freshness_slo: 26小时
+known_caveats:
+- 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）
+columns:
+- name: （见源表/宽表定义）
+  business: 完整列清单经工具 describe_table 获取；关键业务列见 guide
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: pw_taskitem（一行 = 一个计划任务项）：pwtaskitemid/pwtaskid(关联 pw_task)/ruleitemtag(表单类型如
+  RF_W_GaseousCheck)/pollutanttype(SO2/NOX/O3 等)/sdtdate/edtdate(计划窗口)/basedate/finishdatetime(完成时间)/finishworkordercode(转工单号)/state(数值状态)。完成率/超期率/转工单率统计用
+  mart_inspection_task_analysis（已预计算）。

@@ -1,0 +1,15 @@
+dataset: log_device
+description: 设备状态与事件日志。源自 LOG_DEVICE，一行 = 一条事件（今年约 7.4 万条）。
+owner: 广东运维平台组
+grain: 一条设备状态/事件日志
+freshness_slo: 60分钟（高频链路）
+known_caveats:
+- 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）
+columns:
+- name: （见源表/宽表定义）
+  business: 完整列清单经工具 describe_table 获取；关键业务列见 guide
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: log_device（一行 = 一条设备事件日志）：devicelogid/deviceid/stationid/"time"(事件时间)/deviceidstate(变更后状态:DeviceNormal/DeviceSpare等)/eventstate(事件动作:WeekCheck周检/MonthCheck月检/QuaryCheck季检/HYCheck半年检/YearCheck年检/DeviceStart启用/DeviceAdd新增/DeviceStop停用/DeviceUpdata信息更新)/orderid(关联工单)/remarks。设备生命周期分析建议用
+  mart_device_lifecycle_analysis（已翻译事件中文名并关联站点/设备维度）。

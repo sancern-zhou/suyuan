@@ -1,0 +1,301 @@
+# GENERATED FILE - run gen_semantic_artifacts.py; do not edit by hand
+version: 1
+project: guangdong
+generated_from:
+- semantic/registry.yaml
+- guangdong_cube_metrics/tool.py
+cubes:
+  AlarmNotify:
+    dataset: mart_alarm_notify_analysis
+    grain: 一行 = 一条告警通知记录（含短信/邮件发送渠道）
+    applicability: 站点告警通知流水统计（通知量、类型分布、站点覆盖、城市分布）；本库告警为通知流水，无处理闭环状态，未处理率/处理时长不可评估
+    source_window: 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量
+    freshness_slo: 60分钟
+    limitations:
+    - ALM_SUMMARY 自 2020 年停更，禁止作为告警来源；当前告警态势（正常/紧急）用 StationAlarmStatus
+    - ALARMLEVEL 当前实测恒为 9（通知级），级别维度不可用
+    - 告警类型自 CONTENT 前缀解析（如 "站点断数"），类型清单以实际数据为准
+    - 站点关联经 dim_station.station_id（实测匹配率 99.5%，少量通知无匹配站点）
+    measures:
+      count:
+        name: 告警通知量
+        definition: 通知记录条数
+        null_policy: not_applicable
+        time_basis: notifyTime
+      distinctStationCount:
+        name: 涉及站点数
+        definition: 去重站点数
+        null_policy: not_applicable
+        time_basis: notifyTime
+      distinctDayCount:
+        name: 涉及天数(去重)
+        definition: 涉及天数(去重)
+    dimensions:
+      alarmType: 告警类型(站点断数等,自CONTENT解析)
+      cityName: 城市名(经alm_home补充,覆盖率以推送为准)
+      stationTypeName: 站点类型中文名
+      stationCode: 站点编码
+      stationName: 站点名
+      notifyChannels: 发送渠道(SMS,Mail等)
+      notifyTime: 告警时间(时间维度)
+  DeviceLifecycle:
+    dataset: mart_device_lifecycle_analysis
+    grain: 一行 = 一条设备状态/事件日志
+    applicability: 设备周期检查执行（周/月/季/半年/年检）与启用/新增/停用/信息更新事件统计；事件类型中文映射见 event_type_cn
+    source_window: 今年窗口 + 持续增量（今年约 7.4 万条）
+    freshness_slo: 60分钟
+    limitations:
+    - 设备状态枚举（DeviceNormal/DeviceSpare 等）为平台原文未翻译；事件动作 QuaryCheck 为源系统拼写（季检）
+    - 少量事件无匹配站点/设备（外键缺失时维度为 NULL）
+    measures:
+      count:
+        name: 生命周期事件数
+        definition: 事件日志条数
+        null_policy: not_applicable
+        time_basis: eventTime
+      distinctDevices:
+        name: 涉及设备数
+        definition: 去重设备数
+        null_policy: not_applicable
+        time_basis: eventTime
+      checkEventCount:
+        name: 周期检查事件数
+        definition: 周/月/季/半年/年检事件条数
+        null_policy: not_applicable
+        time_basis: eventTime
+      lifecycleEventCount:
+        name: 启用/新增/停用/更新事件数
+        definition: 启用/新增/停用/更新事件数
+      stopEventCount:
+        name: 停用事件数
+        definition: DeviceStop 事件条数
+        null_policy: not_applicable
+        time_basis: eventTime
+    dimensions:
+      eventType: 事件动作(原文:WeekCheck等)
+      eventTypeCn: 事件动作中文(周检/月检/季检/启用/停用等)
+      stateAfter: 变更后状态(DeviceNormal/DeviceSpare等)
+      cityName: 城市名(经alm_home补充)
+      stationCode: 站点编码
+      stationName: 站点名
+      deviceCode: 设备编码
+      deviceType: 设备类型(源库代码原文)
+      orderRef: 关联工单
+      eventTime: 事件时间(时间维度)
+  InspectionTask:
+    dataset: mart_inspection_task_analysis
+    grain: 一行 = 一个运维计划任务项（PW_TASKITEM+PW_TASK 宽表化）
+    applicability: 运维计划任务项的量、完成率、超期率、转工单率统计（按规则/周期/监测项/站点/城市分组）
+    source_window: 今年窗口（按创建日期，每年滚动）
+    freshness_slo: 26小时
+    limitations:
+    - 完成态滞后于创建：任务项创建后在周期内完成，完成率每日全量刷新——按日趋势解读完成率时，最近 1-2 天的"未完成"可能是"尚未到完成时点"而非真实超期
+    - 超期 = 未完成且过计划结束日（EDTDATE）；无作废概念
+    - 转工单率分母为全部任务项；未完成项也可转工单（核销途径），与其他"完成才转单"口径不同
+    - PW_TASK 今年窗口拉到 0 行（任务头多为往年生成），任务头维度来自每日全量的 PW_TASK 全表
+    measures:
+      count:
+        name: 任务项数
+        definition: 任务项条数
+        null_policy: not_applicable
+        time_basis: planDate
+      finishedCount:
+        name: 已完成任务项数
+        definition: 已完成任务项数
+      finishedRate:
+        name: 完成率
+        definition: 已完成任务项数 / 任务项总数 × 100
+        numerator: finishedCount
+        denominator: count
+        null_policy: denominator_zero
+        time_basis: planDate
+      overdueCount:
+        name: 超期任务项数(未完成且过计划结束日)
+        definition: 超期任务项数(未完成且过计划结束日)
+      overdueRate:
+        name: 超期率
+        definition: 超期任务项数（未完成且过计划结束日）/ 任务项总数 × 100
+        numerator: overdueCount
+        denominator: count
+        null_policy: denominator_zero
+        time_basis: planDate
+      toOrderCount:
+        name: 已转工单任务项数
+        definition: 已转工单任务项数
+      toOrderRate:
+        name: 转工单率
+        definition: 已转工单任务项数 / 任务项总数 × 100
+        numerator: toOrderCount
+        denominator: count
+        null_policy: denominator_zero
+        time_basis: planDate
+      distinctStations:
+        name: 涉及站点数(去重)
+        definition: 涉及站点数(去重)
+    dimensions:
+      cityName: 城市名(经alm_home补充,覆盖率以推送为准)
+      stationCode: 站点编码
+      stationName: 站点名
+      ruleName: 规则名
+      ruleType: 规则类型
+      ruleCycle: 周期(周/月/季等)
+      itemFormTag: 表单类型(RF_W_GaseousCheck等)
+      pollutantType: 监测项目(SO2/NOX/O3等)
+      isFinished: 是否已完成
+      isOverdue: 是否已超期
+      isToOrder: 是否已转工单
+      planDate: 计划日期(时间维度)
+      finishDatetime: 完成时间(时间维度)
+  StationAlarmStatus:
+    dataset: mart_station_alarm_status
+    grain: 一行 = 一个站点的当前告警态势（快照，每日刷新）
+    applicability: 只回答"当前哪些站点在告警"（正常/紧急），不回答历史；历史通知用 AlarmNotify
+    source_window: 当前快照（无历史窗口）
+    freshness_slo: 26小时
+    limitations:
+    - 覆盖面以源系统推送为准（2026-10-25 当日 63/332 站），非全站快照；"未推送=无告警"不成立，只可表述为"推送范围内"
+    measures:
+      count:
+        name: 快照站点数(覆盖面以源系统推送为准)
+        definition: 快照站点数(覆盖面以源系统推送为准)
+      alarmingCount:
+        name: 当前告警站点数
+        definition: 告警状态≠正常的站点数
+        null_policy: not_applicable
+        time_basis: latestAlarmTime
+    dimensions:
+      alarmStatus: 告警状态(正常/紧急)
+      isAlarming: 是否告警中
+      cityName: 城市名
+      stationTypeName: 站点类型中文名
+      stationCode: 站点编码
+      stationName: 站点名
+      managerName: 运维管理人
+      latestAlarmDesc: 最新告警描述
+      latestAlarmTime: 最新告警时间(时间维度)
+  WorkOrder:
+    dataset: mart_work_order_analysis
+    grain: 一行 = 一张运维工单（全类型，含作废单）
+    applicability: 全部 28 类运维工单（Check/Fault/SupCheck 等）；工单量与时效结论必须按 order_status/order_type
+      显式过滤口径，不得把全表计数表述为"已完成工单量"
+    source_window: 今年窗口（full_load_since={year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24
+      同步量控制约定）
+    freshness_slo: 60分钟（高频链路）；维表 26 小时
+    limitations:
+    - 作废单(Invalid)在表内：参与 count 基数，但不参与超期与时效类指标；统计"工单量"必须声明是否含作废
+    - 超期率分母只计计划完成时间非空的单（overdueEvaluable）；故障单(Fault/SupFault)计划完成时间实测全空，超期不可评估——与江苏结论一致
+    - 例行维护单（Check/SupCheck/SupSECCheck 等）计划完成时间非空但平台不作为考核截止：源系统超时标记 order_overtime
+      全年实测全 0，本表重算超期率对这些类型会得到接近 100% 的失真值——例行单超期结论必须以源系统超时标记为准，不得引用 overdueRate
+    - 响应类指标（responseWithin2hRate/avgResponseMinutes）仅故障单可评估（到站=首个 FaultProcess 步骤开始）；非故障单不可评估
+    - 重复故障（is_repeat_fault/repeatFaultRate）仅在故障单口径（Fault/SupFault）下有意义：同站同设备前 30 天存在其他故障单
+    - 附件完整率只覆盖附件索引（附件本体在源系统）；跨工单类型的附件要求不同，横向比较需按类型分层
+    - 城市维度（cityName/cityCode/stationTypeName）经 alm_home 站点态势快照每日补充，覆盖率以源系统推送为准（2026-10-25
+      当日 63/332 站）；无推送的站点城市列为 NULL，按城市统计须注明覆盖率
+    - 完成率(finishRate)分母含作废单；剔除作废的单口径完成率需配合 orderStatus 维度自行过滤
+    - 实时在办状态以运维源库（execute_ops_sql_query 直查）为准，本数据集非实时
+    measures:
+      count:
+        name: 工单量
+        definition: 宽表行数（全类型含作废单；结论必须声明口径）
+        null_policy: not_applicable
+        time_basis: createTime
+      finishedCount:
+        name: 已完成工单数
+        definition: 已完成工单数
+      finishRate:
+        name: 完成率
+        definition: 已完成工单数 / 工单总数(含作废) × 100
+        numerator: finishedCount
+        denominator: count
+        null_policy: denominator_zero
+        time_basis: createTime
+        limitations: 分母含作废单，剔除作废需配合 orderStatus 维度过滤
+      overdueEvaluable:
+        name: 超期可评估工单数(计划完成时间非空)
+        definition: 超期可评估工单数(计划完成时间非空)
+      overdueCount:
+        name: 超期工单数
+        definition: 超期工单数
+      overdueRate:
+        name: 超期率
+        definition: 超期工单数 / 计划完成时间非空的工单数 × 100
+        numerator: overdueCount
+        denominator: overdueEvaluable
+        null_policy: denominator_zero_as_not_evaluable
+        time_basis: createTime
+        limitations: 仅按有计划完成时间的单评估；部分类型无计划时间
+      responseEvaluable:
+        name: 可评估响应的工单数(故障单)
+        definition: 可评估响应的工单数(故障单)
+      responseWithin2hCount:
+        name: 2小时内到站故障工单数
+        definition: 2小时内到站故障工单数
+      responseWithin2hRate:
+        name: 2小时响应率
+        definition: 2小时内到站的故障工单数 / 可评估响应的故障工单数 × 100
+        numerator: responseWithin2hCount
+        denominator: responseEvaluable
+        null_policy: denominator_zero
+        time_basis: createTime
+        limitations: 仅故障单可评估（到站=首个 FaultProcess 步骤开始）
+      faultCount:
+        name: 故障工单数(Fault/SupFault)
+        definition: 故障工单数(Fault/SupFault)
+      repeatFaultCount:
+        name: 30天重复故障工单数
+        definition: 30天重复故障工单数
+      repeatFaultRate:
+        name: 30天重复故障率
+        definition: 30天内重复的故障工单数 / 故障工单数(Fault+SupFault) × 100
+        numerator: repeatFaultCount
+        denominator: faultCount
+        null_policy: denominator_zero
+        time_basis: createTime
+        limitations: 重复判定=同站同设备前30天存在其他故障单；仅故障单口径
+      hasAttachmentCount:
+        name: 有附件的工单数
+        definition: 有附件的工单数
+      attachmentRate:
+        name: 附件完整率
+        definition: 有附件索引的工单数 / 工单总数 × 100
+        numerator: hasAttachmentCount
+        denominator: count
+        null_policy: denominator_zero
+        time_basis: createTime
+        limitations: 仅覆盖附件索引，本体在源系统；跨类型比较需分层
+      avgResponseMinutes:
+        name: 平均响应时长(分钟,仅故障单)
+        definition: 平均响应时长(分钟,仅故障单)
+      avgProcessMinutes:
+        name: 平均到站后处理时长(分钟)
+        definition: 平均到站后处理时长(分钟)
+      avgRepairMinutes:
+        name: 平均全程修复时长(分钟)
+        definition: 平均全程修复时长(分钟)
+      avgNodeCount:
+        name: 平均流转节点数
+        definition: 平均流转节点数
+      avgExpense:
+        name: 平均工单费用(元)
+        definition: 平均工单费用(元)
+    dimensions:
+      orderType: 工单类型代码(28种,字典见 ops 提示词语义字典)
+      orderStatus: 工单状态(已完成/处理中/待处理/已作废)
+      urgency: 紧急程度
+      maintenanceType: 维护周期(周/月/双周/季/半年/日/年/按需)
+      orderOvertime: 源系统超时标记(原文;例行单超期以本标记为准,勿用overdueRate)
+      totalOvertime: 源系统累计超时标记(原文)
+      stationCode: 站点编码
+      stationName: 站点名
+      stationType: 站点类型(源库代码原文)
+      stationTypeName: 站点类型中文名(经alm_home补充,覆盖率以推送为准)
+      cityName: 城市名(经alm_home补充,覆盖率以推送为准)
+      cityCode: 城市行政区码(经alm_home补充)
+      regionId: 区域ID(无区域字典)
+      deviceCode: 设备编码
+      deviceType: 设备类型(源库代码原文)
+      isFinish: 是否已完成
+      isOverdue: 是否超期(仅计划完成时间非空的单有意义)
+      isRepeatFault: 是否30天内重复故障(仅故障单口径)
+      createTime: 创建时间(时间维度)
+      finishTime: 完成时间(时间维度)

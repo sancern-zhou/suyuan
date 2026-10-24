@@ -1,0 +1,15 @@
+dataset: mart_station_alarm_status
+description: 站点当前告警态势快照。一行 = 一个站点（当日 63 站），语义层 AlarmNotify cube 的态势维度来源。
+owner: 广东运维平台组
+grain: 一个站点的当前告警态势
+freshness_slo: 26小时
+known_caveats:
+- 数据范围与上游 ODS 一致（今年窗口+持续增量）
+columns:
+- name: （见源表/宽表定义）
+  business: 完整列清单经工具 describe_table 获取；关键业务列见 guide
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: mart_station_alarm_status（一行 = 一个站点当前态势）：station_id/station_code/station_name/city_name/station_type_name/manager_name/alarm_status(正常/紧急)/is_alarming/alarm_level/latest_alarm_desc/latest_alarm_time/is_interrupt。"当前哪些站点在告警"用
+  is_alarming 过滤；历史通知用 mart_alarm_notify_analysis。

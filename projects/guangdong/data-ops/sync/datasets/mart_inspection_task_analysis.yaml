@@ -1,0 +1,17 @@
+dataset: mart_inspection_task_analysis
+description: 运维计划任务项宽表。一行 = 一个计划任务项（今年窗口），语义层 InspectionTask cube 的数据源。
+owner: 广东运维平台组
+grain: 一个计划任务项（完成/超期/转工单已预计算）
+freshness_slo: 26小时
+known_caveats:
+- 数据范围与上游 ODS 一致（今年窗口+持续增量）
+columns:
+- name: （见源表/宽表定义）
+  business: 完整列清单经工具 describe_table 获取；关键业务列见 guide
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: mart_inspection_task_analysis（一行 = 一个计划任务项）：维度 task_item_id/station_code/station_name/city_name/rule_name/rule_type/rule_cycle/item_form_tag(RF_W_GaseousCheck
+  等)/pollutant_type(SO2/NOX/O3 等)；时间 plan_date/plan_start_date/plan_end_date/create_time/finish_datetime；指标
+  is_finished/is_overdue(未完成且过计划结束日)/is_to_order/finish_work_order_code/state_code。任务项量/完成率/超期率/转工单率统计用本表；完成态每日全量刷新（完成滞后于创建，勿按
+  create_time 增量口径推算当日完成率）。

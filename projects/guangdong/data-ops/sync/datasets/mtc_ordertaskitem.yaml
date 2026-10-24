@@ -1,0 +1,15 @@
+dataset: mtc_ordertaskitem
+description: 工单关联任务项。源自 MTC_ORDERTASKITEM，一行 = 工单的一个任务项（今年计划窗口约 8.4 万项，每日全量+窗口刷新）。
+owner: 广东运维平台组
+grain: 一张工单关联的一个任务项
+freshness_slo: 26小时
+known_caveats:
+- 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）
+columns:
+- name: （见源表/宽表定义）
+  business: 完整列清单经工具 describe_table 获取；关键业务列见 guide
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: mtc_ordertaskitem（一行 = 工单一个任务项）：ordertaskitemid/workingordercode(工单号)/ruleitemtag/pollutanttype/checkprocessstatus/sdtdate/edtdate/planfinishtime/processtype。注意：无创建时间列，按
+  planfinishtime 今年窗口同步；工单任务项核对用本表按 workingordercode 过滤。

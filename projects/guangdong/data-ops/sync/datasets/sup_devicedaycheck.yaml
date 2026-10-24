@@ -1,0 +1,15 @@
+dataset: sup_devicedaycheck
+description: 设备日检查。源自 Sup_DeviceDayCheck，一行 = 设备×日的检查记录（今年 4,040 条，updatetime 增量）。
+owner: 广东运维平台组
+grain: 一台设备一个检查日的记录
+freshness_slo: 26小时
+known_caveats:
+- 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）
+columns:
+- name: （见源表/宽表定义）
+  business: 完整列清单经工具 describe_table 获取；关键业务列见 guide
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: sup_devicedaycheck（一行 = 设备×日检查）：id/deviceid/stationid/检查日期与项目列/updatetime（23
+  列）。

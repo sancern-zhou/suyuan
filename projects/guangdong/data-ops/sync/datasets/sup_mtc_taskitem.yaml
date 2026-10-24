@@ -1,0 +1,14 @@
+dataset: sup_mtc_taskitem
+description: 组分网运维任务项。源自 Sup_Mtc_TaskItem，一行 = 一个任务项（今年约 2.7 万项，每日全量+今年创建窗口刷新）。
+owner: 广东运维平台组
+grain: 一个组分网任务项
+freshness_slo: 26小时
+known_caveats:
+- 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）
+columns:
+- name: （见源表/宽表定义）
+  business: 完整列清单经工具 describe_table 获取；关键业务列见 guide
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: sup_mtc_taskitem（一行 = 一个组分网任务项）：id/pwtaskid 等结构与 pw_taskitem 类似，面向组分网（Sup 前缀工单体系）。统计用巡检域宽表；明细核对用本表。

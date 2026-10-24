@@ -1,0 +1,15 @@
+dataset: pw_task
+description: 运维计划任务头表。源自 PW_TASK，一行 = 一个站点一个周期的一条计划任务（全量 10.9 万行，每日全量刷新）。
+owner: 广东运维平台组
+grain: 一个站点一个周期的一条计划任务
+freshness_slo: 26小时
+known_caveats:
+- 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）
+columns:
+- name: （见源表/宽表定义）
+  business: 完整列清单经工具 describe_table 获取；关键业务列见 guide
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: pw_task（一行 = 一条计划任务）：pwtaskid(主键)/rulename(规则名)/ruletype(规则类型)/rulecycle(周期)/pwtasktime(任务时间)/finishpwtasktime(完成时间)/stationid(站点)。任务项明细与完成/超期统计用
+  mart_inspection_task_analysis；本表为任务头维度来源。

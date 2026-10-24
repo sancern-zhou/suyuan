@@ -1,0 +1,42 @@
+# 数据集契约：working_order_details
+dataset: working_order_details
+description: >
+  广东运维工单流程明细。一行 = 工单一个流程步骤，源自 dbo.working_order_details。
+  源表无更新时间列：高频走 id 增量抓新步骤，每日全量 upsert 捕获历史步骤状态流转。
+  是工单时效分析、流程链核查与故障根因归纳（alarm_reason）的主要来源。
+owner: 广东运维平台组
+grain: 一行 = 工单一个流程步骤（id）
+freshness_slo: 26小时（新步骤小时级可见）
+known_caveats:
+  - ODS 不追踪源端物理删除：如源端清理历史明细，行数对账用 sync_table.py --check，差异需人工重建
+  - processtaskid 在 ODS 保留源库原始列名（大写转小写），dbt 层映射为 process_task_id
+  - process_time 为源系统原文（非可靠时间戳），时效计算一律用 process_start_time/process_end_time
+columns:
+  - {name: id, business: 明细行ID(主键)}
+  - {name: working_order_code, business: 工单号(关联主表)}
+  - {name: process_step, business: 流程步骤代码(CreateOrder/Approve/Review/CheckOrder/SupCheck_Check/FaultProcess 等)}
+  - {name: processtaskid, business: 流程任务ID(ODS原始列名,mart层为process_task_id)}
+  - {name: process_user_id, business: 处理人ID}
+  - {name: process_start_time, business: 步骤开始时间}
+  - {name: process_end_time, business: 步骤结束时间}
+  - {name: process_status, business: 步骤状态(数值原文)}
+  - {name: process_time, business: 处理时间(源系统原文,不可靠)}
+  - {name: expense, business: 步骤费用}
+  - {name: submit_remark, business: 提交备注/处理描述}
+  - {name: description_ta, business: 处理描述}
+  - {name: participate_user_ids, business: 参与人ID列表}
+  - {name: dispatch_status, business: 派单状态}
+  - {name: standby_device_code, business: 备用设备编码}
+  - {name: image_path, business: 图片路径}
+  - {name: alarm_reason, business: 故障原因(故障单根因归纳的主要来源)}
+  - {name: refreshed_at, business: 本表刷新时间(dbt 重建时间)}
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: >-
+  working_order_details（一行 = 工单一个流程步骤）：working_order_code 关联主表；
+  process_step(步骤：CreateOrder/Approve/Review/CheckOrder/SupCheck_Check/FaultProcess 等)；
+  process_task_id 流程任务ID；process_user_id 处理人；process_start_time/process_end_time；
+  process_status(数值状态原文)；alarm_reason 故障原因（故障单根因归纳的主要来源）；
+  submit_remark/description_ta 处理描述；expense 步骤费用。工单时效与流程链分析用本表；
+  首个 FaultProcess 步骤开始时间为故障单"到站"代理口径（见 mart_work_order_analysis）。

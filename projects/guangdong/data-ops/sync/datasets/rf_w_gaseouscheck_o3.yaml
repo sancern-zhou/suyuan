@@ -1,0 +1,15 @@
+dataset: rf_w_gaseouscheck_o3
+description: O3 气态检查表单实体。源自 RF_W_GASEOUSCHECK_O3，一行 = 一张表单（今年约 6,544 张）。
+owner: 广东运维平台组
+grain: 一张 O3 气态检查表单
+freshness_slo: 26小时
+known_caveats:
+- 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）
+columns:
+- name: （见源表/宽表定义）
+  business: 完整列清单经工具 describe_table 获取；关键业务列见 guide
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: rf_w_gaseouscheck_o3（一行 = 一张 O3 气态检查表单）：rfwgaseouscheckid/workingordercode/stationid/createdate
+  + 检查题目项列（85 列）。

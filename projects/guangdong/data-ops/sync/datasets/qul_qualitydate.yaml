@@ -1,0 +1,14 @@
+dataset: qul_qualitydate
+description: 质控评价日期。源自 QUL_QUALITYDATE，一行 = 一条记录（今年 2,227 条，updatetime 增量）。
+owner: 广东运维平台组
+grain: 一条质控评价日期记录
+freshness_slo: 26小时
+known_caveats:
+- 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）
+columns:
+- name: （见源表/宽表定义）
+  business: 完整列清单经工具 describe_table 获取；关键业务列见 guide
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: qul_qualitydate（一行 = 一条质控评价日期）：qualitydateid/stationid/评价日期与类型列/updatetime。质控时间范围核对用本表。

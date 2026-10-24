@@ -1,0 +1,16 @@
+dataset: mart_alarm_notify_analysis
+description: 站点告警通知分析宽表。一行 = 一条告警通知（今年窗口），语义层 AlarmNotify cube 的数据源。
+owner: 广东运维平台组
+grain: 一条告警通知（站点/城市/类型已宽表化）
+freshness_slo: 60分钟（高频链路）
+known_caveats:
+- 数据范围与上游 ODS 一致（今年窗口+持续增量）
+columns:
+- name: （见源表/宽表定义）
+  business: 完整列清单经工具 describe_table 获取；关键业务列见 guide
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: mart_alarm_notify_analysis（一行 = 一条告警通知）：维度 alarm_id/station_code/station_name/station_type_name/city_code/city_name/alarm_type(实测仅三类:站点断数/小时浓度超标/仪器断数)/notify_channels；时间
+  notify_time/notify_date。统计告警通知量、类型分布、站点覆盖、城市分布用本表。注意：通知流水无处理状态，"未处理率"不可评估；当前态势用
+  mart_station_alarm_status。

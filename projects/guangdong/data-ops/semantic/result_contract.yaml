@@ -1,0 +1,52 @@
+version: 1
+description: >-
+  广东 Agent 工具结果采用按场景裁剪的结构化协议。字段只有在该查询产生相应语义时才返回，
+  禁止为了统一而返回空字段或重复 summary。（模式对齐江苏 result_contract.yaml）
+profiles:
+  metric_definition:
+    purpose: Cube 指标定义查询
+    required:
+      - success
+      - cube
+      - semantic_context
+    optional:
+      - summary
+    rules:
+      - semantic_context 必须包含 metric_definitions、grain 和 applicability
+  metric_query:
+    purpose: Cube 官方指标查询
+    required:
+      - success
+      - data
+      - semantic_context
+      - quality_status
+    optional:
+      - file_path
+      - count
+      - sample_count
+    rules:
+      - semantic_context 必须包含 dataset、grain、applicability、data_as_of 和指标定义
+      - quality_guidance 决定 Agent 能否形成定量结论
+      - 只有工具完成了判断时才增加 findings
+  evidence_sql:
+    purpose: 受控 SQL 字段级取证
+    required:
+      - success
+      - data
+    optional:
+      - file_path
+      - count
+      - sample_count
+      - data_as_of
+    rules:
+      - 工单字段级取证用于 mart_work_order_analysis 口径核对与明细回溯
+      - 实时状态核对应改用 execute_ops_sql_query 直查源库
+  schema_introspection:
+    purpose: 受控数据集结构查询
+    required:
+      - success
+      - columns
+    optional:
+      - summary
+    rules:
+      - 不返回与结构查询无关的 findings 或 data

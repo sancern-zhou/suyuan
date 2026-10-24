@@ -1,0 +1,15 @@
+dataset: alm_home
+description: 站点当前告警态势快照。源自 Alm_Home，一行 = 一个站点（当日 63 站，覆盖面以源系统推送为准），每日刷新。
+owner: 广东运维平台组
+grain: 一个站点的当前告警态势（快照）
+freshness_slo: 26小时
+known_caveats:
+- 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）
+columns:
+- name: （见源表/宽表定义）
+  business: 完整列清单经工具 describe_table 获取；关键业务列见 guide
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: alm_home（一行 = 一个站点当前态势）：dictionaryitemtext(状态:正常/紧急)/content(最新告警描述)/alarmtime/alarmlevel/isinterrupt；regionid(城市行政区码)/regionname(城市名)/typename(站点类型中文名)/username(运维管理人)。本表为"当前告警站点清单"（实测只推送告警中站点，正常站点不入表）；城市维度字典亦来源于此；历史通知流水用
+  alm_alarm。本表同时是城市维度字典来源（dim_station 城市列经它补充）。

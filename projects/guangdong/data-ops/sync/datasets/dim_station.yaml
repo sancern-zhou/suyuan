@@ -1,0 +1,52 @@
+dataset: dim_station
+description: '广东站点目录一致性维度表。一行 = 一个站点（约 332 站全量），源自 dbo.base_station， 每日全量同步后由 dbt
+  重建（交换式，无空窗）。统一站点维度：工单/附件/设备 的站点归属都应经本表关联。
+
+  '
+owner: 广东运维平台组
+grain: 一行 = 一个站点（station_id）
+freshness_slo: 26小时
+known_caveats:
+- 城市维度（city_code/city_name）与站点类型中文名（station_type_name）、管理人（manager_name）经 alm_home
+  站点态势快照每日补充（源库无区域字典）；alm_home 未覆盖的站点城市列为 NULL（当前 63 站有城市信息）
+- 站点网络构成见 docs/work-order-semantics/03：国控站、省控站与组分站（超级站成分监测网），组分站工单使用 Sup 前缀专属类型
+- station_type 为源库字典代码原文（smallint）；中文名用 station_type_name
+columns:
+- name: station_id
+  business: 站点ID(主键)
+- name: station_code
+  business: 站点编码
+- name: station_name
+  business: 站点中文名(如 从化天湖/南沙大稳)
+- name: region_id
+  business: 区域ID(无区域字典
+  仅有ID): null
+- name: longitude
+  business: 经度
+- name: latitude
+  business: 纬度
+- name: address
+  business: 地址
+- name: station_type
+  business: 站点类型(源库字典代码原文)
+- name: status
+  business: 启用状态
+- name: unique_code
+  business: 站点唯一编码
+- name: monitor_ip
+  business: 监测设备IP
+- name: mapping_station_id
+  business: 映射站点ID
+- name: operation_type
+  business: 运维方式
+- name: description
+  business: 描述
+- name: create_time
+  business: 建站时间
+- name: refreshed_at
+  business: 本表刷新时间(dbt 重建时间)
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: dim_station（一行 = 一个站点，332 站）：station_id(主键)/station_code/station_name/region_id/city_code(城市行政区码)/city_name(城市名,经alm_home补充)/station_type_name(站点类型中文名:省控等)/manager_name(运维管理人)/longitude/latitude/address/station_type(源库代码原文)/status/unique_code/operation_type/create_time/refreshed_at。站点名单、站点归属、城市/经纬度用本表；工单表
+  station_id 以文本形式关联本表 station_id。城市信息覆盖面以 alm_home 推送为准（当前 63 站）。
