@@ -655,6 +655,51 @@ def _make_token(secret: str, ttl_seconds: int = 300) -> str:
     return f"{header}.{payload}.{signature}"
 
 
+async def cube_load(query: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """执行一次 Cube Core /load 查询，返回解包 value 后的扁平行。
+
+    工具执行路径（XuchangCubeMetricsTool.execute）与大屏快照 fetcher
+    共用此入口，鉴权、排队等待与错误语义只维护一份。
+    """
+    base_url = os.getenv("CUBE_API_URL", "http://127.0.0.1:4610/cubejs-api/v1")
+    secret = os.getenv("CUBE_API_SECRET", "")
+    if not secret:
+        raise RuntimeError("CUBE_API_SECRET 未配置(语义层鉴权)")
+
+    token = _make_token(secret)
+    wait_seconds = float(os.getenv("CUBE_API_WAIT_SECONDS", "60"))
+    started = time.monotonic()
+    deadline = started + wait_seconds
+    body: Dict[str, Any] = {}
+    async with httpx.AsyncClient(timeout=30) as client:
+        while True:
+            resp = await client.post(
+                f"{base_url}/load",
+                json={"query": query},
+                headers={"Authorization": token},
+            )
+            if resp.status_code != 200:
+                detail = resp.text[:500]
+                raise RuntimeError(f"语义层返回 {resp.status_code}: {detail}")
+            body = resp.json()
+            pending = str(body.get("error") or "")
+            if "continue wait" not in pending.lower():
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"语义层查询排队超时({round(time.monotonic() - started, 1)}s): {pending}"
+                )
+            await asyncio.sleep(1.5)
+    if body.get("error"):
+        raise RuntimeError(f"语义层错误: {body['error']}")
+
+    return [
+        {k: (v.get("value") if isinstance(v, dict) else v)
+         for k, v in row.items()}
+        for row in body.get("data", [])
+    ]
+
+
 class XuchangCubeMetricsTool(LLMTool):
     """经语义层查询许昌空气质量指标（口径唯一,免写SQL）。"""
 
@@ -864,42 +909,7 @@ class XuchangCubeMetricsTool(LLMTool):
         status, error, row_count = "ok", None, 0
         started = time.monotonic()
         try:
-            base_url = os.getenv("CUBE_API_URL", "http://127.0.0.1:4610/cubejs-api/v1")
-            secret = os.getenv("CUBE_API_SECRET", "")
-            if not secret:
-                raise RuntimeError("CUBE_API_SECRET 未配置(语义层鉴权)")
-
-            token = _make_token(secret)
-            wait_seconds = float(os.getenv("CUBE_API_WAIT_SECONDS", "60"))
-            deadline = started + wait_seconds
-            body: Dict[str, Any] = {}
-            async with httpx.AsyncClient(timeout=30) as client:
-                while True:
-                    resp = await client.post(
-                        f"{base_url}/load",
-                        json={"query": query},
-                        headers={"Authorization": token},
-                    )
-                    if resp.status_code != 200:
-                        detail = resp.text[:500]
-                        raise RuntimeError(f"语义层返回 {resp.status_code}: {detail}")
-                    body = resp.json()
-                    pending = str(body.get("error") or "")
-                    if "continue wait" not in pending.lower():
-                        break
-                    if time.monotonic() >= deadline:
-                        raise RuntimeError(
-                            f"语义层查询排队超时({round(time.monotonic() - started, 1)}s): {pending}"
-                        )
-                    await asyncio.sleep(1.5)
-            if body.get("error"):
-                raise RuntimeError(f"语义层错误: {body['error']}")
-
-            results = [
-                {k: (v.get("value") if isinstance(v, dict) else v)
-                 for k, v in row.items()}
-                for row in body.get("data", [])
-            ]
+            results = await cube_load(query)
             row_count = len(results)
         except Exception as exc:
             logger.error(

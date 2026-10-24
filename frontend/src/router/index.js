@@ -18,6 +18,12 @@ const routes = [
       meta: { public: true, title: '登录' }
     },
     {
+      path: '/bigscreen',
+      name: 'bigscreen',
+      component: () => import('@/views/BigScreenView.vue'),
+      meta: { requiredModule: 'xuchang-air-quality', title: '数据大屏' }
+    },
+    {
       path: '/',
       name: 'analysis',
       component: ReactAnalysisView

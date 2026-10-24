@@ -168,6 +168,38 @@
         </div>
       </section>
 
+      <section v-if="showBigScreenEntry" class="portal-section task-portal" aria-labelledby="bigscreen-title">
+        <header class="section-heading">
+          <span class="heading-bar task-bar" aria-hidden="true"></span>
+          <div>
+            <h2 id="bigscreen-title">数据大屏</h2>
+            <p>面向大气科、监测科与现场巡查管控人员的实时态势展示</p>
+          </div>
+        </header>
+
+        <div class="scheduled-task-grid">
+          <a class="scheduled-task-card bigscreen-card" href="/bigscreen" target="_blank" rel="noopener">
+            <span class="task-ambient" aria-hidden="true"></span>
+            <span class="task-badge">指挥展示</span>
+            <span class="task-card-top">
+              <span class="task-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><rect x="2.5" y="4.5" width="19" height="13" rx="1.5" /><path d="M8 20.5h8M12 17.5v3" /></svg>
+              </span>
+              <span class="task-title-wrap">
+                <strong>大气环境管控数据大屏</strong>
+                <small>新窗口打开 · 适合大屏设备常驻展示</small>
+              </span>
+            </span>
+            <span class="card-description">城市排名、站点态势、告警与达标进度整屏联动，数据与对话问数同源。</span>
+            <span class="task-meta"><span>每 30 分钟聚合快照</span><span>5 分钟轮询刷新</span></span>
+            <span class="card-action task-action">
+              打开大屏
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12" /><path d="m12 6 4 4-4 4" /></svg>
+            </span>
+          </a>
+        </div>
+      </section>
+
     </div>
   </main>
 </template>
@@ -199,6 +231,7 @@ const props = defineProps({
 
 const emit = defineEmits(['select', 'select-task'])
 const isSceneLayout = computed(() => props.layout === 'scenes')
+const showBigScreenEntry = projectConfig.hasModule('xuchang-air-quality')
 const sceneGroups = computed(() => props.scenes.map(scene => ({
   ...scene,
   agents: scene.modeIds

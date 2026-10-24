@@ -51,6 +51,7 @@ from app.fetchers.xuchang_nmc_hourly_forecast import XuchangNmcHourlyForecastFet
 from app.fetchers.xuchang_station_daily_exceedance import XuchangStationDailyExceedanceFetcher
 from app.fetchers.xuchang_station_daily_pollution import XuchangStationDailyPollutionFetcher
 from app.fetchers.xuchang_station_deviation_alert import XuchangStationDeviationAlertFetcher
+from app.fetchers.xuchang_screen_snapshot import XuchangScreenSnapshotFetcher
 from app.fetchers.xuchang_transport_analysis import XuchangTransportAnalysisFetcher
 from app.fetchers.xuchang_weather_com_daily_forecast import XuchangWeatherComDailyForecastFetcher
 from app.fetchers.xuchang_weather_situation import (
@@ -154,6 +155,7 @@ def _configured_fetchers(project_context):
         "xuchang_station_daily_pollution_fetcher": XuchangStationDailyPollutionFetcher,
         "xuchang_station_daily_exceedance_fetcher": XuchangStationDailyExceedanceFetcher,
         "xuchang_transport_analysis_fetcher": XuchangTransportAnalysisFetcher,
+        "xuchang_screen_snapshot_fetcher": XuchangScreenSnapshotFetcher,
         "xuchang_zhongda_station_minute_fetcher": XuchangZhongdaStationFetcher,
         "xuchang_zhongda_station_hour_fetcher":
             lambda: XuchangZhongdaStationFetcher(data_kind="hour"),

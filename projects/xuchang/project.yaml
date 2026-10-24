@@ -276,6 +276,8 @@ backend:
     # 场景二：站点日污染超标确认与溯源任务触发
     - xuchang_station_daily_exceedance_fetcher
     - xuchang_transport_analysis_fetcher
+    # 数据大屏整屏快照（Cube 同源聚合，web 端 /api/xuchang-dashboard 只读文件）
+    - xuchang_screen_snapshot_fetcher
     - xuchang_zhongda_station_minute_fetcher
     - xuchang_zhongda_station_hour_fetcher
     - xuchang_zhongda_city_hour_fetcher
