@@ -396,16 +396,21 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     var showBroadcasts by remember { mutableStateOf(false) }
     var showReports by remember { mutableStateOf(false) }
     var showShared by remember { mutableStateOf(false) }
-    LaunchedEffect(showHistory, showBroadcasts, showReports, showShared) {
-        viewModel.setChatVisible(!showHistory && !showBroadcasts && !showReports && !showShared)
+    var showDashboard by remember { mutableStateOf<String?>(null) } // null=关闭；"fieldwatch"/"bigscreen"=打开
+    LaunchedEffect(showHistory, showBroadcasts, showReports, showShared, showDashboard) {
+        viewModel.setChatVisible(
+            showHistory == false && showBroadcasts == false && showReports == false &&
+                showShared == false && showDashboard == null
+        )
     }
     var selectedTaskId by remember { mutableStateOf<String?>(null) }
     // 系统返回（侧滑/返回键）在面板打开时先回对话页，而不是走 Activity 默认行为直接退出。
-    BackHandler(enabled = showHistory || showBroadcasts || showReports || showShared) {
+    BackHandler(enabled = showHistory || showBroadcasts || showReports || showShared || showDashboard != null) {
         showHistory = false
         showBroadcasts = false
         showReports = false
         showShared = false
+        showDashboard = null
     }
     val voiceClient = remember { RealtimeVoiceClient(BuildConfig.API_BASE_URL) }
     val scope = rememberCoroutineScope()
@@ -533,19 +538,28 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             showBroadcasts = showBroadcasts,
             showReports = showReports,
             showShared = showShared,
+            showDashboard = showDashboard,
             taskTitles = state.scheduledTasks.map { it.taskId to it.name },
             onSelectTask = { selectedTaskId = it },
             onHistory = { showHistory = true; showBroadcasts = false; showReports = false; showShared = false },
-            onBack = { showHistory = false; showBroadcasts = false; showReports = false; showShared = false },
+            onBack = { showHistory = false; showBroadcasts = false; showReports = false; showShared = false; showDashboard = null },
             onBroadcasts = { showBroadcasts = true; showHistory = false; showReports = false; showShared = false; viewModel.openBroadcasts() },
                 onReports = { selectedTaskId = null; showReports = true; showHistory = false; showBroadcasts = false; showShared = false; viewModel.refreshScheduledTasks() },
             onShared = { showShared = true; showHistory = false; showBroadcasts = false; showReports = false; viewModel.loadSharedConversations() },
+            onDashboard = { showDashboard = it; showHistory = false; showBroadcasts = false; showReports = false; showShared = false },
             unreadBroadcastCount = state.unreadBroadcastCount,
             unreadReportCount = state.reportUnreadCount,
             onNew = { showHistory = false; showBroadcasts = false; showReports = false; showShared = false; viewModel.newConversation() },
         )
         if (showShared) {
             SharedConversationsPanel(state, viewModel, onBack = { showShared = false })
+        } else if (showDashboard != null) {
+            DashboardWebViewScreen(
+                entryUrl = dashboardEntryUrl(
+                    BuildConfig.WEB_FRONTEND_URL, showDashboard ?: "", BuildConfig.DASHBOARD_ACCESS_TOKEN
+                ),
+                allowedBaseUrl = BuildConfig.WEB_FRONTEND_URL
+            )
         } else if (showReports) {
             ScheduledTaskPanel(state, viewModel, selectedTaskId, onSession = { showReports = false })
         } else if (showBroadcasts) {
@@ -823,6 +837,7 @@ private fun AppTopBar(
     showBroadcasts: Boolean,
     showReports: Boolean,
     showShared: Boolean,
+    showDashboard: String?,
     taskTitles: List<Pair<String, String>>,
     onSelectTask: (String) -> Unit,
     onHistory: () -> Unit,
@@ -830,20 +845,33 @@ private fun AppTopBar(
     onBroadcasts: () -> Unit,
     onReports: () -> Unit,
     onShared: () -> Unit,
+    onDashboard: (String) -> Unit,
     unreadBroadcastCount: Int,
     unreadReportCount: Int,
     onNew: () -> Unit,
 ) {
     var taskMenuExpanded by remember { mutableStateOf(false) }
+    // 直连未配置（无前端地址或无令牌）时隐藏入口，保持登录后的 Web 端入口可用。
+    val dashboardEntryAvailable = remember {
+        BuildConfig.WEB_FRONTEND_URL.isNotBlank() &&
+            BuildConfig.DASHBOARD_ACCESS_TOKEN.isNotBlank() &&
+            dashboardEntryUrl(BuildConfig.WEB_FRONTEND_URL, "/fieldwatch", BuildConfig.DASHBOARD_ACCESS_TOKEN) != null
+    }
     Row(
         Modifier.fillMaxWidth().background(Color.White).statusBarsPadding().padding(horizontal = 18.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
     ) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            IconButton(onClick = if (showHistory || showBroadcasts || showReports || showShared) onBack else onHistory) {
-                Icon(painterResource(if (showHistory || showBroadcasts || showReports || showShared) R.drawable.ic_back else R.drawable.ic_menu), contentDescription = if (showHistory || showBroadcasts || showReports || showShared) "返回对话" else "历史会话", tint = SuyuanColors.text)
+            IconButton(onClick = if (showHistory || showBroadcasts || showReports || showShared || showDashboard != null) onBack else onHistory) {
+                Icon(painterResource(if (showHistory || showBroadcasts || showReports || showShared || showDashboard != null) R.drawable.ic_back else R.drawable.ic_menu), contentDescription = if (showHistory || showBroadcasts || showReports || showShared || showDashboard != null) "返回对话" else "历史会话", tint = SuyuanColors.text)
             }
-            if (showHistory) Text("历史会话", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
+            if (showDashboard != null) {
+                Text(
+                    if (showDashboard == "/bigscreen") "数据大屏" else "现场巡查快报",
+                    color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(start = 8.dp)
+                )
+            } else if (showHistory) Text("历史会话", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
             if (showBroadcasts) {
                 Text("广播消息", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
             } else if (showShared) {
@@ -867,6 +895,11 @@ private fun AppTopBar(
                     Box {
                         Icon(painterResource(R.drawable.ic_history), contentDescription = "定时任务", tint = SuyuanColors.text)
                         if (unreadReportCount > 0) Box(Modifier.size(8.dp).clip(CircleShape).background(SuyuanColors.error).align(androidx.compose.ui.Alignment.TopEnd))
+                    }
+                }
+                if (dashboardEntryAvailable) {
+                    IconButton(onClick = { onDashboard("/fieldwatch") }) {
+                        Icon(painterResource(R.drawable.ic_campaign), contentDescription = "巡查快报", tint = SuyuanColors.text)
                     }
                 }
             }
