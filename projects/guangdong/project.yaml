@@ -20,6 +20,7 @@ backend:
     ops: projects/guangdong/prompts/ops.md
   tools:
   - execute_guangdong_mart_sql
+  - guangdong_query_metrics
   - query_gd_suncere
   - query_gd_suncere_city_hour
   - query_gd_suncere_station_hour_new
@@ -71,6 +72,7 @@ backend:
     - station_operation_daily
     ops:
     - execute_guangdong_mart_sql
+    - guangdong_query_metrics
     - query_gd_suncere_station_hour_new
     - query_gd_suncere_station_day_new
     - station_operation_daily
