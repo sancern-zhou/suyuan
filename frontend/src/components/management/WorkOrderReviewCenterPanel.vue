@@ -282,7 +282,7 @@
               </template>
 
               <template v-else-if="source.key === 'station_hour'">
-                <!-- 多目标污染物拆成多张时序图：每张图只画该污染物的本站曲线、配对对照曲线
+                <!-- 多目标污染物拆成多张时序图：每张图只画该污染物的本站曲线、配对同站互证曲线
                      与它自己的剔除区间，避免同图叠加时互相遮挡；互为配对的污染物（NO↔NO2、
                      PM10↔PM2.5）合并为一张图，避免两张图曲线完全相同的重复。 -->
                 <ReviewTimeSeriesChart
@@ -568,11 +568,11 @@ const evidenceSections = computed(() => {
     })
 })
 
-// 剔除建议涉及的目标/对照之外的污染物：补画曲线用色与单位覆盖由共享模块提供，
+// 剔除建议涉及的目标/同站互证之外的污染物：补画曲线用色与单位覆盖由共享模块提供，
 // 气象图污染物面板续取同一套。
 const stationHourData = computed(() => sourceCache.value.station_hour?.data || {})
 
-// 小时时序图按污染物拆图（目标曲线/对照曲线/剔除区间逐项独立成图），装配逻辑与
+// 小时时序图按污染物拆图（目标曲线/同站互证曲线/剔除区间逐项独立成图），装配逻辑与
 // 气象图污染物面板共用 reviewTimeSeriesData，保证曲线名称与颜色两图一致。
 const hourlyChartBundle = computed(() => buildPollutantCharts({
   data: stationHourData.value,

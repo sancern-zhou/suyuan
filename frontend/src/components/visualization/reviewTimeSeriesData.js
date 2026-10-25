@@ -56,7 +56,7 @@ export function hexWithAlpha(hex, alpha = 0.14) {
   return `rgba(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`
 }
 
-// 目标/对照之外的污染物曲线用色（避开同城带的灰/绿/黄三色）。
+// 目标/同站互证之外的污染物曲线用色（避开同城带的灰/绿/黄三色）。
 export const EXTRA_POLLUTANT_COLORS = ['#ff8a75', '#56d6c9', '#d7a84e', '#8fb4ff']
 // 曲线单位覆盖：CO 与常规 μg/m³ 不同，其余与目标污染物一致。
 export const POLLUTANT_UNIT_OVERRIDES = { CO: 'mg/m³' }
@@ -93,8 +93,8 @@ export function switcherPollutantGroups(codes) {
   return groups
 }
 
-// 小时时序图按污染物拆图的共享装配。多目标污染物同图叠加时，目标曲线、对照曲线与
-// 剔除区间互相遮挡难以辨认；这里为每个目标污染物各装配一张图（本站曲线 + 配对对照曲线 +
+// 小时时序图按污染物拆图的共享装配。多目标污染物同图叠加时，目标曲线、同站互证曲线与
+// 剔除区间互相遮挡难以辨认；这里为每个目标污染物各装配一张图（本站曲线 + 配对同站互证曲线 +
 // 它自己的剔除区间），并保证同一污染物跨图同色。互为配对的污染物（NO↔NO2、PM10↔PM2.5）
 // 合并为一张"X+Y"图——两张图的曲线完全相同，拆开是重复，同图对比才是诊断所需。
 // 同城对比带只随主目标图显示（取证侧仅对主目标污染物取同城带）。
@@ -106,7 +106,7 @@ export function switcherPollutantGroups(codes) {
 // - charts: [{ pollutant, unit, series, markAreas }]，首项恒为主目标图（含同城带叠加）；
 // - colorMap: 污染物 → 曲线色（气象图污染物面板与区间着色复用）；
 // - stationPollutantSeries: 主目标图的站内曲线（剔除同城带叠加），气象图复用；
-// - seriesPointsByPollutant: 污染物 → 本站逐时点列（目标/对照/extra_points 全量，
+// - seriesPointsByPollutant: 污染物 → 本站逐时点列（目标/同站互证/extra_points 全量，
 //   气象图污染物切换选项的数据源）；
 // - targetCode: 主目标污染物编码（气象图切换默认选中）。
 export function buildPollutantCharts({
@@ -123,7 +123,7 @@ export function buildPollutantCharts({
     return { charts: [], colorMap: {}, stationPollutantSeries: [], seriesPointsByPollutant: {}, targetCode }
   }
 
-  // 污染物 → 本站逐时序列：主目标取 points，包内对照取 comparison_points（旧包回落
+  // 污染物 → 本站逐时序列：主目标取 points，包内同站互证项取 comparison_points（旧包回落
   // pm25_points），其余取 extra_points；三处皆无则该污染物无曲线可画。
   const comparisonName = data.comparison_pollutant || (data.pm25_points?.length ? 'PM2.5' : '')
   const comparisonCode = String(comparisonName || '').toUpperCase()
@@ -157,7 +157,7 @@ export function buildPollutantCharts({
     }
   }
 
-  // 污染物 → 曲线色：目标/对照固定色，其余从补画色板取；各图的对照污染物也预占颜色，
+  // 污染物 → 曲线色：目标/同站互证固定色，其余从补画色板取；各图的同站互证污染物也预占颜色，
   // 同一污染物在所有图里同色，与剔除区间标注的着色一致。
   const colorMap = { [targetCode]: '#2f86e0' }
   if (comparisonCode) colorMap[comparisonCode] = '#9b8cff'

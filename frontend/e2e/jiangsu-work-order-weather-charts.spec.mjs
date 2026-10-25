@@ -1,7 +1,7 @@
 import { expect, test } from 'playwright/test'
 
 // 故障工单审核工作台「气象时序」回归：右上角污染物切换器（参照智能事件对比图），
-// 一次只画选中污染物的本站+配对对照曲线；轴收紧到实际观测范围，不留未来空段。
+// 一次只画选中组的本站/同站互证曲线；轴收紧到实际观测范围，不留未来空段。
 const TIMES = ['2026-10-23 08:00:00', '2026-10-23 09:00:00', '2026-10-23 10:00:00']
 const points = base => TIMES.map(time => ({ time, value: base }))
 const stationHourSource = {

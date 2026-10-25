@@ -360,6 +360,9 @@
                     </template>
                     <template v-else-if="section.key === 'weather'">
                       <div class="minute-line-chart" aria-label="气象折线时序图">
+                        <div v-if="weatherChartOption && weatherSwitchOptions.length > 1" class="comparison-pollutant-switch weather-pollutant-switch" role="group" aria-label="气象图污染物切换">
+                          <button v-for="item in weatherSwitchOptions" :key="item.label" type="button" :class="{ active: weatherActiveLabel === item.label }" :aria-pressed="weatherActiveLabel === item.label" @click="weatherPollutant = item.label">{{ item.label }}</button>
+                        </div>
                         <div v-if="weatherChartOption" :ref="el => { weatherChartRef = el }" class="chart-canvas weather-chart-canvas"></div>
                         <p v-else class="source-empty">暂无气象时序数据，无法绘制气象图</p>
                       </div>
@@ -472,6 +475,7 @@ import * as echarts from 'echarts'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import { getTaskReview } from '@/services/taskReviewsApi.js'
 import { CHART_PRIMARY, CHART_ALARM } from '@/services/chart/chartColors'
+import { CHART_COMPARISON_PAIRS, switcherPollutantGroups } from '@/components/visualization/reviewTimeSeriesData.js'
 import {
   dispatchJiangsuSmartEventOrder,
   getJiangsuSmartEvent,
@@ -1189,24 +1193,77 @@ const weatherValue = value => {
   if (value == null || value === '' || Number(value) <= -99) return null
   return Number.isFinite(Number(value)) ? Number(value) : null
 }
+// 气象图污染物分组切换（与工单审核工作台同方案）：互为配对的污染物并成一组
+// （PM10/PM2.5，两条都是本站曲线），一次只画选中组，避免六参数同图叠加以致难读；
+// 单向配对组（O3）补配对项的同站互证曲线。默认选中事件目标污染物所在组。
+const WEATHER_KEY_CODE = { pM10: 'PM10', pM2_5: 'PM2.5', sO2: 'SO2', nO2: 'NO2', co: 'CO', o3: 'O3' }
+const WEATHER_CODE_COLORS = {
+  PM10: '#2f86e0', 'PM2.5': '#9b8cff', SO2: '#ff8a75', NO2: '#56d6c9', CO: '#d7a84e', O3: '#8fb4ff',
+}
+const weatherCodeLabel = code => POLLUTANT_SERIES.find(item => WEATHER_KEY_CODE[item.key] === code)?.label || code
+const weatherKeyByCode = code => POLLUTANT_SERIES.find(item => WEATHER_KEY_CODE[item.key] === code)?.key || null
+const weatherAvailableCodes = computed(() => POLLUTANT_SERIES
+  .filter(item => hourlyRecords.value.some(row => recordPollutant(row, item.key) != null))
+  .map(item => WEATHER_KEY_CODE[item.key]))
+const weatherGroups = computed(() => switcherPollutantGroups(weatherAvailableCodes.value)
+  .map(group => ({ members: group.members, label: group.members.join('/') })))
+const weatherPollutant = ref('')
+const weatherActiveLabel = computed(() => {
+  const groups = weatherGroups.value
+  if (!groups.length) return ''
+  const selected = groups.find(group => group.label === weatherPollutant.value)
+  if (selected) return selected.label
+  const targets = selectedEvent.value?.evidence_package?.collection_policy?.instrument_target_pollutants
+  const normalized = (Array.isArray(targets) ? targets : []).map(item => String(item).trim().toUpperCase())
+  const hit = groups.find(group => group.members.some(member => normalized.includes(member)))
+  return (hit || groups[0]).label
+})
+const weatherSwitchOptions = computed(() => weatherGroups.value.map(group => ({
+  label: group.label,
+  color: WEATHER_CODE_COLORS[group.members[0]],
+})))
+const weatherSelectedCodes = computed(() => weatherGroups.value
+  .find(group => group.label === weatherActiveLabel.value)?.members || [])
 const weatherChartOption = computed(() => {
   if (!weatherRecords.value.length) return null
   const times = [...new Set([...weatherRecords.value, ...hourlyRecords.value].map(row => weatherTimeKey(row.timePoint)))].filter(Boolean).sort()
   const weatherByTime = new Map(weatherRecords.value.map(row => [weatherTimeKey(row.timePoint), row]))
   const pollutantsByTime = new Map(hourlyRecords.value.map(row => [weatherTimeKey(row.timePoint), row]))
-  const series = POLLUTANT_SERIES.map(item => ({
-    name: item.label, type: 'line', xAxisIndex: 0, yAxisIndex: item.key === 'co' ? 1 : 0,
+  const pollutantSeries = code => ({
+    name: `${weatherCodeLabel(code)}（本站）`, type: 'line', xAxisIndex: 0,
+    yAxisIndex: code === 'CO' ? 1 : 0,
     showSymbol: false, connectNulls: false,
-    data: times.map(time => recordPollutant(pollutantsByTime.get(time), item.key)),
-  }))
+    itemStyle: { color: WEATHER_CODE_COLORS[code] }, lineStyle: { color: WEATHER_CODE_COLORS[code] },
+    data: times.map(time => recordPollutant(pollutantsByTime.get(time), weatherKeyByCode(code))),
+  })
+  const series = weatherSelectedCodes.value.map(pollutantSeries)
+  // 单向配对组（如 O3）补配对项的同站互证曲线；双向组两条本站曲线本身即互为同站互证
+  if (weatherSelectedCodes.value.length === 1) {
+    const code = weatherSelectedCodes.value[0]
+    const pair = CHART_COMPARISON_PAIRS[code]
+    const pairKey = pair ? weatherKeyByCode(pair) : null
+    if (pair && pair !== code && pairKey
+      && hourlyRecords.value.some(row => recordPollutant(row, pairKey) != null)) {
+      series.push({
+        name: `${weatherCodeLabel(pair)}（同站互证）`, type: 'line', xAxisIndex: 0,
+        yAxisIndex: pair === 'CO' ? 1 : 0,
+        showSymbol: false, connectNulls: false,
+        itemStyle: { color: WEATHER_CODE_COLORS[pair] }, lineStyle: { color: WEATHER_CODE_COLORS[pair] },
+        data: times.map(time => recordPollutant(pollutantsByTime.get(time), pairKey)),
+      })
+    }
+  }
+  // CO 未显示时不渲染 mg/m³ 次轴（ECharts 各 grid 的 yAxis 须连续分组，后续轴索引顺移）
+  const hasCo = series.some(item => item.yAxisIndex === 1)
+  const windSpeedAxis = hasCo ? 2 : 1
   series.push(...WEATHER_SERIES.map(item => ({
     name: item.label, type: 'line', xAxisIndex: item.key === 'windSpeed' ? 1 : 2,
-    yAxisIndex: { windSpeed: 2, temperature: 4, humidity: 4, pressure: 5 }[item.key],
+    yAxisIndex: { windSpeed: windSpeedAxis, temperature: windSpeedAxis + 2, humidity: windSpeedAxis + 2, pressure: windSpeedAxis + 3 }[item.key],
     showSymbol: false, connectNulls: false,
     data: times.map(time => weatherValue(weatherByTime.get(time)?.[item.key])),
   })))
   series.push({
-    name: '风向', type: 'scatter', xAxisIndex: 1, yAxisIndex: 3,
+    name: '风向', type: 'scatter', xAxisIndex: 1, yAxisIndex: windSpeedAxis + 1,
     symbol: 'path://M-1,12 L-1,-5 L-4,-5 L0,-12 L4,-5 L1,-5 L1,12 Z',
     symbolSize: [8, 26], itemStyle: { color: CHART_PRIMARY },
     data: times.flatMap(time => {
@@ -1238,7 +1295,7 @@ const weatherChartOption = computed(() => {
     xAxis,
     yAxis: [
       { type: 'value', gridIndex: 0, name: '浓度 (μg/m³)', scale: true },
-      { type: 'value', gridIndex: 0, name: 'CO (mg/m³)', position: 'right', scale: true, splitLine: { show: false } },
+      ...(hasCo ? [{ type: 'value', gridIndex: 0, name: 'CO (mg/m³)', position: 'right', scale: true, splitLine: { show: false } }] : []),
       { type: 'value', gridIndex: 1, name: '风速 (m/s)', min: 0 },
       { type: 'value', gridIndex: 1, show: false, min: 0, max: 1 },
       { type: 'value', gridIndex: 2, name: '气温 (℃) / 湿度 (%)', scale: true },
@@ -1251,6 +1308,7 @@ const weatherChartOption = computed(() => {
     series,
   }
 })
+watch(() => selectedEvent.value?.event_id, () => { weatherPollutant.value = '' })
 const renderCharts = () => {
   deltaChartInstance = ensureChart(deltaChartRef.value, deltaChartInstance, deltaChartOption.value)
   comparisonChartInstance = ensureChart(comparisonChartRef.value, comparisonChartInstance, comparisonChartOption.value)
@@ -2290,6 +2348,7 @@ applyDemoFreezeWindow().then(() => loadEvents())
 }
 .comparison-pollutant-switch button:hover { color: var(--color-primary); }
 .comparison-pollutant-switch button.active { background: var(--bg-container); color: var(--color-primary); box-shadow: 0 1px 3px rgba(31, 42, 68, 0.14); font-weight: 600; }
+.weather-pollutant-switch { justify-content: flex-end; margin-bottom: 6px; }
 .comparison-chart-canvas { height: 360px; }
 .video-evidence-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
 .video-evidence-card { margin: 0; border: 1px solid var(--border-2); border-radius: 6px; overflow: hidden; background: var(--bg-container); }
