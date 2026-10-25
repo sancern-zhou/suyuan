@@ -82,6 +82,20 @@ data-ops 链路写入与 fetcher 同名表，回滚后仍可运行。
 `OPS_MART_DATABASE_URL`（mart 查询/审计/DQ 连接）、`CUBE_API_URL`/`CUBE_API_SECRET`
 （语义层 REST，默认 `http://127.0.0.1:4611/cubejs-api/v1`）。
 
+## ODS 兜底通道（同步的数据不允许 Agent 查不到）
+
+主契约 `contract.txt`（37 张：高频维度/指标完整字段说明 + 长尾一句话）覆盖不到的
+同步表（月检 `rf_m_*`、质控 `rf_q_*`、半年 `rf_hy_*`、年维保 `rf_y_*`、
+组分网浊度计、现场检查评分 `sec_checkscore*` 等 53 张）由
+`backend/app/tools/query/guangdong_ops_sql_query/ods_contract.txt` 托底：
+`execute_guangdong_mart_sql` 一个工具两套白名单，兜底表引用写全限定名
+`guangdong_ods.<表名>`，一句话索引 + `describe_table` 取列（同步内部列 `_synced_at` 等不外露）。
+
+- 生成：`gen_ods_fallback_contract.py`（清单 = sources.yml 声明 − 契约覆盖 + EXTRA_FALLBACK，
+  新表缺用途登记直接生成失败）；`--grant` 给 agent_reader 补授权。
+- 校验：`dq_check.py` 第 6 项每日查生成物漂移与授权完整性；
+  `audit_ods_coverage.py` 随时人工复核库面（GAP/未声明表必须为 0，退出码非 0 即有缺口）。
+
 ## 口径修改的正确姿势（四方一致）
 
 1. 改 `sync/datasets/*.yaml`（契约）
@@ -93,6 +107,7 @@ data-ops 链路写入与 fetcher 同名表，回滚后仍可运行。
 
 ```bash
 PYTHONPATH=backend python projects/guangdong/data-ops/sync/gen_tool_contract.py --check
+PYTHONPATH=backend python projects/guangdong/data-ops/sync/gen_ods_fallback_contract.py --check
 python projects/guangdong/data-ops/semantic/validate_registry.py
 python projects/guangdong/data-ops/semantic/gen_semantic_artifacts.py --check
 python projects/guangdong/data-ops/sync/dq_check.py   # 运行时环境

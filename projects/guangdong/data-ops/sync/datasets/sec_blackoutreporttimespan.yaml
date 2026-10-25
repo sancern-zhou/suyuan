@@ -2,6 +2,8 @@ dataset: sec_blackoutreporttimespan
 description: 停运报告时段表。源自 SEC_BlackOutReportTimespan，一行 = 一条停运跨度（今年约 550 条）。
 owner: 广东运维平台组
 grain: 一条停运时间跨度
+detail: brief
+summary: 停运时间跨度（id/sdt/edt 起止时间等 7 列）。
 freshness_slo: 26小时
 known_caveats:
 - 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）

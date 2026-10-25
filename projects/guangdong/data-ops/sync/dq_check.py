@@ -7,6 +7,9 @@ Checks:
   4. unique keys     - dedup-sensitive tables must have no duplicate keys
   5. contract drift  - contract.txt 必须与 sync/datasets/*.yaml 一致
      (gen_tool_contract.py --check)
+  6. ods fallback    - ods_contract.txt 与同步范围一致，且 agent_reader 对兜底表
+     有 SELECT 授权（同步进 guangdong_ods 的表不允许 Agent 查不到；
+     gen_ods_fallback_contract.py --check + role_table_grants）
 
 Results appended to guangdong_sync.dq_results; exit 1 if any check fails so the
 scheduled task log shows it clearly. guangdong_query_metrics 读取本表生成
@@ -173,13 +176,11 @@ async def check_heartbeat(pg, results):
                          f"watermark={row['watermark']} age {age_h:.1f}h")
 
 
-async def check_contract_drift(pg, results):
-    """契约防漂移: datasets/*.yaml 必须与工具加载的 contract.txt 生成物一致。"""
-    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gen_tool_contract.py")
+async def _run_generator_check(script_name):
+    """在仓库根 PYTHONPATH 下运行 sync 生成器的 --check，返回 (status, detail)。"""
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), script_name)
     if not os.path.exists(script):
-        await record(pg, results, "contract", "execute_guangdong_mart_sql", "SKIP",
-                     "gen_tool_contract.py not deployed to runtime; skip")
-        return
+        return "SKIP", f"{script_name} not deployed to runtime; skip"
     # 仓库内运行：sync 目录向上四级为仓库根；独立运行时目录（gitignore 的部署副本）：
     # 在 sync_config.json 配 backend_root 绝对路径。
     cfg_backend_root = None
@@ -204,10 +205,52 @@ async def check_contract_drift(pg, results):
         out, _ = await proc.communicate()
         lines = (out or b"").decode("utf-8", "replace").strip().splitlines()
         detail = lines[-1] if lines else f"exit={proc.returncode}"
-        status = "OK" if proc.returncode == 0 else "FAIL"
+        return ("OK" if proc.returncode == 0 else "FAIL"), detail
     except Exception as exc:  # noqa: BLE001
-        status, detail = "FAIL", f"check error: {exc}"
+        return "FAIL", f"check error: {exc}"
+
+
+async def check_contract_drift(pg, results):
+    """契约防漂移: datasets/*.yaml 必须与工具加载的 contract.txt 生成物一致。"""
+    status, detail = await _run_generator_check("gen_tool_contract.py")
     await record(pg, results, "contract", "execute_guangdong_mart_sql", status, detail)
+
+
+async def check_ods_fallback(pg, results):
+    """ODS 兜底通道: 生成物防漂移 + agent_reader 授权完整性。
+
+    不变式: 同步进 guangdong_ods 的表不得出现"Agent 查不到"——没被主契约
+    覆盖的表必须落在 ods_contract.txt 里, 且 agent_reader 有 SELECT 权限。
+    """
+    status, detail = await _run_generator_check("gen_ods_fallback_contract.py")
+    await record(pg, results, "contract", "ods_fallback", status, detail)
+
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import gen_ods_fallback_contract as ods_contract
+
+        tables, _covered = ods_contract.fallback_tables()
+    except Exception as exc:  # noqa: BLE001
+        await record(pg, results, "grant", "ods_fallback", "FAIL",
+                     f"cannot compute fallback list: {exc}")
+        return
+
+    rows = await pg.fetch(
+        """SELECT table_name FROM information_schema.role_table_grants
+           WHERE grantee='agent_reader' AND table_schema='guangdong_ods'"""
+    )
+    granted = {r["table_name"] for r in rows}
+    missing = sorted(set(tables) - granted)
+    if missing:
+        await record(
+            pg, results, "grant", "ods_fallback", "FAIL",
+            f"agent_reader missing SELECT on {len(missing)} table(s): "
+            + ", ".join(missing[:8])
+            + " (run gen_ods_fallback_contract.py --grant)",
+        )
+    else:
+        await record(pg, results, "grant", "ods_fallback", "OK",
+                     f"{len(tables)} fallback tables granted")
 
 
 async def main() -> int:
@@ -222,6 +265,7 @@ async def main() -> int:
         await check_unique(pg, results)
         await check_heartbeat(pg, results)
         await check_contract_drift(pg, results)
+        await check_ods_fallback(pg, results)
     finally:
         await pg.close()
     failed = [r for r in results if r["status"] == "FAIL"]

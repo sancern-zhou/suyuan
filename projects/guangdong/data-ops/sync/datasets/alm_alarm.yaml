@@ -2,6 +2,8 @@ dataset: alm_alarm
 description: 广东站点告警通知流水。源自 ALM_ALARM，一行 = 一条通知（今年约 20 万条）。
 owner: 广东运维平台组
 grain: 一条告警通知记录（含短信/邮件发送渠道）
+detail: brief
+summary: 告警通知流水（含 SMS/Mail 发送渠道，无处理闭环状态）；统计用 mart_alarm_notify_analysis，当前态势用 mart_station_alarm_status。
 freshness_slo: 60分钟（高频链路）
 known_caveats:
 - 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）

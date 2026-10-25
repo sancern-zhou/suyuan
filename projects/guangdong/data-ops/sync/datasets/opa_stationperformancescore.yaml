@@ -2,6 +2,8 @@ dataset: opa_stationperformancescore
 description: 站点×月绩效考核透传层。一行 = 一个站点一月的考核记录（116 列平台口径原文，13,289 行，每日全量刷新）。
 owner: 广东运维平台组
 grain: 一行 = 站点×月绩效考核记录（ospsid）
+detail: brief
+summary: 站点×月绩效考核原文宽表（116 列，六参数/捕获率/质控/两率/金额）；汇总口径用 mart_performance_analysis，完整列名用 describe_table。
 freshness_slo: 26小时
 known_caveats:
 - 平台每日 10:15 左右重算；分析统计优先用 mart_performance_analysis（已宽表化并关联站点维度）

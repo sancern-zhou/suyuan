@@ -2,6 +2,8 @@ dataset: mtc_ordertaskitem
 description: 工单关联任务项。源自 MTC_ORDERTASKITEM，一行 = 工单的一个任务项（今年计划窗口约 8.4 万项，每日全量+窗口刷新）。
 owner: 广东运维平台组
 grain: 一张工单关联的一个任务项
+detail: brief
+summary: 工单关联任务项（workingordercode/ruleitemtag/planfinishtime）；无创建时间列，按工单号过滤核对。
 freshness_slo: 26小时
 known_caveats:
 - 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）

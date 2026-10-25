@@ -2,6 +2,8 @@ dataset: alm_home
 description: 站点当前告警态势快照。源自 Alm_Home，一行 = 一个站点（当日 63 站，覆盖面以源系统推送为准），每日刷新。
 owner: 广东运维平台组
 grain: 一个站点的当前告警态势（快照）
+detail: brief
+summary: 站点当前告警态势快照（实测仅告警中站点入表）；当前态势统计用 mart_station_alarm_status。
 freshness_slo: 26小时
 known_caveats:
 - 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）

@@ -2,6 +2,8 @@ dataset: sec_qcblackout
 description: 质控停运月度汇总。源自 SEC_QcBlackOut，一行 = 站点×月的质控停运汇总（3.5 万行，每月新增，每日全量刷新）。
 owner: 广东运维平台组
 grain: 一个站点一月的质控停运汇总
+detail: brief
+summary: 站点×月质控停运汇总（month 最新 2026-09）。
 freshness_slo: 26小时
 known_caveats:
 - 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）

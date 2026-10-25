@@ -2,6 +2,8 @@ dataset: log_device
 description: 设备状态与事件日志。源自 LOG_DEVICE，一行 = 一条事件（今年约 7.4 万条）。
 owner: 广东运维平台组
 grain: 一条设备状态/事件日志
+detail: brief
+summary: 设备状态/事件日志（devicelogid/eventstate/orderid）；生命周期统计用 mart_device_lifecycle_analysis。
 freshness_slo: 60分钟（高频链路）
 known_caveats:
 - 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）

@@ -2,6 +2,8 @@ dataset: sup_devicedaycheck
 description: 设备日检查。源自 Sup_DeviceDayCheck，一行 = 设备×日的检查记录（今年 4,040 条，updatetime 增量）。
 owner: 广东运维平台组
 grain: 一台设备一个检查日的记录
+detail: brief
+summary: 设备×日检查记录（id/deviceid/stationid/检查日期与项目列，23 列）。
 freshness_slo: 26小时
 known_caveats:
 - 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）

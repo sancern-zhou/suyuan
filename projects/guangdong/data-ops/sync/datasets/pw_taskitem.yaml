@@ -2,6 +2,8 @@ dataset: pw_taskitem
 description: 运维计划任务项。源自 PW_TASKITEM，一行 = 一个任务项（今年约 8.3 万项，每日全量+今年创建窗口刷新）。
 owner: 广东运维平台组
 grain: 一个计划任务项
+detail: brief
+summary: 计划任务项（ruleitemtag/pollutanttype/计划窗口/完成时间/转工单号）；统计用 mart_inspection_task_analysis。
 freshness_slo: 26小时
 known_caveats:
 - 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）

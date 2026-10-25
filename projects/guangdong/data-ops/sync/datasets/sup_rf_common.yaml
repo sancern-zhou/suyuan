@@ -2,6 +2,8 @@ dataset: sup_rf_common
 description: 运维表单通用数据体（非故障单的表单内容，306 列宽表）。源自 Sup_RF_Common，一行 = 一张表单提交。
 owner: 广东运维平台组
 grain: 一张非故障单的表单体（题目项展开为列）
+detail: brief
+summary: 组分网非故障单表单体（306 列题目项平铺，workingordercode 关联工单）；列多，先按工单号过滤再取列，完整列名用 describe_table。
 freshness_slo: 60分钟（高频链路）
 known_caveats:
 - 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）

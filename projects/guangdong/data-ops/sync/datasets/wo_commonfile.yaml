@@ -2,6 +2,8 @@ dataset: wo_commonfile
 description: 工单附件/表单文件主表透传。一行 = 一条文件记录（今年窗口增量，约 30 万行/年）；ops_audit 本地取数依赖本表。
 owner: 广东运维平台组
 grain: 一行 = 一条附件记录（wcfid）
+detail: brief
+summary: 工单附件主表（wcfid/refid/type_code/file_path）；完整性统计用 wo_commonfile_links，文件本体在源系统。
 freshness_slo: 60分钟
 known_caveats:
 - refid 为工单/表单关联键；与 wo_commonfile_links 视图同源，本表为物理表全量口径

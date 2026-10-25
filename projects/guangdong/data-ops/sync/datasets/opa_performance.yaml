@@ -2,6 +2,8 @@ dataset: opa_performance
 description: 工单流程步骤绩效得分透传层。一行 = 一张工单一个流程步骤的考核得分（36,115 行，每日全量刷新）。
 owner: 广东运维平台组
 grain: 一行 = 工单一个流程步骤的绩效得分（id）
+detail: brief
+summary: 工单一个流程步骤的绩效得分（ospsid/working_order_code/两率/质控/总分/核减实发金额）；站点月度汇总用 mart_performance_analysis。
 freshness_slo: 26小时
 known_caveats:
 - 无时间列，每日全量同步；得分金额为平台考核口径原值，不重算

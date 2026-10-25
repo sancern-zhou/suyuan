@@ -4,6 +4,11 @@
 单一来源约定：datasets/*.yaml 是契约的唯一人工维护源；工具描述中的契约文本块
 （backend/app/tools/query/guangdong_ops_sql_query/contract.txt）是本脚本的生成物。
 
+契约分层（控制工具描述体积，长尾表靠 describe_table 取列）：
+  - 高频维度/指标表与高频表单（周检 rf_w_*）：yaml 带 guide 字段，契约保留完整字段说明；
+  - 其余表（detail: brief）：契约只留「表名（grain）：summary」一句话，字段结构用 describe_table。
+    brief 表必须有 summary 字段，生成器强校验，缺失直接失败。
+
 用法:
   PYTHONPATH=backend python projects/guangdong/data-ops/sync/gen_tool_contract.py            # 生成并写入 contract.txt
   PYTHONPATH=backend python projects/guangdong/data-ops/sync/gen_tool_contract.py --check    # 校验 contract.txt 是否与 yaml 一致（漂移检测）
@@ -72,7 +77,9 @@ HEADER = (
     "\n\n【广东运维工单数据集契约（PostgreSQL，仅下列{n}张表）】\n"
     "数据由 data-ops 链路（sync_table.py -> dbt）从运维源库（Operation_SC_GD）按水位同步，非实时；"
     "实时状态类问题建议同时用 execute_ops_sql_query 直查源库核对。\n"
-    "生成SQL前先读契约，直接生成SQL，不要先describe_table；仅当契约未列字段时才describe_table。"
+    "生成SQL前先读契约，直接生成SQL，不要先describe_table；仅当契约未列字段时才describe_table。\n"
+    "中低频表单不在本契约：月检(rf_m_*)/质控(rf_q_*)/半年(rf_hy_*)/年维保(rf_y_*)等由 ODS 兜底契约"
+    "（ods_contract.txt，同一工具第二套白名单，引用写全限定名 guangdong_ods.<表名>）托底，一句话索引+describe_table 取列。"
 )
 
 FOOTER = (
@@ -84,6 +91,7 @@ FOOTER = (
 FILE_HEADER = (
     "# generated from sync/datasets/*.yaml by gen_tool_contract.py — DO NOT EDIT BY HAND\n"
     "# 单一来源: projects/guangdong/data-ops/sync/datasets/*.yaml；漂移检测见 dq_check.py\n"
+    "# 分层: yaml 带 guide=完整字段说明（高频）；detail: brief + summary=一句话（长尾，describe_table 取列）\n"
 )
 
 
@@ -122,15 +130,31 @@ def build_contract():
     order = [t for t in TABLE_ORDER if t in docs]
     extra = sorted(set(docs) - set(order))
     order += extra
-    missing_guide = [t for t in order if not docs[t].get("guide")]
+    missing_guide = [
+        t for t in order
+        if not docs[t].get("detail") == "brief" and not docs[t].get("guide")
+    ]
     if missing_guide:
         raise SystemExit("datasets missing guide field: " + ", ".join(missing_guide))
+    missing_summary = [
+        t for t in order
+        if docs[t].get("detail") == "brief" and not docs[t].get("summary")
+    ]
+    if missing_summary:
+        raise SystemExit(
+            "brief datasets missing summary field: " + ", ".join(missing_summary))
     tables_line = ",".join(order)
     segments = []
     for t in order:
-        segments.append("\n- {d}（{g}）：{guide}".format(
-            d=t, g=docs[t].get("grain", "").strip(), guide=docs[t]["guide"].strip(),
-        ))
+        doc = docs[t]
+        if doc.get("detail") == "brief":
+            segments.append("\n- {d}（{g}）：{s}".format(
+                d=t, g=doc.get("grain", "").strip(), s=doc["summary"].strip(),
+            ))
+        else:
+            segments.append("\n- {d}（{g}）：{guide}".format(
+                d=t, g=doc.get("grain", "").strip(), guide=doc["guide"].strip(),
+            ))
     body = HEADER.format(n=len(order)) + "".join(segments) + FOOTER
     content = FILE_HEADER + "TABLES: " + tables_line + "\nGUIDE_START" + body + "\nGUIDE_END\n"
     return content

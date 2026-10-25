@@ -2,6 +2,8 @@ dataset: sec_blackoutreportdetail
 description: 停运报告明细。源自 SEC_BlackOutReportDetail，一行 = 一条停运时段明细（今年约 23.1 万条）。
 owner: 广东运维平台组
 grain: 一条停运时段明细
+detail: brief
+summary: 停运时段明细（stationid/timepoint 等共 5 列）；历史停运报告主表 SEC_BLACKOUTREPORT 2019 年后停更勿用。
 freshness_slo: 26小时
 known_caveats:
 - 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）

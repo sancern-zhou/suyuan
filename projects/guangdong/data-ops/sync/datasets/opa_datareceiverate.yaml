@@ -2,6 +2,8 @@ dataset: opa_datareceiverate
 description: 数据到报率平台统计。源自 OPA_DataReceiveRate，一行 = 一条统计记录（每日生成，共 1.1 万行）。
 owner: 广东运维平台组
 grain: 一条到报率统计记录
+detail: brief
+summary: 到报率统计（每日 10:15 左右生成，30 列）；平台统计口径直接取用勿重算。
 freshness_slo: 26小时
 known_caveats:
 - 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）
