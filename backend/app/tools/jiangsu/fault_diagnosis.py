@@ -1821,6 +1821,113 @@ class JiangsuStationEnvironmentHistoryTool(LLMTool):
             return {"status": "failed", "success": False, "data": {}, "summary": f"站房动环历史查询失败：{exc}"}
 
 
+class JiangsuStationEnvironmentHistoryDbTool(LLMTool):
+    """Read station-house env/power hour history from the local synced ODS shards.
+
+    2026-10-25 起智能事件/工单审核的动环证据统一取自本地同步分片
+    (jiangsu_ods.integrated_h_<年>_<站>, 小时级增量同步), 不再在证据采集时
+    实时调用平台 GetStationEnvPowerData 接口。分片仅覆盖 100 个省控站与
+    小时分片实测 11 个动环项(VA/VB/VC/IA/IB/IC/StationTemp/StationHum/
+    PipeTemp/PipeHum/SamplePipeSPress); 30 秒曲线、钢瓶压力/烟感/水浸等
+    未覆盖项仍需 API 工具(jiangsu_fetch_station_environment_history)。
+    """
+
+    _SHARD_SCHEMA = "jiangsu_ods"
+
+    def __init__(self) -> None:
+        super().__init__(
+            name="jiangsu_query_station_environment_history_local",
+            description=(
+                "读取本地同步的江苏站房动环小时历史(jiangsu_ods.integrated_h_<年>_<站>)，"
+                "覆盖 100 个省控站的小时分片 11 项动环指标，数据截至最近一次同步整点。"
+                "仅供证据采集链路内部使用；30 秒曲线与未覆盖项请用 jiangsu_fetch_station_environment_history。"
+            ),
+            category=ToolCategory.QUERY,
+            function_schema={"name": "jiangsu_query_station_environment_history_local",
+                             "description": "按站点编码查询本地同步的站房动环小时历史(单站)。",
+                             "parameters": {"type": "object", "properties": {
+                                 "station_code": {"type": "string", "description": "平台站点编码，如 3001A。"},
+                                 "start_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss。"},
+                                 "end_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss。"},
+                                 "time_type": {"type": "string", "enum": ["h"], "default": "h"},
+                                 "pollutant_codes": {"type": "array", "items": {"type": "string"},
+                                                     "description": "可选，只查询指定动环编码（如 StationTemp、VA）。"},
+                             }, "required": ["station_code", "start_time", "end_time"]}},
+        )
+
+    async def execute(self, context=None, station_code: str | None = None,
+                      start_time: str | None = None, end_time: str | None = None,
+                      time_type: str = "h", pollutant_codes: list[str] | None = None,
+                      **_: Any) -> dict[str, Any]:
+        try:
+            code = str(station_code or "").strip().lower()
+            if not code:
+                raise ValueError("站房动环本地查询需要 station_code")
+            start = _parse_iso_time(start_time, "start_time")
+            end = _parse_iso_time(end_time, "end_time")
+            if start > end:
+                raise ValueError("开始时间不能晚于结束时间")
+            if str(time_type or "h").strip().lower() != "h":
+                raise ValueError("本地同步分片仅含小时数据，30 秒曲线请用 jiangsu_fetch_station_environment_history")
+            items = [str(item).strip() for item in (pollutant_codes or []) if str(item).strip()]
+
+            years = range(start.year, end.year + 1)
+            shards = [f"integrated_h_{year}_{code}" for year in years]
+            existing = {
+                row["table_name"]
+                for row in await _ods_rows(
+                    """SELECT table_name FROM information_schema.tables
+                       WHERE table_schema = $1 AND table_name = ANY($2)""",
+                    self._SHARD_SCHEMA, list(shards),
+                )
+            }
+            if not existing:
+                return {"status": "failed", "success": False, "data": {},
+                        "summary": (f"站房动环本地同步表无该站点分片（{code}）：分片仅覆盖 100 个省控站"
+                                    f"（3072A 无分片），且小时数据自 2026-10 起同步。")}
+
+            rows: list[dict[str, Any]] = []
+            shard_hits: list[str] = []
+            for shard in shards:
+                if shard not in existing:
+                    continue
+                shard_rows = await _ods_rows(
+                    f"""SELECT stationcode AS "stationCode", timepoint AS "timepoint",
+                               pollutantcode AS "pollutantCode", monvalue, mark
+                        FROM {self._SHARD_SCHEMA}.{shard}
+                        WHERE timepoint >= $1 AND timepoint <= $2
+                          {"AND pollutantcode = ANY($3)" if items else ""}
+                        ORDER BY timepoint, pollutantcode""",
+                    start, end, *([list(items)] if items else []),
+                )
+                for row in shard_rows:
+                    raw = row.get("monvalue")
+                    if isinstance(raw, str):
+                        try:
+                            row["monValue"] = float(raw)
+                        except ValueError:
+                            row["monValue"] = None
+                    else:
+                        row["monValue"] = raw
+                rows.extend(shard_rows)
+                shard_hits.append(shard)
+
+            coverage = max((row["timepoint"] for row in rows if row.get("timepoint")), default=None)
+            data = {"tableData": rows, "chartData": []}
+            return {"status": "success" if rows else "empty", "success": True,
+                    "data": data,
+                    "metadata": {"source": "jiangsu_ods_local", "endpoint": f"jiangsu_ods.integrated_h_<年>_{code}",
+                                 "shards": shard_hits, "station_code": code,
+                                 "time_range": [start_time, end_time], "time_type": "h",
+                                 "pollutant_codes": items or ["全部(小时分片11项)"],
+                                 "record_count": len(rows), "data_through": str(coverage) if coverage else None,
+                                 "queried_at": datetime.now().astimezone().isoformat()},
+                    "summary": (f"站房动环历史(本地同步表)查询完成：站点 {code}，返回 {len(rows)} 条小时记录"
+                                + (f"，数据截至 {coverage}" if coverage else "，窗口内无数据") + "。")}
+        except ValueError as exc:
+            return {"status": "failed", "success": False, "data": {}, "summary": f"站房动环历史(本地同步表)查询失败：{exc}"}
+
+
 class JiangsuQcTaskHistoryTool(LLMTool):
     """Read task records first; their ``rId`` and ``rStart`` drive detail tools."""
 

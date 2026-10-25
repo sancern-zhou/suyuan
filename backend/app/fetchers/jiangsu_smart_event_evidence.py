@@ -29,7 +29,7 @@ from app.tools.jiangsu.fault_diagnosis import (
     JiangsuFaultWorkOrdersTool,
     JiangsuQcTaskHistoryTool,
     JiangsuStationAlarmLogsTool,
-    JiangsuStationEnvironmentHistoryTool,
+    JiangsuStationEnvironmentHistoryDbTool,
 )
 from app.tools.jiangsu.legacy_evidence import JiangsuLegacyEvidenceAdapter, filter_diagnostic_alarm_rows
 from app.tools.jiangsu.review_station_selection import select_district_stations
@@ -708,7 +708,7 @@ class JiangsuSmartEventEvidenceFetcher:
         *,
         station_data_tool: JiangsuStationDataTool | None = None,
         station_alarm_tool: JiangsuStationAlarmLogsTool | None = None,
-        environment_tool: JiangsuStationEnvironmentHistoryTool | None = None,
+        environment_tool: JiangsuStationEnvironmentHistoryDbTool | None = None,
         work_order_tool: JiangsuFaultWorkOrdersTool | None = None,
         qc_history_tool: JiangsuQcTaskHistoryTool | None = None,
         legacy_adapter: JiangsuLegacyEvidenceAdapter | None = None,
@@ -716,7 +716,7 @@ class JiangsuSmartEventEvidenceFetcher:
     ) -> None:
         self.station_data_tool = station_data_tool or JiangsuStationDataTool()
         self.station_alarm_tool = station_alarm_tool or JiangsuStationAlarmLogsTool()
-        self.environment_tool = environment_tool or JiangsuStationEnvironmentHistoryTool()
+        self.environment_tool = environment_tool or JiangsuStationEnvironmentHistoryDbTool()
         self.work_order_tool = work_order_tool or JiangsuFaultWorkOrdersTool()
         self.qc_history_tool = qc_history_tool or JiangsuQcTaskHistoryTool()
         self.legacy_adapter = legacy_adapter or JiangsuLegacyEvidenceAdapter()
@@ -1305,6 +1305,9 @@ class JiangsuSmartEventEvidenceFetcher:
             "仪器状态、动环历史按事件起止时间所在整点小时区间抓取（合并桶即首末线索所在小时之间）。",
             "仪器状态仅在事件窗口命中目标污染物仪器告警时抓取；告警回看七天并按恢复时间判断重叠，查询失败不视为无告警。",
             "动环历史仅在站房设备告警日志出现动环（动力环境）类告警时抓取。",
+            "动环历史统一取自本地同步分片表（jiangsu_ods.integrated_h_<年>_<站>，小时级增量同步），"
+            "覆盖 100 个省控站的小时分片 11 项动环指标，数据截至最近一次同步整点；"
+            "30 秒曲线与分片未覆盖项（钢瓶压力/烟感/水浸等）不在证据包内，分片缺失时记录为 failed gap。",
             "质控操作记录仅保留严重告警类型（不合格/超差等非合格结果）。",
             "站房设备告警接口原生仅返回查询当日数据，且与数采报警同源；入包仅保留动环明细与分类统计/设备状态位，通用明细见数采报警源。",
             "平台告警源已移除：原 ALMsummary 仓储无平台 API 可查。",

@@ -29,7 +29,7 @@ from app.tools.jiangsu.fault_diagnosis import (
     JiangsuQcTaskHistoryTool,
     JiangsuQcTaskStatusTool,
     JiangsuStationAlarmLogsTool,
-    JiangsuStationEnvironmentHistoryTool,
+    JiangsuStationEnvironmentHistoryDbTool,
 )
 from app.tools.jiangsu.result_filter import compact_air_quality_records
 from app.tools.jiangsu.review_station_selection import select_district_stations
@@ -1400,7 +1400,7 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
         detail_tool: JiangsuFaultWorkOrderDetailTool | None = None,
         station_data_tool: JiangsuStationDataTool | None = None,
         station_alarm_tool: JiangsuStationAlarmLogsTool | None = None,
-        environment_tool: JiangsuStationEnvironmentHistoryTool | None = None,
+        environment_tool: JiangsuStationEnvironmentHistoryDbTool | None = None,
         qc_history_tool: JiangsuQcTaskHistoryTool | None = None,
         qc_status_tool: JiangsuQcTaskStatusTool | None = None,
         qc_run_log_tool: JiangsuQcRunLogTool | None = None,
@@ -1421,7 +1421,7 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
         self.detail_tool = detail_tool or JiangsuFaultWorkOrderDetailTool()
         self.station_data_tool = station_data_tool or JiangsuStationDataTool()
         self.station_alarm_tool = station_alarm_tool or JiangsuStationAlarmLogsTool()
-        self.environment_tool = environment_tool or JiangsuStationEnvironmentHistoryTool()
+        self.environment_tool = environment_tool or JiangsuStationEnvironmentHistoryDbTool()
         self.qc_history_tool = qc_history_tool or JiangsuQcTaskHistoryTool()
         self.qc_status_tool = qc_status_tool or JiangsuQcTaskStatusTool()
         self.qc_run_log_tool = qc_run_log_tool or JiangsuQcRunLogTool()

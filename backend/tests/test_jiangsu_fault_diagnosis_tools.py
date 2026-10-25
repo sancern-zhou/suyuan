@@ -18,6 +18,7 @@ from app.tools.jiangsu.fault_diagnosis import (
     JiangsuQcTaskStatusTool,
     JiangsuReviewEvidenceTool,
     JiangsuStationAlarmLogsTool,
+    JiangsuStationEnvironmentHistoryDbTool,
     JiangsuStationEnvironmentHistoryTool,
     _project_alarms,
 )
@@ -1652,3 +1653,92 @@ async def test_network_inspection_summary_excludes_non_provincial_stations(monke
     assert result["metadata"]["alarm_station_count"] == 1
     assert [row["code"] for row in result["data"]["staList"]] == ["3001A", "3002A"]
     assert "覆盖 2 个站点" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_station_environment_history_db_reads_local_shard(monkeypatch):
+    from datetime import datetime as _dt
+
+    async def fake_ods(sql, *args):
+        if "information_schema" in sql:
+            return [{"table_name": "integrated_h_2026_3001a"}]
+        assert "integrated_h_2026_3001a" in sql
+        return [
+            {"stationCode": "3001a", "timepoint": _dt(2026, 10, 25, 8, 0),
+             "pollutantCode": "StationTemp", "monvalue": "25.6", "mark": None},
+            {"stationCode": "3001a", "timepoint": _dt(2026, 10, 25, 8, 0),
+             "pollutantCode": "VA", "monvalue": "abc", "mark": "Lsp"},
+        ]
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._ods_rows", fake_ods)
+    result = await JiangsuStationEnvironmentHistoryDbTool().execute(
+        station_code="3001A", start_time="2026-10-25 00:00:00", end_time="2026-10-25 23:59:59",
+    )
+
+    assert result["success"] is True
+    assert result["status"] == "success"
+    rows = result["data"]["tableData"]
+    assert rows[0]["monValue"] == 25.6
+    assert rows[1]["monValue"] is None
+    assert result["metadata"]["source"] == "jiangsu_ods_local"
+    assert result["metadata"]["shards"] == ["integrated_h_2026_3001a"]
+    assert result["metadata"]["data_through"] == "2026-10-25 08:00:00"
+    assert "数据截至" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_station_environment_history_db_filters_pollutants(monkeypatch):
+    captured = {}
+
+    async def fake_ods(sql, *args):
+        if "information_schema" in sql:
+            return [{"table_name": "integrated_h_2026_3001a"}]
+        captured["args"] = args
+        assert "pollutantcode = ANY" in sql
+        return []
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._ods_rows", fake_ods)
+    result = await JiangsuStationEnvironmentHistoryDbTool().execute(
+        station_code="3001a", start_time="2026-10-25 00:00:00", end_time="2026-10-25 06:00:00",
+        pollutant_codes=["StationTemp", "VA"],
+    )
+
+    assert result["success"] is True
+    assert result["status"] == "empty"
+    assert list(captured["args"][2]) == ["StationTemp", "VA"]
+    assert result["metadata"]["pollutant_codes"] == ["StationTemp", "VA"]
+
+
+@pytest.mark.asyncio
+async def test_station_environment_history_db_missing_shard_reports_failed(monkeypatch):
+    async def fake_ods(sql, *args):
+        if "information_schema" in sql:
+            return []
+        raise AssertionError("无分片表时不应再查询数据")
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._ods_rows", fake_ods)
+    result = await JiangsuStationEnvironmentHistoryDbTool().execute(
+        station_code="3072A", start_time="2026-10-25 00:00:00", end_time="2026-10-25 06:00:00",
+    )
+
+    assert result["success"] is False
+    assert result["status"] == "failed"
+    assert "无该站点分片" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_station_environment_history_db_rejects_30s_and_missing_code(monkeypatch):
+    tool = JiangsuStationEnvironmentHistoryDbTool()
+
+    result = await tool.execute(
+        station_code="3001A", start_time="2026-10-25 00:00:00", end_time="2026-10-25 06:00:00",
+        time_type="30s",
+    )
+    assert result["success"] is False
+    assert "30 秒" in result["summary"]
+
+    result = await tool.execute(
+        start_time="2026-10-25 00:00:00", end_time="2026-10-25 06:00:00",
+    )
+    assert result["success"] is False
+    assert "station_code" in result["summary"]
