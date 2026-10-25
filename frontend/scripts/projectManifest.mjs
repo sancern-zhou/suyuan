@@ -5,7 +5,7 @@ import { parse } from 'yaml'
 
 
 const IDENTIFIER = /^[a-z][a-z0-9_-]*$/
-const AGENT_MODE_IDS = new Set(['assistant', 'ppt', 'expert', 'query', 'knowledge', 'report', 'chart', 'board', 'ops'])
+const AGENT_MODE_IDS = new Set(['assistant', 'ppt', 'expert', 'query', 'knowledge', 'report', 'chart', 'board', 'ops', 'gd_query', 'station_fault_diagnosis', 'operations_analysis'])
 const AGENT_SCENE_IDS = new Set(['office', 'monitoring', 'operations'])
 const SIDEBAR_AGENT_MODE_IDS = new Set(['query', 'knowledge', 'expert'])
 const AGENT_PLATFORM_LAYOUTS = new Set(['scenes', 'environment-grid'])

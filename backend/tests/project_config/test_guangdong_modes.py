@@ -1,10 +1,17 @@
 """Guangdong agent-modes rollout: manifest, whitelists, prompts, workflow contract."""
 
+import pytest
+
 from app.agent.prompts.prompt_builder import build_react_system_prompt
 from app.agent.prompts.project_prompt import load_project_mode_prompt
 from app.agent.prompts.tool_registry import get_tools_by_mode
 from app.project_config.loader import load_project_context
 from config.settings import settings
+
+
+@pytest.fixture(autouse=True)
+def _guangdong_project(monkeypatch):
+    monkeypatch.setattr(settings, "project_id", "guangdong")
 
 
 def _guangdong_context():
