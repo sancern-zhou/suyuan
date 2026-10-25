@@ -42,8 +42,10 @@ logs、target、node_modules、计划任务入口 start-*.cmd / sync-*.cmd）。
 
 ## 生产入口（服务器侧）
 
-- 计划任务 `SuyuanJiangsu-*`（sync-all / sync-daily / sync-mart / Cube 等，360 安全卫士
+- 计划任务 `SuyuanJiangsu-*`（sync-all / sync-daily / sync-env-hourly / sync-mart / Cube 等，360 安全卫士
   白名单必须覆盖，否则会被静默删除——见 2026-09-24 事故）
 - dbt：`sync-all.cmd`（tag:frequent 全量链路）/ `sync-daily.cmd`（SCD2 快照 + tag:daily）
+- 站房动环小时分片：`sync-env-hourly.cmd`（每小时第 10 分钟, integrated_h_<年>_<站> 增量;
+  智能事件/工单审核动环证据统一读该同步链路, API 故障日兜底副本滞后至多 1 小时）
 - Cube：`start-cube.cmd` → 127.0.0.1:4610，`gen-token.js` 生成调用 JWT
 - 护栏/审计：`sync/setup_agent_guardrails.sql`（agent_reader 只读 + query_audit 审计表）

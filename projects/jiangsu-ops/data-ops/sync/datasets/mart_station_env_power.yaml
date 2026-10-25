@@ -2,18 +2,19 @@
 dataset: mart_station_env_power
 description: >
   江苏站房动环小时数据集(长表)。一行 = 一个站点 × 一个小时 × 一项动环指标。
-  源为 air 平台 air_province_data 库 integrated_h_2026_<站> 按年分片表(每日 02:30 增量同步),
-  回填自 2026-10-01;用于设备域运维分析的动环/供电历史取证,替代分析链路对实时 API 的依赖。
+  源为 air 平台 air_province_data 库 integrated_h_2026_<站> 按年分片表(小时级增量同步,
+  每小时第 10 分钟 sync-env-hourly.cmd; 每日 02:30 sync-daily 兜底),
+  回填自 2026-10-01;智能事件/工单审核的动环证据与分析链路统一取自本数据集, 不依赖实时 API。
 owner: 江苏运维平台组
 grain: 一行 = 一站 × 一小时 × 一动环项
 detail: brief
 summary: 一行=站×小时×动环项（三相电压电流/站房温湿度/管道温湿度/采样管压力）
-freshness_slo: 26小时
+freshness_slo: 2小时
 known_caveats:
   - 有数据的站为 99/101:3072A 源库无 2026 分片表,3039A 分片表 2026-10 起零数据(平台侧未上报),涉及时须注明
   - 小时表实测仅 11 项动环编码(供电六相/站房温湿度/管线温湿压);钢瓶压力/烟感/水浸等其余项在小时表中无数据,需实时取证时走 API 工具
   - 按年分片,每年 1 月须用 gen_env_sync_config.py 换年份表名并重跑同步;mark 为平台原样标记(如 Lsp),含义待业务确认
-  - 当日小时数据次日 02:30 才入库;当日实时补查用 jiangsu_fetch_station_environment_history
+  - 当日小时数据按小时级调度入库(整点后 :10 左右可查最近完整小时);API 故障日的兜底副本滞后至多 1 小时
 columns:
   - {name: id, business: 源记录ID(站内唯一,联合 station_code 才全局唯一)}
   - {name: station_code, business: 平台站点编码}
