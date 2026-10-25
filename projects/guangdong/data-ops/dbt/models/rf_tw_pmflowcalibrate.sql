@@ -1,0 +1,57 @@
+{{ config(
+    indexes=[
+        {'columns': ['id'], 'unique': True},
+    ],
+    post_hook=[
+        "GRANT SELECT ON {{ this }} TO agent_reader",
+    ],
+) }}
+
+-- rf_tw_pmflowcalibrate：契约透传层（源 dbo.RF_TW_PmFlowCalibrate，全量同步；ops_audit 本地取数依赖）。
+-- 契约: sync/datasets/rf_tw_pmflowcalibrate.yaml；列名与 ODS 一致（源列名小写）。
+select
+    id,
+    workingordercode,
+    pollutanttype,
+    stationid,
+    deviceid,
+    operationsunitid,
+    areaid,
+    checkdate,
+    remark,
+    prepareruserid,
+    reviewuserid,
+    auditoruserid,
+    preparerdate,
+    reviewdate,
+    auditordate,
+    createdate,
+    processtype,
+    temperature,
+    humidity,
+    checksdt,
+    checkedt,
+    f_devicemodel,
+    f_devicecode,
+    f_prevdate,
+    f_nextdate,
+    f_a,
+    f_b,
+    f_r,
+    pm_devicebrand,
+    pm_devicemodel,
+    pm_devicecode,
+    pm_devicetype,
+    pm_prevdate,
+    pm_nextdate,
+    prev_s,
+    prev_a,
+    prev_b,
+    prev_c,
+    next_s,
+    next_a,
+    next_b,
+    next_c,
+    iscalibrate,
+    now()::timestamp         as refreshed_at
+from {{ source('guangdong_ods', 'rf_tw_pmflowcalibrate') }}

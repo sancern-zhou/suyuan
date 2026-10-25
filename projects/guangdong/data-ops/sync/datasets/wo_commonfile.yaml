@@ -1,0 +1,16 @@
+dataset: wo_commonfile
+description: 工单附件/表单文件主表透传。一行 = 一条文件记录（今年窗口增量，约 30 万行/年）；ops_audit 本地取数依赖本表。
+owner: 广东运维平台组
+grain: 一行 = 一条附件记录（wcfid）
+freshness_slo: 60分钟
+known_caveats:
+- refid 为工单/表单关联键；与 wo_commonfile_links 视图同源，本表为物理表全量口径
+columns:
+- name: （见源表）
+  business: wcfid/refid/function_code/type_code/file_name/file_path/remark/createuserid/createdate/updateuserid/updatedate
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: wo_commonfile（一行 = 一条附件记录）：wcfid(主键)/refid(工单或表单关联键)/function_code(流程类型)/type_code(RF
+  表单名)/file_name/file_path/remark/create_time。附件完整性按 refid 计数；文件本体存于源系统。附件索引视图 wo_commonfile_links
+  为本表的投影口径。

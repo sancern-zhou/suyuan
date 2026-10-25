@@ -321,7 +321,12 @@ async def run_check(table: str) -> int:
     pg = await asyncpg.connect(cfg["target"]["dsn"])
     try:
         tgt_count = await pg.fetchval(f"SELECT COUNT(*) FROM {TARGET_SCHEMA}.{q(table)}")
-        tgt_max = await pg.fetchval(f"SELECT MAX(_src_incremental) FROM {TARGET_SCHEMA}.{q(table)}")
+        if spec.get("incremental_type") == "int":
+            # int 水位列是 text，按字典序 MAX 会取到 '999999' 而非 '1050096'，需转数值
+            tgt_max = await pg.fetchval(
+                f"SELECT MAX(_src_incremental::numeric) FROM {TARGET_SCHEMA}.{q(table)}")
+        else:
+            tgt_max = await pg.fetchval(f"SELECT MAX(_src_incremental) FROM {TARGET_SCHEMA}.{q(table)}")
     finally:
         await pg.close()
     count_note = ""
@@ -329,7 +334,8 @@ async def run_check(table: str) -> int:
         count_note = f" (window>={cfg['full_load_since']}: target is a subset by design)"
     if spec.get("incremental_type") == "int" and src_max is not None and tgt_max is not None:
         # int 水位按数值比较（text 存储下字典序会误判，如 "999999" > "1050052"）
-        ok = tgt_count <= src_count and int(str(tgt_max)) >= int(str(src_max))
+        from decimal import Decimal
+        ok = tgt_count <= src_count and Decimal(str(tgt_max)) >= Decimal(str(src_max))
     else:
         ok = tgt_count <= src_count and (
             src_max is None or tgt_max is None or str(src_max) <= str(tgt_max)

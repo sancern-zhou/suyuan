@@ -1,0 +1,58 @@
+{{ config(
+    indexes=[
+        {'columns': ['stationmaintaincheckid'], 'unique': True},
+    ],
+    post_hook=[
+        "GRANT SELECT ON {{ this }} TO agent_reader",
+    ],
+) }}
+
+-- rf_m_stationmaintaincheck：契约透传层（源 dbo.RF_M_StationMaintainCheck，全量同步；ops_audit 本地取数依赖）。
+-- 契约: sync/datasets/rf_m_stationmaintaincheck.yaml；列名与 ODS 一致（源列名小写）。
+select
+    stationmaintaincheckid,
+    workingordercode,
+    stationid,
+    operationsunitid,
+    areaid,
+    checkdate,
+    remark,
+    prepareruserid,
+    reviewuserid,
+    auditoruserid,
+    preparerdate,
+    reviewdate,
+    auditordate,
+    createdate,
+    processtype,
+    pollutanttype,
+    year,
+    month,
+    pm10qg,
+    pm25qg,
+    sjbf,
+    pm10db,
+    pm25db,
+    pm10ll,
+    pm25ll,
+    so2ll,
+    noxll,
+    coll,
+    o3ll,
+    dtjzyll,
+    pm10qgrk,
+    pm25qgrk,
+    sjbfrk,
+    pm10dbrk,
+    pm25dbrk,
+    pm10llrk,
+    pm25llrk,
+    so2llrk,
+    noxllrk,
+    collrk,
+    o3llrk,
+    dtjzyllrk,
+    opuser,
+    opuserrk,
+    now()::timestamp         as refreshed_at
+from {{ source('guangdong_ods', 'rf_m_stationmaintaincheck') }}

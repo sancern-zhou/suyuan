@@ -1,0 +1,57 @@
+{{ config(
+    indexes=[
+        {'columns': ['rfsecinspectionid'], 'unique': True},
+    ],
+    post_hook=[
+        "GRANT SELECT ON {{ this }} TO agent_reader",
+    ],
+) }}
+
+-- rf_sec_inspection：契约透传层（源 dbo.RF_SEC_INSPECTION，每日全量；ops_audit 本地取数依赖）。
+-- 契约: sync/datasets/rf_sec_inspection.yaml；列名与 ODS 一致（源列名小写）。
+select
+    rfsecinspectionid,
+    stationid,
+    operationsunitid,
+    fieldunitid,
+    areaid,
+    cityid,
+    checkdate,
+    prepareruserid,
+    reviewuserid,
+    auditoruserid,
+    preparerdate,
+    reviewdate,
+    auditordate,
+    createdate,
+    workingordercode,
+    outside1,
+    outside2,
+    outside3,
+    outside4,
+    outside5,
+    outside6,
+    outside7,
+    outside8,
+    inside9,
+    inside10,
+    inside11,
+    inside12,
+    inside13,
+    inside14,
+    inside15,
+    inside16,
+    inside17,
+    inside18,
+    inside19,
+    inside20,
+    inside21,
+    inside22,
+    inside23,
+    inside24,
+    inside25,
+    remark,
+    processtype,
+    pollutanttype,
+    now()::timestamp         as refreshed_at
+from {{ source('guangdong_ods', 'rf_sec_inspection') }}

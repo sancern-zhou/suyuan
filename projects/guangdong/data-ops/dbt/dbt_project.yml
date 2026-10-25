@@ -29,6 +29,8 @@ models:
       +tags: ["daily"]
     dim_user:
       +tags: ["daily"]
+    wo_commonfile:
+      +tags: ["daily"]
     opa_performance:
       +tags: ["daily"]
     opa_stationperformancescore:
@@ -88,4 +90,110 @@ models:
     mart_inspection_task_analysis:
       +tags: ["daily"]
     mart_station_alarm_status:
+      +tags: ["daily"]
+    rf_y_devicechange:
+      +tags: ["daily"]
+    rf_y_devicerepair:
+      +tags: ["daily"]
+    rf_y_preventivemaintenance:
+      +tags: ["daily"]
+    rf_sec_inspection:
+      +tags: ["daily"]
+    rf_sec_instrumentrecord:
+      +tags: ["daily"]
+    rf_sec_monitoringcheck:
+      +tags: ["daily"]
+    rf_pm1monitorinspection:
+      +tags: ["daily"]
+    rf_bcmonitorinspection:
+      +tags: ["daily"]
+    sec_checkscore:
+      +tags: ["daily"]
+    sec_checkscore_sx:
+      +tags: ["daily"]
+    sec_checkscore_sxnew:
+      +tags: ["daily"]
+    sup_rf_monthnephelometercheck:
+      +tags: ["daily"]
+    sup_rf_nephelometercalibration:
+      +tags: ["daily"]
+    rf_hy_environmenthumidity:
+      +tags: ["daily"]
+    rf_hy_gaseouscalidevicecheck:
+      +tags: ["daily"]
+    rf_hy_stationdevicemaintain:
+      +tags: ["daily"]
+    rf_hy_o3valuepass:
+      +tags: ["daily"]
+    rf_hy_visibilitycali:
+      +tags: ["daily"]
+    rf_hy_noxconversionrate:
+      +tags: ["daily"]
+    rf_w_graincalibrationcheck_pm10:
+      +tags: ["daily"]
+    rf_w_graincalibrationcheck_pm25:
+      +tags: ["daily"]
+    rf_w_graincalibrationcheckattach:
+      +tags: ["daily"]
+    rf_w_longopticalpath:
+      +tags: ["daily"]
+    rf_w_standard_all:
+      +tags: ["daily"]
+    rf_m_gaseouscalicheck:
+      +tags: ["daily"]
+    rf_m_gaseouscalidevicecheck:
+      +tags: ["daily"]
+    rf_m_gaseousflowcheck:
+      +tags: ["daily"]
+    rf_m_manualcomparison:
+      +tags: ["daily"]
+    rf_m_manualcomparisondetail:
+      +tags: ["daily"]
+    rf_m_membraneweighing:
+      +tags: ["daily"]
+    rf_m_pmdevicemaintain:
+      +tags: ["daily"]
+    rf_m_stationdevicemaintain:
+      +tags: ["daily"]
+    rf_m_stationmaintaincheck:
+      +tags: ["daily"]
+    rf_q_gaseousmultipoint_co:
+      +tags: ["daily"]
+    rf_q_gaseousmultipoint_no2:
+      +tags: ["daily"]
+    rf_q_gaseousmultipoint_o3:
+      +tags: ["daily"]
+    rf_q_gaseousmultipoint_so2:
+      +tags: ["daily"]
+    rf_q_gaseousprecision_co:
+      +tags: ["daily"]
+    rf_q_gaseousprecision_no2:
+      +tags: ["daily"]
+    rf_q_gaseousprecision_o3:
+      +tags: ["daily"]
+    rf_q_gaseousprecision_so2:
+      +tags: ["daily"]
+    rf_q_gaseousflowcheck:
+      +tags: ["daily"]
+    rf_q_longopticalpath_no2:
+      +tags: ["daily"]
+    rf_q_longopticalpath_o3:
+      +tags: ["daily"]
+    rf_q_longopticalpath_so2:
+      +tags: ["daily"]
+    rf_q_pm10runstatuscheck:
+      +tags: ["daily"]
+    rf_q_pm25runstatuscheck:
+      +tags: ["daily"]
+    rf_q_pmpressure:
+      +tags: ["daily"]
+    rf_q_stationdeviceclean:
+      +tags: ["daily"]
+    rf_q_stationmaintaincheck:
+      +tags: ["daily"]
+    rf_tw_cleancuttinghead:
+      +tags: ["daily"]
+    rf_tw_pmflowcalibrate:
+      +tags: ["daily"]
+    rf_tw_pmflowcheck:
       +tags: ["daily"]

@@ -173,6 +173,10 @@ def _configured_fetchers(project_context):
             selected = [name for name in selected
                         if not name.startswith("xuchang_")
                         and name != "gems_xuchang_image_fetcher"]
+        # 广东部署：会商模板 xlsx 未随部署提供（M:\tmp\A会商文件\模板\ 为空），
+        # 三个会商 fetcher 每晚必然失败；业务补放模板后移除本排除
+        selected = [name for name in selected
+                    if name not in ("consultation", "monthly_consultation", "annual_ytd_consultation")]
         if "xuchang-satellite" in enabled_modules:
             selected.append("gems_image")
             if os.getenv("GEMS_HCHO_DATA_FETCH_ENABLED", "false").lower() == "true":

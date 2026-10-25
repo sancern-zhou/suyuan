@@ -9,7 +9,12 @@ from typing import Any
 from app.services.ops_audit.audit_window import calculate_weekly_created_window
 from app.services.ops_audit.config import load_audit_window_config
 from app.services.ops_audit.evidence_builder import build_dataset_evidence, build_summary_evidence
+import structlog
+
 from app.services.ops_work_order_audit_engine import OUTPUT_DIR, WorkOrderDatasetFilter, fetch_dataset
+
+
+logger = structlog.get_logger()
 
 
 @dataclass
@@ -32,24 +37,40 @@ class DatasetFetchRequest:
     persist_dataset: bool = True
 
 
+def _fetch_dataset_with_source(filter_config: WorkOrderDatasetFilter) -> dict[str, Any]:
+    """数据源分发：默认本地 guangdong_mart（OPS_AUDIT_DATA_SOURCE=local），
+    本地失败自动回退源库直查；OPS_AUDIT_DATA_SOURCE=source 强制源库。"""
+    import os
+
+    from app.services.ops_work_order_audit_local import fetch_dataset_local, local_source_enabled
+
+    if local_source_enabled():
+        try:
+            dataset = fetch_dataset_local(filter_config)
+            logger.info("ops_audit_dataset_source", source="local",
+                        orders=len(dataset.get("orders", [])))
+            return dataset
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ops_audit_local_fetch_failed_fallback_source", error=str(exc))
+    return fetch_dataset(filter_config)
+
+
 def fetch_ops_audit_dataset(request: DatasetFetchRequest) -> dict[str, Any]:
     """Fetch a dataset using creation-time centric audit windows."""
 
     request = _apply_window_defaults(request)
-    dataset = fetch_dataset(
-        WorkOrderDatasetFilter(
-            limit=max(1, min(int(request.limit or 200), 3000)),
-            order_statuses=request.order_statuses,
-            create_time_start=request.create_time_start,
-            create_time_end=request.create_time_end,
-            finish_time_start=request.finish_time_start,
-            finish_time_end=request.finish_time_end,
-            station_ids=request.station_ids,
-            order_types=request.order_types,
-            maintenance_types=request.maintenance_types,
-            working_order_codes=request.working_order_codes,
-        )
-    )
+    dataset = _fetch_dataset_with_source(WorkOrderDatasetFilter(
+        limit=max(1, min(int(request.limit or 200), 3000)),
+        order_statuses=request.order_statuses,
+        create_time_start=request.create_time_start,
+        create_time_end=request.create_time_end,
+        finish_time_start=request.finish_time_start,
+        finish_time_end=request.finish_time_end,
+        station_ids=request.station_ids,
+        order_types=request.order_types,
+        maintenance_types=request.maintenance_types,
+        working_order_codes=request.working_order_codes,
+    ))
 
     output_dir = (request.output_dir or OUTPUT_DIR).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)

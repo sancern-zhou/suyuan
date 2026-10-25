@@ -37,6 +37,7 @@ TABLE_ORDER = [
     "working_orders",
     "working_order_details",
     "wo_commonfile_links",
+    "wo_commonfile",
     "dim_station",
     "dim_device",
     "dim_user",

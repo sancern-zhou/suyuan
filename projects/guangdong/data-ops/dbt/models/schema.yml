@@ -252,6 +252,13 @@ models:
     data_tests: [unique, not_null]
   - name: refreshed_at
     description: 本表刷新时间
+- name: wo_commonfile
+  description: 工单附件主表透传层（WO_COMMONFILE 今年窗口）。一行 = 一条附件/表单文件记录。
+  columns:
+  - name: wcfid
+    description: 主键
+    data_tests: [unique, not_null]
+
 - name: dim_user
   description: 运维用户维度。一行 = 一个平台账号（敏感列已在同步层排除）；解析工单/任务项处理人中文名。
   columns:
@@ -315,4 +322,322 @@ models:
   columns:
   - name: station_id
     description: 站点ID
+    data_tests: [unique, not_null]
+- name: rf_y_devicechange
+  description: 契约透传层：dbo.RF_Y_DEVICECHANGE（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: rfydevicechangeid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_y_devicerepair
+  description: 契约透传层：dbo.RF_Y_DEVICEREPAIR（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: rfydevicerepairid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_y_preventivemaintenance
+  description: 契约透传层：dbo.RF_Y_PreventiveMaintenance（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_sec_inspection
+  description: 契约透传层：dbo.RF_SEC_INSPECTION（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: rfsecinspectionid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_sec_instrumentrecord
+  description: 契约透传层：dbo.RF_SEC_INSTRUMENTRECORD（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: instrumentrecordid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_sec_monitoringcheck
+  description: 契约透传层：dbo.RF_SEC_MONITORINGCHECK（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: monitoringcheckid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_pm1monitorinspection
+  description: 契约透传层：dbo.RF_PM1MonitorInspection（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: rfwpm1monitorid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_bcmonitorinspection
+  description: 契约透传层：dbo.RF_BCMonitorInspection（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: rfwbcmonitorid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: sec_checkscore
+  description: 契约透传层：dbo.SEC_CHECKSCORE（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: seccheckscoreid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: sec_checkscore_sx
+  description: 契约透传层：dbo.SEC_CHECKSCORE_SX（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: seccheckscoreid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: sec_checkscore_sxnew
+  description: 契约透传层：dbo.SEC_CHECKSCORE_SXNEW（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: seccheckscoreid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: sup_rf_monthnephelometercheck
+  description: 契约透传层：dbo.Sup_RF_MonthNepheloMeterCheck（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+- name: sup_rf_nephelometercalibration
+  description: 契约透传层：dbo.Sup_RF_NepheloMeterCalibration（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_hy_environmenthumidity
+  description: 契约透传层：dbo.RF_HY_EnvironmentHumidity（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_hy_gaseouscalidevicecheck
+  description: 契约透传层：dbo.RF_HY_GASEOUSCALIDEVICECHECK（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: rfhygaseouscalidevicecheckid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_hy_stationdevicemaintain
+  description: 契约透传层：dbo.RF_HY_STATIONDEVICEMAINTAIN（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: rfhystationdevicemaintainid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_hy_o3valuepass
+  description: 契约透传层：dbo.RF_HY_O3VALUEPASS（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: rfwinspectionid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_hy_visibilitycali
+  description: 契约透传层：dbo.RF_HY_VISIBILITYCALI（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: rfwinspectionid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_hy_noxconversionrate
+  description: 契约透传层：dbo.RF_HY_NOXCONVERSIONRATE（每日全量，ops_audit 本地取数依赖）。
+  columns:
+  - name: rfhynoxconversionrateid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_w_graincalibrationcheck_pm10
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: graincalibrationcheckid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_w_graincalibrationcheck_pm25
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: graincalibrationcheckid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_w_graincalibrationcheckattach
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_w_longopticalpath
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfwlongopticalpathid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_w_standard_all
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfstandardallid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_m_gaseouscalicheck
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfmgaseouscalicheckid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_m_gaseouscalidevicecheck
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfhygaseouscalidevicecheckid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_m_gaseousflowcheck
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfmgaseousflowcheckid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_m_manualcomparison
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: manualcomparisonid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_m_manualcomparisondetail
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: mcdetailid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_m_membraneweighing
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfmmbwhid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_m_pmdevicemaintain
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_m_stationdevicemaintain
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfmstationdevicemaintainid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_m_stationmaintaincheck
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: stationmaintaincheckid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_gaseousmultipoint_co
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfqgaseouscheckid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_gaseousmultipoint_no2
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfqgaseouscheckid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_gaseousmultipoint_o3
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfqgaseouscheckid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_gaseousmultipoint_so2
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfqgaseouscheckid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_gaseousprecision_co
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfqgaseousprecisionid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_gaseousprecision_no2
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfqgaseousprecisionid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_gaseousprecision_o3
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfqgaseousprecisionid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_gaseousprecision_so2
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfqgaseousprecisionid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_gaseousflowcheck
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_longopticalpath_no2
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfwinspectionid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_longopticalpath_o3
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfwinspectionid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_longopticalpath_so2
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfwinspectionid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_pm10runstatuscheck
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfwinspectionid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_pm25runstatuscheck
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfwinspectionid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_pmpressure
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfwinspectionid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_stationdeviceclean
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: rfwinspectionid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_q_stationmaintaincheck
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: stationmaintaincheckid
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_tw_cleancuttinghead
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_tw_pmflowcalibrate
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+- name: rf_tw_pmflowcheck
+  description: 契约透传层（RF 表单，全量，ops_audit 依赖）。
+  columns:
+  - name: id
+    description: 主键
     data_tests: [unique, not_null]

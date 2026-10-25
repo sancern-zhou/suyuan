@@ -32,6 +32,7 @@ select
         when 9 then 'VOC站'
         else '未知(' || coalesce(v.ddstationtype::text, 'null') || ')'
     end                        as station_type_name,
+    v.departmentid              as operation_unit_id,
     v.operationdepatment       as operation_unit_name,
     v.departmentname           as department_name,
     h.username                 as manager_name,
@@ -63,6 +64,7 @@ select
     sup.regionid               as city_code,
     sup.regionname             as city_name,
     '组分站'                   as station_type_name,
+    null::text                 as operation_unit_id,
     sup.operationdepatment     as operation_unit_name,
     null::text                 as department_name,
     null::text                 as manager_name,

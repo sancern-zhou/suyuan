@@ -71,3 +71,111 @@ sources:
     description: 工单流程步骤绩效得分（每日全量）。
   - name: opa_stationperformancescore
     description: 站点×月绩效考核宽表（每日全量，每日 10:15 左右重算）。
+  - name: wo_commonfile
+    description: 工单附件主表（WO_COMMONFILE，今年窗口增量）。
+  - name: rf_y_devicechange
+    description: 源 dbo.RF_Y_DEVICECHANGE（每日全量，ops_audit 依赖）。
+  - name: rf_y_devicerepair
+    description: 源 dbo.RF_Y_DEVICEREPAIR（每日全量，ops_audit 依赖）。
+  - name: rf_y_preventivemaintenance
+    description: 源 dbo.RF_Y_PreventiveMaintenance（每日全量，ops_audit 依赖）。
+  - name: rf_sec_inspection
+    description: 源 dbo.RF_SEC_INSPECTION（每日全量，ops_audit 依赖）。
+  - name: rf_sec_instrumentrecord
+    description: 源 dbo.RF_SEC_INSTRUMENTRECORD（每日全量，ops_audit 依赖）。
+  - name: rf_sec_monitoringcheck
+    description: 源 dbo.RF_SEC_MONITORINGCHECK（每日全量，ops_audit 依赖）。
+  - name: rf_pm1monitorinspection
+    description: 源 dbo.RF_PM1MonitorInspection（每日全量，ops_audit 依赖）。
+  - name: rf_bcmonitorinspection
+    description: 源 dbo.RF_BCMonitorInspection（每日全量，ops_audit 依赖）。
+  - name: sec_checkscore
+    description: 源 dbo.SEC_CHECKSCORE（每日全量，ops_audit 依赖）。
+  - name: sec_checkscore_sx
+    description: 源 dbo.SEC_CHECKSCORE_SX（每日全量，ops_audit 依赖）。
+  - name: sec_checkscore_sxnew
+    description: 源 dbo.SEC_CHECKSCORE_SXNEW（每日全量，ops_audit 依赖）。
+  - name: sup_rf_monthnephelometercheck
+    description: 源 dbo.Sup_RF_MonthNepheloMeterCheck（每日全量，ops_audit 依赖）。
+  - name: sup_rf_nephelometercalibration
+    description: 源 dbo.Sup_RF_NepheloMeterCalibration（每日全量，ops_audit 依赖）。
+  - name: rf_hy_environmenthumidity
+    description: 源 dbo.RF_HY_EnvironmentHumidity（每日全量，ops_audit 依赖）。
+  - name: rf_hy_gaseouscalidevicecheck
+    description: 源 dbo.RF_HY_GASEOUSCALIDEVICECHECK（每日全量，ops_audit 依赖）。
+  - name: rf_hy_stationdevicemaintain
+    description: 源 dbo.RF_HY_STATIONDEVICEMAINTAIN（每日全量，ops_audit 依赖）。
+  - name: rf_hy_o3valuepass
+    description: 源 dbo.RF_HY_O3VALUEPASS（每日全量，ops_audit 依赖）。
+  - name: rf_hy_visibilitycali
+    description: 源 dbo.RF_HY_VISIBILITYCALI（每日全量，ops_audit 依赖）。
+  - name: rf_hy_noxconversionrate
+    description: 源 dbo.RF_HY_NOXCONVERSIONRATE（每日全量，ops_audit 依赖）。
+  - name: rf_w_graincalibrationcheck_pm10
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_w_graincalibrationcheck_pm25
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_w_graincalibrationcheckattach
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_w_longopticalpath
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_w_standard_all
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_m_gaseouscalicheck
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_m_gaseouscalidevicecheck
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_m_gaseousflowcheck
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_m_manualcomparison
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_m_manualcomparisondetail
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_m_membraneweighing
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_m_pmdevicemaintain
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_m_stationdevicemaintain
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_m_stationmaintaincheck
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_gaseousmultipoint_co
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_gaseousmultipoint_no2
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_gaseousmultipoint_o3
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_gaseousmultipoint_so2
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_gaseousprecision_co
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_gaseousprecision_no2
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_gaseousprecision_o3
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_gaseousprecision_so2
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_gaseousflowcheck
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_longopticalpath_no2
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_longopticalpath_o3
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_longopticalpath_so2
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_pm10runstatuscheck
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_pm25runstatuscheck
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_pmpressure
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_stationdeviceclean
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_q_stationmaintaincheck
+    description: 源 RF 表（全量同步，ops_audit 依赖）。
+  - name: rf_tw_cleancuttinghead
+    description: 源 RF 表（全量，ops_audit 依赖）。
+  - name: rf_tw_pmflowcalibrate
+    description: 源 RF 表（全量，ops_audit 依赖）。
+  - name: rf_tw_pmflowcheck
+    description: 源 RF 表（全量，ops_audit 依赖）。
