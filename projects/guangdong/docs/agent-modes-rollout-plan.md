@@ -193,6 +193,13 @@
 
 ### 待部署环境执行的验收与运行时动作
 
+> 2026-10-25 本地部署（Windows，M:\suyuan-guangdong）已完成重新部署并验证：
+> 测试 10/10 通过（另 6 个失败为分支预存的 xuchang 断言问题，与本改动无关，上一提交同样失败）；
+> 前端已重建（node_modules 需先 `npm install` 补 lucide-vue-next；`frontend/scripts/projectManifest.mjs`
+> 构建白名单已补新 id），产物校验通过；web/worker/前端服务已重启，
+> `runtime-config` 返回 11 个模式与 overrides，worker 内部端口 8011 正常。
+> 下列第 3、4 项（典型问题实测、知识库建库与图谱构建）仍待执行。
+
 1. 重启 web/worker 后：`load_project_context('guangdong')` 加载无错、新模式出现在 manifest；web 日志 `get_react_agent_tool_registry_debug` 核对各模式白名单。
 2. 跑 `backend/tests/project_config/test_guangdong_modes.py` 与既有 `test_routing.py`、`test_mode_prompt_overrides.py` 回归。
 3. 典型问题实测：gd_query 指标类问题走语义层且返回口径说明；问"告警未处理率"应被口径拦截；operations_analysis 试一次多域报告编排（注意 max_nodes=12 预算）。
