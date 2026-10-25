@@ -283,11 +283,12 @@
 
               <template v-else-if="source.key === 'station_hour'">
                 <!-- 多目标污染物拆成多张时序图：每张图只画该污染物的本站曲线、配对对照曲线
-                     与它自己的剔除区间，避免同图叠加时目标/对照曲线与剔除区间互相遮挡。 -->
+                     与它自己的剔除区间，避免同图叠加时互相遮挡；互为配对的污染物（NO↔NO2、
+                     PM10↔PM2.5）合并为一张图，避免两张图曲线完全相同的重复。 -->
                 <ReviewTimeSeriesChart
                   v-for="chart in pollutantCharts"
                   :key="chart.pollutant"
-                  :title="pollutantCharts.length > 1 ? `${chart.pollutant} 小时时序` : ''"
+                  :title="pollutantCharts.length > 1 ? chart.title : ''"
                   :series="chart.series"
                   :mark-areas="chart.markAreas"
                   :unit="chart.unit"

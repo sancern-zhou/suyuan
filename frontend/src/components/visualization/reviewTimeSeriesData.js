@@ -72,8 +72,9 @@ export const CHART_COMPARISON_PAIRS = {
 
 // 小时时序图按污染物拆图的共享装配。多目标污染物同图叠加时，目标曲线、对照曲线与
 // 剔除区间互相遮挡难以辨认；这里为每个目标污染物各装配一张图（本站曲线 + 配对对照曲线 +
-// 它自己的剔除区间），并保证同一污染物跨图同色。同城对比带只随主目标图显示
-// （取证侧仅对主目标污染物取同城带）。
+// 它自己的剔除区间），并保证同一污染物跨图同色。互为配对的污染物（NO↔NO2、PM10↔PM2.5）
+// 合并为一张"X+Y"图——两张图的曲线完全相同，拆开是重复，同图对比才是诊断所需。
+// 同城对比带只随主目标图显示（取证侧仅对主目标污染物取同城带）。
 //
 // 入参：data = 证据包 station_hour.data（pollutant/pollutants/comparison_*/points/extra_points），
 // fallbackPollutant = 索引里的工单目标污染物（旧包 data.pollutant 缺失时兜底），
@@ -153,12 +154,6 @@ export function buildPollutantCharts({
     color: colorMap[pollutant] || '#2f86e0',
     points,
   })
-  const withComparison = (pollutant, series) => {
-    const pair = CHART_COMPARISON_PAIRS[pollutant]
-    const points = pair && pair !== pollutant ? pointsOf(pair) : []
-    if (points.length) series.push(seriesEntry(pair, points, '对照'))
-    return series
-  }
   // 区间归属：标注了污染物 → 该污染物的图；无归属或归属污染物无曲线（旧包无 extra_points）
   // → 落在主目标图，由图表回退默认琥珀色。
   const areasOf = pollutant => markAreas
@@ -173,8 +168,41 @@ export function buildPollutantCharts({
       return color ? { ...area, color } : { ...area }
     })
 
-  const mainSeries = withComparison(targetCode, [seriesEntry(targetCode, targetPoints, '本站')])
-  if (bandRows.length) {
+  // 出图主体（保序，主目标恒为首图）。互为配对且都在列的污染物合并为一张"X+Y"图：
+  // NO↔NO2、PM10↔PM2.5 这类双向配对的两张图曲线完全相同（本站/对照只是互换），
+  // 拆开是重复；合并后两条本站曲线与双方剔除区间同图呈现，倒挂类诊断恰好需要同图对比。
+  // 已被并入别图（absorbed）的污染物不再单独出图，其在别的图里仍可作对照曲线出现。
+  const subjects = [targetCode, ...chartPollutants.filter(pollutant => pollutant !== targetCode)]
+  const mergePartner = new Map()
+  const absorbed = new Set()
+  for (const pollutant of subjects) {
+    if (absorbed.has(pollutant)) continue
+    const pair = CHART_COMPARISON_PAIRS[pollutant]
+    if (pair && pair !== pollutant && subjects.includes(pair) && !absorbed.has(pair)) {
+      mergePartner.set(pollutant, pair)
+      absorbed.add(pair)
+    }
+  }
+  const charts = []
+  for (const pollutant of subjects) {
+    if (absorbed.has(pollutant)) continue
+    const partner = mergePartner.get(pollutant) || null
+    const members = partner ? [pollutant, partner] : [pollutant]
+    const series = members.map(member => seriesEntry(member, pointsOf(member), '本站'))
+    if (!partner) {
+      const pair = CHART_COMPARISON_PAIRS[pollutant]
+      const points = pair && pair !== pollutant ? pointsOf(pair) : []
+      if (points.length) series.push(seriesEntry(pair, points, '对照'))
+    }
+    charts.push({
+      pollutant: members.join('+'),
+      title: `${members.join('+')} 小时时序`,
+      unit: unitOf(pollutant),
+      series,
+      markAreas: members.flatMap(member => areasOf(member)),
+    })
+  }
+  if (charts.length && bandRows.length) {
     const pick = key => bandRows.filter(row => row[key] != null).map(row => ({ time: row.time, value: row[key] }))
     // 同域只有 1 个对比站时最低/中位/最高三值相同，合并为一条线，避免三条重合曲线。
     const overlays = bandComparisonCollapsed
@@ -182,27 +210,14 @@ export function buildPollutantCharts({
       : [['同城最低', '#94a3b8', 'min'], ['同城中位', '#61d394', 'median'], ['同城最高', '#f6bd4a', 'max']]
     overlays.forEach(([name, color, key]) => {
       const points = pick(key)
-      if (points.length) mainSeries.push({ name, unit: data.unit || 'μg/m³', color, points })
-    })
-  }
-  const charts = [{
-    pollutant: targetCode,
-    unit: unitOf(targetCode),
-    series: mainSeries,
-    markAreas: areasOf(targetCode),
-  }]
-  for (const pollutant of chartPollutants) {
-    if (pollutant === targetCode) continue
-    charts.push({
-      pollutant,
-      unit: unitOf(pollutant),
-      series: withComparison(pollutant, [seriesEntry(pollutant, pointsOf(pollutant), '本站')]),
-      markAreas: areasOf(pollutant),
+      if (points.length) charts[0].series.push({ name, unit: data.unit || 'μg/m³', color, points })
     })
   }
   return {
     charts,
     colorMap,
-    stationPollutantSeries: charts[0].series.filter(item => !String(item.name || '').startsWith('同城')),
+    stationPollutantSeries: charts.length
+      ? charts[0].series.filter(item => !String(item.name || '').startsWith('同城'))
+      : [],
   }
 }

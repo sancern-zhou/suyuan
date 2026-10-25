@@ -153,23 +153,66 @@ test('areas for pollutants without curves fall back to the main chart uncolored'
   assert.equal(charts[0].markAreas[0].color, undefined)
 })
 
-test('comparison pollutant excluded by the review gets its own chart with swapped pairing', () => {
+test('mutual-pair pollutants marked by the review merge into one chart instead of duplicating curves', () => {
   const { charts } = buildPollutantCharts({
     data: {
-      pollutant: 'PM10', comparison_pollutant: 'PM2.5', unit: 'μg/m³',
-      points: [_hour('10:00', 82), _hour('11:00', 91)],
-      comparison_points: [_hour('10:00', 61), _hour('11:00', 58)],
+      pollutant: 'NO', comparison_pollutant: 'NO2', unit: 'μg/m³',
+      points: [_hour('10:00', 8), _hour('11:00', 9)],
+      comparison_points: [_hour('10:00', 30), _hour('11:00', 28)],
     },
     markAreas: [
-      { name: 'PM10剔除区间', pollutant: 'PM10', start: '2026-09-14 10:00:00', end: '2026-09-14 11:00:00' },
-      { name: 'PM2.5剔除区间', pollutant: 'PM2.5', start: '2026-09-14 10:00:00', end: '2026-09-14 11:00:00' },
+      { name: 'NO剔除区间', pollutant: 'NO', start: '2026-09-14 10:00:00', end: '2026-09-14 11:00:00' },
+      { name: 'NO2剔除区间', pollutant: 'NO2', start: '2026-09-14 10:00:00', end: '2026-09-14 11:00:00' },
     ],
   })
 
-  assert.deepEqual(charts.map(chart => chart.pollutant), ['PM10', 'PM2.5'])
-  assert.deepEqual(charts[1].series.map(item => item.name), ['PM2.5（本站）', 'PM10（对照）'])
-  assert.deepEqual(charts[1].markAreas.map(area => area.name), ['PM2.5剔除区间'])
-  assert.deepEqual(charts[0].markAreas.map(area => area.name), ['PM10剔除区间'])
+  // NO↔NO2 互为配对且都在列：合并为一张"NO+NO2"图，两条都是本站曲线，双方区间同图
+  assert.equal(charts.length, 1)
+  assert.equal(charts[0].pollutant, 'NO+NO2')
+  assert.equal(charts[0].title, 'NO+NO2 小时时序')
+  assert.deepEqual(charts[0].series.map(item => item.name), ['NO（本站）', 'NO2（本站）'])
+  assert.notEqual(charts[0].series[0].color, charts[0].series[1].color)
+  assert.deepEqual(charts[0].markAreas.map(area => area.name), ['NO剔除区间', 'NO2剔除区间'])
+  assert.equal(charts[0].markAreas[0].color, charts[0].series[0].color)
+  assert.equal(charts[0].markAreas[1].color, charts[0].series[1].color)
+})
+
+test('one-way pair keeps reference curve; pair merge only when both are chart subjects', () => {
+  // 目标 NO 与剔除区间里的 O3 出图；NO2 只是参考曲线不在出图列 → 各图独立、不合并
+  const { charts } = buildPollutantCharts({
+    data: {
+      pollutant: 'NO', comparison_pollutant: 'NO2', unit: 'μg/m³',
+      points: [_hour('10:00', 8)],
+      comparison_points: [_hour('10:00', 30)],
+      extra_points: { O3: [_hour('10:00', 80)], NO2: [_hour('10:00', 31)] },
+    },
+    markAreas: [
+      { name: 'NO剔除区间', pollutant: 'NO', start: '2026-09-14 10:00:00', end: '2026-09-14 11:00:00' },
+      { name: 'O3剔除区间', pollutant: 'O3', start: '2026-09-14 10:00:00', end: '2026-09-14 11:00:00' },
+    ],
+  })
+
+  assert.deepEqual(charts.map(chart => chart.pollutant), ['NO', 'O3'])
+  assert.deepEqual(charts[0].series.map(item => item.name), ['NO（本站）', 'NO2（对照）'])
+  assert.deepEqual(charts[1].series.map(item => item.name), ['O3（本站）', 'NO2（对照）'])
+  assert.deepEqual(charts[1].markAreas.map(area => area.name), ['O3剔除区间'])
+
+  // 目标 SO2 无配对；O3 与 NO2 都因剔除区间入列且互为配对 → 合并为一张"O3+NO2"
+  const merged = buildPollutantCharts({
+    data: {
+      pollutant: 'SO2', unit: 'μg/m³',
+      points: [_hour('10:00', 9)],
+      extra_points: { O3: [_hour('10:00', 80)], NO2: [_hour('10:00', 31)], NO: [_hour('10:00', 8)] },
+    },
+    markAreas: [
+      { name: 'O3剔除区间', pollutant: 'O3', start: '2026-09-14 10:00:00', end: '2026-09-14 11:00:00' },
+      { name: 'NO2剔除区间', pollutant: 'NO2', start: '2026-09-14 10:00:00', end: '2026-09-14 11:00:00' },
+    ],
+  })
+  assert.deepEqual(merged.charts.map(chart => chart.pollutant), ['SO2', 'O3+NO2'])
+  assert.deepEqual(merged.charts[0].series.map(item => item.name), ['SO2（本站）'])
+  assert.deepEqual(merged.charts[1].series.map(item => item.name), ['O3（本站）', 'NO2（本站）'])
+  assert.deepEqual(merged.charts[1].markAreas.map(area => area.name), ['O3剔除区间', 'NO2剔除区间'])
 })
 
 test('CO chart switches unit to mg/m3 and packages without target points render nothing', () => {

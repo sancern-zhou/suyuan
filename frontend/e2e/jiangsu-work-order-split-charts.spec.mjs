@@ -1,8 +1,9 @@
 import { expect, test } from 'playwright/test'
 
 // 故障工单审核工作台「污染物小时时序」按污染物拆图回归：
-// 多目标污染物时每个污染物一张图（本站 + 配对对照 + 它自己的剔除区间），
-// 避免同图叠加时目标/对照曲线与剔除区间互相遮挡；同城对比带只随主目标图。
+// 多目标污染物时每个污染物一张图（本站曲线 + 配对对照曲线 + 它自己的剔除区间），
+// 避免同图叠加时目标/对照曲线与剔除区间互相遮挡；互为配对的污染物（NO↔NO2）合并为
+// 一张图避免曲线重复；同城对比带只随主目标图。
 const TIMES = ['2026-10-23 08:00:00', '2026-10-23 09:00:00', '2026-10-23 10:00:00']
 const points = base => TIMES.map(time => ({ time, value: base }))
 const band = TIMES.map(time => ({ time, target: 20, min: 15, median: 18, max: 26 }))
@@ -62,10 +63,9 @@ test('multi-pollutant hourly series split into one chart per pollutant', async (
   }))
   await page.goto('/__wor_split_test__')
 
-  // 拆图标题：NO / NO2 / O3 各一张
+  // 拆图标题：NO↔NO2 互为配对合并为一张，O3 单独一张
   await expect(page.locator('#wor-section-station_hour')).toBeVisible()
-  await expect(page.getByText('NO 小时时序', { exact: true })).toBeVisible()
-  await expect(page.getByText('NO2 小时时序', { exact: true })).toBeVisible()
+  await expect(page.getByText('NO+NO2 小时时序', { exact: true })).toBeVisible()
   await expect(page.getByText('O3 小时时序', { exact: true })).toBeVisible()
 
   const readCharts = () => page.evaluate(async () => {
@@ -84,20 +84,18 @@ test('multi-pollutant hourly series split into one chart per pollutant', async (
     })
   })
 
-  await expect.poll(readCharts).toHaveLength(3)
+  await expect.poll(readCharts).toHaveLength(2)
   const charts = (await readCharts()).filter(Boolean)
-  // 主目标图：NO 本站 + NO2 对照 + 同城带三条；归属 NO 与无归属的区间都落在这张图
+  // 主目标图（NO+NO2 合并）：两条本站曲线 + 同城带；NO/NO2 区间与无归属区间都落在这张图
   assertChart(charts[0], {
-    series: ['NO（本站）', 'NO2（对照）', '同城最低', '同城中位', '同城最高'],
-    areas: ['NO剔除区间', '剔除候选'],
+    series: ['NO（本站）', 'NO2（本站）', '同城最低', '同城中位', '同城最高'],
+    areas: ['NO剔除区间', '剔除候选', 'NO2剔除区间'],
   })
-  // 包内对照污染物被剔除 → 自己的图，配对翻转为 NO 对照
-  assertChart(charts[1], { series: ['NO2（本站）', 'NO（对照）'], areas: ['NO2剔除区间'] })
-  // 其余目标污染物图：O3 本站 + NO2 对照
-  assertChart(charts[2], { series: ['O3（本站）', 'NO2（对照）'], areas: ['O3剔除区间'] })
-  // 同一污染物跨图同色（NO2 在主图为对照紫、在 O3 图仍为紫）
-  const no2ColorMain = charts[0].seriesColors[charts[0].seriesNames.indexOf('NO2（对照）')]
-  const no2ColorO3 = charts[2].seriesColors[charts[2].seriesNames.indexOf('NO2（对照）')]
+  // O3 图：本站 + 配对对照（NO2 已并入主图，此处仅作参考曲线）
+  assertChart(charts[1], { series: ['O3（本站）', 'NO2（对照）'], areas: ['O3剔除区间'] })
+  // 同一污染物跨图同色（NO2 在主图为本站色、在 O3 图作对照仍是同一颜色）
+  const no2ColorMain = charts[0].seriesColors[charts[0].seriesNames.indexOf('NO2（本站）')]
+  const no2ColorO3 = charts[1].seriesColors[charts[1].seriesNames.indexOf('NO2（对照）')]
   expect(no2ColorMain).toBe(no2ColorO3)
   expect(errors).toEqual([])
 })
