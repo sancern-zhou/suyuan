@@ -94,6 +94,7 @@ knowledge:
     station_fault_diagnosis: 广东运维工单知识
 scheduled_tasks:
 - gd_station_operation_daily
+- gd_station_alarm_status_watch
 - gd_work_order_timeout_watch
 - gd_work_order_monthly_report
 - gd_fault_diagnosis_watch

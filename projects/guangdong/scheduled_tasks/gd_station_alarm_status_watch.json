@@ -1,0 +1,37 @@
+{
+  "task_id": "gd_station_alarm_status_watch",
+  "name": "广东站点告警态势日报",
+  "description": "每个工作日早上输出当前告警站点清单（源自源系统实时推送快照）：告警站点数、城市分布、重点站点及最新告警描述，并推送通知",
+  "execution_mode": "custom",
+  "model_tier": "auto",
+  "tool_names": [
+    "execute_guangdong_mart_sql",
+    "send_notification"
+  ],
+  "trigger_type": "schedule",
+  "schedule_type": "daily_custom",
+  "hour": 8,
+  "minute": 0,
+  "enabled": true,
+  "prompt": "执行广东站点告警态势日报扫描，只读本地数据集，不修改任何数据。执行步骤：1) 查询站点告警态势快照（当前告警站点清单，取 alarm_status 不为'正常'的记录）：告警站点总数、按城市分布、按运维单位分布。2) 重点站点清单：列出全部告警站点（站点名/城市/运维单位/最新告警描述/最新告警时间），按告警时间倒序；若超过 20 站，正文列 Top20 并注明其余数量。3) 输出：150-300字结论在前（当前告警站点数、集中在哪些城市与单位、最近告警的站点及事由），随后附告警站点清单表。4) 用 send_notification 推送结论摘要（含清单要点）；推送失败不阻塞，如实记录即可。数据红线：本快照仅包含源系统推送的告警中站点，'未推送=无告警'不成立，结论必须表述为'推送范围内的当前告警站点'，不得得出'全省仅N站告警'的全量结论；快照覆盖面以当日数据为准；查询失败或为空时如实说明数据缺口；不输出表名、字段名、SQL或文件路径。",
+  "timeout_seconds": 600,
+  "created_by": "project-default",
+  "owner_user_id": "system",
+  "owner_username": "gd-alarm-watch-agent",
+  "owner_display_name": "广东告警态势智能体",
+  "tags": [
+    "广东",
+    "站点告警",
+    "态势",
+    "日报",
+    "只读"
+  ],
+  "workspace_entry": {
+    "enabled": true,
+    "title": "告警态势日报"
+  },
+  "history_learning": {
+    "enabled": false
+  },
+  "skill_id": null
+}
