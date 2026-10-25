@@ -79,10 +79,13 @@ export const CHART_COMPARISON_PAIRS = {
 // 入参：data = 证据包 station_hour.data（pollutant/pollutants/comparison_*/points/extra_points），
 // fallbackPollutant = 索引里的工单目标污染物（旧包 data.pollutant 缺失时兜底），
 // markAreas = 审核回写的剔除区间，bandRows/bandComparisonCollapsed/bandDistrictName = 同城带叠加。
-// 返回：{ charts, colorMap, stationPollutantSeries }：
+// 返回：{ charts, colorMap, stationPollutantSeries, seriesPointsByPollutant, targetCode }：
 // - charts: [{ pollutant, unit, series, markAreas }]，首项恒为主目标图（含同城带叠加）；
 // - colorMap: 污染物 → 曲线色（气象图污染物面板与区间着色复用）；
-// - stationPollutantSeries: 主目标图的站内曲线（剔除同城带叠加），气象图复用。
+// - stationPollutantSeries: 主目标图的站内曲线（剔除同城带叠加），气象图复用；
+// - seriesPointsByPollutant: 污染物 → 本站逐时点列（目标/对照/extra_points 全量，
+//   气象图污染物切换选项的数据源）；
+// - targetCode: 主目标污染物编码（气象图切换默认选中）。
 export function buildPollutantCharts({
   data = {},
   fallbackPollutant = '',
@@ -93,7 +96,9 @@ export function buildPollutantCharts({
 } = {}) {
   const targetCode = String(data.pollutant || fallbackPollutant || 'PM10').toUpperCase()
   const targetPoints = (data.points || []).map(point => ({ time: point.time, value: point.value }))
-  if (!targetPoints.length) return { charts: [], colorMap: {}, stationPollutantSeries: [] }
+  if (!targetPoints.length) {
+    return { charts: [], colorMap: {}, stationPollutantSeries: [], seriesPointsByPollutant: {}, targetCode }
+  }
 
   // 污染物 → 本站逐时序列：主目标取 points，包内对照取 comparison_points（旧包回落
   // pm25_points），其余取 extra_points；三处皆无则该污染物无曲线可画。
@@ -219,5 +224,7 @@ export function buildPollutantCharts({
     stationPollutantSeries: charts.length
       ? charts[0].series.filter(item => !String(item.name || '').startsWith('同城'))
       : [],
+    seriesPointsByPollutant: seriesPoints,
+    targetCode,
   }
 }

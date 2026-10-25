@@ -322,7 +322,20 @@
               </template>
 
               <template v-else-if="source.key === 'weather'">
-                <JiangsuWeatherReviewChart v-if="weatherRows.length" :entry="weatherEntry" :weather="weatherPayload" :mark-areas="markAreas" />
+                <template v-if="weatherRows.length">
+                  <!-- 污染物切换器（参照智能事件对比图）：一次只画选中污染物的本站/对照曲线 -->
+                  <div v-if="weatherPollutantOptions.length > 1" class="pollutant-switch" role="group" aria-label="气象图污染物切换">
+                    <button
+                      v-for="option in weatherPollutantOptions"
+                      :key="option.code"
+                      type="button"
+                      :class="{ active: option.code === weatherActivePollutant }"
+                      :aria-pressed="option.code === weatherActivePollutant"
+                      @click="weatherPollutant = option.code"
+                    ><i class="switch-swatch" :style="{ background: option.color }"></i>{{ option.label }}</button>
+                  </div>
+                  <JiangsuWeatherReviewChart :entry="weatherEntry" :weather="weatherPayload" :mark-areas="weatherSelectedAreas" />
+                </template>
                 <p v-else class="source-empty">未获取到城市气象数据。</p>
               </template>
 
@@ -432,6 +445,7 @@ import ReviewTimeSeriesChart from '@/components/visualization/ReviewTimeSeriesCh
 import {
   areaPollutant,
   buildPollutantCharts,
+  CHART_COMPARISON_PAIRS,
   EXTRA_POLLUTANT_COLORS,
   POLLUTANT_UNIT_OVERRIDES,
 } from '@/components/visualization/reviewTimeSeriesData.js'
@@ -569,13 +583,6 @@ const hourlyChartBundle = computed(() => buildPollutantCharts({
 }))
 const pollutantCharts = computed(() => hourlyChartBundle.value.charts)
 const pollutantColorMap = computed(() => hourlyChartBundle.value.colorMap)
-// 站内污染物序列（主目标图的站内曲线，不含同城带叠加）：气象图的污染物面板复用同一份。
-const stationPollutantSeries = computed(() => hourlyChartBundle.value.stationPollutantSeries)
-// 气象图的污染物面板标注沿用全量区间（该图叠加站点全污染物，作背景参考）。
-const markAreas = computed(() => (index.value.mark_areas || []).map(area => {
-  const color = pollutantColorMap.value[areaPollutant(area)]
-  return color ? { ...area, color } : { ...area }
-}))
 
 // 同城对比带：取证侧只存聚合行（本站 target + 同城最低/中位/最高）。聚合行叠加在小时时序图上
 // 与站内序列同图对照；同区只有 1 个省控对比站时最低/中位/最高三值相同，合并为一条"同城对比站"线。
@@ -599,56 +606,92 @@ const weatherPayload = computed(() => ({
   end: entry.value.window_end,
   data: weatherRows.value,
 }))
-// 气象图的污染物面板画站点全污染物（目标/对照 + extra_points 全部其余项），
-// 对齐智能事件证据包的「站点污染物与气象时序」复合图；小时时序图仍只画
-// 目标/对照/剔除建议补画项，保持主图聚焦。
+// 气象图污染物切换（参照智能事件「目标站与对比站小时趋势」的右上角切换器）：
+// 全污染物同图叠加难以辨认，改为一次只画选中污染物的本站曲线 + 其配对对照曲线。
+// 选项 = 有曲线的站点污染物（目标/对照/extra_points 全量，规范排序），默认选中工单目标污染物。
 const WEATHER_POLLUTANT_ORDER = ['PM10', 'PM2.5', 'SO2', 'NO', 'NO2', 'CO', 'O3']
-const weatherPollutantSeries = computed(() => {
-  const data = stationHourData.value
-  const byName = new Map()
-  for (const item of stationPollutantSeries.value) {
-    const code = /^(.+?)（/.exec(item.name)?.[1]?.trim().toUpperCase()
-    if (code) byName.set(code === 'PM2_5' || code === 'PM25' ? 'PM2.5' : code, item)
-  }
-  const extras = Object.keys(data.extra_points || {})
-    .filter(pollutant => (data.extra_points[pollutant] || []).length)
-    .map(pollutant => String(pollutant).toUpperCase())
-  const ordered = [...byName.keys(), ...WEATHER_POLLUTANT_ORDER, ...extras]
+const weatherPollutant = ref('')
+const weatherPointsByPollutant = computed(() => hourlyChartBundle.value.seriesPointsByPollutant || {})
+const weatherTargetCode = computed(() => String(hourlyChartBundle.value.targetCode || entry.value.pollutant || '').toUpperCase())
+const weatherPollutantCodes = computed(() => {
+  const pointsByPollutant = weatherPointsByPollutant.value
+  return [
+    ...WEATHER_POLLUTANT_ORDER,
+    ...Object.keys(pointsByPollutant).map(code => String(code).toUpperCase()),
+  ]
     .map(code => (code === 'PM2_5' || code === 'PM25' ? 'PM2.5' : code))
-    .filter((code, idx, list) => list.indexOf(code) === idx)
-  if (!ordered.length) return []
-  // 目标/对照/剔除建议污染物沿用小时时序图的配色；其余站点污染物从补画色板续取，
-  // 跳过已占用颜色，保证整张图内不重色。
+    .filter((code, idx, list) => list.indexOf(code) === idx && (pointsByPollutant[code] || []).length)
+})
+// 污染物 → 曲线色：小时时序图已有的沿用（跨图同色），其余从补画色板续取且整图内不重色。
+const weatherColorMap = computed(() => {
   const colors = { ...pollutantColorMap.value }
   const used = new Set(Object.values(colors))
   let extraIndex = 0
-  for (const pollutant of ordered) {
-    if (colors[pollutant]) continue
+  for (const code of weatherPollutantCodes.value) {
+    if (colors[code]) continue
     let color = EXTRA_POLLUTANT_COLORS[extraIndex++ % EXTRA_POLLUTANT_COLORS.length]
     for (let step = 0; step < EXTRA_POLLUTANT_COLORS.length && used.has(color); step += 1) {
       color = EXTRA_POLLUTANT_COLORS[extraIndex++ % EXTRA_POLLUTANT_COLORS.length]
     }
-    colors[pollutant] = color
+    colors[code] = color
     used.add(color)
   }
-  return ordered.map(pollutant => {
-    const item = byName.get(pollutant)
-    const points = item?.points?.length
-      ? item.points
-      : (data.extra_points?.[pollutant] || []).map(point => ({ time: point.time, value: point.value }))
-    return {
-      name: item?.name || `${pollutant}（本站）`,
-      unit: POLLUTANT_UNIT_OVERRIDES[pollutant] || data.unit || 'μg/m³',
-      color: colors[pollutant],
-      points,
-    }
+  return colors
+})
+const weatherPollutantOptions = computed(() => {
+  const unitOf = code => POLLUTANT_UNIT_OVERRIDES[code] || stationHourData.value.unit || 'μg/m³'
+  return weatherPollutantCodes.value.map(code => ({
+    code,
+    label: code,
+    color: weatherColorMap.value[code],
+    unit: unitOf(code),
+  }))
+})
+const weatherActivePollutant = computed(() => {
+  const codes = weatherPollutantCodes.value
+  if (!codes.length) return ''
+  if (codes.includes(weatherPollutant.value)) return weatherPollutant.value
+  const target = weatherTargetCode.value
+  return codes.includes(target) ? target : codes[0]
+})
+const weatherSelectedSeries = computed(() => {
+  const code = weatherActivePollutant.value
+  const pointsByPollutant = weatherPointsByPollutant.value
+  if (!code || !(pointsByPollutant[code] || []).length) return []
+  const unitOf = pollutant => POLLUTANT_UNIT_OVERRIDES[pollutant] || stationHourData.value.unit || 'μg/m³'
+  const series = [{
+    name: `${code}（本站）`, unit: unitOf(code),
+    color: weatherColorMap.value[code] || '#2f86e0', points: pointsByPollutant[code],
+  }]
+  const pair = CHART_COMPARISON_PAIRS[code]
+  if (pair && pair !== code && (pointsByPollutant[pair] || []).length) {
+    series.push({
+      name: `${pair}（对照）`, unit: unitOf(pair),
+      color: weatherColorMap.value[pair] || '#9b8cff', points: pointsByPollutant[pair],
+    })
+  }
+  return series
+})
+// 区间归属与小时时序图一致：标注了污染物的区间随该污染物显示，
+// 无归属（或归属污染物无曲线）回落主目标图，由图表回退默认琥珀色。
+const weatherSelectedAreas = computed(() => {
+  const code = weatherActivePollutant.value
+  const targetCode = weatherTargetCode.value
+  const pointsByPollutant = weatherPointsByPollutant.value
+  return (index.value.mark_areas || []).filter(area => {
+    const owner = areaPollutant(area)
+    if (!owner) return code === targetCode
+    return owner === code || (code === targetCode && !(pointsByPollutant[owner] || []).length)
+  }).map(area => {
+    const color = weatherColorMap.value[areaPollutant(area)]
+    return color ? { ...area, color } : { ...area }
   })
 })
 const weatherEntry = computed(() => ({
   title: '站点污染物与气象时序',
   unit: stationHourData.value.unit || 'μg/m3',
-  // 目标/对照/剔除建议污染物与小时时序图同名同色；其余站点污染物在此补齐全画
-  series: weatherPollutantSeries.value.map(item => ({ name: item.name, unit: item.unit, color: item.color, points: item.points })),
+  // 只画切换器选中污染物的本站/对照曲线，名称与颜色和小时时序图保持一致
+  series: weatherSelectedSeries.value,
 }))
 
 const workOrderData = computed(() => sourceCache.value.work_order?.data || {})
@@ -1123,6 +1166,7 @@ async function openDetail(code) {
   releaseAttachmentUrls()
   expandedQcKeys.value = []
   expandedSourceKeys.value = []
+  weatherPollutant.value = ''
   activeSectionKey.value = 'judgment'
   actionError.value = ''
   detailLoading.value = true
@@ -1849,6 +1893,46 @@ loadOrders()
   margin: 0;
   font-size: var(--text-size-sm);
   color: var(--text-3);
+}
+
+/* 气象图污染物切换器（参照智能事件对比图的右上角切换按钮组），色标与曲线同色 */
+.pollutant-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-radius: 4px;
+  padding: 2px;
+  background: #f5f7fa;
+}
+
+.pollutant-switch button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 48px;
+  border: 0;
+  border-radius: 4px;
+  padding: 5px 8px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  transition: all 0.15s ease;
+}
+
+.pollutant-switch button.active {
+  background: var(--bg-container);
+  color: var(--color-primary);
+  box-shadow: 0 1px 3px rgba(31, 42, 68, 0.14);
+  font-weight: 600;
+}
+
+.pollutant-switch .switch-swatch {
+  width: 12px;
+  height: 3px;
+  border-radius: 2px;
+  flex: 0 0 auto;
 }
 
 /* 同城对比带区块的范围说明（图已并入上方小时时序图，本区块只剩说明与数据表） */

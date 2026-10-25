@@ -1,7 +1,7 @@
 import { expect, test } from 'playwright/test'
 
-// 故障工单审核工作台「气象时序」回归：站点全污染物（目标/对照/extra_points）+ 气象复合图，
-// 与智能事件证据包对齐；小时时序图保持只画目标/对照。
+// 故障工单审核工作台「气象时序」回归：右上角污染物切换器（参照智能事件对比图），
+// 一次只画选中污染物的本站+配对对照曲线；轴收紧到实际观测范围，不留未来空段。
 const TIMES = ['2026-10-23 08:00:00', '2026-10-23 09:00:00', '2026-10-23 10:00:00']
 const points = base => TIMES.map(time => ({ time, value: base }))
 const stationHourSource = {
@@ -37,7 +37,7 @@ const sourceByName = {
   band: empty('band'), alarms: empty('alarms'), env_power: empty('env_power'), qc: empty('qc'),
 }
 
-test('weather section renders every station pollutant beside weather series', async ({ page }) => {
+test('weather section switches pollutants and clamps axis to observed range', async ({ page }) => {
   const errors = []
   page.on('pageerror', error => errors.push(error.message))
   await page.route('**/api/**', route => {
@@ -62,36 +62,62 @@ test('weather section renders every station pollutant beside weather series', as
 
   await expect(page.getByText('站点污染物与气象时序', { exact: true })).toBeVisible()
   await expect(page.locator('#wor-section-weather .weather-chart canvas')).toBeVisible()
-  await expect(page.locator('#wor-section-station_hour canvas').first()).toBeVisible()
+  const switchGroup = page.getByRole('group', { name: '气象图污染物切换' })
+  await expect(switchGroup.getByRole('button')).toHaveCount(7)
 
-  const readCharts = () => page.evaluate(async () => {
+  const readWeather = () => page.evaluate(async () => {
     const echarts = await import('/node_modules/.vite/deps/echarts.js')
-    const describe = holder => {
-      const chart = echarts.getInstanceByDom(holder)
-      if (!chart) return null
-      const option = chart.getOption()
-      return {
-        seriesNames: option.series.map(item => item.name),
-        seriesAxis: option.series.map(item => item.yAxisIndex),
-        axisNames: option.yAxis.map(axis => axis.name || ''),
-        axisRange: { min: option.xAxis[0].min, max: option.xAxis[0].max },
-        pollutantSlotCount: option.series[0].data.length,
-      }
-    }
+    const holder = document.querySelector('#wor-section-weather .weather-chart')
+    const chart = echarts.getInstanceByDom(holder)
+    if (!chart) return null
+    const option = chart.getOption()
     return {
-      weather: describe(document.querySelector('#wor-section-weather .weather-chart')),
-      hourly: describe(document.querySelector('#wor-section-station_hour .chart-surface')),
+      seriesNames: option.series.map(item => item.name),
+      seriesAxis: option.series.map(item => item.yAxisIndex),
+      axisNames: option.yAxis.map(axis => axis.name || ''),
+      axisRange: { min: option.xAxis[0].min, max: option.xAxis[0].max },
+      pollutantSlotCount: option.series[0].data.length,
+      targetMarkArea: Boolean(option.series[0].markArea),
     }
   })
-  await expect.poll(() => readCharts().then(charts => charts.weather)).toEqual({
-    seriesNames: ['NO（本站）', 'NO2（对照）', 'PM10（本站）', 'PM2.5（本站）', 'SO2（本站）', 'CO（本站）', 'O3（本站）',
-      '风速 (m/s)', '风向', '温度 (°C)', '湿度 (%)', '大气压 (hPa)'],
-    seriesAxis: [0, 0, 0, 0, 0, 1, 0, 2, 3, 4, 4, 5],
+  const expectState = async expected => expect.poll(readWeather).toEqual(expected)
+
+  // 默认选中工单目标污染物 NO：本站 + 配对对照 NO2，无 mg/m³ 次轴（未显示 CO）；
+  // NO 的剔除区间随图；轴收紧到 08:00~10:00 观测范围
+  await expect(switchGroup.getByRole('button', { name: 'NO', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expectState({
+    seriesNames: ['NO（本站）', 'NO2（对照）', '风速 (m/s)', '风向', '温度 (°C)', '湿度 (%)', '大气压 (hPa)'],
+    seriesAxis: [0, 0, 1, 2, 3, 3, 4],
+    axisNames: ['μg/m³', '风速 (m/s)', '', '温度/湿度', '气压 (hPa)'],
+    axisRange: { min: Date.parse('2026-10-23T08:00:00'), max: Date.parse('2026-10-23T10:00:00') },
+    pollutantSlotCount: 3,
+    targetMarkArea: true,
+  })
+
+  // 切到 O3：本站 O3 + 对照 NO2；NO 的剔除区间不随图
+  await switchGroup.getByRole('button', { name: 'O3', exact: true }).click()
+  await expect(switchGroup.getByRole('button', { name: 'O3', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expectState({
+    seriesNames: ['O3（本站）', 'NO2（对照）', '风速 (m/s)', '风向', '温度 (°C)', '湿度 (%)', '大气压 (hPa)'],
+    seriesAxis: [0, 0, 1, 2, 3, 3, 4],
+    axisNames: ['μg/m³', '风速 (m/s)', '', '温度/湿度', '气压 (hPa)'],
+    axisRange: { min: Date.parse('2026-10-23T08:00:00'), max: Date.parse('2026-10-23T10:00:00') },
+    pollutantSlotCount: 3,
+    targetMarkArea: false,
+  })
+
+  // 切到 CO：无配对单曲线，mg/m³ 序列挂右侧次轴（各 grid 的 yAxis 连续分组：紧跟主轴）
+  await switchGroup.getByRole('button', { name: 'CO', exact: true }).click()
+  await expectState({
+    seriesNames: ['CO（本站）', '风速 (m/s)', '风向', '温度 (°C)', '湿度 (%)', '大气压 (hPa)'],
+    seriesAxis: [1, 2, 3, 4, 4, 5],
     axisNames: ['μg/m³', 'mg/m³', '风速 (m/s)', '', '温度/湿度', '气压 (hPa)'],
     axisRange: { min: Date.parse('2026-10-23T08:00:00'), max: Date.parse('2026-10-23T10:00:00') },
     pollutantSlotCount: 3,
+    targetMarkArea: false,
   })
-  // 小时时序图保持聚焦：只有目标 + 对照两条污染物曲线
-  await expect.poll(() => readCharts().then(charts => charts.hourly?.seriesNames)).toEqual(['NO（本站）', 'NO2（对照）'])
+
+  // 小时时序图不受切换影响：仍按拆图逻辑渲染
+  await expect(page.locator('#wor-section-station_hour canvas').first()).toBeVisible()
   expect(errors).toEqual([])
 })

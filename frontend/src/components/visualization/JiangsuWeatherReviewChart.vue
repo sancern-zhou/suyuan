@@ -50,28 +50,31 @@ const valuesFor = key => hourlyWeatherPoints(rangedWeather.value, key)
 const alignedPollutant = item => { const values = new Map((item.points || []).map(point => [weatherTime(point.time), point.value])); return times.value.map(time => [time, values.get(time) ?? null]) }
 // 次轴：unit 与主单位不同的污染物序列（如 CO 的 mg/m³）挂到首格右侧独立轴，
 // 与智能事件证据包的站点污染物+气象复合图同构；序列不带 unit 的旧调用方无次轴。
-// 注意 ECharts 要求各 grid 的 yAxis 连续分组：次轴必须紧跟主污染轴（index 1），
-// 后续风速/风向/温湿压的轴索引相应顺移。
-const secondaryUnits = [...new Set(props.entry.series
+// 注意 ECharts 要求各 grid 的 yAxis 连续分组：次轴必须紧跟主污染轴，风速/风向/温湿压
+// 的轴索引相应顺移；切换器切换污染物序列会增减次轴，因此轴布局须随 props 响应式重算。
+const secondaryUnits = computed(() => [...new Set(props.entry.series
   .map(item => (item.unit && props.entry.unit && item.unit !== props.entry.unit ? item.unit : null))
-  .filter(Boolean))]
-const secondaryAxisIndex = unit => 1 + secondaryUnits.indexOf(unit)
-const WIND_SPEED_AXIS = 1 + secondaryUnits.length
-const WIND_DIRECTION_AXIS = WIND_SPEED_AXIS + 1
-const CLIMATE_AXIS = WIND_DIRECTION_AXIS + 1
-const PRESSURE_AXIS = CLIMATE_AXIS + 1
+  .filter(Boolean))])
+const axisLayout = computed(() => ({
+  secondary: unit => 1 + secondaryUnits.value.indexOf(unit),
+  windSpeed: 1 + secondaryUnits.value.length,
+  windDirection: 2 + secondaryUnits.value.length,
+  climate: 3 + secondaryUnits.value.length,
+  pressure: 4 + secondaryUnits.value.length,
+}))
 const option = computed(() => {
+  const layout = axisLayout.value
   const windSpeed = valuesFor('windSpeed'); const windDirection = valuesFor('windDirection'); const temperature = valuesFor('temperature'); const humidity = valuesFor('humidity'); const pressure = valuesFor('pressure')
   // 污染物曲线颜色由调用方传入（与小时时序图一致：目标蓝、对照紫、剔除建议污染物补画色），
   // 未带颜色的序列（如 AI 旧 spec）回退 ECharts 默认色板；气象序列固定用默认色板。
   const series = props.entry.series.map(item => ({
     name: item.name, type: 'line', xAxisIndex: 0,
-    yAxisIndex: item.unit && secondaryUnits.includes(item.unit) ? secondaryAxisIndex(item.unit) : 0,
+    yAxisIndex: item.unit && secondaryUnits.value.includes(item.unit) ? layout.secondary(item.unit) : 0,
     showSymbol: false, connectNulls: false,
     data: alignedPollutant(item),
     ...(item.color ? { lineStyle: { color: item.color }, itemStyle: { color: item.color } } : {}),
   }))
-  series.push({ name: '风速 (m/s)', type: 'line', xAxisIndex: 1, yAxisIndex: WIND_SPEED_AXIS, showSymbol: false, data: windSpeed }, { name: '风向', type: 'scatter', xAxisIndex: 1, yAxisIndex: WIND_DIRECTION_AXIS, symbol: WIND_ARROW_SYMBOL, symbolSize: [8, 26], data: windDirection.flatMap(([time, value]) => (value == null || value < 0 || value > 360) ? [] : [{ value: [time, 0.5, value], symbolRotate: 180 - value }]), encode: { x: 0, y: 1, tooltip: [2] }, tooltip: { valueFormatter: direction => `${direction}°（来向）` } }, { name: '温度 (°C)', type: 'line', xAxisIndex: 2, yAxisIndex: CLIMATE_AXIS, showSymbol: false, data: temperature }, { name: '湿度 (%)', type: 'line', xAxisIndex: 2, yAxisIndex: CLIMATE_AXIS, showSymbol: false, data: humidity }, { name: '大气压 (hPa)', type: 'line', xAxisIndex: 2, yAxisIndex: PRESSURE_AXIS, showSymbol: false, data: pressure })
+  series.push({ name: '风速 (m/s)', type: 'line', xAxisIndex: 1, yAxisIndex: layout.windSpeed, showSymbol: false, data: windSpeed }, { name: '风向', type: 'scatter', xAxisIndex: 1, yAxisIndex: layout.windDirection, symbol: WIND_ARROW_SYMBOL, symbolSize: [8, 26], data: windDirection.flatMap(([time, value]) => (value == null || value < 0 || value > 360) ? [] : [{ value: [time, 0.5, value], symbolRotate: 180 - value }]), encode: { x: 0, y: 1, tooltip: [2] }, tooltip: { valueFormatter: direction => `${direction}°（来向）` } }, { name: '温度 (°C)', type: 'line', xAxisIndex: 2, yAxisIndex: layout.climate, showSymbol: false, data: temperature }, { name: '湿度 (%)', type: 'line', xAxisIndex: 2, yAxisIndex: layout.climate, showSymbol: false, data: humidity }, { name: '大气压 (hPa)', type: 'line', xAxisIndex: 2, yAxisIndex: layout.pressure, showSymbol: false, data: pressure })
   if (series[0] && props.markAreas.length) series[0].markArea = {
     silent: true,
     itemStyle: { color: 'rgba(220, 110, 40, 0.16)' },
@@ -83,7 +86,7 @@ const option = computed(() => {
     ]),
   }
   const x = { type: 'time', min: weatherTime(observationRange.value.start), max: weatherTime(observationRange.value.end), axisLabel: { hideOverlap: true } }
-  return { animation: false, tooltip: { trigger: 'axis', confine: true }, legend: { type: 'scroll', top: 4, left: 0, right: 0 }, grid: [{ left: 72, right: 72, top: 50, height: '23%' }, { left: 72, right: 72, top: '37%', height: '23%' }, { left: 72, right: 72, top: '70%', height: '20%' }], xAxis: [{ ...x, gridIndex: 0 }, { ...x, gridIndex: 1 }, { ...x, gridIndex: 2 }], yAxis: [{ type: 'value', name: props.entry.unit, gridIndex: 0, position: 'left', scale: true, ...AXIS_NAME_STYLE }, ...secondaryUnits.map(unit => ({ type: 'value', name: unit, gridIndex: 0, position: 'right', scale: true, splitLine: { show: false }, ...AXIS_NAME_STYLE })), { type: 'value', name: '风速 (m/s)', gridIndex: 1, position: 'left', scale: true, ...AXIS_NAME_STYLE }, { type: 'value', gridIndex: 1, show: false, min: 0, max: 1 }, { type: 'value', name: '温度/湿度', gridIndex: 2, position: 'left', scale: true, ...AXIS_NAME_STYLE }, { type: 'value', name: '气压 (hPa)', gridIndex: 2, position: 'right', scale: true, splitLine: { show: false }, ...AXIS_NAME_STYLE }], dataZoom: [{ type: 'inside', xAxisIndex: [0, 1, 2], filterMode: 'none' }, { type: 'slider', xAxisIndex: [0, 1, 2], bottom: 4, height: 22, filterMode: 'none' }], series }
+  return { animation: false, tooltip: { trigger: 'axis', confine: true }, legend: { type: 'scroll', top: 4, left: 0, right: 0 }, grid: [{ left: 72, right: 72, top: 50, height: '23%' }, { left: 72, right: 72, top: '37%', height: '23%' }, { left: 72, right: 72, top: '70%', height: '20%' }], xAxis: [{ ...x, gridIndex: 0 }, { ...x, gridIndex: 1 }, { ...x, gridIndex: 2 }], yAxis: [{ type: 'value', name: props.entry.unit, gridIndex: 0, position: 'left', scale: true, ...AXIS_NAME_STYLE }, ...secondaryUnits.value.map(unit => ({ type: 'value', name: unit, gridIndex: 0, position: 'right', scale: true, splitLine: { show: false }, ...AXIS_NAME_STYLE })), { type: 'value', name: '风速 (m/s)', gridIndex: 1, position: 'left', scale: true, ...AXIS_NAME_STYLE }, { type: 'value', gridIndex: 1, show: false, min: 0, max: 1 }, { type: 'value', name: '温度/湿度', gridIndex: 2, position: 'left', scale: true, ...AXIS_NAME_STYLE }, { type: 'value', name: '气压 (hPa)', gridIndex: 2, position: 'right', scale: true, splitLine: { show: false }, ...AXIS_NAME_STYLE }], dataZoom: [{ type: 'inside', xAxisIndex: [0, 1, 2], filterMode: 'none' }, { type: 'slider', xAxisIndex: [0, 1, 2], bottom: 4, height: 22, filterMode: 'none' }], series }
 })
 watch(option, value => chart?.setOption(value, true))
 onMounted(() => { chart = echarts.init(surface.value); chart.setOption(option.value); observer = new ResizeObserver(() => chart?.resize()); observer.observe(surface.value) })
