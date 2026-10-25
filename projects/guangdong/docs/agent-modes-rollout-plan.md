@@ -178,7 +178,7 @@
 | 步骤 | 状态 | 产出 |
 |---|---|---|
 | 第1步 gd_query | ✅ 配置完成 | `prompts/gd_query.md` + `agent_mode_tools.gd_query`（全量白名单）+ welcome 文案 |
-| 第2步 ops 升级 | ✅ 配置完成 | extra_tools 此前已含语义层工具；`ops.md` 补绩效/巡检对照口径；welcome 文案 |
+| 第2步 ops 升级 | ✅ 配置完成 | 2026-10-25 二次升级：对标江苏重塑为**运维工单审核模式**（例行工单规则筛查 + 故障工单人工复核）——ops.md 全文重写（审核双线定位/复核边界/审核口径红线，故障诊断职责划归站点故障诊断智能体）；工具面对标江苏从共享基线叠加改为审核专用全量白名单（ops_audit 三件套 + mart SQL/语义层/源库核对 + 站点数据佐证 + 报告/图表/子代理复核，移除共享基线中的画板/PPT/GIS/联网等分析类工具）；welcome 文案改为审核定位 |
 | 第3步 station_fault_diagnosis | ✅ 配置完成 | `prompts/station_fault_diagnosis.md` + 白名单（图谱/语义层/站点数据/会话文件） |
 | 第4步 operations_analysis | ✅ 配置完成 | 父提示词 + 9 个子模式提示词（`prompts/internal/`）+ `agent_workflow_modes`/`agent_workflow_parents`（并发3/节点12/重试3/补图2/1200s） |
 | 第5步 knowledge | ⚠️ 配置完成，建库待部署环境 | `prompts/knowledge.md` + welcome；`bindings.station_fault_diagnosis` 已配置；collections 建库与文档上传、故障诊断图谱构建需在运行系统执行（见下） |

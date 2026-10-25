@@ -128,11 +128,27 @@ def test_operations_analysis_prompt_declares_budget_and_children():
     assert "累计节点 12" in prompt
 
 
-def test_ops_mode_keeps_semantic_layer_upgrade():
+def test_ops_mode_is_audit_focused_with_lean_whitelist():
+    manifest = _guangdong_context().manifest
+    # ops 对标江苏改为审核专用全量白名单，不走共享基线叠加
+    assert "ops" in manifest.backend.agent_mode_tools
+    assert "ops" not in manifest.backend.agent_mode_extra_tools
     tools = get_tools_by_mode("ops")
+    # 审核链路与语义层口径核对
+    assert "ops_audit_fetch_dataset" in tools
+    assert "ops_audit_run_rules" in tools
     assert "execute_guangdong_mart_sql" in tools
     assert "guangdong_query_metrics" in tools
+    assert "execute_ops_sql_query" in tools
+    # 工具面收敛：共享运维基线中的分析/画板/PPT 类工具不再进入
+    assert "create_drawio_board" not in tools
+    assert "generate_map" not in tools
+    assert "create_pptx_with_ppt_master" not in tools
+    assert "web_search" not in tools
     prompt = build_react_system_prompt("ops")
-    # ops 升级补充的绩效/巡检对照口径
+    # 审核定位与保留的绩效/巡检对照口径
+    assert "运维工单审核" in prompt
+    assert "例行工单审核" in prompt
+    assert "故障工单人工复核" in prompt
     assert "平台考核口径原值" in prompt
     assert "转工单率分母" in prompt

@@ -59,19 +59,20 @@ frontend:
       - 广东运维
       - 问数生图
     ops:
-      name: 广东运维管理模式
-      short_name: 运维管理
-      description: 工单审核、运维指标查询与故障诊断一体化的运维工作台
+      name: 运维工单审核模式
+      short_name: 运维工单审核
+      description: 例行工单规则筛查与故障工单人工复核，输出带规则标识的问题清单与正式报告
       welcome:
-        description: 面向广东站点运维的工单审核、指标查询、运行日报与故障诊断，数据口径与审核规则内置。
+        description: 面向广东站点运维工单的例行工单审核与故障工单复核，审核规则与工单口径内置，结论落到工单号与字段级证据。
         features:
-        - 按状态、类型、站点筛选工单并执行审核规则筛查
-        - 查询工单、告警、巡检、绩效等运维指标与明细
-        - 查看站点运行日报与连续缺数站点跟踪
-        - 按站点或工单发起故障诊断，输出诊断路径与处置建议
+        - 例行工单按内置规则集批量筛查，输出带规则标识的问题清单
+        - 按工单号、站点、时间窗口筛选工单并核对状态与处置记录
+        - 故障单复核含响应时效、重复故障、附件完整性与站点数据佐证
+        - 标注证据缺失与需人工确认的风险点，生成审核正式报告
+        - 当前不支持工单流转操作
       tags:
       - 工单审核
-      - 运维指标
+      - 人工复核
     knowledge:
       name: 广东知识问答智能体
       short_name: 知识问答
@@ -228,7 +229,32 @@ backend:
   # 新模式（id 不在共享模式表内）必须全量声明 agent_mode_tools；workflow 子模式
   # 只能出现在 agent_mode_tools（校验要求），且不得声明委派工具。
   # 白名单同时用于提示词和函数 schema；新增工具必须经过项目评审后加入。
+  # 2026-10-25 ops 对标江苏改为审核专用全量白名单：仅保留例行/故障工单审核链路、
+  # 语义层口径核对与最小只读佐证工具，分析类工具归 gd_query/运维分析。
   agent_mode_tools:
+    ops:
+    - ask_user_question
+    - list_session_resources
+    - read_session_resource
+    - publish_session_file
+    - read_file
+    - edit_file
+    - write_file
+    - list_skills
+    - view_skill
+    - ops_audit_fetch_dataset
+    - ops_audit_run_rules
+    - ops_audit_inspect
+    - execute_guangdong_mart_sql
+    - guangdong_query_metrics
+    - execute_ops_sql_query
+    - query_gd_suncere_station_hour_new
+    - query_gd_suncere_station_day_new
+    - station_operation_daily
+    - execute_python
+    - create_business_chart
+    - create_report_package
+    - call_sub_agent
     gd_query:
     - ask_user_question
     - list_session_resources
@@ -411,12 +437,6 @@ backend:
     - query_station_standard_report
     - query_station_standard_yoy_report
     - analyze_city_pollutant_rankings
-    - station_operation_daily
-    ops:
-    - execute_guangdong_mart_sql
-    - guangdong_query_metrics
-    - query_gd_suncere_station_hour_new
-    - query_gd_suncere_station_day_new
     - station_operation_daily
     deliberation_meteorology:
     - query_gd_suncere_city_hour
