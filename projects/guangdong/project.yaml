@@ -14,10 +14,331 @@ frontend:
   - report
   - board
   - ops
+  - gd_query
+  - knowledge
+  - station_fault_diagnosis
+  - operations_analysis
   agent_platform_layout: scenes
+  # 各前台模式的展示与欢迎文案：键与值结构对齐江苏 agent_mode_overrides
+  # （name/short_name 供后端 coordinator/社交通道读取；welcome.description/
+  #   welcome.features 供前端场景卡片与聊天欢迎区渲染）。
+  agent_mode_overrides:
+    gd_query:
+      name: 广东运维问数智能体
+      short_name: 运维问数
+      description: 查询广东运维工单、告警、巡检、绩效等指标并生成专业图表
+      welcome:
+        description: 面向广东站点运维数据，用自然语言完成指标查询、统计分析与图表生成，口径声明随结论交付。
+        features:
+        - 查询工单量、完成率、超期率、响应率、重复故障率等运维指标
+        - 查询告警通知分布、巡检执行、绩效得分与设备生命周期情况
+        - 查询城市、区县、站点监测数据并生成趋势、对比与排名图表
+        - 结论附带统计口径与数据截至时间，口径不可评估时如实说明
+      tags:
+      - 广东运维
+      - 问数生图
+    ops:
+      name: 广东运维管理模式
+      short_name: 运维管理
+      description: 工单审核、运维指标查询与故障诊断一体化的运维工作台
+      welcome:
+        description: 面向广东站点运维的工单审核、指标查询、运行日报与故障诊断，数据口径与审核规则内置。
+        features:
+        - 按状态、类型、站点筛选工单并执行审核规则筛查
+        - 查询工单、告警、巡检、绩效等运维指标与明细
+        - 查看站点运行日报与连续缺数站点跟踪
+        - 按站点或工单发起故障诊断，输出诊断路径与处置建议
+      tags:
+      - 工单审核
+      - 运维指标
+    knowledge:
+      name: 广东知识问答智能体
+      short_name: 知识问答
+      description: 检索授权知识库和用户材料，按需联网补充并给出可追溯答案
+      welcome:
+        description: 面向广东运维规程、制度标准、设备资料与历史报告，优先从授权知识库检索依据并给出可追溯回答。
+        features:
+        - 检索授权知识库中的运维规程、制度与设备资料
+        - 阅读命中文档上下文和用户上传材料
+        - 知识库证据不足时按需搜索并抓取公开网页
+        - 区分知识库、用户材料和网络信息来源
+      tags:
+      - 广东知识库
+      - 来源追溯
+    station_fault_diagnosis:
+      name: 站点故障诊断智能体
+      short_name: 故障诊断
+      description: 按站点、工单或异常现象发起诊断，输出诊断路径与处置建议
+      welcome:
+        description: 面向站点数据异常、设备故障与告警原因的即席诊断，先检索候选原因再用工单、设备与告警证据核验。
+        features:
+        - 按站点或工单发起即席故障诊断，与每日定时扫描互补
+        - 结合工单处置、设备检修历史与告警记录交叉核验
+        - 输出诊断路径、原因排序、支持与否定证据
+        - 给出立即可做与需现场核验的处置建议
+      tags:
+      - 故障诊断
+      - 站点运维
+    operations_analysis:
+      name: 广东运维操作分析智能体
+      short_name: 运维分析
+      description: 编排数据域子智能体完成运维专题分析与正式报告出具
+      welcome:
+        description: 面向广东运维的日常监管与风险监管分析，按数据域编排取数与分析，出具可审计的正式报告。
+        features:
+        - 工单、告警、巡检、绩效、设备、站点、到报率七域批量取数
+        - 常态监管专题分析与风险假设核验（要求反证）
+        - 多域交叉核验与口径一致性核对
+        - 出具带口径声明与缺口说明的正式运维分析报告
+      tags:
+      - 运维分析
+      - 正式报告
 backend:
   mode_prompt_files:
     ops: projects/guangdong/prompts/ops.md
+    gd_query: projects/guangdong/prompts/gd_query.md
+    knowledge: projects/guangdong/prompts/knowledge.md
+    station_fault_diagnosis: projects/guangdong/prompts/station_fault_diagnosis.md
+    operations_analysis: projects/guangdong/prompts/operations_analysis.md
+    gd_ops_data_workorder: projects/guangdong/prompts/internal/gd_ops_data_workorder.md
+    gd_ops_data_alarm: projects/guangdong/prompts/internal/gd_ops_data_alarm.md
+    gd_ops_data_inspection: projects/guangdong/prompts/internal/gd_ops_data_inspection.md
+    gd_ops_data_performance: projects/guangdong/prompts/internal/gd_ops_data_performance.md
+    gd_ops_data_device: projects/guangdong/prompts/internal/gd_ops_data_device.md
+    gd_ops_data_station: projects/guangdong/prompts/internal/gd_ops_data_station.md
+    gd_ops_data_rates: projects/guangdong/prompts/internal/gd_ops_data_rates.md
+    gd_ops_regular_analysis: projects/guangdong/prompts/internal/gd_ops_regular_analysis.md
+    gd_ops_risk_analysis: projects/guangdong/prompts/internal/gd_ops_risk_analysis.md
+  # workflow 子模式仅由 operations_analysis 委派，不出现在前台。
+  # 参照江苏 2026-10-12 按数据域拆子模式的做法：每个子模式只在
+  # agent_mode_tools 暴露本域工具，父 Agent 无法把跨域任务塞给单个节点。
+  agent_workflow_modes:
+    gd_ops_data_workorder:
+      positioning: 工单数据准备
+      scope: 全类型工单（含作废）的批量指标、受控明细与数据对齐；口径按类型与状态声明；响应类仅故障单可评估
+      boundary: 只取数和确定性整理，不作风险认定、不生成正式报告；例行单超期以源系统超时标记为准；跨域取数列入 data_gaps 交父 Agent 委派
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
+      max_iterations: 10
+      timeout_seconds: 300
+      max_deliverables: 3
+    gd_ops_data_alarm:
+      positioning: 告警数据准备
+      scope: 告警通知流水四类分布、站点与城市覆盖；当前告警态势快照（仅推送范围内）；禁止未处理率
+      boundary: 只取数和确定性整理，不作风险认定；通知无处理闭环状态，不得输出未处理率与处理时长；跨域取数列入 data_gaps
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
+      max_iterations: 10
+      timeout_seconds: 300
+      max_deliverables: 3
+    gd_ops_data_inspection:
+      positioning: 巡检数据准备
+      scope: 任务项完成率、超期率、转工单率（按周期/监测项/站点/城市分组）
+      boundary: 只取数和确定性整理，不作风险认定、不生成正式报告；完成态滞后口径（最近1-2天未完成可能是尚未到时点）必须随交付声明；跨域取数列入 data_gaps 交父 Agent 委派
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
+      max_iterations: 10
+      timeout_seconds: 300
+      max_deliverables: 3
+    gd_ops_data_performance:
+      positioning: 绩效数据准备
+      scope: 站点×月考核得分排名、低分清单、质控合格率与金额四件套（合同/核减/扣款/实发）
+      boundary: 只取数和确定性整理；平台口径原值不重算；组分站无运维单位信息、跨合同需分组；跨域取数列入 data_gaps
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
+      max_iterations: 10
+      timeout_seconds: 300
+      max_deliverables: 3
+    gd_ops_data_device:
+      positioning: 设备数据准备
+      scope: 设备生命周期事件、周期检查执行与启停事件统计；事件动作中文映射，状态枚举保留原文
+      boundary: 只取数和确定性整理，不作风险认定；未匹配站点/设备的记录不得静默丢弃；跨域取数列入 data_gaps
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
+      max_iterations: 10
+      timeout_seconds: 300
+      max_deliverables: 3
+    gd_ops_data_station:
+      positioning: 站点数据准备
+      scope: 站点名录（432 站主网+组分网）、城市/区域归属、运维单位与处理人中文解析、设备台账关联
+      boundary: 只做台账取数与解析；组分站无经纬度/运维单位的缺口必须声明；业务流水取数不在本节点，列入 data_gaps
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
+      max_iterations: 10
+      timeout_seconds: 300
+      max_deliverables: 3
+    gd_ops_data_rates:
+      positioning: 平台率值数据准备
+      scope: 平台到报率统计（每日生成）及其按站点/日期的分布
+      boundary: 率值一律以平台统计原值为准禁止自算；不取业务明细、不生成正式报告；跨域取数列入 data_gaps
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
+      max_iterations: 10
+      timeout_seconds: 300
+      max_deliverables: 3
+    gd_ops_regular_analysis:
+      positioning: 常态监管专题分析
+      scope: 复用共享数据回答一个运维问题（确定性核算、异常清单、管理解释与图表）
+      boundary: 不重新查询业务来源、不作因果或责任认定、不成稿
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用；分析图表随节点交付
+      max_iterations: 12
+      timeout_seconds: 300
+      max_deliverables: 3
+    gd_ops_risk_analysis:
+      positioning: 风险线索专题分析
+      require_counter_evidence: true
+      scope: 复用共享数据核验一个风险假设，列支持证据、反证与替代解释
+      boundary: 证据不足只报线索和缺口，不认定违规、不自行补查或成稿
+      outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用；分析图表随节点交付
+      max_iterations: 14
+      timeout_seconds: 360
+      max_deliverables: 3
+  # 父级预算起步值（江苏 16 节点是 10 子模式成熟后的值，广东 9 个子模式先 12）。
+  agent_workflow_parents:
+    operations_analysis:
+      child_modes:
+      - gd_ops_data_workorder
+      - gd_ops_data_alarm
+      - gd_ops_data_inspection
+      - gd_ops_data_performance
+      - gd_ops_data_device
+      - gd_ops_data_station
+      - gd_ops_data_rates
+      - gd_ops_regular_analysis
+      - gd_ops_risk_analysis
+      max_concurrency: 3
+      max_nodes: 12
+      max_retries: 3
+      max_extensions: 2
+      timeout_seconds: 1200
+  # 新模式（id 不在共享模式表内）必须全量声明 agent_mode_tools；workflow 子模式
+  # 只能出现在 agent_mode_tools（校验要求），且不得声明委派工具。
+  # 白名单同时用于提示词和函数 schema；新增工具必须经过项目评审后加入。
+  agent_mode_tools:
+    gd_query:
+    - ask_user_question
+    - list_session_resources
+    - read_session_resource
+    - publish_session_file
+    - read_file
+    - edit_file
+    - write_file
+    - guangdong_query_metrics
+    - execute_guangdong_mart_sql
+    - query_gd_suncere_city_hour
+    - query_gd_suncere_city_day
+    - query_gd_suncere_district_day
+    - query_gd_suncere_district_report
+    - query_gd_suncere_regional_comparison
+    - query_city_standard_report
+    - query_city_standard_yoy_report
+    - query_station_standard_report
+    - analyze_city_pollutant_rankings
+    - get_5min_data
+    - station_operation_daily
+    - aggregate_data
+    - create_business_chart
+    - execute_echarts_python
+    - execute_python
+    - create_report_package
+    station_fault_diagnosis:
+    - ask_user_question
+    - list_session_resources
+    - read_session_resource
+    - publish_session_file
+    - read_file
+    - edit_file
+    - write_file
+    - knowledge_graph_query
+    - knowledge_graph_build
+    - guangdong_query_metrics
+    - execute_guangdong_mart_sql
+    - query_gd_suncere_station_hour_new
+    - query_gd_suncere_station_day_new
+    operations_analysis:
+    - ask_user_question
+    - run_agent_workflow
+    - call_sub_agent
+    - list_session_resources
+    - read_session_resource
+    - publish_session_file
+    - read_file
+    - edit_file
+    - write_file
+    - create_report_package
+    - execute_python
+    gd_ops_data_workorder:
+    - list_session_resources
+    - read_session_resource
+    - read_file
+    - write_file
+    - publish_session_file
+    - guangdong_query_metrics
+    - execute_guangdong_mart_sql
+    - execute_python
+    gd_ops_data_alarm:
+    - list_session_resources
+    - read_session_resource
+    - read_file
+    - write_file
+    - publish_session_file
+    - guangdong_query_metrics
+    - execute_guangdong_mart_sql
+    - execute_python
+    gd_ops_data_inspection:
+    - list_session_resources
+    - read_session_resource
+    - read_file
+    - write_file
+    - publish_session_file
+    - guangdong_query_metrics
+    - execute_guangdong_mart_sql
+    - execute_python
+    gd_ops_data_performance:
+    - list_session_resources
+    - read_session_resource
+    - read_file
+    - write_file
+    - publish_session_file
+    - guangdong_query_metrics
+    - execute_guangdong_mart_sql
+    - execute_python
+    gd_ops_data_device:
+    - list_session_resources
+    - read_session_resource
+    - read_file
+    - write_file
+    - publish_session_file
+    - guangdong_query_metrics
+    - execute_guangdong_mart_sql
+    - execute_python
+    gd_ops_data_station:
+    - list_session_resources
+    - read_session_resource
+    - read_file
+    - write_file
+    - publish_session_file
+    - guangdong_query_metrics
+    - execute_guangdong_mart_sql
+    - execute_python
+    gd_ops_data_rates:
+    - list_session_resources
+    - read_session_resource
+    - read_file
+    - write_file
+    - publish_session_file
+    - guangdong_query_metrics
+    - execute_guangdong_mart_sql
+    - execute_python
+    gd_ops_regular_analysis:
+    - list_session_resources
+    - read_session_resource
+    - read_file
+    - write_file
+    - publish_session_file
+    - execute_python
+    - create_business_chart
+    gd_ops_risk_analysis:
+    - list_session_resources
+    - read_session_resource
+    - read_file
+    - write_file
+    - publish_session_file
+    - execute_python
+    - create_business_chart
   tools:
   - execute_guangdong_mart_sql
   - guangdong_query_metrics
@@ -90,6 +411,8 @@ backend:
     - query_city_standard_yoy_report
 knowledge:
   collections: []
+  # 运行时把该绑定名解析为启用图谱的知识库 id；station_fault_diagnosis 依赖。
+  # 故障诊断图谱与知识库集（collections）建库见 rollout 文档第 5 步说明。
   bindings:
     station_fault_diagnosis: 广东运维工单知识
 scheduled_tasks:

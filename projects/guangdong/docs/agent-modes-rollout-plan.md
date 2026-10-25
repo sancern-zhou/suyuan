@@ -162,3 +162,39 @@
 - 数据集契约：`projects/guangdong/data-ops/sync/datasets/*.yaml`（各表 grain/guide/limitations）
 - 江苏参照（只读，不要改动）：`origin/project/jiangsu-ops:projects/jiangsu-ops/project.yaml` 与 `projects/jiangsu-ops/prompts/*.md`
 - 治理总览：`projects/guangdong/data-ops/README.md`、`projects/guangdong/data-ops/docs/source-survey-20261024.md`
+
+---
+
+## 六、实施记录（2026-10-25）
+
+### 已实施（本分支提交）
+
+| 步骤 | 状态 | 产出 |
+|---|---|---|
+| 第1步 gd_query | ✅ 配置完成 | `prompts/gd_query.md` + `agent_mode_tools.gd_query`（全量白名单）+ welcome 文案 |
+| 第2步 ops 升级 | ✅ 配置完成 | extra_tools 此前已含语义层工具；`ops.md` 补绩效/巡检对照口径；welcome 文案 |
+| 第3步 station_fault_diagnosis | ✅ 配置完成 | `prompts/station_fault_diagnosis.md` + 白名单（图谱/语义层/站点数据/会话文件） |
+| 第4步 operations_analysis | ✅ 配置完成 | 父提示词 + 9 个子模式提示词（`prompts/internal/`）+ `agent_workflow_modes`/`agent_workflow_parents`（并发3/节点12/重试3/补图2/1200s） |
+| 第5步 knowledge | ⚠️ 配置完成，建库待部署环境 | `prompts/knowledge.md` + welcome；`bindings.station_fault_diagnosis` 已配置；collections 建库与文档上传、故障诊断图谱构建需在运行系统执行（见下） |
+| 第6步 coordinator | ⛔ 被共享层阻塞（见下） | 未改动布局，仍为 scenes |
+| 前端 | ✅ 源码完成 | `frontend/src/config/agentModes.js` 静态目录补 gd_query/station_fault_diagnosis/operations_analysis 三条目（knowledge 原有）；需在部署环境 `cd frontend && npm run build:standalone` 重建发版 |
+| 测试 | ✅ 新增 | `backend/tests/project_config/test_guangdong_modes.py`（manifest/白名单/提示词/workflow 契约断言） |
+
+### 实施中发现的关键约束（与原计划的差异）
+
+1. **新模式 id 必须全量声明 `agent_mode_tools`**：共享 `get_tools_by_mode` 对不在共享模式表内的 id，只有声明了 `agent_mode_tools` 才能解析（`agent_mode_extra_tools` 只对共享已有模式生效）。因此 gd_query / station_fault_diagnosis / operations_analysis / 9 个子模式全部走 `agent_mode_tools` 全量白名单，`ask_user_question` 已显式写入各交互模式白名单（新模式不在共享 `INTERACTIVE_QUESTION_MODES` 内，不会自动追加）。
+2. **workflow 校验强制**：`run_agent_workflow` 必须出现在父模式的 `agent_mode_tools`（不含 extra_tools）；子模式必须同时有 `agent_mode_tools` 与 `mode_prompt_files` 条目、不得声明委派工具、不得出现在 `frontend.agent_modes`——均已满足。
+3. **第 4 步解耦性已确认**：`agent_workflow_modes`/`agent_workflow_parents` 的加载（`backend/app/agent/workflow/project_policy.py`）不读 `agent_platform_layout`，scenes 布局下 operations_analysis 可正常编排子模式，第 4 步无需与第 6 步绑定。
+4. **前端静态目录**：manifest overrides 只能覆盖既有静态条目，新 id 必须在 `frontend/src/config/agentModes.js` 有条目否则模式卡片被过滤（`getAgentMode` 返回 null）。已在项目分支补条目（沿用江苏分支同一做法；回合 main 时注意与江苏条目合并）。
+
+### 第 6 步 coordinator 阻塞详情
+
+当前共享层（main 与本分支）`agent_platform_layout: Literal["scenes", "environment-grid"]` 不含 `coordinator`；前端 `AgentPlatform.vue` 只实现 scenes 渲染路径。coordinator 的完整支持（models.py 的 CoordinatorManifest 扩展、前端首页改造）目前在 `project/jiangsu-ops` 分支。**上线 coordinator 必须先把江苏分支的 coordinator 共享层改动回合 main，再在广东切布局**；在那之前不得把 `coordinator` 写进 project.yaml（会被 Literal 校验拒绝导致 manifest 加载失败）。
+
+### 待部署环境执行的验收与运行时动作
+
+1. 重启 web/worker 后：`load_project_context('guangdong')` 加载无错、新模式出现在 manifest；web 日志 `get_react_agent_tool_registry_debug` 核对各模式白名单。
+2. 跑 `backend/tests/project_config/test_guangdong_modes.py` 与既有 `test_routing.py`、`test_mode_prompt_overrides.py` 回归。
+3. 典型问题实测：gd_query 指标类问题走语义层且返回口径说明；问"告警未处理率"应被口径拦截；operations_analysis 试一次多域报告编排（注意 max_nodes=12 预算）。
+4. 第 5 步运行时动作：创建知识库集合并上传 work-order-semantics 三份字典与历史会商/报告；用 `knowledge_graph_build` 以故障原因字典 + DeviceLifecycle 事件构建故障诊断图谱（绑定名"广东运维工单知识"需解析到启用图谱的知识库）。
+5. 前端重建发版：`cd frontend && npm run build:standalone`，并按 AGENTS.md 校验构建产物。
