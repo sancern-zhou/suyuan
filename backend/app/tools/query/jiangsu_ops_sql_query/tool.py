@@ -30,13 +30,9 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
-def _load_contract() -> tuple:
-    """Load the dataset contract generated from sync/datasets/*.yaml (single source).
-
-    contract.txt is produced by sync/gen_tool_contract.py (E:\\Tools\\suyuan-jiangsu);
-    drift between the yaml sources and this file is checked daily by dq_check.py.
-    """
-    text = (Path(__file__).with_name("contract.txt")).read_text(encoding="utf-8")
+def _load_contract_file(path: Path, label: str) -> tuple:
+    """Load a generated dataset contract (TABLES line + GUIDE block)."""
+    text = path.read_text(encoding="utf-8")
     tables: List[str] = []
     guide_lines: List[str] = []
     in_guide = False
@@ -51,13 +47,43 @@ def _load_contract() -> tuple:
             guide_lines.append(line)
     if not tables or not guide_lines:
         raise RuntimeError(
-            "contract.txt invalid (missing TABLES or GUIDE block) — "
-            "regenerate with sync/gen_tool_contract.py"
+            f"{label} invalid (missing TABLES or GUIDE block) — "
+            "regenerate with sync/gen_*contract.py"
         )
     return tables, "\n".join(guide_lines)
 
 
+def _load_contract() -> tuple:
+    """Load the dataset contract generated from sync/datasets/*.yaml (single source).
+
+    contract.txt is produced by sync/gen_tool_contract.py (E:\\Tools\\suyuan-jiangsu);
+    drift between the yaml sources and this file is checked daily by dq_check.py.
+    """
+    return _load_contract_file(Path(__file__).with_name("contract.txt"), "contract.txt")
+
+
+def _load_ods_contract() -> tuple:
+    """Load the ODS fallback whitelist generated from sync_config.json.
+
+    ods_contract.txt is produced by sync/gen_ods_fallback_contract.py: every synced
+    ODS table that no mart/dim contract covers stays queryable here, so no synced
+    data is unreachable to the agent (low-frequency raw fallback).
+    """
+    path = Path(__file__).with_name("ods_contract.txt")
+    if not path.exists():
+        logger.warning(
+            "jiangsu_ods_contract_missing",
+            path=str(path),
+            hint="run sync/gen_ods_fallback_contract.py to restore the ODS fallback channel",
+        )
+        return [], ""
+    return _load_contract_file(path, "ods_contract.txt")
+
+
 MART_TABLES, MART_SCHEMA_GUIDE = _load_contract()
+ODS_TABLES, ODS_SCHEMA_GUIDE = _load_ods_contract()
+ODS_TABLE_SET = set(ODS_TABLES)
+MART_TABLE_SET = set(MART_TABLES)
 
 class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
     """对 jiangsu_mart 主题数据集执行受控 SELECT 查询。"""
@@ -68,7 +94,7 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
         self.tool_name = "execute_jiangsu_mart_sql"
         self.sql_validator = SQLValidator(
             max_limit=1000,
-            allowed_tables=MART_TABLES + ["information_schema.columns"],
+            allowed_tables=MART_TABLES + ODS_TABLES + ["information_schema.columns"],
         )
         function_schema = {
             "name": self.tool_name,
@@ -77,6 +103,7 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                 "只允许SELECT；表名白名单见工具说明；返回数据截至时间、语义上下文和质量状态。"
                 "此工具用于字段级取证，官方指标计算优先使用 jiangsu_query_metrics。"
                 + MART_SCHEMA_GUIDE
+                + ODS_SCHEMA_GUIDE
             ),
             "parameters": {
                 "type": "object",
@@ -123,10 +150,11 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
 
         if describe_table is not None:
             table = describe_table.strip().split(".")[-1].strip().lower()
-            if table not in MART_TABLES:
+            schema = self._schema_of(table)
+            if schema is None:
                 return {"success": False, "data": None,
-                        "summary": f"表 {describe_table} 不在白名单中。允许: {', '.join(MART_TABLES)}"}
-            return await self._describe_table(table)
+                        "summary": f"表 {describe_table} 不在白名单中。允许: {', '.join(MART_TABLES + ODS_TABLES)}"}
+            return await self._describe_table(table, schema)
 
         if limit is None:
             limit = self.DEFAULT_LIMIT
@@ -140,21 +168,45 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
             raise RuntimeError("OPS_MART_DATABASE_URL 未配置（agent_reader 只读连接）")
         return dsn
 
-    async def _describe_table(self, table: str) -> Dict[str, Any]:
-        conn = await asyncpg.connect(self._mart_dsn())
+    @staticmethod
+    def _schema_of(table: str) -> Optional[str]:
+        """Resolve which schema a whitelisted table lives in (None = not allowed)."""
+        if table in MART_TABLE_SET:
+            return "jiangsu_mart"
+        if table in ODS_TABLE_SET:
+            return "jiangsu_ods"
+        return None
+
+    async def _connect(self):
+        """Read-only connection; search_path exposes mart and ODS fallback tables."""
+        return await asyncpg.connect(
+            self._mart_dsn(),
+            server_settings={"search_path": "jiangsu_mart,jiangsu_ods"},
+        )
+
+    async def _describe_table(self, table: str, schema: str = "jiangsu_mart") -> Dict[str, Any]:
+        conn = await self._connect()
         try:
             rows = await conn.fetch(
                 """SELECT column_name, data_type
                    FROM information_schema.columns
-                   WHERE table_schema='jiangsu_mart' AND table_name=$1
+                   WHERE table_schema=$2 AND table_name=$1
                    ORDER BY ordinal_position""",
-                table,
+                table, schema,
             )
-            columns = [{"name": r["column_name"], "type": r["data_type"]} for r in rows]
+            columns = [
+                {"name": r["column_name"], "type": r["data_type"]}
+                for r in rows
+                # ODS 同步内部列（_src_incremental/_sync_batch/_synced_at）不是业务字段，
+                # 且 _synced_at 只在首插时写入，露出来会误导"数据新鲜度"判断。
+                if not r["column_name"].startswith("_")
+            ]
             semantic = dataset_metadata(table)
             payload = {
                 "success": True,
                 "table": table,
+                "schema": schema,
+                "layer": "mart" if schema == "jiangsu_mart" else "ods_fallback",
                 "columns": columns,
                 "semantic_context": {
                     "query_role": "schema_introspection",
@@ -195,18 +247,19 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                 return {
                     "success": False,
                     "data": [],
-                    "summary": f"SQL验证失败: {error_msg}。允许的表: {', '.join(MART_TABLES)}",
+                    "summary": f"SQL验证失败: {error_msg}",
                 }
 
             # 行数上限用外层包裹强制，不依赖LLM写LIMIT；多取一行用于判定是否被截断
             safe_sql = f"SELECT * FROM ({sql.rstrip('; ')}) AS _mart_query LIMIT {limit + 1}"
 
-            conn = await asyncpg.connect(self._mart_dsn())
+            conn = await self._connect()
             rows = await conn.fetch(safe_sql)
             truncated = len(rows) > limit
             results = [dict(r) for r in rows[:limit]]
             row_count = len(results)
             datasets = self._datasets_from_sql(sql)
+            ods_tables = self._ods_tables_from_sql(sql)
             semantic_entries = [dataset_metadata(table) for table in datasets]
             primary_semantic = semantic_entries[0] if semantic_entries else {}
             time_column = self._freshness_column(datasets[0]) if datasets else None
@@ -214,7 +267,9 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                 data_as_of = await conn.fetchval(
                     f"SELECT max({time_column})::text FROM jiangsu_mart.{datasets[0]}"
                 )
-            quality_checks = await self._quality_checks(conn, datasets)
+            elif ods_tables:
+                data_as_of = await self._ods_data_as_of(conn, ods_tables)
+            quality_checks = await self._quality_checks(conn, datasets + ods_tables)
             quality_status = self._quality_status_from_checks(quality_checks)
 
             sample_data = results
@@ -245,6 +300,8 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                     "query_role": "field_evidence",
                     "official_metric_calculation": False,
                     "datasets": datasets,
+                    "ods_tables": ods_tables,
+                    "layer": "ods_fallback" if ods_tables and not datasets else "mart",
                     "dataset": primary_semantic.get("dataset"),
                     "cube": primary_semantic.get("cube"),
                     "grain": primary_semantic.get("grain"),
@@ -255,7 +312,12 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                     "registry_version": primary_semantic.get("registry_version", 0),
                     "quality_checks": quality_checks,
                     "quality_guidance": quality_guidance(quality_status),
-                    "interpretation": "此结果用于字段级取证；官方汇总指标应优先使用 jiangsu_query_metrics。",
+                    "interpretation": (
+                        "此结果用于字段级取证；官方汇总指标应优先使用 jiangsu_query_metrics。"
+                        if not (ods_tables and not datasets)
+                        else "此结果为 ODS 原始层兜底查询，字段为平台原值、无业务口径加工；"
+                             "汇总口径问题请优先用 mart/dim 表或 jiangsu_query_metrics。"
+                    ),
                 },
                 "summary": (
                     f"返回 {len(results)} 行（数据截至 {data_as_of}，质量状态：{quality_status}）"
@@ -281,17 +343,46 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
             )
 
     @staticmethod
-    def _datasets_from_sql(sql: str) -> List[str]:
-        found = []
+    def _referenced_tables(sql: str) -> List[str]:
+        """Table names referenced after FROM/JOIN, schema qualifier stripped."""
+        found: List[str] = []
         for match in re.finditer(
-            r"(?:from|join)\s+(?:jiangsu_mart\.)?\"?([a-zA-Z_][\w]*)\"?",
+            r"(?:from|join)\s+(?:jiangsu_(?:mart|ods)\s*\.\s*)?\"?([a-zA-Z_][\w]*)\"?",
             sql,
             re.IGNORECASE,
         ):
             table = match.group(1).lower()
-            if table in MART_TABLES and table not in found:
+            if table in {"jiangsu_mart", "jiangsu_ods"}:
+                continue
+            if table not in found:
                 found.append(table)
         return found
+
+    @classmethod
+    def _datasets_from_sql(cls, sql: str) -> List[str]:
+        return [t for t in cls._referenced_tables(sql) if t in MART_TABLE_SET]
+
+    @classmethod
+    def _ods_tables_from_sql(cls, sql: str) -> List[str]:
+        return [t for t in cls._referenced_tables(sql) if t in ODS_TABLE_SET]
+
+    @staticmethod
+    async def _ods_data_as_of(conn, tables: List[str]) -> Optional[str]:
+        """ODS 兜底表的数据时点 = 最近一次成功同步完成时间。
+
+        ODS 表的 _synced_at 只在首次 INSERT 写入、upsert 冲突不刷新，不能用来判断新鲜度；
+        心跳表 sync_watermark.updated_at 才是每轮同步刷新的时间。
+        """
+        try:
+            ts = await conn.fetchval(
+                """SELECT max(updated_at)::text FROM jiangsu_sync.sync_watermark
+                   WHERE table_name = ANY($1::text[]) AND last_status = 'ok'""",
+                tables,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("jiangsu_ods_data_as_of_unavailable", error=str(exc))
+            return None
+        return ts
 
     @staticmethod
     def _freshness_column(table: str) -> Optional[str]:
@@ -341,26 +432,22 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
             import asyncpg.exceptions as _pgexc
             if not isinstance(exc, (_pgexc.UndefinedColumnError, _pgexc.UndefinedTableError)):
                 return ""
-            candidates: List[str] = []
-            for m in re.finditer(
-                r"(?:from|join)\s+(?:jiangsu_mart\.)?\"?(\w+)\"?", sql, re.IGNORECASE
-            ):
-                name = m.group(1).lower()
-                if name in MART_TABLES and name not in candidates:
-                    candidates.append(name)
+            candidates: List[str] = [
+                t for t in self._referenced_tables(sql) if self._schema_of(t)
+            ]
             if not candidates:
                 if isinstance(exc, _pgexc.UndefinedTableError):
-                    return f" 提示: 表不在白名单。允许: {', '.join(MART_TABLES)}"
+                    return f" 提示: 表不在白名单。允许: {', '.join(MART_TABLES + ODS_TABLES)}"
                 return ""
-            conn = await asyncpg.connect(self._mart_dsn())
+            conn = await self._connect()
             try:
                 hints = []
                 for table in candidates[:3]:
                     rows = await conn.fetch(
                         """SELECT column_name, data_type FROM information_schema.columns
-                           WHERE table_schema='jiangsu_mart' AND table_name=$1
+                           WHERE table_schema=$2 AND table_name=$1
                            ORDER BY ordinal_position""",
-                        table,
+                        table, self._schema_of(table),
                     )
                     cols = ", ".join(f"{r['column_name']} {r['data_type']}" for r in rows)
                     hints.append(f"{table}({cols})")
@@ -390,7 +477,12 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                     str(getattr(context, "user_id", "") or "") if context else "",
                     str(getattr(context, "agent_mode", "") or "") if context else "",
                     self.tool_name,
-                    "jiangsu_mart",
+                    (
+                        "jiangsu_mart"
+                        if self._datasets_from_sql(sql or "")
+                        or not self._ods_tables_from_sql(sql or "")
+                        else "jiangsu_ods"
+                    ),
                     json.dumps({"sql": (sql or "")[:4000], "status": status}, ensure_ascii=False),
                     row_count,
                     truncated,

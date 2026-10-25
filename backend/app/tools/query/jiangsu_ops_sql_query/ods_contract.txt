@@ -1,0 +1,35 @@
+# generated from sync_config.json + datasets/*.yaml + dbt/models by gen_ods_fallback_contract.py — DO NOT EDIT BY HAND
+# 兜底清单 = 已同步逻辑表 - 已被 mart/dim 契约覆盖的源表 + EXTRA_FALLBACK；漂移检测见 dq_check.py
+TABLES: alm_rule,bsd_maintenanceunit,bsd_region,bsd_supply,bsd_usergroup,bsd_usergroup_station,bsd_usergroup_station_devicetype,bsd_usergroup_user,mot_alarm,mtc_dataentry,mtc_dataentry_data,mtc_fault,mtc_faultcontent,mtc_faultcontentitem,mtc_taskitem,mtc_working_order_detail,opa_kq_attendance,opa_qcqa_deduction,qa_standardmaterialstorage,qc_historymonthresultoverview,qc_task,rf_common,rf_ruleitem,wfl_workflow,wfl_workflowtask,wo_commonfile
+GUIDE_START
+
+【ODS 兜底表（原始层，低频/明细取证用；共26张）】
+仅当上方 mart/dim 契约无法回答时使用。兜底表为平台原值，无业务口径加工；引用请写全限定名 jiangsu_ods.<表名>；查询必须带过滤条件与 LIMIT，禁止全表扫描；列结构用 describe_table 获取。
+
+- alm_rule：告警规则配置（约19条），解释告警为何触发、阈值来源
+- bsd_maintenanceunit：运维单位字典（code 对应工单 operationunitid）
+- bsd_region：行政区划字典（areacode/level/经纬度）
+- bsd_supply：质控耗材领用台账（滤膜/硅胶/纸带），数量字段大面积为空，仅作旁证
+- bsd_usergroup：班组字典（groupcode/groupname/归属单位）
+- bsd_usergroup_station：班组→责任站点映射（usergroup_guid 实为班组编码 groupcode）
+- bsd_usergroup_station_devicetype：班组→站点→设备类型责任矩阵
+- bsd_usergroup_user：班组→人员映射（groupcode + userid，关联 dim_person）
+- mot_alarm：平台内部告警历史（约6.4万行）；站点告警优先查 mart_alarm_event_analysis
+- mtc_dataentry：数据补录单（工单号+站点+时段）
+- mtc_dataentry_data：补录明细（站点×时间点×污染物）
+- mtc_fault：故障单设备处置扩展（按 workingordercode 关联工单）
+- mtc_faultcontent：故障现象字典
+- mtc_faultcontentitem：工单→故障现象多选关系
+- mtc_taskitem：工单逐项任务进度（约12万行，按 workingordercode 关联）
+- mtc_working_order_detail：工单流转流水，含处理人 processusername 与各节点起止时间
+- opa_kq_attendance：到站签到明细（个人签到；mart 只给站点×日次数）
+- opa_qcqa_deduction：质控扣分明细（考核扣分溯源）
+- qa_standardmaterialstorage：标准物质台账（标气标液证书号与有效期，与人员持证无关）
+- qc_historymonthresultoverview：质控月度概览（年×月×污染物×区域）
+- qc_task：质控任务定义（uniquecode/污染物/任务名/站点）
+- rf_common：非故障工单表单体矩阵（补录/审核类工单取值）
+- rf_ruleitem：工单任务规则项字典（ruleitemtag → 名称）
+- wfl_workflow：工作流定义（流程模板）
+- wfl_workflowtask：工作流节点定义（guid 对应工单 currentpoint，解释当前节点）
+- wo_commonfile：工单附件索引（仅文件路径，不存内容）
+GUIDE_END

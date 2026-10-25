@@ -5,6 +5,8 @@ description: >
   工具 jiangsu_fetch_qc_monitoring_curve 已改读本链。
 owner: 江苏运维平台组
 grain: 一行 = 一站 × 一任务窗口 × 一时间点
+detail: brief
+summary: 一行=站×质控任务窗口×时间点，质控前后监测曲线；聚合数值用 datavalue_numeric
 freshness_slo: 26小时
 known_caveats:
   - 按年源表,每年 1 月须换年份表名(gen_alarmlog_sync_config.py)

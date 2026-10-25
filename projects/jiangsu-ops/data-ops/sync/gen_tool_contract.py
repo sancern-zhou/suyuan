@@ -42,6 +42,7 @@ TABLE_ORDER = [
     "dim_station",
     "dim_device",
     "dim_device_parameter",
+    "dim_person",
     "mart_device_lifecycle_analysis",
     "mart_station_env_power",
     "mart_station_alarm_log",
@@ -53,7 +54,8 @@ TABLE_ORDER = [
 HEADER = (
     "\n\n【江苏运维主题数据集契约（PostgreSQL，仅下列{n}张表）】\n"
     "数据自2026-06-01起；不支持同比/年度；实时状态请走平台API工具，不在本数据集。\n"
-    "生成SQL前先读契约，直接生成SQL，不要先describe_table；仅当契约未列字段时才describe_table。"
+    "生成SQL前先读契约，直接生成SQL，不要先describe_table；仅当契约未列字段时才describe_table。\n"
+    "带 * 的是低频表，只给用途不给字段，用之前先 describe_table 取列结构。"
 )
 
 FOOTER = (
@@ -103,15 +105,34 @@ def build_contract():
     order = [t for t in TABLE_ORDER if t in docs]
     extra = sorted(set(docs) - set(order))
     order += extra
-    missing_guide = [t for t in order if not docs[t].get("guide")]
+    missing_guide = [
+        t for t in order
+        if docs[t].get("detail") != "brief" and not docs[t].get("guide")
+    ]
     if missing_guide:
         raise SystemExit("datasets missing guide field: " + ", ".join(missing_guide))
+    missing_summary = [
+        t for t in order
+        if docs[t].get("detail") == "brief" and not docs[t].get("summary")
+    ]
+    if missing_summary:
+        raise SystemExit(
+            "datasets marked detail:brief need a one-line summary: " + ", ".join(missing_summary)
+        )
     tables_line = ",".join(order)
     segments = []
     for t in order:
-        segments.append("\n- {d}（{g}）：{guide}".format(
-            d=t, g=docs[t].get("grain", "").strip(), guide=docs[t]["guide"].strip(),
-        ))
+        doc = docs[t]
+        grain = (doc.get("grain") or "").strip()
+        if doc.get("detail") == "brief":
+            # 低频表: 只给用途, 字段结构按需 describe_table —— 控制工具描述体积
+            segments.append("\n- *{d}（{g}）：{s}".format(
+                d=t, g=grain, s=doc["summary"].strip(),
+            ))
+        else:
+            segments.append("\n- {d}（{g}）：{guide}".format(
+                d=t, g=grain, guide=doc["guide"].strip(),
+            ))
     body = HEADER.format(n=len(order)) + "".join(segments) + FOOTER
     content = FILE_HEADER + "TABLES: " + tables_line + "\nGUIDE_START" + body + "\nGUIDE_END\n"
     return content

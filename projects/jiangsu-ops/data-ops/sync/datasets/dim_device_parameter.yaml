@@ -8,6 +8,8 @@ description: >
   源表 air_province_bsd.dbo.bsd_moniter_parameter（每日全量，开 SCD2 快照）。
 owner: 江苏运维平台组
 grain: 一行 = 设备型号 × 受检参数（(devicemodel_id, parameterid) 源粒度唯一）
+detail: brief
+summary: 一行=设备型号×受检参数，含上下限/预警限与单位；经 dim_device.device_model_id 关联
 freshness_slo: 26小时（每日全量）
 known_caveats:
   - 源库 statusname(参数名) 约 37% 为空，这些行未进本表；参数名以 statusname 为准

@@ -5,6 +5,8 @@ description: >
   含停电起止时间、时长、撤销标记，用于高值时段停电合规核验（停电时段 vs 离线/断数告警）。
 owner: 江苏运维平台组
 grain: 一行 = 一张停电单
+detail: brief
+summary: 一行=一张停电单（约65行），查停电时段与离线上告警合规核对
 freshness_slo: 26小时
 known_caveats:
   - stop_type 0/1 语义待业务确认（按 62:3 分布猜测 0=计划停电/1=故障停电），列值已带(待确认)标记

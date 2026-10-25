@@ -5,6 +5,8 @@ description: >
   工具 jiangsu_fetch_qc_run_logs 与质控详情链已改读本链。
 owner: 江苏运维平台组
 grain: 一行 = 一条质控运行事件
+detail: brief
+summary: 一行=一条质控运行事件，按 rid 过滤看执行轨迹
 freshness_slo: 26小时
 known_caveats:
   - 按年源表,每年 1 月须换年份表名(gen_alarmlog_sync_config.py)

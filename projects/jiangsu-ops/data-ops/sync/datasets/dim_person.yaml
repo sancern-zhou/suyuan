@@ -1,0 +1,49 @@
+# 数据集契约：dim_person
+dataset: dim_person
+description: >
+  江苏运维人员维度表。一行 = 一名人员（user_id，全省 101 人，每日 02:30 全量重建，
+  源自 jiangsu_ods.opa_user_info ← 源库 opa_product_data.dbo.OPA_UserInfo）。
+  用于人员名册、运维单位归属、持证情况核查、班组责任站点范围。
+grain: 一行 = 一名人员（user_id）
+freshness_slo: 26小时（每日全量）
+known_caveats:
+  - 持证信息只有 has_work_license（是否持证）与 work_number（证书编号）两列；
+    源表没有证书类型、发证机构、有效期/到期日，不能回答"证书是否快到期/过期"
+  - work_number 存在一证多人：2024-JCJS-00104119 被 5 人共用、
+    2026-JCJS-00902003000201 被 3 人共用；cert_shared_count 即同证号人数，>1 表示证号复用
+  - station_count 是"所在班组的责任站点数"，不是个人直接负责站点数
+  - title 与 achievement 在源库 101 行全为空，不得作为判断依据
+  - department_name 为运维单位（江苏苏力/武汉天虹/隆力德）；
+    institution_names 为班组归属单位，两者口径可能不一致
+columns:
+  - {name: user_id, business: 平台用户ID(人员业务键,唯一)}
+  - {name: user_name, business: 姓名}
+  - {name: position, business: 岗位(运维/运维负责人/驻场等)}
+  - {name: title, business: 职称(源库全空)}
+  - {name: has_work_license, business: 是否持证(true/false,平台标记)}
+  - {name: work_number, business: 证书编号(如 KQYW-LLD-2024-010、2022-JCJS-12502204)}
+  - {name: department_code, business: 部门编码}
+  - {name: department_name, business: 运维单位名称}
+  - {name: achievement, business: 绩效(源库全空)}
+  - {name: achievement_position, business: 绩效岗位}
+  - {name: remark, business: 备注}
+  - {name: group_count, business: 所属班组数}
+  - {name: group_names, business: 所属班组名(顿号分隔)}
+  - {name: institution_names, business: 班组归属单位(顿号分隔)}
+  - {name: station_count, business: 班组责任站点数(非个人直接负责)}
+  - {name: cert_shared_count, business: "同证号人数(1=唯一, 大于1=证号被多人共用)"}
+  - {name: create_time, business: 平台建档时间}
+  - {name: update_time, business: 平台最后更新时间}
+  - {name: synced_at, business: 重建时间}
+access:
+  tool: execute_jiangsu_mart_sql
+  role: agent_reader
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  查人员名册、运维单位归属、持证情况、班组责任范围用本表。
+  维度 user_id/user_name/position/department_name(运维单位)；
+  持证 has_work_license(布尔)+work_number(证书编号)，cert_shared_count>1 表示证号被多人共用；
+  班组 group_names/institution_names/group_count，station_count 为班组责任站点数(非个人直接负责)。
+  源表无证书类型/发证机构/有效期，不得回答证书到期类问题；title/achievement 源库全空，不得作为判断依据。
+  按处理人下钻工单流转明细查 ODS 兜底表 jiangsu_ods.mtc_working_order_detail(processusername)；
+  巡检任务执行人查 mart_inspection_analysis.taskusername。

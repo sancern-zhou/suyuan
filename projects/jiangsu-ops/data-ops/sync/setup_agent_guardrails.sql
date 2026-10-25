@@ -22,6 +22,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA jiangsu_mart GRANT SELECT ON TABLES TO agent_
 -- DQ 结果用于质量四态(ok/degraded/blocked/unknown); 只授这一张表, 不放行整个 schema。
 GRANT USAGE ON SCHEMA jiangsu_sync TO agent_reader;
 GRANT SELECT ON jiangsu_sync.dq_results TO agent_reader;
+-- ODS 兜底查询的"数据截至"时点: 只读同步心跳(表名/状态/更新时间), 不含业务数据。
+-- 兜底表本身的 SELECT 由 gen_ods_fallback_contract.py --grant 按清单授权(每日重授, 幂等)。
+GRANT SELECT ON jiangsu_sync.sync_watermark TO agent_reader;
 
 -- 审计表: 应用侧工具每次查询写入一条
 CREATE TABLE IF NOT EXISTS jiangsu_sync.query_audit (

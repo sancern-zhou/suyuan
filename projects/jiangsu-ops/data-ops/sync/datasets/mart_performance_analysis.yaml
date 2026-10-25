@@ -6,6 +6,8 @@ description: >
   （运维分/质控分/档案分/总分，源 opa_performance_qaqc）按站点+月份合成一张宽表。
 owner: 江苏运维平台组
 grain: 一行 = 站点×月
+detail: brief
+summary: 一行=站点×月；两率与运维/质控/档案评分，2026-07 以来平台无实际填报，统计基本为空
 freshness_slo: 26小时
 known_caveats:
   - 站点范围=全部类型站（省控/省乡镇/省建等，约 47% 行非省控站）；按站点类型过滤/分组用

@@ -116,6 +116,10 @@ MODEL_TESTS = {
         "parameter_name": ["not_null"],  # 模型已过滤空参数名, 硬测守住
         "devicemodel_id": ["warn_not_null"],  # 型号码非数字则置空(理论不出现)
     },
+    "dim_person": {
+        "user_id": ["unique", "not_null"],
+        "user_name": ["not_null"],
+    },
     "mart_device_lifecycle_analysis": {
         "event_id": ["unique", "not_null"],
         "event_time": ["not_null"],
@@ -183,6 +187,7 @@ DATASET_TO_MODEL = {
     "mart_blackout_analysis": "mart_blackout_analysis",
     "mart_qc_backorder_analysis": "mart_qc_backorder_analysis",
     "dim_device_parameter": "dim_device_parameter",
+    "dim_person": "dim_person",
     "mart_device_lifecycle_analysis": "mart_device_lifecycle_analysis",
     "mart_station_env_power": "mart_station_env_power",
     "mart_station_alarm_log": "mart_station_alarm_log",

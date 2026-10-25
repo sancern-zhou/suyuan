@@ -5,6 +5,8 @@ description: >
   jsonstr 为平台原始状态载荷(含执行步骤/结果值);工具 jiangsu_fetch_qc_task_status 已改读本链。
 owner: 江苏运维平台组
 grain: 一行 = 一次质控任务状态快照(同 rid 取 createtime 最新)
+detail: brief
+summary: 一行=一次质控任务状态快照（jsonstr 含 Steps/Actions），按 rid 定位
 freshness_slo: 26小时
 known_caveats:
   - 按年源表,每年 1 月须换年份表名(gen_alarmlog_sync_config.py)

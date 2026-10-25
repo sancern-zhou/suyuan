@@ -64,6 +64,9 @@ frontend/.vite/
 *.txt
 !backend/requirements.txt
 !backend/app/tools/xuchang/station_catalog/hidden_stations.txt
+# 江苏运维 SQL 工具契约（生成物，但属代码资产，需随仓库分发）
+!backend/app/tools/query/jiangsu_ops_sql_query/contract.txt
+!backend/app/tools/query/jiangsu_ops_sql_query/ods_contract.txt
 *.docx
 *.xlsx
 *.pptx

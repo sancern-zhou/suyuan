@@ -7,6 +7,8 @@ Checks:
   4. unique keys     - dedup-sensitive tables must have no duplicate keys
   5. generated-artifact drift - contract.txt 与 dbt sources/schema/snapshots
      必须与 datasets/*.yaml 一致（gen_tool_contract.py / gen_dbt_artifacts.py --check）
+  6. ODS fallback coverage - 同步进 ODS 但无 mart/dim 覆盖的表必须落在
+     ods_contract.txt 且 agent_reader 已授权（gen_ods_fallback_contract.py --check）
 
 Results appended to jiangsu_sync.dq_results; exit 1 if any check fails so the
 scheduled task log shows it clearly.
@@ -36,6 +38,7 @@ FRESHNESS_SLA_MIN = {
     "dim_station": (30, "synced_at"),
     "dim_device": (26 * 60, "synced_at"),
     "dim_device_parameter": (26 * 60, "synced_at"),
+    "dim_person": (26 * 60, "synced_at"),
     "mart_station_alarm_log": (26 * 60, "synced_at"),
     "mart_station_env_power": (26 * 60, "synced_at"),
     "mart_qc_task_status_result": (26 * 60, "synced_at"),
@@ -65,6 +68,7 @@ NULL_CHECKS = {
     "dim_station": (["station_code"], {}),
     "dim_device": (["device_code"], {"station_code": 400}),
     "dim_device_parameter": (["devicemodel", "parameterid", "parameter_name"], {}),
+    "dim_person": (["user_id", "user_name"], {}),
     "mart_station_alarm_log": (["station_code", "alarm_time"], {}),
     "mart_station_env_power": (["station_code", "timepoint", "pollutant_code"], {}),
     "mart_qc_task_status_result": (["rid"], {"station_code": 100}),
@@ -73,6 +77,7 @@ NULL_CHECKS = {
 }
 
 UNIQUE_CHECKS = {
+    "dim_person": ["user_id"],
     "mart_station_alarm_log": ["station_code", "id"],
     "mart_station_env_power": ["station_code", "id"],
     "mart_qc_task_status_result": ["rid"],
@@ -116,6 +121,43 @@ async def check_dbt_artifacts(pg, results):
     """dbt 生成物(sources/schema/snapshots)防漂移: 必须与 datasets/*.yaml 一致。"""
     status, detail = await _run_generator_check("gen_dbt_artifacts.py")
     await record(pg, results, "dbt_artifacts", "schema.yml", status, detail)
+
+
+async def check_ods_fallback(pg, results):
+    """ODS 兜底通道: 生成物防漂移 + agent_reader 授权完整性。
+
+    不变式: 同步进 jiangsu_ods 的表不得出现"Agent 查不到"——没被 mart/dim 契约
+    覆盖的表必须落在 ods_contract.txt 里, 且 agent_reader 有 SELECT 权限。
+    """
+    status, detail = await _run_generator_check("gen_ods_fallback_contract.py")
+    await record(pg, results, "contract", "ods_fallback", status, detail)
+
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import gen_ods_fallback_contract as ods_contract
+
+        tables, _covered = ods_contract.fallback_tables()
+    except Exception as exc:  # noqa: BLE001
+        await record(pg, results, "grant", "ods_fallback", "FAIL",
+                     f"cannot compute fallback list: {exc}")
+        return
+
+    rows = await pg.fetch(
+        """SELECT table_name FROM information_schema.role_table_grants
+           WHERE grantee='agent_reader' AND table_schema='jiangsu_ods'"""
+    )
+    granted = {r["table_name"] for r in rows}
+    missing = sorted(set(tables) - granted)
+    if missing:
+        await record(
+            pg, results, "grant", "ods_fallback", "FAIL",
+            f"agent_reader missing SELECT on {len(missing)} table(s): "
+            + ", ".join(missing[:8])
+            + " (run gen_ods_fallback_contract.py --grant)",
+        )
+    else:
+        await record(pg, results, "grant", "ods_fallback", "OK",
+                     f"{len(tables)} fallback tables granted")
 
 
 async def record(pg, results, name, table, status, detail):
@@ -226,6 +268,7 @@ async def main() -> int:
         await check_uniques(pg, results)
         await check_contract_drift(pg, results)
         await check_dbt_artifacts(pg, results)
+        await check_ods_fallback(pg, results)
     finally:
         await pg.close()
     failures = sum(1 for r in results if r[2] == "FAIL")

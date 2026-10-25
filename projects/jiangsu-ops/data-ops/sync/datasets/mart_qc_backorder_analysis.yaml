@@ -8,6 +8,8 @@ description: >
   源表 air_province_data.dbo.qc_backorderarrangelog（每日全量）。
 owner: 江苏运维平台组
 grain: 一行 = 一条补测安排（站点×小时×污染物）
+detail: brief
+summary: 一行=一条补测安排（站点×小时×污染物）；state/datatype 为平台原始枚举，中文语义未确认
 freshness_slo: 26小时（每日全量）
 known_caveats:
   - 站点范围=省控站统一口径（启用的省控站 101 个，dim_station.is_active_provincial）；

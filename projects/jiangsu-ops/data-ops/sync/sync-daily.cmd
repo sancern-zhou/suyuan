@@ -26,4 +26,6 @@ for %%t in (%CHECKLIST%) do (
     E:\Tools\Python311\python.exe sync_table.py %%t --check >> sync_check.log 2>&1
 )
 rem �����������(���ʶ�/��ֵ/ͬ������/��ԼƯ��), ����� jiangsu_sync.dq_results
+rem ODS 兜底通道: 每日重授一次 agent_reader 的 SELECT(幂等), 新增同步表不用手工授权
+E:\Tools\Python311\python.exe gen_ods_fallback_contract.py --grant >> sync_mart.log 2>&1
 E:\Tools\Python311\python.exe dq_check.py >> sync_dq.log 2>&1
