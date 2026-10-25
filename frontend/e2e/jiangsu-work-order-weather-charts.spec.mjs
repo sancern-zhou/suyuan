@@ -19,7 +19,9 @@ const weatherSource = {
 const empty = name => ({ source: name, data: null })
 const entry = {
   working_order_code: 'FA-TEST', title: '测试故障工单', site_name: '测试站点',
-  pollutant: 'NO', window_start: '2026-10-23 08:00:00', window_end: '2026-10-23 10:00:00',
+  pollutant: 'NO',
+  // 窗口是创建自然日（末端在未来），数据只到 10:00：轴须收紧到观测范围，不留未来空段。
+  window_start: '2026-10-23 08:00:00', window_end: '2026-10-23 23:59:59',
   status: '待审核',
 }
 const index = {
@@ -72,6 +74,8 @@ test('weather section renders every station pollutant beside weather series', as
         seriesNames: option.series.map(item => item.name),
         seriesAxis: option.series.map(item => item.yAxisIndex),
         axisNames: option.yAxis.map(axis => axis.name || ''),
+        axisRange: { min: option.xAxis[0].min, max: option.xAxis[0].max },
+        pollutantSlotCount: option.series[0].data.length,
       }
     }
     return {
@@ -84,6 +88,8 @@ test('weather section renders every station pollutant beside weather series', as
       '风速 (m/s)', '风向', '温度 (°C)', '湿度 (%)', '大气压 (hPa)'],
     seriesAxis: [0, 0, 0, 0, 0, 1, 0, 2, 3, 4, 4, 5],
     axisNames: ['μg/m³', 'mg/m³', '风速 (m/s)', '', '温度/湿度', '气压 (hPa)'],
+    axisRange: { min: Date.parse('2026-10-23T08:00:00'), max: Date.parse('2026-10-23T10:00:00') },
+    pollutantSlotCount: 3,
   })
   // 小时时序图保持聚焦：只有目标 + 对照两条污染物曲线
   await expect.poll(() => readCharts().then(charts => charts.hourly?.seriesNames)).toEqual(['NO（本站）', 'NO2（对照）'])

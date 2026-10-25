@@ -21,8 +21,32 @@ const surface = ref(null); let chart; let observer
 // 纵坐标名称：贴各自的轴侧、垂直居中（默认 nameLocation:'end' 会把名称顶到轴顶端，
 // 与上方图例 / 上一个子图的时间轴标签重叠）。
 const AXIS_NAME_STYLE = { nameLocation: 'middle', nameRotate: 90, nameGap: 52, nameTextStyle: { fontSize: 11 } }
-const times = computed(() => hourlyWeatherPoints(props.weather, 'windSpeed').map(([time]) => time))
-const valuesFor = key => hourlyWeatherPoints(props.weather, key)
+// 轴范围：证据包窗口是自然日/推算窗，末端常落在未来（数据只到最近一个完整小时），
+// 直接用窗口会把轴拖出一段没有数据的空白。这里收紧到实际观测范围——气象行 ∪ 污染物
+// 曲线点的最早/最晚时刻（时间格式混有 'T' 与空格，归一为空格后按字典序比较），
+// 无有效观测时回退窗口原值。
+const observationRange = computed(() => {
+  let start = null
+  let end = null
+  const consider = value => {
+    const text = String(value ?? '').trim().replace('T', ' ')
+    if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(text)) return
+    if (start === null || text < start) start = text
+    if (end === null || text > end) end = text
+  }
+  for (const row of (props.weather?.data || [])) consider(row?.timePoint)
+  for (const item of (props.entry?.series || [])) {
+    for (const point of (item?.points || [])) consider(point?.time)
+  }
+  return {
+    start: start ?? String(props.weather?.start ?? '').replace('T', ' '),
+    end: end ?? String(props.weather?.end ?? '').replace('T', ' '),
+  }
+})
+// 逐小时槽位与轴共用收紧后的范围：气象行更晚、污染物更早等交错形态也全覆盖。
+const rangedWeather = computed(() => ({ ...props.weather, start: observationRange.value.start, end: observationRange.value.end }))
+const times = computed(() => hourlyWeatherPoints(rangedWeather.value, 'windSpeed').map(([time]) => time))
+const valuesFor = key => hourlyWeatherPoints(rangedWeather.value, key)
 const alignedPollutant = item => { const values = new Map((item.points || []).map(point => [weatherTime(point.time), point.value])); return times.value.map(time => [time, values.get(time) ?? null]) }
 // 次轴：unit 与主单位不同的污染物序列（如 CO 的 mg/m³）挂到首格右侧独立轴，
 // 与智能事件证据包的站点污染物+气象复合图同构；序列不带 unit 的旧调用方无次轴。
@@ -58,7 +82,7 @@ const option = computed(() => {
       { xAxis: weatherTime(area.end) },
     ]),
   }
-  const x = { type: 'time', min: weatherTime(props.weather.start), max: weatherTime(props.weather.end), axisLabel: { hideOverlap: true } }
+  const x = { type: 'time', min: weatherTime(observationRange.value.start), max: weatherTime(observationRange.value.end), axisLabel: { hideOverlap: true } }
   return { animation: false, tooltip: { trigger: 'axis', confine: true }, legend: { type: 'scroll', top: 4, left: 0, right: 0 }, grid: [{ left: 72, right: 72, top: 50, height: '23%' }, { left: 72, right: 72, top: '37%', height: '23%' }, { left: 72, right: 72, top: '70%', height: '20%' }], xAxis: [{ ...x, gridIndex: 0 }, { ...x, gridIndex: 1 }, { ...x, gridIndex: 2 }], yAxis: [{ type: 'value', name: props.entry.unit, gridIndex: 0, position: 'left', scale: true, ...AXIS_NAME_STYLE }, ...secondaryUnits.map(unit => ({ type: 'value', name: unit, gridIndex: 0, position: 'right', scale: true, splitLine: { show: false }, ...AXIS_NAME_STYLE })), { type: 'value', name: '风速 (m/s)', gridIndex: 1, position: 'left', scale: true, ...AXIS_NAME_STYLE }, { type: 'value', gridIndex: 1, show: false, min: 0, max: 1 }, { type: 'value', name: '温度/湿度', gridIndex: 2, position: 'left', scale: true, ...AXIS_NAME_STYLE }, { type: 'value', name: '气压 (hPa)', gridIndex: 2, position: 'right', scale: true, splitLine: { show: false }, ...AXIS_NAME_STYLE }], dataZoom: [{ type: 'inside', xAxisIndex: [0, 1, 2], filterMode: 'none' }, { type: 'slider', xAxisIndex: [0, 1, 2], bottom: 4, height: 22, filterMode: 'none' }], series }
 })
 watch(option, value => chart?.setOption(value, true))
