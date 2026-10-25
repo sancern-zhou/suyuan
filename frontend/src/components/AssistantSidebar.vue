@@ -57,6 +57,19 @@
           </div>
         </button>
         <button
+          v-if="['jiangsu-ops', 'guangdong'].includes(projectConfig.project)"
+          class="module-card"
+          :class="{ active: isActive('task-scheduler-center') }"
+          type="button"
+          @click="handleModuleSelect('task-scheduler-center')"
+          :title="isCollapsed ? '任务调度中心' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('task-scheduler-center')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">任务调度中心</p>
+          </div>
+        </button>
+        <button
           class="module-card"
           :class="{ active: isActive('knowledge-base') }"
           type="button"
@@ -755,6 +768,14 @@ const moduleIcons = {
       <path d="M12 8v4l3 2" />
       <path d="M5 4 3 6" />
       <path d="m19 4 2 2" />
+    </svg>
+  `,
+  'task-scheduler-center': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 6.5h7v7H4z" />
+      <path d="M13 6.5h7v7h-7z" />
+      <path d="M4 15h7v4H4z" />
+      <path d="M13 15h7v4h-7z" />
     </svg>
   `,
   'social-platform': `

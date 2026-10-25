@@ -31,7 +31,7 @@
       :human-feedback="store.pendingHumanFeedback"
       :human-feedback-submitting="store.isHumanFeedbackSubmitting"
       :human-feedback-error="store.humanFeedbackSubmitError"
-      :active-module="workspace === 'platform' ? 'agent-platform' : (workspace === 'forecast' ? 'air-quality-forecast' : (managementPanel === 'task-workspace' && taskWorkspaceTask ? `task-workspace:${taskWorkspaceTask.task_id}` : activeAssistant))"
+      :active-module="workspace === 'platform' ? 'agent-platform' : (workspace === 'forecast' ? 'air-quality-forecast' : (workspace === 'task-center' ? 'task-scheduler-center' : (managementPanel === 'task-workspace' && taskWorkspaceTask ? `task-workspace:${taskWorkspaceTask.task_id}` : activeAssistant)))"
       :task-workspace-entries="taskWorkspaceEntries"
       :task-workspace-task="taskWorkspaceTask"
       :agent-mode="store.currentMode"
@@ -101,6 +101,7 @@
       @edit-scheduled-task="editScheduledTask"
       @delete-scheduled-task="deleteScheduledTask"
       @restore-execution-session="handleSessionRestoreAndClosePanel"
+      @select-review="handleTodoReviewOpen"
       @refresh-session-history="refreshSessionHistory"
       @cleanup-sessions="handleSessionCleanup"
       @restore-session="handleSessionRestoreAndClosePanel"
@@ -471,6 +472,34 @@ const handleAssistantSelect = async (moduleId) => {
   }
 }
 
+// 任务调度中心「进入对话区」：恢复该审核记录对应的执行会话；找不到执行会话时
+// 回退到该任务的工作区，不跳转对话空白页。
+const handleTodoReviewOpen = async (review) => {
+  let sessionId = null
+  if (review?.execution_id && review?.task_id) {
+    try {
+      const { executions } = await scheduledTasksStore.fetchTaskExecutions(review.task_id, { page: 1, pageSize: 50 })
+      sessionId = executions.find(item => item.execution_id === review.execution_id)?.session_id || null
+    } catch (error) {
+      console.warn('[ReactAnalysisView] 审核执行记录获取失败:', error)
+    }
+  }
+  if (sessionId) {
+    const restored = await handleSessionRestoreAndClosePanel(sessionId)
+    if (restored) return
+  }
+  if (review?.task_id) {
+    await scheduledTasksStore.fetchTasks()
+    const task = scheduledTasksStore.tasks.find(item => item.task_id === review.task_id)
+    if (task) {
+      taskWorkspaceTask.value = task
+      workspace.value = 'chat'
+      showManagementPanel('task-workspace')
+      rightPanelVisible.value = false
+    }
+  }
+}
+
 const handleSidebarAction = async (actionId) => {
   if (typeof actionId === 'object' && actionId?.type === 'task-workspace') {
     await scheduledTasksStore.fetchTasks()
@@ -509,6 +538,15 @@ const handleSidebarAction = async (actionId) => {
     hideManagementPanel()
     resetPanelState()
     workspace.value = 'forecast'
+    return
+  }
+
+  // 任务调度中心（迁移自江苏分支）：整页展示审核结果列表
+  if (actionId === 'task-scheduler-center') {
+    if (!await confirmResourcePreviewLeave()) return
+    hideManagementPanel()
+    resetPanelState()
+    workspace.value = 'task-center'
     return
   }
 

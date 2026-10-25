@@ -1,0 +1,39 @@
+{
+  "task_id": "gd_fault_work_order_audit",
+  "name": "广东故障工单审核",
+  "description": "每个工作日早上对近7天新建的故障工单按审核要点批量筛查（处置记录完整性、响应时效、重复故障、附件完整性、长期未闭环），逐单生成任务调度中心待人工确认的审核卡片并输出审核综述",
+  "execution_mode": "custom",
+  "model_tier": "auto",
+  "tool_names": [
+    "execute_guangdong_mart_sql",
+    "guangdong_query_metrics",
+    "execute_python",
+    "submit_task_review"
+  ],
+  "trigger_type": "schedule",
+  "schedule_type": "daily_custom",
+  "hour": 9,
+  "minute": 0,
+  "enabled": true,
+  "prompt": "执行广东故障工单审核扫描，只读本地工单同步数据集，不修改任何数据，不创建或派发工单。审核范围：近7天新建的故障类工单（工单类型 Fault 与 SupFault，含作废单时必须单独声明口径）。\n\n审核要点（每张工单逐项核对）：\n1) 处置记录完整性：已完成（Finish）的工单其处理明细中应存在故障处理环节与处置说明；缺失的判定为'处置记录不完整'（status=fail）。\n2) 响应时效：响应类口径仅适用故障单，到站=首个故障处理环节开始；从创建到到站超过2小时的判定为'响应超时'；已完成但全无故障处理环节的判定为'响应记录缺失'（status=uncertain）。\n3) 重复故障：同一站点同一设备前30天内存在其他故障单的，判定为'30天内重复故障'，注明前次故障工单号。\n4) 附件完整性：无任何附件索引的工单判定为'附件缺失'（status=uncertain，仅提示核对）。\n5) 长期未闭环：处理中且创建超过7天的工单判定为'长期未闭环'。\n\n交付要求：\n- 对每张命中任一问题要点的工单，调用 submit_task_review 提交一张审核卡片：category 固定为'工单审核'；subject_id 用工单号；title 为'工单号+站点中文名+问题要点'；summary 用业务语言写清问题事实（命中要点、关键时间、设备/原因信息，300字内）；decision 按严重度选择（处置记录缺失或长期未闭环用 needs_action，响应超时/重复故障用 needs_action，附件缺失或响应记录缺失用 needs_evidence，无问题工单不提交）；comment 写审核依据（命中要点、判定口径、涉及时间与关联工单号，不出现表名字段名）；checks 数组对五类要点各给一项（命中 fail、存疑 uncertain、通过 pass，basis 写明判定事实）；sections 可附'站点信息''处置情况'等键值区块。单轮最多提交 20 张卡片，按严重度优先（长期未闭环>处置记录缺失>响应超时>重复故障>附件缺失），超出的在综述中说明数量。\n- 同一执行内同一工单号只提交一次。\n- 最后输出 200-400 字审核综述：本轮审核工单总量、命中问题工单数与各要点分布、最需人工优先处理的工单（工单号+站点+原因）、数据截至时间与数据缺口说明。只使用查询返回的真实数字与名称，不得补造；查询失败或结果为空时如实说明，不得输出'无问题'类绝对结论；不输出表名、字段名、SQL、文件路径等内部技术语言。",
+  "timeout_seconds": 900,
+  "created_by": "project-default",
+  "owner_user_id": "system",
+  "owner_username": "gd-fault-audit-agent",
+  "owner_display_name": "广东故障工单审核智能体",
+  "tags": [
+    "广东",
+    "故障工单",
+    "工单审核",
+    "任务调度中心",
+    "只读"
+  ],
+  "workspace_entry": {
+    "enabled": true,
+    "title": "故障工单审核"
+  },
+  "history_learning": {
+    "enabled": false
+  },
+  "skill_id": null
+}

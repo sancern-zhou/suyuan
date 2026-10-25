@@ -28,6 +28,13 @@
         class="forecast-workspace"
         embedded
       />
+      <component
+        :is="TaskSchedulerCenter"
+        v-else-if="workspace === 'task-center' && TaskSchedulerCenter"
+        :running-modes="runningAgentModes"
+        @select-task="handleTaskWorkspaceSelect"
+        @select-review="$emit('select-review', $event)"
+      />
       <template v-else>
         <div class="conversation-workspace">
           <ChatArea
@@ -287,6 +294,11 @@ const AirQualityForecastView = projectConfig.hasModule('xuchang-air-quality')
   ? defineAsyncComponent(() => import('@/views/AirQualityForecastView.vue'))
   : null
 
+// 任务调度中心（迁移自江苏分支）：展示 submit_task_review 提交的审核结果列表。
+const TaskSchedulerCenter = ['jiangsu-ops', 'guangdong'].includes(projectConfig.project)
+  ? defineAsyncComponent(() => import('@/components/coordinator/TaskSchedulerCenter.vue'))
+  : null
+
 const auth = useAuthStore()
 const assistantPanelOpen = ref(false)
 
@@ -535,6 +547,7 @@ const emit = defineEmits([
   'update:activeModule',
   'update:leftSidebarCollapsed',
   'update:layout-ref',
+  'select-review',
   'send',
   'pause',
   'update:useReranker',

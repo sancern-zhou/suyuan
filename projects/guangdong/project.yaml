@@ -462,3 +462,4 @@ scheduled_tasks:
 - gd_work_order_timeout_watch
 - gd_work_order_monthly_report
 - gd_fault_diagnosis_watch
+- gd_fault_work_order_audit
