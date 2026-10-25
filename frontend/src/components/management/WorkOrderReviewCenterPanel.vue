@@ -323,14 +323,14 @@
 
               <template v-else-if="source.key === 'weather'">
                 <template v-if="weatherRows.length">
-                  <!-- 污染物切换器（参照智能事件对比图）：一次只画选中污染物的本站/对照曲线 -->
+                  <!-- 污染物切换器（参照智能事件对比图）：一次只画选中组的本站/互证曲线 -->
                   <div v-if="weatherPollutantOptions.length > 1" class="pollutant-switch" role="group" aria-label="气象图污染物切换">
                     <button
                       v-for="option in weatherPollutantOptions"
                       :key="option.code"
                       type="button"
-                      :class="{ active: option.code === weatherActivePollutant }"
-                      :aria-pressed="option.code === weatherActivePollutant"
+                      :class="{ active: weatherActiveGroup?.label === option.code }"
+                      :aria-pressed="weatherActiveGroup?.label === option.code"
                       @click="weatherPollutant = option.code"
                     ><i class="switch-swatch" :style="{ background: option.color }"></i>{{ option.label }}</button>
                   </div>
@@ -448,6 +448,7 @@ import {
   CHART_COMPARISON_PAIRS,
   EXTRA_POLLUTANT_COLORS,
   POLLUTANT_UNIT_OVERRIDES,
+  switcherPollutantGroups,
 } from '@/components/visualization/reviewTimeSeriesData.js'
 import {
   getWorkOrderReview,
@@ -607,8 +608,10 @@ const weatherPayload = computed(() => ({
   data: weatherRows.value,
 }))
 // 气象图污染物切换（参照智能事件「目标站与对比站小时趋势」的右上角切换器）：
-// 全污染物同图叠加难以辨认，改为一次只画选中污染物的本站曲线 + 其配对对照曲线。
-// 选项 = 有曲线的站点污染物（目标/对照/extra_points 全量，规范排序），默认选中工单目标污染物。
+// 全污染物同图叠加难以辨认，改为一次只画选中组的曲线：互为配对的污染物（NO↔NO2、
+// PM10↔PM2.5）并成一组（两组的曲线完全相同，本站/互证只是互换，拆开是重复），
+// 组内两条都是本站曲线；单向配对（O3→NO2）与无配对（SO2/CO）独立成组，选中时
+// 补配对污染物的互证曲线。默认选中工单目标污染物所在组。
 const WEATHER_POLLUTANT_ORDER = ['PM10', 'PM2.5', 'SO2', 'NO', 'NO2', 'CO', 'O3']
 const weatherPollutant = ref('')
 const weatherPointsByPollutant = computed(() => hourlyChartBundle.value.seriesPointsByPollutant || {})
@@ -638,50 +641,57 @@ const weatherColorMap = computed(() => {
   }
   return colors
 })
-const weatherPollutantOptions = computed(() => {
-  const unitOf = code => POLLUTANT_UNIT_OVERRIDES[code] || stationHourData.value.unit || 'μg/m³'
-  return weatherPollutantCodes.value.map(code => ({
-    code,
-    label: code,
-    color: weatherColorMap.value[code],
-    unit: unitOf(code),
-  }))
-})
-const weatherActivePollutant = computed(() => {
-  const codes = weatherPollutantCodes.value
-  if (!codes.length) return ''
-  if (codes.includes(weatherPollutant.value)) return weatherPollutant.value
+const weatherPollutantGroups = computed(() => switcherPollutantGroups(weatherPollutantCodes.value)
+  .map(group => ({ members: group.members, label: group.members.join('/') })))
+const weatherPollutantOptions = computed(() => weatherPollutantGroups.value.map(group => ({
+  code: group.label,
+  label: group.label,
+  color: weatherColorMap.value[group.members[0]],
+})))
+const weatherActiveGroup = computed(() => {
+  const groups = weatherPollutantGroups.value
+  if (!groups.length) return null
+  const selected = groups.find(group => group.label === weatherPollutant.value)
+  if (selected) return selected
   const target = weatherTargetCode.value
-  return codes.includes(target) ? target : codes[0]
+  return groups.find(group => group.members.includes(target)) || groups[0]
 })
 const weatherSelectedSeries = computed(() => {
-  const code = weatherActivePollutant.value
+  const group = weatherActiveGroup.value
   const pointsByPollutant = weatherPointsByPollutant.value
-  if (!code || !(pointsByPollutant[code] || []).length) return []
+  if (!group) return []
   const unitOf = pollutant => POLLUTANT_UNIT_OVERRIDES[pollutant] || stationHourData.value.unit || 'μg/m³'
-  const series = [{
-    name: `${code}（本站）`, unit: unitOf(code),
-    color: weatherColorMap.value[code] || '#2f86e0', points: pointsByPollutant[code],
-  }]
-  const pair = CHART_COMPARISON_PAIRS[code]
-  if (pair && pair !== code && (pointsByPollutant[pair] || []).length) {
-    series.push({
-      name: `${pair}（对照）`, unit: unitOf(pair),
-      color: weatherColorMap.value[pair] || '#9b8cff', points: pointsByPollutant[pair],
-    })
+  const series = group.members
+    .filter(member => (pointsByPollutant[member] || []).length)
+    .map(member => ({
+      name: `${member}（本站）`, unit: unitOf(member),
+      color: weatherColorMap.value[member] || '#2f86e0', points: pointsByPollutant[member],
+    }))
+  if (!series.length) return []
+  // 单向配对组（如 O3）补配对污染物的互证曲线；双向组两条本站曲线已互证，不另补
+  if (group.members.length === 1) {
+    const pair = CHART_COMPARISON_PAIRS[group.members[0]]
+    if (pair && pair !== group.members[0] && (pointsByPollutant[pair] || []).length) {
+      series.push({
+        name: `${pair}（互证）`, unit: unitOf(pair),
+        color: weatherColorMap.value[pair] || '#9b8cff', points: pointsByPollutant[pair],
+      })
+    }
   }
   return series
 })
-// 区间归属与小时时序图一致：标注了污染物的区间随该污染物显示，
-// 无归属（或归属污染物无曲线）回落主目标图，由图表回退默认琥珀色。
+// 区间归属与小时时序图一致：标注了污染物的区间随所属组显示，
+// 无归属（或归属污染物无曲线）回落主目标组，由图表回退默认琥珀色。
 const weatherSelectedAreas = computed(() => {
-  const code = weatherActivePollutant.value
+  const group = weatherActiveGroup.value
+  if (!group) return []
   const targetCode = weatherTargetCode.value
   const pointsByPollutant = weatherPointsByPollutant.value
   return (index.value.mark_areas || []).filter(area => {
     const owner = areaPollutant(area)
-    if (!owner) return code === targetCode
-    return owner === code || (code === targetCode && !(pointsByPollutant[owner] || []).length)
+    if (!owner) return group.members.includes(targetCode)
+    return group.members.includes(owner)
+      || (group.members.includes(targetCode) && !(pointsByPollutant[owner] || []).length)
   }).map(area => {
     const color = weatherColorMap.value[areaPollutant(area)]
     return color ? { ...area, color } : { ...area }
@@ -690,7 +700,7 @@ const weatherSelectedAreas = computed(() => {
 const weatherEntry = computed(() => ({
   title: '站点污染物与气象时序',
   unit: stationHourData.value.unit || 'μg/m3',
-  // 只画切换器选中污染物的本站/对照曲线，名称与颜色和小时时序图保持一致
+  // 只画切换器选中组的本站/互证曲线，名称与颜色和小时时序图保持一致
   series: weatherSelectedSeries.value,
 }))
 

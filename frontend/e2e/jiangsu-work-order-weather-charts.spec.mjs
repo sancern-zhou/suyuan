@@ -63,7 +63,8 @@ test('weather section switches pollutants and clamps axis to observed range', as
   await expect(page.getByText('站点污染物与气象时序', { exact: true })).toBeVisible()
   await expect(page.locator('#wor-section-weather .weather-chart canvas')).toBeVisible()
   const switchGroup = page.getByRole('group', { name: '气象图污染物切换' })
-  await expect(switchGroup.getByRole('button')).toHaveCount(7)
+  // 互为配对的污染物并成一组：PM10/PM2.5、NO/NO2；单向配对 O3 与无配对 SO2/CO 独立
+  await expect(switchGroup.getByRole('button')).toHaveCount(5)
 
   const readWeather = () => page.evaluate(async () => {
     const echarts = await import('/node_modules/.vite/deps/echarts.js')
@@ -82,11 +83,11 @@ test('weather section switches pollutants and clamps axis to observed range', as
   })
   const expectState = async expected => expect.poll(readWeather).toEqual(expected)
 
-  // 默认选中工单目标污染物 NO：本站 + 配对对照 NO2，无 mg/m³ 次轴（未显示 CO）；
-  // NO 的剔除区间随图；轴收紧到 08:00~10:00 观测范围
-  await expect(switchGroup.getByRole('button', { name: 'NO', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  // 默认选中目标污染物 NO 所在的 NO/NO2 组：两条本站曲线（与小时时序图合并图一致）；
+  // NO 的剔除区间随组显示；轴收紧到 08:00~10:00 观测范围
+  await expect(switchGroup.getByRole('button', { name: 'NO/NO2', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await expectState({
-    seriesNames: ['NO（本站）', 'NO2（对照）', '风速 (m/s)', '风向', '温度 (°C)', '湿度 (%)', '大气压 (hPa)'],
+    seriesNames: ['NO（本站）', 'NO2（本站）', '风速 (m/s)', '风向', '温度 (°C)', '湿度 (%)', '大气压 (hPa)'],
     seriesAxis: [0, 0, 1, 2, 3, 3, 4],
     axisNames: ['μg/m³', '风速 (m/s)', '', '温度/湿度', '气压 (hPa)'],
     axisRange: { min: Date.parse('2026-10-23T08:00:00'), max: Date.parse('2026-10-23T10:00:00') },
@@ -94,11 +95,11 @@ test('weather section switches pollutants and clamps axis to observed range', as
     targetMarkArea: true,
   })
 
-  // 切到 O3：本站 O3 + 对照 NO2；NO 的剔除区间不随图
+  // 切到 O3：本站 O3 + 互证 NO2（单向配对）；NO/NO2 组的剔除区间不随图
   await switchGroup.getByRole('button', { name: 'O3', exact: true }).click()
   await expect(switchGroup.getByRole('button', { name: 'O3', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await expectState({
-    seriesNames: ['O3（本站）', 'NO2（对照）', '风速 (m/s)', '风向', '温度 (°C)', '湿度 (%)', '大气压 (hPa)'],
+    seriesNames: ['O3（本站）', 'NO2（互证）', '风速 (m/s)', '风向', '温度 (°C)', '湿度 (%)', '大气压 (hPa)'],
     seriesAxis: [0, 0, 1, 2, 3, 3, 4],
     axisNames: ['μg/m³', '风速 (m/s)', '', '温度/湿度', '气压 (hPa)'],
     axisRange: { min: Date.parse('2026-10-23T08:00:00'), max: Date.parse('2026-10-23T10:00:00') },

@@ -153,7 +153,7 @@ def _station_hour_source(pack: dict[str, Any], pollutant: str,
                 "summary": "小时原始数据未含有效目标污染物数值", "data": data}
     data["points"] = points
     data["comparison_points"] = comparison_points
-    summary = (f"本站 {pollutant} 逐时浓度（含审核标识解析与 {comparison} 对照序列）"
+    summary = (f"本站 {pollutant} 逐时浓度（含审核标识解析与 {comparison} 互证序列）"
                if comparison else f"本站 {pollutant} 逐时浓度（含审核标识解析）")
     return {"status": "success", "record_count": len(points), "summary": summary, "data": data}
 

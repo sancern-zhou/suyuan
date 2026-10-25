@@ -6,8 +6,26 @@ import {
   finiteObservation,
   hexWithAlpha,
   observationValue,
-  normalizeReviewPoints
+  normalizeReviewPoints,
+  switcherPollutantGroups
 } from './reviewTimeSeriesData.js'
+
+test('switcher groups merge mutual pairs and keep one-way/unpaired pollutants separate', () => {
+  const groups = switcherPollutantGroups(['PM10', 'PM2.5', 'SO2', 'NO', 'NO2', 'CO', 'O3'])
+  assert.deepEqual(groups.map(group => group.members.join('/')),
+    ['PM10/PM2.5', 'SO2', 'NO/NO2', 'CO', 'O3'])
+
+  // 单向配对的 NO2 与 O3 不并组（NO2 归 NO/NO2 组，O3 独立成组补 NO2 互证曲线）
+  const oneway = switcherPollutantGroups(['O3', 'NO2', 'SO2'])
+  assert.deepEqual(oneway.map(group => group.members.join('/')), ['O3', 'NO2', 'SO2'])
+
+  // 顺序无关：NO2 先出现时双向配对仍合并
+  const reversed = switcherPollutantGroups(['NO2', 'NO'])
+  assert.deepEqual(reversed.map(group => group.members.join('/')), ['NO2/NO'])
+
+  // 配对污染物只有一方在列时不并组
+  assert.deepEqual(switcherPollutantGroups(['NO']).map(group => group.members.join('/')), ['NO'])
+})
 
 test('empty observations stay null while real zero is preserved', () => {
   for (const raw of [null, undefined, '', '  ', '--', NaN, Infinity, false, [], {}]) {
@@ -91,10 +109,10 @@ test('single-pollutant package keeps one chart with target, comparison and band 
   assert.equal(charts[0].pollutant, 'PM10')
   assert.equal(charts[0].unit, 'μg/m³')
   assert.deepEqual(charts[0].series.map(item => item.name),
-    ['PM10（本站）', 'PM2.5（对照）', '同城最低', '同城中位', '同城最高'])
+    ['PM10（本站）', 'PM2.5（互证）', '同城最低', '同城中位', '同城最高'])
   assert.equal(charts[0].markAreas.length, 1)
   assert.equal(charts[0].markAreas[0].color, colorMap.PM10)
-  assert.deepEqual(stationPollutantSeries.map(item => item.name), ['PM10（本站）', 'PM2.5（对照）'])
+  assert.deepEqual(stationPollutantSeries.map(item => item.name), ['PM10（本站）', 'PM2.5（互证）'])
   assert.equal(colorMap.PM10, '#2f86e0')
   assert.equal(colorMap['PM2.5'], '#9b8cff')
 })
@@ -112,8 +130,8 @@ test('multi-target pollutants split into one chart each with paired comparison a
 
   assert.deepEqual(charts.map(chart => chart.pollutant), ['PM10', 'NO2'])
   assert.deepEqual(charts[0].series.map(item => item.name),
-    ['PM10（本站）', 'PM2.5（对照）', '同城最低', '同城中位', '同城最高'])
-  assert.deepEqual(charts[1].series.map(item => item.name), ['NO2（本站）', 'NO（对照）'])
+    ['PM10（本站）', 'PM2.5（互证）', '同城最低', '同城中位', '同城最高'])
+  assert.deepEqual(charts[1].series.map(item => item.name), ['NO2（本站）', 'NO（互证）'])
   assert.notEqual(charts[1].series[0].color, charts[1].series[1].color)
 })
 
@@ -193,8 +211,8 @@ test('one-way pair keeps reference curve; pair merge only when both are chart su
   })
 
   assert.deepEqual(charts.map(chart => chart.pollutant), ['NO', 'O3'])
-  assert.deepEqual(charts[0].series.map(item => item.name), ['NO（本站）', 'NO2（对照）'])
-  assert.deepEqual(charts[1].series.map(item => item.name), ['O3（本站）', 'NO2（对照）'])
+  assert.deepEqual(charts[0].series.map(item => item.name), ['NO（本站）', 'NO2（互证）'])
+  assert.deepEqual(charts[1].series.map(item => item.name), ['O3（本站）', 'NO2（互证）'])
   assert.deepEqual(charts[1].markAreas.map(area => area.name), ['O3剔除区间'])
 
   // 目标 SO2 无配对；O3 与 NO2 都因剔除区间入列且互为配对 → 合并为一张"O3+NO2"
@@ -243,7 +261,7 @@ test('legacy package without comparison fields falls back to pm25_points pairing
   })
 
   assert.equal(charts.length, 1)
-  assert.equal(charts[0].series[1].name, 'PM2.5（对照）')
+  assert.equal(charts[0].series[1].name, 'PM2.5（互证）')
 })
 
 test('pollutants without valid curves never claim a chart slot', () => {

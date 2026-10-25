@@ -2961,7 +2961,7 @@ class JiangsuReviewEvidenceTool(LLMTool):
             if name_points:
                 extra_points[name] = name_points
         comparison_summary = (
-            f"本站 {pollutant_code} 逐时浓度（含 {comparison_code} 对照序列）"
+            f"本站 {pollutant_code} 逐时浓度（含 {comparison_code} 互证序列）"
             if comparison_code else f"本站 {pollutant_code} 逐时浓度")
         sources: dict[str, dict[str, Any]] = {
             "work_order": {
