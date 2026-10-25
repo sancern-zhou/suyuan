@@ -1,0 +1,16 @@
+dataset: opa_stationperformancescore
+description: 站点×月绩效考核透传层。一行 = 一个站点一月的考核记录（116 列平台口径原文，13,289 行，每日全量刷新）。
+owner: 广东运维平台组
+grain: 一行 = 站点×月绩效考核记录（ospsid）
+freshness_slo: 26小时
+known_caveats:
+- 平台每日 10:15 左右重算；分析统计优先用 mart_performance_analysis（已宽表化并关联站点维度）
+columns:
+- name: （见源表）
+  business: 六参数得分/数据捕获率/质控次数/两率得分/金额等 116 列考核原文
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: opa_stationperformancescore（一行 = 站点×月考核记录，116 列考核原文）：ospsid/stationid/performancemouth(考核月份)/contractname/contractcode/sdt/edt/六参数得分(so2score…pm25score
+  及 *scoretotal 合计)/数据捕获率(*datacapturerate)/质控(*qcnumber/qcqualifiedrate)/两率(tworatescore)/总分(totalscore)/金额(initialamount/htje/kkje/sjje)/deductionremark(扣减规则说明)。完整列名用
+  describe_table。

@@ -18,7 +18,7 @@ rem working_order_details has no update column: full reload catches step status 
 "%GD_PYTHON%" sync_table.py working_order_details --full >> sync_working_order_details.log 2>&1
 
 rem ---- daily incremental: forms/reports/plans (create-time watermarks) ----
-for %%t in (PW_TASK RF_W_INSPECTION RF_W_INSPECTIONSUMMARY RF_W_GASEOUSCHECK_SO2 RF_W_GASEOUSCHECK_NOX RF_W_GASEOUSCHECK_CO RF_W_GASEOUSCHECK_O3 RF_W_OTHERDEVICECHECK RF_W_PMCHECK SEC_BlackOutReportDetail SEC_BlackOutReportTimespan QUL_QUALITYDATE Sup_DeviceDayCheck) do (
+for %%t in (PW_TASK RF_W_INSPECTION RF_W_INSPECTIONSUMMARY RF_W_GASEOUSCHECK_SO2 RF_W_GASEOUSCHECK_NOX RF_W_GASEOUSCHECK_CO RF_W_GASEOUSCHECK_O3 RF_W_OTHERDEVICECHECK RF_W_PMCHECK SEC_BlackOutReportDetail SEC_BlackOutReportTimespan QUL_QUALITYDATE Sup_DeviceDayCheck OPA_Performance OPA_STATIONPERFORMANCESCORE) do (
     "%GD_PYTHON%" sync_table.py %%t >> sync_%%t.log 2>&1
 )
 

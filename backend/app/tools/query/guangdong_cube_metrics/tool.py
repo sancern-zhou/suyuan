@@ -170,6 +170,32 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "finishDatetime", "title": "完成时间(时间维度)"},
         ],
     },
+    # ---- P1 绩效域 cube(2026-10-25): 站点×月绩效考核 ----
+    "Performance": {
+        "measures": [
+            {"name": "count", "title": "站点月数"},
+            {"name": "distinctStationCount", "title": "涉及站点数(去重)"},
+            {"name": "avgTotalScore", "title": "平均总分(平台考核口径)"},
+            {"name": "below60Count", "title": "低于60分站点月数"},
+            {"name": "sumDeductionAmount", "title": "核减金额合计(元)"},
+            {"name": "sumPenaltyAmount", "title": "扣款金额合计(元)"},
+            {"name": "sumPaidAmount", "title": "实发金额合计(元)"},
+            {"name": "avgQcQualifiedRate", "title": "平均质控合格率(平台口径)"},
+        ],
+        "dimensions": [
+            {"name": "performanceMonth", "title": "考核月份(如 2026年09月)"},
+            {"name": "cityName", "title": "城市名"},
+            {"name": "stationCode", "title": "站点编码"},
+            {"name": "stationName", "title": "站点名"},
+            {"name": "stationTypeName", "title": "站点类型中文名"},
+            {"name": "operationUnitName", "title": "运维单位中文名"},
+            {"name": "contractName", "title": "合同名"},
+            {"name": "contractCode", "title": "合同编号"},
+            {"name": "statusCode", "title": "状态码(原文)"},
+            {"name": "deductionRemark", "title": "扣减规则说明(原文)"},
+            {"name": "contractStartDate", "title": "合同开始日期(时间维度)"},
+        ],
+    },
 }
 
 # 每个 cube 对应的宽表新鲜度列(用于返回 data_as_of)
@@ -179,6 +205,7 @@ FRESHNESS_COLUMN: Dict[str, Tuple[str, str]] = {
     "StationAlarmStatus": ("mart_station_alarm_status", "refreshed_at"),
     "DeviceLifecycle": ("mart_device_lifecycle_analysis", "refreshed_at"),
     "InspectionTask": ("mart_inspection_task_analysis", "refreshed_at"),
+    "Performance": ("mart_performance_analysis", "refreshed_at"),
 }
 
 ALLOWED_FILTER_OPERATORS = {
@@ -226,7 +253,8 @@ class GuangdongQueryMetricsTool(LLMTool):
             "description": (
                 "查询广东运维指标(语义层,口径唯一):工单量/完成率/超期率/2小时响应率/30天重复故障率/附件完整率、"
                 "告警通知量与站点覆盖(AlarmNotify)、当前告警站点态势(StationAlarmStatus)、"
-                "设备周期检查与启停事件(DeviceLifecycle)、巡检任务完成率/超期率/转工单率(InspectionTask)。"
+                "设备周期检查与启停事件(DeviceLifecycle)、巡检任务完成率/超期率/转工单率(InspectionTask)、"
+                "站点绩效月度考核得分与金额(Performance,平台口径不重算)。"
                 "注意: 工单量与时效结论必须按工单类型与状态声明口径(全类型含作废);"
                 "工单超期率分母只计有计划完成时间的单;响应类指标仅故障单可评估;"
                 "告警通知无处理状态,未处理率不可评估。"

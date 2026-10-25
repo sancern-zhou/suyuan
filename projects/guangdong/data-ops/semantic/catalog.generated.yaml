@@ -146,6 +146,71 @@ cubes:
       isToOrder: 是否已转工单
       planDate: 计划日期(时间维度)
       finishDatetime: 完成时间(时间维度)
+  Performance:
+    dataset: mart_performance_analysis
+    grain: 一行 = 一个站点×月的绩效月度考核记录
+    applicability: 站点绩效月度考核的得分排名、低分清单、质控合格率、金额（核减/扣款/实发）统计；得分与金额均为平台考核口径原值，不重算
+    source_window: 2026 合同年度（sdt 2026-01-01 起）
+    freshness_slo: 26小时
+    limitations:
+    - 平台每日 10:15 左右重算，当月得分以当日重算结果为准；月初上月数据可能仍在微调
+    - 金额单位元：initial_amount(合同)/deduction_amount(核减)/penalty_amount(扣款)/paid_amount(实发)；跨合同汇总需按
+      contract 区分
+    - 扣减规则说明在 deduction_remark 原文（如"考核分数90分（含）以上的，不扣减"），金额争议以此为准
+    - 组分站无运维单位/部门信息；组分网与主网合同不同，横向比较需按合同分组
+    - 工单维度绩效追查用 opa_performance（按 working_order_code 关联工单）
+    measures:
+      count:
+        name: 站点月数
+        definition: 考核记录条数（站点×月）
+        null_policy: not_applicable
+        time_basis: performanceMonth
+      distinctStationCount:
+        name: 涉及站点数
+        definition: 去重站点数
+        null_policy: not_applicable
+        time_basis: performanceMonth
+      avgTotalScore:
+        name: 平均总分
+        definition: total_score 平均值（平台考核口径）
+        null_policy: denominator_zero
+        time_basis: performanceMonth
+      below60Count:
+        name: 低于60分站点月数
+        definition: total_score < 60 的记录数
+        null_policy: not_applicable
+        time_basis: performanceMonth
+      sumDeductionAmount:
+        name: 核减金额合计
+        definition: deduction_amount 求和（元）
+        null_policy: denominator_zero
+        time_basis: performanceMonth
+      sumPenaltyAmount:
+        name: 扣款金额合计(元)
+        definition: 扣款金额合计(元)
+      sumPaidAmount:
+        name: 实发金额合计
+        definition: paid_amount 求和（元）
+        null_policy: denominator_zero
+        time_basis: performanceMonth
+      avgQcQualifiedRate:
+        name: 平均质控合格率
+        definition: qc_qualified_rate 平均值（平台口径；该率=合格质控次数/质控总次数）
+        denominator: qc_number
+        null_policy: denominator_zero
+        time_basis: performanceMonth
+    dimensions:
+      performanceMonth: 考核月份(如 2026年09月)
+      cityName: 城市名
+      stationCode: 站点编码
+      stationName: 站点名
+      stationTypeName: 站点类型中文名
+      operationUnitName: 运维单位中文名
+      contractName: 合同名
+      contractCode: 合同编号
+      statusCode: 状态码(原文)
+      deductionRemark: 扣减规则说明(原文)
+      contractStartDate: 合同开始日期(时间维度)
   StationAlarmStatus:
     dataset: mart_station_alarm_status
     grain: 一行 = 一个站点的当前告警态势（快照，每日刷新）

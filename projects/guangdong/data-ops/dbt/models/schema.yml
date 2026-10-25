@@ -262,6 +262,27 @@ models:
     description: 用户中文名
     data_tests: [not_null]
 
+- name: opa_performance
+  description: 工单流程步骤绩效得分透传层。一行 = 一张工单一个流程步骤的考核得分。
+  columns:
+  - name: id
+    description: 主键
+    data_tests: [unique, not_null]
+
+- name: opa_stationperformancescore
+  description: 站点×月绩效考核透传层。一行 = 一个站点一月的考核记录（116 列平台口径原文）。
+  columns:
+  - name: ospsid
+    description: 主键
+    data_tests: [unique, not_null]
+
+- name: mart_performance_analysis
+  description: 站点绩效月度考核宽表。一行 = 一个站点×月的绩效考核（平台口径，2026 合同年度）；Performance cube 数据源。
+  columns:
+  - name: ospsid
+    description: 考核记录ID
+    data_tests: [unique, not_null]
+
 - name: mart_alarm_notify_analysis
   description: 站点告警通知流水宽表。一行 = 一条告警通知（含发送渠道），无处理闭环状态；当前态势见 mart_station_alarm_status。
   columns:

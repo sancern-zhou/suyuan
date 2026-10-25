@@ -67,3 +67,7 @@ sources:
     description: 部门字典（每日全量）。
   - name: v_supcityandregionanddepartment
     description: 组分网站点-城市视图（100 站，ID 空间 1~102，每日全量）。
+  - name: opa_performance
+    description: 工单流程步骤绩效得分（每日全量）。
+  - name: opa_stationperformancescore
+    description: 站点×月绩效考核宽表（每日全量，每日 10:15 左右重算）。

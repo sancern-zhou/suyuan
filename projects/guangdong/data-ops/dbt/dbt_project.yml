@@ -29,6 +29,12 @@ models:
       +tags: ["daily"]
     dim_user:
       +tags: ["daily"]
+    opa_performance:
+      +tags: ["daily"]
+    opa_stationperformancescore:
+      +tags: ["daily"]
+    mart_performance_analysis:
+      +tags: ["daily"]
     mart_work_order_analysis:
       +tags: ["frequent"]
     alm_alarm:

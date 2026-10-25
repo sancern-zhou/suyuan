@@ -31,6 +31,7 @@ FRESHNESS_SLA_MIN = {
     "mart_device_lifecycle_analysis": (120, "refreshed_at"),
     "mart_inspection_task_analysis": (26 * 60, "refreshed_at"),
     "mart_station_alarm_status": (26 * 60, "refreshed_at"),
+    "mart_performance_analysis": (26 * 60, "refreshed_at"),
     "working_orders": (120, "refreshed_at"),
     "working_order_details": (26 * 60, "refreshed_at"),
     "wo_commonfile_links": (120, "refreshed_at"),
@@ -55,6 +56,7 @@ NULL_CHECKS = {
     "working_orders": (["id", "working_order_code", "create_time"], {}),
     "dim_station": (["station_id", "station_code"], {"city_name": 5}),
     "dim_user": (["user_id", "user_name"], {"department_name": 100}),
+    "mart_performance_analysis": (["ospsid", "performance_month"], {"city_name": 50}),
     "dim_device": (["device_id"], {"station_id": 10}),
 }
 
@@ -69,6 +71,9 @@ UNIQUE_CHECKS = {
     "wo_commonfile_links": ["id"],
     "dim_station": ["station_id"],
     "dim_user": ["user_id"],
+    "mart_performance_analysis": ["ospsid"],
+    "opa_performance": ["id"],
+    "opa_stationperformancescore": ["ospsid"],
     "dim_device": ["device_id"],
     "alm_alarm": ["alarmid"],
     "log_device": ["devicelogid"],

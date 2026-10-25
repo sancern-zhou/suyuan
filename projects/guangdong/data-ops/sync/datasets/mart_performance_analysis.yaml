@@ -1,0 +1,46 @@
+dataset: mart_performance_analysis
+description: 站点绩效月度考核宽表。一行 = 一个站点×月的绩效考核（2026 合同年度），语义层 Performance cube 的数据源。
+owner: 广东运维平台组
+grain: 一行 = 一个站点×月的绩效月度考核（ospsid）
+freshness_slo: 26小时
+known_caveats:
+- 得分与金额均为平台考核口径原值，不重算；扣减规则说明见 deduction_remark 原文
+- 平台每日 10:15 左右重算，当月数据以当日重算结果为准
+- 金额单位元：initial_amount(合同)/deduction_amount(核减)/penalty_amount(扣款)/paid_amount(实发)
+- 站点经 dim_station 关联（主网+组分网）；组分站无运维单位/部门信息
+- 2026 合同年度（sdt 2026-01-01 起）
+example_questions:
+- 9 月各城市站点绩效总分排名？
+- 哪些站点当月总分低于 60 分？
+- 某站点本年度累计核减金额？
+- 质控合格率低于 95% 的站点清单？
+columns:
+- name: ospsid
+  business: 考核记录ID(主键)
+- name: station_id/station_code/station_name
+  business: 站点维度(经dim_station)
+- name: city_code/city_name
+  business: 城市维度(全站覆盖)
+- name: station_type_name/operation_unit_name
+  business: 站点类型/运维单位中文名
+- name: performance_month
+  business: 考核月份(如 2026年09月)
+- name: contract_name/contract_code
+  business: 合同
+- name: total_score/two_rate_score/quality_control_score/effect_rate/effect_rate_score/province_center_score
+  business: 考核得分(平台口径)
+- name: acquisition_ratio/qc_qualified_rate/qc_number/all_qc_number
+  business: 数据捕获率/质控合格率/质控次数
+- name: initial_amount/deduction_amount/penalty_amount/paid_amount
+  business: 金额(元):合同/核减/扣款/实发
+- name: status_code/archiving_date/deduction_remark
+  business: 状态/归档时间/扣减规则说明
+- name: source_updated_at/refreshed_at
+  business: 源重算时间/本表刷新时间
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: mart_performance_analysis（一行 = 一个站点×月的绩效月度考核）：维度 station_code/station_name/city_name/station_type_name/operation_unit_name/performance_month(如
+  2026年09月)/contract_name/status_code；得分 total_score/two_rate_score(两率)/quality_control_score(质控)/effect_rate(有效率)/province_center_score；质控
+  qc_qualified_rate/qc_number/all_qc_number；金额(元) initial_amount(合同)/deduction_amount(核减)/penalty_amount(扣款)/paid_amount(实发)；扣减规则
+  deduction_remark 原文。得分金额均为平台考核口径，不重算；月度排名/低分清单/金额汇总用本表。

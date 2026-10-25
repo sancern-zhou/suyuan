@@ -1,0 +1,16 @@
+dataset: opa_performance
+description: 工单流程步骤绩效得分透传层。一行 = 一张工单一个流程步骤的考核得分（36,115 行，每日全量刷新）。
+owner: 广东运维平台组
+grain: 一行 = 工单一个流程步骤的绩效得分（id）
+freshness_slo: 26小时
+known_caveats:
+- 无时间列，每日全量同步；得分金额为平台考核口径原值，不重算
+- 按工单号关联 mart_work_order_analysis / working_orders 追查工单详情
+columns:
+- name: （见源表）
+  business: id/ospsid/working_order_code/process_step/two_rate_score/quality_control_score/effect_rate_score/province_center_score/total_score/htje/sjje/deduction_remark/per_sec_check_score/per_data_audit_score
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: opa_performance（一行 = 工单一个流程步骤的绩效得分）：id/ospsid(关联站点月度绩效)/working_order_code(工单号)/process_step(步骤)/two_rate_score(两率得分)/quality_control_score(质控得分)/total_score(总分)/htje(核减金额)/sjje(实发金额)/deduction_remark(扣减说明)。工单绩效追查按
+  working_order_code 过滤；站点月度汇总用 mart_performance_analysis。
