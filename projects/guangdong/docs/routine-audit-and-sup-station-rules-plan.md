@@ -1,10 +1,10 @@
-# 例行工单每周审核与组分站审核规则扩展方案（待确认）
+# 例行工单每周审核与组分站审核规则扩展方案
 
-> 生成时间：2026-10-25。本文档回答"已有常规站点审核规则和每周任务，为什么部署里没有"，并给出组分站规则扩展与例行审核上线的实施方案，**待确认后实施**。
+> 生成时间：2026-10-25；**同日已确认并实施一期**（见文末"实施记录"）。业务决策：组分站与常规站审核流程一致，**拆分为两个每周定时任务**分别生成审核报告，便于维护与优化。
 
 ---
 
-## 一、现状核查结论
+## 一、现状核查结论（实施前）
 
 ### 1.1 为什么这次部署没有看到每周例行审核任务
 
@@ -76,3 +76,35 @@
 - 本地取数：`backend/app/services/ops_work_order_audit_local.py`（RF_TABLES 清单）
 - 技能：`backend/docs/skills/ops_work_order_audit.md`
 - 组分站表单数据集契约：`projects/guangdong/data-ops/sync/datasets/sup_rf_common.yaml`
+
+---
+
+## 六、一期实施记录（2026-10-25，已落地）
+
+### 业务决策（已确认）
+
+组分站与常规站审核流程一致，拆分为**两个每周定时任务**分别取数、跑规则、成稿与提交卡片：
+
+| 任务 | 调度 | 类型范围 | 表单来源 |
+|---|---|---|---|
+| `gd_routine_work_order_audit` 常规站 | 每周一 10:00 | Check / SECCheck / SECCheckCnemc / SECFlightCheck / Inspection / WorkRectify（主网非故障） | 主网 RF_W_*/RF_M_* 等 33 张分表，全量规则+视觉 |
+| `gd_sup_station_work_order_audit` 组分站 | 每周一 11:30（错峰） | SupCheck / SupSECCheck | `sup_rf_common` 通用宽表，一期通用规则 |
+
+### 一期代码改动（backend，本地 guangdong_mart 路径）
+
+1. **组分站取数分支**（`ops_work_order_audit_local.py`）：请求类型全部为 SupCheck/SupSECCheck 时进入 sup_mode——绕过主网 `EXCLUDED_AUDIT_ORDER_TYPES`（此前 SupCheck 被引擎显式排除，即组分站无规则的代码根源），RF 表单改查 `sup_rf_common`（SELECT * + 头信息列大写化），以 `SUP_RF_COMMON` 键进入 `rf_forms`，规则引擎/证据包/报告全链路通用消费，无需改规则分发。
+2. **常量**（`ops_work_order_audit_engine.py`）：`SUP_AUDIT_ORDER_TYPES`、`SUP_RF_COMMON_TABLE`；主网请求误传 SupCheck 仍被既有口径剔除，两任务互不影响。
+3. **字段档案**（`rf_field_profiles.yaml`）：人员组加组分站三段流转字段 PREPAREUSERID/REVIEWUSERID/AUDITUSERID（实测空值率 0%/16.5%/28.6%，为真实业务问题信号）；检查时间字段 CHECKDATE 原已覆盖。
+4. **表单显示名**（`rf_form_names.py`）：SUP_RF_COMMON="组分网巡检表单（通用数据体，组分站）"。
+5. **单测**：`ops_work_order_audit_local_sup_test.py`（请求判定/大写化/主网口径不变），4/4 通过；规则引擎回归 176 通过、5 个失败均为预存视觉/OCR 环境问题。
+
+### 验证结果（不跑全量）
+
+- **取数冒烟**：近 2 天真实库查询 → 19 张 SupCheck 工单、15 张组分站表单，头字段（工单号/检查日期/三段人员/设备/站点编码）就位。
+- **规则冒烟**（无视觉、无 LLM，14 天窗口 120 工单/56 表单）：确定性规则命中 3 张工单"复核人/审核人为空"，`report_ready=True`、`report_input.items=3`——通用规则对组分站端到端生效。
+- **已知一期限制**：组分站设备不在主网 `dim_device` 台账（冒烟 devices=0），设备一致性规则对组分站暂不命中，待二期扩展组分站设备台账或按 sup 表单历史自比；备注/题目项列未做语义规则（列语义普查后二期落）。
+
+### 部署同步
+
+- worker 重启后 sync 自动创建组分站任务；常规站任务因持久存储不覆盖 seed，已通过任务 API 同步 name/skill_id/prompt。
+- 二期（列语义普查 + 组分站专属规则 + 设备台账）按第三节计划另行排期。

@@ -174,6 +174,10 @@ BRAND_ALIASES = load_brand_aliases()
 RF_FIELD_PROFILES = load_rf_field_profiles()
 DEVICE_IDENTITY_PROFILE = load_device_identity_profiles()
 EXCLUDED_AUDIT_ORDER_TYPES = {"SupCheck"}
+# 组分站审核路径：请求类型全部落在该集合时，本地取数走 sup_rf_common 通用表单宽表
+# （组分网表单不落主网 RF_W_* 分表），表单以 SUP_RF_COMMON 键进入 rf_forms 供通用规则消费。
+SUP_AUDIT_ORDER_TYPES = frozenset({"SupCheck", "SupSECCheck"})
+SUP_RF_COMMON_TABLE = "SUP_RF_COMMON"
 
 FORM_RANGE_PROFILES = {
     "RF_W_GASEOUSCHECK_CO": {

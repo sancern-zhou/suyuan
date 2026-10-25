@@ -25,6 +25,8 @@ from app.services.ops_work_order_audit_aliases import _COLUMN_ALIASES
 from app.services.ops_work_order_audit_engine import (
     EXCLUDED_AUDIT_ORDER_TYPES,
     RF_TABLES,
+    SUP_AUDIT_ORDER_TYPES,
+    SUP_RF_COMMON_TABLE,
     _clean_values,
     _history_form_from_joined_row,
     _history_form_seeds,
@@ -98,6 +100,51 @@ _DEVICE_FIELD_MAP = {
     "POLLUTANTID": "pollutant_id",
     "DEVICETYPE": "device_type",
 }
+
+# sup_rf_common 头信息列小写 → 大写（通用规则按大写字段名匹配 profile 组；
+# 题目项列不映射，保留小写原样，待二期列语义普查后按需补充）。
+_SUP_FORM_UPPER_MAP = {
+    "id": "ID",
+    "detailid": "DETAILID",
+    "workingordercode": "WORKINGORDERCODE",
+    "stationid": "STATIONID",
+    "stationcode": "STATIONCODE",
+    "uniquecode": "UNIQUECODE",
+    "deviceid": "DEVICEID",
+    "ruleitemtag": "RULEITEMTAG",
+    "pollutanttype": "POLLUTANTTYPE",
+    "operationunitid": "OPERATIONUNITID",
+    "checkdate": "CHECKDATE",
+    "devicebrand": "DEVICEBRAND",
+    "devicemodel": "DEVICEMODEL",
+    "devicecode": "DEVICECODE",
+    "prepareuserid": "PREPAREUSERID",
+    "preparetime": "PREPARETIME",
+    "reviewuserid": "REVIEWUSERID",
+    "reviewtime": "REVIEWTIME",
+    "audituserid": "AUDITUSERID",
+    "audittime": "AUDITTIME",
+    "processtype": "PROCESSTYPE",
+    "createuserid": "CREATEUSERID",
+    "createtime": "CREATETIME",
+    "updateuserid": "UPDATEUSERID",
+    "updatetime": "UPDATETIME",
+}
+
+
+def is_sup_station_request(order_types: list[str] | None) -> bool:
+    """组分站审核请求判定：显式请求的类型全部属于组分站集合。"""
+    values = _clean_values(order_types)
+    return bool(values) and set(values) <= set(SUP_AUDIT_ORDER_TYPES)
+
+
+def _uppercase_sup_form_row(record: dict[str, Any]) -> dict[str, Any]:
+    """sup_rf_common 行头信息列大写化（同键小写列保留，供二期普查对照）。"""
+    row = dict(record)
+    for low, upper in _SUP_FORM_UPPER_MAP.items():
+        if low in row and row[low] is not None:
+            row[upper] = row[low]
+    return row
 
 
 def local_source_enabled() -> bool:
@@ -214,7 +261,10 @@ def fetch_dataset_local(filter_config: Any) -> dict[str, Any]:
     limit = max(1, min(int(filters.limit or 200), 3000))
     station_ids = _clean_values(filters.station_ids)
     requested_order_types = _clean_values(filters.order_types)
-    order_types = effective_audit_order_types(requested_order_types)
+    # 组分站审核请求（类型全部为 SupCheck/SupSECCheck）不过主网类型过滤，
+    # 表单改读 sup_rf_common 通用宽表；主网请求维持原口径（SupCheck 仍被排除）。
+    sup_mode = is_sup_station_request(requested_order_types)
+    order_types = list(requested_order_types) if sup_mode else effective_audit_order_types(requested_order_types)
     maintenance_types = _clean_values(filters.maintenance_types)
     working_order_codes = _clean_values(filters.working_order_codes)
     order_statuses = _clean_values(filters.order_statuses)
@@ -243,7 +293,8 @@ def fetch_dataset_local(filter_config: Any) -> dict[str, Any]:
         where_parts.append(_in_clause_pg('"ddworkingordertype"', order_types, params))
     elif requested_order_types:
         where_parts.append("1 = 0")
-    where_parts.append(_not_in_clause_pg('"ddworkingordertype"', sorted(EXCLUDED_AUDIT_ORDER_TYPES), params))
+    if not sup_mode:
+        where_parts.append(_not_in_clause_pg('"ddworkingordertype"', sorted(EXCLUDED_AUDIT_ORDER_TYPES), params))
     if maintenance_types:
         where_parts.append(_in_clause_pg('"maintenancetype"', maintenance_types, params))
     if working_order_codes:
@@ -301,30 +352,53 @@ def fetch_dataset_local(filter_config: Any) -> dict[str, Any]:
 
             rf_forms: dict[str, list[dict[str, Any]]] = {}
             rf_form_filter_stats: dict[str, dict[str, Any]] = {}
-            for table in RF_TABLES:
-                local_table = table.lower()
+            if sup_mode:
+                # 组分站：表单体在 sup_rf_common 通用宽表（306 列），按工单号整取，
+                # 头信息列大写化后以 SUP_RF_COMMON 键进入 rf_forms 供通用规则消费。
                 try:
-                    if not _table_exists(cur, local_table):
-                        raise RuntimeError(f"local table missing: {local_table}")
-                    alias_map = _COLUMN_ALIASES.get(local_table) or {}
-                    if alias_map:
-                        cols = ", ".join(f'"{low}" AS "{orig}"' for low, orig in alias_map.items())
-                        table_sql = f"SELECT {cols} FROM {_mart(local_table)} "
-                    else:
-                        table_sql = f"SELECT * FROM {_mart(local_table)} "
-                    table_rows = _rows(cur,
-                        table_sql
-                        + f'WHERE "workingordercode" IN ({code_ph}) LIMIT 3000',
+                    if not _table_exists(cur, "sup_rf_common"):
+                        raise RuntimeError("local table missing: sup_rf_common")
+                    sup_rows = _rows(cur,
+                        f"SELECT * FROM {_mart('sup_rf_common')} "
+                        f'WHERE "workingordercode" IN ({code_ph}) LIMIT 3000',
                         codes)
-                    selected_rows, stats = _select_rf_forms_with_filter_stats(table, table_rows)
-                    rf_forms[table] = selected_rows
-                    rf_form_filter_stats[table] = stats
+                    selected_rows, stats = _select_rf_forms_with_filter_stats(
+                        SUP_RF_COMMON_TABLE,
+                        [_uppercase_sup_form_row(row) for row in sup_rows],
+                    )
+                    rf_forms[SUP_RF_COMMON_TABLE] = selected_rows
+                    rf_form_filter_stats[SUP_RF_COMMON_TABLE] = stats
                 except Exception as exc:
                     error_rows = [{"_query_error": str(exc)}]
-                    selected_rows, stats = _select_rf_forms_with_filter_stats(table, error_rows)
-                    rf_forms[table] = selected_rows
-                    rf_form_filter_stats[table] = stats
-                    logger.warning("ops_audit_local_rf_failed", table=table, error=str(exc))
+                    selected_rows, stats = _select_rf_forms_with_filter_stats(SUP_RF_COMMON_TABLE, error_rows)
+                    rf_forms[SUP_RF_COMMON_TABLE] = selected_rows
+                    rf_form_filter_stats[SUP_RF_COMMON_TABLE] = stats
+                    logger.warning("ops_audit_local_sup_rf_failed", error=str(exc))
+            else:
+                for table in RF_TABLES:
+                    local_table = table.lower()
+                    try:
+                        if not _table_exists(cur, local_table):
+                            raise RuntimeError(f"local table missing: {local_table}")
+                        alias_map = _COLUMN_ALIASES.get(local_table) or {}
+                        if alias_map:
+                            cols = ", ".join(f'"{low}" AS "{orig}"' for low, orig in alias_map.items())
+                            table_sql = f"SELECT {cols} FROM {_mart(local_table)} "
+                        else:
+                            table_sql = f"SELECT * FROM {_mart(local_table)} "
+                        table_rows = _rows(cur,
+                            table_sql
+                            + f'WHERE "workingordercode" IN ({code_ph}) LIMIT 3000',
+                            codes)
+                        selected_rows, stats = _select_rf_forms_with_filter_stats(table, table_rows)
+                        rf_forms[table] = selected_rows
+                        rf_form_filter_stats[table] = stats
+                    except Exception as exc:
+                        error_rows = [{"_query_error": str(exc)}]
+                        selected_rows, stats = _select_rf_forms_with_filter_stats(table, error_rows)
+                        rf_forms[table] = selected_rows
+                        rf_form_filter_stats[table] = stats
+                        logger.warning("ops_audit_local_rf_failed", table=table, error=str(exc))
 
             device_ids = {str(row.get("DEVICEID")) for row in orders if row.get("DEVICEID")}
             device_codes = {

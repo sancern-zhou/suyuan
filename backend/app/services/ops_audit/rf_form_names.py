@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 RF_FORM_NAMES: dict[str, str] = {
+    "SUP_RF_COMMON": "组分网巡检表单（通用数据体，组分站）",
     "RF_W_GASEOUSCHECK_CO": "一氧化碳（CO）分析仪运行状况检查记录表（每周）",
     "RF_W_GASEOUSCHECK_NOX": "氮氧化物（NOx）分析仪运行状况检查记录表（每周）",
     "RF_W_GASEOUSCHECK_O3": "臭氧（O3）分析仪运行状况检查记录表（每周）",

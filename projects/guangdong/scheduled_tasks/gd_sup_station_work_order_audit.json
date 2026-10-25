@@ -1,0 +1,46 @@
+{
+  "task_id": "gd_sup_station_work_order_audit",
+  "name": "广东例行工单审核（组分站）",
+  "description": "每周一上午对上周创建的组分网例行工单（组分站巡检 SupCheck、组分网现场检查 SupSECCheck）执行审核规则集，通用规则（流程、必填、审核流转、检查时间、设备一致性、附件）先行覆盖，逐单生成任务调度中心待人工确认的审核卡片并输出审核综述",
+  "execution_mode": "custom",
+  "model_tier": "auto",
+  "tool_names": [
+    "list_skills",
+    "view_skill",
+    "ops_audit_fetch_dataset",
+    "ops_audit_run_rules",
+    "ops_audit_inspect",
+    "read_file",
+    "write_file",
+    "submit_task_review"
+  ],
+  "trigger_type": "schedule",
+  "schedule_type": "weekly_custom",
+  "day_of_week": 0,
+  "hour": 11,
+  "minute": 30,
+  "enabled": true,
+  "prompt": "执行广东组分站例行工单每周审核，只读数据，不创建或派发工单，不修改审核规则。审核范围仅限组分网站点工单：工单类型 SupCheck 组分网巡检单、SupSECCheck 组分网现场检查单（组分站表单存于通用表单体宽表，不走主网分表）；不含主网 Check/SECCheck 类（由常规站审核任务承接），不含 Fault/SupFault 故障类。\n\n第一步：先用 list_skills 找到工单审核技能（ops_work_order_audit），再用 view_skill 读取完整流程，本提示词与技能冲突时以技能为准。\n\n第二步：调用 ops_audit_fetch_dataset 取数，order_types 固定传 [\"SupCheck\", \"SupSECCheck\"]，审核窗口用工具的周创建窗口预设（audit_window_preset=\"weekly_created\"，即上周一至周日创建）。检查返回的数据覆盖情况（工单、流程、组分站表单、附件），关键覆盖异常时在综述中说明影响后继续。\n\n第三步：把返回的 dataset_path 原值传给 ops_audit_run_rules。当前阶段组分站适用规则为通用规则集：流程链完整性（创建/巡检检查/复核/审批环节）、生命周期闭环、表单必填与审核流转人员（准备/复核/审核三段）、检查时间与工单窗口合理性、设备一致性（表单设备品牌型号编号 vs 站点设备台账）、附件完整性。主网表单量值/公式/视觉类规则不适用于组分站表单结构，规则输出为空属正常，不要判定为执行失败。\n\n第四步：消费最终问题清单。只把本轮 report_input.items 中确认的问题工单转为审核卡片，调用 submit_task_review 逐单提交：category 固定为'工单审核'；subject_id 用工单号；title 为'工单号+站点中文名+命中规则摘要'；summary 用业务语言汇总该单命中的规则与问题事实（每条注明规则标识，300字内）；decision 按问题严重度选择（影响流程完整性或数据追溯用 needs_action，存疑或需补证据用 needs_evidence）；checks 按命中规则逐项给出（status 与 basis 来自规则结果，不重写判定）；可附 sections 键值区块（站点信息、命中规则明细）。单轮最多提交 20 张，按问题严重度优先，超出的在综述中说明数量与分布。report_ready=false 时，待核验项不入正式卡片，在综述中说明待核验数量与原因。\n\n第五步：输出 200-400 字审核综述：本周组分站工单审核总量与类型分布、规则命中工单数与规则分布、问题最集中的站点、已提交卡片数、report_ready 状态与数据缺口（如复核人/审核人缺失的整体比例）。只使用本轮规则执行返回的真实数字与名称，不得补造；不输出表名、字段名、SQL、文件路径等内部技术语言。",
+  "timeout_seconds": 1800,
+  "created_by": "project-default",
+  "owner_user_id": "system",
+  "owner_username": "gd-sup-audit-agent",
+  "owner_display_name": "广东组分站审核智能体",
+  "tags": [
+    "广东",
+    "组分站",
+    "例行工单",
+    "工单审核",
+    "每周审核",
+    "任务调度中心",
+    "只读"
+  ],
+  "workspace_entry": {
+    "enabled": true,
+    "title": "组分站工单审核"
+  },
+  "history_learning": {
+    "enabled": false
+  },
+  "skill_id": "ops_work_order_audit"
+}
