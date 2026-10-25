@@ -169,6 +169,12 @@
 
 ### 已实施（本分支提交）
 
+> 2026-10-25 补充：按业务决策下线画板(board)与幻灯片(ppt)模式（从 agent_modes 移除，
+> 不保留入口）；首页 scenes 入口经 `agent_scenes` + `agent_scene_overrides` 重排——
+> 办公(助手/知识问答)、监测分析(问数/专家/报告)、运维管理(运维管理/gd_query/故障诊断/运维分析)。
+> 注意：前端项目配置为构建时注入（`__SUYUAN_PROJECT_CONFIG__`），改 manifest 后必须重建前端才生效，
+> 运行时 runtime-config 仅后端消费。浏览器实测首页 9 个智能体入口正确。
+
 | 步骤 | 状态 | 产出 |
 |---|---|---|
 | 第1步 gd_query | ✅ 配置完成 | `prompts/gd_query.md` + `agent_mode_tools.gd_query`（全量白名单）+ welcome 文案 |

@@ -8,17 +8,38 @@ frontend:
   features: {}
   agent_modes:
   - assistant
-  - ppt
   - expert
   - query
   - report
-  - board
   - ops
   - gd_query
   - knowledge
   - station_fault_diagnosis
   - operations_analysis
   agent_platform_layout: scenes
+  # 首页 scenes 布局的场景与各场景模式入口（键必须是前端静态场景 id；
+  # mode_ids 内的模式必须已在 agent_modes 与前端静态目录中声明）。
+  # 2026-10-25 按业务决策下线画板(board)与幻灯片(ppt)类模式，入口不保留。
+  agent_scenes:
+  - office
+  - monitoring
+  - operations
+  agent_scene_overrides:
+    office:
+      mode_ids:
+      - assistant
+      - knowledge
+    monitoring:
+      mode_ids:
+      - query
+      - expert
+      - report
+    operations:
+      mode_ids:
+      - ops
+      - gd_query
+      - station_fault_diagnosis
+      - operations_analysis
   # 各前台模式的展示与欢迎文案：键与值结构对齐江苏 agent_mode_overrides
   # （name/short_name 供后端 coordinator/社交通道读取；welcome.description/
   #   welcome.features 供前端场景卡片与聊天欢迎区渲染）。
