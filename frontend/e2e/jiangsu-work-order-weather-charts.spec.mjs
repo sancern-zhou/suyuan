@@ -99,7 +99,7 @@ test('weather section switches pollutants and clamps axis to observed range', as
   await switchGroup.getByRole('button', { name: 'O3', exact: true }).click()
   await expect(switchGroup.getByRole('button', { name: 'O3', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await expectState({
-    seriesNames: ['O3（本站）', 'NO2（互证）', '风速 (m/s)', '风向', '温度 (°C)', '湿度 (%)', '大气压 (hPa)'],
+    seriesNames: ['O3（本站）', 'NO2（同站互证）', '风速 (m/s)', '风向', '温度 (°C)', '湿度 (%)', '大气压 (hPa)'],
     seriesAxis: [0, 0, 1, 2, 3, 3, 4],
     axisNames: ['μg/m³', '风速 (m/s)', '', '温度/湿度', '气压 (hPa)'],
     axisRange: { min: Date.parse('2026-10-23T08:00:00'), max: Date.parse('2026-10-23T10:00:00') },

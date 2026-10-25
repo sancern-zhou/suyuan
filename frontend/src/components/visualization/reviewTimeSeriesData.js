@@ -61,7 +61,7 @@ export const EXTRA_POLLUTANT_COLORS = ['#ff8a75', '#56d6c9', '#d7a84e', '#8fb4ff
 // 曲线单位覆盖：CO 与常规 μg/m³ 不同，其余与目标污染物一致。
 export const POLLUTANT_UNIT_OVERRIDES = { CO: 'mg/m³' }
 // 时序图互证配对（与后端 review_evidence.COMPARISON_POLLUTANTS 保持一致）：
-// 每张图保留该污染物最有诊断意义的互证曲线（颗粒物互证倒挂、NO/NO2 同仪、O3↔NO2 光化学平衡）。
+// 每张图保留该污染物最有诊断意义的同站互证曲线（颗粒物互证倒挂、NO/NO2 同仪、O3↔NO2 光化学平衡）。
 export const CHART_COMPARISON_PAIRS = {
   PM10: 'PM2.5',
   'PM2.5': 'PM10',
@@ -72,7 +72,7 @@ export const CHART_COMPARISON_PAIRS = {
 
 // 气象图切换器选项分组：互为配对（A↔B 双向互指）的污染物并成一组——两组的曲线完全相同
 // （本站/互证只是互换），拆成两个选项是重复；单向配对（O3→NO2）与无配对（SO2/CO）
-// 各自独立成组（单向组的视图仍会补对方的互证曲线）。返回 [{ members: [code, ...] }]，
+// 各自独立成组（单向组的视图仍会补对方的同站互证曲线）。返回 [{ members: [code, ...] }]，
 // 组顺序与成员顺序跟随输入首现顺序。
 export function switcherPollutantGroups(codes) {
   const inCodes = new Set(codes)
@@ -199,7 +199,7 @@ export function buildPollutantCharts({
   // 出图主体（保序，主目标恒为首图）。互为配对且都在列的污染物合并为一张"X+Y"图：
   // NO↔NO2、PM10↔PM2.5 这类双向配对的两张图曲线完全相同（本站/互证只是互换），
   // 拆开是重复；合并后两条本站曲线与双方剔除区间同图呈现，倒挂类诊断恰好需要同图对比。
-  // 已被并入别图（absorbed）的污染物不再单独出图，其在别的图里仍可作互证曲线出现。
+  // 已被并入别图（absorbed）的污染物不再单独出图，其在别的图里仍可作同站互证曲线出现。
   const subjects = [targetCode, ...chartPollutants.filter(pollutant => pollutant !== targetCode)]
   const mergePartner = new Map()
   const absorbed = new Set()
@@ -220,7 +220,7 @@ export function buildPollutantCharts({
     if (!partner) {
       const pair = CHART_COMPARISON_PAIRS[pollutant]
       const points = pair && pair !== pollutant ? pointsOf(pair) : []
-      if (points.length) series.push(seriesEntry(pair, points, '互证'))
+      if (points.length) series.push(seriesEntry(pair, points, '同站互证'))
     }
     charts.push({
       pollutant: members.join('+'),

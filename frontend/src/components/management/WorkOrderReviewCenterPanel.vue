@@ -323,7 +323,7 @@
 
               <template v-else-if="source.key === 'weather'">
                 <template v-if="weatherRows.length">
-                  <!-- 污染物切换器（参照智能事件对比图）：一次只画选中组的本站/互证曲线 -->
+                  <!-- 污染物切换器（参照智能事件对比图）：一次只画选中组的本站/同站互证曲线 -->
                   <div v-if="weatherPollutantOptions.length > 1" class="pollutant-switch" role="group" aria-label="气象图污染物切换">
                     <button
                       v-for="option in weatherPollutantOptions"
@@ -611,7 +611,7 @@ const weatherPayload = computed(() => ({
 // 全污染物同图叠加难以辨认，改为一次只画选中组的曲线：互为配对的污染物（NO↔NO2、
 // PM10↔PM2.5）并成一组（两组的曲线完全相同，本站/互证只是互换，拆开是重复），
 // 组内两条都是本站曲线；单向配对（O3→NO2）与无配对（SO2/CO）独立成组，选中时
-// 补配对污染物的互证曲线。默认选中工单目标污染物所在组。
+// 补配对污染物的同站互证曲线。默认选中工单目标污染物所在组。
 const WEATHER_POLLUTANT_ORDER = ['PM10', 'PM2.5', 'SO2', 'NO', 'NO2', 'CO', 'O3']
 const weatherPollutant = ref('')
 const weatherPointsByPollutant = computed(() => hourlyChartBundle.value.seriesPointsByPollutant || {})
@@ -668,12 +668,12 @@ const weatherSelectedSeries = computed(() => {
       color: weatherColorMap.value[member] || '#2f86e0', points: pointsByPollutant[member],
     }))
   if (!series.length) return []
-  // 单向配对组（如 O3）补配对污染物的互证曲线；双向组两条本站曲线已互证，不另补
+  // 单向配对组（如 O3）补配对污染物的同站互证曲线；双向组两条本站曲线本身即互为同站互证，不另补
   if (group.members.length === 1) {
     const pair = CHART_COMPARISON_PAIRS[group.members[0]]
     if (pair && pair !== group.members[0] && (pointsByPollutant[pair] || []).length) {
       series.push({
-        name: `${pair}（互证）`, unit: unitOf(pair),
+        name: `${pair}（同站互证）`, unit: unitOf(pair),
         color: weatherColorMap.value[pair] || '#9b8cff', points: pointsByPollutant[pair],
       })
     }
@@ -700,7 +700,7 @@ const weatherSelectedAreas = computed(() => {
 const weatherEntry = computed(() => ({
   title: '站点污染物与气象时序',
   unit: stationHourData.value.unit || 'μg/m3',
-  // 只画切换器选中组的本站/互证曲线，名称与颜色和小时时序图保持一致
+  // 只画切换器选中组的本站/同站互证曲线，名称与颜色和小时时序图保持一致
   series: weatherSelectedSeries.value,
 }))
 

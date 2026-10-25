@@ -109,10 +109,10 @@ test('single-pollutant package keeps one chart with target, comparison and band 
   assert.equal(charts[0].pollutant, 'PM10')
   assert.equal(charts[0].unit, 'μg/m³')
   assert.deepEqual(charts[0].series.map(item => item.name),
-    ['PM10（本站）', 'PM2.5（互证）', '同城最低', '同城中位', '同城最高'])
+    ['PM10（本站）', 'PM2.5（同站互证）', '同城最低', '同城中位', '同城最高'])
   assert.equal(charts[0].markAreas.length, 1)
   assert.equal(charts[0].markAreas[0].color, colorMap.PM10)
-  assert.deepEqual(stationPollutantSeries.map(item => item.name), ['PM10（本站）', 'PM2.5（互证）'])
+  assert.deepEqual(stationPollutantSeries.map(item => item.name), ['PM10（本站）', 'PM2.5（同站互证）'])
   assert.equal(colorMap.PM10, '#2f86e0')
   assert.equal(colorMap['PM2.5'], '#9b8cff')
 })
@@ -130,8 +130,8 @@ test('multi-target pollutants split into one chart each with paired comparison a
 
   assert.deepEqual(charts.map(chart => chart.pollutant), ['PM10', 'NO2'])
   assert.deepEqual(charts[0].series.map(item => item.name),
-    ['PM10（本站）', 'PM2.5（互证）', '同城最低', '同城中位', '同城最高'])
-  assert.deepEqual(charts[1].series.map(item => item.name), ['NO2（本站）', 'NO（互证）'])
+    ['PM10（本站）', 'PM2.5（同站互证）', '同城最低', '同城中位', '同城最高'])
+  assert.deepEqual(charts[1].series.map(item => item.name), ['NO2（本站）', 'NO（同站互证）'])
   assert.notEqual(charts[1].series[0].color, charts[1].series[1].color)
 })
 
@@ -211,8 +211,8 @@ test('one-way pair keeps reference curve; pair merge only when both are chart su
   })
 
   assert.deepEqual(charts.map(chart => chart.pollutant), ['NO', 'O3'])
-  assert.deepEqual(charts[0].series.map(item => item.name), ['NO（本站）', 'NO2（互证）'])
-  assert.deepEqual(charts[1].series.map(item => item.name), ['O3（本站）', 'NO2（互证）'])
+  assert.deepEqual(charts[0].series.map(item => item.name), ['NO（本站）', 'NO2（同站互证）'])
+  assert.deepEqual(charts[1].series.map(item => item.name), ['O3（本站）', 'NO2（同站互证）'])
   assert.deepEqual(charts[1].markAreas.map(area => area.name), ['O3剔除区间'])
 
   // 目标 SO2 无配对；O3 与 NO2 都因剔除区间入列且互为配对 → 合并为一张"O3+NO2"
@@ -261,7 +261,7 @@ test('legacy package without comparison fields falls back to pm25_points pairing
   })
 
   assert.equal(charts.length, 1)
-  assert.equal(charts[0].series[1].name, 'PM2.5（互证）')
+  assert.equal(charts[0].series[1].name, 'PM2.5（同站互证）')
 })
 
 test('pollutants without valid curves never claim a chart slot', () => {
