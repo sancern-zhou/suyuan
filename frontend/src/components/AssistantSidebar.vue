@@ -597,7 +597,7 @@ const QUICK_ENTRY_DEFS = Object.freeze([
   { id: 'query-dashboard', fallbackName: '运维问数生图', icon: 'query-dashboard' },
   { id: 'work-order-review', modeId: 'ops', fallbackName: '智能工单审核', icon: 'work-order-review' },
   { id: 'smart-inspection', modeId: 'smart_inspection', fallbackName: '站点智能巡检', icon: 'smart-inspection' },
-  { id: 'operations-analysis', modeId: 'operations_analysis', fallbackName: '运维操作分析', icon: 'operations-analysis' },
+  { id: 'operations-analysis', modeId: 'operations_analysis', fallbackName: '运维分析报告', icon: 'operations-analysis' },
   { id: 'device-control', modeId: 'device_control', fallbackName: '智能设备反控', icon: 'device-control' },
   { id: 'station-fault-diagnosis', modeId: 'station_fault_diagnosis', fallbackName: '站点故障诊断', icon: 'station-fault-diagnosis' },
   { id: 'smart-event-external', modeId: 'smart_event_external', fallbackName: '外界环境识别', icon: 'smart-event-external' },
