@@ -28,6 +28,9 @@
         class="forecast-workspace"
         embedded
       />
+      <div v-else-if="workspace === 'bigscreen' && BigScreenView" class="bigscreen-workspace">
+        <component :is="BigScreenView" embedded />
+      </div>
       <template v-else>
         <div class="conversation-workspace">
           <ChatArea
@@ -35,6 +38,7 @@
         :messages="messages"
         :pending-steering-inputs="pendingSteeringInputs"
         :pending-interaction="pendingInteraction"
+        :background-delegation="backgroundDelegation"
         :interaction-resolving="interactionResolving"
         :is-analyzing="isAnalyzing"
         :input-disabled="inputDisabled || conversationReadOnly"
@@ -287,6 +291,10 @@ const AirQualityForecastView = projectConfig.hasModule('xuchang-air-quality')
   ? defineAsyncComponent(() => import('@/views/AirQualityForecastView.vue'))
   : null
 
+const BigScreenView = projectConfig.hasModule('xuchang-air-quality')
+  ? defineAsyncComponent(() => import('@/views/BigScreenView.vue'))
+  : null
+
 const auth = useAuthStore()
 const assistantPanelOpen = ref(false)
 
@@ -351,6 +359,10 @@ const props = defineProps({
     default: () => []
   },
   pendingInteraction: {
+    type: Object,
+    default: null
+  },
+  backgroundDelegation: {
     type: Object,
     default: null
   },
@@ -788,6 +800,14 @@ defineExpose({ layoutRef })
 .forecast-workspace {
   flex: 1 1 0%;
   min-width: 0;
+}
+
+.bigscreen-workspace {
+  flex: 1 1 0%;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  background: #04141f;
 }
 
 .conversation-workspace {

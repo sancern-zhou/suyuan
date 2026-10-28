@@ -16,6 +16,7 @@
       :messages="currentModeMessages"
       :pending-steering-inputs="currentModePendingSteeringInputs"
       :pending-interaction="store.pendingInteraction"
+      :background-delegation="store.backgroundDelegation"
       :interaction-resolving="interactionResolving"
       :is-analyzing="currentModeIsAnalyzing"
       :input-disabled="inputDisabled"
@@ -31,7 +32,7 @@
       :human-feedback="store.pendingHumanFeedback"
       :human-feedback-submitting="store.isHumanFeedbackSubmitting"
       :human-feedback-error="store.humanFeedbackSubmitError"
-      :active-module="workspace === 'platform' ? 'agent-platform' : (workspace === 'forecast' ? 'air-quality-forecast' : (managementPanel === 'task-workspace' && taskWorkspaceTask ? `task-workspace:${taskWorkspaceTask.task_id}` : activeAssistant))"
+      :active-module="workspace === 'platform' ? 'agent-platform' : (workspace === 'forecast' ? 'air-quality-forecast' : (workspace === 'bigscreen' ? 'big-screen' : (managementPanel === 'task-workspace' && taskWorkspaceTask ? `task-workspace:${taskWorkspaceTask.task_id}` : activeAssistant)))"
       :task-workspace-entries="taskWorkspaceEntries"
       :task-workspace-task="taskWorkspaceTask"
       :agent-mode="store.currentMode"
@@ -501,6 +502,14 @@ const handleSidebarAction = async (actionId) => {
     resetPanelState()
     agentPlatformError.value = ''
     workspace.value = 'platform'
+    return
+  }
+
+  if (actionId === 'big-screen') {
+    if (!await confirmResourcePreviewLeave()) return
+    hideManagementPanel()
+    resetPanelState()
+    workspace.value = 'bigscreen'
     return
   }
 

@@ -55,10 +55,20 @@ Raw records may be used when field names are supplied:
 - Concentrations must come from real pollutant observations. Use
   `execute_python` for pure wind-frequency roses; do not supply placeholder
   concentrations to reuse this template.
+- Colors are NOT data-stretched. Direction-bin means are colored with the
+  fixed HJ 633-2026 six-level scale resolved from `pollutant_name` (same
+  palette and breaks as AQI calendars); a fixed level legend is always drawn
+  below the chart.
+- `pollutant_name` must be a built-in indicator (AQI, PM2.5, PM10, SO2, NO2,
+  CO, O3) so the six-level breaks resolve; other indicators are rejected.
+- `unit` must match the standard basis: μg/m³ (mg/m³ for CO); AQI is unitless.
 - Use `pollutant_name` and `unit` options instead of embedding units in every
   label.
 - Use `direction_bins` only when the report needs a specific directional
   resolution.
+- `average_time` selects the IAQI period for the level breaks (default `24h`,
+  O3 default `daily_max_8h`); pass e.g. `1h` when coloring hourly
+  observations against hourly breaks.
 - Do not include figure numbers in the chart title.
 
 ## Useful Options
@@ -66,5 +76,4 @@ Raw records may be used when field names are supplied:
 - `pollutant_name`
 - `unit`
 - `direction_bins`
-- `show_colorbar` (default `false`; set `true` only when the right-side
-  concentration color scale is explicitly required)
+- `average_time`

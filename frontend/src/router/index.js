@@ -24,7 +24,8 @@ const routes = [
       meta: {
         requiredModule: 'xuchang-air-quality',
         title: '数据大屏',
-        allowDashboardToken: true
+        allowDashboardToken: true,
+        adminOnly: true
       }
     },
     {
@@ -34,7 +35,8 @@ const routes = [
       meta: {
         requiredModule: 'xuchang-air-quality',
         title: '现场巡查快报',
-        allowDashboardToken: true
+        allowDashboardToken: true,
+        adminOnly: true
       }
     },
     {

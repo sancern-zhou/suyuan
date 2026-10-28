@@ -4,6 +4,7 @@
  */
 import AMapLoader from '@amap/amap-jsapi-loader'
 import { resolveAMapConfig } from './amapConfig.js'
+import { authFetch } from '@/auth/http.js'
 
 let AMapInstance = null
 let loadingPromise = null
@@ -23,7 +24,10 @@ export async function loadAMap() {
     return loadingPromise
   }
 
-  const amapConfig = await resolveAMapConfig({ env: import.meta.env })
+  const amapConfig = await resolveAMapConfig({
+    env: import.meta.env,
+    fetchImpl: authFetch
+  })
   if (!amapConfig.key) {
     throw new Error('缺少高德地图 API Key，无法加载高德地图。')
   }

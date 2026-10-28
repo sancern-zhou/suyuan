@@ -31,6 +31,17 @@ export function createAuthGuard(authStore) {
       return true
     }
 
+    // 开发阶段页面（数据大屏/现场巡查快报）：仅超级管理员可见；
+    // 墙屏令牌直连不受此限（后端令牌校验把关）。
+    if (to.meta?.adminOnly && authStore.isAuthenticated) {
+      const user = authStore.user
+      const isAdmin =
+        user?.isAdmin === true ||
+        user?.admin === true ||
+        (Array.isArray(user?.roleCodes) && user.roleCodes.includes('SUYUAN_ADMIN'))
+      if (!isAdmin) return { path: '/' }
+    }
+
     if (authStore.isAuthenticated) return true
     return {
       path: '/login',
