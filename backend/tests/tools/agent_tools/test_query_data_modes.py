@@ -68,7 +68,8 @@ def test_station_and_city_submodes_split_tool_whitelists():
     assert "query_airdata_platform" in city
     assert "xuchang_station_catalog" not in city
     assert {"query_xcai_city_history", "execute_sql_query", "query_airdata_platform"} <= city
-    assert "query_national_city_air_quality" in city
+    # 【暂时下线 2026-10-27】国家城市发布数据查询不对 Agent 暴露
+    assert "query_national_city_air_quality" not in city
     assert "get_weather_data" not in station | city
 
     for mode in ("query_monitoring_station", "query_monitoring_city"):

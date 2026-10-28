@@ -337,6 +337,16 @@ class AgentRuntime:
                 self.writer.add_iteration(planner_result.thought, action, observation)
                 state.last_observation = observation
                 return
+            delegation_absorbed = False
+            async for delegation_event in self._absorb_background_delegations(
+                state, planner_result, action
+            ):
+                if delegation_event.get("type") == "_delegation_absorbed":
+                    delegation_absorbed = bool(delegation_event.get("absorbed"))
+                    continue
+                yield delegation_event
+            if delegation_absorbed:
+                return
             async for event in self._complete_response(state, planner_result, action.get("answer", "")):
                 yield event
             return
@@ -1272,6 +1282,94 @@ class AgentRuntime:
             observe_fixed_workflow_tool_results(
                 definition, state.fixed_workflow_progress, records
             )
+
+    async def _absorb_background_delegations(
+        self,
+        state: RunState,
+        planner_result: PlannerResult,
+        action: Dict[str, Any],
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """交付边界等待本会话后台委派完成，结果作为观察注入并继续循环。
+
+        助手模式后台委派（run_in_background=true）受理后回合常以纯文本
+        结束，而委派完成没有任何回灌通路，用户将永远等不到结论。这里在
+        完成边界等待本会话委派（可配置超时），把结果原文作为工具观察回
+        灌，交由下一轮 planner 自然续写；超时仍未完成的放行交付，结果
+        仍可经 manage_assistant_runs 查询。
+
+        yield 两个 delegation_status 事件（running/completed）供前端状态
+        卡展示，末尾以 _delegation_absorbed 事件携带是否注入的结论。
+        """
+        if self.config.runtime_mode != "assistant":
+            return
+        from app.social.assistant_runs import (
+            AssistantRunService,
+            background_runs_view,
+        )
+        from config.settings import settings
+
+        service = AssistantRunService()
+        if service.pending_background_count(state.session_id) <= 0:
+            return
+
+        def _runs_view():
+            return background_runs_view(state.session_id)
+
+        yield {
+            "type": "delegation_status",
+            "data": {"phase": "running", "runs": _runs_view(), "session_id": state.session_id},
+        }
+        results, still_running = await service.wait_for_session_runs(
+            state.session_id, float(settings.assistant_delegation_wait_seconds)
+        )
+        if not results:
+            yield {
+                "type": "delegation_status",
+                "data": {
+                    "phase": "released",
+                    "runs": _runs_view(),
+                    "session_id": state.session_id,
+                },
+            }
+            yield {"type": "_delegation_absorbed", "absorbed": False}
+            return
+        for item in results:
+            raw = item.get("result")
+            serialized = (
+                json.dumps(raw, ensure_ascii=False, default=str) if raw is not None else ""
+            )
+            if len(serialized) > 20000:
+                item["result"] = {
+                    "content": serialized[:20000],
+                    "total_chars": len(serialized),
+                    "truncated": True,
+                }
+        statuses = [str(item.get("status")) for item in results]
+        observation = {
+            "success": all(status == "succeeded" for status in statuses),
+            "delegation_results": results,
+            "summary": "后台委派已返回 {} 项（{}）{}".format(
+                len(results),
+                "/".join(statuses),
+                f"；仍有 {still_running} 项在运行" if still_running else "",
+            ),
+        }
+        self._ensure_user_message_written(state)
+        self.writer.add_iteration(planner_result.thought, action, observation)
+        state.last_observation = observation
+        yield {
+            "type": "delegation_status",
+            "data": {
+                "phase": "completed",
+                "runs": [
+                    {key: item.get(key) for key in ("run_id", "kind", "status", "goal", "target_mode")}
+                    for item in results
+                ],
+                "still_running": still_running,
+                "session_id": state.session_id,
+            },
+        }
+        yield {"type": "_delegation_absorbed", "absorbed": True}
 
     def _tool_names_to_suppress(self, state: RunState) -> set[str]:
         """Hide housekeeping tools after terminal/no-progress state updates."""

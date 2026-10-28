@@ -1080,6 +1080,8 @@ class CallSubAgentTool(LLMTool):
                         "task.result_repair_requested",
                         payload={"repair_index": repair_index + 1, "errors": validation_errors},
                     )
+                    repair_evidence = self._summarize_child_evidence(result_events)
+                    history_for_repair = conversation_history if conversation_history else None
                     if submitted_result is not None:
                         repair_prompt = (
                             "上一轮提交的 submit_result 未通过结构化结果协议校验。"
@@ -1095,7 +1097,14 @@ class CallSubAgentTool(LLMTool):
                             "字段结构见工具定义，不要重新执行分析。\n"
                             f"结果协议：{json.dumps(result_schema, ensure_ascii=False)}"
                         )
-                    result_events.extend(await run_child_turn(repair_prompt))
+                    if repair_evidence:
+                        repair_prompt += "\n\n本轮已完成的工作与证据（可直接引用，无需重新执行）：\n" + repair_evidence
+                    result_events.extend(
+                        await run_child_turn(
+                            repair_prompt,
+                            history_for_repair,
+                        )
+                    )
                     submitted_result = self._extract_submitted_result(result_events)
                     if isinstance(submitted_result, dict):
                         final_result = {
@@ -1647,6 +1656,69 @@ class CallSubAgentTool(LLMTool):
                 collect(result)
                 collect(result.get("data") if isinstance(result, dict) else None)
         return file_paths
+
+    def _summarize_child_evidence(
+        self,
+        events: list,
+        *,
+        max_items: int = 12,
+        max_summary_chars: int = 200,
+    ) -> str:
+        """汇总子 Agent 已完成的工具调用与产物，供修复轮在缺失上下文时引用。
+
+        修复轮若从空白上下文启动，模型看不到本轮已取到的数据（历史上曾因此
+        交出空壳信封被协议校验拒绝）；这里把已执行的工具、成败、产物路径和
+        摘要压成短文本，拼进修复提示。
+        """
+        lines: List[str] = []
+        for event in events:
+            kind = event.get("type")
+            if kind == "tool_call":
+                tool = str(
+                    (event.get("data") or {}).get("tool_name")
+                    or event.get("tool_name")
+                    or event.get("tool")
+                    or "unknown"
+                )
+                lines.append(f"- 发起调用 {tool}")
+            elif kind in ("observation", "tool_result"):
+                data = event.get("data")
+                result = None
+                if isinstance(data, dict):
+                    result = (
+                        data["result"]
+                        if isinstance(data.get("result"), dict)
+                        else data
+                    )
+                if not isinstance(result, dict):
+                    continue
+                tool = str(
+                    (data.get("tool_name") if isinstance(data, dict) else None)
+                    or (data.get("name") if isinstance(data, dict) else None)
+                    or result.get("tool_name")
+                    or "tool"
+                )
+                success = result.get("success")
+                status = "成功" if success is not False else "失败"
+                metadata = result.get("metadata")
+                file_path = result.get("file_path") or (
+                    metadata.get("file_path") if isinstance(metadata, dict) else None
+                )
+                summary = str(result.get("summary") or "")[:max_summary_chars]
+                piece = f"- {tool}: {status}"
+                if file_path:
+                    piece += f"，产物 {file_path}"
+                if summary:
+                    piece += f"；摘要：{summary}"
+                lines.append(piece)
+            if len(lines) >= max_items:
+                break
+        file_paths = self._extract_file_paths(events)
+        if file_paths:
+            shown = ", ".join(file_paths[:8])
+            extra = f"（共 {len(file_paths)} 个）" if len(file_paths) > 8 else ""
+            lines.append(f"- 已保存产物：{shown}{extra}")
+        return "\n".join(lines)
 
     @staticmethod
     def _format_imported_resource_lines(refs: List[Dict[str, Any]]) -> List[str]:

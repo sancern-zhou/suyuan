@@ -158,6 +158,46 @@ def test_normalization_tool_turn_forces_delivery_without_tools():
     assert "停止调用分析类工具" in render_phase_prompt(definition, progress)
 
 
+def test_normalization_failure_gets_repair_turn_before_delivery():
+    """汇总脚本失败不得直接进入交付：留在 normalize 修复，成功后才推进。"""
+    definition = get_mode_workflow("query_forecast")
+    progress = {"phase_index": 1}
+    failed = [{
+        "tool_name": "execute_python",
+        "result": {"success": False, "error": "KeyError: 'temperature'"},
+    }]
+
+    observe_tool_results(definition, progress, failed)
+    assert current_phase(definition, progress).name == "normalize"
+    assert "execute_python" in allowed_tools(definition, progress)
+    assert progress["phase_attempt"] == 1
+    assert progress["last_failed_tools"] == ["execute_python"]
+
+    observe_tool_results(definition, progress, [{
+        "tool_name": "execute_python",
+        "result": {"success": True},
+    }])
+    assert current_phase(definition, progress).name == "deliver"
+    assert progress["phase_attempt"] == 0
+
+
+def test_normalization_advances_after_repair_budget_exhausted():
+    """修复轮有预算上限：连续失败耗尽 max_attempts 后放行交付，避免死循环。"""
+    definition = get_mode_workflow("query_forecast")
+    progress = {"phase_index": 1}
+    failed = [{
+        "tool_name": "execute_python",
+        "result": {"success": False, "error": "boom"},
+    }]
+
+    max_attempts = current_phase(definition, progress).max_attempts
+    for _ in range(max_attempts):
+        observe_tool_results(definition, progress, failed)
+
+    assert current_phase(definition, progress).name == "deliver"
+    assert progress["phase_attempt"] == 0
+
+
 def test_agent_runtime_filters_tools_by_fixed_workflow_phase():
     runtime = object.__new__(AgentRuntime)
     runtime.config = SimpleNamespace(extra_tool_names=None)

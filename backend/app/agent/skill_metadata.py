@@ -91,7 +91,7 @@ SKILL_METADATA = {
             "call_sub_agent", "search_files", "read_file", "read_docx",
             "list_session_resources", "web_search", "web_fetch", "write_file",
             "execute_tender_sql_query", "query_national_province_air_quality",
-            "query_national_city_air_quality", "execute_python", "create_business_chart",
+            "execute_python", "create_business_chart",
             "create_report_package",
         ],
     },
