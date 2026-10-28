@@ -115,6 +115,27 @@ CATALOG: Dict[str, Dict[str, List[Dict[str, str]]]] = {
             {"name": "dataDate", "title": "数据日期(时间维度,src 2024-08-01起/app 2024-09-01起)"},
         ],
     },
+    # 乡镇站 5 分钟：旧云平台替代源（TownStationData 2026-10-21 停更后启用），
+    # 全部为原始（未审核）口径，仅保留最近 30 天；5 分钟不发布 AQI。
+    "TownFiveMinute": {
+        "measures": [
+            {"name": "count", "title": "5分钟记录数"},
+            {"name": "avgPm25", "title": "PM2.5(μg/m³)"},
+            {"name": "avgPm10", "title": "PM10(μg/m³)"},
+            {"name": "avgSo2", "title": "SO2(μg/m³)"},
+            {"name": "avgNo2", "title": "NO2(μg/m³)"},
+            {"name": "avgCo", "title": "CO(mg/m³)"},
+            {"name": "avgO3", "title": "O3(μg/m³)"},
+            {"name": "maxAqi", "title": "AQI(平台5分钟不发布,恒空)"},
+            {"name": "onlineSites", "title": "有数据站点数(去重)"},
+        ],
+        "dimensions": [
+            {"name": "stationCode", "title": "乡镇站编码(平台内部)"},
+            {"name": "stationName", "title": "乡镇站名(前缀含区县)"},
+            {"name": "countyName", "title": "区县名"},
+            {"name": "dataTime", "title": "数据时间(时间维度,5分钟粒度,滚动30天)"},
+        ],
+    },
     # 城市小时: 18 城市组(含济源)逐小时六参数+AQI, 河南实时发布系统采集。
     "SsfbCityHour": {
         "measures": [
@@ -634,10 +655,13 @@ def _render_guide() -> str:
         "(2026-01~07,过滤 periodType=month/cum,仅用于全国排名,浓度绝对值用本地口径);"
         "小时排名过滤 dataTime 到具体小时,日排名过滤 dataDate 到具体日期;"
         "排名规则统一为数值越低越靠前(Rank*=1 最优),相同值并列(RANK:1,2,2,4);"
-        "乡镇站(76个,2024起)用 TownHour/TownDay,必须过滤 caliber(app=审核,官方结论优先),"
+        "乡镇站(76个,2024起)小时/日用 TownHour/TownDay,必须过滤 caliber(app=审核,官方结论优先),"
         "否则原始与审核重复计数;"
-        "审核口径(caliber='app')常滞后甚至断档(最近1-2天可能无数据),查最新时段发现 app 无数据或覆盖不足时,"
-        "回退 caliber='src' 查原始口径,并在答复中注明为未审核原始数据。"
+        "审核口径(caliber='app')常滞后甚至断档,查最新时段发现 app 无数据或覆盖不足时,"
+        "回退 caliber='src' 查原始口径,并在答复中注明为未审核原始数据;"
+        "乡镇站最近30天内的 5 分钟实时数据用 TownFiveMinute"
+        "(旧云平台替代源,全部为原始未审核口径,平台不发布 5 分钟 AQI,"
+        "AQI/等级需按 HJ633 由六参数推算并注明为推算值;乡镇小时/日历史仍以 TownHour/TownDay 为准)。"
     )
     return "\n".join(lines)
 
@@ -728,7 +752,8 @@ class XuchangCubeMetricsTool(LLMTool):
                 "168城市全国排名用 Rank168CityMonthly(过滤 periodType);"
                 "区县排名用 SsfbCountyDayRank/SsfbCountyHourRank,站点排名用 SsfbSiteDayRank/SsfbSiteHourRank;"
                 "乡镇站问题用 TownHour/TownDay 并过滤 caliber(官方结论用 app;"
-                "app 无最新时段数据时回退 src 并注明为未审核原始数据)。"
+                "app 无最新时段数据时回退 src 并注明为未审核原始数据);"
+                "乡镇站最近30天 5 分钟实时数据用 TownFiveMinute(原始未审核,AQI需按HJ633推算)。"
                 + _render_guide()
             ),
             "parameters": {

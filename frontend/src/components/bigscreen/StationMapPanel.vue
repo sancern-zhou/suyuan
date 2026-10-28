@@ -1,24 +1,24 @@
 <template>
   <section class="map-panel">
-    <header class="panel-title">
-      <span class="title-bar" aria-hidden="true"></span>
-      <h3>站点实时态势</h3>
+    <div ref="mapContainer" class="map-container" aria-label="许昌市站点空气质量地图"></div>
+
+    <div class="map-controls">
+      <div class="layer-toggle">
+        <button
+          v-for="layer in layerOptions"
+          :key="layer.key"
+          type="button"
+          :class="{ on: visibleLayers.includes(layer.key) }"
+          @click="toggleLayer(layer.key)"
+        >{{ layer.label }}</button>
+      </div>
       <div class="map-legend">
         <span v-for="level in legendLevels" :key="level.label">
           <i :style="{ background: level.color }"></i>{{ level.label }}
         </span>
-        <span class="layer-toggle">
-          <button
-            v-for="layer in layerOptions"
-            :key="layer.key"
-            type="button"
-            :class="{ on: visibleLayers.includes(layer.key) }"
-            @click="toggleLayer(layer.key)"
-          >{{ layer.label }}</button>
-        </span>
       </div>
-    </header>
-    <div ref="mapContainer" class="map-container" aria-label="许昌市站点空气质量地图"></div>
+    </div>
+
     <div v-if="error" class="map-error">{{ error }}</div>
   </section>
 </template>
@@ -41,13 +41,14 @@ const layerOptions = [
   { key: 'townships', label: '乡镇站' },
   { key: 'counties', label: '区县' }
 ]
-const legendLevels = LEVEL_NAMES.slice(0, 4).map((label, index) => ({
+const legendLevels = LEVEL_NAMES.map((label, index) => ({
   label: label.replace('污染', ''),
   color: LEVEL_PALETTE[index]
 }))
 
 let AMap = null
 let map = null
+let boundaryPolygon = null
 const markerGroups = { national: [], townships: [], counties: [] }
 
 const TYPE_LABELS = { national: '国控站', township: '乡镇站', county: '区县代表点' }
@@ -81,7 +82,7 @@ const buildMarker = (station, isAlerting) => {
         <div class="screen-station-info">
           <strong>${esc(station.station_name)}</strong>
           <p>AQI ${station.aqi ?? '—'} · PM2.5 ${station.pm25 ?? '—'}</p>
-          <small>${esc(TYPE_LABELS[station.type] || '站点')}${station.quality ? ' · ' + esc(station.quality) : ''}${station.primary ? ' · 首要 ' + esc(station.primary) : ''} · ${esc(String(station.data_time || '').replace('T', ' ').slice(0, 16))}</small>
+          <small>${esc(TYPE_LABELS[station.type] || '站点')}${station.quality ? ' · ' + esc(station.quality) : ''}${station.primary ? ' · 首要 ' + esc(station.primary) : ''}${station.aqi_estimated ? ' · AQI按HJ633推算' : ''} · ${esc(String(station.data_time || '').replace('T', ' ').slice(0, 16))}</small>
         </div>`,
       offset: new AMap.Pixel(0, -18)
     })
@@ -132,19 +133,60 @@ const toggleLayer = key => {
   applyLayerVisibility()
 }
 
+// 许昌市界高亮：边界 GeoJSON 本地打包（public/geo/xuchang_bound.json），
+// 不依赖高德 district 在线接口（部分网络环境不可达）；失败静默降级。
+const renderCityBoundary = async () => {
+  try {
+    const url = `${import.meta.env.BASE_URL}geo/xuchang_bound.json`
+    const response = await fetch(url)
+    if (!response.ok) return
+    const geo = await response.json()
+    if (!map) return
+    const rings = []
+    for (const feature of geo?.features || []) {
+      const geometry = feature?.geometry
+      if (geometry?.type === 'Polygon') rings.push(geometry.coordinates[0])
+      else if (geometry?.type === 'MultiPolygon') {
+        geometry.coordinates.forEach(polygon => rings.push(polygon[0]))
+      }
+    }
+    if (!rings.length) return
+    boundaryPolygon = new AMap.Polygon({
+      path: rings.map(ring => ring.map(([lng, lat]) => [lng, lat])),
+      strokeColor: '#3fc8d4',
+      strokeWeight: 2.5,
+      strokeOpacity: 0.95,
+      fillColor: '#0b3a52',
+      fillOpacity: 0.15,
+      zIndex: 50
+    })
+    map.add(boundaryPolygon)
+  } catch (exc) {
+    console.warn('市界边界加载失败', exc)
+  }
+}
+
 onMounted(async () => {
   try {
     AMap = await loadAMap()
     map = new AMap.Map(mapContainer.value, {
-      center: [113.852, 34.036],
-      zoom: 9.2,
+      center: [113.852, 34.028],
+      zoom: 10.5,
       mapStyle: 'amap://styles/dark',
       viewMode: '2D',
       resizeEnable: true,
       zoomEnable: true,
       dragEnable: true
     })
+    // 卫星影像 + 路网注记（JS API 2.0 类名为 TileLayer.Satellite / TileLayer.RoadNet）
+    try {
+      map.add(new AMap.TileLayer.Satellite({ zIndex: 5 }))
+      map.add(new AMap.TileLayer.RoadNet({ zIndex: 6 }))
+    } catch (exc) {
+      console.warn('卫星图层加载失败，回退默认底图', exc)
+    }
     map.addControl(new AMap.Scale())
+    renderCityBoundary()
     renderMarkers()
   } catch (exc) {
     error.value = exc?.message || '地图加载失败'
@@ -153,6 +195,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   clearMarkers()
+  boundaryPolygon = null
   map?.destroy()
   map = null
 })
@@ -162,44 +205,61 @@ watch(() => [props.stations, props.alerts], renderMarkers, { deep: true })
 
 <style lang="scss" scoped>
 .map-panel {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  padding: 12px 14px;
-  border: 1px solid rgba(63, 200, 212, 0.18);
-  border-radius: 8px;
-  background: rgba(7, 41, 59, 0.55);
+  position: absolute;
+  inset: 0;
   overflow: hidden;
 }
 
-.panel-title {
+.map-container {
+  position: absolute;
+  inset: 0;
+}
+
+.map-controls {
+  position: absolute;
+  bottom: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 12px;
+}
 
-  .title-bar {
-    width: 4px;
-    height: 14px;
-    border-radius: 2px;
-    background: #3fc8d4;
-  }
-  h3 {
-    margin: 0;
-    font-size: 15px;
-    color: #eaf6f8;
-    letter-spacing: 1px;
+.layer-toggle {
+  display: inline-flex;
+  gap: 4px;
+
+  button {
+    padding: 3px 10px;
+    border: 1px solid rgba(63, 200, 212, 0.4);
+    border-radius: 4px;
+    background: rgba(7, 41, 59, 0.8);
+    color: #8ab6c2;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    backdrop-filter: blur(4px);
+
+    &.on {
+      background: rgba(63, 200, 212, 0.2);
+      color: #3fc8d4;
+      border-color: #3fc8d4;
+    }
   }
 }
 
 .map-legend {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-left: auto;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid rgba(63, 200, 212, 0.25);
+  border-radius: 4px;
+  background: rgba(7, 41, 59, 0.8);
   font-size: 11px;
   color: #8ab6c2;
+  backdrop-filter: blur(4px);
 
   > span {
     display: inline-flex;
@@ -207,33 +267,6 @@ watch(() => [props.stations, props.alerts], renderMarkers, { deep: true })
     gap: 4px;
     i { width: 9px; height: 9px; border-radius: 50%; }
   }
-
-  .layer-toggle {
-    display: inline-flex;
-    gap: 4px;
-
-    button {
-      padding: 2px 8px;
-      border: 1px solid rgba(63, 200, 212, 0.3);
-      border-radius: 4px;
-      background: transparent;
-      color: #6f95a3;
-      font-size: 11px;
-      cursor: pointer;
-      transition: all 0.2s;
-
-      &.on {
-        background: rgba(63, 200, 212, 0.15);
-        color: #3fc8d4;
-      }
-    }
-  }
-}
-
-.map-container {
-  flex: 1;
-  min-height: 0;
-  border-radius: 6px;
 }
 
 .map-error {
@@ -241,6 +274,7 @@ watch(() => [props.stations, props.alerts], renderMarkers, { deep: true })
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
+  z-index: 210;
   padding: 10px 18px;
   border-radius: 6px;
   background: rgba(7, 41, 59, 0.9);

@@ -1,95 +1,111 @@
 <template>
-  <main class="bigscreen-viewport">
-    <div class="bigscreen-stage" ref="stageEl" :style="{ transform: `scale(${scale})` }">
-      <ScreenHeader
-        :header="store.header"
-        :minute="store.minute"
-        :data-cutoff-hour="store.snapshot?.data_cutoff_hour || ''"
-        :generated-at="store.snapshot?.generated_at || ''"
-        :loading="store.loading"
-        :error="store.error"
+  <main ref="viewportEl" class="bigscreen-viewport" :class="{ 'is-embedded': embedded }">
+    <StationMapPanel
+      class="map-layer"
+      :stations="store.stations"
+      :alerts="store.alerts"
+    />
+
+    <ScreenHeader
+      :header="store.header"
+      :minute="store.minute"
+      :data-cutoff-hour="store.snapshot?.data_cutoff_hour || ''"
+      :generated-at="store.snapshot?.generated_at || ''"
+      :loading="store.loading"
+      :error="store.error"
+    />
+
+    <button
+      class="panel-handle handle-left"
+      :class="{ open: leftOpen }"
+      type="button"
+      :title="leftOpen ? '收起数据面板' : '展开数据面板'"
+      @click="leftOpen = !leftOpen"
+    >{{ leftOpen ? '‹' : '›' }}</button>
+
+    <aside v-show="leftOpen" class="side-panel panel-left">
+      <RealtimePanel :header="store.header" :minute="store.minute" />
+      <TrendPanel :trend="store.cityTrend" :forecast="store.forecast" />
+      <RankingPanel
+        title="国控站实时排名"
+        name-key="station_name"
+        :rows="nationalRows"
+        :data-time="nationalTime"
+        highlight=""
       />
+    </aside>
 
-      <div class="screen-body">
-        <div class="column column-left">
-          <RankingPanel
-            title="河南 18 城市小时排名"
-            :rows="store.cityHourRank?.rows || []"
-            :data-time="store.cityHourRank?.data_time"
-            name-key="city"
-          />
-          <RankingPanel
-            title="许昌县市区小时排名"
-            :rows="store.countyHourRank?.rows || []"
-            :data-time="store.countyHourRank?.data_time"
-            name-key="county"
-          />
-        </div>
+    <button
+      class="panel-handle handle-right"
+      :class="{ open: rightOpen }"
+      type="button"
+      :title="rightOpen ? '收起数据面板' : '展开数据面板'"
+      @click="rightOpen = !rightOpen"
+    >{{ rightOpen ? '›' : '‹' }}</button>
 
-        <div class="column column-center">
-          <FocusCarouselPanel
-            :assets="store.assets"
-            :asset-url="store.assetUrl"
-            class="center-carousel"
-          >
-            <StationMapPanel :stations="store.stations" :alerts="store.alerts" />
-          </FocusCarouselPanel>
-          <TrendPanel :trend="store.cityTrend" :forecast="store.forecast" />
-        </div>
+    <aside v-show="rightOpen" class="side-panel panel-right">
+      <DataQualityBar :quality="store.quality" />
+      <AlertListPanel :alerts="store.alerts" />
+      <TargetProgressPanel
+        :target="store.yearTarget || {}"
+        :forecast="store.forecast"
+        :rank168="store.rank168"
+      />
+    </aside>
 
-        <div class="column column-right">
-          <DataQualityBar :quality="store.quality" />
-          <AlertListPanel :alerts="store.alerts" />
-          <TargetProgressPanel
-            :target="store.yearTarget || {}"
-            :forecast="store.forecast"
-            :rank168="store.rank168"
-          />
-        </div>
-      </div>
-
-      <BroadcastTicker :items="store.broadcast" />
-    </div>
+    <BroadcastTicker :items="store.broadcast" />
   </main>
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import ScreenHeader from '@/components/bigscreen/ScreenHeader.vue'
-import RankingPanel from '@/components/bigscreen/RankingPanel.vue'
+import RealtimePanel from '@/components/bigscreen/RealtimePanel.vue'
 import TrendPanel from '@/components/bigscreen/TrendPanel.vue'
+import RankingPanel from '@/components/bigscreen/RankingPanel.vue'
 import TargetProgressPanel from '@/components/bigscreen/TargetProgressPanel.vue'
 import AlertListPanel from '@/components/bigscreen/AlertListPanel.vue'
 import StationMapPanel from '@/components/bigscreen/StationMapPanel.vue'
-import FocusCarouselPanel from '@/components/bigscreen/FocusCarouselPanel.vue'
 import DataQualityBar from '@/components/bigscreen/DataQualityBar.vue'
 import BroadcastTicker from '@/components/bigscreen/BroadcastTicker.vue'
 import { useBigScreenStore } from '@/stores/bigScreen.js'
 import { initDashboardAccessToken } from '@/api/bigScreen.js'
 
-const DESIGN_WIDTH = 1920
-const DESIGN_HEIGHT = 1080
+const props = defineProps({
+  embedded: { type: Boolean, default: false }
+})
 
 const store = useBigScreenStore()
-const stageEl = ref(null)
-const scale = ref(1)
+const viewportEl = ref(null)
+const leftOpen = ref(true)
+const rightOpen = ref(true)
 
-const applyScale = () => {
-  scale.value = Math.min(
-    window.innerWidth / DESIGN_WIDTH,
-    window.innerHeight / DESIGN_HEIGHT
-  )
-}
+// 国控站行映射为排名表字段（RankingPanel 期望 nameKey/aqi/pm25/quality/primary）
+const nationalRows = computed(() =>
+  (store.stations?.national || [])
+    .filter(item => item.aqi != null && Number.isFinite(Number(item.aqi)))
+    .sort((a, b) => a.aqi - b.aqi)
+    .map((item, index) => ({
+      station_name: item.station_name,
+      aqi: item.aqi,
+      pm25: item.pm25,
+      quality: item.quality,
+      primary: item.primary,
+      rank: index + 1
+    }))
+)
+
+const nationalTime = computed(() => {
+  const rows = store.stations?.national || []
+  return String(rows[0]?.data_time || '').replace('T', ' ').slice(0, 16)
+})
 
 onMounted(() => {
   initDashboardAccessToken()
-  applyScale()
-  window.addEventListener('resize', applyScale)
   store.startPolling()
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', applyScale)
   store.stopPolling()
 })
 </script>
@@ -98,57 +114,92 @@ onBeforeUnmount(() => {
 .bigscreen-viewport {
   position: fixed;
   inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #04141f;
   overflow: hidden;
   font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  background: #04141f;
 }
 
-.bigscreen-stage {
-  flex-shrink: 0;
-  width: 1920px;
-  height: 1080px;
+.bigscreen-viewport.is-embedded {
+  position: absolute;
+}
+
+.map-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.side-panel {
+  position: absolute;
+  top: 64px;
+  bottom: 44px;
+  z-index: 200;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 0 18px 14px;
-  transform-origin: center center;
-  color: #d8ecf1;
-  background:
-    radial-gradient(1200px 500px at 18% -8%, rgba(17, 96, 134, 0.35), transparent 65%),
-    radial-gradient(1000px 480px at 88% 108%, rgba(14, 138, 150, 0.22), transparent 65%),
-    #051a28;
+  gap: 10px;
+  width: 380px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(63, 200, 212, 0.35) transparent;
+  padding-bottom: 4px;
 }
 
-.screen-body {
-  flex: 1;
-  display: grid;
-  grid-template-columns: 372px 1fr 396px;
-  gap: 12px;
-  min-height: 0;
+.panel-left { left: 12px; }
+.panel-right { right: 12px; }
+
+/* 自由高度滚动容器内，ECharts 面板需固定高度防止塌陷 */
+.side-panel {
+  :deep(.trend-panel),
+  :deep(.ranking-panel) {
+    height: 250px;
+    flex-shrink: 0;
+  }
+
+  :deep(.alert-panel) {
+    max-height: 320px;
+    flex-shrink: 0;
+  }
+
+  /* 卫星底图上提升面板遮蔽度，保证文字可读 */
+  :deep(section) {
+    background: rgba(6, 30, 44, 0.82);
+    backdrop-filter: blur(8px);
+  }
 }
 
-.column {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 0;
+.panel-handle {
+  position: absolute;
+  top: 50%;
+  z-index: 210;
+  width: 20px;
+  height: 64px;
+  border: 1px solid rgba(63, 200, 212, 0.4);
+  background: rgba(7, 41, 59, 0.85);
+  color: #3fc8d4;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: all 0.2s;
+
+  &:hover { background: rgba(63, 200, 212, 0.25); }
 }
 
-.column-left {
-  :first-child { flex: 5; }
-  :last-child { flex: 4; }
+.handle-left {
+  left: 0;
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  transition: left 0.25s ease;
+
+  &.open { left: 392px; }
 }
 
-.column-center {
-  .center-carousel { flex: 3; }
-  :last-child { flex: 2; }
-}
+.handle-right {
+  right: 0;
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  transition: right 0.25s ease;
 
-.column-right {
-  :first-child { flex: 4; }
-  :last-child { flex: 3; }
+  &.open { right: 392px; }
 }
 </style>

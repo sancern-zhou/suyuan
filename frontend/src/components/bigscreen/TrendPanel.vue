@@ -50,10 +50,10 @@ const render = () => {
       axisLabel: {
         color: '#7f9caa',
         fontSize: 11,
-        interval: Math.max(Math.floor(categories.length / 12) - 1, 0),
+        interval: Math.max(Math.floor(categories.length / 4) - 1, 0),
         formatter: value => {
           const match = String(value).match(/(\d{2})-(\d{2})[T\s](\d{2})/)
-          return match ? `${match[1]}/${match[2]} ${match[3]}时` : value
+          return match ? `${Number(match[2])}日${match[3]}时` : value
         }
       }
     },

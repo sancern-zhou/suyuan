@@ -102,6 +102,16 @@ cubes:
       - 必须过滤caliber=app或caliber=src，否则同站同日会重复计数
       - 官方结论优先使用app；app缺失时回退src必须明确说明为未审核原始数据
       - -99为无效值，不参与数值聚合
+  TownFiveMinute:
+    dataset: DataCrawler.TownStationFiveMinute
+    grain: 一行 = 乡镇站 × 5分钟
+    applicability: 许昌乡镇站76个的5分钟实时数据（TownStationData停更后的旧云平台替代源）
+    source_window: 2026-10-27起，滚动保留最近30天
+    limitations:
+      - 平台5分钟无审核流，全部为原始（未审核）口径
+      - 平台5分钟不发布AQI/等级，AQI与首要污染物需按HJ633由六参数推算并在结论中注明
+      - 乡镇站小时/日历史仍以TownHour/TownDay为准，本表不用于历史回溯
+      - -99为无效值，不参与数值聚合
   ProvinceMonth:
     dataset: DataCrawler.ProvinceMonthReport
     grain: 一行 = 期次(Scope=month) × 层级(Level) × 区域

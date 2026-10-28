@@ -1,4 +1,4 @@
-"""许昌数据大屏快照 fetcher：聚合、单段降级、乡镇站口径回退、告警窗口。"""
+"""许昌数据大屏快照 fetcher：聚合、单段降级、地图站点 5 分钟口径、告警窗口。"""
 
 from __future__ import annotations
 
@@ -14,9 +14,11 @@ from app.fetchers.xuchang_screen_snapshot import (
     SNAPSHOT_FILE,
     XuchangScreenSnapshotFetcher,
 )
+from app.scenarios.xuchang_city_exceedance.aqi import hourly_aqi_and_primary
 
 NOW = datetime(2026, 10, 24, 15, 0, 0)
 CUTOFF = "2026-10-24T14:00:00.000"
+TOWN_SLOT = "2026-10-24T14:35:00.000"
 
 
 def _cube_rows(cube: str, members: dict[str, Any]) -> list[dict[str, Any]]:
@@ -33,7 +35,9 @@ def _make_cube_load(handlers: dict[str, Any]):
             raise AssertionError(f"未预期的 Cube 查询: {query}")
         if isinstance(handler, Exception):
             raise handler
-        return handler(query)
+        if callable(handler):
+            return handler(query)
+        return handler
 
     return _load
 
@@ -69,7 +73,10 @@ def _default_handlers() -> dict[str, Any]:
             "county": "建安区", "rankAqi": 1, "avgAqi": 79, "avgPm25": 55,
             "quality": "良", "primaryPollutant": "PM2.5",
         }),
-        # 区县代表点（地图 counties 层）
+        # 区县代表点（地图 counties 层）：先探测最新可用小时
+        "SsfbCountyHour.count": _cube_rows("SsfbCountyHour", {
+            "dataTime": CUTOFF, "count": 1,
+        }),
         "SsfbCountyHour.maxAqi": _cube_rows("SsfbCountyHour", {
             "county": "建安区", "maxAqi": 79, "avgPm25": 55,
             "quality": "良", "primaryPollutant": "PM2.5",
@@ -84,8 +91,8 @@ def _default_handlers() -> dict[str, Any]:
         "SsfbSiteHour.onlineSites": _cube_rows("SsfbSiteHour", {
             "dataTime": CUTOFF, "city": "许昌市", "onlineSites": 23,
         }),
-        "TownHour.onlineSites": _cube_rows("TownHour", {
-            "dataTime": CUTOFF, "onlineSites": 71,
+        "TownFiveMinute.onlineSites": _cube_rows("TownFiveMinute", {
+            "dataTime": TOWN_SLOT, "onlineSites": 71,
         }),
         "XuchangCityYearTarget.pm25Target": _cube_rows("XuchangCityYearTarget", {
             "year": "2026", "pm25Target": 44, "pm10Target": 76,
@@ -100,6 +107,15 @@ def _default_handlers() -> dict[str, Any]:
             *_cube_rows("SsfbCityDay", {"quality": "良", "count": 10, "avgPm25": 52}),
             *_cube_rows("SsfbCityDay", {"quality": "轻度污染", "count": 2, "avgPm25": 88}),
         ],
+        # 乡镇站 5 分钟：探测最新槽位 → 锁定该槽取全部站点
+        "TownFiveMinute.count": _cube_rows("TownFiveMinute", {
+            "dataTime": TOWN_SLOT, "count": 1,
+        }),
+        "TownFiveMinute.avgPm25": _cube_rows("TownFiveMinute", {
+            "stationName": "禹州市范坡镇", "avgPm25": 61, "avgPm10": 90,
+            "avgSo2": 10, "avgNo2": 30, "avgCo": 0.7, "avgO3": 100,
+            "maxAqi": None,
+        }),
     }
 
 
@@ -125,10 +141,13 @@ def _make_fetcher(monkeypatch, handlers) -> XuchangScreenSnapshotFetcher:
     monkeypatch.setattr(
         "app.fetchers.xuchang_screen_snapshot.cube_load", _make_cube_load(handlers)
     )
+
+    async def _fake_observed_met(self):
+        return {"time": "2026-10-24T14:00:00", "temperature": 18.2,
+                "humidity": 61, "wind_speed": 8.0, "wind_direction": 45.0}
+
     monkeypatch.setattr(
-        XuchangScreenSnapshotFetcher, "_observed_met",
-        lambda self: {"time": "2026-10-24T14:00:00", "temperature": 18.2,
-                      "humidity": 61, "wind_speed": 8.0, "wind_direction": 45.0},
+        XuchangScreenSnapshotFetcher, "_observed_met", _fake_observed_met,
     )
     monkeypatch.setattr(
         XuchangScreenSnapshotFetcher, "_forecast_72h",
@@ -177,7 +196,7 @@ def episodes_writer(registry):
 async def test_fetch_and_store_writes_full_snapshot(
     monkeypatch, registry, episodes_writer
 ):
-    episodes_writer({
+    episodes_writer(registry, {
         "active": [{
             "episode_id": "ep-1", "station_id": "1008A", "station_name": "许昌学院",
             "target_pollutant": "pm25", "alert_type": "deviation", "status": "active",
@@ -187,13 +206,14 @@ async def test_fetch_and_store_writes_full_snapshot(
         "history": [],
     })
     handlers = _default_handlers()
-    # 乡镇站：app 口径无数据 → 回退 src
-    handlers["TownHour.count"] = lambda query: (
-        [] if query["filters"][0]["values"] == ["app"]
-        else _cube_rows("TownHour", {"dataTime": "2026-10-24T14:00:00.000", "count": 1})
-    )
-    handlers["TownHour.avgPm25"] = _cube_rows("TownHour", {
-        "stationName": "禹州市范坡镇", "avgPm25": 61, "maxAqi": 86,
+    # 乡镇站 5 分钟：锁定最新槽位（14:35）
+    handlers["TownFiveMinute.count"] = _cube_rows("TownFiveMinute", {
+        "dataTime": TOWN_SLOT, "count": 1,
+    })
+    handlers["TownFiveMinute.avgPm25"] = _cube_rows("TownFiveMinute", {
+        "stationName": "禹州市范坡镇", "avgPm25": 61, "avgPm10": 90,
+        "avgSo2": 10, "avgNo2": 30, "avgCo": 0.7, "avgO3": 100,
+        "maxAqi": None,
     })
 
     fetcher = _make_fetcher(monkeypatch, handlers)
@@ -204,7 +224,7 @@ async def test_fetch_and_store_writes_full_snapshot(
     assert result["segments_failed"] == []
     snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
 
-    assert snapshot["schema_version"] == 1
+    assert snapshot["schema_version"] == 2
     assert snapshot["data_cutoff_hour"] == CUTOFF
     assert snapshot["errors"] is None
     # header
@@ -227,10 +247,17 @@ async def test_fetch_and_store_writes_full_snapshot(
     assert snapshot["alerts"][0]["station_name"] == "许昌学院"
     assert snapshot["alerts"][0]["status"] == "active"
     assert snapshot["alerts"][0]["lon"] == 113.8611
-    # 站点：国控 + 乡镇（src 回退）
+    # 站点：国控（monkeypatch 桩）+ 乡镇 5 分钟（AQI 按 HJ633 推算）
     assert snapshot["stations"]["national"][0]["station_id"] == "1008A"
     townships = snapshot["stations"]["townships"]
+    est_aqi, est_primary = hourly_aqi_and_primary({
+        "so2": 10, "no2": 30, "o3": 100, "co": 0.7, "pm10": 90, "pm25": 61,
+    })
     assert townships and townships[0]["caliber"] == "src"
+    assert townships[0]["station_name"] == "禹州市范坡镇"
+    assert townships[0]["aqi_estimated"] is True
+    assert townships[0]["aqi"] == int(round(est_aqi))
+    assert townships[0]["data_time"] == TOWN_SLOT
     assert townships[0]["lon"] == 113.531
     # 区县代表点：仅内置坐标表中的区县 + 最新小时值
     counties = snapshot["stations"]["counties"]
@@ -247,7 +274,8 @@ async def test_fetch_and_store_writes_full_snapshot(
     assert snapshot["minute"]["city"]["quality"] == "良"
     assert snapshot["quality"]["site_hour"]["online"] == 23
     assert snapshot["quality"]["town_hour"]["online"] == 71
-    assert snapshot["quality"]["town_hour"]["caliber"] == "app"
+    assert snapshot["quality"]["town_hour"]["caliber"] == "src"
+    assert snapshot["quality"]["town_hour"]["data_time"] == TOWN_SLOT
     # 播报
     assert snapshot["broadcast"][0]["task_name"] == "站点日污染溯源报告"
 

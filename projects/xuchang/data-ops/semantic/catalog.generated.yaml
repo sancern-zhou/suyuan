@@ -926,6 +926,49 @@ cubes:
       quality: 空气质量等级
       primaryPollutant: 首要污染物
       dataDate: 数据日期(时间维度,src 2024-08-01起/app 2024-09-01起)
+  TownFiveMinute:
+    dataset: DataCrawler.TownStationFiveMinute
+    grain: 一行 = 乡镇站 × 5分钟
+    applicability: 许昌乡镇站76个的5分钟实时数据（TownStationData停更后的旧云平台替代源）
+    source_window: 2026-10-27起，滚动保留最近30天
+    limitations:
+    - 平台5分钟无审核流，全部为原始（未审核）口径
+    - 平台5分钟不发布AQI/等级，AQI与首要污染物需按HJ633由六参数推算并在结论中注明
+    - 乡镇站小时/日历史仍以TownHour/TownDay为准，本表不用于历史回溯
+    - -99为无效值，不参与数值聚合
+    measures:
+      count:
+        name: 5分钟记录数
+        definition: 5分钟记录数
+      avgPm25:
+        name: PM2.5(μg/m³)
+        definition: PM2.5(μg/m³)
+      avgPm10:
+        name: PM10(μg/m³)
+        definition: PM10(μg/m³)
+      avgSo2:
+        name: SO2(μg/m³)
+        definition: SO2(μg/m³)
+      avgNo2:
+        name: NO2(μg/m³)
+        definition: NO2(μg/m³)
+      avgCo:
+        name: CO(mg/m³)
+        definition: CO(mg/m³)
+      avgO3:
+        name: O3(μg/m³)
+        definition: O3(μg/m³)
+      maxAqi:
+        name: AQI(平台5分钟不发布,恒空)
+        definition: AQI(平台5分钟不发布,恒空)
+      onlineSites:
+        name: 有数据站点数(去重)
+        definition: 有数据站点数(去重)
+    dimensions:
+      stationCode: 乡镇站编码(平台内部)
+      stationName: 乡镇站名(前缀含区县)
+      countyName: 区县名
+      dataTime: 数据时间(时间维度,5分钟粒度,滚动30天)
   TownHour:
     dataset: DataCrawler.view_dat_town_hour_src/view_dat_town_hour_app
     grain: 一行 = 乡镇站 × 小时 × 口径
