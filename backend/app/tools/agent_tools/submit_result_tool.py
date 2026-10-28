@@ -52,6 +52,12 @@ class SubmitResultTool:
         }
         self.submitted_result: Optional[Dict[str, Any]] = None
 
+    def __call__(self, *args: Any, **kwargs: Any):
+        # executor 直接调用 registry 里的值（await tool_func(...)）；
+        # 裸实例注册（call_sub_agent/_inject_submit_result）需要可调用形态，
+        # 否则报 'SubmitResultTool' object is not callable，交付信封丢失。
+        return self.execute(*args, **kwargs)
+
     async def execute(self, result: Optional[Any] = None, **kwargs: Any) -> Dict[str, Any]:
         if isinstance(result, dict):
             self.submitted_result = result

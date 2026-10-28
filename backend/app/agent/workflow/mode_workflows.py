@@ -68,8 +68,8 @@ _NORMALIZE_TOOLS = (
     "publish_session_file",
 )
 
-# normalize 只有"真正动手"的工具才推进阶段（单轮预算）；读结果文件属于输入动作，
-# 不消耗唯一一轮，避免读手册/预览把归一化机会烧掉。
+# normalize 只有"真正动手"的工具才推进阶段；调用失败不推进、留在本阶段修复
+# （预算内），读结果文件属于输入动作不消耗轮次，避免读手册/预览烧掉机会。
 _NORMALIZE_ADVANCE_TOOLS = (
     "execute_python",
     "write_file",
@@ -251,9 +251,10 @@ def observe_tool_results(
 ) -> None:
     """Advance a workflow after one bounded tool turn.
 
-    Acquisition gets one repair turn only when at least one call failed. A
-    successful batch advances immediately. Normalization always advances after
-    its single optional tool turn.
+    Every phase with advance tools gets repair turns while failures remain
+    (bounded by phase.max_attempts); a fully successful batch advances
+    immediately. This keeps the normalize phase from moving on to delivery
+    with only a failed computation in hand.
     """
     if not records:
         return
@@ -274,7 +275,9 @@ def observe_tool_results(
         str(record.get("tool_name") or "") for record in failures
     ]
 
-    should_advance = phase.name != "acquire" or not failures or attempt >= phase.max_attempts
+    # 失败即留在当前阶段修复（受 max_attempts 预算约束），全批成功或预算
+    # 耗尽才推进——acquire 与 normalize 语义一致，避免带着失败结果进交付。
+    should_advance = not failures or attempt >= phase.max_attempts
     if should_advance:
         progress["phase_index"] = min(
             int(progress.get("phase_index") or 0) + 1,

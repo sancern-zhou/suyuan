@@ -39,7 +39,7 @@ def test_domain_expert_tool_whitelists_are_disjoint_and_lean():
 
     monitoring_only = {
         "query_xcai_city_history",
-        "query_national_city_air_quality",
+        # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
     }
     weather_only = {
         "get_observed_meteorology",
@@ -51,6 +51,7 @@ def test_domain_expert_tool_whitelists_are_disjoint_and_lean():
     }
     assert meteorology_names.isdisjoint(monitoring_only)
     assert analysis_names.isdisjoint(weather_only)
+    assert "query_national_city_air_quality" not in analysis_names
 
     assert "query_xcai_city_history" in analysis_names
     assert "create_business_chart" in analysis_names
