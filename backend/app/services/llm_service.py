@@ -59,6 +59,28 @@ OPENCODE_GO_USER_AGENT = "suyuan-agent/1.0"
 OPENCODE_GO_PROVIDERS = frozenset({"go", "go2"})
 
 
+def _parse_extra_headers(raw: str) -> Dict[str, str]:
+    """解析 LLM_EXTRA_HEADERS（JSON 对象）为请求头字典。
+
+    非法 JSON 或非对象值返回空字典并告警，不阻断请求。
+    """
+    if not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        logger.warning("llm_extra_headers_parse_failed")
+        return {}
+    if not isinstance(parsed, dict):
+        logger.warning("llm_extra_headers_not_object")
+        return {}
+    return {
+        str(key): str(value)
+        for key, value in parsed.items()
+        if value is not None
+    }
+
+
 class LLMService:
     """LLM服务类 - 支持多provider配置"""
 
@@ -1854,6 +1876,13 @@ class LLMService:
             headers["x-opencode-session"] = (
                 _llm_opencode_session_id.get() or f"suyuan-{os.getpid()}"
             )
+
+        # 供应商网关自定义请求头（如内网网关的 jcmp-token）；显式配置优先
+        extra_headers = _parse_extra_headers(
+            getattr(settings, "llm_extra_headers", "") or ""
+        )
+        if extra_headers:
+            headers.update(extra_headers)
 
         return url, headers
 

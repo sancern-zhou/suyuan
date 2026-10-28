@@ -643,6 +643,14 @@ class Settings(BaseSettings):
         default=24_000,
         description="Per-result char cap above which a tool result falls back to its compacted history form instead of verbatim projection"
     )
+    llm_extra_headers: str = Field(
+        default="",
+        description=(
+            "JSON object of extra HTTP headers appended to chat_completions "
+            "requests, e.g. '{\"jcmp-token\":\"...\"}' for gated intranet "
+            "gateways. Ignored in anthropic_messages mode."
+        ),
+    )
     llm_fallbacks: str = Field(
         default="doubao/gpt-5.6-luna,bailian/qwen3.8-max,deepseek/deepseek-v4-pro",
         description="Comma-separated fallback models, e.g. bailian/qwen3.8-max"
