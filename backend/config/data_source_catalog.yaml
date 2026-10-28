@@ -22,7 +22,7 @@ sources:
   - domain: 空气质量（语义层：河南18城市组含济源排名/小时日值 + 全省区县站点(193区县) + 乡镇站）
     route: tool
     locator: xuchang_cube_metrics
-    usage: "优先用本工具点数查询（免写SQL）：SsfbCityRanking（月/年/日累计统计与排名，**本地计算非官方口径**，银行家修约：PM2.5/CO 一位小数其余整数，Rank* 升序=1 最优，含济源，需 periodType+period 过滤）/SsfbCityHourRank（某小时 18 城排名，dataTime 过滤到小时）/SsfbCityHour/SsfbCityDay（城市小时日值）/SsfbSiteHour/SsfbSiteDay（全省区县站点 193 区县，County 字段做区县口径，剔除国控）/TownHour/TownDay（乡镇站76个，2024 起、2025 年起完整，必须过滤 caliber：官方结论用 caliber='app' 审核口径，区县从 stationName 前缀解析）；排名规则=数值越低越靠前，相同值并列"
+    usage: "优先用本工具点数查询（免写SQL）：SsfbCityRanking（月/年/日累计统计与排名，**本地计算非官方口径**，银行家修约：PM2.5/CO 一位小数其余整数，Rank* 升序=1 最优，含济源，需 periodType+period 过滤）/SsfbCityHourRank（某小时 18 城排名，dataTime 过滤到小时）/SsfbCityHour/SsfbCityDay（城市小时日值）/SsfbSiteHour/SsfbSiteDay（全省区县站点 193 区县，County 字段做区县口径，剔除国控）/TownHour/TownDay（乡镇站76个，2024 起、2025 年起完整，必须过滤 caliber：官方结论用 caliber='app' 审核口径，区县从 stationName 前缀解析）/TownFiveMinute（乡镇站最近30天 5 分钟实时数据，旧云平台替代源，原始未审核口径，5 分钟不发布 AQI，需按 HJ633 由六参数推算）；排名规则=数值越低越靠前，相同值并列"
     granularity: 逐小时/逐日/月年累计
     caveats: "数据窗口：ssfb 2026-10-03 起、乡镇站 2024 起；本地排名已用 2026-08 官方数据回验（单项浓度平均差 PM2.5 0.4/PM10 0.6 μg/m³）；省APP官方表 HenanCityAccumulateRanking 的 city_rank 经验证为行政区划顺序（非排名）且已停更，勿当排名引用；编码解析用 xuchang_station_catalog"
 
@@ -54,7 +54,8 @@ sources:
     granularity: 逐小时/3小时间隔/逐日
     caveats: "库内历史网格（ERA5 再分析/边界层/云量）与站点实况由预采集窗口维护，一般覆盖近 90 天，更早需在线补采（近5天即时、更大范围后台排队）；预报数据的静稳/扩散形势研判归 expert_meteorology；平台 SQL 库（execute_sql_query/execute_crawler_sql_query/execute_postgres_sql_query）均无气象实况表（dat_weather_hour 无许昌数据），禁止在其中寻找许昌气象数据"
 
-  - domain: 空气质量（全国城市对比）
-    route: tool
-    locator: query_national_city_air_quality
-    usage: "全国城市六参数浓度与 AQI 对比、排名类分析"
+  # 【暂时下线 2026-10-27】query_national_city_air_quality 已停止注册，条目同步移除
+  # - domain: 空气质量（全国城市对比）
+  #   route: tool
+  #   locator: query_national_city_air_quality
+  #   usage: "全国城市六参数浓度与 AQI 对比、排名类分析"
