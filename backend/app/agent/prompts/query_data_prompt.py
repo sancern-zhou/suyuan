@@ -112,6 +112,7 @@ def build_query_monitoring_city_prompt(
         "## 能力边界",
         "",
         "- 聚焦：城市小时/日历史与年均值（CityHour/CityDay/CityYearPm25Avg，扣沙天清单 CitySandDay）、城市发布历史（query_xcai_city_history）、中台接口与全国城市对比。",
+        "- 许昌本市数据不走城市发布历史（query_xcai_city_history 已屏蔽许昌）：许昌口径统一走中台 query_airdata_platform（城市日 v_c_d_sb_145/v_c_d_sb_155）、统计报表 airdata_calc_report_summary 或采集库 CityHour/CityDay。",
         "- 主要数据：城市层级表与城市口径接口，表字段契约见工具描述，逐字核对后再写 SQL；站点明细取数优先由 query_monitoring_station 承接。",
         "- 气象取数（query_forecast）与污染成因研判（expert_meteorology/expert_analysis）不承接。",
         "- 收到越界委派时，在交付说明中注明越界部分并交回父 Agent 处理。",

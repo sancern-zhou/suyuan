@@ -8,18 +8,26 @@ from app.scenarios.xuchang_city_exceedance.aqi import (
 
 
 def test_iaqi_piecewise_linear_pm25():
+    # GB 3095—2026 过渡限值：PM2.5 24h 二级折点 75→60
     assert iaqi("pm25", 35) == 50
-    assert iaqi("pm25", 75) == 100
-    assert iaqi("pm25", 82) == 108.8
+    assert iaqi("pm25", 60) == 100
+    assert iaqi("pm25", 75) == 113.6
+    assert iaqi("pm25", 82) == 120.0
     assert iaqi("pm25", -99) is None
     assert iaqi("pm25", None) is None
+
+
+def test_iaqi_pm10_new_breakpoint():
+    # GB 3095—2026 过渡限值：PM10 24h 二级折点 150→120
+    assert iaqi("pm10", 120) == 100
+    assert iaqi("pm10", 150) == 111.5
 
 
 def test_hourly_primary_and_aqi_from_zhongda_row():
     row = {"pm25": 82, "pm10": 100, "o3": 50, "no2": 20, "so2": 5, "co": 0.7}
     aqi, primary = hourly_aqi_and_primary(row)
     assert primary == "PM2.5"
-    assert aqi == 108.8
+    assert aqi == 120.0
 
 
 def test_low_pollution_has_no_primary():

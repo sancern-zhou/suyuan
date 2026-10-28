@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.xuchang_dashboard_routes import router
-from app.auth.dependencies import require_current_user
+from app.auth.dependencies import optional_current_user, require_current_user
 from app.fetchers.xuchang_screen_snapshot import SNAPSHOT_DIR, SNAPSHOT_FILE
+from config.settings import settings as app_settings
 
 
 @pytest.fixture
@@ -21,7 +23,8 @@ def client(tmp_path, monkeypatch):
     )
     app = FastAPI()
     app.include_router(router)
-    app.dependency_overrides[require_current_user] = lambda: object()
+    # 大屏页面开发阶段仅超级管理员可见：require_dashboard_reader 校验 is_admin
+    app.dependency_overrides[optional_current_user] = lambda: SimpleNamespace(is_admin=True)
     return TestClient(app)
 
 
@@ -32,10 +35,7 @@ def token_client(tmp_path, monkeypatch):
         "app.api.xuchang_dashboard_routes.get_data_registry",
         lambda: tmp_path,
     )
-    monkeypatch.setattr(
-        "config.settings.settings.dashboard_access_token",
-        "screen-token-123",
-    )
+    monkeypatch.setattr(app_settings, "dashboard_access_token", "screen-token-123")
     app = FastAPI()
     app.include_router(router)
     # 不注入 current_user，模拟无网关会话的大屏设备

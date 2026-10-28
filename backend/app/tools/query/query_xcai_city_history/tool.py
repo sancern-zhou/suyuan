@@ -21,9 +21,25 @@ from app.utils.data_standardizer import get_data_standardizer
 if TYPE_CHECKING:
     from app.agent.context.execution_context import ExecutionContext
 
-from .sql_client import get_sql_server_client
+from .sql_client import get_sql_server_client, normalize_city_names
 
 logger = structlog.get_logger()
+
+XUCHANG_BLOCKED_CITY_NAMES = {"许昌", "许昌市"}
+_XUCHANG_BLOCKED_GUIDANCE = (
+    "许昌市数据不在城市发布历史（XcAiDb）通道开放范围：许昌官方口径以中大平台为准。"
+    "请改用 query_airdata_platform（城市日 v_c_d_sb_145/v_c_d_sb_155；月度及以上统计用 "
+    "airdata_calc_report_summary）或 execute_crawler_sql_query（CityHour/CityDay 长历史）查询许昌。"
+)
+
+
+def find_blocked_cities(cities: List[str]) -> List[str]:
+    """Return Xuchang name variants (short/full) present in the requested list."""
+    return [
+        name
+        for name in normalize_city_names(cities)
+        if name in XUCHANG_BLOCKED_CITY_NAMES
+    ]
 
 
 class QueryXcAiCityHistoryTool(LLMTool):
@@ -40,6 +56,7 @@ class QueryXcAiCityHistoryTool(LLMTool):
                 "查询全国城市历史空气质量小时/日数据（XcAiDb SQL Server）。"
                 "hour表自2017-01-01起，day表自2021-06-25起；返回file_path供下游读取。"
                 "城市名用中文全称，时间格式为YYYY-MM-DD HH:MM:SS。"
+                "不支持许昌市：许昌已被屏蔽，须改走中台/采集库口径（见拒绝说明）。"
             ),
             "parameters": {
                 "type": "object",
@@ -100,6 +117,32 @@ class QueryXcAiCityHistoryTool(LLMTool):
         Returns:
             UDF v2.0格式的查询结果
         """
+        blocked = find_blocked_cities(cities)
+        if blocked:
+            logger.warning(
+                "query_xcai_city_history_city_blocked",
+                cities=cities,
+                blocked_cities=blocked,
+                data_type=data_type
+            )
+            return {
+                "status": "failed",
+                "success": False,
+                "error": _XUCHANG_BLOCKED_GUIDANCE,
+                "data": None,
+                "metadata": {
+                    "tool_name": "query_xcai_city_history",
+                    "cities": cities,
+                    "blocked_cities": blocked,
+                    "data_type": data_type,
+                    "time_range": f"{start_time} to {end_time}"
+                },
+                "summary": (
+                    f"查询被拒绝：{', '.join(blocked)} 不在城市发布历史通道开放范围。"
+                    f"{_XUCHANG_BLOCKED_GUIDANCE}"
+                )
+            }
+
         logger.info(
             "query_xcai_city_history_start",
             cities=cities,

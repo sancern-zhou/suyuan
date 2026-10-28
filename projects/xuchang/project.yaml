@@ -5,6 +5,7 @@ modules:
   - satellite
   - xuchang-air-quality
   - xuchang-satellite
+  - shared-conversations
 frontend:
   theme: default
   brand_name: 许昌市AI应用智能体
@@ -71,7 +72,7 @@ backend:
       # 站点周边实时路况（百度地图 Traffic API，实时额度与定时抓取共享）
       - query_xuchang_traffic_status
       - query_national_province_air_quality
-      - query_national_city_air_quality
+      # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
       - query_airdata_platform
       - airdata_calc_report_summary
       - xuchang_station_catalog
@@ -102,7 +103,7 @@ backend:
       - xuchang_station_catalog
       - xuchang_cube_metrics
       - query_national_province_air_quality
-      - query_national_city_air_quality
+      # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
       - resolve_station_geo
       # 实时路况已移交问数模式；专家模式历史路况走 execute_postgres_sql_query（traffic_snapshot）
       - meteorological_trajectory_analysis
@@ -151,7 +152,7 @@ backend:
       - airdata_calc_report_summary
       - xuchang_station_catalog
       - xuchang_cube_metrics
-      - query_national_city_air_quality
+      # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
       - execute_sql_query
       - execute_python
       - create_business_chart
@@ -170,7 +171,7 @@ backend:
       - query_airdata_platform
       - xuchang_station_catalog
       - xuchang_cube_metrics
-      - query_national_city_air_quality
+      # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
       - resolve_station_geo
       - execute_python
       - create_business_chart
@@ -253,6 +254,8 @@ backend:
     - city_weather_history
     - nmc_observed_weather
     - nmc_weather_chart
+    # 小时观测聚合日值（日历日 00-24 北京时），供问数/专家模式直接查询
+    - observed_weather_daily
     - xuchang_daily_attainment_forecast_fetcher
     - xuchang_annual_attainment_forecast_fetcher
     - xuchang_city_exceedance_fetcher
@@ -281,6 +284,8 @@ backend:
     - xuchang_zhongda_station_minute_fetcher
     - xuchang_zhongda_station_hour_fetcher
     - xuchang_zhongda_city_hour_fetcher
+    # 空气质量信息联网系统(旧云平台)：乡镇站5分钟数据(TownStationData 2026-10-21 停更后的替代源)，仅保留30天
+    - xuchang_town_five_minute_fetcher
     - gems_xuchang_image_fetcher
   weather_history:
     bootstrap_days: 90

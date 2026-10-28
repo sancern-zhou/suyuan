@@ -46,12 +46,18 @@ async def require_dashboard_reader(
     request: Request,
     user: CurrentUser | None = Depends(optional_current_user),
 ) -> CurrentUser | None:
-    """大屏读取鉴权：正常网关身份，或部署级大屏直连令牌（?access_token=）。
+    """大屏读取鉴权：超级管理员网关身份，或部署级大屏直连令牌（?access_token=）。
 
-    令牌校验与中间件 _valid_dashboard_access 同源（dashboard_access_token）；
+    页面开发阶段：登录身份仅超级管理员放行；令牌直连（墙屏设备）保留，
+    令牌校验与中间件 _valid_dashboard_access 同源（dashboard_access_token），
     此处复核是防止中间件配置遗漏时令牌直接命中路由，也覆盖 POST/非 GET 语义。
     """
     if user is not None:
+        if not user.is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="dashboard_admin_only",
+            )
         return user
     from config.settings import settings
 
@@ -129,9 +135,12 @@ def _safe_dt(value: Any):
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
+    if moment.tzinfo is not None:
+        moment = moment.astimezone().replace(tzinfo=None)
+    return moment
 
 
 def _merge_hot_alerts(snapshot: Dict[str, Any]) -> Dict[str, Any]:

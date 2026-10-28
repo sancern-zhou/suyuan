@@ -100,7 +100,7 @@ def test_xuchang_expert_mode_exposes_project_data_query_tools():
         "airdata_calc_report_summary",
         "xuchang_station_catalog",
         "query_national_province_air_quality",
-        "query_national_city_air_quality",
+        # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
         "resolve_station_geo",
     }.issubset(expert_tools)
 

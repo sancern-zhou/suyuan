@@ -14,6 +14,16 @@
 - **时间范围**：2021-06-25 至今
 - **字段**：TimePoint, Area, CityCode, PM2_5_24h, PM10_24h, O3_8h_24h, NO2_24h, SO2_24h, CO_24h, AQI, PrimaryPollutant, Quality
 
+## 许昌市限制
+
+许昌市（含"许昌"/"许昌市"两种写法）已被本工具屏蔽，调用直接返回 failed 并提示改走官方口径通道：
+
+- 城市日数据：`query_airdata_platform`（v_c_d_sb_145 / v_c_d_sb_155 分段）
+- 月度及以上统计：`airdata_calc_report_summary`
+- 城市小时/日长历史：`execute_crawler_sql_query`（CityHour / CityDay）
+
+其他城市不受影响。
+
 ## 使用示例
 
 ```python
