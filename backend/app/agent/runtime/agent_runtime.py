@@ -63,6 +63,7 @@ class AgentRuntimeConfig:
     user_identifier: Optional[str] = None
     board_context: Optional[Dict[str, Any]] = None
     extra_tool_names: Optional[List[str]] = None
+    runtime_metadata: Optional[Dict[str, Any]] = None
 
 
 class AgentRuntime:
@@ -99,6 +100,15 @@ class AgentRuntime:
             enhance_with_history=self.config.enhance_with_history,
             board_context=self.config.board_context,
         )
+        # 子 Agent 的修复轮复用了会话但会新建 RunState：允许调用方显式传入
+        # 固定工作流进度，避免 acquire/normalize 重跑或 allow_completion=False 卡死。
+        initial_fixed_progress = (
+            (self.config.runtime_metadata or {}).get("fixed_workflow_progress")
+            if isinstance(self.config.runtime_metadata, dict)
+            else None
+        )
+        if isinstance(initial_fixed_progress, dict) and initial_fixed_progress:
+            state.fixed_workflow_progress = dict(initial_fixed_progress)
         self.executor.resource_run_id = state.run_id
 
         if self.config.cancel_event is not None:
@@ -392,6 +402,13 @@ class AgentRuntime:
             self._enforce_custom_tool_terminal_rules(state, action, records)
             for event in tool_events:
                 yield event
+            submitted = self._submitted_result_from_records(records)
+            if submitted is not None:
+                async for event in self._complete_after_submit_result(
+                    state, planner_result, submitted
+                ):
+                    yield event
+                return
             interaction = self._interaction_from_observation(observation)
             if interaction is not None:
                 async for event in self._finish_for_interaction(
@@ -920,7 +937,12 @@ class AgentRuntime:
         workflow_definition = get_mode_workflow(state.mode)
         if workflow_definition:
             phase_prompt = render_phase_prompt(
-                workflow_definition, state.fixed_workflow_progress
+                workflow_definition,
+                state.fixed_workflow_progress,
+                has_submit_result=(
+                    isinstance(getattr(self.executor, "tool_registry", None), dict)
+                    and "submit_result" in self.executor.tool_registry
+                ),
             )
             context_result["system_prompt"] = (
                 f"{context_result.get('system_prompt', '').rstrip()}\n\n{phase_prompt}"
@@ -1487,6 +1509,39 @@ class AgentRuntime:
         partial.pop_events.append(self.events.thought(state, partial.thought))
         return partial
 
+    @staticmethod
+    def _submitted_result_from_records(records: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """本轮是否成功调用了 submit_result；是则返回结构化信封。
+
+        返回 None 表示本轮没有交付调用；返回 {} 表示已提交但工具结果未携带信封
+        （仍应视为终止动作，避免再烧一轮纯文本）。
+        """
+        for record in records:
+            if str(record.get("tool_name") or "") != "submit_result":
+                continue
+            result = record.get("result")
+            if isinstance(result, dict) and result.get("success") is False:
+                continue
+            data = result.get("data") if isinstance(result, dict) else None
+            submitted = data.get("submitted_result") if isinstance(data, dict) else None
+            return submitted if isinstance(submitted, dict) else {}
+        return None
+
+    async def _complete_after_submit_result(
+        self,
+        state: RunState,
+        planner_result: PlannerResult,
+        submitted: Dict[str, Any],
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """submit_result 是交付边界：提交成功即结束本轮，不再要求额外一轮纯文本。"""
+        answer = (
+            json.dumps(submitted, ensure_ascii=False)
+            if submitted
+            else "结构化结果已提交"
+        )
+        async for event in self._complete_response(state, planner_result, answer):
+            yield event
+
     async def _handle_streamed_tools(
         self,
         state: RunState,
@@ -1509,6 +1564,14 @@ class AgentRuntime:
         self.writer.add_iteration(planner_result.thought, action, observation)
         self._observe_fixed_workflow(state, records)
         self._enforce_custom_tool_terminal_rules(state, action, records)
+
+        submitted = self._submitted_result_from_records(records)
+        if submitted is not None:
+            async for event in self._complete_after_submit_result(
+                state, planner_result, submitted
+            ):
+                yield event
+            return
 
         interaction = self._interaction_from_observation(observation)
         if interaction is not None:

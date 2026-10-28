@@ -69,7 +69,9 @@ class SubmitResultTool:
             "status": "success",
             "success": True,
             "result": "结果已提交",
-            "data": {},
+            # 回传结构化信封：runtime 据此把 submit_result 视为终止动作，
+            # 父 Agent 也可直接从 tool_result 提取（不依赖事件命名）。
+            "data": {"submitted_result": self.submitted_result},
             "summary": "结构化结果已接收",
         }
 

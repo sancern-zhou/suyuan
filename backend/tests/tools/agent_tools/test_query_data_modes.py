@@ -104,10 +104,10 @@ def test_query_submodes_registered_in_contract():
 
 
 def test_query_submode_default_iteration_budgets():
-    assert _resolve_child_max_iterations("query_monitoring", None) == 4
-    assert _resolve_child_max_iterations("query_monitoring_station", None) == 4
-    assert _resolve_child_max_iterations("query_monitoring_city", None) == 4
-    assert _resolve_child_max_iterations("query_forecast", None) == 4
+    assert _resolve_child_max_iterations("query_monitoring", None) == 20
+    assert _resolve_child_max_iterations("query_monitoring_station", None) == 20
+    assert _resolve_child_max_iterations("query_monitoring_city", None) == 20
+    assert _resolve_child_max_iterations("query_forecast", None) == 20
     assert _resolve_child_max_iterations("query_monitoring", 50) == 50
     assert _resolve_child_max_iterations("query_monitoring", 500) == 120
 

@@ -248,3 +248,15 @@ def test_fixed_workflow_whitelist_keeps_submit_result_visible():
     blocked = runtime._fixed_workflow_blocked_observation(state, blocked_action)
     assert blocked is not None
     assert "execute_sql_query" in blocked["data"]["blocked_tools"]
+
+
+def test_deliver_prompt_mentions_submit_result_when_injected():
+    definition = get_mode_workflow("query_monitoring_city")
+    deliver = {"phase_index": len(definition.phases) - 1}
+
+    with_submit = render_phase_prompt(definition, deliver, has_submit_result=True)
+    assert "submit_result" in with_submit
+    assert "tools 为空" not in with_submit
+
+    without_submit = render_phase_prompt(definition, deliver, has_submit_result=False)
+    assert "tools 为空" in without_submit
