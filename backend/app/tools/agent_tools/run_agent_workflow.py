@@ -45,14 +45,26 @@ REPORT_NODE_ALLOWED_MODES = frozenset({
     "expert_analysis",
 })
 
+_FIXED_QUERY_NODE_MODES = frozenset({
+    "query_monitoring",
+    "query_monitoring_station",
+    "query_monitoring_city",
+    "query_forecast",
+})
+# 固定问数工作流的实际预算是各阶段之和（acquire 4 + normalize 15 + deliver 1 = 20）。
+# DAG 首试可以收紧，但不能低于 8：acquire/normalize/deliver 各需至少一轮，
+# 且 submit_result 之后仍需一轮收尾（理想路径实测 5 轮）。
+_QUERY_NODE_MIN_ITERATIONS = 8
+
 _DEFAULT_EXPERT_NODE_LIMITS = {
     "expert_meteorology": {"max_iterations": 15, "timeout_seconds": 300},
     "expert_analysis": {"max_iterations": 20, "timeout_seconds": 360},
     "expert": {"max_iterations": 30, "timeout_seconds": 480},
-    # 固定问数流程由运行时约束为最多四轮；墙钟 600s 容纳慢查询与重试。
-    "query_monitoring_station": {"max_iterations": 4, "timeout_seconds": 600},
-    "query_monitoring_city": {"max_iterations": 4, "timeout_seconds": 600},
-    "query_forecast": {"max_iterations": 4, "timeout_seconds": 600},
+    # 固定问数流程的运行时上限是阶段预算之和（20 轮）；墙钟 600s 容纳慢查询与重试。
+    "query_monitoring": {"max_iterations": 20, "timeout_seconds": 600},
+    "query_monitoring_station": {"max_iterations": 20, "timeout_seconds": 600},
+    "query_monitoring_city": {"max_iterations": 20, "timeout_seconds": 600},
+    "query_forecast": {"max_iterations": 20, "timeout_seconds": 600},
 }
 
 
@@ -83,7 +95,8 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "报告编排禁止综合问数（query / query_monitoring）子节点：监测历史按层级拆 query_monitoring_station（站点）或 "
     "query_monitoring_city（城市），层级不明确先向用户确认口径；气象与预报用 query_forecast；"
     "综合 expert 也不对报告 DAG 暴露。"
-    "**问数节点轮次硬约束**：固定工作流由运行时控制为最多 4 轮且失败项最多补查一次；"
+    "**问数节点轮次硬约束**：固定问数工作流由运行时控制为最多 20 轮（acquire 4 + normalize 15 + deliver 1），"
+    "失败项最多补查一次；DAG 可为问数节点收紧 max_iterations，但运行时会把低于 8 的值抬到 8；"
     "任务书必须写清时间范围、区域与指标口径，取数策略由子节点按阶段提示执行，不要在任务书里教写 SQL。"
     "**交付物粒度硬约束**：每个节点承载 2~3 项强耦合必交物（最多 5 项）；"
     "一个专家节点只能回答一个分析问题；计算结果、对应图表和证据摘要可以算同一问题的交付物。"
@@ -575,6 +588,12 @@ class RunAgentWorkflowTool(LLMTool):
                 if limits:
                     node.setdefault("max_iterations", limits["max_iterations"])
                     node.setdefault("timeout_seconds", limits["timeout_seconds"])
+                if str(node.get("target_mode") or "") in _FIXED_QUERY_NODE_MODES:
+                    try:
+                        configured = int(node.get("max_iterations"))
+                    except (TypeError, ValueError):
+                        configured = _QUERY_NODE_MIN_ITERATIONS
+                    node["max_iterations"] = max(configured, _QUERY_NODE_MIN_ITERATIONS)
                 granularity_error = self._validate_expert_node_granularity(node)
                 if granularity_error:
                     return self._failure(granularity_error)

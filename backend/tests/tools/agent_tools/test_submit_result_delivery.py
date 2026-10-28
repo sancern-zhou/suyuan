@@ -31,6 +31,8 @@ async def test_submit_result_tool_stores_payload():
     result = await tool.execute(result={"status": "completed", "findings": [], "evidence": []})
     assert result["success"] is True
     assert tool.submitted_result["status"] == "completed"
+    # 回传信封供 runtime 识别交付边界（submit_result 即刻终止本轮）
+    assert result["data"]["submitted_result"] == tool.submitted_result
 
 
 def test_extract_submitted_result_prefers_latest_call():
@@ -57,6 +59,58 @@ def test_extract_submitted_result_tolerates_flat_payload():
         {"type": "tool_call", "name": "submit_result", "arguments": {"status": "completed", "findings": []}}
     ]
     assert tool._extract_submitted_result(events) == {"status": "completed", "findings": []}
+
+
+def test_extract_submitted_result_reads_real_runtime_tool_use_event():
+    """生产 runtime 下发的是 tool_use（data.tool_name/data.input），不是 tool_call。"""
+    tool = CallSubAgentTool.__new__(CallSubAgentTool)
+    events = [
+        {
+            "type": "tool_use",
+            "data": {
+                "tool_name": "submit_result",
+                "input": {"result": {"status": "completed", "findings": [{"id": 1}]}},
+            },
+        },
+    ]
+    assert tool._extract_submitted_result(events) == {
+        "status": "completed",
+        "findings": [{"id": 1}],
+    }
+
+
+def test_extract_submitted_result_reads_tool_result_envelope():
+    tool = CallSubAgentTool.__new__(CallSubAgentTool)
+    events = [
+        {
+            "type": "tool_result",
+            "data": {
+                "tool_name": "submit_result",
+                "result": {
+                    "success": True,
+                    "data": {"submitted_result": {"status": "completed_with_gaps"}},
+                },
+            },
+        },
+    ]
+    assert tool._extract_submitted_result(events) == {"status": "completed_with_gaps"}
+
+
+def test_extract_submitted_result_falls_back_to_submit_tool():
+    tool = CallSubAgentTool.__new__(CallSubAgentTool)
+    submit_tool = SubmitResultTool(RESULT_SCHEMA)
+    submit_tool.submitted_result = {"status": "completed", "findings": [], "evidence": []}
+    assert tool._extract_submitted_result([], submit_tool) == submit_tool.submitted_result
+
+
+def test_fixed_workflow_deliver_progress_targets_last_phase():
+    progress = CallSubAgentTool._fixed_workflow_deliver_progress("query_monitoring_city")
+    assert progress is not None
+    from app.agent.workflow.mode_workflows import get_mode_workflow
+
+    definition = get_mode_workflow("query_monitoring_city")
+    assert definition.phases[progress["phase_index"]].name == "deliver"
+    assert CallSubAgentTool._fixed_workflow_deliver_progress("expert_analysis") is None
 
 
 def test_submit_result_injection_follows_child_registry_assignment():

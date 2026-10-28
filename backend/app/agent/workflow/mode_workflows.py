@@ -220,6 +220,8 @@ def current_phase(
 def render_phase_prompt(
     definition: FixedWorkflowDefinition,
     progress: Mapping[str, Any],
+    *,
+    has_submit_result: bool = False,
 ) -> str:
     phase = current_phase(definition, progress)
     attempt = int(progress.get("phase_attempt") or 0) + 1
@@ -231,10 +233,19 @@ def render_phase_prompt(
         "运行时只暴露本阶段允许的工具，并负责推进阶段；不要自行重复或回退阶段。"
     )
     if not phase.allowed_tools:
-        prompt += (
-            "硬性约束：本轮请求 tools 为空，你必须直接输出一段纯文本答案；"
-            "输出任何工具调用（含手写调用标记）都会导致本轮失败。"
-        )
+        if has_submit_result:
+            # 交付阶段由调用方动态注入 submit_result：它不是"空工具"阶段，
+            # 提交成功即结束本轮（runtime 交付边界），不会再要求额外纯文本轮。
+            prompt += (
+                "硬性约束：本轮只暴露交付工具 submit_result；"
+                "请基于已有证据调用 submit_result 提交结构化结果，"
+                "不要再调用分析/取数工具。"
+            )
+        else:
+            prompt += (
+                "硬性约束：本轮请求 tools 为空，你必须直接输出一段纯文本答案；"
+                "输出任何工具调用（含手写调用标记）都会导致本轮失败。"
+            )
     return prompt
 
 

@@ -100,8 +100,8 @@ def test_child_agents_have_no_memory_edit_tools():
 def test_domain_expert_iteration_defaults_are_bounded():
     # 计算密集型专家任务的默认轮数已放宽（分箱/相关性 15-20 轮收不完），
     # 工作流重试还会在此基础上按 50% 自动扩容（见 coordinator）。
-    assert _resolve_child_max_iterations("expert_meteorology", None) == 20
-    assert _resolve_child_max_iterations("expert_analysis", None) == 28
+    assert _resolve_child_max_iterations("expert_meteorology", None) == 40
+    assert _resolve_child_max_iterations("expert_analysis", None) == 40
     assert _resolve_child_max_iterations("expert", None) == 40
     assert _resolve_child_max_iterations("expert_analysis", 12) == 12
     assert _resolve_child_max_iterations("expert_analysis", 999) == 120

@@ -706,3 +706,34 @@ async def test_non_report_mode_rejects_generic_query(monkeypatch):
     )
     assert result["success"] is False
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_run_agent_workflow_query_nodes_get_at_least_eight_iterations(monkeypatch):
+    """回归：问数节点预算曾被硬编码为 4，固定工作流跑不完 acquire→normalize→deliver。"""
+    calls = []
+
+    class FakeSubAgentTool:
+        async def execute(self, **kwargs):
+            calls.append(kwargs)
+            return {"status": "success", "success": True, "result": "ok", "data": {}}
+
+    monkeypatch.setattr(
+        RunAgentWorkflowTool,
+        "_build_sub_agent_tool",
+        staticmethod(lambda: FakeSubAgentTool()),
+    )
+    result = await RunAgentWorkflowTool().execute(
+        workflow={
+            "workflow_id": "query-budget",
+            "nodes": [
+                {"task_id": "city", "target_mode": "query_monitoring_city", "goal": "城市取数", "max_iterations": 4},
+                {"task_id": "met", "target_mode": "query_forecast", "goal": "气象取数"},
+            ],
+        },
+    )
+
+    assert result["success"] is True, result
+    by_goal = {call["goal"]: call for call in calls}
+    assert by_goal["城市取数"]["max_iterations"] == 8
+    assert by_goal["气象取数"]["max_iterations"] == 20
