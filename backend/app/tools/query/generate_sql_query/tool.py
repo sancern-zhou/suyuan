@@ -14,7 +14,7 @@ import time
 import json
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.utils.sql_builder import SQLBuilder, get_table_schema, list_available_tables
+from app.utils.sql_builder import SQLBuilder, TableSchema, get_table_schema, list_available_tables
 from app.utils.sql_validator import SQLValidator, sanitize_sql_limit
 from app.db.database import async_session
 
@@ -34,18 +34,11 @@ class GenerateSQLQueryTool(LLMTool):
                 "【SQL生成与执行工具】将自然语言查询描述转换为SQL查询并执行，支持本地PostgreSQL/TimescaleDB数据库。\n\n"
                 "**核心功能：**\n"
                 "- 理解自然语言查询意图，自动生成SQL查询语句\n"
-                "- 支持本地数据库表：ERA5气象数据、地面观测数据、空气质量历史、预报数据等\n"
+                "- 支持本地数据库表：城市空气质量发布历史等\n"
                 "- 自动验证SQL安全性（只允许SELECT查询）\n"
                 "- 支持自定义查询条件、聚合函数、JOIN操作\n\n"
                 "**可用数据表：**\n"
-                "- era5_reanalysis_data: ERA5气象再分析数据（温度、湿度、风速、边界层高度等）\n"
-                "- observed_weather_data: 地面观测气象数据（站点观测数据）\n"
-                "- weather_stations: 气象站点元数据\n"
-                "- city_aqi_publish_history: 城市空气质量历史数据（PM2.5、PM10、O3、NO2、SO2、CO、AQI）\n"
-                "- air_quality_forecast: 空气质量预报数据\n"
-                "- fire_hotspots: 火灾热点数据（NASA FIRMS）\n"
-                "- dust_forecasts: 沙尘预报数据（CAMS）\n"
-                "- dust_events: 沙尘事件记录\n\n"
+                "- city_aqi_publish_history: 城市空气质量历史数据（PM2.5、PM10、O3、NO2、SO2、CO、AQI）\n\n"
                 "**参数说明：**\n"
                 "- query_description: 自然语言查询描述（如\"广州2025年1月平均PM2.5\"）\n"
                 "- tables: 指定查询的表名（可选，不指定则自动推断）\n"
@@ -84,7 +77,7 @@ class GenerateSQLQueryTool(LLMTool):
                     "explain_only": {
                         "type": "boolean",
                         "description": "只生成SQL不执行（默认false）",
-                        "default": false
+                        "default": False
                     }
                 },
                 "required": ["query_description"]
@@ -100,7 +93,12 @@ class GenerateSQLQueryTool(LLMTool):
         )
 
         self.sql_builder = SQLBuilder()
-        self.sql_validator = SQLValidator(max_limit=10000)
+        # 本工具经主库 session 执行 SQL；气象表在独立气象库（weather_db），
+        # 必须显式收窄白名单，防止命中主库中的历史残留副本。
+        self.sql_validator = SQLValidator(
+            max_limit=10000,
+            allowed_tables=list(TableSchema.TABLE_SCHEMAS.keys()),
+        )
 
     async def execute(
         self,
