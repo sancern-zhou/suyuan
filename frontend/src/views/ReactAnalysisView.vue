@@ -16,6 +16,7 @@
       :messages="currentModeMessages"
       :pending-steering-inputs="currentModePendingSteeringInputs"
       :pending-interaction="store.pendingInteraction"
+      :background-delegation="store.backgroundDelegation"
       :interaction-resolving="interactionResolving"
       :is-analyzing="currentModeIsAnalyzing"
       :input-disabled="inputDisabled"

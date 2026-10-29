@@ -5,8 +5,10 @@ from datetime import datetime
 import pytest
 
 from app.agent.context.data_shape import (
+    MAX_SHAPE_COLUMNS,
     TableTypesCache,
     build_data_shape,
+    compact_shape,
     dataframe_column_types,
     infer_column_types,
     render_shape_line,
@@ -58,6 +60,44 @@ def test_render_shape_line_honors_columns_total_from_truncated_shape():
     assert "…共 40 列" in line
     assert "col_3:str" in line
     assert "col_4" not in line
+
+
+def test_compact_shape_truncates_columns_and_keeps_total():
+    shape = build_data_shape({f"col_{i}": "str" for i in range(40)}, 7, "db")
+    compact = compact_shape(shape)
+    assert len(compact["columns"]) == MAX_SHAPE_COLUMNS
+    assert compact["columns_total"] == 40
+    assert compact["row_count"] == 7
+    # 原形状不被修改（metadata 里保存的仍是完整列清单）
+    assert len(shape["columns"]) == 40
+    assert "columns_total" not in shape
+
+
+def test_compact_shape_keeps_narrow_shape_untouched():
+    shape = build_data_shape({"Aqi": "float", "StationName": "varchar"}, 7, "db")
+    compact = compact_shape(shape)
+    assert compact == {"columns": shape["columns"], "row_count": 7, "source": "db"}
+    assert "columns_total" not in compact
+
+
+def test_standard_format_passthrough_compacts_data_shapes():
+    from app.agent.tool_adapter import _convert_to_standard_format
+
+    wide = build_data_shape({f"col_{i}": "str" for i in range(40)}, 7, "db")
+    result = _convert_to_standard_format(
+        {
+            "success": True,
+            "data": [],
+            "summary": "ok",
+            "data_shape": wide,
+            "data_shapes": {"a.json": wide},
+        },
+        "execute_sql_query",
+        0.1,
+    )
+    assert len(result["data_shape"]["columns"]) == MAX_SHAPE_COLUMNS
+    assert result["data_shape"]["columns_total"] == 40
+    assert result["data_shapes"]["a.json"]["columns_total"] == 40
 
 
 def test_shape_summary_suffix_empty_without_shape():

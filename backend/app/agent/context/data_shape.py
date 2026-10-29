@@ -75,6 +75,29 @@ def shape_from_records(
     return build_data_shape(infer_column_types(records), row_count, source)
 
 
+def compact_shape(
+    shape: Mapping[str, Any],
+    max_columns: int = MAX_SHAPE_COLUMNS,
+) -> dict[str, Any]:
+    """截断列清单为进 LLM 上下文的紧凑副本；columns_total 保留真实总列数。
+
+    宽表的完整列清单不应整份进入上下文（单次数 KB）；SQL 工具把完整
+    data_shape 挂在结果上、资源声明把它带给模型，都需要在此收口。
+    渲染端 render_shape_line 已认 columns_total。
+    """
+    columns = list(shape.get("columns") or [])
+    compact: dict[str, Any] = {
+        "columns": columns[:max_columns],
+        "row_count": shape.get("row_count"),
+        "source": shape.get("source"),
+    }
+    total = shape.get("columns_total")
+    total = int(total) if isinstance(total, int) and total > 0 else len(columns)
+    if total > max_columns:
+        compact["columns_total"] = total
+    return compact
+
+
 def render_shape_line(shape: Mapping[str, Any], max_columns: int = MAX_SHAPE_COLUMNS) -> str:
     """渲染为紧凑单行：`列A:str, 列B:float | 864行`；无列时仅返回行数（如 `0行`）。
 

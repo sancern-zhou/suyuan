@@ -20,6 +20,7 @@ from app.utils.environment_charts import (
     MISSING_COLOR,
     get_six_level_scale,
     legend_below,
+    level_color,
     level_index,
     text_color_for,
 )
@@ -340,6 +341,10 @@ def _render_pollutant_calendar(
     }
 
 
+def _normalized_unit_text(unit: str) -> str:
+    return str(unit).replace("μ", "u").replace("µ", "u").replace("³", "3").replace("^", "").strip()
+
+
 def _render_generic_pollutant_wind_rose(
     chart_id: str | None,
     title: str,
@@ -347,7 +352,8 @@ def _render_generic_pollutant_wind_rose(
     output_context: str,
     options: Dict[str, Any],
 ) -> Dict[str, Any]:
-    pollutant_name = str(normalize_matplotlib_label_text(data.get("pollutant_name") or options.get("pollutant_name") or "污染物"))
+    raw_pollutant = str(data.get("pollutant_name") or options.get("pollutant_name") or "污染物")
+    pollutant_name = str(normalize_matplotlib_label_text(raw_pollutant))
     unit = str(normalize_matplotlib_label_text(data.get("unit") or options.get("unit") or "μg/m³"))
     wind_directions = _number_sequence(data.get("wind_directions"))
     wind_speeds = _number_sequence(data.get("wind_speeds"))
@@ -365,6 +371,24 @@ def _render_generic_pollutant_wind_rose(
         raise ChartDataError("generic_pollutant_wind_rose 的风向、风速、浓度长度必须一致。")
     direction_bins = int(options.get("direction_bins") or data.get("direction_bins") or 16)
     direction_bins = min(max(direction_bins, 4), 36)
+
+    average_time = str(data.get("average_time") or options.get("average_time") or "").strip() or None
+    try:
+        scale = get_six_level_scale(pollutant=raw_pollutant, average_time=average_time)
+    except ValueError as exc:
+        raise ChartDataError(
+            f"generic_pollutant_wind_rose 无法按 HJ 633-2026 六级着色：{exc}"
+        ) from exc
+    if scale["pollutant"] == "AQI":
+        unit = ""
+    else:
+        expected_unit = "mg/m³" if scale["pollutant"] == "CO" else "μg/m³"
+        if _normalized_unit_text(unit) != _normalized_unit_text(expected_unit):
+            raise ChartDataError(
+                f"generic_pollutant_wind_rose 的 {scale['pollutant']} 分级断点以 {expected_unit} 计；"
+                f"请先把浓度换算为 {expected_unit} 并以该单位传入。"
+            )
+
     image_base64, valid_count = _render_generic_wind_rose_image(
         title=title,
         pollutant_name=pollutant_name,
@@ -373,7 +397,7 @@ def _render_generic_pollutant_wind_rose(
         wind_speeds=wind_speeds,
         concentrations=concentrations,
         direction_bins=direction_bins,
-        show_colorbar=_bool_option(data, options, "show_colorbar", False),
+        scale=scale,
     )
     visual = _cache_base64_image(image_base64, chart_id or f"generic_pollutant_wind_rose_{pollutant_name}", title)
     return {
@@ -390,7 +414,9 @@ def _render_generic_pollutant_wind_rose(
             "unit": unit,
             "direction_bin_count": direction_bins,
             "valid_point_count": valid_count,
-            "show_colorbar": _bool_option(data, options, "show_colorbar", False),
+            "average_time": scale["average_time"],
+            "level_standard": scale["standard"],
+            "level_breaks": list(scale["breaks"]),
         },
         "summary": f"报告图表已生成：{title}。",
     }
@@ -651,7 +677,7 @@ def _render_generic_wind_rose_image(
     wind_speeds: Sequence[float],
     concentrations: Sequence[float],
     direction_bins: int,
-    show_colorbar: bool = False,
+    scale: Dict[str, Any],
 ) -> tuple[str, int]:
     valid = [
         (float(direction) % 360, float(speed), float(concentration))
@@ -675,20 +701,14 @@ def _render_generic_wind_rose_image(
     radii = np.array(means)
     width = np.deg2rad(bin_width * 0.88)
     fig, ax = plt.subplots(figsize=(6.2, 6.2), dpi=180, subplot_kw={"polar": True})
-    cmap = plt.get_cmap("YlOrRd")
-    vmax = max(means) if any(means) else 1.0
-    colors = [cmap(value / vmax if vmax else 0) for value in means]
-    ax.bar(theta, radii, width=width, color=colors, edgecolor="white", linewidth=0.8)
+    # 等级色用 HJ 633-2026 固定六级断点映射，禁止连续色图按数据极值拉伸。
+    bar_colors = [level_color(value, scale) for value in means]
+    ax.bar(theta, radii, width=width, color=bar_colors, edgecolor="white", linewidth=0.8)
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
     ax.set_title(str(normalize_matplotlib_label_text(title)), fontsize=14, fontweight="bold", pad=18)
     ax.set_rlabel_position(_polar_rlabel_angle(theta, radii))
     ax.tick_params(labelsize=9)
-    if show_colorbar:
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=vmax))
-        sm.set_array([])
-        cbar = fig.colorbar(sm, ax=ax, shrink=0.72, pad=0.1)
-        cbar.set_label(str(normalize_matplotlib_label_text(f"{pollutant_name} ({unit})")), fontsize=10)
     ax.text(
         0.5,
         -0.08,
@@ -698,6 +718,13 @@ def _render_generic_wind_rose_image(
         va="top",
         fontsize=9,
     )
+    handles, legend_labels = _calendar_level_legend(
+        [float(item) for item in scale["breaks"]],
+        [str(item) for item in scale["labels"]],
+        [str(item) for item in scale["colors"]],
+        unit,
+    )
+    legend_below(ax, handles=handles, labels=legend_labels, ncols=3)
     _set_rlabel_background(fig, ax)
     fig.tight_layout(pad=1.0)
     return _figure_to_base64(fig), len(valid)

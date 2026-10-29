@@ -335,6 +335,7 @@ const createEmptyModeState = () => ({
   pendingPausedRunId: null,
   workspace: null,
   pendingInteraction: null,
+  backgroundDelegation: null,
   pendingHumanFeedback: null,
   humanFeedbackSubmitting: false,
   humanFeedbackError: null,
@@ -443,6 +444,10 @@ export const useReactStore = defineStore('react', {
 
     pendingInteraction() {
       return this.currentState?.pendingInteraction || null
+    },
+
+    backgroundDelegation() {
+      return this.currentState?.backgroundDelegation || null
     },
 
     pendingHumanFeedback() {
@@ -1453,6 +1458,15 @@ export const useReactStore = defineStore('react', {
         }
         case 'interaction_required': {
           targetState.pendingInteraction = data || null
+          break
+        }
+        case 'delegation_status': {
+          // 后台委派状态卡：running（等待期可见）/ completed（结果已回灌）
+          targetState.backgroundDelegation = {
+            phase: data?.phase === 'completed' ? 'completed' : 'running',
+            runs: Array.isArray(data?.runs) ? data.runs : [],
+            stillRunning: Number(data?.still_running) || 0
+          }
           break
         }
         case 'start': {
