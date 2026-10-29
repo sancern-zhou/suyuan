@@ -743,7 +743,6 @@ async def test_document_processor_uses_configured_model_tier(monkeypatch):
 
 def test_all_qwen_visual_runtimes_are_migrated_to_bailian():
     runtime_files = [
-        "backend/app/fetchers/quick_trace/quick_trace_fetcher.py",
         "backend/app/services/tenders/llm.py",
         "backend/app/tools/utility/analyze_image_tool.py",
     ]
@@ -754,7 +753,7 @@ def test_all_qwen_visual_runtimes_are_migrated_to_bailian():
         assert "qwen-vl" not in source.lower(), relative_path
         assert "dashscope.aliyuncs.com/compatible-mode" not in source, relative_path
 
-    for relative_path in runtime_files[1:]:
+    for relative_path in runtime_files:
         source = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
         assert "BAILIAN_" in source or "bailian" in source.lower(), relative_path
 

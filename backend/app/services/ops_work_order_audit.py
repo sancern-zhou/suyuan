@@ -259,6 +259,7 @@ class OpsWorkOrderAuditConfig:
     finish_time_end: Optional[str] = None
     audit_window_preset: Optional[str] = "weekly_created"
     station_ids: Optional[list[str]] = None
+    operation_units: Optional[list[str]] = None
     order_types: Optional[list[str]] = None
     maintenance_types: Optional[list[str]] = None
     working_order_codes: Optional[list[str]] = None
@@ -296,6 +297,7 @@ def fetch_ops_audit_dataset(config: Optional[OpsWorkOrderAuditConfig] = None) ->
         finish_time_end=config.finish_time_end,
         audit_window_preset=config.audit_window_preset,
         station_ids=config.station_ids,
+        operation_units=config.operation_units,
         order_types=config.order_types,
         maintenance_types=config.maintenance_types,
         working_order_codes=config.working_order_codes,

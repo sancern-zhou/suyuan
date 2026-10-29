@@ -5,6 +5,7 @@ grain: 一张 SO2 气态检查表单
 freshness_slo: 26小时
 known_caveats:
 - 今年窗口（{year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）
+- 表单在送审流程中原行修改（打回重报不换行，createdate 不变），每日对近 7 天滚动全量重拉捕获；超出 7 天的原地修改不再同步（例行工单超 7 天自动送审，之后一般不再修改）
 columns:
 - name: （见源表/宽表定义）
   business: 完整列清单经工具 describe_table 获取；关键业务列见 guide

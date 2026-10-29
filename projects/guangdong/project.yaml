@@ -5,7 +5,12 @@ modules:
 frontend:
   theme: default
   brand_name: 广东省大气环境智能体
-  features: {}
+  features:
+    # ERA5 抓取已下线，数据管理不再展示历史补采入口。
+    era5HistoricalBackfill: false
+  # 2026-10-28 按业务要求左侧功能入口不再展示“智能问数”；问数能力仍保留在
+  # 智能体平台场景与 query/gd_query 模式中，本项只控制侧栏快捷入口。
+  sidebar_agent_modes: []
   agent_modes:
   - assistant
   - expert
@@ -115,7 +120,146 @@ frontend:
       tags:
       - 运维分析
       - 正式报告
+  # 平台使用说明面板内容：由 frontend/src/components/management/PlatformGuidePanel.vue 渲染，
+  # 字段校验见 frontend/scripts/projectManifest.mjs 的 normalizePlatformGuide。
+  # 2026-10-29 按实际模式与数据接入情况维护；数据口径来源：
+  # data-ops/semantic/registry.yaml（时间窗口）、data-ops/sync/sync-all.cmd（每小时增量）、
+  # sync-daily.cmd（每日 02:30 全量）、query_gd_suncere 工具（监测接口实时查询）。
+  platform_guide:
+    intro: >-
+      广东省大气环境智能体面向省控站点运维统筹与监管场景，把监测数据查询、运维指标分析、
+      工单审核、故障诊断与正式报告整合为一个对话式工作台；在首页选择场景进入对应模式，
+      用自然语言直接提问即可。
+    mode_groups:
+    - scene: office
+      modes:
+      - name: 助手模式
+        desc: 理解工作目标并协调各专业智能体，处理日常办公事项、跟进持续任务并提供平台使用指导。
+        example: 整理我上传的考核材料，提炼关键结论并生成汇报提纲
+      - name: 知识问答
+        desc: 检索授权知识库中的广东运维规程、制度标准、设备资料与历史报告，按需联网补充，回答区分知识库、上传材料与网络来源。
+        example: 运维规程对站点断数处置有什么要求？
+    - scene: monitoring
+      modes:
+      - name: AI 问数
+        desc: 用自然语言查询城市、区县、站点监测数据，完成统计分析并生成趋势、对比、排名图表。
+        example: 查广州市 9 月 PM2.5 日均浓度并画趋势图
+      - name: 专家分析
+        desc: 组织空气质量、气象、污染组分多领域专家协同研判，诊断污染过程成因并给出管控建议。
+        example: 综合分析广州近期臭氧污染过程的成因，并给出管控建议
+      - name: 报告生成
+        desc: 将业务资料、分析结论与图表组织为结构清晰的专业报告，支持简报、专报与分析报告。
+        example: 根据本轮分析结果生成一份污染过程分析简报
+    - scene: operations
+      modes:
+      - name: 运维问数
+        desc: 用自然语言查询工单、告警、巡检、绩效、设备等运维指标与站点监测数据并生成图表，结论附带统计口径与数据截至时间。
+        example: 查本月各运维单位工单完成率并画对比图
+      - name: 运维工单审核
+        desc: 例行工单按内置规则集批量筛查，故障工单逐单人工复核，输出带规则标识的问题清单与正式审核报告；当前不支持工单流转操作。
+        example: 审核上周例行工单，按规则列出问题清单
+      - name: 站点故障诊断
+        desc: 按站点、工单或异常现象发起即席诊断，交叉核验工单、设备与告警证据，输出诊断路径、原因排序与处置建议。
+        example: ××站 PM10 昨天数据异常，帮忙诊断原因
+      - name: 运维分析报告
+        desc: 按工单、告警、巡检、绩效、设备、站点、到报率七个数据域编排取数与分析，出具带口径声明的正式运维分析报告；全流程耗时一般 10 分钟以上。
+        example: 生成本月运维分析报告
+    mode_motto: 选择口诀：查监测 → AI 问数　｜　要数字 → 运维问数　｜　审工单 → 运维工单审核　｜　查根因 → 站点故障诊断　｜　出报告 → 运维分析报告　｜　问规程 → 知识问答
+    data_groups:
+    - title: 运维业务数据（本地同步库，2026 年起逐年滚动）
+      rows:
+      - name: 运维工单
+        granularity: 单
+        range: 2026-01-01 至今（今年窗口，每年滚动）
+        sync: 每小时增量，每日 02:30 全量对齐
+        desc: 覆盖全部 28 类运维工单（含作废单）；超期、响应等时效指标的口径随结论声明
+      - name: 告警通知
+        granularity: 条
+        range: 2026-01-01 至今
+        sync: 每小时增量，每日 02:30 全量对齐
+        desc: 站点断数、仪器断数、质控异常、小时浓度超标四类通知流水；通知无处理结果，不提供未处理率
+      - name: 当前告警态势
+        granularity: 站
+        range: 当前快照（不查历史）
+        sync: 提问时实时读取源系统推送
+        desc: 只回答推送范围内哪些站点在告警；未推送不等于无告警
+      - name: 巡检任务
+        granularity: 任务项
+        range: 2026-01-01 至今
+        sync: 每小时增量，每日 02:30 全量对齐
+        desc: 完成率、超期率、转工单率；最近 1-2 天未完成可能是尚未到时点
+      - name: 绩效考核
+        granularity: 站点×月
+        range: 2026 合同年度
+        sync: 平台每日上午重算，本地每日同步
+        desc: 考核得分与合同、核减、扣款、实发金额按平台口径原值交付；组分站无运维单位信息
+      - name: 设备生命周期
+        granularity: 事件
+        range: 2026-01-01 至今
+        sync: 每小时增量，每日 02:30 全量对齐
+        desc: 周检、月检、季检、启停等事件统计；设备状态保留平台原文并附说明
+      - name: 站点台账
+        granularity: 台账
+        range: 全量名录
+        sync: 每日全量刷新
+        desc: 主网与组分网 432 站名录、城市区域归属、运维单位与处理人；组分站无经纬度与运维单位
+      - name: 平台到报率
+        granularity: 站点×日
+        range: 平台每日统计产出
+        sync: 每日同步
+        desc: 一律以平台统计原值为准，不做自算
+    - title: 环境监测数据（平台接口实时查询，不入库）
+      rows:
+      - name: 城市/区县监测数据
+        granularity: 1 小时、1 日
+        range: 平台在线数据，历史深度以平台为准
+        sync: 提问时接口实时读取
+        desc: 城市与区县污染物浓度、日报、区域对比、排名与同比
+      - name: 站点监测数据
+        granularity: 5 分钟、1 小时、1 日
+        range: 平台在线数据，历史深度以平台为准
+        sync: 提问时接口实时读取
+        desc: 6 项污染物浓度；近 3 天自动取原始实况、3 天前自动取审核实况，结论注明口径
+      - name: 站点运行日报
+        granularity: 站点×日
+        range: 每日生成
+        sync: 固定工具直接读取
+        desc: 连续缺数站点跟踪与缺数时长
+    - title: 气象数据
+      rows:
+      - name: 逐小时气象实况
+        granularity: 1 小时
+        range: 持续积累
+        sync: 每小时自动抓取上一小时实况
+        desc: 覆盖城市的气温、湿度、风向风速、气压、降水等要素，按城市名称直接查询
+    - title: 知识与外部资料
+      rows:
+      - name: 授权知识库
+        granularity: —
+        range: 持续更新
+        sync: 人工维护更新
+        desc: 广东运维规程、制度标准、设备资料与历史报告，是知识问答、故障诊断与报告口径的依据来源
+      - name: 公开网页检索
+        granularity: —
+        range: 按需
+        sync: 提问时实时搜索与抓取
+        desc: 知识库证据不足时按需补充公开信息，回答区分信息来源
+    notices:
+    - 每个数值结论都附带统计口径（统计对象、时间范围、分母）与数据截至时间；数据缺失或指标不可评估时如实说明，不编造数据。
+    - 本地同步库每小时增量、每日凌晨全量对齐；环境监测数据一律接口实时查询、不与运维数据混用，跨源结论会明确区分来源。
+    - 绩效得分与金额、平台到报率均按平台口径原值交付，不做重算或修正。
+    - 运维工单审核当前不支持工单流转操作；组分站台账信息缺口会在结论中如实声明。
+    - 运维分析报告为多智能体编排任务，全流程一般需要 10 分钟以上，生成期间可先处理其他事项，完成后在会话中查看。
 backend:
+  # 广东项目自有技能库：优先加载本目录，再叠加共享 backend/docs/skills。
+  # 江苏分支技能已引入本地，后续按广东工具与口径改写。
+  skills_dir: projects/guangdong/skills
+  # 数据管理只保留广东实际使用的 fetcher；ERA5、济宁溯源、气象图、空气质量预报、
+  # 卫星火点、沙尘、污染过程、数据质量、招投标、故障诊断、站点运行监控等脚本已下线。
+  fetchers:
+  - task_review_feedback
+  - observed_weather
+  - nmc_observed_weather
   mode_prompt_files:
     ops: projects/guangdong/prompts/ops.md
     gd_query: projects/guangdong/prompts/gd_query.md
@@ -140,64 +284,64 @@ backend:
       scope: 全类型工单（含作废）的批量指标、受控明细与数据对齐；口径按类型与状态声明；响应类仅故障单可评估
       boundary: 只取数和确定性整理，不作风险认定、不生成正式报告；例行单超期以源系统超时标记为准；跨域取数列入 data_gaps 交父 Agent 委派
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
-      max_iterations: 10
-      timeout_seconds: 300
+      max_iterations: 20
+      timeout_seconds: 420
       max_deliverables: 3
     gd_ops_data_alarm:
       positioning: 告警数据准备
       scope: 告警通知流水四类分布、站点与城市覆盖；当前告警态势快照（仅推送范围内）；禁止未处理率
       boundary: 只取数和确定性整理，不作风险认定；通知无处理闭环状态，不得输出未处理率与处理时长；跨域取数列入 data_gaps
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
-      max_iterations: 10
-      timeout_seconds: 300
+      max_iterations: 20
+      timeout_seconds: 420
       max_deliverables: 3
     gd_ops_data_inspection:
       positioning: 巡检数据准备
       scope: 任务项完成率、超期率、转工单率（按周期/监测项/站点/城市分组）
       boundary: 只取数和确定性整理，不作风险认定、不生成正式报告；完成态滞后口径（最近1-2天未完成可能是尚未到时点）必须随交付声明；跨域取数列入 data_gaps 交父 Agent 委派
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
-      max_iterations: 10
-      timeout_seconds: 300
+      max_iterations: 20
+      timeout_seconds: 420
       max_deliverables: 3
     gd_ops_data_performance:
       positioning: 绩效数据准备
       scope: 站点×月考核得分排名、低分清单、质控合格率与金额四件套（合同/核减/扣款/实发）
       boundary: 只取数和确定性整理；平台口径原值不重算；组分站无运维单位信息、跨合同需分组；跨域取数列入 data_gaps
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
-      max_iterations: 10
-      timeout_seconds: 300
+      max_iterations: 20
+      timeout_seconds: 420
       max_deliverables: 3
     gd_ops_data_device:
       positioning: 设备数据准备
       scope: 设备生命周期事件、周期检查执行与启停事件统计；事件动作中文映射，状态枚举保留原文
       boundary: 只取数和确定性整理，不作风险认定；未匹配站点/设备的记录不得静默丢弃；跨域取数列入 data_gaps
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
-      max_iterations: 10
-      timeout_seconds: 300
+      max_iterations: 20
+      timeout_seconds: 420
       max_deliverables: 3
     gd_ops_data_station:
       positioning: 站点数据准备
       scope: 站点名录（432 站主网+组分网）、城市/区域归属、运维单位与处理人中文解析、设备台账关联
       boundary: 只做台账取数与解析；组分站无经纬度/运维单位的缺口必须声明；业务流水取数不在本节点，列入 data_gaps
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
-      max_iterations: 10
-      timeout_seconds: 300
+      max_iterations: 20
+      timeout_seconds: 420
       max_deliverables: 3
     gd_ops_data_rates:
       positioning: 平台率值数据准备
       scope: 平台到报率统计（每日生成）及其按站点/日期的分布
       boundary: 率值一律以平台统计原值为准禁止自算；不取业务明细、不生成正式报告；跨域取数列入 data_gaps
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用
-      max_iterations: 10
-      timeout_seconds: 300
+      max_iterations: 20
+      timeout_seconds: 420
       max_deliverables: 3
     gd_ops_regular_analysis:
       positioning: 常态监管专题分析
       scope: 复用共享数据回答一个运维问题（确定性核算、异常清单、管理解释与图表）
       boundary: 不重新查询业务来源、不作因果或责任认定、不成稿
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用；分析图表随节点交付
-      max_iterations: 12
-      timeout_seconds: 300
+      max_iterations: 20
+      timeout_seconds: 420
       max_deliverables: 3
     gd_ops_risk_analysis:
       positioning: 风险线索专题分析
@@ -205,8 +349,8 @@ backend:
       scope: 复用共享数据核验一个风险假设，列支持证据、反证与替代解释
       boundary: 证据不足只报线索和缺口，不认定违规、不自行补查或成稿
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用；分析图表随节点交付
-      max_iterations: 14
-      timeout_seconds: 360
+      max_iterations: 24
+      timeout_seconds: 480
       max_deliverables: 3
   # 父级预算起步值（江苏 16 节点是 10 子模式成熟后的值，广东 9 个子模式先 12）。
   agent_workflow_parents:
@@ -225,7 +369,7 @@ backend:
       max_nodes: 12
       max_retries: 3
       max_extensions: 2
-      timeout_seconds: 1200
+      timeout_seconds: 1800
   # 新模式（id 不在共享模式表内）必须全量声明 agent_mode_tools；workflow 子模式
   # 只能出现在 agent_mode_tools（校验要求），且不得声明委派工具。
   # 白名单同时用于提示词和函数 schema；新增工具必须经过项目评审后加入。
@@ -245,6 +389,7 @@ backend:
     - ops_audit_fetch_dataset
     - ops_audit_run_rules
     - ops_audit_inspect
+    - guangdong_station_catalog
     - execute_guangdong_mart_sql
     - guangdong_query_metrics
     - execute_ops_sql_query
@@ -263,6 +408,7 @@ backend:
     - read_file
     - edit_file
     - write_file
+    - guangdong_station_catalog
     - guangdong_query_metrics
     - execute_guangdong_mart_sql
     - query_gd_suncere_city_hour
@@ -291,6 +437,7 @@ backend:
     - write_file
     - knowledge_graph_query
     - knowledge_graph_build
+    - guangdong_station_catalog
     - guangdong_query_metrics
     - execute_guangdong_mart_sql
     - query_gd_suncere_station_hour_new
@@ -358,6 +505,7 @@ backend:
     - read_file
     - write_file
     - publish_session_file
+    - guangdong_station_catalog
     - guangdong_query_metrics
     - execute_guangdong_mart_sql
     - execute_python
@@ -389,6 +537,7 @@ backend:
   tools:
   - execute_guangdong_mart_sql
   - guangdong_query_metrics
+  - guangdong_station_catalog
   - query_gd_suncere
   - query_gd_suncere_city_hour
   - query_gd_suncere_station_hour_new

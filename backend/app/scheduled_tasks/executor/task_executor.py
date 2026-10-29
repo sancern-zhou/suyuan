@@ -166,6 +166,7 @@ class ScheduledTaskExecutor:
         event: TaskEvent | None = None,
         update_stats: bool = True,
         broadcast_user_names: list[str] | None = None,
+        trigger_type: str | None = None,
     ) -> TaskExecution:
         """执行任务"""
         # 为整个任务创建统一的 session_id（保持所有步骤的上下文连续）
@@ -180,8 +181,9 @@ class ScheduledTaskExecutor:
             status=ExecutionStatus.RUNNING,
             started_at=datetime.now(),
             total_steps=1,
-            scheduled_time=task.next_run_at if event is None else None,
-            trigger_type="event" if event else "scheduled",
+            # 手动触发的执行没有对应的计划槽位，不能把下一个 cron 时间标成 scheduled_time
+            scheduled_time=task.next_run_at if (event is None and trigger_type is None) else None,
+            trigger_type=trigger_type or ("event" if event else "scheduled"),
             event_id=event.event_id if event else None,
             event_type=event.event_type if event else None,
             event_attributes=event.attributes if event else {},

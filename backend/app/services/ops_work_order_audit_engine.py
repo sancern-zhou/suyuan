@@ -80,8 +80,15 @@ from app.services.ops_audit.rules.rf_position_rules import check_rf_field_positi
 from app.services.ops_audit.rules.rf_range_rules import check_rf_range_values  # noqa: E402
 from app.services.ops_audit.rules.rf_required_rules import check_rf_required_fields  # noqa: E402
 from app.services.ops_audit.rules.rf_time_rules import check_rf_time_ranges  # noqa: E402
+from app.services.ops_audit.rules.sup_form_rules import check_sup_form_rules  # noqa: E402
+from app.services.ops_audit.rules.sup_attachment_rules import check_sup_attachment_rules  # noqa: E402
+from app.services.ops_audit.rules.sup_watermark_rules import (  # noqa: E402
+    build_sup_watermark_tasks,
+    run_sup_watermark_task,
+)
 from app.services.ops_audit.rules.rf_unit_rules import check_rf_unit_values  # noqa: E402
 from app.services.ops_audit.rules.rf_visibility_rules import check_rf_visibility_values  # noqa: E402
+from app.services.ops_audit.rules.form_presence_rules import check_form_data_missing  # noqa: E402
 from app.services.ops_audit.rules.workflow_rules import check_workflow_completeness  # noqa: E402
 from app.services.ops_audit.scoring import (  # noqa: E402
     COMMON_PATTERN_ELIGIBLE_RULES,
@@ -598,6 +605,7 @@ class WorkOrderDatasetFilter:
     finish_time_start: str | None = None
     finish_time_end: str | None = None
     station_ids: list[str] | None = None
+    operation_units: list[str] | None = None  # 运维单位名称列表，按站点档案过滤；仅本地 guangdong_mart 数据源支持
     order_types: list[str] | None = None
     maintenance_types: list[str] | None = None
     working_order_codes: list[str] | None = None
@@ -625,6 +633,7 @@ def _station_meta_by_id(stations: list[dict[str, Any]]) -> dict[str, dict[str, A
         if station_id is None:
             continue
         meta[str(station_id)] = {
+            "station_id": str(station_id),
             "station_name": _first_non_empty(
                 station,
                 ["STATIONNAME", "StationName", "station_name", "stationname", "NAME", "Name", "name"],
@@ -643,6 +652,11 @@ def _station_meta_by_id(stations: list[dict[str, Any]]) -> dict[str, dict[str, A
                     "运维单位",
                 ],
             ),
+            # 组分站水印试点用：城市/地址参与地点比对，坐标参与距离比对（组分站常缺失）。
+            "city_name": _first_non_empty(station, ["CITYNAME", "CityName", "city_name", "cityname", "CITY", "city"]),
+            "address": _first_non_empty(station, ["ADDRESS", "Address", "address"]),
+            "longitude": _first_non_empty(station, ["LONGITUDE", "Longitude", "longitude"]),
+            "latitude": _first_non_empty(station, ["LATITUDE", "Latitude", "latitude"]),
         }
     return meta
 
@@ -675,6 +689,11 @@ def _normalize_dataset_filter(filter_config: WorkOrderDatasetFilter | int) -> Wo
 
 def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]:
     filters = _normalize_dataset_filter(filter_config)
+    if _clean_values(filters.operation_units):
+        # 源库没有可用的站点→运维单位维表关联；静默忽略会放大取数范围，必须显式失败。
+        raise ValueError(
+            "operation_units 过滤仅支持本地 guangdong_mart 数据源（OPS_AUDIT_DATA_SOURCE=local）"
+        )
     limit = max(1, min(int(filters.limit or 200), 3000))
     station_ids = _clean_values(filters.station_ids)
     requested_order_types = _clean_values(filters.order_types)
@@ -1783,10 +1802,14 @@ def _run_one_flow_visual_task(task: dict[str, Any]) -> list[Issue]:
         with llm_service.use_provider_model(target["provider"], target["model"]):
             if task.get("task_type") == "multipoint_curve_visual":
                 run_multipoint_curve_visual_task(task, issues)
+            elif task.get("task_type") == "sup_watermark":
+                run_sup_watermark_task(task, issues)
             else:
                 run_flow_visual_task(task, issues)
     elif task.get("task_type") == "multipoint_curve_visual":
         run_multipoint_curve_visual_task(task, issues)
+    elif task.get("task_type") == "sup_watermark":
+        run_sup_watermark_task(task, issues)
     else:
         run_flow_visual_task(task, issues)
     selected_rule_id = str(task.get("visual_rule_id") or "").strip()
@@ -1835,6 +1858,18 @@ def _visual_rule_ids_for_task(task: dict[str, Any]) -> set[str]:
     if tables & PM_TEMP_PRESSURE_VISUAL_RULE_TABLES:
         return {"ATTACHMENT_PM_TEMP_PRESSURE_VALUE_MISMATCH"}
     return set()
+
+
+def _sup_watermark_run_cap() -> int | None:
+    """组分站水印试点的运行级视觉调用上限（超出部分丢弃，先到先得）。"""
+
+    raw = os.getenv("OPS_AUDIT_SUP_WATERMARK_MAX_TASKS", "")
+    if not raw.strip():
+        return None
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return None
 
 
 def _is_void_order(order: dict[str, Any], forms: list[tuple[str, dict[str, Any]]]) -> bool:
@@ -1946,6 +1981,7 @@ def audit_dataset(
         }
     attachments_by_code = _group_records_by_order_code(dataset.get("attachments", []), ["refid", "REFID", "remark", "REMARK"])
     wo_commonfile_by_code = _group_records_by_order_code(dataset.get("wo_commonfile", []), ["REFID", "refid"])
+    sup_taskitems_by_code = _group_records_by_order_code(dataset.get("sup_taskitems", []), ["WORKINGORDERCODE", "workingordercode"])
     all_orders_for_device_consistency: list[dict[str, Any]] = []
     all_forms_by_code: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     o3_history_conflicts_by_code: dict[str, list[Issue]] = {}
@@ -1976,6 +2012,7 @@ def audit_dataset(
         )
 
         if enable_non_visual:
+            check_form_data_missing(order, forms, issues)
             check_workflow_completeness(order, details, issues)
             check_modular_lifecycle_closure(order, details, forms, issues)
             check_rf_required_fields(order, forms, issues)
@@ -2002,6 +2039,21 @@ def audit_dataset(
                 issues,
                 all_orders=all_orders_for_device_consistency,
                 forms_by_code=all_forms_by_code,
+            )
+            # 组分站档案驱动规则：仅对带 RULEITEMTAG 的 sup_rf_common 表单生效。
+            check_sup_form_rules(
+                order,
+                forms,
+                issues,
+                wo_commonfile_by_code.get(str(code), []),
+                sup_taskitems_by_code.get(str(code), []),
+            )
+            check_sup_attachment_rules(
+                order,
+                forms,
+                attachments_by_code.get(str(code), []),
+                wo_commonfile_by_code.get(str(code), []),
+                issues,
             )
 
             check_rf_forms(
@@ -2079,6 +2131,18 @@ def audit_dataset(
             for task in multipoint_tasks:
                 task["working_order_code"] = code
             flow_visual_tasks.extend(_select_visual_tasks(multipoint_tasks, visual_rule_id))
+            # 组分站水印试点（阶段 2.3）：问题触发 + 抽检，视觉调用量受运行级硬顶约束。
+            sup_watermark_tasks = build_sup_watermark_tasks(
+                order,
+                forms,
+                attachments_by_code.get(str(code), []),
+                wo_commonfile_by_code.get(str(code), []),
+                station_meta,
+                has_prior_issues=bool(issues),
+            )
+            for task in sup_watermark_tasks:
+                task["working_order_code"] = code
+            flow_visual_tasks.extend(_select_visual_tasks(sup_watermark_tasks, visual_rule_id))
         record_issues_by_code[str(code)] = issues
         issues_for_record = [issue for issue in dedupe_issues(issues) if not is_excluded_rule(issue.rule_id)]
         attachment_review_rules = sorted(
@@ -2112,6 +2176,17 @@ def audit_dataset(
         )
 
     if enable_visual:
+        sup_watermark_cap = _sup_watermark_run_cap()
+        if sup_watermark_cap is not None:
+            kept: list[dict[str, Any]] = []
+            extra: list[dict[str, Any]] = []
+            for task in flow_visual_tasks:
+                if task.get("task_type") == "sup_watermark":
+                    if len(kept) < sup_watermark_cap:
+                        kept.append(task)
+                    continue
+                extra.append(task)
+            flow_visual_tasks = extra + kept
         _run_flow_visual_tasks(flow_visual_tasks, record_issues_by_code)
     for record in records:
         code = str(record.get("working_order_code") or "")
@@ -2165,6 +2240,7 @@ def audit_dataset(
         for issue in record.get("candidate_issues", []):
             candidate_issue_counter[issue["rule_id"]] += 1
 
+    no_form_data_records = [record for record in records if not record.get("rf_tables")]
     return {
         "audit_info": {
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -2185,6 +2261,10 @@ def audit_dataset(
             "severity_counts": dict(severity_counter),
             "category_counts": dict(category_counter),
             "assessment_counts": dict(assessment_counter),
+            "form_data_missing_order_count": len(no_form_data_records),
+            "form_data_missing_order_codes": [
+                record.get("working_order_code") for record in no_form_data_records[:20]
+            ],
             "top_rules": issue_counter.most_common(20),
             "deterministic_top_rules": deterministic_issue_counter.most_common(20),
             "candidate_top_rules": candidate_issue_counter.most_common(20),

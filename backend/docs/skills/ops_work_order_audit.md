@@ -16,7 +16,8 @@ description: 审核运维工单并生成可追溯的最终问题清单或正式�
 - 将时间字段与完成状态分开解释。`已完成`只对应 `order_statuses=["Finish"]`，不决定使用哪个时间字段。
 - 用户说创建、发起或生成的工单时，使用 `create_time_start`、`create_time_end`；说完成、办结或结束的工单时，使用 `finish_time_start`、`finish_time_end`。
 - 用户只说“某时间段已完成工单”且未说明时间字段时，先确认；必须自行假设时，明确说明假设。
-- 仅在用户明确要求周期审核或周审核窗口时使用 `audit_window_preset="weekly_created"`。
+- 仅在用户明确要求周期审核或周审核窗口时使用 `audit_window_preset="weekly_created"`：该预设按上上周一 00:00 至上周一 00:00 的创建时间窗口取数，不限完成状态（不含作废单），滞后完成的工单由后续运行按创建窗口自然覆盖。
+- 按运维单位筛选时传 `operation_units`（站点档案中的运维单位全名，如 202805贝瑟）；该过滤仅本地数据源支持，主网按 dim_station 档案、组分站按组分网日检档案匹配站点。
 
 ### 2. 取数
 
@@ -30,8 +31,8 @@ description: 审核运维工单并生成可追溯的最终问题清单或正式�
 
 将上一步的 `data.dataset_path` 原值传给 `ops_audit_run_rules`。
 
-- 默认执行流量或读数图片视觉识别；用户要求关闭视觉识别或排查图片误判时传 `enable_visual=false`。
-- 默认执行流程、表单、数值、附件和跨工单等非视觉规则；用户明确要求仅做视觉审核时传 `enable_visual=true, enable_non_visual=false`。
+- **视觉识别默认不执行**：`enable_visual` 默认 false，定时审核与常规审核只跑流程、表单、数值、附件和跨工单等非视觉规则；仅当用户明确要求图片视觉审核/照片水印核验时传 `enable_visual=true`（可配合 `visual_rule_id` 单独触发某个视觉规则，如 `SUP_ATTACHMENT_WATERMARK_STATION`）。
+- 用户明确要求仅做视觉审核时传 `enable_visual=true, enable_non_visual=false`。
 - 工具会执行确定性规则、适用的视觉比对和语义复核，并直接生成 `final_issue_list_path`、`report_input_path` 和 `report_ready`。
 - `semantic_candidates` 是候选，`semantic_review_tasks` 是任务记录，`semantic_review_results` 是语义复核证据；正式报告问题只使用本轮 `report_input.items`。
 - `report_ready=false` 时，`pending_review_items` 或 `pending_semantic_reviews` 中仍有待核验项，不得生成正式报告；工具结果会同时返回 `human_feedback`，主助手将其转交右侧“待确认”面板。

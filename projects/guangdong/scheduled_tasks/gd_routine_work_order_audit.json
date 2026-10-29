@@ -1,7 +1,7 @@
 {
   "task_id": "gd_routine_work_order_audit",
   "name": "广东例行工单审核（常规站）",
-  "description": "每周一早上对上周创建的常规站例行维护工单（运维单、现场检查、巡检单等主网非故障类型）执行完整审核规则集（流程、表单字段、数值、附件、图片视觉识别与语义复核），生成最终问题清单并逐单提交任务调度中心待人工确认",
+  "description": "每周一早上对上上周完整周（周一至周日）创建并完成的常规站例行维护工单（运维单、现场检查、巡检单等主网非故障类型）执行完整审核规则集（流程、表单字段、数值、附件、图片视觉识别与语义复核），生成最终问题清单并逐单提交任务调度中心待人工确认",
   "execution_mode": "custom",
   "model_tier": "auto",
   "tool_names": [
@@ -20,7 +20,7 @@
   "hour": 10,
   "minute": 0,
   "enabled": true,
-  "prompt": "执行广东常规站例行工单每周审核，只读数据，不创建或派发工单，不修改审核规则。审核范围仅限常规站（主网）例行工单：工单类型 Check 运维单、SECCheck 现场检查单、SECCheckCnemc 计划内现场检查、SECFlightCheck 飞行检查、Inspection 巡检单、WorkRectify 运维工作整改单，不含组分网 SupCheck/SupSECCheck（由组分站审核任务承接），不含 Fault/SupFault 故障类。\n\n第一步：先用 list_skills 找到工单审核技能（ops_work_order_audit），再用 view_skill 读取完整流程，本提示词与技能冲突时以技能为准。\n\n第二步：调用 ops_audit_fetch_dataset 取数。审核窗口用工具的周创建窗口预设（audit_window_preset=\"weekly_created\"，即上周一至周日创建）。检查返回的数据覆盖情况（工单、流程、RF 表单、附件、设备历史），关键覆盖异常时在综述中说明影响后继续。\n\n第三步：把返回的 dataset_path 原值传给 ops_audit_run_rules，执行完整规则集（默认含图片视觉识别与非视觉规则，不关闭）。工具会输出 final_issue_list_path、report_input_path 与 report_ready。\n\n第四步：消费最终问题清单。只把本轮 report_input.items 中确认的问题工单转为审核卡片，调用 submit_task_review 逐单提交：category 固定为'工单审核'；subject_id 用工单号；title 为'工单号+站点中文名+命中规则摘要'；summary 用业务语言汇总该单命中的规则与问题事实（每条注明规则标识，300字内）；decision 按问题严重度选择（影响数据有效性或流程完整性用 needs_action，存疑或需补证据用 needs_evidence）；checks 按命中规则逐项给出（status 与 basis 来自规则结果，不重写判定）；可附 sections 键值区块（站点信息、命中规则明细）。单轮最多提交 20 张，按问题严重度优先，超出的在综述中说明数量与分布。report_ready=false 时，待核验项不入正式卡片，在综述中说明待核验数量与原因。\n\n第五步：输出 200-400 字审核综述：本周常规站例行工单审核总量与类型分布、规则命中工单数与规则分布（Top5 规则标识）、问题最集中的站点与规则、已提交卡片数、report_ready 状态与数据缺口。只使用本轮规则执行返回的真实数字与名称，不得补造；不输出表名、字段名、SQL、文件路径等内部技术语言。",
+  "prompt": "执行广东常规站例行工单每周审核，只读数据，不创建或派发工单，不修改审核规则。审核范围仅限常规站（主网）例行工单：工单类型 Check 运维单、SECCheck 现场检查单、SECCheckCnemc 计划内现场检查、SECFlightCheck 飞行检查、Inspection 巡检单、WorkRectify 运维工作整改单，不含组分网 SupCheck/SupSECCheck（由组分站审核任务承接），不含 Fault/SupFault 故障类。\n\n第一步：先用 list_skills 找到工单审核技能（ops_work_order_audit），再用 view_skill 读取完整流程，本提示词与技能冲突时以技能为准。\n\n第二步：调用 ops_audit_fetch_dataset 取数。审核窗口用工具的周创建窗口预设（audit_window_preset=\"weekly_created\"，即上上周一 00:00 至上周一 00:00 创建且完成（上上周完整自然周，如 10-26 运行审核 10-12~10-18））。检查返回的数据覆盖情况（工单、流程、RF 表单、附件、设备历史），关键覆盖异常时在综述中说明影响后继续。\n\n第三步：把返回的 dataset_path 原值传给 ops_audit_run_rules。定时审核默认不启用视觉识别（enable_visual 不传或传 false，只跑非视觉规则）；图片视觉审核/照片水印核验仅在用户明确要求时单独触发（enable_visual=true）。，执行完整规则集（默认含图片视觉识别与非视觉规则，不关闭）。工具会输出 final_issue_list_path、report_input_path 与 report_ready。\n\n第四步：消费最终问题清单。只把本轮 report_input.items 中确认的问题工单转为审核卡片，调用 submit_task_review 逐单提交：category 固定为'工单审核'；subject_id 用工单号；title 为'工单号+站点中文名+命中规则摘要'；summary 用业务语言汇总该单命中的规则与问题事实（每条注明规则标识，300字内）；decision 按问题严重度选择（影响数据有效性或流程完整性用 needs_action，存疑或需补证据用 needs_evidence）；checks 按命中规则逐项给出（status 与 basis 来自规则结果，不重写判定）；可附 sections 键值区块（站点信息、命中规则明细）。单轮最多提交 20 张，按问题严重度优先，超出的在综述中说明数量与分布。report_ready=false 时，待核验项不入正式卡片，在综述中说明待核验数量与原因。\n\n第五步：输出 200-400 字审核综述：本周常规站例行工单审核总量与类型分布、规则命中工单数与规则分布（Top5 规则标识）、问题最集中的站点与规则、已提交卡片数、report_ready 状态与数据缺口。只使用本轮规则执行返回的真实数字与名称，不得补造；不输出表名、字段名、SQL、文件路径等内部技术语言。",
   "timeout_seconds": 1800,
   "created_by": "project-default",
   "owner_user_id": "system",

@@ -23,6 +23,8 @@ const mockPayload = {
   }
 }
 
+const normalizedMockConfig = { ...mockPayload, loginUrl: '' }
+
 
 test('loads mock mode from the public business-gateway endpoint without credentials', async () => {
   const calls = []
@@ -37,11 +39,31 @@ test('loads mock mode from the public business-gateway endpoint without credenti
     }
   })
 
-  assert.deepEqual(config, mockPayload)
+  assert.deepEqual(config, normalizedMockConfig)
   assert.equal(calls[0].url, '/api/suyuan/auth/runtime-config')
   assert.equal(calls[0].options.cache, 'no-store')
   assert.equal(calls[0].options.credentials, 'same-origin')
   assert.equal(calls[0].options.signal instanceof AbortSignal, true)
+})
+
+
+test('operation mode keeps the sysCode and a login URL', () => {
+  assert.deepEqual(
+    normalizeAuthRuntimeConfig({ authMode: 'operation', sysCode: 'SUYUAN' }),
+    { authMode: 'operation', sysCode: 'SUYUAN', mockUser: null, loginUrl: '/Home/LogOn' }
+  )
+  assert.deepEqual(
+    normalizeAuthRuntimeConfig({
+      authMode: 'operation',
+      sysCode: 'SUYUAN',
+      loginUrl: '/Security/LogOn'
+    }),
+    { authMode: 'operation', sysCode: 'SUYUAN', mockUser: null, loginUrl: '/Security/LogOn' }
+  )
+  assert.deepEqual(
+    normalizeAuthRuntimeConfig({ authMode: 'operation', sysCode: '' }),
+    companyRuntimeConfig()
+  )
 })
 
 
@@ -73,11 +95,11 @@ test('initializes the auth store with the loaded runtime config', async () => {
   const authStore = { configure: config => seen.push(config) }
 
   const config = await initializeAuthStore(authStore, {
-    load: async () => mockPayload
+    load: async () => normalizedMockConfig
   })
 
-  assert.deepEqual(config, mockPayload)
-  assert.deepEqual(seen, [mockPayload])
+  assert.deepEqual(config, normalizedMockConfig)
+  assert.deepEqual(seen, [normalizedMockConfig])
 })
 
 

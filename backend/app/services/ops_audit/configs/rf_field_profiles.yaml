@@ -7,10 +7,11 @@ low_value_field_groups:
     - CHECKUSERID
     - PATROLUSER
     - PREPARERUSERID
-    # 组分站表单（sup_rf_common）三段流转人员：准备/复核/审核
+    # 组分站表单（sup_rf_common/Sup_RF_* 分表）流转人员：仅保留准备/填报人。
+    # 复核人(REVIEWUSERID)/审批人(AUDITUSERID)缺失不作为审核点
+    # （2026-10-27 业务决定，组分站周审核复盘；与 rule_review_stages.excluded
+    # 中 RF_REVIEW_EMPTY/RF_AUDITOR_EMPTY 的既定口径一致）。
     - PREPAREUSERID
-    - REVIEWUSERID
-    - AUDITUSERID
   车辆:
     - CAR
     - CARNUMBER

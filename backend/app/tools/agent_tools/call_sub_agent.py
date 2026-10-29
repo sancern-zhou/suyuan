@@ -943,7 +943,7 @@ class CallSubAgentTool(LLMTool):
                     + "\n\n## 结果交付协议\n"
                     + "分析完成后必须调用 `submit_result` 工具提交结构化结果（字段结构见工具定义），"
                     + "然后用一句话简述结论即可结束。未调用 submit_result 直接结束视为未完成交付，"
-                    + "将触发重试。\n"
+                    + "将触发重试。证据足以回答任务问题即应交付，不要为追求完整性用尽迭代预算。\n"
                 )
             iteration_limit = _resolve_child_max_iterations(target_mode, max_iterations)
             sub_agent = ReActAgent(
@@ -1450,7 +1450,9 @@ class CallSubAgentTool(LLMTool):
         if result_schema:
             parts.append(
                 "## 结构化结果协议（必须遵守）\n"
-                "最终回复必须包含一个可解析的 JSON 对象，放在 ```json 代码块中；除 JSON 外可以附简短说明。\n"
+                "交付必须通过 `submit_result` 工具完成，字段结构见该工具的参数定义；"
+                "不要在正文里输出 JSON 代码块，正文只需一句话总结结论。\n"
+                "字段参考（仅用于调用 submit_result，不是正文格式）：\n"
                 f"```json\n{json.dumps(result_schema, ensure_ascii=False, indent=2)}\n```\n"
             )
 

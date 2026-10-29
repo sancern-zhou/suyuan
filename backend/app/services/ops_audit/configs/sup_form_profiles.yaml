@@ -1,0 +1,739 @@
+# 组分站表单档案（sup_rf_common 通用宽表 + sup_rf_* 专用分表，按 ruleitemtag 建档）
+#
+# 依据：projects/guangdong/docs/sup-station-audit-phase2-plan.md（二期计划）、
+# docs/sup-audit-cases/ 18 条人工排查案例、projects/guangdong/docs/sup-instrument-rules/
+# （2026-10-27《组分仪器工单规则》22 类仪器文档转录与阈值）、
+# tag-inventory.md（2026-10-27 全分表 tag 盘点，backend/scripts/sup_tag_inventory.py）。
+# sup_rf_common 列名沿用通用命名（string1..string150 / bool_1..bool_50 /
+# time1..time4 / remark*），语义必须按 ruleitemtag 逐类型维护；专用分表
+# （deviceflowcheck / ambienttemperature / pm1monitorinspection 等）为语义化列名。
+#
+# 标注约定：
+# - confirmed: false 表示阈值/列语义来自数据推断与案例反推，待业务确认后置 true；
+#   文档红字明确且列语义已验证的可置 true；
+# - enabled: false 可按类型停用全部规则；
+# - range_columns 支持 expression+inputs（计算型区间，如 温度示值误差=读数-标准值）；
+# - formula_columns 支持 skip_if_inputs_zero（0 填充占位行跳过复算）；
+# - date_columns 的 single_date_rule 支持 not_future / not_past；
+# - abnormal_columns 声明异常取值（SUP_ABNORMAL_NO_REMARK：命中且无备注即问题）；
+# - attachments.class 取值：report（报告/证明文档）、data_file（质控数据文件）；
+# - 命中率口径：近 90 天本地库，附件要求的类型命中率 <5% 才纳入（避免把行业
+#   常态误报为问题），PDLIYearCheck 报告要求命中 ~17% 且带备注豁免。
+
+defaults:
+  # 表单备注出现这些关键词时，跳过必需附件要求（如"无需送检"年检表单）。
+  attachment_exemption_keywords: ["无需送检", "无需检定", "不适用", "无此项", "未配置", "停运"]
+  # 视觉水印试点（阶段 2.3）：抽检+问题触发模式，不做全量以控制视觉调用成本。
+  # - sample_rate: 无其他问题的工单按工单号稳定哈希抽样比例；
+  # - trigger_rule_prefixes: 工单已被这些前缀规则命中时，照片全检（问题触发）；
+  # - max_tasks_per_run / max_photos_per_order: 调用量硬顶（可用环境变量覆盖）。
+  watermark_pilot:
+    enabled: true
+    sample_rate: 0.3
+    trigger_rule_prefixes: ["SUP_", "RF_", "FLOW_", "LIFECYCLE_"]
+    max_tasks_per_run: 20
+    max_photos_per_order: 2
+    distance_km_threshold: 5
+  # 及时性计划口径（阶段 2.4）：sup_mtc_taskitem.planfinishtime 为周期任务计划完成日；
+  # 表单创建晚于计划完成日超过 plan_late_grace_days 天判"填写不及时"。
+  # 全局分布：~87% 当天完成、≤4 天占 96.6%，宽限 5 天为试点值（待业务确认）。
+  timeliness:
+    plan_late_grace_days: 5
+  attachment_classes:
+    report:
+      extensions: [".pdf", ".doc", ".docx", ".rtf"]
+      filename_keywords: ["报告", "检定证书", "校准证书", "证书", "report"]
+      description: 维护/检定/校准报告或证书文档
+    data_file:
+      extensions: [".xls", ".xlsx", ".csv", ".doc", ".docx", ".pdf"]
+      filename_keywords: ["质控", "数据", "记录表"]
+      description: 质控/核查数据文件
+
+# 全局列名字典：仅用于语义标注（普查/契约文档），不参与任何审计规则判定。
+# 列名按小写匹配；tag 级 range/formula/enum/date 组的 label 优先级更高。
+column_labels:
+  formtype: "表单类型（源系统原文）"
+  devicebrand: "设备品牌"
+  devicemodel: "设备型号"
+  devicecode: "设备编号"
+  devicenameno: "设备名称/编号（源系统原文）"
+  ruletype: "规则类型"
+  ruleitemtag: "表单类型标签"
+  pollutanttype: "监测项目"
+  prevordercode: "上一工单号"
+  currentordercode: "当前工单号"
+  prevdate: "上次计划日期"
+  nextdate: "下次计划日期"
+  currentdate: "本次计划日期"
+  diffdays: "与计划日期相差天数"
+  hmtimes: "环节/次数（源系统原文）"
+  isover: "是否超期（源系统标记）"
+  month: "月份"
+  year: "年份"
+  starttime: "开始时间"
+  endtime: "结束时间"
+  datetime1: "检查时间1"
+  datetime2: "检查时间2"
+  datetime3: "检查时间3"
+  datetime4: "检查时间4"
+  calibrationdate: "校准日期"
+  calibrationno: "校准编号"
+  calibrationresult: "校准结果"
+  standardgas: "标准气体"
+  gassourceno: "标气瓶编号"
+  gasexpirationdate: "标气有效期"
+  gasmic: "标气浓度"
+  ppb: "浓度（ppb）"
+  ppm: "浓度（ppm）"
+  ppmcode: "标气编号（ppm 组）"
+  temperature: "温度"
+  humidity: "湿度"
+  pressure: "压力"
+  integratedtemp: "积分温度"
+  denuderresult: "去除器检查结果"
+  aersolresult: "气溶胶检查结果"
+  iconeresult: "离子色谱检查结果"
+  anioneluentresult: "阴离子淋洗液检查结果"
+  instrumentstatusresult: "仪器状态检查结果"
+  steamgeneratorresult: "蒸汽发生器检查结果"
+  anioncolumnresult: "阴离子色谱柱检查结果"
+  anionpressureresult: "阴离子压力检查结果"
+  cationpressureresult: "阳离子压力检查结果"
+  weekdatacontrol: "周检-数据控制检查结果"
+  weekattribute: "周检-仪器参数/属性检查结果"
+  weekdewaterbottle: "周检-排水瓶检查结果"
+  weekzeropointtest: "周检-零点测试结果"
+  weekstabilitytest: "周检-稳定性测试结果"
+  monthsamplelinetube: "月检-采样管路检查结果"
+  monthcap: "月检-滤帽检查结果"
+  monthcutter: "月检-切割器检查结果"
+  monthdate: "月检-日期/时间检查结果"
+  quartertrafficv: "季检-流量检查结果"
+  quarterleaktest: "季检-泄漏测试结果"
+  ondemandopticalcavity: "按需-光腔检查结果"
+  ondemandlubrication: "按需-润滑维护结果"
+  ondemandpapertape: "按需-纸带检查结果"
+  ondemandfilter: "按需-滤膜检查结果"
+  ondemandptinspect: "按需-纸带检查项"
+  ondemandfinspect: "按需-滤膜检查项"
+  calibrationpoint: "校准膜核查校准点"
+  originalvalue: "校准膜核查原始值"
+  currentvalue: "校准膜核查当前值"
+  merror: "校准膜测定误差(%)"
+  atdisplayvalue: "环境温度显示值"
+  tdisplayvalue: "温度显示值"
+  athumidityvalue: "环境湿度显示值"
+  thumidityvalue: "湿度显示值"
+  pgdisplayvalue: "压力显示值"
+  pgtvalue: "压力标准值"
+  ftmodel: "参考流量计型号"
+  ftnumber: "参考流量计编号"
+  ttmodel: "参考温度计型号"
+  ttnumber: "参考温度计编号"
+  htmodel: "参考湿度计型号"
+  htnumber: "参考湿度计编号"
+  btmodel: "参考气压计型号"
+  btnumber: "参考气压计编号"
+  ttvalidity: "温度计检定有效期"
+  ftvalidity: "流量计检定有效期"
+  htvalidity: "湿度计检定有效期"
+  btvalidity: "气压计检定有效期"
+  dtisitcalibrated: "温度计是否在检定有效期内"
+  ipisitcalibrated: "压力计是否在检定有效期内"
+  flowisitcalibrated: "流量计是否在检定有效期内"
+  alineisitcalibrated: "采样管线是否已校准/检查"
+  timeisitcalibrated: "计时器是否已校准"
+  papertapeisitcalibrated: "纸带是否正常"
+  atisitcalibrated: "环境温度传感器是否正常"
+  ahisitcalibrated: "环境湿度传感器是否正常"
+  pgisitcalibrated: "压力传感器是否正常"
+  externalisitclean: "仪器外部是否清洁"
+  insideisitclean: "仪器内部是否清洁"
+  spwhether: "采样口/采样头检查是否通过"
+  idbwhether: "进气/干燥瓶检查是否通过"
+  shwhether: "采样头检查是否通过"
+  leakwhether: "是否漏气"
+  isitcomplete: "巡检项目是否完整"
+  ttisitcomplete: "温度计检定信息是否完整"
+  htisitcomplete: "湿度计检定信息是否完整"
+  btisitcomplete: "气压计检定信息是否完整"
+  flowermodel1: "参考流量计1型号"
+  flowercode1: "参考流量计1编号"
+  calibratedateprev1: "参考流量计1上次检定日期"
+  calibratedatenext1: "参考流量计1下次检定日期"
+  slope1: "参考流量计1校准曲线斜率"
+  intercept1: "参考流量计1校准曲线截距"
+  r1: "参考流量计1校准曲线相关系数"
+  flowermodel2: "参考流量计2型号"
+  flowercode2: "参考流量计2编号"
+  calibratedateprev2: "参考流量计2上次检定日期"
+  calibratedatenext2: "参考流量计2下次检定日期"
+  slope2: "参考流量计2校准曲线斜率"
+  intercept2: "参考流量计2校准曲线截距"
+  r2: "参考流量计2校准曲线相关系数"
+  targetvalue1: "校准前目标流量值"
+  displayvalue1: "校准前仪器显示流量值"
+  correctionvalue1: "校准前已修正标准值"
+  error1: "校准前流量相对误差(%)"
+  indicationerror1: "校准前示值误差(%)"
+  isok1: "校准前是否合格（源系统标记）"
+  iscalibrate1: "校准前是否执行校准（源系统标记）"
+  targetvalue2: "校准后目标流量值"
+  displayvalue2: "校准后仪器显示流量值"
+  correctionvalue2: "校准后已修正标准值"
+  error2: "校准后流量相对误差(%)"
+  indicationerror2: "校准后示值误差(%)"
+  isok2: "校准后是否合格（源系统标记）"
+  iscalibrate2: "校准后是否执行校准（源系统标记）"
+  devicevalue1: "设备读数1"
+  devicevalue2: "设备读数2"
+  iscalibrate3: "校准标记3（源系统原文）"
+  iscalibrate4: "校准标记4（源系统原文）"
+  setflowvalue1: "五点核查设定流量1"
+  setflowvalue2: "五点核查设定流量2"
+  setflowvalue3: "五点核查设定流量3"
+  setflowvalue4: "五点核查设定流量4"
+  setflowvalue5: "五点核查设定流量5"
+  actualflowvalue1: "五点核查实测流量1"
+  actualflowvalue2: "五点核查实测流量2"
+  actualflowvalue3: "五点核查实测流量3"
+  actualflowvalue4: "五点核查实测流量4"
+  actualflowvalue5: "五点核查实测流量5"
+  relativeerror1: "流量相对误差1(%)"
+  relativeerror2: "流量相对误差2(%)"
+  relativeerror3: "流量相对误差3(%)"
+  relativeerror4: "流量相对误差4(%)"
+  relativeerror5: "流量相对误差5(%)"
+  curveequation: "拟合曲线方程（文本原文）"
+  coefficient: "拟合曲线相关系数"
+  liquidflowsetvalue: "液体流量设定值"
+  liquidactualflowvalue1: "液体流量实测值1"
+  liquidactualflowvalue2: "液体流量实测值2"
+  liquidactualflowvalue3: "液体流量实测值3"
+  liquidflowstandarddeviation: "液体流量标准差"
+  isliquidflowqualified: "液体流量是否合格（源系统标记）"
+  t_model: "参考温度计型号"
+  t_code: "参考温度计编号"
+  t_range: "参考温度计量程"
+  t_revised: "温度修正值"
+  t_prevdate: "参考温度计上次检定日期"
+  t_nextdate: "参考温度计下次检定日期"
+  t_r_standard: "温度标准值"
+  t_r_revised: "温度标准值修正值"
+  t_r_prevvalue: "温度校准前读数"
+  t_r_nextvalue: "温度校准后读数"
+  t_iscalibrated: "温度是否已校准（源系统标记）"
+  p_model: "参考气压计型号"
+  p_code: "参考气压计编号"
+  p_prevdate: "参考气压计上次检定日期"
+  p_nextdate: "参考气压计下次检定日期"
+  p_slope: "气压计校准曲线斜率"
+  p_intercept: "气压计校准曲线截距"
+  p_r: "气压计校准曲线相关系数"
+  p_r_standard: "气压标准值"
+  p_r_revised: "气压标准值修正值"
+  p_r_prevvalue: "气压校准前读数"
+  p_r_nextvalue: "气压校准后读数"
+  p_iscalibrated: "气压是否已校准（源系统标记）"
+  sensor: "传感器类型"
+form_profiles:
+  # ── 年度维护检定类（问题类①：缺报告/证明附件）───────────────────────────
+  Sup_RF_PDLIYearCheck:
+    display_name: 激光雷达/颗粒物等非常规仪器年度维护检定记录
+    category: year_maintenance
+    cycle: year
+    max_fill_lag_days: 60
+    required_attachments:
+      - class: report
+        severity: 高
+        suggestion: 补充年度预防性维护/检定报告扫描件（仅有过程照片不满足要求）。
+    # time1/time2 为送检起止时间（多数与检查日期同日），语义待业务确认后建档。
+
+  # ── 周质控类（问题类④数据文件、⑥日期、②及时性）────────────────────────
+  Sup_RF_Week_NMHCQC:
+    display_name: 甲烷/非甲烷总烃质控结果每周记录
+    category: week_qc
+    cycle: week
+    max_fill_lag_days: 7
+    stale_data_max_lag_days: 7
+    required_attachments:
+      - class: data_file
+        severity: 高
+        suggestion: 补充本周甲烷/非甲烷质控数据文件（Excel），仅零点/跨度照片不满足要求。
+    # 视觉水印试点（博罗石下案例：附件照片水印=河源站点）。周质控照片应落在
+    # 检查日前 7 天窗口内；地点/坐标与站点比对不一致进人工核验，不直接判失败。
+    watermark_check:
+      enabled: true
+      time_window_days: 7
+      confirmed: false
+    # 钢瓶标气（time1/time2）：口径存在"生产日期+1年"与"启用日期+1年"两种填法，
+    # 区间档位检查会产生系统性误报（真实数据 261~364 天均见），只保留有效期覆盖
+    # 检查日期（过期判定）；动态校准仪（time3/time4）校准→有效期档位判定期待业务确认，
+    # 案例实证 56 天（8/11→10/6）被人工判定"日期有误"。
+    date_columns:
+      - start: time1
+        end: time2
+        label: 标准气钢瓶有效期
+        must_cover_checkdate: true
+        confirmed: false
+      - start: time3
+        end: time4
+        label: 动态校准仪校准/有效期
+        valid_intervals_days: [30, 90, 180, 365]
+        interval_tolerance_days: 3
+        must_cover_checkdate: true
+        confirmed: false
+
+  Sup_RF_WaterSolubleIonsQuality:
+    display_name: 气体-气溶胶水溶性离子质控每周记录
+    category: week_qc
+    cycle: week
+    max_fill_lag_days: 7
+    stale_data_max_lag_days: 7
+    required_attachments:
+      - class: data_file
+        severity: 高
+        suggestion: 补充水溶性离子质控记录表数据文件；柱压等数值应在数据文件内完整填写并按范围复核。
+    range_note: 柱压超范围判定需读取 xlsx 数据文件（同 O3 量值传递 XLS 规则模式），二期扩展。
+
+  Sup_RF_HeavyMetalQuality:
+    display_name: 无机元素（重金属）质控每周记录
+    category: week_qc
+    cycle: week
+    max_fill_lag_days: 7
+    stale_data_max_lag_days: 7
+    required_attachments:
+      - class: data_file
+        severity: 高
+        suggestion: 补充重金属核查质控记录表数据文件。
+
+  Sup_RF_VocsSinglePoint:
+    display_name: VOCs 单点核查每周记录
+    category: week_qc
+    cycle: week
+    max_fill_lag_days: 7
+    stale_data_max_lag_days: 7
+    required_attachments:
+      - class: data_file
+        severity: 高
+        suggestion: 补充 VOCs 单点核查质控数据文件。
+
+  Sup_RF_Week_YT_SingleQC:
+    display_name: YT 单点质控每周记录
+    category: week_qc
+    cycle: week
+    max_fill_lag_days: 7
+    stale_data_max_lag_days: 7
+    required_attachments:
+      - class: data_file
+        severity: 高
+        suggestion: 补充 YT 单点质控数据文件。
+
+  Sup_RF_Week_HONOQC:
+    display_name: HONO 质控每周记录
+    category: week_qc
+    cycle: week
+    max_fill_lag_days: 7
+    # 两个通道标线相关系数（列语义由近 90 天样本推断，待业务确认）；
+    # 阈值 >0.995 来自《HONO》文档周质控注意栏。
+    range_columns:
+      - column: string28
+        label: 通道 1 标线相关系数R2
+        min: 0.995
+        max: 1
+        confirmed: false
+      - column: string38
+        label: 通道 2 标线相关系数R2
+        min: 0.995
+        max: 1
+        confirmed: false
+    stale_data_max_lag_days: 7
+
+  # ── 周巡检/检查类（问题类⑥日期、⑤必填）────────────────────────────────
+  Sup_RF_Week_HONOCheck:
+    display_name: HONO 分析仪运行状况检查/校准记录（每周）
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    # 案例实证：东莞东城甲醛标准溶液有效期应一个月内（配制日+30 天），
+    # 有效区间按 30/31 天档位判定。
+    date_columns:
+      - start: time1
+        end: time2
+        label: 吸收液/标准溶液配制与有效期
+        valid_intervals_days: [30, 31]
+        interval_tolerance_days: 3
+        must_cover_checkdate: true
+        confirmed: false
+
+  Sup_RF_OCECJGWeekCheck:
+    display_name: OCEC 有机碳/元素碳分析仪周巡检记录（升温程序）
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    # 案例实证：升温程序温度偏差按阶段填写，标准 ±10%；
+    # 偏差列填绝对温度（如 851.3）被人工判定"温度偏差填写有误"；
+    # "/"配说明备注（如内标阶段为降温）为合理豁免。
+    range_columns:
+      - column: string42
+        remark_column: string43
+        label: OC 阶段实际升温程序温度偏差
+        min: -10
+        max: 10
+        unit: "%"
+        confirmed: false
+      - column: string44
+        remark_column: string45
+        label: EC 阶段实际升温程序温度偏差
+        min: -10
+        max: 10
+        unit: "%"
+        confirmed: false
+      - column: string46
+        remark_column: string47
+        label: 内标阶段实际升温程序温度偏差
+        min: -10
+        max: 10
+        unit: "%"
+        confirmed: false
+    required_value_columns:
+      - column: string33
+        remark_column: string34
+        label: OC 阶段实际炉温
+      - column: string35
+        remark_column: string36
+        label: EC 阶段实际炉温
+      - column: string42
+        remark_column: string43
+        label: OC 阶段升温程序温度偏差
+      - column: string44
+        remark_column: string45
+        label: EC 阶段升温程序温度偏差
+
+  # ── 流量/校准核查类（问题类③公式可复算）────────────────────────────────
+  Sup_RF_PANsFlowCheck:
+    display_name: PANs 校准仪流量季度检查记录
+    category: flow_check
+    cycle: quarter
+    max_fill_lag_days: 31
+    # 案例实证（潮州西园路，工单已退回修改）：设定误差 =（仪器读数-设定值）/设定值×100%；
+    # 每个流量点列序为 设定值/仪器读数/流量计读数，案例单三个点的误差均按流量计读数
+    # 误算（如点 2 填 0.5%，按仪器读数复算应为 27.7%）。阈值待业务确认。
+    formula_columns:
+      - target: string16
+        expression: "({string14}-{string13})/{string13}*100"
+        inputs: [string14, string13]
+        label: 流量点 1 设定误差（仪器读数-设定值）
+        unit: "%"
+        tolerance: 0.5
+        tolerance_mode: absolute
+        confirmed: false
+      - target: string20
+        expression: "({string18}-{string17})/{string17}*100"
+        inputs: [string18, string17]
+        label: 流量点 2 设定误差（仪器读数-设定值）
+        unit: "%"
+        tolerance: 0.5
+        tolerance_mode: absolute
+        confirmed: false
+      - target: string24
+        expression: "({string22}-{string21})/{string21}*100"
+        inputs: [string22, string21]
+        label: 流量点 3 设定误差（仪器读数-设定值）
+        unit: "%"
+        tolerance: 0.5
+        tolerance_mode: absolute
+        confirmed: false
+    range_columns:
+      - column: string16
+        label: 流量点 1 设定误差
+        min: -2
+        max: 2
+        unit: "%"
+        confirmed: true
+      - column: string20
+        label: 流量点 2 设定误差
+        min: -2
+        max: 2
+        unit: "%"
+        confirmed: true
+      - column: string24
+        label: 流量点 3 设定误差
+        min: -2
+        max: 2
+        unit: "%"
+        confirmed: true
+
+  # ── 半年/年度维护类（问题类②及时性）────────────────────────────────────
+  Sup_RF_HY_NMHCMaintenanceRecord:
+    display_name: 甲烷/非甲烷总烃分析仪半年维护记录
+    category: halfyear_maintenance
+    cycle: halfyear
+    max_fill_lag_days: 45
+    # 附件以现场照片为主（近 90 天数据文件覆盖率 52%），不设报告硬性要求。
+
+  Sup_RF_NMHCAnalyzerRecord:
+    display_name: 甲烷/非甲烷总烃分析仪年度标气核查记录
+    category: year_maintenance
+    cycle: year
+    max_fill_lag_days: 60
+
+  Sup_RF_PANsStabilityCheck:
+    display_name: PANs 稳定性年度核查记录
+    category: year_check
+    cycle: year
+    max_fill_lag_days: 60
+
+  Sup_RF_Week_BJCCheck:
+    display_name: BC（黑碳）仪周检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+
+  Sup_RF_OcecHeliumMethaneCheck:
+    display_name: OCEC 半年氦甲烷通道流量核查记录
+    category: halfyear_check
+    cycle: halfyear
+    max_fill_lag_days: 45
+
+  Sup_RF_VoCsTianHongCheck:
+    display_name: VOCs 天虹仪器周检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+
+  Sup_RF_Quarter_YT_NMHCRecord:
+    display_name: YT 甲烷/非甲烷季度核查记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+
+  Sup_RF_OcecOrganicCarbonCheck:
+    display_name: OCEC 有机碳检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+
+  Sup_RF_TurbidiMeterRoutineCheck:
+    display_name: 浊度仪例行检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+
+  Sup_RF_TurbidiMeterCalibration:
+    display_name: 浊度仪校准记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_OCECSamplingFlowCheck:
+    display_name: OCEC 采样流量检查记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+
+  Sup_RF_HP_Precision:
+    display_name: HP 精密度检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+
+  # ── 通用表单族（2026-10-27 tag 盘点建档，见 docs/sup-instrument-rules/tag-inventory.md）──
+  # Sup_RF_DeviceFlowCheck 为 PM1/氨/BC/水溶性离子/重金属共用的采样流量核查表
+  # （sup_rf_deviceflowcheck 分表，语义化列名，公式已按样本行验证）；
+  # 判据：《组分仪器工单规则》流量核查通用红字——相对误差≤±5%、示值误差≤±2%。
+  Sup_RF_DeviceFlowCheck: &sup_device_flow_check_profile
+    display_name: 仪器采样流量核查校准记录
+    category: flow_check
+    cycle: month
+    max_fill_lag_days: 31
+    formula_columns:
+      - target: correctionvalue1
+        expression: "{displayvalue1}*{slope1}+{intercept1}"
+        inputs: [displayvalue1, slope1, intercept1]
+        label: 校准前已修正标准值（显示值×斜率+截距）
+        tolerance: 0.02
+        tolerance_mode: absolute
+        confirmed: true
+      - target: error1
+        expression: "({correctionvalue1}-{targetvalue1})/{targetvalue1}*100"
+        inputs: [correctionvalue1, targetvalue1]
+        label: 校准前流量相对误差(%)
+        tolerance: 0.05
+        tolerance_mode: absolute
+        confirmed: true
+      - target: correctionvalue2
+        expression: "{displayvalue2}*{slope1}+{intercept1}"
+        inputs: [displayvalue2, slope1, intercept1]
+        label: 校准后已修正标准值（显示值×斜率+截距）
+        tolerance: 0.02
+        tolerance_mode: absolute
+        skip_if_inputs_zero: true
+        confirmed: true
+      - target: error2
+        expression: "({correctionvalue2}-{targetvalue2})/{targetvalue2}*100"
+        inputs: [correctionvalue2, targetvalue2]
+        label: 校准后流量相对误差(%)
+        tolerance: 0.05
+        tolerance_mode: absolute
+        skip_if_inputs_zero: true
+        confirmed: true
+    range_columns:
+      - column: error1
+        label: 校准前流量相对误差
+        min: -5
+        max: 5
+        unit: "%"
+        confirmed: true
+      - column: indicationerror1
+        label: 校准前示值误差
+        min: -2
+        max: 2
+        unit: "%"
+        confirmed: true
+      - column: error2
+        label: 校准后流量相对误差
+        min: -5
+        max: 5
+        unit: "%"
+        confirmed: true
+      - column: indicationerror2
+        label: 校准后示值误差
+        min: -2
+        max: 2
+        unit: "%"
+        confirmed: true
+    date_columns:
+      - start: calibratedateprev1
+        end: calibratedatenext1
+        label: 参考流量计检定有效期
+        must_cover_checkdate: true
+        confirmed: true
+      - start: calibratedateprev1
+        label: 参考流量计上次检定日期
+        single_date_rule: not_future
+        confirmed: true
+
+  Sup_RF_DeviceFlowCheck_PTRMS: *sup_device_flow_check_profile
+
+  # 温压核查族（sup_rf_ambienttemperature 分表，PM1/重金属/水溶性离子/OCEC/CO2 共用）；
+  # 判据：《组分仪器工单规则》温压核查红框——温度误差≤±2℃、气压误差≤±1kPa。
+  Sup_RF_AmbientTemperature:
+    display_name: 仪器环境温度和压力校准记录
+    category: ambient_check
+    cycle: month
+    max_fill_lag_days: 10
+    range_columns:
+      - label: 温度示值误差（校准前）
+        expression: "({t_r_prevvalue}-{t_r_standard})"
+        inputs: [t_r_prevvalue, t_r_standard]
+        min: -2
+        max: 2
+        unit: ℃
+        confirmed: true
+      - label: 温度示值误差（校准后）
+        expression: "({t_r_nextvalue}-{t_r_standard})"
+        inputs: [t_r_nextvalue, t_r_standard]
+        min: -2
+        max: 2
+        unit: ℃
+        confirmed: true
+      - label: 气压示值误差（校准前）
+        expression: "({p_r_prevvalue}-{p_r_standard})"
+        inputs: [p_r_prevvalue, p_r_standard]
+        min: -1
+        max: 1
+        unit: kPa
+        confirmed: true
+      - label: 气压示值误差（校准后）
+        expression: "({p_r_nextvalue}-{p_r_standard})"
+        inputs: [p_r_nextvalue, p_r_standard]
+        min: -1
+        max: 1
+        unit: kPa
+        confirmed: true
+    date_columns:
+      - start: t_prevdate
+        end: t_nextdate
+        label: 参考温度计校准有效期
+        must_cover_checkdate: true
+        confirmed: false
+      - start: p_prevdate
+        end: p_nextdate
+        label: 参考气压计校准有效期
+        must_cover_checkdate: true
+        confirmed: false
+
+  # PM1 月巡查校准膜误差（sup_rf_pm1monitorinspection 分表）；阈值 ±5% 来自《PM1》文档。
+  Sup_RF_PM1MonitorInspection_Month:
+    display_name: PM1 监测仪月巡查记录（含校准膜核查）
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+    range_columns:
+      - column: merror
+        label: 校准膜测定误差
+        min: -5
+        max: 5
+        unit: "%"
+        confirmed: true
+
+  # PANs 重复性年度核查（RSD≤3%，来自《PANs》文档红字；列语义按样本推断）。
+  Sup_RF_PANsRepeatabilityCheck:
+    display_name: PANs 重复性年度核查记录
+    category: year_check
+    cycle: year
+    max_fill_lag_days: 60
+    range_columns:
+      - column: string15
+        label: 相对标准偏差RSD
+        min: 0
+        max: 3
+        unit: "%"
+        confirmed: false
+
+  # PANs 周巡检单点标定曲线 R2≥0.995（文档判据；string19 列语义按样本推断）。
+  Sup_RF_PANsWeekCheck:
+    display_name: PANs 分析仪周巡检记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    range_columns:
+      - column: string19
+        label: 单点标定校准曲线相关系数R2
+        min: 0.995
+        max: 1
+        confirmed: false
+
+  # PANs 工作曲线月校准：红字"多点标曲结果最新要求为R2≥0.999"（string48 按样本推断）。
+  Sup_RF_PANsWorkCurveCalibration:
+    display_name: PANs 分析仪工作曲线月校准记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+    range_columns:
+      - column: string48
+        label: 多点标曲相关系数R2
+        min: 0.999
+        max: 1
+        confirmed: false
+
+  # 优泰甲烷/非甲烷月度验漏：偏差要求 ≤1 mL/min（文档红框；列语义按样本推断）。
+  Sup_RF_Month_YT_LeakChecking:
+    display_name: 甲烷/非甲烷总烃分析仪验漏记录（月度）
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+    range_columns:
+      - column: string4
+        label: 验漏偏差 1
+        min: -1
+        max: 1
+        unit: mL/min
+        confirmed: false
+      - column: string5
+        label: 验漏偏差 2
+        min: -1
+        max: 1
+        unit: mL/min
+        confirmed: false

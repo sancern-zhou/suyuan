@@ -46,6 +46,7 @@ TABLE_ORDER = [
     "dim_station",
     "dim_device",
     "dim_user",
+    "dim_station_user",
     "mart_performance_analysis",
     "opa_performance",
     "opa_stationperformancescore",

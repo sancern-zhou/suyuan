@@ -5,13 +5,17 @@ rem Keep this file pure ASCII (GBK codepage consoles break on UTF-8 comments).
 
 setlocal
 set RUNTIME_DIR=%~dp0..
-set GD_PYTHON=E:\Tools\Python311\python.exe
-set DBT_EXE=E:\Tools\suyuan-guangdong\dbt-venv\Scripts\dbt.exe
+set GD_PYTHON=M:\suyuan-tools\envs\backend_py311\Scripts\python.exe
+set DBT_EXE=M:\suyuan-tools\data-ops-guangdong\dbt-venv\Scripts\dbt.exe
 
 cd /d %RUNTIME_DIR%\sync
 
 rem ---- ODS incremental: work-order chain + alarms/lifecycle/task items/form bodies ----
-for %%t in (working_orders working_order_details wo_commonfile_links ALM_ALARM LOG_DEVICE Sup_RF_Common) do (
+rem WO_COMMONFILE joined 2026-10-26: was declared in sync_config but absent from
+rem every batch, freezing attachment metadata at its 2026-10-25 one-off full pull.
+rem Sup_RF_* specialized form tables joined 2026-10-26: component-station forms
+rem live here, not only in Sup_RF_Common (audit coverage gap, 17/21 orders).
+for %%t in (working_orders working_order_details wo_commonfile_links WO_COMMONFILE ALM_ALARM LOG_DEVICE Sup_RF_Common Sup_RF_PM1MonitorInspection Sup_RF_DeviceFlowCheck Sup_RF_MonitorInspection Sup_RF_AmbientTemperature) do (
     "%GD_PYTHON%" sync_table.py %%t >> sync_%%t.log 2>&1
 )
 

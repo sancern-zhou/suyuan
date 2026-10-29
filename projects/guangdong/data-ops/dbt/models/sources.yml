@@ -65,6 +65,10 @@ sources:
     description: 平台用户字典（每日全量；敏感列在同步层排除）。
   - name: sys_department
     description: 部门字典（每日全量）。
+  - name: sys_userstation
+    description: 站点-运维人员映射（dbo.SYS_USERSTATION，约 3,659 行，每日全量；dim_station_user 桥表依赖）。
+  - name: sys_departmentstation
+    description: 站点-部门映射（dbo.SYS_DEPARTMENTSTATION，约 518 行，每日全量）。
   - name: v_supcityandregionanddepartment
     description: 组分网站点-城市视图（100 站，ID 空间 1~102，每日全量）。
   - name: opa_performance
@@ -179,3 +183,215 @@ sources:
     description: 源 RF 表（全量，ops_audit 依赖）。
   - name: rf_tw_pmflowcheck
     description: 源 RF 表（全量，ops_audit 依赖）。
+  - name: sec_scoresheet
+    description: 源 dbo.SEC_ScoreSheet（每日全量，组分网表单/业务表同步）。
+  - name: sup_contractsetting
+    description: 源 dbo.Sup_ContractSetting（每日全量，组分网表单/业务表同步）。
+  - name: sup_device
+    description: 源 dbo.Sup_Device（每日增量，组分网表单/业务表同步）。
+  - name: sup_devicelog
+    description: 源 dbo.Sup_DeviceLog（每日全量，组分网表单/业务表同步）。
+  - name: sup_devicemodel
+    description: 源 dbo.Sup_DeviceModel（每日增量，组分网表单/业务表同步）。
+  - name: sup_effectrate
+    description: 源 dbo.Sup_EffectRate（每日增量，组分网表单/业务表同步）。
+  - name: sup_monthreport
+    description: 源 dbo.Sup_MonthReport（每日增量，组分网表单/业务表同步）。
+  - name: sup_mtc_device
+    description: 源 dbo.Sup_Mtc_Device（每日全量，组分网表单/业务表同步）。
+  - name: sup_nmhc_curveverificationpoint
+    description: 源 dbo.Sup_NMHC_CurveVerificationPoint（每日全量，组分网表单/业务表同步）。
+  - name: sup_nmhc_systemblank
+    description: 源 dbo.Sup_NMHC_SystemBlank（每日全量，组分网表单/业务表同步）。
+  - name: sup_powerfailurereport
+    description: 源 dbo.Sup_PowerFailureReport（每日全量，组分网表单/业务表同步）。
+  - name: sup_powerfailurereportdetail
+    description: 源 dbo.Sup_PowerFailureReportDetail（每日全量，组分网表单/业务表同步）。
+  - name: sup_pw_task
+    description: 源 dbo.Sup_Pw_Task（每日增量，组分网表单/业务表同步）。
+  - name: sup_quarterlyreportupload
+    description: 源 dbo.Sup_QuarterlyReportUpload（每日全量，组分网表单/业务表同步）。
+  - name: sup_rf_ambienttemperature
+    description: 组分站温湿度计（环境温度/气压）检查表单分表（dbo.Sup_RF_AmbientTemperature，小时级增量，ops_audit 依赖）。
+  - name: sup_rf_bcyearmaintain
+    description: 源 dbo.Sup_RF_BCYearMaintain（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_co2devicemaintain
+    description: 源 dbo.Sup_RF_CO2DeviceMaintain（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_co2halfyeardevicemaintain
+    description: 源 dbo.Sup_RF_CO2HalfYearDeviceMaintain（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_co2inspection
+    description: 源 dbo.Sup_RF_CO2Inspection（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_co2mulitypointcheck_q
+    description: 源 dbo.Sup_RF_CO2MulityPointCheck_Q（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_co2yeardevicemaintain
+    description: 源 dbo.Sup_RF_CO2YearDeviceMaintain（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_calibration_noy
+    description: 源 dbo.Sup_RF_Calibration_NOy（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_channelflowcalibration
+    description: 源 dbo.Sup_RF_ChannelFlowCalibration（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_chromatotecflowcheck
+    description: 源 dbo.Sup_RF_ChromatotecFlowCheck（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_chromatotecmonthmaintain
+    description: 源 dbo.Sup_RF_ChromatotecMonthMaintain（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_chromatotecquartermaintain
+    description: 源 dbo.Sup_RF_ChromatotecQuarterMaintain（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_chromatotecweekcheck
+    description: 源 dbo.Sup_RF_ChromatotecWeekCheck（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_co2analyzerinspection
+    description: 源 dbo.Sup_RF_Co2Analyzerinspection（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_conversionrate_noy
+    description: 源 dbo.Sup_RF_ConversionRate_NOy（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_dailyinspection
+    description: 源 dbo.Sup_RF_DailyInspection（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_deviceflowcheck
+    description: 组分站设备流量检查表单分表（dbo.Sup_RF_DeviceFlowCheck，小时级增量，ops_audit 依赖）。一行 = 一条设备流量检查/标定记录。
+  - name: sup_rf_equipmentmaintenance
+    description: 源 dbo.Sup_RF_EquipmentMaintenance（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_equipmentstatus
+    description: 源 dbo.Sup_RF_EquipmentStatus（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_gacmonthmaintain
+    description: 源 dbo.Sup_RF_GACMonthMaintain（每日全量，组分网表单/业务表同步）。
+  - name: sup_rf_gacquartermaintain
+    description: 源 dbo.Sup_RF_GACQuarterMaintain（每日全量，组分网表单/业务表同步）。
+  - name: sup_rf_gacweekmaintain
+    description: 源 dbo.Sup_RF_GACWeekMaintain（每日全量，组分网表单/业务表同步）。
+  - name: sup_rf_gacweekmaintainbymarga
+    description: 源 dbo.Sup_RF_GACWeekMaintainByMARGA（每日全量，组分网表单/业务表同步）。
+  - name: sup_rf_gacyearmaintain
+    description: 源 dbo.Sup_RF_GACYearMaintain（每日全量，组分网表单/业务表同步）。
+  - name: sup_rf_heavymetalinspection
+    description: 源 dbo.Sup_RF_HeavyMetalInspection（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_leakageratecalibration_i
+    description: 源 dbo.Sup_RF_LeakageRateCalibration_i（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_maintenancerecord
+    description: 源 dbo.Sup_RF_MaintenanceRecord（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_monitorinspection
+    description: 组分站监测仪巡检表单分表（dbo.Sup_RF_MonitorInspection，小时级增量，ops_audit 依赖）。一行 = 一条监测仪运行状况检查记录。
+  - name: sup_rf_monthdevicemaintain_noy
+    description: 源 dbo.Sup_RF_MonthDeviceMaintain_NOy（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_multicalibration
+    description: 源 dbo.Sup_RF_MultiCalibration（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_n2oanalyzerinspection
+    description: 源 dbo.Sup_RF_N2OAnalyzerinspection（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_nh3analyzerinspection
+    description: 源 dbo.Sup_RF_NH3AnalyzerInspection（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_nh3calibration
+    description: 源 dbo.Sup_RF_NH3Calibration（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_nh3conversionrate
+    description: 源 dbo.Sup_RF_NH3ConversionRate（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_nh3devicemultipoint
+    description: 源 dbo.Sup_RF_NH3DeviceMultipoint（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_nh3gaseouscalidevicecheck
+    description: 源 dbo.Sup_RF_NH3GASEOUSCALIDEVICECHECK（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_nh3instrumentdetectionlimit
+    description: 源 dbo.Sup_RF_NH3InstrumentDetectionLimit（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_nh3instrumentprecision
+    description: 源 dbo.Sup_RF_NH3InstrumentPrecision（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_nh3monthdevicemaintain
+    description: 源 dbo.Sup_RF_NH3MonthDeviceMaintain（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_nh3responsetimeinspection
+    description: 源 dbo.Sup_RF_NH3ResponseTimeInspection（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_nmhc_qualitycontroldatadetail
+    description: 源 dbo.Sup_RF_NMHC_QualityControlDataDetail（每日全量，组分网表单/业务表同步）。
+  - name: sup_rf_o3laserradarcalibration
+    description: 源 dbo.Sup_RF_O3LaserRadarCalibration（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_o3laserradarcheck
+    description: 源 dbo.Sup_RF_O3LaserRadarCheck（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_o3laserradarmaintenance
+    description: 源 dbo.Sup_RF_O3LaserRadarMaintenance（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_ocechalfyearcheck
+    description: 源 dbo.Sup_RF_OCECHalfYearCheck（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_ocecmonthcheck
+    description: 源 dbo.Sup_RF_OCECMonthCheck（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_ocecmultipointcheck
+    description: 源 dbo.Sup_RF_OCECMultipointCheck（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_ocecquarterhcheck
+    description: 源 dbo.Sup_RF_OCECQuarterhCheck（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_ocecsinglecheck
+    description: 源 dbo.Sup_RF_OCECSingleCheck（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_ocecweekcheck
+    description: 源 dbo.Sup_RF_OCECWeekCheck（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_ocecyearcheck
+    description: 源 dbo.Sup_RF_OCECYearCheck（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_pm1monitorinspection
+    description: 组分站PM1监测巡检表单分表（dbo.Sup_RF_PM1MonitorInspection，小时级增量，ops_audit 依赖）。一行 = 一条PM1巡检表单记录。
+  - name: sup_rf_ptrmsweekcheck
+    description: 源 dbo.Sup_RF_PTRMSWeekCheck（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_quarterlyequipment
+    description: 源 dbo.Sup_RF_QuarterlyEquipment（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_repairerecord
+    description: 源 dbo.Sup_RF_RepaireRecord（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_ruleitemtask
+    description: 源 dbo.Sup_RF_RuleItemTask（每日全量，组分网表单/业务表同步）。
+  - name: sup_rf_speedmetermaintain
+    description: 源 dbo.Sup_RF_SpeedMeterMaintain（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_turbidimeter
+    description: 源 dbo.Sup_RF_Turbidimeter（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_urgmonthmaintain
+    description: 源 dbo.Sup_RF_URGMonthMaintain（每日全量，组分网表单/业务表同步）。
+  - name: sup_rf_urgquartermaintain
+    description: 源 dbo.Sup_RF_URGQuarterMaintain（每日全量，组分网表单/业务表同步）。
+  - name: sup_rf_urgweekmaintain
+    description: 源 dbo.Sup_RF_URGWeekMaintain（每日全量，组分网表单/业务表同步）。
+  - name: sup_rf_urgyearmaintain
+    description: 源 dbo.Sup_RF_URGYearMaintain（每日全量，组分网表单/业务表同步）。
+  - name: sup_rf_vocqualitycontroldatadetail
+    description: 源 dbo.Sup_RF_VOCQualityControlDataDetail（每日全量，组分网表单/业务表同步）。
+  - name: sup_rf_visibilitymeter
+    description: 源 dbo.Sup_RF_VisibilityMeter（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_watersolubleionsblankcheck
+    description: 源 dbo.Sup_RF_WaterSolubleIonsBlankCheck（每日全量，组分网表单/业务表同步）。
+  - name: sup_rf_watersolubleionscalibration
+    description: 源 dbo.Sup_RF_WaterSolubleIonsCalibration（每日全量，组分网表单/业务表同步）。
+  - name: sup_rf_watersolubleionssinglecheck
+    description: 源 dbo.Sup_RF_WaterSolubleIonsSingleCheck（每日全量，组分网表单/业务表同步）。
+  - name: sup_rf_week_radiationrecord
+    description: 源 dbo.Sup_RF_Week_RadiationRecord（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_year_radiationcalibration
+    description: 源 dbo.Sup_RF_Year_RadiationCalibration（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_zerospancalibration
+    description: 源 dbo.Sup_RF_ZeroSpanCalibration（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_thybhalfyearmaintain
+    description: 源 dbo.Sup_RF_thybHalfYearMaintain（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_thybmonthmaintain
+    description: 源 dbo.Sup_RF_thybMonthMaintain（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_thybquartermaintain
+    description: 源 dbo.Sup_RF_thybQuarterMaintain（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_thybweekcheck
+    description: 源 dbo.Sup_RF_thybWeekCheck（每日增量，组分网表单/业务表同步）。
+  - name: sup_rf_thybyearmaintain
+    description: 源 dbo.Sup_RF_thybYearMaintain（每日增量，组分网表单/业务表同步）。
+  - name: sup_referencematerial
+    description: 源 dbo.Sup_ReferenceMaterial（每日增量，组分网表单/业务表同步）。
+  - name: sup_scoresheet
+    description: 源 dbo.Sup_ScoreSheet（每日全量，组分网表单/业务表同步）。
+  - name: sup_sec_configdata
+    description: 源 dbo.Sup_Sec_ConfigData（每日全量，组分网表单/业务表同步）。
+  - name: sup_vocs_curveverificationpoint
+    description: 源 dbo.Sup_VOCs_CurveVerificationPoint（每日全量，组分网表单/业务表同步）。
+  - name: sup_vocs_internalstandard
+    description: 源 dbo.Sup_VOCs_InternalStandard（每日全量，组分网表单/业务表同步）。
+  - name: sup_vocs_systemblank
+    description: 源 dbo.Sup_VOCs_SystemBlank（每日全量，组分网表单/业务表同步）。
+  - name: sup_pw_taskitem
+    description: 源 dbo.sup_Pw_TaskItem（每日增量，组分网表单/业务表同步）。
+  - name: rf_ruleitemtask
+    description: 源 dbo.RF_RuleItemTask（每日全量，2026 年起回填）。
+  - name: sec_configdata
+    description: 源 dbo.Sec_ConfigData（每日全量，2026 年起回填）。
+  - name: rf_hy_humidity
+    description: 源 dbo.RF_HY_Humidity（每日全量，2026 年起回填）。
+  - name: sec_flightcheck
+    description: 源 dbo.SEC_FlightCheck（每日全量，2026 年起回填）。
+  - name: drt_beta
+    description: 源 dbo.DRT_Beta（每日全量，2026 年起回填）。
+  - name: drt_gasanalyzer
+    description: 源 dbo.DRT_GasAnalyzer（每日全量，2026 年起回填）。
+  - name: drt_gasanalyzer_fiveparameters
+    description: 源 dbo.DRT_GasAnalyzer_FiveParameters（每日全量，2026 年起回填）。
+  - name: drt_gasanalyzer_nox
+    description: 源 dbo.DRT_GasAnalyzer_NOX（每日全量，2026 年起回填）。
+  - name: drt_teom
+    description: 源 dbo.DRT_Teom（每日全量，2026 年起回填）。
+  - name: pw_unitplan
+    description: 源 dbo.PW_UNITPLAN（每日全量，2026 年起回填）。

@@ -71,12 +71,6 @@ __all__ = [
 
 # 延迟导入工作流工具类
 try:
-    from .quick_trace_workflow import QuickTraceWorkflow
-    register_workflow_tool(QuickTraceWorkflow)
-except ImportError as e:
-    print(f"Failed to import QuickTraceWorkflow: {e}")
-
-try:
     from .deep_trace_workflow import DeepTraceWorkflow
     register_workflow_tool(DeepTraceWorkflow)
 except ImportError as e:

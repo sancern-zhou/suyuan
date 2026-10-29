@@ -27,6 +27,24 @@ export function createProjectConfig(value) {
       Object.freeze({ modeIds: Object.freeze([...(override.modeIds || [])]) })
     ])
   ))
+  const rawPlatformGuide = value.frontend.platformGuide
+  const platformGuide = rawPlatformGuide
+    ? Object.freeze({
+        intro: rawPlatformGuide.intro || '',
+        modeMotto: rawPlatformGuide.modeMotto || '',
+        modeGroups: Object.freeze((rawPlatformGuide.modeGroups || []).map(group => Object.freeze({
+          scene: group.scene,
+          sceneName: group.sceneName || '',
+          modes: Object.freeze((group.modes || []).map(mode => Object.freeze({ ...mode })))
+        }))),
+        usageModes: Object.freeze((rawPlatformGuide.usageModes || []).map(mode => Object.freeze({ ...mode }))),
+        dataGroups: Object.freeze((rawPlatformGuide.dataGroups || []).map(group => Object.freeze({
+          title: group.title,
+          rows: Object.freeze((group.rows || []).map(row => Object.freeze({ ...row })))
+        }))),
+        notices: Object.freeze([...(rawPlatformGuide.notices || [])])
+      })
+    : null
   return Object.freeze({
     schemaVersion: value.schemaVersion,
     project: value.project,
@@ -41,6 +59,7 @@ export function createProjectConfig(value) {
     agentPlatformLayout: value.frontend.agentPlatformLayout || 'scenes',
     agentScenes: Object.freeze([...(value.frontend.agentScenes || [])]),
     sidebarAgentModes: Object.freeze([...(value.frontend.sidebarAgentModes || ['query'])]),
+    platformGuide,
     hasModule: moduleId => modules.has(moduleId),
     hasFeature: featureId => features[featureId] === true,
     isFeatureEnabled: (featureId, defaultValue = false) => (

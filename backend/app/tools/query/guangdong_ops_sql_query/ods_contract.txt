@@ -1,14 +1,21 @@
 # generated from dbt/models/sources.yml + datasets/*.yaml + dbt/models by gen_ods_fallback_contract.py — DO NOT EDIT BY HAND
 # 兜底清单 = 已同步 ODS 表(sources.yml) - 已被契约覆盖的源表 + EXTRA_FALLBACK；漂移检测见 dq_check.py，库面复核见 audit_ods_coverage.py
-TABLES: rf_bcmonitorinspection,rf_hy_environmenthumidity,rf_hy_gaseouscalidevicecheck,rf_hy_noxconversionrate,rf_hy_o3valuepass,rf_hy_stationdevicemaintain,rf_hy_visibilitycali,rf_m_gaseouscalicheck,rf_m_gaseouscalidevicecheck,rf_m_gaseousflowcheck,rf_m_manualcomparison,rf_m_manualcomparisondetail,rf_m_membraneweighing,rf_m_pmdevicemaintain,rf_m_stationdevicemaintain,rf_m_stationmaintaincheck,rf_pm1monitorinspection,rf_q_gaseousflowcheck,rf_q_gaseousmultipoint_co,rf_q_gaseousmultipoint_no2,rf_q_gaseousmultipoint_o3,rf_q_gaseousmultipoint_so2,rf_q_gaseousprecision_co,rf_q_gaseousprecision_no2,rf_q_gaseousprecision_o3,rf_q_gaseousprecision_so2,rf_q_longopticalpath_no2,rf_q_longopticalpath_o3,rf_q_longopticalpath_so2,rf_q_pm10runstatuscheck,rf_q_pm25runstatuscheck,rf_q_pmpressure,rf_q_stationdeviceclean,rf_q_stationmaintaincheck,rf_sec_inspection,rf_sec_instrumentrecord,rf_sec_monitoringcheck,rf_tw_cleancuttinghead,rf_tw_pmflowcalibrate,rf_tw_pmflowcheck,rf_w_graincalibrationcheck_pm10,rf_w_graincalibrationcheck_pm25,rf_w_graincalibrationcheckattach,rf_w_longopticalpath,rf_w_standard_all,rf_y_devicechange,rf_y_devicerepair,rf_y_preventivemaintenance,sec_checkscore,sec_checkscore_sx,sec_checkscore_sxnew,sup_rf_monthnephelometercheck,sup_rf_nephelometercalibration
+TABLES: drt_beta,drt_gasanalyzer,drt_gasanalyzer_fiveparameters,drt_gasanalyzer_nox,drt_teom,pw_unitplan,rf_bcmonitorinspection,rf_hy_environmenthumidity,rf_hy_gaseouscalidevicecheck,rf_hy_humidity,rf_hy_noxconversionrate,rf_hy_o3valuepass,rf_hy_stationdevicemaintain,rf_hy_visibilitycali,rf_m_gaseouscalicheck,rf_m_gaseouscalidevicecheck,rf_m_gaseousflowcheck,rf_m_manualcomparison,rf_m_manualcomparisondetail,rf_m_membraneweighing,rf_m_pmdevicemaintain,rf_m_stationdevicemaintain,rf_m_stationmaintaincheck,rf_pm1monitorinspection,rf_q_gaseousflowcheck,rf_q_gaseousmultipoint_co,rf_q_gaseousmultipoint_no2,rf_q_gaseousmultipoint_o3,rf_q_gaseousmultipoint_so2,rf_q_gaseousprecision_co,rf_q_gaseousprecision_no2,rf_q_gaseousprecision_o3,rf_q_gaseousprecision_so2,rf_q_longopticalpath_no2,rf_q_longopticalpath_o3,rf_q_longopticalpath_so2,rf_q_pm10runstatuscheck,rf_q_pm25runstatuscheck,rf_q_pmpressure,rf_q_stationdeviceclean,rf_q_stationmaintaincheck,rf_ruleitemtask,rf_sec_inspection,rf_sec_instrumentrecord,rf_sec_monitoringcheck,rf_tw_cleancuttinghead,rf_tw_pmflowcalibrate,rf_tw_pmflowcheck,rf_w_graincalibrationcheck_pm10,rf_w_graincalibrationcheck_pm25,rf_w_graincalibrationcheckattach,rf_w_longopticalpath,rf_w_standard_all,rf_y_devicechange,rf_y_devicerepair,rf_y_preventivemaintenance,sec_checkscore,sec_checkscore_sx,sec_checkscore_sxnew,sec_configdata,sec_flightcheck,sec_scoresheet,sup_contractsetting,sup_device,sup_devicelog,sup_devicemodel,sup_effectrate,sup_monthreport,sup_mtc_device,sup_nmhc_curveverificationpoint,sup_nmhc_systemblank,sup_powerfailurereport,sup_powerfailurereportdetail,sup_pw_task,sup_pw_taskitem,sup_quarterlyreportupload,sup_referencematerial,sup_rf_bcyearmaintain,sup_rf_calibration_noy,sup_rf_channelflowcalibration,sup_rf_chromatotecflowcheck,sup_rf_chromatotecmonthmaintain,sup_rf_chromatotecquartermaintain,sup_rf_chromatotecweekcheck,sup_rf_co2analyzerinspection,sup_rf_co2devicemaintain,sup_rf_co2halfyeardevicemaintain,sup_rf_co2inspection,sup_rf_co2mulitypointcheck_q,sup_rf_co2yeardevicemaintain,sup_rf_conversionrate_noy,sup_rf_dailyinspection,sup_rf_equipmentmaintenance,sup_rf_equipmentstatus,sup_rf_gacmonthmaintain,sup_rf_gacquartermaintain,sup_rf_gacweekmaintain,sup_rf_gacweekmaintainbymarga,sup_rf_gacyearmaintain,sup_rf_heavymetalinspection,sup_rf_leakageratecalibration_i,sup_rf_maintenancerecord,sup_rf_monthdevicemaintain_noy,sup_rf_monthnephelometercheck,sup_rf_multicalibration,sup_rf_n2oanalyzerinspection,sup_rf_nephelometercalibration,sup_rf_nh3analyzerinspection,sup_rf_nh3calibration,sup_rf_nh3conversionrate,sup_rf_nh3devicemultipoint,sup_rf_nh3gaseouscalidevicecheck,sup_rf_nh3instrumentdetectionlimit,sup_rf_nh3instrumentprecision,sup_rf_nh3monthdevicemaintain,sup_rf_nh3responsetimeinspection,sup_rf_nmhc_qualitycontroldatadetail,sup_rf_o3laserradarcalibration,sup_rf_o3laserradarcheck,sup_rf_o3laserradarmaintenance,sup_rf_ocechalfyearcheck,sup_rf_ocecmonthcheck,sup_rf_ocecmultipointcheck,sup_rf_ocecquarterhcheck,sup_rf_ocecsinglecheck,sup_rf_ocecweekcheck,sup_rf_ocecyearcheck,sup_rf_ptrmsweekcheck,sup_rf_quarterlyequipment,sup_rf_repairerecord,sup_rf_ruleitemtask,sup_rf_speedmetermaintain,sup_rf_thybhalfyearmaintain,sup_rf_thybmonthmaintain,sup_rf_thybquartermaintain,sup_rf_thybweekcheck,sup_rf_thybyearmaintain,sup_rf_turbidimeter,sup_rf_urgmonthmaintain,sup_rf_urgquartermaintain,sup_rf_urgweekmaintain,sup_rf_urgyearmaintain,sup_rf_visibilitymeter,sup_rf_vocqualitycontroldatadetail,sup_rf_watersolubleionsblankcheck,sup_rf_watersolubleionscalibration,sup_rf_watersolubleionssinglecheck,sup_rf_week_radiationrecord,sup_rf_year_radiationcalibration,sup_rf_zerospancalibration,sup_scoresheet,sup_sec_configdata,sup_vocs_curveverificationpoint,sup_vocs_internalstandard,sup_vocs_systemblank,sys_departmentstation
 GUIDE_START
 
-【ODS 兜底表（原始层，中低频表单/明细取证用；共53张）】
+【ODS 兜底表（原始层，中低频表单/明细取证用；共156张）】
 仅当上方契约表无法回答时使用。兜底表为平台原值，无业务口径加工；引用请写全限定名 guangdong_ods.<表名>；查询必须带过滤条件与 LIMIT，禁止全表扫描；列结构用 describe_table 获取（表单题目项列不逐列说明，按列名语义取用）。
 
+- drt_beta：数据回补单表单（Beta 仪器类，对应 DataMakeup 工单）
+- drt_gasanalyzer：数据回补单表单（气态分析仪，含比对/质控数据列）
+- drt_gasanalyzer_fiveparameters：数据回补单表单（气态五参数）
+- drt_gasanalyzer_nox：数据回补单表单（NOx 分析仪）
+- drt_teom：数据回补单表单（TEOM 颗粒物）
+- pw_unitplan：运维单位计划（计划周期/单位/站点，计划执行台账）
 - rf_bcmonitorinspection：BC（黑碳）仪监测巡检记录表单（组分网）
 - rf_hy_environmenthumidity：环境湿度校准记录表（半年）
 - rf_hy_gaseouscalidevicecheck：气态校准设备检查记录表（半年）
+- rf_hy_humidity：海盐湿度记录表单（与 rf_hy_environmenthumidity 为两张不同表单，历史量小）
 - rf_hy_noxconversionrate：NOx 分析仪转化率检查记录表（半年）
 - rf_hy_o3valuepass：O3 校准仪（工作标准）量值传递记录表（半年）
 - rf_hy_stationdevicemaintain：站点设备维护记录表（半年）
@@ -40,6 +47,7 @@ GUIDE_START
 - rf_q_pmpressure：颗粒物压力检查记录表（季度）
 - rf_q_stationdeviceclean：站点设备清洁记录表（季度）
 - rf_q_stationmaintaincheck：站房维护检查记录表（季度）
+- rf_ruleitemtask：主网规则任务生成记录（计划任务项来源，含前后工单号与周期差；计划完成/超期溯源用）
 - rf_sec_inspection：现场检查（SEC）巡检表单
 - rf_sec_instrumentrecord：现场检查（SEC）仪器记录表单
 - rf_sec_monitoringcheck：现场检查（SEC）监测核查表单
@@ -57,6 +65,101 @@ GUIDE_START
 - sec_checkscore：现场检查评分明细（dbo.SEC_CHECKSCORE；评分溯源用，考核汇总用 mart_performance_analysis）
 - sec_checkscore_sx：现场检查评分变体表（dbo.SEC_CHECKSCORE_SX，历史留存）
 - sec_checkscore_sxnew：现场检查评分变体表（dbo.SEC_CHECKSCORE_SXNEW，历史留存）
+- sec_configdata：现场检查题目配置/评分数据（SEC 检查数据，对应组分网 sup_sec_configdata）
+- sec_flightcheck：飞行检查工单表单（SEC 现场检查体系，2026 年仍有新增）
+- sec_scoresheet：现场检查评分记录（主网 SEC 评分明细）
+- sup_contractsetting：组分网合同配置
+- sup_device：组分网设备台账
+- sup_devicelog：组分网设备状态变更日志
+- sup_devicemodel：组分网设备型号字典
+- sup_effectrate：组分网站点数据有效率统计
+- sup_monthreport：组分网月度报告数据
+- sup_mtc_device：组分网运维任务设备关联台账
+- sup_nmhc_curveverificationpoint：NMHC 曲线核查点数据（组分网质控）
+- sup_nmhc_systemblank：NMHC 系统空白数据（组分网质控）
+- sup_powerfailurereport：组分网停运申请报告主表（对应主网 SEC_BlackOutReport）
+- sup_powerfailurereportdetail：组分网停运报告明细（时段/停运原因）
+- sup_pw_task：组分网计划任务头（周期/站点，完成率统计用）
+- sup_pw_taskitem：组分网计划任务项（完成/超期/转工单明细）
+- sup_quarterlyreportupload：组分网季度报告上传记录
+- sup_referencematerial：组分网标准物质台账
+- sup_rf_bcyearmaintain：BC（黑碳）分析仪年度维护记录表单（组分网）
+- sup_rf_calibration_noy：NOy 分析仪校准记录表单（组分网）
+- sup_rf_channelflowcalibration：通道流量校准记录表单（组分网）
+- sup_rf_chromatotecflowcheck：Chromatotec 分析仪流量检查记录表单（组分网）
+- sup_rf_chromatotecmonthmaintain：Chromatotec 分析仪月维护记录表单（组分网）
+- sup_rf_chromatotecquartermaintain：Chromatotec 分析仪季维护记录表单（组分网）
+- sup_rf_chromatotecweekcheck：Chromatotec 分析仪周检记录表单（组分网）
+- sup_rf_co2analyzerinspection：CO2 分析仪巡检记录表单（组分网）
+- sup_rf_co2devicemaintain：CO2 分析仪设备维护记录表单（组分网）
+- sup_rf_co2halfyeardevicemaintain：CO2 分析仪半年维护记录表单（组分网）
+- sup_rf_co2inspection：CO2 分析仪检查记录表单（组分网）
+- sup_rf_co2mulitypointcheck_q：CO2 分析仪多点核查记录表单（季度，组分网）
+- sup_rf_co2yeardevicemaintain：CO2 分析仪年度维护记录表单（组分网）
+- sup_rf_conversionrate_noy：NOy 分析仪转化率检查记录表单（组分网）
+- sup_rf_dailyinspection：组分网设备日常巡检记录表单
+- sup_rf_equipmentmaintenance：组分网设备维护记录表单
+- sup_rf_equipmentstatus：组分网设备状态记录表单
+- sup_rf_gacmonthmaintain：GAC 月维护记录表单（组分网）
+- sup_rf_gacquartermaintain：GAC 季维护记录表单（组分网）
+- sup_rf_gacweekmaintain：GAC 周维护记录表单（组分网）
+- sup_rf_gacweekmaintainbymarga：GAC（MARGA 设备）周维护记录表单（组分网）
+- sup_rf_gacyearmaintain：GAC 年维护记录表单（组分网）
+- sup_rf_heavymetalinspection：重金属分析仪巡检记录表单（组分网）
+- sup_rf_leakageratecalibration_i：泄漏率校准记录表单（组分网）
+- sup_rf_maintenancerecord：组分网维护记录表单
+- sup_rf_monthdevicemaintain_noy：NOy 分析仪月维护记录表单（组分网）
 - sup_rf_monthnephelometercheck：组分网浊度仪月检查记录表单
+- sup_rf_multicalibration：组分网多点（多量程）校准记录表单
+- sup_rf_n2oanalyzerinspection：N2O 分析仪巡检记录表单（组分网）
 - sup_rf_nephelometercalibration：组分网浊度仪校准记录表单
+- sup_rf_nh3analyzerinspection：NH3 分析仪巡检记录表单（组分网）
+- sup_rf_nh3calibration：NH3 分析仪校准记录表单（组分网）
+- sup_rf_nh3conversionrate：NH3 分析仪转化率检查记录表单（组分网）
+- sup_rf_nh3devicemultipoint：NH3 设备多点校准记录表单（组分网）
+- sup_rf_nh3gaseouscalidevicecheck：NH3 气态校准设备检查记录表单（组分网）
+- sup_rf_nh3instrumentdetectionlimit：NH3 仪器检出限记录表单（组分网）
+- sup_rf_nh3instrumentprecision：NH3 仪器精密度记录表单（组分网）
+- sup_rf_nh3monthdevicemaintain：NH3 设备月维护记录表单（组分网）
+- sup_rf_nh3responsetimeinspection：NH3 响应时间检查记录表单（组分网）
+- sup_rf_nmhc_qualitycontroldatadetail：NMHC 质控数据明细（组分网）
+- sup_rf_o3laserradarcalibration：O3 激光雷达校准记录表单（组分网）
+- sup_rf_o3laserradarcheck：O3 激光雷达检查记录表单（组分网）
+- sup_rf_o3laserradarmaintenance：O3 激光雷达维护记录表单（组分网）
+- sup_rf_ocechalfyearcheck：OCEC 分析仪半年检记录表单（组分网）
+- sup_rf_ocecmonthcheck：OCEC 分析仪月检记录表单（组分网）
+- sup_rf_ocecmultipointcheck：OCEC 分析仪多点核查记录表单（组分网）
+- sup_rf_ocecquarterhcheck：OCEC 分析仪季检记录表单（组分网）
+- sup_rf_ocecsinglecheck：OCEC 分析仪单点核查记录表单（组分网）
+- sup_rf_ocecweekcheck：OCEC 分析仪周检记录表单（组分网）
+- sup_rf_ocecyearcheck：OCEC 分析仪年检记录表单（组分网）
+- sup_rf_ptrmsweekcheck：PTR-MS 周检记录表单（组分网）
+- sup_rf_quarterlyequipment：组分网季度设备检查记录表单
+- sup_rf_repairerecord：组分网维修记录表单
+- sup_rf_ruleitemtask：组分网规则任务生成记录（计划任务项来源）
+- sup_rf_speedmetermaintain：风速仪维护记录表单（组分网）
+- sup_rf_thybhalfyearmaintain：thyb（甲烷/非甲烷）半年维护记录表单（组分网）
+- sup_rf_thybmonthmaintain：thyb 月维护记录表单（组分网）
+- sup_rf_thybquartermaintain：thyb 季维护记录表单（组分网）
+- sup_rf_thybweekcheck：thyb 周检记录表单（组分网）
+- sup_rf_thybyearmaintain：thyb 年维护记录表单（组分网）
+- sup_rf_turbidimeter：浊度仪记录表单（组分网）
+- sup_rf_urgmonthmaintain：URG 月维护记录表单（组分网）
+- sup_rf_urgquartermaintain：URG 季维护记录表单（组分网）
+- sup_rf_urgweekmaintain：URG 周维护记录表单（组分网）
+- sup_rf_urgyearmaintain：URG 年维护记录表单（组分网）
+- sup_rf_visibilitymeter：能见度仪记录表单（组分网）
+- sup_rf_vocqualitycontroldatadetail：VOCs 质控数据明细（组分网）
+- sup_rf_watersolubleionsblankcheck：水溶性离子空白检查记录表单（组分网）
+- sup_rf_watersolubleionscalibration：水溶性离子校准记录表单（组分网）
+- sup_rf_watersolubleionssinglecheck：水溶性离子单点核查记录表单（组分网）
+- sup_rf_week_radiationrecord：辐射周检记录表单（组分网）
+- sup_rf_year_radiationcalibration：辐射年校准记录表单（组分网）
+- sup_rf_zerospancalibration：组分网零点/跨度校准记录表单
+- sup_scoresheet：组分网现场检查评分记录
+- sup_sec_configdata：组分网现场检查题目配置数据
+- sup_vocs_curveverificationpoint：VOCs 曲线核查点数据（组分网质控）
+- sup_vocs_internalstandard：VOCs 内标数据（组分网质控）
+- sup_vocs_systemblank：VOCs 系统空白数据（组分网质控）
+- sys_departmentstation：站点-部门授权映射原始表（dbo.SYS_DEPARTMENTSTATION，约 518 行；dim_station_user 的部门取自人员所属部门，本表保留源系统站点×部门关系的原始层，部门维度取证用）
 GUIDE_END

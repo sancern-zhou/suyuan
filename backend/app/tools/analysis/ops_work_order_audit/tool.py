@@ -166,7 +166,7 @@ class OpsAuditFetchDatasetTool(LLMTool):
                         },
                         "audit_window_preset": {
                             "type": "string",
-                            "description": "审核窗口预设：weekly_created 默认按最近周三回看上上周三至上周三创建且已完成工单；none 关闭默认窗口。仅用于周期审核/周审核窗口，不用于用户要求某段时间完成/办结的工单。",
+                            "description": "审核窗口预设：weekly_created 按自然周回看上上周一 00:00 至上周一 00:00 创建的工单（不限完成状态，周一运行审核上上周完整周，如 2026-10-26 运行审核 10-12~10-18 创建的工单）；none 关闭默认窗口。仅用于周期审核/周审核窗口，不用于用户要求某段时间完成/办结的工单。",
                         },
                         "evidence_level": {
                             "type": "string",
@@ -181,6 +181,11 @@ class OpsAuditFetchDatasetTool(LLMTool):
                             "type": "array",
                             "items": {"type": "string"},
                             "description": "站点ID列表。",
+                        },
+                        "operation_units": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "运维单位名称列表（与站点档案精确匹配，如 202805贝瑟）；主网按 dim_station 档案、组分站按组分网日检档案过滤站点。需要多个运维单位时本参数与 station_ids 可同时使用（取交集）。",
                         },
                         "order_type": {
                             "type": "string",
@@ -230,6 +235,7 @@ class OpsAuditFetchDatasetTool(LLMTool):
         evidence_level: str = "summary",
         station_id: Optional[str] = None,
         station_ids: Optional[list[str]] = None,
+        operation_units: Optional[list[str]] = None,
         order_type: Optional[str] = None,
         order_types: Optional[list[str]] = None,
         maintenance_type: Optional[str] = None,
@@ -249,6 +255,7 @@ class OpsAuditFetchDatasetTool(LLMTool):
                     finish_time_end=finish_time_end,
                     audit_window_preset=audit_window_preset,
                     station_ids=_merge_single_and_many(station_id, station_ids),
+                    operation_units=_as_list(operation_units),
                     order_types=_merge_single_and_many(order_type, order_types),
                     maintenance_types=_merge_single_and_many(maintenance_type, maintenance_types),
                     working_order_codes=_as_list(working_order_codes),
@@ -325,7 +332,7 @@ def _context_summary_record(result: Dict[str, Any]) -> Dict[str, Any]:
         "report_ready": result.get("report_ready"),
         "pending_review_count": result.get("pending_review_count", 0),
         "report_issue_count": result.get("report_issue_count", 0),
-        "enable_visual": result.get("enable_visual", True),
+        "enable_visual": result.get("enable_visual", False),
         "visual_rule_id": result.get("visual_rule_id"),
         "enable_non_visual": result.get("enable_non_visual", True),
         "classification_counts": result.get("summary", {}).get("audit_level_counts", {}),
@@ -460,8 +467,8 @@ class OpsAuditRunRulesTool(LLMTool):
                         },
                         "enable_visual": {
                             "type": "boolean",
-                            "description": "是否执行流量/读数照片视觉识别；默认 true。传 false 时跳过视觉识别，仅执行非视觉规则。",
-                            "default": True,
+                            "description": "是否执行流量/读数照片视觉识别与组分站水印核验；默认 false（不执行视觉识别，仅非视觉规则）。仅当用户明确要求图片视觉审核/水印核验时传 true。",
+                            "default": False,
                         },
                         "enable_non_visual": {
                             "type": "boolean",
@@ -470,7 +477,7 @@ class OpsAuditRunRulesTool(LLMTool):
                         },
                         "visual_rule_id": {
                             "type": "string",
-                            "description": "可选。单独触发一个视觉识别规则；传入后本次只构建和输出该规则的多模态审核任务。",
+                            "description": "可选。单独触发一个视觉识别规则；传入后本次只构建和输出该规则的多模态审核任务（需同时 enable_visual=true）。",
                             "enum": [
                                 "ATTACHMENT_PM_FLOW_CALIBRATION_VALUE_MISMATCH",
                                 "ATTACHMENT_GAS_FLOW_DISPLAY_VALUE_MISMATCH",
@@ -481,6 +488,7 @@ class OpsAuditRunRulesTool(LLMTool):
                                 "ATTACHMENT_O3_TRANSFER_SIX_POINT_REVIEW",
                                 "ATTACHMENT_TW_CLEANING_PHOTO_TIME_OUTSIDE_MAINTENANCE",
                                 "ATTACHMENT_HY_STATION_PHOTO_DATE_OUTSIDE_MAINTENANCE",
+                                "SUP_ATTACHMENT_WATERMARK_STATION",
                             ],
                         },
                     },
@@ -497,7 +505,7 @@ class OpsAuditRunRulesTool(LLMTool):
         dataset_path: str = "",
         output_dir: Optional[str] = None,
         evidence_level: str = "summary",
-        enable_visual: bool = True,
+        enable_visual: bool = False,
         enable_non_visual: bool = True,
         visual_rule_id: Optional[str] = None,
         **_: Any,
@@ -518,7 +526,7 @@ class OpsAuditRunRulesTool(LLMTool):
                         else None,
                     },
                 )
-            visual_enabled = _coerce_bool(enable_visual, default=True)
+            visual_enabled = _coerce_bool(enable_visual, default=False)
             non_visual_enabled = _coerce_bool(enable_non_visual, default=True)
             effective_output_dir = _effective_audit_output_dir(context, output_dir)
             result = await asyncio.to_thread(
@@ -557,6 +565,12 @@ class OpsAuditRunRulesTool(LLMTool):
         levels = result.get("summary", {}).get("audit_level_counts", {})
         top_rules = result.get("summary", {}).get("top_rules", [])[:5]
         business = result.get("business_review", {})
+        no_form_count = result.get("summary", {}).get("form_data_missing_order_count", 0)
+        no_form_text = (
+            f"其中 {no_form_count} 单无任何RF表单数据（FORM_DATA_MISSING，表单类规则无法审核，需核实填报或数据同步）。"
+            if no_form_count
+            else ""
+        )
         visual_text = (
             "图片视觉审核已执行"
             if result.get("enable_visual", True)
@@ -570,7 +584,7 @@ class OpsAuditRunRulesTool(LLMTool):
         level_text = "，".join(f"{key}{value}条" for key, value in levels.items())
         rule_text = "，".join(f"{rule_id}({count})" for rule_id, count in top_rules)
         return (
-            f"{non_visual_text}，{visual_text}。分类分布：{level_text}。"
+            f"{non_visual_text}，{visual_text}。分类分布：{level_text}。{no_form_text}"
             f"备注语义候选 {result.get('semantic_candidate_count', 0)} 条。"
             f"备注语义复核结果 {result.get('semantic_review_result_count', 0)} 条（仅用于闭环说明辅助定性）。"
             f"备注语义复核任务 {result.get('semantic_review_task_count', 0)} 条。"

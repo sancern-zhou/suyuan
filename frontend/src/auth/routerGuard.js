@@ -7,7 +7,7 @@ export function safeRedirect(value, fallback = '/') {
 }
 
 
-export function createAuthGuard(authStore) {
+export function createAuthGuard(authStore, { onOperationLoginRequired = null } = {}) {
   return async to => {
     if (!authStore.initialized) {
       try {
@@ -18,12 +18,19 @@ export function createAuthGuard(authStore) {
     }
 
     if (to.path === '/login') {
-      return authStore.isAuthenticated
-        ? safeRedirect(to.query?.redirect)
-        : true
+      if (authStore.isAuthenticated) return safeRedirect(to.query?.redirect)
+      if (authStore.authMode === 'operation' && onOperationLoginRequired) {
+        onOperationLoginRequired()
+        return false
+      }
+      return true
     }
 
     if (authStore.isAuthenticated) return true
+    if (authStore.authMode === 'operation' && onOperationLoginRequired) {
+      onOperationLoginRequired()
+      return false
+    }
     return {
       path: '/login',
       query: { redirect: safeRedirect(to.fullPath) }
@@ -32,6 +39,6 @@ export function createAuthGuard(authStore) {
 }
 
 
-export function installAuthGuard(router, authStore) {
-  router.beforeEach(createAuthGuard(authStore))
+export function installAuthGuard(router, authStore, options = {}) {
+  router.beforeEach(createAuthGuard(authStore, options))
 }

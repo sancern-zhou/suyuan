@@ -47,6 +47,8 @@ def create_social_worker_api_app(
 
     @app.middleware("http")
     async def require_internal_token(request: Request, call_next):
+        if request.url.path == "/health":
+            return await call_next(request)
         if request.url.path == "/internal/social/broadcast" and not internal_token:
             return JSONResponse(
                 {"detail": "Social worker token is not configured"},
@@ -81,6 +83,10 @@ def create_social_worker_api_app(
                     status_code=401,
                 )
         return await call_next(request)
+
+    @app.get("/health")
+    def health() -> dict:
+        return {"status": "ok"}
 
     app.include_router(social_account_router)
     app.include_router(fetcher_worker_router)

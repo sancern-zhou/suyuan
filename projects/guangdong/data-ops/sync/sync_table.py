@@ -15,6 +15,13 @@ Incremental modes per table (sync_config.json):
   - incremental_column + incremental_type=int       -> strict > watermark
   - mode "daily_full"                               -> no watermark; --full reload
       (master data without a reliable update column)
+  - refresh_window_days=N (with explicit --full)    -> rolling-window refresh:
+      re-pull rows with [incremental_column] >= now-N days and upsert. For
+      forms whose rows are edited IN PLACE during review (reject -> modify ->
+      resubmit never changes the create-time column, so the watermark can
+      never re-see them). Applies to explicit --full runs only; a first run
+      (no watermark yet) still backfills full history. To re-backfill full
+      history later, delete the watermark row or drop the option.
   - where (static SQL predicate)                    -> row scope filter applied on
       EVERY pull (full and incremental); watermark only advances over fetched
       (filtered) rows.
@@ -160,13 +167,23 @@ async def log_batch(pg, entry: dict) -> None:
     )
 
 
-def build_source_sql(spec: dict, watermark, full: bool, since: str | None) -> str:
+def build_source_sql(spec: dict, watermark, full: bool, since: str | None,
+                     refresh_days: int | None = None) -> str:
     cols = spec["columns"]
     col_sql = ", ".join(f"[{c}]" for c in cols)
     incr = spec.get("incremental_column")
     clauses = []
     if full:
-        if spec.get("apply_window") and since:
+        if refresh_days and incr:
+            # 滚动窗口全量：表单在送审流程中是原行修改（打回重报不换行，
+            # 创建时间列不变），创建时间水位永远看不见这类修改；业务约定
+            # 例行工单超 N 天自动送审、之后不再改，故只重拉近 N 天并整行
+            # upsert（config.json 的 refresh_window_days）。
+            window_start = (
+                dt.datetime.now() - dt.timedelta(days=int(refresh_days))
+            ).strftime("%Y-%m-%d %H:%M:%S.000")
+            clauses.append(f"[{incr}] >= '{window_start}'")
+        elif spec.get("apply_window") and since:
             if spec.get("initial_where_tpl"):
                 clauses.append(spec["initial_where_tpl"].format(since=since))
             elif incr:
@@ -186,9 +203,10 @@ def build_source_sql(spec: dict, watermark, full: bool, since: str | None) -> st
     return f"SELECT {col_sql} FROM {spec['source_table']}{where}{order}"
 
 
-def fetch_source_rows(spec: dict, cfg: dict, watermark, full: bool):
+def fetch_source_rows(spec: dict, cfg: dict, watermark, full: bool,
+                      refresh_days: int | None = None):
     since = cfg.get("full_load_since")
-    sql = build_source_sql(spec, watermark, full, since)
+    sql = build_source_sql(spec, watermark, full, since, refresh_days)
     conn = source_conn(cfg, spec.get("source_db"))
     try:
         cur = conn.cursor()
@@ -260,17 +278,24 @@ async def run_sync(table: str, full: bool) -> int:
     try:
         await ensure_meta(pg)
         await ensure_ods_table(pg, table, spec)
-        wm = None if full else await get_watermark(pg, table)
+        stored_wm = await get_watermark(pg, table)
+        wm = None if full else stored_wm
         if wm is None and spec.get("mode") == "daily_full":
             full = True
             entry["mode"] = mode = "full"
         # First run of an incremental table (no watermark yet) must honour the
         # full-load window instead of silently pulling all history.
         query_full = full or wm is None
-        entry["watermark_before"] = wm
-        new_wm = wm
+        entry["watermark_before"] = stored_wm
+        # Seed from the stored watermark: a --full run that fetches zero rows
+        # (rolling-window refresh on a quiet day) must not rewind or null it.
+        new_wm = stored_wm
+        # Rolling window applies to explicit --full runs only; a first run
+        # (no watermark) must still backfill full history.
+        refresh_days = spec.get("refresh_window_days") if full else None
         total = 0
-        for rows in fetch_source_rows(spec, cfg, None if query_full else wm, query_full):
+        for rows in fetch_source_rows(spec, cfg, None if query_full else wm,
+                                      query_full, refresh_days):
             new_wm = batch_watermark(spec, rows, new_wm)
             await upsert_rows(pg, table, spec, rows, batch_id)
             total += len(rows)

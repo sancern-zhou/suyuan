@@ -6,6 +6,7 @@ import redis.asyncio as redis
 
 from app.auth.identity_cache import IdentityCache
 from app.auth.middleware import GatewayAuthenticationMiddleware
+from app.auth.operation_client import OperationAuthClient
 from app.auth.platform_client import PlatformAuthClient
 from app.auth.service import AuthenticationService
 from app.auth.share_access import get_share_access_service
@@ -50,6 +51,14 @@ def configure_middleware(app: FastAPI) -> None:
     )
 
     auth_redis = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    operation_client = None
+    if settings.auth_mode == "operation":
+        operation_client = OperationAuthClient(
+            validate_url=settings.auth_operation_validate_url,
+            cookie_name=settings.auth_operation_cookie_name,
+            admin_usernames=settings.auth_operation_admin_usernames_set,
+            timeout_seconds=settings.auth_operation_timeout_seconds,
+        )
     auth_service = AuthenticationService(
         settings=settings,
         cache=IdentityCache(
@@ -63,6 +72,7 @@ def configure_middleware(app: FastAPI) -> None:
             admin_role_codes=settings.auth_admin_role_codes_set,
             platform_sys_code=settings.auth_platform_sys_code,
         ),
+        operation_client=operation_client,
     )
     app.state.auth_redis = auth_redis
     app.state.auth_service = auth_service

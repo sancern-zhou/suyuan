@@ -5,6 +5,18 @@ import { defineStore } from 'pinia';
 
 const API_BASE = `${(import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')}/scheduled-tasks`;
 
+// 浏览器在请求未拿到任何响应时抛 TypeError（Chrome: Failed to fetch）。
+// 典型来源是空闲 keep-alive 连接被关闭后仍被复用，或页面/iframe 在保存途中被卸载。
+const isNetworkFailure = error => {
+  if (!error || error.name !== 'TypeError') return false
+  return /failed to fetch|networkerror|load failed|network request failed/i.test(String(error.message || ''))
+}
+
+const networkSaveError = error => {
+  if (!isNetworkFailure(error)) return error
+  return new Error('网络连接中断，请求未完成，请重试')
+}
+
 const responseErrorMessage = async (response, fallback) => {
   const payload = await response.json().catch(() => null)
   const detail = payload?.detail
@@ -272,6 +284,24 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async createTask(data) {
+      const knownTaskIds = new Set(this.tasks.map(task => task.task_id))
+      try {
+        return await this._createTaskOnce(data)
+      } catch (error) {
+        if (!isNetworkFailure(error)) throw error
+        // 创建不是幂等操作：先确认上一次请求是否其实已落到服务端，
+        // 否则一次丢失响应的重试会生成重复任务。
+        const recovered = await this._findTaskCreatedAfterFailure(knownTaskIds, data.name)
+        if (recovered) return recovered
+        try {
+          return await this._createTaskOnce(data)
+        } catch (retryError) {
+          throw networkSaveError(retryError)
+        }
+      }
+    },
+
+    async _createTaskOnce(data) {
       const response = await authFetch(API_BASE, {
         method: 'POST',
         headers: {
@@ -290,6 +320,23 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       await this.fetchTasks();
       await this.fetchStats();
       return task;
+    },
+
+    async _findTaskCreatedAfterFailure(knownTaskIds, name) {
+      try {
+        const response = await authFetch(API_BASE)
+        if (!response.ok) return null
+        const payload = await response.json()
+        const tasks = Array.isArray(payload) ? payload.map(item => item.task || item) : []
+        const now = Date.now()
+        return tasks.find(task => {
+          if (knownTaskIds.has(task.task_id) || task.name !== name) return false
+          const created = Date.parse(task.created_at || '')
+          return Number.isFinite(created) && now - created < 120000
+        }) || null
+      } catch {
+        return null
+      }
     },
 
     // WebSocket连接
@@ -378,6 +425,19 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async updateTask(taskId, data) {
+      try {
+        await this._updateTaskOnce(taskId, data)
+      } catch (error) {
+        if (!isNetworkFailure(error)) throw error
+        try {
+          await this._updateTaskOnce(taskId, data)
+        } catch (retryError) {
+          throw networkSaveError(retryError)
+        }
+      }
+    },
+
+    async _updateTaskOnce(taskId, data) {
       const response = await authFetch(`${API_BASE}/${taskId}`, {
         method: 'PUT',
         headers: {

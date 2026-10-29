@@ -15,6 +15,7 @@ export function createAuthApi({ fetchImpl = globalThis.fetch, storage, config } 
   const crypto = createCompanyCrypto(runtime)
   const authPlatformSysCode = runtime.authPlatformSysCode || 'JCXT'
   const url = path => `${runtime.authBaseUrl || ''}${path}`
+  const backendBase = (import.meta.env?.VITE_API_BASE_URL || '/api/suyuan').replace(/\/$/, '')
   const session = () => storage?.readSession?.() || { token: '', sysCode: runtime.sysCode }
 
   return {
@@ -53,6 +54,26 @@ export function createAuthApi({ fetchImpl = globalThis.fetch, storage, config } 
         },
         body: JSON.stringify({ isLog: '1', logType: '6' })
       }))
+    },
+
+    async operationSession() {
+      const existing = session()
+      const headers = existing.token
+        ? { Authorization: `Bearer ${existing.token}` }
+        : {}
+      const response = await fetchImpl(`${backendBase}/auth/operation-session`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers
+      })
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok || body?.authenticated !== true) {
+        const error = new Error(body?.detail || 'Operation session required')
+        error.statusCode = response.status
+        throw error
+      }
+      return body
     }
   }
 }

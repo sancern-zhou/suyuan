@@ -4,7 +4,7 @@ function configuredApiBase() {
 
 
 export function companyRuntimeConfig() {
-  return { authMode: 'company', sysCode: 'SUYUAN', mockUser: null }
+  return { authMode: 'company', sysCode: 'SUYUAN', mockUser: null, loginUrl: '' }
 }
 
 
@@ -18,7 +18,15 @@ export function normalizeAuthRuntimeConfig(value) {
   if (!nonEmptyString(value.sysCode)) return companyRuntimeConfig()
   const sysCode = value.sysCode.trim()
   if (value.authMode === 'company') {
-    return { authMode: 'company', sysCode, mockUser: null }
+    return { authMode: 'company', sysCode, mockUser: null, loginUrl: '' }
+  }
+  if (value.authMode === 'operation') {
+    return {
+      authMode: 'operation',
+      sysCode,
+      mockUser: null,
+      loginUrl: nonEmptyString(value.loginUrl) ? value.loginUrl : '/Home/LogOn'
+    }
   }
   const user = value.mockUser
   if (
@@ -39,7 +47,8 @@ export function normalizeAuthRuntimeConfig(value) {
   return {
     authMode: 'mock',
     sysCode,
-    mockUser: { ...user, roleCodes: [...user.roleCodes] }
+    mockUser: { ...user, roleCodes: [...user.roleCodes] },
+    loginUrl: ''
   }
 }
 

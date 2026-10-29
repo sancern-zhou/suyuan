@@ -487,6 +487,30 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         except ImportError as e:
             logger.warning("tool_import_failed", tool="guangdong_query_metrics", error=str(e))
 
+    # 广东站点目录查询（provider + tool 成对注册进共享站点目录服务，模式同许昌）
+    if is_project_tool_enabled(context, "legacy", "guangdong_station_catalog"):
+        try:
+            from app.services.station_directory import get_station_directory_registry
+            from app.tools.guangdong.station_catalog.provider import (
+                GuangdongStationCatalogProvider,
+            )
+            from app.tools.guangdong.station_catalog.tool import GuangdongStationCatalogTool
+
+            station_provider = GuangdongStationCatalogProvider()
+            get_station_directory_registry().register(
+                station_provider, projects=["guangdong"]
+            )
+            registry.register(
+                GuangdongStationCatalogTool(provider=station_provider), priority=47
+            )
+            logger.info("tool_loaded", tool="guangdong_station_catalog")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="guangdong_station_catalog",
+                error=str(e),
+            )
+
     try:
         from app.tools.knowledge.knowledge_graph_query.tool import KnowledgeGraphQueryTool
         registry.register(KnowledgeGraphQueryTool(), priority=51)
@@ -1204,13 +1228,6 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     # ========================================
     # Workflow Tools（工作流工具 - 统一架构）
     # ========================================
-
-    try:
-        from app.tools.workflow.quick_trace_workflow import QuickTraceWorkflow
-        registry.register(QuickTraceWorkflow(), priority=45)
-        logger.info("tool_loaded", tool="quick_trace_workflow")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="quick_trace_workflow", error=str(e))
 
     try:
         from app.tools.workflow.deep_trace_workflow import DeepTraceWorkflow

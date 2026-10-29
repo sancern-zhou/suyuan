@@ -311,6 +311,12 @@ rules:
     default_severity: 高
     scope: RF_HY_O3VALUEPASS/WO_COMMONFILE
     rationale: O3量值传递表的斜率、截距、改变率、传递日期、公式和有效期应与XLS附件按标签提取的值一致；上级标准型号、设备号和序列号不纳入此项比对。
+  - rule_id: ATTACHMENT_XLS_READ_FAILED_DIAGNOSTIC
+    name: XLS 附件读取环境依赖缺失诊断
+    category: 附件读数一致性
+    default_severity: 低
+    scope: RF_HY_O3VALUEPASS/WO_COMMONFILE
+    rationale: XLS附件因运行环境缺少解析依赖（如 xlrd）无法读取时，属于环境问题而非工单填报问题，仅记入技术诊断，不进入业务问题清单。
   - rule_id: ATTACHMENT_MULTIPOINT_WATERMARK_REVIEW
     name: 多点校准附件水印和站点名称待复核
     category: 附件质量问题

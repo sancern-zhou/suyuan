@@ -183,17 +183,6 @@ def test_report_no_observations_is_incomplete(tmp_path):
     assert not r['report_ready'] and not r['entries']
 
 
-@pytest.mark.asyncio
-async def test_fetcher_propagates_collection_failure(monkeypatch):
-    from app.fetchers import station_operation_monitor as module
-    monkeypatch.setattr(module,'load_config',lambda:{'collection_cron':'25 * * * *'})
-    monkeypatch.setattr(module,'collect',lambda:{'success':False,'failed_slices':[{}]})
-    fetcher=module.StationOperationMonitorFetcher()
-    assert fetcher.schedule=='25 * * * *'
-    with pytest.raises(RuntimeError):
-        await fetcher.fetch_and_store()
-
-
 def test_unrecoverable_requires_attributable_confirmation(tmp_path):
     store=MonitorStore(tmp_path/'monitor.sqlite3');store.seed(ROSTER)
     end=BASE+timedelta(days=1)

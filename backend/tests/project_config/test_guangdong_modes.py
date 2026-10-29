@@ -30,7 +30,8 @@ def test_guangdong_manifest_declares_rollout_modes():
     assert set(parent.child_modes) == children
     assert parent.max_concurrency == 3
     assert parent.max_nodes == 12
-    assert parent.timeout_seconds == 1200
+    # 节点预算放宽后（数据 20 轮/风险 24 轮），父级 DAG 截止时间同步放宽。
+    assert parent.timeout_seconds == 1800
 
 
 def test_guangdong_mode_prompt_files_exist():
@@ -53,6 +54,8 @@ def test_gd_query_whitelist_is_semantic_layer_first():
     # 语义层与受控 SQL
     assert "guangdong_query_metrics" in tools
     assert "execute_guangdong_mart_sql" in tools
+    # 站点目录解析
+    assert "guangdong_station_catalog" in tools
     # 站点监测数据接口
     assert "query_gd_suncere_city_hour" in tools
     assert "query_station_standard_report" in tools
@@ -74,6 +77,7 @@ def test_station_fault_diagnosis_whitelist_is_graph_and_evidence_focused():
     assert "knowledge_graph_query" in tools
     assert "knowledge_graph_build" in tools
     assert "execute_guangdong_mart_sql" in tools
+    assert "guangdong_station_catalog" in tools
     assert "ask_user_question" in tools
     assert "run_agent_workflow" not in tools
 
@@ -103,6 +107,11 @@ def test_workflow_child_tool_surfaces_are_domain_scoped():
     for child in data_children:
         assert "execute_guangdong_mart_sql" in tools_by_child[child], child
         assert "create_business_chart" not in tools_by_child[child], child
+    # 站点数据节点持站点目录解析工具，其他数据节点不持有
+    assert "guangdong_station_catalog" in tools_by_child["gd_ops_data_station"]
+    for child in data_children:
+        if child != "gd_ops_data_station":
+            assert "guangdong_station_catalog" not in tools_by_child[child], child
     for analysis_child in ("gd_ops_regular_analysis", "gd_ops_risk_analysis"):
         # 分析节点只消费共享数据，不持有取数工具
         assert "execute_guangdong_mart_sql" not in tools_by_child[analysis_child]
@@ -139,6 +148,7 @@ def test_ops_mode_is_audit_focused_with_lean_whitelist():
     assert "ops_audit_run_rules" in tools
     assert "execute_guangdong_mart_sql" in tools
     assert "guangdong_query_metrics" in tools
+    assert "guangdong_station_catalog" in tools
     assert "execute_ops_sql_query" in tools
     # 工具面收敛：共享运维基线中的分析/画板/PPT 类工具不再进入
     assert "create_drawio_board" not in tools

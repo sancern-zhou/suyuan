@@ -29,6 +29,7 @@ class DatasetFetchRequest:
     finish_time_end: str | None = None
     audit_window_preset: str | None = "weekly_created"
     station_ids: list[str] | None = None
+    operation_units: list[str] | None = None
     order_types: list[str] | None = None
     maintenance_types: list[str] | None = None
     working_order_codes: list[str] | None = None
@@ -67,6 +68,7 @@ def fetch_ops_audit_dataset(request: DatasetFetchRequest) -> dict[str, Any]:
         finish_time_start=request.finish_time_start,
         finish_time_end=request.finish_time_end,
         station_ids=request.station_ids,
+        operation_units=request.operation_units,
         order_types=request.order_types,
         maintenance_types=request.maintenance_types,
         working_order_codes=request.working_order_codes,
@@ -111,16 +113,28 @@ def _apply_window_defaults(request: DatasetFetchRequest) -> DatasetFetchRequest:
         raise ValueError(f"不支持的审核窗口预设：{request.audit_window_preset}")
 
     window_config = load_audit_window_config().get("audit_window", {})
-    anchor_weekday = _weekday_index(window_config.get("anchor_weekday", "Wednesday"))
+    anchor_weekday = _weekday_index(window_config.get("anchor_weekday", "Monday"))
+    finish_start_offset = window_config.get("finish_start_offset_days")
+    finish_end_offset = window_config.get("finish_end_offset_days")
     window = calculate_weekly_created_window(
         timezone=str(window_config.get("timezone") or "Asia/Shanghai"),
         anchor_weekday=anchor_weekday,
         created_start_offset_days=int(window_config.get("created_start_offset_days", 14)),
         created_end_offset_days=int(window_config.get("created_end_offset_days", 7)),
         order_statuses=list(window_config.get("order_statuses", ["Finish"])),
+        finish_start_offset_days=(
+            int(finish_start_offset) if finish_start_offset is not None else None
+        ),
+        finish_end_offset_days=(
+            int(finish_end_offset) if finish_end_offset is not None else None
+        ),
     )
     request.create_time_start = window.create_time_start
     request.create_time_end = window.create_time_end
+    if window.finish_time_start:
+        request.finish_time_start = window.finish_time_start
+    if window.finish_time_end:
+        request.finish_time_end = window.finish_time_end
     if not request.order_statuses:
         request.order_statuses = window.order_statuses
     return request
@@ -150,7 +164,7 @@ def _weekday_index(name: Any) -> int:
         "saturday": 5,
         "sunday": 6,
     }
-    return weekdays.get(value, 2)
+    return weekdays.get(value, 0)
 
 
 def _build_dataset_summary(dataset: dict[str, Any]) -> dict[str, Any]:

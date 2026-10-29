@@ -1,8 +1,18 @@
 audit_window:
-  anchor_weekday: Wednesday
+  # 业务口径：周一审核上上周完整自然周（周一 00:00 至下周一 00:00）创建的工单，
+  # 不限完成状态（Finish/Doing/Wait，不含作废单），不约束完成时间。
+  # 周一运行时锚点=当天（本周一），创建窗口 = [anchor-14天, anchor-7天)，
+  # 即上上周一至上周日的完整自然周（如 2026-10-26 运行审核 10-12~10-18 创建的工单）；
+  # 滞后完成的工单由后续运行按创建窗口自然补齐覆盖。
+  anchor_weekday: Monday
   created_start_offset_days: 14
   created_end_offset_days: 7
+  finish_start_offset_days: null
+  finish_end_offset_days: null
+  require_finished_in_window: false
   order_statuses:
     - Finish
+    - Doing
+    - Wait
   timezone: Asia/Shanghai
   include_auto_finish_risk: true

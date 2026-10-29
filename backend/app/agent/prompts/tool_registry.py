@@ -340,8 +340,6 @@ OPS_TOOL_NAMES = [
     "agent_case_library",
     "knowledge_graph_query",
     "execute_ops_sql_query",
-    # 广东工单同步数据集（guangdong 分支；其他分支未注册时按缺名忽略）
-    "execute_guangdong_mart_sql",
     # 审核正式报告生成与验收
     "create_report_package",
     # 子 Agent 复核

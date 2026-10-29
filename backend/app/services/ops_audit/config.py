@@ -153,10 +153,16 @@ DEFAULT_ATTACHMENT_REQUIREMENTS = {
 
 DEFAULT_AUDIT_WINDOW = {
     "audit_window": {
-        "anchor_weekday": "Wednesday",
+        # 业务口径：周一审核上上周完整自然周（周一至周日）创建的工单，不限完成状态
+        # （Finish/Doing/Wait，不含作废单），不约束完成时间；滞后完成的工单由后续
+        # 运行时点按创建窗口自然补齐覆盖。
+        "anchor_weekday": "Monday",
         "created_start_offset_days": 14,
         "created_end_offset_days": 7,
-        "order_statuses": ["Finish"],
+        "finish_start_offset_days": None,
+        "finish_end_offset_days": None,
+        "require_finished_in_window": False,
+        "order_statuses": ["Finish", "Doing", "Wait"],
         "timezone": "Asia/Shanghai",
         "include_auto_finish_risk": True,
     }
@@ -219,6 +225,12 @@ DEFAULT_SCORING_CONFIG = {
         "RF_O3_TRANSFER_RESULT_INVALID",
         "ATTACHMENT_REQUIRED_MISSING",
         "ATTACHMENT_O3_VALUE_PASS_XLS_VALUE_MISMATCH",
+        "SUP_FORMULA_RECALC",
+        "SUP_RANGE_OUT_OF_SPEC",
+        "SUP_REQUIRED_VALUE_EMPTY",
+        "SUP_DATE_REASONABLENESS",
+        "SUP_ATTACHMENT_REQUIRED_MISSING",
+        "SUP_ATTACHMENT_ITEM_MATCH",
     ],
     "critical_hard_error_rules": [
         "FLOW_MISSING",
@@ -249,6 +261,10 @@ DEFAULT_SCORING_CONFIG = {
         "RF_RANGE_BY_GAS_TYPE_MISMATCH",
         "ATTACHMENT_REQUIRED_MISSING",
         "ATTACHMENT_O3_VALUE_PASS_XLS_VALUE_MISMATCH",
+        "SUP_FORMULA_RECALC",
+        "SUP_REQUIRED_VALUE_EMPTY",
+        "SUP_DATE_REASONABLENESS",
+        "SUP_ATTACHMENT_REQUIRED_MISSING",
     ],
 }
 
@@ -501,6 +517,78 @@ DEFAULT_RULE_CATALOG = [
         "scope": "RF_Q_GASEOUSMULTIPOINT_*/多点曲线图片",
         "rationale": "多点曲线应呈现与RF表单校准浓度点一致的明显梯度；疑似不一致和资料不足均需附图人工确认。",
     },
+    {
+        "rule_id": "SUP_FORMULA_RECALC",
+        "name": "组分站表单公式列复算不一致",
+        "category": "表单数值逻辑",
+        "default_severity": "高",
+        "scope": "sup_rf_common（按 ruleitemtag 档案）",
+        "rationale": "档案标注公式列（如 PANs 设定误差）可由输入列复算，填写值与复算值超容差说明填报错误。",
+    },
+    {
+        "rule_id": "SUP_RANGE_OUT_OF_SPEC",
+        "name": "组分站表单数值超出档案标准范围",
+        "category": "表单结果合理性",
+        "default_severity": "高",
+        "scope": "sup_rf_common（按 ruleitemtag 档案）",
+        "rationale": "档案标注阈值列（如升温程序温度偏差 ±10%）超范围且无备注判失败；有备注降级为人工复核。",
+    },
+    {
+        "rule_id": "SUP_REQUIRED_VALUE_EMPTY",
+        "name": "组分站表单必填数值列为空",
+        "category": "表单完整性",
+        "default_severity": "高",
+        "scope": "sup_rf_common（按 ruleitemtag 档案）",
+        "rationale": "档案标注必填数值列空白影响结果判定；“/”配说明备注视为合理豁免，“/”无备注降级人工复核。",
+    },
+    {
+        "rule_id": "SUP_DATE_REASONABLENESS",
+        "name": "组分站表单日期异常",
+        "category": "时间合理性",
+        "default_severity": "高",
+        "scope": "sup_rf_common（按 ruleitemtag 档案）",
+        "rationale": "档案标注日期对（配制/校准日期→有效期）应落在标准周期档位且覆盖检查日期，异常日期说明填报或维护超期。",
+    },
+    {
+        "rule_id": "SUP_CYCLE_TIMELINESS",
+        "name": "组分站周期表单填写不及时（表单侧口径）",
+        "category": "时间合理性",
+        "default_severity": "高",
+        "scope": "sup_rf_common（按 ruleitemtag 档案）",
+        "rationale": "质控计划数据源接入前，按检查日期距工单创建滞后、质控数据文件日期距检查日期超周期判定填写不及时。",
+    },
+    {
+        "rule_id": "SUP_ATTACHMENT_REQUIRED_MISSING",
+        "name": "组分站表单必需附件缺失",
+        "category": "附件清单",
+        "default_severity": "高",
+        "scope": "sup_rf_common/wo_commonfile（typecode=ruleitemtag）",
+        "rationale": "年度维护检定类应附报告/证书文档、周质控类应附数据文件，仅过程照片不满足归档要求。",
+    },
+    {
+        "rule_id": "SUP_ATTACHMENT_ITEM_MATCH",
+        "name": "组分站附件与表单监测项目不一致",
+        "category": "附件一致性",
+        "default_severity": "高",
+        "scope": "sup_rf_common/wo_commonfile（typecode=ruleitemtag_监测项目）",
+        "rationale": "附件类型码监测项目后缀应与表单 pollutanttype 一致，全部不符说明附件传错。",
+    },
+    {
+        "rule_id": "SUP_ATTACHMENT_WATERMARK_STATION",
+        "name": "组分站附件照片水印与站点不一致待核验",
+        "category": "附件内容质量",
+        "default_severity": "中",
+        "scope": "sup_rf_common/wo_commonfile（Week_NMHCQC 试点，抽检+问题触发）",
+        "rationale": "附件照片水印地点/坐标/时间与工单站点及检查日期比对不一致时进入人工核验，不直接判失败（博罗石下案例路径）。",
+    },
+    {
+        "rule_id": "FORM_DATA_MISSING",
+        "name": "工单无任何RF表单数据",
+        "category": "数据覆盖",
+        "default_severity": "中",
+        "scope": "全部工单（整单无 rf_forms 记录时触发）",
+        "rationale": "整单无表单数据时表单类规则全部零命中，若不显式标记会被误读为审核通过；触发说明运维漏填报或表单数据未同步/未纳入取数，需人工核实。",
+    },
 ]
 
 DEFAULT_RF_FIELD_PROFILES = {
@@ -572,6 +660,7 @@ DEFAULT_RULE_REVIEW_STAGES = {
             "ATTACHMENT_MULTIPOINT_GRADIENT_REVIEW",
             "ATTACHMENT_MULTIPOINT_WATERMARK_REVIEW",
             "ATTACHMENT_O3_TRANSFER_SIX_POINT_REVIEW",
+            "SUP_ATTACHMENT_WATERMARK_STATION",
         ],
         "manual_evidence_review": [
             "ATTACHMENT_O3_VALUE_PASS_XLS_MISSING_REVIEW",
@@ -579,7 +668,9 @@ DEFAULT_RULE_REVIEW_STAGES = {
         ],
         "technical_diagnostic": [
             "ATTACHMENT_FLOW_VISUAL_DIAGNOSTIC",
+            "ATTACHMENT_XLS_READ_FAILED_DIAGNOSTIC",
             "RF_RANGE_UNIT_MISMATCH",
+            "SUP_ATTACHMENT_WATERMARK_READ_FAILED",
         ],
         "future_ocr": [
             "ATTACHMENT_CERT_INCOMPLETE",
@@ -682,6 +773,33 @@ def load_rf_numeric_profiles() -> dict[str, Any]:
 def load_rf_enum_profiles() -> dict[str, Any]:
     """Load RF enum and boolean value profiles."""
     return load_yaml_config("rf_enum_profiles.yaml", {"profiles": []})
+
+
+SUP_FORM_PROFILES_DEFAULTS = {
+    "defaults": {
+        "attachment_exemption_keywords": ["无需送检", "无需检定", "不适用", "无此项", "未配置", "停运"],
+        "attachment_classes": {
+            "report": {
+                "extensions": [".pdf", ".doc", ".docx", ".rtf"],
+                "filename_keywords": ["报告", "检定证书", "校准证书", "证书", "report"],
+            },
+            "data_file": {
+                "extensions": [".xls", ".xlsx", ".csv", ".doc", ".docx", ".pdf"],
+                "filename_keywords": ["质控", "数据", "记录表"],
+            },
+        },
+    },
+    "form_profiles": {},
+}
+
+
+def load_sup_form_profiles() -> dict[str, Any]:
+    """Load per-ruleitemtag profiles for sup_rf_common form audits (phase 2)."""
+
+    loaded = load_yaml_config("sup_form_profiles.yaml", SUP_FORM_PROFILES_DEFAULTS)
+    merged = deepcopy(SUP_FORM_PROFILES_DEFAULTS)
+    merged.update(loaded or {})
+    return merged
 
 
 def load_semantic_review_profiles() -> dict[str, Any]:

@@ -30,7 +30,7 @@ models:
     dim_user:
       +tags: ["daily"]
     wo_commonfile:
-      +tags: ["daily"]
+      +tags: ["frequent"]
     opa_performance:
       +tags: ["daily"]
     opa_stationperformancescore:
@@ -196,4 +196,14 @@ models:
     rf_tw_pmflowcalibrate:
       +tags: ["daily"]
     rf_tw_pmflowcheck:
+      +tags: ["daily"]
+    sup_rf_pm1monitorinspection:
+      +tags: ["frequent"]
+    sup_rf_deviceflowcheck:
+      +tags: ["frequent"]
+    sup_rf_monitorinspection:
+      +tags: ["frequent"]
+    sup_rf_ambienttemperature:
+      +tags: ["frequent"]
+    dim_station_user:
       +tags: ["daily"]

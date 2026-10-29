@@ -42,7 +42,7 @@ Operation_SC_GD（dbo.working_orders / working_order_details / wo_commonfile_lin
 
 ## 与运行时目录的关系
 
-**本目录是代码源（进 git）；运行时目录（如 `E:\Tools\suyuan-guangdong`）含真实凭据、
+**本目录是代码源（进 git）；运行时目录（本机为 `M:\suyuan-tools\data-ops-guangdong`）含真实凭据、
 logs、target、node_modules 和计划任务入口。** 改代码流程：改本目录 → 同步到运行时 →
 按需重启（dbt 改动随下次调度生效；cube 改动需重启 Cube 服务）。
 

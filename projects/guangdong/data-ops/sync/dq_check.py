@@ -10,6 +10,11 @@ Checks:
   6. ods fallback    - ods_contract.txt 与同步范围一致，且 agent_reader 对兜底表
      有 SELECT 授权（同步进 guangdong_ods 的表不允许 Agent 查不到；
      gen_ods_fallback_contract.py --check + role_table_grants）
+  7. mart coverage   - guangdong_mart 里的每张表都必须出现在 agent 白名单
+     （contract.txt 主契约 或 ods_contract.txt 兜底），否则 Agent 查不到；
+     仅查 guangdong_ods 的 check 6 覆盖不到 mart-only 表（2026-10-28 复盘补的盲区）
+  8. sup profiles    - 组分站语义档案（sup_form_profiles.yaml）里每个 ruleitemtag
+     的承载表都必须可被 Agent 查询（档案有、数据查不到即 FAIL）
 
 Results appended to guangdong_sync.dq_results; exit 1 if any check fails so the
 scheduled task log shows it clearly. guangdong_query_metrics 读取本表生成
@@ -253,6 +258,118 @@ async def check_ods_fallback(pg, results):
                      f"{len(tables)} fallback tables granted")
 
 
+TOOL_DIR_PARTS = ("app", "tools", "query", "guangdong_ops_sql_query")
+
+
+def _contract_table_paths() -> tuple[str, str]:
+    """定位 agent 工具加载的两份白名单（主契约 + ODS 兜底）。
+
+    运行时目录可能在仓库外（sync_config.json 的 backend_root），优先用它；
+    未配置或路径不存在时按仓库标准布局（本文件上溯 4 级到仓库根）回退。
+    """
+    backend_root = ""
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as fh:
+            backend_root = str(json.load(fh).get("backend_root") or "")
+    except (OSError, ValueError):
+        backend_root = ""
+    if not backend_root or not os.path.isdir(backend_root):
+        here = os.path.dirname(os.path.abspath(__file__))
+        backend_root = os.path.abspath(os.path.join(here, "..", "..", "..", "..", "backend"))
+    tool_dir = os.path.join(backend_root, *TOOL_DIR_PARTS)
+    return (os.path.join(tool_dir, "contract.txt"),
+            os.path.join(tool_dir, "ods_contract.txt"))
+
+
+def _read_contract_tables(path: str) -> set[str]:
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            if line.startswith("TABLES:"):
+                return {t.strip().lower() for t in line.split(":", 1)[1].split(",") if t.strip()}
+    return set()
+
+
+async def check_mart_contract_coverage(pg, results):
+    """mart 表必须被 agent 白名单覆盖（主契约或 ODS 兜底）。
+
+    check_ods_fallback 只校验 guangdong_ods 的同步表；只存在于 guangdong_mart
+    的表（如组分网分表先在 mart 落地）是盲区：库里有数、审计读得到，但
+    execute_guangdong_mart_sql 会因白名单缺失拒绝查询。
+    """
+    try:
+        rows = await pg.fetch(
+            """SELECT c.relname AS table_name
+               FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'guangdong_mart' AND c.relkind = 'r'"""
+        )
+        mart_tables = {r["table_name"].lower() for r in rows}
+        contract_path, ods_path = _contract_table_paths()
+        allowed = _read_contract_tables(contract_path) | _read_contract_tables(ods_path)
+    except Exception as exc:  # noqa: BLE001
+        await record(pg, results, "contract", "guangdong_mart", "FAIL",
+                     f"coverage check error: {exc}")
+        return
+    missing = sorted(mart_tables - allowed)
+    if missing:
+        await record(
+            pg, results, "contract", "guangdong_mart", "FAIL",
+            f"{len(missing)} mart table(s) not in agent whitelist: "
+            + ", ".join(missing[:8])
+            + (" ..." if len(missing) > 8 else "")
+            + " (add to sources.yml/datasets then regenerate contracts)",
+        )
+    else:
+        await record(pg, results, "contract", "guangdong_mart", "OK",
+                     f"{len(mart_tables)} mart tables all covered by agent whitelist")
+
+
+async def check_sup_profile_coverage(pg, results):
+    """组分站语义档案与 Agent 白名单一致性（sup_form_profiles.yaml -> 承载表可查）。
+
+    档案按 ruleitemtag 建档但不声明承载表：若某 tag 的数据只落在未进白名单的表，
+    就会出现"规则有档案、Agent 查不到数据"。复用 check_sup_profile_coverage.py
+    的扫描与比对逻辑，避免两份实现漂移。
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        import check_sup_profile_coverage as cov
+
+        profile_tags = cov.load_profile_tags()
+        whitelist = cov.load_whitelist()
+        carriers = await cov.scan_tag_carriers(pg)
+    except Exception as exc:  # noqa: BLE001
+        await record(pg, results, "contract", "sup_form_profiles", "FAIL",
+                     f"check error: {exc}")
+        return
+
+    lower_map = {k.lower(): v for k, v in carriers.items()}
+    unreachable, no_data = [], []
+    for tag in sorted(profile_tags):
+        tables = carriers.get(tag) or lower_map.get(tag.lower()) or set()
+        if not tables:
+            no_data.append(tag)
+            continue
+        bad = sorted(t for t in tables if t not in whitelist)
+        if bad:
+            unreachable.append("%s -> %s" % (tag, ",".join(bad)))
+    if unreachable:
+        await record(
+            pg, results, "contract", "sup_form_profiles", "FAIL",
+            "%d profile tag(s) carry data only in non-whitelisted tables: " % len(unreachable)
+            + "; ".join(unreachable[:6])
+            + (" ..." if len(unreachable) > 6 else "")
+            + " (sync + whitelist the carrier table, then regenerate contracts)",
+        )
+    elif no_data:
+        await record(
+            pg, results, "contract", "sup_form_profiles", "WARN",
+            "%d profile tag(s) have no carrier rows in synced tables: " % len(no_data)
+            + ", ".join(no_data[:8]),
+        )
+    else:
+        await record(pg, results, "contract", "sup_form_profiles", "OK",
+                     f"{len(profile_tags)} profile tags all backed by whitelisted tables")
+
 async def main() -> int:
     with open(CONFIG_PATH, encoding="utf-8") as fh:
         dsn = json.load(fh)["target"]["dsn"]
@@ -266,6 +383,8 @@ async def main() -> int:
         await check_heartbeat(pg, results)
         await check_contract_drift(pg, results)
         await check_ods_fallback(pg, results)
+        await check_mart_contract_coverage(pg, results)
+        await check_sup_profile_coverage(pg, results)
     finally:
         await pg.close()
     failed = [r for r in results if r["status"] == "FAIL"]

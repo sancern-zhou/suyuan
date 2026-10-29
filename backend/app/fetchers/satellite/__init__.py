@@ -5,6 +5,5 @@ Satellite data fetchers package.
 """
 from app.fetchers.satellite.gems_image_fetcher import GemsImageFetcher
 from app.fetchers.satellite.gems_hcho_data_fetcher import GemsHchoDataFetcher
-from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
 
-__all__ = ["GemsHchoDataFetcher", "GemsImageFetcher", "NASAFirmsFetcher"]
+__all__ = ["GemsHchoDataFetcher", "GemsImageFetcher"]

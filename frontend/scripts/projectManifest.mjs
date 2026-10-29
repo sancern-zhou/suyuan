@@ -20,6 +20,8 @@ const AGENT_MODE_OVERRIDE_KEYS = new Set([
   'iconPaths'
 ])
 const AGENT_SCENE_OVERRIDE_KEYS = new Set(['mode_ids', 'modeIds'])
+const GUIDE_MODE_KEYS = new Set(['name', 'desc', 'example'])
+const GUIDE_DATA_ROW_KEYS = new Set(['name', 'granularity', 'range', 'sync', 'desc'])
 
 
 function readYaml(path) {
@@ -110,6 +112,131 @@ function normalizeAgentSceneOverrides(value = {}) {
 }
 
 
+function normalizeGuideMode(value, field) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${field} must be an object`)
+  }
+  const mode = {}
+  for (const key of Object.keys(value)) {
+    if (!GUIDE_MODE_KEYS.has(key)) throw new Error(`unknown guide mode field: ${field}.${key}`)
+    if (typeof value[key] !== 'string' || !value[key].trim()) {
+      throw new Error(`${field}.${key} must be a non-empty string`)
+    }
+    mode[key] = value[key]
+  }
+  for (const key of GUIDE_MODE_KEYS) {
+    if (typeof mode[key] !== 'string') throw new Error(`${field}.${key} must be a non-empty string`)
+  }
+  return mode
+}
+
+
+function normalizeGuideDataRow(value, field) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${field} must be an object`)
+  }
+  const row = {}
+  for (const key of Object.keys(value)) {
+    if (!GUIDE_DATA_ROW_KEYS.has(key)) throw new Error(`unknown guide data row field: ${field}.${key}`)
+    if (typeof value[key] !== 'string') throw new Error(`${field}.${key} must be a string`)
+    row[key] = value[key]
+  }
+  if (typeof row.name !== 'string' || !row.name.trim()) {
+    throw new Error(`${field}.name must be a non-empty string`)
+  }
+  if (typeof row.desc !== 'string' || !row.desc.trim()) {
+    throw new Error(`${field}.desc must be a non-empty string`)
+  }
+  row.granularity = row.granularity ?? ''
+  row.range = row.range ?? ''
+  row.sync = row.sync ?? ''
+  return row
+}
+
+
+function normalizePlatformGuide(value) {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('frontend.platform_guide must be an object')
+  }
+  const PLATFORM_GUIDE_KEYS = new Set(['intro', 'mode_groups', 'usage_modes', 'mode_motto', 'data_groups', 'notices'])
+  for (const key of Object.keys(value)) {
+    if (!PLATFORM_GUIDE_KEYS.has(key)) throw new Error(`unknown platform guide field: ${key}`)
+  }
+  if (value.intro !== undefined && typeof value.intro !== 'string') {
+    throw new Error('frontend.platform_guide.intro must be a string')
+  }
+  if (value.mode_motto !== undefined && typeof value.mode_motto !== 'string') {
+    throw new Error('frontend.platform_guide.mode_motto must be a string')
+  }
+  const modeGroups = (value.mode_groups ?? []).map((group, index) => {
+    const field = `frontend.platform_guide.mode_groups[${index}]`
+    if (!group || typeof group !== 'object' || Array.isArray(group)) {
+      throw new Error(`${field} must be an object`)
+    }
+    if (group.scene !== undefined && !AGENT_SCENE_IDS.has(group.scene)) {
+      throw new Error(`${field}.scene must be a known agent scene id`)
+    }
+    for (const key of Object.keys(group)) {
+      if (!['scene', 'scene_name', 'modes'].includes(key)) {
+        throw new Error(`unknown guide mode group field: ${field}.${key}`)
+      }
+    }
+    const modes = (group.modes ?? []).map((mode, modeIndex) => (
+      normalizeGuideMode(mode, `${field}.modes[${modeIndex}]`)
+    ))
+    if (modes.length === 0) throw new Error(`${field}.modes must contain at least one mode`)
+    return {
+      scene: group.scene ?? '',
+      sceneName: typeof group.scene_name === 'string' ? group.scene_name : '',
+      modes
+    }
+  })
+  const usageModes = (value.usage_modes ?? []).map((mode, index) => (
+    normalizeGuideMode(mode, `frontend.platform_guide.usage_modes[${index}]`)
+  ))
+  if (modeGroups.length > 0 && usageModes.length > 0) {
+    throw new Error('frontend.platform_guide cannot declare both mode_groups and usage_modes')
+  }
+  const dataGroups = (value.data_groups ?? []).map((group, index) => {
+    const field = `frontend.platform_guide.data_groups[${index}]`
+    if (!group || typeof group !== 'object' || Array.isArray(group)) {
+      throw new Error(`${field} must be an object`)
+    }
+    for (const key of Object.keys(group)) {
+      if (!['title', 'rows'].includes(key)) throw new Error(`unknown guide data group field: ${field}.${key}`)
+    }
+    if (typeof group.title !== 'string' || !group.title.trim()) {
+      throw new Error(`${field}.title must be a non-empty string`)
+    }
+    const rows = (group.rows ?? []).map((row, rowIndex) => (
+      normalizeGuideDataRow(row, `${field}.rows[${rowIndex}]`)
+    ))
+    if (rows.length === 0) throw new Error(`${field}.rows must contain at least one row`)
+    return { title: group.title, rows }
+  })
+  const notices = value.notices === undefined ? [] : uniqueStrings(value.notices, 'frontend.platform_guide.notices')
+  const guide = {
+    intro: typeof value.intro === 'string' ? value.intro : '',
+    modeGroups,
+    usageModes,
+    modeMotto: typeof value.mode_motto === 'string' ? value.mode_motto : '',
+    dataGroups,
+    notices
+  }
+  const isEmptyGuide = (
+    !guide.intro
+    && !guide.modeMotto
+    && guide.modeGroups.length === 0
+    && guide.usageModes.length === 0
+    && guide.dataGroups.length === 0
+    && guide.notices.length === 0
+  )
+  if (isEmptyGuide) return null
+  return guide
+}
+
+
 export function loadProjectBuildConfig({ projectId, repoRoot }) {
   if (!IDENTIFIER.test(projectId)) {
     throw new Error(`invalid project identifier: ${projectId}`)
@@ -170,7 +297,8 @@ export function loadProjectBuildConfig({ projectId, repoRoot }) {
       agentSceneOverrides: normalizeAgentSceneOverrides(manifest.frontend?.agent_scene_overrides),
       agentPlatformLayout,
       agentScenes,
-      sidebarAgentModes
+      sidebarAgentModes,
+      platformGuide: normalizePlatformGuide(manifest.frontend?.platform_guide)
     }
   }
 }

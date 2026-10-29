@@ -160,9 +160,12 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     # Company Gateway Authentication
-    auth_mode: Literal["company", "mock"] = Field(
+    auth_mode: Literal["company", "mock", "operation"] = Field(
         default="company",
-        description="Authentication mode; mock is restricted to non-production development",
+        description=(
+            "Authentication mode; mock is restricted to non-production development, "
+            "operation reuses the local ops-platform Forms-authentication cookie"
+        ),
     )
     auth_sys_code: str = Field(default="SUYUAN", description="Company system code")
     auth_platform_sys_code: str = Field(
@@ -224,6 +227,45 @@ class Settings(BaseSettings):
     auth_mock_username: str = Field(default="local-developer")
     auth_mock_display_name: str = Field(default="本地开发用户")
     auth_mock_role_codes: str = Field(default="")
+
+    # Operation-platform (运维平台) cookie authentication
+    auth_operation_cookie_name: str = Field(
+        default="GDOperation",
+        description="Forms-authentication cookie issued by the local ops platform",
+    )
+    auth_operation_validate_url: str = Field(
+        default="http://127.0.0.1:8094/AuthWhoAmI.aspx",
+        description=(
+            "Identity oracle on the ops platform; returns "
+            '{"authenticated":true,"userName":"..."} for a valid Forms cookie'
+        ),
+    )
+    auth_operation_admin_usernames: str = Field(
+        default="",
+        description="Comma-separated ops-platform usernames treated as Suyuan administrators",
+    )
+    auth_operation_timeout_seconds: float = Field(
+        default=3.0,
+        ge=0.5,
+        le=30,
+        description="Timeout for ops-platform identity lookups",
+    )
+    auth_session_token_secret: str = Field(
+        default="",
+        description=(
+            "HMAC secret for agent-issued session tokens (operation mode); "
+            "empty disables them"
+        ),
+    )
+    auth_session_token_ttl_seconds: int = Field(
+        default=28800,
+        ge=0,
+        le=2592000,
+        description=(
+            "Lifetime of agent-issued session tokens; 0 disables issuance and "
+            "falls back to validating the ops cookie on every request"
+        ),
+    )
 
     # Android App account gateway. Account secrets are provisioned outside the
     # repository as a JSON object: {"account_id": {"secret": "...", "name": "..."}}.
@@ -301,6 +343,10 @@ class Settings(BaseSettings):
         return set(self._split_unique_csv(self.auth_mock_role_codes))
 
     @property
+    def auth_operation_admin_usernames_set(self) -> set[str]:
+        return set(self._split_unique_csv(self.auth_operation_admin_usernames))
+
+    @property
     def trusted_gateway_networks_list(self) -> List[str]:
         return self._split_unique_csv(self.trusted_gateway_networks)
 
@@ -336,7 +382,7 @@ class Settings(BaseSettings):
             raise ValueError("production cannot enable mock authentication")
         if not self.nacos_register_enabled:
             raise ValueError("production requires Nacos registration")
-        if not self.auth_service_url.strip():
+        if self.auth_mode != "operation" and not self.auth_service_url.strip():
             raise ValueError("production requires AUTH_SERVICE_URL")
         if not (self.share_signing_secret or "").strip():
             raise ValueError("production requires a share-signing secret")

@@ -130,6 +130,16 @@ def write_report(
         lines.append(f"- 站点：{dataset_summary['station_count']} 个")
         lines.append(f"- 通用文件：{dataset_summary['wo_commonfile_count']} 条")
         lines.append(f"- 设备记录：{dataset_summary['device_count']} 条")
+        no_form_records = [record for record in records if not record.get("rf_tables")]
+        if no_form_records:
+            sample_codes = ", ".join(
+                str(record.get("working_order_code")) for record in no_form_records[:10]
+            )
+            overflow = "" if len(no_form_records) <= 10 else f" 等 {len(no_form_records)} 单"
+            lines.append(
+                f"- 无任何RF表单数据的工单：{len(no_form_records)} 条（{sample_codes}{overflow}）；"
+                "这些工单的表单类规则未实际生效，需核实是漏填报还是表单数据未同步/未纳入取数。"
+            )
         lines.extend(["", "### 工单类型分布", ""])
         for key, value in dataset_summary["order_type_counts"].items():
             lines.append(f"- {key}：{value} 条")

@@ -26,7 +26,6 @@ from app.services.ops_work_order_audit_engine import (
     EXCLUDED_AUDIT_ORDER_TYPES,
     RF_TABLES,
     SUP_AUDIT_ORDER_TYPES,
-    SUP_RF_COMMON_TABLE,
     _clean_values,
     _history_form_from_joined_row,
     _history_form_seeds,
@@ -138,6 +137,18 @@ def is_sup_station_request(order_types: list[str] | None) -> bool:
     return bool(values) and set(values) <= set(SUP_AUDIT_ORDER_TYPES)
 
 
+# 组分站表单载体（本地 mart 表名，小写）：sup_rf_common 通用宽表 + Sup_RF_* 专用分表。
+# 源库按 RULEITEMTAG 把多数组分站表单写在专用分表（2026-10-26 复盘：周窗口 21 单中
+# 17 单的表单只在分表），仅读宽表会把整单判成"无表单数据"。
+SUP_MART_FORM_TABLES: tuple[str, ...] = (
+    "sup_rf_common",
+    "sup_rf_pm1monitorinspection",
+    "sup_rf_deviceflowcheck",
+    "sup_rf_monitorinspection",
+    "sup_rf_ambienttemperature",
+)
+
+
 def _uppercase_sup_form_row(record: dict[str, Any]) -> dict[str, Any]:
     """sup_rf_common 行头信息列大写化（同键小写列保留，供二期普查对照）。"""
     row = dict(record)
@@ -237,6 +248,7 @@ def _empty_dataset(filters, order_statuses, limit, station_ids, order_types,
                 "finish_time_start": filters.finish_time_start,
                 "finish_time_end": filters.finish_time_end,
                 "station_ids": station_ids,
+                "operation_units": _clean_values(getattr(filters, "operation_units", None)) or None,
                 "order_types": order_types,
                 "maintenance_types": maintenance_types,
                 "working_order_codes": working_order_codes,
@@ -252,6 +264,7 @@ def _empty_dataset(filters, order_statuses, limit, station_ids, order_types,
         "devices": [],
         "device_history": {"orders": [], "rf_forms": {}, "query_info": {"skipped": True, "reason": "no_orders"}},
         "rf_forms": {},
+        "sup_taskitems": [],
     }
 
 
@@ -260,6 +273,7 @@ def fetch_dataset_local(filter_config: Any) -> dict[str, Any]:
     filters = _normalize_dataset_filter(filter_config)
     limit = max(1, min(int(filters.limit or 200), 3000))
     station_ids = _clean_values(filters.station_ids)
+    operation_units = _clean_values(filters.operation_units)
     requested_order_types = _clean_values(filters.order_types)
     # 组分站审核请求（类型全部为 SupCheck/SupSECCheck）不过主网类型过滤，
     # 表单改读 sup_rf_common 通用宽表；主网请求维持原口径（SupCheck 仍被排除）。
@@ -289,6 +303,22 @@ def fetch_dataset_local(filter_config: Any) -> dict[str, Any]:
         params.append(filters.finish_time_end)
     if station_ids:
         where_parts.append(_in_clause_pg('"stationid"', station_ids, params))
+    if operation_units:
+        # 运维单位按站点档案过滤：主网走 dim_station 档案，组分站走 sup_devicedaycheck
+        # （组分网站点不在 dim_station，且 Sup 站点→运维单位关系随合同更新，以日检表为准）。
+        unit_ph = ", ".join("%s" for _ in operation_units)
+        if sup_mode:
+            unit_subquery = (
+                f'SELECT DISTINCT "stationid"::text FROM {_mart("sup_devicedaycheck")} '
+                f'WHERE "operationunitname" IN ({unit_ph})'
+            )
+        else:
+            unit_subquery = (
+                f'SELECT "station_id"::text FROM {_mart("dim_station")} '
+                f'WHERE "operation_unit_name" IN ({unit_ph})'
+            )
+        where_parts.append(f'"stationid"::text IN ({unit_subquery})')
+        params.extend(operation_units)
     if order_types:
         where_parts.append(_in_clause_pg('"ddworkingordertype"', order_types, params))
     elif requested_order_types:
@@ -342,38 +372,60 @@ def fetch_dataset_local(filter_config: Any) -> dict[str, Any]:
                 st_ph = ", ".join("%s" for _ in station_ids_for_query)
                 stations = _rows(cur,
                     'SELECT "STATIONID", "NAME", "CODE", "UNIQUECODE", '
-                    '"OPERATIONUNITID", "OPERATIONUNIT" '
+                    '"OPERATIONUNITID", "OPERATIONUNIT", "CITYNAME", "ADDRESS", "LONGITUDE", "LATITUDE" '
                     "FROM (SELECT station_id AS \"STATIONID\", station_name AS \"NAME\", "
                     'station_code AS "CODE", unique_code AS "UNIQUECODE", '
-                    'operation_unit_id AS "OPERATIONUNITID", operation_unit_name AS "OPERATIONUNIT" '
+                    'operation_unit_id AS "OPERATIONUNITID", operation_unit_name AS "OPERATIONUNIT", '
+                    'city_name AS "CITYNAME", address AS "ADDRESS", '
+                    'longitude AS "LONGITUDE", latitude AS "LATITUDE" '
                     f"FROM {_mart('dim_station')}) st "
                     f'WHERE "STATIONID" IN ({st_ph}) LIMIT 3000',
                     station_ids_for_query)
 
             rf_forms: dict[str, list[dict[str, Any]]] = {}
             rf_form_filter_stats: dict[str, dict[str, Any]] = {}
+            sup_taskitems: list[dict[str, Any]] = []
             if sup_mode:
-                # 组分站：表单体在 sup_rf_common 通用宽表（306 列），按工单号整取，
-                # 头信息列大写化后以 SUP_RF_COMMON 键进入 rf_forms 供通用规则消费。
+                # 组分站：表单体分布在 sup_rf_common 通用宽表与 Sup_RF_* 专用分表，
+                # 按工单号整取，头信息列大写化后以各表大写名进入 rf_forms 供通用规则消费。
+                for local_table in SUP_MART_FORM_TABLES:
+                    table_key = local_table.upper()
+                    try:
+                        if not _table_exists(cur, local_table):
+                            raise RuntimeError(f"local table missing: {local_table}")
+                        sup_rows = _rows(cur,
+                            f"SELECT * FROM {_mart(local_table)} "
+                            f'WHERE "workingordercode" IN ({code_ph}) LIMIT 3000',
+                            codes)
+                        selected_rows, stats = _select_rf_forms_with_filter_stats(
+                            table_key,
+                            [_uppercase_sup_form_row(row) for row in sup_rows],
+                        )
+                        rf_forms[table_key] = selected_rows
+                        rf_form_filter_stats[table_key] = stats
+                    except Exception as exc:
+                        error_rows = [{"_query_error": str(exc)}]
+                        selected_rows, stats = _select_rf_forms_with_filter_stats(table_key, error_rows)
+                        rf_forms[table_key] = selected_rows
+                        rf_form_filter_stats[table_key] = stats
+                        logger.warning("ops_audit_local_sup_rf_failed", table=local_table, error=str(exc))
+                # 质控计划任务项（阶段 2.4）：按工单号整取，提供周期任务计划完成时间，
+                # 供及时性规则用计划口径替换表单侧代理口径。
                 try:
-                    if not _table_exists(cur, "sup_rf_common"):
-                        raise RuntimeError("local table missing: sup_rf_common")
-                    sup_rows = _rows(cur,
-                        f"SELECT * FROM {_mart('sup_rf_common')} "
-                        f'WHERE "workingordercode" IN ({code_ph}) LIMIT 3000',
-                        codes)
-                    selected_rows, stats = _select_rf_forms_with_filter_stats(
-                        SUP_RF_COMMON_TABLE,
-                        [_uppercase_sup_form_row(row) for row in sup_rows],
-                    )
-                    rf_forms[SUP_RF_COMMON_TABLE] = selected_rows
-                    rf_form_filter_stats[SUP_RF_COMMON_TABLE] = stats
+                    if _table_exists(cur, "sup_mtc_taskitem"):
+                        sup_taskitems = _rows(cur,
+                            'SELECT "workingordercode" AS "WORKINGORDERCODE", '
+                            '"ruleitemtag" AS "RULEITEMTAG", "pollutanttype" AS "POLLUTANTTYPE", '
+                            '"planfinishtime" AS "PLANFINISHTIME", "finishtime" AS "FINISHTIME", '
+                            '"status" AS "STATUS" '
+                            f"FROM {_mart('sup_mtc_taskitem')} "
+                            f'WHERE "workingordercode" IN ({code_ph}) LIMIT 6000',
+                            codes)
+                    else:
+                        sup_taskitems = []
                 except Exception as exc:
-                    error_rows = [{"_query_error": str(exc)}]
-                    selected_rows, stats = _select_rf_forms_with_filter_stats(SUP_RF_COMMON_TABLE, error_rows)
-                    rf_forms[SUP_RF_COMMON_TABLE] = selected_rows
-                    rf_form_filter_stats[SUP_RF_COMMON_TABLE] = stats
-                    logger.warning("ops_audit_local_sup_rf_failed", error=str(exc))
+                    sup_taskitems = []
+                    logger.warning("ops_audit_local_sup_taskitems_failed", error=str(exc))
             else:
                 for table in RF_TABLES:
                     local_table = table.lower()
@@ -436,6 +488,7 @@ def fetch_dataset_local(filter_config: Any) -> dict[str, Any]:
                 "finish_time_start": filters.finish_time_start,
                 "finish_time_end": filters.finish_time_end,
                 "station_ids": station_ids,
+                "operation_units": operation_units or None,
                 "order_types": order_types,
                 "maintenance_types": maintenance_types,
                 "working_order_codes": working_order_codes,
@@ -451,6 +504,7 @@ def fetch_dataset_local(filter_config: Any) -> dict[str, Any]:
         "devices": devices,
         "device_history": device_history,
         "rf_forms": rf_forms,
+        "sup_taskitems": sup_taskitems,
     }
 
 

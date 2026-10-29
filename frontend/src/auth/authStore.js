@@ -10,17 +10,21 @@ export function createAuthSession({
   storage,
   sysCode = 'SUYUAN',
   authMode = 'company',
-  mockUser = null
+  mockUser = null,
+  loginUrl = ''
 }) {
   const persisted = storage.readSession()
   const isMock = authMode === 'mock' && Boolean(mockUser?.id)
+  const isOperation = authMode === 'operation'
   if (isMock) storage.clear()
+  const mode = isMock ? 'mock' : (isOperation ? 'operation' : 'company')
   const session = {
-    authMode: isMock ? 'mock' : 'company',
+    authMode: mode,
     mockUser: isMock ? mockUser : null,
     token: !isMock && persisted.sysCode === sysCode ? persisted.token : '',
     user: !isMock && persisted.sysCode === sysCode ? persisted.user : null,
     sysCode,
+    loginUrl,
     loading: false,
     initialized: false,
 
@@ -32,6 +36,21 @@ export function createAuthSession({
         return this.user
       }
       this.initialized = true
+      if (this.authMode === 'operation') {
+        this.loading = true
+        try {
+          const response = await api.operationSession()
+          this.user = response.user
+          this.token = response.sessionToken || ''
+          storage.writeSession({ token: this.token, sysCode, user: this.user })
+          return this.user
+        } catch (error) {
+          this.clear()
+          throw error
+        } finally {
+          this.loading = false
+        }
+      }
       if (!this.token) return null
       this.loading = true
       try {
@@ -52,6 +71,22 @@ export function createAuthSession({
         this.initialized = true
         this.user = this.mockUser
         return this.user
+      }
+      if (this.authMode === 'operation') {
+        this.loading = true
+        try {
+          const response = await api.operationSession()
+          this.user = response.user
+          this.token = response.sessionToken || ''
+          this.initialized = true
+          storage.writeSession({ token: this.token, sysCode, user: this.user })
+          return this.user
+        } catch (error) {
+          this.clear()
+          throw error
+        } finally {
+          this.loading = false
+        }
       }
       this.loading = true
       try {
@@ -79,6 +114,15 @@ export function createAuthSession({
         this.initialized = true
         return
       }
+      if (this.authMode === 'operation') {
+        // The ops platform owns the real session; clear only the local view
+        // and hand control back to the ops login page.
+        storage.clear()
+        this.token = ''
+        this.user = null
+        this.initialized = true
+        return
+      }
       const token = this.token
       try {
         if (token) await api.logout(token)
@@ -103,7 +147,8 @@ let browserSession
 let browserRuntimeConfig = {
   authMode: 'company',
   sysCode: 'SUYUAN',
-  mockUser: null
+  mockUser: null,
+  loginUrl: ''
 }
 
 
@@ -120,10 +165,15 @@ function getBrowserSession() {
       api: createAuthApi({ storage }),
       sysCode: browserRuntimeConfig.sysCode || 'SUYUAN',
       authMode: browserRuntimeConfig.authMode,
-      mockUser: browserRuntimeConfig.mockUser
+      mockUser: browserRuntimeConfig.mockUser,
+      loginUrl: browserRuntimeConfig.loginUrl || ''
     })
   }
   return browserSession
+}
+
+export function operationLoginUrl() {
+  return browserRuntimeConfig.loginUrl || '/Home/LogOn'
 }
 
 
@@ -137,7 +187,7 @@ export const useAuthStore = defineStore('suyuan-auth', {
   }),
   getters: {
     isAuthenticated: state => Boolean(
-      state.user && (state.authMode === 'mock' || state.token)
+      state.user && (state.authMode === 'mock' || state.authMode === 'operation' || state.token)
     )
   },
   actions: {

@@ -29,6 +29,7 @@ _PUBLIC_EXACT_PATHS = {
     "/api/health",
     "/api/ready",
     "/api/auth/runtime-config",
+    "/api/auth/operation-session",
     "/index.html",
     "/favicon.ico",
     "/wechat-screenshot.png",
@@ -115,6 +116,24 @@ class GatewayAuthenticationMiddleware:
         if self.settings.auth_mode == "mock":
             token = "local-mock"
             sys_code = self.settings.auth_sys_code
+        elif self.settings.auth_mode == "operation":
+            # Prefer the agent-issued session token (keeps an idle session
+            # alive beyond the ops platform's own ticket lifetime); otherwise
+            # fall back to the ops Forms cookie, which is re-resolved through
+            # the ops platform itself.
+            sys_code = self.settings.auth_sys_code
+            user = self.auth_service.resolve_session_token(
+                self._bearer_token(headers)
+            )
+            if user is not None:
+                await self.app(
+                    self._authenticated_scope(scope, user), receive, send
+                )
+                return
+            token = self._operation_cookie(headers)
+            if not token:
+                await self._error(scope, receive, send, 401, "authentication_required")
+                return
         else:
             authorization = headers.get("authorization", "")
             scheme, separator, token = authorization.partition(" ")
@@ -137,6 +156,24 @@ class GatewayAuthenticationMiddleware:
             return
 
         await self.app(self._authenticated_scope(scope, user), receive, send)
+
+    @staticmethod
+    def _bearer_token(headers: Headers) -> str:
+        authorization = headers.get("authorization", "")
+        scheme, separator, token = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not separator:
+            return ""
+        return token.strip()
+
+    def _operation_cookie(self, headers: Headers) -> str:
+        cookie = SimpleCookie()
+        try:
+            cookie.load(headers.get("cookie", ""))
+        except ValueError:
+            return ""
+        name = self.settings.auth_operation_cookie_name
+        morsel = cookie.get(name)
+        return morsel.value if morsel else ""
 
     @staticmethod
     def _authenticated_scope(scope: Scope, user: Any) -> Scope:

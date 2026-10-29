@@ -98,3 +98,89 @@
 2. 视觉水印试点范围：仅 Week_NMHCQC 抽检，还是扩到全部年维护检定类（附件量更大）？
 3. "填写不及时"的判定基准：以质控计划周期为准（需核实计划数据可得性）还是以工单创建/检查日期偏离为准（可立即落）？
 4. 组分站设备台账缺失（一期已知）是否同期解决：若能提供组分站设备台账同步，设备一致性规则可一并纳入二期。
+
+---
+
+## 五、阶段 2.1 + 2.2 实施记录（2026-10-25，已落地）
+
+M1+M2 批次（表单档案 + 确定性规则）已实现并通过 18 案例回归，视觉水印试点（阶段 2.3）与设备台账类规则未含。
+
+### 代码改动（backend，分支 project/guangdong）
+
+1. **表单档案** `backend/app/services/ops_audit/configs/sup_form_profiles.yaml`（新增）：22 种 ruleitemtag 建档，覆盖 18 案例涉及类型 ∪ 表单量 P0 类型。档案驱动项：必需附件类（report/data_file，含命中率依据）、公式列（PANs 设定误差=（仪器读数-设定值）/设定值×100%，三流量点）、阈值列（OCEC 升温程序温度偏差 ±10%、PANs 误差 ±10%）、必填数值列（OCEC 炉温/偏差，"/"+备注豁免）、日期对（NMHC 钢瓶有效期/动态校准仪校准周期、HONO 标液 30 天有效期）、周期及时性参数。推断性阈值均标 `confirmed: false` 待业务校准；加载器 `config.load_sup_form_profiles()`。
+2. **表单规则** `rules/sup_form_rules.py`（新增）：SUP_FORMULA_RECALC（表达式 AST 白名单安全复算）、SUP_RANGE_OUT_OF_SPEC（超范围无备注=高、有备注=中人工复核）、SUP_REQUIRED_VALUE_EMPTY（空白=高、"/"无备注=中、"/"+备注豁免）、SUP_DATE_REASONABLENESS（日期对标准周期档位/覆盖检查日期/先后顺序）、SUP_CYCLE_TIMELINESS（表单侧口径：填写滞后+质控数据文件日期过期，文件名支持"2026年8月30日/9月23日/2026-10-12至2026-10-18"等格式并取区间末）。
+3. **附件规则** `rules/sup_attachment_rules.py`（新增）：SUP_ATTACHMENT_REQUIRED_MISSING（按 typecode=ruleitemtag_监测项目 匹配附件，报告/数据文件缺失判失败，"无需送检"等备注豁免）、SUP_ATTACHMENT_ITEM_MATCH（全部附件监测项目后缀与表单 pollutanttype 不符判失败）。
+4. **引擎接入**（`ops_work_order_audit_engine.py`）：两规则挂入 enable_non_visual 分支，仅处理带 RULEITEMTAG 的表单，主网 RF 分表零影响（有专项测试）。7 条规则登记 rule_catalog/scoring 硬错误/taxonomy 分类；`rf_form_names.py` 补全组分站 94 种类型中文显示名（`sup_form_display_name`）。
+5. **档案建设工具** `backend/scripts/sup_profile_probe.py`：列语义/公式统计推断脚本（阶段 2.1 后续建档复用）。
+
+### 案例回归与验证
+
+- **单测 33 个**（规则命中/豁免/引擎分发/主网不受影响）全通过；全量 ops_audit 回归 509 测试，24 个失败经 git stash 基线对照确认**全部为预存问题**（12 个与基线一致 + 12 个一期已记录的视觉/OCR 环境差异），SUP 相关零失败。
+- **18 案例回归**（`tests/test_sup_case_regression.py`，案例时点状态重建）：**14/18 工单命中**（达到计划 ≥14 口径；12 条案例 + 吴川 3 单分别计数），命中分布：附件缺失 5（丰顺/吴川×3/江东）、及时性 4（深圳/云浮/湛江海大/惠州江北数据过期）、公式 1（PANs）、阈值 1（清远 OCEC）、必填 1（韶关 OCEC）、日期 2（惠州下埔 56 天/东莞东城标液 61 天）。
+- **确定性盲区 4 条+1**（逐条注明原因）：惠州江北 BC 附件（需组分站设备台账，待确认问题 4）、吴川 N2O 示值误差（表单类型未定位+阈值待业务确认）、韶关 NH3 采样管/龙川换滤膜（bool 题目项级要求且表单未同步）、江门柱压（数值在 xlsx 数据文件内，需数据文件读数规则扩展）、博罗石下水印（属阶段 2.3 视觉试点）。
+- **真实库冒烟**（近 14 天 400 单/325 表单/4024 附件）：SUP 命中 8 单（2%），噪声修正（钢瓶区间档位检查移除——"生产日期/启用日期+1年"两种填法并存产生系统性误报；文件名区间日期取区间末）后余留命中均为可解释问题（PANs 复算不符 3、填写滞后/数据过期 3、动态校准仪 61 天 1、OCEC"/"无备注 2）。
+
+### 遗留与后续
+
+- 阶段 2.3 视觉水印试点、阶段 2.4 质控计划数据源核实、水溶性离子柱压 xlsx 读数规则（复用 O3 量值传递 XLS 模式）另行排期。
+- 全部 `confirmed: false` 阈值（PANs 误差 ±10%/容差 0.5、OCEC ±10%、动态校准仪周期档位、标液 30 天、及时性滞后天数）待业务方按第四节问题 1 提供口径后校准。
+
+---
+
+## 六、阶段 2.3 视觉水印试点实施记录（2026-10-25，已落地）
+
+### 前置修复（关键）
+
+`ocr_adapter` 的独立视觉调用在 go 网关下全部 400 失败——根因是缺少 OpenCode Go 网关要求的 `x-opencode-session` 路由头（`llm_service` 主链路已带该头，视觉适配层漏掉）。已在 `_call_vision_model` 补充网关头（User-Agent + 会话 ID），**deepseek-v4.1-flash 实测支持多模态图片输入**，修复同时生效于主网全部视觉规则。
+
+### 代码改动
+
+1. **`rules/sup_watermark_rules.py`（新增）**：`SUP_ATTACHMENT_WATERMARK_STATION`（水印与站点/检查日期不一致 → 中严重度人工核验，不直接判失败）与 `SUP_ATTACHMENT_WATERMARK_READ_FAILED`（识别失败 → 低严重度技术诊断，不进报告问题清单）。比对维度：站点名/城市/地址与水印地点字符重合（2 字滑窗）、站点坐标与水印坐标距离（组分站坐标缺失时自动跳过）、水印时间落在检查日前 `time_window_days` 窗口。
+2. **抽检+问题触发模式**：工单已被其他规则命中 → 照片全检（每单上限 `max_photos_per_order`）；其余按工单号稳定哈希抽样（`sample_rate`，同单跨次运行判定一致）；每次运行视觉调用量由 `max_tasks_per_run` 硬顶（近 14 天触发口径共 115 个候选任务，运行硬顶保护生效）。均可由 `OPS_AUDIT_SUP_WATERMARK_*` 环境变量覆盖。
+3. **试点范围**：仅 `Sup_RF_Week_NMHCQC`（档案 `watermark_check` 开关）；照片按 `typecode=tag_监测项目` 精确归属表单。
+4. **取数扩展**：`fetch_dataset_local` 站点投影增加 CITYNAME/ADDRESS/LONGITUDE/LATITUDE，`_station_meta_by_id` 透传——城市/地址参与地点比对，解决"东城站照片水印=东莞市大气环保体验馆"这类站名与水印无字面重合的系统性误报。
+5. 规则目录/复核阶段（manual_visual_review、technical_diagnostic）/taxonomy 登记完成。
+
+### 真实验证
+
+- **单测 45 个**（含水印试点 12 个，视觉调用全 mock）全通过；既有全量回归零新增失败。
+- **8 个代表性站点 29 张真实照片批量验证**（视觉调用成功率 29/29）：博罗石下（整改后水印=博罗县·石下屯村）、东城（城市匹配修复后）、下埔、紫马岭、牧羊、从化天湖、鹤山花果山共 27 张正确通过；龙川细坳 2 张标记 time_outside_window——核查发现该单检查日期填了 **2026-10-30（未来日期）**，标记属实且额外暴露"检查日期填未来日期"数据质量问题，非误报。
+- **端到端链路**：audit_dataset(enable_visual=True) 全窗运行成功，运行级调用量硬顶（cap=6）生效；产物与生产 `latest_*` 文件隔离（`backend/output/sup_phase2_acceptance/`）。
+- 案例锚点说明：博罗石下案例的原错误照片（水印=河源中学）已随退回整改被替换，当前数据无真实"跨站水印"样本；错站误报路径由单测夹具（博罗站×河源水印）覆盖，视觉读取真实性由 29 张真实照片验证。
+
+### 遗留
+
+- 组分站坐标（dim_station.longitude/latitude）当前全空，坐标比对自动跳过；台账/坐标补齐后距离比对自动生效。
+- `time_window_days=7`、`sample_rate=0.3`、`distance_km_threshold=5` 为试点参数，待业务确认。
+- 明日（周一 11:30）组分站每周任务将自动带全部二期规则运行，跑后核查产物即可替代手动全量验收。
+
+---
+
+## 七、阶段 2.4 及时性计划口径实施记录（2026-10-25，已落地）
+
+### 数据源核实结论（原"待核实"项已解决）
+
+质控计划任务表**已同步本地**：`guangdong_mart.sup_mtc_taskitem`（2.7 万行，1.29 万工单），按工单号+ruleitemtag+监测项目提供 `planfinishtime`（周期计划完成日）与 `finishtime`（实际完成）。全局分布：约 87% 当天完成、≤4 天占 96.6%，超 5 天属少数异常。
+
+### 代码改动
+
+1. **取数**（`ops_work_order_audit_local.py`）：sup 模式增取 `sup_mtc_taskitem`（工单号过滤）→ 数据集 `sup_taskitems` 键。
+2. **及时性规则升级**（`rules/sup_form_rules.py`）：有计划任务项时按**计划口径**——表单创建晚于 `planfinishtime` 超过宽限 `plan_late_grace_days`（默认 5，档案 `defaults.timeliness`，confirmed: false）判"填写不及时"；无任务项时**回退**原表单侧口径（检查日期滞后），数据文件过期检查不变。evidence 声明所用口径。
+3. 真实对照（14 天 606 单）：计划口径命中 3 条 plan_overdue（2 条为表单口径漏抓的真实超期）+ 4 条数据文件过期；原表单口径误判的台山端芬单被计划口径正确豁免（计划允许更晚完成）。已知答案回归 12/12 持平。
+
+### 丰顺工单同步缺口核查结论（原遗留项已查明）
+
+案例工单 CH2609241790216699673（BC 年检缺报告）**不是同步漏单**：源系统侧该工单已被删除（人工判定后退回作废），本地 `working_orders` 同步如实删除；`sup_rf_common`/`wo_commonfile`/`sup_mtc_taskitem` 无级联清理，遗留孤儿行。审核以工单表为锚跳过该单属正确行为。**数据运维改进项**：为 sup_rf_common/wo_commonfile/sup_mtc_taskitem 增加孤儿行级联清理（workingordercode 不在 working_orders 时删除），避免脏数据累积。
+
+### 后续待办
+
+- 代码提交（共享层 `backend/app/services/ops_audit` 的分支归属口径待定）；
+- 周一 11:30 组分站每周任务自动全量运行后核查产物（等效验收）；
+- 业务方阈值口径表（校准全部 confirmed: false 项）、组分站设备台账/坐标同步。
+
+---
+
+## 八、审核窗口与视觉开关口径修正（2026-10-25，业务确认后落地）
+
+1. **审核窗口**：`weekly_created` 预设由"周三锚、仅创建时间"修正为业务口径——周一审核**上上周完整自然周（周一 00:00 至下周一 00:00）创建且完成**的工单（如 10-26 运行审核 10-12~10-18）。改动：`audit_window.yaml`/`audit_window.py`（周一锚 + 完成时间窗口）、`dataset_fetcher`（应用完成窗口）、任务提示词与工具描述。新增窗口单测 4 个。
+2. **视觉识别默认关闭**：`ops_audit_run_rules` 的 `enable_visual` 默认值改为 **false**，定时审核与常规审核只跑非视觉规则；视觉审核（主网照片读数规则 + 组分站水印核验）仅由用户明确要求时手动触发（`enable_visual=true`，可配 `visual_rule_id` 单独触发某条，枚举已补 `SUP_ATTACHMENT_WATERMARK_STATION`）。技能文档与两个任务提示词（仓库 JSON + 持久化存储）同步更新。

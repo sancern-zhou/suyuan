@@ -76,6 +76,8 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
         "RF_CALIBRATION_INTERVAL_TOO_LONG",
         "RF_REFERENCE_FLOWMETER_CERT_DATE_MISMATCH",
         "RF_HY_ENV_HUMIDITY_CALIBRATION_DATE_INVALID",
+        "SUP_DATE_REASONABLENESS",
+        "SUP_CYCLE_TIMELINESS",
     }:
         return "时间合理性问题"
     if rule in {
@@ -100,10 +102,16 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
         "RF_M_GASEOUS_CALIDEVICE_ENV_HUMIDITY_OUT_OF_RANGE",
         "RF_O3_VALUE_PASS_FIELD_POSITION_SUSPECT",
         "RF_O3_TRANSFER_RESULT_INVALID",
+        "SUP_FORMULA_RECALC",
+        "SUP_RANGE_OUT_OF_SPEC",
     }:
         return "数值逻辑问题"
-    if rule in {"RF_O3_VALUE_PASS_FLOW_VALUE_MISSING"}:
+    if rule in {"RF_O3_VALUE_PASS_FLOW_VALUE_MISSING", "SUP_REQUIRED_VALUE_EMPTY"}:
         return "完整性问题"
+    if rule in {"SUP_ATTACHMENT_ITEM_MATCH", "RF_DEVICE_IDENTITY_INCONSISTENT"}:
+        return "一致性问题"
+    if rule in {"SUP_ATTACHMENT_WATERMARK_STATION"}:
+        return "附件质量问题"
     if rule in {"RF_PM_TEMP_PRESSURE_ERROR_UNRECALCULABLE"}:
         return "表单完整性问题"
     if rule in {"RF_CALIBRATION_DATE_SHOULD_BE_EMPTY"}:
