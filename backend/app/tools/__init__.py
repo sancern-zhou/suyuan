@@ -228,6 +228,45 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_pm25_crustal", error=str(e))
 
+    # ========================================
+    # Super-station Component Query Tools (Phase 2: species/OFP/recovery/trace)
+    # ========================================
+
+    try:
+        from app.tools.query.get_vocs_species.tool import GetVOCsSpeciesTool
+        registry.register(GetVOCsSpeciesTool(), priority=66)
+        logger.info("tool_loaded", tool="get_vocs_species")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_vocs_species", error=str(e))
+
+    try:
+        from app.tools.query.get_vocs_ofp.tool import GetVOCsOFPTool
+        registry.register(GetVOCsOFPTool(), priority=67)
+        logger.info("tool_loaded", tool="get_vocs_ofp")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_vocs_ofp", error=str(e))
+
+    try:
+        from app.tools.query.get_ofp_top10.tool import GetOFPTop10Tool
+        registry.register(GetOFPTop10Tool(), priority=68)
+        logger.info("tool_loaded", tool="get_ofp_top10")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_ofp_top10", error=str(e))
+
+    try:
+        from app.tools.query.get_pm25_recovery.tool import GetPM25RecoveryTool
+        registry.register(GetPM25RecoveryTool(), priority=69)
+        logger.info("tool_loaded", tool="get_pm25_recovery")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_pm25_recovery", error=str(e))
+
+    try:
+        from app.tools.query.get_pm25_trace.tool import GetPM25TraceTool
+        registry.register(GetPM25TraceTool(), priority=71)
+        logger.info("tool_loaded", tool="get_pm25_trace")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_pm25_trace", error=str(e))
+
     try:
         from app.tools.query.get_nearby_stations.tool import GetNearbyStationsTool
         registry.register(GetNearbyStationsTool(), priority=70)

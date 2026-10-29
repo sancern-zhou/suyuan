@@ -61,13 +61,18 @@ _FORECAST_QUERY_TOOLS = (
     "execute_postgres_sql_query",
 )
 
-# 组分问数：广东省超级站组分取数（水溶性离子/碳组分/地壳元素/VOCs）；
-# 站点名→编码映射内置于工具，无目录解析轮次。
+# 组分问数：广东省超级站组分取数（水溶性离子/碳组分/地壳元素/微量元素/
+# VOCs 类别/物种/OFP/官方重构）；站点名→编码映射内置于工具，无目录解析轮次。
 _COMPONENT_QUERY_TOOLS = (
     "get_vocs_data",
+    "get_vocs_species",
+    "get_vocs_ofp",
+    "get_ofp_top10",
     "get_pm25_ionic",
     "get_pm25_carbon",
     "get_pm25_crustal",
+    "get_pm25_recovery",
+    "get_pm25_trace",
 )
 
 _NORMALIZE_TOOLS = (
@@ -204,9 +209,11 @@ for _definition in (
         _COMPONENT_QUERY_TOOLS,
         "超站组分数据固定问数流程",
         scope_line=(
-            "聚焦广东省超级站组分取数：水溶性离子、碳组分（OC/EC）、地壳元素、VOCs 类别，"
+            "聚焦广东省超级站组分取数：水溶性离子、碳组分（OC/EC）、地壳元素、微量元素/重金属、"
+            "VOCs 类别与 117 物种、VOCs 类别 OFP、物种 OFP Top10 与累计贡献、PM2.5 官方质量重构，"
             "多站点多组分批量并发查询；组分站点不接受城市名，站点清单见组分问数提示词；"
-            "碳组分与地壳元素数值仅小时粒度，地壳元素需审核口径（data_type=1）。"
+            "碳组分、地壳元素与微量元素数值仅小时粒度（地壳/微量元素需审核口径 data_type=1），"
+            "VOCs 物种/OFP 小时窗口不超过 24 小时。"
         ),
     ),
 ):

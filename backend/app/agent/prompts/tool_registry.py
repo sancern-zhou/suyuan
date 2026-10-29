@@ -98,9 +98,14 @@ EXPERT_TOOL_NAMES = [
     "knowledge_document_reader",
     # 数据查询工具
     "get_vocs_data",
+    "get_vocs_species",
+    "get_vocs_ofp",
+    "get_ofp_top10",
     "get_pm25_ionic",
     "get_pm25_carbon",
     "get_pm25_crustal",
+    "get_pm25_recovery",
+    "get_pm25_trace",
     "get_weather_forecast",
     "get_observed_meteorology",
     "get_platform_weather_image",
@@ -181,9 +186,14 @@ QUERY_TOOL_NAMES = [
     "search_files",
     # === 参数化查询工具 ===
     "get_vocs_data",
+    "get_vocs_species",
+    "get_vocs_ofp",
+    "get_ofp_top10",
     "get_pm25_ionic",
     "get_pm25_carbon",
     "get_pm25_crustal",
+    "get_pm25_recovery",
+    "get_pm25_trace",
     "get_weather_data",
     "get_observed_meteorology",
     "get_weather_forecast",
@@ -256,7 +266,8 @@ QUERY_FORECAST_TOOL_NAMES = [
 ]
 
 # ===== 组分问数模式工具（报告 DAG 子模式，广东省超级站组分站） =====
-# 超站组分取数专用：水溶性离子、碳组分（OC/EC）、地壳元素、VOCs 类别；
+# 超站组分取数专用：水溶性离子、碳组分（OC/EC）、地壳元素、微量元素、
+# VOCs 类别/物种、OFP、PM2.5 官方重构；
 # 站点名→编码映射内置于工具（geo_mappings.json），不需要额外目录工具。
 QUERY_COMPONENT_TOOL_NAMES = [
     "list_session_resources",
@@ -266,9 +277,14 @@ QUERY_COMPONENT_TOOL_NAMES = [
     "write_file",
     # 超站组分取数
     "get_vocs_data",
+    "get_vocs_species",
+    "get_vocs_ofp",
+    "get_ofp_top10",
     "get_pm25_ionic",
     "get_pm25_carbon",
     "get_pm25_crustal",
+    "get_pm25_recovery",
+    "get_pm25_trace",
     # 可选归一化计算
     "execute_python",
 ]
@@ -286,9 +302,14 @@ EXPERT_COMPONENT_TOOL_NAMES = [
     "edit_file",
     # 超站组分取数
     "get_vocs_data",
+    "get_vocs_species",
+    "get_vocs_ofp",
+    "get_ofp_top10",
     "get_pm25_ionic",
     "get_pm25_carbon",
     "get_pm25_crustal",
+    "get_pm25_recovery",
+    "get_pm25_trace",
     # 组分分析（输入为组分查询工具落盘的 file_path）
     "calculate_carbon",
     "calculate_soluble",
@@ -493,9 +514,14 @@ DELIBERATION_CHEMISTRY_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     "get_vocs_data",
+    "get_vocs_species",
+    "get_vocs_ofp",
+    "get_ofp_top10",
     "get_pm25_ionic",
     "get_pm25_carbon",
     "get_pm25_crustal",
+    "get_pm25_recovery",
+    "get_pm25_trace",
     "calculate_vocs_pmf",
     "calculate_reconstruction",
     "calculate_carbon",

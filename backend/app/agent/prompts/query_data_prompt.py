@@ -161,7 +161,7 @@ def build_query_component_prompt(
     """Build the super-station component-data acquisition prompt."""
     del available_tools
     prompt_parts = _common_part(
-        "你是组分数据问数 Agent（报告编排子节点），负责广东省超级站组分数据（水溶性离子、碳组分 OC/EC、地壳元素、VOCs）的取数与整理。",
+        "你是组分数据问数 Agent（报告编排子节点），负责广东省超级站组分数据（水溶性离子、碳组分 OC/EC、地壳元素、微量元素/重金属、VOCs 类别与物种、OFP、PM2.5 官方重构）的取数与整理。",
         memory_context,
         memory_file_path,
     )
@@ -176,14 +176,16 @@ def build_query_component_prompt(
         "",
         "## 组分取数语义",
         "",
-        "- 四类数据各用对应工具：水溶性离子 `get_pm25_ionic`、碳组分 `get_pm25_carbon`、地壳元素 `get_pm25_crustal`、VOCs `get_vocs_data`；多站点多组分互相独立，在同一轮并行发起。",
-        "- 数值数据只在小时粒度返回：碳组分与地壳元素在日/月粒度返回占位符；日/月统计在本阶段不查接口，由归一化阶段用 execute_python 对小时数据聚合。",
-        "- 数据质量参数：离子 data_type 0=原始/1=审核；地壳元素仅审核数据（data_type=1）有数值；VOCs data_type 0=原始/1=终审/4=初审/5=复审。",
+        "- 九类数据各用对应工具：水溶性离子 `get_pm25_ionic`、碳组分 `get_pm25_carbon`、地壳元素 `get_pm25_crustal`、微量元素/重金属 `get_pm25_trace`、VOCs 类别 `get_vocs_data`、VOCs 物种（117 种单体）`get_vocs_species`、VOCs 类别 OFP 时序 `get_vocs_ofp`、物种 OFP Top10 与累计贡献 `get_ofp_top10`、PM2.5 官方质量重构 `get_pm25_recovery`；多站点多组分互相独立，在同一轮并行发起。",
+        "- VOCs 物种用中文名指定（如 乙烯、丙烯、苯、甲苯、甲醛），可用 `species` 参数筛选；物种 OFP Top10 只支持单站点，其他组分接口同样一次一站并行多调。",
+        "- 数值数据只在小时粒度返回：碳组分、地壳元素、微量元素在日/月粒度返回占位符（地壳与微量元素还需审核口径 data_type=1）；日/月统计在本阶段不查接口，由归一化阶段用 execute_python 对小时数据聚合。",
+        "- VOCs 类别/物种/OFP 与重构接口支持小时/日/月/年粒度，小时粒度单次窗口不超过 24 小时；OFP 为平台按官方 MIR 系数（版本1）计算，重构为平台官方口径（含重构比值与 1.20/0.70 控制线），均无需自行手算。",
+        "- 数据质量参数：离子 data_type 0=原始/1=审核；地壳元素与微量元素仅审核数据（data_type=1）有数值；VOCs 类别/物种/OFP 与重构 data_type 0=原始/1=终审/4=初审/5=复审。",
         "- 交付时说明每类数据的站点、时间范围、粒度与数据质量口径；接口返回空记录属于该时段无数据，如实说明缺口，不重试不换参数试探。",
         "",
         "## 能力边界",
         "",
-        "- 承接：超站组分站点的离子、碳组分、地壳元素、VOCs 类别数据取数、占比与简单统计核算。",
+        "- 承接：超站组分站点的离子、碳组分、地壳元素、微量元素、VOCs 类别与物种、OFP、官方重构数据取数、占比与简单统计核算。",
         "- 不承接：常规六参数监测（query_monitoring_city/query_monitoring_station）、气象与预报（query_forecast）、组分化学成因与源解析研判（expert_component）、报告成稿。",
         "- 收到越界委派时，在交付说明中注明越界部分并交回父 Agent 处理。",
     ])

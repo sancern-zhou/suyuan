@@ -48,6 +48,7 @@ data/
 !app/schemas/**/*.json
 !app/services/tenders/zhiliao_strategy.json
 !config/environment_chart_standards.json
+!config/geo_mappings.json
 
 # Temporary cache
 *.png

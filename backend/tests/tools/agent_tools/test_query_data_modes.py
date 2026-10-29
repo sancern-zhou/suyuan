@@ -154,6 +154,9 @@ def test_query_component_whitelist_is_lean():
 
     component = set(QUERY_COMPONENT_TOOL_NAMES)
     assert {"get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal"} <= component
+    # 组分二期：物种级/OFP/官方重构/微量元素与四工具同入白名单
+    assert {"get_vocs_species", "get_vocs_ofp", "get_ofp_top10",
+            "get_pm25_recovery", "get_pm25_trace"} <= component
     assert "execute_python" in component
     # 无目录工具：组分站点名→编码映射内置于查询工具
     assert "xuchang_station_catalog" not in component
@@ -161,7 +164,7 @@ def test_query_component_whitelist_is_lean():
     # 不携带监测/气象取数工具，也无委派工具
     assert not component & {"query_xcai_city_history", "get_weather_data", "execute_sql_query",
                             "call_sub_agent", "run_agent_workflow", "ask_user_question"}
-    assert len(component) <= 12
+    assert len(component) <= 20
     assert not component & AGENT_HIDDEN_TOOL_NAMES
 
 
@@ -187,7 +190,9 @@ def test_query_component_workflow_registered():
     definition = get_mode_workflow("query_component")
     assert definition is not None
     phase_tools = {tool for phase in definition.phases for tool in phase.allowed_tools}
-    assert {"get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal"} <= phase_tools
+    assert {"get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
+            "get_vocs_species", "get_vocs_ofp", "get_ofp_top10",
+            "get_pm25_recovery", "get_pm25_trace"} <= phase_tools
     assert "query_xcai_city_history" not in phase_tools
 
 
@@ -200,6 +205,13 @@ def test_query_component_prompt_declares_station_table_and_semantics():
     # 组分取数语义：小时数值、审核口径
     assert "小时" in prompt
     assert "审核" in prompt
+    # 组分二期九工具语义：物种/OFP/重构/微量元素
+    assert "get_vocs_species" in prompt
+    assert "get_vocs_ofp" in prompt
+    assert "get_ofp_top10" in prompt
+    assert "get_pm25_recovery" in prompt
+    assert "get_pm25_trace" in prompt
+    assert "24 小时" in prompt
     # 边界：常规监测/气象/研判不承接
     assert "query_monitoring_city" in prompt
     assert "query_forecast" in prompt

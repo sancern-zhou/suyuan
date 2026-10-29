@@ -464,6 +464,12 @@ backend:
     - get_pm25_ionic
     - get_pm25_carbon
     - get_pm25_crustal
+    # 2026-10-30 组分二期：VOCs 物种级/OFP/PM2.5 官方重构/微量元素
+    - get_vocs_species
+    - get_vocs_ofp
+    - get_ofp_top10
+    - get_pm25_recovery
+    - get_pm25_trace
     station_fault_diagnosis:
     - ask_user_question
     - list_session_resources

@@ -26,7 +26,6 @@ SHARED_MODE_TOOL_NAME_LISTS = [
     tool_registry.QUERY_TOOL_NAMES,
     tool_registry.KNOWLEDGE_TOOL_NAMES,
     tool_registry.REPORT_TOOL_NAMES,
-    tool_registry.CHART_TOOL_NAMES,
     tool_registry.BOARD_TOOL_NAMES,
     tool_registry.OPS_TOOL_NAMES,
     tool_registry.GRAPH_TOOL_NAMES,

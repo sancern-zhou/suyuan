@@ -32,6 +32,12 @@ from typing import Dict, Any, Optional, List
 from urllib.parse import urlencode
 
 from app.utils.particulate_token_manager import get_particulate_token_manager
+from app.utils.component_semantics import (
+    OFP_DETECTION_ITEM_TYPE_GUIDS,
+    OFP_FACTOR_UNIT_GUIDS,
+    OFP_MIR_VERSION,
+    VOC_SPECIES_DETECTION_ITEM_TYPE_GUID,
+)
 
 logger = structlog.get_logger()
 
@@ -48,6 +54,8 @@ class VocApiClient:
         # VOCs API端点
         self.voc_category_endpoint = "/api/supproduct/supoperation/ComponentVOC/GetComponentVOCAnalysis"
         self.voc_species_endpoint = "/api/supproduct/supoperation/ComponentVOC/GetSpeciesVOCAnalysis"
+        self.ofp_timeseries_endpoint = "/api/supproduct/supoperation/DataAnalysis/GetStationOfpDataAsync"
+        self.ofp_top10_endpoint = "/api/supproduct/supoperation/DataAnalysis/GetStationDataSecondOFPAOrdersync"
 
     def _get_auth_headers(self) -> Dict[str, str]:
         """获取认证请求头"""
@@ -175,6 +183,9 @@ class VocApiClient:
         """
         查询VOCs物种数据（乙烷、乙烯、乙炔、丙烷等具体物种）
 
+        接口约定：物种级分析必须携带固定 DetectionitemType GUID，
+        且 tableType/TableType 双写同值。
+
         Args:
             station_code: 站点编码，如 "1042b"
             start_time: 开始时间
@@ -184,7 +195,10 @@ class VocApiClient:
             is_mark: 是否包含标识字段
 
         Returns:
-            API响应，包含具体VOCs物种数据
+            API响应，包含:
+            - result.dataList: 时序记录（物种中文名为键，伴随 *_Mark 标识字段）
+            - result.resultDataProp: 数值化时序
+            - result.topTenResultAvg: 物种浓度 Top10 均值（如返回）
         """
         self.logger.info(
             "voc_species_query_start",
@@ -195,27 +209,25 @@ class VocApiClient:
             data_type=data_type
         )
 
-        # 构建查询参数（使用最小参数集，避免超时）
         params = {
             "StationCodes": station_code,
+            "DetectionitemType": VOC_SPECIES_DETECTION_ITEM_TYPE_GUID,
             "StartTime": start_time,
             "EndTime": end_time,
             "tableType": table_type,
+            "TableType": table_type,
             "dataType": data_type,
-            "IsMark": is_mark
+            "IsMark": is_mark,
+            "skipCount": 0,
+            "maxResultCount": 1000
         }
 
-        # 构建完整URL
-        url = f"{self.base_url}{self.voc_species_endpoint}?{urlencode(params)}"
+        url = self._build_query_url(self.voc_species_endpoint, params)
 
         try:
-            # 获取认证头
             headers = self._get_auth_headers()
+            response = requests.get(url, headers=headers, timeout=60)
 
-            # 发送GET请求
-            response = requests.get(url, headers=headers, timeout=30)
-
-            # 检查响应状态
             if response.status_code != 200:
                 return {
                     "success": False,
@@ -223,10 +235,8 @@ class VocApiClient:
                     "status_code": response.status_code
                 }
 
-            # 解析JSON响应
             api_response = response.json()
 
-            # 检查业务状态
             if not api_response.get("success"):
                 return {
                     "success": False,
@@ -234,7 +244,6 @@ class VocApiClient:
                     "api_response": api_response
                 }
 
-            # 成功返回
             return {
                 "success": True,
                 "api_response": api_response,
@@ -247,6 +256,145 @@ class VocApiClient:
                 "success": False,
                 "error": str(e)
             }
+
+    def get_ofp_timeseries(
+        self,
+        station_code: str,
+        start_time: str,
+        end_time: str,
+        table_type: int = 1,
+        data_type: int = 1,
+        is_mark: bool = False
+    ) -> Dict[str, Any]:
+        """
+        查询VOCs类别 OFP（臭氧生成潜势）时序与占比
+
+        平台按固定 MIR 系数版本（mirVerEmun=1）计算 OFP。
+        返回 result 为二元数组：[0] 各类别 OFP 时序（含 TimePoint），[1] 各类别浓度百分比。
+
+        Args:
+            station_code: 站点编码，如 "1042b"
+            start_time: 开始时间
+            end_time: 结束时间
+            table_type: 统计类型，1=小时，2=日，3=月，5=年
+            data_type: 数据类型，0=原始，1=终审，4=初审，5=复审
+            is_mark: 是否包含标识字段
+        """
+        self.logger.info(
+            "voc_ofp_timeseries_query_start",
+            station_code=station_code,
+            start_time=start_time,
+            end_time=end_time,
+            table_type=table_type,
+            data_type=data_type
+        )
+
+        params = self._ofp_common_params(
+            station_code, start_time, end_time, table_type, data_type, is_mark
+        )
+        return self._get_json(self.ofp_timeseries_endpoint, params, "voc_ofp_timeseries")
+
+    def get_ofp_top10(
+        self,
+        station_code: str,
+        start_time: str,
+        end_time: str,
+        table_type: int = 1,
+        data_type: int = 1,
+        is_mark: bool = False
+    ) -> Dict[str, Any]:
+        """
+        查询VOCs物种 OFP Top10 与浓度 Top10（含 OFP 累计贡献）
+
+        仅支持单站点。返回 result：
+        - datalistOrderByOFP: OFP 前10（DisplayName/ofp/val）
+        - datalistOrderByval: 浓度前10
+        - ofpresults: OFP 降序物种及累计贡献百分比（contribution）
+
+        Args:
+            同 get_ofp_timeseries
+        """
+        self.logger.info(
+            "voc_ofp_top10_query_start",
+            station_code=station_code,
+            start_time=start_time,
+            end_time=end_time,
+            table_type=table_type,
+            data_type=data_type
+        )
+
+        params = self._ofp_common_params(
+            station_code, start_time, end_time, table_type, data_type, is_mark
+        )
+        return self._get_json(self.ofp_top10_endpoint, params, "voc_ofp_top10")
+
+    def _ofp_common_params(
+        self,
+        station_code: str,
+        start_time: str,
+        end_time: str,
+        table_type: int,
+        data_type: int,
+        is_mark: bool
+    ) -> Dict[str, Any]:
+        """OFP 接口公共参数：仪器 GUID 数组 + MIR 版本 + 因子单位为约定固定值。"""
+        return {
+            "StationCodes": station_code,
+            "DetectionitemType": list(OFP_DETECTION_ITEM_TYPE_GUIDS),
+            "StartTime": start_time,
+            "EndTime": end_time,
+            "tableType": table_type,
+            "TableType": table_type,
+            "dataType": data_type,
+            "IsMark": is_mark,
+            "mirVerEmun": OFP_MIR_VERSION,
+            "factorUnit": list(OFP_FACTOR_UNIT_GUIDS),
+        }
+
+    def _build_query_url(self, endpoint: str, params: Dict[str, Any]) -> str:
+        """构建 GET 查询 URL；数组参数按重复键序列化（超站接口约定）。"""
+        query: List[tuple] = []
+        for key, value in params.items():
+            if value is None:
+                continue
+            if isinstance(value, list):
+                query.extend((key, str(item)) for item in value)
+            else:
+                query.append((key, str(value)))
+        return f"{self.base_url}{endpoint}?{urlencode(query)}"
+
+    def _get_json(self, endpoint: str, params: Dict[str, Any], op: str) -> Dict[str, Any]:
+        """发起 GET 查询并归一化错误返回。"""
+        url = self._build_query_url(endpoint, params)
+        try:
+            headers = self._get_auth_headers()
+            response = requests.get(url, headers=headers, timeout=60)
+
+            if response.status_code != 200:
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code}: {response.text}",
+                    "status_code": response.status_code
+                }
+
+            api_response = response.json()
+
+            if not api_response.get("success"):
+                return {
+                    "success": False,
+                    "error": api_response.get("msg", "API返回失败"),
+                    "api_response": api_response
+                }
+
+            return {"success": True, "api_response": api_response}
+
+        except requests.exceptions.Timeout:
+            return {"success": False, "error": f"{op} API请求超时"}
+        except requests.exceptions.RequestException as e:
+            return {"success": False, "error": f"网络请求失败: {str(e)}"}
+        except Exception as e:
+            self.logger.error(f"{op}_failed", error=str(e))
+            return {"success": False, "error": str(e)}
 
 
 # 单例模式

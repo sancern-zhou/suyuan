@@ -43,6 +43,7 @@ class ParticulateAPIClient:
         # API端点
         self.ionic_endpoint = "/api/supproduct/supoperation/ElementCompositionAnalysis/GetChartAnalysis"
         self.carbon_endpoint = "/api/supproduct/supoperation/ComponentPm25/GetComponentPm25Analysis"
+        self.recovery_endpoint = "/api/supproduct/supoperation/ComponentPm25/GetComponentPm25RecoveryAnalysis"
 
     def _get_auth_headers(self) -> Dict[str, str]:
         """获取认证请求头"""
@@ -199,6 +200,57 @@ class ParticulateAPIClient:
 
         # 重金属使用与离子相同的端点
         return self._call_api(self.ionic_endpoint, payload)
+
+    def get_pm25_recovery(
+        self,
+        station: str,
+        code: str,
+        start_time: str,
+        end_time: str,
+        table_type: int = 1,
+        data_type: int = 0,
+        chart_analysis_type: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        查询 PM2.5 组分质量重构（平台官方口径）
+
+        平台按官方化学系数（OM/OC 1.4、Si 2.49、Ca 1.63、Fe 2.42、Ti 1.94、ai 2.2）
+        重构九组分（有机物/硫酸盐/硝酸盐/铵盐/元素碳/氯盐/地壳元素/微量元素/其他），
+        返回重构质量浓度与 PM2.5 实测比值、高位线 1.20 / 低位线 0.70、K/B/R² 拟合。
+
+        Args:
+            station: 站点名称
+            code: 站点编码
+            start_time: 开始时间
+            end_time: 结束时间
+            table_type: 时间粒度 (1=小时, 2=日均, 3=月, 5=年)
+            data_type: 数据类型 (0=原始, 1=终审, 4=初审, 5=复审)
+            chart_analysis_type: 图表分析类型（接口必填，约定 0）
+
+        Returns:
+            API响应，result 含:
+            - resultData: 重构质量时序（九组分 + PM₂.₅ + 重构比值 + 高位线/低位线 + K/B/R2）
+            - resultAvg: 重构平均浓度
+            - resultAvgProp: 平均占比
+            - resultDataProp: 百分比时序
+        """
+        payload = {
+            "StationCodes": [code],
+            "timePoint": [start_time, end_time],
+            "tableType": table_type,
+            "dataType": data_type,
+            "IsMark": False,
+            "chartAnalysisType": chart_analysis_type,
+            "StartTime": start_time,
+            "EndTime": end_time,
+            "skipCount": 0,
+            "maxResultCount": 1000,
+        }
+
+        self.logger.info(
+            f"[ParticulateAPI] PM2.5重构参数 - table_type={table_type}, data_type={data_type}"
+        )
+        return self._call_api(self.recovery_endpoint, payload)
 
     def _call_api(self, endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """

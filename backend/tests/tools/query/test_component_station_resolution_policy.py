@@ -2,16 +2,10 @@ import pytest
 
 
 class FakeMatcher:
-    def __init__(self):
-        self.codes = {"公园前": "1006b", "南沙科大": "1007b"}
+    """component_station_resolver 只依赖 station_codes 名称→编码字典。"""
 
-    def stations_to_codes(self, names):
-        codes = []
-        for name in names:
-            if name not in self.codes:
-                raise ValueError(f"组分站点 '{name}' 不在组分站点映射表中。")
-            codes.append(self.codes[name])
-        return codes
+    def __init__(self):
+        self.station_codes = {"公园前": "1006b", "南沙科大": "1007b"}
 
 
 class DummyContext:
@@ -19,8 +13,17 @@ class DummyContext:
         raise AssertionError("API failure should not save data")
 
 
+@pytest.fixture
+def fake_station_matcher(monkeypatch):
+    """站点解析单一入口在 component_station_resolver，统一打桩。"""
+    monkeypatch.setattr(
+        "app.tools.query.component_station_resolver.get_particulate_geo_matcher",
+        lambda: FakeMatcher(),
+    )
+
+
 @pytest.mark.asyncio
-async def test_pm25_ionic_maps_station_name_but_not_city(monkeypatch):
+async def test_pm25_ionic_maps_station_name_but_not_city(fake_station_matcher, monkeypatch):
     from app.tools.query.get_pm25_ionic.tool import GetPM25IonicTool
 
     captured = {}
@@ -30,7 +33,6 @@ async def test_pm25_ionic_maps_station_name_but_not_city(monkeypatch):
             captured.update(kwargs)
             return {"success": False, "error": "stop"}
 
-    monkeypatch.setattr("app.tools.query.get_pm25_ionic.tool.get_particulate_geo_matcher", lambda: FakeMatcher())
     monkeypatch.setattr("app.tools.query.get_pm25_ionic.tool.get_particulate_api_client", lambda: FakeClient())
 
     station_result = await GetPM25IonicTool().execute(
@@ -57,7 +59,7 @@ async def test_pm25_ionic_maps_station_name_but_not_city(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_pm25_carbon_maps_station_name_without_city_mapping(monkeypatch):
+async def test_pm25_carbon_maps_station_name_without_city_mapping(fake_station_matcher, monkeypatch):
     from app.tools.query.get_pm25_carbon.tool import GetPM25CarbonTool
 
     captured = {}
@@ -67,7 +69,6 @@ async def test_pm25_carbon_maps_station_name_without_city_mapping(monkeypatch):
             captured.update(kwargs)
             return {"success": False, "error": "stop"}
 
-    monkeypatch.setattr("app.tools.query.get_pm25_carbon.tool.get_particulate_geo_matcher", lambda: FakeMatcher())
     monkeypatch.setattr("app.tools.query.get_pm25_carbon.tool.get_particulate_api_client", lambda: FakeClient())
 
     result = await GetPM25CarbonTool().execute(
@@ -84,7 +85,7 @@ async def test_pm25_carbon_maps_station_name_without_city_mapping(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_pm25_crustal_maps_station_name_without_city_mapping(monkeypatch):
+async def test_pm25_crustal_maps_station_name_without_city_mapping(fake_station_matcher, monkeypatch):
     from app.tools.query.get_pm25_crustal.tool import GetPM25CrustalTool
 
     captured = {}
@@ -94,7 +95,6 @@ async def test_pm25_crustal_maps_station_name_without_city_mapping(monkeypatch):
             captured.update(kwargs)
             return {"success": False, "error": "stop"}
 
-    monkeypatch.setattr("app.tools.query.get_pm25_crustal.tool.get_particulate_geo_matcher", lambda: FakeMatcher())
     monkeypatch.setattr("app.tools.query.get_pm25_crustal.tool.get_particulate_api_client", lambda: FakeClient())
 
     result = await GetPM25CrustalTool().execute(
@@ -111,7 +111,7 @@ async def test_pm25_crustal_maps_station_name_without_city_mapping(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_vocs_maps_station_name_without_city_mapping(monkeypatch):
+async def test_vocs_maps_station_name_without_city_mapping(fake_station_matcher, monkeypatch):
     from app.tools.query.get_vocs_data.tool_api import GetVOCsDataTool
 
     captured = {}
@@ -121,7 +121,6 @@ async def test_vocs_maps_station_name_without_city_mapping(monkeypatch):
             captured.update(kwargs)
             return {"success": False, "error": "stop"}
 
-    monkeypatch.setattr("app.tools.query.get_vocs_data.tool_api.get_particulate_geo_matcher", lambda: FakeMatcher())
     monkeypatch.setattr("app.tools.query.get_vocs_data.tool_api.get_voc_api_client", lambda: FakeClient())
 
     result = await GetVOCsDataTool().execute(

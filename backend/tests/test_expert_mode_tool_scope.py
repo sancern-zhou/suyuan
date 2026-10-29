@@ -45,5 +45,5 @@ def test_expert_mode_keeps_trajectory_and_report_tools():
 def test_expert_prompt_prioritizes_python_for_analysis_charts():
     prompt = build_expert_prompt([])
     assert "专业分析绘图以 `execute_python`（Matplotlib/Seaborn）为主" in prompt
-    assert "`create_business_chart` 辅助" in prompt
-    assert "`execute_echarts_python` 辅助交互探索" in prompt
+    assert "已支持的专用业务图型统一使用 `create_business_chart`" in prompt
+    assert "`execute_echarts_python` 用于其他交互探索" in prompt
