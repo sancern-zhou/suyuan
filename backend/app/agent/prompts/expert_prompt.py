@@ -1,9 +1,10 @@
 """专家模式系统提示词。
 
-三种专家变体共享同一骨架与输出协议：
+四种专家变体共享同一骨架与输出协议：
 - 综合专家（expert）：原有全领域专家，行为保持兼容。
 - 气象专家（expert_meteorology）：只做气象条件与输送过程研判。
 - 常规分析专家（expert_analysis）：只做常规监测数据（六参数浓度/超标/时空变化）研判。
+- 组分专家（expert_component）：只做 PM2.5 组分化学与 VOCs 组成研判。
 """
 
 from typing import List, Optional
@@ -133,8 +134,12 @@ _SUBAGENT_RETURN_RULES = [
 
 
 def _common_rules(tool_guidance: List[str]) -> List[str]:
-    """所有变体共享的骨架段落（工具指引由变体注入）。"""
+    """所有变体共享的骨架段落（工具指引由变体注入并渲染为独立段落）。"""
     return [
+        "## 工具选择",
+        "",
+        *tool_guidance,
+        "",
         *_USER_SCENARIO_RULES,
         *_POLLUTION_INVESTIGATION_FRAMEWORK,
         *_RESPONSE_RULES,
@@ -267,6 +272,53 @@ def build_expert_meteorology_prompt(
     return "\n".join(prompt_parts)
 
 
+def build_expert_component_prompt(
+    available_tools: List[str],
+    memory_context: Optional[str] = None,
+    memory_file_path: Optional[str] = None,
+) -> str:
+    """
+    构建组分专家模式系统提示词（报告 DAG 子专家）。
+
+    定位：只负责 PM2.5 组分化学与 VOCs 组成的专业研判；气象条件引用上游气象节点。
+    """
+    prompt_parts = _memory_blocks(memory_context, memory_file_path)
+
+    tool_guidance = [
+        "按分析目标选择超站组分查询（get_pm25_ionic/get_pm25_carbon/get_pm25_crustal/get_vocs_data）、组分分析（calculate_*）或轻量计算与业务图表工具；工具参数和可用工具以本次 tool schema 为准。",
+        "组分查询工具只接受超级站组分站点名或站点编码（如 鹤山花果山=1001b）；用户给城市时先换算为该市组分站点，没有组分站点时如实说明。",
+        *_chart_guidance("create_business_chart" in available_tools),
+    ]
+
+    prompt_parts.extend([
+        "你是大气组分分析专家，负责对 PM2.5 组分（水溶性离子、碳组分 OC/EC、地壳元素）与 VOCs 组成进行化学成因与来源指向的专业研判。",
+        "",
+        *_boundary_section([
+            "- 你负责：组分浓度特征与占比结构、二次无机盐生成（SO4²⁻/NO₃⁻/NH₄⁺ 与 SOR/NOR）、碳组分一次/二次拆分（OC/EC 比值与 SOC 估算）、地壳元素与扬尘指向、VOCs 物种反应活性与臭氧生成潜势（OFP）、组分重构与来源指向性判断，并说明判断依据和证据缺口。",
+            "- 你的分析聚焦组分化学；气象条件与输送直接引用上游气象节点（expert_meteorology）结论并标注来源，常规六参数研判归 expert_analysis，定量源解析谱（PMF 成分谱）与正式报告由对应节点完成。",
+            "- 缺少上游气象或六参数结论时，在 data_gaps 中记录，并按现有组分证据给出保守判断。",
+        ]),
+        *_common_rules(tool_guidance),
+        "## 专业推理要求",
+        "",
+        "每个结论必须区分观测事实、推理判断、反证检查和不确定性。",
+        "",
+        "### 常见组分机制检查",
+        "",
+        "- 二次无机盐：SO4²⁻、NO₃⁻、NH₄⁺ 占比与升降；硫氧化率 SOR=SO4²⁻/(SO4²⁻+SO2)、氮氧化率 NOR=NO3⁻/(NO3⁻+NO2)（SO2/NO2 数据不可得时说明缺口）；NH4⁺/SO4²⁻ 摩尔比判断铵充足性。",
+        "- 碳组分：OC/EC 比值（>2 提示二次生成贡献）、SOC=OC−EC×(OC/EC)min 的最小比值法估算、取暖季与秋冬季一次源波动。",
+        "- 地壳元素：Al/Si/Ca/Fe/Ti/K 富集与扬尘、建筑尘、道路尘指向；地壳元素仅审核数据有数值，取数时注意数据质量口径。",
+        "- VOCs：烷烃/烯烃/芳香烃/OVOCs 占比结构、B/T（苯/甲苯）比与机动车或溶剂源指向、OFP=Σ(物种浓度×MIR 系数) 识别活性物种、烯烃与芳香烃对臭氧生成的贡献。",
+        "- 交叉验证：组分重构 PM2.5 与常规监测浓度趋势对比；组分突变时段与气象节点结论（静稳、降水、输送）交叉印证。",
+        "",
+        "引用上游气象或六参数结论时必须标注来源节点；结论中的占比、比值和 OFP 必须给出计算口径、时间范围与站点。",
+        "",
+        *_EFFICIENCY_RULES,
+    ])
+
+    return "\n".join(prompt_parts)
+
+
 def build_expert_analysis_prompt(
     available_tools: List[str],
     memory_context: Optional[str] = None,
@@ -289,7 +341,7 @@ def build_expert_analysis_prompt(
         "",
         *_boundary_section([
             "- 你负责：六参数浓度特征与超标统计、AQI 与首要污染物变化、站点和城市时空对比、污染过程分段、本地累积与区域同步性的初步研判，并说明判断依据和证据缺口。",
-            "- 你的分析聚焦常规监测数据；离子、碳组分、地壳元素和 VOCs/OFP 等组分分析由后续独立组分分析专家承担。",
+            "- 你的分析聚焦常规监测数据；离子、碳组分、地壳元素和 VOCs/OFP 等组分分析由组分专家（expert_component）承担。",
             "- 气象判断直接引用上游气象节点结论并标注来源；当前缺少气象结论时在 data_gaps 中记录，并按现有监测证据给出保守判断。",
         ]),
         *_common_rules(tool_guidance),

@@ -1,6 +1,7 @@
-"""报告 DAG 问数子模式（query_monitoring / query_forecast）：工具、提示词与契约守卫。"""
+"""报告 DAG 问数子模式（query_monitoring / query_forecast / query_component）：工具、提示词与契约守卫。"""
 
 from app.agent.prompts.query_data_prompt import (
+    build_query_component_prompt,
     build_query_forecast_prompt,
     build_query_monitoring_prompt,
 )
@@ -141,3 +142,65 @@ def test_forecast_prompt_requires_lead_time_annotation():
     assert "气象与空气质量预报问数" in prompt
     assert "起报时间" in prompt
     assert "静稳或输送研判" in prompt
+
+
+# ----------------------------------------
+# 组分问数子模式（query_component，广东省超级站）
+# ----------------------------------------
+
+
+def test_query_component_whitelist_is_lean():
+    from app.agent.prompts.tool_registry import QUERY_COMPONENT_TOOL_NAMES
+
+    component = set(QUERY_COMPONENT_TOOL_NAMES)
+    assert {"get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal"} <= component
+    assert "execute_python" in component
+    # 无目录工具：组分站点名→编码映射内置于查询工具
+    assert "xuchang_station_catalog" not in component
+    assert "resolve_station_geo" not in component
+    # 不携带监测/气象取数工具，也无委派工具
+    assert not component & {"query_xcai_city_history", "get_weather_data", "execute_sql_query",
+                            "call_sub_agent", "run_agent_workflow", "ask_user_question"}
+    assert len(component) <= 12
+    assert not component & AGENT_HIDDEN_TOOL_NAMES
+
+
+def test_query_component_resolves_via_get_tools_by_mode():
+    tools = get_tools_by_mode("query_component")
+    assert tools
+    assert "call_sub_agent" not in tools
+    profile = get_agent_profile("query_component")
+    assert profile.allow_delegation is False
+
+
+def test_query_component_registered_in_contract_and_budget():
+    assert "query_component" in target_mode_values()
+    contract = build_target_mode_contract()
+    assert "组分问数 Agent" in contract
+    assert "query_component" in contract
+    assert _resolve_child_max_iterations("query_component", None) == 20
+
+
+def test_query_component_workflow_registered():
+    from app.agent.workflow.mode_workflows import get_mode_workflow
+
+    definition = get_mode_workflow("query_component")
+    assert definition is not None
+    phase_tools = {tool for phase in definition.phases for tool in phase.allowed_tools}
+    assert {"get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal"} <= phase_tools
+    assert "query_xcai_city_history" not in phase_tools
+
+
+def test_query_component_prompt_declares_station_table_and_semantics():
+    prompt = build_query_component_prompt(["get_pm25_ionic", "execute_python"])
+    assert "组分数据问数 Agent" in prompt
+    # 站点清单内嵌（组分站与常规监测站是两套体系）
+    assert "鹤山花果山=1001b" in prompt
+    assert "不接受城市名" in prompt
+    # 组分取数语义：小时数值、审核口径
+    assert "小时" in prompt
+    assert "审核" in prompt
+    # 边界：常规监测/气象/研判不承接
+    assert "query_monitoring_city" in prompt
+    assert "query_forecast" in prompt
+    assert "expert_component" in prompt

@@ -64,9 +64,9 @@ session_manager = get_session_manager()
 
 # Child execution uses office and the registered professional leaf modes.
 AgentMode = Literal[
-    "office", "query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "report", "assistant", "expert",
+    "office", "query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "query_component", "report", "assistant", "expert",
 
-    "expert_meteorology", "expert_analysis", "ops", "board", "ppt", "knowledge",
+    "expert_meteorology", "expert_analysis", "expert_component", "ops", "board", "ppt", "knowledge",
 ]
 
 _DEFAULT_CHILD_MAX_ITERATIONS = {
@@ -74,12 +74,14 @@ _DEFAULT_CHILD_MAX_ITERATIONS = {
     # 适度放宽；工作流重试还会在此基础上自动扩容（见 coordinator）。
     "expert_meteorology": 40,
     "expert_analysis": 40,
+    "expert_component": 40,
     "expert": 40,
     # 固定问数工作流由运行时限制为阶段预算之和（acquire 4 + normalize 15 + deliver 1）。
     "query_monitoring": 20,
     "query_monitoring_station": 20,
     "query_monitoring_city": 20,
     "query_forecast": 20,
+    "query_component": 20,
 }
 
 

@@ -8,9 +8,15 @@ from typing import Literal, List, Optional
 from .office_prompt import build_office_prompt
 from .assistant_role_contract import ASSISTANT_MEDIA_CONTRACT, ASSISTANT_ROLE_CONTRACT
 from .ppt_prompt import build_ppt_prompt
-from .expert_prompt import build_expert_analysis_prompt, build_expert_meteorology_prompt, build_expert_prompt
+from .expert_prompt import (
+    build_expert_analysis_prompt,
+    build_expert_component_prompt,
+    build_expert_meteorology_prompt,
+    build_expert_prompt,
+)
 from .query_prompt import build_query_prompt
 from .query_data_prompt import (
+    build_query_component_prompt,
     build_query_forecast_prompt,
     build_query_monitoring_city_prompt,
     build_query_monitoring_prompt,
@@ -111,11 +117,13 @@ AgentMode = Literal[
     "expert",
     "expert_meteorology",
     "expert_analysis",
+    "expert_component",
     "query",
     "query_monitoring",
     "query_monitoring_station",
     "query_monitoring_city",
     "query_forecast",
+    "query_component",
     "knowledge",
     "report",
     "enforcement_exam",
@@ -132,7 +140,7 @@ AgentMode = Literal[
 
 
 # 数据源地图对取数/研判/编排模式生效；纯产出型模式（ppt/board 等）不需要。
-DATA_SOURCE_MAP_MODES = {"query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "expert", "expert_meteorology", "expert_analysis", "report"}
+DATA_SOURCE_MAP_MODES = {"query", "query_monitoring", "query_monitoring_station", "query_monitoring_city", "query_forecast", "query_component", "expert", "expert_meteorology", "expert_analysis", "expert_component", "report"}
 
 
 def _with_data_source_map(prompt: str, mode: str) -> str:
@@ -245,6 +253,8 @@ def _build_react_system_prompt(
         return _with_platform_contracts(build_expert_meteorology_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "expert_analysis":
         return _with_platform_contracts(build_expert_analysis_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "expert_component":
+        return _with_platform_contracts(build_expert_component_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "query":
         return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path)
                                         + build_delegation_contract(mode, filtered_tools))
@@ -256,6 +266,8 @@ def _build_react_system_prompt(
         return _with_platform_contracts(build_query_monitoring_city_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "query_forecast":
         return _with_platform_contracts(build_query_forecast_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "query_component":
+        return _with_platform_contracts(build_query_component_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "knowledge":
         return _with_platform_contracts(build_knowledge_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "report":

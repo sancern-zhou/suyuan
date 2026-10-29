@@ -61,6 +61,15 @@ _FORECAST_QUERY_TOOLS = (
     "execute_postgres_sql_query",
 )
 
+# 组分问数：广东省超级站组分取数（水溶性离子/碳组分/地壳元素/VOCs）；
+# 站点名→编码映射内置于工具，无目录解析轮次。
+_COMPONENT_QUERY_TOOLS = (
+    "get_vocs_data",
+    "get_pm25_ionic",
+    "get_pm25_carbon",
+    "get_pm25_crustal",
+)
+
 _NORMALIZE_TOOLS = (
     "execute_python",
     "read_session_resource",
@@ -189,6 +198,16 @@ for _definition in (
         "query_forecast",
         _FORECAST_QUERY_TOOLS,
         "气象实况、气象预报与空气质量预报固定问数流程",
+    ),
+    _query_definition(
+        "query_component",
+        _COMPONENT_QUERY_TOOLS,
+        "超站组分数据固定问数流程",
+        scope_line=(
+            "聚焦广东省超级站组分取数：水溶性离子、碳组分（OC/EC）、地壳元素、VOCs 类别，"
+            "多站点多组分批量并发查询；组分站点不接受城市名，站点清单见组分问数提示词；"
+            "碳组分与地壳元素数值仅小时粒度，地壳元素需审核口径（data_type=1）。"
+        ),
     ),
 ):
     workflow_catalog.register(_definition)

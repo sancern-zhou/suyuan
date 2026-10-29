@@ -12,14 +12,15 @@
 from typing import Dict, Iterable, List
 
 # 工具实现可由显式后端工作流继续使用，但不得向任何 Agent 暴露。
+# 组分查询（get_vocs_data 等）与组分分析（calculate_carbon 等）已对
+# query_component / expert_component / deliberation_chemistry / 问数与专家主模式开放。
+# 仍隐藏：综合兜底聚合、综合 PMF、轨迹源解析、地图生成、空气质量预报。
 AGENT_HIDDEN_TOOL_NAMES = frozenset({
     "aggregate_data",
-    "calculate_pmf", "calculate_pm_pmf", "calculate_vocs_pmf",
+    "calculate_pmf", "calculate_pm_pmf",
     "analyze_trajectory_sources",
-    "calculate_reconstruction", "calculate_carbon", "calculate_soluble",
-    "calculate_crustal", "calculate_trace", "predict_air_quality",
+    "predict_air_quality",
     "generate_map",
-    "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
 })
 
 # ========================================
@@ -147,7 +148,7 @@ EXPERT_METEOROLOGY_TOOL_NAMES = [
 
 # ===== 常规分析专家模式工具（报告 DAG 子专家，精简配置） =====
 # 只保留监测数据研判必需工具；气象/轨迹工具不进入本白名单。
-# 注意：组分数据工具（get_vocs_data 等）在 AGENT_HIDDEN_TOOL_NAMES 中，不对 Agent 暴露。
+# 组分化学与 VOCs 研判由 expert_component 承担，不在本白名单。
 EXPERT_ANALYSIS_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
@@ -252,6 +253,52 @@ QUERY_FORECAST_TOOL_NAMES = [
     "execute_postgres_sql_query",
     # 可选归一化计算
     "execute_python",
+]
+
+# ===== 组分问数模式工具（报告 DAG 子模式，广东省超级站组分站） =====
+# 超站组分取数专用：水溶性离子、碳组分（OC/EC）、地壳元素、VOCs 类别；
+# 站点名→编码映射内置于工具（geo_mappings.json），不需要额外目录工具。
+QUERY_COMPONENT_TOOL_NAMES = [
+    "list_session_resources",
+    "read_session_resource",
+    "publish_session_file",
+    # 中间产物落盘（read_file 不进问数流程：读上游结果用 read_session_resource）
+    "write_file",
+    # 超站组分取数
+    "get_vocs_data",
+    "get_pm25_ionic",
+    "get_pm25_carbon",
+    "get_pm25_crustal",
+    # 可选归一化计算
+    "execute_python",
+]
+
+# ===== 组分专家模式工具（报告 DAG 子专家） =====
+# 组分化学与来源指向研判：超站组分取数 + 组分分析工具 + 绘图；
+# 气象/轨迹工具不进入本白名单（气象结论引用 expert_meteorology 上游节点）。
+EXPERT_COMPONENT_TOOL_NAMES = [
+    "list_session_resources",
+    "publish_session_file",
+    # 上游产物复用与中间产物落地
+    "read_file",
+    "write_file",
+    # 长期记忆维护（MEMORY.md）
+    "edit_file",
+    # 超站组分取数
+    "get_vocs_data",
+    "get_pm25_ionic",
+    "get_pm25_carbon",
+    "get_pm25_crustal",
+    # 组分分析（输入为组分查询工具落盘的 file_path）
+    "calculate_carbon",
+    "calculate_soluble",
+    "calculate_crustal",
+    "calculate_trace",
+    "calculate_reconstruction",
+    "calculate_vocs_pmf",
+    # 计算与绘图
+    "execute_python",
+    "create_business_chart",
 ]
 
 # 站点层级监测问数：国控站走采集库 SQL（Station 表即站点目录）；乡镇站/中台口径
@@ -507,6 +554,8 @@ QUERY_MONITORING_TOOLS = _build_tool_dict(QUERY_MONITORING_TOOL_NAMES)
 QUERY_MONITORING_STATION_TOOLS = _build_tool_dict(QUERY_MONITORING_STATION_TOOL_NAMES)
 QUERY_MONITORING_CITY_TOOLS = _build_tool_dict(QUERY_MONITORING_CITY_TOOL_NAMES)
 QUERY_FORECAST_TOOLS = _build_tool_dict(QUERY_FORECAST_TOOL_NAMES)
+QUERY_COMPONENT_TOOLS = _build_tool_dict(QUERY_COMPONENT_TOOL_NAMES)
+EXPERT_COMPONENT_TOOLS = _build_tool_dict(EXPERT_COMPONENT_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
 KNOWLEDGE_TOOLS = _build_tool_dict(KNOWLEDGE_TOOL_NAMES)
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
@@ -547,7 +596,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     根据模式获取工具有序白名单。
 
     Args:
-        mode: "assistant" | "ppt" | "expert" | "expert_meteorology" | "expert_analysis" | "query" | "query_monitoring" | "query_monitoring_station" | "query_monitoring_city" | "query_forecast" | "report" | "office" | "enforcement_exam" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
+        mode: "assistant" | "ppt" | "expert" | "expert_meteorology" | "expert_analysis" | "expert_component" | "query" | "query_monitoring" | "query_monitoring_station" | "query_monitoring_city" | "query_forecast" | "query_component" | "report" | "office" | "enforcement_exam" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
 
     Returns:
         工具字典 {tool_name: ""}，key 顺序即工具顺序。
@@ -562,6 +611,8 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "query_monitoring_station": QUERY_MONITORING_STATION_TOOLS,
         "query_monitoring_city": QUERY_MONITORING_CITY_TOOLS,
         "query_forecast": QUERY_FORECAST_TOOLS,
+        "query_component": QUERY_COMPONENT_TOOLS,
+        "expert_component": EXPERT_COMPONENT_TOOLS,
         "query": QUERY_TOOLS,
         "knowledge": KNOWLEDGE_TOOLS,
         "report": REPORT_TOOLS,

@@ -64,7 +64,10 @@ def test_domain_expert_tool_whitelists_are_disjoint_and_lean():
         assert AGENT_HIDDEN_TOOL_NAMES.isdisjoint(tools)
         assert {"run_agent_workflow", "call_sub_agent", "ask_user_question"}.isdisjoint(tools)
         assert {"write_file", "publish_session_file"}.issubset(tools)
-        assert {"edit_file", "create_report_package"}.isdisjoint(tools)
+        # edit_file 用于专家子 Agent 的 MEMORY.md 常驻记忆维护（白名单注释约定），
+        # 仅报告包收口工具不进入子模式。
+        assert "edit_file" in tools
+        assert "create_report_package" not in tools
 
 
 def test_domain_expert_profiles_disallow_delegation():
@@ -102,6 +105,7 @@ def test_domain_expert_iteration_defaults_are_bounded():
     # 工作流重试还会在此基础上按 50% 自动扩容（见 coordinator）。
     assert _resolve_child_max_iterations("expert_meteorology", None) == 40
     assert _resolve_child_max_iterations("expert_analysis", None) == 40
+    assert _resolve_child_max_iterations("expert_component", None) == 40
     assert _resolve_child_max_iterations("expert", None) == 40
     assert _resolve_child_max_iterations("expert_analysis", 12) == 12
     assert _resolve_child_max_iterations("expert_analysis", 999) == 120
@@ -136,7 +140,7 @@ def test_analysis_prompt_defers_to_upstream_meteorology():
     assert "上游气象节点结论" in prompt
     assert "data_gaps" in prompt
     assert "meteorological_trajectory_analysis" not in prompt
-    assert "离子、碳组分、地壳元素和 VOCs/OFP 等组分分析由后续独立组分分析专家承担" in prompt
+    assert "组分分析由组分专家（expert_component）承担" in prompt
     assert "水溶性离子" not in prompt
     assert "VOCs/OFP 信号" not in prompt
     assert "业务影响和补证建议" in prompt
@@ -144,8 +148,24 @@ def test_analysis_prompt_defers_to_upstream_meteorology():
     assert "关键数值同时说明时间范围、空间范围、指标口径和单位" in prompt
     assert "判断依据、适用条件" in prompt
     assert "置信度" not in prompt
-    for negative_marker in ("NEVER", "禁止", "不得", "不要", "不负责"):
+    # 总研判框架中"不要一开始就进入企业或轨迹细节"是共享防下钻规则，不在负面词之列。
+    for negative_marker in ("NEVER", "禁止", "不得", "不负责"):
         assert negative_marker not in prompt
+
+
+def test_component_prompt_focuses_on_chemistry_and_upstream_references():
+    """组分专家提示词：聚焦组分化学，气象/六参数结论引用上游节点。"""
+    from app.agent.prompts.expert_prompt import build_expert_component_prompt
+
+    prompt = build_expert_component_prompt(list(get_tools_by_mode("expert_component")))
+    assert "大气组分分析专家" in prompt
+    assert "SOR" in prompt and "OFP" in prompt
+    assert "SOC" in prompt
+    assert "expert_meteorology" in prompt
+    assert "expert_analysis" in prompt
+    assert "get_pm25_ionic" in prompt or "组分查询" in prompt
+    # 不自带气象/轨迹工具，也不做报告成稿
+    assert "meteorological_trajectory_analysis" not in prompt
 
 
 def test_general_expert_prompt_keeps_full_scope_and_gains_efficiency_rules():
@@ -164,7 +184,9 @@ def test_contract_registers_domain_expert_modes():
     values = target_mode_values()
     assert "expert_meteorology" in values
     assert "expert_analysis" in values
+    assert "expert_component" in values
     contract = build_target_mode_contract()
     assert "气象专家 Agent" in contract
     assert "常规分析专家 Agent" in contract
+    assert "组分专家 Agent" in contract
     assert "expert_meteorology" in contract

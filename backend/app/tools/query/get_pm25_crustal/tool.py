@@ -9,58 +9,13 @@ from typing import TYPE_CHECKING, Any, Dict, List, Union
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.query.component_station_resolver import resolve_component_station
 from app.utils.particulate_api_client import get_particulate_api_client
-from app.utils.particulate_geo_matcher import get_particulate_geo_matcher
 
 if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
 
 logger = structlog.get_logger()
-
-
-def _resolve_station_and_code(
-    *,
-    locations: Union[List[str], None],
-    station: Union[str, None],
-    code: Union[str, None],
-) -> tuple[str | None, str | None, Dict[str, Any] | None]:
-    if locations:
-        station_names = [str(location).strip() for location in locations if str(location).strip()]
-    elif station:
-        station_names = [station.strip()]
-    else:
-        station_names = []
-
-    if station_names:
-        matcher = get_particulate_geo_matcher()
-        try:
-            station_codes = matcher.stations_to_codes(station_names)
-        except ValueError as e:
-            return None, None, {
-                "success": False,
-                "error": (
-                    f"{e} 请先调用 resolve_station_geo 获取城市下辖组分站点，"
-                    "再传入具体站点名称查询。"
-                ),
-                "locations": locations,
-                "station_names": station_names,
-            }
-        if not station_codes:
-            return None, None, {
-                "success": False,
-                "error": f"无法将站点名称映射到组分站点编码: {station_names}",
-                "locations": locations,
-                "station_names": station_names,
-            }
-        return station_names[0], code or station_codes[0], None
-
-    if station and code:
-        return station, code, None
-
-    return None, None, {
-        "success": False,
-        "error": "必须提供具体组分站点名称 station，或同时提供 station 和 code；城市请先用 resolve_station_geo 展开。"
-    }
 
 
 def _filter_mark_fields(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -93,49 +48,53 @@ class GetPM25CrustalTool(LLMTool):
         function_schema = {
             "name": "get_pm25_crustal",
             "description": (
-                "查询PM2.5地壳元素数据（Al/Si/Fe/Ca/Ti/K等），用于扬尘源解析和地壳元素分析。"
-                "需要地壳元素/重金属数据时优先使用；城市下辖组分站点需先用 resolve_station_geo 获取，本工具只查询指定站点。"
+                "查询广东省超级站组分站点的 PM2.5 地壳元素/无机元素数据"
+                "（Al、Si、Ca、Fe、Ti、K、Mn 等），用于扬尘/建筑尘/道路尘指向、"
+                "地壳贡献核算和富集因子分析。"
+                "站点名→编码映射内置（组分站点编码以 b 结尾，与常规监测站点是两套体系）；"
+                "每次只查询一个组分站点，多站点在同一轮并行多次调用。"
+                "注意：数值数据仅审核数据（data_type=1）且小时粒度返回，"
+                "其他口径返回占位符。不要用于常规六参数/城市浓度查询（那是监测数据工具）。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "station": {
+                        "type": "string",
+                        "description": "组分站点名称（如 新兴、鹤山花果山），自动映射站点编码；不接受城市名"
+                    },
                     "locations": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "组分站点名称列表，不接受城市名；城市需先用 resolve_station_geo 展开"
-                    },
-                    "station": {
-                        "type": "string",
-                        "description": "中文组分站点名，可自动映射站点编码"
+                        "description": "兼容参数：单个组分站点名的列表形式；多站点请并行调用"
                     },
                     "code": {
                         "type": "string",
-                        "description": "站点编码；传入 station 时可省略"
+                        "description": "组分站点编码（如 1042b）；传入 station 时可省略，只传 code 也可查询"
                     },
                     "start_time": {
                         "type": "string",
-                        "description": "开始时间，格式YYYY-MM-DD HH:MM:SS"
+                        "description": "开始时间，格式 YYYY-MM-DD HH:MM:SS"
                     },
                     "end_time": {
                         "type": "string",
-                        "description": "结束时间，格式YYYY-MM-DD HH:MM:SS"
+                        "description": "结束时间，格式 YYYY-MM-DD HH:MM:SS"
                     },
                     "data_type": {
                         "type": "integer",
                         "enum": [0, 1],
-                        "description": "数据质量：0原始，1审核；地壳元素数值需用1，默认1",
+                        "description": "数据质量：0原始，1审核（默认且唯一有数值的口径）",
                         "default": 1
                     },
                     "time_granularity": {
                         "type": "integer",
-                        "enum": [0],
-                        "description": "时间粒度固定0；其他粒度会返回占位符",
+                        "description": "固定为 0（小时数值口径）；其他值返回占位符，保持默认即可",
                         "default": 0
                     },
                     "elements": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "元素列表，如['Al','Si','Fe','Ca','Ti','Mn']",
+                        "description": "元素列表，如['Al','Si','Fe','Ca','Ti','Mn']；留空查默认六元素",
                         "default": ["Al", "Si", "Fe", "Ca", "Ti", "Mn"]
                     }
                 },
@@ -192,7 +151,7 @@ class GetPM25CrustalTool(LLMTool):
                 output=time_granularity
             )
 
-        station, code, error = _resolve_station_and_code(locations=locations, station=station, code=code)
+        station, code, error = resolve_component_station(locations=locations, station=station, code=code)
         if error:
             return error
 

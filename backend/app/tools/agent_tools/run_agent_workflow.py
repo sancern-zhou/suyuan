@@ -33,7 +33,7 @@ RESOURCE_CONTRACT_PROPERTIES = {
 }
 
 # 报告 DAG 专家节点集合：这些模式必须提供 task_contract 并受交付物粒度校验
-EXPERT_NODE_MODES = frozenset({"expert_meteorology", "expert_analysis"})
+EXPERT_NODE_MODES = frozenset({"expert_meteorology", "expert_analysis", "expert_component"})
 MAX_EXPERT_NODE_DELIVERABLES = 3
 # 报告父 Agent 只允许层级化问数与领域专家节点，禁止子节点越权成稿或再次编排；
 # 综合问数 query_monitoring 不再兜底：层级不明确由报告 Agent 先向用户确认。
@@ -41,8 +41,10 @@ REPORT_NODE_ALLOWED_MODES = frozenset({
     "query_monitoring_station",
     "query_monitoring_city",
     "query_forecast",
+    "query_component",
     "expert_meteorology",
     "expert_analysis",
+    "expert_component",
 })
 
 _FIXED_QUERY_NODE_MODES = frozenset({
@@ -50,6 +52,7 @@ _FIXED_QUERY_NODE_MODES = frozenset({
     "query_monitoring_station",
     "query_monitoring_city",
     "query_forecast",
+    "query_component",
 })
 # 固定问数工作流的实际预算是各阶段之和（acquire 4 + normalize 15 + deliver 1 = 20）。
 # DAG 首试可以收紧，但不能低于 8：acquire/normalize/deliver 各需至少一轮，
@@ -59,12 +62,14 @@ _QUERY_NODE_MIN_ITERATIONS = 8
 _DEFAULT_EXPERT_NODE_LIMITS = {
     "expert_meteorology": {"max_iterations": 15, "timeout_seconds": 300},
     "expert_analysis": {"max_iterations": 20, "timeout_seconds": 360},
+    "expert_component": {"max_iterations": 20, "timeout_seconds": 360},
     "expert": {"max_iterations": 30, "timeout_seconds": 480},
     # 固定问数流程的运行时上限是阶段预算之和（20 轮）；墙钟 600s 容纳慢查询与重试。
     "query_monitoring": {"max_iterations": 20, "timeout_seconds": 600},
     "query_monitoring_station": {"max_iterations": 20, "timeout_seconds": 600},
     "query_monitoring_city": {"max_iterations": 20, "timeout_seconds": 600},
     "query_forecast": {"max_iterations": 20, "timeout_seconds": 600},
+    "query_component": {"max_iterations": 20, "timeout_seconds": 600},
 }
 
 
@@ -79,8 +84,8 @@ WORKFLOW_DAG_EXAMPLE = (
 
 WORKFLOW_SCHEMA_DESCRIPTION = (
     "提交一个有向无环 Agent 工作流（DAG）：节点可并行执行，只有依赖节点成功后才会执行下游节点；"
-    "适合问数、专家研判、多源数据分析和分阶段报告任务。query 父模式可用站点/城市/预报取数节点；"
-    "expert 父模式还可用气象/常规分析专家节点；精简子节点不再次编排。编排完全由你自主决定：按分析问题规划节点数量、"
+    "适合问数、专家研判、多源数据分析和分阶段报告任务。query 父模式可用站点/城市/预报/组分取数节点；"
+    "expert 父模式还可用气象/常规分析/组分专家节点；精简子节点不再次编排。编排完全由你自主决定：按分析问题规划节点数量、"
     "每个节点的 target_mode 与 goal；无依赖的数据/分析节点并行执行，需要上游产物或结论的节点用 "
     "dependencies 表达，不靠文字约定顺序。每个节点必须有唯一 task_id、target_mode、goal，"
     "goal 写清时间范围、区域、指标口径和预期输出；把无依赖的取数拆成独立节点以并行执行。"
@@ -90,10 +95,12 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "城市口径与全国对比拆 query_monitoring_city；层级混合拆成站点+城市两个节点，"
     "层级不明确先向用户确认口径，禁止用 query_monitoring 兜底；"
     "气象实况/预报与空气质量预报数据拆 query_forecast，与监测节点可并行；"
+    "广东省超级站组分数据（离子/碳组分/地壳元素/VOCs）取数拆 query_component；"
     "气象条件、输送通道、静稳/边界层形势拆 expert_meteorology；浓度特征、超标统计、"
-    "组分解读、成因研判拆 expert_analysis；交叉归因由你自己整合（整合阶段禁止重新取数）。"
+    "成因研判拆 expert_analysis；组分化学、SOC/OFP 与来源指向拆 expert_component；交叉归因由你自己整合（整合阶段禁止重新取数）。"
     "报告编排禁止综合问数（query / query_monitoring）子节点：监测历史按层级拆 query_monitoring_station（站点）或 "
-    "query_monitoring_city（城市），层级不明确先向用户确认口径；气象与预报用 query_forecast；"
+    "query_monitoring_city（城市），层级不明确先向用户确认口径；气象与预报用 query_forecast，"
+    "超站组分取数用 query_component；"
     "综合 expert 也不对报告 DAG 暴露。"
     "**问数节点轮次硬约束**：固定问数工作流由运行时控制为最多 20 轮（acquire 4 + normalize 15 + deliver 1），"
     "失败项最多补查一次；DAG 可为问数节点收紧 max_iterations，但运行时会把低于 8 的值抬到 8；"
@@ -618,11 +625,11 @@ class RunAgentWorkflowTool(LLMTool):
                 if disallowed_nodes:
                     return self._failure(
                         "报告 DAG 子节点仅允许 query_monitoring_station / "
-                        "query_monitoring_city / query_forecast / "
-                        "expert_meteorology / expert_analysis；"
+                        "query_monitoring_city / query_forecast / query_component / "
+                        "expert_meteorology / expert_analysis / expert_component；"
                         "监测历史按层级拆 query_monitoring_station（站点）或 query_monitoring_city（城市），"
                         "层级不明确先向用户确认口径，不要使用综合问数 query_monitoring 兜底；"
-                        "气象与预报用 query_forecast，其他模式不得作为报告子节点。"
+                        "气象与预报用 query_forecast，超站组分取数用 query_component，其他模式不得作为报告子节点。"
                         f"越界节点：{', '.join(disallowed_nodes)}"
                     )
             from app.agent.workflow.project_policy import prepare_node, apply_workflow_limits

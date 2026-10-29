@@ -59,6 +59,17 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
             "预报数据的分析结论（如静稳形势、扩散条件）由 expert_meteorology 完成，本模式只交付数据。"
         ),
     },
+    "query_component": {
+        "positioning": "组分问数 Agent：面向广东省超级站组分数据（水溶性离子、碳组分、地壳元素、VOCs）的取数与整理。",
+        "scope": "超站组分站点的离子、OC/EC、地壳元素、VOCs 类别小时数据，多站点批量取数、占比与简单统计核算、数据质量口径与缺口说明。",
+        "boundary": "只取数与整理，不做组分化学成因研判与来源指向结论（归 expert_component）；不取常规六参数监测与气象数据，不产出报告包。",
+        "outputs": "结构化组分数据文件（file_path）+ 站点清单、时间粒度、数据质量口径（原始/审核）和缺口说明。",
+        "warning": (
+            "运行时限定批量取数、可选归一化、交付三个阶段，最多一次失败项补查。"
+            "组分站点与常规监测站点是两套体系，站点名→编码映射内置于工具；"
+            "用户给城市时先按站点清单换算为具体组分站点，该市无组分站点时如实说明。"
+        ),
+    },
     "expert": {
         "positioning": "专家 Agent：面向机制、成因与判断依据的专业研判。",
         "scope": "气象/遥感/轨迹/源解析等专业分析、证据解释、适用条件和证据缺口说明。",
@@ -82,11 +93,21 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
     "expert_analysis": {
         "positioning": "常规分析专家 Agent：面向空气质量监测数据的专业研判。",
         "scope": "六参数浓度特征与超标统计、AQI 与首要污染物变化、站点和城市时空对比、污染过程分段、本地累积与区域同步性的初步研判、判断依据和证据缺口说明。",
-        "boundary": "职责聚焦常规监测数据；离子、碳组分、地壳元素、VOCs/OFP 由后续组分专家承担，气象判断引用上游气象节点，源解析定量和报告包由对应节点完成。",
+        "boundary": "职责聚焦常规监测数据；离子、碳组分、地壳元素、VOCs/OFP 由组分专家（expert_component）承担，气象判断引用上游气象节点，源解析定量和报告包由对应节点完成。",
         "outputs": "结构化监测分析结论、证据与不确定性；内容较长时可附一份已发布的 Markdown 分析备忘录。",
         "warning": (
             "常规分析专家不配置气象与轨迹工具；需要气象结论时依赖 expert_meteorology 上游节点，"
             "同一数据源已有 query 节点产出时，通过 dependencies 复用其 file_path。"
+        ),
+    },
+    "expert_component": {
+        "positioning": "组分专家 Agent：面向 PM2.5 组分化学与 VOCs 组成的专业研判。",
+        "scope": "二次无机盐（SO4²⁻/NO₃⁻/NH₄⁺ 与 SOR/NOR）、碳组分一次二次拆分（OC/EC、SOC）、地壳元素与扬尘指向、VOCs 物种活性与 OFP、组分重构与来源指向性判断、证据与缺口说明。",
+        "boundary": "职责聚焦组分化学与来源指向；气象条件引用 expert_meteorology 上游结论，常规六参数研判归 expert_analysis，定量源解析谱与正式报告由对应节点完成。",
+        "outputs": "结构化组分分析结论、证据与不确定性；内容较长时可附一份已发布的 Markdown 分析备忘录。",
+        "warning": (
+            "组分专家自带超站组分取数与分析工具；同一数据源若已有 query 节点产出，"
+            "通过 dependencies 复用其 file_path，禁止重复取数。"
         ),
     },
     "board": {
@@ -127,8 +148,10 @@ _ROUTING_RULES = (
     "城市口径与全国对比用 query_monitoring_city；层级混合拆成站点+城市两个节点，"
     "层级不明确先向用户确认口径，不要用 query_monitoring 兜底（报告 DAG 已禁用，仅限非报告父模式直接委托）；"
     "气象实况/预报与空气质量预报数据用 query_forecast；"
-    "气象条件、输送通道与静稳形势用 expert_meteorology，六参数浓度/AQI/超标与时空变化用 expert_analysis；组分分析预留给独立专家模式，"
-    "二者可并行拆分，交叉归因（如气象导致累积）在 synthesis 或报告整合阶段完成；"
+    "广东省超级站组分数据（离子/碳组分/地壳元素/VOCs）取数用 query_component；"
+    "气象条件、输送通道与静稳形势用 expert_meteorology，六参数浓度/AQI/超标与时空变化用 expert_analysis，"
+    "组分化学、SOC/OFP 与来源指向用 expert_component，"
+    "三者可并行拆分，交叉归因（如气象导致组分累积）在 synthesis 或报告整合阶段完成；"
     "expert 需要 query 系数据时，把对应问数节点写入 dependencies 并复用其 file_path；"
     "无依赖的 source 节点并行且会话隔离；同源数据由一个节点获取，后续节点通过 dependencies 复用。"
 )

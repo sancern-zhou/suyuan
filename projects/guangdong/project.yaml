@@ -254,12 +254,42 @@ backend:
   # 广东项目自有技能库：优先加载本目录，再叠加共享 backend/docs/skills。
   # 江苏分支技能已引入本地，后续按广东工具与口径改写。
   skills_dir: projects/guangdong/skills
-  # 数据管理只保留广东实际使用的 fetcher；ERA5、济宁溯源、气象图、空气质量预报、
-  # 卫星火点、沙尘、污染过程、数据质量、招投标、故障诊断、站点运行监控等脚本已下线。
+  # 2026-10-29 气象抓取改造：下线 Open-Meteo 逐小时实况（observed_weather，其
+  # 站点表无人维护）；NMC 观测（nmc_observed_weather）与 ERA5 历史
+  # （city_weather_history，写 era5_reanalysis_data）均只覆盖广东 21 地市，
+  # 数据落本地气象库（.env.guangdong 的 WEATHER_DATABASE_URL）。
   fetchers:
   - task_review_feedback
-  - observed_weather
   - nmc_observed_weather
+  - observed_weather_daily
+  - city_weather_history
+  weather_history:
+    bootstrap_days: 90
+    lookback_days: 7
+    online_enabled: true
+    # 广东 21 地市 ERA5 历史代表点（地级市驻地坐标，与 weather_targets 目录一致）。
+    points:
+    - {city: 广州市, province: 广东省, lat: 23.13, lon: 113.26}
+    - {city: 韶关市, province: 广东省, lat: 24.81, lon: 113.60}
+    - {city: 深圳市, province: 广东省, lat: 22.54, lon: 114.06}
+    - {city: 珠海市, province: 广东省, lat: 22.27, lon: 113.58}
+    - {city: 汕头市, province: 广东省, lat: 23.35, lon: 116.68}
+    - {city: 佛山市, province: 广东省, lat: 23.02, lon: 113.12}
+    - {city: 江门市, province: 广东省, lat: 22.58, lon: 113.08}
+    - {city: 湛江市, province: 广东省, lat: 21.27, lon: 110.36}
+    - {city: 茂名市, province: 广东省, lat: 21.66, lon: 110.93}
+    - {city: 肇庆市, province: 广东省, lat: 23.05, lon: 112.47}
+    - {city: 惠州市, province: 广东省, lat: 23.11, lon: 114.42}
+    - {city: 梅州市, province: 广东省, lat: 24.29, lon: 116.12}
+    - {city: 汕尾市, province: 广东省, lat: 22.79, lon: 115.38}
+    - {city: 河源市, province: 广东省, lat: 23.75, lon: 114.70}
+    - {city: 阳江市, province: 广东省, lat: 21.86, lon: 111.98}
+    - {city: 清远市, province: 广东省, lat: 23.68, lon: 113.05}
+    - {city: 东莞市, province: 广东省, lat: 23.02, lon: 113.75}
+    - {city: 中山市, province: 广东省, lat: 22.52, lon: 113.39}
+    - {city: 潮州市, province: 广东省, lat: 23.66, lon: 116.62}
+    - {city: 揭阳市, province: 广东省, lat: 22.55, lon: 116.37}
+    - {city: 云浮市, province: 广东省, lat: 22.92, lon: 112.04}
   mode_prompt_files:
     ops: projects/guangdong/prompts/ops.md
     gd_query: projects/guangdong/prompts/gd_query.md
@@ -427,6 +457,13 @@ backend:
     - execute_echarts_python
     - execute_python
     - create_report_package
+    # 2026-10-29 气象库改造：运维问数可查本地 ERA5 历史与 NMC 观测表
+    - get_weather_data
+    # 2026-10-30 组分数据工具接入广东问数：超站组分站点（离子/碳组分/地壳元素/VOCs）
+    - get_vocs_data
+    - get_pm25_ionic
+    - get_pm25_carbon
+    - get_pm25_crustal
     station_fault_diagnosis:
     - ask_user_question
     - list_session_resources
@@ -563,6 +600,8 @@ backend:
     - query_gd_suncere_station_hour_new
     - query_city_standard_report
     - query_city_standard_yoy_report
+    # 2026-10-29 气象库改造：专家分析可查本地 ERA5 历史与 NMC 观测表
+    - get_weather_data
     query:
     - get_5min_data
     - query_gd_suncere_city_hour

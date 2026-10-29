@@ -6,7 +6,7 @@ VOCs组分查询工具（直接调用广东超站API）
 
 站点映射说明：
 - VOCs站点与PM2.5组分站点共享同一套编码系统（geo_mappings.json）
-- 使用 ParticulateGeoMatcher 进行站点名称到编码的映射
+- 站点名称→编码解析统一走 component_station_resolver
 - 站点编码格式：1025b（带b后缀）
 """
 
@@ -16,58 +16,13 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.query.component_station_resolver import resolve_component_station
 from app.utils.vocs_api_client import get_voc_api_client
-from app.utils.particulate_geo_matcher import get_particulate_geo_matcher
 
 if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
 
 logger = structlog.get_logger()
-
-
-def _resolve_station_and_code(
-    *,
-    locations: Union[List[str], None],
-    station: Union[str, None],
-    code: Union[str, None],
-) -> tuple[str | None, str | None, Dict[str, Any] | None]:
-    if locations:
-        station_names = [str(location).strip() for location in locations if str(location).strip()]
-    elif station:
-        station_names = [station.strip()]
-    else:
-        station_names = []
-
-    if station_names:
-        matcher = get_particulate_geo_matcher()
-        try:
-            station_codes = matcher.stations_to_codes(station_names)
-        except ValueError as e:
-            return None, None, {
-                "success": False,
-                "error": (
-                    f"{e} 请先调用 resolve_station_geo 获取城市下辖 VOCs 组分站点，"
-                    "再传入具体站点名称查询。"
-                ),
-                "locations": locations,
-                "station_names": station_names,
-            }
-        if not station_codes:
-            return None, None, {
-                "success": False,
-                "error": f"无法将站点名称映射到VOCs组分站点编码: {station_names}",
-                "locations": locations,
-                "station_names": station_names,
-            }
-        return station_names[0], code or station_codes[0], None
-
-    if station and code:
-        return station, code, None
-
-    return None, None, {
-        "success": False,
-        "error": "必须提供具体VOCs组分站点名称 station，或同时提供 station 和 code；城市请先用 resolve_station_geo 展开。"
-    }
 
 
 class GetVOCsDataTool(LLMTool):
@@ -77,44 +32,48 @@ class GetVOCsDataTool(LLMTool):
         function_schema = {
             "name": "get_vocs_data",
             "description": (
-                "查询VOCs组分数据，包括烷烃、烯烃、炔烃、芳香烃、OVOCs、卤代烃、有机硫等。"
-                "直接调用广东超站API获取结构化数据，支持站点名称自动映射编码。"
-                "用于VOCs组分分析和臭氧生成潜势(OFP)分析。"
-                "城市下辖VOCs站点需先用 resolve_station_geo 获取，本工具只查询指定站点。"
+                "查询广东省超级站组分站点的 VOCs 组分数据（VOCs 类别：烷烃、烯烃、炔烃、"
+                "芳香烃、OVOCs、卤代烃等及其占比），用于 VOCs 组成特征、"
+                "臭氧生成潜势（OFP）核算和来源指向分析。"
+                "站点名→编码映射内置（组分站点编码以 b 结尾，与常规监测站点是两套体系）；"
+                "每次只查询一个组分站点，多站点在同一轮并行多次调用。"
+                "返回类别级时序/均值/占比结构；物种级明细按 station 清单结合类别结果另行研判。"
+                "不要用于常规六参数/城市浓度查询（那是监测数据工具）。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "station": {
+                        "type": "string",
+                        "description": "组分站点名称（如 新兴、鹤山花果山），自动映射站点编码；不接受城市名"
+                    },
                     "locations": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "VOCs组分站点名称列表，不接受城市名；城市需先用 resolve_station_geo 展开"
-                    },
-                    "station": {
-                        "type": "string",
-                        "description": "中文VOCs组分站点名，可自动映射站点编码"
+                        "description": "兼容参数：单个组分站点名的列表形式；多站点请并行调用"
                     },
                     "code": {
                         "type": "string",
-                        "description": "站点编码；传入 station 时可省略"
+                        "description": "组分站点编码（如 1042b）；传入 station 时可省略，只传 code 也可查询"
                     },
                     "start_time": {
                         "type": "string",
-                        "description": "开始时间，格式YYYY-MM-DD HH:MM:SS"
+                        "description": "开始时间，格式 YYYY-MM-DD HH:MM:SS"
                     },
                     "end_time": {
                         "type": "string",
-                        "description": "结束时间，格式YYYY-MM-DD HH:MM:SS"
+                        "description": "结束时间，格式 YYYY-MM-DD HH:MM:SS"
                     },
-                    "table_type": {
+                    "time_granularity": {
                         "type": "integer",
                         "enum": [1, 2, 3, 5],
-                        "description": "统计类型：1小时（默认），2日，3月，5年"
+                        "description": "统计粒度：1小时（默认），2日，3月，5年",
+                        "default": 1
                     },
                     "data_type": {
                         "type": "integer",
                         "enum": [0, 1, 4, 5],
-                        "description": "数据类型：0原始（默认），1终审，4初审，5复审"
+                        "description": "数据审核类型：0原始（默认），1终审，4初审，5复审"
                     }
                 },
                 "required": ["start_time", "end_time"],
@@ -137,15 +96,22 @@ class GetVOCsDataTool(LLMTool):
         locations: Union[List[str], None] = None,
         station: Union[str, None] = None,
         code: Union[str, None] = None,
-        table_type: int = 1,
+        time_granularity: Union[int, str, None] = None,
+        table_type: Union[int, str, None] = None,
         data_type: int = 0,
         **_: Any
     ) -> Dict[str, Any]:
         """执行VOCs类别查询"""
 
-        station, code, error = _resolve_station_and_code(locations=locations, station=station, code=code)
+        station, code, error = resolve_component_station(locations=locations, station=station, code=code)
         if error:
             return error
+
+        # 兼容旧参数名 table_type；粒度参数统一走 time_granularity
+        granularity_raw = time_granularity if time_granularity is not None else table_type
+        if granularity_raw is None:
+            granularity_raw = 1
+        table_type_value = int(granularity_raw)
 
         logger.info(
             "voc_categories_query_start",
@@ -153,7 +119,7 @@ class GetVOCsDataTool(LLMTool):
             code=code,
             start_time=start_time,
             end_time=end_time,
-            table_type=table_type,
+            time_granularity=table_type_value,
             data_type=data_type
         )
 
@@ -165,7 +131,7 @@ class GetVOCsDataTool(LLMTool):
             station_code=code,
             start_time=start_time,
             end_time=end_time,
-            table_type=table_type,
+            table_type=table_type_value,
             data_type=data_type
         )
 
