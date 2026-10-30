@@ -12,6 +12,7 @@ from app.auth.service import AuthenticationService
 from app.auth.share_access import get_share_access_service
 from app.auth.ws_tickets import WebSocketTicketService
 from app.core.fetcher_worker_proxy import FetcherWorkerProxyMiddleware
+from app.core.http_method_override import HttpMethodOverrideMiddleware
 from app.core.scheduled_task_worker_proxy import ScheduledTaskWorkerProxyMiddleware
 from app.core.slow_request_logger import SlowRequestLoggingMiddleware
 from app.core.social_account_worker_proxy import SocialAccountWorkerProxyMiddleware
@@ -52,6 +53,7 @@ def configure_middleware(app: FastAPI) -> None:
 
     auth_redis = redis.Redis.from_url(settings.redis_url, decode_responses=True)
     operation_client = None
+    operation_access_policy = None
     if settings.auth_mode == "operation":
         operation_client = OperationAuthClient(
             validate_url=settings.auth_operation_validate_url,
@@ -59,6 +61,11 @@ def configure_middleware(app: FastAPI) -> None:
             admin_usernames=settings.auth_operation_admin_usernames_set,
             timeout_seconds=settings.auth_operation_timeout_seconds,
         )
+        if settings.auth_operation_access_control_enabled:
+            from app.auth.operation_access import OperationAccessPolicy
+
+            operation_access_policy = OperationAccessPolicy(settings=settings)
+    app.state.operation_access_policy = operation_access_policy
     auth_service = AuthenticationService(
         settings=settings,
         cache=IdentityCache(
@@ -86,6 +93,7 @@ def configure_middleware(app: FastAPI) -> None:
         settings=settings,
         auth_service=auth_service,
         share_access=get_share_access_service(),
+        access_policy=operation_access_policy,
     )
     app.add_middleware(
         CORSMiddleware,
@@ -99,3 +107,5 @@ def configure_middleware(app: FastAPI) -> None:
         SlowRequestLoggingMiddleware,
         threshold_seconds=settings.slow_request_log_threshold_seconds,
     )
+    # 必须位于最外层：在 CORS/认证/路由看到请求前就把 POST+override 还原为真实方法。
+    app.add_middleware(HttpMethodOverrideMiddleware)

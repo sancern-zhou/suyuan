@@ -29,19 +29,37 @@ _MONITORING_QUERY_TOOLS = (
     "execute_postgres_sql_query",
     "query_airdata_platform",
     "xuchang_station_catalog",
+    "monitoring_station_catalog",
+    # 组分站名录/某城市有无组分站属于目录事实问题，监测子流程也要能解析
+    # （该目录只含可取数的 38 个超站组分站，含 VOCs/PM2.5 组分能力标注，
+    # 与监测/运维台账口径不同源）。
+    "component_station_catalog",
     "airdata_calc_report_summary",
     "query_national_city_air_quality",
 )
 
-# 站点层级问数：国控站走采集库 SQL；乡镇站/中台口径走"目录解析编码 → 中台查询"
-# （编码不可猜，该串行为必要轮次）。目录工具与中台工具必须成对配置。
+# 站点层级问数：国控站走采集库 SQL；乡镇站/中台口径走"目录解析编码 → 取数"
+# （编码不可猜，该串行为必要轮次）。站点地理工具按体系各用各的：许昌=
+# xuchang_station_catalog+中台查询成对；广东=monitoring_station_catalog
+# （监测平台唯一编码，名称/城市用于过滤采集库 SQL），不混用运维台账目录；
+# 组分站名录/组分类型用 component_station_catalog。
+# 广东报表包视图与 5 分钟数据（query_station_standard_report 等，仅广东注册）
+# 服务报告 DAG 站点取数节点；其他项目未注册时为静默死条目，无害。
 _MONITORING_STATION_QUERY_TOOLS = (
     "execute_crawler_sql_query",
     "xuchang_station_catalog",
+    "monitoring_station_catalog",
+    "component_station_catalog",
     "query_airdata_platform",
+    "query_station_standard_report",
+    "query_station_standard_yoy_report",
+    "get_5min_data",
 )
 
 # 城市层级问数：城市小时/日/年均值 + SQL Server 城市发布历史 + 中台接口。
+# 站点目录工具不进入本表（站点任务归 query_monitoring_station）。
+# 广东报表包视图（query_city_standard_report 等，仅广东注册）服务报告 DAG
+# 城市取数节点；其他项目未注册时为静默死条目，无害。
 _MONITORING_CITY_QUERY_TOOLS = (
     "query_xcai_city_history",
     "execute_sql_query",
@@ -50,6 +68,12 @@ _MONITORING_CITY_QUERY_TOOLS = (
     "query_airdata_platform",
     "airdata_calc_report_summary",
     "query_national_city_air_quality",
+    "query_gd_suncere_city_hour",
+    "query_gd_suncere_city_day",
+    "query_gd_suncere_district_day",
+    "query_city_standard_report",
+    "query_city_standard_yoy_report",
+    "query_gd_suncere_district_report",
 )
 
 _FORECAST_QUERY_TOOLS = (
@@ -58,11 +82,13 @@ _FORECAST_QUERY_TOOLS = (
     "get_weather_forecast",
     "query_airdata_platform",
     "xuchang_station_catalog",
+    "monitoring_station_catalog",
     "execute_postgres_sql_query",
 )
 
 # 组分问数：广东省超级站组分取数（水溶性离子/碳组分/地壳元素/微量元素/
-# VOCs 类别/物种/OFP/官方重构）；站点名→编码映射内置于工具，无目录解析轮次。
+# VOCs 类别/物种/OFP/官方重构）；站点名→编码映射内置于取数工具，城市展开
+# 用组分体系目录 component_station_catalog（与取数工具同一 38 站清单）。
 _COMPONENT_QUERY_TOOLS = (
     "get_vocs_data",
     "get_vocs_species",
@@ -73,6 +99,7 @@ _COMPONENT_QUERY_TOOLS = (
     "get_pm25_crustal",
     "get_pm25_recovery",
     "get_pm25_trace",
+    "component_station_catalog",
 )
 
 _NORMALIZE_TOOLS = (
@@ -182,9 +209,14 @@ for _definition in (
         "国控站点层级空气质量监测固定问数流程",
         scope_line=(
             "聚焦站点层级取数：国控站小时/日历史用采集库 SQL 直接查询"
-            "（StationHour/StationDay，按名称或区域 LIKE 过滤，无需解析目录）；"
-            "乡镇站与中台口径数据先用 xuchang_station_catalog 解析编码"
-            "（支持按名称模糊、按区县展开下辖站点），再调 query_airdata_platform 查询。"
+            "（StationHour/StationDay，按名称或区域 LIKE 过滤，无需解析编码）；"
+            "乡镇站编码不可猜：先用站点地理工具解析（xuchang_station_catalog / "
+            "monitoring_station_catalog，按部署可用；支持按名称模糊、按区县/城市"
+            "展开下辖站点），再按可用工具取数（query_airdata_platform 中台查询，"
+            "或以站点名称/城市过滤采集库 SQL）。"
+            "站点日报/同比等报表包视图（query_station_standard_report / "
+            "query_station_standard_yoy_report）与站点 5 分钟数据（get_5min_data）"
+            "按部署可用，报告取数任务优先使用。"
         ),
         context_block=_table_contract_block(_STATION_CONTRACT_TABLES),
     ),
@@ -196,6 +228,9 @@ for _definition in (
             "聚焦城市层级取数：城市小时/日/年均值、城市发布历史与全国对比，"
             "主要使用 CityHour/CityDay/CityYearPm25Avg 表，扣沙天用 CitySandDay 清单过滤；"
             "城市发布历史（CityAQIPublishHistory）用 query_xcai_city_history。"
+            "城市/区域日报与同比报表包视图（query_city_standard_report / "
+            "query_city_standard_yoy_report / query_gd_suncere_district_report 等）"
+            "按部署可用，报告取数与排名数据优先使用报表包视图字段口径。"
         ),
         context_block=_table_contract_block(_CITY_CONTRACT_TABLES),
     ),

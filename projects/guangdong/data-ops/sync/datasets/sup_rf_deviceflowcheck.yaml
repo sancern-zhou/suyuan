@@ -1,0 +1,191 @@
+dataset: sup_rf_deviceflowcheck
+description: >
+  组分网设备采样流量核查/校准记录表单（源 dbo.Sup_RF_DeviceFlowCheck）。一行 = 一条流量核查记录，
+  按 ruleitemtag 覆盖 PM1/NH3/BC/水溶性离子/重金属/PTR-MS 等仪器族。2026 年起回填 + 小时级增量。
+owner: 广东运维平台组
+grain: 一行 = 一条设备流量核查/校准记录（id）
+freshness_slo: 2小时
+known_caveats:
+- 参考流量计 1/2 为两条独立校准链路，字段各自成组（*1/*2），不要混用
+- correctionvalue1/2 = displayvalue×slope+intercept（系统计算列）；error1/2 与 indicationerror1/2 是两个不同误差口径
+- 五点流量（setflowvalue/actualflowvalue/relativeerror 1..5）与液体流量列仅在部分仪器族填写，其余为空属正常
+- 2026-01-01 前的历史不回填
+columns:
+- name: id
+  business: 记录ID（主键）
+- name: workingordercode
+  business: 关联工单号
+- name: stationid
+  business: 站点ID（关联 dim_station.station_id）
+- name: stationcode
+  business: 站点编码
+- name: uniquecode
+  business: 站点唯一编码
+- name: operationunitid
+  business: 运维单位ID
+- name: checkdate
+  business: 检查日期
+- name: deviceid
+  business: 核查设备ID
+- name: devicebrand
+  business: 设备品牌
+- name: devicemodel
+  business: 设备型号
+- name: devicecode
+  business: 设备编号
+- name: prepareuserid
+  business: 填报人ID
+- name: preparetime
+  business: 填报时间
+- name: reviewuserid
+  business: 复核人ID
+- name: reviewtime
+  business: 复核时间
+- name: audituserid
+  business: 审核人ID
+- name: audittime
+  business: 审核时间
+- name: processtype
+  business: 流程状态（源系统枚举原文）
+- name: createuserid
+  business: 创建人ID
+- name: createtime
+  business: 创建时间
+- name: updateuserid
+  business: 更新人ID
+- name: updatetime
+  business: 更新时间（增量水位列）
+- name: flowermodel1
+  business: 参考流量计1型号
+- name: flowercode1
+  business: 参考流量计1编号
+- name: calibratedateprev1
+  business: 参考流量计1上次检定日期
+- name: calibratedatenext1
+  business: 参考流量计1下次检定日期（应覆盖检查日期）
+- name: slope1
+  business: 参考流量计1校准曲线斜率
+- name: intercept1
+  business: 参考流量计1校准曲线截距
+- name: r1
+  business: 参考流量计1校准曲线相关系数
+- name: flowermodel2
+  business: 参考流量计2型号
+- name: flowercode2
+  business: 参考流量计2编号
+- name: calibratedateprev2
+  business: 参考流量计2上次检定日期
+- name: calibratedatenext2
+  business: 参考流量计2下次检定日期
+- name: slope2
+  business: 参考流量计2校准曲线斜率
+- name: intercept2
+  business: 参考流量计2校准曲线截距
+- name: r2
+  business: 参考流量计2校准曲线相关系数
+- name: temperature
+  business: 核查时环境温度
+- name: pressure
+  business: 核查时环境压力
+- name: targetvalue1
+  business: 校准前目标流量值
+- name: displayvalue1
+  business: 校准前仪器显示流量值
+- name: correctionvalue1
+  business: 校准前已修正标准值（显示值×斜率+截距，系统计算列）
+- name: error1
+  business: 校准前流量相对误差(%)（判据 ≤±5%）
+- name: indicationerror1
+  business: 校准前示值误差(%)（判据 ≤±2%）
+- name: isok1
+  business: 校准前是否合格（源系统标记）
+- name: iscalibrate1
+  business: 校准前是否执行校准（源系统标记）
+- name: targetvalue2
+  business: 校准后目标流量值
+- name: displayvalue2
+  business: 校准后仪器显示流量值
+- name: correctionvalue2
+  business: 校准后已修正标准值（系统计算列）
+- name: error2
+  business: 校准后流量相对误差(%)（判据 ≤±5%）
+- name: indicationerror2
+  business: 校准后示值误差(%)（判据 ≤±2%）
+- name: isok2
+  business: 校准后是否合格
+- name: iscalibrate2
+  business: 校准后是否执行校准
+- name: devicevalue1
+  business: 设备读数1
+- name: devicevalue2
+  business: 设备读数2
+- name: iscalibrate3
+  business: 校准标记3（源系统原文，仪器族差异）
+- name: setflowvalue1
+  business: 五点核查设定流量1
+- name: setflowvalue2
+  business: 五点核查设定流量2
+- name: setflowvalue3
+  business: 五点核查设定流量3
+- name: setflowvalue4
+  business: 五点核查设定流量4
+- name: setflowvalue5
+  business: 五点核查设定流量5
+- name: actualflowvalue1
+  business: 五点核查实测流量1
+- name: actualflowvalue2
+  business: 五点核查实测流量2
+- name: actualflowvalue3
+  business: 五点核查实测流量3
+- name: actualflowvalue4
+  business: 五点核查实测流量4
+- name: actualflowvalue5
+  business: 五点核查实测流量5
+- name: relativeerror1
+  business: 流量相对误差1(%)
+- name: relativeerror2
+  business: 流量相对误差2(%)
+- name: relativeerror3
+  business: 流量相对误差3(%)
+- name: relativeerror4
+  business: 流量相对误差4(%)
+- name: relativeerror5
+  business: 流量相对误差5(%)
+- name: curveequation
+  business: 拟合曲线方程（文本原文）
+- name: coefficient
+  business: 拟合曲线相关系数
+- name: iscalibrate4
+  business: 校准标记4（源系统原文）
+- name: liquidflowsetvalue
+  business: 液体流量设定值
+- name: liquidactualflowvalue1
+  business: 液体流量实测值1
+- name: liquidactualflowvalue2
+  business: 液体流量实测值2
+- name: liquidactualflowvalue3
+  business: 液体流量实测值3
+- name: liquidflowstandarddeviation
+  business: 液体流量标准差
+- name: isliquidflowqualified
+  business: 液体流量是否合格（源系统标记）
+- name: remark
+  business: 备注
+- name: ruleitemtag
+  business: 表单类型标签（Sup_RF_DeviceFlowCheck / Sup_RF_DeviceFlowCheck_PTRMS）
+- name: pollutanttype
+  business: 监测项目（PM1/NH3/BC/WaterSolubleIons/HeavyMetal/PTR-MS 等）
+- name: detailid
+  business: 明细ID
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: >-
+  sup_rf_deviceflowcheck（一行 = 一条流量核查记录，id 主键）：维度 workingordercode/stationid/stationcode/checkdate/
+  deviceid/devicebrand/devicemodel/devicecode/ruleitemtag/pollutanttype；
+  参考流量计1组 flowermodel1/flowercode1/calibratedateprev1/calibratedatenext1/slope1/intercept1/r1，
+  流量计2组同名字段以 2 结尾；校准前 targetvalue1(目标)/displayvalue1(显示)/correctionvalue1(修正后标准值=
+  显示×斜率+截距)/error1(相对误差%,≤±5)/indicationerror1(示值误差%,≤±2)/isok1/iscalibrate1；
+  校准后同名以 2 结尾；五点核查 setflowvalue1..5/actualflowvalue1..5/relativeerror1..5/curveequation/coefficient；
+  液体流量 liquidflowsetvalue/liquidactualflowvalue1..3/liquidflowstandarddeviation/isliquidflowqualified；
+  temperature/pressure 核查环境；remark 备注。两个误差口径不要混用。

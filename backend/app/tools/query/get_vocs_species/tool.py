@@ -122,7 +122,7 @@ class GetVOCsSpeciesTool(LLMTool):
     ) -> Dict[str, Any]:
         """执行 VOCs 物种级查询"""
 
-        station, code, error = resolve_component_station(locations=locations, station=station, code=code)
+        station, code, error = resolve_component_station(locations=locations, station=station, code=code, require_domain="vocs")
         if error:
             return error
 

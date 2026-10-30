@@ -137,7 +137,7 @@
             :sessions="sessionHistoryData"
             :session-history-stats="sessionHistoryStats"
             :session-history-loading="sessionHistoryLoading"
-            :is-admin="auth.user?.admin === true"
+            :is-admin="auth.user?.isAdmin === true || auth.user?.admin === true"
             @close="$emit('close-management-panel')"
             @refresh-sessions="$emit('refresh-session-history')"
             @cleanup-sessions="$emit('cleanup-sessions')"

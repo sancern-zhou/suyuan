@@ -1,0 +1,4 @@
+interface:
+  display_name: "站点故障诊断"
+  short_description: "结合工单、设备、告警与监测证据诊断广东站点故障并给出现场处置建议"
+  default_prompt: "使用 $station-alarm-diagnosis 诊断该广东站点的故障原因并给出处置建议。"

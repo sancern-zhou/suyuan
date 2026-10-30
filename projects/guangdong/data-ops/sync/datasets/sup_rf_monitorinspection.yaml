@@ -1,0 +1,160 @@
+dataset: sup_rf_monitorinspection
+description: >
+  组分网监测仪巡检记录表单（源 dbo.Sup_RF_MonitorInspection）。一行 = 一条巡检记录，
+  按 ruleitemtag 区分周检/月检/季检（Sup_RF_MonitorInspection_Week/Month/Quarter），当前以 BC 仪器为主。
+  2026 年起回填 + 小时级增量。
+owner: 广东运维平台组
+grain: 一行 = 一条监测仪巡检记录（id）
+freshness_slo: 2小时
+known_caveats:
+- 周检/月检/季检题目项列在同一条记录上并存，未填项为空属正常，统计前按 ruleitemtag 过滤周期
+- 各项检查结果列为源系统文本/枚举原文，不是布尔值
+- 各项 remarks 与检查项一一对应（week*/month*/quarter*/ondemand*）
+- 2026-01-01 前的历史不回填
+columns:
+- name: id
+  business: 记录ID（主键）
+- name: workingordercode
+  business: 关联工单号
+- name: stationid
+  business: 站点ID（关联 dim_station.station_id）
+- name: stationcode
+  business: 站点编码
+- name: uniquecode
+  business: 站点唯一编码
+- name: operationunitid
+  business: 运维单位ID
+- name: checkdate
+  business: 检查日期
+- name: deviceid
+  business: 设备ID
+- name: devicebrand
+  business: 设备品牌
+- name: devicemodel
+  business: 设备型号
+- name: devicecode
+  business: 设备编号
+- name: prepareuserid
+  business: 填报人ID
+- name: preparetime
+  business: 填报时间
+- name: reviewuserid
+  business: 复核人ID
+- name: reviewtime
+  business: 复核时间
+- name: audituserid
+  business: 审核人ID
+- name: audittime
+  business: 审核时间
+- name: processtype
+  business: 流程状态（源系统枚举原文）
+- name: createuserid
+  business: 创建人ID
+- name: createtime
+  business: 创建时间
+- name: updateuserid
+  business: 更新人ID
+- name: updatetime
+  business: 更新时间（增量水位列）
+- name: temperature
+  business: 站房温度
+- name: humidity
+  business: 站房湿度
+- name: analyzermodel
+  business: 分析仪型号
+- name: analyzernumber
+  business: 分析仪编号
+- name: analyzerlasttime
+  business: 分析仪上次校准/维护时间
+- name: analyzeranothertime
+  business: 分析仪下次校准/维护时间
+- name: formtype
+  business: 表单类型（源系统原文）
+- name: weekdatacontrol
+  business: 周检-数据控制检查结果
+- name: weekattribute
+  business: 周检-仪器参数/属性检查结果
+- name: weekdewaterbottle
+  business: 周检-排水瓶检查结果
+- name: weekzeropointtest
+  business: 周检-零点测试结果
+- name: weekstabilitytest
+  business: 周检-稳定性测试结果
+- name: monthsamplelinetube
+  business: 月检-采样管路检查结果
+- name: monthcap
+  business: 月检-滤帽检查结果
+- name: monthcutter
+  business: 月检-切割器检查结果
+- name: monthdate
+  business: 月检-日期/时间检查结果
+- name: quartertrafficv
+  business: 季检-流量检查结果
+- name: quarterleaktest
+  business: 季检-泄漏测试结果
+- name: ondemandopticalcavity
+  business: 按需-光腔检查结果
+- name: ondemandlubrication
+  business: 按需-润滑维护结果
+- name: ondemandpapertape
+  business: 按需-纸带检查结果
+- name: ondemandfilter
+  business: 按需-滤膜检查结果
+- name: ondemandptinspect
+  business: 按需-纸带检查项
+- name: ondemandfinspect
+  business: 按需-滤膜检查项
+- name: weekdcremarks
+  business: 周检-数据控制备注
+- name: weekaremarks
+  business: 周检-参数检查备注
+- name: weekdbremarks
+  business: 周检-排水瓶备注
+- name: weekzptremarks
+  business: 周检-零点测试备注
+- name: weekstremarks
+  business: 周检-稳定性测试备注
+- name: monthsltremarks
+  business: 月检-采样管路备注
+- name: monthcremarks
+  business: 月检-滤帽备注
+- name: monthcuttremarks
+  business: 月检-切割器备注
+- name: monthdremarks
+  business: 月检-日期检查备注
+- name: quartertvremarks
+  business: 季检-流量检查备注
+- name: quarterltremarks
+  business: 季检-泄漏测试备注
+- name: ondemandqcremarks
+  business: 按需-光腔检查备注
+- name: ondemandlremarks
+  business: 按需-润滑维护备注
+- name: ondemandptremarks
+  business: 按需-纸带检查备注
+- name: ondemandfremarks
+  business: 按需-滤膜检查备注
+- name: faultdescription
+  business: 故障描述
+- name: maintenanceresults
+  business: 维护结果
+- name: otherremarks
+  business: 其他备注
+- name: ruleitemtag
+  business: 表单类型标签（Sup_RF_MonitorInspection_Week/Month/Quarter）
+- name: pollutanttype
+  business: 监测项目（当前以 BC 为主）
+- name: detailid
+  business: 明细ID
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: >-
+  sup_rf_monitorinspection（一行 = 一条监测仪巡检记录，id 主键）：维度 workingordercode/stationid/stationcode/
+  checkdate/deviceid/devicebrand/devicemodel/devicecode/ruleitemtag/pollutanttype/formtype；
+  站房 environment temperature/humidity；分析仪 analyzermodel/analyzernumber/analyzerlasttime/analyzeranothertime；
+  周检 weekdatacontrol/weekattribute/weekdewaterbottle/weekzeropointtest/weekstabilitytest；
+  月检 monthsamplelinetube/monthcap/monthcutter/monthdate；季检 quartertrafficv/quarterleaktest；
+  按需 ondemandopticalcavity/ondemandlubrication/ondemandpapertape/ondemandfilter/ondemandptinspect/ondemandfinspect；
+  各检查项对应 *remarks 备注；faultdescription/maintenanceresults/otherremarks。
+  统计按 ruleitemtag 过滤周期，未填项为空属正常。

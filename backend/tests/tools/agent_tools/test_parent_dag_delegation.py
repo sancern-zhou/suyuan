@@ -23,19 +23,26 @@ def test_parent_tools_and_project_prompt_receive_delegation_guidance(monkeypatch
     monkeypatch.setattr("app.agent.prompts.tool_registry._get_project_tool_names_by_mode", lambda mode: None)
     monkeypatch.setattr("app.agent.prompts.tool_registry._get_project_disabled_tool_names", lambda: [])
     monkeypatch.setattr("app.agent.prompts.prompt_builder.load_project_mode_prompt", lambda mode: "项目职责边界")
+    # 【2026-10-30】query/expert 父模式委派收敛为 call_sub_agent，run_agent_workflow 下线。
     for mode in ("query", "expert"):
         tools = get_tools_by_mode(mode)
-        assert {"run_agent_workflow", "call_sub_agent"}.issubset(tools)
+        assert "run_agent_workflow" not in tools
+        assert "call_sub_agent" in tools
         prompt = build_react_system_prompt(mode, available_tools=list(tools))
         assert "项目职责边界" in prompt
-        assert "精简子 Agent 与依赖工作流" in prompt
+        assert "精简子 Agent 委派" in prompt
         assert "query_monitoring_station" in prompt
         assert "能一次批量取数时优先批量查询" in prompt
-        assert "DAG 会增加模型调用" in prompt
+        assert "run_agent_workflow" not in prompt
+        assert "DAG 会增加模型调用" not in prompt
     assert "expert_meteorology" in build_react_system_prompt("expert")
     # Data-source catalogs can mention expert routing; only the delegation contract
     # determines which child types the query parent is authorized to call.
     assert "expert_meteorology" not in build_delegation_contract("query", ["run_agent_workflow"])
+    # 仅保留 call_sub_agent 的父模式：契约不引导 run_agent_workflow / DAG 概念。
+    call_only_contract = build_delegation_contract("query", ["call_sub_agent"])
+    assert "run_agent_workflow" not in call_only_contract
+    assert "call_sub_agent 委派子 Agent" in call_only_contract
     assert "精简子 Agent 与依赖工作流" not in build_react_system_prompt("query", available_tools=["execute_python"])
 
 

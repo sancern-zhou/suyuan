@@ -1,0 +1,4 @@
+interface:
+  display_name: "工单轨迹合理性分析（未接入）"
+  short_description: "江苏签到轨迹分析专用，广东未接入轨迹数据，当前停用"
+  default_prompt: "该技能在广东部署未接入，人员签到与轨迹数据属于数据盲区。"

@@ -34,6 +34,37 @@ def _get_geo_mappings_path() -> Path:
     return current.parents[2] / "config" / "geo_mappings.json"
 
 
+# geo_mappings.json station_capabilities 的合法能力域：
+# vocs=VOCs 组分监测（类别/物种/OFP），pm25=PM2.5 组分监测（离子/碳组分/地壳/微量元素/重构）。
+CAPABILITY_DOMAINS: frozenset = frozenset({"vocs", "pm25"})
+
+
+def load_capability_map() -> dict:
+    """读取 geo_mappings.json 的 station_capabilities（站点名 -> 能力域元组）。
+
+    能力标注按超站接口原始数据实测维护；缺失或为空的站点返回空元组
+    （视为仅有站点名录，无能力结论）。
+    """
+
+    path = _get_geo_mappings_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    raw = data.get("station_capabilities") or {}
+    result: dict = {}
+    for name, domains in raw.items():
+        if not isinstance(domains, (list, tuple)):
+            continue
+        cleaned = tuple(
+            domain
+            for domain in (str(item).strip().lower() for item in domains)
+            if domain in CAPABILITY_DOMAINS
+        )
+        result[str(name).strip()] = cleaned
+    return result
+
+
 class ParticulateGeoMatcher:
     """颗粒物组分站点地理映射器（单例模式）"""
 

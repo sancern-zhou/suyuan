@@ -83,3 +83,23 @@ test('mock administrator enters protected routes without a company token', async
     true
   )
 })
+
+
+test('access-denied page is always reachable', async () => {
+  const auth = store()
+
+  assert.equal(await createAuthGuard(auth)({ path: '/access-denied', fullPath: '/access-denied' }), true)
+})
+
+test('roster-blocked account lands on the access-denied page instead of the ops login', async () => {
+  const auth = store({
+    accessDenied: true,
+    initialized: true
+  })
+  const onOperationLoginRequired = () => { throw new Error('must not bounce to ops login') }
+
+  assert.deepEqual(
+    await createAuthGuard(auth, { onOperationLoginRequired })({ path: '/', fullPath: '/' }),
+    { path: '/access-denied' }
+  )
+})

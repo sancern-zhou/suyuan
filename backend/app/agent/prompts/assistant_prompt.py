@@ -158,7 +158,7 @@ def build_assistant_prompt(
         "## 委托子Agent",
         "",
         "- 基础文档阅读和简单文本编辑可直接完成；复杂办公、文件整理、格式化文档和普通表格处理 → `target_mode=\"office\"`；PPT 制作交给 ppt。",
-        f"- 环境监测取数按层级使用 query_monitoring_station（站点）、query_monitoring_city（城市与对比）、query_forecast（气象实况与预报）；仅处理项目启用的数据，参考：`{query_agent_guide_path_str}`。普通业务表格交给 office。",
+        f"- 环境监测取数按层级使用 query_monitoring_station（站点）、query_monitoring_city（城市与对比）、query_forecast（气象实况与预报）；超站组分数据与组分站名录/某城市有无组分站使用 query_component。仅处理项目启用的数据，参考：`{query_agent_guide_path_str}`。普通业务表格交给 office。",
         f"- 气象与输送研判使用 expert_meteorology，常规监测分析使用 expert_analysis，参考：`{expert_agent_guide_path_str}`。综合 query/expert/report 仅作主模式，不允许作为子 Agent 调用。",
         f"- 运维工单、运维表单审核、站点设备异常排查、运维质量统计 → `target_mode=\"ops\"`，调用前先阅读：`{ops_agent_guide_path_str}`",
         "- 运维 Agent 按自身权限交付审核结果；需要额外正式报告时整理材料并引导报告主模式。",

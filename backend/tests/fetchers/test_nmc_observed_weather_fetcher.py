@@ -20,7 +20,7 @@ def test_normalize_nmc_number_treats_sentinels_as_none():
 
 
 def test_parse_nmc_passedchart_row_maps_fields_to_observed_data_point():
-    station = NMC_CITY_STATIONS["xuchang"]
+    station = NMC_CITY_STATIONS["guangzhou"]
     row = {
         "time": "2026-07-08 16:00",
         "temperature": 36.4,
@@ -34,10 +34,10 @@ def test_parse_nmc_passedchart_row_maps_fields_to_observed_data_point():
 
     data_point = parse_nmc_passedchart_row(station, row)
 
-    assert data_point.station_id == "ZzMTA"
-    assert data_point.station_name == "许昌"
-    assert data_point.lat == 34.07
-    assert data_point.lon == 113.92
+    assert data_point.station_id == "DwzZf"
+    assert data_point.station_name == "广州"
+    assert data_point.lat == 23.13
+    assert data_point.lon == 113.26
     assert data_point.time == datetime(2026, 7, 8, 16, 0)
     assert data_point.temperature_2m == 36.4
     assert data_point.relative_humidity_2m == 50.0
@@ -50,7 +50,7 @@ def test_parse_nmc_passedchart_row_maps_fields_to_observed_data_point():
 
 
 def test_parse_nmc_passedchart_row_marks_partial_when_core_values_missing():
-    station = NMC_CITY_STATIONS["xuchang"]
+    station = NMC_CITY_STATIONS["guangzhou"]
     row = {
         "time": "2026-07-08 16:00",
         "temperature": 9999,
@@ -94,7 +94,7 @@ class FakeRepo:
 async def test_fetcher_stores_passedchart_rows_for_configured_city():
     client = FakeClient(
         {
-            "ZzMTA": {
+            "DwzZf": {
                 "data": {
                     "passedchart": [
                         {
@@ -112,7 +112,7 @@ async def test_fetcher_stores_passedchart_rows_for_configured_city():
         }
     )
     repo = FakeRepo()
-    stations = {"xuchang": NMC_CITY_STATIONS["xuchang"]}
+    stations = {"guangzhou": NMC_CITY_STATIONS["guangzhou"]}
     fetcher = NMCObservedWeatherFetcher(
         client=client,
         repo=repo,
@@ -125,7 +125,7 @@ async def test_fetcher_stores_passedchart_rows_for_configured_city():
 
     assert result["saved"] == 1
     assert result["failed_cities"] == 0
-    assert [point.station_id for point in repo.saved] == ["ZzMTA"]
+    assert [point.station_id for point in repo.saved] == ["DwzZf"]
 
 
 @pytest.mark.asyncio
@@ -137,18 +137,18 @@ async def test_fetcher_continues_when_one_city_fails():
             key=key,
             station_id=station_id,
             station_name=key,
-            province="河南省",
+            province="广东省",
             city=f"{key}市",
-            lat=34.0,
+            lat=23.0,
             lon=113.0,
             provider="NMC",
         )
 
-    stations = {"a": _station("a", "58968"), "b": _station("b", "57089")}
+    stations = {"a": _station("a", "G0001"), "b": _station("b", "G0002")}
     client = FakeClient(
         {
-            "58968": RuntimeError("network failed"),
-            "57089": {
+            "G0001": RuntimeError("network failed"),
+            "G0002": {
                 "data": {
                     "passedchart": [
                         {
@@ -178,43 +178,62 @@ async def test_fetcher_continues_when_one_city_fails():
 
     assert result["saved"] == 1
     assert result["failed_cities"] == 1
-    assert [point.station_id for point in repo.saved] == ["57089"]
+    assert [point.station_id for point in repo.saved] == ["G0002"]
 
 
-def test_henan_nmc_station_catalog_covers_all_prefecture_level_cities():
-    henan_stations = {
-        station.city: station
-        for station in NMC_CITY_STATIONS.values()
-        if station.province == "河南省"
+@pytest.mark.asyncio
+async def test_fetcher_returns_empty_result_when_no_stations_configured():
+    client = FakeClient({})
+    repo = FakeRepo()
+    fetcher = NMCObservedWeatherFetcher(
+        client=client,
+        repo=repo,
+        stations={},
+        request_interval_seconds=0,
+        max_attempts=1,
+    )
+
+    result = await fetcher.fetch_and_store()
+
+    assert result["cities"] == 0
+    assert result["saved"] == 0
+    assert client.requested_station_ids == []
+
+
+def test_guangdong_nmc_station_catalog_covers_all_prefecture_level_cities():
+    assert len(NMC_CITY_STATIONS) == 21
+    assert {station.city for station in NMC_CITY_STATIONS.values()} == {
+        "广州市",
+        "韶关市",
+        "深圳市",
+        "珠海市",
+        "汕头市",
+        "佛山市",
+        "江门市",
+        "湛江市",
+        "茂名市",
+        "肇庆市",
+        "惠州市",
+        "梅州市",
+        "汕尾市",
+        "河源市",
+        "阳江市",
+        "清远市",
+        "东莞市",
+        "中山市",
+        "潮州市",
+        "揭阳市",
+        "云浮市",
     }
-
-    assert set(henan_stations) == {
-        "郑州市",
-        "开封市",
-        "洛阳市",
-        "平顶山市",
-        "安阳市",
-        "鹤壁市",
-        "新乡市",
-        "焦作市",
-        "濮阳市",
-        "许昌市",
-        "漯河市",
-        "三门峡市",
-        "南阳市",
-        "商丘市",
-        "信阳市",
-        "周口市",
-        "驻马店市",
-        "济源市",
-    }
-    assert henan_stations["郑州市"].station_id == "YVItN"
-    assert henan_stations["洛阳市"].url.endswith("/luoyang2.html")
+    assert NMC_CITY_STATIONS["guangzhou"].station_id == "DwzZf"
+    assert NMC_CITY_STATIONS["shenzhen"].station_id == "AhpEU"
+    assert NMC_CITY_STATIONS["guangzhou"].url.endswith("/AGD/guangzhou.html")
+    assert all(station.province == "广东省" for station in NMC_CITY_STATIONS.values())
 
 
 @pytest.mark.asyncio
 async def test_fetcher_spaces_requests_and_retries_transient_failures():
-    station = NMC_CITY_STATIONS["xuchang"]
+    station = NMC_CITY_STATIONS["guangzhou"]
 
     class FlakyClient:
         def __init__(self):
@@ -235,7 +254,7 @@ async def test_fetcher_spaces_requests_and_retries_transient_failures():
     fetcher = NMCObservedWeatherFetcher(
         client=client,
         repo=FakeRepo(),
-        stations={"xuchang": station},
+        stations={"guangzhou": station},
         request_interval_seconds=3,
         retry_backoff_seconds=15,
         max_attempts=2,
@@ -251,7 +270,7 @@ async def test_fetcher_spaces_requests_and_retries_transient_failures():
 
 @pytest.mark.asyncio
 async def test_fetcher_defers_remaining_cities_after_rate_limit():
-    stations = {key: NMC_CITY_STATIONS[key] for key in ("xuchang", "zhengzhou", "kaifeng")}
+    stations = {key: NMC_CITY_STATIONS[key] for key in ("guangzhou", "shenzhen", "zhuhai")}
 
     class RateLimitedClient:
         def __init__(self):

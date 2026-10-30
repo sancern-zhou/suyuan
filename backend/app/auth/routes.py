@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 
 from config.settings import Settings, settings
 
-from .dependencies import require_current_user
+from .dependencies import require_admin_user, require_current_user
 from .errors import AuthenticationRejected, AuthenticationUnavailable
 from .models import CurrentUser
 from .service import build_mock_user
@@ -26,6 +26,28 @@ def get_auth_settings() -> Settings:
 
 def get_auth_service(request: Request):
     return request.app.state.auth_service
+
+
+def get_operation_access_policy(request: Request):
+    return getattr(request.app.state, "operation_access_policy", None)
+
+
+def _operation_access_denial(request: Request, user: CurrentUser) -> JSONResponse | None:
+    """403 payload when the roster blocks this ops-platform account."""
+    policy = get_operation_access_policy(request)
+    if policy is None or user.auth_source != "operation":
+        return None
+    allowed, _reason = policy.decide(user.username)
+    if allowed:
+        return None
+    return JSONResponse(
+        {
+            "detail": "operation_account_blocked",
+            "message": "该账号所属单位无权访问智能体平台，如需使用请联系管理员",
+        },
+        status_code=403,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def _operation_user_payload(user: CurrentUser) -> dict:
@@ -121,6 +143,9 @@ async def operation_session(
             return JSONResponse(
                 {"detail": "authentication_unavailable"}, status_code=503
             )
+    denial = _operation_access_denial(request, user)
+    if denial is not None:
+        return denial
     return JSONResponse(
         {
             "authenticated": True,
@@ -138,3 +163,14 @@ async def issue_ws_ticket(
 ):
     ticket = await service.issue(user, purpose="scheduled-tasks")
     return {"ticket": ticket, "expires_in": service.ttl_seconds}
+
+
+@router.get("/auth/operation-access")
+async def operation_access_summary(
+    _admin: CurrentUser = Depends(require_admin_user),
+    policy=Depends(get_operation_access_policy),
+):
+    """Admin view of the ops-platform roster backing the access decision."""
+    if policy is None:
+        return {"enabled": False, "detail": "operation_access_control_disabled"}
+    return policy.summary()

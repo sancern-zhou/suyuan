@@ -106,7 +106,7 @@ def test_ingestion_preserves_utc_and_normalizes_storage_units():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("city", [None, "许昌市"])
+@pytest.mark.parametrize("city", [None, "广州市"])
 async def test_tool_emits_beijing_time_si_wind_and_source_in_saved_data(monkeypatch, city):
     tool = GetWeatherDataTool()
     fields = ["temperature_2m", "relative_humidity_2m", "dew_point_2m", "wind_speed_10m", "wind_direction_10m", "wind_gusts_10m", "surface_pressure", "precipitation", "cloud_cover", "shortwave_radiation", "visibility", "boundary_layer_height"]
@@ -118,7 +118,7 @@ async def test_tool_emits_beijing_time_si_wind_and_source_in_saved_data(monkeypa
     row.data_source = OPEN_METEO_SOURCE
 
     async def query(lat, lon, start, end):
-        assert (lat, lon) == (34, 113.75)
+        assert (lat, lon) == (23.25, 113.25)
         assert start == datetime(2026, 9, 4, 16, tzinfo=timezone.utc)
         assert end == datetime(2026, 9, 7, 1, tzinfo=timezone.utc)
         return [row]
@@ -132,7 +132,7 @@ async def test_tool_emits_beijing_time_si_wind_and_source_in_saved_data(monkeypa
 
     monkeypatch.setattr(tool.repo, "get_weather_data", query)
     context = Context()
-    result = await tool.execute(context, "era5", "2026-09-05T00:00:00", "2026-09-07T09:00:00", lat=34, lon=113.75, city=city)
+    result = await tool.execute(context, "era5", "2026-09-05T00:00:00", "2026-09-07T09:00:00", lat=23.25, lon=113.25, city=city)
     assert result["success"]
     output = result["data"][0]
     assert output["timestamp"] == "2026-09-05T08:00:00+08:00"

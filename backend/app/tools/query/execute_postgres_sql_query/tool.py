@@ -1,4 +1,4 @@
-"""Read-only PostgreSQL/KingbaseES SQL queries for permit-license and observed weather data."""
+"""Read-only PostgreSQL/KingbaseES SQL queries for permit-license and Guangdong weather data."""
 
 from __future__ import annotations
 
@@ -30,11 +30,13 @@ PERMIT_SQL_TABLES = [
     "permit_documents",
 ]
 
-# 气象观测表位于独立气象库（WEATHER_DATABASE_URL/weather_engine），不在主库。
-# weather_stations 主档表当前仅剩广东遗留站点且无人维护，NMC 站点未登记，故不开放。
+# 气象表位于独立气象库（WEATHER_DATABASE_URL/weather_engine），不在主库。
+# 广东 21 地市 NMC 观测与 ERA5 历史都落在气象库；weather_stations 主档表无人
+# 维护（NMC 站点登记在 app/config/weather_targets.py 目录中），故不开放。
 WEATHER_SQL_TABLES = [
     "observed_weather_data",
     "observed_weather_daily",
+    "era5_reanalysis_data",
 ]
 
 # 许昌国控站周边路况定时抓取数据（主库）。工具代码与抓取脚本在 xuchang 分支
@@ -75,8 +77,8 @@ class ExecutePostgresSQLQueryTool(LLMTool):
         self._table_types_cache = TableTypesCache()
         schema_description = (
             "PostgreSQL/KingbaseES 只读 SQL 查询工具。支持四类数据："
-            "许昌市企业排污许可证数据（主库）、气象站逐小时地面观测数据（独立气象库，"
-            "含定时抓取的中央气象台NMC观测，如许昌站）、许昌国控站周边路况时序（主库，定时抓取）"
+            "许昌市企业排污许可证数据（主库）、广东 21 地市气象数据（独立气象库："
+            "NMC 逐小时观测、逐日统计与 ERA5 历史再分析）、许昌国控站周边路况时序（主库，定时抓取）"
             "和定时任务结果/站点快速告警记录（主库）；"
             "支持 describe_table 查看表结构，或 sql 执行 SELECT/CTE 查询，二者必须二选一。"
             f"仅允许白名单业务表：{', '.join(ALLOWED_SQL_TABLES)}；禁止采集运行日志和失败记录。"
@@ -89,10 +91,9 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             "\n- permit_license_versions：许可证历史/业务版本，以 license_id 关联主表。"
             "\n- permit_pollution_details：大气/水污染物、排放方式和执行标准，以 license_id 关联主表。"
             "\n- permit_documents：已下载的许可证正副本及分页文件，以 license_id 关联主表。"
-            "\n- observed_weather_data：气象站逐小时地面观测数据（NMC定时抓取落库）；"
-            "主键(time, station_id)；站点字段 station_id/station_name（许昌站为 'ZzMTA'/'许昌'，"
-            "许昌下辖长葛='sHlBF'、禹州='HFqwM'，其余站点可用 "
-            "SELECT DISTINCT station_id, station_name FROM observed_weather_data 查询）；"
+            "\n- observed_weather_data：广东 21 地市 NMC 城市站逐小时地面观测（定时抓取落库）；"
+            "主键(time, station_id)；站点字段 station_id/station_name（如广州='DwzZf'/'广州'，"
+            "其余站点可用 SELECT DISTINCT station_id, station_name FROM observed_weather_data 查询）；"
             "气象字段：temperature_2m(°C)、relative_humidity_2m(%)、dew_point_2m(°C)、"
             "wind_speed_10m(km/h)、wind_direction_10m(°，气象来向)、surface_pressure(hPa)、"
             "precipitation(mm)、cloud_cover(%)、visibility(m)；"
@@ -106,7 +107,16 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             "valid_hours=参与聚合的小时数，data_quality 'good'=24小时齐全、'partial'=20~23小时"
             "（均值可能偏倚、降水累计可能少算缺测时段）；有效小时数<20 的日子指标列为 NULL，"
             "查询日均值时建议附带 data_quality 判断可靠性。"
-            "\n注意：permit_* 表在主库，observed_weather_data/observed_weather_daily 在独立气象库，"
+            "\n- era5_reanalysis_data：广东 21 地市历史气象再分析（city_weather_history 定时采集，"
+            "Open-Meteo Archive best match，非纯 ERA5 模式，来源以 data_source 为准）；"
+            "主键(time, lat, lon)，坐标为各市代表点按 0.25° 对齐后的网格点；"
+            "气象字段：temperature_2m(°C)、relative_humidity_2m(%)、dew_point_2m(°C)、"
+            "wind_speed_10m(m/s)、wind_direction_10m(°)、wind_gusts_10m(m/s)、"
+            "surface_pressure(hPa)、precipitation(mm)、cloud_cover(%)、shortwave_radiation(W/m²)、"
+            "visibility(m)、boundary_layer_height(m)；"
+            "time 为 UTC；按城市查询优先用 get_weather_data 工具（内部解析代表点），"
+            "本表适合直接 SQL 聚合统计。"
+            "\n注意：permit_* 表在主库，observed_weather_data/observed_weather_daily/era5_reanalysis_data 在独立气象库，"
             "两库不支持跨库 JOIN，混用会直接报错。"
             "\n- traffic_snapshot：国控站周边路况快照（定时抓取，6分钟时隙，slot_at 为 UTC 时隙起点）；"
             "station_code 站点编码（道路级行以 'road:路名' 前缀区分），"
@@ -132,7 +142,8 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             "hour_count、notification_count、peak_station_value（站点峰值浓度）、"
             "peak_deviation_ratio（峰值偏差比）；event_ids 为 JSON 数组，"
             "可与 scheduled_task_results.event_id 关联取历次结论与通报。"
-            "\n注意：permit_*/路况/定时任务结果表在主库，observed_weather_data/observed_weather_daily 在独立气象库，"
+            "\n注意：permit_*/路况/定时任务结果表在主库，气象表（observed_weather_data/"
+            "observed_weather_daily/era5_reanalysis_data）在独立气象库，"
             "两库不支持跨库 JOIN，混用会直接报错。"
             "\n\n示例："
             "\n- 企业查询：SELECT enterprise_name, permit_number, current_status FROM permit_licenses "
@@ -140,12 +151,15 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             "\n- 大气污染物：SELECT l.enterprise_name, p.air_pollutant_types, p.air_emission_standard "
             "FROM permit_licenses l JOIN permit_pollution_details p ON p.license_id = l.id "
             "WHERE l.city_name = '许昌市' LIMIT 50"
-            "\n- 许昌小时观测：SELECT time, temperature_2m, relative_humidity_2m, wind_speed_10m, "
+            "\n- 广东小时观测：SELECT time, temperature_2m, relative_humidity_2m, wind_speed_10m, "
             "wind_direction_10m, precipitation FROM observed_weather_data "
-            "WHERE station_id = 'ZzMTA' AND time >= '2026-08-30' ORDER BY time LIMIT 48"
-            "\n- 许昌日值气象：SELECT obs_date, temperature_2m_avg, temperature_2m_max, temperature_2m_min, "
+            "WHERE station_id = 'DwzZf' AND time >= '2026-10-28' ORDER BY time LIMIT 48"
+            "\n- 广东日值气象：SELECT obs_date, temperature_2m_avg, temperature_2m_max, temperature_2m_min, "
             "relative_humidity_2m_avg, wind_speed_10m_avg, precipitation_sum, data_quality "
-            "FROM observed_weather_daily WHERE station_id = 'ZzMTA' AND obs_date >= '2026-10-01' ORDER BY obs_date"
+            "FROM observed_weather_daily WHERE station_id = 'DwzZf' AND obs_date >= '2026-10-01' ORDER BY obs_date"
+            "\n- ERA5 历史聚合：SELECT time, temperature_2m, boundary_layer_height, shortwave_radiation "
+            "FROM era5_reanalysis_data WHERE lat = 23.25 AND lon = 113.25 "
+            "AND time >= '2026-10-01' ORDER BY time LIMIT 100"
             "\n- 路况小时统计：SELECT station_code, hour_ts, samples, avg_status, max_status, "
             "congestion_sections FROM v_station_traffic_hourly "
             "WHERE station_code IN ('1003A','1005A') ORDER BY hour_ts DESC LIMIT 100"
@@ -183,10 +197,10 @@ class ExecutePostgresSQLQueryTool(LLMTool):
         }
         super().__init__(
             name="execute_postgres_sql_query",
-            description="Execute read-only PostgreSQL/KingbaseES permit-license, observed-weather and traffic-history SQL queries",
+            description="Execute read-only PostgreSQL/KingbaseES permit-license, Guangdong-weather and traffic-history SQL queries",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="1.3.0",
+            version="1.4.0",
             requires_context=True,
         )
         self.sql_validator = SQLValidator(

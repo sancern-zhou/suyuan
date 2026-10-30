@@ -89,13 +89,14 @@ PPT_TOOL_NAMES = [
 
 # ===== 专家模式工具 =====
 EXPERT_TOOL_NAMES = [
-    "run_agent_workflow",
+    # 【暂时下线 2026-10-30】run_agent_workflow 不对专家模式暴露；
+    # 委派统一走 call_sub_agent，固定问数流程由对应叶子子模式承接。
     "call_sub_agent",
     "list_session_resources",
     "publish_session_file",
-    # 知识库检索与命中文档上下文阅读
-    "knowledge_qa_workflow",
-    "knowledge_document_reader",
+    # 【暂时下线 2026-10-30】知识库检索与命中文档上下文阅读不对专家模式暴露
+    # （knowledge / enforcement_exam 等模式保留 knowledge_qa_workflow /
+    #   knowledge_document_reader；许昌经项目接管白名单不受影响）
     # 数据查询工具
     "get_vocs_data",
     "get_vocs_species",
@@ -108,7 +109,9 @@ EXPERT_TOOL_NAMES = [
     "get_pm25_trace",
     "get_weather_forecast",
     "get_observed_meteorology",
-    "get_platform_weather_image",
+    # 【暂时下线 2026-10-30】get_platform_weather_image 不对专家主模式暴露
+    # （气象取数走 get_observed_meteorology / get_weather_forecast；
+    #   DAG 气象子专家 expert_meteorology 白名单仍保留）
     "query_xcai_city_history",
     "execute_sql_query",
     # 分析工具
@@ -173,7 +176,8 @@ EXPERT_ANALYSIS_TOOL_NAMES = [
 
 # ===== 问数模式工具 =====
 QUERY_TOOL_NAMES = [
-    "run_agent_workflow",
+    # 【暂时下线 2026-10-30】run_agent_workflow 不对问数模式暴露；
+    # 委派统一走 call_sub_agent，固定问数流程由对应叶子子模式承接。
     "call_sub_agent",
     "list_session_resources",
     "publish_session_file",

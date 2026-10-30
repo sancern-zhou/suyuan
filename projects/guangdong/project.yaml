@@ -294,6 +294,9 @@ backend:
     ops: projects/guangdong/prompts/ops.md
     gd_query: projects/guangdong/prompts/gd_query.md
     knowledge: projects/guangdong/prompts/knowledge.md
+    # 2026-10-30 report 对标许昌改为整合者定位：项目提示词整体替换共享报告提示词，
+    # 与 agent_mode_tools.report 全量白名单配套。
+    report: projects/guangdong/prompts/report.md
     station_fault_diagnosis: projects/guangdong/prompts/station_fault_diagnosis.md
     operations_analysis: projects/guangdong/prompts/operations_analysis.md
     gd_ops_data_workorder: projects/guangdong/prompts/internal/gd_ops_data_workorder.md
@@ -470,6 +473,81 @@ backend:
     - get_ofp_top10
     - get_pm25_recovery
     - get_pm25_trace
+    # 2026-10-30 通用问数（query）改为项目全量白名单：接入监测体系站点地理工具；
+    # 收缩移除 run_agent_workflow、源码类文件工具
+    # （write_file/grep/list_directory/search_files）、knowledge_graph_query、
+    # query_national_province_air_quality 与 GIS 视觉交互 7 件（resolve_map_data_asset/
+    # create_map_point_asset/spatial_analysis/spatial_interpolation/visual_interaction/
+    # get_map_program_receipt/wait_map_program_receipt）；resolve_station_geo 为
+    # 已下线工具的死条目（注册随 acdc3987 拆分删除）不再保留。共享基线其余工具保留。
+    # 2026-10-30 委派通道定为仅 call_sub_agent（与专家模式一致，run_agent_workflow
+    # 不对问数/专家暴露）；固定问数流程仍经对应叶子子模式承接。
+    # 站点地理用 monitoring_station_catalog（监测体系，与监测取数工具同源），
+    # 不用运维台账口径的 guangdong_station_catalog（两套体系不混用）。
+    query:
+    - ask_user_question
+    - call_sub_agent
+    - list_session_resources
+    - read_session_resource
+    - publish_session_file
+    - read_file
+    - edit_file
+    - monitoring_station_catalog
+    # 组分站名录/某城市有无组分站、VOCs 与颗粒物组分能力用组分体系目录
+    # （38 站清单带能力标注；监测/运维台账目录都不含组分类型细分）
+    - component_station_catalog
+    # 监测/中台取数
+    - query_xcai_city_history
+    - execute_sql_query
+    - get_5min_data
+    - query_gd_suncere_city_hour
+    - query_gd_suncere_station_day_new
+    - query_gd_suncere_city_day
+    - query_gd_suncere_district_report
+    - query_city_standard_report
+    - query_city_standard_yoy_report
+    - query_station_standard_report
+    - query_station_standard_yoy_report
+    - analyze_city_pollutant_rankings
+    - station_operation_daily
+    # 气象实况与预报
+    - get_weather_data
+    - get_observed_meteorology
+    - get_weather_forecast
+    - get_current_weather
+    # 超站组分取数
+    - get_vocs_data
+    - get_vocs_species
+    - get_vocs_ofp
+    - get_ofp_top10
+    - get_pm25_ionic
+    - get_pm25_carbon
+    - get_pm25_crustal
+    - get_pm25_recovery
+    - get_pm25_trace
+    # 计算与图表
+    - execute_python
+    - create_business_chart
+    - execute_echarts_python
+    # 2026-10-30 report 对标许昌改为整合者全量白名单：主 Agent 不直接执行业务
+    # 数据查询，取数与专家研判全部通过 run_agent_workflow 委托问数/专家子节点，
+    # 主 Agent 负责定义口径、拆解问题、复用节点结果做跨域整合、图表、成稿与收口。
+    # analyze_city_pollutant_rankings 保留在主模式：它是消费上游交付文件的确定性
+    # 排名核算工具（非取数），且后端报告自动复核轮强制要求使用它。
+    report:
+    - list_session_resources
+    - read_session_resource
+    - publish_session_file
+    - read_file
+    - write_file
+    - edit_file
+    - create_business_chart
+    - execute_python
+    - analyze_city_pollutant_rankings
+    - create_report_package
+    - run_agent_workflow
+    - list_skills
+    - view_skill
     station_fault_diagnosis:
     - ask_user_question
     - list_session_resources
@@ -580,7 +658,11 @@ backend:
   tools:
   - execute_guangdong_mart_sql
   - guangdong_query_metrics
+  # 三套站点体系各一工具，共用 station_directory 底座：
+  # guangdong=运维台账(dim_station) / monitoring=监测平台站点地理快照 / component=组分接口清单(geo_mappings)
   - guangdong_station_catalog
+  - monitoring_station_catalog
+  - component_station_catalog
   - query_gd_suncere
   - query_gd_suncere_city_hour
   - query_gd_suncere_station_hour_new
@@ -608,30 +690,38 @@ backend:
     - query_city_standard_yoy_report
     # 2026-10-29 气象库改造：专家分析可查本地 ERA5 历史与 NMC 观测表
     - get_weather_data
-    query:
-    - get_5min_data
-    - query_gd_suncere_city_hour
-    - query_gd_suncere_station_day_new
-    - query_gd_suncere_city_day
-    - query_city_standard_report
-    - query_city_standard_yoy_report
+    # 2026-10-30 报告 DAG 问数子模式接入站点地理（阶段可见性由共享
+    # mode_workflows 阶段表控制）：监测子模式用监测体系 monitoring_station_catalog；
+    # 组分子模式用组分体系 component_station_catalog；城市子模式站点任务归 station、
+    # 不追加（测试守卫）。监测子模式同时带组分目录：组分站名录、"某城市有无
+    # VOCs/颗粒物组分站"属于目录事实问题，在站点子流程就地可答
+    # （阶段可见性见 mode_workflows _MONITORING_*_QUERY_TOOLS）。
+    query_monitoring:
+    - monitoring_station_catalog
+    - component_station_catalog
+    query_monitoring_station:
+    - monitoring_station_catalog
+    - component_station_catalog
+    # 2026-10-30 report 整合者改造：原报告主模式直查的站点级报表包与 5 分钟数据
+    # 下放站点问数节点（需与 mode_workflows 站点阶段表成对配置）。
     - query_station_standard_report
     - query_station_standard_yoy_report
-    - query_gd_suncere_district_report
-    - analyze_city_pollutant_rankings
-    - station_operation_daily
-    report:
     - get_5min_data
+    query_forecast:
+    - monitoring_station_catalog
+    query_component:
+    - component_station_catalog
+    # query 模式已改为 agent_mode_tools 全量接管（见上），不再走 extras 追加
+    # 2026-10-30 report 整合者改造：原报告主模式直查的城市/区域报表包视图下放
+    # 城市问数节点（需与 mode_workflows 城市阶段表成对配置）；排名核算
+    # analyze_city_pollutant_rankings 留在报告主模式消费节点交付文件。
+    query_monitoring_city:
     - query_gd_suncere_city_hour
     - query_gd_suncere_city_day
     - query_gd_suncere_district_day
     - query_city_standard_report
     - query_city_standard_yoy_report
     - query_gd_suncere_district_report
-    - query_station_standard_report
-    - query_station_standard_yoy_report
-    - analyze_city_pollutant_rankings
-    - station_operation_daily
     deliberation_meteorology:
     - query_gd_suncere_city_hour
     - query_gd_suncere_station_hour_new

@@ -6,6 +6,10 @@ import { browserAuthStorage } from './storage.js'
 
 const ABSOLUTE_URL = /^[a-z][a-z\d+.-]*:\/\//i
 
+// 公网防火墙会重置 PUT/PATCH/DELETE 连接（GET/POST 放行），网内统一改用
+// POST + 方法覆盖头发送，由后端中间件还原真实方法后再路由。
+const OVERRIDABLE_METHODS = ['PUT', 'DELETE', 'PATCH']
+
 
 function configuredApiBase() {
   return import.meta.env?.VITE_API_BASE_URL || '/api/suyuan'
@@ -63,7 +67,8 @@ export function createAuthFetch({
       headers.delete('Authorization')
       headers.delete('SysCode')
     }
-    const response = await fetchImpl(url, { ...fetchOptions, headers })
+    const rawMethod = (fetchOptions.method ?? (typeof input === 'string' ? undefined : input?.method) ?? 'GET').toUpperCase()
+    const response = await fetchImpl(url, applyMethodOverride(fetchOptions, headers, rawMethod, external))
     if (!external && !publicRequest && clearOnUnauthorized && response.status === 401) {
       // A delayed response from an earlier session must not log out a newer login.
       if (storage.readSession().token === requestToken) storage.clear()
@@ -85,6 +90,15 @@ export function createAuthFetch({
 }
 
 
+function applyMethodOverride(fetchOptions, headers, rawMethod, external) {
+  if (external || !OVERRIDABLE_METHODS.includes(rawMethod)) {
+    return { ...fetchOptions, headers }
+  }
+  headers.set('X-HTTP-Method-Override', rawMethod)
+  return { ...fetchOptions, method: 'POST', headers }
+}
+
+
 function browserStorage() {
   return browserAuthStorage()
 }
@@ -102,6 +116,11 @@ authAxios.interceptors.request.use(config => {
     throw new Error('Absolute URLs require external: true')
   }
   if (!external) config.url = gatewayUrl(config.url || '')
+  const rawMethod = (config.method || 'get').toUpperCase()
+  if (!external && OVERRIDABLE_METHODS.includes(rawMethod)) {
+    config.method = 'post'
+    config.headers['X-HTTP-Method-Override'] = rawMethod
+  }
   if (!external && !publicRequest) {
     const session = browserStorage().readSession()
     config.headers.Authorization = session.token ? `Bearer ${session.token}` : undefined

@@ -44,12 +44,15 @@ def test_assistant_mode_does_not_expose_diagram_artifact_tool():
     assert "create_diagram_artifact" not in ASSISTANT_TOOL_ORDER
 
 
-def test_weather_image_tool_is_reserved_for_expert_mode(monkeypatch):
+def test_weather_image_tool_not_exposed_to_interactive_expert_mode(monkeypatch):
+    """【2026-10-30 下线】平台天气图片工具不再对专家主模式暴露；
+    仅报告 DAG 气象子专家 expert_meteorology 保留。"""
     from config.settings import settings
 
     monkeypatch.setattr(settings, "project_id", "default")
     assert "get_platform_weather_image" not in get_tools_by_mode("assistant")
-    assert "get_platform_weather_image" in get_tools_by_mode("expert")
+    assert "get_platform_weather_image" not in get_tools_by_mode("expert")
+    assert "get_platform_weather_image" in get_tools_by_mode("expert_meteorology")
 
 
 def test_office_does_not_query_business_databases():

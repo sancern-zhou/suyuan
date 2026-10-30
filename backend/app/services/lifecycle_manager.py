@@ -21,7 +21,6 @@ from app.fetchers.satellite.gems_hcho_data_fetcher import GemsHchoDataFetcher
 from app.fetchers.satellite.gems_image_fetcher import GemsImageFetcher
 from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
 from app.fetchers.weather.observed_daily_fetcher import ObservedWeatherDailyFetcher
-from app.fetchers.weather.observed_fetcher import ObservedWeatherFetcher
 from app.fetchers.xuchang_annual_attainment_forecast import XuchangAnnualAttainmentForecastFetcher
 from app.fetchers.xuchang_cnemc_station_hour import XuchangCnemcStationHourFetcher
 from app.fetchers.xuchang_city_exceedance import XuchangCityExceedanceFetcher
@@ -36,7 +35,6 @@ from app.fetchers.xuchang_weather_com_daily_forecast import XuchangWeatherComDai
 from app.fetchers.xuchang_weather_situation import (
     XuchangWeatherSituationEvidenceFetcher,
 )
-from app.fetchers.xuchang_town_five_minute import XuchangTownFiveMinuteFetcher
 from app.fetchers.xuchang_zhongda_station import (
     XuchangZhongdaCityFetcher,
     XuchangZhongdaStationFetcher,
@@ -98,7 +96,6 @@ def _configured_fetchers(project_context):
     enabled_modules = project_context.enabled_modules
     factories = {
         "task_review_feedback": TaskReviewFeedbackFetcher,
-        "observed_weather": ObservedWeatherFetcher,
         "nmc_observed_weather": NMCObservedWeatherFetcher,
         "observed_weather_daily": ObservedWeatherDailyFetcher,
         "consultation": ConsultationFileFetcher,
@@ -120,7 +117,6 @@ def _configured_fetchers(project_context):
         "xuchang_zhongda_station_hour_fetcher":
             lambda: XuchangZhongdaStationFetcher(data_kind="hour"),
         "xuchang_zhongda_city_hour_fetcher": XuchangZhongdaCityFetcher,
-        "xuchang_town_five_minute_fetcher": XuchangTownFiveMinuteFetcher,
         "gems_xuchang_image_fetcher": GemsImageFetcher,
     }
     # 广东工单同步已 data-ops 化（2026-10-24）：sync_table.py + dbt 计划任务负责

@@ -3,7 +3,7 @@ from datetime import datetime
 import pytest
 
 from app.config.weather_targets import (
-    ERA5_MAIN_FETCHER,
+    ERA5_CITY_HISTORY_FETCHER,
     get_observed_station_targets,
     iter_era5_city_targets,
     resolve_weather_city_target,
@@ -12,21 +12,22 @@ from app.tools.query.get_weather_data.tool import GetWeatherDataTool
 
 
 def test_shared_catalog_resolves_city_alias_and_drives_fetch_targets():
-    nanjing = resolve_weather_city_target("南京")
+    guangzhou = resolve_weather_city_target("广州")
 
-    assert nanjing is not None
-    assert nanjing.city == "南京市"
-    assert nanjing.era5_point == {"lat": 32.0603, "lon": 118.7969}
+    assert guangzhou is not None
+    assert guangzhou.city == "广州市"
+    assert guangzhou.province == "广东省"
+    assert guangzhou.era5_point == {"lat": 23.13, "lon": 113.26}
 
-    main_fetch_cities = {
-        target.city for target in iter_era5_city_targets(ERA5_MAIN_FETCHER)
+    history_cities = {
+        target.city for target in iter_era5_city_targets(ERA5_CITY_HISTORY_FETCHER)
     }
-    assert "南京市" in main_fetch_cities
-    assert "许昌市" in main_fetch_cities
-    assert "济宁市" not in main_fetch_cities
+    assert "广州市" in history_cities
+    assert len(history_cities) == 21
+    assert resolve_weather_city_target("南京市") is None
 
     nmc_stations = get_observed_station_targets(provider="NMC")
-    assert nmc_stations["xuchang"].station_id == "ZzMTA"
+    assert nmc_stations["guangzhou"].station_id == "DwzZf"
 
 
 def test_weather_tool_schema_accepts_single_and_multiple_cities():
@@ -56,19 +57,19 @@ async def test_era5_city_query_uses_shared_catalog_and_reports_partial_result(mo
     result = await tool.execute(
         context=None,
         data_type="era5",
-        cities=["南京", "不存在市"],
+        cities=["广州", "不存在市"],
         start_time="2026-08-01T00:00:00",
         end_time="2026-08-01T23:59:59",
     )
 
-    assert calls == [(32.0603, 118.7969, "南京市")]
+    assert calls == [(23.13, 113.26, "广州市")]
     assert result["status"] == "partial"
     assert result["success"] is True
-    assert result["data"][0]["city"] == "南京市"
-    assert result["metadata"]["resolved_cities"] == ["南京市"]
+    assert result["data"][0]["city"] == "广州市"
+    assert result["metadata"]["resolved_cities"] == ["广州市"]
     assert result["metadata"]["unresolved_cities"] == ["不存在市"]
-    assert result["metadata"]["targets"][0]["grid_lat"] == 32.0
-    assert result["metadata"]["targets"][0]["grid_lon"] == 118.75
+    assert result["metadata"]["targets"][0]["grid_lat"] == 23.25
+    assert result["metadata"]["targets"][0]["grid_lon"] == 113.25
 
 
 @pytest.mark.asyncio
@@ -100,12 +101,12 @@ async def test_observed_city_query_uses_catalog_station_ids(monkeypatch):
     result = await tool.execute(
         context=None,
         data_type="observed",
-        city="许昌",
+        city="广州",
         start_time="2026-08-01T00:00:00",
         end_time="2026-08-01T23:59:59",
     )
 
     assert result["status"] == "success"
-    assert result["data"][0]["city"] == "许昌市"
-    assert result["data"][0]["station_id"] == "ZzMTA"
+    assert result["data"][0]["city"] == "广州市"
+    assert result["data"][0]["station_id"] == "DwzZf"
     assert result["metadata"]["targets"][0]["provider"] == "NMC"

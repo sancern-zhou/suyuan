@@ -68,11 +68,13 @@ class GatewayAuthenticationMiddleware:
         settings: Any,
         auth_service: Any,
         share_access: Any | None = None,
+        access_policy: Any | None = None,
     ) -> None:
         self.app = app
         self.settings = settings
         self.auth_service = auth_service
         self.share_access = share_access
+        self.access_policy = access_policy
         self._trusted_networks = tuple(
             ipaddress.ip_network(value, strict=False)
             for value in settings.trusted_gateway_networks_list
@@ -126,6 +128,10 @@ class GatewayAuthenticationMiddleware:
                 self._bearer_token(headers)
             )
             if user is not None:
+                denial = self._operation_access_denial(user)
+                if denial is not None:
+                    await self._error(scope, receive, send, 403, denial)
+                    return
                 await self.app(
                     self._authenticated_scope(scope, user), receive, send
                 )
@@ -155,7 +161,23 @@ class GatewayAuthenticationMiddleware:
             await self._error(scope, receive, send, 503, "authentication_unavailable")
             return
 
+        denial = self._operation_access_denial(user)
+        if denial is not None:
+            await self._error(scope, receive, send, 403, denial)
+            return
+
         await self.app(self._authenticated_scope(scope, user), receive, send)
+
+    def _operation_access_denial(self, user: Any) -> str | None:
+        """Deny ops-platform accounts the roster blocks (unit whitelist)."""
+        if self.access_policy is None:
+            return None
+        if getattr(user, "auth_source", "") != "operation":
+            return None
+        allowed, _reason = self.access_policy.decide(user.username)
+        if allowed:
+            return None
+        return "operation_account_blocked"
 
     @staticmethod
     def _bearer_token(headers: Headers) -> str:

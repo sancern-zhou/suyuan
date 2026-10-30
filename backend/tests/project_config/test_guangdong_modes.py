@@ -137,6 +137,120 @@ def test_operations_analysis_prompt_declares_budget_and_children():
     assert "累计节点 12" in prompt
 
 
+def test_guangdong_report_mode_is_integrator_focused():
+    manifest = _guangdong_context().manifest
+    # 2026-10-30 对标许昌：report 走全量接管白名单，不再用 extras 追加直查工具
+    assert "report" in manifest.backend.agent_mode_tools
+    assert "report" not in manifest.backend.agent_mode_extra_tools
+    tools = get_tools_by_mode("report")
+    # 整合者工具面：资源、文件、图表、排名核算、收口与 DAG 委托
+    assert {
+        "list_session_resources",
+        "read_session_resource",
+        "publish_session_file",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "create_business_chart",
+        "execute_python",
+        "analyze_city_pollutant_rankings",
+        "create_report_package",
+        "run_agent_workflow",
+        "list_skills",
+        "view_skill",
+        "ask_user_question",
+    }.issubset(tools)
+    # 主 Agent 不直接执行业务数据查询
+    assert {
+        "get_5min_data",
+        "query_gd_suncere_city_hour",
+        "query_gd_suncere_city_day",
+        "query_gd_suncere_district_day",
+        "query_city_standard_report",
+        "query_city_standard_yoy_report",
+        "query_gd_suncere_district_report",
+        "query_station_standard_report",
+        "query_station_standard_yoy_report",
+        "station_operation_daily",
+        "execute_sql_query",
+        "query_xcai_city_history",
+    }.isdisjoint(tools)
+    # 编排者不持有源码检索与重型执行工具（对标许昌守卫）
+    assert {"bash", "grep", "list_directory", "search_files", "execute_echarts_python"}.isdisjoint(tools)
+    assert "call_sub_agent" not in tools
+    assert "render_report_package" not in tools
+    assert "validate_report_package" not in tools
+
+
+def test_guangdong_report_prompt_is_project_override():
+    manifest = _guangdong_context().manifest
+    assert manifest.backend.mode_prompt_files.get("report") == (
+        "projects/guangdong/prompts/report.md"
+    )
+    prompt = build_react_system_prompt("report")
+    # 整合者定位与 DAG 委托
+    assert "报告整合者" in prompt
+    assert "不直接执行业务数据查询" in prompt
+    assert "run_agent_workflow" in prompt
+    # 七类叶子模式全部声明，综合兜底禁止
+    for mode in (
+        "query_monitoring_station",
+        "query_monitoring_city",
+        "query_forecast",
+        "query_component",
+        "expert_meteorology",
+        "expert_analysis",
+        "expert_component",
+    ):
+        assert mode in prompt
+    assert "query_monitoring）兜底" in prompt
+    # 广东口径：区域展开、报表包字段、排名工具、完成标记
+    assert "珠三角" in prompt
+    assert "pM2_5_Decimal" in prompt
+    assert "analyze_city_pollutant_rankings" in prompt
+    assert "<!-- report_final_complete -->" in prompt
+    # 直查时代的计划模板流程随白名单一并下线
+    assert "backend_data_registry" not in prompt
+    assert "计划模板" not in prompt
+
+
+def test_report_pipeline_data_tools_reach_query_leaf_nodes():
+    # 原报告主模式直查的报表包/5分钟工具必须能在问数叶子节点使用：
+    # 模式白名单（extras）与固定流程阶段表（mode_workflows）成对配置
+    city_tools = set(get_tools_by_mode("query_monitoring_city"))
+    station_tools = set(get_tools_by_mode("query_monitoring_station"))
+    for name in (
+        "query_gd_suncere_city_hour",
+        "query_gd_suncere_city_day",
+        "query_gd_suncere_district_day",
+        "query_city_standard_report",
+        "query_city_standard_yoy_report",
+        "query_gd_suncere_district_report",
+    ):
+        assert name in city_tools, name
+    for name in (
+        "query_station_standard_report",
+        "query_station_standard_yoy_report",
+        "get_5min_data",
+    ):
+        assert name in station_tools, name
+
+    from app.agent.workflow.mode_workflows import get_mode_workflow
+
+    city_phase = get_mode_workflow("query_monitoring_city").phases[0]
+    station_phase = get_mode_workflow("query_monitoring_station").phases[0]
+    assert set(city_phase.allowed_tools).issuperset({
+        "query_city_standard_report",
+        "query_city_standard_yoy_report",
+        "query_gd_suncere_district_report",
+    })
+    assert set(station_phase.allowed_tools).issuperset({
+        "query_station_standard_report",
+        "query_station_standard_yoy_report",
+        "get_5min_data",
+    })
+
+
 def test_ops_mode_is_audit_focused_with_lean_whitelist():
     manifest = _guangdong_context().manifest
     # ops 对标江苏改为审核专用全量白名单，不走共享基线叠加

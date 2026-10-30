@@ -157,3 +157,73 @@ test('absolute external URLs require an explicit opt-in', async () => {
 
   await assert.rejects(() => authFetch('https://example.test/data'), /external: true/)
 })
+
+
+test('PUT/DELETE/PATCH requests travel as POST with a method override header', async () => {
+  const seen = []
+  const authFetch = createAuthFetch({
+    storage: sessionStorage(),
+    apiBaseUrl: '/api/suyuan',
+    fetchImpl: async (url, options) => {
+      seen.push({ url, options })
+      return new Response('{}', { status: 200 })
+    }
+  })
+
+  await authFetch('/api/admin/coordinator/quick-prompts/1', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label: 'x' })
+  })
+  await authFetch('/api/admin/coordinator/quick-prompts/1', { method: 'DELETE' })
+  await authFetch('/api/knowledge-bases/1/rules/2', { method: 'PATCH' })
+
+  assert.deepEqual(
+    seen.map(({ options }) => options.method),
+    ['POST', 'POST', 'POST']
+  )
+  assert.deepEqual(
+    seen.map(({ options }) => options.headers.get('X-HTTP-Method-Override')),
+    ['PUT', 'DELETE', 'PATCH']
+  )
+  assert.equal(seen[0].options.headers.get('Content-Type'), 'application/json')
+  assert.ok(seen[0].options.body)
+})
+
+
+test('GET/POST requests keep their method and carry no override header', async () => {
+  const seen = []
+  const authFetch = createAuthFetch({
+    storage: sessionStorage(),
+    apiBaseUrl: '/api/suyuan',
+    fetchImpl: async (url, options) => {
+      seen.push(options)
+      return new Response('{}', { status: 200 })
+    }
+  })
+
+  await authFetch('/api/project/coordinator/quick-prompts')
+  await authFetch('/api/admin/coordinator/quick-prompts', { method: 'POST', body: '{}' })
+
+  assert.equal(seen[0].method, undefined)
+  assert.equal(seen[0].headers.has('X-HTTP-Method-Override'), false)
+  assert.equal(seen[1].method, 'POST')
+  assert.equal(seen[1].headers.has('X-HTTP-Method-Override'), false)
+})
+
+
+test('external requests keep the real method without override', async () => {
+  const seen = []
+  const authFetch = createAuthFetch({
+    storage: sessionStorage(),
+    fetchImpl: async (url, options) => {
+      seen.push(options)
+      return new Response('{}', { status: 200 })
+    }
+  })
+
+  await authFetch('https://example.test/upload', { method: 'PUT', external: true })
+
+  assert.equal(seen[0].method, 'PUT')
+  assert.equal(seen[0].headers.has('X-HTTP-Method-Override'), false)
+})

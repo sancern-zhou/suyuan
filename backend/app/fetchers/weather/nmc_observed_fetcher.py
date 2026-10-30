@@ -16,7 +16,6 @@ from app.config.weather_targets import (
 )
 from app.db.repositories.weather_repo import WeatherRepository
 from app.fetchers.base.fetcher_interface import DataFetcher
-from app.fetchers.weather.observed_fetcher import ObservedDataPoint
 
 logger = structlog.get_logger()
 
@@ -30,6 +29,67 @@ NMC_MAX_ATTEMPTS = 2
 # Compatibility aliases. The shared target catalog is the single definition site.
 NMCCityStation = ObservedWeatherStationTarget
 NMC_CITY_STATIONS: dict[str, NMCCityStation] = get_observed_station_targets(provider="NMC")
+
+
+class ObservedDataPoint:
+    """观测数据点（用于传递数据并落库 observed_weather_data）。"""
+
+    def __init__(
+        self,
+        station_id: str,
+        time: datetime,
+        lat: float = None,
+        lon: float = None,
+        station_name: str = None,
+        temperature_2m: float = None,
+        relative_humidity_2m: float = None,
+        dew_point_2m: float = None,
+        wind_speed_10m: float = None,
+        wind_direction_10m: float = None,
+        surface_pressure: float = None,
+        precipitation: float = None,
+        cloud_cover: float = None,
+        visibility: float = None,
+        data_source: str = "Open-Meteo",
+        data_quality: str = "good",
+    ):
+        self.station_id = station_id
+        self.time = time
+        self.lat = lat
+        self.lon = lon
+        self.station_name = station_name
+        self.temperature_2m = temperature_2m
+        self.relative_humidity_2m = relative_humidity_2m
+        self.dew_point_2m = dew_point_2m
+        self.wind_speed_10m = wind_speed_10m
+        self.wind_direction_10m = wind_direction_10m
+        self.surface_pressure = surface_pressure
+        self.precipitation = precipitation
+        self.cloud_cover = cloud_cover
+        self.visibility = visibility
+        self.data_source = data_source
+        self.data_quality = data_quality
+
+    def to_dict(self):
+        """转换为字典（用于数据库存储）"""
+        return {
+            "station_id": self.station_id,
+            "time": self.time,
+            "lat": self.lat,
+            "lon": self.lon,
+            "station_name": self.station_name,
+            "temperature_2m": self.temperature_2m,
+            "relative_humidity_2m": self.relative_humidity_2m,
+            "dew_point_2m": self.dew_point_2m,
+            "wind_speed_10m": self.wind_speed_10m,
+            "wind_direction_10m": self.wind_direction_10m,
+            "surface_pressure": self.surface_pressure,
+            "precipitation": self.precipitation,
+            "cloud_cover": self.cloud_cover,
+            "visibility": self.visibility,
+            "data_source": self.data_source,
+            "data_quality": self.data_quality,
+        }
 
 
 def _normalize_nmc_number(value: Any) -> float | None:
@@ -129,7 +189,8 @@ class NMCObservedWeatherFetcher(DataFetcher):
         )
         self.client = client or NMCObservedWeatherClient()
         self.repo = repo or WeatherRepository()
-        self.stations = stations or NMC_CITY_STATIONS
+        # 显式传入空 dict 表示该部署不抓任何站点；仅 None 回退到共享站点目录。
+        self.stations = stations if stations is not None else NMC_CITY_STATIONS
         self.request_interval_seconds = max(0.0, request_interval_seconds)
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
         self.max_attempts = max(1, max_attempts)
@@ -177,6 +238,9 @@ class NMCObservedWeatherFetcher(DataFetcher):
         }
 
         stations = list(self.stations.values())
+        if not stations:
+            logger.warning("nmc_observed_no_stations_configured")
+            return result
         for index, station in enumerate(stations):
             if index:
                 await self.sleeper(self.request_interval_seconds)

@@ -250,6 +250,43 @@ class Settings(BaseSettings):
         le=30,
         description="Timeout for ops-platform identity lookups",
     )
+    auth_operation_access_control_enabled: bool = Field(
+        default=False,
+        description=(
+            "Restrict operation-mode sign-ins to bureau-side accounts from the "
+            "ops-platform roster (SYS_USER); external unit accounts are denied"
+        ),
+    )
+    auth_operation_allowed_usertypes: str = Field(
+        default="1,5",
+        description=(
+            "Comma-separated SYS_USER.USERTYPE values allowed to sign in "
+            "(1=省中心, 5=市级); other types are treated as external units"
+        ),
+    )
+    auth_operation_allowed_usernames: str = Field(
+        default="",
+        description=(
+            "Comma-separated ops-platform usernames always allowed regardless "
+            "of their roster decision"
+        ),
+    )
+    auth_operation_blocked_usernames: str = Field(
+        default="",
+        description=(
+            "Comma-separated ops-platform usernames always denied; overrides "
+            "the allow lists"
+        ),
+    )
+    auth_operation_access_sync_interval_seconds: int = Field(
+        default=300,
+        ge=30,
+        le=86400,
+        description=(
+            "Refresh interval for the ops-platform account roster snapshot "
+            "backing the access decision"
+        ),
+    )
     auth_session_token_secret: str = Field(
         default="",
         description=(
@@ -345,6 +382,18 @@ class Settings(BaseSettings):
     @property
     def auth_operation_admin_usernames_set(self) -> set[str]:
         return set(self._split_unique_csv(self.auth_operation_admin_usernames))
+
+    @property
+    def auth_operation_allowed_usertypes_set(self) -> set[str]:
+        return set(self._split_unique_csv(self.auth_operation_allowed_usertypes))
+
+    @property
+    def auth_operation_allowed_usernames_set(self) -> set[str]:
+        return set(self._split_unique_csv(self.auth_operation_allowed_usernames))
+
+    @property
+    def auth_operation_blocked_usernames_set(self) -> set[str]:
+        return set(self._split_unique_csv(self.auth_operation_blocked_usernames))
 
     @property
     def trusted_gateway_networks_list(self) -> List[str]:

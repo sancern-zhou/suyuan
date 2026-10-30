@@ -9,12 +9,19 @@ export function safeRedirect(value, fallback = '/') {
 
 export function createAuthGuard(authStore, { onOperationLoginRequired = null } = {}) {
   return async to => {
+    if (to.path === '/access-denied') return true
     if (!authStore.initialized) {
       try {
         await authStore.bootstrap()
       } catch {
         // The store clears an invalid persisted session before returning here.
       }
+    }
+
+    // Accounts denied by the unit whitelist must land on the notice page
+    // instead of bouncing back to the ops-platform login forever.
+    if (authStore.accessDenied) {
+      return { path: '/access-denied' }
     }
 
     if (to.path === '/login') {

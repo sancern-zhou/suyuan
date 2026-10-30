@@ -7,6 +7,7 @@ import SkillsManagementView from '@/views/SkillsManagementView.vue'
 import SocialAccountsView from '@/views/SocialAccountsView.vue'
 import ExpertDeliberationView from '@/views/ExpertDeliberationView.vue'
 import LoginView from '@/views/LoginView.vue'
+import AccessDeniedView from '@/views/AccessDeniedView.vue'
 import { projectConfig } from '@/config/projectConfig.js'
 import { filterProjectRoutes } from './projectRoutes.js'
 
@@ -16,6 +17,12 @@ const routes = [
       name: 'login',
       component: LoginView,
       meta: { public: true, title: '登录' }
+    },
+    {
+      path: '/access-denied',
+      name: 'access-denied',
+      component: AccessDeniedView,
+      meta: { public: true, title: '无访问权限' }
     },
     {
       path: '/',

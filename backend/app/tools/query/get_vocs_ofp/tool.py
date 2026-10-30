@@ -100,7 +100,7 @@ class GetVOCsOFPTool(LLMTool):
     ) -> Dict[str, Any]:
         """执行类别 OFP 时序查询"""
 
-        station, code, error = resolve_component_station(locations=locations, station=station, code=code)
+        station, code, error = resolve_component_station(locations=locations, station=station, code=code, require_domain="vocs")
         if error:
             return error
 

@@ -1,0 +1,33 @@
+# 数据集契约：dim_station_user
+dataset: dim_station_user
+description: >
+  站点-运维人员桥表。一行 = 一个站点×一个责任人账号（站点×人员去重后约 3,000+ 行，每日全量刷新）。
+  源 sys_userstation（dbo.SYS_USERSTATION，约 3,659 行）经 sys_user/sys_department 解析中文名。
+  为站点目录提供全主网覆盖的"站点→运维人员"名册（dim_station.manager_name 仅 alm_home 告警推送站，
+  约 63 站动态快照，覆盖面天然残缺；按人员查站点、按站点查人员用本表）。
+owner: 广东运维平台组
+grain: 一行 = 一个站点×一个责任人（station_id + user_id）
+freshness_slo: 26小时
+known_caveats:
+  - 覆盖面为运维平台账号-站点授权关系：一个站点可对应多人，一人可负责多站
+  - 组分站（station_id 1~102）是否在 sys_userstation 中登记待同步后实测；未登记即无组分站人员映射
+  - user_status 保留源系统原文，离职/停用账号仍在表中，按 user_status 与 dim_user.status 过滤在岗人员
+  - 部门中文名经 sys_department 关联；账号未挂部门时为 NULL
+columns:
+  - {name: station_id, business: 站点ID(文本形式,与dim_station.station_id关联)}
+  - {name: user_id, business: 用户ID(与dim_user.user_id关联)}
+  - {name: user_name, business: 运维人员中文名}
+  - {name: user_code, business: 用户编码}
+  - {name: department_id, business: 部门ID}
+  - {name: department_name, business: 运维部门中文名(经sys_department)}
+  - {name: user_status, business: 账号状态(源系统原文)}
+  - {name: refreshed_at, business: 本表刷新时间}
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: >-
+  dim_station_user（一行 = 一个站点×一个责任人）：station_id(文本)/user_id/user_name(中文名)/
+  department_name(运维部门中文名)/user_status/refreshed_at。
+  按站点查运维人员、按人员查负责站点用本表（station_id 文本关联 dim_station.station_id，
+  user_id 关联 dim_user.user_id）；在岗过滤用 user_status（源系统原文如 Enabled）。
+  站点目录整体口径（含运维单位/城市归属）仍以 dim_station 为主表。

@@ -1,0 +1,133 @@
+{
+  "skills": {
+    "backup-quarterly-analysis": {
+      "enabled": true,
+      "aliases": [
+        "备机季度分析",
+        "备机使用分析",
+        "备机超期分析"
+      ],
+      "required_tools": [
+        "read_file",
+        "write_file",
+        "execute_python",
+        "create_report_package",
+        "call_sub_agent",
+        "run_agent_workflow"
+      ]
+    },
+    "daily-operations-supervision-report": {
+      "enabled": true,
+      "aliases": [
+        "日常运维监管月报",
+        "日常监管报告",
+        "月度运维监管",
+        "运维日常监管"
+      ],
+      "required_tools": [
+        "read_file",
+        "write_file",
+        "execute_python",
+        "create_report_package",
+        "call_sub_agent",
+        "run_agent_workflow"
+      ]
+    },
+    "fault-work-order-monthly-analysis": {
+      "enabled": true,
+      "aliases": [
+        "故障工单月度分析",
+        "故障工单月报",
+        "站点故障频发分析"
+      ],
+      "required_tools": [
+        "read_file",
+        "write_file",
+        "execute_python",
+        "create_report_package",
+        "call_sub_agent",
+        "run_agent_workflow"
+      ]
+    },
+    "operations-risk-prevention-report": {
+      "enabled": true,
+      "aliases": [
+        "运维风险监管报告",
+        "风险防范报告",
+        "疑似风险线索",
+        "报警集中分析"
+      ],
+      "required_tools": [
+        "read_file",
+        "write_file",
+        "execute_python",
+        "create_report_package",
+        "call_sub_agent",
+        "run_agent_workflow"
+      ]
+    },
+    "fault-work-order-review": {
+      "enabled": true,
+      "aliases": [
+        "故障工单审核",
+        "故障单复核",
+        "工单审核闭环"
+      ],
+      "required_tools": [
+        "read_file",
+        "write_file",
+        "guangdong_station_catalog",
+        "execute_guangdong_mart_sql",
+        "execute_ops_sql_query",
+        "query_gd_suncere_station_hour_new",
+        "query_gd_suncere_station_day_new",
+        "create_report_package"
+      ]
+    },
+    "station-alarm-diagnosis": {
+      "enabled": true,
+      "aliases": [
+        "站点告警诊断",
+        "站点故障诊断",
+        "站房故障诊断",
+        "故障原因分析"
+      ],
+      "required_tools": [
+        "read_file",
+        "knowledge_graph_query",
+        "guangdong_station_catalog",
+        "guangdong_query_metrics",
+        "execute_guangdong_mart_sql",
+        "query_gd_suncere_station_hour_new",
+        "query_gd_suncere_station_day_new"
+      ]
+    },
+    "data-audit-review": {
+      "enabled": false,
+      "aliases": [
+        "数据审核",
+        "数据审核复核",
+        "平台初审复核"
+      ],
+      "required_tools": []
+    },
+    "smart-event-judgment": {
+      "enabled": false,
+      "aliases": [
+        "智能事件研判",
+        "智能事件AI研判",
+        "告警事件研判"
+      ],
+      "required_tools": []
+    },
+    "工单轨迹合理性分析": {
+      "enabled": false,
+      "aliases": [
+        "工单轨迹分析",
+        "轨迹合理性分析",
+        "签到轨迹分析"
+      ],
+      "required_tools": []
+    }
+  }
+}

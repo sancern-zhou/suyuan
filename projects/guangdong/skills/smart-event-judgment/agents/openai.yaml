@@ -1,0 +1,4 @@
+interface:
+  display_name: "智能事件研判（未接入）"
+  short_description: "江苏智能事件中心专用，广东部署未接入，当前停用"
+  default_prompt: "该技能在广东部署未接入，请改用站点故障诊断技能。"

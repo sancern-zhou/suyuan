@@ -1,0 +1,123 @@
+dataset: sup_rf_ambienttemperature
+description: >
+  组分网温压传感器核查记录表单（源 dbo.Sup_RF_AmbientTemperature）。一行 = 一条仪器环境温度/气压核查记录，
+  按 ruleitemtag 覆盖 PM1/重金属/水溶性离子/OCEC/CO2 等仪器族。2026 年起回填 + 小时级增量。
+owner: 广东运维平台组
+grain: 一行 = 一条温压核查记录（id）
+freshness_slo: 2小时
+known_caveats:
+- 表单在审核流程中可原行修改，按 UpdateTime 水位增量，2026-01-01 前的历史不回填
+- 温度示值误差判据 ≤±2℃、气压 ≤±1kPa（见 sup_form_profiles.yaml Sup_RF_AmbientTemperature）
+- t_iscalibrated/p_iscalibrated 为源系统标记原文（1/0），不是已校准结论，需结合校准日期判断
+columns:
+- name: id
+  business: 记录ID（主键）
+- name: workingordercode
+  business: 关联工单号（join working_orders.working_order_code）
+- name: stationid
+  business: 站点ID（文本，关联 dim_station.station_id）
+- name: stationcode
+  business: 站点编码
+- name: uniquecode
+  business: 站点唯一编码
+- name: operationunitid
+  business: 运维单位ID
+- name: checkdate
+  business: 检查日期
+- name: deviceid
+  business: 核查设备ID
+- name: devicebrand
+  business: 设备品牌
+- name: devicemodel
+  business: 设备型号
+- name: devicecode
+  business: 设备编号
+- name: prepareuserid
+  business: 填报人ID
+- name: preparetime
+  business: 填报时间
+- name: reviewuserid
+  business: 复核人ID
+- name: reviewtime
+  business: 复核时间
+- name: audituserid
+  business: 审核人ID
+- name: audittime
+  business: 审核时间
+- name: processtype
+  business: 流程状态（源系统枚举原文）
+- name: createuserid
+  business: 创建人ID
+- name: createtime
+  business: 创建时间
+- name: updateuserid
+  business: 更新人ID
+- name: updatetime
+  business: 更新时间（增量水位列）
+- name: t_model
+  business: 参考温度计型号
+- name: t_code
+  business: 参考温度计编号
+- name: t_range
+  business: 参考温度计量程
+- name: t_revised
+  business: 温度修正值
+- name: t_prevdate
+  business: 参考温度计上次检定日期
+- name: t_nextdate
+  business: 参考温度计下次检定日期（应覆盖检查日期）
+- name: t_r_standard
+  business: 温度标准值
+- name: t_r_revised
+  business: 温度标准值修正值
+- name: t_r_prevvalue
+  business: 温度校准前读数
+- name: t_r_nextvalue
+  business: 温度校准后读数
+- name: t_iscalibrated
+  business: 温度是否已校准（源系统标记原文）
+- name: p_model
+  business: 参考气压计型号
+- name: p_code
+  business: 参考气压计编号
+- name: p_prevdate
+  business: 参考气压计上次检定日期
+- name: p_nextdate
+  business: 参考气压计下次检定日期
+- name: p_slope
+  business: 气压计校准曲线斜率
+- name: p_intercept
+  business: 气压计校准曲线截距
+- name: p_r
+  business: 气压计校准曲线相关系数
+- name: p_r_standard
+  business: 气压标准值
+- name: p_r_revised
+  business: 气压标准值修正值
+- name: p_r_prevvalue
+  business: 气压校准前读数
+- name: p_r_nextvalue
+  business: 气压校准后读数
+- name: p_iscalibrated
+  business: 气压是否已校准（源系统标记原文）
+- name: sensor
+  business: 传感器类型
+- name: remark
+  business: 备注
+- name: ruleitemtag
+  business: 表单类型标签（Sup_RF_AmbientTemperature）
+- name: pollutanttype
+  business: 监测项目（PM1/HeavyMetal/WaterSolubleIons/OCEC/CO2 等）
+- name: detailid
+  business: 明细ID
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: >-
+  sup_rf_ambienttemperature（一行 = 一条温压核查记录，id 主键）：维度 workingordercode/stationid/stationcode/
+  checkdate/deviceid/devicebrand/devicemodel/devicecode/ruleitemtag/pollutanttype；
+  温度组 t_model/t_code/t_range/t_revised/t_prevdate/t_nextdate(检定有效期)/t_r_standard/t_r_revised/
+  t_r_prevvalue(校准前)/t_r_nextvalue(校准后)/t_iscalibrated；
+  气压组 p_model/p_code/p_prevdate/p_nextdate/p_slope/p_intercept/p_r/p_r_standard/p_r_revised/
+  p_r_prevvalue/p_r_nextvalue/p_iscalibrated；remark 备注。
+  误差口径：温度示值误差=t_r_*值-t_r_standard（≤±2℃），气压≤±1kPa；判定以下表原值计算，不要套用其他表单字段。

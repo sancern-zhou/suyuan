@@ -21,6 +21,7 @@ from app.lifecycle.knowledge_base import (
 )
 from app.lifecycle.loop_watchdog import start_loop_watchdog
 from app.lifecycle.nacos import start_nacos
+from app.lifecycle.operation_access import start_operation_access_policy
 from app.lifecycle.roles import normalize_app_role, starts_background_services
 from app.lifecycle.scheduled import start_scheduled_task_service
 from app.lifecycle.social import start_social_platform_service
@@ -54,6 +55,8 @@ async def run_startup(app: FastAPI) -> None:
     )
 
     await start_nacos(app)
+
+    await start_operation_access_policy(app)
 
     await initialize_tools_and_agents()
 

@@ -1,0 +1,184 @@
+dataset: sup_rf_pm1monitorinspection
+description: >
+  组分网 PM1 监测仪巡检记录表单（源 dbo.Sup_RF_PM1MonitorInspection）。一行 = 一条 PM1 巡检记录，
+  按 ruleitemtag 区分周检/月检/半年检（Sup_RF_PM1MonitorInspection_Week/Month/HalfYear）。
+  2026 年起回填 + 小时级增量。
+owner: 广东运维平台组
+grain: 一行 = 一条 PM1 巡检记录（id）
+freshness_slo: 2小时
+known_caveats:
+- 校准膜测定误差 merror 判据 ≤±5%（sup_form_profiles.yaml Sup_RF_PM1MonitorInspection_Month）
+- 各 isitcalibrated/isitclean/whether/isitcomplete 为源系统标记原文，不是结论值，需结合检查内容判断
+- 参考器具（温度/湿度/流量/气压计）按 ft/tt/ht/bt 前缀分组，检定有效期列与器具列一一对应
+- 2026-01-01 前的历史不回填
+columns:
+- name: id
+  business: 记录ID（主键）
+- name: workingordercode
+  business: 关联工单号
+- name: stationid
+  business: 站点ID（关联 dim_station.station_id）
+- name: stationcode
+  business: 站点编码
+- name: uniquecode
+  business: 站点唯一编码
+- name: operationunitid
+  business: 运维单位ID
+- name: checkdate
+  business: 检查日期
+- name: deviceid
+  business: 设备ID
+- name: devicebrand
+  business: 设备品牌
+- name: devicemodel
+  business: 设备型号
+- name: devicecode
+  business: 设备编号
+- name: prepareuserid
+  business: 填报人ID
+- name: preparetime
+  business: 填报时间
+- name: reviewuserid
+  business: 复核人ID
+- name: reviewtime
+  business: 复核时间
+- name: audituserid
+  business: 审核人ID
+- name: audittime
+  business: 审核时间
+- name: processtype
+  business: 流程状态（源系统枚举原文）
+- name: createuserid
+  business: 创建人ID
+- name: createtime
+  business: 创建时间
+- name: updateuserid
+  business: 更新人ID
+- name: updatetime
+  business: 更新时间（增量水位列）
+- name: temperature
+  business: 站房温度
+- name: humidity
+  business: 站房湿度
+- name: analyzermodel
+  business: 分析仪型号
+- name: analyzernumber
+  business: 分析仪编号
+- name: analyzerlasttime
+  business: 分析仪上次校准/维护时间
+- name: analyzeranothertime
+  business: 分析仪下次校准/维护时间
+- name: formtype
+  business: 表单类型（源系统原文）
+- name: idvalue
+  business: PM1 浓度/信号读数（按列名推断，待业务确认）
+- name: flowdvalue
+  business: 流量显示值（按列名推断，待业务确认）
+- name: calibrationpoint
+  business: 校准膜核查校准点
+- name: originalvalue
+  business: 校准膜核查原始值
+- name: currentvalue
+  business: 校准膜核查当前值
+- name: merror
+  business: 校准膜测定误差(%)（判据 ≤±5%）
+- name: atdisplayvalue
+  business: 环境温度显示值
+- name: tdisplayvalue
+  business: 温度显示值
+- name: athumidityvalue
+  business: 环境湿度显示值
+- name: thumidityvalue
+  business: 湿度显示值
+- name: pgdisplayvalue
+  business: 压力显示值
+- name: pgtvalue
+  business: 压力标准值
+- name: ftmodel
+  business: 参考流量计型号
+- name: ftnumber
+  business: 参考流量计编号
+- name: ttmodel
+  business: 参考温度计型号
+- name: ttnumber
+  business: 参考温度计编号
+- name: htmodel
+  business: 参考湿度计型号
+- name: htnumber
+  business: 参考湿度计编号
+- name: btmodel
+  business: 参考气压计型号
+- name: btnumber
+  business: 参考气压计编号
+- name: icontent
+  business: 检查内容/项目文本（按列名推断，待业务确认）
+- name: dtisitcalibrated
+  business: 温度计是否在检定有效期内（源系统标记）
+- name: ipisitcalibrated
+  business: 压力计是否在检定有效期内（源系统标记）
+- name: flowisitcalibrated
+  business: 流量计是否在检定有效期内（源系统标记）
+- name: alineisitcalibrated
+  business: 采样管线是否已校准/检查（源系统标记）
+- name: timeisitcalibrated
+  business: 计时器是否已校准（源系统标记）
+- name: papertapeisitcalibrated
+  business: 纸带是否正常（源系统标记）
+- name: atisitcalibrated
+  business: 环境温度传感器是否正常（源系统标记）
+- name: ahisitcalibrated
+  business: 环境湿度传感器是否正常（源系统标记）
+- name: pgisitcalibrated
+  business: 压力传感器是否正常（源系统标记）
+- name: externalisitclean
+  business: 仪器外部是否清洁（源系统标记）
+- name: insideisitclean
+  business: 仪器内部是否清洁（源系统标记）
+- name: spwhether
+  business: 采样口/采样头检查是否通过（源系统标记，按列名推断）
+- name: idbwhether
+  business: 进气/干燥瓶检查是否通过（源系统标记，按列名推断）
+- name: shwhether
+  business: 采样头检查是否通过（源系统标记，按列名推断）
+- name: leakwhether
+  business: 是否漏气（源系统标记，按列名推断）
+- name: isitcomplete
+  business: 巡检项目是否完整（源系统标记）
+- name: ttisitcomplete
+  business: 温度计检定信息是否完整（源系统标记）
+- name: htisitcomplete
+  business: 湿度计检定信息是否完整（源系统标记）
+- name: btisitcomplete
+  business: 气压计检定信息是否完整（源系统标记）
+- name: ttvalidity
+  business: 温度计检定有效期（文本原文）
+- name: ftvalidity
+  business: 流量计检定有效期（文本原文）
+- name: htvalidity
+  business: 湿度计检定有效期（文本原文）
+- name: btvalidity
+  business: 气压计检定有效期（文本原文）
+- name: faultdescription
+  business: 故障描述
+- name: maintenanceresults
+  business: 维护结果
+- name: otherremarks
+  business: 其他备注
+- name: ruleitemtag
+  business: 表单类型标签（Sup_RF_PM1MonitorInspection_Week/Month/HalfYear）
+- name: pollutanttype
+  business: 监测项目（PM1）
+- name: detailid
+  business: 明细ID
+access:
+  tool: execute_guangdong_mart_sql
+  role: suyuan(应用) / agent_reader(语义层)
+guide: >-
+  sup_rf_pm1monitorinspection（一行 = 一条 PM1 巡检记录，id 主键）：维度 workingordercode/stationid/stationcode/
+  checkdate/deviceid/devicebrand/devicemodel/devicecode/ruleitemtag/formtype；
+  校准膜 calibrationpoint/originalvalue/currentvalue/merror(测定误差%,≤±5)；
+  温湿压 atdisplayvalue/tdisplayvalue/athumidityvalue/thumidityvalue/pgdisplayvalue/pgtvalue；
+  参考器具 ftmodel/ftnumber/ttmodel/ttnumber/htmodel/htnumber/btmodel/btnumber + tt/ft/ht/btvalidity；
+  检查标记 dt/ip/flow/aline/time/papertape/at/ah/pg isitcalibrated、external/inside isitclean、
+  sp/idb/sh/leak whether、isitcomplete/tt/ht/bt isitcomplete；faultdescription/maintenanceresults/otherremarks。
+  标记列均为源系统原文，不能直接当合格结论；按 ruleitemtag 过滤周/月/半年周期。

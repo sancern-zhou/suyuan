@@ -194,8 +194,10 @@ class WeatherHistoryService:
         # OS locking survives cancellation and releases automatically after a crash.
         with (self.jobs.root / "worker.lock").open("a") as lock:
             try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
+                # fileno() 兼容 Windows 的 fcntl 垫片（msvcrt.locking 只收整数 fd）；
+                # 锁被占用在 POSIX 抛 BlockingIOError、Windows 垫片抛 OSError，统一放行。
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
                 return
             processed = 0
             for job in self.jobs.pending():

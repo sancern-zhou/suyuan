@@ -27,6 +27,7 @@ export function createAuthSession({
     loginUrl,
     loading: false,
     initialized: false,
+    accessDenied: false,
 
     async bootstrap() {
       if (this.initialized) return this.user
@@ -42,10 +43,12 @@ export function createAuthSession({
           const response = await api.operationSession()
           this.user = response.user
           this.token = response.sessionToken || ''
+          this.accessDenied = false
           storage.writeSession({ token: this.token, sysCode, user: this.user })
           return this.user
         } catch (error) {
           this.clear()
+          this.accessDenied = error?.detail === 'operation_account_blocked'
           throw error
         } finally {
           this.loading = false
@@ -79,10 +82,12 @@ export function createAuthSession({
           this.user = response.user
           this.token = response.sessionToken || ''
           this.initialized = true
+          this.accessDenied = false
           storage.writeSession({ token: this.token, sysCode, user: this.user })
           return this.user
         } catch (error) {
           this.clear()
+          this.accessDenied = error?.detail === 'operation_account_blocked'
           throw error
         } finally {
           this.loading = false
@@ -134,6 +139,7 @@ export function createAuthSession({
     clear() {
       this.token = ''
       this.user = null
+      this.accessDenied = false
       this.initialized = true
       storage.clear()
     }
@@ -183,7 +189,8 @@ export const useAuthStore = defineStore('suyuan-auth', {
     token: '',
     user: null,
     loading: false,
-    initialized: false
+    initialized: false,
+    accessDenied: false
   }),
   getters: {
     isAuthenticated: state => Boolean(
@@ -198,6 +205,7 @@ export const useAuthStore = defineStore('suyuan-auth', {
       this.user = session.user
       this.loading = session.loading
       this.initialized = session.initialized
+      this.accessDenied = session.accessDenied === true
     },
     configure(runtimeConfig) {
       configureBrowserSession(runtimeConfig)

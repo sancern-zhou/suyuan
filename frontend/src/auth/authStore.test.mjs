@@ -105,3 +105,53 @@ test('mock mode clears persisted company state and bootstraps the in-memory admi
   assert.deepEqual(calls, [])
   assert.deepEqual(raw.dump(), {})
 })
+
+
+test('operation bootstrap marks a roster-blocked account as access denied', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  const api = {
+    operationSession: async () => {
+      const error = new Error('operation_account_blocked')
+      error.statusCode = 403
+      error.detail = 'operation_account_blocked'
+      error.message = '该账号所属单位无权访问智能体平台，如需使用请联系管理员'
+      throw error
+    }
+  }
+  const session = createAuthSession({
+    api,
+    storage,
+    sysCode: 'SUYUAN',
+    authMode: 'operation'
+  })
+
+  await assert.rejects(session.bootstrap())
+  assert.equal(session.accessDenied, true)
+  assert.deepEqual(raw.dump(), {})
+})
+
+test('operation bootstrap success clears the access denied flag', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  const api = {
+    operationSession: async () => ({
+      authenticated: true,
+      user: { id: 'ops-zhangsan', userName: 'zhangsan' },
+      sessionToken: 'session-token'
+    })
+  }
+  const session = createAuthSession({
+    api,
+    storage,
+    sysCode: 'SUYUAN',
+    authMode: 'operation'
+  })
+  session.accessDenied = true
+
+  const user = await session.bootstrap()
+
+  assert.equal(user.userName, 'zhangsan')
+  assert.equal(session.accessDenied, false)
+  assert.equal(session.token, 'session-token')
+})

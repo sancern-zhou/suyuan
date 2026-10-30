@@ -71,6 +71,8 @@ export function createAuthApi({ fetchImpl = globalThis.fetch, storage, config } 
       if (!response.ok || body?.authenticated !== true) {
         const error = new Error(body?.detail || 'Operation session required')
         error.statusCode = response.status
+        error.detail = body?.detail || ''
+        error.message = body?.message || ''
         throw error
       }
       return body

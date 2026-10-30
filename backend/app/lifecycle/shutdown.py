@@ -19,6 +19,7 @@ from app.lifecycle.knowledge_base import (
 )
 from app.lifecycle.loop_watchdog import stop_loop_watchdog
 from app.lifecycle.nacos import stop_nacos
+from app.lifecycle.operation_access import stop_operation_access_policy
 from app.lifecycle.roles import normalize_app_role, starts_background_services
 from app.lifecycle.scheduled import stop_scheduled_task_service
 from app.lifecycle.social import stop_social_platform_service
@@ -36,6 +37,8 @@ async def run_shutdown(app: FastAPI) -> None:
     logger.info("application_shutting_down", app_role=app_role)
 
     await stop_loop_watchdog()
+
+    await stop_operation_access_policy(app)
 
     from app.api.knowledge_graph_routes import stop_graph_build_recovery
 

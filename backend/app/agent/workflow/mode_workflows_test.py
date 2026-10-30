@@ -32,14 +32,22 @@ def test_station_and_city_query_modes_split_by_table_level():
     progress = {}
 
     assert station is not None and city is not None
-    # 站点模式：采集库 SQL + 乡镇站目录解析/中台链路（成对配置）
+    # 站点模式：采集库 SQL + 乡镇站目录解析/中台链路（成对配置）+ 报表包视图
+    # 与 5 分钟数据（广东注册；其他项目为静默死条目）
     assert allowed_tools(station, progress) == {
         "execute_crawler_sql_query",
         "xuchang_station_catalog",
+        "monitoring_station_catalog",
+        "component_station_catalog",
         "query_airdata_platform",
+        "query_station_standard_report",
+        "query_station_standard_yoy_report",
+        "get_5min_data",
     }
     assert "query_xcai_city_history" in allowed_tools(city, progress)
     assert "xuchang_station_catalog" not in allowed_tools(city, progress)
+    assert "query_station_standard_report" not in allowed_tools(city, progress)
+    assert "query_city_standard_report" in allowed_tools(city, progress)
 
     station_acquire = current_phase(station, progress).description
     city_acquire = current_phase(city, progress).description

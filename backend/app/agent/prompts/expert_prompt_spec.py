@@ -14,8 +14,9 @@ def test_expert_mode_exposes_meteorology_tools_only():
     } - set(_get_project_disabled_tool_names())
 
     assert expected.issubset(tools)
-    # get_platform_weather_image 已接入专家模式，但裁剪为仅天气形势图
-    # （见 test_xuchang_expert_modes_expose_platform_weather_image_chart_only）。
+    # get_platform_weather_image 已于 2026-10-30 对专家主模式下线
+    # （见 task_tool_registry_test；许昌经项目接管白名单自行接入）。
+    assert "get_platform_weather_image" not in tools
     assert {
         "get_satellite_data",
         "get_gems_image",

@@ -3,12 +3,17 @@
 单一事实来源：`ParticulateGeoMatcher` + `geo_mappings.json`。
 组分站点与常规空气质量监测站点是两套体系（编码以 `b` 结尾），
 城市名不在映射表内：调用方须传入具体站点名或站点编码。
+
+组分监测能力（geo_mappings.json 的 station_capabilities）用于取数前拦截：
+对无 VOCs 设备的站调 VOCs 工具只会拿到全"—"的占位行，容易被误读成
+"该时段无数据"；`require_domain` 在解析阶段直接拦下并给出有能力的站点清单。
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from app.tools.guangdong.component_station_catalog.provider import load_capability_map
 from app.utils.particulate_geo_matcher import get_particulate_geo_matcher
 
 
@@ -21,17 +26,32 @@ def available_station_text() -> str:
     )
 
 
+def _capable_station_text(domain: str) -> str:
+    """具备指定组分监测能力的 `站点名=编码` 文本（按编码排序）。"""
+
+    matcher = get_particulate_geo_matcher()
+    capabilities = load_capability_map()
+    return "、".join(
+        f"{name}={matcher.station_codes[name]}"
+        for name in sorted(matcher.station_codes, key=lambda item: matcher.station_codes[item])
+        if domain in capabilities.get(name, ())
+    )
+
+
 def resolve_component_station(
     *,
     locations: Union[List[str], None],
     station: Union[str, None],
     code: Union[str, None],
+    require_domain: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[str], Optional[Dict[str, Any]]]:
     """解析组分站点名/编码，返回 `(station, code, error)`。
 
     - `locations` / `station` 接受站点全名（精确匹配优先，子串匹配兜底）；
       一次只允许一个站点，多站点由调用方在同一轮并行多次调用。
     - 只提供 `code` 时直接放行（station 为 None）。
+    - `require_domain`（"vocs"/"pm25"）：解析命中的站点不具备该组分监测能力时
+      返回错误并列出有能力站点，避免拿占位空值当业务数据。
     - 失败时 `error` 携带完整可用站点清单，供编排模型自行修正。
     """
     names: List[str] = []
@@ -73,6 +93,17 @@ def resolve_component_station(
         }
 
     resolved_code = str(code).strip() if code else matcher.station_codes[matched_name]
+    if require_domain:
+        capabilities = load_capability_map()
+        if require_domain not in capabilities.get(matched_name, ()):
+            return None, None, {
+                "success": False,
+                "error": (
+                    f"组分站 '{matched_name}'（{resolved_code}）无该类组分监测能力"
+                    "（接口只会返回占位空值，不代表该时段无数据）。"
+                    f"具备该能力的组分站：{_capable_station_text(require_domain)}。"
+                ),
+            }
     return matched_name, resolved_code, None
 
 

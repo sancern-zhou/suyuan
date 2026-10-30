@@ -61,6 +61,7 @@ def test_postgres_sql_tool_routes_weather_tables_to_weather_engine():
     tool = ExecutePostgresSQLQueryTool()
 
     assert tool._select_engine(["observed_weather_data"]) is weather_engine
+    assert tool._select_engine(["era5_reanalysis_data"]) is weather_engine
     assert tool._select_engine(["permit_licenses"]) is engine
 
 
@@ -69,13 +70,20 @@ def test_postgres_sql_tool_allows_observed_weather_query():
 
     valid, error = tool.sql_validator.validate(
         "SELECT time, temperature_2m, wind_speed_10m FROM observed_weather_data "
-        "WHERE station_id = 'ZzMTA' AND time >= '2026-08-30' ORDER BY time LIMIT 48"
+        "WHERE station_id = 'DwzZf' AND time >= '2026-08-30' ORDER BY time LIMIT 48"
     )
     assert valid is True
     assert error == ""
 
     valid, error = tool.sql_validator.validate(
         "SELECT DISTINCT station_id, station_name FROM observed_weather_data LIMIT 30"
+    )
+    assert valid is True
+    assert error == ""
+
+    valid, error = tool.sql_validator.validate(
+        "SELECT time, temperature_2m, boundary_layer_height FROM era5_reanalysis_data "
+        "WHERE lat = 23.25 AND lon = 113.25 ORDER BY time LIMIT 48"
     )
     assert valid is True
     assert error == ""
@@ -91,7 +99,7 @@ def test_postgres_sql_tool_rejects_cross_database_join():
     valid, _ = tool.sql_validator.validate(sql)
     assert valid is True
 
-    result = asyncio.get_event_loop().run_until_complete(tool._execute_sql(sql, 10, None))
+    result = asyncio.run(tool._execute_sql(sql, 10, None))
     assert result["success"] is False
     assert "跨库" in result["summary"]
 
@@ -147,6 +155,6 @@ def test_postgres_sql_tool_rejects_alert_weather_cross_database_join():
         "SELECT e.station_name, o.temperature_2m FROM xuchang_station_alert_episodes e "
         "JOIN observed_weather_data o ON 1 = 1 LIMIT 10"
     )
-    result = asyncio.get_event_loop().run_until_complete(tool._execute_sql(sql, 10, None))
+    result = asyncio.run(tool._execute_sql(sql, 10, None))
     assert result["success"] is False
     assert "跨库" in result["summary"]

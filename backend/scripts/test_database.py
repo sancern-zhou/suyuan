@@ -144,7 +144,7 @@ async def test_observed_write():
         logger.info("current_weather_fetched", data_keys=list(data.keys()))
 
         # 构造观测数据点（需要导入 ObservedDataPoint）
-        from app.fetchers.weather.observed_fetcher import ObservedDataPoint
+        from app.fetchers.weather.nmc_observed_fetcher import ObservedDataPoint
 
         current = data.get("current", {})
         time_str = current.get("time")
