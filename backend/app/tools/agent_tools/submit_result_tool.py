@@ -52,6 +52,12 @@ class SubmitResultTool:
         }
         self.submitted_result: Optional[Dict[str, Any]] = None
 
+    def __call__(self, *args: Any, **kwargs: Any):
+        # executor 直接调用 registry 里的值（await tool_func(...)）；
+        # 裸实例注册（call_sub_agent/_inject_submit_result）需要可调用形态，
+        # 否则报 'SubmitResultTool' object is not callable，交付信封丢失。
+        return self.execute(*args, **kwargs)
+
     async def execute(self, result: Optional[Any] = None, **kwargs: Any) -> Dict[str, Any]:
         if isinstance(result, dict):
             self.submitted_result = result
@@ -63,7 +69,9 @@ class SubmitResultTool:
             "status": "success",
             "success": True,
             "result": "结果已提交",
-            "data": {},
+            # 回传结构化信封：runtime 据此把 submit_result 视为终止动作，
+            # 父 Agent 也可直接从 tool_result 提取（不依赖事件命名）。
+            "data": {"submitted_result": self.submitted_result},
             "summary": "结构化结果已接收",
         }
 

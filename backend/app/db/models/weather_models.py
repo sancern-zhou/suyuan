@@ -138,6 +138,56 @@ class JiangsuNMCObservedWeatherData(Base):
     )
 
 
+class ObservedWeatherDaily(Base):
+    """
+    气象站逐日统计表（由 observed_weather_data 小时数据聚合，日历日 00-24 北京时）。
+
+    聚合口径（aggregation_version='v1'）：
+    - 均值类（气温/湿度/露点/气压/风速/云量/能见度）取有效小时算术平均；
+    - 风向用单位矢量平均（先 sin/cos 再 atan2 还原，气象来向 0-360°）；
+    - 降水为日累计求和（非平均）；
+    - 日界为日历日 00-24 时（北京时间），与空气质量业务日一致；
+    - 当日有效小时数 >= 20（约 80%）才产出日值，否则指标列置 NULL；
+    - data_quality：'good'=24 小时齐全，'partial'=20~23 小时（均值可能偏倚、
+      降水累计可能少算缺测时段的雨量）。
+    """
+
+    __tablename__ = "observed_weather_daily"
+
+    station_id = Column(String(50), primary_key=True, nullable=False, index=True)
+    obs_date = Column(Date, primary_key=True, nullable=False, index=True)
+
+    station_name = Column(String(100), comment="站名")
+    lat = Column(Float)
+    lon = Column(Float)
+
+    temperature_2m_avg = Column(Float, comment="日均气温 (°C)")
+    temperature_2m_max = Column(Float, comment="日最高气温 (°C，小时级极值)")
+    temperature_2m_min = Column(Float, comment="日最低气温 (°C，小时级极值)")
+    relative_humidity_2m_avg = Column(Float, comment="日均相对湿度 (%)")
+    dew_point_2m_avg = Column(Float, comment="日均露点温度 (°C)")
+    surface_pressure_avg = Column(Float, comment="日均气压 (hPa，本站气压)")
+    wind_speed_10m_avg = Column(Float, comment="日均风速 (m/s)")
+    wind_speed_10m_max = Column(Float, comment="小时级最大风速 (m/s)")
+    wind_direction_10m_vector_avg = Column(Float, comment="风向矢量平均 (°，气象来向 0-360)")
+    precipitation_sum = Column(Float, comment="日累计降水量 (mm)")
+    cloud_cover_avg = Column(Float, comment="日均总云量 (%)")
+    visibility_avg = Column(Float, comment="日均能见度 (m)")
+
+    # 质量元数据
+    valid_hours = Column(Integer, comment="参与聚合的有效小时行数 (0-24)")
+    data_quality = Column(String(20), comment="good=24h 齐全 / partial=20~23h")
+    aggregation_version = Column(String(10), default="v1", comment="聚合口径版本")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        Index("idx_observed_daily_date", "obs_date"),
+    )
+
+
 class WeatherStation(Base):
     """
     Weather station metadata.

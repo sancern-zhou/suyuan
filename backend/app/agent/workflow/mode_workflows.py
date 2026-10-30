@@ -68,8 +68,8 @@ _NORMALIZE_TOOLS = (
     "publish_session_file",
 )
 
-# normalize 只有"真正动手"的工具才推进阶段（单轮预算）；读结果文件属于输入动作，
-# 不消耗唯一一轮，避免读手册/预览把归一化机会烧掉。
+# normalize 只有"真正动手"的工具才推进阶段；调用失败不推进、留在本阶段修复
+# （预算内），读结果文件属于输入动作不消耗轮次，避免读手册/预览烧掉机会。
 _NORMALIZE_ADVANCE_TOOLS = (
     "execute_python",
     "write_file",
@@ -122,26 +122,27 @@ def _query_definition(
                 description=acquire_description,
                 allowed_tools=query_tools,
                 advance_tools=query_tools,
-                max_attempts=2,
+                max_attempts=4,
                 allow_completion=False,
             ),
             WorkflowPhaseDefinition(
                 name="normalize",
                 description=(
-                    "检查成功结果的时间范围、记录数、字段和缺口。只有确需合并或补充质量统计时，"
-                    "才调用一次 execute_python；否则直接交付。禁止新增数据源查询。"
+                    "检查成功结果的时间范围、记录数、字段和缺口。聚合、分箱、统计与"
+                    "多步计算可分多轮调用 execute_python 完成；禁止新增数据源查询。"
                 ),
                 allowed_tools=_NORMALIZE_TOOLS,
                 advance_tools=_NORMALIZE_ADVANCE_TOOLS,
-                max_attempts=1,
+                max_attempts=15,
                 allow_completion=True,
             ),
             WorkflowPhaseDefinition(
                 name="deliver",
                 description=(
-                    "停止调用工具，直接输出最终交付文本。本轮请求没有携带任何工具，"
-                    "任何工具调用或调用标记语法（如 DSML/XML/JSON 标签）都会失败或被当作正文，"
-                    "导致交付失败。file_path 引用上方工具结果中已保存的路径即可，无需执行代码验证；"
+                    "停止调用分析类工具，输出最终交付文本。本轮请求除交付工具 submit_result 外"
+                    "没有其他工具，任何其他工具调用或调用标记语法（如 DSML/XML/JSON 标签）都会"
+                    "失败或被当作正文，导致交付失败。带 result_schema 的调用方应改用 submit_result"
+                    " 提交结构化结果。file_path 引用上方工具结果中已保存的路径即可，无需执行代码验证；"
                     "同时给出字段说明、时间与区域口径、记录数以及数据缺口。"
                     "不做机制分析，不重新查询。"
                 ),
@@ -212,6 +213,8 @@ def current_phase(
 def render_phase_prompt(
     definition: FixedWorkflowDefinition,
     progress: Mapping[str, Any],
+    *,
+    has_submit_result: bool = False,
 ) -> str:
     phase = current_phase(definition, progress)
     attempt = int(progress.get("phase_attempt") or 0) + 1
@@ -223,10 +226,19 @@ def render_phase_prompt(
         "运行时只暴露本阶段允许的工具，并负责推进阶段；不要自行重复或回退阶段。"
     )
     if not phase.allowed_tools:
-        prompt += (
-            "硬性约束：本轮请求 tools 为空，你必须直接输出一段纯文本答案；"
-            "输出任何工具调用（含手写调用标记）都会导致本轮失败。"
-        )
+        if has_submit_result:
+            # 交付阶段由调用方动态注入 submit_result：它不是"空工具"阶段，
+            # 提交成功即结束本轮（runtime 交付边界），不会再要求额外纯文本轮。
+            prompt += (
+                "硬性约束：本轮只暴露交付工具 submit_result；"
+                "请基于已有证据调用 submit_result 提交结构化结果，"
+                "不要再调用分析/取数工具。"
+            )
+        else:
+            prompt += (
+                "硬性约束：本轮请求 tools 为空，你必须直接输出一段纯文本答案；"
+                "输出任何工具调用（含手写调用标记）都会导致本轮失败。"
+            )
     return prompt
 
 
@@ -251,9 +263,10 @@ def observe_tool_results(
 ) -> None:
     """Advance a workflow after one bounded tool turn.
 
-    Acquisition gets one repair turn only when at least one call failed. A
-    successful batch advances immediately. Normalization always advances after
-    its single optional tool turn.
+    Every phase with advance tools gets repair turns while failures remain
+    (bounded by phase.max_attempts); a fully successful batch advances
+    immediately. This keeps the normalize phase from moving on to delivery
+    with only a failed computation in hand.
     """
     if not records:
         return
@@ -274,7 +287,9 @@ def observe_tool_results(
         str(record.get("tool_name") or "") for record in failures
     ]
 
-    should_advance = phase.name != "acquire" or not failures or attempt >= phase.max_attempts
+    # 失败即留在当前阶段修复（受 max_attempts 预算约束），全批成功或预算
+    # 耗尽才推进——acquire 与 normalize 语义一致，避免带着失败结果进交付。
+    should_advance = not failures or attempt >= phase.max_attempts
     if should_advance:
         progress["phase_index"] = min(
             int(progress.get("phase_index") or 0) + 1,

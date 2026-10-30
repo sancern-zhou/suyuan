@@ -12,7 +12,7 @@ Tool Adapter for ReAct Agent - 单一注册源适配器
 注意：现在是完全单一注册源，不允许独立注册工具。
 """
 
-from typing import Dict, Any, List, Optional, Callable, Tuple
+from typing import Dict, Any, List, Mapping, Optional, Callable, Tuple
 from datetime import datetime
 import copy
 import re
@@ -21,6 +21,7 @@ from app.agent.context.data_result_policy import (
     persist_large_inline_data,
     shape_data_result_for_context,
 )
+from app.agent.context.data_shape import compact_shape
 
 # 单一工具注册源
 from app.tools import global_tool_registry
@@ -533,8 +534,19 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
             "ui_command",
         )
         for key in passthrough_fields:
-            if key in result:
-                standard_result[key] = result[key]
+            if key not in result:
+                continue
+            value = result[key]
+            # 形状元数据统一截断后进上下文：SQL 工具把完整 data_shape 挂在结果上，
+            # 宽表完整列清单单次数 KB；紧凑行（前 N 列 + columns_total）已够导航。
+            if key == "data_shape" and isinstance(value, Mapping):
+                value = compact_shape(value)
+            elif key == "data_shapes" and isinstance(value, Mapping):
+                value = {
+                    path: compact_shape(shape) if isinstance(shape, Mapping) else shape
+                    for path, shape in value.items()
+                }
+            standard_result[key] = value
 
         # 添加数据字段（优先使用visuals，如果不存在则使用data）
         if visuals is not None:

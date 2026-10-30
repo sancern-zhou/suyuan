@@ -162,7 +162,7 @@ EXPERT_ANALYSIS_TOOL_NAMES = [
     "edit_file",
     # 监测数据
     "query_xcai_city_history",
-    "query_national_city_air_quality",
+    # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
     "execute_sql_query",
     # 计算与可视化
     "execute_python",
@@ -197,7 +197,7 @@ QUERY_TOOL_NAMES = [
     "resolve_station_geo",
     # === 全国省份空气质量查询 ===
     "query_national_province_air_quality",
-    "query_national_city_air_quality",
+    # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
     # === Agentic GIS 视觉交互工具 ===
     "resolve_map_data_asset",
     "create_map_point_asset",
@@ -234,7 +234,7 @@ QUERY_MONITORING_TOOL_NAMES = [
     "query_airdata_platform",
     "xuchang_station_catalog",
     "airdata_calc_report_summary",
-    "query_national_city_air_quality",
+    # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
     # 可选归一化计算
     "execute_python",
 ]
@@ -281,7 +281,7 @@ QUERY_MONITORING_CITY_TOOL_NAMES = [
     "execute_postgres_sql_query",
     "query_airdata_platform",
     "airdata_calc_report_summary",
-    "query_national_city_air_quality",
+    # 【暂时下线 2026-10-27】query_national_city_air_quality 不对 Agent 暴露
     # 可选归一化计算
     "execute_python",
 ]
