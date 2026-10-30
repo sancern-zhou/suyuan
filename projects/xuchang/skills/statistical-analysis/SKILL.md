@@ -1,5 +1,5 @@
 ---
-name: statistical-analysis
+name: 统计分析
 description: 专家和报告模式按需执行可追溯的环境统计分析、假设检查、趋势回归和季节性分析。
 ---
 

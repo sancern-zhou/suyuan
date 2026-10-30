@@ -1,5 +1,5 @@
 ---
-name: geospatial-analysis
+name: 空间分析
 description: 专家和报告模式按需执行可追溯的站点、行政区、企业和 GeoJSON 空间分析。
 ---
 

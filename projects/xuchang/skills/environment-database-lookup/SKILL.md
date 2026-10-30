@@ -1,5 +1,5 @@
 ---
-name: environment-database-lookup
+name: 环境数据可复现查询
 description: 当用户需要从环境监测、气象、排放、企业或监管数据库取得可复核事实时使用。优先本地数据和现有 Fetcher/SQL 工具，按明确来源、时间范围、字段和证据记录执行轻量查询。
 version: 1.0.0
 metadata:

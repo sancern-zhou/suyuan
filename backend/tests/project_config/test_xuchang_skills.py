@@ -49,7 +49,7 @@ def test_project_skill_frontmatter_drives_selection_contract(monkeypatch):
         "xuchang_station_daily_source_report",
         available_tools={"read_file", "execute_python", "create_report_package"},
     )
-    assert selection.name == "许昌市昨日污染回顾分析 Skill"
+    assert selection.name == "许昌市昨日污染回顾分析"
     assert selection.required_tools == [
         "read_file",
         "execute_python",
@@ -96,7 +96,7 @@ def test_describe_skill_item_reads_project_frontmatter(monkeypatch):
     )
 
     descriptor = describe_skill_item(
-        {"name": "许昌市昨日污染回顾分析 Skill", "file": str(skill_file)},
+        {"name": "许昌市昨日污染回顾分析", "file": str(skill_file)},
         available_tools={"read_file"},
     )
 

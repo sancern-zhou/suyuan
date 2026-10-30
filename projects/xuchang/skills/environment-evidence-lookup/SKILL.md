@@ -1,5 +1,5 @@
 ---
-name: environment-evidence-lookup
+name: 环境科学证据检索
 description: 当用户明确需要污染机理、源解析方法、环境标准或技术背景的外部文献证据时使用。先用少量权威来源形成短证据链，不将科研型系统综述流程默认用于日常环境管理问答。
 version: 1.0.0
 metadata:

@@ -1,5 +1,5 @@
 ---
-name: environment-spatial-audit
+name: 环境空间关系审计
 description: 当环境管理问题需要核对站点、企业、行政区、上风向扇区或距离关系时使用。先校验坐标系和空间范围，再做最小空间连接或距离计算，不把空间邻近直接写成污染贡献或责任归因。
 version: 1.0.0
 metadata:

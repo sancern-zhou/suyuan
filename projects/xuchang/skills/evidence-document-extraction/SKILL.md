@@ -1,5 +1,5 @@
 ---
-name: evidence-document-extraction
+name: 环境证据文档抽取
 description: 当用户需要从 DOCX、PDF、扫描件或表格中提取可追溯的环境证据时使用。优先读取 manifest、页码和结构化字段，按需保留版面位置，不默认批量扫描全部文档。
 version: 1.0.0
 metadata:
