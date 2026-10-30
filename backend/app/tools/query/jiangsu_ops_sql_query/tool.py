@@ -110,7 +110,10 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                 "properties": {
                     "describe_table": {
                         "type": "string",
-                        "description": "查看数据集字段结构（与sql二选一），输入白名单中的表名",
+                        "description": (
+                            "查看数据集字段结构（与sql二选一），输入白名单中的表名；"
+                            "返回按序的『列名:类型』列表"
+                        ),
                     },
                     "sql": {
                         "type": "string",
@@ -149,12 +152,37 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                     "summary": "请提供 sql 或 describe_table 参数，二者必选其一"}
 
         if describe_table is not None:
-            table = describe_table.strip().split(".")[-1].strip().lower()
+            raw = describe_table.strip()
+            table = raw.split(".")[-1].strip().lower()
             schema = self._schema_of(table)
+            started = time.monotonic()
             if schema is None:
+                summary = (f"表 {describe_table} 不在白名单中。"
+                           f"允许: {', '.join(MART_TABLES + ODS_TABLES)}")
+                await self._audit(
+                    context, None, 0, "rejected", summary, False,
+                    int((time.monotonic() - started) * 1000),
+                    describe_table=raw, dataset="unknown",
+                )
+                return {"success": False, "data": None, "summary": summary}
+            try:
+                payload = await self._describe_table(table, schema)
+            except Exception as exc:  # noqa: BLE001
+                error = f"{type(exc).__name__}: {exc}"
+                logger.warning("jiangsu_describe_table_failed", table=table, error=error)
+                await self._audit(
+                    context, None, 0, "error", error, False,
+                    int((time.monotonic() - started) * 1000),
+                    describe_table=table, dataset=schema,
+                )
                 return {"success": False, "data": None,
-                        "summary": f"表 {describe_table} 不在白名单中。允许: {', '.join(MART_TABLES + ODS_TABLES)}"}
-            return await self._describe_table(table, schema)
+                        "summary": f"describe_table 失败: {error}"}
+            await self._audit(
+                context, None, payload.get("column_count", 0), "ok", None, False,
+                int((time.monotonic() - started) * 1000),
+                describe_table=table, dataset=schema,
+            )
+            return payload
 
         if limit is None:
             limit = self.DEFAULT_LIMIT
@@ -201,25 +229,27 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                 # 且 _synced_at 只在首插时写入，露出来会误导"数据新鲜度"判断。
                 if not r["column_name"].startswith("_")
             ]
-            semantic = dataset_metadata(table)
+            semantic = dataset_metadata(table) or {}
+            # 只带非空语义字段：结果契约明确禁止"为统一而返回空字段"
+            semantic_context = {
+                "query_role": "schema_introspection",
+                "official_metric_calculation": False,
+                "layer": "mart" if schema == "jiangsu_mart" else "ods_fallback",
+            }
+            for key in ("dataset", "cube", "grain", "applicability",
+                        "source_window", "limitations", "registry_version"):
+                value = semantic.get(key)
+                if value:
+                    semantic_context[key] = value
             payload = {
                 "success": True,
                 "table": table,
                 "schema": schema,
-                "layer": "mart" if schema == "jiangsu_mart" else "ods_fallback",
-                "columns": columns,
-                "semantic_context": {
-                    "query_role": "schema_introspection",
-                    "official_metric_calculation": False,
-                    "dataset": table,
-                    "cube": semantic.get("cube"),
-                    "grain": semantic.get("grain"),
-                    "applicability": semantic.get("applicability"),
-                    "source_window": semantic.get("source_window"),
-                    "limitations": semantic.get("limitations", []),
-                    "registry_version": semantic.get("registry_version", 0),
-                },
-                "summary": f"{table}: {len(columns)} 列。字段业务含义见工具说明中的契约。",
+                "column_count": len(columns),
+                # 紧凑格式 "列名:类型"，一列一条；比 {name,type} 对象省约一半体积
+                "columns": [f"{c['name']}:{c['type']}" for c in columns],
+                "semantic_context": semantic_context,
+                "summary": f"{table} 共 {len(columns)} 列，按 {schema} 引用。",
             }
             contract_errors = validate_result("schema_introspection", payload)
             if contract_errors:
@@ -458,8 +488,14 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
         except Exception:  # noqa: BLE001
             return ""
 
-    async def _audit(self, context, sql, row_count, status, error, truncated, duration_ms) -> None:
-        """Best-effort 审计；失败只记日志不影响查询。"""
+    async def _audit(self, context, sql, row_count, status, error, truncated, duration_ms,
+                     describe_table: Optional[str] = None,
+                     dataset: Optional[str] = None) -> None:
+        """Best-effort 审计；失败只记日志不影响查询。
+
+        describe_table 调用同样入库（params 记表名而非 SQL），否则"按需取列结构"
+        这条路径的调用频率无从统计。
+        """
         try:
             import json
             import os
@@ -467,6 +503,18 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
             if not app_dsn:
                 return
             session_id = getattr(context, "session_id", None) if context else None
+            if dataset is None:
+                dataset = (
+                    "jiangsu_mart"
+                    if self._datasets_from_sql(sql or "")
+                    or not self._ods_tables_from_sql(sql or "")
+                    else "jiangsu_ods"
+                )
+            params = (
+                {"describe_table": describe_table, "status": status}
+                if describe_table
+                else {"sql": (sql or "")[:4000], "status": status}
+            )
             conn = await asyncpg.connect(app_dsn)
             try:
                 await conn.execute(
@@ -477,13 +525,8 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
                     str(getattr(context, "user_id", "") or "") if context else "",
                     str(getattr(context, "agent_mode", "") or "") if context else "",
                     self.tool_name,
-                    (
-                        "jiangsu_mart"
-                        if self._datasets_from_sql(sql or "")
-                        or not self._ods_tables_from_sql(sql or "")
-                        else "jiangsu_ods"
-                    ),
-                    json.dumps({"sql": (sql or "")[:4000], "status": status}, ensure_ascii=False),
+                    dataset,
+                    json.dumps(params, ensure_ascii=False),
                     row_count,
                     truncated,
                     duration_ms,
