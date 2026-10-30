@@ -69,7 +69,8 @@ class GetVOCsOFPTool(LLMTool):
                     "data_type": {
                         "type": "integer",
                         "enum": [0, 1, 4, 5],
-                        "description": "数据审核类型：0原始，1终审（默认），4初审，5复审"
+                        "description": "数据审核类型：0原始（默认，终审审核滞后常有空窗），1终审，4初审，5复审",
+                        "default": 0
                     }
                 },
                 "required": ["start_time", "end_time"],
@@ -94,7 +95,7 @@ class GetVOCsOFPTool(LLMTool):
         code: Union[str, None] = None,
         time_granularity: Union[int, str, None] = None,
         table_type: Union[int, str, None] = None,
-        data_type: int = 1,
+        data_type: int = 0,
         **_: Any
     ) -> Dict[str, Any]:
         """执行类别 OFP 时序查询"""
