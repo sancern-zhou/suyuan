@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from app.auth.dependencies import require_admin_user
 from pydantic import BaseModel
 import structlog
 

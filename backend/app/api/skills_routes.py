@@ -5,7 +5,6 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi import APIRouter, HTTPException
 from app.agent.selection_context import active_skill_dirs
 from app.services.skills_index import generate_skills_index
 from app.auth.dependencies import require_admin_user

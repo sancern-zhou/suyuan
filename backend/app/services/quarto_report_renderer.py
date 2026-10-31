@@ -731,6 +731,10 @@ class QuartoReportRenderer:
                 check=True,
                 capture_output=True,
                 text=True,
+                # Quarto 输出为 UTF-8；Windows 下 text=True 默认按 ANSI 代码页
+                # （GBK）解码，读取线程会抛 UnicodeDecodeError 丢失全部输出。
+                encoding="utf-8",
+                errors="replace",
                 env=env,
             )
         except FileNotFoundError as exc:

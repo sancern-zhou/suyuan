@@ -85,7 +85,7 @@ def _convert_to_pdf(source: Path) -> Path | None:
             completed = run_soffice(
                 [
                     "--headless",
-                    f"-env:UserInstallation=file://{temp_dir}",
+                    "-env:UserInstallation={}".format(temp_dir.as_uri()),
                     "--convert-to",
                     "pdf",
                     "--outdir",

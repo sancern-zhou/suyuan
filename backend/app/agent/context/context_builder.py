@@ -23,6 +23,7 @@ SYSTEM_CONTEXT_LAYER_ORDER = (
     "platform_policy",
     "mode_policy",
     "knowledge_evidence",
+    "graph_entry",
     "fixed_policies",
     "acceptance_checklist",
     "session_resources",
@@ -139,7 +140,9 @@ class SimplifiedContextBuilder:
         # 日志和 token 估算；请求层优先使用 blocks 以便在稳定前缀处打缓存断点。
         self.last_system_prompt_blocks: List[Dict[str, Any]] = []
 
-        # 知识库图谱上下文，由 Agent 入口按 graph 模式绑定注入。
+        # 知识库图谱入口实体链接层（graph_entry_context），仅当项目在
+        # knowledge.graph_entry_modes 中声明当前模式时由每轮入口确定性生成。
+        self.graph_entry_context: Optional[str] = None
 
         logger.info(
             "context_builder_initialized",
@@ -182,6 +185,7 @@ class SimplifiedContextBuilder:
         # 设置当前模式
         self.current_mode = mode
         self._apply_mode_context_policy(mode)
+        await self._maybe_build_graph_entry_context(query, mode, iteration)
 
         # ✅ 调试日志：检查查询是否包含记忆
         has_memory_in_query = "长期记忆" in query and "记忆文件路径" in query
@@ -400,6 +404,7 @@ class SimplifiedContextBuilder:
             "platform_policy": self._build_platform_policy_prompt(),
             "mode_policy": mode_prompt,
             "knowledge_evidence": self.knowledge_evidence_context or "",
+            "graph_entry": self.graph_entry_context or "",
             "fixed_policies": self._wrap_optional_context(
                 "fixed_policies", self.fixed_policy_context
             ),
@@ -415,6 +420,35 @@ class SimplifiedContextBuilder:
         if not isinstance(content, str) or not content.strip():
             return ""
         return f"<{tag}>\n{content.strip()}\n</{tag}>"
+
+    async def _maybe_build_graph_entry_context(
+        self, query: str, mode: str, iteration: int
+    ) -> None:
+        """按项目声明为问数模式构建图谱入口实体链接层。
+
+        每轮（iteration<=1）重算一次，同轮后续迭代复用快照；未声明
+        graph_entry_modes 的项目/模式保持 None，行为与改造前一致。
+        """
+        enabled_modes: set[str] = set()
+        try:
+            from ...project_config import load_project_context
+            from config.settings import settings
+
+            enabled_modes = set(
+                load_project_context(settings.project_id).manifest.knowledge.graph_entry_modes
+            )
+        except Exception as exc:  # noqa: BLE001 — 配置缺失时静默降级
+            logger.debug("graph_entry_modes_unavailable", error=str(exc))
+
+        if mode not in enabled_modes:
+            self.graph_entry_context = None
+            return
+        if iteration > 1 and self.graph_entry_context is not None:
+            return
+
+        from .graph_entry_context import build_graph_entry_context
+
+        self.graph_entry_context = await build_graph_entry_context(query)
 
     def _build_client_channel_prompt(self) -> str:
         """Render the request origin marker consumed by per-mode prompt branches."""

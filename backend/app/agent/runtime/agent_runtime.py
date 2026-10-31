@@ -1112,6 +1112,17 @@ class AgentRuntime:
                 yield event
                 await self._persist_context_usage(state, usage_data)
 
+            elif event_type == "usage_delta":
+                # 每轮模型调用的真实 token 消耗（Usage, not budget）：累计进会话
+                # 状态并继续下发；不设上限、不参与任何预算判定。
+                turn_usage = event.get("data") or {}
+                state.last_turn_usage = turn_usage
+                try:
+                    state.tokens_spent += int(turn_usage.get("total_tokens") or 0)
+                except (TypeError, ValueError):
+                    pass
+                yield event
+
             elif event_type == "tool_use":
                 tool_data = event["data"]
                 tool_use_id = tool_data.get("tool_use_id", "")
@@ -1248,8 +1259,11 @@ class AgentRuntime:
         # 进入候选名单，否则阶段过滤会把交付工具整体滤掉。
         executor = getattr(self, "executor", None)
         executor_registry = getattr(executor, "tool_registry", None) or {}
-        if "submit_result" in executor_registry:
-            names.append("submit_result")
+        # escalate（升级提问）与 submit_result 同等待遇：由 call_sub_agent 动态
+        # 注入 child registry，不在模式白名单里，必须保持全阶段可见。
+        for dynamic_tool_name in ("submit_result", "escalate", "report_finding"):
+            if dynamic_tool_name in executor_registry:
+                names.append(dynamic_tool_name)
         workflow_definition = get_mode_workflow(state.mode)
         if workflow_definition:
             phase_tools = fixed_workflow_allowed_tools(
@@ -1260,7 +1274,7 @@ class AgentRuntime:
             # 否则带 result_schema 的问数节点无法结构化交付。
             names = [
                 name for name in names
-                if name in phase_tools or name == "submit_result"
+                if name in phase_tools or name in {"submit_result", "escalate", "report_finding"}
             ]
         elif not self.config.extra_tool_names and state.mode not in {"assistant", "office"}:
             return None
@@ -1276,10 +1290,11 @@ class AgentRuntime:
             return None
         allowed = fixed_workflow_allowed_tools(definition, state.fixed_workflow_progress)
         requested = [name for name, _ in self._planner_action_tool_calls(action)]
-        # submit_result 是交付边界工具（见 _allowed_tool_names_for_state），全阶段放行。
+        # submit_result 是交付边界工具、escalate 是升级提问工具（均见
+        # _allowed_tool_names_for_state），全阶段放行。
         blocked = [
             name for name in requested
-            if name not in allowed and name != "submit_result"
+            if name not in allowed and name not in {"submit_result", "escalate", "report_finding"}
         ]
         if not blocked:
             return None
@@ -1586,29 +1601,29 @@ class AgentRuntime:
 
     @staticmethod
     def _is_deterministic_model_error(error: Exception) -> bool:
-        message = str(error).lower()
-        markers = (
-            "http 400", "status code: 400", "status_code=400", "error code: 400",
-            "400 client error", "bad request",
-            "http 401", "http 403", "error code: 401", "error code: 403",
-            "unauthorized", "forbidden",
-            "authentication", "invalid request", "request format",
+        """统一模型错误策略表判定：鉴权/无效请求/模型不可用均不可自愈。"""
+        from app.agent.workflow.model_failure_policy import (
+            STOP_AUTH,
+            STOP_INVALID_REQUEST,
+            STOP_MODEL_UNAVAILABLE,
+            resolve_model_failure_policy,
         )
-        return any(marker in message for marker in markers)
+
+        return resolve_model_failure_policy(error).action in {
+            STOP_AUTH,
+            STOP_INVALID_REQUEST,
+            STOP_MODEL_UNAVAILABLE,
+        }
 
     @staticmethod
     def _is_terminal_quota_error(error: Exception) -> bool:
         """Identify billing/plan exhaustion that cannot recover inside this run."""
-        message = str(error).lower()
-        markers = (
-            "token plan 用量上限",
-            "insufficient_quota",
-            "billing limit",
-            "payment required",
-            "http 402",
-            "error code: 402",
+        from app.agent.workflow.model_failure_policy import (
+            STOP_QUOTA,
+            resolve_model_failure_policy,
         )
-        return any(marker in message for marker in markers)
+
+        return resolve_model_failure_policy(error).action == STOP_QUOTA
 
     @staticmethod
     def _enforce_custom_tool_terminal_rules(

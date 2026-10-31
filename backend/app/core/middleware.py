@@ -10,6 +10,7 @@ from app.auth.platform_client import PlatformAuthClient
 from app.auth.service import AuthenticationService
 from app.auth.share_access import get_share_access_service
 from app.auth.ws_tickets import WebSocketTicketService
+from app.core.http_method_override import HttpMethodOverrideMiddleware
 from app.core.fetcher_worker_proxy import FetcherWorkerProxyMiddleware
 from app.core.jiangsu_smart_event_worker_proxy import JiangsuSmartEventWorkerProxyMiddleware
 from app.core.scheduled_task_worker_proxy import ScheduledTaskWorkerProxyMiddleware
@@ -96,3 +97,5 @@ def configure_middleware(app: FastAPI) -> None:
         SlowRequestLoggingMiddleware,
         threshold_seconds=settings.slow_request_log_threshold_seconds,
     )
+    # 必须位于最外层：在 CORS/认证/路由看到请求前就把 POST+override 还原为真实方法。
+    app.add_middleware(HttpMethodOverrideMiddleware)

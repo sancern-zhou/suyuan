@@ -527,12 +527,14 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
             "source_file_paths",
             "source_report_file_path",
             "source_report_file_paths",
+
             "visual_ids",
             "data_shape",
             "data_shapes",
             # Jiangsu workspace commands must survive result normalization.
             "ui_command",
         )
+
         for key in passthrough_fields:
             if key not in result:
                 continue

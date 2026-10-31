@@ -19,6 +19,7 @@ from .weather_models import (
 
 # 导入报告模板模型
 from .report_template import ReportTemplate, ReportGenerationHistory
+from app.db.report_package_model import ReportPackageDB
 
 # 导入任务审核模型
 from .task_review_db import TaskReviewDB
@@ -40,6 +41,7 @@ __all__ = [
     "AirQualityForecast",
     "CityAQIPublishHistory",
     "ReportTemplate",
+    "ReportPackageDB",
     "ReportGenerationHistory",
     "TaskReviewDB",
     "SmartEventDB",

@@ -15,12 +15,21 @@ Usage:
 """
 
 import os
+import signal
 import socket
 import subprocess
 import shutil
 from pathlib import Path
 
 from app.utils.path_config import get_data_registry
+
+# soffice 偶发挂起（Windows 上启动阶段卡死且不消耗 CPU）。必须带超时：
+# 2026-10-28 曾因无超时的调用把 web 进程事件循环整体卡死两小时以上。
+DEFAULT_SOFFICE_TIMEOUT_SECONDS = 180
+
+
+class SofficeTimeoutError(RuntimeError):
+    """soffice did not finish within the allotted time and was killed."""
 
 
 def _find_soffice_executable() -> str:
@@ -106,17 +115,67 @@ def get_soffice_env() -> dict:
     return env
 
 
-def run_soffice(args: list[str], **kwargs) -> subprocess.CompletedProcess:
+def _kill_process_tree(pid: int) -> None:
+    # subprocess 只杀直接子进程；Windows 上 soffice.bin 是 soffice.exe 拉起的
+    # 子进程，不整树终止会残留持有配置文件锁的孤儿进程。
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            capture_output=True,
+            check=False,
+        )
+    else:
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+        except OSError:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+
+def run_soffice(
+    args: list[str],
+    timeout: float = DEFAULT_SOFFICE_TIMEOUT_SECONDS,
+    **kwargs,
+) -> subprocess.CompletedProcess:
+    """Run soffice with a hard timeout; kill the whole process tree on expiry.
+
+    默认超时兜底：调用方未显式传 timeout 时也不能无限等待 soffice。
+    """
     env = get_soffice_env()
     soffice = get_soffice_path()
 
-    # 默认捕获输出，除非明确指定不捕获
-    if 'stdout' not in kwargs and 'capture_output' not in kwargs:
-        kwargs['capture_output'] = True
+    # 默认捕获输出，除非明确指定不捕获（与原 subprocess.run 行为一致）
+    capture_output = kwargs.pop("capture_output", None)
+    if capture_output:
+        kwargs.setdefault("stdout", subprocess.PIPE)
+        kwargs.setdefault("stderr", subprocess.PIPE)
+    elif capture_output is None and "stdout" not in kwargs:
+        kwargs["stdout"] = subprocess.PIPE
+        kwargs["stderr"] = subprocess.PIPE
     if 'text' not in kwargs and 'encoding' not in kwargs and 'universal_newlines' not in kwargs:
         kwargs['text'] = True
+    check = kwargs.pop("check", False)
 
-    return subprocess.run([soffice] + args, env=env, **kwargs)
+    process = subprocess.Popen([soffice] + args, env=env, **kwargs)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_process_tree(process.pid)
+        try:
+            stdout, stderr = process.communicate(timeout=10)
+        except (subprocess.TimeoutExpired, ValueError):
+            stdout, stderr = None, None
+        raise SofficeTimeoutError(
+            f"soffice timed out after {timeout}s and was killed: "
+            f"{soffice} {' '.join(args)}"
+        ) from None
+
+    result = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
+    if check and result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, process.args, stdout, stderr)
+    return result
 
 
 

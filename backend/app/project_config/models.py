@@ -106,6 +106,9 @@ class FrontendManifest(StrictModel):
     agent_scenes: list[str] = Field(default_factory=list)
     agent_scene_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
     sidebar_agent_modes: list[str] = Field(default_factory=list)
+    # 平台使用说明面板内容，仅供前端构建脚本（frontend/scripts/projectManifest.mjs
+    # 的 normalizePlatformGuide）消费并烘焙进构建产物；后端不做结构解释，保持透传。
+    platform_guide: dict[str, Any] | None = None
 
     _unique_agent_modes = field_validator("agent_modes")(unique)
     _unique_agent_scenes = field_validator("agent_scenes")(unique)
@@ -244,8 +247,13 @@ class KnowledgeManifest(StrictModel):
     # knowledge-base id or an exact knowledge-base name; runtime resolution
     # validates that the target is active and graph-enabled.
     bindings: dict[str, str] = Field(default_factory=dict)
+    # Agent modes whose entry context gets deterministic graph entity-linking
+    # (agent/context/graph_entry_context.py). Empty by default: no project is
+    # affected until it opts in and binds a graph-enabled knowledge base.
+    graph_entry_modes: list[str] = Field(default_factory=list)
 
     _unique_collections = field_validator("collections")(unique)
+    _unique_graph_entry_modes = field_validator("graph_entry_modes")(unique)
 
     @field_validator("bindings")
     @classmethod

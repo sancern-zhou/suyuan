@@ -922,6 +922,10 @@ class ExecutePythonTool(LLMTool):
                     stdout=stdout_file,
                     stderr=stderr_file,
                     cwd=working_dir,
+                    start_new_session=True,
+                    # Windows 无 bwrap 的 --unsetenv/--setenv，改为在启动时
+                    # 直接传入净化环境（Linux 上 None 表示继承后由沙箱净化）。
+                    env=self._windows_sandbox_env(working_dir) if os.name == "nt" else None,
                 )
                 if child_env is not None:
                     popen_kwargs["env"] = child_env
@@ -1080,6 +1084,12 @@ class ExecutePythonTool(LLMTool):
         沙箱不可见项目根目录、宿主机 home、Docker socket 和网络；
         仅会话数据目录可写，其他显式输入文件只读。
         """
+        # Windows 没有 Linux namespace 沙箱，bwrap 永远不可用；与 bash 工具
+        # 的 nt 分支一致退化为直接执行（_build_windows_subprocess_command），
+        # Linux 上维持 fail-closed 沙箱不变。
+        if os.name == "nt":
+            return self._build_windows_subprocess_command(working_dir=working_dir)
+
         bwrap = shutil.which("bwrap")
         prlimit = shutil.which("prlimit")
         if not bwrap or not prlimit:
@@ -1398,6 +1408,91 @@ class ExecutePythonTool(LLMTool):
         return command, sync_dirs, relative_input_mounts
 
     @staticmethod
+    def _build_windows_subprocess_command(
+        *, working_dir: str
+    ) -> Tuple[List[str], List[Tuple[Path, Path, set[str]]], List[Path]]:
+        """Windows 兜底执行命令（无 Bubblewrap，与 bash 工具的 nt 分支一致）。
+
+        只保留跨平台可用的隔离手段：一次性临时 cwd、净化环境变量
+        （_windows_sandbox_env）、输出文件承接与超时终止进程。
+        挂载/暂存/回发布逻辑不适用：会话输出与图表由注入代码直接
+        写入真实持久化路径，无需沙箱发布。
+        """
+        # backend_shim 令 `import backend.app` 与 `import app` 等价，
+        # 对应 Linux 沙箱内挂在 backend/backend 的别名包。
+        shim_dir = Path(working_dir) / "backend_shim"
+        shim_init = shim_dir / "backend" / "__init__.py"
+        shim_init.parent.mkdir(parents=True, exist_ok=True)
+        shim_init.write_text(
+            "import sys\n"
+            "\n"
+            "try:\n"
+            "    import app as _app\n"
+            "except Exception:  # pragma: no cover - app always available in practice\n"
+            "    _app = None\n"
+            "if _app is not None:\n"
+            "    sys.modules.setdefault('backend.app', _app)\n"
+            "    sys.modules[__name__].app = _app\n",
+            encoding="utf-8",
+        )
+        return [sys.executable, "script.py"], [], []
+
+    @staticmethod
+    def _windows_sandbox_env(working_dir: str) -> Dict[str, str]:
+        """构建净化后的子进程环境：不继承 Web worker 的 .env 变量与密钥。"""
+        working_path = Path(working_dir)
+        python_env = Path(sys.prefix).resolve()
+        path_entries = [str(python_env)]
+        for relative in (Path("Library") / "bin", Path("Scripts")):
+            candidate = python_env / relative
+            if candidate.is_dir():
+                path_entries.append(str(candidate))
+        inherited_path = os.environ.get("PATH", "")
+        if inherited_path:
+            path_entries.append(inherited_path)
+        mpl_cache = working_path / "mpl_cache"
+        try:
+            mpl_cache.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            mpl_cache = working_path
+        env = {
+            "PATH": os.pathsep.join(entry for entry in path_entries if entry),
+            "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"),
+            "WINDIR": os.environ.get("WINDIR", r"C:\Windows"),
+            "SYSTEMDRIVE": os.environ.get("SYSTEMDRIVE", "C:"),
+            "COMSPEC": os.environ.get("COMSPEC", r"C:\Windows\System32\cmd.exe"),
+            "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+            "TEMP": str(working_path),
+            "TMP": str(working_path),
+            "HOME": str(working_path),
+            "USERPROFILE": str(working_path),
+            "APPDATA": str(working_path / "appdata" / "roaming"),
+            "LOCALAPPDATA": str(working_path / "appdata" / "local"),
+            "PYTHONPATH": os.pathsep.join([
+                str(working_path / "backend_shim"),
+                str(Path(PROJECT_ROOT) / "backend"),
+            ]),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUNBUFFERED": "1",
+            # Windows 子进程默认按系统代码页（中文系统为 GBK）写 stdout/stderr，
+            # 而工具侧按 UTF-8 读取；不强制 UTF-8 会让 print 的中文变成 U+FFFD
+            # 乱码（ECharts option 从 stdout 解析，整张图中文字都会损坏）。
+            # PYTHONUTF8 同时让 open() 默认编码与 Linux 沙箱一致。
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+            "MPLBACKEND": "Agg",
+            "MPLCONFIGDIR": str(mpl_cache),
+            "XDG_CACHE_HOME": str(working_path / "cache"),
+            "NO_COLOR": "1",
+        }
+        # 企业内网自签 CA 可能经由这两个变量下发，透传以保住 HTTPS 出网。
+        for name in ("SSL_CERT_FILE", "SSL_CERT_DIR"):
+            value = os.environ.get(name)
+            if value:
+                env[name] = value
+        return env
+
+    @staticmethod
     def _sandbox_address_space_limit() -> int:
         """Sandbox RLIMIT_AS in bytes; env-overridable, 4 GiB default.
 
@@ -1447,6 +1542,11 @@ class ExecutePythonTool(LLMTool):
     @staticmethod
     def _terminate_process_group(process: subprocess.Popen) -> None:
         """终止工具进程及其派生的所有子进程。"""
+        if os.name == "nt":
+            # Windows 没有进程组语义；与 bash 工具的 nt 分支一致终止主进程。
+            if process.poll() is None:
+                process.kill()
+            return
         try:
             if os.name == "posix":
                 os.killpg(process.pid, signal.SIGKILL)
@@ -1534,7 +1634,10 @@ class ExecutePythonTool(LLMTool):
         for root, dirs, files in os.walk(temp_dir):
             if Path(root).resolve() == Path(temp_dir).resolve():
                 # Bubblewrap 的输入副本和会话输出镜像由沙箱发布逻辑管理，
-                # 不得被误认为用户在 cwd 生成的普通文件。
+                # 不得被误认为用户在 cwd 生成的普通文件。backend_shim 与
+                # mpl_cache/cache/appdata 是 Windows 兜底执行在临时 cwd 内
+                # 创建的运行时目录（见 _build_windows_subprocess_command /
+                # _windows_sandbox_env），同样不属于用户产物。
                 dirs[:] = [
                     name
                     for name in dirs
@@ -1544,8 +1647,13 @@ class ExecutePythonTool(LLMTool):
                         "images_output",
                         "_suyuan_assets",
                         "backend_runtime",
+                        "backend_shim",
                         "runtime_logs",
+                        "mpl_cache",
+                        "cache",
+                        "appdata",
                     }
+                    and not name.startswith(".")
                 ]
             # 跳过 __pycache__ 目录
             if '__pycache__' in dirs:
