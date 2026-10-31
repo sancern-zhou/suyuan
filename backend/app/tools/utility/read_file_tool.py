@@ -24,6 +24,7 @@ Word XML 三种模式：
 - PDF/DOCX/PPTX 内部委托给专业工具，保持代码不变
 - 自动降级策略确保鲁棒性
 """
+import asyncio
 import difflib
 import os
 import tempfile
@@ -1151,7 +1152,9 @@ class ReadFileTool(LLMTool):
 
             with tempfile.TemporaryDirectory(prefix="read_doc_") as temp_dir:
                 temp_path = Path(temp_dir)
-                result = run_soffice(
+                # soffice 同步阻塞，放线程执行避免卡住事件循环
+                result = await asyncio.to_thread(
+                    run_soffice,
                     [
                         "--headless",
                         "--convert-to",

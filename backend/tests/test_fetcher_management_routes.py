@@ -5,10 +5,27 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.api.fetcher_worker_routes import get_fetcher_scheduler
+from app.auth.models import CurrentUser
 from app.core.fetcher_worker_proxy import FetcherWorkerProxyMiddleware
 from app.lifecycle.social_worker_api import create_social_worker_api_app
+
+
+ADMIN = CurrentUser(id="admin", username="admin", display_name="Admin", is_admin=True)
+
+
+class FakeAuthMiddleware:
+    """Web 进程的鉴权中间件替身：把管理员身份放进 scope.state 供代理转发。"""
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] == "http":
+            scope.setdefault("state", {})["current_user"] = ADMIN
+        await self.app(scope, receive, send)
 
 
 @pytest.fixture
@@ -62,6 +79,7 @@ def web_client(*, enabled=True):
     app.add_middleware(FetcherWorkerProxyMiddleware, app_role="web",
                        worker_base_url="http://worker", worker_token="secret",
                        fetchers_enabled=enabled)
+    app.add_middleware(FakeAuthMiddleware)
     return TestClient(app)
 
 

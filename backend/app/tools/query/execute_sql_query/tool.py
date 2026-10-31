@@ -1122,6 +1122,15 @@ class ExecuteOpsSQLQueryTool(BaseSQLQueryTool):
     """运维模式专用SQL查询工具。"""
 
     def __init__(self):
+        from config.settings import Settings
+        settings = Settings()
+        # 配置了独立运维库（OPS_SQLSERVER_HOST）时，工具整体切换到运维库连接，
+        # 数据库白名单收敛为运维库名；未配置时保持历史行为（XcAi 服务器上的两个库）。
+        self._use_ops_connection = settings.ops_sqlserver_configured
+        ops_database = settings.ops_sqlserver_database
+        allowed_databases = (
+            [ops_database] if self._use_ops_connection else None
+        )
         schema_description = (
             "运维表单SQL Server查询工具。支持二选一：describe_table查看表结构，或sql执行SELECT查询。"
             "用于运维模式查询工单、站点设备、周检、双周、月检、季检、现场巡检等运维表单。"
@@ -1130,7 +1139,7 @@ class ExecuteOpsSQLQueryTool(BaseSQLQueryTool):
             "如果不知道中文业务表单对应哪个白名单表名，不要猜表名或模糊搜索系统表，应说明映射不明确。"
             "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回1000条。"
             "SQL Server语法：中文字符串必须加N前缀，如 N'完成'；分页/限制用TOP，不支持LIMIT。"
-            "database默认为AirPollutionAnalysis。"
+            f"database默认为{ops_database}。"
             "\n\n常用表说明："
             "\n【系统管理】"
             "\n- sys_user：用户信息（CREATEUSERID, CURRENTUSERID, PREVUSERID, NEXTUSERID）"
@@ -1221,9 +1230,28 @@ class ExecuteOpsSQLQueryTool(BaseSQLQueryTool):
             tool_description="Execute operations SQL queries on SQL Server database or get table structure",
             schema_description=schema_description,
             allowed_tables=OPS_SQL_TABLES,
-            default_database="AirPollutionAnalysis",
+            default_database=ops_database,
+            allowed_databases=allowed_databases,
             allow_information_schema_sql=False,
         )
+
+    def _get_connection_string(self, database: str) -> str:
+        """获取运维库连接字符串（独立运维库配置优先）。"""
+        try:
+            import re
+            from config.settings import Settings
+            settings = Settings()
+            conn_str = (
+                settings.ops_sqlserver_connection_string
+                if self._use_ops_connection
+                else settings.sqlserver_connection_string
+            )
+            # 替换 DATABASE=部分
+            conn_str = re.sub(r'DATABASE=\w+', f'DATABASE={database}', conn_str, flags=re.IGNORECASE)
+            return conn_str
+        except Exception as e:
+            logger.error("获取数据库配置失败", error=str(e))
+            raise
 
 
 class ExecuteTenderSQLQueryTool(BaseSQLQueryTool):

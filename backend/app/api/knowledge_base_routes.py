@@ -347,14 +347,18 @@ async def upload_document(
             detail=f"Invalid chunking strategy. Must be one of: {valid_strategies}"
         )
     
-    # 验证LLM模式
-    valid_llm_modes = ["online"]
-    if llm_mode not in valid_llm_modes:
-        os.remove(tmp_path)
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid LLM mode. Must be one of: {valid_llm_modes}"
-        )
+    # 验证LLM模式：仅 llm 策略使用该字段；本地LLM分块路径已移除，
+    # 历史前端默认上传 llm_mode="local"，统一归一化为线上API。
+    if chunking_strategy == "llm":
+        if llm_mode not in ("online", "local"):
+            os.remove(tmp_path)
+            raise HTTPException(
+                status_code=400,
+                detail='Invalid LLM mode. Must be one of: ["online"]'
+            )
+        if llm_mode == "local":
+            logger.info("llm_mode_local_normalized_to_online")
+            llm_mode = "online"
 
     try:
         doc = await service.upload_document(

@@ -52,6 +52,8 @@ def create_social_worker_api_app(
                 {"detail": "Social worker token is not configured"},
                 status_code=503,
             )
+        if request.url.path == "/health":
+            return await call_next(request)
         if internal_token and request.headers.get("x-social-worker-token") != internal_token:
             return JSONResponse({"detail": "Forbidden"}, status_code=403)
         identity_path = (
@@ -60,6 +62,8 @@ def create_social_worker_api_app(
             or request.url.path.startswith("/api/scheduled-tasks/")
             or request.url.path == "/api/social/accounts"
             or request.url.path.startswith("/api/social/accounts/")
+            or request.url.path == "/api/fetchers"
+            or request.url.path.startswith("/api/fetchers/")
         )
         identity_envelope = (
             request.headers.get(INTERNAL_USER_HEADER) if identity_path else None
@@ -81,6 +85,10 @@ def create_social_worker_api_app(
                     status_code=401,
                 )
         return await call_next(request)
+
+    @app.get("/health")
+    def health() -> dict:
+        return {"status": "ok"}
 
     app.include_router(social_account_router)
     app.include_router(fetcher_worker_router)

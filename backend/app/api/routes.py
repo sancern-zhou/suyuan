@@ -1,6 +1,8 @@
 """API routes - Basic configuration endpoints."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from app.auth.dependencies import require_admin_user
 from pydantic import BaseModel
 from typing import Optional
 import structlog
@@ -42,7 +44,7 @@ class ERA5HistoricalFetchRequest(BaseModel):
     date: str  # 日期字符串 (YYYY-MM-DD)
 
 
-@router.post("/fetchers/era5/historical")
+@router.post("/fetchers/era5/historical", dependencies=[Depends(require_admin_user)])
 async def fetch_era5_historical(request: ERA5HistoricalFetchRequest):
     """
     手动触发ERA5历史数据补采
@@ -95,7 +97,7 @@ class JiningERA5FetchRequest(BaseModel):
     station_id: Optional[str] = None  # 站点ID（可选，如 "11149A"）
 
 
-@router.post("/fetchers/jining_era5/fetch")
+@router.post("/fetchers/jining_era5/fetch", dependencies=[Depends(require_admin_user)])
 async def fetch_jining_era5(request: JiningERA5FetchRequest):
     """
     手动触发济宁市ERA5数据抓取
@@ -161,7 +163,7 @@ async def fetch_jining_era5(request: JiningERA5FetchRequest):
         raise HTTPException(status_code=500, detail=f"Failed to fetch Jining ERA5 data: {str(e)}")
 
 
-@router.get("/fetchers/jining_era5/stations")
+@router.get("/fetchers/jining_era5/stations", dependencies=[Depends(require_admin_user)])
 async def list_jining_stations():
     """
     获取济宁市监测站点列表和市中心点

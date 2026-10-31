@@ -4,7 +4,9 @@
 技能是MD文档，描述多步骤工作流。
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from app.auth.dependencies import require_admin_user
 from app.agent.selection_context import active_skill_dirs
 from app.services.skills_index import generate_skills_index
 from app.tools.utility.skill_management.skill_paths import (
@@ -72,7 +74,7 @@ async def list_skills(keyword: str = None, mode: str = None):
         raise HTTPException(status_code=500, detail=f"Failed to list skills: {str(e)}")
 
 
-@router.get("/drafts")
+@router.get("/drafts", dependencies=[Depends(require_admin_user)])
 async def list_skill_drafts():
     """列出候选技能草稿。"""
     try:
@@ -104,7 +106,7 @@ async def list_skill_drafts():
         raise HTTPException(status_code=500, detail=f"Failed to list skill drafts: {str(e)}")
 
 
-@router.get("/drafts/{draft_name}")
+@router.get("/drafts/{draft_name}", dependencies=[Depends(require_admin_user)])
 async def get_skill_draft_detail(draft_name: str):
     """读取候选技能草稿详情。"""
     try:
@@ -135,7 +137,7 @@ async def get_skill_draft_detail(draft_name: str):
         raise HTTPException(status_code=500, detail=f"Failed to get skill draft: {str(e)}")
 
 
-@router.put("/drafts/{draft_name}")
+@router.put("/drafts/{draft_name}", dependencies=[Depends(require_admin_user)])
 async def update_skill_draft_detail(draft_name: str, content: dict):
     """更新候选技能草稿内容。"""
     try:
@@ -173,7 +175,7 @@ async def update_skill_draft_detail(draft_name: str, content: dict):
         raise HTTPException(status_code=500, detail=f"Failed to update skill draft: {str(e)}")
 
 
-@router.get("/{skill_name}")
+@router.get("/{skill_name}", dependencies=[Depends(require_admin_user)])
 async def get_skill_detail(skill_name: str):
     """
     获取单个技能的详细内容
@@ -229,7 +231,7 @@ async def get_skill_detail(skill_name: str):
         raise HTTPException(status_code=500, detail=f"Failed to get skill detail: {str(e)}")
 
 
-@router.put("/{skill_name}")
+@router.put("/{skill_name}", dependencies=[Depends(require_admin_user)])
 async def update_skill(skill_name: str, content: dict):
     """
     更新技能文档内容
@@ -276,7 +278,7 @@ async def update_skill(skill_name: str, content: dict):
         raise HTTPException(status_code=500, detail=f"Failed to update skill: {str(e)}")
 
 
-@router.post("/refresh-index")
+@router.post("/refresh-index", dependencies=[Depends(require_admin_user)])
 async def refresh_skills_index():
     """
     重新生成技能索引
