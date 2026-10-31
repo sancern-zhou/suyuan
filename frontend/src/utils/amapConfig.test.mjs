@@ -22,6 +22,25 @@ test('resolveAMapConfig falls back to backend config when env key is missing', a
   assert.equal(config.key, 'backend-key')
 })
 
+test('resolveAMapConfig uses VITE_API_BASE_URL prefix for sub-path deploys', async () => {
+  const requested = []
+  const config = await resolveAMapConfig({
+    env: { VITE_API_BASE_URL: '/suyuan/api/suyuan' },
+    fetchImpl: async (url) => {
+      requested.push(url)
+      return {
+        ok: true,
+        async json () {
+          return { amapPublicKey: 'backend-key' }
+        }
+      }
+    }
+  })
+
+  assert.deepEqual(requested, ['/suyuan/api/suyuan/config'])
+  assert.equal(config.key, 'backend-key')
+})
+
 test('resolveAMapConfig prefers Vite env key', async () => {
   const config = await resolveAMapConfig({
     env: {

@@ -2,6 +2,10 @@
 
 `spatial_analysis` 用于执行 Agent 生成的通用 GIS 分析 spec。它只负责空间分析和 DataRegistry 资产注册；需要把结果显示到问数看板地图时，继续调用 `visual_interaction`。
 
+需要表格化处理 GeoJSON、站点与行政区点面匹配或最近邻属性连接时，可按需使用
+`app.tools.spatial.geopandas_analysis`。该模块延迟加载 GeoPandas，必须显式检查 CRS；
+距离、面积和缓冲区计算不能直接在经纬度坐标上进行。
+
 ## 适用场景
 
 - 点周边缓冲区：例如站点 3km 范围。
