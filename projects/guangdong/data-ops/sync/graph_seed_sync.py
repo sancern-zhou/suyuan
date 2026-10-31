@@ -76,10 +76,35 @@ async def _resolve_or_create_kb(ensure: bool) -> tuple[str, str, bool]:
         return str(kb.id), str(kb.name), True
 
 
+async def _merge_station_seed(entity_dicts: list[dict], relation_dicts: list[dict]) -> dict:
+    """并入运行时站点台账（dim_station）；目录不可用时跳过站点，保留数据语义种子。"""
+    import structlog
+
+    try:
+        from station_seed import build_station_seed
+    except ImportError:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from station_seed import build_station_seed
+
+    logger = structlog.get_logger()
+    try:
+        station_entities, station_relations, stats = await build_station_seed()
+    except Exception as exc:  # noqa: BLE001 — 站点台账不可用不阻断数据语义种子
+        logger.warning("graph_seed_station_unavailable", error=str(exc))
+        return {"skipped": True, "error": str(exc)}
+    entity_dicts.extend(station_entities)
+    relation_dicts.extend(station_relations)
+    return stats
+
+
 async def main_async(ensure_kb: bool) -> int:
     seed = json.loads(io.open(SEED_PATH, encoding="utf-8").read())
     markdown = io.open(DOC_PATH, encoding="utf-8").read()
     filename = seed["document_filename"]
+
+    entity_dicts = list(seed["entities"])
+    relation_dicts = list(seed["relations"])
+    station_stats = await _merge_station_seed(entity_dicts, relation_dicts)
 
     kb_id, kb_name, created = await _resolve_or_create_kb(ensure_kb)
 
@@ -120,8 +145,8 @@ async def main_async(ensure_kb: bool) -> int:
         await GraphBuildService(async_session).reset_graph(kb_id)
     print("graph reset done")
 
-    entities = [ExtractedEntity(**item) for item in seed["entities"]]
-    relations = [ExtractedRelation(**item) for item in seed["relations"]]
+    entities = [ExtractedEntity(**item) for item in entity_dicts]
+    relations = [ExtractedRelation(**item) for item in relation_dicts]
     async with async_session() as db:
         result = await seed_graph_extraction(
             db,
@@ -135,7 +160,7 @@ async def main_async(ensure_kb: bool) -> int:
         )
     print(
         f"seeded graph: entities={result.entity_count} relations={result.relation_count} "
-        f"kb={kb_name}({kb_id})"
+        f"stations={station_stats} kb={kb_name}({kb_id})"
     )
     return 0
 

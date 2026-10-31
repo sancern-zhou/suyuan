@@ -431,6 +431,20 @@ def _render_seed_json(seed: dict) -> str:
     return json.dumps(seed, ensure_ascii=False, indent=1) + "\n"
 
 
+def _normalize_seed_text(text: str, stamp: str) -> str:
+    """--check 归一化：generated_at 由源文件 mtime 派生，checkout/重部署会触碰
+    mtime 但内容未变，比较时把它对齐到当前生成值，避免误报漂移。"""
+    data = json.loads(text)
+    data["generated_at"] = stamp
+    return _render_seed_json(data)
+
+
+def _normalize_doc_text(text: str) -> str:
+    import re
+
+    return re.sub(r"- 生成时间：.*$", "- 生成时间：<stamp>", text, flags=re.MULTILINE)
+
+
 def main() -> int:
     seed = build_seed()
     document = build_document(seed)
@@ -450,9 +464,9 @@ def main() -> int:
             deployed_doc = io.open(DOC_PATH, encoding="utf-8").read()
         except OSError:
             deployed_doc = None
-        if deployed_seed != _render_seed_json(seed):
+        if deployed_seed is None or _normalize_seed_text(deployed_seed, seed["generated_at"]) != _render_seed_json(seed):
             problems.append("graph_seed.json")
-        if deployed_doc != document:
+        if deployed_doc is None or _normalize_doc_text(deployed_doc) != _normalize_doc_text(document):
             problems.append(DOC_PATH.name)
         if problems:
             print("GRAPH SEED DRIFT:", ", ".join(problems), "— run gen_graph_seed.py")

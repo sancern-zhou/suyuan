@@ -86,10 +86,39 @@ def test_seed_document_contains_anchor_marker(seed):
 
 
 def test_seed_json_artifact_matches_generator():
-    """提交的 graph_seed.json 必须是当前生成器的产物（防漂移）。"""
+    """提交的 graph_seed.json 必须是当前生成器的产物（防漂移；时间戳归一化）。"""
     module = _load_generator()
     deployed = io.open(SEED_JSON, encoding="utf-8").read()
-    assert deployed == module._render_seed_json(module.build_seed())
+    fresh = module.build_seed()
+    assert module._normalize_seed_text(deployed, fresh["generated_at"]) == module._render_seed_json(fresh)
+
+
+def test_station_seed_builds_entities_with_gap_honesty():
+    """站点台账入图：城市短名别名、运维单位关系、组分站缺口如实保留。"""
+    sync_dir = REPO_ROOT / "projects/guangdong/data-ops/sync"
+    spec = importlib.util.spec_from_file_location("station_seed", sync_dir / "station_seed.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    catalog = {"stations": [
+        {"station_name": "华工大站", "station_code": "GD001", "station_id": "S1",
+         "city_name": "广州市", "city_code": "4401", "station_type_name": "常规站",
+         "operation_unit_name": "甲公司", "data_source": "mart"},
+        {"station_name": "超站A", "station_code": "GD002", "station_id": "S2",
+         "city_name": "深圳市", "city_code": "4403", "station_type_name": "组分站",
+         "operation_unit_name": "", "data_source": "component"},
+    ]}
+    entities, relations, stats = module.build_station_seed_from_catalog(catalog)
+
+    by_type = {}
+    for entity in entities:
+        by_type.setdefault(entity["entity_type"], []).append(entity)
+    assert stats["stations"] == 2 and stats["cities"] == 2 and stats["operation_units"] == 1
+    city = next(e for e in by_type["Region"] if e["name"] == "广州市")
+    assert "广州" in city["aliases"], "城市短名别名用于问题匹配"
+    managed = {r["source_local_id"] for r in relations if r["relation_type"] == "managed_by"}
+    assert "station_GD001" in managed and "station_GD002" not in managed
+    assert any("缺口如实声明" in e["description"] for e in by_type["Station"])
 
 
 def test_seed_entities_hit_question_matching(seed):
