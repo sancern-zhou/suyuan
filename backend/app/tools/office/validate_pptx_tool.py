@@ -3,6 +3,7 @@ Validate PPTX deliverables by rendering and running lightweight QA checks.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import hashlib
 import re
@@ -128,12 +129,18 @@ class ValidatePptxTool(LLMTool):
 
             if render_png:
                 try:
-                    render_result = render_deck(pptx_path, qa_dir, dpi=dpi)
+                    # render_deck/inspect_rendered_overflow 内部调 soffice（同步
+                    # 阻塞），放线程执行避免卡住事件循环
+                    render_result = await asyncio.to_thread(
+                        render_deck, pptx_path, qa_dir, dpi=dpi
+                    )
                     page_pngs = [Path(path) for path in render_result.get("page_pngs", [])]
                     rendered_checks = inspect_rendered_pages(page_pngs)
                     visual_quality = self._inspect_rendered_visual_quality(page_pngs)
                     if render_overflow_check:
-                        overflow_checks = inspect_rendered_overflow(pptx_path, qa_dir, dpi=dpi)
+                        overflow_checks = await asyncio.to_thread(
+                            inspect_rendered_overflow, pptx_path, qa_dir, dpi=dpi
+                        )
                     if create_overview:
                         montage_path = create_montage(page_pngs, qa_dir / "montage.png")
                     pdf_path = render_result.get("pdf_path")

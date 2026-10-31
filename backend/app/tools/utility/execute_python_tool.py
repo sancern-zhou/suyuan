@@ -865,31 +865,7 @@ class ExecutePythonTool(LLMTool):
         with open(script_file, 'w', encoding='utf-8') as f:
             f.write(code)
 
-        if self.execution_engine == "subprocess":
-            # Windows 部署回退引擎：无 bwrap 时在独立子进程直接执行。
-            # 隔离弱于 Bubblewrap（无文件系统/网络命名空间，继承父环境变量），仅限受信内网部署。
-            python_exe = os.getenv("PYTHON_EXECUTION_PYTHON") or sys.executable
-            command = [python_exe, script_file]
-            sandbox_sync_dirs = []
-            relative_input_mounts = []
-        elif self.execution_engine == "bubblewrap":
-            sandbox_spec = self._build_bubblewrap_command(
-                code=code,
-                script_file=script_file,
-                working_dir=working_dir,
-                timeout=timeout,
-                context=context,
-                input_files=input_files,
-            )
-            if sandbox_spec is None:
-                return {
-                    "status": "failed",
-                    "success": False,
-                    "data": {"error": "Bubblewrap 沙箱不可用，已拒绝在宿主机直接执行代码"},
-                    "summary": "Python 沙箱不可用",
-                }
-            command, sandbox_sync_dirs, relative_input_mounts = sandbox_spec
-        else:
+        if self.execution_engine != "bubblewrap":
             return {
                 "status": "failed",
                 "success": False,
@@ -897,39 +873,45 @@ class ExecutePythonTool(LLMTool):
                 "summary": "Python 沙箱配置错误",
             }
 
-        # 执行代码
+        sandbox_spec = self._build_bubblewrap_command(
+            code=code,
+            script_file=script_file,
+            working_dir=working_dir,
+            timeout=timeout,
+            context=context,
+            input_files=input_files,
+        )
+        if sandbox_spec is None:
+            return {
+                "status": "failed",
+                "success": False,
+                "data": {"error": "Bubblewrap 沙箱不可用，已拒绝在宿主机直接执行代码"},
+                "summary": "Python 沙箱不可用",
+            }
+        command, sandbox_sync_dirs, relative_input_mounts = sandbox_spec
+
         user_code_start_line = self._user_code_start_line(code, original_code)
         runtime_logs = Path(working_dir) / "runtime_logs"
         runtime_logs.mkdir(parents=True, exist_ok=True)
         stdout_path = runtime_logs / "stdout.log"
         stderr_path = runtime_logs / "stderr.log"
 
-        # 子进程输出统一按 UTF-8 采集（_read_capped_text）。Windows 把 stdout
-        # 重定向到文件时子进程默认用 ANSI 代码页（GBK）写入，中文会在此乱码，
-        # 因此 subprocess 引擎必须显式固定子进程 stdio 编码；Bubblewrap 引擎
-        # 已通过 LANG/LC_ALL=C.UTF-8 达成同样效果。
-        child_env: Optional[Dict[str, str]] = None
-        if self.execution_engine == "subprocess":
-            child_env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
-
+        # 文件承接 stdout/stderr，避免 communicate() 无界缓冲撑高 Web worker 内存。
         process = None
         cgroup_path = None
         cgroup_diagnostics: Dict[str, Any] = {"configured": False, "applied": False}
         try:
-            # 文件承接 stdout/stderr，避免 communicate() 无界缓冲撑高 Web worker 内存。
             with stdout_path.open("wb") as stdout_file, stderr_path.open("wb") as stderr_file:
-                popen_kwargs = dict(
+                process = subprocess.Popen(
+                    command,
                     stdout=stdout_file,
                     stderr=stderr_file,
                     cwd=working_dir,
+                    start_new_session=True,
+                    # Windows 无 bwrap 的 --unsetenv/--setenv，改为在启动时
+                    # 直接传入净化环境（Linux 上 None 表示继承后由沙箱净化）。
+                    env=self._windows_sandbox_env(working_dir) if os.name == "nt" else None,
                 )
-                if child_env is not None:
-                    popen_kwargs["env"] = child_env
-                if os.name == "posix":
-                    popen_kwargs["start_new_session"] = True
-                else:
-                    popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-                process = subprocess.Popen(command, **popen_kwargs)
                 cgroup_path, cgroup_diagnostics = self._attach_cgroup(process.pid)
                 logger.info(
                     "execute_python_subprocess_started",
@@ -1080,6 +1062,12 @@ class ExecutePythonTool(LLMTool):
         沙箱不可见项目根目录、宿主机 home、Docker socket 和网络；
         仅会话数据目录可写，其他显式输入文件只读。
         """
+        # Windows 没有 Linux namespace 沙箱，bwrap 永远不可用；与 bash 工具
+        # 的 nt 分支一致退化为直接执行（_build_windows_subprocess_command），
+        # Linux 上维持 fail-closed 沙箱不变。
+        if os.name == "nt":
+            return self._build_windows_subprocess_command(working_dir=working_dir)
+
         bwrap = shutil.which("bwrap")
         prlimit = shutil.which("prlimit")
         if not bwrap or not prlimit:
@@ -1398,6 +1386,91 @@ class ExecutePythonTool(LLMTool):
         return command, sync_dirs, relative_input_mounts
 
     @staticmethod
+    def _build_windows_subprocess_command(
+        *, working_dir: str
+    ) -> Tuple[List[str], List[Tuple[Path, Path, set[str]]], List[Path]]:
+        """Windows 兜底执行命令（无 Bubblewrap，与 bash 工具的 nt 分支一致）。
+
+        只保留跨平台可用的隔离手段：一次性临时 cwd、净化环境变量
+        （_windows_sandbox_env）、输出文件承接与超时终止进程。
+        挂载/暂存/回发布逻辑不适用：会话输出与图表由注入代码直接
+        写入真实持久化路径，无需沙箱发布。
+        """
+        # backend_shim 令 `import backend.app` 与 `import app` 等价，
+        # 对应 Linux 沙箱内挂在 backend/backend 的别名包。
+        shim_dir = Path(working_dir) / "backend_shim"
+        shim_init = shim_dir / "backend" / "__init__.py"
+        shim_init.parent.mkdir(parents=True, exist_ok=True)
+        shim_init.write_text(
+            "import sys\n"
+            "\n"
+            "try:\n"
+            "    import app as _app\n"
+            "except Exception:  # pragma: no cover - app always available in practice\n"
+            "    _app = None\n"
+            "if _app is not None:\n"
+            "    sys.modules.setdefault('backend.app', _app)\n"
+            "    sys.modules[__name__].app = _app\n",
+            encoding="utf-8",
+        )
+        return [sys.executable, "script.py"], [], []
+
+    @staticmethod
+    def _windows_sandbox_env(working_dir: str) -> Dict[str, str]:
+        """构建净化后的子进程环境：不继承 Web worker 的 .env 变量与密钥。"""
+        working_path = Path(working_dir)
+        python_env = Path(sys.prefix).resolve()
+        path_entries = [str(python_env)]
+        for relative in (Path("Library") / "bin", Path("Scripts")):
+            candidate = python_env / relative
+            if candidate.is_dir():
+                path_entries.append(str(candidate))
+        inherited_path = os.environ.get("PATH", "")
+        if inherited_path:
+            path_entries.append(inherited_path)
+        mpl_cache = working_path / "mpl_cache"
+        try:
+            mpl_cache.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            mpl_cache = working_path
+        env = {
+            "PATH": os.pathsep.join(entry for entry in path_entries if entry),
+            "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"),
+            "WINDIR": os.environ.get("WINDIR", r"C:\Windows"),
+            "SYSTEMDRIVE": os.environ.get("SYSTEMDRIVE", "C:"),
+            "COMSPEC": os.environ.get("COMSPEC", r"C:\Windows\System32\cmd.exe"),
+            "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+            "TEMP": str(working_path),
+            "TMP": str(working_path),
+            "HOME": str(working_path),
+            "USERPROFILE": str(working_path),
+            "APPDATA": str(working_path / "appdata" / "roaming"),
+            "LOCALAPPDATA": str(working_path / "appdata" / "local"),
+            "PYTHONPATH": os.pathsep.join([
+                str(working_path / "backend_shim"),
+                str(Path(PROJECT_ROOT) / "backend"),
+            ]),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUNBUFFERED": "1",
+            # Windows 子进程默认按系统代码页（中文系统为 GBK）写 stdout/stderr，
+            # 而工具侧按 UTF-8 读取；不强制 UTF-8 会让 print 的中文变成 U+FFFD
+            # 乱码（ECharts option 从 stdout 解析，整张图中文字都会损坏）。
+            # PYTHONUTF8 同时让 open() 默认编码与 Linux 沙箱一致。
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+            "MPLBACKEND": "Agg",
+            "MPLCONFIGDIR": str(mpl_cache),
+            "XDG_CACHE_HOME": str(working_path / "cache"),
+            "NO_COLOR": "1",
+        }
+        # 企业内网自签 CA 可能经由这两个变量下发，透传以保住 HTTPS 出网。
+        for name in ("SSL_CERT_FILE", "SSL_CERT_DIR"):
+            value = os.environ.get(name)
+            if value:
+                env[name] = value
+        return env
+
+    @staticmethod
     def _sandbox_address_space_limit() -> int:
         """Sandbox RLIMIT_AS in bytes; env-overridable, 4 GiB default.
 
@@ -1447,11 +1520,13 @@ class ExecutePythonTool(LLMTool):
     @staticmethod
     def _terminate_process_group(process: subprocess.Popen) -> None:
         """终止工具进程及其派生的所有子进程。"""
-        try:
-            if os.name == "posix":
-                os.killpg(process.pid, signal.SIGKILL)
-            else:
+        if os.name == "nt":
+            # Windows 没有进程组语义；与 bash 工具的 nt 分支一致终止主进程。
+            if process.poll() is None:
                 process.kill()
+            return
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
 
@@ -1534,7 +1609,10 @@ class ExecutePythonTool(LLMTool):
         for root, dirs, files in os.walk(temp_dir):
             if Path(root).resolve() == Path(temp_dir).resolve():
                 # Bubblewrap 的输入副本和会话输出镜像由沙箱发布逻辑管理，
-                # 不得被误认为用户在 cwd 生成的普通文件。
+                # 不得被误认为用户在 cwd 生成的普通文件。backend_shim 与
+                # mpl_cache/cache/appdata 是 Windows 兜底执行在临时 cwd 内
+                # 创建的运行时目录（见 _build_windows_subprocess_command /
+                # _windows_sandbox_env），同样不属于用户产物。
                 dirs[:] = [
                     name
                     for name in dirs
@@ -1544,8 +1622,13 @@ class ExecutePythonTool(LLMTool):
                         "images_output",
                         "_suyuan_assets",
                         "backend_runtime",
+                        "backend_shim",
                         "runtime_logs",
+                        "mpl_cache",
+                        "cache",
+                        "appdata",
                     }
+                    and not name.startswith(".")
                 ]
             # 跳过 __pycache__ 目录
             if '__pycache__' in dirs:
@@ -2421,6 +2504,13 @@ def _suyuan_configure_matplotlib_chinese_font(force_default=False):
         from matplotlib import font_manager as _suyuan_font_manager
         from matplotlib.ft2font import FT2Font
         current_fonts = list(_suyuan_plt.rcParams.get('font.sans-serif', []))
+        default_font_path = __SUYUAN_PREFERRED_FONT_PATH__
+        if not os.path.exists(default_font_path):
+            return
+        _suyuan_font_manager.fontManager.addfont(default_font_path)
+        default_font_prop = _suyuan_font_manager.FontProperties(fname=default_font_path)
+        default_font_name = default_font_prop.get_name()
+
         def _font_supports_chinese(font_name):
             try:
                 prop = _suyuan_font_manager.FontProperties(family=[font_name])
@@ -2429,59 +2519,6 @@ def _suyuan_configure_matplotlib_chinese_font(force_default=False):
                 return ord('中') in charmap, _suyuan_font_manager.FontProperties(fname=path)
             except Exception:
                 return False, None
-
-        # 两个执行引擎都以工作目录为 cwd：沙箱内即 /sandbox/_suyuan_assets/...，
-        # Windows subprocess 引擎不挂载字体资产，只能靠系统字体回退。
-        default_font_paths = [
-            __SUYUAN_PREFERRED_FONT_PATH__,
-            os.path.abspath(os.path.join('_suyuan_assets', 'preferred_chinese_font.ttf')),
-            '/sandbox/_suyuan_assets/preferred_chinese_font.ttf',
-            '/home/xckj/.local/share/fonts/方正小标宋简.TTF',
-            '/usr/share/fonts/gb-cjk/GB_XBS_GB18030.TTF',
-            '/usr/share/fonts/gb-cjk/GB_XBS_GBT2312.TTF',
-            '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc',
-            '/usr/share/fonts/google-noto-cjk/NotoSansCJKsc-Regular.otf',
-            '/usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf',
-            '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-            '/usr/share/fonts/truetype/arphic/uming.ttc',
-            '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
-            # Windows 部署：方正小标宋简（授权字体，由 install-chinese-font.ps1 装入系统字体目录）
-            'C:/Windows/Fonts/方正小标宋简.TTF',
-            'C:/Windows/Fonts/方正小标宋简.ttf',
-            'C:/Windows/Fonts/FZXiaoBiaoSong-B05S.ttf',
-            'C:/Windows/Fonts/msyh.ttc',
-            'C:/Windows/Fonts/simhei.ttf',
-            'C:/Windows/Fonts/simsun.ttc',
-            'C:/Windows/Fonts/Deng.ttf',
-        ]
-        default_font_path = next((path for path in default_font_paths if os.path.exists(path)), None)
-        if default_font_path:
-            _suyuan_font_manager.fontManager.addfont(default_font_path)
-            default_font_prop = _suyuan_font_manager.FontProperties(fname=default_font_path)
-        else:
-            # 无预置字体文件时按字体族名解析系统字体，否则中文会退回 DejaVu Sans 显示方框。
-            default_font_prop = None
-            for candidate_name in (
-                'FZXiaoBiaoSong-B05S',
-                'GB_XBS_GB18030',
-                'GB_XBS_GBT2312',
-                'Noto Sans CJK SC',
-                'Noto Sans CJK TC',
-                'Noto Sans CJK JP',
-                'Microsoft YaHei',
-                'SimHei',
-                'SimSun',
-                'DengXian',
-                'PingFang SC',
-                'WenQuanYi Micro Hei',
-            ):
-                supports_chinese, candidate_prop = _font_supports_chinese(candidate_name)
-                if supports_chinese:
-                    default_font_prop = candidate_prop
-                    break
-        if default_font_prop is None:
-            return
-        default_font_name = default_font_prop.get_name()
 
         selected_name = default_font_name
         selected_prop = default_font_prop
@@ -2549,14 +2586,6 @@ def _suyuan_normalize_matplotlib_label_text(value):
         ('m³', 'm$^3$'),
         ('km²', 'km$^2$'),
         ('m²', 'm$^2$'),
-        # 方正小标宋简是 7751 字形的子集，缺这些单位合字与裸上下标；
-        # 转成 mathtext 后由 mathtext 字体渲染，避免缺字画成方框。
-        ('㎡', 'm$^2$'),
-        ('㎥', 'm$^3$'),
-        ('㎞', 'km'),
-        ('²', '$^2$'),
-        ('³', '$^3$'),
-        ('¹', '$^1$'),
     ]
     normalized = value
     for old, new in replacements:

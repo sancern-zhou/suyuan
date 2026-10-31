@@ -10,6 +10,7 @@ dependencies:
   - numpy=1.26.3
   - pandas=2.2.3
   - scipy
+  - statsmodels
   - numba
   
   # ODE Solver (key package for PyBox)

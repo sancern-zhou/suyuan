@@ -106,6 +106,9 @@ class FrontendManifest(StrictModel):
     agent_scenes: list[str] = Field(default_factory=list)
     agent_scene_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
     sidebar_agent_modes: list[str] = Field(default_factory=list)
+    # 平台使用说明面板内容，仅供前端构建脚本（frontend/scripts/projectManifest.mjs
+    # 的 normalizePlatformGuide）消费并烘焙进构建产物；后端不做结构解释，保持透传。
+    platform_guide: dict[str, Any] | None = None
 
     _unique_agent_modes = field_validator("agent_modes")(unique)
     _unique_agent_scenes = field_validator("agent_scenes")(unique)

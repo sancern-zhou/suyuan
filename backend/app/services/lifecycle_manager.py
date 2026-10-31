@@ -207,6 +207,12 @@ def _configured_fetchers(project_context):
             name for name in factories
             if name not in explicit_project_fetchers
         ]
+        # xuchang 专属 fetcher 只在 xuchang 项目运行（其余项目缺 ZHONGDA 等凭据，
+        # 只会产生周期性空转报错；2026-10-25 广东 worker 日志 109 条/夜均源于此）
+        if "xuchang-air-quality" not in enabled_modules:
+            selected = [name for name in selected
+                        if not name.startswith("xuchang_")
+                        and name != "gems_xuchang_image_fetcher"]
         if "xuchang-satellite" in enabled_modules:
             selected.append("gems_image")
             if os.getenv("GEMS_HCHO_DATA_FETCH_ENABLED", "false").lower() == "true":
