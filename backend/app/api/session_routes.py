@@ -613,7 +613,7 @@ async def delete_session(
     Returns:
         删除结果
     """
-    row = await catalog.require_write(session_id, user)
+    row = await catalog.require_manage(session_id, user)
     success = await adapters.get(row.source).delete(row)
 
     if not success:

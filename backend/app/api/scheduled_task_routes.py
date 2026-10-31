@@ -402,6 +402,18 @@ def _require_task_access(task: ScheduledTask, user: CurrentUser, action: str = "
         raise HTTPException(status_code=404, detail=detail)
 
 
+def _require_task_execute(task: ScheduledTask, user: CurrentUser) -> None:
+    """系统任务对可见用户放开立即执行；编辑/删除/启停仍走 _require_task_access。"""
+    if _can_access_task(task, user):
+        return
+    is_system_task = task.owner_user_id == "system" or task.created_by == "system"
+    if is_system_task and _can_view_task(task, user):
+        return
+    if is_system_task:
+        raise HTTPException(status_code=404, detail="系统任务，无权限执行")
+    raise HTTPException(status_code=404, detail="该任务归属其他用户，无权限执行")
+
+
 def _require_task_view(task: ScheduledTask, user: CurrentUser) -> None:
     if not _can_view_task(task, user):
         raise HTTPException(status_code=404, detail=f"Task {task.task_id} not found")
@@ -1148,7 +1160,7 @@ async def execute_task_now(
         task = service.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-        _require_task_access(task, user, action="执行")
+        _require_task_execute(task, user)
 
         if task.trigger_type == TriggerType.EVENT:
             builder = get_manual_event_builder(task.event_type or "")

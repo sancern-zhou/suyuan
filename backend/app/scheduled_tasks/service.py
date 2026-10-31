@@ -194,7 +194,7 @@ class ScheduledTaskService:
         task = self.task_storage.get(task_id)
         if not task:
             raise ValueError(f"Task {task_id} not found")
-        self._track_event_task(self._execute_scheduled_task(task))
+        self._track_event_task(self._execute_scheduled_task(task, manual=True))
         logger.info("manual_task_execution_started", task_id=task_id)
 
     def _resume_claimed_event_tasks(self) -> None:
@@ -362,13 +362,13 @@ class ScheduledTaskService:
         )
 
         # 执行任务（异步）
-        execution = await self._execute_scheduled_task(task)
+        execution = await self._execute_scheduled_task(task, manual=True)
 
         logger.info(f"Manual execution completed: {execution.execution_id}, status: {execution.status}")
 
         return execution
 
-    async def _execute_scheduled_task(self, task: ScheduledTask) -> TaskExecution:
+    async def _execute_scheduled_task(self, task: ScheduledTask, *, manual: bool = False) -> TaskExecution:
         """Execute scheduled work; broadcast tasks send through their Agent tool."""
         execution: TaskExecution | None = None
         try:
@@ -384,6 +384,7 @@ class ScheduledTaskService:
                 broadcast_user_names=[
                     row.get("name") or row["user_id"] for row in recipients
                 ],
+                trigger_type="manual" if manual else None,
             )
             if execution.status != ExecutionStatus.SUCCESS:
                 self.task_storage.update_run_stats(task.task_id, success=False)
@@ -410,7 +411,7 @@ class ScheduledTaskService:
                     completed_at=now,
                     duration_seconds=0,
                     total_steps=1,
-                    trigger_type="scheduled",
+                    trigger_type="manual" if manual else "scheduled",
                     error_message=str(exc),
                 )
                 self.execution_storage.create(execution)
