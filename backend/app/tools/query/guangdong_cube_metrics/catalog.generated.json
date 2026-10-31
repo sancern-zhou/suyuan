@@ -1,0 +1,624 @@
+{
+  "version": 1,
+  "project": "guangdong",
+  "generated_from": [
+    "cube/schema/*.js",
+    "semantic/registry.yaml"
+  ],
+  "cubes": {
+    "AlarmNotify": {
+      "dataset": "mart_alarm_notify_analysis",
+      "grain": "一行 = 一条告警通知记录（含短信/邮件发送渠道）",
+      "applicability": "站点告警通知流水统计（通知量、类型分布、站点覆盖、城市分布）；本库告警为通知流水，无处理闭环状态，未处理率/处理时长不可评估",
+      "source_window": "今年窗口（{year_start}-01-01 每年滚动）+ 持续增量",
+      "freshness_slo": "60分钟",
+      "limitations": [
+        "ALM_SUMMARY 自 2020 年停更，禁止作为告警来源；当前告警态势（正常/紧急）用 StationAlarmStatus",
+        "ALARMLEVEL 当前实测恒为 9（通知级），级别维度不可用",
+        "告警类型自 CONTENT 前缀解析（如 \"站点断数\"），类型清单以实际数据为准",
+        "站点关联经 dim_station.station_id（实测匹配率 99.5%，少量通知无匹配站点）"
+      ],
+      "measures": {
+        "count": {
+          "title": "告警通知量",
+          "name": "告警通知量",
+          "definition": "通知记录条数",
+          "null_policy": "not_applicable",
+          "time_basis": "notifyTime"
+        },
+        "distinctStationCount": {
+          "title": "涉及站点数(去重)",
+          "name": "涉及站点数",
+          "definition": "去重站点数",
+          "null_policy": "not_applicable",
+          "time_basis": "notifyTime"
+        },
+        "distinctDayCount": {
+          "title": "涉及天数(去重)",
+          "name": "涉及天数(去重)",
+          "definition": "涉及天数(去重)"
+        }
+      },
+      "dimensions": {
+        "alarmType": {
+          "title": "告警类型(站点断数等,自CONTENT解析)"
+        },
+        "cityName": {
+          "title": "城市名"
+        },
+        "stationTypeName": {
+          "title": "站点类型中文名"
+        },
+        "stationCode": {
+          "title": "站点编码"
+        },
+        "stationName": {
+          "title": "站点名"
+        },
+        "notifyChannels": {
+          "title": "发送渠道(SMS,Mail等)"
+        },
+        "notifyTime": {
+          "title": "告警时间(时间维度)"
+        }
+      }
+    },
+    "DeviceLifecycle": {
+      "dataset": "mart_device_lifecycle_analysis",
+      "grain": "一行 = 一条设备状态/事件日志",
+      "applicability": "设备周期检查执行（周/月/季/半年/年检）与启用/新增/停用/信息更新事件统计；事件类型中文映射见 event_type_cn",
+      "source_window": "今年窗口 + 持续增量（今年约 7.4 万条）",
+      "freshness_slo": "60分钟",
+      "limitations": [
+        "设备状态枚举（DeviceNormal/DeviceSpare 等）为平台原文未翻译；事件动作 QuaryCheck 为源系统拼写（季检）",
+        "少量事件无匹配站点/设备（外键缺失时维度为 NULL）"
+      ],
+      "measures": {
+        "count": {
+          "title": "生命周期事件数",
+          "name": "生命周期事件数",
+          "definition": "事件日志条数",
+          "null_policy": "not_applicable",
+          "time_basis": "eventTime"
+        },
+        "distinctDevices": {
+          "title": "涉及设备数(去重)",
+          "name": "涉及设备数",
+          "definition": "去重设备数",
+          "null_policy": "not_applicable",
+          "time_basis": "eventTime"
+        },
+        "checkEventCount": {
+          "title": "周期检查事件数(周/月/季/半年/年检)",
+          "name": "周期检查事件数",
+          "definition": "周/月/季/半年/年检事件条数",
+          "null_policy": "not_applicable",
+          "time_basis": "eventTime"
+        },
+        "lifecycleEventCount": {
+          "title": "启用/新增/停用/更新事件数",
+          "name": "启用/新增/停用/更新事件数",
+          "definition": "启用/新增/停用/更新事件数"
+        },
+        "stopEventCount": {
+          "title": "停用事件数",
+          "name": "停用事件数",
+          "definition": "DeviceStop 事件条数",
+          "null_policy": "not_applicable",
+          "time_basis": "eventTime"
+        }
+      },
+      "dimensions": {
+        "eventType": {
+          "title": "事件动作(原文)"
+        },
+        "eventTypeCn": {
+          "title": "事件动作(中文)"
+        },
+        "stateAfter": {
+          "title": "变更后状态(DeviceNormal/DeviceSpare等)"
+        },
+        "cityName": {
+          "title": "城市名"
+        },
+        "stationCode": {
+          "title": "站点编码"
+        },
+        "stationName": {
+          "title": "站点名"
+        },
+        "deviceCode": {
+          "title": "设备编码"
+        },
+        "deviceType": {
+          "title": "设备类型(源库代码原文)"
+        },
+        "orderRef": {
+          "title": "关联工单"
+        },
+        "eventTime": {
+          "title": "事件时间(时间维度)"
+        }
+      }
+    },
+    "InspectionTask": {
+      "dataset": "mart_inspection_task_analysis",
+      "grain": "一行 = 一个运维计划任务项（PW_TASKITEM+PW_TASK 宽表化）",
+      "applicability": "运维计划任务项的量、完成率、超期率、转工单率统计（按规则/周期/监测项/站点/城市分组）",
+      "source_window": "今年窗口（按创建日期，每年滚动）",
+      "freshness_slo": "26小时",
+      "limitations": [
+        "完成态滞后于创建：任务项创建后在周期内完成，完成率每日全量刷新——按日趋势解读完成率时，最近 1-2 天的\"未完成\"可能是\"尚未到完成时点\"而非真实超期",
+        "超期 = 未完成且过计划结束日（EDTDATE）；无作废概念",
+        "转工单率分母为全部任务项；未完成项也可转工单（核销途径），与其他\"完成才转单\"口径不同",
+        "PW_TASK 今年窗口拉到 0 行（任务头多为往年生成），任务头维度来自每日全量的 PW_TASK 全表"
+      ],
+      "measures": {
+        "count": {
+          "title": "任务项数",
+          "name": "任务项数",
+          "definition": "任务项条数",
+          "null_policy": "not_applicable",
+          "time_basis": "planDate"
+        },
+        "finishedCount": {
+          "title": "已完成任务项数",
+          "name": "已完成任务项数",
+          "definition": "已完成任务项数"
+        },
+        "finishedRate": {
+          "title": "完成率(%)",
+          "name": "完成率",
+          "definition": "已完成任务项数 / 任务项总数 × 100",
+          "numerator": "finishedCount",
+          "denominator": "count",
+          "null_policy": "denominator_zero",
+          "time_basis": "planDate"
+        },
+        "overdueCount": {
+          "title": "超期任务项数(未完成且过计划结束日)",
+          "name": "超期任务项数(未完成且过计划结束日)",
+          "definition": "超期任务项数(未完成且过计划结束日)"
+        },
+        "overdueRate": {
+          "title": "超期率(%,分母=全部任务项)",
+          "name": "超期率",
+          "definition": "超期任务项数（未完成且过计划结束日）/ 任务项总数 × 100",
+          "numerator": "overdueCount",
+          "denominator": "count",
+          "null_policy": "denominator_zero",
+          "time_basis": "planDate"
+        },
+        "toOrderCount": {
+          "title": "已转工单任务项数",
+          "name": "已转工单任务项数",
+          "definition": "已转工单任务项数"
+        },
+        "toOrderRate": {
+          "title": "转工单率(%,分母=全部任务项)",
+          "name": "转工单率",
+          "definition": "已转工单任务项数 / 任务项总数 × 100",
+          "numerator": "toOrderCount",
+          "denominator": "count",
+          "null_policy": "denominator_zero",
+          "time_basis": "planDate"
+        },
+        "distinctStations": {
+          "title": "涉及站点数(去重)",
+          "name": "涉及站点数(去重)",
+          "definition": "涉及站点数(去重)"
+        }
+      },
+      "dimensions": {
+        "cityName": {
+          "title": "城市名"
+        },
+        "stationCode": {
+          "title": "站点编码"
+        },
+        "stationName": {
+          "title": "站点名"
+        },
+        "ruleName": {
+          "title": "规则名"
+        },
+        "ruleType": {
+          "title": "规则类型"
+        },
+        "ruleCycle": {
+          "title": "周期(周/月/季等)"
+        },
+        "itemFormTag": {
+          "title": "表单类型(RF_W_GaseousCheck等)"
+        },
+        "pollutantType": {
+          "title": "监测项目(SO2/NOX/O3等)"
+        },
+        "isFinished": {
+          "title": "是否已完成"
+        },
+        "isOverdue": {
+          "title": "是否已超期(未完成且过计划结束日)"
+        },
+        "isToOrder": {
+          "title": "是否已转工单"
+        },
+        "planDate": {
+          "title": "计划日期(时间维度)"
+        },
+        "finishDatetime": {
+          "title": "完成时间(时间维度)"
+        }
+      }
+    },
+    "Performance": {
+      "dataset": "mart_performance_analysis",
+      "grain": "一行 = 一个站点×月的绩效月度考核记录",
+      "applicability": "站点绩效月度考核的得分排名、低分清单、质控合格率、金额（核减/扣款/实发）统计；得分与金额均为平台考核口径原值，不重算",
+      "source_window": "2026 合同年度（sdt 2026-01-01 起）",
+      "freshness_slo": "26小时",
+      "limitations": [
+        "平台每日 10:15 左右重算，当月得分以当日重算结果为准；月初上月数据可能仍在微调",
+        "金额单位元：initial_amount(合同)/deduction_amount(核减)/penalty_amount(扣款)/paid_amount(实发)；跨合同汇总需按 contract 区分",
+        "扣减规则说明在 deduction_remark 原文（如\"考核分数90分（含）以上的，不扣减\"），金额争议以此为准",
+        "组分站无运维单位/部门信息；组分网与主网合同不同，横向比较需按合同分组",
+        "工单维度绩效追查用 opa_performance（按 working_order_code 关联工单）"
+      ],
+      "measures": {
+        "count": {
+          "title": "站点月数",
+          "name": "站点月数",
+          "definition": "考核记录条数（站点×月）",
+          "null_policy": "not_applicable",
+          "time_basis": "performanceMonth"
+        },
+        "distinctStationCount": {
+          "title": "涉及站点数(去重)",
+          "name": "涉及站点数",
+          "definition": "去重站点数",
+          "null_policy": "not_applicable",
+          "time_basis": "performanceMonth"
+        },
+        "avgTotalScore": {
+          "title": "平均总分(平台考核口径)",
+          "name": "平均总分",
+          "definition": "total_score 平均值（平台考核口径）",
+          "null_policy": "denominator_zero",
+          "time_basis": "performanceMonth"
+        },
+        "below60Count": {
+          "title": "低于60分站点月数",
+          "name": "低于60分站点月数",
+          "definition": "total_score < 60 的记录数",
+          "null_policy": "not_applicable",
+          "time_basis": "performanceMonth"
+        },
+        "sumDeductionAmount": {
+          "title": "核减金额合计(元)",
+          "name": "核减金额合计",
+          "definition": "deduction_amount 求和（元）",
+          "null_policy": "denominator_zero",
+          "time_basis": "performanceMonth"
+        },
+        "sumPenaltyAmount": {
+          "title": "扣款金额合计(元)",
+          "name": "扣款金额合计(元)",
+          "definition": "扣款金额合计(元)"
+        },
+        "sumPaidAmount": {
+          "title": "实发金额合计(元)",
+          "name": "实发金额合计",
+          "definition": "paid_amount 求和（元）",
+          "null_policy": "denominator_zero",
+          "time_basis": "performanceMonth"
+        },
+        "avgQcQualifiedRate": {
+          "title": "平均质控合格率(平台口径)",
+          "name": "平均质控合格率",
+          "definition": "qc_qualified_rate 平均值（平台口径；该率=合格质控次数/质控总次数）",
+          "denominator": "qc_number",
+          "null_policy": "denominator_zero",
+          "time_basis": "performanceMonth"
+        }
+      },
+      "dimensions": {
+        "performanceMonth": {
+          "title": "考核月份(如 2026年09月)"
+        },
+        "cityName": {
+          "title": "城市名"
+        },
+        "stationCode": {
+          "title": "站点编码"
+        },
+        "stationName": {
+          "title": "站点名"
+        },
+        "stationTypeName": {
+          "title": "站点类型中文名"
+        },
+        "operationUnitName": {
+          "title": "运维单位中文名"
+        },
+        "contractName": {
+          "title": "合同名"
+        },
+        "contractCode": {
+          "title": "合同编号"
+        },
+        "statusCode": {
+          "title": "状态码(原文)"
+        },
+        "deductionRemark": {
+          "title": "扣减规则说明(原文)"
+        },
+        "contractStartDate": {
+          "title": "合同开始日期(时间维度)"
+        }
+      }
+    },
+    "StationAlarmStatus": {
+      "dataset": "mart_station_alarm_status",
+      "grain": "一行 = 一个站点的当前告警态势（快照，每日刷新）",
+      "applicability": "只回答\"当前哪些站点在告警\"（正常/紧急），不回答历史；历史通知用 AlarmNotify",
+      "source_window": "当前快照（无历史窗口）",
+      "freshness_slo": "26小时",
+      "limitations": [
+        "覆盖面以源系统推送为准（2026-10-25 当日 63/332 站），非全站快照；\"未推送=无告警\"不成立，只可表述为\"推送范围内\""
+      ],
+      "measures": {
+        "count": {
+          "title": "快照站点数",
+          "name": "快照站点数",
+          "definition": "快照站点数"
+        },
+        "alarmingCount": {
+          "title": "当前告警站点数(状态≠正常)",
+          "name": "当前告警站点数",
+          "definition": "告警状态≠正常的站点数",
+          "null_policy": "not_applicable",
+          "time_basis": "latestAlarmTime"
+        }
+      },
+      "dimensions": {
+        "alarmStatus": {
+          "title": "告警状态(正常/紧急)"
+        },
+        "isAlarming": {
+          "title": "是否告警中"
+        },
+        "cityName": {
+          "title": "城市名"
+        },
+        "stationTypeName": {
+          "title": "站点类型中文名"
+        },
+        "stationCode": {
+          "title": "站点编码"
+        },
+        "stationName": {
+          "title": "站点名"
+        },
+        "managerName": {
+          "title": "运维管理人"
+        },
+        "latestAlarmDesc": {
+          "title": "最新告警描述"
+        },
+        "latestAlarmTime": {
+          "title": "最新告警时间(时间维度)"
+        }
+      }
+    },
+    "WorkOrder": {
+      "dataset": "mart_work_order_analysis",
+      "grain": "一行 = 一张运维工单（全类型，含作废单）",
+      "applicability": "全部 28 类运维工单（Check/Fault/SupCheck 等）；工单量与时效结论必须按 order_status/order_type 显式过滤口径，不得把全表计数表述为\"已完成工单量\"",
+      "source_window": "今年窗口（full_load_since={year_start}-01-01 每年滚动）+ 持续增量；窗口前历史不可查（2026-10-24 同步量控制约定）",
+      "freshness_slo": "60分钟（高频链路）；维表 26 小时",
+      "limitations": [
+        "作废单(Invalid)在表内：参与 count 基数，但不参与超期与时效类指标；统计\"工单量\"必须声明是否含作废",
+        "超期率分母只计计划完成时间非空的单（overdueEvaluable）；故障单(Fault/SupFault)计划完成时间实测全空，超期不可评估——与江苏结论一致",
+        "例行维护单（Check/SupCheck/SupSECCheck 等）计划完成时间非空但平台不作为考核截止：源系统超时标记 order_overtime 全年实测全 0，本表重算超期率对这些类型会得到接近 100% 的失真值——例行单超期结论必须以源系统超时标记为准，不得引用 overdueRate",
+        "响应类指标（responseWithin2hRate/avgResponseMinutes）仅故障单可评估（到站=首个 FaultProcess 步骤开始）；非故障单不可评估",
+        "重复故障（is_repeat_fault/repeatFaultRate）仅在故障单口径（Fault/SupFault）下有意义：同站同设备前 30 天存在其他故障单",
+        "附件完整率只覆盖附件索引（附件本体在源系统）；跨工单类型的附件要求不同，横向比较需按类型分层",
+        "城市维度（cityName/cityCode）经 v_cityandregionanddepartment 全站覆盖（332/332，每日刷新；2026-10-25 二期接入）；按城市统计无需再声明覆盖率",
+        "完成率(finishRate)分母含作废单；剔除作废的单口径完成率需配合 orderStatus 维度自行过滤",
+        "实时在办状态以运维源库（execute_ops_sql_query 直查）为准，本数据集非实时"
+      ],
+      "measures": {
+        "count": {
+          "title": "工单量(全类型含作废,结论须声明口径)",
+          "name": "工单量",
+          "definition": "宽表行数（全类型含作废单；结论必须声明口径）",
+          "null_policy": "not_applicable",
+          "time_basis": "createTime"
+        },
+        "finishedCount": {
+          "title": "已完成工单数",
+          "name": "已完成工单数",
+          "definition": "已完成工单数"
+        },
+        "finishRate": {
+          "title": "完成率(%,含作废单基数,剔除作废请配合 orderStatus 维度过滤)",
+          "name": "完成率",
+          "definition": "已完成工单数 / 工单总数(含作废) × 100",
+          "numerator": "finishedCount",
+          "denominator": "count",
+          "null_policy": "denominator_zero",
+          "time_basis": "createTime",
+          "limitations": "分母含作废单，剔除作废需配合 orderStatus 维度过滤"
+        },
+        "overdueEvaluable": {
+          "title": "超期可评估工单数(计划完成时间非空)",
+          "name": "超期可评估工单数(计划完成时间非空)",
+          "definition": "超期可评估工单数(计划完成时间非空)"
+        },
+        "overdueCount": {
+          "title": "超期工单数",
+          "name": "超期工单数",
+          "definition": "超期工单数"
+        },
+        "overdueRate": {
+          "title": "超期率(%,仅按有计划完成时间的单评估;例行维护单计划时间非考核截止,该类超期以orderOvertime标记为准)",
+          "name": "超期率",
+          "definition": "超期工单数 / 计划完成时间非空的工单数 × 100",
+          "numerator": "overdueCount",
+          "denominator": "overdueEvaluable",
+          "null_policy": "denominator_zero_as_not_evaluable",
+          "time_basis": "createTime",
+          "limitations": "仅按有计划完成时间的单评估；部分类型无计划时间"
+        },
+        "responseEvaluable": {
+          "title": "可评估响应的工单数(故障单)",
+          "name": "可评估响应的工单数(故障单)",
+          "definition": "可评估响应的工单数(故障单)"
+        },
+        "responseWithin2hCount": {
+          "title": "2小时内到站故障工单数",
+          "name": "2小时内到站故障工单数",
+          "definition": "2小时内到站故障工单数"
+        },
+        "responseWithin2hRate": {
+          "title": "2小时响应率(%,仅故障单可评估)",
+          "name": "2小时响应率",
+          "definition": "2小时内到站的故障工单数 / 可评估响应的故障工单数 × 100",
+          "numerator": "responseWithin2hCount",
+          "denominator": "responseEvaluable",
+          "null_policy": "denominator_zero",
+          "time_basis": "createTime",
+          "limitations": "仅故障单可评估（到站=首个 FaultProcess 步骤开始）"
+        },
+        "faultCount": {
+          "title": "故障工单数(Fault/SupFault)",
+          "name": "故障工单数(Fault/SupFault)",
+          "definition": "故障工单数(Fault/SupFault)"
+        },
+        "repeatFaultCount": {
+          "title": "30天重复故障工单数",
+          "name": "30天重复故障工单数",
+          "definition": "30天重复故障工单数"
+        },
+        "repeatFaultRate": {
+          "title": "30天重复故障率(%,分母=故障单)",
+          "name": "30天重复故障率",
+          "definition": "30天内重复的故障工单数 / 故障工单数(Fault+SupFault) × 100",
+          "numerator": "repeatFaultCount",
+          "denominator": "faultCount",
+          "null_policy": "denominator_zero",
+          "time_basis": "createTime",
+          "limitations": "重复判定=同站同设备前30天存在其他故障单；仅故障单口径"
+        },
+        "hasAttachmentCount": {
+          "title": "有附件的工单数",
+          "name": "有附件的工单数",
+          "definition": "有附件的工单数"
+        },
+        "attachmentRate": {
+          "title": "附件完整率(%,有附件工单/工单数)",
+          "name": "附件完整率",
+          "definition": "有附件索引的工单数 / 工单总数 × 100",
+          "numerator": "hasAttachmentCount",
+          "denominator": "count",
+          "null_policy": "denominator_zero",
+          "time_basis": "createTime",
+          "limitations": "仅覆盖附件索引，本体在源系统；跨类型比较需分层"
+        },
+        "avgResponseMinutes": {
+          "title": "平均响应时长(分钟,仅故障单)",
+          "name": "平均响应时长(分钟,仅故障单)",
+          "definition": "平均响应时长(分钟,仅故障单)"
+        },
+        "avgProcessMinutes": {
+          "title": "平均到站后处理时长(分钟)",
+          "name": "平均到站后处理时长(分钟)",
+          "definition": "平均到站后处理时长(分钟)"
+        },
+        "avgRepairMinutes": {
+          "title": "平均全程修复时长(分钟)",
+          "name": "平均全程修复时长(分钟)",
+          "definition": "平均全程修复时长(分钟)"
+        },
+        "avgNodeCount": {
+          "title": "平均流转节点数",
+          "name": "平均流转节点数",
+          "definition": "平均流转节点数"
+        },
+        "avgExpense": {
+          "title": "平均工单费用(元)",
+          "name": "平均工单费用(元)",
+          "definition": "平均工单费用(元)"
+        }
+      },
+      "dimensions": {
+        "orderType": {
+          "title": "工单类型代码(28种,字典见语义字典01)"
+        },
+        "orderStatus": {
+          "title": "工单状态(已完成/处理中/待处理/已作废)"
+        },
+        "urgency": {
+          "title": "紧急程度"
+        },
+        "maintenanceType": {
+          "title": "维护周期"
+        },
+        "orderOvertime": {
+          "title": "源系统超时标记(原文;例行单超期以此为准,勿用overdueRate)"
+        },
+        "totalOvertime": {
+          "title": "源系统累计超时标记(原文)"
+        },
+        "stationCode": {
+          "title": "站点编码"
+        },
+        "stationName": {
+          "title": "站点名"
+        },
+        "stationType": {
+          "title": "站点类型(源库代码原文)"
+        },
+        "stationTypeName": {
+          "title": "站点类型中文名(经alm_home补充,覆盖率以推送为准)"
+        },
+        "cityName": {
+          "title": "城市名"
+        },
+        "cityCode": {
+          "title": "城市行政区码"
+        },
+        "createUserName": {
+          "title": "创建人名(经dim_user)"
+        },
+        "currentUserName": {
+          "title": "当前处理人名(经dim_user)"
+        },
+        "regionId": {
+          "title": "区域ID(无区域字典)"
+        },
+        "deviceCode": {
+          "title": "设备编码"
+        },
+        "deviceType": {
+          "title": "设备类型(源库代码原文)"
+        },
+        "isFinish": {
+          "title": "是否已完成"
+        },
+        "isOverdue": {
+          "title": "是否超期(仅计划完成时间非空的单有意义)"
+        },
+        "isRepeatFault": {
+          "title": "是否30天内重复故障(仅故障单口径)"
+        },
+        "createTime": {
+          "title": "创建时间(时间维度)"
+        },
+        "finishTime": {
+          "title": "完成时间(时间维度)"
+        }
+      }
+    }
+  }
+}

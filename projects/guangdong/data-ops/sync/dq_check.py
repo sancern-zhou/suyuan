@@ -15,6 +15,9 @@ Checks:
      仅查 guangdong_ods 的 check 6 覆盖不到 mart-only 表（2026-10-28 复盘补的盲区）
   8. sup profiles    - 组分站语义档案（sup_form_profiles.yaml）里每个 ruleitemtag
      的承载表都必须可被 Agent 查询（档案有、数据查不到即 FAIL）
+  9. semantic catalog - catalog.generated.json（guangdong_query_metrics 运行时
+     fail-closed 加载的成员白名单+语义产物）必须与 cube/schema/*.js +
+     semantic/registry.yaml 一致（gen_semantic_artifacts.py --check）
 
 Results appended to guangdong_sync.dq_results; exit 1 if any check fails so the
 scheduled task log shows it clearly. guangdong_query_metrics 读取本表生成
@@ -228,6 +231,15 @@ async def check_graph_seed_drift(pg, results):
     await record(pg, results, "contract", "graph_seed", status, detail)
 
 
+async def check_semantic_catalog_drift(pg, results):
+    """语义目录防漂移: catalog.generated.json 必须与 cube/schema/*.js +
+    registry.yaml 一致（gen_semantic_artifacts.py --check）。该产物是
+    guangdong_query_metrics 运行时 fail-closed 加载的成员白名单与语义来源。"""
+    status, detail = await _run_generator_check(
+        os.path.join("..", "semantic", "gen_semantic_artifacts.py"))
+    await record(pg, results, "contract", "semantic_catalog", status, detail)
+
+
 async def check_ods_fallback(pg, results):
     """ODS 兜底通道: 生成物防漂移 + agent_reader 授权完整性。
 
@@ -390,6 +402,7 @@ async def main() -> int:
         await check_heartbeat(pg, results)
         await check_contract_drift(pg, results)
         await check_graph_seed_drift(pg, results)
+        await check_semantic_catalog_drift(pg, results)
         await check_ods_fallback(pg, results)
         await check_mart_contract_coverage(pg, results)
         await check_sup_profile_coverage(pg, results)

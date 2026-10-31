@@ -49,6 +49,8 @@ data/
 !app/services/tenders/zhiliao_strategy.json
 !config/environment_chart_standards.json
 !config/geo_mappings.json
+# Generated semantic catalog consumed by guangdong_query_metrics (source-adjacent artifact).
+!app/tools/query/guangdong_cube_metrics/catalog.generated.json
 
 # Temporary cache
 *.png

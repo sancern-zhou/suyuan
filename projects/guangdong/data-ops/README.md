@@ -10,11 +10,12 @@ data-ops/
 │            （gen_tool_contract.py 生成后端工具 contract.txt）。
 ├── dbt/     mart 加工层 — guangdong_ods → guangdong_mart（6 个模型 / schema 数据测试）。
 │            sync-all = tag:frequent（小时级）；sync-daily = tag:daily（每日 02:30）。
-├── cube/    语义层 — Cube Core 0.35.x，口径唯一定义在 schema/*.js，REST 127.0.0.1:4611
-│            （江苏为 4610，同机共存错开端口）。
-└── semantic/ 语义注册中心 — registry.yaml 登记指标业务口径（分子/分母/粒度/适用范围/限制）；
-             查询工具返回的 semantic_context 由此生成；validate_registry.py 提交前校验；
-             gen_semantic_artifacts.py 生成 catalog.generated.yaml 并做漂移检测。
+├── cube/    语义层 — Cube Core 0.35.x，口径唯一定义在 schema/*.js（同时是查询成员
+│            唯一真相源），REST 127.0.0.1:4611（江苏为 4610，同机共存错开端口）。
+└── semantic/ 语义注册中心 — registry.yaml 登记指标业务口径（分子/分母/粒度/适用范围/
+             限制，精选维护）；gen_semantic_artifacts.py 把 schema 成员与 registry join 成
+             backend 工具加载的 catalog.generated.json 并做漂移检测（dq_check 每日核对）；
+             validate_registry.py 提交前语义校验。
 ```
 
 ## 数据流

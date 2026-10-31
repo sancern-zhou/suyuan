@@ -8,7 +8,7 @@ cube(`WorkOrder`, {
   sql: `select * from guangdong_mart.mart_work_order_analysis`,
 
   measures: {
-    count: { type: `count` },
+    count: { type: `count`, title: `工单量(全类型含作废,结论须声明口径)` },
     finishedCount: {
       type: `count`,
       filters: [{ sql: `${CUBE}.is_finish` }],
@@ -27,6 +27,7 @@ cube(`WorkOrder`, {
     overdueCount: {
       type: `count`,
       filters: [{ sql: `${CUBE}.is_overdue` }],
+      title: `超期工单数`,
     },
     overdueRate: {
       type: `number`,
@@ -41,6 +42,7 @@ cube(`WorkOrder`, {
     responseWithin2hCount: {
       type: `count`,
       filters: [{ sql: `${CUBE}.is_response_within_2h` }],
+      title: `2小时内到站故障工单数`,
     },
     responseWithin2hRate: {
       type: `number`,
@@ -55,6 +57,7 @@ cube(`WorkOrder`, {
     repeatFaultCount: {
       type: `count`,
       filters: [{ sql: `${CUBE}.is_repeat_fault` }],
+      title: `30天重复故障工单数`,
     },
     repeatFaultRate: {
       type: `number`,

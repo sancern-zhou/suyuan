@@ -118,11 +118,44 @@ def test_quality_state_exposes_agent_decision_boundary():
     assert quality_guidance("unexpected")["decision"] == "质量未知"
 
 
-def test_generated_semantic_index_keeps_registry_and_catalog_visible():
-    path = resolve_agent_path("projects/guangdong/data-ops/semantic/catalog.generated.yaml")
-    generated = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert len(generated["cubes"]) == len(CATALOG)
-    assert generated["cubes"]["WorkOrder"]["measures"]["overdueRate"]["denominator"] == "overdueEvaluable"
+def test_semantic_catalog_artifact_matches_generator():
+    """语义目录防漂移：catalog.generated.json 必须等于生成器当前产物
+    （cube/schema/*.js ⊕ registry.yaml 单一 join）。改口径后未重新生成 → 此测试红。"""
+    import json
+    import sys
+    from pathlib import Path
+    data_ops_semantic = (Path(__file__).resolve().parents[2]
+                         / "projects/guangdong/data-ops/semantic")
+    sys.path.insert(0, str(data_ops_semantic))
+    try:
+        import gen_semantic_artifacts
+    finally:
+        sys.path.pop(0)
+    deployed = resolve_agent_path(
+        "backend/app/tools/query/guangdong_cube_metrics/catalog.generated.json"
+    ).read_text(encoding="utf-8")
+    assert deployed == gen_semantic_artifacts.render()
+
+
+def test_semantic_catalog_artifact_covers_all_schema_members():
+    """产物成员完整性：六个 cube 全覆盖、关键口径字段来自 registry 叠加、
+    未登记成员回退 schema title。backend 不再持有手工 CATALOG（2026-10-31）。"""
+    import json
+    path = resolve_agent_path(
+        "backend/app/tools/query/guangdong_cube_metrics/catalog.generated.json")
+    generated = json.loads(path.read_text(encoding="utf-8"))
+    assert set(generated["cubes"]) == {
+        "WorkOrder", "AlarmNotify", "StationAlarmStatus",
+        "DeviceLifecycle", "InspectionTask", "Performance",
+    }
+    work_order = generated["cubes"]["WorkOrder"]
+    # registry 叠加：分子/分母业务口径必须保留
+    assert work_order["measures"]["overdueRate"]["denominator"] == "overdueEvaluable"
+    assert work_order["measures"]["count"]["name"] == "工单量"
+    # 未登记成员回退 schema title
+    assert work_order["measures"]["overdueCount"]["definition"] == "超期工单数"
+    # 维度来自 schema
+    assert work_order["dimensions"]["orderOvertime"]["title"].startswith("源系统超时标记")
 
 
 def test_phase1_cubes_registered_with_rate_denominators():
@@ -143,3 +176,22 @@ def test_phase1_marts_in_sql_whitelist():
               "mart_device_lifecycle_analysis", "mart_station_alarm_status",
               "sup_rf_common", "alm_alarm"):
         assert t in sql_tool_module.MART_TABLES, t
+
+
+def test_validate_registry_smoke_passes():
+    """提交前语义校验器自身可运行且当前仓库状态全绿（schema 解析、registry
+    ⊆ schema、率类分母、dataset 契约、产物防漂移）。"""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    script = root / "projects/guangdong/data-ops/semantic/validate_registry.py"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(root / "backend") + os.pathsep + env.get("PYTHONPATH", "")
+    proc = subprocess.run(
+        [sys.executable, str(script)],
+        capture_output=True, text=True, timeout=120, cwd=str(root / "backend"), env=env,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "SEMANTIC_REGISTRY_OK" in proc.stdout

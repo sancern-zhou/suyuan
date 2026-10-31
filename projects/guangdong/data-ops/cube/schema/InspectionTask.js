@@ -10,6 +10,7 @@ cube(`InspectionTask`, {
     finishedCount: {
       type: `count`,
       filters: [{ sql: `${CUBE}.is_finished` }],
+      title: `已完成任务项数`,
     },
     finishedRate: {
       type: `number`,
@@ -19,6 +20,7 @@ cube(`InspectionTask`, {
     overdueCount: {
       type: `count`,
       filters: [{ sql: `${CUBE}.is_overdue` }],
+      title: `超期任务项数(未完成且过计划结束日)`,
     },
     overdueRate: {
       type: `number`,
@@ -28,6 +30,7 @@ cube(`InspectionTask`, {
     toOrderCount: {
       type: `count`,
       filters: [{ sql: `${CUBE}.is_to_order` }],
+      title: `已转工单任务项数`,
     },
     toOrderRate: {
       type: `number`,
