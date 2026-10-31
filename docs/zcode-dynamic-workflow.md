@@ -155,3 +155,13 @@ SKILL.md 的方法论部分（fresh eyes、每发现一确认者、确定性门�
 与 ZCode 的语义差异：ZCode 的停驻在 driver 层、主 Agent 应答（run 后台化、主 Agent 空闲）；我们的主 Agent 在 inline 路径被工具调用阻塞，因此**应答方是用户**（WorkflowPanel 卡片），这也更贴合问数口径澄清的真实场景。挂起节点占住一个 governor 槽位（已知限制）。明确未做：durable 路径的持久化问答（用户离线→答案落库→续跑注入）、通知推送、主对话流渲染。
 
 移植验证：`tests/tools/agent_tools/test_escalate_tool.py`（预算/超时/作答/注入条件 4 例）+ `coordinator_policy_test.py` 补记档与快照往返 1 例；workflow 包全量 134 通过无回归。
+
+## 十一、第四轮移植：渐进交付 report_finding（2026-10-31）
+
+| ZCode 机制（出处） | 机制要点 | suyan 落点（本轮移植） |
+|---|---|---|
+| report 渐进交付（`dw/src/engine/engine-report.ts` + `dynamic-workflow-run-observation.ts` reportsOf） | 子 Agent `report(item, tag)` 按条发布中间发现：落持久行（一次写入恒 completed）、事件扇出、去重、终态通知无论成败都从 journal 捞回（salvage 的本体）；有界（单条字节/条数/run 级字节，超限 failRun） | `backend/app/tools/agent_tools/report_finding_tool.py`：`report_finding(content, tag?)` 裸类，由 `build_finding_tool` 注入工作流节点子 Agent（agent_runtime 白名单三处与 submit_result/escalate 同组豁免）。coordinator `record_finding`：内容哈希去重、每节点 ≤20 条/单条 ≤1000 字符/总字节 ≤256KB（超限拒绝）、journal `node.finding` 即时落账（兼停摆观测进展信号）、**快照写 3s 防抖合并**（避免每条一次全量 metadata 持久化）。settle 兜底：未调用工具的节点从 result_envelope.findings 一次性补齐（成功与失败路径都做）。消费端：salvage 条目携带 findings（失败不丢）、重试上下文带最近 10 条（子 Agent 修正时站在已有发现上）、result_data 加 node_findings 摘要（失败节点优先）、`_node_history` 返回 findings 字段、WorkflowPanel 节点审查视图实时发现列表 + 节点行计数徽标 |
+
+与 ZCode 的差异：ZCode 的 report 由编排脚本发布、供主 Agent 与看板消费；我们由节点子 Agent 显式发布，运行中受益方是前端（实时）与重试/失败抢救，父 Agent 本体在 settle 后经 compact 视图消费（工具阻塞语义决定运行中无法喂父 LLM 上下文）。
+
+移植验证：`tests/tools/agent_tools/test_report_finding_tool.py`（上报/去重/上限/注入 5 例）+ `coordinator_policy_test.py` 补去重边界与 salvage、settle 兜底、快照往返 3 例；workflow 包全量 140 通过无回归。

@@ -700,6 +700,17 @@ class RunAgentWorkflowTool(LLMTool):
                             + "\n".join(f"- {path}" for path in delivered)
                             + "\n请核对剩余交付物并继续完成。\n"
                         )
+                    findings = retry_context.get("findings") or []
+                    if findings:
+                        context_text += (
+                            "上一轮已上报的关键发现（已被保留，勿重复上报，直接沿用）：\n"
+                            + "\n".join(
+                                f"- [{item.get('tag') or '发现'}] {item.get('content')}"
+                                for item in findings
+                                if isinstance(item, Mapping) and item.get("content")
+                            )
+                            + "\n"
+                        )
                 result = await sub_agent_tool.execute(
                     context=context,
                     target_mode=payload["target_mode"],
@@ -723,6 +734,9 @@ class RunAgentWorkflowTool(LLMTool):
                     # 升级提问（escalate）：子 Agent 阻塞性问题挂起本节点，
                     # 记档进 coordinator 快照推给前端；用户作答后原地续跑。
                     _escalation_observer=coordinator.record_escalation,
+                    # 渐进发现（report_finding）：中间结论实时进 journal/快照，
+                    # 前端实时可见，节点失败后随 salvage 保留。
+                    _finding_observer=coordinator.record_finding,
                 )
                 violations = (result.get("data") or {}).get("resource_contract_violations") if isinstance(result, Mapping) else None
                 if violations:
@@ -836,6 +850,13 @@ class RunAgentWorkflowTool(LLMTool):
                 "node_usage": snapshot.get("node_usage", {}),
                 "quota_pause": dict(quota_pause) if isinstance(quota_pause, Mapping) else None,
                 "delivery": snapshot.get("delivery", {}),
+                # 渐进发现摘要：失败/被阻断节点的发现优先（envelope 可能缺失），
+                # 供父 Agent 在最终视图组织"抢救到了什么"
+                "node_findings": {
+                    task_id: findings[-5:]
+                    for task_id, findings in (snapshot.get("node_findings") or {}).items()
+                    if findings
+                },
                 "node_statuses": {task_id: node["status"] for task_id, node in snapshot["graph"].items()},
                 "node_decisions": snapshot.get("node_decisions", {}),
                 "node_input_gaps": snapshot.get("node_input_gaps", {}),

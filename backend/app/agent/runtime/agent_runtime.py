@@ -1261,7 +1261,7 @@ class AgentRuntime:
         executor_registry = getattr(executor, "tool_registry", None) or {}
         # escalate（升级提问）与 submit_result 同等待遇：由 call_sub_agent 动态
         # 注入 child registry，不在模式白名单里，必须保持全阶段可见。
-        for dynamic_tool_name in ("submit_result", "escalate"):
+        for dynamic_tool_name in ("submit_result", "escalate", "report_finding"):
             if dynamic_tool_name in executor_registry:
                 names.append(dynamic_tool_name)
         workflow_definition = get_mode_workflow(state.mode)
@@ -1274,7 +1274,7 @@ class AgentRuntime:
             # 否则带 result_schema 的问数节点无法结构化交付。
             names = [
                 name for name in names
-                if name in phase_tools or name in {"submit_result", "escalate"}
+                if name in phase_tools or name in {"submit_result", "escalate", "report_finding"}
             ]
         elif not self.config.extra_tool_names and state.mode not in {"assistant", "office"}:
             return None
@@ -1294,7 +1294,7 @@ class AgentRuntime:
         # _allowed_tool_names_for_state），全阶段放行。
         blocked = [
             name for name in requested
-            if name not in allowed and name not in {"submit_result", "escalate"}
+            if name not in allowed and name not in {"submit_result", "escalate", "report_finding"}
         ]
         if not blocked:
             return None

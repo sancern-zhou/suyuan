@@ -319,3 +319,100 @@ def test_escalation_lifecycle_recorded_in_snapshot_and_journal():
         assert restored.snapshot()["pending_escalations"]["e1"]["status"] == "resolved"
 
     asyncio.run(run())
+
+
+def test_progressive_findings_dedupe_bounds_and_salvage():
+    """渐进发现：去重入账、上限拒绝、失败节点 salvage 携带发现。"""
+
+    async def run():
+        journal = FakeJournal()
+
+        async def execute(node, dependencies, attempt, retry_context=None):
+            # 执行中上报两条发现（其中一条重复），随后失败
+            coordinator.record_finding({"task_id": "air", "content": "PM2.5 均值 58，同比 +12%", "tag": "数值"})
+            coordinator.record_finding({"task_id": "air", "content": "PM2.5 均值 58，同比 +12%", "tag": "数值"})
+            coordinator.record_finding({"task_id": "air", "content": "两站点数据缺失", "tag": "异常"})
+            return {"success": False, "summary": "校验未通过"}
+
+        coordinator = WorkflowCoordinator(
+            {"workflow_id": "finding-1", "nodes": [{"task_id": "air", "max_attempts": 1}]},
+            executor=execute,
+            journal=journal,
+        )
+        result = await coordinator.run()
+        assert result["status"] == "failed"
+        # 去重后仅 2 条
+        findings = result["node_findings"]["air"]
+        assert len(findings) == 2
+        assert {item["tag"] for item in findings} == {"数值", "异常"}
+        # journal 两条 node.finding
+        assert journal.event_types().count("node.finding") == 2
+        # salvage 携带发现（失败不丢工作量）
+        salvage = result["delivery"]["salvage"]
+        assert len(salvage) == 1
+        assert len(salvage[0]["findings"]) == 2
+
+    asyncio.run(run())
+
+
+retry_context_captured = None
+
+
+def test_settle_fallback_absorbs_envelope_findings():
+    """未调用 report_finding 的节点：settle 时从结果信封 findings 补齐。"""
+
+    async def run():
+        async def execute(node, dependencies, attempt, retry_context=None):
+            return {
+                "status": "success",
+                "data": {
+                    "result_envelope": {
+                        "status": "completed",
+                        "findings": ["全市均值 58 μg/m³", {"content": "NO2 同比下降 5%"}],
+                    }
+                },
+            }
+
+        coordinator = WorkflowCoordinator(
+            {
+                "workflow_id": "finding-2",
+                "nodes": [
+                    {"task_id": "a", "target_mode": "query", "goal": "取数"},
+                    {"task_id": "b", "target_mode": "query", "goal": "研判", "dependencies": ["a"]},
+                ],
+            },
+            executor=execute,
+        )
+        result = await coordinator.run()
+        assert result["status"] == "succeeded"
+        contents = {item["content"] for item in result["node_findings"]["a"]}
+        assert "全市均值 58 μg/m³" in contents
+        assert "NO2 同比下降 5%" in contents
+
+    asyncio.run(run())
+
+
+def test_findings_snapshot_roundtrip():
+    """快照往返：node_findings 恢复后仍在（含重试上下文路径）。"""
+
+    async def run():
+        async def execute(node, dependencies, attempt, retry_context=None):
+            global retry_context_captured
+            if attempt == 1:
+                coordinator.record_finding({"task_id": "air", "content": "口径按 HJ633", "tag": "口径"})
+                return {"success": False, "summary": "校验未通过"}
+            retry_context_captured = retry_context
+            return {"status": "success"}
+
+        coordinator = WorkflowCoordinator(
+            {"workflow_id": "finding-3", "nodes": [{"task_id": "air", "max_attempts": 2}]},
+            executor=execute,
+        )
+        result = await coordinator.run()
+        assert result["status"] == "succeeded"
+        assert result["node_findings"]["air"][0]["content"] == "口径按 HJ633"
+        # 重试上下文带上了上轮发现
+        assert retry_context_captured is not None
+        assert retry_context_captured["findings"][0]["content"] == "口径按 HJ633"
+
+    asyncio.run(run())

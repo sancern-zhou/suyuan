@@ -32,6 +32,13 @@
                 <span v-else class="progress-complete" aria-hidden="true">✓</span>
                 <strong>{{ nodeHistory.progress?.label || (isInspectionRunning ? '正在分析任务' : '分析已结束') }}</strong>
               </div>
+              <ol v-if="nodeFindings.length" class="finding-list" aria-label="实时发现">
+                <li v-for="(item, index) in nodeFindings" :key="index">
+                  <span class="finding-tag" aria-hidden="true">◆</span>
+                  <span class="finding-main"><em v-if="item.tag">{{ item.tag }}</em>{{ item.content }}</span>
+                  <time v-if="item.at">{{ formatTime(item.at * 1000) }}</time>
+                </li>
+              </ol>
               <ol v-if="toolActivities.length" class="tool-activity-list">
                 <li v-for="item in toolActivities" :key="item.key" :class="`activity-${item.status}`">
                   <span class="activity-icon" aria-hidden="true">{{ item.status === 'running' ? '·' : item.status === 'failed' ? '×' : '✓' }}</span>
@@ -88,7 +95,7 @@
                   <button v-for="(node, nodeIndex) in stage" :key="node.task_id" type="button" class="workflow-node-row" :class="`node-${statusMeta(node.status).key}`" @click="selectNode(node.task_id)">
                     <span class="step-index">{{ stageIndex + 1 }}{{ stage.length > 1 ? String.fromCharCode(65 + nodeIndex) : '' }}</span>
                     <span class="node-main"><span class="node-title"><span class="node-status" aria-hidden="true"></span><strong>{{ nodeTitle(node) }}</strong><small>{{ modeLabel(node.payload?.target_mode) }}</small></span><span class="node-summary">{{ nodeGoal(node) }}</span><span class="node-dependencies">{{ dependencyLabel(node) }}</span></span>
-                    <span class="node-result"><strong>{{ statusMeta(node.status).label }}</strong><small>{{ nodeDuration(node.task_id) }}</small></span><span class="row-chevron" aria-hidden="true">›</span>
+                    <span class="node-result"><strong>{{ statusMeta(node.status).label }}</strong><small>{{ nodeDuration(node.task_id) }}</small><small v-if="node.findings?.length" class="findings-badge">发现 {{ node.findings.length }}</small></span><span class="row-chevron" aria-hidden="true">›</span>
                   </button>
                 </div>
               </section>
@@ -123,8 +130,10 @@ const nodeCount = snapshot => Object.keys(snapshot?.graph || snapshot?.definitio
 const selectedStatus = computed(() => selectedWorkflow.value?.job_status || selectedWorkflow.value?.snapshot?.status || 'unknown')
 const nodes = computed(() => {
   const snapshot = selectedWorkflow.value?.snapshot || {}; const graph = snapshot.graph || {}; const definitions = snapshot.definition?.nodes || []; const definitionMap = new Map(definitions.map(node => [node.task_id, node]))
-  return Object.entries(graph).map(([taskId, node]) => ({ ...definitionMap.get(taskId), ...node, task_id: taskId, error: snapshot.node_errors?.[taskId], lineage: snapshot.node_lineage?.[taskId] }))
+  return Object.entries(graph).map(([taskId, node]) => ({ ...definitionMap.get(taskId), ...node, task_id: taskId, error: snapshot.node_errors?.[taskId], lineage: snapshot.node_lineage?.[taskId], findings: snapshot.node_findings?.[taskId] || [] }))
 })
+// 当前审查节点的渐进发现（实时，来自父快照 node_findings）
+const nodeFindings = computed(() => (nodeHistory.value?.findings || []).slice().reverse())
 const selectedNode = computed(() => nodes.value.find(node => node.task_id === selectedNodeId.value) || null)
 const nodeStages = computed(() => {
   const remaining = new Map(nodes.value.map(node => [node.task_id, node])); const placed = new Set(); const stages = []
@@ -254,6 +263,7 @@ onMounted(() => { if (props.sessionId) refresh() }); onBeforeUnmount(() => { sto
 .subagent-chat { padding: 18px; border-bottom: 1px solid #e3e8ee; background: #f7f9fb; }.conversation-list { display: grid; gap: 14px; }.conversation-message { max-width: 94%; padding: 12px; border: 1px solid #dfe6ed; border-radius: 7px; background: #fff; }.conversation-message.role-user { justify-self: end; width: calc(100% - 22px); background: #eef3f7; }.conversation-message.role-assistant { justify-self: start; }.message-author strong { color: #3d5066; font-size: 11px; }.message-author time { color: #8a98a8; font-size: 9px; }.message-content { margin-top: 8px; overflow-wrap: anywhere; color: #34485f; font-size: 12px; line-height: 1.65; white-space: pre-wrap; }
 .message-content :deep(.markdown-renderer > div > :first-child) { margin-top: 0; }.message-content :deep(.markdown-renderer > div > :last-child) { margin-bottom: 0; }
 .process-message { overflow: hidden; border: 1px solid #d9e2ec; border-radius: 7px; background: #fff; }.process-message.running { border-color: #bad6ef; }.process-heading { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border-bottom: 1px solid #e6ebf1; }.agent-mark { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: #284e72; color: #fff; font-size: 10px; font-weight: 700; }.process-title { display: grid; gap: 1px; min-width: 0; flex: 1; }.process-title strong { color: #34485f; font-size: 11px; }.process-title small { color: #8491a0; font-size: 9px; }.live-indicator { display: inline-flex; align-items: center; gap: 5px; color: #2778c9; font-size: 9px; }.live-indicator i { width: 6px; height: 6px; border-radius: 50%; background: #2778c9; animation: live-pulse 1.4s ease-in-out infinite; }.progress-line { display: flex; align-items: center; gap: 8px; padding: 11px 12px 7px; color: #405269; font-size: 11px; }.progress-spinner { width: 12px; height: 12px; border: 2px solid #cfe0f1; border-top-color: #2778c9; border-radius: 50%; animation: progress-spin .9s linear infinite; }.progress-complete { color: #16845b; font-weight: 700; }.tool-activity-list { margin: 3px 12px 9px 26px; padding: 0; border-left: 1px solid #dce4ec; list-style: none; }.tool-activity-list li { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 7px; min-height: 39px; margin-left: -10px; color: #526173; }.activity-icon { display: grid; place-items: center; width: 19px; height: 19px; border: 1px solid #cad6e2; border-radius: 50%; background: #fff; color: #16845b; font-size: 10px; font-weight: 700; }.activity-running .activity-icon { border-color: #9fc6e9; color: #2778c9; font-size: 16px; }.activity-failed .activity-icon { border-color: #efb8b8; color: #c63e3e; }.activity-main { display: grid; gap: 2px; min-width: 0; }.activity-main strong { overflow: hidden; color: #405269; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.activity-main small, .tool-activity-list time { color: #8491a0; font-size: 9px; }.tool-activity-list time { white-space: nowrap; }.process-empty { margin: 2px 12px 11px 40px; color: #78879a; font-size: 10px; }.process-summary { padding: 8px 12px; border-top: 1px solid #edf1f5; color: #738296; font-size: 9px; }.history-empty { margin: 12px 0 0; color: #8290a0; font-size: 11px; }.more-button { margin: 0 12px 10px; }.lineage-list { display: grid; gap: 6px; margin-top: 11px; color: #526173; font-size: 11px; }.lineage-list span { overflow-wrap: anywhere; }
+.finding-list { margin: 3px 12px 9px 26px; padding: 0; border-left: 1px solid #bcd6ee; list-style: none; }.finding-list li { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: start; gap: 7px; padding: 4px 0; color: #3c5470; }.finding-tag { color: #2778c9; font-size: 10px; }.finding-main { overflow-wrap: anywhere; font-size: 10px; line-height: 1.55; }.finding-main em { margin-right: 5px; padding: 1px 5px; border-radius: 4px; background: #e4f1ff; color: #2169a8; font-size: 9px; font-style: normal; }.finding-list time { color: #8491a0; font-size: 9px; white-space: nowrap; }.findings-badge { color: #2169a8; }
 @keyframes progress-spin { to { transform: rotate(360deg); } }
 @keyframes live-pulse { 50% { opacity: .35; } }
 @media (max-width: 640px) { .workflow-detail, .review-section, .subagent-chat { padding: 12px; }.workflow-node-row { grid-template-columns: 26px minmax(0, 1fr) 12px; }.node-result { display: none; }.review-heading { padding: 16px 12px; } }

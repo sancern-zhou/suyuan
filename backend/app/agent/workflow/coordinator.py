@@ -255,6 +255,11 @@ class WorkflowCoordinator:
         # 升级提问（对齐 ZCode escalation）：子 Agent 挂起等待用户回答的问题
         # 记档（raised/resolved/timeout 状态流转），随快照推给前端轮询。
         self.pending_escalations: Dict[str, Dict[str, Any]] = {}
+        # 渐进发现（对齐 ZCode report）：节点执行中的中间结论，实时进 journal
+        # 与前端；节点失败时已上报的发现随 salvage 保留，不随节点倒下丢失。
+        self.node_findings: Dict[str, List[Dict[str, Any]]] = {}
+        self._findings_flush_task: Optional[asyncio.Task] = None
+        self._findings_dirty = False
         self.status = "queued"
         self._persistence_ready = False
         self.cancel_requested = False
@@ -397,6 +402,19 @@ class WorkflowCoordinator:
             if self._stall_watch is not None:
                 await self._stall_watch.stop()
                 self._stall_watch = None
+            # 渐进发现的防抖快照写：run 结束强制落一次
+            if self._findings_flush_task is not None:
+                self._findings_flush_task.cancel()
+                try:
+                    await self._findings_flush_task
+                except asyncio.CancelledError:
+                    pass
+                self._findings_flush_task = None
+                self._findings_dirty = False
+                try:
+                    self._persist_snapshot({})
+                except Exception as exc:
+                    logger.warning("workflow_findings_flush_failed", error=str(exc))
             # Parent request cancellation must not leave child tasks running.
             for task in self._active_tasks.values():
                 task.cancel()
@@ -428,18 +446,22 @@ class WorkflowCoordinator:
                      and (run := self.runtime.find_run(task_id=node.task_id)) is not None
                      and run.attempt < run.max_attempts and self.node_retryable.get(node.task_id, True)] if hasattr(self, "runtime") and not self.budget_state.get("exhausted") else []
         # 失败抢救（对齐 ZCode salvage）：失败/被阻断节点在倒下前已落盘的中间
-        # 产物照常列出——"死在第 12 个节点的 run 仍做完了前 11 个节点的活"，
-        # 失败也不丢工作量。
+        # 产物与已上报的发现照常列出——"死在第 12 个节点的 run 仍做完了前 11
+        # 个节点的活"，失败也不丢工作量。
         salvage = [
             {
                 "task_id": node.task_id,
                 "status": node.status,
                 "error": str(self.node_errors.get(node.task_id, ""))[:300],
                 "delivered_files": (self.node_progress.get(node.task_id) or {}).get("delivered_files") or [],
+                "findings": (self.node_findings.get(node.task_id) or [])[:10],
             }
             for node in self._graph_nodes()
             if node.status in {"failed", "blocked"}
-            and (self.node_progress.get(node.task_id) or {}).get("delivered_files")
+            and (
+                (self.node_progress.get(node.task_id) or {}).get("delivered_files")
+                or self.node_findings.get(node.task_id)
+            )
         ]
         return {"deliverable": self.status in {"succeeded", "partial"}, "complete": self.status == "succeeded",
                 "available_nodes": sorted(self.node_results), "gaps": gaps,
@@ -678,6 +700,10 @@ class WorkflowCoordinator:
             "node_retryable": dict(self.node_retryable),
             "node_usage": dict(self.node_usage),
             "node_failure_policies": dict(self.node_failure_policies),
+            "node_findings": {
+                key: [dict(item) for item in value]
+                for key, value in self.node_findings.items()
+            },
             "quota_pause": dict(self.quota_pause) if self.quota_pause else None,
             "pending_escalations": {
                 key: dict(value) for key, value in self.pending_escalations.items()
@@ -739,7 +765,8 @@ class WorkflowCoordinator:
                 max_iterations=effective_node.max_iterations,
                 timeout_seconds=effective_node.timeout_seconds,
             )
-        # 重试续用上次的子会话：带上失败原因与已交付进度，子 Agent 在已有工作基础上修正
+        # 重试续用上次的子会话：带上失败原因、已交付进度与已上报发现，
+        # 子 Agent 在已有工作基础上修正
         retry_context = None
         if attempt > 1 or task_id in self.node_sessions:
             previous_error = self.node_errors.get(task_id)
@@ -747,6 +774,7 @@ class WorkflowCoordinator:
                 "session_id": self.node_sessions.get(task_id),
                 "error": previous_error,
                 "progress": self.node_progress.get(task_id),
+                "findings": (self.node_findings.get(task_id) or [])[-10:],
             }
             logger.info(
                 "workflow_retry_reuses_child_session",
@@ -803,6 +831,10 @@ class WorkflowCoordinator:
                 ][:20]
                 if delivered:
                     self.node_progress[task_id] = {"delivered_files": delivered}
+            # 渐进发现兜底（对齐 ZCode report 的 salvage 语义）：子 Agent 未调用
+            # report_finding 时，从结果信封的 findings 一次性补齐，保证每个节点
+            # 都有最低限度的发现记录（成功与失败路径都做）。
+            self._absorb_envelope_findings(task_id, result if isinstance(result, Mapping) else None)
             if self._result_failed(result):
                 raise RuntimeError(self._result_error(result))
             if node.output_contract is not None:
@@ -954,6 +986,11 @@ class WorkflowCoordinator:
             str(key): dict(value)
             for key, value in (raw_escalations or {}).items()
             if isinstance(value, Mapping)
+        }
+        self.node_findings = {
+            str(key): [dict(item) for item in value if isinstance(item, Mapping)]
+            for key, value in (snapshot.get("node_findings") or {}).items()
+            if isinstance(value, list)
         }
         snapshot_definition_hash = str(snapshot.get("definition_hash") or "")
         if snapshot_definition_hash and snapshot_definition_hash != self.definition_hash:
@@ -1108,6 +1145,78 @@ class WorkflowCoordinator:
             self._persist_snapshot({})
         except Exception as exc:  # noqa: BLE001 - 记档失败不影响执行
             logger.warning("workflow_escalation_record_failed", error=str(exc))
+
+    # 渐进发现边界（对齐 ZCode report 上限语义）：每节点条数 / 单条字符 / 总字节
+    FINDINGS_MAX_PER_NODE = 20
+    FINDING_MAX_CHARS = 1000
+    FINDINGS_MAX_BYTES = 256 * 1024
+    FINDINGS_FLUSH_DEBOUNCE_SECONDS = 3.0
+
+    def record_finding(self, info: Mapping[str, Any]) -> None:
+        """子 Agent 上报一条渐进发现（fail-soft）：去重入账 + journal + 防抖快照。
+
+        ReportFindingTool 经 call_sub_agent 的 `_finding_observer` 回调；
+        journal 即时落账（廉价单行 INSERT，也是停摆观测的进展信号），快照写
+        合并到防抖窗口，避免高频发现打爆父会话 metadata 持久化。
+        """
+        task_id = str(info.get("task_id") or "")
+        content = str(info.get("content") or "").strip()[: self.FINDING_MAX_CHARS]
+        if not task_id or not content:
+            return
+        findings = self.node_findings.setdefault(task_id, [])
+        fingerprint = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+        if any(item.get("_fp") == fingerprint for item in findings):
+            return
+        if len(findings) >= self.FINDINGS_MAX_PER_NODE:
+            return
+        findings.append({
+            "content": content,
+            "tag": str(info.get("tag") or "").strip()[:40] or None,
+            "at": info.get("at") or time.time(),
+            "_fp": fingerprint,
+        })
+        while (
+            sum(len(str(item.get("content") or "").encode("utf-8")) for item in findings)
+            > self.FINDINGS_MAX_BYTES
+            and len(findings) > 1
+        ):
+            findings.pop(0)
+        self._journal_event("node.finding", task_id=task_id, content=content[:300], tag=info.get("tag"))
+        self._schedule_findings_flush()
+
+    def _absorb_envelope_findings(self, task_id: str, result: Any) -> None:
+        """节点 settle 时从结果信封 findings 补齐渐进发现（兜底，去重）。"""
+        if not isinstance(result, Mapping):
+            return
+        data = result.get("data")
+        if not isinstance(data, Mapping):
+            return
+        envelope = data.get("result_envelope")
+        if not isinstance(envelope, Mapping):
+            return
+        for item in (envelope.get("findings") or [])[: self.FINDINGS_MAX_PER_NODE]:
+            text = str(item.get("content") if isinstance(item, Mapping) else item or "").strip()
+            if text:
+                self.record_finding({"task_id": task_id, "content": text, "tag": "交付"})
+
+    def _schedule_findings_flush(self) -> None:
+        """防抖快照写：3 秒窗口内的多条发现合并为一次全量持久化。"""
+        self._findings_dirty = True
+        if self._findings_flush_task is not None and not self._findings_flush_task.done():
+            return
+
+        async def flush() -> None:
+            try:
+                await asyncio.sleep(self.FINDINGS_FLUSH_DEBOUNCE_SECONDS)
+                if self._findings_dirty:
+                    self._findings_dirty = False
+                    self._persist_snapshot({})
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("workflow_findings_flush_failed", error=str(exc))
+
+        self._findings_flush_task = asyncio.create_task(flush())
 
     def _graph_nodes(self):
         return [self.graph._nodes[node.task_id] for node in self.definition.nodes]

@@ -131,6 +131,12 @@ def _node_history(snapshot: dict[str, Any], task_id: str, child: Any | None, aft
         "answer": next((str(message.get("content") or "") for message in reversed(child.conversation_history)
                         if message.get("role") == "assistant"), "") if child is not None else "",
         "node_events": events,
+        # 渐进发现（父快照 node_findings：执行中实时更新，子会话建立前也有数据）
+        "findings": [
+            {"content": item.get("content"), "tag": item.get("tag"), "at": item.get("at")}
+            for item in (snapshot.get("node_findings") or {}).get(task_id) or []
+            if isinstance(item, dict) and item.get("content")
+        ][-20:],
         "child_events": [{"sequence": int(event.get("sequence") or 0),
                           "type": str(event.get("event_type") or "unknown"),
                           "status": event.get("status"), "timestamp": event.get("timestamp")}

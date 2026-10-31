@@ -135,6 +135,15 @@ def build_escalation_tool(workflow_run, effective_task_id, tool_executor, observ
     )
 
 
+def build_finding_tool(effective_task_id, observer):
+    """工作流节点的渐进发现上报工具构造；无观察者返回 None。"""
+    if observer is None:
+        return None
+    from app.tools.agent_tools.report_finding_tool import ReportFindingTool
+
+    return ReportFindingTool(task_id=str(effective_task_id), on_finding=observer)
+
+
 class CallSubAgentTool(LLMTool):
     """
     调用子Agent的工具（双向通用）
@@ -432,6 +441,7 @@ class CallSubAgentTool(LLMTool):
         _input_contracts: Optional[List[Dict[str, Any]]] = None,
         _on_session_started: Optional[Callable[[str], None]] = None,
         _escalation_observer: Optional[Callable[[Dict[str, Any]], None]] = None,
+        _finding_observer: Optional[Callable[[Dict[str, Any]], None]] = None,
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
         """
@@ -987,6 +997,19 @@ class CallSubAgentTool(LLMTool):
                     "可直接回答，并附上各候选口径的后果差异）。提问会挂起当前任务等待回答；"
                     "次数有限，能推断的问题不要问；拿到答案后严格按答案执行，未获回答则按"
                     "指引标注假设后继续。\n"
+                )
+            # 渐进发现（report_finding）：执行中把关键中间结论按条上报，实时
+            # 展示给用户；节点失败时已上报的发现仍被保留（salvage）。
+            finding_tool = build_finding_tool(effective_task_id, _finding_observer)
+            if finding_tool is not None:
+                child_registry["report_finding"] = finding_tool
+                child_request_prompt = (
+                    child_request_prompt.rstrip()
+                    + "\n\n## 渐进发现协议\n"
+                    + "得到决定性中间结论时（关键数值/占比、口径或范围决策、数据异常与"
+                    "缺失），随手调用 `report_finding` 上报（每条一句话、含具体数值与"
+                    "口径）。只报决定性内容，不要报过程流水；条数有限，最终结论仍以 "
+                    "submit_result 交付。\n"
                 )
             iteration_limit = _resolve_child_max_iterations(target_mode, max_iterations)
             sub_agent = ReActAgent(
