@@ -41,25 +41,52 @@ def test_project_alarms_keeps_real_api_fields():
     }]
 
 
-def test_station_fault_diagnosis_exposes_only_read_only_evidence_and_knowledge_tools():
-    assert get_tool_order("station_fault_diagnosis") == [
-        "jiangsu_smart_event_workspace",
-        "knowledge_qa_workflow",
-        "knowledge_document_reader",
-        "jiangsu_fetch_station_data",
-        "jiangsu_fetch_station_directory",
-        "jiangsu_fetch_alarm_records",
-        "jiangsu_fetch_station_alarm_logs",
-        "jiangsu_fetch_fault_work_orders",
-        "jiangsu_fetch_auto_inspection",
-        "jiangsu_fetch_qc_task_history",
-        "jiangsu_fetch_qc_task_status",
-        "jiangsu_fetch_qc_run_logs",
-        "jiangsu_fetch_qc_monitoring_curve",
-        "jiangsu_query_operations_graph",
-        "knowledge_graph_query",
-        "create_report_package",
-    ]
+# 2026-10-25 对齐生产白名单：该模式自 2026-08 站房故障诊断自动化起逐步放开文件读写、
+# 受控 SQL（mart/Cube）、派单等生产工具（project.yaml 是唯一真相），早已不只读。
+# 清单逐项钉死，防误改；项目上下文自备（不依赖环境变量）。
+STATION_FAULT_DIAGNOSIS_TOOLS = [
+    "read_file",
+    "edit_file",
+    "write_file",
+    "knowledge_qa_workflow",
+    "knowledge_document_reader",
+    "jiangsu_fetch_station_data",
+    "jiangsu_fetch_station_directory",
+    "jiangsu_fetch_alarm_records",
+    "jiangsu_smart_event_workspace",
+    "jiangsu_fetch_station_alarm_logs",
+    "jiangsu_fetch_fault_work_orders",
+    "jiangsu_fetch_fault_work_order_detail",
+    "jiangsu_fetch_auto_inspection",
+    "jiangsu_fetch_qc_task_history",
+    "jiangsu_fetch_qc_task_status",
+    "jiangsu_fetch_qc_run_logs",
+    "jiangsu_fetch_qc_monitoring_curve",
+    "jiangsu_query_operations_graph",
+    "knowledge_graph_query",
+    "execute_jiangsu_mart_sql",
+    "jiangsu_query_metrics",
+    "jiangsu_prepare_fault_work_order",
+    "create_report_package",
+    "execute_python",
+]
+
+
+def test_station_fault_diagnosis_manifest_declares_whitelist():
+    from app.project_config.loader import load_project_context
+
+    context = load_project_context("jiangsu-ops", repo_root=Path(__file__).resolve().parents[2])
+    assert (
+        context.manifest.backend.agent_mode_tools["station_fault_diagnosis"]
+        == STATION_FAULT_DIAGNOSIS_TOOLS
+    )
+
+
+def test_station_fault_diagnosis_registry_serves_whitelist(monkeypatch):
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "project_id", "jiangsu-ops")
+    assert get_tool_order("station_fault_diagnosis") == STATION_FAULT_DIAGNOSIS_TOOLS
 
 
 def _ods_stub(tables):
