@@ -157,6 +157,22 @@
       <slot name="management-panels"></slot>
     </div>
 
+    <!-- 后台委派状态横幅：运行中/已完成（无需时长，右侧面板可见 DAG 进度） -->
+    <div
+      v-if="!showManagementPanel && backgroundDelegation"
+      class="delegation-status-banner"
+      :class="backgroundDelegation.phase === 'running' ? 'is-running' : 'is-done'"
+      role="status"
+    >
+      <span class="delegation-status-dot" aria-hidden="true"></span>
+      <template v-if="backgroundDelegation.phase === 'completed'">后台任务已完成</template>
+      <template v-else>
+        后台任务运行中<template
+          v-if="(backgroundDelegation.runs || []).some(run => (run.goal || '').trim())"
+        >：{{ (backgroundDelegation.runs || []).map(run => (run.goal || '').trim()).filter(Boolean).join('、') }}</template>
+      </template>
+    </div>
+
     <!-- 消息列表 -->
     <ReActMessageList
       v-show="!showManagementPanel"
@@ -245,6 +261,10 @@ const props = defineProps({
     default: () => []
   },
   pendingInteraction: {
+    type: Object,
+    default: null
+  },
+  backgroundDelegation: {
     type: Object,
     default: null
   },
@@ -526,6 +546,43 @@ defineExpose({
 </script>
 
 <style scoped>
+.delegation-status-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 20px 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  border: 1px solid rgba(64, 128, 255, 0.25);
+  background: rgba(64, 128, 255, 0.08);
+  color: #2b5fd9;
+}
+
+.delegation-status-banner.is-done {
+  border-color: rgba(82, 196, 26, 0.3);
+  background: rgba(82, 196, 26, 0.08);
+  color: #389e0d;
+}
+
+.delegation-status-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.delegation-status-banner.is-running .delegation-status-dot {
+  animation: delegation-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes delegation-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
 .conversation-actions {
   display: flex;
   align-items: center;

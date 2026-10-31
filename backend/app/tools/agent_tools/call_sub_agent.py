@@ -72,14 +72,14 @@ AgentMode = Literal[
 _DEFAULT_CHILD_MAX_ITERATIONS = {
     # 计算密集型专家任务（聚合、分箱、相关性）在 15-20 轮内常常收不完，
     # 适度放宽；工作流重试还会在此基础上自动扩容（见 coordinator）。
-    "expert_meteorology": 20,
-    "expert_analysis": 28,
+    "expert_meteorology": 40,
+    "expert_analysis": 40,
     "expert": 40,
-    # 固定问数工作流由运行时限制为最多四轮。
-    "query_monitoring": 4,
-    "query_monitoring_station": 4,
-    "query_monitoring_city": 4,
-    "query_forecast": 4,
+    # 固定问数工作流由运行时限制为阶段预算之和（acquire 4 + normalize 15 + deliver 1）。
+    "query_monitoring": 20,
+    "query_monitoring_station": 20,
+    "query_monitoring_city": 20,
+    "query_forecast": 20,
 }
 
 
@@ -108,6 +108,40 @@ def ensure_structured_delivery_schema(target_mode: str, result_schema):
     from app.agent.workflow.protocol import EXPERT_ANALYSIS_RESULT_SCHEMA
 
     return deepcopy(EXPERT_ANALYSIS_RESULT_SCHEMA)
+
+
+def build_escalation_tool(workflow_run, effective_task_id, tool_executor, observer):
+    """工作流节点的升级提问工具构造；非工作流上下文返回 None。
+
+    提问记录挂在父会话（用户所在会话）上，resolve API 按它校验归属。
+    预算与超时取 settings（agent_escalation_max_per_node / timeout_seconds）。
+    """
+    if workflow_run is None or observer is None:
+        return None
+    from app.tools.agent_tools.escalate_tool import EscalateTool
+    from config.settings import settings
+
+    parent_session_id = (
+        getattr(getattr(tool_executor, "memory_manager", None), "session_id", None)
+        or getattr(tool_executor, "session_id", None)
+    )
+    return EscalateTool(
+        session_id=parent_session_id,
+        workflow_id=str(workflow_run.task_id),
+        task_id=str(effective_task_id),
+        on_escalation=observer,
+        max_escalations=settings.agent_escalation_max_per_node,
+        timeout_seconds=settings.agent_escalation_timeout_seconds,
+    )
+
+
+def build_finding_tool(effective_task_id, observer):
+    """工作流节点的渐进发现上报工具构造；无观察者返回 None。"""
+    if observer is None:
+        return None
+    from app.tools.agent_tools.report_finding_tool import ReportFindingTool
+
+    return ReportFindingTool(task_id=str(effective_task_id), on_finding=observer)
 
 
 class CallSubAgentTool(LLMTool):
@@ -406,6 +440,8 @@ class CallSubAgentTool(LLMTool):
         _upstream_handles: Optional[List[Dict[str, Any]]] = None,
         _input_contracts: Optional[List[Dict[str, Any]]] = None,
         _on_session_started: Optional[Callable[[str], None]] = None,
+        _escalation_observer: Optional[Callable[[Dict[str, Any]], None]] = None,
+        _finding_observer: Optional[Callable[[Dict[str, Any]], None]] = None,
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
         """
@@ -945,6 +981,36 @@ class CallSubAgentTool(LLMTool):
                     + "然后用一句话简述结论即可结束。未调用 submit_result 直接结束视为未完成交付，"
                     + "将触发重试。\n"
                 )
+            # 升级提问（escalate）：工作流节点子 Agent 可以向用户提出阻塞性澄清
+            # 问题（问数口径/统计范围/时间边界），只挂起本节点、其余节点照常跑；
+            # 用户超时未答则按指引自行推进。
+            escalate_tool = build_escalation_tool(
+                workflow_run, effective_task_id, tool_executor, _escalation_observer
+            )
+            if escalate_tool is not None:
+                child_registry["escalate"] = escalate_tool
+                child_request_prompt = (
+                    child_request_prompt.rstrip()
+                    + "\n\n## 澄清提问协议\n"
+                    + "遇到无法从任务描述、上游数据或领域常识推断、且猜错会导致整份结论失效的"
+                    "口径/范围/时间边界问题时，调用 `escalate` 工具向用户提问（问题必须具体、"
+                    "可直接回答，并附上各候选口径的后果差异）。提问会挂起当前任务等待回答；"
+                    "次数有限，能推断的问题不要问；拿到答案后严格按答案执行，未获回答则按"
+                    "指引标注假设后继续。\n"
+                )
+            # 渐进发现（report_finding）：执行中把关键中间结论按条上报，实时
+            # 展示给用户；节点失败时已上报的发现仍被保留（salvage）。
+            finding_tool = build_finding_tool(effective_task_id, _finding_observer)
+            if finding_tool is not None:
+                child_registry["report_finding"] = finding_tool
+                child_request_prompt = (
+                    child_request_prompt.rstrip()
+                    + "\n\n## 渐进发现协议\n"
+                    + "得到决定性中间结论时（关键数值/占比、口径或范围决策、数据异常与"
+                    "缺失），随手调用 `report_finding` 上报（每条一句话、含具体数值与"
+                    "口径）。只报决定性内容，不要报过程流水；条数有限，最终结论仍以 "
+                    "submit_result 交付。\n"
+                )
             iteration_limit = _resolve_child_max_iterations(target_mode, max_iterations)
             sub_agent = ReActAgent(
                 max_iterations=iteration_limit,
@@ -992,7 +1058,16 @@ class CallSubAgentTool(LLMTool):
                 initial_messages: Optional[List[Dict[str, Any]]] = None,
                 *,
                 include_skill: bool = False,
+                fixed_workflow_progress: Optional[Dict[str, Any]] = None,
             ) -> List[Dict[str, Any]]:
+                turn_runtime_metadata = {
+                    **runtime_metadata,
+                    "agent_depth": agent_depth + 1,
+                    "max_agent_depth": max_agent_depth,
+                    "workflow_run_id": workflow_run.run_id,
+                }
+                if fixed_workflow_progress is not None:
+                    turn_runtime_metadata["fixed_workflow_progress"] = dict(fixed_workflow_progress)
                 turn_events: List[Dict[str, Any]] = []
                 async with child_actor_registry.lease(actor_key):
                     with model_chain_context_factory():
@@ -1003,12 +1078,7 @@ class CallSubAgentTool(LLMTool):
                             enhance_with_history=True,
                             initial_messages=initial_messages,
                             user_identifier=None,
-                            runtime_metadata={
-                                **runtime_metadata,
-                                "agent_depth": agent_depth + 1,
-                                "max_agent_depth": max_agent_depth,
-                                "workflow_run_id": workflow_run.run_id,
-                            },
+                            runtime_metadata=turn_runtime_metadata,
                             selected_skill_context=(
                                 selected_child_skill.content
                                 if include_skill and selected_child_skill
@@ -1047,7 +1117,8 @@ class CallSubAgentTool(LLMTool):
 
             # 7. 提取最终结果；结构化协议失败时在同一 child runtime 上做有限修复。
             # 优先取 submit_result 工具提交的信封（结构化交付），文本答案仅作回退。
-            submitted_result = self._extract_submitted_result(result_events)
+            # 修复轮只从“本轮事件”取结果，避免用上一轮残留的 agent_finish 掩盖失败。
+            submitted_result = self._extract_submitted_result(result_events, submit_tool)
             if isinstance(submitted_result, dict):
                 final_result = {
                     "status": "success",
@@ -1061,6 +1132,7 @@ class CallSubAgentTool(LLMTool):
                     "status": "cancelled",
                     "answer": "工作流已超过截止时间，子 Agent 结果已取消。",
                 }
+            repair_workflow_progress = self._fixed_workflow_deliver_progress(target_mode)
             structured_result = None
             validation_errors = []
             if result_schema and final_result["status"] != "cancelled":
@@ -1080,6 +1152,8 @@ class CallSubAgentTool(LLMTool):
                         "task.result_repair_requested",
                         payload={"repair_index": repair_index + 1, "errors": validation_errors},
                     )
+                    repair_evidence = self._summarize_child_evidence(result_events)
+                    history_for_repair = conversation_history if conversation_history else None
                     if submitted_result is not None:
                         repair_prompt = (
                             "上一轮提交的 submit_result 未通过结构化结果协议校验。"
@@ -1095,15 +1169,29 @@ class CallSubAgentTool(LLMTool):
                             "字段结构见工具定义，不要重新执行分析。\n"
                             f"结果协议：{json.dumps(result_schema, ensure_ascii=False)}"
                         )
-                    result_events.extend(await run_child_turn(repair_prompt))
-                    submitted_result = self._extract_submitted_result(result_events)
-                    if isinstance(submitted_result, dict):
+                    if repair_evidence:
+                        repair_prompt += "\n\n本轮已完成的工作与证据（可直接引用，无需重新执行）：\n" + repair_evidence
+                    repair_events = await run_child_turn(
+                        repair_prompt,
+                        history_for_repair,
+                        # 修复轮沿用子会话但会新建 RunState：固定工作流必须显式从
+                        # deliver 阶段起跑，否则进度重置回 acquire（allow_completion=False），
+                        # submit_result 之后的文本会被“阶段未完成”无限拦截。
+                        fixed_workflow_progress=repair_workflow_progress,
+                    )
+                    result_events.extend(repair_events)
+                    next_submitted = self._extract_submitted_result(repair_events, submit_tool)
+                    if isinstance(next_submitted, dict):
+                        submitted_result = next_submitted
                         final_result = {
                             "status": "success",
                             "answer": json.dumps(submitted_result, ensure_ascii=False),
                         }
                     else:
-                        final_result = self._extract_final_result(result_events)
+                        next_final = self._extract_final_result(repair_events)
+                        # 修复轮没产出结果时保留上一轮的有效结果，但不再跨轮兜底捞旧 agent_finish。
+                        if next_final["status"] == "success" or final_result["status"] != "success":
+                            final_result = next_final
                     structured_result, validation_errors = self._validate_structured_result(
                         final_result.get("answer", ""), result_schema
                     )
@@ -1115,7 +1203,7 @@ class CallSubAgentTool(LLMTool):
                 target_mode=target_mode,
                 status=final_result["status"],
                 answer_length=len(final_result.get("answer", "")),
-                iterations=len([e for e in result_events if e.get("type") == "tool_call"]),
+                iterations=self._count_tool_calls(result_events),
                 max_iterations=iteration_limit,
                 session_id=session_id
             )
@@ -1248,7 +1336,7 @@ class CallSubAgentTool(LLMTool):
                 "schema_version": "v2.0",
                 "generator": "call_sub_agent",
                 "sub_agent_mode": target_mode,
-                "iterations": len([e for e in result_events if e.get("type") == "tool_call"]),
+                "iterations": self._count_tool_calls(result_events),
                 "file_paths_count": len(structured_data["file_paths"]),
                 "chart_urls_count": len(structured_data["chart_urls"]),
                 "image_paths_count": len(structured_data["image_paths"]),
@@ -1259,6 +1347,9 @@ class CallSubAgentTool(LLMTool):
             enhanced_metadata["agent_profile"] = agent_profile.name
             enhanced_metadata["capability_policy"] = capability_policy.to_dict()
             enhanced_metadata["run_in_background"] = bool(run_in_background)
+            child_usage = self._aggregate_usage(result_events)
+            if child_usage is not None:
+                enhanced_metadata["usage"] = child_usage
             if task_id:
                 enhanced_metadata["task_id"] = task_id
             enhanced_metadata["workflow_run_id"] = workflow_run.run_id
@@ -1515,31 +1606,114 @@ class CallSubAgentTool(LLMTool):
             scheduled_task_context=scheduled_task_context,
         )
 
-    def _extract_submitted_result(self, events: list) -> Optional[Dict[str, Any]]:
-        """从事件流提取最近一次 submit_result 工具提交的结构化信封（倒序取最新）。"""
+    def _extract_submitted_result(
+        self,
+        events: list,
+        submit_tool: Optional[Any] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """从事件流提取最近一次 submit_result 工具提交的结构化信封（倒序取最新）。
+
+        ReAct runtime 实际下发的是 ``tool_use`` / ``tool_result`` 事件；早期实现
+        只认 ``tool_call``，导致生产环境里提交成功的信封永远读不到（子 Agent
+        被迫进入补交轮）。这里同时兼容三种形态，并以 SubmitResultTool 实例上
+        保存的最新信封作为最终兜底。
+        """
         for event in reversed(events):
-            if event.get("type") != "tool_call":
+            kind = event.get("type")
+            payload: Any = None
+            name = None
+            if kind == "tool_use":
+                data = event.get("data") if isinstance(event.get("data"), dict) else {}
+                name = data.get("tool_name") or event.get("tool_name")
+                payload = data.get("input") or event.get("input")
+            elif kind == "tool_result":
+                data = event.get("data") if isinstance(event.get("data"), dict) else {}
+                name = data.get("tool_name") or event.get("tool_name")
+                result = data.get("result") if isinstance(data.get("result"), dict) else {}
+                nested = result.get("data") if isinstance(result.get("data"), dict) else {}
+                submitted = nested.get("submitted_result") if isinstance(nested, dict) else None
+                if not isinstance(submitted, dict):
+                    submitted = result.get("submitted_result")
+                if name == "submit_result" and isinstance(submitted, dict):
+                    return submitted
                 continue
-            name = (
-                event.get("tool")
-                or event.get("tool_name")
-                or event.get("name")
-            )
+            elif kind == "tool_call":
+                name = (
+                    event.get("tool")
+                    or event.get("tool_name")
+                    or event.get("name")
+                )
+                payload = (
+                    event.get("args")
+                    or event.get("arguments")
+                    or event.get("input")
+                    or {}
+                )
+            else:
+                continue
             if name != "submit_result":
                 continue
-            payload = (
-                event.get("args")
-                or event.get("arguments")
-                or event.get("input")
-                or {}
-            )
             if isinstance(payload, dict):
                 result = payload.get("result")
                 if isinstance(result, dict):
                     return result
                 if payload:
                     return payload
+        if submit_tool is not None:
+            submitted = getattr(submit_tool, "submitted_result", None)
+            if isinstance(submitted, dict):
+                return submitted
         return None
+
+    @staticmethod
+    def _count_tool_calls(events: list) -> int:
+        return len([
+            event for event in events
+            if event.get("type") in {"tool_call", "tool_use"}
+        ])
+
+    @staticmethod
+    def _aggregate_usage(events: list) -> Optional[Dict[str, Any]]:
+        """聚合子会话 usage_delta 事件（Usage, not budget：只记账不设上限）。
+
+        返回 {turns, input_tokens, output_tokens, total_tokens}；无遥测数据
+        （旧网关不回传 usage）时返回 None，信封里不带 usage 键。
+        """
+        turns = 0
+        input_tokens = 0
+        output_tokens = 0
+        total_tokens = 0
+        for event in events:
+            if event.get("type") != "usage_delta":
+                continue
+            data = event.get("data") or {}
+            if not isinstance(data, dict):
+                continue
+            turns += 1
+            input_tokens += int(data.get("input_tokens") or 0)
+            output_tokens += int(data.get("output_tokens") or 0)
+            total_tokens += int(data.get("total_tokens") or 0)
+        if turns == 0:
+            return None
+        return {
+            "turns": turns,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+        }
+
+    @staticmethod
+    def _fixed_workflow_deliver_progress(target_mode: str) -> Optional[Dict[str, Any]]:
+        """修复轮应直接从固定工作流的 deliver 阶段起跑，避免进度重置回 acquire。"""
+        from app.agent.workflow.mode_workflows import get_mode_workflow
+
+        definition = get_mode_workflow(str(target_mode))
+        if definition is None:
+            return None
+        for index, phase in enumerate(definition.phases):
+            if str(phase.name) == "deliver":
+                return {"phase_index": index, "phase_attempt": 0}
+        return {"phase_index": max(0, len(definition.phases) - 1), "phase_attempt": 0}
 
     def _extract_final_result(self, events: list) -> Dict:
         """从事件流中提取最终结果"""
@@ -1647,6 +1821,69 @@ class CallSubAgentTool(LLMTool):
                 collect(result)
                 collect(result.get("data") if isinstance(result, dict) else None)
         return file_paths
+
+    def _summarize_child_evidence(
+        self,
+        events: list,
+        *,
+        max_items: int = 12,
+        max_summary_chars: int = 200,
+    ) -> str:
+        """汇总子 Agent 已完成的工具调用与产物，供修复轮在缺失上下文时引用。
+
+        修复轮若从空白上下文启动，模型看不到本轮已取到的数据（历史上曾因此
+        交出空壳信封被协议校验拒绝）；这里把已执行的工具、成败、产物路径和
+        摘要压成短文本，拼进修复提示。
+        """
+        lines: List[str] = []
+        for event in events:
+            kind = event.get("type")
+            if kind in {"tool_call", "tool_use"}:
+                tool = str(
+                    (event.get("data") or {}).get("tool_name")
+                    or event.get("tool_name")
+                    or event.get("tool")
+                    or "unknown"
+                )
+                lines.append(f"- 发起调用 {tool}")
+            elif kind in ("observation", "tool_result"):
+                data = event.get("data")
+                result = None
+                if isinstance(data, dict):
+                    result = (
+                        data["result"]
+                        if isinstance(data.get("result"), dict)
+                        else data
+                    )
+                if not isinstance(result, dict):
+                    continue
+                tool = str(
+                    (data.get("tool_name") if isinstance(data, dict) else None)
+                    or (data.get("name") if isinstance(data, dict) else None)
+                    or result.get("tool_name")
+                    or "tool"
+                )
+                success = result.get("success")
+                status = "成功" if success is not False else "失败"
+                metadata = result.get("metadata")
+                file_path = result.get("file_path") or (
+                    metadata.get("file_path") if isinstance(metadata, dict) else None
+                )
+                summary = str(result.get("summary") or "")[:max_summary_chars]
+                piece = f"- {tool}: {status}"
+                if file_path:
+                    piece += f"，产物 {file_path}"
+                if summary:
+                    piece += f"；摘要：{summary}"
+                lines.append(piece)
+            if len(lines) >= max_items:
+                break
+        file_paths = self._extract_file_paths(events)
+        if file_paths:
+            shown = ", ".join(file_paths[:8])
+            extra = f"（共 {len(file_paths)} 个）" if len(file_paths) > 8 else ""
+            lines.append(f"- 已保存产物：{shown}{extra}")
+        return "\n".join(lines)
 
     @staticmethod
     def _format_imported_resource_lines(refs: List[Dict[str, Any]]) -> List[str]:
@@ -1775,10 +2012,17 @@ class CallSubAgentTool(LLMTool):
         return list(set(image_paths))  # 去重
 
     def _extract_tool_calls(self, events: list) -> list:
-        """从事件流中提取工具调用记录"""
+        """从事件流中提取工具调用记录（兼容 tool_use / tool_call 两种形态）"""
         tool_calls = []
         for event in events:
-            if event.get("type") == "tool_call":
+            kind = event.get("type")
+            if kind == "tool_use":
+                data = event.get("data") if isinstance(event.get("data"), dict) else {}
+                tool_calls.append({
+                    "tool": data.get("tool_name", ""),
+                    "args": data.get("input") or {},
+                })
+            elif kind == "tool_call":
                 tool_calls.append({
                     "tool": event.get("generator", event.get("tool", "")),
                     "args": event.get("args", {})
@@ -1835,6 +2079,8 @@ class CallSubAgentTool(LLMTool):
     @staticmethod
     def _compact_execution_event(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         kind = event.get("type")
+        if kind == "tool_use":
+            kind = "tool_call"
         if kind not in {"tool_call", "tool_result", "agent_finish"}:
             return None
         data = event.get("data") or {}

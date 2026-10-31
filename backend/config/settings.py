@@ -45,6 +45,10 @@ class Settings(BaseSettings):
         default=False,
         description="Enable bounded read-only assistant analyses; also requires assistant_followups_enabled",
     )
+    assistant_schedule_reply_synthesis: bool = Field(
+        default=False,
+        description="Route scheduled task results through an assistant follow-up turn before replying",
+    )
     sse_heartbeat_interval_seconds: float = Field(
         default=15.0,
         gt=0,
@@ -133,6 +137,35 @@ class Settings(BaseSettings):
     zhongda_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
     zhongda_login_retries: int = Field(default=8, ge=1, le=30, description="验证码 OCR 重试次数")
 
+    # 空气质量信息联网系统（旧云平台，许昌乡镇站 5 分钟/小时/日数据替代源）。
+    # TownStationData 2026-10-21 起停更后启用；账号密码环境变量注入。
+    town_cloud_api_base_url: str = Field(default="http://117.159.53.11:60601")
+    town_cloud_username: str = Field(default="")
+    town_cloud_password: str = Field(default="")
+    town_cloud_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    town_cloud_login_retries: int = Field(default=8, ge=1, le=30, description="验证码识别重试次数（GLM 视觉识别）")
+    town_five_minute_lookback_minutes: int = Field(
+        default=180,
+        ge=15,
+        le=4320,
+        description="5 分钟数据回看窗口（分钟）；平台限制单次查询窗口 ≤ 3 天",
+    )
+    town_five_minute_retention_days: int = Field(
+        default=30,
+        ge=7,
+        le=365,
+        description="5 分钟数据保留天数，超过即删除",
+    )
+
+    # 助手模式后台委派（run_in_background）在交付边界的等待上限：
+    # 等待本会话委派完成后把结果注入观察继续 loop；超时放行交付。
+    assistant_delegation_wait_seconds: int = Field(
+        default=1800,
+        ge=0,
+        le=7200,
+        description="助手模式交付边界等待后台委派完成的秒数",
+    )
+
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse CORS origins string into list."""
@@ -194,6 +227,21 @@ class Settings(BaseSettings):
         ge=30,
         le=86400,
         description="Signed anonymous share grant lifetime",
+    )
+    dashboard_api_prefix: str = Field(
+        default="",
+        description=(
+            "部署级直连令牌放行的只读 API 前缀（如 /api/xuchang-dashboard）；"
+            "与 dashboard_access_token 成对配置，空=禁用（默认）"
+        ),
+    )
+    dashboard_access_token: str = Field(
+        default="",
+        description=(
+            "静态直连令牌：非空时允许携带 ?access_token= 的 GET 请求免网关登录"
+            "访问 dashboard_api_prefix 下的只读接口（大屏设备开机即显）；"
+            "空=禁用（默认）。路由层仍需复核同一令牌"
+        ),
     )
     auth_docs_public: bool = Field(
         default=False,
@@ -721,6 +769,16 @@ class Settings(BaseSettings):
         default=7200,
         ge=60,
         description="TTL for active-run steering metadata and pending inputs",
+    )
+    agent_escalation_timeout_seconds: float = Field(
+        default=600.0,
+        ge=5,
+        description="Workflow sub-agent escalate: wait for user answer before proceeding on best judgment",
+    )
+    agent_escalation_max_per_node: int = Field(
+        default=3,
+        ge=1,
+        description="Workflow sub-agent escalate: max clarification questions per node attempt",
     )
     agent_visual_alias_redis_prefix: str = Field(
         default="suyuan:agent:visual_alias",

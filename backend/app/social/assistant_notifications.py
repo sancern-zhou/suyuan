@@ -382,6 +382,19 @@ class AssistantNotificationService:
         return state
 
     async def _append_web_reply(self, session, row):
+        from config.settings import settings
+
+        if settings.assistant_schedule_reply_synthesis:
+            try:
+                synthesized = await self._synthesize_reply(row)
+                if synthesized:
+                    row.content = synthesized
+            except Exception as exc:
+                logger.warning(
+                    "assistant_reply_synthesis_failed",
+                    message_id=row.message_id,
+                    error=str(exc),
+                )
         async with self.transcript_factory() as transcript:
             if transcript.get_bind().url == session.get_bind().url:
                 return await self._append_transcript(session, row)
@@ -389,6 +402,67 @@ class AssistantNotificationService:
             # lock and notification identity below make that replay idempotent.
             await self._append_transcript(transcript, row)
             await transcript.commit()
+
+    async def _synthesize_reply(self, row) -> str:
+        """以助手身份对定时结果做一轮跟进整理，返回面向用户的最终文本。
+
+        通知结果不再直写对话：先进入助手上下文（含绑定事项的目标与完成
+        标准），由助手核对、筛选、更新事项并组织汇报；失败时调用方回退
+        为原始内容直写。
+        """
+        from app.agent.react_agent import create_react_agent
+        from app.auth.models import CurrentUser
+        from app.social.web_assistant import (
+            assistant_account_context,
+            web_assistant_context,
+        )
+
+        user = CurrentUser(id=row.owner_user_id, username=None, display_name=None)
+        data = row.data if isinstance(row.data, dict) else {}
+        parts = ["后台定时任务已执行完成，请以助手身份向用户汇报。"]
+        title = data.get("task_name") or ""
+        if title:
+            parts.append(f"任务名称：{title}")
+        if getattr(row, "task_id", None):
+            try:
+                from app.social.assistant_task_models import AssistantTaskDB
+
+                async with self.session_factory() as db:
+                    matter = await db.get(AssistantTaskDB, row.task_id)
+                if matter is not None:
+                    parts.append(
+                        f"关联事项：目标={matter.goal}；完成标准={matter.completion_criteria}；"
+                        f"状态={matter.status}；下一步={matter.next_step or '无'}。"
+                    )
+            except Exception as exc:
+                logger.warning("assistant_reply_matter_lookup_failed", error=str(exc))
+        parts.append("执行结果：\n" + (row.content or "")[:4000])
+        parts.append(
+            "要求：核对结果是否满足完成标准；向用户输出整理后的汇报（关键结论、口径、产物引用、异常与建议）；"
+            "不要复述本提示；如事项状态需要更新，调用 manage_assistant_tasks 更新状态与下一步；"
+            "最终回复直接面向用户。"
+        )
+        agent = create_react_agent()
+        final_answer = ""
+        async for event in agent.analyze(
+            "\n".join(parts),
+            session_id=row.source_session_id,
+            manual_mode="assistant",
+            **web_assistant_context(user),
+        ):
+            if event.get("type") != "agent_finish":
+                continue
+            payload = event.get("data") if isinstance(event.get("data"), dict) else {}
+            candidate = payload.get("answer") or payload.get("final_message") or ""
+            if candidate:
+                final_answer = str(candidate)
+        if not final_answer.strip():
+            logger.warning(
+                "assistant_reply_synthesis_empty",
+                message_id=row.message_id,
+                session_id=row.source_session_id,
+            )
+        return final_answer.strip()
 
     @staticmethod
     async def _append_transcript(session, row):

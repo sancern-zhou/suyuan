@@ -18,7 +18,7 @@ def test_query_modes_are_registered_as_fixed_agent_workflows():
 
     assert monitoring is workflow_catalog.get("agent_mode", "query_monitoring")
     assert forecast is workflow_catalog.get("agent_mode", "query_forecast")
-    assert monitoring.max_iterations == 4
+    assert monitoring.max_iterations == 20
     assert [phase.name for phase in monitoring.phases] == [
         "acquire",
         "normalize",
@@ -120,7 +120,7 @@ def test_acquisition_ignores_support_tool_failures_in_mixed_batch():
     assert current_phase(definition, progress).name == "normalize"
 
 
-def test_query_workflow_allows_only_one_failed_batch_repair():
+def test_query_workflow_allows_bounded_failed_batch_repairs():
     definition = get_mode_workflow("query_forecast")
     progress = {}
     failed = [{
@@ -133,6 +133,11 @@ def test_query_workflow_allows_only_one_failed_batch_repair():
     assert progress["phase_attempt"] == 1
     assert progress["last_failed_tools"] == ["get_weather_forecast"]
 
+    observe_tool_results(definition, progress, failed)
+    assert current_phase(definition, progress).name == "acquire"
+    assert progress["phase_attempt"] == 2
+
+    observe_tool_results(definition, progress, failed)
     observe_tool_results(definition, progress, failed)
     assert current_phase(definition, progress).name == "normalize"
     assert progress["phase_attempt"] == 0
@@ -149,7 +154,47 @@ def test_normalization_tool_turn_forces_delivery_without_tools():
 
     assert current_phase(definition, progress).name == "deliver"
     assert allowed_tools(definition, progress) == set()
-    assert "停止调用工具" in render_phase_prompt(definition, progress)
+    assert "停止调用分析类工具" in render_phase_prompt(definition, progress)
+
+
+def test_normalization_failure_gets_repair_turn_before_delivery():
+    """汇总脚本失败不得直接进入交付：留在 normalize 修复，成功后才推进。"""
+    definition = get_mode_workflow("query_forecast")
+    progress = {"phase_index": 1}
+    failed = [{
+        "tool_name": "execute_python",
+        "result": {"success": False, "error": "KeyError: 'temperature'"},
+    }]
+
+    observe_tool_results(definition, progress, failed)
+    assert current_phase(definition, progress).name == "normalize"
+    assert "execute_python" in allowed_tools(definition, progress)
+    assert progress["phase_attempt"] == 1
+    assert progress["last_failed_tools"] == ["execute_python"]
+
+    observe_tool_results(definition, progress, [{
+        "tool_name": "execute_python",
+        "result": {"success": True},
+    }])
+    assert current_phase(definition, progress).name == "deliver"
+    assert progress["phase_attempt"] == 0
+
+
+def test_normalization_advances_after_repair_budget_exhausted():
+    """修复轮有预算上限：连续失败耗尽 max_attempts 后放行交付，避免死循环。"""
+    definition = get_mode_workflow("query_forecast")
+    progress = {"phase_index": 1}
+    failed = [{
+        "tool_name": "execute_python",
+        "result": {"success": False, "error": "boom"},
+    }]
+
+    max_attempts = current_phase(definition, progress).max_attempts
+    for _ in range(max_attempts):
+        observe_tool_results(definition, progress, failed)
+
+    assert current_phase(definition, progress).name == "deliver"
+    assert progress["phase_attempt"] == 0
 
 
 def test_agent_runtime_filters_tools_by_fixed_workflow_phase():
@@ -203,3 +248,15 @@ def test_fixed_workflow_whitelist_keeps_submit_result_visible():
     blocked = runtime._fixed_workflow_blocked_observation(state, blocked_action)
     assert blocked is not None
     assert "execute_sql_query" in blocked["data"]["blocked_tools"]
+
+
+def test_deliver_prompt_mentions_submit_result_when_injected():
+    definition = get_mode_workflow("query_monitoring_city")
+    deliver = {"phase_index": len(definition.phases) - 1}
+
+    with_submit = render_phase_prompt(definition, deliver, has_submit_result=True)
+    assert "submit_result" in with_submit
+    assert "tools 为空" not in with_submit
+
+    without_submit = render_phase_prompt(definition, deliver, has_submit_result=False)
+    assert "tools 为空" in without_submit

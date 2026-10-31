@@ -29,6 +29,7 @@ from app.services.llm_failover import (
     should_fallback,
     summarize_attempts,
 )
+from app.services.llm_concurrency import llm_request_slot
 from app.services.llm_thinking_policy import reset_request_tier, set_request_tier
 from app.services.chat_completions_adapter import (
     ChatCompletionsStreamAdapter,
@@ -1298,7 +1299,10 @@ class LLMService:
             self._schedule_anthropic_client_close(temporary_client)
 
     async def _run_llm_request_with_global_limit(self, operation: str, call):
-        semaphore = get_llm_pool_semaphore(self.provider, self.model)
+        # AIMD 并发治理（对齐 ZCode governor）：per provider/model 桶自适应限流，
+        # 正常退出/异常分别结算为成功/限流/瞬态/永久信号，无需调用方关心。
+        from app.services.llm_concurrency import llm_request_slot
+
         wait_started = time.monotonic()
         logger.debug(
             "llm_pool_concurrency_waiting",
@@ -1306,7 +1310,7 @@ class LLMService:
             model=self.model,
             operation=operation,
         )
-        async with semaphore:
+        async with llm_request_slot(self.provider, self.model):
             logger.debug(
                 "llm_pool_concurrency_acquired",
                 provider=self.provider,
@@ -3265,8 +3269,7 @@ class LLMService:
                 try:
                     candidate_emitted = False
                     if self.api_mode == "chat_completions":
-                        semaphore = get_llm_pool_semaphore(self.provider, self.model)
-                        async with semaphore:
+                        async with llm_request_slot(self.provider, self.model):
                             async for event in self._chat_completions_stream(
                                 messages=messages,
                                 tools=tools,
@@ -3304,7 +3307,6 @@ class LLMService:
                         messages_count=len(api_params.get("messages", [])),
                         has_tools=bool(api_params.get("tools")),
                     )
-                    semaphore = get_llm_pool_semaphore(self.provider, self.model)
                     pool_wait_started = time.monotonic()
                     logger.info(
                         "llm_pool_concurrency_waiting",
@@ -3312,7 +3314,7 @@ class LLMService:
                         model=self.model,
                         operation="anthropic_stream",
                     )
-                    async with semaphore:
+                    async with llm_request_slot(self.provider, self.model):
                         logger.info(
                             "llm_pool_concurrency_acquired",
                             provider=self.provider,

@@ -17,6 +17,7 @@ from app.agent.workflow.resource_handoff import result_resource_declarations
 from app.agent.workflow.target_mode_contract import build_target_mode_contract, target_mode_values
 from app.agent.workflow.coordinator import WorkflowCoordinator, WorkflowNodeSpec
 from app.agent.workflow.delegation import delegation_error
+from app.agent.workflow.quota_resume import schedule_quota_resume
 from app.agent.workflow.resource_contract import ResourceContractError
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
@@ -33,7 +34,7 @@ RESOURCE_CONTRACT_PROPERTIES = {
 }
 
 # 报告 DAG 专家节点集合：这些模式必须提供 task_contract 并受交付物粒度校验
-EXPERT_NODE_MODES = frozenset({"expert_meteorology", "expert_analysis"})
+EXPERT_NODE_MODES = frozenset({"expert_meteorology", "expert_analysis", "expert_component"})
 MAX_EXPERT_NODE_DELIVERABLES = 3
 # 报告父 Agent 只允许层级化问数与领域专家节点，禁止子节点越权成稿或再次编排；
 # 综合问数 query_monitoring 不再兜底：层级不明确由报告 Agent 先向用户确认。
@@ -41,18 +42,35 @@ REPORT_NODE_ALLOWED_MODES = frozenset({
     "query_monitoring_station",
     "query_monitoring_city",
     "query_forecast",
+    "query_component",
     "expert_meteorology",
     "expert_analysis",
+    "expert_component",
 })
+
+_FIXED_QUERY_NODE_MODES = frozenset({
+    "query_monitoring",
+    "query_monitoring_station",
+    "query_monitoring_city",
+    "query_forecast",
+    "query_component",
+})
+# 固定问数工作流的实际预算是各阶段之和（acquire 4 + normalize 15 + deliver 1 = 20）。
+# DAG 首试可以收紧，但不能低于 8：acquire/normalize/deliver 各需至少一轮，
+# 且 submit_result 之后仍需一轮收尾（理想路径实测 5 轮）。
+_QUERY_NODE_MIN_ITERATIONS = 8
 
 _DEFAULT_EXPERT_NODE_LIMITS = {
     "expert_meteorology": {"max_iterations": 15, "timeout_seconds": 300},
     "expert_analysis": {"max_iterations": 20, "timeout_seconds": 360},
+    "expert_component": {"max_iterations": 20, "timeout_seconds": 360},
     "expert": {"max_iterations": 30, "timeout_seconds": 480},
-    # 固定问数流程由运行时约束为最多四轮；墙钟 600s 容纳慢查询与重试。
-    "query_monitoring_station": {"max_iterations": 4, "timeout_seconds": 600},
-    "query_monitoring_city": {"max_iterations": 4, "timeout_seconds": 600},
-    "query_forecast": {"max_iterations": 4, "timeout_seconds": 600},
+    # 固定问数流程的运行时上限是阶段预算之和（20 轮）；墙钟 600s 容纳慢查询与重试。
+    "query_monitoring": {"max_iterations": 20, "timeout_seconds": 600},
+    "query_monitoring_station": {"max_iterations": 20, "timeout_seconds": 600},
+    "query_monitoring_city": {"max_iterations": 20, "timeout_seconds": 600},
+    "query_forecast": {"max_iterations": 20, "timeout_seconds": 600},
+    "query_component": {"max_iterations": 20, "timeout_seconds": 600},
 }
 
 
@@ -65,63 +83,51 @@ WORKFLOW_DAG_EXAMPLE = (
     '"dependencies": ["station-data", "weather-data"]}]}, "max_concurrency": 4}'
 )
 
+# 编排方法论（领域拆分、并行/合并判据、预算调优）迁入项目技能，按需加载；
+# 技能不存在（其他部署）时降级为不引用，描述中的硬约束自足。
+_ORCHESTRATION_SKILL_ID = "agent-workflow-orchestration"
+
+
+def _orchestration_skill_hint() -> str:
+    try:
+        from app.agent.selection_context import load_skill_selection
+
+        load_skill_selection(_ORCHESTRATION_SKILL_ID)
+    except Exception:  # noqa: BLE001
+        return ""
+    return (
+        f"首次编排前先 view_skill('{_ORCHESTRATION_SKILL_ID}') 查看编排细则"
+        "（领域拆分、并行/合并判据、图表随节点产出、预算调优），本描述只保留硬约束。\n"
+    )
+
 WORKFLOW_SCHEMA_DESCRIPTION = (
     "提交一个有向无环 Agent 工作流（DAG）：节点可并行执行，只有依赖节点成功后才会执行下游节点；"
-    "适合问数、专家研判、多源数据分析和分阶段报告任务。query 父模式可用站点/城市/预报取数节点；"
-    "expert 父模式还可用气象/常规分析专家节点；精简子节点不再次编排。编排完全由你自主决定：按分析问题规划节点数量、"
-    "每个节点的 target_mode 与 goal；无依赖的数据/分析节点并行执行，需要上游产物或结论的节点用 "
-    "dependencies 表达，不靠文字约定顺序。每个节点必须有唯一 task_id、target_mode、goal，"
-    "goal 写清时间范围、区域、指标口径和预期输出；把无依赖的取数拆成独立节点以并行执行。"
+    "适合问数、专家研判、多源数据分析和分阶段报告任务。编排由你自主决定：按分析问题规划节点数量、"
+    "每个节点的 target_mode 与 goal；无依赖节点并行，需要上游产物或结论的节点用 dependencies 表达。"
+    "每个节点必须有唯一 task_id、target_mode、goal，goal 写清时间范围、区域、指标口径和预期输出。"
     "节点可用可选 phase 字段打用户可读的阶段名（如'取数与质检'/'气象分箱研判'/'整合成稿'），"
-    "同阶段节点共用一个名字，面板按阶段分组展示故事线；用业务语言命名，不用编排术语。"
-    "领域拆分建议：监测历史取数按层级拆分——站点小时/日与站点目录拆 query_monitoring_station，"
-    "城市口径与全国对比拆 query_monitoring_city；层级混合拆成站点+城市两个节点，"
-    "层级不明确先向用户确认口径，禁止用 query_monitoring 兜底；"
-    "气象实况/预报与空气质量预报数据拆 query_forecast，与监测节点可并行；"
-    "气象条件、输送通道、静稳/边界层形势拆 expert_meteorology；浓度特征、超标统计、"
-    "组分解读、成因研判拆 expert_analysis；交叉归因由你自己整合（整合阶段禁止重新取数）。"
-    "报告编排禁止综合问数（query / query_monitoring）子节点：监测历史按层级拆 query_monitoring_station（站点）或 "
-    "query_monitoring_city（城市），层级不明确先向用户确认口径；气象与预报用 query_forecast；"
-    "综合 expert 也不对报告 DAG 暴露。"
-    "**问数节点轮次硬约束**：固定工作流由运行时控制为最多 4 轮且失败项最多补查一次；"
-    "任务书必须写清时间范围、区域与指标口径，取数策略由子节点按阶段提示执行，不要在任务书里教写 SQL。"
-    "**交付物粒度硬约束**：每个节点承载 2~3 项强耦合必交物（最多 5 项）；"
-    "一个专家节点只能回答一个分析问题；计算结果、对应图表和证据摘要可以算同一问题的交付物。"
-    "**同域多节点并行是默认模式**——同一领域的多个独立子分析拆成多个同 mode 节点"
-    "（如 3 个 expert_analysis 分别做相关性/超标统计/时空对比，task_id 不同即可），"
-    "不要把独立子分析合并进单一节点：并行节点总耗时 ≈ 最慢节点，合并则全部串行相加。"
-    "**合并判据**：共享同一份输入文件不是合并理由（各分支可各自 load_data，重复读取是秒级成本）；"
-    "只有必须共享同一份中间计算状态（同一样本集/同一对齐表）才能保持可比时才合并。"
-    "样本一致性用任务书统一过滤口径解决；有依赖的子分析用 dependencies 表达（如归因节点依赖分段节点）。"
-    "**⚠️ 图表随节点并行产出**：报告需要的分析图表（分箱图、相关性热力图、时序对比等）"
-    "必须在对应子节点的 goal/task_contract 中明确要求，由子 Agent 在分析的同时一并生成；"
-    "子节点交付的图表文件会在上游产物清单中回传，父 Agent 只做复用与排版，"
-    "禁止在 DAG 完成后再由父 Agent 重新绘制分析图表——那是串行追加的整段时间。"
-    "DAG 禁止 query、expert、report 主模式子节点；当前父 Agent 是唯一整合与成稿者。"
-    "工具返回每个节点的紧凑 result_envelope（status/summary/findings/evidence/data_gaps）与血缘清单："
-    "findings 是报告取数来源，其中的数值可直接引用；"
-    "各节点完整结果已落盘并在 full_results.path；assistant 助手通过 read_session_resource 读取已登记资源，"
-    "或用 manage_assistant_runs 读取委派结果；其他有文件权限的模式可用 read_file 一次整读，"
-    "禁止分页反复读同一文件。"
-    "据此判断覆盖范围与缺口并整合结论，不要对子节点过程做重复全量复核。"
+    "同阶段节点共用一个名字，面板按阶段分组展示故事线。\n"
+    + _orchestration_skill_hint()
+    + "**硬约束**：固定问数节点由运行时控制为最多 20 轮（可收紧，低于 8 的值抬到 8），失败项最多补查一次；"
+    "任务书写清时间范围、区域与指标口径即可，不要教写 SQL。"
+    "专家节点 task_contract.deliverables 最多 3 项，超过必须拆成多个并行节点。"
+    "报告需要的分析图表必须在对应子节点的 goal/task_contract 中要求随节点产出，"
+    "禁止 DAG 完成后由父 Agent 重新绘制分析图表。"
+    "报告 DAG 禁止综合问数（query / query_monitoring）与综合 expert 子节点；"
+    "监测历史按层级拆 query_monitoring_station（站点）或 query_monitoring_city（城市），层级不明确先向用户确认口径。"
+    "DAG 禁止 query、expert、report 主模式子节点；当前父 Agent 是唯一整合与成稿者。\n"
     "专家子节点（expert_meteorology/expert_analysis）必须提供 task_contract（protocol_version=workflow.v1、"
     "task_type=expert_analysis、question、decision_context、scope、required_evidence、deliverables）和 "
-    "result_schema（要求 status、findings、evidence、uncertainties、data_gaps，finding 通过 evidence id 回溯证据）；"
-    "节点可用 max_attempts 设置重试次数（默认 2：重试自动续用子会话、预算扩容 50% 并携带失败原因），"
-    "用 max_iterations 限制子 Agent 推理轮次，"
-    "用 timeout_seconds 设置节点硬超时；聚合、分箱、相关性等含图表的计算密集节点请放宽预算"
-    "（建议计算密集的专家子节点 max_iterations≥25、timeout_seconds≥1200）。"
-    "重试时预算自动放宽：迭代与超时各放大 50%（迭代封顶 120、超时封顶 1 小时），"
-    "专家节点 task_contract.deliverables 最多 3 项；超过 3 项必须拆成多个并行节点。"
-    "因此首试可给紧凑预算，把余量留给重试。"
+    "result_schema（要求 status、findings、evidence、uncertainties、data_gaps，finding 通过 evidence id 回溯证据）。"
+    "首试给紧凑预算：重试自动续用子会话，迭代与超时各放宽 50%（迭代封顶 120、超时封顶 1 小时），"
+    "因此首试预算不足不会直接失败。"
     "条件节点用 when 声明 source_task_id（必须是直接依赖）、path（上游结果的点分路径）、op、value；"
     "支持 all/any/not 组合；条件为假会跳过该分支，缺少比较证据会报告失败，不猜测真假。"
     "辅助节点显式 required=false；下游只有 dependency_policy=allow_partial 才能消费部分上游，"
-    "且至少需要一个成功上游。工具返回 partial 时参考 delivery.gaps，交付已有成果并说明缺口；"
-    "不能把缺失数据当作零、编造结论或默认重新取数。关键节点失败仍阻断完整交付。"
-    "input_contracts 按 source_task_id 校验上游资源，output_contract 校验本节点产物；"
-    "可约束 kind/format/fields/units/granularity/time_range/scope。字段尽可能从文件核对，"
-    "单位、粒度、时间覆盖和范围依赖资源 metadata.data_contract；缺失元数据不会自动假定满足要求。"
+    "收到 partial 时按 delivery.gaps 交付已有成果并说明缺口，不能把缺失数据当作零或默认重新取数。\n"
+    "工具返回每个节点的紧凑 result_envelope（status/summary/findings/evidence/data_gaps）与血缘清单，"
+    "findings 中的数值可直接引用；各节点完整结果已落盘并在 full_results.path，"
+    "assistant 通过 read_session_resource / manage_assistant_runs 读取，其他有文件权限的模式用 read_file 一次整读。"
     f"示例：{WORKFLOW_DAG_EXAMPLE}\n\n"
     f"{build_target_mode_contract()}"
 )
@@ -398,7 +404,8 @@ class RunAgentWorkflowTool(LLMTool):
         schema = deepcopy(super().get_function_schema())
         properties = schema["parameters"]["properties"]
         properties["workflow"]["properties"]["nodes"]["items"]["properties"]["target_mode"]["enum"] = target_mode_values()
-        schema["description"] = WORKFLOW_SCHEMA_DESCRIPTION + "\n当前项目能力契约优先于通用领域拆分建议：\n" + build_target_mode_contract()
+        # WORKFLOW_SCHEMA_DESCRIPTION 已内嵌 target_mode 契约，不再二次拼接。
+        schema["description"] = WORKFLOW_SCHEMA_DESCRIPTION
         return schema
 
     def __init__(self) -> None:
@@ -575,6 +582,12 @@ class RunAgentWorkflowTool(LLMTool):
                 if limits:
                     node.setdefault("max_iterations", limits["max_iterations"])
                     node.setdefault("timeout_seconds", limits["timeout_seconds"])
+                if str(node.get("target_mode") or "") in _FIXED_QUERY_NODE_MODES:
+                    try:
+                        configured = int(node.get("max_iterations"))
+                    except (TypeError, ValueError):
+                        configured = _QUERY_NODE_MIN_ITERATIONS
+                    node["max_iterations"] = max(configured, _QUERY_NODE_MIN_ITERATIONS)
                 granularity_error = self._validate_expert_node_granularity(node)
                 if granularity_error:
                     return self._failure(granularity_error)
@@ -599,11 +612,11 @@ class RunAgentWorkflowTool(LLMTool):
                 if disallowed_nodes:
                     return self._failure(
                         "报告 DAG 子节点仅允许 query_monitoring_station / "
-                        "query_monitoring_city / query_forecast / "
-                        "expert_meteorology / expert_analysis；"
+                        "query_monitoring_city / query_forecast / query_component / "
+                        "expert_meteorology / expert_analysis / expert_component；"
                         "监测历史按层级拆 query_monitoring_station（站点）或 query_monitoring_city（城市），"
                         "层级不明确先向用户确认口径，不要使用综合问数 query_monitoring 兜底；"
-                        "气象与预报用 query_forecast，其他模式不得作为报告子节点。"
+                        "气象与预报用 query_forecast，超站组分取数用 query_component，其他模式不得作为报告子节点。"
                         f"越界节点：{', '.join(disallowed_nodes)}"
                     )
             from app.agent.workflow.project_policy import prepare_node, apply_workflow_limits
@@ -687,6 +700,17 @@ class RunAgentWorkflowTool(LLMTool):
                             + "\n".join(f"- {path}" for path in delivered)
                             + "\n请核对剩余交付物并继续完成。\n"
                         )
+                    findings = retry_context.get("findings") or []
+                    if findings:
+                        context_text += (
+                            "上一轮已上报的关键发现（已被保留，勿重复上报，直接沿用）：\n"
+                            + "\n".join(
+                                f"- [{item.get('tag') or '发现'}] {item.get('content')}"
+                                for item in findings
+                                if isinstance(item, Mapping) and item.get("content")
+                            )
+                            + "\n"
+                        )
                 result = await sub_agent_tool.execute(
                     context=context,
                     target_mode=payload["target_mode"],
@@ -707,6 +731,12 @@ class RunAgentWorkflowTool(LLMTool):
                     _on_session_started=lambda child_session_id: coordinator.bind_node_session(
                         node.task_id, child_session_id
                     ),
+                    # 升级提问（escalate）：子 Agent 阻塞性问题挂起本节点，
+                    # 记档进 coordinator 快照推给前端；用户作答后原地续跑。
+                    _escalation_observer=coordinator.record_escalation,
+                    # 渐进发现（report_finding）：中间结论实时进 journal/快照，
+                    # 前端实时可见，节点失败后随 salvage 保留。
+                    _finding_observer=coordinator.record_finding,
                 )
                 violations = (result.get("data") or {}).get("resource_contract_violations") if isinstance(result, Mapping) else None
                 if violations:
@@ -785,6 +815,17 @@ class RunAgentWorkflowTool(LLMTool):
                 snapshot["node_results"],
             )
             session_id = getattr(context, "session_id", None) if context is not None else None
+            # 配额暂停 → 到点自动续跑（对齐 ZCode quota-resume）：inline 与
+            # durable 路径都经过这里，挂 Redis 唤醒器，worker 扫描到点投递。
+            quota_pause = snapshot.get("quota_pause") if isinstance(snapshot, Mapping) else None
+            quota_resume_scheduled = False
+            if isinstance(quota_pause, Mapping) and quota_pause.get("reset_at") and session_id:
+                quota_resume_scheduled = await schedule_quota_resume(
+                    session_id,
+                    str(snapshot["workflow_id"]),
+                    float(quota_pause["reset_at"]),
+                    source="run_agent_workflow",
+                )
             full_results = self._write_full_results(session_id, str(snapshot["workflow_id"]), snapshot)
             if full_results and full_results.get("declaration"):
                 resources = [*resources, full_results["declaration"]]
@@ -806,7 +847,16 @@ class RunAgentWorkflowTool(LLMTool):
                 "status": snapshot["status"],
                 "revision": snapshot.get("revision", 0),
                 "budget_state": snapshot.get("budget_state", {}),
+                "node_usage": snapshot.get("node_usage", {}),
+                "quota_pause": dict(quota_pause) if isinstance(quota_pause, Mapping) else None,
                 "delivery": snapshot.get("delivery", {}),
+                # 渐进发现摘要：失败/被阻断节点的发现优先（envelope 可能缺失），
+                # 供父 Agent 在最终视图组织"抢救到了什么"
+                "node_findings": {
+                    task_id: findings[-5:]
+                    for task_id, findings in (snapshot.get("node_findings") or {}).items()
+                    if findings
+                },
                 "node_statuses": {task_id: node["status"] for task_id, node in snapshot["graph"].items()},
                 "node_decisions": snapshot.get("node_decisions", {}),
                 "node_input_gaps": snapshot.get("node_input_gaps", {}),
@@ -826,12 +876,39 @@ class RunAgentWorkflowTool(LLMTool):
                     if full_results else None
                 ),
             }
+            salvage = snapshot.get("delivery", {}).get("salvage") or []
+            salvaged_files = sum(len(item.get("delivered_files") or []) for item in salvage)
+            if succeeded:
+                result_message = "工作流已完成"
+            elif isinstance(quota_pause, Mapping) and quota_pause.get("reset_at"):
+                from datetime import datetime as _dt
+
+                reset_text = _dt.fromtimestamp(float(quota_pause["reset_at"])).strftime("%H:%M")
+                result_message = (
+                    f"模型配额已耗尽，工作流已暂停；预计 {reset_text} 配额重置后自动恢复执行"
+                    if quota_resume_scheduled
+                    else f"模型配额已耗尽，工作流已暂停；配额重置后可手动恢复执行"
+                )
+            elif salvaged_files:
+                # 失败抢救优先呈现（对齐 ZCode delivery guidance：先说抢救到了什么）
+                result_message = (
+                    f"部分任务完成；{len(salvage)} 个未成功节点在失败前已交付 "
+                    f"{salvaged_files} 份中间产物（见 delivery.salvage），可先行采用并说明缺口"
+                    if snapshot["status"] == "partial"
+                    else f"工作流未完成；已从失败节点抢救 {salvaged_files} 份中间产物（见 delivery.salvage）"
+                )
+            else:
+                result_message = (
+                    "部分任务完成，可交付已有成果并说明缺口"
+                    if snapshot["status"] == "partial"
+                    else "工作流未完成"
+                )
             return {
                 "status": "success" if succeeded else snapshot["status"],
                 # A usable partial delivery is a valid tool observation; do not
                 # trigger generic tool-error handling or hide its resources.
                 "success": snapshot["status"] in {"succeeded", "partial"},
-                "result": "工作流已完成" if succeeded else "部分任务完成，可交付已有成果并说明缺口" if snapshot["status"] == "partial" else "工作流未完成",
+                "result": result_message,
                 "data": result_data,
                 "metadata": {
                     "schema_version": "workflow.v1",

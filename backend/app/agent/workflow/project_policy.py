@@ -34,8 +34,11 @@ def scope_delegation_schema(schema, parent_mode):
     enabled_modes = [mode for mode in policy.child_modes if mode not in PRIMARY_ONLY_MODES]
     target["enum"] = enabled_modes
     contracts = child_modes()
+    # 一行制定位+边界：完整 scope/outputs 由子模式自身提示词承载，
+    # 不再重复注入（此前同一段全文同时进 target 描述与工具描述，双份计费）。
     description = "\n".join(
-        f"{mode}: {contracts[mode].positioning}；{contracts[mode].scope}；边界：{contracts[mode].boundary}"
+        f"- {mode}：{str(contracts[mode].positioning).strip().rstrip('。')}"
+        f"；边界：{str(contracts[mode].boundary).strip().rstrip('。')}"
         for mode in enabled_modes
     )
     target["description"] = description
@@ -43,7 +46,8 @@ def scope_delegation_schema(schema, parent_mode):
         "项目内部子 Agent 工作流：按独立问题分配任务，dependencies 复用共享资源，"
         "无依赖节点并行，已知条件用 when，首轮结束后仅对具体缺口使用 extension 补图。"
         "节点 task_contract 必须含 protocol_version=workflow.v1、question、scope、required_evidence、"
-        "deliverables（最多三项）。父 Agent 整合并成稿，简单问题直接执行。\n" + description
+        "deliverables（最多三项）。父 Agent 整合并成稿，简单问题直接执行。"
+        f"允许子模式：{', '.join(enabled_modes)}。"
     )
     return schema
 

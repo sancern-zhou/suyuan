@@ -19,8 +19,8 @@ def test_fixed_query_modes_have_separate_domain_tools():
 def test_fixed_query_modes_are_registered_and_bounded():
     assert "query_monitoring" in target_mode_values()
     assert "query_forecast" in target_mode_values()
-    assert _resolve_child_max_iterations("query_monitoring", None) == 4
-    assert _resolve_child_max_iterations("query_forecast", None) == 4
+    assert _resolve_child_max_iterations("query_monitoring", None) == 20
+    assert _resolve_child_max_iterations("query_forecast", None) == 20
 
 
 def test_monitoring_prompt_describes_runtime_owned_fixed_flow():

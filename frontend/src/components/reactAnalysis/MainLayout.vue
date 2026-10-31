@@ -46,6 +46,7 @@
         :messages="messages"
         :pending-steering-inputs="pendingSteeringInputs"
         :pending-interaction="pendingInteraction"
+        :background-delegation="backgroundDelegation"
         :interaction-resolving="interactionResolving"
         :is-analyzing="isAnalyzing"
         :input-disabled="inputDisabled || conversationReadOnly"
@@ -397,6 +398,10 @@ const props = defineProps({
     default: () => []
   },
   pendingInteraction: {
+    type: Object,
+    default: null
+  },
+  backgroundDelegation: {
     type: Object,
     default: null
   },

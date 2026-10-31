@@ -419,6 +419,18 @@ async def get_session_messages(
     return result
 
 
+def _ensure_pending_interaction_session_id(payload: dict, session_id: str) -> None:
+    """兜底补齐 pending_interaction.session_id。
+
+    历史版本的持久化对象只在 SSE 事件里带 session_id，恢复后前端
+    提交/取消会被守卫静默拦截；这里按恢复的会话补齐。
+    """
+    metadata = payload.get("metadata")
+    pending = metadata.get("pending_interaction") if isinstance(metadata, dict) else None
+    if isinstance(pending, dict) and not pending.get("session_id"):
+        metadata["pending_interaction"] = {**pending, "session_id": session_id}
+
+
 def _sanitize_floats(obj):
     """
     清理数据中的特殊浮点值（inf, -inf, nan），转换为 None
@@ -519,6 +531,7 @@ async def restore_session(
             session_id=session_id,
             db=db,
         )
+        _ensure_pending_interaction_session_id(normalized_session, session_id)
         normalized_session["resource_counts"] = resource_counts
         normalized_session["resource_version"] = resource_version
         active_run = await _resolve_active_run(request, session_id)
@@ -540,6 +553,7 @@ async def restore_session(
 
     # 使用 mode='json' 确保 float 特殊值（inf, -inf, NaN）被正确处理
     session_data = session.model_dump(mode='json')
+    _ensure_pending_interaction_session_id(session_data, session_id)
 
     # 分页加载路径不携带 session_metadata，上下文占用快照单独取出随恢复返回
     try:

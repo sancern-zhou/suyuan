@@ -15,12 +15,33 @@ from app.tools.scheduled_tasks.session_identity import resolve_task_user
 from app.utils.path_config import get_data_registry, resolve_agent_path
 
 _LIVE_TASKS = set()
+# 进程内登记：源会话 → 后台委派 task。用于会话运行时在交付边界等待
+# 委派完成并把结果作为工具观察注入（参考 _LIVE_TASKS 的进程内语义：
+# 进程重启后登记丢失，等待自然退化为"无待完成委派"）。
+_PENDING_BY_SESSION: dict[str, set] = {}
 managed_delegation = ContextVar("managed_assistant_delegation", default=None)
 TERMINAL = {"succeeded", "failed", "cancelled", "partial"}
 
 
 def _now():
     return datetime.now(UTC).isoformat()
+
+
+def background_runs_view(session_id: str) -> list[dict]:
+    """源会话在跑的后台委派概览（不含结果），供会话快照/状态卡使用。"""
+    view = []
+    for task in _PENDING_BY_SESSION.get(session_id) or ():
+        record = getattr(task, "_assistant_run_record", None) or {}
+        view.append(
+            {
+                "run_id": record.get("run_id"),
+                "kind": record.get("kind"),
+                "status": record.get("status"),
+                "goal": record.get("goal"),
+                "target_mode": record.get("target_mode"),
+            }
+        )
+    return view
 
 
 class AssistantRunService:
@@ -65,6 +86,35 @@ class AssistantRunService:
                 view["status"] = "unknown"
                 view["notice"] = "没有可确认的活动执行器；不能据此判定完成，未自动重跑"
         return view
+
+    def pending_background_count(self, session_id: str) -> int:
+        """源会话当前仍在运行的后台委派数（进程内登记）。"""
+        return len(_PENDING_BY_SESSION.get(session_id) or ())
+
+    async def wait_for_session_runs(self, session_id: str, timeout: float) -> tuple[list[dict], int]:
+        """等待该会话的后台委派完成，返回 (已完成结果列表, 仍在运行数)。
+
+        结果取自进程内 record 引用（状态由 run() 就地更新），不落盘读取；
+        超时后仅返回已完成部分，未完成者留给调用方决定后续。
+        """
+        tasks = set(_PENDING_BY_SESSION.get(session_id) or ())
+        if not tasks:
+            return [], 0
+        done, pending = await asyncio.wait(tasks, timeout=timeout)
+        results = []
+        for task in done:
+            record = getattr(task, "_assistant_run_record", None) or {}
+            results.append(
+                {
+                    "run_id": record.get("run_id"),
+                    "kind": record.get("kind"),
+                    "status": record.get("status"),
+                    "target_mode": record.get("target_mode"),
+                    "goal": record.get("goal"),
+                    "result": record.get("result"),
+                }
+            )
+        return results, len(pending)
 
     async def command(self, context, *, action, run_id=None, message=None, offset=0, limit=20):
         from config.settings import settings
@@ -213,9 +263,20 @@ class AssistantRunService:
             raise
         gate.set()
         _LIVE_TASKS.add(task)
+        if background:
+            # 供源会话运行时在交付边界等待并读取结果（wait_for_session_runs）。
+            task._assistant_run_record = record
+            _PENDING_BY_SESSION.setdefault(context.session_id, set()).add(task)
 
         def finished(done):
             _LIVE_TASKS.discard(done)
+            record = getattr(done, "_assistant_run_record", None)
+            if record is not None:
+                session_tasks = _PENDING_BY_SESSION.get(
+                    str(record.get("source_session_id") or "")
+                )
+                if session_tasks is not None:
+                    session_tasks.discard(done)
             if not done.cancelled():
                 done.exception()
 

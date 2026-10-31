@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import re
 from http.cookies import SimpleCookie
@@ -89,6 +90,10 @@ class GatewayAuthenticationMiddleware:
             return
 
         if method in {"GET", "HEAD"} and self._valid_resource_preview(scope, path):
+            await self.app(scope, receive, send)
+            return
+
+        if method in {"GET", "HEAD"} and self._valid_dashboard_access(scope, path):
             await self.app(scope, receive, send)
             return
 
@@ -219,6 +224,20 @@ class GatewayAuthenticationMiddleware:
                 unquote(shared_report.group(1)),
             )
         return False
+
+    def _valid_dashboard_access(self, scope: Scope, path: str) -> bool:
+        """部署级直连令牌：静态凭证，仅放行配置前缀（dashboard_api_prefix）的 GET。
+
+        令牌或前缀为空（默认）时整体禁用；启用前缀的路由层仍需复核
+        同一令牌，中间件放行不会绕过鉴权语义。
+        """
+        configured = getattr(self.settings, "dashboard_access_token", "")
+        prefix = getattr(self.settings, "dashboard_api_prefix", "")
+        if not configured or not prefix or not path.startswith(prefix):
+            return False
+        query = parse_qs(scope.get("query_string", b"").decode("utf-8"))
+        supplied = (query.get("access_token") or [""])[0]
+        return bool(supplied) and hmac.compare_digest(supplied, configured)
 
     def _verify_preview_ticket(
         self,

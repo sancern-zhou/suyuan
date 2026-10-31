@@ -1,171 +1,169 @@
 <template>
   <div class="skills-management-view">
+    <!-- 列表视图 -->
     <div v-if="!showDetailFullscreen" class="list-view">
       <header class="page-header">
-        <div class="header-copy">
-          <div>
-            <h2>技能管理</h2>
-            <p>按目录直接展示每个技能卡片</p>
-          </div>
+        <div class="header-title">
+          <h2>技能</h2>
+          <span class="count-chip">{{ activeCountLabel }}</span>
         </div>
-        <div class="header-actions">
-          <button
-            type="button"
-            class="btn-secondary"
-            :disabled="refreshingIndex"
-            @click="refreshSkillIndex"
-          >
-            {{ refreshingIndex ? '刷新中...' : '刷新技能' }}
-          </button>
-          <div class="search-box">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="11" cy="11" r="6.5" />
-              <path d="M16 16l4.5 4.5" />
+        <div class="header-tools">
+          <label class="search-box">
+            <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
             </svg>
             <input
               v-model="searchKeyword"
-              type="text"
-              placeholder="搜索技能或描述"
+              type="search"
+              :placeholder="activeSkillType === 'draft' ? '搜索待审核草稿…' : '搜索技能…'"
             />
-          </div>
+          </label>
+          <button
+            type="button"
+            class="icon-btn"
+            :disabled="refreshingIndex"
+            :title="refreshingIndex ? '正在刷新技能索引' : '刷新技能索引'"
+            @click="refreshSkillIndex"
+          >
+            <svg class="refresh-icon" :class="{ spinning: refreshingIndex }" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20 11a8 8 0 1 0-2.6 6" />
+              <path d="M20 5v6h-6" />
+            </svg>
+          </button>
         </div>
       </header>
 
-      <section v-if="loadError" class="load-note">
-        {{ loadError }}
-      </section>
-
-      <nav class="category-tabs" aria-label="技能分类">
-        <button v-for="section in skillSections" :key="section.id" type="button" @click="document.getElementById('skill-section-'+section.id)?.scrollIntoView({behavior:'smooth'})">{{ section.title }}</button>
-      </nav>
-
-      <section v-if="loading" class="state-panel">
-        <strong>加载中...</strong>
-      </section>
-
-      <section v-else-if="skillSections.length === 0" class="state-panel empty">
-        <strong>{{ emptyStateText }}</strong>
-        <span>尝试调整搜索词，或点击刷新重新生成索引。</span>
-      </section>
-
-      <section v-else class="skill-sections">
-        <article
-          v-for="section in skillSections"
-          :id="'skill-section-'+section.id" :key="section.id"
-          class="skill-section"
+      <div class="type-tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          class="type-tab"
+          :class="{ active: activeSkillType === 'official' }"
+          :aria-selected="activeSkillType === 'official'"
+          @click="switchSkillType('official')"
         >
-          <button
-            type="button"
-            class="section-toggle"
-            :class="{ collapsed: isSectionCollapsed(section.id) }"
-            :aria-expanded="!isSectionCollapsed(section.id)"
-            @click="toggleSection(section.id)"
-          >
-            <div class="section-toggle-main">
-              <div class="section-copy">
-                <span class="section-badge">{{ section.badge }}</span>
-                <h3>{{ section.title }}</h3>
-                <p>{{ section.description }}</p>
-              </div>
-              <div class="section-meta">
-                <span>{{ section.count }} 个技能</span>
-                <span v-if="section.draftCount">{{ section.draftCount }} 个待审核</span>
-              </div>
-            </div>
-            <span class="section-toggle-icon" aria-hidden="true">
-              <svg viewBox="0 0 20 20">
-                <path d="m6 8 4 4 4-4" />
-              </svg>
-            </span>
-          </button>
-
-          <div v-if="!isSectionCollapsed(section.id)" class="skill-grid">
-            <article
-              v-for="skill in section.items"
-              :key="skill.file || skill.name"
-              class="skill-card"
-              :class="{ draft: skill.is_draft }"
-              role="button"
-              tabindex="0"
-              @click="viewSkillDetail(skill)"
-              @keydown.enter.prevent="viewSkillDetail(skill)"
-              @keydown.space.prevent="viewSkillDetail(skill)"
-            >
-              <div class="skill-card-top">
-                <div class="skill-card-title">
-                  <span class="skill-name">{{ skill.name }}</span>
-                  <span class="skill-badge" :class="{ draft: skill.is_draft }">
-                    {{ skill.is_draft ? '待审核' : '正式' }}
-                  </span>
-                </div>
-                <p class="skill-desc" :title="skill.description">{{ getSkillSummary(skill) }}</p>
-              </div>
-
-              <div class="skill-meta">
-                <span class="skill-chip">{{ getSkillGroupLabel(skill) }}</span>
-                <span class="skill-chip">{{ getSkillRelativePath(skill.file) }}</span>
-              </div>
-
-              <div class="skill-actions">
-                <button type="button" class="btn-link" @click.stop="viewSkillDetail(skill)">
-                  查看详情
-                  <svg viewBox="0 0 20 20" aria-hidden="true">
-                    <path d="m7 4.5 5.5 5.5L7 15.5" />
-                  </svg>
-                </button>
-              </div>
-            </article>
-          </div>
-        </article>
-      </section>
-    </div>
-
-    <div v-else class="detail-fullscreen">
-      <div class="detail-header">
-        <div class="header-copy detail-copy">
-          <button class="btn-back" @click="closeDetailFullscreen">
-            ← 返回列表
-          </button>
-          <div>
-            <h2>{{ currentSkill?.name }}</h2>
-            <div class="detail-badges">
-              <span v-if="currentSkill?.is_draft" class="draft-badge">待审核草稿</span>
-              <span v-if="currentSkill?.file" class="path-badge">{{ getSkillRelativePath(currentSkill.file) }}</span>
-            </div>
-          </div>
-        </div>
-        <div class="header-actions">
-          <button v-if="!isEditing" class="btn-primary" @click="startEdit">
-            编辑
-          </button>
-          <button v-else class="btn-primary" @click="saveSkill" :disabled="saving">
-            {{ saving ? '保存中...' : '保存' }}
-          </button>
-          <button v-if="isEditing" class="btn-secondary" @click="cancelEdit">
-            取消
-          </button>
-        </div>
+          正式技能
+          <span class="tab-count">{{ officialSkills.length }}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="type-tab"
+          :class="{ active: activeSkillType === 'draft' }"
+          :aria-selected="activeSkillType === 'draft'"
+          @click="switchSkillType('draft')"
+        >
+          待审核草稿
+          <span class="tab-count">{{ drafts.length }}</span>
+        </button>
       </div>
 
+      <div class="main-content">
+        <div v-if="loading" class="skeleton-list" aria-busy="true">
+          <div v-for="index in 4" :key="index" class="skeleton-row">
+            <span class="skeleton-icon"></span>
+            <span class="skeleton-lines">
+              <span class="skeleton-line short"></span>
+              <span class="skeleton-line"></span>
+            </span>
+          </div>
+        </div>
+
+        <div v-else-if="filteredSkills.length === 0" class="empty-state">
+          <svg class="empty-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 4 5 7.5l7 3.5 7-3.5L12 4Z" />
+            <path d="M5 12l7 3.5L19 12" />
+            <path d="M5 16.5 12 20l7-3.5" />
+          </svg>
+          <p>{{ emptyStateText }}</p>
+        </div>
+
+        <div v-else class="skill-groups">
+          <section v-for="group in skillGroups" :key="group.id" class="skill-group">
+            <div class="group-header">
+              <h3>{{ group.label }}</h3>
+              <span class="group-count">{{ group.items.length }}</span>
+            </div>
+
+            <div class="skill-cards">
+              <div
+                v-for="skill in group.items"
+                :key="skill.file || skill.name"
+                class="skill-card"
+                role="button"
+                tabindex="0"
+                @click="viewSkillDetail(skill)"
+                @keydown.enter="viewSkillDetail(skill)"
+                @keydown.space.prevent="viewSkillDetail(skill)"
+              >
+                <span class="skill-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M12 4 5 7.5l7 3.5 7-3.5L12 4Z" />
+                    <path d="M5 12l7 3.5L19 12" />
+                    <path d="M5 16.5 12 20l7-3.5" />
+                  </svg>
+                </span>
+
+                <span class="skill-body">
+                  <span class="skill-name-row">
+                    <span class="skill-name">{{ skill.name }}</span>
+                    <span v-if="skill.is_draft" class="chip chip-draft">待审核</span>
+                  </span>
+                  <span class="skill-desc" :title="skill.description">
+                    {{ skill.description || '暂无描述' }}
+                  </span>
+                </span>
+
+                <svg class="skill-chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m9 6 6 6-6 6" />
+                </svg>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <!-- 全屏详情视图 -->
+    <div v-else class="detail-view">
+      <header class="detail-header">
+        <button type="button" class="back-btn" @click="closeDetailFullscreen">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6" /></svg>
+          返回
+        </button>
+        <div class="detail-title">
+          <h2>{{ currentSkill?.name }}</h2>
+          <span v-if="currentSkill?.is_draft" class="chip chip-draft">待审核草稿</span>
+        </div>
+        <div class="detail-actions">
+          <template v-if="!isEditing">
+            <button type="button" class="btn-primary" @click="startEdit">编辑</button>
+          </template>
+          <template v-else>
+            <button type="button" class="btn-ghost" @click="cancelEdit">取消</button>
+            <button type="button" class="btn-primary" :disabled="saving" @click="saveSkill">
+              {{ saving ? '保存中…' : '保存' }}
+            </button>
+          </template>
+        </div>
+      </header>
+
       <div class="detail-content">
-        <div v-if="currentSkill" class="detail-info">
-          <div class="info-row">
-            <span class="info-label">技能名称</span>
-            <span class="info-value">{{ currentSkill.name }}</span>
+        <div v-if="currentSkill" class="detail-meta">
+          <div class="meta-item">
+            <span class="meta-label">来源</span>
+            <span class="meta-value">{{ sourceLabel(currentSkill) }}</span>
           </div>
-          <div class="info-row">
-            <span class="info-label">状态</span>
-            <span class="info-value">{{ currentSkill?.is_draft ? '待审核草稿' : '正式技能' }}</span>
-          </div>
-          <div class="info-row" v-if="currentSkill.file">
-            <span class="info-label">文件</span>
-            <span class="info-value">{{ getSkillRelativePath(currentSkill.file) }}</span>
+          <div class="meta-item">
+            <span class="meta-label">文件</span>
+            <span class="meta-value mono">{{ displayPath(currentSkill.file) }}</span>
           </div>
         </div>
 
         <div class="editor-container">
           <div v-if="!isEditing" class="markdown-preview" v-html="renderMarkdown(currentSkill?.content)"></div>
-          <textarea v-else v-model="editedContent" class="markdown-editor"></textarea>
+          <textarea v-else v-model="editedContent" class="markdown-editor" spellcheck="false"></textarea>
         </div>
       </div>
     </div>
@@ -189,6 +187,7 @@ import markdownItMultimdTable from 'markdown-it-multimd-table'
 
 defineEmits(['close'])
 
+// 配置 markdown-it
 const md = markdownIt({
   html: true,
   linkify: true,
@@ -198,251 +197,110 @@ const md = markdownIt({
   .use(markdownItMultimdTable)
 
 const loading = ref(false)
-const loadError = ref('')
 const searchKeyword = ref('')
 const officialSkills = ref([])
-const draftSkills = ref([])
+const drafts = ref([])
+const activeSkillType = ref('official')
 const showDetailFullscreen = ref(false)
 const currentSkill = ref(null)
 const isEditing = ref(false)
 const editedContent = ref('')
 const saving = ref(false)
 const refreshingIndex = ref(false)
-const collapsedSections = ref(new Set())
 
-const skillGroupLabels = {
-  root: '根目录技能',
-  drafts: '待审核草稿',
-  tender_market: '生态环境招投标市场分析'
-}
+const activeSkills = computed(() =>
+  activeSkillType.value === 'draft' ? drafts.value : officialSkills.value
+)
 
-const skillGroupDescriptions = {
-  root: '直接位于技能根目录的单文件技能',
-  drafts: '等待人工审核的技能草稿',
-  tender_market: '按目录拆分的招投标市场分析技能包'
-}
+const activeCountLabel = computed(() =>
+  activeSkillType.value === 'draft'
+    ? `${drafts.value.length} 个待审核草稿`
+    : `${officialSkills.value.length} 个技能`
+)
 
-const normalizePath = (value) => String(value || '').replace(/\\/g, '/')
-
-const getSkillRelativePath = (filePath) => {
-  const normalized = normalizePath(filePath)
-  const marker = '/docs/skills/'
-  const index = normalized.lastIndexOf(marker)
-  if (index >= 0) {
-    return normalized.slice(index + marker.length)
-  }
-  return normalized.split('/').slice(-2).join('/')
-}
-
-const isDraftSkill = (skill) => {
-  if (skill?.is_draft) return true
-  return getSkillRelativePath(skill?.file).startsWith('.drafts/')
-}
-
-const getSkillGroupKey = (skill) => {
-  if (isDraftSkill(skill)) return 'drafts'
-
-  const relativePath = getSkillRelativePath(skill?.file)
-  const segments = relativePath.split('/').filter(Boolean)
-  if (segments.length <= 1) return 'root'
-
-  const topLevel = segments[0]
-  if (topLevel.toLowerCase() === 'skill_template.md' || topLevel.toLowerCase() === 'skills_index.md') {
-    return 'root'
-  }
-  return topLevel
-}
-
-const getSkillGroupLabel = (skillOrKey) => {
-  const key = typeof skillOrKey === 'string' ? skillOrKey : getSkillGroupKey(skillOrKey)
-  return skillGroupLabels[key] || key.replace(/[_-]+/g, ' ')
-}
-
-const getSkillGroupDescription = (groupKey) => {
-  return skillGroupDescriptions[groupKey] || '按目录展开的技能文档'
-}
-
-const isSectionCollapsed = (sectionId) => collapsedSections.value.has(sectionId)
-
-const toggleSection = (sectionId) => {
-  const next = new Set(collapsedSections.value)
-  if (next.has(sectionId)) {
-    next.delete(sectionId)
-  } else {
-    next.add(sectionId)
-  }
-  collapsedSections.value = next
-}
-
-const getSkillIdentifier = (skill) => {
-  if (skill?.id) return skill.id
-
-  const filePath = normalizePath(skill?.file)
-  const fileName = filePath.split('/').pop() || ''
-
-  if (fileName.toLowerCase() === 'skill.md') {
-    const pathParts = filePath.split('/').filter(Boolean)
-    return pathParts[pathParts.length - 2] || fileName.replace(/\.md$/i, '')
-  }
-  return fileName.replace(/\.md$/i, '')
-}
-
-const getSkillSummary = (skill) => {
-  const description = String(skill?.description || '').replace(/\s+/g, ' ').trim()
-  if (!description) return '暂无技能描述'
-  return description.length > 160 ? `${description.slice(0, 157)}...` : description
-}
-
-const matchesKeyword = (skill) => {
-  const keyword = searchKeyword.value.trim().toLowerCase()
-  if (!keyword) return true
-
-  return [
-    skill.name,
-    skill.description,
-    getSkillGroupLabel(skill),
-    getSkillRelativePath(skill.file)
-  ].some((value) => String(value ?? '').toLowerCase().includes(keyword))
-}
-
-const sortSkills = (items) => {
-  return [...items].sort((left, right) => {
-    const leftName = String(left.name ?? '')
-    const rightName = String(right.name ?? '')
-    return leftName.localeCompare(rightName, 'zh-Hans-CN')
+// 搜索在前端完成，name / description / aliases 任一命中即保留
+const filteredSkills = computed(() => {
+  const terms = searchKeyword.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (!terms.length) return activeSkills.value
+  return activeSkills.value.filter((skill) => {
+    const haystack = [skill.name, skill.description, ...(skill.aliases || [])]
+      .join(' ')
+      .toLowerCase()
+    return terms.some((term) => haystack.includes(term))
   })
-}
+})
 
-const filteredOfficialSkills = computed(() => officialSkills.value.filter(matchesKeyword))
-const filteredDraftSkills = computed(() => draftSkills.value.filter(matchesKeyword))
-
-const buildOfficialSections = computed(() => {
-  const grouped = new Map()
-
-  filteredOfficialSkills.value.forEach((skill) => {
-    const key = getSkillGroupKey(skill)
-    if (!grouped.has(key)) grouped.set(key, [])
-    grouped.get(key).push(skill)
-  })
-
-  const orderedKeys = [
-    ...(grouped.has('root') ? ['root'] : []),
-    ...[...grouped.keys()]
-      .filter((key) => key !== 'root')
-      .sort((left, right) => {
-        return getSkillGroupLabel(left).localeCompare(getSkillGroupLabel(right), 'zh-Hans-CN')
-      })
+// 按技能来源分组：项目技能优先，其次共享技能库
+const skillGroups = computed(() => {
+  if (activeSkillType.value === 'draft') {
+    return [{ id: 'draft', label: '待审核草稿', items: filteredSkills.value }]
+  }
+  const groups = [
+    { id: 'project', label: '项目技能', items: [] },
+    { id: 'shared', label: '共享技能库', items: [] },
+    { id: 'other', label: '其他', items: [] }
   ]
-
-  return orderedKeys
-    .filter((key) => grouped.has(key))
-    .map((key) => {
-      const items = sortSkills(grouped.get(key) || [])
-      return {
-        id: `official-${key}`,
-        badge: '正式',
-        title: getSkillGroupLabel(key),
-        description: getSkillGroupDescription(key),
-        count: items.length,
-        draftCount: 0,
-        items
-      }
-    })
-})
-
-const buildDraftSection = computed(() => {
-  const items = sortSkills(filteredDraftSkills.value)
-  return {
-    id: 'drafts',
-    badge: '草稿',
-    title: getSkillGroupLabel('drafts'),
-    description: getSkillGroupDescription('drafts'),
-    count: items.length,
-    draftCount: items.length,
-    items
+  const byId = Object.fromEntries(groups.map((group) => [group.id, group]))
+  for (const skill of filteredSkills.value) {
+    byId[sourceId(skill)].items.push(skill)
   }
+  return groups.filter((group) => group.items.length)
 })
-
-const skillSections = computed(() => {
-  const sections = [...buildOfficialSections.value]
-  if (buildDraftSection.value.items.length > 0) {
-    sections.push(buildDraftSection.value)
-  }
-  return sections
-})
-
-const stats = computed(() => {
-  const official = officialSkills.value.length
-  const drafts = draftSkills.value.length
-  return {
-    total: official + drafts,
-    official,
-    drafts
-  }
-})
-
-const summaryCards = computed(() => [
-  {
-    label: '技能总数',
-    value: stats.value.total,
-    hint: '正式技能 + 草稿'
-  },
-  {
-    label: '正式技能',
-    value: stats.value.official,
-    hint: '已发布文档'
-  },
-  {
-    label: '草稿数量',
-    value: stats.value.drafts,
-    hint: '待审核内容'
-  },
-  {
-    label: '分类数',
-    value: skillSections.value.length,
-    hint: '页面直接按分类展开'
-  }
-])
 
 const emptyStateText = computed(() => {
-  return searchKeyword.value.trim()
-    ? '未找到匹配的技能'
-    : '当前没有可展示的技能'
+  if (searchKeyword.value.trim()) {
+    return activeSkillType.value === 'draft' ? '未找到匹配的待审核草稿' : '未找到匹配的技能'
+  }
+  return activeSkillType.value === 'draft' ? '暂无待审核技能草稿' : '暂无技能文档'
 })
+
+const normalizedPath = (filePath) => String(filePath || '').replace(/\\/g, '/')
+
+const sourceId = (skill) => {
+  const path = normalizedPath(skill?.file)
+  // 索引里的链接可能是仓库相对路径（projects/...），也可能已被解析成绝对路径
+  if (/(^|\/)projects\//.test(path)) return 'project'
+  if (/(^|\/)backend\/docs\/skills\//.test(path)) return 'shared'
+  return 'other'
+}
+
+const sourceLabel = (skill) => {
+  if (skill?.is_draft) return '待审核草稿'
+  return { project: '项目技能', shared: '共享技能库', other: '其他' }[sourceId(skill)]
+}
+
+const displayPath = (filePath) => {
+  const path = normalizedPath(filePath)
+  const projectIndex = path.indexOf('/projects/')
+  if (projectIndex >= 0) return path.slice(projectIndex + 1)
+  const docsIndex = path.indexOf('backend/docs/skills')
+  if (docsIndex >= 0) return path.slice(docsIndex)
+  return path
+}
 
 const loadSkills = async () => {
   loading.value = true
-  loadError.value = ''
   try {
-    const [officialResult, draftResult] = await Promise.allSettled([
+    const [officialResult, draftResult] = await Promise.all([
       getSkillsList(),
-      getSkillDraftsList()
+      getSkillDraftsList().catch(() => ({ success: false }))
     ])
-
-    const errors = []
-
-    if (officialResult.status === 'fulfilled' && officialResult.value.success) {
-      officialSkills.value = officialResult.value.data?.skills || []
-    } else {
-      officialSkills.value = []
-      errors.push('正式技能列表加载失败')
+    if (officialResult.success) {
+      officialSkills.value = officialResult.data.skills || []
     }
-
-    if (draftResult.status === 'fulfilled' && draftResult.value.success) {
-      draftSkills.value = draftResult.value.data?.drafts || []
-    } else {
-      draftSkills.value = []
-      errors.push('草稿列表加载失败')
-    }
-
-    loadError.value = errors.join('；')
+    drafts.value = draftResult?.success ? draftResult.data.drafts || [] : []
   } catch (error) {
     console.error('加载技能列表失败:', error)
-    loadError.value = error.message || '加载技能列表失败'
     alert('加载技能列表失败: ' + error.message)
   } finally {
     loading.value = false
   }
+}
+
+const switchSkillType = (type) => {
+  if (activeSkillType.value === type) return
+  activeSkillType.value = type
+  searchKeyword.value = ''
 }
 
 const refreshSkillIndex = async () => {
@@ -462,11 +320,29 @@ const refreshSkillIndex = async () => {
   }
 }
 
+const getFileName = (filePath) => {
+  return filePath.split('/').pop()
+}
+
+const getSkillIdentifier = (skill) => {
+  if (skill?.id) return skill.id
+
+  const filePath = String(skill?.file || '')
+  const fileName = getFileName(filePath)
+  // Project skills are package directories whose entry point is SKILL.md.
+  if (fileName.toLowerCase() === 'skill.md') {
+    const pathParts = filePath.split('/').filter(Boolean)
+    return pathParts[pathParts.length - 2] || fileName.replace(/\.md$/i, '')
+  }
+  return fileName.replace(/\.md$/i, '')
+}
+
 const viewSkillDetail = async (skill) => {
   try {
     const skillIdentifier = getSkillIdentifier(skill)
-    const loader = isDraftSkill(skill) ? getSkillDraftDetail : getSkillDetail
-    const data = await loader(skillIdentifier)
+    const data = skill.is_draft || activeSkillType.value === 'draft'
+      ? await getSkillDraftDetail(skillIdentifier)
+      : await getSkillDetail(skillIdentifier)
     if (data.success) {
       currentSkill.value = data.data
       editedContent.value = data.data.content
@@ -509,7 +385,7 @@ const saveSkill = async () => {
   saving.value = true
   try {
     const skillIdentifier = getSkillIdentifier(currentSkill.value)
-    const data = isDraftSkill(currentSkill.value)
+    const data = currentSkill.value.is_draft
       ? await saveSkillDraftDetail(skillIdentifier, editedContent.value)
       : await saveSkillDetail(skillIdentifier, editedContent.value)
 
@@ -548,570 +424,631 @@ onMounted(() => {
 
 <style scoped>
 .skills-management-view {
+  padding: 4px 2px 24px;
   height: 100%;
   overflow-y: auto;
-  box-sizing: border-box;
-  padding: 20px 24px 28px;
-  background: #f5f7fb;
-  color: #24333e;
+  color: var(--text-1, #333);
+  font-size: var(--text-size-base, 14px);
 }
 
-.list-view {
-  display: grid;
-  gap: 16px;
-}
-
-.page-header,
-.detail-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 18px;
-  align-items: flex-start;
-}
-
-.header-copy {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 16px;
-  align-items: baseline;
-}
-
-.header-copy h2 {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 650;
-  color: #15232d;
-}
-
-.header-copy p {
-  margin: 4px 0 0;
-  color: #607080;
-  font-size: 12px;
-}
-
-.stats {
-  color: #607080;
-  font-size: 13px;
-}
-
-.header-actions {
+/* 顶部 */
+.page-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.header-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.header-title h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--text-1, #333);
+}
+
+.count-chip {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--bg-muted, #f8fafc);
+  border: 1px solid var(--border-1, #f0f0f0);
+  color: var(--text-3, #999);
+  font-size: var(--text-size-xs, 12px);
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.header-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .search-box {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 280px;
-  padding: 0 12px;
-  border: 1px solid #d7e0e8;
-  border-radius: 10px;
-  background: #fff;
+  gap: 6px;
+  height: var(--control-h-md, 32px);
+  padding: 0 10px;
+  width: 240px;
+  background: var(--bg-container, #fff);
+  border: 1px solid var(--border-3, #d9d9d9);
+  border-radius: var(--radius-lg, 8px);
+  transition: border-color var(--transition-fast, 0.15s ease), box-shadow var(--transition-fast, 0.15s ease);
 }
 
-.search-box svg {
-  width: 16px;
-  height: 16px;
-  fill: none;
-  stroke: #6b7f90;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.7;
+.search-box:focus-within {
+  border-color: var(--color-primary, #1890ff);
+  box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(24, 144, 255, 0.12));
+}
+
+.search-icon {
+  width: 15px;
+  height: 15px;
   flex: none;
+  fill: none;
+  stroke: var(--text-3, #999);
+  stroke-width: 1.8;
+  stroke-linecap: round;
 }
 
 .search-box input {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: #22313b;
-  font: inherit;
-  min-height: 38px;
-}
-
-.load-note {
-  padding: 10px 12px;
-  border: 1px solid #f0d7a3;
-  border-radius: 10px;
-  background: #fff8e5;
-  color: #8a5f12;
-  font-size: 12px;
-}
-
-.summary-row {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.category-tabs { display:flex; gap:34px; align-items:center; overflow-x:auto; white-space:nowrap; margin:18px 0 28px; border-bottom:1px solid #eee; }
-.category-tabs button { border:0; background:none; padding:0 0 14px; color:#888; font-size:18px; font-weight:600; cursor:pointer; }
-.category-tabs button:hover { color:#111; }
-.skill-section { scroll-margin-top:24px; }
-.skill-card { border:1px solid #ececec; border-radius:24px; padding:28px 40px; box-shadow:0 8px 24px rgba(0,0,0,.03); background:#fff; }
-
-.summary-card {
-  display: grid;
-  gap: 4px;
-  min-height: 84px;
-  padding: 14px 16px;
-  border: 1px solid #dde5ec;
-  border-radius: 12px;
-  background: #fff;
-}
-
-.summary-card span,
-.summary-card small {
-  color: #6d7f8f;
-  font-size: 11px;
-}
-
-.summary-card strong {
-  font-size: 26px;
-  font-weight: 700;
-  color: #163041;
-}
-
-.state-panel {
-  display: grid;
-  place-items: center;
-  min-height: 220px;
-  border: 1px dashed #cfd9e2;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.6);
-  color: #6f8090;
-  text-align: center;
-}
-
-.state-panel.empty {
-  gap: 6px;
-}
-
-.state-panel strong {
-  color: #32495b;
-  font-size: 14px;
-}
-
-.skill-sections {
-  display: grid;
-  gap: 18px;
-}
-
-.skill-section {
-  display: grid;
-  gap: 12px;
-}
-
-.section-toggle {
-  display: flex;
-  width: 100%;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-  padding: 14px 16px;
-  border: 1px solid #dde5ec;
-  border-radius: 12px;
-  background: #fff;
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
-}
-
-.section-toggle:hover,
-.section-toggle:focus-visible {
-  border-color: #1590a0;
-  box-shadow: 0 12px 28px rgba(16, 82, 94, 0.06);
-  transform: translateY(-1px);
-  outline: none;
-}
-
-.section-toggle-main {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-  min-width: 0;
   flex: 1;
-}
-
-.section-copy {
-  display: grid;
-  gap: 4px;
   min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: var(--text-size-sm, 13px);
+  color: var(--text-1, #333);
 }
 
-.section-badge {
-  color: #0f7b8a;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
+.search-box input::placeholder {
+  color: var(--text-disabled, #bfbfbf);
 }
 
-.section-copy h3 {
-  margin: 0;
-  font-size: 18px;
-  color: #183241;
+.search-box input::-webkit-search-cancel-button {
+  cursor: pointer;
 }
 
-.section-copy p {
-  margin: 0;
-  color: #678090;
-  font-size: 12px;
-}
-
-.section-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.icon-btn {
+  display: inline-flex;
   align-items: center;
-  color: #6d7f8f;
-  font-size: 11px;
-  flex: none;
+  justify-content: center;
+  width: var(--control-h-md, 32px);
+  height: var(--control-h-md, 32px);
+  padding: 0;
+  border: 1px solid var(--border-3, #d9d9d9);
+  border-radius: var(--radius-lg, 8px);
+  background: var(--bg-container, #fff);
+  color: var(--icon-1, #595959);
+  cursor: pointer;
+  transition: background var(--transition-fast, 0.15s ease), color var(--transition-fast, 0.15s ease);
 }
 
-.section-meta span {
-  padding: 5px 8px;
-  border-radius: 999px;
-  background: #edf4f8;
+.icon-btn:hover:not(:disabled) {
+  background: var(--bg-hover, #f5f5f5);
+  color: var(--color-primary, #1890ff);
 }
 
-.section-toggle-icon {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  flex: none;
-  border-radius: 999px;
-  background: #f1f6f9;
-  color: #5c7282;
+.icon-btn:disabled {
+  cursor: default;
+  opacity: 0.8;
 }
 
-.section-toggle-icon svg {
+.refresh-icon {
   width: 16px;
   height: 16px;
   fill: none;
   stroke: currentColor;
+  stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.8;
-  transition: transform 0.18s ease;
 }
 
-.section-toggle.collapsed .section-toggle-icon svg {
-  transform: rotate(-90deg);
+.refresh-icon.spinning {
+  animation: skill-spin 0.9s linear infinite;
 }
 
-.skill-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 12px;
+@keyframes skill-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 分类 tab */
+.type-tabs {
+  display: inline-flex;
+  gap: 2px;
+  margin: 14px 0 4px;
+  padding: 3px;
+  background: var(--bg-muted, #f8fafc);
+  border: 1px solid var(--border-1, #f0f0f0);
+  border-radius: var(--radius-lg, 8px);
+}
+
+.type-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: none;
+  border-radius: var(--radius-md, 6px);
+  background: transparent;
+  color: var(--text-2, #666);
+  font-size: var(--text-size-sm, 13px);
+  cursor: pointer;
+  transition: background var(--transition-fast, 0.15s ease), color var(--transition-fast, 0.15s ease);
+}
+
+.type-tab:hover {
+  color: var(--text-1, #333);
+}
+
+.type-tab.active {
+  background: var(--bg-container, #fff);
+  color: var(--color-primary, #1890ff);
+  font-weight: var(--font-weight-medium, 500);
+  box-shadow: var(--shadow-1, 0 1px 2px rgba(31, 42, 68, 0.06));
+}
+
+.tab-count {
+  color: var(--text-3, #999);
+  font-size: var(--text-size-xs, 12px);
+  font-weight: 400;
+}
+
+.type-tab.active .tab-count {
+  color: var(--color-primary, #1890ff);
+}
+
+/* 列表 */
+.main-content {
+  min-height: 300px;
+  margin-top: 12px;
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 0 8px;
+}
+
+.group-header:first-child {
+  margin-top: 4px;
+}
+
+.group-header h3 {
+  margin: 0;
+  font-size: var(--text-size-sm, 13px);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--text-2, #666);
+}
+
+.group-count {
+  color: var(--text-3, #999);
+  font-size: var(--text-size-xs, 12px);
+}
+
+.skill-cards {
+  background: var(--bg-container, #fff);
+  border: 1px solid var(--border-2, #e8e8e8);
+  border-radius: var(--radius-lg, 8px);
+  overflow: hidden;
 }
 
 .skill-card {
   display: flex;
-  flex-direction: column;
-  gap: 14px;
-  height: 236px;
-  padding: 16px;
-  border: 1px solid #dce5ec;
-  border-radius: 12px;
-  background: #fff;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
   cursor: pointer;
-  overflow: hidden;
-  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+  outline: none;
+  transition: background var(--transition-fast, 0.15s ease);
+}
+
+.skill-card + .skill-card {
+  border-top: 1px solid var(--border-1, #f0f0f0);
 }
 
 .skill-card:hover,
 .skill-card:focus-visible {
-  border-color: #1590a0;
-  box-shadow: 0 12px 28px rgba(16, 82, 94, 0.08);
-  transform: translateY(-1px);
-  outline: none;
+  background: var(--bg-muted, #f8fafc);
 }
 
-.skill-card.draft {
-  background: #fbfcfd;
+.skill-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-primary-bg, #e6f7ff);
+  color: var(--color-primary, #1890ff);
 }
 
-.skill-card-top {
-  display: grid;
-  gap: 8px;
-  min-height: 0;
+.skill-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.skill-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
   flex: 1;
 }
 
-.skill-card-title {
+.skill-name-row {
   display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  align-items: flex-start;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
 .skill-name {
-  font-size: 15px;
-  font-weight: 700;
-  color: #183241;
-  min-width: 0;
+  font-size: var(--text-size-base, 14px);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--text-1, #333);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.skill-badge,
-.draft-badge,
-.path-badge {
-  flex: none;
-  padding: 3px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.skill-badge {
-  color: #0d7c49;
-  background: #e7f8ef;
-}
-
-.skill-badge.draft,
-.draft-badge {
-  color: #8a5f12;
-  background: #fff3d8;
-}
-
-.path-badge {
-  color: #5f7181;
-  background: #edf4f8;
 }
 
 .skill-desc {
-  margin: 0;
-  color: #5e7384;
-  font-size: 13px;
-  line-height: 1.6;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
-}
-
-.skill-meta {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.skill-chip {
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: #f1f6f9;
-  color: #5c7282;
-  font-size: 11px;
-  min-width: 0;
+  font-size: var(--text-size-sm, 13px);
+  color: var(--text-3, #999);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.5;
 }
 
-.skill-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: auto;
+.skill-chevron {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--text-disabled, #bfbfbf);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: stroke var(--transition-fast, 0.15s ease), transform var(--transition-fast, 0.15s ease);
 }
 
-.btn-primary,
-.btn-secondary,
-.btn-back,
-.btn-link {
-  border: 0;
-  border-radius: 9px;
-  cursor: pointer;
-  font: inherit;
-  transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+.skill-card:hover .skill-chevron,
+.skill-card:focus-visible .skill-chevron {
+  stroke: var(--color-primary, #1890ff);
+  transform: translateX(2px);
 }
 
-.btn-primary {
-  padding: 8px 14px;
-  border: 1px solid #1590a0;
-  background: #1590a0;
-  color: #fff;
-}
-
-.btn-primary:hover {
-  background: #0f7b8a;
-}
-
-.btn-primary:disabled {
-  opacity: 0.58;
-  cursor: default;
-}
-
-.btn-secondary,
-.btn-back {
-  padding: 8px 12px;
-  border: 1px solid #d8e1e8;
-  background: #fff;
-  color: #405868;
-}
-
-.btn-link {
+.chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  background: transparent;
-  color: #0f7b8a;
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm, 4px);
+  font-size: var(--text-size-xs, 12px);
+  font-weight: 400;
+  line-height: 18px;
+  white-space: nowrap;
 }
 
-.btn-link svg {
+.chip-draft {
+  color: var(--color-warning-text, #d48806);
+  background: var(--color-warning-bg, #fffbe6);
+  border: 1px solid #f5d78e;
+}
+
+/* 空态 / 骨架屏 */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 56px 20px;
+  color: var(--text-3, #999);
+}
+
+.empty-icon {
+  width: 32px;
+  height: 32px;
+  fill: none;
+  stroke: var(--text-disabled, #bfbfbf);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.empty-state p {
+  margin: 0;
+  font-size: var(--text-size-sm, 13px);
+}
+
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-container, #fff);
+  border: 1px solid var(--border-2, #e8e8e8);
+  border-radius: var(--radius-lg, 8px);
+  margin-bottom: 8px;
+}
+
+.skeleton-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md, 6px);
+  background: var(--bg-hover, #f5f5f5);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.skeleton-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  flex: 1;
+}
+
+.skeleton-line {
+  height: 10px;
+  border-radius: var(--radius-sm, 4px);
+  background: var(--bg-hover, #f5f5f5);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.skeleton-line.short {
+  width: 24%;
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* 详情视图 */
+.detail-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-1, #f0f0f0);
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  padding: 5px 10px 5px 6px;
+  border: 1px solid var(--border-3, #d9d9d9);
+  border-radius: var(--radius-md, 6px);
+  background: var(--bg-container, #fff);
+  color: var(--text-2, #666);
+  font-size: var(--text-size-sm, 13px);
+  cursor: pointer;
+  transition: background var(--transition-fast, 0.15s ease), color var(--transition-fast, 0.15s ease);
+}
+
+.back-btn:hover {
+  background: var(--bg-hover, #f5f5f5);
+  color: var(--text-1, #333);
+}
+
+.back-btn svg {
   width: 14px;
   height: 14px;
   fill: none;
   stroke: currentColor;
+  stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.8;
 }
 
-.btn-secondary:hover,
-.btn-back:hover,
-.btn-link:hover {
-  border-color: #1590a0;
-  color: #0f7b8a;
-}
-
-.detail-fullscreen {
+.detail-title {
   display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-height: 100%;
-}
-
-.detail-copy {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.detail-copy h2 {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 650;
-  color: #15232d;
-}
-
-.detail-badges {
-  display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
-  margin-top: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.detail-title h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-1, #333);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.btn-primary {
+  padding: 6px 16px;
+  border: 1px solid var(--color-primary, #1890ff);
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-primary, #1890ff);
+  color: #fff;
+  font-size: var(--text-size-sm, 13px);
+  cursor: pointer;
+  transition: background var(--transition-fast, 0.15s ease);
+}
+
+.btn-primary:hover {
+  background: var(--color-primary-hover, #40a9ff);
+  border-color: var(--color-primary-hover, #40a9ff);
+}
+
+.btn-primary:disabled {
+  background: var(--color-primary-disabled, #e3effc);
+  border-color: var(--color-primary-disabled, #e3effc);
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  padding: 6px 16px;
+  border: 1px solid var(--border-3, #d9d9d9);
+  border-radius: var(--radius-md, 6px);
+  background: var(--bg-container, #fff);
+  color: var(--text-2, #666);
+  font-size: var(--text-size-sm, 13px);
+  cursor: pointer;
+  transition: background var(--transition-fast, 0.15s ease);
+}
+
+.btn-ghost:hover {
+  background: var(--bg-hover, #f5f5f5);
 }
 
 .detail-content {
-  display: flex;
   flex: 1;
-  flex-direction: column;
-  gap: 16px;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
+  overflow-y: auto;
 }
 
-.detail-info {
+.detail-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 24px;
-  padding: 16px;
-  border: 1px solid #dce5ec;
-  border-radius: 12px;
-  background: #fff;
+  padding: 10px 14px;
+  background: var(--bg-muted, #f8fafc);
+  border: 1px solid var(--border-1, #f0f0f0);
+  border-radius: var(--radius-lg, 8px);
 }
 
-.info-row {
-  display: grid;
-  gap: 6px;
+.meta-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
 }
 
-.info-label {
-  color: #708391;
-  font-size: 12px;
+.meta-label {
+  flex: none;
+  font-size: var(--text-size-xs, 12px);
+  color: var(--text-3, #999);
 }
 
-.info-value {
-  color: #183241;
-  font-size: 14px;
-  font-weight: 600;
-  word-break: break-word;
+.meta-value {
+  font-size: var(--text-size-sm, 13px);
+  color: var(--text-2, #666);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta-value.mono {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-size-xs, 12px);
 }
 
 .editor-container {
+  flex: 1;
+  min-height: 320px;
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  border: 1px solid #dce5ec;
-  border-radius: 12px;
-  background: #fff;
+  border: 1px solid var(--border-2, #e8e8e8);
+  border-radius: var(--radius-lg, 8px);
+  background: var(--bg-container, #fff);
+  overflow: hidden;
 }
 
 .markdown-preview {
   flex: 1;
   overflow-y: auto;
-  min-height: 0;
   padding: 20px;
-  line-height: 1.7;
-  color: #24333e;
+  line-height: var(--line-height-body, 1.6);
+  color: var(--text-1, #333);
 }
 
 .markdown-editor {
   flex: 1;
   width: 100%;
-  min-height: 0;
   padding: 20px;
-  border: 0;
-  outline: 0;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-  font-size: 14px;
-  line-height: 1.6;
+  border: none;
+  outline: none;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-size-sm, 13px);
+  line-height: var(--line-height-body, 1.6);
   resize: none;
-  background: #fafbfd;
+  background: var(--bg-muted, #f8fafc);
 }
 
+/* Markdown 预览样式 */
 .markdown-preview :deep(h1) {
-  font-size: 24px;
-  margin: 20px 0 16px;
+  font-size: 22px;
+  margin: 8px 0 16px;
   padding-bottom: 8px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--border-1, #f0f0f0);
 }
 
 .markdown-preview :deep(h2) {
-  font-size: 20px;
-  margin: 18px 0 14px;
+  font-size: 18px;
+  margin: 20px 0 12px;
 }
 
 .markdown-preview :deep(h3) {
-  font-size: 18px;
-  margin: 16px 0 12px;
+  font-size: 16px;
+  margin: 16px 0 10px;
 }
 
 .markdown-preview :deep(p) {
-  margin: 12px 0;
+  margin: 10px 0;
 }
 
 .markdown-preview :deep(code) {
-  background: #f5f5f5;
+  background: var(--bg-hover, #f5f5f5);
   padding: 2px 6px;
-  border-radius: 3px;
-  font-family: monospace;
-  font-size: 14px;
+  border-radius: var(--radius-sm, 4px);
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
 }
 
 .markdown-preview :deep(pre) {
-  background: #f5f5f5;
-  padding: 12px;
-  border-radius: 4px;
+  background: var(--code-block-bg, #282c34);
+  color: #e6e6e6;
+  padding: 14px;
+  border-radius: var(--radius-md, 6px);
   overflow-x: auto;
   margin: 12px 0;
 }
@@ -1119,11 +1056,12 @@ onMounted(() => {
 .markdown-preview :deep(pre code) {
   background: none;
   padding: 0;
+  color: inherit;
 }
 
 .markdown-preview :deep(ul),
 .markdown-preview :deep(ol) {
-  margin: 12px 0;
+  margin: 10px 0;
   padding-left: 24px;
 }
 
@@ -1131,41 +1069,28 @@ onMounted(() => {
   border-collapse: collapse;
   width: 100%;
   margin: 12px 0;
+  font-size: 13px;
 }
 
 .markdown-preview :deep(table th),
 .markdown-preview :deep(table td) {
-  border: 1px solid #ddd;
+  border: 1px solid var(--border-3, #d9d9d9);
   padding: 8px 12px;
   text-align: left;
 }
 
 .markdown-preview :deep(table th) {
-  background: #f5f5f5;
+  background: var(--bg-muted, #f8fafc);
   font-weight: 600;
 }
 
-@media (max-width: 820px) {
-  .page-header,
-  .detail-header {
-    flex-direction: column;
-  }
-
-  .header-actions,
+@media (max-width: 720px) {
   .search-box {
-    width: 100%;
+    width: 170px;
   }
 
-  .summary-row {
-    grid-template-columns: 1fr;
-  }
-
-  .section-header {
-    flex-direction: column;
-  }
-
-  .detail-info {
-    gap: 14px;
+  .detail-title h2 {
+    font-size: 16px;
   }
 }
 </style>
