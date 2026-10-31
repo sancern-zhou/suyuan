@@ -132,3 +132,16 @@ SKILL.md 的方法论部分（fresh eyes、每发现一确认者、确定性门�
 明确未移植：escalation（`dwfq-*` 阻塞应答，需 worker→主会话应答回路，留待下一轮）、hole 机制（suyan 拓扑是 JSON 定义而非模型脚本，无编译期站点概念）、前端用量展示。
 
 移植验证：`backend/app/agent/workflow/model_failure_policy_test.py`（分类表 12 例）+ `coordinator_policy_test.py`（stop 类零重试、瞬态重试上膛记账、用量累计与事件顺序、salvage 内容、停摆单次通知）21 例全绿。
+
+## 九、第二轮移植：AIMD 并发治理器与配额自动续跑（2026-10-31）
+
+在第一轮四项的基础上，继续移植 ZCode 的两个模型资源治理机制：
+
+| ZCode 机制（出处） | 机制要点 | suyan 落点（本轮移植） |
+|---|---|---|
+| AIMD 并发治理器（`dynamic-workflow/src/engine/concurrency.ts` + `bootstrap/app/workflow-concurrency-governor.ts`） | 闸门粒度是每次模型请求尝试：每 4 次连续成功 +1（需有等待者）、429/过载 ×0.75 收缩、空闲 5 分钟回初值、上限 2×D；epoch 防阻尼（同一批在飞请求只裁决一次）；lastGood 探测语义（已证明水位之上被拒回落不乘系数）；冷却仅由 Retry-After 驱动；**配额类停止走 ended-only**（额度窗口的 Retry-After 可达数小时，当并发信号会冻桶几小时） | `backend/app/services/llm_concurrency.py`：纯状态机 `ConcurrencyController`（全部收 now 参数）+ 进程级 per `provider:model` 桶 `LlmConcurrencyGovernor`。`llm_request_slot()` 异步上下文管理器在 `__aexit__` 自动按结果结算（正常/取消/限流/瞬态/永久），替换原固定信号量 `get_llm_pool_semaphore`（保留兼容）。作用域为 per 进程（与原信号量语义一致），跨进程 Redis 全局治理留待后续。配额信号补账进 `llm_failure_counter`（billing 原来不计数，运行监控看不到） |
+| 配额重置自动续跑（`bootstrap/app/dynamic-workflow-quota-resume.ts` + 策略表 `resolveQuotaResetAt`） | 配额停止非终态：resetAt 解析（Retry-After 优先，否则原文重置时刻按北京时间，合理窗口 [now−24h, now+35d]）；唯一数据源是 run 行，定时器只是唤醒、到点复核 resetAt 未变才续；同一 resetAt 重复失败 10 分钟起 ×2 封顶 60 分钟拉开间隔 | 策略表 `FailurePolicy.reset_at`（`resolve_quota_reset_at`）；coordinator 记档 `quota_pause`（journal `workflow.quota_paused`）；`_prepare_snapshot_resume` 把 stop_quota 节点翻回可重试并抬高 run 的 attempt 上限（解除 resume 409 硬阻断）；`workflow/quota_resume.py`：Redis ZSET 唤醒器（`{prefix}:quota_resume`）+ worker 循环每 5s 扫描，统一覆盖 inline（web 进程）与 durable（worker 队列）两条路径，`store.enqueue` 与手动 resume 同路；防循环同 ZCode（10min ×2 封顶 60min、至多 3 次后留手动）；全程 fail-soft |
+
+移植验证：`tests/services/test_llm_concurrency.py`（状态机 12 例 + 桶级 4 例）、`model_failure_policy_test.py` 补 reset_at 解析 6 例、`coordinator_policy_test.py` 补 quota_pause 记档与快照恢复 2 例、`quota_resume_test.py`（schedule/scan/防循环 8 例，全 fake Redis）。
+
+明确未移植：跨进程 Redis 全局并发治理、run 间公平队列与 observer 模式（我们主 Agent 与工作流不同进程，无此争用）、LLM 层 Retry-After 头的 HTTP 读取（沿用错误文本解析，网关不透传时退化为指数退避）。

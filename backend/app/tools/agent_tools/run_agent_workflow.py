@@ -17,6 +17,7 @@ from app.agent.workflow.resource_handoff import result_resource_declarations
 from app.agent.workflow.target_mode_contract import build_target_mode_contract, target_mode_values
 from app.agent.workflow.coordinator import WorkflowCoordinator, WorkflowNodeSpec
 from app.agent.workflow.delegation import delegation_error
+from app.agent.workflow.quota_resume import schedule_quota_resume
 from app.agent.workflow.resource_contract import ResourceContractError
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
@@ -797,6 +798,17 @@ class RunAgentWorkflowTool(LLMTool):
                 snapshot["node_results"],
             )
             session_id = getattr(context, "session_id", None) if context is not None else None
+            # 配额暂停 → 到点自动续跑（对齐 ZCode quota-resume）：inline 与
+            # durable 路径都经过这里，挂 Redis 唤醒器，worker 扫描到点投递。
+            quota_pause = snapshot.get("quota_pause") if isinstance(snapshot, Mapping) else None
+            quota_resume_scheduled = False
+            if isinstance(quota_pause, Mapping) and quota_pause.get("reset_at") and session_id:
+                quota_resume_scheduled = await schedule_quota_resume(
+                    session_id,
+                    str(snapshot["workflow_id"]),
+                    float(quota_pause["reset_at"]),
+                    source="run_agent_workflow",
+                )
             full_results = self._write_full_results(session_id, str(snapshot["workflow_id"]), snapshot)
             if full_results and full_results.get("declaration"):
                 resources = [*resources, full_results["declaration"]]
@@ -819,6 +831,7 @@ class RunAgentWorkflowTool(LLMTool):
                 "revision": snapshot.get("revision", 0),
                 "budget_state": snapshot.get("budget_state", {}),
                 "node_usage": snapshot.get("node_usage", {}),
+                "quota_pause": dict(quota_pause) if isinstance(quota_pause, Mapping) else None,
                 "delivery": snapshot.get("delivery", {}),
                 "node_statuses": {task_id: node["status"] for task_id, node in snapshot["graph"].items()},
                 "node_decisions": snapshot.get("node_decisions", {}),
@@ -843,6 +856,15 @@ class RunAgentWorkflowTool(LLMTool):
             salvaged_files = sum(len(item.get("delivered_files") or []) for item in salvage)
             if succeeded:
                 result_message = "工作流已完成"
+            elif isinstance(quota_pause, Mapping) and quota_pause.get("reset_at"):
+                from datetime import datetime as _dt
+
+                reset_text = _dt.fromtimestamp(float(quota_pause["reset_at"])).strftime("%H:%M")
+                result_message = (
+                    f"模型配额已耗尽，工作流已暂停；预计 {reset_text} 配额重置后自动恢复执行"
+                    if quota_resume_scheduled
+                    else f"模型配额已耗尽，工作流已暂停；配额重置后可手动恢复执行"
+                )
             elif salvaged_files:
                 # 失败抢救优先呈现（对齐 ZCode delivery guidance：先说抢救到了什么）
                 result_message = (

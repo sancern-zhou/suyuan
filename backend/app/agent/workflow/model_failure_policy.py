@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import random
 import re
+import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Optional, Union
 
@@ -34,6 +35,9 @@ class FailurePolicy:
     reason: str
     retryable: bool
     retry_after: Optional[float] = None  # 秒；来自 Retry-After 头或限流原文
+    # 配额重置时刻（epoch 秒）。仅 stop_quota 且网关给出可信重置时间时填充；
+    # 供工作流层安排"到点自动续跑"（quota_resume）。None = 不自动续跑。
+    reset_at: Optional[float] = None
 
 
 _QUOTA_MARKERS = (
@@ -158,13 +162,18 @@ def parse_retry_after(text: str) -> Optional[float]:
 def resolve_model_failure_policy(error: Union[BaseException, str]) -> FailurePolicy:
     """把一次模型请求失败映射为处置策略（全引擎唯一判定源）。"""
     message = _error_text(error)
-    retry_after = parse_retry_after(str(error) if isinstance(error, BaseException) else str(error))
+    raw_text = str(error) if isinstance(error, BaseException) else str(error)
+    retry_after = parse_retry_after(raw_text)
 
-    def policy(action: str, reason: str, retryable: bool) -> FailurePolicy:
-        return FailurePolicy(action=action, reason=reason, retryable=retryable, retry_after=retry_after)
+    def policy(action: str, reason: str, retryable: bool, reset_at: Optional[float] = None) -> FailurePolicy:
+        return FailurePolicy(
+            action=action, reason=reason, retryable=retryable, retry_after=retry_after, reset_at=reset_at
+        )
 
     if any(marker in message for marker in _QUOTA_MARKERS):
-        return policy(STOP_QUOTA, "model quota exhausted", False)
+        # 配额重置时刻：Retry-After 秒数优先，其次从原文绝对时刻解析；
+        # 都没有 → 不填，不自动续跑（行为退化为失败后手动 resume）。
+        return policy(STOP_QUOTA, "model quota exhausted", False, resolve_quota_reset_at(raw_text, retry_after))
     if any(marker in message for marker in _AUTH_MARKERS):
         return policy(STOP_AUTH, "model auth failed", False)
     if any(marker in message for marker in _MODEL_UNAVAILABLE_MARKERS):
@@ -186,3 +195,47 @@ def transient_backoff_seconds(attempt: int, policy: Optional[FailurePolicy] = No
         return min(600.0, max(1.0, policy.retry_after))
     base = min(60.0, 2.0 * (2 ** max(0, attempt - 1)))
     return base + random.uniform(0, base * 0.1)
+
+
+# 配额重置时刻的合理窗口（对齐 ZCode：过去容忍 24h 时钟偏差，未来至多 35 天月度额度）
+_QUOTA_RESET_PAST_TOLERANCE_SECONDS = 24 * 3600.0
+_QUOTA_RESET_MAX_AHEAD_SECONDS = 35 * 24 * 3600.0
+
+# 绝对时刻解析：必须与"重置/reset"同句出现（避免把无关时间戳当重置时刻），
+# 支持两种语序（"重置于 2026-11-01 00:00" / "2026-11-01 00:00 后重置"）与
+# 2026-11-01 00:00 / 2026/11/01 00:00:00 / 2026年11月01日 00:00 三种写法，
+# 按北京时间 +08:00 解析（国内主流模型网关的额度窗口口径）。
+_DT_PATTERN = r"(?P<y>\d{4})[-/年](?P<m>\d{1,2})[-/月](?P<d>\d{1,2})日?(?:\s+(?P<H>\d{1,2}):(?P<M>\d{2})(?::(?P<S>\d{2}))?)?"
+_QUOTA_RESET_ABSOLUTE_PATTERNS = (
+    re.compile(r"(?:重置|reset)[^\d]{0,40}?" + _DT_PATTERN, re.IGNORECASE),
+    re.compile(_DT_PATTERN + r"[^\d]{0,40}?(?:重置|reset)", re.IGNORECASE),
+)
+
+
+def resolve_quota_reset_at(text: str, retry_after: Optional[float] = None) -> Optional[float]:
+    """解析配额重置时刻（epoch 秒）；解析不出或落在合理窗口外返回 None。"""
+    now = time.time()
+    candidate: Optional[float] = None
+    if retry_after and retry_after > 0:
+        candidate = now + retry_after
+    else:
+        for pattern in _QUOTA_RESET_ABSOLUTE_PATTERNS:
+            match = pattern.search(text)
+            if not match:
+                continue
+            parts = match.groupdict()
+            try:
+                naive = datetime(
+                    int(parts["y"]), int(parts["m"]), int(parts["d"]),
+                    int(parts["H"] or 0), int(parts["M"] or 0), int(parts["S"] or 0),
+                )
+                # 北京时间口径（详见上方正则注释）
+                candidate = naive.replace(tzinfo=timezone(timedelta(hours=8))).timestamp()
+                break
+            except (TypeError, ValueError):
+                candidate = None
+    if candidate is None:
+        return None
+    if candidate < now - _QUOTA_RESET_PAST_TOLERANCE_SECONDS or candidate > now + _QUOTA_RESET_MAX_AHEAD_SECONDS:
+        return None
+    return candidate

@@ -249,6 +249,9 @@ class WorkflowCoordinator:
         # 停摆观测（对齐 ZCode stall clock）：纯观察，不做任何决策。
         self.stall_info: Optional[Dict[str, Any]] = None
         self._stall_watch: Optional["WorkflowStallWatch"] = None
+        # 配额暂停（对齐 ZCode quota-resume）：stop_quota 且网关给出可信重置
+        # 时刻时记档，供 quota_resume 层到点自动续跑；None = 正常失败语义。
+        self.quota_pause: Optional[Dict[str, Any]] = None
         self.status = "queued"
         self._persistence_ready = False
         self.cancel_requested = False
@@ -672,6 +675,7 @@ class WorkflowCoordinator:
             "node_retryable": dict(self.node_retryable),
             "node_usage": dict(self.node_usage),
             "node_failure_policies": dict(self.node_failure_policies),
+            "quota_pause": dict(self.quota_pause) if self.quota_pause else None,
             "stall": dict(self.stall_info) if self.stall_info else None,
             "delivery": self.delivery(),
             "workflow_run_id": self.workflow_run.run_id if hasattr(self, "workflow_run") else None,
@@ -864,6 +868,22 @@ class WorkflowCoordinator:
                     "action": policy.action,
                     "reason": policy.reason,
                 }
+                # 配额暂停记档：可信重置时刻 → 到点自动续跑（quota_resume 层）
+                if (
+                    policy.action == "stop_quota"
+                    and policy.reset_at
+                    and self.quota_pause is None
+                ):
+                    self.quota_pause = {
+                        "reset_at": float(policy.reset_at),
+                        "task_id": task_id,
+                        "error": error[:300],
+                    }
+                    self._journal_event(
+                        "workflow.quota_paused",
+                        task_id=task_id,
+                        reset_at=self.quota_pause["reset_at"],
+                    )
             self._journal_event(
                 "node.failed",
                 task_id=task_id,
@@ -921,6 +941,8 @@ class WorkflowCoordinator:
         }
         raw_stall = snapshot.get("stall")
         self.stall_info = dict(raw_stall) if isinstance(raw_stall, Mapping) else None
+        raw_quota_pause = snapshot.get("quota_pause")
+        self.quota_pause = dict(raw_quota_pause) if isinstance(raw_quota_pause, Mapping) else None
         snapshot_definition_hash = str(snapshot.get("definition_hash") or "")
         if snapshot_definition_hash and snapshot_definition_hash != self.definition_hash:
             raise ValueError("workflow snapshot definition does not match current workflow")
@@ -944,8 +966,14 @@ class WorkflowCoordinator:
         """Normalize a failed snapshot before scheduling retryable nodes."""
         if not snapshot or self.cancel_requested or self.status == "cancelled" or self.budget_state.get("exhausted"):
             return
+        quota_paused = bool(snapshot.get("quota_pause"))
         runtime_runs = self.runtime.snapshot().get("runs") or {}
         for node in self._graph_nodes():
+            # 配额暂停恢复：stop_quota 节点翻回可重试并复位 pending——配额窗口
+            # 已过，重跑是全新尝试，不受节点 attempt 计数限制（对齐 ZCode：
+            # quota-resume 是 resume 一个 stopped run，不是重试预算内重试）。
+            if quota_paused and self.node_failure_policies.get(node.task_id, {}).get("action") == "stop_quota":
+                self.node_retryable[node.task_id] = True
             # Older snapshots used cancelled for dependency blocking.
             if node.status == "blocked" or (
                 node.status == "cancelled"
@@ -955,6 +983,16 @@ class WorkflowCoordinator:
                 self.node_errors.pop(node.task_id, None)
                 continue
             if node.status != "failed":
+                continue
+            if quota_paused and self.node_failure_policies.get(node.task_id, {}).get("action") == "stop_quota":
+                node.status = "pending"
+                self.node_errors.pop(node.task_id, None)
+                # 抬高该节点 run 的 attempt 上限，让 runtime.start() 的
+                # failed→retry 路径生效（配额恢复后是全新尝试，不受原
+                # max_attempts 限制）；attempt 计数保持单调递增。
+                node_run = self.runtime.find_run(task_id=node.task_id)
+                if node_run is not None and node_run.status == "failed":
+                    node_run.max_attempts = max(int(node_run.max_attempts or 1), int(node_run.attempt or 0) + 1)
                 continue
             if not self.node_retryable.get(node.task_id, True):
                 continue

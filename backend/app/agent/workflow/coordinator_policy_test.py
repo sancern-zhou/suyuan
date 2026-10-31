@@ -6,6 +6,7 @@ docs/zcode-dynamic-workflow.md 的移植对照节）。
 
 import asyncio
 import time
+from datetime import datetime, timedelta
 
 from app.agent.workflow.coordinator import WorkflowCoordinator
 from app.agent.workflow.stall_watch import WorkflowStallWatch
@@ -194,5 +195,83 @@ def test_stall_watch_notifies_once_per_quiet_segment_and_rearms():
         await asyncio.sleep(0.6)
         assert len(notifications) == 2
         await watch.stop()
+
+    asyncio.run(run())
+
+
+def test_quota_pause_recorded_with_reset_at():
+    """stop_quota 且网关给出重置时刻：记档 quota_pause 并落 journal。"""
+
+    reset_text = (datetime.now() + timedelta(hours=30)).strftime("%Y-%m-%d %H:%M")
+
+    async def run():
+        journal = FakeJournal()
+
+        async def execute(node, dependencies, attempt, retry_context=None):
+            raise RuntimeError(f"Error code: 402 - token plan 用量上限，重置于 {reset_text}")
+
+        coordinator = WorkflowCoordinator(
+            {"workflow_id": "quota-1", "nodes": [{"task_id": "air", "max_attempts": 2}]},
+            executor=execute,
+            journal=journal,
+        )
+        result = await coordinator.run()
+        assert result["status"] == "failed"
+        assert result["quota_pause"]["task_id"] == "air"
+        assert result["quota_pause"]["reset_at"] > 0
+        assert "workflow.quota_paused" in journal.event_types()
+        # 无 reset_at 的配额错误不记档（不自动续跑）
+        journal2 = FakeJournal()
+
+        async def execute2(node, dependencies, attempt, retry_context=None):
+            raise RuntimeError("Error code: 402 - insufficient_quota")
+
+        coordinator2 = WorkflowCoordinator(
+            {"workflow_id": "quota-2", "nodes": [{"task_id": "air", "max_attempts": 2}]},
+            executor=execute2,
+            journal=journal2,
+        )
+        result2 = await coordinator2.run()
+        assert result2["quota_pause"] is None
+        assert "workflow.quota_paused" not in journal2.event_types()
+
+    asyncio.run(run())
+
+
+def test_quota_paused_snapshot_resumes_quota_failed_nodes():
+    """带 quota_pause 的快照恢复时：stop_quota 节点翻回可重试并重跑成功。"""
+
+    reset_text = (datetime.now() + timedelta(hours=30)).strftime("%Y-%m-%d %H:%M")
+
+    async def run():
+        journal = FakeJournal()
+        attempts = []
+
+        async def fail_execute(node, dependencies, attempt, retry_context=None):
+            attempts.append(attempt)
+            raise RuntimeError(f"Error code: 402 - insufficient_quota，重置于 {reset_text}")
+
+        coordinator = WorkflowCoordinator(
+            {"workflow_id": "quota-3", "nodes": [{"task_id": "air", "max_attempts": 1}]},
+            executor=fail_execute,
+            journal=journal,
+        )
+        result = await coordinator.run()
+        assert result["status"] == "failed"
+        assert result["node_retryable"]["air"] is False
+
+        # 配额重置后续跑：reset_at 已过，stop_quota 节点无视 attempt 计数重跑
+        async def succeed_execute(node, dependencies, attempt, retry_context=None):
+            return {"status": "success"}
+
+        resumed = WorkflowCoordinator(
+            result["definition"],
+            executor=succeed_execute,
+            snapshot=result,
+            journal=journal,
+        )
+        resumed_result = await resumed.run()
+        assert resumed_result["status"] == "succeeded"
+        assert resumed_result["node_results"]["air"]["status"] == "success"
 
     asyncio.run(run())
