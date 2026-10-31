@@ -1,0 +1,2006 @@
+{
+ "version": 1,
+ "generated_at": "2026-10-31 15:42",
+ "kb_binding_key": "data_semantics",
+ "prompt_version": "guangdong_data_semantics_seed_v1",
+ "extractor_name": "guangdong_data_semantics_seeder",
+ "document_filename": "广东数据语义契约.md",
+ "anchor_marker": "## 指标口径与查询路由",
+ "entities": [
+  {
+   "local_id": "domain_告警",
+   "entity_type": "Domain",
+   "name": "告警",
+   "aliases": [],
+   "description": "广东运维数仓数据域：告警（4 张契约表）",
+   "attributes": {
+    "table_count": 4
+   },
+   "evidence_text": "数据域 告警"
+  },
+  {
+   "local_id": "domain_巡检",
+   "entity_type": "Domain",
+   "name": "巡检",
+   "aliases": [],
+   "description": "广东运维数仓数据域：巡检（19 张契约表）",
+   "attributes": {
+    "table_count": 19
+   },
+   "evidence_text": "数据域 巡检"
+  },
+  {
+   "local_id": "domain_工单",
+   "entity_type": "Domain",
+   "name": "工单",
+   "aliases": [],
+   "description": "广东运维数仓数据域：工单（5 张契约表）",
+   "attributes": {
+    "table_count": 5
+   },
+   "evidence_text": "数据域 工单"
+  },
+  {
+   "local_id": "domain_站点与组织",
+   "entity_type": "Domain",
+   "name": "站点与组织",
+   "aliases": [],
+   "description": "广东运维数仓数据域：站点与组织（3 张契约表）",
+   "attributes": {
+    "table_count": 3
+   },
+   "evidence_text": "数据域 站点与组织"
+  },
+  {
+   "local_id": "domain_绩效",
+   "entity_type": "Domain",
+   "name": "绩效",
+   "aliases": [],
+   "description": "广东运维数仓数据域：绩效（4 张契约表）",
+   "attributes": {
+    "table_count": 4
+   },
+   "evidence_text": "数据域 绩效"
+  },
+  {
+   "local_id": "domain_设备",
+   "entity_type": "Domain",
+   "name": "设备",
+   "aliases": [],
+   "description": "广东运维数仓数据域：设备（3 张契约表）",
+   "attributes": {
+    "table_count": 3
+   },
+   "evidence_text": "数据域 设备"
+  },
+  {
+   "local_id": "domain_质控",
+   "entity_type": "Domain",
+   "name": "质控",
+   "aliases": [],
+   "description": "广东运维数仓数据域：质控（4 张契约表）",
+   "attributes": {
+    "table_count": 4
+   },
+   "evidence_text": "数据域 质控"
+  },
+  {
+   "local_id": "table_alm_alarm",
+   "entity_type": "MartTable",
+   "name": "alm_alarm",
+   "aliases": [
+    "alm_alarm"
+   ],
+   "description": "一条告警通知记录（含短信/邮件发送渠道）",
+   "attributes": {
+    "数据域": "告警",
+    "freshness_slo": "60分钟（高频链路）",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "alm_alarm（一条告警通知记录（含短信/邮件发送渠道））"
+  },
+  {
+   "local_id": "table_alm_home",
+   "entity_type": "MartTable",
+   "name": "alm_home",
+   "aliases": [
+    "alm_home"
+   ],
+   "description": "一个站点的当前告警态势（快照）",
+   "attributes": {
+    "数据域": "告警",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "alm_home（一个站点的当前告警态势（快照））"
+  },
+  {
+   "local_id": "table_dim_device",
+   "entity_type": "MartTable",
+   "name": "dim_device",
+   "aliases": [
+    "dim_device"
+   ],
+   "description": "一行 = 一台设备（device_id）",
+   "attributes": {
+    "数据域": "设备",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "dim_device（一行 = 一台设备（device_id））"
+  },
+  {
+   "local_id": "table_dim_station",
+   "entity_type": "MartTable",
+   "name": "dim_station",
+   "aliases": [
+    "dim_station"
+   ],
+   "description": "一行 = 一个站点（station_id）",
+   "attributes": {
+    "数据域": "站点与组织",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "dim_station（一行 = 一个站点（station_id））"
+  },
+  {
+   "local_id": "table_dim_station_user",
+   "entity_type": "MartTable",
+   "name": "dim_station_user",
+   "aliases": [
+    "dim_station_user"
+   ],
+   "description": "一行 = 一个站点×一个责任人（station_id + user_id）",
+   "attributes": {
+    "数据域": "站点与组织",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "dim_station_user（一行 = 一个站点×一个责任人（station_id + user_id））"
+  },
+  {
+   "local_id": "table_dim_user",
+   "entity_type": "MartTable",
+   "name": "dim_user",
+   "aliases": [
+    "dim_user"
+   ],
+   "description": "一行 = 一个平台账号（user_id）",
+   "attributes": {
+    "数据域": "站点与组织",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "dim_user（一行 = 一个平台账号（user_id））"
+  },
+  {
+   "local_id": "table_log_device",
+   "entity_type": "MartTable",
+   "name": "log_device",
+   "aliases": [
+    "log_device"
+   ],
+   "description": "一条设备状态/事件日志",
+   "attributes": {
+    "数据域": "设备",
+    "freshness_slo": "60分钟（高频链路）",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "log_device（一条设备状态/事件日志）"
+  },
+  {
+   "local_id": "table_mart_alarm_notify_analysis",
+   "entity_type": "MartTable",
+   "name": "mart_alarm_notify_analysis",
+   "aliases": [
+    "mart_alarm_notify_analysis"
+   ],
+   "description": "一条告警通知（站点/城市/类型已宽表化）",
+   "attributes": {
+    "数据域": "告警",
+    "freshness_slo": "60分钟（高频链路）",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "mart_alarm_notify_analysis（一条告警通知（站点/城市/类型已宽表化））"
+  },
+  {
+   "local_id": "table_mart_device_lifecycle_analysis",
+   "entity_type": "MartTable",
+   "name": "mart_device_lifecycle_analysis",
+   "aliases": [
+    "mart_device_lifecycle_analysis"
+   ],
+   "description": "一条设备状态/事件日志（维度已宽表化）",
+   "attributes": {
+    "数据域": "设备",
+    "freshness_slo": "60分钟（高频链路）",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "mart_device_lifecycle_analysis（一条设备状态/事件日志（维度已宽表化））"
+  },
+  {
+   "local_id": "table_mart_inspection_task_analysis",
+   "entity_type": "MartTable",
+   "name": "mart_inspection_task_analysis",
+   "aliases": [
+    "mart_inspection_task_analysis"
+   ],
+   "description": "一个计划任务项（完成/超期/转工单已预计算）",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "mart_inspection_task_analysis（一个计划任务项（完成/超期/转工单已预计算））"
+  },
+  {
+   "local_id": "table_mart_performance_analysis",
+   "entity_type": "MartTable",
+   "name": "mart_performance_analysis",
+   "aliases": [
+    "mart_performance_analysis"
+   ],
+   "description": "一行 = 一个站点×月的绩效月度考核（ospsid）",
+   "attributes": {
+    "数据域": "绩效",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "mart_performance_analysis（一行 = 一个站点×月的绩效月度考核（ospsid））"
+  },
+  {
+   "local_id": "table_mart_station_alarm_status",
+   "entity_type": "MartTable",
+   "name": "mart_station_alarm_status",
+   "aliases": [
+    "mart_station_alarm_status"
+   ],
+   "description": "一个站点的当前告警态势",
+   "attributes": {
+    "数据域": "告警",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "mart_station_alarm_status（一个站点的当前告警态势）"
+  },
+  {
+   "local_id": "table_mart_work_order_analysis",
+   "entity_type": "MartTable",
+   "name": "mart_work_order_analysis",
+   "aliases": [
+    "mart_work_order_analysis"
+   ],
+   "description": "一行 = 一张运维工单（源表 dbo.working_orders.id）",
+   "attributes": {
+    "数据域": "工单",
+    "freshness_slo": "60分钟",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "mart_work_order_analysis（一行 = 一张运维工单（源表 dbo.working_orders.id））"
+  },
+  {
+   "local_id": "table_mtc_ordertaskitem",
+   "entity_type": "MartTable",
+   "name": "mtc_ordertaskitem",
+   "aliases": [
+    "mtc_ordertaskitem"
+   ],
+   "description": "一张工单关联的一个任务项",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "mtc_ordertaskitem（一张工单关联的一个任务项）"
+  },
+  {
+   "local_id": "table_opa_datareceiverate",
+   "entity_type": "MartTable",
+   "name": "opa_datareceiverate",
+   "aliases": [
+    "opa_datareceiverate"
+   ],
+   "description": "一条到报率统计记录",
+   "attributes": {
+    "数据域": "绩效",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "opa_datareceiverate（一条到报率统计记录）"
+  },
+  {
+   "local_id": "table_opa_performance",
+   "entity_type": "MartTable",
+   "name": "opa_performance",
+   "aliases": [
+    "opa_performance"
+   ],
+   "description": "一行 = 工单一个流程步骤的绩效得分（id）",
+   "attributes": {
+    "数据域": "绩效",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "opa_performance（一行 = 工单一个流程步骤的绩效得分（id））"
+  },
+  {
+   "local_id": "table_opa_stationperformancescore",
+   "entity_type": "MartTable",
+   "name": "opa_stationperformancescore",
+   "aliases": [
+    "opa_stationperformancescore"
+   ],
+   "description": "一行 = 站点×月绩效考核记录（ospsid）",
+   "attributes": {
+    "数据域": "绩效",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "opa_stationperformancescore（一行 = 站点×月绩效考核记录（ospsid））"
+  },
+  {
+   "local_id": "table_pw_task",
+   "entity_type": "MartTable",
+   "name": "pw_task",
+   "aliases": [
+    "pw_task"
+   ],
+   "description": "一个站点一个周期的一条计划任务",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "pw_task（一个站点一个周期的一条计划任务）"
+  },
+  {
+   "local_id": "table_pw_taskitem",
+   "entity_type": "MartTable",
+   "name": "pw_taskitem",
+   "aliases": [
+    "pw_taskitem"
+   ],
+   "description": "一个计划任务项",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "pw_taskitem（一个计划任务项）"
+  },
+  {
+   "local_id": "table_qul_qualitydate",
+   "entity_type": "MartTable",
+   "name": "qul_qualitydate",
+   "aliases": [
+    "qul_qualitydate"
+   ],
+   "description": "一条质控评价日期记录",
+   "attributes": {
+    "数据域": "质控",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "qul_qualitydate（一条质控评价日期记录）"
+  },
+  {
+   "local_id": "table_rf_w_gaseouscheck_co",
+   "entity_type": "MartTable",
+   "name": "rf_w_gaseouscheck_co",
+   "aliases": [
+    "rf_w_gaseouscheck_co"
+   ],
+   "description": "一张 CO 气态检查表单",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "rf_w_gaseouscheck_co（一张 CO 气态检查表单）"
+  },
+  {
+   "local_id": "table_rf_w_gaseouscheck_nox",
+   "entity_type": "MartTable",
+   "name": "rf_w_gaseouscheck_nox",
+   "aliases": [
+    "rf_w_gaseouscheck_nox"
+   ],
+   "description": "一张 NOX 气态检查表单",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "rf_w_gaseouscheck_nox（一张 NOX 气态检查表单）"
+  },
+  {
+   "local_id": "table_rf_w_gaseouscheck_o3",
+   "entity_type": "MartTable",
+   "name": "rf_w_gaseouscheck_o3",
+   "aliases": [
+    "rf_w_gaseouscheck_o3"
+   ],
+   "description": "一张 O3 气态检查表单",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "rf_w_gaseouscheck_o3（一张 O3 气态检查表单）"
+  },
+  {
+   "local_id": "table_rf_w_gaseouscheck_so2",
+   "entity_type": "MartTable",
+   "name": "rf_w_gaseouscheck_so2",
+   "aliases": [
+    "rf_w_gaseouscheck_so2"
+   ],
+   "description": "一张 SO2 气态检查表单",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "rf_w_gaseouscheck_so2（一张 SO2 气态检查表单）"
+  },
+  {
+   "local_id": "table_rf_w_inspection",
+   "entity_type": "MartTable",
+   "name": "rf_w_inspection",
+   "aliases": [
+    "rf_w_inspection"
+   ],
+   "description": "一张巡检表单提交",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "rf_w_inspection（一张巡检表单提交）"
+  },
+  {
+   "local_id": "table_rf_w_inspectionsummary",
+   "entity_type": "MartTable",
+   "name": "rf_w_inspectionsummary",
+   "aliases": [
+    "rf_w_inspectionsummary"
+   ],
+   "description": "一张巡检汇总表单",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "rf_w_inspectionsummary（一张巡检汇总表单）"
+  },
+  {
+   "local_id": "table_rf_w_otherdevicecheck",
+   "entity_type": "MartTable",
+   "name": "rf_w_otherdevicecheck",
+   "aliases": [
+    "rf_w_otherdevicecheck"
+   ],
+   "description": "一张其他设备检查表单",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "rf_w_otherdevicecheck（一张其他设备检查表单）"
+  },
+  {
+   "local_id": "table_rf_w_pmcheck",
+   "entity_type": "MartTable",
+   "name": "rf_w_pmcheck",
+   "aliases": [
+    "rf_w_pmcheck"
+   ],
+   "description": "一张 PM 检查表单",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "rf_w_pmcheck（一张 PM 检查表单）"
+  },
+  {
+   "local_id": "table_sec_blackoutreportdetail",
+   "entity_type": "MartTable",
+   "name": "sec_blackoutreportdetail",
+   "aliases": [
+    "sec_blackoutreportdetail"
+   ],
+   "description": "一条停运时段明细",
+   "attributes": {
+    "数据域": "质控",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "sec_blackoutreportdetail（一条停运时段明细）"
+  },
+  {
+   "local_id": "table_sec_blackoutreporttimespan",
+   "entity_type": "MartTable",
+   "name": "sec_blackoutreporttimespan",
+   "aliases": [
+    "sec_blackoutreporttimespan"
+   ],
+   "description": "一条停运时间跨度",
+   "attributes": {
+    "数据域": "质控",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "sec_blackoutreporttimespan（一条停运时间跨度）"
+  },
+  {
+   "local_id": "table_sec_qcblackout",
+   "entity_type": "MartTable",
+   "name": "sec_qcblackout",
+   "aliases": [
+    "sec_qcblackout"
+   ],
+   "description": "一个站点一月的质控停运汇总",
+   "attributes": {
+    "数据域": "质控",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "sec_qcblackout（一个站点一月的质控停运汇总）"
+  },
+  {
+   "local_id": "table_sup_devicedaycheck",
+   "entity_type": "MartTable",
+   "name": "sup_devicedaycheck",
+   "aliases": [
+    "sup_devicedaycheck"
+   ],
+   "description": "一台设备一个检查日的记录",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "sup_devicedaycheck（一台设备一个检查日的记录）"
+  },
+  {
+   "local_id": "table_sup_mtc_taskitem",
+   "entity_type": "MartTable",
+   "name": "sup_mtc_taskitem",
+   "aliases": [
+    "sup_mtc_taskitem"
+   ],
+   "description": "一个组分网任务项",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "26小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "sup_mtc_taskitem（一个组分网任务项）"
+  },
+  {
+   "local_id": "table_sup_rf_ambienttemperature",
+   "entity_type": "MartTable",
+   "name": "sup_rf_ambienttemperature",
+   "aliases": [
+    "sup_rf_ambienttemperature"
+   ],
+   "description": "一行 = 一条温压核查记录（id）",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "2小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "sup_rf_ambienttemperature（一行 = 一条温压核查记录（id））"
+  },
+  {
+   "local_id": "table_sup_rf_common",
+   "entity_type": "MartTable",
+   "name": "sup_rf_common",
+   "aliases": [
+    "sup_rf_common"
+   ],
+   "description": "一张非故障单的表单体（题目项展开为列）",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "60分钟（高频链路）",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "sup_rf_common（一张非故障单的表单体（题目项展开为列））"
+  },
+  {
+   "local_id": "table_sup_rf_deviceflowcheck",
+   "entity_type": "MartTable",
+   "name": "sup_rf_deviceflowcheck",
+   "aliases": [
+    "sup_rf_deviceflowcheck"
+   ],
+   "description": "一行 = 一条设备流量核查/校准记录（id）",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "2小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "sup_rf_deviceflowcheck（一行 = 一条设备流量核查/校准记录（id））"
+  },
+  {
+   "local_id": "table_sup_rf_monitorinspection",
+   "entity_type": "MartTable",
+   "name": "sup_rf_monitorinspection",
+   "aliases": [
+    "sup_rf_monitorinspection"
+   ],
+   "description": "一行 = 一条监测仪巡检记录（id）",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "2小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "sup_rf_monitorinspection（一行 = 一条监测仪巡检记录（id））"
+  },
+  {
+   "local_id": "table_sup_rf_pm1monitorinspection",
+   "entity_type": "MartTable",
+   "name": "sup_rf_pm1monitorinspection",
+   "aliases": [
+    "sup_rf_pm1monitorinspection"
+   ],
+   "description": "一行 = 一条 PM1 巡检记录（id）",
+   "attributes": {
+    "数据域": "巡检",
+    "freshness_slo": "2小时",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "sup_rf_pm1monitorinspection（一行 = 一条 PM1 巡检记录（id））"
+  },
+  {
+   "local_id": "table_wo_commonfile",
+   "entity_type": "MartTable",
+   "name": "wo_commonfile",
+   "aliases": [
+    "wo_commonfile"
+   ],
+   "description": "一行 = 一条附件记录（wcfid）",
+   "attributes": {
+    "数据域": "工单",
+    "freshness_slo": "60分钟",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "wo_commonfile（一行 = 一条附件记录（wcfid））"
+  },
+  {
+   "local_id": "table_wo_commonfile_links",
+   "entity_type": "MartTable",
+   "name": "wo_commonfile_links",
+   "aliases": [
+    "wo_commonfile_links"
+   ],
+   "description": "一行 = 一条附件索引（id）",
+   "attributes": {
+    "数据域": "工单",
+    "freshness_slo": "60分钟",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "wo_commonfile_links（一行 = 一条附件索引（id））"
+  },
+  {
+   "local_id": "table_working_order_details",
+   "entity_type": "MartTable",
+   "name": "working_order_details",
+   "aliases": [
+    "working_order_details"
+   ],
+   "description": "一行 = 工单一个流程步骤（id）",
+   "attributes": {
+    "数据域": "工单",
+    "freshness_slo": "26小时（新步骤小时级可见）",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "working_order_details（一行 = 工单一个流程步骤（id））"
+  },
+  {
+   "local_id": "table_working_orders",
+   "entity_type": "MartTable",
+   "name": "working_orders",
+   "aliases": [
+    "working_orders"
+   ],
+   "description": "一行 = 一张运维工单（working_order_code 唯一业务号）",
+   "attributes": {
+    "数据域": "工单",
+    "freshness_slo": "60分钟",
+    "owner": "广东运维平台组"
+   },
+   "evidence_text": "working_orders（一行 = 一张运维工单（working_order_code 唯一业务号））"
+  },
+  {
+   "local_id": "tool_semantic_metrics",
+   "entity_type": "QueryTool",
+   "name": "语义层指标点查",
+   "aliases": [
+    "guangdong_query_metrics",
+    "指标点查",
+    "指标查询"
+   ],
+   "description": "按注册口径点查运维指标（工单/告警通知/站点告警态势/设备生命周期/巡检/绩效），走 Cube 语义层，口径唯一并返回解释元数据；指标统计类问题优先用它。",
+   "attributes": {},
+   "evidence_text": "语义层指标点查"
+  },
+  {
+   "local_id": "tool_mart_sql",
+   "entity_type": "QueryTool",
+   "name": "运维明细受控SQL",
+   "aliases": [
+    "execute_guangdong_mart_sql",
+    "execute_ops_sql_query",
+    "明细",
+    "取证"
+   ],
+   "description": "guangdong_mart 42 张契约表字段级查询 + guangdong_ods 兜底表（引用写全限定名），SELECT-only 白名单；明细、自定义聚合、字段取证用它，写 SQL 前先 describe_table 取契约。",
+   "attributes": {},
+   "evidence_text": "运维明细受控SQL"
+  },
+  {
+   "local_id": "tool_monitor_api",
+   "entity_type": "QueryTool",
+   "name": "监测数据实时接口",
+   "aliases": [
+    "query_gd_suncere_city_day",
+    "query_gd_suncere_city_hour",
+    "get_5min_data",
+    "analyze_city_pollutant_rankings",
+    "空气质量",
+    "浓度",
+    "排名",
+    "同比",
+    "达标"
+   ],
+   "description": "环境监测浓度/排名/同比/达标/小时与5分钟数据走监测数据接口中台实时查询，不入运维数仓，禁止用运维表近似替代。",
+   "attributes": {},
+   "evidence_text": "监测数据实时接口"
+  },
+  {
+   "local_id": "tool_component",
+   "entity_type": "QueryTool",
+   "name": "组分数据查询",
+   "aliases": [
+    "get_vocs_species",
+    "get_vocs_ofp",
+    "get_pm25_ionic",
+    "get_pm25_carbon",
+    "组分",
+    "VOCs",
+    "OFP",
+    "源解析",
+    "碳组分",
+    "离子",
+    "颗粒物组分"
+   ],
+   "description": "组分网超站数据：VOCs 物种与 OFP、PM2.5 离子/碳组分/地壳元素/溯源等专项查询。",
+   "attributes": {},
+   "evidence_text": "组分数据查询"
+  },
+  {
+   "local_id": "tool_weather",
+   "entity_type": "QueryTool",
+   "name": "气象数据查询",
+   "aliases": [
+    "get_weather_data",
+    "get_observed_meteorology",
+    "气象",
+    "风玫瑰",
+    "风速",
+    "降水",
+    "天气"
+   ],
+   "description": "气象观测/预报/历史数据查询，支持风玫瑰等专项输出。",
+   "attributes": {},
+   "evidence_text": "气象数据查询"
+  },
+  {
+   "local_id": "tool_station_catalog",
+   "entity_type": "QueryTool",
+   "name": "站点目录",
+   "aliases": [
+    "guangdong_station_catalog",
+    "monitoring_station_catalog",
+    "component_station_catalog",
+    "站点名录",
+    "运维单位",
+    "站点归属"
+   ],
+   "description": "运维台账 432 站 / 监测体系站点 / 38 个组分超站名录与归属，是按站点过滤取数的前置步骤。",
+   "attributes": {},
+   "evidence_text": "站点目录"
+  },
+  {
+   "local_id": "metric_alarmnotify_count",
+   "entity_type": "Metric",
+   "name": "告警通知量",
+   "aliases": [
+    "告警通知量",
+    "count",
+    "AlarmNotify.count"
+   ],
+   "description": "通知记录条数",
+   "attributes": {
+    "cube": "AlarmNotify",
+    "measure": "count",
+    "time_basis": "notifyTime"
+   },
+   "evidence_text": "告警通知量：通知记录条数"
+  },
+  {
+   "local_id": "metric_alarmnotify_distinctstationcount",
+   "entity_type": "Metric",
+   "name": "告警通知涉及站点数",
+   "aliases": [
+    "涉及站点数",
+    "distinctStationCount",
+    "AlarmNotify.distinctStationCount"
+   ],
+   "description": "去重站点数",
+   "attributes": {
+    "cube": "AlarmNotify",
+    "measure": "distinctStationCount",
+    "time_basis": "notifyTime"
+   },
+   "evidence_text": "告警通知涉及站点数：去重站点数"
+  },
+  {
+   "local_id": "metric_devicelifecycle_checkeventcount",
+   "entity_type": "Metric",
+   "name": "周期检查事件数",
+   "aliases": [
+    "周期检查事件数",
+    "checkEventCount",
+    "DeviceLifecycle.checkEventCount"
+   ],
+   "description": "周/月/季/半年/年检事件条数",
+   "attributes": {
+    "cube": "DeviceLifecycle",
+    "measure": "checkEventCount",
+    "time_basis": "eventTime"
+   },
+   "evidence_text": "周期检查事件数：周/月/季/半年/年检事件条数"
+  },
+  {
+   "local_id": "metric_devicelifecycle_count",
+   "entity_type": "Metric",
+   "name": "生命周期事件数",
+   "aliases": [
+    "生命周期事件数",
+    "count",
+    "DeviceLifecycle.count"
+   ],
+   "description": "事件日志条数",
+   "attributes": {
+    "cube": "DeviceLifecycle",
+    "measure": "count",
+    "time_basis": "eventTime"
+   },
+   "evidence_text": "生命周期事件数：事件日志条数"
+  },
+  {
+   "local_id": "metric_devicelifecycle_distinctdevices",
+   "entity_type": "Metric",
+   "name": "涉及设备数",
+   "aliases": [
+    "涉及设备数",
+    "distinctDevices",
+    "DeviceLifecycle.distinctDevices"
+   ],
+   "description": "去重设备数",
+   "attributes": {
+    "cube": "DeviceLifecycle",
+    "measure": "distinctDevices",
+    "time_basis": "eventTime"
+   },
+   "evidence_text": "涉及设备数：去重设备数"
+  },
+  {
+   "local_id": "metric_devicelifecycle_stopeventcount",
+   "entity_type": "Metric",
+   "name": "停用事件数",
+   "aliases": [
+    "停用事件数",
+    "stopEventCount",
+    "DeviceLifecycle.stopEventCount"
+   ],
+   "description": "DeviceStop 事件条数",
+   "attributes": {
+    "cube": "DeviceLifecycle",
+    "measure": "stopEventCount",
+    "time_basis": "eventTime"
+   },
+   "evidence_text": "停用事件数：DeviceStop 事件条数"
+  },
+  {
+   "local_id": "metric_inspectiontask_count",
+   "entity_type": "Metric",
+   "name": "任务项数",
+   "aliases": [
+    "任务项数",
+    "count",
+    "InspectionTask.count"
+   ],
+   "description": "任务项条数",
+   "attributes": {
+    "cube": "InspectionTask",
+    "measure": "count",
+    "time_basis": "planDate"
+   },
+   "evidence_text": "任务项数：任务项条数"
+  },
+  {
+   "local_id": "metric_inspectiontask_finishedrate",
+   "entity_type": "Metric",
+   "name": "巡检完成率",
+   "aliases": [
+    "完成率",
+    "finishedRate",
+    "InspectionTask.finishedRate"
+   ],
+   "description": "已完成任务项数 / 任务项总数 × 100",
+   "attributes": {
+    "cube": "InspectionTask",
+    "measure": "finishedRate",
+    "numerator": "finishedCount",
+    "denominator": "count",
+    "time_basis": "planDate"
+   },
+   "evidence_text": "巡检完成率：已完成任务项数 / 任务项总数 × 100"
+  },
+  {
+   "local_id": "metric_inspectiontask_overduerate",
+   "entity_type": "Metric",
+   "name": "巡检超期率",
+   "aliases": [
+    "超期率",
+    "overdueRate",
+    "InspectionTask.overdueRate"
+   ],
+   "description": "超期任务项数（未完成且过计划结束日）/ 任务项总数 × 100",
+   "attributes": {
+    "cube": "InspectionTask",
+    "measure": "overdueRate",
+    "numerator": "overdueCount",
+    "denominator": "count",
+    "time_basis": "planDate"
+   },
+   "evidence_text": "巡检超期率：超期任务项数（未完成且过计划结束日）/ 任务项总数 × 100"
+  },
+  {
+   "local_id": "metric_inspectiontask_toorderrate",
+   "entity_type": "Metric",
+   "name": "转工单率",
+   "aliases": [
+    "转工单率",
+    "toOrderRate",
+    "InspectionTask.toOrderRate"
+   ],
+   "description": "已转工单任务项数 / 任务项总数 × 100",
+   "attributes": {
+    "cube": "InspectionTask",
+    "measure": "toOrderRate",
+    "numerator": "toOrderCount",
+    "denominator": "count",
+    "time_basis": "planDate"
+   },
+   "evidence_text": "转工单率：已转工单任务项数 / 任务项总数 × 100"
+  },
+  {
+   "local_id": "metric_performance_avgqcqualifiedrate",
+   "entity_type": "Metric",
+   "name": "平均质控合格率",
+   "aliases": [
+    "平均质控合格率",
+    "avgQcQualifiedRate",
+    "Performance.avgQcQualifiedRate"
+   ],
+   "description": "qc_qualified_rate 平均值（平台口径；该率=合格质控次数/质控总次数）",
+   "attributes": {
+    "cube": "Performance",
+    "measure": "avgQcQualifiedRate",
+    "denominator": "qc_number",
+    "time_basis": "performanceMonth"
+   },
+   "evidence_text": "平均质控合格率：qc_qualified_rate 平均值（平台口径；该率=合格质控次数/质控总次数）"
+  },
+  {
+   "local_id": "metric_performance_avgtotalscore",
+   "entity_type": "Metric",
+   "name": "平均总分",
+   "aliases": [
+    "平均总分",
+    "avgTotalScore",
+    "Performance.avgTotalScore"
+   ],
+   "description": "total_score 平均值（平台考核口径）",
+   "attributes": {
+    "cube": "Performance",
+    "measure": "avgTotalScore",
+    "time_basis": "performanceMonth"
+   },
+   "evidence_text": "平均总分：total_score 平均值（平台考核口径）"
+  },
+  {
+   "local_id": "metric_performance_below60count",
+   "entity_type": "Metric",
+   "name": "低于60分站点月数",
+   "aliases": [
+    "低于60分站点月数",
+    "below60Count",
+    "Performance.below60Count"
+   ],
+   "description": "total_score < 60 的记录数",
+   "attributes": {
+    "cube": "Performance",
+    "measure": "below60Count",
+    "time_basis": "performanceMonth"
+   },
+   "evidence_text": "低于60分站点月数：total_score < 60 的记录数"
+  },
+  {
+   "local_id": "metric_performance_count",
+   "entity_type": "Metric",
+   "name": "站点月数",
+   "aliases": [
+    "站点月数",
+    "count",
+    "Performance.count"
+   ],
+   "description": "考核记录条数（站点×月）",
+   "attributes": {
+    "cube": "Performance",
+    "measure": "count",
+    "time_basis": "performanceMonth"
+   },
+   "evidence_text": "站点月数：考核记录条数（站点×月）"
+  },
+  {
+   "local_id": "metric_performance_distinctstationcount",
+   "entity_type": "Metric",
+   "name": "绩效涉及站点数",
+   "aliases": [
+    "涉及站点数",
+    "distinctStationCount",
+    "Performance.distinctStationCount"
+   ],
+   "description": "去重站点数",
+   "attributes": {
+    "cube": "Performance",
+    "measure": "distinctStationCount",
+    "time_basis": "performanceMonth"
+   },
+   "evidence_text": "绩效涉及站点数：去重站点数"
+  },
+  {
+   "local_id": "metric_performance_sumdeductionamount",
+   "entity_type": "Metric",
+   "name": "核减金额合计",
+   "aliases": [
+    "核减金额合计",
+    "sumDeductionAmount",
+    "Performance.sumDeductionAmount"
+   ],
+   "description": "deduction_amount 求和（元）",
+   "attributes": {
+    "cube": "Performance",
+    "measure": "sumDeductionAmount",
+    "time_basis": "performanceMonth"
+   },
+   "evidence_text": "核减金额合计：deduction_amount 求和（元）"
+  },
+  {
+   "local_id": "metric_performance_sumpaidamount",
+   "entity_type": "Metric",
+   "name": "实发金额合计",
+   "aliases": [
+    "实发金额合计",
+    "sumPaidAmount",
+    "Performance.sumPaidAmount"
+   ],
+   "description": "paid_amount 求和（元）",
+   "attributes": {
+    "cube": "Performance",
+    "measure": "sumPaidAmount",
+    "time_basis": "performanceMonth"
+   },
+   "evidence_text": "实发金额合计：paid_amount 求和（元）"
+  },
+  {
+   "local_id": "metric_stationalarmstatus_alarmingcount",
+   "entity_type": "Metric",
+   "name": "当前告警站点数",
+   "aliases": [
+    "当前告警站点数",
+    "alarmingCount",
+    "StationAlarmStatus.alarmingCount"
+   ],
+   "description": "告警状态≠正常的站点数",
+   "attributes": {
+    "cube": "StationAlarmStatus",
+    "measure": "alarmingCount",
+    "time_basis": "latestAlarmTime"
+   },
+   "evidence_text": "当前告警站点数：告警状态≠正常的站点数"
+  },
+  {
+   "local_id": "metric_workorder_attachmentrate",
+   "entity_type": "Metric",
+   "name": "附件完整率",
+   "aliases": [
+    "附件完整率",
+    "attachmentRate",
+    "WorkOrder.attachmentRate"
+   ],
+   "description": "有附件索引的工单数 / 工单总数 × 100",
+   "attributes": {
+    "cube": "WorkOrder",
+    "measure": "attachmentRate",
+    "numerator": "hasAttachmentCount",
+    "denominator": "count",
+    "time_basis": "createTime",
+    "limitations": "仅覆盖附件索引，本体在源系统；跨类型比较需分层"
+   },
+   "evidence_text": "附件完整率：有附件索引的工单数 / 工单总数 × 100"
+  },
+  {
+   "local_id": "metric_workorder_count",
+   "entity_type": "Metric",
+   "name": "工单量",
+   "aliases": [
+    "工单量",
+    "count",
+    "WorkOrder.count"
+   ],
+   "description": "宽表行数（全类型含作废单；结论必须声明口径）",
+   "attributes": {
+    "cube": "WorkOrder",
+    "measure": "count",
+    "time_basis": "createTime"
+   },
+   "evidence_text": "工单量：宽表行数（全类型含作废单；结论必须声明口径）"
+  },
+  {
+   "local_id": "metric_workorder_finishrate",
+   "entity_type": "Metric",
+   "name": "工单完成率",
+   "aliases": [
+    "完成率",
+    "finishRate",
+    "WorkOrder.finishRate"
+   ],
+   "description": "已完成工单数 / 工单总数(含作废) × 100",
+   "attributes": {
+    "cube": "WorkOrder",
+    "measure": "finishRate",
+    "numerator": "finishedCount",
+    "denominator": "count",
+    "time_basis": "createTime",
+    "limitations": "分母含作废单，剔除作废需配合 orderStatus 维度过滤"
+   },
+   "evidence_text": "工单完成率：已完成工单数 / 工单总数(含作废) × 100"
+  },
+  {
+   "local_id": "metric_workorder_overduerate",
+   "entity_type": "Metric",
+   "name": "工单超期率",
+   "aliases": [
+    "超期率",
+    "overdueRate",
+    "WorkOrder.overdueRate"
+   ],
+   "description": "超期工单数 / 计划完成时间非空的工单数 × 100",
+   "attributes": {
+    "cube": "WorkOrder",
+    "measure": "overdueRate",
+    "numerator": "overdueCount",
+    "denominator": "overdueEvaluable",
+    "time_basis": "createTime",
+    "limitations": "仅按有计划完成时间的单评估；部分类型无计划时间"
+   },
+   "evidence_text": "工单超期率：超期工单数 / 计划完成时间非空的工单数 × 100"
+  },
+  {
+   "local_id": "metric_workorder_repeatfaultrate",
+   "entity_type": "Metric",
+   "name": "30天重复故障率",
+   "aliases": [
+    "30天重复故障率",
+    "repeatFaultRate",
+    "WorkOrder.repeatFaultRate"
+   ],
+   "description": "30天内重复的故障工单数 / 故障工单数(Fault+SupFault) × 100",
+   "attributes": {
+    "cube": "WorkOrder",
+    "measure": "repeatFaultRate",
+    "numerator": "repeatFaultCount",
+    "denominator": "faultCount",
+    "time_basis": "createTime",
+    "limitations": "重复判定=同站同设备前30天存在其他故障单；仅故障单口径"
+   },
+   "evidence_text": "30天重复故障率：30天内重复的故障工单数 / 故障工单数(Fault+SupFault) × 100"
+  },
+  {
+   "local_id": "metric_workorder_responsewithin2hrate",
+   "entity_type": "Metric",
+   "name": "2小时响应率",
+   "aliases": [
+    "2小时响应率",
+    "responseWithin2hRate",
+    "WorkOrder.responseWithin2hRate"
+   ],
+   "description": "2小时内到站的故障工单数 / 可评估响应的故障工单数 × 100",
+   "attributes": {
+    "cube": "WorkOrder",
+    "measure": "responseWithin2hRate",
+    "numerator": "responseWithin2hCount",
+    "denominator": "responseEvaluable",
+    "time_basis": "createTime",
+    "limitations": "仅故障单可评估（到站=首个 FaultProcess 步骤开始）"
+   },
+   "evidence_text": "2小时响应率：2小时内到站的故障工单数 / 可评估响应的故障工单数 × 100"
+  }
+ ],
+ "relations": [
+  {
+   "source_local_id": "table_alm_alarm",
+   "target_local_id": "domain_告警",
+   "relation_type": "belongs_to",
+   "description": "alm_alarm 属于 告警 数据域",
+   "evidence_text": "alm_alarm 属于 告警"
+  },
+  {
+   "source_local_id": "table_alm_home",
+   "target_local_id": "domain_告警",
+   "relation_type": "belongs_to",
+   "description": "alm_home 属于 告警 数据域",
+   "evidence_text": "alm_home 属于 告警"
+  },
+  {
+   "source_local_id": "table_dim_device",
+   "target_local_id": "domain_设备",
+   "relation_type": "belongs_to",
+   "description": "dim_device 属于 设备 数据域",
+   "evidence_text": "dim_device 属于 设备"
+  },
+  {
+   "source_local_id": "table_dim_station",
+   "target_local_id": "domain_站点与组织",
+   "relation_type": "belongs_to",
+   "description": "dim_station 属于 站点与组织 数据域",
+   "evidence_text": "dim_station 属于 站点与组织"
+  },
+  {
+   "source_local_id": "table_dim_station_user",
+   "target_local_id": "domain_站点与组织",
+   "relation_type": "belongs_to",
+   "description": "dim_station_user 属于 站点与组织 数据域",
+   "evidence_text": "dim_station_user 属于 站点与组织"
+  },
+  {
+   "source_local_id": "table_dim_user",
+   "target_local_id": "domain_站点与组织",
+   "relation_type": "belongs_to",
+   "description": "dim_user 属于 站点与组织 数据域",
+   "evidence_text": "dim_user 属于 站点与组织"
+  },
+  {
+   "source_local_id": "table_log_device",
+   "target_local_id": "domain_设备",
+   "relation_type": "belongs_to",
+   "description": "log_device 属于 设备 数据域",
+   "evidence_text": "log_device 属于 设备"
+  },
+  {
+   "source_local_id": "table_mart_alarm_notify_analysis",
+   "target_local_id": "domain_告警",
+   "relation_type": "belongs_to",
+   "description": "mart_alarm_notify_analysis 属于 告警 数据域",
+   "evidence_text": "mart_alarm_notify_analysis 属于 告警"
+  },
+  {
+   "source_local_id": "table_mart_device_lifecycle_analysis",
+   "target_local_id": "domain_设备",
+   "relation_type": "belongs_to",
+   "description": "mart_device_lifecycle_analysis 属于 设备 数据域",
+   "evidence_text": "mart_device_lifecycle_analysis 属于 设备"
+  },
+  {
+   "source_local_id": "table_mart_inspection_task_analysis",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "mart_inspection_task_analysis 属于 巡检 数据域",
+   "evidence_text": "mart_inspection_task_analysis 属于 巡检"
+  },
+  {
+   "source_local_id": "table_mart_performance_analysis",
+   "target_local_id": "domain_绩效",
+   "relation_type": "belongs_to",
+   "description": "mart_performance_analysis 属于 绩效 数据域",
+   "evidence_text": "mart_performance_analysis 属于 绩效"
+  },
+  {
+   "source_local_id": "table_mart_station_alarm_status",
+   "target_local_id": "domain_告警",
+   "relation_type": "belongs_to",
+   "description": "mart_station_alarm_status 属于 告警 数据域",
+   "evidence_text": "mart_station_alarm_status 属于 告警"
+  },
+  {
+   "source_local_id": "table_mart_work_order_analysis",
+   "target_local_id": "domain_工单",
+   "relation_type": "belongs_to",
+   "description": "mart_work_order_analysis 属于 工单 数据域",
+   "evidence_text": "mart_work_order_analysis 属于 工单"
+  },
+  {
+   "source_local_id": "table_mtc_ordertaskitem",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "mtc_ordertaskitem 属于 巡检 数据域",
+   "evidence_text": "mtc_ordertaskitem 属于 巡检"
+  },
+  {
+   "source_local_id": "table_opa_datareceiverate",
+   "target_local_id": "domain_绩效",
+   "relation_type": "belongs_to",
+   "description": "opa_datareceiverate 属于 绩效 数据域",
+   "evidence_text": "opa_datareceiverate 属于 绩效"
+  },
+  {
+   "source_local_id": "table_opa_performance",
+   "target_local_id": "domain_绩效",
+   "relation_type": "belongs_to",
+   "description": "opa_performance 属于 绩效 数据域",
+   "evidence_text": "opa_performance 属于 绩效"
+  },
+  {
+   "source_local_id": "table_opa_stationperformancescore",
+   "target_local_id": "domain_绩效",
+   "relation_type": "belongs_to",
+   "description": "opa_stationperformancescore 属于 绩效 数据域",
+   "evidence_text": "opa_stationperformancescore 属于 绩效"
+  },
+  {
+   "source_local_id": "table_pw_task",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "pw_task 属于 巡检 数据域",
+   "evidence_text": "pw_task 属于 巡检"
+  },
+  {
+   "source_local_id": "table_pw_taskitem",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "pw_taskitem 属于 巡检 数据域",
+   "evidence_text": "pw_taskitem 属于 巡检"
+  },
+  {
+   "source_local_id": "table_qul_qualitydate",
+   "target_local_id": "domain_质控",
+   "relation_type": "belongs_to",
+   "description": "qul_qualitydate 属于 质控 数据域",
+   "evidence_text": "qul_qualitydate 属于 质控"
+  },
+  {
+   "source_local_id": "table_rf_w_gaseouscheck_co",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "rf_w_gaseouscheck_co 属于 巡检 数据域",
+   "evidence_text": "rf_w_gaseouscheck_co 属于 巡检"
+  },
+  {
+   "source_local_id": "table_rf_w_gaseouscheck_nox",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "rf_w_gaseouscheck_nox 属于 巡检 数据域",
+   "evidence_text": "rf_w_gaseouscheck_nox 属于 巡检"
+  },
+  {
+   "source_local_id": "table_rf_w_gaseouscheck_o3",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "rf_w_gaseouscheck_o3 属于 巡检 数据域",
+   "evidence_text": "rf_w_gaseouscheck_o3 属于 巡检"
+  },
+  {
+   "source_local_id": "table_rf_w_gaseouscheck_so2",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "rf_w_gaseouscheck_so2 属于 巡检 数据域",
+   "evidence_text": "rf_w_gaseouscheck_so2 属于 巡检"
+  },
+  {
+   "source_local_id": "table_rf_w_inspection",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "rf_w_inspection 属于 巡检 数据域",
+   "evidence_text": "rf_w_inspection 属于 巡检"
+  },
+  {
+   "source_local_id": "table_rf_w_inspectionsummary",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "rf_w_inspectionsummary 属于 巡检 数据域",
+   "evidence_text": "rf_w_inspectionsummary 属于 巡检"
+  },
+  {
+   "source_local_id": "table_rf_w_otherdevicecheck",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "rf_w_otherdevicecheck 属于 巡检 数据域",
+   "evidence_text": "rf_w_otherdevicecheck 属于 巡检"
+  },
+  {
+   "source_local_id": "table_rf_w_pmcheck",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "rf_w_pmcheck 属于 巡检 数据域",
+   "evidence_text": "rf_w_pmcheck 属于 巡检"
+  },
+  {
+   "source_local_id": "table_sec_blackoutreportdetail",
+   "target_local_id": "domain_质控",
+   "relation_type": "belongs_to",
+   "description": "sec_blackoutreportdetail 属于 质控 数据域",
+   "evidence_text": "sec_blackoutreportdetail 属于 质控"
+  },
+  {
+   "source_local_id": "table_sec_blackoutreporttimespan",
+   "target_local_id": "domain_质控",
+   "relation_type": "belongs_to",
+   "description": "sec_blackoutreporttimespan 属于 质控 数据域",
+   "evidence_text": "sec_blackoutreporttimespan 属于 质控"
+  },
+  {
+   "source_local_id": "table_sec_qcblackout",
+   "target_local_id": "domain_质控",
+   "relation_type": "belongs_to",
+   "description": "sec_qcblackout 属于 质控 数据域",
+   "evidence_text": "sec_qcblackout 属于 质控"
+  },
+  {
+   "source_local_id": "table_sup_devicedaycheck",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "sup_devicedaycheck 属于 巡检 数据域",
+   "evidence_text": "sup_devicedaycheck 属于 巡检"
+  },
+  {
+   "source_local_id": "table_sup_mtc_taskitem",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "sup_mtc_taskitem 属于 巡检 数据域",
+   "evidence_text": "sup_mtc_taskitem 属于 巡检"
+  },
+  {
+   "source_local_id": "table_sup_rf_ambienttemperature",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "sup_rf_ambienttemperature 属于 巡检 数据域",
+   "evidence_text": "sup_rf_ambienttemperature 属于 巡检"
+  },
+  {
+   "source_local_id": "table_sup_rf_common",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "sup_rf_common 属于 巡检 数据域",
+   "evidence_text": "sup_rf_common 属于 巡检"
+  },
+  {
+   "source_local_id": "table_sup_rf_deviceflowcheck",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "sup_rf_deviceflowcheck 属于 巡检 数据域",
+   "evidence_text": "sup_rf_deviceflowcheck 属于 巡检"
+  },
+  {
+   "source_local_id": "table_sup_rf_monitorinspection",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "sup_rf_monitorinspection 属于 巡检 数据域",
+   "evidence_text": "sup_rf_monitorinspection 属于 巡检"
+  },
+  {
+   "source_local_id": "table_sup_rf_pm1monitorinspection",
+   "target_local_id": "domain_巡检",
+   "relation_type": "belongs_to",
+   "description": "sup_rf_pm1monitorinspection 属于 巡检 数据域",
+   "evidence_text": "sup_rf_pm1monitorinspection 属于 巡检"
+  },
+  {
+   "source_local_id": "table_wo_commonfile",
+   "target_local_id": "domain_工单",
+   "relation_type": "belongs_to",
+   "description": "wo_commonfile 属于 工单 数据域",
+   "evidence_text": "wo_commonfile 属于 工单"
+  },
+  {
+   "source_local_id": "table_wo_commonfile_links",
+   "target_local_id": "domain_工单",
+   "relation_type": "belongs_to",
+   "description": "wo_commonfile_links 属于 工单 数据域",
+   "evidence_text": "wo_commonfile_links 属于 工单"
+  },
+  {
+   "source_local_id": "table_working_order_details",
+   "target_local_id": "domain_工单",
+   "relation_type": "belongs_to",
+   "description": "working_order_details 属于 工单 数据域",
+   "evidence_text": "working_order_details 属于 工单"
+  },
+  {
+   "source_local_id": "table_working_orders",
+   "target_local_id": "domain_工单",
+   "relation_type": "belongs_to",
+   "description": "working_orders 属于 工单 数据域",
+   "evidence_text": "working_orders 属于 工单"
+  },
+  {
+   "source_local_id": "domain_告警",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "告警 类问题优先经 tool_semantic_metrics",
+   "evidence_text": "告警 -> tool_semantic_metrics"
+  },
+  {
+   "source_local_id": "domain_告警",
+   "target_local_id": "tool_mart_sql",
+   "relation_type": "query_via",
+   "description": "告警 类问题优先经 tool_mart_sql",
+   "evidence_text": "告警 -> tool_mart_sql"
+  },
+  {
+   "source_local_id": "domain_巡检",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "巡检 类问题优先经 tool_semantic_metrics",
+   "evidence_text": "巡检 -> tool_semantic_metrics"
+  },
+  {
+   "source_local_id": "domain_巡检",
+   "target_local_id": "tool_mart_sql",
+   "relation_type": "query_via",
+   "description": "巡检 类问题优先经 tool_mart_sql",
+   "evidence_text": "巡检 -> tool_mart_sql"
+  },
+  {
+   "source_local_id": "domain_工单",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "工单 类问题优先经 tool_semantic_metrics",
+   "evidence_text": "工单 -> tool_semantic_metrics"
+  },
+  {
+   "source_local_id": "domain_工单",
+   "target_local_id": "tool_mart_sql",
+   "relation_type": "query_via",
+   "description": "工单 类问题优先经 tool_mart_sql",
+   "evidence_text": "工单 -> tool_mart_sql"
+  },
+  {
+   "source_local_id": "domain_站点与组织",
+   "target_local_id": "tool_station_catalog",
+   "relation_type": "query_via",
+   "description": "站点与组织 类问题优先经 tool_station_catalog",
+   "evidence_text": "站点与组织 -> tool_station_catalog"
+  },
+  {
+   "source_local_id": "domain_站点与组织",
+   "target_local_id": "tool_mart_sql",
+   "relation_type": "query_via",
+   "description": "站点与组织 类问题优先经 tool_mart_sql",
+   "evidence_text": "站点与组织 -> tool_mart_sql"
+  },
+  {
+   "source_local_id": "domain_绩效",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "绩效 类问题优先经 tool_semantic_metrics",
+   "evidence_text": "绩效 -> tool_semantic_metrics"
+  },
+  {
+   "source_local_id": "domain_绩效",
+   "target_local_id": "tool_mart_sql",
+   "relation_type": "query_via",
+   "description": "绩效 类问题优先经 tool_mart_sql",
+   "evidence_text": "绩效 -> tool_mart_sql"
+  },
+  {
+   "source_local_id": "domain_设备",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "设备 类问题优先经 tool_semantic_metrics",
+   "evidence_text": "设备 -> tool_semantic_metrics"
+  },
+  {
+   "source_local_id": "domain_设备",
+   "target_local_id": "tool_mart_sql",
+   "relation_type": "query_via",
+   "description": "设备 类问题优先经 tool_mart_sql",
+   "evidence_text": "设备 -> tool_mart_sql"
+  },
+  {
+   "source_local_id": "domain_质控",
+   "target_local_id": "tool_mart_sql",
+   "relation_type": "query_via",
+   "description": "质控 类问题优先经 tool_mart_sql",
+   "evidence_text": "质控 -> tool_mart_sql"
+  },
+  {
+   "source_local_id": "metric_alarmnotify_count",
+   "target_local_id": "table_mart_alarm_notify_analysis",
+   "relation_type": "measured_in",
+   "description": "告警通知量 由 mart_alarm_notify_analysis 计算",
+   "evidence_text": "告警通知量 -> mart_alarm_notify_analysis"
+  },
+  {
+   "source_local_id": "metric_alarmnotify_count",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "告警通知量 优先走语义层点查（口径唯一）",
+   "evidence_text": "告警通知量 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_alarmnotify_distinctstationcount",
+   "target_local_id": "table_mart_alarm_notify_analysis",
+   "relation_type": "measured_in",
+   "description": "告警通知涉及站点数 由 mart_alarm_notify_analysis 计算",
+   "evidence_text": "告警通知涉及站点数 -> mart_alarm_notify_analysis"
+  },
+  {
+   "source_local_id": "metric_alarmnotify_distinctstationcount",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "告警通知涉及站点数 优先走语义层点查（口径唯一）",
+   "evidence_text": "告警通知涉及站点数 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_devicelifecycle_checkeventcount",
+   "target_local_id": "table_mart_device_lifecycle_analysis",
+   "relation_type": "measured_in",
+   "description": "周期检查事件数 由 mart_device_lifecycle_analysis 计算",
+   "evidence_text": "周期检查事件数 -> mart_device_lifecycle_analysis"
+  },
+  {
+   "source_local_id": "metric_devicelifecycle_checkeventcount",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "周期检查事件数 优先走语义层点查（口径唯一）",
+   "evidence_text": "周期检查事件数 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_devicelifecycle_count",
+   "target_local_id": "table_mart_device_lifecycle_analysis",
+   "relation_type": "measured_in",
+   "description": "生命周期事件数 由 mart_device_lifecycle_analysis 计算",
+   "evidence_text": "生命周期事件数 -> mart_device_lifecycle_analysis"
+  },
+  {
+   "source_local_id": "metric_devicelifecycle_count",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "生命周期事件数 优先走语义层点查（口径唯一）",
+   "evidence_text": "生命周期事件数 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_devicelifecycle_distinctdevices",
+   "target_local_id": "table_mart_device_lifecycle_analysis",
+   "relation_type": "measured_in",
+   "description": "涉及设备数 由 mart_device_lifecycle_analysis 计算",
+   "evidence_text": "涉及设备数 -> mart_device_lifecycle_analysis"
+  },
+  {
+   "source_local_id": "metric_devicelifecycle_distinctdevices",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "涉及设备数 优先走语义层点查（口径唯一）",
+   "evidence_text": "涉及设备数 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_devicelifecycle_stopeventcount",
+   "target_local_id": "table_mart_device_lifecycle_analysis",
+   "relation_type": "measured_in",
+   "description": "停用事件数 由 mart_device_lifecycle_analysis 计算",
+   "evidence_text": "停用事件数 -> mart_device_lifecycle_analysis"
+  },
+  {
+   "source_local_id": "metric_devicelifecycle_stopeventcount",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "停用事件数 优先走语义层点查（口径唯一）",
+   "evidence_text": "停用事件数 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_inspectiontask_count",
+   "target_local_id": "table_mart_inspection_task_analysis",
+   "relation_type": "measured_in",
+   "description": "任务项数 由 mart_inspection_task_analysis 计算",
+   "evidence_text": "任务项数 -> mart_inspection_task_analysis"
+  },
+  {
+   "source_local_id": "metric_inspectiontask_count",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "任务项数 优先走语义层点查（口径唯一）",
+   "evidence_text": "任务项数 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_inspectiontask_finishedrate",
+   "target_local_id": "table_mart_inspection_task_analysis",
+   "relation_type": "measured_in",
+   "description": "巡检完成率 由 mart_inspection_task_analysis 计算",
+   "evidence_text": "巡检完成率 -> mart_inspection_task_analysis"
+  },
+  {
+   "source_local_id": "metric_inspectiontask_finishedrate",
+   "target_local_id": "metric_inspectiontask_count",
+   "relation_type": "derived_from",
+   "description": "巡检完成率 的分母是 任务项数",
+   "evidence_text": "巡检完成率.denominator=count"
+  },
+  {
+   "source_local_id": "metric_inspectiontask_finishedrate",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "巡检完成率 优先走语义层点查（口径唯一）",
+   "evidence_text": "巡检完成率 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_inspectiontask_overduerate",
+   "target_local_id": "table_mart_inspection_task_analysis",
+   "relation_type": "measured_in",
+   "description": "巡检超期率 由 mart_inspection_task_analysis 计算",
+   "evidence_text": "巡检超期率 -> mart_inspection_task_analysis"
+  },
+  {
+   "source_local_id": "metric_inspectiontask_overduerate",
+   "target_local_id": "metric_inspectiontask_count",
+   "relation_type": "derived_from",
+   "description": "巡检超期率 的分母是 任务项数",
+   "evidence_text": "巡检超期率.denominator=count"
+  },
+  {
+   "source_local_id": "metric_inspectiontask_overduerate",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "巡检超期率 优先走语义层点查（口径唯一）",
+   "evidence_text": "巡检超期率 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_inspectiontask_toorderrate",
+   "target_local_id": "table_mart_inspection_task_analysis",
+   "relation_type": "measured_in",
+   "description": "转工单率 由 mart_inspection_task_analysis 计算",
+   "evidence_text": "转工单率 -> mart_inspection_task_analysis"
+  },
+  {
+   "source_local_id": "metric_inspectiontask_toorderrate",
+   "target_local_id": "metric_inspectiontask_count",
+   "relation_type": "derived_from",
+   "description": "转工单率 的分母是 任务项数",
+   "evidence_text": "转工单率.denominator=count"
+  },
+  {
+   "source_local_id": "metric_inspectiontask_toorderrate",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "转工单率 优先走语义层点查（口径唯一）",
+   "evidence_text": "转工单率 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_performance_avgqcqualifiedrate",
+   "target_local_id": "table_mart_performance_analysis",
+   "relation_type": "measured_in",
+   "description": "平均质控合格率 由 mart_performance_analysis 计算",
+   "evidence_text": "平均质控合格率 -> mart_performance_analysis"
+  },
+  {
+   "source_local_id": "metric_performance_avgqcqualifiedrate",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "平均质控合格率 优先走语义层点查（口径唯一）",
+   "evidence_text": "平均质控合格率 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_performance_avgtotalscore",
+   "target_local_id": "table_mart_performance_analysis",
+   "relation_type": "measured_in",
+   "description": "平均总分 由 mart_performance_analysis 计算",
+   "evidence_text": "平均总分 -> mart_performance_analysis"
+  },
+  {
+   "source_local_id": "metric_performance_avgtotalscore",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "平均总分 优先走语义层点查（口径唯一）",
+   "evidence_text": "平均总分 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_performance_below60count",
+   "target_local_id": "table_mart_performance_analysis",
+   "relation_type": "measured_in",
+   "description": "低于60分站点月数 由 mart_performance_analysis 计算",
+   "evidence_text": "低于60分站点月数 -> mart_performance_analysis"
+  },
+  {
+   "source_local_id": "metric_performance_below60count",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "低于60分站点月数 优先走语义层点查（口径唯一）",
+   "evidence_text": "低于60分站点月数 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_performance_count",
+   "target_local_id": "table_mart_performance_analysis",
+   "relation_type": "measured_in",
+   "description": "站点月数 由 mart_performance_analysis 计算",
+   "evidence_text": "站点月数 -> mart_performance_analysis"
+  },
+  {
+   "source_local_id": "metric_performance_count",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "站点月数 优先走语义层点查（口径唯一）",
+   "evidence_text": "站点月数 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_performance_distinctstationcount",
+   "target_local_id": "table_mart_performance_analysis",
+   "relation_type": "measured_in",
+   "description": "绩效涉及站点数 由 mart_performance_analysis 计算",
+   "evidence_text": "绩效涉及站点数 -> mart_performance_analysis"
+  },
+  {
+   "source_local_id": "metric_performance_distinctstationcount",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "绩效涉及站点数 优先走语义层点查（口径唯一）",
+   "evidence_text": "绩效涉及站点数 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_performance_sumdeductionamount",
+   "target_local_id": "table_mart_performance_analysis",
+   "relation_type": "measured_in",
+   "description": "核减金额合计 由 mart_performance_analysis 计算",
+   "evidence_text": "核减金额合计 -> mart_performance_analysis"
+  },
+  {
+   "source_local_id": "metric_performance_sumdeductionamount",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "核减金额合计 优先走语义层点查（口径唯一）",
+   "evidence_text": "核减金额合计 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_performance_sumpaidamount",
+   "target_local_id": "table_mart_performance_analysis",
+   "relation_type": "measured_in",
+   "description": "实发金额合计 由 mart_performance_analysis 计算",
+   "evidence_text": "实发金额合计 -> mart_performance_analysis"
+  },
+  {
+   "source_local_id": "metric_performance_sumpaidamount",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "实发金额合计 优先走语义层点查（口径唯一）",
+   "evidence_text": "实发金额合计 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_stationalarmstatus_alarmingcount",
+   "target_local_id": "table_mart_station_alarm_status",
+   "relation_type": "measured_in",
+   "description": "当前告警站点数 由 mart_station_alarm_status 计算",
+   "evidence_text": "当前告警站点数 -> mart_station_alarm_status"
+  },
+  {
+   "source_local_id": "metric_stationalarmstatus_alarmingcount",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "当前告警站点数 优先走语义层点查（口径唯一）",
+   "evidence_text": "当前告警站点数 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_workorder_attachmentrate",
+   "target_local_id": "table_mart_work_order_analysis",
+   "relation_type": "measured_in",
+   "description": "附件完整率 由 mart_work_order_analysis 计算",
+   "evidence_text": "附件完整率 -> mart_work_order_analysis"
+  },
+  {
+   "source_local_id": "metric_workorder_attachmentrate",
+   "target_local_id": "metric_workorder_count",
+   "relation_type": "derived_from",
+   "description": "附件完整率 的分母是 工单量",
+   "evidence_text": "附件完整率.denominator=count"
+  },
+  {
+   "source_local_id": "metric_workorder_attachmentrate",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "附件完整率 优先走语义层点查（口径唯一）",
+   "evidence_text": "附件完整率 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_workorder_count",
+   "target_local_id": "table_mart_work_order_analysis",
+   "relation_type": "measured_in",
+   "description": "工单量 由 mart_work_order_analysis 计算",
+   "evidence_text": "工单量 -> mart_work_order_analysis"
+  },
+  {
+   "source_local_id": "metric_workorder_count",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "工单量 优先走语义层点查（口径唯一）",
+   "evidence_text": "工单量 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_workorder_finishrate",
+   "target_local_id": "table_mart_work_order_analysis",
+   "relation_type": "measured_in",
+   "description": "工单完成率 由 mart_work_order_analysis 计算",
+   "evidence_text": "工单完成率 -> mart_work_order_analysis"
+  },
+  {
+   "source_local_id": "metric_workorder_finishrate",
+   "target_local_id": "metric_workorder_count",
+   "relation_type": "derived_from",
+   "description": "工单完成率 的分母是 工单量",
+   "evidence_text": "工单完成率.denominator=count"
+  },
+  {
+   "source_local_id": "metric_workorder_finishrate",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "工单完成率 优先走语义层点查（口径唯一）",
+   "evidence_text": "工单完成率 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_workorder_overduerate",
+   "target_local_id": "table_mart_work_order_analysis",
+   "relation_type": "measured_in",
+   "description": "工单超期率 由 mart_work_order_analysis 计算",
+   "evidence_text": "工单超期率 -> mart_work_order_analysis"
+  },
+  {
+   "source_local_id": "metric_workorder_overduerate",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "工单超期率 优先走语义层点查（口径唯一）",
+   "evidence_text": "工单超期率 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_workorder_repeatfaultrate",
+   "target_local_id": "table_mart_work_order_analysis",
+   "relation_type": "measured_in",
+   "description": "30天重复故障率 由 mart_work_order_analysis 计算",
+   "evidence_text": "30天重复故障率 -> mart_work_order_analysis"
+  },
+  {
+   "source_local_id": "metric_workorder_repeatfaultrate",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "30天重复故障率 优先走语义层点查（口径唯一）",
+   "evidence_text": "30天重复故障率 -> guangdong_query_metrics"
+  },
+  {
+   "source_local_id": "metric_workorder_responsewithin2hrate",
+   "target_local_id": "table_mart_work_order_analysis",
+   "relation_type": "measured_in",
+   "description": "2小时响应率 由 mart_work_order_analysis 计算",
+   "evidence_text": "2小时响应率 -> mart_work_order_analysis"
+  },
+  {
+   "source_local_id": "metric_workorder_responsewithin2hrate",
+   "target_local_id": "tool_semantic_metrics",
+   "relation_type": "query_via",
+   "description": "2小时响应率 优先走语义层点查（口径唯一）",
+   "evidence_text": "2小时响应率 -> guangdong_query_metrics"
+  }
+ ]
+}

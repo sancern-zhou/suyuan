@@ -740,6 +740,13 @@ knowledge:
   # 故障诊断图谱与知识库集（collections）建库见 rollout 文档第 5 步说明。
   bindings:
     station_fault_diagnosis: 广东运维工单知识
+    # 数据语义图谱（gen_graph_seed.py 生成、graph_seed_sync.py 写入），
+    # 供问数入口确定性实体链接（graph_entry_context）使用。
+    data_semantics: 广东数据语义
+  # 声明哪些 Agent 模式在每轮入口做图谱实体链接注入；未声明的项目/模式不受影响。
+  graph_entry_modes:
+  - gd_query
+  - query
 scheduled_tasks:
 - gd_station_operation_daily
 - gd_station_alarm_status_watch

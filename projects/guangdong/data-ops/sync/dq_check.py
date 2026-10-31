@@ -221,6 +221,13 @@ async def check_contract_drift(pg, results):
     await record(pg, results, "contract", "execute_guangdong_mart_sql", status, detail)
 
 
+async def check_graph_seed_drift(pg, results):
+    """图谱种子防漂移: graph_seed.json / 广东数据语义契约.md 必须与
+    datasets/*.yaml + semantic/registry.yaml 一致（gen_graph_seed.py --check）。"""
+    status, detail = await _run_generator_check("gen_graph_seed.py")
+    await record(pg, results, "contract", "graph_seed", status, detail)
+
+
 async def check_ods_fallback(pg, results):
     """ODS 兜底通道: 生成物防漂移 + agent_reader 授权完整性。
 
@@ -382,6 +389,7 @@ async def main() -> int:
         await check_unique(pg, results)
         await check_heartbeat(pg, results)
         await check_contract_drift(pg, results)
+        await check_graph_seed_drift(pg, results)
         await check_ods_fallback(pg, results)
         await check_mart_contract_coverage(pg, results)
         await check_sup_profile_coverage(pg, results)
