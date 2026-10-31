@@ -11,6 +11,11 @@ profiles:
       - semantic_context
     optional:
       - summary
+    # 机器可读规则（共享校验器 app/services/semantic_governance/contract.py 解释）
+    semantic_context_required:
+      - metric_definitions
+      - grain
+      - applicability
     rules:
       - semantic_context 必须包含 metric_definitions、grain 和 applicability
   metric_query:
@@ -24,6 +29,12 @@ profiles:
       - file_path
       - count
       - sample_count
+    semantic_context_required:
+      - dataset
+      - grain
+      - applicability
+      - data_as_of
+      - metric_definitions
     rules:
       - semantic_context 必须包含 dataset、grain、applicability、data_as_of 和指标定义
       - quality_guidance 决定 Agent 能否形成定量结论
@@ -48,5 +59,7 @@ profiles:
       - columns
     optional:
       - summary
+    semantic_context_equals:
+      query_role: schema_introspection
     rules:
       - 不返回与结构查询无关的 findings 或 data
