@@ -65,6 +65,15 @@
   ! grep -R "/visualizations" frontend/dist/assets
   ```
 
+## 上下文注入选型策略（工具描述 / skill / describe_table）
+
+写入请求上下文的约束文本按"稳定性 × 内容类型"三选一，禁止把长文档整体内联进工具描述或系统提示词（单工具 schema 与单模式注入总量受 `backend/tests/test_agent_mode_context_budget.py` 预算上限守门）：
+
+- **工具描述**：只放路由（是什么/何时用/红线）与高频速查，保持缓存稳定前缀精炼。少变的基础规范（SQL 方言、白名单红线、路径约定等）通过引用固定文档路径渐进读取（read_file 按需整读）；引用路径优先由工具结果或错误信息给出（确定性触发），描述内只留一行指引。硬约束优先做成运行时校验，错误信息即召回钩子，不依赖模型自觉读文档。
+- **skill（list_skills/view_skill）**：灵活、偏业务流程的知识（编排方法、领域拆分、成稿风格等），人编常调、改文件即生效。工具描述在入口点名技能（如"编排前先 view_skill: xxx"），并配失败可见的确定性校验兜底。
+- **describe_table（工具参数按需取数）**：具体表/字段信息等由数据管道生成的契约，单一来源零漂移、按表粒度取用；支持批量与表名索引（如 `describe_table='tables'`），错误信息带模糊纠错提示。
+- 选型口诀：真相在管道 → 工具参数按需取；真相在人且常调 → skill；少变基础规范 → 引用文档渐进读取；真相在子模式 → 父侧只留一行定位。参考实现：`execute_guangdong_mart_sql`（describe_table 契约）、技能 `agent-workflow-orchestration`（编排细则）。
+
 ## 分支与更新归属规范
 
 - 共享层改动一律提交到 `main`：`backend/app`（除 `tools/jiangsu/`、`fetchers/jiangsu_*`、`fetchers/weather/jiangsu_*`）、`backend/tests`（除 jiangsu 专用测试）、`backend/config`、`frontend/src` 公共组件与配置、CI、`.gitignore`、`AGENTS.md`。

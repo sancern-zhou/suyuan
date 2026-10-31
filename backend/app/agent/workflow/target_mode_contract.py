@@ -181,19 +181,37 @@ def _active_contracts():
     }}
 
 
-def build_target_mode_contract() -> str:
-    """构建 target_mode 能力/工具边界契约文本（供工具 schema 使用）。"""
-    lines = ["子 Agent（target_mode）能力与工具边界："]
-    for mode, spec in _active_contracts().items():
-        parts = [f"- {mode}：{spec['positioning']}"]
-        if spec.get("scope"):
-            parts.append(f"能做：{spec['scope']}")
-        if spec.get("boundary"):
-            parts.append(f"边界：{spec['boundary']}")
-        if spec.get("outputs"):
-            parts.append(f"产出：{spec['outputs']}")
-        if spec.get("warning"):
-            parts.append(f"⚠️ {spec['warning']}")
-        lines.append(" ".join(parts))
+def build_target_mode_contract(compact: bool = True) -> str:
+    """构建 target_mode 能力/工具边界契约文本（供工具 schema 使用）。
+
+    compact=True 注入一行制（定位+边界）。scope/outputs/warning 全文不再进入
+    每次请求：子模式自己的系统提示词才是权威能力边界，硬约束（禁用组合、
+    任务契约校验）由 delegation_error/prepare_node 在运行时强制，字段级细节
+    按需 view_skill 查看。compact=False 保留完整四段文本供非请求场景使用。
+    """
+    contracts = _active_contracts()
+    if not compact:
+        lines = ["子 Agent（target_mode）能力与工具边界："]
+        for mode, spec in contracts.items():
+            parts = [f"- {mode}：{spec['positioning']}"]
+            if spec.get("scope"):
+                parts.append(f"能做：{spec['scope']}")
+            if spec.get("boundary"):
+                parts.append(f"边界：{spec['boundary']}")
+            if spec.get("outputs"):
+                parts.append(f"产出：{spec['outputs']}")
+            if spec.get("warning"):
+                parts.append(f"⚠️ {spec['warning']}")
+            lines.append(" ".join(parts))
+        lines.append(_ROUTING_RULES)
+        return "\n".join(lines)
+    lines = ["子 Agent（target_mode）定位与边界（详细分工以子模式自身提示词为准）："]
+    for mode, spec in contracts.items():
+        positioning = str(spec.get("positioning") or "").strip().rstrip("。")
+        line = f"- {mode}：{positioning}"
+        boundary = str(spec.get("boundary") or "").strip().rstrip("。")
+        if boundary:
+            line += f"；边界：{boundary}"
+        lines.append(line)
     lines.append(_ROUTING_RULES)
     return "\n".join(lines)
