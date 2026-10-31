@@ -78,9 +78,10 @@ HEADER = (
     "\n\n【广东运维工单数据集契约（PostgreSQL，仅下列{n}张表）】\n"
     "数据由 data-ops 链路（sync_table.py -> dbt）从运维源库（Operation_SC_GD）按水位同步，非实时；"
     "实时状态类问题建议同时用 execute_ops_sql_query 直查源库核对。\n"
-    "生成SQL前先读契约，直接生成SQL，不要先describe_table；仅当契约未列字段时才describe_table。\n"
+    "写SQL前先 describe_table('表名') 取该表字段契约（含业务含义与统计口径，支持逗号分隔批量）；"
+    "契约未覆盖的字段以 describe_table 返回的列名为准。\n"
     "中低频表单不在本契约：月检(rf_m_*)/质控(rf_q_*)/半年(rf_hy_*)/年维保(rf_y_*)等由 ODS 兜底契约"
-    "（ods_contract.txt，同一工具第二套白名单，引用写全限定名 guangdong_ods.<表名>）托底，一句话索引+describe_table 取列。"
+    "（同一工具第二套白名单，引用写全限定名 guangdong_ods.<表名>）托底，describe_table 取列与说明。"
 )
 
 FOOTER = (

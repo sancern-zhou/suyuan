@@ -9,19 +9,22 @@
 guangdong_work_order fetcher 直写；contract.txt 由
 projects/guangdong/data-ops/sync/gen_tool_contract.py 从 datasets/*.yaml 生成。
 2026-10-25 ODS 兜底通道：同步进 guangdong_ods 的表不允许 Agent 查不到——
-主契约（37 张，高频完整说明+长尾一句话）覆盖不到的表由 ods_contract.txt
-（gen_ods_fallback_contract.py 生成，53 张一句话索引）托底，
-引用写全限定名 guangdong_ods.<表名>，列结构用 describe_table 获取。
+主契约覆盖不到的表由 ods_contract.txt（gen_ods_fallback_contract.py 生成）
+托底，引用写全限定名 guangdong_ods.<表名>，列结构用 describe_table 获取。
+2026-10-31 描述瘦身：字段契约不再整体注入工具描述（此前 42+156 张表约 2 万字符
+随每次请求计费）；工具描述只留路由与高频表速查，逐表契约（业务含义+列结构）
+改由 describe_table 按需返回，describe_table='tables' 取全量表名索引。
 数据新鲜度见各表 refreshed_at（dbt 重建时间）与
 guangdong_sync.ods_sync_watermark（ODS 水位）。
 """
 from __future__ import annotations
 
+import difflib
 import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import asyncpg
 import structlog
@@ -47,6 +50,13 @@ FRESHNESS_COLUMN = {
     "mart_work_order_analysis": "refreshed_at",
 }
 
+# describe_table 一次最多展开的表数量（防止批量取列撑爆单条工具结果）。
+DESCRIBE_BATCH_MAX = 8
+# describe_table='tables'（或等义关键词）返回全量表名与一句话索引。
+TABLE_INDEX_KEYWORDS = {"tables", "all", "index", "表名清单", "全部表", "所有表"}
+# 表索引单条摘要的最大字符数（长 guide 截断，字段细节走逐表 describe）。
+INDEX_SUMMARY_MAX_CHARS = 90
+
 
 def _load_contract_file(path: Path, label: str) -> tuple:
     """Load a generated dataset contract (TABLES line + GUIDE block)."""
@@ -71,10 +81,33 @@ def _load_contract_file(path: Path, label: str) -> tuple:
     return tables, "\n".join(guide_lines)
 
 
+def _split_contract_guide(guide: str) -> Tuple[str, Dict[str, str]]:
+    """Split a generated GUIDE block into global rules and per-table entries.
+
+    契约行格式为 "- 表名（grain）：说明"；非 "-" 行（【...】段与总则）归全局规则。
+    """
+    global_lines: List[str] = []
+    table_guides: Dict[str, str] = {}
+    for raw in guide.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("- "):
+            entry = line[2:].strip()
+            name = re.split(r"[（:：]", entry, maxsplit=1)[0].strip().lower()
+            if name:
+                table_guides[name] = entry
+        else:
+            global_lines.append(line)
+    return "\n".join(global_lines), table_guides
+
+
 def _load_contract() -> tuple:
     """Load the dataset contract generated from data-ops sync/datasets/*.yaml (single source)."""
-    return _load_contract_file(
+    tables, guide = _load_contract_file(
         Path(__file__).with_name("contract.txt"), "contract.txt")
+    global_rules, table_guides = _split_contract_guide(guide)
+    return tables, guide, global_rules, table_guides
 
 
 def _load_ods_contract() -> tuple:
@@ -90,14 +123,34 @@ def _load_ods_contract() -> tuple:
             path=str(path),
             hint="run sync/gen_ods_fallback_contract.py to restore the ODS fallback channel",
         )
-        return [], ""
-    return _load_contract_file(path, "ods_contract.txt")
+        return [], "", "", {}
+    tables, guide = _load_contract_file(path, "ods_contract.txt")
+    global_rules, table_guides = _split_contract_guide(guide)
+    return tables, guide, global_rules, table_guides
 
 
-MART_TABLES, MART_SCHEMA_GUIDE = _load_contract()
-ODS_TABLES, ODS_SCHEMA_GUIDE = _load_ods_contract()
+MART_TABLES, MART_SCHEMA_GUIDE, MART_GLOBAL_RULES, MART_TABLE_GUIDES = _load_contract()
+ODS_TABLES, ODS_SCHEMA_GUIDE, ODS_GLOBAL_RULES, ODS_TABLE_GUIDES = _load_ods_contract()
 MART_TABLE_SET = set(MART_TABLES)
 ODS_TABLE_SET = set(ODS_TABLES)
+
+
+def _trim(text: str, limit: int = INDEX_SUMMARY_MAX_CHARS) -> str:
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
+
+# 工具描述保留的高频表速查（字段细节仍以 describe_table 返回的契约为准）。
+_HOT_TABLE_CHEATSHEET = """
+【高频速查】
+- mart_work_order_analysis 一行=一张工单（全类型含作废单）：order_type/order_status_cn/station_name/city_name + 时效(response_minutes)/超期(is_overdue)/重复故障(is_repeat_fault)等指标；工单量与时效结论必须按 order_status/order_type 显式过滤
+- mart_inspection_task_analysis 一行=一个计划任务项：is_finished/is_overdue/is_to_order 已预计算；完成率/超期率/转工单率统计用本表
+- mart_alarm_notify_analysis 一行=一条告警通知：alarm_type 实测三类/notify_time；通知无处理闭环状态，当前态势用 mart_station_alarm_status(is_alarming)
+- working_orders 工单主表：order_type 代码值字典大，describe_table('working_orders') 获取完整字典
+- dim_station 站点目录（432站=主网332+组分网100）：city_name/station_type_name/operation_unit_name
+""".strip()
 
 
 class ExecuteGuangdongMartSQLTool(LLMTool):
@@ -114,19 +167,26 @@ class ExecuteGuangdongMartSQLTool(LLMTool):
         function_schema = {
             "name": self.tool_name,
             "description": (
-                "查询广东运维工单数据集（本地PostgreSQL受控同步层，主契约+ODS兜底两套白名单）。"
-                "只允许SELECT；表名白名单见工具说明，兜底表引用写全限定名 guangdong_ods.<表名>；"
-                "返回数据附数据截至时间与同步状态。"
+                "查询广东运维工单数据集（本地PostgreSQL受控同步层，主契约"
+                f"{len(MART_TABLES)}张+ODS兜底{len(ODS_TABLES)}张两套白名单）。"
+                "只允许SELECT；返回数据附数据截至时间与同步状态。"
                 "此工具用于工单字段级取证与统计；实时状态核对优先 execute_ops_sql_query。"
-                + MART_SCHEMA_GUIDE
-                + ODS_SCHEMA_GUIDE
+                "【用法】写SQL前先 describe_table('表名') 取字段契约（业务含义+统计口径+列结构，"
+                "支持逗号分隔批量）；describe_table='tables' 返回全部表名与一句话索引。"
+                "数据按水位同步非实时；查询务必带过滤条件与 LIMIT（上限1000）。"
+                + _HOT_TABLE_CHEATSHEET +
+                "\n【SQL方言】PostgreSQL：LIMIT 不用 TOP；日期截断 date_trunc；"
+                "布尔列 IS TRUE；聚合统计优先 GROUP BY 站点/类型/区域返回小结果集。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "describe_table": {
                         "type": "string",
-                        "description": "查看数据集字段结构（与sql二选一），输入白名单中的表名（兜底表同样支持）",
+                        "description": (
+                            "查看数据集字段契约（与sql二选一）：输入表名（支持逗号分隔批量、兜底表全限定名），"
+                            "返回业务含义+统计口径+列结构；输入 'tables' 返回全部表名与一句话索引"
+                        ),
                     },
                     "sql": {
                         "type": "string",
@@ -145,7 +205,7 @@ class ExecuteGuangdongMartSQLTool(LLMTool):
             description="查询广东运维工单数据集（分析宽表/工单/明细/附件/站点/设备/中低频表单兜底，受控只读SQL）",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="1.1.0",
+            version="1.2.0",
             requires_context=True,
         )
 
@@ -166,12 +226,7 @@ class ExecuteGuangdongMartSQLTool(LLMTool):
                     "summary": "请提供 sql 或 describe_table 参数，二者必选其一"}
 
         if describe_table is not None:
-            table = describe_table.strip().split(".")[-1].strip().lower()
-            schema = self._schema_of(table)
-            if schema is None:
-                return {"success": False, "data": None,
-                        "summary": f"表 {describe_table} 不在白名单中。允许: {', '.join(MART_TABLES + ODS_TABLES)}"}
-            return await self._describe_table(table, schema)
+            return await self._describe_tables(describe_table)
 
         if limit is None:
             limit = self.DEFAULT_LIMIT
@@ -201,33 +256,133 @@ class ExecuteGuangdongMartSQLTool(LLMTool):
         )
 
     # ------------------------------------------------------------ 表结构
-    async def _describe_table(self, table: str, schema: str = MART_SCHEMA) -> Dict[str, Any]:
-        conn = await self._connect()
-        try:
-            rows = await conn.fetch(
-                "SELECT column_name, data_type FROM information_schema.columns "
-                "WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position",
-                schema,
-                table,
-            )
-            columns = [
-                {"name": r["column_name"], "type": r["data_type"]}
-                for r in rows
-                # ODS 同步内部列（_src_incremental/_sync_batch/_synced_at）不是业务字段，
-                # 且 _synced_at 只在首插时写入，露出来会误导"数据新鲜度"判断。
-                if schema != ODS_SCHEMA or not r["column_name"].startswith("_")
-            ]
-            layer = "mart" if schema == MART_SCHEMA else "ods_fallback"
+    def _unknown_table_summary(self, table: str) -> str:
+        """Unknown-table message with fuzzy recall: point at describe_table('tables')."""
+        close = difflib.get_close_matches(
+            table, MART_TABLES + ODS_TABLES, n=3, cutoff=0.6)
+        hint = (
+            f"相近表名：{', '.join(close)}；" if close else ""
+        )
+        return (
+            f"表 {table} 不在白名单中。{hint}"
+            f"describe_table='tables' 可列出全部 {len(MART_TABLES) + len(ODS_TABLES)} 张表名与一句话索引。"
+        )
+
+    def _table_index(self) -> List[Dict[str, Any]]:
+        """All whitelisted tables with a one-line summary (on-demand, not in schema)."""
+        items: List[Dict[str, Any]] = []
+        for table in MART_TABLES:
+            items.append({
+                "table": table,
+                "layer": "mart",
+                "summary": _trim(MART_TABLE_GUIDES.get(table, "")),
+            })
+        for table in ODS_TABLES:
+            items.append({
+                "table": table,
+                "layer": "ods_fallback",
+                "summary": _trim(ODS_TABLE_GUIDES.get(table, "")),
+            })
+        return items
+
+    def _guide_of(self, table: str, schema: str) -> str:
+        guides = MART_TABLE_GUIDES if schema == MART_SCHEMA else ODS_TABLE_GUIDES
+        return guides.get(table, "")
+
+    async def _describe_tables(self, raw: str) -> Dict[str, Any]:
+        """Per-table contract on demand: 'tables' index, or 1..N named tables."""
+        request = (raw or "").strip()
+        if request.lower() in TABLE_INDEX_KEYWORDS or request in TABLE_INDEX_KEYWORDS:
+            items = self._table_index()
             return {
                 "success": True,
+                "mode": "table_index",
+                "total": len(items),
+                "tables": items,
+                "summary": (
+                    f"共 {len(items)} 张表（mart {len(MART_TABLES)} + ods 兜底 {len(ODS_TABLES)}）；"
+                    "用 describe_table('表名') 取字段契约（业务含义+统计口径+列结构）。"
+                ),
+            }
+
+        names = [n for n in re.split(r"[,，;；、\s]+", request) if n]
+        if not names:
+            return {"success": False, "data": None,
+                    "summary": "describe_table 参数为空；输入表名或 'tables' 查看全部表名。"}
+        if len(names) > DESCRIBE_BATCH_MAX:
+            return {"success": False, "data": None,
+                    "summary": f"一次最多 describe {DESCRIBE_BATCH_MAX} 张表，请分批调用。"}
+
+        resolved: List[Tuple[str, str]] = []
+        unknown: List[str] = []
+        for name in names:
+            table = name.strip().split(".")[-1].strip().lower()
+            schema = self._schema_of(table)
+            if schema is None:
+                unknown.append(table)
+            else:
+                resolved.append((table, schema))
+        if unknown:
+            return {"success": False, "data": None,
+                    "summary": self._unknown_table_summary(unknown[0])}
+
+        columns_by_table = await self._fetch_columns(resolved)
+        entries = []
+        for table, schema in resolved:
+            columns = columns_by_table.get(table, [])
+            entries.append({
                 "table": table,
                 "schema": schema,
-                "layer": layer,
+                "layer": "mart" if schema == MART_SCHEMA else "ods_fallback",
+                "guide": self._guide_of(table, schema),
                 "columns": columns,
-                "summary": f"{table}: {len(columns)} 列。字段业务含义以工具说明中的数据集约束为准。",
-            }
+                "summary": f"{table}: {len(columns)} 列；字段业务含义与统计口径见 guide（数据集契约）。",
+            })
+        rules = MART_GLOBAL_RULES + ("\n" + ODS_GLOBAL_RULES if ODS_GLOBAL_RULES else "")
+        result: Dict[str, Any] = {
+            "success": True,
+            "mode": "table_contract",
+            "tables": entries,
+            "contract_rules": _trim(rules, 1600),
+            "summary": "；".join(item["summary"] for item in entries),
+        }
+        if len(entries) == 1:
+            # 单表请求保持既有顶层字段形状，老调用方不破坏。
+            only = entries[0]
+            result.update({
+                "table": only["table"], "schema": only["schema"],
+                "layer": only["layer"], "columns": only["columns"],
+            })
+        return result
+
+    async def _fetch_columns(
+        self, resolved: List[Tuple[str, str]]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Batch information_schema lookup for (table, schema) pairs."""
+        conn = await self._connect()
+        columns_by_table: Dict[str, List[Dict[str, Any]]] = {}
+        try:
+            for schema in (MART_SCHEMA, ODS_SCHEMA):
+                tables = [t for t, s in resolved if s == schema]
+                if not tables:
+                    continue
+                rows = await conn.fetch(
+                    "SELECT table_name, column_name, data_type FROM information_schema.columns "
+                    "WHERE table_schema = $1 AND lower(table_name) = ANY($2) "
+                    "ORDER BY table_name, ordinal_position",
+                    schema,
+                    tables,
+                )
+                for r in rows:
+                    # ODS 同步内部列（_src_incremental/_sync_batch/_synced_at）不是业务字段，
+                    # 且 _synced_at 只在首插时写入，露出来会误导"数据新鲜度"判断。
+                    if schema == ODS_SCHEMA and r["column_name"].startswith("_"):
+                        continue
+                    columns_by_table.setdefault(r["table_name"], []).append(
+                        {"name": r["column_name"], "type": r["data_type"]})
         finally:
             await conn.close()
+        return columns_by_table
 
     # ------------------------------------------------------------ 查询
     async def _execute_sql(
@@ -244,7 +399,11 @@ class ExecuteGuangdongMartSQLTool(LLMTool):
                 return {
                     "success": False,
                     "data": [],
-                    "summary": f"SQL校验失败: {error_msg}。允许的表: {', '.join(MART_TABLES + ODS_TABLES)}",
+                    "summary": (
+                        f"SQL校验失败: {error_msg}。"
+                        "字段口径先 describe_table('表名') 取契约（含业务含义与统计口径）；"
+                        "describe_table='tables' 列出全部表名。"
+                    ),
                 }
 
             # 行数上限由外层包裹强制，不依赖 LLM 写 LIMIT；多取一行用于判定截断。
