@@ -24,6 +24,7 @@ from .storage import (
     TaskCaseStorage,
 )
 from .scheduler import SimpleScheduler
+from .event_result_hooks import notify_event_result
 from .executor import ScheduledTaskExecutor
 from .event_delivery import EventTaskDelivery
 from .event_output import parse_event_task_output
@@ -483,9 +484,9 @@ class ScheduledTaskService:
                 if recovered:
                     existing = recovered
             if existing and force_retry and existing.status == "failed":
-                claim = self.claim_storage.retry_failed(task.task_id, event.event_id)
+                claim = self.claim_storage.retry_failed(task.task_id, event.event_id, event=event)
             elif existing and force_retry and existing.status == "succeeded":
-                claim = self.claim_storage.reopen(task.task_id, event.event_id)
+                claim = self.claim_storage.reopen(task.task_id, event.event_id, event=event)
             elif existing:
                 result.duplicate_task_ids.append(task.task_id)
                 continue
@@ -566,6 +567,7 @@ class ScheduledTaskService:
                         "failed",
                         execution_id=execution.execution_id,
                     )
+                    await notify_event_result(task, event, execution)
                     return execution
 
             execution = await self.executor.execute_task(
@@ -584,10 +586,12 @@ class ScheduledTaskService:
             if execution.status != ExecutionStatus.SUCCESS:
                 self.task_storage.update_run_stats(task.task_id, success=False)
                 self.claim_storage.mark_status(claim_id, "failed")
+                await notify_event_result(task, event, execution)
                 return execution
 
             self.task_storage.update_run_stats(task.task_id, success=True)
             self.claim_storage.mark_status(claim_id, "succeeded")
+            await notify_event_result(task, event, execution)
             return execution
         except Exception as exc:
             logger.error(
@@ -609,6 +613,7 @@ class ScheduledTaskService:
                 "failed",
                 execution_id=execution.execution_id,
             )
+            await notify_event_result(task, event, execution)
             return execution
 
     async def retry_failed_delivery(self, execution_id: str) -> dict:

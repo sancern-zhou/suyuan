@@ -148,7 +148,13 @@ class EventClaimStorage:
             self._atomic_write(path, claim.model_dump(mode="json"))
             return claim
 
-    def retry_failed(self, task_id: str, event_id: str) -> EventClaim:
+    def retry_failed(
+        self,
+        task_id: str,
+        event_id: str,
+        *,
+        event: TaskEvent | None = None,
+    ) -> EventClaim:
         path = self._claim_path(task_id, event_id)
         with self._locked():
             if not path.exists():
@@ -159,11 +165,21 @@ class EventClaimStorage:
             claim.status = "claimed"
             claim.attempt += 1
             claim.execution_id = None
+            if event is not None:
+                # Keep the durable snapshot in sync with the latest dispatch so a
+                # restart resume replays current attributes instead of stale ones.
+                claim.event_snapshot = event.model_dump(mode="json")
             claim.updated_at = datetime.now().astimezone()
             self._atomic_write(path, claim.model_dump(mode="json"))
             return claim
 
-    def reopen(self, task_id: str, event_id: str) -> EventClaim:
+    def reopen(
+        self,
+        task_id: str,
+        event_id: str,
+        *,
+        event: TaskEvent | None = None,
+    ) -> EventClaim:
         """Re-open a terminal (failed or succeeded) claim for a forced manual run."""
         path = self._claim_path(task_id, event_id)
         with self._locked():
@@ -175,6 +191,8 @@ class EventClaimStorage:
             claim.status = "claimed"
             claim.attempt += 1
             claim.execution_id = None
+            if event is not None:
+                claim.event_snapshot = event.model_dump(mode="json")
             claim.updated_at = datetime.now().astimezone()
             self._atomic_write(path, claim.model_dump(mode="json"))
             return claim
