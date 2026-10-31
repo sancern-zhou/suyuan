@@ -720,6 +720,9 @@ class RunAgentWorkflowTool(LLMTool):
                     _on_session_started=lambda child_session_id: coordinator.bind_node_session(
                         node.task_id, child_session_id
                     ),
+                    # 升级提问（escalate）：子 Agent 阻塞性问题挂起本节点，
+                    # 记档进 coordinator 快照推给前端；用户作答后原地续跑。
+                    _escalation_observer=coordinator.record_escalation,
                 )
                 violations = (result.get("data") or {}).get("resource_contract_violations") if isinstance(result, Mapping) else None
                 if violations:

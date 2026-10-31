@@ -145,3 +145,13 @@ SKILL.md 的方法论部分（fresh eyes、每发现一确认者、确定性门�
 移植验证：`tests/services/test_llm_concurrency.py`（状态机 12 例 + 桶级 4 例）、`model_failure_policy_test.py` 补 reset_at 解析 6 例、`coordinator_policy_test.py` 补 quota_pause 记档与快照恢复 2 例、`quota_resume_test.py`（schedule/scan/防循环 8 例，全 fake Redis）。
 
 明确未移植：跨进程 Redis 全局并发治理、run 间公平队列与 observer 模式（我们主 Agent 与工作流不同进程，无此争用）、LLM 层 Retry-After 头的 HTTP 读取（沿用错误文本解析，网关不透传时退化为指数退避）。
+
+## 十、第三轮移植：escalation 阻塞应答（2026-10-31）
+
+| ZCode 机制（出处） | 机制要点 | suyan 落点（本轮移植） |
+|---|---|---|
+| escalation 升级提问（`bootstrap/app/workflow-driver-escalation.ts`，MAX_ESCALATIONS_PER_ASK=3） | 子 Agent mid-turn 调 `escalate` → driver 停驻该 ask（deferred），双轨记 `escalation-raised`；主 Agent 经 run service 作答 → 解 deferred、`escalation-resolved`，turn 就地继续；第 4 次返回普通工具结果"自行以最佳判断推进"（抛错会被当可重试故障反复撞墙）；ask 结束三条异常路径撤下停驻 | `backend/app/tools/agent_tools/escalate_tool.py`：EscalateTool 照 submit_result 裸类模式，由 `build_escalation_tool` 在工作流节点上下文注入 child registry（agent_runtime 三处白名单与 submit_result 同待遇）。**真挂起**：execute 内轮询 Redis（0.5s）等答案，只挂起该节点、其余节点照常跑；问题/答案落 `{steering_prefix}:workflow:escalation:{eid}`（TTL 24h，跨 3 个 uvicorn worker 安全）；超时（`agent_escalation_timeout_seconds` 默认 600s）与预算（`agent_escalation_max_per_node` 默认 3）均返回**普通结果**按假设推进，不抛错。coordinator `record_escalation` 记档（journal `workflow.escalation_raised/resolved/timeout` + 快照 `pending_escalations` 推前端轮询）。API `POST /{workflow_id}/escalations/{eid}/resolve`（按 session_id/workflow_id 校验归属、幂等）；前端 WorkflowPanel 渲染澄清卡片（问题+输入框），复用快照轮询通道 |
+
+与 ZCode 的语义差异：ZCode 的停驻在 driver 层、主 Agent 应答（run 后台化、主 Agent 空闲）；我们的主 Agent 在 inline 路径被工具调用阻塞，因此**应答方是用户**（WorkflowPanel 卡片），这也更贴合问数口径澄清的真实场景。挂起节点占住一个 governor 槽位（已知限制）。明确未做：durable 路径的持久化问答（用户离线→答案落库→续跑注入）、通知推送、主对话流渲染。
+
+移植验证：`tests/tools/agent_tools/test_escalate_tool.py`（预算/超时/作答/注入条件 4 例）+ `coordinator_policy_test.py` 补记档与快照往返 1 例；workflow 包全量 134 通过无回归。

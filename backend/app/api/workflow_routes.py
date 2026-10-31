@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import json
 import re
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -391,3 +392,54 @@ async def resume_workflow(
     except Exception as exc:
         raise HTTPException(status_code=503, detail="workflow_queue_unavailable") from exc
     return {"workflow_id": workflow_id, "status": job.status, "queued": True}
+
+
+@router.post("/{workflow_id}/escalations/{escalation_id}/resolve", status_code=202)
+async def resolve_workflow_escalation(
+    session_id: str,
+    workflow_id: str,
+    escalation_id: str,
+    payload: dict,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    """回答工作流子 Agent 的升级提问（escalate）：写 Redis 唤醒等待方。"""
+    await catalog.require_write(session_id, user)
+    answer = str((payload or {}).get("answer") or "").strip()
+    if not answer:
+        raise HTTPException(status_code=422, detail="answer_required")
+    from app.tools.agent_tools.escalate_tool import escalation_redis_key
+
+    from config.settings import settings
+
+    store = get_workflow_job_store()
+    key = escalation_redis_key(settings.agent_steering_redis_prefix, escalation_id)
+    try:
+        raw = await store.redis.get(key)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="escalation_store_unavailable") from exc
+    if not raw:
+        raise HTTPException(status_code=404, detail="escalation_not_found_or_expired")
+    try:
+        record = json.loads(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=410, detail="escalation_record_corrupted")
+    if not isinstance(record, dict) or str(record.get("session_id") or "") != session_id:
+        raise HTTPException(status_code=404, detail="escalation_not_found")
+    if str(record.get("workflow_id") or "") != workflow_id:
+        raise HTTPException(status_code=404, detail="escalation_not_found")
+    if record.get("status") == "answered":
+        # 幂等：重复提交同一答案
+        return {"escalation_id": escalation_id, "status": "answered", "already_resolved": True}
+    record["status"] = "answered"
+    record["answer"] = answer[:2000]
+    record["resolved_at"] = time.time()
+    try:
+        await store.redis.set(
+            key,
+            json.dumps(record, ensure_ascii=False, default=str),
+            ex=24 * 3600,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="escalation_store_unavailable") from exc
+    return {"escalation_id": escalation_id, "status": "answered"}

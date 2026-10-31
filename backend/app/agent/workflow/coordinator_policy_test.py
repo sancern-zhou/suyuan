@@ -275,3 +275,47 @@ def test_quota_paused_snapshot_resumes_quota_failed_nodes():
         assert resumed_result["node_results"]["air"]["status"] == "success"
 
     asyncio.run(run())
+
+
+def test_escalation_lifecycle_recorded_in_snapshot_and_journal():
+    """escalation raised → resolved 状态流转：journal 事件 + 快照记档。"""
+
+    async def run():
+        journal = FakeJournal()
+
+        async def execute(node, dependencies, attempt, retry_context=None):
+            return {"status": "success"}
+
+        coordinator = WorkflowCoordinator(
+            {
+                "workflow_id": "esc-1",
+                "nodes": [
+                    {"task_id": "a", "target_mode": "query", "goal": "取数"},
+                    {"task_id": "b", "target_mode": "query", "goal": "研判", "dependencies": ["a"]},
+                ],
+            },
+            executor=execute,
+            journal=journal,
+        )
+        coordinator.record_escalation({
+            "escalation_id": "e1", "event": "raised", "task_id": "a",
+            "question": "用口径 A 还是 B？", "context": "差异 15%", "asked_at": 1.0,
+        })
+        assert coordinator.snapshot()["pending_escalations"]["e1"]["status"] == "pending"
+        coordinator.record_escalation({
+            "escalation_id": "e1", "event": "resolved", "task_id": "a",
+            "question": "用口径 A 还是 B？", "answer": "口径 A", "asked_at": 1.0,
+        })
+        snapshot = coordinator.snapshot()
+        assert snapshot["pending_escalations"]["e1"]["status"] == "resolved"
+        assert snapshot["pending_escalations"]["e1"]["answer"] == "口径 A"
+        types = journal.event_types()
+        assert "workflow.escalation_raised" in types
+        assert "workflow.escalation_resolved" in types
+        # 快照往返：恢复后记档仍在
+        restored = WorkflowCoordinator(
+            snapshot["definition"], executor=execute, snapshot=snapshot, journal=journal
+        )
+        assert restored.snapshot()["pending_escalations"]["e1"]["status"] == "resolved"
+
+    asyncio.run(run())

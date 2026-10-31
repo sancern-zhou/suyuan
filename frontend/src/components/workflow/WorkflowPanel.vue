@@ -70,6 +70,15 @@
         <div v-if="detailLoading" class="detail-state">正在加载工作流详情...</div>
         <article v-else-if="selectedWorkflow" class="workflow-detail">
           <header class="detail-header"><div><p class="eyebrow">{{ selectedWorkflow.workflow_id }}</p><h3>{{ statusMeta(selectedStatus).label }}</h3></div><div class="detail-actions"><button v-if="canCancel" type="button" class="button danger" @click="cancel">取消</button><button v-if="canResume" type="button" class="button" @click="resume">恢复</button></div></header>
+          <section v-if="pendingEscalations.length" class="detail-section escalation-section" aria-label="子 Agent 澄清提问">
+            <div class="section-heading"><h4>子 Agent 需要你的澄清</h4><span>回答后对应节点原地继续执行；超时未答将按假设自行推进</span></div>
+            <div v-for="item in pendingEscalations" :key="item.escalation_id" class="escalation-card">
+              <p class="escalation-question">{{ item.question }}</p>
+              <p v-if="item.context" class="escalation-context">{{ item.context }}</p>
+              <textarea v-model="escalationAnswers[item.escalation_id]" rows="2" placeholder="输入你的回答…" :disabled="escalationSubmitting[item.escalation_id]"></textarea>
+              <div class="escalation-actions"><button type="button" class="button" :disabled="!(escalationAnswers[item.escalation_id] || '').trim() || escalationSubmitting[item.escalation_id]" @click="submitEscalation(item)">{{ escalationSubmitting[item.escalation_id] ? '提交中…' : '回答并继续' }}</button></div>
+            </div>
+          </section>
           <section class="detail-section">
             <div class="section-heading"><h4>执行顺序</h4><span>{{ liveLabel }}</span></div>
             <div class="workflow-stage-list" aria-label="工作流节点执行顺序">
@@ -95,7 +104,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
-import { cancelSessionWorkflow, followSessionWorkflow, getSessionWorkflow, getSessionWorkflowEvents, getSessionWorkflowNodeHistory, listSessionWorkflows, resumeSessionWorkflow } from '@/services/workflowApi.js'
+import { cancelSessionWorkflow, followSessionWorkflow, getSessionWorkflow, getSessionWorkflowEvents, getSessionWorkflowNodeHistory, listSessionWorkflows, resolveWorkflowEscalation, resumeSessionWorkflow } from '@/services/workflowApi.js'
 import { workflowCanResume, workflowGaps } from './workflowState.js'
 
 const props = defineProps({ sessionId: { type: String, default: '' } })
@@ -124,6 +133,23 @@ const nodeStages = computed(() => {
 })
 const deliveryGaps = computed(() => workflowGaps(selectedWorkflow.value?.snapshot))
 const canCancel = computed(() => ['queued', 'running'].includes(String(selectedStatus.value))); const canResume = computed(() => workflowCanResume(selectedWorkflow.value?.snapshot, String(selectedStatus.value)))
+// 子 Agent 升级提问（escalate）：pending 状态的问题渲染为澄清卡片
+const pendingEscalations = computed(() => Object.values(selectedWorkflow.value?.snapshot?.pending_escalations || {}).filter(item => item?.escalation_id && item?.status === 'pending'))
+const escalationAnswers = ref({}); const escalationSubmitting = ref({})
+async function submitEscalation(item) {
+  const answer = String(escalationAnswers.value[item.escalation_id] || '').trim()
+  if (!answer || escalationSubmitting.value[item.escalation_id]) return
+  escalationSubmitting.value = { ...escalationSubmitting.value, [item.escalation_id]: true }
+  try {
+    await resolveWorkflowEscalation(props.sessionId, selectedId.value, item.escalation_id, answer)
+    const record = selectedWorkflow.value?.snapshot?.pending_escalations?.[item.escalation_id]
+    if (record) record.status = 'answered'
+  } catch (err) {
+    error.value = err?.message || '回答提交失败'
+  } finally {
+    escalationSubmitting.value = { ...escalationSubmitting.value, [item.escalation_id]: false }
+  }
+}
 const liveLabel = computed(() => selectedWorkflow.value?.active ? '实时更新中' : '已结束')
 const nodeConversation = computed(() => nodeHistory.value?.conversation || [])
 const nodeUserMessages = computed(() => {
@@ -223,6 +249,7 @@ onMounted(() => { if (props.sessionId) refresh() }); onBeforeUnmount(() => { sto
 .workflow-node-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto 12px; align-items: center; gap: 9px; width: 100%; min-height: 82px; padding: 11px; border: 0; border-left: 3px solid transparent; background: #fff; color: inherit; text-align: left; cursor: pointer; }.workflow-node-row + .workflow-node-row { border-top: 1px solid #edf1f5; }.workflow-node-row:hover { background: #f6f9fc; }.workflow-node-row:focus-visible { outline: 2px solid #2778c9; outline-offset: -2px; }.workflow-node-row.node-running { border-left-color: #2778c9; }.workflow-node-row.node-failed { border-left-color: #d04444; }.workflow-node-row.node-success { border-left-color: #16845b; }
 .step-index { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: #e9eef3; color: #53677c; font-size: 10px; font-weight: 700; }.node-main { display: grid; gap: 5px; min-width: 0; }.node-title { display: flex; align-items: center; gap: 7px; min-width: 0; }.node-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }.node-title small { flex: 0 0 auto; color: #728196; font-size: 9px; }.node-summary, .node-dependencies { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #68788a; font-size: 10px; }.node-dependencies { color: #8491a0; }.node-result { display: grid; gap: 4px; text-align: right; }.node-result strong { font-size: 10px; }.node-result small { color: #8491a0; font-size: 9px; white-space: nowrap; }.row-chevron { color: #8795a5; font-size: 20px; }
 .errors-section { padding: 10px; border: 1px solid #f1d2d2; border-radius: 7px; background: #fff8f8; color: #a33b3b; font-size: 11px; }.errors-section p { margin: 6px 0 0; }
+.escalation-section { padding: 10px; border: 1px solid #cfe0f1; border-radius: 7px; background: #f2f8ff; }.escalation-card { display: grid; gap: 7px; padding: 10px; border: 1px solid #d9e6f3; border-radius: 7px; background: #fff; }.escalation-card + .escalation-card { margin-top: 8px; }.escalation-question { margin: 0; color: #2b4257; font-size: 12px; font-weight: 650; line-height: 1.55; }.escalation-context { margin: 0; color: #68788a; font-size: 10px; line-height: 1.55; white-space: pre-wrap; }.escalation-card textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #cbd8e5; border-radius: 6px; color: #34485f; font: inherit; font-size: 12px; resize: vertical; }.escalation-card textarea:focus { outline: 2px solid #9cc4e8; outline-offset: -1px; }.escalation-actions { display: flex; justify-content: flex-end; }
 .subagent-review { padding-bottom: 24px; }.review-heading { padding: 20px 18px 17px; border-bottom: 1px solid #e3e8ee; background: #fff; }.review-heading h2 { font-size: 18px; }.review-heading > p:not(.eyebrow) { margin: 8px 0 0; color: #617184; font-size: 12px; line-height: 1.6; }.review-meta { justify-content: flex-start; flex-wrap: wrap; margin-top: 11px; color: #75849a; font-size: 10px; }.review-meta strong { color: #405269; }.review-section { padding: 18px; border-bottom: 1px solid #e3e8ee; }
 .subagent-chat { padding: 18px; border-bottom: 1px solid #e3e8ee; background: #f7f9fb; }.conversation-list { display: grid; gap: 14px; }.conversation-message { max-width: 94%; padding: 12px; border: 1px solid #dfe6ed; border-radius: 7px; background: #fff; }.conversation-message.role-user { justify-self: end; width: calc(100% - 22px); background: #eef3f7; }.conversation-message.role-assistant { justify-self: start; }.message-author strong { color: #3d5066; font-size: 11px; }.message-author time { color: #8a98a8; font-size: 9px; }.message-content { margin-top: 8px; overflow-wrap: anywhere; color: #34485f; font-size: 12px; line-height: 1.65; white-space: pre-wrap; }
 .message-content :deep(.markdown-renderer > div > :first-child) { margin-top: 0; }.message-content :deep(.markdown-renderer > div > :last-child) { margin-bottom: 0; }

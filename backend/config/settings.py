@@ -761,6 +761,16 @@ class Settings(BaseSettings):
         ge=60,
         description="TTL for active-run steering metadata and pending inputs",
     )
+    agent_escalation_timeout_seconds: float = Field(
+        default=600.0,
+        ge=5,
+        description="Workflow sub-agent escalate: wait for user answer before proceeding on best judgment",
+    )
+    agent_escalation_max_per_node: int = Field(
+        default=3,
+        ge=1,
+        description="Workflow sub-agent escalate: max clarification questions per node attempt",
+    )
     agent_visual_alias_redis_prefix: str = Field(
         default="suyuan:agent:visual_alias",
         description="Redis key prefix for session-scoped short chart aliases ([[chart:chart_N]])",

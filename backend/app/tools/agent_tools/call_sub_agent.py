@@ -110,6 +110,31 @@ def ensure_structured_delivery_schema(target_mode: str, result_schema):
     return deepcopy(EXPERT_ANALYSIS_RESULT_SCHEMA)
 
 
+def build_escalation_tool(workflow_run, effective_task_id, tool_executor, observer):
+    """工作流节点的升级提问工具构造；非工作流上下文返回 None。
+
+    提问记录挂在父会话（用户所在会话）上，resolve API 按它校验归属。
+    预算与超时取 settings（agent_escalation_max_per_node / timeout_seconds）。
+    """
+    if workflow_run is None or observer is None:
+        return None
+    from app.tools.agent_tools.escalate_tool import EscalateTool
+    from config.settings import settings
+
+    parent_session_id = (
+        getattr(getattr(tool_executor, "memory_manager", None), "session_id", None)
+        or getattr(tool_executor, "session_id", None)
+    )
+    return EscalateTool(
+        session_id=parent_session_id,
+        workflow_id=str(workflow_run.task_id),
+        task_id=str(effective_task_id),
+        on_escalation=observer,
+        max_escalations=settings.agent_escalation_max_per_node,
+        timeout_seconds=settings.agent_escalation_timeout_seconds,
+    )
+
+
 class CallSubAgentTool(LLMTool):
     """
     调用子Agent的工具（双向通用）
@@ -406,6 +431,7 @@ class CallSubAgentTool(LLMTool):
         _upstream_handles: Optional[List[Dict[str, Any]]] = None,
         _input_contracts: Optional[List[Dict[str, Any]]] = None,
         _on_session_started: Optional[Callable[[str], None]] = None,
+        _escalation_observer: Optional[Callable[[Dict[str, Any]], None]] = None,
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
         """
@@ -944,6 +970,23 @@ class CallSubAgentTool(LLMTool):
                     + "分析完成后必须调用 `submit_result` 工具提交结构化结果（字段结构见工具定义），"
                     + "然后用一句话简述结论即可结束。未调用 submit_result 直接结束视为未完成交付，"
                     + "将触发重试。\n"
+                )
+            # 升级提问（escalate）：工作流节点子 Agent 可以向用户提出阻塞性澄清
+            # 问题（问数口径/统计范围/时间边界），只挂起本节点、其余节点照常跑；
+            # 用户超时未答则按指引自行推进。
+            escalate_tool = build_escalation_tool(
+                workflow_run, effective_task_id, tool_executor, _escalation_observer
+            )
+            if escalate_tool is not None:
+                child_registry["escalate"] = escalate_tool
+                child_request_prompt = (
+                    child_request_prompt.rstrip()
+                    + "\n\n## 澄清提问协议\n"
+                    + "遇到无法从任务描述、上游数据或领域常识推断、且猜错会导致整份结论失效的"
+                    "口径/范围/时间边界问题时，调用 `escalate` 工具向用户提问（问题必须具体、"
+                    "可直接回答，并附上各候选口径的后果差异）。提问会挂起当前任务等待回答；"
+                    "次数有限，能推断的问题不要问；拿到答案后严格按答案执行，未获回答则按"
+                    "指引标注假设后继续。\n"
                 )
             iteration_limit = _resolve_child_max_iterations(target_mode, max_iterations)
             sub_agent = ReActAgent(

@@ -252,6 +252,9 @@ class WorkflowCoordinator:
         # 配额暂停（对齐 ZCode quota-resume）：stop_quota 且网关给出可信重置
         # 时刻时记档，供 quota_resume 层到点自动续跑；None = 正常失败语义。
         self.quota_pause: Optional[Dict[str, Any]] = None
+        # 升级提问（对齐 ZCode escalation）：子 Agent 挂起等待用户回答的问题
+        # 记档（raised/resolved/timeout 状态流转），随快照推给前端轮询。
+        self.pending_escalations: Dict[str, Dict[str, Any]] = {}
         self.status = "queued"
         self._persistence_ready = False
         self.cancel_requested = False
@@ -676,6 +679,9 @@ class WorkflowCoordinator:
             "node_usage": dict(self.node_usage),
             "node_failure_policies": dict(self.node_failure_policies),
             "quota_pause": dict(self.quota_pause) if self.quota_pause else None,
+            "pending_escalations": {
+                key: dict(value) for key, value in self.pending_escalations.items()
+            },
             "stall": dict(self.stall_info) if self.stall_info else None,
             "delivery": self.delivery(),
             "workflow_run_id": self.workflow_run.run_id if hasattr(self, "workflow_run") else None,
@@ -943,6 +949,12 @@ class WorkflowCoordinator:
         self.stall_info = dict(raw_stall) if isinstance(raw_stall, Mapping) else None
         raw_quota_pause = snapshot.get("quota_pause")
         self.quota_pause = dict(raw_quota_pause) if isinstance(raw_quota_pause, Mapping) else None
+        raw_escalations = snapshot.get("pending_escalations")
+        self.pending_escalations = {
+            str(key): dict(value)
+            for key, value in (raw_escalations or {}).items()
+            if isinstance(value, Mapping)
+        }
         snapshot_definition_hash = str(snapshot.get("definition_hash") or "")
         if snapshot_definition_hash and snapshot_definition_hash != self.definition_hash:
             raise ValueError("workflow snapshot definition does not match current workflow")
@@ -1063,6 +1075,39 @@ class WorkflowCoordinator:
                 task_id=task_id,
                 spent_tokens=int(self.budget_state["spent_tokens"]),
             )
+
+    def record_escalation(self, info: Mapping[str, Any]) -> None:
+        """子 Agent escalation 状态流转记档（fail-soft，供快照与 journal）。
+
+        EscalateTool 经 call_sub_agent 的 `_escalation_observer` 回调：
+        event ∈ raised（问题挂起）/ resolved（用户已答）/ timeout（超时自答）。
+        """
+        try:
+            escalation_id = str(info.get("escalation_id") or "")
+            if not escalation_id:
+                return
+            event = str(info.get("event") or "raised")
+            record = {
+                "escalation_id": escalation_id,
+                "task_id": info.get("task_id"),
+                "question": str(info.get("question") or "")[:500],
+                "context": str(info.get("context") or "")[:500],
+                "status": event if event in {"resolved", "timeout"} else "pending",
+                "asked_at": info.get("asked_at"),
+            }
+            if event == "resolved":
+                record["answer"] = str(info.get("answer") or "")[:500]
+            self.pending_escalations[escalation_id] = record
+            self._journal_event(
+                f"workflow.escalation_{event}",
+                task_id=record.get("task_id"),
+                escalation_id=escalation_id,
+                question=record["question"],
+                **({"answer": record["answer"]} if "answer" in record else {}),
+            )
+            self._persist_snapshot({})
+        except Exception as exc:  # noqa: BLE001 - 记档失败不影响执行
+            logger.warning("workflow_escalation_record_failed", error=str(exc))
 
     def _graph_nodes(self):
         return [self.graph._nodes[node.task_id] for node in self.definition.nodes]
