@@ -1259,8 +1259,11 @@ class AgentRuntime:
         # 进入候选名单，否则阶段过滤会把交付工具整体滤掉。
         executor = getattr(self, "executor", None)
         executor_registry = getattr(executor, "tool_registry", None) or {}
-        if "submit_result" in executor_registry:
-            names.append("submit_result")
+        # escalate（升级提问）与 submit_result 同等待遇：由 call_sub_agent 动态
+        # 注入 child registry，不在模式白名单里，必须保持全阶段可见。
+        for dynamic_tool_name in ("submit_result", "escalate", "report_finding"):
+            if dynamic_tool_name in executor_registry:
+                names.append(dynamic_tool_name)
         workflow_definition = get_mode_workflow(state.mode)
         if workflow_definition:
             phase_tools = fixed_workflow_allowed_tools(
@@ -1271,7 +1274,7 @@ class AgentRuntime:
             # 否则带 result_schema 的问数节点无法结构化交付。
             names = [
                 name for name in names
-                if name in phase_tools or name == "submit_result"
+                if name in phase_tools or name in {"submit_result", "escalate", "report_finding"}
             ]
         elif not self.config.extra_tool_names and state.mode not in {"assistant", "office"}:
             return None
@@ -1287,10 +1290,11 @@ class AgentRuntime:
             return None
         allowed = fixed_workflow_allowed_tools(definition, state.fixed_workflow_progress)
         requested = [name for name, _ in self._planner_action_tool_calls(action)]
-        # submit_result 是交付边界工具（见 _allowed_tool_names_for_state），全阶段放行。
+        # submit_result 是交付边界工具、escalate 是升级提问工具（均见
+        # _allowed_tool_names_for_state），全阶段放行。
         blocked = [
             name for name in requested
-            if name not in allowed and name != "submit_result"
+            if name not in allowed and name not in {"submit_result", "escalate", "report_finding"}
         ]
         if not blocked:
             return None
