@@ -34,6 +34,7 @@ import typing
 # ---- 历史膨胀点上限（单位：字符；按 2026-10-31 瘦身后实测值 + 少量余量） ----
 PER_TOOL_SCHEMA_CAPS: Dict[str, int] = {
     "execute_guangdong_mart_sql": 2_500,   # 实测 ~1.3K；契约走 describe_table
+    "guangdong_query_metrics": 2_500,      # 实测 ~1.9K；语义目录走 describe_cube + 生成产物
     "run_agent_workflow": 11_000,          # 实测 ~9.6K；细则走 view_skill
     "call_sub_agent": 7_500,               # 实测 ~6.0K；子模式契约一行制
 }
