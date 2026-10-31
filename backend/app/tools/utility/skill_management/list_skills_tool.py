@@ -194,6 +194,8 @@ class ListSkillsTool(LLMTool):
                 full_path = str(resolve_agent_path(file_path))
             else:
                 full_path = str(self.skills_dir / file_path)
+            # 统一正斜杠，保证跨平台（Windows 本地与 CI）路径断言一致。
+            full_path = full_path.replace("\\", "/")
             skills.append({
                 "name": name.strip(),
                 "file": full_path,
@@ -222,7 +224,8 @@ class ListSkillsTool(LLMTool):
                     name, description = self._parse_skill_file(md_file)
                     skills.append({
                         "name": name,
-                        "file": str(md_file),
+                        # 统一正斜杠，保证跨平台（Windows 本地与 CI）路径断言一致。
+                        "file": str(md_file).replace("\\", "/"),
                         "description": description
                     })
 
@@ -247,6 +250,13 @@ class ListSkillsTool(LLMTool):
 
         filtered = []
         for skill in skills:
+            skill_path = Path(skill.get("file", ""))
+            # 相对路径含技能目录名（即技能ID，如 daily-operations-supervision-report/SKILL.md），
+            # 纳入搜索文本才能按技能ID或部分ID命中包式技能。
+            try:
+                relative = str(skill_path.relative_to(self.skills_dir)).replace("\\", "/")
+            except ValueError:
+                relative = skill_path.name
             searchable_text = (
                 f"{skill.get('name', '')}\n"
                 f"{skill.get('description', '')}\n"

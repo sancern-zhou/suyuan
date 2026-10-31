@@ -414,6 +414,7 @@ OPS_TOOL_NAMES = [
     "execute_ops_sql_query",
     # 审核正式报告生成与验收
     "create_report_package",
+    "publish_report",
     # 子 Agent 复核
     "call_sub_agent",
     # 代码执行

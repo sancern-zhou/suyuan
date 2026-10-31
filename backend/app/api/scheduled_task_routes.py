@@ -960,6 +960,9 @@ async def get_task_result_report(
     if not relative:
         relative = "report.html"
     try:
+        # 两侧都 resolve 再做包含校验：Windows 临时目录返回 8.3 短路径
+        # （ADMINI~1），只 resolve 一侧会导致合法路径被误判越界。
+        report_dir = report_dir.resolve()
         target = (report_dir / relative).resolve()
         target.relative_to(report_dir)
     except (ValueError, OSError):

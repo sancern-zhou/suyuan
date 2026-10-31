@@ -111,7 +111,6 @@
             <div class="option-group" v-if="kbUploadOptions.chunking_strategy === 'llm'">
               <label>LLM模式</label>
               <select v-model="kbUploadOptions.llm_mode">
-                <option value="local">本地千问3（快速，25K字符阈值）</option>
                 <option value="online">线上API（长文档，60K字符阈值）</option>
               </select>
             </div>

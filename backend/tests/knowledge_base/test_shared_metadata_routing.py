@@ -81,3 +81,20 @@ async def test_document_enrichment_replaces_null_vector_filename():
     await service._enrich_results_with_document_info(results)
 
     assert results[0]["filename"] == "真实文档.pdf"
+
+
+@pytest.mark.asyncio
+async def test_document_enrichment_drops_orphaned_search_hits():
+    class EmptyDB:
+        async def execute(self, _statement):
+            return SimpleNamespace(
+                scalars=lambda: SimpleNamespace(all=lambda: [])
+            )
+
+    service = KnowledgeBaseService.__new__(KnowledgeBaseService)
+    service.db = EmptyDB()
+    results = [{"document_id": "doc-missing", "filename": "ghost.pdf", "knowledge_base": {}}]
+
+    await service._enrich_results_with_document_info(results)
+
+    assert results == []
