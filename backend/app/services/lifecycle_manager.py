@@ -203,7 +203,10 @@ def _configured_fetchers(project_context):
             history_config, project_context.manifest.project
         )
     if configured is None:
-        selected = list(factories)
+        selected = [
+            name for name in factories
+            if name not in explicit_project_fetchers
+        ]
         # xuchang 专属 fetcher 只在 xuchang 项目运行（其余项目缺 ZHONGDA 等凭据，
         # 只会产生周期性空转报错；2026-10-25 广东 worker 日志 109 条/夜均源于此）
         if "xuchang-air-quality" not in enabled_modules:
