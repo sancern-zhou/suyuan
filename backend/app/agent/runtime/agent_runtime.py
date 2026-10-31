@@ -1112,6 +1112,17 @@ class AgentRuntime:
                 yield event
                 await self._persist_context_usage(state, usage_data)
 
+            elif event_type == "usage_delta":
+                # 每轮模型调用的真实 token 消耗（Usage, not budget）：累计进会话
+                # 状态并继续下发；不设上限、不参与任何预算判定。
+                turn_usage = event.get("data") or {}
+                state.last_turn_usage = turn_usage
+                try:
+                    state.tokens_spent += int(turn_usage.get("total_tokens") or 0)
+                except (TypeError, ValueError):
+                    pass
+                yield event
+
             elif event_type == "tool_use":
                 tool_data = event["data"]
                 tool_use_id = tool_data.get("tool_use_id", "")
@@ -1586,29 +1597,29 @@ class AgentRuntime:
 
     @staticmethod
     def _is_deterministic_model_error(error: Exception) -> bool:
-        message = str(error).lower()
-        markers = (
-            "http 400", "status code: 400", "status_code=400", "error code: 400",
-            "400 client error", "bad request",
-            "http 401", "http 403", "error code: 401", "error code: 403",
-            "unauthorized", "forbidden",
-            "authentication", "invalid request", "request format",
+        """统一模型错误策略表判定：鉴权/无效请求/模型不可用均不可自愈。"""
+        from app.agent.workflow.model_failure_policy import (
+            STOP_AUTH,
+            STOP_INVALID_REQUEST,
+            STOP_MODEL_UNAVAILABLE,
+            resolve_model_failure_policy,
         )
-        return any(marker in message for marker in markers)
+
+        return resolve_model_failure_policy(error).action in {
+            STOP_AUTH,
+            STOP_INVALID_REQUEST,
+            STOP_MODEL_UNAVAILABLE,
+        }
 
     @staticmethod
     def _is_terminal_quota_error(error: Exception) -> bool:
         """Identify billing/plan exhaustion that cannot recover inside this run."""
-        message = str(error).lower()
-        markers = (
-            "token plan 用量上限",
-            "insufficient_quota",
-            "billing limit",
-            "payment required",
-            "http 402",
-            "error code: 402",
+        from app.agent.workflow.model_failure_policy import (
+            STOP_QUOTA,
+            resolve_model_failure_policy,
         )
-        return any(marker in message for marker in markers)
+
+        return resolve_model_failure_policy(error).action == STOP_QUOTA
 
     @staticmethod
     def _enforce_custom_tool_terminal_rules(

@@ -17,6 +17,7 @@ from app.agent.workflow.resource_handoff import result_resource_declarations
 from app.agent.workflow.target_mode_contract import build_target_mode_contract, target_mode_values
 from app.agent.workflow.coordinator import WorkflowCoordinator, WorkflowNodeSpec
 from app.agent.workflow.delegation import delegation_error
+from app.agent.workflow.quota_resume import schedule_quota_resume
 from app.agent.workflow.resource_contract import ResourceContractError
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
@@ -797,6 +798,17 @@ class RunAgentWorkflowTool(LLMTool):
                 snapshot["node_results"],
             )
             session_id = getattr(context, "session_id", None) if context is not None else None
+            # 配额暂停 → 到点自动续跑（对齐 ZCode quota-resume）：inline 与
+            # durable 路径都经过这里，挂 Redis 唤醒器，worker 扫描到点投递。
+            quota_pause = snapshot.get("quota_pause") if isinstance(snapshot, Mapping) else None
+            quota_resume_scheduled = False
+            if isinstance(quota_pause, Mapping) and quota_pause.get("reset_at") and session_id:
+                quota_resume_scheduled = await schedule_quota_resume(
+                    session_id,
+                    str(snapshot["workflow_id"]),
+                    float(quota_pause["reset_at"]),
+                    source="run_agent_workflow",
+                )
             full_results = self._write_full_results(session_id, str(snapshot["workflow_id"]), snapshot)
             if full_results and full_results.get("declaration"):
                 resources = [*resources, full_results["declaration"]]
@@ -818,6 +830,8 @@ class RunAgentWorkflowTool(LLMTool):
                 "status": snapshot["status"],
                 "revision": snapshot.get("revision", 0),
                 "budget_state": snapshot.get("budget_state", {}),
+                "node_usage": snapshot.get("node_usage", {}),
+                "quota_pause": dict(quota_pause) if isinstance(quota_pause, Mapping) else None,
                 "delivery": snapshot.get("delivery", {}),
                 "node_statuses": {task_id: node["status"] for task_id, node in snapshot["graph"].items()},
                 "node_decisions": snapshot.get("node_decisions", {}),
@@ -838,12 +852,39 @@ class RunAgentWorkflowTool(LLMTool):
                     if full_results else None
                 ),
             }
+            salvage = snapshot.get("delivery", {}).get("salvage") or []
+            salvaged_files = sum(len(item.get("delivered_files") or []) for item in salvage)
+            if succeeded:
+                result_message = "工作流已完成"
+            elif isinstance(quota_pause, Mapping) and quota_pause.get("reset_at"):
+                from datetime import datetime as _dt
+
+                reset_text = _dt.fromtimestamp(float(quota_pause["reset_at"])).strftime("%H:%M")
+                result_message = (
+                    f"模型配额已耗尽，工作流已暂停；预计 {reset_text} 配额重置后自动恢复执行"
+                    if quota_resume_scheduled
+                    else f"模型配额已耗尽，工作流已暂停；配额重置后可手动恢复执行"
+                )
+            elif salvaged_files:
+                # 失败抢救优先呈现（对齐 ZCode delivery guidance：先说抢救到了什么）
+                result_message = (
+                    f"部分任务完成；{len(salvage)} 个未成功节点在失败前已交付 "
+                    f"{salvaged_files} 份中间产物（见 delivery.salvage），可先行采用并说明缺口"
+                    if snapshot["status"] == "partial"
+                    else f"工作流未完成；已从失败节点抢救 {salvaged_files} 份中间产物（见 delivery.salvage）"
+                )
+            else:
+                result_message = (
+                    "部分任务完成，可交付已有成果并说明缺口"
+                    if snapshot["status"] == "partial"
+                    else "工作流未完成"
+                )
             return {
                 "status": "success" if succeeded else snapshot["status"],
                 # A usable partial delivery is a valid tool observation; do not
                 # trigger generic tool-error handling or hide its resources.
                 "success": snapshot["status"] in {"succeeded", "partial"},
-                "result": "工作流已完成" if succeeded else "部分任务完成，可交付已有成果并说明缺口" if snapshot["status"] == "partial" else "工作流未完成",
+                "result": result_message,
                 "data": result_data,
                 "metadata": {
                     "schema_version": "workflow.v1",

@@ -103,3 +103,37 @@ test('roster-blocked account lands on the access-denied page instead of the ops 
     { path: '/access-denied' }
   )
 })
+
+test('dashboard routes pass unauthenticated when the URL carries an access token', async () => {
+  const auth = store({
+    async bootstrap() { this.initialized = true; throw new Error('no session') }
+  })
+  const guard = createAuthGuard(auth)
+
+  assert.equal(
+    await guard({
+      path: '/dashboard-example',
+      fullPath: '/dashboard-example?access_token=screen-token',
+      meta: { allowDashboardToken: true },
+      query: { access_token: 'screen-token' }
+    }),
+    true
+  )
+})
+
+test('dashboard routes without a token still redirect to login', async () => {
+  const auth = store({
+    async bootstrap() { this.initialized = true; throw new Error('no session') }
+  })
+  const guard = createAuthGuard(auth)
+
+  assert.deepEqual(
+    await guard({
+      path: '/dashboard-example',
+      fullPath: '/dashboard-example',
+      meta: { allowDashboardToken: true },
+      query: {}
+    }),
+    { path: '/login', query: { redirect: '/dashboard-example' } }
+  )
+})

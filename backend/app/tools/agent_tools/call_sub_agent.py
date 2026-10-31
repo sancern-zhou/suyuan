@@ -1283,6 +1283,9 @@ class CallSubAgentTool(LLMTool):
             enhanced_metadata["agent_profile"] = agent_profile.name
             enhanced_metadata["capability_policy"] = capability_policy.to_dict()
             enhanced_metadata["run_in_background"] = bool(run_in_background)
+            child_usage = self._aggregate_usage(result_events)
+            if child_usage is not None:
+                enhanced_metadata["usage"] = child_usage
             if task_id:
                 enhanced_metadata["task_id"] = task_id
             enhanced_metadata["workflow_run_id"] = workflow_run.run_id
@@ -1606,6 +1609,36 @@ class CallSubAgentTool(LLMTool):
             event for event in events
             if event.get("type") in {"tool_call", "tool_use"}
         ])
+
+    @staticmethod
+    def _aggregate_usage(events: list) -> Optional[Dict[str, Any]]:
+        """聚合子会话 usage_delta 事件（Usage, not budget：只记账不设上限）。
+
+        返回 {turns, input_tokens, output_tokens, total_tokens}；无遥测数据
+        （旧网关不回传 usage）时返回 None，信封里不带 usage 键。
+        """
+        turns = 0
+        input_tokens = 0
+        output_tokens = 0
+        total_tokens = 0
+        for event in events:
+            if event.get("type") != "usage_delta":
+                continue
+            data = event.get("data") or {}
+            if not isinstance(data, dict):
+                continue
+            turns += 1
+            input_tokens += int(data.get("input_tokens") or 0)
+            output_tokens += int(data.get("output_tokens") or 0)
+            total_tokens += int(data.get("total_tokens") or 0)
+        if turns == 0:
+            return None
+        return {
+            "turns": turns,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+        }
 
     @staticmethod
     def _fixed_workflow_deliver_progress(target_mode: str) -> Optional[Dict[str, Any]]:
