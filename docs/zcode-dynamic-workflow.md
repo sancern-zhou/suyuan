@@ -117,3 +117,18 @@ SKILL.md 的方法论部分（fresh eyes、每发现一确认者、确定性门�
 | `bundled-skills/skills/dynamic-workflows/` | ~1.5k+ | SKILL.md 编写契约 + patterns.md 拓扑目录 + examples.md 完整示例 |
 
 另：`packages/desktop/src/host/index.ts` 是桌面宿主与 CLI 的接驳点；`runtime/methods/background-stop-dynamic-workflow.ts` 等是 core 运行时的暴露方法。
+
+## 八、v3.17.1 引擎演进与 suyan 移植对照（2026-10-31）
+
+基线更新：引擎自本文考察的 v3.14.3 起又演进约 3.5k 行源码（至 10-30 sync 的 v3.17.1），并首次补齐两份官方规格文档：`packages/dynamic-workflow/docs/analysis.md`（1167 行，编译期分析）与 `docs/execution-engine.md`（917 行，执行引擎）。主要新机制与 suyan 的移植落点：
+
+| ZCode 机制（出处） | 机制要点 | suyan 落点（本次移植） |
+|---|---|---|
+| Usage, not budget（`engine.ts` askStats→spentTokens→usage-updated） | 每次模型回合计量 `askStats {tokens, toolCalls, turns}`，引擎累计 `spent_tokens`，先写 journal 列再发事件；无预算无上限，纯遥测 | planner 每轮 `message_stop` 产出 `usage_delta`（跨协议合并 start/delta 两帧 usage）→ agent_runtime 累计 `state.tokens_spent` → call_sub_agent 聚合进信封 `metadata.usage` → coordinator 记 `node_usage` 并累计 `budget_state.spent_tokens`，journal 出 `workflow.usage` 事件，snapshot 透出 |
+| Stall clock（`bootstrap/app/workflow-driver-concurrency.ts`，默认 20 分钟） | run 级停摆时钟：任一瞬态重试上膛时定闹钟，"距上次模型请求成功超阈值且本段排定过重试"→ `run-stalled` 事件，每静默段至多一次，纯观察不决策 | `workflow/stall_watch.py`：v1 用 journal 事件近似 ZCode 的模型请求信号（差异已注释），静默超 `budget.stall_notify_seconds`（默认 1200s）→ `workflow.stalled` journal 事件 + snapshot `stall` 字段 |
+| 模型错误策略表 + transient redrive（`adapters/src/model/workflow-model-failure-policy.ts`） | 单一判定函数供多层共用：配额/鉴权/无效请求/模型不可用 → 立即停；上下文超限单独归类；表外一切（限流/过载/5xx/网络）→ run 内无限重试 + Retry-After 退避，逃生口是 stall clock | `workflow/model_failure_policy.py`：`resolve_model_failure_policy()` 唯一判定源 + `transient_backoff_seconds()`（Retry-After 优先，否则 2s→60s 指数退避+抖动）。coordinator `_run_node` 按策略决定重试/立即失败（journal 记 `node.retry_scheduled` 与 `failure_policy`）；agent_runtime 的 deterministic/quota 分类改为委托策略表（保留 2 次 deterministic 熔断安全网） |
+| Salvage（`dynamic-workflow-run-observation.ts` reportsOf） | report 条目落持久行，终态通知无论成败都从 journal 捞回——失败也不丢已完成的工作量 | coordinator `delivery()` 新增 `salvage`：失败/被阻断节点在倒下前已交付的中间产物清单（来自 node_progress.delivered_files）；`run_agent_workflow` 最终报告未完全成功时优先呈现抢救产物 |
+
+明确未移植：escalation（`dwfq-*` 阻塞应答，需 worker→主会话应答回路，留待下一轮）、hole 机制（suyan 拓扑是 JSON 定义而非模型脚本，无编译期站点概念）、前端用量展示。
+
+移植验证：`backend/app/agent/workflow/model_failure_policy_test.py`（分类表 12 例）+ `coordinator_policy_test.py`（stop 类零重试、瞬态重试上膛记账、用量累计与事件顺序、salvage 内容、停摆单次通知）21 例全绿。

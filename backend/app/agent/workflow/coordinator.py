@@ -17,8 +17,10 @@ import structlog
 
 from .graph import WorkflowConcurrencyGovernor, WorkflowGraph
 from .lineage import build_node_lineage, validate_node_lineage
+from .model_failure_policy import resolve_model_failure_policy, transient_backoff_seconds
 from .runtime import TERMINAL_STATUSES, WorkflowRuntime
 from .routing import validate_condition, evaluate_condition
+from .stall_watch import WorkflowStallWatch
 from .resource_contract import ResourceContractError, validate_contract_definition, assert_resource_contracts, check_resource_contracts, result_handles
 
 logger = structlog.get_logger()
@@ -154,7 +156,7 @@ class WorkflowDefinition:
         for node in nodes:
             graph.add_task(node.task_id, dependencies=node.dependencies)
         budget = dict(value.get("budget") or {})
-        defaults = {"max_nodes": 32, "max_extensions": 3, "max_retries": 16, "timeout_seconds": 3600.0}
+        defaults = {"max_nodes": 32, "max_extensions": 3, "max_retries": 16, "timeout_seconds": 3600.0, "stall_notify_seconds": 1200.0}
         if set(budget) - set(defaults):
             raise ValueError("unknown workflow budget field")
         for key, raw in budget.items():
@@ -240,6 +242,13 @@ class WorkflowCoordinator:
         self.node_input_gaps: Dict[str, List[Dict[str, Any]]] = {}
         self.node_contract_errors: Dict[str, List[Dict[str, Any]]] = {}
         self.node_retryable: Dict[str, bool] = {}
+        # 用量遥测（对齐 ZCode "Usage, not budget"）：节点级 token 统计 + 运行级
+        # 累计；只记账不设上限，预算仍由轮次/超时承担。失败策略留档供审计。
+        self.node_usage: Dict[str, Dict[str, Any]] = {}
+        self.node_failure_policies: Dict[str, Dict[str, Any]] = {}
+        # 停摆观测（对齐 ZCode stall clock）：纯观察，不做任何决策。
+        self.stall_info: Optional[Dict[str, Any]] = None
+        self._stall_watch: Optional["WorkflowStallWatch"] = None
         self.status = "queued"
         self._persistence_ready = False
         self.cancel_requested = False
@@ -334,6 +343,8 @@ class WorkflowCoordinator:
 
     def _journal_event(self, event_type: str, task_id: Optional[str] = None, **payload: Any) -> None:
         """事件落 SQLite journal；fail-soft，不影响执行。"""
+        if self._stall_watch is not None:
+            self._stall_watch.note_progress()
         if self.journal is None:
             return
         try:
@@ -346,10 +357,25 @@ class WorkflowCoordinator:
         except Exception as exc:  # noqa: BLE001
             logger.warning("workflow_journal_append_failed", event_type=event_type, error=str(exc))
 
+    def _handle_stalled(self, info: Dict[str, Any]) -> None:
+        """停摆通知：记档 + 落 journal + 推快照，纯观察不决策。"""
+        self.stall_info = info
+        self._journal_event("workflow.stalled", **info)
+        try:
+            self._persist_snapshot({})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("workflow_stall_persist_failed", error=str(exc))
+
     async def run(self) -> Dict[str, Any]:
         if self.budget_state.get("exhausted"):
             return self.snapshot()
         self._run_started = time.monotonic()
+        stall_threshold = float(self.definition.budget.get("stall_notify_seconds", 1200.0))
+        self._stall_watch = WorkflowStallWatch(
+            threshold_seconds=stall_threshold,
+            on_stalled=self._handle_stalled,
+        )
+        self._stall_watch.start()
         try:
             remaining = self.definition.budget.get("timeout_seconds", 3600.0) - float(self.budget_state.get("elapsed_seconds", 0))
             async with asyncio.timeout(max(0, remaining)):
@@ -362,6 +388,9 @@ class WorkflowCoordinator:
                 self.runtime.transition(self.workflow_run.run_id, "failed", payload={"error": self.node_errors["__budget__"]})
             self._journal_event("workflow.budget_exhausted", limit="timeout_seconds")
         finally:
+            if self._stall_watch is not None:
+                await self._stall_watch.stop()
+                self._stall_watch = None
             # Parent request cancellation must not leave child tasks running.
             for task in self._active_tasks.values():
                 task.cancel()
@@ -392,8 +421,23 @@ class WorkflowCoordinator:
         retryable = [node.task_id for node in self._graph_nodes() if node.status == "failed"
                      and (run := self.runtime.find_run(task_id=node.task_id)) is not None
                      and run.attempt < run.max_attempts and self.node_retryable.get(node.task_id, True)] if hasattr(self, "runtime") and not self.budget_state.get("exhausted") else []
+        # 失败抢救（对齐 ZCode salvage）：失败/被阻断节点在倒下前已落盘的中间
+        # 产物照常列出——"死在第 12 个节点的 run 仍做完了前 11 个节点的活"，
+        # 失败也不丢工作量。
+        salvage = [
+            {
+                "task_id": node.task_id,
+                "status": node.status,
+                "error": str(self.node_errors.get(node.task_id, ""))[:300],
+                "delivered_files": (self.node_progress.get(node.task_id) or {}).get("delivered_files") or [],
+            }
+            for node in self._graph_nodes()
+            if node.status in {"failed", "blocked"}
+            and (self.node_progress.get(node.task_id) or {}).get("delivered_files")
+        ]
         return {"deliverable": self.status in {"succeeded", "partial"}, "complete": self.status == "succeeded",
                 "available_nodes": sorted(self.node_results), "gaps": gaps,
+                "salvage": salvage,
                 "skipped_nodes": [node.task_id for node in self._graph_nodes() if node.status == "skipped"],
                 "retryable_nodes": retryable,
                 "next_actions": (["deliver_with_gaps", "extend_missing_evidence"] if self.status == "partial" else
@@ -626,6 +670,9 @@ class WorkflowCoordinator:
             "node_input_gaps": dict(self.node_input_gaps),
             "node_contract_errors": dict(self.node_contract_errors),
             "node_retryable": dict(self.node_retryable),
+            "node_usage": dict(self.node_usage),
+            "node_failure_policies": dict(self.node_failure_policies),
+            "stall": dict(self.stall_info) if self.stall_info else None,
             "delivery": self.delivery(),
             "workflow_run_id": self.workflow_run.run_id if hasattr(self, "workflow_run") else None,
             "runtime": self.runtime.snapshot() if hasattr(self, "runtime") else {},
@@ -699,6 +746,7 @@ class WorkflowCoordinator:
                 previous_error=str(previous_error)[:200] if previous_error else None,
             )
         try:
+            result: Any = None
             self.node_contract_errors.pop(task_id, None)
             input_handles = [handle for dependency, result in dependency_results.items() for handle in result_handles(dependency, result)]
             violations = check_resource_contracts(list(node.input_contracts), input_handles)
@@ -780,6 +828,7 @@ class WorkflowCoordinator:
                 attempt=node_run.attempt,
                 delivered_files=(self.node_progress.get(task_id) or {}).get("delivered_files"),
             )
+            self._record_node_usage(task_id, result if isinstance(result, Mapping) else None)
         except asyncio.CancelledError:
             if self.cancel_requested:
                 self.graph.set_status(task_id, "cancelled")
@@ -799,23 +848,46 @@ class WorkflowCoordinator:
             if isinstance(exc, ResourceContractError):
                 self.node_contract_errors[task_id] = exc.violations
             self.runtime.transition(node_run.run_id, "failed", payload={"error": error})
+            # 模型错误走统一策略表（单一判定源）：配额/鉴权/无效请求/上下文超限
+            # 立即失败不烧重试；限流/过载/网络按瞬态重试并尊重 Retry-After。
+            # ValueError/TypeError 等本地编程错误仍快速失败。
+            policy = resolve_model_failure_policy(exc) if not isinstance(exc, ResourceContractError) else None
+            local_non_retryable = isinstance(exc, (ValueError, TypeError, PermissionError, NotImplementedError))
             retrying = (
                 node_run.attempt < node_run.max_attempts
-                and not isinstance(exc, (ValueError, TypeError, PermissionError, NotImplementedError))
+                and not local_non_retryable
+                and (policy is None or policy.retryable)
             )
             self.node_retryable[task_id] = retrying
+            if policy is not None and not policy.retryable:
+                self.node_failure_policies[task_id] = {
+                    "action": policy.action,
+                    "reason": policy.reason,
+                }
             self._journal_event(
                 "node.failed",
                 task_id=task_id,
                 attempt=node_run.attempt,
                 error=error[:500],
                 retrying=retrying,
+                failure_policy=({"action": policy.action, "reason": policy.reason} if policy else None),
+                usage=self._node_usage_from(result),
                 progress=self.node_progress.get(task_id),
             )
+            # 顺序契约（对齐 ZCode）：节点进度事件先于用量事件，settled 最后。
+            self._record_node_usage(task_id, result if isinstance(result, Mapping) else None)
             if retrying:
-                # Transient failures back off; contract repair reuses the child session.
-                if isinstance(exc, (ConnectionError, TimeoutError)):
-                    await asyncio.sleep(min(8.0, 0.25 * 2 ** (attempt - 1)) + random.uniform(0, 0.1))
+                if policy is not None and policy.retryable:
+                    delay = transient_backoff_seconds(attempt, policy)
+                    self._journal_event(
+                        "node.retry_scheduled",
+                        task_id=task_id,
+                        attempt=node_run.attempt,
+                        delay_seconds=round(delay, 2),
+                        action=policy.action if policy else None,
+                        retry_after=policy.retry_after if policy else None,
+                    )
+                    await asyncio.sleep(delay)
                 self.graph.set_status(task_id, "pending")
                 self.runtime.start(node_run.run_id)
             else:
@@ -837,6 +909,18 @@ class WorkflowCoordinator:
         self.node_input_gaps = dict(snapshot.get("node_input_gaps") or {})
         self.node_contract_errors = dict(snapshot.get("node_contract_errors") or {})
         self.node_retryable = dict(snapshot.get("node_retryable") or {})
+        self.node_usage = {
+            str(key): dict(value)
+            for key, value in (snapshot.get("node_usage") or {}).items()
+            if isinstance(value, Mapping)
+        }
+        self.node_failure_policies = {
+            str(key): dict(value)
+            for key, value in (snapshot.get("node_failure_policies") or {}).items()
+            if isinstance(value, Mapping)
+        }
+        raw_stall = snapshot.get("stall")
+        self.stall_info = dict(raw_stall) if isinstance(raw_stall, Mapping) else None
         snapshot_definition_hash = str(snapshot.get("definition_hash") or "")
         if snapshot_definition_hash and snapshot_definition_hash != self.definition_hash:
             raise ValueError("workflow snapshot definition does not match current workflow")
@@ -909,6 +993,38 @@ class WorkflowCoordinator:
             return
         self.node_sessions[task_id] = session_id
         self._persist_snapshot({})
+
+    def _node_usage_from(self, result: Any) -> Optional[Dict[str, Any]]:
+        """从节点结果信封的 metadata 里取子会话用量（无则 None）。"""
+        if not isinstance(result, Mapping):
+            return None
+        metadata = result.get("metadata")
+        if not isinstance(metadata, Mapping):
+            return None
+        usage = metadata.get("usage")
+        return dict(usage) if isinstance(usage, Mapping) else None
+
+    def _record_node_usage(self, task_id: str, result: Any) -> None:
+        """记账一次节点用量并累计运行级 spent_tokens（fail-soft）。
+
+        对齐 ZCode 引擎：先写快照（持久账本），再发用量事件；事件携带累计值，
+        结算后的尾流用量只记账不补发（本处只在中途调用，天然满足）。
+        """
+        usage = self._node_usage_from(result)
+        if not usage:
+            return
+        self.node_usage[task_id] = usage
+        try:
+            turn_tokens = int(usage.get("total_tokens") or 0)
+        except (TypeError, ValueError):
+            turn_tokens = 0
+        if turn_tokens:
+            self.budget_state["spent_tokens"] = int(self.budget_state.get("spent_tokens") or 0) + turn_tokens
+            self._journal_event(
+                "workflow.usage",
+                task_id=task_id,
+                spent_tokens=int(self.budget_state["spent_tokens"]),
+            )
 
     def _graph_nodes(self):
         return [self.graph._nodes[node.task_id] for node in self.definition.nodes]

@@ -818,6 +818,7 @@ class RunAgentWorkflowTool(LLMTool):
                 "status": snapshot["status"],
                 "revision": snapshot.get("revision", 0),
                 "budget_state": snapshot.get("budget_state", {}),
+                "node_usage": snapshot.get("node_usage", {}),
                 "delivery": snapshot.get("delivery", {}),
                 "node_statuses": {task_id: node["status"] for task_id, node in snapshot["graph"].items()},
                 "node_decisions": snapshot.get("node_decisions", {}),
@@ -838,12 +839,30 @@ class RunAgentWorkflowTool(LLMTool):
                     if full_results else None
                 ),
             }
+            salvage = snapshot.get("delivery", {}).get("salvage") or []
+            salvaged_files = sum(len(item.get("delivered_files") or []) for item in salvage)
+            if succeeded:
+                result_message = "工作流已完成"
+            elif salvaged_files:
+                # 失败抢救优先呈现（对齐 ZCode delivery guidance：先说抢救到了什么）
+                result_message = (
+                    f"部分任务完成；{len(salvage)} 个未成功节点在失败前已交付 "
+                    f"{salvaged_files} 份中间产物（见 delivery.salvage），可先行采用并说明缺口"
+                    if snapshot["status"] == "partial"
+                    else f"工作流未完成；已从失败节点抢救 {salvaged_files} 份中间产物（见 delivery.salvage）"
+                )
+            else:
+                result_message = (
+                    "部分任务完成，可交付已有成果并说明缺口"
+                    if snapshot["status"] == "partial"
+                    else "工作流未完成"
+                )
             return {
                 "status": "success" if succeeded else snapshot["status"],
                 # A usable partial delivery is a valid tool observation; do not
                 # trigger generic tool-error handling or hide its resources.
                 "success": snapshot["status"] in {"succeeded", "partial"},
-                "result": "工作流已完成" if succeeded else "部分任务完成，可交付已有成果并说明缺口" if snapshot["status"] == "partial" else "工作流未完成",
+                "result": result_message,
                 "data": result_data,
                 "metadata": {
                     "schema_version": "workflow.v1",
