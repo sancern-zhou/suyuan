@@ -368,7 +368,14 @@ async def resume_workflow(
         raise HTTPException(status_code=409, detail="cancelled_workflow_cannot_resume")
     if snapshot.get("status") not in {"failed", "partial", "running", "queued"}:
         raise HTTPException(status_code=409, detail="workflow_not_resumable")
-    if snapshot.get("status") in {"failed", "partial"} and not _has_retryable_nodes(snapshot):
+    # 配额暂停的工作流不受重试预算阻断：配额窗口过后是全新尝试
+    #（coordinator._prepare_snapshot_resume 会把 stop_quota 节点翻回可重试）。
+    quota_paused = bool(isinstance(snapshot.get("quota_pause"), dict) and snapshot["quota_pause"].get("reset_at"))
+    if (
+        snapshot.get("status") in {"failed", "partial"}
+        and not quota_paused
+        and not _has_retryable_nodes(snapshot)
+    ):
         raise HTTPException(status_code=409, detail="workflow_retry_budget_exhausted")
     if await active_workflow_registry.get(workflow_id) is not None:
         raise HTTPException(status_code=409, detail="workflow_already_active")

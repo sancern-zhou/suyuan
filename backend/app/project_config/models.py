@@ -175,8 +175,13 @@ class KnowledgeManifest(StrictModel):
     # knowledge-base id or an exact knowledge-base name; runtime resolution
     # validates that the target is active and graph-enabled.
     bindings: dict[str, str] = Field(default_factory=dict)
+    # Agent modes whose entry context gets deterministic graph entity-linking
+    # (agent/context/graph_entry_context.py). Empty by default: no project is
+    # affected until it opts in and binds a graph-enabled knowledge base.
+    graph_entry_modes: list[str] = Field(default_factory=list)
 
     _unique_collections = field_validator("collections")(unique)
+    _unique_graph_entry_modes = field_validator("graph_entry_modes")(unique)
 
     @field_validator("bindings")
     @classmethod

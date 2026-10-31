@@ -407,6 +407,16 @@ class ReActPlanner:
         current_tool_block: Optional[Dict[str, Any]] = None  # {"index": int, "id": str, "name": str, "input_json": str}
         # V4: 追踪已 yield 的 tool_use 数量（避免重复处理）
         yielded_tool_use_count = 0
+        # 本轮 token 用量累计（usage_delta 遥测的事件源）：message_start 给输入侧、
+        # message_delta 给输出侧（OpenAI 兼容协议两者都在 delta 帧），message_stop
+        # 合并产出一次 usage_delta，供运行时累计 spent_tokens。
+        turn_usage_acc: Dict[str, int] = {}
+
+        def _acc_turn_usage(usage: Dict[str, Any]) -> None:
+            for field in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens"):
+                value = usage.get(field)
+                if isinstance(value, (int, float)) and value > 0:
+                    turn_usage_acc[field] = max(int(turn_usage_acc.get(field) or 0), int(value))
 
         try:
             async for event in self.llm_service.chat_anthropic_streaming(
@@ -644,6 +654,7 @@ class ReActPlanner:
                         )
 
                 elif event_type == "message_start":
+                    _acc_turn_usage(event_data.get("usage") or {})
                     context_usage = self._build_context_usage(
                         event_data.get("usage") or {},
                         model=event_data.get("model"),
@@ -659,6 +670,7 @@ class ReActPlanner:
                     )
                     # OpenAI 兼容协议的真实 usage 在结束帧 message_delta（message_start 为占位 0）；
                     # Anthropic 原生路径此处无 input_tokens，_build_context_usage 返回 None 自然跳过。
+                    _acc_turn_usage(event_data.get("usage") or {})
                     context_usage = self._build_context_usage(
                         event_data.get("usage") or {},
                         model=event_data.get("model"),
@@ -679,6 +691,25 @@ class ReActPlanner:
                     result = self._parse_accumulated_blocks(
                         current_blocks,
                     )
+
+                    # 本轮用量遥测（Usage, not budget）：每轮模型调用结束产出一次
+                    # usage_delta，运行时累计 spent_tokens；只记账不设上限。
+                    if turn_usage_acc:
+                        input_tokens = int(turn_usage_acc.get("input_tokens") or 0)
+                        output_tokens = int(turn_usage_acc.get("output_tokens") or 0)
+                        turn_tokens = input_tokens + output_tokens
+                        if turn_tokens > 0:
+                            yield {
+                                "type": "usage_delta",
+                                "data": {
+                                    "input_tokens": input_tokens,
+                                    "cache_read_input_tokens": int(turn_usage_acc.get("cache_read_input_tokens") or 0),
+                                    "cache_creation_input_tokens": int(turn_usage_acc.get("cache_creation_input_tokens") or 0),
+                                    "output_tokens": output_tokens,
+                                    "total_tokens": turn_tokens,
+                                },
+                            }
+                        turn_usage_acc.clear()
 
                     # 提取 thought
                     text_content = ""

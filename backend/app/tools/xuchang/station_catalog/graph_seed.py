@@ -14,6 +14,7 @@ from typing import Any
 import structlog
 from sqlalchemy import or_, select
 
+from app.knowledge_base.graph_schemas import ExtractedEntity, ExtractedRelation
 from app.tools.xuchang.station_catalog.catalog import (
     CITY_CODE,
     CITY_NAME,
@@ -26,6 +27,10 @@ logger = structlog.get_logger()
 DOCUMENT_FILENAME = "许昌市空气监测站点目录.md"
 
 KB_BINDING_KEY = "station_directory"
+
+PROMPT_VERSION = "xuchang_station_catalog_deterministic"
+
+ANCHOR_MARKER = "## 站点归属关系"
 
 
 def render_station_directory(catalog: dict[str, Any]) -> str:
@@ -155,250 +160,180 @@ async def _resolve_target_kb() -> dict[str, Any]:
     )
 
 
+def _build_catalog_extraction(
+    catalog: dict[str, Any],
+) -> tuple[list[ExtractedEntity], list[ExtractedRelation]]:
+    """按目录构建站点实体与 located_in 关系。
+
+    LLM 对大表格的抽取是有损的（76 个乡镇站只能抽出少数），
+    站点目录是结构化数据，直接构建实体和关系，由种子服务写入并置为 confirmed。
+    """
+    townships = catalog.get("townships") or []
+    regular = catalog.get("regular_stations") or []
+    districts = catalog.get("districts") or []
+
+    entities: list[ExtractedEntity] = [
+        ExtractedEntity(
+            local_id="district_city",
+            entity_type="Region",
+            name=CITY_NAME,
+            aliases=[CITY_CODE],
+            description="许昌市（地级市）",
+            attributes={"areacode": CITY_CODE},
+            evidence_text=f"{CITY_NAME}（{CITY_CODE}）",
+        )
+    ]
+    relations: list[ExtractedRelation] = []
+
+    for item in districts:
+        district = item["name"]
+        entities.append(
+            ExtractedEntity(
+                local_id=f"district_{district}",
+                entity_type="Region",
+                name=district,
+                aliases=[item["areacode"]],
+                description="许昌市区县",
+                attributes={"areacode": item["areacode"], "city": CITY_NAME},
+                evidence_text=f"{district}（{item['areacode']}）",
+            )
+        )
+        relations.append(
+            ExtractedRelation(
+                source_local_id=f"district_{district}",
+                target_local_id="district_city",
+                relation_type="located_in",
+                description=f"{district} 隶属于 {CITY_NAME}",
+                evidence_text=f"{district} 隶属于 {CITY_NAME}",
+            )
+        )
+
+    def _ensure_district_entity(district: str) -> None:
+        if not district:
+            return
+        if any(e.local_id == f"district_{district}" for e in entities):
+            return
+        entities.append(
+            ExtractedEntity(
+                local_id=f"district_{district}",
+                entity_type="Region",
+                name=district,
+                description="许昌市功能区（中台区域表未登记，归属以站点名称前缀为准）",
+                attributes={"city": CITY_NAME, "source": "station_name_prefix"},
+                evidence_text=district,
+            )
+        )
+
+    for item in townships:
+        name = item["station_name"]
+        district = item.get("district") or ""
+        entities.append(
+            ExtractedEntity(
+                local_id=f"station_{item['station_code']}",
+                entity_type="Station",
+                name=name,
+                aliases=[item["station_code"]],
+                description=f"许昌市乡镇空气监测站，归属{district or '未知'}",
+                attributes={
+                    "station_code": item["station_code"],
+                    "station_type": "township",
+                    "district": district,
+                    "city": CITY_NAME,
+                },
+                evidence_text=f"{name}（{item['station_code']}）",
+            )
+        )
+        if district:
+            _ensure_district_entity(district)
+            relations.append(
+                ExtractedRelation(
+                    source_local_id=f"station_{item['station_code']}",
+                    target_local_id=f"district_{district}",
+                    relation_type="located_in",
+                    description=f"{name} 隶属于 {district}",
+                    evidence_text=f"{name}（{item['station_code']}）隶属于 {district}",
+                )
+            )
+
+    for item in regular:
+        name = item["station_name"]
+        entities.append(
+            ExtractedEntity(
+                local_id=f"station_{item['station_code']}",
+                entity_type="Station",
+                name=name,
+                aliases=[
+                    alias
+                    for alias in (item["station_code"], item.get("unique_code") or "")
+                    if alias
+                ],
+                description="许昌市国控空气监测站",
+                attributes={
+                    "station_code": item["station_code"],
+                    "station_type": "regular",
+                    "type_name": item.get("type_name") or "",
+                    "district": item.get("district") or "",
+                    "city": CITY_NAME,
+                },
+                evidence_text=name,
+            )
+        )
+        if item.get("district"):
+            relations.append(
+                ExtractedRelation(
+                    source_local_id=f"station_{item['station_code']}",
+                    target_local_id=f"district_{item['district']}",
+                    relation_type="located_in",
+                    description=f"{name} 隶属于 {item['district']}",
+                    evidence_text=f"{name} 隶属于 {item['district']}",
+                )
+            )
+            _ensure_district_entity(item["district"])
+        else:
+            relations.append(
+                ExtractedRelation(
+                    source_local_id=f"station_{item['station_code']}",
+                    target_local_id="district_city",
+                    relation_type="located_in",
+                    description=f"{name} 隶属于 {CITY_NAME}",
+                    evidence_text=name,
+                )
+            )
+
+    return entities, relations
+
+
 async def _seed_graph_deterministic(
     kb_id: str,
     document_id: str,
     catalog: dict[str, Any],
 ) -> dict[str, int]:
-    """绕过 LLM 抽取，按目录确定性写入站点实体与 located_in 关系。
+    """按目录确定性写入站点实体与 located_in 关系，绕过 LLM 抽取。
 
     LLM 对大表格的抽取是有损的（76 个乡镇站只能抽出少数），
-    站点目录是结构化数据，直接按 chunk 写入实体和关系并置为 confirmed。
+    站点目录是结构化数据，经共享种子服务直接写入并置为 confirmed。
     """
-    from sqlalchemy import select
-
     from app.db.knowledge_database import knowledge_async_session as async_session
-    from app.knowledge_base.extraction_run_repository import (
-        ExtractionRunContext,
-        ExtractionRunRepository,
-    )
-    from app.knowledge_base.graph_models import KnowledgeChunk
-    from app.knowledge_base.graph_repository import KnowledgeGraphRepository
-    from app.knowledge_base.graph_schemas import (
-        ChunkGraphExtraction,
-        ExtractedEntity,
-        ExtractedRelation,
-    )
-    from app.knowledge_base.models import Document as DocumentModel
-    from app.knowledge_base.models import KnowledgeBase
+    from app.knowledge_base.graph_seed_service import GraphSeedError, seed_graph_extraction
 
-    townships = catalog.get("townships") or []
-    regular = catalog.get("regular_stations") or []
-    districts = catalog.get("districts") or []
+    entities, relations = _build_catalog_extraction(catalog)
 
-    async with async_session() as db:
-        kb = await db.get(KnowledgeBase, kb_id)
-        if kb is None:
-            raise StationCatalogError(f"知识库不存在: {kb_id}")
-        scene_profile_version = int(kb.scene_profile_version or 0)
-        schema_version = int(kb.schema_version or 0)
-
-        chunks = (
-            await db.execute(
-                select(KnowledgeChunk)
-                .where(
-                    KnowledgeChunk.kb_id == kb_id,
-                    KnowledgeChunk.document_id == document_id,
-                )
-                .order_by(KnowledgeChunk.chunk_index)
+    try:
+        async with async_session() as db:
+            result = await seed_graph_extraction(
+                db,
+                kb_id,
+                document_id,
+                entities,
+                relations,
+                prompt_version=PROMPT_VERSION,
+                extractor_name="xuchang_station_catalog_seeder",
+                anchor_chunk_marker=ANCHOR_MARKER,
             )
-        ).scalars().all()
-        if not chunks:
-            raise StationCatalogError("站点目录文档没有可用的分块")
+    except GraphSeedError as exc:
+        raise StationCatalogError(str(exc)) from exc
 
-        anchor = next(
-            (chunk for chunk in chunks if "## 站点归属关系" in (chunk.content or "")),
-            chunks[0],
-        )
-        repo = KnowledgeGraphRepository(db)
-
-        entities: list[ExtractedEntity] = [
-            ExtractedEntity(
-                local_id="district_city",
-                entity_type="Region",
-                name=CITY_NAME,
-                aliases=[CITY_CODE],
-                description="许昌市（地级市）",
-                attributes={"areacode": CITY_CODE},
-                evidence_text=f"{CITY_NAME}（{CITY_CODE}）",
-            )
-        ]
-        relations: list[ExtractedRelation] = []
-
-        for item in districts:
-            district = item["name"]
-            entities.append(
-                ExtractedEntity(
-                    local_id=f"district_{district}",
-                    entity_type="Region",
-                    name=district,
-                    aliases=[item["areacode"]],
-                    description="许昌市区县",
-                    attributes={"areacode": item["areacode"], "city": CITY_NAME},
-                    evidence_text=f"{district}（{item['areacode']}）",
-                )
-            )
-            relations.append(
-                ExtractedRelation(
-                    source_local_id=f"district_{district}",
-                    target_local_id="district_city",
-                    relation_type="located_in",
-                    description=f"{district} 隶属于 {CITY_NAME}",
-                    evidence_text=f"{district} 隶属于 {CITY_NAME}",
-                )
-            )
-
-
-        def _ensure_district_entity(district: str) -> None:
-            if not district:
-                return
-            if any(e.local_id == f"district_{district}" for e in entities):
-                return
-            entities.append(
-                ExtractedEntity(
-                    local_id=f"district_{district}",
-                    entity_type="Region",
-                    name=district,
-                    description="许昌市功能区（中台区域表未登记，归属以站点名称前缀为准）",
-                    attributes={"city": CITY_NAME, "source": "station_name_prefix"},
-                    evidence_text=district,
-                )
-            )
-
-        for item in townships:
-            name = item["station_name"]
-            district = item.get("district") or ""
-            entities.append(
-                ExtractedEntity(
-                    local_id=f"station_{item['station_code']}",
-                    entity_type="Station",
-                    name=name,
-                    aliases=[item["station_code"]],
-                    description=f"许昌市乡镇空气监测站，归属{district or '未知'}",
-                    attributes={
-                        "station_code": item["station_code"],
-                        "station_type": "township",
-                        "district": district,
-                        "city": CITY_NAME,
-                    },
-                    evidence_text=f"{name}（{item['station_code']}）",
-                )
-            )
-            if district:
-                _ensure_district_entity(district)
-                relations.append(
-                    ExtractedRelation(
-                        source_local_id=f"station_{item['station_code']}",
-                        target_local_id=f"district_{district}",
-                        relation_type="located_in",
-                        description=f"{name} 隶属于 {district}",
-                        evidence_text=f"{name}（{item['station_code']}）隶属于 {district}",
-                    )
-                )
-
-        for item in regular:
-            name = item["station_name"]
-            entities.append(
-                ExtractedEntity(
-                    local_id=f"station_{item['station_code']}",
-                    entity_type="Station",
-                    name=name,
-                    aliases=[
-                        alias
-                        for alias in (item["station_code"], item.get("unique_code") or "")
-                        if alias
-                    ],
-                    description="许昌市国控空气监测站",
-                    attributes={
-                        "station_code": item["station_code"],
-                        "station_type": "regular",
-                        "type_name": item.get("type_name") or "",
-                        "district": item.get("district") or "",
-                        "city": CITY_NAME,
-                    },
-                    evidence_text=name,
-                )
-            )
-            if item.get("district"):
-                relations.append(
-                    ExtractedRelation(
-                        source_local_id=f"station_{item['station_code']}",
-                        target_local_id=f"district_{item['district']}",
-                        relation_type="located_in",
-                        description=f"{name} 隶属于 {item['district']}",
-                        evidence_text=f"{name} 隶属于 {item['district']}",
-                    )
-                )
-                _ensure_district_entity(item["district"])
-            else:
-                relations.append(
-                    ExtractedRelation(
-                        source_local_id=f"station_{item['station_code']}",
-                        target_local_id="district_city",
-                        relation_type="located_in",
-                        description=f"{name} 隶属于 {CITY_NAME}",
-                        evidence_text=name,
-                    )
-                )
-
-
-        run_repo = ExtractionRunRepository(db)
-        run_id = await run_repo.start(
-            ExtractionRunContext(
-                kb_id=kb_id,
-                document_id=document_id,
-                chunk_id=anchor.id,
-                content_generation=int(anchor.content_generation or 0),
-                scene_profile_version=scene_profile_version,
-                schema_version=schema_version,
-                prompt_version="xuchang_station_catalog_deterministic",
-                model_name="deterministic",
-                model_params={},
-            )
-        )
-        extraction = ChunkGraphExtraction(
-            chunk_id=anchor.id,
-            extractor_name="xuchang_station_catalog_seeder",
-            extraction_run_id=run_id,
-            entities=entities,
-            relations=relations,
-        )
-        result = await repo.upsert_chunk_extraction(
-            kb_id=kb_id,
-            document_id=document_id,
-            extraction=extraction,
-            extraction_run_id=run_id,
-        )
-        await run_repo.complete(
-            run_id,
-            raw_response={"seeded_entities": len(entities), "seeded_relations": len(relations)},
-            parsed_response={},
-            token_usage={},
-            latency_ms=0,
-        )
-
-        for record_id in result.entity_ids:
-            await repo.set_review_status(
-                kb_id=kb_id, kind="entity", record_id=record_id, status="confirmed"
-            )
-        for record_id in result.relation_ids:
-            await repo.set_review_status(
-                kb_id=kb_id, kind="relation", record_id=record_id, status="confirmed"
-            )
-
-        for chunk in chunks:
-            chunk.graph_status = "completed"
-            chunk.last_error = None
-
-        doc = await db.get(DocumentModel, document_id)
-        if doc is not None:
-            doc.graph_status = "completed"
-        await db.commit()
-
-    return {
-        "entities": len({e.local_id for e in entities}),
-        "relations": len(relations),
-    }
+    return {"entities": result.entity_count, "relations": result.relation_count}
 
 
 async def sync_station_knowledge_graph(
