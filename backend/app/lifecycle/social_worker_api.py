@@ -60,6 +60,8 @@ def create_social_worker_api_app(
             or request.url.path.startswith("/api/scheduled-tasks/")
             or request.url.path == "/api/social/accounts"
             or request.url.path.startswith("/api/social/accounts/")
+            or request.url.path == "/api/fetchers"
+            or request.url.path.startswith("/api/fetchers/")
         )
         identity_envelope = (
             request.headers.get(INTERNAL_USER_HEADER) if identity_path else None
