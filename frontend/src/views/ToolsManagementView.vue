@@ -1,154 +1,144 @@
 <template>
   <div class="tools-management-view">
     <header class="page-header">
-      <div class="header-left">
-        <span class="stats" v-if="stats">
-          共 {{ stats.total }} 个工具 / {{ stats.enabled }} 已启用 / {{ stats.disabled }} 已禁用
-        </span>
+      <div class="header-title">
+        <h2>工具</h2>
+        <span class="count-chip">{{ stats.total }} 个工具</span>
+        <span v-if="stats.disabled" class="count-chip count-chip-warn">{{ stats.disabled }} 个已禁用</span>
       </div>
-      <div class="header-actions">
-        <div class="search-box">
-          <input
-            v-model="searchQuery"
-            type="text"
-            placeholder="搜索工具..."
-            @input="filterTools"
-          />
-        </div>
+      <div class="header-tools">
+        <label class="search-box">
+          <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
+          <input v-model="searchQuery" type="search" placeholder="搜索工具…" />
+        </label>
+        <button
+          type="button"
+          class="icon-btn"
+          :disabled="loading"
+          :title="loading ? '正在加载工具列表' : '刷新工具列表'"
+          @click="fetchTools"
+        >
+          <svg class="refresh-icon" :class="{ spinning: loading }" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 11a8 8 0 1 0-2.6 6" />
+            <path d="M20 5v6h-6" />
+          </svg>
+        </button>
       </div>
     </header>
 
     <div class="main-content">
-      <!-- 工具分类列表 -->
-      <div class="category-list-panel">
-        <div class="panel-header">
-          <span>工具分类</span>
-        </div>
-
-        <div v-if="loading" class="loading-state">加载中...</div>
-
-        <div v-else class="categories">
-          <div
-            v-for="category in filteredCategories"
-            :key="category.id"
-            class="category-card"
-            :class="{ active: selectedCategory === category.id }"
-            @click="selectCategory(category.id)"
-          >
-            <div class="category-card-header">
-              <span class="category-name">{{ category.name }}</span>
-              <span class="category-count">{{ category.count }}</span>
-            </div>
-            <div class="category-desc">{{ category.description }}</div>
-          </div>
+      <div v-if="loading && !tools.length" class="skeleton-list" aria-busy="true">
+        <div v-for="index in 4" :key="index" class="skeleton-row">
+          <span class="skeleton-icon"></span>
+          <span class="skeleton-lines">
+            <span class="skeleton-line short"></span>
+            <span class="skeleton-line"></span>
+          </span>
         </div>
       </div>
 
-      <!-- 工具列表 -->
-      <div class="tools-list-panel" v-if="selectedCategory">
-        <div class="panel-header">
-          <h2>{{ getCategoryName(selectedCategory) }}</h2>
-        </div>
+      <div v-else-if="groups.length === 0" class="empty-state">
+        <svg class="empty-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M14.7 6.3a4 4 0 0 0 5 5l-8.4 8.4a2.1 2.1 0 0 1-3-3z" />
+          <path d="M4 20l3-3" />
+        </svg>
+        <p>{{ searchQuery.trim() ? '未找到匹配的工具' : '暂无工具' }}</p>
+      </div>
 
-        <div v-if="filteredTools.length === 0" class="empty-state">
-          未找到工具
-        </div>
+      <div v-else class="tool-groups">
+        <section v-for="group in groups" :key="group.id" class="tool-group">
+          <div class="group-header">
+            <h3>{{ group.label }}</h3>
+            <span class="group-count">{{ group.items.length }}</span>
+          </div>
 
-        <div v-else class="tools-list">
-          <div
-            v-for="tool in filteredTools"
-            :key="tool.name"
-            class="tool-card"
-            :class="{ disabled: tool.status === 'disabled' }"
-          >
-            <div class="tool-card-header">
-              <span class="tool-name">{{ tool.name }}</span>
-              <span
-                class="tool-badge"
-                :class="tool.status"
-              >
-                {{ tool.status === 'enabled' ? '已启用' : '已禁用' }}
+          <div class="tool-rows">
+            <div
+              v-for="tool in group.items"
+              :key="tool.name"
+              class="tool-row"
+              :class="{ off: tool.status === 'disabled' }"
+              role="button"
+              tabindex="0"
+              @click="viewToolDetail(tool)"
+              @keydown.enter="viewToolDetail(tool)"
+              @keydown.space.prevent="viewToolDetail(tool)"
+            >
+              <span class="tool-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M14.7 6.3a4 4 0 0 0 5 5l-8.4 8.4a2.1 2.1 0 0 1-3-3z" />
+                  <path d="M4 20l3-3" />
+                </svg>
               </span>
-            </div>
-            <div class="tool-desc">{{ tool.description }}</div>
-            <div class="tool-meta">
-              <span class="tool-category">{{ getCategoryLabel(tool.category) }}</span>
-              <span class="tool-version">v{{ tool.version }}</span>
-              <span class="tool-calls">调用: {{ tool.statistics.total }}</span>
-              <span class="tool-success-rate">
-                成功率: {{ getSuccessRate(tool.statistics) }}%
+
+              <span class="tool-body">
+                <span class="tool-name-row">
+                  <span class="tool-name">{{ tool.name }}</span>
+                  <span v-if="tool.status === 'disabled'" class="chip chip-off">已禁用</span>
+                </span>
+                <span class="tool-desc" :title="tool.description">
+                  {{ tool.description || '暂无描述' }}
+                </span>
               </span>
-            </div>
-            <div class="tool-actions">
+
               <button
-                class="btn-toggle"
-                :class="{ enabled: tool.status === 'enabled' }"
-                @click="toggleToolStatus(tool)"
+                type="button"
+                class="switch"
+                :class="{ on: tool.status === 'enabled' }"
+                role="switch"
+                :aria-checked="tool.status === 'enabled'"
+                :title="tool.status === 'enabled' ? '点击禁用该工具' : '点击启用该工具'"
+                @click.stop="toggleToolStatus(tool)"
+                @keydown.enter.stop
+                @keydown.space.stop.prevent
               >
-                {{ tool.status === 'enabled' ? '禁用' : '启用' }}
-              </button>
-              <button
-                class="btn-text"
-                @click="viewToolDetail(tool)"
-              >
-                查看详情
+                <span class="switch-dot"></span>
               </button>
             </div>
           </div>
-        </div>
-      </div>
-
-      <div v-else class="no-selection">
-        <p>请从左侧选择一个工具分类</p>
+        </section>
       </div>
     </div>
 
-    <!-- 工具详情对话框 -->
+    <!-- 工具详情 -->
     <div v-if="showDetailDialog" class="dialog-overlay" @click.self="showDetailDialog = false">
-      <div class="dialog dialog-wide">
-        <div class="dialog-header">
-          <h3>工具详情</h3>
-          <button class="btn-close" @click="showDetailDialog = false">×</button>
-        </div>
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="工具详情">
+        <header class="dialog-header">
+          <div class="dialog-title">
+            <h3>{{ currentTool?.name }}</h3>
+            <span class="chip" :class="currentTool?.status === 'enabled' ? 'chip-on' : 'chip-off'">
+              {{ currentTool?.status === 'enabled' ? '已启用' : '已禁用' }}
+            </span>
+          </div>
+          <button type="button" class="icon-btn" title="关闭" @click="showDetailDialog = false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+          </button>
+        </header>
+
         <div class="dialog-body" v-if="currentTool">
-          <div class="tool-detail-section">
+          <p class="dialog-desc">{{ currentTool.description }}</p>
+
+          <section class="detail-section">
             <h4>基本信息</h4>
             <div class="info-grid">
-              <div class="info-item">
-                <span class="info-label">工具名称</span>
-                <span class="info-value">{{ currentTool.name }}</span>
-              </div>
-              <div class="info-item">
-                <span class="info-label">描述</span>
-                <span class="info-value">{{ currentTool.description }}</span>
-              </div>
               <div class="info-item">
                 <span class="info-label">类别</span>
                 <span class="info-value">{{ getCategoryLabel(currentTool.category) }}</span>
               </div>
               <div class="info-item">
                 <span class="info-label">版本</span>
-                <span class="info-value">{{ currentTool.version }}</span>
-              </div>
-              <div class="info-item">
-                <span class="info-label">状态</span>
-                <span class="info-value" :class="currentTool.status">
-                  {{ currentTool.status === 'enabled' ? '已启用' : '已禁用' }}
-                </span>
+                <span class="info-value">v{{ currentTool.version }}</span>
               </div>
               <div class="info-item">
                 <span class="info-label">优先级</span>
                 <span class="info-value">{{ currentTool.priority }}</span>
               </div>
-            </div>
-          </div>
-
-          <div class="tool-detail-section">
-            <h4>元数据</h4>
-            <div class="info-grid">
               <div class="info-item">
-                <span class="info-label">数据类型</span>
-                <span class="info-value">{{ currentTool.metadata.data_type }}</span>
+                <span class="info-label">需要上下文</span>
+                <span class="info-value">{{ currentTool.requires_context ? '是' : '否' }}</span>
               </div>
               <div class="info-item">
                 <span class="info-label">支持批量</span>
@@ -159,36 +149,37 @@
                 <span class="info-value">{{ currentTool.metadata.requires_handle ? '是' : '否' }}</span>
               </div>
               <div class="info-item">
-                <span class="info-label">需要上下文</span>
-                <span class="info-value">{{ currentTool.requires_context ? '是' : '否' }}</span>
+                <span class="info-label">数据类型</span>
+                <span class="info-value">{{ currentTool.metadata.data_type }}</span>
               </div>
             </div>
-          </div>
+          </section>
 
-          <div class="tool-detail-section">
-            <h4>统计信息</h4>
-            <div class="info-grid">
-              <div class="info-item">
-                <span class="info-label">总调用次数</span>
-                <span class="info-value">{{ currentTool.statistics.total }}</span>
+          <section class="detail-section">
+            <h4>调用统计</h4>
+            <div class="stat-grid">
+              <div class="stat-item">
+                <span class="stat-value">{{ currentTool.statistics.total }}</span>
+                <span class="stat-label">总调用</span>
               </div>
-              <div class="info-item">
-                <span class="info-label">成功次数</span>
-                <span class="info-value">{{ currentTool.statistics.success }}</span>
+              <div class="stat-item">
+                <span class="stat-value">{{ currentTool.statistics.success }}</span>
+                <span class="stat-label">成功</span>
               </div>
-              <div class="info-item">
-                <span class="info-label">失败次数</span>
-                <span class="info-value">{{ currentTool.statistics.failed }}</span>
+              <div class="stat-item">
+                <span class="stat-value">{{ currentTool.statistics.failed }}</span>
+                <span class="stat-label">失败</span>
               </div>
-              <div class="info-item">
-                <span class="info-label">成功率</span>
-                <span class="info-value">{{ getSuccessRate(currentTool.statistics) }}%</span>
+              <div class="stat-item">
+                <span class="stat-value">{{ getSuccessRate(currentTool.statistics) }}%</span>
+                <span class="stat-label">成功率</span>
               </div>
-              <div class="info-item">
-                <span class="info-label">平均执行时间</span>
-                <span class="info-value">{{ currentTool.statistics.avg_execution_time.toFixed(2) }}s</span>
+              <div class="stat-item">
+                <span class="stat-value">{{ currentTool.statistics.avg_execution_time.toFixed(2) }}s</span>
+                <span class="stat-label">平均耗时</span>
               </div>
             </div>
+
             <div v-if="recentErrors(currentTool).length" class="recent-errors">
               <h5>最近错误（最多 10 条）</h5>
               <ul class="error-list">
@@ -198,18 +189,22 @@
                 </li>
               </ul>
             </div>
-          </div>
+          </section>
 
-          <div class="tool-detail-section" v-if="currentTool.function_schema">
+          <section class="detail-section" v-if="currentTool.function_schema">
             <h4>函数定义</h4>
             <div class="code-block">
               <pre>{{ JSON.stringify(currentTool.function_schema, null, 2) }}</pre>
             </div>
-          </div>
+          </section>
         </div>
-        <div class="dialog-footer">
-          <button class="btn-secondary" @click="showDetailDialog = false">关闭</button>
-        </div>
+
+        <footer class="dialog-footer">
+          <button type="button" class="btn-primary" @click="toggleToolStatus(currentTool)">
+            {{ currentTool?.status === 'enabled' ? '禁用该工具' : '启用该工具' }}
+          </button>
+          <button type="button" class="btn-ghost" @click="showDetailDialog = false">关闭</button>
+        </footer>
       </div>
     </div>
   </div>
@@ -221,75 +216,53 @@ import { getToolsList, updateToolStatus } from '@/api/toolsManagement'
 
 const loading = ref(false)
 const tools = ref([])
-const categories = ref([])
-const selectedCategory = ref(null)
 const searchQuery = ref('')
 const showDetailDialog = ref(false)
 const currentTool = ref(null)
 
-const categoryMap = {
-  'query': {
-    id: 'query',
-    name: '数据查询',
-    description: '从数据库查询各类环境数据'
-  },
-  'analysis': {
-    id: 'analysis',
-    name: '数据分析',
-    description: '执行PMF、OBM等分析计算'
-  },
-  'visualization': {
-    id: 'visualization',
-    name: '数据可视化',
-    description: '生成图表和可视化配置'
-  },
-  'task_management': {
-    id: 'task_management',
-    name: '任务管理',
-    description: '管理任务清单和状态'
-  }
+const CATEGORY_META = {
+  query: { name: '数据查询', order: 1 },
+  analysis: { name: '数据分析', order: 2 },
+  visualization: { name: '数据可视化', order: 3 },
+  task_management: { name: '任务管理', order: 4 },
+  planning: { name: '规划', order: 5 },
+  reporting: { name: '报告', order: 6 },
+  knowledge_qa: { name: '知识问答', order: 7 },
+  quick_trace: { name: '快速溯源', order: 8 },
+  deep_trace: { name: '深度溯源', order: 9 }
 }
+
+const getCategoryLabel = (categoryId) => CATEGORY_META[categoryId]?.name || categoryId || '其他'
 
 const stats = computed(() => {
   const total = tools.value.length
-  const enabled = tools.value.filter(t => t.status === 'enabled').length
-  const disabled = total - enabled
-  return { total, enabled, disabled }
-})
-
-const filteredCategories = computed(() => {
-  const search = searchQuery.value.toLowerCase().trim()
-  if (!search) return categories.value
-
-  return categories.value.map(cat => {
-    const catTools = tools.value.filter(t => t.category === cat.id)
-    const filteredTools = catTools.filter(t =>
-      t.name.toLowerCase().includes(search) ||
-      t.description.toLowerCase().includes(search)
-    )
-    return {
-      ...cat,
-      count: filteredTools.length
-    }
-  }).filter(cat => cat.count > 0)
+  const enabled = tools.value.filter((tool) => tool.status === 'enabled').length
+  return { total, enabled, disabled: total - enabled }
 })
 
 const filteredTools = computed(() => {
-  if (!selectedCategory.value) return []
-
-  const search = searchQuery.value.toLowerCase().trim()
-  const catTools = tools.value.filter(t => t.category === selectedCategory.value)
-
-  if (!search) return catTools
-
-  return catTools.filter(t =>
-    t.name.toLowerCase().includes(search) ||
-    t.description.toLowerCase().includes(search)
-  )
+  const terms = searchQuery.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (!terms.length) return tools.value
+  return tools.value.filter((tool) => {
+    const haystack = `${tool.name || ''} ${tool.description || ''}`.toLowerCase()
+    return terms.some((term) => haystack.includes(term))
+  })
 })
 
-onMounted(async () => {
-  await fetchTools()
+// 分类分组：已知分类按固定顺序，未知分类排在后面按 id 排序
+const groups = computed(() => {
+  const buckets = new Map()
+  for (const tool of filteredTools.value) {
+    const id = tool.category || 'unknown'
+    if (!buckets.has(id)) buckets.set(id, [])
+    buckets.get(id).push(tool)
+  }
+  const ids = [...buckets.keys()].sort((a, b) => {
+    const aOrder = CATEGORY_META[a]?.order ?? 99
+    const bOrder = CATEGORY_META[b]?.order ?? 99
+    return aOrder === bOrder ? a.localeCompare(b) : aOrder - bOrder
+  })
+  return ids.map((id) => ({ id, label: getCategoryLabel(id), items: buckets.get(id) }))
 })
 
 const fetchTools = async () => {
@@ -297,48 +270,11 @@ const fetchTools = async () => {
   try {
     const response = await getToolsList()
     tools.value = response.tools || []
-
-    // 计算分类统计
-    const categoryCounts = {}
-    tools.value.forEach(tool => {
-      const cat = tool.category
-      categoryCounts[cat] = (categoryCounts[cat] || 0) + 1
-    })
-
-    // 生成分类列表
-    categories.value = Object.keys(categoryMap).map(catId => {
-      return {
-        ...categoryMap[catId],
-        count: categoryCounts[catId] || 0
-      }
-    }).filter(cat => cat.count > 0)
-
-    // 默认选择第一个分类
-    if (categories.value.length > 0 && !selectedCategory.value) {
-      selectedCategory.value = categories.value[0].id
-    }
   } catch (e) {
     alert('获取工具列表失败: ' + e.message)
   } finally {
     loading.value = false
   }
-}
-
-const selectCategory = (categoryId) => {
-  selectedCategory.value = categoryId
-}
-
-const filterTools = () => {
-  // 触发计算属性重新计算
-}
-
-const getCategoryName = (categoryId) => {
-  return categoryMap[categoryId]?.name || categoryId
-}
-
-const getCategoryLabel = (categoryId) => {
-  const cat = categoryMap[categoryId]
-  return cat ? cat.name : categoryId
 }
 
 const getSuccessRate = (statistics) => {
@@ -359,502 +295,671 @@ const formatErrorTime = (value) => {
 }
 
 const toggleToolStatus = async (tool) => {
-  const newStatus = tool.status === 'enabled' ? false : true
+  if (!tool) return
+  const newStatus = tool.status !== 'enabled'
   const action = newStatus ? '启用' : '禁用'
 
   if (!confirm(`确定要${action}工具"${tool.name}"吗？`)) return
 
   try {
     await updateToolStatus(tool.name, newStatus)
-
-    // 更新本地状态
     tool.status = newStatus ? 'enabled' : 'disabled'
   } catch (e) {
     alert(`${action}工具失败: ${e.message}`)
   }
 }
 
-const viewToolDetail = async (tool) => {
+const viewToolDetail = (tool) => {
   currentTool.value = tool
   showDetailDialog.value = true
 }
 
+onMounted(() => {
+  fetchTools()
+})
 </script>
 
 <style scoped>
 .tools-management-view {
+  padding: 4px 2px 24px;
   height: 100%;
-  display: flex;
-  flex-direction: column;
-  background: #f5f6fb;
+  overflow-y: auto;
+  color: var(--text-1, #333);
+  font-size: var(--text-size-base, 14px);
 }
 
+/* 顶部 */
 .page-header {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  align-items: center;
-  padding: 16px 24px;
-  background: #fff;
-  border-bottom: 1px solid #e8e8e8;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
   gap: 16px;
+  flex-wrap: wrap;
 }
 
-.header-left h1 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-}
-
-.header-actions {
+.header-title {
   display: flex;
-  gap: 12px;
-  align-items: center;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.stats {
-  font-size: 13px;
-  color: #666;
-  margin-left: 16px;
+.header-title h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--text-1, #333);
+}
+
+.count-chip {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--bg-muted, #f8fafc);
+  border: 1px solid var(--border-1, #f0f0f0);
+  color: var(--text-3, #999);
+  font-size: var(--text-size-xs, 12px);
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.count-chip-warn {
+  color: var(--color-warning-text, #d48806);
+  background: var(--color-warning-bg, #fffbe6);
+  border-color: #f5d78e;
+}
+
+.header-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .search-box {
   display: flex;
   align-items: center;
+  gap: 6px;
+  height: var(--control-h-md, 32px);
+  padding: 0 10px;
+  width: 240px;
+  background: var(--bg-container, #fff);
+  border: 1px solid var(--border-3, #d9d9d9);
+  border-radius: var(--radius-lg, 8px);
+  transition: border-color var(--transition-fast, 0.15s ease), box-shadow var(--transition-fast, 0.15s ease);
+}
+
+.search-box:focus-within {
+  border-color: var(--color-primary, #1890ff);
+  box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(24, 144, 255, 0.12));
+}
+
+.search-icon {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  fill: none;
+  stroke: var(--text-3, #999);
+  stroke-width: 1.8;
+  stroke-linecap: round;
 }
 
 .search-box input {
-  padding: 8px 12px;
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
-  font-size: 14px;
-  width: 250px;
-}
-
-.search-box input:focus {
-  border-color: #1890ff;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
   outline: none;
+  background: transparent;
+  font-size: var(--text-size-sm, 13px);
+  color: var(--text-1, #333);
 }
 
-.btn-primary {
-  background: #1890ff;
-  color: #fff;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 6px;
+.search-box input::placeholder {
+  color: var(--text-disabled, #bfbfbf);
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h-md, 32px);
+  height: var(--control-h-md, 32px);
+  padding: 0;
+  border: 1px solid var(--border-3, #d9d9d9);
+  border-radius: var(--radius-lg, 8px);
+  background: var(--bg-container, #fff);
+  color: var(--icon-1, #595959);
   cursor: pointer;
-  font-size: 14px;
+  transition: background var(--transition-fast, 0.15s ease), color var(--transition-fast, 0.15s ease);
 }
 
-.btn-primary:hover {
-  background: #40a9ff;
+.icon-btn:hover:not(:disabled) {
+  background: var(--bg-hover, #f5f5f5);
+  color: var(--color-primary, #1890ff);
 }
 
-.btn-primary:disabled {
-  background: #d9d9d9;
-  cursor: not-allowed;
+.icon-btn:disabled {
+  cursor: default;
+  opacity: 0.8;
 }
 
-.btn-secondary {
-  background: #fff;
-  color: #333;
-  border: 1px solid #d9d9d9;
-  padding: 8px 16px;
-  border-radius: 6px;
-  cursor: pointer;
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
-.btn-secondary:hover {
-  border-color: #40a9ff;
-  color: #40a9ff;
+.refresh-icon.spinning {
+  animation: tool-spin 0.9s linear infinite;
 }
 
-.btn-text {
-  background: none;
-  border: none;
-  color: #1890ff;
-  cursor: pointer;
-  font-size: 13px;
-  padding: 4px 8px;
+@keyframes tool-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-.btn-text:hover {
-  background: #f0f7ff;
-  border-radius: 4px;
-}
-
-.btn-toggle {
-  padding: 6px 12px;
-  border: 1px solid #d9d9d9;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
-  color: #666;
-  background: #fff;
-}
-
-.btn-toggle:hover {
-  border-color: #1890ff;
-}
-
-.btn-toggle.enabled {
-  background: #e6f7ff;
-  border-color: #1890ff;
-  color: #1890ff;
-}
-
+/* 列表 */
 .main-content {
-  flex: 1;
-  display: flex;
-  overflow: hidden;
-  padding: 16px;
-  gap: 16px;
+  min-height: 300px;
+  margin-top: 12px;
 }
 
-.category-list-panel {
-  width: 260px;
-  background: #fff;
-  border-radius: 8px;
+.group-header {
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.tools-list-panel {
-  flex: 1;
-  background: #fff;
-  border-radius: 8px;
-  overflow-y: auto;
-  padding: 20px;
-}
-
-.panel-header {
-  display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid #f0f0f0;
-  font-weight: 500;
+  gap: 8px;
+  margin: 18px 0 8px;
 }
 
-.panel-header h2 {
+.group-header:first-child {
+  margin-top: 4px;
+}
+
+.group-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--text-size-sm, 13px);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--text-2, #666);
 }
 
-.categories {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
+.group-count {
+  color: var(--text-3, #999);
+  font-size: var(--text-size-xs, 12px);
 }
 
-.category-card {
-  padding: 12px;
-  border: 1px solid #e8e8e8;
-  border-radius: 6px;
-  margin-bottom: 8px;
-  cursor: pointer;
-  transition: all 0.2s;
+.tool-rows {
+  background: var(--bg-container, #fff);
+  border: 1px solid var(--border-2, #e8e8e8);
+  border-radius: var(--radius-lg, 8px);
+  overflow: hidden;
 }
 
-.category-card:hover {
-  border-color: #1890ff;
-}
-
-.category-card.active {
-  border-color: #1890ff;
-  background: #e6f7ff;
-}
-
-.category-card-header {
+.tool-row {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 4px;
+  gap: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  outline: none;
+  transition: background var(--transition-fast, 0.15s ease);
 }
 
-.category-name {
-  font-weight: 500;
-  font-size: 14px;
+.tool-row + .tool-row {
+  border-top: 1px solid var(--border-1, #f0f0f0);
 }
 
-.category-count {
-  font-size: 12px;
-  color: #999;
-  background: #f0f0f0;
-  padding: 2px 8px;
-  border-radius: 10px;
+.tool-row:hover,
+.tool-row:focus-visible {
+  background: var(--bg-muted, #f8fafc);
 }
 
-.category-desc {
-  font-size: 12px;
-  color: #999;
+.tool-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-primary-bg, #e6f7ff);
+  color: var(--color-primary, #1890ff);
 }
 
-.tools-list {
+.tool-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tool-row.off .tool-icon {
+  background: var(--bg-hover, #f5f5f5);
+  color: var(--text-3, #999);
+}
+
+.tool-body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
 }
 
-.tool-card {
-  border: 1px solid #e8e8e8;
-  border-radius: 8px;
-  padding: 16px;
-  transition: all 0.2s;
-}
-
-.tool-card:hover {
-  border-color: #1890ff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.tool-card.disabled {
-  opacity: 0.6;
-  background: #fafafa;
-}
-
-.tool-card-header {
+.tool-name-row {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  gap: 8px;
+  min-width: 0;
 }
 
 .tool-name {
-  font-weight: 600;
-  font-size: 15px;
-  color: #333;
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--text-1, #333);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.tool-badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 4px;
-}
-
-.tool-badge.enabled {
-  background: #e6f7ff;
-  color: #1890ff;
-}
-
-.tool-badge.disabled {
-  background: #f0f0f0;
-  color: #999;
+.tool-row.off .tool-name {
+  color: var(--text-3, #999);
 }
 
 .tool-desc {
-  font-size: 13px;
-  color: #666;
-  margin-bottom: 12px;
+  font-size: var(--text-size-sm, 13px);
+  color: var(--text-3, #999);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   line-height: 1.5;
 }
 
-.tool-meta {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 12px;
-  font-size: 12px;
-  color: #999;
+.tool-row.off .tool-desc {
+  color: var(--text-disabled, #bfbfbf);
 }
 
-.tool-category,
-.tool-version,
-.tool-calls,
-.tool-success-rate {
-  background: #f0f0f0;
-  padding: 2px 6px;
-  border-radius: 4px;
+/* 启用开关 */
+.switch {
+  position: relative;
+  flex: none;
+  width: 38px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--border-3, #d9d9d9);
+  cursor: pointer;
+  transition: background var(--transition-fast, 0.15s ease);
 }
 
-.tool-actions {
-  display: flex;
-  gap: 8px;
+.switch.on {
+  background: var(--color-primary, #1890ff);
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--color-primary-ring, rgba(24, 144, 255, 0.4));
+  outline-offset: 2px;
+}
+
+.switch-dot {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-1, 0 1px 2px rgba(31, 42, 68, 0.06));
+  transition: transform var(--transition-fast, 0.15s ease);
+}
+
+.switch.on .switch-dot {
+  transform: translateX(16px);
+}
+
+.chip {
+  display: inline-flex;
   align-items: center;
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm, 4px);
+  font-size: var(--text-size-xs, 12px);
+  font-weight: 400;
+  line-height: 18px;
+  white-space: nowrap;
 }
 
-.no-selection,
-.empty-state,
-.loading-state {
+.chip-off {
+  color: var(--text-2, #666);
+  background: var(--bg-hover, #f5f5f5);
+  border: 1px solid var(--border-3, #d9d9d9);
+}
+
+.chip-on {
+  color: var(--color-success, #52c41a);
+  background: var(--color-success-bg, #f6ffed);
+  border: 1px solid #b7eb8f;
+}
+
+/* 空态 / 骨架屏 */
+.empty-state {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 200px;
-  color: #999;
-  font-size: 14px;
+  gap: 10px;
+  padding: 56px 20px;
+  color: var(--text-3, #999);
 }
 
-.no-selection {
+.empty-icon {
+  width: 32px;
+  height: 32px;
+  fill: none;
+  stroke: var(--text-disabled, #bfbfbf);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.empty-state p {
+  margin: 0;
+  font-size: var(--text-size-sm, 13px);
+}
+
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-container, #fff);
+  border: 1px solid var(--border-2, #e8e8e8);
+  border-radius: var(--radius-lg, 8px);
+  margin-bottom: 8px;
+}
+
+.skeleton-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md, 6px);
+  background: var(--bg-hover, #f5f5f5);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.skeleton-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
   flex: 1;
-  background: #fff;
-  border-radius: 8px;
 }
 
-/* Dialog */
+.skeleton-line {
+  height: 10px;
+  border-radius: var(--radius-sm, 4px);
+  background: var(--bg-hover, #f5f5f5);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.skeleton-line.short {
+  width: 24%;
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* 详情对话框 */
 .dialog-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  inset: 0;
+  z-index: var(--z-modal, 1000);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.45);
 }
 
 .dialog {
-  background: #fff;
-  border-radius: 8px;
-  width: 600px;
-  max-height: 80vh;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
-}
-
-.dialog-wide {
-  width: 800px;
-  max-width: 90vw;
+  width: 720px;
+  max-width: 100%;
+  max-height: 84vh;
+  background: var(--bg-container, #fff);
+  border-radius: var(--radius-lg, 8px);
+  box-shadow: var(--shadow-3, 0 8px 24px rgba(31, 42, 68, 0.16));
+  overflow: hidden;
 }
 
 .dialog-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 16px 20px;
-  border-bottom: 1px solid #f0f0f0;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-1, #f0f0f0);
 }
 
-.dialog-header h3 {
+.dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dialog-title h3 {
   margin: 0;
-  font-size: 16px;
-}
-
-.btn-close {
-  background: none;
-  border: none;
-  font-size: 20px;
-  cursor: pointer;
-  color: #999;
-  line-height: 1;
-}
-
-.btn-close:hover {
-  color: #333;
+  font-family: var(--font-mono, monospace);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1, #333);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dialog-body {
-  padding: 20px;
-  overflow-y: auto;
   flex: 1;
+  padding: 18px;
+  overflow-y: auto;
 }
 
-.dialog-footer {
+.dialog-desc {
+  margin: 0 0 18px;
+  font-size: var(--text-size-sm, 13px);
+  line-height: var(--line-height-body, 1.6);
+  color: var(--text-2, #666);
+}
+
+.detail-section {
+  margin-bottom: 20px;
+}
+
+.detail-section h4 {
+  margin: 0 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-1, #f0f0f0);
+  font-size: var(--text-size-sm, 13px);
+  font-weight: 500;
+  color: var(--text-2, #666);
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+
+.info-item {
   display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  padding: 16px 20px;
-  border-top: 1px solid #f0f0f0;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
 }
 
-.tool-detail-section {
-  margin-bottom: 24px;
+.info-label {
+  font-size: var(--text-size-xs, 12px);
+  color: var(--text-3, #999);
+}
+
+.info-value {
+  font-size: var(--text-size-sm, 13px);
+  color: var(--text-1, #333);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--bg-muted, #f8fafc);
+  border: 1px solid var(--border-1, #f0f0f0);
+  border-radius: var(--radius-md, 6px);
+}
+
+.stat-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-1, #333);
+}
+
+.stat-label {
+  font-size: var(--text-size-xs, 12px);
+  color: var(--text-3, #999);
 }
 
 .recent-errors {
-  margin-top: 16px;
+  margin-top: 14px;
 }
 
 .recent-errors h5 {
-  margin: 0 0 8px 0;
-  font-size: 13px;
-  color: #d93026;
+  margin: 0 0 8px;
+  font-size: var(--text-size-xs, 12px);
+  font-weight: 500;
+  color: var(--color-danger, #f5222d);
 }
 
 .error-list {
   margin: 0;
   padding: 0;
   list-style: none;
-  max-height: 240px;
+  max-height: 200px;
   overflow-y: auto;
 }
 
 .error-item {
   display: flex;
   gap: 12px;
-  padding: 6px 8px;
-  border-bottom: 1px dashed #f0f0f0;
-  font-size: 12px;
   align-items: baseline;
+  padding: 6px 8px;
+  border-bottom: 1px dashed var(--border-1, #f0f0f0);
+  font-size: var(--text-size-xs, 12px);
 }
 
 .error-time {
   flex-shrink: 0;
-  color: #999;
-  font-family: monospace;
+  color: var(--text-3, #999);
+  font-family: var(--font-mono, monospace);
 }
 
 .error-text {
-  color: #c0392b;
+  color: var(--color-danger, #f5222d);
   word-break: break-all;
 }
 
-.tool-detail-section h4 {
-  margin: 0 0 12px 0;
-  font-size: 14px;
-  color: #333;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #e8e8e8;
-}
-
-.info-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 16px;
-}
-
-.info-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.info-label {
-  font-size: 12px;
-  color: #999;
-}
-
-.info-value {
-  font-size: 14px;
-  font-weight: 500;
-  color: #333;
-}
-
-.info-value.enabled {
-  color: #52c41a;
-}
-
-.info-value.disabled {
-  color: #ff4d4f;
-}
-
 .code-block {
-  background: #f5f5f5;
-  border-radius: 6px;
+  max-height: 260px;
   padding: 12px;
-  overflow-x: auto;
+  overflow: auto;
+  border-radius: var(--radius-md, 6px);
+  background: var(--bg-muted, #f8fafc);
+  border: 1px solid var(--border-1, #f0f0f0);
 }
 
 .code-block pre {
   margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: #333;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-size-xs, 12px);
+  line-height: 1.6;
+  color: var(--text-2, #666);
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-1, #f0f0f0);
+}
+
+.btn-primary {
+  padding: 6px 16px;
+  border: 1px solid var(--color-primary, #1890ff);
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-primary, #1890ff);
+  color: #fff;
+  font-size: var(--text-size-sm, 13px);
+  cursor: pointer;
+  transition: background var(--transition-fast, 0.15s ease);
+}
+
+.btn-primary:hover {
+  background: var(--color-primary-hover, #40a9ff);
+  border-color: var(--color-primary-hover, #40a9ff);
+}
+
+.btn-ghost {
+  padding: 6px 16px;
+  border: 1px solid var(--border-3, #d9d9d9);
+  border-radius: var(--radius-md, 6px);
+  background: var(--bg-container, #fff);
+  color: var(--text-2, #666);
+  font-size: var(--text-size-sm, 13px);
+  cursor: pointer;
+  transition: background var(--transition-fast, 0.15s ease);
+}
+
+.btn-ghost:hover {
+  background: var(--bg-hover, #f5f5f5);
+}
+
+@media (max-width: 720px) {
+  .search-box {
+    width: 170px;
+  }
+
+  .info-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>

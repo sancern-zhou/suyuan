@@ -1196,6 +1196,9 @@ async def analyze_stream(
                                     "title": interaction_data.get("title") or "需要你的选择",
                                     "questions": interaction_data["questions"],
                                     "mode": request.mode,
+                                    # 持久化对象必须带 session_id：sync/restore 恢复
+                                    # 后前端提交回复依赖该字段（否则被静默拦截）。
+                                    "session_id": actual_session_id,
                                 }
                                 session.metadata["pending_interaction"] = interaction
                                 if not await session_manager.save_session_metadata(session):
@@ -1215,6 +1218,7 @@ async def analyze_stream(
                                     "actions": interaction_data.get("actions") or ["approve", "reject"],
                                     "promotion": interaction_data["promotion"],
                                     "pending_request": pending_request,
+                                    "session_id": actual_session_id,
                                 }
                                 session.metadata["workspace"] = interaction["promotion"]
                                 session.metadata["pending_interaction"] = interaction
@@ -1286,6 +1290,7 @@ async def analyze_stream(
                                         ),
                                         "actions": ["approve", "reject"],
                                         "promotion": promotion,
+                                        "session_id": actual_session_id,
                                     }
                                     session.metadata["workspace"] = promotion
                                     session.metadata["pending_interaction"] = interaction

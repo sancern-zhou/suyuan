@@ -63,6 +63,7 @@ class AgentRuntimeConfig:
     user_identifier: Optional[str] = None
     board_context: Optional[Dict[str, Any]] = None
     extra_tool_names: Optional[List[str]] = None
+    runtime_metadata: Optional[Dict[str, Any]] = None
 
 
 class AgentRuntime:
@@ -99,6 +100,15 @@ class AgentRuntime:
             enhance_with_history=self.config.enhance_with_history,
             board_context=self.config.board_context,
         )
+        # 子 Agent 的修复轮复用了会话但会新建 RunState：允许调用方显式传入
+        # 固定工作流进度，避免 acquire/normalize 重跑或 allow_completion=False 卡死。
+        initial_fixed_progress = (
+            (self.config.runtime_metadata or {}).get("fixed_workflow_progress")
+            if isinstance(self.config.runtime_metadata, dict)
+            else None
+        )
+        if isinstance(initial_fixed_progress, dict) and initial_fixed_progress:
+            state.fixed_workflow_progress = dict(initial_fixed_progress)
         self.executor.resource_run_id = state.run_id
 
         if self.config.cancel_event is not None:
@@ -337,6 +347,16 @@ class AgentRuntime:
                 self.writer.add_iteration(planner_result.thought, action, observation)
                 state.last_observation = observation
                 return
+            delegation_absorbed = False
+            async for delegation_event in self._absorb_background_delegations(
+                state, planner_result, action
+            ):
+                if delegation_event.get("type") == "_delegation_absorbed":
+                    delegation_absorbed = bool(delegation_event.get("absorbed"))
+                    continue
+                yield delegation_event
+            if delegation_absorbed:
+                return
             async for event in self._complete_response(state, planner_result, action.get("answer", "")):
                 yield event
             return
@@ -382,6 +402,13 @@ class AgentRuntime:
             self._enforce_custom_tool_terminal_rules(state, action, records)
             for event in tool_events:
                 yield event
+            submitted = self._submitted_result_from_records(records)
+            if submitted is not None:
+                async for event in self._complete_after_submit_result(
+                    state, planner_result, submitted
+                ):
+                    yield event
+                return
             interaction = self._interaction_from_observation(observation)
             if interaction is not None:
                 async for event in self._finish_for_interaction(
@@ -910,7 +937,12 @@ class AgentRuntime:
         workflow_definition = get_mode_workflow(state.mode)
         if workflow_definition:
             phase_prompt = render_phase_prompt(
-                workflow_definition, state.fixed_workflow_progress
+                workflow_definition,
+                state.fixed_workflow_progress,
+                has_submit_result=(
+                    isinstance(getattr(self.executor, "tool_registry", None), dict)
+                    and "submit_result" in self.executor.tool_registry
+                ),
             )
             context_result["system_prompt"] = (
                 f"{context_result.get('system_prompt', '').rstrip()}\n\n{phase_prompt}"
@@ -1273,6 +1305,94 @@ class AgentRuntime:
                 definition, state.fixed_workflow_progress, records
             )
 
+    async def _absorb_background_delegations(
+        self,
+        state: RunState,
+        planner_result: PlannerResult,
+        action: Dict[str, Any],
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """交付边界等待本会话后台委派完成，结果作为观察注入并继续循环。
+
+        助手模式后台委派（run_in_background=true）受理后回合常以纯文本
+        结束，而委派完成没有任何回灌通路，用户将永远等不到结论。这里在
+        完成边界等待本会话委派（可配置超时），把结果原文作为工具观察回
+        灌，交由下一轮 planner 自然续写；超时仍未完成的放行交付，结果
+        仍可经 manage_assistant_runs 查询。
+
+        yield 两个 delegation_status 事件（running/completed）供前端状态
+        卡展示，末尾以 _delegation_absorbed 事件携带是否注入的结论。
+        """
+        if self.config.runtime_mode != "assistant":
+            return
+        from app.social.assistant_runs import (
+            AssistantRunService,
+            background_runs_view,
+        )
+        from config.settings import settings
+
+        service = AssistantRunService()
+        if service.pending_background_count(state.session_id) <= 0:
+            return
+
+        def _runs_view():
+            return background_runs_view(state.session_id)
+
+        yield {
+            "type": "delegation_status",
+            "data": {"phase": "running", "runs": _runs_view(), "session_id": state.session_id},
+        }
+        results, still_running = await service.wait_for_session_runs(
+            state.session_id, float(settings.assistant_delegation_wait_seconds)
+        )
+        if not results:
+            yield {
+                "type": "delegation_status",
+                "data": {
+                    "phase": "released",
+                    "runs": _runs_view(),
+                    "session_id": state.session_id,
+                },
+            }
+            yield {"type": "_delegation_absorbed", "absorbed": False}
+            return
+        for item in results:
+            raw = item.get("result")
+            serialized = (
+                json.dumps(raw, ensure_ascii=False, default=str) if raw is not None else ""
+            )
+            if len(serialized) > 20000:
+                item["result"] = {
+                    "content": serialized[:20000],
+                    "total_chars": len(serialized),
+                    "truncated": True,
+                }
+        statuses = [str(item.get("status")) for item in results]
+        observation = {
+            "success": all(status == "succeeded" for status in statuses),
+            "delegation_results": results,
+            "summary": "后台委派已返回 {} 项（{}）{}".format(
+                len(results),
+                "/".join(statuses),
+                f"；仍有 {still_running} 项在运行" if still_running else "",
+            ),
+        }
+        self._ensure_user_message_written(state)
+        self.writer.add_iteration(planner_result.thought, action, observation)
+        state.last_observation = observation
+        yield {
+            "type": "delegation_status",
+            "data": {
+                "phase": "completed",
+                "runs": [
+                    {key: item.get(key) for key in ("run_id", "kind", "status", "goal", "target_mode")}
+                    for item in results
+                ],
+                "still_running": still_running,
+                "session_id": state.session_id,
+            },
+        }
+        yield {"type": "_delegation_absorbed", "absorbed": True}
+
     def _tool_names_to_suppress(self, state: RunState) -> set[str]:
         """Hide housekeeping tools after terminal/no-progress state updates."""
         suppressed = set(state.suppress_tool_names_next_turn)
@@ -1389,6 +1509,39 @@ class AgentRuntime:
         partial.pop_events.append(self.events.thought(state, partial.thought))
         return partial
 
+    @staticmethod
+    def _submitted_result_from_records(records: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """本轮是否成功调用了 submit_result；是则返回结构化信封。
+
+        返回 None 表示本轮没有交付调用；返回 {} 表示已提交但工具结果未携带信封
+        （仍应视为终止动作，避免再烧一轮纯文本）。
+        """
+        for record in records:
+            if str(record.get("tool_name") or "") != "submit_result":
+                continue
+            result = record.get("result")
+            if isinstance(result, dict) and result.get("success") is False:
+                continue
+            data = result.get("data") if isinstance(result, dict) else None
+            submitted = data.get("submitted_result") if isinstance(data, dict) else None
+            return submitted if isinstance(submitted, dict) else {}
+        return None
+
+    async def _complete_after_submit_result(
+        self,
+        state: RunState,
+        planner_result: PlannerResult,
+        submitted: Dict[str, Any],
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """submit_result 是交付边界：提交成功即结束本轮，不再要求额外一轮纯文本。"""
+        answer = (
+            json.dumps(submitted, ensure_ascii=False)
+            if submitted
+            else "结构化结果已提交"
+        )
+        async for event in self._complete_response(state, planner_result, answer):
+            yield event
+
     async def _handle_streamed_tools(
         self,
         state: RunState,
@@ -1411,6 +1564,14 @@ class AgentRuntime:
         self.writer.add_iteration(planner_result.thought, action, observation)
         self._observe_fixed_workflow(state, records)
         self._enforce_custom_tool_terminal_rules(state, action, records)
+
+        submitted = self._submitted_result_from_records(records)
+        if submitted is not None:
+            async for event in self._complete_after_submit_result(
+                state, planner_result, submitted
+            ):
+                yield event
+            return
 
         interaction = self._interaction_from_observation(observation)
         if interaction is not None:

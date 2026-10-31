@@ -45,6 +45,28 @@ def test_query_prompt_prioritizes_echarts_with_business_chart_support():
     assert "常规趋势、比较、分布图优先使用 ECharts" in prompt
 
 
+def test_query_prompt_forbids_manual_aggregation_of_monitoring_data():
+    prompt = build_query_prompt([])
+    assert "禁止对空气监测数据做手动聚合计算" in prompt
+    assert "不得用小时数据聚合出月度/年度统计" in prompt
+    assert "不得用站点数据聚合出区县/城市统计" in prompt
+
+
+def test_query_sub_mode_prompts_forbid_manual_aggregation_of_monitoring_data():
+    from app.agent.prompts.query_data_prompt import (
+        build_query_monitoring_city_prompt,
+        build_query_monitoring_prompt,
+        build_query_monitoring_station_prompt,
+    )
+
+    for prompt in (
+        build_query_monitoring_prompt([]),
+        build_query_monitoring_station_prompt([]),
+        build_query_monitoring_city_prompt([]),
+    ):
+        assert "禁止对空气监测数据做手动聚合计算" in prompt
+
+
 def test_jiangxi_query_system_prompt_uses_exact_project_override(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "jiangxi")
 
