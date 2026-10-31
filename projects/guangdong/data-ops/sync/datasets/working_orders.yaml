@@ -75,7 +75,7 @@ guide: working_orders（一行 = 一张运维工单，全类型含作废单）�
   Year=年维护/AsNeed=按需)；时间 create_time/update_time/finish_time/plan_finish_time/refreshed_at；
   金额 total_expense；指标辅助 order_overtime/total_overtime(超时标记，源系统原文，跨类型超期统计 建议用 mart_work_order_analysis.is_overdue)。按站点名称关联
   dim_station（station_id = dim_station.station_id 的文本形式）。工单量统计必须按 order_status 过滤（含
-  Invalid）。 order_type 字典（源 WFL_WORKFLOW 实测，筛选/分组时直接用代码值）：Check=运维单(例行维护)、 Fault=故障单、SupCheck=组分网巡检单、SupSECCheck=组分网现场检查单、SECCheckCnemc=计划内现场检查、
+  Invalid）。 order_type 字典（源 WFL_WORKFLOW 实测，筛选/分组时直接用代码值）：Check=运维单(例行维护)、 Fault=故障单、SupFault=组分网故障单、SupCheck=组分网巡检单、SupSECCheck=组分网现场检查单、SECCheckCnemc=计划内现场检查、
   QCBlackOut=自动质控报告工单、WorkRectify=运维工作整改单、SupWorkRectify=组分网运维工作整改单、 StationBlackOut=临时停运申请、SupPowerFailure=组分网停运工单、Results=成效审核工单、
   SupAchievement=组分网绩效审核工单、Performance=绩效审核工单(旧版)、Performance2026=绩效审核工单 (2026版)、SECFlightCheck=飞行检查工单、SECCheck=现场检查单、SECOutsidePlan=计划外现场检查、
   SupDeviceCalibrate=组分网设备校准单、DeviceCalibration=设备校准单、Inspection=巡检单、 GreenHouseCheck=温室巡检单(日)、PlanChangeMT=运维计划变更申请单、PlanChangeSC=现场计划变更申请单、
