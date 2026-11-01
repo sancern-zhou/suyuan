@@ -18,6 +18,9 @@ import structlog
 
 from app.scheduled_tasks.event_delivery import EventTaskDelivery
 from app.scheduled_tasks.event_output import BroadcastPayload, EventTaskOutput
+from app.scenarios.xuchang_station_deviation.wechat_push_queue import (
+    enqueue_station_alert_wechat_message,
+)
 from app.utils.path_config import resolve_agent_path
 
 logger = structlog.get_logger()
@@ -591,6 +594,14 @@ async def run_station_alert_workflow(
             station_id=package.get("station_id"),
         )
     media = await asyncio.to_thread(_collect_media, package)
+
+    # 微信群 RPA 推送：文案定稿即入队，先于现有投递；失败不影响 App/GeTui 主流程
+    try:
+        enqueued = enqueue_station_alert_wechat_message(package, message)
+        if enqueued:
+            logger.info("xuchang_wechat_push_enqueued", message_id=enqueued["id"])
+    except Exception:
+        logger.warning("xuchang_wechat_push_enqueue_failed", exc_info=True)
 
     output = EventTaskOutput(
         success=True,

@@ -194,6 +194,10 @@ def test_run_station_alert_workflow_delivers_composed_notice(tmp_path, monkeypat
         "app.scenarios.xuchang_station_deviation.alert_notification.EventTaskDelivery",
         _FakeDelivery,
     )
+    monkeypatch.setattr(
+        "app.scenarios.xuchang_station_deviation.wechat_push_queue.get_data_registry",
+        lambda: tmp_path,
+    )
 
     async def _fake_chat(messages, **kwargs):
         assert messages[0]["role"] == "user"
@@ -223,6 +227,13 @@ def test_run_station_alert_workflow_delivers_composed_notice(tmp_path, monkeypat
     assert delivered["media"] == [str(chart)]
     assert "投递成功1个" in result["summary"]
     assert result["tool_call_details"]["media_count"] == 1
+
+    # 文案定稿后同步入队微信群推送队列
+    from app.scenarios.xuchang_station_deviation import wechat_push_queue
+
+    pending = wechat_push_queue.list_pending_messages(root=tmp_path)
+    assert len(pending) == 1
+    assert pending[0]["text"] == "LLM 生成的站点告警通报"
 
 
 def test_run_station_alert_workflow_requires_evidence_path():

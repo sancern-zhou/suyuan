@@ -231,6 +231,21 @@ class Settings(BaseSettings):
             "空=禁用（默认）。路由层仍需复核同一令牌"
         ),
     )
+    xuchang_wechat_push_api_prefix: str = Field(
+        default="",
+        description=(
+            "部署级机器令牌放行的 API 前缀（如 /api/xuchang-wechat-push）；"
+            "与 xuchang_wechat_push_token 成对配置，空=禁用（默认）"
+        ),
+    )
+    xuchang_wechat_push_token: str = Field(
+        default="",
+        description=(
+            "静态机器令牌：非空时允许携带 Authorization: Bearer 的 GET/POST 免"
+            "网关登录访问 xuchang_wechat_push_api_prefix 下的接口（微信群 RPA "
+            "推送 agent 取消息/回执）；空=禁用（默认）。路由层仍需复核同一令牌"
+        ),
+    )
     auth_docs_public: bool = Field(
         default=False,
         description="Allow anonymous Swagger/OpenAPI access",
