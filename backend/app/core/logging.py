@@ -31,6 +31,12 @@ def configure_logging() -> None:
             exception_formatter=structlog.dev.plain_traceback,
         )
 
+    def add_process(logger, method_name, event_dict):
+        # 多进程部署（uvicorn --workers N）共享同一日志文件，PID 是区分
+        # 各 worker 事件的唯一线索；放在时间戳之后便于按进程切分日志。
+        event_dict["process"] = os.getpid()
+        return event_dict
+
     structlog.configure(
         processors=[
             structlog.stdlib.filter_by_level,
@@ -38,6 +44,7 @@ def configure_logging() -> None:
             structlog.stdlib.add_log_level,
             structlog.stdlib.PositionalArgumentsFormatter(),
             structlog.processors.TimeStamper(fmt="iso"),
+            add_process,
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
             renderer,

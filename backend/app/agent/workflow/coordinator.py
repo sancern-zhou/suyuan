@@ -242,6 +242,9 @@ class WorkflowCoordinator:
         self.node_input_gaps: Dict[str, List[Dict[str, Any]]] = {}
         self.node_contract_errors: Dict[str, List[Dict[str, Any]]] = {}
         self.node_retryable: Dict[str, bool] = {}
+        # 字段级结构化校验错误留档：节点因结果协议校验失败时保存明细，
+        # 重试上下文带给子 Agent 自纠（摘要句只有"未通过"，修不了字段）。
+        self.node_validation_errors: Dict[str, List[Dict[str, Any]]] = {}
         # 用量遥测（对齐 ZCode "Usage, not budget"）：节点级 token 统计 + 运行级
         # 累计；只记账不设上限，预算仍由轮次/超时承担。失败策略留档供审计。
         self.node_usage: Dict[str, Dict[str, Any]] = {}
@@ -773,6 +776,7 @@ class WorkflowCoordinator:
             retry_context = {
                 "session_id": self.node_sessions.get(task_id),
                 "error": previous_error,
+                "validation_errors": self.node_validation_errors.get(task_id) or [],
                 "progress": self.node_progress.get(task_id),
                 "findings": (self.node_findings.get(task_id) or [])[-10:],
             }
@@ -836,6 +840,15 @@ class WorkflowCoordinator:
             # 都有最低限度的发现记录（成功与失败路径都做）。
             self._absorb_envelope_findings(task_id, result if isinstance(result, Mapping) else None)
             if self._result_failed(result):
+                # 结构化协议校验失败的明细先留档：摘要句只有"未通过结构化
+                # 协议校验"，重试上下文必须带上字段级错误，子 Agent 才有
+                # 办法逐项修正而不是盲跑重试。
+                data = result.get("data") if isinstance(result, Mapping) else None
+                validation_errors = data.get("validation_errors") if isinstance(data, Mapping) else None
+                if isinstance(validation_errors, list) and validation_errors:
+                    self.node_validation_errors[task_id] = [
+                        item for item in validation_errors if isinstance(item, Mapping)
+                    ][:20]
                 raise RuntimeError(self._result_error(result))
             if node.output_contract is not None:
                 warnings = check_resource_contracts([node.output_contract], result_handles(task_id, result))
@@ -854,11 +867,23 @@ class WorkflowCoordinator:
                 expected_dependencies=node.dependencies,
                 require_envelope=bool(node.payload.get("require_lineage")),
             )
-            if lineage_errors:
+            if lineage_errors and node.payload.get("require_lineage"):
+                # 显式声明以血缘为消费通道的节点：血缘违规仍是失败。
                 self.node_results.pop(task_id, None)
                 raise RuntimeError(f"node lineage validation failed: {lineage_errors}")
+            if lineage_errors:
+                # 血缘是记账簿不是交付物：下游资源由 resource_contract 凭实际
+                # 文件核验，不依赖血缘簿。簿记异常降级为警告事件，不废掉
+                # 刚跑完的节点（缓存复用路径同语义：警告后跳过复用）。
+                self._journal_event(
+                    "node.lineage_warning",
+                    task_id=task_id,
+                    attempt=node_run.attempt,
+                    violations=lineage_errors[:10],
+                )
             self.node_lineage[task_id] = lineage
             self.node_errors.pop(task_id, None)
+            self.node_validation_errors.pop(task_id, None)
             if not self.node_contract_errors.get(task_id):
                 self.node_contract_errors.pop(task_id, None)
             self.node_retryable.pop(task_id, None)

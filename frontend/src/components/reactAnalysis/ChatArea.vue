@@ -213,6 +213,7 @@
       ref="inputBoxRef"
       v-model="inputValue"
       :pending-steering-inputs="pendingSteeringInputs"
+      :background-runs="backgroundDelegation?.runs || []"
       :session-id="sessionId"
       :disabled="inputDisabled || readOnly"
       :is-analyzing="isAnalyzing"
