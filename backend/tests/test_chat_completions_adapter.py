@@ -503,3 +503,80 @@ def test_stream_adapter_raises_when_tool_call_arguments_remain_malformed_at_fini
 
     assert exc_info.value.tool_name == "create_business_chart"
     assert exc_info.value.tool_call_id == "call_bad"
+
+
+def _feed_single_tool_call(adapter, *, name: str, arguments: str) -> None:
+    adapter.feed_chunk(
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_salvage",
+                                "type": "function",
+                                "function": {"name": name, "arguments": arguments},
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+    )
+
+
+def test_stream_adapter_salvages_raw_control_chars_in_tool_arguments():
+    """字符串字面量内的裸换行不再报废整轮流式响应（r3 版 DAG 编排事故类）。
+
+    模型流式输出超长工具参数时偶尔漏转义换行；JSON 源文本中裸控制字符
+    任何位置都非法，替换为空格后 token 间空白语义不变、字符串内容轻微
+    改写——两者都优于整次调用报废。
+    """
+    adapter = ChatCompletionsStreamAdapter(model="glm-4.7")
+    raw = '{"workflow": {"workflow_id": "r4", "nodes": [' \
+          '{"task_id": "a", "goal": "第一行\n第二行"}]}, "max_concurrency": 4}'
+    assert "\n" in raw  # 裸换行确实在参数串里
+
+    _feed_single_tool_call(adapter, name="run_agent_workflow", arguments=raw)
+    events = adapter.finish()
+
+    tool_use = [
+        event for event in events
+        if event.get("type") == "content_block_start"
+        and event["data"]["block"].get("type") == "tool_use"
+    ]
+    assert tool_use, "抢救成功必须产出 tool_use 块"
+    parsed = tool_use[0]["data"]["block"]["input"]
+    assert parsed["workflow"]["workflow_id"] == "r4"
+    assert parsed["workflow"]["nodes"][0]["goal"] == "第一行 第二行"
+
+
+def test_stream_adapter_keeps_escaped_newlines_untouched():
+    """合法的 \\n 转义序列不参与抢救，内容保持原样。"""
+    adapter = ChatCompletionsStreamAdapter(model="glm-4.7")
+    raw = '{"goal": "第一行\\n第二行"}'
+
+    _feed_single_tool_call(adapter, name="run_agent_workflow", arguments=raw)
+    events = adapter.finish()
+
+    tool_use = [
+        event for event in events
+        if event.get("type") == "content_block_start"
+        and event["data"]["block"].get("type") == "tool_use"
+    ]
+    assert tool_use[0]["data"]["block"]["input"]["goal"] == "第一行\n第二行"
+
+
+def test_tool_call_arguments_error_message_is_truncated():
+    """畸形参数全文不再整体进报错信息（曾把上万字 DAG 全文打进日志与反馈）。"""
+    raw = '{"goal": "' + "超长" * 5000 + '"'
+
+    with pytest.raises(ToolCallArgumentsError) as exc_info:
+        from app.services.chat_completions_adapter import _parse_arguments
+
+        _parse_arguments(raw, tool_name="run_agent_workflow")
+
+    assert len(str(exc_info.value)) < 2500
+    assert len(exc_info.value.raw) > 2000  # raw 属性保留全文供调试

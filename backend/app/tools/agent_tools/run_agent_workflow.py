@@ -107,7 +107,9 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "提交一个有向无环 Agent 工作流（DAG）：节点可并行执行，只有依赖节点成功后才会执行下游节点；"
     "适合问数、专家研判、多源数据分析和分阶段报告任务。编排由你自主决定：按分析问题规划节点数量、"
     "每个节点的 target_mode 与 goal；无依赖节点并行，需要上游产物或结论的节点用 dependencies 表达。"
-    "每个节点必须有唯一 task_id、target_mode、goal，goal 写清时间范围、区域、指标口径和预期输出。"
+    "每个节点必须有唯一 task_id、target_mode、goal。goal 只写本任务的特定事实：时间范围、区域、指标口径、预期输出与差异要求；"
+    "全 DAG 通用的规范标准与历史教训不逐节点复写——统一成图标准子 Agent 作图工具手册已内置，"
+    "统一口径写进 result_schema 字段描述，上一轮失败信息由重试上下文携带，不靠 goal 复读。"
     "节点可用可选 phase 字段打用户可读的阶段名（如'取数与质检'/'气象分箱研判'/'整合成稿'），"
     "同阶段节点共用一个名字，面板按阶段分组展示故事线。\n"
     + _orchestration_skill_hint()
@@ -772,11 +774,24 @@ class RunAgentWorkflowTool(LLMTool):
                 if retry_context:
                     retry_session_id = str(retry_context.get("session_id") or "") or None
                     previous_error = str(retry_context.get("error") or "")[:300]
-                    if retry_session_id or previous_error:
+                    retry_validation_errors = [
+                        item
+                        for item in (retry_context.get("validation_errors") or [])
+                        if isinstance(item, Mapping)
+                    ][:20]
+                    if retry_session_id or previous_error or retry_validation_errors:
                         context_text += (
                             "\n## 重试说明\n"
                             f"上一轮执行未通过结果校验：{previous_error or '未交付结构化结果'}。\n"
                             "该会话保留了上轮已完成的工作，请在其基础上修正并交付，不要从零重做。\n"
+                        )
+                    if retry_validation_errors:
+                        # 字段级校验明细：只给"未通过"摘要时子 Agent 无法定位
+                        # 修复点，只能盲跑重试；明细与同会话修复轮同源同格式。
+                        context_text += (
+                            "上一轮结构化校验失败明细（逐项修正后重新交付）：\n"
+                            + json.dumps(retry_validation_errors, ensure_ascii=False)
+                            + "\n"
                         )
                     progress = retry_context.get("progress") or {}
                     delivered = progress.get("delivered_files") or []
