@@ -58,6 +58,7 @@ def build_delegation_result_card(item: dict, serialized: str) -> dict:
     raw = item.get("result")
     summary = ""
     artifacts: list = []
+    data_gaps: list = []
     if isinstance(raw, dict):
         data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
         envelope = (
@@ -66,6 +67,12 @@ def build_delegation_result_card(item: dict, serialized: str) -> dict:
             else {}
         )
         summary = str(envelope.get("summary") or raw.get("summary") or "").strip()[:600]
+        # 缺口声明随卡透出（C4）：父模型只看卡时也必须看到缺口，不得当作零。
+        outputs = (
+            envelope.get("outputs") if isinstance(envelope.get("outputs"), dict) else {}
+        )
+        for gap in (outputs.get("data_gaps") or [])[:5]:
+            data_gaps.append(str(gap)[:120])
         for path in (data.get("file_paths") or [])[:10]:
             artifacts.append({"kind": "file", "path": str(path)})
         for url in (data.get("chart_urls") or [])[:10]:
@@ -84,6 +91,7 @@ def build_delegation_result_card(item: dict, serialized: str) -> dict:
         "total_chars": len(serialized),
         "truncated": True,
         "artifacts": artifacts,
+        "data_gaps": data_gaps,
         "full_result_pointer": (
             f"manage_assistant_runs action=result run_id={item.get('run_id')}"
         ),

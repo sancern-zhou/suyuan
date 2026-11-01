@@ -165,6 +165,11 @@ class Settings(BaseSettings):
         le=20000,
         description="交付边界吸收时单条委派结果的内联上限字符数",
     )
+    # 阶段 C 交付验收清单：off 跳过 / observe 只记录 would_reject / enforce 并入校验触发修复轮。
+    delivery_checklist_mode: Literal["off", "observe", "enforce"] = Field(
+        default="observe",
+        description="交付验收清单执行模式；observe 期按真实案例修订清单内容后再切 enforce",
+    )
 
     @property
     def cors_origins_list(self) -> List[str]:
