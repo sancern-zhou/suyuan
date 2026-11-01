@@ -1,5 +1,7 @@
 """submit_result 结构化交付：工具与事件提取。"""
 
+import json
+
 import pytest
 
 from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
@@ -123,3 +125,22 @@ def test_submit_result_injection_follows_child_registry_assignment():
     assert src.index("child_registry = capability_policy.filter_registry") < src.index(
         'child_registry["submit_result"] = submit_tool'
     )
+
+
+def test_validate_structured_result_checks_deliverables_against_real_files(tmp_path):
+    """交付信封的 deliverables 与真实文件机械核对，违规进同一校验错误通道（修复轮喂回）。"""
+    good = tmp_path / "air.csv"
+    good.write_text("time,pm25\n2026-10-01,42\n", encoding="utf-8")
+    envelope = json.dumps({
+        "status": "completed", "findings": [], "evidence": [],
+        "deliverables": [{"path": str(good), "format": "csv", "fields": ["pm25"]}],
+    }, ensure_ascii=False)
+    _, errors = CallSubAgentTool._validate_structured_result(envelope, RESULT_SCHEMA)
+    assert errors == []
+
+    bad = json.dumps({
+        "status": "completed", "findings": [], "evidence": [],
+        "deliverables": [{"path": str(tmp_path / "absent.csv"), "format": "csv"}],
+    }, ensure_ascii=False)
+    _, errors = CallSubAgentTool._validate_structured_result(bad, RESULT_SCHEMA)
+    assert {"path": "$.deliverables[0].path", "expected": "existing file", "got": "not found"} in errors

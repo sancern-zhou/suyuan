@@ -15,6 +15,7 @@ import structlog
 from app.agent.workflow.protocol import strip_embedded_json_blocks
 from app.agent.workflow.resource_handoff import result_resource_declarations
 from app.agent.workflow.target_mode_contract import build_target_mode_contract, target_mode_values
+from app.agent.workflow import route_decisions
 from app.agent.workflow.coordinator import WorkflowCoordinator, WorkflowNodeSpec
 from app.agent.workflow.delegation import delegation_error
 from app.agent.workflow.quota_resume import schedule_quota_resume
@@ -24,12 +25,14 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 logger = structlog.get_logger(__name__)
 
+# 资源契约只暴露交接时可机械核对的约束：kind/format/fields（后缀、CSV 表头、小型 JSON 键）。
+# granularity/time_range/units/scope 没有元数据写入通道，声明必然在交接校验时失败——
+# 解析期会直接拒绝（resource_contract._CONSTRAINTS_WITHOUT_PRODUCER），这里从生成端就不暴露。
+# format 必须是具体文件格式，"file" 是 kind 的语义。
 RESOURCE_CONTRACT_PROPERTIES = {
-    "kind": {"type": "string"}, "format": {"type": "string"},
-    "fields": {"type": "array", "items": {"type": "string"}},
-    "units": {"type": "object", "additionalProperties": {"type": "string"}},
-    "granularity": {"type": "string"}, "scope": {"type": "object"},
-    "time_range": {"type": "object", "properties": {"start": {"type": "string"}, "end": {"type": "string"}}, "required": ["start", "end"]},
+    "kind": {"type": "string", "enum": ["file", "data"], "description": "file=落盘文件，data=结构化数据文件"},
+    "format": {"type": "string", "description": "具体文件格式（csv/json/xlsx/qmd 等），禁止填 file"},
+    "fields": {"type": "array", "items": {"type": "string"}, "description": "必须包含的字段名，按 CSV 表头/JSON 键核对"},
     "required": {"type": "boolean", "description": "默认 true；false 表示不兼容时允许缺少此资源，但仍明确交付缺口。"},
 }
 
@@ -104,7 +107,9 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "提交一个有向无环 Agent 工作流（DAG）：节点可并行执行，只有依赖节点成功后才会执行下游节点；"
     "适合问数、专家研判、多源数据分析和分阶段报告任务。编排由你自主决定：按分析问题规划节点数量、"
     "每个节点的 target_mode 与 goal；无依赖节点并行，需要上游产物或结论的节点用 dependencies 表达。"
-    "每个节点必须有唯一 task_id、target_mode、goal，goal 写清时间范围、区域、指标口径和预期输出。"
+    "每个节点必须有唯一 task_id、target_mode、goal。goal 只写本任务的特定事实：时间范围、区域、指标口径、预期输出与差异要求；"
+    "全 DAG 通用的规范标准与历史教训不逐节点复写——统一成图标准子 Agent 作图工具手册已内置，"
+    "统一口径写进 result_schema 字段描述，上一轮失败信息由重试上下文携带，不靠 goal 复读。"
     "节点可用可选 phase 字段打用户可读的阶段名（如'取数与质检'/'气象分箱研判'/'整合成稿'），"
     "同阶段节点共用一个名字，面板按阶段分组展示故事线。\n"
     + _orchestration_skill_hint()
@@ -119,12 +124,16 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "专家子节点（expert_meteorology/expert_analysis）必须提供 task_contract（protocol_version=workflow.v1、"
     "task_type=expert_analysis、question、decision_context、scope、required_evidence、deliverables）和 "
     "result_schema（要求 status、findings、evidence、uncertainties、data_gaps，finding 通过 evidence id 回溯证据）。"
+    "需要落盘文件的节点在 result_schema 中声明 deliverables 数组（{path,format,fields}：子 Agent 提交时回填真实路径，"
+    "运行时按实际文件核对存在性/格式/字段，不符会被退回修复轮重交）；口径与单位写进 goal 和字段 description（给子 Agent 读的人话）。"
     "首试给紧凑预算：重试自动续用子会话，迭代与超时各放宽 50%（迭代封顶 120、超时封顶 1 小时），"
     "因此首试预算不足不会直接失败。"
     "条件节点用 when 声明 source_task_id（必须是直接依赖）、path（上游结果的点分路径）、op、value；"
     "支持 all/any/not 组合；条件为假会跳过该分支，缺少比较证据会报告失败，不猜测真假。"
     "辅助节点显式 required=false；下游只有 dependency_policy=allow_partial 才能消费部分上游，"
     "收到 partial 时按 delivery.gaps 交付已有成果并说明缺口，不能把缺失数据当作零或默认重新取数。\n"
+    "资源契约（input_contracts/output_contract）只声明 kind/format/fields，format 用具体文件格式（csv/json），禁 'file'；"
+    "粒度、时间范围、单位不声明为契约。跨节点只传结论与文件路径，不内联大数据。\n"
     "工具返回每个节点的紧凑 result_envelope（status/summary/findings/evidence/data_gaps）与血缘清单，"
     "findings 中的数值可直接引用；各节点完整结果已落盘并在 full_results.path，"
     "assistant 通过 read_session_resource / manage_assistant_runs 读取，其他有文件权限的模式用 read_file 一次整读。"
@@ -417,13 +426,20 @@ class RunAgentWorkflowTool(LLMTool):
             function_schema={
                 "name": "run_agent_workflow",
                 "description": WORKFLOW_SCHEMA_DESCRIPTION,
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "run_in_background": {
-                            "type": "boolean",
-                            "description": "助手可转入后台执行并返回 run_id，之后用 manage_assistant_runs 查询、读结果或请求停止。默认等待本次结果。",
-                        },
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "describe_mode": {
+                                "type": "string",
+                                "description": (
+                                    "只读查询，不执行编排：传 'modes' 返回全部可委派子模式一行速查；"
+                                    "传具体模式名返回该模式完整契约（定位/能做/边界/产出/注意）。"
+                                ),
+                            },
+                            "run_in_background": {
+                                "type": "boolean",
+                                "description": "助手模式默认后台执行并返回 run_id，之后用 manage_assistant_runs 查询、读结果或请求停止；显式传 false 等待本次结果。其他模式传 true 转入进程内后台。",
+                            },
                         "workflow": {
                             "type": "object",
                             "description": (
@@ -527,7 +543,64 @@ class RunAgentWorkflowTool(LLMTool):
             version="1.0.0",
         )
 
+    @staticmethod
+    def _context_mode(context: Optional[Any]) -> str:
+        return str(
+            getattr(context, "runtime_mode", None)
+            or getattr(context, "manual_mode", None)
+            or getattr(getattr(context, "memory_manager", None), "mode", "")
+            or ""
+        )
+
+    def _record_route_decision(self, context: Optional[Any], kwargs: Mapping[str, Any]) -> None:
+        """顶层编排审计（阶段 A）：每次 run_agent_workflow 调用记一行，不按节点重复。
+
+        工作流节点经 call_sub_agent 执行时带 `_workflow_node` 标记，不会重复入账。
+        """
+        workflow = kwargs.get("workflow")
+        nodes = list(workflow.get("nodes") or []) if isinstance(workflow, Mapping) else []
+        target_modes = sorted(
+            {
+                str(node.get("target_mode"))
+                for node in nodes
+                if isinstance(node, Mapping) and node.get("target_mode")
+            }
+        )
+        runtime_metadata = (
+            dict(getattr(context, "runtime_metadata", {}) or {})
+            if context is not None
+            else {}
+        )
+        route_decisions.record_route_decision(
+            session_id=getattr(context, "session_id", None),
+            user_identifier=runtime_metadata.get("user_identifier"),
+            parent_mode=self._context_mode(context),
+            target_modes=target_modes,
+            reason_code=route_decisions.REASON_ASSISTANT_JUDGMENT,
+            reason_values={
+                "workflow_id": str(workflow.get("workflow_id") or "")[:120]
+                if isinstance(workflow, Mapping)
+                else "",
+                "node_count": len(nodes),
+                "extension": bool(kwargs.get("extension")),
+            },
+        )
+
     async def execute(self, context=None, **kwargs):
+        describe_arg = kwargs.get("describe_mode")
+        if isinstance(describe_arg, str) and describe_arg.strip():
+            from app.agent.workflow.target_mode_contract import describe_target_mode
+
+            contract_text = describe_target_mode(describe_arg)
+            return {
+                "status": "success",
+                "success": True,
+                "result": contract_text,
+                "data": {"describe_mode": describe_arg.strip()},
+                "metadata": {"schema_version": "workflow.v1", "generator": "run_agent_workflow"},
+                "summary": "子模式契约查询已返回",
+            }
+        self._record_route_decision(context, kwargs)
         if getattr(context, "runtime_mode", None) == "assistant":
             from app.social.assistant_runs import AssistantRunService
 
@@ -602,6 +675,21 @@ class RunAgentWorkflowTool(LLMTool):
                 return self._failure("补图的父模式必须与原工作流一致")
             boundary_error = delegation_error(runtime_mode, [str(node.get("target_mode") or "") for node in [*nodes, *added_nodes]])
             if boundary_error:
+                route_decisions.record_route_decision(
+                    session_id=getattr(context, "session_id", None),
+                    user_identifier=(
+                        dict(getattr(context, "runtime_metadata", {}) or {}).get("user_identifier")
+                        if context is not None
+                        else None
+                    ),
+                    parent_mode=runtime_mode,
+                    target_modes=[
+                        str(node.get("target_mode") or "")
+                        for node in [*nodes, *added_nodes]
+                    ],
+                    reason_code=route_decisions.REASON_BOUNDARY_REFUSED,
+                    reason_values={"error": str(boundary_error)[:300]},
+                )
                 return self._failure(boundary_error)
             if runtime_mode == "report":
                 disallowed_nodes = [
@@ -686,11 +774,24 @@ class RunAgentWorkflowTool(LLMTool):
                 if retry_context:
                     retry_session_id = str(retry_context.get("session_id") or "") or None
                     previous_error = str(retry_context.get("error") or "")[:300]
-                    if retry_session_id or previous_error:
+                    retry_validation_errors = [
+                        item
+                        for item in (retry_context.get("validation_errors") or [])
+                        if isinstance(item, Mapping)
+                    ][:20]
+                    if retry_session_id or previous_error or retry_validation_errors:
                         context_text += (
                             "\n## 重试说明\n"
                             f"上一轮执行未通过结果校验：{previous_error or '未交付结构化结果'}。\n"
                             "该会话保留了上轮已完成的工作，请在其基础上修正并交付，不要从零重做。\n"
+                        )
+                    if retry_validation_errors:
+                        # 字段级校验明细：只给"未通过"摘要时子 Agent 无法定位
+                        # 修复点，只能盲跑重试；明细与同会话修复轮同源同格式。
+                        context_text += (
+                            "上一轮结构化校验失败明细（逐项修正后重新交付）：\n"
+                            + json.dumps(retry_validation_errors, ensure_ascii=False)
+                            + "\n"
                         )
                     progress = retry_context.get("progress") or {}
                     delivered = progress.get("delivered_files") or []
@@ -726,6 +827,8 @@ class RunAgentWorkflowTool(LLMTool):
                     # 成本 ~1 分钟且保住全部已有工作，只要带 result_schema 就值得跑满 2 轮。
                     repair_attempts=2 if payload.get("result_schema") else max(0, min(node.max_attempts - 1, 2)),
                     _force_isolated_session=True,
+                    # 节点执行不记顶层路由审计（见 _record_route_decision）。
+                    _workflow_node=True,
                     _upstream_handles=upstream_handles,
                     **({"_input_contracts": list(node.input_contracts)} if node.input_contracts else {}),
                     _on_session_started=lambda child_session_id: coordinator.bind_node_session(

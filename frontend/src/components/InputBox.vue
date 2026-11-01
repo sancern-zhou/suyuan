@@ -141,6 +141,18 @@
           </div>
         </div>
 
+        <div v-if="directThroughRun" class="direct-through-indicator" role="status">
+          <span class="direct-through-text" :title="directThroughLabel">
+            将追加给运行中的任务：{{ directThroughLabel }}
+          </span>
+          <button
+            type="button"
+            class="direct-through-switch"
+            title="忽略运行中的任务，作为新任务发送"
+            @click="suppressDirectThrough"
+          >作为新任务</button>
+        </div>
+
         <textarea
           ref="textareaRef"
           v-model="localValue"
@@ -316,7 +328,7 @@
               :class="{ 'send-button': !isAnalyzing, 'steer-button': isAnalyzing }"
               @click="handleSend()"
               :disabled="actionButtonDisabled"
-              :title="isAnalyzing ? runningActionTitle : '发送 (Enter)'"
+              :title="sendActionTitle"
             >
               <svg v-if="!isAnalyzing" viewBox="0 0 24 24" class="send-icon">
                 <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor"/>
@@ -414,6 +426,10 @@ const props = defineProps({
     default: false
   },
   pendingSteeringInputs: {
+    type: Array,
+    default: () => []
+  },
+  backgroundRuns: {
     type: Array,
     default: () => []
   },
@@ -752,6 +768,36 @@ const contextUsageSummary = computed(() => {
   return `${formatContextTokens(usage.contextTokens)} / ${formatContextTokens(usage.contextWindow)} (${contextUsagePercent.value}%)`
 })
 const canSteerWhileRunning = computed(() => props.isAnalyzing && reactStore.currentMode === 'assistant')
+// 阶段 B 追问直通：非分析态且会话只有一个活跃子委派时，发送即转交给该任务。
+// 用户点"作为新任务"后对同一 run 抑制提示（按 run_id 记忆，新任务自动恢复）。
+const directThroughRun = computed(() => {
+  if (props.isAnalyzing || reactStore.currentMode !== 'assistant') return null
+  const runs = (props.backgroundRuns || []).filter(
+    run => run && run.run_id && run.kind === 'child' &&
+      (run.status === 'running' || !run.status)
+  )
+  if (runs.length !== 1) return null
+  const state = reactStore.currentState
+  if (state?.directThroughSuppressedRunId === runs[0].run_id) return null
+  return runs[0]
+})
+const suppressDirectThrough = () => {
+  const state = reactStore.currentState
+  if (state && directThroughRun.value) {
+    state.directThroughSuppressedRunId = directThroughRun.value.run_id
+  }
+}
+const directThroughLabel = computed(() => {
+  const run = directThroughRun.value
+  if (!run) return ''
+  const goal = String(run.goal || '').trim()
+  return goal ? goal.slice(0, 40) : (run.target_mode || '后台任务')
+})
+const sendActionTitle = computed(() => {
+  if (props.isAnalyzing) return runningActionTitle.value
+  if (directThroughRun.value) return '转交给运行中的任务 (Enter)'
+  return '发送 (Enter)'
+})
 const boardSyncStatus = computed(() => (
   reactStore.currentMode === 'board'
     ? reactStore.currentState?.board?.syncStatus || 'idle'
@@ -1639,6 +1685,40 @@ defineExpose({
     cursor: not-allowed;
     color: #999;
   }
+}
+
+.direct-through-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 6px 10px;
+  border: 1px solid rgba(40, 120, 255, 0.45);
+  border-radius: 8px;
+  background: rgba(40, 120, 255, 0.06);
+  font-size: 12px;
+}
+
+.direct-through-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.direct-through-switch {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: #2878ff;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.direct-through-switch:hover {
+  text-decoration: underline;
 }
 
 .pending-steering-indicator {

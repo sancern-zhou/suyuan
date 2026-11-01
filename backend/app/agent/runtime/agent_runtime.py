@@ -1330,9 +1330,10 @@ class AgentRuntime:
 
         助手模式后台委派（run_in_background=true）受理后回合常以纯文本
         结束，而委派完成没有任何回灌通路，用户将永远等不到结论。这里在
-        完成边界等待本会话委派（可配置超时），把结果原文作为工具观察回
-        灌，交由下一轮 planner 自然续写；超时仍未完成的放行交付，结果
-        仍可经 manage_assistant_runs 查询。
+        完成边界等待本会话委派（可配置超时），结果按内联/溢出策略注入
+        观察（小结果整体内联，大结果降为摘要卡+产物指针），交由下一轮
+        planner 自然续写；超时仍未完成的放行交付，结果仍可经
+        manage_assistant_runs 查询。
 
         yield 两个 delegation_status 事件（running/completed）供前端状态
         卡展示，末尾以 _delegation_absorbed 事件携带是否注入的结论。
@@ -1370,17 +1371,13 @@ class AgentRuntime:
             }
             yield {"type": "_delegation_absorbed", "absorbed": False}
             return
-        for item in results:
-            raw = item.get("result")
-            serialized = (
-                json.dumps(raw, ensure_ascii=False, default=str) if raw is not None else ""
-            )
-            if len(serialized) > 20000:
-                item["result"] = {
-                    "content": serialized[:20000],
-                    "total_chars": len(serialized),
-                    "truncated": True,
-                }
+        # 阶段 B 内联/溢出：小结果（≤阈值）整体内联，大结果降为摘要卡+产物
+        # 指针，防上下文膨胀；完整结果经 manage_assistant_runs action=result 按需读取。
+        from app.social.assistant_runs import apply_inline_or_spill
+
+        apply_inline_or_spill(
+            results, int(settings.assistant_delegation_inline_result_chars)
+        )
         statuses = [str(item.get("status")) for item in results]
         observation = {
             "success": all(status == "succeeded" for status in statuses),

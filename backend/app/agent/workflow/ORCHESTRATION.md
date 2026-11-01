@@ -85,7 +85,7 @@ partial 表示已有可交付成果，避免被通用工具错误处理误判为
 
 ## 输入与输出资源契约
 
-input_contracts 按直接依赖来源约束资源；output_contract 约束节点交付。每份契约必须由同一个资源满足，不能把不同文件的字段拼成虚构的完整数据集。例如：
+input_contracts 按直接依赖来源约束资源；output_contract 约束节点交付。契约只声明交接时可机械核对的约束（kind/format/fields）：format 必须是具体文件格式（csv/json/xlsx/qmd），"file" 是 kind 的语义；粒度、时间范围、单位与口径没有元数据写入通道，解析期直接拒绝声明——把它们写进节点 goal 与 result_schema 字段描述（模型可读），文件类要求用 result_schema 的 deliverables 数组承载。每份契约必须由同一个资源满足，不能把不同文件的字段拼成虚构的完整数据集。例如：
 
 ```json
 {
@@ -93,16 +93,14 @@ input_contracts 按直接依赖来源约束资源；output_contract 约束节点
     "source_task_id": "air",
     "kind": "data",
     "format": "csv",
-    "fields": ["time", "pm25"],
-    "units": {"pm25": "ug/m3"},
-    "granularity": "hour",
-    "time_range": {"start": "2026-10-01", "end": "2026-10-02"},
-    "scope": {"city": "xuchang"}
+    "fields": ["time", "pm25"]
   }]
 }
 ```
 
-文件存在性、格式和字段尽可能从实际文件确认：CSV 头最多读 64KiB；JSON 最多解析 2MiB，支持记录列表和 records/rows/data 包装。其他格式及大型 JSON 的字段依赖目录元数据，兼容现有查询和 Python 产物的 `metadata.data_shape.columns`。单位、粒度、时间覆盖和范围来自资源 `metadata.data_contract`，不根据预期契约生成元数据或自动换算。没有可信元数据时，显式要求的约束不能视为满足。
+文件存在性、格式和字段尽可能从实际文件确认：CSV 头最多读 64KiB；JSON 最多解析 2MiB，支持记录列表和 records/rows/data 包装。其他格式及大型 JSON 的字段依赖目录元数据，兼容现有查询和 Python 产物的 `metadata.data_shape.columns`。没有可信元数据时，显式要求的约束不能视为满足。
+
+子 Agent 在交付信封的 deliverables 数组回填真实产出文件（{path, format, fields}），提交时逐项机械核验：文件存在、后缀与 format 一致、fields 被文件实际包含（CSV 表头/小型 JSON 键）；违规进结构化交付的校验错误，由修复轮在原子会话内退回重交。核验通过的路径并入节点结果的 file_paths，下游 input_contracts（kind/format/fields）凭后缀与字段推断自然满足。
 
 调度前先校验句柄与文件；下游资源导入后再根据真实目录校验，失效资源不能以请求句柄冒充导入成功。元数据和上游来源信息在导入及父节点资源发布时保留。必需契约失败不会启动下游模型或自动同条件重试，违反项写入 node_contract_errors；契约 required=false 时允许继续但必须报告缺口，最终为 partial。
 
