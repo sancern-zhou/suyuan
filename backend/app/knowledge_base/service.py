@@ -192,7 +192,7 @@ class KnowledgeBaseService:
             else self.vector_store
         )
         await scoped_store.create_collection(collection_name, enable_hybrid=True)
-        if not scoped_store._collection_supports_hybrid(collection_name):
+        if not await asyncio.to_thread(scoped_store._collection_supports_hybrid, collection_name):
             raise RuntimeError(f"Failed to create hybrid collection: {collection_name}")
 
         # 创建数据库记录
