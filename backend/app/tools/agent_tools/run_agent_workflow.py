@@ -24,12 +24,14 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 logger = structlog.get_logger(__name__)
 
+# 资源契约只暴露交接时可机械核对的约束：kind/format/fields（后缀、CSV 表头、小型 JSON 键）。
+# granularity/time_range/units/scope 没有元数据写入通道，声明必然在交接校验时失败——
+# 解析期会直接拒绝（resource_contract._CONSTRAINTS_WITHOUT_PRODUCER），这里从生成端就不暴露。
+# format 必须是具体文件格式，"file" 是 kind 的语义。
 RESOURCE_CONTRACT_PROPERTIES = {
-    "kind": {"type": "string"}, "format": {"type": "string"},
-    "fields": {"type": "array", "items": {"type": "string"}},
-    "units": {"type": "object", "additionalProperties": {"type": "string"}},
-    "granularity": {"type": "string"}, "scope": {"type": "object"},
-    "time_range": {"type": "object", "properties": {"start": {"type": "string"}, "end": {"type": "string"}}, "required": ["start", "end"]},
+    "kind": {"type": "string", "enum": ["file", "data"], "description": "file=落盘文件，data=结构化数据文件"},
+    "format": {"type": "string", "description": "具体文件格式（csv/json/xlsx/qmd 等），禁止填 file"},
+    "fields": {"type": "array", "items": {"type": "string"}, "description": "必须包含的字段名，按 CSV 表头/JSON 键核对"},
     "required": {"type": "boolean", "description": "默认 true；false 表示不兼容时允许缺少此资源，但仍明确交付缺口。"},
 }
 
@@ -119,12 +121,16 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     "专家子节点（expert_meteorology/expert_analysis）必须提供 task_contract（protocol_version=workflow.v1、"
     "task_type=expert_analysis、question、decision_context、scope、required_evidence、deliverables）和 "
     "result_schema（要求 status、findings、evidence、uncertainties、data_gaps，finding 通过 evidence id 回溯证据）。"
+    "需要落盘文件的节点在 result_schema 中声明 deliverables 数组（{path,format,fields}：子 Agent 提交时回填真实路径，"
+    "运行时按实际文件核对存在性/格式/字段，不符会被退回修复轮重交）；口径与单位写进 goal 和字段 description（给子 Agent 读的人话）。"
     "首试给紧凑预算：重试自动续用子会话，迭代与超时各放宽 50%（迭代封顶 120、超时封顶 1 小时），"
     "因此首试预算不足不会直接失败。"
     "条件节点用 when 声明 source_task_id（必须是直接依赖）、path（上游结果的点分路径）、op、value；"
     "支持 all/any/not 组合；条件为假会跳过该分支，缺少比较证据会报告失败，不猜测真假。"
     "辅助节点显式 required=false；下游只有 dependency_policy=allow_partial 才能消费部分上游，"
     "收到 partial 时按 delivery.gaps 交付已有成果并说明缺口，不能把缺失数据当作零或默认重新取数。\n"
+    "资源契约（input_contracts/output_contract）只声明 kind/format/fields，format 用具体文件格式（csv/json），禁 'file'；"
+    "粒度、时间范围、单位不声明为契约。跨节点只传结论与文件路径，不内联大数据。\n"
     "工具返回每个节点的紧凑 result_envelope（status/summary/findings/evidence/data_gaps）与血缘清单，"
     "findings 中的数值可直接引用；各节点完整结果已落盘并在 full_results.path，"
     "assistant 通过 read_session_resource / manage_assistant_runs 读取，其他有文件权限的模式用 read_file 一次整读。"
