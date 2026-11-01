@@ -433,3 +433,117 @@ def test_coordinator_injects_completed_results_and_journal():
         assert started["payload"]["phase"] == "研判阶段"
 
     asyncio.run(run())
+
+
+def test_coordinator_retry_context_carries_field_level_validation_errors():
+    """结构化校验失败的重试必须携带字段级错误明细。
+
+    曾只传摘要句"…结果未通过结构化协议校验"，子 Agent 无从定位修复点，
+    只能盲跑重试直至预算耗尽（2026-11-01 report 版工作流三个节点两轮
+    全败即此模式）。
+    """
+
+    async def run():
+        retry_contexts = []
+
+        validation_failure = {
+            "status": "invalid_result",
+            "success": False,
+            "summary": "query_component结果未通过结构化协议校验",
+            "data": {
+                "validation_errors": [
+                    {"path": "$.findings", "expected": "array", "got": "missing"},
+                    {"path": "$.status", "expected": "string", "got": "number"},
+                ]
+            },
+        }
+
+        async def execute(node, dependencies, attempt, retry_context=None):
+            if attempt == 1:
+                return validation_failure
+            retry_contexts.append(dict(retry_context or {}))
+            return {"status": "success", "success": True, "data": {}}
+
+        coordinator = WorkflowCoordinator(
+            {"workflow_id": "retry-2", "nodes": [{"task_id": "vocs-data", "max_attempts": 2}]},
+            executor=execute,
+        )
+        result = await coordinator.run()
+
+        assert result["status"] == "succeeded"
+        assert len(retry_contexts) == 1
+        assert retry_contexts[0]["validation_errors"] == validation_failure["data"]["validation_errors"]
+        assert "未通过结构化协议校验" in retry_contexts[0]["error"]
+
+    asyncio.run(run())
+
+
+def test_coordinator_require_lineage_contract_failure_fails_node():
+    """显式 require_lineage 的节点：血缘违规（信封缺失）仍是失败。"""
+
+    async def run():
+        async def execute(node, dependencies, attempt, retry_context=None):
+            return {"status": "success", "success": True, "data": {}}
+
+        coordinator = WorkflowCoordinator(
+            {
+                "workflow_id": "lineage-strict",
+                "nodes": [{"task_id": "strict", "require_lineage": True, "max_attempts": 1}],
+            },
+            executor=execute,
+        )
+        result = await coordinator.run()
+
+        assert result["status"] == "failed"
+        assert "lineage validation failed" in str(result["node_errors"]["strict"])
+
+    asyncio.run(run())
+
+
+def test_coordinator_lineage_bookkeeping_anomaly_keeps_node_result(monkeypatch):
+    """血缘簿异常不判死节点：降级为 journal 警告，结果与血缘保留。
+
+    血缘是记账簿，下游资源由 resource_contract 凭实际文件核验；
+    记账异常不该废掉刚跑完的节点（对齐缓存复用路径的警告语义）。
+    """
+    import app.agent.workflow.coordinator as coordinator_module
+
+    async def run():
+        bogus_lineage = {
+            "task_id": "source",
+            "inputs": [],
+            "output": {"ref_id": "source:result", "kind": "node_result", "source_task_id": "someone-else"},
+            "evidence": [],
+            "artifacts": [],
+            "status": "complete",
+        }
+        real_build = coordinator_module.build_node_lineage
+        monkeypatch.setattr(
+            coordinator_module, "build_node_lineage", lambda **kwargs: dict(bogus_lineage) if kwargs["task_id"] == "source" else real_build(**kwargs)
+        )
+
+        class FakeJournal:
+            def __init__(self):
+                self.events = []
+
+            def append(self, **kwargs):
+                self.events.append(kwargs)
+
+        async def execute(node, dependencies, attempt, retry_context=None):
+            return {"status": "success", "success": True, "data": {}}
+
+        journal = FakeJournal()
+        coordinator = WorkflowCoordinator(
+            {"workflow_id": "lineage-soft", "nodes": [{"task_id": "source"}]},
+            executor=execute,
+            journal=journal,
+        )
+        result = await coordinator.run()
+
+        assert result["status"] == "succeeded"
+        assert result["node_results"]["source"]["success"] is True
+        warnings = [e for e in journal.events if e["event_type"] == "node.lineage_warning"]
+        assert len(warnings) == 1
+        assert warnings[0]["task_id"] == "source"
+
+    asyncio.run(run())

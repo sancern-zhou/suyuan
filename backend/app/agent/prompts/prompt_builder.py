@@ -33,7 +33,7 @@ from .ops_prompt import build_ops_prompt
 from .graph_prompt import build_graph_prompt
 from .enforcement_exam_prompt import build_enforcement_exam_prompt
 from .custom_prompt import build_custom_prompt
-from .project_prompt import load_project_mode_prompt
+from .project_prompt import load_project_audience_contract, load_project_mode_prompt
 from app.utils.path_config import format_agent_path, resolve_agent_path
 from .deliberation_prompt import (
     build_deliberation_chemistry_prompt,
@@ -64,9 +64,13 @@ MANUAL_FEEDBACK_CONTRACT = (
     "把稳定、长期有用的内容主动维护进对应模式的长期记忆，一次性任务细节不进入长期记忆。\n"
 )
 
+# 共享中性默认：不点名任何项目地名。项目受众在 projects/<id> 的
+# audience_contract_file 中声明（如广东=广东省、许昌=许昌市）——共享层
+# 曾写死"许昌市"，导致广东部署的子 Agent 在交付摘要里把广东数据标成
+# "许昌市气象实况"且通过结构化校验。
 AUDIENCE_CONTRACT = (
     "## 用户面向与表达约定\n"
-    "本系统面向的用户是许昌市的生态环境管理用户（如局领导、科室与二级机构管理人员、执法人员、监测和业务人员）。"
+    "本系统面向的用户是生态环境管理部门的用户（如局领导、科室与二级机构管理人员、执法人员、监测和业务人员）。"
     "回复前先根据对话上下文判断用户角色，按角色组织输出的详略与侧重点：面向领导侧重结论、态势判断与决策建议；"
     "面向业务人员侧重数据明细、过程分析与办理建议。\n"
     "日常业务与办公输出使用用户能理解的业务语言，不直接输出内部接口名称、工具名、字段名、表结构或技术参数；"
@@ -85,9 +89,12 @@ AIR_QUALITY_STANDARD_TRANSITION_CONTRACT = (
 
 
 def _with_platform_contracts(prompt: str) -> str:
+    # 受众契约按项目解析；项目未声明时回退共享中性默认。解析失败按配置
+    # 错误抛出（与 mode_prompt_files 同策略）：配了文件但缺失属于部署错误。
+    audience = load_project_audience_contract() or AUDIENCE_CONTRACT
     return (
         f"{prompt.rstrip()}\n\n"
-        f"{AUDIENCE_CONTRACT}\n\n"
+        f"{audience}\n\n"
         f"{AIR_QUALITY_STANDARD_TRANSITION_CONTRACT}\n\n"
         f"{FILESYSTEM_PATH_CONTRACT}\n\n{MANUAL_FEEDBACK_CONTRACT}"
     ).rstrip()
