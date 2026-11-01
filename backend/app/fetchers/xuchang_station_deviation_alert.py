@@ -110,14 +110,20 @@ class XuchangStationDeviationAlertFetcher(DataFetcher):
                 ))
             analyzable_by_station: dict[str, list[dict[str, Any]]] = {}
             for alert in result["alerts"]:
+                # 推送管控（算法文档 §9：冷却升级/防抖恢复/限额/免打扰/合并）
+                # 已在 service 推送链完成，能到达这里的告警都是本周期应当
+                # 通报的。episode 服务只保留两件事：同一 event_id 重放去重、
+                # episode 生命周期记录（含关闭事件）；其自带的 30/60 分钟
+                # 通知冷却不再参与通报决策（升级穿透由推送闸门保证）。
                 episode_result = self.episode_service.record(alert)
+                should_analyze = episode_result["status"] != "duplicate"
                 alert["scenario_1_episode"] = {
                     "episode_id": episode_result["episode"]["episode_id"],
                     "status": episode_result["status"],
                     "reason": episode_result.get("reason"),
-                    "should_analyze": episode_result["should_analyze"],
+                    "should_analyze": should_analyze,
                 }
-                if not episode_result["should_analyze"]:
+                if not should_analyze:
                     continue
                 analyzable_by_station.setdefault(str(alert["station_id"]), []).append(alert)
 

@@ -28,6 +28,16 @@ from app.scenarios.xuchang_city_exceedance.station_catalog import (
     NATIONAL_STATION_META,
 )
 from app.utils.path_config import format_agent_path, get_data_registry
+from app.scenarios.xuchang_station_deviation.push_control import (
+    AlertStateStore,
+    PushLogStore,
+    apply_push_chain,
+)
+from app.scenarios.xuchang_station_deviation.rule_config import load_air_alert_config
+from app.scenarios.xuchang_station_deviation.rule_engine import (
+    evaluate_five_minute_cycle,
+    evaluate_pm25_hourly_cycle,
+)
 from app.scenarios.xuchang_station_deviation.source_features import calculate_pollutant_source_features
 from app.scenarios.xuchang_station_deviation.dispatch import resolve_station
 
@@ -430,6 +440,9 @@ class XuchangStationDeviationAlertService:
     def __init__(self, config: StationDeviationConfig | None = None, output_root: Path | None = None) -> None:
         self.config = config or StationDeviationConfig(city_area_code=os.getenv("XUCHANG_STATION_CITY_AREA_CODE", "411000"))
         self.output_root = output_root or get_data_registry() / "xuchang_station_deviation_alerts"
+        # 分级告警（R1-R4 + 推送管控）的状态与推送流水存储（文档 §2.4/§2.5）。
+        self.alert_state_store = AlertStateStore(self.output_root)
+        self.push_log_store = PushLogStore(self.output_root)
 
     def _query(self, sql: str, params: list[Any]) -> list[dict[str, Any]]:
         connection = pyodbc.connect(xcai_connection_string(), timeout=30)
@@ -619,17 +632,26 @@ class XuchangStationDeviationAlertService:
             except ValueError:
                 pass
         peer_mean = _float(alert.get("peer_mean"))
+        rule_type = str(alert.get("rule_type") or "")
         if peer_mean is not None:
             ax.axhline(peer_mean, color="#777777", linestyle=":", linewidth=1.2, label="其余站点均值")
             threshold = _float(alert.get("threshold"))
             absolute_threshold = _float(alert.get("absolute_delta_threshold")) or 0.0
+            if threshold is None and rule_type == "spatial_outlier":
+                detail = alert.get("detail") or {}
+                threshold = _float((detail.get("multiples_effective") or {}).get(3))
+                absolute_threshold = _float(detail.get("diff_floor")) or 0.0
             if threshold is not None:
                 trigger_line = max(peer_mean * (1 + threshold), peer_mean + absolute_threshold)
                 ax.axhline(trigger_line, color="#ff7f0e", linestyle="-.", linewidth=1.1, label="相对/绝对触发线")
         signal_labels = []
-        if alert.get("rule", "").startswith("six_consecutive"):
+        if rule_type == "continuous_rise" or str(alert.get("rule", "")).startswith("six_consecutive"):
             signal_labels.append("单站持续快速上升")
-        elif alert.get("peer_mean") is not None:
+        elif rule_type == "sudden_rise":
+            signal_labels.append("单站快速抬升")
+        elif rule_type == "limit_breach":
+            signal_labels.append("限值突破")
+        elif rule_type == "spatial_outlier" or peer_mean is not None:
             signal_labels.append("单站相对区域偏高")
         if alert.get("granularity") == "hour" or alert.get("measurement_granularity") == "hour":
             signal_labels.append("小时数据")
@@ -835,64 +857,104 @@ class XuchangStationDeviationAlertService:
         granularity: str = "5min",
         meteorology_summary: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        # Run after the source five-minute slot closes; PM2.5 is still read
-        # from the most recently completed hourly record for that hour.
+        """分级告警主流程（算法文档 §10）：数据加载 → R1-R4 判定 → 区域豁免
+        → 推送管控链（冷却/防抖/限额/免打扰/合并）→ 证据产物 → 状态落盘。
+
+        PM10/SO2/NO2/CO/O3 逐 5 分钟槽判定；PM2.5 按小时版在整点槽触发
+        （§8、§10）。``result["alerts"]`` 只含通过推送管控的告警，被抑制的
+        候选在 ``result["suppressed_alerts"]`` 中给出原因。
+        """
         if granularity not in {"5min", "hour"}:
             raise ValueError("granularity must be '5min' or 'hour'")
-        target_slot = _slot(
-            target_time or datetime.now(TZ_SHANGHAI),
-            "hour" if granularity == "hour" else "minute",
-        )
+        now = target_time or datetime.now(TZ_SHANGHAI)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=TZ_SHANGHAI)
+        target_slot = _slot(now, "hour" if granularity == "hour" else "minute")
         rows, expected_station_count = self.load_station_rows(target_slot)
         target_hour = _hour(target_slot).replace(tzinfo=None)
-        if granularity == "hour":
-            detection_rows = [
-                row for row in rows
-                if row.get("data_source") == "hour"
-                and _hour(row.get("data_time")) == target_hour - timedelta(hours=1)
-            ]
-        else:
-            detection_rows = [
-                row for row in rows
-                if (
-                    row.get("data_source") == "minute"
-                    and _slot(row.get("data_time"), "minute") == target_slot
-                )
-                or (
-                    row.get("data_source") == "hour"
-                    and _hour(row.get("data_time")) == target_hour - timedelta(hours=1)
-                )
-            ]
-        minute_trend_rows = self._minute_trend_rows(rows, target_slot) if granularity == "5min" else []
-        aqi_values = [row.get("aqi") for row in detection_rows if row.get("aqi") is not None]
+        config = load_air_alert_config(self.output_root)
+        allowlist = set(NATIONAL_STATION_CODES)
+
+        # 污染等级为小时粒度（§3.2）：沿用上一完整小时的城市最高 AQI 折算。
+        prev_hour_rows = [
+            row for row in rows
+            if row.get("data_source") == "hour"
+            and isinstance(row.get("data_time"), datetime)
+            and _hour(row["data_time"]) == target_hour - timedelta(hours=1)
+        ]
+        aqi_values = [row.get("aqi") for row in prev_hour_rows if row.get("aqi") is not None]
         air_quality_level = air_quality_level_from_aqi(max(aqi_values)) if aqi_values else None
-        result = detect_station_deviations(
-            detection_rows,
-            expected_station_count=expected_station_count.get("hour", 0),
-            expected_station_counts=expected_station_count,
-            config=self.config,
-            air_quality_level=air_quality_level,
-        )
+
+        # 不利气象仅作为观测结论随结果输出；分级阈值的灵敏度修正由污染等级
+        # 承担（算法文档 §3.4），不再缩放规则阈值。
+        meteo_decision = evaluate_adverse_meteorology(meteorology_summary)
+
+        candidates: list[dict[str, Any]] = []
+        current_values: dict[tuple[str, str, str], float] = {}
+        checks: list[dict[str, Any]] = []
+        region_event_stations: list[str] = []
         if granularity == "5min":
-            meteo_decision = evaluate_adverse_meteorology(meteorology_summary)
-            sensitivity = meteo_decision["sensitivity"]
-            result["alerts"].extend(
-                detect_continuous_rises(minute_trend_rows, config=self.config, sensitivity=sensitivity)
+            outcome = evaluate_five_minute_cycle(
+                rows,
+                target_slot=target_slot,
+                config=config,
+                states=self.alert_state_store,
+                level_name=air_quality_level,
+                expected_minute_count=expected_station_count.get("minute") or None,
+                station_allowlist=allowlist,
             )
-            unique: dict[str, dict[str, Any]] = {}
-            for alert in result["alerts"]:
-                unique[alert["event_id"]] = alert
-            result["alerts"] = list(unique.values())
+            candidates.extend(outcome.candidates)
+            current_values.update(outcome.current_values)
+            checks.extend(outcome.checks)
+            region_event_stations = outcome.region_event_stations
+            if target_slot.minute == 0:
+                # §10：整点槽追加触发 PM2.5 小时规则（上一完整小时）。
+                pm25_outcome = evaluate_pm25_hourly_cycle(
+                    rows,
+                    target_hour=_hour(target_slot) - timedelta(hours=1),
+                    config=config,
+                    states=self.alert_state_store,
+                    expected_hour_count=expected_station_count.get("hour") or None,
+                    station_allowlist=allowlist,
+                )
+                candidates.extend(pm25_outcome.candidates)
+                current_values.update(pm25_outcome.current_values)
+                checks.extend(pm25_outcome.checks)
+        else:
+            pm25_outcome = evaluate_pm25_hourly_cycle(
+                rows,
+                target_hour=_hour(target_slot) - timedelta(hours=1),
+                config=config,
+                states=self.alert_state_store,
+                expected_hour_count=expected_station_count.get("hour") or None,
+                station_allowlist=allowlist,
+            )
+            candidates.extend(pm25_outcome.candidates)
+            current_values.update(pm25_outcome.current_values)
+            checks.extend(pm25_outcome.checks)
+        region_event = len(region_event_stations) >= config.r4_region_exempt_sites
+
+        pushed, suppressed, window_summary = apply_push_chain(
+            candidates,
+            store=self.alert_state_store,
+            config=config,
+            now=now,
+            log_store=self.push_log_store,
+            current_values=current_values,
+            region_event=region_event,
+        )
+
+        minute_trend_rows = self._minute_trend_rows(rows, target_slot) if granularity == "5min" else []
         events = []
         alerts_by_station: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for alert in result["alerts"]:
+        for alert in pushed:
             alerts_by_station[str(alert.get("station_id") or "")].append(alert)
         multifactor_paths = {
             sid: self.write_multifactor_table(items, rows)
             for sid, items in alerts_by_station.items()
             if len({_observed_indicator(a.get("target_pollutant")) for a in items}) >= 2
         }
-        for alert in result["alerts"]:
+        for alert in pushed:
             # Reuse the daily review's composition model. It selects minute
             # pollutants with the matching hourly PM2.5 value when available.
             alert["pollutant_source_features"] = calculate_pollutant_source_features(
@@ -930,8 +992,22 @@ class XuchangStationDeviationAlertService:
             "expected_station_count": expected_station_count,
             "rows": len(rows),
             "alerts": events,
-            "checks": result["checks"],
+            "suppressed_alerts": [
+                {
+                    "event_id": item["alert"].get("event_id"),
+                    "station_id": item["alert"].get("station_id"),
+                    "target_pollutant": item["alert"].get("target_pollutant"),
+                    "rule_type": item["alert"].get("rule_type"),
+                    "alert_level": item["alert"].get("alert_level"),
+                    "reason": item["reason"],
+                }
+                for item in suppressed
+            ],
+            "window_summary": window_summary,
+            "region_event": region_event,
+            "region_event_stations": region_event_stations,
+            "checks": checks,
             "granularity": granularity,
             "air_quality_level": air_quality_level,
-            "meteorology_decision": evaluate_adverse_meteorology(meteorology_summary),
+            "meteorology_decision": meteo_decision,
         }

@@ -25,8 +25,13 @@ logger = structlog.get_logger()
 POLLUTANT_UNITS = {"CO": "mg/m³"}
 DEFAULT_UNIT = "μg/m³"
 
-# 与站点服务告警 rule 字段一一对应的中文告警类型。
+# 与站点服务告警 rule 字段一一对应的中文告警类型：分级告警（R1-R4）的
+# rule_type + 旧版单级别规则的 rule 串（历史事件回看仍可渲染）。
 RULE_LABELS = {
+    "limit_breach": "限值突破",
+    "sudden_rise": "突升",
+    "continuous_rise": "连续抬升",
+    "spatial_outlier": "空间离群",
     "six_consecutive_5min_rises_and_pollutant_thresholds": "单站持续快速上升",
     "relative_deviation > threshold AND absolute_delta > pollutant_absolute_threshold": "单站相对区域偏高",
 }
@@ -92,9 +97,12 @@ def _fmt_time(value: Any) -> str:
 
 
 def _alert_type_label(alert: dict[str, Any]) -> str:
-    label = RULE_LABELS.get(str(alert.get("rule", "")))
-    if label is None:
+    label = str(alert.get("rule_label") or "") or RULE_LABELS.get(str(alert.get("rule", "")))
+    if not label:
         label = "站点异常告警"
+    level_name = alert.get("alert_level_name")
+    if level_name:
+        label = f"{label}·{level_name}"
     if str(alert.get("measurement_granularity")) == "hour":
         label += "（小时数据）"
     return label
@@ -125,7 +133,12 @@ def _rise_sentence(alert: dict[str, Any]) -> str:
     window = alert.get("rise_window_values") or []
     parts = [f"实测{_fmt(alert.get('station_value'))} {unit}"]
     if window:
-        parts.append(f"30分钟内从{_fmt(window[0])}连续6个5分钟节抬升至{_fmt(window[-1])} {unit}")
+        if str(alert.get("measurement_granularity")) == "hour":
+            parts.append(
+                f"从{_fmt(window[0])}连续{alert.get('rise_count') or len(window) - 1}个小时节抬升至{_fmt(window[-1])} {unit}"
+            )
+        else:
+            parts.append(f"30分钟内从{_fmt(window[0])}连续6个5分钟节抬升至{_fmt(window[-1])} {unit}")
     total_abs = alert.get("total_rise_abs")
     total_rate = alert.get("total_rise_rate")
     if total_abs is not None:
@@ -133,6 +146,36 @@ def _rise_sentence(alert: dict[str, Any]) -> str:
         if total_rate is not None:
             sentence += f"（累计涨幅{_fmt(float(total_rate) * 100)}%）"
         parts.append(sentence)
+    return "，".join(parts)
+
+
+def _sudden_rise_sentence(alert: dict[str, Any]) -> str:
+    """突升（R2）事实句：实测值、对比基线抬升比例、连续确认情况。"""
+    unit = _unit(str(alert.get("target_pollutant")))
+    detail = alert.get("detail") or {}
+    parts = [f"实测{_fmt(alert.get('station_value'))} {unit}"]
+    base = detail.get("baseline")
+    if base is not None:
+        parts.append(f"较近段基线{_fmt(base)} {unit}抬升{_fmt(alert.get('rise_percent'))}%")
+    confirm = detail.get("confirm_streak")
+    if confirm:
+        parts.append(f"已连续{confirm}个周期超抬升阈值")
+    return "，".join(parts)
+
+
+def _limit_sentence(alert: dict[str, Any]) -> str:
+    """限值突破（R1）事实句：实测值、分档限值与触发口径。"""
+    unit = _unit(str(alert.get("target_pollutant")))
+    detail = alert.get("detail") or {}
+    parts = [f"实测{_fmt(alert.get('station_value'))} {unit}"]
+    threshold = detail.get("limit_threshold")
+    if threshold is not None:
+        bin_name = detail.get("limit_bin") or ""
+        version = detail.get("limit_version") or "现行限值"
+        parts.append(f"{bin_name}档限值{_fmt(threshold)} {unit}（{version}）")
+    trigger = detail.get("trigger")
+    if trigger:
+        parts.append(str(trigger))
     return "，".join(parts)
 
 
@@ -249,15 +292,27 @@ def _factor_overview(alert: dict[str, Any]) -> str:
         f"{pollutant}（{_alert_type_label(alert)}，{alert.get('measurement_granularity', '')}数据）",
         f"告警时间{_fmt_time(alert.get('occurred_at'))}",
     ]
+    concurrent = alert.get("concurrent_rules") or []
+    if concurrent:
+        others = "、".join(
+            f"{item.get('rule_label') or item.get('rule_type')}（{item.get('alert_level_name') or ''}）"
+            for item in concurrent
+        )
+        parts.append(f"同站同窗口还命中{others}，已合并为一条通报")
     return "，".join(parts)
 
 
 def _factor_trend(alert: dict[str, Any], evidence: dict[str, Any]) -> str:
+    rule_type = str(alert.get("rule_type") or "")
     rule = str(alert.get("rule", ""))
     sentences: list[str] = []
-    if rule.startswith("six_consecutive"):
+    if rule_type == "continuous_rise" or rule.startswith("six_consecutive"):
         sentences.append(_rise_sentence(alert))
-    elif rule.startswith("relative_deviation"):
+    elif rule_type == "sudden_rise":
+        sentences.append(_sudden_rise_sentence(alert))
+    elif rule_type == "limit_breach":
+        sentences.append(_limit_sentence(alert))
+    elif rule_type == "spatial_outlier" or rule.startswith("relative_deviation"):
         sentences.append(_deviation_sentence(alert))
     trend = _trend_sentence(alert, evidence)
     if trend:
@@ -408,13 +463,24 @@ def compose_station_alert_fallback_message(package: dict[str, Any]) -> str:
     granularity = "小时" if primary.get("measurement_granularity") == "hour" else "5分钟"
     pollutant = str(primary["target_pollutant"])
     rule = str(primary["rule"])
-    measurements = (
-        _rise_sentence(primary) if rule.startswith("six_consecutive")
-        else _deviation_sentence(primary)
+    rule_type = str(primary.get("rule_type") or "")
+    if rule_type == "continuous_rise" or rule.startswith("six_consecutive"):
+        measurements = _rise_sentence(primary)
+    elif rule_type == "sudden_rise":
+        measurements = _sudden_rise_sentence(primary)
+    elif rule_type == "limit_breach":
+        measurements = _limit_sentence(primary)
+    else:
+        measurements = _deviation_sentence(primary)
+    label = (
+        str(primary.get("rule_label") or "") or RULE_LABELS.get(rule, "站点异常告警")
     )
+    level_name = primary.get("alert_level_name")
+    if level_name:
+        label = f"{label}·{level_name}"
     overview = (
         f"{_fmt_time(primary['occurred_at'])}，{station}发生"
-        f"{RULE_LABELS.get(rule, '站点异常告警')}："
+        f"{label}："
         f"{pollutant}（{granularity}数据）{measurements}。"
     )
     if len(items) > 1:
