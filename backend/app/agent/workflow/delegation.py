@@ -114,7 +114,7 @@ def build_delegation_contract(mode: str, available_tools: list[str]) -> str:
             "已知条件用 when 控制分支，条件未满足的任务不启动；条件引用直接上游的结构化结果。"
             "辅助节点可设 required=false；下游显式 dependency_policy=allow_partial 才能消费部分成功结果。"
             "收到 partial 时按 delivery.gaps 交付已有成果并说明限制；关键证据失败不能形成完整结论。"
-            "输入资源用 input_contracts 校验字段、单位、粒度、时间覆盖和范围，产物可设 output_contract。"
+            "输入资源用 input_contracts 校验 kind、format（具体文件格式）与字段；口径、粒度、时间范围写进 goal 与 result_schema 字段描述，产物文件由子 Agent 在交付信封 deliverables 里回填真实路径。"
             "资源缺失或不兼容先说明缺口、决定是否补图，不让下游默认重新取数。\n"
         )
     else:

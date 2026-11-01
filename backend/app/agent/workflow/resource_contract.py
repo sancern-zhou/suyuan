@@ -18,6 +18,14 @@ class ResourceContractError(ValueError):
 
 _KEYS = {"source_task_id", "required", "kind", "format", "fields", "units", "granularity", "time_range", "scope"}
 
+# 交付链路当前没有 metadata.data_contract 的生产写入通道（全仓只有测试构造过），
+# 声明这些约束在交接校验时永远无法满足——解析期直接拒绝，编排模型当场改稿，
+# 不让必死的契约进入运行期。引入资源元数据写入能力后，把对应键移出本元组即可解锁。
+_CONSTRAINTS_WITHOUT_PRODUCER = ("granularity", "time_range", "units", "scope")
+# kind 的取值域；format 必须是具体文件格式（可从交付文件后缀核对），"file"/"data" 是 kind 的语义。
+_KIND_VALUES = ("file", "data")
+_KIND_SEMANTIC_VALUES = ("file", "data")
+
 
 def result_handles(task_id: str, result: Any) -> list[dict[str, Any]]:
     from .lineage import _result_envelope
@@ -53,6 +61,23 @@ def result_handles(task_id: str, result: Any) -> list[dict[str, Any]]:
 def validate_contract_definition(contract: Mapping[str, Any], dependencies: tuple[str, ...] | None = None) -> None:
     if not isinstance(contract, Mapping) or set(contract) - _KEYS:
         raise ValueError("invalid resource contract fields")
+    declared_unproducible = [key for key in _CONSTRAINTS_WITHOUT_PRODUCER if key in contract]
+    if declared_unproducible:
+        raise ValueError(
+            "resource contract 不可声明 " + "/".join(declared_unproducible)
+            + "：交付链路没有这些元数据的写入通道，交接校验必然失败；"
+            "口径请写进节点 goal 与 result_schema 字段描述（模型可读），"
+            "文件类要求用 result_schema 的 deliverables 数组承载"
+        )
+    if contract.get("format") in _KIND_SEMANTIC_VALUES:
+        raise ValueError(
+            f"resource contract format 不能是 '{contract['format']}'（这是 kind 的语义）："
+            "format 必须是具体文件格式（csv/json/xlsx/qmd 等），交接时按交付文件后缀核对"
+        )
+    if "kind" in contract and contract["kind"] not in _KIND_VALUES:
+        raise ValueError(
+            f"resource contract kind 必须是 {'/'.join(_KIND_VALUES)} 之一，got '{contract['kind']}'"
+        )
     if dependencies is not None and contract.get("source_task_id") not in dependencies:
         raise ValueError("resource contract source must be a direct dependency")
     if dependencies is None and "source_task_id" in contract:
@@ -83,6 +108,79 @@ def _date(value: Any) -> datetime:
     from datetime import timezone
     result = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     return result if result.tzinfo else result.replace(tzinfo=timezone.utc)
+
+
+def _json_type(value: Any) -> str:
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, Mapping):
+        return "object"
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    return type(value).__name__
+
+
+def validate_deliverable_entries(entries: Any) -> list[dict[str, str]]:
+    """核验交付信封的 deliverables 数组：交货方自报路径 → 机械核对真实文件。
+
+    每项要求 path 指向真实存在的文件；声明 format 时与文件后缀一致；
+    声明 fields 时字段必须被文件实际包含（CSV 表头 / 小型 JSON 键，同 _check 的
+    fail-closed 语义：核对不了的格式不视为满足）。返回 validate_result_schema
+    同形的违规列表（path/expected/got），空列表即通过；调用方把违规并进
+    结构化交付的校验错误，由既有修复轮喂回原子会话修正。
+    """
+    if entries is None:
+        return []
+    if not isinstance(entries, list):
+        return [{"path": "$.deliverables", "expected": "array of {path, format?, fields?}", "got": _json_type(entries)}]
+    violations: list[dict[str, str]] = []
+    for index, entry in enumerate(entries):
+        prefix = f"$.deliverables[{index}]"
+        if not isinstance(entry, Mapping):
+            violations.append({"path": prefix, "expected": "object with path", "got": _json_type(entry)})
+            continue
+        raw_path = str(entry.get("path") or "").strip()
+        if not raw_path:
+            violations.append({"path": f"{prefix}.path", "expected": "nonempty file path", "got": "missing"})
+            continue
+        path_prefix = f"{prefix}.path"
+        try:
+            path = resolve_agent_path(raw_path)
+        except (OSError, ValueError, TypeError) as exc:
+            violations.append({"path": path_prefix, "expected": "resolvable file path", "got": str(exc)})
+            continue
+        if not path.is_file():
+            violations.append({"path": path_prefix, "expected": "existing file", "got": "not found"})
+            continue
+        declared_format = entry.get("format")
+        if isinstance(declared_format, str) and declared_format:
+            actual_format = path.suffix.lower().lstrip(".")
+            if actual_format != declared_format.lower():
+                violations.append({"path": f"{prefix}.format", "expected": declared_format, "got": actual_format or "none"})
+        declared_fields = entry.get("fields")
+        if isinstance(declared_fields, list) and declared_fields and all(isinstance(f, str) for f in declared_fields):
+            try:
+                actual_fields = _file_fields(path)
+            except (OSError, ValueError, TypeError) as exc:
+                violations.append({"path": f"{prefix}.fields", "expected": "inspectable file", "got": str(exc)})
+                continue
+            if actual_fields is None:
+                violations.append({
+                    "path": f"{prefix}.fields",
+                    "expected": declared_fields,
+                    "got": f"fields cannot be verified for .{path.suffix.lower().lstrip('.')} files; declare fields only for csv/json",
+                })
+                continue
+            missing = sorted(set(declared_fields) - actual_fields)
+            if missing:
+                violations.append({"path": f"{prefix}.fields", "expected": declared_fields, "got": f"missing {missing}"})
+    return violations
 
 
 def _file_fields(path: Path) -> set[str] | None:

@@ -36,6 +36,7 @@ from app.agent.workflow.resource_handoff import (
     result_resource_declarations,
     stored_resource_ref,
 )
+from app.agent.workflow.resource_contract import validate_deliverable_entries
 from app.agent.workflow.target_mode_contract import (
     build_target_mode_contract,
     target_mode_values,
@@ -1223,8 +1224,24 @@ class CallSubAgentTool(LLMTool):
                 )
 
             # 提取结构化数据
+            extracted_file_paths = self._extract_file_paths(result_events)
+            # 交付信封核验后的文件并入 file_paths：下游 input_contracts
+            # （kind/format/fields）凭文件后缀与 CSV/JSON 字段即可自然满足，
+            # 不需要额外的元数据写入通道。
+            if isinstance(structured_result, dict):
+                for item in structured_result.get("deliverables") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    raw = str(item.get("path") or "").strip()
+                    if not raw or raw in extracted_file_paths:
+                        continue
+                    try:
+                        if resolve_agent_path(raw).is_file():
+                            extracted_file_paths.append(raw)
+                    except (OSError, ValueError, TypeError):
+                        continue
             structured_data = {
-                "file_paths": self._extract_file_paths(result_events),
+                "file_paths": extracted_file_paths,
                 "chart_urls": self._extract_chart_urls(result_events),  # 图片URL（前端渲染）
                 "image_paths": self._extract_image_paths(result_events),  # 本地路径（文件操作）
                 "tool_calls": self._extract_tool_calls(result_events)
@@ -1779,7 +1796,12 @@ class CallSubAgentTool(LLMTool):
                 "expected": "JSON result matching result_schema",
                 "got": "no structured JSON result",
             }]
-        return structured_result, validate_result_schema(structured_result, schema)
+        violations = validate_result_schema(structured_result, schema)
+        # 交付文件机械核验（交货方自报路径 → 文件存在/后缀/字段核对），
+        # 违规并入同一校验错误通道，由既有修复轮喂回原子会话修正。
+        if isinstance(structured_result, dict):
+            violations = violations + validate_deliverable_entries(structured_result.get("deliverables"))
+        return structured_result, violations
 
     def _extract_file_paths(self, events: list) -> list:
         """Extract file handles from current tool_result and legacy events."""
