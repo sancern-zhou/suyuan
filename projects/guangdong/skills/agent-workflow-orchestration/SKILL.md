@@ -49,4 +49,5 @@ required_tools:
 
 - 条件节点用 when 声明 source_task_id（必须是直接依赖）、path（上游结果点分路径）、op、value；支持 all/any/not 组合；条件为假跳过该分支，缺少比较证据会报告失败，不猜测真假。
 - 辅助节点显式 required=false；下游只有 dependency_policy=allow_partial 才能消费部分上游，且至少一个成功上游。收到 partial 时参考 delivery.gaps，交付已有成果并说明缺口；不能把缺失数据当零、编造结论或默认重新取数。
-- input_contracts 按 source_task_id 校验上游资源，output_contract 校验本节点产物；可约束 kind/format/fields/units/granularity/time_range/scope。字段尽可能从文件核对；缺失元数据不会自动假定满足要求。
+- input_contracts 按 source_task_id 校验上游资源，output_contract 校验本节点产物；只声明 kind/format/fields（可从文件机械核对：后缀、CSV 表头、小型 JSON 键）。format 必须是具体文件格式（csv/json/qmd），禁填 "file"；粒度、时间范围、单位、口径没有元数据写入通道，声明会被解析期拒绝——写进节点 goal 与 result_schema 字段描述。
+- 需要交付文件的节点在 result_schema 声明 deliverables 数组（{path, format, fields}）：子 Agent 提交时回填真实路径，运行时按实际文件核对，不符会在原子会话内被退回重交（修复轮）；核验通过的路径自动并入节点 file_paths 供下游消费。
