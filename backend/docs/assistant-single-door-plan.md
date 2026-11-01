@@ -89,14 +89,21 @@
 测试：`tests/test_assistant_delegation_async.py`（9 项：默认后台/显式同步/开关回退、内联/溢出、steer 归属与守卫）；
 既有 `tests/test_assistant_delegation_absorb.py`（6 项）与预算测试通过。
 
-### 阶段 C：交付质量（约 1–2 周，observe 与试运行同跑）
+### 阶段 C：交付质量——已实施（2026-11-01，observe 默认）
 
-| 项 | 内容 | 落点 |
-| --- | --- | --- |
-| C1 | 交付验收清单：每 target_mode 一份"什么算完成"清单（报告=数据表+图+方法说明+来源可追溯；PPT=逐页无溢出+真实检查；结论必须引用查询结果），并入 target-mode 契约；parent 集成前逐项核验，不合格一次打回 | `backend/app/agent/workflow/target_mode_contract.py`、`backend/docs/skills/agent-workflow-orchestration`（如为共享 skill 则同步项目副本） |
-| C2 | mandate 范围字段：委派参数结构化 scope（地域/时间/指标/职责），子 agent 超范围输出判无效——把 `delegation_error` 中的提示文案升级为字段校验 | `delegation.py`、call_sub_agent / run_agent_workflow 参数模型 |
-| C3 | observe 模式：清单与 scope 校验先 `observe`（仅记录 would_reject 决策），试运行结束后人工回看，逐清单切 `enforce` | 校验执行处 + 配置开关 |
-| C4 | 缺口纪律扩展：result envelope 强制"缺口声明"，缺失数据不得当零——将 ORCHESTRATION.md 既有纪律从 workflow 节点扩展到所有 call_sub_agent 交付 | `backend/app/agent/workflow/protocol.py`、`resource_contract.py` |
+实施切分按批准决策："机制现在开发、内容观察期定稿"。关键设计依据：B2 落地后父模型
+经常只看摘要卡，验收必须代码化在交付路径上，不能依赖父模型通读全量结果。
+
+| 项 | 内容 | 落点 | 状态 |
+| --- | --- | --- | --- |
+| C1 | 交付验收清单（两层） | 新模块 `app/agent/workflow/delivery_checklists.py`：①`checklist_text(mode)` 定性验收条目（通用缺口纪律 + 12 个模式的"什么算完成"）注入结构化交付的子 Agent 提示词；②`evaluate_delivery_checklist` 机械化核验（键存在性/类型），违规以 {"path","expected","got"} 形状并入 result_schema 校验同通道——enforce 模式下由**既有修复轮**喂回子会话修正，不新增打回机制。清单内容是数据文件，观察期按真实案例修订 | 已实施 |
+| C2 | mandate 范围字段 | call_sub_agent 新增 `mandate` 参数（region/time_range/metrics/responsibility）：渲染为子提示词"授权边界"节（超范围产出无效、范围不足在 scope/data_gaps 声明）；随 envelope metadata 记录；提供 mandate 时机械核验要求结果带 `scope` 对象。**遗留**：run_agent_workflow 节点 v1 未加 mandate（节点已有 task_contract 承载范围，避免改 WorkflowNodeSpec） | 已实施（节点侧遗留） |
+| C3 | observe 模式 | `delivery_checklist_mode` 设置（off/observe/enforce，默认 observe）。observe 记录两处：结构化日志事件 `delivery_checklist_evaluated` + result envelope metadata `delivery_checklist_violations`（随交付可经 manage_assistant_runs 审查，无需新表）。切 enforce 由 E 关卡按 would_reject 率决定 | 已实施 |
+| C4 | 缺口纪律扩展 | `data_gaps` 机械核验覆盖所有结构化交付（含自定义 schema——EXPERT_ANALYSIS_RESULT_SCHEMA 本身已 required，此处补齐缺口）；通用清单文本（缺口声明+证据可追溯）进所有结构化交付提示词；B2 摘要卡新增 `data_gaps` 透出——父模型只看卡时也必须看到缺口 | 已实施 |
+
+实施中发现（利好）：`EXPERT_ANALYSIS_RESULT_SCHEMA` 已 required
+`status/findings/evidence/uncertainties/data_gaps` 且含 `scope` 字段——机械核验做薄即可，
+qualitative 部分交由提示词条目。测试：`tests/test_delivery_checklists.py`（15 项）。
 
 ### 阶段 D：过程可控性（前端为主，约 2 周，可与试运行并行）
 

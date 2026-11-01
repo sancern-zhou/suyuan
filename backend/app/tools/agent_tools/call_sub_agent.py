@@ -31,6 +31,10 @@ from app.agent.prompts.tool_registry import get_tools_by_mode
 from app.agent.workflow.capabilities import MEMORY_EDIT_TOOL_NAMES, build_child_capability_policy
 from app.agent.workflow.delegation import is_leaf_mode, delegation_error
 from app.agent.workflow import route_decisions
+from app.agent.workflow.delivery_checklists import (
+    checklist_text,
+    evaluate_delivery_checklist,
+)
 
 from app.agent.workflow.resource_handoff import (
     import_workflow_handles,
@@ -259,6 +263,16 @@ class CallSubAgentTool(LLMTool):
                         "type": "object",
                         "description": "结构化任务协议；子Agent必须按其中的范围、问题和交付要求执行。"
                     },
+                    "mandate": {
+                        "type": "object",
+                        "description": "本次委派授权边界（阶段C）；子Agent超出边界的产出视为无效，范围不足时在结果的 scope/data_gaps 中声明限制，不得越界。",
+                        "properties": {
+                            "region": {"type": "string", "description": "地域范围"},
+                            "time_range": {"type": "string", "description": "时间范围与统计口径"},
+                            "metrics": {"type": "string", "description": "指标口径"},
+                            "responsibility": {"type": "string", "description": "职责边界：做什么、不做什么"}
+                        }
+                    },
                     "result_schema": {
                         "type": "object",
                         "description": "子Agent最终结果的JSON Schema子集。提供后会解析并校验结构化结果。"
@@ -485,6 +499,7 @@ class CallSubAgentTool(LLMTool):
         task_id: Optional[str] = None,
         parent_task_id: Optional[str] = None,
         task_contract: Optional[Dict[str, Any]] = None,
+        mandate: Optional[Dict[str, Any]] = None,
         result_schema: Optional[Dict[str, Any]] = None,
         repair_attempts: int = 1,
         max_iterations: Optional[int] = None,
@@ -1022,6 +1037,20 @@ class CallSubAgentTool(LLMTool):
                     imported_resource_refs
                 ),
             )
+            if isinstance(mandate, dict) and mandate:
+                mandate_lines = [
+                    f"- {key}: {value}"
+                    for key, value in mandate.items()
+                    if str(value or "").strip()
+                ]
+                if mandate_lines:
+                    child_request_prompt = (
+                        child_request_prompt.rstrip()
+                        + "\n\n## 授权边界（mandate）\n"
+                        + "\n".join(mandate_lines)
+                        + "\n超出以上授权范围的产出视为无效；范围不足以完成任务时，"
+                        "在结果的 scope 与 data_gaps 中如实声明限制，不要越界产出。\n"
+                    )
             logger.debug(
                 "child_request_prompt_built",
                 target_mode=target_mode,
@@ -1051,6 +1080,8 @@ class CallSubAgentTool(LLMTool):
                     + "分析完成后必须调用 `submit_result` 工具提交结构化结果（字段结构见工具定义），"
                     + "然后用一句话简述结论即可结束。未调用 submit_result 直接结束视为未完成交付，"
                     + "将触发重试。\n"
+                    + "\n## 验收清单（交付前逐项自查）\n"
+                    + checklist_text(str(target_mode))
                 )
             # 升级提问（escalate）：工作流节点子 Agent 可以向用户提出阻塞性澄清
             # 问题（问数口径/统计范围/时间边界），只挂起本节点、其余节点照常跑；
@@ -1206,10 +1237,17 @@ class CallSubAgentTool(LLMTool):
             repair_workflow_progress = self._fixed_workflow_deliver_progress(target_mode)
             structured_result = None
             validation_errors = []
+            checklist_violations = []
             if result_schema and final_result["status"] != "cancelled":
                 structured_result, validation_errors = self._validate_structured_result(
                     final_result.get("answer", ""), result_schema
                 )
+                blocking, checklist_violations = self._evaluate_delivery_checklist(
+                    target_mode, mandate, structured_result
+                )
+                # enforce 模式：清单违规并入校验错误通道，由既有修复轮喂回修正；
+                # observe 模式只记录（见 envelope metadata 与日志）。
+                validation_errors = validation_errors + blocking
                 attempts = max(0, min(int(repair_attempts or 0), 2))
                 for repair_index in range(attempts):
                     if not validation_errors:
@@ -1266,6 +1304,10 @@ class CallSubAgentTool(LLMTool):
                     structured_result, validation_errors = self._validate_structured_result(
                         final_result.get("answer", ""), result_schema
                     )
+                    blocking, checklist_violations = self._evaluate_delivery_checklist(
+                        target_mode, mandate, structured_result
+                    )
+                    validation_errors = validation_errors + blocking
                     if validation_errors:
                         workflow_runtime.start(workflow_run.run_id)
 
@@ -1358,7 +1400,20 @@ class CallSubAgentTool(LLMTool):
                     for url in structured_data["chart_urls"]
                 ],
                 errors=validation_errors,
-                metadata={"target_mode": target_mode, "task_id": effective_task_id},
+                metadata={
+                    "target_mode": target_mode,
+                    "task_id": effective_task_id,
+                    **(
+                        {"mandate": mandate}
+                        if isinstance(mandate, dict) and mandate
+                        else {}
+                    ),
+                    **(
+                        {"delivery_checklist_violations": checklist_violations}
+                        if checklist_violations
+                        else {}
+                    ),
+                },
             )
             human_feedback = self._extract_human_feedback(result_events)
             if human_feedback is not None:
@@ -1852,6 +1907,34 @@ class CallSubAgentTool(LLMTool):
             "code": "编程Agent",
         }
         return mode_names.get(mode, mode)
+
+    def _evaluate_delivery_checklist(
+        self,
+        target_mode: str,
+        mandate: Optional[Dict[str, Any]],
+        structured_result: Optional[Dict[str, Any]],
+    ) -> tuple:
+        """交付验收清单（阶段 C）。返回 (blocking, observed)。
+
+        observe：只记录（日志 + envelope metadata），不拦截交付；
+        enforce：违规并入校验错误触发既有修复轮；off：跳过。
+        """
+        from config.settings import settings as _settings
+
+        mode = str(getattr(_settings, "delivery_checklist_mode", "observe") or "observe")
+        if mode == "off" or not isinstance(structured_result, dict):
+            return [], []
+        observed = evaluate_delivery_checklist(
+            str(target_mode), structured_result, mandate
+        )
+        if observed:
+            logger.info(
+                "delivery_checklist_evaluated",
+                target_mode=target_mode,
+                checklist_mode=mode,
+                violations=observed,
+            )
+        return (observed if mode == "enforce" else []), observed
 
     @staticmethod
     def _validate_structured_result(answer: str, schema: Dict[str, Any]):
