@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import uuid4
 
+import structlog
+
 from app.agent.workflow.registry import active_workflow_registry
 from app.social.assistant_request import require_assistant_request
 from app.tools.scheduled_tasks.session_identity import resolve_task_user
@@ -21,6 +23,8 @@ _LIVE_TASKS = set()
 _PENDING_BY_SESSION: dict[str, set] = {}
 managed_delegation = ContextVar("managed_assistant_delegation", default=None)
 TERMINAL = {"succeeded", "failed", "cancelled", "partial"}
+
+logger = structlog.get_logger()
 
 
 def _now():
@@ -42,6 +46,60 @@ def background_runs_view(session_id: str) -> list[dict]:
             }
         )
     return view
+
+
+def build_delegation_result_card(item: dict, serialized: str) -> dict:
+    """大结果降为摘要卡：≤600 字摘要 + 产物指针 + 完整结果读取方式。
+
+    对齐"返回=投递不是代理"（方案 D5）：assistant 上下文只吸收摘要与
+    产物位置，完整结果留在委派记录里按需读取（manage_assistant_runs
+    action=result）。
+    """
+    raw = item.get("result")
+    summary = ""
+    artifacts: list = []
+    if isinstance(raw, dict):
+        data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+        envelope = (
+            data.get("result_envelope")
+            if isinstance(data.get("result_envelope"), dict)
+            else {}
+        )
+        summary = str(envelope.get("summary") or raw.get("summary") or "").strip()[:600]
+        for path in (data.get("file_paths") or [])[:10]:
+            artifacts.append({"kind": "file", "path": str(path)})
+        for url in (data.get("chart_urls") or [])[:10]:
+            artifacts.append({"kind": "chart", "url": str(url)})
+        for ref in (data.get("resource_refs") or [])[:10]:
+            if isinstance(ref, dict) and ref.get("resource_id"):
+                artifacts.append(
+                    {
+                        "kind": "resource",
+                        "resource_id": str(ref["resource_id"]),
+                        "name": ref.get("label"),
+                    }
+                )
+    return {
+        "content": summary,
+        "total_chars": len(serialized),
+        "truncated": True,
+        "artifacts": artifacts,
+        "full_result_pointer": (
+            f"manage_assistant_runs action=result run_id={item.get('run_id')}"
+        ),
+    }
+
+
+def apply_inline_or_spill(results: list, inline_chars: int) -> None:
+    """交付边界吸收的内联/溢出策略：小结果整体内联，大结果降为摘要卡。"""
+    for item in results:
+        raw = item.get("result")
+        serialized = (
+            json.dumps(raw, ensure_ascii=False, default=str) if raw is not None else ""
+        )
+        if len(serialized) <= inline_chars:
+            continue
+        item["result"] = build_delegation_result_card(item, serialized)
 
 
 class AssistantRunService:
@@ -185,7 +243,13 @@ class AssistantRunService:
             raise PermissionError("后台任务不能新增用户委派")
         project, owner = settings.project_id, user.id
         kwargs = dict(kwargs)
-        background = bool(kwargs.pop("run_in_background", False))
+        raw_background = kwargs.pop("run_in_background", None)
+        # 阶段 B：助手委派默认后台执行（首轮先答复计划，结果在交付边界按
+        # 内联/溢出策略整合）；显式传 false 才同步等待。开关可按部署回退。
+        if raw_background is None:
+            background = bool(settings.assistant_delegation_background_default)
+        else:
+            background = bool(raw_background)
         if kwargs.get("background_task_id") or kwargs.get("cancel_background_task"):
             raise ValueError("查询或停止委派请使用 manage_assistant_runs")
         run_id = "delegation_" + uuid4().hex
@@ -296,6 +360,56 @@ class AssistantRunService:
                 "summary": "委派已受理，使用 manage_assistant_runs 查询实际进度和结果",
             }
         return await task
+
+    async def steer_run(
+        self, project, owner, *, session_id: str, run_id: str, message: str
+    ) -> bool:
+        """HTTP 追问直通（阶段 B）：把用户追问写入运行中子会话的 steering。
+
+        与 command(action="steer") 同一套状态校验；HTTP 侧以会话归属校验
+        （路由层 _source 确保 owner==user）+ web_assistant_request 权限域
+        替代工具上下文。
+        """
+        record = self.get(project, owner, run_id)
+        if record.get("source_session_id") != session_id:
+            raise PermissionError("委派不属于该会话")
+        require_assistant_request(session_id)
+        if record["status"] in TERMINAL:
+            raise ValueError("该运行已经结束，请读取结果；后续修改需显式复用子会话")
+        if record["kind"] != "child" or not record.get("child_session_id"):
+            raise ValueError("该运行暂不支持补充要求；不要重启或伪造已受理")
+        from app.agent.runtime.steering import steering_registry
+
+        accepted = await steering_registry.add_input(record["child_session_id"], message)
+        if accepted:
+            await self._persist_steer_message(session_id, record["run_id"], message)
+        return accepted
+
+    async def _persist_steer_message(self, session_id: str, run_id: str, message: str) -> None:
+        """把转交消息落进父会话 transcript（fail-soft）。
+
+        落库后前端轮询快照即可见，无需本地回显；写入失败只记日志，
+        不影响 steering 已受理的事实。
+        """
+        try:
+            from app.db.session_repository import get_session_repository
+
+            await get_session_repository().add_message(
+                session_id,
+                {
+                    "role": "user",
+                    "type": "user",
+                    "content": message,
+                    "data": {"source": "direct_through", "run_id": run_id},
+                },
+            )
+        except Exception:  # noqa: BLE001 — 回显不阻塞转交
+            logger.warning(
+                "assistant_steer_message_persist_failed",
+                session_id=session_id,
+                run_id=run_id,
+                exc_info=True,
+            )
 
     def child_arguments(self, project, owner, record, kwargs):
         kwargs = dict(kwargs)

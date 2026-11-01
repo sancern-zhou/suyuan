@@ -15,6 +15,7 @@ import structlog
 from app.agent.workflow.protocol import strip_embedded_json_blocks
 from app.agent.workflow.resource_handoff import result_resource_declarations
 from app.agent.workflow.target_mode_contract import build_target_mode_contract, target_mode_values
+from app.agent.workflow import route_decisions
 from app.agent.workflow.coordinator import WorkflowCoordinator, WorkflowNodeSpec
 from app.agent.workflow.delegation import delegation_error
 from app.agent.workflow.quota_resume import schedule_quota_resume
@@ -423,13 +424,20 @@ class RunAgentWorkflowTool(LLMTool):
             function_schema={
                 "name": "run_agent_workflow",
                 "description": WORKFLOW_SCHEMA_DESCRIPTION,
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "run_in_background": {
-                            "type": "boolean",
-                            "description": "助手可转入后台执行并返回 run_id，之后用 manage_assistant_runs 查询、读结果或请求停止。默认等待本次结果。",
-                        },
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "describe_mode": {
+                                "type": "string",
+                                "description": (
+                                    "只读查询，不执行编排：传 'modes' 返回全部可委派子模式一行速查；"
+                                    "传具体模式名返回该模式完整契约（定位/能做/边界/产出/注意）。"
+                                ),
+                            },
+                            "run_in_background": {
+                                "type": "boolean",
+                                "description": "助手模式默认后台执行并返回 run_id，之后用 manage_assistant_runs 查询、读结果或请求停止；显式传 false 等待本次结果。其他模式传 true 转入进程内后台。",
+                            },
                         "workflow": {
                             "type": "object",
                             "description": (
@@ -533,7 +541,64 @@ class RunAgentWorkflowTool(LLMTool):
             version="1.0.0",
         )
 
+    @staticmethod
+    def _context_mode(context: Optional[Any]) -> str:
+        return str(
+            getattr(context, "runtime_mode", None)
+            or getattr(context, "manual_mode", None)
+            or getattr(getattr(context, "memory_manager", None), "mode", "")
+            or ""
+        )
+
+    def _record_route_decision(self, context: Optional[Any], kwargs: Mapping[str, Any]) -> None:
+        """顶层编排审计（阶段 A）：每次 run_agent_workflow 调用记一行，不按节点重复。
+
+        工作流节点经 call_sub_agent 执行时带 `_workflow_node` 标记，不会重复入账。
+        """
+        workflow = kwargs.get("workflow")
+        nodes = list(workflow.get("nodes") or []) if isinstance(workflow, Mapping) else []
+        target_modes = sorted(
+            {
+                str(node.get("target_mode"))
+                for node in nodes
+                if isinstance(node, Mapping) and node.get("target_mode")
+            }
+        )
+        runtime_metadata = (
+            dict(getattr(context, "runtime_metadata", {}) or {})
+            if context is not None
+            else {}
+        )
+        route_decisions.record_route_decision(
+            session_id=getattr(context, "session_id", None),
+            user_identifier=runtime_metadata.get("user_identifier"),
+            parent_mode=self._context_mode(context),
+            target_modes=target_modes,
+            reason_code=route_decisions.REASON_ASSISTANT_JUDGMENT,
+            reason_values={
+                "workflow_id": str(workflow.get("workflow_id") or "")[:120]
+                if isinstance(workflow, Mapping)
+                else "",
+                "node_count": len(nodes),
+                "extension": bool(kwargs.get("extension")),
+            },
+        )
+
     async def execute(self, context=None, **kwargs):
+        describe_arg = kwargs.get("describe_mode")
+        if isinstance(describe_arg, str) and describe_arg.strip():
+            from app.agent.workflow.target_mode_contract import describe_target_mode
+
+            contract_text = describe_target_mode(describe_arg)
+            return {
+                "status": "success",
+                "success": True,
+                "result": contract_text,
+                "data": {"describe_mode": describe_arg.strip()},
+                "metadata": {"schema_version": "workflow.v1", "generator": "run_agent_workflow"},
+                "summary": "子模式契约查询已返回",
+            }
+        self._record_route_decision(context, kwargs)
         if getattr(context, "runtime_mode", None) == "assistant":
             from app.social.assistant_runs import AssistantRunService
 
@@ -608,6 +673,21 @@ class RunAgentWorkflowTool(LLMTool):
                 return self._failure("补图的父模式必须与原工作流一致")
             boundary_error = delegation_error(runtime_mode, [str(node.get("target_mode") or "") for node in [*nodes, *added_nodes]])
             if boundary_error:
+                route_decisions.record_route_decision(
+                    session_id=getattr(context, "session_id", None),
+                    user_identifier=(
+                        dict(getattr(context, "runtime_metadata", {}) or {}).get("user_identifier")
+                        if context is not None
+                        else None
+                    ),
+                    parent_mode=runtime_mode,
+                    target_modes=[
+                        str(node.get("target_mode") or "")
+                        for node in [*nodes, *added_nodes]
+                    ],
+                    reason_code=route_decisions.REASON_BOUNDARY_REFUSED,
+                    reason_values={"error": str(boundary_error)[:300]},
+                )
                 return self._failure(boundary_error)
             if runtime_mode == "report":
                 disallowed_nodes = [
@@ -732,6 +812,8 @@ class RunAgentWorkflowTool(LLMTool):
                     # 成本 ~1 分钟且保住全部已有工作，只要带 result_schema 就值得跑满 2 轮。
                     repair_attempts=2 if payload.get("result_schema") else max(0, min(node.max_attempts - 1, 2)),
                     _force_isolated_session=True,
+                    # 节点执行不记顶层路由审计（见 _record_route_decision）。
+                    _workflow_node=True,
                     _upstream_handles=upstream_handles,
                     **({"_input_contracts": list(node.input_contracts)} if node.input_contracts else {}),
                     _on_session_started=lambda child_session_id: coordinator.bind_node_session(
