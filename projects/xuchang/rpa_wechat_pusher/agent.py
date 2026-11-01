@@ -1,7 +1,7 @@
-"""许昌站点告警 → 个人微信群 RPA 推送 agent（wxauto 桌面自动化）。
+"""许昌站点告警 → 个人微信群 RPA 推送 agent（wechatauto-replica 驱动微信 4.x）。
 
-常驻轮询后端待发队列，用 wxauto 操控微信电脑版把告警通报发进指定群。
-仅发不收；依赖微信电脑版已登录且主窗口可用。部署步骤见 README.md。
+常驻轮询后端待发队列，把告警通报发进指定群。仅发不收；依赖微信 4.x
+电脑版已登录且主窗口可用。部署步骤见 README.md。
 
 用法：
     python agent.py                # 常驻轮询（Ctrl+C 退出）
@@ -81,26 +81,28 @@ def load_config() -> dict:
 
 
 class WeChatSender:
-    """wxauto 懒加载封装；初始化失败（微信未登录等）与发送失败分开处理。"""
+    """wechatauto-replica 驱动（微信 4.x 客户端）。
+
+    微信 3.9.x + wxauto 的老路线已被腾讯强制升级拦截（2025-10 起新设备登录
+    提示版本过低），本 agent 直接适配微信 4.x：wechatauto 热激活 Weixin.dll
+    的无障碍闸门使 UIA 树物化后发送，UIA 优先、OCR 兜底（OCR 依赖 winsdk，
+    缺失时仅少一层兜底，不影响发送）。
+    """
 
     def __init__(self) -> None:
         try:
-            from wxauto import WeChat
+            from wechatauto.guia import quick_send
         except ImportError as exc:
             raise RuntimeError(
-                "未安装 wxauto，请先运行 install.bat（或 .venv\\Scripts\\pip install -r requirements.txt）"
+                "未安装 wechatauto-replica，请先运行 install.bat"
             ) from exc
-        try:
-            self._wx = WeChat()
-        except Exception as exc:
-            raise RuntimeError(
-                f"初始化微信失败（{exc}）：请确认微信电脑版已登录且主窗口未关闭到托盘"
-            ) from exc
+        self._send = quick_send
 
     def send_text(self, group_name: str, text: str) -> None:
-        result = self._wx.SendMsg(msg=text, who=group_name)
-        if result is False:
-            raise RuntimeError(f"wxauto 返回发送失败（会话「{group_name}」）")
+        result = self._send(text, group_name)
+        status = str((result or {}).get("status") or "")
+        if "成功" not in status and "ok" not in status.lower():
+            raise RuntimeError(f"发送未确认：{result}")
 
 
 def http_headers(cfg: dict) -> dict:

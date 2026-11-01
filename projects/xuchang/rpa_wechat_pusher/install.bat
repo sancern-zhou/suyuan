@@ -21,6 +21,13 @@ if errorlevel 1 (
     echo [错误] 依赖安装失败，请检查网络后重新运行本脚本
     exit /b 1
 )
+rem wechatauto-replica 以 --no-deps 安装：跳过 winsdk（仅 OCR 兜底用，
+rem Python 3.13 无预编译 wheel；跳过它不影响 UIA 主通道发送）
+.venv\Scripts\python -m pip install --no-deps wechatauto-replica
+if errorlevel 1 (
+    echo [错误] wechatauto-replica 安装失败，请检查网络后重新运行本脚本
+    exit /b 1
+)
 
 echo [3/3] 初始化配置...
 if not exist config.toml copy config.example.toml config.toml >nul
@@ -28,7 +35,8 @@ if not exist data mkdir data
 
 echo.
 echo 安装完成。下一步：
-echo   1. 编辑 config.toml，填写后端地址、token 和目标群名
-echo   2. 微信电脑版登录后运行: .venv\Scripts\python agent.py --test "测试"
+echo   1. 微信电脑版登录后先用文件传输助手验证:
+echo      .venv\Scripts\python agent.py --test "测试"  （config.toml 群名先填 filehelper）
+echo   2. 编辑 config.toml 填写后端地址、token 和真实群名
 echo   3. 验证通过后运行 start_agent.bat 常驻
 endlocal
