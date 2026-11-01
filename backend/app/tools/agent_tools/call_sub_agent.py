@@ -30,6 +30,7 @@ from app.agent.selection_context import load_skill_selection
 from app.agent.prompts.tool_registry import get_tools_by_mode
 from app.agent.workflow.capabilities import MEMORY_EDIT_TOOL_NAMES, build_child_capability_policy
 from app.agent.workflow.delegation import is_leaf_mode, delegation_error
+from app.agent.workflow import route_decisions
 
 from app.agent.workflow.resource_handoff import (
     import_workflow_handles,
@@ -184,6 +185,13 @@ class CallSubAgentTool(LLMTool):
                         "enum": target_mode_values(),
                         "description": "目标 Agent 模式。能力与工具边界：" + build_target_mode_contract(),
                     },
+                    "describe_mode": {
+                        "type": "string",
+                        "description": (
+                            "只读查询，不执行委派：传 'modes' 返回全部可委派子模式一行速查；"
+                            "传具体模式名返回该模式完整契约（定位/能做/边界/产出/注意）。"
+                        ),
+                    },
                     "profile": {
                         "type": "string",
                         "enum": ["general-purpose", "orchestrator", "explore"],
@@ -291,7 +299,7 @@ class CallSubAgentTool(LLMTool):
                     },
                     "run_in_background": {
                         "type": "boolean",
-                        "description": "后台执行并返回任务句柄；助手 assistant 使用 manage_assistant_runs 管理返回的 run_id。"
+                        "description": "助手模式默认后台执行并返回 run_id（本轮先答复计划，结果在交付边界整合）；显式传 false 同步等待结果。其他模式传 true 转入进程内后台。"
                     },
                     "background_task_id": {
                         "type": "string",
@@ -322,6 +330,20 @@ class CallSubAgentTool(LLMTool):
 
     async def execute(self, context: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
         """Run a child Agent, optionally returning a background task handle."""
+        describe_arg = kwargs.get("describe_mode")
+        if isinstance(describe_arg, str) and describe_arg.strip():
+            from app.agent.workflow.target_mode_contract import describe_target_mode
+
+            contract_text = describe_target_mode(describe_arg)
+            return {
+                "status": "success",
+                "success": True,
+                "result": contract_text,
+                "data": {"describe_mode": describe_arg.strip()},
+                "metadata": {"schema_version": "workflow.v1", "generator": "call_sub_agent"},
+                "summary": "子模式契约查询已返回",
+            }
+        self._record_route_decision(context, kwargs)
         if getattr(context, "runtime_mode", None) == "assistant":
             from app.social.assistant_runs import AssistantRunService, managed_delegation
 
@@ -396,6 +418,41 @@ class CallSubAgentTool(LLMTool):
             },
             "summary": "后台子Agent已启动",
         }
+
+    def _record_route_decision(self, context: Optional[Any], kwargs: Dict[str, Any]) -> None:
+        """顶层委派审计（阶段 A）：工作流节点与助手运行内部执行不重复记录。"""
+        if kwargs.get("_workflow_node"):
+            return
+        if str(getattr(context, "runtime_mode", "") or "") == "assistant":
+            try:
+                from app.social.assistant_runs import managed_delegation
+
+                if managed_delegation.get() is not None:
+                    return
+            except Exception:  # noqa: BLE001 — 审计不阻塞委派
+                pass
+        runtime_metadata = (
+            dict(getattr(context, "runtime_metadata", {}) or {})
+            if context is not None
+            else {}
+        )
+        route_hint = runtime_metadata.get("route_hint")
+        route_decisions.record_route_decision(
+            session_id=getattr(context, "session_id", None),
+            user_identifier=runtime_metadata.get("user_identifier"),
+            parent_mode=self._get_parent_mode(context),
+            target_modes=[kwargs.get("target_mode")],
+            reason_code=(
+                route_decisions.REASON_SCENE_PREFILL
+                if route_hint
+                else route_decisions.REASON_ASSISTANT_JUDGMENT
+            ),
+            reason_values={
+                "goal_chars": len(str(kwargs.get("goal") or kwargs.get("task_description") or "")),
+                "background": bool(kwargs.get("run_in_background")),
+            },
+            route_hint=route_hint,
+        )
 
     async def _execute_foreground_as_subagent(self, **kwargs):
         """以 subagent 调用方档位执行子 Agent（思考策略按此关闭慢思考）。"""
@@ -526,6 +583,19 @@ class CallSubAgentTool(LLMTool):
             parent_mode = self._get_parent_mode(context)
             boundary_error = delegation_error(parent_mode, [str(target_mode)])
             if boundary_error:
+                refusal_metadata = (
+                    dict(getattr(context, "runtime_metadata", {}) or {})
+                    if context is not None
+                    else {}
+                )
+                route_decisions.record_route_decision(
+                    session_id=getattr(context, "session_id", None),
+                    user_identifier=refusal_metadata.get("user_identifier"),
+                    parent_mode=parent_mode,
+                    target_modes=[str(target_mode)],
+                    reason_code=route_decisions.REASON_BOUNDARY_REFUSED,
+                    reason_values={"error": str(boundary_error)[:300]},
+                )
                 return {
                     "status": "failed", "success": False, "result": boundary_error,
                     "data": {}, "metadata": {"generator": "call_sub_agent"},

@@ -153,6 +153,18 @@ class Settings(BaseSettings):
         le=7200,
         description="助手模式交付边界等待后台委派完成的秒数",
     )
+    # 阶段 B 后台委派默认化开关：助手模式不传 run_in_background 时是否转后台。
+    assistant_delegation_background_default: bool = Field(
+        default=True,
+        description="助手模式委派默认后台执行；false 恢复旧行为（默认同步等待结果）",
+    )
+    # 阶段 B 内联/溢出阈值：交付边界吸收时单条结果超过该字符数降为摘要卡+指针。
+    assistant_delegation_inline_result_chars: int = Field(
+        default=4000,
+        ge=500,
+        le=20000,
+        description="交付边界吸收时单条委派结果的内联上限字符数",
+    )
 
     @property
     def cors_origins_list(self) -> List[str]:

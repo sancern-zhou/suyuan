@@ -12,6 +12,7 @@ import { filterConversationHistory } from '@/components/conversationListPolicy.j
 import { AGENT_MODE_IDS } from '@/config/agentModes.js'
 import { projectConfig, resolveProjectDefaultAgentMode } from '@/config/projectConfig.js'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
+import { steerAssistantRun } from '@/services/assistantApi.js'
 import { chooseRestoredResource } from '@/services/sessionResourceLifecycle.js'
 import { confirmResourcePreviewLeave } from '@/services/resourcePreviewLeaveGuard.js'
 import {
@@ -141,6 +142,34 @@ export function useSessionManagement(store) {
    * 发送消息
    * @param {string|object} payload - 消息内容或包含选项的对象
    */
+  // 阶段 B 追问直通：唯一活跃子委派时，回车转交给运行中的任务而非开启新对话。
+  // 多个活跃 run 或 workflow 类委派不支持转交，回常规对话由 assistant 裁决；
+  // 用户点"作为新任务"后对同一 run 抑制（directThroughSuppressedRunId）。
+  const resolveDirectThroughRun = (agentMode) => {
+    if (agentMode !== 'assistant') return null
+    const state = store.currentState
+    const runs = (state?.backgroundDelegation?.runs || []).filter(
+      run => run && run.run_id && run.kind === 'child' &&
+        (run.status === 'running' || !run.status)
+    )
+    if (runs.length !== 1) return null
+    if (state.directThroughSuppressedRunId === runs[0].run_id) return null
+    return runs[0]
+  }
+
+  const steerBackgroundRun = async (run, query, onAccepted) => {
+    const state = store.currentState
+    try {
+      await steerAssistantRun(run.run_id, state.sessionId, query)
+    } catch (error) {
+      console.warn('[assistant] direct-through steer failed, fallback to normal send:', error)
+      return false
+    }
+    if (typeof onAccepted === 'function') onAccepted()
+    refreshSessionHistory({ silent: true })
+    return true
+  }
+
   const handleSend = async (payload) => {
     if (currentConversationPolicy.value.readOnly) return false
     const query = payload.query
@@ -151,6 +180,12 @@ export function useSessionManagement(store) {
     const activeContexts = Array.isArray(payload.activeContexts) ? payload.activeContexts : null
     const messageAttachments = payload.messageAttachments || []
     const modelTier = payload.modelTier || 'flash'
+
+    const directRun = resolveDirectThroughRun(agentMode)
+    if (directRun) {
+      const steered = await steerBackgroundRun(directRun, query, payload.onAccepted)
+      if (steered) return true
+    }
 
     // 构建分析选项
     const options = {
