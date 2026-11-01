@@ -307,19 +307,21 @@ class KnowledgeVectorStore:
         try:
             from qdrant_client.models import Distance, VectorParams, HnswConfigDiff
 
-            # 检查是否已存在
-            collections = self.qdrant_client.get_collections().collections
+            # 检查是否已存在（同步客户端调用一律丢线程池，避免阻塞事件循环）
+            collections = (await asyncio.to_thread(self.qdrant_client.get_collections)).collections
             existing_names = [c.name for c in collections]
 
             if collection_name in existing_names:
-                if enable_hybrid and not self._collection_supports_hybrid(collection_name):
-                    point_count = self._collection_point_count(collection_name)
+                if enable_hybrid and not await asyncio.to_thread(self._collection_supports_hybrid, collection_name):
+                    point_count = await asyncio.to_thread(self._collection_point_count, collection_name)
                     if point_count == 0:
                         logger.warning(
                             "recreate_empty_collection_for_hybrid",
                             collection=collection_name
                         )
-                        self.qdrant_client.delete_collection(collection_name)
+                        await asyncio.to_thread(
+                            self.qdrant_client.delete_collection, collection_name
+                        )
                         self._invalidate_collection_config_cache(collection_name)
                     else:
                         logger.warning(
@@ -339,7 +341,7 @@ class KnowledgeVectorStore:
                     return True
 
             # 删除空的非hybrid集合后，重新读取集合列表
-            collections = self.qdrant_client.get_collections().collections
+            collections = (await asyncio.to_thread(self.qdrant_client.get_collections)).collections
             existing_names = [c.name for c in collections]
             if collection_name in existing_names:
                 logger.warning(
@@ -361,7 +363,8 @@ class KnowledgeVectorStore:
                 # 创建支持混合检索的Collection
                 from qdrant_client.models import SparseVectorParams, SparseIndexParams
 
-                self.qdrant_client.create_collection(
+                await asyncio.to_thread(
+                    self.qdrant_client.create_collection,
                     collection_name=collection_name,
                     vectors_config={
                         "dense": VectorParams(
@@ -391,7 +394,8 @@ class KnowledgeVectorStore:
                 }
             else:
                 # 创建仅支持稠密向量的Collection（向后兼容）
-                self.qdrant_client.create_collection(
+                await asyncio.to_thread(
+                    self.qdrant_client.create_collection,
                     collection_name=collection_name,
                     vectors_config=VectorParams(
                         size=self._embedding_dim,
@@ -432,7 +436,9 @@ class KnowledgeVectorStore:
             是否删除成功
         """
         try:
-            self.qdrant_client.delete_collection(collection_name)
+            await asyncio.to_thread(
+                self.qdrant_client.delete_collection, collection_name
+            )
             self._invalidate_collection_config_cache(collection_name)
             logger.info("collection_deleted", collection=collection_name)
             return True
