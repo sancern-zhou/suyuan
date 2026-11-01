@@ -30,6 +30,11 @@ from app.agent.selection_context import load_skill_selection
 from app.agent.prompts.tool_registry import get_tools_by_mode
 from app.agent.workflow.capabilities import MEMORY_EDIT_TOOL_NAMES, build_child_capability_policy
 from app.agent.workflow.delegation import is_leaf_mode, delegation_error
+from app.agent.workflow import route_decisions
+from app.agent.workflow.delivery_checklists import (
+    checklist_text,
+    evaluate_delivery_checklist,
+)
 
 from app.agent.workflow.resource_handoff import (
     import_workflow_handles,
@@ -186,6 +191,13 @@ class CallSubAgentTool(LLMTool):
                         "enum": target_mode_values(),
                         "description": "目标 Agent 模式。能力与工具边界：" + build_target_mode_contract(),
                     },
+                    "describe_mode": {
+                        "type": "string",
+                        "description": (
+                            "只读查询，不执行委派：传 'modes' 返回全部可委派子模式一行速查；"
+                            "传具体模式名返回该模式完整契约（定位/能做/边界/产出/注意）。"
+                        ),
+                    },
                     "profile": {
                         "type": "string",
                         "enum": ["general-purpose", "orchestrator", "explore"],
@@ -253,6 +265,16 @@ class CallSubAgentTool(LLMTool):
                         "type": "object",
                         "description": "结构化任务协议；子Agent必须按其中的范围、问题和交付要求执行。"
                     },
+                    "mandate": {
+                        "type": "object",
+                        "description": "本次委派授权边界（阶段C）；子Agent超出边界的产出视为无效，范围不足时在结果的 scope/data_gaps 中声明限制，不得越界。",
+                        "properties": {
+                            "region": {"type": "string", "description": "地域范围"},
+                            "time_range": {"type": "string", "description": "时间范围与统计口径"},
+                            "metrics": {"type": "string", "description": "指标口径"},
+                            "responsibility": {"type": "string", "description": "职责边界：做什么、不做什么"}
+                        }
+                    },
                     "result_schema": {
                         "type": "object",
                         "description": "子Agent最终结果的JSON Schema子集。提供后会解析并校验结构化结果。"
@@ -293,7 +315,7 @@ class CallSubAgentTool(LLMTool):
                     },
                     "run_in_background": {
                         "type": "boolean",
-                        "description": "后台执行并返回任务句柄；助手 assistant 使用 manage_assistant_runs 管理返回的 run_id。"
+                        "description": "助手模式默认后台执行并返回 run_id（本轮先答复计划，结果在交付边界整合）；显式传 false 同步等待结果。其他模式传 true 转入进程内后台。"
                     },
                     "background_task_id": {
                         "type": "string",
@@ -324,6 +346,20 @@ class CallSubAgentTool(LLMTool):
 
     async def execute(self, context: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
         """Run a child Agent, optionally returning a background task handle."""
+        describe_arg = kwargs.get("describe_mode")
+        if isinstance(describe_arg, str) and describe_arg.strip():
+            from app.agent.workflow.target_mode_contract import describe_target_mode
+
+            contract_text = describe_target_mode(describe_arg)
+            return {
+                "status": "success",
+                "success": True,
+                "result": contract_text,
+                "data": {"describe_mode": describe_arg.strip()},
+                "metadata": {"schema_version": "workflow.v1", "generator": "call_sub_agent"},
+                "summary": "子模式契约查询已返回",
+            }
+        self._record_route_decision(context, kwargs)
         if getattr(context, "runtime_mode", None) == "assistant":
             from app.social.assistant_runs import AssistantRunService, managed_delegation
 
@@ -399,6 +435,41 @@ class CallSubAgentTool(LLMTool):
             "summary": "后台子Agent已启动",
         }
 
+    def _record_route_decision(self, context: Optional[Any], kwargs: Dict[str, Any]) -> None:
+        """顶层委派审计（阶段 A）：工作流节点与助手运行内部执行不重复记录。"""
+        if kwargs.get("_workflow_node"):
+            return
+        if str(getattr(context, "runtime_mode", "") or "") == "assistant":
+            try:
+                from app.social.assistant_runs import managed_delegation
+
+                if managed_delegation.get() is not None:
+                    return
+            except Exception:  # noqa: BLE001 — 审计不阻塞委派
+                pass
+        runtime_metadata = (
+            dict(getattr(context, "runtime_metadata", {}) or {})
+            if context is not None
+            else {}
+        )
+        route_hint = runtime_metadata.get("route_hint")
+        route_decisions.record_route_decision(
+            session_id=getattr(context, "session_id", None),
+            user_identifier=runtime_metadata.get("user_identifier"),
+            parent_mode=self._get_parent_mode(context),
+            target_modes=[kwargs.get("target_mode")],
+            reason_code=(
+                route_decisions.REASON_SCENE_PREFILL
+                if route_hint
+                else route_decisions.REASON_ASSISTANT_JUDGMENT
+            ),
+            reason_values={
+                "goal_chars": len(str(kwargs.get("goal") or kwargs.get("task_description") or "")),
+                "background": bool(kwargs.get("run_in_background")),
+            },
+            route_hint=route_hint,
+        )
+
     async def _execute_foreground_as_subagent(self, **kwargs):
         """以 subagent 调用方档位执行子 Agent（思考策略按此关闭慢思考）。"""
         from app.services.llm_thinking_policy import (
@@ -430,6 +501,7 @@ class CallSubAgentTool(LLMTool):
         task_id: Optional[str] = None,
         parent_task_id: Optional[str] = None,
         task_contract: Optional[Dict[str, Any]] = None,
+        mandate: Optional[Dict[str, Any]] = None,
         result_schema: Optional[Dict[str, Any]] = None,
         repair_attempts: int = 1,
         max_iterations: Optional[int] = None,
@@ -528,6 +600,19 @@ class CallSubAgentTool(LLMTool):
             parent_mode = self._get_parent_mode(context)
             boundary_error = delegation_error(parent_mode, [str(target_mode)])
             if boundary_error:
+                refusal_metadata = (
+                    dict(getattr(context, "runtime_metadata", {}) or {})
+                    if context is not None
+                    else {}
+                )
+                route_decisions.record_route_decision(
+                    session_id=getattr(context, "session_id", None),
+                    user_identifier=refusal_metadata.get("user_identifier"),
+                    parent_mode=parent_mode,
+                    target_modes=[str(target_mode)],
+                    reason_code=route_decisions.REASON_BOUNDARY_REFUSED,
+                    reason_values={"error": str(boundary_error)[:300]},
+                )
                 return {
                     "status": "failed", "success": False, "result": boundary_error,
                     "data": {}, "metadata": {"generator": "call_sub_agent"},
@@ -954,6 +1039,20 @@ class CallSubAgentTool(LLMTool):
                     imported_resource_refs
                 ),
             )
+            if isinstance(mandate, dict) and mandate:
+                mandate_lines = [
+                    f"- {key}: {value}"
+                    for key, value in mandate.items()
+                    if str(value or "").strip()
+                ]
+                if mandate_lines:
+                    child_request_prompt = (
+                        child_request_prompt.rstrip()
+                        + "\n\n## 授权边界（mandate）\n"
+                        + "\n".join(mandate_lines)
+                        + "\n超出以上授权范围的产出视为无效；范围不足以完成任务时，"
+                        "在结果的 scope 与 data_gaps 中如实声明限制，不要越界产出。\n"
+                    )
             logger.debug(
                 "child_request_prompt_built",
                 target_mode=target_mode,
@@ -983,6 +1082,8 @@ class CallSubAgentTool(LLMTool):
                     + "分析完成后必须调用 `submit_result` 工具提交结构化结果（字段结构见工具定义），"
                     + "然后用一句话简述结论即可结束。未调用 submit_result 直接结束视为未完成交付，"
                     + "将触发重试。证据足以回答任务问题即应交付，不要为追求完整性用尽迭代预算。\n"
+                    + "\n## 验收清单（交付前逐项自查）\n"
+                    + checklist_text(str(target_mode))
                 )
             # 升级提问（escalate）：工作流节点子 Agent 可以向用户提出阻塞性澄清
             # 问题（问数口径/统计范围/时间边界），只挂起本节点、其余节点照常跑；
@@ -1138,10 +1239,17 @@ class CallSubAgentTool(LLMTool):
             repair_workflow_progress = self._fixed_workflow_deliver_progress(target_mode)
             structured_result = None
             validation_errors = []
+            checklist_violations = []
             if result_schema and final_result["status"] != "cancelled":
                 structured_result, validation_errors = self._validate_structured_result(
                     final_result.get("answer", ""), result_schema
                 )
+                blocking, checklist_violations = self._evaluate_delivery_checklist(
+                    target_mode, mandate, structured_result
+                )
+                # enforce 模式：清单违规并入校验错误通道，由既有修复轮喂回修正；
+                # observe 模式只记录（见 envelope metadata 与日志）。
+                validation_errors = validation_errors + blocking
                 attempts = max(0, min(int(repair_attempts or 0), 2))
                 for repair_index in range(attempts):
                     if not validation_errors:
@@ -1198,6 +1306,10 @@ class CallSubAgentTool(LLMTool):
                     structured_result, validation_errors = self._validate_structured_result(
                         final_result.get("answer", ""), result_schema
                     )
+                    blocking, checklist_violations = self._evaluate_delivery_checklist(
+                        target_mode, mandate, structured_result
+                    )
+                    validation_errors = validation_errors + blocking
                     if validation_errors:
                         workflow_runtime.start(workflow_run.run_id)
 
@@ -1290,7 +1402,20 @@ class CallSubAgentTool(LLMTool):
                     for url in structured_data["chart_urls"]
                 ],
                 errors=validation_errors,
-                metadata={"target_mode": target_mode, "task_id": effective_task_id},
+                metadata={
+                    "target_mode": target_mode,
+                    "task_id": effective_task_id,
+                    **(
+                        {"mandate": mandate}
+                        if isinstance(mandate, dict) and mandate
+                        else {}
+                    ),
+                    **(
+                        {"delivery_checklist_violations": checklist_violations}
+                        if checklist_violations
+                        else {}
+                    ),
+                },
             )
             human_feedback = self._extract_human_feedback(result_events)
             if human_feedback is not None:
@@ -1786,6 +1911,34 @@ class CallSubAgentTool(LLMTool):
             "code": "编程Agent",
         }
         return mode_names.get(mode, mode)
+
+    def _evaluate_delivery_checklist(
+        self,
+        target_mode: str,
+        mandate: Optional[Dict[str, Any]],
+        structured_result: Optional[Dict[str, Any]],
+    ) -> tuple:
+        """交付验收清单（阶段 C）。返回 (blocking, observed)。
+
+        observe：只记录（日志 + envelope metadata），不拦截交付；
+        enforce：违规并入校验错误触发既有修复轮；off：跳过。
+        """
+        from config.settings import settings as _settings
+
+        mode = str(getattr(_settings, "delivery_checklist_mode", "observe") or "observe")
+        if mode == "off" or not isinstance(structured_result, dict):
+            return [], []
+        observed = evaluate_delivery_checklist(
+            str(target_mode), structured_result, mandate
+        )
+        if observed:
+            logger.info(
+                "delivery_checklist_evaluated",
+                target_mode=target_mode,
+                checklist_mode=mode,
+                violations=observed,
+            )
+        return (observed if mode == "enforce" else []), observed
 
     @staticmethod
     def _validate_structured_result(answer: str, schema: Dict[str, Any]):

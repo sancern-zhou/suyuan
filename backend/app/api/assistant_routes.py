@@ -265,3 +265,43 @@ async def read_notification(message_id: str, user: AuthenticatedUser, service: T
 
     await result(AssistantNotificationService(service.session_factory).mark_read(settings.project_id, user.id, message_id))
     return {"success": True}
+
+
+class AssistantRunSteerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message: str = Field(min_length=1, max_length=20000)
+
+
+@router.post("/runs/{run_id}/steer")
+async def assistant_run_steer(
+    run_id: str,
+    payload: AssistantRunSteerRequest,
+    user: AuthenticatedUser,
+    catalog: Catalog,
+    session_id: str = Query(min_length=1, max_length=255),
+):
+    """追问直通（阶段 B）：把用户追问转交给该会话运行中的后台委派。
+
+    前端在会话快照的 background_runs 显示唯一活跃 run 时调用本端点，
+    消息直达子会话 steering；多活跃 run 或新任务仍走常规对话由 assistant 裁决。
+    """
+    from app.social.assistant_runs import AssistantRunService
+
+    _available("manage_assistant_runs")
+    row = await _source(catalog, user, session_id)
+    message = payload.message.strip()
+    with web_assistant_request(session_id, user, message, uuid4().hex):
+        accepted = await AssistantRunService().steer_run(
+            settings.project_id,
+            row.owner_user_id,
+            session_id=session_id,
+            run_id=run_id,
+            message=message,
+        )
+    return {
+        "run_id": run_id,
+        "session_id": session_id,
+        "accepted": bool(accepted),
+        "status": "steer_requested" if accepted else "not_accepted",
+        "message": "已转交给运行中的任务" if accepted else "该任务当前不接受补充要求",
+    }

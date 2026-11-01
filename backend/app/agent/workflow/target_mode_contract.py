@@ -181,6 +181,62 @@ def _active_contracts():
     }}
 
 
+def _format_mode_contract(mode: str, spec: dict[str, str]) -> str:
+    lines = [f"{mode}：{spec.get('positioning', '')}"]
+    if spec.get("scope"):
+        lines.append(f"能做：{spec['scope']}")
+    if spec.get("boundary"):
+        lines.append(f"边界：{spec['boundary']}")
+    if spec.get("outputs"):
+        lines.append(f"产出：{spec['outputs']}")
+    if spec.get("warning"):
+        lines.append(f"⚠️ {spec['warning']}")
+    return "\n".join(lines)
+
+
+def describe_target_mode(arg: str) -> str:
+    """describe_mode 参数解释（按需披露，仿 describe_table 模式）。
+
+    'modes' 返回全部可委派子模式一行速查（与工具描述内联的速查表同源）；
+    具体模式名返回该模式完整契约（定位/能做/边界/产出/注意），长尾细节
+    不占每次请求的固定上下文。未知名返回模糊纠错候选；主模式返回说明与
+    其契约并标注不可作为子 Agent。
+    """
+    from difflib import get_close_matches
+
+    from app.agent.workflow.delegation import PRIMARY_ONLY_MODES
+
+    query = str(arg or "").strip()
+    if not query:
+        return (
+            "describe_mode 需要一个值：传 'modes' 查看全部可委派子模式速查，"
+            "或传具体模式名查看其完整契约。"
+        )
+    if query.lower() in {"modes", "list", "all"}:
+        return build_target_mode_contract(compact=True)
+    delegatable = _active_contracts()
+    contracts: dict[str, dict[str, str]] = dict(TARGET_MODE_CONTRACTS)
+    for name, spec in delegatable.items():
+        contracts.setdefault(name, spec)
+    spec = contracts.get(query)
+    if spec is None:
+        if query in PRIMARY_ONLY_MODES:
+            return f"{query} 是主模式，不能作为子 Agent 调用；其职责由主模式系统提示词定义。"
+        candidates = get_close_matches(query, list(contracts), n=3, cutoff=0.4)
+        hint = "、".join(candidates) if candidates else "、".join(sorted(delegatable))
+        return (
+            f"未知模式 '{query}'。近似候选：{hint}；"
+            "或传 describe_mode='modes' 查看全部可委派子模式。"
+        )
+    if query in PRIMARY_ONLY_MODES:
+        return (
+            f"{query} 是主模式，不能作为子 Agent 调用"
+            "（取数/研判/正式报告由主模式直接完成或经其委派）。\n"
+            + _format_mode_contract(query, spec)
+        )
+    return _format_mode_contract(query, spec)
+
+
 def build_target_mode_contract(compact: bool = True) -> str:
     """构建 target_mode 能力/工具边界契约文本（供工具 schema 使用）。
 
