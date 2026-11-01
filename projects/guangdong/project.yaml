@@ -254,6 +254,8 @@ backend:
   # 广东项目自有技能库：优先加载本目录，再叠加共享 backend/docs/skills。
   # 江苏分支技能已引入本地，后续按广东工具与口径改写。
   skills_dir: projects/guangdong/skills
+  # 平台提示词"用户面向与表达约定"段落的广东版（共享默认不点名项目地名）。
+  audience_contract_file: projects/guangdong/prompts/audience_contract.md
   # 2026-10-29 气象抓取改造：下线 Open-Meteo 逐小时实况（observed_weather，其
   # 站点表无人维护）；NMC 观测（nmc_observed_weather）与 ERA5 历史
   # （city_weather_history，写 era5_reanalysis_data）均只覆盖广东 21 地市，
