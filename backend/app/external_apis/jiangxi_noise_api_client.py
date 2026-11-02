@@ -215,6 +215,7 @@ class JiangxiNoiseDataClient:
         secret_key: str,
         timeout: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        auth_token: str = "",
     ) -> None:
         base_url = base_url.strip().rstrip("/")
         username = username.strip()
@@ -245,7 +246,11 @@ class JiangxiNoiseDataClient:
         self.secret_key = secret_key
         self.timeout = timeout
         self._transport = transport
-        self._token: str | None = None
+        # 静态 token 模式（内网部署）：直接使用平台 Web 端登录 token，
+        # 跳过 GetExternalApiToken 外部换取（内网平台要求应用授权）。
+        # token 过期需在平台 Web 重新登录获取并更新环境变量。
+        self._auth_token = (auth_token or "").strip()
+        self._token: str | None = self._auth_token or None
 
     @classmethod
     def from_env(cls) -> JiangxiNoiseDataClient:
@@ -253,6 +258,7 @@ class JiangxiNoiseDataClient:
         base_url = os.getenv("JIANGXI_NOISE_BASE_URL", "")
         username = os.getenv("JIANGXI_NOISE_USERNAME", "")
         secret_key = os.getenv("JIANGXI_NOISE_SECRET_KEY", "")
+        auth_token = os.getenv("JIANGXI_NOISE_AUTH_TOKEN", "")
         timeout_value = os.getenv("JIANGXI_NOISE_TIMEOUT_SECONDS", "30")
         try:
             timeout = float(timeout_value)
@@ -266,6 +272,7 @@ class JiangxiNoiseDataClient:
             username=username,
             secret_key=secret_key,
             timeout=timeout,
+            auth_token=auth_token,
         )
 
     def _create_http_client(self) -> httpx.AsyncClient:
@@ -375,6 +382,12 @@ class JiangxiNoiseDataClient:
                     ) from exc
 
                 if response.status_code == 401 and attempt == 0:
+                    if self._auth_token:
+                        raise JiangxiNoiseClientError(
+                            "authentication_failed",
+                            "Web 登录 token 已过期：请在噪声平台 Web 端重新登录，"
+                            "获取新 token 并更新 JIANGXI_NOISE_AUTH_TOKEN 后重启服务",
+                        )
                     self._token = None
                     logger.info("jiangxi_noise_token_refresh")
                     continue
