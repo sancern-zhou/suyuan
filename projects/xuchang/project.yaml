@@ -36,6 +36,8 @@ backend:
     - query_airdata_platform
     - airdata_calc_report_summary
     - xuchang_station_catalog
+  # 平台提示词"用户面向与表达约定"段落的许昌版（共享默认不点名项目地名）。
+  audience_contract_file: projects/xuchang/prompts/audience_contract.md
   agent_mode_tools:
     query:
       - run_agent_workflow
