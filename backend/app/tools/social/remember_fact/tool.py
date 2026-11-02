@@ -9,6 +9,7 @@
 from pathlib import Path
 from typing import Dict, Any
 from contextvars import ContextVar
+import asyncio
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
@@ -133,9 +134,15 @@ class RememberFactTool(LLMTool):
                     "summary": "记忆添加失败：无法找到记忆文件"
                 }
             store = CuratedFactStore(Path(memory_file_path).parent)
-            result = store.add(
-                fact=fact, category=category, source_ref=source_ref,
-                applies_when=applies_when, valid_until=valid_until,
+            # 事实库要扫描并解析整个 facts 目录、等文件锁、fsync 落盘：全是阻塞
+            # 调用，必须离开事件循环，否则整合期间会把整个 web worker 卡住。
+            result = await asyncio.to_thread(
+                store.add,
+                fact=fact,
+                category=category,
+                source_ref=source_ref,
+                applies_when=applies_when,
+                valid_until=valid_until,
             )
             return {"success": True, "summary": f"记忆事实{result['status']}: {fact[:50]}", **result}
 

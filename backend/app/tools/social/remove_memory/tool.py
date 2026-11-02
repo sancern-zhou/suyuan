@@ -8,6 +8,7 @@
 from pathlib import Path
 from typing import Dict, Any
 from contextvars import ContextVar
+import asyncio
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
@@ -117,18 +118,26 @@ class RemoveMemoryTool(LLMTool):
                     "summary": "记忆删除失败：无法找到记忆文件"
                 }
             store = CuratedFactStore(Path(memory_file_path).parent)
-            result = store.remove(old_text, category)
-            payload = {
-                "success": result == "removed",
-                "status": result,
-                "summary": f"共享事实删除结果：{result}",
-            }
-            if result == "not_found":
-                suggestions = store.suggest(old_text, category)
-                if suggestions:
-                    payload["error"] = "未找到匹配条目，请确认后使用以下候选的完整原文重试：" + "；".join(
-                        item["fact"] for item in suggestions
-                    )
+
+            # 匹配、删除、候选建议都要扫描整个 facts 目录并等文件锁：整体放到
+            # 线程里执行，避免阻塞事件循环。
+            def _remove_sync() -> dict:
+                removal = store.remove(old_text, category)
+                result_payload = {
+                    "success": removal == "removed",
+                    "status": removal,
+                    "summary": f"共享事实删除结果：{removal}",
+                }
+                if removal == "not_found":
+                    suggestions = store.suggest(old_text, category)
+                    if suggestions:
+                        result_payload["error"] = (
+                            "未找到匹配条目，请确认后使用以下候选的完整原文重试："
+                            + "；".join(item["fact"] for item in suggestions)
+                        )
+                return result_payload
+
+            payload = await asyncio.to_thread(_remove_sync)
             return payload
 
         except Exception as e:

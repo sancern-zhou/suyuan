@@ -5,6 +5,13 @@ from pydantic import ValidationError
 
 from .models import ModuleManifest, ProjectContext, ProjectManifest, validate_identifier
 
+# libyaml-backed loader when available: pure-Python safe_load spends ~67 ms on the
+# 36 KB Guangdong manifest, which agents pay on every planner iteration.
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+_CONTEXT_CACHE: dict[
+    tuple[str, str], tuple[tuple[tuple[str, int, int], ...], ProjectContext]
+] = {}
+
 
 class ProjectConfigError(RuntimeError):
     pass
@@ -18,12 +25,29 @@ def _read_yaml(path: Path) -> dict:
     if not path.is_file():
         raise ProjectConfigError(f"manifest not found: {path}")
     try:
-        value = yaml.safe_load(path.read_text(encoding="utf-8"))
+        value = yaml.load(path.read_text(encoding="utf-8"), Loader=_YAML_LOADER)
     except yaml.YAMLError as exc:
         raise ProjectConfigError(f"invalid YAML in {path}: {exc}") from exc
     if not isinstance(value, dict):
         raise ProjectConfigError(f"manifest must be an object: {path}")
     return value
+
+
+def _manifest_signature(
+    root: Path, project_id: str, module_ids: tuple[str, ...] | list[str]
+) -> tuple[tuple[str, int, int], ...]:
+    """Cheap change detector: (path, mtime_ns, size) for every manifest read."""
+    paths = [root / "projects" / project_id / "project.yaml"]
+    paths.extend(root / "modules" / module_id / "module.yaml" for module_id in module_ids)
+    signature: list[tuple[str, int, int]] = []
+    for path in paths:
+        try:
+            stat = path.stat()
+        except OSError:
+            signature.append((str(path), -1, -1))
+        else:
+            signature.append((str(path), stat.st_mtime_ns, stat.st_size))
+    return tuple(signature)
 
 
 def load_project_context(project_id: str, *, repo_root: Path | None = None) -> ProjectContext:
@@ -33,6 +57,16 @@ def load_project_context(project_id: str, *, repo_root: Path | None = None) -> P
         raise ProjectConfigError(str(exc)) from exc
 
     root = (repo_root or repository_root()).resolve()
+    cache_key = (str(root), project_id)
+    cached = _CONTEXT_CACHE.get(cache_key)
+    if cached is not None:
+        cached_signature, cached_context = cached
+        current_signature = _manifest_signature(
+            root, project_id, cached_context.manifest.modules
+        )
+        if current_signature == cached_signature:
+            return cached_context
+
     project_path = root / "projects" / project_id / "project.yaml"
     try:
         project = ProjectManifest.model_validate(_read_yaml(project_path))
@@ -64,8 +98,15 @@ def load_project_context(project_id: str, *, repo_root: Path | None = None) -> P
             if dependency not in selected:
                 raise ProjectConfigError(f"{module_id} requires {dependency}")
 
-    return ProjectContext(
+    context = ProjectContext(
         manifest=project,
         module_manifests=modules,
         enabled_modules=frozenset({"core", *selected}),
     )
+    # Callers only read the context; the signature guards against manifest edits
+    # so a cached instance never outlives the files it was built from.
+    _CONTEXT_CACHE[cache_key] = (
+        _manifest_signature(root, project_id, project.modules),
+        context,
+    )
+    return context

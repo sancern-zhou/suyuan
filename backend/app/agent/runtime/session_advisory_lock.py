@@ -14,9 +14,25 @@ from typing import AsyncIterator
 import structlog
 from sqlalchemy import text
 
-from app.db.database import engine
+from app.db.database import engine as _default_engine
+from app.db.session_database import session_engine
 
 logger = structlog.get_logger()
+
+
+def _select_lock_engine():
+    """Hold run locks on the conversation-history database when it is PostgreSQL.
+
+    The lock keeps one pooled connection checked out for the whole run; on a
+    WAN database that idle flow gets dropped mid-run and the unlock then
+    fails, leaving the server-side lock wedged until the stale backend times
+    out — every follow-up message of that session is rejected meanwhile. The
+    session store is local in the standard layout, so prefer it.
+    """
+    return session_engine if session_engine.dialect.name == "postgresql" else _default_engine
+
+
+engine = _select_lock_engine()
 
 
 @dataclass
@@ -116,10 +132,22 @@ async def session_advisory_lock(session_id: str, *, wait_timeout: float = 0) -> 
                 )
                 if not unlock_result.scalar():
                     await conn.invalidate()
-            except BaseException:
+            except asyncio.CancelledError:
                 # Never return a connection holding a session lock to the pool.
                 await conn.invalidate()
                 raise
+            except Exception:
+                # Unlock is best-effort cleanup: a dead connection means the
+                # server-side lock dies with its backend, and the run itself
+                # has already finished — a failed unlock must not replace the
+                # run's outcome (it once killed the final SSE event and left
+                # the session unwritable until the stale backend timed out).
+                await conn.invalidate()
+                logger.warning(
+                    "session_advisory_unlock_failed",
+                    session_id=session_id,
+                    exc_info=True,
+                )
             logger.info(
                 "session_advisory_lock_released",
                 session_id=session_id,

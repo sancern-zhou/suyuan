@@ -46,7 +46,7 @@ async def test_runtime_stops_before_execution_when_registration_fails(monkeypatc
     runtime = object.__new__(AgentRuntime)
     runtime.memory = NS(session_id="s")
     runtime.executor = NS()
-    runtime.config = NS(enhance_with_history=True, board_context=None, cancel_event=asyncio.Event())
+    runtime.config = NS(enhance_with_history=True, board_context=None, cancel_event=asyncio.Event(), runtime_metadata=None)
     claim = AsyncMock(return_value=False)
     register_owner = AsyncMock()
     monkeypatch.setattr(module.cancellation_registry, "attach_run_id", claim)
@@ -99,11 +99,28 @@ async def test_lock_released_on_cancel_and_invalidated_on_unlock_error(fake_lock
     task.cancel()
     with pytest.raises(asyncio.CancelledError): await task
     assert not fake_lock_db.locked
-    with pytest.raises(RuntimeError, match="unlock connection failure"):
-        async with session_advisory_lock("s"):
-            fake_lock_db.connections[-1].unlock_error = True
+    # A failed unlock is best-effort cleanup: it invalidates the connection
+    # and must not mask the run's outcome with a spurious error.
+    async with session_advisory_lock("s"):
+        fake_lock_db.connections[-1].unlock_error = True
     assert fake_lock_db.connections[-1].invalidated
     assert not fake_lock_db.locked
+
+
+@pytest.mark.asyncio
+async def test_lock_engine_prefers_postgresql_session_database(monkeypatch):
+    import app.agent.runtime.session_advisory_lock as lock_module
+
+    def fake_engine(dialect_name):
+        return NS(dialect=NS(name=dialect_name))
+
+    session_db, main_db = fake_engine("postgresql"), fake_engine("postgresql")
+    monkeypatch.setattr(lock_module, "session_engine", session_db)
+    monkeypatch.setattr(lock_module, "_default_engine", main_db)
+    assert lock_module._select_lock_engine() is session_db
+
+    monkeypatch.setattr(lock_module, "session_engine", fake_engine("kingbase"))
+    assert lock_module._select_lock_engine() is main_db
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,7 @@ import fcntl
 import os
 from pathlib import Path
 import tempfile
+import time
 from typing import Any, Iterator
 from uuid import uuid4
 
@@ -25,15 +26,35 @@ class CuratedFactStore:
     INDEX_CHAR_LIMIT = 25_000
     SUGGESTION_LIMIT = 3
     SUGGESTION_CUTOFF = 0.72
+    LOCK_TIMEOUT_SECONDS = 5.0
+    LOCK_RETRY_INTERVAL_SECONDS = 0.05
 
     def __init__(self, workspace: Path) -> None:
         self.root = Path(workspace).resolve() / "facts"
 
     @contextmanager
-    def _locked(self) -> Iterator[None]:
+    def _locked(self, timeout: float | None = None) -> Iterator[None]:
+        """Take the writer lock without waiting on it indefinitely.
+
+        The Windows fcntl shim maps a blocking flock onto msvcrt.LK_LOCK, which
+        spins for ten seconds before failing. Writers contend across processes
+        (every web worker can consolidate the same mode), so poll LOCK_NB and
+        fail early instead of parking a caller for the full msvcrt window.
+        """
+        limit = self.LOCK_TIMEOUT_SECONDS if timeout is None else timeout
+        deadline = time.monotonic() + limit
         self.root.mkdir(parents=True, exist_ok=True)
         with (self.root / ".lock").open("a+") as lock:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            while True:
+                try:
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            f"curated facts lock unavailable after {limit}s: {self.root}"
+                        ) from None
+                    time.sleep(self.LOCK_RETRY_INTERVAL_SECONDS)
             try:
                 yield
             finally:

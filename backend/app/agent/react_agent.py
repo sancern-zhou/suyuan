@@ -470,10 +470,13 @@ class ReActAgent:
             try:
                 from .memory.active_memory_retriever import build_memory_context
 
-                memory_context = build_memory_context(
+                # 记忆注入要读 MEMORY.md 并扫描/加锁整个 facts 目录，放到线程里
+                # 执行；to_thread 会带上当前 context，快照语义不变。
+                memory_context = await asyncio.to_thread(
+                    build_memory_context,
                     memory_store=assistant_memory_store,
                     query=user_query,
-                    recent_messages=initial_messages or []
+                    recent_messages=initial_messages or [],
                 )
             except ModuleNotFoundError as e:
                 logger.warning("active_memory_retriever_missing_fallback", error=str(e))
@@ -496,7 +499,9 @@ class ReActAgent:
                 memory_store.create_snapshot()
                 memory_snapshot_created = True
                 from .memory.active_memory_retriever import build_memory_context
-                memory_context = build_memory_context(memory_store, user_query)
+                memory_context = await asyncio.to_thread(
+                    build_memory_context, memory_store, user_query
+                )
 
         # ✅ 统一：记录记忆注入日志
         if memory_context:
