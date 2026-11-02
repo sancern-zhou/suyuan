@@ -296,3 +296,5 @@ sources:
   - name: wfl_workflow
   - name: wfl_workflowtask
   - name: wo_commonfile
+  - name: acs_door_records
+    description: 站点门禁出入事件(平台API stationintegrate/HK, 每日增量, sync_door_access.py)

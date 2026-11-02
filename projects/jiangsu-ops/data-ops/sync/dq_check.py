@@ -40,6 +40,7 @@ FRESHNESS_SLA_MIN = {
     "dim_device_parameter": (26 * 60, "synced_at"),
     "dim_person": (26 * 60, "synced_at"),
     "mart_station_alarm_log": (26 * 60, "synced_at"),
+    "mart_station_door_access": (26 * 60, "synced_at"),
     "mart_station_env_power": (26 * 60, "synced_at"),
     "mart_qc_task_status_result": (26 * 60, "synced_at"),
     "mart_qc_air_data_result": (26 * 60, "synced_at"),
@@ -68,8 +69,9 @@ NULL_CHECKS = {
     "dim_station": (["station_code"], {}),
     "dim_device": (["device_code"], {"station_code": 400}),
     "dim_device_parameter": (["devicemodel", "parameterid", "parameter_name"], {}),
-    "dim_person": (["user_id", "user_name"], {}),
+    "dim_person": (["user_id", "user_name"], {"user_name": 2}),  # user_id=550 上游姓名被清空(2026-10-26), 容2行留可见性
     "mart_station_alarm_log": (["station_code", "alarm_time"], {}),
+    "mart_station_door_access": (["event_id", "event_time"], {"station_code": 200}),
     "mart_station_env_power": (["station_code", "timepoint", "pollutant_code"], {}),
     "mart_qc_task_status_result": (["rid"], {"station_code": 100}),
     "mart_qc_air_data_result": (["station_code", "timepoint"], {}),
@@ -79,6 +81,7 @@ NULL_CHECKS = {
 UNIQUE_CHECKS = {
     "dim_person": ["user_id"],
     "mart_station_alarm_log": ["station_code", "id"],
+    "mart_station_door_access": ["event_id"],
     "mart_station_env_power": ["station_code", "id"],
     "mart_qc_task_status_result": ["rid"],
     "mart_qc_air_data_result": ["id"],

@@ -994,7 +994,8 @@ class JiangsuDoorAccessRecordsTool(LLMTool):
         "eventTime", "EventTime", "swipeTime", "SwipeTime", "openTime", "OpenTime",
         "createTime", "CreateTime", "timePoint", "TimePoint", "occurredAt",
     )
-    _TYPE_KEYS = ("eventType", "EventType", "eventName", "accessType", "openType", "doorEventType")
+    _TYPE_KEYS = ("eventName", "EventName", "eventType", "EventType", "accessType", "openType", "doorEventType")
+    _IN_OUT_KEYS = ("inAndOutType", "InAndOutType")
     _DOOR_KEYS = ("doorName", "DoorName", "deviceName", "channelName", "readerName", "pointName")
     _CARD_KEYS = ("cardNo", "CardNo", "cardNumber", "icCard", "idCard", "credentialNo")
 
@@ -1013,7 +1014,7 @@ class JiangsuDoorAccessRecordsTool(LLMTool):
                 "name": "jiangsu_fetch_door_access_records",
                 "description": (
                     "按站点和时间范围只读读取江苏省控站点门禁开关门/刷卡记录，用作签到到站之外的独立进站证据。"
-                    "返回记录会归一为人员、站点、事件时间、事件类型、门名称和卡号等字段，并保留平台原始字段。"
+                    "返回记录会归一为人员、站点、事件时间、事件类型（合法卡比对通过/按钮开门等）、出入方向、门名称和卡号等字段，并保留平台原始字段。"
                     "本工具只读查询；门禁记录为离散事件，不是连续位置轨迹，也不等同于责任认定；"
                     "签到与门禁不一致只能作为待核查线索。"
                 ),
@@ -1121,11 +1122,15 @@ class JiangsuDoorAccessRecordsTool(LLMTool):
     async def _fetch_station(
         self, station_code: str, start_time: str, end_time: str, max_result_count: int
     ) -> dict[str, Any]:
+        # 平台要求数组下标绑定且必须携带 ConfigType=2；缺 ConfigType 时接口恒返回空列表(2026-11-02 实测定案)。
         return await self._api.get(self._PATH, [
-            ("StationCode", station_code),
-            ("EventTime", start_time),
-            ("EventTime", end_time),
-            ("MaxResultCount", str(max_result_count)),
+            ("skipCount", "0"),
+            ("sorting", "id"),
+            ("maxResultCount", str(max_result_count)),
+            ("StationCode[0]", station_code),
+            ("EventTime[0]", start_time),
+            ("EventTime[1]", end_time),
+            ("ConfigType", "2"),
         ])
 
     @staticmethod
@@ -1160,6 +1165,7 @@ class JiangsuDoorAccessRecordsTool(LLMTool):
             "person_name": _take_field(row, cls._PERSON_KEYS, used),
             "event_time": _take_field(row, cls._TIME_KEYS, used),
             "event_type": _take_field(row, cls._TYPE_KEYS, used),
+            "in_and_out_type": _take_field(row, cls._IN_OUT_KEYS, used),
             "door_name": _take_field(row, cls._DOOR_KEYS, used),
             "card_no": _take_field(row, cls._CARD_KEYS, used),
         }

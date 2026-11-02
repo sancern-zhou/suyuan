@@ -12,6 +12,9 @@ rem վ������Сʱ��Ƭ��(integrated_h_2026_*, 100վ): ���
 echo [%date% %time%] env hourly shards begin >> sync_integrated_env.log 2>&1
 E:\Tools\Python311\python.exe sync_env_hourly.py >> sync_integrated_env.log 2>&1
 echo [%date% %time%] env hourly shards exit=%errorlevel% >> sync_integrated_env.log
+echo [%date% %time%] door access sync begin >> sync_door_access.log 2>&1
+E:\Tools\Python311\python.exe sync_door_access.py >> sync_door_access.log 2>&1
+echo [%date% %time%] door access sync exit=%errorlevel% >> sync_door_access.log
 echo [%date% %time%] dbt snapshot + build tag:daily >> sync_mart.log 2>&1
 rem PYTHONUTF8=1: dbt �� UTF-8 ��������ע�͵�ģ���ļ�(�ƻ�����Ĭ�� GBK �� UnicodeDecodeError)
 set "PYTHONUTF8=1"

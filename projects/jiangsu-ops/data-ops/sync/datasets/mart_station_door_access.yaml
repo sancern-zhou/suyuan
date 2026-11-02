@@ -1,0 +1,45 @@
+# 数据集契约：mart_station_door_access
+dataset: mart_station_door_access
+description: >
+  江苏省控站点门禁出入事件(海康ACS)。一行 = 一条开门/刷卡事件(平台API每日02:30增量,
+  3天重叠窗口, 主键 event_id 幂等)。源接口 stationintegrate/HK/GetACSDoorRecordsAsync,
+  经 sync_door_access.py 落 jiangsu_ods.acs_door_records, 替代已下线的 API 查询工具。
+owner: 江苏运维平台组
+grain: 一行 = 一条门禁出入事件
+freshness_slo: 26小时
+known_caveats:
+  - station_code 由设备名 devName 经 dim_station.station_name 精确匹配回填, 匹配不上的行为空(看 dev_name 原文)
+  - event_type_cn 映射 successCard=合法卡比对通过, infoOpenDoorByButton=按钮开门, 其余取事件名末段
+  - inAndOutType 进/出口径待平台确认(实测 1 见于刷卡事件, -1 见于按钮开门事件, 勿直接解读为出/进)
+  - 合法卡比对的 cardNo 存在 2^64-3 溢出值(18446744073709551613)=未登记卡, person_name 为空
+  - cert_no 已脱敏(前6后4), 证件号原文在 jiangsu_ods.acs_door_records(Agent 无权直查)
+  - 门禁是离散开关门/刷卡事件, 不是连续轨迹; 卡可能共用, 不能据此认定实际进站人员或违规事实
+columns:
+  - {name: event_id, business: 事件唯一ID(海康eventId, 主键)}
+  - {name: station_code, business: 平台站点编码(devName 匹配回填, 可为空)}
+  - {name: station_name, business: 站点名称(经dim_station)}
+  - {name: city_code, business: 城市行政区码}
+  - {name: city_name, business: 城市名}
+  - {name: dev_name, business: 门禁设备名(平台原值, 即站名_设备)}
+  - {name: door_name, business: 门名称(如 站名_门_1)}
+  - {name: event_time, business: 事件时间(门禁设备侧)}
+  - {name: receive_time, business: 平台接收时间(可能与事件时间有偏差)}
+  - {name: event_name, business: 事件类型原名(acs.acs.eventType.*)}
+  - {name: event_type_cn, business: "事件类型中文(合法卡比对通过/按钮开门等)"}
+  - {name: event_type, business: 事件类型数字码(198914=合法卡比对通过, 198916=按钮开门)}
+  - {name: in_and_out_type, business: 出入方向原值(1=刷卡事件, -1=按钮开门事件; 进/出口径待平台确认)}
+  - {name: person_id, business: 人员平台ID(未登记卡为空)}
+  - {name: person_name, business: 人员姓名(未登记卡/按钮开门为空)}
+  - {name: card_no, business: 卡号(文本; 含 2^64-3 溢出值=未登记卡)}
+  - {name: org_name, business: 人员所属组织(如 省控人员/运维单位)}
+  - {name: cert_no_masked, business: 脱敏证件号(前6后4, 其余打码)}
+  - {name: reader_dev_name, business: 读卡器名称}
+  - {name: synced_at, business: 重建时间}
+access:
+  tool: execute_jiangsu_mart_sql
+  role: agent_reader
+guide: >-
+  核验人员是否实际进站、运维到岗分析用本表:按 station_code + event_time 过滤,
+  event_type_cn 区分合法卡比对通过/按钮开门, person_name/card_no 识别人员(注意未登记卡
+  溢出值), 按钮开门无人员信息; 签到交叉核验可关联 jiangsu_ods.opa_kq_attendance(兜底表);
+  门禁事件是离散事件不是轨迹, 卡可能共用, 结论留待核查不要直接认定违规。

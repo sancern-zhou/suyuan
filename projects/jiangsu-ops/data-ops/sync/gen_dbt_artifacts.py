@@ -118,12 +118,17 @@ MODEL_TESTS = {
     },
     "dim_person": {
         "user_id": ["unique", "not_null"],
-        "user_name": ["not_null"],
+        "user_name": ["warn_not_null"],  # 2026-10-26 上游把 user_id=550 姓名清空(持证运维), 硬测试曾连挂6晚夜间链路
     },
     "mart_device_lifecycle_analysis": {
         "event_id": ["unique", "not_null"],
         "event_time": ["not_null"],
         "station_code": ["warn_not_null"],  # 部分日志无站点码且设备为入库/孤儿设备
+    },
+    "mart_station_door_access": {
+        "event_id": ["unique", "not_null"],
+        "event_time": ["not_null"],
+        "station_code": ["warn_not_null"],  # devName 匹配不上的行留空, 由人工核对
     },
 }
 
@@ -162,7 +167,13 @@ SOURCE_NOTES = {
     "bsd_devicetype": "设备类型字典(Code→Name, 27行; dim_device.device_type_name 的来源)",
 }
 
-# 每日 check 快照的字典/规则表。事实型大表(工单/告警/质控结果)不入快照 —— 
+# 非 sync_config.json 通道的 ODS 表(API 拉取等), 手工登记进 sources.yml:
+# key=表名, value=说明。门禁事件经 sync_door_access.py 从平台 API 落地。
+EXTRA_SOURCE_TABLES = {
+    "acs_door_records": "站点门禁出入事件(平台API stationintegrate/HK, 每日增量, sync_door_access.py)",
+}
+
+# 每日 check 快照的字典/规则表。事实型大表(工单/告警/质控结果)不入快照 ——
 # 它们的变更历史本来就在业务主键上, 快照留给"上游会悄悄改配置"的场景。
 SNAPSHOT_TABLES = [
     "alm_rule", "bsd_city", "bsd_device", "bsd_devicetype", "bsd_maintenanceunit", "bsd_moniter_parameter", "bsd_region",
@@ -191,6 +202,7 @@ DATASET_TO_MODEL = {
     "mart_device_lifecycle_analysis": "mart_device_lifecycle_analysis",
     "mart_station_env_power": "mart_station_env_power",
     "mart_station_alarm_log": "mart_station_alarm_log",
+    "mart_station_door_access": "mart_station_door_access",
     "mart_qc_task_status_result": "mart_qc_task_status_result",
     "mart_qc_air_data_result": "mart_qc_air_data_result",
     "mart_qc_run_log_result": "mart_qc_run_log_result",
@@ -217,6 +229,8 @@ def render_sources_yml() -> str:
                 "warn_after": {"count": 24, "period": "hour"},
             }
         tables.append(entry)
+    for name, note in EXTRA_SOURCE_TABLES.items():
+        tables.append({"name": name, "description": note})
     doc = {
         "version": 2,
         "sources": [

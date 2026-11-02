@@ -467,14 +467,18 @@ async def test_door_access_records_normalizes_and_flags_boundary(monkeypatch):
 
     async def fake_get(path, params):
         assert path == "stationintegrate/HK/GetACSDoorRecordsAsync"
-        assert ("StationCode", "5006A") in params
-        assert ("EventTime", "2026-08-01 00:00:00") in params
-        assert ("MaxResultCount", "1000") in params
+        assert ("StationCode[0]", "5006A") in params
+        assert ("EventTime[0]", "2026-08-01 00:00:00") in params
+        assert ("EventTime[1]", "2026-08-02 00:00:00") in params
+        assert ("maxResultCount", "1000") in params
+        assert ("ConfigType", "2") in params
         return {"result": {"list": [
             {
                 "personName": "张三",
                 "eventTime": "2026-08-01 08:00:00",
-                "eventType": "刷卡",
+                "eventName": "acs.acs.eventType.successCard",
+                "eventType": 198914,
+                "inAndOutType": 1,
                 "doorName": "站房大门",
                 "cardNo": "C1",
                 "stationCode": "5006A",
@@ -490,6 +494,8 @@ async def test_door_access_records_normalizes_and_flags_boundary(monkeypatch):
     assert result["status"] == "success"
     assert result["metadata"]["record_count"] == 1
     assert result["data"][0]["person_name"] == "张三"
+    assert result["data"][0]["event_type"] == "acs.acs.eventType.successCard"
+    assert result["data"][0]["in_and_out_type"] == 1
     assert result["data"][0]["door_name"] == "站房大门"
     assert result["data"][0]["station_code"] == "5006A"
     assert "连续轨迹" in result["metadata"]["boundary"]
@@ -500,7 +506,7 @@ async def test_door_access_records_isolates_station_failure(monkeypatch):
     tool = JiangsuDoorAccessRecordsTool()
 
     async def fake_get(path, params):
-        if dict(params)["StationCode"] == "B":
+        if dict(params)["StationCode[0]"] == "B":
             raise RuntimeError("平台超时")
         return {"result": {"list": [{"personName": "李四", "eventTime": "2026-08-01 09:00:00"}]}}
 
