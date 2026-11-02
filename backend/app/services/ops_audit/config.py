@@ -34,8 +34,7 @@ DEFAULT_BRAND_ALIASES = {
     "THERMO": {"THERMO", "TE", "热电"},
 }
 
-DEFAULT_DEVICE_IDENTITY_PROFILES = {
-    "enabled": False,
+DEFAULT_AUDIT_HISTORY_PROFILES = {
     "history_limit": 500,
     "recent_per_device_limit": 5,
     "history_rf_tables": [
@@ -51,30 +50,6 @@ DEFAULT_DEVICE_IDENTITY_PROFILES = {
         "RF_Q_GASEOUSMULTIPOINT_NO2": ["DEVICECODE"],
         "RF_Q_GASEOUSMULTIPOINT_O3": ["DEVICECODE"],
         "RF_Q_GASEOUSMULTIPOINT_SO2": ["DEVICECODE"],
-    },
-    "enabled_order_types": ["Check", "SupCheck"],
-    "enabled_maintenance_types": ["Week", "TwoWeek", "Month", "Quarter", "HalfYear", "Year"],
-    "identity_fields": [
-        {"key": "brand", "label": "品牌", "severity": "中"},
-        {"key": "model", "label": "型号", "severity": "中"},
-        {"key": "device_code", "label": "设备编号", "severity": "中"},
-        {"key": "range", "label": "量程", "severity": "中"},
-    ],
-    "rf_identity_fields": {
-        "brand": ["DEVICEBRAND", "BRAND"],
-        "model": ["DEVICEMODEL", "MODEL"],
-        "device_code": ["DEVICECODE", "DEVICECODEN", "DEVICECODE_NEW"],
-        "range": ["RANGEVALUE", "RANGE", "MEASURERANGE", "FULLSCALE"],
-    },
-    "base_device_fields": {
-        "brand": ["DEVICEBRAND"],
-        "model": ["DEVICEMODEL"],
-        "device_code": ["DEVICECODE"],
-    },
-    "replacement_tables": ["RF_Y_DEVICECHANGE", "RF_Y_DEVICEREPAIR"],
-    "replacement_keywords": ["更换", "替换", "维修", "报废", "停用", "启用"],
-    "model_aliases": {
-        "49IPS": ["49IPS", "TE-49IPS", "THERMO 49IPS", "THERMO SCIENTIFIC 49IPS"],
     },
 }
 
@@ -187,18 +162,11 @@ DEFAULT_SCORING_CONFIG = {
     "common_pattern_order_ratio": 0.25,
     "common_pattern_eligible_rules": [
         "RF_AUDITOR_EMPTY",
-        "FLOW_REMARK_LOW_VALUE",
-        "FLOW_NO_REVIEW",
         "RF_REQUIRED_FIELD_LOW_VALUE",
         "RF_ENV_TEMP_HUMIDITY_EMPTY",
         "RF_PERSONNEL_VEHICLE_FORMAT_LOW_VALUE",
     ],
     "hard_error_rules": [
-        "FLOW_MISSING",
-        "FLOW_NO_CREATE",
-        "FLOW_NO_CHECK",
-        "FLOW_TIME_ORDER",
-        "FLOW_SEQUENCE",
         "RF_STATION_MISMATCH",
         "RF_TW_POLLUTANT_MISMATCH",
         "RF_Q_MULTIPOINT_METRIC_EMPTY",
@@ -233,10 +201,6 @@ DEFAULT_SCORING_CONFIG = {
         "SUP_ATTACHMENT_ITEM_MATCH",
     ],
     "critical_hard_error_rules": [
-        "FLOW_MISSING",
-        "FLOW_NO_CREATE",
-        "FLOW_TIME_ORDER",
-        "FLOW_SEQUENCE",
         "RF_STATION_MISMATCH",
         "RF_TW_POLLUTANT_MISMATCH",
         "RF_Q_MULTIPOINT_METRIC_EMPTY",
@@ -269,38 +233,6 @@ DEFAULT_SCORING_CONFIG = {
 }
 
 DEFAULT_RULE_CATALOG = [
-    {
-        "rule_id": "FLOW_MISSING",
-        "name": "工单流程缺失",
-        "category": "流程完整性",
-        "default_severity": "高",
-        "scope": "working_orders/working_order_details",
-        "rationale": "缺少流程记录会影响审核追溯。",
-    },
-    {
-        "rule_id": "FLOW_NO_CREATE",
-        "name": "流程无创建步骤",
-        "category": "流程完整性",
-        "default_severity": "中",
-        "scope": "working_orders/working_order_details",
-        "rationale": "流程应包含工单创建或提交步骤。",
-    },
-    {
-        "rule_id": "FLOW_NO_CHECK",
-        "name": "流程无审核步骤",
-        "category": "流程完整性",
-        "default_severity": "高",
-        "scope": "working_orders/working_order_details",
-        "rationale": "流程应包含审核、复核或检查步骤以形成闭环。",
-    },
-    {
-        "rule_id": "LIFECYCLE_FINISH_WITHOUT_EFFECTIVE_CLOSURE",
-        "name": "已完成工单缺少有效闭环证据",
-        "category": "生命周期闭环风险",
-        "default_severity": "高",
-        "scope": "working_orders/working_order_details",
-        "rationale": "系统状态为完成不等于实质闭环，缺少处理节点或处理说明时应优先复核。",
-    },
     {
         "rule_id": "RF_CHECK_TIME_OUTSIDE_RANGE",
         "name": "RF 表单检查时间不在开始结束时间内",
@@ -454,6 +386,14 @@ DEFAULT_RULE_CATALOG = [
         "rationale": "相同序列号、传递日期、公式和有效期的上级标准出现不同型号或设备号填法时，需要结合证书人工确认，不能按历史多数值自动判错。",
     },
     {
+        "rule_id": "ATTACHMENT_O3_UPPER_FORMULA_UNPARSEABLE_REVIEW",
+        "name": "O3传递公式无法解析待复核",
+        "category": "附件证据复核",
+        "default_severity": "中",
+        "scope": "RF_HY_O3VALUEPASS/WO_COMMONFILE",
+        "rationale": "传递公式文本无法解析出斜率和截距时无法进行数值比对，属于证据格式问题而非数值错误，转人工比对证书，不进入硬错误清单。",
+    },
+    {
         "rule_id": "RF_PM_TEMP_ERROR_MISMATCH",
         "name": "颗粒物温度误差复算不一致",
         "category": "表单数值逻辑",
@@ -602,7 +542,6 @@ DEFAULT_RF_FIELD_PROFILES = {
     "check_time_fields": ["CHECKTIME", "CHECKDATETIME", "CHECKDATE", "CALIBRATIONDATE"],
     "start_time_fields": ["STARTTIME", "STARTDATETIME", "BEGINTIME", "BEGIN_TIME"],
     "end_time_fields": ["ENDTIME", "ENDDATETIME", "FINISHTIME", "END_TIME"],
-    "near_deadline_hours": 4,
 }
 
 DEFAULT_SEMANTIC_REVIEW_PROFILES = {
@@ -641,12 +580,9 @@ DEFAULT_SEMANTIC_REVIEW_PROFILES = {
 DEFAULT_RULE_REVIEW_STAGES = {
     "stages": {
         "semantic_remark": [
-            "FLOW_REMARK_LOW_VALUE",
             "REMARK_SEMANTIC_INCOMPLETE",
             "RF_TW_REMARK_LOW_VALUE",
             "RF_Q_PENDING_NO_REMARK",
-            "LIFECYCLE_FINISH_NEAR_DEADLINE",
-            "LIFECYCLE_FINISH_WITHOUT_EFFECTIVE_CLOSURE",
             "RF_ABNORMAL_VALUE_NO_REMARK",
         ],
         "flow_visual": [
@@ -665,6 +601,7 @@ DEFAULT_RULE_REVIEW_STAGES = {
         "manual_evidence_review": [
             "ATTACHMENT_O3_VALUE_PASS_XLS_MISSING_REVIEW",
             "RF_O3_UPPER_STANDARD_HISTORY_CONFLICT_REVIEW",
+            "ATTACHMENT_O3_UPPER_FORMULA_UNPARSEABLE_REVIEW",
         ],
         "technical_diagnostic": [
             "ATTACHMENT_FLOW_VISUAL_DIAGNOSTIC",
@@ -715,14 +652,14 @@ def load_low_value_remarks() -> set[str]:
 
 
 def load_brand_aliases() -> dict[str, set[str]]:
-    loaded = load_yaml_config("device_identity_profiles.yaml", {}).get("brand_aliases", DEFAULT_BRAND_ALIASES)
+    loaded = load_yaml_config("audit_history_profiles.yaml", {}).get("brand_aliases", DEFAULT_BRAND_ALIASES)
     return _as_set_map(loaded)
 
 
-def load_device_identity_profiles() -> dict[str, Any]:
-    loaded = load_yaml_config("device_identity_profiles.yaml", {})
-    profiles = deepcopy(DEFAULT_DEVICE_IDENTITY_PROFILES)
-    profiles.update(loaded.get("device_identity", {}))
+def load_audit_history_profiles() -> dict[str, Any]:
+    loaded = load_yaml_config("audit_history_profiles.yaml", {})
+    profiles = deepcopy(DEFAULT_AUDIT_HISTORY_PROFILES)
+    profiles.update(loaded.get("audit_history", {}))
     return profiles
 
 

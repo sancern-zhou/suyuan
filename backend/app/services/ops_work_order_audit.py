@@ -66,22 +66,6 @@ RULE_CATALOG = [
         "rationale": "时间倒置属于明显数据错误。",
     },
     {
-        "rule_id": "LIFECYCLE_FINISH_NEAR_DEADLINE",
-        "name": "工单临近计划截止时间完成",
-        "category": "生命周期闭环风险",
-        "default_severity": "低",
-        "scope": "working_orders/working_order_details",
-        "rationale": "临近截止完成可能是正常赶办，也可能是到期自动完成或补录完成，需要结合流程、RF 和附件复核。",
-    },
-    {
-        "rule_id": "LIFECYCLE_FINISH_WITHOUT_EFFECTIVE_CLOSURE",
-        "name": "已完成工单缺少有效闭环证据",
-        "category": "生命周期闭环风险",
-        "default_severity": "高",
-        "scope": "working_orders/working_order_details",
-        "rationale": "系统状态为完成不等于实质闭环，缺少处理节点或处理说明时应优先复核。",
-    },
-    {
         "rule_id": "MAIN_CONTENT_EMPTY",
         "name": "检查/巡检类工单内容为空",
         "category": "主表完整性",
@@ -104,54 +88,6 @@ RULE_CATALOG = [
         "default_severity": "中",
         "scope": "working_orders",
         "rationale": "设备级检查应关联设备；站点级任务需业务口径确认是否豁免。",
-    },
-    {
-        "rule_id": "FLOW_MISSING",
-        "name": "完工工单无流程详情",
-        "category": "流程完整性",
-        "default_severity": "高",
-        "scope": "working_order_details",
-        "rationale": "缺少流程详情时无法证明工单经过处理闭环。",
-    },
-    {
-        "rule_id": "FLOW_NO_CREATE",
-        "name": "缺少创建流程步骤",
-        "category": "流程完整性",
-        "default_severity": "高",
-        "scope": "working_order_details",
-        "rationale": "创建步骤是流程链路起点。",
-    },
-    {
-        "rule_id": "FLOW_NO_CHECK",
-        "name": "缺少检查/巡检处理步骤",
-        "category": "流程完整性",
-        "default_severity": "高",
-        "scope": "working_order_details",
-        "rationale": "检查、巡检、故障类工单应有实际处理节点。",
-    },
-    {
-        "rule_id": "FLOW_NO_REVIEW",
-        "name": "检查/巡检工单缺少复核步骤",
-        "category": "流程完整性",
-        "default_severity": "中",
-        "scope": "working_order_details",
-        "rationale": "复核是否强制需要按业务流程确认，当前作为可校准规则。",
-    },
-    {
-        "rule_id": "FLOW_END_EMPTY",
-        "name": "已完成流程步骤结束时间为空",
-        "category": "流程完整性",
-        "default_severity": "中",
-        "scope": "working_order_details",
-        "rationale": "结束时间为空会影响节点时效性计算。",
-    },
-    {
-        "rule_id": "FLOW_REMARK_LOW_VALUE",
-        "name": "处理备注为空或信息量低",
-        "category": "填报规范性",
-        "default_severity": "中",
-        "scope": "working_order_details",
-        "rationale": "备注缺少原因、措施、结果时，需要语义审核进一步判断闭环性。",
     },
     {
         "rule_id": "RF_AUDITOR_EMPTY",
@@ -280,7 +216,6 @@ def list_ops_audit_rules() -> dict[str, Any]:
     result["calibration_notes"] = [
         "RF_AUDITOR_EMPTY 是否计为问题，需要按当前业务流程确认。",
         "MAIN_CONTENT_EMPTY 若 RF 表单完整，可考虑从中风险降为提示。",
-        "FLOW_NO_REVIEW 是否强制，应按工单类型、维护类型和流程配置校准。",
     ]
     return result
 

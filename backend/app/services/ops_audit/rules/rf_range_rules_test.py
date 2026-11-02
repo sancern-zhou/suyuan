@@ -281,3 +281,23 @@ def test_fpi_ranges_follow_2020_parameter_sheet():
         check_rf_range_values({"WORKINGORDERCODE": "WO-FPI-SHEET"}, [(table, form)], issues)
         has_range_issue = any(issue.rule_id == "RF_RANGE_OUT_OF_SPEC" for issue in issues)
         assert has_range_issue is expected_issue, (table, form, issues)
+
+
+def test_o3_api_sample_pressure_upper_bound_is_32_in_hg_a():
+    cases = [
+        ("31", False),
+        ("32", False),
+        ("32.5", True),
+        ("33", True),
+    ]
+    for raw_value, expected_issue in cases:
+        issues = []
+        form = {
+            "WORKINGORDERCODE": "WO-O3-API-PRESSURE",
+            "DEVICEBRAND": "API",
+            "POLLUTANTTYPE": "O3",
+            "CYYLCHECKVALUE": raw_value,
+        }
+        check_rf_range_values({"WORKINGORDERCODE": "WO-O3-API-PRESSURE"}, [("RF_W_GASEOUSCHECK_O3", form)], issues)
+        has_range_issue = any(issue.rule_id == "RF_RANGE_OUT_OF_SPEC" for issue in issues)
+        assert has_range_issue is expected_issue, (raw_value, issues)

@@ -613,3 +613,85 @@ def test_abnormal_normal_value_passes(monkeypatch):
     issues = _run(form)
 
     assert issues == []
+
+
+# ---------------------------------------------------------------------------
+# PANs 周巡检状态检查参数（Sup_RF_PANsWeekCheck 档案范围/异常勾选）
+# ---------------------------------------------------------------------------
+
+
+def _pans_week_form(**overrides):
+    form = {
+        "RULEITEMTAG": "Sup_RF_PANsWeekCheck",
+        "POLLUTANTTYPE": "PANs",
+        "CHECKDATE": "2026-09-03 00:00:00",
+        "string18": "Y=8.35E-009X",
+        "string19": "0.9992",
+        "string20": "12",
+        "string22": "50",
+        "string24": "18",
+        "string26": "24.7",
+        "string28": "41.10",
+        "string30": "干净",
+        "string32": "否",
+        "string34": "正常",
+        "string36": "检查",
+        "string38": "检查",
+        "string40": "否",
+    }
+    form.update(overrides)
+    return form
+
+
+def test_pans_week_status_out_of_range_without_remark_hits_high():
+    from app.services.ops_audit.rules.sup_form_rules import ABNORMAL_RULE_ID
+
+    issues = _run(_pans_week_form(string20="13.2", string26="27"))
+
+    matched = [issue for issue in issues if issue.rule_id == RANGE_RULE_ID]
+    assert len(matched) == 1
+    assert matched[0].severity == "高"
+    evidence = json.loads(matched[0].evidence)
+    assert {item["column"] for item in evidence["violations"]} == {"string20", "string26"}
+    assert matched[0].message.count("超出标准范围") == 1
+    assert ABNORMAL_RULE_ID not in _rule_ids(issues)
+
+
+def test_pans_week_prepressure_with_remark_downgrades_to_review():
+    issues = _run(
+        _pans_week_form(string24="15", string25="根据该站点仪器性能，柱前压设定值为15kPa")
+    )
+
+    matched = [issue for issue in issues if issue.rule_id == RANGE_RULE_ID]
+    assert len(matched) == 1
+    assert matched[0].severity == "中"
+    evidence = json.loads(matched[0].evidence)
+    assert evidence["with_remark"] is True
+    assert evidence["needs_semantic_review"] is True
+
+
+def test_pans_week_status_in_range_passes():
+    issues = _run(_pans_week_form())
+
+    assert issues == []
+
+
+def test_pans_week_condensation_yes_without_remark_hits():
+    from app.services.ops_audit.rules.sup_form_rules import ABNORMAL_RULE_ID
+
+    issues = _run(_pans_week_form(string32="是"))
+
+    matched = [issue for issue in issues if issue.rule_id == ABNORMAL_RULE_ID]
+    assert len(matched) == 1
+    assert matched[0].severity == "中"
+    assert "采样管路是否有冷凝水" in matched[0].message
+
+
+def test_pans_week_abnormal_with_remark_exempt():
+    from app.services.ops_audit.rules.sup_form_rules import ABNORMAL_RULE_ID
+
+    issues = _run(
+        _pans_week_form(string32="是", string33="已现场整改，清理冷凝水", string40="是", string41="正常未调整")
+    )
+
+    assert ABNORMAL_RULE_ID not in _rule_ids(issues)

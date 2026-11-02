@@ -1,40 +1,10 @@
 rules:
-  - rule_id: FLOW_MISSING
-    name: 工单流程缺失
-    category: 流程完整性
-    default_severity: 高
-    scope: working_orders/working_order_details
-    rationale: 缺少流程记录会影响审核追溯。
-  - rule_id: FLOW_NO_CREATE
-    name: 流程无创建步骤
-    category: 流程完整性
-    default_severity: 中
-    scope: working_orders/working_order_details
-    rationale: 流程应包含工单创建或提交步骤。
-  - rule_id: FLOW_NO_CHECK
-    name: 流程无审核步骤
-    category: 流程完整性
-    default_severity: 高
-    scope: working_orders/working_order_details
-    rationale: 流程应包含审核、复核或检查步骤以形成闭环。
   - rule_id: WO_MONTHLY_DYNAMIC_CALIBRATION_DURATION_TOO_SHORT
     name: 月度动态校准维护处理时长未超过5分钟
     category: 时间合理性
     default_severity: 高
     scope: Check/Month/working_order_details.CheckOrder
     rationale: 月度动态校准维护工单的检查处理步骤，应根据流程开始与结束时间持续超过5分钟；间隔小于或等于5分钟属于异常。
-  - rule_id: LIFECYCLE_FINISH_NEAR_DEADLINE
-    name: 工单临近计划截止时间完成
-    category: 生命周期闭环风险
-    default_severity: 低
-    scope: working_orders/working_order_details
-    rationale: 临近截止完成可能是正常赶办，也可能是到期自动完成或补录完成，需要结合流程、RF 和附件复核。
-  - rule_id: LIFECYCLE_FINISH_WITHOUT_EFFECTIVE_CLOSURE
-    name: 已完成工单缺少有效闭环证据
-    category: 生命周期闭环风险
-    default_severity: 高
-    scope: working_orders/working_order_details
-    rationale: 系统状态为完成不等于实质闭环，缺少处理节点或处理说明时应优先复核。
   - rule_id: RF_REQUIRED_FIELD_LOW_VALUE
     name: RF 表单关键字段为空或低价值
     category: 表单完整性
@@ -341,6 +311,12 @@ rules:
     default_severity: 中
     scope: RF_HY_O3VALUEPASS/device_history
     rationale: 相同序列号、传递日期、公式和有效期的上级标准出现不同型号或设备号填法时，需要结合证书人工确认，不能按历史多数值自动判错。
+  - rule_id: ATTACHMENT_O3_UPPER_FORMULA_UNPARSEABLE_REVIEW
+    name: O3传递公式无法解析待复核
+    category: 附件证据复核
+    default_severity: 中
+    scope: RF_HY_O3VALUEPASS/WO_COMMONFILE
+    rationale: 传递公式文本无法解析出斜率和截距时无法进行数值比对，属于证据格式问题而非数值错误，转人工比对证书，不进入硬错误清单。
   - rule_id: RF_O3_VALUE_PASS_FLOW_VALUE_MISSING
     name: O3量值传递传递流量未填写
     category: 表单完整性
@@ -455,12 +431,6 @@ rules:
     default_severity: 中
     scope: RF_Q_PMPRESSURE
     rationale: 仪器显示值、标准值或误差字段缺失/不可解析时，无法复核误差公式和阈值是否符合要求。
-  - rule_id: RF_DEVICE_IDENTITY_INCONSISTENT
-    name: 跨工单设备身份疑似不一致
-    category: 跨工单一致性
-    default_severity: 中
-    scope: working_orders/RF_*/base_device/device_history
-    rationale: 同一站点同类表单中的品牌、型号或设备编号发生变化时，可能是填报错误，也可能是正常设备更换、维修、停用启用或台账变更；默认作为疑似问题，需结合更换/维修记录或台账变更证据复核。
   - rule_id: ATTACHMENT_REQUIRED_MISSING
     name: 必需附件缺失
     category: 附件清单

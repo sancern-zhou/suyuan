@@ -16,29 +16,17 @@ ISSUE_CATEGORIES = {
 }
 
 EXCLUDED_RULE_IDS = {
-    "FLOW_MISSING",
-    "FLOW_NO_CREATE",
-    "FLOW_NO_CHECK",
-    "FLOW_NO_REVIEW",
-    "FLOW_END_EMPTY",
-    "FLOW_TIME_ORDER",
-    "FLOW_SEQUENCE",
-    "FLOW_REMARK_LOW_VALUE",
-    "LIFECYCLE_FINISH_NEAR_DEADLINE",
-    "LIFECYCLE_FINISH_WITHOUT_EFFECTIVE_CLOSURE",
     "RF_AUDITOR_EMPTY",
     "RF_REVIEW_EMPTY",
     "RF_VALUE_FORMULA_MISMATCH",
 }
-
-EXCLUDED_RULE_PREFIXES = ("FLOW_", "LIFECYCLE_")
 
 
 def is_excluded_rule(rule_id: str | None) -> bool:
     """Return whether a rule should be hidden from audit results."""
 
     rule = str(rule_id or "")
-    return rule in EXCLUDED_RULE_IDS or rule.startswith(EXCLUDED_RULE_PREFIXES)
+    return rule in EXCLUDED_RULE_IDS
 
 
 def issue_category(rule_id: str | None, category: str | None = None) -> str:
@@ -59,7 +47,6 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
         "RF_STATION_MISMATCH",
         "RF_RANGE_BY_GAS_TYPE_MISMATCH",
         "RF_POLLUTANT_TYPE_MISMATCH",
-        "RF_DEVICE_IDENTITY_INCONSISTENT",
         "RF_ENUM_VALUE_INVALID",
         "RF_VISIBILITY_NO_DEVICE_FIELD_CONFLICT",
         "RF_RANGE_UNIT_MISMATCH",
@@ -108,7 +95,7 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
         return "数值逻辑问题"
     if rule in {"RF_O3_VALUE_PASS_FLOW_VALUE_MISSING", "SUP_REQUIRED_VALUE_EMPTY"}:
         return "完整性问题"
-    if rule in {"SUP_ATTACHMENT_ITEM_MATCH", "RF_DEVICE_IDENTITY_INCONSISTENT"}:
+    if rule in {"SUP_ATTACHMENT_ITEM_MATCH"}:
         return "一致性问题"
     if rule in {"SUP_ATTACHMENT_WATERMARK_STATION"}:
         return "附件质量问题"

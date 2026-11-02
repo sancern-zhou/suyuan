@@ -209,19 +209,6 @@ def is_blank(value: Any) -> bool:
     return value is None or (isinstance(value, str) and value.strip() == "")
 
 
-def parse_time(value: Any) -> datetime | None:
-    if not value:
-        return None
-    if isinstance(value, datetime):
-        return value
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
-        try:
-            return datetime.strptime(str(value), fmt)
-        except ValueError:
-            continue
-    return None
-
-
 def add_issue(
     issues: list[Issue],
     rule_id: str,
@@ -233,40 +220,6 @@ def add_issue(
     suggestion: str,
 ) -> None:
     issues.append(Issue(rule_id, category, severity, field, message, evidence, suggestion))
-
-
-def check_workflow(order: dict[str, Any], details: list[dict[str, Any]], issues: list[Issue]) -> None:
-    if not details:
-        add_issue(issues, "FLOW_MISSING", "流程完整性", "高", "working_order_details", "完工工单无流程详情", "", "按工单编号补查或修复流程记录关联")
-        return
-
-    steps = [detail.get("PROCESSSTEP") for detail in details]
-    if "CreateOrder" not in steps:
-        add_issue(issues, "FLOW_NO_CREATE", "流程完整性", "高", "PROCESSSTEP", "缺少创建步骤", ",".join(map(str, steps)), "补齐 CreateOrder 流程记录")
-
-    if order.get("DDWORKINGORDERTYPE") in {"Check", "SupCheck", "Fault"} and not ({"CheckOrder", "SupCheck_Check"} & set(steps)):
-        add_issue(issues, "FLOW_NO_CHECK", "流程完整性", "高", "PROCESSSTEP", "缺少检查/巡检处理步骤", ",".join(map(str, steps)), "补齐检查处理环节")
-
-    if order.get("DDWORKINGORDERTYPE") in {"Check", "SupCheck"} and "Review" not in steps:
-        add_issue(issues, "FLOW_NO_REVIEW", "流程完整性", "中", "PROCESSSTEP", "检查/巡检工单缺少复核步骤", ",".join(map(str, steps)), "按业务流程补齐复核")
-
-    previous_start = None
-    for detail in details:
-        step = detail.get("PROCESSSTEP") or ""
-        start = parse_time(detail.get("PROCESSSTARTDATETIME"))
-        end = parse_time(detail.get("PROCESSENDDATETIME"))
-        if detail.get("PROCESSSTATUS") in {"1.00", 1, 1.0} and step != "CreateOrder" and end is None:
-            add_issue(issues, "FLOW_END_EMPTY", "流程完整性", "中", "PROCESSENDDATETIME", "已完成流程步骤结束时间为空", step, "补齐流程结束时间")
-        if start and end and end < start:
-            add_issue(issues, "FLOW_TIME_ORDER", "时间合理性", "高", "PROCESSENDDATETIME", "流程结束时间早于开始时间", f"{step}: {end} < {start}", "修正流程节点时间")
-        if previous_start and start and start < previous_start:
-            add_issue(issues, "FLOW_SEQUENCE", "时间合理性", "中", "PROCESSSTARTDATETIME", "流程开始时间顺序倒置", f"{step}: {start}", "核对流程节点顺序")
-        if start:
-            previous_start = start
-
-        remark = detail.get("SUBMITREMARK")
-        if step != "CreateOrder" and (is_blank(remark) or str(remark).strip() in LOW_VALUE_REMARKS):
-            add_issue(issues, "FLOW_REMARK_LOW_VALUE", "填报规范性", "中", "SUBMITREMARK", "处理备注为空或信息量低", str(remark), "补充原因、措施、结果")
 
 
 def check_rf_forms(order: dict[str, Any], forms: list[tuple[str, dict[str, Any]]], issues: list[Issue]) -> None:
@@ -342,7 +295,6 @@ def audit_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
     for order in dataset.get("orders", []):
         code = order.get("WORKINGORDERCODE")
         issues: list[Issue] = []
-        check_workflow(order, details_by_code.get(code, []), issues)
         check_rf_forms(order, forms_by_code.get(code, []), issues)
         score = severity_score(issues)
         records.append(
@@ -423,7 +375,7 @@ def write_report(audit: dict[str, Any], path: Path) -> None:
         )
 
     lines.extend(["", "## 后续语义审核输入建议", ""])
-    lines.append("- 对存在 `FLOW_REMARK_LOW_VALUE`、报警/故障处置闭环不足的工单，进入大模型语义审核。")
+    lines.append("- 对存在备注信息量低、报警/故障处置闭环不足的工单，进入大模型语义审核。")
     lines.append("- 语义审核重点判断备注是否覆盖原因、措施、结果，报警是否说明数据有效性和恢复情况。")
     lines.append("- 大模型只消费确定性规则筛出的异常工单，降低成本并减少误判面。")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -431,7 +383,6 @@ def write_report(audit: dict[str, Any], path: Path) -> None:
 
 def build_semantic_candidates(audit: dict[str, Any]) -> dict[str, Any]:
     semantic_rule_ids = {
-        "FLOW_REMARK_LOW_VALUE",
         "RF_TW_REMARK_LOW_VALUE",
         "RF_Q_PENDING_NO_REMARK",
     }

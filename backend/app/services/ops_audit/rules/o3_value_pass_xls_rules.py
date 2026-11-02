@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import tempfile
+import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -23,6 +24,7 @@ RULE_ID = "ATTACHMENT_O3_VALUE_PASS_XLS_VALUE_MISMATCH"
 READ_FAILED_DIAGNOSTIC_RULE_ID = "ATTACHMENT_XLS_READ_FAILED_DIAGNOSTIC"
 MISSING_XLS_REVIEW_RULE_ID = "ATTACHMENT_O3_VALUE_PASS_XLS_MISSING_REVIEW"
 HISTORY_CONFLICT_REVIEW_RULE_ID = "RF_O3_UPPER_STANDARD_HISTORY_CONFLICT_REVIEW"
+UNPARSEABLE_FORMULA_REVIEW_RULE_ID = "ATTACHMENT_O3_UPPER_FORMULA_UNPARSEABLE_REVIEW"
 FLOW_MISSING_RULE_ID = "RF_O3_VALUE_PASS_FLOW_VALUE_MISSING"
 FIELD_POSITION_RULE_ID = "RF_O3_VALUE_PASS_FIELD_POSITION_SUSPECT"
 RF_TABLE = "RF_HY_O3VALUEPASS"
@@ -107,8 +109,12 @@ def check_o3_value_pass_xls_values(
 
             comparisons = _compare_values(form, cell_values["cells"])
             failed = [comparison for comparison in comparisons if comparison["status"] != "match"]
-            if failed:
-                _add_issue(order, form, item, failed, issues)
+            unparseable = [comparison for comparison in failed if comparison["status"] == "formula_unparseable"]
+            mismatches = [comparison for comparison in failed if comparison["status"] != "formula_unparseable"]
+            if mismatches:
+                _add_issue(order, form, item, mismatches, issues)
+            if unparseable:
+                _add_unparseable_formula_review_issue(order, form, item, unparseable, issues)
 
 
 def build_o3_upper_standard_history_conflicts(
@@ -958,15 +964,13 @@ def _compare_upper_standard_values(form: dict[str, Any], cells: dict[str, Any]) 
         xls_value = candidate.get("value")
         if _is_blank(form_value):
             status = "missing_form_value"
-        elif _upper_standard_values_match(
-            form_value,
-            xls_value,
-            comparison["comparison_type"],
-            field=field,
-        ):
-            status = "match"
         else:
-            status = "mismatch"
+            status = _upper_standard_comparison_status(
+                form_value,
+                xls_value,
+                comparison["comparison_type"],
+                field=field,
+            )
         results.append(
             {
                 **comparison,
@@ -982,26 +986,31 @@ def _compare_upper_standard_values(form: dict[str, Any], cells: dict[str, Any]) 
     return results
 
 
-def _upper_standard_values_match(
+def _upper_standard_comparison_status(
     form_value: Any,
     xls_value: Any,
     comparison_type: str,
     *,
     field: str = "",
-) -> bool:
+) -> str:
     if comparison_type == "formula":
         form_formula = _parse_linear_formula(form_value)
         xls_formula = _parse_linear_formula(xls_value)
-        return form_formula is not None and xls_formula is not None and all(
+        if form_formula is None or xls_formula is None:
+            return "formula_unparseable"
+        matched = all(
             abs(left - right) <= 1e-9 for left, right in zip(form_formula, xls_formula, strict=True)
         )
+        return "match" if matched else "mismatch"
     if comparison_type == "date":
         form_date = _normalize_date_value(form_value)
         xls_date = _normalize_date_value(xls_value)
-        return _date_values_match(form_date, xls_date)
+        return "match" if _date_values_match(form_date, xls_date) else "mismatch"
     if field == "DELIVER6VALUE":
-        return _normalize_upper_standard_model(form_value) == _normalize_upper_standard_model(xls_value)
-    return _normalize_identity_text(form_value) == _normalize_identity_text(xls_value)
+        matched = _normalize_upper_standard_model(form_value) == _normalize_upper_standard_model(xls_value)
+    else:
+        matched = _normalize_identity_text(form_value) == _normalize_identity_text(xls_value)
+    return "match" if matched else "mismatch"
 
 
 def _normalize_identity_text(value: Any) -> str:
@@ -1101,20 +1110,32 @@ def _compare_transfer_formula(form: dict[str, Any], cell_data: Any) -> list[dict
     return [{**base, "status": "mismatch", "formula_slope": formula_slope, "formula_intercept": formula_intercept}]
 
 
+# 真实工单里同一公式存在多种等价写法：全角括号/加号、"×"乘号、"显示值"等前缀、
+# "真实浓度pp"等变量名。先归一化再解析，避免仅格式差异被当成数值不一致。
+_FORMULA_VARIABLE_TOKENS = ("真实浓度", "实际浓度", "显示浓度", "测定浓度", "浓度")
+
+
+def _normalize_formula_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    for token in _FORMULA_VARIABLE_TOKENS:
+        text = text.replace(token, "x")
+    text = text.replace("×", "*").replace("·", "*").replace("⋅", "*")
+    return re.sub(r"\s+", "", text)
+
+
 def _parse_linear_formula(value: Any) -> tuple[float, float] | None:
-    text = str(value or "").strip()
+    text = _normalize_formula_text(value)
     if not text:
         return None
-    match = re.search(r"([-+]?\d+(?:\.\d+)?)\s*\*?\s*\(?\s*[xXｘＸ]\s*\)?", text)
+    match = re.search(r"([-+]?\d+(?:\.\d+)?)\*?[()]*[xX][()]?", text)
     if not match:
         return None
     slope = float(match.group(1))
     tail = text[match.end():]
-    intercept_match = re.search(r"([-+]\s*\d+(?:\.\d+)?)", tail)
+    intercept_match = re.search(r"([-+])[()]?(\d+(?:\.\d+)?)[)]?", tail)
     if not intercept_match:
         return None
-    intercept = float(intercept_match.group(1).replace(" ", ""))
-    return slope, intercept
+    return slope, float(f"{intercept_match.group(1)}{intercept_match.group(2)}")
 
 
 def _cell_candidates(cell_data: Any, comparison: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1199,6 +1220,44 @@ def _add_issue(
         )
 
 
+def _add_unparseable_formula_review_issue(
+    order: dict[str, Any],
+    form: dict[str, Any],
+    item: dict[str, Any] | None,
+    comparisons: list[dict[str, Any]],
+    issues: list[Issue],
+) -> None:
+    """公式文本解析不出斜率/截距时无法数值比对，转人工复核而非判定数值错误。"""
+    for comparison in comparisons:
+        evidence = {
+            "working_order_code": order.get("WORKINGORDERCODE") or form.get("WORKINGORDERCODE"),
+            "rf_table": RF_TABLE,
+            "attachment": item,
+            "comparison": comparison,
+            "comparisons": [comparison],
+            "needs_manual_review": True,
+            "review_reason": "formula_unparseable",
+        }
+        comparison_field = str(comparison.get("field") or comparison.get("cell") or "xls")
+        add_issue(
+            issues,
+            UNPARSEABLE_FORMULA_REVIEW_RULE_ID,
+            "附件证据复核",
+            "中",
+            f"attachment.{RF_TABLE}.{comparison_field}",
+            _unparseable_formula_message([comparison]),
+            json.dumps(evidence, ensure_ascii=False, default=str),
+        )
+
+
+def _unparseable_formula_message(comparisons: list[dict[str, Any]]) -> str:
+    details = [_comparison_detail(comparison) for comparison in comparisons[:3]]
+    details = [detail for detail in details if detail]
+    if details:
+        return f"O3量值传递公式无法解析，需人工比对：{'；'.join(details)}"
+    return "O3量值传递公式无法解析，需人工比对"
+
+
 def _issue_message(comparisons: list[dict[str, Any]]) -> str:
     details = [_comparison_detail(comparison) for comparison in comparisons[:3]]
     details = [detail for detail in details if detail]
@@ -1227,7 +1286,7 @@ def _comparison_detail(comparison: dict[str, Any]) -> str:
     if status == "missing_xls_value":
         return f"{label}XLS {cell}为空，表单字段{field}值{form_value}"
     if status == "formula_unparseable":
-        return f"{label}XLS {cell}无法解析，公式文本{xls_value}"
+        return f"{label}公式无法解析出斜率和截距，表单字段{field}值{form_value}，XLS {cell}值{xls_value}"
     return f"{label}异常：{_display_value(status)}"
 
 

@@ -472,7 +472,7 @@ class OpsAuditRunRulesTool(LLMTool):
                         },
                         "enable_non_visual": {
                             "type": "boolean",
-                            "description": "是否执行流程、表单字段、数值、附件清单、XLS及跨工单等非视觉规则；默认 true。传 false 且 enable_visual=true 时仅执行视觉审核。",
+                            "description": "是否执行表单字段、数值、附件清单、XLS及O3历史证据等非视觉规则；默认 true。传 false 且 enable_visual=true 时仅执行视觉审核。",
                             "default": True,
                         },
                         "visual_rule_id": {
@@ -594,7 +594,6 @@ class OpsAuditRunRulesTool(LLMTool):
             f"待人工核验 {result.get('pending_review_count', 0)} 条。"
             f"确定问题 {len(business.get('confirmed_issues', []))} 类，"
             f"待确认问题 {len(business.get('candidate_issues', []))} 类。"
-            f"跨工单设备一致性问题 {result.get('device_consistency_issue_count', 0)} 条。"
             f"附件清单问题 {result.get('attachment_issue_count', 0)} 条，"
             f"附件复核候选 {result.get('attachment_review_candidate_count', 0)} 条。"
             f"高频规则：{rule_text}。结果文件："

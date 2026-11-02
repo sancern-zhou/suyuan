@@ -35,7 +35,7 @@ def _issue_ids(audit: dict) -> set[str]:
     return {issue["rule_id"] for issue in audit["records"][0]["issues"]}
 
 
-def test_main_order_and_workflow_rules_are_detected():
+def test_main_order_rules_are_detected():
     order = {
         "WORKINGORDERCODE": "WO-MAIN",
         "STATIONID": "",
@@ -51,22 +51,7 @@ def test_main_order_and_workflow_rules_are_detected():
     assert "MAIN_REQUIRED" in ids
     assert "MAIN_STATUS" in ids
     assert "MAIN_CONTENT_EMPTY" in ids
-    assert "FLOW_MISSING" in ids
-
-
-def test_workflow_step_rules_are_detected():
-    order = _base_order("WO-FLOW")
-    audit = audit_dataset(
-        _base_dataset(
-            order,
-            details=[
-                {"WORKINGORDERCODE": "WO-FLOW", "PROCESSSTEP": "CheckOrder"},
-            ],
-        )
-    )
-    ids = _issue_ids(audit)
-    assert "FLOW_NO_CREATE" in ids
-    assert "FLOW_NO_CHECK" not in ids
+    assert "FLOW_MISSING" not in ids
 
 
 def test_rf_required_and_time_rules_are_detected():
@@ -229,7 +214,7 @@ def test_o3_weekly_brand_range_rules_check_api_pressure():
                         "POLLUTANTTYPE": "O3",
                         "GYCHECKVALUE": "3256",
                         "ZWDCHECKVALUE": "3257",
-                        "CYYLCHECKVALUE": "29",
+                        "CYYLCHECKVALUE": "35",
                         "CYLLCHECKVALUE": "850",
                         "FYCHECKVALUE": "40",
                         "YLCHECKVALUE": "1.0",
@@ -566,10 +551,11 @@ def test_range_out_of_spec_with_handling_record_is_candidate_not_direct_determin
     assert "RF_RANGE_OUT_OF_SPEC" not in audit["records"][0]["deterministic_rules"]
 
 
-def test_lifecycle_attachment_and_device_rules_are_detected():
+def test_attachment_rules_are_detected():
     order = _base_order("WO-ALL")
     order["FINISHTIME"] = "2026-05-20 10:20:00"
-    order["MAINTENANCETYPE"] = "Month"
+    # MONTH_FLOW_CHECK_REPORT 当前 enabled: false，改用启用中的预防性维护报告要求。
+    order["MAINTENANCETYPE"] = "Quarter"
     audit = audit_dataset(
         _base_dataset(
             order,
@@ -578,7 +564,7 @@ def test_lifecycle_attachment_and_device_rules_are_detected():
                 {"WORKINGORDERCODE": "WO-ALL", "PROCESSSTEP": "CheckOrder", "SUBMITREMARK": "完成"},
             ],
             rf_forms={
-                "RF_M_GASEOUSFLOWCHECK": [
+                "RF_Y_PreventiveMaintenance": [
                     {
                         "WORKINGORDERCODE": "WO-ALL",
                         "DEVICEBRAND": "API",
@@ -621,9 +607,7 @@ def test_lifecycle_attachment_and_device_rules_are_detected():
         )
     )
     ids = _issue_ids(audit)
-    assert "LIFECYCLE_FINISH_WITHOUT_EFFECTIVE_CLOSURE" in ids
     assert "ATTACHMENT_REQUIRED_MISSING" in ids
-    assert "RF_DEVICE_IDENTITY_INCONSISTENT" not in ids
 
 
 def test_attachment_report_only_photo_is_detected():

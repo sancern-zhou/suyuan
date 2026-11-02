@@ -125,9 +125,6 @@ def run_rule_engine(
         "final_affected_order_count": final_issue_list.get("affected_order_count", 0),
         "visual_evidence_success_count": visual_evidence["success_count"],
         "visual_evidence_failed_count": visual_evidence["failed_count"],
-        "device_consistency_issue_count": audit.get("summary", {}).get(
-            "device_consistency_issue_count", 0
-        ),
         "attachment_review_candidate_count": audit.get("summary", {}).get(
             "attachment_review_candidate_count", 0
         ),

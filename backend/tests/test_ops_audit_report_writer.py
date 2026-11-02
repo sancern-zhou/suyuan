@@ -324,61 +324,6 @@ def test_write_report_expands_structured_evidence_details(tmp_path: Path) -> Non
     assert "字段核查：字段 AIRTEMPVALUE/AIRTEMPISNORMAL；温度值 /；温度状态 /；是否缺失 是；状态是否异常 否；是否超范围 否" in text
 
 
-def test_write_report_expands_device_identity_evidence_details(tmp_path: Path) -> None:
-    audit = {
-        "audit_info": {
-            "generated_at": "2026-05-26 23:09:39",
-            "rule_stage": "deterministic_with_semantic_review",
-            "order_count": 1,
-        },
-        "summary": {"audit_level_counts": {"需补正": 1}},
-        "records": [
-            {"working_order_code": "WO-CURRENT", "create_time": "2026-05-20 08:00:00"},
-        ],
-    }
-    final_issue_list = {
-        "items": [
-            {
-                "operation_unit": "一厂运维",
-                "station_name": "连山金山",
-                "station_id": "1545",
-                "rf_form_name": "颗粒物PM10/PM2.5自动监测分析仪运行状况检查记录表（每周）",
-                "working_order_code": "WO-CURRENT",
-                "message": "同设备跨工单型号不一致",
-                "rule_id": "RF_DEVICE_IDENTITY_INCONSISTENT",
-                "evidence": json.dumps(
-                    {
-                        "field": "model",
-                        "current_value": "FH62C14",
-                        "comparisons": [
-                            {
-                                "compare_order_code": "WO-HISTORY",
-                                "compare_create_time": "2026-05-13 21:21:18",
-                                "compare_table": "RF_W_PMCHECK",
-                                "current_raw": "FH62C14",
-                                "compare_raw": "SHARP5030",
-                                "current_source": "rf_form.DEVICEMODEL",
-                                "compare_source": "rf_form.DEVICEMODEL",
-                            }
-                        ],
-                    },
-                    ensure_ascii=False,
-                ),
-            },
-        ]
-    }
-
-    out_path = tmp_path / "report.md"
-    write_report(audit, out_path, final_issue_list=final_issue_list)
-    text = out_path.read_text(encoding="utf-8")
-
-    assert "连山金山、颗粒物PM10/PM2.5自动监测分析仪运行状况检查记录表（每周）、WO-CURRENT" in text
-    assert "对比工单WO-HISTORY（2026-05-13 21:21:18）" in text
-    assert "当前值FH62C14" in text
-    assert "历史值SHARP5030" in text
-    assert "字段rf_form.DEVICEMODEL/rf_form.DEVICEMODEL" in text
-
-
 def test_write_report_separates_value_abnormal_from_missing_explanation(tmp_path: Path) -> None:
     audit = {
         "audit_info": {

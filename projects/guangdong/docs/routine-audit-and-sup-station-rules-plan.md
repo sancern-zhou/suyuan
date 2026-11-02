@@ -25,12 +25,9 @@
 
 | 类别 | 规则 | 组分站可复用性 |
 |---|---|---|
-| 流程链 | FLOW_MISSING / FLOW_NO_CREATE / FLOW_NO_CHECK | **直接复用**（scope=工单主表/明细，组分网流程环节 SupCheck_Check/Review/Approve 已在语义字典） |
-| 生命周期闭环 | LIFECYCLE_FINISH_NEAR_DEADLINE / FINISH_WITHOUT_EFFECTIVE_CLOSURE | **直接复用** |
 | 工单-表单一致性 | RF_STATION_MISMATCH、RF_CHECK_TIME_OUTSIDE_RANGE | 复用（后者按字段名匹配检查日期，需把 sup_rf_common 的 `checkdate` 加入字段 profile） |
 | 必填/低值/审核人 | RF_REQUIRED_FIELD_LOW_VALUE、RF_AUDITOR_EMPTY、RF_ABNORMAL_VALUE_NO_REMARK 等 | **字段 profile 加别名后复用**（sup_rf_common 有 prepareuserid/reviewuserid/audituserid/devicecode/devicebrand/devicemodel 等同义字段） |
 | 附件 | ATTACHMENT_CERT/REPORT/REQUIRED_MISSING、照片水印时间类 | 复用（附件仍走 wo_commonfile） |
-| 设备一致性 | RF_DEVICE_IDENTITY_INCONSISTENT | 复用（表单内品牌/型号/编号 vs 设备维度表） |
 | 主网表单专属 | 各 RF_W_*/RF_M_*/RF_Q_* 表单上的量值、公式、单位、枚举、温湿度、颗粒物、多点线性、O3 传递等 ~40 条 + 照片视觉识别 | **不复用**（表结构与字段完全不同），组分站按二期新建 |
 
 ## 三、实施方案
@@ -38,8 +35,8 @@
 ### 一期：取数接入 + 通用规则覆盖组分站（预计 1~1.5 天）
 
 1. **取数接入**：`ops_work_order_audit_local.py` 取数增加 `sup_rf_common`（按工单号过滤、order_type 限定 SupCheck/SupSECCheck），dataset 增加 `sup_forms` 键与覆盖统计（`sup_form_count`），证据包与报告展示同步。
-2. **字段 profile 扩展**：`rf_field_profiles.yaml` 增加组分站字段别名组（人员=prepareuserid/reviewuserid/audituserid，时间=checkdate，设备=devicecode/devicebrand/devicemodel），使必填/审核人/时间窗/设备一致性类规则自动覆盖组分站表单。
-3. **规则范围核对**：逐一确认流程链/生命周期/附件规则内部无 order_type 白名单把 Sup* 排除；有的放开并补单测。
+2. **字段 profile 扩展**：`rf_field_profiles.yaml` 增加组分站字段别名组（人员=prepareuserid/reviewuserid/audituserid，时间=checkdate），使必填/审核人/时间窗类规则自动覆盖组分站表单。
+3. **规则范围核对**：逐一确认附件规则内部无 order_type 白名单把 Sup* 排除；有的放开并补单测。
 4. **每周任务即生效**：`gd_routine_work_order_audit` 提示词已按技能流程与卡片交付写好，一期合入后组分站工单获得通用规则覆盖，主网工单全量规则不变；组分站专属问题暂由语义复核与人工卡片兜底。
 
 ### 二期：组分站专属规则（预计 2~3 天，依数据普查结果定）
@@ -49,7 +46,6 @@
    - 巡检项漏填/异常项无备注（对应主网 RF_ABNORMAL_VALUE_NO_REMARK 的组分站版）；
    - 准备→复核→审核三时间戳完整性与顺序（sup_rf_common 头信息三组 user/time）；
    - 检查日期与工单创建窗口一致性（组分站版时间窗规则）；
-   - 设备品牌/型号/编号与站点设备台账一致性（复用设备一致性阈值）;
    - 组分网校准单（SupDeviceCalibrate）多点数据规则：复用 RF_MULTIPOINT_* 阈值逻辑，数据源换 sup_rf_common 对应列。
 3. **视觉规则**：组分站照片同样在附件流，按站点类型对照片时间/水印规则启用（视二期普查中照片量决定）。
 
@@ -87,8 +83,8 @@
 
 | 任务 | 调度 | 类型范围 | 表单来源 |
 |---|---|---|---|
-| `gd_routine_work_order_audit` 常规站 | 每周一 10:00 | Check / SECCheck / SECCheckCnemc / SECFlightCheck / Inspection / WorkRectify（主网非故障） | 主网 RF_W_*/RF_M_* 等 33 张分表，全量规则+视觉 |
-| `gd_sup_station_work_order_audit` 组分站 | 每周一 11:30（错峰） | SupCheck / SupSECCheck | `sup_rf_common` 通用宽表，一期通用规则 |
+| `gd_routine_work_order_audit` 常规站 | 每周一 10:00 | Check、SECCheck、SECCheckCnemc、SECFlightCheck、Inspection、WorkRectify 六类例行工单；不按运维单位或站点筛选 | 主网 RF_W_*/RF_M_* 等 33 张分表，全量规则+视觉 |
+| `gd_sup_station_work_order_audit` 组分站 | 每周一 11:30（错峰） | SupCheck / SupSECCheck；仅限 10 家运维单位短名精确匹配 | `sup_rf_common` 通用宽表，一期通用规则 |
 
 ### 一期代码改动（backend，本地 guangdong_mart 路径）
 
@@ -102,9 +98,15 @@
 
 - **取数冒烟**：近 2 天真实库查询 → 19 张 SupCheck 工单、15 张组分站表单，头字段（工单号/检查日期/三段人员/设备/站点编码）就位。
 - **规则冒烟**（无视觉、无 LLM，14 天窗口 120 工单/56 表单）：确定性规则命中 3 张工单"复核人/审核人为空"，`report_ready=True`、`report_input.items=3`——通用规则对组分站端到端生效。
-- **已知一期限制**：组分站设备不在主网 `dim_device` 台账（冒烟 devices=0），设备一致性规则对组分站暂不命中，待二期扩展组分站设备台账或按 sup 表单历史自比；备注/题目项列未做语义规则（列语义普查后二期落）。
+- **已知一期限制**：备注/题目项列未做语义规则（列语义普查后二期落）。
 
 ### 部署同步
 
 - worker 重启后 sync 自动创建组分站任务；常规站任务因持久存储不覆盖 seed，已通过任务 API 同步 name/skill_id/prompt。
-- 二期（列语义普查 + 组分站专属规则 + 设备台账）按第三节计划另行排期。
+- 二期（列语义普查 + 组分站专属规则）按第三节计划另行排期。
+
+### 2026-11-02 审核范围校正
+
+- 常规站：恢复 Check、SECCheck、SECCheckCnemc、SECFlightCheck、Inspection、WorkRectify 六类例行工单；`ops_audit_fetch_dataset` 不传 `operation_units`/`station_ids`，窗口内全部主网例行工单纳入审核。
+- 组分站：固定 `operation_units` 为 10 家短名（202805贝瑟、202805博之越、202805科迪隆、202805蓝盾、202805力合科技、202805鹏宇、202805武汉天虹、202805祥得、202805壹点、202805中科光电），仅按短名精确匹配，名单外单位不纳入；该名单已固化到 seed。
+- 运行库 `backend_data_registry_guangdong/scheduled_tasks/tasks.json` 与 seed 同步修正；长期记忆中的常规站范围事实同步更正。

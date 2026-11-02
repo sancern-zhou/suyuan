@@ -33,18 +33,15 @@ if str(BACKEND) not in sys.path:
 
 from config.settings import Settings  # noqa: E402
 from app.services.ops_audit.config import (  # noqa: E402
+    load_audit_history_profiles,
     load_brand_aliases,
-    load_device_identity_profiles,
     load_low_value_remarks,
     load_rf_field_profiles,
 )
 from app.services.ops_audit.models import Issue  # noqa: E402
 from app.services.ops_audit.report_writer import write_report as modular_write_report  # noqa: E402
 from app.services.ops_audit.rule_taxonomy import is_excluded_rule  # noqa: E402
-from app.services.ops_audit.rules.device_consistency_rules import (  # noqa: E402
-    check_device_identity_consistency,
-    merge_device_history,
-)
+from app.services.ops_audit.rules.device_history import merge_device_history  # noqa: E402
 from app.services.ops_audit.rules.base import add_issue  # noqa: E402
 from app.services.ops_audit.rules.attachment_rules import (  # noqa: E402
     attachment_review_candidate_rule_ids,
@@ -63,7 +60,6 @@ from app.services.ops_audit.rules.multipoint_curve_visual_rules import (  # noqa
     run_multipoint_curve_visual_task,
 )
 from app.services.ops_audit.semantic.ocr_adapter import flow_visual_provider_summary  # noqa: E402
-from app.services.ops_audit.rules.lifecycle_rules import check_lifecycle_closure as check_modular_lifecycle_closure  # noqa: E402
 from app.services.ops_audit.rules.o3_transfer_quality_rules import check_o3_transfer_quality_values  # noqa: E402
 from app.services.ops_audit.rules.o3_value_pass_xls_rules import (  # noqa: E402
     build_o3_upper_standard_history_conflicts,
@@ -89,7 +85,7 @@ from app.services.ops_audit.rules.sup_watermark_rules import (  # noqa: E402
 from app.services.ops_audit.rules.rf_unit_rules import check_rf_unit_values  # noqa: E402
 from app.services.ops_audit.rules.rf_visibility_rules import check_rf_visibility_values  # noqa: E402
 from app.services.ops_audit.rules.form_presence_rules import check_form_data_missing  # noqa: E402
-from app.services.ops_audit.rules.workflow_rules import check_workflow_completeness  # noqa: E402
+from app.services.ops_audit.rules.work_order_duration_rules import check_monthly_dynamic_calibration_duration  # noqa: E402
 from app.services.ops_audit.scoring import (  # noqa: E402
     COMMON_PATTERN_ELIGIBLE_RULES,
     COMMON_PATTERN_MIN_AFFECTED_ORDERS,
@@ -179,7 +175,7 @@ RF_TABLES = [
 LOW_VALUE_REMARKS = load_low_value_remarks()
 BRAND_ALIASES = load_brand_aliases()
 RF_FIELD_PROFILES = load_rf_field_profiles()
-DEVICE_IDENTITY_PROFILE = load_device_identity_profiles()
+AUDIT_HISTORY_PROFILE = load_audit_history_profiles()
 EXCLUDED_AUDIT_ORDER_TYPES = {"SupCheck"}
 # 组分站审核路径：请求类型全部落在该集合时，本地取数走 sup_rf_common 通用表单宽表
 # （组分网表单不落主网 RF_W_* 分表），表单以 SUP_RF_COMMON 键进入 rf_forms 供通用规则消费。
@@ -908,7 +904,7 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
             cursor,
             orders,
             rf_forms,
-            limit=int(DEVICE_IDENTITY_PROFILE.get("history_limit", 500)),
+            limit=int(AUDIT_HISTORY_PROFILE.get("history_limit", 500)),
         )
 
     return {
@@ -946,10 +942,10 @@ def _history_identity(value: Any) -> str:
 
 
 def _history_target_tables(rf_forms: dict[str, list[dict[str, Any]]]) -> list[str]:
-    match_fields = DEVICE_IDENTITY_PROFILE.get("history_match_fields", {}) or {}
+    match_fields = AUDIT_HISTORY_PROFILE.get("history_match_fields", {}) or {}
     configured = {
         str(table)
-        for table in DEVICE_IDENTITY_PROFILE.get("history_rf_tables", [])
+        for table in AUDIT_HISTORY_PROFILE.get("history_rf_tables", [])
         if str(table) in RF_TABLES and match_fields.get(str(table))
     }
     return sorted(table for table in configured if rf_forms.get(table))
@@ -967,7 +963,7 @@ def _history_form_seeds(
         for order in orders
         if order.get("WORKINGORDERCODE")
     }
-    match_fields = DEVICE_IDENTITY_PROFILE.get("history_match_fields", {}) or {}
+    match_fields = AUDIT_HISTORY_PROFILE.get("history_match_fields", {}) or {}
     seeds_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
     for table in target_tables:
         for form in rf_forms.get(table, []):
@@ -1072,7 +1068,7 @@ def _fetch_device_history(
     total_limit = max(1, min(int(limit or 500), 1000))
     per_device_limit = max(
         1,
-        min(int(DEVICE_IDENTITY_PROFILE.get("recent_per_device_limit", 5) or 5), 20),
+        min(int(AUDIT_HISTORY_PROFILE.get("recent_per_device_limit", 5) or 5), 20),
     )
     seed_batch_size = 250
     history_orders_by_code: dict[str, dict[str, Any]] = {}
@@ -1484,102 +1480,6 @@ def check_form_common_fields(table: str, form: dict[str, Any], issues: list[Issu
             )
 
 
-def check_workflow(order: dict[str, Any], details: list[dict[str, Any]], issues: list[Issue]) -> None:
-    if not details:
-        add_issue(issues, "FLOW_MISSING", "流程完整性", "高", "working_order_details", "完工工单无流程详情", "")
-        return
-
-    steps = [detail.get("PROCESSSTEP") for detail in details]
-    if "CreateOrder" not in steps:
-        add_issue(issues, "FLOW_NO_CREATE", "流程完整性", "高", "PROCESSSTEP", "缺少创建步骤", ",".join(map(str, steps)))
-
-    valid_process_steps_by_type = {
-        "Check": {"CheckOrder"},
-        "SupCheck": {"SupCheck_Check"},
-        "Fault": {"FaultProcess", "CheckOrder"},
-        "SECCheckCnemc": {"SECCheckCnemc", "OperationCheckCnemc"},
-        "SupSECCheck": {"SECCheckCnemc", "OperationCheckCnemc", "SupCheck_Check"},
-        "WorkRectify": {"WorkRectify", "CheckOrder"},
-        "StationBlackOut": {"FaultProcess", "CheckOrder"},
-    }
-    expected_process_steps = valid_process_steps_by_type.get(order.get("DDWORKINGORDERTYPE"))
-    if expected_process_steps and not (expected_process_steps & set(steps)):
-        add_issue(issues, "FLOW_NO_CHECK", "流程完整性", "高", "PROCESSSTEP", "缺少检查/巡检处理步骤", ",".join(map(str, steps)))
-
-    if order.get("DDWORKINGORDERTYPE") in {"Check", "SupCheck"} and "Review" not in steps:
-        add_issue(issues, "FLOW_NO_REVIEW", "流程完整性", "中", "PROCESSSTEP", "检查/巡检工单缺少复核步骤", ",".join(map(str, steps)))
-
-    previous_start = None
-    for detail in details:
-        step = detail.get("PROCESSSTEP") or ""
-        start = parse_time(detail.get("PROCESSSTARTDATETIME"))
-        end = parse_time(detail.get("PROCESSENDDATETIME"))
-        if detail.get("PROCESSSTATUS") in {"1.00", 1, 1.0} and step != "CreateOrder" and end is None:
-            add_issue(issues, "FLOW_END_EMPTY", "流程完整性", "中", "PROCESSENDDATETIME", "已完成流程步骤结束时间为空", step)
-        if start and end and end < start:
-            add_issue(issues, "FLOW_TIME_ORDER", "时间合理性", "高", "PROCESSENDDATETIME", "流程结束时间早于开始时间", f"{step}: {end} < {start}")
-        if previous_start and start and start < previous_start:
-            add_issue(issues, "FLOW_SEQUENCE", "时间合理性", "中", "PROCESSSTARTDATETIME", "流程开始时间顺序倒置", f"{step}: {start}")
-        if start:
-            previous_start = start
-
-        remark = detail.get("SUBMITREMARK")
-        if step != "CreateOrder" and (is_blank(remark) or str(remark).strip() in LOW_VALUE_REMARKS):
-            add_issue(issues, "FLOW_REMARK_LOW_VALUE", "填报规范性", "中", "SUBMITREMARK", "处理备注为空或信息量低", str(remark))
-
-
-def check_lifecycle_closure(order: dict[str, Any], details: list[dict[str, Any]], issues: list[Issue]) -> None:
-    if order.get("DDWORKINGORDERSTATUS") != "Finish":
-        return
-
-    finish_time = parse_time(order.get("FINISHTIME"))
-    plan_finish_time = parse_time(order.get("PLANFINISHTIME"))
-    if finish_time and plan_finish_time:
-        seconds_to_deadline = abs((plan_finish_time - finish_time).total_seconds())
-        if seconds_to_deadline <= 30 * 60:
-            add_issue(
-                issues,
-                "LIFECYCLE_FINISH_NEAR_DEADLINE",
-                "生命周期闭环风险",
-                "低",
-                "FINISHTIME/PLANFINISHTIME",
-                "工单临近计划截止时间完成",
-                f"finish={finish_time}, plan_finish={plan_finish_time}, delta_minutes={round(seconds_to_deadline / 60, 1)}",
-            )
-
-    if not details:
-        return
-
-    effective_steps_by_type = {
-        "Check": {"CheckOrder"},
-        "SupCheck": {"SupCheck_Check"},
-        "Fault": {"FaultProcess", "CheckOrder"},
-        "SECCheckCnemc": {"SECCheckCnemc", "OperationCheckCnemc"},
-        "SupSECCheck": {"SECCheckCnemc", "OperationCheckCnemc", "SupCheck_Check"},
-        "WorkRectify": {"WorkRectify", "CheckOrder"},
-        "StationBlackOut": {"FaultProcess", "CheckOrder"},
-    }
-    expected_steps = effective_steps_by_type.get(order.get("DDWORKINGORDERTYPE"), set())
-    non_create_details = [detail for detail in details if detail.get("PROCESSSTEP") != "CreateOrder"]
-    actual_steps = {detail.get("PROCESSSTEP") for detail in non_create_details}
-    has_expected_processing = bool(expected_steps & actual_steps) if expected_steps else bool(non_create_details)
-    has_meaningful_remark = any(
-        not is_blank(detail.get("SUBMITREMARK")) and str(detail.get("SUBMITREMARK")).strip() not in LOW_VALUE_REMARKS
-        for detail in non_create_details
-    )
-    if not has_expected_processing or not has_meaningful_remark:
-        severity = "高" if not has_expected_processing else "中"
-        add_issue(
-            issues,
-            "LIFECYCLE_FINISH_WITHOUT_EFFECTIVE_CLOSURE",
-            "生命周期闭环风险",
-            severity,
-            "working_order_details",
-            "已完成工单缺少有效闭环证据",
-            f"steps={','.join(map(str, sorted(actual_steps))) or '<无>'}, has_meaningful_remark={has_meaningful_remark}",
-        )
-
-
 def check_rf_forms(
     order: dict[str, Any],
     forms: list[tuple[str, dict[str, Any]]],
@@ -1982,11 +1882,11 @@ def audit_dataset(
     attachments_by_code = _group_records_by_order_code(dataset.get("attachments", []), ["refid", "REFID", "remark", "REMARK"])
     wo_commonfile_by_code = _group_records_by_order_code(dataset.get("wo_commonfile", []), ["REFID", "refid"])
     sup_taskitems_by_code = _group_records_by_order_code(dataset.get("sup_taskitems", []), ["WORKINGORDERCODE", "workingordercode"])
-    all_orders_for_device_consistency: list[dict[str, Any]] = []
+    all_history_orders: list[dict[str, Any]] = []
     all_forms_by_code: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     o3_history_conflicts_by_code: dict[str, list[Issue]] = {}
     if enable_non_visual:
-        all_orders_for_device_consistency, all_forms_by_code = merge_device_history(audit_source)
+        all_history_orders, all_forms_by_code = merge_device_history(audit_source)
         current_order_codes = {
             str(order.get("WORKINGORDERCODE"))
             for order in audit_source.get("orders", [])
@@ -2013,8 +1913,7 @@ def audit_dataset(
 
         if enable_non_visual:
             check_form_data_missing(order, forms, issues)
-            check_workflow_completeness(order, details, issues)
-            check_modular_lifecycle_closure(order, details, forms, issues)
+            check_monthly_dynamic_calibration_duration(order, details, issues)
             check_rf_required_fields(order, forms, issues)
             check_rf_time_ranges(order, forms, issues)
             check_rf_unit_values(order, forms, issues)
@@ -2025,7 +1924,7 @@ def audit_dataset(
                 order,
                 forms,
                 issues,
-                all_orders=all_orders_for_device_consistency,
+                all_orders=all_history_orders,
                 forms_by_code=all_forms_by_code,
             )
             check_rf_pm_pressure_values(order, forms, issues)
@@ -2037,7 +1936,7 @@ def audit_dataset(
                 order,
                 forms,
                 issues,
-                all_orders=all_orders_for_device_consistency,
+                all_orders=all_history_orders,
                 forms_by_code=all_forms_by_code,
             )
             # 组分站档案驱动规则：仅对带 RULEITEMTAG 的 sup_rf_common 表单生效。
@@ -2065,16 +1964,6 @@ def audit_dataset(
                 attachment_rf_typecodes,
                 attachments_by_code.get(str(code), []) + wo_commonfile_by_code.get(str(code), []),
             )
-            if DEVICE_IDENTITY_PROFILE.get("enabled", False):
-                check_device_identity_consistency(
-                    order,
-                    forms,
-                    all_orders_for_device_consistency,
-                    all_forms_by_code,
-                    devices_by_id,
-                    devices_by_code,
-                    issues,
-                )
             check_attachment_requirements(
                 order,
                 forms,
@@ -2214,7 +2103,6 @@ def audit_dataset(
     category_counter = Counter()
     assessment_counter = Counter()
     level_counter = Counter(record["audit_level"] for record in records if record.get("audit_level"))
-    device_consistency_issue_count = 0
     attachment_issue_count = 0
     attachment_review_candidate_count = 0
     for record in records:
@@ -2231,8 +2119,6 @@ def audit_dataset(
             issue_counter[issue["rule_id"]] += 1
             severity_counter[issue["severity"]] += 1
             category_counter[issue["category"]] += 1
-            if issue["rule_id"] == "RF_DEVICE_IDENTITY_INCONSISTENT":
-                device_consistency_issue_count += 1
             if str(issue["rule_id"]).startswith("ATTACHMENT_"):
                 attachment_issue_count += 1
         for issue in record.get("deterministic_issues", []):
@@ -2271,7 +2157,6 @@ def audit_dataset(
             "technical_diagnostic_top_rules": technical_diagnostic_counter.most_common(20),
             "technical_diagnostic_count": sum(technical_diagnostic_counter.values()),
             "common_patterns": [],
-            "device_consistency_issue_count": device_consistency_issue_count,
             "attachment_issue_count": attachment_issue_count,
             "attachment_review_candidate_count": attachment_review_candidate_count,
         },
@@ -2425,7 +2310,7 @@ def write_report(audit: dict[str, Any], path: Path) -> None:
         )
 
     lines.extend(["", "## 后续语义审核输入建议", ""])
-    lines.append("- 对存在 `FLOW_REMARK_LOW_VALUE`、报警/故障处置闭环不足的工单，进入大模型语义审核。")
+    lines.append("- 对存在备注信息量低、报警/故障处置闭环不足的工单，进入大模型语义审核。")
     lines.append("- 语义审核重点判断备注是否覆盖原因、措施、结果，报警是否说明数据有效性和恢复情况。")
     lines.append("- 大模型只消费确定性规则筛出的异常工单，降低成本并减少误判面。")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -2433,11 +2318,8 @@ def write_report(audit: dict[str, Any], path: Path) -> None:
 
 def build_semantic_candidates(audit: dict[str, Any]) -> dict[str, Any]:
     semantic_rule_ids = {
-        "FLOW_REMARK_LOW_VALUE",
         "RF_TW_REMARK_LOW_VALUE",
         "RF_Q_PENDING_NO_REMARK",
-        "LIFECYCLE_FINISH_NEAR_DEADLINE",
-        "LIFECYCLE_FINISH_WITHOUT_EFFECTIVE_CLOSURE",
         "RF_REQUIRED_FIELD_LOW_VALUE",
         "RF_ENV_TEMP_HUMIDITY_EMPTY",
         "RF_CHECK_TIME_OUTSIDE_RANGE",

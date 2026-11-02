@@ -451,8 +451,6 @@ def _format_decision_evidence_lines(item: dict[str, Any]) -> list[str]:
 
 
 def _format_structured_evidence_lines(item: dict[str, Any]) -> list[str]:
-    if item.get("rule_id") == "RF_DEVICE_IDENTITY_INCONSISTENT":
-        return []
     evidence = _parse_evidence(item.get("evidence"))
     if not evidence:
         return []
@@ -900,40 +898,7 @@ def _issue_station_label(item: dict[str, Any]) -> str:
 
 
 def _issue_message(item: dict[str, Any]) -> str:
-    message = _display_value(item.get("message"), "未填写问题描述")
-    detail = _issue_evidence_detail(item)
-    return f"{message}（{detail}）" if detail else message
-
-
-def _issue_evidence_detail(item: dict[str, Any]) -> str:
-    if item.get("rule_id") != "RF_DEVICE_IDENTITY_INCONSISTENT":
-        return ""
-    evidence = _parse_evidence(item.get("evidence"))
-    comparisons = evidence.get("comparisons")
-    if not isinstance(comparisons, list) or not comparisons:
-        return ""
-    details = []
-    for comparison in comparisons[:3]:
-        if not isinstance(comparison, dict):
-            continue
-        compare_order = _display_value(comparison.get("compare_order_code"), "未关联对比工单")
-        compare_time = str(comparison.get("compare_create_time") or "").strip()
-        compare_label = f"对比工单{compare_order}"
-        if compare_time:
-            compare_label = f"{compare_label}（{compare_time}）"
-        current_raw = _display_value(comparison.get("current_raw") or evidence.get("current_value"), "空")
-        compare_raw = _display_value(comparison.get("compare_raw"), "空")
-        source_detail = _source_detail(comparison)
-        details.append(f"{compare_label}：当前值{current_raw}，历史值{compare_raw}{source_detail}")
-    return "；".join(details)
-
-
-def _source_detail(comparison: dict[str, Any]) -> str:
-    current_source = str(comparison.get("current_source") or "").strip()
-    compare_source = str(comparison.get("compare_source") or "").strip()
-    if current_source or compare_source:
-        return f"，字段{current_source or '-'}/{compare_source or '-'}"
-    return ""
+    return _display_value(item.get("message"), "未填写问题描述")
 
 
 def _parse_evidence(evidence: Any) -> dict[str, Any]:

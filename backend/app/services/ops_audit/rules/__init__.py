@@ -12,11 +12,7 @@ from app.services.ops_audit.rules.attachment_rules import (
     check_attachment_requirements,
 )
 from app.services.ops_audit.rules.attachment_ocr_rules import check_attachment_ocr_quality
-from app.services.ops_audit.rules.device_consistency_rules import (
-    check_device_identity_consistency,
-    merge_device_history,
-)
-from app.services.ops_audit.rules.lifecycle_rules import check_lifecycle_closure
+from app.services.ops_audit.rules.device_history import merge_device_history
 from app.services.ops_audit.rules.o3_transfer_quality_rules import check_o3_transfer_quality_values
 from app.services.ops_audit.rules.rf_abnormal_remark_rules import check_rf_abnormal_remarks
 from app.services.ops_audit.rules.rf_calibration_date_rules import check_rf_calibration_dates
@@ -31,11 +27,13 @@ from app.services.ops_audit.rules.rf_required_rules import check_rf_required_fie
 from app.services.ops_audit.rules.rf_time_rules import check_rf_time_ranges
 from app.services.ops_audit.rules.rf_unit_rules import check_rf_unit_values
 from app.services.ops_audit.rules.rf_visibility_rules import check_rf_visibility_values
-from app.services.ops_audit.rules.workflow_rules import check_workflow_completeness
+from app.services.ops_audit.rules.work_order_duration_rules import (
+    check_monthly_dynamic_calibration_duration,
+)
 
 __all__ = [
-    # Workflow rules
-    "check_workflow_completeness",
+    # Work order duration rules
+    "check_monthly_dynamic_calibration_duration",
     # RF form rules
     "check_rf_required_fields",
     "check_rf_time_ranges",
@@ -51,10 +49,7 @@ __all__ = [
     "check_rf_enum_values",
     "check_rf_visibility_values",
     "check_o3_transfer_quality_values",
-    # Lifecycle rules
-    "check_lifecycle_closure",
-    # Device consistency rules
-    "check_device_identity_consistency",
+    # History index
     "merge_device_history",
     # Attachment rules
     "check_attachment_requirements",
@@ -71,7 +66,7 @@ def get_all_rule_checkers() -> dict[str, callable]:
     making it easy to enable/disable rule groups during audit runs.
     """
     return {
-        "workflow": check_workflow_completeness,
+        "work_order_duration": check_monthly_dynamic_calibration_duration,
         "rf_required": check_rf_required_fields,
         "rf_time": check_rf_time_ranges,
         "rf_unit": check_rf_unit_values,
@@ -86,8 +81,6 @@ def get_all_rule_checkers() -> dict[str, callable]:
         "rf_enum": check_rf_enum_values,
         "rf_visibility": check_rf_visibility_values,
         "o3_transfer_quality": check_o3_transfer_quality_values,
-        "lifecycle": check_lifecycle_closure,
-        "device_consistency": check_device_identity_consistency,
         "attachment": check_attachment_requirements,
         "attachment_ocr": check_attachment_ocr_quality,
     }

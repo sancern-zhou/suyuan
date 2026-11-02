@@ -1,11 +1,10 @@
 """Test cases for ops audit rules modules.
 
-This module provides test examples for the new rule modules:
-- workflow_rules.py
+This module provides test examples for the rule modules:
+- work_order_duration_rules.py
 - rf_required_rules.py
 - rf_time_rules.py
 - rf_range_rules.py
-- lifecycle_rules.py
 
 The tests demonstrate how to use the rule checkers with sample data.
 """
@@ -14,8 +13,6 @@ import json
 from datetime import datetime
 
 from app.services.ops_audit.rules import (
-    check_workflow_completeness,
-    check_lifecycle_closure,
     check_rf_calibration_dates,
     check_rf_required_fields,
     check_rf_enum_values,
@@ -515,46 +512,6 @@ def test_quarter_gaseous_flow_dynamic_calibrator_is_valid_on_expiry_date():
     assert issues == []
 
 
-def test_workflow_completeness():
-    """Test workflow completeness rules."""
-    print("\nTesting workflow completeness rules...")
-
-    order = {
-        "WORKINGORDERCODE": "CH202605260001",
-        "STATIONID": "1001A",
-        "DDWORKINGORDERTYPE": "Check",
-    }
-
-    # Test case 1: Missing workflow
-    issues = []
-    check_workflow_completeness(order, [], issues)
-    print(f"  Missing workflow: {len(issues)} issues")
-    for issue in issues:
-        print(f"    - {issue.rule_id}: {issue.message}")
-
-    # Test case 2: Workflow without create step
-    workflow_no_create = [{
-        "WORKFLOWID": "WF001",
-        "steps": [
-            {"NAME": "CheckOrder", "CREATETIME": "2026-05-26 10:00:00"},
-        ]
-    }]
-    issues = []
-    check_workflow_completeness(order, workflow_no_create, issues)
-    print(f"  No create step: {len(issues)} issues")
-
-    # Test case 3: Workflow without check step
-    workflow_no_check = [{
-        "WORKFLOWID": "WF002",
-        "steps": [
-            {"NAME": "CreateOrder", "CREATETIME": "2026-05-26 09:00:00"},
-        ]
-    }]
-    issues = []
-    check_workflow_completeness(order, workflow_no_check, issues)
-    print(f"  No check step: {len(issues)} issues")
-
-
 def test_rf_required_fields():
     """Test RF form required field rules."""
     print("\nTesting RF form required field rules...")
@@ -633,64 +590,15 @@ def test_rf_range_values():
         print(f"    - {issue.rule_id}: {issue.message}")
 
 
-def test_lifecycle_closure():
-    """Test lifecycle closure rules."""
-    print("\nTesting lifecycle closure rules...")
-
-    # Test case 1: Order without effective closure
-    order_no_closure = {
-        "WORKINGORDERCODE": "CH202605260001",
-        "STATIONID": "1001A",
-        "DDWORKINGORDERTYPE": "Check",
-        "MAINTENANCETYPE": "Week",
-        "CREATETIME": "2026-05-27 09:00:00",
-        "FINISHTIME": "2026-05-27 09:30:00",  # Only 30 min processing
-        "PLANFINISHTIME": "2026-05-27 10:00:00",
-    }
-
-    workflows = [{
-        "WORKFLOWID": "WF001",
-        "steps": [
-            {
-                "NAME": "CreateOrder",
-                "CREATETIME": "2026-05-27 09:00:00",
-                "REMARK": "",
-            },
-            {
-                "NAME": "CheckOrder",
-                "CREATETIME": "2026-05-27 09:30:00",
-                "REMARK": "完成",  # Low value remark
-            },
-        ]
-    }]
-
-    forms = [
-        ("RF_W_PMCHECK", {
-            "WORKINGORDERCODE": "CH202605260001",
-            "DISPLAYVALUE": "0",  # Zero value
-            "REMARK": "正常",  # Low value
-        })
-    ]
-
-    issues = []
-    check_lifecycle_closure(order_no_closure, workflows, forms, issues)
-    print(f"  No effective closure: {len(issues)} issues")
-    for issue in issues:
-        print(f"    - {issue.rule_id}: {issue.message}")
-
-
 def run_all_tests():
     """Run all test cases."""
     print("=" * 60)
     print("OPS AUDIT RULES MODULE TESTS")
     print("=" * 60)
 
-    test_main_order_required()
-    test_workflow_completeness()
     test_rf_required_fields()
     test_rf_time_ranges()
     test_rf_range_values()
-    test_lifecycle_closure()
 
     print("\n" + "=" * 60)
     print("All tests completed!")

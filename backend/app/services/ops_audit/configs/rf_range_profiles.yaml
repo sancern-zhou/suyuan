@@ -186,7 +186,7 @@ o3_weekly_check_profiles:
         label: 压力
         field: CYYLCHECKVALUE
         ranges:
-          API: {max: 28, unit: In-Hg-A, operator: "<="}
+          API: {max: 32, unit: In-Hg-A, operator: "<="}
           EC: {min: 400, max: 800, unit: TORR}
           FPI: {min: 7, max: 15, unit: psia}
           THERMO: {min: 200, max: 1000, unit: mmHg}

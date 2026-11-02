@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from app.services.ops_audit.rules.workflow_rules import check_workflow_completeness
+from app.services.ops_audit.rules.work_order_duration_rules import check_monthly_dynamic_calibration_duration
 from app.services.ops_work_order_audit_engine import audit_dataset
 
 
@@ -43,7 +43,7 @@ def _details(end_time):
 def test_monthly_dynamic_calibration_requires_more_than_five_minutes(end_time, expected_issue):
     issues = []
 
-    check_workflow_completeness(_order(), _details(end_time), issues)
+    check_monthly_dynamic_calibration_duration(_order(), _details(end_time), issues)
 
     matched = [issue for issue in issues if issue.rule_id == RULE_ID]
     assert bool(matched) is expected_issue
@@ -62,7 +62,7 @@ def test_monthly_dynamic_calibration_requires_more_than_five_minutes(end_time, e
 def test_monthly_dynamic_calibration_rule_ignores_other_orders(overrides):
     issues = []
 
-    check_workflow_completeness(_order(**overrides), _details("2026-06-08 10:01:00"), issues)
+    check_monthly_dynamic_calibration_duration(_order(**overrides), _details("2026-06-08 10:01:00"), issues)
 
     assert RULE_ID not in {issue.rule_id for issue in issues}
 
@@ -77,7 +77,7 @@ def test_monthly_dynamic_calibration_rule_only_checks_processing_steps():
         }
     ]
 
-    check_workflow_completeness(_order(), details, issues)
+    check_monthly_dynamic_calibration_duration(_order(), details, issues)
 
     assert RULE_ID not in {issue.rule_id for issue in issues}
 

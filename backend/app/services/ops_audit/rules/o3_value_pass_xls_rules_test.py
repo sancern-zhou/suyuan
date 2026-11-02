@@ -742,3 +742,115 @@ def test_o3_value_pass_date_in_metadata_fields_is_not_reported_as_position_suspe
 
     matched = [issue for issue in issues if issue.rule_id == "RF_O3_VALUE_PASS_FIELD_POSITION_SUSPECT"]
     assert matched == []
+
+
+def test_parse_linear_formula_tolerates_real_world_format_variants():
+    parse = o3_value_pass_xls_rules._parse_linear_formula
+
+    assert parse("Y=（1.00684)X+（0.04）") == (1.00684, 0.04)
+    assert parse("显示值Y=（1.00684）X+0.04(ppb)") == (1.00684, 0.04)
+    assert parse("y=（1.00684）X+(0.04)") == (1.00684, 0.04)
+    assert parse("显示值（49IPS)=1.00684 ×真实浓度pp+0.04") == (1.00684, 0.04)
+    assert parse("y = 1.00338 (x) + 0.20") == (1.00338, 0.20)
+    assert parse("Y=0.99979*X+0.21(ppb)") == (0.99979, 0.21)
+    assert parse("Y=1.00261X(ppb)+0.05ppb") == (1.00261, 0.05)
+    assert parse("y=1.00170x-0.390") == (1.0017, -0.39)
+
+    assert parse("") is None
+    assert parse(None) is None
+    assert parse("/") is None
+    assert parse("公式见证书") is None
+    assert parse("待补充") is None
+
+
+def _upper_standard_workbook(path, *, formula="显示值Y=（1.00684）X+0.04(ppb)"):
+    wb = Workbook()
+    ws = wb.active
+    ws["D25"], ws["F25"] = "斜率", "0.999"
+    ws["D26"], ws["F26"] = "截距(ppb)", "-0.079"
+    ws["F28"] = "-0.07"
+    ws["A16"] = "上级臭氧传递标准："
+    ws["A17"], ws["D17"], ws["G17"] = "型号：", "传递日期：", "2026/3/11to16"
+    ws["A18"], ws["D18"], ws["G18"] = "设备号：", "传递公式：", formula
+    ws["A19"], ws["D19"], ws["G19"] = "序列号：", "传递有效期限：", "2027/3/16"
+    wb.save(path)
+
+
+def test_upper_standard_formula_format_variants_match(tmp_path):
+    xls_path = tmp_path / "o3-transfer.xlsx"
+    _upper_standard_workbook(xls_path)
+    issues = []
+
+    o3_value_pass_xls_rules.check_o3_value_pass_xls_values(
+        {"WORKINGORDERCODE": "WO-001"},
+        [
+            (
+                "RF_HY_O3VALUEPASS",
+                _form(
+                    WORKDENSITY6VALUE="2026/3/11~16",
+                    DELIVERTO6VALUE="y=（1.00684）X+(0.04)",
+                    BVALUE="2027/3/16",
+                ),
+            )
+        ],
+        [],
+        [_attachment(xls_path)],
+        issues,
+    )
+
+    assert issues == []
+
+
+def test_unparseable_formula_routes_to_manual_review_rule(tmp_path):
+    xls_path = tmp_path / "o3-transfer-unparseable.xlsx"
+    _upper_standard_workbook(xls_path, formula="公式见证书附录")
+    issues = []
+
+    o3_value_pass_xls_rules.check_o3_value_pass_xls_values(
+        {"WORKINGORDERCODE": "WO-001"},
+        [
+            (
+                "RF_HY_O3VALUEPASS",
+                _form(
+                    WORKDENSITY6VALUE="2026/3/11~16",
+                    DELIVERTO6VALUE="Y=1.00684X+0.04(ppb)",
+                    BVALUE="2027/3/16",
+                ),
+            )
+        ],
+        [],
+        [_attachment(xls_path)],
+        issues,
+    )
+
+    assert [issue.rule_id for issue in issues] == [
+        "ATTACHMENT_O3_UPPER_FORMULA_UNPARSEABLE_REVIEW"
+    ]
+    issue = issues[0]
+    assert issue.severity == "中"
+    assert issue.category == "附件质量问题"
+    assert "无法解析" in issue.message
+    assert issue.field == "attachment.RF_HY_O3VALUEPASS.DELIVERTO6VALUE"
+    evidence = json.loads(issue.evidence)
+    assert evidence["needs_manual_review"] is True
+    assert evidence["review_reason"] == "formula_unparseable"
+    assert evidence["comparison"]["field"] == "DELIVERTO6VALUE"
+
+
+def test_unparseable_formula_review_rule_is_cataloged_manual_review_not_hard_error():
+    from app.services.ops_audit.config import (
+        load_rule_catalog,
+        load_scoring_config,
+        review_stage_for_rule,
+    )
+
+    catalog = {item["rule_id"]: item for item in load_rule_catalog()}
+    scoring = load_scoring_config()
+
+    assert catalog[o3_value_pass_xls_rules.UNPARSEABLE_FORMULA_REVIEW_RULE_ID]["display_status"] == "active"
+    assert (
+        review_stage_for_rule(o3_value_pass_xls_rules.UNPARSEABLE_FORMULA_REVIEW_RULE_ID)
+        == "manual_evidence_review"
+    )
+    assert o3_value_pass_xls_rules.UNPARSEABLE_FORMULA_REVIEW_RULE_ID not in scoring["hard_error_rules"]
+    assert o3_value_pass_xls_rules.UNPARSEABLE_FORMULA_REVIEW_RULE_ID not in scoring["critical_hard_error_rules"]

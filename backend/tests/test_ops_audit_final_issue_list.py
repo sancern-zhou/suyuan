@@ -20,9 +20,9 @@ def test_final_issue_list_keeps_deterministic_and_promoted_remark_only():
                         "message": "RF表单缺失",
                     },
                     {
-                        "rule_id": "FLOW_REMARK_LOW_VALUE",
+                        "rule_id": "REMARK_SEMANTIC_INCOMPLETE",
                         "severity": "中",
-                        "category": "流程备注",
+                        "category": "语义复核",
                         "field": "SUBMITREMARK",
                         "message": "流程备注低价值",
                     },
@@ -52,7 +52,7 @@ def test_final_issue_list_keeps_deterministic_and_promoted_remark_only():
                 "order_type": "Check",
                 "maintenance_type": "Week",
                 "can_promote_to_final_issue": True,
-                "supported_rule_ids": ["FLOW_REMARK_LOW_VALUE"],
+                "supported_rule_ids": ["REMARK_SEMANTIC_INCOMPLETE"],
                 "conclusion": "备注语义不完整，缺少原因、措施或结果。",
                 "evidence_text": "计划任务单",
                 "confidence": 0.82,
@@ -64,11 +64,11 @@ def test_final_issue_list_keeps_deterministic_and_promoted_remark_only():
     result = build_final_issue_list(audit, semantic_results)
 
     rule_ids = {item["rule_id"] for item in result["items"]}
-    assert rule_ids == {"RF_MISSING", "FLOW_REMARK_LOW_VALUE"}
+    assert rule_ids == {"RF_MISSING", "REMARK_SEMANTIC_INCOMPLETE"}
     assert result["stage_counts"] == {"deterministic": 1, "semantic_remark": 1}
     assert all("suggestion" not in item for item in result["items"])
     assert all("severity" not in item for item in result["items"])
-    semantic_item = next(item for item in result["items"] if item["rule_id"] == "FLOW_REMARK_LOW_VALUE")
+    semantic_item = next(item for item in result["items"] if item["rule_id"] == "REMARK_SEMANTIC_INCOMPLETE")
     assert semantic_item["message"] == "备注未说明异常原因、处置措施和处理结果。"
 
 
@@ -518,7 +518,7 @@ def test_final_issue_list_keeps_rf_table_and_record_context():
     assert all(item["rf_record_key"] for item in result["items"])
 
 
-def test_final_issue_list_uses_device_identity_rf_table_from_evidence():
+def test_final_issue_list_uses_rf_table_from_evidence():
     audit = {
         "records": [
             {
@@ -528,17 +528,14 @@ def test_final_issue_list_uses_device_identity_rf_table_from_evidence():
                 "maintenance_type": "Week",
                 "scoring_issues": [
                     {
-                        "rule_id": "RF_DEVICE_IDENTITY_INCONSISTENT",
-                        "severity": "中",
-                        "category": "一致性问题",
-                        "field": "device_identity.model",
-                        "message": "同设备跨工单型号不一致",
+                        "rule_id": "RF_RANGE_OUT_OF_SPEC",
+                        "severity": "高",
+                        "category": "数值逻辑问题",
+                        "field": "RF_W_PMCHECK.PMTCHECKVALUE",
+                        "message": "参考PMT信号值超出正常范围",
                         "evidence": (
                             '{"working_order_code":"WO-DEVICE","rf_table":"RF_W_PMCHECK",'
-                            '"field":"model","current_value":"FH62C14",'
-                            '"comparisons":[{"compare_order_code":"WO-HISTORY",'
-                            '"compare_table":"RF_W_PMCHECK","current_raw":"FH62C14",'
-                            '"compare_raw":"SHARP5030"}]}'
+                            '"field":"PMTCHECKVALUE","current_value":"0.002"}'
                         ),
                     }
                 ],
@@ -552,10 +549,10 @@ def test_final_issue_list_uses_device_identity_rf_table_from_evidence():
     item = result["items"][0]
     assert item["rf_table"] == "RF_W_PMCHECK"
     assert item["rf_form_name"] == "颗粒物PM10/PM2.5自动监测分析仪运行状况检查记录表（每周）"
-    assert item["rf_record_key"] == "WO-DEVICE::RF_W_PMCHECK::model"
+    assert item["rf_record_key"] == "WO-DEVICE::RF_W_PMCHECK::PMTCHECKVALUE"
 
 
-def test_final_issue_list_uses_device_identity_compare_table_for_legacy_evidence():
+def test_final_issue_list_uses_compare_table_for_legacy_evidence():
     audit = {
         "records": [
             {
@@ -565,13 +562,13 @@ def test_final_issue_list_uses_device_identity_compare_table_for_legacy_evidence
                 "maintenance_type": "Week",
                 "scoring_issues": [
                     {
-                        "rule_id": "RF_DEVICE_IDENTITY_INCONSISTENT",
-                        "severity": "中",
+                        "rule_id": "RF_STATION_MISMATCH",
+                        "severity": "高",
                         "category": "一致性问题",
-                        "field": "device_identity.device_code",
-                        "message": "同设备跨工单设备编号不一致",
+                        "field": "RF_W_PMCHECK.DEVICECODE",
+                        "message": "表单设备编号与工单不一致",
                         "evidence": (
-                            '{"current_order_code":"WO-DEVICE","field":"device_code",'
+                            '{"current_order_code":"WO-DEVICE","field":"DEVICECODE",'
                             '"comparisons":[{"compare_order_code":"WO-HISTORY",'
                             '"compare_table":"RF_W_PMCHECK","current_raw":"CM-0706",'
                             '"compare_raw":"CM-0695"}]}'
@@ -587,7 +584,7 @@ def test_final_issue_list_uses_device_identity_compare_table_for_legacy_evidence
     item = result["items"][0]
     assert item["rf_table"] == "RF_W_PMCHECK"
     assert item["rf_form_name"] == "颗粒物PM10/PM2.5自动监测分析仪运行状况检查记录表（每周）"
-    assert item["rf_record_key"] == "WO-DEVICE::RF_W_PMCHECK::device_code"
+    assert item["rf_record_key"] == "WO-DEVICE::RF_W_PMCHECK::DEVICECODE"
 
 
 def test_final_issue_list_adds_semantic_rf_form_display_name():
@@ -746,7 +743,7 @@ def test_final_issue_list_adds_operation_unit_from_audit_record_to_rule_and_sema
             {
                 "working_order_code": "WO-UNIT",
                 "can_promote_to_final_issue": True,
-                "supported_rule_ids": ["FLOW_REMARK_LOW_VALUE"],
+                "supported_rule_ids": ["REMARK_SEMANTIC_INCOMPLETE"],
                 "conclusion": "备注语义不完整。",
             }
         ]

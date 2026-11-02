@@ -62,4 +62,3 @@ end_time_fields:
   - EndTime
   - EdtTime
   - CheckEdt
-near_deadline_hours: 4

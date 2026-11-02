@@ -30,7 +30,7 @@ defaults:
   watermark_pilot:
     enabled: true
     sample_rate: 0.3
-    trigger_rule_prefixes: ["SUP_", "RF_", "FLOW_", "LIFECYCLE_"]
+    trigger_rule_prefixes: ["SUP_", "RF_"]
     max_tasks_per_run: 20
     max_photos_per_order: 2
     distance_km_threshold: 5
@@ -692,7 +692,15 @@ form_profiles:
         unit: "%"
         confirmed: false
 
-  # PANs 周巡检单点标定曲线 R2≥0.995（文档判据；string19 列语义按样本推断）。
+  # PANs 周巡检：单点标定曲线 R2≥0.995（文档判据）+ 状态检查区参数范围与异常
+  # 勾选（巡检模板红字"填写参数要在范围内，否则需备注上传相关巡检照片"）。
+  # 列语义按 guangdong_mart.sup_rf_common 2234 行样本推断（2026-11 复核）：
+  # 表单区自 string18 起每两列一组——检查值列 + 异常处理记录列；
+  # 正常范围取巡检模板标称区间（TEC柱箱 11.5~12.5、ECD 49~51、
+  # 柱前压 17.5~18.5、尾吹 24~26、汞灯 35~45）。柱前压不少站点按仪器
+  # 性能自设设定值（string25 备注 1000+ 条），超范围有备注按既有口径
+  # 降级人工复核。滤膜(string36)/短硅胶(string38)取值枚举过杂（"否"未必
+  # 异常），不做异常值判定。
   Sup_RF_PANsWeekCheck:
     display_name: PANs 分析仪周巡检记录
     category: week_check
@@ -704,6 +712,58 @@ form_profiles:
         min: 0.995
         max: 1
         confirmed: false
+      - column: string20
+        label: TEC柱箱温度
+        min: 11.5
+        max: 12.5
+        unit: "℃"
+        remark_column: string21
+        confirmed: false
+      - column: string22
+        label: ECD温度
+        min: 49
+        max: 51
+        unit: "℃"
+        remark_column: string23
+        confirmed: false
+      - column: string24
+        label: 柱前压
+        min: 17.5
+        max: 18.5
+        unit: kPa
+        remark_column: string25
+        confirmed: false
+      - column: string26
+        label: 尾吹流量
+        min: 24
+        max: 26
+        unit: mL/min
+        remark_column: string27
+        confirmed: false
+      - column: string28
+        label: 汞灯温度
+        min: 35
+        max: 45
+        unit: "℃"
+        remark_column: string29
+        confirmed: false
+    abnormal_columns:
+      - column: string30
+        label: 采样管路是否干净
+        values: [否]
+        remark_column: string31
+      - column: string32
+        label: 采样管路是否有冷凝水
+        values: [是]
+        remark_column: string33
+      - column: string34
+        label: 采样总风机是否正常工作
+        values: [否]
+        remark_column: string35
+      - column: string40
+        label: 积分参数是否调整
+        values: [是]
+        remark_column: string41
 
   # PANs 工作曲线月校准：红字"多点标曲结果最新要求为R2≥0.999"（string48 按样本推断）。
   Sup_RF_PANsWorkCurveCalibration:

@@ -219,7 +219,7 @@ def test_audit_dataset_can_run_visual_rules_only(monkeypatch):
 
     monkeypatch.setattr(
         ops_work_order_audit_engine,
-        "check_workflow_completeness",
+        "check_monthly_dynamic_calibration_duration",
         fail_non_visual_rule,
     )
     monkeypatch.setattr(
@@ -278,7 +278,7 @@ def test_history_form_seeds_use_target_form_device_identity_and_earliest_time(mo
     }
     monkeypatch.setattr(
         ops_work_order_audit_engine,
-        "DEVICE_IDENTITY_PROFILE",
+        "AUDIT_HISTORY_PROFILE",
         {"history_match_fields": {"RF_HY_O3VALUEPASS": ["DEVICECODE"]}},
     )
 
@@ -350,7 +350,7 @@ def test_fetch_device_history_queries_only_same_device_recent_target_forms(monke
     monkeypatch.setattr(ops_work_order_audit_engine, "rows", fake_rows)
     monkeypatch.setattr(
         ops_work_order_audit_engine,
-        "DEVICE_IDENTITY_PROFILE",
+        "AUDIT_HISTORY_PROFILE",
         {
             "history_rf_tables": ["RF_HY_O3VALUEPASS"],
             "history_match_fields": {"RF_HY_O3VALUEPASS": ["DEVICECODE"]},
@@ -407,7 +407,7 @@ def test_fetch_device_history_skips_database_when_target_form_has_no_device_iden
     monkeypatch.setattr(ops_work_order_audit_engine, "rows", unexpected_rows)
     monkeypatch.setattr(
         ops_work_order_audit_engine,
-        "DEVICE_IDENTITY_PROFILE",
+        "AUDIT_HISTORY_PROFILE",
         {
             "history_rf_tables": ["RF_HY_O3VALUEPASS"],
             "history_match_fields": {"RF_HY_O3VALUEPASS": ["DEVICECODE"]},

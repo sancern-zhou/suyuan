@@ -10,7 +10,6 @@ from app.services.ops_audit.rules.rf_pm_pressure_rules import check_rf_pm_pressu
 from app.services.ops_audit.rules.rf_range_rules import check_rf_range_values
 from app.services.ops_audit.rules.rf_time_rules import check_rf_time_ranges
 from app.services.ops_audit.rules.rf_visibility_rules import check_rf_visibility_values
-from app.services.ops_audit.rules.lifecycle_rules import check_lifecycle_closure
 from app.services.ops_audit.rules.rf_abnormal_remark_rules import check_rf_abnormal_remarks
 from app.services.ops_work_order_audit_engine import audit_dataset
 
@@ -865,29 +864,6 @@ def test_environment_humidity_flags_unchanged_before_after_values_without_remark
     )
 
     assert "RF_HY_ENV_HUMIDITY_BEFORE_AFTER_UNCHANGED_SUSPECT" in _issue_ids(issues)
-
-
-def test_lifecycle_does_not_treat_generic_remarks_as_effective_closure():
-    issues: list[Issue] = []
-    order = {
-        "WORKINGORDERCODE": "WO-LIFECYCLE-REMARK",
-        "CREATETIME": "2026-05-20 10:00:00",
-        "FINISHTIME": "2026-05-20 10:20:00",
-        "PLANFINISHTIME": "2026-05-20 10:30:00",
-        "DDWORKINGORDERTYPE": "Check",
-        "MAINTENANCETYPE": "Week",
-    }
-    workflows = [
-        {"WORKINGORDERCODE": "WO-LIFECYCLE-REMARK", "PROCESSSTEP": "CreateOrder"},
-        {"WORKINGORDERCODE": "WO-LIFECYCLE-REMARK", "PROCESSSTEP": "CheckOrder", "SUBMITREMARK": "已处理"},
-    ]
-    forms = [
-        ("RF_W_PMCHECK", {"WORKINGORDERCODE": "WO-LIFECYCLE-REMARK", "REMARK": "已处理"})
-    ]
-
-    check_lifecycle_closure(order, workflows, forms, issues)
-
-    assert "LIFECYCLE_FINISH_WITHOUT_EFFECTIVE_CLOSURE" in _issue_ids(issues)
 
 
 def test_pm_pressure_recomputes_pressure_error_fields():

@@ -35,7 +35,6 @@ def check_rf_time_ranges(
 
     This rule identifies:
     - RF_CHECK_TIME_OUTSIDE_RANGE: Check time is outside the start/end time range
-    - LIFECYCLE_FINISH_NEAR_DEADLINE: Order completed near planned deadline
 
     The rule is configurable via rf_field_profiles.yaml.
     """
@@ -48,8 +47,6 @@ def check_rf_time_ranges(
         _check_weekly_station_duration(order, table, form, issues)
         _check_two_week_flow_duration(order, table, form, issues)
         _check_multipoint_duration(order, table, form, issues)
-
-    _check_finish_near_deadline(order, forms, issues)
 
 
 def _check_weekly_station_duration(
@@ -307,49 +304,6 @@ def _clock_in_window(check_clock: Any, start_clock: Any, end_clock: Any) -> bool
     if start_clock <= end_clock:
         return start_clock <= check_clock <= end_clock
     return check_clock >= start_clock or check_clock <= end_clock
-
-
-def _check_finish_near_deadline(
-    order: dict[str, Any],
-    forms: list[tuple[str, dict[str, Any]]],
-    issues: list[Issue],
-) -> None:
-    """Check if order was completed near the planned deadline."""
-
-    near_deadline_hours = float(RF_FIELD_PROFILES.get("near_deadline_hours", 4) or 4)
-    plan_finish = _parse_time(order.get("PLANFINISHTIME"))
-    actual_finish = _parse_time(order.get("FINISHTIME"))
-    create_time = _parse_time(order.get("CREATETIME"))
-
-    if not plan_finish or not actual_finish:
-        return
-
-    time_to_deadline = _hours_between(actual_finish, plan_finish)
-
-    if time_to_deadline is None or abs(time_to_deadline) > near_deadline_hours:
-        return
-
-    evidence = {
-        "working_order_code": order.get("WORKINGORDERCODE"),
-        "create_time": _format_time(create_time),
-        "plan_finish_time": _format_time(plan_finish),
-        "actual_finish_time": _format_time(actual_finish),
-        "hours_to_deadline": time_to_deadline,
-        "near_deadline_hours": near_deadline_hours,
-        "order_type": order.get("DDWORKINGORDERTYPE"),
-        "maintenance_type": order.get("MAINTENANCETYPE"),
-    }
-
-    direction = "提前" if time_to_deadline >= 0 else "延后"
-    add_issue(
-        issues,
-        "LIFECYCLE_FINISH_NEAR_DEADLINE",
-        "生命周期闭环风险",
-        "低",
-        "working_order.finish_near_deadline",
-        f"工单{direction}{abs(time_to_deadline):.1f}小时完成(计划{_format_time(plan_finish)},实际{_format_time(actual_finish)})",
-        json.dumps(evidence, ensure_ascii=False, default=str),
-    )
 
 
 def _first_time_value(record: dict[str, Any], fields: list[str]) -> datetime | None:

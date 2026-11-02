@@ -177,7 +177,7 @@ def _pilot_config() -> dict[str, Any]:
     pilot = dict(defaults.get("watermark_pilot") or {})
     pilot.setdefault("enabled", True)
     pilot.setdefault("sample_rate", 0.3)
-    pilot.setdefault("trigger_rule_prefixes", ["SUP_", "RF_", "FLOW_", "LIFECYCLE_"])
+    pilot.setdefault("trigger_rule_prefixes", ["SUP_", "RF_"])
     pilot.setdefault("max_tasks_per_run", 20)
     pilot.setdefault("max_photos_per_order", 2)
     pilot.setdefault("distance_km_threshold", 5)

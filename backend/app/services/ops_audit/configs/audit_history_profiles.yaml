@@ -1,0 +1,28 @@
+brand_aliases:
+  API:
+    - API
+  THERMO:
+    - THERMO
+    - TE
+    - 热电
+
+audit_history:
+  history_limit: 500
+  recent_per_device_limit: 5
+  history_rf_tables:
+    - RF_HY_O3VALUEPASS
+    - RF_Q_GASEOUSMULTIPOINT_CO
+    - RF_Q_GASEOUSMULTIPOINT_NO2
+    - RF_Q_GASEOUSMULTIPOINT_O3
+    - RF_Q_GASEOUSMULTIPOINT_SO2
+  history_match_fields:
+    RF_HY_O3VALUEPASS:
+      - AVALUE
+    RF_Q_GASEOUSMULTIPOINT_CO:
+      - DEVICECODE
+    RF_Q_GASEOUSMULTIPOINT_NO2:
+      - DEVICECODE
+    RF_Q_GASEOUSMULTIPOINT_O3:
+      - DEVICECODE
+    RF_Q_GASEOUSMULTIPOINT_SO2:
+      - DEVICECODE
