@@ -34,6 +34,17 @@ SENT_MARKERS_LIMIT = 500
 
 PENDING_PATH = "/api/xuchang-wechat-push/pending"
 ACK_PATH = "/api/xuchang-wechat-push/ack"
+MEDIA_PATH = "/api/xuchang-wechat-push/media"
+
+# 图片按 content-type 落本地临时文件的扩展名映射
+_MEDIA_EXTS = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/bmp": ".bmp",
+}
+MEDIA_FETCH_RETRIES = 2
 
 
 def log(message: str) -> None:
@@ -91,18 +102,25 @@ class WeChatSender:
 
     def __init__(self) -> None:
         try:
-            from wechatauto.guia import quick_send
+            from wechatauto.guia import quick_send, quick_send_image
         except ImportError as exc:
             raise RuntimeError(
                 "未安装 wechatauto-replica，请先运行 install.bat"
             ) from exc
         self._send = quick_send
+        self._send_image = quick_send_image
 
     def send_text(self, group_name: str, text: str) -> None:
         result = self._send(text, group_name)
         status = str((result or {}).get("status") or "")
         if "成功" not in status and "ok" not in status.lower():
             raise RuntimeError(f"发送未确认：{result}")
+
+    def send_image(self, group_name: str, image_path: str) -> None:
+        result = self._send_image(image_path, group_name)
+        status = str((result or {}).get("status") or "")
+        if "成功" not in status and "ok" not in status.lower():
+            raise RuntimeError(f"图片发送未确认：{result}")
 
 
 def http_headers(cfg: dict) -> dict:
@@ -191,6 +209,35 @@ def send_with_retry(cfg: dict, sender: WeChatSender, text: str) -> str | None:
     return last_error
 
 
+def fetch_media(cfg: dict, message_id: str, index: int) -> Path | None:
+    """下载消息附图到本地临时文件；重试耗尽返回 None。"""
+    url = f"{cfg['base_url']}{MEDIA_PATH}/{message_id}/{index}"
+    for attempt in range(1 + MEDIA_FETCH_RETRIES):
+        try:
+            response = httpx.get(
+                url, headers=http_headers(cfg), timeout=cfg["http_timeout_seconds"]
+            )
+            if response.status_code == 200:
+                ext = _MEDIA_EXTS.get(
+                    response.headers.get("content-type", "").split(";")[0].strip(),
+                    ".png",
+                )
+                cache_dir = DATA_DIR / "media_cache"
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                local_path = cache_dir / f"{message_id}_{index}{ext}"
+                local_path.write_bytes(response.content)
+                return local_path
+            log(
+                f"[warn] 附图下载失败（{message_id}#{index} 第 {attempt + 1} 次）："
+                f"HTTP {response.status_code}"
+            )
+        except httpx.HTTPError as exc:
+            log(f"[warn] 附图下载失败（{message_id}#{index} 第 {attempt + 1} 次）：{exc}")
+        if attempt < MEDIA_FETCH_RETRIES:
+            time.sleep(2)
+    return None
+
+
 def run_cycle(cfg: dict, markers: dict, sender: WeChatSender | None, dry_run: bool) -> None:
     messages = fetch_pending(cfg)
     if messages is None:
@@ -207,20 +254,42 @@ def run_cycle(cfg: dict, markers: dict, sender: WeChatSender | None, dry_run: bo
             ack(cfg, message_id, "sent", detail="本地已发送标记补回执")
             continue
         if dry_run:
-            log(f"[dry-run] 将发到「{cfg['group_name']}」：{text[:80]}...")
+            media = msg.get("media") or []
+            suffix = f"（附图 {len(media)} 张）" if media else ""
+            log(f"[dry-run] 将发到「{cfg['group_name']}」：{text[:80]}...{suffix}")
             continue
         if sender is None:
             return  # 微信不可用：消息留在队列，下轮再试
         error = send_with_retry(cfg, sender, text)
-        if error is None:
-            log(f"[info] 已发送告警 {message_id} 到「{cfg['group_name']}」")
-            markers["markers"][message_id] = datetime.now().isoformat(
-                timespec="seconds"
-            )
-            save_markers(markers)
-            ack(cfg, message_id, "sent")
-        else:
+        if error is not None:
             ack(cfg, message_id, "failed", detail=error)
+            continue
+        log(f"[info] 已发送告警 {message_id} 到「{cfg['group_name']}」")
+        # 文本发出后逐张发附图：单张失败只记录不重发整条消息（避免文案重复刷群）
+        media = msg.get("media") or []
+        failed_media: list[int] = []
+        for index in range(len(media)):
+            local_path = fetch_media(cfg, message_id, index)
+            if local_path is None:
+                failed_media.append(index)
+                continue
+            try:
+                sender.send_image(cfg["group_name"], str(local_path))
+                log(f"[info] 已发送附图 {message_id}#{index}")
+            except Exception as exc:
+                log(f"[warn] 附图发送失败（{message_id}#{index}）：{exc}")
+                failed_media.append(index)
+        detail = None
+        if media:
+            detail = f"附图 {len(media) - len(failed_media)}/{len(media)} 张成功"
+            if failed_media:
+                detail += f"（失败序号：{','.join(map(str, failed_media))}）"
+                log(f"[warn] {detail}")
+        markers["markers"][message_id] = datetime.now().isoformat(
+            timespec="seconds"
+        )
+        save_markers(markers)
+        ack(cfg, message_id, "sent", detail=detail)
 
 
 def ensure_sender(cfg: dict, sender: WeChatSender | None) -> WeChatSender | None:

@@ -595,9 +595,12 @@ async def run_station_alert_workflow(
         )
     media = await asyncio.to_thread(_collect_media, package)
 
-    # 微信群 RPA 推送：文案定稿即入队，先于现有投递；失败不影响 App/GeTui 主流程
+    # 微信群 RPA 推送：文案定稿即入队（含证据附图路径），先于现有投递；
+    # 失败不影响 App/GeTui 主流程
     try:
-        enqueued = enqueue_station_alert_wechat_message(package, message)
+        enqueued = enqueue_station_alert_wechat_message(
+            package, message, media=media
+        )
         if enqueued:
             logger.info("xuchang_wechat_push_enqueued", message_id=enqueued["id"])
     except Exception:

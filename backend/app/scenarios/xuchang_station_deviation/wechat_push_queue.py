@@ -103,12 +103,14 @@ def enqueue_station_alert_wechat_message(
     package: dict[str, Any],
     message: str,
     *,
+    media: list[str] | None = None,
     root: Path | None = None,
 ) -> dict[str, Any] | None:
-    """把定稿的站点告警通报文案写入待发队列，返回入队记录。
+    """把定稿的站点告警通报文案（及证据附图路径）写入待发队列。
 
-    空文案跳过；调用方（alert_notification workflow）负责 try/except，
-    入队失败只记日志、不影响现有投递主流程。
+    空文案跳过；media 存 agent 原始路径（web 侧经 resolve_agent_path 解析，
+    由 /media 端点下发）。调用方（alert_notification workflow）负责
+    try/except，入队失败只记日志、不影响现有投递主流程。
     """
     text = str(message or "").strip()
     if not text:
@@ -118,6 +120,7 @@ def enqueue_station_alert_wechat_message(
         "id": f"wx-{now:%Y%m%d%H%M%S%f}-{uuid.uuid4().hex[:8]}",
         "kind": "station_alert",
         "text": text,
+        "media": [str(p) for p in (media or [])],
         "metadata": {
             "episode_id": _first_episode_id(package),
             "station_id": str(package.get("station_id") or ""),
@@ -129,6 +132,20 @@ def enqueue_station_alert_wechat_message(
     }
     _write_atomic(record, _status_dir(PENDING_DIR, root) / f"{record['id']}.json")
     return record
+
+
+def find_message(
+    message_id: str, *, root: Path | None = None
+) -> dict[str, Any] | None:
+    """按 id 查消息记录：pending 优先，已归档的 sent/failed 兜底（供媒体下发）。"""
+    if not _SAFE_MESSAGE_ID.fullmatch(message_id or ""):
+        return None
+    for status in (PENDING_DIR, SENT_DIR, FAILED_DIR):
+        path = _status_dir(status, root) / f"{message_id}.json"
+        record = _read_json(path)
+        if record:
+            return record
+    return None
 
 
 def list_pending_messages(
