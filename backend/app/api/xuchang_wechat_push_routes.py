@@ -11,13 +11,24 @@ import hmac
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.auth.dependencies import optional_current_user
 from app.auth.models import CurrentUser
 from app.scenarios.xuchang_station_deviation import wechat_push_queue as queue
+from app.utils.path_config import get_data_registry, is_path_within, resolve_agent_path
 
 router = APIRouter(prefix="/api/xuchang-wechat-push", tags=["xuchang-wechat-push"])
+
+_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+}
 
 
 def _configured_token() -> str:
@@ -98,3 +109,44 @@ async def ack_message(
 @router.get("/status")
 async def push_status(_: CurrentUser | None = Depends(require_push_agent)) -> dict:
     return queue.push_status_snapshot()
+
+
+@router.get("/media/{message_id}/{index}")
+async def get_media(
+    message_id: str,
+    index: int,
+    _: CurrentUser | None = Depends(require_push_agent),
+) -> FileResponse:
+    """下发告警通报的证据附图：pending 优先，已归档消息兜底（供补图排障）。"""
+    if index < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_media_index"
+        )
+    record = queue.find_message(message_id)
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="message_not_found"
+        )
+    media = record.get("media") or []
+    if index >= len(media):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="media_index_out_of_range"
+        )
+    try:
+        path = resolve_agent_path(str(media[index]))
+    except (ValueError, OSError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"invalid_media_path: {exc}"
+        ) from exc
+    # 附图只允许来自 data registry（入队数据是 worker 受信收集，仍复核边界）
+    if not is_path_within(path, [get_data_registry()]):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="media_outside_registry"
+        )
+    if not path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="media_file_missing"
+        )
+    return FileResponse(
+        path, media_type=_MEDIA_TYPES.get(path.suffix.lower(), "application/octet-stream")
+    )

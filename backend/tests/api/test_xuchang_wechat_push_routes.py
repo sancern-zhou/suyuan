@@ -206,6 +206,111 @@ def test_non_admin_login_is_forbidden(tmp_path, monkeypatch):
     assert response.json()["detail"] == "wechat_push_admin_only"
 
 
+def test_media_endpoint_serves_registry_image(token_client, tmp_path, monkeypatch):
+    from app.utils.path_config import resolve_agent_path
+
+    monkeypatch.setattr(
+        "app.api.xuchang_wechat_push_routes.resolve_agent_path",
+        lambda p: tmp_path / p,
+    )
+    monkeypatch.setattr(
+        "app.api.xuchang_wechat_push_routes.get_data_registry",
+        lambda: tmp_path,
+    )
+    client, registry = token_client
+    media_rel = "xuchang_wechat_push_selftest/chart.png"
+    image_file = tmp_path / media_rel
+    image_file.parent.mkdir(parents=True, exist_ok=True)
+    image_file.write_bytes(b"\x89PNG-fake-bytes")
+    record = queue.enqueue_station_alert_wechat_message(
+        {"station_id": "1", "station_name": "s", "alerts": []},
+        "带图通报",
+        media=[media_rel, "xuchang_wechat_push_selftest/missing.png"],
+        root=registry,
+    )
+
+    ok = client.get(
+        f"/api/xuchang-wechat-push/media/{record['id']}/0", headers=_headers()
+    )
+    assert ok.status_code == 200
+    assert ok.content == b"\x89PNG-fake-bytes"
+    assert ok.headers["content-type"] == "image/png"
+
+    # 越界 / 缺文件 / 消息不存在
+    out_of_range = client.get(
+        f"/api/xuchang-wechat-push/media/{record['id']}/5", headers=_headers()
+    )
+    assert out_of_range.status_code == 404
+    missing_file = client.get(
+        f"/api/xuchang-wechat-push/media/{record['id']}/1", headers=_headers()
+    )
+    assert missing_file.status_code == 404
+    missing_msg = client.get(
+        "/api/xuchang-wechat-push/media/wx-none/0", headers=_headers()
+    )
+    assert missing_msg.status_code == 404
+    negative = client.get(
+        f"/api/xuchang-wechat-push/media/{record['id']}/-1", headers=_headers()
+    )
+    assert negative.status_code == 400
+
+
+def test_media_endpoint_serves_archived_message(token_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "app.api.xuchang_wechat_push_routes.resolve_agent_path",
+        lambda p: tmp_path / p,
+    )
+    monkeypatch.setattr(
+        "app.api.xuchang_wechat_push_routes.get_data_registry",
+        lambda: tmp_path,
+    )
+    client, registry = token_client
+    media_rel = "xuchang_wechat_push_selftest/chart.png"
+    image_file = tmp_path / media_rel
+    image_file.parent.mkdir(parents=True, exist_ok=True)
+    image_file.write_bytes(b"\x89PNG-archived")
+    record = queue.enqueue_station_alert_wechat_message(
+        {"alerts": []}, "正文", media=[media_rel], root=registry
+    )
+    client.post(
+        "/api/xuchang-wechat-push/ack",
+        json={"id": record["id"], "status": "sent"},
+        headers=_headers(),
+    )
+
+    ok = client.get(
+        f"/api/xuchang-wechat-push/media/{record['id']}/0", headers=_headers()
+    )
+    assert ok.status_code == 200
+    assert ok.content == b"\x89PNG-archived"
+
+
+def test_media_outside_registry_is_404(token_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "app.api.xuchang_wechat_push_routes.resolve_agent_path",
+        lambda p: tmp_path / p,
+    )
+    client, registry = token_client
+    outside = tmp_path / "outside_secret.png"
+    outside.write_bytes(b"secret")
+    record = queue.enqueue_station_alert_wechat_message(
+        {"alerts": []}, "正文", media=["outside_secret.png"], root=registry
+    )
+
+    response = client.get(
+        f"/api/xuchang-wechat-push/media/{record['id']}/0", headers=_headers()
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "media_outside_registry"
+
+
+def test_media_requires_token(token_client, tmp_path):
+    client, registry = token_client
+    assert client.get(
+        "/api/xuchang-wechat-push/media/wx-1/0"
+    ).status_code == 401
+
+
 def test_queue_extract_skips_blank_message(tmp_path):
     assert (
         queue.enqueue_station_alert_wechat_message({"alerts": []}, "  ", root=tmp_path)

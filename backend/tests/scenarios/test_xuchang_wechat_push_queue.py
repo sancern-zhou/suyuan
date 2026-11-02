@@ -36,6 +36,7 @@ def test_enqueue_extracts_episode_and_pollutants(tmp_path):
     record = queue.enqueue_station_alert_wechat_message(
         _package([_alert("PM10", "ep-a"), _alert("SO2", "ep-a")]),
         "通报正文",
+        media=["backend_data_registry/xuchang_alerts/chart-1.png"],
         root=tmp_path,
     )
 
@@ -44,6 +45,7 @@ def test_enqueue_extracts_episode_and_pollutants(tmp_path):
     assert record["metadata"]["episode_id"] == "ep-a"
     assert record["metadata"]["pollutants"] == "PM10、SO2"
     assert record["metadata"]["station_name"] == "许昌学院"
+    assert record["media"] == ["backend_data_registry/xuchang_alerts/chart-1.png"]
     assert record["attempts"] == 0
     stored = json.loads(
         (_status_path(tmp_path, queue.PENDING_DIR) / f"{record['id']}.json").read_text(
@@ -51,6 +53,12 @@ def test_enqueue_extracts_episode_and_pollutants(tmp_path):
         )
     )
     assert stored["text"] == "通报正文"
+    assert stored["media"] == ["backend_data_registry/xuchang_alerts/chart-1.png"]
+
+
+def test_enqueue_without_media_defaults_empty(tmp_path):
+    record = queue.enqueue_station_alert_wechat_message(_package(), "正文", root=tmp_path)
+    assert record["media"] == []
 
 
 def test_enqueue_without_episode_or_alerts_still_queues(tmp_path):
@@ -80,6 +88,16 @@ def test_ack_unknown_and_invalid_ids(tmp_path):
         queue.ack_message("../escape", "sent", root=tmp_path)
     with pytest.raises(ValueError):
         queue.ack_message("wx-1", "maybe", root=tmp_path)
+
+
+def test_find_message_prefers_pending_and_falls_back_to_archive(tmp_path):
+    record = queue.enqueue_station_alert_wechat_message(_package(), "正文", root=tmp_path)
+
+    assert queue.find_message(record["id"], root=tmp_path)["id"] == record["id"]
+    queue.ack_message(record["id"], "sent", root=tmp_path)
+    assert queue.find_message(record["id"], root=tmp_path)["id"] == record["id"]
+    assert queue.find_message("wx-none", root=tmp_path) is None
+    assert queue.find_message("../escape", root=tmp_path) is None
 
 
 def test_cleanup_archive_keeps_recent_files(tmp_path):
