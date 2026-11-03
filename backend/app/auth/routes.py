@@ -103,6 +103,26 @@ async def runtime_auth_config(
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
+@router.get("/auth/me")
+async def current_user_profile(
+    user: CurrentUser = Depends(require_current_user),
+):
+    """当前登录用户（网关解析后的权威身份），前端会话建立/校验统一走这里。
+
+    OAuth2.0 授权码 token 绑定业务应用，平台 getCurrentUser 需要业务 SysCode；
+    该回退逻辑在服务端 PlatformAuthClient 内完成，浏览器侧不感知。
+    """
+    return {
+        "id": user.id,
+        "userName": user.username,
+        "name": user.display_name,
+        "roleCodes": list(user.role_codes),
+        "isAdmin": user.is_admin,
+        "sysCode": user.sys_code,
+        "authSource": user.auth_source,
+    }
+
+
 @router.post("/auth/ws-ticket")
 async def issue_ws_ticket(
     user: CurrentUser = Depends(require_current_user),

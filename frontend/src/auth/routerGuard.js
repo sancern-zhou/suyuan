@@ -12,6 +12,20 @@ export function safeRedirect(value, fallback = '/') {
 
 // 入口 token / OAuth 授权码只服务于首次握手；跳转登录页等重定向目标里不携带，
 // 避免失效凭证残留在地址栏与跳转链中。
+export function queryWithoutEntryCredentials(query = {}) {
+  const cleaned = { ...query }
+  const sensitiveKeys = [...ENTRY_TOKEN_KEYS, ...ENTRY_OAUTH_KEYS]
+  let changed = false
+  for (const key of sensitiveKeys) {
+    if (key in cleaned) {
+      delete cleaned[key]
+      changed = true
+    }
+  }
+  return changed ? cleaned : null
+}
+
+
 export function fullPathWithoutEntryToken(to) {
   const query = { ...(to?.query || {}) }
   const sensitiveKeys = [...ENTRY_TOKEN_KEYS, ...ENTRY_OAUTH_KEYS]
@@ -54,7 +68,15 @@ export function createAuthGuard(authStore) {
       return true
     }
 
-    if (authStore.isAuthenticated) return true
+    if (authStore.isAuthenticated) {
+      // 入口 token/授权码已消费：通过一次 replace 导航让地址栏与路由状态
+      // 同步收敛（仅 history.replaceState 会让 vue-router 后续找回旧 query）
+      const cleanedQuery = queryWithoutEntryCredentials(to.query || {})
+      if (cleanedQuery) {
+        return { path: to.path, query: cleanedQuery, hash: to.hash || '', replace: true }
+      }
+      return true
+    }
     return {
       path: '/login',
       query: { redirect: safeRedirect(fullPathWithoutEntryToken(to)) }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createOAuthApi } from './oauthApi.js'
+import { createOAuthApi, createSessionApi } from './oauthApi.js'
 
 
 test('exchangeCode calls the gateway exchange endpoint and returns token fields', async () => {
@@ -58,4 +58,34 @@ test('an exchange response without an access token is rejected', async () => {
     () => api.exchangeCode('code', 'http://11.54.200.200:5175/'),
     /未返回访问令牌/
   )
+})
+
+
+test('session api resolves the current user through the gateway with token headers', async () => {
+  const seen = []
+  const api = createSessionApi({
+    apiBaseUrl: '/api/suyuan',
+    sysCode: 'SUYUAN',
+    fetchImpl: async (url, options) => {
+      seen.push({ url, headers: options.headers })
+      return new Response(JSON.stringify({ id: 'u1', userName: 'zhangsan', name: '张三' }), { status: 200 })
+    }
+  })
+
+  const response = await api.me('gateway-token')
+
+  assert.equal(response.result.id, 'u1')
+  assert.equal(seen[0].url, '/api/suyuan/auth/me')
+  assert.equal(seen[0].headers.Authorization, 'Bearer gateway-token')
+  assert.equal(seen[0].headers.SysCode, 'SUYUAN')
+})
+
+
+test('session api failures surface the backend detail', async () => {
+  const api = createSessionApi({
+    apiBaseUrl: '/api/suyuan',
+    fetchImpl: async () => new Response(JSON.stringify({ detail: 'authentication_required' }), { status: 401 })
+  })
+
+  await assert.rejects(() => api.me('bad-token'), /authentication_required/)
 })

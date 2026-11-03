@@ -43,43 +43,28 @@ class PlatformAuthClient:
             token_fingerprint=fingerprint,
             sys_code=self._platform_sys_code,
         )
-        try:
-            response = await self._client.get(
-                self._url,
-                params={"isLog": "1", "logType": "4"},
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "SysCode": self._platform_sys_code,
-                },
-            )
-        except httpx.HTTPError as exc:
-            self._logger.warning(
-                "company_auth_lookup_unavailable",
+        status, body = await self._fetch(token, self._platform_sys_code, fingerprint)
+        # OAuth2.0 授权码换来的 token 绑定业务应用自身，平台要求 SysCode 头等于
+        # 业务应用编码；用平台编码(JCXT)查询会得到 403 "未授权的应用访问"(state=131)，
+        # 此时以业务编码重试一次（如 SUYUAN）。
+        if (
+            _is_unregistered_app(body)
+            and sys_code
+            and sys_code != self._platform_sys_code
+        ):
+            self._logger.info(
+                "company_auth_lookup_retry_business_syscode",
                 token_fingerprint=fingerprint,
-                error_type=type(exc).__name__,
+                sys_code=sys_code,
             )
-            raise AuthenticationUnavailable(
-                "company authentication unavailable"
-            ) from exc
+            status, body = await self._fetch(token, sys_code, fingerprint)
 
-        if response.status_code >= 500:
-            self._logger.warning(
-                "company_auth_lookup_unavailable",
-                token_fingerprint=fingerprint,
-                status_code=response.status_code,
-            )
-            raise AuthenticationUnavailable("company authentication unavailable")
-        if response.status_code in {401, 403} or 400 <= response.status_code < 500:
+        if status in {401, 403} or 400 <= status < 500:
             raise AuthenticationRejected("company authentication rejected")
 
-        try:
-            body = response.json()
-        except ValueError as exc:
-            raise AuthenticationUnavailable("company authentication unavailable") from exc
-        if not isinstance(body, dict):
+        state = _normalized_state(body.get("state")) if body else None
+        if body is None:
             raise AuthenticationUnavailable("company authentication unavailable")
-
-        state = _normalized_state(body.get("state"))
         if state in _REJECTED_STATES or body.get("success") is False:
             raise AuthenticationRejected("company authentication rejected")
         if state is not None and state not in _SUCCESS_STATES:
@@ -100,6 +85,46 @@ class PlatformAuthClient:
         )
         return user
 
+    async def _fetch(
+        self, token: str, syscode_header: str, fingerprint: str
+    ) -> tuple[int, dict | None]:
+        try:
+            response = await self._client.get(
+                self._url,
+                params={"isLog": "1", "logType": "4"},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "SysCode": syscode_header,
+                },
+            )
+        except httpx.HTTPError as exc:
+            self._logger.warning(
+                "company_auth_lookup_unavailable",
+                token_fingerprint=fingerprint,
+                error_type=type(exc).__name__,
+            )
+            raise AuthenticationUnavailable(
+                "company authentication unavailable"
+            ) from exc
+
+        if response.status_code >= 500:
+            self._logger.warning(
+                "company_auth_lookup_unavailable",
+                token_fingerprint=fingerprint,
+                status_code=response.status_code,
+            )
+            raise AuthenticationUnavailable("company authentication unavailable")
+
+        try:
+            body = response.json()
+        except ValueError:
+            if 400 <= response.status_code < 500:
+                return response.status_code, None
+            raise AuthenticationUnavailable("company authentication unavailable")
+        if not isinstance(body, dict):
+            raise AuthenticationUnavailable("company authentication unavailable")
+        return response.status_code, body
+
     async def close(self) -> None:
         await self._client.aclose()
 
@@ -111,3 +136,12 @@ def _normalized_state(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _is_unregistered_app(body: dict | None) -> bool:
+    """平台返回 state=131「未授权的应用访问」：SysCode 头不是已注册应用编码。"""
+    if not isinstance(body, dict):
+        return False
+    if _normalized_state(body.get("state")) == 131:
+        return True
+    return "未授权的应用" in str(body.get("msg") or "")

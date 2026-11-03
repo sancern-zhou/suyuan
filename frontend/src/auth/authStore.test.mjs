@@ -249,3 +249,31 @@ test('a failed oauth exchange without a local session lands on the login route',
   assert.equal(session.token, '')
   assert.equal(location.href, 'http://11.54.200.200:5175/')
 })
+
+
+test('session identity is resolved through the gateway session api', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  storage.writeSession({ token: 'oauth-access-token', sysCode: 'SUYUAN', user: null })
+  const platformCalls = []
+  const api = {
+    currentUser: async token => {
+      platformCalls.push(token)
+      throw new Error('platform direct call must not be used')
+    }
+  }
+  const meCalls = []
+  const sessionApi = {
+    me: async token => {
+      meCalls.push(token)
+      return { result: { id: 'u1', userName: 'zhangsan', name: '张三' } }
+    }
+  }
+  const session = createAuthSession({ api, storage, sysCode: 'SUYUAN', sessionApi })
+
+  const user = await session.bootstrap()
+
+  assert.equal(user.id, 'u1')
+  assert.deepEqual(meCalls, ['oauth-access-token'])
+  assert.deepEqual(platformCalls, [])
+})

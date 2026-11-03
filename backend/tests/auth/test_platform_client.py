@@ -209,3 +209,63 @@ async def test_logs_contain_only_token_fingerprint():
     serialized = json.dumps(logger.events, ensure_ascii=False)
     assert token not in serialized
     assert "token_fingerprint" in serialized
+
+
+@pytest.mark.asyncio
+async def test_oauth_bound_token_retries_with_business_syscode():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("SysCode"))
+        if request.headers.get("SysCode") == "JCXT":
+            return httpx.Response(
+                403,
+                json={"state": 131, "msg": "未授权的应用访问", "success": False},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "state": 0,
+                "success": True,
+                "result": {"id": "u1", "userName": "zhangsan", "name": "张三"},
+            },
+        )
+
+    client = PlatformAuthClient(
+        base_url="http://auth",
+        current_user_path="/current",
+        admin_role_codes=set(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    user = await client.get_current_user("oauth-token", "SUYUAN")
+    await client.close()
+
+    assert user.id == "u1"
+    assert user.display_name == "张三"
+    assert seen == ["JCXT", "SUYUAN"]
+
+
+@pytest.mark.asyncio
+async def test_unregistered_app_on_both_syscodes_is_rejected():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("SysCode"))
+        return httpx.Response(
+            403,
+            json={"state": 131, "msg": "未授权的应用访问", "success": False},
+        )
+
+    client = PlatformAuthClient(
+        base_url="http://auth",
+        current_user_path="/current",
+        admin_role_codes=set(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(AuthenticationRejected, match="company authentication rejected"):
+        await client.get_current_user("oauth-token", "SUYUAN")
+    await client.close()
+
+    assert seen == ["JCXT", "SUYUAN"]

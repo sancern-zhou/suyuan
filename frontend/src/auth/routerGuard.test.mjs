@@ -65,6 +65,34 @@ test('entry token parameters are dropped from the login redirect target', async 
 })
 
 
+test('authenticated entry landings replace the address without the consumed credentials', async () => {
+  const auth = store({
+    token: 'oauth-access-token',
+    user: { id: 'u1' },
+    initialized: true
+  })
+
+  assert.deepEqual(
+    await createAuthGuard(auth)({
+      path: '/',
+      fullPath: '/?code=one-time&state=portal',
+      query: { code: 'one-time', state: 'portal' },
+      hash: ''
+    }),
+    { path: '/', query: {}, hash: '', replace: true }
+  )
+  assert.deepEqual(
+    await createAuthGuard(auth)({
+      path: '/',
+      fullPath: '/?from=portal',
+      query: { from: 'portal' },
+      hash: ''
+    }),
+    true
+  )
+})
+
+
 test('authenticated users leave login for a validated redirect', async () => {
   const auth = store({ token: 'token', user: { id: 'u1' }, initialized: true })
   const guard = createAuthGuard(auth)

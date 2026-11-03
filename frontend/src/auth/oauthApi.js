@@ -30,3 +30,25 @@ export function createOAuthApi({ fetchImpl = globalThis.fetch, apiBaseUrl = conf
     }
   }
 }
+
+
+// 会话身份查询：走本方后端网关（服务端完成平台应用编码回退），
+// 浏览器不直接调用统一鉴权平台的 getCurrentUser。
+export function createSessionApi({
+  fetchImpl = globalThis.fetch,
+  apiBaseUrl = configuredApiBase(),
+  sysCode = 'SUYUAN'
+} = {}) {
+  const base = String(apiBaseUrl || '/api/suyuan').replace(/\/$/, '')
+  return {
+    async me(token) {
+      const response = await fetchImpl(`${base}/auth/me`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          SysCode: sysCode
+        }
+      })
+      return { result: await responseBody(response) }
+    }
+  }
+}

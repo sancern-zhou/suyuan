@@ -3,7 +3,7 @@ import { setAccountIdentity } from './accountSession.js'
 
 import { createAuthApi } from './authApi.js'
 import { extractEntryToken, extractOAuthCode, oauthRedirectUri, stripEntryToken } from './entryToken.js'
-import { createOAuthApi } from './oauthApi.js'
+import { createOAuthApi, createSessionApi } from './oauthApi.js'
 import { browserAuthStorage } from './storage.js'
 
 
@@ -17,6 +17,7 @@ export function createAuthSession({
   authMode = 'company',
   mockUser = null,
   oauthApi = createOAuthApi(),
+  sessionApi = { me: token => api.currentUser(token) },
   entryLocation = typeof globalThis.location !== 'undefined' ? globalThis.location : null,
   entryHistory = hasBrowserHistory ? globalThis.history : null
 }) {
@@ -61,7 +62,7 @@ export function createAuthSession({
     async establishEntryIdentity(token) {
       this.loading = true
       try {
-        const response = await api.currentUser(token)
+        const response = await sessionApi.me(token)
         this.token = token
         this.user = response.result
         storage.writeSession({ token: this.token, sysCode, user: this.user })
@@ -92,7 +93,7 @@ export function createAuthSession({
       if (!this.token) return null
       this.loading = true
       try {
-        const response = await api.currentUser(this.token)
+        const response = await sessionApi.me(this.token)
         this.user = response.result
         storage.writeSession({ token: this.token, sysCode, user: this.user })
         return this.user
@@ -115,7 +116,7 @@ export function createAuthSession({
         const response = await api.login(credentials)
         this.token = response?.result?.accessToken || ''
         if (!this.token) throw new Error('Company login returned no access token')
-        const current = await api.currentUser(this.token)
+        const current = await sessionApi.me(this.token)
         this.user = current.result
         this.initialized = true
         storage.writeSession({ token: this.token, sysCode, user: this.user })
@@ -172,11 +173,13 @@ function configureBrowserSession(runtimeConfig) {
 function getBrowserSession() {
   if (!browserSession) {
     const storage = browserAuthStorage()
+    const sysCode = browserRuntimeConfig.sysCode || 'SUYUAN'
     browserSession = createAuthSession({
       storage,
       api: createAuthApi({ storage }),
       oauthApi: createOAuthApi(),
-      sysCode: browserRuntimeConfig.sysCode || 'SUYUAN',
+      sessionApi: createSessionApi({ sysCode }),
+      sysCode,
       authMode: browserRuntimeConfig.authMode,
       mockUser: browserRuntimeConfig.mockUser
     })
