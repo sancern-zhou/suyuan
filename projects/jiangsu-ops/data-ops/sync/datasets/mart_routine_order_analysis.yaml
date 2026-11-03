@@ -78,6 +78,7 @@ guide: >-
   is_content_filled(有填报内容)/is_form_only_close(形式闭环但内容空白,疑点单)/
   is_overdue(未完成且过计划日)/finished_after_plan。
   本表=例行单全集(非Fault)，与 mart_work_order_analysis(仅Fault)互补，两表合计=工单全集；
+  工单号前缀即类型: FA=故障单(查故障单表), CH=巡检/现场检查, CAL=校准, QC/QA=质控(后三类查本表)；
   按工单号核查工单是否存在时先查本表再查故障单表，两表皆空才可下"不存在"结论；
   "巡检工单"建单量/填报率/形式闭环统计查本表，巡检任务项完成率/超期查 mart_inspection_analysis；
   QC/QA 类型细分语义待业务确认，约8张CAL校准单无站点码属正常。
