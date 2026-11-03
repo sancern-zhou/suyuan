@@ -128,6 +128,80 @@ test('an optional request can preserve the session on 401', async () => {
 })
 
 
+function fakeLocation(pathname = '/assignments', search = '?tab=week', hash = '') {
+  const calls = []
+  return {
+    calls,
+    pathname,
+    search,
+    hash,
+    assign(url) { calls.push(url) }
+  }
+}
+
+
+test('401 sends the stale page to the login route with a redirect back', async () => {
+  const storage = sessionStorage()
+  const location = fakeLocation()
+  const authFetch = createAuthFetch({
+    storage,
+    apiBaseUrl: '/api/suyuan',
+    fetchImpl: async () => new Response('{}', { status: 401 }),
+    loginLocation: location
+  })
+
+  await authFetch('/api/one')
+
+  assert.equal(storage.clearCalls, 1)
+  assert.deepEqual(
+    location.calls,
+    ['/login?redirect=' + encodeURIComponent('/assignments?tab=week')]
+  )
+})
+
+
+test('login page 401 responses do not re-navigate', async () => {
+  const storage = sessionStorage()
+  const location = fakeLocation('/login', '', '')
+  const authFetch = createAuthFetch({
+    storage,
+    apiBaseUrl: '/api/suyuan',
+    fetchImpl: async () => new Response('{}', { status: 401 }),
+    loginLocation: location
+  })
+
+  await authFetch('/api/one')
+
+  assert.equal(storage.clearCalls, 1)
+  assert.equal(location.calls.length, 0)
+})
+
+
+test('a newer session is neither cleared nor redirected by a delayed 401', async () => {
+  let token = 'old-token'
+  const storage = {
+    readSession: () => ({ token, sysCode: 'SUYUAN' }),
+    clearCalls: 0,
+    clear() { this.clearCalls += 1 }
+  }
+  const location = fakeLocation()
+  const authFetch = createAuthFetch({
+    storage,
+    apiBaseUrl: '/api/suyuan',
+    fetchImpl: async () => {
+      token = 'new-token'
+      return new Response('{}', { status: 401 })
+    },
+    loginLocation: location
+  })
+
+  await authFetch('/api/old-session-request')
+
+  assert.equal(storage.clearCalls, 0)
+  assert.equal(location.calls.length, 0)
+})
+
+
 test('explicit signed-public and external requests never receive the company token', async () => {
   const seen = []
   const authFetch = createAuthFetch({

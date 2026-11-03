@@ -7,6 +7,15 @@ import { browserAuthStorage } from './storage.js'
 const ABSOLUTE_URL = /^[a-z][a-z\d+.-]*:\/\//i
 
 
+// 运维平台登录态失效后，静默清会话只会让旧页面停在原地持续 401 轮询；
+// company 认证下 401 即需要重新认证，统一送往登录页并携带回跳地址。
+function redirectToLogin(location) {
+  if (!location || location.pathname === '/login') return
+  const target = `${location.pathname}${location.search}${location.hash}`
+  location.assign(`/login?redirect=${encodeURIComponent(target)}`)
+}
+
+
 function configuredApiBase() {
   return import.meta.env?.VITE_API_BASE_URL || '/api/suyuan'
 }
@@ -32,8 +41,13 @@ export function createAuthFetch({
   fetchImpl = globalThis.fetch,
   storage,
   apiBaseUrl = configuredApiBase(),
-  locationOrigin = globalThis.location?.origin
+  locationOrigin = globalThis.location?.origin,
+  loginLocation
 }) {
+  const locationForLogin = loginLocation
+    ?? (globalThis.location && typeof globalThis.location.assign === 'function'
+      ? globalThis.location
+      : null)
   return async function authFetch(input, options = {}) {
     const {
       external = false,
@@ -66,7 +80,10 @@ export function createAuthFetch({
     const response = await fetchImpl(url, { ...fetchOptions, headers })
     if (!external && !publicRequest && clearOnUnauthorized && response.status === 401) {
       // A delayed response from an earlier session must not log out a newer login.
-      if (storage.readSession().token === requestToken) storage.clear()
+      if (storage.readSession().token === requestToken) {
+        storage.clear()
+        redirectToLogin(locationForLogin)
+      }
     }
     if (!external && !publicRequest && response.status !== 401) {
       assertAccountGeneration(generation)
@@ -127,7 +144,11 @@ authAxios.interceptors.response.use(
   },
   error => {
     if (error?.response?.status === 401 && error.config?.accountProtected) {
-      if ((browserStorage().readSession().token || '') === error.config.accountToken) browserStorage().clear()
+      const storage = browserStorage()
+      if ((storage.readSession().token || '') === error.config.accountToken) {
+        storage.clear()
+        redirectToLogin(globalThis.location || null)
+      }
     }
     return Promise.reject(error)
   }
