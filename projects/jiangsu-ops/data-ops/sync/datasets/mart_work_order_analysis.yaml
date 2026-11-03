@@ -83,3 +83,6 @@ guide: >-
   本表仅故障工单(ordertype='Fault')，例行单不入表，工单量/时效结论须注明为故障单口径；
   4小时恢复率须注明可评估工单占比，不得把不可评估单计入分母；
   按站点类型统计(省控站/省建站/省乡镇站)用 station_type_name 过滤或分组。
+  工单实体分层：按工单号核查工单是否存在/什么类型时查 jiangsu_ods.mtc_working_order(工单主表全集,
+  FA=故障单/CH=例行计划单等)；例行单(巡检/校准等)统计查 mart_routine_order_analysis；
+  巡检任务项完成台账查 mart_inspection_analysis；本表查不到某工单号不代表该工单不存在(可能只是例行单)。

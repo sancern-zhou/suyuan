@@ -1,0 +1,83 @@
+# 数据集契约：mart_routine_order_analysis
+dataset: mart_routine_order_analysis
+description: >
+  江苏例行单（非故障工单）分析数据集。一行 = 一张例行单（源表 mtc_WorkingOrder 中
+  ordertype <> 'Fault' 的全部工单：巡检/现场检查 Check、仪器校准 Calibration、
+  数据补录 DataEntry、质控例行 QC、质控审核 QA），含流程状态、计划/完成时间、
+  任务项填报聚合与"形式闭环但内容空白"标记。背景：2026-11-03 问数假阴性事故
+  （按工单号查例行单两表皆空 → 误答"没有工单"）暴露例行单无 Agent 可查口径，
+  本表为工单存在性核查与例行单统计的权威入口。
+owner: 江苏运维平台组
+grain: 一行 = 一张例行单（源表 mtc_WorkingOrder.Id，ordertype <> 'Fault'）
+freshness_slo: 30分钟
+data_as_of: 由工具运行时返回 refreshed_at 最大值
+known_caveats:
+  - 本表与 mart_work_order_analysis（仅 Fault）互补，两表合计=工单全集；
+    按工单号核查工单是否存在时，两表都查不到再下"不存在"结论（且注明确核查过哪两表）
+  - order_type_cn 的 QC=质控例行/QA=质控审核细分语义待业务确认，其余类型按平台惯例映射
+  - 约8张 CAL 仪器校准单无站点编码（设备级校准单，源库同现状），station_code 为空属正常
+  - 任务项聚合来自 mtc_taskitem，status 实测仅 0(未开始)/1(已完成)两态；
+    task_items_finished=0 表示整单无任何任务项填报完成，即"内容空白"
+  - is_form_only_close（形式闭环但内容空白）是 2026-11-03 如东芳泉路 CH261026 型工单的
+    直接标记：流程已审批闭环、检查项全部未填报，属疑点单，建议退回补录
+  - 巡检任务项的完成台账（含处理人/周期窗口/超期判定）仍以 mart_inspection_analysis 为准，
+    本表是工单级视角；两者按 working_order_code 可关联
+  - 同步窗口以源表为准，实测最早建单 2025-04；统计口径建议自 2026-06-01 起与故障单宽表对齐
+columns:
+  - {name: id, business: 工单源ID(主键)}
+  - {name: working_order_code, business: 工单号}
+  - {name: order_type, business: 工单类型原始值}
+  - {name: order_type_cn, business: 工单类型中文(巡检/现场检查/仪器校准/数据补录/质控例行/质控审核), note: QC/QA细分语义待业务确认}
+  - {name: order_create_type, business: 建单方式原始值(Plan/Manual)}
+  - {name: order_create_type_cn, business: 建单方式中文(平台按计划自动生成/人工创建)}
+  - {name: rule_type, business: 周期类型原始值(Week/Month/Quarter/HalfYear/Year)}
+  - {name: rule_type_cn, business: 周期类型中文(周检/月检/季检/半年检/年检)}
+  - {name: order_title, business: 工单标题(计划任务单/周巡检等)}
+  - {name: order_status, business: 状态原始值, enum: {Doing: 处理中, Finish: 已完成, Wait: 等待中, Invalid: 已作废}}
+  - {name: order_status_cn, business: 状态中文名}
+  - {name: workflow_status, business: 流程状态原始值, enum: {ToAssign: 待分派, Doing: 流转中, Finish: 已闭环}}
+  - {name: workflow_status_cn, business: 流程状态中文}
+  - {name: urgency_type, business: 紧急程度}
+  - {name: station_code, business: 站点编码, note: CAL校准单约8张无站点码(设备级), 空属正常}
+  - {name: station_name, business: 站点名称(经dim_station)}
+  - {name: station_type_name, business: 站点类型(经dim_station,省控站/省乡镇站/省建站等), note: 按类型过滤用本列}
+  - {name: city_code, business: 城市行政区码}
+  - {name: city_name, business: 城市名}
+  - {name: device_id, business: 设备ID, note: 空=工单未关联设备}
+  - {name: operation_unit_id, business: 运维单位ID}
+  - {name: create_time, business: 创建时间}
+  - {name: create_user_name, business: 创建人}
+  - {name: plan_finish_time, business: 计划完成时间}
+  - {name: finish_time, business: 完成时间}
+  - {name: finished_after_plan, business: 完成晚于计划(布尔)}
+  - {name: is_overdue, business: 是否超期(未完成且计划完成日已过,作废单不计)}
+  - {name: current_point, business: 当前流程节点}
+  - {name: node_count, business: 流转节点数(含建单)}
+  - {name: task_item_count, business: 任务项总数(来自mtc_taskitem,无任务项为空)}
+  - {name: task_items_finished, business: 已填报完成任务项数(status=1)}
+  - {name: task_items_unstarted, business: 未开始任务项数(status=0)}
+  - {name: is_content_filled, business: 是否有填报内容(至少一项任务项完成,布尔)}
+  - {name: is_form_only_close, business: 形式闭环但内容空白(流程完成且零填报,布尔,疑点单标记)}
+  - {name: source_updated_at, business: 源系统最后更新时间}
+  - {name: refreshed_at, business: 本表刷新时间}
+allowed_filters: [station_code, station_name, station_type_name, city_name, order_type, order_type_cn, order_status, order_status_cn, rule_type_cn, working_order_code, create_time, finish_time, is_overdue, is_form_only_close]
+example_questions:
+  - 工单CH261026179300727842392存在吗？什么类型、什么状态？
+  - 上周各市巡检单建单量和填报完成情况？
+  - 最近有哪些形式闭环但内容空白的巡检单？
+  - 本月数据补录单有几张、涉及哪些站？
+join_notes: 工单级视角单表即得；巡检任务项完成台账/处理人/周期窗口关联 mart_inspection_analysis（working_order_code）；
+  逐项任务进度明细用 jiangsu_ods.mtc_taskitem 原始行；流转节点流水用 jiangsu_ods.mtc_working_order_detail
+# guide 字段由 gen_tool_contract.py 汇总生成工具描述契约文本（单一来源）
+guide: >-
+  维度 working_order_code/order_type_cn(巡检/现场检查/仪器校准/数据补录/质控例行/质控审核)/
+  order_create_type_cn(平台按计划自动生成/人工创建)/rule_type_cn(周检/月检/季检/半年检/年检)/
+  station_code/station_name/station_type_name/city_name/order_status_cn(已完成/处理中/等待中/已作废)/
+  workflow_status_cn(已闭环/流转中/待分派)；时间 create_time/plan_finish_time/finish_time；
+  指标 task_item_count/task_items_finished/task_items_unstarted(任务项填报聚合)/
+  is_content_filled(有填报内容)/is_form_only_close(形式闭环但内容空白,疑点单)/
+  is_overdue(未完成且过计划日)/finished_after_plan。
+  本表=例行单全集(非Fault)，与 mart_work_order_analysis(仅Fault)互补，两表合计=工单全集；
+  按工单号核查工单是否存在时先查本表再查故障单表，两表皆空才可下"不存在"结论；
+  "巡检工单"建单量/填报率/形式闭环统计查本表，巡检任务项完成率/超期查 mart_inspection_analysis；
+  QC/QA 类型细分语义待业务确认，约8张CAL校准单无站点码属正常。

@@ -416,7 +416,8 @@ class ExecuteJiangsuOpsSQLQueryTool(LLMTool):
 
     @staticmethod
     def _freshness_column(table: str) -> Optional[str]:
-        if table in {"mart_work_order_analysis", "mart_alarm_event_analysis",
+        if table in {"mart_work_order_analysis", "mart_routine_order_analysis",
+                     "mart_alarm_event_analysis",
                      "mart_station_device_health", "mart_station_daily_profile"}:
             return "refreshed_at"
         return "synced_at"

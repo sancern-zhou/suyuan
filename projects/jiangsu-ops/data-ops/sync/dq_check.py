@@ -25,6 +25,7 @@ import asyncpg
 FRESHNESS_SLA_MIN = {
     # table: (sla_minutes, refresh_ts_column)
     "mart_work_order_analysis": (30, "refreshed_at"),
+    "mart_routine_order_analysis": (30, "refreshed_at"),
     "mart_alarm_event_analysis": (30, "refreshed_at"),
     "mart_station_device_health": (30, "refreshed_at"),
     "mart_station_daily_profile": (26 * 60, "refreshed_at"),
@@ -52,6 +53,9 @@ NULL_CHECKS = {
     # station_code 容忍少量 null: CAL* 校准类工单系统生成、无站点(源库同现状)
     "mart_work_order_analysis": (
         ["id", "station_code", "create_time"], {"station_code": 10},
+    ),
+    "mart_routine_order_analysis": (
+        ["id", "station_code", "create_time"], {"station_code": 20},  # ~8张CAL校准单无站点码
     ),
     "mart_alarm_event_analysis": (["id", "station_code", "alarm_time"], {}),
     "mart_station_device_health": (["station_code"], {}),
@@ -163,6 +167,54 @@ async def check_ods_fallback(pg, results):
                      f"{len(tables)} fallback tables granted")
 
 
+async def check_routine_order_semantics(pg, results):
+    """例行单口径差对账（2026-11-03 如东芳泉路假阴性事故的长效观测）。
+
+    巡检任务台账(mart_inspection_analysis, pw_taskitem 完成回写口径)说"无关联工单"的
+    站点数, 与工单主表真实存在例行单的站点数的差, 就是"台账无单号 ≠ 未建单"的口径差。
+    该差是已知口径事实而非错误 —— 记录数值供判定, 只有查询本身失败才 WARN(不 FAIL,
+    避免夜间链路被信息型检查阻塞)。
+    """
+    try:
+        row = await pg.fetchrow(
+            """
+            with ledger as (
+                select station_code
+                from jiangsu_mart.mart_inspection_analysis
+                where plan_start_date >= date_trunc('week', current_date) - interval '7 days'
+                  and rule_type_cn = '周巡检'
+                group by station_code
+                having sum(case when coalesce(workingordercode, '') <> '' then 1 else 0 end) = 0
+            ),
+            reality as (
+                select t.stationcode as station_code
+                from jiangsu_ods.mtc_taskitem t
+                join jiangsu_ods.mtc_working_order o
+                     on o.workingordercode = t.workingordercode
+                where t.planfinishtime >= date_trunc('week', current_date) - interval '7 days'
+                  and t.planfinishtime < date_trunc('week', current_date)
+                  and t.ruleitemtag like 'RF_W%'
+                group by t.stationcode
+            )
+            select
+                (select count(*) from ledger) as ledger_no_code,
+                (select count(*) from reality) as reality_has_order,
+                (select count(*) from ledger l where not exists (
+                    select 1 from reality r where r.station_code = l.station_code)) as truly_missing
+            """
+        )
+        await record(
+            pg, results, "semantics", "routine_order_ledger_gap", "OK",
+            f"上周周巡检: 台账无回写单号={row['ledger_no_code']}站, "
+            f"工单主表实际建单={row['reality_has_order']}站, "
+            f"其中确实未建单={row['truly_missing']}站 "
+            "(口径差=回写口径滞后, 判定工单存在性须用工单主表)",
+        )
+    except Exception as exc:  # noqa: BLE001
+        await record(pg, results, "semantics", "routine_order_ledger_gap", "WARN",
+                     f"reconcile query failed: {exc}")
+
+
 async def record(pg, results, name, table, status, detail):
     results.append((name, table, status, detail))
     print(f"[{status}] {name}/{table}: {detail}")
@@ -272,6 +324,7 @@ async def main() -> int:
         await check_contract_drift(pg, results)
         await check_dbt_artifacts(pg, results)
         await check_ods_fallback(pg, results)
+        await check_routine_order_semantics(pg, results)
     finally:
         await pg.close()
     failures = sum(1 for r in results if r[2] == "FAIL")

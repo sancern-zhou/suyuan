@@ -30,6 +30,7 @@ TARGET_PATH = resolve_agent_path("backend/app/tools/query/jiangsu_ops_sql_query/
 # 表在契约文本与白名单中的显示顺序（新表按语义插入到合适位置）
 TABLE_ORDER = [
     "mart_work_order_analysis",
+    "mart_routine_order_analysis",
     "mart_alarm_event_analysis",
     "mart_station_device_health",
     "mart_station_daily_profile",

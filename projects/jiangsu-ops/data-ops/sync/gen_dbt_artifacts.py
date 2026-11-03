@@ -54,6 +54,10 @@ MODEL_TESTS = {
         "id": ["unique", "not_null"],
         "station_code": ["warn_not_null"],  # 已知 ~5 张 CAL 校准单无站点码
     },
+    "mart_routine_order_analysis": {
+        "id": ["unique", "not_null"],
+        "station_code": ["warn_not_null"],  # 已知 ~8 张 CAL 校准单无站点码(设备级)
+    },
     "mart_alarm_event_analysis": {
         "id": ["unique", "not_null"],
     },
@@ -188,6 +192,7 @@ DATASET_TO_MODEL = {
     "dim_station": "dim_station",
     "dim_device": "dim_device",
     "mart_work_order_analysis": "mart_work_order_analysis",
+    "mart_routine_order_analysis": "mart_routine_order_analysis",
     "mart_alarm_event_analysis": "mart_alarm_event_analysis",
     "mart_station_device_health": "mart_station_device_health",
     "mart_station_daily_profile": "mart_station_daily_profile",

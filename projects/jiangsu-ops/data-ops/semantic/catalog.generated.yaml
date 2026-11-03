@@ -95,7 +95,9 @@ cubes:
     applicability: 巡检任务项，可包含非省控站
     source_window: 2026-06-01 起
     freshness_slo: 30分钟
-    limitations: []
+    limitations:
+    - workingordercode/has_linked_order 是任务项完成回写口径，未完成的例行计划单不回写， 台账无单号不代表平台未生成工单，工单存在性以
+      mtc_working_order 为准
     measures:
       count:
         name: 巡检任务项数
@@ -439,6 +441,8 @@ cubes:
     freshness_slo: 30分钟
     limitations:
     - 故障工单没有计划完成时间，超期率不可评估，不得把 0 当作没有超期
+    - 本表查不到某工单号不代表该工单不存在——例行单(CH=巡检/现场检查等计划单)不入本表， 工单存在性与全类型清单以工单主表 jiangsu_ods.mtc_working_order
+      为准， 例行单分析见 mart_routine_order_analysis
     measures:
       count:
         name: 故障工单量(仅Fault类型)

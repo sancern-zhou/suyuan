@@ -22,6 +22,8 @@ models:
       +tags: ["daily"]
     mart_work_order_analysis:
       +tags: ["frequent"]
+    mart_routine_order_analysis:
+      +tags: ["frequent"]
     mart_alarm_event_analysis:
       +tags: ["frequent"]
     mart_station_device_health:

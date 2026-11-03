@@ -206,6 +206,99 @@ models:
     description: 源系统最后更新时间
   - name: refreshed_at
     description: 本表刷新时间
+- name: mart_routine_order_analysis
+  description: '江苏例行单（非故障工单）分析数据集。一行 = 一张例行单（源表 mtc_WorkingOrder 中 ordertype <> ''Fault'' 的全部工单：巡检/现场检查
+    Check、仪器校准 Calibration、 数据补录 DataEntry、质控例行 QC、质控审核 QA），含流程状态、计划/完成时间、 任务项填报聚合与"形式闭环但内容空白"标记。背景：2026-11-03
+    问数假阴性事故 （按工单号查例行单两表皆空 → 误答"没有工单"）暴露例行单无 Agent 可查口径， 本表为工单存在性核查与例行单统计的权威入口。
+
+    已知口径注意: 本表与 mart_work_order_analysis（仅 Fault）互补，两表合计=工单全集； 按工单号核查工单是否存在时，两表都查不到再下"不存在"结论（且注明确核查过哪两表）;
+    order_type_cn 的 QC=质控例行/QA=质控审核细分语义待业务确认，其余类型按平台惯例映射; 约8张 CAL 仪器校准单无站点编码（设备级校准单，源库同现状），station_code
+    为空属正常; 任务项聚合来自 mtc_taskitem，status 实测仅 0(未开始)/1(已完成)两态； task_items_finished=0 表示整单无任何任务项填报完成，即"内容空白";
+    is_form_only_close（形式闭环但内容空白）是 2026-11-03 如东芳泉路 CH261026 型工单的 直接标记：流程已审批闭环、检查项全部未填报，属疑点单，建议退回补录; 巡检任务项的完成台账（含处理人/周期窗口/超期判定）仍以
+    mart_inspection_analysis 为准， 本表是工单级视角；两者按 working_order_code 可关联; 同步窗口以源表为准，实测最早建单 2025-04；统计口径建议自
+    2026-06-01 起与故障单宽表对齐
+
+    粒度: 一行 = 一张例行单（源表 mtc_WorkingOrder.Id，ordertype <> ''Fault''）'
+  columns:
+  - name: id
+    description: 工单源ID(主键)
+    data_tests:
+    - unique
+    - not_null
+  - name: working_order_code
+    description: 工单号
+  - name: order_type
+    description: 工单类型原始值
+  - name: order_type_cn
+    description: 工单类型中文(巡检/现场检查/仪器校准/数据补录/质控例行/质控审核)
+  - name: order_create_type
+    description: 建单方式原始值(Plan/Manual)
+  - name: order_create_type_cn
+    description: 建单方式中文(平台按计划自动生成/人工创建)
+  - name: rule_type
+    description: 周期类型原始值(Week/Month/Quarter/HalfYear/Year)
+  - name: rule_type_cn
+    description: 周期类型中文(周检/月检/季检/半年检/年检)
+  - name: order_title
+    description: 工单标题(计划任务单/周巡检等)
+  - name: order_status
+    description: 状态原始值
+  - name: order_status_cn
+    description: 状态中文名
+  - name: workflow_status
+    description: 流程状态原始值
+  - name: workflow_status_cn
+    description: 流程状态中文
+  - name: urgency_type
+    description: 紧急程度
+  - name: station_code
+    description: 站点编码
+    data_tests:
+    - not_null:
+        config:
+          severity: warn
+  - name: station_name
+    description: 站点名称(经dim_station)
+  - name: station_type_name
+    description: 站点类型(经dim_station
+  - name: city_code
+    description: 城市行政区码
+  - name: city_name
+    description: 城市名
+  - name: device_id
+    description: 设备ID
+  - name: operation_unit_id
+    description: 运维单位ID
+  - name: create_time
+    description: 创建时间
+  - name: create_user_name
+    description: 创建人
+  - name: plan_finish_time
+    description: 计划完成时间
+  - name: finish_time
+    description: 完成时间
+  - name: finished_after_plan
+    description: 完成晚于计划(布尔)
+  - name: is_overdue
+    description: 是否超期(未完成且计划完成日已过
+  - name: current_point
+    description: 当前流程节点
+  - name: node_count
+    description: 流转节点数(含建单)
+  - name: task_item_count
+    description: 任务项总数(来自mtc_taskitem
+  - name: task_items_finished
+    description: 已填报完成任务项数(status=1)
+  - name: task_items_unstarted
+    description: 未开始任务项数(status=0)
+  - name: is_content_filled
+    description: 是否有填报内容(至少一项任务项完成
+  - name: is_form_only_close
+    description: 形式闭环但内容空白(流程完成且零填报
+  - name: source_updated_at
+    description: 源系统最后更新时间
+  - name: refreshed_at
+    description: 本表刷新时间
 - name: mart_alarm_event_analysis
   description: '江苏站点告警事件数据集。一行=一条站点告警（2026-06-01 起，源 alm_summary）。 含告警级别/状态（已翻译）、生命周期时间、持续与处理时长、是否未处理、
     告警后24小时内同站关联故障工单数（关联自 mart_work_order_analysis，仅Fault口径）。 用于告警分析、告警→工单转化、未处理告警督办。
@@ -447,8 +540,10 @@ models:
 
     已知口径注意: status 0/1/2 按数据分布推断为 未开始/处理中/已完成（94%已完成），语义待业务确认; is_overdue = 计划周期结束日(plan_end_date)已过仍未完成；plan
     窗口来自 pw_Task（每日全量）， 当日新任务项可能短暂关联不到周期行; has_linked_order 约97%（巡检项完成生成故障/巡检工单，WorkingOrderCode 关联）;
-    窗口按 UpdateTime>=2026-06-01 引导，含少量 6 月前创建但近期更新的任务项; 本表含三类站点的巡检：省控站约63%、省乡镇站约25%、省建站约12%（2026-10 实测）；
-    按站点类型过滤/分组用 station_type_name，不得默认全省巡检即省控站口径
+    workingordercode/has_linked_order 是"任务项完成回写"口径：只有巡检项完成时平台才回写工单号， 未填报/未完成的例行计划单（周巡检等，平台按计划自动建单）在本表永远查不到单号——
+    本表查不到某工单号 ≠ 该工单不存在。判断工单是否存在/状态用 jiangsu_ods.mtc_working_order （工单主表全集），逐项进度用 jiangsu_ods.mtc_taskitem（2026-11-03
+    如东芳泉路假阴性教训）; 窗口按 UpdateTime>=2026-06-01 引导，含少量 6 月前创建但近期更新的任务项; 本表含三类站点的巡检：省控站约63%、省乡镇站约25%、省建站约12%（2026-10
+    实测）； 按站点类型过滤/分组用 station_type_name，不得默认全省巡检即省控站口径
 
     粒度: 一行 = 一条巡检任务项'
   columns:
@@ -484,9 +579,9 @@ models:
   - name: is_finished
     description: 是否已完成(布尔)
   - name: working_order_code
-    description: 关联工单号
+    description: 关联工单号(完成回写口径
   - name: has_linked_order
-    description: 是否已转工单(布尔)
+    description: 是否已转工单(完成回写
   - name: task_date
     description: 任务日期
   - name: create_time

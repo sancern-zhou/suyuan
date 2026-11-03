@@ -13,6 +13,10 @@ known_caveats:
   - is_overdue = 计划周期结束日(plan_end_date)已过仍未完成；plan 窗口来自 pw_Task（每日全量），
     当日新任务项可能短暂关联不到周期行
   - has_linked_order 约97%（巡检项完成生成故障/巡检工单，WorkingOrderCode 关联）
+  - workingordercode/has_linked_order 是"任务项完成回写"口径：只有巡检项完成时平台才回写工单号，
+    未填报/未完成的例行计划单（周巡检等，平台按计划自动建单）在本表永远查不到单号——
+    本表查不到某工单号 ≠ 该工单不存在。判断工单是否存在/状态用 jiangsu_ods.mtc_working_order
+    （工单主表全集），逐项进度用 jiangsu_ods.mtc_taskitem（2026-11-03 如东芳泉路假阴性教训）
   - 窗口按 UpdateTime>=2026-06-01 引导，含少量 6 月前创建但近期更新的任务项
   - 本表含三类站点的巡检：省控站约63%、省乡镇站约25%、省建站约12%（2026-10 实测）；
     按站点类型过滤/分组用 station_type_name，不得默认全省巡检即省控站口径
@@ -31,8 +35,8 @@ columns:
   - {name: status, business: 状态原始值(0/1/2)}
   - {name: status_cn, business: 状态中文(未开始/处理中/已完成,待业务确认)}
   - {name: is_finished, business: 是否已完成(布尔)}
-  - {name: working_order_code, business: 关联工单号}
-  - {name: has_linked_order, business: 是否已转工单(布尔)}
+  - {name: working_order_code, business: 关联工单号(完成回写口径,空≠平台未建单;未完成的例行计划单不回写,工单存在性以 mtc_working_order 为准)}
+  - {name: has_linked_order, business: 是否已转工单(完成回写,布尔,同上口径)}
   - {name: task_date, business: 任务日期}
   - {name: create_time, business: 创建时间}
   - {name: finish_time, business: 完成时间}
@@ -52,3 +56,8 @@ guide: >-
   has_linked_order(巡检转工单)/working_order_code。
   巡检完成率、超期未完成、按人员完成量、巡检转工单率查本表；
   按站点类型统计用 station_type_name 过滤或分组，结论须注明口径含哪些站点类型。
+  工单实体分层：工单全集(存在性/类型/状态)查 jiangsu_ods.mtc_working_order，故障单统计查
+  mart_work_order_analysis，例行单(巡检/校准等)统计查 mart_routine_order_analysis，
+  工单逐项任务进度查 jiangsu_ods.mtc_taskitem；本表是巡检任务项完成台账(回写口径)，
+  workingordercode 为空只代表任务项未完成，不代表平台未生成工单，
+  按"巡检工单是否存在"核查时不得以本表 0 行下结论。

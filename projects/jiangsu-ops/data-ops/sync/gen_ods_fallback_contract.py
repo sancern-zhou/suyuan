@@ -49,11 +49,16 @@ TARGET_PATH = resolve_agent_path(
 SHARD_RE = re.compile(r"^(alarmlog|integrated_h)_\d{4}_\d{4}[a-z]$")
 
 # mart 已覆盖、但 mart 未暴露行级明细/映射关系，仍需原始表兜底的例外。
-# 判断标准：mart 只给了汇总值或部分列，而"某条明细/某条映射是什么"仍不可查。
+# 判断标准：mart 只给了汇总值或部分列，而"某条明细/某条映射是什么"仍不可查；
+# 以及被**过滤口径 mart** 引用的源表——mart 只暴露其子集（如 mart_work_order_analysis
+# 对 mtc_working_order 只取 ordertype='Fault'），全集仍必须可查，否则会出现
+# "按工单号查工单 0 行 → 误判工单不存在"类假阴性（2026-11-03 如东芳泉路事故）。
 EXTRA_FALLBACK = {
     "bsd_usergroup",           # dim_person 只给班组名/数量，班组编码与单位类型未暴露
     "bsd_usergroup_user",      # dim_person 只给人员所属班组名，人↔班组映射未暴露
     "bsd_usergroup_station",   # dim_person 只给责任站点数，班组→站点清单未暴露
+    "mtc_taskitem",            # 例行单宽表只给逐单聚合，逐项任务进度明细仍需原始行
+    "mtc_working_order",       # 工单主表全集；mart_work_order_analysis 仅暴露 Fault 子集
     "mtc_working_order_detail",  # mart 只给节点数，处理人/节点流水未暴露
     "opa_kq_attendance",       # mart 只给站点×日签到次数，个人签到明细未暴露
 }
@@ -75,7 +80,8 @@ ODS_TABLE_NOTES = {
     "mtc_fault": "故障单设备处置扩展（按 workingordercode 关联工单）",
     "mtc_faultcontent": "故障现象字典",
     "mtc_faultcontentitem": "工单→故障现象多选关系",
-    "mtc_taskitem": "工单逐项任务进度（约12万行，按 workingordercode 关联）",
+    "mtc_taskitem": "工单逐项任务进度（约12万行，按 workingordercode 关联；例行单未填报的项 status=0 也会落在这里，是判断工单是否实际开展的明细口径）",
+    "mtc_working_order": "工单主表全集（FA=故障单、CH=例行/计划单等全类型；工单存在性/类型/状态判定的权威表；故障单口径统计另见 mart_work_order_analysis，巡检任务完成台账另见 mart_inspection_analysis）",
     "mtc_working_order_detail": "工单流转流水，含处理人 processusername 与各节点起止时间",
     "opa_kq_attendance": "到站签到明细（个人签到；mart 只给站点×日次数）",
     "opa_qcqa_deduction": "质控扣分明细（考核扣分溯源）",
