@@ -342,7 +342,17 @@ def _render_pollutant_calendar(
 
 
 def _normalized_unit_text(unit: str) -> str:
-    return str(unit).replace("μ", "u").replace("µ", "u").replace("³", "3").replace("^", "").strip()
+    return (
+        str(unit)
+        .replace("$", "")
+        .replace("{", "")
+        .replace("}", "")
+        .replace("μ", "u")
+        .replace("µ", "u")
+        .replace("³", "3")
+        .replace("^", "")
+        .strip()
+    )
 
 
 def _render_generic_pollutant_wind_rose(
@@ -371,6 +381,14 @@ def _render_generic_pollutant_wind_rose(
         raise ChartDataError("generic_pollutant_wind_rose 的风向、风速、浓度长度必须一致。")
     direction_bins = int(options.get("direction_bins") or data.get("direction_bins") or 16)
     direction_bins = min(max(direction_bins, 4), 36)
+    radial_metric = str(
+        options.get("radial_metric") or data.get("radial_metric") or "mean_concentration"
+    ).strip()
+    if radial_metric not in {"mean_concentration", "level_frequency"}:
+        raise ChartDataError(
+            "generic_pollutant_wind_rose 的 radial_metric 仅支持 "
+            "mean_concentration（方位浓度均值）或 level_frequency（按 HJ 633 等级的频次堆叠）。"
+        )
 
     average_time = str(data.get("average_time") or options.get("average_time") or "").strip() or None
     try:
@@ -389,7 +407,7 @@ def _render_generic_pollutant_wind_rose(
                 f"请先把浓度换算为 {expected_unit} 并以该单位传入。"
             )
 
-    image_base64, valid_count = _render_generic_wind_rose_image(
+    image_base64, valid_count, metric_metadata = _render_generic_wind_rose_image(
         title=title,
         pollutant_name=pollutant_name,
         unit=unit,
@@ -398,6 +416,7 @@ def _render_generic_pollutant_wind_rose(
         concentrations=concentrations,
         direction_bins=direction_bins,
         scale=scale,
+        radial_metric=radial_metric,
     )
     visual = _cache_base64_image(image_base64, chart_id or f"generic_pollutant_wind_rose_{pollutant_name}", title)
     return {
@@ -413,10 +432,12 @@ def _render_generic_pollutant_wind_rose(
             "pollutant_name": pollutant_name,
             "unit": unit,
             "direction_bin_count": direction_bins,
+            "radial_metric": radial_metric,
             "valid_point_count": valid_count,
             "average_time": scale["average_time"],
             "level_standard": scale["standard"],
             "level_breaks": list(scale["breaks"]),
+            **metric_metadata,
         },
         "summary": f"报告图表已生成：{title}。",
     }
@@ -660,13 +681,162 @@ def _polar_rlabel_angle(theta_radians: "np.ndarray", heights: "np.ndarray", fall
 
 
 def _set_rlabel_background(fig, ax, alpha: float = 0.8) -> None:
-    """给极坐标径向刻度标签加白色底框，即使贴到色块上也保持可读。"""
+    """径向刻度标签保持横排并加白色底框，即使贴到色块上也保持可读。"""
     try:
         fig.canvas.draw()
         for text in ax.yaxis.get_ticklabels():
+            text.set_rotation(0)
             text.set_bbox(dict(facecolor="white", edgecolor="none", alpha=alpha, pad=1.0))
     except Exception:
         pass
+
+
+_WIND_ROSE_COMPASS_LABELS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+
+
+def _style_wind_rose_frame(ax) -> None:
+    """罗盘方位、浅色网格和深色外圈，与报告中的污染玫瑰图样式一致。"""
+    ax.set_theta_zero_location("N")
+    ax.set_theta_direction(-1)
+    ax.set_thetagrids([0, 45, 90, 135, 180, 225, 270, 315], list(_WIND_ROSE_COMPASS_LABELS))
+    ax.tick_params(axis="x", labelsize=11, pad=8)
+    for label in ax.get_xticklabels():
+        label.set_fontweight("bold")
+    ax.grid(color="#d9d9d9", linewidth=0.8)
+    ax.spines["polar"].set_color("#555555")
+    ax.spines["polar"].set_linewidth(1.2)
+
+
+def _nice_frequency_axis(max_value: float) -> tuple[float, List[float], List[str]]:
+    """频次轴取 0.1/0.2/0.25/0.5/1/2/2.5/5… 的整齐间隔，并留一格余量。"""
+    target = max(float(max_value), 1e-9)
+    steps = (0.1, 0.2, 0.25, 0.5, 1.0, 2.0, 2.5, 5.0, 10.0, 20.0, 25.0, 50.0, 100.0)
+    step = next((item for item in steps if target / item <= 7), 100.0)
+    axis_max = (math.floor(target / step + 1e-9) + 1) * step
+    tick_count = max(1, int(round(axis_max / step)))
+    ticks = [step * index for index in range(1, tick_count + 1)]
+    if float(step).is_integer():
+        decimals = 0
+    elif abs(step * 10 - round(step * 10)) < 1e-9:
+        decimals = 1
+    else:
+        decimals = 2
+    labels = [
+        f"{value:g}" if decimals == 0 else f"{value:.{decimals}f}"
+        for value in ticks
+    ]
+    return axis_max, ticks, labels
+
+
+def _direction_bin_index(direction: float, direction_bins: int) -> int:
+    """把风向归入以罗盘方位为中心的扇区（N 扇区覆盖 348.75°–11.25°）。"""
+    bin_width = 360 / direction_bins
+    return int((direction % 360 + bin_width / 2) // bin_width) % direction_bins
+
+
+def _level_frequency_counts(
+    wind_directions: Sequence[float],
+    wind_speeds: Sequence[float],
+    concentrations: Sequence[float],
+    direction_bins: int,
+    breaks: Sequence[float],
+    level_count: int,
+) -> tuple[np.ndarray, int]:
+    """按方位分箱统计 HJ 633 各级出现次数；无效浓度不参与分母。"""
+    counts = np.zeros((direction_bins, level_count), dtype=float)
+    total = 0
+    for direction, speed, concentration in zip(wind_directions, wind_speeds, concentrations):
+        try:
+            direction_value = float(direction)
+            speed_value = float(speed)
+            concentration_value = float(concentration)
+        except (TypeError, ValueError):
+            continue
+        if not (
+            math.isfinite(direction_value)
+            and math.isfinite(speed_value)
+            and math.isfinite(concentration_value)
+        ):
+            continue
+        if speed_value < 0 or concentration_value < 0:
+            continue
+        level = level_index(concentration_value, breaks)
+        if level is None:
+            continue
+        bin_index = _direction_bin_index(direction_value, direction_bins)
+        counts[bin_index, level] += 1
+        total += 1
+    return counts, total
+
+
+def _render_level_frequency_wind_rose_image(
+    title: str,
+    unit: str,
+    wind_directions: Sequence[float],
+    wind_speeds: Sequence[float],
+    concentrations: Sequence[float],
+    direction_bins: int,
+    scale: Dict[str, Any],
+) -> tuple[str, int, Dict[str, Any]]:
+    """按方位堆叠 HJ 633 等级频次，径向为该方位观测占全部有效点位的比例。"""
+    colors = [str(item) for item in scale["colors"]]
+    labels = [str(item) for item in scale["labels"]]
+    counts, total = _level_frequency_counts(
+        wind_directions=wind_directions,
+        wind_speeds=wind_speeds,
+        concentrations=concentrations,
+        direction_bins=direction_bins,
+        breaks=scale["breaks"],
+        level_count=len(colors),
+    )
+    if total <= 0:
+        raise ChartDataError("generic_pollutant_wind_rose 没有可渲染的有效数据点。")
+
+    shares = counts / total * 100.0
+    bin_width = 360 / direction_bins
+    theta = np.deg2rad(np.arange(direction_bins) * bin_width)
+    width = np.deg2rad(bin_width * 0.88)
+    fig, ax = plt.subplots(figsize=(6.2, 6.2), dpi=180, subplot_kw={"polar": True})
+    bottom = np.zeros(direction_bins)
+    for level, (color, label) in enumerate(zip(colors, labels)):
+        values = shares[:, level]
+        ax.bar(theta, values, bottom=bottom, width=width, color=color,
+               edgecolor="white", linewidth=0.6, label=label)
+        bottom += values
+
+    _style_wind_rose_frame(ax)
+    ax.set_title(str(normalize_matplotlib_label_text(title)), fontsize=14, fontweight="bold", pad=18)
+    axis_max, ticks, tick_labels = _nice_frequency_axis(float(bottom.max()))
+    ax.set_ylim(0, axis_max)
+    ax.set_yticks(ticks)
+    ax.set_yticklabels(tick_labels, fontsize=9)
+    ax.set_rlabel_position(_polar_rlabel_angle(theta, bottom, fallback_deg=200.0))
+    ax.text(
+        0.5,
+        -0.08,
+        f"有效点位: {total}；方向分箱: {direction_bins}；径向: 观测频次占比（%）",
+        transform=ax.transAxes,
+        ha="center",
+        va="top",
+        fontsize=9,
+    )
+    handles, legend_labels = _calendar_level_legend(
+        [float(item) for item in scale["breaks"]],
+        labels,
+        colors,
+        unit,
+    )
+    legend_below(ax, handles=handles, labels=legend_labels, ncols=3)
+    _set_rlabel_background(fig, ax)
+    fig.tight_layout(pad=1.0)
+    level_totals = {
+        label: round(float(counts[:, level].sum()) / total * 100.0, 1)
+        for level, label in enumerate(labels)
+    }
+    return _figure_to_base64(fig), total, {
+        "radial_unit": "%",
+        "level_frequency_totals": level_totals,
+    }
 
 
 def _render_generic_wind_rose_image(
@@ -678,37 +848,60 @@ def _render_generic_wind_rose_image(
     concentrations: Sequence[float],
     direction_bins: int,
     scale: Dict[str, Any],
-) -> tuple[str, int]:
-    valid = [
-        (float(direction) % 360, float(speed), float(concentration))
-        for direction, speed, concentration in zip(wind_directions, wind_speeds, concentrations)
-        if speed >= 0
-    ]
+    radial_metric: str = "mean_concentration",
+) -> tuple[str, int, Dict[str, Any]]:
+    if radial_metric == "level_frequency":
+        return _render_level_frequency_wind_rose_image(
+            title=title,
+            unit=unit,
+            wind_directions=wind_directions,
+            wind_speeds=wind_speeds,
+            concentrations=concentrations,
+            direction_bins=direction_bins,
+            scale=scale,
+        )
+
+    valid = []
+    for direction, speed, concentration in zip(wind_directions, wind_speeds, concentrations):
+        try:
+            direction_value = float(direction)
+            speed_value = float(speed)
+            concentration_value = float(concentration)
+        except (TypeError, ValueError):
+            continue
+        if not (
+            math.isfinite(direction_value)
+            and math.isfinite(speed_value)
+            and math.isfinite(concentration_value)
+        ):
+            continue
+        if speed_value < 0:
+            continue
+        valid.append((direction_value % 360, speed_value, concentration_value))
     if not valid:
         raise ChartDataError("generic_pollutant_wind_rose 没有可渲染的有效数据点。")
 
     bin_width = 360 / direction_bins
-    means = []
-    counts = []
-    for index in range(direction_bins):
-        start = index * bin_width
-        end = start + bin_width
-        bin_values = [concentration for direction, _, concentration in valid if start <= direction < end]
-        counts.append(len(bin_values))
-        means.append(sum(bin_values) / len(bin_values) if bin_values else 0.0)
+    bin_sums = [0.0] * direction_bins
+    counts = [0] * direction_bins
+    for direction, _, concentration in valid:
+        index = _direction_bin_index(direction, direction_bins)
+        bin_sums[index] += concentration
+        counts[index] += 1
+    means = [bin_sums[index] / counts[index] if counts[index] else 0.0
+             for index in range(direction_bins)]
 
-    theta = np.deg2rad(np.arange(direction_bins) * bin_width + bin_width / 2)
+    theta = np.deg2rad(np.arange(direction_bins) * bin_width)
     radii = np.array(means)
     width = np.deg2rad(bin_width * 0.88)
     fig, ax = plt.subplots(figsize=(6.2, 6.2), dpi=180, subplot_kw={"polar": True})
     # 等级色用 HJ 633-2026 固定六级断点映射，禁止连续色图按数据极值拉伸。
     bar_colors = [level_color(value, scale) for value in means]
     ax.bar(theta, radii, width=width, color=bar_colors, edgecolor="white", linewidth=0.8)
-    ax.set_theta_zero_location("N")
-    ax.set_theta_direction(-1)
+    _style_wind_rose_frame(ax)
     ax.set_title(str(normalize_matplotlib_label_text(title)), fontsize=14, fontweight="bold", pad=18)
     ax.set_rlabel_position(_polar_rlabel_angle(theta, radii))
-    ax.tick_params(labelsize=9)
+    ax.tick_params(axis="y", labelsize=9)
     ax.text(
         0.5,
         -0.08,
@@ -727,7 +920,7 @@ def _render_generic_wind_rose_image(
     legend_below(ax, handles=handles, labels=legend_labels, ncols=3)
     _set_rlabel_background(fig, ax)
     fig.tight_layout(pad=1.0)
-    return _figure_to_base64(fig), len(valid)
+    return _figure_to_base64(fig), len(valid), {}
 
 
 def _extract_wind_rose_arrays(
