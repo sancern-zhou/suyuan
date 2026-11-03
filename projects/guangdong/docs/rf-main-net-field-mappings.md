@@ -4,87 +4,150 @@
 - 视图：`SummerFresh.MVC/Views/ReportForms`、`Views/MtcWorkingOrder`、`Areas/Sup/Views/QcForm` 的 `RF_*.cshtml`（中文标签 ↔ `@Html.TextBoxFor(m => m.列)` 绑定 + `validator` 校验器）。
 - 用途：主网 `rf_*` 审计规则（range/required/formula/enum/multipoint/position/unit 等档案）的列语义与必填口径核对；同时纠正 `column-semantics.md`「主网表单题目项字典」误用（`RF_ITEM` 实为工单耗材/附件记录表，见 `opa-source-gap-analysis.md`）。
 
-覆盖：实体表 73 个（带注释 67），视图模型 59 个。
+覆盖：实体表 73 个（带注释 73），视图模型 59 个。
 
 ## PW_TASK
 - 实体文件：`ReportForms/PW_TASK.cs`
 
 | 列 | 含义（实体注释） | 视图标签 |
 | --- | --- | --- |
+| `STATE` |  |  |
+| `EDTDATE` |  |  |
+| `SDTDATE` |  |  |
 | `PWTASKID` | 流水号 |  |
+| `RULENAME` |  |  |
+| `RULETYPE` |  |  |
+| `RULECYCLE` |  |  |
+| `STATIONID` |  |  |
+| `PLANWORKID` |  |  |
+| `PWTASKTIME` |  |  |
 | `PWUNITPLANID` | 单位计划ID |  |
+| `FINISHPWTASKTIME` |  |  |
 
 ## PW_TASKITEM
 - 实体文件：`ReportForms/PW_TASKITEM.cs`
 
 | 列 | 含义（实体注释） | 视图标签 |
 | --- | --- | --- |
+| `STATE` |  |  |
+| `EDTDATE` |  |  |
+| `SDTDATE` |  |  |
 | `BASEDATE` | 计划项的基准日期 |  |
+| `PWTASKID` |  |  |
 | `CREATETIME` | 创建时间 |  |
+| `TASKUSERID` |  |  |
+| `RULEITEMTAG` |  |  |
 | `CREATEUSERID` | 创建人 |  |
+| `FINISHUSERID` |  |  |
 | `PWTASKITEMID` | 流水号 |  |
+| `POLLUTANTTYPE` |  |  |
+| `FINISHDATETIME` |  |  |
+| `FINISHWORKORDERCODE` |  |  |
 
 ## PW_TASKITEMTEMP
 - 实体文件：`ReportForms/PW_TASKITEM.cs`
 
 | 列 | 含义（实体注释） | 视图标签 |
 | --- | --- | --- |
+| `ID` |  |  |
+| `STATE` |  |  |
+| `EDTDATE` |  |  |
+| `SDTDATE` |  |  |
 | `BASEDATE` | 计划项的基准日期 |  |
+| `DATATYPE` |  |  |
+| `PLANTYPE` |  |  |
+| `PWTASKID` |  |  |
 | `CREATETIME` | 创建时间 |  |
+| `TASKUSERID` |  |  |
+| `RULEITEMTAG` |  |  |
 | `CREATEUSERID` | 创建人 |  |
+| `FINISHUSERID` |  |  |
 | `PWTASKITEMID` | 任务项id |  |
+| `POLLUTANTTYPE` |  |  |
+| `FINISHDATETIME` |  |  |
+| `WORKINGORDERCODE` |  |  |
+| `FINISHWORKORDERCODE` |  |  |
 
 ## PW_TASKTEMP
 - 实体文件：`ReportForms/PW_TASK.cs`
 
 | 列 | 含义（实体注释） | 视图标签 |
 | --- | --- | --- |
+| `ID` |  |  |
+| `STATE` |  |  |
+| `EDTDATE` |  |  |
+| `SDTDATE` |  |  |
+| `DATATYPE` |  |  |
+| `PLANTYPE` |  |  |
 | `PWTASKID` | 任务ID |  |
+| `RULENAME` |  |  |
+| `RULETYPE` |  |  |
+| `RULECYCLE` |  |  |
+| `STATIONID` |  |  |
+| `PLANWORKID` |  |  |
+| `PWTASKTIME` |  |  |
 | `PWUNITPLANID` | 单位计划ID |  |
+| `FINISHPWTASKTIME` |  |  |
+| `WORKINGORDERCODE` |  |  |
 
 ## RF_BCMonitorInspection
 - 实体文件：`ReportForms/RF_BCMonitorInspection.cs`
 - 视图：Views/ReportForms/RF_BCMonitorInspection.cshtml
 
-| 列 | 视图标签 |
-| --- | --- |
-| `CAP` | 防虫雨帽 / 检查/清洁 |
-| `OTHER` | 其它 |
-| `CUTTER` | 切割器 / 检查/清洁 |
-| `FILTER` | 过滤器 / 按需 |
-| `CAPREMARK` | 防虫雨帽 / 检查/清洁 |
-| `PAPERTAPE` | 纸带 / 按需 |
-| `DEVICECODE` | 仪器型号 / 仪器编号 |
-| `DEVICEMODEL` | 仪器型号 / 仪器编号 |
-| `LEAKAGETEST` | 检漏测试 / 检查 |
-| `CLEANAIRTEST` | 清洁空气测试 / 检查 |
-| `CUTTERREMARK` | 切割器 / 检查/清洁 |
-| `FILTERREMARK` | 过滤器 / 按需 |
-| `DEWATERBOTTLE` | 除水汽瓶 / 检查 |
-| `OPTICALCAVITY` | 光腔 / 检查/清洁 / 半年 |
-| `STABILITYTEST` | 稳定性测试 / 检查 |
-| `TIMEDATEAFTER` | 时间日期 / 检查/校准 |
-| `SAMPLELINETUBE` | 样气线管 / 检查/清洁 / 每月 |
-| `TIMEDATEBEFORE` | 时间日期 / 检查/校准 |
-| `TIMEDATEREMARK` | 时间日期 / 检查/校准 |
-| `PAPERTAPEREMARK` | 纸带 / 按需 |
-| `DATATRANSMISSION` | 数据传输 / 检查 / 每周 |
-| `LEAKAGETESTREMARK` | 检漏测试 / 检查 |
-| `CLEANAIRTESTREMARK` | 清洁空气测试 / 检查 |
-| `MAINTENANCERESULTS` | 维修结果 |
-| `PROBLEMDESCRIPTION` | 维修记录 / 问题描述 |
-| `DEWATERBOTTLEREMARK` | 除水汽瓶 / 检查 |
-| `OPTICALCAVITYREMARK` | 光腔 / 检查/清洁 / 半年 |
-| `STABILITYTESTREMARK` | 稳定性测试 / 检查 |
-| `INSTRUMENTPARAMETERS` | 仪器参数 / 检查 |
-| `SAMPLELINETUBEREMARK` | 样气线管 / 检查/清洁 / 每月 |
-| `FLOWVERIFICATIONAFTER` | 流量验证 / 检查/清洁 |
-| `DATATRANSMISSIONREMARK` | 数据传输 / 检查 / 每周 |
-| `FLOWVERIFICATIONBEFORE` | 流量验证 / 检查/清洁 |
-| `FLOWVERIFICATIONREMARK` | 流量验证 / 检查/清洁 |
-| `INSTRUMENTPARAMETERSREMARK` | 仪器参数 / 检查 |
-| `OPTICALCAVITYSLIDERLUBRICATION` | 光腔滑块润滑 / 保养 / 每年 |
-| `OPTICALCAVITYSLIDERLUBRICATIONREMARK` | 光腔滑块润滑 / 保养 / 每年 |
+| 列 | 含义（实体注释） | 视图标签 |
+| --- | --- | --- |
+| `CAP` |  | 防虫雨帽 / 检查/清洁 |
+| `OTHER` |  | 其它 |
+| `AREAID` |  |  |
+| `CUTTER` |  | 切割器 / 检查/清洁 |
+| `FILTER` |  | 过滤器 / 按需 |
+| `FORMTYPE` |  |  |
+| `CAPREMARK` |  | 防虫雨帽 / 检查/清洁 |
+| `CHECKDATE` |  |  |
+| `PAPERTAPE` |  | 纸带 / 按需 |
+| `STATIONID` |  |  |
+| `CREATEDATE` |  |  |
+| `DEVICECODE` |  | 仪器型号 / 仪器编号 |
+| `REVIEWDATE` |  |  |
+| `AUDITORDATE` |  |  |
+| `DEVICEMODEL` |  | 仪器型号 / 仪器编号 |
+| `LEAKAGETEST` |  | 检漏测试 / 检查 |
+| `PROCESSTYPE` |  |  |
+| `CLEANAIRTEST` |  | 清洁空气测试 / 检查 |
+| `CUTTERREMARK` |  | 切割器 / 检查/清洁 |
+| `FILTERREMARK` |  | 过滤器 / 按需 |
+| `PREPARERDATE` |  |  |
+| `REVIEWUSERID` |  |  |
+| `AUDITORUSERID` |  |  |
+| `DEWATERBOTTLE` |  | 除水汽瓶 / 检查 |
+| `OPTICALCAVITY` |  | 光腔 / 检查/清洁 / 半年 |
+| `STABILITYTEST` |  | 稳定性测试 / 检查 |
+| `TIMEDATEAFTER` |  | 时间日期 / 检查/校准 |
+| `PREPARERUSERID` |  |  |
+| `RFWBCMONITORID` |  |  |
+| `SAMPLELINETUBE` |  | 样气线管 / 检查/清洁 / 每月 |
+| `TIMEDATEBEFORE` |  | 时间日期 / 检查/校准 |
+| `TIMEDATEREMARK` |  | 时间日期 / 检查/校准 |
+| `PAPERTAPEREMARK` |  | 纸带 / 按需 |
+| `DATATRANSMISSION` |  | 数据传输 / 检查 / 每周 |
+| `OPERATIONSUNITID` |  |  |
+| `WORKINGORDERCODE` |  |  |
+| `LEAKAGETESTREMARK` |  | 检漏测试 / 检查 |
+| `CLEANAIRTESTREMARK` |  | 清洁空气测试 / 检查 |
+| `MAINTENANCERESULTS` |  | 维修结果 |
+| `PROBLEMDESCRIPTION` |  | 维修记录 / 问题描述 |
+| `DEWATERBOTTLEREMARK` |  | 除水汽瓶 / 检查 |
+| `OPTICALCAVITYREMARK` |  | 光腔 / 检查/清洁 / 半年 |
+| `STABILITYTESTREMARK` |  | 稳定性测试 / 检查 |
+| `INSTRUMENTPARAMETERS` |  | 仪器参数 / 检查 |
+| `SAMPLELINETUBEREMARK` |  | 样气线管 / 检查/清洁 / 每月 |
+| `FLOWVERIFICATIONAFTER` |  | 流量验证 / 检查/清洁 |
+| `DATATRANSMISSIONREMARK` |  | 数据传输 / 检查 / 每周 |
+| `FLOWVERIFICATIONBEFORE` |  | 流量验证 / 检查/清洁 |
+| `FLOWVERIFICATIONREMARK` |  | 流量验证 / 检查/清洁 |
+| `INSTRUMENTPARAMETERSREMARK` |  | 仪器参数 / 检查 |
+| `OPTICALCAVITYSLIDERLUBRICATION` |  | 光腔滑块润滑 / 保养 / 每年 |
+| `OPTICALCAVITYSLIDERLUBRICATIONREMARK` |  | 光腔滑块润滑 / 保养 / 每年 |
 
 **平台校验器：**`DEVICECODE`=required；`DEVICEMODEL`=required
 
@@ -115,7 +178,11 @@
 
 | 列 | 含义（实体注释） | 视图标签 |
 | --- | --- | --- |
+| `ID` |  |  |
 | `AREAID` | 省市区 |  |
+| `REMARK` |  |  |
+| `EDTTIME` |  | 操作日期 / 开始时间 / 结束时间 |
+| `SDTTIME` |  | 操作日期 / 开始时间 / 结束时间 |
 | `HUMIDITY` | 室内湿度 | 室内温度 / 室内湿度 |
 | `SENSORNO` | 传感器编号 | 传感器编号 / 上次校准日期 |
 | `SERIALNO` | 序列号 |  |
@@ -126,13 +193,18 @@
 | `AUDITORDATE` | 审核时间 |  |
 | `DEVICEMODEL` | 仪器型号 |  |
 | `PROCESSTYPE` | 处理方式/类型 |  |
+| `STATIONCODE` |  |  |
 | `TEMPERATURE` | 室内温度 | 室内温度 / 室内湿度 |
+| `DEVICEMODEL2` |  |  |
 | `OUTFACTORYNO` | 出厂编号 |  |
 | `PREPARERDATE` | 填报时间(单据每次点保存更新的时间) |  |
 | `REVIEWUSERID` | 复核人 |  |
 | `AUDITORUSERID` | 审核人 |  |
 | `POLLUTANTTYPE` | 监测类型 |  |
 | `PREPARERUSERID` | 填表人 |  |
+| `STANDARDREADNUM` |  | 校准前 / 校准后 |
+| `CAILBNEXTREADNUM` |  |  |
+| `CAILBPREVREADNUM` |  |  |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单号 |  |
 | `LASTTIMECAILBTIME1` | 环境湿度传感器资料-上次校准日期 | 传感器编号 / 上次校准日期 |
@@ -259,7 +331,11 @@
 
 | 列 | 含义（实体注释） | 视图标签 |
 | --- | --- | --- |
+| `ID` |  |  |
 | `AREAID` | 省市区 |  |
+| `REMARK` |  |  |
+| `EDTTIME` |  | 操作日期 / 开始时间 / 结束时间 |
+| `SDTTIME` |  | 操作日期 / 开始时间 / 结束时间 |
 | `HUMIDITY` | 室内湿度 | 室内温度 / 室内湿度 |
 | `SENSORNO` | 传感器编号 | 传感器编号 / 上次校准日期 |
 | `SERIALNO` | 序列号 |  |
@@ -270,13 +346,18 @@
 | `AUDITORDATE` | 审核时间 |  |
 | `DEVICEMODEL` | 仪器型号 |  |
 | `PROCESSTYPE` | 处理方式/类型 |  |
+| `STATIONCODE` |  |  |
 | `TEMPERATURE` | 室内温度 | 室内温度 / 室内湿度 |
+| `DEVICEMODEL2` |  |  |
 | `OUTFACTORYNO` | 出厂编号 |  |
 | `PREPARERDATE` | 填报时间(单据每次点保存更新的时间) |  |
 | `REVIEWUSERID` | 复核人 |  |
 | `AUDITORUSERID` | 审核人 |  |
 | `POLLUTANTTYPE` | 监测类型 |  |
 | `PREPARERUSERID` | 填表人 |  |
+| `STANDARDREADNUM` |  | 校准前 / 校准后 |
+| `CAILBNEXTREADNUM` |  | 控制限要求：±4%RH |
+| `CAILBPREVREADNUM` |  | 控制限要求：±4%RH |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单号 |  |
 | `LASTTIMECAILBTIME1` | 环境湿度传感器资料-上次校准日期 | 传感器编号 / 上次校准日期 |
@@ -422,10 +503,12 @@
 | --- | --- | --- |
 | `YEAR` | 真正的年份 | 年份： |
 | `MONTH` | 上半年还是下半年 |  |
+| `AREAID` |  |  |
 | `CODDRK` | 对CO监测仪进行多点校准 备注 | 5 / 对CO监测仪进行多点校准 |
 | `CYCDRK` | 进行臭氧量值传递 备注 | 8 / 进行臭氧量值传递 |
 | `LQGHRK` | 更换零气源净化剂和氧化剂 备注 | 9 / 更换零气源净化剂和氧化剂 对零气性能进行检查 |
 | `O3DDRK` | 对O3监测仪进行多点校准 备注 | 6 / 对O3监测仪进行多点校准 |
+| `REMARK` |  |  |
 | `NJDJZRK` | 对能见度仪器进行校准 备注 | 11 / 对能见度仪器进行校准 |
 | `NOXDDRK` | 对NOX监测仪进行多点校准 备注 | 4 / 对NOX监测仪进行多点校准 |
 | `SO2DDRK` | 对SO2监测仪进行多点校准 备注 | 3 / 对SO2监测仪进行多点校准 |
@@ -439,22 +522,36 @@
 | `NOXFXYRK` | 对NOX分析仪钼炉 备注 | 10 / 对NOX分析仪钼炉 转化率进行检查 |
 | `O3DDGZQK` | 对O3监测仪进行多点校准 工作情况 | 6 / 对O3监测仪进行多点校准 |
 | `O3DDUSER` | 对O3监测仪进行多点校准 运维人员 |  |
+| `CHECKDATE` |  |  |
 | `NJDJZGZQK` | 对能见度仪器进行校准 工作情况 | 11 / 对能见度仪器进行校准 |
 | `NJDJZUSER` | 对能见度仪器进行校准 运维人员 |  |
 | `NOXDDGZQK` | 对NOX监测仪进行多点校准 工作情况 | 4 / 对NOX监测仪进行多点校准 |
 | `NOXDDUSER` | 对NOX监测仪进行多点校准 运维人员 |  |
 | `SO2DDGZQK` | 对SO2监测仪进行多点校准 工作情况 | 3 / 对SO2监测仪进行多点校准 |
 | `SO2DDUSER` | 对SO2监测仪进行多点校准 运维人员 |  |
+| `STATIONID` |  |  |
+| `CREATEDATE` |  |  |
 | `DTJZLLGZQK` | 对动态校准仪流量进行20点检查 工作情况 | 7 / 对动态校准仪流量进行20点检查 |
 | `DTJZLLUSER` | 对动态校准仪流量进行20点检查 运维人员 |  |
 | `NOXFXYGZQK` | 对NOX分析仪钼炉 工作情况 | 10 / 对NOX分析仪钼炉 转化率进行检查 |
 | `NOXFXYUSER` | 对NOX分析仪钼炉 运维人员 |  |
+| `REVIEWDATE` |  |  |
+| `AUDITORDATE` |  |  |
 | `CHECKPM10RK` | 检查PM10 备注 | 1 / 检查PM10分析仪相对湿度、 温度传感器和动态加热装置是否正常工作 |
 | `CHECKPM25RK` | 检查PM2.5 备注 | 2 / 检查PM2.5分析仪相对湿度、 温度传感器和动态加热装置是否正常工作 |
+| `PROCESSTYPE` |  |  |
+| `PREPARERDATE` |  |  |
+| `REVIEWUSERID` |  |  |
+| `AUDITORUSERID` |  |  |
 | `CHECKPM10GZQK` | 检查PM10 工作情况 | 1 / 检查PM10分析仪相对湿度、 温度传感器和动态加热装置是否正常工作 |
 | `CHECKPM10USER` | 检查PM10 运维人员 |  |
 | `CHECKPM25GZQK` | 检查PM2.5 工作情况 | 2 / 检查PM2.5分析仪相对湿度、 温度传感器和动态加热装置是否正常工作 |
 | `CHECKPM25USER` | 检查PM2.5 运维人员 |  |
+| `POLLUTANTTYPE` |  |  |
+| `PREPARERUSERID` |  |  |
+| `OPERATIONSUNITID` |  |  |
+| `WORKINGORDERCODE` |  |  |
+| `STATIONMAINTAINCHECKID` |  |  |
 
 **平台校验器：**`CHECKPM10GZQK`=required；`CHECKPM25GZQK`=required；`CODDGZQK`=required；`CYCDGZQK`=required；`DTJZLLGZQK`=required；`LQGHGZQK`=required；`NJDJZGZQK`=required；`NOXDDGZQK`=required；`NOXFXYGZQK`=required；`O3DDGZQK`=required；`SO2DDGZQK`=required
 
@@ -513,7 +610,9 @@
 | `ITEMNAME` | 耗材名称 |  |
 | `REGIONID` | 工单的站点所在区域 |  |
 | `RFITEMID` | 明细ID |  |
+| `STATIONID` |  |  |
 | `CREATETIME` | 创建时间 |  |
+| `PROCESSTYPE` |  |  |
 | `RULEITEMTAG` | 报表类型 |  |
 | `IMGPATHAFTER` | 更换后的凭证路径 |  |
 | `POLLUTANTTYPE` | 监测类型 |  |
@@ -766,6 +865,7 @@
 | `PREPARERUSERID` | 填表人 |  |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单编号 |  |
+| `MANUALCOMPARISONID` |  |  |
 
 ## RF_M_MANUALCOMPARISONDETAIL
 - 实体文件：`ReportForms/RF_M_MANUALCOMPARISONDETAIL.cs`
@@ -812,6 +912,7 @@
 | `STATIONID` | 站点ID |  |
 | `ZDJCYXHBH` | 自动监测仪器型号及编号 |  |
 | `CREATEDATE` | 创建日期 |  |
+| `MCDETAILID` |  |  |
 | `REVIEWDATE` | 复核时间 |  |
 | `SUBMITDATE` | 提交时间 |  |
 | `UPDATETIME` | 最后更新时间 |  |
@@ -842,6 +943,7 @@
 | `REMARK` | 备注 | 备注： |
 | `ADDRESS` | 地点 | 日期 / 地点 |
 | `CHECKDATE` | 检查时间 | 日期 / 地点 |
+| `RFMMBWHID` |  |  |
 | `STATIONID` | 站点ID |  |
 | `BFIRSTTEMP` | 采样后滤膜第一次温度 | 温度(单位:℃) |
 | `CREATEDATE` | 创建日期 |  |
@@ -1003,6 +1105,7 @@
 | `MONTH` | 月 |  |
 | `NOXLL` | 检查NOX分析仪流量 | 6 / 检查NOX分析仪流量 |
 | `SO2LL` | 检查SO2分析仪流量 | 5 / 检查SO2分析仪流量 |
+| `AREAID` |  |  |
 | `COLLRK` | 检查CO分析仪流量 | 7 / 检查CO分析仪流量 |
 | `O3LLRK` | 检查O3分析仪流量 | 8 / 检查O3分析仪流量 |
 | `OPUSER` | 运维人员 |  |
@@ -1012,6 +1115,7 @@
 | `PM25DB` | PM2.5自动监测系统同步比对监测 | 12 / PM2.5自动监测系统同步比对监测 |
 | `PM25LL` | 检查PM2.5监测仪流量 | 4 / 检查PM2.5监测仪流量 |
 | `PM25QG` | 清洗PM2.5切割器 | 2 / 清洗PM2.5切割器 |
+| `REMARK` |  |  |
 | `SJBFRK` | 数据备份 | 10 / 数据备份 |
 | `DTJZYLL` | 检查动态校准仪流量 | 9 / 检查动态校准仪流量 |
 | `NOXLLRK` | 检查NOX分析仪流量 | 6 / 检查NOX分析仪流量 |
@@ -1023,7 +1127,21 @@
 | `PM25DBRK` | PM2.5自动监测系统同步比对监测 | 12 / PM2.5自动监测系统同步比对监测 |
 | `PM25LLRK` | 检查PM2.5监测仪流量 | 4 / 检查PM2.5监测仪流量 |
 | `PM25QGRK` | 清洗PM2.5切割器 | 2 / 清洗PM2.5切割器 |
+| `CHECKDATE` |  |  |
 | `DTJZYLLRK` | 检查动态校准仪流量 | 9 / 检查动态校准仪流量 |
+| `STATIONID` |  |  |
+| `CREATEDATE` |  |  |
+| `REVIEWDATE` |  |  |
+| `AUDITORDATE` |  |  |
+| `PROCESSTYPE` |  |  |
+| `PREPARERDATE` |  |  |
+| `REVIEWUSERID` |  |  |
+| `AUDITORUSERID` |  |  |
+| `POLLUTANTTYPE` |  |  |
+| `PREPARERUSERID` |  |  |
+| `OPERATIONSUNITID` |  |  |
+| `WORKINGORDERCODE` |  |  |
+| `STATIONMAINTAINCHECKID` |  |  |
 
 **平台校验器：**`COLL`=required；`DTJZYLL`=required；`NOXLL`=required；`O3LL`=required；`PM10LL`=required；`PM25LL`=required；`SO2LL`=required
 
@@ -1031,56 +1149,71 @@
 - 实体文件：`ReportForms/RF_PM1MonitorInspection.cs`
 - 视图：Views/ReportForms/RF_PM1MonitorInspection.cshtml
 
-| 列 | 视图标签 |
-| --- | --- |
-| `TIME` | 时间 / 是否正常 / 月 |
-| `OTHER` | 其它 |
-| `FLOWCODE` | 流量计 / ±5% |
-| `FLOWMETER` | 流量 / 仪器显示值 / 流量计显示值 / 是否校准 |
-| `FLOWMODEL` | 流量计 / ±5% |
-| `PAPERTAPE` | 纸带 / 是否正常 |
-| `THISVALUE` | 校准膜 / 是否合格 |
-| `DEVICECODE` | 仪器型号 / 仪器编号 |
-| `DEVICEMODEL` | 仪器型号 / 仪器编号 |
-| `WETNESSCODE` | 湿度计 / ±5% |
-| `HEADANDBLOCK` | 压头和垫块 / 采样头及切割头 / 是否漏气 |
-| `ISAIRLEAKAGE` | 压头和垫块 / 采样头及切割头 / 是否漏气 |
-| `PRESSURECODE` | 压力计 / ±1kPa |
-| `WETNESSMODEL` | 湿度计 / ±5% |
-| `MOISTUREMETER` | 环境湿度 / 仪器显示值 / 流量计显示值 / 是否校准 |
-| `ORIGINALVALUE` | 校准膜 / 是否合格 |
-| `PRESSUREMETER` | 环境压力 / 仪器显示值 / 流量计显示值 / 是否校准 |
-| `PRESSUREMODEL` | 压力计 / ±1kPa |
-| `TEMPERATURECODE` | 温度计 / ±2℃ |
-| `CALIBRATIONPOINT` | 校准膜 / 是否合格 |
-| `DATATRANSMISSION` | 数据传输 / 是否正常 / 周 |
-| `EXTERNALCLEANING` | 清洗部件 / 外部清洁 / 内部清洁 / 采样管路 / 半年 |
-| `INTERNALCLEANING` | 清洗部件 / 外部清洁 / 内部清洁 / 采样管路 / 半年 |
-| `MEASUREMENTERROR` | 校准膜 / 是否合格 |
-| `SAMPLINGTUBEROAD` | 清洗部件 / 外部清洁 / 内部清洁 / 采样管路 / 半年 |
-| `TEMPERATUREMODEL` | 温度计 / ±2℃ |
-| `THERMOMETERVALUE` | 环境温度 / 仪器显示值 / 流量计显示值 / 是否校准 / 季度 |
-| `FLOWISCALIBRATION` | 流量 / 仪器显示值 / 流量计显示值 / 是否校准 |
-| `FLOWEXPIRATIONDATE` | 流量计 / ±5% |
-| `MAINTENANCERESULTS` | 维修结果 |
-| `PROBLEMDESCRIPTION` | 维修记录 / 问题描述 |
-| `FLOWINSTRUMENTVALUE` | 流量 / 仪器显示值 / 流量计显示值 / 是否校准 |
-| `FLOWOUTLOOKISNORMAL` | 流量计 / ±5% |
-| `INSTRUMENTPARAMETERS` | 仪器参数 / 是否正常 |
-| `WETNESSISCALIBRATION` | 环境湿度 / 仪器显示值 / 流量计显示值 / 是否校准 |
-| `PRESSUREISCALIBRATION` | 环境压力 / 仪器显示值 / 流量计显示值 / 是否校准 |
-| `WETNESSEXPIRATIONDATE` | 湿度计 / ±5% |
-| `PRESSUREEXPIRATIONDATE` | 压力计 / ±1kPa |
-| `WETNESSINSTRUMENTVALUE` | 环境湿度 / 仪器显示值 / 流量计显示值 / 是否校准 |
-| `WETNESSOUTLOOKISNORMAL` | 湿度计 / ±5% |
-| `PRESSUREINSTRUMENTVALUE` | 环境压力 / 仪器显示值 / 流量计显示值 / 是否校准 |
-| `PRESSUREOUTLOOKISNORMAL` | 压力计 / ±1kPa |
-| `TEMPERATUREISCALIBRATION` | 环境温度 / 仪器显示值 / 流量计显示值 / 是否校准 / 季度 |
-| `CALIBRATIONMEMBRANEISPASS` | 校准膜 / 是否合格 |
-| `TEMPERATUREEXPIRATIONDATE` | 温度计 / ±2℃ |
-| `SAMPLINGHEADANDCUTTINGHEAD` | 压头和垫块 / 采样头及切割头 / 是否漏气 |
-| `TEMPERATUREINSTRUMENTVALUE` | 环境温度 / 仪器显示值 / 流量计显示值 / 是否校准 / 季度 |
-| `TEMPERATUREOUTLOOKISNORMAL` | 温度计 / ±2℃ |
+| 列 | 含义（实体注释） | 视图标签 |
+| --- | --- | --- |
+| `TIME` |  | 时间 / 是否正常 / 月 |
+| `OTHER` |  | 其它 |
+| `AREAID` |  |  |
+| `FLOWCODE` |  | 流量计 / ±5% |
+| `FORMTYPE` |  |  |
+| `CHECKDATE` |  |  |
+| `FLOWMETER` |  | 流量 / 仪器显示值 / 流量计显示值 / 是否校准 |
+| `FLOWMODEL` |  | 流量计 / ±5% |
+| `PAPERTAPE` |  | 纸带 / 是否正常 |
+| `STATIONID` |  |  |
+| `THISVALUE` |  | 校准膜 / 是否合格 |
+| `CREATEDATE` |  |  |
+| `DEVICECODE` |  | 仪器型号 / 仪器编号 |
+| `REVIEWDATE` |  |  |
+| `AUDITORDATE` |  |  |
+| `DEVICEMODEL` |  | 仪器型号 / 仪器编号 |
+| `PROCESSTYPE` |  |  |
+| `WETNESSCODE` |  | 湿度计 / ±5% |
+| `HEADANDBLOCK` |  | 压头和垫块 / 采样头及切割头 / 是否漏气 |
+| `ISAIRLEAKAGE` |  | 压头和垫块 / 采样头及切割头 / 是否漏气 |
+| `PREPARERDATE` |  |  |
+| `PRESSURECODE` |  | 压力计 / ±1kPa |
+| `REVIEWUSERID` |  |  |
+| `WETNESSMODEL` |  | 湿度计 / ±5% |
+| `AUDITORUSERID` |  |  |
+| `MOISTUREMETER` |  | 环境湿度 / 仪器显示值 / 流量计显示值 / 是否校准 |
+| `ORIGINALVALUE` |  | 校准膜 / 是否合格 |
+| `PRESSUREMETER` |  | 环境压力 / 仪器显示值 / 流量计显示值 / 是否校准 |
+| `PRESSUREMODEL` |  | 压力计 / ±1kPa |
+| `PREPARERUSERID` |  |  |
+| `RFWPM1MONITORID` |  |  |
+| `TEMPERATURECODE` |  | 温度计 / ±2℃ |
+| `CALIBRATIONPOINT` |  | 校准膜 / 是否合格 |
+| `DATATRANSMISSION` |  | 数据传输 / 是否正常 / 周 |
+| `EXTERNALCLEANING` |  | 清洗部件 / 外部清洁 / 内部清洁 / 采样管路 / 半年 |
+| `INTERNALCLEANING` |  | 清洗部件 / 外部清洁 / 内部清洁 / 采样管路 / 半年 |
+| `MEASUREMENTERROR` |  | 校准膜 / 是否合格 |
+| `OPERATIONSUNITID` |  |  |
+| `SAMPLINGTUBEROAD` |  | 清洗部件 / 外部清洁 / 内部清洁 / 采样管路 / 半年 |
+| `TEMPERATUREMODEL` |  | 温度计 / ±2℃ |
+| `THERMOMETERVALUE` |  | 环境温度 / 仪器显示值 / 流量计显示值 / 是否校准 / 季度 |
+| `WORKINGORDERCODE` |  |  |
+| `FLOWISCALIBRATION` |  | 流量 / 仪器显示值 / 流量计显示值 / 是否校准 |
+| `FLOWEXPIRATIONDATE` |  | 流量计 / ±5% |
+| `MAINTENANCERESULTS` |  | 维修结果 |
+| `PROBLEMDESCRIPTION` |  | 维修记录 / 问题描述 |
+| `FLOWINSTRUMENTVALUE` |  | 流量 / 仪器显示值 / 流量计显示值 / 是否校准 |
+| `FLOWOUTLOOKISNORMAL` |  | 流量计 / ±5% |
+| `INSTRUMENTPARAMETERS` |  | 仪器参数 / 是否正常 |
+| `WETNESSISCALIBRATION` |  | 环境湿度 / 仪器显示值 / 流量计显示值 / 是否校准 |
+| `PRESSUREISCALIBRATION` |  | 环境压力 / 仪器显示值 / 流量计显示值 / 是否校准 |
+| `WETNESSEXPIRATIONDATE` |  | 湿度计 / ±5% |
+| `PRESSUREEXPIRATIONDATE` |  | 压力计 / ±1kPa |
+| `WETNESSINSTRUMENTVALUE` |  | 环境湿度 / 仪器显示值 / 流量计显示值 / 是否校准 |
+| `WETNESSOUTLOOKISNORMAL` |  | 湿度计 / ±5% |
+| `PRESSUREINSTRUMENTVALUE` |  | 环境压力 / 仪器显示值 / 流量计显示值 / 是否校准 |
+| `PRESSUREOUTLOOKISNORMAL` |  | 压力计 / ±1kPa |
+| `TEMPERATUREISCALIBRATION` |  | 环境温度 / 仪器显示值 / 流量计显示值 / 是否校准 / 季度 |
+| `CALIBRATIONMEMBRANEISPASS` |  | 校准膜 / 是否合格 |
+| `TEMPERATUREEXPIRATIONDATE` |  | 温度计 / ±2℃ |
+| `SAMPLINGHEADANDCUTTINGHEAD` |  | 压头和垫块 / 采样头及切割头 / 是否漏气 |
+| `TEMPERATUREINSTRUMENTVALUE` |  | 环境温度 / 仪器显示值 / 流量计显示值 / 是否校准 / 季度 |
+| `TEMPERATUREOUTLOOKISNORMAL` |  | 温度计 / ±2℃ |
 
 **平台校验器：**`DEVICECODE`=required；`DEVICEMODEL`=required
 
@@ -1155,6 +1288,7 @@
 | `LINGDIANSDTDATE` | 零点开始时间 |  |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单编号 |  |
+| `RFQGASEOUSCHECKID` |  |  |
 
 ## RF_Q_GASEOUSMULTIPOINT_NO2
 - 实体文件：`ReportForms/RF_Q_GASEOUSMULTIPOINT_NO2.cs`
@@ -1226,6 +1360,7 @@
 | `LINGDIANSDTDATE` | 零点开始时间 |  |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单编号 |  |
+| `RFQGASEOUSCHECKID` |  |  |
 
 ## RF_Q_GASEOUSMULTIPOINT_O3
 - 实体文件：`ReportForms/RF_Q_GASEOUSMULTIPOINT_O3.cs`
@@ -1297,6 +1432,7 @@
 | `LINGDIANSDTDATE` | 零点开始时间 |  |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单编号 |  |
+| `RFQGASEOUSCHECKID` |  |  |
 
 ## RF_Q_GASEOUSMULTIPOINT_SO2
 - 实体文件：`ReportForms/RF_Q_GASEOUSMULTIPOINT_SO2.cs`
@@ -1368,6 +1504,7 @@
 | `LINGDIANSDTDATE` | 零点开始时间 |  |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单编号 |  |
+| `RFQGASEOUSCHECKID` |  |  |
 
 ## RF_Q_GASEOUSPRECISION_CO
 - 实体文件：`ReportForms/RF_Q_GASEOUSPRECISION_CO.cs`
@@ -1447,6 +1584,7 @@
 | `CALIBRATIONDATE` | 校准日期 |  |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单编号 |  |
+| `RFQGASEOUSPRECISIONID` |  |  |
 
 ## RF_Q_GASEOUSPRECISION_NO2
 - 实体文件：`ReportForms/RF_Q_GASEOUSPRECISION_NO2.cs`
@@ -1526,6 +1664,7 @@
 | `CALIBRATIONDATE` | 校准日期 |  |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单编号 |  |
+| `RFQGASEOUSPRECISIONID` |  |  |
 
 ## RF_Q_GASEOUSPRECISION_O3
 - 实体文件：`ReportForms/RF_Q_GASEOUSPRECISION_O3.cs`
@@ -1605,6 +1744,7 @@
 | `CALIBRATIONDATE` | 校准日期 |  |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单编号 |  |
+| `RFQGASEOUSPRECISIONID` |  |  |
 
 ## RF_Q_GASEOUSPRECISION_SO2
 - 实体文件：`ReportForms/RF_Q_GASEOUSPRECISION_SO2.cs`
@@ -1684,6 +1824,7 @@
 | `CALIBRATIONDATE` | 校准日期 |  |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单编号 |  |
+| `RFQGASEOUSPRECISIONID` |  |  |
 
 ## RF_Q_GaseousFlowCheck
 - 实体文件：`ReportForms/RF_Q_GaseousFlowCheck.cs`
@@ -1691,7 +1832,112 @@
 
 | 列 | 含义（实体注释） | 视图标签 |
 | --- | --- | --- |
+| `ID` |  |  |
+| `P_AS` |  | 出厂编号 / 斜率 |
+| `P_BS` |  | 上次校准日期 / 截距 / 测量显示值 |
+| `P_PA` |  | 下次校准日期 / 截距 / 真实值(Pa) |
+| `P_RS` |  | 下次校准日期 / 截距 / 真实值(Pa) |
+| `T_TA` |  | 上次校准日期 / 下次校准日期 / 真实值(Ta) |
+| `D_AC1` |  | 流量检查日期 / 上一次 / 零气 |
+| `D_AC2` |  | 下一次 / 标准气 |
+| `D_BC1` |  | 流量检查日期 / 上一次 / 零气 |
+| `D_BC2` |  | 下一次 / 标准气 |
+| `D_RC1` |  | 流量检查日期 / 上一次 / 零气 |
+| `D_RC2` |  | 下一次 / 标准气 |
+| `F_AS1` |  | 零气 |
+| `F_AS2` |  | 标准气 |
+| `F_BS1` |  | 零气 |
+| `F_BS2` |  | 标准气 |
+| `F_RS1` |  | 零气 |
+| `F_RS2` |  | 标准气 |
+| `AREAID` |  |  |
+| `REMARK` |  | 备注 |
+| `EDTTIME` |  | 操作日期 / 开始时间 / 结束时间 |
+| `RF_D_20` |  | 20% |
+| `RF_D_35` |  | 35% |
+| `RF_D_50` |  | 50% |
+| `RF_D_60` |  | 60% |
+| `RF_D_80` |  | 标准气 / 80% |
+| `RF_D_85` |  | 零气 / 85% |
+| `SDTTIME` |  | 操作日期 / 开始时间 / 结束时间 |
+| `DF_QM_20` |  | 20% |
+| `DF_QM_35` |  | 35% |
+| `DF_QM_50` |  | 50% |
+| `DF_QM_60` |  | 60% |
+| `DF_QM_80` |  | 标准气 / 80% |
+| `DF_QM_85` |  | 零气 / 85% |
+| `HUMIDITY` |  | 校准人员 / 室内温度 / 室内湿度 |
+| `RF_QA_20` |  | 20% |
+| `RF_QA_35` |  | 35% |
+| `RF_QA_50` |  | 50% |
+| `RF_QA_60` |  | 60% |
+| `RF_QA_80` |  | 标准气 / 80% |
+| `RF_QA_85` |  | 零气 / 85% |
+| `RF_QS_20` |  | 20% |
+| `RF_QS_35` |  | 35% |
+| `RF_QS_50` |  | 50% |
+| `RF_QS_60` |  | 60% |
+| `RF_QS_80` |  | 标准气 / 80% |
+| `RF_QS_85` |  | 零气 / 85% |
+| `CHECKDATE` |  |  |
+| `STATIONID` |  |  |
+| `CREATEDATE` |  | 操作日期 / 开始时间 / 结束时间 |
+| `REVIEWDATE` |  |  |
+| `AUDITORDATE` |  |  |
+| `PROCESSTYPE` |  |  |
+| `TEMPERATURE` |  | 校准人员 / 室内温度 / 室内湿度 |
+| `DF_VALUVE_20` |  | 20% |
+| `DF_VALUVE_35` |  | 35% |
+| `DF_VALUVE_50` |  | 50% |
+| `DF_VALUVE_60` |  | 60% |
+| `DF_VALUVE_80` |  | 标准气 / 80% |
+| `DF_VALUVE_85` |  | 零气 / 85% |
+| `PREPARERDATE` |  |  |
+| `REVIEWUSERID` |  |  |
+| `RF_VALUVE_20` |  | 20% |
+| `RF_VALUVE_35` |  | 35% |
+| `RF_VALUVE_50` |  | 50% |
+| `RF_VALUVE_60` |  | 60% |
+| `RF_VALUVE_80` |  | 标准气 / 80% |
+| `RF_VALUVE_85` |  | 零气 / 85% |
+| `AUDITORUSERID` |  |  |
+| `D_DEVICEMODEL` |  | 仪器型号 / 流量校准方程(Y_真实值，X_显示值) |
+| `D_FACTORYCODE` |  | 出厂编号 / 斜率(Ac) / 截距(Bc) / 相关系数(Rc) |
+| `POLLUTANTTYPE` |  |  |
+| `P_DEVICEMODEL` |  | 设备型号 / 校准方程(Y_真实值，X_显示值) |
+| `P_FACTORYCODE` |  | 出厂编号 / 斜率 |
+| `T_DEVICEMODEL` |  | 设备型号 / 出厂编号 |
+| `T_FACTORYCODE` |  | 设备型号 / 出厂编号 |
+| `F_DEVICEMODEL1` |  | 零气 |
+| `F_DEVICEMODEL2` |  | 标准气 |
+| `F_FACTORYCODE1` |  | 零气 |
+| `F_FACTORYCODE2` |  | 标准气 |
+| `PREPARERUSERID` |  |  |
+| `CALIBRATEUSERID` |  |  |
+| `OPERATIONSUNITID` |  |  |
+| `P_MEASURINGRANGE` |  |  |
+| `P_MEASURINGVALUE` |  | 上次校准日期 / 截距 / 测量显示值 |
+| `T_MEASURINGRANGE` |  | 测量范围 / 示值修正量 / 测量显示值 |
+| `T_MEASURINGVALUE` |  | 测量范围 / 示值修正量 / 测量显示值 |
+| `WORKINGORDERCODE` |  |  |
 | `CALCULATIONMETHOD` | 加热方式 |  |
+| `P_CORRECTIONVALUE` |  |  |
+| `T_CORRECTIONVALUE` |  | 测量范围 / 示值修正量 / 测量显示值 |
+| `D_CALIBRATEDATENEXT` |  | 下一次 / 标准气 |
+| `D_CALIBRATEDATEPREV` |  | 流量检查日期 / 上一次 / 零气 |
+| `F_CALIBRATIONRANGE1` |  | 零气 |
+| `F_CALIBRATIONRANGE2` |  | 标准气 |
+| `P_CALIBRATEDATENEXT` |  | 下次校准日期 / 截距 / 真实值(Pa) |
+| `P_CALIBRATEDATEPREV` |  | 上次校准日期 / 截距 / 测量显示值 |
+| `T_CALIBRATEDATENEXT` |  | 上次校准日期 / 下次校准日期 / 真实值(Ta) |
+| `T_CALIBRATEDATEPREV` |  | 上次校准日期 / 下次校准日期 / 真实值(Ta) |
+| `F_CALIBRATEDATENEXT1` |  | 零气 |
+| `F_CALIBRATEDATENEXT2` |  | 标准气 |
+| `F_CALIBRATEDATEPREV1` |  | 零气 |
+| `F_CALIBRATEDATEPREV2` |  | 标准气 |
+| `D_CALIBRATIONEQUATION` |  |  |
+| `F_CALIBRATIONEQUATION` |  |  |
+| `P_CALIBRATIONEQUATION` |  |  |
 
 **平台校验器：**`DF_QM_20`=required；`DF_QM_35`=required；`DF_QM_50`=required；`DF_QM_60`=required；`DF_QM_80`=required；`DF_QM_85`=required；`DF_VALUVE_20`=required；`DF_VALUVE_35`=required；`DF_VALUVE_50`=required；`DF_VALUVE_60`=required；`DF_VALUVE_80`=required；`DF_VALUVE_85`=required；`D_AC1`=required；`D_AC2`=required；`D_BC1`=required；`D_BC2`=required；`D_DEVICEMODEL`=required；`D_FACTORYCODE`=required；`D_RC1`=required；`D_RC2`=required；`F_AS1`=required；`F_AS2`=required；`F_BS1`=required；`F_BS2`=required；`F_CALIBRATIONRANGE1`=required；`F_CALIBRATIONRANGE2`=required；`F_DEVICEMODEL1`=required；`F_DEVICEMODEL2`=required；`F_FACTORYCODE1`=required；`F_FACTORYCODE2`=required；`F_RS1`=required；`F_RS2`=required；`HUMIDITY`=required；`P_AS`=required；`P_BS`=required；`P_DEVICEMODEL`=required；`P_FACTORYCODE`=required；`P_MEASURINGVALUE`=required；`P_PA`=required；`P_RS`=required；`RF_D_20`=required；`RF_D_35`=required；`RF_D_50`=required；`RF_D_60`=required；`RF_D_80`=required；`RF_D_85`=required；`RF_QA_20`=required；`RF_QA_35`=required；`RF_QA_50`=required；`RF_QA_60`=required；`RF_QA_80`=required；`RF_QA_85`=required；`RF_QS_20`=required；`RF_QS_35`=required；`RF_QS_50`=required；`RF_QS_60`=required；`RF_QS_80`=required；`RF_QS_85`=required；`RF_VALUVE_20`=required；`RF_VALUVE_35`=required；`RF_VALUVE_50`=required；`RF_VALUVE_60`=required；`RF_VALUVE_80`=required；`RF_VALUVE_85`=required；`TEMPERATURE`=required；`T_CORRECTIONVALUE`=required；`T_DEVICEMODEL`=required；`T_FACTORYCODE`=required；`T_MEASURINGRANGE`=required；`T_MEASURINGVALUE`=required；`T_TA`=required
 
@@ -2047,6 +2293,7 @@
 | `AUDITORDATE` | 审核时间 |  |
 | `DEIVCEMODEL` | 仪器型号(PM10) | 仪器编号 / 检查日期 |
 | `PROCESSTYPE` | 处理方式/类型 |  |
+| `PREPARERDATE` |  |  |
 | `REVIEWUSERID` | 复核人 |  |
 | `AUDITORUSERID` | 审核人 |  |
 | `PREPARERUSERID` | 填表人 |  |
@@ -2079,6 +2326,10 @@
 | `CHECK3DATE` | 清洁采样风机维护时间 |  |
 | `CHECK4DATE` | 清洁颗粒物采样管维护时间 |  |
 | `CHECK5DATE` | 清洁角反射镜（长光程）维护时间 |  |
+| `CHECK6DATE` |  |  |
+| `CHECK7DATE` |  |  |
+| `CHECK8DATE` |  |  |
+| `CHECK9DATE` |  |  |
 | `CREATEDATE` | 创建日期 |  |
 | `REVIEWDATE` | 复核时间 |  |
 | `AUDITORDATE` | 审核时间 |  |
@@ -2088,6 +2339,10 @@
 | `CHACK3USERID` | 清洁采样风机巡检人 |  |
 | `CHACK4USERID` | 清洁颗粒物采样管巡检人 |  |
 | `CHACK5USERID` | 清洁角反射镜（长光程）巡检人 |  |
+| `CHACK6USERID` |  |  |
+| `CHACK7USERID` |  |  |
+| `CHACK8USERID` |  |  |
+| `CHACK9USERID` |  |  |
 | `PREPARERDATE` | 填报时间(单据每次点保存更新的时间) |  |
 | `REVIEWUSERID` | 复核人 |  |
 | `AUDITORUSERID` | 审核人 |  |
@@ -2104,8 +2359,10 @@
 | --- | --- | --- |
 | `YEAR` | 年 | 年份： / 季度： |
 | `CFJRK` | 清洗采样总管及采样风机 备注 | 1 / 清洗采样总管及采样风机 |
+| `AREAID` |  |  |
 | `PM10RK` | PM10 备注 | 2 / PM10 监测仪器进行标准膜校准 或K0值检查 |
 | `PM25RK` | PM25 备注 | 3 / PM2.5 监测仪器进行标准膜校准 或K0值检查 |
+| `REMARK` |  |  |
 | `CFJGZQK` | 清洗采样总管及采样风机 工作情况 | 1 / 清洗采样总管及采样风机 |
 | `CFJUSER` | 清洗采样总管及采样风机 运维人员 |  |
 | `QUARTER` | 第几季度 |  |
@@ -2113,20 +2370,80 @@
 | `PM10USER` | PM10 运维人员 |  |
 | `PM25GZQK` | PM25 工作情况 | 3 / PM2.5 监测仪器进行标准膜校准 或K0值检查 |
 | `PM25USER` | PM25 运维人员 |  |
+| `CHECKDATE` |  |  |
+| `STATIONID` |  |  |
+| `CREATEDATE` |  |  |
+| `REVIEWDATE` |  |  |
+| `AUDITORDATE` |  |  |
+| `PROCESSTYPE` |  |  |
+| `PREPARERDATE` |  |  |
+| `REVIEWUSERID` |  |  |
+| `AUDITORUSERID` |  |  |
+| `POLLUTANTTYPE` |  |  |
+| `PREPARERUSERID` |  |  |
+| `OPERATIONSUNITID` |  |  |
+| `WORKINGORDERCODE` |  |  |
+| `STATIONMAINTAINCHECKID` |  |  |
 
 **平台校验器：**`CFJGZQK`=required；`PM10GZQK`=required；`PM25GZQK`=required
 
 ## RF_RULE
 - 实体文件：`ReportForms/RF_RULE.cs`
 
+| 列 | 含义（实体注释） | 视图标签 |
+| --- | --- | --- |
+| `ID` |  |  |
+| `RULENAME` |  |  |
+| `RULETYPE` |  |  |
+| `RULECYCLE` |  |  |
+| `RULETIMES` |  |  |
+| `REMINDERDAYS` |  |  |
+
 ## RF_RULEITEM
 - 实体文件：`ReportForms/RF_RULEITEM.cs`
+
+| 列 | 含义（实体注释） | 视图标签 |
+| --- | --- | --- |
+| `ID` |  |  |
+| `SHORTNAME` |  |  |
+| `RULEITEMTAG` |  |  |
+| `RULEITEMNAME` |  |  |
+| `POLLUTANTTYPE` |  |  |
+| `PLANFINISHTIME` |  |  |
 
 ## RF_RULEITEM_RELEVANCE
 - 实体文件：`ReportForms/RF_RULEITEM_RELEVANCE.cs`
 
+| 列 | 含义（实体注释） | 视图标签 |
+| --- | --- | --- |
+| `ID` |  |  |
+| `RULETYPE` |  |  |
+| `USERTYPE` |  |  |
+| `RULEITEMTAG` |  |  |
+
 ## RF_RuleItemTask
 - 实体文件：`ReportForms/RF_RuleItemTask.cs`
+
+| 列 | 含义（实体注释） | 视图标签 |
+| --- | --- | --- |
+| `ID` |  |  |
+| `ISOVER` |  |  |
+| `TASKNUM` |  |  |
+| `DEVICEID` |  |  |
+| `DIFFDAYS` |  |  |
+| `MONTHNUM` |  |  |
+| `NEXTDATE` |  |  |
+| `PREVDATE` |  |  |
+| `RULETYPE` |  |  |
+| `BRANDCODE` |  |  |
+| `MONTHSPAN` |  |  |
+| `STATIONID` |  |  |
+| `CURRENTDATE` |  |  |
+| `RULEITEMTAG` |  |  |
+| `RULEITEMNAME` |  |  |
+| `POLLUTANTTYPE` |  |  |
+| `PREVORDERCODE` |  |  |
+| `CURRENTORDERCODE` |  |  |
 
 ## RF_SEC_APPLICATIONFORM
 - 实体文件：`ReportForms/RF_SEC_APPLICATIONFORM.cs`
@@ -2162,6 +2479,7 @@
 | `PREPARERUSERID` | 填表人 |  |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单编号 |  |
+| `APPLICATIONFORMID` |  |  |
 
 ## RF_SEC_GASEOUSCHECK
 - 实体文件：`ReportForms/RF_SEC_GASEOUSCHECK.cs`
@@ -2254,9 +2572,11 @@
 | `REVIEWDATE` | 复核时间 |  |
 | `AUDITORDATE` | 审核时间 |  |
 | `FIELDUNITID` | 现场单位ID |  |
+| `PROCESSTYPE` |  |  |
 | `PREPARERDATE` | 填报时间(单据每次点保存更新的时间) |  |
 | `REVIEWUSERID` | 复核人 |  |
 | `AUDITORUSERID` | 审核人 |  |
+| `POLLUTANTTYPE` |  |  |
 | `PREPARERUSERID` | 填表人 |  |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单编号 |  |
@@ -2326,10 +2646,15 @@
 | `LLJZFYQSZ2` | 流量校准辅流量仪器设定流量2 |  |
 | `LLJZZYQSZ1` | 流量校准主流量仪器设定流量1 |  |
 | `LLJZZYQSZ2` | 流量校准主流量仪器设定流量2 |  |
+| `QYJCREMARK` |  |  |
 | `REVIEWDATE` | 复核时间 |  |
+| `WDJCREMARK` |  |  |
 | `AUDITORDATE` | 审核时间 |  |
+| `JLFLLREMARK` |  |  |
+| `JLZLLREMARK` |  |  |
 | `LLJCZHBZXZH` | 流量检查主流量标准流量计修正后 | 主流量 |
 | `LLJCZHBZXZQ` | 流量检查主流量标准流量计修正前 | 主流量 |
+| `LLJCZREMARK` |  |  |
 | `LLJZFJZHXZH` | 流量校准辅流量校准后修正后 | 辅流量 |
 | `LLJZFJZHXZQ` | 流量校准辅流量校准后修正前 | 辅流量 |
 | `LLJZFJZQXZH` | 流量校准辅流量校准前修正后 | 辅流量 |
@@ -2340,6 +2665,7 @@
 | `LLJZZJZQXZQ` | 流量校准主流量校准前修正前 | 主流量 |
 | `PROCESSTYPE` | 处理方式/类型 |  |
 | `STATIONCODE` | 站内编号 | 子站名称 / 站内编号 |
+| `LLJCZHREMARK` |  |  |
 | `LLJZFJZHXZH1` | 流量校准辅流量校准后修正后1 |  |
 | `LLJZFJZHXZH2` | 流量校准辅流量校准后修正后2 |  |
 | `LLJZFJZHXZQ1` | 流量校准辅流量校准后修正前1 |  |
@@ -2443,6 +2769,7 @@
 
 | 列 | 含义（实体注释） | 视图标签 |
 | --- | --- | --- |
+| `ID` |  |  |
 | `AREAID` | 省市区 |  |
 | `REMARK` | 备注 | 备注： |
 | `DEVICEID` | 仪器id |  |
@@ -2455,6 +2782,12 @@
 | `PREPARERDATE` | 填报时间(单据每次点保存更新的时间) |  |
 | `REVIEWUSERID` | 复核人 |  |
 | `AUDITORUSERID` | 审核人 |  |
+| `PM_DEVICECODE` |  |  |
+| `PM_DEVICETYPE` |  |  |
+| `POLLUTANTTYPE` |  |  |
+| `CLEANINGREMARK` |  | 清洗切割头 |
+| `PM_DEVICEBRAND` |  |  |
+| `PM_DEVICEMODEL` |  |  |
 | `PREPARERUSERID` | 填表人 |  |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单号 |  |
@@ -2467,18 +2800,46 @@
 
 | 列 | 含义（实体注释） | 视图标签 |
 | --- | --- | --- |
+| `ID` |  |  |
+| `F_A` |  |  |
+| `F_B` |  |  |
+| `F_R` |  |  |
 | `AREAID` | 省市区 |  |
+| `NEXT_A` |  | 校准后 |
+| `NEXT_B` |  | 校准后 |
+| `NEXT_C` |  | 校准后 |
+| `NEXT_S` |  | 校准后 |
+| `PREV_A` |  | 校准前 / 是 否 |
+| `PREV_B` |  | 校准前 / 是 否 |
+| `PREV_C` |  | 校准前 / 是 否 |
+| `PREV_S` |  | 校准前 / 是 否 |
 | `REMARK` | 备注 | 备注： |
+| `CHECKEDT` |  | 室内温度(℃) / 室内湿度(％RH) / 开始时间 / 结束时间 |
+| `CHECKSDT` |  | 室内温度(℃) / 室内湿度(％RH) / 开始时间 / 结束时间 |
 | `DEVICEID` | 仪器id |  |
+| `HUMIDITY` |  | 室内温度(℃) / 室内湿度(％RH) / 开始时间 / 结束时间 |
 | `CHECKDATE` | 检查日期 |  |
 | `STATIONID` | 站点ID |  |
 | `CREATEDATE` | 创建日期 |  |
+| `F_NEXTDATE` |  |  |
+| `F_PREVDATE` |  |  |
 | `REVIEWDATE` | 复核时间 |  |
 | `AUDITORDATE` | 审核时间 |  |
+| `ISCALIBRATE` |  |  |
+| `PM_NEXTDATE` |  |  |
+| `PM_PREVDATE` |  |  |
 | `PROCESSTYPE` | 处理方式/类型 |  |
+| `TEMPERATURE` |  | 室内温度(℃) / 室内湿度(％RH) / 开始时间 / 结束时间 |
+| `F_DEVICECODE` |  |  |
 | `PREPARERDATE` | 填报时间(单据每次点保存更新的时间) |  |
 | `REVIEWUSERID` | 复核人 |  |
 | `AUDITORUSERID` | 审核人 |  |
+| `F_DEVICEMODEL` |  |  |
+| `PM_DEVICECODE` |  |  |
+| `PM_DEVICETYPE` |  |  |
+| `POLLUTANTTYPE` |  |  |
+| `PM_DEVICEBRAND` |  |  |
+| `PM_DEVICEMODEL` |  |  |
 | `PREPARERUSERID` | 填表人 |  |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单号 |  |
@@ -2489,19 +2850,66 @@
 
 | 列 | 含义（实体注释） | 视图标签 |
 | --- | --- | --- |
+| `ID` |  |  |
+| `F_A` |  |  |
+| `F_B` |  |  |
+| `F_R` |  |  |
+| `P_R` |  |  |
 | `AREAID` | 省市区 |  |
 | `REMARK` | 备注 | 备注： |
+| `T_VALUE` |  | 温度计 |
+| `CHECKEDT` |  | 室内温度(℃) / 室内湿度(％RH) / 开始时间 / 结束时间 |
+| `CHECKSDT` |  | 室内温度(℃) / 室内湿度(％RH) / 开始时间 / 结束时间 |
 | `DEVICEID` | 仪器id |  |
+| `HUMIDITY` |  | 室内温度(℃) / 室内湿度(％RH) / 开始时间 / 结束时间 |
 | `CHECKDATE` | 检查日期 |  |
 | `STATIONID` | 站点ID |  |
 | `CREATEDATE` | 创建日期 |  |
+| `F_NEXTDATE` |  |  |
+| `F_PREVDATE` |  |  |
+| `P_NEXTDATE` |  |  |
+| `P_PREVDATE` |  |  |
 | `REVIEWDATE` | 复核时间 |  |
+| `T_NEXTDATE` |  | 温度计 |
+| `T_PREVDATE` |  | 温度计 |
 | `AUDITORDATE` | 审核时间 |  |
+| `PM_NEXTDATE` |  |  |
+| `PM_PREVDATE` |  |  |
 | `PROCESSTYPE` | 处理方式/类型 |  |
+| `P_VALUEREAL` |  |  |
+| `TEMPERATURE` |  | 室内温度(℃) / 室内湿度(％RH) / 开始时间 / 结束时间 |
+| `F_DEVICECODE` |  |  |
+| `MAINFLOWDIFF` |  | 主流量读数（l/min）_（在主流量显示屏上） |
+| `MAINFLOWOPEN` |  | 主流量读数（l/min）_（在主流量显示屏上） |
+| `MAINFLOWREAL` |  | 主流量真实值（l/min） |
+| `MAINFLOWSTOP` |  | 主流量读数（l/min）_（在主流量显示屏上） |
 | `PREPARERDATE` | 填报时间(单据每次点保存更新的时间) |  |
+| `P_DEVICECODE` |  | 大气压计 |
 | `REVIEWUSERID` | 复核人 |  |
+| `T_DEVICECODE` |  | 温度计 |
 | `AUDITORUSERID` | 审核人 |  |
+| `F_DEVICEMODEL` |  |  |
+| `MAINFLOWERROR` |  | 主流量设定值与修正值的相对百分误差 |
+| `MAINFLOWFIXED` |  | 主流量修正值（l/min） |
+| `MAINFLOWREFER` |  | 参考流量计指示的主流量值（l/min） |
+| `PM_DEVICECODE` |  |  |
+| `PM_DEVICETYPE` |  |  |
+| `POLLUTANTTYPE` |  |  |
+| `P_DEVICEMODEL` |  | 大气压计 |
+| `REFERFLOWDIFF` |  | 辅流量读数（l/min）_（在主流量显示屏上） |
+| `REFERFLOWOPEN` |  | 辅流量读数（l/min）_（在主流量显示屏上） |
+| `REFERFLOWREAL` |  | 辅流量真实值（l/min） |
+| `REFERFLOWSTOP` |  | 辅流量读数（l/min）_（在主流量显示屏上） |
+| `T_DEVICEMODEL` |  | 温度计 |
+| `MAINFLOWTARGET` |  | 主流量设定值（l/min）_（设定温度/流量显示屏） |
+| `PM_DEVICEBRAND` |  |  |
+| `PM_DEVICEMODEL` |  |  |
 | `PREPARERUSERID` | 填表人 |  |
+| `P_VALUEDISPLAY` |  |  |
+| `REFERFLOWERROR` |  | 辅流量设定值与修正值的相对百分误差 |
+| `REFERFLOWFIXED` |  | 辅流量修正值（l/min） |
+| `REFERFLOWREFER` |  | 参考流量计指示的辅流量值（l/min） |
+| `REFERFLOWTARGET` |  | 辅流量设定值（l/min）_（设定温度/流量显示屏） |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单号 |  |
 
@@ -2531,6 +2939,7 @@
 | `STATIONID` | 站点ID |  |
 | `AGCCKVALUE` | AGC |  |
 | `BJCHECKROW` | 背景导常记录 | 背景 |
+| `CBCHECKROW` |  | 测量信号 (参比信号) / 1.17～1.22(API) 1.1～1.3(聚光) 20～90 mV(零气信号M)(大西比) 120～300 mV(标气信号M)(大西比) 2000～4900 mV（新先河） |
 | `CREATEDATE` | 创建日期 |  |
 | `DEVICECODE` | 仪器编号 | 仪器编号： / 使用满量程（PPM） |
 | `FYCHECKROW` | 反应室温度导常记录 | 样品温度 / 48±4 ℃(API) 15～55 ℃(聚光) 8～47 ℃(赛默飞) 20～45 ℃(大西比) 48±1 ℃（新先河） |
@@ -2543,6 +2952,7 @@
 | `YLCHECKROW` | 斜率导常记录 | 斜率(Slope) / 1±0.3(API) 0.85～1.15(聚光) 0.500～2.000(赛默飞) 0.5～2(天虹) 0.7-1.3（新先河） |
 | `ZYCHECKROW` | 增益导常记录 | 增益 |
 | `AUDITORDATE` | 审核时间 |  |
+| `DEVICEBRAND` |  | 仪器品牌： |
 | `DEVICEMODEL` | 仪器型号 | 仪器型号： / 校准日期 |
 | `GFCCHECKROW` | 相关轮温度异常记录 | 相关轮温度 ( GFC轮温度) / 68±2 ℃(API) 66～70 ℃(聚光) 44±1 ℃(大西比) 68±10 ℃（新先河） |
 | `HWGYDLCKROW` | 红外光源电流导常记录 |  |
@@ -2555,6 +2965,7 @@
 | `PZDYCKVALUE` | 偏置电压 |  |
 | `ZWDCHECKROW` | 紫外灯光强导常记录 |  |
 | `BJCHECKVALUE` | 背景检查值 | 背景 |
+| `CBCHECKVALUE` |  | 测量信号 (参比信号) / 1.17～1.22(API) 1.1～1.3(聚光) 20～90 mV(零气信号M)(大西比) 120～300 mV(标气信号M)(大西比) 2000～4900 mV（新先河） |
 | `CYLLCHECKROW` | 室采样流量导常记录 | 采样流量 (试样流量/样气) / 800±10% ml/min(API) 0.5～1.1 LPM(EC) 720～880 SCCM(聚光) 0.350～1.500 L/min(赛默飞) 300～1200 ml/min(天虹) 0.8～1.2 L/min(大西比) 1000±100 ml/min（新先河） |
 | `CYYLCHECKROW` | 采样压力导常记录 | 采样压力 (样气压力) / 环境压力25～35 In-Hg-A(API) 430～800 TORR(EC) 7～15 PSIA(聚光) 250～1000 mmHg(赛默飞) 50～110 kPa(天虹) 79～106 kPa(大西比) 50-102 Kpa（新先河） |
 | `DEFAULTVALUE` | 设置保存默认值 |  |
@@ -2708,11 +3119,15 @@
 | `GHLM` | 更换滤膜 |  |
 | `KDPY` | 跨度漂移(％) | 跨度漂移(％) |
 | `AREAID` | 省市区 |  |
+| `CDCODE` |  | 传递标准型号： / 传递时间 |
+| `CDDATE` |  | 传递标准型号： / 传递时间 |
 | `MCLPPM` | 满程量浓度 | 满量程的80％ |
 | `REMARK` | 备注 | 备注： |
+| `CDMODEL` |  | 传递标准编号： / 有效期 |
 | `GQCKROW` | 光强异常记录 |  |
 | `LDPYPPB` | 零点漂移(PPB) | 零点漂移(PPB) |
 | `PPMCODE` | 标气瓶 |  |
+| `YXQDATE` |  | 传递标准编号： / 有效期 |
 | `BJREGION` | 背景范围 | 背景 |
 | `DDLCKROW` | 灯电流导常记录 |  |
 | `ZYREGION` | 增益范围 | 增益 |
@@ -2739,6 +3154,7 @@
 | `ZYCHECKROW` | 增益导常记录 | 增益 |
 | `AUDITORDATE` | 审核时间 |  |
 | `CLXHCKVALUE` | 测量信号 |  |
+| `DEVICEBRAND` |  | 仪器品牌： |
 | `DEVICEMODEL` | 仪器型号 | 仪器型号： / 校准日期 |
 | `GDCDCKVALUE` | 光池灯温度 |  |
 | `JXWDCKVALUE` | 机箱温度 |  |
@@ -2763,12 +3179,16 @@
 | `YLCHECKVALUE` | 斜率检查值 | 斜率(Slope) / 1.0±1.5(API) 0.85～1.15(聚光) 0.500～2.000(赛默飞) 0.5～2(天虹) 0.5～1.5(新先河) |
 | `ZYCHECKVALUE` | 增益检查值 | 增益 |
 | `AUDITORUSERID` | 审核人 |  |
+| `GYBCHECKVALUE` |  | 测量信号(测量电压/紫外测量检测器信号) / 2500～4800 mV(API) 1.5～4.096 V(聚光) 500～4800 mV(ESA) 45000～150000 HZ(赛默飞) 2300～5200 mV(天虹) 2000～4900 mV(新先河) |
 | `PMTCHECKVALUE` | 参比信号检查值 |  |
 | `POLLUTANTTYPE` | 污染物类型 |  |
 | `ZWDCHECKVALUE` | 紫外灯光强检查值 | 参比信号(参比电压/紫外参考检测器信号/模拟电压) / 2500～4800 mV(API) 1.5～4.096 V(聚光) 500～4800 mV(ESA) 45000～150000 HZ(赛默飞) 2300～5200 mV(天虹) 2000～4900 mV(新先河) |
+| `CYLLCHECKVALUE` |  | 采样流量(试样流量/样气流量) / 800±10% ml/min(API) 0.25～0.55 LPM(EC) 720～880 SCCM(聚光) 0.400～1.400 L/min(赛默飞A，B路) 300～1200 ml/min(天虹) 1.2～1.7 L/min(大西比) 800±80 ml/min(新先河) |
 | `CYYLCHECKVALUE` | 采样压力检查值 | 压力(样气压力) / 环境压力-2 In-Hg-A(API) 400～800 TORR(EC) 7～15 psia(聚光) 200～1000 mmHg(赛默飞) 50～110 kPa(天虹) 90～106 kPa(大西比) 50～102 kPa(新先河) |
 | `PREPARERUSERID` | 填表人 |  |
+| `ZWDBCHECKVALUE` |  | 参比信号(参比电压/紫外参考检测器信号/模拟电压) / 2500～4800 mV(API) 1.5～4.096 V(聚光) 500～4800 mV(ESA) 45000～150000 HZ(赛默飞) 2300～5200 mV(天虹) 2000～4900 mV(新先河) |
 | `CALIBRATIONDATE` | 校准日期 | 仪器型号： / 校准日期 |
+| `CYLLBCHECKVALUE` |  | 采样流量(试样流量/样气流量) / 800±10% ml/min(API) 0.25～0.55 LPM(EC) 720～880 SCCM(聚光) 0.400～1.400 L/min(赛默飞A，B路) 300～1200 ml/min(天虹) 1.2～1.7 L/min(大西比) 800±80 ml/min(新先河) |
 | `CYLLCHECKVALUEA` | 采样流量检查值A |  |
 | `CYLLCHECKVALUEB` | 采样流量检查值B |  |
 | `LDBIAODINGVALUE` | 零点标定值 | 零点 |
@@ -2868,6 +3288,7 @@
 
 | 列 | 含义（实体注释） | 视图标签 |
 | --- | --- | --- |
+| `ID` |  |  |
 | `XDWC` | 相对误差1 |  |
 | `LLJXH` | 流量计 型 号1 |  |
 | `SYCJCZ` | 上一次监测值1 |  |
@@ -2899,8 +3320,24 @@
 | `D2WC2` | D2相对 误差2 | S P A N FOIL / D 2 |
 | `XSJZH` | 系数校准后 |  |
 | `XSJZQ` | 系数校准前 |  |
+| `AREAID` |  |  |
+| `REMARK` |  | 备注： |
 | `BJZCCBH` | 标准膜出厂编号 |  |
 | `BZMMODEL` | 标准膜型号 |  |
+| `CHECKDATE` |  |  |
+| `STATIONID` |  |  |
+| `CREATEDATE` |  |  |
+| `REVIEWDATE` |  |  |
+| `AUDITORDATE` |  |  |
+| `PROCESSTYPE` |  |  |
+| `PREPARERDATE` |  |  |
+| `REVIEWUSERID` |  |  |
+| `AUDITORUSERID` |  |  |
+| `POLLUTANTTYPE` |  |  |
+| `PREPARERUSERID` |  |  |
+| `OPERATIONSUNITID` |  |  |
+| `WORKINGORDERCODE` |  |  |
+| `GRAINCALIBRATIONCHECKID` |  |  |
 
 **平台校验器：**`BJZCCBH`=required；`BZMMODEL`=required；`BZZ1`=required；`BZZ2`=required；`CCCJ`=required；`D1WC1`=required；`D2WC2`=required；`EDZ1`=required；`EDZ2`=required；`NEW`=required；`OLD`=required；`SNSD`=required；`SNWD`=required；`XSJZH`=required；`XSJZQ`=required
 
@@ -2926,8 +3363,24 @@
 | `D2WC2` | D2相对 误差2 | S P A N FOIL / D 2 |
 | `XSJZH` | 系数校准后 |  |
 | `XSJZQ` | 系数校准前 |  |
+| `AREAID` |  |  |
+| `REMARK` |  | 备注： |
 | `BJZCCBH` | 标准膜出厂编号 |  |
 | `BZMMODEL` | 标准膜型号 |  |
+| `CHECKDATE` |  |  |
+| `STATIONID` |  |  |
+| `CREATEDATE` |  |  |
+| `REVIEWDATE` |  |  |
+| `AUDITORDATE` |  |  |
+| `PROCESSTYPE` |  |  |
+| `PREPARERDATE` |  |  |
+| `REVIEWUSERID` |  |  |
+| `AUDITORUSERID` |  |  |
+| `POLLUTANTTYPE` |  |  |
+| `PREPARERUSERID` |  |  |
+| `OPERATIONSUNITID` |  |  |
+| `WORKINGORDERCODE` |  |  |
+| `GRAINCALIBRATIONCHECKID` |  |  |
 
 **平台校验器：**`BJZCCBH`=required；`BZMMODEL`=required；`BZZ1`=required；`BZZ2`=required；`CCCJ`=required；`D1WC1`=required；`D2WC2`=required；`EDZ1`=required；`EDZ2`=required；`NEW`=required；`OLD`=required；`SNSD`=required；`SNWD`=required；`XSJZH`=required；`XSJZQ`=required
 
@@ -2938,6 +3391,7 @@
 | --- | --- | --- |
 | `AREAID` | 省市区 |  |
 | `REMARK` | 备注 |  |
+| `ENDTIME` |  |  |
 | `INSIDE1` | 站房内部的供电、通讯是否畅通 |  |
 | `INSIDE2` | 站房内部给排水、供暖设施、空调工作状况 |  |
 | `INSIDE3` | 站房内有无气泵产生的异常声音 |  |
@@ -2963,6 +3417,7 @@
 | `OUTSIDE7` | 站房防雷接地是否完好 |  |
 | `OUTSIDE8` | 站房屋顶是否完好，有无漏雨 |  |
 | `CHECKDATE` | 检查时间 |  |
+| `STARTTIME` |  |  |
 | `STATIONID` | 站点ID |  |
 | `CREATEDATE` | 创建日期 |  |
 | `REVIEWDATE` | 复核时间 |  |
@@ -3010,6 +3465,7 @@
 | `CLEANINGMAINTENANCE` | 清洗维护类 | 清洗维护类 |
 | `EQUIPMENTMAINTENANCE` | 设备维修类 | 设备维修类 |
 | `REPLACEMENTSPAREPARTS` | 更换耗材备件类 | 更换耗材备件类 |
+| `RFWINSPECTIONSUMMARYID` |  |  |
 
 **平台校验器：**`CALIBRATIONCLASS`=required；`CAR`=required；`CHANGEMACHINE`=required；`CLEANINGMAINTENANCE`=required；`EQUIPMENTMAINTENANCE`=required；`OTHER`=required；`REPLACEMENTSPAREPARTS`=required；`ROUTINEINSPECTION`=required；`USERS`=required
 
@@ -3065,6 +3521,10 @@
 
 | 列 | 含义（实体注释） | 视图标签 |
 | --- | --- | --- |
+| `ISOK1` |  |  |
+| `ISOK2` |  |  |
+| `ISOK3` |  |  |
+| `ISOK4` |  |  |
 | `AREAID` | 省市区 |  |
 | `CHECKDATE` | 检查时间 |  |
 | `STATIONID` | 站点ID |  |
@@ -3102,6 +3562,7 @@
 | `OTHERVALUE` | 其他参数 |  |
 | `REVIEWDATE` | 复核时间 |  |
 | `AUDITORDATE` | 审核时间 |  |
+| `DEVICEBRAND` |  |  |
 | `DEVICECODEN` | 仪器编号 |  |
 | `DEVICEMODEL` | 仪器型号 |  |
 | `PROCESSTYPE` | 处理方式（1：现场维修/调试，2：更换备机，3：其他） |  |
@@ -3264,8 +3725,14 @@
 
 | 列 | 含义（实体注释） | 视图标签 |
 | --- | --- | --- |
+| `ID` |  |  |
 | `AREAID` | 省市区 |  |
+| `HAS_CO` |  |  |
+| `HAS_NO` |  |  |
+| `HAS_O3` |  |  |
+| `HAS_PM` |  |  |
 | `REMARK` | 备注 | 维护总结： |
+| `HAS_SO2` |  |  |
 | `CHECKDATE` | 检查日期 |  |
 | `STATIONID` | 站点ID |  |
 | `CREATEDATE` | 创建日期 |  |
@@ -3275,6 +3742,7 @@
 | `PREPARERDATE` | 填报时间(单据每次点保存更新的时间) |  |
 | `REVIEWUSERID` | 复核人 |  |
 | `AUDITORUSERID` | 审核人 |  |
+| `POLLUTANTTYPE` |  |  |
 | `PREPARERUSERID` | 填表人 |  |
 | `OPERATIONSUNITID` | 运维单位ID |  |
 | `WORKINGORDERCODE` | 工单号 |  |
