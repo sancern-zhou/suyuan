@@ -65,8 +65,10 @@ const routes = [
       meta: { title: '专家会商推演', requiredModule: 'legacy' }
     },
     {
+      // 兜底：总系统(统一鉴权平台)菜单跳转可能携带任意 defaultRoute 路径，
+      // 统一回首页并保留 query/hash，避免入口 token/授权码丢失
       path: '/:pathMatch(.*)*',
-      redirect: '/'
+      redirect: to => ({ path: '/', query: to.query, hash: to.hash })
     }
 ]
 
