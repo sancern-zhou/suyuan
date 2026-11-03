@@ -1,4 +1,4 @@
-import { ENTRY_OAUTH_KEYS, ENTRY_TOKEN_KEYS } from './entryToken.js'
+import { ENTRY_DES_KEYS, ENTRY_OAUTH_KEYS, ENTRY_TOKEN_KEYS } from './entryToken.js'
 
 
 export function safeRedirect(value, fallback = '/') {
@@ -14,7 +14,7 @@ export function safeRedirect(value, fallback = '/') {
 // 避免失效凭证残留在地址栏与跳转链中。
 export function queryWithoutEntryCredentials(query = {}) {
   const cleaned = { ...query }
-  const sensitiveKeys = [...ENTRY_TOKEN_KEYS, ...ENTRY_OAUTH_KEYS]
+  const sensitiveKeys = [...ENTRY_TOKEN_KEYS, ...ENTRY_OAUTH_KEYS, ...ENTRY_DES_KEYS]
   let changed = false
   for (const key of sensitiveKeys) {
     if (key in cleaned) {
@@ -28,7 +28,7 @@ export function queryWithoutEntryCredentials(query = {}) {
 
 export function fullPathWithoutEntryToken(to) {
   const query = { ...(to?.query || {}) }
-  const sensitiveKeys = [...ENTRY_TOKEN_KEYS, ...ENTRY_OAUTH_KEYS]
+  const sensitiveKeys = [...ENTRY_TOKEN_KEYS, ...ENTRY_OAUTH_KEYS, ...ENTRY_DES_KEYS]
   const hasEntryCredential = sensitiveKeys.some(key => key in query)
   if (!hasEntryCredential) return to?.fullPath || to?.path || '/'
   for (const key of sensitiveKeys) delete query[key]

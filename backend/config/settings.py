@@ -10,6 +10,9 @@ from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
+# 统一鉴权平台 AuthController /url 内置的 des 对称加密密钥字面量（字节码反汇编确认）
+THIRD_PARTY_DES_KEY_PLACEHOLDER = "d3b246fdcf3511eba4d6000c29a4d755"
+
 
 class Settings(BaseSettings):
     """Application configuration settings."""
@@ -297,6 +300,13 @@ class Settings(BaseSettings):
     auth_third_mint_redirect_uri: str = Field(
         default="",
         description="JWT 换正式会话时 directAuthorize 的 redirectUri，须与白名单数据值完全一致",
+    )
+    auth_third_des_key: str = Field(
+        default=THIRD_PARTY_DES_KEY_PLACEHOLDER,
+        description=(
+            "统一鉴权平台 dockingThirdUrl des 串的 3DES 密钥字面量"
+            "（平台代码内置，反汇编确认）；空=使用内置默认"
+        ),
     )
     auth_mock_user_id: str = Field(default="local-developer")
     auth_mock_username: str = Field(default="local-developer")

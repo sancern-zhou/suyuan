@@ -30,6 +30,26 @@ test('jwtLogin exchanges the platform jwt for a session token', async () => {
 })
 
 
+test('desLogin decrypts through the gateway preserving base64 plus signs', async () => {
+  const seen = []
+  const api = createOAuthApi({
+    apiBaseUrl: '/api/suyuan',
+    fetchImpl: async (url) => {
+      seen.push(url)
+      return new Response(JSON.stringify({ accessToken: 'access-des' }), { status: 200 })
+    }
+  })
+
+  const result = await api.desLogin('e9+SraTzUfqX7qMmtg')
+
+  assert.equal(result.accessToken, 'access-des')
+  assert.equal(
+    seen[0],
+    '/api/suyuan/auth/oauth/des-login?des=' + encodeURIComponent('e9+SraTzUfqX7qMmtg')
+  )
+})
+
+
 test('exchangeCode calls the gateway exchange endpoint and returns token fields', async () => {
   const seen = []
   const api = createOAuthApi({

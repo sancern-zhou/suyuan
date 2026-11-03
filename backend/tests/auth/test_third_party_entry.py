@@ -6,7 +6,16 @@ import time
 
 import pytest
 
-from app.auth.third_party_entry import ThirdPartyJwtError, verify_third_party_jwt
+from cryptography.hazmat.primitives import padding as crypto_padding
+from cryptography.hazmat.primitives.ciphers import Cipher, modes
+
+from app.auth.third_party_entry import (
+    THIRD_PARTY_DES_KEY,
+    ThirdPartyDesError,
+    ThirdPartyJwtError,
+    decrypt_third_party_des,
+    verify_third_party_jwt,
+)
 
 SECRET = "2A3D1678-64D2-4527-B3C3-621BB622C0DD"
 
@@ -68,3 +77,28 @@ def test_malformed_and_foreign_alg_are_rejected():
 def test_key_matches_platform_base64_of_secret_bytes():
     # 平台 JwtUtils: signWith(HS256, Base64.getEncoder().encode(secret.getBytes()))
     assert base64.b64encode(SECRET.encode()) == b'MkEzRDE2NzgtNjREMi00NTI3LUIzQzMtNjIxQkI2MjJDMERE'
+
+
+def des_encrypt(plain: dict) -> str:
+    from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES as DeprecatedTripleDES
+
+    key = THIRD_PARTY_DES_KEY.encode()[:24]
+    padder = crypto_padding.PKCS7(64).padder()
+    padded = padder.update(json.dumps(plain, separators=(",", ":")).encode()) + padder.finalize()
+    encryptor = Cipher(DeprecatedTripleDES(key), modes.ECB()).encryptor()
+    return base64.b64encode(encryptor.update(padded) + encryptor.finalize()).decode()
+
+
+def test_des_decrypt_returns_platform_access_token():
+    plain = {"ACCESS_TOKEN": "6a9d8300-147b-4621-9f2d-e46c904ead5f",
+             "ACCESS_USER_ID": 1, "ACCESS_SYS_CODE": "SUYUAN", "ACCESS_LOGIN": []}
+    des = des_encrypt(plain)
+
+    assert decrypt_third_party_des(des) == plain["ACCESS_TOKEN"]
+
+
+def test_des_decrypt_rejects_garbage():
+    with pytest.raises(ThirdPartyDesError, match="malformed"):
+        decrypt_third_party_des("%%%not-base64%%%")
+    with pytest.raises(ThirdPartyDesError, match="no access token"):
+        decrypt_third_party_des(des_encrypt({"OTHER": "x"}))

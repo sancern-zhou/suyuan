@@ -305,3 +305,34 @@ test('a jwt-shaped entry token is exchanged before establishing the session', as
   assert.deepEqual(jwtLoginCalls, ['eyJhbGciOiJIUzI1NiJ9.a.b'])
   assert.equal(location.href, 'http://11.54.200.200:5175/')
 })
+
+
+test('a des entry token is decrypted into the gateway session', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  const api = {
+    currentUser: async () => ({ result: { id: '1', userName: 'ScGuanLy', name: '超级管理员' } })
+  }
+  const oauthApi = {}
+  const desLoginCalls = []
+  const oauthApiWithDes = {
+    desLogin: async des => {
+      desLoginCalls.push(des)
+      return { accessToken: 'des-access-token', refreshToken: '', expiresIn: 3600 }
+    }
+  }
+  const { location, history } = fakeEntryEnvironment(
+    'http://11.54.200.200:5175/?des=' + encodeURIComponent('e9+SraTzUfqX7qMmtgRekLi3sATWgNi5tyEX')
+  )
+  const session = createAuthSession({
+    api, storage, sysCode: 'SUYUAN', oauthApi: oauthApiWithDes,
+    entryLocation: location, entryHistory: history
+  })
+
+  const user = await session.bootstrap()
+
+  assert.equal(user.id, '1')
+  assert.equal(session.token, 'des-access-token')
+  assert.deepEqual(desLoginCalls, ['e9+SraTzUfqX7qMmtgRekLi3sATWgNi5tyEX'])
+  assert.equal(location.href, 'http://11.54.200.200:5175/')
+})

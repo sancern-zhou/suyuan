@@ -46,6 +46,20 @@ export function createOAuthApi({ fetchImpl = globalThis.fetch, apiBaseUrl = conf
         refreshToken: String(body.refreshToken || ''),
         expiresIn: Number(body.expiresIn) || 0
       }
+    },
+    // 总系统"需单点登录"菜单传入的 des 加密串（内含平台会话令牌）→ 解密换取
+    async desLogin(des) {
+      const params = new URLSearchParams({ des })
+      const body = await responseBody(
+        await fetchImpl(`${base}/auth/oauth/des-login?${params.toString()}`)
+      )
+      const accessToken = String(body.accessToken || '').trim()
+      if (!accessToken) throw new Error('des 换取会话未返回访问令牌')
+      return {
+        accessToken,
+        refreshToken: String(body.refreshToken || ''),
+        expiresIn: Number(body.expiresIn) || 0
+      }
     }
   }
 }

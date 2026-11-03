@@ -2,7 +2,13 @@ import { defineStore } from 'pinia'
 import { setAccountIdentity } from './accountSession.js'
 
 import { createAuthApi } from './authApi.js'
-import { extractEntryToken, extractOAuthCode, oauthRedirectUri, stripEntryToken } from './entryToken.js'
+import {
+  extractDesToken,
+  extractEntryToken,
+  extractOAuthCode,
+  oauthRedirectUri,
+  stripEntryToken,
+} from './entryToken.js'
 import { createOAuthApi, createSessionApi, isJwtShape } from './oauthApi.js'
 import { browserAuthStorage } from './storage.js'
 
@@ -39,7 +45,10 @@ export function createAuthSession({
     async bootstrapWithEntryToken() {
       const entryToken = extractEntryToken(entryLocation)
       const oauthCode = extractOAuthCode(entryLocation)
-      if (!entryToken && !oauthCode) return undefined
+      const desToken = !entryToken && !oauthCode && !this.token
+        ? extractDesToken(entryLocation)
+        : ''
+      if (!entryToken && !oauthCode && !desToken) return undefined
 
       let token = ''
       try {
@@ -47,8 +56,15 @@ export function createAuthSession({
           token = isJwtShape(entryToken)
             ? (await oauthApi.jwtLogin(entryToken)).accessToken
             : entryToken
-        } else if (oauthCode) {
+        }
+        if (!token && oauthCode) {
           token = (await oauthApi.exchangeCode(oauthCode, oauthRedirectUri(entryLocation))).accessToken
+        }
+        if (!token) {
+          // 总系统"需单点登录"菜单：dockingThirdUrl 生成的 des 加密串
+          if (desToken) {
+            token = (await oauthApi.desLogin(desToken)).accessToken
+          }
         }
         if (!token) {
           stripEntryToken(entryLocation, entryHistory)

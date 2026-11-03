@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { extractEntryToken, extractOAuthCode, oauthRedirectUri, stripEntryToken } from './entryToken.js'
+import {
+  extractDesToken,
+  extractEntryToken,
+  extractOAuthCode,
+  oauthRedirectUri,
+  stripEntryToken,
+} from './entryToken.js'
 
 
 function fakeLocation(href) {
@@ -81,6 +87,41 @@ test('oauth redirect uri is the site root of the entry origin', () => {
     'http://11.54.200.200:5175/'
   )
   assert.equal(oauthRedirectUri(null), '')
+})
+
+
+test('des token is extracted with base64 plus signs preserved', () => {
+  const raw = 'e9+SraTzUfqX7qMmtgRekLi3sATWgNi5tyEXmrY+b/OYK'
+  assert.equal(
+    extractDesToken(fakeLocation(`http://11.54.200.200:5175/?des=${encodeURIComponent(raw)}`)),
+    raw
+  )
+  // vue-router 中转可能把 + 变成空格，应还原
+  assert.equal(
+    extractDesToken(fakeLocation(`http://11.54.200.200:5175/?des=${raw.replace(/\+/g, '%20')}`)),
+    raw
+  )
+  assert.equal(extractDesToken(fakeLocation('http://11.54.200.200:5175/?code=x')), '')
+})
+
+
+test('des token is recovered from the login redirect parameter', () => {
+  const raw = 'e9+SraTzUfqX7qMmtgRekLi3sATWgNi5tyEXmrY+b/OYK'
+  const target = `/?des=${encodeURIComponent(raw)}`
+  const location = fakeLocation(`http://11.54.200.200:5175/login?redirect=${encodeURIComponent(target)}`)
+  assert.equal(extractDesToken(location), raw)
+})
+
+
+test('strip removes the des parameter from the entry address', () => {
+  const history = fakeHistory()
+  const changed = stripEntryToken(
+    fakeLocation('http://11.54.200.200:5175/?des=abc&from=portal'),
+    history
+  )
+
+  assert.equal(changed, true)
+  assert.equal(history.calls[0].url, 'http://11.54.200.200:5175/?from=portal')
 })
 
 

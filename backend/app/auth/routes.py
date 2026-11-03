@@ -10,7 +10,13 @@ from .errors import AuthenticationRejected, AuthenticationUnavailable
 from .models import CurrentUser
 from .oauth_client import PlatformOAuthClient
 from .service import build_mock_user
-from .third_party_entry import ThirdPartyJwtError, verify_third_party_jwt
+from .third_party_entry import (
+    THIRD_PARTY_DES_KEY,
+    ThirdPartyDesError,
+    ThirdPartyJwtError,
+    decrypt_third_party_des,
+    verify_third_party_jwt,
+)
 from .ws_tickets import WebSocketTicketService
 
 
@@ -160,6 +166,28 @@ async def oauth_jwt_login(
         "refreshToken": result.get("refreshToken"),
         "expiresIn": result.get("expiresIn", result.get("expireIn")),
         "tokenType": result.get("tokenType", "bearer"),
+    }
+
+
+@router.get("/auth/oauth/des-login")
+async def oauth_des_login(
+    des: str = Query(..., min_length=1),
+):
+    """总系统菜单(需单点登录)入口：解密平台 des 串，取其中的正式会话令牌。
+
+    平台 dockingThirdUrl 生成的 des = Base64(3DES/ECB/PKCS5(JSON))，
+    明文含 ACCESS_TOKEN（平台签发的会话令牌，网关直接可用），无需再次签发。
+    """
+    key_text = settings.auth_third_des_key.strip() or THIRD_PARTY_DES_KEY
+    try:
+        access_token = decrypt_third_party_des(des.strip(), key_text)
+    except ThirdPartyDesError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return {
+        "accessToken": access_token,
+        "refreshToken": "",
+        "expiresIn": None,
+        "tokenType": "bearer",
     }
 
 
