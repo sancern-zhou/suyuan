@@ -106,6 +106,7 @@ class XuchangStationDeviationEpisodeService:
                     "target_pollutant": pollutant,
                     "measurement_granularity": granularity,
                     "alert_type": alert_type,
+                    "air_quality_level": alert.get("air_quality_level"),
                     "started_at": occurred_at.isoformat(),
                     "last_seen_at": occurred_at.isoformat(),
                     "last_notified_at": occurred_at.isoformat(),
@@ -143,6 +144,14 @@ class XuchangStationDeviationEpisodeService:
                 episode["hour_count"] = int(episode.get("hour_count", 0)) + 1
                 episode["peak_station_value"] = max(previous_value, current_value)
                 episode["peak_deviation_ratio"] = max(previous_ratio, current_ratio)
+                if alert.get("is_upgrade"):
+                    # #23 升级例外：升级通知归属首条所在过程，不新开事件。
+                    episode["last_upgrade"] = {
+                        "event_id": alert.get("event_id"),
+                        "from_level": alert.get("upgrade_from_level"),
+                        "to_level": alert.get("air_quality_level") or alert.get("upgrade_to_level"),
+                        "occurred_at": occurred_at.isoformat(),
+                    }
                 if should_analyze:
                     episode["last_notified_at"] = occurred_at.isoformat()
                     episode["notification_count"] = int(episode.get("notification_count", 0)) + 1

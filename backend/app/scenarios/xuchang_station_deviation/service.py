@@ -871,42 +871,30 @@ class XuchangStationDeviationAlertService:
             now = now.replace(tzinfo=TZ_SHANGHAI)
         target_slot = _slot(now, "hour" if granularity == "hour" else "minute")
         rows, expected_station_count = self.load_station_rows(target_slot)
-        target_hour = _hour(target_slot).replace(tzinfo=None)
         config = load_air_alert_config(self.output_root)
         allowlist = set(NATIONAL_STATION_CODES)
 
-        # 污染等级为小时粒度（§3.2）：沿用上一完整小时的城市最高 AQI 折算。
-        prev_hour_rows = [
-            row for row in rows
-            if row.get("data_source") == "hour"
-            and isinstance(row.get("data_time"), datetime)
-            and _hour(row["data_time"]) == target_hour - timedelta(hours=1)
-        ]
-        aqi_values = [row.get("aqi") for row in prev_hour_rows if row.get("aqi") is not None]
-        air_quality_level = air_quality_level_from_aqi(max(aqi_values)) if aqi_values else None
-
-        # 不利气象仅作为观测结论随结果输出；分级阈值的灵敏度修正由污染等级
-        # 承担（算法文档 §3.4），不再缩放规则阈值。
+        # 污染等级按站点 × 污染物 1h IAQI 定档，在规则引擎内部计算；
+        # 不利气象仅作为观测结论随结果输出，不再缩放规则阈值。
         meteo_decision = evaluate_adverse_meteorology(meteorology_summary)
 
         candidates: list[dict[str, Any]] = []
         current_values: dict[tuple[str, str, str], float] = {}
         checks: list[dict[str, Any]] = []
-        region_event_stations: list[str] = []
+        region_merged: list[dict[str, Any]] = []
         if granularity == "5min":
             outcome = evaluate_five_minute_cycle(
                 rows,
                 target_slot=target_slot,
                 config=config,
                 states=self.alert_state_store,
-                level_name=air_quality_level,
                 expected_minute_count=expected_station_count.get("minute") or None,
                 station_allowlist=allowlist,
             )
             candidates.extend(outcome.candidates)
             current_values.update(outcome.current_values)
             checks.extend(outcome.checks)
-            region_event_stations = outcome.region_event_stations
+            region_merged.extend(outcome.region_merged)
             if target_slot.minute == 0:
                 # §10：整点槽追加触发 PM2.5 小时规则（上一完整小时）。
                 pm25_outcome = evaluate_pm25_hourly_cycle(
@@ -920,6 +908,7 @@ class XuchangStationDeviationAlertService:
                 candidates.extend(pm25_outcome.candidates)
                 current_values.update(pm25_outcome.current_values)
                 checks.extend(pm25_outcome.checks)
+                region_merged.extend(pm25_outcome.region_merged)
         else:
             pm25_outcome = evaluate_pm25_hourly_cycle(
                 rows,
@@ -932,7 +921,11 @@ class XuchangStationDeviationAlertService:
             candidates.extend(pm25_outcome.candidates)
             current_values.update(pm25_outcome.current_values)
             checks.extend(pm25_outcome.checks)
-        region_event = len(region_event_stations) >= config.r4_region_exempt_sites
+            region_merged.extend(pm25_outcome.region_merged)
+        # CL 区域合并的其余站点：以 regional_merge 抑制留痕（不推送、不占冷却）。
+        for alert in region_merged:
+            alert["suppress_reason"] = "regional_merge"
+        suppressed_pre = [{"alert": alert, "reason": "regional_merge"} for alert in region_merged]
 
         pushed, suppressed, window_summary = apply_push_chain(
             candidates,
@@ -941,8 +934,8 @@ class XuchangStationDeviationAlertService:
             now=now,
             log_store=self.push_log_store,
             current_values=current_values,
-            region_event=region_event,
         )
+        suppressed = suppressed_pre + suppressed
 
         minute_trend_rows = self._minute_trend_rows(rows, target_slot) if granularity == "5min" else []
         events = []
@@ -998,16 +991,13 @@ class XuchangStationDeviationAlertService:
                     "station_id": item["alert"].get("station_id"),
                     "target_pollutant": item["alert"].get("target_pollutant"),
                     "rule_type": item["alert"].get("rule_type"),
-                    "alert_level": item["alert"].get("alert_level"),
+                    "air_quality_level": item["alert"].get("air_quality_level"),
                     "reason": item["reason"],
                 }
                 for item in suppressed
             ],
             "window_summary": window_summary,
-            "region_event": region_event,
-            "region_event_stations": region_event_stations,
             "checks": checks,
             "granularity": granularity,
-            "air_quality_level": air_quality_level,
             "meteorology_decision": meteo_decision,
         }

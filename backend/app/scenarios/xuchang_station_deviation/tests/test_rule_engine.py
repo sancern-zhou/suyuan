@@ -1,4 +1,8 @@
-"""分级告警规则引擎测试——对应《算法需求文档》§13 验收用例（T01-T15 节选）。
+"""浓度告警规则引擎测试（判据修订版）。
+
+对应《空气质量浓度数据告警规则体系（判据修订）》：DS 单点突升、
+CL 连续抬升、OL 站点离群；选档按站点 × 污染物 1h IAQI；
+O3 不判、限值突破不保留、无告警级别。
 
 时间线均使用 Asia/Shanghai 时区的 5 分钟槽/整点槽；行数据用中大表字段
 形态（``_mark`` 列表示质控标记，缺测/负值视为无效）。
@@ -6,7 +10,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -19,9 +23,8 @@ from app.scenarios.xuchang_station_deviation.rule_config import AirAlertRuleConf
 from app.scenarios.xuchang_station_deviation.rule_engine import (
     evaluate_five_minute_cycle,
     evaluate_pm25_hourly_cycle,
-    delta_ratio,
+    level_name_for,
     new_rule_state,
-    trim_mean_others,
 )
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -74,11 +77,11 @@ def _history_rows(station_id: str, values: list[float], slot: datetime,
     return rows
 
 
-def _cycle(rows: list[dict[str, Any]], slot: datetime, level_name: str | None = "良",
+def _cycle(rows: list[dict[str, Any]], slot: datetime,
            config: AirAlertRuleConfig | None = None, states: MemStates | None = None):
     return evaluate_five_minute_cycle(
         rows, target_slot=slot, config=config or AirAlertRuleConfig(),
-        states=states or MemStates(), level_name=level_name,
+        states=states or MemStates(),
     )
 
 
@@ -86,338 +89,446 @@ def _slot_values(outcome, rule_type: str | None = None) -> list[dict[str, Any]]:
     return [c for c in outcome.candidates if rule_type is None or c["rule_type"] == rule_type]
 
 
-# ---- 公共计算组件（§3）----
-
-def test_delta_ratio_follows_pollution_level():
-    config = AirAlertRuleConfig()
-    assert delta_ratio(0.30, 0, config) == 0.40   # 优良 +10pp
-    assert delta_ratio(0.30, 1, config) == 0.40
-    assert delta_ratio(0.30, 2, config) == 0.30   # 轻中度不修正
-    assert abs(delta_ratio(0.30, 4, config) - 0.20) < 1e-9   # 重严重 -10pp
-    assert abs(delta_ratio(0.30, 5, config) - 0.20) < 1e-9
+def _hour_rows(values: list[tuple[datetime, float]], station_id: str, column: str = "pm25") -> list[dict[str, Any]]:
+    return [_row(station_id, moment, {column: value}, source="hour") for moment, value in values]
 
 
-def test_trim_mean_others_requires_five_valid_peers():
-    values = {"a": 100.0, "b": 40.0, "c": 50.0, "d": 60.0, "e": 70.0, "f": 200.0}
-    # 去掉最大 200 与最小 40，均值 60。
-    assert trim_mean_others(values, "a") == 60.0
-    four = {"a": 100.0, "b": 40.0, "c": 50.0, "d": 60.0, "e": 70.0}
-    assert trim_mean_others(four, "a") is None     # 其余站不足 5 个，跳过 R4
+# ---- 选档（站点 × 污染物 1h IAQI）----
+
+def test_level_name_for_uses_hj633_breakpoints():
+    # PM2.5/PM10 用日平均断点（2026 过渡限值：良上限 60/120）；SO2 用 1h 断点
+    #（良下限 150）。
+    assert level_name_for("PM2.5", 55) == "良"
+    assert level_name_for("PM2.5", 65) == "轻度污染"
+    assert level_name_for("PM2.5", 30) == "优"
+    assert level_name_for("PM10", 110) == "良"
+    assert level_name_for("PM10", 130) == "轻度污染"
+    assert level_name_for("SO2", 160) == "良"
+    assert level_name_for("SO2", 100) == "优"
+    assert level_name_for("CO", 6) == "良"
 
 
-def test_r1_limit_version_switches_in_2031():
-    config = AirAlertRuleConfig()
-    assert config.active_limit_version(date(2030, 12, 31))["tiers"]["PM10"]["良"] == 120
-    assert config.active_limit_version(date(2031, 1, 1))["tiers"]["PM10"]["良"] == 100
-    assert config.active_limit_version(date(2031, 1, 1))["tiers"]["PM2.5"]["良"] == 50
+# ---- DS 单点突升 ----
 
-
-# ---- R1 限值突破（§4）----
-
-def test_r1_good_period_pm10_125_is_level3():
-    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
-    rows = [_row(sid, slot, {"pm10": 125 if sid == "a" else 100}) for sid in STATIONS]
-    outcome = _cycle(rows, slot, level_name="良")
-    breaches = _slot_values(outcome, "limit_breach")
-    assert len(breaches) == 1
-    alert = breaches[0]
-    assert (alert["station_id"], alert["alert_level"]) == ("a", 3)
-    assert alert["detail"]["limit_threshold"] == 120
-    # 良档：125 < 120×1.2，只有三级。
-
-
-def test_r1_secondary_and_primary_grades():
-    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
-    rows = [_row(sid, slot, {"pm10": 150 if sid == "a" else 100}) for sid in STATIONS]
-    outcome = _cycle(rows, slot, level_name="良")
-    breaches = _slot_values(outcome, "limit_breach")
-    assert len(breaches) == 1
-    assert breaches[0]["alert_level"] == 2   # 150 ≥ 144
-
-    slot2 = datetime(2026, 9, 12, 9, 5, tzinfo=TZ)
-    rows2 = [_row(sid, slot2, {"o3": 210 if sid == "a" else 180}) for sid in STATIONS]
-    outcome2 = _cycle(rows2, slot2, level_name="中度污染")
-    primary = _slot_values(outcome2, "limit_breach")[0]
-    assert primary["alert_level"] == 1                                    # 达到 1h 国标限值 200
-    assert primary["detail"]["limit_1h"] == 200
-
-
-# ---- R2 突升（§5）----
-
-def _r2_scenario(slot: datetime, current: float, level_name: str = "中度污染",
-                 base_value: float = 90.0, others: float = 90.0,
+def _ds_scenario(slot: datetime, current: float, base_value: float = 40.0,
+                 others: float = 40.0, level_hour_value: float = 60.0,
                  states: MemStates | None = None):
+    """构造良档（小时 60 → PM10 良）下基线 3 期的 DS 场景。"""
     rows = []
     for sid in STATIONS:
-        history_values = [base_value] * 12
-        rows.extend(_history_rows(sid, history_values, slot))
+        hour_value = level_hour_value if sid == "a" else others
+        rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": hour_value}, source="hour"))
+        rows.extend(_history_rows(sid, [base_value] * 4, slot))
     for sid in STATIONS:
         value = current if sid == "a" else others
         rows.append(_row(sid, slot, {"pm10": value}))
-    states = states or MemStates()
-    outcome = _cycle(rows, slot, level_name=level_name, states=states)
-    return outcome, states
+    outcome = _cycle(rows, slot, states=states or MemStates())
+    return outcome
 
 
-def test_r2_level3_requires_two_period_confirmation():
-    # T03：基线 90、中度时段，第一期 125（≥90×1.3）只记 streak，不触发。
+def test_ds_hits_when_both_gates_pass():
+    # 良档：阈值 = max(40×0.3, 15) = 15。55−40=15 → 触发，单窗口即成立。
     slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
-    outcome, states = _r2_scenario(slot, current=125)
-    assert _slot_values(outcome, "sudden_rise") == []
-    assert states.instance("5min", "a", "PM10", "R2")["streak_cnt"] == 1
-    # 第二期仍满足 → 触发三级。
-    slot2 = slot + timedelta(minutes=5)
-    outcome2, states2 = _r2_scenario(slot2, current=130, states=states)
-    rises = _slot_values(outcome2, "sudden_rise")
-    assert len(rises) == 1 and rises[0]["alert_level"] == 3
-    assert rises[0]["detail"]["confirm_streak"] == 2
-
-
-def test_r2_immediate_for_secondary_grade():
-    # 中度时段：130 ≥ 90×1.5=135 不成立；改用 140 ≥ 135 → 二级即时（无确认）。
-    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
-    outcome, _states = _r2_scenario(slot, current=140)
+    outcome = _ds_scenario(slot, current=55.0)
     rises = _slot_values(outcome, "sudden_rise")
-    assert len(rises) == 1 and rises[0]["alert_level"] == 2
+    assert len(rises) == 1 and rises[0]["station_id"] == "a"
+    assert rises[0]["air_quality_level"] == "良"
+    assert rises[0]["detail"]["threshold"] == 15.0
+    assert rises[0]["detail"]["delta"] == 15.0
 
 
-def test_r2_ratio_widens_in_good_period():
-    # 优良时段修正 +10pp：三级阈值 90×1.4=126，125 不再满足原始三级条件。
-    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
-    outcome, _states = _r2_scenario(slot, current=125, level_name="良")
-    assert _slot_values(outcome, "sudden_rise") == []
-    assert outcome.region_event_stations == []
-
-
-def test_r2_floor_blocks_low_absolute_values():
-    # 绝对底线 F(PM10)=100：基线 50 时抬升比例满足，但 90 < 100 不触发。
-    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
-    outcome, _states = _r2_scenario(slot, current=90, base_value=50.0, others=50.0, level_name="中度污染")
-    assert _slot_values(outcome, "sudden_rise") == []
-
-
-def test_r2_streak_resets_after_interruption():
-    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
-    _outcome, states = _r2_scenario(slot, current=125)
-    assert states.instance("5min", "a", "PM10", "R2")["streak_cnt"] == 1
-    # 下一周期回落 → 间断清零（§5.2）。
-    slot2 = slot + timedelta(minutes=5)
-    _outcome2, states2 = _r2_scenario(slot2, current=100, states=states)
-    assert states2.instance("5min", "a", "PM10", "R2")["streak_cnt"] == 0
-
-
-# ---- R3 连续抬升（§6）----
-
-def test_r3_secondary_after_six_continuous_rises():
-    # T04：自 90 连续 6 周期涨至 122（累计 35.6%）→ 二级；前 5 个周期累计
-    # 始终不足 15%，不提前触发三级。每期涨幅均 ≥2%。
-    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
-    series = [90.0, 92.0, 94.0, 96.0, 98.0, 102.0, 122.0]
-    states = MemStates()
-    candidates: list[dict[str, Any]] = []
-    for index, value in enumerate(series):
-        current_slot = slot + timedelta(minutes=5 * index)
-        rows = []
-        for sid in STATIONS:
-            history = series[:index] if sid == "a" else [40.0] * max(index, 1)
-            rows.extend(_history_rows(sid, history, current_slot))
-            rows.append(_row(sid, current_slot, {"pm10": value if sid == "a" else 40.0}))
-        outcome = _cycle(rows, current_slot, level_name="中度污染", states=states)
-        candidates.extend(_slot_values(outcome, "continuous_rise"))
-    assert len(candidates) == 1
-    alert = candidates[0]
-    assert alert["alert_level"] == 2
-    assert alert["detail"]["streak_cnt"] == 6
-    assert alert["rise_count"] == 6
-    assert alert["total_rise_rate"] > 0.30
-
-
-def test_r3_resets_after_missing_slot():
-    # T15：缺测一个周期后连续计数清零，重新累计。
-    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
-    series = [90.0, 93.0, 96.0, None, 96.0, 99.0, 102.0]
-    states = MemStates()
-    candidates: list[dict[str, Any]] = []
-    for index, value in enumerate(series):
-        current_slot = slot + timedelta(minutes=5 * index)
-        rows = []
-        for sid in STATIONS:
-            history = [v for v in series[:index] if v is not None] if sid == "a" else [40.0] * index
-            rows.extend(_history_rows(sid, history, current_slot))
-            if value is not None:
-                rows.append(_row(sid, current_slot, {"pm10": value if sid == "a" else 40.0}))
-        outcome = _cycle(rows, current_slot, level_name="中度污染", states=states)
-        candidates.extend(_slot_values(outcome, "continuous_rise"))
-    # 缺测打断后（且首轮第 4 期持平归零）最多只重新累计到 2 个周期（<4），
-    # 不应有任何 R3 告警。
-    assert candidates == []
-
-
-# ---- R4 空间离群（§7）----
-
-def _r4_scenario(slot: datetime, target_value: float, peer_value: float = 55.0,
-                 level_name: str = "中度污染", pollutant: str = "no2",
-                 states: MemStates | None = None, periods: int = 1):
-    states = states or MemStates()
-    candidates = []
-    for index in range(periods):
-        current_slot = slot + timedelta(minutes=5 * index)
-        rows = []
-        for sid in STATIONS:
-            value = target_value if sid == "a" else peer_value
-            rows.append(_row(sid, current_slot, {pollutant: value}))
-        outcome = _cycle(rows, current_slot, level_name=level_name, states=states)
-        candidates.extend(_slot_values(outcome, "spatial_outlier"))
-    return candidates, states
-
-
-def test_r4_level3_requires_three_persistent_periods():
-    # T05：S 站 NO2=96、其余均值 55：仅持续 2 周期不触发，第 3 周期触发三级。
-    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
-    candidates, _states = _r4_scenario(slot, 96.0, periods=2)
-    assert candidates == []
-    candidates, _states = _r4_scenario(slot, 96.0, periods=3)
-    assert len(candidates) == 1 and candidates[0]["alert_level"] == 3
-    assert candidates[0]["detail"]["hold_streak"] == 3
-
-
-def test_r4_primary_grade_is_immediate():
-    # 一级（≥3 倍）即时：120 ≥ 55×3=165 不成立；用 170 触发。
-    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
-    candidates, _states = _r4_scenario(slot, 170.0)
-    assert len(candidates) == 1 and candidates[0]["alert_level"] == 1
-
-
-def test_r4_heavy_pollution_relaxes_multiples():
-    # 重度污染倍率各减 0.5：二级阈值 55×1.5=82.5 → 96 满足二级（持续 2 周期）。
-    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
-    candidates, _states = _r4_scenario(slot, 96.0, level_name="重度污染", periods=2)
-    assert len(candidates) == 1 and candidates[0]["alert_level"] == 2
-    assert candidates[0]["detail"]["multiples_effective"][2] == 1.5
-
-
-def test_region_event_stations_from_raw_r2_hits():
-    # T06（引擎侧）：4 个站点满足 R2 三级原始条件 → 计入区域过程站点。
+def test_ds_absolute_gate_dominates_low_baseline():
+    # 基线 30、轻度档（小时 130 → PM10 轻度）：阈值 = max(30×0.25, 20) = 20。
+    # Δ15（45−30）< 20 → 不触发；Δ20（50−30）→ 触发。
     slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
     rows = []
     for sid in STATIONS:
-        rows.extend(_history_rows(sid, [90.0] * 12, slot))
-    current = {"a": 130.0, "b": 130.0, "c": 130.0, "d": 130.0, "e": 90.0, "f": 90.0}
+        rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 130.0 if sid == "a" else 30.0}, source="hour"))
+        rows.extend(_history_rows(sid, [30.0] * 4, slot))
+    for sid in STATIONS:
+        rows.append(_row(sid, slot, {"pm10": 45.0 if sid == "a" else 30.0}))
+    outcome = _cycle(rows, slot)
+    assert _slot_values(outcome, "sudden_rise") == []
+    slot2 = slot + timedelta(minutes=5)
+    rows2 = []
+    for sid in STATIONS:
+        rows2.append(_row(sid, slot2 - timedelta(hours=1), {"pm10": 130.0 if sid == "a" else 30.0}, source="hour"))
+        rows2.extend(_history_rows(sid, [30.0] * 5, slot2))
+    for sid in STATIONS:
+        rows2.append(_row(sid, slot2, {"pm10": 50.0 if sid == "a" else 30.0}))
+    outcome2 = _cycle(rows2, slot2)
+    assert len(_slot_values(outcome2, "sudden_rise")) == 1
+
+
+def test_ds_suppressed_when_neighbors_rise_too():
+    # 邻站同向：≥2 个邻站也命中各自 DS 阈值 → 区域过程，不判单点突升。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 40.0}, source="hour"))
+        rows.extend(_history_rows(sid, [40.0] * 4, slot))
+    current = {"a": 60.0, "b": 60.0, "c": 60.0, "d": 40.0, "e": 40.0, "f": 40.0}
     for sid in STATIONS:
         rows.append(_row(sid, slot, {"pm10": current[sid]}))
-    outcome = _cycle(rows, slot, level_name="中度污染")
-    assert set(outcome.region_event_stations) == {"a", "b", "c", "d"}
+    outcome = _cycle(rows, slot)
+    assert _slot_values(outcome, "sudden_rise") == []
 
 
-def test_baseline_below_minimum_skips_relative_rules():
-    # §11：有效值 <8 → 跳过 R2/R3；R1、R4 照常。
+def test_ds_single_station_still_fires_with_two_neighbors_flat():
+    # 只有本站命中、邻站持平 → 单点突升成立。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    outcome = _ds_scenario(slot, current=60.0)
+    assert len(_slot_values(outcome, "sudden_rise")) == 1
+
+
+def test_ds_needs_three_consecutive_history_slots():
+    # 历史槽不足 3 个连续 → 基线缺失，不判 DS。
     slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
     rows = []
     for sid in STATIONS:
-        rows.extend(_history_rows(sid, [90.0] * 7, slot))
+        rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 40.0}, source="hour"))
+        rows.extend(_history_rows(sid, [40.0] * 2, slot))
     for sid in STATIONS:
-        rows.append(_row(sid, slot, {"pm10": 200 if sid == "a" else 90.0}))
-    states = MemStates()
-    outcome = _cycle(rows, slot, level_name="中度污染", states=states)
+        rows.append(_row(sid, slot, {"pm10": 60.0 if sid == "a" else 40.0}))
+    outcome = _cycle(rows, slot)
     assert _slot_values(outcome, "sudden_rise") == []
+
+
+def test_o3_is_not_evaluated():
+    # O3 暂不纳入：任何浓度都不产生 O3 告警。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, slot - timedelta(hours=1), {"o3": 100.0}, source="hour"))
+        rows.extend(_history_rows(sid, [100.0] * 4, slot, column="o3"))
+    for sid in STATIONS:
+        rows.append(_row(sid, slot, {"o3": 300.0 if sid == "a" else 100.0}))
+    outcome = _cycle(rows, slot)
+    assert outcome.candidates == []
+
+
+# ---- CL 连续抬升 ----
+
+def _cl_run(series: list[float], level_hour_value: float = 60.0):
+    """构造良档场景逐槽跑，返回累计的 CL 候选。
+
+    series 为抬升段起点后的值序列；首值即抬升起点，之前自动垫 3 个基线槽
+    （值与首值相同）。邻站全部持平 40。
+    """
+    slot0 = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    states = MemStates()
+    candidates: list[dict[str, Any]] = []
+    baseline_pad = [series[0]] * 3
+    full = baseline_pad + list(series)
+    for index in range(len(full)):
+        slot = slot0 + timedelta(minutes=5 * index)
+        rows = []
+        for sid in STATIONS:
+            rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": level_hour_value}, source="hour"))
+            history = full[:index] if sid == "a" else [40.0] * index
+            rows.extend(_history_rows(sid, history, slot))
+            value = full[index] if sid == "a" else 40.0
+            rows.append(_row(sid, slot, {"pm10": value}))
+        outcome = _cycle(rows, slot, states=states)
+        candidates.extend(_slot_values(outcome, "continuous_rise"))
+    return candidates
+
+
+def test_cl_three_monotonic_segments_with_even_share():
+    # 良档：基线 40、段增量 5/5/5、累计 15 < max(40×0.5, 25)=25 → 不触发；
+    # 段增量 10/10/10、累计 30 ≥ 25、各段 10 ≥ 4.5 → 触发。
+    assert _cl_run([40.0, 45.0, 50.0, 55.0]) == []
+    candidates = _cl_run([40.0, 50.0, 60.0, 70.0])
+    assert len(candidates) == 1
+    alert = candidates[0]
+    assert alert["air_quality_level"] == "良"
+    assert alert["detail"]["total_rise_abs"] == 30.0
+    assert alert["detail"]["segment_gains"] == [10.0, 10.0, 10.0]
+
+
+def test_cl_rejects_uneven_segments():
+    # 单尖峰形态：40→70→70→70。段增量 30/0/0，0 < 30×0.15 → 不判 CL。
+    assert _cl_run([40.0, 70.0, 70.0, 70.0]) == []
+
+
+def test_cl_rejects_dip_in_window():
+    # 中途回落：40→55→50→70。有负段 → 不判 CL。
+    assert _cl_run([40.0, 55.0, 50.0, 70.0]) == []
+
+
+def test_cl_baseline_is_before_start_not_sliding():
+    # 基线固定为抬升起点前 15 分钟均值（40），不随窗口滑动：
+    # 段增量 15/5/5、累计 25 ≥ 25、各段 ≥ 3.75 → 触发。
+    candidates = _cl_run([40.0, 55.0, 60.0, 65.0])
+    assert len(candidates) == 1
+    assert candidates[0]["detail"]["baseline"] == 40.0
+
+
+def test_cl_needs_consecutive_slots():
+    # 缺一个槽 → 窗口不连续，不判 CL。
+    slot0 = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, slot0 - timedelta(hours=1), {"pm10": 40.0}, source="hour"))
+        rows.extend(_history_rows(sid, [40.0, 40.0, 40.0, 40.0], slot0, skip_slots={2}))
+    for sid in STATIONS:
+        rows.append(_row(sid, slot0, {"pm10": 70.0 if sid == "a" else 40.0}))
+    outcome = _cycle(rows, slot0)
     assert _slot_values(outcome, "continuous_rise") == []
-    assert outcome.region_event_stations == []
-    # R1 照常：200 ≥ 200×?；中度档 T=200 → 三级。
-    assert any(c["rule_type"] == "limit_breach" and c["alert_level"] == 3 for c in outcome.candidates)
 
 
 def test_marked_current_value_is_invalid():
-    # 质控标记（§2.1 有效性约定）：带标记的当前值不参与判定。
+    # 质控标记：带标记的当前值不参与判定。
     slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
     rows = []
     for sid in STATIONS:
-        rows.extend(_history_rows(sid, [90.0] * 12, slot))
+        rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 40.0}, source="hour"))
+        rows.extend(_history_rows(sid, [40.0] * 4, slot))
     for sid in STATIONS:
         marks = {"pm10": "质控"} if sid == "a" else None
-        rows.append(_row(sid, slot, {"pm10": 200 if sid == "a" else 90.0}, marks=marks))
-    outcome = _cycle(rows, slot, level_name="中度污染")
+        rows.append(_row(sid, slot, {"pm10": 200 if sid == "a" else 40.0}, marks=marks))
+    outcome = _cycle(rows, slot)
     assert ("5min", "a", "PM10") not in outcome.current_values
     assert all(c["station_id"] != "a" for c in outcome.candidates)
 
 
-# ---- PM2.5 小时版（§8）----
+# ---- OL 站点离群 ----
 
-def test_pm25_hourly_r1_and_r2():
-    # T13：小时值 65（良档 ≥60）→ R1 三级；同时 R2 小时版三级
-    # （65 ≥ 50×1.25=62.5 且差 15 ≥ 15）。
+def _ol_rows(slot: datetime, current: dict[str, float], pollutant: str = "no2"):
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, slot - timedelta(hours=1), {pollutant: 55.0}, source="hour"))
+    for sid in STATIONS:
+        rows.append(_row(sid, slot, {pollutant: current[sid]}))
+    return rows
+
+
+def test_ol_no_alert_level_field():
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    rows = _ol_rows(slot, {"a": 96.0, "b": 55.0, "c": 55.0, "d": 55.0, "e": 55.0, "f": 55.0})
+    outcome = _cycle(rows, slot)
+    assert all("alert_level" not in c for c in outcome.candidates)
+
+
+def test_ol_uses_regional_mean_not_trimmed_mean():
+    # 其余站 55/55/55/55/200：简单平均 = 84（旧去极值口径会剔掉 200 得 55）。
+    # Δ12 < max(84×0.5, 20) → 不触发（若用旧口径 96−55=41 ≥ 27.5+ 会误触发）。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    rows = _ol_rows(slot, {"a": 96.0, "b": 55.0, "c": 55.0, "d": 55.0, "e": 55.0, "f": 200.0})
+    outcome = _cycle(rows, slot)
+    assert _slot_values(outcome, "spatial_outlier") == []
+
+
+def test_ol_requires_two_windows_for_five_min():
+    # 5 分钟 OL 需连续 2 个窗口：第 1 窗口只记 streak，第 2 窗口触发。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    current = {"a": 150.0, "b": 40.0, "c": 40.0, "d": 40.0, "e": 40.0, "f": 40.0}
+    states = MemStates()
+    rows1 = _ol_rows(slot, current, "pm10")
+    outcome1 = _cycle(rows1, slot, states=states)
+    assert _slot_values(outcome1, "spatial_outlier") == []
+    slot2 = slot + timedelta(minutes=5)
+    rows2 = _ol_rows(slot2, current, "pm10")
+    outcome2 = _cycle(rows2, slot2, states=states)
+    outliers = _slot_values(outcome2, "spatial_outlier")
+    assert len(outliers) == 1 and outliers[0]["station_id"] == "a"
+    assert outliers[0]["detail"]["hold_streak"] == 2
+
+
+def test_ol_requires_min_region_stations():
+    # 有效站 <4：不判 OL。
+    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    rows = [_row(sid, slot, {"pm10": 150.0 if sid == "a" else 40.0}) for sid in STATIONS[:3]]
+    outcome = _cycle(rows, slot)
+    assert _slot_values(outcome, "spatial_outlier") == []
+
+
+def test_ol_streak_resets_after_interruption():
+    # 中途一窗不满足 → streak 清零，重新累计 2 窗口才触发。
+    slot0 = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    states = MemStates()
+    up = {"a": 150.0, "b": 40.0, "c": 40.0, "d": 40.0, "e": 40.0, "f": 40.0}
+    down = {**up, "a": 40.0}
+    _cycle(_ol_rows(slot0, up, "pm10"), slot0, states=states)
+    slot1 = slot0 + timedelta(minutes=5)
+    _cycle(_ol_rows(slot1, down, "pm10"), slot1, states=states)
+    slot2 = slot1 + timedelta(minutes=5)
+    outcome2 = _cycle(_ol_rows(slot2, up, "pm10"), slot2, states=states)
+    assert _slot_values(outcome2, "spatial_outlier") == []
+    slot3 = slot2 + timedelta(minutes=5)
+    outcome3 = _cycle(_ol_rows(slot3, up, "pm10"), slot3, states=states)
+    assert len(_slot_values(outcome3, "spatial_outlier")) == 1
+
+
+# ---- PM2.5 小时版 ----
+
+def test_pm25_hourly_ds_and_level_from_same_hour():
+    # 小时值 65 定档为轻度（良上限 60）；轻度 DS 阈值 = max(50×0.25, 10)=12.5；
+    # 65−50=15 ≥ 12.5 → 触发。
     hour = datetime(2026, 9, 12, 8, 0, tzinfo=TZ)
     rows = []
     for sid in STATIONS:
-        for hours_back in (3, 2, 1):
-            rows.append(_row(sid, hour - timedelta(hours=hours_back), {"pm25": 50 if sid == "a" else 40.0}, source="hour"))
-        rows.append(_row(sid, hour, {"pm25": 65 if sid == "a" else 40.0}, source="hour"))
+        rows.append(_row(sid, hour - timedelta(hours=1), {"pm25": 50.0 if sid == "a" else 40.0}, source="hour"))
+        rows.append(_row(sid, hour, {"pm25": 65.0 if sid == "a" else 40.0}, source="hour"))
     outcome = evaluate_pm25_hourly_cycle(
         rows, target_hour=hour, config=AirAlertRuleConfig(), states=MemStates(),
     )
-    by_rule: dict[str, list[dict[str, Any]]] = {}
-    for candidate in outcome.candidates:
-        by_rule.setdefault(candidate["rule_type"], []).append(candidate)
-    assert {c["alert_level"] for c in by_rule["limit_breach"]} == {3}
-    assert {c["alert_level"] for c in by_rule["sudden_rise"]} == {3}
-    assert by_rule["sudden_rise"][0]["detail"]["absolute_gain"] == 15.0
+    rises = [c for c in outcome.candidates if c["rule_type"] == "sudden_rise"]
+    assert len(rises) == 1
+    assert rises[0]["air_quality_level"] == "轻度污染"
+    assert rises[0]["detail"]["threshold"] == 12.5
+    assert rises[0]["measurement_granularity"] == "hour"
 
 
-def test_pm25_hourly_r3_two_hour_rise():
-    # 连续 2 小时上涨（+10%、+18.2%），累计 30% ≥ 15% → 三级。
+def test_pm25_hourly_ds_suppressed_when_region_rises():
+    # 全站同步从 40 → 55：邻站同向（≥2 个命中）→ 不判 DS。
     hour = datetime(2026, 9, 12, 8, 0, tzinfo=TZ)
-    series = [40.0, 44.0, 52.0]
     rows = []
     for sid in STATIONS:
-        for index, value in enumerate(series):
-            rows.append(_row(sid, hour - timedelta(hours=2 - index), {"pm25": value if sid == "a" else 40.0}, source="hour"))
+        rows.append(_row(sid, hour - timedelta(hours=1), {"pm25": 40.0}, source="hour"))
+        rows.append(_row(sid, hour, {"pm25": 55.0}, source="hour"))
+    outcome = evaluate_pm25_hourly_cycle(
+        rows, target_hour=hour, config=AirAlertRuleConfig(), states=MemStates(),
+    )
+    assert [c for c in outcome.candidates if c["rule_type"] == "sudden_rise"] == []
+
+
+def test_pm25_hourly_cl_three_hours():
+    # 连续 3 小时上涨 40→55→65→75，基线取起点前一小时 40：
+    # 累计 35 ≥ max(40×0.5, 25)=25，各段 15/10/10 ≥ 5.25 → 触发。
+    hour0 = datetime(2026, 9, 12, 6, 0, tzinfo=TZ)
+    series = [40.0, 55.0, 65.0, 75.0]
+    rows = []
+    for sid in STATIONS:
+        rows.extend(_hour_rows(
+            [(hour0 + timedelta(hours=i), series[i] if sid == "a" else 40.0) for i in range(4)],
+            sid,
+        ))
     states = MemStates()
     rises: list[dict[str, Any]] = []
     for index in range(len(series)):
-        target = hour - timedelta(hours=2 - index)
+        target = hour0 + timedelta(hours=index)
         outcome = evaluate_pm25_hourly_cycle(
             rows, target_hour=target, config=AirAlertRuleConfig(), states=states,
         )
         rises.extend(c for c in outcome.candidates if c["rule_type"] == "continuous_rise")
-    assert len(rises) == 1 and rises[0]["alert_level"] == 3
-    assert rises[0]["measurement_granularity"] == "hour"
-    assert rises[0]["detail"]["streak_cnt"] == 2
+    assert len(rises) == 1
+    assert rises[0]["detail"]["total_rise_abs"] == 35.0
+    assert rises[0]["detail"]["segment_gains"] == [15.0, 10.0, 10.0]
+
+
+def test_pm25_hourly_ol_single_window():
+    # PM2.5 OL 单窗口即成立：本站 65、其余 40（轻度档阈值 max(40×0.35, 18)=18）。
+    hour = datetime(2026, 9, 12, 8, 0, tzinfo=TZ)
+    rows = []
+    for sid in STATIONS:
+        rows.append(_row(sid, hour, {"pm25": 65.0 if sid == "a" else 40.0}, source="hour"))
+    outcome = evaluate_pm25_hourly_cycle(
+        rows, target_hour=hour, config=AirAlertRuleConfig(), states=MemStates(),
+    )
+    outliers = [c for c in outcome.candidates if c["rule_type"] == "spatial_outlier"]
+    assert len(outliers) == 1 and outliers[0]["station_id"] == "a"
+
+
+# ---- CL 区域合并（>=4 站同因子同窗口命中 → 最大站主告警 + 全站清单）----
+
+def _regional_cl_run(rising: dict[str, float], config: AirAlertRuleConfig | None = None):
+    """6 站 CL 区域场景：前 3 个槽全部 40（基线垫底），后 4 个槽按
+    series_map 逐站抬升（40→50→60→rising[sid]）。"""
+    slot0 = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    full = {sid: [40.0, 40.0, 40.0, 40.0, 50.0, 60.0, rising[sid]] for sid in STATIONS}
+    states = MemStates()
+    outcome = None
+    for index in range(len(full["a"])):
+        slot = slot0 + timedelta(minutes=5 * index)
+        rows = []
+        for sid in STATIONS:
+            rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 60.0}, source="hour"))
+            rows.extend(_history_rows(sid, full[sid][:index], slot))
+            rows.append(_row(sid, slot, {"pm10": full[sid][index]}))
+        outcome = _cycle(rows, slot, config=config, states=states)
+    return outcome
+
+
+def test_regional_rise_merged_to_single_primary():
+    # 4 个站同时抬升（各段 10、累计 30 ≥ 25）→ 合并为一条，
+    # detail.region_stations 带 3 站，其余进 region_merged。
+    outcome = _regional_cl_run({"a": 70.0, "b": 70.0, "c": 70.0, "d": 70.0, "e": 40.0, "f": 40.0})
+    rises = [c for c in outcome.candidates if c["rule_type"] == "continuous_rise"]
+    assert len(rises) == 1
+    primary = rises[0]
+    assert primary["region_merged_count"] == 4
+    assert len(primary["detail"]["region_stations"]) == 3
+    assert {item["station_id"] for item in primary["detail"]["region_stations"]} == {"b", "c", "d"}
+    assert len(outcome.region_merged) == 3
+    assert all(item["station_id"] in {"b", "c", "d"} for item in outcome.region_merged)
+
+
+def test_regional_rise_not_triggered_below_threshold_sites():
+    # 只有 3 个站命中 → 不合并，各自保留候选。
+    outcome = _regional_cl_run({"a": 70.0, "b": 70.0, "c": 70.0, "d": 40.0, "e": 40.0, "f": 40.0})
+    rises = [c for c in outcome.candidates if c["rule_type"] == "continuous_rise"]
+    assert len(rises) == 3
+    assert outcome.region_merged == []
+
+
+def test_regional_rise_merge_can_be_disabled():
+    # cl_region_merge_sites=0：不合并，6 站全部各自保留。
+    outcome = _regional_cl_run(
+        {"a": 70.0, "b": 70.0, "c": 70.0, "d": 70.0, "e": 70.0, "f": 70.0},
+        config=AirAlertRuleConfig(cl_region_merge_sites=0),
+    )
+    assert len([c for c in outcome.candidates if c["rule_type"] == "continuous_rise"]) == 6
 
 
 # ---- 推送链协同（引擎产物 → 管控）----
 
-def test_region_event_suppresses_spatial_outliers_in_chain(tmp_path):
-    slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
-    rows = [_row(sid, slot, {"no2": 170 if sid == "a" else 55.0}) for sid in STATIONS]
-    outcome = _cycle(rows, slot, level_name="中度污染")
-    spatial = _slot_values(outcome, "spatial_outlier")
-    assert spatial and spatial[0]["alert_level"] == 1   # 170 ≥ 55×3 → 一级即时
+def test_priority_keeps_sudden_rise_over_outlier(tmp_path):
+    # #24：同站同因子同窗口同时命中 DS 与 OL → 只推 DS（优先级 1 < 3）。
+    # OL 需连续 2 个窗口，第 2 窗口与 DS 同窗口出现。
+    slot0 = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
+    states = MemStates()
+    outcome_all = None
+    for index in range(2):
+        slot = slot0 + timedelta(minutes=5 * index)
+        rows = []
+        for sid in STATIONS:
+            rows.append(_row(sid, slot - timedelta(hours=1), {"pm10": 40.0}, source="hour"))
+            rows.extend(_history_rows(sid, [40.0] * (4 + index), slot))
+        current = {"a": 100.0, "b": 40.0, "c": 40.0, "d": 40.0, "e": 40.0, "f": 40.0}
+        for sid in STATIONS:
+            rows.append(_row(sid, slot, {"pm10": current[sid]}))
+        outcome_all = _cycle(rows, slot, states=states)
+    types = {c["rule_type"] for c in outcome_all.candidates}
+    assert {"sudden_rise", "spatial_outlier"} <= types
     store = AlertStateStore(tmp_path)
     pushed, suppressed, _summary = apply_push_chain(
-        list(outcome.candidates), store=store, config=AirAlertRuleConfig(),
-        now=slot, log_store=PushLogStore(tmp_path),
-        current_values=outcome.current_values, region_event=True,
+        list(outcome_all.candidates), store=store, config=AirAlertRuleConfig(),
+        now=slot0 + timedelta(minutes=5), log_store=PushLogStore(tmp_path),
+        current_values=outcome_all.current_values,
     )
-    assert pushed == []
-    assert all(item["reason"] == "region_event" for item in suppressed)
-    store.save()
+    assert [a["rule_type"] for a in pushed] == ["sudden_rise"]
+    assert all(item["reason"] == "priority" for item in suppressed)
 
 
 def test_window_summary_covers_three_stations(tmp_path):
-    # T09：同窗口 3 个站点各一条三级 → 合并为一条摘要。
+    # 同窗口 3 个站点各一条 DS → 合并为一条摘要。
     slot = datetime(2026, 9, 12, 8, 5, tzinfo=TZ)
     candidates = []
     for sid in ("a", "c", "e"):
         candidates.append({
             "event_id": f"e-{sid}", "occurred_at": slot.isoformat(), "city": "许昌市",
             "station_id": sid, "station_name": sid, "target_pollutant": "PM10",
-            "measurement_granularity": "5min", "rule_type": "limit_breach",
-            "rule_label": "限值突破", "alert_level": 3, "alert_level_name": "三级",
-            "station_value": 125.0, "recovery_threshold": 120.0, "detail": {},
+            "measurement_granularity": "5min", "rule_type": "sudden_rise",
+            "rule_label": "单点突升", "rule_priority": 1,
+            "air_quality_level": "良", "station_value": 55.0,
+            "recovery_threshold": 15.0, "detail": {},
         })
     store = AlertStateStore(tmp_path)
-    pushed, suppressed, summary = apply_push_chain(
+    pushed, _suppressed, summary = apply_push_chain(
         candidates, store=store, config=AirAlertRuleConfig(), now=slot,
-        log_store=PushLogStore(tmp_path),
+        log_store=PushLogStore(tmp_path), current_values={},
     )
-    assert len(pushed) == 3 and suppressed == []
-    assert summary is not None and summary.count("- ") == 3
+    assert len(pushed) == 3
+    assert summary is not None and "3 个站点" in summary
+    store.save()

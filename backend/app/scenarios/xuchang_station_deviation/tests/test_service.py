@@ -162,15 +162,19 @@ def test_marked_minute_value_is_exempt_from_alert_calculation():
 
 
 @pytest.mark.asyncio
-async def test_run_limit_breach_alert_carries_source_features(tmp_path):
+async def test_run_sudden_rise_alert_carries_source_features(tmp_path):
     # service 层按国控站点白名单过滤，须使用规范站点编码。
     stations = ("1003A", "1005A", "1008A", "1009A", "1011A", "1012A")
     rows = []
-    # 上一完整小时行：提供城市 AQI（80 → 良档），R1 查良档阈值表。
+    # 上一完整小时行：提供站点 × 污染物选档（PM10=80 → 良档）。
     for sid in stations:
-        rows.append({**_row(sid, 40), "data_source": "hour", "data_time": datetime(2026, 8, 4, 7), "aqi": 80})
-    # 当前 5 分钟槽：1003A 站 PM10 = 200（≥120×1.5 → R1 一级），其余 40。
-    # CO 本底 0.5 mg/m³，避免 CO 限值档（良档 T=4）抢占主告警。
+        rows.append({**_row(sid, 80), "data_source": "hour", "data_time": datetime(2026, 8, 4, 7), "aqi": 80})
+    # 历史 3 个连续 5 分钟槽：全部 40（DS 基线）。
+    for minute in (50, 55, 0):
+        for sid in stations:
+            rows.append({**_row(sid, 40), "data_source": "minute", "data_time": datetime(2026, 8, 4, 7, minute) if minute else datetime(2026, 8, 4, 8, 0)})
+    # 当前 5 分钟槽：1003A 站 PM10 = 200（Δ160 ≥ max(40×0.3, 15)=15 → DS）。
+    # CO 本底 0.5 mg/m³，避免 CO 同窗口抢主告警。
     for sid in stations:
         value = 200 if sid == "1003A" else 40
         row = {**_row(sid, value), "data_source": "minute", "data_time": datetime(2026, 8, 4, 8, 5)}
@@ -182,17 +186,15 @@ async def test_run_limit_breach_alert_carries_source_features(tmp_path):
     result = await service.run(datetime(2026, 8, 4, 8, 6))
 
     pushed = result["alerts"]
-    assert pushed, "R1 一级应产生推送"
-    alert = next(item for item in pushed if item["station_id"] == "1003A" and item["rule_type"] == "limit_breach")
-    assert alert["alert_level"] == 1
-    assert result["air_quality_level"] == "良"
+    assert pushed, "单点突升应产生推送"
+    alert = next(item for item in pushed if item["station_id"] == "1003A" and item["rule_type"] == "sudden_rise")
+    assert alert["air_quality_level"] == "良"
+    assert alert["detail"]["threshold"] == 15.0
     features = alert["pollutant_source_features"]
     assert features["status"] == "calculated"
     assert "classification" in features
     assert "minute pollutants" in features["granularity"]
-    # 同窗口同站的 R4 一级（200 vs 去极值均值 40）合并为主告警的并发规则。
-    concurrent = alert.get("concurrent_rules") or []
-    assert any(item["rule_type"] == "spatial_outlier" for item in concurrent)
+    # 同窗口同站的 OL 需 2 个窗口确认，本槽只记 streak，不产生并发规则。
     assert result["suppressed_alerts"] == []
 
 
@@ -265,23 +267,29 @@ def test_multifactor_snapshot_prefers_slot_pm25_over_previous_hour():
 
 @pytest.mark.asyncio
 async def test_run_screen_minute_pollutants_through_dedicated_lanes(tmp_path):
-    # 分钟表只有 5 因子通道（PM10/SO2/NO2/CO/O3）；NOX 无独立通道，
-    # PM2.5 只在整点槽走小时版。1003A 站 NO2=100（良档 ≥80）→ R1 分级告警。
+    # 分钟表只有 4 因子通道（PM10/SO2/NO2/CO）；O3 暂不纳入，NOX 无独立
+    # 通道，PM2.5 只在整点槽走小时版。1003A 站 NO2=100（优档：40→优）：
+    # Δ60 ≥ max(40×0.5, 10)=20 → 单点突升。
+    stations = ("1003A", "1005A", "1008A", "1009A", "1011A", "1012A")
     rows = []
-    for sid, no2_value in (("1003A", 100), ("1005A", 40), ("1008A", 40)):
+    for sid in stations:
+        rows.append({**_row(sid, 40), "data_source": "hour", "data_time": datetime(2026, 9, 12, 20), "aqi": 40})
+    for minute in (20, 25, 30):
+        for sid in stations:
+            rows.append({**_row(sid, 40), "data_source": "minute", "data_time": datetime(2026, 9, 12, 21, minute)})
+    for sid in stations:
         row = {**_row(sid, 40), "data_source": "minute", "data_time": datetime(2026, 9, 12, 21, 35)}
-        row["no2"] = no2_value
+        row["no2"] = 100 if sid == "1003A" else 40
         row["co"] = 0.5
         rows.append(row)
     service = XuchangStationDeviationAlertService(output_root=tmp_path)
-    service.load_station_rows = lambda timestamp: (rows, {"hour": 3, "minute": 3})
+    service.load_station_rows = lambda timestamp: (rows, {"hour": 6, "minute": 6})
 
     result = await service.run(datetime(2026, 9, 12, 21, 36))
 
     alerts_for_a = [a for a in result["alerts"] if a["station_id"] == "1003A"]
     pollutants = {a["target_pollutant"] for a in alerts_for_a}
     assert pollutants == {"NO2"}
-    assert all(a["rule_type"] == "limit_breach" for a in alerts_for_a)
-    # 良档 NO2=100：≥80（三级）且 ≥96（80×1.2）→ 二级。
-    assert alerts_for_a[0]["alert_level"] == 2
+    assert all(a["rule_type"] == "sudden_rise" for a in alerts_for_a)
+    assert all("alert_level" not in a for a in alerts_for_a)
     assert all("multifactor_table_path" not in a for a in result["alerts"])
