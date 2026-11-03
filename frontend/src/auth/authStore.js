@@ -2,15 +2,21 @@ import { defineStore } from 'pinia'
 import { setAccountIdentity } from './accountSession.js'
 
 import { createAuthApi } from './authApi.js'
+import { extractEntryToken, stripEntryToken } from './entryToken.js'
 import { browserAuthStorage } from './storage.js'
 
+
+const hasBrowserHistory = typeof globalThis.history !== 'undefined' &&
+  typeof globalThis.history.replaceState === 'function'
 
 export function createAuthSession({
   api,
   storage,
   sysCode = 'SUYUAN',
   authMode = 'company',
-  mockUser = null
+  mockUser = null,
+  entryLocation = typeof globalThis.location !== 'undefined' ? globalThis.location : null,
+  entryHistory = hasBrowserHistory ? globalThis.history : null
 }) {
   const persisted = storage.readSession()
   const isMock = authMode === 'mock' && Boolean(mockUser?.id)
@@ -24,6 +30,28 @@ export function createAuthSession({
     loading: false,
     initialized: false,
 
+    // 统一鉴权平台以带 token 的入口 URL 打开本系统时，优先用该 token
+    // 换取登录会话（免二次登录）；入口 token 失效则回落既有会话/登录页。
+    async bootstrapWithEntryToken() {
+      const entryToken = extractEntryToken(entryLocation)
+      if (!entryToken || entryToken === this.token) {
+        if (entryToken) stripEntryToken(entryLocation, entryHistory)
+        return undefined
+      }
+      this.loading = true
+      try {
+        const response = await api.currentUser(entryToken)
+        this.token = entryToken
+        this.user = response.result
+        storage.writeSession({ token: this.token, sysCode, user: this.user })
+        return this.user
+      } finally {
+        // 成功与否都清掉地址栏中的 token，避免其残留于地址/历史记录
+        stripEntryToken(entryLocation, entryHistory)
+        this.loading = false
+      }
+    },
+
     async bootstrap() {
       if (this.initialized) return this.user
       if (this.authMode === 'mock') {
@@ -32,6 +60,14 @@ export function createAuthSession({
         return this.user
       }
       this.initialized = true
+      let entryUser
+      try {
+        entryUser = await this.bootstrapWithEntryToken()
+      } catch (error) {
+        // 入口 token 无效：回落既有会话或登录页
+        entryUser = undefined
+      }
+      if (entryUser) return entryUser
       if (!this.token) return null
       this.loading = true
       try {

@@ -105,3 +105,81 @@ test('mock mode clears persisted company state and bootstraps the in-memory admi
   assert.deepEqual(calls, [])
   assert.deepEqual(raw.dump(), {})
 })
+
+
+function fakeEntryEnvironment(href) {
+  const url = new URL(href)
+  const location = {
+    get href() { return url.href },
+    get search() { return url.search },
+    get hash() { return url.hash }
+  }
+  const history = {
+    state: null,
+    replaceState(state, title, newUrl) { url.href = new URL(newUrl, url.href).href }
+  }
+  return { location, history }
+}
+
+
+test('an entry token from the unified platform establishes a session without login', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  const calls = []
+  const api = {
+    currentUser: async token => {
+      calls.push(token)
+      return { result: { id: 'u9', userName: 'zhangsan', name: '张三' } }
+    }
+  }
+  const { location, history } = fakeEntryEnvironment('http://11.54.200.200:5175/?token=portal-token&from=portal')
+  const session = createAuthSession({ api, storage, sysCode: 'SUYUAN', entryLocation: location, entryHistory: history })
+
+  const user = await session.bootstrap()
+
+  assert.equal(user.id, 'u9')
+  assert.equal(session.token, 'portal-token')
+  assert.deepEqual(raw.dump()['Access-Token'], 'portal-token')
+  assert.deepEqual(calls, ['portal-token'])
+  // 地址栏中的 token 已被清洗
+  assert.equal(location.href, 'http://11.54.200.200:5175/?from=portal')
+})
+
+
+test('a rejected entry token falls back to the persisted session', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  storage.writeSession({ token: 'local-token', sysCode: 'SUYUAN', user: { id: 'u1' } })
+  const calls = []
+  const api = {
+    currentUser: async token => {
+      calls.push(token)
+      if (token === 'stale-entry-token') throw new Error('company authentication rejected')
+      return { result: { id: 'u1' } }
+    }
+  }
+  const { location, history } = fakeEntryEnvironment('http://11.54.200.200:5175/?token=stale-entry-token')
+  const session = createAuthSession({ api, storage, sysCode: 'SUYUAN', entryLocation: location, entryHistory: history })
+
+  const user = await session.bootstrap()
+
+  assert.equal(user.id, 'u1')
+  assert.equal(session.token, 'local-token')
+  assert.deepEqual(calls, ['stale-entry-token', 'local-token'])
+  assert.equal(location.href, 'http://11.54.200.200:5175/')
+})
+
+
+test('a rejected entry token without a local session lands on the login route', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  const api = {
+    currentUser: async () => { throw new Error('rejected') }
+  }
+  const { location, history } = fakeEntryEnvironment('http://11.54.200.200:5175/?token=bad-token')
+  const session = createAuthSession({ api, storage, sysCode: 'SUYUAN', entryLocation: location, entryHistory: history })
+
+  assert.equal(await session.bootstrap(), null)
+  assert.equal(session.token, '')
+  assert.equal(location.href, 'http://11.54.200.200:5175/')
+})

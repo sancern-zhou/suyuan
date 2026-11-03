@@ -1,9 +1,31 @@
+import { ENTRY_TOKEN_KEYS } from './entryToken.js'
+
+
 export function safeRedirect(value, fallback = '/') {
   if (typeof value !== 'string') return fallback
   if (!value.startsWith('/') || value.startsWith('//') || value.startsWith('/\\')) {
     return fallback
   }
   return value
+}
+
+
+// 入口 token 只服务于首次握手；跳转登录页等重定向目标里不携带它，
+// 避免失效 token 残留在地址栏与跳转链中。
+export function fullPathWithoutEntryToken(to) {
+  const query = { ...(to?.query || {}) }
+  const hasEntryToken = ENTRY_TOKEN_KEYS.some(key => key in query)
+  if (!hasEntryToken) return to?.fullPath || to?.path || '/'
+  for (const key of ENTRY_TOKEN_KEYS) delete query[key]
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) {
+    if (value === null || value === undefined) continue
+    for (const item of Array.isArray(value) ? value : [value]) {
+      search.append(key, String(item))
+    }
+  }
+  const queryString = search.toString()
+  return `${to?.path || '/'}${queryString ? `?${queryString}` : ''}`
 }
 
 
@@ -34,7 +56,7 @@ export function createAuthGuard(authStore) {
     if (authStore.isAuthenticated) return true
     return {
       path: '/login',
-      query: { redirect: safeRedirect(to.fullPath) }
+      query: { redirect: safeRedirect(fullPathWithoutEntryToken(to)) }
     }
   }
 }

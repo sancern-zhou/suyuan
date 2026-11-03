@@ -49,6 +49,22 @@ test('invalid session redirects to login with a same-origin return path', async 
 })
 
 
+test('entry token parameters are dropped from the login redirect target', async () => {
+  const auth = store({
+    async bootstrap() { this.initialized = true; throw new Error('invalid') }
+  })
+
+  assert.deepEqual(
+    await createAuthGuard(auth)({
+      path: '/',
+      fullPath: '/?token=stale&from=portal',
+      query: { token: 'stale', from: 'portal' }
+    }),
+    { path: '/login', query: { redirect: '/?from=portal' } }
+  )
+})
+
+
 test('authenticated users leave login for a validated redirect', async () => {
   const auth = store({ token: 'token', user: { id: 'u1' }, initialized: true })
   const guard = createAuthGuard(auth)
