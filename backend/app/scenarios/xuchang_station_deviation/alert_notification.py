@@ -28,13 +28,13 @@ logger = structlog.get_logger()
 POLLUTANT_UNITS = {"CO": "mg/m³"}
 DEFAULT_UNIT = "μg/m³"
 
-# 与站点服务告警 rule 字段一一对应的中文告警类型：分级告警（R1-R4）的
-# rule_type + 旧版单级别规则的 rule 串（历史事件回看仍可渲染）。
+# 与站点服务告警 rule 字段一一对应的中文告警类型：判据修订版三类规则
+# + 旧版限值突破/单级别规则的 rule 串（历史事件回看仍可渲染）。
 RULE_LABELS = {
-    "limit_breach": "限值突破",
-    "sudden_rise": "突升",
+    "sudden_rise": "单点突升",
     "continuous_rise": "连续抬升",
-    "spatial_outlier": "空间离群",
+    "spatial_outlier": "站点离群",
+    "limit_breach": "限值突破",
     "six_consecutive_5min_rises_and_pollutant_thresholds": "单站持续快速上升",
     "relative_deviation > threshold AND absolute_delta > pollutant_absolute_threshold": "单站相对区域偏高",
 }
@@ -103,9 +103,11 @@ def _alert_type_label(alert: dict[str, Any]) -> str:
     label = str(alert.get("rule_label") or "") or RULE_LABELS.get(str(alert.get("rule", "")))
     if not label:
         label = "站点异常告警"
-    level_name = alert.get("alert_level_name")
+    if alert.get("is_upgrade"):
+        label = f"【升级】{label}"
+    level_name = alert.get("air_quality_level") or alert.get("alert_level_name")
     if level_name:
-        label = f"{label}·{level_name}"
+        label = f"{label}·{level_name}档"
     if str(alert.get("measurement_granularity")) == "hour":
         label += "（小时数据）"
     return label
@@ -149,20 +151,31 @@ def _rise_sentence(alert: dict[str, Any]) -> str:
         if total_rate is not None:
             sentence += f"（累计涨幅{_fmt(float(total_rate) * 100)}%）"
         parts.append(sentence)
+    region_stations = (alert.get("detail") or {}).get("region_stations") or []
+    if region_stations:
+        names = "、".join(
+            f"{item.get('station_name') or item.get('station_id')}"
+            f"{_fmt(item.get('station_value'))}{unit}"
+            for item in region_stations
+        )
+        parts.append(f"同窗口另有{len(region_stations)}个站点连续抬升（{names}），已合并为本条区域告警")
     return "，".join(parts)
 
 
 def _sudden_rise_sentence(alert: dict[str, Any]) -> str:
-    """突升（R2）事实句：实测值、对比基线抬升比例、连续确认情况。"""
+    """单点突升事实句：实测值、基线与触发阈值（Δ >= MAX(比例×基线, 绝对增量)）。"""
     unit = _unit(str(alert.get("target_pollutant")))
     detail = alert.get("detail") or {}
     parts = [f"实测{_fmt(alert.get('station_value'))} {unit}"]
     base = detail.get("baseline")
     if base is not None:
-        parts.append(f"较近段基线{_fmt(base)} {unit}抬升{_fmt(alert.get('rise_percent'))}%")
-    confirm = detail.get("confirm_streak")
-    if confirm:
-        parts.append(f"已连续{confirm}个周期超抬升阈值")
+        parts.append(f"较近段基线{_fmt(base)} {unit}抬升{_fmt(detail.get('delta'))} {unit}")
+    threshold = detail.get("threshold")
+    if threshold is not None:
+        parts.append(
+            f"达到触发阈值{_fmt(threshold)} {unit}"
+            f"（比例{_fmt(float(detail.get('ratio') or 0) * 100)}%、绝对增量{_fmt(detail.get('absolute_threshold'))} {unit}取严）"
+        )
     return "，".join(parts)
 
 
@@ -298,10 +311,11 @@ def _factor_overview(alert: dict[str, Any]) -> str:
     concurrent = alert.get("concurrent_rules") or []
     if concurrent:
         others = "、".join(
-            f"{item.get('rule_label') or item.get('rule_type')}（{item.get('alert_level_name') or ''}）"
+            f"{item.get('rule_label') or item.get('rule_type')}"
+            f"（{(item.get('air_quality_level') or '')}档）"
             for item in concurrent
         )
-        parts.append(f"同站同窗口还命中{others}，已合并为一条通报")
+        parts.append(f"同站还命中{others}，已合并为一条通报")
     return "，".join(parts)
 
 
@@ -478,9 +492,11 @@ def compose_station_alert_fallback_message(package: dict[str, Any]) -> str:
     label = (
         str(primary.get("rule_label") or "") or RULE_LABELS.get(rule, "站点异常告警")
     )
-    level_name = primary.get("alert_level_name")
+    if primary.get("is_upgrade"):
+        label = f"【升级】{label}"
+    level_name = primary.get("air_quality_level") or primary.get("alert_level_name")
     if level_name:
-        label = f"{label}·{level_name}"
+        label = f"{label}·{level_name}档"
     overview = (
         f"{_fmt_time(primary['occurred_at'])}，{station}发生"
         f"{label}："

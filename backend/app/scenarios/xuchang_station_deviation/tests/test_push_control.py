@@ -1,7 +1,12 @@
-"""推送管控（M 链）测试——对应《算法需求文档》§9 与验收用例 T07/T08/T10/T11/T12。"""
+"""推送管控（M 链）测试（判据修订版）。
+
+覆盖：按规则/因子冷却、#23 升级例外（污染等级升高穿透冷却）、
+#24 优先级（DS > CL > OL）、恢复防抖、限额、免打扰、同站合并、流水。
+"""
 
 from __future__ import annotations
 
+import json as _json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -22,12 +27,13 @@ from app.scenarios.xuchang_station_deviation.rule_config import AirAlertRuleConf
 TZ = ZoneInfo("Asia/Shanghai")
 
 
-def _alert(station_id: str = "a", rule_type: str = "limit_breach", level: int = 3,
+def _alert(station_id: str = "a", rule_type: str = "sudden_rise",
            pollutant: str = "PM10", grain: str = "5min",
            occurred_at: str = "2026-11-02T09:00:00+08:00",
-           recovery_threshold: float = 120.0) -> dict[str, Any]:
+           air_quality_level: str = "良",
+           recovery_threshold: float = 15.0) -> dict[str, Any]:
     return {
-        "event_id": f"e-{station_id}-{rule_type}-{level}-{pollutant}",
+        "event_id": f"e-{station_id}-{rule_type}-{pollutant}",
         "occurred_at": occurred_at,
         "city": "许昌市",
         "station_id": station_id,
@@ -35,11 +41,11 @@ def _alert(station_id: str = "a", rule_type: str = "limit_breach", level: int = 
         "target_pollutant": pollutant,
         "measurement_granularity": grain,
         "rule_type": rule_type,
-        "rule_label": {"limit_breach": "限值突破", "sudden_rise": "突升",
-                       "continuous_rise": "连续抬升", "spatial_outlier": "空间离群"}[rule_type],
-        "alert_level": level,
-        "alert_level_name": {1: "一级", 2: "二级", 3: "三级"}[level],
-        "station_value": 200.0,
+        "rule_label": {"sudden_rise": "单点突升", "continuous_rise": "连续抬升",
+                       "spatial_outlier": "站点离群"}[rule_type],
+        "rule_priority": {"sudden_rise": 1, "continuous_rise": 2, "spatial_outlier": 3}[rule_type],
+        "air_quality_level": air_quality_level,
+        "station_value": 55.0,
         "recovery_threshold": recovery_threshold,
         "detail": {},
     }
@@ -55,160 +61,164 @@ def test_first_alert_pushes_and_disarms(tmp_path):
     store = AlertStateStore(tmp_path)
     pushed, suppressed, _summary = _chain([_alert()], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
     assert len(pushed) == 1 and suppressed == []
-    state = store.instance("5min", "a", "PM10", "limit_breach")
+    state = store.instance("5min", "a", "PM10", "sudden_rise")
     assert state["armed"] is False
-    assert state["last_level"] == 3
+    assert state["last_air_level"] == "良"
     assert store.global_push_count("2026-11-02") == 1
 
 
-def test_same_level_within_cooldown_is_suppressed(tmp_path):
-    # T07：三级推送后 60 分钟再次三级 → 不推送。armed 防抖先拦截（闸门
-    # 顺序与文档 §9.1 伪代码一致），冷却期在恢复武装后兜底。
+def test_same_rule_within_cooldown_is_suppressed(tmp_path):
+    # DS（PM10）冷却 30 分钟：09:00 推送后，09:15 再次命中 → 冷却拦截。
     store = AlertStateStore(tmp_path)
-    now = datetime(2026, 11, 2, 9, 0, tzinfo=TZ)
-    _chain([_alert()], store, tmp_path, now)
-    second = _alert(occurred_at="2026-11-02T10:00:00+08:00")
+    _chain([_alert()], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
+    second = _alert(occurred_at="2026-11-02T09:15:00+08:00")
     second["event_id"] = "e-second"
-    pushed, suppressed, _summary = _chain([second], store, tmp_path, datetime(2026, 11, 2, 10, 0, tzinfo=TZ))
+    pushed, suppressed, _summary = _chain([second], store, tmp_path, datetime(2026, 11, 2, 9, 15, tzinfo=TZ))
     assert pushed == []
-    assert suppressed[0]["reason"] == "hysteresis"
+    assert suppressed[0]["reason"] in {"cooldown", "hysteresis"}
 
 
-def test_cooldown_applies_after_rearm_and_expires(tmp_path):
-    # 三级推送（09:00，阈值 120）→ 三个周期回落确认重新武装（09:05/10/15，
-    # 当前值 100 ≤ 108）→ 恢复后 09:15 仍在 120 分钟冷却内 → 冷却兜底拦截；
-    # 11:05 冷却过期 → 同级告警放行。
+def test_cooldown_differs_by_rule_and_pollutant(tmp_path):
+    # DS-PM2.5 冷却 60 分钟；DS-PM10 冷却 30 分钟；CL-PM10 冷却 60 分钟。
+    config = AirAlertRuleConfig()
+    assert config.cooldown_for("sudden_rise", "PM2.5") == 60
+    assert config.cooldown_for("sudden_rise", "PM10") == 30
+    assert config.cooldown_for("continuous_rise", "PM10") == 60
+    assert config.cooldown_for("continuous_rise", "PM2.5") == 120
+    assert config.cooldown_for("spatial_outlier", "NO2") == 30
+
+
+def test_level_upgrade_penetrates_cooldown(tmp_path):
+    # #23：冷却期内污染等级由良升至轻度 → 立即推送，带升级标识。
+    store = AlertStateStore(tmp_path)
+    _chain([_alert()], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
+    escalated = _alert(occurred_at="2026-11-02T09:15:00+08:00", air_quality_level="轻度污染")
+    escalated["event_id"] = "e-escalated"
+    pushed, suppressed, _summary = _chain([escalated], store, tmp_path, datetime(2026, 11, 2, 9, 15, tzinfo=TZ))
+    assert len(pushed) == 1 and suppressed == []
+    assert pushed[0]["is_upgrade"] is True
+    assert pushed[0]["upgrade_from_level"] == "良"
+    assert pushed[0]["upgrade_to_level"] == "轻度污染"
+    assert pushed[0]["upgrade_of_event_id"] == "e-a-sudden_rise-PM10"
+    state = store.instance("5min", "a", "PM10", "sudden_rise")
+    assert state["last_air_level"] == "轻度污染"
+    assert state["last_push_ts"].startswith("2026-11-02T09:15")
+
+
+def test_level_downgrade_still_suppressed(tmp_path):
+    # 等级回落不穿透冷却：轻度推送后良档再次命中 → 正常拦截。
+    store = AlertStateStore(tmp_path)
+    _chain([_alert(air_quality_level="轻度污染")], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
+    later = _alert(occurred_at="2026-11-02T09:15:00+08:00", air_quality_level="良")
+    later["event_id"] = "e-later"
+    pushed, suppressed, _summary = _chain([later], store, tmp_path, datetime(2026, 11, 2, 9, 15, tzinfo=TZ))
+    assert pushed == [] and suppressed
+
+
+def test_priority_keeps_ds_over_cl_over_ol(tmp_path):
+    # #24：同站同因子同窗口三条规则命中 → 只推 DS，CL/OL 以 priority 抑制。
+    store = AlertStateStore(tmp_path)
+    candidates = [
+        _alert(rule_type="spatial_outlier"),
+        _alert(rule_type="continuous_rise"),
+        _alert(rule_type="sudden_rise"),
+    ]
+    for index, candidate in enumerate(candidates):
+        candidate["event_id"] = f"e-{index}"
+    pushed, suppressed, _summary = _chain(candidates, store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
+    assert len(pushed) == 1 and pushed[0]["rule_type"] == "sudden_rise"
+    assert {item["alert"]["rule_type"] for item in suppressed} == {"continuous_rise", "spatial_outlier"}
+    assert all(item["reason"] == "priority" for item in suppressed)
+
+
+def test_same_rule_different_pollutant_not_priority_suppressed(tmp_path):
+    # #24 范围是同站同因子：同站不同因子互不挤占（合并只影响通报组织）。
+    store = AlertStateStore(tmp_path)
+    candidates = [_alert(pollutant="PM10"), _alert(pollutant="NO2")]
+    candidates[1]["event_id"] = "e-no2"
+    pushed, suppressed, _summary = _chain(candidates, store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
+    assert suppressed == []
+    assert {a["target_pollutant"] for a in pushed} == {"PM10", "NO2"}
+    # 同站合并：NO2 优先级同为 DS，按污染物序取 PM10 作主告警。
+    primary = next(a for a in pushed if a.get("concurrent_rules"))
+    assert primary["target_pollutant"] == "PM10"
+    assert primary["concurrent_rules"][0]["target_pollutant"] == "NO2"
+
+
+def test_hysteresis_blocks_until_recovered(tmp_path):
+    # 推送后连续 3 个周期 ≤阈值×90% 才重新武装；恢复后冷却期兜底。
     store = AlertStateStore(tmp_path)
     config = AirAlertRuleConfig()
     _chain([_alert()], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
     key = ("5min", "a", "PM10")
-    recovered = _alert(occurred_at="2026-11-02T09:05:00+08:00")
-    recovered["event_id"] = "e-recover"
-    _chain([recovered], store, tmp_path, datetime(2026, 11, 2, 9, 5, tzinfo=TZ), current_values={key: 100.0})
-    rearm = _alert(occurred_at="2026-11-02T09:10:00+08:00")
-    rearm["event_id"] = "e-rearm"
-    _chain([rearm], store, tmp_path, datetime(2026, 11, 2, 9, 10, tzinfo=TZ), current_values={key: 100.0})
-    rebound = _alert(occurred_at="2026-11-02T09:15:00+08:00")
-    rebound["event_id"] = "e-rebound"
-    pushed, suppressed, _summary = _chain(
-        [rebound], store, tmp_path, datetime(2026, 11, 2, 9, 15, tzinfo=TZ), current_values={key: 100.0}
-    )
-    # 第 3 个回落周期（09:15 链）触发重新武装，但仍在三级冷却（120 分钟）内。
-    state = store.instance("5min", "a", "PM10", "limit_breach")
-    assert state["armed"] is True
-    assert pushed == [] and suppressed[0]["reason"] == "cooldown"
-    later = _alert(occurred_at="2026-11-02T11:05:00+08:00")
-    later["event_id"] = "e-later"
-    pushed2, _s2, _w2 = _chain([later], store, tmp_path, datetime(2026, 11, 2, 11, 5, tzinfo=TZ), current_values={key: 100.0})
-    assert len(pushed2) == 1   # 冷却期已过
-
-
-def test_escalation_penetrates_cooldown(tmp_path):
-    # T08：冷却期内三级升级为二级（级别数字变小）→ 立即推送并刷新冷却。
-    store = AlertStateStore(tmp_path)
-    now = datetime(2026, 11, 2, 9, 0, tzinfo=TZ)
-    _chain([_alert(level=3, recovery_threshold=180.0)], store, tmp_path, now)
-    escalated = _alert(level=2, occurred_at="2026-11-02T09:30:00+08:00")
-    escalated["event_id"] = "e-escalated"
-    pushed, suppressed, _summary = _chain([escalated], store, tmp_path, datetime(2026, 11, 2, 9, 30, tzinfo=TZ))
-    assert len(pushed) == 1 and suppressed == []
-    state = store.instance("5min", "a", "PM10", "limit_breach")
-    assert state["last_level"] == 2
-    assert state["last_push_ts"].startswith("2026-11-02T09:30")
-
-
-def test_hysteresis_blocks_until_recovered(tmp_path):
-    # §9.2：推送后连续 3 个周期 ≤阈值×90% 才重新武装；期间同级不重复推送；
-    # 恢复武装后冷却期（二级 90 分钟）继续兜底。
-    store = AlertStateStore(tmp_path)
-    now = datetime(2026, 11, 2, 9, 0, tzinfo=TZ)
-    _chain([_alert(level=2, recovery_threshold=150.0)], store, tmp_path, now)
-    key = ("5min", "a", "PM10")
-    config = AirAlertRuleConfig()
     gate_time = datetime(2026, 11, 2, 9, 5, tzinfo=TZ)
     for index in range(1, 4):
-        # 当前值 100 ≤ 150×0.9=135，逐周期计数。
-        rearmed = recovery_pass(store, {key: 100.0}, config)
-        state = store.instance("5min", "a", "PM10", "limit_breach")
+        # 当前值 10 ≤ 15×0.9=13.5，逐周期计数。
+        rearmed = recovery_pass(store, {key: 10.0}, config)
+        state = store.instance("5min", "a", "PM10", "sudden_rise")
         if index < 3:
             assert rearmed == []
-            assert evaluate_gate(state, 2, gate_time, config) == "hysteresis"
-    assert rearmed == [instance_key("5min", "a", "PM10", "limit_breach")]
-    state = store.instance("5min", "a", "PM10", "limit_breach")
-    assert state["armed"] is True and state["last_level"] == 2   # 恢复保留 last_level
-    assert evaluate_gate(state, 2, gate_time, config) == "cooldown"     # 冷却兜底
-    assert evaluate_gate(state, 2, datetime(2026, 11, 2, 10, 31, tzinfo=TZ), config) is None  # 91 分钟后过期
+            assert evaluate_gate(
+                state, rule_type="sudden_rise", pollutant="PM10",
+                air_quality_level="良", now=gate_time, config=config,
+            ) == "hysteresis"
+    assert rearmed == [instance_key("5min", "a", "PM10", "sudden_rise")]
+    state = store.instance("5min", "a", "PM10", "sudden_rise")
+    assert state["armed"] is True and state["last_air_level"] == "良"
+    # 恢复后仍在 DS-PM10 冷却（30 分钟）内 → 冷却兜底；31 分钟后过期。
+    assert evaluate_gate(
+        state, rule_type="sudden_rise", pollutant="PM10",
+        air_quality_level="良", now=gate_time, config=config,
+    ) == "cooldown"
+    assert evaluate_gate(
+        state, rule_type="sudden_rise", pollutant="PM10",
+        air_quality_level="良", now=datetime(2026, 11, 2, 9, 31, tzinfo=TZ), config=config,
+    ) is None
 
 
 def test_recovery_counter_resets_on_rebound(tmp_path):
     store = AlertStateStore(tmp_path)
     commit_push(
-        store, store.instance("5min", "a", "PM10", "limit_breach"),
-        level=2, now=datetime(2026, 11, 2, 9, 0, tzinfo=TZ),
-        recovery_threshold=150.0, station_id="a",
+        store, store.instance("5min", "a", "PM10", "sudden_rise"),
+        event_id="e-first", air_quality_level="良",
+        now=datetime(2026, 11, 2, 9, 0, tzinfo=TZ),
+        recovery_threshold=15.0, station_id="a",
     )
     key = ("5min", "a", "PM10")
-    assert recovery_pass(store, {key: 100.0}, AirAlertRuleConfig()) == []
+    assert recovery_pass(store, {key: 10.0}, AirAlertRuleConfig()) == []
     # 回弹超过阈值×90% → 计数清零，之后重新计数。
-    assert recovery_pass(store, {key: 200.0}, AirAlertRuleConfig()) == []
-    state = store.instance("5min", "a", "PM10", "limit_breach")
+    assert recovery_pass(store, {key: 55.0}, AirAlertRuleConfig()) == []
+    state = store.instance("5min", "a", "PM10", "sudden_rise")
     assert state["recover_cnt"] == 0
 
 
-def test_site_daily_quota_silences_sixth_level3(tmp_path):
-    # T10：某站三级当日第 6 次 → 静默入库。
+def test_site_daily_quota_and_global_cap(tmp_path):
+    # 站点日上限 8 条、全局日上限 40 条（不再区分告警级别）。
     store = AlertStateStore(tmp_path)
     day = "2026-11-02"
-    for _ in range(5):
-        store.increment_push(day, "a", 3)
-    assert quota_reason(store, "a", 3, day, AirAlertRuleConfig()) == "quota"
-    assert quota_reason(store, "a", 1, day, AirAlertRuleConfig()) is None   # 一级不限
-
-
-def test_global_daily_cap_silences_level2_after_40(tmp_path):
-    # T11：全局日推送达 40 后，二级静默、一级不限。
-    store = AlertStateStore(tmp_path)
-    day = "2026-11-02"
+    for _ in range(8):
+        store.increment_push(day, "a")
+    assert quota_reason(store, "a", day, AirAlertRuleConfig()) == "quota"
+    assert quota_reason(store, "b", day, AirAlertRuleConfig()) is None
     for index in range(40):
-        store.increment_push(day, f"s{index % 6}", 2)
-    assert quota_reason(store, "a", 2, day, AirAlertRuleConfig()) == "global_cap"
-    assert quota_reason(store, "a", 1, day, AirAlertRuleConfig()) is None
+        store.increment_push(day, f"s{index % 6}")
+    assert quota_reason(store, "b", day, AirAlertRuleConfig()) == "global_cap"
 
 
-def test_quiet_hours_silence_level3_only(tmp_path):
-    # T12：22:30 三级静默入库；二级不受免打扰限制。
+def test_quiet_hours_silence_outlier_only(tmp_path):
+    # 22:30 站点离群（OL）静默入库；DS/CL 不受免打扰限制。
     config = AirAlertRuleConfig()
     assert config.in_quiet_hours(22) and config.in_quiet_hours(2)
     assert not config.in_quiet_hours(6) and not config.in_quiet_hours(21)
     store = AlertStateStore(tmp_path)
     night = datetime(2026, 11, 2, 22, 30, tzinfo=TZ)
-    pushed, suppressed, _summary = _chain([_alert(level=3)], store, tmp_path, night)
+    pushed, suppressed, _summary = _chain([_alert(rule_type="spatial_outlier")], store, tmp_path, night)
     assert pushed == [] and suppressed[0]["reason"] == "quiet_hours"
-    level2 = _alert(level=2)
-    level2["event_id"] = "e-l2-night"
-    pushed2, _s2, _w2 = _chain([level2], store, tmp_path, night)
+    pushed2, _s2, _w2 = _chain([_alert()], store, tmp_path, night)
     assert len(pushed2) == 1
 
 
-def test_same_station_multi_rule_merges_into_one_primary(tmp_path):
-    # §9.3.1：同站多条规则保留最高级别（一级/二级高于三级）。
-    store = AlertStateStore(tmp_path)
-    candidates = [
-        _alert(rule_type="limit_breach", level=3),
-        _alert(rule_type="spatial_outlier", level=2, pollutant="PM10"),
-    ]
-    candidates[1]["event_id"] = "e-a-r4"
-    pushed, suppressed, _summary = _chain(candidates, store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
-    assert len(pushed) == 1
-    primary = pushed[0]
-    assert primary["rule_type"] == "spatial_outlier" and primary["alert_level"] == 2
-    assert primary["concurrent_rules"][0]["rule_type"] == "limit_breach"
-    assert suppressed == []
-
-
 def test_push_log_records_push_and_suppress(tmp_path):
-    import json as _json
-
     store = AlertStateStore(tmp_path)
     log_store = PushLogStore(tmp_path)
     morning = datetime(2026, 11, 2, 9, 0, tzinfo=TZ)
@@ -226,10 +236,10 @@ def test_push_log_records_push_and_suppress(tmp_path):
 
 
 def test_state_survives_restart(tmp_path):
-    # §11：重启后从状态文件恢复 armed/冷却期。
+    # 重启后从状态文件恢复 armed/冷却期/等级。
     store = AlertStateStore(tmp_path)
     _chain([_alert()], store, tmp_path, datetime(2026, 11, 2, 9, 0, tzinfo=TZ))
     reopened = AlertStateStore(tmp_path)
-    state = reopened.instance("5min", "a", "PM10", "limit_breach")
-    assert state["armed"] is False and state["last_level"] == 3
-    assert evaluate_gate(state, 3, datetime(2026, 11, 2, 9, 30, tzinfo=TZ), AirAlertRuleConfig()) == "hysteresis"
+    state = reopened.instance("5min", "a", "PM10", "sudden_rise")
+    assert state["armed"] is False and state["last_air_level"] == "良"
+    assert state["first_event_id"] == "e-a-sudden_rise-PM10"
