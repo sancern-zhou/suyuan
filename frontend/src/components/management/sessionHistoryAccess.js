@@ -34,3 +34,12 @@ export function historyRowLabels(session = {}, isAdmin = false) {
     readOnly: session.read_only_on_web === true
   }
 }
+
+export function sidebarOwnerBadge(session = {}, currentUserId = '') {
+  const ownerId = String(session.owner_user_id || '').trim()
+  if (!ownerId) return ''
+  if (currentUserId && ownerId === String(currentUserId).trim()) return ''
+  const ownerName = String(session.owner_display_name || '').trim()
+  const ownerIdentity = String(session.owner_username || '').trim()
+  return ownerName || ownerIdentity
+}

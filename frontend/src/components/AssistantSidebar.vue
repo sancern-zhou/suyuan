@@ -286,6 +286,11 @@
                 @click="loadSession(session)"
               >
                 <span class="session-query">{{ truncateQuery(session.query, 30) }}</span>
+                <span
+                  v-if="sessionOwnerBadge(session)"
+                  class="session-owner"
+                  :title="`${sessionOwnerBadge(session)}的会话`"
+                >{{ sessionOwnerBadge(session) }}</span>
                 <span v-if="session.unread_count > 0" class="session-unread" aria-label="未读消息">{{ session.unread_count }}</span>
                 <span class="session-time">{{ session.is_running ? '运行中' : formatTime(session.updated_at) }}</span>
               </div>
@@ -374,6 +379,7 @@ import {
 } from './conversationListPolicy.js'
 import { AGENT_MODES, AGENT_MODE_IDS, getAgentMode } from '@/config/agentModes.js'
 import { filterSidebarModules } from './sidebarProjectModules.js'
+import { sidebarOwnerBadge } from './management/sessionHistoryAccess.js'
 import AppDownloadQrcodeDialog from '@/components/AppDownloadQrcodeDialog.vue'
 
 const router = useRouter()
@@ -421,6 +427,11 @@ const userDisplayName = computed(() => {
   return String(name).trim() || '当前用户'
 })
 const userInitial = computed(() => Array.from(userDisplayName.value)[0] || '用')
+
+// 历史会话归属用户名：运维平台登录后按 owner 字段区分归属，
+// 仅当会话不属于当前登录用户（如管理员查看全员会话）时显示
+const sessionOwnerBadge = (session) =>
+  sidebarOwnerBadge(session, auth.user?.id || '')
 
 const brandInitial = computed(() => Array.from(projectConfig.brandName || '')[0] || '')
 
@@ -1780,6 +1791,20 @@ onUnmounted(() => {
   font-size: 11px;
   color: var(--text-3);
   flex-shrink: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+}
+
+.session-owner {
+  flex-shrink: 0;
+  max-width: 5.5em;
+  overflow: hidden;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(13, 125, 131, 0.1);
+  color: var(--color-primary-active, #0d7d83);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 }
 
