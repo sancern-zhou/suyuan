@@ -552,6 +552,10 @@ class KnowledgeGraphRepository:
                 extraction_run_id=extraction_run_id,
             )
             self.session.add(mention)
+            # 同块第二个抽取项可能归并到同一实体；autoflush=False 时
+            # 不落库的话下一次查重看不到本条，会插入重复 mention 触发
+            # uq_kg_entity_mention 唯一约束。
+            await self.session.flush()
         mention.evidence_text = evidence_text
         mention.evidence_start = evidence_start
         mention.evidence_end = evidence_end
@@ -585,6 +589,7 @@ class KnowledgeGraphRepository:
                 extraction_run_id=extraction_run_id,
             )
             self.session.add(mention)
+            await self.session.flush()
         mention.evidence_text = evidence_text
         mention.evidence_start = evidence_start
         mention.evidence_end = evidence_end

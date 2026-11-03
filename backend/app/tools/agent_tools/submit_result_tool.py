@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, Optional
 
 from app.tools.base.tool_interface import ToolCategory
@@ -31,6 +32,23 @@ def envelope_parameters(result_schema: Optional[Dict[str, Any]]) -> Dict[str, An
         },
         "required": ["result"],
     }
+
+
+def json_safe_envelope(value: Any) -> Optional[Dict[str, Any]]:
+    """信封唯一准入契约：从这里交付的结果永远是 JSON 可序列化对象。
+
+    信封的全部下游（agent_runtime 交付边界、call_sub_agent final_result、
+    workflow result_envelope）都会对其 json.dumps——契约在唯一生产点建立
+    一次，而不是让每个下游各自加 default=str 兜底。混入不可序列化对象时
+    按保守策略降级为字符串表示，保证交付边界永不因序列化失败废掉节点。
+    """
+    if not isinstance(value, dict):
+        return None
+    try:
+        json.dumps(value, ensure_ascii=False)
+        return value
+    except (TypeError, ValueError):
+        return json.loads(json.dumps(value, ensure_ascii=False, default=str))
 
 
 class SubmitResultTool:
@@ -60,11 +78,17 @@ class SubmitResultTool:
 
     async def execute(self, result: Optional[Any] = None, **kwargs: Any) -> Dict[str, Any]:
         if isinstance(result, dict):
-            self.submitted_result = result
+            self.submitted_result = json_safe_envelope(result)
         else:
-            # 模型把信封字段平铺在参数顶层时兜底接收
-            flat = {key: value for key, value in kwargs.items() if isinstance(key, str)}
-            self.submitted_result = flat or None
+            # 模型把信封字段平铺在参数顶层时兜底接收。
+            # executor 会注入 __execution_context 等双下划线关键字参数，
+            # 它们不是模型产出，剔除（曾混进信封导致交付边界序列化崩溃）。
+            flat = {
+                key: value
+                for key, value in kwargs.items()
+                if isinstance(key, str) and not key.startswith("__")
+            }
+            self.submitted_result = json_safe_envelope(flat) if flat else None
         return {
             "status": "success",
             "success": True,
