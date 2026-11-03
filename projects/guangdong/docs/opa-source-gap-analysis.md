@@ -32,17 +32,13 @@
 - `form-name-dictionary-from-source.md/.json`（本次产出）——`ReportFormsEnum` 全枚举成员描述 + Sup/ReportForms 实体类标题；
 - 落地：按 `rf_form_names.py` 结构生成补丁时注意键名大小写（源码枚举为 `RF_W_Inspection`，现字典为 `RF_W_INSPECTION`）；合并后跑 `tests/test_sup_form_rules.py` 等回归。
 
-### P3 枚举值字典核验（中）
+### P3 枚举值字典核验（已完成）
 
-现状：`rf_enum_profiles.yaml` 仅 66 行，`allowed_values` 多为 `["0","1"]`，含义靠命名推断。
+已完成（2026-11-03）：`rf-enum-reconciliation.md`——`RF_W_OTHERDEVICECHECK.IsOk1-4` 按 GD 视图核实并**修正 2 处标签**（IsOk3=是否故障送修、IsOk4=是否维护雨量传感器；城市摄影/数据采集仪实为文本字段 CITYCAMERA*/DATAACQUISITION*）；`RF_TW_PmFlowCalibrate.IsCalibrate` 核实无误。待办：`pollutant_type_profiles` 的 NOX/NO2 期望值建议在部署环境抽 1 条数据核对（QUL 回传对 NOX 表用 `QULPollutant.NO`，与表单 POLLUTANTTYPE 非同一字段）。
 
-可补资源：GD 视图 radio 绑定（如 `IsCalibrated`：`RadioButtonFor(m => m.T_IsCalibrated, 1)是 / 0否`）、`Enum/*.cs`（`ImageType`（附件图片类型：停电图片/调研申请图片…）、`RF_TaskItem_Status`、`PlanEnum`（计划类型/计划状态）、`SECEnum` 等）。可扩展出"0/1 中文含义 + 是否含其他合法值"的字典，降低误报。
+### P4 品牌/版本表单变体（已完成）
 
-### P4 品牌码 → 表单变体选择（中）
-
-现状：Sup 表单按 `mtc_taskitem.brandcode` 选择品牌专属模板（如 AmbientTemperature 的 `_METROHM`/`_SUNSET` 变体），审核侧当前不看 brandcode，所有品牌共用一套列规则。
-
-可补资源：`Sup_QCDeviceBrand`（BrandCode/BrandName/厂家/批次）、`Sup_DeviceBrand`、`BSD_DEVICEBRAND` 实体；变体命名可在 cshtml/Vue 文件名中枚举（`_TH`/`_SUNSET`/`_METROHM`/`_MAGEE`/`_TSI`/`_EC` 等）。落地：建档 `brandcode→品牌名→适用表单变体`，在审核取数时带出品牌，按变体细分规则（尤其水溶性离子/OCEC/浊度计的多品牌差异）。
+已完成（2026-11-03）：`sup-brand-version-form-dictionary.md`——GD 平台表单选择机制=**版本**（`SYS_VersionConfig` 按工单创建时间窗口 → `{tag}_{version}` 视图，50+ tag）+ **品牌硬编码分支 9 处**（Etraninc/伊创、wisdominc/唯思德、Bmet/赛克码、EXPEC/谱育；含 `Sup_RF_Check_OCEC_Bmet`、`Sup_RF_Check_Vocs_EXPEC` 独立表单）。品牌字典实体：`Sup_QCDeviceBrand`（BrandCode/BrandName/Factory）等。建议：对 2026 年 8~9 月后 Bmet/EXPEC 独立表单单独抽样确认列布局；档案层未来可加 `valid_from/valid_to`+`brand_code`。
 
 ### P5 附件口径核验（中）
 

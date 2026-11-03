@@ -1,3 +1,10 @@
+# 来源核对（2026-11-03，广东运维平台源码）：
+# - RF_W_OTHERDEVICECHECK.IsOk1-4 为 bool radio（视图 RF_W_OtherDeviceCheck.cshtml）：
+#   IsOk1=气象五/六参数仪正常(正常/故障)、IsOk2=能见度仪正常(正常/故障)、
+#   IsOk3=是否故障送修、IsOk4=是否维护雨量传感器（是/否）；
+#   注意：城市摄影系统(CITYCAMERA*)与数据采集仪(DATAACQUISITION*)是文本字段，不是 IsOk3/4，
+#   原标签“城市摄影/数据采集仪是否正常”已按源码更正（见 docs/rf-enum-reconciliation.md）。
+# - RF_TW_PmFlowCalibrate.IsCalibrate 为 bool radio 是/否（视图同名校验）。
 profiles:
   - tables:
       - RF_W_OTHERDEVICECHECK
@@ -13,12 +20,12 @@ profiles:
         disallow_range_like: true
         severity: 中
       - name: IsOk3
-        label: 城市摄影是否正常
+        label: 是否故障送修
         allowed_values: ["0", "1", "0.0", "1.0"]
         disallow_range_like: true
         severity: 中
       - name: IsOk4
-        label: 数据采集仪是否正常
+        label: 是否维护雨量传感器
         allowed_values: ["0", "1", "0.0", "1.0"]
         disallow_range_like: true
         severity: 中
