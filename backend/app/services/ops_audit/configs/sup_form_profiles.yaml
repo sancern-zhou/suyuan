@@ -275,7 +275,7 @@ form_profiles:
         end: time2
         label: 标准气钢瓶有效期
         must_cover_checkdate: true
-        confirmed: false
+        confirmed: true
       - start: time3
         end: time4
         label: 动态校准仪校准/有效期
@@ -381,21 +381,21 @@ form_profiles:
         min: -10
         max: 10
         unit: "%"
-        confirmed: false
+        confirmed: true
       - column: string44
         remark_column: string45
         label: EC 阶段实际升温程序温度偏差
         min: -10
         max: 10
         unit: "%"
-        confirmed: false
+        confirmed: true
       - column: string46
         remark_column: string47
         label: 内标阶段实际升温程序温度偏差
         min: -10
         max: 10
         unit: "%"
-        confirmed: false
+        confirmed: true
     required_value_columns:
       - column: string33
         remark_column: string34
@@ -657,12 +657,12 @@ form_profiles:
         end: t_nextdate
         label: 参考温度计校准有效期
         must_cover_checkdate: true
-        confirmed: false
+        confirmed: true
       - start: p_prevdate
         end: p_nextdate
         label: 参考气压计校准有效期
         must_cover_checkdate: true
-        confirmed: false
+        confirmed: true
 
   # PM1 月巡查校准膜误差（sup_rf_pm1monitorinspection 分表）；阈值 ±5% 来自《PM1》文档。
   Sup_RF_PM1MonitorInspection_Month:
@@ -690,7 +690,7 @@ form_profiles:
         min: 0
         max: 3
         unit: "%"
-        confirmed: false
+        confirmed: true
 
   # PANs 周巡检：单点标定曲线 R2≥0.995（文档判据）+ 状态检查区参数范围与异常
   # 勾选（巡检模板红字"填写参数要在范围内，否则需备注上传相关巡检照片"）。
@@ -711,42 +711,42 @@ form_profiles:
         label: 单点标定校准曲线相关系数R2
         min: 0.995
         max: 1
-        confirmed: false
+        confirmed: true
       - column: string20
         label: TEC柱箱温度
         min: 11.5
         max: 12.5
         unit: "℃"
         remark_column: string21
-        confirmed: false
+        confirmed: true
       - column: string22
         label: ECD温度
         min: 49
         max: 51
         unit: "℃"
         remark_column: string23
-        confirmed: false
+        confirmed: true
       - column: string24
         label: 柱前压
         min: 17.5
         max: 18.5
         unit: kPa
         remark_column: string25
-        confirmed: false
+        confirmed: true
       - column: string26
         label: 尾吹流量
         min: 24
         max: 26
         unit: mL/min
         remark_column: string27
-        confirmed: false
+        confirmed: true
       - column: string28
         label: 汞灯温度
         min: 35
         max: 45
         unit: "℃"
         remark_column: string29
-        confirmed: false
+        confirmed: true
     abnormal_columns:
       - column: string30
         label: 采样管路是否干净
@@ -765,18 +765,20 @@ form_profiles:
         values: [是]
         remark_column: string41
 
-  # PANs 工作曲线月校准：红字"多点标曲结果最新要求为R2≥0.999"（string48 按样本推断）。
+  # PANs 工作曲线月校准（GD 源码实体注释：string43=曲线方程、string44=线性相关系数；
+  # 原 string48 为跨表族布局误配，已修正）。阈值取业务最新要求 R2≥0.999（《组分仪器工单规则》
+  # 月度表红字；平台视图红字为旧值 0.995）。
   Sup_RF_PANsWorkCurveCalibration:
     display_name: PANs 分析仪工作曲线月校准记录
     category: month_check
     cycle: month
     max_fill_lag_days: 10
     range_columns:
-      - column: string48
-        label: 多点标曲相关系数R2
+      - column: string44
+        label: 线性相关系数R2
         min: 0.999
         max: 1
-        confirmed: false
+        confirmed: true
 
   # 优泰甲烷/非甲烷月度验漏：偏差要求 ≤1 mL/min（文档红框；列语义按样本推断）。
   Sup_RF_Month_YT_LeakChecking:

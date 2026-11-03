@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""题目项列语义普查：组分站分表列语义 × 档案标签 + 主网表单题目项字典。
+"""列语义普查：组分站分表列语义 × 档案标签 + 工单耗材/附件记录（RF_ITEM）。
 
 产物：projects/guangdong/docs/sup-instrument-rules/column-semantics.md
 
@@ -7,7 +7,9 @@
   1. guangdong_mart 全部 sup_rf% 表（列填充率，按 ruleitemtag 分组）——复用
      sup_tag_inventory.py 的填充率算法；
   2. sup_form_profiles.yaml（按 tag 建档的列语义：range/formula/date/enum/abnormal）；
-  3. 源库 dbo.RF_ITEM（主网表单题目项字典：tag -> 题目序号/题目名称）。
+  3. 源库 dbo.RF_ITEM（工单耗材/附件记录：tag -> 耗材序号/名称；注意该表实体为
+     SummerFresh.Maintenance.Entity.ReportForms/RF_W_ITEM.cs（类名 RF_ITEM），
+     RFItemService 按其查工单附件与耗材，**不是表单题目项字典**）。
 
 标注约定：
   - "档案" = 语义来自 sup_form_profiles.yaml（confirmed: true/false 原样标注）；
@@ -81,7 +83,12 @@ def load_profile_labels() -> dict[str, dict[str, tuple[str, str]]]:
 
 
 def source_item_dictionary() -> dict[str, list[str]]:
-    """源库 RF_ITEM：tag -> [题目序号.题目名称]（主网表单题目项字典）。"""
+    """源库 RF_ITEM：tag -> [耗材序号.耗材名称]（工单耗材/附件记录表）。
+
+    来源实体 `RF_W_ITEM.cs`（class RF_ITEM，[Table("RF_ITEM")]）与 RFItemService：
+    ITEMID/ITEMNAME/ITEMNUM 为耗材（BSD_SUPPLY）及附件记录，按 workingordercode+
+    ruleitemtag+types(ImageType) 查询；不是表单题目项字典（2026-11-03 源码核实）。
+    """
     import pyodbc
 
     conn_str = (
@@ -146,7 +153,7 @@ def main() -> int:
         "# 题目项列语义普查（自动生成）",
         "",
         "- 生成脚本：`backend/scripts/form_semantics_census.py`（%s）。" % dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "- 来源：`guangdong_mart`/`guangdong_ods` 全部 sup_rf% 表填充率 × `sup_form_profiles.yaml` 档案标签 × 源库 `dbo.RF_ITEM` 题目项字典。",
+        "- 来源：`guangdong_mart`/`guangdong_ods` 全部 sup_rf% 表填充率 × `sup_form_profiles.yaml` 档案标签 × 源库 `dbo.RF_ITEM` 工单耗材/附件记录。",
         "- 标注：**档案**=已有语义档案（附 confirmed 状态）；**未确认**=按列名/占位规则推断，待业务确认。",
         "- 未列入的列：填充率 <15% 或技术列（工单号/站点/设备/流程等）。",
         "",
@@ -210,8 +217,8 @@ def main() -> int:
                 lines.append("| `%s` | %.0f%% | %s | %s |" % (column, rate * 100, meaning, source))
             lines.append("")
 
-    # 主网 RF_ITEM 题目项字典
-    lines += ["## 主网表单题目项字典（源库 dbo.RF_ITEM）", ""]
+    # 工单耗材/附件记录（RF_ITEM；非题目项字典，2026-11-03 源码核实）
+    lines += ["## 工单耗材/附件记录（源库 dbo.RF_ITEM；非题目项字典）", ""]
     try:
         item_dict = source_item_dictionary()
         lines += [

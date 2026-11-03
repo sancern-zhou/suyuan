@@ -8741,10 +8741,12 @@
 | `string26` | 19% | 题目项占位列（序号列，需结合表单模板确认） | 占位 |
 | `string14` | 19% | 题目项占位列（序号列，需结合表单模板确认） | 占位 |
 
-## 主网表单题目项字典（源库 dbo.RF_ITEM）
+## 工单耗材/附件记录（源库 dbo.RF_ITEM；非题目项字典）
 
-- 用途：主网 RF/SEC 表单的题目项名称清单（区县口径的题目文本）；列级映射仍以代码中的
-  `rf_field_profiles.yaml` / `RF_TABLES` 列别名为准。
+> **更正（2026-11-03，广东运维平台源码核实）**：本节原题为「主网表单题目项字典」，实为误读。
+> `RF_ITEM` 对应实体 `SummerFresh.Maintenance/Entity/ReportForms/RF_W_ITEM.cs`（类名 `RF_ITEM`，`[Table("RF_ITEM")]`），
+> 字段 ITEMID/ITEMNAME/ITEMNUM 是**工单耗材（BSD_SUPPLY）与附件记录**（RFItemService 按 workingordercode+ruleitemtag+types(ImageType) 查询 IMGPATH），
+> 下表为各 tag 的耗材/附件名称清单，不是题目项文本。主网表单列语义请用 `rf-main-net-field-mappings.md`（实体注释+视图标签生成）。
 
 | ruleitemtag | 题目数 | 题目项（序号. 名称，最多 30 项） |
 | --- | ---: | --- |
