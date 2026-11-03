@@ -172,7 +172,8 @@ class CreateBusinessChartTool(LLMTool):
                     "options": {
                         "type": "object",
                         "description": (
-                            "专用图型参数，以对应业务文档为准；污染物风玫瑰支持字段映射、方向分箱和风速分箱。"
+                            "专用图型参数，以对应业务文档为准；污染物风玫瑰支持字段映射、方向分箱、风速分箱"
+                            "和径向口径（radial_metric：mean_concentration 方位浓度均值 / level_frequency 按 HJ 633 等级频次堆叠）。"
                             "wind_timeseries 使用风速/风向角时必须显式提供 "
                             "wind_direction_convention（meteorological_from 或 mathematical_to）；"
                             "直接提供 east_u/north_v 时无需该参数。"
