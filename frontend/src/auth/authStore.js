@@ -2,7 +2,8 @@ import { defineStore } from 'pinia'
 import { setAccountIdentity } from './accountSession.js'
 
 import { createAuthApi } from './authApi.js'
-import { extractEntryToken, stripEntryToken } from './entryToken.js'
+import { extractEntryToken, extractOAuthCode, oauthRedirectUri, stripEntryToken } from './entryToken.js'
+import { createOAuthApi } from './oauthApi.js'
 import { browserAuthStorage } from './storage.js'
 
 
@@ -15,6 +16,7 @@ export function createAuthSession({
   sysCode = 'SUYUAN',
   authMode = 'company',
   mockUser = null,
+  oauthApi = createOAuthApi(),
   entryLocation = typeof globalThis.location !== 'undefined' ? globalThis.location : null,
   entryHistory = hasBrowserHistory ? globalThis.history : null
 }) {
@@ -30,23 +32,42 @@ export function createAuthSession({
     loading: false,
     initialized: false,
 
-    // 统一鉴权平台以带 token 的入口 URL 打开本系统时，优先用该 token
-    // 换取登录会话（免二次登录）；入口 token 失效则回落既有会话/登录页。
+    // 统一鉴权平台入口握手：入口 URL 带 token 直连，或 OAuth2.0 授权码回跳
+    // （directAuthorize ?code=xxx），都在此换取登录会话实现免二次登录；
+    // 失效则回落既有本地会话或登录页。
     async bootstrapWithEntryToken() {
       const entryToken = extractEntryToken(entryLocation)
-      if (!entryToken || entryToken === this.token) {
-        if (entryToken) stripEntryToken(entryLocation, entryHistory)
-        return undefined
+      const oauthCode = extractOAuthCode(entryLocation)
+      if (!entryToken && !oauthCode) return undefined
+
+      let token = ''
+      try {
+        if (entryToken && entryToken !== this.token) {
+          token = entryToken
+        } else if (oauthCode) {
+          token = (await oauthApi.exchangeCode(oauthCode, oauthRedirectUri(entryLocation))).accessToken
+        }
+        if (!token) {
+          stripEntryToken(entryLocation, entryHistory)
+          return undefined
+        }
+        return await this.establishEntryIdentity(token)
+      } finally {
+        // 任何失败路径都清洗入口参数，避免 token/授权码残留于地址与历史记录
+        if (!this.token) stripEntryToken(entryLocation, entryHistory)
       }
+    },
+
+    async establishEntryIdentity(token) {
       this.loading = true
       try {
-        const response = await api.currentUser(entryToken)
-        this.token = entryToken
+        const response = await api.currentUser(token)
+        this.token = token
         this.user = response.result
         storage.writeSession({ token: this.token, sysCode, user: this.user })
         return this.user
       } finally {
-        // 成功与否都清掉地址栏中的 token，避免其残留于地址/历史记录
+        // 成功与否都清洗入口参数，避免 token/授权码残留于地址与历史记录
         stripEntryToken(entryLocation, entryHistory)
         this.loading = false
       }
@@ -154,6 +175,7 @@ function getBrowserSession() {
     browserSession = createAuthSession({
       storage,
       api: createAuthApi({ storage }),
+      oauthApi: createOAuthApi(),
       sysCode: browserRuntimeConfig.sysCode || 'SUYUAN',
       authMode: browserRuntimeConfig.authMode,
       mockUser: browserRuntimeConfig.mockUser

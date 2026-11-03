@@ -16,7 +16,7 @@ function redirectToLogin(location) {
 }
 
 
-function configuredApiBase() {
+export function configuredApiBase() {
   return import.meta.env?.VITE_API_BASE_URL || '/api/suyuan'
 }
 

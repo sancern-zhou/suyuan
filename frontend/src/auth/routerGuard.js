@@ -1,4 +1,4 @@
-import { ENTRY_TOKEN_KEYS } from './entryToken.js'
+import { ENTRY_OAUTH_KEYS, ENTRY_TOKEN_KEYS } from './entryToken.js'
 
 
 export function safeRedirect(value, fallback = '/') {
@@ -10,13 +10,14 @@ export function safeRedirect(value, fallback = '/') {
 }
 
 
-// 入口 token 只服务于首次握手；跳转登录页等重定向目标里不携带它，
-// 避免失效 token 残留在地址栏与跳转链中。
+// 入口 token / OAuth 授权码只服务于首次握手；跳转登录页等重定向目标里不携带，
+// 避免失效凭证残留在地址栏与跳转链中。
 export function fullPathWithoutEntryToken(to) {
   const query = { ...(to?.query || {}) }
-  const hasEntryToken = ENTRY_TOKEN_KEYS.some(key => key in query)
-  if (!hasEntryToken) return to?.fullPath || to?.path || '/'
-  for (const key of ENTRY_TOKEN_KEYS) delete query[key]
+  const sensitiveKeys = [...ENTRY_TOKEN_KEYS, ...ENTRY_OAUTH_KEYS]
+  const hasEntryCredential = sensitiveKeys.some(key => key in query)
+  if (!hasEntryCredential) return to?.fullPath || to?.path || '/'
+  for (const key of sensitiveKeys) delete query[key]
   const search = new URLSearchParams()
   for (const [key, value] of Object.entries(query)) {
     if (value === null || value === undefined) continue

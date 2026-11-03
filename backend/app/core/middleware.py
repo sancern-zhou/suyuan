@@ -6,6 +6,7 @@ import redis.asyncio as redis
 
 from app.auth.identity_cache import IdentityCache
 from app.auth.middleware import GatewayAuthenticationMiddleware
+from app.auth.oauth_client import PlatformOAuthClient
 from app.auth.platform_client import PlatformAuthClient
 from app.auth.service import AuthenticationService
 from app.auth.share_access import get_share_access_service
@@ -74,6 +75,16 @@ def configure_middleware(app: FastAPI) -> None:
     )
     app.state.auth_redis = auth_redis
     app.state.auth_service = auth_service
+    # 统一鉴权平台 OAuth2.0 授权码交换客户端：未配 client_id/secret 时
+    # configured=False，exchange 端点对前端回 503 oauth_not_configured
+    oauth_base_url = (
+        settings.auth_oauth_base_url.strip() or settings.auth_service_url.strip()
+    )
+    app.state.oauth_client = PlatformOAuthClient(
+        base_url=oauth_base_url,
+        client_id=settings.auth_oauth_client_id.strip(),
+        client_secret=settings.auth_oauth_client_secret.strip(),
+    )
     app.state.ws_ticket_service = WebSocketTicketService(
         auth_redis,
         key_prefix=settings.auth_identity_cache_key_prefix,

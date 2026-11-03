@@ -6,6 +6,11 @@
 
 export const ENTRY_TOKEN_KEYS = Object.freeze(['token', 'accessToken', 'access_token'])
 
+// OAuth2.0 授权码入口（directAuthorize 302 回跳 ?code=xxx&state=yyy）
+export const ENTRY_OAUTH_KEYS = Object.freeze(['code', 'state'])
+
+const STRIP_KEYS = Object.freeze([...ENTRY_TOKEN_KEYS, ...ENTRY_OAUTH_KEYS])
+
 
 function mergeSearchParams(base, extra) {
   const merged = new URLSearchParams(base)
@@ -45,6 +50,17 @@ export function extractEntryToken(locationLike) {
   return ''
 }
 
+export function extractOAuthCode(locationLike) {
+  if (!locationLike) return ''
+  const params = locationSearchParams(locationLike)
+  return (params.get('code') || '').trim()
+}
+
+export function oauthRedirectUri(locationLike) {
+  if (!locationLike || !locationLike.origin) return ''
+  return `${locationLike.origin}/`
+}
+
 export function stripEntryToken(locationLike, historyLike) {
   if (!locationLike || !historyLike || typeof historyLike.replaceState !== 'function') {
     return false
@@ -56,7 +72,7 @@ export function stripEntryToken(locationLike, historyLike) {
     return false
   }
   let changed = false
-  const search = dropKeysFromSearch(url.search, ENTRY_TOKEN_KEYS)
+  const search = dropKeysFromSearch(url.search, STRIP_KEYS)
   if (search.changed) {
     url.search = search.search
     changed = true
@@ -65,7 +81,7 @@ export function stripEntryToken(locationLike, historyLike) {
   const queryAt = hash.indexOf('?')
   if (queryAt >= 0) {
     const hashPath = hash.slice(0, queryAt)
-    const hashSearch = dropKeysFromSearch(hash.slice(queryAt + 1), ENTRY_TOKEN_KEYS)
+    const hashSearch = dropKeysFromSearch(hash.slice(queryAt + 1), STRIP_KEYS)
     if (hashSearch.changed) {
       url.hash = hashSearch.search ? `${hashPath}?${hashSearch.search}` : hashPath
       changed = true

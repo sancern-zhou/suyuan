@@ -264,6 +264,24 @@ class Settings(BaseSettings):
         default=False,
         description="Allow anonymous Swagger/OpenAPI access",
     )
+    auth_oauth_client_id: str = Field(
+        default="",
+        description=(
+            "统一鉴权平台 OAuth2.0 客户端ID（与 SysCode 同值，平台侧配发）；"
+            "空=授权码换 token 通道整体禁用"
+        ),
+    )
+    auth_oauth_client_secret: str = Field(
+        default="",
+        description="统一鉴权平台 OAuth2.0 客户端秘钥（平台侧配发，仅后端持有）",
+    )
+    auth_oauth_base_url: str = Field(
+        default="",
+        description=(
+            "OAuth2.0 端点基址，默认复用 auth_service_url；"
+            "接口为 {base}/auth/oauth/token"
+        ),
+    )
     auth_mock_user_id: str = Field(default="local-developer")
     auth_mock_username: str = Field(default="local-developer")
     auth_mock_display_name: str = Field(default="本地开发用户")

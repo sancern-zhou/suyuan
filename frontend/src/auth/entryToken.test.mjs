@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { extractEntryToken, stripEntryToken } from './entryToken.js'
+import { extractEntryToken, extractOAuthCode, oauthRedirectUri, stripEntryToken } from './entryToken.js'
 
 
 function fakeLocation(href) {
   const url = new URL(href)
   return {
     get href() { return url.href },
+    get origin() { return url.origin },
     get search() { return url.search },
     get hash() { return url.hash }
   }
@@ -58,6 +59,31 @@ test('missing or blank entry tokens yield an empty string', () => {
 })
 
 
+test('oauth authorization code is extracted from the redirect query', () => {
+  assert.equal(
+    extractOAuthCode(fakeLocation('http://11.54.200.200:5175/?code=abc123')),
+    'abc123'
+  )
+  assert.equal(
+    extractOAuthCode(
+      fakeLocation('http://11.54.200.200:5175/?code=xyz&state=portal#/deep/route')
+    ),
+    'xyz'
+  )
+  assert.equal(extractOAuthCode(fakeLocation('http://11.54.200.200:5175/?state=only')), '')
+  assert.equal(extractOAuthCode(null), '')
+})
+
+
+test('oauth redirect uri is the site root of the entry origin', () => {
+  assert.equal(
+    oauthRedirectUri(fakeLocation('http://11.54.200.200:5175/?code=x')),
+    'http://11.54.200.200:5175/'
+  )
+  assert.equal(oauthRedirectUri(null), '')
+})
+
+
 test('strip removes the token parameter from the address and keeps other params', () => {
   const history = fakeHistory()
   const changed = stripEntryToken(
@@ -81,6 +107,18 @@ test('strip cleans a hash-embedded token query and drops the bare query mark', (
 
   assert.equal(changed, true)
   assert.equal(history.calls[0].url, 'http://11.54.200.200:5175/#/deep/route?keep=1')
+})
+
+
+test('strip removes the oauth code and state parameters from the redirect entry', () => {
+  const history = fakeHistory()
+  const changed = stripEntryToken(
+    fakeLocation('http://11.54.200.200:5175/?code=one-time&state=portal&keep=1'),
+    history
+  )
+
+  assert.equal(changed, true)
+  assert.equal(history.calls[0].url, 'http://11.54.200.200:5175/?keep=1')
 })
 
 

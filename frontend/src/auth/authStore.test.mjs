@@ -111,6 +111,7 @@ function fakeEntryEnvironment(href) {
   const url = new URL(href)
   const location = {
     get href() { return url.href },
+    get origin() { return url.origin },
     get search() { return url.search },
     get hash() { return url.hash }
   }
@@ -178,6 +179,71 @@ test('a rejected entry token without a local session lands on the login route', 
   }
   const { location, history } = fakeEntryEnvironment('http://11.54.200.200:5175/?token=bad-token')
   const session = createAuthSession({ api, storage, sysCode: 'SUYUAN', entryLocation: location, entryHistory: history })
+
+  assert.equal(await session.bootstrap(), null)
+  assert.equal(session.token, '')
+  assert.equal(location.href, 'http://11.54.200.200:5175/')
+})
+
+
+test('an oauth authorization code is exchanged and establishes the session', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  const userCalls = []
+  const exchangeCalls = []
+  const api = {
+    currentUser: async token => {
+      userCalls.push(token)
+      return { result: { id: 'u7', userName: 'zhangsan', name: '张三' } }
+    }
+  }
+  const oauthApi = {
+    exchangeCode: async (code, redirectUri) => {
+      exchangeCalls.push([code, redirectUri])
+      return { accessToken: 'oauth-access-token', refreshToken: 'refresh-1', expiresIn: 3600 }
+    }
+  }
+  const { location, history } = fakeEntryEnvironment(
+    'http://11.54.200.200:5175/?code=one-time-code&state=portal'
+  )
+  const session = createAuthSession({
+    api,
+    storage,
+    sysCode: 'SUYUAN',
+    oauthApi,
+    entryLocation: location,
+    entryHistory: history
+  })
+
+  const user = await session.bootstrap()
+
+  assert.equal(user.id, 'u7')
+  assert.equal(session.token, 'oauth-access-token')
+  assert.deepEqual(raw.dump()['Access-Token'], 'oauth-access-token')
+  assert.deepEqual(exchangeCalls, [['one-time-code', 'http://11.54.200.200:5175/']])
+  assert.deepEqual(userCalls, ['oauth-access-token'])
+  assert.equal(location.href, 'http://11.54.200.200:5175/')
+})
+
+
+test('a failed oauth exchange without a local session lands on the login route', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  const api = {
+    currentUser: async () => { throw new Error('should not be called') }
+  }
+  const oauthApi = {
+    exchangeCode: async () => { throw new Error('oauth_not_configured') }
+  }
+  const { location, history } = fakeEntryEnvironment('http://11.54.200.200:5175/?code=bad-code')
+  const session = createAuthSession({
+    api,
+    storage,
+    sysCode: 'SUYUAN',
+    oauthApi,
+    entryLocation: location,
+    entryHistory: history
+  })
 
   assert.equal(await session.bootstrap(), null)
   assert.equal(session.token, '')
