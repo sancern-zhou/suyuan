@@ -1,6 +1,12 @@
 # RF form range check profiles for operations work order audits
 
 # Expected check value fields by table
+# 注意（2026-11-03 广东运维平台源码核对，见 docs/rf-main-net-reconciliation.md）：
+# 下列 RF_W_GASEOUSCHECK_{CO,NOX,O3,SO2} 与 RF_W_PMCHECK 的 DISPLAYVALUE/MEASUREVALUE/
+# SENSORVALUE（PM 为 PM* 前缀）在 GD 源码实体、表单视图与数据侧列别名中均不存在；
+# 这 5 张表单的真实字段为 LDPYPPB（零点漂移）/KDPY（跨度漂移）/LDSHOWVALUE/MCLPPM/
+# MAINFLOWVALUE 等（视图标签含品牌阈值）。当前 RF_RANGE_OUT_OF_SPEC 对上述表实际空转，
+# 待业务确认后需改用真实字段与区间口径。
 check_value_fields:
   RF_W_GASEOUSCHECK_CO:
     - DISPLAYVALUE

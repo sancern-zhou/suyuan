@@ -16,11 +16,13 @@
 
 ## 二、待补足（按优先级）
 
-### P1 主网 `rf_*` 档案列语义核验（高）
+### P1 主网 `rf_*` 档案列语义核验（已核对，待回写）
 
-现状：`rf_range/rf_numeric/rf_required/rf_enum/rf_unit/rf_multipoint/rf_position/rf_humidity/rf_pm_pressure/rf_calibration_date` 等档案仅引用 10 张表、66 个列，覆盖面远小于 73 个主网表单实体。
+已完成（2026-11-03）：`rf-main-net-reconciliation.md`——7 个主网档案共 213 条（表,列）引用逐条核对：**✅实体注释 102 + ✅视图标签 81（共 183 条源码印证）**、🟡实体存在无注释 13、⚠️源码未见 17。
 
-可补资源：`rf-main-net-field-mappings.md`（本次产出）——把组分站的"逐列核对"方法复制到主网档案即可。数据支撑：`guangdong_mart` 主网 `rf_%` 表普查（`form_semantics_census.py` 可扩展扫描主网表）。
+关键发现：`rf_range_profiles.check_value_fields` 对 `RF_W_GASEOUSCHECK_{CO,NOX,O3,SO2}` 与 `RF_W_PMCHECK` 引用的 DISPLAYVALUE/MEASUREVALUE/SENSORVALUE（PM 前缀版）在 GD 实体、视图与数据侧列别名中**均不存在**——该规则对 5 张表实际空转；真实字段为 LDPYPPB/KDPY/LDSHOWVALUE/MCLPPM/MAINFLOWVALUE 等（视图标签含品牌阈值）。配置处已加注释标注，待业务确认后改用真实字段。
+
+后续：主网档案（rf_*_profiles.yaml）无 `confirmed` 标记体系，无需翻转；剩余 🟡/⚠️ 条目按报告逐条业务确认。
 
 ### P2 表单类型名称字典自动化（已产出草案）
 
