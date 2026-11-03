@@ -121,3 +121,39 @@ def test_configured_requires_both_credentials():
     )
     assert configured.configured is True
     assert missing_secret.configured is False
+
+
+@pytest.mark.asyncio
+async def test_authorize_code_extracts_code_from_redirect_location():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        return httpx.Response(
+            302,
+            headers={"Location": "http://master/callback?code=one-time&state=x"},
+        )
+
+    client = build_client(handler)
+    code = await client.authorize_code(
+        client_id="SUYUAN", user_mark="SUYUAN_MASTER", secret_name="ScGuanLy",
+        redirect_uri="http://master/callback",
+    )
+
+    assert code == "one-time"
+    assert "directAuthorize" in seen["url"]
+    assert "userMark=SUYUAN_MASTER" in seen["url"]
+    assert "secretName=ScGuanLy" in seen["url"]
+
+
+@pytest.mark.asyncio
+async def test_authorize_code_rejects_platform_error_message():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"state": 500, "msg": "回调地址不合法", "success": False})
+
+    client = build_client(handler)
+    with pytest.raises(AuthenticationRejected, match="回调地址不合法"):
+        await client.authorize_code(
+            client_id="SUYUAN", user_mark="SUYUAN_MASTER", secret_name="u",
+            redirect_uri="http://master/callback",
+        )

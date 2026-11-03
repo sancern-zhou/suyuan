@@ -277,3 +277,31 @@ test('session identity is resolved through the gateway session api', async () =>
   assert.deepEqual(meCalls, ['oauth-access-token'])
   assert.deepEqual(platformCalls, [])
 })
+
+
+test('a jwt-shaped entry token is exchanged before establishing the session', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  const jwtLoginCalls = []
+  const api = {
+    currentUser: async () => ({ result: { id: 'u3', userName: 'lisi', name: '李四' } })
+  }
+  const oauthApi = {
+    jwtLogin: async token => {
+      jwtLoginCalls.push(token)
+      return { accessToken: 'minted-access-token', refreshToken: 'refresh-1', expiresIn: 3600 }
+    }
+  }
+  const { location, history } = fakeEntryEnvironment('http://11.54.200.200:5175/?token=eyJhbGciOiJIUzI1NiJ9.a.b')
+  const session = createAuthSession({
+    api, storage, sysCode: 'SUYUAN', oauthApi,
+    entryLocation: location, entryHistory: history
+  })
+
+  const user = await session.bootstrap()
+
+  assert.equal(user.id, 'u3')
+  assert.equal(session.token, 'minted-access-token')
+  assert.deepEqual(jwtLoginCalls, ['eyJhbGciOiJIUzI1NiJ9.a.b'])
+  assert.equal(location.href, 'http://11.54.200.200:5175/')
+})

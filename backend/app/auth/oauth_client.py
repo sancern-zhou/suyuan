@@ -29,11 +29,14 @@ class PlatformOAuthClient:
         client_id: str,
         client_secret: str,
         token_path: str = "/auth/oauth/token",
+        authorize_path: str = "/auth/oauth/directAuthorize",
         timeout_seconds: float = 10.0,
         transport: httpx.AsyncBaseTransport | None = None,
         logger: Any | None = None,
     ) -> None:
-        self._url = f"{base_url.rstrip('/')}/{token_path.lstrip('/')}"
+        self._base_url = base_url.rstrip("/")
+        self._url = f"{self._base_url}/{token_path.lstrip('/')}"
+        self._authorize_path = authorize_path
         self._client_id = client_id
         self._client_secret = client_secret
         self._client = httpx.AsyncClient(timeout=timeout_seconds, transport=transport)
@@ -42,6 +45,45 @@ class PlatformOAuthClient:
     @property
     def configured(self) -> bool:
         return bool(self._client_id and self._client_secret)
+
+    async def authorize_code(self, *, client_id: str, user_mark: str, secret_name: str,
+                             redirect_uri: str, scope: str = "all") -> str:
+        """调用 directAuthorize 取一次性授权码（不跟随重定向，从 Location 提取）。"""
+        from urllib.parse import parse_qs, urlparse
+
+        try:
+            response = await self._client.get(
+                f"{self._base_url}/{self._authorize_path.lstrip('/')}",
+                params={
+                    "clientId": client_id,
+                    "userMark": user_mark,
+                    "secretName": secret_name,
+                    "responseType": "code",
+                    "redirectUri": redirect_uri,
+                    "scope": scope,
+                },
+            )
+        except httpx.HTTPError as exc:
+            self._logger.warning(
+                "oauth_authorize_unavailable", error_type=type(exc).__name__
+            )
+            raise AuthenticationUnavailable("oauth authorize unavailable") from exc
+        if response.status_code >= 500:
+            raise AuthenticationUnavailable("oauth authorize unavailable")
+        location = response.headers.get("location", "")
+        if response.status_code != 302 or "code=" not in location:
+            detail = ""
+            try:
+                detail = str(response.json().get("msg") or "")
+            except ValueError:
+                pass
+            self._logger.info("oauth_authorize_rejected", detail=detail[:120])
+            raise AuthenticationRejected(detail or "oauth authorize rejected")
+        query = parse_qs(urlparse(location).query)
+        code = (query.get("code") or [""])[0]
+        if not code:
+            raise AuthenticationRejected("oauth authorize returned no code")
+        return code
 
     async def exchange_code(self, code: str, redirect_uri: str) -> dict[str, Any]:
         return await self._token_request(

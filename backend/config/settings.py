@@ -282,6 +282,22 @@ class Settings(BaseSettings):
             "接口为 {base}/auth/oauth/token"
         ),
     )
+    auth_third_jwt_secret: str = Field(
+        default="",
+        description=(
+            "统一鉴权平台 JWT_SECRET_KEY 字典的 SECRET_KEY 原值；"
+            "用于校验平台签发的第三方入口 JWT(token=HS256, 密钥=Base64(该值字节))；"
+            "空=JWT 入口通道禁用"
+        ),
+    )
+    auth_third_mint_user_mark: str = Field(
+        default="SUYUAN",
+        description="JWT 换正式会话时，平台 directAuthorize 使用的回调白名单明细编码",
+    )
+    auth_third_mint_redirect_uri: str = Field(
+        default="",
+        description="JWT 换正式会话时 directAuthorize 的 redirectUri，须与白名单数据值完全一致",
+    )
     auth_mock_user_id: str = Field(default="local-developer")
     auth_mock_username: str = Field(default="local-developer")
     auth_mock_display_name: str = Field(default="本地开发用户")

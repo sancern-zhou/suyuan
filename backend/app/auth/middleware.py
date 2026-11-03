@@ -32,6 +32,7 @@ _PUBLIC_EXACT_PATHS = {
     "/api/auth/runtime-config",
     "/api/auth/oauth/exchange",
     "/api/auth/oauth/refresh",
+    "/api/auth/oauth/jwt-login",
     "/index.html",
     "/favicon.ico",
     "/wechat-screenshot.png",

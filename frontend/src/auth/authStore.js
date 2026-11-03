@@ -3,7 +3,7 @@ import { setAccountIdentity } from './accountSession.js'
 
 import { createAuthApi } from './authApi.js'
 import { extractEntryToken, extractOAuthCode, oauthRedirectUri, stripEntryToken } from './entryToken.js'
-import { createOAuthApi, createSessionApi } from './oauthApi.js'
+import { createOAuthApi, createSessionApi, isJwtShape } from './oauthApi.js'
 import { browserAuthStorage } from './storage.js'
 
 
@@ -44,7 +44,9 @@ export function createAuthSession({
       let token = ''
       try {
         if (entryToken && entryToken !== this.token) {
-          token = entryToken
+          token = isJwtShape(entryToken)
+            ? (await oauthApi.jwtLogin(entryToken)).accessToken
+            : entryToken
         } else if (oauthCode) {
           token = (await oauthApi.exchangeCode(oauthCode, oauthRedirectUri(entryLocation))).accessToken
         }

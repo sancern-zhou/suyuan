@@ -12,6 +12,11 @@ async function responseBody(response) {
 }
 
 
+export function isJwtShape(value) {
+  return typeof value === 'string' && value.split('.').length === 3
+}
+
+
 export function createOAuthApi({ fetchImpl = globalThis.fetch, apiBaseUrl = configuredApiBase() } = {}) {
   const base = String(apiBaseUrl || '/api/suyuan').replace(/\/$/, '')
   return {
@@ -22,6 +27,20 @@ export function createOAuthApi({ fetchImpl = globalThis.fetch, apiBaseUrl = conf
       )
       const accessToken = String(body.accessToken || '').trim()
       if (!accessToken) throw new Error('OAuth 授权码交换未返回访问令牌')
+      return {
+        accessToken,
+        refreshToken: String(body.refreshToken || ''),
+        expiresIn: Number(body.expiresIn) || 0
+      }
+    },
+    // 总系统 getThirdUrl 传入的平台 JWT（120 秒有效期）→ 换正式会话令牌
+    async jwtLogin(jwt) {
+      const params = new URLSearchParams({ token: jwt })
+      const body = await responseBody(
+        await fetchImpl(`${base}/auth/oauth/jwt-login?${params.toString()}`)
+      )
+      const accessToken = String(body.accessToken || '').trim()
+      if (!accessToken) throw new Error('JWT 换取会话未返回访问令牌')
       return {
         accessToken,
         refreshToken: String(body.refreshToken || ''),

@@ -1,7 +1,33 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createOAuthApi, createSessionApi } from './oauthApi.js'
+import { createOAuthApi, createSessionApi, isJwtShape } from './oauthApi.js'
+
+
+test('jwt shape detection distinguishes platform jwt from access tokens', () => {
+  assert.equal(isJwtShape('eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn9.sig'), true)
+  assert.equal(isJwtShape('2b265354-b95d-44f3-b690-8bd68bd903db'), false)
+  assert.equal(isJwtShape(''), false)
+})
+
+
+test('jwtLogin exchanges the platform jwt for a session token', async () => {
+  const seen = []
+  const api = createOAuthApi({
+    apiBaseUrl: '/api/suyuan',
+    fetchImpl: async (url) => {
+      seen.push(url)
+      return new Response(JSON.stringify({
+        accessToken: 'access-9', refreshToken: 'refresh-9', expiresIn: 3600
+      }), { status: 200 })
+    }
+  })
+
+  const result = await api.jwtLogin('header.payload.sig')
+
+  assert.equal(result.accessToken, 'access-9')
+  assert.equal(seen[0], '/api/suyuan/auth/oauth/jwt-login?token=header.payload.sig')
+})
 
 
 test('exchangeCode calls the gateway exchange endpoint and returns token fields', async () => {

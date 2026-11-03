@@ -10,6 +10,7 @@ from .errors import AuthenticationRejected, AuthenticationUnavailable
 from .models import CurrentUser
 from .oauth_client import PlatformOAuthClient
 from .service import build_mock_user
+from .third_party_entry import ThirdPartyJwtError, verify_third_party_jwt
 from .ws_tickets import WebSocketTicketService
 
 
@@ -120,6 +121,45 @@ async def current_user_profile(
         "isAdmin": user.is_admin,
         "sysCode": user.sys_code,
         "authSource": user.auth_source,
+    }
+
+
+@router.get("/auth/oauth/jwt-login")
+async def oauth_jwt_login(
+    request: Request,
+    token: str = Query(..., min_length=1),
+    oauth: PlatformOAuthClient = Depends(get_oauth_client),
+):
+    """统一鉴权平台 getThirdUrl 入口：校验平台签发的 JWT 并代发正式会话令牌。
+
+    总系统以 <子系统URL>?token=<HS256 JWT> 打开本系统；JWT 由平台 JWT_SECRET_KEY
+    签发（120 秒有效期），此处验签换取本系统可用的 accessToken/refreshToken。
+    """
+    settings_obj = settings
+    secret = settings_obj.auth_third_jwt_secret.strip()
+    mint_redirect = settings_obj.auth_third_mint_redirect_uri.strip()
+    user_mark = settings_obj.auth_third_mint_user_mark.strip() or "SUYUAN"
+    if not secret or not mint_redirect or not oauth.configured:
+        raise HTTPException(status_code=503, detail="third_party_entry_not_configured")
+    try:
+        username = verify_third_party_jwt(token.strip(), secret)
+    except ThirdPartyJwtError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    try:
+        code = await _run_oauth(oauth.authorize_code(
+            client_id=settings_obj.auth_oauth_client_id.strip(),
+            user_mark=user_mark,
+            secret_name=username,
+            redirect_uri=mint_redirect,
+        ))
+        result = await _run_oauth(oauth.exchange_code(code, mint_redirect))
+    except HTTPException:
+        raise
+    return {
+        "accessToken": result.get("accessToken"),
+        "refreshToken": result.get("refreshToken"),
+        "expiresIn": result.get("expiresIn", result.get("expireIn")),
+        "tokenType": result.get("tokenType", "bearer"),
     }
 
 
