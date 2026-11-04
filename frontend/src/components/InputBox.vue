@@ -258,6 +258,7 @@
             </div>
 
             <button
+              v-if="showKnowledgeBaseToggle"
               class="kb-toggle-button"
               :class="{ 'kb-active': showKnowledgeBaseSelector }"
               @click="toggleKnowledgeBase"
@@ -733,6 +734,8 @@ const activeModelTierMode = computed(() => (
 ))
 const showModelTierSelector = computed(() => shouldShowModelTierSelector(activeModelTierMode.value))
 const showVoiceControls = computed(() => shouldShowVoiceControls(composerAgentMode.value))
+// 知识库选择仅知识问答模式需要；其他模式（含浮窗助手）不显示入口
+const showKnowledgeBaseToggle = computed(() => composerAgentMode.value === 'knowledge')
 const contextUsage = computed(() => reactStore.currentState?.contextUsage || null)
 const contextUsagePercent = computed(() => contextUsagePercentOf(
   contextUsage.value?.contextTokens,
