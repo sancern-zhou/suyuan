@@ -724,11 +724,15 @@ const paletteItems = computed(() => {
   return filterPaletteItems(source, activeTrigger.value.search)
 })
 const showCommandPalette = computed(() => activeTrigger.value !== null)
+// 优先使用宿主显式传入的 agentMode（浮窗固定 assistant），避免全局当前模式影响输入区控件显隐
+const composerAgentMode = computed(() => (
+  validAgentModes.includes(props.agentMode) ? props.agentMode : reactStore.currentMode
+))
 const activeModelTierMode = computed(() => (
-  validAgentModes.includes(reactStore.currentMode) ? reactStore.currentMode : 'assistant'
+  validAgentModes.includes(composerAgentMode.value) ? composerAgentMode.value : 'assistant'
 ))
 const showModelTierSelector = computed(() => shouldShowModelTierSelector(activeModelTierMode.value))
-const showVoiceControls = computed(() => shouldShowVoiceControls(reactStore.currentMode))
+const showVoiceControls = computed(() => shouldShowVoiceControls(composerAgentMode.value))
 const contextUsage = computed(() => reactStore.currentState?.contextUsage || null)
 const contextUsagePercent = computed(() => contextUsagePercentOf(
   contextUsage.value?.contextTokens,
