@@ -14,7 +14,8 @@ export function buildAnalyzeRequestBody(query, options = {}) {
     mapContext = null,
     userIdentifier = null,
     isInterruption = false,
-    previousPausedRunId = null
+    previousPausedRunId = null,
+    pageContext = null
   } = options
 
   const body = {
@@ -36,5 +37,6 @@ export function buildAnalyzeRequestBody(query, options = {}) {
 
   if (boardContext !== null) body.board_context = boardContext
   if (mapContext !== null) body.map_context = mapContext
+  if (agentMode === 'assistant' && pageContext) body.page_context = pageContext
   return body
 }

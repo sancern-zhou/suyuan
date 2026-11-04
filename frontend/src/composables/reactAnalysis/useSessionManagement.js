@@ -6,19 +6,14 @@ import { onAccountChanged } from '@/auth/accountSession.js'
  */
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { preserveCatalogFields } from '@/components/management/sessionHistoryAccess.js'
-import { restoredConversationPolicy } from '@/components/socialHistoryReadOnly.js'
-import { resolveRestoredAgentMode } from '@/components/agentPlatform/restoreModePolicy.js'
+import { useConversationActions } from './useConversationActions.js'
 import { filterConversationHistory } from '@/components/conversationListPolicy.js'
 import { AGENT_MODE_IDS } from '@/config/agentModes.js'
 import { projectConfig, resolveProjectDefaultAgentMode } from '@/config/projectConfig.js'
-import { resolveCoordinatorMode } from '@/components/coordinator/coordinatorWorkspace.js'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
-import { steerAssistantRun } from '@/services/assistantApi.js'
-import { chooseRestoredResource } from '@/services/sessionResourceLifecycle.js'
 import { confirmResourcePreviewLeave } from '@/services/resourcePreviewLeaveGuard.js'
 import {
   listSessions,
-  restoreSession,
   getSessionMessages,
   deleteSession as deleteSessionRequest,
   markSessionCase,
@@ -38,6 +33,9 @@ export function useSessionManagement(store) {
   let autoRefreshTimer = null
   let refreshInFlight = null
   let restoreRequestToken = 0
+  const { handleSend, restore, doRestoreSession, currentConversationPolicy } = useConversationActions(store, {
+    onSettled: () => refreshSessionHistory({ silent: true })
+  })
 
   const localSessionHistoryData = computed(() => {
     return Object.values(store.sessionStates || {})
@@ -133,9 +131,6 @@ export function useSessionManagement(store) {
    * 是否可以输入
    */
   const canInput = computed(() => store.canInput)
-  const currentConversationPolicy = computed(() => restoredConversationPolicy(
-    store.currentState?.conversationAccess || {}
-  ))
 
   // ========== 会话操作方法 ==========
 
@@ -143,83 +138,7 @@ export function useSessionManagement(store) {
    * 发送消息
    * @param {string|object} payload - 消息内容或包含选项的对象
    */
-  // 阶段 B 追问直通：唯一活跃子委派时，回车转交给运行中的任务而非开启新对话。
-  // 多个活跃 run 或 workflow 类委派不支持转交，回常规对话由 assistant 裁决；
-  // 用户点"作为新任务"后对同一 run 抑制（directThroughSuppressedRunId）。
-  const resolveDirectThroughRun = (agentMode) => {
-    if (agentMode !== 'assistant') return null
-    const state = store.currentState
-    const runs = (state?.backgroundDelegation?.runs || []).filter(
-      run => run && run.run_id && run.kind === 'child' &&
-        (run.status === 'running' || !run.status)
-    )
-    if (runs.length !== 1) return null
-    if (state.directThroughSuppressedRunId === runs[0].run_id) return null
-    return runs[0]
-  }
-
-  const steerBackgroundRun = async (run, query, onAccepted) => {
-    const state = store.currentState
-    try {
-      await steerAssistantRun(run.run_id, state.sessionId, query)
-    } catch (error) {
-      console.warn('[assistant] direct-through steer failed, fallback to normal send:', error)
-      return false
-    }
-    if (typeof onAccepted === 'function') onAccepted()
-    refreshSessionHistory({ silent: true })
-    return true
-  }
-
-  const handleSend = async (payload) => {
-    if (currentConversationPolicy.value.readOnly) return false
-    const query = payload.query
-    const knowledgeBaseIds = payload.knowledgeBaseIds || []
-    const explicitAgentMode = payload.agentMode
-    let agentMode = explicitAgentMode || store.agentMode
-    // 助手模式是统一入口：当项目声明了自然语言路由规则时，
-    // 将命令交给对应的专业智能体并保留原始问题。
-    if (!explicitAgentMode && agentMode === 'assistant' && projectConfig.coordinator?.routes?.length) {
-      const routedMode = resolveCoordinatorMode(
-        query,
-        projectConfig.coordinator.routes,
-        'assistant'
-      )
-      if (routedMode !== 'assistant' && projectConfig.agentModeIds.includes(routedMode)) {
-        agentMode = routedMode
-      }
-    }
-    const skillIds = payload.skillIds || []
-    const contextRefs = payload.contextRefs || []
-    const activeContexts = Array.isArray(payload.activeContexts) ? payload.activeContexts : null
-    const messageAttachments = payload.messageAttachments || []
-    const modelTier = payload.modelTier || 'auto'
-
-    const directRun = resolveDirectThroughRun(agentMode)
-    if (directRun) {
-      const steered = await steerBackgroundRun(directRun, query, payload.onAccepted)
-      if (steered) return true
-    }
-
-    // 构建分析选项
-    const options = {
-      knowledgeBaseIds,
-      agentMode,  // ✅ 传递agentMode参数
-      modelTier,
-      skillIds,
-      contextRefs,
-      activeContexts,
-      messageAttachments,
-      onAccepted: payload.onAccepted
-    }
-
-    // 使用store的分析方法
-    try {
-      await store.analyze(query, options)
-    } finally {
-      refreshSessionHistory({ silent: true })
-    }
-  }
+  // 发送与追问直通由 useConversationActions 统一提供给全页和浮窗。
 
   /**
    * 暂停分析
@@ -249,229 +168,8 @@ export function useSessionManagement(store) {
 
   // ========== 会话恢复 ==========
 
-  const hasRestorableLocalState = sessionState => {
-    if (!sessionState) return false
-    return (Array.isArray(sessionState.messages) && sessionState.messages.length > 0) ||
-      !!sessionState.isAnalyzing ||
-      !!sessionState.isComplete ||
-      !!sessionState.finalAnswer
-  }
-
-  /**
-   * 执行会话恢复的统一逻辑
-   * @param {string} sessionId - 会话ID
-   * @param {object} options - 恢复选项
-   * @returns {object} 恢复结果
-   */
-  const doRestoreSession = async (sessionId, options = {}) => {
-    const { messageLimit = 100 } = options
-    const requestToken = ++restoreRequestToken
-
-    try {
-      // 1. 调用恢复API
-      const [restoreResult] = await Promise.all([
-        restoreSession(sessionId, { messageLimit }),
-        resourceStore.loadCatalog(sessionId)
-      ])
-      if (requestToken !== restoreRequestToken) {
-        return { success: false, cancelled: true, error: '会话已切换' }
-      }
-
-      if (!restoreResult) {
-        return {
-          success: false,
-          error: '恢复失败：API返回为空'
-        }
-      }
-
-      // 后端返回格式：{ message: "...", session: {...} }
-      const sessionData = restoreResult.session || restoreResult
-      let messages = sessionData.conversation_history || []
-      const restoredBoard = sessionData.metadata?.drawio_board || sessionData.drawio_board || null
-      // 运行中的 detached run：消息在终态才落库，恢复到 0 条属预期，改走接流
-      const activeRun = sessionData.active_run || null
-      const hasActiveRun = !!(activeRun && (activeRun.stream_id || activeRun === true))
-      if (messages.length === 0 && !restoredBoard?.board_id && !hasActiveRun) {
-        throw new Error('该历史会话没有可恢复的消息，消息持久化可能失败')
-      }
-
-      // 详细分析 final 消息（只根据type字段判断）
-      const finalMessages = messages.filter(m => {
-        const msgType = (m.type || '').toLowerCase()
-        return msgType === 'final' || msgType === 'assistant'
-      })
-
-      // 【修复】final消息按ID去重，只过滤真正重复ID的消息
-      const idMap = new Map()
-      finalMessages.forEach(m => {
-        if (m.id) {
-          if (idMap.has(m.id)) {
-            // 发现重复ID
-            const existing = idMap.get(m.id)
-            console.warn('[会话恢复] 发现重复ID的final消息:', {
-              id: m.id,
-              原消息时间: existing.timestamp || 'N/A',
-              重复消息时间: m.timestamp || 'N/A'
-            })
-          } else {
-            idMap.set(m.id, m)
-          }
-        }
-      })
-
-      // 只保留每个ID的第一次出现
-      const seenIds = new Set(idMap.keys())
-      const beforeCount = messages.length
-      messages = messages.filter(m => {
-        // 只检查final/assistant消息的ID
-        const msgType = (m.type || '').toLowerCase()
-        if (msgType === 'final' || msgType === 'assistant') {
-          return !m.id || seenIds.has(m.id)
-        }
-        return true
-      })
-
-      if (messages.length !== beforeCount) {
-        console.log(`[会话恢复] 按ID去重：${beforeCount} → ${messages.length} (过滤${beforeCount - messages.length}条)`)
-      }
-
-      // 2. 更新对话状态；资源状态由 sessionResourceStore 独立维护。
-      const restoredMode = resolveRestoredAgentMode(sessionData, sessionId, store.currentMode)
-      store.switchMode(restoredMode)
-      store.reset()
-      store.setSessionId(sessionId, restoredMode)
-      store.currentState.conversationAccess = {
-        source: sessionData.source || 'web',
-        read_only_on_web: sessionData.read_only_on_web === true
-      }
-      store.setMessages(messages)
-      store.currentState.pendingInteraction = sessionData.metadata?.pending_interaction || null
-      if (restoredMode === 'board' && restoredBoard?.board_id &&
-          typeof store.ensureDrawioBoardState === 'function' &&
-          typeof store.loadDrawioBoardVersions === 'function') {
-        const board = store.ensureDrawioBoardState(store.currentState)
-        board.activeBoardId = restoredBoard.board_id
-        board.title = restoredBoard.title || board.title
-        board.acceptedVersionId = restoredBoard.accepted_version_id || restoredBoard.acceptedVersionId || null
-        board.workingVersionId = restoredBoard.working_version_id || restoredBoard.workingVersionId ||
-          restoredBoard.candidate_version_id || restoredBoard.candidateVersionId || null
-        board.candidateVersionId = restoredBoard.candidate_version_id || restoredBoard.candidateVersionId || null
-        try {
-          await store.loadDrawioBoardVersions(store.currentState)
-        } catch (error) {
-          console.warn('[会话恢复] 画板版本和手动草稿恢复失败:', error)
-        }
-      }
-      resourceStore.activateSession(sessionId)
-      await resourceStore.refreshIfNewer(sessionId, sessionData.resource_version || 0)
-      if (requestToken !== restoreRequestToken || resourceStore.activeSessionId !== sessionId) {
-        return { success: false, cancelled: true, error: '会话已切换' }
-      }
-      chooseRestoredResource(resourceStore, sessionId)
-
-      // 运行中的任务：接回 detached run 事件流，实时展示进度。
-      // 不 await 完成（跟随会持续到任务终止），失败时回退为普通恢复结果。
-      if (hasActiveRun) {
-        store.reattachActiveRun(sessionId, { mode: restoredMode }).catch(error => {
-          console.warn('[会话恢复] 接回运行中任务失败:', error)
-        })
-      }
-
-      // 设置分页信息
-      if (sessionData.has_more_messages !== undefined || sessionData.total_message_count !== undefined) {
-        store.setPagination({
-          hasMoreMessages: sessionData.has_more_messages || false,
-          totalMessageCount: sessionData.total_message_count || messages.length,
-          oldestSequence: sessionData.oldest_sequence,
-          loadingMore: false
-        })
-      }
-
-      return {
-        success: true,
-        messageCount: messages.length,
-        resourceCount: resourceStore.sessionState(sessionId)?.resources?.length || 0
-      }
-
-    } catch (error) {
-      if (requestToken !== restoreRequestToken) {
-        return { success: false, cancelled: true, error: '会话已切换' }
-      }
-      console.error('[会话恢复] 恢复会话时出错:', error)
-      if (hasRestorableLocalState(store.sessionStates?.[sessionId])) {
-        store._activateSession(sessionId)
-        return {
-          success: true,
-          session: store.sessionStates[sessionId],
-          local: true,
-          degraded: true,
-          error: error.message
-        }
-      }
-      return {
-        success: false,
-        error: error.message
-      }
-    }
-  }
-
-  const activateLocalSessionIfAvailable = async (sessionId) => {
-    const localSessionState = store.sessionStates?.[sessionId]
-    if (!hasRestorableLocalState(localSessionState)) return false
-
-    restoreRequestToken += 1
-    store._activateSession(sessionId, localSessionState.mode)
-    resourceStore.activateSession(sessionId)
-    void resourceStore.loadCatalog(sessionId).then(() => chooseRestoredResource(resourceStore, sessionId))
-    console.log('[会话切换] 已激活本地会话状态，跳过后端恢复:', {
-      sessionId,
-      messageCount: localSessionState.messages?.length || 0,
-      isAnalyzing: !!localSessionState.isAnalyzing
-    })
-    return true
-  }
-
-  /**
-   * 处理会话恢复
-   * @param {string} sessionId - 会话ID
-   */
-  const handleSessionRestore = async (sessionId) => {
-    if (resourceStore.activeSessionId && resourceStore.activeSessionId !== sessionId) {
-      if (!await confirmResourcePreviewLeave()) return false
-    }
-    if (await activateLocalSessionIfAvailable(sessionId)) {
-      return true
-    }
-
-    const result = await doRestoreSession(sessionId, { messageLimit: 100, restoreOfficeDocs: true })
-
-    if (result.success) {
-      return true
-    } else {
-      console.error('[会话恢复] 恢复会话失败:', result.error)
-      return false
-    }
-  }
-
-  /**
-   * 从侧边栏快速加载会话
-   * @param {string} sessionId - 会话ID
-   */
-  const handleLoadSession = async (sessionId) => {
-    if (resourceStore.activeSessionId && resourceStore.activeSessionId !== sessionId) {
-      if (!await confirmResourcePreviewLeave()) return false
-    }
-    if (await activateLocalSessionIfAvailable(sessionId)) {
-      return true
-    }
-
-    const result = await doRestoreSession(sessionId, {
-      messageLimit: 100,
-      restoreOfficeDocs: true
-    })
-
-    return result.success
-  }
+  const handleSessionRestore = async (sessionId) => restore(sessionId)
+  const handleLoadSession = async (sessionId) => restore(sessionId)
 
   const startNewWebConversation = async () => {
     if (!await confirmResourcePreviewLeave()) return false

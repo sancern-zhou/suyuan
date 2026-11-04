@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 const storeSource = readFileSync(new URL('../../stores/reactStore.js', import.meta.url), 'utf8')
 const inputSource = readFileSync(new URL('../InputBox.vue', import.meta.url), 'utf8')
 const selectorSource = readFileSync(new URL('../AgentModeSelector.vue', import.meta.url), 'utf8')
-const sessionManagementSource = readFileSync(new URL('../../composables/reactAnalysis/useSessionManagement.js', import.meta.url), 'utf8')
+const sessionManagementSource = readFileSync(new URL('../../composables/reactAnalysis/useConversationActions.js', import.meta.url), 'utf8')
 
 test('board state and snapshots are isolated to board mode', () => {
   assert.match(storeSource, /actualMode === 'board'/)

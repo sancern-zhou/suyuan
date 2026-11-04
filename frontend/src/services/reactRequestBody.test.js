@@ -39,6 +39,12 @@ test('Web assistant uses assistant runtime while professional requests retain th
   }
 })
 
+test('only assistant requests carry a sanitized page context', () => {
+  const pageContext = { route_name: 'knowledge-base', title: '知识库管理' }
+  assert.deepEqual(buildAnalyzeRequestBody('当前页面怎么用', { agentMode: 'assistant', pageContext }).page_context, pageContext)
+  assert.equal('page_context' in buildAnalyzeRequestBody('查询', { agentMode: 'query', pageContext }), false)
+})
+
 test('carries the previous paused run barrier into the next normal turn', () => {
   const body = buildAnalyzeRequestBody('继续刚才的数据分析', {
     sessionId: 'assistant_session_1',

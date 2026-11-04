@@ -29,11 +29,16 @@ test('floating assistant uses the real conversation state on every coordinator w
   assert.match(view, /handleSend\(\{ query, agentMode: mode \}\)/)
 })
 
-test('assistant sends can route through project coordinator rules', async () => {
-  const source = await readFile(new URL('../../composables/reactAnalysis/useSessionManagement.js', import.meta.url), 'utf8')
+// 2026-10-12 产品决策：关键词路由（project.coordinator.routes）整体删除，不允许
+// 关键词路由；发送统一走 useConversationActions（全页与浮窗共用），追问直通与
+// 江苏自动档默认由该共享链路承载。契约随之改为守护委派结构而非路由代码。
+test('assistant sends delegate to shared conversation actions without keyword routing', async () => {
+  const management = await readFile(new URL('../../composables/reactAnalysis/useSessionManagement.js', import.meta.url), 'utf8')
+  const actions = await readFile(new URL('../../composables/reactAnalysis/useConversationActions.js', import.meta.url), 'utf8')
 
-  assert.match(source, /resolveCoordinatorMode\(/)
-  assert.match(source, /agentMode === 'assistant'/)
-  assert.match(source, /projectConfig\.coordinator\?\.routes/)
+  assert.match(management, /useConversationActions\(/)
+  assert.doesNotMatch(management, /resolveCoordinatorMode\(/)
+  assert.match(actions, /resolveDirectThroughRun\(/)
+  assert.match(actions, /payload\.modelTier \|\| 'auto'/)
 })
 
