@@ -31,6 +31,7 @@ from app.services.llm_failover import (
 )
 from app.services.llm_concurrency import llm_request_slot
 from app.services.llm_thinking_policy import reset_request_tier, set_request_tier
+from app.utils.async_cleanup import reset_context_var
 from app.services.chat_completions_adapter import (
     ChatCompletionsStreamAdapter,
     ToolCallArgumentsError,
@@ -195,7 +196,7 @@ class LLMService:
             yield
         finally:
             temporary_client = self.anthropic_client
-            _llm_request_state.reset(token)
+            reset_context_var(_llm_request_state, token)
             if temporary_client is not None:
                 self._schedule_anthropic_client_close(temporary_client)
 
@@ -231,7 +232,7 @@ class LLMService:
             yield
         finally:
             temporary_client = self.anthropic_client
-            _llm_request_state.reset(token)
+            reset_context_var(_llm_request_state, token)
             if temporary_client is not None:
                 self._schedule_anthropic_client_close(temporary_client)
 
@@ -300,7 +301,7 @@ class LLMService:
         finally:
             reset_request_tier(tier_token)
             temporary_client = self.anthropic_client
-            _llm_request_state.reset(token)
+            reset_context_var(_llm_request_state, token)
             if temporary_client is not None:
                 self._schedule_anthropic_client_close(temporary_client)
 
@@ -335,7 +336,7 @@ class LLMService:
         try:
             yield
         finally:
-            _llm_opencode_session_id.reset(token)
+            reset_context_var(_llm_opencode_session_id, token)
 
     @contextmanager
     def use_auto_profile(self, auto_profile: Optional[str]):
@@ -410,7 +411,7 @@ class LLMService:
             yield
         finally:
             temporary_client = self.anthropic_client
-            _llm_request_state.reset(token)
+            reset_context_var(_llm_request_state, token)
             if temporary_client is not None:
                 self._schedule_anthropic_client_close(temporary_client)
 

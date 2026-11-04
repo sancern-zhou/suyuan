@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 
+from app.utils.async_cleanup import reset_context_var
+
 _caller_tier_var: ContextVar[str | None] = ContextVar("llm_caller_tier", default=None)
 _request_tier_var: ContextVar[str | None] = ContextVar("llm_request_tier", default=None)
 
@@ -25,7 +27,7 @@ def set_agent_caller_tier(tier: str):
 
 
 def reset_agent_caller_tier(token) -> None:
-    _caller_tier_var.reset(token)
+    reset_context_var(_caller_tier_var, token)
 
 
 def get_agent_caller_tier() -> str | None:
@@ -39,7 +41,7 @@ def set_request_tier(tier: str | None):
 
 
 def reset_request_tier(token) -> None:
-    _request_tier_var.reset(token)
+    reset_context_var(_request_tier_var, token)
 
 
 def get_request_tier() -> str | None:
