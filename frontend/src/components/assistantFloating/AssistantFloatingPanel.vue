@@ -117,6 +117,7 @@ async function resolveInteraction(resolution) {
 .delegation-banner { padding: 6px 14px; font-size: 12px; background: #edf5ff; color: #34638d; flex-shrink: 0; } .delegation-banner.completed { background: #eaf7f0; color: #26754d; }
 .assistant-floating-panel :deep(.message-viewport) { min-height: 0; flex: 1; }
 .assistant-floating-panel :deep(.message-list-content) { padding: 12px 10px; }
+.assistant-floating-panel :deep(.agent-message.final) { background: transparent; padding: 2px 2px; }
 .assistant-floating-panel :deep(.welcome-message) { padding: 14px 6px; } .assistant-floating-panel :deep(.welcome-message h2) { font-size: 18px; } .assistant-floating-panel :deep(.welcome-capabilities) { display: none; }
 .assistant-floating-panel :deep(.input-area) { padding: 6px 8px 8px; }
 .assistant-floating-panel :deep(.input-wrapper) { flex-direction: row; align-items: flex-end; gap: 4px; }
