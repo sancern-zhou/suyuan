@@ -14,6 +14,9 @@ Incremental modes per table (sync_config.json):
       SELECT gains "__incr" column; state changes bump the coalesced timestamp
   - mode "daily_full"                               -> no watermark; --full reload
       (small dictionaries / tables without a reliable update column)
+  - full_window_days (per table)                    -> rolling full-reload window:
+      --full pulls rows whose incremental expression falls in the last N days
+      (nightly heal for in-place updates the watermark cannot see)
   - where (static SQL predicate)                    -> row scope filter applied on
       EVERY pull (full and incremental). Use for business scope cuts, e.g. only
       rows whose uniquecode is in the provincial-station list of the source
@@ -22,6 +25,7 @@ Incremental modes per table (sync_config.json):
 Usage:
   python sync_table.py <table>              # incremental (auto-full if no watermark)
   python sync_table.py <table> --full       # force full reload (window applies)
+  python sync_table.py <table> --full --since 2026-06-01   # one-off window override
   python sync_table.py <table> --check      # row-count + max-timestamp reconciliation
 """
 from __future__ import annotations
@@ -201,8 +205,22 @@ def build_source_sql(spec: dict, watermark, full: bool, since: str | None) -> st
     return f"SELECT {col_sql} FROM {spec['source_table']}{where}{order}"
 
 
-def fetch_source_rows(spec: dict, cfg: dict, watermark, full: bool):
-    since = cfg.get("full_load_since")
+def resolve_since(spec: dict, cfg: dict, since_override) -> str | None:
+    # Full-reload window precedence: explicit --since (one-off backfill) beats a
+    # per-table rolling window (full_window_days, the nightly heal over in-place
+    # updates the watermark cannot see), which beats the global backfill horizon.
+    if since_override:
+        return since_override
+    days = spec.get("full_window_days")
+    if days:
+        return (dt.datetime.now() - dt.timedelta(days=int(days))).strftime(
+            "%Y-%m-%d %H:%M:%S.000")
+    return cfg.get("full_load_since")
+
+
+def fetch_source_rows(spec: dict, cfg: dict, watermark, full: bool,
+                      since_override=None):
+    since = resolve_since(spec, cfg, since_override)
     sql = build_source_sql(spec, watermark, full, since)
     conn = source_conn(cfg, spec["source_db"])
     try:
@@ -268,7 +286,7 @@ def batch_watermark(spec: dict, rows: list[tuple], current):
     return best if best_key > cur_key else current
 
 
-async def run_sync(table: str, full: bool) -> int:
+async def run_sync(table: str, full: bool, since_override=None) -> int:
     cfg = load_config()
     spec = cfg["tables"][table]
     batch_id = uuid.uuid4()
@@ -290,7 +308,8 @@ async def run_sync(table: str, full: bool) -> int:
         entry["watermark_before"] = wm
         new_wm = wm
         total = 0
-        for rows in fetch_source_rows(spec, cfg, None if query_full else wm, query_full):
+        for rows in fetch_source_rows(spec, cfg, None if query_full else wm,
+                                      query_full, since_override):
             new_wm = batch_watermark(spec, rows, new_wm)
             await upsert_rows(pg, table, spec, rows, batch_id)
             total += len(rows)
@@ -334,7 +353,11 @@ async def run_check(table: str) -> int:
         src_count = cur.fetchone()[0]
         src_max = None
         if incr:
-            cur.execute(f"SELECT MAX({incr}) FROM {spec['source_table']}")
+            # Aggregate arguments cannot contain subqueries in T-SQL, so wrap
+            # expression-based incremental columns in a derived table.
+            cur.execute(
+                f"SELECT MAX(x) FROM (SELECT ({incr}) AS x FROM {spec['source_table']}) t"
+            )
             src_max = cur.fetchone()[0]
     finally:
         conn.close()
@@ -359,11 +382,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("table")
     parser.add_argument("--full", action="store_true")
+    parser.add_argument("--since", default=None,
+                        help="override the full-reload window start (one-off backfill)")
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     if args.check:
         return asyncio.run(run_check(args.table))
-    return asyncio.run(run_sync(args.table, args.full))
+    return asyncio.run(run_sync(args.table, args.full, args.since))
 
 
 if __name__ == "__main__":

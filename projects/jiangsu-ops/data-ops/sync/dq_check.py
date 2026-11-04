@@ -215,6 +215,48 @@ async def check_routine_order_semantics(pg, results):
                      f"reconcile query failed: {exc}")
 
 
+async def check_form_sync_drift(pg, results):
+    """表单仅关单/同步滞后哨兵（2026-11-04 rf_common 原地更新漏同步事故长效观测）。
+
+    双信号(任务项状态 OR rf_common.preparetime)都空白的已闭环单, 关单超 3 天仍在
+    疑点单列的, 要么是运维真没填表就关单, 要么是同步链路再次漏拉原地更新(含平台
+    不盖章的静默写入, 如归档后作废)。count>0 报 WARN(不阻塞夜间链路), 供人工判定。
+    """
+    try:
+        row = await pg.fetchrow(
+            """
+            select count(*) as total
+            from jiangsu_mart.mart_routine_order_analysis
+            where is_form_only_close
+              and finish_time < current_date - interval '3 days'
+              and create_time >= '2026-06-01'
+            """
+        )
+        total = row["total"]
+        if total == 0:
+            await record(pg, results, "semantics", "form_only_close_drift", "OK",
+                         "闭环超3天且无任何填报证据的单=0 (双信号同步健康)")
+        else:
+            samples = await pg.fetch(
+                """
+                select working_order_code, station_code, finish_time
+                from jiangsu_mart.mart_routine_order_analysis
+                where is_form_only_close
+                  and finish_time < current_date - interval '3 days'
+                  and create_time >= '2026-06-01'
+                order by finish_time desc limit 5
+                """
+            )
+            codes = ", ".join(
+                f"{r['working_order_code']}({r['station_code']})" for r in samples)
+            await record(pg, results, "semantics", "form_only_close_drift", "WARN",
+                         f"闭环超3天无填报证据={total}张, 疑似真疑点单或同步漏拉原地更新; "
+                         f"样本: {codes}; 判定须直连源库核 rf_common")
+    except Exception as exc:  # noqa: BLE001
+        await record(pg, results, "semantics", "form_only_close_drift", "WARN",
+                     f"drift query failed: {exc}")
+
+
 async def record(pg, results, name, table, status, detail):
     results.append((name, table, status, detail))
     print(f"[{status}] {name}/{table}: {detail}")
@@ -325,6 +367,7 @@ async def main() -> int:
         await check_dbt_artifacts(pg, results)
         await check_ods_fallback(pg, results)
         await check_routine_order_semantics(pg, results)
+        await check_form_sync_drift(pg, results)
     finally:
         await pg.close()
     failures = sum(1 for r in results if r[2] == "FAIL")

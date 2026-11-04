@@ -86,6 +86,54 @@
         "syncerrmsg",
         "createtime"
       ]
+    },
+    "rf_common": {
+      "_comment": "原地更新表单实例: 平台填表/复核/审核只写业务时间戳不碰 UpdateTime(死列)，增量水位必须取五个时间戳最大值；full_window_days=7 夜间治愈窗兜底静默写入",
+      "source_db": "opa_product_data",
+      "source_table": "dbo.rf_common",
+      "mode": "incremental",
+      "pk": [
+        "Id"
+      ],
+      "incremental_type": "datetime",
+      "incremental_expr": "(SELECT MAX(v) FROM (VALUES ([UpdateTime]),([PrepareTime]),([ReviewTime]),([AuditTime]),([CreateTime])) t(v))",
+      "apply_window": true,
+      "full_window_days": 7,
+      "initial_where_tpl": "(SELECT MAX(v) FROM (VALUES ([UpdateTime]),([PrepareTime]),([ReviewTime]),([AuditTime]),([CreateTime])) t(v)) >= '{since}'",
+      "columns": [
+        "Id",
+        "WorkingOrderCode",
+        "DetailId",
+        "RuleItemTag",
+        "PrepareTime",
+        "ReviewTime",
+        "AuditTime",
+        "CreateTime",
+        "UpdateTime"
+      ]
+    },
+    "mtc_taskitem": {
+      "_comment": "任务项只有 Id 可做增量(状态翻转原地写 ProsessSdtTime 且无更新时间列)；禁止用 COALESCE(ProsessEdtTime,ProsessSdtTime,PlanFinishTime) 做增量水位——周计划预生成未来日期任务项会永久抬高水位压住全部后续更新(2026-11-04 教训)；原地更新靠 nightly full_window_days 治愈窗(模板按活动时间滚窗)兜底",
+      "source_db": "opa_product_data",
+      "source_table": "dbo.mtc_TaskItem",
+      "mode": "incremental",
+      "pk": [
+        "Id"
+      ],
+      "incremental_column": "Id",
+      "incremental_type": "int",
+      "apply_window": true,
+      "full_window_days": 7,
+      "initial_where_tpl": "COALESCE([ProsessEdtTime], [ProsessSdtTime], [PlanFinishTime]) >= '{since}'",
+      "columns": [
+        "Id",
+        "WorkingOrderCode",
+        "Status",
+        "ProsessSdtTime",
+        "ProsessEdtTime",
+        "PlanFinishTime",
+        "stationcode"
+      ]
     }
   }
 }
