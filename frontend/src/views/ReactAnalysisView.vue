@@ -77,7 +77,8 @@
       @assistant-select="handleAssistantSelect"
       @sidebar-action="handleSidebarAction"
       @select-agent="handleAgentSelect"
-      @coordinator-submit="handleCoordinatorSubmit"
+      @coordinator-submit="handleFloatingAssistantSubmit"
+      @open-full-conversation="workspace = 'chat'"
       @load-session="handleLoadSessionAndClosePanel"
       @start-drag="startDragging"
       @stop-drag="stopDragging"
@@ -586,6 +587,20 @@ const handleCoordinatorSubmit = async (payload) => {
   const opened = await handleAgentSelect(mode)
   if (!opened) return
   await handleSend({ query, agentMode: mode })
+}
+
+const handleFloatingAssistantSubmit = async (payload) => {
+  const query = String(payload?.query || '').trim()
+  if (!query) return
+  const mode = payload?.mode || resolveCoordinatorMode(
+    query,
+    projectConfig.coordinator?.routes || [],
+    defaultAgentMode
+  )
+  if (!projectConfig.agentModeIds.includes(mode)) return
+  // 浮窗仅切换会话状态，不抢占用户正在查看的首页或工作台。
+  store.enterModeConversation(mode)
+  await handleSend({ query, agentMode: mode, modelTier: payload.modelTier })
 }
 
 const handleLoadSessionAndClosePanel = async (sessionId) => {

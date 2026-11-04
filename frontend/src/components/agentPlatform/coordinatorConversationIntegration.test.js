@@ -4,13 +4,29 @@ import test from 'node:test'
 
 const readSource = relativePath => readFile(new URL(relativePath, import.meta.url), 'utf8')
 
-test('coordinator home exposes one assistant conversation entry with prompt routing', async () => {
+test('coordinator home removes the fixed conversation card and keeps its catalog', async () => {
   const source = await readSource('../coordinator/CoordinatorHome.vue')
 
-  assert.match(source, /aria-label="助手模式对话窗口"/)
-  assert.match(source, /@submit\.prevent="submitQuery"/)
-  assert.match(source, /emit\('submit', \{ query: value \}\)/)
-  assert.match(source, /quickPrompts/)
+  assert.doesNotMatch(source, /class="assistant-conversation"/)
+  assert.doesNotMatch(source, /aria-label="输入助手任务"/)
+  assert.doesNotMatch(source, /emit\('submit'/)
+  assert.match(source, /aria-label="智能体类型"/)
+})
+
+test('floating assistant uses the real conversation state on every coordinator workspace', async () => {
+  const layout = await readSource('../reactAnalysis/MainLayout.vue')
+  const dock = await readSource('../coordinator/CoordinatorAssistantDock.vue')
+  const view = await readSource('../../views/ReactAnalysisView.vue')
+
+  assert.match(layout, /<CoordinatorAssistantDock/)
+  assert.match(layout, /:messages="messages"/)
+  assert.match(layout, /@submit="\$emit\('coordinator-submit', \$event\)"/)
+  assert.match(dock, /<ReActMessageList/)
+  assert.match(dock, /<InputBox/)
+  assert.match(dock, /position: fixed/)
+  assert.match(view, /handleFloatingAssistantSubmit/)
+  assert.match(view, /store\.enterModeConversation\(mode\)/)
+  assert.match(view, /handleSend\(\{ query, agentMode: mode \}\)/)
 })
 
 test('assistant sends can route through project coordinator rules', async () => {

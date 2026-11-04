@@ -56,6 +56,7 @@ import {
   peekNextQueuedInput,
   queueIncomingBehindPendingAndTakeNext,
 } from './reactStoreQueue.js'
+import { shouldActivateStartedSession } from './reactStoreSessionActivation.js'
 import { restoreMapScene } from './reactStoreMapScene.js'
 import { normalizeRestoredMessages } from './sessionContent.js'
 import { mergeMapPrograms } from '../components/queryDashboard/mapProgramMerge.js'
@@ -1443,6 +1444,9 @@ export const useReactStore = defineStore('react', {
       const targetState = sessionId
         ? this._ensureSessionState(sessionId, targetMode)
         : (this.modeStates[targetMode] || this.currentState)
+      if (shouldActivateStartedSession(type, sessionId, targetMode, this.currentMode, this.currentState.sessionId)) {
+        this._activateSession(sessionId, targetMode)
+      }
       console.log('[handleEvent] targetState:', targetState)
       console.log('[handleEvent] targetState.messages.length:', targetState?.messages?.length)
 

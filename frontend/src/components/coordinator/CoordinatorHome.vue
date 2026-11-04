@@ -29,31 +29,6 @@
         </div>
       </header>
 
-      <section class="assistant-conversation" aria-label="助手模式对话窗口">
-        <div class="conversation-heading">
-          <span class="conversation-avatar" aria-hidden="true">AI</span>
-          <div>
-            <span class="role">ASSISTANT MODE</span>
-            <h2>{{ coordinator.greeting || '今天需要我关注什么？' }}</h2>
-            <p>直接描述目标，我会提取意图并切换到合适的专业智能体。</p>
-          </div>
-        </div>
-        <form class="conversation-composer" @submit.prevent="submitQuery">
-          <input
-            v-model="query"
-            type="text"
-            aria-label="输入助手任务"
-            placeholder="例如：查询今天江苏全省异常站点并说明依据"
-          >
-          <button type="submit" :disabled="!query.trim()">发送</button>
-        </form>
-        <div v-if="quickPrompts.length" class="quick-prompts" aria-label="快捷提问">
-          <button v-for="prompt in quickPrompts" :key="prompt.label" type="button" @click="submitPrompt(prompt)">
-            {{ prompt.label }}
-          </button>
-        </div>
-      </section>
-
       <section class="agent-groups" aria-label="智能体类型">
         <header class="section-header">
           <div><span>AGENT TYPES</span><h2>按类型选择智能体</h2></div>
@@ -103,11 +78,10 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { AGENT_SCENES } from '@/config/agentModes.js'
 
-const emit = defineEmits(['select', 'select-task', 'restore-session', 'submit', 'switch-view'])
-const query = ref('')
+const emit = defineEmits(['select', 'select-task', 'restore-session', 'switch-view'])
 
 const props = defineProps({
   coordinator: { type: Object, default: () => ({}) },
@@ -117,8 +91,6 @@ const props = defineProps({
   selectingMode: { type: String, default: '' },
   scheduledTasks: { type: Array, default: () => [] }
 })
-
-const quickPrompts = computed(() => Array.isArray(props.coordinator?.quickPrompts) ? props.coordinator.quickPrompts : [])
 
 const agentGroups = computed(() => {
   const assigned = new Set()
@@ -143,19 +115,6 @@ const agentGroups = computed(() => {
   })
   return groups
 })
-
-const submitQuery = () => {
-  const value = query.value.trim()
-  if (!value) return
-  emit('submit', { query: value })
-  query.value = ''
-}
-
-const submitPrompt = (prompt) => {
-  const value = String(prompt?.prompt || '').trim()
-  if (!value) return
-  emit('submit', { query: value, mode: prompt?.mode })
-}
 </script>
 
 <style scoped>
@@ -200,21 +159,6 @@ const submitPrompt = (prompt) => {
 .agent-platform-entry { display: flex; align-items: center; gap: 7px; padding: 10px 14px; border: 1px solid #c9dcdf; border-radius: 11px; background: rgba(255,255,255,.72); color: #496572; cursor: pointer; font-size: 13px; }
 .agent-platform-entry svg { width: 16px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.5; }
 
-.assistant-conversation { margin-bottom: 28px; padding: 20px 22px 17px; border: 1px solid rgba(63, 200, 212, .24); border-radius: 16px; background: linear-gradient(120deg, rgba(7, 41, 59, .98), rgba(13, 76, 107, .94)); box-shadow: 0 14px 30px rgba(7, 41, 59, .16); color: var(--bg-container); }
-.conversation-heading { display: flex; align-items: center; gap: 12px; }
-.conversation-avatar { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid rgba(126, 239, 232, .38); border-radius: 12px; background: rgba(75, 211, 210, .15); color: #a9f6ef; font-size: 11px; font-weight: 800; }
-.conversation-heading .role { color: #70d9d3; }
-.conversation-heading h2 { margin: 4px 0 2px; font-size: 18px; letter-spacing: .02em; }
-.conversation-heading p { margin: 0; color: rgba(220, 239, 244, .72); font-size: 11px; }
-.conversation-composer { display: flex; gap: 9px; margin-top: 17px; }
-.conversation-composer input { min-width: 0; flex: 1; padding: 11px 13px; border: 1px solid rgba(173, 235, 234, .23); border-radius: 10px; outline: none; background: rgba(255, 255, 255, .1); color: var(--bg-container); font: inherit; font-size: 12px; }
-.conversation-composer input::placeholder { color: rgba(212, 235, 239, .54); }
-.conversation-composer input:focus { border-color: rgba(123, 239, 232, .68); box-shadow: 0 0 0 3px rgba(82, 222, 216, .12); }
-.conversation-composer button { padding: 0 17px; border: 0; border-radius: 10px; background: #4fd2c7; color: #073441; font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; }
-.conversation-composer button:disabled { cursor: not-allowed; opacity: .48; }
-.quick-prompts { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
-.quick-prompts button { padding: 5px 9px; border: 1px solid rgba(173, 235, 234, .18); border-radius: 999px; background: rgba(255, 255, 255, .06); color: rgba(220, 239, 244, .74); font: inherit; font-size: 10px; cursor: pointer; }
-.quick-prompts button:hover { border-color: rgba(123, 239, 232, .55); color: #d9fffb; }
 
 .section-header { justify-content: space-between; margin-bottom: 12px; }
 .section-header span { color: var(--teal-600); font-size: 9px; font-weight: 800; letter-spacing: .14em; }
@@ -276,8 +220,6 @@ button:focus-visible { outline: 3px solid rgba(76, 202, 198, .35); outline-offse
   .identity p { display: none; }
   .header-actions { align-items: stretch; flex-direction: column; }
   .agent-platform-entry { justify-content: center; padding: 7px 9px; font-size: 10px; }
-  .conversation-composer { align-items: stretch; flex-direction: column; }
-  .conversation-composer button { min-height: 36px; }
   .agent-grid { grid-template-columns: 1fr; }
 }
 </style>

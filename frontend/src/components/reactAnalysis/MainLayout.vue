@@ -85,6 +85,7 @@
         @new-web-conversation="$emit('new-web-conversation')"
         @resolve-interaction="$emit('resolve-interaction', $event)"
         @close-interaction="$emit('close-interaction')"
+        @toggle-float-assistant="floatingAssistantOpen = !floatingAssistantOpen"
       >
         <template #management-panels>
           <!-- 管理面板插槽 -->
@@ -293,6 +294,26 @@
         />
       </div>
     </div>
+
+    <CoordinatorAssistantDock
+      v-if="floatingAssistantAvailable"
+      ref="floatingAssistantRef"
+      :open="floatingAssistantOpen"
+      :messages="messages"
+      :pending-steering-inputs="pendingSteeringInputs"
+      :background-runs="backgroundDelegation?.runs || []"
+      :show-reflexion="showReflexion"
+      :reflexion-count="reflexionCount"
+      :is-analyzing="isAnalyzing"
+      :input-disabled="inputDisabled || conversationReadOnly"
+      :session-id="sessionId"
+      :agent-mode="agentMode"
+      @toggle="toggleFloatingAssistant"
+      @close="floatingAssistantOpen = false"
+      @submit="$emit('coordinator-submit', $event)"
+      @pause="$emit('pause')"
+      @expand="openFullFloatingConversation"
+    />
   </div>
 </template>
 
@@ -303,6 +324,7 @@ import AssistantSidebar from '@/components/AssistantSidebar.vue'
 import AgentPlatform from '@/components/agentPlatform/AgentPlatform.vue'
 import { projectConfig } from '@/config/projectConfig.js'
 import ChatArea from './ChatArea.vue'
+import CoordinatorAssistantDock from '@/components/coordinator/CoordinatorAssistantDock.vue'
 import RightPanelContainer from './RightPanelContainer.vue'
 import WidthResizer from './WidthResizer.vue'
 import ModeMemoryDialog from './dialogs/ModeMemoryDialog.vue'
@@ -333,6 +355,19 @@ const TaskSchedulerCenter = projectConfig.project === 'jiangsu-ops'
 
 const auth = useAuthStore()
 const assistantPanelOpen = ref(false)
+const floatingAssistantOpen = ref(false)
+const floatingAssistantRef = ref(null)
+const floatingAssistantAvailable = computed(() => projectConfig.agentPlatformLayout === 'coordinator')
+
+const toggleFloatingAssistant = () => {
+  floatingAssistantOpen.value = !floatingAssistantOpen.value
+  if (floatingAssistantOpen.value) floatingAssistantRef.value?.focusInput()
+}
+
+const openFullFloatingConversation = () => {
+  floatingAssistantOpen.value = false
+  emit('open-full-conversation')
+}
 
 // 共享对话报告停靠面板：与聊天右侧面板同款交互（拖拽调宽/展开收起/新窗口）
 const sharedReportView = ref(null)
@@ -642,6 +677,7 @@ const emit = defineEmits([
   'new-web-conversation',
   'select-agent',
   'coordinator-submit',
+  'open-full-conversation',
   'preview-message-attachment',
   'resolve-interaction',
   'close-interaction'

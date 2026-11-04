@@ -19,11 +19,8 @@ test('coordinator layout delegates to the controlled coordinator home', async ()
   const source = await readComponent('AgentPlatform.vue')
 
   assert.match(source, /<CoordinatorHome/)
-  // 运行时常用问题覆盖构建期内置配置，接口失败时回退。
-  assert.match(source, /:coordinator="coordinatorConfig"/)
-  assert.match(source, /runtimeQuickPrompts/)
-  assert.match(source, /getCoordinatorQuickPrompts/)
-  assert.match(source, /@submit="emit\('submit', \$event\)"/)
+  assert.match(source, /:coordinator="coordinator"/)
+  assert.doesNotMatch(source, /@submit="emit\('submit', \$event\)"/)
 })
 
 test('coordinator layout switches between the personal home and voice-driven command center', async () => {

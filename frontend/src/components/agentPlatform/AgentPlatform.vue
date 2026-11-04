@@ -1,7 +1,7 @@
 <template>
   <CoordinatorHome
     v-if="isCoordinatorLayout && coordinatorView === 'home'"
-    :coordinator="coordinatorConfig"
+    :coordinator="coordinator"
     :agents="agents"
     :scenes="scenes"
     :running-modes="runningModes"
@@ -10,12 +10,11 @@
     @select="emit('select', $event)"
     @select-task="emit('select-task', $event)"
     @restore-session="emit('restore-session', $event)"
-    @submit="emit('submit', $event)"
     @switch-view="coordinatorView = 'command-center'"
   />
   <CoordinatorCommandCenter
     v-else-if="isCoordinatorLayout"
-    :coordinator="coordinatorConfig"
+    :coordinator="coordinator"
     @switch-view="coordinatorView = 'home'"
   />
   <main v-else class="agent-platform">
@@ -195,7 +194,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { AGENT_SCENES, selectAgentModes } from '@/config/agentModes.js'
 import { projectConfig } from '@/config/projectConfig.js'
-import { getCoordinatorQuickPrompts } from '@/api/coordinatorConfig.js'
 import CoordinatorHome from '@/components/coordinator/CoordinatorHome.vue'
 import CoordinatorCommandCenter from '@/components/coordinator/CoordinatorCommandCenter.vue'
 
@@ -220,33 +218,13 @@ const props = defineProps({
   scheduledTasks: { type: Array, default: () => [] }
 })
 
-const emit = defineEmits(['select', 'select-task', 'restore-session', 'submit'])
+const emit = defineEmits(['select', 'select-task', 'restore-session'])
 const coordinatorView = ref('home')
-
-// 运行时常用问题覆盖构建期内置值；接口不可用时保留内置列表。
-const runtimeQuickPrompts = ref(null)
-const coordinatorConfig = computed(() => {
-  const base = props.coordinator && Object.keys(props.coordinator).length > 0
-    ? props.coordinator
-    : (projectConfig.coordinator || {})
-  if (!Array.isArray(runtimeQuickPrompts.value)) return base
-  return { ...base, quickPrompts: runtimeQuickPrompts.value }
-})
 
 onMounted(() => {
   const params = new URLSearchParams(window.location.search)
   if (params.get('command-center') === '1') coordinatorView.value = 'command-center'
   if (props.layout !== 'coordinator') return
-  getCoordinatorQuickPrompts()
-    .then(data => {
-      const items = Array.isArray(data?.items) ? data.items : []
-      runtimeQuickPrompts.value = items
-        .filter(item => item?.label && item?.prompt)
-        .map(item => ({ label: item.label, prompt: item.prompt, mode: item.mode || null }))
-    })
-    .catch(error => {
-      console.warn('[AgentPlatform] quick prompts fetch failed, keep built-in list:', error)
-    })
 })
 const isCoordinatorLayout = computed(() => props.layout === 'coordinator')
 const isSceneLayout = computed(() => props.layout === 'scenes')
