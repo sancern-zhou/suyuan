@@ -97,6 +97,8 @@ class CoordinatorManifest(StrictModel):
 class FrontendManifest(StrictModel):
     theme: str = "default"
     brand_name: str = "风清气智"
+    # 品牌点击跳转链接（如上级平台选择页），仅供前端构建脚本消费，后端透传不解释。
+    brand_link: str | None = None
     features: dict[str, bool] = Field(default_factory=dict)
     agent_modes: list[str] = Field(default_factory=list)
     default_agent_mode: str | None = None
