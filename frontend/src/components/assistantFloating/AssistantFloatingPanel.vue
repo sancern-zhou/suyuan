@@ -113,8 +113,11 @@ async function resolveInteraction(resolution) {
 .assistant-floating-panel :deep(.message-list-content) { padding: 12px 10px; }
 .assistant-floating-panel :deep(.welcome-message) { padding: 14px 6px; } .assistant-floating-panel :deep(.welcome-message h2) { font-size: 18px; } .assistant-floating-panel :deep(.welcome-capabilities) { display: none; }
 .assistant-floating-panel :deep(.input-area) { padding: 6px 8px 8px; }
-.assistant-floating-panel :deep(.input-field) { min-height: 38px; max-height: 110px; padding: 9px 12px 7px; font-size: 14px; }
-.assistant-floating-panel :deep(.input-footer) { min-height: 34px; padding: 2px 4px 4px 8px; }
+.assistant-floating-panel :deep(.input-wrapper) { flex-direction: row; align-items: flex-end; gap: 4px; }
+.assistant-floating-panel :deep(.input-field) { flex: 1; min-width: 0; min-height: 40px; max-height: 110px; padding: 10px 4px 10px 12px; font-size: 14px; }
+.assistant-floating-panel :deep(.input-footer) { min-height: 40px; align-items: flex-end; padding: 2px 2px 4px 0; border-top: none; }
+.assistant-floating-panel :deep(.action-group) { padding: 2px; }
+.assistant-floating-panel :deep(.pending-steering-indicator) { position: absolute; top: -22px; left: 10px; padding: 0; }
 .assistant-floating-panel :deep(.input-box), .assistant-floating-panel :deep(.input-area) { flex-shrink: 0; }
 .floating-error { padding: 6px 14px; background: #fff0f0; color: #b73838; font-size: 12px; display: flex; justify-content: space-between; gap: 8px; } .floating-error button { border: 0; color: inherit; background: transparent; cursor: pointer; } .read-only-notice { font-size: 12px; padding: 6px 14px; color: #78612c; background: #fff9e7; }
 .items-backdrop { position: absolute; inset: 0; z-index: 6; background: rgba(13, 34, 54, .24); display: flex; justify-content: flex-end; }
