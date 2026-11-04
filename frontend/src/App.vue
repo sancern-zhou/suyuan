@@ -1,12 +1,14 @@
 <template>
   <div id="app">
     <router-view :key="accountRevision" />
+    <AssistantFloatingHost />
   </div>
 </template>
 
 <script setup>
 import { ref, onBeforeUnmount } from 'vue'
 import { accountGeneration, onAccountChanged } from './auth/accountSession.js'
+import AssistantFloatingHost from './components/assistantFloating/AssistantFloatingHost.vue'
 
 const accountRevision = ref(accountGeneration())
 const stop = onAccountChanged(() => { accountRevision.value = accountGeneration() })
