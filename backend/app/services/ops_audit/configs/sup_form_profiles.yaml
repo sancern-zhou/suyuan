@@ -799,3 +799,346 @@ form_profiles:
         max: 1
         unit: mL/min
         confirmed: false
+
+  # ── 无档案类型扩面（2026-11-03，列语义来自运维平台源码映射文档
+  #    projects/guangdong/docs/sup-instrument-rules/opa-source-field-mappings.md，
+  #    并经 guangdong_mart.sup_rf_common 数据分布复核）─────────────────────
+  # 高精度温室气体每日健康检查：cshtml 标签自带阈值（45±1℃/140±1Torr/<0.05%）。
+  Sup_RF_HP_DalyHealth:
+    display_name: 高精度温室气体分析仪每日健康检查记录
+    category: day_check
+    cycle: day
+    max_fill_lag_days: 2
+    range_columns:
+      - column: string1
+        label: 加热盒温度
+        min: 44
+        max: 46
+        unit: "℃"
+        confirmed: true
+      - column: string2
+        label: 腔室温度
+        min: 44
+        max: 46
+        unit: "℃"
+        confirmed: true
+      - column: string3
+        label: 腔室压力
+        min: 139
+        max: 141
+        unit: Torr
+        confirmed: true
+      - column: string5
+        label: H2O 水汽值
+        min: 0
+        max: 0.05
+        unit: "%"
+        confirmed: true
+  # 站房周安全检查：string12/13 为温湿度实测值；time1=防雷检定有效期（每年检定）。
+  # bool_1~bool_37 勾选列在数据中全 0（运维未使用勾选框），不设异常值规则。
+  Sup_RF_WeekSecurityCheck:
+    display_name: 站房周安全检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    range_columns:
+      - column: string12
+        label: 站房内部温度
+        min: 20
+        max: 30
+        unit: "℃"
+        confirmed: true
+      - column: string13
+        label: 站房内部湿度
+        min: 0
+        max: 80
+        unit: "%"
+        confirmed: true
+    date_columns:
+      # time1 存的是防雷"检定日期"（非有效期截止），每年检定 → 按检定日期年龄判过期。
+      - start: time1
+        label: 防雷检定
+        single_date_rule: max_age_days
+        max_age_days: 370
+        confirmed: true
+  # 颗粒物激光雷达巡检：bool_1~6 为状态类勾选（1=正常），维护执行标记 bool_7~12
+  # 常态为 0（该次未执行属正常），不设规则；string1~6 为对应项备注。
+  Sup_RF_PRInspectionRecord:
+    display_name: 颗粒物激光雷达巡检记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    abnormal_columns:
+      - {column: bool_1, label: 仪器状态, values: ["0"], remark_column: string1}
+      - {column: bool_2, label: 石英光学接收头清洁, values: ["0"], remark_column: string2}
+      - {column: bool_3, label: 仪器水汽情况检查, values: ["0"], remark_column: string3}
+      - {column: bool_4, label: 夜间信号检查, values: ["0"], remark_column: string4}
+      - {column: bool_5, label: 微量泵工作状态, values: ["0"], remark_column: string5}
+      - {column: bool_6, label: 气密性检查, values: ["0"], remark_column: string6}
+  # 温室气体站房周检查：bool_1~bool_29 全部为"检查项正常与否"勾选（数据 ≥95% 填 1），
+  # 0=该项异常或未确认，命中即转人工复核；表单无逐项备注列，依赖表单级备注豁免。
+  Sup_RF_HP_StationCheck:
+    display_name: 温室气体站房周检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    abnormal_columns:
+      - {column: bool_1, label: 点位周围环境变化情况, values: ["0"]}
+      - {column: bool_2, label: 点位周围安全隐患, values: ["0"]}
+      - {column: bool_3, label: 周围道路供电通讯给排水设施状况, values: ["0"]}
+      - {column: bool_4, label: 站房外围防护栏隔离带, values: ["0"]}
+      - {column: bool_5, label: 视频监控系统, values: ["0"]}
+      - {column: bool_6, label: 周围树木是否需要修剪, values: ["0"]}
+      - {column: bool_7, label: 站房防雷接地, values: ["0"]}
+      - {column: bool_8, label: 站房屋顶完好无漏雨, values: ["0"]}
+      - {column: bool_9, label: 外部采样管路及顶端过滤器, values: ["0"]}
+      - {column: bool_10, label: 采样设施周围状况, values: ["0"]}
+      - {column: bool_11, label: 站房供电通讯, values: ["0"]}
+      - {column: bool_12, label: 给排水供暖空调, values: ["0"]}
+      - {column: bool_13, label: 消防安全设施, values: ["0"]}
+      - {column: bool_14, label: 站房内气泵异常声音, values: ["0"]}
+      - {column: bool_15, label: 站房内异常气味, values: ["0"]}
+      - {column: bool_16, label: 站房温湿度符合要求, values: ["0"]}
+      - {column: bool_17, label: 采样管冷凝水, values: ["0"]}
+      - {column: bool_18, label: 站房排风扇, values: ["0"]}
+      - {column: bool_19, label: 稳压电源参数, values: ["0"]}
+      - {column: bool_20, label: 电源插头线板, values: ["0"]}
+      - {column: bool_21, label: 仪器气泵, values: ["0"]}
+      - {column: bool_22, label: Nafion膜是否需更换, values: ["0"]}
+      - {column: bool_23, label: 气瓶减压阀压力指示, values: ["0"]}
+      - {column: bool_24, label: 抽气泵采样流量, values: ["0"]}
+      - {column: bool_25, label: 仪器进气总流量, values: ["0"]}
+      - {column: bool_26, label: 采样管气密性(CO2数据), values: ["0"]}
+      - {column: bool_27, label: 多口阀阀位切换, values: ["0"]}
+      - {column: bool_28, label: 冷阱工作状态, values: ["0"]}
+      - {column: bool_29, label: UPS工作状态, values: ["0"]}
+  # VOCs 现场检查：string1/2 为温湿度实测值（标签 <25℃ / <80%），remark1/2 为其备注；
+  # bool 列数据全 0（未使用勾选框），不设规则。
+  Sup_RF_VocsSceneCheck:
+    display_name: VOCs 现场周检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    range_columns:
+      - column: string1
+        label: 站房温度
+        min: 0
+        max: 25
+        unit: "℃"
+        remark_column: remark1
+        confirmed: true
+      - column: string2
+        label: 站房湿度
+        min: 0
+        max: 80
+        unit: "%"
+        remark_column: remark2
+        confirmed: true
+  # 单颗粒质谱日常检查：bool_1~4、6~12 为状态类勾选（数据 ≥90% 填 1），
+  # bool_13（干燥硅胶）多数填 0 属常态，bool_5 低规三零值偏多，均不设规则；
+  # string1~12 为对应项备注。
+  Sup_RF_MSRoutineCheck:
+    display_name: 单颗粒飞行时间质谱日常检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+    abnormal_columns:
+      - {column: bool_1, label: 仪器状态, values: ["0"], remark_column: string1}
+      - {column: bool_2, label: 分子涡轮泵工作状态, values: ["0"], remark_column: string2}
+      - {column: bool_3, label: 分子涡轮泵温度, values: ["0"], remark_column: string3}
+      - {column: bool_4, label: 真空规状态, values: ["0"], remark_column: string4}
+      - {column: bool_6, label: 电离激光冷却水液位, values: ["0"], remark_column: string6}
+      - {column: bool_7, label: 电离激光能量值(0.5mJ), values: ["0"], remark_column: string7}
+      - {column: bool_8, label: 采样泵工作状态, values: ["0"], remark_column: string8}
+      - {column: bool_9, label: 变色硅胶使用情况, values: ["0"], remark_column: string9}
+      - {column: bool_10, label: 电离图谱情况, values: ["0"], remark_column: string10}
+      - {column: bool_11, label: 源解析图谱检查, values: ["0"], remark_column: string11}
+      - {column: bool_12, label: 激光冷却水, values: ["0"], remark_column: string12}
+  # 优泰流量传递月校准：误差阈值取《组分仪器工单规则》流量核查通用红字 ±5%
+  # （与 Sup_RF_DeviceFlowCheck 同口径）；string5 相关系数数据填 0/100 疑为百分比，
+  # 不设规则；string19/25/31（吹扫/氦氧/氦甲烷误差）common 投影 0 填充。
+  Sup_RF_Month_YT_FlowCalibration:
+    display_name: 优泰流量传递月校准记录
+    category: flow_check
+    cycle: month
+    max_fill_lag_days: 10
+    range_columns:
+      - column: string13
+        label: 氦气通道流量误差
+        min: -5
+        max: 5
+        unit: "%"
+        confirmed: false
+    date_columns:
+      - start: time1
+        end: time2
+        label: 参考流量计校准有效期
+        must_cover_checkdate: true
+        confirmed: true
+  # OCEC(JG) 多点核查：time1/2 为标准蔗糖溶液配制/有效期限（实体注释明确），
+  # 有效期档位随配制浓度变化，仅做覆盖检查日期判定。
+  Sup_RF_OCECJGMultipointCheck:
+    display_name: OCEC 多点核查记录（JG）
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+    date_columns:
+      - start: time1
+        end: time2
+        label: 标准蔗糖溶液有效期
+        must_cover_checkdate: true
+        confirmed: true
+  # OCEC 流量传递核查：偏差 ±5% 同工单规则红字；相关系数按数据下限放宽到 0.99
+  # （计量认证一般要求 0.999，是否收紧待业务确认）。
+  Sup_RF_OcecFlowVerificationCheck:
+    display_name: OCEC 流量传递核查记录
+    category: halfyear_check
+    cycle: halfyear
+    max_fill_lag_days: 45
+    range_columns:
+      - column: string7
+        label: 参考流量计相关系数
+        min: 0.99
+        max: 1
+        confirmed: false
+      - column: string11
+        label: 校准前流量偏差
+        min: -5
+        max: 5
+        unit: "%"
+        confirmed: false
+  # 单颗粒质谱质量校准：视图标签带质量数区间（38.5~39.5 等），但数据"结果"列
+  # 填的是 合格/异常 文本，按异常取值规则配置；时间对为上次/下次校准日期。
+  Sup_RF_MSQualityCalibration:
+    display_name: 单颗粒飞行时间质谱质量校准记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+    abnormal_columns:
+      - {column: string9, label: 质量校准结果 39K+, values: ["异常", "不合格"]}
+      - {column: string12, label: 质量校准结果 208Pb+, values: ["异常", "不合格"]}
+      - {column: string15, label: 质量校准结果 46NO2-, values: ["异常", "不合格"]}
+      - {column: string18, label: 质量校准结果 97HSO4-, values: ["异常", "不合格"]}
+    date_columns:
+      - start: time1
+        end: time2
+        label: 质谱校准有效期
+        must_cover_checkdate: true
+        confirmed: true
+  # 单颗粒质谱粒径校准：string24 为粒径校准相关系数 R2，表单"参考范围"列
+  # （string27）常态填 0.98，阈值待业务确认是否收紧；时间对为上次/下次校准日期。
+  Sup_RF_MSParticleSizeCalibration:
+    display_name: 单颗粒飞行时间质谱粒径校准记录
+    category: quarter_check
+    cycle: quarter
+    max_fill_lag_days: 31
+    range_columns:
+      - column: string24
+        label: 粒径校准相关系数R2
+        min: 0.98
+        max: 1
+        confirmed: false
+    date_columns:
+      - start: time1
+        end: time2
+        label: 质谱校准有效期
+        must_cover_checkdate: true
+        confirmed: true
+  # ── 以下类型暂只建及时性口径：内容列在 sup_rf_common 投影缺失/不可靠
+  #    （OCECWeekCheck 实体用自定义列名 tb1bz*；Week_YT_Check 实体 string 列
+  #    0 填充；VocsFlowCheck 列语义弱），待分表接入或源码补充后再补内容规则。
+  Sup_RF_VocsFlowCheck:
+    display_name: VOCs 流量检查记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+  Sup_RF_Week_YT_Check:
+    display_name: 优泰甲烷/非甲烷周检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+  Sup_RF_thybWeekCheck:
+    display_name: 谱育（EXPEC）VOCs 周检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+  Sup_RF_Month_HONOCheck:
+    display_name: HONO 月检查记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+  Sup_RF_Month_HONOTest:
+    display_name: HONO 月测试记录
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+  Sup_RF_PTR_MSQuality:
+    display_name: PTR-MS 质控核查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+  Sup_RF_Week_THLiDAR:
+    display_name: 激光雷达周检查记录（TH）
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+  Sup_RF_Week_FKXLiDAR:
+    display_name: 风廓线激光雷达周检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+  Sup_RF_HONOConsumablesReplace:
+    display_name: HONO 耗材更换记录
+    category: week_maintenance
+    cycle: week
+    max_fill_lag_days: 7
+  Sup_RF_OCECWeekCheck:
+    display_name: OCEC 周检查记录（赛克码）
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+  Sup_RF_HP_Comparability:
+    display_name: 高精度温室气体可比性核查记录
+    category: halfyear_check
+    cycle: halfyear
+    max_fill_lag_days: 45
+  Sup_RF_Year_YT_AccuracyRecord:
+    display_name: 优泰年度准确度核查记录
+    category: year_check
+    cycle: year
+    max_fill_lag_days: 60
+  Sup_RF_Month_THLiDAR:
+    display_name: 激光雷达月检查记录（TH）
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+  # 温室气体 GreenHouse 系列：源码三层均未覆盖（见映射文档），列语义待业务确认，
+  # 仅建及时性口径；周期按数据间隔推断（D=日检、W=周检）。
+  RF_D_GreenHouseCheck:
+    display_name: 温室气体日常检查记录
+    category: day_check
+    cycle: day
+    max_fill_lag_days: 2
+  RF_W_GreenHouseCheck:
+    display_name: 温室气体周检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+  # VOCs 在线监测仪通用周检查（源码映射文档未展开列语义，仅及时性口径）。
+  Sup_RF_RULEITEMVOCs:
+    display_name: VOCs 在线监测仪周检查记录
+    category: week_check
+    cycle: week
+    max_fill_lag_days: 7
+  # VOCs（AMA）采样流量核查：time1/2 为采样流量计上次/下次校准时间（实体注释）。
+  Sup_RF_VOCsAMASamplingFlowRecord:
+    display_name: VOCs 采样流量核查记录（AMA）
+    category: month_check
+    cycle: month
+    max_fill_lag_days: 10
+    date_columns:
+      - start: time1
+        end: time2
+        label: 采样流量计校准有效期
+        must_cover_checkdate: true
+        confirmed: true

@@ -695,3 +695,202 @@ def test_pans_week_abnormal_with_remark_exempt():
     )
 
     assert ABNORMAL_RULE_ID not in _rule_ids(issues)
+
+
+# ---------------------------------------------------------------------------
+# 2026-11 扩面：活跃无档案类型建档（列语义来自运维平台源码映射文档）
+# ---------------------------------------------------------------------------
+
+
+NEW_PROFILE_TAGS = [
+    "Sup_RF_HP_DalyHealth",
+    "Sup_RF_WeekSecurityCheck",
+    "Sup_RF_PRInspectionRecord",
+    "Sup_RF_HP_StationCheck",
+    "Sup_RF_VocsSceneCheck",
+    "Sup_RF_MSRoutineCheck",
+    "Sup_RF_Month_YT_FlowCalibration",
+    "Sup_RF_OCECJGMultipointCheck",
+    "Sup_RF_OcecFlowVerificationCheck",
+    "Sup_RF_MSQualityCalibration",
+    "Sup_RF_MSParticleSizeCalibration",
+    "Sup_RF_VocsFlowCheck",
+    "Sup_RF_Week_YT_Check",
+    "Sup_RF_thybWeekCheck",
+    "Sup_RF_Month_HONOCheck",
+    "Sup_RF_Month_HONOTest",
+    "Sup_RF_PTR_MSQuality",
+    "Sup_RF_Week_THLiDAR",
+    "Sup_RF_Week_FKXLiDAR",
+    "Sup_RF_HONOConsumablesReplace",
+    "Sup_RF_OCECWeekCheck",
+    "Sup_RF_HP_Comparability",
+    "Sup_RF_Year_YT_AccuracyRecord",
+    "Sup_RF_Month_THLiDAR",
+    "RF_D_GreenHouseCheck",
+    "RF_W_GreenHouseCheck",
+]
+
+
+def test_expanded_active_tags_all_profiled():
+    from app.services.ops_audit.rules.sup_form_rules import SUP_FORM_PROFILES
+
+    catalog = SUP_FORM_PROFILES["form_profiles"]
+    missing = [tag for tag in NEW_PROFILE_TAGS if tag not in catalog]
+    assert missing == []
+
+
+def test_daly_health_out_of_range_hits_high():
+    form = {
+        "RULEITEMTAG": "Sup_RF_HP_DalyHealth",
+        "CHECKDATE": "2026-09-04 00:00:00",
+        "string1": "45.0",
+        "string2": "50.0",
+        "string3": "140",
+        "string5": "0.02",
+    }
+    issues = _run(form)
+
+    matched = [issue for issue in issues if issue.rule_id == RANGE_RULE_ID]
+    assert len(matched) == 1
+    assert matched[0].severity == "高"
+    assert "腔室温度" in matched[0].message
+
+
+def test_week_security_humidity_and_lightning_date_hit():
+    form = {
+        "RULEITEMTAG": "Sup_RF_WeekSecurityCheck",
+        "CHECKDATE": "2026-09-04 00:00:00",
+        "string12": "26",
+        "string13": "218",
+        "time1": "2025-08-01 00:00:00",
+        "bool_1": "0",
+        "bool_28": "0",
+    }
+    issues = _run(form)
+
+    range_hit = [issue for issue in issues if issue.rule_id == RANGE_RULE_ID]
+    assert len(range_hit) == 1
+    assert "站房内部湿度" in range_hit[0].message
+    date_hit = [issue for issue in issues if issue.rule_id == DATE_RULE_ID]
+    assert len(date_hit) == 1
+    assert "防雷检定" in date_hit[0].message
+    assert "399" in date_hit[0].message
+    # bool 全 0 是该表单数据常态（勾选框未使用），不得判异常。
+    from app.services.ops_audit.rules.sup_form_rules import ABNORMAL_RULE_ID
+
+    assert ABNORMAL_RULE_ID not in _rule_ids(issues)
+
+
+def test_week_security_recent_lightning_date_passes():
+    form = {
+        "RULEITEMTAG": "Sup_RF_WeekSecurityCheck",
+        "CHECKDATE": "2026-09-04 00:00:00",
+        "string12": "26",
+        "string13": "46",
+        "time1": "2026-03-06 00:00:00",
+    }
+    issues = _run(form)
+
+    assert DATE_RULE_ID not in _rule_ids(issues)
+    assert RANGE_RULE_ID not in _rule_ids(issues)
+
+
+def test_pr_inspection_abnormal_bool_without_remark_hits():
+    from app.services.ops_audit.rules.sup_form_rules import ABNORMAL_RULE_ID
+
+    form = {
+        "RULEITEMTAG": "Sup_RF_PRInspectionRecord",
+        "CHECKDATE": "2026-09-04 00:00:00",
+        "bool_1": 0,
+        "string1": None,
+        "bool_8": 0,
+    }
+    issues = _run(form)
+
+    matched = [issue for issue in issues if issue.rule_id == ABNORMAL_RULE_ID]
+    assert len(matched) == 1
+    assert "仪器状态" in matched[0].message
+
+
+def test_pr_inspection_abnormal_bool_with_remark_exempt():
+    from app.services.ops_audit.rules.sup_form_rules import ABNORMAL_RULE_ID
+
+    form = {
+        "RULEITEMTAG": "Sup_RF_PRInspectionRecord",
+        "CHECKDATE": "2026-09-04 00:00:00",
+        "bool_2": 0,
+        "string2": "已现场清洁接收头",
+    }
+    issues = _run(form)
+
+    assert ABNORMAL_RULE_ID not in _rule_ids(issues)
+
+
+def test_station_check_bool_zero_hits_manual_review():
+    from app.services.ops_audit.rules.sup_form_rules import ABNORMAL_RULE_ID
+
+    form = {
+        "RULEITEMTAG": "Sup_RF_HP_StationCheck",
+        "CHECKDATE": "2026-09-04 00:00:00",
+        **{f"bool_{i}": 1 for i in range(1, 30)},
+        "bool_17": 0,
+    }
+    issues = _run(form)
+
+    matched = [issue for issue in issues if issue.rule_id == ABNORMAL_RULE_ID]
+    assert len(matched) == 1
+    assert matched[0].severity == "中"
+    assert "采样管冷凝水" in matched[0].message
+
+
+def test_ms_routine_check_skips_majority_zero_bool():
+    from app.services.ops_audit.rules.sup_form_rules import ABNORMAL_RULE_ID
+
+    form = {
+        "RULEITEMTAG": "Sup_RF_MSRoutineCheck",
+        "CHECKDATE": "2026-09-04 00:00:00",
+        "bool_13": 0,
+        "bool_2": 0,
+    }
+    issues = _run(form)
+
+    matched = [issue for issue in issues if issue.rule_id == ABNORMAL_RULE_ID]
+    assert len(matched) == 1
+    assert "分子涡轮泵工作状态" in matched[0].message
+
+
+def test_ms_quality_calibration_abnormal_result_hits():
+    from app.services.ops_audit.rules.sup_form_rules import ABNORMAL_RULE_ID
+
+    form = {
+        "RULEITEMTAG": "Sup_RF_MSQualityCalibration",
+        "CHECKDATE": "2026-09-14 00:00:00",
+        "string9": "合格",
+        "string12": "异常",
+        "time1": "2026-05-29 00:00:00",
+        "time2": "2026-11-11 00:00:00",
+    }
+    issues = _run(form)
+
+    matched = [issue for issue in issues if issue.rule_id == ABNORMAL_RULE_ID]
+    assert len(matched) == 1
+    assert "208Pb+" in matched[0].message
+    assert DATE_RULE_ID not in _rule_ids(issues)
+
+
+def test_vocs_scene_temp_over_range_with_remark_downgrades():
+    form = {
+        "RULEITEMTAG": "Sup_RF_VocsSceneCheck",
+        "CHECKDATE": "2026-09-04 00:00:00",
+        "string1": "27.8",
+        "string2": "50",
+        "remark1": "站房巡检时开门导致温度偏高",
+    }
+    issues = _run(form)
+
+    matched = [issue for issue in issues if issue.rule_id == RANGE_RULE_ID]
+    assert len(matched) == 1
+    assert matched[0].severity == "中"
+    evidence = json.loads(matched[0].evidence)
+    assert evidence["with_remark"] is True

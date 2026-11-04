@@ -493,6 +493,23 @@ def check_date_columns(
                     "checkdate": str(check_date),
                 }
             )
+        if single_rule == "max_age_days" and check_date is not None and single_value is not None:
+            # 单参考日期时效（如"检定日期+有效期1年"的每年检定项）：表单存的是
+            # 检定/校准日期本身，按 距检查日期年龄 超过 max_age_days 判过期。
+            max_age = spec.get("max_age_days")
+            if max_age is not None:
+                age_days = (_as_date(check_date) - _as_date(single_value)).days
+                if age_days > int(max_age):
+                    violations.append(
+                        {
+                            "kind": "stale_reference_date",
+                            "label": label,
+                            "date": str(_as_date(single_value)),
+                            "checkdate": str(check_date),
+                            "age_days": age_days,
+                            "max_age_days": int(max_age),
+                        }
+                    )
     if not violations:
         return
     evidence = {
@@ -573,6 +590,11 @@ def _date_violation_text(item: dict[str, Any]) -> str:
         return f"日期 {item['date']} 晚于检查日期 {item['checkdate']}"
     if kind == "date_before_checkdate":
         return f"日期 {item['date']} 早于检查日期 {item['checkdate']}"
+    if kind == "stale_reference_date":
+        return (
+            f"{item['label']} {item['date']} 距检查日期 {item['checkdate']} 已 {item['age_days']} 天，"
+            f"超出 {item['max_age_days']} 天有效期要求"
+        )
     return str(item)
 
 
