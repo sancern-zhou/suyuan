@@ -18,7 +18,8 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
-    client_max_body_size 100m;
+    # 120m：为 100MB 压缩包上传（/api/upload/chat）预留 multipart 编码开销
+    client_max_body_size 120m;
 
     # 基础安全响应头（SPA 场景；API 响应同样适用）
     # 注意：CSP 只作用于静态 location（见下方各静态块），不能放在 server 级。

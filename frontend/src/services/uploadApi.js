@@ -119,9 +119,11 @@ export function validateFile(file) {
   const maxSize = {
     image: 5 * 1024 * 1024, // 5MB
     document: 50 * 1024 * 1024, // 50MB
+    archive: 100 * 1024 * 1024, // 100MB（压缩包）
   };
 
   const imageTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/bmp', 'image/webp', 'image/svg+xml'];
+  const archiveTypes = ['application/zip', 'application/x-zip-compressed'];
   const documentTypes = [
     'application/pdf',
     'text/plain',
@@ -163,16 +165,21 @@ export function validateFile(file) {
     '.doc': 'document',
     '.xls': 'document',
     '.ppt': 'document',
+    // 压缩包（助手委派 office 子代理解压读取）
+    '.zip': 'archive',
   };
 
   // 首先通过 MIME 类型检查
   const isImage = imageTypes.includes(file.type);
+  const isArchive = archiveTypes.includes(file.type);
   const isDocument = documentTypes.includes(file.type);
 
   let category = null;
 
   if (isImage) {
     category = 'image';
+  } else if (isArchive) {
+    category = 'archive';
   } else if (isDocument) {
     category = 'document';
   } else {
@@ -193,9 +200,10 @@ export function validateFile(file) {
 
   if (file.size > limit) {
     const limitMB = limit / 1024 / 1024;
+    const categoryLabel = { image: '图片', archive: '压缩包', document: '文档' }[category] || '文件';
     return {
       valid: false,
-      message: `文件过大。${category === 'image' ? '图片' : '文档'}最大允许 ${limitMB}MB`
+      message: `文件过大。${categoryLabel}最大允许 ${limitMB}MB`
     };
   }
 

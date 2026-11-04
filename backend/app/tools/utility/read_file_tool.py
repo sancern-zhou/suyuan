@@ -93,6 +93,9 @@ class ReadFileTool(LLMTool):
         ".wasm", ".zip",
     }
 
+    # 压缩包扩展名：拒绝直接读取，错误信息指向 office 子代理解压。
+    ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z", ".tar", ".tgz", ".gz", ".bz2"}
+
     # 建议分页行数（用于大文件提示；未显式传 limit 时不自动分页）
     DEFAULT_LIMIT = 1000
 
@@ -213,9 +216,13 @@ class ReadFileTool(LLMTool):
             file_ext = resolved_path.suffix.lower()
 
             if file_ext in self.UNSUPPORTED_BINARY_EXTENSIONS:
+                if file_ext in self.ARCHIVE_EXTENSIONS:
+                    hint = "压缩包请委派 office 子代理（call_sub_agent target_mode=office）用 execute_python 解压后再读取包内文档"
+                else:
+                    hint = "请使用对应的专业工具"
                 return {
                     "success": False,
-                    "data": {"error": f"不支持直接读取二进制文件: {file_ext}，请使用对应的专业工具"},
+                    "data": {"error": f"不支持直接读取二进制文件: {file_ext}，{hint}"},
                     "summary": f"不支持的二进制文件: {file_ext}"
                 }
 

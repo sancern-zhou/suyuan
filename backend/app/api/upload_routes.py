@@ -200,6 +200,7 @@ def _remove_office_pdf_preview(file_path: str) -> None:
 UPLOAD_STORAGE_DIR = os.getenv("UPLOAD_STORAGE_DIR", str(get_uploads_dir()))
 MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5MB
 MAX_DOCUMENT_SIZE = 50 * 1024 * 1024  # 50MB
+MAX_ARCHIVE_SIZE = 100 * 1024 * 1024  # 100MB（压缩包，office 子代理经 execute_python 解压）
 
 # 支持的文件类型
 IMAGE_TYPES = {
@@ -219,7 +220,11 @@ DOCUMENT_TYPES = {
     "application/msword",  # .doc
     "application/vnd.ms-excel",  # .xls
     "application/vnd.ms-powerpoint",  # .ppt
+    "application/zip",  # .zip
+    "application/x-zip-compressed",  # .zip（Windows 常见 MIME）
 }
+# 压缩包按扩展名识别，享受独立的归档大小上限。
+ARCHIVE_EXTENSIONS = {".zip"}
 
 
 def get_file_category(mime_type: str, filename: str = None) -> str:
@@ -262,7 +267,9 @@ def validate_file_type(filename: str, content_type: str) -> tuple[bool, str]:
         ".pdf", ".txt", ".md", ".markdown", ".html", ".htm", ".json", ".csv",
         # Office（新旧格式都支持）
         ".docx", ".xlsx", ".pptx",
-        ".doc", ".xls", ".ppt"
+        ".doc", ".xls", ".ppt",
+        # 压缩包（助手委派 office 子代理解压读取）
+        ".zip",
     }
 
     if ext not in allowed_extensions:
@@ -282,6 +289,8 @@ def validate_file_type(filename: str, content_type: str) -> tuple[bool, str]:
 
 def get_max_size(content_type: str, filename: str = None) -> int:
     """根据文件类型获取最大允许大小"""
+    if filename and Path(filename).suffix.lower() in ARCHIVE_EXTENSIONS:
+        return MAX_ARCHIVE_SIZE
     if get_file_category(content_type, filename) == "image":
         return MAX_IMAGE_SIZE
     return MAX_DOCUMENT_SIZE
@@ -401,6 +410,7 @@ async def upload_chat_file(
     - 图片: PNG, JPG, JPEG, GIF, BMP, WEBP, SVG (最大 5MB；SVG 会安全转换为 PNG)
     - 文档: PDF, TXT, MD, HTML, HTM, JSON, CSV (最大 50MB)
     - Office: DOC, DOCX, XLS, XLSX, PPT, PPTX (最大 50MB)
+    - 压缩包: ZIP (最大 100MB；助手委派 office 子代理解压读取)
 
     Args:
         file: 上传的文件

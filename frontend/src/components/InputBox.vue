@@ -306,7 +306,7 @@
                 ref="fileInputRef"
                 type="file"
                 @change="handleFileSelect"
-                accept="image/*,.pdf,.txt,.md,.html,.htm,.json,.csv,.docx,.xlsx,.pptx"
+                accept="image/*,.pdf,.txt,.md,.html,.htm,.json,.csv,.docx,.xlsx,.pptx,.doc,.xls,.ppt,.zip"
               />
               <span class="upload-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24">

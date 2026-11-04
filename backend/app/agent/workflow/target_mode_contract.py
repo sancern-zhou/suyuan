@@ -140,9 +140,14 @@ TARGET_MODE_CONTRACTS: dict[str, dict[str, str]] = {
     },
     "office": {
         "positioning": "办公模式：助手专属的日常轻办公子 Agent。",
-        "scope": "文档阅读、文件整理、普通文件编辑、表格清洗核对、轻量计算与 HTML 交付。",
+        "scope": "文档阅读、压缩包（.zip）解压与包内文档读取、文件整理、普通文件编辑、表格清洗核对、轻量计算与 HTML 交付。",
         "boundary": "仅由 assistant 委派，不再次委派；不取业务或气象数据，不做业务图表、专业研判、知识问答和正式报告。",
         "outputs": "经核对的办公文件、处理说明和资源引用。",
+        "warning": (
+            "解压用户上传的 zip 用 execute_python（zipfile）：上传附件位于 data registry（沙箱只读挂载），"
+            "解压产物写入会话目录或 artifacts 后登记交付；限制解压总大小、过滤条目路径穿越（../），"
+            "处理中文文件名编码（cp437/GBK）后再交付清单。"
+        ),
     },
 }
 
