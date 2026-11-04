@@ -32,6 +32,7 @@ from typing import Dict, Any, Optional, List
 from urllib.parse import urlencode
 
 from app.utils.particulate_token_manager import get_particulate_token_manager
+from app.utils.query_window_limits import check_query_window
 from app.utils.component_semantics import (
     OFP_DETECTION_ITEM_TYPE_GUIDS,
     OFP_FACTOR_UNIT_GUIDS,
@@ -108,6 +109,17 @@ class VocApiClient:
             table_type=table_type,
             data_type=data_type
         )
+
+        limit_error = check_query_window(
+            start_time, end_time, table_type, tool="VOCs 类别查询"
+        )
+        if limit_error:
+            return {
+                "success": False,
+                "error": limit_error,
+                "error_code": "query_range_too_large",
+                "api_response": None,
+            }
 
         # 构建查询参数（使用最小参数集，避免超时）
         params = {
@@ -209,6 +221,17 @@ class VocApiClient:
             data_type=data_type
         )
 
+        limit_error = check_query_window(
+            start_time, end_time, table_type, tool="VOCs 物种查询"
+        )
+        if limit_error:
+            return {
+                "success": False,
+                "error": limit_error,
+                "error_code": "query_range_too_large",
+                "api_response": None,
+            }
+
         params = {
             "StationCodes": station_code,
             "DetectionitemType": VOC_SPECIES_DETECTION_ITEM_TYPE_GUID,
@@ -289,6 +312,17 @@ class VocApiClient:
             data_type=data_type
         )
 
+        limit_error = check_query_window(
+            start_time, end_time, table_type, tool="VOCs 类别 OFP 查询"
+        )
+        if limit_error:
+            return {
+                "success": False,
+                "error": limit_error,
+                "error_code": "query_range_too_large",
+                "api_response": None,
+            }
+
         params = self._ofp_common_params(
             station_code, start_time, end_time, table_type, data_type, is_mark
         )
@@ -322,6 +356,17 @@ class VocApiClient:
             table_type=table_type,
             data_type=data_type
         )
+
+        limit_error = check_query_window(
+            start_time, end_time, table_type, tool="VOCs 物种 OFP Top10 查询"
+        )
+        if limit_error:
+            return {
+                "success": False,
+                "error": limit_error,
+                "error_code": "query_range_too_large",
+                "api_response": None,
+            }
 
         params = self._ofp_common_params(
             station_code, start_time, end_time, table_type, data_type, is_mark

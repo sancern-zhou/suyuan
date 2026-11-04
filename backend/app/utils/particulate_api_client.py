@@ -27,6 +27,7 @@ import json
 from typing import Dict, Any, Optional, List
 
 from app.utils.particulate_token_manager import get_particulate_token_manager
+from app.utils.query_window_limits import check_query_window
 
 logger = structlog.get_logger()
 
@@ -91,6 +92,17 @@ class ParticulateAPIClient:
 
         self.logger.info(f"[ParticulateAPI] 离子分析参数 - time_type(时间粒度)={time_type}, data_type(数据质量)={data_type}")
 
+        limit_error = check_query_window(
+            start_time, end_time, time_type, tool="水溶性离子查询"
+        )
+        if limit_error:
+            return {
+                "success": False,
+                "error": limit_error,
+                "error_code": "query_range_too_large",
+                "api_response": None,
+            }
+
         payload = {
             "StationCodes": [code],
             "pageCode": "element-lonic-analysis",
@@ -136,6 +148,17 @@ class ParticulateAPIClient:
         # a34004 = PM2.5
         if detection_item_codes is None:
             detection_item_codes = ["a340101", "a340091", "a34004"]
+
+        limit_error = check_query_window(
+            start_time, end_time, table_type, tool="碳组分查询"
+        )
+        if limit_error:
+            return {
+                "success": False,
+                "error": limit_error,
+                "error_code": "query_range_too_large",
+                "api_response": None,
+            }
 
         payload = {
             "StationCodes": [code],
@@ -183,6 +206,17 @@ class ParticulateAPIClient:
         # a20002=铝, a20119=硅, a20029=钙, a20111=铁, a20095=钛, a20068=钾
         if detection_item_codes is None:
             detection_item_codes = ["a20002", "a20119", "a20029", "a20111", "a20095", "a20068"]
+
+        limit_error = check_query_window(
+            start_time, end_time, data_type, tool="地壳元素/重金属查询"
+        )
+        if limit_error:
+            return {
+                "success": False,
+                "error": limit_error,
+                "error_code": "query_range_too_large",
+                "api_response": None,
+            }
 
         payload = {
             "StationCodes": [code],
@@ -234,6 +268,17 @@ class ParticulateAPIClient:
             - resultAvgProp: 平均占比
             - resultDataProp: 百分比时序
         """
+        limit_error = check_query_window(
+            start_time, end_time, table_type, tool="PM2.5 组分重构查询"
+        )
+        if limit_error:
+            return {
+                "success": False,
+                "error": limit_error,
+                "error_code": "query_range_too_large",
+                "api_response": None,
+            }
+
         payload = {
             "StationCodes": [code],
             "timePoint": [start_time, end_time],
