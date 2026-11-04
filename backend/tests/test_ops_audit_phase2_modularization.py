@@ -312,16 +312,20 @@ def test_workflow_and_gas_type_rules_run_in_batch_audit():
             "RF_W_GASEOUSCHECK_CO": [
                 {
                     "WORKINGORDERCODE": "WO-RULES",
-                    "DEVICEBRAND": "THERMO",
-                    "DEVICEMODEL": "T100",
-                    "POLLUTANTTYPE": "NOX",
-                    "DISPLAYVALUE": "",
-                    "MEASUREVALUE": "",
-                    "SENSORVALUE": "",
+                    "DEVICEBRAND": "FPI",
+                    "DEVICEMODEL": "AQMS-300",
+                    "POLLUTANTTYPE": "CO",
+                    "JGCHECKVALUE": "600",
                     "CHECKTIME": "2026-05-20 13:00:00",
                     "STARTTIME": "2026-05-20 12:00:00",
                     "ENDTIME": "2026-05-20 14:00:00",
-                }
+                },
+                {
+                    "WORKINGORDERCODE": "WO-RULES",
+                    "DEVICEBRAND": "FPI",
+                    "DEVICEMODEL": "AQMS-300",
+                    "POLLUTANTTYPE": "NOX",
+                },
             ]
         },
         "attachments": [],
@@ -336,7 +340,7 @@ def test_workflow_and_gas_type_rules_run_in_batch_audit():
     assert "FLOW_NO_CREATE" not in rule_ids
     assert "FLOW_NO_CHECK" not in rule_ids
     assert "RF_RANGE_BY_GAS_TYPE_MISMATCH" in rule_ids
-    assert "RF_RANGE_VALUE_MISSING" in rule_ids
+    assert "RF_RANGE_OUT_OF_SPEC" in rule_ids
 
 
 def test_evidence_builder_creates_layered_bundle():

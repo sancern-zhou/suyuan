@@ -224,6 +224,7 @@
 ## 关键结论（需复核）
 
 1. **RF_W_GASEOUSCHECK_{CO,NOX,O3,SO2} 的 DISPLAYVALUE/MEASUREVALUE/SENSORVALUE（12 条）与 RF_W_PMCHECK 的 PM_{DISPLAY,MEASURE,SENSOR}VALUE（3 条）在 GD 实体与视图中均不存在**——这 5 张表单实际字段为 LDPYPPB（零点漂移）/KDPY（跨度漂移）/MCLPPM（满程量浓度）/MAINFLOWVALUE 等，且视图标签内含品牌阈值（如 API/聚光/赛默飞/先河）。`rf_range_profiles.check_value_fields` 若继续引用不存在的列，`RF_RANGE_OUT_OF_SPEC` 对这 5 张表将空转；建议改用真实字段并接入视图标签阈值。
+   - ✅ **已闭环（2026-11-04）**：`check_value_fields`/`brand_ranges` 已下线；5 张周检表改由 `*_weekly_check_profiles` 用真实字段按视图红字阈值审核，品牌别名统一到顶层 `brand_aliases`。详见 `audit-rule-source-governance.md`。
 2. **RF_W_GASEOUSCHECK_O3.CHECKDATE**：GD 实体直接继承 CustomEntity，未映射该列（部分实体映射），数据侧可能仍有该列；风险低，建议取数时以数据侧列名为准。
 3. **RF_Q_GaseousFlowCheck.CALIBRATIONDATE**：GD 实体含 CHECKDATE/CHECKDATE2 而无 CALIBRATIONDATE——疑为旧列名，建议核对数据侧（`ops_work_order_audit_aliases.py` 同表别名未含该列）。
 

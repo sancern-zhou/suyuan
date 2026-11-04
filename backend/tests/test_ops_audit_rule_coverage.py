@@ -99,20 +99,25 @@ def test_rf_range_rules_are_detected():
                 "RF_W_GASEOUSCHECK_CO": [
                     {
                         "WORKINGORDERCODE": "WO-RF-RANGE",
-                        "DEVICEBRAND": "THERMO",
-                        "DEVICEMODEL": "48i",
+                        "DEVICEBRAND": "FPI",
+                        "DEVICEMODEL": "AQMS-300",
                         "DEVICECODE": "CO-001",
+                        "POLLUTANTTYPE": "CO",
+                        "JGCHECKVALUE": "600",
+                    },
+                    {
+                        "WORKINGORDERCODE": "WO-RF-RANGE",
+                        "DEVICEBRAND": "FPI",
+                        "DEVICEMODEL": "AQMS-300",
+                        "DEVICECODE": "CO-002",
                         "POLLUTANTTYPE": "NOX",
-                        "DISPLAYVALUE": "",
-                        "MEASUREVALUE": "/",
-                        "SENSORVALUE": None,
-                    }
+                    },
                 ]
             },
         )
     )
     ids = _issue_ids(audit)
-    assert "RF_RANGE_VALUE_MISSING" in ids
+    assert "RF_RANGE_OUT_OF_SPEC" in ids
     assert "RF_RANGE_BY_GAS_TYPE_MISMATCH" in ids
 
 
@@ -341,7 +346,7 @@ def test_so2_weekly_brand_range_rules_use_structured_fields():
                         "CYLLCHECKVALUE": "650",
                         "PMTCHECKVALUE": "5100",
                         "ZWDCHECKVALUE": "3.5",
-                        "YLCHECKVALUE": "0.2",
+                        "YLCHECKVALUE": "1.0",
                         "JGCHECKVALUE": "0.62",
                         "GYCHECKVALUE": "520",
                         "FYCHECKVALUE": "50",

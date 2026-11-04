@@ -171,7 +171,7 @@ def _check_pm_sample_tube_temperature(
     number = _num(value)
     missing = value is None or str(value).strip() in {"", "/", "-", "未填", "无"}
     abnormal_status = _is_pm_sample_tube_temp_status_abnormal(status)
-    out_of_range = number is not None and (number < 0 or number > 60)
+    out_of_range = number is not None and (number < 0 or number > 50)
     if not (missing or abnormal_status or out_of_range):
         return
     reason_parts = []
