@@ -4,6 +4,8 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from uuid import uuid4
 
+from app.utils.async_cleanup import reset_context_var
+
 
 @dataclass(frozen=True)
 class AssistantRequest:
@@ -39,7 +41,7 @@ def end_assistant_request(token: Token) -> None:
     if scope:
         # Child asyncio tasks inherit ContextVars; revoke their shared scope too.
         scope.active = False
-    _request.reset(token)
+    reset_context_var(_request, token)
 
 
 def require_assistant_request(session_id: str) -> AssistantRequest:
