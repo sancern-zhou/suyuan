@@ -64,7 +64,7 @@
       @update:active-module="handleAssistantSelect"
       @update:left-sidebar-collapsed="leftSidebarCollapsed = $event"
       @update:layout-ref="layoutRef = $event"
-      @send="handleSend"
+      @send="handlePageSend"
       @assistant-continue="handleAssistantContinue"
       @pause="handlePause"
       @update:use-reranker="handleRerankerChange"
@@ -116,7 +116,7 @@
       @submit-human-feedback="handleHumanFeedbackSubmit"
     >
     </MainLayout>
-    <AssistantConversationSync :state="store.currentState" :mode="store.currentMode" :active="workspace === 'chat' && !managementPanel" @sessions="applyAssistantConversations" />
+    <AssistantConversationSync v-if="!floating.enabled" :state="store.currentState" :mode="store.currentMode" :active="workspace === 'chat' && !managementPanel" @sessions="applyAssistantConversations" />
 
     <!-- 知识库创建对话框 -->
     <KnowledgeBaseCreateDialog
@@ -148,9 +148,11 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useReactStore } from '@/stores/reactStore'
 import AssistantConversationSync from '@/components/reactAnalysis/AssistantConversationSync.vue'
+import { useAssistantFloatingStore } from '@/stores/assistantFloating.js'
+import { buildAssistantPageContext } from '@/services/assistantPageContext.js'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
 import {
@@ -188,6 +190,7 @@ import KnowledgeBaseChunksDialog from '@/components/reactAnalysis/dialogs/Knowle
 // Stores
 const route = useRoute()
 const store = useReactStore()
+const floating = useAssistantFloatingStore()
 const defaultAgentMode = resolveProjectDefaultAgentMode(projectConfig, AGENT_MODE_IDS)
 // 问数入口按项目启用情况选择模式：江苏使用 jiangsu_query，其他项目使用共享 query 模式。
 const queryAgentMode = projectConfig.agentModeIds.includes('jiangsu_query') ? 'jiangsu_query' : 'query'
@@ -309,7 +312,7 @@ const chatAreaDragOver = ref(false)
 const useReranker = ref(false)
 const scheduledTasksRefreshing = ref(false)
 const mainLayoutRef = ref(null)
-const workspace = ref('platform')
+const workspace = ref(route.query.assistant === '1' ? 'chat' : 'platform')
 const selectingAgentMode = ref('')
 const agentPlatformError = ref('')
 const resolvingInteractionId = ref(null)
@@ -374,8 +377,15 @@ const handleRerankerChange = (value) => {
   useReranker.value = value
 }
 
+const handlePageSend = payload => handleSend({ ...payload, pageContext: buildAssistantPageContext(route) })
+
 const handleAgentSelect = async (mode) => {
   if (selectingAgentMode.value) return
+  if (mode === 'assistant' && floating.enabled) {
+    floating.setFullPageActive(false)
+    floating.openPanel()
+    return
+  }
 
   const decision = resolveAgentSelection(mode, store)
   if (decision.action === 'invalid') {
@@ -428,6 +438,11 @@ const handleAssistantContinue = async ({ query, sessionId }) => {
 }
 
 const handleSessionRestoreAndClosePanel = async (sessionId) => {
+  const isAssistant = sessionId.startsWith('assistant_') || floating.conversations.some(row => row.session_id === sessionId)
+  if (isAssistant && floating.enabled && route.query.workspace !== 'full') {
+    if (route.name !== 'session') await router.push({ name: 'session', params: { id: sessionId } })
+    return true
+  }
   const restored = await handleSessionRestore(sessionId)
   if (restored) {
     hideManagementPanel()
@@ -455,17 +470,29 @@ const queueRouteSessionRestore = (sessionId) => {
 }
 
 watch(
-  () => route.params.id,
-  (sessionId) => {
+  () => [route.params.id, route.query.assistant],
+  ([sessionId]) => {
     if (sessionId) {
       queueRouteSessionRestore(sessionId)
       return
     }
     hideManagementPanel()
     resetPanelState()
-    workspace.value = 'platform'
+    workspace.value = route.query.assistant === '1' ? 'chat' : 'platform'
+    if (route.query.assistant === '1') floating.activate()
   }
 )
+watch(
+  () => [workspace.value, store.currentMode, managementPanel.value],
+  ([currentWorkspace, mode, panel]) => {
+    floating.setFullPageActive(floating.enabled && currentWorkspace === 'chat' && mode === 'assistant' && !panel)
+  },
+  { immediate: true }
+)
+watch(() => floating.conversations, applyAssistantConversations, { deep: true })
+watch(() => store.currentState.isAnalyzing, (running, wasRunning) => {
+  if (floating.enabled && wasRunning && !running) void floating.refresh()
+})
 
 const handleAssistantSelect = async (moduleId) => {
   if (moduleId !== 'general-agent' && store.currentState.isAnalyzing) {
@@ -775,6 +802,11 @@ onMounted(async () => {
 
   if (route.params.id) {
     await queueRouteSessionRestore(route.params.id)
+  } else if (route.query.assistant === '1') {
+    floating.activate()
+  }
+  if (route.query.preview_resource && currentModeSessionId.value) {
+    await openMessageAttachmentPreview({ sessionId: currentModeSessionId.value, resourceId: route.query.preview_resource })
   }
 })
 
