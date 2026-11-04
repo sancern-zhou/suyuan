@@ -4,7 +4,6 @@
       <div class="assistant-title"><span class="status-dot" :class="{ running: state.isAnalyzing }"></span><div><strong>AI 助手</strong><small>{{ state.isAnalyzing ? '正在处理，可继续补充要求' : '随时为你分析和跟进' }}</small></div></div>
       <div class="header-actions">
         <button type="button" title="新建对话" aria-label="新建对话" @click="newConversation"><Plus :size="18" /></button>
-        <button type="button" title="历史对话" aria-label="历史对话" @click="emit('history')"><History :size="17" /></button>
         <button type="button" title="展开主工作区" aria-label="展开主工作区" @click="openWorkspace"><Maximize2 :size="17" /></button>
         <button type="button" title="收起助手" aria-label="收起助手" @click="close"><X :size="19" /></button>
       </div>
@@ -58,7 +57,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { History, Maximize2, Plus, X } from 'lucide-vue-next'
+import { Maximize2, Plus, X } from 'lucide-vue-next'
 import ReActMessageList from '@/components/ReActMessageList.vue'
 import InputBox from '@/components/InputBox.vue'
 import AgentInteractionDialog from '@/components/reactAnalysis/dialogs/AgentInteractionDialog.vue'
@@ -68,7 +67,7 @@ import { useAssistantFloatingStore } from '@/stores/assistantFloating.js'
 import { useConversationActions } from '@/composables/reactAnalysis/useConversationActions.js'
 import { buildAssistantPageContext } from '@/services/assistantPageContext.js'
 
-const emit = defineEmits(['close', 'open-workspace', 'history'])
+const emit = defineEmits(['close', 'open-workspace'])
 const store = useReactStore()
 const floating = useAssistantFloatingStore()
 const route = useRoute()
