@@ -8,6 +8,8 @@ frontend:
   features:
     # ERA5 抓取已下线，数据管理不再展示历史补采入口。
     era5HistoricalBackfill: false
+    # 全站助手浮球/浮窗：登录后任意非公开页面可见（App 根节点挂载）。
+    assistant_floating: true
   # 2026-10-28 按业务要求左侧功能入口不再展示“智能问数”；问数能力仍保留在
   # 智能体平台场景与 query/gd_query 模式中，本项只控制侧栏快捷入口。
   sidebar_agent_modes: []
