@@ -54,7 +54,8 @@ export const useAssistantFloatingStore = defineStore('assistantFloating', () => 
 
   function openPanel() {
     if (fullPageActive.value) return false
-    activate()
+    // 不切换全局 currentMode：浮窗直接读写 assistant 会话状态，
+    // 在问数/知识等其他模式对话页上展开时，底层页面保持原模式。
     open.value = true
     void markAllNotificationsRead().catch(() => {})
     void refresh()
@@ -66,13 +67,20 @@ export const useAssistantFloatingStore = defineStore('assistantFloating', () => 
     if (value) open.value = false
   }
   function newConversation() {
-    activate()
-    react.reset()
-    resources.activateSession(null)
-    state.value.conversationAccess = { source: 'web', read_only_on_web: false }
+    react.resetModeConversation('assistant')
     revision = undefined
     lastReadSequence = -1
     lastSessionId = null
+  }
+  function switchAssistantSession(sessionId) {
+    if (!sessionId) return null
+    const target = react._ensureSessionState(sessionId, 'assistant')
+    react.activeSessionByMode.assistant = sessionId
+    revision = undefined
+    lastSessionId = null
+    lastReadSequence = -1
+    lastEpoch = -1
+    return target
   }
 
   function loadPosition() {
@@ -174,7 +182,7 @@ export const useAssistantFloatingStore = defineStore('assistantFloating', () => 
 
   return {
     enabled, open, visible, fullPageActive, conversations, notifications, notificationUnread, position,
-    state, unread, activate, openPanel, closePanel, setFullPageActive, newConversation,
+    state, unread, activate, openPanel, closePanel, setFullPageActive, newConversation, switchAssistantSession,
     savePosition, refresh, markAllNotificationsRead
   }
 })
