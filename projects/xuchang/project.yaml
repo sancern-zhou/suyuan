@@ -11,6 +11,7 @@ frontend:
   brand_name: 许昌市AI应用智能体
   features:
     query_agent_as_default: true
+    assistant_floating: true
   agent_modes:
     - assistant
     - query
