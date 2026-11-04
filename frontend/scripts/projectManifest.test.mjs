@@ -17,6 +17,7 @@ test('default project enables core and legacy', () => {
   assert.deepEqual(config.frontend, {
     theme: 'default',
     brandName: '风清气智',
+    brandLink: null,
     features: {},
     agentModes: ['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops'],
     defaultAgentMode: 'assistant',
@@ -51,6 +52,8 @@ test('jiangsu operations project exposes its dedicated operations modes', () => 
     'device_control', 'station_fault_diagnosis', 'smart_event_external', 'smart_event_instrument'
   ])
   assert.equal(config.frontend.defaultAgentMode, 'ops')
+  assert.equal(config.frontend.brandName, '苏环运智')
+  assert.equal(config.frontend.brandLink, 'http://11.54.200.200:8183/#/platform/platformSelection')
   assert.equal(config.frontend.agentModeOverrides.ops.name, '工单审核模式')
   assert.equal(config.frontend.agentModeOverrides.ops.shortName, '智能工单审核')
   assert.equal(config.frontend.agentModeOverrides.jiangsu_query.name, '运维问数生图智能体')
@@ -94,6 +97,24 @@ test('unknown agent scene ids fail validation', () => {
   assert.throws(
     () => loadProjectBuildConfig({ projectId: 'demo', repoRoot: tempRoot }),
     /unknown agent scene/
+  )
+})
+
+test('brand link must be a string when present', () => {
+  const tempRoot = resolve(import.meta.dirname, '../../../tmp/opencode/manifest-test')
+  mkdirSync(resolve(tempRoot, 'projects/demo'), { recursive: true })
+  mkdirSync(resolve(tempRoot, 'modules'), { recursive: true })
+  writeFileSync(resolve(tempRoot, 'projects/demo/project.yaml'), [
+    'schema_version: 1',
+    'project: demo',
+    'frontend:',
+    '  brand_link: 123',
+    ''
+  ].join('\n'))
+
+  assert.throws(
+    () => loadProjectBuildConfig({ projectId: 'demo', repoRoot: tempRoot }),
+    /brand_link must be a string/
   )
 })
 

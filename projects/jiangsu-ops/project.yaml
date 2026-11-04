@@ -6,7 +6,9 @@ modules:
   # 不展示；如需恢复，加回 - shared-conversations 并重建前端即可。
 frontend:
   theme: default
-  brand_name: 江苏省运维审核管理服务平台
+  brand_name: 苏环运智
+  # 点击侧边栏品牌名跳转上一级统一鉴权平台的平台选择页；留空则品牌不可点击。
+  brand_link: "http://11.54.200.200:8183/#/platform/platformSelection"
   features: {}
   # social 由江苏独立微信渠道驱动，不作为 Web 端手动切换的业务场景。
   agent_modes:

@@ -12,6 +12,7 @@ test('project config exposes module and feature predicates', () => {
     frontend: {
       theme: 'demo',
       brandName: '演示项目',
+      brandLink: 'http://portal.example/#/platform/platformSelection',
       features: { noiseMap: true, era5HistoricalBackfill: false },
       agentModes: ['assistant', 'query'],
       defaultAgentMode: 'query',
@@ -36,6 +37,7 @@ test('project config exposes module and feature predicates', () => {
   assert.equal(config.isFeatureEnabled('era5HistoricalBackfill', true), false)
   assert.equal(config.isFeatureEnabled('unspecified', true), true)
   assert.equal(config.brandName, '演示项目')
+  assert.equal(config.brandLink, 'http://portal.example/#/platform/platformSelection')
   assert.deepEqual(config.agentModeIds, ['assistant', 'query'])
   assert.equal(config.defaultAgentMode, 'query')
   assert.equal(config.agentPlatformLayout, 'coordinator')

@@ -4,10 +4,24 @@
       <template v-if="!isCollapsed">
         <div class="header-title-wrapper">
           <div class="brand-copy">
-            <h2>{{ projectConfig.brandName }}</h2>
+            <h2>
+              <a
+                v-if="projectConfig.brandLink"
+                class="brand-link"
+                :href="projectConfig.brandLink"
+                title="返回上一级平台选择"
+              >{{ projectConfig.brandName }}</a>
+              <span v-else>{{ projectConfig.brandName }}</span>
+            </h2>
           </div>
         </div>
       </template>
+      <a
+        v-else-if="projectConfig.brandLink"
+        class="brand-mark brand-link"
+        :href="projectConfig.brandLink"
+        title="返回上一级平台选择"
+      >{{ brandInitial }}</a>
       <div v-else class="brand-mark" :title="projectConfig.brandName">
         {{ brandInitial }}
       </div>
@@ -1180,6 +1194,18 @@ onUnmounted(() => {
     color: var(--text-1);
     font-weight: 600;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  .brand-link {
+    color: inherit;
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 0.16s ease;
+
+    &:hover {
+      color: var(--color-primary);
+      text-decoration: none;
+    }
   }
 
   .header-image {

@@ -42,6 +42,7 @@ export function createProjectConfig(value) {
     modules: Object.freeze([...modules]),
     theme: value.frontend.theme,
     brandName: value.frontend.brandName || '风清气智',
+    brandLink: value.frontend.brandLink || null,
     features,
     agentModeIds,
     defaultAgentMode,
