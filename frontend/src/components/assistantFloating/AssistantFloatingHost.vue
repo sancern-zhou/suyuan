@@ -2,7 +2,7 @@
   <div v-if="floating.enabled" class="assistant-floating-host">
     <Transition name="assistant-panel">
       <div v-if="floating.open" class="floating-window">
-        <AssistantFloatingPanel @close="floating.closePanel()" @open-workspace="openWorkspace" @history="openHistory" />
+        <AssistantFloatingPanel @close="floating.closePanel()" @open-workspace="openWorkspace" />
       </div>
     </Transition>
     <button
@@ -66,7 +66,7 @@ function drag(event) {
   const height = size?.height || 62
   floating.position = {
     x: Math.max(8, Math.min(window.innerWidth - width - 8, start.right - dx)),
-    y: Math.max(8, Math.min(window.innerHeight - height - 8, start.bottom + dy))
+    y: Math.max(8, Math.min(window.innerHeight - height - 8, start.bottom - dy))
   }
 }
 function stopDrag() {
@@ -79,10 +79,6 @@ async function openWorkspace(sessionId, attachment = null) {
   floating.closePanel()
   if (sessionId) await router.push({ name: 'session', params: { id: sessionId }, query: attachment ? { preview_resource: attachment.resourceId, workspace: 'full' } : { workspace: 'full' } })
   else await router.push({ name: 'analysis', query: { assistant: '1', workspace: 'full' } })
-}
-async function openHistory() {
-  floating.closePanel()
-  await router.push({ name: 'analysis', query: { history: 'assistant' } })
 }
 onMounted(() => window.addEventListener('resize', keepInView))
 onBeforeUnmount(() => { window.removeEventListener('pointermove', drag); window.removeEventListener('resize', keepInView) })

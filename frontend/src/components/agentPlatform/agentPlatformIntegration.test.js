@@ -193,7 +193,7 @@ test('analysis view defaults to the platform and opens chat through explicit flo
   assert.match(source, /workspace\.value = 'chat'/)
   assert.match(source, /workspace\.value = 'platform'/)
   assert.match(source, /route\.params\.id/)
-  assert.match(source, /watch\(\s*\(\) => \[route\.params\.id, route\.query\.assistant, route\.query\.history\]/)
+  assert.match(source, /watch\(\s*\(\) => \[route\.params\.id, route\.query\.assistant\]/)
   assert.match(source, /queueRouteSessionRestore/)
 })
 

@@ -469,7 +469,7 @@ const queueRouteSessionRestore = (sessionId) => {
 }
 
 watch(
-  () => [route.params.id, route.query.assistant, route.query.history],
+  () => [route.params.id, route.query.assistant],
   ([sessionId]) => {
     if (sessionId) {
       queueRouteSessionRestore(sessionId)
@@ -479,12 +479,6 @@ watch(
     resetPanelState()
     workspace.value = route.query.assistant === '1' ? 'chat' : 'platform'
     if (route.query.assistant === '1') floating.activate()
-    if (route.query.history === 'assistant') {
-      workspace.value = 'chat'
-      floating.activate()
-      showManagementPanel('session-history')
-      void refreshSessionHistory()
-    }
   }
 )
 watch(
@@ -780,11 +774,6 @@ onMounted(async () => {
     await queueRouteSessionRestore(route.params.id)
   } else if (route.query.assistant === '1') {
     floating.activate()
-  } else if (route.query.history === 'assistant') {
-    workspace.value = 'chat'
-    floating.activate()
-    showManagementPanel('session-history')
-    await refreshSessionHistory()
   }
   if (route.query.preview_resource && currentModeSessionId.value) {
     await openMessageAttachmentPreview({ sessionId: currentModeSessionId.value, resourceId: route.query.preview_resource })
