@@ -22,21 +22,24 @@ export function hasRestorableLocalState(sessionState) {
     !!sessionState.isAnalyzing || !!sessionState.isComplete || !!sessionState.finalAnswer
 }
 
-export function useConversationActions(store, { onSettled = () => {} } = {}) {
+export function useConversationActions(store, { getState = null, preserveCurrentMode = false, onSettled = () => {} } = {}) {
   const resourceStore = useSessionResourceStore()
   let restoreRequestToken = 0
+  // getState：调用方指定的目标会话状态（浮窗传 assistant 状态）；
+  // 缺省为全局当前状态（全页工作区行为不变）。
+  const targetState = computed(getState || (() => store.currentState))
   const currentConversationPolicy = computed(() => restoredConversationPolicy(
-    store.currentState?.conversationAccess || {}
+    targetState.value?.conversationAccess || {}
   ))
 
   const handleSend = async payload => {
     if (currentConversationPolicy.value.readOnly) return false
     const query = payload.query
     const agentMode = payload.agentMode || store.agentMode
-    const directRun = resolveDirectThroughRun(store.currentState, agentMode)
+    const directRun = resolveDirectThroughRun(targetState.value, agentMode)
     if (directRun) {
       try {
-        await steerAssistantRun(directRun.run_id, store.currentState.sessionId, query)
+        await steerAssistantRun(directRun.run_id, targetState.value.sessionId, query)
         if (typeof payload.onAccepted === 'function') payload.onAccepted()
         await onSettled()
         return true
@@ -53,6 +56,7 @@ export function useConversationActions(store, { onSettled = () => {} } = {}) {
       activeContexts: Array.isArray(payload.activeContexts) ? payload.activeContexts : null,
       messageAttachments: payload.messageAttachments || [],
       pageContext: payload.pageContext || null,
+      preserveCurrentMode,
       onAccepted: payload.onAccepted
     }
     try {

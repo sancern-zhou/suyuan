@@ -1,7 +1,7 @@
 <template>
-  <section class="assistant-floating-panel" aria-label="AI 助手">
+  <section class="assistant-floating-panel" aria-label="助手">
     <header class="floating-header">
-      <div class="assistant-title"><span class="status-dot" :class="{ running: state.isAnalyzing }"></span><strong>AI 助手</strong></div>
+      <div class="assistant-title"><span class="status-dot" :class="{ running: state.isAnalyzing }"></span><strong>助手</strong></div>
       <div class="header-actions">
         <button type="button" class="items-toggle" :class="{ 'has-unread': floating.notificationUnread }" title="事项与建议" aria-label="事项与建议" @click="itemsOpen = true"><ListChecks :size="17" /></button>
         <button type="button" title="新建对话" aria-label="新建对话" @click="newConversation"><Plus :size="18" /></button>
@@ -71,7 +71,11 @@ const emit = defineEmits(['close', 'open-workspace'])
 const store = useReactStore()
 const floating = useAssistantFloatingStore()
 const route = useRoute()
-const { handleSend, restore, currentConversationPolicy: policy } = useConversationActions(store, { onSettled: () => floating.refresh() })
+const { handleSend, currentConversationPolicy: policy } = useConversationActions(store, {
+  getState: () => floating.state,
+  preserveCurrentMode: true,
+  onSettled: () => floating.refresh()
+})
 const state = computed(() => floating.state)
 const itemsOpen = ref(false)
 const error = ref('')
@@ -84,9 +88,11 @@ async function send(payload) {
 }
 async function continueItem({ query, sessionId }) {
   try {
-    if (!await restore(sessionId)) { error.value = '会话恢复失败，请稍后重试'; return }
+    // 浮窗内切换 assistant 上下文到来源会话并增量同步，不切全局模式、不跳全页。
+    floating.switchAssistantSession(sessionId)
+    await floating.refresh()
     await send({ query })
-  } catch (failure) { error.value = failure.message || '会话恢复失败' }
+  } catch (failure) { error.value = failure.message || '会话切换失败' }
 }
 function newConversation() { floating.newConversation() }
 function openWorkspace() { emit('open-workspace', state.value.sessionId) }
