@@ -3,6 +3,11 @@
 > 2026-11-04 首版。适用对象：`backend/app/services/ops_audit/` 下主网 RF 周检范围规则。
 > 目标：把“平台视图正常范围文本”固化为可执行的审核阈值，并让无法判定的事实可观测，而不是静默跳过。
 
+## 0. 归属与分支
+
+本套规则与配置**仅服务广东运维**，经确认保留在 `project/guangdong` 分支，**不按共享层回合 `main`**。
+`backend/app/services/ops_audit/**` 虽位于共享路径且 `origin/main` 存在同名文件，该例外以本说明为准；后续改动只在广东工作树发布。
+
 ## 1. 权威口径与证据
 
 1. 广东运维平台对 `RF_W_GASEOUSCHECK_CO/NOX/O3/SO2`、`RF_W_PMCHECK` **没有服务端数值校验**，前端也只有 `required` 必填；唯一权威阈值是视图“正常范围”列的 HTML 文本。
