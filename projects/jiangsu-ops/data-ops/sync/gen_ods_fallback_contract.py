@@ -61,6 +61,7 @@ EXTRA_FALLBACK = {
     "mtc_working_order",       # 工单主表全集；mart_work_order_analysis 仅暴露 Fault 子集
     "mtc_working_order_detail",  # mart 只给节点数，处理人/节点流水未暴露
     "opa_kq_attendance",       # mart 只给站点×日签到次数，个人签到明细未暴露
+    "rf_common",               # 例行单宽表仅用 preparetime 做填报判定，表单内容(StringN按模板取列)与填写/复核/审核明细仍需原始行
 }
 
 # 每张兜底表的用途说明（必须人工登记；新增同步表若落到兜底清单而没有说明，生成直接失败，
