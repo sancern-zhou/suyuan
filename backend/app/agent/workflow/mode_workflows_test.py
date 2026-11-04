@@ -258,6 +258,46 @@ def test_fixed_workflow_whitelist_keeps_submit_result_visible():
     assert "execute_sql_query" in blocked["data"]["blocked_tools"]
 
 
+def test_non_workflow_mode_keeps_dynamic_delivery_tools_visible():
+    """无固定工作流的模式也必须保留 call_sub_agent 注入的交付工具。
+
+    回归：expert 模式曾直接返回 None，导致 _run_planner_stream 的动态
+    schema 补齐循环空转，模型工具列表里看不到 submit_result，只能把
+    JSON 贴进正文，节点反复“未通过结构化协议校验”。
+    """
+    from app.agent.prompts.tool_registry import get_tools_by_mode
+
+    runtime = AgentRuntime.__new__(AgentRuntime)
+    runtime.config = SimpleNamespace(extra_tool_names=None)
+    runtime.executor = SimpleNamespace(
+        tool_registry={
+            "submit_result": object(),
+            "escalate": object(),
+            "report_finding": object(),
+        }
+    )
+    state = RunState(session_id="expert-test", user_query="分析", mode="expert_analysis")
+
+    names = runtime._allowed_tool_names_for_state(state)
+
+    assert names is not None
+    assert "submit_result" in names
+    assert "escalate" in names
+    assert "report_finding" in names
+    # 返回显式名单后仍覆盖此前的模式默认工具集
+    assert set(get_tools_by_mode("expert_analysis").keys()).issubset(set(names))
+
+
+def test_non_workflow_mode_without_dynamic_tools_keeps_none_fallback():
+    """没有动态交付工具时保持原有 None 语义，避免无谓构造白名单。"""
+    runtime = AgentRuntime.__new__(AgentRuntime)
+    runtime.config = SimpleNamespace(extra_tool_names=None)
+    runtime.executor = SimpleNamespace(tool_registry={"execute_sql_query": object()})
+    state = RunState(session_id="expert-test-2", user_query="分析", mode="expert_analysis")
+
+    assert runtime._allowed_tool_names_for_state(state) is None
+
+
 def test_deliver_prompt_mentions_submit_result_when_injected():
     definition = get_mode_workflow("query_monitoring_city")
     deliver = {"phase_index": len(definition.phases) - 1}

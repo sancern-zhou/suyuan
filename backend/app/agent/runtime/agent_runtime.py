@@ -1277,7 +1277,14 @@ class AgentRuntime:
                 if name in phase_tools or name in {"submit_result", "escalate", "report_finding"}
             ]
         elif not self.config.extra_tool_names and state.mode not in {"assistant", "office"}:
-            return None
+            # 无固定工作流时 None 表示回退到模式默认工具集；但动态注入的
+            # 交付工具不在模式白名单里，必须在回退前显式保留，否则
+            # _run_planner_stream 的动态 schema 补齐循环会空转，模型看不到它们。
+            if not any(
+                name in executor_registry
+                for name in ("submit_result", "escalate", "report_finding")
+            ):
+                return None
         return list(dict.fromkeys(names))
 
     def _fixed_workflow_blocked_observation(
