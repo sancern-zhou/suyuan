@@ -41,13 +41,6 @@
 
       <div class="actions-right-group">
         <button
-          v-if="floatingAssistantAvailable"
-          type="button"
-          class="panel-toggle-btn"
-          title="打开悬浮助手"
-          @click="$emit('toggle-float-assistant')"
-        >悬浮助手</button>
-        <button
           v-if="agentMode === 'assistant'"
           type="button"
           class="panel-toggle-btn assistant-panel-trigger"
@@ -242,9 +235,6 @@ import InputBox from '@/components/InputBox.vue'
 import AgentInteractionDialog from './dialogs/AgentInteractionDialog.vue'
 import { shareConversation } from '@/api/sharedConversations.js'
 import { withComposerShortcutGuide } from '@/components/inputBoxPlaceholder.js'
-import { projectConfig } from '@/config/projectConfig.js'
-
-const floatingAssistantAvailable = computed(() => projectConfig.agentPlatformLayout === 'coordinator')
 
 const shareSessionBusy = ref(false)
 
@@ -383,8 +373,7 @@ const emit = defineEmits([
   'open-memory',
   'open-assistant',
   'toggle-left-sidebar',
-  'new-conversation',
-  'toggle-float-assistant'
+  'new-conversation'
 ])
 
 const inputBoxRef = ref(null)

@@ -13,20 +13,28 @@ test('coordinator home removes the fixed conversation card and keeps its catalog
   assert.match(source, /aria-label="智能体类型"/)
 })
 
-test('floating assistant uses the real conversation state on every coordinator workspace', async () => {
+// 2026-11-05 收敛：助手浮窗统一走 main 共享层 assistantFloating（App 级挂载，
+// assistant_floating 特性门控），本地 CoordinatorAssistantDock 退役。共享面板
+// 承载江苏沉淀的设计：运行时常用问题（管理端可配、配置兜底）、Esc 收起、
+// 下拉箭头收起按钮；Dock 及 coordinator-submit 链路不得回流。
+test('floating assistant is app-level with quick prompts and esc collapse; dock retired', async () => {
+  const app = await readSource('../../App.vue')
+  const host = await readSource('../assistantFloating/AssistantFloatingHost.vue')
+  const panel = await readSource('../assistantFloating/AssistantFloatingPanel.vue')
   const layout = await readSource('../reactAnalysis/MainLayout.vue')
-  const dock = await readSource('../coordinator/CoordinatorAssistantDock.vue')
-  const view = await readSource('../../views/ReactAnalysisView.vue')
+  const chat = await readSource('../reactAnalysis/ChatArea.vue')
+  const projectYaml = await readFile(new URL('../../../../projects/jiangsu-ops/project.yaml', import.meta.url), 'utf8')
 
-  assert.match(layout, /<CoordinatorAssistantDock/)
-  assert.match(layout, /:messages="messages"/)
-  assert.match(layout, /@submit="\$emit\('coordinator-submit', \$event\)"/)
-  assert.match(dock, /<ReActMessageList/)
-  assert.match(dock, /<InputBox/)
-  assert.match(dock, /position: fixed/)
-  assert.match(view, /handleFloatingAssistantSubmit/)
-  assert.match(view, /store\.enterModeConversation\(mode\)/)
-  assert.match(view, /handleSend\(\{ query, agentMode: mode \}\)/)
+  assert.match(app, /<AssistantFloatingHost/)
+  assert.match(projectYaml, /assistant_floating: true/)
+  assert.match(host, /Escape/)
+  assert.match(panel, /getCoordinatorQuickPrompts/)
+  assert.match(panel, /quickPrompts/)
+  assert.match(panel, /收起（Esc）/)
+  assert.match(panel, /ChevronDown/)
+  assert.doesNotMatch(layout, /CoordinatorAssistantDock/)
+  assert.doesNotMatch(layout, /coordinator-submit/)
+  assert.doesNotMatch(chat, /toggle-float-assistant/)
 })
 
 // 2026-10-12 产品决策：关键词路由（project.coordinator.routes）整体删除，不允许

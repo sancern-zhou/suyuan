@@ -77,8 +77,6 @@
       @assistant-select="handleAssistantSelect"
       @sidebar-action="handleSidebarAction"
       @select-agent="handleAgentSelect"
-      @coordinator-submit="handleFloatingAssistantSubmit"
-      @open-full-conversation="workspace = 'chat'"
       @load-session="handleLoadSessionAndClosePanel"
       @start-drag="startDragging"
       @stop-drag="stopDragging"
@@ -184,7 +182,6 @@ import {
   resolveAgentSelection,
   resolveTaskWorkspaceMode
 } from '@/components/agentPlatform/workspacePolicy.js'
-import { resolveCoordinatorMode } from '@/components/coordinator/coordinatorWorkspace.js'
 import { extractSmartEventWorkspaceCommand } from '@/services/jiangsuSmartEventWorkspace.js'
 import { extractWorkOrderReviewCommand, WORK_ORDER_REVIEW_COMMANDS } from '@/services/jiangsuWorkOrderReviewWorkspace.js'
 import { extractDeviceControlWorkspaceCommand } from '@/services/jiangsuDeviceControlWorkspace.js'
@@ -547,7 +544,7 @@ const handlePageSend = payload => handleSend({ ...payload, pageContext: buildAss
 const handleAgentSelect = async (mode) => {
   if (selectingAgentMode.value) return false
   // main 的全站浮窗（assistant_floating 特性）启用时，选助手不再进全页，
-  // 就地拉起浮窗；江苏未声明该特性，走既有 CoordinatorAssistantDock 入口。
+  // 就地拉起浮窗；特性关闭时助手仍走全页工作区。
   if (mode === 'assistant' && floating.enabled) {
     floating.setFullPageActive(false)
     floating.openPanel()
@@ -586,33 +583,6 @@ const handleAgentSelect = async (mode) => {
   } finally {
     selectingAgentMode.value = ''
   }
-}
-
-const handleCoordinatorSubmit = async (payload) => {
-  const query = String(payload?.query || '').trim()
-  if (!query) return
-  const mode = payload?.mode || resolveCoordinatorMode(
-    query,
-    projectConfig.coordinator?.routes || [],
-    defaultAgentMode
-  )
-  const opened = await handleAgentSelect(mode)
-  if (!opened) return
-  await handleSend({ query, agentMode: mode })
-}
-
-const handleFloatingAssistantSubmit = async (payload) => {
-  const query = String(payload?.query || '').trim()
-  if (!query) return
-  const mode = payload?.mode || resolveCoordinatorMode(
-    query,
-    projectConfig.coordinator?.routes || [],
-    defaultAgentMode
-  )
-  if (!projectConfig.agentModeIds.includes(mode)) return
-  // 浮窗仅切换会话状态，不抢占用户正在查看的首页或工作台。
-  store.enterModeConversation(mode)
-  await handleSend({ query, agentMode: mode, modelTier: payload.modelTier })
 }
 
 const handleLoadSessionAndClosePanel = async (sessionId) => {

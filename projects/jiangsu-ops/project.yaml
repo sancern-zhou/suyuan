@@ -9,7 +9,9 @@ frontend:
   brand_name: 苏环运智
   # 点击侧边栏品牌名跳转上一级统一鉴权平台的平台选择页；留空则品牌不可点击。
   brand_link: "http://11.54.200.200:8183/#/platform/platformSelection"
-  features: {}
+  features:
+    # 2026-11-05 收敛：助手浮窗统一走 main 共享层（assistantFloating），本地 Dock 退役。
+    assistant_floating: true
   # social 由江苏独立微信渠道驱动，不作为 Web 端手动切换的业务场景。
   agent_modes:
     - assistant

@@ -187,16 +187,11 @@ test('main layout switches between agent platform and chat workspace', async () 
   assert.doesNotMatch(source, /AgentWorkspaceHeader/)
   assert.match(source, /:agent-mode="agentMode"/)
   assert.match(source, /select-agent/)
-  assert.match(source, /coordinator-submit/)
 })
 
-test('coordinator query opens the routed professional mode and sends the original intent', async () => {
-  const source = await readSource('../../views/ReactAnalysisView.vue')
-
-  assert.match(source, /const handleCoordinatorSubmit = async/)
-  assert.match(source, /await handleAgentSelect\(mode\)/)
-  assert.match(source, /await handleSend\(\{ query, agentMode: mode \}\)/)
-})
+// 2026-11-05 收敛：coordinator-submit 链与关键词路由处理器随本地 Dock 一起退役，
+// 浮窗快捷提问在共享面板内直接走 assistant 入口，契约由
+// coordinatorConversationIntegration.test.js 的收敛用例守护。
 
 test('chat workspace passes the selected agent to the welcome area for every agent mode', async () => {
   const chatArea = await readSource('../reactAnalysis/ChatArea.vue')

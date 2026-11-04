@@ -80,8 +80,18 @@ async function openWorkspace(sessionId, attachment = null) {
   if (sessionId) await router.push({ name: 'session', params: { id: sessionId }, query: attachment ? { preview_resource: attachment.resourceId, workspace: 'full' } : { workspace: 'full' } })
   else await router.push({ name: 'analysis', query: { assistant: '1', workspace: 'full' } })
 }
-onMounted(() => window.addEventListener('resize', keepInView))
-onBeforeUnmount(() => { window.removeEventListener('pointermove', drag); window.removeEventListener('resize', keepInView) })
+function handleKeydown(event) {
+  if (event.key === 'Escape' && floating.open) floating.closePanel()
+}
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown)
+  window.addEventListener('resize', keepInView)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('pointermove', drag)
+  window.removeEventListener('resize', keepInView)
+})
 function keepInView() {
   floating.savePosition({
     x: Math.max(8, Math.min(window.innerWidth - 70, floating.position.x)),
