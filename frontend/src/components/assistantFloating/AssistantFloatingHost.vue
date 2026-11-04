@@ -66,7 +66,7 @@ function drag(event) {
   const height = size?.height || 62
   floating.position = {
     x: Math.max(8, Math.min(window.innerWidth - width - 8, start.right - dx)),
-    y: Math.max(8, Math.min(window.innerHeight - height - 8, start.bottom + dy))
+    y: Math.max(8, Math.min(window.innerHeight - height - 8, start.bottom - dy))
   }
 }
 function stopDrag() {
