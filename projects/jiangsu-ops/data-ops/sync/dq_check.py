@@ -55,7 +55,8 @@ NULL_CHECKS = {
         ["id", "station_code", "create_time"], {"station_code": 10},
     ),
     "mart_routine_order_analysis": (
-        ["id", "station_code", "create_time"], {"station_code": 20},  # ~8张CAL校准单无站点码
+        # ~44张CAL校准单系统生成无站点码(源库同现状, 2026-11-04 全历史回补后实测)
+        ["id", "station_code", "create_time"], {"station_code": 60},
     ),
     "mart_alarm_event_analysis": (["id", "station_code", "alarm_time"], {}),
     "mart_station_device_health": (["station_code"], {}),
