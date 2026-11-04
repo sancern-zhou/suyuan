@@ -209,6 +209,18 @@ rules:
     default_severity: 高
     scope: RF_W_GASEOUSCHECK_CO/RF_W_GASEOUSCHECK_NOX/RF_W_GASEOUSCHECK_O3/RF_W_GASEOUSCHECK_SO2/RF_W_PMCHECK/RF_M_GASEOUSFLOWCHECK
     rationale: 检查值超出对应品牌正常范围，或月度气体流量显示值、测量值超出表单流量范围文本解析出的上下限，需核对单位、复测或补充异常处理记录。
+  - rule_id: RF_RANGE_UNIT_MISMATCH
+    name: RF 表单检查值单位与正常范围单位不一致
+    category: 一致性
+    default_severity: 中
+    scope: RF_W_GASEOUSCHECK_CO/RF_W_GASEOUSCHECK_NOX/RF_W_GASEOUSCHECK_O3/RF_W_GASEOUSCHECK_SO2/RF_W_PMCHECK
+    rationale: 填报值单位与源码视图正常范围单位不可换算时无法进行范围比对，属于技术诊断，不计入工单问题。
+  - rule_id: RF_RANGE_BRAND_PROFILE_UNCOVERED
+    name: RF 表单品牌正常范围未配置
+    category: 一致性
+    default_severity: 低
+    scope: RF_W_GASEOUSCHECK_CO/RF_W_GASEOUSCHECK_NOX/RF_W_GASEOUSCHECK_O3/RF_W_GASEOUSCHECK_SO2/RF_W_PMCHECK
+    rationale: 已填报的检查值在源码视图中没有对应品牌阈值或品牌与型号冲突，规则无法判定；仅作技术诊断，不计入工单问题，用于发现建档缺口。
   - rule_id: RF_M_GASEOUS_FLOW_RANGE_MISSING
     name: 月度气体流量检查流量范围未填写
     category: 表单完整性

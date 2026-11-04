@@ -11,6 +11,7 @@ from app.services.ops_audit.models import Issue
 from app.services.ops_audit.rules.base import add_issue
 
 RANGE_PROFILES = load_yaml_config("rf_range_profiles.yaml", {})
+COMMON_BRAND_ALIASES = RANGE_PROFILES.get("brand_aliases", {})
 MONTHLY_GASEOUS_FLOW_FIELDS = [
     ("SO2", "FLOWRANGSO2", ["DISPLAYVALUESO2", "MEASUREDVALUESO2"]),
     ("NO2", "FLOWRANGNO2", ["DISPLAYVALUENO2", "MEASUREDVALUENO2"]),
@@ -29,11 +30,14 @@ def check_rf_range_values(
     """Check RF form range values for completeness and validity.
 
     This rule identifies:
-    - RF_RANGE_VALUE_MISSING: Expected check value is missing
-    - RF_RANGE_OUT_OF_SPEC: Check value exceeds brand normal range
-    - RF_RANGE_BY_GAS_TYPE_MISMATCH: Gas type doesn't match range
+    - RF_RANGE_OUT_OF_SPEC: check value is outside the source view's brand range
+    - RF_RANGE_BY_GAS_TYPE_MISMATCH: gas type doesn't match the table profile
+    - RF_RANGE_UNIT_MISMATCH: value unit cannot be compared with the profile unit
+    - RF_RANGE_BRAND_PROFILE_UNCOVERED: brand has no configured range for a
+      submitted field (technical diagnostic, does not count as a work-order issue)
+    - RF_M_GASEOUS_FLOW_RANGE_MISSING: monthly flow range text is missing
 
-    The rule is configurable via rf_range_profiles.yaml.
+    Thresholds are configured via rf_range_profiles.yaml.
     """
 
     check_value_fields = RANGE_PROFILES.get("check_value_fields", {})
@@ -46,9 +50,6 @@ def check_rf_range_values(
     structured_weekly_profiles.update(RANGE_PROFILES.get("so2_weekly_check_profiles", {}))
     structured_weekly_profiles.update(RANGE_PROFILES.get("pm_weekly_check_profiles", {}))
 
-    if not check_value_fields:
-        return
-
     for table, form in forms:
         if form.get("_query_error"):
             continue
@@ -58,6 +59,7 @@ def check_rf_range_values(
             _check_monthly_gaseous_flow_range_text(order, table, form, issues)
 
         _check_weekly_structured_ranges(order, table, form, structured_weekly_profiles, issues)
+        _check_gas_type_mismatch(order, table, form, gas_type_mapping, issues)
 
         if table not in check_value_fields:
             continue
@@ -67,7 +69,6 @@ def check_rf_range_values(
             continue
 
         _check_missing_values(order, table, form, value_fields, issues)
-        _check_gas_type_mismatch(order, table, form, gas_type_mapping, issues)
         _check_value_out_of_spec(order, table, form, brand_ranges, gas_type_mapping, issues)
 
 
@@ -94,32 +95,47 @@ def _check_weekly_structured_ranges(
 
     raw_brand = form.get(profile.get("brand_field") or "DEVICEBRAND") or form.get("BRAND")
     model_text = _profile_model_text(form)
-    brand = _normalize_profile_brand(
-        raw_brand,
-        profile.get("brand_aliases", {}),
-        model_text,
-    )
-    if not brand:
-        return
+    aliases = {**COMMON_BRAND_ALIASES, **profile.get("brand_aliases", {})}
+    brand = _normalize_profile_brand(raw_brand, aliases, model_text) or ""
     model_brand = _model_brand_hint(model_text)
-    if model_brand and model_brand != brand:
+    if brand and model_brand and model_brand != brand:
         # A conflicting model is stronger evidence that the selected brand
         # range profile is not trustworthy. Do not turn a profile mismatch
         # into a business abnormal-value issue.
+        _add_brand_profile_uncovered_issue(
+            order,
+            table,
+            profile,
+            brand,
+            _profile_value_fields(form, profile),
+            issues,
+            reason="brand_model_conflict",
+            model_brand=model_brand,
+        )
         return
 
     out_of_spec_values = []
+    uncovered_fields = []
     for field_config in profile.get("fields", []):
         field_name = str(field_config.get("field") or "")
         if not field_name or field_name not in form:
             continue
         value = _parse_numeric(form.get(field_name))
         if value is None:
-            if field_config.get("semantic_required_when_blank"):
+            if field_config.get("semantic_required_when_blank") and _is_explicit_blank_placeholder(form.get(field_name)):
                 _add_blank_structured_value_semantic_candidate(order, table, form, field_config, issues)
             continue
         spec = _structured_range_spec_for_field(form, field_name, field_config, brand)
         if not spec:
+            # A submitted value that has no brand/default range must not be
+            # silently skipped; record it as a technical diagnostic.
+            uncovered_fields.append(
+                {
+                    "field": field_name,
+                    "label": field_config.get("label") or field_name,
+                    "raw_value": form.get(field_name),
+                }
+            )
             continue
         comparison_result = _comparison_text_satisfies_spec(form.get(field_name), spec)
         if comparison_result is True:
@@ -161,6 +177,16 @@ def _check_weekly_structured_ranges(
             }
         )
 
+    if uncovered_fields:
+        _add_brand_profile_uncovered_issue(
+            order,
+            table,
+            profile,
+            brand,
+            uncovered_fields,
+            issues,
+        )
+
     for item in out_of_spec_values:
         handling_record_candidates = _handling_record_candidates(form, item.get("field"))
         evidence = {
@@ -197,10 +223,66 @@ def _check_weekly_structured_ranges(
             (
                 f"{profile.get('display_name') or table}周检{item['label']}检查值"
                 f"({_out_of_spec_value_text(item)})"
-                f"超出{brand}品牌正常范围({_range_spec_text(item)})"
+                f"超出{brand or '当前'}品牌正常范围({_range_spec_text(item)})"
             ),
             json.dumps(evidence, ensure_ascii=False, default=str),
         )
+
+
+def _profile_value_fields(form: dict[str, Any], profile: dict[str, Any]) -> list[dict[str, Any]]:
+    fields = []
+    for field_config in profile.get("fields", []):
+        field_name = str(field_config.get("field") or "")
+        if not field_name or field_name not in form:
+            continue
+        if _parse_numeric(form.get(field_name)) is None:
+            continue
+        fields.append(
+            {
+                "field": field_name,
+                "label": field_config.get("label") or field_name,
+                "raw_value": form.get(field_name),
+            }
+        )
+    return fields
+
+
+def _add_brand_profile_uncovered_issue(
+    order: dict[str, Any],
+    table: str,
+    profile: dict[str, Any],
+    brand: str,
+    fields: list[dict[str, Any]],
+    issues: list[Issue],
+    reason: str = "brand_range_not_configured",
+    model_brand: str | None = None,
+) -> None:
+    if not fields:
+        return
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "brand": brand,
+        "model_brand": model_brand,
+        "reason": reason,
+        "uncovered_fields": fields,
+        "report_classification": "technical_diagnostic",
+        "counts_as_work_order_issue": False,
+    }
+    labels = "、".join(str(item.get("label") or item.get("field")) for item in fields[:5])
+    reason_text = "品牌与型号冲突" if reason == "brand_model_conflict" else "品牌正常范围未配置"
+    add_issue(
+        issues,
+        "RF_RANGE_BRAND_PROFILE_UNCOVERED",
+        "一致性",
+        "低",
+        f"rf.{table}.brand_profile",
+        (
+            f"{profile.get('display_name') or table}周检{reason_text}"
+            f"({brand or '<空>'}): {labels}"
+        ),
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
 
 
 def _add_range_unit_mismatch_issue(
@@ -642,6 +724,18 @@ def _parse_numeric(value: Any) -> float | None:
         return None
 
 
+def _is_explicit_blank_placeholder(value: Any) -> bool:
+    """True only for an explicitly marked blank ("/", "无", ...), not an empty input.
+
+    The platform uses "/" or "无" to declare a check item not applicable, which
+    needs a remark; a truly empty input is treated as "not filled" and stays
+    optional (matching the historical PM flow behaviour).
+    """
+    if value is None:
+        return False
+    return str(value).strip() in {"/", "-", "无", "无该项指标", "无此参数", "不适用"}
+
+
 def _convert_value_to_spec_unit(raw_value: Any, numeric: float, spec: dict[str, Any]) -> float | None:
     return _convert_unit(numeric, _extract_value_unit(raw_value), spec.get("unit"))
 
@@ -656,6 +750,7 @@ def _structured_range_spec_for_field(
         _inline_range_spec_for_field(form, field_name)
         or _inline_range_spec_for_label(form, field_config.get("label") or field_name)
         or (field_config.get("ranges") or {}).get(brand)
+        or (field_config.get("ranges") or {}).get("default")
     )
     if not spec:
         return None

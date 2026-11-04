@@ -67,7 +67,7 @@ def test_o3_signal_converts_volts_to_millivolts_before_range_check():
     assert [issue.rule_id for issue in issues] == []
 
 
-def test_nox_esa_reaction_temperature_is_not_audited():
+def test_nox_esa_reaction_temperature_is_not_range_audited():
     issues = []
     order = {"WORKINGORDERCODE": "CH2606061780721914673"}
     form = {
@@ -79,25 +79,28 @@ def test_nox_esa_reaction_temperature_is_not_audited():
 
     check_rf_range_values(order, [("RF_W_GASEOUSCHECK_NOX", form)], issues)
 
-    assert [issue.rule_id for issue in issues] == []
+    assert [issue.rule_id for issue in issues if issue.rule_id != "RF_RANGE_BRAND_PROFILE_UNCOVERED"] == []
+    assert [issue.rule_id for issue in issues] == ["RF_RANGE_BRAND_PROFILE_UNCOVERED"]
 
 
-def test_nox_xh_reaction_pressure_is_not_audited():
-    issues = []
-    order = {"WORKINGORDERCODE": "CH2606041780562726996"}
-    form = {
-        "WORKINGORDERCODE": "CH2606041780562726996",
-        "DEVICEBRAND": "XH",
-        "POLLUTANTTYPE": "NOX",
-        "FYSHICHECKVALUE": "5.825",
-    }
+def test_nox_xh_reaction_pressure_uses_source_kpa_range():
+    for raw_value, expected_out_of_spec in [("5.825", True), ("20", False), ("13", False), ("34", False)]:
+        issues = []
+        order = {"WORKINGORDERCODE": "CH2606041780562726996"}
+        form = {
+            "WORKINGORDERCODE": "CH2606041780562726996",
+            "DEVICEBRAND": "XH",
+            "POLLUTANTTYPE": "NOX",
+            "FYSHICHECKVALUE": raw_value,
+        }
 
-    check_rf_range_values(order, [("RF_W_GASEOUSCHECK_NOX", form)], issues)
+        check_rf_range_values(order, [("RF_W_GASEOUSCHECK_NOX", form)], issues)
 
-    assert [issue.rule_id for issue in issues] == []
+        has_range_issue = any(issue.rule_id == "RF_RANGE_OUT_OF_SPEC" for issue in issues)
+        assert has_range_issue is expected_out_of_spec, (raw_value, issues)
 
 
-def test_nox_thermo_reaction_pressure_is_not_audited():
+def test_nox_thermo_reaction_pressure_is_not_range_audited():
     issues = []
     order = {"WORKINGORDERCODE": "CH2606031780491579385"}
     form = {
@@ -109,22 +112,24 @@ def test_nox_thermo_reaction_pressure_is_not_audited():
 
     check_rf_range_values(order, [("RF_W_GASEOUSCHECK_NOX", form)], issues)
 
-    assert [issue.rule_id for issue in issues] == []
+    assert [issue.rule_id for issue in issues if issue.rule_id != "RF_RANGE_BRAND_PROFILE_UNCOVERED"] == []
 
 
-def test_nox_xh_reaction_temperature_is_not_audited():
-    issues = []
-    order = {"WORKINGORDERCODE": "CH2606041780562726996"}
-    form = {
-        "WORKINGORDERCODE": "CH2606041780562726996",
-        "DEVICEBRAND": "XH",
-        "POLLUTANTTYPE": "NOX",
-        "FYCHECKVALUE": "59.9℃",
-    }
+def test_nox_xh_reaction_temperature_uses_source_range():
+    for raw_value, expected_out_of_spec in [("59.9℃", True), ("50", False), ("49", False), ("51", False)]:
+        issues = []
+        order = {"WORKINGORDERCODE": "CH2606041780562726996"}
+        form = {
+            "WORKINGORDERCODE": "CH2606041780562726996",
+            "DEVICEBRAND": "XH",
+            "POLLUTANTTYPE": "NOX",
+            "FYCHECKVALUE": raw_value,
+        }
 
-    check_rf_range_values(order, [("RF_W_GASEOUSCHECK_NOX", form)], issues)
+        check_rf_range_values(order, [("RF_W_GASEOUSCHECK_NOX", form)], issues)
 
-    assert [issue.rule_id for issue in issues] == []
+        has_range_issue = any(issue.rule_id == "RF_RANGE_OUT_OF_SPEC" for issue in issues)
+        assert has_range_issue is expected_out_of_spec, (raw_value, issues)
 
 
 def test_o3_th_brand_with_thermo_model_uses_thermo_signal_ranges():
@@ -168,8 +173,9 @@ def test_weekly_gaseous_profiles_classify_th_abbreviation_by_model():
         **rf_range_rules.RANGE_PROFILES.get("so2_weekly_check_profiles", {}),
     }
 
-    for profile in profiles.values():
-        aliases = profile.get("brand_aliases", {})
+    assert profiles
+    for _profile in profiles.values():
+        aliases = rf_range_rules.COMMON_BRAND_ALIASES
         assert rf_range_rules._normalize_profile_brand("TH", aliases, "2001H") == "TH"
         assert rf_range_rules._normalize_profile_brand("TH", aliases, "2004H") == "TH"
         assert rf_range_rules._normalize_profile_brand("TH", aliases, "49i") == "THERMO"
@@ -264,15 +270,25 @@ def test_nox_esa_sample_pressure_with_hpa_does_not_report_unit_mismatch():
 
     check_rf_range_values(order, [("RF_W_GASEOUSCHECK_NOX", form)], issues)
 
-    assert [issue.rule_id for issue in issues] == []
+    assert [
+        issue.rule_id
+        for issue in issues
+        if issue.rule_id in {"RF_RANGE_OUT_OF_SPEC", "RF_RANGE_UNIT_MISMATCH"}
+    ] == []
 
 
-def test_fpi_ranges_follow_2020_parameter_sheet():
+def test_fpi_ranges_follow_source_view():
     cases = [
-        ("RF_W_GASEOUSCHECK_O3", {"DEVICEBRAND": "聚光", "POLLUTANTTYPE": "O3", "CYLLCHECKVALUE": "1000"}, False),
-        ("RF_W_GASEOUSCHECK_O3", {"DEVICEBRAND": "聚光", "POLLUTANTTYPE": "O3", "CYLLCHECKVALUE": "1201"}, True),
-        ("RF_W_GASEOUSCHECK_CO", {"DEVICEBRAND": "FPI", "POLLUTANTTYPE": "CO", "JGCHECKVALUE": "1.2"}, False),
-        ("RF_W_GASEOUSCHECK_CO", {"DEVICEBRAND": "FPI", "POLLUTANTTYPE": "CO", "JGCHECKVALUE": "0.5"}, True),
+        # O3 采样流量 A：视图 720～880 SCCM
+        ("RF_W_GASEOUSCHECK_O3", {"DEVICEBRAND": "聚光", "POLLUTANTTYPE": "O3", "CYLLCHECKVALUE": "800"}, False),
+        ("RF_W_GASEOUSCHECK_O3", {"DEVICEBRAND": "聚光", "POLLUTANTTYPE": "O3", "CYLLCHECKVALUE": "900"}, True),
+        # CO 截距：视图 -200～500（未标单位，暂按数值区间审）
+        ("RF_W_GASEOUSCHECK_CO", {"DEVICEBRAND": "聚光", "POLLUTANTTYPE": "CO", "JGCHECKVALUE": "100"}, False),
+        ("RF_W_GASEOUSCHECK_CO", {"DEVICEBRAND": "聚光", "POLLUTANTTYPE": "CO", "JGCHECKVALUE": "600"}, True),
+        # CO 采样流量：视图 720～880 SCCM
+        ("RF_W_GASEOUSCHECK_CO", {"DEVICEBRAND": "聚光", "POLLUTANTTYPE": "CO", "CYLLCHECKVALUE": "800"}, False),
+        ("RF_W_GASEOUSCHECK_CO", {"DEVICEBRAND": "聚光", "POLLUTANTTYPE": "CO", "CYLLCHECKVALUE": "1000"}, True),
+        # PM 流量：视图 15.87～17.54 L/min，不区分品牌
         ("RF_W_PMCHECK", {"DEVICEBRAND": "聚光", "POLLUTANTTYPE": "PM10", "MAINFLOWVALUE": "16.0"}, False),
         ("RF_W_PMCHECK", {"DEVICEBRAND": "聚光", "POLLUTANTTYPE": "PM10", "MAINFLOWVALUE": "18.0"}, True),
     ]
