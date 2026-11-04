@@ -89,6 +89,38 @@ async def test_conversational_submit_writes_work_order_review_judgment(tmp_path,
     assert detail['entry']['review_id'] == result['data']['review_id']
 
 
+@pytest.mark.asyncio
+async def test_submit_tool_blocks_approve_when_declaration_says_no_removal(tmp_path, monkeypatch):
+    """工单申报"无异常数据剔除"而结论建议剔除：approve 被硬校验拒绝，须改 reject 重报。"""
+    from config.settings import settings
+    from app.services.jiangsu_work_order_review import save_evidence
+
+    monkeypatch.setattr(settings, 'data_registry_dir', str(tmp_path))
+    save_evidence({
+        'working_order_code': 'FA260914178938611578927',
+        'title': '站点CO偏低', 'site_name': '沛县汉源宾馆', 'pollutant': 'CO',
+        'window': {'start_time': '2026-10-23 00:00:00', 'end_time': '2026-10-24 23:59:59'},
+        'sources': {'work_order': {'status': 'success', 'record_count': 1,
+                                   'data': {'details': [{'submitRemark': '数据已恢复正常，无异常数据剔除'}]}}},
+    })
+
+    tool = SubmitTaskReviewTool()
+    impact = dict(pollutant='CO', decision='partial_exclude', basis='零点漂移致系统性偏低',
+                  start='2026-10-23T15:00:00+08:00', end='2026-10-24T11:00:00+08:00',
+                  boundary_sources=['小时原始序列'], reasonableness_status='pass',
+                  reasonableness_basis='校准后恢复稳定')
+    submission = payload(data_impact=[impact])
+    submission['subject_id'] = 'FA260914178938611578927'
+    result = await tool.execute(context=SimpleNamespace(session_id='ops_session_3'), **submission)
+    assert result['success'] is False
+    assert 'reject' in result['summary']
+
+    # 改为建议退回后可正常提交（工单打回运维修正剔除申报）
+    submission['decision'] = 'reject'
+    ok = await tool.execute(context=SimpleNamespace(session_id='ops_session_3'), **submission)
+    assert ok['success'] is True
+
+
 def test_confirm_then_new_execution_reopens_without_losing_history():
     record = service.submit_review(payload(), source())
     result = service.decide_review(record['review_id'], human(record), {'username': 'operator'})

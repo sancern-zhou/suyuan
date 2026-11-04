@@ -26,6 +26,12 @@ SCHEMA = "jiangsu_work_order_reviews/v1"
 EVIDENCE_INDEX_NAME = "index.json"
 SOURCE_NAME_PATTERN = re.compile(r"^[0-9A-Za-z_.-]{1,64}$")
 
+# 工单填报"无剔除"类申报的识别模式（运维在 submitRemark 等自由文本字段声明
+# 不需要剔除监测数据）。approve + 建议剔除 与此类声明同现属于结论性不一致。
+_NO_EXCLUSION_DECLARATION_RE = re.compile(
+    r"无异常数据剔除|无数据剔除|无需(?:数据)?剔除|不需要剔除|不用剔除|无剔除"
+)
+
 _SOURCE_ORDER = ("work_order", "station_hour", "band", "weather", "alarms", "env_power", "qc")
 
 _DECISION_STATUS = {
@@ -445,6 +451,51 @@ def get_order_source(code: str, name: str) -> dict[str, Any]:
     payload = json.loads(source_path.read_text(encoding="utf-8"))
     return {"source": name, "data": payload.get("data"),
             "meta": {k: v for k, v in payload.items() if k != "data"}}
+
+
+def validate_removal_declaration_consistency(submission: dict[str, Any]) -> None:
+    """工单审核结论语义硬约束：通过=工单整体成立，含剔除申报一致。
+
+    工单填报"无异常数据剔除/无需剔除"类声明、而 AI 结论同时建议剔除
+    （partial_exclude/exclude）时，剔除申报与核定数据处置结论性不一致，
+    拒绝以 approve 提交，必须改为 reject 退回运维修正申报后重报。
+    证据包尚未采集或读取失败时不拦截（交由 SOP 语义约束与人工确认闸门）。
+    """
+    if str(submission.get("decision") or "") != "approve":
+        return
+    if not any(item.get("decision") in {"partial_exclude", "exclude"}
+               for item in submission.get("data_impact") or []):
+        return
+    code = str(submission.get("subject_id") or "").strip()
+    if not code:
+        return
+    try:
+        payload = get_order_source(code, "work_order")
+    except KeyError:
+        return
+    except Exception as exc:
+        logger.debug("removal_declaration_check_skipped", work_order_code=code, error=str(exc))
+        return
+    hits: list[str] = []
+
+    def _collect(value: Any) -> None:
+        if isinstance(value, dict):
+            for child in value.values():
+                _collect(child)
+        elif isinstance(value, list):
+            for child in value:
+                _collect(child)
+        elif isinstance(value, str) and _NO_EXCLUSION_DECLARATION_RE.search(value):
+            hits.append(value)
+
+    _collect(payload.get("data") or {})
+    if hits:
+        raise ValueError(
+            "工单填报了「无异常数据剔除/无需剔除」类申报，而本次结论建议剔除监测数据："
+            "剔除申报与核定数据处置不一致，不得建议通过归档。"
+            "请将 decision 改为 reject（退回运维修正剔除申报），"
+            "并在 comment 中写明工单申报与核定剔除区间的对照。"
+        )
 
 
 def sync_review_record(review: dict[str, Any], decision: dict[str, Any] | None = None) -> None:

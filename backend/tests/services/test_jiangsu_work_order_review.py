@@ -8,6 +8,7 @@ from app.services.jiangsu_work_order_review import (
     list_orders,
     record_operation,
     save_evidence,
+    validate_removal_declaration_consistency,
 )
 
 
@@ -274,3 +275,53 @@ def test_list_orders_filters_by_date_range(isolated_registry):
     today = date.today().isoformat()
     assert list_orders(start_date="2026-09-13", end_date="2026-09-13")["total"] == 1
     assert list_orders(start_date=today, end_date=today)["total"] == 1
+
+
+def _declaration_package(code, remark):
+    package = _sample_package(code)
+    package["sources"]["work_order"] = {
+        "status": "success", "record_count": 1,
+        "data": {"details": [{"submitRemark": remark}]},
+    }
+    return package
+
+
+def _exclusion_submission(code, decision="approve"):
+    return {
+        "subject_id": code, "category": "工单审核", "decision": decision,
+        "data_impact": [{"pollutant": "CO", "decision": "partial_exclude",
+                         "start": "2026-10-23T15:00:00+08:00", "end": "2026-10-24T11:00:00+08:00"}],
+    }
+
+
+def test_approve_with_exclusion_blocked_by_no_removal_declaration(isolated_registry):
+    """工单申报"无异常数据剔除"而 AI 建议剔除：approve 是结论性不一致，必须拒绝提交。"""
+    code = "FA260914178938611578927"
+    save_evidence(_declaration_package(code, "已校准，数据已恢复正常，无异常数据剔除"))
+
+    with pytest.raises(ValueError, match="reject"):
+        validate_removal_declaration_consistency(_exclusion_submission(code))
+
+
+def test_declaration_check_variants(isolated_registry):
+    code = "FA260914178938611578927"
+
+    # 申报无剔除 + 建议退回：一致，放行
+    save_evidence(_declaration_package(code, "现场已处理，无异常数据剔除"))
+    validate_removal_declaration_consistency(_exclusion_submission(code, decision="reject"))
+
+    # 通过且无剔除建议：无冲突
+    validate_removal_declaration_consistency({
+        "subject_id": code, "category": "工单审核", "decision": "approve",
+        "data_impact": [{"pollutant": "CO", "decision": "keep"}],
+    })
+
+    # 申报为"申请剔除 X 至 Y"而非"无剔除"声明：区间比对交由 SOP 语义约束，不拦截
+    save_evidence(_declaration_package(code, "故障期间数据已申请剔除10月23日15时至17时"))
+    validate_removal_declaration_consistency(_exclusion_submission(code))
+
+
+def test_declaration_check_skipped_without_evidence_pack(isolated_registry):
+    """证据包尚未采集（如非江苏链路的工单审核）：不拦截，交由 SOP 语义约束。"""
+    validate_removal_declaration_consistency(
+        _exclusion_submission("FA-NEVER-COLLECTED"))

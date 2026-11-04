@@ -477,6 +477,11 @@ def submit_review(payload, source):
             raise ValueError("subject_id 和 event_id 必须匹配本次任务绑定的业务编号")
     from app.scheduled_tasks.models.review_requirements import validate_review_result
     validate_review_result(submission, source.get("result_requirements", []))
+    if is_work_order_review(submission):
+        # 工单审核结论语义：通过的前提是剔除申报一致；申报无剔除而建议剔除时拒绝 approve。
+        from app.services.jiangsu_work_order_review import validate_removal_declaration_consistency
+
+        validate_removal_declaration_consistency(submission)
     from app.utils.path_config import format_agent_path, is_path_within, resolve_agent_path
     for evidence in submission["evidence"]:
         path = resolve_agent_path(evidence["path"])
