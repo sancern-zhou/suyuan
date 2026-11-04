@@ -12,8 +12,8 @@
       class="assistant-ball"
       :class="{ running: floating.state?.isAnalyzing, dragging }"
       :style="ballStyle"
-      title="打开 AI 助手（可拖动）"
-      aria-label="打开 AI 助手"
+      title="打开助手（可拖动）"
+      aria-label="打开助手"
       @pointerdown="startDrag"
       @click="handleClick"
     >
