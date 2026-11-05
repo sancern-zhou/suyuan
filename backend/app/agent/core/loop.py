@@ -126,6 +126,7 @@ class ReActLoop:
             user_identifier=getattr(self.executor, "user_identifier", None),
             board_context=self.context_builder.board_context if self.current_mode == "board" else None,
             extra_tool_names=self.extra_tool_names,
+            runtime_metadata=getattr(self.executor, "runtime_metadata", None),
         ))
 
         async for event in runtime.run(

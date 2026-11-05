@@ -125,6 +125,50 @@ async def test_social_record_rejects_web_write_with_409():
 
 
 @pytest.mark.asyncio
+async def test_system_owned_session_is_readable_by_any_authenticated_user():
+    service = ConversationCatalogService(FakeRepository([row(owner="system")]))
+    other = CurrentUser(id="u2", username="u2", display_name="U2")
+
+    assert (await service.require_read("s1", other)).session_id == "s1"
+
+
+@pytest.mark.asyncio
+async def test_system_owned_session_allows_continue_conversation_for_other_users():
+    service = ConversationCatalogService(FakeRepository([row(owner="system")]))
+    other = CurrentUser(id="ops-suncereltd", username="suncereltd", display_name="运维")
+
+    written = await service.require_write("s1", other)
+    assert written.owner_user_id == "system"
+
+
+@pytest.mark.asyncio
+async def test_system_owned_read_only_record_still_rejects_write():
+    service = ConversationCatalogService(
+        FakeRepository([row(owner="system", read_only=True)])
+    )
+    other = CurrentUser(id="u2", username="u2", display_name="U2")
+
+    with pytest.raises(HTTPException) as exc:
+        await service.require_write("s1", other)
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "social_session_read_only"
+
+
+@pytest.mark.asyncio
+async def test_system_owned_session_is_manageable_only_by_owner_or_admin():
+    service = ConversationCatalogService(FakeRepository([row(owner="system")]))
+    other = CurrentUser(id="u2", username="u2", display_name="U2")
+    admin = CurrentUser(
+        id="admin", username="admin", display_name="Admin", is_admin=True
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await service.require_manage("s1", other)
+    assert exc.value.status_code == 404
+    assert (await service.require_manage("s1", admin)).session_id == "s1"
+
+
+@pytest.mark.asyncio
 async def test_claim_web_draft_registers_new_session_for_current_user():
     repository = FakeRepository()
     service = ConversationCatalogService(repository)

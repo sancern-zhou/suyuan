@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +17,31 @@ from app.tools.visualization.create_business_chart.theme import REPORT_THEME, SE
 def test_python_execution_tools_are_pinned_to_sandbox():
     assert ExecutePythonTool().execution_engine == "bubblewrap"
     assert ExecuteEChartsPythonTool().execution_engine == "bubblewrap"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows 兜底命令仅在 nt 上生效")
+def test_windows_fallback_builds_plain_subprocess_command(tmp_path):
+    """Windows 无 bubblewrap 时退化为直接执行：纯子进程命令 + 空挂载。"""
+    tool = ExecutePythonTool()
+    command, sync_dirs, input_mounts = tool._build_bubblewrap_command(
+        code="print('test')",
+        script_file=str(tmp_path / "script.py"),
+        working_dir=str(tmp_path),
+        timeout=5,
+    )
+
+    assert command == [sys.executable, "script.py"]
+    assert sync_dirs == []
+    assert input_mounts == []
+    assert (tmp_path / "backend_shim" / "backend" / "__init__.py").is_file()
+
+    env = ExecutePythonTool._windows_sandbox_env(str(tmp_path))
+    assert "PATH" in env and "SYSTEMROOT" in env
+    assert str(tmp_path / "backend_shim") in env["PYTHONPATH"]
+    assert env["PYTHONDONTWRITEBYTECODE"] == "1"
+    # 子进程必须按 UTF-8 写 stdout，否则中文（ECharts option 等）会变成 U+FFFD。
+    assert env["PYTHONIOENCODING"] == "utf-8"
+    assert env["PYTHONUTF8"] == "1"
 
 
 @pytest.mark.asyncio
@@ -413,6 +439,10 @@ async def test_bubblewrap_hides_host_files_and_worker_secrets(monkeypatch):
     }
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows 无 bubblewrap，_build_bubblewrap_command 在 nt 上退化为直接执行",
+)
 def test_bubblewrap_is_fail_closed_when_dependency_is_missing(monkeypatch, tmp_path):
     tool = ExecutePythonTool()
     monkeypatch.setattr(
@@ -453,6 +483,10 @@ def _image_context(images_dir: Path, session_dir: Path, image_names):
     )
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows 无 bubblewrap，_build_bubblewrap_command 在 nt 上退化为直接执行",
+)
 def test_bubblewrap_stages_image_inputs_instead_of_ro_binding_them(
     monkeypatch, tmp_path
 ):

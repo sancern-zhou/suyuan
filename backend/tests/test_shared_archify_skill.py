@@ -29,11 +29,11 @@ async def test_shared_archify_skill_is_published_for_assistant_mode():
         available_tools=set(ASSISTANT_TOOL_NAMES),
     )
 
-    assert name == "Archify 图技能"
+    assert name == "架构图绘制技能"
     assert "standalone HTML 图" in description
     assert "候选 JSON" in description
     assert any(
-        skill["name"] == "Archify 图技能" and Path(skill["file"]).name == "archify.md"
+        skill["name"] == "架构图绘制技能" and Path(skill["file"]).name == "archify.md"
         for skill in listing["data"]["skills"]
     )
     assert selection.skill_id == "archify"

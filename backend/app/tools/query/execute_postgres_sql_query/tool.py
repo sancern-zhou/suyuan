@@ -34,6 +34,7 @@ PERMIT_SQL_TABLES = [
 # weather_stations 主档表当前仅剩广东遗留站点且无人维护，NMC 站点未登记，故不开放。
 WEATHER_SQL_TABLES = [
     "observed_weather_data",
+    "observed_weather_daily",
 ]
 
 # 许昌国控站周边路况定时抓取数据（主库）。工具代码与抓取脚本在 xuchang 分支
@@ -96,7 +97,16 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             "wind_speed_10m(km/h)、wind_direction_10m(°，气象来向)、surface_pressure(hPa)、"
             "precipitation(mm)、cloud_cover(%)、visibility(m)；"
             "溯源字段 data_source='NMC'、data_quality='good'/'partial'；NULL 表示该小时缺测。"
-            "\n注意：permit_* 表在主库，observed_weather_data 在独立气象库，"
+            "\n- observed_weather_daily：气象站逐日统计（由 observed_weather_data 小时数据自动聚合）；"
+            "主键(station_id, obs_date)，obs_date 为日历日 00-24 时（北京时间）口径，与空气质量业务日一致；"
+            "指标：temperature_2m_avg/max/min(°C，max/min 为小时级极值)、relative_humidity_2m_avg(%)、"
+            "dew_point_2m_avg(°C)、surface_pressure_avg(hPa)、wind_speed_10m_avg/max(m/s)、"
+            "wind_direction_10m_vector_avg(°，矢量平均的气象来向)、precipitation_sum(mm，日累计)、"
+            "cloud_cover_avg(%)、visibility_avg(m)；"
+            "valid_hours=参与聚合的小时数，data_quality 'good'=24小时齐全、'partial'=20~23小时"
+            "（均值可能偏倚、降水累计可能少算缺测时段）；有效小时数<20 的日子指标列为 NULL，"
+            "查询日均值时建议附带 data_quality 判断可靠性。"
+            "\n注意：permit_* 表在主库，observed_weather_data/observed_weather_daily 在独立气象库，"
             "两库不支持跨库 JOIN，混用会直接报错。"
             "\n- traffic_snapshot：国控站周边路况快照（定时抓取，6分钟时隙，slot_at 为 UTC 时隙起点）；"
             "station_code 站点编码（道路级行以 'road:路名' 前缀区分），"
@@ -122,7 +132,7 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             "hour_count、notification_count、peak_station_value（站点峰值浓度）、"
             "peak_deviation_ratio（峰值偏差比）；event_ids 为 JSON 数组，"
             "可与 scheduled_task_results.event_id 关联取历次结论与通报。"
-            "\n注意：permit_*/路况/定时任务结果表在主库，observed_weather_data 在独立气象库，"
+            "\n注意：permit_*/路况/定时任务结果表在主库，observed_weather_data/observed_weather_daily 在独立气象库，"
             "两库不支持跨库 JOIN，混用会直接报错。"
             "\n\n示例："
             "\n- 企业查询：SELECT enterprise_name, permit_number, current_status FROM permit_licenses "
@@ -133,6 +143,9 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             "\n- 许昌小时观测：SELECT time, temperature_2m, relative_humidity_2m, wind_speed_10m, "
             "wind_direction_10m, precipitation FROM observed_weather_data "
             "WHERE station_id = 'ZzMTA' AND time >= '2026-08-30' ORDER BY time LIMIT 48"
+            "\n- 许昌日值气象：SELECT obs_date, temperature_2m_avg, temperature_2m_max, temperature_2m_min, "
+            "relative_humidity_2m_avg, wind_speed_10m_avg, precipitation_sum, data_quality "
+            "FROM observed_weather_daily WHERE station_id = 'ZzMTA' AND obs_date >= '2026-10-01' ORDER BY obs_date"
             "\n- 路况小时统计：SELECT station_code, hour_ts, samples, avg_status, max_status, "
             "congestion_sections FROM v_station_traffic_hourly "
             "WHERE station_code IN ('1003A','1005A') ORDER BY hour_ts DESC LIMIT 100"

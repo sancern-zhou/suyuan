@@ -1,9 +1,9 @@
 ---
-name: Archify 图技能
+name: 架构图绘制技能
 description: 为 suyuan 项目助手模式生成和校验架构、工作流、序列、数据流和生命周期图；优先使用已安装的 Archify 包完成 JSON authoring、验证、交付和预览。
 ---
 
-# Archify 图技能
+# 架构图绘制技能
 
 ## 概述
 用于在 suyuan 项目助手模式中把自然语言需求、Mermaid 草稿或仓库证据整理成可校验的 standalone HTML 图。优先调用已安装的 Archify 包 `$CODEX_HOME/skills/archify`；当图必须反映真实代码时，先读取仓库证据，再写候选 JSON。

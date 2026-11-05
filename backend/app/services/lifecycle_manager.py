@@ -33,6 +33,7 @@ from app.fetchers.weather.era5_fetcher import ERA5Fetcher
 from app.fetchers.weather.jining_era5_fetcher import JiningERA5Fetcher
 from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
 from app.fetchers.weather.nmc_weather_chart_fetcher import NMCWeatherChartFetcher
+from app.fetchers.weather.observed_daily_fetcher import ObservedWeatherDailyFetcher
 from app.fetchers.weather.observed_fetcher import ObservedWeatherFetcher
 from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
     OpenMeteoAirQualityForecastFetcher,
@@ -51,6 +52,7 @@ from app.fetchers.xuchang_weather_com_daily_forecast import XuchangWeatherComDai
 from app.fetchers.xuchang_weather_situation import (
     XuchangAirQualityForecastFetcher, XuchangWeatherSituationEvidenceFetcher,
 )
+from app.fetchers.xuchang_town_five_minute import XuchangTownFiveMinuteFetcher
 from app.fetchers.xuchang_zhongda_station import (
     XuchangZhongdaCityFetcher,
     XuchangZhongdaStationFetcher,
@@ -117,6 +119,7 @@ def _configured_fetchers(project_context):
         "jining_era5": JiningERA5Fetcher,
         "nmc_observed_weather": NMCObservedWeatherFetcher,
         "nmc_weather_chart": NMCWeatherChartFetcher,
+        "observed_weather_daily": ObservedWeatherDailyFetcher,
         "open_meteo_air_quality_forecast": OpenMeteoAirQualityForecastFetcher,
         "city_air_quality_forecast": CityAirQualityForecastFetcher,
         "nasa_firms": NASAFirmsFetcher,
@@ -150,6 +153,7 @@ def _configured_fetchers(project_context):
         "xuchang_zhongda_station_hour_fetcher":
             lambda: XuchangZhongdaStationFetcher(data_kind="hour"),
         "xuchang_zhongda_city_hour_fetcher": XuchangZhongdaCityFetcher,
+        "xuchang_town_five_minute_fetcher": XuchangTownFiveMinuteFetcher,
         "gems_xuchang_image_fetcher": GemsImageFetcher,
     }
     from app.services.station_operation_monitor.runtime import config_path
@@ -165,6 +169,12 @@ def _configured_fetchers(project_context):
         )
     if configured is None:
         selected = list(factories)
+        # xuchang 专属 fetcher 只在 xuchang 项目运行（其余项目缺 ZHONGDA 等凭据，
+        # 只会产生周期性空转报错；2026-10-25 广东 worker 日志 109 条/夜均源于此）
+        if "xuchang-air-quality" not in enabled_modules:
+            selected = [name for name in selected
+                        if not name.startswith("xuchang_")
+                        and name != "gems_xuchang_image_fetcher"]
         if "xuchang-satellite" in enabled_modules:
             selected.append("gems_image")
             if os.getenv("GEMS_HCHO_DATA_FETCH_ENABLED", "false").lower() == "true":

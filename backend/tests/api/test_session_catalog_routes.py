@@ -18,6 +18,9 @@ class DenyingCatalog:
     async def require_write(self, session_id, user):
         raise HTTPException(status_code=404, detail="session_not_found")
 
+    async def require_manage(self, session_id, user):
+        raise HTTPException(status_code=404, detail="session_not_found")
+
 
 def make_client(user=None, catalog=None, adapters=None, redis=None):
     app = FastAPI()

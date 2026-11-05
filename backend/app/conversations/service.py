@@ -9,6 +9,10 @@ from app.auth.models import CurrentUser
 
 from .schemas import ConversationCatalogRecord, ConversationSource
 
+# 项目级定时任务的执行会话统一登记在 system 名下（见 projects/*/scheduled_tasks/*.json），
+# 属于任务调度中心的共享资产：全部登录用户可查看并继续对话，但管理（删除）仅限 owner/管理员。
+SYSTEM_OWNER_USER_ID = "system"
+
 
 class ConversationCatalogService:
     def __init__(self, repository, *, resource_service=None):
@@ -108,13 +112,23 @@ class ConversationCatalogService:
         """Return a catalog record without applying visibility policy."""
         return await self.repository.get(session_id)
 
+    def _may_read(self, row: ConversationCatalogRecord, user: CurrentUser) -> bool:
+        if user.is_admin:
+            return True
+        if row.owner_user_id == SYSTEM_OWNER_USER_ID:
+            return True
+        return row.owner_user_id in visible_owner_ids(user.id)
+
+    def _may_manage(self, row: ConversationCatalogRecord, user: CurrentUser) -> bool:
+        if user.is_admin:
+            return True
+        return row.owner_user_id in visible_owner_ids(user.id)
+
     async def require_read(
         self, session_id: str, user: CurrentUser
     ) -> ConversationCatalogRecord:
         row = await self.repository.get(session_id)
-        if row is None or (
-            not user.is_admin and row.owner_user_id not in visible_owner_ids(user.id)
-        ):
+        if row is None or not self._may_read(row, user):
             raise HTTPException(status_code=404, detail="session_not_found")
         return row
 
@@ -124,6 +138,15 @@ class ConversationCatalogService:
         row = await self.require_read(session_id, user)
         if row.read_only_on_web:
             raise HTTPException(status_code=409, detail="social_session_read_only")
+        return row
+
+    async def require_manage(
+        self, session_id: str, user: CurrentUser
+    ) -> ConversationCatalogRecord:
+        """Delete-level authority: owner or admin only, even for shared system sessions."""
+        row = await self.repository.get(session_id)
+        if row is None or not self._may_manage(row, user):
+            raise HTTPException(status_code=404, detail="session_not_found")
         return row
 
     async def list_visible(

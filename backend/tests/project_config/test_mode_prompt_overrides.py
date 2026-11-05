@@ -150,3 +150,38 @@ def test_xuchang_mode_prompts_carry_client_channel_branches(monkeypatch):
         assert "<client_channel>" in prompt
         assert "App 端没有右侧面板" in prompt
         assert "适当精简" in prompt
+
+
+def test_audience_contract_is_project_scoped(monkeypatch):
+    """受众契约按项目解析：共享默认不点名任何项目地名。
+
+    共享层曾写死"许昌市"，广东部署的所有子 Agent 都被告知服务许昌用户，
+    导致广东工作流的子 Agent 在交付摘要里把广东数据标成"许昌市气象实况"
+    且通过形状校验（2026-11-01 事故）。
+
+    项目分支的 audience_contract_file 声明不进 main：真实项目断言仅在
+    声明存在时生效（项目分支上运行），main 上验证中性默认契约。
+    """
+    from app.agent.prompts.prompt_builder import AUDIENCE_CONTRACT
+    from app.agent.prompts.project_prompt import load_project_audience_contract
+
+    assert "许昌" not in AUDIENCE_CONTRACT
+
+    monkeypatch.setattr(settings, "project_id", "default")
+    assert load_project_audience_contract() is None
+    default_prompt = build_react_system_prompt("query")
+    assert "许昌" not in default_prompt
+    assert "生态环境管理部门的用户" in default_prompt
+
+    monkeypatch.setattr(settings, "project_id", "guangdong")
+    guangdong_contract = load_project_audience_contract()
+    if guangdong_contract is not None:  # 项目分支携带声明时验证真实接入
+        assert "广东省" in guangdong_contract
+        assert "广东省" in build_react_system_prompt("query")
+        assert "许昌" not in build_react_system_prompt("expert_component")
+
+    monkeypatch.setattr(settings, "project_id", "xuchang")
+    xuchang_contract = load_project_audience_contract()
+    if xuchang_contract is not None:
+        assert "许昌市" in xuchang_contract
+        assert "许昌市" in build_react_system_prompt("query")

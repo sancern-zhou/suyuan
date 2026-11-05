@@ -31,6 +31,11 @@ async function refresh() {
     if (disposed || !props.active || document.hidden || epoch !== accountGeneration() || props.state !== state ||
         state.sessionId !== id || state.isAnalyzing || state.messages !== messages) return
     state.pendingInteraction = snapshot.pending_interaction || null
+    state.backgroundDelegation = (Array.isArray(snapshot.background_runs) && snapshot.background_runs.length)
+      ? { phase: 'running', runs: snapshot.background_runs }
+      : state.backgroundDelegation && state.backgroundDelegation.phase === 'running'
+        ? null
+        : state.backgroundDelegation
     if (!snapshot.unchanged) {
       mergeAssistantSnapshot(state, snapshot)
       lastRevision = snapshot.revision

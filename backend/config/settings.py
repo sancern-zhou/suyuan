@@ -45,6 +45,10 @@ class Settings(BaseSettings):
         default=False,
         description="Enable bounded read-only assistant analyses; also requires assistant_followups_enabled",
     )
+    assistant_schedule_reply_synthesis: bool = Field(
+        default=False,
+        description="Route scheduled task results through an assistant follow-up turn before replying",
+    )
     sse_heartbeat_interval_seconds: float = Field(
         default=15.0,
         gt=0,
@@ -121,6 +125,52 @@ class Settings(BaseSettings):
     zhongda_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
     zhongda_login_retries: int = Field(default=8, ge=1, le=30, description="验证码 OCR 重试次数")
 
+    # 空气质量信息联网系统（旧云平台，许昌乡镇站 5 分钟/小时/日数据替代源）。
+    # TownStationData 2026-10-21 起停更后启用；账号密码环境变量注入。
+    town_cloud_api_base_url: str = Field(default="http://117.159.53.11:60601")
+    town_cloud_username: str = Field(default="")
+    town_cloud_password: str = Field(default="")
+    town_cloud_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    town_cloud_login_retries: int = Field(default=8, ge=1, le=30, description="验证码识别重试次数（GLM 视觉识别）")
+    town_five_minute_lookback_minutes: int = Field(
+        default=180,
+        ge=15,
+        le=4320,
+        description="5 分钟数据回看窗口（分钟）；平台限制单次查询窗口 ≤ 3 天",
+    )
+    town_five_minute_retention_days: int = Field(
+        default=30,
+        ge=7,
+        le=365,
+        description="5 分钟数据保留天数，超过即删除",
+    )
+
+    # 助手模式后台委派（run_in_background）在交付边界的等待上限：
+    # 等待本会话委派完成后把结果注入观察继续 loop；超时放行交付。
+    assistant_delegation_wait_seconds: int = Field(
+        default=1800,
+        ge=0,
+        le=7200,
+        description="助手模式交付边界等待后台委派完成的秒数",
+    )
+    # 阶段 B 后台委派默认化开关：助手模式不传 run_in_background 时是否转后台。
+    assistant_delegation_background_default: bool = Field(
+        default=True,
+        description="助手模式委派默认后台执行；false 恢复旧行为（默认同步等待结果）",
+    )
+    # 阶段 B 内联/溢出阈值：交付边界吸收时单条结果超过该字符数降为摘要卡+指针。
+    assistant_delegation_inline_result_chars: int = Field(
+        default=4000,
+        ge=500,
+        le=20000,
+        description="交付边界吸收时单条委派结果的内联上限字符数",
+    )
+    # 阶段 C 交付验收清单：off 跳过 / observe 只记录 would_reject / enforce 并入校验触发修复轮。
+    delivery_checklist_mode: Literal["off", "observe", "enforce"] = Field(
+        default="observe",
+        description="交付验收清单执行模式；observe 期按真实案例修订清单内容后再切 enforce",
+    )
+
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse CORS origins string into list."""
@@ -182,6 +232,21 @@ class Settings(BaseSettings):
         ge=30,
         le=86400,
         description="Signed anonymous share grant lifetime",
+    )
+    dashboard_api_prefix: str = Field(
+        default="",
+        description=(
+            "部署级直连令牌放行的只读 API 前缀（如 /api/xuchang-dashboard）；"
+            "与 dashboard_access_token 成对配置，空=禁用（默认）"
+        ),
+    )
+    dashboard_access_token: str = Field(
+        default="",
+        description=(
+            "静态直连令牌：非空时允许携带 ?access_token= 的 GET 请求免网关登录"
+            "访问 dashboard_api_prefix 下的只读接口（大屏设备开机即显）；"
+            "空=禁用（默认）。路由层仍需复核同一令牌"
+        ),
     )
     auth_docs_public: bool = Field(
         default=False,
@@ -721,6 +786,16 @@ class Settings(BaseSettings):
         ge=60,
         description="TTL for active-run steering metadata and pending inputs",
     )
+    agent_escalation_timeout_seconds: float = Field(
+        default=600.0,
+        ge=5,
+        description="Workflow sub-agent escalate: wait for user answer before proceeding on best judgment",
+    )
+    agent_escalation_max_per_node: int = Field(
+        default=3,
+        ge=1,
+        description="Workflow sub-agent escalate: max clarification questions per node attempt",
+    )
     agent_visual_alias_redis_prefix: str = Field(
         default="suyuan:agent:visual_alias",
         description="Redis key prefix for session-scoped short chart aliases ([[chart:chart_N]])",
@@ -1064,6 +1139,61 @@ class Settings(BaseSettings):
             f"Encrypt={self.sqlserver_encrypt};"
             f"TrustServerCertificate={self.sqlserver_trust_server_certificate};"
         )
+
+    # Operations (work order) SQL Server Configuration.
+    # 每个字段未配置时逐项回退到通用 sqlserver_* 配置；仅
+    # ops_sqlserver_database 固定默认 AirPollutionAnalysis（与历史行为一致），
+    # 这样在未配置 OPS_SQLSERVER_* 的部署上连接串与旧行为完全相同。
+    ops_sqlserver_host: Optional[str] = Field(
+        default=None,
+        description="Operations SQL Server host; falls back to sqlserver_host when unset",
+    )
+    ops_sqlserver_port: Optional[int] = Field(
+        default=None,
+        description="Operations SQL Server port; falls back to sqlserver_port when unset",
+    )
+    ops_sqlserver_database: str = Field(
+        default="AirPollutionAnalysis",
+        description="Operations SQL Server database name"
+    )
+    ops_sqlserver_user: Optional[str] = Field(
+        default=None,
+        description="Operations SQL Server username; falls back to sqlserver_user when unset",
+    )
+    ops_sqlserver_password: Optional[str] = Field(
+        default=None,
+        description="Operations SQL Server password; falls back to sqlserver_password when unset",
+    )
+    ops_sqlserver_driver: Optional[str] = Field(
+        default=None,
+        description="Operations SQL Server ODBC driver; falls back to sqlserver_driver when unset",
+    )
+    ops_sqlserver_encrypt: Optional[str] = Field(
+        default=None,
+        description="Operations ODBC Encrypt flag; falls back to sqlserver_encrypt when unset",
+    )
+    ops_sqlserver_trust_server_certificate: Optional[str] = Field(
+        default=None,
+        description="Operations trust server cert flag; falls back when unset",
+    )
+
+    @property
+    def ops_sqlserver_connection_string(self) -> str:
+        """ODBC connection string for the operations (work order) SQL Server."""
+        return (
+            f"DRIVER={{{self.ops_sqlserver_driver or self.sqlserver_driver}}};"
+            f"SERVER={self.ops_sqlserver_host or self.sqlserver_host},{self.ops_sqlserver_port or self.sqlserver_port};"
+            f"DATABASE={self.ops_sqlserver_database};"
+            f"UID={self.ops_sqlserver_user or self.sqlserver_user};"
+            f"PWD={{{self.ops_sqlserver_password or self.sqlserver_password}}};"
+            f"Encrypt={self.ops_sqlserver_encrypt or self.sqlserver_encrypt};"
+            f"TrustServerCertificate={self.ops_sqlserver_trust_server_certificate or self.sqlserver_trust_server_certificate};"
+        )
+
+    @property
+    def ops_sqlserver_configured(self) -> bool:
+        """True when the deployment points operations tools at a dedicated SQL Server."""
+        return bool(self.ops_sqlserver_host)
 
     # Query Template Configuration
     query_template_city_pollutant: str = Field(

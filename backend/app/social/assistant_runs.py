@@ -9,18 +9,105 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import uuid4
 
+import structlog
+
 from app.agent.workflow.registry import active_workflow_registry
 from app.social.assistant_request import require_assistant_request
 from app.tools.scheduled_tasks.session_identity import resolve_task_user
 from app.utils.path_config import get_data_registry, resolve_agent_path
 
 _LIVE_TASKS = set()
+# 进程内登记：源会话 → 后台委派 task。用于会话运行时在交付边界等待
+# 委派完成并把结果作为工具观察注入（参考 _LIVE_TASKS 的进程内语义：
+# 进程重启后登记丢失，等待自然退化为"无待完成委派"）。
+_PENDING_BY_SESSION: dict[str, set] = {}
 managed_delegation = ContextVar("managed_assistant_delegation", default=None)
 TERMINAL = {"succeeded", "failed", "cancelled", "partial"}
+
+logger = structlog.get_logger()
 
 
 def _now():
     return datetime.now(UTC).isoformat()
+
+
+def background_runs_view(session_id: str) -> list[dict]:
+    """源会话在跑的后台委派概览（不含结果），供会话快照/状态卡使用。"""
+    view = []
+    for task in _PENDING_BY_SESSION.get(session_id) or ():
+        record = getattr(task, "_assistant_run_record", None) or {}
+        view.append(
+            {
+                "run_id": record.get("run_id"),
+                "kind": record.get("kind"),
+                "status": record.get("status"),
+                "goal": record.get("goal"),
+                "target_mode": record.get("target_mode"),
+            }
+        )
+    return view
+
+
+def build_delegation_result_card(item: dict, serialized: str) -> dict:
+    """大结果降为摘要卡：≤600 字摘要 + 产物指针 + 完整结果读取方式。
+
+    对齐"返回=投递不是代理"（方案 D5）：assistant 上下文只吸收摘要与
+    产物位置，完整结果留在委派记录里按需读取（manage_assistant_runs
+    action=result）。
+    """
+    raw = item.get("result")
+    summary = ""
+    artifacts: list = []
+    data_gaps: list = []
+    if isinstance(raw, dict):
+        data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+        envelope = (
+            data.get("result_envelope")
+            if isinstance(data.get("result_envelope"), dict)
+            else {}
+        )
+        summary = str(envelope.get("summary") or raw.get("summary") or "").strip()[:600]
+        # 缺口声明随卡透出（C4）：父模型只看卡时也必须看到缺口，不得当作零。
+        outputs = (
+            envelope.get("outputs") if isinstance(envelope.get("outputs"), dict) else {}
+        )
+        for gap in (outputs.get("data_gaps") or [])[:5]:
+            data_gaps.append(str(gap)[:120])
+        for path in (data.get("file_paths") or [])[:10]:
+            artifacts.append({"kind": "file", "path": str(path)})
+        for url in (data.get("chart_urls") or [])[:10]:
+            artifacts.append({"kind": "chart", "url": str(url)})
+        for ref in (data.get("resource_refs") or [])[:10]:
+            if isinstance(ref, dict) and ref.get("resource_id"):
+                artifacts.append(
+                    {
+                        "kind": "resource",
+                        "resource_id": str(ref["resource_id"]),
+                        "name": ref.get("label"),
+                    }
+                )
+    return {
+        "content": summary,
+        "total_chars": len(serialized),
+        "truncated": True,
+        "artifacts": artifacts,
+        "data_gaps": data_gaps,
+        "full_result_pointer": (
+            f"manage_assistant_runs action=result run_id={item.get('run_id')}"
+        ),
+    }
+
+
+def apply_inline_or_spill(results: list, inline_chars: int) -> None:
+    """交付边界吸收的内联/溢出策略：小结果整体内联，大结果降为摘要卡。"""
+    for item in results:
+        raw = item.get("result")
+        serialized = (
+            json.dumps(raw, ensure_ascii=False, default=str) if raw is not None else ""
+        )
+        if len(serialized) <= inline_chars:
+            continue
+        item["result"] = build_delegation_result_card(item, serialized)
 
 
 class AssistantRunService:
@@ -65,6 +152,35 @@ class AssistantRunService:
                 view["status"] = "unknown"
                 view["notice"] = "没有可确认的活动执行器；不能据此判定完成，未自动重跑"
         return view
+
+    def pending_background_count(self, session_id: str) -> int:
+        """源会话当前仍在运行的后台委派数（进程内登记）。"""
+        return len(_PENDING_BY_SESSION.get(session_id) or ())
+
+    async def wait_for_session_runs(self, session_id: str, timeout: float) -> tuple[list[dict], int]:
+        """等待该会话的后台委派完成，返回 (已完成结果列表, 仍在运行数)。
+
+        结果取自进程内 record 引用（状态由 run() 就地更新），不落盘读取；
+        超时后仅返回已完成部分，未完成者留给调用方决定后续。
+        """
+        tasks = set(_PENDING_BY_SESSION.get(session_id) or ())
+        if not tasks:
+            return [], 0
+        done, pending = await asyncio.wait(tasks, timeout=timeout)
+        results = []
+        for task in done:
+            record = getattr(task, "_assistant_run_record", None) or {}
+            results.append(
+                {
+                    "run_id": record.get("run_id"),
+                    "kind": record.get("kind"),
+                    "status": record.get("status"),
+                    "target_mode": record.get("target_mode"),
+                    "goal": record.get("goal"),
+                    "result": record.get("result"),
+                }
+            )
+        return results, len(pending)
 
     async def command(self, context, *, action, run_id=None, message=None, offset=0, limit=20):
         from config.settings import settings
@@ -135,7 +251,13 @@ class AssistantRunService:
             raise PermissionError("后台任务不能新增用户委派")
         project, owner = settings.project_id, user.id
         kwargs = dict(kwargs)
-        background = bool(kwargs.pop("run_in_background", False))
+        raw_background = kwargs.pop("run_in_background", None)
+        # 阶段 B：助手委派默认后台执行（首轮先答复计划，结果在交付边界按
+        # 内联/溢出策略整合）；显式传 false 才同步等待。开关可按部署回退。
+        if raw_background is None:
+            background = bool(settings.assistant_delegation_background_default)
+        else:
+            background = bool(raw_background)
         if kwargs.get("background_task_id") or kwargs.get("cancel_background_task"):
             raise ValueError("查询或停止委派请使用 manage_assistant_runs")
         run_id = "delegation_" + uuid4().hex
@@ -213,9 +335,20 @@ class AssistantRunService:
             raise
         gate.set()
         _LIVE_TASKS.add(task)
+        if background:
+            # 供源会话运行时在交付边界等待并读取结果（wait_for_session_runs）。
+            task._assistant_run_record = record
+            _PENDING_BY_SESSION.setdefault(context.session_id, set()).add(task)
 
         def finished(done):
             _LIVE_TASKS.discard(done)
+            record = getattr(done, "_assistant_run_record", None)
+            if record is not None:
+                session_tasks = _PENDING_BY_SESSION.get(
+                    str(record.get("source_session_id") or "")
+                )
+                if session_tasks is not None:
+                    session_tasks.discard(done)
             if not done.cancelled():
                 done.exception()
 
@@ -235,6 +368,56 @@ class AssistantRunService:
                 "summary": "委派已受理，使用 manage_assistant_runs 查询实际进度和结果",
             }
         return await task
+
+    async def steer_run(
+        self, project, owner, *, session_id: str, run_id: str, message: str
+    ) -> bool:
+        """HTTP 追问直通（阶段 B）：把用户追问写入运行中子会话的 steering。
+
+        与 command(action="steer") 同一套状态校验；HTTP 侧以会话归属校验
+        （路由层 _source 确保 owner==user）+ web_assistant_request 权限域
+        替代工具上下文。
+        """
+        record = self.get(project, owner, run_id)
+        if record.get("source_session_id") != session_id:
+            raise PermissionError("委派不属于该会话")
+        require_assistant_request(session_id)
+        if record["status"] in TERMINAL:
+            raise ValueError("该运行已经结束，请读取结果；后续修改需显式复用子会话")
+        if record["kind"] != "child" or not record.get("child_session_id"):
+            raise ValueError("该运行暂不支持补充要求；不要重启或伪造已受理")
+        from app.agent.runtime.steering import steering_registry
+
+        accepted = await steering_registry.add_input(record["child_session_id"], message)
+        if accepted:
+            await self._persist_steer_message(session_id, record["run_id"], message)
+        return accepted
+
+    async def _persist_steer_message(self, session_id: str, run_id: str, message: str) -> None:
+        """把转交消息落进父会话 transcript（fail-soft）。
+
+        落库后前端轮询快照即可见，无需本地回显；写入失败只记日志，
+        不影响 steering 已受理的事实。
+        """
+        try:
+            from app.db.session_repository import get_session_repository
+
+            await get_session_repository().add_message(
+                session_id,
+                {
+                    "role": "user",
+                    "type": "user",
+                    "content": message,
+                    "data": {"source": "direct_through", "run_id": run_id},
+                },
+            )
+        except Exception:  # noqa: BLE001 — 回显不阻塞转交
+            logger.warning(
+                "assistant_steer_message_persist_failed",
+                session_id=session_id,
+                run_id=run_id,
+                exc_info=True,
+            )
 
     def child_arguments(self, project, owner, record, kwargs):
         kwargs = dict(kwargs)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -24,9 +25,11 @@ class ToolCallArgumentsError(ValueError):
         self.raw = raw
         self.tool_name = tool_name
         self.tool_call_id = tool_call_id
+        # raw 可能是上万字的 DAG 参数全文；报错信息只留前段供定位，
+        # 避免畸形 JSON 全文进日志与修复反馈上下文。
         super().__init__(
             "Invalid tool call arguments JSON"
-            f" for tool '{tool_name or 'unknown'}': {raw}"
+            f" for tool '{tool_name or 'unknown'}': {str(raw)[:2000]}"
         )
 
 
@@ -245,6 +248,25 @@ def map_finish_reason(finish_reason: Optional[str]) -> Optional[str]:
     }.get(finish_reason, "stop_sequence")
 
 
+def _salvage_control_chars(raw: str) -> str | None:
+    """JSON 源文本中的裸控制字符抢救。
+
+    模型流式输出超长工具参数时，偶尔会在字符串字面量里漏转义换行等裸
+    控制字符（2026-11-01 广东 r3 版 DAG 编排即因此整次调用报废）。裸控制
+    字符在 JSON 中任何位置都非法：出现在 token 之间本就是空白（替换为
+    空格语义不变），出现在字符串内部替换为空格仅轻微改写内容——两者都
+    优于让整轮流式响应报废。无法抢救时返回 None 走原报错路径。
+    """
+    if not any(chr(code) in raw for code in range(0x00, 0x20)):
+        return None
+    salvaged = re.sub(r"[\x00-\x1f]+", " ", raw)
+    try:
+        json.loads(salvaged)
+    except json.JSONDecodeError:
+        return None
+    return salvaged
+
+
 def _parse_arguments(
     raw: Any,
     *,
@@ -255,14 +277,18 @@ def _parse_arguments(
         return {}
     if isinstance(raw, dict):
         return raw
+    text = str(raw)
     try:
-        parsed = json.loads(str(raw))
+        parsed = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise ToolCallArgumentsError(
-            raw,
-            tool_name=tool_name,
-            tool_call_id=tool_call_id,
-        ) from exc
+        salvaged = _salvage_control_chars(text)
+        if salvaged is None:
+            raise ToolCallArgumentsError(
+                raw,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+            ) from exc
+        parsed = json.loads(salvaged)
     if not isinstance(parsed, dict):
         raise ToolCallArgumentsError(
             raw,

@@ -77,12 +77,21 @@ class AssistantConversationSync:
                 SessionDB.session_id == session_id
             ).with_for_update())).scalar_one_or_none()
             pending = (session.session_metadata or {}).get("pending_interaction") if session else None
+            # 历史版本的 pending_interaction 持久化对象不带 session_id（只在
+            # SSE 事件里追加），前端恢复后提交/取消会被守卫静默拦截；
+            # 返回前统一补齐，救活存量挂起的交互。
+            if isinstance(pending, dict) and not pending.get("session_id"):
+                pending = {**pending, "session_id": session_id}
+            # 后台委派状态卡：刷新/轮询期间保持"任务在跑"对用户可见。
+            from app.social.assistant_runs import background_runs_view
+
+            background_runs = background_runs_view(session_id)
             current = (await db.execute(select(func.max(Message.id)).where(
                 Message.session_id == session_id
             ))).scalar_one() or 0
             if revision is not None and revision == current:
                 return {"session_id": session_id, "revision": current, "unchanged": True,
-                        "pending_interaction": pending}
+                        "pending_interaction": pending, "background_runs": background_runs}
             rows = (await db.execute(select(Message).where(
                 Message.session_id == session_id
             ).order_by(Message.sequence_number.desc(), Message.id.desc()).limit(limit))).scalars().all()
@@ -90,7 +99,7 @@ class AssistantConversationSync:
             messages = [SessionRepository._message_row_to_context_dict(row) for row in reversed(rows)]
             return {
                 "session_id": session_id, "revision": current, "messages": messages,
-                "pending_interaction": pending,
+                "pending_interaction": pending, "background_runs": background_runs,
                 "through_sequence": rows[0].sequence_number if rows else -1,
                 "oldest_sequence": rows[-1].sequence_number if rows else None,
                 "has_more": bool(rows and rows[-1].sequence_number > 0),

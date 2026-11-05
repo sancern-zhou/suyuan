@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 import structlog
 
+from app.services.fault_relation_registry import diagnose_from_edges
 from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
@@ -31,9 +32,11 @@ class FaultDiagnosisService:
         self,
         output_root: str | Path | None = None,
         knowledge_graph_guidance_provider=None,
+        fault_relation_provider=None,
     ) -> None:
         self.output_root = Path(output_root or self._default_output_root()).resolve()
         self.knowledge_graph_guidance_provider = knowledge_graph_guidance_provider
+        self.fault_relation_provider = fault_relation_provider
 
     def run(self, *, limit: int = 20) -> dict[str, Any]:
         pending = self.discover_pending(limit=limit)
@@ -117,7 +120,7 @@ class FaultDiagnosisService:
         reason_codes = list(conclusion.get("reason_codes") or [])
         event_id = str(conclusion.get("event_id") or event.get("event_id") or "")
         time_range = dict(conclusion.get("time_range") or event.get("time_range") or {})
-        cause = self._ranked_cause(reason_codes, evidence_pack)
+        cause = self._attributed_cause(conclusion, evidence_pack, reason_codes)
         affected_stations = self._affected_stations(evidence_pack)
         event_context = self._event_context(evidence_pack, affected_stations)
         created_at = datetime.now(TZ_SHANGHAI).isoformat()
@@ -157,6 +160,65 @@ class FaultDiagnosisService:
             "diagnosis_summary": diagnosis.get("summary"),
             "created_at": diagnosis["created_at"],
         }
+
+    def _attributed_cause(
+        self,
+        conclusion: dict[str, Any],
+        evidence_pack: dict[str, Any],
+        reason_codes: list[str],
+    ) -> dict[str, Any]:
+        """优先走图谱边集归因；无边可用时回退规则级联（行为与历史完全一致）。
+
+        图谱路径会影子运行规则级联并记录分歧，用于边集切换期的观察。
+        """
+        provider = self.fault_relation_provider
+        if provider is not None:
+            edges: list[Any] = []
+            try:
+                payload = provider(
+                    entity_hints=self._entity_hints(conclusion, evidence_pack)
+                )
+                if isinstance(payload, dict):
+                    edges = list(payload.get("edges") or [])
+            except Exception as exc:
+                logger.warning("fault_relation_provider_failed", error=str(exc))
+                edges = []
+            if edges:
+                graph_cause = diagnose_from_edges(reason_codes, edges)
+                self._shadow_compare(reason_codes, evidence_pack, graph_cause)
+                return graph_cause
+        return self._ranked_cause(reason_codes, evidence_pack)
+
+    def _shadow_compare(
+        self,
+        reason_codes: list[str],
+        evidence_pack: dict[str, Any],
+        graph_cause: dict[str, Any],
+    ) -> None:
+        """图谱边集与规则级联双跑对比，分歧只记录不影响产出。"""
+        cascade_cause = self._ranked_cause(reason_codes, evidence_pack)
+        compared_fields = (
+            "cause",
+            "cause_type",
+            "confidence",
+            "supporting_evidence",
+            "contradicting_evidence",
+            "missing_evidence",
+            "recommended_action",
+        )
+        differing = {
+            field: {"graph": graph_cause.get(field), "cascade": cascade_cause.get(field)}
+            for field in compared_fields
+            if graph_cause.get(field) != cascade_cause.get(field)
+        }
+        if differing:
+            logger.warning(
+                "fault_attribution_divergence",
+                event_id=str(evidence_pack.get("event_id") or ""),
+                reason_codes=list(reason_codes),
+                matched_relation_types=graph_cause.get("matched_relation_types"),
+                differing=differing,
+            )
 
     def _ranked_cause(
         self, reason_codes: list[str], evidence_pack: dict[str, Any]

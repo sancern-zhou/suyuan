@@ -71,7 +71,10 @@ def _pool_key(provider: Optional[str] = None, model: Optional[str] = None) -> st
 
 
 def get_llm_pool_semaphore(provider: Optional[str] = None, model: Optional[str] = None) -> asyncio.Semaphore:
-    """Return a provider/model semaphore scoped to the running event loop."""
+    """Deprecated: 固定信号量已被 AIMD 治理器取代（app.services.llm_concurrency）。
+
+    仅为向后兼容保留；新的模型请求一律走 ``llm_request_slot``。
+    """
     key = _pool_key(provider, model)
     limit = max(1, int(getattr(settings, "llm_global_max_concurrency", 2) or 2))
     loop = asyncio.get_running_loop()

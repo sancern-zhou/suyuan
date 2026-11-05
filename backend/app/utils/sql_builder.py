@@ -15,128 +15,10 @@ class TableSchema:
     """数据库表结构信息"""
 
     # 表结构定义
+    # 注：气象类表（era5_reanalysis_data/observed_weather_data/weather_stations/
+    # air_quality_forecast/fire_hotspots/dust_*）位于独立气象库（WEATHER_DATABASE_URL），
+    # 本构建器只服务主库 session 的 generate_sql_query，故不再收录，防止误查主库残留副本。
     TABLE_SCHEMAS = {
-        'era5_reanalysis_data': {
-            'description': 'ERA5气象再分析数据',
-            'columns': {
-                'time': 'DateTime',
-                'lat': 'Float',
-                'lon': 'Float',
-                'temperature_2m': 'Float',
-                'relative_humidity_2m': 'Float',
-                'dew_point_2m': 'Float',
-                'wind_speed_10m': 'Float',
-                'wind_direction_10m': 'Float',
-                'wind_gusts_10m': 'Float',
-                'surface_pressure': 'Float',
-                'precipitation': 'Float',
-                'cloud_cover': 'Float',
-                'shortwave_radiation': 'Float',
-                'visibility': 'Float',
-                'boundary_layer_height': 'Float',
-            },
-            'primary_key': ['time', 'lat', 'lon'],
-        },
-        'observed_weather_data': {
-            'description': '地面观测气象数据',
-            'columns': {
-                'time': 'DateTime',
-                'station_id': 'String',
-                'station_name': 'String',
-                'lat': 'Float',
-                'lon': 'Float',
-                'temperature_2m': 'Float',
-                'relative_humidity_2m': 'Float',
-                'dew_point_2m': 'Float',
-                'wind_speed_10m': 'Float',
-                'wind_direction_10m': 'Float',
-                'surface_pressure': 'Float',
-                'precipitation': 'Float',
-                'cloud_cover': 'Float',
-                'visibility': 'Float',
-            },
-            'primary_key': ['time', 'station_id'],
-        },
-        'weather_stations': {
-            'description': '气象站点元数据',
-            'columns': {
-                'station_id': 'String',
-                'station_name': 'String',
-                'lat': 'Float',
-                'lon': 'Float',
-                'elevation': 'Float',
-                'province': 'String',
-                'city': 'String',
-                'station_type': 'String',
-                'has_pbl_observation': 'Boolean',
-                'has_upper_air': 'Boolean',
-                'data_provider': 'String',
-                'is_active': 'Boolean',
-            },
-            'primary_key': ['station_id'],
-        },
-        'fire_hotspots': {
-            'description': '火灾热点数据',
-            'columns': {
-                'id': 'Integer',
-                'lat': 'Float',
-                'lon': 'Float',
-                'brightness': 'Float',
-                'frp': 'Float',
-                'confidence': 'Integer',
-                'acq_datetime': 'DateTime',
-                'satellite': 'String',
-                'daynight': 'String',
-            },
-            'primary_key': ['id'],
-        },
-        'dust_forecasts': {
-            'description': '沙尘预报数据',
-            'columns': {
-                'id': 'Integer',
-                'lat': 'Float',
-                'lon': 'Float',
-                'forecast_time': 'DateTime',
-                'valid_time': 'DateTime',
-                'leadtime_hour': 'Integer',
-                'dust_aod_550nm': 'Float',
-                'total_aod_550nm': 'Float',
-                'dust_surface_concentration': 'Float',
-                'pm10_concentration': 'Float',
-            },
-            'primary_key': ['id'],
-        },
-        'dust_events': {
-            'description': '沙尘事件记录',
-            'columns': {
-                'id': 'Integer',
-                'event_name': 'String',
-                'event_date': 'DateTime',
-                'event_duration_hours': 'Integer',
-                'intensity_level': 'String',
-                'max_dust_aod': 'Float',
-                'max_pm10_concentration': 'Float',
-                'source_region': 'String',
-                'transport_direction': 'String',
-            },
-            'primary_key': ['id'],
-        },
-        'air_quality_forecast': {
-            'description': '空气质量预报数据',
-            'columns': {
-                'id': 'Integer',
-                'forecast_date': 'Date',
-                'source': 'String',
-                'calculated_aqi': 'Integer',
-                'calculated_aqi_level': 'String',
-                'calculated_primary_pollutant': 'String',
-                'aqi': 'Integer',
-                'aqi_level': 'String',
-                'primary_pollutant': 'String',
-                'pollutants': 'JSON',
-            },
-            'primary_key': ['id'],
-        },
         'city_aqi_publish_history': {
             'description': '城市空气质量历史数据',
             'columns': {
@@ -308,16 +190,10 @@ class SQLBuilder:
         """
         desc_lower = description.lower()
 
-        # 关键词到表的映射
+        # 关键词到表的映射（仅主库表；气象表在独立气象库，由
+        # execute_postgres_sql_query / get_observed_meteorology 等专用工具查询）
         table_keywords = {
-            'era5_reanalysis_data': ['era5', '再分析', '气象', '边界层', '辐射'],
-            'observed_weather_data': ['观测', '地面', '站点'],
-            'weather_stations': ['站点', '气象站', 'station'],
             'city_aqi_publish_history': ['aqi', '空气质量', 'pm2.5', 'pm10', 'o3', 'no2', 'so2', 'co', '污染物'],
-            'air_quality_forecast': ['预报', '预测'],
-            'fire_hotspots': ['火点', '火灾', 'fire'],
-            'dust_forecasts': ['沙尘', 'dust'],
-            'dust_events': ['沙尘事件', '沙尘暴'],
         }
 
         # 计算每个表的相关性得分

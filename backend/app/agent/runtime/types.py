@@ -92,6 +92,10 @@ class RunState:
     # 上下文构成分段估算：{"system_prompt": n, "messages": n, "tools": n}，
     # 随 context_usage 事件下发供前端 hover 面板展示占比
     context_breakdown: Optional[Dict[str, int]] = None
+    # 本会话累计 token 用量（planner usage_delta 事件累计；Usage, not budget——
+    # 只记账遥测，不参与预算判定）
+    tokens_spent: int = 0
+    last_turn_usage: Optional[Dict[str, Any]] = None
 
     def timestamp(self) -> str:
         return datetime.now().isoformat()

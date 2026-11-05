@@ -116,12 +116,21 @@ async def workflow_worker_loop(stop_event: asyncio.Event, *, poll_timeout: int =
     """Claim and execute durable workflow jobs until worker shutdown."""
     store = get_workflow_job_store()
     recovery_tick = 0
+    quota_scan_tick = 0
     while not stop_event.is_set():
         try:
             recovery_tick += 1
+            quota_scan_tick += 1
             if recovery_tick >= 10:
                 await store.recover_expired()
                 recovery_tick = 0
+            if quota_scan_tick >= 5:
+                # 配额重置自动续跑扫描（fail-soft，见 quota_resume.py）：
+                # 每约 5 秒一次，粒度足够（续跑余量 60s）
+                from .quota_resume import scan_and_resume_due
+
+                await scan_and_resume_due(store)
+                quota_scan_tick = 0
             job = await store.claim(timeout=poll_timeout)
             if job is None:
                 continue

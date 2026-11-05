@@ -112,7 +112,7 @@ test('session history applies the shared scheduled-conversation exclusion policy
 })
 
 test('session restore does not replace the current chat with an empty persisted transcript', async () => {
-  const source = await readSource('../../composables/reactAnalysis/useSessionManagement.js')
+  const source = await readSource('../../composables/reactAnalysis/useConversationActions.js')
 
   const guardIndex = source.indexOf("throw new Error('该历史会话没有可恢复的消息")
   const resetIndex = source.indexOf('store.reset()', guardIndex)
@@ -188,12 +188,12 @@ test('chat workspace passes the selected agent to the welcome area for every age
 test('analysis view defaults to the platform and opens chat through explicit flows', async () => {
   const source = await readSource('../../views/ReactAnalysisView.vue')
 
-  assert.match(source, /const workspace = ref\('platform'\)/)
+  assert.match(source, /const workspace = ref\(route\.query\.assistant === '1' \? 'chat' : 'platform'\)/)
   assert.match(source, /resolveAgentSelection/)
   assert.match(source, /workspace\.value = 'chat'/)
   assert.match(source, /workspace\.value = 'platform'/)
   assert.match(source, /route\.params\.id/)
-  assert.match(source, /watch\(\s*\(\) => route\.params\.id/)
+  assert.match(source, /watch\(\s*\(\) => \[route\.params\.id, route\.query\.assistant\]/)
   assert.match(source, /queueRouteSessionRestore/)
 })
 

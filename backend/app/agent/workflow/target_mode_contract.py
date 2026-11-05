@@ -154,19 +154,93 @@ def _active_contracts():
     }}
 
 
-def build_target_mode_contract() -> str:
-    """构建 target_mode 能力/工具边界契约文本（供工具 schema 使用）。"""
-    lines = ["子 Agent（target_mode）能力与工具边界："]
-    for mode, spec in _active_contracts().items():
-        parts = [f"- {mode}：{spec['positioning']}"]
-        if spec.get("scope"):
-            parts.append(f"能做：{spec['scope']}")
-        if spec.get("boundary"):
-            parts.append(f"边界：{spec['boundary']}")
-        if spec.get("outputs"):
-            parts.append(f"产出：{spec['outputs']}")
-        if spec.get("warning"):
-            parts.append(f"⚠️ {spec['warning']}")
-        lines.append(" ".join(parts))
+def _format_mode_contract(mode: str, spec: dict[str, str]) -> str:
+    lines = [f"{mode}：{spec.get('positioning', '')}"]
+    if spec.get("scope"):
+        lines.append(f"能做：{spec['scope']}")
+    if spec.get("boundary"):
+        lines.append(f"边界：{spec['boundary']}")
+    if spec.get("outputs"):
+        lines.append(f"产出：{spec['outputs']}")
+    if spec.get("warning"):
+        lines.append(f"⚠️ {spec['warning']}")
+    return "\n".join(lines)
+
+
+def describe_target_mode(arg: str) -> str:
+    """describe_mode 参数解释（按需披露，仿 describe_table 模式）。
+
+    'modes' 返回全部可委派子模式一行速查（与工具描述内联的速查表同源）；
+    具体模式名返回该模式完整契约（定位/能做/边界/产出/注意），长尾细节
+    不占每次请求的固定上下文。未知名返回模糊纠错候选；主模式返回说明与
+    其契约并标注不可作为子 Agent。
+    """
+    from difflib import get_close_matches
+
+    from app.agent.workflow.delegation import PRIMARY_ONLY_MODES
+
+    query = str(arg or "").strip()
+    if not query:
+        return (
+            "describe_mode 需要一个值：传 'modes' 查看全部可委派子模式速查，"
+            "或传具体模式名查看其完整契约。"
+        )
+    if query.lower() in {"modes", "list", "all"}:
+        return build_target_mode_contract(compact=True)
+    delegatable = _active_contracts()
+    contracts: dict[str, dict[str, str]] = dict(TARGET_MODE_CONTRACTS)
+    for name, spec in delegatable.items():
+        contracts.setdefault(name, spec)
+    spec = contracts.get(query)
+    if spec is None:
+        if query in PRIMARY_ONLY_MODES:
+            return f"{query} 是主模式，不能作为子 Agent 调用；其职责由主模式系统提示词定义。"
+        candidates = get_close_matches(query, list(contracts), n=3, cutoff=0.4)
+        hint = "、".join(candidates) if candidates else "、".join(sorted(delegatable))
+        return (
+            f"未知模式 '{query}'。近似候选：{hint}；"
+            "或传 describe_mode='modes' 查看全部可委派子模式。"
+        )
+    if query in PRIMARY_ONLY_MODES:
+        return (
+            f"{query} 是主模式，不能作为子 Agent 调用"
+            "（取数/研判/正式报告由主模式直接完成或经其委派）。\n"
+            + _format_mode_contract(query, spec)
+        )
+    return _format_mode_contract(query, spec)
+
+
+def build_target_mode_contract(compact: bool = True) -> str:
+    """构建 target_mode 能力/工具边界契约文本（供工具 schema 使用）。
+
+    compact=True 注入一行制（定位+边界）。scope/outputs/warning 全文不再进入
+    每次请求：子模式自己的系统提示词才是权威能力边界，硬约束（禁用组合、
+    任务契约校验）由 delegation_error/prepare_node 在运行时强制，字段级细节
+    按需 view_skill 查看。compact=False 保留完整四段文本供非请求场景使用。
+    """
+    contracts = _active_contracts()
+    if not compact:
+        lines = ["子 Agent（target_mode）能力与工具边界："]
+        for mode, spec in contracts.items():
+            parts = [f"- {mode}：{spec['positioning']}"]
+            if spec.get("scope"):
+                parts.append(f"能做：{spec['scope']}")
+            if spec.get("boundary"):
+                parts.append(f"边界：{spec['boundary']}")
+            if spec.get("outputs"):
+                parts.append(f"产出：{spec['outputs']}")
+            if spec.get("warning"):
+                parts.append(f"⚠️ {spec['warning']}")
+            lines.append(" ".join(parts))
+        lines.append(_ROUTING_RULES)
+        return "\n".join(lines)
+    lines = ["子 Agent（target_mode）定位与边界（详细分工以子模式自身提示词为准）："]
+    for mode, spec in contracts.items():
+        positioning = str(spec.get("positioning") or "").strip().rstrip("。")
+        line = f"- {mode}：{positioning}"
+        boundary = str(spec.get("boundary") or "").strip().rstrip("。")
+        if boundary:
+            line += f"；边界：{boundary}"
+        lines.append(line)
     lines.append(_ROUTING_RULES)
     return "\n".join(lines)

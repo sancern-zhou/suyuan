@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import json
 import re
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -130,6 +131,12 @@ def _node_history(snapshot: dict[str, Any], task_id: str, child: Any | None, aft
         "answer": next((str(message.get("content") or "") for message in reversed(child.conversation_history)
                         if message.get("role") == "assistant"), "") if child is not None else "",
         "node_events": events,
+        # 渐进发现（父快照 node_findings：执行中实时更新，子会话建立前也有数据）
+        "findings": [
+            {"content": item.get("content"), "tag": item.get("tag"), "at": item.get("at")}
+            for item in (snapshot.get("node_findings") or {}).get(task_id) or []
+            if isinstance(item, dict) and item.get("content")
+        ][-20:],
         "child_events": [{"sequence": int(event.get("sequence") or 0),
                           "type": str(event.get("event_type") or "unknown"),
                           "status": event.get("status"), "timestamp": event.get("timestamp")}
@@ -368,7 +375,14 @@ async def resume_workflow(
         raise HTTPException(status_code=409, detail="cancelled_workflow_cannot_resume")
     if snapshot.get("status") not in {"failed", "partial", "running", "queued"}:
         raise HTTPException(status_code=409, detail="workflow_not_resumable")
-    if snapshot.get("status") in {"failed", "partial"} and not _has_retryable_nodes(snapshot):
+    # 配额暂停的工作流不受重试预算阻断：配额窗口过后是全新尝试
+    #（coordinator._prepare_snapshot_resume 会把 stop_quota 节点翻回可重试）。
+    quota_paused = bool(isinstance(snapshot.get("quota_pause"), dict) and snapshot["quota_pause"].get("reset_at"))
+    if (
+        snapshot.get("status") in {"failed", "partial"}
+        and not quota_paused
+        and not _has_retryable_nodes(snapshot)
+    ):
         raise HTTPException(status_code=409, detail="workflow_retry_budget_exhausted")
     if await active_workflow_registry.get(workflow_id) is not None:
         raise HTTPException(status_code=409, detail="workflow_already_active")
@@ -384,3 +398,54 @@ async def resume_workflow(
     except Exception as exc:
         raise HTTPException(status_code=503, detail="workflow_queue_unavailable") from exc
     return {"workflow_id": workflow_id, "status": job.status, "queued": True}
+
+
+@router.post("/{workflow_id}/escalations/{escalation_id}/resolve", status_code=202)
+async def resolve_workflow_escalation(
+    session_id: str,
+    workflow_id: str,
+    escalation_id: str,
+    payload: dict,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    """回答工作流子 Agent 的升级提问（escalate）：写 Redis 唤醒等待方。"""
+    await catalog.require_write(session_id, user)
+    answer = str((payload or {}).get("answer") or "").strip()
+    if not answer:
+        raise HTTPException(status_code=422, detail="answer_required")
+    from app.tools.agent_tools.escalate_tool import escalation_redis_key
+
+    from config.settings import settings
+
+    store = get_workflow_job_store()
+    key = escalation_redis_key(settings.agent_steering_redis_prefix, escalation_id)
+    try:
+        raw = await store.redis.get(key)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="escalation_store_unavailable") from exc
+    if not raw:
+        raise HTTPException(status_code=404, detail="escalation_not_found_or_expired")
+    try:
+        record = json.loads(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=410, detail="escalation_record_corrupted")
+    if not isinstance(record, dict) or str(record.get("session_id") or "") != session_id:
+        raise HTTPException(status_code=404, detail="escalation_not_found")
+    if str(record.get("workflow_id") or "") != workflow_id:
+        raise HTTPException(status_code=404, detail="escalation_not_found")
+    if record.get("status") == "answered":
+        # 幂等：重复提交同一答案
+        return {"escalation_id": escalation_id, "status": "answered", "already_resolved": True}
+    record["status"] = "answered"
+    record["answer"] = answer[:2000]
+    record["resolved_at"] = time.time()
+    try:
+        await store.redis.set(
+            key,
+            json.dumps(record, ensure_ascii=False, default=str),
+            ex=24 * 3600,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="escalation_store_unavailable") from exc
+    return {"escalation_id": escalation_id, "status": "answered"}

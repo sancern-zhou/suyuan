@@ -24,6 +24,7 @@ class RouterSpec:
 
 
 ROUTER_REGISTRY = [
+    RouterSpec("app.api.report_library_routes", description="Smart report library", owner="core"),
     RouterSpec("app.api.assistant_routes", description="Shared assistant Web workspace", owner="core"),
     RouterSpec("app.api.task_review_routes", description="Unified human task review", owner="core"),
     RouterSpec(

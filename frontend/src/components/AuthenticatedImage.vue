@@ -4,6 +4,7 @@
     v-bind="$attrs"
     :src="resolvedUrl"
     @click="emit('click', $event)"
+    @error="emit('error', $event)"
   />
 </template>
 

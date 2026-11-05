@@ -335,6 +335,7 @@ const createEmptyModeState = () => ({
   pendingPausedRunId: null,
   workspace: null,
   pendingInteraction: null,
+  backgroundDelegation: null,
   pendingHumanFeedback: null,
   humanFeedbackSubmitting: false,
   humanFeedbackError: null,
@@ -443,6 +444,10 @@ export const useReactStore = defineStore('react', {
 
     pendingInteraction() {
       return this.currentState?.pendingInteraction || null
+    },
+
+    backgroundDelegation() {
+      return this.currentState?.backgroundDelegation || null
     },
 
     pendingHumanFeedback() {
@@ -1132,6 +1137,22 @@ export const useReactStore = defineStore('react', {
       console.log('[reset] Reset current mode:', this.currentMode)
     },
 
+    // 重置指定模式的会话状态，不切换全局 currentMode（浮窗新建对话使用）。
+    resetModeConversation(mode) {
+      if (!VALID_MODES.includes(mode)) return
+      const activeId = this.activeSessionByMode[mode]
+      const current = (activeId && this.sessionStates[activeId]) || this.modeStates[mode]
+      const emptyState = createEmptyModeState()
+      emptyState.maxIterations = current?.maxIterations
+      if (activeId) {
+        if (!this.sessionStates[activeId]?.isAnalyzing) delete this.sessionStates[activeId]
+        delete this.activeSessionByMode[mode]
+        Object.assign(this.modeStates[mode], emptyState)
+      } else if (current) {
+        Object.assign(current, emptyState)
+      }
+    },
+
     // 添加消息（添加到当前模式）
     addMessage(type, content, data = null, attachments = null, extraFields = {}) {
       const message = {
@@ -1453,6 +1474,15 @@ export const useReactStore = defineStore('react', {
         }
         case 'interaction_required': {
           targetState.pendingInteraction = data || null
+          break
+        }
+        case 'delegation_status': {
+          // 后台委派状态卡：running（等待期可见）/ completed（结果已回灌）
+          targetState.backgroundDelegation = {
+            phase: data?.phase === 'completed' ? 'completed' : 'running',
+            runs: Array.isArray(data?.runs) ? data.runs : [],
+            stillRunning: Number(data?.still_running) || 0
+          }
           break
         }
         case 'start': {
@@ -2700,6 +2730,7 @@ export const useReactStore = defineStore('react', {
         contextRefs = [],
         activeContexts = null,
         messageAttachments = [],
+        pageContext = null,
         preserveCurrentMode = false,
         queuedAlreadyShown = false,
         dequeuedInput = false,
@@ -2909,6 +2940,7 @@ export const useReactStore = defineStore('react', {
           skillIds,
           contextRefs,
           activeContexts,
+          pageContext: actualMode === 'assistant' ? pageContext : null,
           ...(boardContext !== null ? { boardContext } : {}),
           ...(mapContext !== null ? { mapContext } : {}),
           onAccepted,

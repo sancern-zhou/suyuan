@@ -1,6 +1,7 @@
 """
 PDF conversion service - Convert Office documents to PDF for frontend preview
 """
+import asyncio
 from contextlib import contextmanager
 from pathlib import Path
 from app.tools.office.soffice import run_soffice
@@ -10,6 +11,10 @@ import uuid
 import logging
 from zipfile import ZipFile, ZIP_DEFLATED
 from xml.etree import ElementTree as ET
+
+# soffice 在 Windows 上偶发启动挂死（0 CPU 不退出）；转换必须丢进线程并带
+# 超时，否则会把整个 web 进程的事件循环一起卡死（2026-10-28 事故）。
+_SOFFICE_TIMEOUT_SECONDS = 120
 
 logger = logging.getLogger(__name__)
 WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -27,6 +32,27 @@ class PDFConverter:
     def __init__(self):
         self.output_dir = Path(tempfile.gettempdir()) / "office_pdf_cache"
         self.output_dir.mkdir(exist_ok=True)
+
+    @staticmethod
+    async def _convert_with_soffice(conversion_source: Path, workdir: Path):
+        """Run LibreOffice off the event loop, with a hard timeout.
+
+        run_soffice 是同步阻塞调用；soffice 挂死时若无超时/无线程隔离，
+        整个进程的所有请求都会停摆。
+        """
+        return await asyncio.to_thread(
+            run_soffice,
+            [
+                "--headless",
+                # UserInstallation 必须是合法 file:// URI（正斜杠），
+                # 直接拼 Windows 反斜杠路径会让 soffice 启动异常。
+                "-env:UserInstallation={}".format(workdir.as_uri()),
+                "--convert-to", "pdf",
+                "--outdir", str(workdir),
+                str(conversion_source)
+            ],
+            timeout=_SOFFICE_TIMEOUT_SECONDS,
+        )
 
     async def convert_to_pdf(self, office_file_path: str) -> dict:
         """
@@ -55,13 +81,9 @@ class PDFConverter:
             ) as workdir:
                 with self._office_pdf_source(Path(office_file_path)) as conversion_source:
                     # Use LibreOffice to convert
-                    result = run_soffice([
-                        "--headless",
-                        "-env:UserInstallation=file://{}".format(workdir),
-                        "--convert-to", "pdf",
-                        "--outdir", workdir,
-                        str(conversion_source)
-                    ])
+                    result = await self._convert_with_soffice(
+                        conversion_source, Path(workdir)
+                    )
 
                 if result.returncode != 0:
                     logger.error(f"LibreOffice conversion failed: {result.stderr}")
@@ -92,13 +114,9 @@ class PDFConverter:
                 prefix=".convert-", dir=self.output_dir
             ) as workdir:
                 with self._office_pdf_source(Path(office_file_path)) as conversion_source:
-                    result = run_soffice([
-                        "--headless",
-                        "-env:UserInstallation=file://{}".format(workdir),
-                        "--convert-to", "pdf",
-                        "--outdir", workdir,
-                        str(conversion_source)
-                    ])
+                    result = await self._convert_with_soffice(
+                        conversion_source, Path(workdir)
+                    )
 
                 if result.returncode != 0:
                     logger.error(f"LibreOffice PDF rebuild failed: {result.stderr}")

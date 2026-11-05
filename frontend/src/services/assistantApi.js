@@ -36,3 +36,12 @@ export const syncAssistantConversation = (id, revision) => request(
 export const readAssistantConversation = (id, throughSequence) => request(
   `conversations/${encodeURIComponent(id)}/read`, { through_sequence: throughSequence }
 )
+export const listAssistantNotifications = () => request('notifications?limit=50')
+export const readAssistantNotification = messageId => request(
+  `notifications/${encodeURIComponent(messageId)}/read`
+)
+// 追问直通（阶段 B）：把消息转交给该会话唯一活跃的后台委派
+export const steerAssistantRun = (runId, sessionId, message) => request(
+  `runs/${encodeURIComponent(runId)}/steer?session_id=${encodeURIComponent(sessionId)}`,
+  { message }
+)

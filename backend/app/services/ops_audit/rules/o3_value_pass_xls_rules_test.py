@@ -178,6 +178,51 @@ def test_o3_value_pass_xls_unavailable_local_path_is_not_reported():
     assert issues == []
 
 
+def test_o3_value_pass_xls_missing_dependency_routes_to_diagnostic(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        o3_value_pass_xls_rules,
+        "_read_cells",
+        lambda item: {"status": "error", "error": "No module named 'xlrd'"},
+    )
+    issues = []
+
+    o3_value_pass_xls_rules.check_o3_value_pass_xls_values(
+        {"WORKINGORDERCODE": "WO-001"},
+        [("RF_HY_O3VALUEPASS", _form())],
+        [],
+        [_attachment(tmp_path / "臭氧标准传递.xls")],
+        issues,
+    )
+
+    assert len(issues) == 1
+    assert issues[0].rule_id == "ATTACHMENT_XLS_READ_FAILED_DIAGNOSTIC"
+    assert "No module named" in issues[0].message
+    from app.services.ops_audit.config import review_stage_for_rule
+
+    assert review_stage_for_rule(issues[0].rule_id) == "technical_diagnostic"
+
+
+def test_o3_value_pass_xls_parse_error_still_reported_as_issue(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        o3_value_pass_xls_rules,
+        "_read_cells",
+        lambda item: {"status": "error", "error": "文件格式损坏，无法解析"},
+    )
+    issues = []
+
+    o3_value_pass_xls_rules.check_o3_value_pass_xls_values(
+        {"WORKINGORDERCODE": "WO-001"},
+        [("RF_HY_O3VALUEPASS", _form())],
+        [],
+        [_attachment(tmp_path / "臭氧标准传递.xls")],
+        issues,
+    )
+
+    assert len(issues) == 1
+    assert issues[0].rule_id == "ATTACHMENT_O3_VALUE_PASS_XLS_VALUE_MISMATCH"
+    assert "读取失败" in issues[0].message
+
+
 def test_o3_value_pass_xls_mismatch_adds_issue(tmp_path):
     xls_path = tmp_path / "o3-transfer.xlsx"
     _xlsx(xls_path, slope="1.001")

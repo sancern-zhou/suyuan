@@ -57,6 +57,16 @@ export async function resumeSessionWorkflow(sessionId, workflowId) {
   )
 }
 
+export async function resolveWorkflowEscalation(sessionId, workflowId, escalationId, answer) {
+  return readJson(
+    await authFetch(
+      `${workflowBase(sessionId)}/${encodeURIComponent(workflowId)}/escalations/${encodeURIComponent(escalationId)}/resolve`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answer }) }
+    ),
+    '回答提交失败'
+  )
+}
+
 export async function followSessionWorkflow(sessionId, workflowId, {
   afterEventId = '0-0',
   timeoutSeconds = 30,

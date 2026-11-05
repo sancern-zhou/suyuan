@@ -24,6 +24,7 @@ from .storage import (
     TaskCaseStorage,
 )
 from .scheduler import SimpleScheduler
+from .event_result_hooks import notify_event_result
 from .executor import ScheduledTaskExecutor
 from .event_delivery import EventTaskDelivery
 from .event_output import parse_event_task_output
@@ -194,7 +195,7 @@ class ScheduledTaskService:
         task = self.task_storage.get(task_id)
         if not task:
             raise ValueError(f"Task {task_id} not found")
-        self._track_event_task(self._execute_scheduled_task(task))
+        self._track_event_task(self._execute_scheduled_task(task, manual=True))
         logger.info("manual_task_execution_started", task_id=task_id)
 
     def _resume_claimed_event_tasks(self) -> None:
@@ -362,13 +363,13 @@ class ScheduledTaskService:
         )
 
         # 执行任务（异步）
-        execution = await self._execute_scheduled_task(task)
+        execution = await self._execute_scheduled_task(task, manual=True)
 
         logger.info(f"Manual execution completed: {execution.execution_id}, status: {execution.status}")
 
         return execution
 
-    async def _execute_scheduled_task(self, task: ScheduledTask) -> TaskExecution:
+    async def _execute_scheduled_task(self, task: ScheduledTask, *, manual: bool = False) -> TaskExecution:
         """Execute scheduled work; broadcast tasks send through their Agent tool."""
         execution: TaskExecution | None = None
         try:
@@ -384,6 +385,7 @@ class ScheduledTaskService:
                 broadcast_user_names=[
                     row.get("name") or row["user_id"] for row in recipients
                 ],
+                trigger_type="manual" if manual else None,
             )
             if execution.status != ExecutionStatus.SUCCESS:
                 self.task_storage.update_run_stats(task.task_id, success=False)
@@ -410,7 +412,7 @@ class ScheduledTaskService:
                     completed_at=now,
                     duration_seconds=0,
                     total_steps=1,
-                    trigger_type="scheduled",
+                    trigger_type="manual" if manual else "scheduled",
                     error_message=str(exc),
                 )
                 self.execution_storage.create(execution)
@@ -482,9 +484,9 @@ class ScheduledTaskService:
                 if recovered:
                     existing = recovered
             if existing and force_retry and existing.status == "failed":
-                claim = self.claim_storage.retry_failed(task.task_id, event.event_id)
+                claim = self.claim_storage.retry_failed(task.task_id, event.event_id, event=event)
             elif existing and force_retry and existing.status == "succeeded":
-                claim = self.claim_storage.reopen(task.task_id, event.event_id)
+                claim = self.claim_storage.reopen(task.task_id, event.event_id, event=event)
             elif existing:
                 result.duplicate_task_ids.append(task.task_id)
                 continue
@@ -565,6 +567,7 @@ class ScheduledTaskService:
                         "failed",
                         execution_id=execution.execution_id,
                     )
+                    await notify_event_result(task, event, execution)
                     return execution
 
             execution = await self.executor.execute_task(
@@ -583,10 +586,12 @@ class ScheduledTaskService:
             if execution.status != ExecutionStatus.SUCCESS:
                 self.task_storage.update_run_stats(task.task_id, success=False)
                 self.claim_storage.mark_status(claim_id, "failed")
+                await notify_event_result(task, event, execution)
                 return execution
 
             self.task_storage.update_run_stats(task.task_id, success=True)
             self.claim_storage.mark_status(claim_id, "succeeded")
+            await notify_event_result(task, event, execution)
             return execution
         except Exception as exc:
             logger.error(
@@ -608,6 +613,7 @@ class ScheduledTaskService:
                 "failed",
                 execution_id=execution.execution_id,
             )
+            await notify_event_result(task, event, execution)
             return execution
 
     async def retry_failed_delivery(self, execution_id: str) -> dict:

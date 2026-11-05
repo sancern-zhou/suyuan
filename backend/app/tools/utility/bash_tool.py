@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import locale
 import os
 import platform
 import signal
@@ -22,6 +23,9 @@ from app.utils import path_config
 
 logger = structlog.get_logger()
 resolve_agent_path = path_config.resolve_agent_path
+# Windows 的 signal 模块没有 SIGKILL；_signal_process_tree 在 nt 上不使用
+# 该信号，但调用方会先求值实参，需要一个存在的占位值。
+_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
 
 
 class BashTool(LLMTool):
@@ -117,8 +121,8 @@ class BashTool(LLMTool):
                         if len(chunk) > allowed:
                             exceeded = True
                             if process.returncode is None:
-                                self._signal_process_tree(process, signal.SIGKILL)
-                return preview.decode("utf-8", errors="replace"), exceeded, path
+                                self._signal_process_tree(process, _SIGKILL)
+                return self._decode_output(bytes(preview)), exceeded, path
 
             stdout_task = asyncio.create_task(capture(process.stdout, "stdout"))
             stderr_task = asyncio.create_task(capture(process.stderr, "stderr"))
@@ -378,6 +382,30 @@ class BashTool(LLMTool):
         clipped = encoded[: cls.MAX_OUTPUT_BYTES].decode("utf-8", errors="ignore")
         return clipped + "\n... (output truncated)", True
 
+    @staticmethod
+    def _decode_output(payload: bytes) -> str:
+        """Decode console output; Windows shells emit the OEM code page (CP936)."""
+        if not payload:
+            return ""
+        try:
+            return payload.decode("utf-8")
+        except UnicodeDecodeError:
+            pass
+        if os.name == "nt":
+            # locale.getpreferredencoding() 可能因 UTF-8 模式返回 utf-8，
+            # 与 cmd.exe 实际使用的 OEM 代码页不一致；直接问系统。
+            try:
+                import ctypes
+
+                oem_code_page = ctypes.windll.kernel32.GetOEMCP()
+                return payload.decode(f"cp{oem_code_page}")
+            except (LookupError, UnicodeDecodeError, OSError):
+                pass
+        try:
+            return payload.decode(locale.getpreferredencoding(False), errors="replace")
+        except (LookupError, UnicodeDecodeError):
+            return payload.decode("utf-8", errors="replace")
+
     def _success_result(
         self,
         command: str,
@@ -455,7 +483,7 @@ class BashTool(LLMTool):
         try:
             await asyncio.wait_for(process.wait(), timeout=cls.TERMINATION_GRACE_SECONDS)
         except asyncio.TimeoutError:
-            cls._signal_process_tree(process, signal.SIGKILL)
+            cls._signal_process_tree(process, _SIGKILL)
             await process.wait()
 
     def _log_command(self, command: str, result: str, exit_code: Optional[int] = None) -> None:

@@ -49,16 +49,48 @@ Raw records may be used when field names are supplied:
 }
 ```
 
+## Radial Metrics
+
+`radial_metric` selects how the direction bins are drawn:
+
+- `mean_concentration` (default): one bar per direction bin; the bar height is
+  that bin's mean concentration and the color is the HJ 633 level of the mean.
+  Use it when the reader needs the typical concentration from each direction.
+- `level_frequency`: stacked frequency rose. Each direction bin stacks the
+  HJ 633 level counts, and the radial axis is the share (%) of all valid
+  observations that fall in that direction. Use it when the reader needs the
+  pollution-level composition of each direction (like a report pollution
+  rose). `direction_bins: 36` gives the dense spoke look; `16` is the default.
+  Non-finite, negative and missing concentrations are dropped before binning,
+  and a direction with no valid observation stays empty. The fixed six-level
+  legend still shows the concentration ranges for each level.
+
+Both modes share the compass frame (N/NE/E/SE/S/SW/W/NW, 0° up, clockwise),
+the light grid and the dark outer ring. Direction bins are centered on the
+compass points, so wind direction 0° sits in the middle of the N sector.
+
 ## Design Rules
 
 - Use one pollutant per image.
 - Concentrations must come from real pollutant observations. Use
   `execute_python` for pure wind-frequency roses; do not supply placeholder
   concentrations to reuse this template.
+- Colors are NOT data-stretched. Both radial metrics use the fixed
+  HJ 633-2026 six-level scale resolved from `pollutant_name` (same palette and
+  breaks as AQI calendars); a fixed level legend is always drawn below the
+  chart. In `mean_concentration` mode each direction bar takes the level color
+  of its mean; in `level_frequency` mode the stack segments take the level
+  colors.
+- `pollutant_name` must be a built-in indicator (AQI, PM2.5, PM10, SO2, NO2,
+  CO, O3) so the six-level breaks resolve; other indicators are rejected.
+- `unit` must match the standard basis: μg/m³ (mg/m³ for CO); AQI is unitless.
 - Use `pollutant_name` and `unit` options instead of embedding units in every
   label.
 - Use `direction_bins` only when the report needs a specific directional
   resolution.
+- `average_time` selects the IAQI period for the level breaks (default `24h`,
+  O3 default `daily_max_8h`); pass e.g. `1h` when coloring hourly
+  observations against hourly breaks.
 - Do not include figure numbers in the chart title.
 
 ## Useful Options
@@ -66,5 +98,5 @@ Raw records may be used when field names are supplied:
 - `pollutant_name`
 - `unit`
 - `direction_bins`
-- `show_colorbar` (default `false`; set `true` only when the right-side
-  concentration color scale is explicitly required)
+- `radial_metric`
+- `average_time`

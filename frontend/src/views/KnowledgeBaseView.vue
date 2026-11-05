@@ -187,7 +187,6 @@
               <div class="option-group" v-if="uploadOptions.chunking_strategy === 'llm'">
                 <label>LLM模式</label>
                 <select v-model="uploadOptions.llm_mode">
-                  <option value="local">本地千问3（快速，25K字符阈值）</option>
                   <option value="online">线上API（长文档，60K字符阈值）</option>
                 </select>
               </div>
@@ -527,7 +526,7 @@ const uploadOptions = ref({
   chunking_strategy: 'llm',
   chunk_size: 800,
   chunk_overlap: 100,
-  llm_mode: 'local'  // 默认本地LLM
+  llm_mode: 'online'  // 本地LLM分块路径已移除，仅支持线上API
 })
 
 const searching = ref(false)
@@ -887,12 +886,12 @@ const getChunkTypeName = (type) => {
   return map[type] || type
 }
 
-const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
+const getChunkingStrategyHint = (strategy, llmMode = 'online') => {
   if (strategy === 'llm') {
     if (llmMode === 'online') {
       return '使用线上API(DeepSeek等)进行智能分块。60K字符分段阈值，适合超长文档。每段附带主题标签和上下文前缀，质量最高。'
     }
-    return '使用本地千问3进行智能分块。25K字符分段阈值，速度快，无额外成本。每段附带主题标签和上下文前缀，推荐用于环保政策和技术规范。'
+    return '使用线上API进行智能分块。60K字符分段阈值。每段附带主题标签和上下文前缀，推荐用于环保政策和技术规范。'
   }
   const hints = {
     sentence: '速度快，适合通用文档。按句子边界分割，简单可靠。',

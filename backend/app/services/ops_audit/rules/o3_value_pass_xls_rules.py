@@ -20,6 +20,7 @@ from app.services.ops_audit.remote_fetch import guarded_get
 from app.services.ops_audit.rules.base import add_issue
 
 RULE_ID = "ATTACHMENT_O3_VALUE_PASS_XLS_VALUE_MISMATCH"
+READ_FAILED_DIAGNOSTIC_RULE_ID = "ATTACHMENT_XLS_READ_FAILED_DIAGNOSTIC"
 MISSING_XLS_REVIEW_RULE_ID = "ATTACHMENT_O3_VALUE_PASS_XLS_MISSING_REVIEW"
 HISTORY_CONFLICT_REVIEW_RULE_ID = "RF_O3_UPPER_STANDARD_HISTORY_CONFLICT_REVIEW"
 FLOW_MISSING_RULE_ID = "RF_O3_VALUE_PASS_FLOW_VALUE_MISSING"
@@ -95,7 +96,11 @@ def check_o3_value_pass_xls_values(
         for item in selected_items:
             cell_values = _read_cells_cached(item, read_cache)
             if cell_values.get("status") != "success":
-                if item.get("attachment_kind") == "pdf" or _is_unavailable_attachment_source_error(cell_values.get("error")):
+                error_text = str(cell_values.get("error") or "")
+                if item.get("attachment_kind") == "pdf" or _is_unavailable_attachment_source_error(error_text):
+                    continue
+                if _is_missing_dependency_error(error_text):
+                    _add_read_failed_diagnostic_issue(order, form, item, error_text, issues)
                     continue
                 _add_issue(order, form, item, [{"status": "xls_read_error", "error": cell_values.get("error")}], issues)
                 continue
@@ -849,6 +854,37 @@ def _is_unavailable_attachment_source_error(error: Any) -> bool:
         or "文件不存在且未配置附件根路径/基础URL" in text
         or "下载附件失败" in text
         or "附件主机无法解析" in text
+    )
+
+
+def _is_missing_dependency_error(error: Any) -> bool:
+    text = str(error or "")
+    return "No module named" in text or "ModuleNotFoundError" in text
+
+
+def _add_read_failed_diagnostic_issue(
+    order: dict[str, Any],
+    form: dict[str, Any],
+    item: dict[str, Any],
+    error_text: str,
+    issues: list[Issue],
+) -> None:
+    """依赖缺失属于运行环境问题而非工单问题，走技术诊断通道，不入业务问题清单。"""
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE") or form.get("WORKINGORDERCODE"),
+        "rf_table": RF_TABLE,
+        "attachment": item,
+        "error": error_text,
+        "report_classification": "technical_diagnostic",
+    }
+    add_issue(
+        issues,
+        READ_FAILED_DIAGNOSTIC_RULE_ID,
+        "附件读数一致性",
+        "低",
+        f"attachment.{RF_TABLE}.xls",
+        f"XLS附件读取失败（环境依赖缺失，需运维处理，不计入工单问题）：{error_text[:120]}",
+        json.dumps(evidence, ensure_ascii=False, default=str),
     )
 
 
