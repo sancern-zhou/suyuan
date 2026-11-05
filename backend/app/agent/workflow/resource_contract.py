@@ -130,10 +130,12 @@ def validate_deliverable_entries(entries: Any) -> list[dict[str, str]]:
     """核验交付信封的 deliverables 数组：交货方自报路径 → 机械核对真实文件。
 
     每项要求 path 指向真实存在的文件；声明 format 时与文件后缀一致；
-    声明 fields 时字段必须被文件实际包含（CSV 表头 / 小型 JSON 键，同 _check 的
-    fail-closed 语义：核对不了的格式不视为满足）。返回 validate_result_schema
-    同形的违规列表（path/expected/got），空列表即通过；调用方把违规并进
-    结构化交付的校验错误，由既有修复轮喂回原子会话修正。
+    声明 fields 时按形态分级核验（2026-11-05 降档）：csv 核对表头、能解析出
+    records/rows/data 记录列表的 json 核对键交集，二者为硬性；顶层结构键的
+    嵌套 JSON（报表包）与不可核对格式（图片、超大 JSON 等）视为信息性声明，
+    不再判死——此类核验不可靠且子 Agent 无从修复（qingyuan-oct DAG 失败教训）。
+    返回 validate_result_schema 同形的违规列表（path/expected/got），空列表即
+    通过；调用方把违规并进结构化交付的校验错误，由既有修复轮喂回原子会话修正。
     """
     if entries is None:
         return []
@@ -165,21 +167,27 @@ def validate_deliverable_entries(entries: Any) -> list[dict[str, str]]:
                 violations.append({"path": f"{prefix}.format", "expected": declared_format, "got": actual_format or "none"})
         declared_fields = entry.get("fields")
         if isinstance(declared_fields, list) and declared_fields and all(isinstance(f, str) for f in declared_fields):
+            suffix = path.suffix.lower()
+            verifiable = suffix == ".csv" or (
+                suffix == ".json" and path.stat().st_size <= 2 * 1024 * 1024
+            )
+            if not verifiable:
+                # 不可核对格式（图片、超大 JSON 等）：fields 视为信息性声明，不判死
+                continue
             try:
-                actual_fields = _file_fields(path)
+                if suffix == ".csv":
+                    actual_fields = _file_fields(path)
+                    records_shaped = True
+                else:
+                    actual_fields, records_shaped = _json_record_fields(path)
             except (OSError, ValueError, TypeError) as exc:
                 violations.append({"path": f"{prefix}.fields", "expected": "inspectable file", "got": str(exc)})
                 continue
-            if actual_fields is None:
-                violations.append({
-                    "path": f"{prefix}.fields",
-                    "expected": declared_fields,
-                    "got": f"fields cannot be verified for .{path.suffix.lower().lstrip('.')} files; declare fields only for csv/json",
-                })
-                continue
-            missing = sorted(set(declared_fields) - actual_fields)
-            if missing:
-                violations.append({"path": f"{prefix}.fields", "expected": declared_fields, "got": f"missing {missing}"})
+            # 仅顶层结构键的嵌套 JSON（报表包）：键集合不代表记录字段，fields 不判死
+            if records_shaped:
+                missing = sorted(set(declared_fields) - (actual_fields or set()))
+                if missing:
+                    violations.append({"path": f"{prefix}.fields", "expected": declared_fields, "got": f"missing {missing}"})
     return violations
 
 
@@ -192,24 +200,38 @@ def _file_fields(path: Path) -> set[str] | None:
             raise ValueError("CSV header exceeds inspection limit")
         return set(next(csv.reader([header]), []))
     if path.suffix.lower() == ".json" and path.stat().st_size <= 2 * 1024 * 1024:
-        value = json.loads(path.read_text(encoding="utf-8"))
-        for _ in range(4):
-            if not isinstance(value, Mapping):
-                break
-            nested = next((value[key] for key in ("records", "rows", "data") if isinstance(value.get(key), (list, dict))), None)
-            if nested is None:
-                break
-            value = nested
-        if isinstance(value, list):
-            fields = None
-            for row in value:
-                if not isinstance(row, Mapping):
-                    return set()
-                fields = set(row) if fields is None else fields.intersection(row)
-            return fields or set()
-        if isinstance(value, Mapping):
-            return set(value)
+        fields, _descended = _json_record_fields(path)
+        return fields
     return None
+
+
+def _json_record_fields(path: Path) -> tuple[set[str] | None, bool]:
+    """小型 JSON 的字段核验信息：返回 (键集合, 是否解析自 records/rows/data 记录列表)。
+
+    descended=True 表示键集合来自记录列表的行键交集（可靠，可作硬核验依据）；
+    False 表示只拿到顶层结构键（报表包等嵌套结构的 structural keys 不代表
+    记录字段，据此核对必然误报 missing）。
+    """
+    value = json.loads(path.read_text(encoding="utf-8"))
+    descended = False
+    for _ in range(4):
+        if not isinstance(value, Mapping):
+            break
+        nested = next((value[key] for key in ("records", "rows", "data") if isinstance(value.get(key), (list, dict))), None)
+        if nested is None:
+            break
+        descended = True
+        value = nested
+    if isinstance(value, list):
+        fields = None
+        for row in value:
+            if not isinstance(row, Mapping):
+                return set(), descended
+            fields = set(row) if fields is None else fields.intersection(row)
+        return (fields or set()), descended
+    if isinstance(value, Mapping):
+        return set(value), descended
+    return None, descended
 
 
 def _check(contract: Mapping[str, Any], handle: Mapping[str, Any]) -> list[str]:
@@ -290,3 +312,19 @@ def assert_resource_contracts(contracts: list[Mapping[str, Any]], handles: list[
     violations = [item for item in check_resource_contracts(contracts, handles) if item["required"]]
     if violations:
         raise ResourceContractError(violations)
+
+
+def fatal_resource_contract_violations(violations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """资源契约违规中仍应判节点失败的子集（2026-11-05 语义收窄）。
+
+    仅 required 上游资源整体缺失（resource_missing，下游在没有任何可消费
+    产物时运行纯属浪费）保持 fatal；形态不符（resource_incompatible，
+    format/fields 与契约不一致）只记录不判死——契约已注入子 Agent 指令、
+    违规随 node_contract_errors 与 delivery.gaps 暴露给父侧整合，子代理
+    交付 json 而契约写 csv 不应废掉整节点（qingyuan-oct qy-weather/qy-station
+    两节点教训）。
+    """
+    return [
+        item for item in violations
+        if item.get("required", True) and item.get("code") == "resource_missing"
+    ]

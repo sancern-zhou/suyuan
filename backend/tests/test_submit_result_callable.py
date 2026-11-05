@@ -27,10 +27,18 @@ async def test_instance_is_directly_awaitable_like_executor_does():
 
 
 @pytest.mark.asyncio
-async def test_execute_without_result_keeps_envelope_none():
+async def test_execute_without_result_bounces_as_undelivered():
+    """空提交（无信封）按"未调用即未交付"打回，不再假象成功。
+
+    2026-11-05 提交时校验前移：此前空提交 ack 成功、runtime 以空信封终止，
+    子 Agent 以为已交付而节点事后判死；现在 success=False 回给子 Agent 补交，
+    终止判定（_submitted_result_from_records）跳过失败提交不终止循环。
+    """
     tool = SubmitResultTool()
     outcome = await tool()
-    assert outcome["success"] is True
+    assert outcome["success"] is False
+    assert outcome["status"] == "validation_failed"
+    assert {"path": "$", "expected": "object result envelope", "got": "missing"} in outcome["data"]["validation_errors"]
     assert tool.submitted_result is None
 
 

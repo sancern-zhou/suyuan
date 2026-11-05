@@ -44,7 +44,12 @@ def delegation_error(parent_mode: str, target_modes: list[str]) -> str | None:
     if is_leaf_mode(parent_mode):
         return f"精简子 Agent {parent_mode} 只执行本节点任务，不支持再次委派或 DAG 编排。"
     project_policy = parent_policy(parent_mode)
-    allowed = set(project_policy.child_modes) if project_policy else PARENT_CHILD_MODES.get(parent_mode)
+    allowed = PARENT_CHILD_MODES.get(parent_mode)
+    if project_policy:
+        # 项目父策略叠加在共享父边界之上，不是替换：混合父（如 assistant，既有
+        # 共享子模式又有项目工作流子模式）保留共享可委派集合；纯项目父
+        # （PARENT_CHILD_MODES 无记录，如 operations_analysis）行为不变。
+        allowed = set(project_policy.child_modes) | (allowed or set())
     project_targets = set(target_modes) & set(child_modes())
     if project_targets and project_policy is None:
         return "项目内部子 Agent 只允许由已配置的父模式委派。"
