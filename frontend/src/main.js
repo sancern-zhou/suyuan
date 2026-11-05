@@ -1,3 +1,4 @@
+import './utils/polyfills.js'
 import { installAccountStoreReset } from './auth/accountStoreReset.js'
 import { discardLegacyConversationState, onAccountChanged, setAccountIdentity } from './auth/accountSession.js'
 import { browserAuthStorage } from './auth/storage.js'

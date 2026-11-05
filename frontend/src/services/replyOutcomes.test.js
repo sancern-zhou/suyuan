@@ -24,3 +24,22 @@ test('updated report versions retain the owning reply through stable group IDs',
   const final = { ...message, data: { resource_group_ids: ['report'] } }
   assert.equal(replyOutcomes(final, [final], [resource('new','report','docx','resource-edit')]).files.length, 1)
 })
+test('keeps only the newest version per logical file name', () => {
+  const older = { ...resource('a', 'a', 'csv'), label: 'qy_oct_windbin_final.csv', updated_at: '2026-11-05T10:00:00Z' }
+  const newer = { ...resource('b', 'b', 'csv'), label: 'qy_oct_windbin_final_1793850871.csv', updated_at: '2026-11-05T12:00:00Z' }
+  const result = replyOutcomes(message, [message], [older, newer])
+  assert.equal(result.files.length, 1)
+  assert.equal(result.files[0].resource.resource_id, 'b')
+})
+test('falls back to filename timestamp when updated_at is missing', () => {
+  const plain = { ...resource('a', 'a', 'csv'), label: 'stats.csv' }
+  const suffixed = { ...resource('b', 'b', 'csv'), label: 'stats_1793850871.csv' }
+  const result = replyOutcomes(message, [message], [plain, suffixed])
+  assert.equal(result.files.length, 1)
+  assert.equal(result.files[0].resource.resource_id, 'b')
+})
+test('distinct logical files are not merged', () => {
+  const windbin = { ...resource('a', 'a', 'csv'), label: 'windbin.csv' }
+  const periodStats = { ...resource('b', 'b', 'csv'), label: 'period_stats.csv' }
+  assert.equal(replyOutcomes(message, [message], [windbin, periodStats]).files.length, 2)
+})
