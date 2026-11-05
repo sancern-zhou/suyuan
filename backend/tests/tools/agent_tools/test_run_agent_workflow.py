@@ -243,7 +243,7 @@ async def test_run_agent_workflow_dispatches_parallel_nodes_and_injects_dependen
     assert all(call["_force_isolated_session"] is True for call in calls)
     assert all(call["max_iterations"] == 20 for call in calls)
     assert all(
-        node["timeout_seconds"] == 360
+        node["timeout_seconds"] == 900
         for node in result["data"]["node_results"].values()
     )
 
@@ -282,9 +282,9 @@ async def test_run_agent_workflow_applies_domain_expert_limits(monkeypatch):
     assert by_mode["expert_analysis"]["max_iterations"] == 20
     views = result["data"]["node_results"]
     assert views["weather"]["target_mode"] == "expert_meteorology"
-    assert views["weather"]["timeout_seconds"] == 300
+    assert views["weather"]["timeout_seconds"] == 900
     assert views["analysis"]["target_mode"] == "expert_analysis"
-    assert views["analysis"]["timeout_seconds"] == 360
+    assert views["analysis"]["timeout_seconds"] == 900
 
 
 @pytest.mark.asyncio
@@ -737,3 +737,35 @@ async def test_run_agent_workflow_query_nodes_get_at_least_eight_iterations(monk
     by_goal = {call["goal"]: call for call in calls}
     assert by_goal["城市取数"]["max_iterations"] == 8
     assert by_goal["气象取数"]["max_iterations"] == 20
+
+
+@pytest.mark.asyncio
+async def test_expert_node_timeout_floor_overrides_authored_smaller_value(monkeypatch):
+    """D6（2026-11-05）：分析子 agent 超时下限 900s——编排写 300s 也抬到下限。"""
+    calls = []
+
+    class FakeSubAgentTool:
+        async def execute(self, **kwargs):
+            calls.append(kwargs)
+            return {"status": "success", "success": True, "result": "ok", "data": {}}
+
+    monkeypatch.setattr(
+        RunAgentWorkflowTool,
+        "_build_sub_agent_tool",
+        staticmethod(lambda: FakeSubAgentTool()),
+    )
+    result = await RunAgentWorkflowTool().execute(
+        workflow={
+            "workflow_id": "timeout-floor",
+            "nodes": [
+                {"task_id": "met", "target_mode": "expert_meteorology", "goal": "气象分析",
+                 "timeout_seconds": 300,
+                 "task_contract": {"protocol_version": "workflow.v1", "question": "静稳形势",
+                                   "deliverables": ["静稳指数"]}},
+            ],
+        },
+    )
+    assert result["success"] is True, result
+    # 超时由 coordinator 按节点定义的 asyncio.timeout 执行，不随 kwargs 下发；
+    # 下限生效体现在节点视图 timeout_seconds 被抬到 900
+    assert result["data"]["node_results"]["met"]["timeout_seconds"] == 900

@@ -48,6 +48,10 @@ class CoordinatorManifest(StrictModel):
 class FrontendManifest(StrictModel):
     theme: str = "default"
     brand_name: str = "风清气智"
+    # 助手浮窗人设名（如「苏小环」），仅供前端浮球/面板文案消费，后端透传不解释。
+    assistant_name: str | None = None
+    # 默认模型档位（如 auto/flash），仅供前端发送兜底消费，后端透传不解释。
+    default_model_tier: str | None = None
     features: dict[str, bool] = Field(default_factory=dict)
     agent_modes: list[str] = Field(default_factory=list)
     default_agent_mode: str | None = None
