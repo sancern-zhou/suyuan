@@ -258,6 +258,7 @@
             </div>
 
             <button
+              v-if="showKnowledgeBaseToggle"
               class="kb-toggle-button"
               :class="{ 'kb-active': showKnowledgeBaseSelector }"
               @click="toggleKnowledgeBase"
@@ -724,11 +725,17 @@ const paletteItems = computed(() => {
   return filterPaletteItems(source, activeTrigger.value.search)
 })
 const showCommandPalette = computed(() => activeTrigger.value !== null)
+// 优先使用宿主显式传入的 agentMode（浮窗固定 assistant），避免全局当前模式影响输入区控件显隐
+const composerAgentMode = computed(() => (
+  validAgentModes.includes(props.agentMode) ? props.agentMode : reactStore.currentMode
+))
 const activeModelTierMode = computed(() => (
-  validAgentModes.includes(reactStore.currentMode) ? reactStore.currentMode : 'assistant'
+  validAgentModes.includes(composerAgentMode.value) ? composerAgentMode.value : 'assistant'
 ))
 const showModelTierSelector = computed(() => shouldShowModelTierSelector(activeModelTierMode.value))
-const showVoiceControls = computed(() => shouldShowVoiceControls(reactStore.currentMode))
+const showVoiceControls = computed(() => shouldShowVoiceControls(composerAgentMode.value))
+// 知识库选择仅知识问答模式需要；其他模式（含浮窗助手）不显示入口
+const showKnowledgeBaseToggle = computed(() => composerAgentMode.value === 'knowledge')
 const contextUsage = computed(() => reactStore.currentState?.contextUsage || null)
 const contextUsagePercent = computed(() => contextUsagePercentOf(
   contextUsage.value?.contextTokens,

@@ -1,23 +1,21 @@
 <template>
-  <div class="reply-outcomes">
-    <article v-for="item in outcomes.files" :key="item.group.group_id" class="file-card">
-      <button class="file-summary" @click.stop="$emit('preview', item.resource.resource_id)">
-        <span class="file-icon" :class="iconClass(item.group.primary?.format || item.resource.format)">{{ badge(item.group.primary?.format || item.resource.format) }}</span>
-        <span class="file-copy"><strong>{{ item.group.primary?.label || item.resource.label }}</strong><small>{{ formats(item.group) }} · 点击查看</small></span>
-        <span class="chevron">›</span>
-      </button>
-      <ResourcePreviewActions :resource="item.resource" :group="item.group" compact />
-    </article>
-    <details v-if="outcomes.others.length" @toggle="opened = $event.target.open">
-      <summary>其他成果（{{ outcomes.others.length }}）</summary>
-      <template v-if="opened">
-        <div v-for="item in outcomes.others" :key="item.group.group_id">
-          <InlineChartCard v-if="item.resource.renderer === 'chart'" :resource="item.resource" />
-          <AuthenticatedImage v-else :source="item.resource.content_url" :alt="item.resource.label" class="outcome-image" @click="$emit('preview', item.resource.resource_id)" />
-        </div>
-      </template>
-    </details>
-  </div>
+  <details v-if="outcomes.files.length || outcomes.others.length" class="reply-outcomes" @toggle="opened = $event.target.open">
+    <summary>文件成果（{{ outcomes.files.length + outcomes.others.length }}）</summary>
+    <template v-if="opened">
+      <article v-for="item in outcomes.files" :key="item.group.group_id" class="file-card">
+        <button class="file-summary" @click.stop="$emit('preview', item.resource.resource_id)">
+          <span class="file-icon" :class="iconClass(item.group.primary?.format || item.resource.format)">{{ badge(item.group.primary?.format || item.resource.format) }}</span>
+          <span class="file-copy"><strong>{{ item.group.primary?.label || item.resource.label }}</strong><small>{{ formats(item.group) }} · 点击查看</small></span>
+          <span class="chevron">›</span>
+        </button>
+        <ResourcePreviewActions :resource="item.resource" :group="item.group" compact />
+      </article>
+      <div v-for="item in outcomes.others" :key="item.group.group_id">
+        <InlineChartCard v-if="item.resource.renderer === 'chart'" :resource="item.resource" />
+        <AuthenticatedImage v-else :source="item.resource.content_url" :alt="item.resource.label" class="outcome-image" @click="$emit('preview', item.resource.resource_id)" />
+      </div>
+    </template>
+  </details>
 </template>
 <script setup>
 import { computed, ref } from 'vue'

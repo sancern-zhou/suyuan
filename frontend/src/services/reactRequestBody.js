@@ -1,3 +1,6 @@
+// 相对导入：本模块会被 node --test 直测，别名仅在 vite 下可解析。
+import { projectConfig } from '../config/projectConfig.js'
+
 export function buildAnalyzeRequestBody(query, options = {}) {
   const {
     sessionId = null,
@@ -6,7 +9,8 @@ export function buildAnalyzeRequestBody(query, options = {}) {
     assistantMode = null,
     agentMode = 'expert',
     knowledgeBaseIds = null,
-    modelTier = 'flash',
+    // 默认档位随项目配置（frontend.default_model_tier）。
+    modelTier = projectConfig.defaultModelTier,
     skillIds = [],
     contextRefs = [],
     activeContexts = null,
@@ -14,7 +18,8 @@ export function buildAnalyzeRequestBody(query, options = {}) {
     mapContext = null,
     userIdentifier = null,
     isInterruption = false,
-    previousPausedRunId = null
+    previousPausedRunId = null,
+    pageContext = null
   } = options
 
   const body = {
@@ -36,5 +41,6 @@ export function buildAnalyzeRequestBody(query, options = {}) {
 
   if (boardContext !== null) body.board_context = boardContext
   if (mapContext !== null) body.map_context = mapContext
+  if (agentMode === 'assistant' && pageContext) body.page_context = pageContext
   return body
 }

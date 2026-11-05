@@ -1008,11 +1008,18 @@ class CallSubAgentTool(LLMTool):
             # Validate the imported catalog, not just requested handles. A stale
             # or missing group must fail before the child starts model calls.
             if _input_contracts:
-                from app.agent.workflow.resource_contract import assert_resource_contracts, check_resource_contracts
-                assert_resource_contracts(_input_contracts, imported_resource_refs)
-                resource_contract_warnings = [item for item in check_resource_contracts(_input_contracts, imported_resource_refs) if not item["required"]]
+                from app.agent.workflow.resource_contract import (
+                    ResourceContractError, check_resource_contracts, fatal_resource_contract_violations,
+                )
+                violations = check_resource_contracts(_input_contracts, imported_resource_refs)
+                # 形态不符（format/fields）降为缺口提示随上下文进入子 Agent，
+                # 仅 required 上游资源整体缺失仍在模型调用开始前失败（2026-11-05）。
+                fatal = fatal_resource_contract_violations(violations)
+                if fatal:
+                    raise ResourceContractError(fatal)
+                resource_contract_warnings = [item for item in violations if item not in fatal]
                 if resource_contract_warnings:
-                    effective_context = (effective_context or "") + "\n资源导入后发现可选证据缺口：" + json.dumps(resource_contract_warnings, ensure_ascii=False) + "\n仅基于可用证据交付并明确限制，不重新取数。"
+                    effective_context = (effective_context or "") + "\n资源导入后发现与资源契约不符/可选证据缺口：" + json.dumps(resource_contract_warnings, ensure_ascii=False) + "\n仅基于可用证据交付并明确限制，不重新取数。"
 
             # 3. 构建子 Agent 请求：ReActAgent 会自行构建系统提示，因此把任务、
             # 补充上下文和规范化后的工作目录作为本轮用户请求一起传入。

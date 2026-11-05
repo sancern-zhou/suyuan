@@ -736,6 +736,12 @@ class ReActAgent:
                 (runtime_metadata or {}).get("authenticated_account")
                 if manual_mode == "assistant" else None
             )
+            page_context = (runtime_metadata or {}).get("page_context")
+            react_loop.context_builder.page_context = (
+                dict(page_context)
+                if manual_mode == "assistant" and isinstance(page_context, dict)
+                else None
+            )
 
             if manual_mode in {"query", "graph"} and map_context:
                 react_loop.context_builder.map_context = map_context

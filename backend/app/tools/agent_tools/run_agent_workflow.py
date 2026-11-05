@@ -63,11 +63,15 @@ _FIXED_QUERY_NODE_MODES = frozenset({
 # 且 submit_result 之后仍需一轮收尾（理想路径实测 5 轮）。
 _QUERY_NODE_MIN_ITERATIONS = 8
 
+# 专家分析类节点默认超时（2026-11-05 上调）：跨节点数据分析实测 8–12 分钟
+# （清远 10 月溯源：expert_meteorology 493s、expert_analysis 705s 成功），
+# 旧默认 300/360s 在分析中途即被取消，重试扩档（×1.5）也覆盖不了。
+# D6：所有分析子 agent 超时下限 900s——编排写了更小值也抬到下限（见 _apply_node_budgets）。
 _DEFAULT_EXPERT_NODE_LIMITS = {
-    "expert_meteorology": {"max_iterations": 15, "timeout_seconds": 300},
-    "expert_analysis": {"max_iterations": 20, "timeout_seconds": 360},
-    "expert_component": {"max_iterations": 20, "timeout_seconds": 360},
-    "expert": {"max_iterations": 30, "timeout_seconds": 480},
+    "expert_meteorology": {"max_iterations": 15, "timeout_seconds": 900},
+    "expert_analysis": {"max_iterations": 20, "timeout_seconds": 900},
+    "expert_component": {"max_iterations": 20, "timeout_seconds": 900},
+    "expert": {"max_iterations": 30, "timeout_seconds": 900},
     # 固定问数流程的运行时上限是阶段预算之和（20 轮）；墙钟 600s 容纳慢查询与重试。
     "query_monitoring": {"max_iterations": 20, "timeout_seconds": 600},
     "query_monitoring_station": {"max_iterations": 20, "timeout_seconds": 600},
@@ -116,6 +120,7 @@ WORKFLOW_SCHEMA_DESCRIPTION = (
     + "**硬约束**：固定问数节点由运行时控制为最多 20 轮（可收紧，低于 8 的值抬到 8），失败项最多补查一次；"
     "任务书写清时间范围、区域与指标口径即可，不要教写 SQL。"
     "专家节点 task_contract.deliverables 最多 3 项，超过必须拆成多个并行节点。"
+    "专家分析类节点 timeout 下限 900s（跨节点数据分析实测 8–12 分钟），声明更小值也会被抬到 900s。"
     "报告需要的分析图表必须在对应子节点的 goal/task_contract 中要求随节点产出，"
     "禁止 DAG 完成后由父 Agent 重新绘制分析图表。"
     "报告 DAG 禁止综合问数（query / query_monitoring）与综合 expert 子节点；"
@@ -654,7 +659,16 @@ class RunAgentWorkflowTool(LLMTool):
                 limits = _DEFAULT_EXPERT_NODE_LIMITS.get(str(node.get("target_mode")))
                 if limits:
                     node.setdefault("max_iterations", limits["max_iterations"])
-                    node.setdefault("timeout_seconds", limits["timeout_seconds"])
+                    if str(node.get("target_mode") or "").startswith("expert"):
+                        # D6（2026-11-05）：分析子 agent 超时下限 900s——编排写了更小值也抬到下限，
+                        # 防止 300/360s 类小预算在分析中途取消子代理（qingyuan-oct 教训）。
+                        try:
+                            authored = int(node.get("timeout_seconds") or 0)
+                        except (TypeError, ValueError):
+                            authored = 0
+                        node["timeout_seconds"] = max(authored, limits["timeout_seconds"])
+                    else:
+                        node.setdefault("timeout_seconds", limits["timeout_seconds"])
                 if str(node.get("target_mode") or "") in _FIXED_QUERY_NODE_MODES:
                     try:
                         configured = int(node.get("max_iterations"))

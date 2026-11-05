@@ -1137,6 +1137,22 @@ export const useReactStore = defineStore('react', {
       console.log('[reset] Reset current mode:', this.currentMode)
     },
 
+    // 重置指定模式的会话状态，不切换全局 currentMode（浮窗新建对话使用）。
+    resetModeConversation(mode) {
+      if (!VALID_MODES.includes(mode)) return
+      const activeId = this.activeSessionByMode[mode]
+      const current = (activeId && this.sessionStates[activeId]) || this.modeStates[mode]
+      const emptyState = createEmptyModeState()
+      emptyState.maxIterations = current?.maxIterations
+      if (activeId) {
+        if (!this.sessionStates[activeId]?.isAnalyzing) delete this.sessionStates[activeId]
+        delete this.activeSessionByMode[mode]
+        Object.assign(this.modeStates[mode], emptyState)
+      } else if (current) {
+        Object.assign(current, emptyState)
+      }
+    },
+
     // 添加消息（添加到当前模式）
     addMessage(type, content, data = null, attachments = null, extraFields = {}) {
       const message = {
@@ -2714,6 +2730,7 @@ export const useReactStore = defineStore('react', {
         contextRefs = [],
         activeContexts = null,
         messageAttachments = [],
+        pageContext = null,
         preserveCurrentMode = false,
         queuedAlreadyShown = false,
         dequeuedInput = false,
@@ -2923,6 +2940,7 @@ export const useReactStore = defineStore('react', {
           skillIds,
           contextRefs,
           activeContexts,
+          pageContext: actualMode === 'assistant' ? pageContext : null,
           ...(boardContext !== null ? { boardContext } : {}),
           ...(mapContext !== null ? { mapContext } : {}),
           onAccepted,
