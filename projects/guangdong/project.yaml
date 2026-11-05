@@ -27,6 +27,9 @@ frontend:
   # 首页 scenes 布局的场景与各场景模式入口（键必须是前端静态场景 id；
   # mode_ids 内的模式必须已在 agent_modes 与前端静态目录中声明）。
   # 2026-10-25 按业务决策下线画板(board)与幻灯片(ppt)类模式，入口不保留。
+  # 2026-11-04 确认既定意图：下线的只是前台入口，画板/PPT 能力保留、只经
+  # 助手委派使用（call_sub_agent target_mode="board"/"ppt"）；共享助手角色
+  # 契约"PPT 和画板交给 ppt、board"与本决策一致，不改共享层。
   agent_scenes:
   - office
   - monitoring
@@ -390,7 +393,28 @@ backend:
       timeout_seconds: 480
       max_deliverables: 3
   # 父级预算起步值（江苏 16 节点是 10 子模式成熟后的值，广东 9 个子模式先 12）。
+  # 2026-11-04 助手接入项目工作流子模式：运维取数/分析类问题由助手直接单点委派
+  # gd_ops 节点（call_sub_agent），不再强制绕行 operations_analysis 主模式。
+  # 共享可委派子模式（office/knowledge/query_monitoring_* 等）不在 child_modes——
+  # 清单校验要求父策略只含项目工作流子模式；共享集合由 delegation_error 与
+  # scope_delegation_schema 的混合父模式并集逻辑保留，二者以本清单为准追加。
   agent_workflow_parents:
+    assistant:
+      child_modes:
+      - gd_ops_data_workorder
+      - gd_ops_data_alarm
+      - gd_ops_data_inspection
+      - gd_ops_data_performance
+      - gd_ops_data_device
+      - gd_ops_data_station
+      - gd_ops_data_rates
+      - gd_ops_regular_analysis
+      - gd_ops_risk_analysis
+      max_concurrency: 3
+      max_nodes: 12
+      max_retries: 3
+      max_extensions: 2
+      timeout_seconds: 1800
     operations_analysis:
       child_modes:
       - gd_ops_data_workorder
@@ -413,6 +437,11 @@ backend:
   # 2026-10-25 ops 对标江苏改为审核专用全量白名单：仅保留例行/故障工单审核链路、
   # 语义层口径核对与最小只读佐证工具，分析类工具归 gd_query/运维分析。
   agent_mode_tools:
+    # assistant 仅声明 run_agent_workflow 以满足 workflow 父模式校验（每个父模式
+    # 必须声明该工具）；助手工具面仍由共享 ASSISTANT_TOOL_NAMES 白名单收敛，
+    # 此接管列表不扩权（get_tools_by_mode 对 assistant/office 会并回角色基线）。
+    assistant:
+    - run_agent_workflow
     ops:
     - ask_user_question
     - list_session_resources
@@ -659,6 +688,22 @@ backend:
     - publish_session_file
     - execute_python
     - create_business_chart
+  # 2026-11-04 业务确认助手去掉 send_notification：Web/App 正常交付走会话资源
+  # 卡片与内联预览（助手契约明示"不必另发 send_notification"），提醒类外发统一
+  # 经 manage_assistant_schedule 的服务端投递；本部署助手无微信主动外发场景。
+  # 共享白名单保留该工具（许昌等微信渠道部署仍依赖），此处仅项目级禁用。
+  #
+  # 2026-11-05 禁用 execute_crawler_sql_query：采集库（StationHour/StationDay，
+  # MySQL）为本部署不存在的数据源——.env.guangdong 无任何 crawler DB 配置，
+  # 工具按默认值连 127.0.0.1 必然失败。该工具在共享层进入
+  # query_monitoring/query_monitoring_station/query_monitoring_city 白名单，
+  # 2026-11-04 夜间站点问数节点每次取数先烧 3+ 轮必然失败调用（详见
+  # workflow_journal qingyuan-oct 两次 DAG 失败）。站点/城市历史数据走
+  # query_gd_suncere_* 与 query_station_standard_report 系报表包视图。
+  # 共享白名单保留该工具（许昌采集库部署仍依赖），此处仅项目级禁用。
+  disabled_tools:
+  - send_notification
+  - execute_crawler_sql_query
   tools:
   - execute_guangdong_mart_sql
   - guangdong_query_metrics

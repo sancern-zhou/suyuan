@@ -5,6 +5,8 @@ import pytest
 from app.agent.prompts.prompt_builder import build_react_system_prompt
 from app.agent.prompts.project_prompt import load_project_mode_prompt
 from app.agent.prompts.tool_registry import get_tools_by_mode
+from app.agent.tool_adapter import get_tool_schemas
+from app.agent.workflow.delegation import delegation_error
 from app.project_config.loader import load_project_context
 from config.settings import settings
 
@@ -276,3 +278,54 @@ def test_ops_mode_is_audit_focused_with_lean_whitelist():
     assert "故障工单人工复核" in prompt
     assert "平台考核口径原值" in prompt
     assert "转工单率分母" in prompt
+
+
+def test_assistant_parent_scopes_project_children_with_shared_set():
+    """助手混合父模式：可直接单点委派 gd_ops 工作流子模式，共享子模式保留。"""
+    manifest = _guangdong_context().manifest
+    children = set(manifest.backend.agent_workflow_modes)
+    assert set(manifest.backend.agent_workflow_parents["assistant"].child_modes) == children
+
+    # 项目子模式放行；共享可委派子模式与 office 保留；工作台主入口仍不可子调用
+    assert delegation_error("assistant", ["gd_ops_data_workorder"]) is None
+    assert delegation_error("assistant", ["gd_ops_risk_analysis"]) is None
+    assert delegation_error("assistant", ["office"]) is None
+    assert delegation_error("assistant", ["query_monitoring_city"]) is None
+    assert delegation_error("assistant", ["gd_query"])
+    assert delegation_error("assistant", ["operations_analysis"])
+    assert delegation_error("gd_query", ["gd_ops_data_workorder"])
+
+    schemas = {s["name"]: s for s in get_tool_schemas(mode="assistant")}
+    direct = schemas["call_sub_agent"]["parameters"]["properties"]["target_mode"]
+    dag = schemas["run_agent_workflow"]["parameters"]["properties"]["workflow"][
+        "properties"]["nodes"]["items"]["properties"]["target_mode"]
+    assert children <= set(direct["enum"])
+    assert {"office", "knowledge", "query_monitoring_station", "ppt", "board", "ops"} <= set(direct["enum"])
+    assert set(direct["enum"]) == set(dag["enum"])
+    # 一行制定位与项目子模式契约要求进入 call_sub_agent；DAG 工具描述不被覆盖
+    assert "gd_ops_data_workorder：" in direct["description"]
+    assert "项目工作流子模式" in schemas["call_sub_agent"]["description"]
+    assert "项目工作流子模式" not in schemas["run_agent_workflow"]["description"]
+
+
+def test_assistant_whitelist_excludes_send_notification():
+    """2026-11-04 业务决策：助手去掉 send_notification（项目级禁用，共享白名单保留）。"""
+    tools = get_tools_by_mode("assistant")
+    assert "send_notification" not in tools
+    schemas = {s["name"]: s for s in get_tool_schemas(mode="assistant")}
+    assert "send_notification" not in schemas
+    # 许昌等微信渠道部署不受影响：共享白名单仍声明该工具
+    from app.agent.prompts.tool_registry import ASSISTANT_TOOL_ORDER
+    assert "send_notification" in ASSISTANT_TOOL_ORDER
+
+
+def test_crawler_sql_query_disabled_for_guangdong():
+    """2026-11-05：采集库 MySQL 非本部署数据源，禁用 crawler 工具（项目级）。"""
+    for mode in ("query_monitoring", "query_monitoring_station", "query_monitoring_city"):
+        tools = get_tools_by_mode(mode)
+        assert "execute_crawler_sql_query" not in tools, mode
+        schemas = {s["name"] for s in get_tool_schemas(mode=mode)}
+        assert "execute_crawler_sql_query" not in schemas, mode
+    # 站点取数仍保留报表包视图与目录解析，取数能力不因禁用而缺失
+    station_tools = get_tools_by_mode("query_monitoring_station")
+    assert {"query_station_standard_report", "monitoring_station_catalog"} <= set(station_tools)
