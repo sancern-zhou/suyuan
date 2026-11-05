@@ -17,6 +17,8 @@ test('default project enables core and legacy', () => {
   assert.deepEqual(config.frontend, {
     theme: 'default',
     brandName: '风清气智',
+    assistantName: null,
+    defaultModelTier: null,
     features: {},
     agentModes: ['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops'],
     defaultAgentMode: 'assistant',

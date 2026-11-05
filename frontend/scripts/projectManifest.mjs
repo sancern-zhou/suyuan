@@ -290,6 +290,9 @@ export function loadProjectBuildConfig({ projectId, repoRoot }) {
     frontend: {
       theme: manifest.frontend?.theme ?? 'default',
       brandName: manifest.frontend?.brand_name ?? '风清气智',
+      // 助手浮窗人设名与默认模型档位：项目级部署决策，缺省回落共享默认值。
+      assistantName: manifest.frontend?.assistant_name ?? null,
+      defaultModelTier: manifest.frontend?.default_model_tier ?? null,
       features: manifest.frontend?.features ?? {},
       agentModes,
       defaultAgentMode,

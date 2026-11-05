@@ -1,12 +1,12 @@
 <template>
-  <section class="assistant-floating-panel" aria-label="助手">
+  <section class="assistant-floating-panel" :aria-label="assistantName">
     <header class="floating-header">
-      <div class="assistant-title"><span class="status-dot" :class="{ running: state.isAnalyzing }"></span><strong>助手</strong></div>
+      <div class="assistant-title"><span class="status-dot" :class="{ running: state.isAnalyzing }"></span><strong>{{ assistantName }}</strong></div>
       <div class="header-actions">
         <button type="button" class="items-toggle" :class="{ 'has-unread': floating.notificationUnread }" title="事项与建议" aria-label="事项与建议" @click="itemsOpen = true"><ListChecks :size="17" /></button>
         <button type="button" title="新建对话" aria-label="新建对话" @click="newConversation"><Plus :size="18" /></button>
         <button type="button" title="展开主工作区" aria-label="展开主工作区" @click="openWorkspace"><Maximize2 :size="17" /></button>
-        <button type="button" title="收起助手" aria-label="收起助手" @click="close"><X :size="19" /></button>
+        <button type="button" title="收起（Esc）" aria-label="收起助手" @click="close"><ChevronDown :size="19" /></button>
       </div>
     </header>
     <div v-if="error" class="floating-error" role="alert">{{ error }}<button type="button" @click="error = ''">知道了</button></div>
@@ -27,6 +27,9 @@
       @load-more="store.loadMoreMessages()"
       @preview-message-attachment="preview"
     />
+    <div v-if="!policy.readOnly && quickPrompts.length && !state.isAnalyzing" class="floating-quick-prompts" aria-label="快捷提问">
+      <button v-for="prompt in quickPrompts" :key="prompt.label" type="button" :title="prompt.prompt" @click="send({ query: prompt.prompt })">{{ prompt.label }}</button>
+    </div>
     <div v-if="policy.readOnly" class="read-only-notice">{{ policy.notice }}</div>
     <AgentInteractionDialog
       :interaction="state.pendingInteraction"
@@ -42,7 +45,7 @@
       :pending-steering-inputs="state.pendingSteeringInputs || []"
       :background-runs="state.backgroundDelegation?.runs || []"
       agent-mode="assistant"
-      placeholder="向助手提问，或让它跟进当前工作"
+      :placeholder="inputPlaceholder"
       @send="send"
       @pause="store.pauseAnalysis()"
     />
@@ -55,13 +58,15 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { ListChecks, Maximize2, Plus, X } from 'lucide-vue-next'
+import { ChevronDown, ListChecks, Maximize2, Plus } from 'lucide-vue-next'
 import ReActMessageList from '@/components/ReActMessageList.vue'
 import InputBox from '@/components/InputBox.vue'
 import AgentInteractionDialog from '@/components/reactAnalysis/dialogs/AgentInteractionDialog.vue'
 import AssistantPanel from '@/components/reactAnalysis/AssistantPanel.vue'
+import { projectConfig } from '@/config/projectConfig.js'
+import { getCoordinatorQuickPrompts } from '@/api/coordinatorConfig.js'
 import { useReactStore } from '@/stores/reactStore.js'
 import { useAssistantFloatingStore } from '@/stores/assistantFloating.js'
 import { useConversationActions } from '@/composables/reactAnalysis/useConversationActions.js'
@@ -80,6 +85,21 @@ const state = computed(() => floating.state)
 const itemsOpen = ref(false)
 const error = ref('')
 const interactionResolving = ref(false)
+// 助手人设名随项目配置（frontend.assistant_name），标题与占位文案统一取该名。
+const assistantName = projectConfig.assistantName
+const inputPlaceholder = `向${assistantName}提问，或让它跟进当前工作`
+// 常用问题：运行时配置优先（管理端可配、无需重建），失败回落项目内置配置。
+const runtimeQuickPrompts = ref(null)
+const quickPrompts = computed(() => Array.isArray(runtimeQuickPrompts.value)
+  ? runtimeQuickPrompts.value
+  : (Array.isArray(projectConfig.coordinator?.quickPrompts) ? projectConfig.coordinator.quickPrompts : []))
+
+onMounted(() => {
+  getCoordinatorQuickPrompts().then(data => {
+    const items = Array.isArray(data?.items) ? data.items : []
+    runtimeQuickPrompts.value = items.filter(item => item?.label && item?.prompt)
+  }).catch(() => { runtimeQuickPrompts.value = null })
+})
 
 async function send(payload) {
   error.value = ''
@@ -115,6 +135,9 @@ async function resolveInteraction(resolution) {
 .header-actions { display: flex; gap: 2px; } button { font: inherit; } .header-actions button { position: relative; border: 0; background: transparent; color: inherit; padding: 6px; cursor: pointer; border-radius: 6px; display: flex; } .header-actions button:hover { background: var(--bg-hover, #f0f4f8); }
 .items-toggle.has-unread::after { content: ''; position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: #e45555; border: 1.5px solid #fff; }
 .delegation-banner { padding: 6px 14px; font-size: 12px; background: #edf5ff; color: #34638d; flex-shrink: 0; } .delegation-banner.completed { background: #eaf7f0; color: #26754d; }
+.floating-quick-prompts { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 10px 0; flex-shrink: 0; }
+.floating-quick-prompts button { padding: 5px 10px; border: 1px solid var(--border-color, #dfe7ef); border-radius: 999px; background: var(--bg-container, #fff); color: var(--text-secondary, #5a6b7d); font-size: 12px; cursor: pointer; }
+.floating-quick-prompts button:hover { border-color: #4386e8; color: #2a5da8; }
 .assistant-floating-panel :deep(.message-viewport) { min-height: 0; flex: 1; }
 .assistant-floating-panel :deep(.message-list-content) { padding: 12px 10px; }
 .assistant-floating-panel :deep(.agent-message.final) { background: transparent; padding: 2px 2px; }
