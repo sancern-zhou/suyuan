@@ -381,7 +381,8 @@ backend:
       boundary: 不重新查询业务来源、不作因果或责任认定、不成稿
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用；分析图表随节点交付
       max_iterations: 20
-      timeout_seconds: 420
+      # D6：分析子 agent 超时下限 900s（2026-11-05，实测跨节点数据分析 8–12 分钟）
+      timeout_seconds: 900
       max_deliverables: 3
     gd_ops_risk_analysis:
       positioning: 风险线索专题分析
@@ -390,7 +391,8 @@ backend:
       boundary: 证据不足只报线索和缺口，不认定违规、不自行补查或成稿
       outputs: 结构化 findings、evidence、uncertainties、data_gaps 与资源引用；分析图表随节点交付
       max_iterations: 24
-      timeout_seconds: 480
+      # D6：分析子 agent 超时下限 900s（2026-11-05，实测跨节点数据分析 8–12 分钟）
+      timeout_seconds: 900
       max_deliverables: 3
   # 父级预算起步值（江苏 16 节点是 10 子模式成熟后的值，广东 9 个子模式先 12）。
   # 2026-11-04 助手接入项目工作流子模式：运维取数/分析类问题由助手直接单点委派
