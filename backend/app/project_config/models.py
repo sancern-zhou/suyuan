@@ -99,6 +99,10 @@ class FrontendManifest(StrictModel):
     brand_name: str = "风清气智"
     # 品牌点击跳转链接（如上级平台选择页），仅供前端构建脚本消费，后端透传不解释。
     brand_link: str | None = None
+    # 助手浮窗人设名（如「苏小环」），仅供前端浮球/面板文案消费，后端透传不解释。
+    assistant_name: str | None = None
+    # 默认模型档位（如 auto/flash），仅供前端发送兜底消费，后端透传不解释。
+    default_model_tier: str | None = None
     features: dict[str, bool] = Field(default_factory=dict)
     agent_modes: list[str] = Field(default_factory=list)
     default_agent_mode: str | None = None
