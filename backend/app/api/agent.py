@@ -1531,13 +1531,12 @@ async def analyze_stream(
                             break
 
             except asyncio.CancelledError:
-                if (
-                    actual_session_id
-                    and session is not None
-                    and cancel_event is not None
-                    and await cancellation_registry.can_finalize(actual_session_id, cancel_event)
-                ):
+                if actual_session_id and session is not None and cancel_event is not None:
                     async def persist_interrupted_transcript() -> None:
+                        # can_finalize 是清理链的第一环，必须放进不可中断区内：
+                        # 取消风暴中它自身的 await 被打断会连带跳过暂停转录落盘。
+                        if not await cancellation_registry.can_finalize(actual_session_id, cancel_event):
+                            return
                         pause_reason = await cancellation_registry.pause_reason(
                             actual_session_id,
                             cancel_event,

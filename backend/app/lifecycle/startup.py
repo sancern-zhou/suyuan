@@ -57,6 +57,19 @@ async def run_startup(app: FastAPI) -> None:
 
     await initialize_tools_and_agents()
 
+    if app_role == "web":
+        # Web 进程独占 SSE agent run 的取消状态键，且部署为单实例：启动瞬间
+        # 进程内不可能有存活 run，非终态状态全部是上次硬杀/重启留下的孤儿。
+        # 不回收则 REGISTER 拒绝新 run、暂停屏障等满超时，会话被锁死到 TTL。
+        try:
+            from app.agent.runtime.cancellation import cancellation_registry
+
+            recovered = await cancellation_registry.recover_stale_states()
+            if recovered:
+                logger.info("cancellation_stale_states_recovered", recovered=recovered)
+        except Exception as e:
+            logger.warning("cancellation_stale_state_recovery_skipped", error=str(e))
+
     if starts_background_services(app_role):
         database_ready = await init_database_and_fetchers()
         await start_scheduled_task_service()

@@ -34,6 +34,7 @@ class CancellationStateStore(Protocol):
         *,
         error: Optional[str] = None,
     ) -> bool: ...
+    async def list_non_terminal_sessions(self) -> "list[tuple[str, CancellationState]]": ...
     async def aclose(self) -> None: ...
 
 
@@ -109,6 +110,14 @@ class InMemoryCancellationStateStore:
                 error=error,
             )
             return True
+
+    async def list_non_terminal_sessions(self) -> "list[tuple[str, CancellationState]]":
+        async with self._lock:
+            return [
+                (session_id, state)
+                for session_id, state in self._states.items()
+                if state.status not in TERMINAL_STATUSES
+            ]
 
     async def aclose(self) -> None:
         return None
@@ -226,6 +235,38 @@ return 1
             self.ttl_seconds,
         )
         return bool(result)
+
+    async def list_non_terminal_sessions(self) -> "list[tuple[str, CancellationState]]":
+        # 会话段可能自身含冒号（agent-workflow:<id>），必须按前缀整段剥离，
+        # 不能按最后一个冒号切分。
+        key_prefix = f"{self.key_prefix}:state:"
+        states: list[tuple[str, CancellationState]] = []
+        cursor = 0
+        while True:
+            cursor, keys = await self.redis.scan(
+                cursor, match=f"{key_prefix}*", count=100
+            )
+            for key in keys:
+                values = await self.redis.hgetall(key)
+                if not values or not values.get("run_id"):
+                    continue
+                status = str(values.get("status") or "running")
+                if status in TERMINAL_STATUSES:
+                    continue
+                states.append(
+                    (
+                        key[len(key_prefix):],
+                        CancellationState(
+                            run_id=str(values["run_id"]),
+                            status=status,
+                            reason=str(values["reason"]) if values.get("reason") else None,
+                            error=str(values["error"]) if values.get("error") else None,
+                        ),
+                    )
+                )
+            if cursor == 0:
+                break
+        return states
 
     async def aclose(self) -> None:
         await self.redis.aclose()

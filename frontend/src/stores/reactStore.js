@@ -47,7 +47,7 @@ import {
   promoteUnappliedSteeringInputsToQueue,
   removePendingSteeringInput
 } from './reactStoreSteering.js'
-import { getEventRunId, shouldApplyRunEvent } from './reactStoreRunOwnership.js'
+import { getEventRunId, shouldApplyRunEvent, shouldClearPendingPausedRunId } from './reactStoreRunOwnership.js'
 import { createRunStreamTracker, observeRunStreamEvent, shouldReportMissingRunProgress } from './reactStoreRunReattach.js'
 import {
   acknowledgeQueuedInput,
@@ -1963,6 +1963,11 @@ export const useReactStore = defineStore('react', {
           addMessage('error', `致命错误: ${targetState.error}`, data)
           targetState.streamingAnswerMessageId = null
           targetState.activeRunId = null
+          // 暂停屏障失败已经报错给用户：对旧 run 的等待契约至此履行完毕，
+          // 保留 pendingPausedRunId 只会让后续每条消息重复撞上同一道屏障。
+          if (shouldClearPendingPausedRunId(data)) {
+            targetState.pendingPausedRunId = null
+          }
           promoteUnappliedSteeringInputsToQueue(targetState, {
             agentMode: targetMode,
             queuedAlreadyShown: true,
