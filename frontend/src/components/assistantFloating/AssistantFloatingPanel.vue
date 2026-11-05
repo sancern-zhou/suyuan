@@ -1,7 +1,7 @@
 <template>
-  <section class="assistant-floating-panel" aria-label="助手">
+  <section class="assistant-floating-panel" :aria-label="assistantName">
     <header class="floating-header">
-      <div class="assistant-title"><span class="status-dot" :class="{ running: state.isAnalyzing }"></span><strong>助手</strong></div>
+      <div class="assistant-title"><span class="status-dot" :class="{ running: state.isAnalyzing }"></span><strong>{{ assistantName }}</strong></div>
       <div class="header-actions">
         <button type="button" class="items-toggle" :class="{ 'has-unread': floating.notificationUnread }" title="事项与建议" aria-label="事项与建议" @click="itemsOpen = true"><ListChecks :size="17" /></button>
         <button type="button" title="新建对话" aria-label="新建对话" @click="newConversation"><Plus :size="18" /></button>
@@ -45,7 +45,7 @@
       :pending-steering-inputs="state.pendingSteeringInputs || []"
       :background-runs="state.backgroundDelegation?.runs || []"
       agent-mode="assistant"
-      placeholder="向助手提问，或让它跟进当前工作"
+      :placeholder="inputPlaceholder"
       @send="send"
       @pause="store.pauseAnalysis()"
     />
@@ -85,6 +85,9 @@ const state = computed(() => floating.state)
 const itemsOpen = ref(false)
 const error = ref('')
 const interactionResolving = ref(false)
+// 助手人设名随项目配置（frontend.assistant_name），标题与占位文案统一取该名。
+const assistantName = projectConfig.assistantName
+const inputPlaceholder = `向${assistantName}提问，或让它跟进当前工作`
 // 常用问题：运行时配置优先（管理端可配、无需重建），失败回落项目内置配置。
 const runtimeQuickPrompts = ref(null)
 const quickPrompts = computed(() => Array.isArray(runtimeQuickPrompts.value)

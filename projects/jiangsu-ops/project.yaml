@@ -7,6 +7,10 @@ modules:
 frontend:
   theme: default
   brand_name: 苏环运智
+  # 助手浮窗人设名：浮球/面板标题/占位文案统一显示「苏小环」，不显示通用「助手」。
+  assistant_name: 苏小环
+  # 默认模型档位为自动档（7634ffa2 同批决策），配置化后共享层回落 flash。
+  default_model_tier: auto
   # 点击侧边栏品牌名跳转上一级统一鉴权平台的平台选择页；留空则品牌不可点击。
   brand_link: "http://11.54.200.200:8183/#/platform/platformSelection"
   features:

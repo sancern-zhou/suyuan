@@ -12,15 +12,15 @@
       class="assistant-ball"
       :class="{ running: floating.state?.isAnalyzing, dragging }"
       :style="ballStyle"
-      title="打开助手（可拖动）"
-      aria-label="打开助手"
+      :title="ballTitle"
+      :aria-label="ballTitle"
       @pointerdown="startDrag"
       @click="handleClick"
     >
       <MessageCircle :size="27" aria-hidden="true" />
       <span v-if="floating.unread" class="ball-badge">{{ floating.unread > 99 ? '99+' : floating.unread }}</span>
       <span v-else-if="floating.notificationUnread" class="notification-dot"></span>
-      <span class="ball-label">助手</span>
+      <span class="ball-label">{{ assistantName }}</span>
     </button>
   </div>
 </template>
@@ -31,7 +31,11 @@ import { useRouter } from 'vue-router'
 import { MessageCircle } from 'lucide-vue-next'
 import { useAssistantFloatingStore } from '@/stores/assistantFloating.js'
 import AssistantFloatingPanel from './AssistantFloatingPanel.vue'
+import { projectConfig } from '@/config/projectConfig.js'
 
+// 助手人设名随项目配置（frontend.assistant_name），缺省「助手」。
+const assistantName = projectConfig.assistantName
+const ballTitle = `打开${assistantName}（可拖动）`
 const floating = useAssistantFloatingStore()
 const router = useRouter()
 const ballRef = ref(null)

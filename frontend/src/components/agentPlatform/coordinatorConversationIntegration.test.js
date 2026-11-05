@@ -27,6 +27,8 @@ test('floating assistant is app-level with quick prompts and esc collapse; dock 
 
   assert.match(app, /<AssistantFloatingHost/)
   assert.match(projectYaml, /assistant_floating: true/)
+  assert.match(projectYaml, /assistant_name: 苏小环/)
+  assert.match(projectYaml, /default_model_tier: auto/)
   assert.match(host, /Escape/)
   assert.match(panel, /getCoordinatorQuickPrompts/)
   assert.match(panel, /quickPrompts/)
@@ -47,6 +49,6 @@ test('assistant sends delegate to shared conversation actions without keyword ro
   assert.match(management, /useConversationActions\(/)
   assert.doesNotMatch(management, /resolveCoordinatorMode\(/)
   assert.match(actions, /resolveDirectThroughRun\(/)
-  assert.match(actions, /payload\.modelTier \|\| 'auto'/)
+  assert.match(actions, /payload\.modelTier \|\| projectConfig\.defaultModelTier/)
 })
 

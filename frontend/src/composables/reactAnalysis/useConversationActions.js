@@ -1,5 +1,7 @@
 import { computed } from 'vue'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
+// 相对导入：本模块会被 node --test 直测，别名仅在 vite 下可解析。
+import { projectConfig } from '../../config/projectConfig.js'
 import { steerAssistantRun } from '@/services/assistantApi.js'
 import { chooseRestoredResource } from '@/services/sessionResourceLifecycle.js'
 import { confirmResourcePreviewLeave } from '@/services/resourcePreviewLeaveGuard.js'
@@ -50,8 +52,8 @@ export function useConversationActions(store, { getState = null, preserveCurrent
     const options = {
       knowledgeBaseIds: payload.knowledgeBaseIds || [],
       agentMode,
-      // 江苏默认档位为自动档（7634ffa2 同批决策）：未显式选档时不降级到 flash。
-      modelTier: payload.modelTier || 'auto',
+      // 默认档位随项目配置（frontend.default_model_tier）：未显式选档时取项目决策值。
+      modelTier: payload.modelTier || projectConfig.defaultModelTier,
       skillIds: payload.skillIds || [],
       contextRefs: payload.contextRefs || [],
       activeContexts: Array.isArray(payload.activeContexts) ? payload.activeContexts : null,

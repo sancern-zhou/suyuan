@@ -18,6 +18,8 @@ test('default project enables core and legacy', () => {
     theme: 'default',
     brandName: '风清气智',
     brandLink: null,
+    assistantName: null,
+    defaultModelTier: null,
     features: {},
     agentModes: ['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops'],
     defaultAgentMode: 'assistant',
@@ -54,6 +56,9 @@ test('jiangsu operations project exposes its dedicated operations modes', () => 
   assert.equal(config.frontend.defaultAgentMode, 'ops')
   assert.equal(config.frontend.brandName, '苏环运智')
   assert.equal(config.frontend.brandLink, 'http://11.54.200.200:8183/#/platform/platformSelection')
+  // 江苏部署决策：助手人设「苏小环」+ 默认档位自动档（yaml 键经 camelize 透传）。
+  assert.equal(config.frontend.assistantName, '苏小环')
+  assert.equal(config.frontend.defaultModelTier, 'auto')
   assert.equal(config.frontend.agentModeOverrides.ops.name, '工单审核模式')
   assert.equal(config.frontend.agentModeOverrides.ops.shortName, '智能工单审核')
   assert.equal(config.frontend.agentModeOverrides.jiangsu_query.name, '运维问数生图智能体')

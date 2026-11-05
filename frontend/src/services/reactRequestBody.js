@@ -1,3 +1,6 @@
+// 相对导入：本模块会被 node --test 直测，别名仅在 vite 下可解析。
+import { projectConfig } from '../config/projectConfig.js'
+
 export function buildAnalyzeRequestBody(query, options = {}) {
   const {
     sessionId = null,
@@ -6,7 +9,8 @@ export function buildAnalyzeRequestBody(query, options = {}) {
     assistantMode = null,
     agentMode = 'expert',
     knowledgeBaseIds = null,
-    modelTier = 'auto',
+    // 默认档位随项目配置（frontend.default_model_tier）。
+    modelTier = projectConfig.defaultModelTier,
     skillIds = [],
     contextRefs = [],
     activeContexts = null,
