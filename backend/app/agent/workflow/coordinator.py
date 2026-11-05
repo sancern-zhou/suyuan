@@ -21,7 +21,7 @@ from .model_failure_policy import resolve_model_failure_policy, transient_backof
 from .runtime import TERMINAL_STATUSES, WorkflowRuntime
 from .routing import validate_condition, evaluate_condition
 from .stall_watch import WorkflowStallWatch
-from .resource_contract import ResourceContractError, validate_contract_definition, assert_resource_contracts, check_resource_contracts, result_handles
+from .resource_contract import ResourceContractError, validate_contract_definition, assert_resource_contracts, check_resource_contracts, fatal_resource_contract_violations, result_handles
 
 logger = structlog.get_logger()
 
@@ -444,7 +444,8 @@ class WorkflowCoordinator:
                  "status": node.status, "reason": self.node_errors.get(node.task_id, "upstream unavailable")}
                 for node in self._graph_nodes() if node.status in {"failed", "blocked"}]
         gaps += [{"task_id": task_id, "required": False, "status": "resource_gap", "reason": str(item["details"])}
-                 for task_id, errors in self.node_contract_errors.items() for item in errors if not item.get("required", True)]
+                 for task_id, errors in self.node_contract_errors.items()
+                 for item in errors if not fatal_resource_contract_violations([item])]
         retryable = [node.task_id for node in self._graph_nodes() if node.status == "failed"
                      and (run := self.runtime.find_run(task_id=node.task_id)) is not None
                      and run.attempt < run.max_attempts and self.node_retryable.get(node.task_id, True)] if hasattr(self, "runtime") and not self.budget_state.get("exhausted") else []
@@ -537,7 +538,7 @@ class WorkflowCoordinator:
                 if not skip_reason:
                     for dependency in spec.dependencies:
                         for violation in self.node_contract_errors.get(dependency, []):
-                            if not violation.get("required", True):
+                            if not fatal_resource_contract_violations([violation]):
                                 self.node_input_gaps.setdefault(task_id, []).append({
                                     "task_id": dependency, "status": "resource_gap", "reason": str(violation["details"]),
                                 })
@@ -796,9 +797,13 @@ class WorkflowCoordinator:
                 self.node_contract_errors[task_id] = violations
                 self.node_input_gaps.setdefault(task_id, []).extend(
                     {"task_id": item["source_task_id"], "status": "resource_gap", "reason": str(item["details"])}
-                    for item in violations if not item["required"]
+                    for item in violations if not fatal_resource_contract_violations([item])
                 )
-                assert_resource_contracts(list(node.input_contracts), input_handles)
+                # 形态不符（format/fields）降为记录不阻断（2026-11-05）：子 Agent
+                # 带着缺口说明照常执行，仅 required 上游资源整体缺失仍在执行前失败。
+                fatal = fatal_resource_contract_violations(violations)
+                if fatal:
+                    raise ResourceContractError(fatal)
             async with self.governor:
                 executions = self.budget_state.setdefault("executions", {})
                 if executions.get(task_id, 0):
@@ -854,7 +859,9 @@ class WorkflowCoordinator:
                 warnings = check_resource_contracts([node.output_contract], result_handles(task_id, result))
                 if warnings:
                     self.node_contract_errors.setdefault(task_id, []).extend(warnings)
-                assert_resource_contracts([node.output_contract], result_handles(task_id, result))
+                # 产物形态要求不判死（2026-11-05）：契约已注入子 Agent 指令（## 资源契约），
+                # 违规记录进 node_contract_errors 并经 delivery.gaps 暴露给父侧整合；
+                # 节点照常交付，由父 Agent 裁决是否需要定向续用子会话补做。
             self.node_results[task_id] = result
             lineage = build_node_lineage(
                 task_id=task_id,

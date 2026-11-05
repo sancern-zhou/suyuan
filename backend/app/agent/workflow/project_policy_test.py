@@ -49,6 +49,61 @@ def test_project_children_are_scoped_and_cannot_delegate_or_override_profile(pol
     assert get_agent_profile("manager").allow_delegation
 
 
+def test_hybrid_parent_keeps_shared_children_and_direct_tool_description(monkeypatch):
+    """assistant 这类混合父模式：项目子模式叠加在共享父边界之上，不替换。"""
+    config = configuration()
+    # 父模式校验要求声明 run_agent_workflow；assistant 共享白名单本就含它。
+    config["agent_mode_tools"]["assistant"] = ["run_agent_workflow"]
+    config["agent_workflow_parents"]["assistant"] = {"child_modes": ["internal_data"]}
+    backend = BackendManifest.model_validate(config)
+    monkeypatch.setattr(project_policy, "active_backend", lambda: backend)
+
+    assert delegation_error("assistant", ["internal_data"]) is None
+    assert delegation_error("assistant", ["office"]) is None
+    assert delegation_error("assistant", ["query_monitoring_station"]) is None
+    # 未列入共享父边界或项目清单的目标仍然拒收
+    assert delegation_error("assistant", ["query"])
+    assert delegation_error("assistant", ["manager"])
+
+    direct = {
+        "name": "call_sub_agent",
+        "description": "direct delegation tool",
+        "parameters": {"type": "object", "properties": {
+            "target_mode": {"enum": ["x"], "description": "d"},
+        }},
+    }
+    dag = {
+        "name": "run_agent_workflow",
+        "description": "dag orchestration tool",
+        "parameters": {"type": "object", "properties": {
+            "workflow": {"type": "object", "properties": {"nodes": {"type": "array", "items": {
+                "type": "object", "properties": {"target_mode": {"enum": ["x"], "description": "d"}},
+            }}}},
+        }},
+    }
+    scoped_direct = project_policy.scope_delegation_schema(direct, "assistant")
+    direct_target = scoped_direct["parameters"]["properties"]["target_mode"]
+    assert "internal_data" in direct_target["enum"]
+    assert {"office", "knowledge", "ppt", "board", "ops"} <= set(direct_target["enum"])
+    # 一行制定位进 target 描述；原工具描述保留并追加项目子模式契约要求
+    assert direct_target["description"].startswith("- internal_data：data；边界：no report")
+    assert "direct delegation tool" in scoped_direct["description"]
+    assert "task_contract" in scoped_direct["description"]
+
+    # DAG 工具只收窄 enum：描述与 target 描述原样保留（避免与 call_sub_agent 双份计费）
+    scoped_dag = project_policy.scope_delegation_schema(dag, "assistant")
+    dag_target = scoped_dag["parameters"]["properties"]["workflow"]["properties"]["nodes"]["items"]["properties"]["target_mode"]
+    assert scoped_dag["description"] == "dag orchestration tool"
+    assert dag_target["description"] == "d"
+    assert set(dag_target["enum"]) == set(direct_target["enum"])
+
+    # 纯项目父模式行为不变：工具描述整体替换为编排契约
+    scoped_manager = project_policy.scope_delegation_schema(deepcopy(direct), "manager")
+    assert "direct delegation tool" not in scoped_manager["description"]
+    assert "项目内部子 Agent 工作流" in scoped_manager["description"]
+    assert "internal_data" in scoped_manager["parameters"]["properties"]["target_mode"]["enum"]
+
+
 def test_project_modes_do_not_leak_after_switching_project(policy, monkeypatch):
     monkeypatch.setattr(project_policy, "active_backend", lambda: BackendManifest())
     assert "internal_data" not in target_mode_values()
