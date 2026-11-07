@@ -7,6 +7,7 @@ import pytest
 
 from app.scenarios.xuchang_station_deviation.alert_notification import (
     _collect_media,
+    compose_station_alert_fallback_message,
     compose_station_alert_message,
     run_station_alert_workflow,
 )
@@ -149,6 +150,41 @@ def test_multi_factor_episode_merges_into_one_notice(tmp_path):
     assert "合并为一条通报" in message
     assert message.count("三、气象与质控") == 1  # 气象与质控只出现一次
     assert "自行核实周边3公里范围" in message  # PM10 地图缺失时如实说明
+
+
+
+def test_region_merged_alerts_listed_in_notice():
+    primary = _deviation_alert(
+        target_pollutant="PM25",
+        station_value=95.0,
+        rule="six_consecutive_hourly_rises_and_pollutant_thresholds",
+        detail={
+            "region_stations": [
+                {"station_id": "1005A", "station_name": "文教园区", "station_value": 88.0},
+                {"station_id": "1008A", "station_name": "椹涧乡", "station_value": 82.0},
+            ]
+        },
+        pollutant_source_features={"status": "not_calculated"},
+    )
+    message = compose_station_alert_message(_package([
+        {"alert": primary, "evidence": _deviation_evidence()},
+    ]))
+    assert "同窗口另有2个站点同因子连续抬升" in message
+    assert "文教园区88" in message and "椹涧乡82" in message
+    assert "图表展示的是抬升幅度最大的站点" in message
+
+    # 兜底文案同样要体现区域合并
+    fallback = compose_station_alert_fallback_message(_package([
+        {"alert": primary, "evidence": _deviation_evidence()},
+    ]))
+    assert "同窗口另有2个站点同因子连续抬升" in fallback
+    assert "文教园区88" in fallback
+
+    # 非区域合并告警不受影响
+    plain = compose_station_alert_message(_package([
+        {"alert": _deviation_alert(), "evidence": _deviation_evidence()},
+    ]))
+    assert "同窗口另有" not in plain
 
 
 def test_collect_media_deduplicates_and_keeps_existing_files(tmp_path):

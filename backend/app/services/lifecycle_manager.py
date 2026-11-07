@@ -59,6 +59,7 @@ from app.fetchers.xuchang_weather_situation import (
     XuchangAirQualityForecastFetcher, XuchangWeatherSituationEvidenceFetcher,
 )
 from app.fetchers.xuchang_town_five_minute import XuchangTownFiveMinuteFetcher
+from app.fetchers.xuchang_town_hour_day import XuchangTownAirDataFetcher
 from app.fetchers.xuchang_zhongda_station import (
     XuchangZhongdaCityFetcher,
     XuchangZhongdaStationFetcher,
@@ -164,6 +165,8 @@ def _configured_fetchers(project_context):
             lambda: XuchangZhongdaStationFetcher(data_kind="hour"),
         "xuchang_zhongda_city_hour_fetcher": XuchangZhongdaCityFetcher,
         "xuchang_town_five_minute_fetcher": XuchangTownFiveMinuteFetcher,
+        "xuchang_town_hour_fetcher": lambda: XuchangTownAirDataFetcher(data_kind="hour"),
+        "xuchang_town_day_fetcher": lambda: XuchangTownAirDataFetcher(data_kind="day"),
         "gems_xuchang_image_fetcher": GemsImageFetcher,
     }
     from app.services.station_operation_monitor.runtime import config_path

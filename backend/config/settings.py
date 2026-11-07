@@ -144,6 +144,18 @@ class Settings(BaseSettings):
         le=365,
         description="5 分钟数据保留天数，超过即删除",
     )
+    town_hour_lookback_hours: int = Field(
+        default=30,
+        ge=6,
+        le=720,
+        description="乡镇站小时数据回看窗口（小时），覆盖平台迟到发布与事后修正",
+    )
+    town_day_lookback_days: int = Field(
+        default=16,
+        ge=2,
+        le=180,
+        description="乡镇站日数据回看窗口（天），覆盖跨日补审与事后修正",
+    )
 
     # 助手模式后台委派（run_in_background）在交付边界的等待上限：
     # 等待本会话委派完成后把结果注入观察继续 loop；超时放行交付。

@@ -686,11 +686,12 @@ cubes:
   Rank168CityMonthly:
     dataset: DataCrawler.Rank168CityMonthly
     grain: 一行 = 城市 × 期次类型(month/cum) × 月份
-    applicability: 生态环境部168重点城市全国排名（综合指数+PM2.5倒序）
-    source_window: 2026-01~2026-07（人工回补，无自动采集）
+    applicability: 生态环境部168重点城市官方月度定版排名（综合指数+PM2.5倒序）——部逐月发布、权威但有发布滞后且无自动采集，仅当用户要历史月份的官方排名时使用；168城的最新/实时参考排名改用中台报表接口 airdata_calc_report_summary(is_rank=true)，其基于发布数据实时计算、实时更新但仅作参考非官方定版，答复必须注明实时参考口径，且调用前先确认其输入数据覆盖全国城市——当前库内城市日数据仅许昌时排名恒为1、无意义不要引用
+    source_window: 2026-01~2026-07（人工回补，无自动采集，后续期次需人工回补）
     limitations:
       - 仅用于全国排名与横向对比；浓度绝对值以本地口径为准
       - 与省内排名SsfbCityRanking不可混算；排名并列时排名值可重复
+      - 官方定版口径，与中台 is_rank=true 实时参考排名不可混用：官方结论/历史月份用本模型，最新排名用中台接口并注明口径
     measures:
       compositeIndex:
         name: 环境空气质量综合指数(部发布)

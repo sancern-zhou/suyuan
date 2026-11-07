@@ -649,6 +649,19 @@ class AirDataCalcReportSummaryTool(LLMTool):
                             "（浓度列含全套，其余常用列仅 *_Compare）；默认 false 只返回当期值"
                         ),
                     },
+                    "is_rank": {
+                        "type": "boolean",
+                        "description": (
+                            "是否返回 338 城/168 城/省内排名列（Rank_因子_338|168|Province，"
+                            "因子含综合指数与 6 项浓度，含 _Compare 同比排名）。"
+                            "口径性质：中台基于发布数据实时计算的排名，实时更新但仅作参考，"
+                            "非官方定版；官方定版的 168 城排名是生态环境部逐月发布的月度排名"
+                            "（本地语义层 Rank168CityMonthly，有发布滞后）。"
+                            "注意：排名只在输入数据包含的城市范围内计算，"
+                            "当前库内城市日数据仅覆盖许昌时排名恒为 1、无意义不要引用，"
+                            "待中台侧提供全国城市数据后才产出有效实时排名"
+                        ),
+                    },
                     "ns_type": {
                         "type": "integer",
                         "enum": [1, 2],
@@ -687,7 +700,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
             description="Calc air quality report summary with YoY comparison via AirDataPlatform",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="1.1.0",
+            version="1.2.0",
             requires_context=True,
         )
 
@@ -776,6 +789,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
         region_area_name: dict[str, Any] | None = None,
         need_keys: list[str] | None = None,
         include_compare: bool = False,
+        is_rank: bool = False,
         **kwargs,
     ) -> dict[str, Any]:
         logger.info(
@@ -787,6 +801,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
             area_type=area_type,
             report_time_type=report_time_type,
             include_compare=include_compare,
+            is_rank=is_rank,
             need_keys=need_keys,
         )
         try:
@@ -803,6 +818,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
                 region_area=region_area,
                 region_area_name=region_area_name,
                 need_keys=need_keys,
+                is_rank=bool(is_rank),
             )
             metadata = {
                 "tool_name": self.name,
@@ -813,6 +829,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
                 "report_time_type": report_time_type,
                 "ns_type": ns_type,
                 "compare_year": year,
+                "is_rank": bool(is_rank),
             }
 
             if not data:

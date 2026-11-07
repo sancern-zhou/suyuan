@@ -302,6 +302,23 @@ def _dispatch_sentences(alert: dict[str, Any]) -> list[str]:
     return sentences
 
 
+def _region_merge_sentence(alert: dict[str, Any]) -> str:
+    """区域合并附注：主告警带 region_stations 时列出同窗口合并的其余站点。"""
+    region_stations = (alert.get("detail") or {}).get("region_stations") or []
+    if not region_stations:
+        return ""
+    unit = _unit(str(alert.get("target_pollutant")))
+    names = "、".join(
+        f"{item.get('station_name') or item.get('station_id')}"
+        f"{_fmt(item.get('station_value'))}{unit}"
+        for item in region_stations
+    )
+    return (
+        f"同窗口另有{len(region_stations)}个站点同因子连续抬升"
+        f"（{names}），已合并为本条区域告警，图表展示的是抬升幅度最大的站点。"
+    )
+
+
 def _factor_overview(alert: dict[str, Any]) -> str:
     pollutant = str(alert.get("target_pollutant"))
     parts = [
@@ -358,6 +375,10 @@ def compose_station_alert_message(package: dict[str, Any]) -> str:
     ]
     for item in alerts:
         lines.append(f"- {_factor_overview(item.get('alert') or {})}")
+    for item in alerts:
+        region_note = _region_merge_sentence(item.get("alert") or {})
+        if region_note:
+            lines.append(f"- {region_note}")
     if multi:
         lines.append(f"- 本站点{len(alerts)}个因子合并为一条通报，命中因子：{pollutants}。")
 
@@ -509,6 +530,9 @@ def compose_station_alert_fallback_message(package: dict[str, Any]) -> str:
             for item in items[1:]
         )
         overview += f"同站另有{others}告警。"
+    region_note = _region_merge_sentence(primary)
+    if region_note:
+        overview += region_note
 
     evidence = items[0].get("evidence") or {}
     weather_qc = (
@@ -532,6 +556,8 @@ async def _generate_station_alert_message(
         "必须区分监测事实、可能解释和需要现场核实的建议，不把候选来源写成已确认来源。"
         "输出面向环境业务人员的中文通报，只保留任务指令要求的告警概况、气象与质控两部分，每节不超过200字；"
         "同一站点多个污染物合并为一份通报，引用证据包中的真实图片由系统附带，不要伪造图片链接。"
+        "若告警 detail 中带有 region_stations（区域合并站点清单），必须在告警概况中列出这些站点及其实测值，"
+        "并说明本条通报为区域合并、图表展示抬升幅度最大的站点；不得遗漏或虚构清单外站点。"
     )
     history_context = (
         f"\n\n## 历史执行记忆（仅供参考，不得替代本次证据）\n{history_section}"

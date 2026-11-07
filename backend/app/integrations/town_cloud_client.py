@@ -266,11 +266,14 @@ class TownCloudClient:
         end: datetime,
         *,
         time_step: int = 1,
+        is_audit: int = 0,
         page_size: int = 2000,
     ) -> list[dict[str, Any]]:
         """拉取时间窗口内全部乡镇站（tstype=4）数据行。
 
         timeStep: 1=5分钟（窗口不得超过 3 天，平台限制）、2=小时、3=日。
+        isAudit: 0=原始 / 1=审核（实测平台对乡镇站小时/日数据两口径返回
+        同一套数据，见 xuchang_town_hour_day 抓取器说明）。
         """
         rows: list[dict[str, Any]] = []
         page = 1
@@ -283,7 +286,7 @@ class TownCloudClient:
                     "tstype": "4",
                     "timeStep": str(time_step),
                     "type": "1",
-                    "isAudit": "0",
+                    "isAudit": str(is_audit),
                     "collectionTimeBegin": start.strftime("%Y-%m-%d %H:%M:%S"),
                     "collectionTimeEnd": end.strftime("%Y-%m-%d %H:%M:%S"),
                 },

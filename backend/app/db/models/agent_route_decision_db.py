@@ -6,7 +6,7 @@ executions are not recorded. Clean schemas get the table via init_db
 create_all; managed deployments apply
 ``app/db/migrations/026_create_agent_route_decisions.sql``.
 """
-from sqlalchemy import Column, DateTime, Index, JSON, String
+from sqlalchemy import Column, DateTime, Index, JSON, String, text
 
 from app.db.database import Base
 
@@ -23,7 +23,7 @@ class AgentRouteDecisionDB(Base):
     reason_values = Column(JSON, nullable=False, default=dict)
     route_hint = Column(String(255), nullable=True)
     created_at = Column(
-        DateTime, nullable=False, server_default="CURRENT_TIMESTAMP"
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
 
     __table_args__ = (

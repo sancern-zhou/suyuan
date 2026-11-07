@@ -293,6 +293,9 @@ backend:
     - xuchang_zhongda_city_hour_fetcher
     # 空气质量信息联网系统(旧云平台)：乡镇站5分钟数据(TownStationData 2026-10-21 停更后的替代源)，仅保留30天
     - xuchang_town_five_minute_fetcher
+    # 旧云平台：乡镇站小时/日数据回写 TownStationData 原表(原始+审核同值双写，恢复 view_dat_town_* 视图)
+    - xuchang_town_hour_fetcher
+    - xuchang_town_day_fetcher
     - gems_xuchang_image_fetcher
   weather_history:
     bootstrap_days: 90
