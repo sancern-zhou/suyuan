@@ -110,6 +110,10 @@ class ExecutePythonTool(LLMTool):
                 "不得将自行写入或推断得到的中间数据路径传给后续工具。"
                 "生成 Excel、Word、PDF 等交付文件时必须先调用 artifact_path(filename) 获取输出路径，"
                 "再保存到该路径；工具会自动归档并返回真实 file_path。"
+                "生成或修改 PPTX/DOCX/XLSX 交付文件前必须先 view_skill 对应技能"
+                "（pptx_authoring / docx_authoring / xlsx_authoring，"
+                "或 read_file backend/docs/skills/ 下同名 .md）获取设计规范，"
+                "并用 validate_pptx（PPTX）/ validate_office（DOCX/XLSX）验收通过后才算交付。"
                 "数据/图表/报告三份规范手册位于 backend/app/tools/utility/ 下的 execute_python_data_manual.md、"
                 "execute_python_chart_manual.md、execute_python_report_manual.md；"
                 "配备 read_file 的模式在首次执行某类任务前必须先用 read_file 阅读对应手册（数据处理→data、绘图→chart、正式报告→report），不得凭记忆套用规范或限值；"
@@ -464,7 +468,9 @@ class ExecutePythonTool(LLMTool):
             if docx_postprocess:
                 result["data"]["docx_postprocess"] = docx_postprocess
 
-            # ✅ 处理办公文件：生成 PDF 预览（与 Office 工具统一格式）
+            # 办公产物：标记首个 office 文件为主文档；仅对无 Web 原生渲染器的格式
+            # 生成 PDF 预览派生——docx/xlsx 前端原生渲染（docx-editor / SheetJS），
+            # 不再走 soffice 转换（偶发挂死/超时是预览不稳定的主因之一）。
             office_extensions = {'.docx', '.xlsx', '.pptx', '.pdf', '.doc', '.xls', '.ppt'}
             office_files = [f for f in final_files if Path(f).suffix.lower() in office_extensions]
 
@@ -474,7 +480,8 @@ class ExecutePythonTool(LLMTool):
                 office_suffix = Path(office_file).suffix.lower()
                 result["data"]["file_path"] = office_file
                 result["data"]["file_name"] = Path(office_file).name
-                if office_suffix != ".pdf":
+                if office_suffix in {".ppt", ".pptx", ".doc"}:
+                    # ppt/pptx 页图渲染与旧版 .doc 二进制仍需 PDF 预览派生
                     try:
                         from app.services.pdf_converter import pdf_converter
                         pdf_preview = await pdf_converter.convert_to_pdf(office_file)

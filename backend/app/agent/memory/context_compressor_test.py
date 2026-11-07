@@ -604,7 +604,7 @@ def test_document_artifact_tool_result_survives_history_restore_projection(tmp_p
         "success": True,
         "status": "success",
         "summary": "已生成PPT",
-        "metadata": {"generator": "create_pptx_with_ppt_master"},
+        "metadata": {"generator": "execute_python"},
         "data": {
             "file_path": str(artifact_path),
             "project_dir": str(tmp_path / "project"),
@@ -638,7 +638,7 @@ def test_document_artifact_tool_result_survives_history_restore_projection(tmp_p
     runtime_session = SessionMemory(session_id="artifact-projection-source", base_dir=tmp_path)
     runtime_session.add_streaming_tool_results([
         {
-            "tool_name": "create_pptx_with_ppt_master",
+            "tool_name": "execute_python",
             "tool_use_id": "toolu_ppt_1",
             "tool_input": {"title": "deck"},
             "result": result,

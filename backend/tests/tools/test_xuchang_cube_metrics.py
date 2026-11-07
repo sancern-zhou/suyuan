@@ -31,6 +31,35 @@ def test_catalog_covers_all_cube_schema_names_with_chinese_titles():
             assert member["title"], (cube, member["name"])
 
 
+def test_generated_artifact_is_in_sync_with_schemas_and_registry():
+    """防漂移：提交的 catalog.generated.json 必须等于生成器当前输出。"""
+    import importlib.util
+    from pathlib import Path
+
+    generator_path = (
+        Path(__file__).resolve().parents[3]
+        / "projects/xuchang/data-ops/semantic/gen_semantic_artifacts.py"
+    )
+    spec = importlib.util.spec_from_file_location("gen_xuchang_catalog", generator_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    artifact_path = Path(__file__).resolve().parents[2] / "app/tools/query/xuchang_cube_metrics/catalog.generated.json"
+    committed = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert committed == module.build()
+
+
+def test_tool_description_is_slim_and_routes_to_describe():
+    """描述只留路由与红线（预算帽 2500），成员目录不内联。"""
+    import json as _json
+
+    schema = XuchangCubeMetricsTool().get_function_schema()
+    size = len(_json.dumps(schema, ensure_ascii=False))
+    assert size < 2500, f"schema {size} 超历史膨胀帽"
+    assert "【语义目录】" not in schema["description"]
+    assert "describe_cube='cubes'" in schema["description"]
+
+
 def test_make_token_is_signed_hs256():
     secret = "unit-test-secret"
     token = _make_token(secret)
@@ -209,3 +238,24 @@ async def test_describe_cube_returns_semantic_definition_without_cube_call():
     assert result["semantic_context"]["metric_definitions"]["rankPm25"]["name"]
     assert "daily" in result["semantic_context"]["applicability"]
     assert any("ProvinceMonth" in item for item in result["semantic_context"]["limitations"])
+    # 瘦身后成员目录的唯一召回通道：members 清单带中文标题
+    names = {m["name"] for m in result["members"]["measures"]}
+    assert "SsfbCityRanking.rankPm25" in names
+    assert result["members"]["dimensions"]
+
+
+@pytest.mark.asyncio
+async def test_describe_cube_index_lists_all_cubes():
+    result = await XuchangCubeMetricsTool().execute(describe_cube="cubes")
+    assert result["success"] is True
+    assert len(result["cubes"]) == len(CATALOG)
+    entry = next(c for c in result["cubes"] if c["cube"] == "SsfbCityRanking")
+    assert entry["measures"] >= 1 and entry["applicability"]
+
+
+@pytest.mark.asyncio
+async def test_describe_unknown_cube_suggests_close_matches():
+    result = await XuchangCubeMetricsTool().execute(describe_cube="SsfbCityRankin")
+    assert result["success"] is False
+    assert "SsfbCityRanking" in result["summary"]
+    assert "describe_cube='cubes'" in result["summary"]

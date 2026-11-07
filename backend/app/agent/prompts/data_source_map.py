@@ -39,6 +39,22 @@ def _candidate_paths() -> List[Path]:
     return [_catalog_path(), _config_catalog_path()]
 
 
+def _current_project_id() -> str:
+    """当前部署项目（独立成函数便于测试注入）。"""
+    from config.settings import settings
+
+    return str(settings.project_id or "default")
+
+
+def _entry_matches_project(item: dict[str, Any]) -> bool:
+    """条目可选 ``projects: [project_id]`` 标签：未标注 = 全项目可见。"""
+    projects = item.get("projects")
+    if not isinstance(projects, list):
+        return True
+    names = {str(project).strip() for project in projects if str(project).strip()}
+    return not names or _current_project_id() in names
+
+
 def load_data_source_catalog(*, refresh: bool = False) -> List[dict[str, Any]]:
     """加载数据源目录；全部候选缺失/损坏时返回空列表并记录日志。"""
     global _CACHE
@@ -80,6 +96,8 @@ def load_data_source_catalog(*, refresh: bool = False) -> List[dict[str, Any]]:
         locator = str(item.get("locator") or "").strip()
         if not domain or not locator:
             logger.warning("data_source_catalog_entry_invalid", entry=item)
+            continue
+        if not _entry_matches_project(item):
             continue
         entries.append(item)
 

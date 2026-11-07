@@ -63,8 +63,11 @@ XUCHANG_WECHAT_PUSH_TOKEN=<随机串>   # python -c "import secrets; print(secre
    .venv\Scripts\python agent.py --dry-run
    ```
 
-8. 双击 `start_agent.bat` 常驻运行。开机自启：`Win+R` 输入 `shell:startup`，
-   把 `start_agent.bat` 的快捷方式放进去。
+8. 配置登录自启（两者都放 shell:startup 快捷方式，目标均为
+   `.venv\Scripts\pythonw.exe`，无窗口运行）：
+   - `pythonw.exe agent.py`（工作目录本目录）→ 常驻推送；
+   - `pythonw.exe watchdog.py`（工作目录本目录）→ 看门狗，每 10 分钟
+     检查并拉起 agent。
 
 ## 运行注意事项（都是实测坑）
 
@@ -88,7 +91,14 @@ XUCHANG_WECHAT_PUSH_TOKEN=<随机串>   # python -c "import secrets; print(secre
 - 后端侧：管理员登录浏览器访问 `/api/xuchang-wechat-push/status`
   （或带 `Authorization: Bearer <token>`），看 `pending_count`（积压）、
   `failed_count`、`agent.last_seen_at`（agent 心跳，agent 在线即持续刷新）。
-- 本机侧：`data/agent.log`。
+- 本机侧：`data/agent.log`；看门狗日志 `data/watchdog.log`。
+- **看门狗（watchdog.py）**：登录自启，每 10 分钟检查 agent 进程，缺失则
+  无窗口拉起（覆盖误关窗口、被杀、偶发崩溃）。杀毒软件（尤其 360 主动防御）
+  可能把 wechatauto 的内存操作判定为威胁而终止 python 进程——请把
+  `.venv\Scripts\pythonw.exe`、`python.exe`、本目录和微信安装目录加入
+  安全软件白名单，否则看门狗会陷入"拉起-被杀"循环（日志可辨）。
+- **单实例锁**：agent 启动时占用 `127.0.0.1:47615`，重复启动会立即退出
+  （防止双实例同时拉取导致重复发群）。
 
 | 现象 | 处理 |
 |---|---|
@@ -97,12 +107,15 @@ XUCHANG_WECHAT_PUSH_TOKEN=<随机串>   # python -c "import secrets; print(secre
 | 初始化微信失败 / 找不到主窗口 | 微信未登录 / 关到托盘；确认装的是 wechatauto-replica 而非旧 wxauto |
 | 发送失败：找不到会话 | 群名不唯一或不在会话列表，置顶目标群 |
 | 心跳有但积压上涨 | 微信掉线或窗口不可用，看 agent.log |
+| agent.log 出现 "已有 agent 实例在运行" | 已有常驻实例，正常退出无需处理；确认只需一套自启（快捷方式 + 看门狗） |
+| agent 反复消失 | 查安全软件白名单（见上），看门狗日志有拉起记录 |
 
 ## 常见问题
 
-- **为什么安装时跳过 winsdk？** winsdk（WinRT 绑定）仅用于 wechatauto 的
-  OCR 兜底识别通道，且 Python 3.13 无预编译 wheel、源码构建需要 MSVC。
-  跳过它只少一层 OCR 兜底，UIA 主通道发送完全不受影响。
+- **winsdk 报错（No module named 'winsdk'）？** wechatauto 的 OCR 兜底依赖
+  winsdk，而 Python 3.11+ 官方无预编译 wheel。本目录 `winsdk_shim/` 把
+  `winsdk.windows.*` 转发到现代 pywinrt 包（`winrt-*`，由 requirements.txt
+  安装），agent 启动时自动挂载，OCR 兜底可用——无需再处理。
 - **微信自动升级到 4.3+ 会失效吗？** wechatauto 依赖微信内部布局与无障碍
   闸门特征，大版本更新可能需要等它适配；因此**关闭微信自动更新**，
   升级前先在 `--test` 模式验证。

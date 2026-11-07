@@ -317,7 +317,7 @@ async def render_session_resource(
     try:
         if payload.format == "docx":
             path = await asyncio.to_thread(quarto_report_renderer.render_docx, report_id)
-            renderer = "file"
+            renderer = "docx"
             label = "report.docx"
         else:
             path = await asyncio.to_thread(

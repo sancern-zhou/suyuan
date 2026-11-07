@@ -36,6 +36,9 @@ PENDING_PATH = "/api/xuchang-wechat-push/pending"
 ACK_PATH = "/api/xuchang-wechat-push/ack"
 MEDIA_PATH = "/api/xuchang-wechat-push/media"
 
+# 单实例守卫：双 agent 会同时拉取同一消息导致重复发群，用本地端口占位互斥
+INSTANCE_LOCK_PORT = 47615
+
 # 图片按 content-type 落本地临时文件的扩展名映射
 _MEDIA_EXTS = {
     "image/png": ".png",
@@ -49,7 +52,12 @@ MEDIA_FETCH_RETRIES = 2
 
 def log(message: str) -> None:
     line = f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}"
-    print(line, flush=True)
+    try:
+        # pythonw（无控制台）自启时 sys.stdout 为 None，日志只落文件
+        if sys.stdout is not None:
+            print(line, flush=True)
+    except (OSError, ValueError):
+        pass
     try:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         with LOG_PATH.open("a", encoding="utf-8") as handle:
@@ -91,6 +99,22 @@ def load_config() -> dict:
     return cfg
 
 
+def ensure_winsdk_shim() -> None:
+    """winsdk 在 Python 3.11+ 无预编译 wheel，用 winrt 新包做同名转发。
+
+    wechatauto 的 OCR 兜底（UIA 偶发失败时顶上）需要 winsdk；缺它时每次
+    兜底都会 ModuleNotFoundError，表现为发送偶发失败/附图丢失。
+    """
+    try:
+        import winsdk  # noqa: F401
+        return
+    except ImportError:
+        pass
+    shim_dir = BASE_DIR / "winsdk_shim"
+    if (shim_dir / "winsdk").is_dir() and str(shim_dir) not in sys.path:
+        sys.path.insert(0, str(shim_dir))
+
+
 class WeChatSender:
     """wechatauto-replica 驱动（微信 4.x 客户端）。
 
@@ -101,6 +125,7 @@ class WeChatSender:
     """
 
     def __init__(self) -> None:
+        ensure_winsdk_shim()
         try:
             from wechatauto.guia import quick_send, quick_send_image
         except ImportError as exc:
@@ -210,13 +235,15 @@ def send_with_retry(cfg: dict, sender: WeChatSender, text: str) -> str | None:
 
 
 def fetch_media(cfg: dict, message_id: str, index: int) -> Path | None:
-    """下载消息附图到本地临时文件；重试耗尽返回 None。"""
+    """下载消息附图到本地临时文件；重试耗尽返回 None。
+
+    图片体积大于文本响应，公网链路单独放宽超时；断网时仍受重试次数约束。
+    """
     url = f"{cfg['base_url']}{MEDIA_PATH}/{message_id}/{index}"
+    timeout = max(30.0, float(cfg["http_timeout_seconds"]))
     for attempt in range(1 + MEDIA_FETCH_RETRIES):
         try:
-            response = httpx.get(
-                url, headers=http_headers(cfg), timeout=cfg["http_timeout_seconds"]
-            )
+            response = httpx.get(url, headers=http_headers(cfg), timeout=timeout)
             if response.status_code == 200:
                 ext = _MEDIA_EXTS.get(
                     response.headers.get("content-type", "").split(";")[0].strip(),
@@ -231,11 +258,26 @@ def fetch_media(cfg: dict, message_id: str, index: int) -> Path | None:
                 f"[warn] 附图下载失败（{message_id}#{index} 第 {attempt + 1} 次）："
                 f"HTTP {response.status_code}"
             )
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, OSError) as exc:
             log(f"[warn] 附图下载失败（{message_id}#{index} 第 {attempt + 1} 次）：{exc}")
         if attempt < MEDIA_FETCH_RETRIES:
             time.sleep(2)
     return None
+
+
+def send_image_with_retry(cfg: dict, sender: WeChatSender, image_path: str) -> str | None:
+    """附图发送带轮内重试（UIA 偶发失败/OCR 兜底抖动时第二次常成功）。"""
+    last_error = "未知错误"
+    for attempt in range(1 + cfg["send_retry"]):
+        try:
+            sender.send_image(cfg["group_name"], image_path)
+            return None
+        except Exception as exc:
+            last_error = str(exc)
+            log(f"[warn] 附图发送失败（第 {attempt + 1} 次）：{last_error}")
+            if attempt < cfg["send_retry"]:
+                time.sleep(cfg["send_retry_delay_seconds"])
+    return last_error
 
 
 def run_cycle(cfg: dict, markers: dict, sender: WeChatSender | None, dry_run: bool) -> None:
@@ -265,7 +307,13 @@ def run_cycle(cfg: dict, markers: dict, sender: WeChatSender | None, dry_run: bo
             ack(cfg, message_id, "failed", detail=error)
             continue
         log(f"[info] 已发送告警 {message_id} 到「{cfg['group_name']}」")
-        # 文本发出后逐张发附图：单张失败只记录不重发整条消息（避免文案重复刷群）
+        # 文本发出后立即落本地标记：进程在附图阶段被杀/崩溃时，重启后只补
+        # ack 不再重发文本（避免群里出现重复通报）
+        markers["markers"][message_id] = datetime.now().isoformat(
+            timespec="seconds"
+        )
+        save_markers(markers)
+        # 逐张发附图：单张失败只记录不重发整条消息（避免文案重复刷群）
         media = msg.get("media") or []
         failed_media: list[int] = []
         for index in range(len(media)):
@@ -273,11 +321,10 @@ def run_cycle(cfg: dict, markers: dict, sender: WeChatSender | None, dry_run: bo
             if local_path is None:
                 failed_media.append(index)
                 continue
-            try:
-                sender.send_image(cfg["group_name"], str(local_path))
+            error = send_image_with_retry(cfg, sender, str(local_path))
+            if error is None:
                 log(f"[info] 已发送附图 {message_id}#{index}")
-            except Exception as exc:
-                log(f"[warn] 附图发送失败（{message_id}#{index}）：{exc}")
+            else:
                 failed_media.append(index)
         detail = None
         if media:
@@ -285,10 +332,6 @@ def run_cycle(cfg: dict, markers: dict, sender: WeChatSender | None, dry_run: bo
             if failed_media:
                 detail += f"（失败序号：{','.join(map(str, failed_media))}）"
                 log(f"[warn] {detail}")
-        markers["markers"][message_id] = datetime.now().isoformat(
-            timespec="seconds"
-        )
-        save_markers(markers)
         ack(cfg, message_id, "sent", detail=detail)
 
 
@@ -299,6 +342,18 @@ def ensure_sender(cfg: dict, sender: WeChatSender | None) -> WeChatSender | None
         return WeChatSender()
     except RuntimeError as exc:
         log(f"[warn] {exc}")
+        return None
+
+
+def acquire_instance_lock() -> socket.socket | None:
+    """占本地端口做进程互斥：双 agent 会同时拉取同一消息导致重复发群。"""
+    guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        guard.bind(("127.0.0.1", INSTANCE_LOCK_PORT))
+        guard.listen(1)
+        return guard
+    except OSError:
+        guard.close()
         return None
 
 
@@ -313,6 +368,13 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, OSError):
         pass
+
+    guard: socket.socket | None = None
+    if not args.dry_run:
+        guard = acquire_instance_lock()
+        if guard is None:
+            log("[error] 已有 agent 实例在运行（端口 47615 被占用），本进程退出")
+            return 3
 
     try:
         cfg = load_config()

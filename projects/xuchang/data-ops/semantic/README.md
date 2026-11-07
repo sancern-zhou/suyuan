@@ -1,8 +1,9 @@
 # 许昌语义注册中心
 
-`registry.yaml` 维护业务口径、数据范围和限制；Cube schema 维护执行定义；Python 工具的
-`CATALOG` 维护可查询成员。`catalog.generated.yaml` 是供 AI 编程维护和审查的生成索引，
-不是新的业务语义来源。
+`registry.yaml` 维护业务口径、数据范围、限制与成员中文标题；Cube schema 维护执行定义
+（可查询成员的唯一真相）。`gen_semantic_artifacts.py` 把两者合成
+`backend/app/tools/query/xuchang_cube_metrics/catalog.generated.json`（工具 fail-closed
+加载的成员白名单）。改口径只改 schema/registry 后重跑生成器，不再手工维护工具内目录。
 
 提交前运行：
 
