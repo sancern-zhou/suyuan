@@ -17,7 +17,6 @@ from app.tools.artifact_utils import (
     preview_output_path,
 )
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.office.editable_ppt.delivery_guard import validate_editable_ppt_delivery
 from app.tools.resource_declarations import generated_file_products
 from app.utils.path_config import (
     PROJECT_ROOT,
@@ -103,14 +102,6 @@ class PublishSessionFileTool(LLMTool):
 
         suffix = resolved_path.suffix.lower()
         file_type = self._resolve_file_type(suffix)
-        if suffix == ".pptx":
-            delivery = validate_editable_ppt_delivery(resolved_path)
-            if not delivery.get("allowed", False):
-                return self._failure(
-                    delivery["message"],
-                    code=delivery["code"],
-                    project_dir=delivery.get("project_dir"),
-                )
 
         try:
             data: Dict[str, Any] = {

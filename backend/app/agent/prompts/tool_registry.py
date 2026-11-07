@@ -63,15 +63,16 @@ OFFICE_TOOL_NAMES = [
     "create_skill_draft",
 ]
 
-# ===== 幻灯片模式工具 =====
+# ===== 幻灯片模式工具（技能路线：pptx_authoring + execute_python + validate_pptx 闭环） =====
 PPT_TOOL_NAMES = [
     "list_session_resources",
+    "read_session_resource",
     "publish_session_file",
-    # PPT 源码项目和交付
-    "manage_editable_ppt",
+    # 自由创作技能与渲染验收闭环
+    "list_skills",
+    "view_skill",
     "validate_pptx",
-    "create_pptx_with_ppt_master",
-    # 文件读取与直接源码编辑
+    # 文件读取与代码迭代
     "read_file",
     "write_file",
     "edit_file",

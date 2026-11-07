@@ -44,7 +44,6 @@ def test_tool_delivery_has_no_legacy_artifact_adapter() -> None:
         BACKEND_ROOT / "app/tools/utility/publish_session_file_tool.py",
         BACKEND_ROOT / "app/tools/html_artifact/tool.py",
         BACKEND_ROOT / "app/tools/report/report_package/tool.py",
-        BACKEND_ROOT / "app/tools/office/ppt_master_tool.py",
         BACKEND_ROOT / "app/tools/office/read_pptx_tool.py",
     ]
     forbidden = (

@@ -310,3 +310,5 @@ id_ed25519*
 # 本机部署专属（不入 git）
 迁移包/
 deploy/nginx/templates-local/
+# ZCode 会话产物（计划存档等本地文件）
+.zcode/

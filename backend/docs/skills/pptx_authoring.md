@@ -14,13 +14,15 @@ enabled: true
 用 execute_python 直接编写 python-pptx 代码生成 PPTX，并用 validate_pptx 做渲染级验收。
 本技能提供设计规范（防止"能生成但难看"）与迭代协议（防止"一次成型不检查"）。
 
-## 与现有 PPT 工具的分工
+## 与现有交付方式的分工
 
 | 场景 | 用哪个 |
 |---|---|
-| 标准汇报结构（封面/目录/章节/图表页） | create_pptx_with_ppt_master |
-| 多轮可编辑源码项目交付 | manage_editable_ppt |
-| 自由版式、特殊定制、上述工具不适配 | 本技能（execute_python + python-pptx） |
+| 正式公文/政务报告（QMD 渲染） | create_report_package |
+| PPT 制作与多轮修改（全部场景） | 本技能（execute_python + python-pptx + validate_pptx 闭环） |
+
+（create_pptx_with_ppt_master 与 manage_editable_ppt 管线已于 2026-11 退役，
+统一收敛到本技能路线。）
 
 ## 工作流（必须按序执行）
 

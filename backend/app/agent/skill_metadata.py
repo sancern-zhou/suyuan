@@ -60,14 +60,6 @@ SKILL_METADATA = {
         "aliases": [],
         "required_tools": ["read_file"],
     },
-    "editable_ppt_generation": {
-        "enabled": True,
-        "aliases": ["高质量可编辑PPT", "源码PPT生成"],
-        "name": "高质量可编辑 PPT 生成",
-        "description": "从源码项目生成并多轮完善原生可编辑 PPTX",
-        "entry_reference": "backend/app/tools/office/editable_ppt/references/index.md",
-        "required_tools": ["manage_editable_ppt", "read_file", "edit_file", "validate_pptx"],
-    },
     "pptx_authoring": {
         "enabled": True,
         "aliases": ["PPT设计", "PPT制作", "幻灯片生成", "python-pptx", "自由PPT"],
@@ -104,7 +96,8 @@ SKILL_METADATA = {
     "广东省空气质量形势分析汇报PPT": {
         "enabled": True,
         "aliases": [],
-        "required_tools": ["create_business_chart", "create_pptx_with_ppt_master"],
+        # 2026-11 起 PPT 管线退役，改走 pptx_authoring 技能路线（技能正文需在 project/guangdong 分支同步更新）
+        "required_tools": ["create_business_chart", "read_file", "execute_python", "validate_pptx"],
     },
     "抓取生态环境部全国环境空气质量状况页面和图片技能": {
         "enabled": True,
