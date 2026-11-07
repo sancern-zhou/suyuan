@@ -181,6 +181,7 @@ async def test_docx_render_produces_montage_and_visual_review_hint(tool, tmp_pat
     assert any("as_multimodal_attachment" in note for note in result["data"]["usage_notes"])
     resource_renderers = [r.get("renderer") for r in result["resources"]]
     assert "image" in resource_renderers          # montage 已声明
+    assert resource_renderers[0] == "docx"        # 主资源前端原生渲染
 
 
 _REAL_RECALC = ValidateOfficeTool._recalc_cached_values  # 模块导入期捕获原始实现
